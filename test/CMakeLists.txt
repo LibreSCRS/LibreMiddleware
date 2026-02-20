@@ -20,7 +20,6 @@ add_executable(LibreMiddlewareTests
 
 target_link_libraries(LibreMiddlewareTests
     GTest::gtest_main
-    SmartCard
     EIdCard
     VehicleCard
 )
