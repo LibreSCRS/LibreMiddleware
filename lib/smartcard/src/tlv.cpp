@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
 #include "smartcard/tlv.h"
