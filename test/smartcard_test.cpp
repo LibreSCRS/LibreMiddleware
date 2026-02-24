@@ -2,10 +2,53 @@
 // Copyright hirashix0@proton.me
 
 #include <gtest/gtest.h>
+#include <smartcard/apdu.h>
 #include <smartcard/tlv.h>
 #include <smartcard/ber.h>
 
 using namespace smartcard;
+
+// --- APDU tests ---
+
+TEST(APDUTest, VerifyPINCommand) {
+    auto cmd = smartcard::verifyPIN(0x01, {0x31, 0x32, 0x33, 0x34});
+    auto bytes = cmd.toBytes();
+    // CLA=0x00, INS=0x20, P1=0x00, P2=0x01, Lc=4, data=31323334, no Le
+    EXPECT_EQ(bytes[0], 0x00);
+    EXPECT_EQ(bytes[1], 0x20);
+    EXPECT_EQ(bytes[2], 0x00);
+    EXPECT_EQ(bytes[3], 0x01);
+    EXPECT_EQ(bytes[4], 0x04);  // Lc
+    EXPECT_EQ(bytes[5], 0x31);
+    EXPECT_EQ(bytes[6], 0x32);
+    EXPECT_EQ(bytes[7], 0x33);
+    EXPECT_EQ(bytes[8], 0x34);
+    EXPECT_EQ(bytes.size(), 9u);  // 4 header + 1 Lc + 4 data, no Le
+}
+
+TEST(APDUTest, VerifyPINStatusCommand) {
+    auto cmd = smartcard::verifyPINStatus(0x01);
+    auto bytes = cmd.toBytes();
+    // No data, no Le -> just 4 header bytes
+    EXPECT_EQ(bytes.size(), 4u);
+    EXPECT_EQ(bytes[0], 0x00);
+    EXPECT_EQ(bytes[1], 0x20);
+    EXPECT_EQ(bytes[2], 0x00);
+    EXPECT_EQ(bytes[3], 0x01);
+}
+
+TEST(APDUTest, ChangeReferenceDataCommand) {
+    auto cmd = smartcard::changeReferenceData(0x01, {0x31, 0x32, 0x33, 0x34}, {0x35, 0x36, 0x37, 0x38});
+    auto bytes = cmd.toBytes();
+    EXPECT_EQ(bytes[0], 0x00);
+    EXPECT_EQ(bytes[1], 0x24);  // INS
+    EXPECT_EQ(bytes[2], 0x00);
+    EXPECT_EQ(bytes[3], 0x01);
+    EXPECT_EQ(bytes[4], 0x08);  // Lc = 4+4
+    EXPECT_EQ(bytes[5], 0x31);
+    EXPECT_EQ(bytes[9], 0x35);
+    EXPECT_EQ(bytes.size(), 13u);  // 4 header + 1 Lc + 8 data, no Le
+}
 
 // --- TLV tests ---
 

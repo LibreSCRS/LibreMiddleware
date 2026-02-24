@@ -26,3 +26,7 @@ target_link_libraries(LibreMiddlewareTests
 
 include(GoogleTest)
 gtest_discover_tests(LibreMiddlewareTests)
+
+# CLI tool for manual PIN testing with a real card
+add_executable(pin_test_cli pin_test_cli.cpp)
+target_link_libraries(pin_test_cli EIdCard)

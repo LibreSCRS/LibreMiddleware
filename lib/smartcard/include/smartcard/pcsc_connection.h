@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
 #ifndef SMARTCARD_PCSC_CONNECTION_H
@@ -37,10 +37,13 @@ public:
     PCSCConnection& operator=(const PCSCConnection&) = delete;
 
     APDUResponse transmit(const APDUCommand& cmd);
-    void reconnect();
+    void reconnect(DWORD preferredProtocols = SCARD_PROTOCOL_T0 | SCARD_PROTOCOL_T1);
     std::vector<uint8_t> getATR() const;
+    DWORD getActiveProtocol() const { return activeProtocol; }
 
 private:
+    APDUResponse transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen);
+
     SCARDCONTEXT context = 0;
     SCARDHANDLE card = 0;
     DWORD activeProtocol = 0;

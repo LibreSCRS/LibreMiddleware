@@ -71,3 +71,20 @@ TEST(EIdTypesTest, CertificateData) {
     EXPECT_EQ(cert.label, "Auth Certificate");
     ASSERT_EQ(cert.derBytes.size(), 4u);
 }
+
+TEST(EIdTypesTest, PINResultDefaultConstruction) {
+    PINResult r;
+    EXPECT_FALSE(r.success);
+    EXPECT_EQ(r.retriesLeft, -1);
+    EXPECT_FALSE(r.blocked);
+}
+
+TEST(EIdTypesTest, PINResultFieldAssignment) {
+    PINResult r;
+    r.success = true;
+    r.retriesLeft = 3;
+    r.blocked = false;
+    EXPECT_TRUE(r.success);
+    EXPECT_EQ(r.retriesLeft, 3);
+    EXPECT_FALSE(r.blocked);
+}

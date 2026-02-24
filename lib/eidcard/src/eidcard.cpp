@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
 #include "eidcard/eidcard.h"
@@ -153,7 +153,7 @@ static uint16_t parseFciFileSize(const std::vector<uint8_t>& fci)
     return static_cast<uint16_t>((fci[2] << 8) | fci[3]);
 }
 
-// CardEdge applet buffer size (matches nstce BufferLength = 0x0080)
+// CardEdge applet buffer size
 constexpr uint8_t CE_BUFFER_LENGTH = 0x80;
 
 // Read a file from the PKI (PKCS#15/CardEdge) applet using SELECT by file ID.
@@ -403,6 +403,101 @@ CertificateList EIdCard::readCertificates()
     std::cerr << "[EIdCard] readCertificates: returning " << certs.size()
               << " certificates" << std::endl;
     return certs;
+}
+
+// Parse ISO 7816-4 status word into PINResult
+static PINResult parsePINStatusWord(uint16_t sw)
+{
+    PINResult r;
+    if (sw == 0x9000) {
+        r.success = true;
+        return r;
+    }
+    if (sw == 0x6983) {
+        r.blocked = true;
+        r.retriesLeft = 0;
+        return r;
+    }
+    if ((sw & 0xFFF0) == 0x63C0) {
+        r.retriesLeft = sw & 0x0F;
+        return r;
+    }
+    return r;
+}
+
+// Pad a PIN with 0x00 bytes to PIN_MAX_LENGTH (8 bytes).
+static std::vector<uint8_t> padPIN(const std::string& pin)
+{
+    std::vector<uint8_t> padded(pin.begin(), pin.end());
+    padded.resize(protocol::PIN_MAX_LENGTH, 0x00);
+    return padded;
+}
+
+// RAII guard: selects the PKI (CardEdge/PKCS#15) applet on construction,
+// re-selects the eID applet on destruction. PIN operations run on the PKI applet
+// with P2=0x80 (CE_PIN_ID(RoleUser) = 0x80).
+class PkiAppletGuard {
+public:
+    explicit PkiAppletGuard(smartcard::PCSCConnection& conn) : conn_(conn)
+    {
+        auto resp = conn_.transmit(smartcard::selectByAID(protocol::AID_PKCS15));
+        if (!resp.isSuccess()) {
+            throw std::runtime_error("Failed to select PKI applet for PIN operation");
+        }
+    }
+
+    ~PkiAppletGuard()
+    {
+        try {
+            CardReaderGemalto::selectApplication(conn_);
+        } catch (...) {}
+    }
+
+    PkiAppletGuard(const PkiAppletGuard&) = delete;
+    PkiAppletGuard& operator=(const PkiAppletGuard&) = delete;
+
+private:
+    smartcard::PCSCConnection& conn_;
+};
+
+PINResult EIdCard::getPINTriesLeft()
+{
+    if (cardType == CardType::Apollo2008)
+        throw std::runtime_error("PIN operations not supported on Apollo2008 cards");
+
+    PkiAppletGuard guard(*connection);
+
+    // ISO 7816-4 VERIFY with empty data = status check (does not decrement retries)
+    auto resp = connection->transmit(
+        smartcard::verifyPINStatus(protocol::PKI_PIN_REFERENCE));
+    return parsePINStatusWord(resp.statusWord());
+}
+
+PINResult EIdCard::verifyPIN(const std::string& pin)
+{
+    if (cardType == CardType::Apollo2008)
+        throw std::runtime_error("PIN operations not supported on Apollo2008 cards");
+
+    PkiAppletGuard guard(*connection);
+
+    // ISO 7816-4 VERIFY with null-padded PIN (8 bytes)
+    auto resp = connection->transmit(
+        smartcard::verifyPIN(protocol::PKI_PIN_REFERENCE, padPIN(pin)));
+    return parsePINStatusWord(resp.statusWord());
+}
+
+PINResult EIdCard::changePIN(const std::string& oldPin, const std::string& newPin)
+{
+    if (cardType == CardType::Apollo2008)
+        throw std::runtime_error("PIN operations not supported on Apollo2008 cards");
+
+    PkiAppletGuard guard(*connection);
+
+    // ISO 7816-4 CHANGE REFERENCE DATA: data = padded oldPin (8) || padded newPin (8)
+    auto resp = connection->transmit(
+        smartcard::changeReferenceData(protocol::PKI_PIN_REFERENCE,
+                                       padPIN(oldPin), padPIN(newPin)));
+    return parsePINStatusWord(resp.statusWord());
 }
 
 void EIdCard::setCertificateFolderPath(const std::string& path)

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
 #include "smartcard/apdu.h"
@@ -86,5 +86,50 @@ APDUCommand readBinary(uint16_t offset, uint8_t length)
         .hasLe = true
     };
 }
+
+APDUCommand verifyPIN(uint8_t pinRef, const std::vector<uint8_t>& pin)
+{
+    return APDUCommand{
+        .cla = 0x00,
+        .ins = 0x20,  // VERIFY
+        .p1 = 0x00,
+        .p2 = pinRef,
+        .data = pin,
+        .le = 0,
+        .hasLe = false
+    };
+}
+
+APDUCommand verifyPINStatus(uint8_t pinRef)
+{
+    return APDUCommand{
+        .cla = 0x00,
+        .ins = 0x20,  // VERIFY (no data = status check)
+        .p1 = 0x00,
+        .p2 = pinRef,
+        .data = {},
+        .le = 0,
+        .hasLe = false
+    };
+}
+
+APDUCommand changeReferenceData(uint8_t pinRef, const std::vector<uint8_t>& oldPin, const std::vector<uint8_t>& newPin)
+{
+    std::vector<uint8_t> data;
+    data.reserve(oldPin.size() + newPin.size());
+    data.insert(data.end(), oldPin.begin(), oldPin.end());
+    data.insert(data.end(), newPin.begin(), newPin.end());
+
+    return APDUCommand{
+        .cla = 0x00,
+        .ins = 0x24,  // CHANGE REFERENCE DATA
+        .p1 = 0x00,
+        .p2 = pinRef,
+        .data = std::move(data),
+        .le = 0,
+        .hasLe = false
+    };
+}
+
 
 } // namespace smartcard

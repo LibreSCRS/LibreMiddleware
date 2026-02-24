@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
 #ifndef EIDCARD_EIDTYPES_H
@@ -62,6 +62,12 @@ struct CertificateData {
     std::vector<uint8_t> derBytes;
 };
 using CertificateList = std::vector<CertificateData>;
+
+struct PINResult {
+    bool success = false;
+    int retriesLeft = -1;   // -1 = unknown
+    bool blocked = false;
+};
 
 enum class VerificationResult {
     Unknown,  // verification could not be performed

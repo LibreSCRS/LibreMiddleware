@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
 #ifndef SMARTCARD_APDU_H
@@ -31,6 +31,12 @@ APDUCommand selectByAID(const std::vector<uint8_t>& aid);
 APDUCommand selectByPath(uint8_t fileId1, uint8_t fileId2, uint8_t le = 4);
 APDUCommand selectByFileId(uint8_t fileId1, uint8_t fileId2);
 APDUCommand readBinary(uint16_t offset, uint8_t length);
+
+// PIN management commands (ISO 7816-4)
+APDUCommand verifyPIN(uint8_t pinRef, const std::vector<uint8_t>& pin);
+APDUCommand verifyPINStatus(uint8_t pinRef);
+APDUCommand changeReferenceData(uint8_t pinRef, const std::vector<uint8_t>& oldPin, const std::vector<uint8_t>& newPin);
+
 
 } // namespace smartcard
 

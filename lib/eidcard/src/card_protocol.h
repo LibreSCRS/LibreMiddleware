@@ -119,6 +119,13 @@ inline bool isApolloATR(const std::vector<uint8_t>& atr)
            atr[2] == 0x18;
 }
 
+// PIN reference for the PKI (CardEdge/PKCS#15) applet
+// nstpkcs11 CE_PIN_ID(RoleUser) = 0x80 | (1-1) = 0x80
+constexpr uint8_t PKI_PIN_REFERENCE = 0x80;
+
+// Maximum PIN length — PINs are null-padded (0x00) to this length
+constexpr uint8_t PIN_MAX_LENGTH = 8;
+
 // Read chunk size
 constexpr uint8_t READ_CHUNK_SIZE = 0xFF;  // 255 bytes per READ BINARY
 

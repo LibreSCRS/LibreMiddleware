@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
 #ifndef EIDCARD_EIDCARD_H
@@ -35,6 +35,11 @@ public:
     VariablePersonalData readVariablePersonalData();
     PhotoData readPortrait();
     CertificateList readCertificates();
+
+    // PIN management (Gemalto/IF2020 only)
+    PINResult getPINTriesLeft();
+    PINResult verifyPIN(const std::string& pin);
+    PINResult changePIN(const std::string& oldPin, const std::string& newPin);
 
     // Verification
     void setCertificateFolderPath(const std::string& path);
