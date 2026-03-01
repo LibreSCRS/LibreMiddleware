@@ -60,6 +60,7 @@ using PhotoData = std::vector<uint8_t>;
 struct CertificateData {
     std::string label;
     std::vector<uint8_t> derBytes;
+    uint16_t keyFID = 0;  // private key FID on PKI applet (0 if not available)
 };
 using CertificateList = std::vector<CertificateData>;
 

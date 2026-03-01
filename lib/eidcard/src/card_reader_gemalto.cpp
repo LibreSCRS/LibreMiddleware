@@ -23,7 +23,7 @@ CardType CardReaderGemalto::selectApplication(smartcard::PCSCConnection& conn)
         return CardType::ForeignerIF2020;
     }
 
-    // Try SERRP (residence permit - also foreigner)
+    // Try SERRP (alternate AID for foreigner eID, same card family as SERIF)
     resp = conn.transmit(smartcard::selectByAID(protocol::AID_SERRP));
     if (resp.isSuccess()) {
         return CardType::ForeignerIF2020;

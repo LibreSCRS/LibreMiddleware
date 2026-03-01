@@ -1,0 +1,7 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// Copyright hirashix0@proton.me
+
+#pragma once
+
+#define LIBRESCRS_PKCS11_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
+#define LIBRESCRS_PKCS11_VERSION_MINOR @PROJECT_VERSION_MINOR@

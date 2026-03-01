@@ -6,6 +6,8 @@
 
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 #include "eidtypes.h"
 
 namespace smartcard {
@@ -40,6 +42,18 @@ public:
     PINResult getPINTriesLeft();
     PINResult verifyPIN(const std::string& pin);
     PINResult changePIN(const std::string& oldPin, const std::string& newPin);
+
+    // PKCS#11 signing (Gemalto/IF2020 only)
+    // Sign data using MSE SET (algo=0x02, PKCS#1 v1.5) + PSO on the PKI applet.
+    // data = DER DigestInfo; the card applies PKCS#1 v1.5 padding.
+    std::vector<uint8_t> signData(uint16_t keyReference, const std::vector<uint8_t>& data);
+
+    // Discover private key FIDs by parsing the cmapfile on the PKI applet.
+    // Returns list of {label, keyFID} pairs matching certificate order.
+    std::vector<std::pair<std::string, uint16_t>> discoverKeyReferences();
+
+    // Reconnect the underlying PC/SC connection after SCARD_W_RESET_CARD.
+    void reconnectConnection();
 
     // Verification
     void setCertificateFolderPath(const std::string& path);

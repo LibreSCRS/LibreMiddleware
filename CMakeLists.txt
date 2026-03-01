@@ -25,6 +25,7 @@ add_subdirectory(thirdparty)
 add_subdirectory(lib/smartcard)
 add_subdirectory(lib/eidcard)
 add_subdirectory(lib/vehiclecard)
+add_subdirectory(lib/pkcs11)
 
 option(BUILD_TESTING "Build tests" ON)
 if(BUILD_TESTING)

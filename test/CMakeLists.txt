@@ -27,6 +27,10 @@ target_link_libraries(LibreMiddlewareTests
 include(GoogleTest)
 gtest_discover_tests(LibreMiddlewareTests)
 
+add_executable(PKCS11Tests pkcs11_test.cpp)
+target_link_libraries(PKCS11Tests GTest::gtest_main librescrs-pkcs11)
+gtest_discover_tests(PKCS11Tests)
+
 # CLI tool for manual PIN testing with a real card
 add_executable(pin_test_cli pin_test_cli.cpp)
 target_link_libraries(pin_test_cli EIdCard)

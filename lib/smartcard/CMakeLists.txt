@@ -15,10 +15,13 @@ add_library(SmartCard STATIC
     include/smartcard/pcsc_connection.h
     include/smartcard/tlv.h
     include/smartcard/ber.h
+    include/smartcard/pkcs11_card_provider.h
 )
 
 target_include_directories(SmartCard PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+
+set_target_properties(SmartCard PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 target_link_libraries(SmartCard PUBLIC PCSC::PCSC)

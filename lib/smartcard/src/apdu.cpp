@@ -13,13 +13,30 @@ std::vector<uint8_t> APDUCommand::toBytes() const
     bytes.push_back(p1);
     bytes.push_back(p2);
 
+    // ISO 7816-4: short form supports Lc/Nc up to 255.
+    // When data.size() > 255, use extended form: 0x00 followed by 2-byte length.
+    const bool useExtended = (data.size() > 255);
+
     if (!data.empty()) {
-        bytes.push_back(static_cast<uint8_t>(data.size()));
+        if (!useExtended) {
+            bytes.push_back(static_cast<uint8_t>(data.size()));
+        } else {
+            bytes.push_back(0x00);
+            bytes.push_back(static_cast<uint8_t>((data.size() >> 8) & 0xFF));
+            bytes.push_back(static_cast<uint8_t>(data.size() & 0xFF));
+        }
         bytes.insert(bytes.end(), data.begin(), data.end());
     }
 
     if (hasLe) {
-        bytes.push_back(le);
+        if (useExtended) {
+            // Extended Le: le==0 (short form = "up to 256") → 0x01 0x00 (256 bytes).
+            uint16_t extLe = (le == 0) ? 256u : static_cast<uint16_t>(le);
+            bytes.push_back(static_cast<uint8_t>(extLe >> 8));
+            bytes.push_back(static_cast<uint8_t>(extLe & 0xFF));
+        } else {
+            bytes.push_back(le);
+        }
     }
 
     return bytes;
