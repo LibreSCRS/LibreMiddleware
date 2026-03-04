@@ -29,6 +29,7 @@ add_subdirectory(lib/vehiclecard)
 add_subdirectory(lib/healthcard)
 add_subdirectory(lib/pkscard)
 add_subdirectory(lib/pkcs11)
+add_subdirectory(lib/opensc-driver)
 
 option(BUILD_TESTING "Build tests" ON)
 if(BUILD_TESTING)
