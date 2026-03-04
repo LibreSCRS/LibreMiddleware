@@ -13,5 +13,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set_target_properties(OpenSSL_Crypto PROPERTIES
         IMPORTED_LOCATION ${OPENSSL_ROOT}/linux/lib/libcrypto.a
         INTERFACE_INCLUDE_DIRECTORIES ${OPENSSL_ROOT}/linux/include
+        INTERFACE_LINK_LIBRARIES "dl;pthread"
     )
 endif()
