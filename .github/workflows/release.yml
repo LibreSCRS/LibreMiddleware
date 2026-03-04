@@ -152,5 +152,5 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
-          generate_notes: true
+          generate_release_notes: true
           files: artifacts/*
