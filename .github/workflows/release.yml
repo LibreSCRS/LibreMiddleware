@@ -72,8 +72,8 @@ jobs:
             https://github.com/OpenSC/OpenSC /tmp/opensc-src
           cd /tmp/opensc-src
           ./bootstrap
-          ./configure --prefix=/tmp/opensc-install --enable-shared --disable-static \
-            --disable-pcsc --disable-ctapi --disable-cryptotokenkit
+          ./configure --prefix=/tmp/opensc-install \
+            --enable-shared --disable-static --without-readline
           make -j$(nproc) install
 
       - name: Configure & Build
