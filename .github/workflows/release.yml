@@ -5,6 +5,15 @@ on:
   push:
     tags:
       - '[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      opensc_version:
+        description: 'OpenSC version to build driver against (e.g. 0.26.1)'
+        required: false
+        default: '0.26.1'
+
+env:
+  OPENSC_VERSION: ${{ inputs.opensc_version || '0.26.1' }}
 
 jobs:
   test-linux:
@@ -41,14 +50,98 @@ jobs:
       - name: Test
         run: ctest --output-on-failure --test-dir build/test
 
+  opensc-linux:
+    needs: test-linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpcsclite-dev libopensc-dev zlib1g-dev cmake ninja-build
+
+      - name: Clone OpenSC ${{ env.OPENSC_VERSION }} headers
+        run: |
+          git clone --branch ${{ env.OPENSC_VERSION }} --depth 1 \
+            https://github.com/OpenSC/OpenSC /tmp/opensc-src
+
+      - name: Configure & Build
+        run: |
+          cmake -B build -G Ninja \
+            -DBUILD_OPENSC_DRIVER=ON \
+            -DOPENSC_INCLUDE_DIR=/tmp/opensc-src/src
+          cmake --build build --target librescrs-opensc
+
+      - name: Package
+        run: |
+          TAG="${{ github.ref_name }}"
+          PKG="librescrs-opensc-${TAG}-opensc${{ env.OPENSC_VERSION }}-linux-x86_64"
+          mkdir -p "$PKG"
+          cp build/lib/opensc-driver/librescrs-opensc.so "$PKG/"
+          cp lib/opensc-driver/conf/librescrs.conf "$PKG/"
+          cp lib/opensc-driver/README.md "$PKG/"
+          tar czf "${PKG}.tar.gz" "$PKG"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opensc-linux
+          path: librescrs-opensc-*.tar.gz
+
+  opensc-macos:
+    needs: test-macos
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: brew install ninja opensc
+
+      - name: Clone OpenSC ${{ env.OPENSC_VERSION }} headers
+        run: |
+          git clone --branch ${{ env.OPENSC_VERSION }} --depth 1 \
+            https://github.com/OpenSC/OpenSC /tmp/opensc-src
+
+      - name: Configure & Build
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DBUILD_OPENSC_DRIVER=ON \
+            -DOPENSC_INCLUDE_DIR=/tmp/opensc-src/src
+          cmake --build build --target librescrs-opensc
+
+      - name: Package
+        run: |
+          TAG="${{ github.ref_name }}"
+          PKG="librescrs-opensc-${TAG}-opensc${{ env.OPENSC_VERSION }}-macos-arm64"
+          mkdir -p "$PKG"
+          cp build/lib/opensc-driver/librescrs-opensc.dylib "$PKG/"
+          cp lib/opensc-driver/conf/librescrs.conf "$PKG/"
+          cp lib/opensc-driver/README.md "$PKG/"
+          zip -r "${PKG}.zip" "$PKG"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opensc-macos
+          path: librescrs-opensc-*.zip
+
   release:
-    needs: [test-linux, test-macos]
+    needs: [test-linux, test-macos, opensc-linux, opensc-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: 'opensc-*'
+          merge-multiple: true
+          path: artifacts
 
       - uses: softprops/action-gh-release@v2
         with:
           generate_notes: true
+          files: artifacts/*
