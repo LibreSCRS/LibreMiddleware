@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include "cardedge/cardedgetypes.h"
 
 namespace eidcard {
 
@@ -57,18 +58,10 @@ struct VariablePersonalData {
 
 using PhotoData = std::vector<uint8_t>;
 
-struct CertificateData {
-    std::string label;
-    std::vector<uint8_t> derBytes;
-    uint16_t keyFID = 0;  // private key FID on PKI applet (0 if not available)
-};
-using CertificateList = std::vector<CertificateData>;
-
-struct PINResult {
-    bool success = false;
-    int retriesLeft = -1;   // -1 = unknown
-    bool blocked = false;
-};
+// Re-exported from cardedge for backward compatibility
+using CertificateData = cardedge::CertificateData;
+using CertificateList = cardedge::CertificateList;
+using PINResult       = cardedge::PINResult;
 
 enum class VerificationResult {
     Unknown,  // verification could not be performed

@@ -30,7 +30,7 @@ bool VehicleCard::probe(const std::string& readerName)
         };
 
         return tryAID(protocol::SEQ1_CMD1)
-            || tryAID(protocol::SEQ2_CMD1)
+            || (tryAID(protocol::SEQ2_CMD1) && tryAID(protocol::SEQ2_CMD2))
             || tryAID(protocol::SEQ3_CMD1);
     } catch (...) {
         return false;

@@ -28,4 +28,4 @@ target_include_directories(EIdCard PUBLIC
 
 set_target_properties(EIdCard PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-target_link_libraries(EIdCard PUBLIC SmartCard OpenSSL_Crypto z)
+target_link_libraries(EIdCard PUBLIC SmartCard CardEdge OpenSSL_Crypto z)

@@ -23,8 +23,11 @@ set(LIBREMIDDLEWARE_CERTIFICATES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/cer
 
 add_subdirectory(thirdparty)
 add_subdirectory(lib/smartcard)
+add_subdirectory(lib/cardedge)
 add_subdirectory(lib/eidcard)
 add_subdirectory(lib/vehiclecard)
+add_subdirectory(lib/healthcard)
+add_subdirectory(lib/pkscard)
 add_subdirectory(lib/pkcs11)
 
 option(BUILD_TESTING "Build tests" ON)
