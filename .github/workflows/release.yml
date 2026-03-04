@@ -58,19 +58,28 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install dependencies
+      - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpcsclite-dev libopensc-dev zlib1g-dev cmake ninja-build
+          sudo apt-get install -y \
+            libpcsclite-dev libssl-dev zlib1g-dev \
+            pkg-config autoconf automake libtool \
+            cmake ninja-build
 
-      - name: Clone OpenSC ${{ env.OPENSC_VERSION }} headers
+      - name: Clone & build OpenSC ${{ env.OPENSC_VERSION }}
         run: |
           git clone --branch ${{ env.OPENSC_VERSION }} --depth 1 \
             https://github.com/OpenSC/OpenSC /tmp/opensc-src
+          cd /tmp/opensc-src
+          ./bootstrap
+          ./configure --prefix=/tmp/opensc-install --enable-shared --disable-static \
+            --disable-pcsc --disable-ctapi --disable-cryptotokenkit
+          make -j$(nproc) install
 
       - name: Configure & Build
         run: |
           cmake -B build -G Ninja \
+            -DCMAKE_PREFIX_PATH=/tmp/opensc-install \
             -DBUILD_OPENSC_DRIVER=ON \
             -DOPENSC_INCLUDE_DIR=/tmp/opensc-src/src
           cmake --build build --target librescrs-opensc
