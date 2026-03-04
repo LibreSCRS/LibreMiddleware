@@ -28,7 +28,7 @@ target_include_directories(librescrs-pkcs11 PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
 )
 
-target_link_libraries(librescrs-pkcs11 PRIVATE SmartCard EIdCard)
+target_link_libraries(librescrs-pkcs11 PRIVATE EIdCard)
 
 set_target_properties(librescrs-pkcs11 PROPERTIES
     C_VISIBILITY_PRESET hidden

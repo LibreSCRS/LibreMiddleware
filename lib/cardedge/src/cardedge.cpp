@@ -306,6 +306,7 @@ CertificateList readCertificates(smartcard::PCSCConnection& conn)
                 continue;
 
             uint16_t keyFid = 0;
+            uint16_t keySizeBits = 0;
             if (!cmapData.empty() && cf.contId < cmapRecordCount) {
                 size_t recOffset = cmapOffset + cf.contId * protocol::CMAP_RECORD_SIZE;
                 uint8_t flags = cmapData[recOffset + protocol::CMAP_FLAGS_OFFSET];
@@ -313,7 +314,7 @@ CertificateList readCertificates(smartcard::PCSCConnection& conn)
                     size_t sizeOffset = (cf.keyPairId == protocol::AT_KEYEXCHANGE)
                         ? recOffset + protocol::CMAP_KX_SIZE_OFFSET
                         : recOffset + protocol::CMAP_SIG_SIZE_OFFSET;
-                    uint16_t keySizeBits = static_cast<uint16_t>(
+                    keySizeBits = static_cast<uint16_t>(
                         cmapData[sizeOffset] | (cmapData[sizeOffset + 1] << 8));
                     if (keySizeBits != 0)
                         keyFid = protocol::privateKeyFID(cf.contId, cf.keyPairId);
@@ -323,8 +324,8 @@ CertificateList readCertificates(smartcard::PCSCConnection& conn)
             std::cerr << "[cardedge] readCertificates: \"" << cf.label
                       << "\" DER size=" << der.size()
                       << " keyFID=0x" << std::hex << std::setfill('0') << std::setw(4) << keyFid
-                      << std::dec << std::endl;
-            certs.push_back({ cf.label, std::move(der), keyFid });
+                      << " keySizeBits=" << std::dec << keySizeBits << std::endl;
+            certs.push_back({ cf.label, std::move(der), keyFid, keySizeBits });
         } catch (const std::exception& e) {
             std::cerr << "[cardedge] readCertificates: cert 0x" << std::hex << cf.fid
                       << std::dec << " exception: " << e.what() << std::endl;
