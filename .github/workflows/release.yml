@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: LGPL-2.1
+name: Release
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpcsclite-dev cmake ninja-build
+
+      - name: Configure & Build
+        run: |
+          cmake -B build -G Ninja
+          cmake --build build
+
+      - name: Test
+        run: ctest --output-on-failure --test-dir build/test
+
+  test-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: brew install ninja
+
+      - name: Configure & Build
+        run: |
+          cmake -B build -G Ninja
+          cmake --build build
+
+      - name: Test
+        run: ctest --output-on-failure --test-dir build/test
+
+  release:
+    needs: [test-linux, test-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_notes: true
