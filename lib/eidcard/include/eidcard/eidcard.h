@@ -57,6 +57,9 @@ public:
 
     // Verification
     void setCertificateFolderPath(const std::string& path);
+    // Add a single DER-encoded trusted certificate (use when certs come from
+    // memory / Qt resources rather than a filesystem directory).
+    void addTrustedCertificate(const std::vector<uint8_t>& derCert);
     VerificationResult verifyCard();
     VerificationResult verifyFixedData();
     VerificationResult verifyVariableData();

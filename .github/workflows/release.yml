@@ -138,15 +138,65 @@ jobs:
           name: opensc-macos
           path: librescrs-opensc-*.zip
 
+  pkcs11-linux:
+    needs: test-linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpcsclite-dev cmake ninja-build
+
+      - name: Build
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake --build build --target librescrs-pkcs11
+
+      - name: Package
+        run: scripts/linux/build-pkcs11-tar.sh build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkcs11-linux
+          path: LibreSCRS-pkcs11-*.tar.gz
+
+  pkcs11-macos:
+    needs: test-macos
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build tools
+        run: brew install ninja
+
+      - name: Build
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64 -DBUILD_TESTING=OFF
+          cmake --build build --target librescrs-pkcs11
+
+      - name: Package
+        run: scripts/macos/build-pkcs11-zip.sh build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkcs11-macos
+          path: LibreSCRS-pkcs11-*.zip
+
   release:
-    needs: [test-linux, test-macos, opensc-linux, opensc-macos]
+    needs: [test-linux, test-macos, opensc-linux, opensc-macos, pkcs11-linux, pkcs11-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: 'opensc-*'
+          pattern: '*'
           merge-multiple: true
           path: artifacts
 

@@ -72,9 +72,26 @@ CardVerifier::CardVerifier(const std::string& certificateFolderPath)
     : certStore(std::make_unique<CertStore>())
     , certFolderPath(certificateFolderPath)
 {
-    loadTrustedCertificates();
+    if (!certFolderPath.empty())
+        loadTrustedCertificates();
     std::cerr << "[CardVerifier] Loaded " << certStore->certCount
-              << " trusted certificates from: " << certFolderPath << std::endl;
+              << " trusted certificates from: "
+              << (certFolderPath.empty() ? "(individual certs)" : certFolderPath)
+              << std::endl;
+}
+
+void CardVerifier::addCertificate(const std::vector<uint8_t>& derCert)
+{
+    if (!certStore || !certStore->store || derCert.empty())
+        return;
+
+    const uint8_t* p = derCert.data();
+    X509* cert = d2i_X509(nullptr, &p, static_cast<long>(derCert.size()));
+    if (cert) {
+        X509_STORE_add_cert(certStore->store, cert);
+        X509_free(cert);
+        certStore->certCount++;
+    }
 }
 
 CardVerifier::~CardVerifier() = default;

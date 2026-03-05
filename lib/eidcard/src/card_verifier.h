@@ -27,6 +27,10 @@ public:
     CardVerifier(const CardVerifier&) = delete;
     CardVerifier& operator=(const CardVerifier&) = delete;
 
+    // Add a single DER-encoded trusted certificate to the store.
+    // Use this when certs are provided as raw bytes (e.g. from Qt resources).
+    void addCertificate(const std::vector<uint8_t>& derCert);
+
     VerificationResult verifyCard(smartcard::PCSCConnection& conn,
                                   CardReaderBase& reader,
                                   CardType cardType);

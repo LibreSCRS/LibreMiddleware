@@ -226,6 +226,13 @@ void EIdCard::setCertificateFolderPath(const std::string& path)
     verifier.reset();  // force re-creation with new path
 }
 
+void EIdCard::addTrustedCertificate(const std::vector<uint8_t>& derCert)
+{
+    if (!verifier)
+        verifier = std::make_unique<CardVerifier>("");  // empty path = cert-by-cert mode
+    verifier->addCertificate(derCert);
+}
+
 void EIdCard::ensureVerifier()
 {
     if (!verifier && !certFolderPath.empty()) {
