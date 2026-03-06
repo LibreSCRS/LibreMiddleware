@@ -48,7 +48,7 @@ STAGING_PARENT="$(mktemp -d)"
 PKG_NAME="librescrs-pkcs11-$VERSION-linux-$ARCH"
 STAGING="$STAGING_PARENT/$PKG_NAME"
 
-mkdir -p "$STAGING/lib" "$STAGING/include/pkcs11"
+mkdir -p "$STAGING/lib" "$STAGING/include/pkcs11" "$STAGING/p11-kit"
 
 echo "Staging library..."
 cp "$SO_VERSIONED" "$STAGING/lib/librescrs-pkcs11.so.$VERSION"
@@ -57,6 +57,14 @@ cp "$SO_VERSIONED" "$STAGING/lib/librescrs-pkcs11.so.$VERSION"
     ln -sf "librescrs-pkcs11.so.$VERSION" "librescrs-pkcs11.so.1"
     ln -sf "librescrs-pkcs11.so.1"        "librescrs-pkcs11.so"
 )
+
+echo "Creating p11-kit module file..."
+cat > "$STAGING/p11-kit/librescrs.module" << 'MODEOF'
+# p11-kit module registration for LibreSCRS PKCS#11
+# Install to: /usr/share/p11-kit/modules/ (system-wide)
+#         or: ~/.config/pkcs11/modules/    (per-user)
+module: /usr/local/lib/librescrs-pkcs11.so
+MODEOF
 
 echo "Copying headers..."
 cp "$PKCS11_HEADERS_DIR/pkcs11.h"  "$STAGING/include/pkcs11/"
@@ -74,18 +82,27 @@ CONTENTS
   lib/librescrs-pkcs11.so            Unversioned symlink
   include/pkcs11/                     Standard OASIS PKCS#11 v3.x headers
   include/pkcs11_version.h            LibreSCRS version macros
+  p11-kit/librescrs.module            p11-kit module registration file
 
 INSTALLATION
-  Copy the lib/ contents to a directory on the library path, e.g.:
+  1. Copy the library:
     sudo cp lib/librescrs-pkcs11.so.$VERSION /usr/local/lib/
     sudo ln -sf librescrs-pkcs11.so.$VERSION /usr/local/lib/librescrs-pkcs11.so.1
     sudo ln -sf librescrs-pkcs11.so.1        /usr/local/lib/librescrs-pkcs11.so
     sudo ldconfig
 
-  To register the module with a PKCS#11-aware application, point it at the
-  full path of librescrs-pkcs11.so (or the versioned file).
+  2. Register with p11-kit (makes the module available to all p11-kit
+     consumers — Chromium, GnuTLS apps, GNOME Keyring, etc.):
 
-  Example — verify with OpenSC tools:
+    System-wide:
+      sudo cp p11-kit/librescrs.module /usr/share/p11-kit/modules/
+
+    Per-user:
+      mkdir -p ~/.config/pkcs11/modules
+      cp p11-kit/librescrs.module ~/.config/pkcs11/modules/
+
+  3. Verify:
+    p11-kit list-modules | grep -A5 librescrs
     pkcs11-tool --module /usr/local/lib/librescrs-pkcs11.so --list-slots
 
 DEPENDENCIES
