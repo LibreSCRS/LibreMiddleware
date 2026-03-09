@@ -62,7 +62,6 @@ static const u8 AID_SERVSZK[] = {
 #define CE_AT_KEYEXCHANGE       1u
 #define CE_AT_SIGNATURE         2u
 #define CE_PKI_ROOT_DIR_FID     0x7000u
-#define CE_PKI_READ_CHUNK       0x80u
 #define CE_DIR_HEADER_SIZE      10u
 #define CE_DIR_ENTRY_SIZE       12u
 
@@ -85,6 +84,18 @@ static unsigned int ce_private_key_fid(unsigned int cont_idx,
 
 #define DRIVER_DESCRIPTION "LibreSCRS Serbian eID / CardEdge driver"
 #define DRIVER_SHORT_NAME  "librescrs"
+
+static struct sc_card_operations librescrs_ops;
+static const struct sc_card_operations *iso_ops;
+
+static struct sc_card_driver librescrs_drv = {
+    DRIVER_DESCRIPTION,   /* name (long) */
+    DRIVER_SHORT_NAME,    /* short_name  */
+    &librescrs_ops,       /* ops         */
+    NULL,                 /* atr_map     */
+    0,                    /* natrs       */
+    NULL                  /* dll         */
+};
 
 /*
  * ATR table.
@@ -155,6 +166,8 @@ static int librescrs_init(sc_card_t *card)
 {
     LOG_FUNC_CALLED(card->ctx);
 
+    card->caps |= SC_CARD_CAP_ISO7816_PIN_INFO;
+
     _sc_card_add_rsa_alg(card, 2048,
         SC_ALGORITHM_RSA_PAD_PKCS1 | SC_ALGORITHM_RSA_HASH_NONE, 0);
 
@@ -162,105 +175,275 @@ static int librescrs_init(sc_card_t *card)
 }
 
 /*
- * SELECT EF by 2-byte file ID using a raw APDU.
+ * select_file — handle CardEdge's proprietary 10-byte FCI response.
  *
- * CardEdge responds with a proprietary 10-byte FCI (not ISO 7816 TLV),
- * so we must NOT go through sc_select_file() / iso7816_select_file()
- * which would try to parse it as tag-0x6F TLV and return
- * SC_ERROR_UNKNOWN_DATA_RECEIVED.
- *
- * CardEdge FCI layout (10 bytes, all big-endian):
+ * CardEdge FCI layout (10 bytes, big-endian):
  *   [FID_H FID_L Size_H Size_L ACL*6]
  *
- * Returns the file size on success, or a negative SC_ERROR_* code.
+ * iso7816_select_file() would try to parse this as ISO 7816-4 TLV (tag 0x6F)
+ * and fail with SC_ERROR_UNKNOWN_DATA_RECEIVED.
+ *
+ * DF_NAME (AID) selection is delegated to the ISO layer.
  */
-static int librescrs_select_fid_raw(sc_card_t *card, unsigned int fid)
+static int librescrs_select_file(sc_card_t *card, const sc_path_t *in_path,
+                                  sc_file_t **file_out)
 {
     sc_apdu_t apdu;
-    u8 fid_bytes[2];
     u8 fci[16];
+    sc_file_t *file;
     int r;
 
-    fid_bytes[0] = (u8)((fid >> 8) & 0xFF);
-    fid_bytes[1] = (u8)(fid & 0xFF);
+    if (in_path->type == SC_PATH_TYPE_DF_NAME)
+        return iso_ops->select_file(card, in_path, file_out);
+
+    if (in_path->len != 2)
+        LOG_FUNC_RETURN(card->ctx, SC_ERROR_INVALID_ARGUMENTS);
 
     sc_format_apdu(card, &apdu, SC_APDU_CASE_4_SHORT, 0xA4, 0x00, 0x00);
-    apdu.data    = fid_bytes;
+    apdu.data    = in_path->value;
     apdu.datalen = 2;
     apdu.lc      = 2;
     apdu.resp    = fci;
     apdu.resplen = sizeof(fci);
-    apdu.le      = 10;  /* CardEdge FCI is exactly 10 bytes */
+    apdu.le      = 10;
 
     r = sc_transmit_apdu(card, &apdu);
-    if (r < 0)
-        return r;
-    if (apdu.sw1 != 0x90 || apdu.sw2 != 0x00)
-        return SC_ERROR_FILE_NOT_FOUND;
+    LOG_TEST_RET(card->ctx, r, "APDU transmit failed");
+    r = sc_check_sw(card, apdu.sw1, apdu.sw2);
+    LOG_TEST_RET(card->ctx, r, "SELECT FILE failed");
 
-    /* Parse file size from bytes [2:3] (big-endian) */
     if (apdu.resplen < 4)
-        return SC_ERROR_UNKNOWN_DATA_RECEIVED;
+        LOG_FUNC_RETURN(card->ctx, SC_ERROR_UNKNOWN_DATA_RECEIVED);
 
-    return (int)(((unsigned)fci[2] << 8) | (unsigned)fci[3]);
+    if (file_out) {
+        file = sc_file_new();
+        if (!file)
+            LOG_FUNC_RETURN(card->ctx, SC_ERROR_OUT_OF_MEMORY);
+
+        file->id   = ((unsigned)in_path->value[0] << 8) | in_path->value[1];
+        file->path = *in_path;
+        file->size = ((size_t)fci[2] << 8) | (size_t)fci[3];
+        file->type = SC_FILE_TYPE_WORKING_EF;
+        *file_out  = file;
+    }
+
+    LOG_FUNC_RETURN(card->ctx, SC_SUCCESS);
 }
 
 /*
- * Select FID and read the entire file into a malloc'd buffer using raw APDUs.
+ * set_security_env — selects the PKI applet and sends MSE SET to the card.
+ *
+ * OpenSC populates env->key_ref[0] from key_info.key_reference (low byte).
+ * The high byte is always 0x60 (CE_KEYS_BASE_FID >> 8) for all CardEdge
+ * key FIDs, so the full 2-byte FID is reconstructed here.
+ *
+ * MSE SET template P2: 0xB6 for signing, 0xB8 for deciphering.
+ */
+static int librescrs_set_security_env(sc_card_t *card,
+                                       const struct sc_security_env *env,
+                                       int se_num)
+{
+    sc_apdu_t apdu;
+    u8 mse_data[7];
+    unsigned key_ref;
+    u8 p2;
+    int r;
+
+    LOG_FUNC_CALLED(card->ctx);
+    (void)se_num;
+
+    if (librescrs_select_aid(card, AID_PKCS15, AID_PKCS15_LEN) != 0x9000) {
+        sc_log(card->ctx, "librescrs: set_security_env: AID select failed");
+        LOG_FUNC_RETURN(card->ctx, SC_ERROR_CARD_CMD_FAILED);
+    }
+
+    /* Extract key FID. */
+    if ((env->flags & SC_SEC_ENV_FILE_REF_PRESENT) && env->file_ref.len >= 2) {
+        key_ref = ((unsigned)env->file_ref.value[0] << 8)
+                | (unsigned)env->file_ref.value[1];
+    } else if ((env->flags & SC_SEC_ENV_KEY_REF_PRESENT) && env->key_ref_len >= 1) {
+        key_ref = CE_KEYS_BASE_FID | (unsigned)env->key_ref[0];
+    } else {
+        sc_log(card->ctx, "librescrs: set_security_env: no key reference");
+        LOG_FUNC_RETURN(card->ctx, SC_ERROR_INCORRECT_PARAMETERS);
+    }
+
+    /* Determine MSE SET template from operation type. */
+    switch (env->operation) {
+    case SC_SEC_OPERATION_SIGN:
+        p2 = 0xB6;
+        break;
+    case SC_SEC_OPERATION_DECIPHER:
+        p2 = 0xB8;
+        break;
+    default:
+        LOG_FUNC_RETURN(card->ctx, SC_ERROR_NOT_SUPPORTED);
+    }
+
+    /* MSE SET: tag 0x80 = algorithm (RSA2048), tag 0x84 = key ref (2 bytes BE) */
+    mse_data[0] = 0x80;
+    mse_data[1] = 0x01;
+    mse_data[2] = CE_MSE_ALG_RSA2048;
+    mse_data[3] = 0x84;
+    mse_data[4] = 0x02;
+    mse_data[5] = (u8)((key_ref >> 8) & 0xFF);
+    mse_data[6] = (u8)(key_ref & 0xFF);
+
+    sc_format_apdu(card, &apdu, SC_APDU_CASE_3_SHORT, 0x22, 0x41, p2);
+    apdu.data    = mse_data;
+    apdu.datalen = sizeof(mse_data);
+    apdu.lc      = sizeof(mse_data);
+
+    r = sc_transmit_apdu(card, &apdu);
+    LOG_TEST_RET(card->ctx, r, "APDU transmit failed");
+    r = sc_check_sw(card, apdu.sw1, apdu.sw2);
+    LOG_TEST_RET(card->ctx, r, "MSE SET failed");
+
+    sc_log(card->ctx, "librescrs: set_security_env: key_ref=0x%04x p2=0x%02x",
+           key_ref, p2);
+    LOG_FUNC_RETURN(card->ctx, SC_SUCCESS);
+}
+
+/*
+ * compute_signature — PSO COMPUTE DIGITAL SIGNATURE (00 2A 9E 00).
+ *
+ * MSE SET has already been sent by set_security_env().
+ * CardEdge uses P2=0x00 (not 0x9A as in ISO 7816-8), so we cannot
+ * delegate to iso7816_compute_signature().
+ */
+static int librescrs_compute_signature(sc_card_t *card,
+                                        const u8 *data, size_t datalen,
+                                        u8 *out, size_t outlen)
+{
+    sc_apdu_t apdu;
+    u8 resp[256];
+    int r;
+
+    LOG_FUNC_CALLED(card->ctx);
+
+    sc_format_apdu(card, &apdu, SC_APDU_CASE_4_SHORT, 0x2A, 0x9E, 0x00);
+    apdu.data    = data;
+    apdu.datalen = datalen;
+    apdu.lc      = datalen;
+    apdu.resp    = resp;
+    apdu.resplen = sizeof(resp);
+    apdu.le      = 256;
+
+    r = sc_transmit_apdu(card, &apdu);
+    LOG_TEST_RET(card->ctx, r, "APDU transmit failed");
+    r = sc_check_sw(card, apdu.sw1, apdu.sw2);
+    LOG_TEST_RET(card->ctx, r, "PSO COMPUTE DIGITAL SIGNATURE failed");
+
+    if (apdu.resplen > outlen)
+        LOG_FUNC_RETURN(card->ctx, SC_ERROR_BUFFER_TOO_SMALL);
+    memcpy(out, resp, apdu.resplen);
+    LOG_FUNC_RETURN(card->ctx, (int)apdu.resplen);
+}
+
+/*
+ * decipher — PSO DECIPHER (00 2A 80 86).
+ *
+ * MSE SET has already been sent by set_security_env().
+ * CardEdge does not use a padding indicator byte, so we cannot
+ * delegate to iso7816_decipher().
+ */
+static int librescrs_decipher(sc_card_t *card,
+                               const u8 *crgram, size_t crgram_len,
+                               u8 *out, size_t outlen)
+{
+    sc_apdu_t apdu;
+    u8 resp[256];
+    int r;
+
+    LOG_FUNC_CALLED(card->ctx);
+
+    sc_format_apdu(card, &apdu, SC_APDU_CASE_4_SHORT, 0x2A, 0x80, 0x86);
+    apdu.data    = crgram;
+    apdu.datalen = crgram_len;
+    apdu.lc      = crgram_len;
+    apdu.resp    = resp;
+    apdu.resplen = sizeof(resp);
+    apdu.le      = 256;
+
+    r = sc_transmit_apdu(card, &apdu);
+    LOG_TEST_RET(card->ctx, r, "APDU transmit failed");
+    r = sc_check_sw(card, apdu.sw1, apdu.sw2);
+    LOG_TEST_RET(card->ctx, r, "PSO DECIPHER failed");
+
+    if (apdu.resplen > outlen)
+        LOG_FUNC_RETURN(card->ctx, SC_ERROR_BUFFER_TOO_SMALL);
+    memcpy(out, resp, apdu.resplen);
+    LOG_FUNC_RETURN(card->ctx, (int)apdu.resplen);
+}
+
+/*
+ * pin_cmd — thin wrapper that selects the PKI applet, then delegates
+ * to the ISO 7816 implementation.
+ *
+ * Null-padding is handled by iso7816_pin_cmd() when the PKCS#15 layer
+ * sets SC_PIN_CMD_NEED_PADDING (triggered by SC_PKCS15_PIN_FLAG_NEEDS_PADDING
+ * in the auth_info).
+ */
+static int librescrs_pin_cmd(sc_card_t *card, struct sc_pin_cmd_data *data,
+                              int *tries_left)
+{
+    if (librescrs_select_aid(card, AID_PKCS15, AID_PKCS15_LEN) != 0x9000) {
+        sc_log(card->ctx, "librescrs: pin_cmd: AID select failed");
+        return SC_ERROR_CARD_CMD_FAILED;
+    }
+
+    return iso_ops->pin_cmd(card, data, tries_left);
+}
+
+/*
+ * Select FID and read the entire file into a malloc'd buffer.
+ * Uses sc_select_file() (dispatched to card driver's select_file which
+ * handles CardEdge's proprietary FCI) and sc_read_binary().
+ *
  * *out_len receives the byte count; caller must free() the buffer.
  * Returns SC_SUCCESS or a negative SC_ERROR_* code.
  */
-static int librescrs_read_fid(sc_card_t *card, unsigned int fid,
-                               u8 **buf_out, size_t *out_len)
+static int librescrs_read_file(sc_card_t *card, unsigned int fid,
+                                u8 **buf_out, size_t *out_len)
 {
-    int file_size;
+    sc_path_t path;
+    sc_file_t *file = NULL;
     u8 *buf;
-    size_t offset = 0;
+    int r;
 
     *buf_out = NULL;
     *out_len = 0;
 
-    file_size = librescrs_select_fid_raw(card, fid);
-    if (file_size < 0)
-        return file_size;
-    if (file_size == 0)
+    memset(&path, 0, sizeof(path));
+    path.value[0] = (u8)((fid >> 8) & 0xFF);
+    path.value[1] = (u8)(fid & 0xFF);
+    path.len  = 2;
+    path.type = SC_PATH_TYPE_FILE_ID;
+
+    r = sc_select_file(card, &path, &file);
+    if (r < 0)
+        return r;
+
+    if (!file || file->size == 0) {
+        sc_file_free(file);
         return SC_SUCCESS;
+    }
 
-    buf = malloc((size_t)file_size);
-    if (!buf)
+    buf = malloc(file->size);
+    if (!buf) {
+        sc_file_free(file);
         return SC_ERROR_OUT_OF_MEMORY;
+    }
 
-    while (offset < (size_t)file_size) {
-        sc_apdu_t apdu;
-        size_t chunk = CE_PKI_READ_CHUNK;
-        int r;
-
-        if (offset + chunk > (size_t)file_size)
-            chunk = (size_t)file_size - offset;
-
-        /* READ BINARY: 00 B0 [off_high] [off_low] Le */
-        sc_format_apdu(card, &apdu, SC_APDU_CASE_2_SHORT, 0xB0,
-                       (u8)((offset >> 8) & 0x7F),
-                       (u8)(offset & 0xFF));
-        apdu.resp    = buf + offset;
-        apdu.resplen = chunk;
-        apdu.le      = chunk;
-
-        r = sc_transmit_apdu(card, &apdu);
-        if (r < 0) { free(buf); return r; }
-
-        /* Accept 0x9000 (success) and 0x62XX (warning/EOF) */
-        if (apdu.sw1 != 0x90 && apdu.sw1 != 0x62) {
-            free(buf);
-            return SC_ERROR_CARD_CMD_FAILED;
-        }
-        if (apdu.resplen == 0)
-            break;
-        offset += apdu.resplen;
+    r = sc_read_binary(card, 0, buf, file->size, 0);
+    sc_file_free(file);
+    if (r < 0) {
+        free(buf);
+        return r;
     }
 
     *buf_out = buf;
-    *out_len = offset;
+    *out_len = (size_t)r;
     return SC_SUCCESS;
 }
 
@@ -271,8 +454,16 @@ typedef struct ce_dir_entry {
     int      is_dir;
 } ce_dir_entry_t;
 
-/* Parse a CardEdge directory file into an array of ce_dir_entry_t.
- * *entries_out: caller must free().  Returns entry count or -1 on error. */
+/*
+ * Parse a CardEdge directory file into an array of ce_dir_entry_t.
+ *
+ * CardEdge directories use a proprietary binary format:
+ *   [10-byte header] [12-byte entries...]
+ * This is NOT ISO 7816-4 EF.DIR (ASN.1 BER-TLV application templates),
+ * so standard sc_enum_apps() / iso7816_read_ef_dir() cannot be used.
+ *
+ * *entries_out: caller must free().  Returns entry count or -1 on error.
+ */
 static int ce_parse_dir(const u8 *data, size_t len,
                         ce_dir_entry_t **entries_out)
 {
@@ -349,7 +540,7 @@ static int librescrs_enum_certs(sc_card_t *card,
     }
 
     /* Read root directory (FID 0x7000). */
-    r = librescrs_read_fid(card, CE_PKI_ROOT_DIR_FID, &dir_buf, &dir_len);
+    r = librescrs_read_file(card, CE_PKI_ROOT_DIR_FID, &dir_buf, &dir_len);
     if (r < 0) goto out;
 
     root_count = ce_parse_dir(dir_buf, dir_len, &root_entries);
@@ -365,7 +556,7 @@ static int librescrs_enum_certs(sc_card_t *card,
     if (mscp_fid == 0) { r = SC_ERROR_FILE_NOT_FOUND; goto out; }
 
     /* Read mscp directory. */
-    r = librescrs_read_fid(card, mscp_fid, &mscp_buf, &mscp_len);
+    r = librescrs_read_file(card, mscp_fid, &mscp_buf, &mscp_len);
     if (r < 0) goto out;
 
     mscp_count = ce_parse_dir(mscp_buf, mscp_len, &mscp_entries);
@@ -413,7 +604,7 @@ static int librescrs_enum_certs(sc_card_t *card,
 
     /* Read cmapfile and resolve key FIDs. */
     if (cmap_fid != 0) {
-        r = librescrs_read_fid(card, cmap_fid, &cmap_buf, &cmap_len);
+        r = librescrs_read_file(card, cmap_fid, &cmap_buf, &cmap_len);
         if (r == SC_SUCCESS) {
             /* Optional 2-byte prefix present when len-2 is multiple of 86. */
             if (cmap_len >= 2 && (cmap_len - 2) % CE_CMAP_RECORD_SIZE == 0)
@@ -480,7 +671,7 @@ static int librescrs_read_cert_der(sc_card_t *card, unsigned cert_fid,
     *der_out     = NULL;
     *der_len_out = 0;
 
-    r = librescrs_read_fid(card, cert_fid, &raw, &raw_len);
+    r = librescrs_read_file(card, cert_fid, &raw, &raw_len);
     if (r < 0)
         return r;
 
@@ -559,24 +750,20 @@ static int librescrs_pkcs15_bind(sc_pkcs15_card_t *p15card,
     free(p15card->tokeninfo->manufacturer_id);
     p15card->tokeninfo->manufacturer_id = strdup("LibreSCRS");
 
-    /*
-     * Query PIN tries_left — AID_PKCS15 is still selected from enum_certs.
-     * VERIFY Case 1 (no data body) checks status without consuming a try.
-     */
+    /* Query PIN tries_left via card driver's pin_cmd. */
     {
-        sc_apdu_t tapdu;
-        int rv, pin_tries_left = -1;
+        struct sc_pin_cmd_data pin_data;
+        int pin_tries_left = -1;
 
-        sc_format_apdu(card, &tapdu, SC_APDU_CASE_1, 0x20, 0x00,
-                       CE_PIN_REFERENCE);
-        rv = sc_transmit_apdu(card, &tapdu);
-        if (rv >= 0) {
-            if (tapdu.sw1 == 0x63 && (tapdu.sw2 & 0xF0) == 0xC0)
-                pin_tries_left = tapdu.sw2 & 0x0F;
-            else if (tapdu.sw1 == 0x69 && tapdu.sw2 == 0x83)
-                pin_tries_left = 0;
-            /* 0x9000 = PIN session active — tries_left stays -1 (unknown) */
-        }
+        memset(&pin_data, 0, sizeof(pin_data));
+        pin_data.cmd           = SC_PIN_CMD_GET_INFO;
+        pin_data.pin_type      = SC_AC_CHV;
+        pin_data.pin_reference = CE_PIN_REFERENCE;
+
+        /* Best-effort: failure to query PIN status is not fatal. */
+        if (sc_pin_cmd(card, &pin_data, &pin_tries_left) >= 0
+            && pin_tries_left < 0)
+            pin_tries_left = pin_data.pin1.tries_left;
         sc_log(card->ctx, "librescrs: PIN tries_left=%d", pin_tries_left);
 
         /* PIN auth object — must be registered before private keys
@@ -597,8 +784,9 @@ static int librescrs_pkcs15_bind(sc_pkcs15_card_t *p15card,
             auth_info.attrs.pin.stored_length = CE_PIN_MAX_LENGTH;
             auth_info.attrs.pin.type          = SC_PKCS15_PIN_TYPE_ASCII_NUMERIC;
             auth_info.attrs.pin.pad_char      = 0x00;
-            auth_info.attrs.pin.flags         = SC_PKCS15_PIN_FLAG_INITIALIZED |
-                                                SC_PKCS15_PIN_FLAG_LOCAL;
+            auth_info.attrs.pin.flags         = SC_PKCS15_PIN_FLAG_INITIALIZED
+                                              | SC_PKCS15_PIN_FLAG_LOCAL
+                                              | SC_PKCS15_PIN_FLAG_NEEDS_PADDING;
             auth_info.auth_id.len      = 1;
             auth_info.auth_id.value[0] = 1;
 
@@ -707,263 +895,6 @@ out:
     return r;
 }
 
-static struct sc_card_operations librescrs_ops;
-
-/*
- * set_security_env — selects the PKI applet and sends MSE SET to the card.
- *
- * OpenSC populates env->key_ref[0] from key_info.key_reference (low byte).
- * The high byte is always 0x60 (CE_KEYS_BASE_FID >> 8) for all CardEdge
- * key FIDs, so the full 2-byte FID is reconstructed here.
- *
- * MSE SET template P2: 0xB6 for signing, 0xB8 for deciphering.
- */
-static int librescrs_set_security_env(sc_card_t *card,
-                                       const struct sc_security_env *env,
-                                       int se_num)
-{
-    sc_apdu_t apdu;
-    u8 mse_data[7];
-    unsigned key_ref;
-    u8 p2;
-    int r;
-
-    LOG_FUNC_CALLED(card->ctx);
-    (void)se_num;
-
-    if (librescrs_select_aid(card, AID_PKCS15, AID_PKCS15_LEN) != 0x9000) {
-        sc_log(card->ctx, "librescrs: set_security_env: AID select failed");
-        LOG_FUNC_RETURN(card->ctx, SC_ERROR_CARD_CMD_FAILED);
-    }
-
-    /* Extract key FID. */
-    if ((env->flags & SC_SEC_ENV_FILE_REF_PRESENT) && env->file_ref.len >= 2) {
-        key_ref = ((unsigned)env->file_ref.value[0] << 8)
-                | (unsigned)env->file_ref.value[1];
-    } else if ((env->flags & SC_SEC_ENV_KEY_REF_PRESENT) && env->key_ref_len >= 1) {
-        key_ref = CE_KEYS_BASE_FID | (unsigned)env->key_ref[0];
-    } else {
-        sc_log(card->ctx, "librescrs: set_security_env: no key reference");
-        LOG_FUNC_RETURN(card->ctx, SC_ERROR_INCORRECT_PARAMETERS);
-    }
-
-    /* Determine MSE SET template from operation type. */
-    switch (env->operation) {
-    case SC_SEC_OPERATION_SIGN:
-        p2 = 0xB6;
-        break;
-    case SC_SEC_OPERATION_DECIPHER:
-        p2 = 0xB8;
-        break;
-    default:
-        LOG_FUNC_RETURN(card->ctx, SC_ERROR_NOT_SUPPORTED);
-    }
-
-    /* MSE SET: tag 0x80 = algorithm (RSA2048), tag 0x84 = key ref (2 bytes BE) */
-    mse_data[0] = 0x80;
-    mse_data[1] = 0x01;
-    mse_data[2] = CE_MSE_ALG_RSA2048;
-    mse_data[3] = 0x84;
-    mse_data[4] = 0x02;
-    mse_data[5] = (u8)((key_ref >> 8) & 0xFF);
-    mse_data[6] = (u8)(key_ref & 0xFF);
-
-    sc_format_apdu(card, &apdu, SC_APDU_CASE_3_SHORT, 0x22, 0x41, p2);
-    apdu.data    = mse_data;
-    apdu.datalen = sizeof(mse_data);
-    apdu.lc      = sizeof(mse_data);
-
-    r = sc_transmit_apdu(card, &apdu);
-    LOG_TEST_RET(card->ctx, r, "APDU transmit failed");
-    r = sc_check_sw(card, apdu.sw1, apdu.sw2);
-    LOG_TEST_RET(card->ctx, r, "MSE SET failed");
-
-    sc_log(card->ctx, "librescrs: set_security_env: key_ref=0x%04x p2=0x%02x",
-           key_ref, p2);
-    LOG_FUNC_RETURN(card->ctx, SC_SUCCESS);
-}
-
-/*
- * compute_signature — PSO COMPUTE DIGITAL SIGNATURE (00 2A 9E 00).
- *
- * MSE SET has already been sent by set_security_env().
- * CardEdge uses P2=0x00 (not 0x9A as in ISO 7816-8), so we cannot
- * delegate to iso7816_compute_signature().
- */
-static int librescrs_compute_signature(sc_card_t *card,
-                                        const u8 *data, size_t datalen,
-                                        u8 *out, size_t outlen)
-{
-    sc_apdu_t apdu;
-    u8 resp[512];
-    int r;
-
-    LOG_FUNC_CALLED(card->ctx);
-
-    sc_format_apdu(card, &apdu, SC_APDU_CASE_4_SHORT, 0x2A, 0x9E, 0x00);
-    apdu.data    = data;
-    apdu.datalen = datalen;
-    apdu.lc      = datalen;
-    apdu.resp    = resp;
-    apdu.resplen = sizeof(resp);
-    apdu.le      = 256;
-
-    r = sc_transmit_apdu(card, &apdu);
-    LOG_TEST_RET(card->ctx, r, "APDU transmit failed");
-    r = sc_check_sw(card, apdu.sw1, apdu.sw2);
-    LOG_TEST_RET(card->ctx, r, "PSO COMPUTE DIGITAL SIGNATURE failed");
-
-    if (apdu.resplen > outlen)
-        LOG_FUNC_RETURN(card->ctx, SC_ERROR_BUFFER_TOO_SMALL);
-    memcpy(out, resp, apdu.resplen);
-    LOG_FUNC_RETURN(card->ctx, (int)apdu.resplen);
-}
-
-/*
- * decipher — PSO DECIPHER (00 2A 80 86).
- *
- * MSE SET has already been sent by set_security_env().
- * CardEdge does not use a padding indicator byte, so we cannot
- * delegate to iso7816_decipher().
- */
-static int librescrs_decipher(sc_card_t *card,
-                               const u8 *crgram, size_t crgram_len,
-                               u8 *out, size_t outlen)
-{
-    sc_apdu_t apdu;
-    u8 resp[512];
-    int r;
-
-    LOG_FUNC_CALLED(card->ctx);
-
-    sc_format_apdu(card, &apdu, SC_APDU_CASE_4_SHORT, 0x2A, 0x80, 0x86);
-    apdu.data    = crgram;
-    apdu.datalen = crgram_len;
-    apdu.lc      = crgram_len;
-    apdu.resp    = resp;
-    apdu.resplen = sizeof(resp);
-    apdu.le      = 256;
-
-    r = sc_transmit_apdu(card, &apdu);
-    LOG_TEST_RET(card->ctx, r, "APDU transmit failed");
-    r = sc_check_sw(card, apdu.sw1, apdu.sw2);
-    LOG_TEST_RET(card->ctx, r, "PSO DECIPHER failed");
-
-    if (apdu.resplen > outlen)
-        LOG_FUNC_RETURN(card->ctx, SC_ERROR_BUFFER_TOO_SMALL);
-    memcpy(out, resp, apdu.resplen);
-    LOG_FUNC_RETURN(card->ctx, (int)apdu.resplen);
-}
-
-/*
- * pin_cmd — handles VERIFY, CHANGE REFERENCE DATA, and GET_INFO.
- * PIN is null-padded to CE_PIN_MAX_LENGTH bytes before transmission.
- * Status word encoding:
- *   0x9000        — success
- *   0x6983        — blocked
- *   0x63 CX       — X tries remaining
- */
-static int librescrs_pin_cmd(sc_card_t *card, struct sc_pin_cmd_data *data,
-                              int *tries_left)
-{
-    sc_apdu_t apdu;
-    u8 pin1_padded[CE_PIN_MAX_LENGTH];
-    u8 pin2_padded[CE_PIN_MAX_LENGTH];
-    u8 change_data[CE_PIN_MAX_LENGTH * 2];
-    int r;
-
-    if (tries_left)
-        *tries_left = -1;
-
-    /* Re-select AID_PKCS15 before any PIN APDU. */
-    if (librescrs_select_aid(card, AID_PKCS15, AID_PKCS15_LEN) != 0x9000) {
-        sc_log(card->ctx, "librescrs: pin_cmd: AID select failed");
-        return SC_ERROR_CARD_CMD_FAILED;
-    }
-
-    memset(pin1_padded, 0x00, sizeof(pin1_padded));
-    memset(pin2_padded, 0x00, sizeof(pin2_padded));
-    if (data->pin1.data && data->pin1.len > 0) {
-        size_t l = data->pin1.len;
-        if (l > CE_PIN_MAX_LENGTH) l = CE_PIN_MAX_LENGTH;
-        memcpy(pin1_padded, data->pin1.data, l);
-    }
-    if (data->pin2.data && data->pin2.len > 0) {
-        size_t l = data->pin2.len;
-        if (l > CE_PIN_MAX_LENGTH) l = CE_PIN_MAX_LENGTH;
-        memcpy(pin2_padded, data->pin2.data, l);
-    }
-
-    switch (data->cmd) {
-    case SC_PIN_CMD_GET_INFO:
-        /* VERIFY with no data = status check; does not decrement tries. */
-        sc_format_apdu(card, &apdu, SC_APDU_CASE_1, 0x20, 0x00,
-                       CE_PIN_REFERENCE);
-        r = sc_transmit_apdu(card, &apdu);
-        if (r < 0) return r;
-        if (apdu.sw1 == 0x63 && (apdu.sw2 & 0xF0) == 0xC0) {
-            int tl = apdu.sw2 & 0x0F;
-            if (tries_left) *tries_left = tl;
-            data->pin1.tries_left = tl;
-        } else if (apdu.sw1 == 0x69 && apdu.sw2 == 0x83) {
-            if (tries_left) *tries_left = 0;
-            data->pin1.tries_left = 0;
-        }
-        return SC_SUCCESS;
-
-    case SC_PIN_CMD_VERIFY:
-        sc_format_apdu(card, &apdu, SC_APDU_CASE_3_SHORT, 0x20, 0x00,
-                       CE_PIN_REFERENCE);
-        apdu.data    = pin1_padded;
-        apdu.datalen = CE_PIN_MAX_LENGTH;
-        apdu.lc      = CE_PIN_MAX_LENGTH;
-        r = sc_transmit_apdu(card, &apdu);
-        if (r < 0) return r;
-        break;
-
-    case SC_PIN_CMD_CHANGE:
-        /* CHANGE REFERENCE DATA: [old PIN 8 bytes] [new PIN 8 bytes] */
-        memcpy(change_data,                    pin1_padded, CE_PIN_MAX_LENGTH);
-        memcpy(change_data + CE_PIN_MAX_LENGTH, pin2_padded, CE_PIN_MAX_LENGTH);
-        sc_format_apdu(card, &apdu, SC_APDU_CASE_3_SHORT, 0x24, 0x00,
-                       CE_PIN_REFERENCE);
-        apdu.data    = change_data;
-        apdu.datalen = sizeof(change_data);
-        apdu.lc      = sizeof(change_data);
-        r = sc_transmit_apdu(card, &apdu);
-        if (r < 0) return r;
-        break;
-
-    default:
-        return SC_ERROR_NOT_SUPPORTED;
-    }
-
-    /* Parse status word. */
-    if (apdu.sw1 == 0x90 && apdu.sw2 == 0x00)
-        return SC_SUCCESS;
-    if (apdu.sw1 == 0x69 && apdu.sw2 == 0x83) {
-        if (tries_left) *tries_left = 0;
-        return SC_ERROR_PIN_CODE_INCORRECT;
-    }
-    if (apdu.sw1 == 0x63 && (apdu.sw2 & 0xF0) == 0xC0) {
-        int tries = apdu.sw2 & 0x0F;
-        if (tries_left) *tries_left = tries;
-        return (tries == 0) ? SC_ERROR_AUTH_METHOD_BLOCKED
-                            : SC_ERROR_PIN_CODE_INCORRECT;
-    }
-
-    return SC_ERROR_CARD_CMD_FAILED;
-}
-
-static struct sc_card_driver librescrs_drv = {
-    DRIVER_DESCRIPTION,   /* name (long) */
-    DRIVER_SHORT_NAME,    /* short_name  */
-    &librescrs_ops,       /* ops         */
-    librescrs_atrs,       /* atr_map     */
-    0,                    /* natrs       */
-    NULL                  /* dll         */
-};
-
 /*
  * sc_pkcs15_init_func_ex — exported symbol looked up by parse_emu_block()
  * in pkcs15-syn.c when a module with sc_driver_version >= 0.9.3 is loaded
@@ -1003,14 +934,19 @@ void *sc_module_init(const char *name)
 
 struct sc_card_driver *sc_get_driver(void)
 {
-    /* Copy all ISO 7816 default ops, then override only what we handle. */
-    librescrs_ops = *sc_get_iso7816_driver()->ops;
+    /* Save ISO ops for delegation, then override what we handle. */
+    iso_ops = sc_get_iso7816_driver()->ops;
+    librescrs_ops = *iso_ops;
     librescrs_ops.match_card         = librescrs_match_card;
     librescrs_ops.init               = librescrs_init;
+    librescrs_ops.select_file        = librescrs_select_file;
     librescrs_ops.set_security_env   = librescrs_set_security_env;
     librescrs_ops.compute_signature  = librescrs_compute_signature;
     librescrs_ops.decipher           = librescrs_decipher;
     librescrs_ops.pin_cmd            = librescrs_pin_cmd;
+
+    /* Set ATR table on driver struct (external drivers pass NULL initially). */
+    librescrs_drv.atr_map = librescrs_atrs;
 
     return &librescrs_drv;
 }
