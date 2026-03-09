@@ -196,6 +196,15 @@ static int librescrs_select_file(sc_card_t *card, const sc_path_t *in_path,
     if (in_path->type == SC_PATH_TYPE_DF_NAME)
         return iso_ops->select_file(card, in_path, file_out);
 
+    /* AID-only path (path.len==0, path.aid.len>0): PKCS#15 layer wants
+     * to select the applet before a PIN or key operation. */
+    if (in_path->len == 0 && in_path->aid.len > 0) {
+        if (librescrs_select_aid(card, in_path->aid.value,
+                in_path->aid.len) != 0x9000)
+            LOG_FUNC_RETURN(card->ctx, SC_ERROR_CARD_CMD_FAILED);
+        LOG_FUNC_RETURN(card->ctx, SC_SUCCESS);
+    }
+
     if (in_path->len != 2)
         LOG_FUNC_RETURN(card->ctx, SC_ERROR_INVALID_ARGUMENTS);
 
@@ -231,7 +240,11 @@ static int librescrs_select_file(sc_card_t *card, const sc_path_t *in_path,
 }
 
 /*
- * set_security_env — selects the PKI applet and sends MSE SET to the card.
+ * set_security_env — send MSE SET to the card.
+ *
+ * The PKCS#15 layer selects the PKI applet via the AID attached to
+ * key_info.path before calling this function (see select_key_file()
+ * in pkcs15-sec.c).
  *
  * OpenSC populates env->key_ref[0] from key_info.key_reference (low byte).
  * The high byte is always 0x60 (CE_KEYS_BASE_FID >> 8) for all CardEdge
@@ -251,11 +264,6 @@ static int librescrs_set_security_env(sc_card_t *card,
 
     LOG_FUNC_CALLED(card->ctx);
     (void)se_num;
-
-    if (librescrs_select_aid(card, AID_PKCS15, AID_PKCS15_LEN) != 0x9000) {
-        sc_log(card->ctx, "librescrs: set_security_env: AID select failed");
-        LOG_FUNC_RETURN(card->ctx, SC_ERROR_CARD_CMD_FAILED);
-    }
 
     /* Extract key FID. */
     if ((env->flags & SC_SEC_ENV_FILE_REF_PRESENT) && env->file_ref.len >= 2) {
@@ -374,25 +382,6 @@ static int librescrs_decipher(sc_card_t *card,
         LOG_FUNC_RETURN(card->ctx, SC_ERROR_BUFFER_TOO_SMALL);
     memcpy(out, resp, apdu.resplen);
     LOG_FUNC_RETURN(card->ctx, (int)apdu.resplen);
-}
-
-/*
- * pin_cmd — thin wrapper that selects the PKI applet, then delegates
- * to the ISO 7816 implementation.
- *
- * Null-padding is handled by iso7816_pin_cmd() when the PKCS#15 layer
- * sets SC_PIN_CMD_NEED_PADDING (triggered by SC_PKCS15_PIN_FLAG_NEEDS_PADDING
- * in the auth_info).
- */
-static int librescrs_pin_cmd(sc_card_t *card, struct sc_pin_cmd_data *data,
-                              int *tries_left)
-{
-    if (librescrs_select_aid(card, AID_PKCS15, AID_PKCS15_LEN) != 0x9000) {
-        sc_log(card->ctx, "librescrs: pin_cmd: AID select failed");
-        return SC_ERROR_CARD_CMD_FAILED;
-    }
-
-    return iso_ops->pin_cmd(card, data, tries_left);
 }
 
 /*
@@ -787,6 +776,8 @@ static int librescrs_pkcs15_bind(sc_pkcs15_card_t *p15card,
             auth_info.attrs.pin.flags         = SC_PKCS15_PIN_FLAG_INITIALIZED
                                               | SC_PKCS15_PIN_FLAG_LOCAL
                                               | SC_PKCS15_PIN_FLAG_NEEDS_PADDING;
+            auth_info.path.aid.len = AID_PKCS15_LEN;
+            memcpy(auth_info.path.aid.value, AID_PKCS15, AID_PKCS15_LEN);
             auth_info.auth_id.len      = 1;
             auth_info.auth_id.value[0] = 1;
 
@@ -839,14 +830,16 @@ static int librescrs_pkcs15_bind(sc_pkcs15_card_t *p15card,
         }
 
         /*
-         * Do NOT set key_info.path — that would trigger select_key_file()
-         * in use_key(), which appends the key FID to the PKCS#15 app path
-         * and calls sc_select_file(), which fails on CardEdge's non-TLV FCI.
+         * Set only the AID on key_info.path (path.len stays 0).
+         * This makes select_key_file() select the PKI applet via AID
+         * before calling set_security_env(), without appending a file
+         * path that would fail on CardEdge's non-TLV FCI.
          *
-         * With path zeroed, use_key() skips select_key_file() entirely and
-         * calls set_security_env() directly.  The key FID is reconstructed
-         * there from key_info.key_reference via the CE_KEYS_BASE_FID formula.
+         * The key FID is passed via key_info.key_reference and
+         * reconstructed in set_security_env() from the low byte.
          */
+        key_info.path.aid.len = AID_PKCS15_LEN;
+        memcpy(key_info.path.aid.value, AID_PKCS15, AID_PKCS15_LEN);
 
         strncpy(key_obj.label, certs[i].label, sizeof(key_obj.label) - 1);
         key_obj.flags = SC_PKCS15_CO_FLAG_PRIVATE;
@@ -943,7 +936,6 @@ struct sc_card_driver *sc_get_driver(void)
     librescrs_ops.set_security_env   = librescrs_set_security_env;
     librescrs_ops.compute_signature  = librescrs_compute_signature;
     librescrs_ops.decipher           = librescrs_decipher;
-    librescrs_ops.pin_cmd            = librescrs_pin_cmd;
 
     /* Set ATR table on driver struct (external drivers pass NULL initially). */
     librescrs_drv.atr_map = librescrs_atrs;
