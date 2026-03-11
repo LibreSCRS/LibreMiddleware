@@ -5,13 +5,11 @@
  * librescrs_opensc.c — OpenSC external card driver for Serbian smart cards
  *                      with the CardEdge PKI applet.
  *
- * Supported cards:
- *   - Serbian eID Gemalto (2014+)   ATR: 3B FF 94 ...
- *   - Serbian eID IF2020 Foreigner  (AID-matched)
- *   - PKS Chamber of Commerce card  (AID-matched)
+ * Serbian eID, health insurance, and Chamber of Commerce cards use the
+ * same CardEdge PKCS#15 applet.  Cards are matched either by ATR
+ * (Gemalto 2014+ eID) or by AID selection.
  *
  * Apollo 2008 eID has no CardEdge applet and is NOT supported.
- * Serbian health card (SERVSZK) is explicitly rejected in match_card().
  *
  * Build instructions:
  *   Linux:  cmake -DBUILD_OPENSC_DRIVER=ON ...
@@ -42,14 +40,6 @@ static const u8 AID_PKCS15[] = {
     0x50, 0x4B, 0x43, 0x53, 0x2D, 0x31, 0x35
 };
 #define AID_PKCS15_LEN  (sizeof(AID_PKCS15))
-
-/* Serbian health card (SERVSZK) AID — must be rejected in match_card()
- * to avoid false-positive (health cards also respond to AID_PKCS15). */
-static const u8 AID_SERVSZK[] = {
-    0xF3, 0x81, 0x00, 0x00, 0x02,
-    0x53, 0x45, 0x52, 0x56, 0x53, 0x5A, 0x4B, 0x01
-};
-#define AID_SERVSZK_LEN (sizeof(AID_SERVSZK))
 
 /* CardEdge cmapfile constants. */
 #define CE_CMAP_RECORD_SIZE     86u
@@ -82,7 +72,7 @@ static unsigned int ce_private_key_fid(unsigned int cont_idx,
         | CE_KEY_KIND_PRIVATE;
 }
 
-#define DRIVER_DESCRIPTION "LibreSCRS Serbian eID / CardEdge driver"
+#define DRIVER_DESCRIPTION "LibreSCRS Serbian CardEdge driver"
 #define DRIVER_SHORT_NAME  "librescrs"
 
 static struct sc_card_operations librescrs_ops;
@@ -104,8 +94,8 @@ static struct sc_card_driver librescrs_drv = {
  * Mask FF FF FF matches the first 3 bytes; remaining bytes vary between
  * individual cards and are don't-cares.
  *
- * IF2020 Foreigner and PKS cards have no distinct ATR and are identified
- * via AID selection in match_card().
+ * Other CardEdge cards have no distinct ATR and are identified via AID
+ * selection in match_card().
  *
  * Apollo 2008 ATR 3B B9 18 ... is intentionally absent — no CardEdge applet.
  */
@@ -137,24 +127,12 @@ static int librescrs_select_aid(sc_card_t *card, const u8 *aid, size_t aid_len)
 
 static int librescrs_match_card(sc_card_t *card)
 {
-    int sw;
-
     /* ATR hit: Gemalto 2014+ Serbian eID (3B FF 94 ...) */
     if (_sc_match_atr(card, librescrs_atrs, &card->type) >= 0)
         return 1;
 
-    /*
-     * AID-based match for IF2020 Foreigner and PKS cards.
-     * Health cards (SERVSZK) also accept AID_PKCS15 — reject them first.
-     */
-    sw = librescrs_select_aid(card, AID_SERVSZK, AID_SERVSZK_LEN);
-    if (sw == 0x9000) {
-        sc_log(card->ctx, "librescrs: health card detected, not claiming");
-        return 0;
-    }
-
-    sw = librescrs_select_aid(card, AID_PKCS15, AID_PKCS15_LEN);
-    if (sw == 0x9000) {
+    /* AID-based match for cards without a distinct ATR. */
+    if (librescrs_select_aid(card, AID_PKCS15, AID_PKCS15_LEN) == 0x9000) {
         sc_log(card->ctx, "librescrs: CardEdge applet found via AID");
         return 1;
     }
@@ -456,14 +434,14 @@ typedef struct ce_dir_entry {
 static int ce_parse_dir(const u8 *data, size_t len,
                         ce_dir_entry_t **entries_out)
 {
-    unsigned count, i;
+    size_t count, i;
     ce_dir_entry_t *entries;
 
     *entries_out = NULL;
     if (len < CE_DIR_HEADER_SIZE)
         return -1;
 
-    count = (unsigned)data[6] | ((unsigned)data[7] << 8);
+    count = (size_t)data[6] | ((size_t)data[7] << 8);
     if (count == 0)
         return 0;
 
@@ -735,9 +713,9 @@ static int librescrs_pkcs15_bind(sc_pkcs15_card_t *p15card,
 
     /* Set card label. */
     free(p15card->tokeninfo->label);
-    p15card->tokeninfo->label = strdup("LibreSCRS Card");
+    p15card->tokeninfo->label = strdup("Serbian CardEdge");
     free(p15card->tokeninfo->manufacturer_id);
-    p15card->tokeninfo->manufacturer_id = strdup("LibreSCRS");
+    p15card->tokeninfo->manufacturer_id = strdup("CardEdge");
 
     /* Query PIN tries_left via card driver's pin_cmd. */
     {
