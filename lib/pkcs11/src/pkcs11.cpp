@@ -2,8 +2,7 @@
 // Copyright hirashix0@proton.me
 
 #include "pkcs11_library.h"
-#include "eidcard/eid_pkcs11_provider.h"
-#include "eidcard/eidcard.h"
+#include "cardedge/cardedge_pkcs11_provider.h"
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -48,7 +47,7 @@ static std::unique_ptr<PKCS11Library> library;
 static std::vector<std::shared_ptr<smartcard::PKCS11CardProvider>> createDefaultProviders()
 {
     std::vector<std::shared_ptr<smartcard::PKCS11CardProvider>> providers;
-    providers.push_back(std::make_shared<eidcard::EIdPKCS11Provider>());
+    providers.push_back(std::make_shared<cardedge::CardEdgePKCS11Provider>());
     return providers;
 }
 
