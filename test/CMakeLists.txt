@@ -44,3 +44,7 @@ target_link_libraries(pkcs15_probe SmartCard)
 # CLI tool for manual PIN testing with a real PKS Chamber of Commerce card
 add_executable(pks_pin_test_cli pks_pin_test_cli.cpp)
 target_link_libraries(pks_pin_test_cli PKSCard)
+
+# FCI format probe: tests if CardEdge SELECT FILE returns ISO TLV-wrapped FCI
+add_executable(fci_format_probe fci_format_probe.cpp)
+target_link_libraries(fci_format_probe SmartCard)
