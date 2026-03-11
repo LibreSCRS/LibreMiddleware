@@ -27,10 +27,6 @@ PKCS11Library::~PKCS11Library()
             }
         }
     }
-    loginState.clear();
-    sessions.clear();
-    objects.clear();
-    loadedSlots.clear();
 }
 
 // Fill a CK_UTF8CHAR buffer with a string, space-padded (no null terminator).
@@ -416,6 +412,10 @@ void PKCS11Library::ensureObjectsLoaded(CK_SLOT_ID slotID)
         obj.isToken = info.isToken ? CK_TRUE : CK_FALSE;
         obj.isPrivate = info.isPrivate ? CK_TRUE : CK_FALSE;
         obj.canSign = info.canSign ? CK_TRUE : CK_FALSE;
+        obj.canDecrypt = info.canDecrypt ? CK_TRUE : CK_FALSE;
+        obj.canEncrypt = info.canEncrypt ? CK_TRUE : CK_FALSE;
+        obj.canWrap = info.canWrap ? CK_TRUE : CK_FALSE;
+        obj.canUnwrap = info.canUnwrap ? CK_TRUE : CK_FALSE;
         obj.keyReference = info.keyReference;
 
         // For certificates, parse DER to extract Subject, Issuer, SerialNumber.
@@ -465,6 +465,13 @@ void PKCS11Library::ensureObjectsLoaded(CK_SLOT_ID slotID)
                 keyObj.modulus.resize(static_cast<size_t>(len));
                 BN_bn2bin(n, keyObj.modulus.data());
                 BN_free(n);
+            }
+            BIGNUM* e = nullptr;
+            if (EVP_PKEY_get_bn_param(pkey, "e", &e) == 1 && e) {
+                int len = BN_num_bytes(e);
+                keyObj.publicExponent.resize(static_cast<size_t>(len));
+                BN_bn2bin(e, keyObj.publicExponent.data());
+                BN_free(e);
             }
             EVP_PKEY_free(pkey);
             break;
@@ -553,10 +560,56 @@ bool PKCS11Library::matchesTemplate(const PKCS11Object& obj,
             }
             break;
         }
-        case CKA_EXTRACTABLE:
         case CKA_NEVER_EXTRACTABLE:
-        case CKA_ALWAYS_AUTHENTICATE: {
-            // Private keys are never extractable, never per-op auth
+        case CKA_LOCAL: {
+            // Hardware-bound keys: never extractable, locally generated
+            // Matches OpenSC default access_flags for emulated cards (pkcs15-syn.c)
+            if (obj.objectClass == CKO_PRIVATE_KEY && attr.ulValueLen == sizeof(CK_BBOOL)) {
+                CK_BBOOL val;
+                std::memcpy(&val, attr.pValue, sizeof(val));
+                if (val != CK_TRUE) return false;
+            }
+            break;
+        }
+        case CKA_DECRYPT: {
+            if (obj.objectClass == CKO_PRIVATE_KEY && attr.ulValueLen == sizeof(CK_BBOOL)) {
+                CK_BBOOL val;
+                std::memcpy(&val, attr.pValue, sizeof(val));
+                if (obj.canDecrypt != val) return false;
+            }
+            break;
+        }
+        case CKA_ENCRYPT: {
+            if (obj.objectClass == CKO_PRIVATE_KEY && attr.ulValueLen == sizeof(CK_BBOOL)) {
+                CK_BBOOL val;
+                std::memcpy(&val, attr.pValue, sizeof(val));
+                if (obj.canEncrypt != val) return false;
+            }
+            break;
+        }
+        case CKA_WRAP: {
+            if (obj.objectClass == CKO_PRIVATE_KEY && attr.ulValueLen == sizeof(CK_BBOOL)) {
+                CK_BBOOL val;
+                std::memcpy(&val, attr.pValue, sizeof(val));
+                if (obj.canWrap != val) return false;
+            }
+            break;
+        }
+        case CKA_UNWRAP: {
+            if (obj.objectClass == CKO_PRIVATE_KEY && attr.ulValueLen == sizeof(CK_BBOOL)) {
+                CK_BBOOL val;
+                std::memcpy(&val, attr.pValue, sizeof(val));
+                if (obj.canUnwrap != val) return false;
+            }
+            break;
+        }
+        case CKA_EXTRACTABLE:
+        case CKA_ALWAYS_AUTHENTICATE:
+        case CKA_DERIVE:
+        case CKA_SIGN_RECOVER:
+        case CKA_VERIFY:
+        case CKA_VERIFY_RECOVER: {
+            // Keys are non-extractable, no per-op auth, no derive/sign-recover/verify
             if (obj.objectClass == CKO_PRIVATE_KEY && attr.ulValueLen == sizeof(CK_BBOOL)) {
                 CK_BBOOL val;
                 std::memcpy(&val, attr.pValue, sizeof(val));
@@ -568,7 +621,8 @@ bool PKCS11Library::matchesTemplate(const PKCS11Object& obj,
             if (obj.objectClass == CKO_PRIVATE_KEY && attr.ulValueLen == sizeof(CK_ULONG)) {
                 CK_ULONG val;
                 std::memcpy(&val, attr.pValue, sizeof(val));
-                if (val != 2048) return false;
+                CK_ULONG bits = obj.modulus.empty() ? 2048 : static_cast<CK_ULONG>(obj.modulus.size() * 8);
+                if (val != bits) return false;
             }
             break;
         }
@@ -687,6 +741,7 @@ CK_RV PKCS11Library::getAttributeValue(CK_SESSION_HANDLE hSession,
 
     auto& obj = objIt->second;
     CK_RV result = CKR_OK;
+    CK_ULONG modulusBits = 0;  // scratch variable for CKA_MODULUS_BITS
 
     for (CK_ULONG i = 0; i < ulCount; ++i) {
         auto& attr = pTemplate[i];
@@ -758,8 +813,53 @@ CK_RV PKCS11Library::getAttributeValue(CK_SESSION_HANDLE hSession,
             }
             break;
         }
+        case CKA_NEVER_EXTRACTABLE:
+        case CKA_LOCAL: {
+            // Hardware-bound keys: never extractable, locally generated
+            // Matches OpenSC default access_flags for emulated cards (pkcs15-syn.c)
+            static const CK_BBOOL trueVal2 = CK_TRUE;
+            if (obj.objectClass == CKO_PRIVATE_KEY) {
+                src = &trueVal2;
+                srcLen = sizeof(trueVal2);
+                found = true;
+            }
+            break;
+        }
+        case CKA_DECRYPT:
+            if (obj.objectClass == CKO_PRIVATE_KEY) {
+                src = &obj.canDecrypt;
+                srcLen = sizeof(obj.canDecrypt);
+                found = true;
+            }
+            break;
+        case CKA_ENCRYPT:
+            if (obj.objectClass == CKO_PRIVATE_KEY) {
+                src = &obj.canEncrypt;
+                srcLen = sizeof(obj.canEncrypt);
+                found = true;
+            }
+            break;
+        case CKA_WRAP:
+            if (obj.objectClass == CKO_PRIVATE_KEY) {
+                src = &obj.canWrap;
+                srcLen = sizeof(obj.canWrap);
+                found = true;
+            }
+            break;
+        case CKA_UNWRAP:
+            if (obj.objectClass == CKO_PRIVATE_KEY) {
+                src = &obj.canUnwrap;
+                srcLen = sizeof(obj.canUnwrap);
+                found = true;
+            }
+            break;
         case CKA_EXTRACTABLE:
-        case CKA_ALWAYS_AUTHENTICATE: {
+        case CKA_ALWAYS_AUTHENTICATE:
+        case CKA_DERIVE:
+        case CKA_SIGN_RECOVER:
+        case CKA_VERIFY:
+        case CKA_VERIFY_RECOVER: {
+            // Keys are non-extractable, no per-op auth, no derive/sign-recover/verify
             static const CK_BBOOL falseVal = CK_FALSE;
             if (obj.objectClass == CKO_PRIVATE_KEY) {
                 src = &falseVal;
@@ -775,11 +875,18 @@ CK_RV PKCS11Library::getAttributeValue(CK_SESSION_HANDLE hSession,
                 found = true;
             }
             break;
+        case CKA_PUBLIC_EXPONENT:
+            if (obj.objectClass == CKO_PRIVATE_KEY && !obj.publicExponent.empty()) {
+                src = obj.publicExponent.data();
+                srcLen = static_cast<CK_ULONG>(obj.publicExponent.size());
+                found = true;
+            }
+            break;
         case CKA_MODULUS_BITS: {
-            static const CK_ULONG bits2048 = 2048;
             if (obj.objectClass == CKO_PRIVATE_KEY) {
-                src = &bits2048;
-                srcLen = sizeof(bits2048);
+                modulusBits = obj.modulus.empty() ? 2048 : static_cast<CK_ULONG>(obj.modulus.size() * 8);
+                src = &modulusBits;
+                srcLen = sizeof(modulusBits);
                 found = true;
             }
             break;
@@ -805,6 +912,16 @@ CK_RV PKCS11Library::getAttributeValue(CK_SESSION_HANDLE hSession,
                 found = true;
             }
             break;
+        case CKA_TRUSTED: {
+            // User certificates are not authority certs (matches OpenSC cert->authority=0)
+            static const CK_BBOOL trustedVal = CK_FALSE;
+            if (obj.objectClass == CKO_CERTIFICATE) {
+                src = &trustedVal;
+                srcLen = sizeof(trustedVal);
+                found = true;
+            }
+            break;
+        }
         default:
             break;
         }
@@ -907,9 +1024,6 @@ CK_RV PKCS11Library::signInit(CK_SESSION_HANDLE hSession,
     if (pMechanism == nullptr)
         return CKR_ARGUMENTS_BAD;
 
-    std::cerr << "[PKCS11] C_SignInit: mechanism=0x" << std::hex << pMechanism->mechanism
-              << std::dec << std::endl;
-
     if (pMechanism->mechanism != CKM_RSA_PKCS &&
         !isCombinedHashMechanism(pMechanism->mechanism))
         return CKR_MECHANISM_INVALID;
@@ -956,9 +1070,6 @@ CK_RV PKCS11Library::sign(CK_SESSION_HANDLE hSession,
     // From here on, sign state is consumed regardless of outcome
     auto signState = session.signState.value();
     session.signState.reset();
-
-    std::cerr << "[PKCS11] C_Sign: actual sign, mech=0x" << std::hex << signState.mechanism
-              << " initBufLen=" << std::dec << *pulSignatureLen << std::endl;
 
     auto objIt = objects.find(signState.keyHandle);
     if (objIt == objects.end())

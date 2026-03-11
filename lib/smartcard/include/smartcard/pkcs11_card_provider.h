@@ -36,6 +36,10 @@ struct PKCS11ObjectInfo {
     bool isToken = true;
     bool isPrivate = false;
     bool canSign = false;
+    bool canDecrypt = false;     // CKA_DECRYPT (key exchange keys)
+    bool canEncrypt = false;     // CKA_ENCRYPT (key exchange keys)
+    bool canWrap = false;        // CKA_WRAP (key exchange keys)
+    bool canUnwrap = false;      // CKA_UNWRAP (key exchange keys)
     uint16_t keyReference = 0;   // on-card key FID for MSE SET (private keys only)
 };
 

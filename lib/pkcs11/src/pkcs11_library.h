@@ -34,8 +34,13 @@ struct PKCS11Object {
     CK_BBOOL isToken;
     CK_BBOOL isPrivate;
     CK_BBOOL canSign;
+    CK_BBOOL canDecrypt;
+    CK_BBOOL canEncrypt;
+    CK_BBOOL canWrap;
+    CK_BBOOL canUnwrap;
     uint16_t keyReference = 0;       // on-card key FID (private keys only)
     std::vector<uint8_t> modulus;    // RSA public modulus (private keys only, from paired cert)
+    std::vector<uint8_t> publicExponent;  // RSA public exponent (private keys only, from paired cert)
 };
 
 struct FindState {
