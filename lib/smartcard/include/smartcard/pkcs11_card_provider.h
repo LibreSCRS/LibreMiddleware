@@ -11,7 +11,8 @@
 
 namespace smartcard {
 
-struct PKCS11TokenInfo {
+struct PKCS11TokenInfo
+{
     std::string label;
     std::string manufacturer;
     std::string model;
@@ -26,24 +27,26 @@ struct PKCS11TokenInfo {
     bool hasProtectedAuthPath = false;
 };
 
-struct PKCS11ObjectInfo {
-    unsigned long objectClass;       // 1=certificate, 3=private key
+struct PKCS11ObjectInfo
+{
+    unsigned long objectClass; // 1=certificate, 3=private key
     std::string label;
-    std::vector<uint8_t> id;         // CKA_ID linking cert to key
-    std::vector<uint8_t> value;      // DER bytes for certs; empty for keys
-    unsigned long certificateType;   // 0=X.509 for certs
-    unsigned long keyType;           // 0=RSA for keys
+    std::vector<uint8_t> id;       // CKA_ID linking cert to key
+    std::vector<uint8_t> value;    // DER bytes for certs; empty for keys
+    unsigned long certificateType; // 0=X.509 for certs
+    unsigned long keyType;         // 0=RSA for keys
     bool isToken = true;
     bool isPrivate = false;
     bool canSign = false;
-    bool canDecrypt = false;     // CKA_DECRYPT (key exchange keys)
-    bool canEncrypt = false;     // CKA_ENCRYPT (key exchange keys)
-    bool canWrap = false;        // CKA_WRAP (key exchange keys)
-    bool canUnwrap = false;      // CKA_UNWRAP (key exchange keys)
-    uint16_t keyReference = 0;   // on-card key FID for MSE SET (private keys only)
+    bool canDecrypt = false;   // CKA_DECRYPT (key exchange keys)
+    bool canEncrypt = false;   // CKA_ENCRYPT (key exchange keys)
+    bool canWrap = false;      // CKA_WRAP (key exchange keys)
+    bool canUnwrap = false;    // CKA_UNWRAP (key exchange keys)
+    uint16_t keyReference = 0; // on-card key FID for MSE SET (private keys only)
 };
 
-class PKCS11CardProvider {
+class PKCS11CardProvider
+{
 public:
     virtual ~PKCS11CardProvider() = default;
 
@@ -57,15 +60,13 @@ public:
     virtual std::vector<PKCS11ObjectInfo> getObjects() = 0;
 
     // Return 0 on success, nonzero PKCS#11 CKR_* error code.
-    virtual unsigned long login(unsigned long userType,
-                                const std::vector<uint8_t>& pin) = 0;
+    virtual unsigned long login(unsigned long userType, const std::vector<uint8_t>& pin) = 0;
     virtual unsigned long logout() = 0;
 
     // Sign data using the private key identified by keyId (CKA_ID).
     // data = DER DigestInfo for CKM_RSA_PKCS; card applies PKCS#1 v1.5 padding.
     // Returns raw signature bytes (256 for RSA-2048).
-    virtual std::vector<uint8_t> signData(const std::vector<uint8_t>& keyId,
-                                           const std::vector<uint8_t>& data) = 0;
+    virtual std::vector<uint8_t> signData(const std::vector<uint8_t>& keyId, const std::vector<uint8_t>& data) = 0;
 
     // Reconnect the underlying card connection after SCARD_W_RESET_CARD.
     // Default implementation is a no-op (providers that don't hold a persistent

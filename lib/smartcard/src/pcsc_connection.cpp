@@ -17,11 +17,9 @@ PCSCConnection::PCSCConnection(const std::string& readerName)
 
     // Prefer T=1: natively supports arbitrary-length APDUs (no 255-byte Lc limit).
     // Fall back to T=0 for readers/cards that only support T=0 (e.g. older Apollo cards).
-    rv = SCardConnect(context, readerName.c_str(), SCARD_SHARE_SHARED,
-                      SCARD_PROTOCOL_T1, &card, &activeProtocol);
+    rv = SCardConnect(context, readerName.c_str(), SCARD_SHARE_SHARED, SCARD_PROTOCOL_T1, &card, &activeProtocol);
     if (rv != SCARD_S_SUCCESS) {
-        rv = SCardConnect(context, readerName.c_str(), SCARD_SHARE_SHARED,
-                          SCARD_PROTOCOL_T0, &card, &activeProtocol);
+        rv = SCardConnect(context, readerName.c_str(), SCARD_SHARE_SHARED, SCARD_PROTOCOL_T0, &card, &activeProtocol);
     }
     if (rv != SCARD_S_SUCCESS) {
         SCardReleaseContext(context);
@@ -44,17 +42,14 @@ void PCSCConnection::reconnect()
     // Use SCARD_LEAVE_CARD (not SCARD_RESET_CARD) to avoid physically resetting
     // the card and invalidating other SCARD_SHARE_SHARED connections (e.g. Firefox
     // PKCS#11 holding its own connection while LibreCelik retries a read).
-    LONG rv = SCardReconnect(card, SCARD_SHARE_SHARED,
-                             SCARD_PROTOCOL_T1, SCARD_LEAVE_CARD, &activeProtocol);
+    LONG rv = SCardReconnect(card, SCARD_SHARE_SHARED, SCARD_PROTOCOL_T1, SCARD_LEAVE_CARD, &activeProtocol);
     if (rv != SCARD_S_SUCCESS) {
-        rv = SCardReconnect(card, SCARD_SHARE_SHARED,
-                            SCARD_PROTOCOL_T0, SCARD_LEAVE_CARD, &activeProtocol);
+        rv = SCardReconnect(card, SCARD_SHARE_SHARED, SCARD_PROTOCOL_T0, SCARD_LEAVE_CARD, &activeProtocol);
     }
     if (rv != SCARD_S_SUCCESS) {
         throw PCSCError("SCardReconnect failed", rv);
     }
-    std::cerr << "[PCSC] Reconnected, protocol="
-              << (activeProtocol == SCARD_PROTOCOL_T0 ? "T=0" : "T=1") << std::endl;
+    std::cerr << "[PCSC] Reconnected, protocol=" << (activeProtocol == SCARD_PROTOCOL_T0 ? "T=0" : "T=1") << std::endl;
 }
 
 APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
@@ -63,23 +58,15 @@ APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
     std::cerr << "[PCSC] TX (" << cmdLen << " bytes,"
               << " protocol=" << (activeProtocol == SCARD_PROTOCOL_T0 ? "T=0" : "T=1") << "):";
     for (DWORD i = 0; i < cmdLen; i++)
-        std::cerr << " " << std::hex << std::setfill('0') << std::setw(2)
-                  << static_cast<int>(cmdBytes[i]);
+        std::cerr << " " << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(cmdBytes[i]);
     std::cerr << std::dec << std::endl;
 
-    const SCARD_IO_REQUEST* pioSendPci =
-        (activeProtocol == SCARD_PROTOCOL_T0) ? SCARD_PCI_T0 : SCARD_PCI_T1;
+    const SCARD_IO_REQUEST* pioSendPci = (activeProtocol == SCARD_PROTOCOL_T0) ? SCARD_PCI_T0 : SCARD_PCI_T1;
 
     uint8_t recvBuffer[258];
     DWORD recvLength = sizeof(recvBuffer);
 
-    LONG rv = SCardTransmit(card,
-                            pioSendPci,
-                            cmdBytes,
-                            cmdLen,
-                            nullptr,
-                            recvBuffer,
-                            &recvLength);
+    LONG rv = SCardTransmit(card, pioSendPci, cmdBytes, cmdLen, nullptr, recvBuffer, &recvLength);
     if (rv != SCARD_S_SUCCESS) {
         std::cerr << "[PCSC] SCardTransmit FAILED, rv=0x" << std::hex << rv << std::dec << std::endl;
         throw PCSCError("SCardTransmit failed", rv);
@@ -88,8 +75,7 @@ APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
     // Log received response
     std::cerr << "[PCSC] RX (" << recvLength << " bytes):";
     for (DWORD i = 0; i < recvLength; i++)
-        std::cerr << " " << std::hex << std::setfill('0') << std::setw(2)
-                  << static_cast<int>(recvBuffer[i]);
+        std::cerr << " " << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(recvBuffer[i]);
     std::cerr << std::dec << std::endl;
 
     APDUResponse response;
@@ -101,8 +87,7 @@ APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
         }
     }
 
-    std::cerr << "[PCSC] SW=0x" << std::hex << std::setfill('0') << std::setw(4)
-              << response.statusWord() << std::dec
+    std::cerr << "[PCSC] SW=0x" << std::hex << std::setfill('0') << std::setw(4) << response.statusWord() << std::dec
               << ", data=" << response.data.size() << " bytes" << std::endl;
 
     return response;
@@ -122,7 +107,7 @@ APDUResponse PCSCConnection::transmit(const APDUCommand& cmd)
         }
         // SW1=6C: wrong Le — resend command with corrected Le
         else if (response.sw1 == 0x6C) {
-            cmdBytes.back() = response.sw2;  // replace Le with correct value
+            cmdBytes.back() = response.sw2; // replace Le with correct value
             response = transmitRaw(cmdBytes.data(), static_cast<DWORD>(cmdBytes.size()));
         }
     }
@@ -137,7 +122,7 @@ void PCSCConnection::beginTransaction()
         // Card was reset externally (reader firmware, or prior SCARD_RESET_CARD by another
         // process). Re-establish our handle without resetting the card (SCARD_LEAVE_CARD),
         // then retry. The caller's subsequent applet SELECT restores card context.
-        reconnect();  // SCARD_LEAVE_CARD — safe for other SCARD_SHARE_SHARED connections
+        reconnect(); // SCARD_LEAVE_CARD — safe for other SCARD_SHARE_SHARED connections
         rv = SCardBeginTransaction(card);
     }
     if (rv != SCARD_S_SUCCESS)

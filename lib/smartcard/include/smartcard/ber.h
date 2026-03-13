@@ -12,11 +12,12 @@
 namespace smartcard {
 
 // ISO 7816-4 BER-TLV field (used by Serbian vehicle registration cards)
-struct BERField {
+struct BERField
+{
     uint32_t tag = 0;
     bool constructed = false;
-    std::vector<uint8_t> value;       // raw value (for primitive fields)
-    std::vector<BERField> children;   // nested fields (for constructed fields)
+    std::vector<uint8_t> value;     // raw value (for primitive fields)
+    std::vector<BERField> children; // nested fields (for constructed fields)
 
     std::string asString() const;
 };

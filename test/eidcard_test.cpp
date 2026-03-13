@@ -6,7 +6,8 @@
 
 using namespace eidcard;
 
-TEST(EIdTypesTest, DocumentDataDefaultConstruction) {
+TEST(EIdTypesTest, DocumentDataDefaultConstruction)
+{
     DocumentData doc;
     EXPECT_TRUE(doc.docRegNo.empty());
     EXPECT_TRUE(doc.documentType.empty());
@@ -17,7 +18,8 @@ TEST(EIdTypesTest, DocumentDataDefaultConstruction) {
     EXPECT_TRUE(doc.chipSerialNumber.empty());
 }
 
-TEST(EIdTypesTest, FixedPersonalDataDefaultConstruction) {
+TEST(EIdTypesTest, FixedPersonalDataDefaultConstruction)
+{
     FixedPersonalData fp;
     EXPECT_TRUE(fp.personalNumber.empty());
     EXPECT_TRUE(fp.surname.empty());
@@ -30,7 +32,8 @@ TEST(EIdTypesTest, FixedPersonalDataDefaultConstruction) {
     EXPECT_TRUE(fp.statusOfForeigner.empty());
 }
 
-TEST(EIdTypesTest, VariablePersonalDataDefaultConstruction) {
+TEST(EIdTypesTest, VariablePersonalDataDefaultConstruction)
+{
     VariablePersonalData vp;
     EXPECT_TRUE(vp.state.empty());
     EXPECT_TRUE(vp.community.empty());
@@ -40,7 +43,8 @@ TEST(EIdTypesTest, VariablePersonalDataDefaultConstruction) {
     EXPECT_TRUE(vp.addressDate.empty());
 }
 
-TEST(EIdTypesTest, FieldAssignment) {
+TEST(EIdTypesTest, FieldAssignment)
+{
     FixedPersonalData fp;
     fp.surname = "Petrović";
     fp.givenName = "Marko";
@@ -50,21 +54,24 @@ TEST(EIdTypesTest, FieldAssignment) {
     EXPECT_EQ(fp.dateOfBirth, "15.03.1990");
 }
 
-TEST(EIdTypesTest, CardTypeValues) {
+TEST(EIdTypesTest, CardTypeValues)
+{
     EXPECT_EQ(static_cast<int>(CardType::Unknown), 0);
     EXPECT_EQ(static_cast<int>(CardType::Apollo2008), 1);
     EXPECT_EQ(static_cast<int>(CardType::Gemalto2014), 2);
     EXPECT_EQ(static_cast<int>(CardType::ForeignerIF2020), 3);
 }
 
-TEST(EIdTypesTest, PhotoDataIsVector) {
+TEST(EIdTypesTest, PhotoDataIsVector)
+{
     PhotoData photo = {0xFF, 0xD8, 0xFF, 0xE0};
     ASSERT_EQ(photo.size(), 4u);
     EXPECT_EQ(photo[0], 0xFF);
     EXPECT_EQ(photo[1], 0xD8);
 }
 
-TEST(EIdTypesTest, CertificateData) {
+TEST(EIdTypesTest, CertificateData)
+{
     CertificateData cert;
     cert.label = "Auth Certificate";
     cert.derBytes = {0x30, 0x82, 0x01, 0x00};
@@ -72,14 +79,16 @@ TEST(EIdTypesTest, CertificateData) {
     ASSERT_EQ(cert.derBytes.size(), 4u);
 }
 
-TEST(EIdTypesTest, PINResultDefaultConstruction) {
+TEST(EIdTypesTest, PINResultDefaultConstruction)
+{
     PINResult r;
     EXPECT_FALSE(r.success);
     EXPECT_EQ(r.retriesLeft, -1);
     EXPECT_FALSE(r.blocked);
 }
 
-TEST(EIdTypesTest, PINResultFieldAssignment) {
+TEST(EIdTypesTest, PINResultFieldAssignment)
+{
     PINResult r;
     r.success = true;
     r.retriesLeft = 3;

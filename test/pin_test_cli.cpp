@@ -38,7 +38,8 @@ static std::string listReaders()
     rv = SCardListReaders(ctx, nullptr, buf.data(), &len);
     SCardReleaseContext(ctx);
 
-    if (rv != SCARD_S_SUCCESS) return {};
+    if (rv != SCARD_S_SUCCESS)
+        return {};
 
     // Multi-string: null-separated, double-null terminated
     std::string first;
@@ -46,7 +47,8 @@ static std::string listReaders()
     int idx = 0;
     while (*p) {
         std::cout << "  [" << idx << "] " << p << std::endl;
-        if (idx == 0) first = p;
+        if (idx == 0)
+            first = p;
         p += strlen(p) + 1;
         idx++;
     }
@@ -77,8 +79,7 @@ int main(int argc, char* argv[])
         // Step 1: getPINTriesLeft (safe, no retry decrement)
         std::cout << "\n--- Step 1: getPINTriesLeft ---" << std::endl;
         auto tries = card.getPINTriesLeft();
-        std::cout << "Result: retriesLeft=" << tries.retriesLeft
-                  << ", blocked=" << tries.blocked
+        std::cout << "Result: retriesLeft=" << tries.retriesLeft << ", blocked=" << tries.blocked
                   << ", success=" << tries.success << std::endl;
 
         if (tries.blocked) {
@@ -92,8 +93,8 @@ int main(int argc, char* argv[])
 
         // Step 2: Ask user whether to proceed with verifyPIN
         std::cout << "\n--- Step 2: verifyPIN ---" << std::endl;
-        std::cout << "WARNING: A wrong PIN will decrement retries (currently "
-                  << tries.retriesLeft << ")!" << std::endl;
+        std::cout << "WARNING: A wrong PIN will decrement retries (currently " << tries.retriesLeft << ")!"
+                  << std::endl;
         std::cout << "Enter PIN to verify (or 'q' to quit): ";
         std::string pin;
         std::getline(std::cin, pin);
@@ -104,8 +105,7 @@ int main(int argc, char* argv[])
         }
 
         auto verifyResult = card.verifyPIN(pin);
-        std::cout << "Result: success=" << verifyResult.success
-                  << ", retriesLeft=" << verifyResult.retriesLeft
+        std::cout << "Result: success=" << verifyResult.success << ", retriesLeft=" << verifyResult.retriesLeft
                   << ", blocked=" << verifyResult.blocked << std::endl;
 
         if (verifyResult.success) {
@@ -139,8 +139,7 @@ int main(int argc, char* argv[])
         }
 
         auto changeResult = card.changePIN(pin, newPin);
-        std::cout << "Result: success=" << changeResult.success
-                  << ", retriesLeft=" << changeResult.retriesLeft
+        std::cout << "Result: success=" << changeResult.success << ", retriesLeft=" << changeResult.retriesLeft
                   << ", blocked=" << changeResult.blocked << std::endl;
 
         if (changeResult.success) {

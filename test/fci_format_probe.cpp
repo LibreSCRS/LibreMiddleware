@@ -26,23 +26,28 @@ static void hexDump(const std::vector<uint8_t>& data)
 {
     for (size_t i = 0; i < data.size(); ++i) {
         printf("%02X ", data[i]);
-        if ((i % 16 == 15) || (i + 1 == data.size())) printf("\n");
+        if ((i % 16 == 15) || (i + 1 == data.size()))
+            printf("\n");
     }
 }
 
 static void printSW(uint8_t sw1, uint8_t sw2)
 {
     printf("SW=%02X%02X", sw1, sw2);
-    if (sw1 == 0x90 && sw2 == 0x00)      printf(" (OK)");
-    else if (sw1 == 0x61)                 printf(" (more: %d)", sw2);
-    else if (sw1 == 0x6A && sw2 == 0x86) printf(" (INCORRECT P1/P2)");
-    else if (sw1 == 0x6A && sw2 == 0x82) printf(" (FILE NOT FOUND)");
+    if (sw1 == 0x90 && sw2 == 0x00)
+        printf(" (OK)");
+    else if (sw1 == 0x61)
+        printf(" (more: %d)", sw2);
+    else if (sw1 == 0x6A && sw2 == 0x86)
+        printf(" (INCORRECT P1/P2)");
+    else if (sw1 == 0x6A && sw2 == 0x82)
+        printf(" (FILE NOT FOUND)");
     printf("\n");
 }
 
 // Build a raw SELECT FILE APDU with explicit P1, P2, data, Le
-static smartcard::APDUCommand selectRaw(uint8_t p1, uint8_t p2,
-    const std::vector<uint8_t>& data, uint8_t le, bool hasLe)
+static smartcard::APDUCommand selectRaw(uint8_t p1, uint8_t p2, const std::vector<uint8_t>& data, uint8_t le,
+                                        bool hasLe)
 {
     return {0x00, 0xA4, p1, p2, data, le, hasLe};
 }
@@ -79,14 +84,13 @@ int main(int argc, char* argv[])
 
         auto atr = conn.getATR();
         printf("ATR:    ");
-        for (auto b : atr) printf("%02X ", b);
+        for (auto b : atr)
+            printf("%02X ", b);
         printf("\n");
 
         // Select PKI applet first
-        const std::vector<uint8_t> AID_PKCS15 = {
-            0xA0, 0x00, 0x00, 0x00, 0x63,
-            0x50, 0x4B, 0x43, 0x53, 0x2D, 0x31, 0x35
-        };
+        const std::vector<uint8_t> AID_PKCS15 = {0xA0, 0x00, 0x00, 0x00, 0x63, 0x50,
+                                                 0x4B, 0x43, 0x53, 0x2D, 0x31, 0x35};
         auto aidResp = conn.transmit(smartcard::selectByAID(AID_PKCS15));
         printf("\nSELECT AID: SW=%02X%02X\n", aidResp.sw1, aidResp.sw2);
         if (!aidResp.isSuccess()) {
@@ -97,21 +101,22 @@ int main(int argc, char* argv[])
             printf("  AID SELECT response (%zu bytes): ", aidResp.data.size());
             hexDump(aidResp.data);
             printf("  First byte: 0x%02X %s\n", aidResp.data[0],
-                (aidResp.data[0] == 0x6F) ? "== 0x6F (FCI template!)" :
-                (aidResp.data[0] == 0x62) ? "== 0x62 (FCP template!)" :
-                "(!= 0x6F/0x62, NOT ISO TLV)");
+                   (aidResp.data[0] == 0x6F)   ? "== 0x6F (FCI template!)"
+                   : (aidResp.data[0] == 0x62) ? "== 0x62 (FCP template!)"
+                                               : "(!= 0x6F/0x62, NOT ISO TLV)");
         }
 
         // Test FIDs: root dir and a cert file
         const uint16_t testFids[] = {0x7000, 0x6005};
-        const char* fidNames[]    = {"root dir (0x7000)", "key file (0x6005)"};
+        const char* fidNames[] = {"root dir (0x7000)", "key file (0x6005)"};
 
         // P2 variants per ISO 7816-4:
         //   0x00 = return FCI (tag 0x6F expected)
         //   0x04 = return FCP (tag 0x62 expected)
         //   0x08 = return FMD (tag 0x64 expected)
         //   0x0C = return nothing
-        struct P2Variant {
+        struct P2Variant
+        {
             uint8_t p2;
             const char* desc;
         };
@@ -123,7 +128,8 @@ int main(int argc, char* argv[])
         };
 
         // P1 variants
-        struct P1Variant {
+        struct P1Variant
+        {
             uint8_t p1;
             const char* desc;
         };
@@ -133,14 +139,15 @@ int main(int argc, char* argv[])
         };
 
         // Le variants
-        struct LeVariant {
+        struct LeVariant
+        {
             uint8_t le;
             bool hasLe;
             const char* desc;
         };
         const LeVariant leVariants[] = {
-            {0x00, true,  "Le=0x00 (up to 256)"},
-            {0x0A, true,  "Le=0x0A (10 bytes)"},
+            {0x00, true, "Le=0x00 (up to 256)"},
+            {0x0A, true, "Le=0x0A (10 bytes)"},
             {0x00, false, "No Le"},
         };
 
@@ -161,8 +168,7 @@ int main(int argc, char* argv[])
                         conn.transmit(smartcard::selectByAID(AID_PKCS15));
 
                         printf("\n  %s | %s | %s\n", p1v.desc, p2v.desc, lev.desc);
-                        auto resp = conn.transmit(
-                            selectRaw(p1v.p1, p2v.p2, {fidH, fidL}, lev.le, lev.hasLe));
+                        auto resp = conn.transmit(selectRaw(p1v.p1, p2v.p2, {fidH, fidL}, lev.le, lev.hasLe));
                         printf("    ");
                         printSW(resp.sw1, resp.sw2);
 

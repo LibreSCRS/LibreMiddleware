@@ -19,16 +19,21 @@
 
 namespace smartcard {
 
-class PCSCError : public std::runtime_error {
+class PCSCError : public std::runtime_error
+{
 public:
-    PCSCError(const std::string& msg, LONG code)
-        : std::runtime_error(msg), errorCode(code) {}
-    LONG code() const { return errorCode; }
+    PCSCError(const std::string& msg, LONG code) : std::runtime_error(msg), errorCode(code) {}
+    LONG code() const
+    {
+        return errorCode;
+    }
+
 private:
     LONG errorCode;
 };
 
-class PCSCConnection {
+class PCSCConnection
+{
 public:
     explicit PCSCConnection(const std::string& readerName);
     ~PCSCConnection();
@@ -37,9 +42,12 @@ public:
     PCSCConnection& operator=(const PCSCConnection&) = delete;
 
     APDUResponse transmit(const APDUCommand& cmd);
-    void reconnect();  // prefers T=1, falls back to T=0
+    void reconnect(); // prefers T=1, falls back to T=0
     std::vector<uint8_t> getATR() const;
-    DWORD getActiveProtocol() const { return activeProtocol; }
+    DWORD getActiveProtocol() const
+    {
+        return activeProtocol;
+    }
 
     // Acquire / release an exclusive PC/SC transaction on the card.
     // While a transaction is held, other connections' SCardTransmit calls block.
@@ -60,10 +68,17 @@ private:
 // RAII wrapper: begins a PC/SC transaction on construction, ends it on destruction.
 // Prevents APDU interleaving when multiple processes share the same card
 // (e.g., LibreCelik + Firefox PKCS#11 both using SCARD_SHARE_SHARED).
-class CardTransaction {
+class CardTransaction
+{
 public:
-    explicit CardTransaction(PCSCConnection& conn) : conn(conn) { conn.beginTransaction(); }
-    ~CardTransaction() { conn.endTransaction(); }
+    explicit CardTransaction(PCSCConnection& conn) : conn(conn)
+    {
+        conn.beginTransaction();
+    }
+    ~CardTransaction()
+    {
+        conn.endTransaction();
+    }
 
     CardTransaction(const CardTransaction&) = delete;
     CardTransaction& operator=(const CardTransaction&) = delete;

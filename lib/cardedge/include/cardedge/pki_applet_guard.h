@@ -28,12 +28,12 @@ namespace cardedge {
 //   // PKS / Health PKI — no home applet; guard just serialises access.
 //   PkiAppletGuard guard(conn);
 
-class PkiAppletGuard {
+class PkiAppletGuard
+{
 public:
     using ReselHook = std::function<void(smartcard::PCSCConnection&)>;
 
-    explicit PkiAppletGuard(smartcard::PCSCConnection& conn,
-                            ReselHook on_exit = nullptr);
+    explicit PkiAppletGuard(smartcard::PCSCConnection& conn, ReselHook on_exit = nullptr);
     ~PkiAppletGuard() noexcept;
 
     PkiAppletGuard(const PkiAppletGuard&) = delete;
@@ -41,8 +41,8 @@ public:
 
 private:
     smartcard::PCSCConnection& conn;
-    smartcard::CardTransaction  tx;
-    ReselHook                  on_exit;
+    smartcard::CardTransaction tx;
+    ReselHook on_exit;
 };
 
 } // namespace cardedge

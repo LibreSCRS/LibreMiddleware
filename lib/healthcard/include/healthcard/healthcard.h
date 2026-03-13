@@ -16,7 +16,8 @@ class PCSCConnection;
 
 namespace healthcard {
 
-class HealthCard {
+class HealthCard
+{
 public:
     static bool probe(const std::string& readerName);
 

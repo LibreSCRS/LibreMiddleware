@@ -40,7 +40,8 @@ static std::string listReaders()
     rv = SCardListReaders(ctx, nullptr, buf.data(), &len);
     SCardReleaseContext(ctx);
 
-    if (rv != SCARD_S_SUCCESS) return {};
+    if (rv != SCARD_S_SUCCESS)
+        return {};
 
     // Multi-string: null-separated, double-null terminated
     std::string first;
@@ -48,7 +49,8 @@ static std::string listReaders()
     int idx = 0;
     while (*p) {
         std::cout << "  [" << idx << "] " << p << std::endl;
-        if (idx == 0) first = p;
+        if (idx == 0)
+            first = p;
         p += strlen(p) + 1;
         idx++;
     }
@@ -88,8 +90,7 @@ int main(int argc, char* argv[])
         auto keys = card.discoverKeyReferences();
         std::cout << "Found " << keys.size() << " key reference(s):" << std::endl;
         for (const auto& [label, fid] : keys)
-            std::cout << "  \"" << label << "\" FID=0x"
-                      << std::hex << std::setfill('0') << std::setw(4) << fid
+            std::cout << "  \"" << label << "\" FID=0x" << std::hex << std::setfill('0') << std::setw(4) << fid
                       << std::dec << std::endl;
 
         // Step 2: readCertificates
@@ -97,15 +98,13 @@ int main(int argc, char* argv[])
         auto certs = card.readCertificates();
         std::cout << "Found " << certs.size() << " certificate(s):" << std::endl;
         for (const auto& c : certs)
-            std::cout << "  \"" << c.label << "\" DER size=" << c.derBytes.size()
-                      << " keyFID=0x" << std::hex << std::setfill('0') << std::setw(4) << c.keyFID
-                      << std::dec << std::endl;
+            std::cout << "  \"" << c.label << "\" DER size=" << c.derBytes.size() << " keyFID=0x" << std::hex
+                      << std::setfill('0') << std::setw(4) << c.keyFID << std::dec << std::endl;
 
         // Step 3: getPINTriesLeft (safe, no retry decrement)
         std::cout << "\n--- Step 3: getPINTriesLeft ---" << std::endl;
         auto tries = card.getPINTriesLeft();
-        std::cout << "Result: retriesLeft=" << tries.retriesLeft
-                  << ", blocked=" << tries.blocked
+        std::cout << "Result: retriesLeft=" << tries.retriesLeft << ", blocked=" << tries.blocked
                   << ", success=" << tries.success << std::endl;
 
         if (tries.blocked) {
@@ -118,8 +117,8 @@ int main(int argc, char* argv[])
 
         // Step 4: verifyPIN
         std::cout << "\n--- Step 4: verifyPIN ---" << std::endl;
-        std::cout << "WARNING: A wrong PIN will decrement retries (currently "
-                  << tries.retriesLeft << ")!" << std::endl;
+        std::cout << "WARNING: A wrong PIN will decrement retries (currently " << tries.retriesLeft << ")!"
+                  << std::endl;
         std::cout << "Enter PIN to verify (or 'q' to quit): ";
         std::string pin;
         std::getline(std::cin, pin);
@@ -130,8 +129,7 @@ int main(int argc, char* argv[])
         }
 
         auto verifyResult = card.verifyPIN(pin);
-        std::cout << "Result: success=" << verifyResult.success
-                  << ", retriesLeft=" << verifyResult.retriesLeft
+        std::cout << "Result: success=" << verifyResult.success << ", retriesLeft=" << verifyResult.retriesLeft
                   << ", blocked=" << verifyResult.blocked << std::endl;
 
         if (verifyResult.success) {
@@ -165,8 +163,7 @@ int main(int argc, char* argv[])
         }
 
         auto changeResult = card.changePIN(pin, newPin);
-        std::cout << "Result: success=" << changeResult.success
-                  << ", retriesLeft=" << changeResult.retriesLeft
+        std::cout << "Result: success=" << changeResult.success << ", retriesLeft=" << changeResult.retriesLeft
                   << ", blocked=" << changeResult.blocked << std::endl;
 
         if (changeResult.success) {
@@ -182,8 +179,7 @@ int main(int argc, char* argv[])
             if (revert.success)
                 std::cout << "PIN restored to original." << std::endl;
         } else {
-            std::cerr << "changePIN failed. Retries remaining: "
-                      << changeResult.retriesLeft << std::endl;
+            std::cerr << "changePIN failed. Retries remaining: " << changeResult.retriesLeft << std::endl;
         }
 
     } catch (const std::exception& e) {

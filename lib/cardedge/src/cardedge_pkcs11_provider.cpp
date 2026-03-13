@@ -65,11 +65,11 @@ std::vector<smartcard::PKCS11ObjectInfo> CardEdgePKCS11Provider::getObjects()
 
             // Certificate object
             smartcard::PKCS11ObjectInfo certObj;
-            certObj.objectClass = 1;       // CKO_CERTIFICATE
+            certObj.objectClass = 1; // CKO_CERTIFICATE
             certObj.label = cert.label;
             certObj.id = id;
             certObj.value = cert.derBytes;
-            certObj.certificateType = 0;   // CKC_X_509
+            certObj.certificateType = 0; // CKC_X_509
             certObj.keyType = 0;
             certObj.isToken = true;
             certObj.isPrivate = false;
@@ -78,12 +78,12 @@ std::vector<smartcard::PKCS11ObjectInfo> CardEdgePKCS11Provider::getObjects()
 
             // Private key object
             smartcard::PKCS11ObjectInfo keyObj;
-            keyObj.objectClass = 3;        // CKO_PRIVATE_KEY
+            keyObj.objectClass = 3; // CKO_PRIVATE_KEY
             keyObj.label = cert.label;
             keyObj.id = id;
             keyObj.value = {};
             keyObj.certificateType = 0;
-            keyObj.keyType = 0;            // CKK_RSA
+            keyObj.keyType = 0; // CKK_RSA
             keyObj.isToken = true;
             keyObj.isPrivate = true;
             keyObj.canSign = (cert.keyFID != 0);
@@ -108,33 +108,34 @@ std::vector<smartcard::PKCS11ObjectInfo> CardEdgePKCS11Provider::getObjects()
     return objects;
 }
 
-unsigned long CardEdgePKCS11Provider::login(unsigned long userType,
-                                             const std::vector<uint8_t>& pin)
+unsigned long CardEdgePKCS11Provider::login(unsigned long userType, const std::vector<uint8_t>& pin)
 {
-    if (userType != 1)  // CKU_USER
-        return 0x00000103UL;  // CKR_USER_TYPE_INVALID
+    if (userType != 1)       // CKU_USER
+        return 0x00000103UL; // CKR_USER_TYPE_INVALID
     if (!connection)
-        return 0x00000030UL;  // CKR_DEVICE_ERROR
+        return 0x00000030UL; // CKR_DEVICE_ERROR
 
     try {
         PkiAppletGuard guard(*connection);
         std::string pinStr(pin.begin(), pin.end());
         auto result = verifyPIN(*connection, pinStr);
-        if (result.success) return 0;  // CKR_OK
-        if (result.blocked) return 0x000000A4UL;  // CKR_PIN_LOCKED
-        return 0x000000A0UL;  // CKR_PIN_INCORRECT
+        if (result.success)
+            return 0; // CKR_OK
+        if (result.blocked)
+            return 0x000000A4UL; // CKR_PIN_LOCKED
+        return 0x000000A0UL;     // CKR_PIN_INCORRECT
     } catch (...) {
-        return 0x00000030UL;  // CKR_DEVICE_ERROR
+        return 0x00000030UL; // CKR_DEVICE_ERROR
     }
 }
 
 unsigned long CardEdgePKCS11Provider::logout()
 {
-    return 0;  // CKR_OK
+    return 0; // CKR_OK
 }
 
 std::vector<uint8_t> CardEdgePKCS11Provider::signData(const std::vector<uint8_t>& keyId,
-                                                       const std::vector<uint8_t>& data)
+                                                      const std::vector<uint8_t>& data)
 {
     if (!connection)
         throw std::runtime_error("CardEdgePKCS11Provider: not connected");

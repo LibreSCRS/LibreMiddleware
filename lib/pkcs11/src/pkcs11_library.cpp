@@ -11,11 +11,9 @@
 #include <openssl/evp.h>
 #include <openssl/x509.h>
 
-PKCS11Library::PKCS11Library(
-    std::vector<std::shared_ptr<smartcard::PKCS11CardProvider>> providers)
+PKCS11Library::PKCS11Library(std::vector<std::shared_ptr<smartcard::PKCS11CardProvider>> providers)
     : providers(std::move(providers))
-{
-}
+{}
 
 PKCS11Library::~PKCS11Library()
 {
@@ -47,8 +45,7 @@ CK_RV PKCS11Library::getInfo(CK_INFO_PTR pInfo) const
     pInfo->cryptokiVersion.minor = CRYPTOKI_VERSION_MINOR;
     padString(pInfo->manufacturerID, sizeof(pInfo->manufacturerID), "LibreSCRS");
     pInfo->flags = 0;
-    padString(pInfo->libraryDescription, sizeof(pInfo->libraryDescription),
-              "LibreSCRS PKCS#11");
+    padString(pInfo->libraryDescription, sizeof(pInfo->libraryDescription), "LibreSCRS PKCS#11");
     pInfo->libraryVersion.major = LIBRESCRS_PKCS11_VERSION_MAJOR;
     pInfo->libraryVersion.minor = LIBRESCRS_PKCS11_VERSION_MINOR;
 
@@ -85,9 +82,7 @@ void PKCS11Library::ensureConnected(CK_SLOT_ID slotID)
     }
 }
 
-CK_RV PKCS11Library::getSlotList(CK_BBOOL tokenPresent,
-                                  CK_SLOT_ID_PTR pSlotList,
-                                  CK_ULONG_PTR pulCount)
+CK_RV PKCS11Library::getSlotList(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR pSlotList, CK_ULONG_PTR pulCount)
 {
     if (pulCount == nullptr)
         return CKR_ARGUMENTS_BAD;
@@ -131,8 +126,7 @@ CK_RV PKCS11Library::getSlotInfo(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pInfo)
     auto& slot = slots[slotID];
 
     std::memset(pInfo, 0, sizeof(CK_SLOT_INFO));
-    padString(pInfo->slotDescription, sizeof(pInfo->slotDescription),
-              slot.readerName.c_str());
+    padString(pInfo->slotDescription, sizeof(pInfo->slotDescription), slot.readerName.c_str());
     padString(pInfo->manufacturerID, sizeof(pInfo->manufacturerID), "LibreSCRS");
 
     pInfo->flags = CKF_REMOVABLE_DEVICE | CKF_HW_SLOT;
@@ -161,11 +155,9 @@ CK_RV PKCS11Library::getTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
 
     std::memset(pInfo, 0, sizeof(CK_TOKEN_INFO));
     padString(pInfo->label, sizeof(pInfo->label), tokenInfo.label.c_str());
-    padString(pInfo->manufacturerID, sizeof(pInfo->manufacturerID),
-              tokenInfo.manufacturer.c_str());
+    padString(pInfo->manufacturerID, sizeof(pInfo->manufacturerID), tokenInfo.manufacturer.c_str());
     padString(pInfo->model, sizeof(pInfo->model), tokenInfo.model.c_str());
-    padString(pInfo->serialNumber, sizeof(pInfo->serialNumber),
-              tokenInfo.serialNumber.c_str());
+    padString(pInfo->serialNumber, sizeof(pInfo->serialNumber), tokenInfo.serialNumber.c_str());
 
     pInfo->flags = CKF_TOKEN_INITIALIZED | CKF_WRITE_PROTECTED;
     if (tokenInfo.hasPIN) {
@@ -194,18 +186,15 @@ CK_RV PKCS11Library::getTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
     pInfo->ulFreePublicMemory = CK_UNAVAILABLE_INFORMATION;
     pInfo->ulTotalPrivateMemory = CK_UNAVAILABLE_INFORMATION;
     pInfo->ulFreePrivateMemory = CK_UNAVAILABLE_INFORMATION;
-    pInfo->hardwareVersion = {tokenInfo.hardwareVersionMajor,
-                              tokenInfo.hardwareVersionMinor};
-    pInfo->firmwareVersion = {tokenInfo.firmwareVersionMajor,
-                              tokenInfo.firmwareVersionMinor};
+    pInfo->hardwareVersion = {tokenInfo.hardwareVersionMajor, tokenInfo.hardwareVersionMinor};
+    pInfo->firmwareVersion = {tokenInfo.firmwareVersionMajor, tokenInfo.firmwareVersionMinor};
     padString(pInfo->utcTime, sizeof(pInfo->utcTime), "");
 
     return CKR_OK;
 }
 
-CK_RV PKCS11Library::openSession(CK_SLOT_ID slotID, CK_FLAGS flags,
-                                  CK_VOID_PTR pApplication, CK_NOTIFY Notify,
-                                  CK_SESSION_HANDLE_PTR phSession)
+CK_RV PKCS11Library::openSession(CK_SLOT_ID slotID, CK_FLAGS flags, CK_VOID_PTR pApplication, CK_NOTIFY Notify,
+                                 CK_SESSION_HANDLE_PTR phSession)
 {
     (void)pApplication;
     (void)Notify;
@@ -257,7 +246,7 @@ CK_RV PKCS11Library::closeSession(CK_SESSION_HANDLE hSession)
             loginState.erase(slotID);
         }
         // Clean up cached objects for this slot
-        for (auto it = objects.begin(); it != objects.end(); ) {
+        for (auto it = objects.begin(); it != objects.end();) {
             if (it->second.slotID == slotID)
                 it = objects.erase(it);
             else
@@ -275,7 +264,7 @@ CK_RV PKCS11Library::closeAllSessions(CK_SLOT_ID slotID)
     if (slotID >= slots.size())
         return CKR_SLOT_ID_INVALID;
 
-    for (auto it = sessions.begin(); it != sessions.end(); ) {
+    for (auto it = sessions.begin(); it != sessions.end();) {
         if (it->second.slotID == slotID)
             it = sessions.erase(it);
         else
@@ -293,7 +282,7 @@ CK_RV PKCS11Library::closeAllSessions(CK_SLOT_ID slotID)
     }
 
     // Clean up cached objects for this slot
-    for (auto it = objects.begin(); it != objects.end(); ) {
+    for (auto it = objects.begin(); it != objects.end();) {
         if (it->second.slotID == slotID)
             it = objects.erase(it);
         else
@@ -305,8 +294,7 @@ CK_RV PKCS11Library::closeAllSessions(CK_SLOT_ID slotID)
     return CKR_OK;
 }
 
-CK_RV PKCS11Library::getSessionInfo(CK_SESSION_HANDLE hSession,
-                                     CK_SESSION_INFO_PTR pInfo)
+CK_RV PKCS11Library::getSessionInfo(CK_SESSION_HANDLE hSession, CK_SESSION_INFO_PTR pInfo)
 {
     if (pInfo == nullptr)
         return CKR_ARGUMENTS_BAD;
@@ -333,8 +321,7 @@ CK_RV PKCS11Library::getSessionInfo(CK_SESSION_HANDLE hSession,
     return CKR_OK;
 }
 
-CK_RV PKCS11Library::login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType,
-                            CK_UTF8CHAR_PTR pPin, CK_ULONG ulPinLen)
+CK_RV PKCS11Library::login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType, CK_UTF8CHAR_PTR pPin, CK_ULONG ulPinLen)
 {
     auto it = sessions.find(hSession);
     if (it == sessions.end())
@@ -428,13 +415,24 @@ void PKCS11Library::ensureObjectsLoaded(CK_SLOT_ID slotID)
                 int len;
 
                 len = i2d_X509_NAME(X509_get_subject_name(x509), &der);
-                if (len > 0) { obj.subject.assign(der, der + len); OPENSSL_free(der); der = nullptr; }
+                if (len > 0) {
+                    obj.subject.assign(der, der + len);
+                    OPENSSL_free(der);
+                    der = nullptr;
+                }
 
                 len = i2d_X509_NAME(X509_get_issuer_name(x509), &der);
-                if (len > 0) { obj.issuer.assign(der, der + len); OPENSSL_free(der); der = nullptr; }
+                if (len > 0) {
+                    obj.issuer.assign(der, der + len);
+                    OPENSSL_free(der);
+                    der = nullptr;
+                }
 
                 len = i2d_ASN1_INTEGER(X509_get_serialNumber(x509), &der);
-                if (len > 0) { obj.serialNumber.assign(der, der + len); OPENSSL_free(der); }
+                if (len > 0) {
+                    obj.serialNumber.assign(der, der + len);
+                    OPENSSL_free(der);
+                }
 
                 X509_free(x509);
             }
@@ -455,10 +453,12 @@ void PKCS11Library::ensureObjectsLoaded(CK_SLOT_ID slotID)
                 continue;
             const unsigned char* p = certObj.value.data();
             X509* x509 = d2i_X509(nullptr, &p, static_cast<long>(certObj.value.size()));
-            if (!x509) break;
+            if (!x509)
+                break;
             EVP_PKEY* pkey = X509_get_pubkey(x509);
             X509_free(x509);
-            if (!pkey) break;
+            if (!pkey)
+                break;
             BIGNUM* n = nullptr;
             if (EVP_PKEY_get_bn_param(pkey, "n", &n) == 1 && n) {
                 int len = BN_num_bytes(n);
@@ -481,9 +481,7 @@ void PKCS11Library::ensureObjectsLoaded(CK_SLOT_ID slotID)
     loadedSlots.insert(slotID);
 }
 
-bool PKCS11Library::matchesTemplate(const PKCS11Object& obj,
-                                     CK_ATTRIBUTE_PTR pTemplate,
-                                     CK_ULONG ulCount) const
+bool PKCS11Library::matchesTemplate(const PKCS11Object& obj, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount) const
 {
     for (CK_ULONG i = 0; i < ulCount; ++i) {
         auto& attr = pTemplate[i];
@@ -492,62 +490,71 @@ bool PKCS11Library::matchesTemplate(const PKCS11Object& obj,
             if (attr.ulValueLen == sizeof(CK_OBJECT_CLASS)) {
                 CK_OBJECT_CLASS val;
                 std::memcpy(&val, attr.pValue, sizeof(val));
-                if (obj.objectClass != val) return false;
+                if (obj.objectClass != val)
+                    return false;
             }
             break;
         case CKA_TOKEN:
             if (attr.ulValueLen == sizeof(CK_BBOOL)) {
                 CK_BBOOL val;
                 std::memcpy(&val, attr.pValue, sizeof(val));
-                if (obj.isToken != val) return false;
+                if (obj.isToken != val)
+                    return false;
             }
             break;
         case CKA_PRIVATE:
             if (attr.ulValueLen == sizeof(CK_BBOOL)) {
                 CK_BBOOL val;
                 std::memcpy(&val, attr.pValue, sizeof(val));
-                if (obj.isPrivate != val) return false;
+                if (obj.isPrivate != val)
+                    return false;
             }
             break;
         case CKA_LABEL:
             if (attr.pValue != nullptr) {
                 std::string val(static_cast<char*>(attr.pValue), attr.ulValueLen);
-                if (obj.label != val) return false;
+                if (obj.label != val)
+                    return false;
             }
             break;
         case CKA_ID:
             if (attr.pValue != nullptr) {
                 std::vector<uint8_t> val(static_cast<uint8_t*>(attr.pValue),
                                          static_cast<uint8_t*>(attr.pValue) + attr.ulValueLen);
-                if (obj.id != val) return false;
+                if (obj.id != val)
+                    return false;
             }
             break;
         case CKA_CERTIFICATE_TYPE:
             if (attr.ulValueLen == sizeof(CK_CERTIFICATE_TYPE)) {
                 CK_CERTIFICATE_TYPE val;
                 std::memcpy(&val, attr.pValue, sizeof(val));
-                if (obj.certType != val) return false;
+                if (obj.certType != val)
+                    return false;
             }
             break;
         case CKA_KEY_TYPE:
             if (attr.ulValueLen == sizeof(CK_KEY_TYPE)) {
                 CK_KEY_TYPE val;
                 std::memcpy(&val, attr.pValue, sizeof(val));
-                if (obj.keyType != val) return false;
+                if (obj.keyType != val)
+                    return false;
             }
             break;
         case CKA_SIGN:
             if (attr.ulValueLen == sizeof(CK_BBOOL)) {
                 CK_BBOOL val;
                 std::memcpy(&val, attr.pValue, sizeof(val));
-                if (obj.canSign != val) return false;
+                if (obj.canSign != val)
+                    return false;
             }
             break;
         case CKA_VALUE:
             if (attr.pValue != nullptr) {
                 std::vector<uint8_t> val(static_cast<uint8_t*>(attr.pValue),
                                          static_cast<uint8_t*>(attr.pValue) + attr.ulValueLen);
-                if (obj.value != val) return false;
+                if (obj.value != val)
+                    return false;
             }
             break;
         case CKA_SENSITIVE:
@@ -556,7 +563,8 @@ bool PKCS11Library::matchesTemplate(const PKCS11Object& obj,
             if (obj.objectClass == CKO_PRIVATE_KEY && attr.ulValueLen == sizeof(CK_BBOOL)) {
                 CK_BBOOL val;
                 std::memcpy(&val, attr.pValue, sizeof(val));
-                if (val != CK_TRUE) return false;
+                if (val != CK_TRUE)
+                    return false;
             }
             break;
         }
@@ -567,7 +575,8 @@ bool PKCS11Library::matchesTemplate(const PKCS11Object& obj,
             if (obj.objectClass == CKO_PRIVATE_KEY && attr.ulValueLen == sizeof(CK_BBOOL)) {
                 CK_BBOOL val;
                 std::memcpy(&val, attr.pValue, sizeof(val));
-                if (val != CK_TRUE) return false;
+                if (val != CK_TRUE)
+                    return false;
             }
             break;
         }
@@ -575,7 +584,8 @@ bool PKCS11Library::matchesTemplate(const PKCS11Object& obj,
             if (obj.objectClass == CKO_PRIVATE_KEY && attr.ulValueLen == sizeof(CK_BBOOL)) {
                 CK_BBOOL val;
                 std::memcpy(&val, attr.pValue, sizeof(val));
-                if (obj.canDecrypt != val) return false;
+                if (obj.canDecrypt != val)
+                    return false;
             }
             break;
         }
@@ -583,7 +593,8 @@ bool PKCS11Library::matchesTemplate(const PKCS11Object& obj,
             if (obj.objectClass == CKO_PRIVATE_KEY && attr.ulValueLen == sizeof(CK_BBOOL)) {
                 CK_BBOOL val;
                 std::memcpy(&val, attr.pValue, sizeof(val));
-                if (obj.canEncrypt != val) return false;
+                if (obj.canEncrypt != val)
+                    return false;
             }
             break;
         }
@@ -591,7 +602,8 @@ bool PKCS11Library::matchesTemplate(const PKCS11Object& obj,
             if (obj.objectClass == CKO_PRIVATE_KEY && attr.ulValueLen == sizeof(CK_BBOOL)) {
                 CK_BBOOL val;
                 std::memcpy(&val, attr.pValue, sizeof(val));
-                if (obj.canWrap != val) return false;
+                if (obj.canWrap != val)
+                    return false;
             }
             break;
         }
@@ -599,7 +611,8 @@ bool PKCS11Library::matchesTemplate(const PKCS11Object& obj,
             if (obj.objectClass == CKO_PRIVATE_KEY && attr.ulValueLen == sizeof(CK_BBOOL)) {
                 CK_BBOOL val;
                 std::memcpy(&val, attr.pValue, sizeof(val));
-                if (obj.canUnwrap != val) return false;
+                if (obj.canUnwrap != val)
+                    return false;
             }
             break;
         }
@@ -613,7 +626,8 @@ bool PKCS11Library::matchesTemplate(const PKCS11Object& obj,
             if (obj.objectClass == CKO_PRIVATE_KEY && attr.ulValueLen == sizeof(CK_BBOOL)) {
                 CK_BBOOL val;
                 std::memcpy(&val, attr.pValue, sizeof(val));
-                if (val != CK_FALSE) return false;
+                if (val != CK_FALSE)
+                    return false;
             }
             break;
         }
@@ -622,7 +636,8 @@ bool PKCS11Library::matchesTemplate(const PKCS11Object& obj,
                 CK_ULONG val;
                 std::memcpy(&val, attr.pValue, sizeof(val));
                 CK_ULONG bits = obj.modulus.empty() ? 2048 : static_cast<CK_ULONG>(obj.modulus.size() * 8);
-                if (val != bits) return false;
+                if (val != bits)
+                    return false;
             }
             break;
         }
@@ -630,33 +645,34 @@ bool PKCS11Library::matchesTemplate(const PKCS11Object& obj,
             if (obj.objectClass == CKO_CERTIFICATE && attr.pValue != nullptr) {
                 std::vector<uint8_t> val(static_cast<uint8_t*>(attr.pValue),
                                          static_cast<uint8_t*>(attr.pValue) + attr.ulValueLen);
-                if (obj.subject != val) return false;
+                if (obj.subject != val)
+                    return false;
             }
             break;
         case CKA_ISSUER:
             if (obj.objectClass == CKO_CERTIFICATE && attr.pValue != nullptr) {
                 std::vector<uint8_t> val(static_cast<uint8_t*>(attr.pValue),
                                          static_cast<uint8_t*>(attr.pValue) + attr.ulValueLen);
-                if (obj.issuer != val) return false;
+                if (obj.issuer != val)
+                    return false;
             }
             break;
         case CKA_SERIAL_NUMBER:
             if (obj.objectClass == CKO_CERTIFICATE && attr.pValue != nullptr) {
                 std::vector<uint8_t> val(static_cast<uint8_t*>(attr.pValue),
                                          static_cast<uint8_t*>(attr.pValue) + attr.ulValueLen);
-                if (obj.serialNumber != val) return false;
+                if (obj.serialNumber != val)
+                    return false;
             }
             break;
         default:
-            break;  // Unknown/unhandled attribute: ignore, still a potential match
+            break; // Unknown/unhandled attribute: ignore, still a potential match
         }
     }
     return true;
 }
 
-CK_RV PKCS11Library::findObjectsInit(CK_SESSION_HANDLE hSession,
-                                      CK_ATTRIBUTE_PTR pTemplate,
-                                      CK_ULONG ulCount)
+CK_RV PKCS11Library::findObjectsInit(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
 {
     auto it = sessions.find(hSession);
     if (it == sessions.end())
@@ -682,10 +698,8 @@ CK_RV PKCS11Library::findObjectsInit(CK_SESSION_HANDLE hSession,
     return CKR_OK;
 }
 
-CK_RV PKCS11Library::findObjects(CK_SESSION_HANDLE hSession,
-                                  CK_OBJECT_HANDLE_PTR phObject,
-                                  CK_ULONG ulMaxObjectCount,
-                                  CK_ULONG_PTR pulObjectCount)
+CK_RV PKCS11Library::findObjects(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE_PTR phObject, CK_ULONG ulMaxObjectCount,
+                                 CK_ULONG_PTR pulObjectCount)
 {
     auto it = sessions.find(hSession);
     if (it == sessions.end())
@@ -723,10 +737,8 @@ CK_RV PKCS11Library::findObjectsFinal(CK_SESSION_HANDLE hSession)
     return CKR_OK;
 }
 
-CK_RV PKCS11Library::getAttributeValue(CK_SESSION_HANDLE hSession,
-                                         CK_OBJECT_HANDLE hObject,
-                                         CK_ATTRIBUTE_PTR pTemplate,
-                                         CK_ULONG ulCount)
+CK_RV PKCS11Library::getAttributeValue(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject, CK_ATTRIBUTE_PTR pTemplate,
+                                       CK_ULONG ulCount)
 {
     auto sessIt = sessions.find(hSession);
     if (sessIt == sessions.end())
@@ -741,7 +753,7 @@ CK_RV PKCS11Library::getAttributeValue(CK_SESSION_HANDLE hSession,
 
     auto& obj = objIt->second;
     CK_RV result = CKR_OK;
-    CK_ULONG modulusBits = 0;  // scratch variable for CKA_MODULUS_BITS
+    CK_ULONG modulusBits = 0; // scratch variable for CKA_MODULUS_BITS
 
     for (CK_ULONG i = 0; i < ulCount; ++i) {
         auto& attr = pTemplate[i];
@@ -949,30 +961,37 @@ CK_RV PKCS11Library::getAttributeValue(CK_SESSION_HANDLE hSession,
 // Returns true if mechanism is a combined hash+sign (CKM_SHA*_RSA_PKCS).
 static bool isCombinedHashMechanism(CK_MECHANISM_TYPE mech)
 {
-    return mech == CKM_SHA1_RSA_PKCS   ||
-           mech == CKM_SHA256_RSA_PKCS ||
-           mech == CKM_SHA384_RSA_PKCS ||
+    return mech == CKM_SHA1_RSA_PKCS || mech == CKM_SHA256_RSA_PKCS || mech == CKM_SHA384_RSA_PKCS ||
            mech == CKM_SHA512_RSA_PKCS;
 }
 
 // Hash data with the algorithm implied by mech and wrap in a DER DigestInfo.
 // Called for CKM_SHA*_RSA_PKCS — data is the raw (un-hashed) message.
-static std::vector<uint8_t> buildDigestInfo(CK_MECHANISM_TYPE mech,
-                                             const uint8_t* data, size_t dataLen)
+static std::vector<uint8_t> buildDigestInfo(CK_MECHANISM_TYPE mech, const uint8_t* data, size_t dataLen)
 {
     const EVP_MD* md = nullptr;
     switch (mech) {
-    case CKM_SHA1_RSA_PKCS:   md = EVP_sha1();   break;
-    case CKM_SHA256_RSA_PKCS: md = EVP_sha256(); break;
-    case CKM_SHA384_RSA_PKCS: md = EVP_sha384(); break;
-    case CKM_SHA512_RSA_PKCS: md = EVP_sha512(); break;
-    default: throw std::runtime_error("buildDigestInfo: unsupported mechanism");
+    case CKM_SHA1_RSA_PKCS:
+        md = EVP_sha1();
+        break;
+    case CKM_SHA256_RSA_PKCS:
+        md = EVP_sha256();
+        break;
+    case CKM_SHA384_RSA_PKCS:
+        md = EVP_sha384();
+        break;
+    case CKM_SHA512_RSA_PKCS:
+        md = EVP_sha512();
+        break;
+    default:
+        throw std::runtime_error("buildDigestInfo: unsupported mechanism");
     }
 
     // Hash the data
     std::vector<uint8_t> hash(static_cast<size_t>(EVP_MD_size(md)));
     EVP_MD_CTX* ctx = EVP_MD_CTX_new();
-    if (!ctx) throw std::runtime_error("buildDigestInfo: EVP_MD_CTX_new failed");
+    if (!ctx)
+        throw std::runtime_error("buildDigestInfo: EVP_MD_CTX_new failed");
     EVP_DigestInit_ex(ctx, md, nullptr);
     EVP_DigestUpdate(ctx, data, dataLen);
     unsigned int hLen = static_cast<unsigned int>(hash.size());
@@ -984,19 +1003,36 @@ static std::vector<uint8_t> buildDigestInfo(CK_MECHANISM_TYPE mech,
     // SHA-256: OID 2.16.840.1.101.3.4.2.1 (9 bytes), hash = 32 bytes
     // SHA-384: OID 2.16.840.1.101.3.4.2.2 (9 bytes), hash = 48 bytes
     // SHA-512: OID 2.16.840.1.101.3.4.2.3 (9 bytes), hash = 64 bytes
-    static const uint8_t sha1Pfx[]   = {0x30,0x21,0x30,0x09,0x06,0x05,0x2b,0x0e,0x03,0x02,0x1a,0x05,0x00,0x04,0x14};
-    static const uint8_t sha256Pfx[] = {0x30,0x31,0x30,0x0d,0x06,0x09,0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x01,0x05,0x00,0x04,0x20};
-    static const uint8_t sha384Pfx[] = {0x30,0x41,0x30,0x0d,0x06,0x09,0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x02,0x05,0x00,0x04,0x30};
-    static const uint8_t sha512Pfx[] = {0x30,0x51,0x30,0x0d,0x06,0x09,0x60,0x86,0x48,0x01,0x65,0x03,0x04,0x02,0x03,0x05,0x00,0x04,0x40};
+    static const uint8_t sha1Pfx[] = {0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e,
+                                      0x03, 0x02, 0x1a, 0x05, 0x00, 0x04, 0x14};
+    static const uint8_t sha256Pfx[] = {0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01,
+                                        0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20};
+    static const uint8_t sha384Pfx[] = {0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01,
+                                        0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30};
+    static const uint8_t sha512Pfx[] = {0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01,
+                                        0x65, 0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40};
 
-    const uint8_t* pfx    = nullptr;
-    size_t         pfxLen = 0;
+    const uint8_t* pfx = nullptr;
+    size_t pfxLen = 0;
     switch (mech) {
-    case CKM_SHA1_RSA_PKCS:   pfx = sha1Pfx;   pfxLen = sizeof(sha1Pfx);   break;
-    case CKM_SHA256_RSA_PKCS: pfx = sha256Pfx; pfxLen = sizeof(sha256Pfx); break;
-    case CKM_SHA384_RSA_PKCS: pfx = sha384Pfx; pfxLen = sizeof(sha384Pfx); break;
-    case CKM_SHA512_RSA_PKCS: pfx = sha512Pfx; pfxLen = sizeof(sha512Pfx); break;
-    default: throw std::runtime_error("buildDigestInfo: unreachable");
+    case CKM_SHA1_RSA_PKCS:
+        pfx = sha1Pfx;
+        pfxLen = sizeof(sha1Pfx);
+        break;
+    case CKM_SHA256_RSA_PKCS:
+        pfx = sha256Pfx;
+        pfxLen = sizeof(sha256Pfx);
+        break;
+    case CKM_SHA384_RSA_PKCS:
+        pfx = sha384Pfx;
+        pfxLen = sizeof(sha384Pfx);
+        break;
+    case CKM_SHA512_RSA_PKCS:
+        pfx = sha512Pfx;
+        pfxLen = sizeof(sha512Pfx);
+        break;
+    default:
+        throw std::runtime_error("buildDigestInfo: unreachable");
     }
 
     std::vector<uint8_t> digestInfo(pfxLen + hash.size());
@@ -1009,9 +1045,7 @@ static std::vector<uint8_t> buildDigestInfo(CK_MECHANISM_TYPE mech,
 // Signing
 // ---------------------------------------------------------------------------
 
-CK_RV PKCS11Library::signInit(CK_SESSION_HANDLE hSession,
-                               CK_MECHANISM_PTR pMechanism,
-                               CK_OBJECT_HANDLE hKey)
+CK_RV PKCS11Library::signInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
     auto sessIt = sessions.find(hSession);
     if (sessIt == sessions.end())
@@ -1024,8 +1058,7 @@ CK_RV PKCS11Library::signInit(CK_SESSION_HANDLE hSession,
     if (pMechanism == nullptr)
         return CKR_ARGUMENTS_BAD;
 
-    if (pMechanism->mechanism != CKM_RSA_PKCS &&
-        !isCombinedHashMechanism(pMechanism->mechanism))
+    if (pMechanism->mechanism != CKM_RSA_PKCS && !isCombinedHashMechanism(pMechanism->mechanism))
         return CKR_MECHANISM_INVALID;
 
     auto objIt = objects.find(hKey);
@@ -1044,9 +1077,8 @@ CK_RV PKCS11Library::signInit(CK_SESSION_HANDLE hSession,
     return CKR_OK;
 }
 
-CK_RV PKCS11Library::sign(CK_SESSION_HANDLE hSession,
-                            CK_BYTE_PTR pData, CK_ULONG ulDataLen,
-                            CK_BYTE_PTR pSignature, CK_ULONG_PTR pulSignatureLen)
+CK_RV PKCS11Library::sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulDataLen, CK_BYTE_PTR pSignature,
+                          CK_ULONG_PTR pulSignatureLen)
 {
     auto sessIt = sessions.find(hSession);
     if (sessIt == sessions.end())
@@ -1106,12 +1138,15 @@ CK_RV PKCS11Library::sign(CK_SESSION_HANDLE hSession,
             // Reconnect our handle (SCARD_LEAVE_CARD) and force the caller to re-login
             // (the card no longer has our PIN verified).
             std::cerr << "[PKCS11] C_Sign: SCARD_W_RESET_CARD — reconnecting, clearing login" << std::endl;
-            try { slots[obj.slotID].provider->reconnectCard(); } catch (...) {}
+            try {
+                slots[obj.slotID].provider->reconnectCard();
+            } catch (...) {
+            }
             loginState.erase(obj.slotID);
             return CKR_USER_NOT_LOGGED_IN;
         }
-        std::cerr << "[PKCS11] C_Sign: PCSC error: " << e.what()
-                  << " code=0x" << std::hex << e.code() << std::dec << std::endl;
+        std::cerr << "[PKCS11] C_Sign: PCSC error: " << e.what() << " code=0x" << std::hex << e.code() << std::dec
+                  << std::endl;
         return CKR_DEVICE_ERROR;
     } catch (const std::exception& e) {
         std::cerr << "[PKCS11] C_Sign: exception: " << e.what() << std::endl;
@@ -1126,9 +1161,7 @@ CK_RV PKCS11Library::sign(CK_SESSION_HANDLE hSession,
 // Mechanism enumeration
 // ---------------------------------------------------------------------------
 
-CK_RV PKCS11Library::getMechanismList(CK_SLOT_ID slotID,
-                                       CK_MECHANISM_TYPE_PTR pMechanismList,
-                                       CK_ULONG_PTR pulCount)
+CK_RV PKCS11Library::getMechanismList(CK_SLOT_ID slotID, CK_MECHANISM_TYPE_PTR pMechanismList, CK_ULONG_PTR pulCount)
 {
     if (pulCount == nullptr)
         return CKR_ARGUMENTS_BAD;
@@ -1143,11 +1176,7 @@ CK_RV PKCS11Library::getMechanismList(CK_SLOT_ID slotID,
     // to prefer TLS 1.3 (which mandates PSS) over TLS 1.2 (CKM_RSA_PKCS).
     constexpr CK_ULONG MECHANISM_COUNT = 5;
     static const CK_MECHANISM_TYPE mechanismList[MECHANISM_COUNT] = {
-        CKM_RSA_PKCS,
-        CKM_SHA1_RSA_PKCS,
-        CKM_SHA256_RSA_PKCS,
-        CKM_SHA384_RSA_PKCS,
-        CKM_SHA512_RSA_PKCS,
+        CKM_RSA_PKCS, CKM_SHA1_RSA_PKCS, CKM_SHA256_RSA_PKCS, CKM_SHA384_RSA_PKCS, CKM_SHA512_RSA_PKCS,
     };
 
     if (pMechanismList == nullptr) {
@@ -1166,8 +1195,7 @@ CK_RV PKCS11Library::getMechanismList(CK_SLOT_ID slotID,
     return CKR_OK;
 }
 
-CK_RV PKCS11Library::getMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
-                                       CK_MECHANISM_INFO_PTR pInfo)
+CK_RV PKCS11Library::getMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type, CK_MECHANISM_INFO_PTR pInfo)
 {
     if (pInfo == nullptr)
         return CKR_ARGUMENTS_BAD;

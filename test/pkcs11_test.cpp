@@ -3,8 +3,8 @@
 
 #define CK_PTR *
 #define CK_DECLARE_FUNCTION(returnType, name) returnType name
-#define CK_DECLARE_FUNCTION_POINTER(returnType, name) returnType (* name)
-#define CK_CALLBACK_FUNCTION(returnType, name) returnType (* name)
+#define CK_DECLARE_FUNCTION_POINTER(returnType, name) returnType(*name)
+#define CK_CALLBACK_FUNCTION(returnType, name) returnType(*name)
 #ifndef NULL_PTR
 #define NULL_PTR 0
 #endif
@@ -106,8 +106,7 @@ TEST(PKCS11Test, GetInfoAfterInit)
     EXPECT_EQ(info.cryptokiVersion.major, CRYPTOKI_VERSION_MAJOR);
     EXPECT_EQ(info.cryptokiVersion.minor, CRYPTOKI_VERSION_MINOR);
     EXPECT_EQ(std::string(reinterpret_cast<char*>(info.manufacturerID), 9), "LibreSCRS");
-    EXPECT_EQ(std::string(reinterpret_cast<char*>(info.libraryDescription), 17),
-              "LibreSCRS PKCS#11");
+    EXPECT_EQ(std::string(reinterpret_cast<char*>(info.libraryDescription), 17), "LibreSCRS PKCS#11");
     EXPECT_EQ(info.flags, 0u);
     EXPECT_EQ(C_Finalize(nullptr), CKR_OK);
 }
@@ -414,8 +413,7 @@ TEST(PKCS11Test, SessionFunctionsBeforeInit)
     CK_SESSION_HANDLE hSession = 0;
     CK_SESSION_INFO sessionInfo;
 
-    EXPECT_EQ(C_OpenSession(0, CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-              CKR_CRYPTOKI_NOT_INITIALIZED);
+    EXPECT_EQ(C_OpenSession(0, CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_CRYPTOKI_NOT_INITIALIZED);
     EXPECT_EQ(C_CloseSession(0), CKR_CRYPTOKI_NOT_INITIALIZED);
     EXPECT_EQ(C_CloseAllSessions(0), CKR_CRYPTOKI_NOT_INITIALIZED);
     EXPECT_EQ(C_GetSessionInfo(0, &sessionInfo), CKR_CRYPTOKI_NOT_INITIALIZED);
@@ -437,8 +435,7 @@ TEST(PKCS11Test, OpenSessionRequiresSerialFlag)
 
         CK_SESSION_HANDLE hSession;
         // flags=0 means no CKF_SERIAL_SESSION
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], 0, nullptr, nullptr, &hSession),
-                  CKR_SESSION_PARALLEL_NOT_SUPPORTED);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], 0, nullptr, nullptr, &hSession), CKR_SESSION_PARALLEL_NOT_SUPPORTED);
     }
 
     EXPECT_EQ(C_Finalize(nullptr), CKR_OK);
@@ -456,8 +453,7 @@ TEST(PKCS11Test, OpenSessionNullHandle)
         CK_ULONG fillCount = tokenCount;
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, nullptr),
-                  CKR_ARGUMENTS_BAD);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, nullptr), CKR_ARGUMENTS_BAD);
     }
 
     EXPECT_EQ(C_Finalize(nullptr), CKR_OK);
@@ -471,8 +467,7 @@ TEST(PKCS11Test, OpenSessionInvalidSlot)
     getSlotCounts(allCount, tokenCount);
 
     CK_SESSION_HANDLE hSession;
-    EXPECT_EQ(C_OpenSession(9999, CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-              CKR_SLOT_ID_INVALID);
+    EXPECT_EQ(C_OpenSession(9999, CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_SLOT_ID_INVALID);
 
     EXPECT_EQ(C_Finalize(nullptr), CKR_OK);
 }
@@ -518,8 +513,7 @@ TEST(PKCS11Test, OpenAndCloseSession)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
         EXPECT_EQ(C_CloseSession(hSession), CKR_OK);
         // Double-close should fail
         EXPECT_EQ(C_CloseSession(hSession), CKR_SESSION_HANDLE_INVALID);
@@ -542,8 +536,7 @@ TEST(PKCS11Test, SessionInfoReflectsState)
 
         // RO session
         CK_SESSION_HANDLE hRO;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hRO),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hRO), CKR_OK);
         CK_SESSION_INFO info;
         EXPECT_EQ(C_GetSessionInfo(hRO, &info), CKR_OK);
         EXPECT_EQ(info.state, CKS_RO_PUBLIC_SESSION);
@@ -554,8 +547,7 @@ TEST(PKCS11Test, SessionInfoReflectsState)
 
         // RW session
         CK_SESSION_HANDLE hRW;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION | CKF_RW_SESSION,
-                                nullptr, nullptr, &hRW), CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION | CKF_RW_SESSION, nullptr, nullptr, &hRW), CKR_OK);
         EXPECT_EQ(C_GetSessionInfo(hRW, &info), CKR_OK);
         EXPECT_EQ(info.state, CKS_RW_PUBLIC_SESSION);
         EXPECT_TRUE(info.flags & CKF_RW_SESSION);
@@ -588,8 +580,7 @@ TEST(PKCS11Test, GetSessionInfoNullPtr)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
         EXPECT_EQ(C_GetSessionInfo(hSession, nullptr), CKR_ARGUMENTS_BAD);
         C_CloseSession(hSession);
     }
@@ -612,8 +603,7 @@ TEST(PKCS11Test, CloseAllSessions)
         CK_SESSION_HANDLE h1, h2, h3;
         EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &h1), CKR_OK);
         EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &h2), CKR_OK);
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION | CKF_RW_SESSION,
-                                nullptr, nullptr, &h3), CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION | CKF_RW_SESSION, nullptr, nullptr, &h3), CKR_OK);
 
         EXPECT_EQ(C_CloseAllSessions(tokenSlots[0]), CKR_OK);
 
@@ -674,8 +664,7 @@ TEST(PKCS11Test, LogoutWithoutLogin)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
         EXPECT_EQ(C_Logout(hSession), CKR_USER_NOT_LOGGED_IN);
         C_CloseSession(hSession);
     }
@@ -696,8 +685,7 @@ TEST(PKCS11Test, LoginSONotSupported)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
         CK_UTF8CHAR pin[] = "1234";
         EXPECT_EQ(C_Login(hSession, CKU_SO, pin, 4), CKR_USER_TYPE_INVALID);
         C_CloseSession(hSession);
@@ -719,16 +707,14 @@ TEST(PKCS11Test, FinalizeClosesAllSessions)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
     }
 
     EXPECT_EQ(C_Finalize(nullptr), CKR_OK);
 
     // After finalize, all session ops should return CKR_CRYPTOKI_NOT_INITIALIZED
     CK_SESSION_HANDLE hNew;
-    EXPECT_EQ(C_OpenSession(0, CKF_SERIAL_SESSION, nullptr, nullptr, &hNew),
-              CKR_CRYPTOKI_NOT_INITIALIZED);
+    EXPECT_EQ(C_OpenSession(0, CKF_SERIAL_SESSION, nullptr, nullptr, &hNew), CKR_CRYPTOKI_NOT_INITIALIZED);
     EXPECT_EQ(C_CloseSession(1), CKR_CRYPTOKI_NOT_INITIALIZED);
     CK_SESSION_INFO info;
     EXPECT_EQ(C_GetSessionInfo(1, &info), CKR_CRYPTOKI_NOT_INITIALIZED);
@@ -799,8 +785,7 @@ TEST(PKCS11Test, FindObjectsWithoutInit)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
 
         // FindObjects without FindObjectsInit
         CK_OBJECT_HANDLE obj;
@@ -829,8 +814,7 @@ TEST(PKCS11Test, FindObjectsDoubleInit)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
 
         EXPECT_EQ(C_FindObjectsInit(hSession, nullptr, 0), CKR_OK);
         // Second init without final
@@ -856,8 +840,7 @@ TEST(PKCS11Test, GetAttributeValueInvalidObject)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
 
         CK_ATTRIBUTE tmpl = {CKA_CLASS, nullptr, 0};
         EXPECT_EQ(C_GetAttributeValue(hSession, 9999, &tmpl, 1), CKR_OBJECT_HANDLE_INVALID);
@@ -885,8 +868,7 @@ TEST(PKCS11Test, FindAllObjectsOnToken)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
 
         // Empty template matches all objects
         EXPECT_EQ(C_FindObjectsInit(hSession, nullptr, 0), CKR_OK);
@@ -918,8 +900,7 @@ TEST(PKCS11Test, FindCertificatesOnly)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
 
         CK_OBJECT_CLASS certClass = CKO_CERTIFICATE;
         CK_ATTRIBUTE tmpl = {CKA_CLASS, &certClass, sizeof(certClass)};
@@ -957,8 +938,7 @@ TEST(PKCS11Test, GetAttributeValueSizeQuery)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
 
         // Find first certificate
         CK_OBJECT_CLASS certClass = CKO_CERTIFICATE;
@@ -1005,8 +985,7 @@ TEST(PKCS11Test, FindObjectsBatching)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
 
         EXPECT_EQ(C_FindObjectsInit(hSession, nullptr, 0), CKR_OK);
 
@@ -1016,7 +995,8 @@ TEST(PKCS11Test, FindObjectsBatching)
             CK_OBJECT_HANDLE obj;
             CK_ULONG count = 0;
             EXPECT_EQ(C_FindObjects(hSession, &obj, 1, &count), CKR_OK);
-            if (count == 0) break;
+            if (count == 0)
+                break;
             allHandles.push_back(obj);
         }
 
@@ -1044,8 +1024,7 @@ TEST(PKCS11Test, CertKeyPairShareID)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
 
         // Find all objects
         EXPECT_EQ(C_FindObjectsInit(hSession, nullptr, 0), CKR_OK);
@@ -1114,19 +1093,22 @@ static bool g_pinFailed = false;
 static CK_RV loginWithAbort(CK_SESSION_HANDLE hSession, const std::string& pin)
 {
     std::vector<CK_UTF8CHAR> pinVec(pin.begin(), pin.end());
-    CK_RV rv = C_Login(hSession, CKU_USER, pinVec.data(),
-                        static_cast<CK_ULONG>(pinVec.size()));
+    CK_RV rv = C_Login(hSession, CKU_USER, pinVec.data(), static_cast<CK_ULONG>(pinVec.size()));
     if (rv == CKR_PIN_INCORRECT || rv == CKR_PIN_LOCKED) {
         g_pinFailed = true;
         std::cerr << "\n*** PIN VERIFICATION FAILED (rv=0x" << std::hex << rv << std::dec
                   << "). Aborting all subsequent PIN tests. ***\n"
-                  << "*** Check LIBRESCRS_TEST_PIN environment variable. ***\n" << std::endl;
+                  << "*** Check LIBRESCRS_TEST_PIN environment variable. ***\n"
+                  << std::endl;
     }
     return rv;
 }
 
-#define SKIP_IF_PIN_FAILED() \
-    do { if (g_pinFailed) GTEST_SKIP() << "Skipped: previous PIN verification failed"; } while(0)
+#define SKIP_IF_PIN_FAILED()                                                                                           \
+    do {                                                                                                               \
+        if (g_pinFailed)                                                                                               \
+            GTEST_SKIP() << "Skipped: previous PIN verification failed";                                               \
+    } while (0)
 
 // ---------------------------------------------------------------------------
 // C_SignInit / C_Sign — error cases (no hardware needed)
@@ -1165,8 +1147,7 @@ TEST(PKCS11Test, SignWithoutInit)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
 
         CK_BYTE data[1] = {0};
         CK_ULONG sigLen = 256;
@@ -1183,7 +1164,8 @@ TEST(PKCS11Test, SignInitDoubleInit)
 {
     SKIP_IF_PIN_FAILED();
     auto testPIN = getTestPIN();
-    if (testPIN.empty()) GTEST_SKIP() << "Set LIBRESCRS_TEST_PIN to run";
+    if (testPIN.empty())
+        GTEST_SKIP() << "Set LIBRESCRS_TEST_PIN to run";
 
     EXPECT_EQ(C_Initialize(nullptr), CKR_OK);
 
@@ -1196,8 +1178,7 @@ TEST(PKCS11Test, SignInitDoubleInit)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
 
         CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
         CK_ATTRIBUTE findTmpl = {CKA_CLASS, &keyClass, sizeof(keyClass)};
@@ -1242,8 +1223,7 @@ TEST(PKCS11Test, SignInitInvalidMechanism)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
 
         CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
         CK_ATTRIBUTE findTmpl = {CKA_CLASS, &keyClass, sizeof(keyClass)};
@@ -1277,8 +1257,7 @@ TEST(PKCS11Test, SignInitWithCertificate)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
 
         CK_OBJECT_CLASS certClass = CKO_CERTIFICATE;
         CK_ATTRIBUTE findTmpl = {CKA_CLASS, &certClass, sizeof(certClass)};
@@ -1312,8 +1291,7 @@ TEST(PKCS11Test, SignInitWithPrivateKey)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
 
         CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
         CK_ATTRIBUTE findTmpl = {CKA_CLASS, &keyClass, sizeof(keyClass)};
@@ -1351,7 +1329,8 @@ TEST(PKCS11Test, SignSizeQuery)
 {
     SKIP_IF_PIN_FAILED();
     auto testPIN = getTestPIN();
-    if (testPIN.empty()) GTEST_SKIP() << "Set LIBRESCRS_TEST_PIN to run";
+    if (testPIN.empty())
+        GTEST_SKIP() << "Set LIBRESCRS_TEST_PIN to run";
 
     EXPECT_EQ(C_Initialize(nullptr), CKR_OK);
 
@@ -1364,8 +1343,7 @@ TEST(PKCS11Test, SignSizeQuery)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
 
         CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
         CK_ATTRIBUTE findTmpl = {CKA_CLASS, &keyClass, sizeof(keyClass)};
@@ -1384,14 +1362,14 @@ TEST(PKCS11Test, SignSizeQuery)
                 // Size query: pSignature = NULL
                 CK_ULONG sigLen = 0;
                 EXPECT_EQ(C_Sign(hSession, nullptr, 0, nullptr, &sigLen), CKR_OK);
-                EXPECT_EQ(sigLen, 256u);  // RSA-2048
+                EXPECT_EQ(sigLen, 256u); // RSA-2048
 
                 // Sign state should still be active after size query — consume it
                 CK_BYTE dummyData[1] = {0};
                 CK_BYTE sigBuf[256];
                 sigLen = 256;
                 CK_RV rv = C_Sign(hSession, dummyData, 1, sigBuf, &sigLen);
-                (void)rv;  // may be CKR_OK or CKR_DEVICE_ERROR
+                (void)rv; // may be CKR_OK or CKR_DEVICE_ERROR
 
                 C_Logout(hSession);
             }
@@ -1407,7 +1385,8 @@ TEST(PKCS11Test, SignAndVerify)
 {
     SKIP_IF_PIN_FAILED();
     auto testPIN = getTestPIN();
-    if (testPIN.empty()) GTEST_SKIP() << "Set LIBRESCRS_TEST_PIN to run";
+    if (testPIN.empty())
+        GTEST_SKIP() << "Set LIBRESCRS_TEST_PIN to run";
 
     EXPECT_EQ(C_Initialize(nullptr), CKR_OK);
 
@@ -1420,8 +1399,7 @@ TEST(PKCS11Test, SignAndVerify)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
 
         CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
         CK_ATTRIBUTE findTmpl = {CKA_CLASS, &keyClass, sizeof(keyClass)};
@@ -1438,25 +1416,24 @@ TEST(PKCS11Test, SignAndVerify)
                 EXPECT_EQ(C_SignInit(hSession, &mech, keyObj), CKR_OK);
 
                 // SHA-256 DigestInfo prefix (19 bytes) + 32-byte hash = 51 bytes
-                const CK_BYTE digestInfo[] = {
-                    0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01,
-                    0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20,
-                    // SHA-256("test")
-                    0x9f, 0x86, 0xd0, 0x81, 0x88, 0x4c, 0x7d, 0x65, 0x9a, 0x2f,
-                    0xea, 0xa0, 0xc5, 0x5a, 0xd0, 0x15, 0xa3, 0xbf, 0x4f, 0x1b,
-                    0x2b, 0x0b, 0x82, 0x2c, 0xd1, 0x5d, 0x6c, 0x15, 0xb0, 0xf0,
-                    0x0a, 0x08
-                };
+                const CK_BYTE digestInfo[] = {0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03,
+                                              0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20,
+                                              // SHA-256("test")
+                                              0x9f, 0x86, 0xd0, 0x81, 0x88, 0x4c, 0x7d, 0x65, 0x9a, 0x2f, 0xea, 0xa0,
+                                              0xc5, 0x5a, 0xd0, 0x15, 0xa3, 0xbf, 0x4f, 0x1b, 0x2b, 0x0b, 0x82, 0x2c,
+                                              0xd1, 0x5d, 0x6c, 0x15, 0xb0, 0xf0, 0x0a, 0x08};
 
                 CK_BYTE sigBuf[256];
                 CK_ULONG sigLen = sizeof(sigBuf);
-                CK_RV rv = C_Sign(hSession, const_cast<CK_BYTE_PTR>(digestInfo),
-                                   sizeof(digestInfo), sigBuf, &sigLen);
+                CK_RV rv = C_Sign(hSession, const_cast<CK_BYTE_PTR>(digestInfo), sizeof(digestInfo), sigBuf, &sigLen);
                 if (rv == CKR_OK) {
                     EXPECT_EQ(sigLen, 256u);
                     bool allZero = true;
                     for (CK_ULONG i = 0; i < sigLen; ++i) {
-                        if (sigBuf[i] != 0) { allZero = false; break; }
+                        if (sigBuf[i] != 0) {
+                            allZero = false;
+                            break;
+                        }
                     }
                     EXPECT_FALSE(allZero);
                 }
@@ -1475,7 +1452,8 @@ TEST(PKCS11Test, SignConsumesState)
 {
     SKIP_IF_PIN_FAILED();
     auto testPIN = getTestPIN();
-    if (testPIN.empty()) GTEST_SKIP() << "Set LIBRESCRS_TEST_PIN to run";
+    if (testPIN.empty())
+        GTEST_SKIP() << "Set LIBRESCRS_TEST_PIN to run";
 
     EXPECT_EQ(C_Initialize(nullptr), CKR_OK);
 
@@ -1488,8 +1466,7 @@ TEST(PKCS11Test, SignConsumesState)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
 
         CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
         CK_ATTRIBUTE findTmpl = {CKA_CLASS, &keyClass, sizeof(keyClass)};
@@ -1512,8 +1489,7 @@ TEST(PKCS11Test, SignConsumesState)
 
                 // Second sign should fail — state consumed
                 sigLen = sizeof(sigBuf);
-                EXPECT_EQ(C_Sign(hSession, data, 1, sigBuf, &sigLen),
-                          CKR_OPERATION_NOT_INITIALIZED);
+                EXPECT_EQ(C_Sign(hSession, data, 1, sigBuf, &sigLen), CKR_OPERATION_NOT_INITIALIZED);
 
                 C_Logout(hSession);
             }
@@ -1567,7 +1543,8 @@ TEST(PKCS11Test, GetMechanismListValid)
         // CKM_RSA_PKCS should be present
         bool found = false;
         for (CK_ULONG i = 0; i < fillMechCount; ++i) {
-            if (mechs[i] == CKM_RSA_PKCS) found = true;
+            if (mechs[i] == CKM_RSA_PKCS)
+                found = true;
         }
         EXPECT_TRUE(found);
     }
@@ -1625,8 +1602,7 @@ TEST(PKCS11Test, SignInitPSSMissingParams)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
 
         CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
         CK_ATTRIBUTE findTmpl = {CKA_CLASS, &keyClass, sizeof(keyClass)};
@@ -1675,8 +1651,10 @@ TEST(PKCS11Test, GetMechanismListContents)
 
         bool foundPKCS = false, foundPSS = false;
         for (CK_ULONG i = 0; i < mechCount; ++i) {
-            if (mechs[i] == CKM_RSA_PKCS)     foundPKCS = true;
-            if (mechs[i] == CKM_RSA_PKCS_PSS) foundPSS  = true;
+            if (mechs[i] == CKM_RSA_PKCS)
+                foundPKCS = true;
+            if (mechs[i] == CKM_RSA_PKCS_PSS)
+                foundPSS = true;
         }
         EXPECT_TRUE(foundPKCS);
         // PSS is not advertised: CardEdge requires PKCS#1 v1.5 padding by the card;
@@ -1691,8 +1669,7 @@ TEST(PKCS11Test, GetMechanismListContents)
         EXPECT_TRUE(info.flags & CKF_HW);
 
         // PSS must be rejected by getMechanismInfo
-        EXPECT_EQ(C_GetMechanismInfo(tokenSlots[0], CKM_RSA_PKCS_PSS, &info),
-                  CKR_MECHANISM_INVALID);
+        EXPECT_EQ(C_GetMechanismInfo(tokenSlots[0], CKM_RSA_PKCS_PSS, &info), CKR_MECHANISM_INVALID);
     }
 
     EXPECT_EQ(C_Finalize(nullptr), CKR_OK);
@@ -1702,7 +1679,8 @@ TEST(PKCS11Test, SignAndVerifyPSS)
 {
     SKIP_IF_PIN_FAILED();
     auto testPIN = getTestPIN();
-    if (testPIN.empty()) GTEST_SKIP() << "Set LIBRESCRS_TEST_PIN to run";
+    if (testPIN.empty())
+        GTEST_SKIP() << "Set LIBRESCRS_TEST_PIN to run";
 
     EXPECT_EQ(C_Initialize(nullptr), CKR_OK);
 
@@ -1715,8 +1693,7 @@ TEST(PKCS11Test, SignAndVerifyPSS)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
 
         CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
         CK_ATTRIBUTE findTmpl = {CKA_CLASS, &keyClass, sizeof(keyClass)};
@@ -1731,9 +1708,9 @@ TEST(PKCS11Test, SignAndVerifyPSS)
             if (loginRv == CKR_OK) {
                 // PSS is not advertised; signInit must reject it
                 CK_RSA_PKCS_PSS_PARAMS pssParams = {
-                    CKM_SHA256,       // hashAlg
-                    CKG_MGF1_SHA256,  // mgf
-                    32                // sLen
+                    CKM_SHA256,      // hashAlg
+                    CKG_MGF1_SHA256, // mgf
+                    32               // sLen
                 };
                 CK_MECHANISM mechPSS = {CKM_RSA_PKCS_PSS, &pssParams, sizeof(pssParams)};
                 EXPECT_EQ(C_SignInit(hSession, &mechPSS, keyObj), CKR_MECHANISM_INVALID);
@@ -1756,7 +1733,8 @@ TEST(PKCS11Test, SignAndVerifyCombinedSHA512)
 {
     SKIP_IF_PIN_FAILED();
     auto testPIN = getTestPIN();
-    if (testPIN.empty()) GTEST_SKIP() << "Set LIBRESCRS_TEST_PIN to run";
+    if (testPIN.empty())
+        GTEST_SKIP() << "Set LIBRESCRS_TEST_PIN to run";
 
     EXPECT_EQ(C_Initialize(nullptr), CKR_OK);
 
@@ -1769,8 +1747,7 @@ TEST(PKCS11Test, SignAndVerifyCombinedSHA512)
         C_GetSlotList(CK_TRUE, tokenSlots.data(), &fillCount);
 
         CK_SESSION_HANDLE hSession;
-        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession),
-                  CKR_OK);
+        EXPECT_EQ(C_OpenSession(tokenSlots[0], CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
 
         CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
         CK_ATTRIBUTE findTmpl = {CKA_CLASS, &keyClass, sizeof(keyClass)};
@@ -1790,13 +1767,15 @@ TEST(PKCS11Test, SignAndVerifyCombinedSHA512)
                 const CK_BYTE msg[] = "hello world";
                 CK_BYTE sigBuf[256];
                 CK_ULONG sigLen = sizeof(sigBuf);
-                CK_RV rv = C_Sign(hSession, const_cast<CK_BYTE_PTR>(msg),
-                                   sizeof(msg) - 1, sigBuf, &sigLen);
+                CK_RV rv = C_Sign(hSession, const_cast<CK_BYTE_PTR>(msg), sizeof(msg) - 1, sigBuf, &sigLen);
                 if (rv == CKR_OK) {
                     EXPECT_EQ(sigLen, 256u);
                     bool allZero = true;
                     for (CK_ULONG i = 0; i < sigLen; ++i) {
-                        if (sigBuf[i] != 0) { allZero = false; break; }
+                        if (sigBuf[i] != 0) {
+                            allZero = false;
+                            break;
+                        }
                     }
                     EXPECT_FALSE(allZero);
                 }

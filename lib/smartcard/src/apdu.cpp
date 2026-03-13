@@ -54,80 +54,68 @@ uint16_t APDUResponse::statusWord() const
 
 APDUCommand selectByAID(const std::vector<uint8_t>& aid)
 {
-    return APDUCommand{
-        .cla = 0x00,
-        .ins = 0xA4,  // SELECT
-        .p1 = 0x04,   // Select by DF name (AID)
-        .p2 = 0x00,
-        .data = aid,
-        .le = 0,
-        .hasLe = false
-    };
+    return APDUCommand{.cla = 0x00,
+                       .ins = 0xA4, // SELECT
+                       .p1 = 0x04,  // Select by DF name (AID)
+                       .p2 = 0x00,
+                       .data = aid,
+                       .le = 0,
+                       .hasLe = false};
 }
 
 APDUCommand selectByPath(uint8_t fileId1, uint8_t fileId2, uint8_t le)
 {
-    return APDUCommand{
-        .cla = 0x00,
-        .ins = 0xA4,  // SELECT
-        .p1 = 0x08,   // Select by path from current DF
-        .p2 = 0x00,
-        .data = {fileId1, fileId2},
-        .le = le,
-        .hasLe = true
-    };
+    return APDUCommand{.cla = 0x00,
+                       .ins = 0xA4, // SELECT
+                       .p1 = 0x08,  // Select by path from current DF
+                       .p2 = 0x00,
+                       .data = {fileId1, fileId2},
+                       .le = le,
+                       .hasLe = true};
 }
 
 APDUCommand selectByFileId(uint8_t fileId1, uint8_t fileId2)
 {
-    return APDUCommand{
-        .cla = 0x00,
-        .ins = 0xA4,  // SELECT
-        .p1 = 0x00,   // Select by file identifier
-        .p2 = 0x00,
-        .data = {fileId1, fileId2},
-        .le = 0,      // Le=0x00: expect up to 256 bytes of FCI data
-        .hasLe = true
-    };
+    return APDUCommand{.cla = 0x00,
+                       .ins = 0xA4, // SELECT
+                       .p1 = 0x00,  // Select by file identifier
+                       .p2 = 0x00,
+                       .data = {fileId1, fileId2},
+                       .le = 0, // Le=0x00: expect up to 256 bytes of FCI data
+                       .hasLe = true};
 }
 
 APDUCommand readBinary(uint16_t offset, uint8_t length)
 {
-    return APDUCommand{
-        .cla = 0x00,
-        .ins = 0xB0,  // READ BINARY
-        .p1 = static_cast<uint8_t>((offset >> 8) & 0x7F),
-        .p2 = static_cast<uint8_t>(offset & 0xFF),
-        .data = {},
-        .le = length,
-        .hasLe = true
-    };
+    return APDUCommand{.cla = 0x00,
+                       .ins = 0xB0, // READ BINARY
+                       .p1 = static_cast<uint8_t>((offset >> 8) & 0x7F),
+                       .p2 = static_cast<uint8_t>(offset & 0xFF),
+                       .data = {},
+                       .le = length,
+                       .hasLe = true};
 }
 
 APDUCommand verifyPIN(uint8_t pinRef, const std::vector<uint8_t>& pin)
 {
-    return APDUCommand{
-        .cla = 0x00,
-        .ins = 0x20,  // VERIFY
-        .p1 = 0x00,
-        .p2 = pinRef,
-        .data = pin,
-        .le = 0,
-        .hasLe = false
-    };
+    return APDUCommand{.cla = 0x00,
+                       .ins = 0x20, // VERIFY
+                       .p1 = 0x00,
+                       .p2 = pinRef,
+                       .data = pin,
+                       .le = 0,
+                       .hasLe = false};
 }
 
 APDUCommand verifyPINStatus(uint8_t pinRef)
 {
-    return APDUCommand{
-        .cla = 0x00,
-        .ins = 0x20,  // VERIFY (no data = status check)
-        .p1 = 0x00,
-        .p2 = pinRef,
-        .data = {},
-        .le = 0,
-        .hasLe = false
-    };
+    return APDUCommand{.cla = 0x00,
+                       .ins = 0x20, // VERIFY (no data = status check)
+                       .p1 = 0x00,
+                       .p2 = pinRef,
+                       .data = {},
+                       .le = 0,
+                       .hasLe = false};
 }
 
 APDUCommand changeReferenceData(uint8_t pinRef, const std::vector<uint8_t>& oldPin, const std::vector<uint8_t>& newPin)
@@ -137,16 +125,13 @@ APDUCommand changeReferenceData(uint8_t pinRef, const std::vector<uint8_t>& oldP
     data.insert(data.end(), oldPin.begin(), oldPin.end());
     data.insert(data.end(), newPin.begin(), newPin.end());
 
-    return APDUCommand{
-        .cla = 0x00,
-        .ins = 0x24,  // CHANGE REFERENCE DATA
-        .p1 = 0x00,
-        .p2 = pinRef,
-        .data = std::move(data),
-        .le = 0,
-        .hasLe = false
-    };
+    return APDUCommand{.cla = 0x00,
+                       .ins = 0x24, // CHANGE REFERENCE DATA
+                       .p1 = 0x00,
+                       .p2 = pinRef,
+                       .data = std::move(data),
+                       .le = 0,
+                       .hasLe = false};
 }
-
 
 } // namespace smartcard

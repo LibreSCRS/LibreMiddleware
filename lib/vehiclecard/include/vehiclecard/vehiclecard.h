@@ -15,7 +15,8 @@ class PCSCConnection;
 
 namespace vehiclecard {
 
-class VehicleCard {
+class VehicleCard
+{
 public:
     // Check if a vehicle card is present on the given reader without opening a full session.
     static bool probe(const std::string& readerName);

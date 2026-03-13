@@ -21,23 +21,33 @@
 static void hexDump(const std::vector<uint8_t>& data)
 {
     for (size_t i = 0; i < data.size(); ++i) {
-        if (i % 16 == 0) printf("  %04zx: ", i);
+        if (i % 16 == 0)
+            printf("  %04zx: ", i);
         printf("%02X ", data[i]);
-        if ((i % 16 == 15) || (i + 1 == data.size())) printf("\n");
+        if ((i % 16 == 15) || (i + 1 == data.size()))
+            printf("\n");
     }
 }
 
 static void printSW(uint8_t sw1, uint8_t sw2)
 {
     printf("SW: %02X %02X", sw1, sw2);
-    if (sw1 == 0x90 && sw2 == 0x00) printf("  (SUCCESS)");
-    else if (sw1 == 0x61)           printf("  (more data: %d bytes)", sw2);
-    else if (sw1 == 0x6A && sw2 == 0x82) printf("  (FILE NOT FOUND)");
-    else if (sw1 == 0x6A && sw2 == 0x86) printf("  (INCORRECT P1/P2)");
-    else if (sw1 == 0x69 && sw2 == 0x82) printf("  (SECURITY STATUS NOT SATISFIED)");
-    else if (sw1 == 0x69 && sw2 == 0x85) printf("  (CONDITIONS OF USE NOT SATISFIED)");
-    else if (sw1 == 0x6D && sw2 == 0x00) printf("  (INS NOT SUPPORTED)");
-    else if (sw1 == 0x6E && sw2 == 0x00) printf("  (CLA NOT SUPPORTED)");
+    if (sw1 == 0x90 && sw2 == 0x00)
+        printf("  (SUCCESS)");
+    else if (sw1 == 0x61)
+        printf("  (more data: %d bytes)", sw2);
+    else if (sw1 == 0x6A && sw2 == 0x82)
+        printf("  (FILE NOT FOUND)");
+    else if (sw1 == 0x6A && sw2 == 0x86)
+        printf("  (INCORRECT P1/P2)");
+    else if (sw1 == 0x69 && sw2 == 0x82)
+        printf("  (SECURITY STATUS NOT SATISFIED)");
+    else if (sw1 == 0x69 && sw2 == 0x85)
+        printf("  (CONDITIONS OF USE NOT SATISFIED)");
+    else if (sw1 == 0x6D && sw2 == 0x00)
+        printf("  (INS NOT SUPPORTED)");
+    else if (sw1 == 0x6E && sw2 == 0x00)
+        printf("  (CLA NOT SUPPORTED)");
     printf("\n");
 }
 
@@ -92,10 +102,11 @@ static smartcard::APDUCommand mseSet(const std::vector<uint8_t>& data)
 // CardEdge PKI applet read chunk — applet internal buffer is 128 bytes.
 constexpr uint8_t CE_READ_CHUNK = 0x80;
 
-struct CeDirEntry {
+struct CeDirEntry
+{
     std::string name;
-    uint16_t    fid;
-    bool        isDir;
+    uint16_t fid;
+    bool isDir;
 };
 
 // Parse a CardEdge directory file.
@@ -114,21 +125,19 @@ static std::vector<CeDirEntry> parseCeDirFile(const std::vector<uint8_t>& data)
     uint16_t count = static_cast<uint16_t>(data[6]) | (static_cast<uint16_t>(data[7]) << 8);
     printf("    CE dir header: LeftFiles=%u LeftDirs=%u NextFileFID=%04X "
            "NextDirFID=%04X Count=%u\n",
-           data[0], data[1],
-           static_cast<uint16_t>(data[2] | (data[3] << 8)),
-           static_cast<uint16_t>(data[4] | (data[5] << 8)),
-           count);
+           data[0], data[1], static_cast<uint16_t>(data[2] | (data[3] << 8)),
+           static_cast<uint16_t>(data[4] | (data[5] << 8)), count);
 
     for (uint16_t i = 0; i < count; ++i) {
         size_t off = HEADER + i * ENTRY;
-        if (off + ENTRY > data.size()) break;
+        if (off + ENTRY > data.size())
+            break;
         CeDirEntry e;
         e.name.assign(reinterpret_cast<const char*>(data.data() + off),
                       strnlen(reinterpret_cast<const char*>(data.data() + off), 8));
-        e.fid   = static_cast<uint16_t>(data[off + 8]) | (static_cast<uint16_t>(data[off + 9]) << 8);
+        e.fid = static_cast<uint16_t>(data[off + 8]) | (static_cast<uint16_t>(data[off + 9]) << 8);
         e.isDir = data[off + 10] != 0;
-        printf("    Entry[%u]: name=\"%s\" fid=%04X isDir=%d\n",
-               i, e.name.c_str(), e.fid, (int)e.isDir);
+        printf("    Entry[%u]: name=\"%s\" fid=%04X isDir=%d\n", i, e.name.c_str(), e.fid, (int)e.isDir);
         entries.push_back(std::move(e));
     }
     return entries;
@@ -144,11 +153,13 @@ static std::vector<uint8_t> readCeFile(smartcard::PCSCConnection& conn, uint16_t
     auto sel = conn.transmit(smartcard::selectByFileId(h, l));
     printf("  SELECT FID %04X (P1=00 P2=00 Le=00): ", fid);
     printSW(sel.sw1, sel.sw2);
-    if (!sel.isSuccess()) return {};
+    if (!sel.isSuccess())
+        return {};
 
     if (!sel.data.empty()) {
         printf("    FCI (%zu bytes): ", sel.data.size());
-        for (auto b : sel.data) printf("%02X ", b);
+        for (auto b : sel.data)
+            printf("%02X ", b);
         printf("\n");
     }
 
@@ -162,16 +173,16 @@ static std::vector<uint8_t> readCeFile(smartcard::PCSCConnection& conn, uint16_t
         auto rd = conn.transmit(smartcard::readBinary(0, CE_READ_CHUNK));
         printf("    READ BINARY (size=0 probe): ");
         printResp(rd);
-        if (rd.isSuccess() && !rd.data.empty()) return rd.data;
+        if (rd.isSuccess() && !rd.data.empty())
+            return rd.data;
         return {};
     }
 
     std::vector<uint8_t> data;
     data.reserve(fileSize);
-    for (uint16_t offset = 0; offset < fileSize; ) {
+    for (uint16_t offset = 0; offset < fileSize;) {
         uint8_t toRead = static_cast<uint8_t>(
-            std::min(static_cast<uint16_t>(CE_READ_CHUNK),
-                     static_cast<uint16_t>(fileSize - offset)));
+            std::min(static_cast<uint16_t>(CE_READ_CHUNK), static_cast<uint16_t>(fileSize - offset)));
         auto rd = conn.transmit(smartcard::readBinary(offset, toRead));
         if (!rd.isSuccess() || rd.data.empty()) {
             printf("    READ BINARY at offset %u: ", offset);
@@ -188,8 +199,7 @@ static std::vector<uint8_t> readCeFile(smartcard::PCSCConnection& conn, uint16_t
 // Read full file content after a successful SELECT
 // ---------------------------------------------------------------------------
 
-static std::vector<uint8_t> readFileContent(smartcard::PCSCConnection& conn,
-                                             size_t sizeHint = 0)
+static std::vector<uint8_t> readFileContent(smartcard::PCSCConnection& conn, size_t sizeHint = 0)
 {
     std::vector<uint8_t> result;
     uint16_t offset = 0;
@@ -208,11 +218,14 @@ static std::vector<uint8_t> readFileContent(smartcard::PCSCConnection& conn,
             printSW(resp.sw1, resp.sw2);
             break;
         }
-        if (resp.data.empty()) break;
+        if (resp.data.empty())
+            break;
         result.insert(result.end(), resp.data.begin(), resp.data.end());
         offset += static_cast<uint16_t>(resp.data.size());
-        if (resp.data.size() < toRead) break;
-        if (sizeHint > 0 && result.size() >= sizeHint) break;
+        if (resp.data.size() < toRead)
+            break;
+        if (sizeHint > 0 && result.size() >= sizeHint)
+            break;
     }
     return result;
 }
@@ -222,9 +235,7 @@ static std::vector<uint8_t> readFileContent(smartcard::PCSCConnection& conn,
 // Returns the file content (empty if all selects failed).
 // ---------------------------------------------------------------------------
 
-static std::vector<uint8_t> tryReadEF(smartcard::PCSCConnection& conn,
-                                       uint8_t fid1, uint8_t fid2,
-                                       const char* name)
+static std::vector<uint8_t> tryReadEF(smartcard::PCSCConnection& conn, uint8_t fid1, uint8_t fid2, const char* name)
 {
     printf("\n--- EF(%s) [%02X %02X] ---\n", name, fid1, fid2);
 
@@ -311,19 +322,19 @@ int main(int argc, char* argv[])
         // Print ATR
         auto atr = conn.getATR();
         printf("ATR:    ");
-        for (auto b : atr) printf("%02X ", b);
+        for (auto b : atr)
+            printf("%02X ", b);
         printf("\n");
 
         // -------------------------------------------------------------------
         // Step 1 — SELECT PKCS#15 AID
         // -------------------------------------------------------------------
         printf("\n--- Step 1: SELECT PKCS#15 AID ---\n");
-        const std::vector<uint8_t> AID_PKCS15 = {
-            0xA0, 0x00, 0x00, 0x00, 0x63,
-            0x50, 0x4B, 0x43, 0x53, 0x2D, 0x31, 0x35
-        };
+        const std::vector<uint8_t> AID_PKCS15 = {0xA0, 0x00, 0x00, 0x00, 0x63, 0x50,
+                                                 0x4B, 0x43, 0x53, 0x2D, 0x31, 0x35};
         printf("  AID: ");
-        for (auto b : AID_PKCS15) printf("%02X ", b);
+        for (auto b : AID_PKCS15)
+            printf("%02X ", b);
         printf("\n  ");
         auto selResp = conn.transmit(smartcard::selectByAID(AID_PKCS15));
         printResp(selResp);
@@ -332,7 +343,8 @@ int main(int argc, char* argv[])
             printf("\nPKCS#15 AID not found. Trying GlobalPlatform ISD...\n");
             const std::vector<uint8_t> AID_GP = {0xA0, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00};
             printf("  AID: ");
-            for (auto b : AID_GP) printf("%02X ", b);
+            for (auto b : AID_GP)
+                printf("%02X ", b);
             printf("\n  ");
             auto gpResp = conn.transmit(smartcard::selectByAID(AID_GP));
             printResp(gpResp);
@@ -351,9 +363,7 @@ int main(int argc, char* argv[])
 
         // Must re-select PKCS#15 before each EF read since tryReadEF may
         // change current DF with P1=0x00 variants.
-        auto resel = [&]() {
-            conn.transmit(smartcard::selectByAID(AID_PKCS15));
-        };
+        auto resel = [&]() { conn.transmit(smartcard::selectByAID(AID_PKCS15)); };
 
         resel();
         auto tokenInfo = tryReadEF(conn, 0x50, 0x32, "TokenInfo");
@@ -363,28 +373,28 @@ int main(int argc, char* argv[])
 
         // Common CDF paths referenced from ODF (try blindly)
         resel();
-        tryReadEF(conn, 0x50, 0x34, "PrKDF");  // private key directory
+        tryReadEF(conn, 0x50, 0x34, "PrKDF"); // private key directory
 
         resel();
-        tryReadEF(conn, 0x50, 0x35, "PuKDF");  // public key directory
+        tryReadEF(conn, 0x50, 0x35, "PuKDF"); // public key directory
 
         resel();
-        tryReadEF(conn, 0x50, 0x36, "CDF");    // certificate directory
+        tryReadEF(conn, 0x50, 0x36, "CDF"); // certificate directory
 
         resel();
-        tryReadEF(conn, 0x50, 0x33, "AODF");   // authentication object directory
+        tryReadEF(conn, 0x50, 0x33, "AODF"); // authentication object directory
 
         // -------------------------------------------------------------------
         // Step 3 — GET DATA probes (some cards use instead of SELECT+READ)
         // -------------------------------------------------------------------
         printf("\n=== GET DATA probes ===\n");
         resel();
-        for (auto [p1, p2, label] : std::initializer_list<std::tuple<uint8_t,uint8_t,const char*>>{
-                {0x00, 0x00, "P1=00 P2=00"},
-                {0x7F, 0x70, "BER-TLV dir (7F70)"},
-                {0x5F, 0x50, "URL (5F50)"},
-                {0xDF, 0x28, "DF.28"},
-        }) {
+        for (auto [p1, p2, label] : std::initializer_list<std::tuple<uint8_t, uint8_t, const char*>>{
+                 {0x00, 0x00, "P1=00 P2=00"},
+                 {0x7F, 0x70, "BER-TLV dir (7F70)"},
+                 {0x5F, 0x50, "URL (5F50)"},
+                 {0xDF, 0x28, "DF.28"},
+             }) {
             printf("  GET DATA (%s): ", label);
             auto resp = conn.transmit(getData(p1, p2));
             printResp(resp);
@@ -399,17 +409,17 @@ int main(int argc, char* argv[])
         // Some GemXpresso/Axalto cards put certs at 0x4300, 0x4301 ...
         // Some cards use 0x0001, 0x0002 ...
         // Some use 0x1001, 0x1002 ...
-        for (auto [f1, f2, label] : std::initializer_list<std::tuple<uint8_t,uint8_t,const char*>>{
-                {0x43, 0x00, "4300"},
-                {0x43, 0x01, "4301"},
-                {0x10, 0x01, "1001"},
-                {0x10, 0x02, "1002"},
-                {0x00, 0x01, "0001"},
-                {0x00, 0x02, "0002"},
-                {0x00, 0x30, "0030"},
-                {0x00, 0x31, "0031"},
-                {0x3F, 0x00, "MF (3F00)"},
-        }) {
+        for (auto [f1, f2, label] : std::initializer_list<std::tuple<uint8_t, uint8_t, const char*>>{
+                 {0x43, 0x00, "4300"},
+                 {0x43, 0x01, "4301"},
+                 {0x10, 0x01, "1001"},
+                 {0x10, 0x02, "1002"},
+                 {0x00, 0x01, "0001"},
+                 {0x00, 0x02, "0002"},
+                 {0x00, 0x30, "0030"},
+                 {0x00, 0x31, "0031"},
+                 {0x3F, 0x00, "MF (3F00)"},
+             }) {
             printf("  SELECT EF %s (P1=02): ", label);
             auto resp = conn.transmit(selectEFcurrent(f1, f2));
             printSW(resp.sw1, resp.sw2);
@@ -453,8 +463,7 @@ int main(int argc, char* argv[])
             hexDump(ceRoot);
             auto rootEntries = parseCeDirFile(ceRoot);
             for (const auto& re : rootEntries) {
-                printf("\n  --- %s \"%s\" (FID %04X) ---\n",
-                       re.isDir ? "Dir" : "File", re.name.c_str(), re.fid);
+                printf("\n  --- %s \"%s\" (FID %04X) ---\n", re.isDir ? "Dir" : "File", re.name.c_str(), re.fid);
                 resel();
                 auto subData = readCeFile(conn, re.fid);
                 if (subData.empty()) {
@@ -466,8 +475,8 @@ int main(int argc, char* argv[])
                 if (re.isDir) {
                     auto subEntries = parseCeDirFile(subData);
                     for (const auto& se : subEntries) {
-                        printf("\n    --- %s \"%s\" (FID %04X) ---\n",
-                               se.isDir ? "Dir" : "File", se.name.c_str(), se.fid);
+                        printf("\n    --- %s \"%s\" (FID %04X) ---\n", se.isDir ? "Dir" : "File", se.name.c_str(),
+                               se.fid);
                         resel();
                         auto fileData = readCeFile(conn, se.fid);
                         if (!fileData.empty()) {
@@ -510,11 +519,11 @@ int main(int argc, char* argv[])
         // -------------------------------------------------------------------
         printf("\n=== SELECT by path (P1=0x08 P2=0x00, from current DF) ===\n");
         for (auto [f1, f2, label] : std::initializer_list<std::tuple<uint8_t, uint8_t, const char*>>{
-                {0x70, 0x00, "7000 (CardEdge root)"},
-                {0x50, 0x31, "5031 (ODF)"},
-                {0x50, 0x32, "5032 (TokenInfo)"},
-                {0x3F, 0x00, "3F00 (MF)"},
-        }) {
+                 {0x70, 0x00, "7000 (CardEdge root)"},
+                 {0x50, 0x31, "5031 (ODF)"},
+                 {0x50, 0x32, "5032 (TokenInfo)"},
+                 {0x3F, 0x00, "3F00 (MF)"},
+             }) {
             printf("\n  SELECT PATH %s (P1=08): ", label);
             resel();
             auto resp = conn.transmit(smartcard::selectByPath(f1, f2));
@@ -529,8 +538,7 @@ int main(int argc, char* argv[])
         }
 
         printf("\n=== Probe complete ===\n");
-    }
-    catch (const std::exception& ex) {
+    } catch (const std::exception& ex) {
         fprintf(stderr, "\nError: %s\n", ex.what());
         return 1;
     }

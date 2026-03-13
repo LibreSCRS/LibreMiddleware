@@ -19,8 +19,7 @@ static std::string decodeUtf16Le(const std::vector<uint8_t>& bytes)
     std::string out;
     out.reserve(bytes.size());
     for (size_t i = 0; i + 1 < bytes.size(); i += 2) {
-        uint16_t cp = static_cast<uint16_t>(bytes[i]) |
-                      (static_cast<uint16_t>(bytes[i + 1]) << 8);
+        uint16_t cp = static_cast<uint16_t>(bytes[i]) | (static_cast<uint16_t>(bytes[i + 1]) << 8);
         if (cp < 0x80) {
             out += static_cast<char>(cp);
         } else if (cp < 0x800) {
@@ -81,21 +80,18 @@ void HealthCard::initCard()
 std::vector<uint8_t> HealthCard::readFile(const std::vector<uint8_t>& fileId)
 {
     // SELECT FILE by ID (P1=0x00, P2=0x00) — required by health card SERVSZK applet
-    auto selectResp = connection->transmit(
-        smartcard::selectByFileId(fileId[0], fileId[1]));
+    auto selectResp = connection->transmit(smartcard::selectByFileId(fileId[0], fileId[1]));
     if (!selectResp.isSuccess())
-        throw std::runtime_error("Health card: SELECT file failed for fileId "
-            + std::to_string(fileId[0]) + "/" + std::to_string(fileId[1])
-            + " SW=" + std::to_string(selectResp.statusWord()));
+        throw std::runtime_error("Health card: SELECT file failed for fileId " + std::to_string(fileId[0]) + "/" +
+                                 std::to_string(fileId[1]) + " SW=" + std::to_string(selectResp.statusWord()));
 
     // Read 4-byte header: bytes [2:3] (LE) hold the content length
-    auto headerResp = connection->transmit(
-        smartcard::readBinary(0, protocol::FILE_HEADER_SIZE));
+    auto headerResp = connection->transmit(smartcard::readBinary(0, protocol::FILE_HEADER_SIZE));
     if (!headerResp.isSuccess() || headerResp.data.size() < protocol::FILE_HEADER_SIZE)
         throw std::runtime_error("Health card: Cannot read file header");
 
-    uint16_t contentLength = static_cast<uint16_t>(headerResp.data[2]) |
-                             (static_cast<uint16_t>(headerResp.data[3]) << 8);
+    uint16_t contentLength =
+        static_cast<uint16_t>(headerResp.data[2]) | (static_cast<uint16_t>(headerResp.data[3]) << 8);
 
     if (contentLength == 0)
         return {};
@@ -107,8 +103,7 @@ std::vector<uint8_t> HealthCard::readFile(const std::vector<uint8_t>& fileId)
 
     while (fileData.size() < contentLength) {
         uint8_t chunkSize = static_cast<uint8_t>(
-            std::min(static_cast<size_t>(protocol::READ_CHUNK_SIZE),
-                     contentLength - fileData.size()));
+            std::min(static_cast<size_t>(protocol::READ_CHUNK_SIZE), contentLength - fileData.size()));
         auto readResp = connection->transmit(smartcard::readBinary(offset, chunkSize));
         if (!readResp.isSuccess())
             throw std::runtime_error("Health card: READ BINARY failed");
@@ -123,66 +118,66 @@ std::vector<uint8_t> HealthCard::readFile(const std::vector<uint8_t>& fileId)
 
 HealthDocumentData HealthCard::readDocumentData()
 {
-    auto docRaw      = readFile(protocol::FILE_DOCUMENT);
-    auto fixedRaw    = readFile(protocol::FILE_FIXED_PERSONAL);
-    auto varPersRaw  = readFile(protocol::FILE_VARIABLE_PERSONAL);
+    auto docRaw = readFile(protocol::FILE_DOCUMENT);
+    auto fixedRaw = readFile(protocol::FILE_FIXED_PERSONAL);
+    auto varPersRaw = readFile(protocol::FILE_VARIABLE_PERSONAL);
     auto varAdminRaw = readFile(protocol::FILE_VARIABLE_ADMIN);
 
-    auto docFields      = smartcard::parseTLV(docRaw.data(), docRaw.size());
-    auto fixedFields    = smartcard::parseTLV(fixedRaw.data(), fixedRaw.size());
-    auto varPersFields  = smartcard::parseTLV(varPersRaw.data(), varPersRaw.size());
+    auto docFields = smartcard::parseTLV(docRaw.data(), docRaw.size());
+    auto fixedFields = smartcard::parseTLV(fixedRaw.data(), fixedRaw.size());
+    auto varPersFields = smartcard::parseTLV(varPersRaw.data(), varPersRaw.size());
     auto varAdminFields = smartcard::parseTLV(varAdminRaw.data(), varAdminRaw.size());
 
     HealthDocumentData d;
 
     // Document file
-    d.insurerName  = findUtf16String(docFields, protocol::TAG_INSURER_NAME);
-    d.insurerId    = smartcard::findString(docFields, protocol::TAG_INSURER_ID);
-    d.cardId       = smartcard::findString(docFields, protocol::TAG_CARD_ID);
-    d.dateOfIssue  = formatDate(smartcard::findString(docFields, protocol::TAG_DATE_OF_ISSUE));
+    d.insurerName = findUtf16String(docFields, protocol::TAG_INSURER_NAME);
+    d.insurerId = smartcard::findString(docFields, protocol::TAG_INSURER_ID);
+    d.cardId = smartcard::findString(docFields, protocol::TAG_CARD_ID);
+    d.dateOfIssue = formatDate(smartcard::findString(docFields, protocol::TAG_DATE_OF_ISSUE));
     d.dateOfExpiry = formatDate(smartcard::findString(docFields, protocol::TAG_DATE_OF_EXPIRY));
     d.printLanguage = smartcard::findString(docFields, protocol::TAG_PRINT_LANGUAGE);
 
     // Fixed personal file
     d.insurantNumber = smartcard::findString(fixedFields, protocol::TAG_INSURANT_NUMBER);
-    d.familyName     = findUtf16String(fixedFields, protocol::TAG_FAMILY_NAME);
+    d.familyName = findUtf16String(fixedFields, protocol::TAG_FAMILY_NAME);
     d.familyNameLatin = findUtf16String(fixedFields, protocol::TAG_FAMILY_NAME_LAT);
-    d.givenName      = findUtf16String(fixedFields, protocol::TAG_GIVEN_NAME);
+    d.givenName = findUtf16String(fixedFields, protocol::TAG_GIVEN_NAME);
     d.givenNameLatin = findUtf16String(fixedFields, protocol::TAG_GIVEN_NAME_LAT);
-    d.dateOfBirth    = formatDate(smartcard::findString(fixedFields, protocol::TAG_DATE_OF_BIRTH));
+    d.dateOfBirth = formatDate(smartcard::findString(fixedFields, protocol::TAG_DATE_OF_BIRTH));
 
     // Variable personal file
-    d.validUntil     = formatDate(smartcard::findString(varPersFields, protocol::TAG_VALID_UNTIL));
+    d.validUntil = formatDate(smartcard::findString(varPersFields, protocol::TAG_VALID_UNTIL));
     d.permanentlyValid = (smartcard::findString(varPersFields, protocol::TAG_PERMANENTLY_VALID) == "01");
 
     // Variable admin file
-    d.parentName      = findUtf16String(varAdminFields, protocol::TAG_PARENT_NAME);
+    d.parentName = findUtf16String(varAdminFields, protocol::TAG_PARENT_NAME);
     d.parentNameLatin = findUtf16String(varAdminFields, protocol::TAG_PARENT_NAME_LAT);
 
     auto genderRaw = smartcard::findString(varAdminFields, protocol::TAG_GENDER);
-    d.gender = (genderRaw == "01") ? "\xD0\x9C\xD1\x83\xD1\x88\xD0\xBA\xD0\xBE"   // Мушко
+    d.gender = (genderRaw == "01") ? "\xD0\x9C\xD1\x83\xD1\x88\xD0\xBA\xD0\xBE"          // Мушко
                                    : "\xD0\x96\xD0\xB5\xD0\xBD\xD1\x81\xD0\xBA\xD0\xBE"; // Женско
 
-    d.personalNumber     = smartcard::findString(varAdminFields, protocol::TAG_PERSONAL_NUMBER);
-    d.street             = findUtf16String(varAdminFields, protocol::TAG_STREET);
-    d.municipality       = findUtf16String(varAdminFields, protocol::TAG_MUNICIPALITY);
-    d.place              = findUtf16String(varAdminFields, protocol::TAG_PLACE);
-    d.addressNumber      = findUtf16String(varAdminFields, protocol::TAG_ADDRESS_NUMBER);
-    d.apartment          = findUtf16String(varAdminFields, protocol::TAG_APARTMENT);
+    d.personalNumber = smartcard::findString(varAdminFields, protocol::TAG_PERSONAL_NUMBER);
+    d.street = findUtf16String(varAdminFields, protocol::TAG_STREET);
+    d.municipality = findUtf16String(varAdminFields, protocol::TAG_MUNICIPALITY);
+    d.place = findUtf16String(varAdminFields, protocol::TAG_PLACE);
+    d.addressNumber = findUtf16String(varAdminFields, protocol::TAG_ADDRESS_NUMBER);
+    d.apartment = findUtf16String(varAdminFields, protocol::TAG_APARTMENT);
     d.insuranceBasisRzzo = smartcard::findString(varAdminFields, protocol::TAG_INSURANCE_BASIS);
     d.insuranceDescription = findUtf16String(varAdminFields, protocol::TAG_INSURANCE_DESC);
-    d.carrierRelationship  = findUtf16String(varAdminFields, protocol::TAG_CARRIER_RELATION);
-    d.carrierFamilyMember  = (smartcard::findString(varAdminFields, protocol::TAG_CARRIER_FAMILY_MEMBER) == "01");
-    d.carrierIdNumber      = smartcard::findString(varAdminFields, protocol::TAG_CARRIER_ID_NO);
+    d.carrierRelationship = findUtf16String(varAdminFields, protocol::TAG_CARRIER_RELATION);
+    d.carrierFamilyMember = (smartcard::findString(varAdminFields, protocol::TAG_CARRIER_FAMILY_MEMBER) == "01");
+    d.carrierIdNumber = smartcard::findString(varAdminFields, protocol::TAG_CARRIER_ID_NO);
     d.carrierInsurantNumber = smartcard::findString(varAdminFields, protocol::TAG_CARRIER_INSURANT_NO);
-    d.carrierFamilyName    = findUtf16String(varAdminFields, protocol::TAG_CARRIER_FAMILY_NAME);
+    d.carrierFamilyName = findUtf16String(varAdminFields, protocol::TAG_CARRIER_FAMILY_NAME);
     d.carrierFamilyNameLatin = findUtf16String(varAdminFields, protocol::TAG_CARRIER_FAMILY_NAME_LAT);
-    d.carrierGivenName     = findUtf16String(varAdminFields, protocol::TAG_CARRIER_GIVEN_NAME);
+    d.carrierGivenName = findUtf16String(varAdminFields, protocol::TAG_CARRIER_GIVEN_NAME);
     d.carrierGivenNameLatin = findUtf16String(varAdminFields, protocol::TAG_CARRIER_GIVEN_NAME_LAT);
-    d.insuranceStartDate   = formatDate(smartcard::findString(varAdminFields, protocol::TAG_INSURANCE_START));
-    d.country              = findUtf16String(varAdminFields, protocol::TAG_COUNTRY);
-    d.taxpayerName         = findUtf16String(varAdminFields, protocol::TAG_TAXPAYER_NAME);
-    d.taxpayerResidence    = findUtf16String(varAdminFields, protocol::TAG_TAXPAYER_RES);
+    d.insuranceStartDate = formatDate(smartcard::findString(varAdminFields, protocol::TAG_INSURANCE_START));
+    d.country = findUtf16String(varAdminFields, protocol::TAG_COUNTRY);
+    d.taxpayerName = findUtf16String(varAdminFields, protocol::TAG_TAXPAYER_NAME);
+    d.taxpayerResidence = findUtf16String(varAdminFields, protocol::TAG_TAXPAYER_RES);
 
     // Use PIB 1632 if present, fall back to 1633
     auto taxId1 = smartcard::findString(varAdminFields, protocol::TAG_TAXPAYER_ID_1);

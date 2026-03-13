@@ -18,9 +18,9 @@ TEST(HealthDocumentData, DefaultConstruct)
 TEST(HealthDocumentData, FieldAssignment)
 {
     healthcard::HealthDocumentData d;
-    d.insurerName     = "РЗЗО";
-    d.cardId          = "1234567890";
-    d.dateOfBirth     = "01.01.1990";
+    d.insurerName = "РЗЗО";
+    d.cardId = "1234567890";
+    d.dateOfBirth = "01.01.1990";
     d.permanentlyValid = true;
     d.carrierFamilyMember = true;
 

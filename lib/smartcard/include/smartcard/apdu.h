@@ -9,16 +9,18 @@
 
 namespace smartcard {
 
-struct APDUCommand {
+struct APDUCommand
+{
     uint8_t cla, ins, p1, p2;
-    std::vector<uint8_t> data;  // Lc data (empty = no data field)
-    uint8_t le = 0;             // Expected response length (0 = 256)
+    std::vector<uint8_t> data; // Lc data (empty = no data field)
+    uint8_t le = 0;            // Expected response length (0 = 256)
     bool hasLe = true;
 
     std::vector<uint8_t> toBytes() const;
 };
 
-struct APDUResponse {
+struct APDUResponse
+{
     std::vector<uint8_t> data;
     uint8_t sw1, sw2;
 
@@ -36,7 +38,6 @@ APDUCommand readBinary(uint16_t offset, uint8_t length);
 APDUCommand verifyPIN(uint8_t pinRef, const std::vector<uint8_t>& pin);
 APDUCommand verifyPINStatus(uint8_t pinRef);
 APDUCommand changeReferenceData(uint8_t pinRef, const std::vector<uint8_t>& oldPin, const std::vector<uint8_t>& newPin);
-
 
 } // namespace smartcard
 

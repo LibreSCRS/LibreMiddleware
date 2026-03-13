@@ -8,7 +8,8 @@
 
 namespace vehiclecard {
 
-struct VehicleDocumentData {
+struct VehicleDocumentData
+{
     // Registration
     std::string registrationNumber;
     std::string dateOfFirstRegistration;

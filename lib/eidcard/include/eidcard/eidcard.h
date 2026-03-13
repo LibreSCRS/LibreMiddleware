@@ -20,7 +20,8 @@ class CardReaderBase;
 
 class CardVerifier;
 
-class EIdCard {
+class EIdCard
+{
 public:
     // Check if an eID card is present on the given reader without opening a full session.
     static bool probe(const std::string& readerName);

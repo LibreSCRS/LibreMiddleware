@@ -11,14 +11,10 @@
 
 namespace eidcard {
 
-enum class CardType : int {
-    Unknown = 0,
-    Apollo2008 = 1,
-    Gemalto2014 = 2,
-    ForeignerIF2020 = 3
-};
+enum class CardType : int { Unknown = 0, Apollo2008 = 1, Gemalto2014 = 2, ForeignerIF2020 = 3 };
 
-struct DocumentData {
+struct DocumentData
+{
     std::string docRegNo;
     std::string documentType;
     std::string documentSerialNumber;
@@ -28,7 +24,8 @@ struct DocumentData {
     std::string chipSerialNumber;
 };
 
-struct FixedPersonalData {
+struct FixedPersonalData
+{
     std::string personalNumber;
     std::string surname;
     std::string givenName;
@@ -42,7 +39,8 @@ struct FixedPersonalData {
     std::string statusOfForeigner;
 };
 
-struct VariablePersonalData {
+struct VariablePersonalData
+{
     std::string state;
     std::string community;
     std::string place;
@@ -61,12 +59,12 @@ using PhotoData = std::vector<uint8_t>;
 // Re-exported from cardedge for backward compatibility
 using CertificateData = cardedge::CertificateData;
 using CertificateList = cardedge::CertificateList;
-using PINResult       = cardedge::PINResult;
+using PINResult = cardedge::PINResult;
 
 enum class VerificationResult {
-    Unknown,  // verification could not be performed
-    Valid,    // signature verified successfully
-    Invalid   // signature verification failed
+    Unknown, // verification could not be performed
+    Valid,   // signature verified successfully
+    Invalid  // signature verification failed
 };
 
 } // namespace eidcard

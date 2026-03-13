@@ -6,7 +6,8 @@
 
 using namespace vehiclecard;
 
-TEST(VehicleTypesTest, DefaultConstruction) {
+TEST(VehicleTypesTest, DefaultConstruction)
+{
     VehicleDocumentData vd;
     EXPECT_TRUE(vd.registrationNumber.empty());
     EXPECT_TRUE(vd.vehicleIdNumber.empty());
@@ -21,7 +22,8 @@ TEST(VehicleTypesTest, DefaultConstruction) {
     EXPECT_TRUE(vd.serialNumber.empty());
 }
 
-TEST(VehicleTypesTest, FieldAssignment) {
+TEST(VehicleTypesTest, FieldAssignment)
+{
     VehicleDocumentData vd;
     vd.registrationNumber = "BG-123-AB";
     vd.vehicleMake = "Zastava";
@@ -36,7 +38,8 @@ TEST(VehicleTypesTest, FieldAssignment) {
     EXPECT_EQ(vd.colourOfVehicle, "Crvena");
 }
 
-TEST(VehicleTypesTest, OwnerFields) {
+TEST(VehicleTypesTest, OwnerFields)
+{
     VehicleDocumentData vd;
     vd.ownersSurnameOrBusinessName = "Jovanović";
     vd.ownerName = "Milan";
@@ -49,7 +52,8 @@ TEST(VehicleTypesTest, OwnerFields) {
     EXPECT_EQ(vd.ownersPersonalNo, "0101985710123");
 }
 
-TEST(VehicleTypesTest, MassFields) {
+TEST(VehicleTypesTest, MassFields)
+{
     VehicleDocumentData vd;
     vd.vehicleMass = "850";
     vd.maximumPermissibleLadenMass = "1250";

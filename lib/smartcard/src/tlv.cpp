@@ -17,13 +17,11 @@ std::vector<TLVField> parseTLV(const uint8_t* data, size_t length)
 
     while (offset + 4 <= length) {
         // Little-endian 16-bit tag
-        uint16_t tag = static_cast<uint16_t>(data[offset]) |
-                       (static_cast<uint16_t>(data[offset + 1]) << 8);
+        uint16_t tag = static_cast<uint16_t>(data[offset]) | (static_cast<uint16_t>(data[offset + 1]) << 8);
         offset += 2;
 
         // Little-endian 16-bit length
-        uint16_t valueLen = static_cast<uint16_t>(data[offset]) |
-                            (static_cast<uint16_t>(data[offset + 1]) << 8);
+        uint16_t valueLen = static_cast<uint16_t>(data[offset]) | (static_cast<uint16_t>(data[offset + 1]) << 8);
         offset += 2;
 
         if (offset + valueLen > length) {

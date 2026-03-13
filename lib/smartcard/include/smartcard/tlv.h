@@ -11,10 +11,11 @@
 namespace smartcard {
 
 // Custom Little-Endian 16-bit TLV used by Serbian cards (eID, vehicle, health)
-struct TLVField {
+struct TLVField
+{
     uint16_t tag;
     std::vector<uint8_t> value;
-    std::string asString() const;  // UTF-8 decode
+    std::string asString() const; // UTF-8 decode
 };
 
 std::vector<TLVField> parseTLV(const uint8_t* data, size_t length);

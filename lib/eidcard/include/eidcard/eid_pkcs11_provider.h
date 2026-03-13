@@ -12,7 +12,8 @@ namespace eidcard {
 
 class EIdCard;
 
-class EIdPKCS11Provider : public smartcard::PKCS11CardProvider {
+class EIdPKCS11Provider : public smartcard::PKCS11CardProvider
+{
 public:
     EIdPKCS11Provider() = default;
     ~EIdPKCS11Provider() override;
@@ -22,16 +23,14 @@ public:
     void connect(const std::string& readerName) override;
     smartcard::PKCS11TokenInfo getTokenInfo() override;
     std::vector<smartcard::PKCS11ObjectInfo> getObjects() override;
-    unsigned long login(unsigned long userType,
-                        const std::vector<uint8_t>& pin) override;
+    unsigned long login(unsigned long userType, const std::vector<uint8_t>& pin) override;
     unsigned long logout() override;
-    std::vector<uint8_t> signData(const std::vector<uint8_t>& keyId,
-                                   const std::vector<uint8_t>& data) override;
+    std::vector<uint8_t> signData(const std::vector<uint8_t>& keyId, const std::vector<uint8_t>& data) override;
     void reconnectCard() override;
 
 private:
     std::unique_ptr<EIdCard> card;
-    std::map<std::vector<uint8_t>, uint16_t> keyReferenceMap;  // CKA_ID -> key FID
+    std::map<std::vector<uint8_t>, uint16_t> keyReferenceMap; // CKA_ID -> key FID
 };
 
 } // namespace eidcard

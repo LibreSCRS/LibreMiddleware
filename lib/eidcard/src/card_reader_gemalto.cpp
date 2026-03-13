@@ -34,8 +34,7 @@ CardType CardReaderGemalto::selectApplication(smartcard::PCSCConnection& conn)
 
 // SELECT file and read its 4-byte header.
 // On failure, retries with application re-selection and reconnect.
-static smartcard::APDUResponse selectAndReadHeader(smartcard::PCSCConnection& conn,
-                                                    uint8_t fileId1, uint8_t fileId2)
+static smartcard::APDUResponse selectAndReadHeader(smartcard::PCSCConnection& conn, uint8_t fileId1, uint8_t fileId2)
 {
     auto selectResp = conn.transmit(smartcard::selectByPath(fileId1, fileId2, 4));
     if (selectResp.isSuccess()) {
@@ -58,8 +57,7 @@ static smartcard::APDUResponse selectAndReadHeader(smartcard::PCSCConnection& co
     CardReaderGemalto::selectApplication(conn);
     selectResp = conn.transmit(smartcard::selectByPath(fileId1, fileId2, 4));
     if (!selectResp.isSuccess()) {
-        throw std::runtime_error("Gemalto: SELECT file failed, SW=" +
-                                 std::to_string(selectResp.statusWord()));
+        throw std::runtime_error("Gemalto: SELECT file failed, SW=" + std::to_string(selectResp.statusWord()));
     }
     auto headerResp = conn.transmit(smartcard::readBinary(0, 4));
     if (!headerResp.isSuccess() || headerResp.data.size() < 4) {
@@ -69,9 +67,8 @@ static smartcard::APDUResponse selectAndReadHeader(smartcard::PCSCConnection& co
 }
 
 // READ BINARY with retry: re-select app + file, then reconnect + re-select.
-static smartcard::APDUResponse readBinaryWithRetry(smartcard::PCSCConnection& conn,
-                                                    uint16_t offset, uint8_t length,
-                                                    uint8_t fileId1, uint8_t fileId2)
+static smartcard::APDUResponse readBinaryWithRetry(smartcard::PCSCConnection& conn, uint16_t offset, uint8_t length,
+                                                   uint8_t fileId1, uint8_t fileId2)
 {
     auto readResp = conn.transmit(smartcard::readBinary(offset, length));
     if (readResp.isSuccess())
@@ -92,14 +89,12 @@ static smartcard::APDUResponse readBinaryWithRetry(smartcard::PCSCConnection& co
     return readResp;
 }
 
-std::vector<uint8_t> CardReaderGemalto::readFile(smartcard::PCSCConnection& conn,
-                                                  uint8_t fileId1, uint8_t fileId2)
+std::vector<uint8_t> CardReaderGemalto::readFile(smartcard::PCSCConnection& conn, uint8_t fileId1, uint8_t fileId2)
 {
     auto headerResp = selectAndReadHeader(conn, fileId1, fileId2);
 
     // File data length is at header bytes 2-3 in LITTLE-ENDIAN format
-    uint32_t dataLength = static_cast<uint32_t>(headerResp.data[2]) |
-                          (static_cast<uint32_t>(headerResp.data[3]) << 8);
+    uint32_t dataLength = static_cast<uint32_t>(headerResp.data[2]) | (static_cast<uint32_t>(headerResp.data[3]) << 8);
 
     if (dataLength == 0) {
         return {};
@@ -111,14 +106,12 @@ std::vector<uint8_t> CardReaderGemalto::readFile(smartcard::PCSCConnection& conn
     uint16_t offset = 4;
 
     while (fileData.size() < dataLength) {
-        uint8_t chunkSize = static_cast<uint8_t>(
-            std::min(static_cast<uint32_t>(protocol::READ_CHUNK_SIZE),
-                     dataLength - static_cast<uint32_t>(fileData.size())));
+        uint8_t chunkSize = static_cast<uint8_t>(std::min(static_cast<uint32_t>(protocol::READ_CHUNK_SIZE),
+                                                          dataLength - static_cast<uint32_t>(fileData.size())));
 
         auto readResp = readBinaryWithRetry(conn, offset, chunkSize, fileId1, fileId2);
         if (!readResp.isSuccess()) {
-            throw std::runtime_error("Gemalto: READ BINARY failed at offset " +
-                                     std::to_string(offset));
+            throw std::runtime_error("Gemalto: READ BINARY failed at offset " + std::to_string(offset));
         }
 
         if (readResp.data.empty()) {
@@ -132,14 +125,12 @@ std::vector<uint8_t> CardReaderGemalto::readFile(smartcard::PCSCConnection& conn
     return fileData;
 }
 
-std::vector<uint8_t> CardReaderGemalto::readFileRaw(smartcard::PCSCConnection& conn,
-                                                     uint8_t fileId1, uint8_t fileId2)
+std::vector<uint8_t> CardReaderGemalto::readFileRaw(smartcard::PCSCConnection& conn, uint8_t fileId1, uint8_t fileId2)
 {
     auto headerResp = selectAndReadHeader(conn, fileId1, fileId2);
 
     // File data length is at header bytes 2-3 in LITTLE-ENDIAN format
-    uint32_t dataLength = static_cast<uint32_t>(headerResp.data[2]) |
-                          (static_cast<uint32_t>(headerResp.data[3]) << 8);
+    uint32_t dataLength = static_cast<uint32_t>(headerResp.data[2]) | (static_cast<uint32_t>(headerResp.data[3]) << 8);
 
     // Build result starting with the 4-byte header
     uint32_t totalLength = 4 + dataLength;
@@ -155,14 +146,12 @@ std::vector<uint8_t> CardReaderGemalto::readFileRaw(smartcard::PCSCConnection& c
     uint16_t offset = 4;
 
     while (fileData.size() < totalLength) {
-        uint8_t chunkSize = static_cast<uint8_t>(
-            std::min(static_cast<uint32_t>(protocol::READ_CHUNK_SIZE),
-                     totalLength - static_cast<uint32_t>(fileData.size())));
+        uint8_t chunkSize = static_cast<uint8_t>(std::min(static_cast<uint32_t>(protocol::READ_CHUNK_SIZE),
+                                                          totalLength - static_cast<uint32_t>(fileData.size())));
 
         auto readResp = readBinaryWithRetry(conn, offset, chunkSize, fileId1, fileId2);
         if (!readResp.isSuccess()) {
-            throw std::runtime_error("Gemalto: READ BINARY failed at offset " +
-                                     std::to_string(offset));
+            throw std::runtime_error("Gemalto: READ BINARY failed at offset " + std::to_string(offset));
         }
 
         if (readResp.data.empty()) {
