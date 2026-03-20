@@ -47,6 +47,41 @@ add_subdirectory(lib/vehiclecard-plugin)
 add_subdirectory(lib/healthcard-plugin)
 add_subdirectory(lib/pkscard-plugin)
 
+# OpenSC fallback plugin (optional, requires system libopensc)
+option(BUILD_OPENSC_PLUGIN "Build OpenSC fallback plugin" ON)
+option(REQUIRE_OPENSC_PLUGIN "Fail if OpenSC plugin cannot be built" OFF)
+
+if(BUILD_OPENSC_PLUGIN)
+    # Try pkg-config first (Ubuntu libopensc-dev provides libopensc.pc)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(OPENSC QUIET IMPORTED_TARGET libopensc)
+    endif()
+
+    # Fallback: find_library + manual include dir (Arch/Manjaro, or -DOPENSC_INCLUDE_DIR=...)
+    if(NOT OPENSC_FOUND)
+        find_library(OPENSC_LIBRARY NAMES opensc)
+        if(OPENSC_LIBRARY AND OPENSC_INCLUDE_DIR)
+            set(OPENSC_FOUND TRUE)
+            add_library(PkgConfig::OPENSC UNKNOWN IMPORTED)
+            set_target_properties(PkgConfig::OPENSC PROPERTIES
+                IMPORTED_LOCATION "${OPENSC_LIBRARY}"
+                INTERFACE_INCLUDE_DIRECTORIES "${OPENSC_INCLUDE_DIR}"
+            )
+        endif()
+    endif()
+
+    if(OPENSC_FOUND)
+        add_subdirectory(lib/opensc-plugin)
+    else()
+        message(STATUS "libopensc not found — skipping OpenSC fallback plugin (set OPENSC_INCLUDE_DIR for manual detection)")
+    endif()
+endif()
+
+if(REQUIRE_OPENSC_PLUGIN AND NOT OPENSC_FOUND)
+    message(FATAL_ERROR "REQUIRE_OPENSC_PLUGIN=ON but libopensc not found")
+endif()
+
 option(BUILD_TESTING "Build tests" ON)
 if(BUILD_TESTING)
     add_subdirectory(test)

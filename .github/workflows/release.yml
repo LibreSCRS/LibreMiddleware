@@ -24,11 +24,11 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpcsclite-dev cmake ninja-build
+          sudo apt-get install -y libpcsclite-dev cmake ninja-build libopensc-dev
 
       - name: Configure & Build
         run: |
-          cmake -B build -G Ninja
+          cmake -B build -G Ninja -DREQUIRE_OPENSC_PLUGIN=ON
           cmake --build build
 
       - name: Test
@@ -40,11 +40,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install build tools
-        run: brew install ninja
+        run: brew install ninja opensc
 
       - name: Configure & Build
         run: |
-          cmake -B build -G Ninja
+          cmake -B build -G Ninja -DREQUIRE_OPENSC_PLUGIN=ON
           cmake --build build
 
       - name: Test

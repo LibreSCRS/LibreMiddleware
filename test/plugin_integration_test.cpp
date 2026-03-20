@@ -21,8 +21,13 @@ TEST(PluginIntegrationTest, LoadAllPlugins)
 {
     CardPluginRegistry registry;
     auto loaded = registry.loadPluginsFromDirectory(pluginDir());
+#ifdef HAS_OPENSC_PLUGIN
+    EXPECT_EQ(loaded, 5u);
+    EXPECT_EQ(registry.plugins().size(), 5u);
+#else
     EXPECT_EQ(loaded, 4u);
     EXPECT_EQ(registry.plugins().size(), 4u);
+#endif
     for (auto* p : registry.plugins()) {
         std::cout << "  Loaded: " << p->pluginId() << " (" << p->displayName() << ") priority=" << p->probePriority()
                   << "\n";
@@ -86,3 +91,16 @@ TEST(PluginIntegrationTest, UnknownATRReturnsNull)
     std::vector<uint8_t> unknownATR = {0x00, 0x00, 0x00};
     EXPECT_EQ(registry.findPluginForCard(unknownATR), nullptr);
 }
+
+#ifdef HAS_OPENSC_PLUGIN
+TEST(PluginIntegrationTest, OpenSCIsLastInProbeOrder)
+{
+    CardPluginRegistry registry;
+    registry.loadPluginsFromDirectory(pluginDir());
+
+    auto& plugins = registry.plugins();
+    ASSERT_FALSE(plugins.empty());
+    EXPECT_EQ(plugins.back()->pluginId(), "opensc");
+    EXPECT_EQ(plugins.back()->probePriority(), 900);
+}
+#endif

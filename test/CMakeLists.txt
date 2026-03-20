@@ -63,6 +63,12 @@ add_dependencies(PluginIntegrationTests
     rescrs-plugin-rs-health
     rescrs-plugin-rs-pks
 )
+
+if(BUILD_OPENSC_PLUGIN AND OPENSC_FOUND)
+    add_dependencies(PluginIntegrationTests rescrs-plugin-opensc)
+    target_compile_definitions(PluginIntegrationTests PRIVATE HAS_OPENSC_PLUGIN=1)
+endif()
+
 gtest_discover_tests(PluginIntegrationTests)
 
 add_executable(PKCS11Tests pkcs11_test.cpp)
@@ -84,3 +90,20 @@ target_link_libraries(pks_pin_test_cli PKSCard)
 # FCI format probe: tests if CardEdge SELECT FILE returns ISO TLV-wrapped FCI
 add_executable(fci_format_probe fci_format_probe.cpp)
 target_link_libraries(fci_format_probe SmartCard)
+
+# OpenSC fallback plugin tests (conditional on libopensc availability)
+if(BUILD_OPENSC_PLUGIN AND OPENSC_FOUND)
+    add_executable(OpenSCPluginTests
+        opensc_plugin_test.cpp
+    )
+    target_link_libraries(OpenSCPluginTests
+        GTest::gtest_main
+        CardPlugin
+        PkgConfig::OPENSC
+    )
+    target_compile_definitions(OpenSCPluginTests PRIVATE
+        PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
+    )
+    add_dependencies(OpenSCPluginTests rescrs-plugin-opensc)
+    gtest_discover_tests(OpenSCPluginTests)
+endif()
