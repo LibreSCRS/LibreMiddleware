@@ -63,7 +63,9 @@ APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
 
     const SCARD_IO_REQUEST* pioSendPci = (activeProtocol == SCARD_PROTOCOL_T0) ? SCARD_PCI_T0 : SCARD_PCI_T1;
 
-    uint8_t recvBuffer[258];
+    // SM-protected responses can exceed 258 bytes (e.g., 256-byte data + DO'87/99/8E overhead).
+    // Use a larger buffer to accommodate SM wrapping and extended-length responses.
+    uint8_t recvBuffer[1024];
     DWORD recvLength = sizeof(recvBuffer);
 
     LONG rv = SCardTransmit(card, pioSendPci, cmdBytes, cmdLen, nullptr, recvBuffer, &recvLength);

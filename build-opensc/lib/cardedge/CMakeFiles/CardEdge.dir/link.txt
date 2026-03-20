@@ -1,0 +1,2 @@
+/usr/bin/ar qc libCardEdge.a CMakeFiles/CardEdge.dir/src/cardedge.cpp.o
+/usr/bin/ranlib libCardEdge.a

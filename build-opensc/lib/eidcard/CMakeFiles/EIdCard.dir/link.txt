@@ -1,0 +1,2 @@
+/usr/bin/ar qc libEIdCard.a CMakeFiles/EIdCard.dir/src/eidcard.cpp.o CMakeFiles/EIdCard.dir/src/card_reader_gemalto.cpp.o CMakeFiles/EIdCard.dir/src/card_reader_apollo.cpp.o CMakeFiles/EIdCard.dir/src/card_verifier.cpp.o CMakeFiles/EIdCard.dir/src/eid_pkcs11_provider.cpp.o
+/usr/bin/ranlib libEIdCard.a

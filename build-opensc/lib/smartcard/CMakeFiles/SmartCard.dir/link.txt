@@ -1,0 +1,2 @@
+/usr/bin/ar qc libSmartCard.a CMakeFiles/SmartCard.dir/src/apdu.cpp.o CMakeFiles/SmartCard.dir/src/pcsc_connection.cpp.o CMakeFiles/SmartCard.dir/src/tlv.cpp.o CMakeFiles/SmartCard.dir/src/ber.cpp.o
+/usr/bin/ranlib libSmartCard.a

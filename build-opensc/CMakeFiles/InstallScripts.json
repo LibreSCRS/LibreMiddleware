@@ -1,0 +1,16 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/nhirsl/Dev/Code/LibreSCRS/LibreMiddleware/build-opensc/cmake_install.cmake",
+		"/home/nhirsl/Dev/Code/LibreSCRS/LibreMiddleware/build-opensc/thirdparty/cmake_install.cmake",
+		"/home/nhirsl/Dev/Code/LibreSCRS/LibreMiddleware/build-opensc/lib/smartcard/cmake_install.cmake",
+		"/home/nhirsl/Dev/Code/LibreSCRS/LibreMiddleware/build-opensc/lib/cardedge/cmake_install.cmake",
+		"/home/nhirsl/Dev/Code/LibreSCRS/LibreMiddleware/build-opensc/lib/eidcard/cmake_install.cmake",
+		"/home/nhirsl/Dev/Code/LibreSCRS/LibreMiddleware/build-opensc/lib/vehiclecard/cmake_install.cmake",
+		"/home/nhirsl/Dev/Code/LibreSCRS/LibreMiddleware/build-opensc/lib/healthcard/cmake_install.cmake",
+		"/home/nhirsl/Dev/Code/LibreSCRS/LibreMiddleware/build-opensc/lib/pkscard/cmake_install.cmake",
+		"/home/nhirsl/Dev/Code/LibreSCRS/LibreMiddleware/build-opensc/lib/pkcs11/cmake_install.cmake",
+		"/home/nhirsl/Dev/Code/LibreSCRS/LibreMiddleware/build-opensc/lib/opensc-driver/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

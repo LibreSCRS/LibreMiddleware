@@ -64,12 +64,29 @@ add_dependencies(PluginIntegrationTests
     rescrs-plugin-rs-pks
 )
 
+add_dependencies(PluginIntegrationTests rescrs-plugin-emrtd)
+target_compile_definitions(PluginIntegrationTests PRIVATE HAS_EMRTD_PLUGIN=1)
+
 if(BUILD_OPENSC_PLUGIN AND OPENSC_FOUND)
     add_dependencies(PluginIntegrationTests rescrs-plugin-opensc)
     target_compile_definitions(PluginIntegrationTests PRIVATE HAS_OPENSC_PLUGIN=1)
 endif()
 
 gtest_discover_tests(PluginIntegrationTests)
+
+# eMRTD plugin tests
+add_executable(EMRTDPluginTests
+    emrtd_plugin_test.cpp
+)
+target_link_libraries(EMRTDPluginTests
+    GTest::gtest_main
+    CardPlugin
+)
+target_compile_definitions(EMRTDPluginTests PRIVATE
+    PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
+)
+add_dependencies(EMRTDPluginTests rescrs-plugin-emrtd)
+gtest_discover_tests(EMRTDPluginTests)
 
 add_executable(PKCS11Tests pkcs11_test.cpp)
 target_link_libraries(PKCS11Tests GTest::gtest_main librescrs-pkcs11)
@@ -90,6 +107,29 @@ target_link_libraries(pks_pin_test_cli PKSCard)
 # FCI format probe: tests if CardEdge SELECT FILE returns ISO TLV-wrapped FCI
 add_executable(fci_format_probe fci_format_probe.cpp)
 target_link_libraries(fci_format_probe SmartCard)
+
+# eMRTD crypto tests
+add_executable(EMRTDCryptoTests
+    bac_test.cpp
+    secure_messaging_test.cpp
+    pace_test.cpp
+)
+target_link_libraries(EMRTDCryptoTests
+    GTest::gtest_main
+    EMRTDCrypto
+)
+gtest_discover_tests(EMRTDCryptoTests)
+
+add_executable(EMRTDTests
+    mrz_parse_test.cpp
+    data_group_test.cpp
+    pace_hardware_test.cpp
+)
+target_link_libraries(EMRTDTests
+    GTest::gtest_main
+    EMRTD
+)
+gtest_discover_tests(EMRTDTests)
 
 # OpenSC fallback plugin tests (conditional on libopensc availability)
 if(BUILD_OPENSC_PLUGIN AND OPENSC_FOUND)

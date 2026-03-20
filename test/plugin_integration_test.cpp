@@ -21,7 +21,13 @@ TEST(PluginIntegrationTest, LoadAllPlugins)
 {
     CardPluginRegistry registry;
     auto loaded = registry.loadPluginsFromDirectory(pluginDir());
-#ifdef HAS_OPENSC_PLUGIN
+#if defined(HAS_OPENSC_PLUGIN) && defined(HAS_EMRTD_PLUGIN)
+    EXPECT_EQ(loaded, 6u);
+    EXPECT_EQ(registry.plugins().size(), 6u);
+#elif defined(HAS_OPENSC_PLUGIN)
+    EXPECT_EQ(loaded, 5u);
+    EXPECT_EQ(registry.plugins().size(), 5u);
+#elif defined(HAS_EMRTD_PLUGIN)
     EXPECT_EQ(loaded, 5u);
     EXPECT_EQ(registry.plugins().size(), 5u);
 #else
@@ -102,5 +108,23 @@ TEST(PluginIntegrationTest, OpenSCIsLastInProbeOrder)
     ASSERT_FALSE(plugins.empty());
     EXPECT_EQ(plugins.back()->pluginId(), "opensc");
     EXPECT_EQ(plugins.back()->probePriority(), 900);
+}
+#endif
+
+#ifdef HAS_EMRTD_PLUGIN
+TEST(PluginIntegrationTest, EMRTDPriorityBetweenDedicatedAndOpenSC)
+{
+    CardPluginRegistry registry;
+    registry.loadPluginsFromDirectory(pluginDir());
+
+    CardPlugin* emrtd = nullptr;
+    for (auto* p : registry.plugins()) {
+        if (p->pluginId() == "emrtd") {
+            emrtd = p;
+            break;
+        }
+    }
+    ASSERT_NE(emrtd, nullptr);
+    EXPECT_EQ(emrtd->probePriority(), 800);
 }
 #endif

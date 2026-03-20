@@ -1,0 +1,2 @@
+/usr/bin/ar qc libHealthCard.a CMakeFiles/HealthCard.dir/src/healthcard.cpp.o
+/usr/bin/ranlib libHealthCard.a

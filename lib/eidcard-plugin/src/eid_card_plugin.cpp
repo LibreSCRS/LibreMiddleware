@@ -6,6 +6,9 @@
 #include <plugin/card_plugin.h>
 #include <smartcard/pcsc_connection.h>
 
+#include <filesystem>
+#include <fstream>
+
 namespace {
 
 void addText(plugin::CardFieldGroup& group, const std::string& key, const std::string& label, const std::string& val)
@@ -93,13 +96,24 @@ public:
     {
         if (atr.size() < 3)
             return false;
-        // Apollo 2008
+        // Apollo 2008 (contact)
         if (atr[0] == 0x3B && atr[1] == 0xB9 && atr[2] == 0x18)
             return true;
-        // Gemalto 2014+
+        // Gemalto 2014+ (contact)
         if (atr[0] == 0x3B && atr[1] == 0xFF && atr[2] == 0x94)
             return true;
         return false;
+    }
+
+    bool canHandleConnection(smartcard::PCSCConnection& conn) const override
+    {
+        try {
+            // Try to detect card type by selecting eID applet AIDs
+            eidcard::EIdCard card(conn);
+            return card.getCardType() != eidcard::CardType::Unknown;
+        } catch (...) {
+            return false;
+        }
     }
 
     plugin::CardData readCard(smartcard::PCSCConnection& conn) const override
@@ -109,9 +123,51 @@ public:
         plugin::CardData data;
         data.cardType = "rs-eid";
 
-        data.groups.push_back(personalGroup(card.readFixedPersonalData()));
-        data.groups.push_back(addressGroup(card.readVariablePersonalData()));
-        data.groups.push_back(documentGroup(card.readDocumentData()));
+        auto cardType = card.getCardType();
+        std::string cardTypeStr;
+        switch (cardType) {
+        case eidcard::CardType::Apollo2008:
+            cardTypeStr = "Apollo2008";
+            break;
+        case eidcard::CardType::Gemalto2014:
+            cardTypeStr = "Gemalto2014";
+            break;
+        case eidcard::CardType::ForeignerIF2020:
+            cardTypeStr = "ForeignerIF2020";
+            break;
+        default:
+            cardTypeStr = "Unknown";
+            break;
+        }
+
+        auto fixedPersonal = card.readFixedPersonalData();
+        auto variablePersonal = card.readVariablePersonalData();
+        auto documentData = card.readDocumentData();
+
+        // Add card_type as a top-level metadata group
+        {
+            plugin::CardFieldGroup meta;
+            meta.groupKey = "meta";
+            meta.groupLabel = "Card Metadata";
+            meta.fields.push_back(
+                {"card_type", "Card Type", plugin::FieldType::Text, {cardTypeStr.begin(), cardTypeStr.end()}});
+            data.groups.push_back(std::move(meta));
+        }
+
+        auto personalGrp = personalGroup(fixedPersonal);
+        data.groups.push_back(std::move(personalGrp));
+
+        auto addrGrp = addressGroup(variablePersonal);
+        // Add address_date to the address group
+        if (!variablePersonal.addressDate.empty()) {
+            addrGrp.fields.push_back({"address_date",
+                                      "Address Date",
+                                      plugin::FieldType::Text,
+                                      {variablePersonal.addressDate.begin(), variablePersonal.addressDate.end()}});
+        }
+        data.groups.push_back(std::move(addrGrp));
+
+        data.groups.push_back(documentGroup(documentData));
 
         auto photo = card.readPortrait();
         if (!photo.empty()) {
@@ -120,6 +176,52 @@ public:
             photoGroup.groupLabel = "Photo";
             photoGroup.fields.push_back({"photo", "Photo", plugin::FieldType::Photo, photo});
             data.groups.push_back(std::move(photoGroup));
+        }
+
+        // Load trusted CA certificates for SOD verification
+#ifdef LIBREMIDDLEWARE_CERT_DIR
+        {
+            namespace fs = std::filesystem;
+            std::error_code ec;
+            for (const auto& entry : fs::directory_iterator(LIBREMIDDLEWARE_CERT_DIR, ec)) {
+                if (!entry.is_regular_file())
+                    continue;
+                auto ext = entry.path().extension().string();
+                if (ext != ".cer" && ext != ".crt")
+                    continue;
+                std::ifstream f(entry.path(), std::ios::binary);
+                if (!f)
+                    continue;
+                std::vector<uint8_t> der((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+                card.addTrustedCertificate(der);
+            }
+        }
+#endif
+
+        // Verification — add results as metadata fields
+        auto toStr = [](eidcard::VerificationResult r) -> std::string {
+            switch (r) {
+            case eidcard::VerificationResult::Valid:
+                return "valid";
+            case eidcard::VerificationResult::Invalid:
+                return "invalid";
+            default:
+                return "unknown";
+            }
+        };
+
+        auto cardVerification = card.verifyCard();
+        auto fixedVerification = card.verifyFixedData();
+        auto variableVerification = card.verifyVariableData();
+
+        auto* metaGroup = data.findGroup("meta");
+        if (metaGroup) {
+            auto addVerField = [&](const std::string& key, const std::string& val) {
+                metaGroup->fields.push_back({key, key, plugin::FieldType::Text, {val.begin(), val.end()}});
+            };
+            addVerField("card_verification", toStr(cardVerification));
+            addVerField("fixed_verification", toStr(fixedVerification));
+            addVerField("variable_verification", toStr(variableVerification));
         }
 
         return data;

@@ -99,6 +99,10 @@ public:
     {
         return {};
     }
+
+    // Optional: credential passing for two-phase authentication (e.g. eMRTD PACE/BAC).
+    // Keys are plugin-specific. Default is no-op.
+    virtual void setCredentials(const std::string& /*key*/, const std::string& /*value*/) const {}
 };
 
 // Every plugin .so must export these two functions with C linkage:

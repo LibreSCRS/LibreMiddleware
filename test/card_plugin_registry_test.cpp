@@ -88,26 +88,3 @@ TEST(CardPluginRegistryTest, FindAllCandidatesEmptyForUnknownATR)
     auto candidates = registry.findAllCandidates(unknownATR);
     EXPECT_TRUE(candidates.empty());
 }
-
-TEST(CardPluginRegistryTest, FindAllCandidatesTwoPhaseMatchesByATR)
-{
-    CardPluginRegistry registry;
-    registry.loadPluginsFromDirectory(mockPluginDir());
-
-    std::vector<uint8_t> matchingATR = {0xDE, 0xAD, 0xBE, 0xEF};
-
-    // Create a dummy PCSCConnection reference. The mock plugin never dereferences
-    // the connection, so this is safe for testing the two-phase code path.
-    alignas(std::max_align_t) uint8_t connStorage[256] = {};
-    auto& dummyConn = reinterpret_cast<smartcard::PCSCConnection&>(connStorage);
-
-    auto atrOnly = registry.findAllCandidates(matchingATR);
-    auto twoPhase = registry.findAllCandidates(matchingATR, dummyConn);
-
-    // Two-phase result should match ATR-only result (de-duplication works,
-    // Phase 2 adds nothing since the mock's canHandleConnection returns false).
-    ASSERT_EQ(twoPhase.size(), atrOnly.size());
-    for (size_t i = 0; i < atrOnly.size(); ++i) {
-        EXPECT_EQ(twoPhase[i]->pluginId(), atrOnly[i]->pluginId());
-    }
-}

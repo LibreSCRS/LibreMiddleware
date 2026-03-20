@@ -1,0 +1,1 @@
+/usr/bin/cc -fPIC -shared -Wl,--dependency-file=CMakeFiles/librescrs-opensc.dir/link.d -Wl,-soname,librescrs-opensc.so -o librescrs-opensc.so "CMakeFiles/librescrs-opensc.dir/src/librescrs_opensc.c.o"  /usr/lib/libopensc.so /usr/lib/libz.so
