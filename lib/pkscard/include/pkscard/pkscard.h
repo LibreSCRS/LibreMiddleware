@@ -26,8 +26,10 @@ public:
     // Check if a PKS card is present on the given reader without opening a full session.
     // Uses AID selection only; factory ordering ensures this is called after eID probes.
     static bool probe(const std::string& readerName);
+    static bool probe(smartcard::PCSCConnection& conn);
 
     explicit PKSCard(const std::string& readerName);
+    explicit PKSCard(smartcard::PCSCConnection& conn);
     ~PKSCard();
 
     PKSCard(const PKSCard&) = delete;
@@ -53,7 +55,8 @@ public:
     std::vector<std::pair<std::string, uint16_t>> discoverKeyReferences();
 
 private:
-    std::unique_ptr<smartcard::PCSCConnection> connection;
+    std::unique_ptr<smartcard::PCSCConnection> ownedConnection;
+    smartcard::PCSCConnection* conn = nullptr;
 };
 
 } // namespace pkscard

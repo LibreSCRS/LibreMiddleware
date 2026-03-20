@@ -20,8 +20,10 @@ class HealthCard
 {
 public:
     static bool probe(const std::string& readerName);
+    static bool probe(smartcard::PCSCConnection& conn);
 
     explicit HealthCard(const std::string& readerName);
+    explicit HealthCard(smartcard::PCSCConnection& conn);
     ~HealthCard();
     HealthCard(const HealthCard&) = delete;
     HealthCard& operator=(const HealthCard&) = delete;
@@ -33,7 +35,8 @@ public:
     cardedge::PINResult changePIN(const std::string& oldPin, const std::string& newPin);
 
 private:
-    std::unique_ptr<smartcard::PCSCConnection> connection;
+    std::unique_ptr<smartcard::PCSCConnection> ownedConnection;
+    smartcard::PCSCConnection* conn = nullptr;
 
     void initCard();
     std::vector<uint8_t> readFile(const std::vector<uint8_t>& fileId);

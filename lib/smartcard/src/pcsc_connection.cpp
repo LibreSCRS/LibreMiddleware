@@ -8,7 +8,7 @@
 
 namespace smartcard {
 
-PCSCConnection::PCSCConnection(const std::string& readerName)
+PCSCConnection::PCSCConnection(const std::string& readerName) : readerName_(readerName)
 {
     LONG rv = SCardEstablishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &context);
     if (rv != SCARD_S_SUCCESS) {

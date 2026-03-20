@@ -22,6 +22,16 @@ set(LIBREMIDDLEWARE_CERTIFICATES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/cer
     CACHE PATH "Path to Serbian CA certificates" FORCE)
 
 add_subdirectory(thirdparty)
+add_subdirectory(lib/plugin)
+
+# All card plugins build into a single directory for registry discovery
+set(LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/plugins" CACHE PATH
+    "Directory where card plugin .so files are placed")
+
+# Export plugin directory for consumers (e.g. LibreCelik via FetchContent)
+set(LIBREMIDDLEWARE_PLUGIN_DIR "${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}" CACHE PATH
+    "Directory containing LibreMiddleware card plugins (for consumers)")
+
 add_subdirectory(lib/smartcard)
 add_subdirectory(lib/cardedge)
 add_subdirectory(lib/eidcard)
@@ -30,6 +40,12 @@ add_subdirectory(lib/healthcard)
 add_subdirectory(lib/pkscard)
 add_subdirectory(lib/pkcs11)
 add_subdirectory(lib/opensc-driver)
+
+# Card plugins (shared libraries loaded at runtime)
+add_subdirectory(lib/eidcard-plugin)
+add_subdirectory(lib/vehiclecard-plugin)
+add_subdirectory(lib/healthcard-plugin)
+add_subdirectory(lib/pkscard-plugin)
 
 option(BUILD_TESTING "Build tests" ON)
 if(BUILD_TESTING)

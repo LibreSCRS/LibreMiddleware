@@ -38,29 +38,37 @@ bool EIdCard::probe(const std::string& readerName)
     }
 }
 
-EIdCard::EIdCard(const std::string& readerName)
+// Shared init logic for both constructors
+void EIdCard::detectCardType()
 {
-    connection = std::make_unique<smartcard::PCSCConnection>(readerName);
-
-    // Detect card type from ATR
-    auto atr = connection->getATR();
+    auto atr = conn->getATR();
 
     if (protocol::isGemaltoATR(atr)) {
-        // Gemalto card: try AID selection to determine citizen/foreigner
-        cardType = CardReaderGemalto::selectApplication(*connection);
+        cardType = CardReaderGemalto::selectApplication(*conn);
         cardReader = std::make_unique<CardReaderGemalto>();
     } else if (protocol::isApolloATR(atr)) {
         cardType = CardType::Apollo2008;
         cardReader = std::make_unique<CardReaderApollo>();
     } else {
-        // Unknown ATR - try Gemalto AID selection as fallback
-        cardType = CardReaderGemalto::selectApplication(*connection);
+        cardType = CardReaderGemalto::selectApplication(*conn);
         if (cardType != CardType::Unknown) {
             cardReader = std::make_unique<CardReaderGemalto>();
         } else {
             throw std::runtime_error("Unknown card type, ATR not recognized");
         }
     }
+}
+
+EIdCard::EIdCard(const std::string& readerName)
+{
+    ownedConnection = std::make_unique<smartcard::PCSCConnection>(readerName);
+    conn = ownedConnection.get();
+    detectCardType();
+}
+
+EIdCard::EIdCard(smartcard::PCSCConnection& externalConn) : conn(&externalConn)
+{
+    detectCardType();
 }
 
 EIdCard::~EIdCard() = default;
@@ -72,8 +80,8 @@ CardType EIdCard::getCardType() const
 
 DocumentData EIdCard::readDocumentData()
 {
-    smartcard::CardTransaction tx(*connection);
-    auto raw = cardReader->readFile(*connection, protocol::FILE_DOCUMENT_DATA_H, protocol::FILE_DOCUMENT_DATA_L);
+    smartcard::CardTransaction tx(*conn);
+    auto raw = cardReader->readFile(*conn, protocol::FILE_DOCUMENT_DATA_H, protocol::FILE_DOCUMENT_DATA_L);
     auto fields = smartcard::parseTLV(raw.data(), raw.size());
 
     DocumentData doc;
@@ -89,8 +97,8 @@ DocumentData EIdCard::readDocumentData()
 
 FixedPersonalData EIdCard::readFixedPersonalData()
 {
-    smartcard::CardTransaction tx(*connection);
-    auto raw = cardReader->readFile(*connection, protocol::FILE_PERSONAL_DATA_H, protocol::FILE_PERSONAL_DATA_L);
+    smartcard::CardTransaction tx(*conn);
+    auto raw = cardReader->readFile(*conn, protocol::FILE_PERSONAL_DATA_H, protocol::FILE_PERSONAL_DATA_L);
     auto fields = smartcard::parseTLV(raw.data(), raw.size());
 
     FixedPersonalData fpd;
@@ -110,8 +118,8 @@ FixedPersonalData EIdCard::readFixedPersonalData()
 
 VariablePersonalData EIdCard::readVariablePersonalData()
 {
-    smartcard::CardTransaction tx(*connection);
-    auto raw = cardReader->readFile(*connection, protocol::FILE_VARIABLE_DATA_H, protocol::FILE_VARIABLE_DATA_L);
+    smartcard::CardTransaction tx(*conn);
+    auto raw = cardReader->readFile(*conn, protocol::FILE_VARIABLE_DATA_H, protocol::FILE_VARIABLE_DATA_L);
     auto fields = smartcard::parseTLV(raw.data(), raw.size());
 
     VariablePersonalData vpd;
@@ -131,8 +139,8 @@ VariablePersonalData EIdCard::readVariablePersonalData()
 
 PhotoData EIdCard::readPortrait()
 {
-    smartcard::CardTransaction tx(*connection);
-    auto raw = cardReader->readFile(*connection, protocol::FILE_PORTRAIT_H, protocol::FILE_PORTRAIT_L);
+    smartcard::CardTransaction tx(*conn);
+    auto raw = cardReader->readFile(*conn, protocol::FILE_PORTRAIT_H, protocol::FILE_PORTRAIT_L);
     // Photo file data has a 4-byte TLV header (tag + length); trim it
     if (raw.size() > 4) {
         return PhotoData(raw.begin() + 4, raw.end());
@@ -145,8 +153,8 @@ CertificateList EIdCard::readCertificates()
     if (cardType != CardType::Gemalto2014 && cardType != CardType::ForeignerIF2020)
         return {};
 
-    cardedge::PkiAppletGuard guard(*connection, [](auto& c) { CardReaderGemalto::selectApplication(c); });
-    return cardedge::readCertificates(*connection);
+    cardedge::PkiAppletGuard guard(*conn, [](auto& c) { CardReaderGemalto::selectApplication(c); });
+    return cardedge::readCertificates(*conn);
 }
 
 PINResult EIdCard::getPINTriesLeft()
@@ -154,8 +162,8 @@ PINResult EIdCard::getPINTriesLeft()
     if (cardType == CardType::Apollo2008)
         throw std::runtime_error("PIN operations not supported on Apollo2008 cards");
 
-    cardedge::PkiAppletGuard guard(*connection, [](auto& c) { CardReaderGemalto::selectApplication(c); });
-    return cardedge::getPINTriesLeft(*connection);
+    cardedge::PkiAppletGuard guard(*conn, [](auto& c) { CardReaderGemalto::selectApplication(c); });
+    return cardedge::getPINTriesLeft(*conn);
 }
 
 PINResult EIdCard::verifyPIN(const std::string& pin)
@@ -163,8 +171,8 @@ PINResult EIdCard::verifyPIN(const std::string& pin)
     if (cardType == CardType::Apollo2008)
         throw std::runtime_error("PIN operations not supported on Apollo2008 cards");
 
-    cardedge::PkiAppletGuard guard(*connection, [](auto& c) { CardReaderGemalto::selectApplication(c); });
-    return cardedge::verifyPIN(*connection, pin);
+    cardedge::PkiAppletGuard guard(*conn, [](auto& c) { CardReaderGemalto::selectApplication(c); });
+    return cardedge::verifyPIN(*conn, pin);
 }
 
 PINResult EIdCard::changePIN(const std::string& oldPin, const std::string& newPin)
@@ -172,8 +180,8 @@ PINResult EIdCard::changePIN(const std::string& oldPin, const std::string& newPi
     if (cardType == CardType::Apollo2008)
         throw std::runtime_error("PIN operations not supported on Apollo2008 cards");
 
-    cardedge::PkiAppletGuard guard(*connection, [](auto& c) { CardReaderGemalto::selectApplication(c); });
-    return cardedge::changePIN(*connection, oldPin, newPin);
+    cardedge::PkiAppletGuard guard(*conn, [](auto& c) { CardReaderGemalto::selectApplication(c); });
+    return cardedge::changePIN(*conn, oldPin, newPin);
 }
 
 std::vector<uint8_t> EIdCard::signData(uint16_t keyReference, const std::vector<uint8_t>& data)
@@ -181,8 +189,8 @@ std::vector<uint8_t> EIdCard::signData(uint16_t keyReference, const std::vector<
     if (cardType != CardType::Gemalto2014 && cardType != CardType::ForeignerIF2020)
         throw std::runtime_error("signData not supported on this card type");
 
-    cardedge::PkiAppletGuard guard(*connection, [](auto& c) { CardReaderGemalto::selectApplication(c); });
-    return cardedge::signData(*connection, keyReference, data);
+    cardedge::PkiAppletGuard guard(*conn, [](auto& c) { CardReaderGemalto::selectApplication(c); });
+    return cardedge::signData(*conn, keyReference, data);
 }
 
 std::vector<std::pair<std::string, uint16_t>> EIdCard::discoverKeyReferences()
@@ -190,14 +198,14 @@ std::vector<std::pair<std::string, uint16_t>> EIdCard::discoverKeyReferences()
     if (cardType != CardType::Gemalto2014 && cardType != CardType::ForeignerIF2020)
         return {};
 
-    cardedge::PkiAppletGuard guard(*connection, [](auto& c) { CardReaderGemalto::selectApplication(c); });
-    return cardedge::discoverKeyReferences(*connection);
+    cardedge::PkiAppletGuard guard(*conn, [](auto& c) { CardReaderGemalto::selectApplication(c); });
+    return cardedge::discoverKeyReferences(*conn);
 }
 
 void EIdCard::reconnectConnection()
 {
-    if (connection)
-        connection->reconnect();
+    if (conn)
+        conn->reconnect();
 }
 
 void EIdCard::setCertificateFolderPath(const std::string& path)
@@ -225,7 +233,7 @@ VerificationResult EIdCard::verifyCard()
     ensureVerifier();
     if (!verifier)
         return VerificationResult::Unknown;
-    return verifier->verifyCard(*connection, *cardReader, cardType);
+    return verifier->verifyCard(*conn, *cardReader, cardType);
 }
 
 VerificationResult EIdCard::verifyFixedData()
@@ -233,7 +241,7 @@ VerificationResult EIdCard::verifyFixedData()
     ensureVerifier();
     if (!verifier)
         return VerificationResult::Unknown;
-    return verifier->verifyFixedData(*connection, *cardReader, cardType);
+    return verifier->verifyFixedData(*conn, *cardReader, cardType);
 }
 
 VerificationResult EIdCard::verifyVariableData()
@@ -241,7 +249,7 @@ VerificationResult EIdCard::verifyVariableData()
     ensureVerifier();
     if (!verifier)
         return VerificationResult::Unknown;
-    return verifier->verifyVariableData(*connection, *cardReader, cardType);
+    return verifier->verifyVariableData(*conn, *cardReader, cardType);
 }
 
 } // namespace eidcard

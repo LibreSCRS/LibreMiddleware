@@ -55,6 +55,15 @@ bool HealthCard::probe(const std::string& readerName)
 {
     try {
         smartcard::PCSCConnection conn(readerName);
+        return probe(conn);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool HealthCard::probe(smartcard::PCSCConnection& conn)
+{
+    try {
         auto resp = conn.transmit(smartcard::selectByAID(protocol::AID_SERVSZK));
         return resp.isSuccess();
     } catch (...) {
@@ -64,7 +73,13 @@ bool HealthCard::probe(const std::string& readerName)
 
 HealthCard::HealthCard(const std::string& readerName)
 {
-    connection = std::make_unique<smartcard::PCSCConnection>(readerName);
+    ownedConnection = std::make_unique<smartcard::PCSCConnection>(readerName);
+    conn = ownedConnection.get();
+    initCard();
+}
+
+HealthCard::HealthCard(smartcard::PCSCConnection& externalConn) : conn(&externalConn)
+{
     initCard();
 }
 
@@ -72,7 +87,7 @@ HealthCard::~HealthCard() = default;
 
 void HealthCard::initCard()
 {
-    auto resp = connection->transmit(smartcard::selectByAID(protocol::AID_SERVSZK));
+    auto resp = conn->transmit(smartcard::selectByAID(protocol::AID_SERVSZK));
     if (!resp.isSuccess())
         throw std::runtime_error("Health card: SERVSZK AID selection failed");
 }
@@ -80,13 +95,13 @@ void HealthCard::initCard()
 std::vector<uint8_t> HealthCard::readFile(const std::vector<uint8_t>& fileId)
 {
     // SELECT FILE by ID (P1=0x00, P2=0x00) — required by health card SERVSZK applet
-    auto selectResp = connection->transmit(smartcard::selectByFileId(fileId[0], fileId[1]));
+    auto selectResp = conn->transmit(smartcard::selectByFileId(fileId[0], fileId[1]));
     if (!selectResp.isSuccess())
         throw std::runtime_error("Health card: SELECT file failed for fileId " + std::to_string(fileId[0]) + "/" +
                                  std::to_string(fileId[1]) + " SW=" + std::to_string(selectResp.statusWord()));
 
     // Read 4-byte header: bytes [2:3] (LE) hold the content length
-    auto headerResp = connection->transmit(smartcard::readBinary(0, protocol::FILE_HEADER_SIZE));
+    auto headerResp = conn->transmit(smartcard::readBinary(0, protocol::FILE_HEADER_SIZE));
     if (!headerResp.isSuccess() || headerResp.data.size() < protocol::FILE_HEADER_SIZE)
         throw std::runtime_error("Health card: Cannot read file header");
 
@@ -104,7 +119,7 @@ std::vector<uint8_t> HealthCard::readFile(const std::vector<uint8_t>& fileId)
     while (fileData.size() < contentLength) {
         uint8_t chunkSize = static_cast<uint8_t>(
             std::min(static_cast<size_t>(protocol::READ_CHUNK_SIZE), contentLength - fileData.size()));
-        auto readResp = connection->transmit(smartcard::readBinary(offset, chunkSize));
+        auto readResp = conn->transmit(smartcard::readBinary(offset, chunkSize));
         if (!readResp.isSuccess())
             throw std::runtime_error("Health card: READ BINARY failed");
         if (readResp.data.empty())
@@ -191,20 +206,20 @@ HealthDocumentData HealthCard::readDocumentData()
 
 cardedge::CertificateList HealthCard::readCertificates()
 {
-    cardedge::PkiAppletGuard guard(*connection);
-    return cardedge::readCertificates(*connection);
+    cardedge::PkiAppletGuard guard(*conn);
+    return cardedge::readCertificates(*conn);
 }
 
 cardedge::PINResult HealthCard::getPINTriesLeft()
 {
-    cardedge::PkiAppletGuard guard(*connection);
-    return cardedge::getPINTriesLeft(*connection);
+    cardedge::PkiAppletGuard guard(*conn);
+    return cardedge::getPINTriesLeft(*conn);
 }
 
 cardedge::PINResult HealthCard::changePIN(const std::string& oldPin, const std::string& newPin)
 {
-    cardedge::PkiAppletGuard guard(*connection);
-    return cardedge::changePIN(*connection, oldPin, newPin);
+    cardedge::PkiAppletGuard guard(*conn);
+    return cardedge::changePIN(*conn, oldPin, newPin);
 }
 
 } // namespace healthcard

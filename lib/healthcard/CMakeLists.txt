@@ -15,3 +15,4 @@ target_include_directories(HealthCard PUBLIC
 )
 
 target_link_libraries(HealthCard PUBLIC SmartCard CardEdge)
+set_target_properties(HealthCard PROPERTIES POSITION_INDEPENDENT_CODE ON)

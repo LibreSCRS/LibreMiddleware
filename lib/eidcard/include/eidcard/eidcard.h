@@ -27,6 +27,7 @@ public:
     static bool probe(const std::string& readerName);
 
     explicit EIdCard(const std::string& readerName);
+    explicit EIdCard(smartcard::PCSCConnection& conn);
     ~EIdCard();
 
     EIdCard(const EIdCard&) = delete;
@@ -66,12 +67,14 @@ public:
     VerificationResult verifyVariableData();
 
 private:
-    std::unique_ptr<smartcard::PCSCConnection> connection;
+    std::unique_ptr<smartcard::PCSCConnection> ownedConnection;
+    smartcard::PCSCConnection* conn = nullptr; // always valid: points to owned or borrowed
     std::unique_ptr<CardReaderBase> cardReader;
     std::unique_ptr<CardVerifier> verifier;
     std::string certFolderPath;
     CardType cardType = CardType::Unknown;
 
+    void detectCardType();
     void ensureVerifier();
 };
 

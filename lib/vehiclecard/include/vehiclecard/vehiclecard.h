@@ -20,8 +20,10 @@ class VehicleCard
 public:
     // Check if a vehicle card is present on the given reader without opening a full session.
     static bool probe(const std::string& readerName);
+    static bool probe(smartcard::PCSCConnection& conn);
 
     explicit VehicleCard(const std::string& readerName);
+    explicit VehicleCard(smartcard::PCSCConnection& conn);
     ~VehicleCard();
 
     VehicleCard(const VehicleCard&) = delete;
@@ -30,7 +32,8 @@ public:
     VehicleDocumentData readDocumentData();
 
 private:
-    std::unique_ptr<smartcard::PCSCConnection> connection;
+    std::unique_ptr<smartcard::PCSCConnection> ownedConnection;
+    smartcard::PCSCConnection* conn = nullptr;
 
     bool initCard();
     std::vector<uint8_t> readFile(const std::vector<uint8_t>& fileId);

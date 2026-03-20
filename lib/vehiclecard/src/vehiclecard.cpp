@@ -23,8 +23,15 @@ bool VehicleCard::probe(const std::string& readerName)
 {
     try {
         smartcard::PCSCConnection conn(readerName);
+        return probe(conn);
+    } catch (...) {
+        return false;
+    }
+}
 
-        // Try the first AID selection from each sequence — if any succeeds, it's a vehicle card
+bool VehicleCard::probe(smartcard::PCSCConnection& conn)
+{
+    try {
         auto tryAID = [&conn](const std::vector<uint8_t>& aid) -> bool {
             auto resp = conn.transmit(smartcard::selectByAID(aid));
             return resp.isSuccess();
@@ -39,10 +46,18 @@ bool VehicleCard::probe(const std::string& readerName)
 
 VehicleCard::VehicleCard(const std::string& readerName)
 {
-    connection = std::make_unique<smartcard::PCSCConnection>(readerName);
+    ownedConnection = std::make_unique<smartcard::PCSCConnection>(readerName);
+    conn = ownedConnection.get();
 
     if (!initCard()) {
         throw std::runtime_error("Vehicle card initialization failed on reader: " + readerName);
+    }
+}
+
+VehicleCard::VehicleCard(smartcard::PCSCConnection& externalConn) : conn(&externalConn)
+{
+    if (!initCard()) {
+        throw std::runtime_error("Vehicle card initialization failed");
     }
 }
 
@@ -54,19 +69,19 @@ bool VehicleCard::initCard()
     auto trySequence = [this](const std::vector<uint8_t>& cmd1, const std::vector<uint8_t>& cmd2,
                               const std::vector<uint8_t>& cmd3) -> bool {
         // First SELECT (P2=0x00)
-        auto resp = connection->transmit(smartcard::selectByAID(cmd1));
+        auto resp = conn->transmit(smartcard::selectByAID(cmd1));
         if (!resp.isSuccess()) {
             return false;
         }
 
         // Second SELECT (P2=0x00)
-        resp = connection->transmit(smartcard::selectByAID(cmd2));
+        resp = conn->transmit(smartcard::selectByAID(cmd2));
         // Don't check response - continue regardless
 
         // Third SELECT (P2=0x0C)
         smartcard::APDUCommand cmd3apdu{
             .cla = 0x00, .ins = 0xA4, .p1 = 0x04, .p2 = 0x0C, .data = cmd3, .le = 0, .hasLe = false};
-        resp = connection->transmit(cmd3apdu);
+        resp = conn->transmit(cmd3apdu);
         // Don't check response - continue regardless
 
         return true;
@@ -95,13 +110,13 @@ std::vector<uint8_t> VehicleCard::readFile(const std::vector<uint8_t>& fileId)
     // SELECT file: 00 A4 02 04 <fileId> 00
     smartcard::APDUCommand selectCmd{
         .cla = 0x00, .ins = 0xA4, .p1 = 0x02, .p2 = 0x04, .data = fileId, .le = 0, .hasLe = false};
-    auto selectResp = connection->transmit(selectCmd);
+    auto selectResp = conn->transmit(selectCmd);
     if (!selectResp.isSuccess()) {
         throw std::runtime_error("Vehicle: SELECT file failed");
     }
 
     // Read file header (0x20 bytes)
-    auto headerResp = connection->transmit(smartcard::readBinary(0, protocol::FILE_HEADER_SIZE));
+    auto headerResp = conn->transmit(smartcard::readBinary(0, protocol::FILE_HEADER_SIZE));
     if (!headerResp.isSuccess() || headerResp.data.size() < 2) {
         throw std::runtime_error("Vehicle: Cannot read file header");
     }
@@ -167,7 +182,7 @@ std::vector<uint8_t> VehicleCard::readFile(const std::vector<uint8_t>& fileId)
         uint8_t chunkSize = static_cast<uint8_t>(
             std::min(static_cast<size_t>(protocol::READ_CHUNK_SIZE), totalToRead - fileData.size()));
 
-        auto readResp = connection->transmit(smartcard::readBinary(offset, chunkSize));
+        auto readResp = conn->transmit(smartcard::readBinary(offset, chunkSize));
         if (!readResp.isSuccess()) {
             throw std::runtime_error("Vehicle: READ BINARY failed at offset " + std::to_string(offset));
         }

@@ -29,6 +29,42 @@ target_link_libraries(LibreMiddlewareTests
 include(GoogleTest)
 gtest_discover_tests(LibreMiddlewareTests)
 
+# Plugin tests (CardData model + Registry + dlopen loading)
+add_subdirectory(mock_card_plugin)
+
+add_executable(PluginTests
+    card_data_test.cpp
+    card_plugin_registry_test.cpp
+)
+target_link_libraries(PluginTests
+    GTest::gtest_main
+    CardPlugin
+)
+target_compile_definitions(PluginTests PRIVATE
+    MOCK_PLUGIN_DIR="$<TARGET_FILE_DIR:mock-card-plugin>"
+)
+add_dependencies(PluginTests mock-card-plugin)
+gtest_discover_tests(PluginTests)
+
+# Integration test: loads all 4 real card plugins
+add_executable(PluginIntegrationTests
+    plugin_integration_test.cpp
+)
+target_link_libraries(PluginIntegrationTests
+    GTest::gtest_main
+    CardPlugin
+)
+target_compile_definitions(PluginIntegrationTests PRIVATE
+    PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
+)
+add_dependencies(PluginIntegrationTests
+    rescrs-plugin-rs-eid
+    rescrs-plugin-vehicle
+    rescrs-plugin-rs-health
+    rescrs-plugin-rs-pks
+)
+gtest_discover_tests(PluginIntegrationTests)
+
 add_executable(PKCS11Tests pkcs11_test.cpp)
 target_link_libraries(PKCS11Tests GTest::gtest_main librescrs-pkcs11)
 gtest_discover_tests(PKCS11Tests)

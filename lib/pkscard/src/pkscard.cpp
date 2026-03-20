@@ -13,6 +13,15 @@ bool PKSCard::probe(const std::string& readerName)
 {
     try {
         smartcard::PCSCConnection conn(readerName);
+        return probe(conn);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool PKSCard::probe(smartcard::PCSCConnection& conn)
+{
+    try {
         // Health cards also support PKCS15 — reject them by checking for the
         // SERVSZK health insurance applet (AID F3 81 00 00 02 SERVSZK 01).
         static const std::vector<uint8_t> AID_SERVSZK = {0xF3, 0x81, 0x00, 0x00, 0x02, 0x53, 0x45,
@@ -28,45 +37,48 @@ bool PKSCard::probe(const std::string& readerName)
 
 PKSCard::PKSCard(const std::string& readerName)
 {
-    connection = std::make_unique<smartcard::PCSCConnection>(readerName);
+    ownedConnection = std::make_unique<smartcard::PCSCConnection>(readerName);
+    conn = ownedConnection.get();
 }
+
+PKSCard::PKSCard(smartcard::PCSCConnection& externalConn) : conn(&externalConn) {}
 
 PKSCard::~PKSCard() = default;
 
 cardedge::CertificateList PKSCard::readCertificates()
 {
-    cardedge::PkiAppletGuard guard(*connection);
-    return cardedge::readCertificates(*connection);
+    cardedge::PkiAppletGuard guard(*conn);
+    return cardedge::readCertificates(*conn);
 }
 
 cardedge::PINResult PKSCard::getPINTriesLeft()
 {
-    cardedge::PkiAppletGuard guard(*connection);
-    return cardedge::getPINTriesLeft(*connection);
+    cardedge::PkiAppletGuard guard(*conn);
+    return cardedge::getPINTriesLeft(*conn);
 }
 
 cardedge::PINResult PKSCard::verifyPIN(const std::string& pin)
 {
-    cardedge::PkiAppletGuard guard(*connection);
-    return cardedge::verifyPIN(*connection, pin);
+    cardedge::PkiAppletGuard guard(*conn);
+    return cardedge::verifyPIN(*conn, pin);
 }
 
 cardedge::PINResult PKSCard::changePIN(const std::string& oldPin, const std::string& newPin)
 {
-    cardedge::PkiAppletGuard guard(*connection);
-    return cardedge::changePIN(*connection, oldPin, newPin);
+    cardedge::PkiAppletGuard guard(*conn);
+    return cardedge::changePIN(*conn, oldPin, newPin);
 }
 
 std::vector<uint8_t> PKSCard::signData(uint16_t keyReference, const std::vector<uint8_t>& data)
 {
-    cardedge::PkiAppletGuard guard(*connection);
-    return cardedge::signData(*connection, keyReference, data);
+    cardedge::PkiAppletGuard guard(*conn);
+    return cardedge::signData(*conn, keyReference, data);
 }
 
 std::vector<std::pair<std::string, uint16_t>> PKSCard::discoverKeyReferences()
 {
-    cardedge::PkiAppletGuard guard(*connection);
-    return cardedge::discoverKeyReferences(*connection);
+    cardedge::PkiAppletGuard guard(*conn);
+    return cardedge::discoverKeyReferences(*conn);
 }
 
 } // namespace pkscard

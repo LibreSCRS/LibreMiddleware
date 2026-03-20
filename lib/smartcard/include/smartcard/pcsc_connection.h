@@ -44,6 +44,7 @@ public:
     APDUResponse transmit(const APDUCommand& cmd);
     void reconnect(); // prefers T=1, falls back to T=0
     std::vector<uint8_t> getATR() const;
+    const std::string& readerName() const { return readerName_; }
     DWORD getActiveProtocol() const
     {
         return activeProtocol;
@@ -60,6 +61,7 @@ public:
 private:
     APDUResponse transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen);
 
+    std::string readerName_;
     SCARDCONTEXT context = 0;
     SCARDHANDLE card = 0;
     DWORD activeProtocol = 0;

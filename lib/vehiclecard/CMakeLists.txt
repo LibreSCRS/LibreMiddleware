@@ -15,3 +15,4 @@ target_include_directories(VehicleCard PUBLIC
 )
 
 target_link_libraries(VehicleCard PUBLIC SmartCard)
+set_target_properties(VehicleCard PROPERTIES POSITION_INDEPENDENT_CODE ON)
