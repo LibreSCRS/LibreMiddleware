@@ -5,7 +5,6 @@
 #define HEALTHCARD_HEALTHCARD_H
 
 #include "healthcard/healthtypes.h"
-#include <cardedge/cardedgetypes.h>
 #include <memory>
 #include <string>
 #include <vector>
@@ -29,10 +28,6 @@ public:
     HealthCard& operator=(const HealthCard&) = delete;
 
     HealthDocumentData readDocumentData();
-
-    cardedge::CertificateList readCertificates();
-    cardedge::PINResult getPINTriesLeft();
-    cardedge::PINResult changePIN(const std::string& oldPin, const std::string& newPin);
 
 private:
     std::unique_ptr<smartcard::PCSCConnection> ownedConnection;

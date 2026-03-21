@@ -38,7 +38,7 @@ size_t CardPluginRegistry::loadPluginsFromDirectory(const std::filesystem::path&
         if (ext != ".so" && ext != ".dylib")
             continue;
 
-        void* handle = dlopen(entry.path().c_str(), RTLD_LAZY);
+        void* handle = dlopen(entry.path().c_str(), RTLD_NOW | RTLD_LOCAL);
         if (!handle) {
             std::cerr << "CardPluginRegistry: failed to load " << entry.path() << ": " << dlerror() << "\n";
             continue;
@@ -140,7 +140,11 @@ std::vector<CardPlugin*> CardPluginRegistry::findAllCandidates(const std::vector
         }
     }
 
-    std::sort(result.begin(), result.end(),
+    // Sort within each phase independently — ATR matches before AID probes
+    auto phase2Start = result.begin() + static_cast<ptrdiff_t>(seen.size());
+    std::sort(result.begin(), phase2Start,
+              [](const auto* a, const auto* b) { return a->probePriority() < b->probePriority(); });
+    std::sort(phase2Start, result.end(),
               [](const auto* a, const auto* b) { return a->probePriority() < b->probePriority(); });
     return result;
 }

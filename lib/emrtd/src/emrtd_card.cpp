@@ -9,8 +9,7 @@
 
 #include <openssl/crypto.h>
 
-#include <iostream>
-#include <iomanip>
+#include <stdexcept>
 
 namespace emrtd {
 
@@ -70,14 +69,7 @@ AuthResult EMRTDCard::authenticate()
     // not inside the applet. Some cards (e.g. Georgian eID) only allow reading
     // CardAccess from MF, not from within the eMRTD applet.
     auto cardAccess = readCardAccess();
-    std::cerr << "[eMRTD] CardAccess size=" << cardAccess.size() << " data=";
-    for (auto b : cardAccess)
-        std::cerr << std::hex << std::setw(2) << std::setfill('0') << (int)b << " ";
-    std::cerr << std::dec << std::endl;
     auto paceEntries = crypto::parseCardAccessWithParams(cardAccess);
-    std::cerr << "[eMRTD] parseCardAccess found " << paceEntries.size() << " entries" << std::endl;
-    for (const auto& [oid, pid] : paceEntries)
-        std::cerr << "[eMRTD]   OID=" << oid << " paramId=" << pid << std::endl;
 
     // Do NOT select eMRTD applet before PACE — MSE SET AT runs at card level (MF),
     // not inside the applet. Applet selection happens AFTER PACE succeeds.
@@ -126,13 +118,11 @@ AuthResult EMRTDCard::authenticate()
         // PACE runs at card (MF) level, NOT inside the applet
         for (const auto& [oid, paramId] : paceEntries) {
 
-            std::cerr << "[PACE] trying OID=" << oid << " paramId=" << paramId << std::endl;
             crypto::PACEParams params{oid, pwType, password, paramId};
             std::optional<crypto::SessionKeys> session;
             try {
                 session = crypto::performPACE(conn, params);
-            } catch (const std::exception& e) {
-                std::cerr << "[PACE] exception for OID " << oid << ": " << e.what() << std::endl;
+            } catch (const std::exception&) {
                 continue;
             }
             if (session) {
@@ -193,6 +183,8 @@ std::vector<uint8_t> EMRTDCard::transmitSecure(const std::vector<uint8_t>& apduB
     try {
         resp = conn.transmit(cmd);
     } catch (const smartcard::PCSCError&) {
+        if (recovering)
+            return {};
         // Try recovery on card reset
         try {
             recover();
@@ -225,18 +217,23 @@ std::vector<uint8_t> EMRTDCard::transmitSecure(const std::vector<uint8_t>& apduB
 
 void EMRTDCard::recover()
 {
+    recovering = true;
+    struct RecoveryGuard
+    {
+        bool& flag;
+        ~RecoveryGuard()
+        {
+            flag = false;
+        }
+    } guard{recovering};
+
     conn.reconnect();
-    selectApplet();
-    // Re-authenticate using stored credentials
     sm.reset();
     authenticate();
 }
 
 std::optional<std::vector<uint8_t>> EMRTDCard::readFile(uint16_t fid)
 {
-    // Hold exclusive card access for the entire file read sequence
-    smartcard::CardTransaction tx(conn);
-
     // SELECT file by FID (P2=0x0C: no response data expected)
     std::vector<uint8_t> selectApdu = {
         0x00, 0xA4, 0x02, 0x0C, 0x02, static_cast<uint8_t>(fid >> 8), static_cast<uint8_t>(fid & 0xFF)};

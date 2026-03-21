@@ -43,6 +43,7 @@ private:
     std::optional<std::vector<uint8_t>> readFile(uint16_t fid);
     std::vector<uint8_t> transmitSecure(const std::vector<uint8_t>& apdu);
     void recover();
+    bool recovering = false;
 };
 
 } // namespace emrtd

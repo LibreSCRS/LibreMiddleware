@@ -5,7 +5,9 @@
 // Usage: ./pin_test_cli [reader_name]
 // If no reader_name is given, lists available readers.
 
-#include <eidcard/eidcard.h>
+#include <cardedge/cardedge.h>
+#include <cardedge/pki_applet_guard.h>
+#include <smartcard/pcsc_connection.h>
 #include <iostream>
 #include <string>
 #include <cstring>
@@ -72,13 +74,16 @@ int main(int argc, char* argv[])
     }
 
     try {
-        std::cout << "\n--- Creating EIdCard ---" << std::endl;
-        eidcard::EIdCard card(readerName);
-        std::cout << "Card type: " << static_cast<int>(card.getCardType()) << std::endl;
+        std::cout << "\n--- Connecting to card ---" << std::endl;
+        smartcard::PCSCConnection conn(readerName);
 
         // Step 1: getPINTriesLeft (safe, no retry decrement)
         std::cout << "\n--- Step 1: getPINTriesLeft ---" << std::endl;
-        auto tries = card.getPINTriesLeft();
+        cardedge::PINResult tries;
+        {
+            cardedge::PkiAppletGuard guard(conn);
+            tries = cardedge::getPINTriesLeft(conn);
+        }
         std::cout << "Result: retriesLeft=" << tries.retriesLeft << ", blocked=" << tries.blocked
                   << ", success=" << tries.success << std::endl;
 
@@ -104,7 +109,11 @@ int main(int argc, char* argv[])
             return 0;
         }
 
-        auto verifyResult = card.verifyPIN(pin);
+        cardedge::PINResult verifyResult;
+        {
+            cardedge::PkiAppletGuard guard(conn);
+            verifyResult = cardedge::verifyPIN(conn, pin);
+        }
         std::cout << "Result: success=" << verifyResult.success << ", retriesLeft=" << verifyResult.retriesLeft
                   << ", blocked=" << verifyResult.blocked << std::endl;
 
@@ -138,7 +147,11 @@ int main(int argc, char* argv[])
             return 1;
         }
 
-        auto changeResult = card.changePIN(pin, newPin);
+        cardedge::PINResult changeResult;
+        {
+            cardedge::PkiAppletGuard guard(conn);
+            changeResult = cardedge::changePIN(conn, pin, newPin);
+        }
         std::cout << "Result: success=" << changeResult.success << ", retriesLeft=" << changeResult.retriesLeft
                   << ", blocked=" << changeResult.blocked << std::endl;
 
@@ -147,12 +160,20 @@ int main(int argc, char* argv[])
 
             // Verify the new PIN works
             std::cout << "\n--- Verifying new PIN ---" << std::endl;
-            auto recheck = card.verifyPIN(newPin);
+            cardedge::PINResult recheck;
+            {
+                cardedge::PkiAppletGuard guard(conn);
+                recheck = cardedge::verifyPIN(conn, newPin);
+            }
             std::cout << "Verify new PIN: success=" << recheck.success << std::endl;
 
             // Change back to original
             std::cout << "\n--- Changing PIN back to original ---" << std::endl;
-            auto revert = card.changePIN(newPin, pin);
+            cardedge::PINResult revert;
+            {
+                cardedge::PkiAppletGuard guard(conn);
+                revert = cardedge::changePIN(conn, newPin, pin);
+            }
             std::cout << "Revert: success=" << revert.success << std::endl;
             if (revert.success)
                 std::cout << "PIN restored to original." << std::endl;

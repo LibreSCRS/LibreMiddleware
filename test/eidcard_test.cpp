@@ -2,9 +2,12 @@
 // Copyright hirashix0@proton.me
 
 #include <gtest/gtest.h>
+#include <cardedge/cardedgetypes.h>
 #include <eidcard/eidtypes.h>
 
 using namespace eidcard;
+using cardedge::CertificateData;
+using cardedge::PINResult;
 
 TEST(EIdTypesTest, DocumentDataDefaultConstruction)
 {

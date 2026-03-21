@@ -7,8 +7,6 @@
 #include "card_reader_gemalto.h"
 #include "card_reader_apollo.h"
 #include "card_verifier.h"
-#include "cardedge/cardedge.h"
-#include "cardedge/pki_applet_guard.h"
 #include "smartcard/pcsc_connection.h"
 #include "smartcard/tlv.h"
 #include "smartcard/apdu.h"
@@ -146,60 +144,6 @@ PhotoData EIdCard::readPortrait()
         return PhotoData(raw.begin() + 4, raw.end());
     }
     return {};
-}
-
-CertificateList EIdCard::readCertificates()
-{
-    if (cardType != CardType::Gemalto2014 && cardType != CardType::ForeignerIF2020)
-        return {};
-
-    cardedge::PkiAppletGuard guard(*conn, [](auto& c) { CardReaderGemalto::selectApplication(c); });
-    return cardedge::readCertificates(*conn);
-}
-
-PINResult EIdCard::getPINTriesLeft()
-{
-    if (cardType == CardType::Apollo2008)
-        throw std::runtime_error("PIN operations not supported on Apollo2008 cards");
-
-    cardedge::PkiAppletGuard guard(*conn, [](auto& c) { CardReaderGemalto::selectApplication(c); });
-    return cardedge::getPINTriesLeft(*conn);
-}
-
-PINResult EIdCard::verifyPIN(const std::string& pin)
-{
-    if (cardType == CardType::Apollo2008)
-        throw std::runtime_error("PIN operations not supported on Apollo2008 cards");
-
-    cardedge::PkiAppletGuard guard(*conn, [](auto& c) { CardReaderGemalto::selectApplication(c); });
-    return cardedge::verifyPIN(*conn, pin);
-}
-
-PINResult EIdCard::changePIN(const std::string& oldPin, const std::string& newPin)
-{
-    if (cardType == CardType::Apollo2008)
-        throw std::runtime_error("PIN operations not supported on Apollo2008 cards");
-
-    cardedge::PkiAppletGuard guard(*conn, [](auto& c) { CardReaderGemalto::selectApplication(c); });
-    return cardedge::changePIN(*conn, oldPin, newPin);
-}
-
-std::vector<uint8_t> EIdCard::signData(uint16_t keyReference, const std::vector<uint8_t>& data)
-{
-    if (cardType != CardType::Gemalto2014 && cardType != CardType::ForeignerIF2020)
-        throw std::runtime_error("signData not supported on this card type");
-
-    cardedge::PkiAppletGuard guard(*conn, [](auto& c) { CardReaderGemalto::selectApplication(c); });
-    return cardedge::signData(*conn, keyReference, data);
-}
-
-std::vector<std::pair<std::string, uint16_t>> EIdCard::discoverKeyReferences()
-{
-    if (cardType != CardType::Gemalto2014 && cardType != CardType::ForeignerIF2020)
-        return {};
-
-    cardedge::PkiAppletGuard guard(*conn, [](auto& c) { CardReaderGemalto::selectApplication(c); });
-    return cardedge::discoverKeyReferences(*conn);
 }
 
 void EIdCard::reconnectConnection()

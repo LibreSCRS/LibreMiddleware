@@ -74,8 +74,6 @@ plugin::CardFieldGroup documentGroup(const eidcard::DocumentData& doc)
     return group;
 }
 
-} // namespace
-
 class EidCardPlugin : public plugin::CardPlugin
 {
 public:
@@ -226,59 +224,9 @@ public:
 
         return data;
     }
-
-    bool supportsPKI() const override
-    {
-        return true;
-    }
-
-    std::vector<plugin::CertificateData> readCertificates(smartcard::PCSCConnection& conn) const override
-    {
-        eidcard::EIdCard card(conn);
-        auto certs = card.readCertificates();
-
-        std::vector<plugin::CertificateData> result;
-        for (const auto& cert : certs) {
-            result.push_back({cert.label, cert.derBytes, cert.keyFID, cert.keySizeBits});
-        }
-        return result;
-    }
-
-    plugin::PINResult verifyPIN(smartcard::PCSCConnection& conn, const std::string& pin) const override
-    {
-        eidcard::EIdCard card(conn);
-        auto r = card.verifyPIN(pin);
-        return {r.success, r.retriesLeft, r.blocked};
-    }
-
-    plugin::PINResult changePIN(smartcard::PCSCConnection& conn, const std::string& oldPin,
-                                const std::string& newPin) const override
-    {
-        eidcard::EIdCard card(conn);
-        auto r = card.changePIN(oldPin, newPin);
-        return {r.success, r.retriesLeft, r.blocked};
-    }
-
-    int getPINTriesLeft(smartcard::PCSCConnection& conn) const override
-    {
-        eidcard::EIdCard card(conn);
-        return card.getPINTriesLeft().retriesLeft;
-    }
-
-    plugin::SignResult sign(smartcard::PCSCConnection& conn, uint16_t keyReference, std::span<const uint8_t> data,
-                            plugin::SignMechanism /*mechanism*/) const override
-    {
-        eidcard::EIdCard card(conn);
-        auto sig = card.signData(keyReference, {data.begin(), data.end()});
-        return {!sig.empty(), std::move(sig)};
-    }
-
-    std::vector<std::pair<std::string, uint16_t>> discoverKeyReferences(smartcard::PCSCConnection& conn) const override
-    {
-        eidcard::EIdCard card(conn);
-        return card.discoverKeyReferences();
-    }
 };
+
+} // namespace
 
 extern "C" std::unique_ptr<plugin::CardPlugin> create_card_plugin()
 {

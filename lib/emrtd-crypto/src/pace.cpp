@@ -120,6 +120,8 @@ static std::vector<uint8_t> oidStringToBytes(const std::string& oid)
 
     if (components.size() < 2)
         return {};
+    if (components[0] > 2 || (components[0] < 2 && components[1] > 39))
+        return {};
 
     std::vector<uint8_t> bytes;
     bytes.push_back(static_cast<uint8_t>(components[0] * 40 + components[1]));

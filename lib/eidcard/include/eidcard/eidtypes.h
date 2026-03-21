@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <string>
 #include <vector>
-#include "cardedge/cardedgetypes.h"
 
 namespace eidcard {
 
@@ -55,11 +54,6 @@ struct VariablePersonalData
 };
 
 using PhotoData = std::vector<uint8_t>;
-
-// Re-exported from cardedge for backward compatibility
-using CertificateData = cardedge::CertificateData;
-using CertificateList = cardedge::CertificateList;
-using PINResult = cardedge::PINResult;
 
 enum class VerificationResult {
     Unknown, // verification could not be performed

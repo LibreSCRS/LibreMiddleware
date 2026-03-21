@@ -22,6 +22,7 @@ add_executable(LibreMiddlewareTests
 target_link_libraries(LibreMiddlewareTests
     GTest::gtest_main
     EIdCard
+    CardEdge
     VehicleCard
     HealthCard
 )
@@ -64,8 +65,20 @@ add_dependencies(PluginIntegrationTests
     rescrs-plugin-rs-pks
 )
 
-add_dependencies(PluginIntegrationTests rescrs-plugin-emrtd)
-target_compile_definitions(PluginIntegrationTests PRIVATE HAS_EMRTD_PLUGIN=1)
+if(TARGET rescrs-plugin-emrtd)
+    add_dependencies(PluginIntegrationTests rescrs-plugin-emrtd)
+    target_compile_definitions(PluginIntegrationTests PRIVATE HAS_EMRTD_PLUGIN=1)
+endif()
+
+if(TARGET rescrs-plugin-pkcs15)
+    add_dependencies(PluginIntegrationTests rescrs-plugin-pkcs15)
+    target_compile_definitions(PluginIntegrationTests PRIVATE HAS_PKCS15_PLUGIN=1)
+endif()
+
+if(TARGET rescrs-plugin-cardedge)
+    add_dependencies(PluginIntegrationTests rescrs-plugin-cardedge)
+    target_compile_definitions(PluginIntegrationTests PRIVATE HAS_CARDEDGE_PLUGIN=1)
+endif()
 
 if(BUILD_OPENSC_PLUGIN AND OPENSC_FOUND)
     add_dependencies(PluginIntegrationTests rescrs-plugin-opensc)
@@ -94,15 +107,23 @@ gtest_discover_tests(PKCS11Tests)
 
 # CLI tool for manual PIN testing with a real card
 add_executable(pin_test_cli pin_test_cli.cpp)
-target_link_libraries(pin_test_cli EIdCard)
+target_link_libraries(pin_test_cli CardEdge SmartCard)
 
 # PKCS#15 card investigation probe (run with a physical card inserted)
 add_executable(pkcs15_probe pkcs15_probe.cpp)
 target_link_libraries(pkcs15_probe SmartCard)
 
+# PKCS#15-after-PACE probe: authenticates via PACE then probes PKCS#15
+add_executable(pkcs15_after_pace_probe pkcs15_after_pace_probe.cpp)
+target_link_libraries(pkcs15_after_pace_probe SmartCard EMRTDCrypto EMRTD)
+
+# AODF + PIN reference probe
+add_executable(aodf_probe aodf_probe.cpp)
+target_link_libraries(aodf_probe SmartCard)
+
 # CLI tool for manual PIN testing with a real PKS Chamber of Commerce card
 add_executable(pks_pin_test_cli pks_pin_test_cli.cpp)
-target_link_libraries(pks_pin_test_cli PKSCard)
+target_link_libraries(pks_pin_test_cli PKSCard CardEdge)
 
 # FCI format probe: tests if CardEdge SELECT FILE returns ISO TLV-wrapped FCI
 add_executable(fci_format_probe fci_format_probe.cpp)
@@ -130,6 +151,27 @@ target_link_libraries(EMRTDTests
     EMRTD
 )
 gtest_discover_tests(EMRTDTests)
+
+# PKCS#15 parser tests
+add_executable(PKCS15ParserTests pkcs15_parser_test.cpp)
+target_link_libraries(PKCS15ParserTests GTest::gtest_main PKCS15)
+gtest_discover_tests(PKCS15ParserTests)
+
+# CardEdge plugin tests
+add_executable(CardEdgePluginTests cardedge_plugin_test.cpp)
+target_link_libraries(CardEdgePluginTests GTest::gtest_main CardPlugin)
+target_compile_definitions(CardEdgePluginTests PRIVATE PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}")
+add_dependencies(CardEdgePluginTests rescrs-plugin-cardedge)
+gtest_discover_tests(CardEdgePluginTests)
+
+# PKCS#15 plugin tests
+add_executable(PKCS15PluginTests pkcs15_plugin_test.cpp)
+target_link_libraries(PKCS15PluginTests GTest::gtest_main CardPlugin)
+target_compile_definitions(PKCS15PluginTests PRIVATE
+    PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
+)
+add_dependencies(PKCS15PluginTests rescrs-plugin-pkcs15)
+gtest_discover_tests(PKCS15PluginTests)
 
 # OpenSC fallback plugin tests (conditional on libopensc availability)
 if(BUILD_OPENSC_PLUGIN AND OPENSC_FOUND)

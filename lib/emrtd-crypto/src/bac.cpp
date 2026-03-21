@@ -11,6 +11,7 @@
 #include <openssl/rand.h>
 
 #include <algorithm>
+#include <stdexcept>
 
 namespace emrtd::crypto {
 
@@ -31,7 +32,8 @@ BACKeys deriveBACKeys(const std::string& documentNumber, const std::string& date
     std::vector<uint8_t> mrzBytes(mrzInfo.begin(), mrzInfo.end());
     uint8_t hash[EVP_MAX_MD_SIZE];
     size_t hashLen = 0;
-    EVP_Q_digest(nullptr, "SHA1", nullptr, mrzBytes.data(), mrzBytes.size(), hash, &hashLen);
+    if (!EVP_Q_digest(nullptr, "SHA1", nullptr, mrzBytes.data(), mrzBytes.size(), hash, &hashLen))
+        throw std::runtime_error("deriveBACKeys: SHA-1 digest failed");
     std::vector<uint8_t> kSeed(hash, hash + 16);
 
     // Derive K_Enc = KDF(K_seed, 1) and K_MAC = KDF(K_seed, 2)
@@ -53,8 +55,8 @@ std::optional<SessionKeys> performBAC(smartcard::PCSCConnection& conn, const BAC
     // Step 2: Generate RND.IFD (8 bytes) and K.IFD (16 bytes)
     std::vector<uint8_t> rndIFD(8);
     std::vector<uint8_t> kIFD(16);
-    RAND_bytes(rndIFD.data(), 8);
-    RAND_bytes(kIFD.data(), 16);
+    if (RAND_bytes(rndIFD.data(), 8) != 1 || RAND_bytes(kIFD.data(), 16) != 1)
+        return std::nullopt;
 
     // Step 3: Build S = RND.IFD || RND.ICC || K.IFD (32 bytes)
     std::vector<uint8_t> s;

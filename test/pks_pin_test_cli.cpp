@@ -3,14 +3,18 @@
 //
 // CLI tool to test PIN operations on a PKS Chamber of Commerce card.
 // Also dumps discovered key references and certificate count.
+// Uses CardEdge directly for PKI operations; PKSCard is only used for probing.
 // Usage: ./pks_pin_test_cli [reader_name]
 // If no reader_name is given, lists available readers.
 
+#include <cardedge/cardedge.h>
+#include <cardedge/pki_applet_guard.h>
 #include <pkscard/pkscard.h>
+#include <smartcard/pcsc_connection.h>
+#include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <string>
-#include <cstring>
 
 #ifdef __APPLE__
 #include <PCSC/wintypes.h>
@@ -82,28 +86,38 @@ int main(int argc, char* argv[])
         }
         std::cout << "PKS card detected." << std::endl;
 
-        std::cout << "\n--- Creating PKSCard ---" << std::endl;
-        pkscard::PKSCard card(readerName);
+        std::cout << "\n--- Connecting to card ---" << std::endl;
+        smartcard::PCSCConnection conn(readerName);
 
         // Step 1: discoverKeyReferences
         std::cout << "\n--- Step 1: discoverKeyReferences ---" << std::endl;
-        auto keys = card.discoverKeyReferences();
-        std::cout << "Found " << keys.size() << " key reference(s):" << std::endl;
-        for (const auto& [label, fid] : keys)
-            std::cout << "  \"" << label << "\" FID=0x" << std::hex << std::setfill('0') << std::setw(4) << fid
-                      << std::dec << std::endl;
+        {
+            cardedge::PkiAppletGuard guard(conn);
+            auto keys = cardedge::discoverKeyReferences(conn);
+            std::cout << "Found " << keys.size() << " key reference(s):" << std::endl;
+            for (const auto& [label, fid] : keys)
+                std::cout << "  \"" << label << "\" FID=0x" << std::hex << std::setfill('0') << std::setw(4) << fid
+                          << std::dec << std::endl;
+        }
 
         // Step 2: readCertificates
         std::cout << "\n--- Step 2: readCertificates ---" << std::endl;
-        auto certs = card.readCertificates();
-        std::cout << "Found " << certs.size() << " certificate(s):" << std::endl;
-        for (const auto& c : certs)
-            std::cout << "  \"" << c.label << "\" DER size=" << c.derBytes.size() << " keyFID=0x" << std::hex
-                      << std::setfill('0') << std::setw(4) << c.keyFID << std::dec << std::endl;
+        {
+            cardedge::PkiAppletGuard guard(conn);
+            auto certs = cardedge::readCertificates(conn);
+            std::cout << "Found " << certs.size() << " certificate(s):" << std::endl;
+            for (const auto& c : certs)
+                std::cout << "  \"" << c.label << "\" DER size=" << c.derBytes.size() << " keyFID=0x" << std::hex
+                          << std::setfill('0') << std::setw(4) << c.keyFID << std::dec << std::endl;
+        }
 
         // Step 3: getPINTriesLeft (safe, no retry decrement)
         std::cout << "\n--- Step 3: getPINTriesLeft ---" << std::endl;
-        auto tries = card.getPINTriesLeft();
+        cardedge::PINResult tries;
+        {
+            cardedge::PkiAppletGuard guard(conn);
+            tries = cardedge::getPINTriesLeft(conn);
+        }
         std::cout << "Result: retriesLeft=" << tries.retriesLeft << ", blocked=" << tries.blocked
                   << ", success=" << tries.success << std::endl;
 
@@ -128,7 +142,11 @@ int main(int argc, char* argv[])
             return 0;
         }
 
-        auto verifyResult = card.verifyPIN(pin);
+        cardedge::PINResult verifyResult;
+        {
+            cardedge::PkiAppletGuard guard(conn);
+            verifyResult = cardedge::verifyPIN(conn, pin);
+        }
         std::cout << "Result: success=" << verifyResult.success << ", retriesLeft=" << verifyResult.retriesLeft
                   << ", blocked=" << verifyResult.blocked << std::endl;
 
@@ -162,7 +180,11 @@ int main(int argc, char* argv[])
             return 1;
         }
 
-        auto changeResult = card.changePIN(pin, newPin);
+        cardedge::PINResult changeResult;
+        {
+            cardedge::PkiAppletGuard guard(conn);
+            changeResult = cardedge::changePIN(conn, pin, newPin);
+        }
         std::cout << "Result: success=" << changeResult.success << ", retriesLeft=" << changeResult.retriesLeft
                   << ", blocked=" << changeResult.blocked << std::endl;
 
@@ -170,11 +192,19 @@ int main(int argc, char* argv[])
             std::cout << "PIN changed successfully!" << std::endl;
 
             std::cout << "\n--- Verifying new PIN ---" << std::endl;
-            auto recheck = card.verifyPIN(newPin);
+            cardedge::PINResult recheck;
+            {
+                cardedge::PkiAppletGuard guard(conn);
+                recheck = cardedge::verifyPIN(conn, newPin);
+            }
             std::cout << "Verify new PIN: success=" << recheck.success << std::endl;
 
             std::cout << "\n--- Changing PIN back to original ---" << std::endl;
-            auto revert = card.changePIN(newPin, pin);
+            cardedge::PINResult revert;
+            {
+                cardedge::PkiAppletGuard guard(conn);
+                revert = cardedge::changePIN(conn, newPin, pin);
+            }
             std::cout << "Revert: success=" << revert.success << std::endl;
             if (revert.success)
                 std::cout << "PIN restored to original." << std::endl;

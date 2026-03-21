@@ -351,7 +351,7 @@ std::vector<uint8_t> aesCMAC(const std::vector<uint8_t>& key, const std::vector<
         throw std::runtime_error("aesCMAC: EVP_MAC_fetch(CMAC) failed");
     }
 
-    EVP_MAC_CTX* ctx = EVP_MAC_CTX_new(mac);
+    auto ctx = std::unique_ptr<EVP_MAC_CTX, decltype(&EVP_MAC_CTX_free)>(EVP_MAC_CTX_new(mac), EVP_MAC_CTX_free);
     EVP_MAC_free(mac);
     if (!ctx) {
         throw std::runtime_error("aesCMAC: EVP_MAC_CTX_new failed");
@@ -361,22 +361,18 @@ std::vector<uint8_t> aesCMAC(const std::vector<uint8_t>& key, const std::vector<
     params[0] = OSSL_PARAM_construct_utf8_string(OSSL_MAC_PARAM_CIPHER, const_cast<char*>(cipherName), 0);
     params[1] = OSSL_PARAM_construct_end();
 
-    if (!EVP_MAC_init(ctx, key.data(), key.size(), params)) {
-        EVP_MAC_CTX_free(ctx);
+    if (!EVP_MAC_init(ctx.get(), key.data(), key.size(), params)) {
         throw std::runtime_error("aesCMAC: EVP_MAC_init failed");
     }
-    if (!EVP_MAC_update(ctx, data.data(), data.size())) {
-        EVP_MAC_CTX_free(ctx);
+    if (!EVP_MAC_update(ctx.get(), data.data(), data.size())) {
         throw std::runtime_error("aesCMAC: EVP_MAC_update failed");
     }
 
     std::vector<uint8_t> fullMAC(16);
     size_t macLen = 0;
-    if (!EVP_MAC_final(ctx, fullMAC.data(), &macLen, fullMAC.size())) {
-        EVP_MAC_CTX_free(ctx);
+    if (!EVP_MAC_final(ctx.get(), fullMAC.data(), &macLen, fullMAC.size())) {
         throw std::runtime_error("aesCMAC: EVP_MAC_final failed");
     }
-    EVP_MAC_CTX_free(ctx);
 
     // Truncate to 8 bytes per ICAO 9303
     fullMAC.resize(8);

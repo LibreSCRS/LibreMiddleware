@@ -44,7 +44,10 @@ public:
     APDUResponse transmit(const APDUCommand& cmd);
     void reconnect(); // prefers T=1, falls back to T=0
     std::vector<uint8_t> getATR() const;
-    const std::string& readerName() const { return readerName_; }
+    const std::string& readerName() const
+    {
+        return readerName_;
+    }
     DWORD getActiveProtocol() const
     {
         return activeProtocol;

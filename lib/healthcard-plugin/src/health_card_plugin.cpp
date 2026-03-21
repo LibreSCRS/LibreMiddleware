@@ -120,37 +120,6 @@ public:
 
         return data;
     }
-
-    bool supportsPKI() const override
-    {
-        return true;
-    }
-
-    std::vector<plugin::CertificateData> readCertificates(smartcard::PCSCConnection& conn) const override
-    {
-        healthcard::HealthCard card(conn);
-        auto certs = card.readCertificates();
-
-        std::vector<plugin::CertificateData> result;
-        for (const auto& cert : certs) {
-            result.push_back({cert.label, cert.derBytes, cert.keyFID, cert.keySizeBits});
-        }
-        return result;
-    }
-
-    int getPINTriesLeft(smartcard::PCSCConnection& conn) const override
-    {
-        healthcard::HealthCard card(conn);
-        return card.getPINTriesLeft().retriesLeft;
-    }
-
-    plugin::PINResult changePIN(smartcard::PCSCConnection& conn, const std::string& oldPin,
-                                const std::string& newPin) const override
-    {
-        healthcard::HealthCard card(conn);
-        auto r = card.changePIN(oldPin, newPin);
-        return {r.success, r.retriesLeft, r.blocked};
-    }
 };
 
 extern "C" std::unique_ptr<plugin::CardPlugin> create_card_plugin()

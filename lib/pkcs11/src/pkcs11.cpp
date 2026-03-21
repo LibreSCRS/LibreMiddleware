@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-// Copyright hirashix0@proton.me
+// SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "pkcs11_library.h"
 #include "cardedge/cardedge_pkcs11_provider.h"
@@ -7,7 +7,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -33,12 +32,12 @@ static void pkcs11_debug(const char* fmt, ...)
     }                                                                                                                  \
     catch (const std::exception& e)                                                                                    \
     {                                                                                                                  \
-        std::cerr << "[PKCS11] exception: " << e.what() << std::endl;                                                  \
+        pkcs11_debug("exception: %s", e.what());                                                                       \
         return CKR_DEVICE_ERROR;                                                                                       \
     }                                                                                                                  \
     catch (...)                                                                                                        \
     {                                                                                                                  \
-        std::cerr << "[PKCS11] unknown exception" << std::endl;                                                        \
+        pkcs11_debug("unknown exception");                                                                             \
         return CKR_DEVICE_ERROR;                                                                                       \
     }
 

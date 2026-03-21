@@ -6,8 +6,6 @@
 #include "smartcard/apdu.h"
 #include "smartcard/pcsc_connection.h"
 #include "smartcard/tlv.h"
-#include "cardedge/cardedge.h"
-#include "cardedge/pki_applet_guard.h"
 #include <algorithm>
 #include <stdexcept>
 
@@ -202,24 +200,6 @@ HealthDocumentData HealthCard::readDocumentData()
     d.taxpayerActivityCode = smartcard::findString(varAdminFields, protocol::TAG_TAXPAYER_ACTIV);
 
     return d;
-}
-
-cardedge::CertificateList HealthCard::readCertificates()
-{
-    cardedge::PkiAppletGuard guard(*conn);
-    return cardedge::readCertificates(*conn);
-}
-
-cardedge::PINResult HealthCard::getPINTriesLeft()
-{
-    cardedge::PkiAppletGuard guard(*conn);
-    return cardedge::getPINTriesLeft(*conn);
-}
-
-cardedge::PINResult HealthCard::changePIN(const std::string& oldPin, const std::string& newPin)
-{
-    cardedge::PkiAppletGuard guard(*conn);
-    return cardedge::changePIN(*conn, oldPin, newPin);
 }
 
 } // namespace healthcard

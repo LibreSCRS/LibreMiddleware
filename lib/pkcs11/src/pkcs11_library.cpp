@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-// Copyright hirashix0@proton.me
+// SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "pkcs11_library.h"
 #include "pkcs11_version.h"
 #include "smartcard/pcsc_connection.h"
 #include <algorithm>
 #include <cstring>
-#include <iostream>
 #include <openssl/bn.h>
 #include <openssl/evp.h>
 #include <openssl/x509.h>
@@ -632,10 +631,10 @@ bool PKCS11Library::matchesTemplate(const PKCS11Object& obj, CK_ATTRIBUTE_PTR pT
             break;
         }
         case CKA_MODULUS_BITS: {
-            if (obj.objectClass == CKO_PRIVATE_KEY && attr.ulValueLen == sizeof(CK_ULONG)) {
+            if (obj.objectClass == CKO_PRIVATE_KEY && !obj.modulus.empty() && attr.ulValueLen == sizeof(CK_ULONG)) {
                 CK_ULONG val;
                 std::memcpy(&val, attr.pValue, sizeof(val));
-                CK_ULONG bits = obj.modulus.empty() ? 2048 : static_cast<CK_ULONG>(obj.modulus.size() * 8);
+                CK_ULONG bits = static_cast<CK_ULONG>(obj.modulus.size() * 8);
                 if (val != bits)
                     return false;
             }
@@ -895,8 +894,8 @@ CK_RV PKCS11Library::getAttributeValue(CK_SESSION_HANDLE hSession, CK_OBJECT_HAN
             }
             break;
         case CKA_MODULUS_BITS: {
-            if (obj.objectClass == CKO_PRIVATE_KEY) {
-                modulusBits = obj.modulus.empty() ? 2048 : static_cast<CK_ULONG>(obj.modulus.size() * 8);
+            if (obj.objectClass == CKO_PRIVATE_KEY && !obj.modulus.empty()) {
+                modulusBits = static_cast<CK_ULONG>(obj.modulus.size() * 8);
                 src = &modulusBits;
                 srcLen = sizeof(modulusBits);
                 found = true;
@@ -1137,7 +1136,6 @@ CK_RV PKCS11Library::sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULON
             // The card was physically reset by another process while we were signing.
             // Reconnect our handle (SCARD_LEAVE_CARD) and force the caller to re-login
             // (the card no longer has our PIN verified).
-            std::cerr << "[PKCS11] C_Sign: SCARD_W_RESET_CARD — reconnecting, clearing login" << std::endl;
             try {
                 slots[obj.slotID].provider->reconnectCard();
             } catch (...) {
@@ -1145,14 +1143,10 @@ CK_RV PKCS11Library::sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULON
             loginState.erase(obj.slotID);
             return CKR_USER_NOT_LOGGED_IN;
         }
-        std::cerr << "[PKCS11] C_Sign: PCSC error: " << e.what() << " code=0x" << std::hex << e.code() << std::dec
-                  << std::endl;
         return CKR_DEVICE_ERROR;
-    } catch (const std::exception& e) {
-        std::cerr << "[PKCS11] C_Sign: exception: " << e.what() << std::endl;
+    } catch (const std::exception&) {
         return CKR_DEVICE_ERROR;
     } catch (...) {
-        std::cerr << "[PKCS11] C_Sign: unknown exception" << std::endl;
         return CKR_DEVICE_ERROR;
     }
 }

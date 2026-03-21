@@ -16,4 +16,4 @@ target_include_directories(PKSCard PUBLIC
 
 set_target_properties(PKSCard PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-target_link_libraries(PKSCard PUBLIC SmartCard CardEdge)
+target_link_libraries(PKSCard PUBLIC SmartCard PRIVATE CardEdge)

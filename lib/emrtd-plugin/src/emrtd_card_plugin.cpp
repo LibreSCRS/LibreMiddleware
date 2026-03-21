@@ -10,6 +10,7 @@
 #include <smartcard/pcsc_connection.h>
 
 #include <ctime>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <variant>
@@ -34,9 +35,10 @@ std::string formatMRZDate(const std::string& yymmdd, bool isExpiry = false)
     } else {
         // Birth dates are in the past — use 19xx if 20xx would be in the future
         auto now = std::time(nullptr);
-        auto* tm = std::localtime(&now);
-        int currentYY = (tm->tm_year + 1900) % 100;
-        fullYear = (y > currentYY) ? 1900 + y : 2000 + y;
+        struct tm tmBuf{};
+        localtime_r(&now, &tmBuf);
+        int currentYY = (tmBuf.tm_year + 1900) % 100;
+        fullYear = (y > currentYY) ? 1900 + y : 2000 + y; // NOLINT(readability-magic-numbers)
     }
     return dd + "." + mm + "." + std::to_string(fullYear);
 }
@@ -65,6 +67,7 @@ public:
     bool canHandleConnection(smartcard::PCSCConnection& conn) const override
     {
         // Clear credentials from previous session (new card insert = new session)
+        std::lock_guard lock(mtx);
         credentials.reset();
         pendingDocNum.clear();
         pendingDob.clear();
@@ -82,6 +85,7 @@ public:
         plugin::CardData data;
         data.cardType = "emrtd";
 
+        std::unique_lock lock(mtx);
         if (!credentials) {
             // Phase 1: no credentials — return auth_required
             plugin::CardFieldGroup authGroup;
@@ -96,6 +100,7 @@ public:
 
             // Try to read EF.CardAccess to report PACE support
             bool paceSupported = false;
+            std::vector<std::string> paceOids;
             try {
                 // Re-select applet
                 smartcard::APDUCommand selectCmd{
@@ -107,17 +112,17 @@ public:
                     0x00, 0xB0, static_cast<uint8_t>(0x80 | emrtd::SFID_CARD_ACCESS), 0x00, {}, 0x00, true};
                 auto caResp = conn.transmit(readCA);
                 if (caResp.isSuccess() && !caResp.data.empty()) {
-                    supportedPACEOids = emrtd::crypto::parseCardAccess(caResp.data);
-                    paceSupported = !supportedPACEOids.empty();
+                    paceOids = emrtd::crypto::parseCardAccess(caResp.data);
+                    paceSupported = !paceOids.empty();
                 }
             } catch (...) {
                 // Non-fatal
             }
 
             addText("pace_supported", "PACE Supported", paceSupported ? "true" : "false");
-            if (!supportedPACEOids.empty()) {
+            if (!paceOids.empty()) {
                 std::string oids;
-                for (const auto& oid : supportedPACEOids) {
+                for (const auto& oid : paceOids) {
                     if (!oids.empty())
                         oids += ", ";
                     oids += oid;
@@ -130,10 +135,14 @@ public:
         }
 
         // Phase 2: credentials set — authenticate and read
+        // Copy credentials under lock, then release lock for card I/O
+        auto creds = *credentials;
+        lock.unlock();
+
         std::unique_ptr<emrtd::EMRTDCard> card;
-        if (auto* mrz = std::get_if<emrtd::MRZData>(&*credentials)) {
+        if (auto* mrz = std::get_if<emrtd::MRZData>(&creds)) {
             card = std::make_unique<emrtd::EMRTDCard>(conn, *mrz);
-        } else if (auto* can = std::get_if<std::string>(&*credentials)) {
+        } else if (auto* can = std::get_if<std::string>(&creds)) {
             card = std::make_unique<emrtd::EMRTDCard>(conn, *can);
         }
 
@@ -259,6 +268,7 @@ public:
 
     void setCredentials(const std::string& key, const std::string& value) const override
     {
+        std::lock_guard lock(mtx);
         if (key == "can") {
             credentials = std::string(value);
             pendingDocNum.clear();
@@ -284,8 +294,8 @@ private:
         }
     }
 
+    mutable std::mutex mtx;
     mutable std::optional<std::variant<emrtd::MRZData, std::string>> credentials;
-    mutable std::vector<std::string> supportedPACEOids;
     mutable std::string pendingDocNum;
     mutable std::string pendingDob;
     mutable std::string pendingExpiry;

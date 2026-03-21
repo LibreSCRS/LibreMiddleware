@@ -214,6 +214,9 @@ std::vector<uint8_t> SecureMessaging::protect(const std::vector<uint8_t>& comman
     body.insert(body.end(), do8e.begin(), do8e.end());
 
     // Build final APDU: CLA' INS P1 P2 Lc' body 00
+    if (body.size() > 255)
+        throw std::runtime_error("SM protect: body exceeds short-form APDU Lc limit (255 bytes)");
+
     std::vector<uint8_t> result;
     result.push_back(claProtected);
     result.push_back(ins);

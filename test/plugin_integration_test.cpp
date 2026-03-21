@@ -21,19 +21,21 @@ TEST(PluginIntegrationTest, LoadAllPlugins)
 {
     CardPluginRegistry registry;
     auto loaded = registry.loadPluginsFromDirectory(pluginDir());
-#if defined(HAS_OPENSC_PLUGIN) && defined(HAS_EMRTD_PLUGIN)
-    EXPECT_EQ(loaded, 6u);
-    EXPECT_EQ(registry.plugins().size(), 6u);
-#elif defined(HAS_OPENSC_PLUGIN)
-    EXPECT_EQ(loaded, 5u);
-    EXPECT_EQ(registry.plugins().size(), 5u);
-#elif defined(HAS_EMRTD_PLUGIN)
-    EXPECT_EQ(loaded, 5u);
-    EXPECT_EQ(registry.plugins().size(), 5u);
-#else
-    EXPECT_EQ(loaded, 4u);
-    EXPECT_EQ(registry.plugins().size(), 4u);
+    size_t expectedCount = 4;
+#ifdef HAS_EMRTD_PLUGIN
+    expectedCount++;
 #endif
+#ifdef HAS_PKCS15_PLUGIN
+    expectedCount++;
+#endif
+#ifdef HAS_CARDEDGE_PLUGIN
+    expectedCount++;
+#endif
+#ifdef HAS_OPENSC_PLUGIN
+    expectedCount++;
+#endif
+    EXPECT_EQ(loaded, expectedCount);
+    EXPECT_EQ(registry.plugins().size(), expectedCount);
     for (auto* p : registry.plugins()) {
         std::cout << "  Loaded: " << p->pluginId() << " (" << p->displayName() << ") priority=" << p->probePriority()
                   << "\n";

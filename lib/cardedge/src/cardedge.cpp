@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-// Copyright hirashix0@proton.me
+// SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "cardedge/cardedge.h"
 #include "cardedge/pki_applet_guard.h"
@@ -8,8 +8,6 @@
 #include "smartcard/apdu.h"
 #include <algorithm>
 #include <cstring>
-#include <iomanip>
-#include <iostream>
 #include <zlib.h>
 
 namespace cardedge {
@@ -18,8 +16,7 @@ namespace cardedge {
 // PkiAppletGuard
 // ---------------------------------------------------------------------------
 
-PkiAppletGuard::PkiAppletGuard(smartcard::PCSCConnection& conn, ReselHook on_exit)
-    : conn(conn), tx(conn), on_exit(std::move(on_exit))
+PkiAppletGuard::PkiAppletGuard(smartcard::PCSCConnection& conn) : conn(conn), tx(conn)
 {
     auto resp = conn.transmit(smartcard::selectByAID(protocol::AID_PKCS15));
     if (!resp.isSuccess())
@@ -28,12 +25,6 @@ PkiAppletGuard::PkiAppletGuard(smartcard::PCSCConnection& conn, ReselHook on_exi
 
 PkiAppletGuard::~PkiAppletGuard() noexcept
 {
-    if (on_exit) {
-        try {
-            on_exit(conn);
-        } catch (...) {
-        }
-    }
     // tx destructor fires next, releasing the PC/SC transaction.
 }
 
@@ -58,16 +49,10 @@ static std::vector<uint8_t> readPkiFile(smartcard::PCSCConnection& conn, uint16_
     uint8_t fileL = static_cast<uint8_t>(fileId & 0xFF);
 
     auto selectResp = conn.transmit(smartcard::selectByFileId(fileH, fileL));
-    if (!selectResp.isSuccess()) {
-        std::cerr << "[cardedge] readPkiFile: SELECT 0x" << std::hex << std::setfill('0') << std::setw(4) << fileId
-                  << " failed, SW=0x" << std::setw(4) << selectResp.statusWord() << std::dec << std::endl;
+    if (!selectResp.isSuccess())
         return {};
-    }
 
     uint16_t fileSize = parseFciFileSize(selectResp.data);
-    std::cerr << "[cardedge] readPkiFile: SELECT 0x" << std::hex << std::setfill('0') << std::setw(4) << fileId
-              << " OK, size=" << std::dec << fileSize << std::endl;
-
     if (fileSize == 0)
         return {};
 
@@ -84,11 +69,8 @@ static std::vector<uint8_t> readPkiFile(smartcard::PCSCConnection& conn, uint16_
 
         // Accept both 0x9000 (success) and 0x62XX (warnings like end-of-file)
         uint8_t sw1 = static_cast<uint8_t>((readResp.statusWord() >> 8) & 0xFF);
-        if (sw1 != 0x90 && sw1 != 0x62) {
-            std::cerr << "[cardedge] readPkiFile: READ BINARY at offset " << offset << " failed, SW=0x" << std::hex
-                      << std::setfill('0') << std::setw(4) << readResp.statusWord() << std::dec << std::endl;
+        if (sw1 != 0x90 && sw1 != 0x62)
             break;
-        }
 
         fileData.insert(fileData.end(), readResp.data.begin(), readResp.data.end());
     }
@@ -111,10 +93,8 @@ static std::vector<uint8_t> decompressCertificate(const uint8_t* data, size_t da
     std::vector<uint8_t> result(rawLen);
     uLongf destLen = rawLen;
     int ret = uncompress(result.data(), &destLen, compressed, static_cast<uLong>(compressedLen));
-    if (ret != Z_OK) {
-        std::cerr << "[cardedge] decompressCertificate: uncompress failed, ret=" << ret << std::endl;
+    if (ret != Z_OK)
         return {};
-    }
     result.resize(destLen);
     return result;
 }
@@ -187,36 +167,26 @@ CertificateList readCertificates(smartcard::PCSCConnection& conn)
 {
     // Step 1: Read root directory to find the "mscp" subdirectory.
     auto rootDir = readPkiFile(conn, protocol::PKI_ROOT_DIR_FID);
-    if (rootDir.empty()) {
-        std::cerr << "[cardedge] readCertificates: failed to read root directory" << std::endl;
+    if (rootDir.empty())
         return {};
-    }
 
     auto rootEntries = parseDirFile(rootDir);
-    std::cerr << "[cardedge] readCertificates: root dir has " << rootEntries.size() << " entries" << std::endl;
 
     uint16_t mscpFid = 0;
     for (const auto& e : rootEntries) {
-        std::cerr << "[cardedge] readCertificates: root entry: \"" << e.name << "\" fid=0x" << std::hex
-                  << std::setfill('0') << std::setw(4) << e.fid << std::dec << " isDir=" << e.isDir << std::endl;
         if (e.isDir && e.name == "mscp")
             mscpFid = e.fid;
     }
 
-    if (mscpFid == 0) {
-        std::cerr << "[cardedge] readCertificates: 'mscp' directory not found" << std::endl;
+    if (mscpFid == 0)
         return {};
-    }
 
     // Step 2: Read "mscp" directory — collect cert files (kxc*, ksc*) and cmapfile FID.
     auto mscpDir = readPkiFile(conn, mscpFid);
-    if (mscpDir.empty()) {
-        std::cerr << "[cardedge] readCertificates: failed to read mscp directory" << std::endl;
+    if (mscpDir.empty())
         return {};
-    }
 
     auto mscpEntries = parseDirFile(mscpDir);
-    std::cerr << "[cardedge] readCertificates: mscp dir has " << mscpEntries.size() << " entries" << std::endl;
 
     struct CertFileEntry
     {
@@ -229,8 +199,6 @@ CertificateList readCertificates(smartcard::PCSCConnection& conn)
     uint16_t cmapFid = 0;
 
     for (const auto& e : mscpEntries) {
-        std::cerr << "[cardedge] readCertificates: mscp entry: \"" << e.name << "\" fid=0x" << std::hex
-                  << std::setfill('0') << std::setw(4) << e.fid << std::dec << " isDir=" << e.isDir << std::endl;
         if (e.isDir)
             continue;
 
@@ -239,15 +207,18 @@ CertificateList readCertificates(smartcard::PCSCConnection& conn)
         } else if (e.name.size() == 5) {
             std::string prefix = e.name.substr(0, 3);
             if (prefix == "kxc" || prefix == "ksc") {
-                uint8_t contId = static_cast<uint8_t>(std::stoul(e.name.substr(3, 2)));
-                certFiles.push_back({e.fid,
-                                     prefix == "kxc" ? "Key Exchange Certificate" : "Digital Signature Certificate",
-                                     contId, prefix == "kxc" ? protocol::AT_KEYEXCHANGE : protocol::AT_SIGNATURE});
+                try {
+                    auto idx = std::stoul(e.name.substr(3, 2));
+                    uint8_t contId = static_cast<uint8_t>(idx);
+                    certFiles.push_back({e.fid,
+                                         prefix == "kxc" ? "Key Exchange Certificate" : "Digital Signature Certificate",
+                                         contId, prefix == "kxc" ? protocol::AT_KEYEXCHANGE : protocol::AT_SIGNATURE});
+                } catch (const std::exception&) {
+                    continue; // skip malformed entry
+                }
             }
         }
     }
-
-    std::cerr << "[cardedge] readCertificates: found " << certFiles.size() << " certificate files" << std::endl;
 
     // Step 3: Read cmapfile to derive each certificate's private key FID.
     std::vector<uint8_t> cmapData;
@@ -258,10 +229,6 @@ CertificateList readCertificates(smartcard::PCSCConnection& conn)
         if (cmapData.size() >= 2 && (cmapData.size() - 2) % protocol::CMAP_RECORD_SIZE == 0)
             cmapOffset = 2;
         cmapRecordCount = (cmapData.size() - cmapOffset) / protocol::CMAP_RECORD_SIZE;
-        std::cerr << "[cardedge] readCertificates: cmapfile has " << cmapRecordCount << " container records"
-                  << std::endl;
-    } else {
-        std::cerr << "[cardedge] readCertificates: cmapfile not found, key FIDs unavailable" << std::endl;
     }
 
     // Step 4: Read each certificate file, decompress, and pair with its private key FID.
@@ -274,8 +241,6 @@ CertificateList readCertificates(smartcard::PCSCConnection& conn)
     for (const auto& cf : certFiles) {
         try {
             auto raw = readPkiFile(conn, cf.fid);
-            std::cerr << "[cardedge] readCertificates: cert file 0x" << std::hex << std::setfill('0') << std::setw(4)
-                      << cf.fid << std::dec << " raw size=" << raw.size() << std::endl;
             if (raw.size() < 6)
                 continue;
 
@@ -290,7 +255,6 @@ CertificateList readCertificates(smartcard::PCSCConnection& conn)
                 // Uncompressed DER (ASN.1 SEQUENCE)
                 der.assign(certData, certData + certDataLen);
             } else {
-                std::cerr << "[cardedge] readCertificates: unknown cert format, skipping" << std::endl;
                 continue;
             }
 
@@ -312,17 +276,12 @@ CertificateList readCertificates(smartcard::PCSCConnection& conn)
                 }
             }
 
-            std::cerr << "[cardedge] readCertificates: \"" << cf.label << "\" DER size=" << der.size() << " keyFID=0x"
-                      << std::hex << std::setfill('0') << std::setw(4) << keyFid << " keySizeBits=" << std::dec
-                      << keySizeBits << std::endl;
             certs.push_back({cf.label, std::move(der), keyFid, keySizeBits});
-        } catch (const std::exception& e) {
-            std::cerr << "[cardedge] readCertificates: cert 0x" << std::hex << cf.fid << std::dec
-                      << " exception: " << e.what() << std::endl;
+        } catch (const std::exception&) {
+            // Skip certificates that fail to read or decompress
         }
     }
 
-    std::cerr << "[cardedge] readCertificates: returning " << certs.size() << " certificates" << std::endl;
     return certs;
 }
 
@@ -368,11 +327,8 @@ std::vector<uint8_t> signData(smartcard::PCSCConnection& conn, uint16_t keyRefer
                                   .hasLe = false};
 
     auto mseResp = conn.transmit(mseSet);
-    if (!mseResp.isSuccess()) {
-        std::cerr << "[cardedge] signData: MSE SET failed, SW=0x" << std::hex << std::setfill('0') << std::setw(4)
-                  << mseResp.statusWord() << std::dec << std::endl;
+    if (!mseResp.isSuccess())
         throw std::runtime_error("MSE SET failed");
-    }
 
     // PSO COMPUTE DIGITAL SIGNATURE: 00 2A 9E 00 [Lc] [DigestInfo] 00
     smartcard::APDUCommand pso{.cla = 0x00,
@@ -384,13 +340,9 @@ std::vector<uint8_t> signData(smartcard::PCSCConnection& conn, uint16_t keyRefer
                                .hasLe = true};
 
     auto psoResp = conn.transmit(pso);
-    if (!psoResp.isSuccess()) {
-        std::cerr << "[cardedge] signData: PSO failed, SW=0x" << std::hex << std::setfill('0') << std::setw(4)
-                  << psoResp.statusWord() << std::dec << std::endl;
+    if (!psoResp.isSuccess())
         throw std::runtime_error("PSO COMPUTE DIGITAL SIGNATURE failed");
-    }
 
-    std::cerr << "[cardedge] signData: signature size=" << psoResp.data.size() << std::endl;
     return psoResp.data;
 }
 
@@ -432,17 +384,20 @@ std::vector<std::pair<std::string, uint16_t>> discoverKeyReferences(smartcard::P
         } else if (!e.isDir && e.name.size() == 5) {
             std::string prefix = e.name.substr(0, 3);
             if (prefix == "kxc" || prefix == "ksc") {
-                uint8_t contId = static_cast<uint8_t>(std::stoul(e.name.substr(3, 2)));
-                certInfos.push_back({prefix == "kxc" ? "Key Exchange Certificate" : "Digital Signature Certificate",
-                                     contId, prefix == "kxc" ? protocol::AT_KEYEXCHANGE : protocol::AT_SIGNATURE});
+                try {
+                    auto idx = std::stoul(e.name.substr(3, 2));
+                    uint8_t contId = static_cast<uint8_t>(idx);
+                    certInfos.push_back({prefix == "kxc" ? "Key Exchange Certificate" : "Digital Signature Certificate",
+                                         contId, prefix == "kxc" ? protocol::AT_KEYEXCHANGE : protocol::AT_SIGNATURE});
+                } catch (const std::exception&) {
+                    continue; // skip malformed entry
+                }
             }
         }
     }
 
-    if (cmapFid == 0 || certInfos.empty()) {
-        std::cerr << "[cardedge] discoverKeyReferences: cmapfile or cert files not found" << std::endl;
+    if (cmapFid == 0 || certInfos.empty())
         return {};
-    }
 
     auto cmapData = readPkiFile(conn, cmapFid);
 
@@ -452,45 +407,28 @@ std::vector<std::pair<std::string, uint16_t>> discoverKeyReferences(smartcard::P
 
     size_t recCount = (cmapData.size() - cmapOffset) / protocol::CMAP_RECORD_SIZE;
 
-    std::cerr << "[cardedge] discoverKeyReferences: cmapfile has " << recCount
-              << " container records (offset=" << cmapOffset << ", " << cmapData.size() << " bytes)" << std::endl;
-
     std::vector<std::pair<std::string, uint16_t>> result;
     for (const auto& ci : certInfos) {
-        if (ci.contId >= recCount) {
-            std::cerr << "[cardedge] discoverKeyReferences: container " << (int)ci.contId << " out of range"
-                      << std::endl;
+        if (ci.contId >= recCount)
             continue;
-        }
 
         size_t recOffset = cmapOffset + ci.contId * protocol::CMAP_RECORD_SIZE;
         uint8_t flags = cmapData[recOffset + protocol::CMAP_FLAGS_OFFSET];
 
-        if (!(flags & protocol::CMAP_VALID_CONTAINER)) {
-            std::cerr << "[cardedge] discoverKeyReferences: container " << (int)ci.contId << " not valid (flags=0x"
-                      << std::hex << (int)flags << std::dec << ")" << std::endl;
+        if (!(flags & protocol::CMAP_VALID_CONTAINER))
             continue;
-        }
 
         size_t sizeOffset = (ci.keyPairId == protocol::AT_KEYEXCHANGE) ? recOffset + protocol::CMAP_KX_SIZE_OFFSET
                                                                        : recOffset + protocol::CMAP_SIG_SIZE_OFFSET;
         uint16_t keySizeBits = static_cast<uint16_t>(cmapData[sizeOffset] | (cmapData[sizeOffset + 1] << 8));
 
-        if (keySizeBits == 0) {
-            std::cerr << "[cardedge] discoverKeyReferences: container " << (int)ci.contId << " has no "
-                      << (ci.keyPairId == protocol::AT_KEYEXCHANGE ? "KX" : "SIG") << " key" << std::endl;
+        if (keySizeBits == 0)
             continue;
-        }
 
         uint16_t keyFid = protocol::privateKeyFID(ci.contId, ci.keyPairId);
-        std::cerr << "[cardedge] discoverKeyReferences: \"" << ci.label << "\" container=" << (int)ci.contId
-                  << " keySize=" << keySizeBits << " FID=0x" << std::hex << std::setfill('0') << std::setw(4) << keyFid
-                  << std::dec << std::endl;
-
         result.emplace_back(ci.label, keyFid);
     }
 
-    std::cerr << "[cardedge] discoverKeyReferences: found " << result.size() << " key references" << std::endl;
     return result;
 }
 

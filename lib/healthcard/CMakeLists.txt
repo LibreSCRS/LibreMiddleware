@@ -14,5 +14,5 @@ target_include_directories(HealthCard PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-target_link_libraries(HealthCard PUBLIC SmartCard CardEdge)
+target_link_libraries(HealthCard PUBLIC SmartCard)
 set_target_properties(HealthCard PROPERTIES POSITION_INDEPENDENT_CODE ON)
