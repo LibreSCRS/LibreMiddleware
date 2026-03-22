@@ -10,6 +10,12 @@
 
 namespace emrtd::crypto {
 
+struct UnprotectResult {
+    std::vector<uint8_t> data;
+    uint8_t sw1 = 0;
+    uint8_t sw2 = 0;
+};
+
 class SecureMessaging
 {
 public:
@@ -24,6 +30,10 @@ public:
     // Returns decrypted response data, or nullopt if MAC verification fails.
     // Input includes SW1 SW2 at the end.
     std::optional<std::vector<uint8_t>> unprotect(const std::vector<uint8_t>& responseApdu);
+
+    // Like unprotect(), but returns the inner SW from DO'99 along with decrypted data.
+    // Needed by transmitSecureAPDU to forward real status words (e.g. 6282 end-of-file).
+    std::optional<UnprotectResult> unprotectWithSW(const std::vector<uint8_t>& responseApdu);
 
 private:
     SessionKeys keys;

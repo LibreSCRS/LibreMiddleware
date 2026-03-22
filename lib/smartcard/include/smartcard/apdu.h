@@ -29,9 +29,9 @@ struct APDUResponse
 };
 
 // Builders for common ISO 7816-4 commands
-APDUCommand selectByAID(const std::vector<uint8_t>& aid);
+APDUCommand selectByAID(const std::vector<uint8_t>& aid, uint8_t p2 = 0x00);
 APDUCommand selectByPath(uint8_t fileId1, uint8_t fileId2, uint8_t le = 4);
-APDUCommand selectByFileId(uint8_t fileId1, uint8_t fileId2);
+APDUCommand selectByFileId(uint8_t fileId1, uint8_t fileId2, uint8_t p2 = 0x00);
 APDUCommand readBinary(uint16_t offset, uint8_t length);
 
 // PIN management commands (ISO 7816-4)

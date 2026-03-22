@@ -8,7 +8,7 @@
 
 namespace smartcard {
 
-PCSCConnection::PCSCConnection(const std::string& readerName) : readerName_(readerName)
+PCSCConnection::PCSCConnection(const std::string& readerName)
 {
     LONG rv = SCardEstablishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &context);
     if (rv != SCARD_S_SUCCESS) {
@@ -63,9 +63,7 @@ APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
 
     const SCARD_IO_REQUEST* pioSendPci = (activeProtocol == SCARD_PROTOCOL_T0) ? SCARD_PCI_T0 : SCARD_PCI_T1;
 
-    // SM-protected responses can exceed 258 bytes (e.g., 256-byte data + DO'87/99/8E overhead).
-    // Use a larger buffer to accommodate SM wrapping and extended-length responses.
-    uint8_t recvBuffer[1024];
+    uint8_t recvBuffer[258];
     DWORD recvLength = sizeof(recvBuffer);
 
     LONG rv = SCardTransmit(card, pioSendPci, cmdBytes, cmdLen, nullptr, recvBuffer, &recvLength);
@@ -95,8 +93,27 @@ APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
     return response;
 }
 
+void PCSCConnection::setTransmitFilter(TransmitFilter filter)
+{
+    transmitFilter = std::move(filter);
+}
+
+void PCSCConnection::clearTransmitFilter()
+{
+    transmitFilter = nullptr;
+}
+
+APDUResponse PCSCConnection::transmitRaw(const APDUCommand& cmd)
+{
+    auto bytes = cmd.toBytes();
+    return transmitRaw(bytes.data(), static_cast<DWORD>(bytes.size()));
+}
+
 APDUResponse PCSCConnection::transmit(const APDUCommand& cmd)
 {
+    if (transmitFilter)
+        return transmitFilter(cmd);
+
     auto cmdBytes = cmd.toBytes();
     auto response = transmitRaw(cmdBytes.data(), static_cast<DWORD>(cmdBytes.size()));
 

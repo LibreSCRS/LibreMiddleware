@@ -293,8 +293,90 @@ std::optional<std::vector<uint8_t>> SecureMessaging::unprotect(const std::vector
         return detail::unpad(decrypted);
     }
 
-    // No encrypted data — return empty (command with no response data)
+    // No encrypted data — check inner SW from DO'99
+    // If the card returned an error SW (not 90xx/61xx/62xx/63xx), treat as failure
+    if (do99Raw.size() >= 4) {
+        uint8_t sw1 = do99Raw[2];
+        if (sw1 != 0x90 && sw1 != 0x61 && sw1 != 0x62 && sw1 != 0x63)
+            return std::nullopt;
+    }
+
+    // Success with no response data (e.g. SELECT with P2=0x0C)
     return std::vector<uint8_t>{};
+}
+
+// ---------------------------------------------------------------------------
+// unprotectWithSW — like unprotect, but returns the inner SW from DO'99
+// ---------------------------------------------------------------------------
+std::optional<UnprotectResult> SecureMessaging::unprotectWithSW(const std::vector<uint8_t>& responseApdu)
+{
+    if (responseApdu.size() < 2)
+        return std::nullopt;
+
+    detail::incrementSSC(keys.ssc);
+
+    const size_t bs = blockSize();
+
+    // SW1 SW2 are the last two bytes (outer/transport SW)
+    size_t dataEnd = responseApdu.size() - 2;
+
+    // Parse TLV objects from the response body (before SW1 SW2)
+    auto tlvObjects = parseTLV(responseApdu, 0, dataEnd);
+
+    std::vector<uint8_t> do87Value;
+    std::vector<uint8_t> do87Raw;
+    std::vector<uint8_t> do99Raw;
+    std::vector<uint8_t> do99Value;
+    std::vector<uint8_t> receivedMAC;
+
+    for (const auto& obj : tlvObjects) {
+        if (obj.tag == 0x87) {
+            do87Value = obj.value;
+            do87Raw.assign(responseApdu.begin() + static_cast<ptrdiff_t>(obj.startOffset),
+                           responseApdu.begin() + static_cast<ptrdiff_t>(obj.startOffset + obj.totalLen));
+        } else if (obj.tag == 0x99) {
+            do99Value = obj.value;
+            do99Raw.assign(responseApdu.begin() + static_cast<ptrdiff_t>(obj.startOffset),
+                           responseApdu.begin() + static_cast<ptrdiff_t>(obj.startOffset + obj.totalLen));
+        } else if (obj.tag == 0x8E) {
+            receivedMAC = obj.value;
+        }
+    }
+
+    if (receivedMAC.empty())
+        return std::nullopt;
+
+    // Verify MAC FIRST (authenticate-then-decrypt per ICAO spec)
+    std::vector<uint8_t> macInput;
+    macInput.insert(macInput.end(), keys.ssc.begin(), keys.ssc.end());
+    macInput.insert(macInput.end(), do87Raw.begin(), do87Raw.end());
+    macInput.insert(macInput.end(), do99Raw.begin(), do99Raw.end());
+    auto paddedMacInput = detail::pad(macInput, bs);
+
+    auto expectedMAC = computeMAC(paddedMacInput);
+    expectedMAC.resize(8);
+
+    if (receivedMAC.size() < 8 || !std::equal(expectedMAC.begin(), expectedMAC.end(), receivedMAC.begin()))
+        return std::nullopt;
+
+    // Extract inner SW from DO'99
+    UnprotectResult result;
+    if (do99Value.size() >= 2) {
+        result.sw1 = do99Value[0];
+        result.sw2 = do99Value[1];
+    }
+
+    // Decrypt DO'87 if present
+    if (!do87Value.empty()) {
+        if (do87Value[0] != 0x01)
+            return std::nullopt;
+        std::vector<uint8_t> ciphertext(do87Value.begin() + 1, do87Value.end());
+        auto decrypted = decrypt(ciphertext);
+        auto unpadded = detail::unpad(decrypted);
+        result.data = std::move(unpadded);
+    }
+
+    return result;
 }
 
 } // namespace emrtd::crypto

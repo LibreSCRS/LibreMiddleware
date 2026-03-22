@@ -30,6 +30,16 @@ target_link_libraries(LibreMiddlewareTests
 include(GoogleTest)
 gtest_discover_tests(LibreMiddlewareTests)
 
+# PCSCConnection TransmitFilter tests
+add_executable(pcsc_connection_filter_test pcsc_connection_filter_test.cpp)
+target_link_libraries(pcsc_connection_filter_test SmartCard GTest::gtest_main)
+gtest_discover_tests(pcsc_connection_filter_test)
+
+# selectByFileId P2 parameter test
+add_executable(apdu_select_p2_test apdu_select_p2_test.cpp)
+target_link_libraries(apdu_select_p2_test SmartCard GTest::gtest_main)
+gtest_discover_tests(apdu_select_p2_test)
+
 # Plugin tests (CardData model + Registry + dlopen loading)
 add_subdirectory(mock_card_plugin)
 

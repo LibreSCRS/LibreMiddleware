@@ -158,16 +158,16 @@ AuthResult EMRTDCard::authenticate()
     return {false, AuthMethod::PACE_CAN, "PACE failed and BAC requires MRZ credentials"};
 }
 
-std::vector<uint8_t> EMRTDCard::transmitSecure(const std::vector<uint8_t>& apduBytes)
+std::optional<std::vector<uint8_t>> EMRTDCard::transmitSecure(const std::vector<uint8_t>& apduBytes)
 {
     if (!sm)
-        return {};
+        return std::nullopt;
 
     auto protectedApdu = sm->protect(apduBytes);
 
     // Build APDUCommand from protected bytes
     if (protectedApdu.size() < 5)
-        return {};
+        return std::nullopt;
     smartcard::APDUCommand cmd;
     cmd.cla = protectedApdu[0];
     cmd.ins = protectedApdu[1];
@@ -181,16 +181,16 @@ std::vector<uint8_t> EMRTDCard::transmitSecure(const std::vector<uint8_t>& apduB
 
     smartcard::APDUResponse resp;
     try {
-        resp = conn.transmit(cmd);
+        resp = conn.transmitRaw(cmd);
     } catch (const smartcard::PCSCError&) {
         if (recovering)
-            return {};
+            return std::nullopt;
         // Try recovery on card reset
         try {
             recover();
             protectedApdu = sm->protect(apduBytes);
             if (protectedApdu.size() < 5)
-                return {};
+                return std::nullopt;
             cmd.cla = protectedApdu[0];
             cmd.ins = protectedApdu[1];
             cmd.p1 = protectedApdu[2];
@@ -198,9 +198,9 @@ std::vector<uint8_t> EMRTDCard::transmitSecure(const std::vector<uint8_t>& apduB
             lc = protectedApdu[4];
             cmd.data.assign(protectedApdu.begin() + 5, protectedApdu.begin() + 5 + lc);
             cmd.le = protectedApdu.back();
-            resp = conn.transmit(cmd);
+            resp = conn.transmitRaw(cmd);
         } catch (const smartcard::PCSCError&) {
-            return {};
+            return std::nullopt;
         }
     }
 
@@ -209,10 +209,31 @@ std::vector<uint8_t> EMRTDCard::transmitSecure(const std::vector<uint8_t>& apduB
     respBytes.push_back(resp.sw1);
     respBytes.push_back(resp.sw2);
 
-    auto decrypted = sm->unprotect(respBytes);
-    if (!decrypted)
-        return {};
-    return *decrypted;
+    return sm->unprotect(respBytes);
+}
+
+smartcard::APDUResponse EMRTDCard::transmitSecureAPDU(const smartcard::APDUCommand& cmd)
+{
+    if (!sm)
+        return {{}, 0x69, 0x82};
+
+    auto cmdBytes = cmd.toBytes();
+    auto protectedApdu = sm->protect(cmdBytes);
+    if (protectedApdu.size() < 5)
+        return {{}, 0x69, 0x82};
+
+    // Send via transmitRaw to bypass TransmitFilter (avoids recursion)
+    auto resp = conn.transmitRaw(protectedApdu.data(), static_cast<DWORD>(protectedApdu.size()));
+
+    std::vector<uint8_t> respBytes = resp.data;
+    respBytes.push_back(resp.sw1);
+    respBytes.push_back(resp.sw2);
+
+    auto result = sm->unprotectWithSW(respBytes);
+    if (!result)
+        return {{}, 0x69, 0x82};
+
+    return {std::move(result->data), result->sw1, result->sw2};
 }
 
 void EMRTDCard::recover()
@@ -252,10 +273,10 @@ std::optional<std::vector<uint8_t>> EMRTDCard::readFile(uint16_t fid)
         std::vector<uint8_t> readApdu = {0x00, 0xB0, p1, p2, READ_LE};
 
         auto chunk = transmitSecure(readApdu);
-        if (chunk.empty())
+        if (!chunk || chunk->empty())
             break;
 
-        fileData.insert(fileData.end(), chunk.begin(), chunk.end());
+        fileData.insert(fileData.end(), chunk->begin(), chunk->end());
 
         // Parse TLV length from first chunk to know total file size
         if (firstChunk && fileData.size() >= 4) {
@@ -282,7 +303,7 @@ std::optional<std::vector<uint8_t>> EMRTDCard::readFile(uint16_t fid)
             }
         }
 
-        offset += chunk.size();
+        offset += chunk->size();
 
         // Stop if we've read enough
         if (totalLength > 0 && fileData.size() >= totalLength) {

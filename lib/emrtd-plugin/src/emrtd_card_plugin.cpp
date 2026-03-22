@@ -72,11 +72,12 @@ public:
         pendingDocNum.clear();
         pendingDob.clear();
         pendingExpiry.clear();
+        emrTDCard.reset();
+        conn.clearTransmitFilter();
 
-        // SELECT eMRTD applet by AID
-        smartcard::APDUCommand selectCmd{
-            0x00, 0xA4, 0x04, 0x0C, {emrtd::EMRTD_AID, emrtd::EMRTD_AID + emrtd::EMRTD_AID_LEN}, 0, false};
-        auto response = conn.transmit(selectCmd);
+        // SELECT eMRTD applet by AID (P2=0x0C: no FCI response)
+        auto response =
+            conn.transmit(smartcard::selectByAID({emrtd::EMRTD_AID, emrtd::EMRTD_AID + emrtd::EMRTD_AID_LEN}, 0x0C));
         return response.isSuccess();
     }
 
@@ -139,14 +140,13 @@ public:
         auto creds = *credentials;
         lock.unlock();
 
-        std::unique_ptr<emrtd::EMRTDCard> card;
         if (auto* mrz = std::get_if<emrtd::MRZData>(&creds)) {
-            card = std::make_unique<emrtd::EMRTDCard>(conn, *mrz);
+            emrTDCard = std::make_unique<emrtd::EMRTDCard>(conn, *mrz);
         } else if (auto* can = std::get_if<std::string>(&creds)) {
-            card = std::make_unique<emrtd::EMRTDCard>(conn, *can);
+            emrTDCard = std::make_unique<emrtd::EMRTDCard>(conn, *can);
         }
 
-        auto authResult = card->authenticate();
+        auto authResult = emrTDCard->authenticate();
         if (!authResult.success) {
             plugin::CardFieldGroup errorGroup;
             errorGroup.groupKey = "error";
@@ -158,7 +158,7 @@ public:
         }
 
         // Read all DGs
-        auto rawDGs = card->readAllDataGroups();
+        auto rawDGs = emrTDCard->readAllDataGroups();
         auto parsed = emrtd::parseDataGroups(rawDGs);
 
         // Build CardData from parsed DGs
@@ -263,6 +263,14 @@ public:
                 data.groups.push_back(std::move(docExtra));
         }
 
+        // Install SM filter so PKI fallback plugins get SM wrapping transparently
+        conn.setTransmitFilter([this](const smartcard::APDUCommand& cmd) {
+            std::lock_guard lock(mtx);
+            if (!emrTDCard)
+                return smartcard::APDUResponse{{}, 0x69, 0x82};
+            return emrTDCard->transmitSecureAPDU(cmd);
+        });
+
         return data;
     }
 
@@ -299,6 +307,7 @@ private:
     mutable std::string pendingDocNum;
     mutable std::string pendingDob;
     mutable std::string pendingExpiry;
+    mutable std::unique_ptr<emrtd::EMRTDCard> emrTDCard;
 };
 
 } // namespace

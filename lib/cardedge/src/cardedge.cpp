@@ -18,7 +18,8 @@ namespace cardedge {
 
 PkiAppletGuard::PkiAppletGuard(smartcard::PCSCConnection& conn) : conn(conn), tx(conn)
 {
-    auto resp = conn.transmit(smartcard::selectByAID(protocol::AID_PKCS15));
+    // Use P2=0x0C (no FCI) — some cards (e.g. eMRTD with PKCS#15) reject P2=0x00
+    auto resp = conn.transmit(smartcard::selectByAID(protocol::AID_PKCS15, 0x0C));
     if (!resp.isSuccess())
         throw std::runtime_error("Failed to select PKI applet");
 }

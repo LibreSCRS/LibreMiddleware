@@ -4,6 +4,7 @@
 #ifndef SMARTCARD_PCSC_CONNECTION_H
 #define SMARTCARD_PCSC_CONNECTION_H
 
+#include <functional>
 #include <string>
 #include <vector>
 #include <stdexcept>
@@ -42,12 +43,18 @@ public:
     PCSCConnection& operator=(const PCSCConnection&) = delete;
 
     APDUResponse transmit(const APDUCommand& cmd);
+
+    using TransmitFilter = std::function<APDUResponse(const APDUCommand&)>;
+    void setTransmitFilter(TransmitFilter filter);
+    void clearTransmitFilter();
+
+    // Low-level transmit that bypasses the TransmitFilter.
+    // Used by SM layer to send already-wrapped APDUs without recursive filtering.
+    APDUResponse transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen);
+    APDUResponse transmitRaw(const APDUCommand& cmd);
+
     void reconnect(); // prefers T=1, falls back to T=0
     std::vector<uint8_t> getATR() const;
-    const std::string& readerName() const
-    {
-        return readerName_;
-    }
     DWORD getActiveProtocol() const
     {
         return activeProtocol;
@@ -62,9 +69,7 @@ public:
     static std::vector<std::string> listReaders();
 
 private:
-    APDUResponse transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen);
-
-    std::string readerName_;
+    TransmitFilter transmitFilter;
     SCARDCONTEXT context = 0;
     SCARDHANDLE card = 0;
     DWORD activeProtocol = 0;

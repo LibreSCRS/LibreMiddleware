@@ -52,12 +52,12 @@ uint16_t APDUResponse::statusWord() const
     return static_cast<uint16_t>((sw1 << 8) | sw2);
 }
 
-APDUCommand selectByAID(const std::vector<uint8_t>& aid)
+APDUCommand selectByAID(const std::vector<uint8_t>& aid, uint8_t p2)
 {
     return APDUCommand{.cla = 0x00,
                        .ins = 0xA4, // SELECT
                        .p1 = 0x04,  // Select by DF name (AID)
-                       .p2 = 0x00,
+                       .p2 = p2,
                        .data = aid,
                        .le = 0,
                        .hasLe = false};
@@ -74,15 +74,15 @@ APDUCommand selectByPath(uint8_t fileId1, uint8_t fileId2, uint8_t le)
                        .hasLe = true};
 }
 
-APDUCommand selectByFileId(uint8_t fileId1, uint8_t fileId2)
+APDUCommand selectByFileId(uint8_t fileId1, uint8_t fileId2, uint8_t p2)
 {
     return APDUCommand{.cla = 0x00,
                        .ins = 0xA4, // SELECT
                        .p1 = 0x00,  // Select by file identifier
-                       .p2 = 0x00,
+                       .p2 = p2,
                        .data = {fileId1, fileId2},
-                       .le = 0, // Le=0x00: expect up to 256 bytes of FCI data
-                       .hasLe = true};
+                       .le = 0,
+                       .hasLe = (p2 != 0x0C)};
 }
 
 APDUCommand readBinary(uint16_t offset, uint8_t length)

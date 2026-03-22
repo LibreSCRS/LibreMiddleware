@@ -22,13 +22,102 @@ PKCS15Card::PKCS15Card(smartcard::PCSCConnection& conn) : conn(conn) {}
 
 bool PKCS15Card::probe()
 {
-    return selectApplet();
+    // Strategy A: try AID SELECT first (fast path)
+    auto resp = conn.transmit(smartcard::selectByAID(PKCS15_AID, 0x0C));
+    if (resp.isSuccess()) {
+        pkcs15Path.clear(); // AID works, no path needed
+        return true;
+    }
+
+    // Fallback: try AID with P2=0x00 (some cards need FCI)
+    resp = conn.transmit(smartcard::selectByAID(PKCS15_AID));
+    if (resp.isSuccess()) {
+        pkcs15Path.clear();
+        return true;
+    }
+
+    // Strategy A fallback: read EF.DIR to discover PKCS#15 path
+    return probeViaEfDir();
 }
 
 bool PKCS15Card::selectApplet()
 {
-    auto resp = conn.transmit(smartcard::selectByAID(PKCS15_AID));
-    return resp.isSuccess();
+    if (pkcs15Path.empty()) {
+        // AID-based selection worked during probe
+        auto resp = conn.transmit(smartcard::selectByAID(PKCS15_AID, 0x0C));
+        if (resp.isSuccess())
+            return true;
+        resp = conn.transmit(smartcard::selectByAID(PKCS15_AID));
+        return resp.isSuccess();
+    }
+
+    // Path-based selection (discovered from EF.DIR)
+    return selectByPath(pkcs15Path);
+}
+
+bool PKCS15Card::probeViaEfDir()
+{
+    // SELECT MF (3F00)
+    auto resp = conn.transmit(smartcard::selectByFileId(0x3F, 0x00));
+    if (!resp.isSuccess())
+        return false;
+
+    // SELECT EF.DIR (2F00)
+    resp = conn.transmit(smartcard::selectByFileId(0x2F, 0x00));
+    if (!resp.isSuccess())
+        return false;
+
+    // READ EF.DIR
+    auto efDir = readSelectedFile();
+    if (efDir.empty())
+        return false;
+
+    // Parse EF.DIR — look for PKCS#15 AID entries with a path
+    // EF.DIR contains Application Template (tag 61) entries:
+    //   4F = AID, 50 = label, 51 = path
+    size_t pos = 0;
+    while (pos + 2 < efDir.size()) {
+        if (efDir[pos] != 0x61) {
+            pos++;
+            continue;
+        }
+        uint8_t entryLen = efDir[pos + 1];
+        if (pos + 2 + entryLen > efDir.size())
+            break;
+
+        // Parse entry fields
+        std::vector<uint8_t> aid;
+        std::vector<uint8_t> path;
+        size_t fieldPos = pos + 2;
+        size_t entryEnd = pos + 2 + entryLen;
+
+        while (fieldPos + 2 <= entryEnd) {
+            uint8_t tag = efDir[fieldPos];
+            uint8_t len = efDir[fieldPos + 1];
+            if (fieldPos + 2 + len > entryEnd)
+                break;
+
+            if (tag == 0x4F) { // AID
+                aid.assign(efDir.begin() + fieldPos + 2, efDir.begin() + fieldPos + 2 + len);
+            } else if (tag == 0x51) { // Path
+                path.assign(efDir.begin() + fieldPos + 2, efDir.begin() + fieldPos + 2 + len);
+            }
+            fieldPos += 2 + len;
+        }
+
+        // Check if this is a PKCS#15 entry with a usable path
+        if (aid == PKCS15_AID && !path.empty() && path.size() % 2 == 0) {
+            // Try to select by path
+            if (selectByPath(path)) {
+                pkcs15Path = path;
+                return true;
+            }
+        }
+
+        pos = entryEnd;
+    }
+
+    return false;
 }
 
 PKCS15Profile PKCS15Card::readProfile()
@@ -162,13 +251,13 @@ PinResult PKCS15Card::verifyPIN(const PinInfo& pin, const std::string& pinValue)
     return {false, -1, false};
 }
 
-bool PKCS15Card::selectByPath(std::span<const uint8_t> path)
+bool PKCS15Card::selectByPath(std::span<const uint8_t> path, uint8_t selectP2)
 {
     if (path.empty() || path.size() % 2 != 0)
         return false;
 
     for (size_t i = 0; i + 1 < path.size(); i += 2) {
-        auto resp = conn.transmit(smartcard::selectByFileId(path[i], path[i + 1]));
+        auto resp = conn.transmit(smartcard::selectByFileId(path[i], path[i + 1], selectP2));
         if (!resp.isSuccess())
             return false;
     }
