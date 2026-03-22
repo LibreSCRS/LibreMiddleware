@@ -189,3 +189,14 @@ if(BUILD_OPENSC_PLUGIN AND OPENSC_FOUND)
     add_dependencies(OpenSCPluginTests rescrs-plugin-opensc)
     gtest_discover_tests(OpenSCPluginTests)
 endif()
+
+# SmartCard Monitor tests
+add_executable(MonitorTests monitor_test.cpp)
+find_package(Threads REQUIRED)
+target_link_libraries(MonitorTests PRIVATE SmartCard GTest::gtest_main Threads::Threads)
+gtest_discover_tests(MonitorTests)
+
+# AutoReader tests
+add_executable(AutoReaderTests auto_reader_test.cpp)
+target_link_libraries(AutoReaderTests PRIVATE CardPlugin SmartCard GTest::gtest_main Threads::Threads)
+gtest_discover_tests(AutoReaderTests)
