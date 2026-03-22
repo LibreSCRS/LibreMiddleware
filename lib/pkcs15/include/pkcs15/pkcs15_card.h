@@ -26,6 +26,7 @@ public:
     PKCS15Profile readProfile();
     std::vector<uint8_t> readCertificate(const CertificateInfo& cert);
     PinResult verifyPIN(const PinInfo& pin, const std::string& pinValue);
+    PinResult changePIN(const PinInfo& pin, const std::string& oldPin, const std::string& newPin);
     int getPINTriesLeft(const PinInfo& pin);
 
 private:

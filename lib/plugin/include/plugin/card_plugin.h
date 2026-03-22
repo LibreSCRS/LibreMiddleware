@@ -20,12 +20,21 @@ class PCSCConnection;
 
 namespace plugin {
 
-constexpr uint32_t LIBRESCRS_PLUGIN_ABI_VERSION = 2;
+constexpr uint32_t LIBRESCRS_PLUGIN_ABI_VERSION = 3;
 
 struct PINResult
 {
     bool success = false;
     int retriesLeft = -1;
+    bool blocked = false;
+};
+
+struct PinStatusEntry
+{
+    std::string label;
+    uint8_t reference = 0;
+    int triesLeft = -1;
+    bool initialized = true;
     bool blocked = false;
 };
 
@@ -95,6 +104,15 @@ public:
     }
     virtual PINResult changePIN(smartcard::PCSCConnection& /*conn*/, const std::string& /*oldPin*/,
                                 const std::string& /*newPin*/) const
+    {
+        return {};
+    }
+    virtual std::vector<PinStatusEntry> getPINList(smartcard::PCSCConnection& /*conn*/) const
+    {
+        return {};
+    }
+    virtual PINResult changePIN(smartcard::PCSCConnection& /*conn*/, uint8_t /*pinReference*/,
+                                const std::string& /*oldPin*/, const std::string& /*newPin*/) const
     {
         return {};
     }

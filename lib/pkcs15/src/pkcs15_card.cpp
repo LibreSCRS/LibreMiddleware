@@ -251,6 +251,51 @@ PinResult PKCS15Card::verifyPIN(const PinInfo& pin, const std::string& pinValue)
     return {false, -1, false};
 }
 
+PinResult PKCS15Card::changePIN(const PinInfo& pin, const std::string& oldPin, const std::string& newPin)
+{
+    smartcard::CardTransaction tx(conn);
+    selectApplet();
+
+    if (!pin.path.empty())
+        selectByPath(pin.path);
+
+    // Encode old PIN
+    std::vector<uint8_t> oldData(oldPin.begin(), oldPin.end());
+    if (pin.storedLength > 0 && static_cast<int>(oldData.size()) > pin.storedLength)
+        oldData.resize(pin.storedLength);
+    if (pin.storedLength > 0 && static_cast<int>(oldData.size()) < pin.storedLength)
+        oldData.resize(pin.storedLength, pin.padChar);
+
+    // Encode new PIN
+    std::vector<uint8_t> newData(newPin.begin(), newPin.end());
+    if (pin.storedLength > 0 && static_cast<int>(newData.size()) > pin.storedLength)
+        newData.resize(pin.storedLength);
+    if (pin.storedLength > 0 && static_cast<int>(newData.size()) < pin.storedLength)
+        newData.resize(pin.storedLength, pin.padChar);
+
+    auto resp = conn.transmit(smartcard::changeReferenceData(pin.pinReference, oldData, newData));
+    if (resp.isSuccess())
+        return {true, -1, false};
+    if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
+        return {false, resp.sw2 & 0x0F, false};
+    if (resp.statusWord() == 0x6983)
+        return {false, 0, true};
+
+    // Fallback: strip local bit — ONLY on reference-not-found errors
+    uint8_t altRef = pin.pinReference & 0x7F;
+    if (altRef != pin.pinReference && (resp.statusWord() == 0x6A86 || resp.statusWord() == 0x6A88)) {
+        resp = conn.transmit(smartcard::changeReferenceData(altRef, oldData, newData));
+        if (resp.isSuccess())
+            return {true, -1, false};
+        if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
+            return {false, resp.sw2 & 0x0F, false};
+        if (resp.statusWord() == 0x6983)
+            return {false, 0, true};
+    }
+
+    return {false, -1, false};
+}
+
 bool PKCS15Card::selectByPath(std::span<const uint8_t> path, uint8_t selectP2)
 {
     if (path.empty() || path.size() % 2 != 0)

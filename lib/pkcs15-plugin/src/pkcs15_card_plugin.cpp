@@ -135,6 +135,60 @@ public:
         return result;
     }
 
+    std::vector<plugin::PinStatusEntry> getPINList(smartcard::PCSCConnection& conn) const override
+    {
+        pkcs15::PKCS15Card card(conn);
+        cachedProfile = card.readProfile();
+
+        std::vector<plugin::PinStatusEntry> result;
+        for (const auto& pin : cachedProfile.pins) {
+            plugin::PinStatusEntry entry;
+            entry.label = pin.label;
+            entry.reference = pin.pinReference;
+            entry.initialized = pin.initialized;
+
+            if (pin.initialized) {
+                int tries = card.getPINTriesLeft(pin);
+                entry.triesLeft = tries;
+                entry.blocked = (tries == 0);
+            } else {
+                entry.triesLeft = -1;
+                entry.blocked = false;
+            }
+
+            result.push_back(std::move(entry));
+        }
+        return result;
+    }
+
+    plugin::PINResult changePIN(smartcard::PCSCConnection& conn, uint8_t pinReference, const std::string& oldPin,
+                                const std::string& newPin) const override
+    {
+        pkcs15::PKCS15Card card(conn);
+        auto profile = cachedProfile.pins.empty() ? card.readProfile() : cachedProfile;
+
+        for (const auto& pin : profile.pins) {
+            if (pin.pinReference == pinReference) {
+                auto r = card.changePIN(pin, oldPin, newPin);
+                return {r.success, r.retriesLeft, r.blocked};
+            }
+        }
+        return {};
+    }
+
+    plugin::PINResult changePIN(smartcard::PCSCConnection& conn, const std::string& oldPin,
+                                const std::string& newPin) const override
+    {
+        pkcs15::PKCS15Card card(conn);
+        auto profile = cachedProfile.pins.empty() ? card.readProfile() : cachedProfile;
+        auto* pinInfo = findUserPin(profile);
+        if (!pinInfo)
+            return {};
+
+        auto r = card.changePIN(*pinInfo, oldPin, newPin);
+        return {r.success, r.retriesLeft, r.blocked};
+    }
+
     int getPINTriesLeft(smartcard::PCSCConnection& conn) const override
     {
         pkcs15::PKCS15Card card(conn);
@@ -159,6 +213,8 @@ public:
     }
 
 private:
+    mutable pkcs15::PKCS15Profile cachedProfile;
+
     static const pkcs15::PinInfo* findUserPin(const pkcs15::PKCS15Profile& profile)
     {
         // Find first local + initialized PIN (User PIN)
