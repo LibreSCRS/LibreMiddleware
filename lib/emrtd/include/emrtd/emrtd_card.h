@@ -44,7 +44,10 @@ public:
     smartcard::APDUResponse transmitSecureAPDU(const smartcard::APDUCommand& cmd);
 
     /// True when Secure Messaging is established (after successful PACE/BAC).
-    bool hasSecureMessaging() const { return sm != nullptr; }
+    bool hasSecureMessaging() const
+    {
+        return sm != nullptr;
+    }
 
 private:
     smartcard::PCSCConnection& conn;

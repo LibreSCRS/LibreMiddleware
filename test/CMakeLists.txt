@@ -174,6 +174,13 @@ target_compile_definitions(CardEdgePluginTests PRIVATE PLUGIN_DIR="${LIBREMIDDLE
 add_dependencies(CardEdgePluginTests rescrs-plugin-cardedge)
 gtest_discover_tests(CardEdgePluginTests)
 
+# PKS plugin tests
+add_executable(PksPluginTests pks_plugin_test.cpp)
+target_link_libraries(PksPluginTests GTest::gtest_main CardPlugin)
+target_compile_definitions(PksPluginTests PRIVATE PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}")
+add_dependencies(PksPluginTests rescrs-plugin-rs-pks)
+gtest_discover_tests(PksPluginTests)
+
 # PKCS#15 plugin tests
 add_executable(PKCS15PluginTests pkcs15_plugin_test.cpp)
 target_link_libraries(PKCS15PluginTests GTest::gtest_main CardPlugin)

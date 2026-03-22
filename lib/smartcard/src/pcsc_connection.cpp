@@ -63,7 +63,7 @@ APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
 
     const SCARD_IO_REQUEST* pioSendPci = (activeProtocol == SCARD_PROTOCOL_T0) ? SCARD_PCI_T0 : SCARD_PCI_T1;
 
-    uint8_t recvBuffer[258];
+    uint8_t recvBuffer[512];
     DWORD recvLength = sizeof(recvBuffer);
 
     LONG rv = SCardTransmit(card, pioSendPci, cmdBytes, cmdLen, nullptr, recvBuffer, &recvLength);

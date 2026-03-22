@@ -28,7 +28,9 @@ bool PKSCard::probe(smartcard::PCSCConnection& conn)
         if (conn.transmit(smartcard::selectByAID(AID_SERVSZK)).isSuccess())
             return false;
         cardedge::PkiAppletGuard guard(conn);
-        return true;
+        // Verify CardEdge root dir (0x7000) exists — rejects generic PKCS#15 cards
+        auto resp = conn.transmit(smartcard::selectByFileId(0x70, 0x00));
+        return resp.isSuccess();
     } catch (...) {
         return false;
     }

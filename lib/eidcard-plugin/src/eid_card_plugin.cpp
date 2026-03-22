@@ -116,67 +116,79 @@ public:
 
     plugin::CardData readCard(smartcard::PCSCConnection& conn) const override
     {
+        return readCardStreaming(conn, nullptr);
+    }
+
+    plugin::CardData readCardStreaming(smartcard::PCSCConnection& conn, GroupCallback onGroup) const override
+    {
         eidcard::EIdCard card(conn);
 
         plugin::CardData data;
         data.cardType = "rs-eid";
 
+        auto emitGroup = [&](plugin::CardFieldGroup&& group) {
+            if (onGroup)
+                onGroup(data.cardType, group);
+            data.groups.push_back(std::move(group));
+        };
+
+        // 1. Meta (card type detection — fast, single SELECT)
         auto cardType = card.getCardType();
-        std::string cardTypeStr;
-        switch (cardType) {
-        case eidcard::CardType::Apollo2008:
-            cardTypeStr = "Apollo2008";
-            break;
-        case eidcard::CardType::Gemalto2014:
-            cardTypeStr = "Gemalto2014";
-            break;
-        case eidcard::CardType::ForeignerIF2020:
-            cardTypeStr = "ForeignerIF2020";
-            break;
-        default:
-            cardTypeStr = "Unknown";
-            break;
-        }
-
-        auto fixedPersonal = card.readFixedPersonalData();
-        auto variablePersonal = card.readVariablePersonalData();
-        auto documentData = card.readDocumentData();
-
-        // Add card_type as a top-level metadata group
         {
             plugin::CardFieldGroup meta;
             meta.groupKey = "meta";
             meta.groupLabel = "Card Metadata";
-            meta.fields.push_back(
-                {"card_type", "Card Type", plugin::FieldType::Text, {cardTypeStr.begin(), cardTypeStr.end()}});
-            data.groups.push_back(std::move(meta));
+            std::string ct;
+            switch (cardType) {
+            case eidcard::CardType::Apollo2008:
+                ct = "Apollo2008";
+                break;
+            case eidcard::CardType::Gemalto2014:
+                ct = "Gemalto2014";
+                break;
+            case eidcard::CardType::ForeignerIF2020:
+                ct = "ForeignerIF2020";
+                break;
+            default:
+                ct = "Unknown";
+                break;
+            }
+            meta.fields.push_back({"card_type", "Card Type", plugin::FieldType::Text, {ct.begin(), ct.end()}});
+            emitGroup(std::move(meta));
         }
 
-        auto personalGrp = personalGroup(fixedPersonal);
-        data.groups.push_back(std::move(personalGrp));
+        // 2. Personal data (card I/O: readFixedPersonalData)
+        auto fixedPersonal = card.readFixedPersonalData();
+        emitGroup(personalGroup(fixedPersonal));
 
-        auto addrGrp = addressGroup(variablePersonal);
-        // Add address_date to the address group
-        if (!variablePersonal.addressDate.empty()) {
-            addrGrp.fields.push_back({"address_date",
-                                      "Address Date",
-                                      plugin::FieldType::Text,
-                                      {variablePersonal.addressDate.begin(), variablePersonal.addressDate.end()}});
+        // 3. Address (card I/O: readVariablePersonalData)
+        auto variablePersonal = card.readVariablePersonalData();
+        {
+            auto addrGrp = addressGroup(variablePersonal);
+            if (!variablePersonal.addressDate.empty()) {
+                addrGrp.fields.push_back({"address_date",
+                                          "Address Date",
+                                          plugin::FieldType::Text,
+                                          {variablePersonal.addressDate.begin(), variablePersonal.addressDate.end()}});
+            }
+            emitGroup(std::move(addrGrp));
         }
-        data.groups.push_back(std::move(addrGrp));
 
-        data.groups.push_back(documentGroup(documentData));
+        // 4. Document (card I/O: readDocumentData)
+        auto documentData = card.readDocumentData();
+        emitGroup(documentGroup(documentData));
 
+        // 5. Photo (card I/O: readPortrait — slowest)
         auto photo = card.readPortrait();
         if (!photo.empty()) {
             plugin::CardFieldGroup photoGroup;
             photoGroup.groupKey = "photo";
             photoGroup.groupLabel = "Photo";
             photoGroup.fields.push_back({"photo", "Photo", plugin::FieldType::Photo, photo});
-            data.groups.push_back(std::move(photoGroup));
+            emitGroup(std::move(photoGroup));
         }
 
-        // Load trusted CA certificates for SOD verification
+        // 6. Verification — CA cert loading + verify, results added to meta group
 #ifdef LIBREMIDDLEWARE_CERT_DIR
         {
             namespace fs = std::filesystem;
@@ -196,7 +208,6 @@ public:
         }
 #endif
 
-        // Verification — add results as metadata fields
         auto toStr = [](eidcard::VerificationResult r) -> std::string {
             switch (r) {
             case eidcard::VerificationResult::Valid:

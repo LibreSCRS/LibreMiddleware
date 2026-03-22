@@ -36,6 +36,11 @@ public:
 
     plugin::CardData readCard(smartcard::PCSCConnection& conn) const override
     {
+        return readCardStreaming(conn, nullptr);
+    }
+
+    plugin::CardData readCardStreaming(smartcard::PCSCConnection& conn, GroupCallback onGroup) const override
+    {
         plugin::CardData data;
         data.cardType = "rs-pks";
 
@@ -43,6 +48,8 @@ public:
         meta.groupKey = "meta";
         meta.groupLabel = "Card Metadata";
         meta.fields.push_back({"card_type", "Card Type", plugin::FieldType::Text, {'P', 'K', 'S'}});
+        if (onGroup)
+            onGroup(data.cardType, meta);
         data.groups.push_back(std::move(meta));
         return data;
     }

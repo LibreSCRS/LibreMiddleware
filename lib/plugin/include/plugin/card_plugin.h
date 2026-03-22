@@ -6,6 +6,7 @@
 #include <plugin/card_data.h>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
@@ -19,7 +20,7 @@ class PCSCConnection;
 
 namespace plugin {
 
-constexpr uint32_t LIBRESCRS_PLUGIN_ABI_VERSION = 1;
+constexpr uint32_t LIBRESCRS_PLUGIN_ABI_VERSION = 2;
 
 struct PINResult
 {
@@ -66,6 +67,18 @@ public:
 
     // Data reading
     virtual CardData readCard(smartcard::PCSCConnection& conn) const = 0;
+
+    // Callback for progressive group delivery during card reading.
+    // First argument is the plugin's pluginId() so the GUI can look up
+    // the correct widget plugin before cardDataReady fires.
+    using GroupCallback = std::function<void(const std::string& cardType, const CardFieldGroup&)>;
+
+    // Progressive version of readCard — calls onGroup for each group as it
+    // becomes available. Default delegates to readCard() (backward compatible).
+    virtual CardData readCardStreaming(smartcard::PCSCConnection& conn, GroupCallback onGroup) const
+    {
+        return readCard(conn);
+    }
 
     // Optional: PKI operations
     virtual bool supportsPKI() const

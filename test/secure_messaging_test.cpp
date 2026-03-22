@@ -118,6 +118,61 @@ TEST(SecureMessagingTest, ProtectContainsDO97WhenLePresent)
     EXPECT_TRUE(found97);
 }
 
+TEST(SecureMessagingTest, ProtectCase1AlwaysContainsDO97)
+{
+    // Case 1: no data, no Le (e.g. VERIFY PIN status: 00 20 00 80)
+    // DO'97 must be present with value 0x00 so the card accepts the SM structure.
+    SessionKeys keys;
+    keys.encKey = std::vector<uint8_t>(16, 0x01);
+    keys.macKey = std::vector<uint8_t>(16, 0x02);
+    keys.ssc = std::vector<uint8_t>(8, 0x00);
+
+    SecureMessaging sm(keys, SMAlgorithm::DES3);
+
+    std::vector<uint8_t> cmd = {0x00, 0x20, 0x00, 0x80}; // VERIFY PIN status, Case 1
+    auto protectedCmd = sm.protect(cmd);
+
+    bool found97 = false;
+    uint8_t do97Value = 0xFF;
+    for (size_t i = 5; i + 2 < protectedCmd.size(); ++i) {
+        if (protectedCmd[i] == 0x97 && protectedCmd[i + 1] == 0x01) {
+            found97 = true;
+            do97Value = protectedCmd[i + 2];
+            break;
+        }
+    }
+    EXPECT_TRUE(found97) << "DO'97 must be present for Case 1 commands";
+    EXPECT_EQ(do97Value, 0x00) << "DO'97 value should be 0x00 (accept up to 256 bytes)";
+}
+
+TEST(SecureMessagingTest, ProtectCase3AlwaysContainsDO97)
+{
+    // Case 3: Lc + data, no Le (e.g. SELECT with P2=0x0C: 00 A4 04 0C 07 ...)
+    // DO'97 must be present even though the original command has no Le.
+    SessionKeys keys;
+    keys.encKey = std::vector<uint8_t>(16, 0x01);
+    keys.macKey = std::vector<uint8_t>(16, 0x02);
+    keys.ssc = std::vector<uint8_t>(8, 0x00);
+
+    SecureMessaging sm(keys, SMAlgorithm::DES3);
+
+    std::vector<uint8_t> cmd = {0x00, 0xA4, 0x04, 0x0C, 0x07,
+                                 0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01}; // Case 3
+    auto protectedCmd = sm.protect(cmd);
+
+    bool found97 = false;
+    uint8_t do97Value = 0xFF;
+    for (size_t i = 5; i + 2 < protectedCmd.size(); ++i) {
+        if (protectedCmd[i] == 0x97 && protectedCmd[i + 1] == 0x01) {
+            found97 = true;
+            do97Value = protectedCmd[i + 2];
+            break;
+        }
+    }
+    EXPECT_TRUE(found97) << "DO'97 must be present for Case 3 commands";
+    EXPECT_EQ(do97Value, 0x00) << "DO'97 value should be 0x00 when original has no Le";
+}
+
 TEST(SecureMessagingTest, UnprotectInvalidMACReturnsNullopt)
 {
     // Construct a synthetic SM response with a wrong MAC — unprotect must return nullopt

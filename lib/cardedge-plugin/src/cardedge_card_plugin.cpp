@@ -47,7 +47,12 @@ public:
         return resp.isSuccess();
     }
 
-    plugin::CardData readCard(smartcard::PCSCConnection& /*conn*/) const override
+    plugin::CardData readCard(smartcard::PCSCConnection& conn) const override
+    {
+        return readCardStreaming(conn, nullptr);
+    }
+
+    plugin::CardData readCardStreaming(smartcard::PCSCConnection& /*conn*/, GroupCallback onGroup) const override
     {
         plugin::CardData data;
         data.cardType = "cardedge";
@@ -57,6 +62,8 @@ public:
         meta.groupLabel = "Card Metadata";
         std::string name = "CardEdge (Serbian PKI)";
         meta.fields.push_back({"card_type", "Card Type", plugin::FieldType::Text, {name.begin(), name.end()}});
+        if (onGroup)
+            onGroup(data.cardType, meta);
         data.groups.push_back(std::move(meta));
 
         return data;

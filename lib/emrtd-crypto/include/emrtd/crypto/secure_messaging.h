@@ -10,7 +10,8 @@
 
 namespace emrtd::crypto {
 
-struct UnprotectResult {
+struct UnprotectResult
+{
     std::vector<uint8_t> data;
     uint8_t sw1 = 0;
     uint8_t sw2 = 0;
