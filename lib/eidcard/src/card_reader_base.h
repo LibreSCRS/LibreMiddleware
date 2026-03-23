@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
-#ifndef EIDCARD_CARD_READER_BASE_H
-#define EIDCARD_CARD_READER_BASE_H
+#pragma once
 
 #include <cstdint>
 #include <vector>
@@ -25,5 +24,3 @@ public:
 };
 
 } // namespace eidcard
-
-#endif // EIDCARD_CARD_READER_BASE_H

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0 and LibreSCRS contributors
 
-#ifndef SMARTCARD_IPCSC_SCAN_PROVIDER_H
-#define SMARTCARD_IPCSC_SCAN_PROVIDER_H
+#pragma once
 
 #ifdef __APPLE__
 #include <PCSC/winscard.h>
@@ -27,5 +26,3 @@ public:
 };
 
 } // namespace smartcard
-
-#endif // SMARTCARD_IPCSC_SCAN_PROVIDER_H

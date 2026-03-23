@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
-#ifndef VEHICLECARD_VEHICLECARD_H
-#define VEHICLECARD_VEHICLECARD_H
+#pragma once
 
 #include <memory>
 #include <string>
@@ -40,5 +39,3 @@ private:
 };
 
 } // namespace vehiclecard
-
-#endif // VEHICLECARD_VEHICLECARD_H

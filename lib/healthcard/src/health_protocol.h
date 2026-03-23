@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
-#ifndef HEALTHCARD_HEALTH_PROTOCOL_H
-#define HEALTHCARD_HEALTH_PROTOCOL_H
+#pragma once
 
 #include <cstdint>
 #include <vector>
@@ -78,5 +77,3 @@ constexpr uint16_t TAG_TAXPAYER_ID_2 = 1633;
 constexpr uint16_t TAG_TAXPAYER_ACTIV = 1634;
 
 } // namespace healthcard::protocol
-
-#endif // HEALTHCARD_HEALTH_PROTOCOL_H

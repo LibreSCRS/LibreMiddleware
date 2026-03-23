@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#ifndef CARDEDGE_PKI_APPLET_GUARD_H
-#define CARDEDGE_PKI_APPLET_GUARD_H
+#pragma once
 
 #include "smartcard/pcsc_connection.h"
 
@@ -33,5 +32,3 @@ private:
 };
 
 } // namespace cardedge
-
-#endif // CARDEDGE_PKI_APPLET_GUARD_H

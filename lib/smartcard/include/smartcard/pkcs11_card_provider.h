@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
-#ifndef SMARTCARD_PKCS11_CARD_PROVIDER_H
-#define SMARTCARD_PKCS11_CARD_PROVIDER_H
+#pragma once
 
 #include <cstdint>
 #include <memory>
@@ -75,5 +74,3 @@ public:
 };
 
 } // namespace smartcard
-
-#endif // SMARTCARD_PKCS11_CARD_PROVIDER_H

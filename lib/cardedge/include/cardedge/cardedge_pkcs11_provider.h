@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
-#ifndef CARDEDGE_PKCS11_PROVIDER_H
-#define CARDEDGE_PKCS11_PROVIDER_H
+#pragma once
 
 #include "smartcard/pkcs11_card_provider.h"
 #include "smartcard/pcsc_connection.h"
@@ -36,5 +35,3 @@ private:
 };
 
 } // namespace cardedge
-
-#endif // CARDEDGE_PKCS11_PROVIDER_H

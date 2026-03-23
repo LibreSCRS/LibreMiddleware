@@ -33,11 +33,11 @@ public:
     struct StatusChangeAction
     {
         LONG returnValue = SCARD_S_SUCCESS;
-        std::vector<DWORD> eventStates;
+        std::vector<DWORD> eventStates = {};
         bool blocking = false;
-        std::optional<std::vector<std::string>> newReaders;
+        std::optional<std::vector<std::string>> newReaders = {};
         // ATR data to set on reader states (index -> ATR bytes)
-        std::vector<std::vector<uint8_t>> atrData;
+        std::vector<std::vector<uint8_t>> atrData = {};
     };
 
     void setReaders(std::vector<std::string> names)

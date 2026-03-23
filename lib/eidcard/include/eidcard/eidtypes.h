@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
-#ifndef EIDCARD_EIDTYPES_H
-#define EIDCARD_EIDTYPES_H
+#pragma once
 
 #include <cstdint>
 #include <string>
@@ -62,5 +61,3 @@ enum class VerificationResult {
 };
 
 } // namespace eidcard
-
-#endif // EIDCARD_EIDTYPES_H

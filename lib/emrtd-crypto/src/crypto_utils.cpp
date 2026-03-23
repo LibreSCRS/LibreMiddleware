@@ -298,7 +298,6 @@ std::vector<uint8_t> retailMAC(const std::vector<uint8_t>& key, const std::vecto
     // We use low-level DES_* APIs to avoid the OpenSSL 3 legacy provider requirement
     // that EVP_des_cbc() imposes.
 
-    DES_cblock ivBlock = {};
     DES_key_schedule ksA{}, ksB{};
 
     // DES_set_key_unchecked does not validate parity/weak-key — required for test vectors.

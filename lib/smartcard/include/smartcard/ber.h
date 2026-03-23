@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
-#ifndef SMARTCARD_BER_H
-#define SMARTCARD_BER_H
+#pragma once
 
 #include <cstdint>
 #include <initializer_list>
@@ -33,5 +32,3 @@ std::string berFindString(const BERField& root, std::initializer_list<uint32_t> 
 std::vector<uint8_t> berFindBytes(const BERField& root, std::initializer_list<uint32_t> path);
 
 } // namespace smartcard
-
-#endif // SMARTCARD_BER_H

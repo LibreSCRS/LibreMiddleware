@@ -39,7 +39,7 @@ public:
         return readCardStreaming(conn, nullptr);
     }
 
-    plugin::CardData readCardStreaming(smartcard::PCSCConnection& conn, GroupCallback onGroup) const override
+    plugin::CardData readCardStreaming(smartcard::PCSCConnection& /*conn*/, GroupCallback onGroup) const override
     {
         plugin::CardData data;
         data.cardType = "rs-pks";

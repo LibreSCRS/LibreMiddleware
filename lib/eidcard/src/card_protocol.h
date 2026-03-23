@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
-#ifndef EIDCARD_CARD_PROTOCOL_H
-#define EIDCARD_CARD_PROTOCOL_H
+#pragma once
 
 #include <cstdint>
 #include <vector>
@@ -101,5 +100,3 @@ inline bool isApolloATR(const std::vector<uint8_t>& atr)
 constexpr uint8_t READ_CHUNK_SIZE = 0xFF; // 255 bytes per READ BINARY
 
 } // namespace eidcard::protocol
-
-#endif // EIDCARD_CARD_PROTOCOL_H

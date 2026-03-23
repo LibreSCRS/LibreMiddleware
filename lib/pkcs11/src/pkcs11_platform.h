@@ -3,8 +3,7 @@
 
 // Platform-specific PKCS#11 macros (must be defined before including pkcs11.h)
 
-#ifndef PKCS11_PLATFORM_H
-#define PKCS11_PLATFORM_H
+#pragma once
 
 #define CK_PTR *
 #define CK_DECLARE_FUNCTION(returnType, name) __attribute__((visibility("default"))) returnType name
@@ -15,5 +14,3 @@
 #endif
 
 #include "pkcs11/pkcs11.h"
-
-#endif // PKCS11_PLATFORM_H

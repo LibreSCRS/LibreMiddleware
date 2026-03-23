@@ -17,6 +17,10 @@ set(PROJECT_VERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_
 
 project(LibreMiddleware VERSION ${PROJECT_VERSION} LANGUAGES CXX)
 
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+    add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
 # Export certificates directory for consumers
 set(LIBREMIDDLEWARE_CERTIFICATES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/certificates/all"
     CACHE PATH "Path to Serbian CA certificates" FORCE)

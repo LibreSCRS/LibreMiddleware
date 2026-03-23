@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
-#ifndef CARDEDGE_CARDEDGE_PROTOCOL_H
-#define CARDEDGE_CARDEDGE_PROTOCOL_H
+#pragma once
 
 #include <cstdint>
 #include <vector>
@@ -68,5 +67,3 @@ inline uint16_t privateKeyFID(uint8_t containerIndex, uint16_t keyPairId)
 }
 
 } // namespace cardedge::protocol
-
-#endif // CARDEDGE_CARDEDGE_PROTOCOL_H

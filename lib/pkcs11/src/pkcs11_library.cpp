@@ -213,7 +213,7 @@ CK_RV PKCS11Library::openSession(CK_SLOT_ID slotID, CK_FLAGS flags, CK_VOID_PTR 
     ensureConnected(slotID);
 
     CK_SESSION_HANDLE handle = nextSessionHandle++;
-    sessions[handle] = {slotID, flags};
+    sessions[handle] = {slotID, flags, {}, {}};
     *phSession = handle;
     return CKR_OK;
 }

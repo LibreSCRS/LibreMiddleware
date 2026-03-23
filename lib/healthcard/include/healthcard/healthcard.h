@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
-#ifndef HEALTHCARD_HEALTHCARD_H
-#define HEALTHCARD_HEALTHCARD_H
+#pragma once
 
 #include "healthcard/healthtypes.h"
 #include <memory>
@@ -38,5 +37,3 @@ private:
 };
 
 } // namespace healthcard
-
-#endif // HEALTHCARD_HEALTHCARD_H

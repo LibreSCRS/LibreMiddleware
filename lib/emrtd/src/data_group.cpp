@@ -67,7 +67,7 @@ void parseName(const std::string& nameField, std::string& surname, std::string& 
 
 // Parse a TLV value: given a buffer and starting position, return the value bytes and advance pos.
 // Returns empty vector on error.
-std::vector<uint8_t> parseTLVValue(const std::vector<uint8_t>& data, size_t& pos)
+[[maybe_unused]] std::vector<uint8_t> parseTLVValue(const std::vector<uint8_t>& data, size_t& pos)
 {
     if (pos >= data.size())
         return {};

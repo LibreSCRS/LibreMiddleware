@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
-#ifndef CARDEDGE_CARDEDGE_H
-#define CARDEDGE_CARDEDGE_H
+#pragma once
 
 #include <string>
 #include <utility>
@@ -41,5 +40,3 @@ std::vector<uint8_t> signData(smartcard::PCSCConnection& conn, uint16_t keyRefer
 std::vector<std::pair<std::string, uint16_t>> discoverKeyReferences(smartcard::PCSCConnection& conn);
 
 } // namespace cardedge
-
-#endif // CARDEDGE_CARDEDGE_H

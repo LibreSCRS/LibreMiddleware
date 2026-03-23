@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0 and LibreSCRS contributors
 
-#ifndef PLUGIN_AUTO_READER_H
-#define PLUGIN_AUTO_READER_H
+#pragma once
 
 #include <plugin/card_data.h>
 #include <smartcard/monitor.h>
@@ -44,5 +43,3 @@ private:
 };
 
 } // namespace plugin
-
-#endif // PLUGIN_AUTO_READER_H

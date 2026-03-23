@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
-#ifndef CARDEDGE_CARDEDGETYPES_H
-#define CARDEDGE_CARDEDGETYPES_H
+#pragma once
 
 #include <cstdint>
 #include <string>
@@ -28,5 +27,3 @@ struct PINResult
 };
 
 } // namespace cardedge
-
-#endif // CARDEDGE_CARDEDGETYPES_H

@@ -8,13 +8,6 @@
 
 namespace {
 
-void addText(plugin::CardFieldGroup& group, const std::string& key, const std::string& label, const std::string& val)
-{
-    if (!val.empty()) {
-        group.fields.push_back({key, label, plugin::FieldType::Text, {val.begin(), val.end()}});
-    }
-}
-
 class HealthCardPlugin : public plugin::CardPlugin
 {
 public:
@@ -64,16 +57,16 @@ public:
             plugin::CardFieldGroup personal;
             personal.groupKey = "personal";
             personal.groupLabel = "Personal Data";
-            addText(personal, "given_name", "Given Name", doc.givenName);
-            addText(personal, "given_name_latin", "Given Name (Latin)", doc.givenNameLatin);
-            addText(personal, "family_name", "Family Name", doc.familyName);
-            addText(personal, "family_name_latin", "Family Name (Latin)", doc.familyNameLatin);
-            addText(personal, "parent_name", "Parent Name", doc.parentName);
-            addText(personal, "parent_name_latin", "Parent Name (Latin)", doc.parentNameLatin);
-            addText(personal, "date_of_birth", "Date of Birth", doc.dateOfBirth);
-            addText(personal, "gender", "Gender", doc.gender);
-            addText(personal, "personal_number", "JMBG", doc.personalNumber);
-            addText(personal, "insurant_number", "LBO", doc.insurantNumber);
+            plugin::addTextField(personal, "given_name", "Given Name", doc.givenName);
+            plugin::addTextField(personal, "given_name_latin", "Given Name (Latin)", doc.givenNameLatin);
+            plugin::addTextField(personal, "family_name", "Family Name", doc.familyName);
+            plugin::addTextField(personal, "family_name_latin", "Family Name (Latin)", doc.familyNameLatin);
+            plugin::addTextField(personal, "parent_name", "Parent Name", doc.parentName);
+            plugin::addTextField(personal, "parent_name_latin", "Parent Name (Latin)", doc.parentNameLatin);
+            plugin::addTextField(personal, "date_of_birth", "Date of Birth", doc.dateOfBirth);
+            plugin::addTextField(personal, "gender", "Gender", doc.gender);
+            plugin::addTextField(personal, "personal_number", "JMBG", doc.personalNumber);
+            plugin::addTextField(personal, "insurant_number", "LBO", doc.insurantNumber);
             emitGroup(std::move(personal));
         }
 
@@ -81,19 +74,19 @@ public:
             plugin::CardFieldGroup insurance;
             insurance.groupKey = "insurance";
             insurance.groupLabel = "Insurance";
-            addText(insurance, "insurer_name", "Insurer", doc.insurerName);
-            addText(insurance, "insurer_id", "Insurer ID", doc.insurerId);
-            addText(insurance, "card_id", "Card ID", doc.cardId);
-            addText(insurance, "date_of_issue", "Date of Issue", doc.dateOfIssue);
-            addText(insurance, "date_of_expiry", "Date of Expiry", doc.dateOfExpiry);
-            addText(insurance, "valid_until", "Valid Until", doc.validUntil);
+            plugin::addTextField(insurance, "insurer_name", "Insurer", doc.insurerName);
+            plugin::addTextField(insurance, "insurer_id", "Insurer ID", doc.insurerId);
+            plugin::addTextField(insurance, "card_id", "Card ID", doc.cardId);
+            plugin::addTextField(insurance, "date_of_issue", "Date of Issue", doc.dateOfIssue);
+            plugin::addTextField(insurance, "date_of_expiry", "Date of Expiry", doc.dateOfExpiry);
+            plugin::addTextField(insurance, "valid_until", "Valid Until", doc.validUntil);
             if (doc.permanentlyValid) {
                 insurance.fields.push_back(
                     {"permanently_valid", "Permanently Valid", plugin::FieldType::Text, {'t', 'r', 'u', 'e'}});
             }
-            addText(insurance, "insurance_basis_rzzo", "Basis", doc.insuranceBasisRzzo);
-            addText(insurance, "insurance_description", "Description", doc.insuranceDescription);
-            addText(insurance, "insurance_start_date", "Start Date", doc.insuranceStartDate);
+            plugin::addTextField(insurance, "insurance_basis_rzzo", "Basis", doc.insuranceBasisRzzo);
+            plugin::addTextField(insurance, "insurance_description", "Description", doc.insuranceDescription);
+            plugin::addTextField(insurance, "insurance_start_date", "Start Date", doc.insuranceStartDate);
             emitGroup(std::move(insurance));
         }
 
@@ -101,12 +94,12 @@ public:
             plugin::CardFieldGroup address;
             address.groupKey = "address";
             address.groupLabel = "Address";
-            addText(address, "street", "Street", doc.street);
-            addText(address, "address_number", "Number", doc.addressNumber);
-            addText(address, "apartment", "Apartment", doc.apartment);
-            addText(address, "place", "Place", doc.place);
-            addText(address, "municipality", "Municipality", doc.municipality);
-            addText(address, "country", "Country", doc.country);
+            plugin::addTextField(address, "street", "Street", doc.street);
+            plugin::addTextField(address, "address_number", "Number", doc.addressNumber);
+            plugin::addTextField(address, "apartment", "Apartment", doc.apartment);
+            plugin::addTextField(address, "place", "Place", doc.place);
+            plugin::addTextField(address, "municipality", "Municipality", doc.municipality);
+            plugin::addTextField(address, "country", "Country", doc.country);
             emitGroup(std::move(address));
         }
 
@@ -118,11 +111,11 @@ public:
                 carrier.fields.push_back(
                     {"carrier_family_member", "Family Member", plugin::FieldType::Text, {'t', 'r', 'u', 'e'}});
             }
-            addText(carrier, "carrier_given_name", "Given Name", doc.carrierGivenName);
-            addText(carrier, "carrier_family_name", "Family Name", doc.carrierFamilyName);
-            addText(carrier, "carrier_relationship", "Relationship", doc.carrierRelationship);
-            addText(carrier, "carrier_id_number", "ID Number", doc.carrierIdNumber);
-            addText(carrier, "carrier_insurant_number", "LBO", doc.carrierInsurantNumber);
+            plugin::addTextField(carrier, "carrier_given_name", "Given Name", doc.carrierGivenName);
+            plugin::addTextField(carrier, "carrier_family_name", "Family Name", doc.carrierFamilyName);
+            plugin::addTextField(carrier, "carrier_relationship", "Relationship", doc.carrierRelationship);
+            plugin::addTextField(carrier, "carrier_id_number", "ID Number", doc.carrierIdNumber);
+            plugin::addTextField(carrier, "carrier_insurant_number", "LBO", doc.carrierInsurantNumber);
             emitGroup(std::move(carrier));
         }
 
@@ -130,10 +123,10 @@ public:
             plugin::CardFieldGroup taxpayer;
             taxpayer.groupKey = "taxpayer";
             taxpayer.groupLabel = "Taxpayer";
-            addText(taxpayer, "taxpayer_name", "Name", doc.taxpayerName);
-            addText(taxpayer, "taxpayer_id_number", "ID Number", doc.taxpayerIdNumber);
-            addText(taxpayer, "taxpayer_residence", "Residence", doc.taxpayerResidence);
-            addText(taxpayer, "taxpayer_activity_code", "Activity Code", doc.taxpayerActivityCode);
+            plugin::addTextField(taxpayer, "taxpayer_name", "Name", doc.taxpayerName);
+            plugin::addTextField(taxpayer, "taxpayer_id_number", "ID Number", doc.taxpayerIdNumber);
+            plugin::addTextField(taxpayer, "taxpayer_residence", "Residence", doc.taxpayerResidence);
+            plugin::addTextField(taxpayer, "taxpayer_activity_code", "Activity Code", doc.taxpayerActivityCode);
             emitGroup(std::move(taxpayer));
         }
 

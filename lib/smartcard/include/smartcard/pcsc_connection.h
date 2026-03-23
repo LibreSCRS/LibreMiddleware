@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
-#ifndef SMARTCARD_PCSC_CONNECTION_H
-#define SMARTCARD_PCSC_CONNECTION_H
+#pragma once
 
 #include <functional>
 #include <string>
@@ -99,5 +98,3 @@ private:
 };
 
 } // namespace smartcard
-
-#endif // SMARTCARD_PCSC_CONNECTION_H

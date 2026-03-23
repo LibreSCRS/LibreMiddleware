@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#ifndef PKCS11_LIBRARY_H
-#define PKCS11_LIBRARY_H
+#pragma once
 
 #include "smartcard/pkcs11_card_provider.h"
 #include "pkcs11_platform.h"
@@ -115,5 +114,3 @@ private:
     bool matchesTemplate(const PKCS11Object& obj, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount) const;
     std::set<CK_SLOT_ID> connectedSlots;
 };
-
-#endif // PKCS11_LIBRARY_H

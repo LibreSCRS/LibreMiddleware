@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
-#ifndef EIDCARD_CARD_VERIFIER_H
-#define EIDCARD_CARD_VERIFIER_H
+#pragma once
 
 #include <cstdint>
 #include <memory>
@@ -70,5 +69,3 @@ private:
 };
 
 } // namespace eidcard
-
-#endif // EIDCARD_CARD_VERIFIER_H

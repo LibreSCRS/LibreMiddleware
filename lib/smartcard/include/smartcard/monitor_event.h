@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0 and LibreSCRS contributors
 
-#ifndef SMARTCARD_MONITOR_EVENT_H
-#define SMARTCARD_MONITOR_EVENT_H
+#pragma once
 
 #include <cstdint>
 #include <string>
@@ -19,5 +18,3 @@ struct MonitorEvent
 };
 
 } // namespace smartcard
-
-#endif // SMARTCARD_MONITOR_EVENT_H

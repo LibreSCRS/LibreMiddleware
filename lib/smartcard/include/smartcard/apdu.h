@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
-#ifndef SMARTCARD_APDU_H
-#define SMARTCARD_APDU_H
+#pragma once
 
 #include <cstdint>
 #include <vector>
@@ -40,5 +39,3 @@ APDUCommand verifyPINStatus(uint8_t pinRef);
 APDUCommand changeReferenceData(uint8_t pinRef, const std::vector<uint8_t>& oldPin, const std::vector<uint8_t>& newPin);
 
 } // namespace smartcard
-
-#endif // SMARTCARD_APDU_H

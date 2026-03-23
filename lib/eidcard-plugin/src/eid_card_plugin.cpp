@@ -11,30 +11,23 @@
 
 namespace {
 
-void addText(plugin::CardFieldGroup& group, const std::string& key, const std::string& label, const std::string& val)
-{
-    if (!val.empty()) {
-        group.fields.push_back({key, label, plugin::FieldType::Text, {val.begin(), val.end()}});
-    }
-}
-
 plugin::CardFieldGroup personalGroup(const eidcard::FixedPersonalData& fp)
 {
     plugin::CardFieldGroup group;
     group.groupKey = "personal";
     group.groupLabel = "Personal Data";
 
-    addText(group, "personal_number", "Personal Number", fp.personalNumber);
-    addText(group, "surname", "Surname", fp.surname);
-    addText(group, "given_name", "Given Name", fp.givenName);
-    addText(group, "parent_given_name", "Parent Given Name", fp.parentGivenName);
-    addText(group, "sex", "Sex", fp.sex);
-    addText(group, "place_of_birth", "Place of Birth", fp.placeOfBirth);
-    addText(group, "community_of_birth", "Community of Birth", fp.communityOfBirth);
-    addText(group, "state_of_birth", "State of Birth", fp.stateOfBirth);
-    addText(group, "date_of_birth", "Date of Birth", fp.dateOfBirth);
-    addText(group, "nationality", "Nationality", fp.nationalityFull);
-    addText(group, "status_of_foreigner", "Status of Foreigner", fp.statusOfForeigner);
+    plugin::addTextField(group, "personal_number", "Personal Number", fp.personalNumber);
+    plugin::addTextField(group, "surname", "Surname", fp.surname);
+    plugin::addTextField(group, "given_name", "Given Name", fp.givenName);
+    plugin::addTextField(group, "parent_given_name", "Parent Given Name", fp.parentGivenName);
+    plugin::addTextField(group, "sex", "Sex", fp.sex);
+    plugin::addTextField(group, "place_of_birth", "Place of Birth", fp.placeOfBirth);
+    plugin::addTextField(group, "community_of_birth", "Community of Birth", fp.communityOfBirth);
+    plugin::addTextField(group, "state_of_birth", "State of Birth", fp.stateOfBirth);
+    plugin::addTextField(group, "date_of_birth", "Date of Birth", fp.dateOfBirth);
+    plugin::addTextField(group, "nationality", "Nationality", fp.nationalityFull);
+    plugin::addTextField(group, "status_of_foreigner", "Status of Foreigner", fp.statusOfForeigner);
 
     return group;
 }
@@ -45,15 +38,15 @@ plugin::CardFieldGroup addressGroup(const eidcard::VariablePersonalData& vp)
     group.groupKey = "address";
     group.groupLabel = "Address";
 
-    addText(group, "state", "State", vp.state);
-    addText(group, "community", "Community", vp.community);
-    addText(group, "place", "Place", vp.place);
-    addText(group, "street", "Street", vp.street);
-    addText(group, "house_number", "House Number", vp.houseNumber);
-    addText(group, "house_letter", "House Letter", vp.houseLetter);
-    addText(group, "entrance", "Entrance", vp.entrance);
-    addText(group, "floor", "Floor", vp.floor);
-    addText(group, "apartment_number", "Apartment Number", vp.apartmentNumber);
+    plugin::addTextField(group, "state", "State", vp.state);
+    plugin::addTextField(group, "community", "Community", vp.community);
+    plugin::addTextField(group, "place", "Place", vp.place);
+    plugin::addTextField(group, "street", "Street", vp.street);
+    plugin::addTextField(group, "house_number", "House Number", vp.houseNumber);
+    plugin::addTextField(group, "house_letter", "House Letter", vp.houseLetter);
+    plugin::addTextField(group, "entrance", "Entrance", vp.entrance);
+    plugin::addTextField(group, "floor", "Floor", vp.floor);
+    plugin::addTextField(group, "apartment_number", "Apartment Number", vp.apartmentNumber);
 
     return group;
 }
@@ -64,12 +57,12 @@ plugin::CardFieldGroup documentGroup(const eidcard::DocumentData& doc)
     group.groupKey = "document";
     group.groupLabel = "Document Data";
 
-    addText(group, "doc_reg_no", "Registration Number", doc.docRegNo);
-    addText(group, "document_type", "Document Type", doc.documentType);
-    addText(group, "document_serial_number", "Serial Number", doc.documentSerialNumber);
-    addText(group, "issuing_date", "Issuing Date", doc.issuingDate);
-    addText(group, "expiry_date", "Expiry Date", doc.expiryDate);
-    addText(group, "issuing_authority", "Issuing Authority", doc.issuingAuthority);
+    plugin::addTextField(group, "doc_reg_no", "Registration Number", doc.docRegNo);
+    plugin::addTextField(group, "document_type", "Document Type", doc.documentType);
+    plugin::addTextField(group, "document_serial_number", "Serial Number", doc.documentSerialNumber);
+    plugin::addTextField(group, "issuing_date", "Issuing Date", doc.issuingDate);
+    plugin::addTextField(group, "expiry_date", "Expiry Date", doc.expiryDate);
+    plugin::addTextField(group, "issuing_authority", "Issuing Authority", doc.issuingAuthority);
 
     return group;
 }

@@ -87,4 +87,11 @@ struct CardData
     }
 };
 
+inline void addTextField(CardFieldGroup& group, const std::string& key, const std::string& label,
+                         const std::string& val)
+{
+    if (!val.empty())
+        group.fields.push_back({key, label, FieldType::Text, {val.begin(), val.end()}});
+}
+
 } // namespace plugin

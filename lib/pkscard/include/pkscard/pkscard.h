@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
-#ifndef PKSCARD_PKSCARD_H
-#define PKSCARD_PKSCARD_H
+#pragma once
 
 #include <string>
 #include <vector>
@@ -28,5 +27,3 @@ public:
 };
 
 } // namespace pkscard
-
-#endif // PKSCARD_PKSCARD_H

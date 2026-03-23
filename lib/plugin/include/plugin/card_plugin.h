@@ -84,7 +84,7 @@ public:
 
     // Progressive version of readCard — calls onGroup for each group as it
     // becomes available. Default delegates to readCard() (backward compatible).
-    virtual CardData readCardStreaming(smartcard::PCSCConnection& conn, GroupCallback onGroup) const
+    virtual CardData readCardStreaming(smartcard::PCSCConnection& conn, GroupCallback /*onGroup*/) const
     {
         return readCard(conn);
     }

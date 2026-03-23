@@ -11,13 +11,6 @@
 
 namespace {
 
-void addText(plugin::CardFieldGroup& group, const std::string& key, const std::string& label, const std::string& val)
-{
-    if (!val.empty()) {
-        group.fields.push_back({key, label, plugin::FieldType::Text, {val.begin(), val.end()}});
-    }
-}
-
 class PKCS15CardPlugin : public plugin::CardPlugin
 {
 public:
@@ -64,9 +57,9 @@ public:
             plugin::CardFieldGroup group;
             group.groupKey = "token";
             group.groupLabel = "Token Info";
-            addText(group, "label", "Label", profile.tokenInfo.label);
-            addText(group, "serial_number", "Serial Number", profile.tokenInfo.serialNumber);
-            addText(group, "manufacturer", "Manufacturer", profile.tokenInfo.manufacturer);
+            plugin::addTextField(group, "label", "Label", profile.tokenInfo.label);
+            plugin::addTextField(group, "serial_number", "Serial Number", profile.tokenInfo.serialNumber);
+            plugin::addTextField(group, "manufacturer", "Manufacturer", profile.tokenInfo.manufacturer);
             data.groups.push_back(std::move(group));
         }
 
@@ -76,7 +69,7 @@ public:
             group.groupKey = "certificates";
             group.groupLabel = "Certificates";
             for (const auto& cert : profile.certificates) {
-                addText(group, "cert_" + cert.label, cert.label, cert.label);
+                plugin::addTextField(group, "cert_" + cert.label, cert.label, cert.label);
             }
             data.groups.push_back(std::move(group));
         }
@@ -89,7 +82,7 @@ public:
             for (const auto& pin : profile.pins) {
                 int tries = card.getPINTriesLeft(pin);
                 std::string triesStr = (tries >= 0) ? std::to_string(tries) : "unknown";
-                addText(group, "pin_" + pin.label, pin.label, "tries left: " + triesStr);
+                plugin::addTextField(group, "pin_" + pin.label, pin.label, "tries left: " + triesStr);
             }
             data.groups.push_back(std::move(group));
         }

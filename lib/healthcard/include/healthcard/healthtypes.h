@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
-#ifndef HEALTHCARD_HEALTHTYPES_H
-#define HEALTHCARD_HEALTHTYPES_H
+#pragma once
 
 #include <string>
 
@@ -59,5 +58,3 @@ struct HealthDocumentData
 };
 
 } // namespace healthcard
-
-#endif // HEALTHCARD_HEALTHTYPES_H

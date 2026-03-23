@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0 and LibreSCRS contributors
 
-#ifndef SMARTCARD_PCSC_SCAN_PROVIDER_H
-#define SMARTCARD_PCSC_SCAN_PROVIDER_H
+#pragma once
 
 #include "ipcsc_scan_provider.h"
 
@@ -35,5 +34,3 @@ public:
 };
 
 } // namespace smartcard
-
-#endif // SMARTCARD_PCSC_SCAN_PROVIDER_H

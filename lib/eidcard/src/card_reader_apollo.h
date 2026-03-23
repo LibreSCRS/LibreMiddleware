@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
-#ifndef EIDCARD_CARD_READER_APOLLO_H
-#define EIDCARD_CARD_READER_APOLLO_H
+#pragma once
 
 #include "card_reader_base.h"
 
@@ -17,5 +16,3 @@ public:
 };
 
 } // namespace eidcard
-
-#endif // EIDCARD_CARD_READER_APOLLO_H

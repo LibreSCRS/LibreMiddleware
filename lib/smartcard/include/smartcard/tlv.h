@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
-#ifndef SMARTCARD_TLV_H
-#define SMARTCARD_TLV_H
+#pragma once
 
 #include <cstdint>
 #include <string>
@@ -25,5 +24,3 @@ std::string findString(const std::vector<TLVField>& fields, uint16_t tag);
 std::vector<uint8_t> findBytes(const std::vector<TLVField>& fields, uint16_t tag);
 
 } // namespace smartcard
-
-#endif // SMARTCARD_TLV_H

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
-#ifndef VEHICLECARD_VEHICLE_PROTOCOL_H
-#define VEHICLECARD_VEHICLE_PROTOCOL_H
+#pragma once
 
 #include <cstdint>
 #include <vector>
@@ -45,5 +44,3 @@ constexpr uint8_t FILE_HEADER_SIZE = 0x20;
 constexpr uint8_t READ_CHUNK_SIZE = 0x64; // 100 bytes
 
 } // namespace vehiclecard::protocol
-
-#endif // VEHICLECARD_VEHICLE_PROTOCOL_H
