@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-// Copyright hirashix0@proton.me
+// SPDX-FileCopyrightText: 2026 hirashix0
 
 #define CK_PTR *
 #define CK_DECLARE_FUNCTION(returnType, name) returnType name

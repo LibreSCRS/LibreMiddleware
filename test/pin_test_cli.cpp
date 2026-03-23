@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-// Copyright hirashix0@proton.me
+// SPDX-FileCopyrightText: 2026 hirashix0
 //
 // Quick CLI tool to test PIN operations on an inserted card.
 // Usage: ./pin_test_cli [reader_name]

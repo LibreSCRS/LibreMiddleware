@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-// Copyright hirashix0@proton.me
+// SPDX-FileCopyrightText: 2026 hirashix0
 //
 // PKCS#15 applet probe: discovers PKCS#15 structure on cards that may have
 // multiple applets (e.g., eMRTD + PKI). Sends raw APDUs to find:

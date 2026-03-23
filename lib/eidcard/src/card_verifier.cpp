@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-// Copyright hirashix0@proton.me
+// SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "card_verifier.h"
 #include "card_protocol.h"
@@ -12,6 +12,7 @@
 #include <openssl/pem.h>
 #include <openssl/pkcs7.h>
 #include <openssl/x509.h>
+#include <openssl/crypto.h>
 #include <openssl/x509_vfy.h>
 
 #include <cstring>
@@ -417,13 +418,13 @@ VerificationResult CardVerifier::verifyGemaltoSOD(smartcard::PCSCConnection& con
         bool found = false;
         for (size_t slot = 0; slot < totalHashes && !found; slot++) {
             const uint8_t* slotPtr = signedContent.data() + slot * SHA256_SIZE;
-            if (std::memcmp(hashRaw.data(), slotPtr, SHA256_SIZE) == 0) {
+            if (CRYPTO_memcmp(hashRaw.data(), slotPtr, SHA256_SIZE) == 0) {
 #ifndef NDEBUG
                 std::cerr << "[CardVerifier] Block " << i << " hash matches at slot " << slot << " (raw with header)"
                           << std::endl;
 #endif
                 found = true;
-            } else if (std::memcmp(hashNoHeader.data(), slotPtr, SHA256_SIZE) == 0) {
+            } else if (CRYPTO_memcmp(hashNoHeader.data(), slotPtr, SHA256_SIZE) == 0) {
 #ifndef NDEBUG
                 std::cerr << "[CardVerifier] Block " << i << " hash matches at slot " << slot << " (without header)"
                           << std::endl;

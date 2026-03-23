@@ -644,6 +644,27 @@ std::optional<SessionKeys> performPACE(smartcard::PCSCConnection& conn, const PA
     //   CAN/PIN/PUK: keySeed = raw password bytes (ICAO 9303)
     // Then K_pi = KDF(keySeed, 3) where KDF uses cipher-appropriate hash.
     std::vector<uint8_t> kpiSeed;
+    std::vector<uint8_t> kPi;
+    std::vector<uint8_t> nonce;
+    std::vector<uint8_t> sharedK;
+
+    // Scope guard to cleanse key material on all exit paths
+    struct KeyCleaner
+    {
+        std::vector<uint8_t>&kpiSeed, &kPi, &nonce, &sharedK;
+        ~KeyCleaner()
+        {
+            if (!kpiSeed.empty())
+                OPENSSL_cleanse(kpiSeed.data(), kpiSeed.size());
+            if (!kPi.empty())
+                OPENSSL_cleanse(kPi.data(), kPi.size());
+            if (!nonce.empty())
+                OPENSSL_cleanse(nonce.data(), nonce.size());
+            if (!sharedK.empty())
+                OPENSSL_cleanse(sharedK.data(), sharedK.size());
+        }
+    } keyCleaner{kpiSeed, kPi, nonce, sharedK};
+
     if (params.passwordType == PACEPasswordType::MRZ) {
         static constexpr size_t PACE_KEY_SEED_LEN = 16;
         unsigned char pwSha1[20] = {};
@@ -655,10 +676,9 @@ std::optional<SessionKeys> performPACE(smartcard::PCSCConnection& conn, const PA
     } else {
         kpiSeed = params.password;
     }
-    auto kPi = detail::kdf(kpiSeed, 3, isDES3, keyLen);
+    kPi = detail::kdf(kpiSeed, 3, isDES3, keyLen);
 
     // Decrypt the nonce
-    std::vector<uint8_t> nonce;
     if (isDES3) {
         nonce = detail::des3Decrypt(kPi, encryptedNonce);
     } else {
@@ -750,7 +770,7 @@ std::optional<SessionKeys> performPACE(smartcard::PCSCConnection& conn, const PA
     auto pkAgreeICC = bytesToPoint(baseGroup.get(), pkAgreeICCBytes, bnCtx.get());
 
     // Compute shared secret K = skAgree * PK_agree_ICC — x-coordinate
-    auto sharedK = ecdhSharedSecret(baseGroup.get(), skAgree.get(), pkAgreeICC.get(), bnCtx.get());
+    sharedK = ecdhSharedSecret(baseGroup.get(), skAgree.get(), pkAgreeICC.get(), bnCtx.get());
 
     // Derive session keys
     auto kEnc = detail::kdf(sharedK, 1, isDES3, keyLen);

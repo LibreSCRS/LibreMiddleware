@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-// Copyright hirashix0@proton.me
+// SPDX-FileCopyrightText: 2026 hirashix0
 //
 // FCI format probe: tests whether CardEdge SELECT FILE ever returns
 // ISO 7816-4 TLV-wrapped FCI (tag 0x6F or 0x62).

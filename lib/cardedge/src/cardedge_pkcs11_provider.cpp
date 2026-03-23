@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-// Copyright hirashix0@proton.me
+// SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "cardedge/cardedge_pkcs11_provider.h"
 #include "cardedge/cardedge.h"

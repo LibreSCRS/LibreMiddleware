@@ -188,6 +188,8 @@ std::optional<std::vector<uint8_t>> EMRTDCard::transmitSecure(const std::vector<
         // Try recovery on card reset
         try {
             recover();
+            if (!sm)
+                return std::nullopt;
             protectedApdu = sm->protect(apduBytes);
             if (protectedApdu.size() < 5)
                 return std::nullopt;

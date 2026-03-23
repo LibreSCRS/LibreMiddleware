@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-// Copyright hirashix0@proton.me
+// SPDX-FileCopyrightText: 2026 hirashix0
 //
 // PKCS#15-after-PACE probe: authenticates via PACE (CAN), then probes
 // PKCS#15 applet structure. Tests the hypothesis that PKCS#15 becomes

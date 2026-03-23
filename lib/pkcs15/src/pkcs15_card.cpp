@@ -136,7 +136,8 @@ PKCS15Profile PKCS15Card::readProfile()
     auto odf = parseODF(odfData);
 
     // Re-select applet before reading TokenInfo
-    selectApplet();
+    if (!selectApplet())
+        throw std::runtime_error("PKCS15: failed to select applet");
 
     // Read TokenInfo (EF.TokenInfo = 5032)
     const uint8_t tokenInfoFid[] = {0x50, 0x32};
@@ -151,21 +152,24 @@ PKCS15Profile PKCS15Card::readProfile()
 
     // Read CDF if present
     if (!odf.certificatesPath.empty()) {
-        selectApplet();
+        if (!selectApplet())
+            throw std::runtime_error("PKCS15: failed to select applet");
         if (selectByPath(odf.certificatesPath))
             profile.certificates = parseCDF(readSelectedFile());
     }
 
     // Read PrKDF if present
     if (!odf.privateKeysPath.empty()) {
-        selectApplet();
+        if (!selectApplet())
+            throw std::runtime_error("PKCS15: failed to select applet");
         if (selectByPath(odf.privateKeysPath))
             profile.privateKeys = parsePrKDF(readSelectedFile());
     }
 
     // Read AODF if present
     if (!odf.authObjectsPath.empty()) {
-        selectApplet();
+        if (!selectApplet())
+            throw std::runtime_error("PKCS15: failed to select applet");
         if (selectByPath(odf.authObjectsPath))
             profile.pins = parseAODF(readSelectedFile());
     }
@@ -176,7 +180,8 @@ PKCS15Profile PKCS15Card::readProfile()
 std::vector<uint8_t> PKCS15Card::readCertificate(const CertificateInfo& cert)
 {
     smartcard::CardTransaction tx(conn);
-    selectApplet();
+    if (!selectApplet())
+        throw std::runtime_error("PKCS15: failed to select applet");
 
     if (!selectByPath(cert.path))
         throw std::runtime_error("Failed to select certificate file");
@@ -187,7 +192,8 @@ std::vector<uint8_t> PKCS15Card::readCertificate(const CertificateInfo& cert)
 int PKCS15Card::getPINTriesLeft(const PinInfo& pin)
 {
     smartcard::CardTransaction tx(conn);
-    selectApplet();
+    if (!selectApplet())
+        throw std::runtime_error("PKCS15: failed to select applet");
 
     // Navigate to PIN's DF if path is given
     if (!pin.path.empty())
@@ -216,7 +222,8 @@ int PKCS15Card::getPINTriesLeft(const PinInfo& pin)
 PinResult PKCS15Card::verifyPIN(const PinInfo& pin, const std::string& pinValue)
 {
     smartcard::CardTransaction tx(conn);
-    selectApplet();
+    if (!selectApplet())
+        throw std::runtime_error("PKCS15: failed to select applet");
 
     if (!pin.path.empty())
         selectByPath(pin.path);
@@ -268,7 +275,8 @@ PinResult PKCS15Card::verifyPIN(const PinInfo& pin, const std::string& pinValue)
 PinResult PKCS15Card::changePIN(const PinInfo& pin, const std::string& oldPin, const std::string& newPin)
 {
     smartcard::CardTransaction tx(conn);
-    selectApplet();
+    if (!selectApplet())
+        throw std::runtime_error("PKCS15: failed to select applet");
 
     if (!pin.path.empty())
         selectByPath(pin.path);

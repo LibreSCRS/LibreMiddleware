@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-// Copyright hirashix0@proton.me
+// SPDX-FileCopyrightText: 2026 hirashix0
 //
 // AODF + PIN reference probe: reads the real authObjects file from ODF
 // and probes VERIFY with different P2 values to discover PIN references.
