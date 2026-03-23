@@ -73,7 +73,8 @@ public:
             plugin::addTextField(veh, "maximum_net_power", "Max Power", doc.maximumNetPower);
             plugin::addTextField(veh, "type_of_fuel", "Fuel", doc.typeOfFuel);
             plugin::addTextField(veh, "vehicle_mass", "Mass", doc.vehicleMass);
-            plugin::addTextField(veh, "maximum_permissible_laden_mass", "Max Laden Mass", doc.maximumPermissibleLadenMass);
+            plugin::addTextField(veh, "maximum_permissible_laden_mass", "Max Laden Mass",
+                                 doc.maximumPermissibleLadenMass);
             plugin::addTextField(veh, "vehicle_load", "Load", doc.vehicleLoad);
             plugin::addTextField(veh, "power_weight_ratio", "Power/Weight", doc.powerWeightRatio);
             plugin::addTextField(veh, "number_of_axes", "Axles", doc.numberOfAxles);
@@ -95,7 +96,8 @@ public:
             plugin::CardFieldGroup owner;
             owner.groupKey = "owner";
             owner.groupLabel = "Owner";
-            plugin::addTextField(owner, "owners_surname_or_business_name", "Surname/Business", doc.ownersSurnameOrBusinessName);
+            plugin::addTextField(owner, "owners_surname_or_business_name", "Surname/Business",
+                                 doc.ownersSurnameOrBusinessName);
             plugin::addTextField(owner, "owner_name", "Name", doc.ownerName);
             plugin::addTextField(owner, "owner_address", "Address", doc.ownerAddress);
             plugin::addTextField(owner, "owners_personal_no", "Personal Number", doc.ownersPersonalNo);
@@ -107,7 +109,8 @@ public:
             plugin::CardFieldGroup user;
             user.groupKey = "user";
             user.groupLabel = "User";
-            plugin::addTextField(user, "users_surname_or_business_name", "Surname/Business", doc.usersSurnameOrBusinessName);
+            plugin::addTextField(user, "users_surname_or_business_name", "Surname/Business",
+                                 doc.usersSurnameOrBusinessName);
             plugin::addTextField(user, "users_name", "Name", doc.usersName);
             plugin::addTextField(user, "users_address", "Address", doc.usersAddress);
             plugin::addTextField(user, "users_personal_no", "Personal Number", doc.usersPersonalNo);

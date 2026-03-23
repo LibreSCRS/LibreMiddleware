@@ -813,8 +813,7 @@ std::optional<SessionKeys> performPACE(smartcard::PCSCConnection& conn, const PA
         expectedTICC = detail::aesCMAC(kMAC, pkdoIFD);
     }
 
-    if (tICC.size() != expectedTICC.size() ||
-        CRYPTO_memcmp(tICC.data(), expectedTICC.data(), tICC.size()) != 0)
+    if (tICC.size() != expectedTICC.size() || CRYPTO_memcmp(tICC.data(), expectedTICC.data(), tICC.size()) != 0)
         return std::nullopt;
 
     // --- Step 8: Build SessionKeys ---

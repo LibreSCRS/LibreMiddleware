@@ -1102,7 +1102,10 @@ CK_RV PKCS11Library::sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULON
         return CKR_OK;
     }
 
-    // From here on, sign state is consumed regardless of outcome
+    // Sign state is consumed regardless of outcome. Per PKCS#11 spec,
+    // CKR_BUFFER_TOO_SMALL should preserve sign state, but since the card
+    // has already performed the RSA operation, we cannot re-do it.
+    // Callers (NSS/Firefox) always query size first (pSignature==NULL path above).
     auto signState = session.signState.value();
     session.signState.reset();
 
