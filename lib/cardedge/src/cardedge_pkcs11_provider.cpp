@@ -6,6 +6,7 @@
 #include "cardedge/pki_applet_guard.h"
 #include "smartcard/apdu.h"
 #include "cardedge_protocol.h"
+#include <openssl/crypto.h>
 
 namespace cardedge {
 
@@ -119,6 +120,7 @@ unsigned long CardEdgePKCS11Provider::login(unsigned long userType, const std::v
         PkiAppletGuard guard(*connection);
         std::string pinStr(pin.begin(), pin.end());
         auto result = verifyPIN(*connection, pinStr);
+        OPENSSL_cleanse(pinStr.data(), pinStr.size());
         if (result.success)
             return 0; // CKR_OK
         if (result.blocked)

@@ -38,9 +38,6 @@ public:
     VariablePersonalData readVariablePersonalData();
     PhotoData readPortrait();
 
-    // Reconnect the underlying PC/SC connection after SCARD_W_RESET_CARD.
-    void reconnectConnection();
-
     // Verification
     void setCertificateFolderPath(const std::string& path);
     // Add a single DER-encoded trusted certificate (use when certs come from

@@ -8,6 +8,7 @@
 #include <smartcard/pcsc_connection.h>
 
 #include <openssl/bn.h>
+#include <openssl/crypto.h>
 #include <openssl/ec.h>
 #include <openssl/evp.h>
 #include <openssl/obj_mac.h>
@@ -73,7 +74,7 @@ static std::pair<size_t, size_t> parseBERLength(const std::vector<uint8_t>& data
         return {first, 1};
     }
     size_t numBytes = first & 0x7F;
-    if (numBytes == 0 || pos + 1 + numBytes > data.size())
+    if (numBytes == 0 || numBytes > sizeof(size_t) || pos + 1 + numBytes > data.size())
         return {0, 0};
 
     size_t len = 0;
@@ -124,7 +125,10 @@ static std::vector<uint8_t> oidStringToBytes(const std::string& oid)
         return {};
 
     std::vector<uint8_t> bytes;
-    bytes.push_back(static_cast<uint8_t>(components[0] * 40 + components[1]));
+    unsigned long firstByte = components[0] * 40 + components[1];
+    if (firstByte > 255)
+        return {};
+    bytes.push_back(static_cast<uint8_t>(firstByte));
 
     for (size_t i = 2; i < components.size(); ++i) {
         unsigned long val = components[i];
@@ -395,7 +399,6 @@ static int parseParameterIdFromCardAccess(const std::vector<uint8_t>& cardAccess
         // Parse OID
         std::string oid;
         if (pos < seqEnd && cardAccess[pos] == 0x06) {
-            size_t oidTagPos = pos;
             pos++;
             auto [oidLen, oidLenBytes] = parseBERLength(cardAccess, pos);
             pos += oidLenBytes;
@@ -790,7 +793,8 @@ std::optional<SessionKeys> performPACE(smartcard::PCSCConnection& conn, const PA
         expectedTICC = detail::aesCMAC(kMAC, pkdoIFD);
     }
 
-    if (tICC != expectedTICC)
+    if (tICC.size() != expectedTICC.size() ||
+        CRYPTO_memcmp(tICC.data(), expectedTICC.data(), tICC.size()) != 0)
         return std::nullopt;
 
     // --- Step 8: Build SessionKeys ---

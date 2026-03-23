@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-License-Identifier: LGPL-2.1-or-later
 // Copyright hirashix0@proton.me
 
 #ifndef EIDCARD_CARD_PROTOCOL_H
@@ -34,10 +34,6 @@ constexpr uint8_t FILE_PORTRAIT_L = 0x06;
 // File IDs - Apollo 2008 certificate and signature files
 constexpr uint8_t FILE_USER_CERT1_H = 0x0F; // User Certificate 1
 constexpr uint8_t FILE_USER_CERT1_L = 0x08;
-constexpr uint8_t FILE_USER_CERT2_H = 0x0F; // User Certificate 2
-constexpr uint8_t FILE_USER_CERT2_L = 0x10;
-constexpr uint8_t FILE_INTERMEDIATE_CA_H = 0x0F; // MOI Intermediate CA Certificate
-constexpr uint8_t FILE_INTERMEDIATE_CA_L = 0x11;
 constexpr uint8_t FILE_CERT_VX_H = 0x0F; // Signing cert for variable data (MOI_CERTo1)
 constexpr uint8_t FILE_CERT_VX_L = 0x13;
 constexpr uint8_t FILE_SIGN_VX_H = 0x0F; // Variable data signature (MOI_SIGN_VX)
@@ -87,9 +83,6 @@ constexpr uint16_t TAG_FLOOR = 1575;
 constexpr uint16_t TAG_APARTMENT_NUMBER = 1578;
 constexpr uint16_t TAG_ADDRESS_DATE = 1580;
 constexpr uint16_t TAG_ADDRESS_LABEL = 1581;
-
-// TLV Tags for Portrait
-constexpr uint16_t TAG_PORTRAIT = 1584;
 
 // ATR patterns for card type detection
 // Gemalto (2014+) cards have ATR starting with 3B FF 94 00 00

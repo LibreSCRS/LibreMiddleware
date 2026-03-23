@@ -390,32 +390,12 @@ std::vector<int> EMRTDCard::readCOM()
     return dgList;
 }
 
-std::map<int, std::vector<uint8_t>> EMRTDCard::readAllDataGroups()
-{
-    auto dgList = readCOM();
-    std::map<int, std::vector<uint8_t>> result;
-
-    for (int dg : dgList) {
-        auto data = readDataGroup(dg);
-        if (data) {
-            result[dg] = std::move(*data);
-        }
-    }
-
-    return result;
-}
-
 std::optional<std::vector<uint8_t>> EMRTDCard::readDataGroup(int dgNumber)
 {
     uint16_t fid = dgToFID(dgNumber);
     if (fid == 0)
         return std::nullopt;
     return readFile(fid);
-}
-
-std::optional<std::vector<uint8_t>> EMRTDCard::readSOD()
-{
-    return readFile(FID_SOD);
 }
 
 } // namespace emrtd

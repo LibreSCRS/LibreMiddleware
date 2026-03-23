@@ -397,9 +397,7 @@ std::vector<PinInfo> parseAODF(std::span<const uint8_t> data)
         for (const auto& field : pinAttrs->children) {
             if (field.tag == 0x03 && !field.constructed && field.value.size() >= 2) {
                 // BIT STRING pinFlags
-                uint8_t unusedBits = field.value[0];
                 uint8_t flagsByte = field.value[1];
-                (void)unusedBits;
                 // PKCS#15 PinFlags: case-sensitive(0), local(1), change-disabled(2),
                 //   unblock-disabled(3), initialized(4), needs-padding(5), ...
                 // Bit numbering: bit 0 is the MSB of the first content byte

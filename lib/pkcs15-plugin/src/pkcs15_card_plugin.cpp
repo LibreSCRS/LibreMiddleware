@@ -138,10 +138,14 @@ public:
     std::vector<plugin::PinStatusEntry> getPINList(smartcard::PCSCConnection& conn) const override
     {
         pkcs15::PKCS15Card card(conn);
-        cachedProfile = card.readProfile();
+        auto profile = card.readProfile();
+        {
+            std::lock_guard<std::mutex> lock(cacheMtx);
+            cachedProfile = profile;
+        }
 
         std::vector<plugin::PinStatusEntry> result;
-        for (const auto& pin : cachedProfile.pins) {
+        for (const auto& pin : profile.pins) {
             plugin::PinStatusEntry entry;
             entry.label = pin.label;
             entry.reference = pin.pinReference;
@@ -165,7 +169,13 @@ public:
                                 const std::string& newPin) const override
     {
         pkcs15::PKCS15Card card(conn);
-        auto profile = cachedProfile.pins.empty() ? card.readProfile() : cachedProfile;
+        pkcs15::PKCS15Profile profile;
+        {
+            std::lock_guard<std::mutex> lock(cacheMtx);
+            profile = cachedProfile;
+        }
+        if (profile.pins.empty())
+            profile = card.readProfile();
 
         for (const auto& pin : profile.pins) {
             if (pin.pinReference == pinReference) {
@@ -180,7 +190,13 @@ public:
                                 const std::string& newPin) const override
     {
         pkcs15::PKCS15Card card(conn);
-        auto profile = cachedProfile.pins.empty() ? card.readProfile() : cachedProfile;
+        pkcs15::PKCS15Profile profile;
+        {
+            std::lock_guard<std::mutex> lock(cacheMtx);
+            profile = cachedProfile;
+        }
+        if (profile.pins.empty())
+            profile = card.readProfile();
         auto* pinInfo = findUserPin(profile);
         if (!pinInfo)
             return {};
@@ -213,6 +229,7 @@ public:
     }
 
 private:
+    mutable std::mutex cacheMtx;
     mutable pkcs15::PKCS15Profile cachedProfile;
 
     static const pkcs15::PinInfo* findUserPin(const pkcs15::PKCS15Profile& profile)

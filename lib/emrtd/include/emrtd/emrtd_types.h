@@ -43,6 +43,5 @@ inline uint16_t dgToFID(int dg)
 }
 
 inline constexpr uint16_t FID_COM = 0x011E;
-inline constexpr uint16_t FID_SOD = 0x011D;
 
 } // namespace emrtd

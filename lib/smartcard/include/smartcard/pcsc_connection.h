@@ -55,9 +55,9 @@ public:
 
     void reconnect(); // prefers T=1, falls back to T=0
     std::vector<uint8_t> getATR() const;
-    DWORD getActiveProtocol() const
+    const std::string& readerName() const
     {
-        return activeProtocol;
+        return storedReaderName;
     }
 
     // Acquire / release an exclusive PC/SC transaction on the card.
@@ -70,6 +70,7 @@ public:
 
 private:
     TransmitFilter transmitFilter;
+    std::string storedReaderName;
     SCARDCONTEXT context = 0;
     SCARDHANDLE card = 0;
     DWORD activeProtocol = 0;

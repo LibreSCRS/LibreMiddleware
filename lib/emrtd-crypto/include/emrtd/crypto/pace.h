@@ -37,11 +37,9 @@ inline constexpr const char* ECDH_GM_AES_CBC_CMAC_192 = "0.4.0.127.0.7.2.2.4.2.3
 inline constexpr const char* ECDH_GM_AES_CBC_CMAC_256 = "0.4.0.127.0.7.2.2.4.2.4";
 // Integrated Mapping (IM)
 inline constexpr const char* ECDH_IM_AES_CBC_CMAC_128 = "0.4.0.127.0.7.2.2.4.3.2";
-inline constexpr const char* ECDH_IM_AES_CBC_CMAC_192 = "0.4.0.127.0.7.2.2.4.3.3";
 inline constexpr const char* ECDH_IM_AES_CBC_CMAC_256 = "0.4.0.127.0.7.2.2.4.3.4";
 // Chip Authentication Mapping (CAM)
 inline constexpr const char* ECDH_CAM_AES_CBC_CMAC_128 = "0.4.0.127.0.7.2.2.4.6.2";
-inline constexpr const char* ECDH_CAM_AES_CBC_CMAC_192 = "0.4.0.127.0.7.2.2.4.6.3";
 inline constexpr const char* ECDH_CAM_AES_CBC_CMAC_256 = "0.4.0.127.0.7.2.2.4.6.4";
 } // namespace pace_oid
 

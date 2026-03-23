@@ -146,13 +146,19 @@ public:
         auto creds = *credentials;
         lock.unlock();
 
+        std::unique_ptr<emrtd::EMRTDCard> localCard;
         if (auto* mrz = std::get_if<emrtd::MRZData>(&creds)) {
-            emrTDCard = std::make_unique<emrtd::EMRTDCard>(conn, *mrz);
+            localCard = std::make_unique<emrtd::EMRTDCard>(conn, *mrz);
         } else if (auto* can = std::get_if<std::string>(&creds)) {
-            emrTDCard = std::make_unique<emrtd::EMRTDCard>(conn, *can);
+            localCard = std::make_unique<emrtd::EMRTDCard>(conn, *can);
         }
+        {
+            std::lock_guard lk(mtx);
+            emrTDCard = std::move(localCard);
+        }
+        emrtd::EMRTDCard* card = emrTDCard.get();
 
-        auto authResult = emrTDCard->authenticate();
+        auto authResult = card->authenticate();
         if (!authResult.success) {
             plugin::CardFieldGroup errorGroup;
             errorGroup.groupKey = "error";
@@ -164,7 +170,7 @@ public:
         }
 
         // Read DGs one by one and emit groups progressively
-        auto dgList = emrTDCard->readCOM();
+        auto dgList = card->readCOM();
 
         auto addTextField = [](plugin::CardFieldGroup& g, const std::string& key, const std::string& label,
                                const std::string& val) {
@@ -173,7 +179,7 @@ public:
         };
 
         for (int dg : dgList) {
-            auto raw = emrTDCard->readDataGroup(dg);
+            auto raw = card->readDataGroup(dg);
             if (!raw)
                 continue;
 

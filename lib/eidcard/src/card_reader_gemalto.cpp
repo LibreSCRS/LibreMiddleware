@@ -96,6 +96,9 @@ std::vector<uint8_t> CardReaderGemalto::readFile(smartcard::PCSCConnection& conn
     // File data length is at header bytes 2-3 in LITTLE-ENDIAN format
     uint32_t dataLength = static_cast<uint32_t>(headerResp.data[2]) | (static_cast<uint32_t>(headerResp.data[3]) << 8);
 
+    if (dataLength > 65535)
+        throw std::runtime_error("Gemalto: file size exceeds maximum (65535 bytes)");
+
     if (dataLength == 0) {
         return {};
     }

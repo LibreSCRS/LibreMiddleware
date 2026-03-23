@@ -146,12 +146,6 @@ PhotoData EIdCard::readPortrait()
     return {};
 }
 
-void EIdCard::reconnectConnection()
-{
-    if (conn)
-        conn->reconnect();
-}
-
 void EIdCard::setCertificateFolderPath(const std::string& path)
 {
     certFolderPath = path;

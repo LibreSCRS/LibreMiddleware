@@ -15,8 +15,6 @@ void addText(plugin::CardFieldGroup& group, const std::string& key, const std::s
     }
 }
 
-} // namespace
-
 class VehicleCardPlugin : public plugin::CardPlugin
 {
 public:
@@ -126,6 +124,8 @@ public:
         return data;
     }
 };
+
+} // namespace
 
 extern "C" std::unique_ptr<plugin::CardPlugin> create_card_plugin()
 {

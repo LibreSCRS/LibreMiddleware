@@ -22,4 +22,4 @@ target_include_directories(CardEdge PUBLIC
 
 set_target_properties(CardEdge PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-target_link_libraries(CardEdge PUBLIC SmartCard z)
+target_link_libraries(CardEdge PUBLIC SmartCard OpenSSL_Crypto z)

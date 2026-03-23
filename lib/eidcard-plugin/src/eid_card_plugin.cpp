@@ -233,6 +233,18 @@ public:
             addVerField("variable_verification", toStr(variableVerification));
         }
 
+        // Emit verification as a separate group for the streaming path
+        plugin::CardFieldGroup verGroup;
+        verGroup.groupKey = "verification";
+        verGroup.groupLabel = "Verification";
+        auto addVerField = [&](const std::string& key, const std::string& val) {
+            verGroup.fields.push_back({key, key, plugin::FieldType::Text, {val.begin(), val.end()}});
+        };
+        addVerField("card_verification", toStr(cardVerification));
+        addVerField("fixed_verification", toStr(fixedVerification));
+        addVerField("variable_verification", toStr(variableVerification));
+        emitGroup(std::move(verGroup));
+
         return data;
     }
 };

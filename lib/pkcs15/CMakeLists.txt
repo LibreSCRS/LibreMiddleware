@@ -16,6 +16,6 @@ target_include_directories(PKCS15 PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-target_link_libraries(PKCS15 PUBLIC SmartCard)
+target_link_libraries(PKCS15 PUBLIC SmartCard OpenSSL_Crypto)
 
 set_target_properties(PKCS15 PROPERTIES POSITION_INDEPENDENT_CODE ON)

@@ -45,6 +45,8 @@ static void pkcs11_debug(const char* fmt, ...)
 // File-scoped library state
 // ---------------------------------------------------------------------------
 
+// TODO: libraryMutex is held during card I/O, causing starvation under concurrent access.
+// Consider per-slot mutexes to allow parallel operations on different cards.
 static std::mutex libraryMutex;
 static std::unique_ptr<PKCS11Library> library;
 

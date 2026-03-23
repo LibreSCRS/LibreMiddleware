@@ -30,9 +30,6 @@ public:
     /// Phase 1: find by ATR match (no card I/O). Returns nullptr if no match.
     CardPlugin* findPluginForCard(const std::vector<uint8_t>& atr) const;
 
-    /// Phase 2: find by AID probe on live connection.
-    CardPlugin* findPluginForConnection(smartcard::PCSCConnection& conn) const;
-
     /// ATR-only overload (Phase 1 only — fast, no card I/O).
     /// Returns all plugins where canHandle(atr) returns true, sorted by priority.
     std::vector<CardPlugin*> findAllCandidates(const std::vector<uint8_t>& atr) const;
@@ -51,8 +48,8 @@ private:
         std::unique_ptr<CardPlugin> plugin;
     };
 
-    std::vector<LoadedPlugin> loadedPlugins_;
-    std::vector<CardPlugin*> sortedPlugins_;
+    std::vector<LoadedPlugin> loadedPlugins;
+    std::vector<CardPlugin*> sortedPlugins;
 
     void sortPlugins();
 };

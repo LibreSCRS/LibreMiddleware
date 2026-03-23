@@ -8,6 +8,7 @@
 #include "smartcard/apdu.h"
 #include <algorithm>
 #include <cstring>
+#include <openssl/crypto.h>
 #include <zlib.h>
 
 namespace cardedge {
@@ -300,14 +301,19 @@ PINResult getPINTriesLeft(smartcard::PCSCConnection& conn)
 
 PINResult verifyPIN(smartcard::PCSCConnection& conn, const std::string& pin)
 {
-    auto resp = conn.transmit(smartcard::verifyPIN(protocol::PKI_PIN_REFERENCE, padPIN(pin)));
+    auto paddedPin = padPIN(pin);
+    auto resp = conn.transmit(smartcard::verifyPIN(protocol::PKI_PIN_REFERENCE, paddedPin));
+    OPENSSL_cleanse(paddedPin.data(), paddedPin.size());
     return parsePINStatusWord(resp.statusWord());
 }
 
 PINResult changePIN(smartcard::PCSCConnection& conn, const std::string& oldPin, const std::string& newPin)
 {
-    auto resp =
-        conn.transmit(smartcard::changeReferenceData(protocol::PKI_PIN_REFERENCE, padPIN(oldPin), padPIN(newPin)));
+    auto paddedOld = padPIN(oldPin);
+    auto paddedNew = padPIN(newPin);
+    auto resp = conn.transmit(smartcard::changeReferenceData(protocol::PKI_PIN_REFERENCE, paddedOld, paddedNew));
+    OPENSSL_cleanse(paddedOld.data(), paddedOld.size());
+    OPENSSL_cleanse(paddedNew.data(), paddedNew.size());
     return parsePINStatusWord(resp.statusWord());
 }
 

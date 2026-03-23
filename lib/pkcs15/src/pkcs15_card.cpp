@@ -6,6 +6,7 @@
 #include <smartcard/apdu.h>
 #include <smartcard/pcsc_connection.h>
 
+#include <openssl/crypto.h>
 #include <stdexcept>
 
 namespace pkcs15 {
@@ -229,25 +230,38 @@ PinResult PKCS15Card::verifyPIN(const PinInfo& pin, const std::string& pinValue)
 
     // Try pinReference directly
     auto resp = conn.transmit(smartcard::verifyPIN(pin.pinReference, pinData));
-    if (resp.isSuccess())
+    if (resp.isSuccess()) {
+        OPENSSL_cleanse(pinData.data(), pinData.size());
         return {true, -1, false};
-    if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
+    }
+    if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0) {
+        OPENSSL_cleanse(pinData.data(), pinData.size());
         return {false, resp.sw2 & 0x0F, false};
-    if (resp.statusWord() == 0x6983)
+    }
+    if (resp.statusWord() == 0x6983) {
+        OPENSSL_cleanse(pinData.data(), pinData.size());
         return {false, 0, true};
+    }
 
     // Fallback: strip local bit
     uint8_t altRef = pin.pinReference & 0x7F;
     if (altRef != pin.pinReference) {
         resp = conn.transmit(smartcard::verifyPIN(altRef, pinData));
-        if (resp.isSuccess())
+        if (resp.isSuccess()) {
+            OPENSSL_cleanse(pinData.data(), pinData.size());
             return {true, -1, false};
-        if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
+        }
+        if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0) {
+            OPENSSL_cleanse(pinData.data(), pinData.size());
             return {false, resp.sw2 & 0x0F, false};
-        if (resp.statusWord() == 0x6983)
+        }
+        if (resp.statusWord() == 0x6983) {
+            OPENSSL_cleanse(pinData.data(), pinData.size());
             return {false, 0, true};
+        }
     }
 
+    OPENSSL_cleanse(pinData.data(), pinData.size());
     return {false, -1, false};
 }
 
@@ -274,25 +288,45 @@ PinResult PKCS15Card::changePIN(const PinInfo& pin, const std::string& oldPin, c
         newData.resize(pin.storedLength, pin.padChar);
 
     auto resp = conn.transmit(smartcard::changeReferenceData(pin.pinReference, oldData, newData));
-    if (resp.isSuccess())
+    if (resp.isSuccess()) {
+        OPENSSL_cleanse(oldData.data(), oldData.size());
+        OPENSSL_cleanse(newData.data(), newData.size());
         return {true, -1, false};
-    if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
+    }
+    if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0) {
+        OPENSSL_cleanse(oldData.data(), oldData.size());
+        OPENSSL_cleanse(newData.data(), newData.size());
         return {false, resp.sw2 & 0x0F, false};
-    if (resp.statusWord() == 0x6983)
+    }
+    if (resp.statusWord() == 0x6983) {
+        OPENSSL_cleanse(oldData.data(), oldData.size());
+        OPENSSL_cleanse(newData.data(), newData.size());
         return {false, 0, true};
+    }
 
     // Fallback: strip local bit — ONLY on reference-not-found errors
     uint8_t altRef = pin.pinReference & 0x7F;
     if (altRef != pin.pinReference && (resp.statusWord() == 0x6A86 || resp.statusWord() == 0x6A88)) {
         resp = conn.transmit(smartcard::changeReferenceData(altRef, oldData, newData));
-        if (resp.isSuccess())
+        if (resp.isSuccess()) {
+            OPENSSL_cleanse(oldData.data(), oldData.size());
+            OPENSSL_cleanse(newData.data(), newData.size());
             return {true, -1, false};
-        if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
+        }
+        if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0) {
+            OPENSSL_cleanse(oldData.data(), oldData.size());
+            OPENSSL_cleanse(newData.data(), newData.size());
             return {false, resp.sw2 & 0x0F, false};
-        if (resp.statusWord() == 0x6983)
+        }
+        if (resp.statusWord() == 0x6983) {
+            OPENSSL_cleanse(oldData.data(), oldData.size());
+            OPENSSL_cleanse(newData.data(), newData.size());
             return {false, 0, true};
+        }
     }
 
+    OPENSSL_cleanse(oldData.data(), oldData.size());
+    OPENSSL_cleanse(newData.data(), newData.size());
     return {false, -1, false};
 }
 

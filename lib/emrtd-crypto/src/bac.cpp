@@ -7,6 +7,7 @@
 #include <smartcard/apdu.h>
 #include <smartcard/pcsc_connection.h>
 
+#include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 
@@ -85,7 +86,7 @@ std::optional<SessionKeys> performBAC(smartcard::PCSCConnection& conn, const BAC
 
     // Step 7: Verify M.ICC
     auto expectedMAC = detail::retailMAC(keys.macKey, detail::pad(eICC, 8));
-    if (mICC != expectedMAC)
+    if (mICC.size() != expectedMAC.size() || CRYPTO_memcmp(mICC.data(), expectedMAC.data(), mICC.size()) != 0)
         return std::nullopt;
 
     // Step 8: Decrypt E.ICC → R = RND.ICC' || RND.IFD' || K.ICC

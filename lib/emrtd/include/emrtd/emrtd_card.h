@@ -29,9 +29,7 @@ public:
 
     AuthResult authenticate();
     std::vector<int> readCOM();
-    std::map<int, std::vector<uint8_t>> readAllDataGroups();
     std::optional<std::vector<uint8_t>> readDataGroup(int dgNumber);
-    std::optional<std::vector<uint8_t>> readSOD();
 
     /// Transmit an APDU through the active Secure Messaging channel.
     /// Returns decrypted response data, or nullopt on SM/transmit error.

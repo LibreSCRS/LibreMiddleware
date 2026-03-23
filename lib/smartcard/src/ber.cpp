@@ -21,19 +21,18 @@ uint32_t parseTag(const uint8_t* data, size_t length, size_t& offset)
     }
 
     uint8_t firstByte = data[offset++];
-    bool isConstructed = (firstByte & 0x20) != 0;
-    (void)isConstructed; // used by caller via tag bit check
-
     if ((firstByte & 0x1F) != 0x1F) {
         // Single-byte tag
         return firstByte;
     }
 
     // Multi-byte tag: subsequent bytes have bit 7 set (continuation)
+    // ISO 7816 tags are at most 3 bytes total — limit continuation bytes to prevent overflow
     uint32_t tag = firstByte;
+    int continuationCount = 0;
     do {
-        if (offset >= length) {
-            throw std::runtime_error("BER: unexpected end of data in multi-byte tag");
+        if (offset >= length || ++continuationCount > 3) {
+            throw std::runtime_error("BER: tag too long or unexpected end of data");
         }
         tag = (tag << 8) | data[offset];
     } while (data[offset++] & 0x80);

@@ -8,7 +8,7 @@
 
 namespace smartcard {
 
-PCSCConnection::PCSCConnection(const std::string& readerName)
+PCSCConnection::PCSCConnection(const std::string& readerName) : storedReaderName(readerName)
 {
     LONG rv = SCardEstablishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &context);
     if (rv != SCARD_S_SUCCESS) {
@@ -49,17 +49,21 @@ void PCSCConnection::reconnect()
     if (rv != SCARD_S_SUCCESS) {
         throw PCSCError("SCardReconnect failed", rv);
     }
+#ifndef NDEBUG
     std::cerr << "[PCSC] Reconnected, protocol=" << (activeProtocol == SCARD_PROTOCOL_T0 ? "T=0" : "T=1") << std::endl;
+#endif
 }
 
 APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
 {
+#ifndef NDEBUG
     // Log sent APDU
     std::cerr << "[PCSC] TX (" << cmdLen << " bytes,"
               << " protocol=" << (activeProtocol == SCARD_PROTOCOL_T0 ? "T=0" : "T=1") << "):";
     for (DWORD i = 0; i < cmdLen; i++)
         std::cerr << " " << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(cmdBytes[i]);
     std::cerr << std::dec << std::endl;
+#endif
 
     const SCARD_IO_REQUEST* pioSendPci = (activeProtocol == SCARD_PROTOCOL_T0) ? SCARD_PCI_T0 : SCARD_PCI_T1;
 
@@ -68,15 +72,19 @@ APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
 
     LONG rv = SCardTransmit(card, pioSendPci, cmdBytes, cmdLen, nullptr, recvBuffer, &recvLength);
     if (rv != SCARD_S_SUCCESS) {
+#ifndef NDEBUG
         std::cerr << "[PCSC] SCardTransmit FAILED, rv=0x" << std::hex << rv << std::dec << std::endl;
+#endif
         throw PCSCError("SCardTransmit failed", rv);
     }
 
+#ifndef NDEBUG
     // Log received response
     std::cerr << "[PCSC] RX (" << recvLength << " bytes):";
     for (DWORD i = 0; i < recvLength; i++)
         std::cerr << " " << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(recvBuffer[i]);
     std::cerr << std::dec << std::endl;
+#endif
 
     APDUResponse response;
     if (recvLength >= 2) {
@@ -87,8 +95,10 @@ APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
         }
     }
 
+#ifndef NDEBUG
     std::cerr << "[PCSC] SW=0x" << std::hex << std::setfill('0') << std::setw(4) << response.statusWord() << std::dec
               << ", data=" << response.data.size() << " bytes" << std::endl;
+#endif
 
     return response;
 }

@@ -4,6 +4,7 @@
 #include <emrtd/crypto/secure_messaging.h>
 #include "crypto_utils.h"
 
+#include <openssl/crypto.h>
 #include <stdexcept>
 
 namespace emrtd::crypto {
@@ -278,7 +279,7 @@ std::optional<std::vector<uint8_t>> SecureMessaging::unprotect(const std::vector
     auto expectedMAC = computeMAC(paddedMacInput);
     expectedMAC.resize(8);
 
-    if (receivedMAC.size() < 8 || !std::equal(expectedMAC.begin(), expectedMAC.end(), receivedMAC.begin()))
+    if (receivedMAC.size() < 8 || CRYPTO_memcmp(expectedMAC.data(), receivedMAC.data(), 8) != 0)
         return std::nullopt;
 
     // Decrypt DO'87 if present
@@ -354,7 +355,7 @@ std::optional<UnprotectResult> SecureMessaging::unprotectWithSW(const std::vecto
     auto expectedMAC = computeMAC(paddedMacInput);
     expectedMAC.resize(8);
 
-    if (receivedMAC.size() < 8 || !std::equal(expectedMAC.begin(), expectedMAC.end(), receivedMAC.begin()))
+    if (receivedMAC.size() < 8 || CRYPTO_memcmp(expectedMAC.data(), receivedMAC.data(), 8) != 0)
         return std::nullopt;
 
     // Extract inner SW from DO'99

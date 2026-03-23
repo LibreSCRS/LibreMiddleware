@@ -122,8 +122,6 @@ std::vector<uint8_t> findTag(const std::vector<uint8_t>& data, size_t start, siz
 {
     size_t pos = start;
     while (pos < end && pos < data.size()) {
-        size_t tagStart = pos;
-
         // Read tag
         bool twoByteTag = (data[pos] & 0x1F) == 0x1F;
         uint8_t t1 = data[pos];
@@ -178,7 +176,6 @@ std::vector<uint8_t> findTag(const std::vector<uint8_t>& data, size_t start, siz
                                         data.begin() + static_cast<ptrdiff_t>(pos + len));
         }
 
-        (void)tagStart;
         pos += len;
     }
     return {};

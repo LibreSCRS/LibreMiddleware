@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstring>
 #include <openssl/bn.h>
+#include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/x509.h>
 
@@ -344,6 +345,7 @@ CK_RV PKCS11Library::login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType, CK
 
     std::vector<uint8_t> pinBytes(pPin, pPin + ulPinLen);
     auto rv = static_cast<CK_RV>(slot.provider->login(userType, pinBytes));
+    OPENSSL_cleanse(pinBytes.data(), pinBytes.size());
     if (rv == CKR_OK)
         loginState[slotID] = userType;
 
@@ -991,10 +993,12 @@ static std::vector<uint8_t> buildDigestInfo(CK_MECHANISM_TYPE mech, const uint8_
     EVP_MD_CTX* ctx = EVP_MD_CTX_new();
     if (!ctx)
         throw std::runtime_error("buildDigestInfo: EVP_MD_CTX_new failed");
-    EVP_DigestInit_ex(ctx, md, nullptr);
-    EVP_DigestUpdate(ctx, data, dataLen);
     unsigned int hLen = static_cast<unsigned int>(hash.size());
-    EVP_DigestFinal_ex(ctx, hash.data(), &hLen);
+    if (!EVP_DigestInit_ex(ctx, md, nullptr) || !EVP_DigestUpdate(ctx, data, dataLen) ||
+        !EVP_DigestFinal_ex(ctx, hash.data(), &hLen)) {
+        EVP_MD_CTX_free(ctx);
+        throw std::runtime_error("buildDigestInfo: digest operation failed");
+    }
     EVP_MD_CTX_free(ctx);
 
     // DER DigestInfo prefixes (AlgorithmIdentifier + OCTET STRING tag+len)
@@ -1119,6 +1123,8 @@ CK_RV PKCS11Library::sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULON
             sig = slots[obj.slotID].provider->signData(obj.id, digestInfo);
         } else {
             // CKM_RSA_PKCS: caller provides pre-built DigestInfo
+            if (ulDataLen > 245)
+                return CKR_DATA_LEN_RANGE;
             std::vector<uint8_t> dataVec(pData, pData + ulDataLen);
             sig = slots[obj.slotID].provider->signData(obj.id, dataVec);
         }

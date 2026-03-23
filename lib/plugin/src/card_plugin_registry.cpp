@@ -14,8 +14,8 @@ using AbiVersionFunc = uint32_t (*)();
 
 CardPluginRegistry::~CardPluginRegistry()
 {
-    sortedPlugins_.clear();
-    for (auto& lp : loadedPlugins_) {
+    sortedPlugins.clear();
+    for (auto& lp : loadedPlugins) {
         lp.plugin.reset();
         if (lp.handle) {
             dlclose(lp.handle);
@@ -73,7 +73,7 @@ size_t CardPluginRegistry::loadPluginsFromDirectory(const std::filesystem::path&
             continue;
         }
 
-        loadedPlugins_.push_back({handle, std::move(plugin)});
+        loadedPlugins.push_back({handle, std::move(plugin)});
         ++count;
     }
 
@@ -83,18 +83,8 @@ size_t CardPluginRegistry::loadPluginsFromDirectory(const std::filesystem::path&
 
 CardPlugin* CardPluginRegistry::findPluginForCard(const std::vector<uint8_t>& atr) const
 {
-    for (auto* plugin : sortedPlugins_) {
+    for (auto* plugin : sortedPlugins) {
         if (plugin->canHandle(atr)) {
-            return plugin;
-        }
-    }
-    return nullptr;
-}
-
-CardPlugin* CardPluginRegistry::findPluginForConnection(smartcard::PCSCConnection& conn) const
-{
-    for (auto* plugin : sortedPlugins_) {
-        if (plugin->canHandleConnection(conn)) {
             return plugin;
         }
     }
@@ -104,7 +94,7 @@ CardPlugin* CardPluginRegistry::findPluginForConnection(smartcard::PCSCConnectio
 std::vector<CardPlugin*> CardPluginRegistry::findAllCandidates(const std::vector<uint8_t>& atr) const
 {
     std::vector<CardPlugin*> result;
-    for (auto* plugin : sortedPlugins_) {
+    for (auto* plugin : sortedPlugins) {
         if (plugin->canHandle(atr)) {
             result.push_back(plugin);
         }
@@ -119,7 +109,7 @@ std::vector<CardPlugin*> CardPluginRegistry::findAllCandidates(const std::vector
     std::vector<CardPlugin*> result;
 
     // Phase 1: ATR matches
-    for (auto* plugin : sortedPlugins_) {
+    for (auto* plugin : sortedPlugins) {
         if (plugin->canHandle(atr)) {
             result.push_back(plugin);
             seen.insert(plugin);
@@ -127,7 +117,7 @@ std::vector<CardPlugin*> CardPluginRegistry::findAllCandidates(const std::vector
     }
 
     // Phase 2: AID probe on remaining plugins
-    for (auto* plugin : sortedPlugins_) {
+    for (auto* plugin : sortedPlugins) {
         if (seen.count(plugin) > 0) {
             continue;
         }
@@ -151,17 +141,17 @@ std::vector<CardPlugin*> CardPluginRegistry::findAllCandidates(const std::vector
 
 const std::vector<CardPlugin*>& CardPluginRegistry::plugins() const
 {
-    return sortedPlugins_;
+    return sortedPlugins;
 }
 
 void CardPluginRegistry::sortPlugins()
 {
-    sortedPlugins_.clear();
-    sortedPlugins_.reserve(loadedPlugins_.size());
-    for (auto& lp : loadedPlugins_) {
-        sortedPlugins_.push_back(lp.plugin.get());
+    sortedPlugins.clear();
+    sortedPlugins.reserve(loadedPlugins.size());
+    for (auto& lp : loadedPlugins) {
+        sortedPlugins.push_back(lp.plugin.get());
     }
-    std::sort(sortedPlugins_.begin(), sortedPlugins_.end(),
+    std::sort(sortedPlugins.begin(), sortedPlugins.end(),
               [](const auto* a, const auto* b) { return a->probePriority() < b->probePriority(); });
 }
 

@@ -31,20 +31,24 @@ static std::vector<uint8_t> stripInnerTlvHeader(const std::vector<uint8_t>& data
     if (data.size() <= 4)
         return data;
 
+#ifndef NDEBUG
     // Log first bytes for debugging
     std::cerr << "[CardVerifier] Raw data first 16 bytes:";
     for (size_t i = 0; i < std::min(data.size(), size_t(16)); i++)
         std::cerr << " " << std::hex << std::setfill('0') << std::setw(2) << (int)data[i];
     std::cerr << std::dec << std::endl;
+#endif
 
     // If data already starts with ASN.1 SEQUENCE (0x30), it's already pure DER
     if (data[0] == 0x30)
         return data;
 
+#ifndef NDEBUG
     // Otherwise strip the 4-byte inner TLV header (2-byte tag + 2-byte LE length)
     std::cerr << "[CardVerifier] Stripping 4-byte inner TLV header (tag=0x" << std::hex << std::setfill('0')
               << std::setw(2) << (int)data[0] << std::setw(2) << (int)data[1] << ", len=" << std::dec
               << (static_cast<uint16_t>(data[2]) | (static_cast<uint16_t>(data[3]) << 8)) << ")" << std::endl;
+#endif
 
     return std::vector<uint8_t>(data.begin() + 4, data.end());
 }
@@ -73,9 +77,11 @@ CardVerifier::CardVerifier(const std::string& certificateFolderPath)
 {
     if (!certFolderPath.empty())
         loadTrustedCertificates();
+#ifndef NDEBUG
     std::cerr << "[CardVerifier] Loaded " << certStore->certCount
               << " trusted certificates from: " << (certFolderPath.empty() ? "(individual certs)" : certFolderPath)
               << std::endl;
+#endif
 }
 
 void CardVerifier::addCertificate(const std::vector<uint8_t>& derCert)
@@ -103,7 +109,9 @@ void CardVerifier::loadTrustedCertificates()
     X509_STORE_set_flags(certStore->store, X509_V_FLAG_NO_CHECK_TIME);
 
     if (!std::filesystem::exists(certFolderPath)) {
+#ifndef NDEBUG
         std::cerr << "[CardVerifier] Certificate folder does not exist: " << certFolderPath << std::endl;
+#endif
         return;
     }
 
@@ -159,10 +167,14 @@ VerificationResult CardVerifier::verifyCard(smartcard::PCSCConnection& conn, Car
             return VerificationResult::Unknown;
         }
     } catch (const std::exception& e) {
+#ifndef NDEBUG
         std::cerr << "[CardVerifier] verifyCard exception: " << e.what() << std::endl;
+#endif
         return VerificationResult::Unknown;
     } catch (...) {
+#ifndef NDEBUG
         std::cerr << "[CardVerifier] verifyCard unknown exception" << std::endl;
+#endif
         return VerificationResult::Unknown;
     }
 }
@@ -187,10 +199,14 @@ VerificationResult CardVerifier::verifyFixedData(smartcard::PCSCConnection& conn
             return VerificationResult::Unknown;
         }
     } catch (const std::exception& e) {
+#ifndef NDEBUG
         std::cerr << "[CardVerifier] verifyFixedData exception: " << e.what() << std::endl;
+#endif
         return VerificationResult::Unknown;
     } catch (...) {
+#ifndef NDEBUG
         std::cerr << "[CardVerifier] verifyFixedData unknown exception" << std::endl;
+#endif
         return VerificationResult::Unknown;
     }
 }
@@ -212,10 +228,14 @@ VerificationResult CardVerifier::verifyVariableData(smartcard::PCSCConnection& c
             return VerificationResult::Unknown;
         }
     } catch (const std::exception& e) {
+#ifndef NDEBUG
         std::cerr << "[CardVerifier] verifyVariableData exception: " << e.what() << std::endl;
+#endif
         return VerificationResult::Unknown;
     } catch (...) {
+#ifndef NDEBUG
         std::cerr << "[CardVerifier] verifyVariableData unknown exception" << std::endl;
+#endif
         return VerificationResult::Unknown;
     }
 }
@@ -226,27 +246,35 @@ VerificationResult CardVerifier::verifyGemaltoCardCert(smartcard::PCSCConnection
 {
     // Read SOD FX block to extract the signer certificate
     auto sodRaw = reader.readFile(conn, protocol::FILE_SOD_FX_H, protocol::FILE_SOD_FX_L);
+#ifndef NDEBUG
     std::cerr << "[CardVerifier] Gemalto card cert: SOD FX size: " << sodRaw.size() << " bytes" << std::endl;
+#endif
     if (sodRaw.empty())
         return VerificationResult::Invalid;
 
     // Strip inner TLV header to get pure PKCS#7 DER
     auto sodData = stripInnerTlvHeader(sodRaw);
+#ifndef NDEBUG
     std::cerr << "[CardVerifier] Gemalto card cert: PKCS#7 size after strip: " << sodData.size() << " bytes"
               << std::endl;
+#endif
 
     // Parse PKCS#7 to extract signer certificate
     const uint8_t* p = sodData.data();
     PKCS7* pkcs7 = d2i_PKCS7(nullptr, &p, static_cast<long>(sodData.size()));
     if (!pkcs7) {
+#ifndef NDEBUG
         std::cerr << "[CardVerifier] Gemalto card cert: failed to parse PKCS#7" << std::endl;
+#endif
         return VerificationResult::Invalid;
     }
 
     // Verify PKCS#7 signature integrity
     int rc = PKCS7_verify(pkcs7, nullptr, nullptr, nullptr, nullptr, PKCS7_NOVERIFY | PKCS7_NOSIGS);
     if (rc != 1) {
+#ifndef NDEBUG
         std::cerr << "[CardVerifier] Gemalto card cert: PKCS#7 structure invalid" << std::endl;
+#endif
         PKCS7_free(pkcs7);
         return VerificationResult::Invalid;
     }
@@ -258,34 +286,42 @@ VerificationResult CardVerifier::verifyGemaltoCardCert(smartcard::PCSCConnection
     if (signerCerts && sk_X509_num(signerCerts) > 0) {
         X509* signerCert = sk_X509_value(signerCerts, 0);
 
+#ifndef NDEBUG
         char* subject = X509_NAME_oneline(X509_get_subject_name(signerCert), nullptr, 0);
         if (subject) {
             std::cerr << "[CardVerifier] Gemalto card signer: " << subject << std::endl;
             OPENSSL_free(subject);
         }
+#endif
 
         X509_STORE_CTX* ctx = X509_STORE_CTX_new();
         if (ctx) {
             rc = X509_STORE_CTX_init(ctx, certStore->store, signerCert, nullptr);
             if (rc == 1) {
                 chainValid = (X509_verify_cert(ctx) == 1);
+#ifndef NDEBUG
                 if (!chainValid) {
                     int err = X509_STORE_CTX_get_error(ctx);
                     std::cerr << "[CardVerifier] Gemalto card cert chain error: " << X509_verify_cert_error_string(err)
                               << " (" << err << ")" << std::endl;
                 }
+#endif
             }
             X509_STORE_CTX_free(ctx);
         }
     } else {
+#ifndef NDEBUG
         std::cerr << "[CardVerifier] Gemalto card cert: no signer certificates found" << std::endl;
+#endif
     }
 
     if (signerCerts)
         sk_X509_free(signerCerts);
     PKCS7_free(pkcs7);
 
+#ifndef NDEBUG
     std::cerr << "[CardVerifier] Gemalto card cert chain: " << (chainValid ? "VALID" : "INVALID") << std::endl;
+#endif
     return chainValid ? VerificationResult::Valid : VerificationResult::Invalid;
 }
 
@@ -296,24 +332,33 @@ VerificationResult CardVerifier::verifyGemaltoSOD(smartcard::PCSCConnection& con
                                                   const std::vector<std::pair<uint8_t, uint8_t>>& dataFileIds)
 {
     // 1. Read SOD block from card
+#ifndef NDEBUG
     std::cerr << "[CardVerifier] Reading SOD file 0x" << std::hex << (int)sodFileH << std::setfill('0') << std::setw(2)
               << (int)sodFileL << std::dec << std::endl;
+#endif
 
     auto sodRaw = reader.readFile(conn, sodFileH, sodFileL);
+#ifndef NDEBUG
     std::cerr << "[CardVerifier] SOD data size: " << sodRaw.size() << " bytes" << std::endl;
+#endif
     if (sodRaw.empty())
         return VerificationResult::Invalid;
 
     // Strip inner TLV header to get pure PKCS#7 DER
     auto sodData = stripInnerTlvHeader(sodRaw);
+#ifndef NDEBUG
     std::cerr << "[CardVerifier] PKCS#7 size after strip: " << sodData.size() << " bytes" << std::endl;
+#endif
 
     // 2. Verify PKCS#7 signature and extract signed content (hash array)
     std::vector<uint8_t> signedContent;
     if (!verifyPKCS7Signature(sodData, signedContent)) {
+#ifndef NDEBUG
         std::cerr << "[CardVerifier] PKCS#7 signature verification FAILED" << std::endl;
+#endif
         return VerificationResult::Invalid;
     }
+#ifndef NDEBUG
     std::cerr << "[CardVerifier] PKCS#7 signature OK, signed content size: " << signedContent.size() << " bytes"
               << std::endl;
 
@@ -322,6 +367,7 @@ VerificationResult CardVerifier::verifyGemaltoSOD(smartcard::PCSCConnection& con
     for (size_t i = 0; i < std::min(signedContent.size(), size_t(64)); i++)
         std::cerr << " " << std::hex << std::setfill('0') << std::setw(2) << (int)signedContent[i];
     std::cerr << std::dec << std::endl;
+#endif
 
     // 3. Compare hashes of data blocks against the SOD content.
     // The signed content contains concatenated SHA-256 hashes (32 bytes each),
@@ -333,12 +379,16 @@ VerificationResult CardVerifier::verifyGemaltoSOD(smartcard::PCSCConnection& con
     constexpr size_t SHA256_SIZE = 32;
 
     if (signedContent.size() < SHA256_SIZE) {
+#ifndef NDEBUG
         std::cerr << "[CardVerifier] Signed content too small: " << signedContent.size() << std::endl;
+#endif
         return VerificationResult::Invalid;
     }
 
     size_t totalHashes = signedContent.size() / SHA256_SIZE;
+#ifndef NDEBUG
     std::cerr << "[CardVerifier] SOD contains " << totalHashes << " hash slots" << std::endl;
+#endif
 
     for (size_t i = 0; i < dataFileIds.size(); i++) {
         auto fh = dataFileIds[i].first;
@@ -346,6 +396,7 @@ VerificationResult CardVerifier::verifyGemaltoSOD(smartcard::PCSCConnection& con
 
         // Read full file including TLV header for hashing (CelikAPI behavior)
         auto rawBlock = reader.readFileRaw(conn, fh, fl);
+#ifndef NDEBUG
         std::cerr << "[CardVerifier] Block " << i << " (0x" << std::hex << (int)fh << std::setfill('0') << std::setw(2)
                   << (int)fl << std::dec << ") raw size: " << rawBlock.size() << " bytes" << std::endl;
 
@@ -354,6 +405,7 @@ VerificationResult CardVerifier::verifyGemaltoSOD(smartcard::PCSCConnection& con
         for (size_t b = 0; b < std::min(rawBlock.size(), size_t(8)); b++)
             std::cerr << " " << std::hex << std::setfill('0') << std::setw(2) << (int)rawBlock[b];
         std::cerr << std::dec << std::endl;
+#endif
 
         auto hashRaw = computeSHA256(rawBlock);
 
@@ -366,17 +418,22 @@ VerificationResult CardVerifier::verifyGemaltoSOD(smartcard::PCSCConnection& con
         for (size_t slot = 0; slot < totalHashes && !found; slot++) {
             const uint8_t* slotPtr = signedContent.data() + slot * SHA256_SIZE;
             if (std::memcmp(hashRaw.data(), slotPtr, SHA256_SIZE) == 0) {
+#ifndef NDEBUG
                 std::cerr << "[CardVerifier] Block " << i << " hash matches at slot " << slot << " (raw with header)"
                           << std::endl;
+#endif
                 found = true;
             } else if (std::memcmp(hashNoHeader.data(), slotPtr, SHA256_SIZE) == 0) {
+#ifndef NDEBUG
                 std::cerr << "[CardVerifier] Block " << i << " hash matches at slot " << slot << " (without header)"
                           << std::endl;
+#endif
                 found = true;
             }
         }
 
         if (!found) {
+#ifndef NDEBUG
             std::cerr << "[CardVerifier] Hash MISMATCH for block " << i << std::endl;
             std::cerr << "  Raw (with hdr): ";
             for (size_t j = 0; j < SHA256_SIZE; j++)
@@ -394,6 +451,7 @@ VerificationResult CardVerifier::verifyGemaltoSOD(smartcard::PCSCConnection& con
                               << (int)signedContent[slot * SHA256_SIZE + j];
                 std::cerr << std::dec << std::endl;
             }
+#endif
             return VerificationResult::Invalid;
         }
     }
@@ -406,16 +464,22 @@ VerificationResult CardVerifier::verifyGemaltoSOD(smartcard::PCSCConnection& con
 VerificationResult CardVerifier::verifyApolloCardCert(smartcard::PCSCConnection& conn, CardReaderBase& reader)
 {
     auto userCertData = reader.readFile(conn, protocol::FILE_USER_CERT1_H, protocol::FILE_USER_CERT1_L);
+#ifndef NDEBUG
     std::cerr << "[CardVerifier] Apollo user cert size: " << userCertData.size() << " bytes" << std::endl;
+#endif
     if (userCertData.empty())
         return VerificationResult::Invalid;
 
     if (verifyCertificateChain(userCertData)) {
+#ifndef NDEBUG
         std::cerr << "[CardVerifier] Apollo cert chain: VALID" << std::endl;
+#endif
         return VerificationResult::Valid;
     }
 
+#ifndef NDEBUG
     std::cerr << "[CardVerifier] Apollo cert chain: INVALID" << std::endl;
+#endif
     return VerificationResult::Invalid;
 }
 
@@ -428,20 +492,28 @@ VerificationResult CardVerifier::verifyApolloSignature(smartcard::PCSCConnection
 {
     // 1. Read the signing certificate from card
     auto certData = reader.readFile(conn, certFileH, certFileL);
+#ifndef NDEBUG
     std::cerr << "[CardVerifier] Apollo signing cert size: " << certData.size() << " bytes" << std::endl;
+#endif
     if (certData.empty())
         return VerificationResult::Invalid;
 
     // 2. Verify the signing certificate chain against trusted CAs
     if (!verifyCertificateChain(certData)) {
+#ifndef NDEBUG
         std::cerr << "[CardVerifier] Apollo signing cert chain: INVALID" << std::endl;
+#endif
         return VerificationResult::Invalid;
     }
+#ifndef NDEBUG
     std::cerr << "[CardVerifier] Apollo signing cert chain: VALID" << std::endl;
+#endif
 
     // 3. Read the signature from card
     auto signature = reader.readFile(conn, sigFileH, sigFileL);
+#ifndef NDEBUG
     std::cerr << "[CardVerifier] Apollo signature size: " << signature.size() << " bytes" << std::endl;
+#endif
     if (signature.empty())
         return VerificationResult::Invalid;
 
@@ -449,18 +521,24 @@ VerificationResult CardVerifier::verifyApolloSignature(smartcard::PCSCConnection
     std::vector<uint8_t> allData;
     for (const auto& [fh, fl] : dataFileIds) {
         auto blockData = reader.readFile(conn, fh, fl);
+#ifndef NDEBUG
         std::cerr << "[CardVerifier] Apollo data block (0x" << std::hex << (int)fh << std::setfill('0') << std::setw(2)
                   << (int)fl << std::dec << ") size: " << blockData.size() << " bytes" << std::endl;
+#endif
         allData.insert(allData.end(), blockData.begin(), blockData.end());
     }
 
     // 5. Verify RSA signature over data using public key from signing cert
     if (verifyRSASignature(certData, allData, signature)) {
+#ifndef NDEBUG
         std::cerr << "[CardVerifier] Apollo RSA signature: VALID" << std::endl;
+#endif
         return VerificationResult::Valid;
     }
 
+#ifndef NDEBUG
     std::cerr << "[CardVerifier] Apollo RSA signature: INVALID" << std::endl;
+#endif
     return VerificationResult::Invalid;
 }
 
@@ -474,7 +552,9 @@ bool CardVerifier::verifyCertificateChain(const std::vector<uint8_t>& certDER)
     const uint8_t* p = certDER.data();
     X509* cert = d2i_X509(nullptr, &p, static_cast<long>(certDER.size()));
     if (!cert) {
+#ifndef NDEBUG
         std::cerr << "[CardVerifier] Failed to parse DER certificate (" << certDER.size() << " bytes)" << std::endl;
+#endif
         return false;
     }
 
@@ -488,11 +568,13 @@ bool CardVerifier::verifyCertificateChain(const std::vector<uint8_t>& certDER)
     bool valid = false;
     if (rc == 1) {
         valid = (X509_verify_cert(ctx) == 1);
+#ifndef NDEBUG
         if (!valid) {
             int err = X509_STORE_CTX_get_error(ctx);
             std::cerr << "[CardVerifier] X509_verify_cert error: " << X509_verify_cert_error_string(err) << " (" << err
                       << ")" << std::endl;
         }
+#endif
     }
 
     X509_STORE_CTX_free(ctx);
@@ -509,10 +591,12 @@ bool CardVerifier::verifyPKCS7Signature(const std::vector<uint8_t>& pkcs7DER, st
     const uint8_t* p = pkcs7DER.data();
     PKCS7* pkcs7 = d2i_PKCS7(nullptr, &p, static_cast<long>(pkcs7DER.size()));
     if (!pkcs7) {
+#ifndef NDEBUG
         std::cerr << "[CardVerifier] Failed to parse PKCS#7 data (" << pkcs7DER.size() << " bytes)" << std::endl;
         unsigned long err = ERR_get_error();
         if (err)
             std::cerr << "[CardVerifier] OpenSSL error: " << ERR_error_string(err, nullptr) << std::endl;
+#endif
         return false;
     }
 
@@ -526,9 +610,11 @@ bool CardVerifier::verifyPKCS7Signature(const std::vector<uint8_t>& pkcs7DER, st
     // Step 1: Verify the PKCS#7 signature (PKCS7_NOVERIFY = don't check cert chain yet)
     int rc = PKCS7_verify(pkcs7, nullptr, nullptr, nullptr, contentBio, PKCS7_NOVERIFY);
     if (rc != 1) {
+#ifndef NDEBUG
         unsigned long err = ERR_get_error();
         std::cerr << "[CardVerifier] PKCS7_verify failed: " << (err ? ERR_error_string(err, nullptr) : "unknown error")
                   << std::endl;
+#endif
         BIO_free(contentBio);
         PKCS7_free(pkcs7);
         return false;
@@ -543,8 +629,10 @@ bool CardVerifier::verifyPKCS7Signature(const std::vector<uint8_t>& pkcs7DER, st
     }
     BIO_free(contentBio);
 
+#ifndef NDEBUG
     std::cerr << "[CardVerifier] PKCS7 signature verified, extracted content: " << extractedContent.size() << " bytes"
               << std::endl;
+#endif
 
     // Step 2: Verify the signer certificate chain against our trusted CAs
     STACK_OF(X509)* signerCerts = PKCS7_get0_signers(pkcs7, nullptr, 0);
@@ -553,35 +641,43 @@ bool CardVerifier::verifyPKCS7Signature(const std::vector<uint8_t>& pkcs7DER, st
     if (signerCerts && sk_X509_num(signerCerts) > 0) {
         X509* signerCert = sk_X509_value(signerCerts, 0);
 
+#ifndef NDEBUG
         // Print signer cert subject for debugging
         char* subject = X509_NAME_oneline(X509_get_subject_name(signerCert), nullptr, 0);
         if (subject) {
             std::cerr << "[CardVerifier] Signer cert subject: " << subject << std::endl;
             OPENSSL_free(subject);
         }
+#endif
 
         X509_STORE_CTX* ctx = X509_STORE_CTX_new();
         if (ctx) {
             rc = X509_STORE_CTX_init(ctx, certStore->store, signerCert, nullptr);
             if (rc == 1) {
                 chainValid = (X509_verify_cert(ctx) == 1);
+#ifndef NDEBUG
                 if (!chainValid) {
                     int err = X509_STORE_CTX_get_error(ctx);
                     std::cerr << "[CardVerifier] Signer cert chain error: " << X509_verify_cert_error_string(err)
                               << " (" << err << ")" << std::endl;
                 }
+#endif
             }
             X509_STORE_CTX_free(ctx);
         }
     } else {
+#ifndef NDEBUG
         std::cerr << "[CardVerifier] No signer certificates found in PKCS#7" << std::endl;
+#endif
     }
 
     if (signerCerts)
         sk_X509_free(signerCerts);
     PKCS7_free(pkcs7);
 
+#ifndef NDEBUG
     std::cerr << "[CardVerifier] Signer cert chain: " << (chainValid ? "VALID" : "INVALID") << std::endl;
+#endif
     return chainValid;
 }
 
