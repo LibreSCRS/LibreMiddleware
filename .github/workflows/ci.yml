@@ -27,17 +27,34 @@ jobs:
 
   build-linux:
     runs-on: ubuntu-latest
+    env:
+      OPENSC_VERSION: '0.26.1'
     steps:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpcsclite-dev cmake ninja-build libopensc-dev
+          sudo apt-get install -y \
+            libpcsclite-dev libssl-dev zlib1g-dev \
+            pkg-config autoconf automake libtool \
+            cmake ninja-build
+
+      - name: Build OpenSC ${{ env.OPENSC_VERSION }} from source
+        run: |
+          git clone --branch ${{ env.OPENSC_VERSION }} --depth 1 \
+            https://github.com/OpenSC/OpenSC /tmp/opensc-src
+          cd /tmp/opensc-src
+          ./bootstrap
+          ./configure --prefix=/tmp/opensc-install \
+            --enable-shared --disable-static --without-readline
+          make -j$(nproc) install
 
       - name: Configure & Build
         run: |
-          cmake -B build -G Ninja
+          cmake -B build -G Ninja \
+            -DCMAKE_PREFIX_PATH=/tmp/opensc-install \
+            -DOPENSC_INCLUDE_DIR=/tmp/opensc-src/src
           cmake --build build
 
       - name: Test
