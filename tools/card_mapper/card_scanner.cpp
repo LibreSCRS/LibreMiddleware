@@ -7,7 +7,7 @@
 #include <card_protocol.h>
 #include <cardedge_protocol.h>
 #include <health_protocol.h>
-#include <vehicle_protocol.h>
+#include <eu_vrc_protocol.h>
 #include <emrtd/emrtd_types.h>
 
 #include <smartcard/apdu.h>
@@ -34,7 +34,7 @@ std::vector<std::pair<uint16_t, uint16_t>> getProbeRanges()
 
 std::vector<AidProbe> getAllKnownProbes()
 {
-    using namespace vehiclecard::protocol;
+    using namespace euvrc::protocol;
 
     auto emrtdAid = std::vector<uint8_t>(emrtd::EMRTD_AID, emrtd::EMRTD_AID + emrtd::EMRTD_AID_LEN);
 
@@ -47,10 +47,13 @@ std::vector<AidProbe> getAllKnownProbes()
         {"SERVSZK", healthcard::protocol::AID_SERVSZK,  {healthcard::protocol::AID_SERVSZK}},
         {"eMRTD",   emrtdAid,                           {emrtdAid}},
 
-        // Vehicle: 3-command selection sequences — all must succeed
-        {"Vehicle-SEQ1", SEQ1_CMD1, {SEQ1_CMD1, SEQ1_CMD2, SEQ1_CMD3}, 0x0C},
-        {"Vehicle-SEQ2", SEQ2_CMD1, {SEQ2_CMD1, SEQ2_CMD2, SEQ1_CMD3}, 0x0C},
-        {"Vehicle-SEQ3", SEQ3_CMD1, {SEQ3_CMD1, SEQ3_CMD2, SEQ3_CMD3}, 0x0C},
+        // EU VRC: EU standard AID (single SELECT)
+        {"EU-EVR-01", EU_VRC_AID, {EU_VRC_AID}},
+
+        // EU VRC: Serbian 3-command selection sequences — all must succeed
+        {"EU-VRC-RS-SEQ1", SEQ1_CMD1, {SEQ1_CMD1, SEQ1_CMD2, SEQ1_CMD3}, 0x0C},
+        {"EU-VRC-RS-SEQ2", SEQ2_CMD1, {SEQ2_CMD1, SEQ2_CMD2, SEQ1_CMD3}, 0x0C},
+        {"EU-VRC-RS-SEQ3", SEQ3_CMD1, {SEQ3_CMD1, SEQ3_CMD2, SEQ3_CMD3}, 0x0C},
     };
 }
 
@@ -176,9 +179,10 @@ std::string matchProfile(const std::vector<std::vector<uint8_t>>& detectedAIDs)
                   aidContained(detectedAIDs, eidcard::protocol::AID_SERRP);
     bool hasCardEdge = aidContained(detectedAIDs, cardedge::protocol::AID_PKCS15);
     bool hasHealth = aidContained(detectedAIDs, healthcard::protocol::AID_SERVSZK);
-    bool hasVehicle = aidContained(detectedAIDs, vehiclecard::protocol::SEQ1_CMD1) ||
-                      aidContained(detectedAIDs, vehiclecard::protocol::SEQ2_CMD1) ||
-                      aidContained(detectedAIDs, vehiclecard::protocol::SEQ3_CMD1);
+    bool hasVehicle = aidContained(detectedAIDs, euvrc::protocol::EU_VRC_AID) ||
+                      aidContained(detectedAIDs, euvrc::protocol::SEQ1_CMD1) ||
+                      aidContained(detectedAIDs, euvrc::protocol::SEQ2_CMD1) ||
+                      aidContained(detectedAIDs, euvrc::protocol::SEQ3_CMD1);
     bool hasEmrtd = aidContained(detectedAIDs,
         std::vector<uint8_t>(emrtd::EMRTD_AID, emrtd::EMRTD_AID + emrtd::EMRTD_AID_LEN));
 

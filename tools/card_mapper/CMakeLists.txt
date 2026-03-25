@@ -15,12 +15,15 @@ target_include_directories(card_mapper PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/eidcard/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/cardedge/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/healthcard/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/vehiclecard/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/eu-vrc/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/emrtd/include
 )
 
 target_link_libraries(card_mapper PRIVATE SmartCard)
 target_compile_features(card_mapper PRIVATE cxx_std_20)
+target_compile_definitions(card_mapper PRIVATE
+    CARD_MAPPER_VERSION="${PROJECT_VERSION}"
+)
 
 # Tests
 if(BUILD_TESTING)
@@ -43,7 +46,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/eidcard/src
         ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/cardedge/src
         ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/healthcard/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/vehiclecard/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/eu-vrc/src
         ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/emrtd/include
     )
     target_link_libraries(card_mapper_tests PRIVATE GTest::gtest_main SmartCard)

@@ -9,7 +9,7 @@
 | Application AID | Not standardized — each Member State requests AID from EU-designated laboratory |
 | Data Format | BER-TLV (ISO/IEC 7816-4) |
 | Authentication | None required for read |
-| Plugin | `vehicle` |
+| Plugin | `eu-vrc` |
 
 ## Standard References
 
@@ -181,7 +181,7 @@ See [rs-vehicle-profile.md](../profiles/rs-vehicle-profile.md) for Serbian-speci
 
 ## Implementation Reference
 
-- Source: `lib/vehiclecard/src/vehiclecard.cpp`
-- Protocol: `lib/vehiclecard/src/vehicle_protocol.h`
+- Source: `lib/eu-vrc/src/eu_vrc_card.cpp`
+- Protocol: `lib/eu-vrc/src/eu_vrc_protocol.h`
 - BER parser: `lib/smartcard/include/smartcard/ber.h`
 - Field paths use `berFindString(merged, {tag1, tag2, ...})` for nested lookups

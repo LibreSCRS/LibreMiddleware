@@ -230,5 +230,8 @@ SEE ALSO:
 
 void printVersion()
 {
-    std::cout << "card_mapper version 0.1.0\n";
+#ifndef CARD_MAPPER_VERSION
+#define CARD_MAPPER_VERSION "0.0.0-dev"
+#endif
+    std::cout << "card_mapper version " << CARD_MAPPER_VERSION << "\n";
 }

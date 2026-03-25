@@ -6,7 +6,7 @@
 #include <card_protocol.h>
 #include <cardedge_protocol.h>
 #include <health_protocol.h>
-#include <vehicle_protocol.h>
+#include <eu_vrc_protocol.h>
 #include <emrtd/emrtd_types.h>
 
 #include <gtest/gtest.h>
@@ -45,8 +45,8 @@ TEST(CardScanner, AllKnownProbesIncludesAll)
 {
     auto probes = getAllKnownProbes();
 
-    // Should have: 3 eID + 1 CardEdge + 1 Health + 1 eMRTD + 3 Vehicle = 9
-    EXPECT_EQ(probes.size(), 9u);
+    // Should have: 3 eID + 1 CardEdge + 1 Health + 1 eMRTD + 1 EU VRC + 3 Serbian = 10
+    EXPECT_EQ(probes.size(), 10u);
 
     // Check eID SERID is present
     auto hasSerid = std::any_of(probes.begin(), probes.end(), [](const AidProbe& p) {
@@ -73,22 +73,22 @@ TEST(CardScanner, SimpleProbesHaveSingleSelectCommand)
     auto probes = getAllKnownProbes();
     for (const auto& p : probes)
     {
-        if (p.name.find("Vehicle") == std::string::npos)
+        if (p.name.find("EU-VRC-RS") == std::string::npos)
         {
             EXPECT_EQ(p.selectSequence.size(), 1u) << "Probe " << p.name << " should have 1 SELECT command";
         }
     }
 }
 
-TEST(CardScanner, VehicleProbesHaveThreeSelectCommands)
+TEST(CardScanner, EuVrcSerbianProbesHaveThreeSelectCommands)
 {
     auto probes = getAllKnownProbes();
     for (const auto& p : probes)
     {
-        if (p.name.find("Vehicle") != std::string::npos)
+        if (p.name.find("EU-VRC-RS") != std::string::npos)
         {
             EXPECT_EQ(p.selectSequence.size(), 3u) << "Probe " << p.name << " should have 3 SELECT commands";
-            EXPECT_EQ(p.lastP2, 0x0C) << "Vehicle last SELECT should use P2=0x0C";
+            EXPECT_EQ(p.lastP2, 0x0C) << "EU VRC Serbian last SELECT should use P2=0x0C";
         }
     }
 }
@@ -123,7 +123,15 @@ TEST(CardScanner, MatchProfileHealth)
 TEST(CardScanner, MatchProfileVehicle)
 {
     std::vector<std::vector<uint8_t>> detected = {
-        vehiclecard::protocol::SEQ1_CMD1,
+        euvrc::protocol::SEQ1_CMD1,
+    };
+    EXPECT_EQ(matchProfile(detected), "rs-vehicle-profile");
+}
+
+TEST(CardScanner, MatchProfileVehicleEuAid)
+{
+    std::vector<std::vector<uint8_t>> detected = {
+        euvrc::protocol::EU_VRC_AID,
     };
     EXPECT_EQ(matchProfile(detected), "rs-vehicle-profile");
 }

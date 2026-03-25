@@ -15,7 +15,7 @@ enable_testing()
 add_executable(LibreMiddlewareTests
     smartcard_test.cpp
     eidcard_test.cpp
-    vehiclecard_test.cpp
+    eu_vrc_test.cpp
     healthcard_test.cpp
 )
 
@@ -23,8 +23,12 @@ target_link_libraries(LibreMiddlewareTests
     GTest::gtest_main
     EIdCard
     CardEdge
-    VehicleCard
+    EuVrc
     HealthCard
+)
+
+target_include_directories(LibreMiddlewareTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/eu-vrc/src
 )
 
 include(GoogleTest)
@@ -70,7 +74,7 @@ target_compile_definitions(PluginIntegrationTests PRIVATE
 )
 add_dependencies(PluginIntegrationTests
     rescrs-plugin-rs-eid
-    rescrs-plugin-vehicle
+    rescrs-plugin-eu-vrc
     rescrs-plugin-rs-health
     rescrs-plugin-rs-pks
 )

@@ -7,7 +7,7 @@
 #include <card_protocol.h>
 #include <cardedge_protocol.h>
 #include <health_protocol.h>
-#include <vehicle_protocol.h>
+#include <eu_vrc_protocol.h>
 #include <emrtd/emrtd_types.h>
 
 #include <smartcard/apdu.h>
@@ -306,17 +306,17 @@ AppletInfo buildHealthInfo()
     return info;
 }
 
-AppletInfo buildVehicleInfo()
+AppletInfo buildEuVrcInfo()
 {
-    using namespace vehiclecard::protocol;
+    using namespace euvrc::protocol;
 
     AppletInfo info;
-    info.name = "Serbian Vehicle Registration";
-    info.description = "Serbian vehicle registration card";
-    info.aids = {SEQ1_CMD1, SEQ2_CMD1, SEQ3_CMD1};
-    info.aidNames = {"Sequence 1", "Sequence 2", "Sequence 3"};
+    info.name = "EU Vehicle Registration Certificate";
+    info.description = "EU VRC smart card (Directive 2003/127/EC) — supports all EU/EEA countries";
+    info.aids = {EU_VRC_AID, SEQ1_CMD1, SEQ2_CMD1, SEQ3_CMD1};
+    info.aidNames = {"EU EVR-01", "Serbian SEQ1", "Serbian SEQ2", "Serbian SEQ3"};
     info.authentication = "None required for read";
-    info.pluginName = "vehicle";
+    info.pluginName = "eu-vrc";
 
     FileNode mf;
     mf.name = "MF";
@@ -325,26 +325,29 @@ AppletInfo buildVehicleInfo()
     mf.isDir = true;
 
     FileNode df;
-    df.name = "DF.Vehicle";
+    df.name = "DF.EuVrc";
     df.isDir = true;
 
-    df.children.push_back({"EF.Document0", FILE_DOCUMENT_0[0], FILE_DOCUMENT_0[1], "binary", "", "", false, {}});
-    df.children.push_back({"EF.Document1", FILE_DOCUMENT_1[0], FILE_DOCUMENT_1[1], "binary", "", "", false, {}});
-    df.children.push_back({"EF.Document2", FILE_DOCUMENT_2[0], FILE_DOCUMENT_2[1], "binary", "", "", false, {}});
-    df.children.push_back({"EF.Document3", FILE_DOCUMENT_3[0], FILE_DOCUMENT_3[1], "binary", "", "", false, {}});
+    for (const auto& f : STANDARD_FILES)
+    {
+        df.children.push_back({f.name, f.fidHi, f.fidLo,
+                               f.isBerTlv ? "BER-TLV" : "binary", "", "", false, {}});
+    }
+    for (const auto& f : NATIONAL_EXTENSION_FILES)
+    {
+        df.children.push_back({f.name, f.fidHi, f.fidLo,
+                               f.isBerTlv ? "BER-TLV" : "binary", "", "[national ext]", false, {}});
+    }
 
     mf.children.push_back(df);
     info.rootNode = mf;
 
-    // Vehicle uses a different parsing approach (not standard TLV),
-    // so no TLV tag data files are defined here
-
     info.readProcedure = {
-        "SELECT using 3-command AID sequence (try SEQ1, SEQ2, SEQ3 as fallback)",
-        "SELECT EF by ID: `00 A4 02 00 02 <FID_H> <FID_L>`",
-        "Read 32-byte file header, extract content length from bytes [2:3] LE",
-        "READ BINARY in 100-byte chunks: `00 B0 <offsetHi> <offsetLo> 64`",
-        "Parse response as BER-TLV",
+        "Detect via EF.DIR (2F00), fallback to EU AID, then national AID sequences",
+        "SELECT EF by FID: `00 A4 02 04 02 <FID_H> <FID_L>` (no Le)",
+        "READ BINARY: start with 255-byte chunks, fall back to 100 on error",
+        "Parse data files as BER-TLV (header-skip fallback for NXP eVL)",
+        "Extract EU-harmonized fields from tag 71/72 trees",
     };
 
     return info;
@@ -421,7 +424,7 @@ AppletInfo buildEmrtdInfo()
 
 std::vector<std::string> getKnownPlugins()
 {
-    return {"eid", "cardedge", "health", "vehicle", "emrtd"};
+    return {"eid", "cardedge", "health", "eu-vrc", "emrtd"};
 }
 
 AppletInfo getPluginInfo(const std::string& pluginName)
@@ -429,10 +432,10 @@ AppletInfo getPluginInfo(const std::string& pluginName)
     if (pluginName == "eid") return buildEidInfo();
     if (pluginName == "cardedge") return buildCardEdgeInfo();
     if (pluginName == "health") return buildHealthInfo();
-    if (pluginName == "vehicle") return buildVehicleInfo();
+    if (pluginName == "eu-vrc") return buildEuVrcInfo();
     if (pluginName == "emrtd") return buildEmrtdInfo();
 
-    throw std::runtime_error("unknown plugin: " + pluginName + " (known: eid, cardedge, health, vehicle, emrtd)");
+    throw std::runtime_error("unknown plugin: " + pluginName + " (known: eid, cardedge, health, eu-vrc, emrtd)");
 }
 
 AppletInfo mapPlugin(const std::string& pluginName, smartcard::PCSCConnection& conn, bool verbose)
@@ -451,33 +454,47 @@ AppletInfo mapPlugin(const std::string& pluginName, smartcard::PCSCConnection& c
     }
 
     // Select the application
-    if (pluginName == "vehicle")
+    if (pluginName == "eu-vrc")
     {
-        // Vehicle card requires a 3-command AID selection sequence with fallback
-        using namespace vehiclecard::protocol;
-        struct AidSequence {
-            std::vector<uint8_t> cmd1, cmd2, cmd3;
-            uint8_t cmd3P2;
-        };
-        std::vector<AidSequence> sequences = {
-            {SEQ1_CMD1, SEQ1_CMD2, SEQ1_CMD3, 0x0C},
-            {SEQ2_CMD1, SEQ2_CMD2, SEQ1_CMD3, 0x0C},
-            {SEQ3_CMD1, SEQ3_CMD2, SEQ3_CMD3, 0x0C},
-        };
+        // EU VRC: try EU standard AID first, then Serbian multi-command sequences
+        using namespace euvrc::protocol;
 
         bool selected = false;
-        for (const auto& seq : sequences)
+
+        // Try EU standard AID first
+        auto euResp = conn.transmit(smartcard::selectByAID(EU_VRC_AID));
+        if (euResp.isSuccess())
         {
-            auto r1 = conn.transmit(smartcard::selectByAID(seq.cmd1));
-            if (!r1.isSuccess()) continue;
-            auto r2 = conn.transmit(smartcard::selectByAID(seq.cmd2));
-            if (!r2.isSuccess()) continue;
-            auto r3 = conn.transmit(smartcard::selectByAID(seq.cmd3, seq.cmd3P2));
-            if (r3.isSuccess()) { selected = true; break; }
+            selected = true;
         }
+
+        // Fall back to Serbian sequences
         if (!selected)
         {
-            std::cerr << "Warning: all vehicle AID sequences failed\n";
+            struct AidSeq {
+                std::vector<uint8_t> cmd1, cmd2, cmd3;
+                uint8_t cmd3P2;
+            };
+            std::vector<AidSeq> sequences = {
+                {SEQ1_CMD1, SEQ1_CMD2, SEQ1_CMD3, 0x0C},
+                {SEQ2_CMD1, SEQ2_CMD2, SEQ1_CMD3, 0x0C},
+                {SEQ3_CMD1, SEQ3_CMD2, SEQ3_CMD3, 0x0C},
+            };
+
+            for (const auto& seq : sequences)
+            {
+                auto r1 = conn.transmit(smartcard::selectByAID(seq.cmd1));
+                if (!r1.isSuccess()) continue;
+                auto r2 = conn.transmit(smartcard::selectByAID(seq.cmd2));
+                if (!r2.isSuccess()) continue;
+                auto r3 = conn.transmit(smartcard::selectByAID(seq.cmd3, seq.cmd3P2));
+                if (r3.isSuccess()) { selected = true; break; }
+            }
+        }
+
+        if (!selected)
+        {
+            std::cerr << "Warning: all EU VRC AID sequences failed\n";
         }
     }
     else if (!info.aids.empty())
@@ -494,7 +511,7 @@ AppletInfo mapPlugin(const std::string& pluginName, smartcard::PCSCConnection& c
     // Determine plugin-specific read chunk size
     uint8_t chunkSize = 0xFF; // default 255
     if (pluginName == "cardedge") chunkSize = cardedge::protocol::PKI_READ_CHUNK;
-    else if (pluginName == "vehicle") chunkSize = vehiclecard::protocol::READ_CHUNK_SIZE;
+    else if (pluginName == "eu-vrc") chunkSize = euvrc::protocol::READ_CHUNK_SMALL;
     else if (pluginName == "health") chunkSize = healthcard::protocol::READ_CHUNK_SIZE;
     else if (pluginName == "eid") chunkSize = eidcard::protocol::READ_CHUNK_SIZE;
 

@@ -52,7 +52,7 @@ cd build/tools/card_mapper && ctest --output-on-failure
    ./card_mapper --plugin eid --output docs/cards/applets/eid-serbian-applet.md --verbose
    ```
 
-   Supported plugins: `eid`, `cardedge`, `health`, `vehicle`, `emrtd`.
+   Supported plugins: `eid`, `cardedge`, `health`, `eu-vrc`, `emrtd`.
 
 3. Compare the output with the existing documentation:
 

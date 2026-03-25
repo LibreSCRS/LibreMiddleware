@@ -16,7 +16,7 @@ TEST(PluginMapper, KnownPluginsContainsAll)
     EXPECT_NE(std::find(plugins.begin(), plugins.end(), "eid"), plugins.end());
     EXPECT_NE(std::find(plugins.begin(), plugins.end(), "cardedge"), plugins.end());
     EXPECT_NE(std::find(plugins.begin(), plugins.end(), "health"), plugins.end());
-    EXPECT_NE(std::find(plugins.begin(), plugins.end(), "vehicle"), plugins.end());
+    EXPECT_NE(std::find(plugins.begin(), plugins.end(), "eu-vrc"), plugins.end());
     EXPECT_NE(std::find(plugins.begin(), plugins.end(), "emrtd"), plugins.end());
 }
 
@@ -56,13 +56,12 @@ TEST(PluginMapper, HealthPluginInfo)
     EXPECT_EQ(info.dataFiles.size(), 4u);
 }
 
-TEST(PluginMapper, VehiclePluginInfo)
+TEST(PluginMapper, EuVrcPluginInfo)
 {
-    auto info = getPluginInfo("vehicle");
-    EXPECT_EQ(info.name, "Serbian Vehicle Registration");
-    EXPECT_EQ(info.pluginName, "vehicle");
-    EXPECT_EQ(info.aids.size(), 3u);
-    // Vehicle uses non-TLV parsing, so no tag data files
+    auto info = getPluginInfo("eu-vrc");
+    EXPECT_EQ(info.name, "EU Vehicle Registration Certificate");
+    EXPECT_EQ(info.pluginName, "eu-vrc");
+    EXPECT_EQ(info.aids.size(), 4u); // EU AID + 3 Serbian sequences
     EXPECT_TRUE(info.dataFiles.empty());
 }
 
