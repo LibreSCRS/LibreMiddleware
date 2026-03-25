@@ -27,6 +27,13 @@ struct AuthResult
     std::string error;
 };
 
+struct ContactPerson
+{
+    std::string name;
+    std::string telephone;
+    std::string address;
+};
+
 // eMRTD Application AID
 inline constexpr uint8_t EMRTD_AID[] = {0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
 inline constexpr size_t EMRTD_AID_LEN = 7;
@@ -43,5 +50,6 @@ inline uint16_t dgToFID(int dg)
 }
 
 inline constexpr uint16_t FID_COM = 0x011E;
+inline constexpr uint16_t FID_SOD = 0x011D;
 
 } // namespace emrtd

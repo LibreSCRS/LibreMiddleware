@@ -108,6 +108,7 @@ add_executable(EMRTDPluginTests
 target_link_libraries(EMRTDPluginTests
     GTest::gtest_main
     CardPlugin
+    SmartCard
 )
 target_compile_definitions(EMRTDPluginTests PRIVATE
     PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
@@ -148,10 +149,12 @@ add_executable(EMRTDCryptoTests
     bac_test.cpp
     secure_messaging_test.cpp
     pace_test.cpp
+    emrtd_crypto_test.cpp
 )
 target_link_libraries(EMRTDCryptoTests
     GTest::gtest_main
     EMRTDCrypto
+    CardPlugin
 )
 gtest_discover_tests(EMRTDCryptoTests)
 

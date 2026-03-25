@@ -9,11 +9,17 @@ add_library(EMRTDCrypto STATIC
     src/crypto_utils.h
     src/bac.cpp
     src/pace.cpp
+    src/passive_auth.cpp
     src/secure_messaging.cpp
+    src/chip_auth.cpp
+    src/active_auth.cpp
     include/emrtd/crypto/types.h
     include/emrtd/crypto/bac.h
     include/emrtd/crypto/pace.h
+    include/emrtd/crypto/passive_auth.h
     include/emrtd/crypto/secure_messaging.h
+    include/emrtd/crypto/chip_auth.h
+    include/emrtd/crypto/active_auth.h
 )
 
 target_include_directories(EMRTDCrypto PUBLIC

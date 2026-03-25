@@ -8,13 +8,17 @@
 #include <cardedge_protocol.h>
 #include <health_protocol.h>
 #include <eu_vrc_protocol.h>
+#include <emrtd/emrtd_card.h>
 #include <emrtd/emrtd_types.h>
 
 #include <smartcard/apdu.h>
 #include <smartcard/tlv.h>
 
+#include <cstdlib>
 #include <format>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 
 namespace card_mapper {
@@ -438,8 +442,220 @@ AppletInfo getPluginInfo(const std::string& pluginName)
     throw std::runtime_error("unknown plugin: " + pluginName + " (known: eid, cardedge, health, eu-vrc, emrtd)");
 }
 
+namespace {
+
+std::string toHex(const std::vector<uint8_t>& data, size_t maxBytes = 0)
+{
+    std::ostringstream ss;
+    size_t limit = (maxBytes > 0 && maxBytes < data.size()) ? maxBytes : data.size();
+    for (size_t i = 0; i < limit; ++i)
+    {
+        if (i > 0) ss << ' ';
+        ss << std::format("{:02X}", data[i]);
+    }
+    if (maxBytes > 0 && data.size() > maxBytes)
+    {
+        ss << " ...";
+    }
+    return ss.str();
+}
+
+std::string authMethodName(emrtd::AuthMethod m)
+{
+    switch (m)
+    {
+    case emrtd::AuthMethod::BAC: return "BAC";
+    case emrtd::AuthMethod::PACE_MRZ: return "PACE-MRZ";
+    case emrtd::AuthMethod::PACE_CAN: return "PACE-CAN";
+    }
+    return "Unknown";
+}
+
+AppletInfo mapEmrtdPlugin(smartcard::PCSCConnection& conn, bool verbose)
+{
+    auto info = buildEmrtdInfo();
+
+    ApduLogger logger;
+    if (verbose)
+    {
+        conn.setTransmitFilter([&logger, &conn](const smartcard::APDUCommand& cmd) -> smartcard::APDUResponse {
+            auto resp = conn.transmitRaw(cmd);
+            logger.log(cmd, resp);
+            return resp;
+        });
+    }
+
+    // Check for MRZ credentials (passport)
+    const char* mrzDoc = std::getenv("LIBRESCRS_TEST_MRZ_DOC");
+    const char* mrzDob = std::getenv("LIBRESCRS_TEST_MRZ_DOB");
+    const char* mrzExpiry = std::getenv("LIBRESCRS_TEST_MRZ_EXPIRY");
+    const char* canStr = std::getenv("LIBRESCRS_TEST_CAN");
+
+    bool haveMrz = (mrzDoc && mrzDob && mrzExpiry &&
+                    std::string(mrzDoc).size() > 0 &&
+                    std::string(mrzDob).size() > 0 &&
+                    std::string(mrzExpiry).size() > 0);
+    bool haveCan = (canStr && std::string(canStr).size() > 0);
+
+    if (!haveMrz && !haveCan)
+    {
+        std::cerr << "eMRTD: no credentials provided.\n"
+                  << "  Set LIBRESCRS_TEST_MRZ_DOC, LIBRESCRS_TEST_MRZ_DOB, LIBRESCRS_TEST_MRZ_EXPIRY for passport\n"
+                  << "  or LIBRESCRS_TEST_CAN for eID CAN-based PACE.\n"
+                  << "  Returning static info only.\n";
+        if (verbose)
+        {
+            conn.clearTransmitFilter();
+            info.apduTrace = logger.formatTrace();
+        }
+        return info;
+    }
+
+    // Create EMRTDCard with appropriate credentials
+    std::unique_ptr<emrtd::EMRTDCard> card;
+    if (haveMrz)
+    {
+        emrtd::MRZData mrz;
+        mrz.documentNumber = mrzDoc;
+        mrz.dateOfBirth = mrzDob;
+        mrz.dateOfExpiry = mrzExpiry;
+        std::cerr << "eMRTD: using MRZ credentials (doc=" << mrz.documentNumber
+                  << ", dob=" << mrz.dateOfBirth << ", exp=" << mrz.dateOfExpiry << ")\n";
+        card = std::make_unique<emrtd::EMRTDCard>(conn, mrz);
+    }
+    else
+    {
+        std::cerr << "eMRTD: using CAN credentials\n";
+        card = std::make_unique<emrtd::EMRTDCard>(conn, std::string(canStr));
+    }
+
+    // Authenticate
+    auto authResult = card->authenticate();
+    if (!authResult.success)
+    {
+        std::cerr << "eMRTD: authentication FAILED: " << authResult.error << "\n";
+        if (verbose)
+        {
+            conn.clearTransmitFilter();
+            info.apduTrace = logger.formatTrace();
+        }
+        return info;
+    }
+
+    std::cerr << "eMRTD: authentication OK (method: " << authMethodName(authResult.method) << ")\n";
+    info.authentication = std::format("Authenticated via {}", authMethodName(authResult.method));
+
+    // Read EF.COM to get DG list
+    auto dgList = card->readCOM();
+    std::cerr << "eMRTD: EF.COM reports " << dgList.size() << " data groups:";
+    for (int dg : dgList)
+    {
+        std::cerr << " DG" << dg;
+    }
+    std::cerr << "\n";
+
+    // Read EF.SOD
+    auto sodData = card->readSOD();
+    if (sodData)
+    {
+        std::cerr << "eMRTD: EF.SOD size: " << sodData->size() << " bytes\n";
+        std::cerr << "eMRTD: EF.SOD first 64 bytes: " << toHex(*sodData, 64) << "\n";
+    }
+    else
+    {
+        std::cerr << "eMRTD: EF.SOD read FAILED\n";
+    }
+
+    // Print summary header
+    std::cout << "\n";
+    std::cout << "=== eMRTD Scan Results ===\n\n";
+    std::cout << "Authentication: " << authMethodName(authResult.method) << "\n";
+    std::cout << "DGs in EF.COM: " << dgList.size() << " —";
+    for (int dg : dgList)
+    {
+        std::cout << " DG" << dg;
+    }
+    std::cout << "\n";
+
+    if (sodData)
+    {
+        std::cout << "EF.SOD: " << sodData->size() << " bytes\n";
+        std::cout << "EF.SOD first 64 bytes: " << toHex(*sodData, 64) << "\n";
+    }
+
+    // Table header
+    std::cout << "\n"
+              << std::format("{:<6} {:<6} {:>8}  {}\n", "DG", "FID", "Size", "First 32 bytes (hex)")
+              << std::string(80, '-') << "\n";
+
+    // Read each DG
+    for (int dg : dgList)
+    {
+        uint16_t fid = emrtd::dgToFID(dg);
+        std::string fidStr = std::format("{:04X}", fid);
+        std::string dgName = std::format("DG{}", dg);
+
+        auto result = card->readDataGroupSafe(dg);
+
+        switch (result.status)
+        {
+        case emrtd::DGReadStatus::OK:
+        {
+            std::cout << std::format("{:<6} {:<6} {:>8}  {}\n",
+                                     dgName, fidStr, result.data.size(),
+                                     toHex(result.data, 32));
+            std::cerr << "eMRTD: " << dgName << " (FID " << fidStr << "): "
+                      << result.data.size() << " bytes\n";
+
+            // Print first 64 hex bytes for DG14 and DG15 (important for PA/CA/AA)
+            if (dg == 14 || dg == 15)
+            {
+                std::cerr << "eMRTD: " << dgName << " first 64 bytes: "
+                          << toHex(result.data, 64) << "\n";
+                std::cout << "  " << dgName << " first 64 bytes: "
+                          << toHex(result.data, 64) << "\n";
+            }
+            break;
+        }
+        case emrtd::DGReadStatus::ACCESS_DENIED:
+            std::cout << std::format("{:<6} {:<6} {:>8}  {}\n",
+                                     dgName, fidStr, 0, "[ACCESS DENIED — EAC required]");
+            std::cerr << "eMRTD: " << dgName << " (FID " << fidStr << "): ACCESS DENIED\n";
+            break;
+        case emrtd::DGReadStatus::NOT_PRESENT:
+            std::cout << std::format("{:<6} {:<6} {:>8}  {}\n",
+                                     dgName, fidStr, 0, "[NOT PRESENT]");
+            std::cerr << "eMRTD: " << dgName << " (FID " << fidStr << "): NOT PRESENT\n";
+            break;
+        case emrtd::DGReadStatus::ERROR:
+            std::cout << std::format("{:<6} {:<6} {:>8}  {}\n",
+                                     dgName, fidStr, 0, "[READ ERROR]");
+            std::cerr << "eMRTD: " << dgName << " (FID " << fidStr << "): READ ERROR\n";
+            break;
+        }
+    }
+
+    std::cout << std::string(80, '-') << "\n";
+
+    if (verbose)
+    {
+        conn.clearTransmitFilter();
+        info.apduTrace = logger.formatTrace();
+    }
+
+    return info;
+}
+
+} // anonymous namespace (mapEmrtdPlugin helpers)
+
 AppletInfo mapPlugin(const std::string& pluginName, smartcard::PCSCConnection& conn, bool verbose)
 {
+    // eMRTD gets its own path — requires PACE/BAC authentication
+    if (pluginName == "emrtd")
+    {
+        return mapEmrtdPlugin(conn, verbose);
+    }
+
     auto info = getPluginInfo(pluginName);
 
     ApduLogger logger;

@@ -78,6 +78,42 @@ cd build/tools/card_mapper && ctest --output-on-failure
 
 5. Verify the protocol header constants match the tool's discovered FIDs and tags.
 
+### I want to scan an eMRTD (passport or eID with PACE)
+
+eMRTD data groups are protected by PACE or BAC authentication. The card_mapper
+reads credentials from environment variables so that secrets are never passed on
+the command line.
+
+**Passport (PACE-MRZ)**:
+
+```bash
+export LIBRESCRS_TEST_MRZ_DOC="014767289"     # document number from MRZ
+export LIBRESCRS_TEST_MRZ_DOB="781207"         # date of birth YYMMDD
+export LIBRESCRS_TEST_MRZ_EXPIRY="291028"      # expiry date YYMMDD
+./card_mapper --plugin emrtd --verbose
+```
+
+**eID card (PACE-CAN)**:
+
+```bash
+export LIBRESCRS_TEST_CAN="123456"             # Card Access Number
+./card_mapper --plugin emrtd --verbose
+```
+
+If no credentials are set, the tool prints static applet metadata only (no
+authentication, no DG reads).
+
+### Environment Variables (eMRTD)
+
+| Variable | Description |
+|----------|-------------|
+| `LIBRESCRS_TEST_MRZ_DOC` | Document number from MRZ line 1 |
+| `LIBRESCRS_TEST_MRZ_DOB` | Date of birth in YYMMDD format |
+| `LIBRESCRS_TEST_MRZ_EXPIRY` | Expiry date in YYMMDD format |
+| `LIBRESCRS_TEST_CAN` | Card Access Number (6-digit, printed on document) |
+
+MRZ variables take precedence over CAN if both are set.
+
 ## Options
 
 Run `card_mapper --help` for full usage information, or see the man page (`card_mapper.1`).

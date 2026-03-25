@@ -1,15 +1,22 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
+#include <emrtd/crypto/active_auth.h>
+#include <emrtd/crypto/chip_auth.h>
 #include <emrtd/crypto/pace.h>
+#include <emrtd/crypto/passive_auth.h>
 #include <emrtd/data_group.h>
 #include <emrtd/emrtd_card.h>
 #include <emrtd/emrtd_types.h>
 #include <plugin/card_plugin.h>
+#include <plugin/security_check.h>
 #include <smartcard/apdu.h>
 #include <smartcard/pcsc_connection.h>
 
+#include <algorithm>
+#include <cstdlib>
 #include <ctime>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -43,6 +50,12 @@ std::string formatMRZDate(const std::string& yymmdd, bool isExpiry = false)
     return dd + "." + mm + "." + std::to_string(fullYear);
 }
 
+struct SessionContext {
+    std::optional<std::variant<emrtd::MRZData, std::string>> credentials;
+    std::string pendingDocNum, pendingDob, pendingExpiry;
+    std::unique_ptr<emrtd::EMRTDCard> emrTDCard;
+};
+
 class EMRTDCardPlugin : public plugin::CardPlugin
 {
 public:
@@ -66,13 +79,9 @@ public:
 
     bool canHandleConnection(smartcard::PCSCConnection& conn) const override
     {
-        // Clear credentials from previous session (new card insert = new session)
+        // Reset session for this connection (new card insert = new session)
         std::lock_guard lock(mtx);
-        credentials.reset();
-        pendingDocNum.clear();
-        pendingDob.clear();
-        pendingExpiry.clear();
-        emrTDCard.reset();
+        sessions.erase(&conn);
         conn.clearTransmitFilter();
 
         // SELECT eMRTD applet by AID (P2=0x0C: no FCI response)
@@ -98,7 +107,24 @@ public:
         };
 
         std::unique_lock lock(mtx);
-        if (!credentials) {
+
+        // Check for pending credentials (set via setCredentials() which has no conn param)
+        auto& session = sessions[&conn];
+        if (pendingCredentials) {
+            session.credentials = *pendingCredentials;
+            pendingCredentials.reset();
+        }
+        if (!session.pendingDocNum.empty() && session.pendingDocNum != pendingDocNum) {
+            // sync pending MRZ fields
+        }
+        // Copy global pending MRZ into session if not yet set
+        if (!session.credentials) {
+            if (!pendingDocNum.empty() && !pendingDob.empty() && !pendingExpiry.empty()) {
+                session.credentials = emrtd::MRZData{pendingDocNum, pendingDob, pendingExpiry};
+            }
+        }
+
+        if (!session.credentials) {
             // Phase 1: no credentials — return auth_required (no streaming needed)
             plugin::CardFieldGroup authGroup;
             authGroup.groupKey = "auth_required";
@@ -143,7 +169,7 @@ public:
         }
 
         // Phase 2: credentials set — authenticate and read
-        auto creds = *credentials;
+        auto creds = *session.credentials;
         lock.unlock();
 
         std::unique_ptr<emrtd::EMRTDCard> localCard;
@@ -154,9 +180,9 @@ public:
         }
         {
             std::lock_guard lk(mtx);
-            emrTDCard = std::move(localCard);
+            sessions[&conn].emrTDCard = std::move(localCard);
         }
-        emrtd::EMRTDCard* card = emrTDCard.get();
+        emrtd::EMRTDCard* card = sessions[&conn].emrTDCard.get();
 
         auto authResult = card->authenticate();
         if (!authResult.success) {
@@ -169,8 +195,7 @@ public:
             return data;
         }
 
-        // Read DGs one by one and emit groups progressively
-        auto dgList = card->readCOM();
+        // --- ICAO-compliant reading flow ---
 
         auto addTextField = [](plugin::CardFieldGroup& g, const std::string& key, const std::string& label,
                                const std::string& val) {
@@ -178,17 +203,103 @@ public:
                 g.fields.push_back({key, label, plugin::FieldType::Text, {val.begin(), val.end()}});
         };
 
-        for (int dg : dgList) {
-            auto raw = card->readDataGroup(dg);
-            if (!raw)
+        // 1. Read COM → emit presence group
+        auto dgList = card->readCOM();
+        {
+            plugin::CardFieldGroup g;
+            g.groupKey = "presence";
+            g.groupLabel = "Data Groups Present";
+            std::string dgListStr;
+            for (int dg : dgList) {
+                if (!dgListStr.empty())
+                    dgListStr += ", ";
+                dgListStr += "DG" + std::to_string(dg);
+            }
+            addTextField(g, "data_groups", "Data Groups", dgListStr);
+            addTextField(g, "auth_method", "Authentication Method",
+                         authResult.method == emrtd::AuthMethod::BAC        ? "BAC"
+                         : authResult.method == emrtd::AuthMethod::PACE_MRZ ? "PACE (MRZ)"
+                                                                            : "PACE (CAN)");
+            emitGroup(std::move(g));
+        }
+
+        // 2. Read SOD → store raw bytes
+        auto sodRaw = card->readSOD();
+
+        // 3. Parse SOD → get authoritative DG list from hash entries
+        std::vector<int> authoritativeDGs;
+        std::optional<emrtd::crypto::SODContent> sodContent;
+        if (sodRaw) {
+            sodContent = emrtd::crypto::parseSOD(*sodRaw);
+            if (sodContent) {
+                for (const auto& [dgNum, hash] : sodContent->dgHashes)
+                    authoritativeDGs.push_back(dgNum);
+                std::sort(authoritativeDGs.begin(), authoritativeDGs.end());
+            }
+        }
+        // Fall back to COM list if SOD parsing failed
+        if (authoritativeDGs.empty())
+            authoritativeDGs = dgList;
+
+        bool hasDG14 = std::find(authoritativeDGs.begin(), authoritativeDGs.end(), 14) != authoritativeDGs.end();
+        bool hasDG15 = std::find(authoritativeDGs.begin(), authoritativeDGs.end(), 15) != authoritativeDGs.end();
+
+        // Storage for raw DG bytes (for passive auth)
+        std::map<int, std::vector<uint8_t>> dgRawData;
+
+        // 4. If DG14 present → Chip Authentication → upgrade SM
+        emrtd::crypto::ChipAuthResult caResult;
+        caResult.chipAuthentication = emrtd::crypto::ChipAuthResult::NOT_PERFORMED;
+        caResult.activeAuthentication = emrtd::crypto::ChipAuthResult::NOT_PERFORMED;
+
+        if (hasDG14) {
+            auto dg14Result = card->readDataGroupSafe(14);
+            if (dg14Result.status == emrtd::DGReadStatus::OK && !dg14Result.data.empty()) {
+                dgRawData[14] = dg14Result.data;
+                if (card->hasSecureMessaging()) {
+                    caResult =
+                        emrtd::crypto::performChipAuth(card->connection(), dg14Result.data, card->secureMessaging());
+                    if (caResult.newSessionKeys) {
+                        card->replaceSM(*caResult.newSessionKeys, caResult.newAlgorithm);
+                    }
+                }
+            }
+        }
+
+        // 5. If no DG14 but DG15 present → Active Authentication
+        if (caResult.chipAuthentication != emrtd::crypto::ChipAuthResult::PASSED && hasDG15) {
+            auto dg15Result = card->readDataGroupSafe(15);
+            if (dg15Result.status == emrtd::DGReadStatus::OK && !dg15Result.data.empty()) {
+                dgRawData[15] = dg15Result.data;
+                if (card->hasSecureMessaging()) {
+                    auto aaResult =
+                        emrtd::crypto::performActiveAuth(card->connection(), dg15Result.data, card->secureMessaging());
+                    caResult.activeAuthentication = aaResult.activeAuthentication;
+                    if (aaResult.errorDetail.size() > caResult.errorDetail.size())
+                        caResult.errorDetail = aaResult.errorDetail;
+                }
+            }
+        }
+
+        // 6. Read remaining DGs and emit groups
+        for (int dg : authoritativeDGs) {
+            // Skip DG14/DG15 — already read above
+            if (dg == 14 || dg == 15)
                 continue;
 
-            std::map<int, std::vector<uint8_t>> singleDG;
-            singleDG[dg] = std::move(*raw);
-            auto parsed = emrtd::parseDataGroups(singleDG);
+            auto dgResult = card->readDataGroupSafe(dg);
+            if (dgResult.status == emrtd::DGReadStatus::OK && !dgResult.data.empty()) {
+                dgRawData[dg] = dgResult.data;
+            }
 
+            // Parse and emit based on DG number
             switch (dg) {
-            case 1:
+            case 1: {
+                if (dgResult.status != emrtd::DGReadStatus::OK || dgResult.data.empty())
+                    break;
+                std::map<int, std::vector<uint8_t>> singleDG;
+                singleDG[1] = dgResult.data;
+                auto parsed = emrtd::parseDataGroups(singleDG);
                 if (parsed.dg1) {
                     {
                         plugin::CardFieldGroup g;
@@ -215,7 +326,13 @@ public:
                     }
                 }
                 break;
-            case 2:
+            }
+            case 2: {
+                if (dgResult.status != emrtd::DGReadStatus::OK || dgResult.data.empty())
+                    break;
+                std::map<int, std::vector<uint8_t>> singleDG;
+                singleDG[2] = dgResult.data;
+                auto parsed = emrtd::parseDataGroups(singleDG);
                 if (parsed.dg2) {
                     plugin::CardFieldGroup g;
                     g.groupKey = "photo";
@@ -224,7 +341,52 @@ public:
                     emitGroup(std::move(g));
                 }
                 break;
-            case 7:
+            }
+            case 3: {
+                plugin::CardFieldGroup g;
+                g.groupKey = "biometric_fingerprint";
+                g.groupLabel = "Fingerprint (DG3)";
+                if (dgResult.status == emrtd::DGReadStatus::ACCESS_DENIED) {
+                    addTextField(g, "access", "Access", "EAC required");
+                } else if (dgResult.status == emrtd::DGReadStatus::OK && !dgResult.data.empty()) {
+                    g.fields.push_back({"fingerprint", "Fingerprint", plugin::FieldType::Binary, dgResult.data});
+                } else {
+                    break; // NOT_PRESENT or ERROR — skip
+                }
+                emitGroup(std::move(g));
+                break;
+            }
+            case 4: {
+                plugin::CardFieldGroup g;
+                g.groupKey = "biometric_iris";
+                g.groupLabel = "Iris (DG4)";
+                if (dgResult.status == emrtd::DGReadStatus::ACCESS_DENIED) {
+                    addTextField(g, "access", "Access", "EAC required");
+                } else if (dgResult.status == emrtd::DGReadStatus::OK && !dgResult.data.empty()) {
+                    g.fields.push_back({"iris", "Iris", plugin::FieldType::Binary, dgResult.data});
+                } else {
+                    break; // NOT_PRESENT or ERROR — skip
+                }
+                emitGroup(std::move(g));
+                break;
+            }
+            case 5: {
+                if (dgResult.status != emrtd::DGReadStatus::OK || dgResult.data.empty())
+                    break;
+                // DG5 contains a portrait image — emit raw as photo
+                plugin::CardFieldGroup g;
+                g.groupKey = "portrait";
+                g.groupLabel = "Portrait (DG5)";
+                g.fields.push_back({"portrait", "Portrait", plugin::FieldType::Photo, dgResult.data});
+                emitGroup(std::move(g));
+                break;
+            }
+            case 7: {
+                if (dgResult.status != emrtd::DGReadStatus::OK || dgResult.data.empty())
+                    break;
+                std::map<int, std::vector<uint8_t>> singleDG;
+                singleDG[7] = dgResult.data;
+                auto parsed = emrtd::parseDataGroups(singleDG);
                 if (parsed.dg7) {
                     plugin::CardFieldGroup g;
                     g.groupKey = "signature";
@@ -233,7 +395,13 @@ public:
                     emitGroup(std::move(g));
                 }
                 break;
-            case 11:
+            }
+            case 11: {
+                if (dgResult.status != emrtd::DGReadStatus::OK || dgResult.data.empty())
+                    break;
+                std::map<int, std::vector<uint8_t>> singleDG;
+                singleDG[11] = dgResult.data;
+                auto parsed = emrtd::parseDataGroups(singleDG);
                 if (parsed.dg11) {
                     plugin::CardFieldGroup g;
                     g.groupKey = "additional";
@@ -251,7 +419,13 @@ public:
                         emitGroup(std::move(g));
                 }
                 break;
-            case 12:
+            }
+            case 12: {
+                if (dgResult.status != emrtd::DGReadStatus::OK || dgResult.data.empty())
+                    break;
+                std::map<int, std::vector<uint8_t>> singleDG;
+                singleDG[12] = dgResult.data;
+                auto parsed = emrtd::parseDataGroups(singleDG);
                 if (parsed.dg12) {
                     plugin::CardFieldGroup g;
                     g.groupKey = "document_extra";
@@ -269,17 +443,177 @@ public:
                         emitGroup(std::move(g));
                 }
                 break;
+            }
+            case 13: {
+                if (dgResult.status != emrtd::DGReadStatus::OK || dgResult.data.empty())
+                    break;
+                plugin::CardFieldGroup g;
+                g.groupKey = "national";
+                g.groupLabel = "National Data (DG13)";
+                g.fields.push_back({"national_data", "National Data", plugin::FieldType::Binary, dgResult.data});
+                emitGroup(std::move(g));
+                break;
+            }
+            case 16: {
+                if (dgResult.status != emrtd::DGReadStatus::OK || dgResult.data.empty())
+                    break;
+                auto contacts = emrtd::EMRTDCard::parseDG16(dgResult.data);
+                if (!contacts.empty()) {
+                    plugin::CardFieldGroup g;
+                    g.groupKey = "contacts";
+                    g.groupLabel = "Persons to Notify (DG16)";
+                    int idx = 0;
+                    for (const auto& contact : contacts) {
+                        std::string prefix = (contacts.size() > 1) ? "contact_" + std::to_string(idx) + "_" : "";
+                        addTextField(g, prefix + "name", "Name", contact.name);
+                        addTextField(g, prefix + "telephone", "Telephone", contact.telephone);
+                        addTextField(g, prefix + "address", "Address", contact.address);
+                        ++idx;
+                    }
+                    emitGroup(std::move(g));
+                }
+                break;
+            }
             default:
                 break;
             }
         }
 
+        // 7. Passive Authentication
+        plugin::SecurityStatus secStatus;
+
+        if (sodRaw && !dgRawData.empty()) {
+            // CSCA trust store path from env var
+            std::string trustStorePath;
+            if (const char* envPath = std::getenv("LIBRESCRS_CSCA_STORE"))
+                trustStorePath = envPath;
+
+            auto paResult = emrtd::crypto::performPassiveAuth(*sodRaw, dgRawData, trustStorePath);
+
+            // SOD signature check
+            {
+                plugin::SecurityCheck check;
+                check.checkId = "pa_sod_signature";
+                check.category = "data_authenticity";
+                check.label = "SOD Digital Signature";
+                check.status = (paResult.sodSignature == emrtd::crypto::PAResult::PASSED)
+                                   ? plugin::SecurityCheck::PASSED
+                               : (paResult.sodSignature == emrtd::crypto::PAResult::FAILED)
+                                   ? plugin::SecurityCheck::FAILED
+                                   : plugin::SecurityCheck::NOT_PERFORMED;
+                if (!paResult.dscSubject.empty())
+                    check.detail = "DSC: " + paResult.dscSubject;
+                secStatus.checks.push_back(std::move(check));
+            }
+
+            // CSCA chain check
+            {
+                plugin::SecurityCheck check;
+                check.checkId = "pa_csca_chain";
+                check.category = "data_authenticity";
+                check.label = "CSCA Certificate Chain";
+                check.status = (paResult.cscaChain == emrtd::crypto::PAResult::PASSED)
+                                   ? plugin::SecurityCheck::PASSED
+                               : (paResult.cscaChain == emrtd::crypto::PAResult::FAILED)
+                                   ? plugin::SecurityCheck::FAILED
+                                   : plugin::SecurityCheck::NOT_PERFORMED;
+                if (trustStorePath.empty())
+                    check.detail = "No CSCA trust store configured";
+                secStatus.checks.push_back(std::move(check));
+            }
+
+            // Per-DG hash checks
+            for (const auto& [dgNum, status] : paResult.dgHashes) {
+                plugin::SecurityCheck check;
+                check.checkId = "pa_dg" + std::to_string(dgNum) + "_hash";
+                check.category = "data_integrity";
+                check.label = "DG" + std::to_string(dgNum) + " Hash (" + paResult.hashAlgorithm + ")";
+                check.status = (status == emrtd::crypto::PAResult::PASSED)    ? plugin::SecurityCheck::PASSED
+                               : (status == emrtd::crypto::PAResult::FAILED)  ? plugin::SecurityCheck::FAILED
+                                                                              : plugin::SecurityCheck::NOT_PERFORMED;
+                secStatus.checks.push_back(std::move(check));
+            }
+
+            if (!paResult.errorDetail.empty()) {
+                plugin::SecurityCheck check;
+                check.checkId = "pa_error";
+                check.category = "data_authenticity";
+                check.label = "Passive Authentication";
+                check.status = plugin::SecurityCheck::FAILED;
+                check.errorDetail = paResult.errorDetail;
+                secStatus.checks.push_back(std::move(check));
+            }
+        }
+
+        // Chip Authentication check
+        {
+            plugin::SecurityCheck check;
+            check.checkId = "chip_auth";
+            check.category = "chip_genuineness";
+            check.label = "Chip Authentication";
+            check.status = (caResult.chipAuthentication == emrtd::crypto::ChipAuthResult::PASSED)
+                               ? plugin::SecurityCheck::PASSED
+                           : (caResult.chipAuthentication == emrtd::crypto::ChipAuthResult::FAILED)
+                               ? plugin::SecurityCheck::FAILED
+                           : (caResult.chipAuthentication == emrtd::crypto::ChipAuthResult::NOT_SUPPORTED)
+                               ? plugin::SecurityCheck::NOT_SUPPORTED
+                               : plugin::SecurityCheck::NOT_PERFORMED;
+            if (!caResult.protocol.empty())
+                check.detail = caResult.protocol;
+            secStatus.checks.push_back(std::move(check));
+        }
+
+        // Active Authentication check
+        {
+            plugin::SecurityCheck check;
+            check.checkId = "active_auth";
+            check.category = "chip_genuineness";
+            check.label = "Active Authentication";
+            check.status = (caResult.activeAuthentication == emrtd::crypto::ChipAuthResult::PASSED)
+                               ? plugin::SecurityCheck::PASSED
+                           : (caResult.activeAuthentication == emrtd::crypto::ChipAuthResult::FAILED)
+                               ? plugin::SecurityCheck::FAILED
+                           : (caResult.activeAuthentication == emrtd::crypto::ChipAuthResult::NOT_SUPPORTED)
+                               ? plugin::SecurityCheck::NOT_SUPPORTED
+                               : plugin::SecurityCheck::NOT_PERFORMED;
+            if (!caResult.errorDetail.empty())
+                check.errorDetail = caResult.errorDetail;
+            secStatus.checks.push_back(std::move(check));
+        }
+
+        secStatus.computeOverall();
+
+        // 8. Emit security_status group
+        {
+            plugin::CardFieldGroup g;
+            g.groupKey = "security_status";
+            g.groupLabel = "Security Verification";
+
+            addTextField(g, "overall_integrity", "Data Integrity", plugin::statusToString(secStatus.overallIntegrity));
+            addTextField(g, "overall_authenticity", "Data Authenticity",
+                         plugin::statusToString(secStatus.overallAuthenticity));
+            addTextField(g, "overall_genuineness", "Chip Genuineness",
+                         plugin::statusToString(secStatus.overallGenuineness));
+
+            for (const auto& check : secStatus.checks) {
+                std::string val = plugin::statusToString(check.status);
+                if (!check.detail.empty())
+                    val += " (" + check.detail + ")";
+                if (!check.errorDetail.empty())
+                    val += " [" + check.errorDetail + "]";
+                addTextField(g, check.checkId, check.label, val);
+            }
+
+            emitGroup(std::move(g));
+        }
+
         // Install SM filter so PKI fallback plugins get SM wrapping transparently
-        conn.setTransmitFilter([this](const smartcard::APDUCommand& cmd) {
+        conn.setTransmitFilter([this, connPtr = &conn](const smartcard::APDUCommand& cmd) {
             std::lock_guard lock(mtx);
-            if (!emrTDCard)
+            auto it = sessions.find(connPtr);
+            if (it == sessions.end() || !it->second.emrTDCard)
                 return smartcard::APDUResponse{{}, 0x69, 0x82};
-            return emrTDCard->transmitSecureAPDU(cmd);
+            return it->second.emrTDCard->transmitSecureAPDU(cmd);
         });
 
         return data;
@@ -289,7 +623,7 @@ public:
     {
         std::lock_guard lock(mtx);
         if (key == "can") {
-            credentials = std::string(value);
+            pendingCredentials = std::string(value);
             pendingDocNum.clear();
             pendingDob.clear();
             pendingExpiry.clear();
@@ -309,16 +643,17 @@ private:
     void trySetMRZ() const
     {
         if (!pendingDocNum.empty() && !pendingDob.empty() && !pendingExpiry.empty()) {
-            credentials = emrtd::MRZData{pendingDocNum, pendingDob, pendingExpiry};
+            pendingCredentials = emrtd::MRZData{pendingDocNum, pendingDob, pendingExpiry};
         }
     }
 
     mutable std::mutex mtx;
-    mutable std::optional<std::variant<emrtd::MRZData, std::string>> credentials;
+    mutable std::map<smartcard::PCSCConnection*, SessionContext> sessions;
+    // Keep pendingCredentials global since setCredentials() has no conn param
+    mutable std::optional<std::variant<emrtd::MRZData, std::string>> pendingCredentials;
     mutable std::string pendingDocNum;
     mutable std::string pendingDob;
     mutable std::string pendingExpiry;
-    mutable std::unique_ptr<emrtd::EMRTDCard> emrTDCard;
 };
 
 } // namespace

@@ -5,6 +5,7 @@
 #include <emrtd/crypto/bac.h>
 #include <emrtd/crypto/pace.h>
 #include <smartcard/apdu.h>
+#include <smartcard/ber.h>
 #include <smartcard/pcsc_connection.h>
 
 #include <openssl/crypto.h>
@@ -238,6 +239,12 @@ smartcard::APDUResponse EMRTDCard::transmitSecureAPDU(const smartcard::APDUComma
     return {std::move(result->data), result->sw1, result->sw2};
 }
 
+void EMRTDCard::replaceSM(const crypto::SessionKeys& newKeys, crypto::SMAlgorithm newAlgo)
+{
+    sm = std::make_unique<crypto::SecureMessaging>(newKeys, newAlgo);
+    smAlgo = newAlgo;
+}
+
 void EMRTDCard::recover()
 {
     recovering = true;
@@ -255,12 +262,14 @@ void EMRTDCard::recover()
     authenticate();
 }
 
-std::optional<std::vector<uint8_t>> EMRTDCard::readFile(uint16_t fid)
+std::optional<std::vector<uint8_t>> EMRTDCard::readFile(uint16_t fid, bool skipSelect)
 {
-    // SELECT file by FID (P2=0x0C: no response data expected)
-    std::vector<uint8_t> selectApdu = {
-        0x00, 0xA4, 0x02, 0x0C, 0x02, static_cast<uint8_t>(fid >> 8), static_cast<uint8_t>(fid & 0xFF)};
-    transmitSecure(selectApdu);
+    if (!skipSelect) {
+        // SELECT file by FID (P2=0x0C: no response data expected)
+        std::vector<uint8_t> selectApdu = {
+            0x00, 0xA4, 0x02, 0x0C, 0x02, static_cast<uint8_t>(fid >> 8), static_cast<uint8_t>(fid & 0xFF)};
+        transmitSecure(selectApdu);
+    }
 
     // READ BINARY in chunks of 256 bytes (Le=0x00 = 256 in short APDU form)
     static constexpr uint8_t READ_LE = 0x00;
@@ -392,12 +401,105 @@ std::vector<int> EMRTDCard::readCOM()
     return dgList;
 }
 
+std::optional<std::vector<uint8_t>> EMRTDCard::readSOD()
+{
+    return readFile(FID_SOD);
+}
+
 std::optional<std::vector<uint8_t>> EMRTDCard::readDataGroup(int dgNumber)
 {
     uint16_t fid = dgToFID(dgNumber);
     if (fid == 0)
         return std::nullopt;
     return readFile(fid);
+}
+
+DGReadResult EMRTDCard::readDataGroupSafe(int dgNumber)
+{
+    uint16_t fid = dgToFID(dgNumber);
+    if (fid == 0)
+        return {DGReadStatus::ERROR, {}};
+
+    // SELECT file by FID via SM, then check the inner SW
+    smartcard::APDUCommand selectCmd{
+        0x00, 0xA4, 0x02, 0x0C, {static_cast<uint8_t>(fid >> 8), static_cast<uint8_t>(fid & 0xFF)}, 0, false};
+    auto selectResp = transmitSecureAPDU(selectCmd);
+    uint16_t sw = selectResp.statusWord();
+
+    // Access denied (security status not satisfied / command not allowed)
+    if (sw == 0x6982 || sw == 0x6986)
+        return {DGReadStatus::ACCESS_DENIED, {}};
+
+    // File not found
+    if (sw == 0x6A82)
+        return {DGReadStatus::NOT_PRESENT, {}};
+
+    // Accept success and warning SWs (9000, 62xx)
+    if (selectResp.sw1 != 0x90 && selectResp.sw1 != 0x62)
+        return {DGReadStatus::ERROR, {}};
+
+    // File selected successfully — read it, skipping the SELECT we already did
+    auto data = readFile(fid, true);
+    if (!data)
+        return {DGReadStatus::ERROR, {}};
+
+    return {DGReadStatus::OK, std::move(*data)};
+}
+
+std::vector<ContactPerson> EMRTDCard::parseDG16(const std::vector<uint8_t>& raw)
+{
+    std::vector<ContactPerson> persons;
+    if (raw.empty())
+        return persons;
+
+    auto root = smartcard::parseBER(raw.data(), raw.size());
+
+    // DG16 outer tag is 0x70, containing one or more constructed entries.
+    // Each entry may have sub-tags for name (5F0E), telephone (5F12), address (5F42).
+    // The exact sub-tag set varies by issuing country — extract what we can.
+    for (const auto& child : root.children) {
+        // 0x70 is the DG16 wrapper tag
+        if (child.tag == 0x70) {
+            for (const auto& entry : child.children) {
+                ContactPerson person;
+                for (const auto& field : entry.children) {
+                    if (field.tag == 0x5F0E)
+                        person.name = field.asString();
+                    else if (field.tag == 0x5F12)
+                        person.telephone = field.asString();
+                    else if (field.tag == 0x5F42)
+                        person.address = field.asString();
+                }
+                // Also handle flat structure (fields directly under 0x70)
+                if (entry.tag == 0x5F0E && person.name.empty())
+                    person.name = entry.asString();
+                else if (entry.tag == 0x5F12 && person.telephone.empty())
+                    person.telephone = entry.asString();
+                else if (entry.tag == 0x5F42 && person.address.empty())
+                    person.address = entry.asString();
+
+                if (!person.name.empty() || !person.telephone.empty() || !person.address.empty())
+                    persons.push_back(std::move(person));
+            }
+
+            // Handle flat structure: fields directly under 0x70 without nesting
+            if (persons.empty()) {
+                ContactPerson person;
+                for (const auto& field : child.children) {
+                    if (field.tag == 0x5F0E)
+                        person.name = field.asString();
+                    else if (field.tag == 0x5F12)
+                        person.telephone = field.asString();
+                    else if (field.tag == 0x5F42)
+                        person.address = field.asString();
+                }
+                if (!person.name.empty() || !person.telephone.empty() || !person.address.empty())
+                    persons.push_back(std::move(person));
+            }
+        }
+    }
+
+    return persons;
 }
 
 } // namespace emrtd

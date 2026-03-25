@@ -19,7 +19,7 @@ target_include_directories(card_mapper PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/emrtd/include
 )
 
-target_link_libraries(card_mapper PRIVATE SmartCard)
+target_link_libraries(card_mapper PRIVATE SmartCard EMRTD)
 target_compile_features(card_mapper PRIVATE cxx_std_20)
 target_compile_definitions(card_mapper PRIVATE
     CARD_MAPPER_VERSION="${PROJECT_VERSION}"
@@ -49,7 +49,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/eu-vrc/src
         ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/emrtd/include
     )
-    target_link_libraries(card_mapper_tests PRIVATE GTest::gtest_main SmartCard)
+    target_link_libraries(card_mapper_tests PRIVATE GTest::gtest_main SmartCard EMRTD)
     target_compile_features(card_mapper_tests PRIVATE cxx_std_20)
     include(GoogleTest)
     gtest_discover_tests(card_mapper_tests)

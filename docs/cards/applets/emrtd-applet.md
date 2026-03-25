@@ -123,6 +123,25 @@ DG1 contains the full Machine Readable Zone, which includes:
 - Optional data + check digit
 - Composite check digit
 
+## Scanning with card_mapper
+
+The `card_mapper` tool supports authenticated eMRTD scanning. Set MRZ or CAN
+credentials via environment variables, then run:
+
+```bash
+export LIBRESCRS_TEST_MRZ_DOC="<document_number>"
+export LIBRESCRS_TEST_MRZ_DOB="<YYMMDD>"
+export LIBRESCRS_TEST_MRZ_EXPIRY="<YYMMDD>"
+card_mapper --plugin emrtd --verbose
+```
+
+This performs PACE (or BAC fallback) authentication, reads EF.COM to discover
+present data groups, reads EF.SOD, then reads each accessible data group and
+prints a summary table with sizes and hex previews. EAC-protected DGs (e.g.
+DG3, DG4) are reported as ACCESS DENIED.
+
+See `tools/card_mapper/README.md` for full environment variable documentation.
+
 ## Implementation Reference
 
 - Source: `lib/emrtd/include/emrtd/emrtd_types.h`
