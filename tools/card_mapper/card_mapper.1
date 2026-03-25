@@ -1,0 +1,175 @@
+.\" SPDX-License-Identifier: LGPL-2.1-or-later
+.\" Man page for card_mapper
+.TH CARD_MAPPER 1 "2026-03-25" "LibreMiddleware" "User Commands"
+.SH NAME
+card_mapper \- smart card file system mapper and documentation generator
+.SH SYNOPSIS
+.B card_mapper
+.B \-\-discover
+.RI [ OPTIONS ]
+.br
+.B card_mapper
+.B \-\-plugin
+.I name
+.RI [ OPTIONS ]
+.SH DESCRIPTION
+.B card_mapper
+scans smart cards via PC/SC and generates Markdown documentation of their
+file system structure, including ASCII tree diagrams, Mermaid diagrams,
+and TLV data element tables.
+.PP
+It operates in two modes:
+.B discover
+mode for unknown cards (probing AIDs and FID ranges), and
+.B plugin
+mode for known card types (using protocol definitions from LibreMiddleware).
+.PP
+The generated documentation follows the applet/profile format used in
+.IR LibreMiddleware/docs/cards/ .
+.SH MODES
+.TP
+.B \-\-discover
+Scan an unknown card: detect applets by probing known AIDs, walk the file
+system by probing FID ranges (0x0F00\-0x0FFF, 0x0D00\-0x0DFF, 0xD000\-0xD0FF),
+attempt TLV parsing on found files, and generate applet and profile documentation.
+.TP
+.BI \-\-plugin " name"
+Map a known plugin's applet using its protocol definitions.
+Supported plugins:
+.BR eid ", " cardedge ", " health ", " vehicle ", " emrtd .
+.SH OPTIONS
+.TP
+.BI \-\-output " file"
+Write single applet doc to
+.I file
+(only valid with
+.BR \-\-plugin ).
+.TP
+.BI \-\-output\-dir " dir"
+Write applet and profile docs to
+.IR dir .
+Default:
+.BR docs/cards/ .
+Only valid with
+.BR \-\-discover .
+.TP
+.BI \-\-scaffold " name"
+Generate a draft
+.I *_protocol.h
+header for a new plugin from scan results.
+Only valid with
+.BR \-\-discover .
+.TP
+.B \-\-verbose
+Append an APDU trace section to the output, showing all command/response
+pairs exchanged during the scan.
+.TP
+.BI \-\-reader " name"
+Use a specific PC/SC reader. Default: first available reader.
+.TP
+.BI \-\-mrz " MRZ"
+Authenticate via PACE using the given MRZ string (eMRTD cards).
+.TP
+.BI \-\-can " CAN"
+Authenticate via PACE\-CAN using the given CAN (eMRTD cards).
+.TP
+.BI \-\-pin " ref"
+Prompt for PIN interactively for the given PIN reference
+(hex with 0x prefix or decimal). Used for PIN\-protected cards like CardEdge.
+.TP
+.B \-\-help
+Show help message and exit.
+.TP
+.B \-\-version
+Show version and exit.
+.SH EXAMPLES
+Scan an unknown card, write docs to default location:
+.PP
+.RS
+.nf
+card_mapper \-\-discover
+.fi
+.RE
+.PP
+Scan unknown card with APDU trace, save to specific directory:
+.PP
+.RS
+.nf
+card_mapper \-\-discover \-\-verbose \-\-output\-dir /tmp/card\-docs/
+.fi
+.RE
+.PP
+Scan unknown card and scaffold a new plugin:
+.PP
+.RS
+.nf
+card_mapper \-\-discover \-\-scaffold mynewcard
+.fi
+.RE
+.PP
+Map Serbian eID applet from a card in the reader:
+.PP
+.RS
+.nf
+card_mapper \-\-plugin eid \-\-output docs/cards/applets/eid\-serbian\-applet.md
+.fi
+.RE
+.PP
+Map eMRTD applet with PACE-MRZ authentication:
+.PP
+.RS
+.nf
+card_mapper \-\-plugin emrtd \-\-mrz "P<SRBSMITH<<JOHN..." \-\-verbose
+.fi
+.RE
+.PP
+Map eMRTD applet with PACE\-CAN authentication:
+.PP
+.RS
+.nf
+card_mapper \-\-plugin emrtd \-\-can 123456
+.fi
+.RE
+.PP
+Map CardEdge applet with PIN (prompts interactively):
+.PP
+.RS
+.nf
+card_mapper \-\-plugin cardedge \-\-pin 0x80
+.fi
+.RE
+.PP
+Use a specific reader when multiple are connected:
+.PP
+.RS
+.nf
+card_mapper \-\-discover \-\-reader "Alcor Micro AU9560"
+.fi
+.RE
+.PP
+Full workflow: discover card, scaffold plugin, with trace:
+.PP
+.RS
+.nf
+card_mapper \-\-discover \-\-scaffold neweid \-\-verbose \-\-output\-dir docs/cards/
+.fi
+.RE
+.SH EXIT CODES
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Error (invalid arguments, card communication failure, etc.).
+.TP
+.B 2
+No card present in reader.
+.SH SEE ALSO
+.BR pcscd (8),
+.BR opensc\-tool (1)
+.PP
+.I docs/cards/
+\(em generated card documentation
+.PP
+.I docs/CONTRIBUTING\-PLUGIN.md
+\(em guide for adding new card plugins
