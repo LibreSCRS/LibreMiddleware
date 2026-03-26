@@ -31,12 +31,13 @@ TEST(APDUTest, VerifyPINStatusCommand)
 {
     auto cmd = smartcard::verifyPINStatus(0x01);
     auto bytes = cmd.toBytes();
-    // No data, no Le -> just 4 header bytes
-    EXPECT_EQ(bytes.size(), 4u);
+    // 4 header bytes + Le=0x00 (Le required for SM — Case 1 triggers 6988 on some cards)
+    EXPECT_EQ(bytes.size(), 5u);
     EXPECT_EQ(bytes[0], 0x00);
     EXPECT_EQ(bytes[1], 0x20);
     EXPECT_EQ(bytes[2], 0x00);
     EXPECT_EQ(bytes[3], 0x01);
+    EXPECT_EQ(bytes[4], 0x00);
 }
 
 TEST(APDUTest, ChangeReferenceDataCommand)

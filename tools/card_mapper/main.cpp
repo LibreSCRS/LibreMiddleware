@@ -8,9 +8,11 @@
 #include "plugin_mapper.h"
 #include "scaffold_generator.h"
 
+#include <emrtd/emrtd_card.h>
 #include <smartcard/pcsc_connection.h>
 
 #include <cstdlib>
+#include <memory>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -64,6 +66,21 @@ int runDiscoverMode(const CliOptions& opts)
 {
     auto readerName = getReaderName(opts);
     smartcard::PCSCConnection conn(readerName);
+
+    // PACE authentication + SM filter — enables scanning applets
+    // that require prior authentication (e.g. PKCS#15 on contactless)
+    std::unique_ptr<emrtd::EMRTDCard> emrTDCard;
+    if (!opts.can.empty()) {
+        emrTDCard = std::make_unique<emrtd::EMRTDCard>(conn, opts.can);
+        auto authResult = emrTDCard->authenticate();
+        if (!authResult.success)
+            throw std::runtime_error("PACE failed: " + authResult.error);
+        std::cerr << "PACE authentication: OK (SM active)\n";
+
+        conn.setTransmitFilter([&emrTDCard](const smartcard::APDUCommand& cmd) {
+            return emrTDCard->transmitSecureAPDU(cmd);
+        });
+    }
 
     auto scanResult = card_mapper::discoverCard(conn, opts.verbose);
 

@@ -65,6 +65,10 @@ public:
     void beginTransaction();
     void endTransaction() noexcept;
 
+    // Abort any pending blocking PC/SC operation (SCardTransmit, etc.) on this
+    // connection's context. Thread-safe: can be called from any thread.
+    void cancel();
+
     static std::vector<std::string> listReaders();
 
 private:

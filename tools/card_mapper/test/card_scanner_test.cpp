@@ -3,6 +3,8 @@
 
 #include "card_scanner.h"
 
+#include <smartcard/apdu.h>
+
 #include <card_protocol.h>
 #include <cardedge_protocol.h>
 #include <health_protocol.h>
@@ -18,27 +20,25 @@ using namespace card_mapper;
 TEST(CardScanner, ProbeRangesContainsExpected)
 {
     auto ranges = getProbeRanges();
-    EXPECT_EQ(ranges.size(), 5u);
+    EXPECT_EQ(ranges.size(), 7u);
 
-    // Check eID range 0x0F00-0x0FFF
+    // Existing ranges
     EXPECT_EQ(ranges[0].first, 0x0F00);
     EXPECT_EQ(ranges[0].second, 0x0FFF);
-
-    // Check health range 0x0D00-0x0DFF
     EXPECT_EQ(ranges[1].first, 0x0D00);
     EXPECT_EQ(ranges[1].second, 0x0DFF);
-
-    // Check EU VRC certificate range 0xC000-0xC0FF
     EXPECT_EQ(ranges[2].first, 0xC000);
     EXPECT_EQ(ranges[2].second, 0xC0FF);
-
-    // Check EU VRC / vehicle data range 0xD000-0xD0FF
     EXPECT_EQ(ranges[3].first, 0xD000);
     EXPECT_EQ(ranges[3].second, 0xD0FF);
-
-    // Check EU VRC signature range 0xE000-0xE0FF
     EXPECT_EQ(ranges[4].first, 0xE000);
     EXPECT_EQ(ranges[4].second, 0xE0FF);
+
+    // PKCS#15 ranges
+    EXPECT_EQ(ranges[5].first, 0x4400);
+    EXPECT_EQ(ranges[5].second, 0x440F);
+    EXPECT_EQ(ranges[6].first, 0x5030);
+    EXPECT_EQ(ranges[6].second, 0x5035);
 }
 
 TEST(CardScanner, AllKnownProbesIncludesAll)
@@ -160,4 +160,15 @@ TEST(CardScanner, MatchProfileUnknown)
 {
     std::vector<std::vector<uint8_t>> detected = {};
     EXPECT_EQ(matchProfile(detected), "");
+}
+
+TEST(SmartCardApdu, IsSelectRetryable)
+{
+    EXPECT_TRUE(smartcard::isSelectRetryable(0x6700));  // Wrong length
+    EXPECT_TRUE(smartcard::isSelectRetryable(0x6982));  // Security status not satisfied
+    EXPECT_TRUE(smartcard::isSelectRetryable(0x6A86));  // Incorrect P1 P2
+    EXPECT_FALSE(smartcard::isSelectRetryable(0x6A82)); // File not found
+    EXPECT_FALSE(smartcard::isSelectRetryable(0x6A88)); // Referenced data not found
+    EXPECT_FALSE(smartcard::isSelectRetryable(0x9000)); // Success
+    EXPECT_FALSE(smartcard::isSelectRetryable(0x6282)); // Warning (end of file)
 }

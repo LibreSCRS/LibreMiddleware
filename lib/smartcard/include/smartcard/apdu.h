@@ -38,4 +38,8 @@ APDUCommand verifyPIN(uint8_t pinRef, const std::vector<uint8_t>& pin);
 APDUCommand verifyPINStatus(uint8_t pinRef);
 APDUCommand changeReferenceData(uint8_t pinRef, const std::vector<uint8_t>& oldPin, const std::vector<uint8_t>& newPin);
 
+// Returns true if the status word indicates a SELECT format mismatch
+// (wrong P2/Le), meaning retrying with alternative P2/Le is appropriate.
+bool isSelectRetryable(uint16_t sw);
+
 } // namespace smartcard

@@ -36,6 +36,7 @@ private:
 
     smartcard::PCSCConnection& conn;
     std::vector<uint8_t> pkcs15Path; // Path discovered from EF.DIR (empty = use AID)
+    uint8_t fileSelectP2 = 0x00;     // Discovered during probe/first selectByPath
 };
 
 } // namespace pkcs15

@@ -125,17 +125,25 @@ public:
 
             result.push_back(std::move(cd));
         }
+
+        {
+            std::lock_guard<std::mutex> lock(cacheMtx);
+            cachedProfile = profile;
+        }
+
         return result;
     }
 
     std::vector<plugin::PinStatusEntry> getPINList(smartcard::PCSCConnection& conn) const override
     {
         pkcs15::PKCS15Card card(conn);
-        auto profile = card.readProfile();
+        pkcs15::PKCS15Profile profile;
         {
             std::lock_guard<std::mutex> lock(cacheMtx);
-            cachedProfile = profile;
+            profile = cachedProfile;
         }
+        if (profile.pins.empty())
+            profile = card.readProfile();
 
         std::vector<plugin::PinStatusEntry> result;
         for (const auto& pin : profile.pins) {
@@ -145,12 +153,12 @@ public:
             entry.initialized = pin.initialized;
 
             if (pin.initialized) {
-                int tries = card.getPINTriesLeft(pin);
-                entry.triesLeft = tries;
-                entry.blocked = (tries == 0);
-            } else {
-                entry.triesLeft = -1;
-                entry.blocked = false;
+                try {
+                    entry.triesLeft = card.getPINTriesLeft(pin);
+                    entry.blocked = (entry.triesLeft == 0);
+                } catch (...) {
+                    entry.triesLeft = -1;
+                }
             }
 
             result.push_back(std::move(entry));
@@ -201,7 +209,13 @@ public:
     int getPINTriesLeft(smartcard::PCSCConnection& conn) const override
     {
         pkcs15::PKCS15Card card(conn);
-        auto profile = card.readProfile();
+        pkcs15::PKCS15Profile profile;
+        {
+            std::lock_guard<std::mutex> lock(cacheMtx);
+            profile = cachedProfile;
+        }
+        if (profile.pins.empty())
+            profile = card.readProfile();
         auto* pin = findUserPin(profile);
         if (!pin)
             return -1;
@@ -212,7 +226,13 @@ public:
     plugin::PINResult verifyPIN(smartcard::PCSCConnection& conn, const std::string& pin) const override
     {
         pkcs15::PKCS15Card card(conn);
-        auto profile = card.readProfile();
+        pkcs15::PKCS15Profile profile;
+        {
+            std::lock_guard<std::mutex> lock(cacheMtx);
+            profile = cachedProfile;
+        }
+        if (profile.pins.empty())
+            profile = card.readProfile();
         auto* pinInfo = findUserPin(profile);
         if (!pinInfo)
             return {};

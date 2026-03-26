@@ -115,7 +115,7 @@ APDUCommand verifyPINStatus(uint8_t pinRef)
                        .p2 = pinRef,
                        .data = {},
                        .le = 0,
-                       .hasLe = false};
+                       .hasLe = true}; // Le required for SM — Case 1 (no Le) triggers 6988 on some cards
 }
 
 APDUCommand changeReferenceData(uint8_t pinRef, const std::vector<uint8_t>& oldPin, const std::vector<uint8_t>& newPin)
@@ -132,6 +132,13 @@ APDUCommand changeReferenceData(uint8_t pinRef, const std::vector<uint8_t>& oldP
                        .data = std::move(data),
                        .le = 0,
                        .hasLe = false};
+}
+
+bool isSelectRetryable(uint16_t sw)
+{
+    return sw == 0x6700     // Wrong length (Le rejected)
+           || sw == 0x6982  // Security status not satisfied (may need P2=0x0C)
+           || sw == 0x6A86; // Incorrect parameters P1-P2
 }
 
 } // namespace smartcard

@@ -27,6 +27,7 @@ bool PKCS15Card::probe()
     auto resp = conn.transmit(smartcard::selectByAID(PKCS15_AID, 0x0C));
     if (resp.isSuccess()) {
         pkcs15Path.clear(); // AID works, no path needed
+        fileSelectP2 = 0x0C;
         return true;
     }
 
@@ -34,6 +35,7 @@ bool PKCS15Card::probe()
     resp = conn.transmit(smartcard::selectByAID(PKCS15_AID));
     if (resp.isSuccess()) {
         pkcs15Path.clear();
+        fileSelectP2 = 0x00;
         return true;
     }
 
@@ -58,15 +60,24 @@ bool PKCS15Card::selectApplet()
 
 bool PKCS15Card::probeViaEfDir()
 {
-    // SELECT MF (3F00)
+    // SELECT MF (3F00) — try default P2, then P2=0x0C
     auto resp = conn.transmit(smartcard::selectByFileId(0x3F, 0x00));
-    if (!resp.isSuccess())
-        return false;
+    if (!resp.isSuccess()) {
+        resp = conn.transmit(smartcard::selectByFileId(0x3F, 0x00, 0x0C));
+        if (!resp.isSuccess())
+            return false;
+        fileSelectP2 = 0x0C;
+    }
 
-    // SELECT EF.DIR (2F00)
-    resp = conn.transmit(smartcard::selectByFileId(0x2F, 0x00));
-    if (!resp.isSuccess())
-        return false;
+    // SELECT EF.DIR (2F00) — use discovered P2
+    resp = conn.transmit(smartcard::selectByFileId(0x2F, 0x00, fileSelectP2));
+    if (!resp.isSuccess()) {
+        uint8_t altP2 = (fileSelectP2 == 0x0C) ? 0x00 : 0x0C;
+        resp = conn.transmit(smartcard::selectByFileId(0x2F, 0x00, altP2));
+        if (!resp.isSuccess())
+            return false;
+        fileSelectP2 = altP2;
+    }
 
     // READ EF.DIR
     auto efDir = readSelectedFile();
@@ -343,10 +354,25 @@ bool PKCS15Card::selectByPath(std::span<const uint8_t> path, uint8_t selectP2)
     if (path.empty() || path.size() % 2 != 0)
         return false;
 
+    // Use stored P2 if caller didn't override
+    uint8_t p2 = (selectP2 != 0x00) ? selectP2 : fileSelectP2;
+
     for (size_t i = 0; i + 1 < path.size(); i += 2) {
-        auto resp = conn.transmit(smartcard::selectByFileId(path[i], path[i + 1], selectP2));
-        if (!resp.isSuccess())
-            return false;
+        auto resp = conn.transmit(smartcard::selectByFileId(path[i], path[i + 1], p2));
+        if (resp.isSuccess())
+            continue;
+
+        // Try alternative P2 on retryable errors
+        if (resp.statusWord() == 0x6700 || resp.statusWord() == 0x6A86) {
+            uint8_t altP2 = (p2 == 0x0C) ? 0x00 : 0x0C;
+            resp = conn.transmit(smartcard::selectByFileId(path[i], path[i + 1], altP2));
+            if (resp.isSuccess()) {
+                fileSelectP2 = altP2; // Cache for future calls
+                p2 = altP2;
+                continue;
+            }
+        }
+        return false;
     }
     return true;
 }

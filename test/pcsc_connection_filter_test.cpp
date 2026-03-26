@@ -11,3 +11,11 @@ TEST(PCSCConnectionFilter, FilterAPIExists)
     static_assert(std::is_invocable_r_v<smartcard::APDUResponse, Filter, const smartcard::APDUCommand&>);
     SUCCEED();
 }
+
+TEST(PCSCConnectionCancel, CancelAPIExists)
+{
+    // PCSCConnection::cancel() must exist and be callable.
+    // Verifies the method signature at compile time.
+    static_assert(std::is_member_function_pointer_v<decltype(&smartcard::PCSCConnection::cancel)>);
+    SUCCEED();
+}

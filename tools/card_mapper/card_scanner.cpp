@@ -10,6 +10,8 @@
 #include <eu_vrc_protocol.h>
 #include <emrtd/emrtd_types.h>
 
+#include <pkcs15/pkcs15_card.h>
+
 #include <smartcard/apdu.h>
 #include <smartcard/ber.h>
 #include <smartcard/tlv.h>
@@ -17,6 +19,7 @@
 #include <algorithm>
 #include <format>
 #include <iostream>
+#include <optional>
 #include <unordered_map>
 
 namespace card_mapper {
@@ -29,6 +32,8 @@ std::vector<std::pair<uint16_t, uint16_t>> getProbeRanges()
         {0xC000, 0xC0FF}, // EU VRC certificate files (C001, C011)
         {0xD000, 0xD0FF}, // EU VRC / Serbian vehicle data files (D001, D011, D021, D031)
         {0xE000, 0xE0FF}, // EU VRC signature files (E001, E011)
+        {0x4400, 0x440F}, // PKCS#15 object files (CDF, PrKDF, AODF, certs)
+        {0x5030, 0x5035}, // PKCS#15 control files (EF.ODF, EF.TokenInfo)
     };
 }
 
@@ -65,20 +70,154 @@ bool aidContained(const std::vector<std::vector<uint8_t>>& detected, const std::
 }
 
 // Try an AID probe: execute all SELECT commands in sequence.
-// Returns true only if ALL succeed.
-bool tryProbe(smartcard::PCSCConnection& conn, const AidProbe& probe)
+// Returns the P2 that worked for the last SELECT, or nullopt if probe failed.
+// When a SELECT returns a retryable error, tries alternative P2 values.
+std::optional<uint8_t> tryProbe(smartcard::PCSCConnection& conn, const AidProbe& probe)
 {
+    constexpr uint8_t AID_P2_ALTS[] = {0x0C, 0x04, 0x00};
+
+    uint8_t workingP2 = probe.lastP2;
+
     for (size_t i = 0; i < probe.selectSequence.size(); ++i) {
         bool isLast = (i == probe.selectSequence.size() - 1);
-        uint8_t p2 = isLast ? probe.lastP2 : 0x00;
+        uint8_t preferredP2 = isLast ? probe.lastP2 : 0x00;
 
-        auto cmd = smartcard::selectByAID(probe.selectSequence[i], p2);
-        auto resp = conn.transmit(cmd);
-        if (!resp.isSuccess() && resp.sw1 != 0x62) {
-            return false;
+        auto resp = conn.transmit(smartcard::selectByAID(probe.selectSequence[i], preferredP2));
+        if (resp.isSuccess() || resp.sw1 == 0x62) {
+            if (isLast)
+                workingP2 = preferredP2;
+            continue;
+        }
+
+        // Try alternative P2 values on retryable errors
+        if (!smartcard::isSelectRetryable(resp.statusWord()))
+            return std::nullopt;
+
+        bool found = false;
+        for (uint8_t altP2 : AID_P2_ALTS) {
+            if (altP2 == preferredP2)
+                continue;
+            resp = conn.transmit(smartcard::selectByAID(probe.selectSequence[i], altP2));
+            if (resp.isSuccess() || resp.sw1 == 0x62) {
+                if (isLast)
+                    workingP2 = altP2;
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+            return std::nullopt;
+    }
+    return workingP2;
+}
+
+// SELECT variant for file selection — each combination of P1/P2/Le that cards may require.
+smartcard::APDUResponse trySelectVariant(smartcard::PCSCConnection& conn, uint8_t hi, uint8_t lo, int variant)
+{
+    switch (variant) {
+    case 0: // P1=0x08, P2=0x00, Le=4 — SELECT by path from MF (eID, health)
+        return conn.transmit(smartcard::selectByPath(hi, lo));
+    case 1: // P1=0x02, P2=0x04, no Le — SELECT child EF, return FCP (vehicle)
+        return conn.transmit(smartcard::APDUCommand{
+            .cla = 0x00, .ins = 0xA4, .p1 = 0x02, .p2 = 0x04, .data = {hi, lo}, .le = 0, .hasLe = false});
+    case 2: // P1=0x00, P2=0x00, Le=0 — SELECT by FID, return FCI (generic)
+        return conn.transmit(smartcard::selectByFileId(hi, lo));
+    case 3: // P1=0x02, P2=0x0C, no Le — SELECT child EF, no response data (strict cards)
+        return conn.transmit(smartcard::APDUCommand{
+            .cla = 0x00, .ins = 0xA4, .p1 = 0x02, .p2 = 0x0C, .data = {hi, lo}, .le = 0, .hasLe = false});
+    case 4: // P1=0x00, P2=0x0C, no Le — SELECT by FID, no response data (strict cards)
+        return conn.transmit(smartcard::selectByFileId(hi, lo, 0x0C));
+    default:
+        return smartcard::APDUResponse{.data = {}, .sw1 = 0x6A, .sw2 = 0x82};
+    }
+}
+
+constexpr int FID_SELECT_VARIANT_COUNT = 5;
+
+// Try to SELECT a file, using cached variant first if available.
+// Permanently skips variants the card rejects (6700/6982/6A86 = format mismatch).
+// Still tries all accepted variants per FID since different P1 values search
+// different scopes (P1=0x00 searches MF, P1=0x02 searches current DF).
+smartcard::APDUResponse selectFile(smartcard::PCSCConnection& conn, uint8_t hi, uint8_t lo,
+                                   int& cachedVariant, uint32_t& rejectedMask)
+{
+    // Fast path: try cached variant first (last variant that returned success)
+    if (cachedVariant >= 0) {
+        auto resp = trySelectVariant(conn, hi, lo, cachedVariant);
+        if (resp.isSuccess() || resp.sw1 == 0x62)
+            return resp;
+    }
+
+    // Try all non-rejected variants
+    for (int v = 0; v < FID_SELECT_VARIANT_COUNT; ++v) {
+        if (v == cachedVariant)
+            continue;
+        if (rejectedMask & (1u << v))
+            continue;
+
+        auto resp = trySelectVariant(conn, hi, lo, v);
+        if (resp.isSuccess() || resp.sw1 == 0x62) {
+            cachedVariant = v;
+            return resp;
+        }
+        // Permanently skip formats the card rejects (format mismatch)
+        if (smartcard::isSelectRetryable(resp.statusWord()))
+            rejectedMask |= (1u << v);
+    }
+
+    return smartcard::APDUResponse{.data = {}, .sw1 = 0x6A, .sw2 = 0x82};
+}
+
+// Read file content with resilience: Le correction, chunk fallback, multi-chunk loop.
+std::vector<uint8_t> readFileContent(smartcard::PCSCConnection& conn)
+{
+    constexpr size_t MAX_READ_SIZE = 65536;
+    constexpr uint8_t CHUNK_SIZES[] = {0xFF, 0x80, 0x40, 0x20};
+
+    // Determine working chunk size from first read
+    uint8_t chunkSize = 0;
+    smartcard::APDUResponse firstResp{};
+
+    for (uint8_t cs : CHUNK_SIZES) {
+        firstResp = conn.transmit(smartcard::readBinary(0, cs));
+
+        // SW=6C XX: card tells us correct Le — use it
+        if (firstResp.sw1 == 0x6C) {
+            chunkSize = firstResp.sw2;
+            firstResp = conn.transmit(smartcard::readBinary(0, chunkSize));
+            break;
+        }
+
+        if (firstResp.isSuccess() || firstResp.statusWord() == 0x6282) {
+            chunkSize = cs;
+            break;
         }
     }
-    return true;
+
+    if (chunkSize == 0 || (firstResp.data.empty() && !firstResp.isSuccess() && firstResp.statusWord() != 0x6282))
+        return {};
+
+    std::vector<uint8_t> result(firstResp.data.begin(), firstResp.data.end());
+
+    // End of file on first read
+    if (firstResp.statusWord() == 0x6282 || firstResp.data.size() < chunkSize)
+        return result;
+
+    // Multi-chunk read loop
+    size_t offset = result.size();
+    while (offset < MAX_READ_SIZE) {
+        auto resp = conn.transmit(smartcard::readBinary(static_cast<uint16_t>(offset), chunkSize));
+        if (resp.data.empty() || (!resp.isSuccess() && resp.statusWord() != 0x6282))
+            break;
+        result.insert(result.end(), resp.data.begin(), resp.data.end());
+        offset += resp.data.size();
+        if (resp.statusWord() == 0x6282)
+            break;
+        if (resp.data.size() < chunkSize)
+            break;
+    }
+
+    return result;
 }
 
 // Known BER-TLV tag names from EU VRC (Directive 2003/127/EC) and ICAO 9303
@@ -164,6 +303,197 @@ void collectBERTags(const smartcard::BERField& node, DataFile& dataFile, const s
     }
 }
 
+// Parse file data into an EF node: try TLV, then BER-TLV, else mark binary
+void parseFileData(const std::vector<uint8_t>& fileData, FileNode& efNode, DataFile& dataFile)
+{
+    auto fields = smartcard::parseTLV(fileData.data(), fileData.size());
+    if (!fields.empty()) {
+        efNode.format = "TLV (LE 16-bit)";
+        for (const auto& field : fields) {
+            TagInfo tag;
+            tag.tag = field.tag;
+            tag.fieldKey = std::format("kTag_{:04X}", field.tag);
+            tag.name = std::format("Tag {}", field.tag);
+            tag.type = "unknown";
+            tag.example = field.asString();
+            dataFile.tags.push_back(tag);
+        }
+    } else {
+        try {
+            auto berRoot = smartcard::parseBER(fileData.data(), fileData.size());
+            if (!berRoot.children.empty()) {
+                efNode.format = "BER-TLV";
+                collectBERTags(berRoot, dataFile, "");
+            } else {
+                efNode.format = "binary";
+            }
+        } catch (const std::exception&) {
+            efNode.format = "binary";
+        }
+    }
+}
+
+// PKCS#15 smart probe: use the PKCS#15 parser to navigate ODF→CDF/PrKDF/AODF
+// instead of brute-forcing FID ranges. Returns true if PKCS#15 structure was read.
+bool probePKCS15(smartcard::PCSCConnection& conn, FileNode& df, AppletInfo& applet)
+{
+    try {
+        pkcs15::PKCS15Card card(conn);
+        if (!card.probe())
+            return false;
+
+        auto profile = card.readProfile();
+
+        applet.description = std::format("PKCS#15: {} ({})",
+                                         profile.tokenInfo.label, profile.tokenInfo.manufacturer);
+
+        auto addEF = [&](const char* name, uint8_t fidH, uint8_t fidL, const std::string& size) {
+            FileNode ef;
+            ef.name = std::format("{} ({})", name, formatFid(fidH, fidL));
+            ef.fidHi = fidH;
+            ef.fidLo = fidL;
+            ef.format = "BER-TLV";
+            ef.sizeEstimate = size;
+            df.children.push_back(ef);
+        };
+
+        // EF.ODF + EF.TokenInfo
+        addEF("EF.ODF", 0x50, 0x31, "");
+        addEF("EF.TokenInfo", 0x50, 0x32,
+              std::format("label={}, serial={}", profile.tokenInfo.label, profile.tokenInfo.serialNumber));
+
+        // CDF entries (certificates)
+        if (!profile.odf.certificatesPath.empty()) {
+            auto& cp = profile.odf.certificatesPath;
+            addEF("EF.CDF", cp[cp.size() - 2], cp[cp.size() - 1],
+                  std::format("{} certs", profile.certificates.size()));
+        }
+
+        for (const auto& cert : profile.certificates) {
+            if (cert.path.size() >= 2) {
+                auto h = cert.path[cert.path.size() - 2];
+                auto l = cert.path[cert.path.size() - 1];
+                FileNode ef;
+                ef.name = std::format("Cert: {} ({})", cert.label, formatFid(h, l));
+                ef.fidHi = h;
+                ef.fidLo = l;
+                ef.format = cert.authority ? "X.509 CA" : "X.509 end-entity";
+                df.children.push_back(ef);
+
+                // Try reading certificate size
+                try {
+                    auto certData = card.readCertificate(cert);
+                    df.children.back().sizeEstimate = std::format("~{}B", certData.size());
+                } catch (...) {
+                    df.children.back().sizeEstimate = "[read failed]";
+                }
+
+                DataFile dataFile;
+                dataFile.name = cert.label;
+                dataFile.fidHi = h;
+                dataFile.fidLo = l;
+                TagInfo tag;
+                tag.tag = 0;
+                tag.name = cert.label;
+                tag.type = cert.authority ? "CA certificate" : "end-entity certificate";
+                tag.fieldKey = "cert";
+                tag.example = std::format("ID={}", formatHex(cert.id));
+                dataFile.tags.push_back(tag);
+                applet.dataFiles.push_back(dataFile);
+            }
+        }
+
+        // PrKDF entries (private keys)
+        if (!profile.odf.privateKeysPath.empty()) {
+            auto& kp = profile.odf.privateKeysPath;
+            addEF("EF.PrKDF", kp[kp.size() - 2], kp[kp.size() - 1],
+                  std::format("{} keys", profile.privateKeys.size()));
+        }
+
+        for (const auto& key : profile.privateKeys) {
+            if (key.path.size() >= 2) {
+                FileNode ef;
+                ef.name = std::format("Key: {} ({}, {}b)", key.label,
+                                      formatFid(key.path[key.path.size() - 2], key.path[key.path.size() - 1]),
+                                      key.keySizeBits);
+                ef.fidHi = key.path[key.path.size() - 2];
+                ef.fidLo = key.path[key.path.size() - 1];
+                ef.format = std::format("RSA-{}", key.keySizeBits);
+                df.children.push_back(ef);
+            }
+        }
+
+        // AODF entries (PINs)
+        if (!profile.odf.authObjectsPath.empty()) {
+            auto& ap = profile.odf.authObjectsPath;
+            addEF("EF.AODF", ap[ap.size() - 2], ap[ap.size() - 1],
+                  std::format("{} PINs", profile.pins.size()));
+        }
+
+        for (const auto& pin : profile.pins) {
+            DataFile dataFile;
+            dataFile.name = std::format("PIN: {}", pin.label);
+            TagInfo tag;
+            tag.tag = pin.pinReference;
+            tag.name = pin.label;
+            tag.type = pin.initialized ? "initialized" : "transport";
+            tag.fieldKey = "pin";
+            tag.example = std::format("ref=0x{:02X}, local={}, tries={}",
+                                      pin.pinReference, pin.local, pin.maxRetries);
+            dataFile.tags.push_back(tag);
+            applet.dataFiles.push_back(dataFile);
+        }
+
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "PKCS#15 smart probe failed: " << e.what() << " — falling back to FID scan\n";
+        return false;
+    }
+}
+
+// Walk FID ranges for an applet: SELECT + READ each file, build file tree
+void walkFidRanges(smartcard::PCSCConnection& conn, FileNode& df, AppletInfo& applet)
+{
+    int cachedFidVariant = -1;
+    uint32_t rejectedFidMask = 0;
+    auto ranges = getProbeRanges();
+
+    for (const auto& [rangeStart, rangeEnd] : ranges) {
+        for (uint16_t fid = rangeStart; fid <= rangeEnd; ++fid) {
+            auto hi = static_cast<uint8_t>(fid >> 8);
+            auto lo = static_cast<uint8_t>(fid & 0xFF);
+
+            auto fileResp = selectFile(conn, hi, lo, cachedFidVariant, rejectedFidMask);
+
+            if (fileResp.isSuccess() || fileResp.sw1 == 0x62) {
+                FileNode efNode;
+                efNode.name = std::format("EF ({})", formatFid(hi, lo));
+                efNode.fidHi = hi;
+                efNode.fidLo = lo;
+
+                auto fileData = readFileContent(conn);
+                if (!fileData.empty()) {
+                    DataFile dataFile;
+                    dataFile.name = efNode.name;
+                    dataFile.fidHi = hi;
+                    dataFile.fidLo = lo;
+
+                    parseFileData(fileData, efNode, dataFile);
+
+                    if (!dataFile.tags.empty()) {
+                        applet.dataFiles.push_back(dataFile);
+                    }
+                    efNode.sizeEstimate = std::format("~{}B", fileData.size());
+                } else if (fileResp.statusWord() == 0x6982) {
+                    efNode.format = "[AUTH REQUIRED]";
+                }
+
+                df.children.push_back(efNode);
+            }
+        }
+    }
+}
+
 } // anonymous namespace
 
 std::string matchProfile(const std::vector<std::vector<uint8_t>>& detectedAIDs)
@@ -224,24 +554,18 @@ ScanResult discoverCard(smartcard::PCSCConnection& conn, bool verbose)
         auto selectMF = smartcard::selectByFileId(0x3F, 0x00);
         conn.transmit(selectMF);
 
-        // Try SELECT EF.DIR by FID
-        smartcard::APDUCommand selectDir{
-            .cla = 0x00, .ins = 0xA4, .p1 = 0x02, .p2 = 0x04, .data = {0x2F, 0x00}, .le = 0, .hasLe = false};
-        auto dirResp = conn.transmit(selectDir);
+        // Try SELECT EF.DIR by FID — multiple methods for strict cards
+        int dirVariant = -1;
+        uint32_t dirRejected = 0;
+        auto dirResp = selectFile(conn, 0x2F, 0x00, dirVariant, dirRejected);
 
-        if (!dirResp.isSuccess()) {
-            // Fallback: try SELECT by path
-            dirResp = conn.transmit(smartcard::selectByPath(0x2F, 0x00));
-        }
-
-        if (dirResp.isSuccess()) {
-            // Read EF.DIR content
-            auto readResp = conn.transmit(smartcard::readBinary(0, 0xFF));
-            if (readResp.isSuccess() && !readResp.data.empty()) {
+        if (dirResp.isSuccess() || dirResp.sw1 == 0x62) {
+            auto dirData = readFileContent(conn);
+            if (!dirData.empty()) {
                 // Parse BER-TLV — EF.DIR contains application templates (tag 61)
                 // with AID (tag 4F) and optional label (tag 50)
                 try {
-                    auto dirTree = smartcard::parseBER(readResp.data.data(), readResp.data.size());
+                    auto dirTree = smartcard::parseBER(dirData.data(), dirData.size());
                     for (const auto& tmpl : dirTree.children) {
                         if (tmpl.tag == 0x61) // Application template
                         {
@@ -270,7 +594,7 @@ ScanResult discoverCard(smartcard::PCSCConnection& conn, bool verbose)
         dirProbe.canonicalAid = aid;
         dirProbe.selectSequence = {aid};
 
-        if (tryProbe(conn, dirProbe)) {
+        if (tryProbe(conn, dirProbe).has_value()) {
             detectedAIDs.push_back(aid);
 
             AppletInfo applet;
@@ -290,79 +614,12 @@ ScanResult discoverCard(smartcard::PCSCConnection& conn, bool verbose)
             df.name = std::format("DF ({})", formatHex(aid));
             df.isDir = true;
 
-            // Walk FID ranges
-            auto ranges = getProbeRanges();
-            for (const auto& [rangeStart, rangeEnd] : ranges) {
-                for (uint16_t fid = rangeStart; fid <= rangeEnd; ++fid) {
-                    auto hi = static_cast<uint8_t>(fid >> 8);
-                    auto lo = static_cast<uint8_t>(fid & 0xFF);
-
-                    auto fileResp = conn.transmit(smartcard::selectByPath(hi, lo));
-                    if (!fileResp.isSuccess()) {
-                        smartcard::APDUCommand selectChild{.cla = 0x00,
-                                                           .ins = 0xA4,
-                                                           .p1 = 0x02,
-                                                           .p2 = 0x04,
-                                                           .data = {hi, lo},
-                                                           .le = 0,
-                                                           .hasLe = false};
-                        fileResp = conn.transmit(selectChild);
-                    }
-                    if (!fileResp.isSuccess()) {
-                        fileResp = conn.transmit(smartcard::selectByFileId(hi, lo));
-                    }
-
-                    if (fileResp.isSuccess()) {
-                        FileNode efNode;
-                        efNode.name = std::format("EF ({})", formatFid(hi, lo));
-                        efNode.fidHi = hi;
-                        efNode.fidLo = lo;
-
-                        auto readCmd = smartcard::readBinary(0, 0xFF);
-                        auto readResp = conn.transmit(readCmd);
-                        if (readResp.isSuccess() && !readResp.data.empty()) {
-                            DataFile dataFile;
-                            dataFile.name = efNode.name;
-                            dataFile.fidHi = hi;
-                            dataFile.fidLo = lo;
-
-                            auto fields = smartcard::parseTLV(readResp.data.data(), readResp.data.size());
-                            if (!fields.empty()) {
-                                efNode.format = "TLV (LE 16-bit)";
-                                for (const auto& field : fields) {
-                                    TagInfo tag;
-                                    tag.tag = field.tag;
-                                    tag.fieldKey = std::format("kTag_{:04X}", field.tag);
-                                    tag.name = std::format("Tag {}", field.tag);
-                                    tag.type = "unknown";
-                                    tag.example = field.asString();
-                                    dataFile.tags.push_back(tag);
-                                }
-                            } else {
-                                try {
-                                    auto berRoot = smartcard::parseBER(readResp.data.data(), readResp.data.size());
-                                    if (!berRoot.children.empty()) {
-                                        efNode.format = "BER-TLV";
-                                        collectBERTags(berRoot, dataFile, "");
-                                    } else {
-                                        efNode.format = "binary";
-                                    }
-                                } catch (const std::exception&) {
-                                    efNode.format = "binary";
-                                }
-                            }
-
-                            if (!dataFile.tags.empty()) {
-                                applet.dataFiles.push_back(dataFile);
-                            }
-                            efNode.sizeEstimate = std::format("~{}B", readResp.data.size());
-                        } else if (fileResp.statusWord() == 0x6982) {
-                            efNode.format = "[AUTH REQUIRED]";
-                        }
-
-                        df.children.push_back(efNode);
-                    }
-                }
+            // Smart path for PKCS#15: parse ODF→CDF/PrKDF/AODF structure
+            if (aid == cardedge::protocol::AID_PKCS15) {
+                if (!probePKCS15(conn, df, applet))
+                    walkFidRanges(conn, df, applet);
+            } else {
+                walkFidRanges(conn, df, applet);
             }
 
             mf.children.push_back(df);
@@ -374,7 +631,7 @@ ScanResult discoverCard(smartcard::PCSCConnection& conn, bool verbose)
     // Probe all known AID sequences
     auto allProbes = getAllKnownProbes();
     for (const auto& probe : allProbes) {
-        if (tryProbe(conn, probe)) {
+        if (auto probeP2 = tryProbe(conn, probe)) {
             // Avoid duplicate canonical AIDs (e.g. multiple vehicle sequences)
             if (aidContained(detectedAIDs, probe.canonicalAid)) {
                 continue;
@@ -399,92 +656,15 @@ ScanResult discoverCard(smartcard::PCSCConnection& conn, bool verbose)
             df.name = std::format("DF ({})", probe.name);
             df.isDir = true;
 
-            // Re-select so we're inside this applet for FID walking
-            tryProbe(conn, probe);
-
-            // Walk FID ranges for this applet
-            // Try both SELECT by path (P1=08) and SELECT by FID (P1=02)
-            // because different cards use different selection methods.
-            auto ranges = getProbeRanges();
-            for (const auto& [rangeStart, rangeEnd] : ranges) {
-                for (uint16_t fid = rangeStart; fid <= rangeEnd; ++fid) {
-                    auto hi = static_cast<uint8_t>(fid >> 8);
-                    auto lo = static_cast<uint8_t>(fid & 0xFF);
-
-                    // Try multiple SELECT variants — different cards use different methods:
-                    //   P1=08 P2=04     SELECT by path from MF (eID, health)
-                    //   P1=02 P2=04     SELECT child EF, no Le (vehicle)
-                    //   P1=00 P2=00     SELECT by FID, return FCI (generic)
-                    auto fileResp = conn.transmit(smartcard::selectByPath(hi, lo));
-                    if (!fileResp.isSuccess()) {
-                        // P1=02 P2=04 without Le — as used by vehicle cards
-                        smartcard::APDUCommand selectChild{.cla = 0x00,
-                                                           .ins = 0xA4,
-                                                           .p1 = 0x02,
-                                                           .p2 = 0x04,
-                                                           .data = {hi, lo},
-                                                           .le = 0,
-                                                           .hasLe = false};
-                        fileResp = conn.transmit(selectChild);
-                    }
-                    if (!fileResp.isSuccess()) {
-                        fileResp = conn.transmit(smartcard::selectByFileId(hi, lo));
-                    }
-
-                    if (fileResp.isSuccess()) {
-                        FileNode efNode;
-                        efNode.name = std::format("EF ({})", formatFid(hi, lo));
-                        efNode.fidHi = hi;
-                        efNode.fidLo = lo;
-
-                        // Try reading to determine format
-                        auto readCmd = smartcard::readBinary(0, 0xFF);
-                        auto readResp = conn.transmit(readCmd);
-                        if (readResp.isSuccess() && !readResp.data.empty()) {
-                            DataFile dataFile;
-                            dataFile.name = efNode.name;
-                            dataFile.fidHi = hi;
-                            dataFile.fidLo = lo;
-
-                            // Try LE 16-bit TLV first (Serbian eID, health)
-                            auto fields = smartcard::parseTLV(readResp.data.data(), readResp.data.size());
-                            if (!fields.empty()) {
-                                efNode.format = "TLV (LE 16-bit)";
-                                for (const auto& field : fields) {
-                                    TagInfo tag;
-                                    tag.tag = field.tag;
-                                    tag.fieldKey = std::format("kTag_{:04X}", field.tag);
-                                    tag.name = std::format("Tag {}", field.tag);
-                                    tag.type = "unknown";
-                                    tag.example = field.asString();
-                                    dataFile.tags.push_back(tag);
-                                }
-                            } else {
-                                // Try BER-TLV (ISO 7816-4, vehicle cards)
-                                try {
-                                    auto berRoot = smartcard::parseBER(readResp.data.data(), readResp.data.size());
-                                    if (!berRoot.children.empty()) {
-                                        efNode.format = "BER-TLV";
-                                        collectBERTags(berRoot, dataFile, "");
-                                    } else {
-                                        efNode.format = "binary";
-                                    }
-                                } catch (const std::exception&) {
-                                    efNode.format = "binary";
-                                }
-                            }
-
-                            if (!dataFile.tags.empty()) {
-                                applet.dataFiles.push_back(dataFile);
-                            }
-                            efNode.sizeEstimate = std::format("~{}B", readResp.data.size());
-                        } else if (fileResp.statusWord() == 0x6982) {
-                            efNode.format = "[AUTH REQUIRED]";
-                        }
-
-                        df.children.push_back(efNode);
-                    }
+            // Smart path for PKCS#15: parse ODF→CDF/PrKDF/AODF structure
+            if (probe.canonicalAid == cardedge::protocol::AID_PKCS15) {
+                if (!probePKCS15(conn, df, applet)) {
+                    tryProbe(conn, probe);
+                    walkFidRanges(conn, df, applet);
                 }
+            } else {
+                tryProbe(conn, probe);
+                walkFidRanges(conn, df, applet);
             }
 
             mf.children.push_back(df);

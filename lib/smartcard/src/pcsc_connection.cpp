@@ -173,6 +173,11 @@ void PCSCConnection::endTransaction() noexcept
     SCardEndTransaction(card, SCARD_LEAVE_CARD);
 }
 
+void PCSCConnection::cancel()
+{
+    SCardCancel(context);
+}
+
 std::vector<uint8_t> PCSCConnection::getATR() const
 {
     DWORD readerLen = 0;
