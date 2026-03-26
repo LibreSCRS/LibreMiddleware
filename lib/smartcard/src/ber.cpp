@@ -72,9 +72,11 @@ size_t parseLength(const uint8_t* data, size_t length, size_t& offset)
     return len;
 }
 
-// Recursively parse BER fields
-std::vector<BERField> parseFields(const uint8_t* data, size_t length)
+// Recursively parse BER fields. maxDepth prevents stack exhaustion from malicious card data.
+std::vector<BERField> parseFields(const uint8_t* data, size_t length, int maxDepth = 32)
 {
+    if (maxDepth <= 0)
+        return {};
     std::vector<BERField> fields;
     size_t offset = 0;
 
@@ -100,7 +102,7 @@ std::vector<BERField> parseFields(const uint8_t* data, size_t length)
         }
 
         if (field.constructed) {
-            field.children = parseFields(data + offset, valueLen);
+            field.children = parseFields(data + offset, valueLen, maxDepth - 1);
         } else {
             field.value.assign(data + offset, data + offset + valueLen);
         }

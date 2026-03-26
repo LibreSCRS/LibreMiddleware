@@ -23,7 +23,10 @@ public:
     std::string formatTrace() const;
     void clear();
 
-    const std::vector<Entry>& getEntries() const { return entries; }
+    const std::vector<Entry>& getEntries() const
+    {
+        return entries;
+    }
 
 private:
     std::vector<Entry> entries;

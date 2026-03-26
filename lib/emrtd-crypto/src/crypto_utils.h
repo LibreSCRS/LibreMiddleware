@@ -10,7 +10,8 @@
 namespace emrtd::crypto::detail {
 
 // ICAO 9303 Key Derivation Function: KDF(K_seed, counter)
-// SHA-1 based for BAC (3DES), SHA-256 based for PACE (AES)
+// Hash selection uses matched security level: SHA-1 for keyLen <= 20 bytes
+// (3DES, AES-128), SHA-256 for larger keys (AES-192, AES-256).
 // Returns key with adjusted parity bits (3DES only)
 // keyLen: output key length in bytes (default 16; use 24 for AES-192, 32 for AES-256)
 std::vector<uint8_t> kdf(const std::vector<uint8_t>& seed, uint32_t counter, bool des3 = true, size_t keyLen = 16);

@@ -36,8 +36,7 @@ PAResult::Status verifyDGHash(const std::vector<uint8_t>& dgRaw, const std::vect
                               const std::string& hashAlgorithm);
 PAResult::Status verifySODSignature(const std::vector<uint8_t>& sodRaw);
 PAResult::Status verifyCSCAChain(const std::vector<uint8_t>& sodRaw, const std::string& trustStorePath);
-PAResult performPassiveAuth(const std::vector<uint8_t>& sodRaw,
-                            const std::map<int, std::vector<uint8_t>>& dgRawData,
+PAResult performPassiveAuth(const std::vector<uint8_t>& sodRaw, const std::map<int, std::vector<uint8_t>>& dgRawData,
                             const std::string& trustStorePath = "");
 
 } // namespace emrtd::crypto

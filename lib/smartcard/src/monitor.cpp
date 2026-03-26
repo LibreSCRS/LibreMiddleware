@@ -64,6 +64,9 @@ void Monitor::stopThread()
         return;
     }
     stopRequested = true;
+    // Note: hContext.load() may race with the monitor thread replacing hContext
+    // in enumerateReaders(). SCardCancel on a stale context returns an error
+    // but does not crash — the monitor thread will see stopRequested and exit.
     pcsc->cancel(hContext.load());
     monitorThread.join();
 }
@@ -195,7 +198,7 @@ std::vector<std::string> Monitor::enumerateReaders()
 
         std::vector<std::string> readers;
         const char* ptr = buffer.data();
-        while (*ptr != '\0') {
+        while (ptr < buffer.data() + dwReaders && *ptr != '\0') {
             readers.emplace_back(ptr);
             ptr += readers.back().size() + 1;
         }

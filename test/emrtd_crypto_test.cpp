@@ -17,12 +17,9 @@ TEST(PassiveAuthTest, VerifyDGHashMatchesSHA256)
 {
     std::vector<uint8_t> emptyData;
     // SHA-256 of empty input
-    std::vector<uint8_t> expectedHash = {
-        0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14,
-        0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f, 0xb9, 0x24,
-        0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c,
-        0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52, 0xb8, 0x55
-    };
+    std::vector<uint8_t> expectedHash = {0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14, 0x9a, 0xfb, 0xf4,
+                                         0xc8, 0x99, 0x6f, 0xb9, 0x24, 0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b,
+                                         0x93, 0x4c, 0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52, 0xb8, 0x55};
     auto status = emrtd::crypto::verifyDGHash(emptyData, expectedHash, "SHA-256");
     EXPECT_EQ(status, emrtd::crypto::PAResult::PASSED);
 }
@@ -39,11 +36,8 @@ TEST(PassiveAuthTest, VerifyDGHashMatchesSHA1)
 {
     std::vector<uint8_t> emptyData;
     // SHA-1 of empty input
-    std::vector<uint8_t> expectedHash = {
-        0xda, 0x39, 0xa3, 0xee, 0x5e, 0x6b, 0x4b, 0x0d,
-        0x32, 0x55, 0xbf, 0xef, 0x95, 0x60, 0x18, 0x90,
-        0xaf, 0xd8, 0x07, 0x09
-    };
+    std::vector<uint8_t> expectedHash = {0xda, 0x39, 0xa3, 0xee, 0x5e, 0x6b, 0x4b, 0x0d, 0x32, 0x55,
+                                         0xbf, 0xef, 0x95, 0x60, 0x18, 0x90, 0xaf, 0xd8, 0x07, 0x09};
     auto status = emrtd::crypto::verifyDGHash(emptyData, expectedHash, "SHA-1");
     EXPECT_EQ(status, emrtd::crypto::PAResult::PASSED);
 }
@@ -92,20 +86,23 @@ TEST(PassiveAuthTest, VerifyCSCAChainEmptyNotPerformed)
 // Chip Authentication tests
 // ---------------------------------------------------------------------------
 
-TEST(ChipAuthTest, ParseEmptyDG14Fails) {
+TEST(ChipAuthTest, ParseEmptyDG14Fails)
+{
     std::vector<emrtd::crypto::ChipAuthInfo> infos;
     std::vector<emrtd::crypto::ChipAuthPublicKey> keys;
     EXPECT_FALSE(emrtd::crypto::parseDG14({}, infos, keys));
 }
 
-TEST(ChipAuthTest, ParseGarbageDG14Fails) {
+TEST(ChipAuthTest, ParseGarbageDG14Fails)
+{
     std::vector<uint8_t> garbage = {0xFF, 0xFE, 0xFD, 0xFC};
     std::vector<emrtd::crypto::ChipAuthInfo> infos;
     std::vector<emrtd::crypto::ChipAuthPublicKey> keys;
     EXPECT_FALSE(emrtd::crypto::parseDG14(garbage, infos, keys));
 }
 
-TEST(ChipAuthTest, ParseDG14WrongTagFails) {
+TEST(ChipAuthTest, ParseDG14WrongTagFails)
+{
     // Tag 0x30 instead of expected 0x6E
     std::vector<uint8_t> wrongTag = {0x30, 0x02, 0x31, 0x00};
     std::vector<emrtd::crypto::ChipAuthInfo> infos;
@@ -113,7 +110,8 @@ TEST(ChipAuthTest, ParseDG14WrongTagFails) {
     EXPECT_FALSE(emrtd::crypto::parseDG14(wrongTag, infos, keys));
 }
 
-TEST(ChipAuthTest, ParseDG14EmptySetFails) {
+TEST(ChipAuthTest, ParseDG14EmptySetFails)
+{
     // Valid 0x6E tag wrapping an empty SET
     std::vector<uint8_t> emptySet = {0x6E, 0x02, 0x31, 0x00};
     std::vector<emrtd::crypto::ChipAuthInfo> infos;
@@ -125,18 +123,21 @@ TEST(ChipAuthTest, ParseDG14EmptySetFails) {
 // Active Authentication tests
 // ---------------------------------------------------------------------------
 
-TEST(ActiveAuthTest, ParseEmptyDG15ReturnsUnknown) {
+TEST(ActiveAuthTest, ParseEmptyDG15ReturnsUnknown)
+{
     auto key = emrtd::crypto::parseDG15({});
     EXPECT_EQ(key.algorithm, emrtd::crypto::AAPublicKey::UNKNOWN);
 }
 
-TEST(ActiveAuthTest, ParseGarbageDG15ReturnsUnknown) {
+TEST(ActiveAuthTest, ParseGarbageDG15ReturnsUnknown)
+{
     std::vector<uint8_t> garbage = {0xFF, 0xFE, 0xFD, 0xFC};
     auto key = emrtd::crypto::parseDG15(garbage);
     EXPECT_EQ(key.algorithm, emrtd::crypto::AAPublicKey::UNKNOWN);
 }
 
-TEST(ActiveAuthTest, ParseDG15WrongTagReturnsUnknown) {
+TEST(ActiveAuthTest, ParseDG15WrongTagReturnsUnknown)
+{
     // Tag 0x30 instead of expected 0x6F
     std::vector<uint8_t> wrongTag = {0x30, 0x02, 0x30, 0x00};
     auto key = emrtd::crypto::parseDG15(wrongTag);
@@ -152,7 +153,8 @@ TEST(SecurityStatusTest, ComputeOverallAllPassed)
     plugin::SecurityStatus status;
     status.checks.push_back({"pa.dg_hash.1", "data_integrity", plugin::SecurityCheck::PASSED, "DG1 Hash", "", ""});
     status.checks.push_back({"pa.dg_hash.2", "data_integrity", plugin::SecurityCheck::PASSED, "DG2 Hash", "", ""});
-    status.checks.push_back({"pa.sod_signature", "data_authenticity", plugin::SecurityCheck::PASSED, "SOD Signature", "", ""});
+    status.checks.push_back(
+        {"pa.sod_signature", "data_authenticity", plugin::SecurityCheck::PASSED, "SOD Signature", "", ""});
     status.checks.push_back({"ca.chip_auth", "chip_genuineness", plugin::SecurityCheck::PASSED, "Chip Auth", "", ""});
     status.computeOverall();
     EXPECT_EQ(status.overallIntegrity, plugin::SecurityCheck::PASSED);
@@ -164,7 +166,8 @@ TEST(SecurityStatusTest, ComputeOverallOneFailed)
 {
     plugin::SecurityStatus status;
     status.checks.push_back({"pa.dg_hash.1", "data_integrity", plugin::SecurityCheck::PASSED, "DG1 Hash", "", ""});
-    status.checks.push_back({"pa.dg_hash.2", "data_integrity", plugin::SecurityCheck::FAILED, "DG2 Hash", "", "hash mismatch"});
+    status.checks.push_back(
+        {"pa.dg_hash.2", "data_integrity", plugin::SecurityCheck::FAILED, "DG2 Hash", "", "hash mismatch"});
     status.computeOverall();
     EXPECT_EQ(status.overallIntegrity, plugin::SecurityCheck::FAILED);
 }
@@ -197,8 +200,7 @@ TEST(SecureMessagingTest, ProtectUnprotectRoundTrip)
     protectKeys.ssc = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
     // Plain SELECT APDU: 00 A4 04 0C 07 A0000002471001
-    std::vector<uint8_t> plainCmd = {0x00, 0xA4, 0x04, 0x0C, 0x07,
-                                     0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
+    std::vector<uint8_t> plainCmd = {0x00, 0xA4, 0x04, 0x0C, 0x07, 0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
 
     SecureMessaging smProtect(protectKeys, SMAlgorithm::DES3);
     auto protectedCmd = smProtect.protect(plainCmd);
@@ -234,8 +236,7 @@ TEST(SecureMessagingTest, ProtectUnprotectRoundTrip)
     // card builds response. For the unprotect test, we verify that two identical
     // SM instances produce the same output (determinism).
     auto protectedRead2 = smCard.protect(readBinary);
-    EXPECT_EQ(protectedRead, protectedRead2)
-        << "Two SM instances with same keys/SSC must produce identical output";
+    EXPECT_EQ(protectedRead, protectedRead2) << "Two SM instances with same keys/SSC must produce identical output";
 }
 
 // ---------------------------------------------------------------------------
@@ -300,8 +301,7 @@ TEST(BACTestVectors, ICAO9303CheckDigits)
 
     // Edge cases
     EXPECT_EQ(emrtd::crypto::detail::computeCheckDigit(""), 0) << "Empty input check digit should be 0";
-    EXPECT_EQ(emrtd::crypto::detail::computeCheckDigit("<<<<<<<<<"), 0)
-        << "All-filler check digit should be 0";
+    EXPECT_EQ(emrtd::crypto::detail::computeCheckDigit("<<<<<<<<<"), 0) << "All-filler check digit should be 0";
 }
 
 TEST(BACTestVectors, ShortDocNumberPadding)

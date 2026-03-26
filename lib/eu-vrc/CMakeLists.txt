@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # SPDX-FileCopyrightText: 2026 hirashix0
 
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 add_library(EuVrc STATIC
     src/eu_vrc_card.cpp
     src/eu_vrc_detection.cpp

@@ -25,7 +25,7 @@ TEST(PluginMapper, EidPluginInfo)
     auto info = getPluginInfo("eid");
     EXPECT_EQ(info.name, "Serbian eID");
     EXPECT_EQ(info.pluginName, "eid");
-    EXPECT_EQ(info.aids.size(), 3u); // SERID, SERIF, SERRP
+    EXPECT_EQ(info.aids.size(), 3u);     // SERID, SERIF, SERRP
     EXPECT_EQ(info.aids[0].size(), 11u); // AID length
     EXPECT_FALSE(info.dataFiles.empty());
     // Should have 3 data files: DocumentData, PersonalData, VariableData

@@ -266,8 +266,7 @@ CK_DECLARE_FUNCTION(CK_RV, C_Login)(CK_SESSION_HANDLE hSession, CK_USER_TYPE use
     std::scoped_lock lock(libraryMutex);
     if (!library)
         return CKR_CRYPTOKI_NOT_INITIALIZED;
-    pkcs11_debug("C_Login session=%lu userType=%lu pinLen=%lu", (unsigned long)hSession, (unsigned long)userType,
-                 (unsigned long)ulPinLen);
+    pkcs11_debug("C_Login session=%lu userType=%lu", (unsigned long)hSession, (unsigned long)userType);
     CK_RV rv = library->login(hSession, userType, pPin, ulPinLen);
     pkcs11_debug("C_Login -> rv=0x%08lx", (unsigned long)rv);
     return rv;

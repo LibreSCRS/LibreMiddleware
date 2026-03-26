@@ -57,20 +57,28 @@ void PCSCConnection::reconnect()
 APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
 {
 #ifndef NDEBUG
-    // Log sent APDU
+    // Log sent APDU — mask data for VERIFY (0x20) and CHANGE REFERENCE DATA (0x24) to avoid PIN exposure
+    bool isSensitive = cmdLen >= 2 && (cmdBytes[1] == 0x20 || cmdBytes[1] == 0x24);
     std::cerr << "[PCSC] TX (" << cmdLen << " bytes,"
               << " protocol=" << (activeProtocol == SCARD_PROTOCOL_T0 ? "T=0" : "T=1") << "):";
-    for (DWORD i = 0; i < cmdLen; i++)
+    DWORD headerLen = std::min(cmdLen, static_cast<DWORD>(isSensitive ? 5 : cmdLen));
+    for (DWORD i = 0; i < headerLen; i++)
         std::cerr << " " << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(cmdBytes[i]);
+    if (isSensitive && cmdLen > 5)
+        std::cerr << " [" << (cmdLen - 5) << " bytes masked]";
+    else
+        for (DWORD i = headerLen; i < cmdLen; i++)
+            std::cerr << " " << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(cmdBytes[i]);
     std::cerr << std::dec << std::endl;
 #endif
 
     const SCARD_IO_REQUEST* pioSendPci = (activeProtocol == SCARD_PROTOCOL_T0) ? SCARD_PCI_T0 : SCARD_PCI_T1;
 
-    uint8_t recvBuffer[512];
-    DWORD recvLength = sizeof(recvBuffer);
+    // 65538 = max extended APDU response (65536 data + 2 SW bytes)
+    static thread_local std::vector<uint8_t> recvBuffer(65538);
+    DWORD recvLength = static_cast<DWORD>(recvBuffer.size());
 
-    LONG rv = SCardTransmit(card, pioSendPci, cmdBytes, cmdLen, nullptr, recvBuffer, &recvLength);
+    LONG rv = SCardTransmit(card, pioSendPci, cmdBytes, cmdLen, nullptr, recvBuffer.data(), &recvLength);
     if (rv != SCARD_S_SUCCESS) {
 #ifndef NDEBUG
         std::cerr << "[PCSC] SCardTransmit FAILED, rv=0x" << std::hex << rv << std::dec << std::endl;
@@ -86,13 +94,15 @@ APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
     std::cerr << std::dec << std::endl;
 #endif
 
+    if (recvLength < 2)
+        throw PCSCError("SCardTransmit: response too short (" + std::to_string(recvLength) + " bytes)",
+                        SCARD_F_COMM_ERROR);
+
     APDUResponse response;
-    if (recvLength >= 2) {
-        response.sw1 = recvBuffer[recvLength - 2];
-        response.sw2 = recvBuffer[recvLength - 1];
-        if (recvLength > 2) {
-            response.data.assign(recvBuffer, recvBuffer + recvLength - 2);
-        }
+    response.sw1 = recvBuffer[recvLength - 2];
+    response.sw2 = recvBuffer[recvLength - 1];
+    if (recvLength > 2) {
+        response.data.assign(recvBuffer.begin(), recvBuffer.begin() + static_cast<ptrdiff_t>(recvLength - 2));
     }
 
 #ifndef NDEBUG

@@ -11,130 +11,77 @@ CliOptions parseOptions(int argc, const char* argv[])
 {
     CliOptions opts;
 
-    for (int i = 1; i < argc; ++i)
-    {
+    for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
 
-        if (arg == "--help")
-        {
+        if (arg == "--help") {
             opts.help = true;
             return opts;
-        }
-        else if (arg == "--version")
-        {
+        } else if (arg == "--version") {
             opts.version = true;
             return opts;
-        }
-        else if (arg == "--discover")
-        {
+        } else if (arg == "--discover") {
             opts.discover = true;
-        }
-        else if (arg == "--plugin")
-        {
+        } else if (arg == "--plugin") {
             opts.pluginMode = true;
-            if (i + 1 < argc)
-            {
+            if (i + 1 < argc) {
                 opts.pluginName = argv[++i];
-            }
-            else
-            {
+            } else {
                 throw std::runtime_error("--plugin requires a plugin name");
             }
-        }
-        else if (arg == "--output")
-        {
-            if (i + 1 < argc)
-            {
+        } else if (arg == "--output") {
+            if (i + 1 < argc) {
                 opts.outputFile = argv[++i];
-            }
-            else
-            {
+            } else {
                 throw std::runtime_error("--output requires a file path");
             }
-        }
-        else if (arg == "--output-dir")
-        {
-            if (i + 1 < argc)
-            {
+        } else if (arg == "--output-dir") {
+            if (i + 1 < argc) {
                 opts.outputDir = argv[++i];
-            }
-            else
-            {
+            } else {
                 throw std::runtime_error("--output-dir requires a directory path");
             }
-        }
-        else if (arg == "--scaffold")
-        {
+        } else if (arg == "--scaffold") {
             opts.scaffold = true;
-            if (i + 1 < argc)
-            {
+            if (i + 1 < argc) {
                 opts.scaffoldName = argv[++i];
-            }
-            else
-            {
+            } else {
                 throw std::runtime_error("--scaffold requires a plugin name");
             }
-        }
-        else if (arg == "--verbose")
-        {
+        } else if (arg == "--verbose") {
             opts.verbose = true;
-        }
-        else if (arg == "--reader")
-        {
-            if (i + 1 < argc)
-            {
+        } else if (arg == "--reader") {
+            if (i + 1 < argc) {
                 opts.readerName = argv[++i];
-            }
-            else
-            {
+            } else {
                 throw std::runtime_error("--reader requires a reader name");
             }
-        }
-        else if (arg == "--mrz")
-        {
-            if (i + 1 < argc)
-            {
+        } else if (arg == "--mrz") {
+            if (i + 1 < argc) {
                 opts.mrz = argv[++i];
-            }
-            else
-            {
+            } else {
                 throw std::runtime_error("--mrz requires an MRZ string");
             }
-        }
-        else if (arg == "--can")
-        {
-            if (i + 1 < argc)
-            {
+        } else if (arg == "--can") {
+            if (i + 1 < argc) {
                 opts.can = argv[++i];
-            }
-            else
-            {
+            } else {
                 throw std::runtime_error("--can requires a CAN string");
             }
-        }
-        else if (arg == "--pin")
-        {
+        } else if (arg == "--pin") {
             opts.pinRequested = true;
-            if (i + 1 < argc)
-            {
+            if (i + 1 < argc) {
                 std::string refStr = argv[++i];
                 // Parse hex (0x80) or decimal reference
-                if (refStr.size() > 2 && refStr[0] == '0' && (refStr[1] == 'x' || refStr[1] == 'X'))
-                {
+                if (refStr.size() > 2 && refStr[0] == '0' && (refStr[1] == 'x' || refStr[1] == 'X')) {
                     opts.pinRef = static_cast<uint8_t>(std::strtoul(refStr.c_str(), nullptr, 16));
-                }
-                else
-                {
+                } else {
                     opts.pinRef = static_cast<uint8_t>(std::strtoul(refStr.c_str(), nullptr, 10));
                 }
-            }
-            else
-            {
+            } else {
                 throw std::runtime_error("--pin requires a reference number");
             }
-        }
-        else
-        {
+        } else {
             throw std::runtime_error("unknown option: " + arg);
         }
     }
@@ -142,24 +89,20 @@ CliOptions parseOptions(int argc, const char* argv[])
     // --help and --version already returned early above
 
     // Validate: exactly one mode required
-    if (opts.discover && opts.pluginMode)
-    {
+    if (opts.discover && opts.pluginMode) {
         throw std::runtime_error("cannot use --discover and --plugin together");
     }
-    if (!opts.discover && !opts.pluginMode)
-    {
+    if (!opts.discover && !opts.pluginMode) {
         throw std::runtime_error("one of --discover or --plugin is required (use --help for usage)");
     }
 
     // --scaffold only with --discover
-    if (opts.scaffold && !opts.discover)
-    {
+    if (opts.scaffold && !opts.discover) {
         throw std::runtime_error("--scaffold can only be used with --discover");
     }
 
     // --output only with --plugin
-    if (!opts.outputFile.empty() && !opts.pluginMode)
-    {
+    if (!opts.outputFile.empty() && !opts.pluginMode) {
         throw std::runtime_error("--output can only be used with --plugin");
     }
 
@@ -169,7 +112,7 @@ CliOptions parseOptions(int argc, const char* argv[])
 void printHelp()
 {
     std::cout <<
-R"(card_mapper — Smart card file system mapper and documentation generator
+        R"(card_mapper — Smart card file system mapper and documentation generator
 
 USAGE:
     card_mapper --discover [OPTIONS]

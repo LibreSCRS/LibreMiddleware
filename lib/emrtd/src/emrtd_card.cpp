@@ -127,6 +127,7 @@ AuthResult EMRTDCard::authenticate()
                 continue;
             }
             if (session) {
+                OPENSSL_cleanse(password.data(), password.size());
                 smAlgo = crypto::paceOIDToSMAlgorithm(oid);
                 sm = std::make_unique<crypto::SecureMessaging>(*session, smAlgo);
                 // Select eMRTD applet AFTER PACE via SM (non-SM commands may invalidate session)
@@ -138,6 +139,7 @@ AuthResult EMRTDCard::authenticate()
                 return {true, method, ""};
             }
         }
+        OPENSSL_cleanse(password.data(), password.size());
         // PACE failed, fall through to BAC
     }
 
@@ -265,9 +267,12 @@ void EMRTDCard::recover()
 std::optional<std::vector<uint8_t>> EMRTDCard::readFile(uint16_t fid, bool skipSelect)
 {
     if (!skipSelect) {
-        // SELECT file by FID (P2=0x0C: no response data expected)
+        // SELECT file by FID (P2=0x04: return FCP template).
+        // P2=0x04 makes this Case 4 (data + Le), ensuring DO'97 is included in SM.
+        // Some chips (e.g. Georgian eID) require DO'97 in CA-derived SM mode;
+        // P2=0x0C (no response) would be Case 3 (no Le, no DO'97) → rejected with 6988.
         std::vector<uint8_t> selectApdu = {
-            0x00, 0xA4, 0x02, 0x0C, 0x02, static_cast<uint8_t>(fid >> 8), static_cast<uint8_t>(fid & 0xFF)};
+            0x00, 0xA4, 0x02, 0x04, 0x02, static_cast<uint8_t>(fid >> 8), static_cast<uint8_t>(fid & 0xFF), 0x00};
         transmitSecure(selectApdu);
     }
 
@@ -420,9 +425,11 @@ DGReadResult EMRTDCard::readDataGroupSafe(int dgNumber)
     if (fid == 0)
         return {DGReadStatus::ERROR, {}};
 
-    // SELECT file by FID via SM, then check the inner SW
+    // SELECT file by FID via SM, then check the inner SW.
+    // P2=0x04 (return FCP) ensures Le/DO'97 are present in SM — required by some
+    // chips in CA-derived SM mode (e.g. Georgian eID rejects P2=0x0C with 6988).
     smartcard::APDUCommand selectCmd{
-        0x00, 0xA4, 0x02, 0x0C, {static_cast<uint8_t>(fid >> 8), static_cast<uint8_t>(fid & 0xFF)}, 0, false};
+        0x00, 0xA4, 0x02, 0x04, {static_cast<uint8_t>(fid >> 8), static_cast<uint8_t>(fid & 0xFF)}, 0, true};
     auto selectResp = transmitSecureAPDU(selectCmd);
     uint16_t sw = selectResp.statusWord();
 

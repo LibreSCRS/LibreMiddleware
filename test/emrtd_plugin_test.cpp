@@ -27,8 +27,9 @@ std::filesystem::path pluginDir()
 
 bool g_authFailed = false;
 
-#define SKIP_IF_AUTH_FAILED() \
-    if (g_authFailed) GTEST_SKIP() << "Previous auth failed, skipping to prevent lockout"
+#define SKIP_IF_AUTH_FAILED()                                                                                          \
+    if (g_authFailed)                                                                                                  \
+    GTEST_SKIP() << "Previous auth failed, skipping to prevent lockout"
 
 struct MRZEnv
 {
@@ -42,15 +43,9 @@ std::optional<MRZEnv> getMRZFromEnv()
     auto doc = std::getenv("LIBRESCRS_TEST_MRZ_DOC");
     auto dob = std::getenv("LIBRESCRS_TEST_MRZ_DOB");
     auto exp = std::getenv("LIBRESCRS_TEST_MRZ_EXPIRY");
-    if (!doc || !dob || !exp) return std::nullopt;
+    if (!doc || !dob || !exp)
+        return std::nullopt;
     return MRZEnv{doc, dob, exp};
-}
-
-std::optional<std::string> getCANFromEnv()
-{
-    auto can = std::getenv("LIBRESCRS_TEST_CAN");
-    if (!can) return std::nullopt;
-    return std::string(can);
 }
 
 // Helper: find the emrtd plugin from the registry
@@ -180,12 +175,13 @@ TEST(EMRTDHardwareTest, PaceMRZEndToEnd)
     auto* emrtd = findEMRTD(registry);
     ASSERT_NE(emrtd, nullptr) << "eMRTD plugin not loaded";
 
-    // Set MRZ credentials
-    emrtd->setCredentials("mrz_doc_number", mrz->docNumber);
-    emrtd->setCredentials("mrz_dob", mrz->dob);
-    emrtd->setCredentials("mrz_expiry", mrz->expiry);
-
     smartcard::PCSCConnection conn(readers[0]);
+
+    // Set MRZ credentials (per-connection)
+    emrtd->setCredentials(conn, "mrz_doc_number", mrz->docNumber);
+    emrtd->setCredentials(conn, "mrz_dob", mrz->dob);
+    emrtd->setCredentials(conn, "mrz_expiry", mrz->expiry);
+
     auto result = readCardWithStreaming(emrtd, conn);
 
     if (result.data.groups.empty()) {
@@ -216,11 +212,12 @@ TEST(EMRTDHardwareTest, PassiveAuthEndToEnd)
     auto* emrtd = findEMRTD(registry);
     ASSERT_NE(emrtd, nullptr);
 
-    emrtd->setCredentials("mrz_doc_number", mrz->docNumber);
-    emrtd->setCredentials("mrz_dob", mrz->dob);
-    emrtd->setCredentials("mrz_expiry", mrz->expiry);
-
     smartcard::PCSCConnection conn(readers[0]);
+
+    emrtd->setCredentials(conn, "mrz_doc_number", mrz->docNumber);
+    emrtd->setCredentials(conn, "mrz_dob", mrz->dob);
+    emrtd->setCredentials(conn, "mrz_expiry", mrz->expiry);
+
     auto result = readCardWithStreaming(emrtd, conn);
 
     if (result.data.groups.empty()) {
@@ -239,8 +236,7 @@ TEST(EMRTDHardwareTest, PassiveAuthEndToEnd)
             foundSodSignature = true;
             auto statusStr = field.asString();
             auto status = statusFromString(statusStr);
-            EXPECT_EQ(status, SecurityCheck::PASSED)
-                << "PA SOD signature status: " << statusStr;
+            EXPECT_EQ(status, SecurityCheck::PASSED) << "PA SOD signature status: " << statusStr;
             break;
         }
     }
@@ -263,11 +259,12 @@ TEST(EMRTDHardwareTest, ChipAuthEndToEnd)
     auto* emrtd = findEMRTD(registry);
     ASSERT_NE(emrtd, nullptr);
 
-    emrtd->setCredentials("mrz_doc_number", mrz->docNumber);
-    emrtd->setCredentials("mrz_dob", mrz->dob);
-    emrtd->setCredentials("mrz_expiry", mrz->expiry);
-
     smartcard::PCSCConnection conn(readers[0]);
+
+    emrtd->setCredentials(conn, "mrz_doc_number", mrz->docNumber);
+    emrtd->setCredentials(conn, "mrz_dob", mrz->dob);
+    emrtd->setCredentials(conn, "mrz_expiry", mrz->expiry);
+
     auto result = readCardWithStreaming(emrtd, conn);
 
     if (result.data.groups.empty()) {
@@ -286,17 +283,14 @@ TEST(EMRTDHardwareTest, ChipAuthEndToEnd)
         if (field.key == "ca.chip_auth") {
             foundCA = true;
             auto status = statusFromString(field.asString());
-            EXPECT_NE(status, SecurityCheck::FAILED)
-                << "Chip Authentication reported FAILED on a genuine document";
+            EXPECT_NE(status, SecurityCheck::FAILED) << "Chip Authentication reported FAILED on a genuine document";
         } else if (field.key == "aa.active_auth") {
             foundAA = true;
             auto status = statusFromString(field.asString());
-            EXPECT_NE(status, SecurityCheck::FAILED)
-                << "Active Authentication reported FAILED on a genuine document";
+            EXPECT_NE(status, SecurityCheck::FAILED) << "Active Authentication reported FAILED on a genuine document";
         }
     }
-    EXPECT_TRUE(foundCA || foundAA)
-        << "Neither ca.chip_auth nor aa.active_auth found in security_status";
+    EXPECT_TRUE(foundCA || foundAA) << "Neither ca.chip_auth nor aa.active_auth found in security_status";
 }
 
 TEST(EMRTDHardwareTest, StreamingGroupOrder)
@@ -315,11 +309,12 @@ TEST(EMRTDHardwareTest, StreamingGroupOrder)
     auto* emrtd = findEMRTD(registry);
     ASSERT_NE(emrtd, nullptr);
 
-    emrtd->setCredentials("mrz_doc_number", mrz->docNumber);
-    emrtd->setCredentials("mrz_dob", mrz->dob);
-    emrtd->setCredentials("mrz_expiry", mrz->expiry);
-
     smartcard::PCSCConnection conn(readers[0]);
+
+    emrtd->setCredentials(conn, "mrz_doc_number", mrz->docNumber);
+    emrtd->setCredentials(conn, "mrz_dob", mrz->dob);
+    emrtd->setCredentials(conn, "mrz_expiry", mrz->expiry);
+
     auto result = readCardWithStreaming(emrtd, conn);
 
     if (result.data.groups.empty()) {
@@ -334,14 +329,13 @@ TEST(EMRTDHardwareTest, StreamingGroupOrder)
     auto personalIt = std::find(result.groupOrder.begin(), result.groupOrder.end(), "personal");
     if (presenceIt != result.groupOrder.end() && personalIt != result.groupOrder.end()) {
         EXPECT_LT(std::distance(result.groupOrder.begin(), presenceIt),
-                   std::distance(result.groupOrder.begin(), personalIt))
+                  std::distance(result.groupOrder.begin(), personalIt))
             << "presence should arrive before personal";
     }
 
     // "security_status" should be the last group delivered
     auto secIt = std::find(result.groupOrder.begin(), result.groupOrder.end(), "security_status");
     if (secIt != result.groupOrder.end()) {
-        EXPECT_EQ(secIt, result.groupOrder.end() - 1)
-            << "security_status should be the last group delivered";
+        EXPECT_EQ(secIt, result.groupOrder.end() - 1) << "security_status should be the last group delivered";
     }
 }

@@ -9,23 +9,28 @@
 #include <string>
 #include <vector>
 
-namespace smartcard { class PCSCConnection; }
+namespace smartcard {
+class PCSCConnection;
+}
 
 namespace emrtd::crypto {
 
-struct ChipAuthInfo {
+struct ChipAuthInfo
+{
     std::vector<uint8_t> oid;
     int version = 0;
     std::optional<int> keyId;
 };
 
-struct ChipAuthPublicKey {
+struct ChipAuthPublicKey
+{
     std::vector<uint8_t> oid;
     std::vector<uint8_t> publicKey; // SubjectPublicKeyInfo DER
     std::optional<int> keyId;
 };
 
-struct ChipAuthResult {
+struct ChipAuthResult
+{
     enum Status { PASSED, FAILED, NOT_PERFORMED, NOT_SUPPORTED };
     Status chipAuthentication = NOT_PERFORMED;
     Status activeAuthentication = NOT_PERFORMED;
@@ -35,11 +40,9 @@ struct ChipAuthResult {
     SMAlgorithm newAlgorithm = SMAlgorithm::AES;
 };
 
-bool parseDG14(const std::vector<uint8_t>& dg14Raw,
-               std::vector<ChipAuthInfo>& caInfos,
+bool parseDG14(const std::vector<uint8_t>& dg14Raw, std::vector<ChipAuthInfo>& caInfos,
                std::vector<ChipAuthPublicKey>& caKeys);
 
-ChipAuthResult performChipAuth(smartcard::PCSCConnection& conn,
-                               const std::vector<uint8_t>& dg14Raw,
+ChipAuthResult performChipAuth(smartcard::PCSCConnection& conn, const std::vector<uint8_t>& dg14Raw,
                                SecureMessaging& currentSM);
 } // namespace emrtd::crypto

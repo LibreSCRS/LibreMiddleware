@@ -132,8 +132,15 @@ public:
     }
 
     // Optional: credential passing for two-phase authentication (e.g. eMRTD PACE/BAC).
-    // Keys are plugin-specific. Default is no-op.
-    virtual void setCredentials(const std::string& /*key*/, const std::string& /*value*/) const {}
+    // Keys are plugin-specific, credentials are stored per-connection.
+    virtual void setCredentials(smartcard::PCSCConnection& /*conn*/, const std::string& /*key*/,
+                                const std::string& /*value*/) const
+    {}
+
+    // Clear cached credentials for a specific connection so the next
+    // readCard/readCardStreaming on this reader starts fresh.
+    // Called when a card is removed or a new card is inserted.
+    virtual void clearCredentials(smartcard::PCSCConnection& /*conn*/) const {}
 };
 
 // Every plugin .so must export these two functions with C linkage:

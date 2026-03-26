@@ -19,14 +19,12 @@ namespace {
 
 std::string getReaderName(const CliOptions& opts)
 {
-    if (!opts.readerName.empty())
-    {
+    if (!opts.readerName.empty()) {
         return opts.readerName;
     }
 
     auto readers = smartcard::PCSCConnection::listReaders();
-    if (readers.empty())
-    {
+    if (readers.empty()) {
         throw std::runtime_error("no PC/SC readers found");
     }
     return readers[0];
@@ -38,8 +36,7 @@ void writeToFile(const std::string& path, const std::string& content)
     std::filesystem::create_directories(filepath.parent_path());
 
     std::ofstream out(path);
-    if (!out)
-    {
+    if (!out) {
         throw std::runtime_error("cannot open file for writing: " + path);
     }
     out << content;
@@ -54,12 +51,9 @@ int runPluginMode(const CliOptions& opts)
     auto appletInfo = card_mapper::mapPlugin(opts.pluginName, conn, opts.verbose);
     auto doc = card_mapper::formatAppletDoc(appletInfo);
 
-    if (!opts.outputFile.empty())
-    {
+    if (!opts.outputFile.empty()) {
         writeToFile(opts.outputFile, doc);
-    }
-    else
-    {
+    } else {
         std::cout << doc;
     }
 
@@ -74,16 +68,12 @@ int runDiscoverMode(const CliOptions& opts)
     auto scanResult = card_mapper::discoverCard(conn, opts.verbose);
 
     // Output applet docs
-    for (const auto& applet : scanResult.detectedApplets)
-    {
+    for (const auto& applet : scanResult.detectedApplets) {
         auto doc = card_mapper::formatAppletDoc(applet);
 
-        if (opts.outputDir.empty() || opts.outputDir == "-")
-        {
+        if (opts.outputDir.empty() || opts.outputDir == "-") {
             std::cout << doc << "\n---\n\n";
-        }
-        else
-        {
+        } else {
             std::string filename = applet.pluginName + "-applet.md";
             writeToFile(opts.outputDir + "/applets/" + filename, doc);
         }
@@ -91,19 +81,15 @@ int runDiscoverMode(const CliOptions& opts)
 
     // Output profile doc
     auto profileDoc = card_mapper::formatProfileDoc(scanResult.profile);
-    if (opts.outputDir.empty() || opts.outputDir == "-")
-    {
+    if (opts.outputDir.empty() || opts.outputDir == "-") {
         std::cout << profileDoc;
-    }
-    else
-    {
+    } else {
         std::string profileFilename = scanResult.profile.name + ".md";
         writeToFile(opts.outputDir + "/profiles/" + profileFilename, profileDoc);
     }
 
     // Scaffold if requested
-    if (opts.scaffold)
-    {
+    if (opts.scaffold) {
         auto header = card_mapper::generateProtocolHeader(opts.scaffoldName, scanResult);
         auto headerPath = "lib/" + opts.scaffoldName + "/src/" + opts.scaffoldName + "_protocol.h";
         writeToFile(headerPath, header);
@@ -122,34 +108,26 @@ int runDiscoverMode(const CliOptions& opts)
 
 int main(int argc, const char* argv[])
 {
-    try
-    {
+    try {
         auto opts = parseOptions(argc, argv);
-        if (opts.help)
-        {
+        if (opts.help) {
             printHelp();
             return EXIT_SUCCESS;
         }
-        if (opts.version)
-        {
+        if (opts.version) {
             printVersion();
             return EXIT_SUCCESS;
         }
 
-        if (opts.pluginMode)
-        {
+        if (opts.pluginMode) {
             return runPluginMode(opts);
-        }
-        else if (opts.discover)
-        {
+        } else if (opts.discover) {
             return runDiscoverMode(opts);
         }
 
         std::cerr << "card_mapper: no mode selected\n";
         return EXIT_FAILURE;
-    }
-    catch (const std::exception& e)
-    {
+    } catch (const std::exception& e) {
         std::cerr << "card_mapper: " << e.what() << "\n";
         return EXIT_FAILURE;
     }

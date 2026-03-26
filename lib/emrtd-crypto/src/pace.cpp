@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 
@@ -97,6 +98,8 @@ static std::string oidBytesToString(const uint8_t* data, size_t len)
     // Remaining bytes use variable-length encoding (base-128, high bit = continuation)
     unsigned long value = 0;
     for (size_t i = 1; i < len; ++i) {
+        if (value > (std::numeric_limits<unsigned long>::max() >> 7))
+            return {}; // overflow protection
         value = (value << 7) | (data[i] & 0x7F);
         if ((data[i] & 0x80) == 0) {
             result += "." + std::to_string(value);
@@ -512,6 +515,9 @@ static ECPointPtr bytesToPoint(const EC_GROUP* group, const std::vector<uint8_t>
         throw std::runtime_error("PACE: EC_POINT_new failed");
     if (!EC_POINT_oct2point(group, point.get(), bytes.data(), bytes.size(), ctx))
         throw std::runtime_error("PACE: EC_POINT_oct2point failed");
+    // Validate that the decoded point lies on the curve to prevent invalid-curve attacks
+    if (EC_POINT_is_on_curve(group, point.get(), ctx) != 1)
+        throw std::runtime_error("PACE: EC point not on curve");
     return point;
 }
 
@@ -647,23 +653,27 @@ std::optional<SessionKeys> performPACE(smartcard::PCSCConnection& conn, const PA
     std::vector<uint8_t> kPi;
     std::vector<uint8_t> nonce;
     std::vector<uint8_t> sharedK;
+    std::vector<uint8_t> kEnc;
+    std::vector<uint8_t> kMAC;
 
     // Scope guard to cleanse key material on all exit paths
     struct KeyCleaner
     {
-        std::vector<uint8_t>&kpiSeed, &kPi, &nonce, &sharedK;
+        std::vector<uint8_t>&kpiSeed, &kPi, &nonce, &sharedK, &kEnc, &kMAC;
         ~KeyCleaner()
         {
-            if (!kpiSeed.empty())
-                OPENSSL_cleanse(kpiSeed.data(), kpiSeed.size());
-            if (!kPi.empty())
-                OPENSSL_cleanse(kPi.data(), kPi.size());
-            if (!nonce.empty())
-                OPENSSL_cleanse(nonce.data(), nonce.size());
-            if (!sharedK.empty())
-                OPENSSL_cleanse(sharedK.data(), sharedK.size());
+            auto cleanse = [](std::vector<uint8_t>& v) {
+                if (!v.empty())
+                    OPENSSL_cleanse(v.data(), v.size());
+            };
+            cleanse(kpiSeed);
+            cleanse(kPi);
+            cleanse(nonce);
+            cleanse(sharedK);
+            cleanse(kEnc);
+            cleanse(kMAC);
         }
-    } keyCleaner{kpiSeed, kPi, nonce, sharedK};
+    } keyCleaner{kpiSeed, kPi, nonce, sharedK, kEnc, kMAC};
 
     if (params.passwordType == PACEPasswordType::MRZ) {
         static constexpr size_t PACE_KEY_SEED_LEN = 16;
@@ -773,8 +783,8 @@ std::optional<SessionKeys> performPACE(smartcard::PCSCConnection& conn, const PA
     sharedK = ecdhSharedSecret(baseGroup.get(), skAgree.get(), pkAgreeICC.get(), bnCtx.get());
 
     // Derive session keys
-    auto kEnc = detail::kdf(sharedK, 1, isDES3, keyLen);
-    auto kMAC = detail::kdf(sharedK, 2, isDES3, keyLen);
+    kEnc = detail::kdf(sharedK, 1, isDES3, keyLen);
+    kMAC = detail::kdf(sharedK, 2, isDES3, keyLen);
 
     // --- Step 7: Mutual authentication ---
     // BSI TR-03110: authentication token = MAC(K_MAC, 0x7F49 Public Key Data Object)

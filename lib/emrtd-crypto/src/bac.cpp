@@ -36,26 +36,49 @@ BACKeys deriveBACKeys(const std::string& documentNumber, const std::string& date
     if (!EVP_Q_digest(nullptr, "SHA1", nullptr, mrzBytes.data(), mrzBytes.size(), hash, &hashLen))
         throw std::runtime_error("deriveBACKeys: SHA-1 digest failed");
     std::vector<uint8_t> kSeed(hash, hash + 16);
+    OPENSSL_cleanse(hash, sizeof(hash));
 
     // Derive K_Enc = KDF(K_seed, 1) and K_MAC = KDF(K_seed, 2)
     BACKeys keys;
     keys.encKey = detail::kdf(kSeed, 1, true);
     keys.macKey = detail::kdf(kSeed, 2, true);
+
+    OPENSSL_cleanse(kSeed.data(), kSeed.size());
+    OPENSSL_cleanse(mrzBytes.data(), mrzBytes.size());
     return keys;
 }
 
 std::optional<SessionKeys> performBAC(smartcard::PCSCConnection& conn, const BACKeys& keys)
 {
+    // Scope guard to cleanse all key material on every exit path
+    std::vector<uint8_t> rndICC, rndIFD, kIFD, kICC, kSeedSession;
+    struct KeyCleaner
+    {
+        std::vector<uint8_t>&rndICC, &rndIFD, &kIFD, &kICC, &kSeedSession;
+        ~KeyCleaner()
+        {
+            auto cleanse = [](std::vector<uint8_t>& v) {
+                if (!v.empty())
+                    OPENSSL_cleanse(v.data(), v.size());
+            };
+            cleanse(rndICC);
+            cleanse(rndIFD);
+            cleanse(kIFD);
+            cleanse(kICC);
+            cleanse(kSeedSession);
+        }
+    } keyCleaner{rndICC, rndIFD, kIFD, kICC, kSeedSession};
+
     // Step 1: GET CHALLENGE — receive 8-byte RND.ICC
     smartcard::APDUCommand getChallenge{0x00, 0x84, 0x00, 0x00, {}, 0x08, true};
     auto response = conn.transmit(getChallenge);
     if (!response.isSuccess() || response.data.size() < 8)
         return std::nullopt;
-    std::vector<uint8_t> rndICC(response.data.begin(), response.data.begin() + 8);
+    rndICC.assign(response.data.begin(), response.data.begin() + 8);
 
     // Step 2: Generate RND.IFD (8 bytes) and K.IFD (16 bytes)
-    std::vector<uint8_t> rndIFD(8);
-    std::vector<uint8_t> kIFD(16);
+    rndIFD.resize(8);
+    kIFD.resize(16);
     if (RAND_bytes(rndIFD.data(), 8) != 1 || RAND_bytes(kIFD.data(), 16) != 1)
         return std::nullopt;
 
@@ -95,15 +118,19 @@ std::optional<SessionKeys> performBAC(smartcard::PCSCConnection& conn, const BAC
     if (r.size() < 32)
         return std::nullopt;
 
+    // Verify RND.ICC' matches (bytes 0-7) — required by ICAO 9303 for MITM protection
+    if (!std::equal(rndICC.begin(), rndICC.end(), r.begin()))
+        return std::nullopt;
+
     // Verify RND.IFD' matches (bytes 8-15 of decrypted data)
     if (!std::equal(rndIFD.begin(), rndIFD.end(), r.begin() + 8))
         return std::nullopt;
 
     // Step 9: Extract K.ICC and derive session keys
-    std::vector<uint8_t> kICC(r.begin() + 16, r.begin() + 32);
+    kICC.assign(r.begin() + 16, r.begin() + 32);
 
     // K_seed_session = K.IFD XOR K.ICC
-    std::vector<uint8_t> kSeedSession(16);
+    kSeedSession.resize(16);
     for (size_t i = 0; i < 16; ++i)
         kSeedSession[i] = kIFD[i] ^ kICC[i];
 

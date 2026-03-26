@@ -187,9 +187,14 @@ std::vector<uint8_t> SecureMessaging::protect(const std::vector<uint8_t>& comman
         do87.insert(do87.end(), encryptedData.begin(), encryptedData.end());
     }
 
-    // DO'97: Le — always present for SM (response contains at least DO'99 + DO'8E)
+    // DO'97: Le — only present when the original command expects response data (Case 2/4).
+    // ICAO 9303 Part 11 Section 9.8.6: "If the command APDU includes Le: Construct DO'97".
+    // Case 1/3 commands (no Le) must NOT include DO'97 — some cards (e.g. Georgian eID)
+    // reject it with SW=6700 on MSE:Set AT.
     std::vector<uint8_t> do97;
-    do97 = {0x97, 0x01, le.value_or(0x00)};
+    if (le.has_value()) {
+        do97 = {0x97, 0x01, le.value()};
+    }
 
     // Build MAC input: SSC || padded header || DO'87 || DO'97, then pad to blockSize
     std::vector<uint8_t> macInput;

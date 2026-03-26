@@ -100,12 +100,14 @@ public:
             plugin::addTextField(veh, "number_of_axles", "L: Axles", doc.numberOfAxles);
             plugin::addTextField(veh, "max_speed", "T: Max Speed", doc.maxSpeed);
             plugin::addTextField(veh, "wheelbase", "M: Wheelbase", doc.wheelbase);
-            plugin::addTextField(veh, "max_laden_mass_service", "F.2: Max Laden Mass (Service)", doc.maxLadenMassService);
+            plugin::addTextField(veh, "max_laden_mass_service", "F.2: Max Laden Mass (Service)",
+                                 doc.maxLadenMassService);
             plugin::addTextField(veh, "max_laden_mass_whole", "F.3: Max Laden Mass (Whole)", doc.maxLadenMassWhole);
             plugin::addTextField(veh, "braked_trailer_mass", "O.1: Braked Trailer Mass", doc.brakedTrailerMass);
             plugin::addTextField(veh, "unbraked_trailer_mass", "O.2: Unbraked Trailer Mass", doc.unbrakedTrailerMass);
             plugin::addTextField(veh, "rated_engine_speed", "P.4: Rated Engine Speed", doc.ratedEngineSpeed);
-            plugin::addTextField(veh, "stationary_sound_level", "U.1: Stationary Sound Level", doc.stationarySoundLevel);
+            plugin::addTextField(veh, "stationary_sound_level", "U.1: Stationary Sound Level",
+                                 doc.stationarySoundLevel);
             plugin::addTextField(veh, "engine_speed_ref", "U.2: Engine Speed (Sound)", doc.engineSpeedRef);
             plugin::addTextField(veh, "drive_by_sound", "U.3: Drive-By Sound", doc.driveBySound);
             plugin::addTextField(veh, "fuel_consumption", "V.7: Fuel Consumption", doc.fuelConsumption);
@@ -128,8 +130,7 @@ public:
         }
 
         // Owner (only if non-empty)
-        if (!doc.owner2Name.empty())
-        {
+        if (!doc.owner2Name.empty()) {
             plugin::CardFieldGroup owner;
             owner.groupKey = "owner";
             owner.groupLabel = "Owner";
@@ -139,8 +140,7 @@ public:
         }
 
         // User (only if non-empty)
-        if (!doc.userName.empty() || !doc.userOtherNames.empty() || !doc.userAddress.empty())
-        {
+        if (!doc.userName.empty() || !doc.userOtherNames.empty() || !doc.userAddress.empty()) {
             plugin::CardFieldGroup user;
             user.groupKey = "user";
             user.groupLabel = "User";
@@ -152,8 +152,7 @@ public:
         }
 
         // National Extensions (only if non-empty)
-        if (!doc.nationalTags.empty())
-        {
+        if (!doc.nationalTags.empty()) {
             // Known Serbian national extension tag names
             static const std::unordered_map<uint32_t, std::pair<std::string, std::string>> serbianTags = {
                 {0xC2, {"owners_personal_no", "Owner Personal Number"}},
@@ -167,13 +166,10 @@ public:
             national.groupKey = "national";
             national.groupLabel = "National Extensions";
 
-            for (const auto& [tag, value] : doc.nationalTags)
-            {
+            for (const auto& [tag, value] : doc.nationalTags) {
                 auto it = serbianTags.find(tag);
-                std::string key = (it != serbianTags.end()) ? it->second.first
-                                                            : std::format("national_{:04X}", tag);
-                std::string label = (it != serbianTags.end()) ? it->second.second
-                                                              : std::format("Tag 0x{:02X}", tag);
+                std::string key = (it != serbianTags.end()) ? it->second.first : std::format("national_{:04X}", tag);
+                std::string label = (it != serbianTags.end()) ? it->second.second : std::format("Tag 0x{:02X}", tag);
                 plugin::addTextField(national, key, label, value);
             }
             emitGroup(std::move(national));

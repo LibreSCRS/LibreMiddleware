@@ -5,6 +5,8 @@
 
 #include <emrtd/crypto/types.h>
 
+#include <openssl/crypto.h>
+
 #include <optional>
 #include <vector>
 
@@ -21,10 +23,20 @@ class SecureMessaging
 {
 public:
     SecureMessaging(SessionKeys keys, SMAlgorithm algo);
+    ~SecureMessaging()
+    {
+        auto cleanse = [](std::vector<uint8_t>& v) {
+            if (!v.empty())
+                OPENSSL_cleanse(v.data(), v.size());
+        };
+        cleanse(keys.encKey);
+        cleanse(keys.macKey);
+        cleanse(keys.ssc);
+    }
 
     // Wrap command APDU with SM (encrypt data + compute MAC).
     // Input: plain command APDU (CLA INS P1 P2 [Lc data] [Le])
-    // Output: SM-protected APDU with DO'87 (encrypted data), DO'8E (MAC), new Le
+    // Output: SM-protected APDU with DO'87 (encrypted data), DO'97 (Le), DO'8E (MAC)
     std::vector<uint8_t> protect(const std::vector<uint8_t>& commandApdu);
 
     // Unwrap response APDU: verify MAC (DO'8E), decrypt data (DO'87).

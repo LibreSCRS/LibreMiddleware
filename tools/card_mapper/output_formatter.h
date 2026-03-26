@@ -23,15 +23,15 @@ struct FileNode
 struct TagInfo
 {
     uint16_t tag;
-    std::string fieldKey;  // e.g. "doc_reg_no"
-    std::string name;      // e.g. "Registration number"
-    std::string type;      // e.g. "string", "binary"
-    std::string example;   // optional example value
+    std::string fieldKey; // e.g. "doc_reg_no"
+    std::string name;     // e.g. "Registration number"
+    std::string type;     // e.g. "string", "binary"
+    std::string example;  // optional example value
 };
 
 struct DataFile
 {
-    std::string name;              // e.g. "EF.DocumentData"
+    std::string name; // e.g. "EF.DocumentData"
     uint8_t fidHi = 0, fidLo = 0;
     std::vector<TagInfo> tags;
 };
@@ -42,12 +42,12 @@ struct AppletInfo
     std::string description;
     std::vector<std::vector<uint8_t>> aids;
     std::vector<std::string> aidNames;
-    std::string authentication;    // "None", "PIN", "PACE"
+    std::string authentication; // "None", "PIN", "PACE"
     std::string pluginName;
     FileNode rootNode;
     std::vector<DataFile> dataFiles;
-    std::vector<std::string> readProcedure;  // step-by-step read instructions
-    std::string apduTrace;                    // verbose APDU trace (Markdown section)
+    std::vector<std::string> readProcedure; // step-by-step read instructions
+    std::string apduTrace;                  // verbose APDU trace (Markdown section)
 };
 
 struct ProfileInfo
@@ -60,7 +60,7 @@ struct ProfileInfo
     {
         std::string name;
         std::vector<uint8_t> aid;
-        std::string docPath;       // relative link
+        std::string docPath; // relative link
     };
     std::vector<AppletRef> applets;
     std::string notes;

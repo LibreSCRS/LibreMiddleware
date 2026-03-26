@@ -49,32 +49,27 @@ TEST(CardScanner, AllKnownProbesIncludesAll)
     EXPECT_EQ(probes.size(), 10u);
 
     // Check eID SERID is present
-    auto hasSerid = std::any_of(probes.begin(), probes.end(), [](const AidProbe& p) {
-        return p.canonicalAid == eidcard::protocol::AID_SERID;
-    });
+    auto hasSerid = std::any_of(probes.begin(), probes.end(),
+                                [](const AidProbe& p) { return p.canonicalAid == eidcard::protocol::AID_SERID; });
     EXPECT_TRUE(hasSerid);
 
     // Check CardEdge is present
-    auto hasCardEdge = std::any_of(probes.begin(), probes.end(), [](const AidProbe& p) {
-        return p.canonicalAid == cardedge::protocol::AID_PKCS15;
-    });
+    auto hasCardEdge = std::any_of(probes.begin(), probes.end(),
+                                   [](const AidProbe& p) { return p.canonicalAid == cardedge::protocol::AID_PKCS15; });
     EXPECT_TRUE(hasCardEdge);
 
     // Check eMRTD is present
     auto emrtdAid = std::vector<uint8_t>(emrtd::EMRTD_AID, emrtd::EMRTD_AID + emrtd::EMRTD_AID_LEN);
-    auto hasEmrtd = std::any_of(probes.begin(), probes.end(), [&](const AidProbe& p) {
-        return p.canonicalAid == emrtdAid;
-    });
+    auto hasEmrtd =
+        std::any_of(probes.begin(), probes.end(), [&](const AidProbe& p) { return p.canonicalAid == emrtdAid; });
     EXPECT_TRUE(hasEmrtd);
 }
 
 TEST(CardScanner, SimpleProbesHaveSingleSelectCommand)
 {
     auto probes = getAllKnownProbes();
-    for (const auto& p : probes)
-    {
-        if (p.name.find("EU-VRC-RS") == std::string::npos)
-        {
+    for (const auto& p : probes) {
+        if (p.name.find("EU-VRC-RS") == std::string::npos) {
             EXPECT_EQ(p.selectSequence.size(), 1u) << "Probe " << p.name << " should have 1 SELECT command";
         }
     }
@@ -83,10 +78,8 @@ TEST(CardScanner, SimpleProbesHaveSingleSelectCommand)
 TEST(CardScanner, EuVrcSerbianProbesHaveThreeSelectCommands)
 {
     auto probes = getAllKnownProbes();
-    for (const auto& p : probes)
-    {
-        if (p.name.find("EU-VRC-RS") != std::string::npos)
-        {
+    for (const auto& p : probes) {
+        if (p.name.find("EU-VRC-RS") != std::string::npos) {
             EXPECT_EQ(p.selectSequence.size(), 3u) << "Probe " << p.name << " should have 3 SELECT commands";
             EXPECT_EQ(p.lastP2, 0x0C) << "EU VRC Serbian last SELECT should use P2=0x0C";
         }

@@ -106,7 +106,7 @@ std::vector<uint8_t> CardReaderGemalto::readFile(smartcard::PCSCConnection& conn
     // Read file data starting after the 4-byte header
     std::vector<uint8_t> fileData;
     fileData.reserve(dataLength);
-    uint16_t offset = 4;
+    uint32_t offset = 4;
 
     while (fileData.size() < dataLength) {
         uint8_t chunkSize = static_cast<uint8_t>(std::min(static_cast<uint32_t>(protocol::READ_CHUNK_SIZE),
@@ -122,7 +122,7 @@ std::vector<uint8_t> CardReaderGemalto::readFile(smartcard::PCSCConnection& conn
         }
 
         fileData.insert(fileData.end(), readResp.data.begin(), readResp.data.end());
-        offset += static_cast<uint16_t>(readResp.data.size());
+        offset += static_cast<uint32_t>(readResp.data.size());
     }
 
     return fileData;
@@ -146,7 +146,7 @@ std::vector<uint8_t> CardReaderGemalto::readFileRaw(smartcard::PCSCConnection& c
     }
 
     // Read remaining data starting after the header
-    uint16_t offset = 4;
+    uint32_t offset = 4;
 
     while (fileData.size() < totalLength) {
         uint8_t chunkSize = static_cast<uint8_t>(std::min(static_cast<uint32_t>(protocol::READ_CHUNK_SIZE),
@@ -162,7 +162,7 @@ std::vector<uint8_t> CardReaderGemalto::readFileRaw(smartcard::PCSCConnection& c
         }
 
         fileData.insert(fileData.end(), readResp.data.begin(), readResp.data.end());
-        offset += static_cast<uint16_t>(readResp.data.size());
+        offset += static_cast<uint32_t>(readResp.data.size());
     }
 
     return fileData;

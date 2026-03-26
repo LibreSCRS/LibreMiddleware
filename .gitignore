@@ -37,3 +37,4 @@ CMakeLists.txt.user
 # PKCS#11 module packaging output
 LibreSCRS-pkcs11-*.tar.gz
 LibreSCRS-pkcs11-*.zip
+.claude/

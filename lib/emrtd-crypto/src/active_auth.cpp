@@ -20,11 +20,19 @@ namespace emrtd::crypto {
 // RAII wrappers for OpenSSL types
 // ---------------------------------------------------------------------------
 
-struct EVPPKeyDeleterAA {
-    void operator()(EVP_PKEY* p) const { EVP_PKEY_free(p); }
+struct EVPPKeyDeleterAA
+{
+    void operator()(EVP_PKEY* p) const
+    {
+        EVP_PKEY_free(p);
+    }
 };
-struct EVPMDCtxDeleter {
-    void operator()(EVP_MD_CTX* p) const { EVP_MD_CTX_free(p); }
+struct EVPMDCtxDeleter
+{
+    void operator()(EVP_MD_CTX* p) const
+    {
+        EVP_MD_CTX_free(p);
+    }
 };
 
 using EVPPKeyPtr = std::unique_ptr<EVP_PKEY, EVPPKeyDeleterAA>;
@@ -103,8 +111,7 @@ AAPublicKey parseDG15(const std::vector<uint8_t>& dg15Raw)
 // performActiveAuth
 // ---------------------------------------------------------------------------
 
-ChipAuthResult performActiveAuth(smartcard::PCSCConnection& conn,
-                                 const std::vector<uint8_t>& dg15Raw,
+ChipAuthResult performActiveAuth(smartcard::PCSCConnection& conn, const std::vector<uint8_t>& dg15Raw,
                                  SecureMessaging& currentSM)
 {
     ChipAuthResult result;
@@ -181,8 +188,8 @@ ChipAuthResult performActiveAuth(smartcard::PCSCConnection& conn,
         return result;
     }
 
-    int verifyResult = EVP_DigestVerify(mdCtx.get(), signature.data(), signature.size(),
-                                        challenge.data(), challenge.size());
+    int verifyResult =
+        EVP_DigestVerify(mdCtx.get(), signature.data(), signature.size(), challenge.data(), challenge.size());
 
     if (verifyResult == 1) {
         result.activeAuthentication = ChipAuthResult::PASSED;

@@ -89,6 +89,8 @@ static std::vector<uint8_t> decompressCertificate(const uint8_t* data, size_t da
 
     // Skip 2-byte header (0x01, 0x00)
     uint16_t rawLen = static_cast<uint16_t>(data[2]) | (static_cast<uint16_t>(data[3]) << 8);
+    if (rawLen == 0 || rawLen > 16384)
+        return {}; // reject unreasonable decompressed sizes
     const uint8_t* compressed = data + 4;
     size_t compressedLen = dataLen - 4;
 
@@ -272,7 +274,8 @@ CertificateList readCertificates(smartcard::PCSCConnection& conn)
                     size_t sizeOffset = (cf.keyPairId == protocol::AT_KEYEXCHANGE)
                                             ? recOffset + protocol::CMAP_KX_SIZE_OFFSET
                                             : recOffset + protocol::CMAP_SIG_SIZE_OFFSET;
-                    keySizeBits = static_cast<uint16_t>(cmapData[sizeOffset] | (cmapData[sizeOffset + 1] << 8));
+                    if (sizeOffset + 1 < cmapData.size())
+                        keySizeBits = static_cast<uint16_t>(cmapData[sizeOffset] | (cmapData[sizeOffset + 1] << 8));
                     if (keySizeBits != 0)
                         keyFid = protocol::privateKeyFID(cf.contId, cf.keyPairId);
                 }
@@ -427,6 +430,8 @@ std::vector<std::pair<std::string, uint16_t>> discoverKeyReferences(smartcard::P
 
         size_t sizeOffset = (ci.keyPairId == protocol::AT_KEYEXCHANGE) ? recOffset + protocol::CMAP_KX_SIZE_OFFSET
                                                                        : recOffset + protocol::CMAP_SIG_SIZE_OFFSET;
+        if (sizeOffset + 1 >= cmapData.size())
+            continue;
         uint16_t keySizeBits = static_cast<uint16_t>(cmapData[sizeOffset] | (cmapData[sizeOffset + 1] << 8));
 
         if (keySizeBits == 0)

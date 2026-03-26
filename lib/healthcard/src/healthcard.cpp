@@ -92,6 +92,9 @@ void HealthCard::initCard()
 
 std::vector<uint8_t> HealthCard::readFile(const std::vector<uint8_t>& fileId)
 {
+    if (fileId.size() < 2)
+        throw std::runtime_error("HealthCard: fileId must be at least 2 bytes");
+
     // SELECT FILE by ID (P1=0x00, P2=0x00) — required by health card SERVSZK applet
     auto selectResp = conn->transmit(smartcard::selectByFileId(fileId[0], fileId[1]));
     if (!selectResp.isSuccess())

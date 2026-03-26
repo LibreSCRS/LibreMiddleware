@@ -11,10 +11,8 @@ namespace card_mapper {
 std::string formatHex(const std::vector<uint8_t>& bytes)
 {
     std::string result;
-    for (size_t i = 0; i < bytes.size(); ++i)
-    {
-        if (i > 0)
-        {
+    for (size_t i = 0; i < bytes.size(); ++i) {
+        if (i > 0) {
             result += ' ';
         }
         result += std::format("{:02X}", bytes[i]);
@@ -31,24 +29,21 @@ namespace {
 
 std::string formatAsciiTreeImpl(const FileNode& root, const std::string& prefix, bool isLast, int depth)
 {
-    static const std::string kBranch = "\xe2\x94\x9c\xe2\x94\x80\xe2\x94\x80 ";  // ├──
-    static const std::string kCorner = "\xe2\x94\x94\xe2\x94\x80\xe2\x94\x80 ";  // └──
-    static const std::string kPipe   = "\xe2\x94\x82   ";                          // │
-    static const std::string kSpace  = "    ";
+    static const std::string kBranch = "\xe2\x94\x9c\xe2\x94\x80\xe2\x94\x80 "; // ├──
+    static const std::string kCorner = "\xe2\x94\x94\xe2\x94\x80\xe2\x94\x80 "; // └──
+    static const std::string kPipe = "\xe2\x94\x82   ";                         // │
+    static const std::string kSpace = "    ";
 
     std::string result;
 
     // Build the current node line
     std::string connector;
     std::string childPrefix;
-    if (depth == 0)
-    {
+    if (depth == 0) {
         // Root node — no connector
         connector = "";
         childPrefix = "";
-    }
-    else
-    {
+    } else {
         connector = isLast ? kCorner : kBranch;
         childPrefix = prefix + (isLast ? kSpace : kPipe);
     }
@@ -56,34 +51,29 @@ std::string formatAsciiTreeImpl(const FileNode& root, const std::string& prefix,
     result += prefix + connector + root.name;
 
     // Add FID if nonzero
-    if (root.fidHi != 0 || root.fidLo != 0)
-    {
+    if (root.fidHi != 0 || root.fidLo != 0) {
         result += " (" + formatFid(root.fidHi, root.fidLo) + ")";
     }
 
     // Add format info
-    if (!root.format.empty())
-    {
-        result += std::string(" \xe2\x80\x94 ") + root.format;  // —
+    if (!root.format.empty()) {
+        result += std::string(" \xe2\x80\x94 ") + root.format; // —
     }
 
     // Add size estimate
-    if (!root.sizeEstimate.empty())
-    {
+    if (!root.sizeEstimate.empty()) {
         result += ", " + root.sizeEstimate;
     }
 
     // Add note
-    if (!root.note.empty())
-    {
+    if (!root.note.empty()) {
         result += " " + root.note;
     }
 
     result += "\n";
 
     // Recurse into children
-    for (size_t i = 0; i < root.children.size(); ++i)
-    {
+    for (size_t i = 0; i < root.children.size(); ++i) {
         bool last = (i == root.children.size() - 1);
         result += formatAsciiTreeImpl(root.children[i], childPrefix, last, depth + 1);
     }
@@ -101,10 +91,8 @@ std::string formatAsciiTree(const FileNode& root)
 static std::string sanitizeId(const std::string& name)
 {
     std::string id;
-    for (char c : name)
-    {
-        if (std::isalnum(static_cast<unsigned char>(c)))
-        {
+    for (char c : name) {
+        if (std::isalnum(static_cast<unsigned char>(c))) {
             id += c;
         }
     }
@@ -118,28 +106,22 @@ std::string formatMermaidTree(const FileNode& root, const std::string& parentId)
 
     // Build node label
     std::string label = root.name;
-    if (root.fidHi != 0 || root.fidLo != 0)
-    {
+    if (root.fidHi != 0 || root.fidLo != 0) {
         label += "<br/>" + formatFid(root.fidHi, root.fidLo);
     }
-    if (!root.format.empty())
-    {
-        label += std::string(" \xe2\x80\x94 ") + root.format;  // —
+    if (!root.format.empty()) {
+        label += std::string(" \xe2\x80\x94 ") + root.format; // —
     }
 
-    if (parentId.empty())
-    {
+    if (parentId.empty()) {
         // Root node: start with graph TD
         result += "graph TD\n";
         result += "  " + nodeId + "[\"" + label + "\"]\n";
-    }
-    else
-    {
+    } else {
         result += "  " + parentId + " --> " + nodeId + "[\"" + label + "\"]\n";
     }
 
-    for (const auto& child : root.children)
-    {
+    for (const auto& child : root.children) {
         result += formatMermaidTree(child, nodeId);
     }
 
@@ -159,13 +141,11 @@ std::string formatAppletDoc(const AppletInfo& applet)
     out << "|----------|-------|\n";
     out << "| Applet | " << applet.description << " |\n";
 
-    for (size_t i = 0; i < applet.aids.size(); ++i)
-    {
+    for (size_t i = 0; i < applet.aids.size(); ++i) {
         std::string aidLabel = (i < applet.aidNames.size()) ? applet.aidNames[i] : "";
         std::string prefix = (i == 0) ? "| Application AID" : "|";
         out << prefix << " | `" << formatHex(applet.aids[i]) << "`";
-        if (!aidLabel.empty())
-        {
+        if (!aidLabel.empty()) {
             out << " (" << aidLabel << ")";
         }
         out << " |\n";
@@ -189,41 +169,31 @@ std::string formatAppletDoc(const AppletInfo& applet)
     out << "```\n\n";
 
     // Data Elements
-    if (!applet.dataFiles.empty())
-    {
+    if (!applet.dataFiles.empty()) {
         out << "## Data Elements\n\n";
-        for (const auto& df : applet.dataFiles)
-        {
+        for (const auto& df : applet.dataFiles) {
             out << "### " << df.name << " (" << formatFid(df.fidHi, df.fidLo) << ")\n";
             out << "| Tag | Field Key | Name | Type | Example |\n";
             out << "|-----|-----------|------|------|----------|\n";
-            for (const auto& tag : df.tags)
-            {
-                out << "| " << tag.tag
-                    << " | " << tag.fieldKey
-                    << " | " << tag.name
-                    << " | " << tag.type
-                    << " | " << tag.example
-                    << " |\n";
+            for (const auto& tag : df.tags) {
+                out << "| " << tag.tag << " | " << tag.fieldKey << " | " << tag.name << " | " << tag.type << " | "
+                    << tag.example << " |\n";
             }
             out << "\n";
         }
     }
 
     // Read Procedure
-    if (!applet.readProcedure.empty())
-    {
+    if (!applet.readProcedure.empty()) {
         out << "## Read Procedure\n\n";
-        for (size_t i = 0; i < applet.readProcedure.size(); ++i)
-        {
+        for (size_t i = 0; i < applet.readProcedure.size(); ++i) {
             out << (i + 1) << ". " << applet.readProcedure[i] << "\n";
         }
         out << "\n";
     }
 
     // APDU Trace (verbose)
-    if (!applet.apduTrace.empty())
-    {
+    if (!applet.apduTrace.empty()) {
         out << "## APDU Trace\n\n";
         out << "```\n";
         out << applet.apduTrace;
@@ -246,13 +216,10 @@ std::string formatProfileDoc(const ProfileInfo& profile)
     out << "| Profile | " << profile.description << " |\n";
 
     // Known ATRs
-    if (!profile.knownATRs.empty())
-    {
+    if (!profile.knownATRs.empty()) {
         out << "| Known ATRs |";
-        for (size_t i = 0; i < profile.knownATRs.size(); ++i)
-        {
-            if (i > 0)
-            {
+        for (size_t i = 0; i < profile.knownATRs.size(); ++i) {
+            if (i > 0) {
                 out << ",";
             }
             out << " `" << profile.knownATRs[i] << "`";
@@ -261,13 +228,10 @@ std::string formatProfileDoc(const ProfileInfo& profile)
     }
 
     // Known Cards
-    if (!profile.knownCards.empty())
-    {
+    if (!profile.knownCards.empty()) {
         out << "| Known Cards |";
-        for (size_t i = 0; i < profile.knownCards.size(); ++i)
-        {
-            if (i > 0)
-            {
+        for (size_t i = 0; i < profile.knownCards.size(); ++i) {
+            if (i > 0) {
                 out << ",";
             }
             out << " " << profile.knownCards[i];
@@ -280,18 +244,15 @@ std::string formatProfileDoc(const ProfileInfo& profile)
     out << "## Applets Present\n\n";
     out << "| Applet | AID | Documentation |\n";
     out << "|--------|-----|---------------|\n";
-    for (const auto& ref : profile.applets)
-    {
-        out << "| " << ref.name
-            << " | `" << formatHex(ref.aid) << "`"
+    for (const auto& ref : profile.applets) {
+        out << "| " << ref.name << " | `" << formatHex(ref.aid) << "`"
             << " | [" << ref.name << "](" << ref.docPath << ")"
             << " |\n";
     }
     out << "\n";
 
     // Notes
-    if (!profile.notes.empty())
-    {
+    if (!profile.notes.empty()) {
         out << "## Card-Specific Notes\n";
         out << profile.notes << "\n";
     }

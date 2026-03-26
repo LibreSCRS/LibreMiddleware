@@ -28,8 +28,7 @@ std::vector<AidSequence> getAllKnownAidSequences()
 std::vector<FileFid> getStandardFileFids()
 {
     std::vector<FileFid> fids;
-    for (const auto& f : protocol::STANDARD_FILES)
-    {
+    for (const auto& f : protocol::STANDARD_FILES) {
         fids.push_back({f.fidHi, f.fidLo, f.name, f.isBerTlv});
     }
     return fids;
@@ -38,8 +37,7 @@ std::vector<FileFid> getStandardFileFids()
 std::vector<FileFid> getNationalExtensionFids()
 {
     std::vector<FileFid> fids;
-    for (const auto& f : protocol::NATIONAL_EXTENSION_FILES)
-    {
+    for (const auto& f : protocol::NATIONAL_EXTENSION_FILES) {
         fids.push_back({f.fidHi, f.fidLo, f.name, f.isBerTlv});
     }
     return fids;
@@ -57,12 +55,10 @@ bool tryEfDir(smartcard::PCSCConnection& conn)
 
     // SELECT EF.DIR (2F00) by FID with P1=02 P2=04, no Le
     smartcard::APDUCommand selectDir{
-        .cla = 0x00, .ins = 0xA4, .p1 = 0x02, .p2 = 0x04,
-        .data = {0x2F, 0x00}, .le = 0, .hasLe = false};
+        .cla = 0x00, .ins = 0xA4, .p1 = 0x02, .p2 = 0x04, .data = {0x2F, 0x00}, .le = 0, .hasLe = false};
     auto dirResp = conn.transmit(selectDir);
 
-    if (!dirResp.isSuccess())
-    {
+    if (!dirResp.isSuccess()) {
         // Fallback: SELECT by path (P1=08)
         dirResp = conn.transmit(smartcard::selectByPath(0x2F, 0x00));
     }
@@ -76,17 +72,13 @@ bool tryEfDir(smartcard::PCSCConnection& conn)
         return false;
 
     // Parse BER-TLV — look for application template (tag 61) with AID (tag 4F)
-    try
-    {
+    try {
         auto dirTree = smartcard::parseBER(readResp.data.data(), readResp.data.size());
-        for (const auto& tmpl : dirTree.children)
-        {
+        for (const auto& tmpl : dirTree.children) {
             if (tmpl.tag == 0x61) // Application template
             {
-                for (const auto& field : tmpl.children)
-                {
-                    if (field.tag == 0x4F && !field.value.empty())
-                    {
+                for (const auto& field : tmpl.children) {
+                    if (field.tag == 0x4F && !field.value.empty()) {
                         // Try to SELECT discovered AID
                         auto selectAid = smartcard::selectByAID(field.value);
                         auto aidResp = conn.transmit(selectAid);
@@ -96,9 +88,7 @@ bool tryEfDir(smartcard::PCSCConnection& conn)
                 }
             }
         }
-    }
-    catch (...)
-    {
+    } catch (...) {
         // EF.DIR content is not valid BER-TLV — skip
     }
 
@@ -115,22 +105,22 @@ bool tryEuStandardAid(smartcard::PCSCConnection& conn)
 // Try a multi-command AID sequence (all commands must succeed)
 bool tryAidSequence(smartcard::PCSCConnection& conn, const AidSequence& seq)
 {
-    for (size_t i = 0; i < seq.selectCommands.size(); ++i)
-    {
+    for (size_t i = 0; i < seq.selectCommands.size(); ++i) {
         bool isLast = (i == seq.selectCommands.size() - 1);
         uint8_t p2 = isLast ? seq.lastP2 : 0x00;
 
-        if (isLast && p2 == 0x0C)
-        {
+        if (isLast && p2 == 0x0C) {
             // Use raw APDU for P2=0x0C
-            smartcard::APDUCommand cmd{
-                .cla = 0x00, .ins = 0xA4, .p1 = 0x04, .p2 = 0x0C,
-                .data = seq.selectCommands[i], .le = 0, .hasLe = false};
+            smartcard::APDUCommand cmd{.cla = 0x00,
+                                       .ins = 0xA4,
+                                       .p1 = 0x04,
+                                       .p2 = 0x0C,
+                                       .data = seq.selectCommands[i],
+                                       .le = 0,
+                                       .hasLe = false};
             auto resp = conn.transmit(cmd);
             // Don't check last response — some cards return warnings
-        }
-        else
-        {
+        } else {
             auto resp = conn.transmit(smartcard::selectByAID(seq.selectCommands[i], p2));
             if (!resp.isSuccess())
                 return false;
@@ -154,8 +144,7 @@ bool detect(smartcard::PCSCConnection& conn)
     // Level 3: Known national AID sequences
     auto sequences = getAllKnownAidSequences();
     // Skip first (EU standard, already tried)
-    for (size_t i = 1; i < sequences.size(); ++i)
-    {
+    for (size_t i = 1; i < sequences.size(); ++i) {
         if (tryAidSequence(conn, sequences[i]))
             return true;
     }

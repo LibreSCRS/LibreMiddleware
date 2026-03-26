@@ -7,11 +7,14 @@
 #include <cstdint>
 #include <vector>
 
-namespace smartcard { class PCSCConnection; }
+namespace smartcard {
+class PCSCConnection;
+}
 
 namespace emrtd::crypto {
 
-struct AAPublicKey {
+struct AAPublicKey
+{
     enum Algorithm { RSA, ECDSA, UNKNOWN };
     Algorithm algorithm = UNKNOWN;
     std::vector<uint8_t> publicKeyDER;
@@ -19,7 +22,6 @@ struct AAPublicKey {
 
 AAPublicKey parseDG15(const std::vector<uint8_t>& dg15Raw);
 
-ChipAuthResult performActiveAuth(smartcard::PCSCConnection& conn,
-                                 const std::vector<uint8_t>& dg15Raw,
+ChipAuthResult performActiveAuth(smartcard::PCSCConnection& conn, const std::vector<uint8_t>& dg15Raw,
                                  SecureMessaging& currentSM);
 } // namespace emrtd::crypto

@@ -10,6 +10,7 @@
 #include <eu_vrc_protocol.h>
 #include <emrtd/emrtd_card.h>
 #include <emrtd/emrtd_types.h>
+#include <emrtd/crypto/chip_auth.h>
 
 #include <smartcard/apdu.h>
 #include <smartcard/tlv.h>
@@ -33,7 +34,8 @@ AppletInfo buildEidInfo()
     info.name = "Serbian eID";
     info.description = "Serbian electronic identity card (citizen and foreigner)";
     info.aids = {AID_SERID, AID_SERIF, AID_SERRP};
-    info.aidNames = {"SERID \xe2\x80\x94 citizen", "SERIF \xe2\x80\x94 foreigner, IF2020", "SERRP \xe2\x80\x94 foreigner, alt"};
+    info.aidNames = {"SERID \xe2\x80\x94 citizen", "SERIF \xe2\x80\x94 foreigner, IF2020",
+                     "SERRP \xe2\x80\x94 foreigner, alt"};
     info.authentication = "None required for read";
     info.pluginName = "eid";
 
@@ -52,13 +54,16 @@ AppletInfo buildEidInfo()
     df.children.push_back({"EF.PersonalData", FILE_PERSONAL_DATA_H, FILE_PERSONAL_DATA_L, "TLV", "", "", false, {}});
     df.children.push_back({"EF.VariableData", FILE_VARIABLE_DATA_H, FILE_VARIABLE_DATA_L, "TLV", "", "", false, {}});
     df.children.push_back({"EF.Portrait", FILE_PORTRAIT_H, FILE_PORTRAIT_L, "binary JPEG", "~15KB", "", false, {}});
-    df.children.push_back({"EF.UserCert1", FILE_USER_CERT1_H, FILE_USER_CERT1_L, "X.509 cert", "", "[Apollo only]", false, {}});
+    df.children.push_back(
+        {"EF.UserCert1", FILE_USER_CERT1_H, FILE_USER_CERT1_L, "X.509 cert", "", "[Apollo only]", false, {}});
     df.children.push_back({"EF.CertVX", FILE_CERT_VX_H, FILE_CERT_VX_L, "X.509 cert", "", "[Apollo only]", false, {}});
     df.children.push_back({"EF.SignVX", FILE_SIGN_VX_H, FILE_SIGN_VX_L, "signature", "", "[Apollo only]", false, {}});
     df.children.push_back({"EF.CertFX", FILE_CERT_FX_H, FILE_CERT_FX_L, "X.509 cert", "", "[Apollo only]", false, {}});
     df.children.push_back({"EF.SignFX", FILE_SIGN_FX_H, FILE_SIGN_FX_L, "signature", "", "[Apollo only]", false, {}});
-    df.children.push_back({"EF.SOD_FX", FILE_SOD_FX_H, FILE_SOD_FX_L, "PKCS#7 SignedData", "", "[Gemalto/IF2020]", false, {}});
-    df.children.push_back({"EF.SOD_VX", FILE_SOD_VX_H, FILE_SOD_VX_L, "PKCS#7 SignedData", "", "[Gemalto/IF2020]", false, {}});
+    df.children.push_back(
+        {"EF.SOD_FX", FILE_SOD_FX_H, FILE_SOD_FX_L, "PKCS#7 SignedData", "", "[Gemalto/IF2020]", false, {}});
+    df.children.push_back(
+        {"EF.SOD_VX", FILE_SOD_VX_H, FILE_SOD_VX_L, "PKCS#7 SignedData", "", "[Gemalto/IF2020]", false, {}});
 
     mf.children.push_back(df);
     info.rootNode = mf;
@@ -219,9 +224,12 @@ AppletInfo buildHealthInfo()
     df.isDir = true;
 
     df.children.push_back({"EF.Document", FILE_DOCUMENT[0], FILE_DOCUMENT[1], "TLV", "", "", false, {}});
-    df.children.push_back({"EF.FixedPersonal", FILE_FIXED_PERSONAL[0], FILE_FIXED_PERSONAL[1], "TLV", "", "", false, {}});
-    df.children.push_back({"EF.VariablePersonal", FILE_VARIABLE_PERSONAL[0], FILE_VARIABLE_PERSONAL[1], "TLV", "", "", false, {}});
-    df.children.push_back({"EF.VariableAdmin", FILE_VARIABLE_ADMIN[0], FILE_VARIABLE_ADMIN[1], "TLV", "", "", false, {}});
+    df.children.push_back(
+        {"EF.FixedPersonal", FILE_FIXED_PERSONAL[0], FILE_FIXED_PERSONAL[1], "TLV", "", "", false, {}});
+    df.children.push_back(
+        {"EF.VariablePersonal", FILE_VARIABLE_PERSONAL[0], FILE_VARIABLE_PERSONAL[1], "TLV", "", "", false, {}});
+    df.children.push_back(
+        {"EF.VariableAdmin", FILE_VARIABLE_ADMIN[0], FILE_VARIABLE_ADMIN[1], "TLV", "", "", false, {}});
 
     mf.children.push_back(df);
     info.rootNode = mf;
@@ -332,15 +340,12 @@ AppletInfo buildEuVrcInfo()
     df.name = "DF.EuVrc";
     df.isDir = true;
 
-    for (const auto& f : STANDARD_FILES)
-    {
-        df.children.push_back({f.name, f.fidHi, f.fidLo,
-                               f.isBerTlv ? "BER-TLV" : "binary", "", "", false, {}});
+    for (const auto& f : STANDARD_FILES) {
+        df.children.push_back({f.name, f.fidHi, f.fidLo, f.isBerTlv ? "BER-TLV" : "binary", "", "", false, {}});
     }
-    for (const auto& f : NATIONAL_EXTENSION_FILES)
-    {
-        df.children.push_back({f.name, f.fidHi, f.fidLo,
-                               f.isBerTlv ? "BER-TLV" : "binary", "", "[national ext]", false, {}});
+    for (const auto& f : NATIONAL_EXTENSION_FILES) {
+        df.children.push_back(
+            {f.name, f.fidHi, f.fidLo, f.isBerTlv ? "BER-TLV" : "binary", "", "[national ext]", false, {}});
     }
 
     mf.children.push_back(df);
@@ -381,31 +386,54 @@ AppletInfo buildEmrtdInfo()
     df.isDir = true;
 
     // EF.COM
-    df.children.push_back({"EF.COM", static_cast<uint8_t>(emrtd::FID_COM >> 8),
-                           static_cast<uint8_t>(emrtd::FID_COM & 0xFF), "ASN.1", "", "", false, {}});
+    df.children.push_back({"EF.COM",
+                           static_cast<uint8_t>(emrtd::FID_COM >> 8),
+                           static_cast<uint8_t>(emrtd::FID_COM & 0xFF),
+                           "ASN.1",
+                           "",
+                           "",
+                           false,
+                           {}});
 
     // Data Groups 1-16
-    for (int dg = 1; dg <= 16; ++dg)
-    {
+    for (int dg = 1; dg <= 16; ++dg) {
         uint16_t fid = emrtd::dgToFID(dg);
         std::string name = std::format("DG{}", dg);
         std::string format;
         std::string note;
 
-        switch (dg)
-        {
-        case 1: format = "MRZ data"; break;
-        case 2: format = "facial image"; break;
-        case 3: format = "fingerprints"; note = "[EAC required]"; break;
-        case 4: format = "iris"; note = "[EAC required]"; break;
-        case 7: format = "signature image"; break;
-        case 11: format = "additional personal details"; break;
-        case 12: format = "issuing information"; break;
-        default: format = "data group"; note = "[optional]"; break;
+        switch (dg) {
+        case 1:
+            format = "MRZ data";
+            break;
+        case 2:
+            format = "facial image";
+            break;
+        case 3:
+            format = "fingerprints";
+            note = "[EAC required]";
+            break;
+        case 4:
+            format = "iris";
+            note = "[EAC required]";
+            break;
+        case 7:
+            format = "signature image";
+            break;
+        case 11:
+            format = "additional personal details";
+            break;
+        case 12:
+            format = "issuing information";
+            break;
+        default:
+            format = "data group";
+            note = "[optional]";
+            break;
         }
 
-        df.children.push_back({name, static_cast<uint8_t>(fid >> 8),
-                               static_cast<uint8_t>(fid & 0xFF), format, "", note, false, {}});
+        df.children.push_back(
+            {name, static_cast<uint8_t>(fid >> 8), static_cast<uint8_t>(fid & 0xFF), format, "", note, false, {}});
     }
 
     mf.children.push_back(df);
@@ -433,11 +461,16 @@ std::vector<std::string> getKnownPlugins()
 
 AppletInfo getPluginInfo(const std::string& pluginName)
 {
-    if (pluginName == "eid") return buildEidInfo();
-    if (pluginName == "cardedge") return buildCardEdgeInfo();
-    if (pluginName == "health") return buildHealthInfo();
-    if (pluginName == "eu-vrc") return buildEuVrcInfo();
-    if (pluginName == "emrtd") return buildEmrtdInfo();
+    if (pluginName == "eid")
+        return buildEidInfo();
+    if (pluginName == "cardedge")
+        return buildCardEdgeInfo();
+    if (pluginName == "health")
+        return buildHealthInfo();
+    if (pluginName == "eu-vrc")
+        return buildEuVrcInfo();
+    if (pluginName == "emrtd")
+        return buildEmrtdInfo();
 
     throw std::runtime_error("unknown plugin: " + pluginName + " (known: eid, cardedge, health, eu-vrc, emrtd)");
 }
@@ -448,13 +481,12 @@ std::string toHex(const std::vector<uint8_t>& data, size_t maxBytes = 0)
 {
     std::ostringstream ss;
     size_t limit = (maxBytes > 0 && maxBytes < data.size()) ? maxBytes : data.size();
-    for (size_t i = 0; i < limit; ++i)
-    {
-        if (i > 0) ss << ' ';
+    for (size_t i = 0; i < limit; ++i) {
+        if (i > 0)
+            ss << ' ';
         ss << std::format("{:02X}", data[i]);
     }
-    if (maxBytes > 0 && data.size() > maxBytes)
-    {
+    if (maxBytes > 0 && data.size() > maxBytes) {
         ss << " ...";
     }
     return ss.str();
@@ -462,11 +494,13 @@ std::string toHex(const std::vector<uint8_t>& data, size_t maxBytes = 0)
 
 std::string authMethodName(emrtd::AuthMethod m)
 {
-    switch (m)
-    {
-    case emrtd::AuthMethod::BAC: return "BAC";
-    case emrtd::AuthMethod::PACE_MRZ: return "PACE-MRZ";
-    case emrtd::AuthMethod::PACE_CAN: return "PACE-CAN";
+    switch (m) {
+    case emrtd::AuthMethod::BAC:
+        return "BAC";
+    case emrtd::AuthMethod::PACE_MRZ:
+        return "PACE-MRZ";
+    case emrtd::AuthMethod::PACE_CAN:
+        return "PACE-CAN";
     }
     return "Unknown";
 }
@@ -476,8 +510,7 @@ AppletInfo mapEmrtdPlugin(smartcard::PCSCConnection& conn, bool verbose)
     auto info = buildEmrtdInfo();
 
     ApduLogger logger;
-    if (verbose)
-    {
+    if (verbose) {
         conn.setTransmitFilter([&logger, &conn](const smartcard::APDUCommand& cmd) -> smartcard::APDUResponse {
             auto resp = conn.transmitRaw(cmd);
             logger.log(cmd, resp);
@@ -491,20 +524,16 @@ AppletInfo mapEmrtdPlugin(smartcard::PCSCConnection& conn, bool verbose)
     const char* mrzExpiry = std::getenv("LIBRESCRS_TEST_MRZ_EXPIRY");
     const char* canStr = std::getenv("LIBRESCRS_TEST_CAN");
 
-    bool haveMrz = (mrzDoc && mrzDob && mrzExpiry &&
-                    std::string(mrzDoc).size() > 0 &&
-                    std::string(mrzDob).size() > 0 &&
+    bool haveMrz = (mrzDoc && mrzDob && mrzExpiry && std::string(mrzDoc).size() > 0 && std::string(mrzDob).size() > 0 &&
                     std::string(mrzExpiry).size() > 0);
     bool haveCan = (canStr && std::string(canStr).size() > 0);
 
-    if (!haveMrz && !haveCan)
-    {
+    if (!haveMrz && !haveCan) {
         std::cerr << "eMRTD: no credentials provided.\n"
                   << "  Set LIBRESCRS_TEST_MRZ_DOC, LIBRESCRS_TEST_MRZ_DOB, LIBRESCRS_TEST_MRZ_EXPIRY for passport\n"
                   << "  or LIBRESCRS_TEST_CAN for eID CAN-based PACE.\n"
                   << "  Returning static info only.\n";
-        if (verbose)
-        {
+        if (verbose) {
             conn.clearTransmitFilter();
             info.apduTrace = logger.formatTrace();
         }
@@ -513,29 +542,24 @@ AppletInfo mapEmrtdPlugin(smartcard::PCSCConnection& conn, bool verbose)
 
     // Create EMRTDCard with appropriate credentials
     std::unique_ptr<emrtd::EMRTDCard> card;
-    if (haveMrz)
-    {
+    if (haveMrz) {
         emrtd::MRZData mrz;
         mrz.documentNumber = mrzDoc;
         mrz.dateOfBirth = mrzDob;
         mrz.dateOfExpiry = mrzExpiry;
-        std::cerr << "eMRTD: using MRZ credentials (doc=" << mrz.documentNumber
-                  << ", dob=" << mrz.dateOfBirth << ", exp=" << mrz.dateOfExpiry << ")\n";
+        std::cerr << "eMRTD: using MRZ credentials (doc=" << mrz.documentNumber << ", dob=" << mrz.dateOfBirth
+                  << ", exp=" << mrz.dateOfExpiry << ")\n";
         card = std::make_unique<emrtd::EMRTDCard>(conn, mrz);
-    }
-    else
-    {
+    } else {
         std::cerr << "eMRTD: using CAN credentials\n";
         card = std::make_unique<emrtd::EMRTDCard>(conn, std::string(canStr));
     }
 
     // Authenticate
     auto authResult = card->authenticate();
-    if (!authResult.success)
-    {
+    if (!authResult.success) {
         std::cerr << "eMRTD: authentication FAILED: " << authResult.error << "\n";
-        if (verbose)
-        {
+        if (verbose) {
             conn.clearTransmitFilter();
             info.apduTrace = logger.formatTrace();
         }
@@ -548,21 +572,17 @@ AppletInfo mapEmrtdPlugin(smartcard::PCSCConnection& conn, bool verbose)
     // Read EF.COM to get DG list
     auto dgList = card->readCOM();
     std::cerr << "eMRTD: EF.COM reports " << dgList.size() << " data groups:";
-    for (int dg : dgList)
-    {
+    for (int dg : dgList) {
         std::cerr << " DG" << dg;
     }
     std::cerr << "\n";
 
     // Read EF.SOD
     auto sodData = card->readSOD();
-    if (sodData)
-    {
+    if (sodData) {
         std::cerr << "eMRTD: EF.SOD size: " << sodData->size() << " bytes\n";
         std::cerr << "eMRTD: EF.SOD first 64 bytes: " << toHex(*sodData, 64) << "\n";
-    }
-    else
-    {
+    } else {
         std::cerr << "eMRTD: EF.SOD read FAILED\n";
     }
 
@@ -571,16 +591,53 @@ AppletInfo mapEmrtdPlugin(smartcard::PCSCConnection& conn, bool verbose)
     std::cout << "=== eMRTD Scan Results ===\n\n";
     std::cout << "Authentication: " << authMethodName(authResult.method) << "\n";
     std::cout << "DGs in EF.COM: " << dgList.size() << " —";
-    for (int dg : dgList)
-    {
+    for (int dg : dgList) {
         std::cout << " DG" << dg;
     }
     std::cout << "\n";
 
-    if (sodData)
-    {
+    if (sodData) {
         std::cout << "EF.SOD: " << sodData->size() << " bytes\n";
         std::cout << "EF.SOD first 64 bytes: " << toHex(*sodData, 64) << "\n";
+    }
+
+    // --- Chip Authentication: read DG14 first, attempt CA, then read remaining DGs ---
+    std::vector<uint8_t> dg14Data;
+
+    if (std::find(dgList.begin(), dgList.end(), 14) != dgList.end()) {
+        std::cerr << "eMRTD: reading DG14 for Chip Authentication...\n";
+        auto dg14Result = card->readDataGroupSafe(14);
+        if (dg14Result.status == emrtd::DGReadStatus::OK && !dg14Result.data.empty()) {
+            dg14Data = dg14Result.data;
+            std::cerr << "eMRTD: DG14 read OK (" << dg14Data.size() << " bytes)\n";
+
+            if (card->hasSecureMessaging()) {
+                std::cerr << "eMRTD: attempting Chip Authentication...\n";
+                auto caResult = emrtd::crypto::performChipAuth(card->connection(), dg14Data, card->secureMessaging());
+
+                std::cout << "Chip Authentication: ";
+                switch (caResult.chipAuthentication) {
+                case emrtd::crypto::ChipAuthResult::PASSED:
+                    std::cout << "PASSED (protocol: " << caResult.protocol << ")\n";
+                    std::cerr << "eMRTD: CA PASSED\n";
+                    if (caResult.newSessionKeys) {
+                        card->replaceSM(*caResult.newSessionKeys, caResult.newAlgorithm);
+                        std::cerr << "eMRTD: SM replaced with CA-derived keys\n";
+                    }
+                    break;
+                case emrtd::crypto::ChipAuthResult::FAILED:
+                    std::cout << "FAILED (" << caResult.errorDetail << ")\n";
+                    std::cerr << "eMRTD: CA FAILED: " << caResult.errorDetail << "\n";
+                    break;
+                default:
+                    std::cout << "NOT SUPPORTED (" << caResult.errorDetail << ")\n";
+                    std::cerr << "eMRTD: CA NOT SUPPORTED: " << caResult.errorDetail << "\n";
+                    break;
+                }
+            }
+        } else {
+            std::cerr << "eMRTD: DG14 read failed (status=" << static_cast<int>(dg14Result.status) << ")\n";
+        }
     }
 
     // Table header
@@ -588,48 +645,46 @@ AppletInfo mapEmrtdPlugin(smartcard::PCSCConnection& conn, bool verbose)
               << std::format("{:<6} {:<6} {:>8}  {}\n", "DG", "FID", "Size", "First 32 bytes (hex)")
               << std::string(80, '-') << "\n";
 
-    // Read each DG
-    for (int dg : dgList)
-    {
+    // Print DG14 result if already read
+    if (!dg14Data.empty()) {
+        std::cout << std::format("{:<6} {:<6} {:>8}  {}\n", "DG14", std::format("{:04X}", emrtd::dgToFID(14)),
+                                 dg14Data.size(), toHex(dg14Data, 32));
+    }
+
+    // Read remaining DGs (skip DG14 — already read above)
+    for (int dg : dgList) {
+        if (dg == 14)
+            continue;
+
         uint16_t fid = emrtd::dgToFID(dg);
         std::string fidStr = std::format("{:04X}", fid);
         std::string dgName = std::format("DG{}", dg);
 
         auto result = card->readDataGroupSafe(dg);
 
-        switch (result.status)
-        {
-        case emrtd::DGReadStatus::OK:
-        {
-            std::cout << std::format("{:<6} {:<6} {:>8}  {}\n",
-                                     dgName, fidStr, result.data.size(),
+        switch (result.status) {
+        case emrtd::DGReadStatus::OK: {
+            std::cout << std::format("{:<6} {:<6} {:>8}  {}\n", dgName, fidStr, result.data.size(),
                                      toHex(result.data, 32));
-            std::cerr << "eMRTD: " << dgName << " (FID " << fidStr << "): "
-                      << result.data.size() << " bytes\n";
+            std::cerr << "eMRTD: " << dgName << " (FID " << fidStr << "): " << result.data.size() << " bytes\n";
 
-            // Print first 64 hex bytes for DG14 and DG15 (important for PA/CA/AA)
-            if (dg == 14 || dg == 15)
-            {
-                std::cerr << "eMRTD: " << dgName << " first 64 bytes: "
-                          << toHex(result.data, 64) << "\n";
-                std::cout << "  " << dgName << " first 64 bytes: "
-                          << toHex(result.data, 64) << "\n";
+            // Print first 64 hex bytes for DG15 (important for AA)
+            if (dg == 15) {
+                std::cerr << "eMRTD: " << dgName << " first 64 bytes: " << toHex(result.data, 64) << "\n";
+                std::cout << "  " << dgName << " first 64 bytes: " << toHex(result.data, 64) << "\n";
             }
             break;
         }
         case emrtd::DGReadStatus::ACCESS_DENIED:
-            std::cout << std::format("{:<6} {:<6} {:>8}  {}\n",
-                                     dgName, fidStr, 0, "[ACCESS DENIED — EAC required]");
+            std::cout << std::format("{:<6} {:<6} {:>8}  {}\n", dgName, fidStr, 0, "[ACCESS DENIED — EAC required]");
             std::cerr << "eMRTD: " << dgName << " (FID " << fidStr << "): ACCESS DENIED\n";
             break;
         case emrtd::DGReadStatus::NOT_PRESENT:
-            std::cout << std::format("{:<6} {:<6} {:>8}  {}\n",
-                                     dgName, fidStr, 0, "[NOT PRESENT]");
+            std::cout << std::format("{:<6} {:<6} {:>8}  {}\n", dgName, fidStr, 0, "[NOT PRESENT]");
             std::cerr << "eMRTD: " << dgName << " (FID " << fidStr << "): NOT PRESENT\n";
             break;
         case emrtd::DGReadStatus::ERROR:
-            std::cout << std::format("{:<6} {:<6} {:>8}  {}\n",
-                                     dgName, fidStr, 0, "[READ ERROR]");
+            std::cout << std::format("{:<6} {:<6} {:>8}  {}\n", dgName, fidStr, 0, "[READ ERROR]");
             std::cerr << "eMRTD: " << dgName << " (FID " << fidStr << "): READ ERROR\n";
             break;
         }
@@ -637,8 +692,7 @@ AppletInfo mapEmrtdPlugin(smartcard::PCSCConnection& conn, bool verbose)
 
     std::cout << std::string(80, '-') << "\n";
 
-    if (verbose)
-    {
+    if (verbose) {
         conn.clearTransmitFilter();
         info.apduTrace = logger.formatTrace();
     }
@@ -646,13 +700,12 @@ AppletInfo mapEmrtdPlugin(smartcard::PCSCConnection& conn, bool verbose)
     return info;
 }
 
-} // anonymous namespace (mapEmrtdPlugin helpers)
+} // namespace
 
 AppletInfo mapPlugin(const std::string& pluginName, smartcard::PCSCConnection& conn, bool verbose)
 {
     // eMRTD gets its own path — requires PACE/BAC authentication
-    if (pluginName == "emrtd")
-    {
+    if (pluginName == "emrtd") {
         return mapEmrtdPlugin(conn, verbose);
     }
 
@@ -660,8 +713,7 @@ AppletInfo mapPlugin(const std::string& pluginName, smartcard::PCSCConnection& c
 
     ApduLogger logger;
 
-    if (verbose)
-    {
+    if (verbose) {
         conn.setTransmitFilter([&logger, &conn](const smartcard::APDUCommand& cmd) -> smartcard::APDUResponse {
             auto resp = conn.transmitRaw(cmd);
             logger.log(cmd, resp);
@@ -670,8 +722,7 @@ AppletInfo mapPlugin(const std::string& pluginName, smartcard::PCSCConnection& c
     }
 
     // Select the application
-    if (pluginName == "eu-vrc")
-    {
+    if (pluginName == "eu-vrc") {
         // EU VRC: try EU standard AID first, then Serbian multi-command sequences
         using namespace euvrc::protocol;
 
@@ -679,15 +730,14 @@ AppletInfo mapPlugin(const std::string& pluginName, smartcard::PCSCConnection& c
 
         // Try EU standard AID first
         auto euResp = conn.transmit(smartcard::selectByAID(EU_VRC_AID));
-        if (euResp.isSuccess())
-        {
+        if (euResp.isSuccess()) {
             selected = true;
         }
 
         // Fall back to Serbian sequences
-        if (!selected)
-        {
-            struct AidSeq {
+        if (!selected) {
+            struct AidSeq
+            {
                 std::vector<uint8_t> cmd1, cmd2, cmd3;
                 uint8_t cmd3P2;
             };
@@ -697,57 +747,56 @@ AppletInfo mapPlugin(const std::string& pluginName, smartcard::PCSCConnection& c
                 {SEQ3_CMD1, SEQ3_CMD2, SEQ3_CMD3, 0x0C},
             };
 
-            for (const auto& seq : sequences)
-            {
+            for (const auto& seq : sequences) {
                 auto r1 = conn.transmit(smartcard::selectByAID(seq.cmd1));
-                if (!r1.isSuccess()) continue;
+                if (!r1.isSuccess())
+                    continue;
                 auto r2 = conn.transmit(smartcard::selectByAID(seq.cmd2));
-                if (!r2.isSuccess()) continue;
+                if (!r2.isSuccess())
+                    continue;
                 auto r3 = conn.transmit(smartcard::selectByAID(seq.cmd3, seq.cmd3P2));
-                if (r3.isSuccess()) { selected = true; break; }
+                if (r3.isSuccess()) {
+                    selected = true;
+                    break;
+                }
             }
         }
 
-        if (!selected)
-        {
+        if (!selected) {
             std::cerr << "Warning: all EU VRC AID sequences failed\n";
         }
-    }
-    else if (!info.aids.empty())
-    {
+    } else if (!info.aids.empty()) {
         auto selectCmd = smartcard::selectByAID(info.aids[0]);
         auto selectResp = conn.transmit(selectCmd);
-        if (!selectResp.isSuccess())
-        {
-            std::cerr << "Warning: SELECT AID failed with SW "
-                      << std::format("{:04X}", selectResp.statusWord()) << "\n";
+        if (!selectResp.isSuccess()) {
+            std::cerr << "Warning: SELECT AID failed with SW " << std::format("{:04X}", selectResp.statusWord())
+                      << "\n";
         }
     }
 
     // Determine plugin-specific read chunk size
     uint8_t chunkSize = 0xFF; // default 255
-    if (pluginName == "cardedge") chunkSize = cardedge::protocol::PKI_READ_CHUNK;
-    else if (pluginName == "eu-vrc") chunkSize = euvrc::protocol::READ_CHUNK_SMALL;
-    else if (pluginName == "health") chunkSize = healthcard::protocol::READ_CHUNK_SIZE;
-    else if (pluginName == "eid") chunkSize = eidcard::protocol::READ_CHUNK_SIZE;
+    if (pluginName == "cardedge")
+        chunkSize = cardedge::protocol::PKI_READ_CHUNK;
+    else if (pluginName == "eu-vrc")
+        chunkSize = euvrc::protocol::READ_CHUNK_SMALL;
+    else if (pluginName == "health")
+        chunkSize = healthcard::protocol::READ_CHUNK_SIZE;
+    else if (pluginName == "eid")
+        chunkSize = eidcard::protocol::READ_CHUNK_SIZE;
 
     // Read each data file and populate example values
-    for (auto& df : info.dataFiles)
-    {
-        if (df.fidHi == 0 && df.fidLo == 0)
-        {
+    for (auto& df : info.dataFiles) {
+        if (df.fidHi == 0 && df.fidLo == 0) {
             continue; // No FID (e.g. CardEdge structural info)
         }
 
         auto selectFile = smartcard::selectByPath(df.fidHi, df.fidLo);
         auto selectResp = conn.transmit(selectFile);
-        if (!selectResp.isSuccess())
-        {
-            if (selectResp.statusWord() == 0x6982)
-            {
+        if (!selectResp.isSuccess()) {
+            if (selectResp.statusWord() == 0x6982) {
                 // Auth required — mark tags
-                for (auto& tag : df.tags)
-                {
+                for (auto& tag : df.tags) {
                     tag.example = "[AUTH REQUIRED]";
                 }
             }
@@ -758,42 +807,33 @@ AppletInfo mapPlugin(const std::string& pluginName, smartcard::PCSCConnection& c
         std::vector<uint8_t> fileData;
         uint16_t offset = 0;
         bool reading = true;
-        while (reading)
-        {
+        while (reading) {
             auto readCmd = smartcard::readBinary(offset, chunkSize);
             auto readResp = conn.transmit(readCmd);
-            if (readResp.isSuccess() && !readResp.data.empty())
-            {
+            if (readResp.isSuccess() && !readResp.data.empty()) {
                 fileData.insert(fileData.end(), readResp.data.begin(), readResp.data.end());
                 offset += static_cast<uint16_t>(readResp.data.size());
-                if (readResp.data.size() < chunkSize)
-                {
+                if (readResp.data.size() < chunkSize) {
                     reading = false;
                 }
-            }
-            else
-            {
+            } else {
                 reading = false;
             }
         }
 
         // Try TLV parsing
-        if (!fileData.empty())
-        {
+        if (!fileData.empty()) {
             auto fields = smartcard::parseTLV(fileData.data(), fileData.size());
-            for (auto& tag : df.tags)
-            {
+            for (auto& tag : df.tags) {
                 auto value = smartcard::findString(fields, tag.tag);
-                if (!value.empty())
-                {
+                if (!value.empty()) {
                     tag.example = value;
                 }
             }
         }
     }
 
-    if (verbose)
-    {
+    if (verbose) {
         conn.clearTransmitFilter();
         info.apduTrace = logger.formatTrace();
     }

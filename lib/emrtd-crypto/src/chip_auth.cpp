@@ -7,6 +7,8 @@
 #include <smartcard/apdu.h>
 #include <smartcard/pcsc_connection.h>
 
+#include <limits>
+
 #include <openssl/bn.h>
 #include <openssl/crypto.h>
 #include <openssl/ec.h>
@@ -26,23 +28,47 @@ namespace emrtd::crypto {
 // RAII wrappers for OpenSSL types
 // ---------------------------------------------------------------------------
 
-struct BNDeleter {
-    void operator()(BIGNUM* p) const { BN_free(p); }
+struct BNDeleter
+{
+    void operator()(BIGNUM* p) const
+    {
+        BN_free(p);
+    }
 };
-struct BNCtxDeleter {
-    void operator()(BN_CTX* p) const { BN_CTX_free(p); }
+struct BNCtxDeleter
+{
+    void operator()(BN_CTX* p) const
+    {
+        BN_CTX_free(p);
+    }
 };
-struct ECGroupDeleter {
-    void operator()(EC_GROUP* p) const { EC_GROUP_free(p); }
+struct ECGroupDeleter
+{
+    void operator()(EC_GROUP* p) const
+    {
+        EC_GROUP_free(p);
+    }
 };
-struct ECPointDeleter {
-    void operator()(EC_POINT* p) const { EC_POINT_free(p); }
+struct ECPointDeleter
+{
+    void operator()(EC_POINT* p) const
+    {
+        EC_POINT_free(p);
+    }
 };
-struct EVPPKeyDeleter {
-    void operator()(EVP_PKEY* p) const { EVP_PKEY_free(p); }
+struct EVPPKeyDeleter
+{
+    void operator()(EVP_PKEY* p) const
+    {
+        EVP_PKEY_free(p);
+    }
 };
-struct EVPPKeyCtxDeleter {
-    void operator()(EVP_PKEY_CTX* p) const { EVP_PKEY_CTX_free(p); }
+struct EVPPKeyCtxDeleter
+{
+    void operator()(EVP_PKEY_CTX* p) const
+    {
+        EVP_PKEY_CTX_free(p);
+    }
 };
 
 using BNPtr = std::unique_ptr<BIGNUM, BNDeleter>;
@@ -86,6 +112,8 @@ static std::string oidBytesToString(const uint8_t* data, size_t len)
 
     unsigned long value = 0;
     for (size_t i = 1; i < len; ++i) {
+        if (value > (std::numeric_limits<unsigned long>::max() >> 7))
+            return {}; // overflow protection
         value = (value << 7) | (data[i] & 0x7F);
         if ((data[i] & 0x80) == 0) {
             result += "." + std::to_string(value);
@@ -167,15 +195,13 @@ static const std::string OID_PK_PREFIX = "0.4.0.127.0.7.2.2.1";
 
 static bool isCAOID(const std::string& oid)
 {
-    return oid.size() > OID_CA_PREFIX.size() &&
-           oid.substr(0, OID_CA_PREFIX.size()) == OID_CA_PREFIX &&
+    return oid.size() > OID_CA_PREFIX.size() && oid.substr(0, OID_CA_PREFIX.size()) == OID_CA_PREFIX &&
            oid[OID_CA_PREFIX.size()] == '.';
 }
 
 static bool isPKOID(const std::string& oid)
 {
-    return oid.size() > OID_PK_PREFIX.size() &&
-           oid.substr(0, OID_PK_PREFIX.size()) == OID_PK_PREFIX &&
+    return oid.size() > OID_PK_PREFIX.size() && oid.substr(0, OID_PK_PREFIX.size()) == OID_PK_PREFIX &&
            oid[OID_PK_PREFIX.size()] == '.';
 }
 
@@ -183,8 +209,7 @@ static bool isPKOID(const std::string& oid)
 // parseDG14 — parse SecurityInfos from DG14 (tag 0x6E, SET OF SecurityInfo)
 // ---------------------------------------------------------------------------
 
-bool parseDG14(const std::vector<uint8_t>& dg14Raw,
-               std::vector<ChipAuthInfo>& caInfos,
+bool parseDG14(const std::vector<uint8_t>& dg14Raw, std::vector<ChipAuthInfo>& caInfos,
                std::vector<ChipAuthPublicKey>& caKeys)
 {
     if (dg14Raw.size() < 4)
@@ -289,9 +314,8 @@ bool parseDG14(const std::vector<uint8_t>& dg14Raw,
                 // SubjectPublicKeyInfo DER = tag + length bytes + content
                 size_t spkiTotalLen = 1 + spkiLenBytes + spkiLen;
                 if (spkiStart + spkiTotalLen <= seqEnd) {
-                    key.publicKey.assign(
-                        dg14Raw.begin() + static_cast<ptrdiff_t>(spkiStart),
-                        dg14Raw.begin() + static_cast<ptrdiff_t>(spkiStart + spkiTotalLen));
+                    key.publicKey.assign(dg14Raw.begin() + static_cast<ptrdiff_t>(spkiStart),
+                                         dg14Raw.begin() + static_cast<ptrdiff_t>(spkiStart + spkiTotalLen));
                 }
                 pos = spkiStart + spkiTotalLen;
             }
@@ -322,7 +346,8 @@ bool parseDG14(const std::vector<uint8_t>& dg14Raw,
 // Helper: determine CA algorithm properties from OID
 // ---------------------------------------------------------------------------
 
-struct CAAlgoInfo {
+struct CAAlgoInfo
+{
     SMAlgorithm smAlgo = SMAlgorithm::AES;
     size_t keyLen = 16;
     bool isDES3 = false;
@@ -331,24 +356,38 @@ struct CAAlgoInfo {
 static CAAlgoInfo caAlgoFromOID(const std::string& oid)
 {
     CAAlgoInfo info;
-    // id-CA-ECDH-3DES-CBC-CBC: 0.4.0.127.0.7.2.2.3.1.x
-    if (oid.find(OID_CA_PREFIX + ".1") != std::string::npos) {
+
+    // BSI TR-03110 Part 3, Table A.1:
+    //   id-CA         = 0.4.0.127.0.7.2.2.3
+    //   id-CA-DH      = {id-CA}.1          id-CA-ECDH      = {id-CA}.2
+    //   ...DH-3DES    = {id-CA-DH}.1       ...ECDH-3DES    = {id-CA-ECDH}.1
+    //   ...DH-AES-128 = {id-CA-DH}.2       ...ECDH-AES-128 = {id-CA-ECDH}.2
+    //   ...DH-AES-192 = {id-CA-DH}.3       ...ECDH-AES-192 = {id-CA-ECDH}.3
+    //   ...DH-AES-256 = {id-CA-DH}.4       ...ECDH-AES-256 = {id-CA-ECDH}.4
+    //
+    // The last OID component selects the cipher suite regardless of DH/ECDH.
+
+    auto lastDot = oid.rfind('.');
+    if (lastDot == std::string::npos || lastDot + 1 >= oid.size())
+        return info;
+
+    auto variant = oid.substr(lastDot + 1);
+
+    if (variant == "1") {
+        // 3DES-CBC-CBC
         info.smAlgo = SMAlgorithm::DES3;
         info.keyLen = 16;
         info.isDES3 = true;
-    }
-    // id-CA-ECDH-AES-CBC-CMAC-128: 0.4.0.127.0.7.2.2.3.2.1
-    else if (oid.ends_with(".2.1")) {
+    } else if (variant == "2") {
+        // AES-CBC-CMAC-128
         info.smAlgo = SMAlgorithm::AES;
         info.keyLen = 16;
-    }
-    // id-CA-ECDH-AES-CBC-CMAC-192: 0.4.0.127.0.7.2.2.3.2.2
-    else if (oid.ends_with(".2.2")) {
+    } else if (variant == "3") {
+        // AES-CBC-CMAC-192
         info.smAlgo = SMAlgorithm::AES;
         info.keyLen = 24;
-    }
-    // id-CA-ECDH-AES-CBC-CMAC-256: 0.4.0.127.0.7.2.2.3.2.3
-    else if (oid.ends_with(".2.3")) {
+    } else if (variant == "4") {
+        // AES-CBC-CMAC-256
         info.smAlgo = SMAlgorithm::AES;
         info.keyLen = 32;
     }
@@ -359,7 +398,8 @@ static CAAlgoInfo caAlgoFromOID(const std::string& oid)
 // Helper: parse SubjectPublicKeyInfo to extract EC group and public point
 // ---------------------------------------------------------------------------
 
-struct ParsedSPKI {
+struct ParsedSPKI
+{
     EVPPKeyPtr pkey;
     int nid = 0;
 };
@@ -416,8 +456,7 @@ static std::vector<uint8_t> extractECPoint(EVP_PKEY* pkey)
 // performChipAuth
 // ---------------------------------------------------------------------------
 
-ChipAuthResult performChipAuth(smartcard::PCSCConnection& conn,
-                               const std::vector<uint8_t>& dg14Raw,
+ChipAuthResult performChipAuth(smartcard::PCSCConnection& conn, const std::vector<uint8_t>& dg14Raw,
                                SecureMessaging& currentSM)
 {
     ChipAuthResult result;
@@ -530,6 +569,7 @@ ChipAuthResult performChipAuth(smartcard::PCSCConnection& conn,
 
     smartcard::APDUCommand mseCmd{0x00, 0x22, 0x41, 0xA4, mseData, 0, false};
     auto mseApdu = currentSM.protect(mseCmd.toBytes());
+
     auto mseResp = conn.transmitRaw(mseApdu.data(), static_cast<unsigned long>(mseApdu.size()));
 
     // Reconstruct response for SM unprotect
@@ -595,9 +635,11 @@ ChipAuthResult performChipAuth(smartcard::PCSCConnection& conn,
     sharedSecret.resize(secretLen);
 
     // Scope guard to cleanse key material
-    struct KeyCleaner {
+    struct KeyCleaner
+    {
         std::vector<uint8_t>& secret;
-        ~KeyCleaner() {
+        ~KeyCleaner()
+        {
             if (!secret.empty())
                 OPENSSL_cleanse(secret.data(), secret.size());
         }
@@ -606,6 +648,20 @@ ChipAuthResult performChipAuth(smartcard::PCSCConnection& conn,
     // --- Derive new session keys using KDF ---
     auto kEnc = detail::kdf(sharedSecret, 1, algoInfo.isDES3, algoInfo.keyLen);
     auto kMAC = detail::kdf(sharedSecret, 2, algoInfo.isDES3, algoInfo.keyLen);
+
+    // Scope guard: cleanse derived keys on all exit paths
+    struct DerivedKeyCleaner
+    {
+        std::vector<uint8_t>& enc;
+        std::vector<uint8_t>& mac;
+        ~DerivedKeyCleaner()
+        {
+            if (!enc.empty())
+                OPENSSL_cleanse(enc.data(), enc.size());
+            if (!mac.empty())
+                OPENSSL_cleanse(mac.data(), mac.size());
+        }
+    } derivedCleaner{kEnc, kMAC};
 
     // --- Build new SessionKeys ---
     SessionKeys newKeys;

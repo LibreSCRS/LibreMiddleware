@@ -27,23 +27,20 @@ std::string generateProtocolHeader(const std::string& name, const ScanResult& sc
     out << "\n";
 
     // ATR
-    if (!scanResult.atr.empty())
-    {
+    if (!scanResult.atr.empty()) {
         out << "// ATR: " << formatHex(scanResult.atr) << "\n";
         out << "\n";
     }
 
     // AIDs from detected applets
     int aidIndex = 0;
-    for (const auto& applet : scanResult.detectedApplets)
-    {
-        for (const auto& aid : applet.aids)
-        {
+    for (const auto& applet : scanResult.detectedApplets) {
+        for (const auto& aid : applet.aids) {
             out << "// AID\n";
             out << std::format("constexpr std::array<uint8_t, {}> kAID_{} = {{", aid.size(), aidIndex);
-            for (size_t i = 0; i < aid.size(); ++i)
-            {
-                if (i > 0) out << ", ";
+            for (size_t i = 0; i < aid.size(); ++i) {
+                if (i > 0)
+                    out << ", ";
                 out << std::format("0x{:02X}", aid[i]);
             }
             out << "};\n";
@@ -53,34 +50,28 @@ std::string generateProtocolHeader(const std::string& name, const ScanResult& sc
     }
 
     // File IDs from detected applets
-    for (const auto& applet : scanResult.detectedApplets)
-    {
-        for (const auto& df : applet.dataFiles)
-        {
-            if (df.fidHi == 0 && df.fidLo == 0) continue;
+    for (const auto& applet : scanResult.detectedApplets) {
+        for (const auto& df : applet.dataFiles) {
+            if (df.fidHi == 0 && df.fidLo == 0)
+                continue;
 
             out << "// File ID: " << formatFid(df.fidHi, df.fidLo) << "\n";
-            out << std::format("constexpr uint8_t kFile_{:02X}{:02X}_H = 0x{:02X};\n",
-                              df.fidHi, df.fidLo, df.fidHi);
-            out << std::format("constexpr uint8_t kFile_{:02X}{:02X}_L = 0x{:02X};\n",
-                              df.fidHi, df.fidLo, df.fidLo);
+            out << std::format("constexpr uint8_t kFile_{:02X}{:02X}_H = 0x{:02X};\n", df.fidHi, df.fidLo, df.fidHi);
+            out << std::format("constexpr uint8_t kFile_{:02X}{:02X}_L = 0x{:02X};\n", df.fidHi, df.fidLo, df.fidLo);
             out << "\n";
         }
     }
 
     // TLV Tags from detected applets
-    for (const auto& applet : scanResult.detectedApplets)
-    {
-        for (const auto& df : applet.dataFiles)
-        {
-            if (df.tags.empty()) continue;
+    for (const auto& applet : scanResult.detectedApplets) {
+        for (const auto& df : applet.dataFiles) {
+            if (df.tags.empty())
+                continue;
 
             out << "// TLV Tags (16-bit LE) \xe2\x80\x94 rename based on card spec\n";
-            for (const auto& tag : df.tags)
-            {
+            for (const auto& tag : df.tags) {
                 out << std::format("constexpr uint16_t kTag_{:04X} = 0x{:04X};", tag.tag, tag.tag);
-                if (!tag.type.empty())
-                {
+                if (!tag.type.empty()) {
                     out << "  // " << tag.type;
                 }
                 out << "\n";
@@ -90,31 +81,28 @@ std::string generateProtocolHeader(const std::string& name, const ScanResult& sc
     }
 
     // File tree info from rootNode children
-    for (const auto& applet : scanResult.detectedApplets)
-    {
+    for (const auto& applet : scanResult.detectedApplets) {
         const auto& root = applet.rootNode;
-        for (const auto& df : root.children)
-        {
-            for (const auto& ef : df.children)
-            {
-                if (ef.fidHi == 0 && ef.fidLo == 0) continue;
+        for (const auto& df : root.children) {
+            for (const auto& ef : df.children) {
+                if (ef.fidHi == 0 && ef.fidLo == 0)
+                    continue;
 
                 // Only emit if not already emitted as a data file
                 bool alreadyEmitted = false;
-                for (const auto& dataFile : applet.dataFiles)
-                {
-                    if (dataFile.fidHi == ef.fidHi && dataFile.fidLo == ef.fidLo)
-                    {
+                for (const auto& dataFile : applet.dataFiles) {
+                    if (dataFile.fidHi == ef.fidHi && dataFile.fidLo == ef.fidLo) {
                         alreadyEmitted = true;
                         break;
                     }
                 }
-                if (alreadyEmitted) continue;
+                if (alreadyEmitted)
+                    continue;
 
-                out << std::format("constexpr uint8_t kFile_{:02X}{:02X}_H = 0x{:02X};\n",
-                                  ef.fidHi, ef.fidLo, ef.fidHi);
-                out << std::format("constexpr uint8_t kFile_{:02X}{:02X}_L = 0x{:02X};\n",
-                                  ef.fidHi, ef.fidLo, ef.fidLo);
+                out << std::format("constexpr uint8_t kFile_{:02X}{:02X}_H = 0x{:02X};\n", ef.fidHi, ef.fidLo,
+                                   ef.fidHi);
+                out << std::format("constexpr uint8_t kFile_{:02X}{:02X}_L = 0x{:02X};\n", ef.fidHi, ef.fidLo,
+                                   ef.fidLo);
                 out << "\n";
             }
         }

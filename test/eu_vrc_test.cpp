@@ -48,8 +48,7 @@ TEST(EuVrcDetection, EuStandardAidIsSingleSelect)
 TEST(EuVrcDetection, SerbianSequencesAreMultiStep)
 {
     auto sequences = euvrc::getAllKnownAidSequences();
-    for (size_t i = 1; i < sequences.size(); ++i)
-    {
+    for (size_t i = 1; i < sequences.size(); ++i) {
         EXPECT_EQ(sequences[i].selectCommands.size(), 3u)
             << "Sequence " << sequences[i].name << " should have 3 commands";
     }

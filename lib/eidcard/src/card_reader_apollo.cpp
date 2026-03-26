@@ -32,6 +32,10 @@ std::vector<uint8_t> CardReaderApollo::readFile(smartcard::PCSCConnection& conn,
     // File data length from header bytes 4-5 in LITTLE-ENDIAN format
     uint32_t dataLength = static_cast<uint32_t>(headerResp.data[4]) | (static_cast<uint32_t>(headerResp.data[5]) << 8);
 
+    constexpr uint32_t maxFileSize = 64 * 1024; // 64KB reasonable max for eID files
+    if (dataLength > maxFileSize)
+        throw std::runtime_error("Apollo: file size exceeds maximum (" + std::to_string(dataLength) + " bytes)");
+
     if (dataLength == 0) {
         return {};
     }
@@ -80,6 +84,10 @@ std::vector<uint8_t> CardReaderApollo::readFileRaw(smartcard::PCSCConnection& co
     }
 
     uint32_t dataLength = static_cast<uint32_t>(headerResp.data[4]) | (static_cast<uint32_t>(headerResp.data[5]) << 8);
+
+    constexpr uint32_t maxFileSize = 64 * 1024;
+    if (dataLength > maxFileSize)
+        throw std::runtime_error("Apollo: file size exceeds maximum (" + std::to_string(dataLength) + " bytes)");
 
     // Build result starting with the 6-byte header
     uint32_t totalLength = 6 + dataLength;

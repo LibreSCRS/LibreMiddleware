@@ -270,8 +270,9 @@ VerificationResult CardVerifier::verifyGemaltoCardCert(smartcard::PCSCConnection
         return VerificationResult::Invalid;
     }
 
-    // Verify PKCS#7 signature integrity
-    int rc = PKCS7_verify(pkcs7, nullptr, nullptr, nullptr, nullptr, PKCS7_NOVERIFY | PKCS7_NOSIGS);
+    // Verify PKCS#7 signature — PKCS7_NOVERIFY skips cert chain validation
+    // (chain is verified separately below), but the CMS signature itself IS checked.
+    int rc = PKCS7_verify(pkcs7, nullptr, nullptr, nullptr, nullptr, PKCS7_NOVERIFY);
     if (rc != 1) {
 #ifndef NDEBUG
         std::cerr << "[CardVerifier] Gemalto card cert: PKCS#7 structure invalid" << std::endl;

@@ -118,10 +118,10 @@ TEST(SecureMessagingTest, ProtectContainsDO97WhenLePresent)
     EXPECT_TRUE(found97);
 }
 
-TEST(SecureMessagingTest, ProtectCase1AlwaysContainsDO97)
+TEST(SecureMessagingTest, ProtectCase1OmitsDO97)
 {
     // Case 1: no data, no Le (e.g. VERIFY PIN status: 00 20 00 80)
-    // DO'97 must be present with value 0x00 so the card accepts the SM structure.
+    // ICAO 9303 Part 11: DO'97 only present when original command includes Le.
     SessionKeys keys;
     keys.encKey = std::vector<uint8_t>(16, 0x01);
     keys.macKey = std::vector<uint8_t>(16, 0x02);
@@ -133,22 +133,20 @@ TEST(SecureMessagingTest, ProtectCase1AlwaysContainsDO97)
     auto protectedCmd = sm.protect(cmd);
 
     bool found97 = false;
-    uint8_t do97Value = 0xFF;
     for (size_t i = 5; i + 2 < protectedCmd.size(); ++i) {
         if (protectedCmd[i] == 0x97 && protectedCmd[i + 1] == 0x01) {
             found97 = true;
-            do97Value = protectedCmd[i + 2];
             break;
         }
     }
-    EXPECT_TRUE(found97) << "DO'97 must be present for Case 1 commands";
-    EXPECT_EQ(do97Value, 0x00) << "DO'97 value should be 0x00 (accept up to 256 bytes)";
+    EXPECT_FALSE(found97) << "DO'97 must NOT be present for Case 1 commands (no Le)";
 }
 
-TEST(SecureMessagingTest, ProtectCase3AlwaysContainsDO97)
+TEST(SecureMessagingTest, ProtectCase3OmitsDO97)
 {
     // Case 3: Lc + data, no Le (e.g. SELECT with P2=0x0C: 00 A4 04 0C 07 ...)
-    // DO'97 must be present even though the original command has no Le.
+    // ICAO 9303 Part 11: DO'97 only present when original command includes Le.
+    // Some cards (e.g. Georgian eID) reject DO'97 on Case 3 MSE:Set AT with SW=6700.
     SessionKeys keys;
     keys.encKey = std::vector<uint8_t>(16, 0x01);
     keys.macKey = std::vector<uint8_t>(16, 0x02);
@@ -160,16 +158,13 @@ TEST(SecureMessagingTest, ProtectCase3AlwaysContainsDO97)
     auto protectedCmd = sm.protect(cmd);
 
     bool found97 = false;
-    uint8_t do97Value = 0xFF;
     for (size_t i = 5; i + 2 < protectedCmd.size(); ++i) {
         if (protectedCmd[i] == 0x97 && protectedCmd[i + 1] == 0x01) {
             found97 = true;
-            do97Value = protectedCmd[i + 2];
             break;
         }
     }
-    EXPECT_TRUE(found97) << "DO'97 must be present for Case 3 commands";
-    EXPECT_EQ(do97Value, 0x00) << "DO'97 value should be 0x00 when original has no Le";
+    EXPECT_FALSE(found97) << "DO'97 must NOT be present for Case 3 commands (no Le)";
 }
 
 TEST(SecureMessagingTest, UnprotectInvalidMACReturnsNullopt)

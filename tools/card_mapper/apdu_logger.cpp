@@ -18,8 +18,7 @@ std::string ApduLogger::formatTrace() const
 {
     std::ostringstream out;
 
-    for (const auto& entry : entries)
-    {
+    for (const auto& entry : entries) {
         auto cmdBytes = entry.command.toBytes();
         out << ">> " << formatHex(cmdBytes) << "\n";
 

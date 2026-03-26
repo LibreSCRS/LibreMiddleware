@@ -55,6 +55,8 @@ void AutoReader::onMonitorEvent(const smartcard::MonitorEvent& event)
                     return;
                 }
 
+                // Note: onData/onError callbacks are invoked from this background thread.
+                // Callers must ensure thread safety (e.g., use QMetaObject::invokeMethod).
                 for (auto* plugin : candidates) {
                     try {
                         auto data = plugin->readCard(conn);

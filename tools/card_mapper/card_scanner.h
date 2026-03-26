@@ -19,10 +19,10 @@ namespace card_mapper {
 // have longer sequences.
 struct AidProbe
 {
-    std::string name;                                // human-readable identifier
-    std::vector<uint8_t> canonicalAid;               // the AID used for profile matching
+    std::string name;                                 // human-readable identifier
+    std::vector<uint8_t> canonicalAid;                // the AID used for profile matching
     std::vector<std::vector<uint8_t>> selectSequence; // SELECT commands in order
-    uint8_t lastP2 = 0x00;                           // P2 for the last SELECT (some use 0x0C)
+    uint8_t lastP2 = 0x00;                            // P2 for the last SELECT (some use 0x0C)
 };
 
 struct ScanResult

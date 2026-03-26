@@ -160,13 +160,14 @@ TEST(PACECryptoTest, KdfAes256WithRawCAN)
 
 TEST(PACECryptoTest, KdfAes128)
 {
-    // Same seed, AES-128 (16-byte output) — truncated SHA-256
+    // Same seed, AES-128 (16-byte output) — truncated SHA-1
+    // KDF uses matched security level: SHA-1 for keyLen <= 20 bytes.
     std::vector<uint8_t> seed = {0x35, 0x34, 0x35, 0x32, 0x39, 0x31};
     auto key = detail::kdf(seed, 3, /*des3=*/false, /*keyLen=*/16);
     ASSERT_EQ(key.size(), 16u);
-    // First 16 bytes of SHA-256("545291" || 00 00 00 03)
-    EXPECT_EQ(key[0], 0x8A);
-    EXPECT_EQ(key[15], 0x13);
+    // First 16 bytes of SHA-1("545291" || 00 00 00 03)
+    EXPECT_EQ(key[0], 0xC2);
+    EXPECT_EQ(key[15], 0xE3);
 }
 
 TEST(PACECryptoTest, KdfDes3WithAdjustedParity)

@@ -8,17 +8,12 @@
 
 namespace plugin {
 
-struct SecurityCheck {
+struct SecurityCheck
+{
     std::string checkId;
     std::string category;
 
-    enum Status {
-        PASSED,
-        FAILED,
-        NOT_PERFORMED,
-        NOT_SUPPORTED,
-        SKIPPED
-    };
+    enum Status { PASSED, FAILED, NOT_PERFORMED, NOT_SUPPORTED, SKIPPED };
     Status status = NOT_PERFORMED;
 
     std::string label;
@@ -26,7 +21,8 @@ struct SecurityCheck {
     std::string errorDetail;
 };
 
-struct SecurityStatus {
+struct SecurityStatus
+{
     std::vector<SecurityCheck> checks;
 
     SecurityCheck::Status overallIntegrity = SecurityCheck::NOT_PERFORMED;
@@ -39,21 +35,30 @@ struct SecurityStatus {
 inline std::string statusToString(SecurityCheck::Status s)
 {
     switch (s) {
-    case SecurityCheck::PASSED: return "PASSED";
-    case SecurityCheck::FAILED: return "FAILED";
-    case SecurityCheck::NOT_PERFORMED: return "NOT_PERFORMED";
-    case SecurityCheck::NOT_SUPPORTED: return "NOT_SUPPORTED";
-    case SecurityCheck::SKIPPED: return "SKIPPED";
+    case SecurityCheck::PASSED:
+        return "PASSED";
+    case SecurityCheck::FAILED:
+        return "FAILED";
+    case SecurityCheck::NOT_PERFORMED:
+        return "NOT_PERFORMED";
+    case SecurityCheck::NOT_SUPPORTED:
+        return "NOT_SUPPORTED";
+    case SecurityCheck::SKIPPED:
+        return "SKIPPED";
     }
     return "UNKNOWN";
 }
 
 inline SecurityCheck::Status statusFromString(const std::string& s)
 {
-    if (s == "PASSED") return SecurityCheck::PASSED;
-    if (s == "FAILED") return SecurityCheck::FAILED;
-    if (s == "NOT_SUPPORTED") return SecurityCheck::NOT_SUPPORTED;
-    if (s == "SKIPPED") return SecurityCheck::SKIPPED;
+    if (s == "PASSED")
+        return SecurityCheck::PASSED;
+    if (s == "FAILED")
+        return SecurityCheck::FAILED;
+    if (s == "NOT_SUPPORTED")
+        return SecurityCheck::NOT_SUPPORTED;
+    if (s == "SKIPPED")
+        return SecurityCheck::SKIPPED;
     return SecurityCheck::NOT_PERFORMED;
 }
 
@@ -64,13 +69,12 @@ inline void SecurityStatus::computeOverall()
     overallGenuineness = SecurityCheck::NOT_PERFORMED;
 
     for (const auto& check : checks) {
-        auto& target = (check.category == "data_integrity") ? overallIntegrity
-                     : (check.category == "data_authenticity") ? overallAuthenticity
-                     : (check.category == "chip_genuineness") ? overallGenuineness
-                     : overallIntegrity;
+        auto& target = (check.category == "data_integrity")      ? overallIntegrity
+                       : (check.category == "data_authenticity") ? overallAuthenticity
+                       : (check.category == "chip_genuineness")  ? overallGenuineness
+                                                                 : overallIntegrity;
 
-        if (check.category != "data_integrity" &&
-            check.category != "data_authenticity" &&
+        if (check.category != "data_integrity" && check.category != "data_authenticity" &&
             check.category != "chip_genuineness")
             continue;
 
@@ -78,8 +82,7 @@ inline void SecurityStatus::computeOverall()
             target = SecurityCheck::FAILED;
         else if (check.status == SecurityCheck::PASSED && target != SecurityCheck::FAILED)
             target = SecurityCheck::PASSED;
-        else if (check.status == SecurityCheck::NOT_SUPPORTED &&
-                 target == SecurityCheck::NOT_PERFORMED)
+        else if (check.status == SecurityCheck::NOT_SUPPORTED && target == SecurityCheck::NOT_PERFORMED)
             target = SecurityCheck::NOT_SUPPORTED;
     }
 }

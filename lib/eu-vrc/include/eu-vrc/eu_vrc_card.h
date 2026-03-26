@@ -11,7 +11,7 @@
 namespace smartcard {
 class PCSCConnection;
 struct BERField;
-}
+} // namespace smartcard
 
 namespace euvrc {
 

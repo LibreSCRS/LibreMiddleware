@@ -49,7 +49,10 @@ std::vector<uint8_t> kdf(const std::vector<uint8_t>& seed, uint32_t counter, boo
     input.push_back(static_cast<uint8_t>((counter >> 8) & 0xFF));
     input.push_back(static_cast<uint8_t>(counter & 0xFF));
 
-    const char* algo = des3 ? "SHA1" : "SHA256";
+    // Hash selection uses "matched security level" approach:
+    // SHA-1 (20 bytes) for key lengths up to 20 bytes (3DES, AES-128),
+    // SHA-256 (32 bytes) for larger keys (AES-192, AES-256).
+    const char* algo = (keyLen <= 20) ? "SHA1" : "SHA256";
     unsigned char digest[64] = {};
     size_t digestLen = 0;
 
@@ -62,6 +65,7 @@ std::vector<uint8_t> kdf(const std::vector<uint8_t>& seed, uint32_t counter, boo
     }
 
     std::vector<uint8_t> key(digest, digest + keyLen);
+    OPENSSL_cleanse(digest, sizeof(digest));
 
     if (des3) {
         adjustParity(key);
@@ -323,6 +327,8 @@ std::vector<uint8_t> retailMAC(const std::vector<uint8_t>& key, const std::vecto
     DES_cblock iv3 = {};
     DES_ncbc_encrypt(decrypted.data(), mac.data(), 8, &ksA, &iv3, DES_ENCRYPT);
 
+    OPENSSL_cleanse(&ksA, sizeof(ksA));
+    OPENSSL_cleanse(&ksB, sizeof(ksB));
     return mac;
 }
 

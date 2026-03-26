@@ -50,7 +50,8 @@ std::string formatMRZDate(const std::string& yymmdd, bool isExpiry = false)
     return dd + "." + mm + "." + std::to_string(fullYear);
 }
 
-struct SessionContext {
+struct SessionContext
+{
     std::optional<std::variant<emrtd::MRZData, std::string>> credentials;
     std::string pendingDocNum, pendingDob, pendingExpiry;
     std::unique_ptr<emrtd::EMRTDCard> emrTDCard;
@@ -108,21 +109,7 @@ public:
 
         std::unique_lock lock(mtx);
 
-        // Check for pending credentials (set via setCredentials() which has no conn param)
         auto& session = sessions[&conn];
-        if (pendingCredentials) {
-            session.credentials = *pendingCredentials;
-            pendingCredentials.reset();
-        }
-        if (!session.pendingDocNum.empty() && session.pendingDocNum != pendingDocNum) {
-            // sync pending MRZ fields
-        }
-        // Copy global pending MRZ into session if not yet set
-        if (!session.credentials) {
-            if (!pendingDocNum.empty() && !pendingDob.empty() && !pendingExpiry.empty()) {
-                session.credentials = emrtd::MRZData{pendingDocNum, pendingDob, pendingExpiry};
-            }
-        }
 
         if (!session.credentials) {
             // Phase 1: no credentials — return auth_required (no streaming needed)
@@ -178,11 +165,12 @@ public:
         } else if (auto* can = std::get_if<std::string>(&creds)) {
             localCard = std::make_unique<emrtd::EMRTDCard>(conn, *can);
         }
+        emrtd::EMRTDCard* card = nullptr;
         {
             std::lock_guard lk(mtx);
             sessions[&conn].emrTDCard = std::move(localCard);
+            card = sessions[&conn].emrTDCard.get();
         }
-        emrtd::EMRTDCard* card = sessions[&conn].emrTDCard.get();
 
         auto authResult = card->authenticate();
         if (!authResult.success) {
@@ -496,11 +484,10 @@ public:
                 check.checkId = "pa_sod_signature";
                 check.category = "data_authenticity";
                 check.label = "SOD Digital Signature";
-                check.status = (paResult.sodSignature == emrtd::crypto::PAResult::PASSED)
-                                   ? plugin::SecurityCheck::PASSED
-                               : (paResult.sodSignature == emrtd::crypto::PAResult::FAILED)
-                                   ? plugin::SecurityCheck::FAILED
-                                   : plugin::SecurityCheck::NOT_PERFORMED;
+                check.status =
+                    (paResult.sodSignature == emrtd::crypto::PAResult::PASSED)   ? plugin::SecurityCheck::PASSED
+                    : (paResult.sodSignature == emrtd::crypto::PAResult::FAILED) ? plugin::SecurityCheck::FAILED
+                                                                                 : plugin::SecurityCheck::NOT_PERFORMED;
                 if (!paResult.dscSubject.empty())
                     check.detail = "DSC: " + paResult.dscSubject;
                 secStatus.checks.push_back(std::move(check));
@@ -512,8 +499,7 @@ public:
                 check.checkId = "pa_csca_chain";
                 check.category = "data_authenticity";
                 check.label = "CSCA Certificate Chain";
-                check.status = (paResult.cscaChain == emrtd::crypto::PAResult::PASSED)
-                                   ? plugin::SecurityCheck::PASSED
+                check.status = (paResult.cscaChain == emrtd::crypto::PAResult::PASSED) ? plugin::SecurityCheck::PASSED
                                : (paResult.cscaChain == emrtd::crypto::PAResult::FAILED)
                                    ? plugin::SecurityCheck::FAILED
                                    : plugin::SecurityCheck::NOT_PERFORMED;
@@ -528,9 +514,9 @@ public:
                 check.checkId = "pa_dg" + std::to_string(dgNum) + "_hash";
                 check.category = "data_integrity";
                 check.label = "DG" + std::to_string(dgNum) + " Hash (" + paResult.hashAlgorithm + ")";
-                check.status = (status == emrtd::crypto::PAResult::PASSED)    ? plugin::SecurityCheck::PASSED
-                               : (status == emrtd::crypto::PAResult::FAILED)  ? plugin::SecurityCheck::FAILED
-                                                                              : plugin::SecurityCheck::NOT_PERFORMED;
+                check.status = (status == emrtd::crypto::PAResult::PASSED)   ? plugin::SecurityCheck::PASSED
+                               : (status == emrtd::crypto::PAResult::FAILED) ? plugin::SecurityCheck::FAILED
+                                                                             : plugin::SecurityCheck::NOT_PERFORMED;
                 secStatus.checks.push_back(std::move(check));
             }
 
@@ -551,13 +537,12 @@ public:
             check.checkId = "chip_auth";
             check.category = "chip_genuineness";
             check.label = "Chip Authentication";
-            check.status = (caResult.chipAuthentication == emrtd::crypto::ChipAuthResult::PASSED)
-                               ? plugin::SecurityCheck::PASSED
-                           : (caResult.chipAuthentication == emrtd::crypto::ChipAuthResult::FAILED)
-                               ? plugin::SecurityCheck::FAILED
-                           : (caResult.chipAuthentication == emrtd::crypto::ChipAuthResult::NOT_SUPPORTED)
-                               ? plugin::SecurityCheck::NOT_SUPPORTED
-                               : plugin::SecurityCheck::NOT_PERFORMED;
+            check.status =
+                (caResult.chipAuthentication == emrtd::crypto::ChipAuthResult::PASSED)   ? plugin::SecurityCheck::PASSED
+                : (caResult.chipAuthentication == emrtd::crypto::ChipAuthResult::FAILED) ? plugin::SecurityCheck::FAILED
+                : (caResult.chipAuthentication == emrtd::crypto::ChipAuthResult::NOT_SUPPORTED)
+                    ? plugin::SecurityCheck::NOT_SUPPORTED
+                    : plugin::SecurityCheck::NOT_PERFORMED;
             if (!caResult.protocol.empty())
                 check.detail = caResult.protocol;
             secStatus.checks.push_back(std::move(check));
@@ -619,41 +604,44 @@ public:
         return data;
     }
 
-    void setCredentials(const std::string& key, const std::string& value) const override
+    void clearCredentials(smartcard::PCSCConnection& conn) const override
     {
         std::lock_guard lock(mtx);
+        sessions.erase(&conn);
+    }
+
+    void setCredentials(smartcard::PCSCConnection& conn, const std::string& key,
+                        const std::string& value) const override
+    {
+        std::lock_guard lock(mtx);
+        auto& session = sessions[&conn];
         if (key == "can") {
-            pendingCredentials = std::string(value);
-            pendingDocNum.clear();
-            pendingDob.clear();
-            pendingExpiry.clear();
+            session.credentials = std::string(value);
+            session.pendingDocNum.clear();
+            session.pendingDob.clear();
+            session.pendingExpiry.clear();
         } else if (key == "mrz_doc_number") {
-            pendingDocNum = value;
-            trySetMRZ();
+            session.pendingDocNum = value;
+            trySetMRZ(session);
         } else if (key == "mrz_dob") {
-            pendingDob = value;
-            trySetMRZ();
+            session.pendingDob = value;
+            trySetMRZ(session);
         } else if (key == "mrz_expiry") {
-            pendingExpiry = value;
-            trySetMRZ();
+            session.pendingExpiry = value;
+            trySetMRZ(session);
         }
     }
 
 private:
-    void trySetMRZ() const
+    static void trySetMRZ(SessionContext& session)
     {
-        if (!pendingDocNum.empty() && !pendingDob.empty() && !pendingExpiry.empty()) {
-            pendingCredentials = emrtd::MRZData{pendingDocNum, pendingDob, pendingExpiry};
+        if (!session.pendingDocNum.empty() && !session.pendingDob.empty() && !session.pendingExpiry.empty()) {
+            session.credentials = emrtd::MRZData{session.pendingDocNum, session.pendingDob, session.pendingExpiry};
         }
     }
 
     mutable std::mutex mtx;
     mutable std::map<smartcard::PCSCConnection*, SessionContext> sessions;
-    // Keep pendingCredentials global since setCredentials() has no conn param
-    mutable std::optional<std::variant<emrtd::MRZData, std::string>> pendingCredentials;
-    mutable std::string pendingDocNum;
-    mutable std::string pendingDob;
-    mutable std::string pendingExpiry;
 };
 
 } // namespace

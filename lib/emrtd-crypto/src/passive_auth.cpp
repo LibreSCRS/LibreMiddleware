@@ -429,8 +429,7 @@ PAResult::Status verifyCSCAChain(const std::vector<uint8_t>& sodRaw, const std::
     return PAResult::FAILED;
 }
 
-PAResult performPassiveAuth(const std::vector<uint8_t>& sodRaw,
-                            const std::map<int, std::vector<uint8_t>>& dgRawData,
+PAResult performPassiveAuth(const std::vector<uint8_t>& sodRaw, const std::map<int, std::vector<uint8_t>>& dgRawData,
                             const std::string& trustStorePath)
 {
     PAResult result;
