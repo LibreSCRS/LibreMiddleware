@@ -51,6 +51,7 @@ std::vector<AidProbe> getAllKnownProbes()
         {"PKCS15", cardedge::protocol::AID_PKCS15, {cardedge::protocol::AID_PKCS15}},
         {"SERVSZK", healthcard::protocol::AID_SERVSZK, {healthcard::protocol::AID_SERVSZK}},
         {"eMRTD", emrtdAid, {emrtdAid}},
+        {"PIV", {0xA0,0x00,0x00,0x03,0x08,0x00,0x00,0x10}, {{0xA0,0x00,0x00,0x03,0x08,0x00,0x00,0x10}}},
 
         // EU VRC: EU standard AID (single SELECT)
         {"EU-EVR-01", EU_VRC_AID, {EU_VRC_AID}},
@@ -83,7 +84,7 @@ std::optional<uint8_t> tryProbe(smartcard::PCSCConnection& conn, const AidProbe&
         uint8_t preferredP2 = isLast ? probe.lastP2 : 0x00;
 
         auto resp = conn.transmit(smartcard::selectByAID(probe.selectSequence[i], preferredP2));
-        if (resp.isSuccess() || resp.sw1 == 0x62) {
+        if (resp.isSuccess() || resp.sw1 == 0x62 || resp.sw1 == 0x61) {
             if (isLast)
                 workingP2 = preferredP2;
             continue;
@@ -98,7 +99,7 @@ std::optional<uint8_t> tryProbe(smartcard::PCSCConnection& conn, const AidProbe&
             if (altP2 == preferredP2)
                 continue;
             resp = conn.transmit(smartcard::selectByAID(probe.selectSequence[i], altP2));
-            if (resp.isSuccess() || resp.sw1 == 0x62) {
+            if (resp.isSuccess() || resp.sw1 == 0x62 || resp.sw1 == 0x61) {
                 if (isLast)
                     workingP2 = altP2;
                 found = true;
@@ -144,7 +145,7 @@ smartcard::APDUResponse selectFile(smartcard::PCSCConnection& conn, uint8_t hi, 
     // Fast path: try cached variant first (last variant that returned success)
     if (cachedVariant >= 0) {
         auto resp = trySelectVariant(conn, hi, lo, cachedVariant);
-        if (resp.isSuccess() || resp.sw1 == 0x62)
+        if (resp.isSuccess() || resp.sw1 == 0x62 || resp.sw1 == 0x61)
             return resp;
     }
 
@@ -156,7 +157,7 @@ smartcard::APDUResponse selectFile(smartcard::PCSCConnection& conn, uint8_t hi, 
             continue;
 
         auto resp = trySelectVariant(conn, hi, lo, v);
-        if (resp.isSuccess() || resp.sw1 == 0x62) {
+        if (resp.isSuccess() || resp.sw1 == 0x62 || resp.sw1 == 0x61) {
             cachedVariant = v;
             return resp;
         }
@@ -498,6 +499,94 @@ bool probePKCS15(smartcard::PCSCConnection& conn, FileNode& df, AppletInfo& appl
     }
 }
 
+// PIV GET DATA probe: read known PIV data objects via INS=CB
+bool probePIV(smartcard::PCSCConnection& conn, FileNode& df, AppletInfo& applet)
+{
+    struct PIVObject {
+        const char* name;
+        std::vector<uint8_t> tag;
+        const char* description;
+    };
+
+    std::vector<PIVObject> objects = {
+        {"CCC",              {0x5F, 0xC1, 0x07}, "Card Capability Container"},
+        {"CHUID",            {0x5F, 0xC1, 0x02}, "Cardholder Unique Identifier"},
+        {"Discovery",        {0x7E},             "Discovery Object"},
+        {"Printed Info",     {0x5F, 0xC1, 0x09}, "Printed Information"},
+        {"Key History",      {0x5F, 0xC1, 0x0C}, "Key History Object"},
+        {"PIV Auth Cert",    {0x5F, 0xC1, 0x05}, "X.509 Certificate for PIV Authentication"},
+        {"Digital Sig Cert", {0x5F, 0xC1, 0x0A}, "X.509 Certificate for Digital Signature"},
+        {"Key Mgmt Cert",   {0x5F, 0xC1, 0x0B}, "X.509 Certificate for Key Management"},
+        {"Card Auth Cert",  {0x5F, 0xC1, 0x01}, "X.509 Certificate for Card Authentication"},
+    };
+
+    // Add retired certificate containers (5FC10D - 5FC120)
+    for (uint8_t i = 0; i < 20; ++i) {
+        objects.push_back({
+            nullptr,
+            {0x5F, 0xC1, static_cast<uint8_t>(0x0D + i)},
+            "Retired X.509 Certificate"
+        });
+    }
+
+    applet.description = "PIV (NIST SP 800-73)";
+    bool foundAny = false;
+
+    for (size_t idx = 0; idx < objects.size(); ++idx) {
+        auto& obj = objects[idx];
+
+        std::string name;
+        if (obj.name) {
+            name = obj.name;
+        } else {
+            name = std::format("Retired Cert {}", idx - 8);
+        }
+
+        // Build GET DATA APDU: 00 CB 3F FF Lc [5C len tag...] 00
+        std::vector<uint8_t> data = {0x5C, static_cast<uint8_t>(obj.tag.size())};
+        data.insert(data.end(), obj.tag.begin(), obj.tag.end());
+
+        smartcard::APDUCommand cmd{
+            .cla = 0x00, .ins = 0xCB, .p1 = 0x3F, .p2 = 0xFF,
+            .data = data, .le = 0, .hasLe = true
+        };
+        auto resp = conn.transmit(cmd);
+
+        FileNode efNode;
+        efNode.name = std::format("{} ({})", name, formatHex(obj.tag));
+
+        if (resp.isSuccess() || resp.sw1 == 0x62 || resp.sw1 == 0x61) {
+            foundAny = true;
+            efNode.sizeEstimate = std::format("~{}B", resp.data.size());
+
+            DataFile dataFile;
+            dataFile.name = name;
+
+            if (!resp.data.empty()) {
+                try {
+                    auto root = smartcard::parseBER(resp.data.data(), resp.data.size());
+                    efNode.format = "BER-TLV";
+                    collectBERTags(root, dataFile, "");
+                } catch (const std::exception&) {
+                    efNode.format = "binary";
+                }
+            }
+
+            if (!dataFile.tags.empty()) {
+                applet.dataFiles.push_back(dataFile);
+            }
+
+            df.children.push_back(efNode);
+        } else if (resp.statusWord() == 0x6982) {
+            efNode.format = "[AUTH REQUIRED]";
+            df.children.push_back(efNode);
+            foundAny = true;
+        }
+    }
+
+    return foundAny;
+}
+
 // Walk FID ranges for an applet: SELECT + READ each file, build file tree
 void walkFidRanges(smartcard::PCSCConnection& conn, FileNode& df, AppletInfo& applet)
 {
@@ -556,6 +645,8 @@ std::string matchProfile(const std::vector<std::vector<uint8_t>>& detectedAIDs)
                       aidContained(detectedAIDs, euvrc::protocol::SEQ3_CMD1);
     bool hasEmrtd =
         aidContained(detectedAIDs, std::vector<uint8_t>(emrtd::EMRTD_AID, emrtd::EMRTD_AID + emrtd::EMRTD_AID_LEN));
+    const std::vector<uint8_t> pivAid = {0xA0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10};
+    bool hasPIV = aidContained(detectedAIDs, pivAid);
 
     if (hasEid && hasCardEdge)
         return "rs-eid-profile";
@@ -571,6 +662,8 @@ std::string matchProfile(const std::vector<std::vector<uint8_t>>& detectedAIDs)
         return "emrtd-pkcs15-profile";
     if (hasEmrtd)
         return "passport-icao-profile";
+    if (hasPIV)
+        return "piv-profile";
     if (hasCardEdge)
         return "cardedge-only-profile";
 
@@ -661,9 +754,14 @@ ScanResult discoverCard(smartcard::PCSCConnection& conn, bool verbose)
             df.name = std::format("DF ({})", formatHex(aid));
             df.isDir = true;
 
+            const std::vector<uint8_t> pivAid = {0xA0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10};
+
             // Smart path for PKCS#15: parse ODF→CDF/PrKDF/AODF structure
             if (aid == cardedge::protocol::AID_PKCS15) {
                 if (!probePKCS15(conn, df, applet))
+                    walkFidRanges(conn, df, applet);
+            } else if (aid == pivAid) {
+                if (!probePIV(conn, df, applet))
                     walkFidRanges(conn, df, applet);
             } else {
                 walkFidRanges(conn, df, applet);
@@ -703,9 +801,16 @@ ScanResult discoverCard(smartcard::PCSCConnection& conn, bool verbose)
             df.name = std::format("DF ({})", probe.name);
             df.isDir = true;
 
+            const std::vector<uint8_t> pivAid = {0xA0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10};
+
             // Smart path for PKCS#15: parse ODF→CDF/PrKDF/AODF structure
             if (probe.canonicalAid == cardedge::protocol::AID_PKCS15) {
                 if (!probePKCS15(conn, df, applet)) {
+                    tryProbe(conn, probe);
+                    walkFidRanges(conn, df, applet);
+                }
+            } else if (probe.canonicalAid == pivAid) {
+                if (!probePIV(conn, df, applet)) {
                     tryProbe(conn, probe);
                     walkFidRanges(conn, df, applet);
                 }

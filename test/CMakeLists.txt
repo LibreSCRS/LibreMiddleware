@@ -94,6 +94,11 @@ if(TARGET rescrs-plugin-cardedge)
     target_compile_definitions(PluginIntegrationTests PRIVATE HAS_CARDEDGE_PLUGIN=1)
 endif()
 
+if(TARGET rescrs-plugin-piv)
+    add_dependencies(PluginIntegrationTests rescrs-plugin-piv)
+    target_compile_definitions(PluginIntegrationTests PRIVATE HAS_PIV_PLUGIN=1)
+endif()
+
 if(BUILD_OPENSC_PLUGIN AND OPENSC_FOUND)
     add_dependencies(PluginIntegrationTests rescrs-plugin-opensc)
     target_compile_definitions(PluginIntegrationTests PRIVATE HAS_OPENSC_PLUGIN=1)
@@ -173,6 +178,16 @@ gtest_discover_tests(EMRTDTests)
 add_executable(PKCS15ParserTests pkcs15_parser_test.cpp)
 target_link_libraries(PKCS15ParserTests GTest::gtest_main PKCS15)
 gtest_discover_tests(PKCS15ParserTests)
+
+# PIV parser tests
+add_executable(PIVParserTests piv_parser_test.cpp)
+target_link_libraries(PIVParserTests GTest::gtest_main PIV)
+gtest_discover_tests(PIVParserTests)
+
+# PIV hardware tests (skipped when no PIV card present)
+add_executable(PIVHardwareTests piv_hardware_test.cpp)
+target_link_libraries(PIVHardwareTests GTest::gtest_main PIV SmartCard)
+gtest_discover_tests(PIVHardwareTests)
 
 # CardEdge plugin tests
 add_executable(CardEdgePluginTests cardedge_plugin_test.cpp)

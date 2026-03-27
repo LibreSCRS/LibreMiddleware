@@ -45,8 +45,8 @@ TEST(CardScanner, AllKnownProbesIncludesAll)
 {
     auto probes = getAllKnownProbes();
 
-    // Should have: 3 eID + 1 CardEdge + 1 Health + 1 eMRTD + 1 EU VRC + 3 Serbian = 10
-    EXPECT_EQ(probes.size(), 10u);
+    // Should have: 3 eID + 1 CardEdge + 1 Health + 1 eMRTD + 1 PIV + 1 EU VRC + 3 Serbian = 11
+    EXPECT_EQ(probes.size(), 11u);
 
     // Check eID SERID is present
     auto hasSerid = std::any_of(probes.begin(), probes.end(),
@@ -63,6 +63,12 @@ TEST(CardScanner, AllKnownProbesIncludesAll)
     auto hasEmrtd =
         std::any_of(probes.begin(), probes.end(), [&](const AidProbe& p) { return p.canonicalAid == emrtdAid; });
     EXPECT_TRUE(hasEmrtd);
+
+    // Check PIV is present
+    auto pivAid = std::vector<uint8_t>{0xA0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10};
+    auto hasPiv =
+        std::any_of(probes.begin(), probes.end(), [&](const AidProbe& p) { return p.canonicalAid == pivAid; });
+    EXPECT_TRUE(hasPiv);
 }
 
 TEST(CardScanner, SimpleProbesHaveSingleSelectCommand)
@@ -146,6 +152,24 @@ TEST(CardScanner, MatchProfileEmrtdPkcs15)
         cardedge::protocol::AID_PKCS15,
     };
     EXPECT_EQ(matchProfile(detected), "emrtd-pkcs15-profile");
+}
+
+TEST(CardScanner, MatchProfilePiv)
+{
+    std::vector<std::vector<uint8_t>> detected = {
+        {0xA0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10},
+    };
+    EXPECT_EQ(matchProfile(detected), "piv-profile");
+}
+
+TEST(CardScanner, MatchProfilePivWithPkcs15)
+{
+    // PIV + PKCS#15 on same card — PIV should win
+    std::vector<std::vector<uint8_t>> detected = {
+        {0xA0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10},
+        cardedge::protocol::AID_PKCS15,
+    };
+    EXPECT_EQ(matchProfile(detected), "piv-profile");
 }
 
 TEST(CardScanner, MatchProfileCardEdgeOnly)

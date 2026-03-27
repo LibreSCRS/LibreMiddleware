@@ -34,6 +34,9 @@ TEST(PluginIntegrationTest, LoadAllPlugins)
 #ifdef HAS_OPENSC_PLUGIN
     expectedCount++;
 #endif
+#ifdef HAS_PIV_PLUGIN
+    expectedCount++;
+#endif
     EXPECT_EQ(loaded, expectedCount);
     EXPECT_EQ(registry.plugins().size(), expectedCount);
     for (auto* p : registry.plugins()) {

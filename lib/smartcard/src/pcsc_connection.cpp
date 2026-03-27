@@ -137,18 +137,24 @@ APDUResponse PCSCConnection::transmit(const APDUCommand& cmd)
     auto cmdBytes = cmd.toBytes();
     auto response = transmitRaw(cmdBytes.data(), static_cast<DWORD>(cmdBytes.size()));
 
-    // T=0 protocol handling
-    if (activeProtocol == SCARD_PROTOCOL_T0) {
-        // SW1=61: response data available — send GET RESPONSE to retrieve it
-        if (response.sw1 == 0x61) {
-            uint8_t getResponse[] = {0x00, 0xC0, 0x00, 0x00, response.sw2};
-            response = transmitRaw(getResponse, sizeof(getResponse));
+    // SW1=61: response data available — send GET RESPONSE to retrieve it.
+    // This is an ISO 7816-4 mechanism used by both T=0 and T=1 protocols.
+    // Loop to handle chained responses (card may send multiple 61xx).
+    while (response.sw1 == 0x61) {
+        auto accumulated = std::move(response.data);
+        uint8_t le = response.sw2; // 0x00 = 256 bytes
+        uint8_t getResponse[] = {0x00, 0xC0, 0x00, 0x00, le};
+        response = transmitRaw(getResponse, sizeof(getResponse));
+        if (!accumulated.empty()) {
+            accumulated.insert(accumulated.end(), response.data.begin(), response.data.end());
+            response.data = std::move(accumulated);
         }
-        // SW1=6C: wrong Le — resend command with corrected Le
-        else if (response.sw1 == 0x6C) {
-            cmdBytes.back() = response.sw2; // replace Le with correct value
-            response = transmitRaw(cmdBytes.data(), static_cast<DWORD>(cmdBytes.size()));
-        }
+    }
+
+    // SW1=6C: wrong Le — resend command with corrected Le (T=0 specific)
+    if (activeProtocol == SCARD_PROTOCOL_T0 && response.sw1 == 0x6C) {
+        cmdBytes.back() = response.sw2;
+        response = transmitRaw(cmdBytes.data(), static_cast<DWORD>(cmdBytes.size()));
     }
 
     return response;
