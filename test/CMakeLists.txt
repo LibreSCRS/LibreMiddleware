@@ -76,7 +76,6 @@ add_dependencies(PluginIntegrationTests
     rescrs-plugin-rs-eid
     rescrs-plugin-eu-vrc
     rescrs-plugin-rs-health
-    rescrs-plugin-rs-pks
 )
 
 if(TARGET rescrs-plugin-emrtd)
@@ -141,10 +140,6 @@ target_link_libraries(pkcs15_after_pace_probe SmartCard EMRTDCrypto EMRTD)
 add_executable(aodf_probe aodf_probe.cpp)
 target_link_libraries(aodf_probe SmartCard)
 
-# CLI tool for manual PIN testing with a real PKS Chamber of Commerce card
-add_executable(pks_pin_test_cli pks_pin_test_cli.cpp)
-target_link_libraries(pks_pin_test_cli PKSCard CardEdge)
-
 # FCI format probe: tests if CardEdge SELECT FILE returns ISO TLV-wrapped FCI
 add_executable(fci_format_probe fci_format_probe.cpp)
 target_link_libraries(fci_format_probe SmartCard)
@@ -195,13 +190,6 @@ target_link_libraries(CardEdgePluginTests GTest::gtest_main CardPlugin)
 target_compile_definitions(CardEdgePluginTests PRIVATE PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}")
 add_dependencies(CardEdgePluginTests rescrs-plugin-cardedge)
 gtest_discover_tests(CardEdgePluginTests)
-
-# PKS plugin tests
-add_executable(PksPluginTests pks_plugin_test.cpp)
-target_link_libraries(PksPluginTests GTest::gtest_main CardPlugin)
-target_compile_definitions(PksPluginTests PRIVATE PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}")
-add_dependencies(PksPluginTests rescrs-plugin-rs-pks)
-gtest_discover_tests(PksPluginTests)
 
 # PKCS#15 plugin tests
 add_executable(PKCS15PluginTests pkcs15_plugin_test.cpp)

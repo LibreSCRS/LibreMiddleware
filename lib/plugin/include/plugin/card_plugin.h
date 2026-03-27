@@ -20,7 +20,7 @@ class PCSCConnection;
 
 namespace plugin {
 
-constexpr uint32_t LIBRESCRS_PLUGIN_ABI_VERSION = 3;
+constexpr uint32_t LIBRESCRS_PLUGIN_ABI_VERSION = 4;
 
 struct PINResult
 {
@@ -130,6 +130,10 @@ public:
     }
     virtual std::vector<std::pair<std::string, uint16_t>>
     discoverKeyReferences(smartcard::PCSCConnection& /*conn*/) const
+    {
+        return {};
+    }
+    virtual CardFieldGroup readTokenInfo(smartcard::PCSCConnection& /*conn*/) const
     {
         return {};
     }

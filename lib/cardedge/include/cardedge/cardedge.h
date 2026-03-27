@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 #include "cardedgetypes.h"
+#include <pkcs15/pkcs15_types.h>
 
 namespace smartcard {
 class PCSCConnection;
@@ -38,5 +39,10 @@ std::vector<uint8_t> signData(smartcard::PCSCConnection& conn, uint16_t keyRefer
 // Discover private key FIDs by parsing the cmapfile on the PKI applet.
 // Returns { label, keyFID } pairs in certificate order.
 std::vector<std::pair<std::string, uint16_t>> discoverKeyReferences(smartcard::PCSCConnection& conn);
+
+// Read EF(TokenInfo) from the PKCS#15 structure on the card.
+// Returns parsed TokenInfo (label, serial, manufacturer).
+// Assumes PKI applet is already selected (called within PkiAppletGuard scope).
+pkcs15::TokenInfo readTokenInfo(smartcard::PCSCConnection& conn);
 
 } // namespace cardedge

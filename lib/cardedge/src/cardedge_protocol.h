@@ -24,6 +24,9 @@ constexpr uint8_t PIN_MAX_RETRIES = 3;
 // Root directory FID inside the PKI applet filesystem.
 constexpr uint16_t PKI_ROOT_DIR_FID = 0x7000;
 
+// PKCS#15 EF(TokenInfo) FID — contains token label, serial, manufacturer.
+constexpr uint16_t PKI_TOKEN_INFO_FID = 0x5032;
+
 // Maximum bytes per READ BINARY on the CardEdge applet (internal buffer limit).
 constexpr uint8_t PKI_READ_CHUNK = 0x80;
 

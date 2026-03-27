@@ -95,6 +95,20 @@ public:
         return true;
     }
 
+    plugin::CardFieldGroup readTokenInfo(smartcard::PCSCConnection& conn) const override
+    {
+        pkcs15::PKCS15Card card(conn);
+        auto info = card.readTokenInfo();
+
+        plugin::CardFieldGroup group;
+        group.groupKey = "token";
+        group.groupLabel = "Token Info";
+        plugin::addTextField(group, "label", "Label", info.label);
+        plugin::addTextField(group, "serial_number", "Serial Number", info.serialNumber);
+        plugin::addTextField(group, "manufacturer", "Manufacturer", info.manufacturer);
+        return group;
+    }
+
     std::vector<plugin::CertificateData> readCertificates(smartcard::PCSCConnection& conn) const override
     {
         pkcs15::PKCS15Card card(conn);

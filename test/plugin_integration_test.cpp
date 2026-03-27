@@ -21,7 +21,7 @@ TEST(PluginIntegrationTest, LoadAllPlugins)
 {
     CardPluginRegistry registry;
     auto loaded = registry.loadPluginsFromDirectory(pluginDir());
-    size_t expectedCount = 4;
+    size_t expectedCount = 3;
 #ifdef HAS_EMRTD_PLUGIN
     expectedCount++;
 #endif
@@ -83,16 +83,6 @@ TEST(PluginIntegrationTest, ApolloEidATRMatchesRsEid)
     auto* p = registry.findPluginForCard(apolloATR);
     ASSERT_NE(p, nullptr);
     EXPECT_EQ(p->pluginId(), "rs-eid");
-}
-
-TEST(PluginIntegrationTest, PksATRMatchesRsPks)
-{
-    CardPluginRegistry registry;
-    registry.loadPluginsFromDirectory(pluginDir());
-    std::vector<uint8_t> pksATR = {0x3B, 0xDE, 0x97, 0x00};
-    auto* p = registry.findPluginForCard(pksATR);
-    ASSERT_NE(p, nullptr);
-    EXPECT_EQ(p->pluginId(), "rs-pks");
 }
 
 TEST(PluginIntegrationTest, UnknownATRReturnsNull)

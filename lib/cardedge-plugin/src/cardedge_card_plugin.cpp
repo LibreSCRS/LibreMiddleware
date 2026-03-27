@@ -74,6 +74,26 @@ public:
         return true;
     }
 
+    plugin::CardFieldGroup readTokenInfo(smartcard::PCSCConnection& conn) const override
+    {
+        cardedge::PkiAppletGuard guard(conn);
+        auto info = cardedge::readTokenInfo(conn);
+
+        // Fallback for cards without EF(TokenInfo)
+        if (info.label.empty())
+            info.label = "CardEdge PKI Token";
+        if (info.manufacturer.empty())
+            info.manufacturer = "CardEdge";
+
+        plugin::CardFieldGroup group;
+        group.groupKey = "token";
+        group.groupLabel = "Token Info";
+        plugin::addTextField(group, "label", "Label", info.label);
+        plugin::addTextField(group, "serial_number", "Serial Number", info.serialNumber);
+        plugin::addTextField(group, "manufacturer", "Manufacturer", info.manufacturer);
+        return group;
+    }
+
     std::vector<plugin::CertificateData> readCertificates(smartcard::PCSCConnection& conn) const override
     {
         cardedge::PkiAppletGuard guard(conn);

@@ -132,6 +132,20 @@ bool PKCS15Card::probeViaEfDir()
     return false;
 }
 
+TokenInfo PKCS15Card::readTokenInfo()
+{
+    smartcard::CardTransaction tx(conn);
+
+    if (!selectApplet())
+        throw std::runtime_error("Failed to select PKCS#15 applet");
+
+    const uint8_t tokenInfoFid[] = {0x50, 0x32};
+    if (!selectByPath(tokenInfoFid))
+        throw std::runtime_error("Failed to select EF.TokenInfo");
+    auto tokenData = readSelectedFile();
+    return parseTokenInfo(tokenData);
+}
+
 PKCS15Profile PKCS15Card::readProfile()
 {
     smartcard::CardTransaction tx(conn);

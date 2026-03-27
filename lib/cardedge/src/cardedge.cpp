@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstring>
 #include <openssl/crypto.h>
+#include <pkcs15/pkcs15_parser.h>
 #include <zlib.h>
 
 namespace cardedge {
@@ -442,6 +443,14 @@ std::vector<std::pair<std::string, uint16_t>> discoverKeyReferences(smartcard::P
     }
 
     return result;
+}
+
+pkcs15::TokenInfo readTokenInfo(smartcard::PCSCConnection& conn)
+{
+    auto data = readPkiFile(conn, protocol::PKI_TOKEN_INFO_FID);
+    if (data.empty())
+        return {};
+    return pkcs15::parseTokenInfo(data);
 }
 
 } // namespace cardedge
