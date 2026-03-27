@@ -8,7 +8,7 @@
 #include <string>
 #include <utility>
 #include <vector>
-#include "eidcard/eidtypes.h"
+#include "rseid/eidtypes.h"
 
 namespace smartcard {
 class PCSCConnection;

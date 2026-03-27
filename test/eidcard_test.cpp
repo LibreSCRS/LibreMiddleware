@@ -3,7 +3,7 @@
 
 #include <gtest/gtest.h>
 #include <cardedge/cardedgetypes.h>
-#include <eidcard/eidtypes.h>
+#include <rseid/eidtypes.h>
 
 using namespace eidcard;
 using cardedge::CertificateData;

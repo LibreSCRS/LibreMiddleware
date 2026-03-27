@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
-#include "healthcard/healthtypes.h"
+#include "rshealth/healthtypes.h"
 
 // Type-level sanity tests — no card required
 

@@ -9,7 +9,7 @@ Middleware libraries for reading Serbian smart cards (eID, vehicle registration,
 - **SmartCard** — PC/SC connection management, APDU command/response, TLV and BER-TLV encoding/decoding
 - **EIdCard** — Serbian electronic ID card protocol (Apollo 2008, Gemalto 2014+, Foreigner IF2020)
 - **VehicleCard** — Serbian vehicle registration document protocol
-- **HealthCard** — Serbian health insurance card (RFZO/RFZO LBO)
+- **RsHealth** — Serbian health insurance card (RFZO/RFZO LBO)
 - **PKSCard** — PKS qualified signature card (Chamber of Commerce of Serbia)
 - **CardEdge** — Generic CardEdge/PKCS#15 applet operations (PIN management, signing, certificate discovery)
 - **PKCS#11** — PKCS#11 module (`librescrs-pkcs11`) for use with Firefox, NSS, OpenSC tools, and other PKCS#11-aware applications
@@ -79,7 +79,7 @@ FetchContent_Declare(LibreMiddleware
 FetchContent_MakeAvailable(LibreMiddleware)
 
 # Link against the libraries you need
-target_link_libraries(YourTarget PRIVATE EIdCard VehicleCard HealthCard PKSCard)
+target_link_libraries(YourTarget PRIVATE RsEId VehicleCard RsHealth PKSCard)
 
 # Access certificates directory
 message(STATUS "Certificates: ${LIBREMIDDLEWARE_CERTIFICATES_DIR}")

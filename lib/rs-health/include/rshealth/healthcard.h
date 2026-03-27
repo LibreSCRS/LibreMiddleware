@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "healthcard/healthtypes.h"
+#include "rshealth/healthtypes.h"
 #include <memory>
 #include <string>
 #include <vector>

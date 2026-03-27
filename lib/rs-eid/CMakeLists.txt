@@ -4,7 +4,7 @@
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_library(EIdCard STATIC
+add_library(RsEId STATIC
     src/eidcard.cpp
     src/card_reader_gemalto.cpp
     src/card_reader_apollo.cpp
@@ -16,14 +16,14 @@ add_library(EIdCard STATIC
     src/card_reader_apollo.h
     src/card_verifier.h
     # Public headers
-    include/eidcard/eidcard.h
-    include/eidcard/eidtypes.h
+    include/rseid/eidcard.h
+    include/rseid/eidtypes.h
 )
 
-target_include_directories(EIdCard PUBLIC
+target_include_directories(RsEId PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-set_target_properties(EIdCard PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_target_properties(RsEId PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-target_link_libraries(EIdCard PUBLIC SmartCard OpenSSL_Crypto z)
+target_link_libraries(RsEId PUBLIC SmartCard OpenSSL_Crypto z)

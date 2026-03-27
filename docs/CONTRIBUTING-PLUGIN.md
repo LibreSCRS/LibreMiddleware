@@ -170,9 +170,9 @@ Study these existing implementations as references:
 
 | Plugin | Card Type | Key Files |
 |--------|-----------|-----------|
-| `eid` | Serbian eID | `lib/eidcard/`, `lib/eidcard-plugin/` |
+| `rs-eid` | Serbian eID | `lib/rs-eid/`, `lib/rs-eid-plugin/` |
 | `eu-vrc` | EU Vehicle Registration (Directive 2003/127/EC) | `lib/eu-vrc/`, `lib/eu-vrc-plugin/` |
-| `health` | Serbian health card | `lib/healthcard/`, `lib/healthcard-plugin/` |
+| `rs-health` | Serbian health card | `lib/rs-health/`, `lib/rs-health-plugin/` |
 | `emrtd` | eMRTD / passport (ICAO 9303) | `lib/emrtd/`, `lib/emrtd-plugin/` |
 | `cardedge` | CardEdge PKI applet | `lib/cardedge/`, `lib/cardedge-plugin/` |
 | `pkcs15` | PKCS#15 generic applet | `lib/pkcs15/`, `lib/pkcs15-plugin/` |

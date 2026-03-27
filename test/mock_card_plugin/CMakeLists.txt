@@ -5,5 +5,5 @@ add_library(mock-card-plugin SHARED mock_card_plugin.cpp)
 target_link_libraries(mock-card-plugin PRIVATE CardPlugin)
 set_target_properties(mock-card-plugin PROPERTIES
     PREFIX "lib"
-    OUTPUT_NAME "rescrs-plugin-mock"
+    OUTPUT_NAME "mock-plugin"
 )

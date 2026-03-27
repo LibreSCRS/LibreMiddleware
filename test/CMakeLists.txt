@@ -21,10 +21,10 @@ add_executable(LibreMiddlewareTests
 
 target_link_libraries(LibreMiddlewareTests
     GTest::gtest_main
-    EIdCard
+    RsEId
     CardEdge
     EuVrc
-    HealthCard
+    RsHealth
 )
 
 target_include_directories(LibreMiddlewareTests PRIVATE
@@ -73,33 +73,33 @@ target_compile_definitions(PluginIntegrationTests PRIVATE
     PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
 )
 add_dependencies(PluginIntegrationTests
-    rescrs-plugin-rs-eid
-    rescrs-plugin-eu-vrc
-    rescrs-plugin-rs-health
+    rs-eid-plugin
+    eu-vrc-plugin
+    rs-health-plugin
 )
 
-if(TARGET rescrs-plugin-emrtd)
-    add_dependencies(PluginIntegrationTests rescrs-plugin-emrtd)
+if(TARGET emrtd-plugin)
+    add_dependencies(PluginIntegrationTests emrtd-plugin)
     target_compile_definitions(PluginIntegrationTests PRIVATE HAS_EMRTD_PLUGIN=1)
 endif()
 
-if(TARGET rescrs-plugin-pkcs15)
-    add_dependencies(PluginIntegrationTests rescrs-plugin-pkcs15)
+if(TARGET pkcs15-plugin)
+    add_dependencies(PluginIntegrationTests pkcs15-plugin)
     target_compile_definitions(PluginIntegrationTests PRIVATE HAS_PKCS15_PLUGIN=1)
 endif()
 
-if(TARGET rescrs-plugin-cardedge)
-    add_dependencies(PluginIntegrationTests rescrs-plugin-cardedge)
+if(TARGET cardedge-plugin)
+    add_dependencies(PluginIntegrationTests cardedge-plugin)
     target_compile_definitions(PluginIntegrationTests PRIVATE HAS_CARDEDGE_PLUGIN=1)
 endif()
 
-if(TARGET rescrs-plugin-piv)
-    add_dependencies(PluginIntegrationTests rescrs-plugin-piv)
+if(TARGET piv-plugin)
+    add_dependencies(PluginIntegrationTests piv-plugin)
     target_compile_definitions(PluginIntegrationTests PRIVATE HAS_PIV_PLUGIN=1)
 endif()
 
 if(BUILD_OPENSC_PLUGIN AND OPENSC_FOUND)
-    add_dependencies(PluginIntegrationTests rescrs-plugin-opensc)
+    add_dependencies(PluginIntegrationTests opensc-plugin)
     target_compile_definitions(PluginIntegrationTests PRIVATE HAS_OPENSC_PLUGIN=1)
 endif()
 
@@ -117,7 +117,7 @@ target_link_libraries(EMRTDPluginTests
 target_compile_definitions(EMRTDPluginTests PRIVATE
     PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
 )
-add_dependencies(EMRTDPluginTests rescrs-plugin-emrtd)
+add_dependencies(EMRTDPluginTests emrtd-plugin)
 gtest_discover_tests(EMRTDPluginTests)
 
 add_executable(PKCS11Tests pkcs11_test.cpp)
@@ -188,7 +188,7 @@ gtest_discover_tests(PIVHardwareTests)
 add_executable(CardEdgePluginTests cardedge_plugin_test.cpp)
 target_link_libraries(CardEdgePluginTests GTest::gtest_main CardPlugin)
 target_compile_definitions(CardEdgePluginTests PRIVATE PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}")
-add_dependencies(CardEdgePluginTests rescrs-plugin-cardedge)
+add_dependencies(CardEdgePluginTests cardedge-plugin)
 gtest_discover_tests(CardEdgePluginTests)
 
 # PKCS#15 plugin tests
@@ -197,7 +197,7 @@ target_link_libraries(PKCS15PluginTests GTest::gtest_main CardPlugin)
 target_compile_definitions(PKCS15PluginTests PRIVATE
     PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
 )
-add_dependencies(PKCS15PluginTests rescrs-plugin-pkcs15)
+add_dependencies(PKCS15PluginTests pkcs15-plugin)
 gtest_discover_tests(PKCS15PluginTests)
 
 # OpenSC fallback plugin tests (conditional on libopensc availability)
@@ -213,7 +213,7 @@ if(BUILD_OPENSC_PLUGIN AND OPENSC_FOUND)
     target_compile_definitions(OpenSCPluginTests PRIVATE
         PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
     )
-    add_dependencies(OpenSCPluginTests rescrs-plugin-opensc)
+    add_dependencies(OpenSCPluginTests opensc-plugin)
     gtest_discover_tests(OpenSCPluginTests)
 endif()
 

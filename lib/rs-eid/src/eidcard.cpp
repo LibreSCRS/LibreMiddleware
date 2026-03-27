@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include "eidcard/eidcard.h"
+#include "rseid/eidcard.h"
 #include "card_protocol.h"
 #include "card_reader_base.h"
 #include "card_reader_gemalto.h"

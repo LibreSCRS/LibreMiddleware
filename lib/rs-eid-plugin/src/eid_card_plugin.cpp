@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include <eidcard/eidcard.h>
-#include <eidcard/eidtypes.h>
+#include <rseid/eidcard.h>
+#include <rseid/eidtypes.h>
 #include <plugin/card_plugin.h>
 #include <smartcard/pcsc_connection.h>
 

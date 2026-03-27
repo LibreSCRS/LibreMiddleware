@@ -4,7 +4,7 @@
 #pragma once
 
 #include "card_reader_base.h"
-#include "eidcard/eidtypes.h"
+#include "rseid/eidtypes.h"
 
 namespace eidcard {
 

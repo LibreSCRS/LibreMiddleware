@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include <healthcard/healthcard.h>
-#include <healthcard/healthtypes.h>
+#include <rshealth/healthcard.h>
+#include <rshealth/healthtypes.h>
 #include <plugin/card_plugin.h>
 #include <smartcard/pcsc_connection.h>
 
