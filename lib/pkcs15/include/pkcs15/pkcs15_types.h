@@ -43,12 +43,15 @@ struct PinInfo
     int minLength = 0;
     int storedLength = 0;
     int maxLength = 0;
+    bool hasMaxLength = false;
     int maxRetries = 0;
     uint8_t padChar = 0x00;
+    std::string lastPinChange;
     std::vector<uint8_t> path;
     bool local = false;
     bool initialized = false;
     bool unblockDisabled = false;
+    bool unblockingPin = false;
 };
 
 struct ObjectDirectory

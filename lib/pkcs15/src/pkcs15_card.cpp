@@ -192,10 +192,10 @@ std::vector<uint8_t> PKCS15Card::readCertificate(const CertificateInfo& cert)
 {
     smartcard::CardTransaction tx(conn);
     if (!selectApplet())
-        throw std::runtime_error("PKCS15: failed to select applet");
+        return {};
 
     if (!selectByPath(cert.path))
-        throw std::runtime_error("Failed to select certificate file");
+        return {};
 
     return readSelectedFile();
 }
@@ -354,10 +354,16 @@ bool PKCS15Card::selectByPath(std::span<const uint8_t> path, uint8_t selectP2)
     if (path.empty() || path.size() % 2 != 0)
         return false;
 
-    // Use stored P2 if caller didn't override
     uint8_t p2 = (selectP2 != 0x00) ? selectP2 : fileSelectP2;
 
-    for (size_t i = 0; i + 1 < path.size(); i += 2) {
+    // Skip 3FFF prefix — in PKCS#15 this means "current application DF",
+    // and we already selected the applet via AID
+    size_t startIdx = 0;
+    if (path.size() >= 2 && path[0] == 0x3F && path[1] == 0xFF) {
+        startIdx = 2;
+    }
+
+    for (size_t i = startIdx; i + 1 < path.size(); i += 2) {
         auto resp = conn.transmit(smartcard::selectByFileId(path[i], path[i + 1], p2));
         if (resp.isSuccess())
             continue;
@@ -367,7 +373,7 @@ bool PKCS15Card::selectByPath(std::span<const uint8_t> path, uint8_t selectP2)
             uint8_t altP2 = (p2 == 0x0C) ? 0x00 : 0x0C;
             resp = conn.transmit(smartcard::selectByFileId(path[i], path[i + 1], altP2));
             if (resp.isSuccess()) {
-                fileSelectP2 = altP2; // Cache for future calls
+                fileSelectP2 = altP2;
                 p2 = altP2;
                 continue;
             }
@@ -384,7 +390,11 @@ std::vector<uint8_t> PKCS15Card::readSelectedFile()
 
     while (true) {
         auto resp = conn.transmit(smartcard::readBinary(static_cast<uint16_t>(offset), READ_CHUNK_SIZE));
-        if (resp.data.empty() || (!resp.isSuccess() && resp.statusWord() != 0x6282))
+
+        // 6282 = standard EOF; 6A86 = some cards signal EOF this way (e.g. Gemalto SafeSign)
+        bool isEof = resp.statusWord() == 0x6282 || (resp.statusWord() == 0x6A86 && !result.empty());
+
+        if (resp.data.empty() || (!resp.isSuccess() && !isEof))
             break;
 
         result.insert(result.end(), resp.data.begin(), resp.data.end());
@@ -392,7 +402,7 @@ std::vector<uint8_t> PKCS15Card::readSelectedFile()
 
         if (offset >= MAX_FILE_SIZE)
             break;
-        if (resp.statusWord() == 0x6282) // end of file
+        if (isEof)
             break;
     }
 

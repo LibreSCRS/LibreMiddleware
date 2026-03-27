@@ -93,18 +93,27 @@ public:
         return {r.success, r.retriesLeft, r.blocked};
     }
 
-    plugin::PINResult changePIN(smartcard::PCSCConnection& conn, const std::string& oldPin,
+    std::vector<plugin::PinStatusEntry> getPINList(smartcard::PCSCConnection& conn) const override
+    {
+        cardedge::PkiAppletGuard guard(conn);
+        auto result = cardedge::getPINTriesLeft(conn);
+        plugin::PinStatusEntry entry;
+        entry.label = "PIN";
+        entry.reference = 0x80;
+        entry.triesLeft = result.retriesLeft;
+        entry.initialized = true;
+        entry.blocked = result.blocked;
+        entry.minLength = 4;
+        entry.maxLength = 8;
+        return {entry};
+    }
+
+    plugin::PINResult changePIN(smartcard::PCSCConnection& conn, uint8_t /*pinReference*/, const std::string& oldPin,
                                 const std::string& newPin) const override
     {
         cardedge::PkiAppletGuard guard(conn);
         auto r = cardedge::changePIN(conn, oldPin, newPin);
         return {r.success, r.retriesLeft, r.blocked};
-    }
-
-    int getPINTriesLeft(smartcard::PCSCConnection& conn) const override
-    {
-        cardedge::PkiAppletGuard guard(conn);
-        return cardedge::getPINTriesLeft(conn).retriesLeft;
     }
 
     plugin::SignResult sign(smartcard::PCSCConnection& conn, uint16_t keyReference, std::span<const uint8_t> data,

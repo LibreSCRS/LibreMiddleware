@@ -161,6 +161,9 @@ public:
                 }
             }
 
+            entry.minLength = pin.minLength;
+            entry.maxLength = pin.maxLength;
+            entry.canChange = !pin.unblockingPin && pin.label.find("PUK") == std::string::npos;
             result.push_back(std::move(entry));
         }
         return result;

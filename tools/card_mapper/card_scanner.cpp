@@ -333,6 +333,47 @@ void parseFileData(const std::vector<uint8_t>& fileData, FileNode& efNode, DataF
     }
 }
 
+std::string probeCertPath(smartcard::PCSCConnection& conn, const std::vector<uint8_t>& path)
+{
+    if (path.empty() || path.size() % 2 != 0)
+        return "[invalid path]";
+
+    size_t startIdx = 0;
+    if (path.size() >= 2 && path[0] == 0x3F && path[1] == 0xFF) {
+        startIdx = 2;
+    }
+
+    std::string lastDf = "applet";
+    for (size_t i = startIdx; i + 1 < path.size(); i += 2) {
+        uint8_t hi = path[i];
+        uint8_t lo = path[i + 1];
+        std::string fid = formatFid(hi, lo);
+
+        auto resp = conn.transmit(smartcard::selectByFileId(hi, lo, 0x0C));
+        if (!resp.isSuccess()) {
+            resp = conn.transmit(smartcard::selectByFileId(hi, lo, 0x00));
+        }
+        if (!resp.isSuccess()) {
+            return std::format("[SELECT {} failed: {:04X} under {}]", fid, resp.statusWord(), lastDf);
+        }
+
+        if (i + 2 >= path.size()) {
+            auto readResp = conn.transmit(smartcard::readBinary(0, 4));
+            if (readResp.isSuccess() || readResp.statusWord() == 0x6282) {
+                return "[readable]";
+            } else if (readResp.statusWord() == 0x6982) {
+                return "[PIN required]";
+            } else if (readResp.statusWord() == 0x6986) {
+                return std::format("[SELECT OK but read failed: {:04X} — may be DF not EF]", readResp.statusWord());
+            } else {
+                return std::format("[read error: {:04X}]", readResp.statusWord());
+            }
+        }
+        lastDf = fid;
+    }
+    return "[path exhausted]";
+}
+
 // PKCS#15 smart probe: use the PKCS#15 parser to navigate ODF→CDF/PrKDF/AODF
 // instead of brute-forcing FID ranges. Returns true if PKCS#15 structure was read.
 bool probePKCS15(smartcard::PCSCConnection& conn, FileNode& df, AppletInfo& applet)
@@ -383,9 +424,15 @@ bool probePKCS15(smartcard::PCSCConnection& conn, FileNode& df, AppletInfo& appl
                 // Try reading certificate size
                 try {
                     auto certData = card.readCertificate(cert);
-                    df.children.back().sizeEstimate = std::format("~{}B", certData.size());
-                } catch (...) {
-                    df.children.back().sizeEstimate = "[read failed]";
+                    if (!certData.empty()) {
+                        df.children.back().sizeEstimate = std::format("~{}B", certData.size());
+                    } else {
+                        card.selectApplet();
+                        std::string diag = probeCertPath(conn, cert.path);
+                        df.children.back().sizeEstimate = diag;
+                    }
+                } catch (const std::exception& e) {
+                    df.children.back().sizeEstimate = std::format("[error: {}]", e.what());
                 }
 
                 DataFile dataFile;

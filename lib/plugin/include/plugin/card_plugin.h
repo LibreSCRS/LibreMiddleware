@@ -36,6 +36,9 @@ struct PinStatusEntry
     int triesLeft = -1;
     bool initialized = true;
     bool blocked = false;
+    int minLength = 0;
+    int maxLength = 0;
+    bool canChange = true;
 };
 
 struct CertificateData

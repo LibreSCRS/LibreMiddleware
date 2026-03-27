@@ -394,26 +394,21 @@ std::vector<PinInfo> parseAODF(std::span<const uint8_t> data)
         // BIT STRING pinFlags, ENUMERATED pinType, INTEGER min, INTEGER stored,
         // INTEGER max, [0] IMPLICIT pinRef, SEQUENCE path
         int intIndex = 0; // track which INTEGER we're on (min=0, stored=1, max=2)
-        for (const auto& field : pinAttrs->children) {
+        for (size_t fi = 0; fi < pinAttrs->children.size(); ++fi) {
+            const auto& field = pinAttrs->children[fi];
+
             if (field.tag == 0x03 && !field.constructed && field.value.size() >= 2) {
-                // BIT STRING pinFlags
                 uint8_t flagsByte = field.value[1];
-                // PKCS#15 PinFlags: case-sensitive(0), local(1), change-disabled(2),
-                //   unblock-disabled(3), initialized(4), needs-padding(5), ...
-                // Bit numbering: bit 0 is the MSB of the first content byte
-                // So bit 1 (local) = 0x40, bit 3 (unblock-disabled) = 0x10,
-                //    bit 4 (initialized) = 0x08, bit 5 (needs-padding) = 0x04
                 pin.local = (flagsByte & 0x40) != 0;
                 pin.unblockDisabled = (flagsByte & 0x10) != 0;
                 pin.initialized = (flagsByte & 0x08) != 0;
+                pin.unblockingPin = (flagsByte & 0x02) != 0;
             } else if (field.tag == 0x0A && !field.constructed) {
-                // ENUMERATED pinType — ASN.1 integers are signed; guard the cast
                 auto val = parseInteger(field.value);
                 if (val >= 0 && val <= 4) {
                     pin.pinType = static_cast<PinType>(val);
                 }
             } else if (field.tag == 0x02 && !field.constructed) {
-                // INTEGER — min, stored, max in order
                 auto val = static_cast<int>(parseInteger(field.value));
                 switch (intIndex) {
                 case 0:
@@ -424,16 +419,19 @@ std::vector<PinInfo> parseAODF(std::span<const uint8_t> data)
                     break;
                 case 2:
                     pin.maxLength = val;
+                    pin.hasMaxLength = true;
                     break;
                 default:
                     break;
                 }
                 intIndex++;
             } else if (field.tag == 0x80 && !field.constructed) {
-                // [0] IMPLICIT INTEGER — pinReference
                 pin.pinReference = field.value.empty() ? 0 : field.value[0];
+            } else if (field.tag == 0x04 && !field.constructed && field.value.size() == 1) {
+                pin.padChar = field.value[0];
+            } else if (field.tag == 0x18 && !field.constructed) {
+                pin.lastPinChange = field.asString();
             } else if (field.tag == 0x30 && field.constructed) {
-                // SEQUENCE — path
                 pin.path = findFirstOctetString(field);
             }
         }

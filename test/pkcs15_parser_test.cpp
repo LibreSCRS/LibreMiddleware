@@ -283,3 +283,56 @@ TEST(ParseAODF, ZeroPadding)
     ASSERT_EQ(pins.size(), 4u);
     EXPECT_EQ(pins[0].label, "PACE CAN");
 }
+
+TEST(ParseAODF, GemaltoToken_UserPin)
+{
+    auto pins = parseAODF(GEMALTO_AODF);
+    ASSERT_GE(pins.size(), 2u);
+    const auto& pin = pins[0];
+    EXPECT_EQ(pin.label, "User Pin");
+    EXPECT_EQ(pin.pinReference, 0x03);
+    EXPECT_EQ(pin.pinType, PinType::Ascii);
+    EXPECT_EQ(pin.minLength, 4);
+    EXPECT_EQ(pin.storedLength, 15);
+    EXPECT_FALSE(pin.hasMaxLength);
+    EXPECT_EQ(pin.maxLength, 0);
+    EXPECT_EQ(pin.padChar, 0x00);
+    EXPECT_EQ(pin.lastPinChange, "20210302064541Z");
+    EXPECT_EQ(pin.path, (std::vector<uint8_t>{0x3F, 0x00}));
+    EXPECT_TRUE(pin.local);
+    EXPECT_TRUE(pin.initialized);
+}
+
+TEST(ParseAODF, GemaltoToken_SOPin)
+{
+    auto pins = parseAODF(GEMALTO_AODF);
+    ASSERT_GE(pins.size(), 2u);
+    const auto& pin = pins[1];
+    EXPECT_EQ(pin.label, "SO Pin");
+    EXPECT_EQ(pin.pinReference, 0x01);
+    EXPECT_EQ(pin.pinType, PinType::Ascii);
+    EXPECT_EQ(pin.minLength, 4);
+    EXPECT_EQ(pin.storedLength, 15);
+    EXPECT_FALSE(pin.hasMaxLength);
+    EXPECT_EQ(pin.padChar, 0x00);
+    EXPECT_EQ(pin.lastPinChange, "20210302064541Z");
+}
+
+TEST(ParseAODF, GemaltoToken_ChallengeResponseKey)
+{
+    // The CRK object uses [1] CONSTRUCTED (0xA1) at the top level, not SEQUENCE.
+    // The AODF parser only extracts SEQUENCE (0x30) entries as PinInfo objects,
+    // so the CRK is correctly skipped — only User Pin and SO Pin are returned.
+    auto pins = parseAODF(GEMALTO_AODF);
+    ASSERT_EQ(pins.size(), 2u);
+}
+
+TEST(ParseAODF, GeorgiaEID_HasMaxLength)
+{
+    auto pins = parseAODF(SAMPLE_AODF);
+    ASSERT_EQ(pins.size(), 4u);
+    EXPECT_TRUE(pins[0].hasMaxLength);
+    EXPECT_EQ(pins[0].maxLength, 12);
+    EXPECT_TRUE(pins[1].hasMaxLength);
+    EXPECT_EQ(pins[1].maxLength, 6);
+}
