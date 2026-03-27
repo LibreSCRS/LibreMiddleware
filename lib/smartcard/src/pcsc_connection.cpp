@@ -79,6 +79,17 @@ APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
     DWORD recvLength = static_cast<DWORD>(recvBuffer.size());
 
     LONG rv = SCardTransmit(card, pioSendPci, cmdBytes, cmdLen, nullptr, recvBuffer.data(), &recvLength);
+    if (rv == static_cast<LONG>(SCARD_W_RESET_CARD)) {
+        // Card was reset (e.g. hot-swap or external reset). Re-establish the
+        // handle without physically resetting the card, then retry once.
+#ifndef NDEBUG
+        std::cerr << "[PCSC] SCardTransmit got RESET_CARD, reconnecting..." << std::endl;
+#endif
+        reconnect();
+        pioSendPci = (activeProtocol == SCARD_PROTOCOL_T0) ? SCARD_PCI_T0 : SCARD_PCI_T1;
+        recvLength = static_cast<DWORD>(recvBuffer.size());
+        rv = SCardTransmit(card, pioSendPci, cmdBytes, cmdLen, nullptr, recvBuffer.data(), &recvLength);
+    }
     if (rv != SCARD_S_SUCCESS) {
 #ifndef NDEBUG
         std::cerr << "[PCSC] SCardTransmit FAILED, rv=0x" << std::hex << rv << std::dec << std::endl;

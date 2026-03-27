@@ -77,9 +77,8 @@ int runDiscoverMode(const CliOptions& opts)
             throw std::runtime_error("PACE failed: " + authResult.error);
         std::cerr << "PACE authentication: OK (SM active)\n";
 
-        conn.setTransmitFilter([&emrTDCard](const smartcard::APDUCommand& cmd) {
-            return emrTDCard->transmitSecureAPDU(cmd);
-        });
+        conn.setTransmitFilter(
+            [&emrTDCard](const smartcard::APDUCommand& cmd) { return emrTDCard->transmitSecureAPDU(cmd); });
     }
 
     auto scanResult = card_mapper::discoverCard(conn, opts.verbose);

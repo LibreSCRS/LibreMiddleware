@@ -51,7 +51,7 @@ std::vector<AidProbe> getAllKnownProbes()
         {"PKCS15", cardedge::protocol::AID_PKCS15, {cardedge::protocol::AID_PKCS15}},
         {"SERVSZK", healthcard::protocol::AID_SERVSZK, {healthcard::protocol::AID_SERVSZK}},
         {"eMRTD", emrtdAid, {emrtdAid}},
-        {"PIV", {0xA0,0x00,0x00,0x03,0x08,0x00,0x00,0x10}, {{0xA0,0x00,0x00,0x03,0x08,0x00,0x00,0x10}}},
+        {"PIV", {0xA0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10}, {{0xA0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10}}},
 
         // EU VRC: EU standard AID (single SELECT)
         {"EU-EVR-01", EU_VRC_AID, {EU_VRC_AID}},
@@ -139,8 +139,8 @@ constexpr int FID_SELECT_VARIANT_COUNT = 5;
 // Permanently skips variants the card rejects (6700/6982/6A86 = format mismatch).
 // Still tries all accepted variants per FID since different P1 values search
 // different scopes (P1=0x00 searches MF, P1=0x02 searches current DF).
-smartcard::APDUResponse selectFile(smartcard::PCSCConnection& conn, uint8_t hi, uint8_t lo,
-                                   int& cachedVariant, uint32_t& rejectedMask)
+smartcard::APDUResponse selectFile(smartcard::PCSCConnection& conn, uint8_t hi, uint8_t lo, int& cachedVariant,
+                                   uint32_t& rejectedMask)
 {
     // Fast path: try cached variant first (last variant that returned success)
     if (cachedVariant >= 0) {
@@ -386,8 +386,7 @@ bool probePKCS15(smartcard::PCSCConnection& conn, FileNode& df, AppletInfo& appl
 
         auto profile = card.readProfile();
 
-        applet.description = std::format("PKCS#15: {} ({})",
-                                         profile.tokenInfo.label, profile.tokenInfo.manufacturer);
+        applet.description = std::format("PKCS#15: {} ({})", profile.tokenInfo.label, profile.tokenInfo.manufacturer);
 
         auto addEF = [&](const char* name, uint8_t fidH, uint8_t fidL, const std::string& size) {
             FileNode ef;
@@ -407,8 +406,7 @@ bool probePKCS15(smartcard::PCSCConnection& conn, FileNode& df, AppletInfo& appl
         // CDF entries (certificates)
         if (!profile.odf.certificatesPath.empty()) {
             auto& cp = profile.odf.certificatesPath;
-            addEF("EF.CDF", cp[cp.size() - 2], cp[cp.size() - 1],
-                  std::format("{} certs", profile.certificates.size()));
+            addEF("EF.CDF", cp[cp.size() - 2], cp[cp.size() - 1], std::format("{} certs", profile.certificates.size()));
         }
 
         for (const auto& cert : profile.certificates) {
@@ -454,8 +452,7 @@ bool probePKCS15(smartcard::PCSCConnection& conn, FileNode& df, AppletInfo& appl
         // PrKDF entries (private keys)
         if (!profile.odf.privateKeysPath.empty()) {
             auto& kp = profile.odf.privateKeysPath;
-            addEF("EF.PrKDF", kp[kp.size() - 2], kp[kp.size() - 1],
-                  std::format("{} keys", profile.privateKeys.size()));
+            addEF("EF.PrKDF", kp[kp.size() - 2], kp[kp.size() - 1], std::format("{} keys", profile.privateKeys.size()));
         }
 
         for (const auto& key : profile.privateKeys) {
@@ -474,8 +471,7 @@ bool probePKCS15(smartcard::PCSCConnection& conn, FileNode& df, AppletInfo& appl
         // AODF entries (PINs)
         if (!profile.odf.authObjectsPath.empty()) {
             auto& ap = profile.odf.authObjectsPath;
-            addEF("EF.AODF", ap[ap.size() - 2], ap[ap.size() - 1],
-                  std::format("{} PINs", profile.pins.size()));
+            addEF("EF.AODF", ap[ap.size() - 2], ap[ap.size() - 1], std::format("{} PINs", profile.pins.size()));
         }
 
         for (const auto& pin : profile.pins) {
@@ -486,8 +482,7 @@ bool probePKCS15(smartcard::PCSCConnection& conn, FileNode& df, AppletInfo& appl
             tag.name = pin.label;
             tag.type = pin.initialized ? "initialized" : "transport";
             tag.fieldKey = "pin";
-            tag.example = std::format("ref=0x{:02X}, local={}, tries={}",
-                                      pin.pinReference, pin.local, pin.maxRetries);
+            tag.example = std::format("ref=0x{:02X}, local={}, tries={}", pin.pinReference, pin.local, pin.maxRetries);
             dataFile.tags.push_back(tag);
             applet.dataFiles.push_back(dataFile);
         }
@@ -502,31 +497,28 @@ bool probePKCS15(smartcard::PCSCConnection& conn, FileNode& df, AppletInfo& appl
 // PIV GET DATA probe: read known PIV data objects via INS=CB
 bool probePIV(smartcard::PCSCConnection& conn, FileNode& df, AppletInfo& applet)
 {
-    struct PIVObject {
+    struct PIVObject
+    {
         const char* name;
         std::vector<uint8_t> tag;
         const char* description;
     };
 
     std::vector<PIVObject> objects = {
-        {"CCC",              {0x5F, 0xC1, 0x07}, "Card Capability Container"},
-        {"CHUID",            {0x5F, 0xC1, 0x02}, "Cardholder Unique Identifier"},
-        {"Discovery",        {0x7E},             "Discovery Object"},
-        {"Printed Info",     {0x5F, 0xC1, 0x09}, "Printed Information"},
-        {"Key History",      {0x5F, 0xC1, 0x0C}, "Key History Object"},
-        {"PIV Auth Cert",    {0x5F, 0xC1, 0x05}, "X.509 Certificate for PIV Authentication"},
+        {"CCC", {0x5F, 0xC1, 0x07}, "Card Capability Container"},
+        {"CHUID", {0x5F, 0xC1, 0x02}, "Cardholder Unique Identifier"},
+        {"Discovery", {0x7E}, "Discovery Object"},
+        {"Printed Info", {0x5F, 0xC1, 0x09}, "Printed Information"},
+        {"Key History", {0x5F, 0xC1, 0x0C}, "Key History Object"},
+        {"PIV Auth Cert", {0x5F, 0xC1, 0x05}, "X.509 Certificate for PIV Authentication"},
         {"Digital Sig Cert", {0x5F, 0xC1, 0x0A}, "X.509 Certificate for Digital Signature"},
-        {"Key Mgmt Cert",   {0x5F, 0xC1, 0x0B}, "X.509 Certificate for Key Management"},
-        {"Card Auth Cert",  {0x5F, 0xC1, 0x01}, "X.509 Certificate for Card Authentication"},
+        {"Key Mgmt Cert", {0x5F, 0xC1, 0x0B}, "X.509 Certificate for Key Management"},
+        {"Card Auth Cert", {0x5F, 0xC1, 0x01}, "X.509 Certificate for Card Authentication"},
     };
 
     // Add retired certificate containers (5FC10D - 5FC120)
     for (uint8_t i = 0; i < 20; ++i) {
-        objects.push_back({
-            nullptr,
-            {0x5F, 0xC1, static_cast<uint8_t>(0x0D + i)},
-            "Retired X.509 Certificate"
-        });
+        objects.push_back({nullptr, {0x5F, 0xC1, static_cast<uint8_t>(0x0D + i)}, "Retired X.509 Certificate"});
     }
 
     applet.description = "PIV (NIST SP 800-73)";
@@ -547,9 +539,7 @@ bool probePIV(smartcard::PCSCConnection& conn, FileNode& df, AppletInfo& applet)
         data.insert(data.end(), obj.tag.begin(), obj.tag.end());
 
         smartcard::APDUCommand cmd{
-            .cla = 0x00, .ins = 0xCB, .p1 = 0x3F, .p2 = 0xFF,
-            .data = data, .le = 0, .hasLe = true
-        };
+            .cla = 0x00, .ins = 0xCB, .p1 = 0x3F, .p2 = 0xFF, .data = data, .le = 0, .hasLe = true};
         auto resp = conn.transmit(cmd);
 
         FileNode efNode;

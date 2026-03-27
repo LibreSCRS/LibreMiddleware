@@ -5,8 +5,7 @@
 #include <pkcs15/pkcs15_parser.h>
 #include <smartcard/apdu.h>
 #include <smartcard/pcsc_connection.h>
-
-#include <openssl/crypto.h>
+#include <smartcard/secure_buffer.h>
 #include <stdexcept>
 
 namespace pkcs15 {
@@ -14,7 +13,8 @@ namespace pkcs15 {
 namespace {
 
 const std::vector<uint8_t> PKCS15_AID = {0xA0, 0x00, 0x00, 0x00, 0x63, 0x50, 0x4B, 0x43, 0x53, 0x2D, 0x31, 0x35};
-constexpr size_t MAX_FILE_SIZE = 65536;
+// ISO 7816-4 READ BINARY short form: P1 bits 0–6 = offset high byte → max offset 32767.
+constexpr size_t MAX_FILE_SIZE = 32767;
 constexpr uint8_t READ_CHUNK_SIZE = 128;
 
 } // namespace
@@ -253,8 +253,8 @@ PinResult PKCS15Card::verifyPIN(const PinInfo& pin, const std::string& pinValue)
     if (!pin.path.empty())
         selectByPath(pin.path);
 
-    // Encode PIN data
-    std::vector<uint8_t> pinData(pinValue.begin(), pinValue.end());
+    // Encode PIN data — SecureBuffer ensures zeroization even on exception.
+    smartcard::SecureBuffer pinData(pinValue);
     if (pin.storedLength > 0 && static_cast<int>(pinData.size()) > pin.storedLength)
         pinData.resize(pin.storedLength);
     if (pin.storedLength > 0 && static_cast<int>(pinData.size()) < pin.storedLength)
@@ -262,38 +262,25 @@ PinResult PKCS15Card::verifyPIN(const PinInfo& pin, const std::string& pinValue)
 
     // Try pinReference directly
     auto resp = conn.transmit(smartcard::verifyPIN(pin.pinReference, pinData));
-    if (resp.isSuccess()) {
-        OPENSSL_cleanse(pinData.data(), pinData.size());
+    if (resp.isSuccess())
         return {true, -1, false};
-    }
-    if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0) {
-        OPENSSL_cleanse(pinData.data(), pinData.size());
+    if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
         return {false, resp.sw2 & 0x0F, false};
-    }
-    if (resp.statusWord() == 0x6983) {
-        OPENSSL_cleanse(pinData.data(), pinData.size());
+    if (resp.statusWord() == 0x6983)
         return {false, 0, true};
-    }
 
     // Fallback: strip local bit
     uint8_t altRef = pin.pinReference & 0x7F;
     if (altRef != pin.pinReference) {
         resp = conn.transmit(smartcard::verifyPIN(altRef, pinData));
-        if (resp.isSuccess()) {
-            OPENSSL_cleanse(pinData.data(), pinData.size());
+        if (resp.isSuccess())
             return {true, -1, false};
-        }
-        if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0) {
-            OPENSSL_cleanse(pinData.data(), pinData.size());
+        if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
             return {false, resp.sw2 & 0x0F, false};
-        }
-        if (resp.statusWord() == 0x6983) {
-            OPENSSL_cleanse(pinData.data(), pinData.size());
+        if (resp.statusWord() == 0x6983)
             return {false, 0, true};
-        }
     }
 
-    OPENSSL_cleanse(pinData.data(), pinData.size());
     return {false, -1, false};
 }
 
@@ -306,60 +293,40 @@ PinResult PKCS15Card::changePIN(const PinInfo& pin, const std::string& oldPin, c
     if (!pin.path.empty())
         selectByPath(pin.path);
 
-    // Encode old PIN
-    std::vector<uint8_t> oldData(oldPin.begin(), oldPin.end());
+    // Encode old PIN — SecureBuffer ensures zeroization even on exception.
+    smartcard::SecureBuffer oldData(oldPin);
     if (pin.storedLength > 0 && static_cast<int>(oldData.size()) > pin.storedLength)
         oldData.resize(pin.storedLength);
     if (pin.storedLength > 0 && static_cast<int>(oldData.size()) < pin.storedLength)
         oldData.resize(pin.storedLength, pin.padChar);
 
     // Encode new PIN
-    std::vector<uint8_t> newData(newPin.begin(), newPin.end());
+    smartcard::SecureBuffer newData(newPin);
     if (pin.storedLength > 0 && static_cast<int>(newData.size()) > pin.storedLength)
         newData.resize(pin.storedLength);
     if (pin.storedLength > 0 && static_cast<int>(newData.size()) < pin.storedLength)
         newData.resize(pin.storedLength, pin.padChar);
 
     auto resp = conn.transmit(smartcard::changeReferenceData(pin.pinReference, oldData, newData));
-    if (resp.isSuccess()) {
-        OPENSSL_cleanse(oldData.data(), oldData.size());
-        OPENSSL_cleanse(newData.data(), newData.size());
+    if (resp.isSuccess())
         return {true, -1, false};
-    }
-    if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0) {
-        OPENSSL_cleanse(oldData.data(), oldData.size());
-        OPENSSL_cleanse(newData.data(), newData.size());
+    if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
         return {false, resp.sw2 & 0x0F, false};
-    }
-    if (resp.statusWord() == 0x6983) {
-        OPENSSL_cleanse(oldData.data(), oldData.size());
-        OPENSSL_cleanse(newData.data(), newData.size());
+    if (resp.statusWord() == 0x6983)
         return {false, 0, true};
-    }
 
     // Fallback: strip local bit — ONLY on reference-not-found errors
     uint8_t altRef = pin.pinReference & 0x7F;
     if (altRef != pin.pinReference && (resp.statusWord() == 0x6A86 || resp.statusWord() == 0x6A88)) {
         resp = conn.transmit(smartcard::changeReferenceData(altRef, oldData, newData));
-        if (resp.isSuccess()) {
-            OPENSSL_cleanse(oldData.data(), oldData.size());
-            OPENSSL_cleanse(newData.data(), newData.size());
+        if (resp.isSuccess())
             return {true, -1, false};
-        }
-        if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0) {
-            OPENSSL_cleanse(oldData.data(), oldData.size());
-            OPENSSL_cleanse(newData.data(), newData.size());
+        if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
             return {false, resp.sw2 & 0x0F, false};
-        }
-        if (resp.statusWord() == 0x6983) {
-            OPENSSL_cleanse(oldData.data(), oldData.size());
-            OPENSSL_cleanse(newData.data(), newData.size());
+        if (resp.statusWord() == 0x6983)
             return {false, 0, true};
-        }
     }
 
-    OPENSSL_cleanse(oldData.data(), oldData.size());
-    OPENSSL_cleanse(newData.data(), newData.size());
     return {false, -1, false};
 }
 

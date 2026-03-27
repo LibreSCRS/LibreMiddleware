@@ -128,6 +128,14 @@ public:
         return {entry};
     }
 
+    plugin::PINResult changePIN(smartcard::PCSCConnection& conn, const std::string& oldPin,
+                                const std::string& newPin) const override
+    {
+        cardedge::PkiAppletGuard guard(conn);
+        auto r = cardedge::changePIN(conn, oldPin, newPin);
+        return {r.success, r.retriesLeft, r.blocked};
+    }
+
     plugin::PINResult changePIN(smartcard::PCSCConnection& conn, uint8_t /*pinReference*/, const std::string& oldPin,
                                 const std::string& newPin) const override
     {

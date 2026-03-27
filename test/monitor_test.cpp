@@ -616,7 +616,59 @@ TEST_F(MonitorTestFixture, ReaderUnplugThenCardRemoveFromSurvivor)
     EXPECT_EQ(result.events[2].readerName, "Reader A");
 }
 
-// --- Test 23: Unsubscribe stops delivery (last subscriber stops monitor) ---
+// --- Test 23: MUTE card becomes usable — deferred CardInserted fires ---
+TEST_F(MonitorTestFixture, MuteToUsableEmitsCardInserted)
+{
+    auto mock = std::make_unique<MockPCSCScanProvider>(counters);
+    mock->setReaders({"Reader A"});
+
+    // PnP check
+    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false});
+
+    // Card present but MUTE (suppressed)
+    mock->pushStatusChange(
+        {SCARD_S_SUCCESS, {SCARD_STATE_PRESENT | SCARD_STATE_MUTE | SCARD_STATE_CHANGED | (1 << 16), 0}, false});
+
+    // MUTE clears — card becomes usable (same event counter)
+    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED | (1 << 16), 0}, false});
+
+    // Stop
+    mock->pushStatusChange({LONG(SCARD_E_CANCELLED), {}, false});
+
+    auto result = runMonitor(std::move(mock));
+
+    ASSERT_EQ(result.events.size(), 1u);
+    EXPECT_EQ(result.events[0].type, MonitorEvent::Type::CardInserted);
+    EXPECT_EQ(result.events[0].readerName, "Reader A");
+}
+
+// --- Test 24: EXCLUSIVE card becomes usable — deferred CardInserted fires ---
+TEST_F(MonitorTestFixture, ExclusiveToUsableEmitsCardInserted)
+{
+    auto mock = std::make_unique<MockPCSCScanProvider>(counters);
+    mock->setReaders({"Reader A"});
+
+    // PnP check
+    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false});
+
+    // Card present but EXCLUSIVE (suppressed)
+    mock->pushStatusChange(
+        {SCARD_S_SUCCESS, {SCARD_STATE_PRESENT | SCARD_STATE_EXCLUSIVE | SCARD_STATE_CHANGED | (1 << 16), 0}, false});
+
+    // EXCLUSIVE clears — card becomes usable (same event counter)
+    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED | (1 << 16), 0}, false});
+
+    // Stop
+    mock->pushStatusChange({LONG(SCARD_E_CANCELLED), {}, false});
+
+    auto result = runMonitor(std::move(mock));
+
+    ASSERT_EQ(result.events.size(), 1u);
+    EXPECT_EQ(result.events[0].type, MonitorEvent::Type::CardInserted);
+    EXPECT_EQ(result.events[0].readerName, "Reader A");
+}
+
+// --- Test 25: Unsubscribe stops delivery (last subscriber stops monitor) ---
 TEST_F(MonitorTestFixture, UnsubscribeStopsDelivery)
 {
     auto mock = std::make_unique<MockPCSCScanProvider>(counters);

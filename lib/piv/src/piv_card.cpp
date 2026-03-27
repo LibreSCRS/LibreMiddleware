@@ -7,6 +7,7 @@
 #include <smartcard/apdu.h>
 #include <smartcard/ber.h>
 #include <smartcard/pcsc_connection.h>
+#include <smartcard/secure_buffer.h>
 
 #include <array>
 
@@ -14,17 +15,18 @@ namespace piv {
 
 namespace {
 
-struct CertSlotDef {
+struct CertSlotDef
+{
     std::array<uint8_t, 3> objectTag;
     uint8_t keyRef;
     const char* name;
 };
 
 constexpr std::array<CertSlotDef, 4> STANDARD_CERT_SLOTS = {{
-    {protocol::OBJ_CERT_PIV_AUTH,    protocol::KEY_PIV_AUTH,    "PIV Authentication"},
+    {protocol::OBJ_CERT_PIV_AUTH, protocol::KEY_PIV_AUTH, "PIV Authentication"},
     {protocol::OBJ_CERT_DIGITAL_SIG, protocol::KEY_DIGITAL_SIG, "Digital Signature"},
-    {protocol::OBJ_CERT_KEY_MGMT,    protocol::KEY_KEY_MGMT,    "Key Management"},
-    {protocol::OBJ_CERT_CARD_AUTH,   protocol::KEY_CARD_AUTH,   "Card Authentication"},
+    {protocol::OBJ_CERT_KEY_MGMT, protocol::KEY_KEY_MGMT, "Key Management"},
+    {protocol::OBJ_CERT_CARD_AUTH, protocol::KEY_CARD_AUTH, "Card Authentication"},
 }};
 
 // Tag 53 is primitive per BER rules (bit 5 clear), so parseBER stores its content
@@ -70,29 +72,33 @@ smartcard::BERField unwrapTag53(const std::vector<uint8_t>& raw)
     size_t pos = 0;
     while (pos < innerLen) {
         // Read tag (1 or 2 bytes)
-        if (pos >= innerLen) break;
         uint32_t tag = inner[pos++];
         if ((tag & 0x1F) == 0x1F) {
             // Multi-byte tag
-            if (pos >= innerLen) break;
+            if (pos >= innerLen)
+                break;
             tag = (tag << 8) | inner[pos++];
         }
 
         // Read length (1 or 2 bytes)
-        if (pos >= innerLen) break;
+        if (pos >= innerLen)
+            break;
         size_t len = inner[pos++];
         if (len == 0x81) {
-            if (pos >= innerLen) break;
+            if (pos >= innerLen)
+                break;
             len = inner[pos++];
         } else if (len == 0x82) {
-            if (pos + 1 >= innerLen) break;
+            if (pos + 1 >= innerLen)
+                break;
             len = (inner[pos] << 8) | inner[pos + 1];
             pos += 2;
         } else if (len >= 0x80) {
             break; // Invalid
         }
 
-        if (pos + len > innerLen) break;
+        if (pos + len > innerLen)
+            break;
 
         smartcard::BERField field;
         field.tag = tag;
@@ -116,7 +122,14 @@ bool PIVCard::probe()
     auto cmd = smartcard::selectByAID(aid);
     auto resp = conn.transmit(cmd);
     // 9000 = success, 62xx = warning, 61xx = success with pending response data
-    return resp.isSuccess() || resp.sw1 == 0x62 || resp.sw1 == 0x61;
+    if (!resp.isSuccess() && resp.sw1 != 0x62 && resp.sw1 != 0x61)
+        return false;
+
+    // AID SELECT alone is insufficient — some non-PIV cards (e.g. Gemalto PKCS#15)
+    // accept the PIV AID without error.  Validate by reading the CHUID data object
+    // which is mandatory on genuine PIV cards (NIST SP 800-73-4 §4.2.1).
+    auto chuid = getData(protocol::OBJ_CHUID);
+    return !chuid.empty();
 }
 
 std::vector<uint8_t> PIVCard::getData(std::span<const uint8_t> objectTag)
@@ -146,7 +159,8 @@ CCCInfo PIVCard::readCCC()
 {
     CCCInfo info;
     auto raw = getData(protocol::OBJ_CCC);
-    if (raw.empty()) return info;
+    if (raw.empty())
+        return info;
 
     auto root = unwrapTag53(raw);
     info.cardIdentifier = smartcard::berFindBytes(root, {0xF0});
@@ -160,7 +174,8 @@ CHUIDInfo PIVCard::readCHUID()
 {
     CHUIDInfo info;
     auto raw = getData(protocol::OBJ_CHUID);
-    if (raw.empty()) return info;
+    if (raw.empty())
+        return info;
 
     auto root = unwrapTag53(raw);
     info.fascn = smartcard::berFindBytes(root, {0x30});
@@ -174,17 +189,20 @@ DiscoveryInfo PIVCard::readDiscovery()
 {
     DiscoveryInfo info;
     auto raw = getData(protocol::OBJ_DISCOVERY);
-    if (raw.empty()) return info;
+    if (raw.empty())
+        return info;
 
     auto root = smartcard::parseBER(raw.data(), raw.size());
 
     // Discovery uses 7E wrapper (not 53)
     auto aid = smartcard::berFindBytes(root, {0x7E, 0x4F});
-    if (aid.empty()) aid = smartcard::berFindBytes(root, {0x4F});
+    if (aid.empty())
+        aid = smartcard::berFindBytes(root, {0x4F});
     info.pivAID = std::move(aid);
 
     auto policy = smartcard::berFindBytes(root, {0x7E, 0x5F2F});
-    if (policy.empty()) policy = smartcard::berFindBytes(root, {0x5F2F});
+    if (policy.empty())
+        policy = smartcard::berFindBytes(root, {0x5F2F});
     if (policy.size() >= 2) {
         info.pinUsagePolicy = static_cast<uint16_t>((policy[0] << 8) | policy[1]);
     } else if (policy.size() == 1) {
@@ -197,28 +215,26 @@ DiscoveryInfo PIVCard::readDiscovery()
 std::optional<PrintedInfo> PIVCard::readPrintedInfo()
 {
     auto raw = getData(protocol::OBJ_PRINTED_INFO);
-    if (raw.empty()) return std::nullopt;
+    if (raw.empty())
+        return std::nullopt;
 
     auto root = unwrapTag53(raw);
 
     PrintedInfo info;
-    auto tryFind = [&](uint32_t tag) -> std::string {
-        return smartcard::berFindString(root, {tag});
-    };
+    auto tryFind = [&](uint32_t tag) -> std::string { return smartcard::berFindString(root, {tag}); };
 
-    info.name                    = tryFind(0x01);
-    info.employeeAffiliation     = tryFind(0x02);
-    info.expirationDate          = tryFind(0x04);
-    info.agencyCardSerialNumber  = tryFind(0x05);
-    info.issuerIdentification    = tryFind(0x06);
+    info.name = tryFind(0x01);
+    info.employeeAffiliation = tryFind(0x02);
+    info.expirationDate = tryFind(0x04);
+    info.agencyCardSerialNumber = tryFind(0x05);
+    info.issuerIdentification = tryFind(0x06);
     info.organizationAffiliation1 = tryFind(0x07);
     info.organizationAffiliation2 = tryFind(0x08);
 
     // Return nullopt if all fields are empty
-    if (info.name.empty() && info.employeeAffiliation.empty() &&
-        info.expirationDate.empty() && info.agencyCardSerialNumber.empty() &&
-        info.issuerIdentification.empty() && info.organizationAffiliation1.empty() &&
-        info.organizationAffiliation2.empty()) {
+    if (info.name.empty() && info.employeeAffiliation.empty() && info.expirationDate.empty() &&
+        info.agencyCardSerialNumber.empty() && info.issuerIdentification.empty() &&
+        info.organizationAffiliation1.empty() && info.organizationAffiliation2.empty()) {
         return std::nullopt;
     }
 
@@ -228,17 +244,20 @@ std::optional<PrintedInfo> PIVCard::readPrintedInfo()
 std::optional<KeyHistoryInfo> PIVCard::readKeyHistory()
 {
     auto raw = getData(protocol::OBJ_KEY_HISTORY);
-    if (raw.empty()) return std::nullopt;
+    if (raw.empty())
+        return std::nullopt;
 
     auto root = unwrapTag53(raw);
 
     KeyHistoryInfo info;
 
     auto onCard = smartcard::berFindBytes(root, {0xC1});
-    if (!onCard.empty()) info.keysWithOnCardCerts = onCard[0];
+    if (!onCard.empty())
+        info.keysWithOnCardCerts = onCard[0];
 
     auto offCard = smartcard::berFindBytes(root, {0xC2});
-    if (!offCard.empty()) info.keysWithOffCardCerts = offCard[0];
+    if (!offCard.empty())
+        info.keysWithOffCardCerts = offCard[0];
 
     info.offCardCertURL = smartcard::berFindString(root, {0xF3});
 
@@ -255,37 +274,43 @@ std::vector<PIVCertificate> PIVCard::readCertificates()
 
     // Extract a TLV field's raw value bytes by walking the buffer manually.
     // This avoids BER constructed/primitive ambiguity for tags like 70.
-    auto extractTlvValue = [](const uint8_t* buf, size_t bufLen,
-                               uint8_t targetTag) -> std::vector<uint8_t> {
+    auto extractTlvValue = [](const uint8_t* buf, size_t bufLen, uint8_t targetTag) -> std::vector<uint8_t> {
         size_t pos = 0;
         while (pos < bufLen) {
-            if (pos >= bufLen) break;
+            if (pos >= bufLen)
+                break;
             uint8_t tag = buf[pos++];
             // Skip multi-byte tags
             if ((tag & 0x1F) == 0x1F) {
                 while (pos < bufLen && (buf[pos] & 0x80))
                     ++pos;
-                if (pos < bufLen) ++pos; // last byte of tag
+                if (pos < bufLen)
+                    ++pos; // last byte of tag
             }
 
-            if (pos >= bufLen) break;
+            if (pos >= bufLen)
+                break;
             size_t len = buf[pos++];
             if (len == 0x81) {
-                if (pos >= bufLen) break;
+                if (pos >= bufLen)
+                    break;
                 len = buf[pos++];
             } else if (len == 0x82) {
-                if (pos + 1 >= bufLen) break;
+                if (pos + 1 >= bufLen)
+                    break;
                 len = (size_t(buf[pos]) << 8) | buf[pos + 1];
                 pos += 2;
             } else if (len == 0x83) {
-                if (pos + 2 >= bufLen) break;
+                if (pos + 2 >= bufLen)
+                    break;
                 len = (size_t(buf[pos]) << 16) | (size_t(buf[pos + 1]) << 8) | buf[pos + 2];
                 pos += 3;
             } else if (len >= 0x80) {
                 break;
             }
 
-            if (pos + len > bufLen) break;
+            if (pos + len > bufLen)
+                break;
 
             if (tag == targetTag)
                 return {buf + pos, buf + pos + len};
@@ -295,18 +320,20 @@ std::vector<PIVCertificate> PIVCard::readCertificates()
         return {};
     };
 
-    auto parseCertContainer = [&extractTlvValue](const std::vector<uint8_t>& raw,
-                                                  const std::string& slotName,
-                                                  uint8_t keyRef) -> std::optional<PIVCertificate> {
-        if (raw.empty()) return std::nullopt;
+    auto parseCertContainer = [&extractTlvValue](const std::vector<uint8_t>& raw, const std::string& slotName,
+                                                 uint8_t keyRef) -> std::optional<PIVCertificate> {
+        if (raw.empty())
+            return std::nullopt;
 
         // Find tag 53 value, then extract tag 70 (cert) and 71 (certInfo) from it
         // Use raw TLV extraction to avoid BER constructed/primitive issues
         auto tag53value = extractTlvValue(raw.data(), raw.size(), 0x53);
-        if (tag53value.empty()) return std::nullopt;
+        if (tag53value.empty())
+            return std::nullopt;
 
         auto certBytes = extractTlvValue(tag53value.data(), tag53value.size(), 0x70);
-        if (certBytes.empty()) return std::nullopt;
+        if (certBytes.empty())
+            return std::nullopt;
 
         PIVCertificate cert;
         cert.slotName = slotName;
@@ -314,7 +341,8 @@ std::vector<PIVCertificate> PIVCard::readCertificates()
         cert.certBytes = std::move(certBytes);
 
         auto certInfo = extractTlvValue(tag53value.data(), tag53value.size(), 0x71);
-        if (!certInfo.empty()) cert.certInfo = certInfo[0];
+        if (!certInfo.empty())
+            cert.certInfo = certInfo[0];
 
         return cert;
     };
@@ -323,7 +351,8 @@ std::vector<PIVCertificate> PIVCard::readCertificates()
     for (const auto& slot : STANDARD_CERT_SLOTS) {
         auto raw = getData(slot.objectTag);
         auto cert = parseCertContainer(raw, slot.name, slot.keyRef);
-        if (cert) certs.push_back(std::move(*cert));
+        if (cert)
+            certs.push_back(std::move(*cert));
     }
 
     // 20 retired certificate slots
@@ -334,7 +363,8 @@ std::vector<PIVCertificate> PIVCard::readCertificates()
 
         auto raw = getData(tag);
         auto cert = parseCertContainer(raw, name, keyRef);
-        if (cert) certs.push_back(std::move(*cert));
+        if (cert)
+            certs.push_back(std::move(*cert));
     }
 
     return certs;
@@ -368,8 +398,8 @@ std::vector<PINInfo> PIVCard::discoverPINs()
 
 plugin::PINResult PIVCard::verifyPIN(uint8_t keyRef, const std::string& pin)
 {
-    // Pad PIN with 0xFF to 8 bytes
-    std::vector<uint8_t> paddedPin(8, 0xFF);
+    // Pad PIN with 0xFF to 8 bytes — SecureBuffer ensures zeroization even on exception.
+    smartcard::SecureBuffer paddedPin(8, 0xFF);
     for (size_t i = 0; i < pin.size() && i < 8; ++i) {
         paddedPin[i] = static_cast<uint8_t>(pin[i]);
     }

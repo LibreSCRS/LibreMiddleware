@@ -30,4 +30,4 @@ target_include_directories(SmartCard PUBLIC
 
 set_target_properties(SmartCard PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-target_link_libraries(SmartCard PUBLIC PCSC::PCSC Threads::Threads)
+target_link_libraries(SmartCard PUBLIC PCSC::PCSC Threads::Threads OpenSSL_Crypto)

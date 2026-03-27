@@ -7,7 +7,6 @@
 #include <smartcard/pcsc_connection.h>
 
 #include <format>
-#include <mutex>
 #include <string>
 
 namespace {
@@ -86,6 +85,7 @@ public:
 
     plugin::CardData readCard(smartcard::PCSCConnection& conn) const override
     {
+        smartcard::CardTransaction tx(conn);
         piv::PIVCard card(conn);
         card.probe();
         auto pivData = card.readAll();
@@ -134,8 +134,7 @@ public:
             plugin::CardFieldGroup group;
             group.groupKey = "discovery";
             group.groupLabel = "Discovery";
-            plugin::addTextField(group, "pinPolicy", "PIN Policy",
-                                 decodePinPolicy(pivData.discovery.pinUsagePolicy));
+            plugin::addTextField(group, "pinPolicy", "PIN Policy", decodePinPolicy(pivData.discovery.pinUsagePolicy));
             data.groups.push_back(std::move(group));
         }
 
@@ -145,8 +144,7 @@ public:
             plugin::CardFieldGroup group;
             group.groupKey = "keyHistory";
             group.groupLabel = "Key History";
-            plugin::addTextField(group, "onCardCerts", "On-Card Certificates",
-                                 std::to_string(kh.keysWithOnCardCerts));
+            plugin::addTextField(group, "onCardCerts", "On-Card Certificates", std::to_string(kh.keysWithOnCardCerts));
             plugin::addTextField(group, "offCardCerts", "Off-Card Certificates",
                                  std::to_string(kh.keysWithOffCardCerts));
             plugin::addTextField(group, "offCardURL", "Off-Card URL", kh.offCardCertURL);
@@ -163,18 +161,12 @@ public:
             data.groups.push_back(std::move(group));
         }
 
-        // Cache discovered PINs for later verifyPIN/getPINTriesLeft calls
-        {
-            auto pins = card.discoverPINs();
-            std::lock_guard<std::mutex> lock(cacheMtx);
-            cachedPINs = std::move(pins);
-        }
-
         return data;
     }
 
     std::vector<plugin::CertificateData> readCertificates(smartcard::PCSCConnection& conn) const override
     {
+        smartcard::CardTransaction tx(conn);
         piv::PIVCard card(conn);
         card.probe();
         auto certs = card.readCertificates();
@@ -193,6 +185,7 @@ public:
 
     std::vector<plugin::PinStatusEntry> getPINList(smartcard::PCSCConnection& conn) const override
     {
+        smartcard::CardTransaction tx(conn);
         piv::PIVCard card(conn);
         card.probe();
         auto pins = card.discoverPINs();
@@ -221,16 +214,11 @@ public:
 
     plugin::PINResult verifyPIN(smartcard::PCSCConnection& conn, const std::string& pin) const override
     {
+        smartcard::CardTransaction tx(conn);
         piv::PIVCard card(conn);
         card.probe();
 
-        std::vector<piv::PINInfo> pins;
-        {
-            std::lock_guard<std::mutex> lock(cacheMtx);
-            pins = cachedPINs;
-        }
-        if (pins.empty())
-            pins = card.discoverPINs();
+        auto pins = card.discoverPINs();
         if (pins.empty())
             return {};
 
@@ -239,33 +227,24 @@ public:
 
     int getPINTriesLeft(smartcard::PCSCConnection& conn) const override
     {
+        smartcard::CardTransaction tx(conn);
         piv::PIVCard card(conn);
         card.probe();
 
-        std::vector<piv::PINInfo> pins;
-        {
-            std::lock_guard<std::mutex> lock(cacheMtx);
-            pins = cachedPINs;
-        }
-        if (pins.empty())
-            pins = card.discoverPINs();
+        auto pins = card.discoverPINs();
         if (pins.empty())
             return -1;
 
         return card.getPINTriesLeft(pins.front().keyReference);
     }
 
-    std::vector<std::pair<std::string, uint16_t>>
-    discoverKeyReferences(smartcard::PCSCConnection& conn) const override
+    std::vector<std::pair<std::string, uint16_t>> discoverKeyReferences(smartcard::PCSCConnection& conn) const override
     {
+        smartcard::CardTransaction tx(conn);
         piv::PIVCard card(conn);
         card.probe();
         return card.discoverKeys();
     }
-
-private:
-    mutable std::mutex cacheMtx;
-    mutable std::vector<piv::PINInfo> cachedPINs;
 };
 
 } // namespace

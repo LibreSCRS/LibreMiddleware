@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace smartcard {
@@ -34,9 +35,9 @@ APDUCommand selectByFileId(uint8_t fileId1, uint8_t fileId2, uint8_t p2 = 0x00);
 APDUCommand readBinary(uint16_t offset, uint8_t length);
 
 // PIN management commands (ISO 7816-4)
-APDUCommand verifyPIN(uint8_t pinRef, const std::vector<uint8_t>& pin);
+APDUCommand verifyPIN(uint8_t pinRef, std::span<const uint8_t> pin);
 APDUCommand verifyPINStatus(uint8_t pinRef);
-APDUCommand changeReferenceData(uint8_t pinRef, const std::vector<uint8_t>& oldPin, const std::vector<uint8_t>& newPin);
+APDUCommand changeReferenceData(uint8_t pinRef, std::span<const uint8_t> oldPin, std::span<const uint8_t> newPin);
 
 // Returns true if the status word indicates a SELECT format mismatch
 // (wrong P2/Le), meaning retrying with alternative P2/Le is appropriate.

@@ -96,13 +96,13 @@ APDUCommand readBinary(uint16_t offset, uint8_t length)
                        .hasLe = true};
 }
 
-APDUCommand verifyPIN(uint8_t pinRef, const std::vector<uint8_t>& pin)
+APDUCommand verifyPIN(uint8_t pinRef, std::span<const uint8_t> pin)
 {
     return APDUCommand{.cla = 0x00,
                        .ins = 0x20, // VERIFY
                        .p1 = 0x00,
                        .p2 = pinRef,
-                       .data = pin,
+                       .data = {pin.begin(), pin.end()},
                        .le = 0,
                        .hasLe = false};
 }
@@ -118,7 +118,7 @@ APDUCommand verifyPINStatus(uint8_t pinRef)
                        .hasLe = true}; // Le required for SM — Case 1 (no Le) triggers 6988 on some cards
 }
 
-APDUCommand changeReferenceData(uint8_t pinRef, const std::vector<uint8_t>& oldPin, const std::vector<uint8_t>& newPin)
+APDUCommand changeReferenceData(uint8_t pinRef, std::span<const uint8_t> oldPin, std::span<const uint8_t> newPin)
 {
     std::vector<uint8_t> data;
     data.reserve(oldPin.size() + newPin.size());

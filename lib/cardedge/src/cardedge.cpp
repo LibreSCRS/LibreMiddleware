@@ -6,9 +6,9 @@
 #include "cardedge_protocol.h"
 #include "smartcard/pcsc_connection.h"
 #include "smartcard/apdu.h"
+#include "smartcard/secure_buffer.h"
 #include <algorithm>
 #include <cstring>
-#include <openssl/crypto.h>
 #include <pkcs15/pkcs15_parser.h>
 #include <zlib.h>
 
@@ -157,9 +157,10 @@ static PINResult parsePINStatusWord(uint16_t sw)
 }
 
 // Pad a PIN with 0x00 bytes to PIN_MAX_LENGTH (8 bytes).
-static std::vector<uint8_t> padPIN(const std::string& pin)
+// Returns SecureBuffer for automatic zeroization on destruction.
+static smartcard::SecureBuffer padPIN(const std::string& pin)
 {
-    std::vector<uint8_t> padded(pin.begin(), pin.end());
+    smartcard::SecureBuffer padded(pin);
     padded.resize(protocol::PIN_MAX_LENGTH, 0x00);
     return padded;
 }
@@ -307,7 +308,6 @@ PINResult verifyPIN(smartcard::PCSCConnection& conn, const std::string& pin)
 {
     auto paddedPin = padPIN(pin);
     auto resp = conn.transmit(smartcard::verifyPIN(protocol::PKI_PIN_REFERENCE, paddedPin));
-    OPENSSL_cleanse(paddedPin.data(), paddedPin.size());
     return parsePINStatusWord(resp.statusWord());
 }
 
@@ -316,8 +316,6 @@ PINResult changePIN(smartcard::PCSCConnection& conn, const std::string& oldPin, 
     auto paddedOld = padPIN(oldPin);
     auto paddedNew = padPIN(newPin);
     auto resp = conn.transmit(smartcard::changeReferenceData(protocol::PKI_PIN_REFERENCE, paddedOld, paddedNew));
-    OPENSSL_cleanse(paddedOld.data(), paddedOld.size());
-    OPENSSL_cleanse(paddedNew.data(), paddedNew.size());
     return parsePINStatusWord(resp.statusWord());
 }
 

@@ -302,6 +302,13 @@ bool Monitor::processEvents(std::vector<SCARD_READERSTATE>& states, int readerCo
                     continue;
                 } else if (states[i].dwEventState & SCARD_STATE_MUTE) {
                     continue;
+                } else if ((dwPrevState & SCARD_STATE_PRESENT) &&
+                           (dwPrevState & (SCARD_STATE_MUTE | SCARD_STATE_EXCLUSIVE))) {
+                    // Card was PRESENT but suppressed (MUTE/EXCLUSIVE) — now usable.
+                    // Emit CardInserted that we deferred earlier.
+                    shouldEmit = true;
+                    eventType = MonitorEvent::Type::CardInserted;
+                    atr.assign(states[i].rgbAtr, states[i].rgbAtr + states[i].cbAtr);
                 } else if (dwPrevState & SCARD_STATE_PRESENT) {
                     if ((dwPrevState >> 16) == (states[i].dwEventState >> 16)) {
                         // Same event counter — INUSE toggle, skip

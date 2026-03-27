@@ -17,6 +17,6 @@ target_include_directories(PIV PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_link_libraries(PIV PUBLIC SmartCard CardPlugin)
+target_link_libraries(PIV PUBLIC SmartCard CardPlugin OpenSSL_Crypto)
 
 set_target_properties(PIV PROPERTIES POSITION_INDEPENDENT_CODE ON)

@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 #include <smartcard/apdu.h>
+#include <array>
 #include <smartcard/tlv.h>
 #include <smartcard/ber.h>
 
@@ -12,7 +13,8 @@ using namespace smartcard;
 
 TEST(APDUTest, VerifyPINCommand)
 {
-    auto cmd = smartcard::verifyPIN(0x01, {0x31, 0x32, 0x33, 0x34});
+    std::array<uint8_t, 4> pin = {0x31, 0x32, 0x33, 0x34};
+    auto cmd = smartcard::verifyPIN(0x01, pin);
     auto bytes = cmd.toBytes();
     // CLA=0x00, INS=0x20, P1=0x00, P2=0x01, Lc=4, data=31323334, no Le
     EXPECT_EQ(bytes[0], 0x00);
@@ -42,7 +44,9 @@ TEST(APDUTest, VerifyPINStatusCommand)
 
 TEST(APDUTest, ChangeReferenceDataCommand)
 {
-    auto cmd = smartcard::changeReferenceData(0x01, {0x31, 0x32, 0x33, 0x34}, {0x35, 0x36, 0x37, 0x38});
+    std::array<uint8_t, 4> oldPin = {0x31, 0x32, 0x33, 0x34};
+    std::array<uint8_t, 4> newPin = {0x35, 0x36, 0x37, 0x38};
+    auto cmd = smartcard::changeReferenceData(0x01, oldPin, newPin);
     auto bytes = cmd.toBytes();
     EXPECT_EQ(bytes[0], 0x00);
     EXPECT_EQ(bytes[1], 0x24); // INS

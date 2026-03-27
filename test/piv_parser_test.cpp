@@ -18,8 +18,7 @@ using namespace smartcard;
 // ---------------------------------------------------------------------------
 
 // Wrap payload in a single-byte-tag BER-TLV element with definite length.
-static std::vector<uint8_t> wrapTLV(uint8_t tag,
-                                    const std::vector<uint8_t>& payload)
+static std::vector<uint8_t> wrapTLV(uint8_t tag, const std::vector<uint8_t>& payload)
 {
     std::vector<uint8_t> r;
     r.push_back(tag);
@@ -37,16 +36,8 @@ static std::vector<uint8_t> wrapTLV(uint8_t tag,
     return r;
 }
 
-// Wrap payload in the PIV tag-53 envelope. Tag 0x53 is primitive per BER
-// (bit 5 clear), so the parser stores the payload as raw value bytes.
-[[maybe_unused]] static std::vector<uint8_t> wrapIn53(const std::vector<uint8_t>& payload)
-{
-    return wrapTLV(0x53, payload);
-}
-
 // Build a two-byte tag TLV element (e.g. tag 5F2F).
-static std::vector<uint8_t> tlv2(uint8_t tag1, uint8_t tag2,
-                                 const std::vector<uint8_t>& value)
+static std::vector<uint8_t> tlv2(uint8_t tag1, uint8_t tag2, const std::vector<uint8_t>& value)
 {
     std::vector<uint8_t> out;
     out.push_back(tag1);
@@ -66,8 +57,7 @@ static std::vector<uint8_t> strBytes(const std::string& s)
     return {s.begin(), s.end()};
 }
 
-static std::vector<uint8_t> concat(
-    std::initializer_list<std::vector<uint8_t>> parts)
+static std::vector<uint8_t> concat(std::initializer_list<std::vector<uint8_t>> parts)
 {
     std::vector<uint8_t> out;
     for (const auto& p : parts)
@@ -112,14 +102,14 @@ TEST(PIVParser, ParseCHUID)
 
     // Use primitive tags for the actual data (these have bit 5 clear):
     // 0x04 (OCTET STRING), 0x0C (UTF8String), 0x13 (PrintableString)
-    auto fascnTlv = wrapTLV(0x04, fascn);                      // primitive
-    auto guidTlv  = wrapTLV(0x04, guid);                       // primitive
-    auto expiryTlv = wrapTLV(0x13, strBytes(expiry));           // primitive
+    auto fascnTlv = wrapTLV(0x04, fascn);             // primitive
+    auto guidTlv = wrapTLV(0x04, guid);               // primitive
+    auto expiryTlv = wrapTLV(0x13, strBytes(expiry)); // primitive
 
     // Wrap each in its PIV parent tag (constructed)
-    auto tag30 = wrapTLV(0x30, fascnTlv);   // 0x30 constructed, child 0x04
-    auto tag34 = wrapTLV(0x34, guidTlv);     // 0x34 constructed, child 0x04
-    auto tag35 = wrapTLV(0x35, expiryTlv);   // 0x35 constructed, child 0x13
+    auto tag30 = wrapTLV(0x30, fascnTlv);  // 0x30 constructed, child 0x04
+    auto tag34 = wrapTLV(0x34, guidTlv);   // 0x34 constructed, child 0x04
+    auto tag35 = wrapTLV(0x35, expiryTlv); // 0x35 constructed, child 0x13
 
     auto inner = concat({tag30, tag34, tag35});
     auto root = parseBER(inner.data(), inner.size());
@@ -144,8 +134,7 @@ TEST(PIVParser, ParseCHUID)
 // =============================================================================
 TEST(PIVParser, ParseDiscovery)
 {
-    std::vector<uint8_t> aid = {0xA0, 0x00, 0x00, 0x03, 0x08,
-                                0x00, 0x00, 0x10, 0x00, 0x01, 0x00};
+    std::vector<uint8_t> aid = {0xA0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10, 0x00, 0x01, 0x00};
     std::vector<uint8_t> policy = {0x60, 0x20};
 
     auto innerPayload = concat({
@@ -164,8 +153,7 @@ TEST(PIVParser, ParseDiscovery)
     auto parsedPolicy = berFindBytes(root, {0x7E, 0x5F2F});
     ASSERT_GE(parsedPolicy.size(), 2u);
 
-    uint16_t pinUsagePolicy =
-        static_cast<uint16_t>((parsedPolicy[0] << 8) | parsedPolicy[1]);
+    uint16_t pinUsagePolicy = static_cast<uint16_t>((parsedPolicy[0] << 8) | parsedPolicy[1]);
     EXPECT_EQ(pinUsagePolicy, 0x6020);
 
     uint8_t policyByte = static_cast<uint8_t>(pinUsagePolicy >> 8);
@@ -268,8 +256,7 @@ TEST(PIVParser, ParseCertContainerCompressed)
 // =============================================================================
 TEST(PIVParser, ParseCCC)
 {
-    std::vector<uint8_t> cardId = {0x01, 0x02, 0x03, 0x04, 0x05,
-                                   0x06, 0x07, 0x08, 0x09, 0x0A};
+    std::vector<uint8_t> cardId = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A};
 
     // Tag 0xF0 is constructed; wrap cardId in primitive tag 0x04
     auto innerTlv = wrapTLV(0x04, cardId);
@@ -290,7 +277,7 @@ TEST(PIVParser, ParseCCC)
 TEST(PIVParser, ParsePrintedInfo)
 {
     std::string name = "John Doe";
-    std::string org  = "ACME Corp";
+    std::string org = "ACME Corp";
 
     auto payload = concat({
         wrapTLV(0x01, strBytes(name)),
