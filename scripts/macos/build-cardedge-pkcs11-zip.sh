@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: LGPL-2.1-or-later
-# Build a LibreSCRS PKCS#11 module ZIP for macOS.
+# Build a LibreSCRS CardEdge PKCS#11 module ZIP for macOS.
 #
-# Usage:  ./scripts/macos/build-pkcs11-zip.sh [BUILD_DIR]
+# Usage:  ./scripts/macos/build-cardedge-pkcs11-zip.sh [BUILD_DIR]
 #   BUILD_DIR  CMake build directory (default: build)
 #
 # Prerequisites:
 #   - CMake Release build already compiled in BUILD_DIR
 #
-# Output: LibreSCRS-pkcs11-<VERSION>-macos.zip in the project root.
+# Output: LibreSCRS-cardedge-pkcs11-<VERSION>-macos.zip in the project root.
 
 set -euo pipefail
 
@@ -24,46 +24,46 @@ if [[ -z "$VERSION" ]]; then
 fi
 echo "Version: $VERSION"
 
-LIB_DIR="$BUILD_DIR/lib/pkcs11"
+LIB_DIR="$BUILD_DIR/lib/cardedge-pkcs11"
 
 if [[ ! -d "$LIB_DIR" ]]; then
     echo "ERROR: PKCS#11 build directory not found: $LIB_DIR"
-    echo "       Run: cmake --build $BUILD_DIR --target librescrs-pkcs11"
+    echo "       Run: cmake --build $BUILD_DIR --target librescrs-cardedge-pkcs11"
     exit 1
 fi
 
 # Find the real (non-symlink) versioned dylib
-DYLIB_VERSIONED=$(find "$LIB_DIR" -maxdepth 1 -name "librescrs-pkcs11.[0-9]*.dylib" ! -type l | sort -V | tail -1)
+DYLIB_VERSIONED=$(find "$LIB_DIR" -maxdepth 1 -name "librescrs-cardedge-pkcs11.[0-9]*.dylib" ! -type l | sort -V | tail -1)
 if [[ -z "$DYLIB_VERSIONED" ]]; then
     echo "ERROR: No versioned dylib found in $LIB_DIR"
     exit 1
 fi
 
-PKCS11_HEADERS_DIR="$PROJECT_ROOT/lib/pkcs11/include/pkcs11"
-PKCS11_VERSION_H="$LIB_DIR/pkcs11_version.h"
+PKCS11_HEADERS_DIR="$PROJECT_ROOT/lib/cardedge-pkcs11/include/cardedge-pkcs11"
+PKCS11_VERSION_H="$LIB_DIR/cardedge_pkcs11_version.h"
 
 # Stage package
 STAGING_PARENT="$(mktemp -d)"
-PKG_NAME="librescrs-pkcs11-$VERSION-macos"
+PKG_NAME="librescrs-cardedge-pkcs11-$VERSION-macos"
 STAGING="$STAGING_PARENT/$PKG_NAME"
 
-mkdir -p "$STAGING/lib" "$STAGING/include/pkcs11"
+mkdir -p "$STAGING/lib" "$STAGING/include/cardedge-pkcs11"
 
 echo "Staging library..."
-cp "$DYLIB_VERSIONED" "$STAGING/lib/librescrs-pkcs11.$VERSION.dylib"
+cp "$DYLIB_VERSIONED" "$STAGING/lib/librescrs-cardedge-pkcs11.$VERSION.dylib"
 (
     cd "$STAGING/lib"
-    ln -sf "librescrs-pkcs11.$VERSION.dylib" "librescrs-pkcs11.1.dylib"
-    ln -sf "librescrs-pkcs11.1.dylib"        "librescrs-pkcs11.dylib"
+    ln -sf "librescrs-cardedge-pkcs11.$VERSION.dylib" "librescrs-cardedge-pkcs11.1.dylib"
+    ln -sf "librescrs-cardedge-pkcs11.1.dylib"        "librescrs-cardedge-pkcs11.dylib"
 )
 
 echo "Ad-hoc signing..."
-codesign --force --sign - "$STAGING/lib/librescrs-pkcs11.$VERSION.dylib"
+codesign --force --sign - "$STAGING/lib/librescrs-cardedge-pkcs11.$VERSION.dylib"
 
 echo "Copying headers..."
-cp "$PKCS11_HEADERS_DIR/pkcs11.h"  "$STAGING/include/pkcs11/"
-cp "$PKCS11_HEADERS_DIR/pkcs11t.h" "$STAGING/include/pkcs11/"
-cp "$PKCS11_HEADERS_DIR/pkcs11f.h" "$STAGING/include/pkcs11/"
+cp "$PKCS11_HEADERS_DIR/pkcs11.h"  "$STAGING/include/cardedge-pkcs11/"
+cp "$PKCS11_HEADERS_DIR/pkcs11t.h" "$STAGING/include/cardedge-pkcs11/"
+cp "$PKCS11_HEADERS_DIR/pkcs11f.h" "$STAGING/include/cardedge-pkcs11/"
 cp "$PKCS11_VERSION_H"             "$STAGING/include/"
 
 cat > "$STAGING/README.txt" << EOF
@@ -71,18 +71,18 @@ LibreSCRS PKCS#11 Module for macOS — version $VERSION
 ======================================================
 
 CONTENTS
-  lib/librescrs-pkcs11.$VERSION.dylib   Universal (arm64 + x86_64) PKCS#11 module
-  lib/librescrs-pkcs11.1.dylib          Soname symlink
-  lib/librescrs-pkcs11.dylib            Unversioned symlink
-  include/pkcs11/                        Standard OASIS PKCS#11 v3.x headers
-  include/pkcs11_version.h               LibreSCRS version macros
+  lib/librescrs-cardedge-pkcs11.$VERSION.dylib   Universal (arm64 + x86_64) PKCS#11 module
+  lib/librescrs-cardedge-pkcs11.1.dylib          Soname symlink
+  lib/librescrs-cardedge-pkcs11.dylib            Unversioned symlink
+  include/cardedge-pkcs11/                        Standard OASIS PKCS#11 v3.x headers
+  include/cardedge_pkcs11_version.h               LibreSCRS version macros
 
 INSTALLATION
   Copy the lib/ contents to a directory of your choice, e.g.:
     sudo cp -R lib/ /usr/local/lib/
 
   Example — verify with OpenSC tools:
-    pkcs11-tool --module /usr/local/lib/librescrs-pkcs11.dylib --list-slots
+    pkcs11-tool --module /usr/local/lib/librescrs-cardedge-pkcs11.dylib --list-slots
 
 DEPENDENCIES
   The module links only against system frameworks:
@@ -98,7 +98,7 @@ LICENSE
   LGPL-2.1-or-later  — see https://github.com/LibreSCRS/LibreMiddleware
 EOF
 
-OUTPUT="$PROJECT_ROOT/LibreSCRS-pkcs11-$VERSION-macos.zip"
+OUTPUT="$PROJECT_ROOT/LibreSCRS-cardedge-pkcs11-$VERSION-macos.zip"
 echo "Creating ZIP..."
 (cd "$STAGING_PARENT" && zip -r -y "$OUTPUT" "$PKG_NAME")
 

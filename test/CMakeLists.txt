@@ -120,9 +120,9 @@ target_compile_definitions(EMRTDPluginTests PRIVATE
 add_dependencies(EMRTDPluginTests emrtd-plugin)
 gtest_discover_tests(EMRTDPluginTests)
 
-add_executable(PKCS11Tests pkcs11_test.cpp)
-target_link_libraries(PKCS11Tests GTest::gtest_main librescrs-pkcs11)
-gtest_discover_tests(PKCS11Tests)
+add_executable(CardEdgePKCS11Tests pkcs11_test.cpp)
+target_link_libraries(CardEdgePKCS11Tests GTest::gtest_main librescrs-cardedge-pkcs11)
+gtest_discover_tests(CardEdgePKCS11Tests)
 
 # CLI tool for manual PIN testing with a real card
 add_executable(pin_test_cli pin_test_cli.cpp)

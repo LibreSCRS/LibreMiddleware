@@ -12,8 +12,8 @@
  * Apollo 2008 eID has no CardEdge applet and is NOT supported.
  *
  * Build instructions:
- *   Linux:  cmake -DBUILD_OPENSC_DRIVER=ON ...
- *   macOS:  cmake -DBUILD_OPENSC_DRIVER=ON \
+ *   Linux:  cmake -DBUILD_CARDEDGE_OPENSC_DRIVER=ON ...
+ *   macOS:  cmake -DBUILD_CARDEDGE_OPENSC_DRIVER=ON \
  *               -DOPENSC_INCLUDE_DIR=/path/to/OpenSC/src ...
  *
  * Usage: see conf/librescrs.conf for opensc.conf snippet.

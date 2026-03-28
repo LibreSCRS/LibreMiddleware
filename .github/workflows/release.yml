@@ -50,7 +50,7 @@ jobs:
       - name: Test
         run: ctest --output-on-failure --test-dir build/test
 
-  opensc-linux:
+  cardedge-opensc-linux:
     needs: test-linux
     runs-on: ubuntu-latest
     steps:
@@ -80,26 +80,26 @@ jobs:
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_PREFIX_PATH=/tmp/opensc-install \
-            -DBUILD_OPENSC_DRIVER=ON \
+            -DBUILD_CARDEDGE_OPENSC_DRIVER=ON \
             -DOPENSC_INCLUDE_DIR=/tmp/opensc-src/src
-          cmake --build build --target librescrs-opensc
+          cmake --build build --target librescrs-cardedge-opensc
 
       - name: Package
         run: |
           TAG="${{ github.ref_name }}"
-          PKG="librescrs-opensc-${TAG}-opensc${{ env.OPENSC_VERSION }}-linux-x86_64"
+          PKG="librescrs-cardedge-opensc-${TAG}-opensc${{ env.OPENSC_VERSION }}-linux-x86_64"
           mkdir -p "$PKG"
-          cp build/lib/opensc-driver/librescrs-opensc.so "$PKG/"
-          cp lib/opensc-driver/conf/librescrs.conf "$PKG/"
-          cp lib/opensc-driver/README.md "$PKG/"
+          cp build/lib/cardedge-opensc-driver/librescrs-cardedge-opensc.so "$PKG/"
+          cp lib/cardedge-opensc-driver/conf/librescrs.conf "$PKG/"
+          cp lib/cardedge-opensc-driver/README.md "$PKG/"
           tar czf "${PKG}.tar.gz" "$PKG"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: opensc-linux
-          path: librescrs-opensc-*.tar.gz
+          name: cardedge-opensc-linux
+          path: librescrs-cardedge-opensc-*.tar.gz
 
-  opensc-macos:
+  cardedge-opensc-macos:
     needs: test-macos
     runs-on: macos-latest
     steps:
@@ -119,26 +119,26 @@ jobs:
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
-            -DBUILD_OPENSC_DRIVER=ON \
+            -DBUILD_CARDEDGE_OPENSC_DRIVER=ON \
             -DOPENSC_INCLUDE_DIR=/tmp/opensc-src/src
-          cmake --build build --target librescrs-opensc
+          cmake --build build --target librescrs-cardedge-opensc
 
       - name: Package
         run: |
           TAG="${{ github.ref_name }}"
-          PKG="librescrs-opensc-${TAG}-opensc${{ env.OPENSC_VERSION }}-macos-arm64"
+          PKG="librescrs-cardedge-opensc-${TAG}-opensc${{ env.OPENSC_VERSION }}-macos-arm64"
           mkdir -p "$PKG"
-          cp build/lib/opensc-driver/librescrs-opensc.dylib "$PKG/"
-          cp lib/opensc-driver/conf/librescrs.conf "$PKG/"
-          cp lib/opensc-driver/README.md "$PKG/"
+          cp build/lib/cardedge-opensc-driver/librescrs-cardedge-opensc.dylib "$PKG/"
+          cp lib/cardedge-opensc-driver/conf/librescrs.conf "$PKG/"
+          cp lib/cardedge-opensc-driver/README.md "$PKG/"
           zip -r "${PKG}.zip" "$PKG"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: opensc-macos
-          path: librescrs-opensc-*.zip
+          name: cardedge-opensc-macos
+          path: librescrs-cardedge-opensc-*.zip
 
-  pkcs11-linux:
+  cardedge-pkcs11-linux:
     needs: test-linux
     runs-on: ubuntu-latest
     steps:
@@ -154,17 +154,17 @@ jobs:
       - name: Build
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
-          cmake --build build --target librescrs-pkcs11
+          cmake --build build --target librescrs-cardedge-pkcs11
 
       - name: Package
-        run: scripts/linux/build-pkcs11-tar.sh build
+        run: scripts/linux/build-cardedge-pkcs11-tar.sh build
 
       - uses: actions/upload-artifact@v4
         with:
-          name: pkcs11-linux
-          path: LibreSCRS-pkcs11-*.tar.gz
+          name: cardedge-pkcs11-linux
+          path: LibreSCRS-cardedge-pkcs11-*.tar.gz
 
-  pkcs11-macos:
+  cardedge-pkcs11-macos:
     needs: test-macos
     runs-on: macos-latest
     steps:
@@ -178,18 +178,18 @@ jobs:
       - name: Build
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64 -DBUILD_TESTING=OFF
-          cmake --build build --target librescrs-pkcs11
+          cmake --build build --target librescrs-cardedge-pkcs11
 
       - name: Package
-        run: scripts/macos/build-pkcs11-zip.sh build
+        run: scripts/macos/build-cardedge-pkcs11-zip.sh build
 
       - uses: actions/upload-artifact@v4
         with:
-          name: pkcs11-macos
-          path: LibreSCRS-pkcs11-*.zip
+          name: cardedge-pkcs11-macos
+          path: LibreSCRS-cardedge-pkcs11-*.zip
 
   release:
-    needs: [test-linux, test-macos, opensc-linux, opensc-macos, pkcs11-linux, pkcs11-macos]
+    needs: [test-linux, test-macos, cardedge-opensc-linux, cardedge-opensc-macos, cardedge-pkcs11-linux, cardedge-pkcs11-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -35,6 +35,6 @@ CMakeLists.txt.user
 .DS_Store
 
 # PKCS#11 module packaging output
-LibreSCRS-pkcs11-*.tar.gz
-LibreSCRS-pkcs11-*.zip
+LibreSCRS-cardedge-pkcs11-*.tar.gz
+LibreSCRS-cardedge-pkcs11-*.zip
 .claude/

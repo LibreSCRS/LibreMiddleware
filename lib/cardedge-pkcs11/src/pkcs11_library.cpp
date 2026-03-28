@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "pkcs11_library.h"
-#include "pkcs11_version.h"
+#include "cardedge_pkcs11_version.h"
 #include "smartcard/pcsc_connection.h"
 #include <algorithm>
 #include <cstring>
@@ -46,8 +46,8 @@ CK_RV PKCS11Library::getInfo(CK_INFO_PTR pInfo) const
     padString(pInfo->manufacturerID, sizeof(pInfo->manufacturerID), "LibreSCRS");
     pInfo->flags = 0;
     padString(pInfo->libraryDescription, sizeof(pInfo->libraryDescription), "LibreSCRS PKCS#11");
-    pInfo->libraryVersion.major = LIBRESCRS_PKCS11_VERSION_MAJOR;
-    pInfo->libraryVersion.minor = LIBRESCRS_PKCS11_VERSION_MINOR;
+    pInfo->libraryVersion.major = LIBRESCRS_CARDEDGE_PKCS11_VERSION_MAJOR;
+    pInfo->libraryVersion.minor = LIBRESCRS_CARDEDGE_PKCS11_VERSION_MINOR;
 
     return CKR_OK;
 }

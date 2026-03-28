@@ -10,7 +10,7 @@
 #endif
 
 #include <gtest/gtest.h>
-#include <pkcs11/pkcs11.h>
+#include <cardedge-pkcs11/pkcs11.h>
 #include <cstdlib>
 #include <map>
 #include <set>

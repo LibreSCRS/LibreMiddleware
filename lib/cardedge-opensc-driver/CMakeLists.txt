@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright hirashix0@proton.me
 
-option(BUILD_OPENSC_DRIVER "Build OpenSC card driver module" OFF)
+option(BUILD_CARDEDGE_OPENSC_DRIVER "Build CardEdge OpenSC card driver module" OFF)
 
 enable_language(C)
 
-if(NOT BUILD_OPENSC_DRIVER)
-    message(STATUS "OpenSC driver: skipped (set -DBUILD_OPENSC_DRIVER=ON to build)")
+if(NOT BUILD_CARDEDGE_OPENSC_DRIVER)
+    message(STATUS "CardEdge OpenSC driver: skipped (set -DBUILD_CARDEDGE_OPENSC_DRIVER=ON to build)")
     return()
 endif()
 
@@ -31,17 +31,17 @@ if(NOT OPENSC_INCLUDE_DIR OR NOT EXISTS "${OPENSC_INCLUDE_DIR}/libopensc/opensc.
         "  -DOPENSC_INCLUDE_DIR=/path/to/OpenSC/src")
 endif()
 
-add_library(librescrs-opensc SHARED
+add_library(librescrs-cardedge-opensc SHARED
     src/librescrs_opensc.c
 )
 
-target_include_directories(librescrs-opensc PRIVATE ${OPENSC_INCLUDE_DIR})
+target_include_directories(librescrs-cardedge-opensc PRIVATE ${OPENSC_INCLUDE_DIR})
 find_package(ZLIB REQUIRED)
-target_link_libraries(librescrs-opensc PRIVATE ${OPENSC_LIB} ZLIB::ZLIB)
+target_link_libraries(librescrs-cardedge-opensc PRIVATE ${OPENSC_LIB} ZLIB::ZLIB)
 
-set_target_properties(librescrs-opensc PROPERTIES
+set_target_properties(librescrs-cardedge-opensc PROPERTIES
     PREFIX ""
-    OUTPUT_NAME "librescrs-opensc"
+    OUTPUT_NAME "librescrs-cardedge-opensc"
     C_STANDARD 99
     C_STANDARD_REQUIRED ON
 )

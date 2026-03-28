@@ -1,1 +1,1 @@
-lib/pkcs11/include/pkcs11/*.h
+lib/cardedge-pkcs11/include/cardedge-pkcs11/*.h

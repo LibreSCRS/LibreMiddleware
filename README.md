@@ -12,7 +12,7 @@ Middleware libraries for reading Serbian smart cards (eID, vehicle registration,
 - **RsHealth** — Serbian health insurance card (RFZO/RFZO LBO)
 - **PKSCard** — PKS qualified signature card (Chamber of Commerce of Serbia)
 - **CardEdge** — Generic CardEdge/PKCS#15 applet operations (PIN management, signing, certificate discovery)
-- **PKCS#11** — PKCS#11 module (`librescrs-pkcs11`) for use with Firefox, NSS, OpenSC tools, and other PKCS#11-aware applications
+- **PKCS#11** — PKCS#11 module (`librescrs-cardedge-pkcs11`) for use with Firefox, NSS, OpenSC tools, and other PKCS#11-aware applications
 
 All libraries are Qt-free, use C++20, and produce static libraries (except the PKCS#11 module which is a shared library).
 
@@ -41,30 +41,30 @@ To disable tests: `cmake -B build -DBUILD_TESTING=OFF`
 
 ## PKCS#11 Module
 
-The `librescrs-pkcs11` shared library allows PKCS#11-aware applications (Firefox, Thunderbird, OpenSC tools) to use Serbian smart cards for TLS client authentication and digital signing.
+The `librescrs-cardedge-pkcs11` shared library allows PKCS#11-aware applications (Firefox, Thunderbird, OpenSC tools) to use Serbian smart cards for TLS client authentication and digital signing.
 
 ### Building the PKCS#11 module
 
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --target librescrs-pkcs11
+cmake --build build --target librescrs-cardedge-pkcs11
 ```
 
 ### Packaging
 
 ```bash
 # Linux
-scripts/linux/build-pkcs11-tar.sh build
+scripts/linux/build-cardedge-pkcs11-tar.sh build
 
 # macOS
-scripts/macos/build-pkcs11-zip.sh build
+scripts/macos/build-cardedge-pkcs11-zip.sh build
 ```
 
 Pre-built packages are available on the [Releases](https://github.com/LibreSCRS/LibreMiddleware/releases) page.
 
 ### Firefox setup
 
-1. Install the PKCS#11 module to `/usr/local/lib/librescrs-pkcs11.so` (Linux) or `/usr/local/lib/librescrs-pkcs11.dylib` (macOS)
+1. Install the PKCS#11 module to `/usr/local/lib/librescrs-cardedge-pkcs11.so` (Linux) or `/usr/local/lib/librescrs-cardedge-pkcs11.dylib` (macOS)
 2. In Firefox: `about:preferences#privacy` → Security Devices → Load → point to the library path
 3. Insert your Serbian eID card — Firefox will offer it for TLS client authentication
 
