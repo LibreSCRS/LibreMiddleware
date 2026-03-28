@@ -5,6 +5,7 @@
 # GIT_VERSION_MAJOR         - Major version
 # GIT_VERSION_MINOR         - Minor version
 # GIT_VERSION_PATCH         - Patch version
+# GIT_VERSION_PRERELEASE    - Pre-release label (e.g. rc1, beta2)
 # GIT_VERSION_COMMIT_NUM    - Commit number
 # GIT_VERSION_COMMIT_SHA    - Hash
 
@@ -32,9 +33,10 @@ if(NOT DEFINED PROJECT_VERSION)
   message(WARNING "Failed to determine PROJECT_VERSION from Git tags. Using default version \"${PROJECT_VERSION}\".")
 endif()
 
-string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)(-([0-9]+)-([a-z0-9]+))?" GITVERSIONDETECT_VERSION_MATCH ${PROJECT_VERSION})
+string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)(-([a-zA-Z0-9.]+))?(-([0-9]+)-([a-z0-9]+))?" GITVERSIONDETECT_VERSION_MATCH ${PROJECT_VERSION})
 set(GIT_VERSION_MAJOR ${CMAKE_MATCH_1})
 set(GIT_VERSION_MINOR ${CMAKE_MATCH_2})
 set(GIT_VERSION_PATCH ${CMAKE_MATCH_3})
-set(GIT_VERSION_COMMIT_NUM ${CMAKE_MATCH_5})
-set(GIT_VERSION_COMMIT_SHA ${CMAKE_MATCH_6})
+set(GIT_VERSION_PRERELEASE ${CMAKE_MATCH_5})
+set(GIT_VERSION_COMMIT_NUM ${CMAKE_MATCH_7})
+set(GIT_VERSION_COMMIT_SHA ${CMAKE_MATCH_8})
