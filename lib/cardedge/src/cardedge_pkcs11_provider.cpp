@@ -22,7 +22,10 @@ bool CardEdgePKCS11Provider::probe(const std::string& readerName)
     try {
         smartcard::PCSCConnection conn(readerName);
         PkiAppletGuard guard(conn);
-        return true;
+        // SELECT root dir 0x7000 — CardEdge-specific, not present on standard PKCS#15.
+        // Without this, generic PKCS#15 cards (e.g. Gemalto AET) would match.
+        auto resp = conn.transmit(smartcard::selectByFileId(0x70, 0x00));
+        return resp.isSuccess();
     } catch (...) {
         return false;
     }
@@ -42,6 +45,7 @@ smartcard::PKCS11TokenInfo CardEdgePKCS11Provider::getTokenInfo()
     info.label = "Serbian CardEdge";
     info.manufacturer = "CardEdge";
     info.model = "PKCS#15";
+    info.serialNumber = "0000000000000000"; // Required by Java SunPKCS11 provider
     info.hasPIN = true;
     return info;
 }

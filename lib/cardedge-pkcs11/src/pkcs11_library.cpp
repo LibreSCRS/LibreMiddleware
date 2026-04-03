@@ -245,15 +245,10 @@ CK_RV PKCS11Library::closeSession(CK_SESSION_HANDLE hSession)
             }
             loginState.erase(slotID);
         }
-        // Clean up cached objects for this slot
-        for (auto it = objects.begin(); it != objects.end();) {
-            if (it->second.slotID == slotID)
-                it = objects.erase(it);
-            else
-                ++it;
-        }
-        loadedSlots.erase(slotID);
-        connectedSlots.erase(slotID);
+        // Keep cached objects and connection — they're slot-scoped, not
+        // session-scoped. Re-reading certs from card on every session
+        // cycle is expensive. Cache is invalidated on C_Finalize or
+        // reconnectCard (SCARD_W_RESET_CARD).
     }
 
     return CKR_OK;
@@ -281,16 +276,7 @@ CK_RV PKCS11Library::closeAllSessions(CK_SLOT_ID slotID)
         loginState.erase(slotID);
     }
 
-    // Clean up cached objects for this slot
-    for (auto it = objects.begin(); it != objects.end();) {
-        if (it->second.slotID == slotID)
-            it = objects.erase(it);
-        else
-            ++it;
-    }
-    loadedSlots.erase(slotID);
-    connectedSlots.erase(slotID);
-
+    // Keep cached objects and connection (slot-scoped, not session-scoped).
     return CKR_OK;
 }
 
@@ -1211,8 +1197,8 @@ CK_RV PKCS11Library::getMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
         return CKR_MECHANISM_INVALID;
 
     std::memset(pInfo, 0, sizeof(CK_MECHANISM_INFO));
-    pInfo->ulMinKeySize = 2048;
-    pInfo->ulMaxKeySize = 2048;
+    pInfo->ulMinKeySize = 1024;
+    pInfo->ulMaxKeySize = 8192;
     pInfo->flags = CKF_SIGN | CKF_HW;
     return CKR_OK;
 }

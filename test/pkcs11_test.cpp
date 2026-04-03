@@ -1566,8 +1566,8 @@ TEST(PKCS11Test, GetMechanismInfoRSAPKCS)
 
         CK_MECHANISM_INFO info;
         EXPECT_EQ(C_GetMechanismInfo(tokenSlots[0], CKM_RSA_PKCS, &info), CKR_OK);
-        EXPECT_EQ(info.ulMinKeySize, 2048u);
-        EXPECT_EQ(info.ulMaxKeySize, 2048u);
+        EXPECT_EQ(info.ulMinKeySize, 1024u);
+        EXPECT_EQ(info.ulMaxKeySize, 8192u);
         EXPECT_TRUE(info.flags & CKF_SIGN);
 
         // Unsupported mechanism
@@ -1663,8 +1663,8 @@ TEST(PKCS11Test, GetMechanismListContents)
 
         CK_MECHANISM_INFO info;
         EXPECT_EQ(C_GetMechanismInfo(tokenSlots[0], CKM_RSA_PKCS, &info), CKR_OK);
-        EXPECT_EQ(info.ulMinKeySize, 2048u);
-        EXPECT_EQ(info.ulMaxKeySize, 2048u);
+        EXPECT_EQ(info.ulMinKeySize, 1024u);
+        EXPECT_EQ(info.ulMaxKeySize, 8192u);
         EXPECT_TRUE(info.flags & CKF_SIGN);
         EXPECT_TRUE(info.flags & CKF_HW);
 
