@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
-# Copyright hirashix0@proton.me
+# SPDX-FileCopyrightText: 2026 hirashix0
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -120,9 +120,9 @@ target_compile_definitions(EMRTDPluginTests PRIVATE
 add_dependencies(EMRTDPluginTests emrtd-plugin)
 gtest_discover_tests(EMRTDPluginTests)
 
-add_executable(CardEdgePKCS11Tests pkcs11_test.cpp)
-target_link_libraries(CardEdgePKCS11Tests GTest::gtest_main librescrs-cardedge-pkcs11)
-gtest_discover_tests(CardEdgePKCS11Tests)
+add_executable(PKCS11Tests pkcs11_test.cpp)
+target_link_libraries(PKCS11Tests GTest::gtest_main librescrs-pkcs11)
+gtest_discover_tests(PKCS11Tests)
 
 # CLI tool for manual PIN testing with a real card
 add_executable(pin_test_cli pin_test_cli.cpp)
@@ -227,3 +227,130 @@ gtest_discover_tests(MonitorTests)
 add_executable(AutoReaderTests auto_reader_test.cpp)
 target_link_libraries(AutoReaderTests PRIVATE CardPlugin SmartCard GTest::gtest_main Threads::Threads)
 gtest_discover_tests(AutoReaderTests)
+
+# Digital signing tests (only when BUILD_SIGNING is enabled)
+if(BUILD_SIGNING)
+    add_executable(LibreSignTests libresign_test.cpp)
+    target_link_libraries(LibreSignTests PRIVATE LibreSign GTest::gtest_main OpenSSL_Crypto)
+    target_compile_definitions(LibreSignTests PRIVATE
+        LIBREMIDDLEWARE_CERT_DIR="${LIBREMIDDLEWARE_CERTIFICATES_DIR}")
+    gtest_discover_tests(LibreSignTests)
+
+    # Shared test support library (must be defined before tests that use it)
+    add_library(SigningTestSupport STATIC
+        signing_test_support/signing_test_support.cpp
+        dss_validation_client.cpp)
+    target_include_directories(SigningTestSupport PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/signing_test_support
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${LibreMiddleware_SOURCE_DIR}/thirdparty/nlohmann)
+    target_link_libraries(SigningTestSupport PUBLIC
+        GTest::gtest LibreSign)
+    target_compile_definitions(SigningTestSupport PUBLIC
+        CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+    # Unified signing E2E tests (parameterized by backend, custom main)
+    add_executable(SigningE2ETests signing_e2e_test.cpp)
+    target_link_libraries(SigningE2ETests PRIVATE SigningTestSupport)
+    gtest_discover_tests(SigningE2ETests)
+
+    # Signing provider unit tests
+    add_executable(SigningProviderTests signing_provider_test.cpp)
+    target_link_libraries(SigningProviderTests PRIVATE SigningTestSupport OpenSSL_Crypto GTest::gtest_main)
+    gtest_discover_tests(SigningProviderTests)
+
+    # HttpClient is core (used by both backends)
+    add_executable(HttpClientTests http_client_test.cpp)
+    target_link_libraries(HttpClientTests PRIVATE LibreSign GTest::gtest_main)
+    gtest_discover_tests(HttpClientTests)
+
+    # DSS backend tests
+    if(SIGNING_BACKEND STREQUAL "dss" OR SIGNING_BACKEND STREQUAL "both")
+        add_executable(DSSServiceManagerTests dss_service_manager_test.cpp)
+        target_link_libraries(DSSServiceManagerTests PRIVATE LibreSign GTest::gmock GTest::gtest_main)
+        gtest_discover_tests(DSSServiceManagerTests)
+
+        add_executable(DSSSigningServiceTests dss_signing_service_test.cpp)
+        target_link_libraries(DSSSigningServiceTests PRIVATE LibreSign GTest::gtest_main)
+        gtest_discover_tests(DSSSigningServiceTests)
+
+        # DSS integration tests (require JAR + Java on PATH)
+        add_executable(DSSIntegrationTests dss_integration_test.cpp)
+        target_link_libraries(DSSIntegrationTests PRIVATE LibreSign GTest::gtest_main)
+        target_compile_definitions(DSSIntegrationTests PRIVATE
+            CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+        gtest_discover_tests(DSSIntegrationTests)
+
+        # Signing integration tests (trust store + DSS service + optional real card)
+        add_executable(SigningIntegrationTests signing_integration_test.cpp)
+        target_link_libraries(SigningIntegrationTests PRIVATE SigningTestSupport GTest::gtest_main OpenSSL_Crypto)
+        target_compile_definitions(SigningIntegrationTests PRIVATE
+            CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+            LIBREMIDDLEWARE_CERT_DIR="${LIBREMIDDLEWARE_CERTIFICATES_DIR}")
+        gtest_discover_tests(SigningIntegrationTests)
+    endif()
+
+    # Native backend tests
+    if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
+        # Internal-utility unit tests (derEncodeLength, sha256Base64 parity).
+        # Includes internal headers from lib/libresign/src/native/, so links
+        # LibreSign + OpenSSL directly.
+        add_executable(NativeUtilsTests native_utils_test.cpp)
+        target_link_libraries(NativeUtilsTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto)
+        gtest_discover_tests(NativeUtilsTests)
+
+        add_executable(Pkcs11TokenTests pkcs11_token_test.cpp)
+        target_link_libraries(Pkcs11TokenTests PRIVATE GTest::gtest_main LibreSign SigningTestSupport)
+        gtest_discover_tests(Pkcs11TokenTests)
+
+        add_executable(TSAClientTests tsa_client_test.cpp)
+        target_link_libraries(TSAClientTests PRIVATE GTest::gtest_main LibreSign)
+        gtest_discover_tests(TSAClientTests)
+
+        add_executable(RevocationClientTests revocation_client_test.cpp)
+        target_link_libraries(RevocationClientTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto)
+        gtest_discover_tests(RevocationClientTests)
+
+        add_executable(CAdESModuleTests cades_module_test.cpp)
+        target_link_libraries(CAdESModuleTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
+        gtest_discover_tests(CAdESModuleTests)
+
+        add_executable(PAdESModuleTests pades_module_test.cpp)
+        target_link_libraries(PAdESModuleTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
+        gtest_discover_tests(PAdESModuleTests)
+
+        add_executable(JAdESModuleTests jades_module_test.cpp)
+        target_link_libraries(JAdESModuleTests PRIVATE GTest::gtest_main LibreSign SigningTestSupport)
+        target_include_directories(JAdESModuleTests PRIVATE
+            ${LibreMiddleware_SOURCE_DIR}/thirdparty/nlohmann)
+        gtest_discover_tests(JAdESModuleTests)
+
+        find_package(LibXml2 REQUIRED)
+        add_executable(XAdESModuleTests xades_module_test.cpp)
+        target_link_libraries(XAdESModuleTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto LibXml2::LibXml2 SigningTestSupport)
+        gtest_discover_tests(XAdESModuleTests)
+
+        add_executable(ASiCModuleTests asic_module_test.cpp)
+        target_link_libraries(ASiCModuleTests PRIVATE GTest::gtest_main LibreSign SigningTestSupport)
+        target_include_directories(ASiCModuleTests PRIVATE
+            ${LibreMiddleware_SOURCE_DIR}/thirdparty/miniz)
+        gtest_discover_tests(ASiCModuleTests)
+
+        add_executable(TrustedListParserTests trusted_list_parser_test.cpp)
+        target_link_libraries(TrustedListParserTests PRIVATE GTest::gtest_main LibreSign LibXml2::LibXml2)
+        gtest_discover_tests(TrustedListParserTests)
+
+        add_executable(CrossBackendTests cross_backend_test.cpp)
+        target_link_libraries(CrossBackendTests PRIVATE GTest::gtest_main LibreSign)
+        gtest_discover_tests(CrossBackendTests)
+
+        add_executable(PdfParserTests pdf_parser_test.cpp)
+        target_link_libraries(PdfParserTests PRIVATE GTest::gtest_main LibreSign)
+        target_include_directories(PdfParserTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lib/libresign/src/native)
+        gtest_discover_tests(PdfParserTests)
+
+        add_executable(ECSigningTests ec_signing_test.cpp)
+        target_link_libraries(ECSigningTests PRIVATE GTest::gtest_main LibreSign SigningTestSupport)
+        gtest_discover_tests(ECSigningTests)
+    endif()
+endif()
