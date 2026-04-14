@@ -3,12 +3,15 @@
 
 #include "pkcs11_library.h"
 #include "cardedge/cardedge_pkcs11_provider.h"
+#include "pkcs15/pkcs15_pkcs11_provider.h"
+#include "piv/piv_pkcs11_provider.h"
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <vector>
 
 // Optional trace logging: set PKCS11_DEBUG=1 in environment to enable.
@@ -45,15 +48,41 @@ static void pkcs11_debug(const char* fmt, ...)
 // File-scoped library state
 // ---------------------------------------------------------------------------
 
-// TODO: libraryMutex is held during card I/O, causing starvation under concurrent access.
-// Consider per-slot mutexes to allow parallel operations on different cards.
-static std::mutex libraryMutex;
+// Shared lock for concurrent C_* operations, exclusive lock for C_Initialize/C_Finalize.
+// Fine-grained locking (per-slot mutex, session mutex) lives inside PKCS11Library.
+//
+// Path to fine-grained locking when this becomes a real problem:
+//
+//   1. Add `std::map<CK_SLOT_ID, std::mutex> slotIoMutexes` to
+//      PKCS11Library and a public `slotIoMutex(CK_SLOT_ID)` lazy-getter.
+//
+//   2. In PKCS11Library::sign / signFinal, restructure into three phases:
+//        (a) under the state mutex: extract SignState + slot pointer +
+//            mark the session as "busy" so another thread can't use it
+//            concurrently; release the state mutex
+//        (b) under the per-slot I/O mutex only: call provider->signXxx
+//        (c) re-take the state mutex: clear busy flag, write the result
+//      This requires changing C_Sign / C_SignFinal in this file to use
+//      `std::unique_lock<std::mutex>` instead of `std::scoped_lock` and
+//      passing it down to PKCS11Library::sign so the library can release
+//      it for phase (b).
+//
+//   3. C_GetTokenInfo / C_OpenSession / C_Login are bounded card-I/O
+//      operations (PIN entry, ATR read) that should also use the per-slot
+//      mutex once the library has been refactored for phase (b).
+//
+//   4. PKCS#11 spec requirement: when CKF_OS_LOCKING_OK is set, the module
+//      MUST be thread-safe. Per-slot locking + busy flag preserves
+//      thread safety while allowing parallel cross-slot operations.
+static std::shared_mutex libraryMutex;
 static std::unique_ptr<PKCS11Library> library;
 
 static std::vector<std::shared_ptr<smartcard::PKCS11CardProvider>> createDefaultProviders()
 {
     std::vector<std::shared_ptr<smartcard::PKCS11CardProvider>> providers;
     providers.push_back(std::make_shared<cardedge::CardEdgePKCS11Provider>());
+    providers.push_back(std::make_shared<pkcs15::Pkcs15PKCS11Provider>());
+    providers.push_back(std::make_shared<piv::PivPKCS11Provider>());
     return providers;
 }
 
@@ -64,7 +93,7 @@ static std::vector<std::shared_ptr<smartcard::PKCS11CardProvider>> createDefault
 CK_DECLARE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
 {
     PKCS11_TRY
-    std::scoped_lock lock(libraryMutex);
+    std::unique_lock lock(libraryMutex);
     if (library)
         return CKR_CRYPTOKI_ALREADY_INITIALIZED;
 
@@ -87,7 +116,7 @@ CK_DECLARE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
 CK_DECLARE_FUNCTION(CK_RV, C_Finalize)(CK_VOID_PTR pReserved)
 {
     PKCS11_TRY
-    std::scoped_lock lock(libraryMutex);
+    std::unique_lock lock(libraryMutex);
     if (!library)
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     if (pReserved != NULL_PTR)
@@ -100,7 +129,7 @@ CK_DECLARE_FUNCTION(CK_RV, C_Finalize)(CK_VOID_PTR pReserved)
 CK_DECLARE_FUNCTION(CK_RV, C_GetInfo)(CK_INFO_PTR pInfo)
 {
     PKCS11_TRY
-    std::scoped_lock lock(libraryMutex);
+    std::shared_lock lock(libraryMutex);
     if (!library)
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     return library->getInfo(pInfo);
@@ -116,7 +145,7 @@ CK_DECLARE_FUNCTION(CK_RV, C_GetInfo)(CK_INFO_PTR pInfo)
 CK_DECLARE_FUNCTION(CK_RV, C_GetSlotList)(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR pSlotList, CK_ULONG_PTR pulCount)
 {
     PKCS11_TRY
-    std::scoped_lock lock(libraryMutex);
+    std::shared_lock lock(libraryMutex);
     if (!library)
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     return library->getSlotList(tokenPresent, pSlotList, pulCount);
@@ -126,7 +155,7 @@ CK_DECLARE_FUNCTION(CK_RV, C_GetSlotList)(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR 
 CK_DECLARE_FUNCTION(CK_RV, C_GetSlotInfo)(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pInfo)
 {
     PKCS11_TRY
-    std::scoped_lock lock(libraryMutex);
+    std::shared_lock lock(libraryMutex);
     if (!library)
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     return library->getSlotInfo(slotID, pInfo);
@@ -136,18 +165,18 @@ CK_DECLARE_FUNCTION(CK_RV, C_GetSlotInfo)(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pI
 CK_DECLARE_FUNCTION(CK_RV, C_GetTokenInfo)(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
 {
     PKCS11_TRY
-    std::scoped_lock lock(libraryMutex);
+    std::shared_lock lock(libraryMutex);
     if (!library)
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     return library->getTokenInfo(slotID, pInfo);
     PKCS11_CATCH
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_GetMechanismList)(CK_SLOT_ID slotID, CK_MECHANISM_TYPE_PTR pMechanismList,
-                                               CK_ULONG_PTR pulCount)
+CK_DECLARE_FUNCTION(CK_RV, C_GetMechanismList)
+(CK_SLOT_ID slotID, CK_MECHANISM_TYPE_PTR pMechanismList, CK_ULONG_PTR pulCount)
 {
     PKCS11_TRY
-    std::scoped_lock lock(libraryMutex);
+    std::shared_lock lock(libraryMutex);
     if (!library)
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     return library->getMechanismList(slotID, pMechanismList, pulCount);
@@ -157,15 +186,15 @@ CK_DECLARE_FUNCTION(CK_RV, C_GetMechanismList)(CK_SLOT_ID slotID, CK_MECHANISM_T
 CK_DECLARE_FUNCTION(CK_RV, C_GetMechanismInfo)(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type, CK_MECHANISM_INFO_PTR pInfo)
 {
     PKCS11_TRY
-    std::scoped_lock lock(libraryMutex);
+    std::shared_lock lock(libraryMutex);
     if (!library)
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     return library->getMechanismInfo(slotID, type, pInfo);
     PKCS11_CATCH
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_InitToken)(CK_SLOT_ID slotID, CK_UTF8CHAR_PTR pPin, CK_ULONG ulPinLen,
-                                        CK_UTF8CHAR_PTR pLabel)
+CK_DECLARE_FUNCTION(CK_RV, C_InitToken)
+(CK_SLOT_ID slotID, CK_UTF8CHAR_PTR pPin, CK_ULONG ulPinLen, CK_UTF8CHAR_PTR pLabel)
 {
     (void)slotID;
     (void)pPin;
@@ -182,8 +211,8 @@ CK_DECLARE_FUNCTION(CK_RV, C_InitPIN)(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PT
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_SetPIN)(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin, CK_ULONG ulOldLen,
-                                     CK_UTF8CHAR_PTR pNewPin, CK_ULONG ulNewLen)
+CK_DECLARE_FUNCTION(CK_RV, C_SetPIN)
+(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pOldPin, CK_ULONG ulOldLen, CK_UTF8CHAR_PTR pNewPin, CK_ULONG ulNewLen)
 {
     (void)hSession;
     (void)pOldPin;
@@ -197,11 +226,11 @@ CK_DECLARE_FUNCTION(CK_RV, C_SetPIN)(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR
 // Session management
 // ---------------------------------------------------------------------------
 
-CK_DECLARE_FUNCTION(CK_RV, C_OpenSession)(CK_SLOT_ID slotID, CK_FLAGS flags, CK_VOID_PTR pApplication, CK_NOTIFY Notify,
-                                          CK_SESSION_HANDLE_PTR phSession)
+CK_DECLARE_FUNCTION(CK_RV, C_OpenSession)
+(CK_SLOT_ID slotID, CK_FLAGS flags, CK_VOID_PTR pApplication, CK_NOTIFY Notify, CK_SESSION_HANDLE_PTR phSession)
 {
     PKCS11_TRY
-    std::scoped_lock lock(libraryMutex);
+    std::shared_lock lock(libraryMutex);
     if (!library)
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     return library->openSession(slotID, flags, pApplication, Notify, phSession);
@@ -211,7 +240,7 @@ CK_DECLARE_FUNCTION(CK_RV, C_OpenSession)(CK_SLOT_ID slotID, CK_FLAGS flags, CK_
 CK_DECLARE_FUNCTION(CK_RV, C_CloseSession)(CK_SESSION_HANDLE hSession)
 {
     PKCS11_TRY
-    std::scoped_lock lock(libraryMutex);
+    std::shared_lock lock(libraryMutex);
     if (!library)
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     return library->closeSession(hSession);
@@ -221,7 +250,7 @@ CK_DECLARE_FUNCTION(CK_RV, C_CloseSession)(CK_SESSION_HANDLE hSession)
 CK_DECLARE_FUNCTION(CK_RV, C_CloseAllSessions)(CK_SLOT_ID slotID)
 {
     PKCS11_TRY
-    std::scoped_lock lock(libraryMutex);
+    std::shared_lock lock(libraryMutex);
     if (!library)
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     return library->closeAllSessions(slotID);
@@ -231,15 +260,15 @@ CK_DECLARE_FUNCTION(CK_RV, C_CloseAllSessions)(CK_SLOT_ID slotID)
 CK_DECLARE_FUNCTION(CK_RV, C_GetSessionInfo)(CK_SESSION_HANDLE hSession, CK_SESSION_INFO_PTR pInfo)
 {
     PKCS11_TRY
-    std::scoped_lock lock(libraryMutex);
+    std::shared_lock lock(libraryMutex);
     if (!library)
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     return library->getSessionInfo(hSession, pInfo);
     PKCS11_CATCH
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_GetOperationState)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pOperationState,
-                                                CK_ULONG_PTR pulOperationStateLen)
+CK_DECLARE_FUNCTION(CK_RV, C_GetOperationState)
+(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pOperationState, CK_ULONG_PTR pulOperationStateLen)
 {
     (void)hSession;
     (void)pOperationState;
@@ -247,9 +276,9 @@ CK_DECLARE_FUNCTION(CK_RV, C_GetOperationState)(CK_SESSION_HANDLE hSession, CK_B
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_SetOperationState)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pOperationState,
-                                                CK_ULONG ulOperationStateLen, CK_OBJECT_HANDLE hEncryptionKey,
-                                                CK_OBJECT_HANDLE hAuthenticationKey)
+CK_DECLARE_FUNCTION(CK_RV, C_SetOperationState)
+(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pOperationState, CK_ULONG ulOperationStateLen, CK_OBJECT_HANDLE hEncryptionKey,
+ CK_OBJECT_HANDLE hAuthenticationKey)
 {
     (void)hSession;
     (void)pOperationState;
@@ -259,11 +288,11 @@ CK_DECLARE_FUNCTION(CK_RV, C_SetOperationState)(CK_SESSION_HANDLE hSession, CK_B
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_Login)(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType, CK_UTF8CHAR_PTR pPin,
-                                    CK_ULONG ulPinLen)
+CK_DECLARE_FUNCTION(CK_RV, C_Login)
+(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType, CK_UTF8CHAR_PTR pPin, CK_ULONG ulPinLen)
 {
     PKCS11_TRY
-    std::scoped_lock lock(libraryMutex);
+    std::shared_lock lock(libraryMutex);
     if (!library)
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     pkcs11_debug("C_Login session=%lu userType=%lu", (unsigned long)hSession, (unsigned long)userType);
@@ -276,7 +305,7 @@ CK_DECLARE_FUNCTION(CK_RV, C_Login)(CK_SESSION_HANDLE hSession, CK_USER_TYPE use
 CK_DECLARE_FUNCTION(CK_RV, C_Logout)(CK_SESSION_HANDLE hSession)
 {
     PKCS11_TRY
-    std::scoped_lock lock(libraryMutex);
+    std::shared_lock lock(libraryMutex);
     if (!library)
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     return library->logout(hSession);
@@ -287,8 +316,8 @@ CK_DECLARE_FUNCTION(CK_RV, C_Logout)(CK_SESSION_HANDLE hSession)
 // Object management
 // ---------------------------------------------------------------------------
 
-CK_DECLARE_FUNCTION(CK_RV, C_CreateObject)(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
-                                           CK_OBJECT_HANDLE_PTR phObject)
+CK_DECLARE_FUNCTION(CK_RV, C_CreateObject)
+(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount, CK_OBJECT_HANDLE_PTR phObject)
 {
     (void)hSession;
     (void)pTemplate;
@@ -297,8 +326,9 @@ CK_DECLARE_FUNCTION(CK_RV, C_CreateObject)(CK_SESSION_HANDLE hSession, CK_ATTRIB
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_CopyObject)(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
-                                         CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount, CK_OBJECT_HANDLE_PTR phNewObject)
+CK_DECLARE_FUNCTION(CK_RV, C_CopyObject)
+(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
+ CK_OBJECT_HANDLE_PTR phNewObject)
 {
     (void)hSession;
     (void)hObject;
@@ -323,11 +353,11 @@ CK_DECLARE_FUNCTION(CK_RV, C_GetObjectSize)(CK_SESSION_HANDLE hSession, CK_OBJEC
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_GetAttributeValue)(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
-                                                CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
+CK_DECLARE_FUNCTION(CK_RV, C_GetAttributeValue)
+(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
 {
     PKCS11_TRY
-    std::scoped_lock lock(libraryMutex);
+    std::shared_lock lock(libraryMutex);
     if (!library)
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     pkcs11_debug("C_GetAttributeValue session=%lu object=%lu attrs=%lu", (unsigned long)hSession,
@@ -340,8 +370,8 @@ CK_DECLARE_FUNCTION(CK_RV, C_GetAttributeValue)(CK_SESSION_HANDLE hSession, CK_O
     PKCS11_CATCH
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_SetAttributeValue)(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject,
-                                                CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
+CK_DECLARE_FUNCTION(CK_RV, C_SetAttributeValue)
+(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
 {
     (void)hSession;
     (void)hObject;
@@ -353,7 +383,7 @@ CK_DECLARE_FUNCTION(CK_RV, C_SetAttributeValue)(CK_SESSION_HANDLE hSession, CK_O
 CK_DECLARE_FUNCTION(CK_RV, C_FindObjectsInit)(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
 {
     PKCS11_TRY
-    std::scoped_lock lock(libraryMutex);
+    std::shared_lock lock(libraryMutex);
     if (!library)
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     pkcs11_debug("C_FindObjectsInit session=%lu attrs=%lu", (unsigned long)hSession, (unsigned long)ulCount);
@@ -377,11 +407,11 @@ CK_DECLARE_FUNCTION(CK_RV, C_FindObjectsInit)(CK_SESSION_HANDLE hSession, CK_ATT
     PKCS11_CATCH
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_FindObjects)(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE_PTR phObject,
-                                          CK_ULONG ulMaxObjectCount, CK_ULONG_PTR pulObjectCount)
+CK_DECLARE_FUNCTION(CK_RV, C_FindObjects)
+(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE_PTR phObject, CK_ULONG ulMaxObjectCount, CK_ULONG_PTR pulObjectCount)
 {
     PKCS11_TRY
-    std::scoped_lock lock(libraryMutex);
+    std::shared_lock lock(libraryMutex);
     if (!library)
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     CK_RV rv = library->findObjects(hSession, phObject, ulMaxObjectCount, pulObjectCount);
@@ -394,7 +424,7 @@ CK_DECLARE_FUNCTION(CK_RV, C_FindObjects)(CK_SESSION_HANDLE hSession, CK_OBJECT_
 CK_DECLARE_FUNCTION(CK_RV, C_FindObjectsFinal)(CK_SESSION_HANDLE hSession)
 {
     PKCS11_TRY
-    std::scoped_lock lock(libraryMutex);
+    std::shared_lock lock(libraryMutex);
     if (!library)
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     return library->findObjectsFinal(hSession);
@@ -405,8 +435,8 @@ CK_DECLARE_FUNCTION(CK_RV, C_FindObjectsFinal)(CK_SESSION_HANDLE hSession)
 // Encryption
 // ---------------------------------------------------------------------------
 
-CK_DECLARE_FUNCTION(CK_RV, C_EncryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
-                                          CK_OBJECT_HANDLE hKey)
+CK_DECLARE_FUNCTION(CK_RV, C_EncryptInit)
+(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
     (void)hSession;
     (void)pMechanism;
@@ -414,8 +444,9 @@ CK_DECLARE_FUNCTION(CK_RV, C_EncryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANI
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_Encrypt)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulDataLen,
-                                      CK_BYTE_PTR pEncryptedData, CK_ULONG_PTR pulEncryptedDataLen)
+CK_DECLARE_FUNCTION(CK_RV, C_Encrypt)
+(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulDataLen, CK_BYTE_PTR pEncryptedData,
+ CK_ULONG_PTR pulEncryptedDataLen)
 {
     (void)hSession;
     (void)pData;
@@ -425,8 +456,9 @@ CK_DECLARE_FUNCTION(CK_RV, C_Encrypt)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pD
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_EncryptUpdate)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulPartLen,
-                                            CK_BYTE_PTR pEncryptedPart, CK_ULONG_PTR pulEncryptedPartLen)
+CK_DECLARE_FUNCTION(CK_RV, C_EncryptUpdate)
+(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulPartLen, CK_BYTE_PTR pEncryptedPart,
+ CK_ULONG_PTR pulEncryptedPartLen)
 {
     (void)hSession;
     (void)pPart;
@@ -436,8 +468,8 @@ CK_DECLARE_FUNCTION(CK_RV, C_EncryptUpdate)(CK_SESSION_HANDLE hSession, CK_BYTE_
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_EncryptFinal)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastEncryptedPart,
-                                           CK_ULONG_PTR pulLastEncryptedPartLen)
+CK_DECLARE_FUNCTION(CK_RV, C_EncryptFinal)
+(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastEncryptedPart, CK_ULONG_PTR pulLastEncryptedPartLen)
 {
     (void)hSession;
     (void)pLastEncryptedPart;
@@ -449,8 +481,8 @@ CK_DECLARE_FUNCTION(CK_RV, C_EncryptFinal)(CK_SESSION_HANDLE hSession, CK_BYTE_P
 // Decryption
 // ---------------------------------------------------------------------------
 
-CK_DECLARE_FUNCTION(CK_RV, C_DecryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
-                                          CK_OBJECT_HANDLE hKey)
+CK_DECLARE_FUNCTION(CK_RV, C_DecryptInit)
+(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
     (void)hSession;
     (void)pMechanism;
@@ -458,8 +490,9 @@ CK_DECLARE_FUNCTION(CK_RV, C_DecryptInit)(CK_SESSION_HANDLE hSession, CK_MECHANI
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_Decrypt)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData,
-                                      CK_ULONG ulEncryptedDataLen, CK_BYTE_PTR pData, CK_ULONG_PTR pulDataLen)
+CK_DECLARE_FUNCTION(CK_RV, C_Decrypt)
+(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedData, CK_ULONG ulEncryptedDataLen, CK_BYTE_PTR pData,
+ CK_ULONG_PTR pulDataLen)
 {
     (void)hSession;
     (void)pEncryptedData;
@@ -469,8 +502,9 @@ CK_DECLARE_FUNCTION(CK_RV, C_Decrypt)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pE
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_DecryptUpdate)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedPart,
-                                            CK_ULONG ulEncryptedPartLen, CK_BYTE_PTR pPart, CK_ULONG_PTR pulPartLen)
+CK_DECLARE_FUNCTION(CK_RV, C_DecryptUpdate)
+(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedPart, CK_ULONG ulEncryptedPartLen, CK_BYTE_PTR pPart,
+ CK_ULONG_PTR pulPartLen)
 {
     (void)hSession;
     (void)pEncryptedPart;
@@ -480,8 +514,8 @@ CK_DECLARE_FUNCTION(CK_RV, C_DecryptUpdate)(CK_SESSION_HANDLE hSession, CK_BYTE_
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_DecryptFinal)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart,
-                                           CK_ULONG_PTR pulLastPartLen)
+CK_DECLARE_FUNCTION(CK_RV, C_DecryptFinal)
+(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pLastPart, CK_ULONG_PTR pulLastPartLen)
 {
     (void)hSession;
     (void)pLastPart;
@@ -500,8 +534,8 @@ CK_DECLARE_FUNCTION(CK_RV, C_DigestInit)(CK_SESSION_HANDLE hSession, CK_MECHANIS
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_Digest)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulDataLen,
-                                     CK_BYTE_PTR pDigest, CK_ULONG_PTR pulDigestLen)
+CK_DECLARE_FUNCTION(CK_RV, C_Digest)
+(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulDataLen, CK_BYTE_PTR pDigest, CK_ULONG_PTR pulDigestLen)
 {
     (void)hSession;
     (void)pData;
@@ -541,7 +575,7 @@ CK_DECLARE_FUNCTION(CK_RV, C_DigestFinal)(CK_SESSION_HANDLE hSession, CK_BYTE_PT
 CK_DECLARE_FUNCTION(CK_RV, C_SignInit)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
     PKCS11_TRY
-    std::scoped_lock lock(libraryMutex);
+    std::shared_lock lock(libraryMutex);
     if (!library)
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     if (pMechanism)
@@ -553,11 +587,12 @@ CK_DECLARE_FUNCTION(CK_RV, C_SignInit)(CK_SESSION_HANDLE hSession, CK_MECHANISM_
     PKCS11_CATCH
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_Sign)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulDataLen,
-                                   CK_BYTE_PTR pSignature, CK_ULONG_PTR pulSignatureLen)
+CK_DECLARE_FUNCTION(CK_RV, C_Sign)
+(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulDataLen, CK_BYTE_PTR pSignature,
+ CK_ULONG_PTR pulSignatureLen)
 {
     PKCS11_TRY
-    std::scoped_lock lock(libraryMutex);
+    std::shared_lock lock(libraryMutex);
     if (!library)
         return CKR_CRYPTOKI_NOT_INITIALIZED;
     pkcs11_debug("C_Sign session=%lu dataLen=%lu sigBuf=%s", (unsigned long)hSession, (unsigned long)ulDataLen,
@@ -571,23 +606,35 @@ CK_DECLARE_FUNCTION(CK_RV, C_Sign)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData
 
 CK_DECLARE_FUNCTION(CK_RV, C_SignUpdate)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulPartLen)
 {
-    (void)hSession;
-    (void)pPart;
-    (void)ulPartLen;
-    return CKR_FUNCTION_NOT_SUPPORTED;
+    PKCS11_TRY
+    std::shared_lock lock(libraryMutex);
+    if (!library)
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    pkcs11_debug("C_SignUpdate session=%lu partLen=%lu", (unsigned long)hSession, (unsigned long)ulPartLen);
+    auto rv = library->signUpdate(hSession, pPart, ulPartLen);
+    pkcs11_debug("C_SignUpdate -> rv=0x%08lx", (unsigned long)rv);
+    return rv;
+    PKCS11_CATCH
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_SignFinal)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature,
-                                        CK_ULONG_PTR pulSignatureLen)
+CK_DECLARE_FUNCTION(CK_RV, C_SignFinal)
+(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature, CK_ULONG_PTR pulSignatureLen)
 {
-    (void)hSession;
-    (void)pSignature;
-    (void)pulSignatureLen;
-    return CKR_FUNCTION_NOT_SUPPORTED;
+    PKCS11_TRY
+    std::shared_lock lock(libraryMutex);
+    if (!library)
+        return CKR_CRYPTOKI_NOT_INITIALIZED;
+    pkcs11_debug("C_SignFinal session=%lu sigBuf=%s", (unsigned long)hSession,
+                 pSignature ? "provided" : "NULL(size query)");
+    auto rv = library->signFinal(hSession, pSignature, pulSignatureLen);
+    pkcs11_debug("C_SignFinal -> rv=0x%08lx sigLen=%lu", (unsigned long)rv,
+                 pulSignatureLen ? (unsigned long)*pulSignatureLen : 0UL);
+    return rv;
+    PKCS11_CATCH
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_SignRecoverInit)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
-                                              CK_OBJECT_HANDLE hKey)
+CK_DECLARE_FUNCTION(CK_RV, C_SignRecoverInit)
+(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
     (void)hSession;
     (void)pMechanism;
@@ -595,8 +642,9 @@ CK_DECLARE_FUNCTION(CK_RV, C_SignRecoverInit)(CK_SESSION_HANDLE hSession, CK_MEC
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_SignRecover)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulDataLen,
-                                          CK_BYTE_PTR pSignature, CK_ULONG_PTR pulSignatureLen)
+CK_DECLARE_FUNCTION(CK_RV, C_SignRecover)
+(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulDataLen, CK_BYTE_PTR pSignature,
+ CK_ULONG_PTR pulSignatureLen)
 {
     (void)hSession;
     (void)pData;
@@ -618,8 +666,8 @@ CK_DECLARE_FUNCTION(CK_RV, C_VerifyInit)(CK_SESSION_HANDLE hSession, CK_MECHANIS
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_Verify)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulDataLen,
-                                     CK_BYTE_PTR pSignature, CK_ULONG ulSignatureLen)
+CK_DECLARE_FUNCTION(CK_RV, C_Verify)
+(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulDataLen, CK_BYTE_PTR pSignature, CK_ULONG ulSignatureLen)
 {
     (void)hSession;
     (void)pData;
@@ -645,8 +693,8 @@ CK_DECLARE_FUNCTION(CK_RV, C_VerifyFinal)(CK_SESSION_HANDLE hSession, CK_BYTE_PT
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_VerifyRecoverInit)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
-                                                CK_OBJECT_HANDLE hKey)
+CK_DECLARE_FUNCTION(CK_RV, C_VerifyRecoverInit)
+(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
     (void)hSession;
     (void)pMechanism;
@@ -654,8 +702,9 @@ CK_DECLARE_FUNCTION(CK_RV, C_VerifyRecoverInit)(CK_SESSION_HANDLE hSession, CK_M
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_VerifyRecover)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature, CK_ULONG ulSignatureLen,
-                                            CK_BYTE_PTR pData, CK_ULONG_PTR pulDataLen)
+CK_DECLARE_FUNCTION(CK_RV, C_VerifyRecover)
+(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature, CK_ULONG ulSignatureLen, CK_BYTE_PTR pData,
+ CK_ULONG_PTR pulDataLen)
 {
     (void)hSession;
     (void)pSignature;
@@ -669,8 +718,9 @@ CK_DECLARE_FUNCTION(CK_RV, C_VerifyRecover)(CK_SESSION_HANDLE hSession, CK_BYTE_
 // Dual-function cryptographic operations
 // ---------------------------------------------------------------------------
 
-CK_DECLARE_FUNCTION(CK_RV, C_DigestEncryptUpdate)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulPartLen,
-                                                  CK_BYTE_PTR pEncryptedPart, CK_ULONG_PTR pulEncryptedPartLen)
+CK_DECLARE_FUNCTION(CK_RV, C_DigestEncryptUpdate)
+(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulPartLen, CK_BYTE_PTR pEncryptedPart,
+ CK_ULONG_PTR pulEncryptedPartLen)
 {
     (void)hSession;
     (void)pPart;
@@ -680,9 +730,9 @@ CK_DECLARE_FUNCTION(CK_RV, C_DigestEncryptUpdate)(CK_SESSION_HANDLE hSession, CK
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_DecryptDigestUpdate)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedPart,
-                                                  CK_ULONG ulEncryptedPartLen, CK_BYTE_PTR pPart,
-                                                  CK_ULONG_PTR pulPartLen)
+CK_DECLARE_FUNCTION(CK_RV, C_DecryptDigestUpdate)
+(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedPart, CK_ULONG ulEncryptedPartLen, CK_BYTE_PTR pPart,
+ CK_ULONG_PTR pulPartLen)
 {
     (void)hSession;
     (void)pEncryptedPart;
@@ -692,8 +742,9 @@ CK_DECLARE_FUNCTION(CK_RV, C_DecryptDigestUpdate)(CK_SESSION_HANDLE hSession, CK
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_SignEncryptUpdate)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulPartLen,
-                                                CK_BYTE_PTR pEncryptedPart, CK_ULONG_PTR pulEncryptedPartLen)
+CK_DECLARE_FUNCTION(CK_RV, C_SignEncryptUpdate)
+(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulPartLen, CK_BYTE_PTR pEncryptedPart,
+ CK_ULONG_PTR pulEncryptedPartLen)
 {
     (void)hSession;
     (void)pPart;
@@ -703,9 +754,9 @@ CK_DECLARE_FUNCTION(CK_RV, C_SignEncryptUpdate)(CK_SESSION_HANDLE hSession, CK_B
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_DecryptVerifyUpdate)(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedPart,
-                                                  CK_ULONG ulEncryptedPartLen, CK_BYTE_PTR pPart,
-                                                  CK_ULONG_PTR pulPartLen)
+CK_DECLARE_FUNCTION(CK_RV, C_DecryptVerifyUpdate)
+(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pEncryptedPart, CK_ULONG ulEncryptedPartLen, CK_BYTE_PTR pPart,
+ CK_ULONG_PTR pulPartLen)
 {
     (void)hSession;
     (void)pEncryptedPart;
@@ -719,8 +770,9 @@ CK_DECLARE_FUNCTION(CK_RV, C_DecryptVerifyUpdate)(CK_SESSION_HANDLE hSession, CK
 // Key management
 // ---------------------------------------------------------------------------
 
-CK_DECLARE_FUNCTION(CK_RV, C_GenerateKey)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
-                                          CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount, CK_OBJECT_HANDLE_PTR phKey)
+CK_DECLARE_FUNCTION(CK_RV, C_GenerateKey)
+(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount,
+ CK_OBJECT_HANDLE_PTR phKey)
 {
     (void)hSession;
     (void)pMechanism;
@@ -730,10 +782,10 @@ CK_DECLARE_FUNCTION(CK_RV, C_GenerateKey)(CK_SESSION_HANDLE hSession, CK_MECHANI
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_GenerateKeyPair)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
-                                              CK_ATTRIBUTE_PTR pPublicKeyTemplate, CK_ULONG ulPublicKeyAttributeCount,
-                                              CK_ATTRIBUTE_PTR pPrivateKeyTemplate, CK_ULONG ulPrivateKeyAttributeCount,
-                                              CK_OBJECT_HANDLE_PTR phPublicKey, CK_OBJECT_HANDLE_PTR phPrivateKey)
+CK_DECLARE_FUNCTION(CK_RV, C_GenerateKeyPair)
+(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_ATTRIBUTE_PTR pPublicKeyTemplate,
+ CK_ULONG ulPublicKeyAttributeCount, CK_ATTRIBUTE_PTR pPrivateKeyTemplate, CK_ULONG ulPrivateKeyAttributeCount,
+ CK_OBJECT_HANDLE_PTR phPublicKey, CK_OBJECT_HANDLE_PTR phPrivateKey)
 {
     (void)hSession;
     (void)pMechanism;
@@ -746,9 +798,9 @@ CK_DECLARE_FUNCTION(CK_RV, C_GenerateKeyPair)(CK_SESSION_HANDLE hSession, CK_MEC
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_WrapKey)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
-                                      CK_OBJECT_HANDLE hWrappingKey, CK_OBJECT_HANDLE hKey, CK_BYTE_PTR pWrappedKey,
-                                      CK_ULONG_PTR pulWrappedKeyLen)
+CK_DECLARE_FUNCTION(CK_RV, C_WrapKey)
+(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hWrappingKey, CK_OBJECT_HANDLE hKey,
+ CK_BYTE_PTR pWrappedKey, CK_ULONG_PTR pulWrappedKeyLen)
 {
     (void)hSession;
     (void)pMechanism;
@@ -759,10 +811,9 @@ CK_DECLARE_FUNCTION(CK_RV, C_WrapKey)(CK_SESSION_HANDLE hSession, CK_MECHANISM_P
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_UnwrapKey)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
-                                        CK_OBJECT_HANDLE hUnwrappingKey, CK_BYTE_PTR pWrappedKey,
-                                        CK_ULONG ulWrappedKeyLen, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulAttributeCount,
-                                        CK_OBJECT_HANDLE_PTR phKey)
+CK_DECLARE_FUNCTION(CK_RV, C_UnwrapKey)
+(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hUnwrappingKey, CK_BYTE_PTR pWrappedKey,
+ CK_ULONG ulWrappedKeyLen, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulAttributeCount, CK_OBJECT_HANDLE_PTR phKey)
 {
     (void)hSession;
     (void)pMechanism;
@@ -775,9 +826,9 @@ CK_DECLARE_FUNCTION(CK_RV, C_UnwrapKey)(CK_SESSION_HANDLE hSession, CK_MECHANISM
     return CKR_FUNCTION_NOT_SUPPORTED;
 }
 
-CK_DECLARE_FUNCTION(CK_RV, C_DeriveKey)(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism,
-                                        CK_OBJECT_HANDLE hBaseKey, CK_ATTRIBUTE_PTR pTemplate,
-                                        CK_ULONG ulAttributeCount, CK_OBJECT_HANDLE_PTR phKey)
+CK_DECLARE_FUNCTION(CK_RV, C_DeriveKey)
+(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hBaseKey, CK_ATTRIBUTE_PTR pTemplate,
+ CK_ULONG ulAttributeCount, CK_OBJECT_HANDLE_PTR phKey)
 {
     (void)hSession;
     (void)pMechanism;
@@ -840,8 +891,10 @@ CK_DECLARE_FUNCTION(CK_RV, C_WaitForSlotEvent)(CK_FLAGS flags, CK_SLOT_ID_PTR pS
 // Function list table and C_GetFunctionList
 // ---------------------------------------------------------------------------
 
+// Advertise PKCS#11 v2.40 for maximum compatibility (Java SunPKCS11 does not
+// support v3.x and crashes when it sees a 3.x version in the function list).
 static CK_FUNCTION_LIST function_list = {
-    {CRYPTOKI_VERSION_MAJOR, CRYPTOKI_VERSION_MINOR},
+    {2, 40},
     C_Initialize,
     C_Finalize,
     C_GetInfo,

@@ -26,4 +26,4 @@ target_include_directories(RsEId PUBLIC
 
 set_target_properties(RsEId PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-target_link_libraries(RsEId PUBLIC SmartCard OpenSSL_Crypto z)
+target_link_libraries(RsEId PUBLIC SmartCard PRIVATE OpenSSL_Crypto z)

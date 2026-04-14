@@ -9,7 +9,7 @@
 
 namespace plugin {
 
-using CreateFunc = std::unique_ptr<CardPlugin> (*)();
+using CreateFunc = CardPlugin* (*)();
 using AbiVersionFunc = uint32_t (*)();
 
 CardPluginRegistry::~CardPluginRegistry()
@@ -66,7 +66,10 @@ size_t CardPluginRegistry::loadPluginsFromDirectory(const std::filesystem::path&
             continue;
         }
 
-        auto plugin = createFunc();
+        // Plugin factory returns a raw pointer to keep the C-linkage entry
+        // point free of non-C types. Ownership transfers to us; wrap in
+        // unique_ptr immediately so any subsequent error path cleans up.
+        std::unique_ptr<CardPlugin> plugin(createFunc());
         if (!plugin) {
             std::cerr << "CardPluginRegistry: " << entry.path() << " create_card_plugin() returned nullptr\n";
             dlclose(handle);

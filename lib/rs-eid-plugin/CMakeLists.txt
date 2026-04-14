@@ -6,7 +6,7 @@ add_library(rs-eid-plugin SHARED
 )
 target_link_libraries(rs-eid-plugin PRIVATE CardPlugin RsEId)
 target_compile_definitions(rs-eid-plugin PRIVATE
-    LIBREMIDDLEWARE_CERT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/certificates/all"
+    LIBREMIDDLEWARE_CERT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/certificates"
 )
 set_target_properties(rs-eid-plugin PROPERTIES
     PREFIX "lib"

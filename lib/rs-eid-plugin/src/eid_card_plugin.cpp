@@ -186,11 +186,29 @@ public:
         {
             namespace fs = std::filesystem;
             std::error_code ec;
+            // Load certs from all subdirectories of the bundled cert dir
+            for (const auto& subdir : fs::directory_iterator(LIBREMIDDLEWARE_CERT_DIR, ec)) {
+                if (!subdir.is_directory())
+                    continue;
+                for (const auto& entry : fs::directory_iterator(subdir.path(), ec)) {
+                    if (!entry.is_regular_file())
+                        continue;
+                    auto ext = entry.path().extension().string();
+                    if (ext != ".cer" && ext != ".crt" && ext != ".pem")
+                        continue;
+                    std::ifstream f(entry.path(), std::ios::binary);
+                    if (!f)
+                        continue;
+                    std::vector<uint8_t> der((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+                    card.addTrustedCertificate(der);
+                }
+            }
+            // Also load flat cert files directly in the bundled cert dir
             for (const auto& entry : fs::directory_iterator(LIBREMIDDLEWARE_CERT_DIR, ec)) {
                 if (!entry.is_regular_file())
                     continue;
                 auto ext = entry.path().extension().string();
-                if (ext != ".cer" && ext != ".crt")
+                if (ext != ".cer" && ext != ".crt" && ext != ".pem")
                     continue;
                 std::ifstream f(entry.path(), std::ios::binary);
                 if (!f)
@@ -244,9 +262,9 @@ public:
 
 } // namespace
 
-extern "C" std::unique_ptr<plugin::CardPlugin> create_card_plugin()
+extern "C" plugin::CardPlugin* create_card_plugin()
 {
-    return std::make_unique<EidCardPlugin>();
+    return new EidCardPlugin();
 }
 
 extern "C" uint32_t card_plugin_abi_version()

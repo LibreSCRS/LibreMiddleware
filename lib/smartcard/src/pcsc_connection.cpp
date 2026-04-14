@@ -151,11 +151,28 @@ APDUResponse PCSCConnection::transmit(const APDUCommand& cmd)
     // SW1=61: response data available — send GET RESPONSE to retrieve it.
     // This is an ISO 7816-4 mechanism used by both T=0 and T=1 protocols.
     // Loop to handle chained responses (card may send multiple 61xx).
+    //
+    // Defensive caps: a buggy or hostile card can in principle return 61xx
+    // indefinitely, which would grow `accumulated` without bound. 256
+    // iterations × 256 bytes = 64 KiB is well above any legitimate APDU
+    // response chain (eMRTD DG files cap well below this; EF.CERT payloads
+    // similarly). Break on exceed — caller sees truncated data + last SW.
+    constexpr size_t kMaxGetResponseIters = 256;
+    constexpr size_t kMaxGetResponseBytes = 65536;
+    size_t getRespIters = 0;
+    size_t totalBytes = response.data.size();
     while (response.sw1 == 0x61) {
+        if (++getRespIters > kMaxGetResponseIters)
+            break;
         auto accumulated = std::move(response.data);
         uint8_t le = response.sw2; // 0x00 = 256 bytes
         uint8_t getResponse[] = {0x00, 0xC0, 0x00, 0x00, le};
         response = transmitRaw(getResponse, sizeof(getResponse));
+        totalBytes += response.data.size();
+        if (totalBytes > kMaxGetResponseBytes) {
+            response.data = std::move(accumulated);
+            break;
+        }
         if (!accumulated.empty()) {
             accumulated.insert(accumulated.end(), response.data.begin(), response.data.end());
             response.data = std::move(accumulated);

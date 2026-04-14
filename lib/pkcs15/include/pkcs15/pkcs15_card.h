@@ -5,6 +5,8 @@
 
 #include <pkcs15/pkcs15_types.h>
 
+#include <smartcard/secure_buffer.h>
+
 #include <cstdint>
 #include <span>
 #include <string>
@@ -29,8 +31,23 @@ public:
     PinResult verifyPIN(const PinInfo& pin, const std::string& pinValue);
     PinResult changePIN(const PinInfo& pin, const std::string& oldPin, const std::string& newPin);
     int getPINTriesLeft(const PinInfo& pin);
+    std::vector<uint8_t> sign(const PrivateKeyInfo& key, const std::string& pin, const PinInfo& pinInfo,
+                              const std::vector<uint8_t>& digestInfo, const std::vector<uint8_t>& rawData,
+                              SignScheme scheme);
 
 private:
+    struct KeyRefInfo
+    {
+        uint8_t keyTag;
+        std::vector<uint8_t> keyRefData;
+    };
+    static KeyRefInfo resolveKeyRef(const PrivateKeyInfo& key);
+    std::vector<uint8_t> tryMsePso(uint8_t sigAlgo, const KeyRefInfo& keyRef, const std::vector<uint8_t>& psoData,
+                                   uint16_t expectedSigLen, uint16_t& lastSW);
+    static smartcard::SecureBuffer encodePIN(const std::string& pin, const PinInfo& pinInfo);
+    // Returns: 1=success, 0=wrong PIN (0x63Cx), -1=other failure
+    int verifyPinInline(const PinInfo& pinInfo, const smartcard::SecureBuffer& pinData);
+    static std::vector<uint8_t> extractRawHash(const std::vector<uint8_t>& digestInfo);
     bool selectByPath(std::span<const uint8_t> path, uint8_t selectP2 = 0x00);
     std::vector<uint8_t> readSelectedFile();
     bool probeViaEfDir(); // EF.DIR fallback: read MF/2F00, find PKCS#15 path

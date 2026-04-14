@@ -27,7 +27,6 @@ public:
     PkiAppletGuard& operator=(const PkiAppletGuard&) = delete;
 
 private:
-    smartcard::PCSCConnection& conn;
     smartcard::CardTransaction tx;
 };
 

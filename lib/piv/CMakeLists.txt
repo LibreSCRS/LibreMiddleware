@@ -1,12 +1,15 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
+# SPDX-FileCopyrightText: 2026 hirashix0
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_library(PIV STATIC
     src/piv_card.cpp
+    src/piv_pkcs11_provider.cpp
     include/piv/piv_types.h
     include/piv/piv_card.h
+    include/piv/piv_pkcs11_provider.h
 )
 
 target_include_directories(PIV PUBLIC
@@ -17,6 +20,6 @@ target_include_directories(PIV PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-target_link_libraries(PIV PUBLIC SmartCard CardPlugin OpenSSL_Crypto)
+target_link_libraries(PIV PUBLIC SmartCard CardPlugin PRIVATE OpenSSL_Crypto)
 
 set_target_properties(PIV PROPERTIES POSITION_INDEPENDENT_CODE ON)

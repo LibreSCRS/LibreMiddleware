@@ -299,21 +299,54 @@ std::vector<PrivateKeyInfo> parsePrKDF(std::span<const uint8_t> data)
         // Child 0: CommonObjectAttributes
         if (entry.children.size() >= 1 && entry.children[0].tag == 0x30) {
             key.label = findFirstString(entry.children[0]);
-        }
-
-        // Child 1: CommonKeyAttributes
-        if (entry.children.size() >= 2 && entry.children[1].tag == 0x30) {
-            const auto& keyAttrs = entry.children[1];
-            for (const auto& child : keyAttrs.children) {
-                if (child.tag == 0x04 && !child.constructed) {
-                    key.id = child.value;
+            // Extract authId — OCTET STRING after label and optional BIT STRING flags
+            bool pastLabel = false;
+            for (const auto& child : entry.children[0].children) {
+                if (!pastLabel && (child.tag == 0x0C || child.tag == 0x13 || child.tag == 0x16)) {
+                    pastLabel = true;
+                } else if (pastLabel && child.tag == 0x04 && !child.constructed) {
+                    key.authId = child.value;
+                    break;
                 }
             }
         }
 
-        // Child: [1] CONSTRUCTED — typeAttributes with path and key size
-        const auto* typeAttrs = findChild(entry, 0xA1);
+        // Child 1: CommonKeyAttributes { id, usage, [accessFlags], [keyReference], ... }
+        if (entry.children.size() >= 2 && entry.children[1].tag == 0x30) {
+            const auto& keyAttrs = entry.children[1];
+            bool foundId = false;
+            bool foundUsage = false;
+            for (const auto& child : keyAttrs.children) {
+                if (child.tag == 0x04 && !child.constructed && !foundId) {
+                    key.id = child.value;
+                    foundId = true;
+                } else if (child.tag == 0x03 && !child.constructed && !foundUsage) {
+                    // KeyUsageFlags BIT STRING — value[0] = unused bits count.
+                    // PKCS#15 bit positions (ASN.1 named bits, MSB-first):
+                    //   0=encrypt(0x80), 1=decrypt(0x40), 2=sign(0x20), 3=signRecover(0x10),
+                    //   4=wrap(0x08), 5=unwrap(0x04), 6=verify(0x02), 7=verifyRecover(0x01),
+                    //   8=derive(byte2:0x80), 9=nonRepudiation(byte2:0x40)
+                    foundUsage = true;
+                    if (child.value.size() >= 2) {
+                        uint8_t flagsByte = child.value[1];
+                        bool hasSign = (flagsByte & 0x30) != 0; // sign(0x20) | signRecover(0x10)
+                        bool hasNonRepudiation = child.value.size() >= 3 && (child.value[2] & 0x40) != 0;
+                        key.canSign = hasSign || hasNonRepudiation;
+                    }
+                } else if (child.tag == 0x02 && !child.value.empty()) {
+                    // keyReference INTEGER (PKCS#15 range 0-255).
+                    // .back() is safe: ASN.1 encodes 0x80 as {0x00, 0x80}, .back() = 0x80.
+                    key.keyReference = child.value.back();
+                }
+            }
+        }
+
+        // TypeAttributes: [1] CONSTRUCTED = RSA, [0] CONSTRUCTED = EC
+        const auto* typeAttrsRsa = findChild(entry, 0xA1);
+        const auto* typeAttrsEc = findChild(entry, 0xA0);
+        const auto* typeAttrs = typeAttrsRsa ? typeAttrsRsa : typeAttrsEc;
         if (typeAttrs) {
+            key.keyType = typeAttrsRsa ? KeyType::Rsa : KeyType::Ec;
             key.path = extractPath(*typeAttrs);
             key.keySizeBits = extractKeySize(*typeAttrs);
         }
@@ -368,6 +401,24 @@ std::vector<PinInfo> parseAODF(std::span<const uint8_t> data)
         // Child 0: CommonObjectAttributes SEQUENCE { UTF8String label }
         if (entry.children.size() >= 1 && entry.children[0].tag == 0x30) {
             pin.label = findFirstString(entry.children[0]);
+        }
+
+        // CommonAuthObjectAttributes — the SEQUENCE between CommonObjectAttributes and [1] typeAttributes
+        // Contains this PIN's own PKCS#15 object ID
+        for (size_t ci = 1; ci < entry.children.size(); ++ci) {
+            const auto& child = entry.children[ci];
+            if (child.tag == 0xA1)
+                break; // reached typeAttributes
+            if (child.tag == 0x30 && child.constructed) {
+                for (const auto& inner : child.children) {
+                    if (inner.tag == 0x04 && !inner.constructed) {
+                        pin.id = inner.value;
+                        break;
+                    }
+                }
+                if (!pin.id.empty())
+                    break;
+            }
         }
 
         // Child: [1] CONSTRUCTED — typeAttributes containing PinAttributes SEQUENCE

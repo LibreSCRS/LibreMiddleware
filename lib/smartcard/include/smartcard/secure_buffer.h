@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <span>
 #include <string>
 #include <vector>
 #include <openssl/crypto.h>
@@ -105,6 +106,24 @@ private:
     }
 
     std::vector<uint8_t> buf;
+};
+
+/// RAII wrapper that zeroizes a std::string on scope exit. Use when a PIN
+/// (or other short secret) must be materialized as a std::string to cross a
+/// C++ API boundary — OPENSSL_cleanse runs on every exit path including
+/// exceptions, so the intermediate buffer never outlives the call.
+///
+/// Note: SSO-safe for PINs shorter than std::string's SSO capacity
+/// (~15–22 bytes on libstdc++). Longer strings allocate heap, which is
+/// also covered — cleanse() runs before the allocator frees it.
+struct PinStringScrubber
+{
+    std::string& s;
+    ~PinStringScrubber()
+    {
+        if (!s.empty())
+            OPENSSL_cleanse(s.data(), s.size());
+    }
 };
 
 } // namespace smartcard

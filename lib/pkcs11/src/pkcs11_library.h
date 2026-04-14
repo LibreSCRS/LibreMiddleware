@@ -5,18 +5,13 @@
 
 #include "smartcard/pkcs11_card_provider.h"
 #include "pkcs11_platform.h"
+#include <atomic>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
-#include <set>
 #include <string>
 #include <vector>
-
-struct SlotEntry
-{
-    std::string readerName;
-    std::shared_ptr<smartcard::PKCS11CardProvider> provider; // null = no token
-};
 
 struct PKCS11Object
 {
@@ -42,6 +37,19 @@ struct PKCS11Object
     uint16_t keyReference = 0;           // on-card key FID (private keys only)
     std::vector<uint8_t> modulus;        // RSA public modulus (private keys only, from paired cert)
     std::vector<uint8_t> publicExponent; // RSA public exponent (private keys only, from paired cert)
+    std::vector<uint8_t> ecParams;       // DER-encoded curve OID (EC keys only, CKA_EC_PARAMS)
+    std::vector<uint8_t> ecPoint;        // DER-encoded EC public key point (EC keys only, CKA_EC_POINT)
+};
+
+struct SlotEntry
+{
+    std::string readerName;
+    std::shared_ptr<smartcard::PKCS11CardProvider> provider; // null = no token
+    std::unique_ptr<std::mutex> mutex;                       // protects mutable state below
+    bool connected = false;
+    std::optional<CK_USER_TYPE> loginState;
+    bool objectsLoaded = false;
+    std::map<CK_OBJECT_HANDLE, PKCS11Object> objects;
 };
 
 struct FindState
@@ -54,6 +62,8 @@ struct SignState
 {
     CK_OBJECT_HANDLE keyHandle;
     CK_MECHANISM_TYPE mechanism;
+    std::vector<uint8_t> buffer; // accumulated data for multi-part (C_SignUpdate/C_SignFinal)
+    bool multiPart = false;      // true after first C_SignUpdate call
 };
 
 struct SessionEntry
@@ -93,6 +103,8 @@ public:
     CK_RV signInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey);
     CK_RV sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulDataLen, CK_BYTE_PTR pSignature,
                CK_ULONG_PTR pulSignatureLen);
+    CK_RV signUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulPartLen);
+    CK_RV signFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature, CK_ULONG_PTR pulSignatureLen);
 
     CK_RV getMechanismList(CK_SLOT_ID slotID, CK_MECHANISM_TYPE_PTR pMechanismList, CK_ULONG_PTR pulCount);
     CK_RV getMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type, CK_MECHANISM_INFO_PTR pInfo);
@@ -100,17 +112,18 @@ public:
 private:
     std::vector<std::shared_ptr<smartcard::PKCS11CardProvider>> providers;
     std::vector<SlotEntry> slots;
+
+    mutable std::mutex sessionMutex; // protects sessions, nextSessionHandle
     CK_SESSION_HANDLE nextSessionHandle = 1;
     std::map<CK_SESSION_HANDLE, SessionEntry> sessions;
-    std::map<CK_SLOT_ID, CK_USER_TYPE> loginState; // absent = not logged in
 
-    CK_OBJECT_HANDLE nextObjectHandle = 1;
-    std::map<CK_OBJECT_HANDLE, PKCS11Object> objects;
-    std::set<CK_SLOT_ID> loadedSlots;
+    std::atomic<CK_OBJECT_HANDLE> nextObjectHandle{1}; // unique across slots
 
     void refreshSlots();
-    void ensureConnected(CK_SLOT_ID slotID);
-    void ensureObjectsLoaded(CK_SLOT_ID slotID);
+    void ensureConnected(CK_SLOT_ID slotID);     // caller holds slot mutex
+    void ensureObjectsLoaded(CK_SLOT_ID slotID); // caller holds slot mutex
     bool matchesTemplate(const PKCS11Object& obj, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount) const;
-    std::set<CK_SLOT_ID> connectedSlots;
+    SessionEntry* findSession(CK_SESSION_HANDLE h); // caller holds sessionMutex
+    CK_ULONG signatureSize(const PKCS11Object& key) const;
+    CK_RV handleCardError(const std::exception& e, CK_SLOT_ID slotID); // caller holds slot mutex
 };

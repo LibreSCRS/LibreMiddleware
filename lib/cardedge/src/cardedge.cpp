@@ -18,7 +18,7 @@ namespace cardedge {
 // PkiAppletGuard
 // ---------------------------------------------------------------------------
 
-PkiAppletGuard::PkiAppletGuard(smartcard::PCSCConnection& conn) : conn(conn), tx(conn)
+PkiAppletGuard::PkiAppletGuard(smartcard::PCSCConnection& conn) : tx(conn)
 {
     // Use P2=0x0C (no FCI) — some cards (e.g. eMRTD with PKCS#15) reject P2=0x00
     auto resp = conn.transmit(smartcard::selectByAID(protocol::AID_PKCS15, 0x0C));
@@ -339,7 +339,8 @@ std::vector<uint8_t> signData(smartcard::PCSCConnection& conn, uint16_t keyRefer
     if (!mseResp.isSuccess())
         throw std::runtime_error("MSE SET failed");
 
-    // PSO COMPUTE DIGITAL SIGNATURE: 00 2A 9E 00 [Lc] [DigestInfo] 00
+    // PSO COMPUTE DIGITAL SIGNATURE: P2=0x00 is CardEdge-specific
+    // (ISO 7816-8 standard is P2=0x9A, but CardEdge uses P2=0x00)
     smartcard::APDUCommand pso{.cla = 0x00,
                                .ins = 0x2A, // PERFORM SECURITY OPERATION
                                .p1 = 0x9E,  // Compute digital signature

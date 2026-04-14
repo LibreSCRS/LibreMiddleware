@@ -151,8 +151,14 @@ public:
 };
 
 // Every plugin .so must export these two functions with C linkage:
-//   extern "C" std::unique_ptr<CardPlugin> create_card_plugin();
+//   extern "C" plugin::CardPlugin* create_card_plugin();
 //   extern "C" uint32_t card_plugin_abi_version();
+//
+// The create_card_plugin() return value is a raw pointer to heap-allocated
+// storage. Ownership transfers to the caller (the plugin registry wraps it
+// in std::unique_ptr<CardPlugin> immediately). Returning a raw pointer —
+// not unique_ptr — keeps the entry point compatible with extern "C"
+// linkage. Plugins should `return new MyPlugin();` inside the factory.
 //
 // ABI constraint: Plugins MUST be built with the same compiler and C++ standard
 // library (libstdc++/libc++) as the host application. The ABI version check

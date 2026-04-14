@@ -447,6 +447,125 @@ std::vector<std::pair<std::string, uint16_t>> PIVCard::discoverKeys()
     return keys;
 }
 
+std::vector<uint8_t> PIVCard::signData(uint8_t keyRef, uint8_t algId, size_t keySizeBytes,
+                                       const std::vector<uint8_t>& data)
+{
+    // Only RSA signing supported. ECC (P1=0x11 P-256, P1=0x14 P-384) requires
+    // different data format (raw hash, no PKCS#1 padding) and response parsing.
+    if (algId != 0x06 && algId != 0x07)
+        throw std::runtime_error("PIV: unsupported algorithm (only RSA supported)");
+
+    // Helper: encode BER-TLV length bytes
+    auto encodeBERLength = [](size_t len) -> std::vector<uint8_t> {
+        if (len < 128)
+            return {static_cast<uint8_t>(len)};
+        if (len <= 255)
+            return {0x81, static_cast<uint8_t>(len)};
+        return {0x82, static_cast<uint8_t>(len >> 8), static_cast<uint8_t>(len & 0xFF)};
+    };
+
+    // NIST SP 800-73-4: for RSA keys, tag 0x81 contains the PKCS#1 v1.5
+    // padded message (full modulus length). The card performs raw RSA only.
+    // Padding: 00 01 [FF...FF] 00 [DigestInfo]
+    if (data.size() + 11 > keySizeBytes)
+        throw std::runtime_error("PIV: DigestInfo too large for key");
+
+    std::vector<uint8_t> padded(keySizeBytes, 0xFF);
+    padded[0] = 0x00;
+    padded[1] = 0x01;
+    padded[keySizeBytes - data.size() - 1] = 0x00;
+    std::copy(data.begin(), data.end(), padded.begin() + keySizeBytes - data.size());
+
+    // Build inner: tag 82 00 (empty response placeholder) + tag 81 [L] [padded data]
+    std::vector<uint8_t> inner;
+    inner.push_back(0x82);
+    inner.push_back(0x00);
+
+    inner.push_back(0x81);
+    auto paddedLen = encodeBERLength(padded.size());
+    inner.insert(inner.end(), paddedLen.begin(), paddedLen.end());
+    inner.insert(inner.end(), padded.begin(), padded.end());
+
+    // Wrap in Dynamic Authentication Template: tag 7C [L] [inner]
+    std::vector<uint8_t> cmdData;
+    cmdData.push_back(0x7C);
+    auto innerLen = encodeBERLength(inner.size());
+    cmdData.insert(cmdData.end(), innerLen.begin(), innerLen.end());
+    cmdData.insert(cmdData.end(), inner.begin(), inner.end());
+
+    // GENERAL AUTHENTICATE: INS 0x87, P1 = algorithm, P2 = key reference
+    // Currently RSA-2048 only (P1=0x07). ECC support would need P1=0x11 (P256) or 0x14 (P384).
+    smartcard::APDUCommand cmd{};
+    cmd.cla = 0x00;
+    cmd.ins = 0x87;
+    cmd.p1 = algId;
+    cmd.p2 = keyRef;
+    cmd.data = cmdData;
+    cmd.le = 0x00;
+    cmd.hasLe = true;
+
+    auto resp = conn.transmit(cmd);
+    if (!resp.isSuccess())
+        throw std::runtime_error("PIV GENERAL AUTHENTICATE failed: SW=" + std::to_string(resp.statusWord()));
+
+    // Parse response: find tag 7C, then tag 82 inside it, extract signature bytes
+    // Manual TLV walk to handle BER lengths
+    auto skipBERLength = [](const uint8_t* buf, size_t bufLen, size_t pos, size_t& outLen) -> size_t {
+        if (pos >= bufLen)
+            return bufLen;
+        uint8_t first = buf[pos++];
+        if (first < 0x80) {
+            outLen = first;
+        } else if (first == 0x81) {
+            if (pos >= bufLen)
+                return bufLen;
+            outLen = buf[pos++];
+        } else if (first == 0x82) {
+            if (pos + 1 >= bufLen)
+                return bufLen;
+            outLen = (static_cast<size_t>(buf[pos]) << 8) | buf[pos + 1];
+            pos += 2;
+        } else {
+            return bufLen; // unsupported
+        }
+        return pos;
+    };
+
+    const uint8_t* rdata = resp.data.data();
+    size_t rlen = resp.data.size();
+    size_t pos = 0;
+
+    // Expect tag 7C
+    if (pos >= rlen || rdata[pos] != 0x7C)
+        throw std::runtime_error("PIV: response missing tag 7C");
+    ++pos;
+
+    size_t outerLen = 0;
+    pos = skipBERLength(rdata, rlen, pos, outerLen);
+    if (pos >= rlen)
+        throw std::runtime_error("PIV: response truncated");
+
+    // Inside 7C, find tag 82
+    size_t outerEnd = pos + outerLen;
+    if (outerEnd > rlen)
+        outerEnd = rlen;
+
+    while (pos < outerEnd) {
+        uint8_t tag = rdata[pos++];
+        size_t fieldLen = 0;
+        pos = skipBERLength(rdata, rlen, pos, fieldLen);
+        if (pos + fieldLen > outerEnd)
+            throw std::runtime_error("PIV: response field truncated");
+
+        if (tag == 0x82) {
+            return {rdata + pos, rdata + pos + fieldLen};
+        }
+        pos += fieldLen;
+    }
+
+    throw std::runtime_error("PIV: response missing tag 82 (signature)");
+}
+
 PIVData PIVCard::readAll()
 {
     PIVData data;

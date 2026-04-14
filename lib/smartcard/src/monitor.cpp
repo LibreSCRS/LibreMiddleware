@@ -13,6 +13,18 @@ namespace smartcard {
 static constexpr DWORD SCAN_TIMEOUT = 3600 * 1000; // 1 hour
 static constexpr const char* PNP_READER = "\\\\?PnP?\\Notification";
 
+// SCARD_* constants are defined by the PCSC headers as unsigned (DWORD)
+// literals, but SCardXxx() functions return signed LONG. Comparing the two
+// directly triggers -Wsign-compare. Re-declare the ones we use as typed LONG
+// constants so every comparison below is sign-homogeneous.
+static constexpr LONG kScSuccess = static_cast<LONG>(SCARD_S_SUCCESS);
+static constexpr LONG kScNoReadersAvailable = static_cast<LONG>(SCARD_E_NO_READERS_AVAILABLE);
+static constexpr LONG kScInsufficientBuffer = static_cast<LONG>(SCARD_E_INSUFFICIENT_BUFFER);
+static constexpr LONG kScTimeout = static_cast<LONG>(SCARD_E_TIMEOUT);
+static constexpr LONG kScNoService = static_cast<LONG>(SCARD_E_NO_SERVICE);
+static constexpr LONG kScUnknownReader = static_cast<LONG>(SCARD_E_UNKNOWN_READER);
+static constexpr LONG kScCancelled = static_cast<LONG>(SCARD_E_CANCELLED);
+
 Monitor::Monitor(std::unique_ptr<IPCSCScanProvider> provider)
     : pcsc(provider ? std::move(provider) : std::make_unique<PCSCScanProvider>())
 {}
@@ -142,7 +154,7 @@ void Monitor::establishContext()
 {
     SCARDCONTEXT ctx = 0;
     LONG rv = pcsc->establishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &ctx);
-    if (rv != SCARD_S_SUCCESS) {
+    if (rv != kScSuccess) {
         throw std::runtime_error("Cannot establish context in Monitor");
     }
     hContext = ctx;
@@ -167,15 +179,15 @@ std::vector<std::string> Monitor::enumerateReaders()
         DWORD dwReaders = 0;
         LONG rv = pcsc->listReaders(hContext, nullptr, nullptr, &dwReaders);
 
-        if (rv == SCARD_E_NO_READERS_AVAILABLE || dwReaders == 0) {
+        if (rv == kScNoReadersAvailable || dwReaders == 0) {
             return {};
         }
 
-        if (rv != SCARD_S_SUCCESS) {
+        if (rv != kScSuccess) {
             pcsc->releaseContext(hContext);
             SCARDCONTEXT ctx = 0;
             rv = pcsc->establishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &ctx);
-            if (rv != SCARD_S_SUCCESS) {
+            if (rv != kScSuccess) {
                 throw std::runtime_error("Cannot re-establish context in Monitor");
             }
             hContext = ctx;
@@ -186,13 +198,13 @@ std::vector<std::string> Monitor::enumerateReaders()
         buffer[0] = '\0';
         rv = pcsc->listReaders(hContext, nullptr, buffer.data(), &dwReaders);
 
-        if (rv == SCARD_E_INSUFFICIENT_BUFFER)
+        if (rv == kScInsufficientBuffer)
             continue; // retry
 
-        if (rv == SCARD_E_NO_READERS_AVAILABLE) {
+        if (rv == kScNoReadersAvailable) {
             return {};
         }
-        if (rv != SCARD_S_SUCCESS) {
+        if (rv != kScSuccess) {
             return {};
         }
 
@@ -217,13 +229,13 @@ void Monitor::waitForFirstReader(bool pnp)
         LONG rv;
         do {
             rv = pcsc->getStatusChange(hContext, SCAN_TIMEOUT, &state, 1);
-        } while (rv == SCARD_E_TIMEOUT && !stopRequested.load());
+        } while (rv == kScTimeout && !stopRequested.load());
 
-        if (rv != SCARD_S_SUCCESS) {
+        if (rv != kScSuccess) {
             pcsc->releaseContext(hContext);
             SCARDCONTEXT ctx = 0;
             LONG rv2 = pcsc->establishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &ctx);
-            if (rv2 != SCARD_S_SUCCESS) {
+            if (rv2 != kScSuccess) {
                 throw std::runtime_error("Cannot re-establish context in Monitor");
             }
             hContext = ctx;
@@ -234,11 +246,11 @@ void Monitor::waitForFirstReader(bool pnp)
         pcsc->listReaders(hContext, nullptr, nullptr, &dwReadersOld);
         dwReaders = dwReadersOld;
 
-        LONG rv = SCARD_S_SUCCESS;
-        while ((rv == SCARD_S_SUCCESS) && (dwReaders == dwReadersOld)) {
+        LONG rv = kScSuccess;
+        while ((rv == kScSuccess) && (dwReaders == dwReadersOld)) {
             rv = pcsc->listReaders(hContext, nullptr, nullptr, &dwReaders);
-            if (rv == SCARD_E_NO_READERS_AVAILABLE) {
-                rv = SCARD_S_SUCCESS;
+            if (rv == kScNoReadersAvailable) {
+                rv = kScSuccess;
             }
             std::this_thread::sleep_for(std::chrono::seconds(1));
             if (stopRequested.load()) {
@@ -255,7 +267,7 @@ bool Monitor::processEvents(std::vector<SCARD_READERSTATE>& states, int readerCo
     // Non-blocking probe to capture initial card state
     LONG rv = pcsc->getStatusChange(hContext, 0, states.data(), totalStates);
 
-    while ((rv == SCARD_S_SUCCESS) || (rv == SCARD_E_TIMEOUT)) {
+    while ((rv == kScSuccess) || (rv == kScTimeout)) {
         if (pnp) {
             if (states[readerCount].dwEventState & SCARD_STATE_CHANGED) {
                 return true; // re-enumerate
@@ -267,7 +279,7 @@ bool Monitor::processEvents(std::vector<SCARD_READERSTATE>& states, int readerCo
                 dwReadersOld += strlen(states[i].szReader) + 1;
             }
             dwReadersOld += 1; // trailing null
-            if ((pcsc->listReaders(hContext, nullptr, nullptr, &dwReaders) == SCARD_S_SUCCESS) &&
+            if ((pcsc->listReaders(hContext, nullptr, nullptr, &dwReaders) == kScSuccess) &&
                 (dwReaders != dwReadersOld)) {
                 return true; // re-enumerate
             }
@@ -342,7 +354,7 @@ bool Monitor::processEvents(std::vector<SCARD_READERSTATE>& states, int readerCo
     }
 
     // Post-loop error handling
-    if (rv == SCARD_E_NO_SERVICE) {
+    if (rv == kScNoService) {
         // Emit CardRemoved only for readers that had a card present
         for (int i = 0; i < readerCount; i++) {
             if (states[i].dwCurrentState & SCARD_STATE_PRESENT) {
@@ -354,27 +366,27 @@ bool Monitor::processEvents(std::vector<SCARD_READERSTATE>& states, int readerCo
         pcsc->releaseContext(hContext);
         SCARDCONTEXT ctx = 0;
         LONG rv2 = pcsc->establishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &ctx);
-        if (rv2 != SCARD_S_SUCCESS) {
+        if (rv2 != kScSuccess) {
             throw std::runtime_error("Cannot re-establish context in Monitor");
         }
         hContext = ctx;
         return true;
     }
 
-    if (rv == SCARD_E_UNKNOWN_READER) {
+    if (rv == kScUnknownReader) {
         return true; // re-enumerate
     }
 
-    if (rv == SCARD_E_CANCELLED) {
+    if (rv == kScCancelled) {
         return false; // stop
     }
 
     // Other error — re-establish context
-    if (rv != SCARD_S_SUCCESS) {
+    if (rv != kScSuccess) {
         pcsc->releaseContext(hContext);
         SCARDCONTEXT ctx = 0;
         LONG rv2 = pcsc->establishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &ctx);
-        if (rv2 != SCARD_S_SUCCESS) {
+        if (rv2 != kScSuccess) {
             throw std::runtime_error("Cannot re-establish context in Monitor");
         }
         hContext = ctx;

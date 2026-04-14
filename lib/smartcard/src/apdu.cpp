@@ -29,13 +29,17 @@ std::vector<uint8_t> APDUCommand::toBytes() const
     }
 
     if (hasLe) {
-        if (useExtended) {
-            // Extended Le: le==0 (short form = "up to 256") → 0x01 0x00 (256 bytes).
-            uint16_t extLe = (le == 0) ? 256u : static_cast<uint16_t>(le);
+        if (useExtended || le > 0xFF) {
+            // Extended Le: 2-byte encoding
+            if (data.empty() && !useExtended) {
+                // Case 2 extended: no data, need 0x00 marker before Le
+                bytes.push_back(0x00);
+            }
+            uint16_t extLe = (le == 0) ? 256u : le;
             bytes.push_back(static_cast<uint8_t>(extLe >> 8));
             bytes.push_back(static_cast<uint8_t>(extLe & 0xFF));
         } else {
-            bytes.push_back(le);
+            bytes.push_back(static_cast<uint8_t>(le));
         }
     }
 

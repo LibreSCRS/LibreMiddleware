@@ -646,9 +646,9 @@ private:
 
 } // namespace
 
-extern "C" std::unique_ptr<plugin::CardPlugin> create_card_plugin()
+extern "C" plugin::CardPlugin* create_card_plugin()
 {
-    return std::make_unique<EMRTDCardPlugin>();
+    return new EMRTDCardPlugin();
 }
 
 extern "C" uint32_t card_plugin_abi_version()

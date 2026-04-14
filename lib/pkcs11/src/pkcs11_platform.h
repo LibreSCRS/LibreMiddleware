@@ -13,4 +13,4 @@
 #define NULL_PTR 0
 #endif
 
-#include "cardedge-pkcs11/pkcs11.h"
+#include "pkcs11/pkcs11.h"

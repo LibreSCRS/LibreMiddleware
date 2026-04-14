@@ -13,7 +13,7 @@ struct APDUCommand
 {
     uint8_t cla, ins, p1, p2;
     std::vector<uint8_t> data; // Lc data (empty = no data field)
-    uint8_t le = 0;            // Expected response length (0 = 256)
+    uint16_t le = 0;           // Expected response length (0 = max, >255 = extended)
     bool hasLe = true;
 
     std::vector<uint8_t> toBytes() const;

@@ -10,6 +10,9 @@
 
 namespace cardedge {
 
+// Shared PIN-string scrubber lives in smartcard/secure_buffer.h.
+using ::smartcard::PinStringScrubber;
+
 CardEdgePKCS11Provider::~CardEdgePKCS11Provider() = default;
 
 std::shared_ptr<smartcard::PKCS11CardProvider> CardEdgePKCS11Provider::createInstance() const
@@ -115,29 +118,36 @@ std::vector<smartcard::PKCS11ObjectInfo> CardEdgePKCS11Provider::getObjects()
 
 unsigned long CardEdgePKCS11Provider::login(unsigned long userType, const std::vector<uint8_t>& pin)
 {
-    if (userType != 1)       // CKU_USER
-        return 0x00000103UL; // CKR_USER_TYPE_INVALID
+    using namespace smartcard::pkcs11_rv;
+    if (userType != 1) // CKU_USER
+        return USER_TYPE_INVALID;
     if (!connection)
-        return 0x00000030UL; // CKR_DEVICE_ERROR
+        return DEVICE_ERROR;
 
     try {
         PkiAppletGuard guard(*connection);
+        // SSO-safe: PIN < 22 bytes. Scrubber cleanses pinStr on scope exit
+        // (normal or exception); previous explicit cleanse calls are now
+        // redundant but harmless.
         std::string pinStr(pin.begin(), pin.end());
+        PinStringScrubber scrubber{pinStr};
         auto result = verifyPIN(*connection, pinStr);
-        OPENSSL_cleanse(pinStr.data(), pinStr.size());
-        if (result.success)
-            return 0; // CKR_OK
+        if (result.success) {
+            cachedPin = smartcard::SecureBuffer(pinStr);
+            return OK;
+        }
         if (result.blocked)
-            return 0x000000A4UL; // CKR_PIN_LOCKED
-        return 0x000000A0UL;     // CKR_PIN_INCORRECT
+            return PIN_LOCKED;
+        return PIN_INCORRECT;
     } catch (...) {
-        return 0x00000030UL; // CKR_DEVICE_ERROR
+        return DEVICE_ERROR;
     }
 }
 
 unsigned long CardEdgePKCS11Provider::logout()
 {
-    return 0; // CKR_OK
+    cachedPin = smartcard::SecureBuffer{};
+    return smartcard::pkcs11_rv::OK;
 }
 
 std::vector<uint8_t> CardEdgePKCS11Provider::signData(const std::vector<uint8_t>& keyId,
@@ -150,7 +160,19 @@ std::vector<uint8_t> CardEdgePKCS11Provider::signData(const std::vector<uint8_t>
     if (it == keyReferenceMap.end())
         throw std::runtime_error("CardEdgePKCS11Provider: unknown key ID");
 
+    if (cachedPin.empty())
+        throw std::runtime_error("CardEdgePKCS11Provider: not logged in");
+
     PkiAppletGuard guard(*connection);
+
+    // Re-verify PIN — SELECT applet (via guard) resets security status.
+    // SSO-safe + exception-safe via PinScrubber.
+    std::string pinStr(cachedPin.begin(), cachedPin.end());
+    PinStringScrubber scrubber{pinStr};
+    auto pinResult = verifyPIN(*connection, pinStr);
+    if (!pinResult.success)
+        throw std::runtime_error("CardEdgePKCS11Provider: PIN re-verification failed");
+
     return cardedge::signData(*connection, it->second, data);
 }
 

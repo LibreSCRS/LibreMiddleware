@@ -136,9 +136,9 @@ public:
 
 } // namespace
 
-extern "C" std::unique_ptr<plugin::CardPlugin> create_card_plugin()
+extern "C" plugin::CardPlugin* create_card_plugin()
 {
-    return std::make_unique<HealthCardPlugin>();
+    return new HealthCardPlugin();
 }
 
 extern "C" uint32_t card_plugin_abi_version()

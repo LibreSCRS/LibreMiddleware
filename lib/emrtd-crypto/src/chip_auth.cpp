@@ -184,9 +184,6 @@ static std::vector<uint8_t> buildTLV(uint8_t tag, const std::vector<uint8_t>& va
 // OID constants for Chip Authentication
 // ---------------------------------------------------------------------------
 
-// id-PK-ECDH: 0.4.0.127.0.7.2.2.1.2
-static const std::string OID_PK_ECDH = "0.4.0.127.0.7.2.2.1.2";
-
 // id-CA prefix: 0.4.0.127.0.7.2.2.3
 static const std::string OID_CA_PREFIX = "0.4.0.127.0.7.2.2.3";
 

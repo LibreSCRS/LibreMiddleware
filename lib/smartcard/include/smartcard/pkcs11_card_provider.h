@@ -10,6 +10,17 @@
 
 namespace smartcard {
 
+// PKCS#11 return values for provider use (avoids pkcs11t.h dependency).
+// Values from PKCS#11 v2.40 §3.1: CK_RV codes.
+namespace pkcs11_rv {
+constexpr unsigned long OK = 0x00000000UL;
+constexpr unsigned long DEVICE_ERROR = 0x00000030UL;
+constexpr unsigned long PIN_INCORRECT = 0x000000A0UL;
+constexpr unsigned long PIN_INVALID = 0x000000A1UL;
+constexpr unsigned long PIN_LOCKED = 0x000000A4UL;
+constexpr unsigned long USER_TYPE_INVALID = 0x00000103UL;
+} // namespace pkcs11_rv
+
 struct PKCS11TokenInfo
 {
     std::string label;
@@ -37,12 +48,22 @@ struct PKCS11ObjectInfo
     bool isToken = true;
     bool isPrivate = false;
     bool canSign = false;
-    bool canDecrypt = false;   // CKA_DECRYPT (key exchange keys)
-    bool canEncrypt = false;   // CKA_ENCRYPT (key exchange keys)
-    bool canWrap = false;      // CKA_WRAP (key exchange keys)
-    bool canUnwrap = false;    // CKA_UNWRAP (key exchange keys)
-    uint16_t keyReference = 0; // on-card key FID for MSE SET (private keys only)
+    bool canDecrypt = false;       // CKA_DECRYPT (key exchange keys)
+    bool canEncrypt = false;       // CKA_ENCRYPT (key exchange keys)
+    bool canWrap = false;          // CKA_WRAP (key exchange keys)
+    bool canUnwrap = false;        // CKA_UNWRAP (key exchange keys)
+    uint16_t keyReference = 0;     // on-card key FID for MSE SET (private keys only)
+    std::vector<uint8_t> ecParams; // DER-encoded curve OID (EC private keys)
+    std::vector<uint8_t> ecPoint;  // DER-encoded EC public key point (EC private keys)
 };
+
+// PIN contract for PKCS11CardProvider implementations:
+// - login(): Provider SHOULD cache PIN securely if needed for sign re-verification.
+// - logout(): Provider MUST clear cached PIN with OPENSSL_cleanse().
+// - signData()/signMessage(): Provider MAY re-verify PIN with card if required
+//   by the card protocol (e.g., PIV requires PIN per-operation).
+// - Use OPENSSL_cleanse() for all PIN copies. Avoid storing in std::string
+//   long-term (SSO may prevent cleansing). Prefer std::vector<uint8_t>.
 
 class PKCS11CardProvider
 {
@@ -64,8 +85,27 @@ public:
 
     // Sign data using the private key identified by keyId (CKA_ID).
     // data = DER DigestInfo for CKM_RSA_PKCS; card applies PKCS#1 v1.5 padding.
-    // Returns raw signature bytes (256 for RSA-2048).
+    // Returns raw signature bytes.
     virtual std::vector<uint8_t> signData(const std::vector<uint8_t>& keyId, const std::vector<uint8_t>& data) = 0;
+
+    // Sign raw message data using a combined hash+sign mechanism.
+    // mechanismType = PKCS#11 mechanism (e.g. CKM_SHA256_RSA_PKCS).
+    // digestInfo = DER DigestInfo built by the PKCS#11 library (hash + OID wrapper).
+    // rawData = original unhashed message bytes.
+    // Default: delegates to signData(keyId, digestInfo).
+    // Override for cards that require hash-specific signature algorithms.
+    virtual std::vector<uint8_t> signMessage(const std::vector<uint8_t>& keyId, const std::vector<uint8_t>& digestInfo,
+                                             const std::vector<uint8_t>& /*rawData*/, unsigned long /*mechanismType*/)
+    {
+        return signData(keyId, digestInfo);
+    }
+
+    // Whether this provider supports RSA-PSS mechanisms.
+    // Default: true. Override to return false for cards that don't support PSS (e.g. PIV).
+    virtual bool supportsPSS() const
+    {
+        return true;
+    }
 
     // Reconnect the underlying card connection after SCARD_W_RESET_CARD.
     // Default implementation is a no-op (providers that don't hold a persistent

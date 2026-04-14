@@ -40,6 +40,12 @@ public:
 
     std::vector<std::pair<std::string, uint16_t>> discoverKeys();
 
+    // Sign data using GENERAL AUTHENTICATE.
+    // keyRef: 0x9A/0x9C/0x9D/0x9E, algId: PIV algorithm (0x07=RSA-2048, 0x05=3DES, etc.)
+    // keySizeBytes: RSA modulus size in bytes (e.g. 256 for RSA-2048)
+    // data: DER DigestInfo (will be PKCS#1 v1.5 padded to keySizeBytes)
+    std::vector<uint8_t> signData(uint8_t keyRef, uint8_t algId, size_t keySizeBytes, const std::vector<uint8_t>& data);
+
 private:
     smartcard::PCSCConnection& conn;
 

@@ -2,25 +2,31 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "pkcs11_library.h"
-#include "cardedge_pkcs11_version.h"
+#include "pkcs11_version.h"
 #include "smartcard/pcsc_connection.h"
+#include "digest_info.h"
 #include <algorithm>
 #include <cstring>
+#include <memory>
 #include <openssl/bn.h>
 #include <openssl/crypto.h>
+#include "der_utils.h"
+#include <openssl/core_names.h>
 #include <openssl/evp.h>
 #include <openssl/x509.h>
 
 PKCS11Library::PKCS11Library(std::vector<std::shared_ptr<smartcard::PKCS11CardProvider>> providers)
     : providers(std::move(providers))
-{}
+{
+    refreshSlots();
+}
 
 PKCS11Library::~PKCS11Library()
 {
-    for (auto& [slotID, userType] : loginState) {
-        if (slotID < slots.size() && slots[slotID].provider) {
+    for (auto& slot : slots) {
+        if (slot.loginState.has_value() && slot.provider) {
             try {
-                slots[slotID].provider->logout();
+                slot.provider->logout();
             } catch (...) {
             }
         }
@@ -41,13 +47,14 @@ CK_RV PKCS11Library::getInfo(CK_INFO_PTR pInfo) const
         return CKR_ARGUMENTS_BAD;
 
     std::memset(pInfo, 0, sizeof(CK_INFO));
-    pInfo->cryptokiVersion.major = CRYPTOKI_VERSION_MAJOR;
-    pInfo->cryptokiVersion.minor = CRYPTOKI_VERSION_MINOR;
+    // Report v2.40 for Java SunPKCS11 compatibility (see pkcs11.cpp function_list)
+    pInfo->cryptokiVersion.major = 2;
+    pInfo->cryptokiVersion.minor = 40;
     padString(pInfo->manufacturerID, sizeof(pInfo->manufacturerID), "LibreSCRS");
     pInfo->flags = 0;
     padString(pInfo->libraryDescription, sizeof(pInfo->libraryDescription), "LibreSCRS PKCS#11");
-    pInfo->libraryVersion.major = LIBRESCRS_CARDEDGE_PKCS11_VERSION_MAJOR;
-    pInfo->libraryVersion.minor = LIBRESCRS_CARDEDGE_PKCS11_VERSION_MINOR;
+    pInfo->libraryVersion.major = LIBRESCRS_PKCS11_VERSION_MAJOR;
+    pInfo->libraryVersion.minor = LIBRESCRS_PKCS11_VERSION_MINOR;
 
     return CKR_OK;
 }
@@ -55,10 +62,11 @@ CK_RV PKCS11Library::getInfo(CK_INFO_PTR pInfo) const
 void PKCS11Library::refreshSlots()
 {
     slots.clear();
-    connectedSlots.clear();
     auto readers = smartcard::PCSCConnection::listReaders();
     for (auto& readerName : readers) {
-        SlotEntry entry{readerName, nullptr};
+        SlotEntry entry;
+        entry.readerName = readerName;
+        entry.mutex = std::make_unique<std::mutex>();
         for (auto& provider : providers) {
             if (provider->probe(readerName)) {
                 // Create a separate provider instance per slot to avoid
@@ -73,24 +81,22 @@ void PKCS11Library::refreshSlots()
 
 void PKCS11Library::ensureConnected(CK_SLOT_ID slotID)
 {
-    if (connectedSlots.contains(slotID))
-        return;
     auto& slot = slots[slotID];
+    if (slot.connected)
+        return;
     if (slot.provider) {
         slot.provider->connect(slot.readerName);
-        connectedSlots.insert(slotID);
+        slot.connected = true;
     }
 }
 
+// No slot mutex needed — slots vector and slot metadata (readerName, provider pointer)
+// are immutable after construction in refreshSlots(). Only mutable per-slot state
+// (connected, loginState, objects) requires the slot mutex.
 CK_RV PKCS11Library::getSlotList(CK_BBOOL tokenPresent, CK_SLOT_ID_PTR pSlotList, CK_ULONG_PTR pulCount)
 {
     if (pulCount == nullptr)
         return CKR_ARGUMENTS_BAD;
-
-    // Only enumerate readers once.  The slot list is fixed for
-    // this library instance (we don't support C_WaitForSlotEvent).
-    if (slots.empty())
-        refreshSlots();
 
     // Collect matching slot IDs
     std::vector<CK_SLOT_ID> matching;
@@ -150,6 +156,22 @@ CK_RV PKCS11Library::getTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
     if (slot.provider == nullptr)
         return CKR_TOKEN_NOT_PRESENT;
 
+    // Count sessions under sessionMutex (released before card I/O)
+    CK_ULONG sessionCount = 0;
+    CK_ULONG rwSessionCount = 0;
+    {
+        std::scoped_lock slock(sessionMutex);
+        for (auto& [handle, entry] : sessions) {
+            if (entry.slotID == slotID) {
+                ++sessionCount;
+                if (entry.flags & CKF_RW_SESSION)
+                    ++rwSessionCount;
+            }
+        }
+    }
+
+    // Card I/O under slot mutex
+    std::scoped_lock lock(*slot.mutex);
     ensureConnected(slotID);
     auto tokenInfo = slot.provider->getTokenInfo();
 
@@ -167,15 +189,6 @@ CK_RV PKCS11Library::getTokenInfo(CK_SLOT_ID slotID, CK_TOKEN_INFO_PTR pInfo)
         pInfo->flags |= CKF_PROTECTED_AUTHENTICATION_PATH;
     }
 
-    CK_ULONG sessionCount = 0;
-    CK_ULONG rwSessionCount = 0;
-    for (auto& [handle, entry] : sessions) {
-        if (entry.slotID == slotID) {
-            ++sessionCount;
-            if (entry.flags & CKF_RW_SESSION)
-                ++rwSessionCount;
-        }
-    }
     pInfo->ulMaxSessionCount = CK_EFFECTIVELY_INFINITE;
     pInfo->ulSessionCount = sessionCount;
     pInfo->ulMaxRwSessionCount = CK_EFFECTIVELY_INFINITE;
@@ -210,40 +223,55 @@ CK_RV PKCS11Library::openSession(CK_SLOT_ID slotID, CK_FLAGS flags, CK_VOID_PTR 
     if (slot.provider == nullptr)
         return CKR_TOKEN_NOT_PRESENT;
 
-    ensureConnected(slotID);
+    {
+        std::scoped_lock lock(*slot.mutex);
+        ensureConnected(slotID);
+    }
 
-    CK_SESSION_HANDLE handle = nextSessionHandle++;
-    sessions[handle] = {slotID, flags, {}, {}};
-    *phSession = handle;
+    {
+        std::scoped_lock lock(sessionMutex);
+        CK_SESSION_HANDLE handle = nextSessionHandle++;
+        sessions[handle] = {slotID, flags, {}, {}};
+        *phSession = handle;
+    }
     return CKR_OK;
 }
 
 CK_RV PKCS11Library::closeSession(CK_SESSION_HANDLE hSession)
 {
-    auto it = sessions.find(hSession);
-    if (it == sessions.end())
-        return CKR_SESSION_HANDLE_INVALID;
+    CK_SLOT_ID slotID;
+    bool shouldLogout = false;
 
-    CK_SLOT_ID slotID = it->second.slotID;
-    sessions.erase(it);
+    {
+        std::scoped_lock lock(sessionMutex);
+        auto it = sessions.find(hSession);
+        if (it == sessions.end())
+            return CKR_SESSION_HANDLE_INVALID;
 
-    // If no more sessions on this slot, clear login state
-    bool hasOtherSessions = false;
-    for (auto& [h, entry] : sessions) {
-        if (entry.slotID == slotID) {
-            hasOtherSessions = true;
-            break;
+        slotID = it->second.slotID;
+        sessions.erase(it);
+
+        // If no more sessions on this slot, clear login state
+        bool hasOtherSessions = false;
+        for (auto& [h, entry] : sessions) {
+            if (entry.slotID == slotID) {
+                hasOtherSessions = true;
+                break;
+            }
         }
+        shouldLogout = !hasOtherSessions;
     }
-    if (!hasOtherSessions) {
-        if (loginState.contains(slotID)) {
-            if (slotID < slots.size() && slots[slotID].provider) {
+
+    if (shouldLogout) {
+        std::scoped_lock lock(*slots[slotID].mutex);
+        if (slots[slotID].loginState.has_value()) {
+            if (slots[slotID].provider) {
                 try {
                     slots[slotID].provider->logout();
                 } catch (...) {
                 }
             }
-            loginState.erase(slotID);
+            slots[slotID].loginState.reset();
         }
         // Keep cached objects and connection — they're slot-scoped, not
         // session-scoped. Re-reading certs from card on every session
@@ -259,21 +287,27 @@ CK_RV PKCS11Library::closeAllSessions(CK_SLOT_ID slotID)
     if (slotID >= slots.size())
         return CKR_SLOT_ID_INVALID;
 
-    for (auto it = sessions.begin(); it != sessions.end();) {
-        if (it->second.slotID == slotID)
-            it = sessions.erase(it);
-        else
-            ++it;
+    {
+        std::scoped_lock lock(sessionMutex);
+        for (auto it = sessions.begin(); it != sessions.end();) {
+            if (it->second.slotID == slotID)
+                it = sessions.erase(it);
+            else
+                ++it;
+        }
     }
 
-    if (loginState.contains(slotID)) {
-        if (slots[slotID].provider) {
-            try {
-                slots[slotID].provider->logout();
-            } catch (...) {
+    {
+        std::scoped_lock lock(*slots[slotID].mutex);
+        if (slots[slotID].loginState.has_value()) {
+            if (slots[slotID].provider) {
+                try {
+                    slots[slotID].provider->logout();
+                } catch (...) {
+                }
             }
+            slots[slotID].loginState.reset();
         }
-        loginState.erase(slotID);
     }
 
     // Keep cached objects and connection (slot-scoped, not session-scoped).
@@ -285,19 +319,29 @@ CK_RV PKCS11Library::getSessionInfo(CK_SESSION_HANDLE hSession, CK_SESSION_INFO_
     if (pInfo == nullptr)
         return CKR_ARGUMENTS_BAD;
 
-    auto it = sessions.find(hSession);
-    if (it == sessions.end())
-        return CKR_SESSION_HANDLE_INVALID;
+    CK_SLOT_ID slotID;
+    CK_FLAGS flags;
+    {
+        std::scoped_lock lock(sessionMutex);
+        auto it = sessions.find(hSession);
+        if (it == sessions.end())
+            return CKR_SESSION_HANDLE_INVALID;
+        slotID = it->second.slotID;
+        flags = it->second.flags;
+    }
 
-    auto& entry = it->second;
+    bool loggedIn;
+    {
+        std::scoped_lock lock(*slots[slotID].mutex);
+        loggedIn = slots[slotID].loginState.has_value();
+    }
+
     std::memset(pInfo, 0, sizeof(CK_SESSION_INFO));
-    pInfo->slotID = entry.slotID;
-    pInfo->flags = entry.flags;
+    pInfo->slotID = slotID;
+    pInfo->flags = flags;
     pInfo->ulDeviceError = 0;
 
-    bool isRW = (entry.flags & CKF_RW_SESSION) != 0;
-    bool loggedIn = loginState.contains(entry.slotID);
-
+    bool isRW = (flags & CKF_RW_SESSION) != 0;
     if (isRW) {
         pInfo->state = loggedIn ? CKS_RW_USER_FUNCTIONS : CKS_RW_PUBLIC_SESSION;
     } else {
@@ -309,19 +353,24 @@ CK_RV PKCS11Library::getSessionInfo(CK_SESSION_HANDLE hSession, CK_SESSION_INFO_
 
 CK_RV PKCS11Library::login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType, CK_UTF8CHAR_PTR pPin, CK_ULONG ulPinLen)
 {
-    auto it = sessions.find(hSession);
-    if (it == sessions.end())
-        return CKR_SESSION_HANDLE_INVALID;
-
     if (userType != CKU_USER)
         return CKR_USER_TYPE_INVALID;
-
-    CK_SLOT_ID slotID = it->second.slotID;
-    if (loginState.contains(slotID))
-        return CKR_USER_ALREADY_LOGGED_IN;
-
     if (pPin == nullptr)
         return CKR_ARGUMENTS_BAD;
+
+    CK_SLOT_ID slotID;
+    {
+        std::scoped_lock lock(sessionMutex);
+        auto it = sessions.find(hSession);
+        if (it == sessions.end())
+            return CKR_SESSION_HANDLE_INVALID;
+        slotID = it->second.slotID;
+    }
+
+    std::scoped_lock lock(*slots[slotID].mutex);
+
+    if (slots[slotID].loginState.has_value())
+        return CKR_USER_ALREADY_LOGGED_IN;
 
     auto& slot = slots[slotID];
     ensureConnected(slotID);
@@ -330,22 +379,40 @@ CK_RV PKCS11Library::login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType, CK
         return CKR_PIN_LEN_RANGE;
 
     std::vector<uint8_t> pinBytes(pPin, pPin + ulPinLen);
-    auto rv = static_cast<CK_RV>(slot.provider->login(userType, pinBytes));
+    auto rv = [&]() {
+        try {
+            return static_cast<CK_RV>(slot.provider->login(userType, pinBytes));
+        } catch (...) {
+            OPENSSL_cleanse(pinBytes.data(), pinBytes.size());
+            throw;
+        }
+    }();
     OPENSSL_cleanse(pinBytes.data(), pinBytes.size());
-    if (rv == CKR_OK)
-        loginState[slotID] = userType;
+    if (rv == CKR_OK) {
+        slot.loginState = userType;
+        // Invalidate cached objects — PACE cards construct PKCS15Card during
+        // login, so objects queried before login are stale (empty).
+        slot.objectsLoaded = false;
+        slot.objects.clear();
+    }
 
     return rv;
 }
 
 CK_RV PKCS11Library::logout(CK_SESSION_HANDLE hSession)
 {
-    auto it = sessions.find(hSession);
-    if (it == sessions.end())
-        return CKR_SESSION_HANDLE_INVALID;
+    CK_SLOT_ID slotID;
+    {
+        std::scoped_lock lock(sessionMutex);
+        auto it = sessions.find(hSession);
+        if (it == sessions.end())
+            return CKR_SESSION_HANDLE_INVALID;
+        slotID = it->second.slotID;
+    }
 
-    CK_SLOT_ID slotID = it->second.slotID;
-    if (!loginState.contains(slotID))
+    std::scoped_lock lock(*slots[slotID].mutex);
+
+    if (!slots[slotID].loginState.has_value())
         return CKR_USER_NOT_LOGGED_IN;
 
     auto& slot = slots[slotID];
@@ -355,7 +422,7 @@ CK_RV PKCS11Library::logout(CK_SESSION_HANDLE hSession)
         } catch (...) {
         }
     }
-    loginState.erase(slotID);
+    slot.loginState.reset();
     return CKR_OK;
 }
 
@@ -365,17 +432,17 @@ CK_RV PKCS11Library::logout(CK_SESSION_HANDLE hSession)
 
 void PKCS11Library::ensureObjectsLoaded(CK_SLOT_ID slotID)
 {
-    if (loadedSlots.contains(slotID))
+    auto& slot = slots[slotID];
+    if (slot.objectsLoaded)
         return;
 
-    auto& slot = slots[slotID];
     if (!slot.provider)
         return;
 
     auto infos = slot.provider->getObjects();
     for (auto& info : infos) {
         PKCS11Object obj;
-        obj.handle = nextObjectHandle++;
+        obj.handle = nextObjectHandle.fetch_add(1);
         obj.slotID = slotID;
         obj.objectClass = static_cast<CK_OBJECT_CLASS>(info.objectClass);
         obj.label = std::move(info.label);
@@ -391,6 +458,8 @@ void PKCS11Library::ensureObjectsLoaded(CK_SLOT_ID slotID)
         obj.canWrap = info.canWrap ? CK_TRUE : CK_FALSE;
         obj.canUnwrap = info.canUnwrap ? CK_TRUE : CK_FALSE;
         obj.keyReference = info.keyReference;
+        obj.ecParams = std::move(info.ecParams);
+        obj.ecPoint = std::move(info.ecPoint);
 
         // For certificates, parse DER to extract Subject, Issuer, SerialNumber.
         // NSS requires these to match certs against the server's CA list.
@@ -425,16 +494,17 @@ void PKCS11Library::ensureObjectsLoaded(CK_SLOT_ID slotID)
             }
         }
 
-        objects[obj.handle] = std::move(obj);
+        slot.objects[obj.handle] = std::move(obj);
     }
 
-    // Populate RSA modulus for private keys from their paired certificates.
-    // NSS uses CKA_MODULUS to determine the signature buffer size before calling C_Sign.
-    for (auto& [keyHandle, keyObj] : objects) {
-        if (keyObj.objectClass != CKO_PRIVATE_KEY || keyObj.slotID != slotID)
+    // Populate RSA modulus / EC params for private keys from paired certificates.
+    // NSS uses CKA_MODULUS to determine RSA signature buffer size before C_Sign.
+    // PKCS#11 consumers use CKA_EC_PARAMS/CKA_EC_POINT for ECDSA key discovery.
+    for (auto& [keyHandle, keyObj] : slot.objects) {
+        if (keyObj.objectClass != CKO_PRIVATE_KEY)
             continue;
-        for (auto& [certHandle, certObj] : objects) {
-            if (certObj.objectClass != CKO_CERTIFICATE || certObj.slotID != slotID)
+        for (auto& [certHandle, certObj] : slot.objects) {
+            if (certObj.objectClass != CKO_CERTIFICATE)
                 continue;
             if (certObj.id != keyObj.id || certObj.value.empty())
                 continue;
@@ -446,26 +516,48 @@ void PKCS11Library::ensureObjectsLoaded(CK_SLOT_ID slotID)
             X509_free(x509);
             if (!pkey)
                 break;
-            BIGNUM* n = nullptr;
-            if (EVP_PKEY_get_bn_param(pkey, "n", &n) == 1 && n) {
-                int len = BN_num_bytes(n);
-                keyObj.modulus.resize(static_cast<size_t>(len));
-                BN_bn2bin(n, keyObj.modulus.data());
-                BN_free(n);
-            }
-            BIGNUM* e = nullptr;
-            if (EVP_PKEY_get_bn_param(pkey, "e", &e) == 1 && e) {
-                int len = BN_num_bytes(e);
-                keyObj.publicExponent.resize(static_cast<size_t>(len));
-                BN_bn2bin(e, keyObj.publicExponent.data());
-                BN_free(e);
+            int keyBaseId = EVP_PKEY_base_id(pkey);
+            if (keyBaseId == EVP_PKEY_RSA) {
+                BIGNUM* n = nullptr;
+                if (EVP_PKEY_get_bn_param(pkey, "n", &n) == 1 && n) {
+                    int len = BN_num_bytes(n);
+                    keyObj.modulus.resize(static_cast<size_t>(len));
+                    BN_bn2bin(n, keyObj.modulus.data());
+                    BN_free(n);
+                }
+                BIGNUM* e = nullptr;
+                if (EVP_PKEY_get_bn_param(pkey, "e", &e) == 1 && e) {
+                    int len = BN_num_bytes(e);
+                    keyObj.publicExponent.resize(static_cast<size_t>(len));
+                    BN_bn2bin(e, keyObj.publicExponent.data());
+                    BN_free(e);
+                }
+            } else if (keyBaseId == EVP_PKEY_EC) {
+                // CKA_EC_PARAMS: DER-encoded curve OID (named curve parameters)
+                unsigned char* paramsDer = nullptr;
+                int pLen = i2d_KeyParams(pkey, &paramsDer);
+                if (pLen > 0 && paramsDer) {
+                    keyObj.ecParams.assign(paramsDer, paramsDer + pLen);
+                    OPENSSL_free(paramsDer);
+                }
+                // CKA_EC_POINT: DER-encoded OCTET STRING wrapping the EC point
+                size_t pointLen = 0;
+                if (EVP_PKEY_get_octet_string_param(pkey, OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY, nullptr, 0, &pointLen) ==
+                        1 &&
+                    pointLen > 0) {
+                    std::vector<uint8_t> rawPoint(pointLen);
+                    EVP_PKEY_get_octet_string_param(pkey, OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY, rawPoint.data(), pointLen,
+                                                    &pointLen);
+                    // PKCS#11 CKA_EC_POINT is a DER OCTET STRING wrapping the raw point
+                    keyObj.ecPoint = libresign::derOctetString(rawPoint);
+                }
             }
             EVP_PKEY_free(pkey);
             break;
         }
     }
 
-    loadedSlots.insert(slotID);
+    slot.objectsLoaded = true;
 }
 
 bool PKCS11Library::matchesTemplate(const PKCS11Object& obj, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount) const
@@ -652,6 +744,20 @@ bool PKCS11Library::matchesTemplate(const PKCS11Object& obj, CK_ATTRIBUTE_PTR pT
                     return false;
             }
             break;
+        case CKA_EC_PARAMS:
+            if (attr.pValue != nullptr && !obj.ecParams.empty()) {
+                if (attr.ulValueLen != obj.ecParams.size() ||
+                    std::memcmp(attr.pValue, obj.ecParams.data(), attr.ulValueLen) != 0)
+                    return false;
+            }
+            break;
+        case CKA_EC_POINT:
+            if (attr.pValue != nullptr && !obj.ecPoint.empty()) {
+                if (attr.ulValueLen != obj.ecPoint.size() ||
+                    std::memcmp(attr.pValue, obj.ecPoint.data(), attr.ulValueLen) != 0)
+                    return false;
+            }
+            break;
         default:
             break; // Unknown/unhandled attribute: ignore, still a potential match
         }
@@ -661,26 +767,35 @@ bool PKCS11Library::matchesTemplate(const PKCS11Object& obj, CK_ATTRIBUTE_PTR pT
 
 CK_RV PKCS11Library::findObjectsInit(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PTR pTemplate, CK_ULONG ulCount)
 {
+    // Hold sessionMutex across the full body so the iterator found below
+    // cannot be invalidated by a concurrent closeSession() on the same
+    // handle. Lock order is session → slot throughout this translation
+    // unit, so nesting the slot mutex below is safe.
+    std::scoped_lock sessLock(sessionMutex);
     auto it = sessions.find(hSession);
     if (it == sessions.end())
         return CKR_SESSION_HANDLE_INVALID;
-
     auto& session = it->second;
+    const CK_SLOT_ID slotID = session.slotID;
+
+    // Per PKCS#11 spec, a session handle is single-threaded
     if (session.findState.has_value())
         return CKR_OPERATION_ACTIVE;
 
     if (ulCount > 0 && pTemplate == nullptr)
         return CKR_ARGUMENTS_BAD;
 
-    ensureObjectsLoaded(session.slotID);
-
     FindState state;
-    for (auto& [handle, obj] : objects) {
-        if (obj.slotID != session.slotID)
-            continue;
-        if (matchesTemplate(obj, pTemplate, ulCount))
-            state.matchedHandles.push_back(handle);
+    {
+        std::scoped_lock lock(*slots[slotID].mutex);
+        ensureObjectsLoaded(slotID);
+
+        for (auto& [handle, obj] : slots[slotID].objects) {
+            if (matchesTemplate(obj, pTemplate, ulCount))
+                state.matchedHandles.push_back(handle);
+        }
     }
+
     session.findState = std::move(state);
     return CKR_OK;
 }
@@ -688,11 +803,13 @@ CK_RV PKCS11Library::findObjectsInit(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PT
 CK_RV PKCS11Library::findObjects(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE_PTR phObject, CK_ULONG ulMaxObjectCount,
                                  CK_ULONG_PTR pulObjectCount)
 {
+    // See findObjectsInit for the locking rationale.
+    std::scoped_lock sessLock(sessionMutex);
     auto it = sessions.find(hSession);
     if (it == sessions.end())
         return CKR_SESSION_HANDLE_INVALID;
-
     auto& session = it->second;
+
     if (!session.findState.has_value())
         return CKR_OPERATION_NOT_INITIALIZED;
 
@@ -712,11 +829,12 @@ CK_RV PKCS11Library::findObjects(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE_PT
 
 CK_RV PKCS11Library::findObjectsFinal(CK_SESSION_HANDLE hSession)
 {
+    std::scoped_lock sessLock(sessionMutex);
     auto it = sessions.find(hSession);
     if (it == sessions.end())
         return CKR_SESSION_HANDLE_INVALID;
-
     auto& session = it->second;
+
     if (!session.findState.has_value())
         return CKR_OPERATION_NOT_INITIALIZED;
 
@@ -727,18 +845,32 @@ CK_RV PKCS11Library::findObjectsFinal(CK_SESSION_HANDLE hSession)
 CK_RV PKCS11Library::getAttributeValue(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE hObject, CK_ATTRIBUTE_PTR pTemplate,
                                        CK_ULONG ulCount)
 {
-    auto sessIt = sessions.find(hSession);
-    if (sessIt == sessions.end())
-        return CKR_SESSION_HANDLE_INVALID;
-
-    auto objIt = objects.find(hObject);
-    if (objIt == objects.end())
-        return CKR_OBJECT_HANDLE_INVALID;
+    CK_SLOT_ID slotID;
+    {
+        std::scoped_lock lock(sessionMutex);
+        auto sessIt = sessions.find(hSession);
+        if (sessIt == sessions.end())
+            return CKR_SESSION_HANDLE_INVALID;
+        slotID = sessIt->second.slotID;
+    }
 
     if (pTemplate == nullptr && ulCount > 0)
         return CKR_ARGUMENTS_BAD;
 
+    std::scoped_lock lock(*slots[slotID].mutex);
+
+    auto objIt = slots[slotID].objects.find(hObject);
+    if (objIt == slots[slotID].objects.end())
+        return CKR_OBJECT_HANDLE_INVALID;
+
     auto& obj = objIt->second;
+    // Slot isolation: an object handle from slot A must not be usable on a
+    // session for slot B. Without this check, a client with two open
+    // sessions could read attributes of objects belonging to a slot it has
+    // not authenticated against (and would not be able to enumerate
+    // legitimately via C_FindObjects on that other session).
+    if (obj.slotID != slotID)
+        return CKR_OBJECT_HANDLE_INVALID;
     CK_RV result = CKR_OK;
     CK_ULONG modulusBits = 0; // scratch variable for CKA_MODULUS_BITS
 
@@ -890,6 +1022,20 @@ CK_RV PKCS11Library::getAttributeValue(CK_SESSION_HANDLE hSession, CK_OBJECT_HAN
             }
             break;
         }
+        case CKA_EC_PARAMS:
+            if (!obj.ecParams.empty()) {
+                src = obj.ecParams.data();
+                srcLen = static_cast<CK_ULONG>(obj.ecParams.size());
+                found = true;
+            }
+            break;
+        case CKA_EC_POINT:
+            if (!obj.ecPoint.empty()) {
+                src = obj.ecPoint.data();
+                srcLen = static_cast<CK_ULONG>(obj.ecPoint.size());
+                found = true;
+            }
+            break;
         case CKA_SUBJECT:
             if (obj.objectClass == CKO_CERTIFICATE && !obj.subject.empty()) {
                 src = obj.subject.data();
@@ -952,6 +1098,12 @@ static bool isCombinedHashMechanism(CK_MECHANISM_TYPE mech)
            mech == CKM_SHA512_RSA_PKCS;
 }
 
+// Returns true if mechanism is an RSA-PSS combined hash+sign mechanism.
+static bool isPSSMechanism(CK_MECHANISM_TYPE mech)
+{
+    return mech == CKM_SHA256_RSA_PKCS_PSS || mech == CKM_SHA384_RSA_PKCS_PSS || mech == CKM_SHA512_RSA_PKCS_PSS;
+}
+
 // Hash data with the algorithm implied by mech and wrap in a DER DigestInfo.
 // Called for CKM_SHA*_RSA_PKCS — data is the raw (un-hashed) message.
 static std::vector<uint8_t> buildDigestInfo(CK_MECHANISM_TYPE mech, const uint8_t* data, size_t dataLen)
@@ -976,49 +1128,34 @@ static std::vector<uint8_t> buildDigestInfo(CK_MECHANISM_TYPE mech, const uint8_
 
     // Hash the data
     std::vector<uint8_t> hash(static_cast<size_t>(EVP_MD_size(md)));
-    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    auto ctx = std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)>(EVP_MD_CTX_new(), EVP_MD_CTX_free);
     if (!ctx)
         throw std::runtime_error("buildDigestInfo: EVP_MD_CTX_new failed");
     unsigned int hLen = static_cast<unsigned int>(hash.size());
-    if (!EVP_DigestInit_ex(ctx, md, nullptr) || !EVP_DigestUpdate(ctx, data, dataLen) ||
-        !EVP_DigestFinal_ex(ctx, hash.data(), &hLen)) {
-        EVP_MD_CTX_free(ctx);
+    if (!EVP_DigestInit_ex(ctx.get(), md, nullptr) || !EVP_DigestUpdate(ctx.get(), data, dataLen) ||
+        !EVP_DigestFinal_ex(ctx.get(), hash.data(), &hLen)) {
         throw std::runtime_error("buildDigestInfo: digest operation failed");
     }
-    EVP_MD_CTX_free(ctx);
 
-    // DER DigestInfo prefixes (AlgorithmIdentifier + OCTET STRING tag+len)
-    // SHA-1:   OID 1.3.14.3.2.26  (5 bytes), hash = 20 bytes
-    // SHA-256: OID 2.16.840.1.101.3.4.2.1 (9 bytes), hash = 32 bytes
-    // SHA-384: OID 2.16.840.1.101.3.4.2.2 (9 bytes), hash = 48 bytes
-    // SHA-512: OID 2.16.840.1.101.3.4.2.3 (9 bytes), hash = 64 bytes
-    static const uint8_t sha1Pfx[] = {0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e,
-                                      0x03, 0x02, 0x1a, 0x05, 0x00, 0x04, 0x14};
-    static const uint8_t sha256Pfx[] = {0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01,
-                                        0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20};
-    static const uint8_t sha384Pfx[] = {0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01,
-                                        0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30};
-    static const uint8_t sha512Pfx[] = {0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01,
-                                        0x65, 0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40};
-
+    // DigestInfo prefixes from shared header (libresign::kDigestInfoSha*Prefix)
     const uint8_t* pfx = nullptr;
     size_t pfxLen = 0;
     switch (mech) {
     case CKM_SHA1_RSA_PKCS:
-        pfx = sha1Pfx;
-        pfxLen = sizeof(sha1Pfx);
+        pfx = libresign::kDigestInfoSha1Prefix;
+        pfxLen = sizeof(libresign::kDigestInfoSha1Prefix);
         break;
     case CKM_SHA256_RSA_PKCS:
-        pfx = sha256Pfx;
-        pfxLen = sizeof(sha256Pfx);
+        pfx = libresign::kDigestInfoSha256Prefix;
+        pfxLen = sizeof(libresign::kDigestInfoSha256Prefix);
         break;
     case CKM_SHA384_RSA_PKCS:
-        pfx = sha384Pfx;
-        pfxLen = sizeof(sha384Pfx);
+        pfx = libresign::kDigestInfoSha384Prefix;
+        pfxLen = sizeof(libresign::kDigestInfoSha384Prefix);
         break;
     case CKM_SHA512_RSA_PKCS:
-        pfx = sha512Pfx;
-        pfxLen = sizeof(sha512Pfx);
+        pfx = libresign::kDigestInfoSha512Prefix;
+        pfxLen = sizeof(libresign::kDigestInfoSha512Prefix);
         break;
     default:
         throw std::runtime_error("buildDigestInfo: unreachable");
@@ -1031,37 +1168,131 @@ static std::vector<uint8_t> buildDigestInfo(CK_MECHANISM_TYPE mech, const uint8_
 }
 
 // ---------------------------------------------------------------------------
+// Lookup and utility helpers
+// ---------------------------------------------------------------------------
+
+SessionEntry* PKCS11Library::findSession(CK_SESSION_HANDLE h)
+{
+    auto it = sessions.find(h);
+    return (it != sessions.end()) ? &it->second : nullptr;
+}
+
+// Parse DER-encoded EC named curve OID and return field size in bytes.
+static size_t ecFieldSizeFromParams(const std::vector<uint8_t>& derParams)
+{
+    // Well-known curves: match OID bytes anywhere in the DER (may be bare OID or wrapped in SEQUENCE)
+    static const uint8_t p256[] = {0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07};
+    static const uint8_t p384[] = {0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22};
+    static const uint8_t p521[] = {0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x23};
+
+    auto contains = [&](const uint8_t* oid, size_t len) {
+        for (size_t i = 0; i + len <= derParams.size(); ++i)
+            if (std::memcmp(derParams.data() + i, oid, len) == 0)
+                return true;
+        return false;
+    };
+
+    if (contains(p256, sizeof(p256)))
+        return 32;
+    if (contains(p384, sizeof(p384)))
+        return 48;
+    if (contains(p521, sizeof(p521)))
+        return 66;
+    return 32; // default P-256
+}
+
+CK_ULONG PKCS11Library::signatureSize(const PKCS11Object& key) const
+{
+    if (!key.modulus.empty())
+        return static_cast<CK_ULONG>(key.modulus.size());
+    if (!key.ecParams.empty()) {
+        size_t fieldBytes = ecFieldSizeFromParams(key.ecParams);
+        return static_cast<CK_ULONG>(2 * fieldBytes + 8);
+    }
+    if (key.keyType == CKK_EC)
+        return 72; // P-256 default if params unavailable
+    return 256;    // RSA fallback
+}
+
+CK_RV PKCS11Library::handleCardError(const std::exception& e, CK_SLOT_ID slotID)
+{
+    if (auto* pcsc = dynamic_cast<const smartcard::PCSCError*>(&e)) {
+        if (pcsc->code() == static_cast<LONG>(SCARD_W_RESET_CARD)) {
+            try {
+                slots[slotID].provider->reconnectCard();
+            } catch (...) {
+            }
+            slots[slotID].loginState.reset();
+            slots[slotID].objectsLoaded = false;
+            slots[slotID].objects.clear();
+            return CKR_USER_NOT_LOGGED_IN;
+        }
+    }
+    return CKR_DEVICE_ERROR;
+}
+
+// ---------------------------------------------------------------------------
 // Signing
 // ---------------------------------------------------------------------------
 
 CK_RV PKCS11Library::signInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMechanism, CK_OBJECT_HANDLE hKey)
 {
+    // Hold sessionMutex across the full body to prevent a concurrent
+    // closeSession() from invalidating the session iterator mid-call.
+    std::scoped_lock sessLock(sessionMutex);
     auto sessIt = sessions.find(hSession);
     if (sessIt == sessions.end())
         return CKR_SESSION_HANDLE_INVALID;
-
     auto& session = sessIt->second;
+    const CK_SLOT_ID slotID = session.slotID;
+
     if (session.signState.has_value())
         return CKR_OPERATION_ACTIVE;
 
     if (pMechanism == nullptr)
         return CKR_ARGUMENTS_BAD;
 
-    if (pMechanism->mechanism != CKM_RSA_PKCS && !isCombinedHashMechanism(pMechanism->mechanism))
+    if (pMechanism->mechanism != CKM_RSA_PKCS && pMechanism->mechanism != CKM_ECDSA &&
+        !isCombinedHashMechanism(pMechanism->mechanism) && !isPSSMechanism(pMechanism->mechanism))
         return CKR_MECHANISM_INVALID;
 
-    auto objIt = objects.find(hKey);
-    if (objIt == objects.end())
+    if (isPSSMechanism(pMechanism->mechanism)) {
+        if (pMechanism->pParameter == nullptr || pMechanism->ulParameterLen != sizeof(CK_RSA_PKCS_PSS_PARAMS))
+            return CKR_MECHANISM_PARAM_INVALID;
+        auto* pssParams = static_cast<CK_RSA_PKCS_PSS_PARAMS*>(pMechanism->pParameter);
+        if (pMechanism->mechanism == CKM_SHA256_RSA_PKCS_PSS &&
+            (pssParams->hashAlg != CKM_SHA256 || pssParams->mgf != CKG_MGF1_SHA256))
+            return CKR_MECHANISM_PARAM_INVALID;
+        if (pMechanism->mechanism == CKM_SHA384_RSA_PKCS_PSS &&
+            (pssParams->hashAlg != CKM_SHA384 || pssParams->mgf != CKG_MGF1_SHA384))
+            return CKR_MECHANISM_PARAM_INVALID;
+        if (pMechanism->mechanism == CKM_SHA512_RSA_PKCS_PSS &&
+            (pssParams->hashAlg != CKM_SHA512 || pssParams->mgf != CKG_MGF1_SHA512))
+            return CKR_MECHANISM_PARAM_INVALID;
+    }
+
+    std::scoped_lock lock(*slots[slotID].mutex);
+
+    auto objIt = slots[slotID].objects.find(hKey);
+    if (objIt == slots[slotID].objects.end())
         return CKR_KEY_HANDLE_INVALID;
 
     auto& obj = objIt->second;
+    // Slot isolation: a key handle from slot A must not sign on a session
+    // bound to slot B. The login-state check below only verifies that the
+    // session's slot is logged in — it does NOT verify that the slot owns
+    // this key. Without this guard a client could sign with a private key
+    // belonging to a different (and possibly differently authenticated)
+    // slot.
+    if (obj.slotID != slotID)
+        return CKR_KEY_HANDLE_INVALID;
     if (obj.objectClass != CKO_PRIVATE_KEY || obj.canSign != CK_TRUE)
         return CKR_KEY_TYPE_INCONSISTENT;
 
-    if (!loginState.contains(session.slotID))
+    if (!slots[slotID].loginState.has_value())
         return CKR_USER_NOT_LOGGED_IN;
 
-    SignState state{hKey, pMechanism->mechanism};
+    SignState state{hKey, pMechanism->mechanism, {}, false};
     session.signState = std::move(state);
     return CKR_OK;
 }
@@ -1069,78 +1300,213 @@ CK_RV PKCS11Library::signInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech
 CK_RV PKCS11Library::sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulDataLen, CK_BYTE_PTR pSignature,
                           CK_ULONG_PTR pulSignatureLen)
 {
+    std::scoped_lock sessLock(sessionMutex);
     auto sessIt = sessions.find(hSession);
     if (sessIt == sessions.end())
         return CKR_SESSION_HANDLE_INVALID;
-
     auto& session = sessIt->second;
+    const CK_SLOT_ID slotID = session.slotID;
+
     if (!session.signState.has_value())
         return CKR_OPERATION_NOT_INITIALIZED;
+
+    // Per PKCS#11 spec: C_Sign is single-part only. If C_SignUpdate was
+    // called, the caller must use C_SignFinal instead.
+    if (session.signState->multiPart) {
+        session.signState.reset();
+        return CKR_FUNCTION_FAILED;
+    }
 
     if (pulSignatureLen == nullptr)
         return CKR_ARGUMENTS_BAD;
 
-    constexpr CK_ULONG RSA2048_SIG_SIZE = 256;
+    std::scoped_lock lock(*slots[slotID].mutex);
+
+    // Determine signature size from key's modulus (supports 2048, 4096, etc.)
+    auto keyIt = slots[slotID].objects.find(session.signState->keyHandle);
+    if (keyIt == slots[slotID].objects.end()) {
+        session.signState.reset();
+        return CKR_DEVICE_ERROR;
+    }
+    CK_ULONG sigSize = signatureSize(keyIt->second);
 
     // Size query: pSignature == NULL — do NOT consume sign state
     if (pSignature == nullptr) {
-        *pulSignatureLen = RSA2048_SIG_SIZE;
+        *pulSignatureLen = sigSize;
         return CKR_OK;
     }
 
-    // Sign state is consumed regardless of outcome. Per PKCS#11 spec,
-    // CKR_BUFFER_TOO_SMALL should preserve sign state, but since the card
-    // has already performed the RSA operation, we cannot re-do it.
-    // Callers (NSS/Firefox) always query size first (pSignature==NULL path above).
+    // Check buffer size before consuming sign state.
+    // Per PKCS#11 spec, CKR_BUFFER_TOO_SMALL must preserve the active
+    // signing operation so callers can retry with a larger buffer.
+    if (*pulSignatureLen < sigSize) {
+        *pulSignatureLen = sigSize;
+        return CKR_BUFFER_TOO_SMALL;
+    }
+
+    // Sign state is consumed from here on. The buffer check above ensures
+    // CKR_BUFFER_TOO_SMALL preserves the signing operation per PKCS#11 spec.
     auto signState = session.signState.value();
     session.signState.reset();
 
-    auto objIt = objects.find(signState.keyHandle);
-    if (objIt == objects.end())
-        return CKR_DEVICE_ERROR;
-
-    auto& obj = objIt->second;
-    if (obj.slotID >= slots.size() || !slots[obj.slotID].provider)
+    auto& obj = keyIt->second;
+    if (!slots[slotID].provider)
         return CKR_DEVICE_ERROR;
 
     try {
         std::vector<uint8_t> sig;
 
-        if (isCombinedHashMechanism(signState.mechanism)) {
-            // Hash data, build DigestInfo, then sign with PKCS#1 v1.5 on card
-            auto digestInfo = buildDigestInfo(signState.mechanism, pData, ulDataLen);
-            sig = slots[obj.slotID].provider->signData(obj.id, digestInfo);
+        if (isCombinedHashMechanism(signState.mechanism) || isPSSMechanism(signState.mechanism)) {
+            // Combined hash+sign: build DigestInfo locally, pass both DigestInfo and
+            // raw data to provider. Cards that do raw RSA use DigestInfo (default).
+            // Cards that require hash-specific algorithms use rawData to hash locally.
+            // PSS mechanisms skip DigestInfo (padding is done differently).
+            std::vector<uint8_t> digestInfo;
+            if (!isPSSMechanism(signState.mechanism))
+                digestInfo = buildDigestInfo(signState.mechanism, pData, ulDataLen);
+            std::vector<uint8_t> rawData(pData, pData + ulDataLen);
+            sig = slots[slotID].provider->signMessage(obj.id, digestInfo, rawData, signState.mechanism);
+        } else if (signState.mechanism == CKM_ECDSA) {
+            // ECDSA: caller provides pre-hashed data, no DigestInfo wrapping.
+            std::vector<uint8_t> dataVec(pData, pData + ulDataLen);
+            sig = slots[slotID].provider->signData(obj.id, dataVec);
         } else {
-            // CKM_RSA_PKCS: caller provides pre-built DigestInfo
-            if (ulDataLen > 245)
+            // CKM_RSA_PKCS: caller provides pre-built DigestInfo.
+            // Max input = key_size_bytes - 11 (PKCS#1 v1.5 overhead).
+            if (!obj.modulus.empty() && obj.modulus.size() <= 11)
+                return CKR_KEY_SIZE_RANGE;
+            CK_ULONG maxInput = obj.modulus.empty() ? 245 : static_cast<CK_ULONG>(obj.modulus.size()) - 11;
+            if (ulDataLen > maxInput)
                 return CKR_DATA_LEN_RANGE;
             std::vector<uint8_t> dataVec(pData, pData + ulDataLen);
-            sig = slots[obj.slotID].provider->signData(obj.id, dataVec);
+            sig = slots[slotID].provider->signData(obj.id, dataVec);
         }
 
         if (*pulSignatureLen < sig.size()) {
             *pulSignatureLen = static_cast<CK_ULONG>(sig.size());
-            return CKR_BUFFER_TOO_SMALL;
+            // Sign state already consumed — operation cannot be retried.
+            // CKR_BUFFER_TOO_SMALL would violate PKCS#11 spec; use CKR_DEVICE_ERROR.
+            return CKR_DEVICE_ERROR;
         }
 
         std::memcpy(pSignature, sig.data(), sig.size());
         *pulSignatureLen = static_cast<CK_ULONG>(sig.size());
         return CKR_OK;
-    } catch (const smartcard::PCSCError& e) {
-        if (e.code() == static_cast<LONG>(SCARD_W_RESET_CARD)) {
-            // The card was physically reset by another process while we were signing.
-            // Reconnect our handle (SCARD_LEAVE_CARD) and force the caller to re-login
-            // (the card no longer has our PIN verified).
-            try {
-                slots[obj.slotID].provider->reconnectCard();
-            } catch (...) {
-            }
-            loginState.erase(obj.slotID);
-            return CKR_USER_NOT_LOGGED_IN;
+    } catch (const std::exception& e) {
+        return handleCardError(e, slotID);
+    } catch (...) {
+        return CKR_DEVICE_ERROR;
+    }
+}
+
+CK_RV PKCS11Library::signUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulPartLen)
+{
+    std::scoped_lock sessLock(sessionMutex);
+    auto sessIt = sessions.find(hSession);
+    if (sessIt == sessions.end())
+        return CKR_SESSION_HANDLE_INVALID;
+    auto& session = sessIt->second;
+
+    if (!session.signState.has_value())
+        return CKR_OPERATION_NOT_INITIALIZED;
+
+    if (pPart == nullptr && ulPartLen > 0) {
+        session.signState.reset(); // per spec, error terminates the operation
+        return CKR_ARGUMENTS_BAD;
+    }
+
+    // Only combined-hash mechanisms (including PSS) support multi-part signing.
+    // CKM_RSA_PKCS is single-part only (caller provides pre-built DigestInfo).
+    if (!isCombinedHashMechanism(session.signState->mechanism) && !isPSSMechanism(session.signState->mechanism)) {
+        session.signState.reset();
+        return CKR_FUNCTION_NOT_SUPPORTED;
+    }
+
+    session.signState->multiPart = true;
+    constexpr size_t kMaxSignBuffer = 64 * 1024 * 1024; // 64 MB
+    // Overflow-safe accumulation check: write the addition as a subtraction
+    // against the cap so it cannot wrap when ulPartLen is huge.
+    if (ulPartLen > kMaxSignBuffer
+            || session.signState->buffer.size() > kMaxSignBuffer - ulPartLen)
+        return CKR_DATA_LEN_RANGE;
+    if (ulPartLen > 0)
+        session.signState->buffer.insert(session.signState->buffer.end(), pPart, pPart + ulPartLen);
+    return CKR_OK;
+}
+
+CK_RV PKCS11Library::signFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature, CK_ULONG_PTR pulSignatureLen)
+{
+    std::scoped_lock sessLock(sessionMutex);
+    auto sessIt = sessions.find(hSession);
+    if (sessIt == sessions.end())
+        return CKR_SESSION_HANDLE_INVALID;
+    auto& session = sessIt->second;
+    const CK_SLOT_ID slotID = session.slotID;
+
+    if (!session.signState.has_value())
+        return CKR_OPERATION_NOT_INITIALIZED;
+
+    // C_SignFinal is only valid for multi-part (combined-hash or PSS) mechanisms
+    if (!isCombinedHashMechanism(session.signState->mechanism) && !isPSSMechanism(session.signState->mechanism)) {
+        session.signState.reset();
+        return CKR_FUNCTION_NOT_SUPPORTED;
+    }
+
+    if (pulSignatureLen == nullptr)
+        return CKR_ARGUMENTS_BAD;
+
+    std::scoped_lock lock(*slots[slotID].mutex);
+
+    // Determine signature size
+    auto keyIt = slots[slotID].objects.find(session.signState->keyHandle);
+    if (keyIt == slots[slotID].objects.end()) {
+        session.signState.reset();
+        return CKR_DEVICE_ERROR;
+    }
+    CK_ULONG sigSize = signatureSize(keyIt->second);
+
+    // Size query
+    if (pSignature == nullptr) {
+        *pulSignatureLen = sigSize;
+        return CKR_OK;
+    }
+
+    // Check buffer size before consuming sign state
+    if (*pulSignatureLen < sigSize) {
+        *pulSignatureLen = sigSize;
+        return CKR_BUFFER_TOO_SMALL;
+    }
+
+    // Consume sign state
+    auto signState = std::move(session.signState.value());
+    session.signState.reset();
+
+    auto& obj = keyIt->second;
+    if (!slots[slotID].provider)
+        return CKR_DEVICE_ERROR;
+
+    try {
+        // Hash the accumulated data, build DigestInfo, sign on card.
+        // Pass raw data alongside DigestInfo for hash-specific algorithm support.
+        // PSS mechanisms skip DigestInfo (padding is done differently).
+        std::vector<uint8_t> digestInfo;
+        if (!isPSSMechanism(signState.mechanism))
+            digestInfo = buildDigestInfo(signState.mechanism, signState.buffer.data(),
+                                         static_cast<CK_ULONG>(signState.buffer.size()));
+        auto sig = slots[slotID].provider->signMessage(obj.id, digestInfo, signState.buffer, signState.mechanism);
+
+        if (*pulSignatureLen < sig.size()) {
+            *pulSignatureLen = static_cast<CK_ULONG>(sig.size());
+            // Sign state already consumed — operation cannot be retried.
+            // CKR_BUFFER_TOO_SMALL would violate PKCS#11 spec; use CKR_DEVICE_ERROR.
+            return CKR_DEVICE_ERROR;
         }
-        return CKR_DEVICE_ERROR;
-    } catch (const std::exception&) {
-        return CKR_DEVICE_ERROR;
+
+        std::memcpy(pSignature, sig.data(), sig.size());
+        *pulSignatureLen = static_cast<CK_ULONG>(sig.size());
+        return CKR_OK;
+    } catch (const std::exception& e) {
+        return handleCardError(e, slotID);
     } catch (...) {
         return CKR_DEVICE_ERROR;
     }
@@ -1159,28 +1525,38 @@ CK_RV PKCS11Library::getMechanismList(CK_SLOT_ID slotID, CK_MECHANISM_TYPE_PTR p
     if (slots[slotID].provider == nullptr)
         return CKR_TOKEN_NOT_PRESENT;
 
-    // CKM_RSA_PKCS_PSS is intentionally NOT advertised: the CardEdge card
-    // performs PKCS#1 v1.5 padding internally and does not support raw RSA
-    // exponentiation (required for PSS). Advertising PSS causes NSS/Firefox
-    // to prefer TLS 1.3 (which mandates PSS) over TLS 1.2 (CKM_RSA_PKCS).
-    constexpr CK_ULONG MECHANISM_COUNT = 5;
-    static const CK_MECHANISM_TYPE mechanismList[MECHANISM_COUNT] = {
-        CKM_RSA_PKCS, CKM_SHA1_RSA_PKCS, CKM_SHA256_RSA_PKCS, CKM_SHA384_RSA_PKCS, CKM_SHA512_RSA_PKCS,
+    std::scoped_lock lock(*slots[slotID].mutex);
+
+    static const CK_MECHANISM_TYPE allMechanisms[] = {
+        CKM_RSA_PKCS,        CKM_SHA1_RSA_PKCS,       CKM_SHA256_RSA_PKCS,     CKM_SHA384_RSA_PKCS,
+        CKM_SHA512_RSA_PKCS, CKM_SHA256_RSA_PKCS_PSS, CKM_SHA384_RSA_PKCS_PSS, CKM_SHA512_RSA_PKCS_PSS,
+        CKM_ECDSA,
     };
 
+    // Filter out PSS mechanisms for providers that don't support them
+    bool hasPSS = slots[slotID].provider->supportsPSS();
+    constexpr size_t kMaxMechanisms = 12; // room for future mechanisms
+    CK_MECHANISM_TYPE filteredList[kMaxMechanisms];
+    CK_ULONG count = 0;
+    for (auto mech : allMechanisms) {
+        if (!hasPSS && isPSSMechanism(mech))
+            continue;
+        filteredList[count++] = mech;
+    }
+
     if (pMechanismList == nullptr) {
-        *pulCount = MECHANISM_COUNT;
+        *pulCount = count;
         return CKR_OK;
     }
 
-    if (*pulCount < MECHANISM_COUNT) {
-        *pulCount = MECHANISM_COUNT;
+    if (*pulCount < count) {
+        *pulCount = count;
         return CKR_BUFFER_TOO_SMALL;
     }
 
-    for (CK_ULONG i = 0; i < MECHANISM_COUNT; ++i)
-        pMechanismList[i] = mechanismList[i];
-    *pulCount = MECHANISM_COUNT;
+    for (CK_ULONG i = 0; i < count; ++i)
+        pMechanismList[i] = filteredList[i];
+    *pulCount = count;
     return CKR_OK;
 }
 
@@ -1193,12 +1569,38 @@ CK_RV PKCS11Library::getMechanismInfo(CK_SLOT_ID slotID, CK_MECHANISM_TYPE type,
     if (slots[slotID].provider == nullptr)
         return CKR_TOKEN_NOT_PRESENT;
 
-    if (type != CKM_RSA_PKCS && !isCombinedHashMechanism(type))
+    if (type != CKM_RSA_PKCS && type != CKM_ECDSA && !isCombinedHashMechanism(type) && !isPSSMechanism(type))
         return CKR_MECHANISM_INVALID;
 
+    std::scoped_lock lock(*slots[slotID].mutex);
+
     std::memset(pInfo, 0, sizeof(CK_MECHANISM_INFO));
-    pInfo->ulMinKeySize = 1024;
-    pInfo->ulMaxKeySize = 8192;
+
+    if (type == CKM_ECDSA) {
+        pInfo->ulMinKeySize = 256;
+        pInfo->ulMaxKeySize = 521;
+        pInfo->flags = CKF_SIGN | CKF_HW;
+        return CKR_OK;
+    }
+
+    // RSA: determine actual key size range from loaded objects on this slot
+    CK_ULONG minBits = 0, maxBits = 0;
+    for (const auto& [h, obj] : slots[slotID].objects) {
+        if (obj.objectClass == CKO_PRIVATE_KEY && !obj.modulus.empty()) {
+            auto bits = static_cast<CK_ULONG>(obj.modulus.size() * 8);
+            if (minBits == 0 || bits < minBits)
+                minBits = bits;
+            if (bits > maxBits)
+                maxBits = bits;
+        }
+    }
+    if (minBits == 0) {
+        minBits = 1024;
+        maxBits = 8192;
+    } // fallback — permissive range; actual key size validated at sign time
+
+    pInfo->ulMinKeySize = minBits;
+    pInfo->ulMaxKeySize = maxBits;
     pInfo->flags = CKF_SIGN | CKF_HW;
     return CKR_OK;
 }

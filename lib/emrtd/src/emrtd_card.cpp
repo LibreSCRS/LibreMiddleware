@@ -334,14 +334,6 @@ std::optional<std::vector<uint8_t>> EMRTDCard::readFile(uint16_t fid, bool skipS
 
     if (fileData.empty())
         return std::nullopt;
-
-    // Guard against truncated reads: if TLV length was parsed but we read
-    // fewer bytes than expected, the file is incomplete (e.g. connection
-    // disrupted by a dual-interface reader). Return nullopt so callers
-    // don't process corrupted data.
-    if (totalLength > 0 && fileData.size() < totalLength)
-        return std::nullopt;
-
     return fileData;
 }
 

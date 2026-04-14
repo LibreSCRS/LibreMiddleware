@@ -146,24 +146,40 @@ std::vector<uint8_t> SecureMessaging::protect(const std::vector<uint8_t>& comman
     uint8_t p1 = commandApdu[2];
     uint8_t p2 = commandApdu[3];
 
-    // Parse Lc, data, Le from the command APDU (ISO 7816-4 short form only)
+    // Parse Lc, data, Le from the command APDU (ISO 7816-4 short + extended).
     std::vector<uint8_t> cmdData;
-    std::optional<uint8_t> le;
+    std::optional<uint16_t> le;
 
     if (commandApdu.size() == 4) {
         // Case 1: no data, no Le
     } else if (commandApdu.size() == 5) {
-        // Case 2: no data, Le present (Le=0 means 256)
+        // Case 2 short: no data, 1-byte Le (Le=0 means 256)
         le = commandApdu[4];
+    } else if (commandApdu.size() == 7 && commandApdu[4] == 0x00) {
+        // Case 2 extended: no data, 00 + 2-byte Le
+        le = static_cast<uint16_t>((commandApdu[5] << 8) | commandApdu[6]);
+    } else if (commandApdu[4] == 0x00 && commandApdu.size() > 7) {
+        // Extended Lc: 00 Lc_hi Lc_lo [data] [Le_hi Le_lo]
+        size_t lc = static_cast<size_t>((commandApdu[5] << 8) | commandApdu[6]);
+        if (commandApdu.size() < 7 + lc)
+            throw std::invalid_argument("APDU data shorter than extended Lc");
+        cmdData.assign(commandApdu.begin() + 7, commandApdu.begin() + 7 + static_cast<ptrdiff_t>(lc));
+        if (commandApdu.size() == 7 + lc + 2) {
+            // Extended Le: 2 bytes after data
+            le = static_cast<uint16_t>((commandApdu[7 + lc] << 8) | commandApdu[7 + lc + 1]);
+        }
     } else {
-        // Case 3 or 4: Lc present
+        // Short Lc: 1-byte Lc [data] [Le]
         size_t lc = commandApdu[4];
         if (commandApdu.size() < 5 + lc)
             throw std::invalid_argument("APDU data shorter than Lc");
         cmdData.assign(commandApdu.begin() + 5, commandApdu.begin() + 5 + static_cast<ptrdiff_t>(lc));
         if (commandApdu.size() == 5 + lc + 1) {
-            // Case 4: data + Le
+            // Case 4 short: 1-byte Le
             le = commandApdu[5 + lc];
+        } else if (commandApdu.size() == 5 + lc + 2) {
+            // Case 4 with 2-byte Le (from extended toBytes)
+            le = static_cast<uint16_t>((commandApdu[5 + lc] << 8) | commandApdu[5 + lc + 1]);
         }
     }
 
@@ -192,8 +208,16 @@ std::vector<uint8_t> SecureMessaging::protect(const std::vector<uint8_t>& comman
     // Case 1/3 commands (no Le) must NOT include DO'97 — some cards (e.g. Georgian eID)
     // reject it with SW=6700 on MSE:Set AT.
     std::vector<uint8_t> do97;
+    bool extendedLe = false;
     if (le.has_value()) {
-        do97 = {0x97, 0x01, le.value()};
+        uint16_t leVal = le.value();
+        if (leVal <= 0xFF) {
+            do97 = {0x97, 0x01, static_cast<uint8_t>(leVal)};
+        } else {
+            // Extended Le: 2-byte value in DO'97. Requires extended outer APDU format.
+            do97 = {0x97, 0x02, static_cast<uint8_t>(leVal >> 8), static_cast<uint8_t>(leVal & 0xFF)};
+            extendedLe = true;
+        }
     }
 
     // Build MAC input: SSC || padded header || DO'87 || DO'97, then pad to blockSize
@@ -217,18 +241,32 @@ std::vector<uint8_t> SecureMessaging::protect(const std::vector<uint8_t>& comman
     body.insert(body.end(), do97.begin(), do97.end());
     body.insert(body.end(), do8e.begin(), do8e.end());
 
-    // Build final APDU: CLA' INS P1 P2 Lc' body 00
-    if (body.size() > 255)
-        throw std::runtime_error("SM protect: body exceeds short-form APDU Lc limit (255 bytes)");
+    // Build final APDU: short or extended format depending on body size and Le
+    bool useExtended = extendedLe || body.size() > 255;
 
     std::vector<uint8_t> result;
     result.push_back(claProtected);
     result.push_back(ins);
     result.push_back(p1);
     result.push_back(p2);
-    result.push_back(static_cast<uint8_t>(body.size()));
+
+    if (useExtended) {
+        // Extended APDU: 00 Lc_hi Lc_lo [body] Le_hi Le_lo
+        result.push_back(0x00); // extended length marker
+        result.push_back(static_cast<uint8_t>(body.size() >> 8));
+        result.push_back(static_cast<uint8_t>(body.size() & 0xFF));
+    } else {
+        result.push_back(static_cast<uint8_t>(body.size()));
+    }
+
     result.insert(result.end(), body.begin(), body.end());
-    result.push_back(0x00); // Le = accept any response length
+
+    if (useExtended) {
+        result.push_back(0x00);
+        result.push_back(0x00); // Extended Le = 0x0000 (maximum)
+    } else {
+        result.push_back(0x00); // Short Le = 256
+    }
 
     return result;
 }

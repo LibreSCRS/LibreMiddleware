@@ -127,10 +127,14 @@ public:
             // Find matching private key by id
             for (const auto& key : profile.privateKeys) {
                 if (key.id == cert.id) {
-                    // keyFID = last 2 bytes of key path
+                    // keyFID = last 2 bytes of key path, or keyReference as fallback
                     if (key.path.size() >= 2) {
                         cd.keyFID =
                             static_cast<uint16_t>((key.path[key.path.size() - 2] << 8) | key.path[key.path.size() - 1]);
+                    } else if (key.keyReference != 0) {
+                        cd.keyFID = static_cast<uint16_t>(key.keyReference);
+                    } else {
+                        cd.keyFID = 1; // matched key exists, use non-zero sentinel
                     }
                     cd.keySizeBits = key.keySizeBits;
                     break;
@@ -242,9 +246,9 @@ private:
 
 } // namespace
 
-extern "C" std::unique_ptr<plugin::CardPlugin> create_card_plugin()
+extern "C" plugin::CardPlugin* create_card_plugin()
 {
-    return std::make_unique<PKCS15CardPlugin>();
+    return new PKCS15CardPlugin();
 }
 
 extern "C" uint32_t card_plugin_abi_version()
