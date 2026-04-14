@@ -25,6 +25,10 @@ build/
 build-*/
 CMakeLists.txt.user
 
+# Persistent cache for fetched+built libxmlsec1 (universal static).
+# See lib/libresign/cmake/UniversalNativeDeps.cmake.
+.thirdparty-cache/
+
 # IDE
 .qtcreator/
 
@@ -38,3 +42,6 @@ CMakeLists.txt.user
 LibreSCRS-cardedge-pkcs11-*.tar.gz
 LibreSCRS-cardedge-pkcs11-*.zip
 .claude/
+
+# Java compiled classes
+*.class

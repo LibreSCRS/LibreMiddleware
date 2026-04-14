@@ -2,7 +2,7 @@
 
 **[librescrs.github.io](https://librescrs.github.io)**
 
-Qt-free C++20 libraries for reading smart cards via direct PC/SC APDU communication.
+Qt-free C++20 static libraries for reading smart cards via direct PC/SC APDU communication.
 
 ## Supported Cards
 

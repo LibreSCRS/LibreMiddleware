@@ -15,15 +15,15 @@ set(PROJECT_VERSION_MINOR ${GIT_VERSION_MINOR})
 set(PROJECT_VERSION_PATCH ${GIT_VERSION_PATCH})
 set(PROJECT_VERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH})
 
-project(LibreMiddleware VERSION ${PROJECT_VERSION} LANGUAGES CXX)
+project(LibreMiddleware VERSION ${PROJECT_VERSION} LANGUAGES CXX C)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
 # Export certificates directory for consumers
-set(LIBREMIDDLEWARE_CERTIFICATES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/certificates/all"
-    CACHE PATH "Path to Serbian CA certificates" FORCE)
+set(LIBREMIDDLEWARE_CERTIFICATES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/certificates"
+    CACHE PATH "Path to bundled CA certificates" FORCE)
 
 add_subdirectory(thirdparty)
 add_subdirectory(lib/plugin)
@@ -45,7 +45,21 @@ add_subdirectory(lib/emrtd-crypto)
 add_subdirectory(lib/emrtd)
 add_subdirectory(lib/pkcs15)
 add_subdirectory(lib/piv)
-add_subdirectory(lib/cardedge-pkcs11)
+# Digital signing support (LibreSign library + DSS integration).
+# pkcs11.so is always built — it's a standalone PKCS#11 module
+# used by Firefox, pkcs11-tool, etc.
+option(BUILD_SIGNING "Build digital signing support (LibreSign + DSS)" ON)
+if(BUILD_SIGNING)
+    add_subdirectory(lib/libresign)
+    message(STATUS "Digital signing: enabled")
+else()
+    message(STATUS "Digital signing: disabled (set -DBUILD_SIGNING=ON to enable)")
+endif()
+# Export flag for consumers (LibreCelik)
+set(LIBREMIDDLEWARE_HAS_SIGNING ${BUILD_SIGNING} CACHE BOOL
+    "Whether LibreMiddleware was built with signing support" FORCE)
+
+add_subdirectory(lib/pkcs11)
 add_subdirectory(lib/cardedge-opensc-driver)
 
 # Card plugins (shared libraries loaded at runtime)
