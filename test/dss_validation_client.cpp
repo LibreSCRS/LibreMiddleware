@@ -37,24 +37,36 @@ ValidationResult DSSValidationClient::validate(std::span<const uint8_t> signedDo
 
     try {
         auto json = nlohmann::json::parse(response.body);
-        result.valid = json.value("valid", false);
-        result.signatureCount = json.value("signatureCount", 0);
+        auto getStr = [](const nlohmann::json& j, const char* k) -> std::string {
+            if (!j.contains(k) || j[k].is_null() || !j[k].is_string()) return {};
+            return j[k].get<std::string>();
+        };
+        auto getBool = [](const nlohmann::json& j, const char* k) -> bool {
+            if (!j.contains(k) || !j[k].is_boolean()) return false;
+            return j[k].get<bool>();
+        };
+        auto getInt = [](const nlohmann::json& j, const char* k) -> int {
+            if (!j.contains(k) || !j[k].is_number_integer()) return 0;
+            return j[k].get<int>();
+        };
+        result.valid = getBool(json, "valid");
+        result.signatureCount = getInt(json, "signatureCount");
 
         if (json.contains("signatures") && json["signatures"].is_array()) {
             for (const auto& sig : json["signatures"]) {
                 ValidationSignatureInfo info;
-                info.level = sig.value("level", "");
-                info.valid = sig.value("valid", false);
-                info.indication = sig.value("indication", "");
-                info.subIndication = sig.value("subIndication", "");
+                info.level = getStr(sig, "level");
+                info.valid = getBool(sig, "valid");
+                info.indication = getStr(sig, "indication");
+                info.subIndication = getStr(sig, "subIndication");
 
                 if (sig.contains("errors") && sig["errors"].is_array()) {
                     for (const auto& e : sig["errors"])
-                        info.errors.push_back(e.get<std::string>());
+                        if (e.is_string()) info.errors.push_back(e.get<std::string>());
                 }
                 if (sig.contains("warnings") && sig["warnings"].is_array()) {
                     for (const auto& w : sig["warnings"])
-                        info.warnings.push_back(w.get<std::string>());
+                        if (w.is_string()) info.warnings.push_back(w.get<std::string>());
                 }
 
                 result.signatures.push_back(std::move(info));

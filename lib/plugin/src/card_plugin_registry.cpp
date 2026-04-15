@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <dlfcn.h>
 #include <iostream>
+#include <mutex>
 
 namespace plugin {
 

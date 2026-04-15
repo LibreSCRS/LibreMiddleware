@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <mutex>
 
 #include <openssl/x509.h>
 #include <openssl/pem.h>

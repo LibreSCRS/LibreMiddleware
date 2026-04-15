@@ -135,7 +135,7 @@ void SigningTestEnvironment::SetUp()
         HttpClient http;
         nlohmann::json trustCfg;
         trustCfg["trustedLists"] =
-            nlohmann::json::array({{{"url", "https://www.minrzs.gov.rs/sites/default/files/2024-10/Serbian_TL.xml"},
+            nlohmann::json::array({{{"url", "https://www.mit.gov.rs/TrustedList/TSL-RS.xml"},
                                     {"isLotl", false},
                                     {"eager", true}}});
         trustCfg["crlEnabled"] = true;

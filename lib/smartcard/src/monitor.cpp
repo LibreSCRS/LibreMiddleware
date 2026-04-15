@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstring>
 #include <iostream>
+#include <mutex>
 #include <stdexcept>
 
 namespace smartcard {

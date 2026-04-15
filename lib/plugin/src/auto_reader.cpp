@@ -6,6 +6,7 @@
 #include <smartcard/pcsc_connection.h>
 
 #include <chrono>
+#include <mutex>
 #include <thread>
 
 namespace plugin {

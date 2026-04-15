@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <openssl/bn.h>
 #include <openssl/crypto.h>
 #include "der_utils.h"
