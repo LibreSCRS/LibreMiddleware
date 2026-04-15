@@ -4,6 +4,7 @@
 #pragma once
 
 #include <memory>
+#include <shared_mutex>
 #include <string>
 #include <vector>
 
@@ -29,8 +30,8 @@ enum class StoreScope {
     SIGNING,            // Tier 1 + 2 + 3 — all available trust anchors
 };
 
-// NOT thread-safe: do not mutate (addUserStorePath, setCscaStorePath) while
-// reading (buildStore, certPathsForScope) from another thread.
+// Thread-safe: mutations (addUserStorePath, setCscaStorePath) take an exclusive
+// lock; readers (buildStore, certPathsForScope) take a shared lock.
 class TrustStoreManager
 {
 public:
@@ -54,6 +55,7 @@ private:
     void loadDirectoryIntoStore(X509_STORE* store, const std::string& dirPath) const;
     void loadBundledCerts(X509_STORE* store) const;
 
+    mutable std::shared_mutex mutex_;
     std::string bundledCertDir;
     std::string cscaPath;
     std::vector<std::string> userPaths;

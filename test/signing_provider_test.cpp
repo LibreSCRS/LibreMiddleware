@@ -80,7 +80,7 @@ TEST_F(SigningProviderTest, CreateEvpKeyFromCert)
     auto cert = parseCertFromToken(token);
     ASSERT_NE(cert, nullptr);
 
-    EvpPkeyPtr pkey(createPkcs11EvpKey(token, cert.get()));
+    EvpPkeyPtr pkey(createPkcs11EvpKey(token, cert.get()).release());
     ASSERT_NE(pkey, nullptr);
 
     EXPECT_GT(EVP_PKEY_get_bits(pkey.get()), 0);
@@ -95,7 +95,7 @@ TEST_F(SigningProviderTest, DigestSignAndVerify)
     auto cert = parseCertFromToken(token);
     ASSERT_NE(cert, nullptr);
 
-    EvpPkeyPtr pkey(createPkcs11EvpKey(token, cert.get()));
+    EvpPkeyPtr pkey(createPkcs11EvpKey(token, cert.get()).release());
     ASSERT_NE(pkey, nullptr);
 
     const unsigned char data[] = "Test data for signing via OpenSSL 3 provider";

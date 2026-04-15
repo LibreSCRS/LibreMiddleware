@@ -40,6 +40,14 @@ std::vector<uint8_t> sha256(const uint8_t* data, size_t len);
 std::vector<uint8_t> sha256(const std::vector<uint8_t>& data);
 std::vector<uint8_t> sha256(const std::string& data);
 
+// SHA-384 hash
+std::vector<uint8_t> sha384(const uint8_t* data, size_t len);
+std::vector<uint8_t> sha384(const std::string& data);
+
+// SHA-512 hash
+std::vector<uint8_t> sha512(const uint8_t* data, size_t len);
+std::vector<uint8_t> sha512(const std::string& data);
+
 // Parse DER-encoded X509 certificate
 X509Ptr parseCert(const std::vector<uint8_t>& der);
 
@@ -67,10 +75,6 @@ std::string iso8601Now();
 
 // MIME type from file extension
 std::string mimeTypeFromFileName(const std::string& fileName);
-
-// Determine PKCS#11 signing algorithm string from certificate key type.
-// Returns e.g. "SHA256withRSA" or "SHA256withECDSA".
-std::string pkcs11Algorithm(X509* cert);
 
 // Collect revocation data (CRLs + OCSP) for the token's certificate chain.
 libresign::RevocationData collectRevocationData(libresign::Pkcs11Token& token, const libresign::TSAConfig& tsa);

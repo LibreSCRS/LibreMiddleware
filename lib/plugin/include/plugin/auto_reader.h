@@ -6,11 +6,13 @@
 #include <plugin/card_data.h>
 #include <smartcard/monitor.h>
 
+#include <atomic>
 #include <functional>
 #include <future>
+#include <map>
+#include <memory>
 #include <mutex>
 #include <string>
-#include <vector>
 
 namespace plugin {
 
@@ -38,8 +40,14 @@ private:
     ErrorCallback onError;
     smartcard::Monitor::SubscriptionId subscriptionId;
 
+    struct PendingRead
+    {
+        std::future<void> future;
+        std::shared_ptr<std::atomic<bool>> cancelled;
+    };
+
     std::mutex pendingMtx;
-    std::vector<std::future<void>> pendingReads;
+    std::map<std::string, PendingRead> pendingByReader;
 };
 
 } // namespace plugin

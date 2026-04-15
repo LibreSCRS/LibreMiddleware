@@ -196,11 +196,23 @@ SigningResult JAdESModule::sign(const std::vector<uint8_t>& data, const std::str
             signingInput = protectedB64 + "." + payloadB64;
         }
 
-        // 5. Hash the signing input with SHA-256
-        auto inputHash = sha256(signingInput);
+        // 5. Hash the signing input with the algorithm matching the JWS "alg"
+        //    (RFC 7518 §3.4: ES256→SHA-256, ES384→SHA-384, ES512→SHA-512)
+        std::vector<uint8_t> inputHash;
+        std::string hashAlgo;
+        if (alg == "ES384") {
+            inputHash = sha384(signingInput);
+            hashAlgo = "SHA384";
+        } else if (alg == "ES512") {
+            inputHash = sha512(signingInput);
+            hashAlgo = "SHA512";
+        } else {
+            inputHash = sha256(signingInput);
+            hashAlgo = "SHA256";
+        }
 
         // 6. Sign
-        auto signatureBytes = signHashWithToken(token, cert.get(), inputHash);
+        auto signatureBytes = signHashWithToken(token, cert.get(), inputHash, hashAlgo);
 
         if (signatureBytes.empty())
             return {false, {}, "PKCS#11 token signing returned empty signature"};

@@ -38,6 +38,11 @@ constexpr int kPadPSS = 6;      // RSA_PKCS1_PSS_PADDING
 
 namespace libresign {
 
+void EvpPkeyPublicDeleter::operator()(EVP_PKEY* p) const
+{
+    EVP_PKEY_free(p);
+}
+
 namespace {
 
 // ---------------------------------------------------------------------------
@@ -797,7 +802,7 @@ void initSigningProvider()
     });
 }
 
-EVP_PKEY* createPkcs11EvpKey(Pkcs11Token& token, X509* cert)
+EvpPkeyPublicPtr createPkcs11EvpKey(Pkcs11Token& token, X509* cert)
 {
     if (!cert)
         throw std::runtime_error("Certificate must not be null");
@@ -868,7 +873,7 @@ EVP_PKEY* createPkcs11EvpKey(Pkcs11Token& token, X509* cert)
     if (!pkey)
         throw std::runtime_error("EVP_PKEY_fromdata returned null key");
 
-    return pkey;
+    return EvpPkeyPublicPtr(pkey);
 }
 
 } // namespace libresign

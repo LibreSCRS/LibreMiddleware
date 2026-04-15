@@ -29,6 +29,8 @@ size_t CardPluginRegistry::loadPluginsFromDirectory(const std::filesystem::path&
         return 0;
     }
 
+    std::unique_lock lock(pluginsMtx);
+
     size_t count = 0;
     for (const auto& entry : std::filesystem::directory_iterator(dir)) {
         if (!entry.is_regular_file())
@@ -38,6 +40,9 @@ size_t CardPluginRegistry::loadPluginsFromDirectory(const std::filesystem::path&
         if (ext != ".so" && ext != ".dylib")
             continue;
 
+        // RTLD_LOCAL prevents plugin symbols from leaking into the global namespace.
+        // Constraint: plugins must not carry vendored static copies of shared system
+        // libraries (e.g., OpenSSL), as each plugin would get its own copy.
         void* handle = dlopen(entry.path().c_str(), RTLD_NOW | RTLD_LOCAL);
         if (!handle) {
             std::cerr << "CardPluginRegistry: failed to load " << entry.path() << ": " << dlerror() << "\n";
@@ -86,6 +91,7 @@ size_t CardPluginRegistry::loadPluginsFromDirectory(const std::filesystem::path&
 
 CardPlugin* CardPluginRegistry::findPluginForCard(const std::vector<uint8_t>& atr) const
 {
+    std::shared_lock lock(pluginsMtx);
     for (auto* plugin : sortedPlugins) {
         if (plugin->canHandle(atr)) {
             return plugin;
@@ -96,6 +102,7 @@ CardPlugin* CardPluginRegistry::findPluginForCard(const std::vector<uint8_t>& at
 
 std::vector<CardPlugin*> CardPluginRegistry::findAllCandidates(const std::vector<uint8_t>& atr) const
 {
+    std::shared_lock lock(pluginsMtx);
     std::vector<CardPlugin*> result;
     for (auto* plugin : sortedPlugins) {
         if (plugin->canHandle(atr)) {
@@ -108,6 +115,7 @@ std::vector<CardPlugin*> CardPluginRegistry::findAllCandidates(const std::vector
 std::vector<CardPlugin*> CardPluginRegistry::findAllCandidates(const std::vector<uint8_t>& atr,
                                                                smartcard::PCSCConnection& conn) const
 {
+    std::shared_lock lock(pluginsMtx);
     std::set<CardPlugin*> seen;
     std::vector<CardPlugin*> result;
 
@@ -144,6 +152,7 @@ std::vector<CardPlugin*> CardPluginRegistry::findAllCandidates(const std::vector
 
 const std::vector<CardPlugin*>& CardPluginRegistry::plugins() const
 {
+    std::shared_lock lock(pluginsMtx);
     return sortedPlugins;
 }
 

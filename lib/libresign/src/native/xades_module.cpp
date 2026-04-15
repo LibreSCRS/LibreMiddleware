@@ -663,8 +663,21 @@ SigningResult XAdESModule::sign(const std::vector<uint8_t>& data, const std::str
             } else {
                 // Enveloped: canonicalize root with signature temporarily removed
                 xmlUnlinkNode(ctx.signatureNode);
+                // Ensure Signature is re-linked even if canonicalization throws
+                struct RelinkGuard
+                {
+                    xmlNodePtr sig;
+                    xmlNodePtr parent;
+                    bool done = false;
+                    ~RelinkGuard()
+                    {
+                        if (!done)
+                            xmlAddChild(parent, sig);
+                    }
+                } relink{ctx.signatureNode, xmlDocGetRootElement(ctx.doc.get())};
                 auto c14nDoc = canonicalizeNode(ctx.doc.get(), xmlDocGetRootElement(ctx.doc.get()));
                 xmlAddChild(xmlDocGetRootElement(ctx.doc.get()), ctx.signatureNode);
+                relink.done = true;
                 archiveInput.insert(archiveInput.end(), c14nDoc.begin(), c14nDoc.end());
             }
 

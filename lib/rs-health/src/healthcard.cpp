@@ -70,13 +70,12 @@ bool HealthCard::probe(smartcard::PCSCConnection& conn)
 }
 
 HealthCard::HealthCard(const std::string& readerName)
+    : ownedConnection(std::make_unique<smartcard::PCSCConnection>(readerName)), conn(*ownedConnection)
 {
-    ownedConnection = std::make_unique<smartcard::PCSCConnection>(readerName);
-    conn = ownedConnection.get();
     initCard();
 }
 
-HealthCard::HealthCard(smartcard::PCSCConnection& externalConn) : conn(&externalConn)
+HealthCard::HealthCard(smartcard::PCSCConnection& externalConn) : conn(externalConn)
 {
     initCard();
 }
@@ -85,7 +84,7 @@ HealthCard::~HealthCard() = default;
 
 void HealthCard::initCard()
 {
-    auto resp = conn->transmit(smartcard::selectByAID(protocol::AID_SERVSZK));
+    auto resp = conn.transmit(smartcard::selectByAID(protocol::AID_SERVSZK));
     if (!resp.isSuccess())
         throw std::runtime_error("Health card: SERVSZK AID selection failed");
 }
@@ -96,13 +95,13 @@ std::vector<uint8_t> HealthCard::readFile(const std::vector<uint8_t>& fileId)
         throw std::runtime_error("HealthCard: fileId must be at least 2 bytes");
 
     // SELECT FILE by ID (P1=0x00, P2=0x00) — required by health card SERVSZK applet
-    auto selectResp = conn->transmit(smartcard::selectByFileId(fileId[0], fileId[1]));
+    auto selectResp = conn.transmit(smartcard::selectByFileId(fileId[0], fileId[1]));
     if (!selectResp.isSuccess())
         throw std::runtime_error("Health card: SELECT file failed for fileId " + std::to_string(fileId[0]) + "/" +
                                  std::to_string(fileId[1]) + " SW=" + std::to_string(selectResp.statusWord()));
 
     // Read 4-byte header: bytes [2:3] (LE) hold the content length
-    auto headerResp = conn->transmit(smartcard::readBinary(0, protocol::FILE_HEADER_SIZE));
+    auto headerResp = conn.transmit(smartcard::readBinary(0, protocol::FILE_HEADER_SIZE));
     if (!headerResp.isSuccess() || headerResp.data.size() < protocol::FILE_HEADER_SIZE)
         throw std::runtime_error("Health card: Cannot read file header");
 
@@ -120,7 +119,7 @@ std::vector<uint8_t> HealthCard::readFile(const std::vector<uint8_t>& fileId)
     while (fileData.size() < contentLength) {
         uint8_t chunkSize = static_cast<uint8_t>(
             std::min(static_cast<size_t>(protocol::READ_CHUNK_SIZE), contentLength - fileData.size()));
-        auto readResp = conn->transmit(smartcard::readBinary(offset, chunkSize));
+        auto readResp = conn.transmit(smartcard::readBinary(offset, chunkSize));
         if (!readResp.isSuccess())
             throw std::runtime_error("Health card: READ BINARY failed");
         if (readResp.data.empty())
@@ -171,8 +170,12 @@ HealthDocumentData HealthCard::readDocumentData()
     d.parentNameLatin = findUtf16String(varAdminFields, protocol::TAG_PARENT_NAME_LAT);
 
     auto genderRaw = smartcard::findString(varAdminFields, protocol::TAG_GENDER);
-    d.gender = (genderRaw == "01") ? "\xD0\x9C\xD1\x83\xD1\x88\xD0\xBA\xD0\xBE"          // Мушко
-                                   : "\xD0\x96\xD0\xB5\xD0\xBD\xD1\x81\xD0\xBA\xD0\xBE"; // Женско
+    if (genderRaw == "01")
+        d.gender = "\xD0\x9C\xD1\x83\xD1\x88\xD0\xBA\xD0\xBE"; // Мушко
+    else if (genderRaw == "02")
+        d.gender = "\xD0\x96\xD0\xB5\xD0\xBD\xD1\x81\xD0\xBA\xD0\xBE"; // Женско
+    else
+        d.gender = genderRaw; // unknown code — pass through
 
     d.personalNumber = smartcard::findString(varAdminFields, protocol::TAG_PERSONAL_NUMBER);
     d.street = findUtf16String(varAdminFields, protocol::TAG_STREET);

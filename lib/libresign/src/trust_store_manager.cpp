@@ -66,6 +66,8 @@ void TrustStoreManager::loadBundledCerts(X509_STORE* store) const
 
 X509StorePtr TrustStoreManager::buildStore(StoreScope scope) const
 {
+    std::shared_lock lock(mutex_);
+
     switch (scope) {
     case StoreScope::EMRTD_PASSIVE_AUTH: {
         if (cscaPath.empty() || !fs::exists(cscaPath))
@@ -113,6 +115,8 @@ X509StorePtr TrustStoreManager::buildStore(StoreScope scope) const
 
 std::vector<std::string> TrustStoreManager::certPathsForScope(StoreScope scope) const
 {
+    std::shared_lock lock(mutex_);
+
     std::vector<std::string> paths;
 
     auto addBundledSubdirs = [&]() {
@@ -150,11 +154,13 @@ std::vector<std::string> TrustStoreManager::certPathsForScope(StoreScope scope) 
 
 void TrustStoreManager::addUserStorePath(const std::string& path)
 {
+    std::unique_lock lock(mutex_);
     userPaths.push_back(path);
 }
 
 void TrustStoreManager::setCscaStorePath(const std::string& path)
 {
+    std::unique_lock lock(mutex_);
     cscaPath = path;
 }
 

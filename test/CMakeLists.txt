@@ -122,7 +122,7 @@ gtest_discover_tests(EMRTDPluginTests)
 
 add_executable(PKCS11Tests pkcs11_test.cpp)
 target_link_libraries(PKCS11Tests GTest::gtest_main librescrs-pkcs11)
-gtest_discover_tests(PKCS11Tests)
+gtest_discover_tests(PKCS11Tests DISCOVERY_TIMEOUT 30)
 
 # CLI tool for manual PIN testing with a real card
 add_executable(pin_test_cli pin_test_cli.cpp)
@@ -252,7 +252,7 @@ if(BUILD_SIGNING)
     # Unified signing E2E tests (parameterized by backend, custom main)
     add_executable(SigningE2ETests signing_e2e_test.cpp)
     target_link_libraries(SigningE2ETests PRIVATE SigningTestSupport)
-    gtest_discover_tests(SigningE2ETests)
+    gtest_discover_tests(SigningE2ETests DISCOVERY_TIMEOUT 30)
 
     # Signing provider unit tests
     add_executable(SigningProviderTests signing_provider_test.cpp)
@@ -320,7 +320,7 @@ if(BUILD_SIGNING)
         gtest_discover_tests(PAdESModuleTests)
 
         add_executable(JAdESModuleTests jades_module_test.cpp)
-        target_link_libraries(JAdESModuleTests PRIVATE GTest::gtest_main LibreSign SigningTestSupport)
+        target_link_libraries(JAdESModuleTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
         target_include_directories(JAdESModuleTests PRIVATE
             ${LibreMiddleware_SOURCE_DIR}/thirdparty/nlohmann)
         gtest_discover_tests(JAdESModuleTests)
@@ -351,6 +351,6 @@ if(BUILD_SIGNING)
 
         add_executable(ECSigningTests ec_signing_test.cpp)
         target_link_libraries(ECSigningTests PRIVATE GTest::gtest_main LibreSign SigningTestSupport)
-        gtest_discover_tests(ECSigningTests)
+        gtest_discover_tests(ECSigningTests DISCOVERY_TIMEOUT 30)
     endif()
 endif()

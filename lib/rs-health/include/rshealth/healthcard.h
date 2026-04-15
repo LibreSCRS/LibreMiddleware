@@ -30,7 +30,7 @@ public:
 
 private:
     std::unique_ptr<smartcard::PCSCConnection> ownedConnection;
-    smartcard::PCSCConnection* conn = nullptr;
+    smartcard::PCSCConnection& conn;
 
     void initCard();
     std::vector<uint8_t> readFile(const std::vector<uint8_t>& fileId);

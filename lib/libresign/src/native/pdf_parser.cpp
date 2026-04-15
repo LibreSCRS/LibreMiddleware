@@ -760,8 +760,8 @@ PdfValue PdfParser::parseNumber(size_t& pos) const
     std::string_view numStr(reinterpret_cast<const char*>(raw.data() + start), pos - start);
 
     if (hasDecimal) {
-        double val = 0.0;
-        std::from_chars(numStr.data(), numStr.data() + numStr.size(), val);
+        // Apple Clang lacks std::from_chars for floating-point types
+        double val = std::strtod(std::string(numStr).c_str(), nullptr);
         return PdfValue::real(val);
     }
 
@@ -781,7 +781,6 @@ PdfValue PdfParser::parseNumber(size_t& pos) const
 
         std::string_view genStr(reinterpret_cast<const char*>(raw.data() + genStart), pos - genStart);
 
-        size_t beforeR = pos;
         skipWhitespaceAndComments(pos);
 
         if (pos < raw.size() && raw[pos] == 'R') {

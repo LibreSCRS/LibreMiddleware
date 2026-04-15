@@ -248,22 +248,26 @@ RevocationData RevocationClient::collectForChain(const std::vector<X509*>& chain
         X509* issuer = chain[i + 1];
 
         // Try CRL — verified against issuer's public key inside fetchCrl
-        auto crlUrls = extractCrlUrls(cert);
-        for (const auto& url : crlUrls) {
-            auto crl = fetchCrl(url, issuer);
-            if (!crl.empty()) {
-                data.crls.push_back(std::move(crl));
-                break; // one CRL per cert is sufficient
+        if (crlEnabled) {
+            auto crlUrls = extractCrlUrls(cert);
+            for (const auto& url : crlUrls) {
+                auto crl = fetchCrl(url, issuer);
+                if (!crl.empty()) {
+                    data.crls.push_back(std::move(crl));
+                    break; // one CRL per cert is sufficient
+                }
             }
         }
 
         // Try OCSP — signature verified against the chain inside fetchOcsp
-        auto ocspUrls = extractOcspUrls(cert);
-        for (const auto& url : ocspUrls) {
-            auto resp = fetchOcsp(cert, issuer, chain, url);
-            if (!resp.empty()) {
-                data.ocspResponses.push_back(std::move(resp));
-                break; // one OCSP response per cert is sufficient
+        if (ocspEnabled) {
+            auto ocspUrls = extractOcspUrls(cert);
+            for (const auto& url : ocspUrls) {
+                auto resp = fetchOcsp(cert, issuer, chain, url);
+                if (!resp.empty()) {
+                    data.ocspResponses.push_back(std::move(resp));
+                    break; // one OCSP response per cert is sufficient
+                }
             }
         }
     }

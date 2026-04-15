@@ -51,29 +51,17 @@ static void pkcs11_debug(const char* fmt, ...)
 // Shared lock for concurrent C_* operations, exclusive lock for C_Initialize/C_Finalize.
 // Fine-grained locking (per-slot mutex, session mutex) lives inside PKCS11Library.
 //
-// Path to fine-grained locking when this becomes a real problem:
+// Implemented: fine-grained locking via three-phase sign pattern.
 //
-//   1. Add `std::map<CK_SLOT_ID, std::mutex> slotIoMutexes` to
-//      PKCS11Library and a public `slotIoMutex(CK_SLOT_ID)` lazy-getter.
+//   sign() and signFinal() use a SessionBusyGuard RAII class to release
+//   sessionMutex during card I/O (Phase B), holding only the per-slot
+//   mutex. A per-session `busy` flag prevents concurrent operations on the
+//   same session while card I/O is in progress. Operations on different
+//   sessions proceed without blocking.
 //
-//   2. In PKCS11Library::sign / signFinal, restructure into three phases:
-//        (a) under the state mutex: extract SignState + slot pointer +
-//            mark the session as "busy" so another thread can't use it
-//            concurrently; release the state mutex
-//        (b) under the per-slot I/O mutex only: call provider->signXxx
-//        (c) re-take the state mutex: clear busy flag, write the result
-//      This requires changing C_Sign / C_SignFinal in this file to use
-//      `std::unique_lock<std::mutex>` instead of `std::scoped_lock` and
-//      passing it down to PKCS11Library::sign so the library can release
-//      it for phase (b).
-//
-//   3. C_GetTokenInfo / C_OpenSession / C_Login are bounded card-I/O
-//      operations (PIN entry, ATR read) that should also use the per-slot
-//      mutex once the library has been refactored for phase (b).
-//
-//   4. PKCS#11 spec requirement: when CKF_OS_LOCKING_OK is set, the module
-//      MUST be thread-safe. Per-slot locking + busy flag preserves
-//      thread safety while allowing parallel cross-slot operations.
+//   Phase A (sessionMutex): validate, extract signState, set busy, unlock.
+//   Phase B (slot mutex only): card I/O via provider->signData/signMessage.
+//   Phase C (~SessionBusyGuard): relock sessionMutex, clear busy.
 static std::shared_mutex libraryMutex;
 static std::unique_ptr<PKCS11Library> library;
 

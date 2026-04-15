@@ -13,9 +13,9 @@ std::vector<uint8_t> APDUCommand::toBytes() const
     bytes.push_back(p1);
     bytes.push_back(p2);
 
-    // ISO 7816-4: short form supports Lc/Nc up to 255.
-    // When data.size() > 255, use extended form: 0x00 followed by 2-byte length.
-    const bool useExtended = (data.size() > 255);
+    // ISO 7816-4: short form supports Lc/Nc up to 255 and Le/Ne up to 256.
+    // When data or expected response exceeds short limits, use extended form.
+    const bool useExtended = (data.size() > 255) || (hasLe && le > 256);
 
     if (!data.empty()) {
         if (!useExtended) {

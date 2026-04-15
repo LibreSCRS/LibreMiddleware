@@ -48,6 +48,8 @@ private:
     void run();
 
     void establishContext();
+    void setContext(SCARDCONTEXT ctx);
+    void reEstablishContext();
     bool checkPnPSupport();
     std::vector<std::string> enumerateReaders();
     void waitForFirstReader(bool pnp);
@@ -57,7 +59,10 @@ private:
     void notifyReaders(const std::vector<std::string>& readers);
 
     std::unique_ptr<IPCSCScanProvider> pcsc;
-    std::atomic<SCARDCONTEXT> hContext{0};
+
+    mutable std::mutex contextMtx;
+    SCARDCONTEXT hContext = 0;
+
     std::map<std::string, DWORD> previousReaderStates;
     std::atomic<bool> stopRequested{false};
 

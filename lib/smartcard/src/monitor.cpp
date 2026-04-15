@@ -4,8 +4,10 @@
 #include "smartcard/monitor.h"
 #include "smartcard/pcsc_scan_provider.h"
 
+#include <cassert>
 #include <chrono>
 #include <cstring>
+#include <iostream>
 #include <stdexcept>
 
 namespace smartcard {
@@ -38,6 +40,7 @@ Monitor::SubscriptionId Monitor::subscribe(MonitorCallback onEvent, ReaderListCa
 {
     std::lock_guard lock(subscribersMtx);
     auto id = nextId++;
+    assert(subscribers.find(id) == subscribers.end()); // overflow guard
     subscribers[id] = {std::move(onEvent), std::move(onReaders)};
     if (subscribers.size() == 1) {
         startThread();
@@ -76,10 +79,15 @@ void Monitor::stopThread()
         return;
     }
     stopRequested = true;
-    // Note: hContext.load() may race with the monitor thread replacing hContext
-    // in enumerateReaders(). SCardCancel on a stale context returns an error
-    // but does not crash — the monitor thread will see stopRequested and exit.
-    pcsc->cancel(hContext.load());
+
+    SCARDCONTEXT ctx;
+    {
+        std::lock_guard lock(contextMtx);
+        ctx = hContext;
+    }
+    if (ctx)
+        pcsc->cancel(ctx);
+
     monitorThread.join();
 }
 
@@ -150,6 +158,23 @@ void Monitor::run()
     }
 }
 
+void Monitor::setContext(SCARDCONTEXT ctx)
+{
+    std::lock_guard lock(contextMtx);
+    hContext = ctx;
+}
+
+void Monitor::reEstablishContext()
+{
+    pcsc->releaseContext(hContext);
+    SCARDCONTEXT ctx = 0;
+    LONG rv = pcsc->establishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &ctx);
+    if (rv != kScSuccess) {
+        throw std::runtime_error("Cannot re-establish context in Monitor");
+    }
+    setContext(ctx);
+}
+
 void Monitor::establishContext()
 {
     SCARDCONTEXT ctx = 0;
@@ -157,7 +182,7 @@ void Monitor::establishContext()
     if (rv != kScSuccess) {
         throw std::runtime_error("Cannot establish context in Monitor");
     }
-    hContext = ctx;
+    setContext(ctx);
 }
 
 bool Monitor::checkPnPSupport()
@@ -184,13 +209,7 @@ std::vector<std::string> Monitor::enumerateReaders()
         }
 
         if (rv != kScSuccess) {
-            pcsc->releaseContext(hContext);
-            SCARDCONTEXT ctx = 0;
-            rv = pcsc->establishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &ctx);
-            if (rv != kScSuccess) {
-                throw std::runtime_error("Cannot re-establish context in Monitor");
-            }
-            hContext = ctx;
+            reEstablishContext();
             return {};
         }
 
@@ -232,30 +251,15 @@ void Monitor::waitForFirstReader(bool pnp)
         } while (rv == kScTimeout && !stopRequested.load());
 
         if (rv != kScSuccess) {
-            pcsc->releaseContext(hContext);
-            SCARDCONTEXT ctx = 0;
-            LONG rv2 = pcsc->establishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &ctx);
-            if (rv2 != kScSuccess) {
-                throw std::runtime_error("Cannot re-establish context in Monitor");
-            }
-            hContext = ctx;
+            reEstablishContext();
         }
     } else {
-        DWORD dwReaders = 0;
-        DWORD dwReadersOld = 0;
-        pcsc->listReaders(hContext, nullptr, nullptr, &dwReadersOld);
-        dwReaders = dwReadersOld;
-
-        LONG rv = kScSuccess;
-        while ((rv == kScSuccess) && (dwReaders == dwReadersOld)) {
-            rv = pcsc->listReaders(hContext, nullptr, nullptr, &dwReaders);
-            if (rv == kScNoReadersAvailable) {
-                rv = kScSuccess;
-            }
+        auto readersBefore = enumerateReaders();
+        while (!stopRequested.load()) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
-            if (stopRequested.load()) {
-                return;
-            }
+            auto readersNow = enumerateReaders();
+            if (readersNow != readersBefore)
+                break;
         }
     }
 }
@@ -273,14 +277,13 @@ bool Monitor::processEvents(std::vector<SCARD_READERSTATE>& states, int readerCo
                 return true; // re-enumerate
             }
         } else {
-            DWORD dwReaders = 0;
-            DWORD dwReadersOld = 0;
+            auto currentReaders = enumerateReaders();
+            std::vector<std::string> knownReaders;
+            knownReaders.reserve(readerCount);
             for (int i = 0; i < readerCount; i++) {
-                dwReadersOld += strlen(states[i].szReader) + 1;
+                knownReaders.emplace_back(states[i].szReader);
             }
-            dwReadersOld += 1; // trailing null
-            if ((pcsc->listReaders(hContext, nullptr, nullptr, &dwReaders) == kScSuccess) &&
-                (dwReaders != dwReadersOld)) {
+            if (currentReaders != knownReaders) {
                 return true; // re-enumerate
             }
         }
@@ -362,14 +365,7 @@ bool Monitor::processEvents(std::vector<SCARD_READERSTATE>& states, int readerCo
             }
         }
 
-        // Re-establish context
-        pcsc->releaseContext(hContext);
-        SCARDCONTEXT ctx = 0;
-        LONG rv2 = pcsc->establishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &ctx);
-        if (rv2 != kScSuccess) {
-            throw std::runtime_error("Cannot re-establish context in Monitor");
-        }
-        hContext = ctx;
+        reEstablishContext();
         return true;
     }
 
@@ -383,13 +379,7 @@ bool Monitor::processEvents(std::vector<SCARD_READERSTATE>& states, int readerCo
 
     // Other error — re-establish context
     if (rv != kScSuccess) {
-        pcsc->releaseContext(hContext);
-        SCARDCONTEXT ctx = 0;
-        LONG rv2 = pcsc->establishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &ctx);
-        if (rv2 != kScSuccess) {
-            throw std::runtime_error("Cannot re-establish context in Monitor");
-        }
-        hContext = ctx;
+        reEstablishContext();
     }
     return true;
 }
@@ -408,7 +398,10 @@ void Monitor::notifyEvent(const MonitorEvent& event)
     for (const auto& cb : callbacks) {
         try {
             cb(event);
+        } catch (const std::exception& ex) {
+            std::cerr << "Monitor: event callback threw: " << ex.what() << "\n";
         } catch (...) {
+            std::cerr << "Monitor: event callback threw unknown exception\n";
         }
     }
 }
@@ -427,7 +420,10 @@ void Monitor::notifyReaders(const std::vector<std::string>& readers)
     for (const auto& cb : callbacks) {
         try {
             cb(readers);
+        } catch (const std::exception& ex) {
+            std::cerr << "Monitor: reader-list callback threw: " << ex.what() << "\n";
         } catch (...) {
+            std::cerr << "Monitor: reader-list callback threw unknown exception\n";
         }
     }
 }

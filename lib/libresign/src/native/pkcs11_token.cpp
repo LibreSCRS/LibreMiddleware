@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <dlfcn.h>
+#include <mutex>
 #include <stdexcept>
 
 #define CK_PTR *
@@ -42,6 +43,7 @@ struct Pkcs11Token::Impl
     CK_SESSION_HANDLE session = 0;
     CK_OBJECT_HANDLE privateKey = 0;
     bool loggedIn = false;
+    std::mutex sessionMutex;
 
     ~Impl()
     {
@@ -211,6 +213,8 @@ Pkcs11Token::~Pkcs11Token() = default;
 
 std::vector<uint8_t> Pkcs11Token::sign(std::span<const uint8_t> hash, const std::string& algorithm)
 {
+    std::scoped_lock lock(impl->sessionMutex);
+
     // Route to CKM_ECDSA for ECDSA / JWS ES256/ES384/ES512 aliases.
     // Previously we matched any string starting with "ES" which would
     // also accept "ES-PSS" or typos; narrow to the three canonical JWS
@@ -238,6 +242,8 @@ std::vector<uint8_t> Pkcs11Token::sign(std::span<const uint8_t> hash, const std:
 
 std::vector<uint8_t> Pkcs11Token::certificate() const
 {
+    std::scoped_lock lock(impl->sessionMutex);
+
     CK_OBJECT_CLASS certClass = CKO_CERTIFICATE;
 
     // Try to get CKA_ID from the private key to match the correct certificate
@@ -291,6 +297,8 @@ std::vector<uint8_t> Pkcs11Token::certificate() const
 
 std::vector<std::vector<uint8_t>> Pkcs11Token::certificateChain() const
 {
+    std::scoped_lock lock(impl->sessionMutex);
+
     // Get CKA_ID from private key to identify the signer certificate
     auto keyId = impl->getKeyId();
 
@@ -300,6 +308,16 @@ std::vector<std::vector<uint8_t>> Pkcs11Token::certificateChain() const
 
     if (impl->funcs->C_FindObjectsInit(impl->session, tmpl, 1) != CKR_OK)
         return {};
+
+    // RAII: always call C_FindObjectsFinal on scope exit — same pattern as
+    // findPrivateKey(). Without this, an exception from C_FindObjects
+    // leaves the session in find-active state.
+    struct FindFinalizer {
+        CK_FUNCTION_LIST_PTR f;
+        CK_SESSION_HANDLE s;
+        ~FindFinalizer() { if (f) f->C_FindObjectsFinal(s); }
+    };
+    FindFinalizer finalizer{impl->funcs, impl->session};
 
     // Per PKCS#11 spec §5.7.7, C_FindObjects may return fewer handles than
     // the buffer can hold even when more objects match — we must loop until
@@ -320,7 +338,6 @@ std::vector<std::vector<uint8_t>> Pkcs11Token::certificateChain() const
         if (allHandles.size() > 4096)
             break;
     }
-    impl->funcs->C_FindObjectsFinal(impl->session);
 
     if (rv != CKR_OK)
         return {};

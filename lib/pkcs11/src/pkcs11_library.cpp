@@ -248,6 +248,9 @@ CK_RV PKCS11Library::closeSession(CK_SESSION_HANDLE hSession)
         if (it == sessions.end())
             return CKR_SESSION_HANDLE_INVALID;
 
+        if (it->second.busy)
+            return CKR_FUNCTION_FAILED;
+
         slotID = it->second.slotID;
         sessions.erase(it);
 
@@ -289,6 +292,13 @@ CK_RV PKCS11Library::closeAllSessions(CK_SLOT_ID slotID)
 
     {
         std::scoped_lock lock(sessionMutex);
+
+        // Check if any session on this slot is busy (sign I/O in progress)
+        for (auto& [h, entry] : sessions) {
+            if (entry.slotID == slotID && entry.busy)
+                return CKR_FUNCTION_FAILED;
+        }
+
         for (auto it = sessions.begin(); it != sessions.end();) {
             if (it->second.slotID == slotID)
                 it = sessions.erase(it);
@@ -776,6 +786,10 @@ CK_RV PKCS11Library::findObjectsInit(CK_SESSION_HANDLE hSession, CK_ATTRIBUTE_PT
     if (it == sessions.end())
         return CKR_SESSION_HANDLE_INVALID;
     auto& session = it->second;
+
+    if (session.busy)
+        return CKR_FUNCTION_FAILED;
+
     const CK_SLOT_ID slotID = session.slotID;
 
     // Per PKCS#11 spec, a session handle is single-threaded
@@ -810,6 +824,9 @@ CK_RV PKCS11Library::findObjects(CK_SESSION_HANDLE hSession, CK_OBJECT_HANDLE_PT
         return CKR_SESSION_HANDLE_INVALID;
     auto& session = it->second;
 
+    if (session.busy)
+        return CKR_FUNCTION_FAILED;
+
     if (!session.findState.has_value())
         return CKR_OPERATION_NOT_INITIALIZED;
 
@@ -834,6 +851,9 @@ CK_RV PKCS11Library::findObjectsFinal(CK_SESSION_HANDLE hSession)
     if (it == sessions.end())
         return CKR_SESSION_HANDLE_INVALID;
     auto& session = it->second;
+
+    if (session.busy)
+        return CKR_FUNCTION_FAILED;
 
     if (!session.findState.has_value())
         return CKR_OPERATION_NOT_INITIALIZED;
@@ -1168,6 +1188,37 @@ static std::vector<uint8_t> buildDigestInfo(CK_MECHANISM_TYPE mech, const uint8_
 }
 
 // ---------------------------------------------------------------------------
+// RAII guard: marks session busy, unlocks sessionMutex for card I/O
+// ---------------------------------------------------------------------------
+
+namespace {
+
+class SessionBusyGuard
+{
+public:
+    SessionBusyGuard(std::unique_lock<std::mutex>& sessLock, SessionEntry& session)
+        : sessLock_(sessLock), session_(session)
+    {
+        sessLock_.unlock();
+    }
+
+    ~SessionBusyGuard()
+    {
+        sessLock_.lock();
+        session_.busy = false;
+    }
+
+    SessionBusyGuard(const SessionBusyGuard&) = delete;
+    SessionBusyGuard& operator=(const SessionBusyGuard&) = delete;
+
+private:
+    std::unique_lock<std::mutex>& sessLock_;
+    SessionEntry& session_;
+};
+
+} // anonymous namespace
+
+// ---------------------------------------------------------------------------
 // Lookup and utility helpers
 // ---------------------------------------------------------------------------
 
@@ -1244,6 +1295,10 @@ CK_RV PKCS11Library::signInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech
     if (sessIt == sessions.end())
         return CKR_SESSION_HANDLE_INVALID;
     auto& session = sessIt->second;
+
+    if (session.busy)
+        return CKR_FUNCTION_FAILED;
+
     const CK_SLOT_ID slotID = session.slotID;
 
     if (session.signState.has_value())
@@ -1300,11 +1355,16 @@ CK_RV PKCS11Library::signInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech
 CK_RV PKCS11Library::sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULONG ulDataLen, CK_BYTE_PTR pSignature,
                           CK_ULONG_PTR pulSignatureLen)
 {
-    std::scoped_lock sessLock(sessionMutex);
+    // --- Phase A: validate and extract state under sessionMutex ---
+    std::unique_lock sessLock(sessionMutex);
     auto sessIt = sessions.find(hSession);
     if (sessIt == sessions.end())
         return CKR_SESSION_HANDLE_INVALID;
     auto& session = sessIt->second;
+
+    if (session.busy)
+        return CKR_FUNCTION_FAILED;
+
     const CK_SLOT_ID slotID = session.slotID;
 
     if (!session.signState.has_value())
@@ -1320,83 +1380,99 @@ CK_RV PKCS11Library::sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULON
     if (pulSignatureLen == nullptr)
         return CKR_ARGUMENTS_BAD;
 
-    std::scoped_lock lock(*slots[slotID].mutex);
+    // Size query and buffer-too-small: brief nested slot lock, return early.
+    // Do NOT set busy — operation is preserved, no card I/O needed.
+    {
+        std::scoped_lock lock(*slots[slotID].mutex);
 
-    // Determine signature size from key's modulus (supports 2048, 4096, etc.)
-    auto keyIt = slots[slotID].objects.find(session.signState->keyHandle);
-    if (keyIt == slots[slotID].objects.end()) {
-        session.signState.reset();
-        return CKR_DEVICE_ERROR;
-    }
-    CK_ULONG sigSize = signatureSize(keyIt->second);
-
-    // Size query: pSignature == NULL — do NOT consume sign state
-    if (pSignature == nullptr) {
-        *pulSignatureLen = sigSize;
-        return CKR_OK;
-    }
-
-    // Check buffer size before consuming sign state.
-    // Per PKCS#11 spec, CKR_BUFFER_TOO_SMALL must preserve the active
-    // signing operation so callers can retry with a larger buffer.
-    if (*pulSignatureLen < sigSize) {
-        *pulSignatureLen = sigSize;
-        return CKR_BUFFER_TOO_SMALL;
-    }
-
-    // Sign state is consumed from here on. The buffer check above ensures
-    // CKR_BUFFER_TOO_SMALL preserves the signing operation per PKCS#11 spec.
-    auto signState = session.signState.value();
-    session.signState.reset();
-
-    auto& obj = keyIt->second;
-    if (!slots[slotID].provider)
-        return CKR_DEVICE_ERROR;
-
-    try {
-        std::vector<uint8_t> sig;
-
-        if (isCombinedHashMechanism(signState.mechanism) || isPSSMechanism(signState.mechanism)) {
-            // Combined hash+sign: build DigestInfo locally, pass both DigestInfo and
-            // raw data to provider. Cards that do raw RSA use DigestInfo (default).
-            // Cards that require hash-specific algorithms use rawData to hash locally.
-            // PSS mechanisms skip DigestInfo (padding is done differently).
-            std::vector<uint8_t> digestInfo;
-            if (!isPSSMechanism(signState.mechanism))
-                digestInfo = buildDigestInfo(signState.mechanism, pData, ulDataLen);
-            std::vector<uint8_t> rawData(pData, pData + ulDataLen);
-            sig = slots[slotID].provider->signMessage(obj.id, digestInfo, rawData, signState.mechanism);
-        } else if (signState.mechanism == CKM_ECDSA) {
-            // ECDSA: caller provides pre-hashed data, no DigestInfo wrapping.
-            std::vector<uint8_t> dataVec(pData, pData + ulDataLen);
-            sig = slots[slotID].provider->signData(obj.id, dataVec);
-        } else {
-            // CKM_RSA_PKCS: caller provides pre-built DigestInfo.
-            // Max input = key_size_bytes - 11 (PKCS#1 v1.5 overhead).
-            if (!obj.modulus.empty() && obj.modulus.size() <= 11)
-                return CKR_KEY_SIZE_RANGE;
-            CK_ULONG maxInput = obj.modulus.empty() ? 245 : static_cast<CK_ULONG>(obj.modulus.size()) - 11;
-            if (ulDataLen > maxInput)
-                return CKR_DATA_LEN_RANGE;
-            std::vector<uint8_t> dataVec(pData, pData + ulDataLen);
-            sig = slots[slotID].provider->signData(obj.id, dataVec);
-        }
-
-        if (*pulSignatureLen < sig.size()) {
-            *pulSignatureLen = static_cast<CK_ULONG>(sig.size());
-            // Sign state already consumed — operation cannot be retried.
-            // CKR_BUFFER_TOO_SMALL would violate PKCS#11 spec; use CKR_DEVICE_ERROR.
+        auto keyIt = slots[slotID].objects.find(session.signState->keyHandle);
+        if (keyIt == slots[slotID].objects.end()) {
+            session.signState.reset();
             return CKR_DEVICE_ERROR;
         }
+        CK_ULONG sigSize = signatureSize(keyIt->second);
 
-        std::memcpy(pSignature, sig.data(), sig.size());
-        *pulSignatureLen = static_cast<CK_ULONG>(sig.size());
-        return CKR_OK;
-    } catch (const std::exception& e) {
-        return handleCardError(e, slotID);
-    } catch (...) {
-        return CKR_DEVICE_ERROR;
+        // Size query: pSignature == NULL — do NOT consume sign state
+        if (pSignature == nullptr) {
+            *pulSignatureLen = sigSize;
+            return CKR_OK;
+        }
+
+        // Check buffer size before consuming sign state.
+        // Per PKCS#11 spec, CKR_BUFFER_TOO_SMALL must preserve the active
+        // signing operation so callers can retry with a larger buffer.
+        if (*pulSignatureLen < sigSize) {
+            *pulSignatureLen = sigSize;
+            return CKR_BUFFER_TOO_SMALL;
+        }
     }
+
+    // Copy signState locally, reset session state, mark busy.
+    auto localSignState = session.signState.value();
+    session.signState.reset();
+    session.busy = true;
+
+    // SessionBusyGuard unlocks sessionMutex now, relocks + clears busy in dtor.
+    SessionBusyGuard busyGuard(sessLock, session);
+
+    // --- Phase B: card I/O under slot mutex only ---
+    {
+        std::scoped_lock lock(*slots[slotID].mutex);
+
+        auto keyIt = slots[slotID].objects.find(localSignState.keyHandle);
+        if (keyIt == slots[slotID].objects.end())
+            return CKR_DEVICE_ERROR;
+
+        auto& obj = keyIt->second;
+        if (!slots[slotID].provider)
+            return CKR_DEVICE_ERROR;
+
+        try {
+            std::vector<uint8_t> sig;
+
+            if (isCombinedHashMechanism(localSignState.mechanism) || isPSSMechanism(localSignState.mechanism)) {
+                // Combined hash+sign: build DigestInfo locally, pass both DigestInfo and
+                // raw data to provider. Cards that do raw RSA use DigestInfo (default).
+                // Cards that require hash-specific algorithms use rawData to hash locally.
+                // PSS mechanisms skip DigestInfo (padding is done differently).
+                std::vector<uint8_t> digestInfo;
+                if (!isPSSMechanism(localSignState.mechanism))
+                    digestInfo = buildDigestInfo(localSignState.mechanism, pData, ulDataLen);
+                std::vector<uint8_t> rawData(pData, pData + ulDataLen);
+                sig = slots[slotID].provider->signMessage(obj.id, digestInfo, rawData, localSignState.mechanism);
+            } else if (localSignState.mechanism == CKM_ECDSA) {
+                // ECDSA: caller provides pre-hashed data, no DigestInfo wrapping.
+                std::vector<uint8_t> dataVec(pData, pData + ulDataLen);
+                sig = slots[slotID].provider->signData(obj.id, dataVec);
+            } else {
+                // CKM_RSA_PKCS: caller provides pre-built DigestInfo.
+                // Max input = key_size_bytes - 11 (PKCS#1 v1.5 overhead).
+                if (!obj.modulus.empty() && obj.modulus.size() <= 11)
+                    return CKR_KEY_SIZE_RANGE;
+                CK_ULONG maxInput = obj.modulus.empty() ? 245 : static_cast<CK_ULONG>(obj.modulus.size()) - 11;
+                if (ulDataLen > maxInput)
+                    return CKR_DATA_LEN_RANGE;
+                std::vector<uint8_t> dataVec(pData, pData + ulDataLen);
+                sig = slots[slotID].provider->signData(obj.id, dataVec);
+            }
+
+            if (*pulSignatureLen < sig.size()) {
+                *pulSignatureLen = static_cast<CK_ULONG>(sig.size());
+                // Sign state already consumed — operation cannot be retried.
+                // CKR_BUFFER_TOO_SMALL would violate PKCS#11 spec; use CKR_DEVICE_ERROR.
+                return CKR_DEVICE_ERROR;
+            }
+
+            std::memcpy(pSignature, sig.data(), sig.size());
+            *pulSignatureLen = static_cast<CK_ULONG>(sig.size());
+            return CKR_OK;
+        } catch (const std::exception& e) {
+            return handleCardError(e, slotID);
+        } catch (...) {
+            return CKR_DEVICE_ERROR;
+        }
+    }
+    // --- Phase C: ~SessionBusyGuard relocks sessionMutex, clears busy ---
 }
 
 CK_RV PKCS11Library::signUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, CK_ULONG ulPartLen)
@@ -1406,6 +1482,9 @@ CK_RV PKCS11Library::signUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, C
     if (sessIt == sessions.end())
         return CKR_SESSION_HANDLE_INVALID;
     auto& session = sessIt->second;
+
+    if (session.busy)
+        return CKR_FUNCTION_FAILED;
 
     if (!session.signState.has_value())
         return CKR_OPERATION_NOT_INITIALIZED;
@@ -1427,8 +1506,10 @@ CK_RV PKCS11Library::signUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, C
     // Overflow-safe accumulation check: write the addition as a subtraction
     // against the cap so it cannot wrap when ulPartLen is huge.
     if (ulPartLen > kMaxSignBuffer
-            || session.signState->buffer.size() > kMaxSignBuffer - ulPartLen)
+            || session.signState->buffer.size() > kMaxSignBuffer - ulPartLen) {
+        session.signState.reset(); // Per spec: error terminates operation
         return CKR_DATA_LEN_RANGE;
+    }
     if (ulPartLen > 0)
         session.signState->buffer.insert(session.signState->buffer.end(), pPart, pPart + ulPartLen);
     return CKR_OK;
@@ -1436,11 +1517,16 @@ CK_RV PKCS11Library::signUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, C
 
 CK_RV PKCS11Library::signFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignature, CK_ULONG_PTR pulSignatureLen)
 {
-    std::scoped_lock sessLock(sessionMutex);
+    // --- Phase A: validate and extract state under sessionMutex ---
+    std::unique_lock sessLock(sessionMutex);
     auto sessIt = sessions.find(hSession);
     if (sessIt == sessions.end())
         return CKR_SESSION_HANDLE_INVALID;
     auto& session = sessIt->second;
+
+    if (session.busy)
+        return CKR_FUNCTION_FAILED;
+
     const CK_SLOT_ID slotID = session.slotID;
 
     if (!session.signState.has_value())
@@ -1455,61 +1541,79 @@ CK_RV PKCS11Library::signFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignatur
     if (pulSignatureLen == nullptr)
         return CKR_ARGUMENTS_BAD;
 
-    std::scoped_lock lock(*slots[slotID].mutex);
+    // Size query and buffer-too-small: brief nested slot lock, return early.
+    // Do NOT set busy — operation is preserved, no card I/O needed.
+    {
+        std::scoped_lock lock(*slots[slotID].mutex);
 
-    // Determine signature size
-    auto keyIt = slots[slotID].objects.find(session.signState->keyHandle);
-    if (keyIt == slots[slotID].objects.end()) {
-        session.signState.reset();
-        return CKR_DEVICE_ERROR;
-    }
-    CK_ULONG sigSize = signatureSize(keyIt->second);
-
-    // Size query
-    if (pSignature == nullptr) {
-        *pulSignatureLen = sigSize;
-        return CKR_OK;
-    }
-
-    // Check buffer size before consuming sign state
-    if (*pulSignatureLen < sigSize) {
-        *pulSignatureLen = sigSize;
-        return CKR_BUFFER_TOO_SMALL;
-    }
-
-    // Consume sign state
-    auto signState = std::move(session.signState.value());
-    session.signState.reset();
-
-    auto& obj = keyIt->second;
-    if (!slots[slotID].provider)
-        return CKR_DEVICE_ERROR;
-
-    try {
-        // Hash the accumulated data, build DigestInfo, sign on card.
-        // Pass raw data alongside DigestInfo for hash-specific algorithm support.
-        // PSS mechanisms skip DigestInfo (padding is done differently).
-        std::vector<uint8_t> digestInfo;
-        if (!isPSSMechanism(signState.mechanism))
-            digestInfo = buildDigestInfo(signState.mechanism, signState.buffer.data(),
-                                         static_cast<CK_ULONG>(signState.buffer.size()));
-        auto sig = slots[slotID].provider->signMessage(obj.id, digestInfo, signState.buffer, signState.mechanism);
-
-        if (*pulSignatureLen < sig.size()) {
-            *pulSignatureLen = static_cast<CK_ULONG>(sig.size());
-            // Sign state already consumed — operation cannot be retried.
-            // CKR_BUFFER_TOO_SMALL would violate PKCS#11 spec; use CKR_DEVICE_ERROR.
+        auto keyIt = slots[slotID].objects.find(session.signState->keyHandle);
+        if (keyIt == slots[slotID].objects.end()) {
+            session.signState.reset();
             return CKR_DEVICE_ERROR;
         }
+        CK_ULONG sigSize = signatureSize(keyIt->second);
 
-        std::memcpy(pSignature, sig.data(), sig.size());
-        *pulSignatureLen = static_cast<CK_ULONG>(sig.size());
-        return CKR_OK;
-    } catch (const std::exception& e) {
-        return handleCardError(e, slotID);
-    } catch (...) {
-        return CKR_DEVICE_ERROR;
+        // Size query
+        if (pSignature == nullptr) {
+            *pulSignatureLen = sigSize;
+            return CKR_OK;
+        }
+
+        // Check buffer size before consuming sign state
+        if (*pulSignatureLen < sigSize) {
+            *pulSignatureLen = sigSize;
+            return CKR_BUFFER_TOO_SMALL;
+        }
     }
+
+    // Copy signState locally, reset session state, mark busy.
+    auto localSignState = std::move(session.signState.value());
+    session.signState.reset();
+    session.busy = true;
+
+    // SessionBusyGuard unlocks sessionMutex now, relocks + clears busy in dtor.
+    SessionBusyGuard busyGuard(sessLock, session);
+
+    // --- Phase B: card I/O under slot mutex only ---
+    {
+        std::scoped_lock lock(*slots[slotID].mutex);
+
+        auto keyIt = slots[slotID].objects.find(localSignState.keyHandle);
+        if (keyIt == slots[slotID].objects.end())
+            return CKR_DEVICE_ERROR;
+
+        auto& obj = keyIt->second;
+        if (!slots[slotID].provider)
+            return CKR_DEVICE_ERROR;
+
+        try {
+            // Hash the accumulated data, build DigestInfo, sign on card.
+            // Pass raw data alongside DigestInfo for hash-specific algorithm support.
+            // PSS mechanisms skip DigestInfo (padding is done differently).
+            std::vector<uint8_t> digestInfo;
+            if (!isPSSMechanism(localSignState.mechanism))
+                digestInfo = buildDigestInfo(localSignState.mechanism, localSignState.buffer.data(),
+                                             static_cast<CK_ULONG>(localSignState.buffer.size()));
+            auto sig = slots[slotID].provider->signMessage(obj.id, digestInfo, localSignState.buffer,
+                                                            localSignState.mechanism);
+
+            if (*pulSignatureLen < sig.size()) {
+                *pulSignatureLen = static_cast<CK_ULONG>(sig.size());
+                // Sign state already consumed — operation cannot be retried.
+                // CKR_BUFFER_TOO_SMALL would violate PKCS#11 spec; use CKR_DEVICE_ERROR.
+                return CKR_DEVICE_ERROR;
+            }
+
+            std::memcpy(pSignature, sig.data(), sig.size());
+            *pulSignatureLen = static_cast<CK_ULONG>(sig.size());
+            return CKR_OK;
+        } catch (const std::exception& e) {
+            return handleCardError(e, slotID);
+        } catch (...) {
+            return CKR_DEVICE_ERROR;
+        }
+    }
+    // --- Phase C: ~SessionBusyGuard relocks sessionMutex, clears busy ---
 }
 
 // ---------------------------------------------------------------------------

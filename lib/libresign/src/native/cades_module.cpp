@@ -150,7 +150,7 @@ std::vector<uint8_t> buildRevocationValues(const RevocationData& revData)
         // SEQUENCE wrapper
         auto crlSeq = derWrap(0x30, crlSeqContent);
 
-        // [0] IMPLICIT wrapper
+        // [0] EXPLICIT wrapper
         auto crlTagged = derWrap(0xA0, crlSeq);
         content.insert(content.end(), crlTagged.begin(), crlTagged.end());
     }
@@ -164,7 +164,7 @@ std::vector<uint8_t> buildRevocationValues(const RevocationData& revData)
         // SEQUENCE wrapper
         auto ocspSeq = derWrap(0x30, ocspSeqContent);
 
-        // [1] IMPLICIT wrapper
+        // [1] EXPLICIT wrapper
         auto ocspTagged = derWrap(0xA1, ocspSeq);
         content.insert(content.end(), ocspTagged.begin(), ocspTagged.end());
     }
@@ -228,7 +228,7 @@ std::vector<uint8_t> CAdESModule::signBB(const std::vector<uint8_t>& data, Pkcs1
     // 2. Create an EVP_PKEY backed by the PKCS#11 token.
     //    This key has the cert's public key but delegates sign() to the card.
     //    OpenSSL CMS API uses it transparently — no workarounds needed.
-    EvpPkeyPtr pkey(createPkcs11EvpKey(token, signerCert.get()));
+    EvpPkeyPtr pkey(createPkcs11EvpKey(token, signerCert.get()).release());
 
     // 3. Create CMS SignedData with the PKCS#11-backed key.
     //    OpenSSL handles content-type, message-digest, and signing-time

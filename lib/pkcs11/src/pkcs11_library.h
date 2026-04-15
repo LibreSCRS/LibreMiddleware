@@ -72,6 +72,7 @@ struct SessionEntry
     CK_FLAGS flags; // CKF_SERIAL_SESSION | optional CKF_RW_SESSION
     std::optional<FindState> findState;
     std::optional<SignState> signState;
+    bool busy = false; // true while sign card I/O in progress
 };
 
 class PKCS11Library

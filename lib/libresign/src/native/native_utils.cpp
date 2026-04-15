@@ -68,6 +68,40 @@ std::vector<uint8_t> sha256(const std::string& data)
     return sha256(reinterpret_cast<const uint8_t*>(data.data()), data.size());
 }
 
+// ---- SHA-384 ----
+
+std::vector<uint8_t> sha384(const uint8_t* data, size_t len)
+{
+    std::vector<uint8_t> hash(EVP_MD_size(EVP_sha384()));
+    unsigned int hashLen = 0;
+    if (!EVP_Digest(data, len, hash.data(), &hashLen, EVP_sha384(), nullptr))
+        throw std::runtime_error("EVP_Digest SHA-384 failed: " + opensslError());
+    hash.resize(hashLen);
+    return hash;
+}
+
+std::vector<uint8_t> sha384(const std::string& data)
+{
+    return sha384(reinterpret_cast<const uint8_t*>(data.data()), data.size());
+}
+
+// ---- SHA-512 ----
+
+std::vector<uint8_t> sha512(const uint8_t* data, size_t len)
+{
+    std::vector<uint8_t> hash(EVP_MD_size(EVP_sha512()));
+    unsigned int hashLen = 0;
+    if (!EVP_Digest(data, len, hash.data(), &hashLen, EVP_sha512(), nullptr))
+        throw std::runtime_error("EVP_Digest SHA-512 failed: " + opensslError());
+    hash.resize(hashLen);
+    return hash;
+}
+
+std::vector<uint8_t> sha512(const std::string& data)
+{
+    return sha512(reinterpret_cast<const uint8_t*>(data.data()), data.size());
+}
+
 // ---- Base64 encoding ----
 
 std::string base64Encode(const uint8_t* data, size_t len)
@@ -247,15 +281,6 @@ std::string tokenAlgorithm(int keyType, const std::string& mdName)
     case 256:
     default:  return std::string("SHA256") + suffix; // 256 explicit + unknown-default
     }
-}
-
-// ---- PKCS#11 signing algorithm from certificate key type ----
-
-std::string pkcs11Algorithm(X509* cert)
-{
-    EVP_PKEY* pubKey = X509_get0_pubkey(cert);
-    int keyType = pubKey ? EVP_PKEY_base_id(pubKey) : EVP_PKEY_RSA;
-    return tokenAlgorithm(keyType, "SHA256");
 }
 
 // ---- Collect revocation data for a token's certificate chain ----

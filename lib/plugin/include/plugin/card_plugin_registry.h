@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <memory>
 #include <set>
+#include <shared_mutex>
 #include <vector>
 
 namespace plugin {
@@ -48,6 +49,7 @@ private:
         std::unique_ptr<CardPlugin> plugin;
     };
 
+    mutable std::shared_mutex pluginsMtx;
     std::vector<LoadedPlugin> loadedPlugins;
     std::vector<CardPlugin*> sortedPlugins;
 

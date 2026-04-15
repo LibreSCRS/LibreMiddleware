@@ -50,6 +50,21 @@ std::vector<uint8_t> mgf1(const EVP_MD* md, const std::vector<uint8_t>& seed, si
     return mask;
 }
 
+// PKCS#1 v1.5 padding: 00 01 FF...FF 00 || DigestInfo
+// Some cards with RSA_RAW algo expect the full padded block, not just DigestInfo.
+std::vector<uint8_t> applyPkcs1v15Padding(const std::vector<uint8_t>& digestInfo, uint16_t keySizeBits)
+{
+    size_t emLen = keySizeBits / 8;
+    if (digestInfo.size() + 11 > emLen)
+        throw std::runtime_error("PKCS15: key too short for PKCS#1 v1.5 padding");
+    std::vector<uint8_t> em(emLen, 0xFF);
+    em[0] = 0x00;
+    em[1] = 0x01;
+    em[emLen - digestInfo.size() - 1] = 0x00;
+    std::copy(digestInfo.begin(), digestInfo.end(), em.end() - digestInfo.size());
+    return em;
+}
+
 // EMSA-PSS-ENCODE per RFC 8017 section 9.1.1
 // hash = Hash(M), already computed. sLen = salt length = hash length (standard).
 std::vector<uint8_t> applyPssPadding(const std::vector<uint8_t>& hash, const EVP_MD* md, uint16_t keySizeBits)
@@ -518,7 +533,13 @@ std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, const std::stri
     if (scheme == SignScheme::RsaPkcs1) {
         attempts.push_back({sig_algo::RSA_RAW, digestInfo});
         attempts.push_back({sig_algo::RSA_PKCS1_V15, digestInfo});
+        // Some cards (e.g. SafeSign) accept algo 0x02 but expect full padded block
+        if (sigLen > digestInfo.size() + 11)
+            attempts.push_back({sig_algo::RSA_PKCS1_V15, applyPkcs1v15Padding(digestInfo, key.keySizeBits)});
         auto rawHash = extractRawHash(digestInfo);
+        // Some cards expect only raw hash with algo 0x02, not DigestInfo
+        if (!rawHash.empty())
+            attempts.push_back({sig_algo::RSA_PKCS1_V15, rawHash});
         uint8_t ha = 0;
         if (rawHash.size() == 20)
             ha = sig_algo::RSA_SHA1_PKCS1;
