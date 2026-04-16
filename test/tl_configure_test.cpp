@@ -42,7 +42,7 @@ TEST(TlConfigureTest, SerbianTlCertificatesAppearInTrustStore)
     config.cacheDirectory = cacheDir.string();
     config.trustedLists.push_back(
         TrustedListEntry{
-            .url = "https://www.mit.gov.rs/tsl/TSL-RS.xml",
+            .url = "https://www.mit.gov.rs/TrustedList/TSL-RS.xml",
             .isLotl = false,
             .eager = true});
 

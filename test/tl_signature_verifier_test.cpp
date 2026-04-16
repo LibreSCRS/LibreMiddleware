@@ -31,19 +31,26 @@ std::vector<uint8_t> getSerbianTl()
 {
     const std::string cachePath = "/tmp/tsl-rs.xml";
     auto data = readFile(cachePath);
-    if (!data.empty() && data.size() > 5 && data[0] == '<' && data[1] == '?')
+    // Check for XML: starts with "<?xml" or BOM + "<?xml"
+    auto startsWithXml = [](const std::vector<uint8_t>& d) {
+        if (d.size() < 5) return false;
+        size_t off = 0;
+        if (d.size() >= 3 && d[0] == 0xEF && d[1] == 0xBB && d[2] == 0xBF)
+            off = 3; // skip UTF-8 BOM
+        return off + 1 < d.size() && d[off] == '<' && d[off + 1] == '?';
+    };
+    if (!data.empty() && startsWithXml(data))
         return data;
 
     // Try downloading
     std::remove(cachePath.c_str());
     int rc = std::system(
         "curl -sS -o /tmp/tsl-rs.xml "
-        "'https://www.mit.gov.rs/tsl/TSL-RS.xml' 2>/dev/null");
+        "'https://www.mit.gov.rs/TrustedList/TSL-RS.xml' 2>/dev/null");
     if (rc != 0)
         return {};
     data = readFile(cachePath);
-    // Verify it's actually XML, not an HTML error page
-    if (data.size() < 100 || data[0] != '<' || data[1] != '?')
+    if (!startsWithXml(data))
         return {};
     return data;
 }
