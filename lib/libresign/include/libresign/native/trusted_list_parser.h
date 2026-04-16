@@ -56,7 +56,8 @@ public:
     TrustedListInfo fetch(const std::string& url, int timeoutSeconds = 30);
 
     /// Result of a fetchRaw() call with HTTP metadata for caching.
-    struct FetchResult {
+    struct FetchResult
+    {
         std::vector<uint8_t> data;
         std::string etag;
         std::string lastModified;
@@ -70,10 +71,8 @@ public:
     /// Fetch raw XML bytes with HTTP conditional request support.
     /// If etag/lastModified are non-empty, sends If-None-Match / If-Modified-Since.
     /// On 304, returns FetchResult with notModified=true and empty data.
-    static FetchResult fetchRawConditional(const std::string& url,
-                                           const std::string& etag = {},
-                                           const std::string& lastModified = {},
-                                           int timeoutSeconds = 30);
+    static FetchResult fetchRawConditional(const std::string& url, const std::string& etag = {},
+                                           const std::string& lastModified = {}, int timeoutSeconds = 30);
 
     // Fetch LOTL, then fetch each member state TL.
     // Returns all entries from all member state TLs.

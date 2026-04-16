@@ -20,7 +20,6 @@ namespace {
 
 using namespace libresign::native_utils;
 
-
 } // namespace
 
 std::vector<std::string> RevocationClient::extractCrlUrls(X509* cert)
@@ -188,8 +187,12 @@ std::vector<uint8_t> RevocationClient::fetchOcsp(X509* cert, X509* issuer, const
     // outlives this call). A lambda deleter frees the stack only — the
     // canonical StackX509Deleter would pop_free the X509 contents, which
     // we don't own.
-    struct StackFreeOnly {
-        void operator()(STACK_OF(X509)* p) const { sk_X509_free(p); }
+    struct StackFreeOnly
+    {
+        void operator()(STACK_OF(X509) * p) const
+        {
+            sk_X509_free(p);
+        }
     };
     std::unique_ptr<STACK_OF(X509), StackFreeOnly> extraCerts(sk_X509_new_null());
     if (!extraCerts)

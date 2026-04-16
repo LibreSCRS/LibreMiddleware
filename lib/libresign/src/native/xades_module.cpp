@@ -51,9 +51,8 @@ std::string percentEncodeUriFilename(const std::string& in)
     std::string out;
     out.reserve(in.size());
     for (unsigned char c : in) {
-        const bool unreserved =
-            (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
-            c == '-' || c == '_' || c == '.' || c == '~';
+        const bool unreserved = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                                c == '-' || c == '_' || c == '.' || c == '~';
         if (unreserved) {
             out.push_back(static_cast<char>(c));
         } else {
@@ -135,7 +134,8 @@ std::vector<uint8_t> canonicalizeNode(xmlDocPtr doc, xmlNodePtr node)
     int size = xmlC14NDocDumpMemory(doc, xpathObj->nodesetval, XML_C14N_EXCLUSIVE_1_0, nullptr, 0, &buf);
 
     if (size < 0 || !buf) {
-        if (buf) xmlFree(buf);
+        if (buf)
+            xmlFree(buf);
         throw std::runtime_error("xmlC14NDocDumpMemory() failed");
     }
 
@@ -399,8 +399,8 @@ SigningResult XAdESModule::sign(const std::vector<uint8_t>& data, const std::str
             // are NOT loaded (no XML_PARSE_DTDLOAD), mitigating XXE and
             // billion-laughs attacks when enveloped input is attacker-supplied.
             constexpr int kSafeXmlOptions = XML_PARSE_NONET | XML_PARSE_NOCDATA;
-            xmlDocPtr origDoc = xmlReadMemory(reinterpret_cast<const char*>(data.data()),
-                                              static_cast<int>(data.size()), nullptr, nullptr, kSafeXmlOptions);
+            xmlDocPtr origDoc = xmlReadMemory(reinterpret_cast<const char*>(data.data()), static_cast<int>(data.size()),
+                                              nullptr, nullptr, kSafeXmlOptions);
             if (!origDoc)
                 return {false, {}, "XAdES enveloped: failed to parse input XML"};
 

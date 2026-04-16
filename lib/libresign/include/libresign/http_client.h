@@ -39,10 +39,8 @@ public:
     /// GET with custom request headers and response header capture.
     /// requestHeaders: list of "Header: value" strings to send.
     /// Response headers are returned in HttpResponse::headers (lowercase keys).
-    HttpResponse getWithHeaders(const std::string& url,
-                                const std::vector<std::string>& requestHeaders,
-                                int timeoutSeconds = 10,
-                                const std::string& unixSocketPath = {}) const;
+    HttpResponse getWithHeaders(const std::string& url, const std::vector<std::string>& requestHeaders,
+                                int timeoutSeconds = 10, const std::string& unixSocketPath = {}) const;
 
     HttpResponse post(const std::string& url, const std::string& jsonBody, int timeoutSeconds = 60,
                       const std::string& unixSocketPath = {}) const;

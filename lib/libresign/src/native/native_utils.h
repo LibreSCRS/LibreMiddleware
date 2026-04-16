@@ -97,12 +97,10 @@ std::vector<uint8_t> signHashWithToken(libresign::Pkcs11Token& token, X509* cert
                                        const std::string& hashAlgo = "SHA256");
 
 // Decompress FlateDecode (zlib) data. Returns nullopt on error.
-std::optional<std::vector<uint8_t>> flateDecode(std::span<const uint8_t> compressed,
-                                                 size_t sizeHint = 0);
+std::optional<std::vector<uint8_t>> flateDecode(std::span<const uint8_t> compressed, size_t sizeHint = 0);
 
 /// Reverse PNG row filters (predictor 10-15). columns = bytes per row (excluding filter byte).
-std::optional<std::vector<uint8_t>> reversePngPredictor(
-    std::span<const uint8_t> data, int columns);
+std::optional<std::vector<uint8_t>> reversePngPredictor(std::span<const uint8_t> data, int columns);
 
 // DER-encode any OpenSSL object using its i2d function
 template <typename T, typename Fn>

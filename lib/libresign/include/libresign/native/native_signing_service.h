@@ -18,20 +18,28 @@ class NativeSigningService : public SigningService
 public:
     bool configure(const TrustConfig& config) override;
 
-    SigningResult sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
-                       std::span<const uint8_t> pin, const std::string& keyAlias,
-                       const std::string& tokenLabel = "") override;
+    SigningResult sign(const SigningRequest& request, const std::string& pkcs11ModulePath, std::span<const uint8_t> pin,
+                       const std::string& keyAlias, const std::string& tokenLabel = "") override;
 
     bool isAvailable() const override;
 
     /// True if configure() was called (even if some TLs failed — degraded mode).
-    bool isConfigured() const { return configured; }
+    bool isConfigured() const
+    {
+        return configured;
+    }
 
     /// True if all eager TLs loaded successfully (no degraded mode).
-    bool isFullyConfigured() const { return configured && fullyConfigured; }
+    bool isFullyConfigured() const
+    {
+        return configured && fullyConfigured;
+    }
 
     /// Set the TrustStoreManager used to receive TL-derived certificates.
-    void setTrustStoreManager(TrustStoreManager* mgr) { trustStoreMgr = mgr; }
+    void setTrustStoreManager(TrustStoreManager* mgr)
+    {
+        trustStoreMgr = mgr;
+    }
 
 private:
     TrustConfig trustConfig;
@@ -40,8 +48,7 @@ private:
     bool fullyConfigured = false;
     TrustStoreManager* trustStoreMgr = nullptr;
 
-    void loadTrustList(const std::string& url, bool isLotl,
-                       TlCache& cache, TlSignatureVerifier& verifier, int depth);
+    void loadTrustList(const std::string& url, bool isLotl, TlCache& cache, TlSignatureVerifier& verifier, int depth);
 };
 
 } // namespace libresign

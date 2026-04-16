@@ -471,8 +471,7 @@ SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfData, Pkcs11Token
         // explicitly with a clear error before doing the iterator math.
         // Also reject the empty / inverted range case (hexEnd <= hexStart)
         // which would silently produce a zero-byte signed range.
-        if (hexStart == 0 || hexStart >= totalLen || hexEnd >= totalLen
-                || hexEnd <= hexStart) {
+        if (hexStart == 0 || hexStart >= totalLen || hexEnd >= totalLen || hexEnd <= hexStart) {
             return {false, {}, "Internal error: invalid /Contents byte range from PDF preparation"};
         }
         size_t contentsOpen = hexStart - 1; // '<'

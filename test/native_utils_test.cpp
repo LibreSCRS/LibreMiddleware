@@ -107,10 +107,9 @@ TEST(Sha256Base64, KnownVectorAbc)
     //   ba7816bf 8f01cfea 414140de 5dae2223 b00361a3 96177a9c b410ff61 f20015ad
     // Verify by independently building the same digest + base64-encoding it.
     std::vector<uint8_t> abc{'a', 'b', 'c'};
-    const std::vector<uint8_t> expectedDigest{0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea,
-                                              0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23,
-                                              0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c,
-                                              0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad};
+    const std::vector<uint8_t> expectedDigest{0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40,
+                                              0xde, 0x5d, 0xae, 0x22, 0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17,
+                                              0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad};
     EXPECT_EQ(sha256(abc), expectedDigest);
     EXPECT_EQ(sha256Base64(abc), base64Encode(expectedDigest));
 }
@@ -337,9 +336,7 @@ TEST(ReversePngPredictor, UpFilter)
     // 3 columns, 2 rows with Up filter (0x02).
     // Row 0: filter=02, data=[0A, 0B, 0C] → output [0A, 0B, 0C] (prev row is zeros)
     // Row 1: filter=02, data=[01, 02, 03] → output [0A+01, 0B+02, 0C+03] = [0B, 0D, 0F]
-    std::vector<uint8_t> data{
-        0x02, 0x0A, 0x0B, 0x0C,
-        0x02, 0x01, 0x02, 0x03};
+    std::vector<uint8_t> data{0x02, 0x0A, 0x0B, 0x0C, 0x02, 0x01, 0x02, 0x03};
     auto result = reversePngPredictor(data, 3);
     ASSERT_TRUE(result.has_value());
     std::vector<uint8_t> expected{0x0A, 0x0B, 0x0C, 0x0B, 0x0D, 0x0F};
@@ -349,9 +346,7 @@ TEST(ReversePngPredictor, UpFilter)
 TEST(ReversePngPredictor, NoneFilter)
 {
     // Filter 0x00: data passes through unchanged.
-    std::vector<uint8_t> data{
-        0x00, 0x10, 0x20, 0x30,
-        0x00, 0x40, 0x50, 0x60};
+    std::vector<uint8_t> data{0x00, 0x10, 0x20, 0x30, 0x00, 0x40, 0x50, 0x60};
     auto result = reversePngPredictor(data, 3);
     ASSERT_TRUE(result.has_value());
     std::vector<uint8_t> expected{0x10, 0x20, 0x30, 0x40, 0x50, 0x60};
@@ -415,8 +410,7 @@ TEST(ReversePngPredictor, AverageFilter)
     //   c=0: 0A + (0+0)/2 = 0A, c=1: 0B + (0A+0)/2 = 10, c=2: 0C + (10+0)/2 = 14
     // Row 1: [03, 01, 02, 03] — above from row 0
     //   c=0: 01 + (0+0A)/2 = 06, c=1: 02 + (06+10)/2 = 0D, c=2: 03 + (0D+14)/2 = 13
-    std::vector<uint8_t> data = {0x03, 0x0A, 0x0B, 0x0C,
-                                  0x03, 0x01, 0x02, 0x03};
+    std::vector<uint8_t> data = {0x03, 0x0A, 0x0B, 0x0C, 0x03, 0x01, 0x02, 0x03};
     auto result = reversePngPredictor(data, 3);
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->at(0), 0x0A);

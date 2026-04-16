@@ -206,7 +206,7 @@ TEST_F(TlCacheTest, RefreshTimestampReturnsFalseForMissing)
 
 } // namespace
 
-#else  // !LIBRESIGN_HAS_NATIVE
+#else // !LIBRESIGN_HAS_NATIVE
 
 TEST(TlCacheTest, SkippedNoNativeBackend)
 {

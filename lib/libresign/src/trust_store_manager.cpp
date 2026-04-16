@@ -41,7 +41,13 @@ void TrustStoreManager::loadDirectoryIntoStore(X509_STORE* store, const std::str
         // throw (or any future code) between acquisition and the explicit
         // X509_free can't leak. X509_STORE_add_cert up-refs internally, so
         // the RAII wrapper still needs to drop our copy on scope exit.
-        struct X509Free { void operator()(X509* p) const { X509_free(p); } };
+        struct X509Free
+        {
+            void operator()(X509* p) const
+            {
+                X509_free(p);
+            }
+        };
         std::unique_ptr<X509, X509Free> cert(d2i_X509_fp(fp.get(), nullptr));
         if (!cert) {
             rewind(fp.get());
@@ -178,7 +184,13 @@ void TrustStoreManager::addTlCertificate(std::span<const uint8_t> certDer)
 
 void TrustStoreManager::loadTlCerts(X509_STORE* store) const
 {
-    struct X509Free { void operator()(X509* p) const { X509_free(p); } };
+    struct X509Free
+    {
+        void operator()(X509* p) const
+        {
+            X509_free(p);
+        }
+    };
     for (const auto& der : tlCerts) {
         const unsigned char* p = der.data();
         std::unique_ptr<X509, X509Free> cert(d2i_X509(nullptr, &p, static_cast<long>(der.size())));

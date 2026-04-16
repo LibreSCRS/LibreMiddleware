@@ -194,9 +194,9 @@ void addUnsignedAttr(CMS_SignerInfo* si, const char* oid, const std::vector<uint
     ASN1_STRING_set(str.get(), value.data(), static_cast<int>(value.size()));
 
     // CMS_unsigned_add1_attr_by_OBJ adds a copy, we free our originals
-    X509AttributePtr attr(X509_ATTRIBUTE_create_by_OBJ(
-        nullptr, obj.get(), V_ASN1_SEQUENCE, const_cast<unsigned char*>(ASN1_STRING_get0_data(str.get())),
-        ASN1_STRING_length(str.get())));
+    X509AttributePtr attr(X509_ATTRIBUTE_create_by_OBJ(nullptr, obj.get(), V_ASN1_SEQUENCE,
+                                                       const_cast<unsigned char*>(ASN1_STRING_get0_data(str.get())),
+                                                       ASN1_STRING_length(str.get())));
 
     if (!attr)
         throw std::runtime_error("X509_ATTRIBUTE_create_by_OBJ() failed: " + opensslError());

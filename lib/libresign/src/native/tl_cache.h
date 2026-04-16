@@ -19,16 +19,17 @@ namespace libresign {
 class TlCache
 {
 public:
-    explicit TlCache(const std::string& cacheDir,
-                     std::chrono::hours ttl = std::chrono::hours(24));
+    explicit TlCache(const std::string& cacheDir, std::chrono::hours ttl = std::chrono::hours(24));
 
-    struct CacheEntry {
+    struct CacheEntry
+    {
         std::vector<uint8_t> data;
         std::string etag;
         std::string lastModified;
     };
 
-    struct CacheMeta {
+    struct CacheMeta
+    {
         std::string etag;
         std::string lastModified;
     };
@@ -45,8 +46,8 @@ public:
     bool refreshTimestamp(const std::string& url);
 
     /// Store XML data and HTTP conditional-request metadata for a URL.
-    void store(const std::string& url, std::span<const uint8_t> data,
-               const std::string& etag, const std::string& lastModified);
+    void store(const std::string& url, std::span<const uint8_t> data, const std::string& etag,
+               const std::string& lastModified);
 
 private:
     std::string cacheDir;

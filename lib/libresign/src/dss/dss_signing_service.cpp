@@ -189,8 +189,8 @@ SigningResult DSSSigningService::sign(const SigningRequest& request, const std::
         meta.erase("pin");
     }
 
-    auto resp = httpClient->postMultipart(result.baseUrl + "/sign/pkcs11", request.document, request.fileName,
-                                          metaJson, 120, socketPath);
+    auto resp = httpClient->postMultipart(result.baseUrl + "/sign/pkcs11", request.document, request.fileName, metaJson,
+                                          120, socketPath);
     // Cleanse PIN from the serialized JSON string
     OPENSSL_cleanse(metaJson.data(), metaJson.size());
 

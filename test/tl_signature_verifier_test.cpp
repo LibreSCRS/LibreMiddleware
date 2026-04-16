@@ -33,7 +33,8 @@ std::vector<uint8_t> getSerbianTl()
     auto data = readFile(cachePath);
     // Check for XML: starts with "<?xml" or BOM + "<?xml"
     auto startsWithXml = [](const std::vector<uint8_t>& d) {
-        if (d.size() < 5) return false;
+        if (d.size() < 5)
+            return false;
         size_t off = 0;
         if (d.size() >= 3 && d[0] == 0xEF && d[1] == 0xBB && d[2] == 0xBF)
             off = 3; // skip UTF-8 BOM
@@ -44,9 +45,8 @@ std::vector<uint8_t> getSerbianTl()
 
     // Try downloading
     std::remove(cachePath.c_str());
-    int rc = std::system(
-        "curl -sS -o /tmp/tsl-rs.xml "
-        "'https://www.mit.gov.rs/TrustedList/TSL-RS.xml' 2>/dev/null");
+    int rc = std::system("curl -sS -o /tmp/tsl-rs.xml "
+                         "'https://www.mit.gov.rs/TrustedList/TSL-RS.xml' 2>/dev/null");
     if (rc != 0)
         return {};
     data = readFile(cachePath);
@@ -57,7 +57,8 @@ std::vector<uint8_t> getSerbianTl()
 
 } // namespace
 
-class TlSignatureVerifierTest : public ::testing::Test {
+class TlSignatureVerifierTest : public ::testing::Test
+{
 protected:
     TlSignatureVerifier verifier;
 };

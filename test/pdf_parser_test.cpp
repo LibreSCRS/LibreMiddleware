@@ -762,22 +762,37 @@ std::vector<uint8_t> buildObjStreamPdf()
     size_t obj4Off = pdf.size();
 
     // W = [1 2 1]: type(1), field2(2), field3(1)
-    // Entries: 0(free), 1(uncomp), 2(uncomp), 3(uncomp), 4(uncomp), 5(compressed in 3, idx 0), 6(compressed in 3, idx 1)
+    // Entries: 0(free), 1(uncomp), 2(uncomp), 3(uncomp), 4(uncomp), 5(compressed in 3, idx 0), 6(compressed in 3, idx
+    // 1)
     std::vector<uint8_t> xrefData;
     // obj 0: free
-    writeBE(xrefData, 0, 1); writeBE(xrefData, 0, 2); writeBE(xrefData, 0, 1);
+    writeBE(xrefData, 0, 1);
+    writeBE(xrefData, 0, 2);
+    writeBE(xrefData, 0, 1);
     // obj 1: uncompressed
-    writeBE(xrefData, 1, 1); writeBE(xrefData, static_cast<int64_t>(obj1Off), 2); writeBE(xrefData, 0, 1);
+    writeBE(xrefData, 1, 1);
+    writeBE(xrefData, static_cast<int64_t>(obj1Off), 2);
+    writeBE(xrefData, 0, 1);
     // obj 2: uncompressed
-    writeBE(xrefData, 1, 1); writeBE(xrefData, static_cast<int64_t>(obj2Off), 2); writeBE(xrefData, 0, 1);
+    writeBE(xrefData, 1, 1);
+    writeBE(xrefData, static_cast<int64_t>(obj2Off), 2);
+    writeBE(xrefData, 0, 1);
     // obj 3: uncompressed (the object stream itself)
-    writeBE(xrefData, 1, 1); writeBE(xrefData, static_cast<int64_t>(obj3Off), 2); writeBE(xrefData, 0, 1);
+    writeBE(xrefData, 1, 1);
+    writeBE(xrefData, static_cast<int64_t>(obj3Off), 2);
+    writeBE(xrefData, 0, 1);
     // obj 4: uncompressed (xref stream)
-    writeBE(xrefData, 1, 1); writeBE(xrefData, static_cast<int64_t>(obj4Off), 2); writeBE(xrefData, 0, 1);
+    writeBE(xrefData, 1, 1);
+    writeBE(xrefData, static_cast<int64_t>(obj4Off), 2);
+    writeBE(xrefData, 0, 1);
     // obj 5: compressed in stream obj 3, index 0
-    writeBE(xrefData, 2, 1); writeBE(xrefData, 3, 2); writeBE(xrefData, 0, 1);
+    writeBE(xrefData, 2, 1);
+    writeBE(xrefData, 3, 2);
+    writeBE(xrefData, 0, 1);
     // obj 6: compressed in stream obj 3, index 1
-    writeBE(xrefData, 2, 1); writeBE(xrefData, 3, 2); writeBE(xrefData, 1, 1);
+    writeBE(xrefData, 2, 1);
+    writeBE(xrefData, 3, 2);
+    writeBE(xrefData, 1, 1);
 
     std::string xrefObj;
     xrefObj += "4 0 obj\n";

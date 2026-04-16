@@ -10,10 +10,12 @@ namespace {
 std::string_view extractHost(std::string_view url)
 {
     auto schemeEnd = url.find("://");
-    if (schemeEnd == std::string_view::npos) return {};
+    if (schemeEnd == std::string_view::npos)
+        return {};
     auto hostStart = schemeEnd + 3;
     auto hostEnd = url.find('/', hostStart);
-    if (hostEnd == std::string_view::npos) hostEnd = url.size();
+    if (hostEnd == std::string_view::npos)
+        hostEnd = url.size();
     // Strip port if present
     auto colonPos = url.find(':', hostStart);
     if (colonPos != std::string_view::npos && colonPos < hostEnd)
@@ -23,11 +25,11 @@ std::string_view extractHost(std::string_view url)
 
 bool hostMatchesDomain(std::string_view host, std::string_view domain)
 {
-    if (host == domain) return true;
+    if (host == domain)
+        return true;
     // Check if host ends with ".domain"
-    if (host.size() > domain.size() + 1
-        && host[host.size() - domain.size() - 1] == '.'
-        && host.substr(host.size() - domain.size()) == domain)
+    if (host.size() > domain.size() + 1 && host[host.size() - domain.size() - 1] == '.' &&
+        host.substr(host.size() - domain.size()) == domain)
         return true;
     return false;
 }
@@ -36,7 +38,8 @@ bool hostMatchesDomain(std::string_view host, std::string_view domain)
 std::span<const uint8_t> pinnedCertForUrl(std::string_view url)
 {
     auto host = extractHost(url);
-    if (host.empty()) return {};
+    if (host.empty())
+        return {};
 
     if (hostMatchesDomain(host, "ec.europa.eu"))
         return kEuLotlSigningCert;

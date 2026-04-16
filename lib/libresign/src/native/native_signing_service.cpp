@@ -36,8 +36,7 @@ std::vector<uint8_t> loadCertFromFile(const std::string& path)
     if (!file)
         return {};
 
-    std::vector<uint8_t> data((std::istreambuf_iterator<char>(file)),
-                               std::istreambuf_iterator<char>());
+    std::vector<uint8_t> data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     if (data.empty())
         return {};
 
@@ -58,8 +57,7 @@ std::vector<uint8_t> loadCertFromFile(const std::string& path)
     if (!cert)
         return {};
 
-    return native_utils::derEncode(
-        static_cast<int (*)(const X509*, unsigned char**)>(i2d_X509), cert.get());
+    return native_utils::derEncode(static_cast<int (*)(const X509*, unsigned char**)>(i2d_X509), cert.get());
 }
 
 } // namespace
@@ -93,9 +91,8 @@ bool NativeSigningService::configure(const TrustConfig& config)
     return eagerCount == 0 || successCount > 0;
 }
 
-void NativeSigningService::loadTrustList(const std::string& url, bool isLotl,
-                                          TlCache& cache, TlSignatureVerifier& verifier,
-                                          int depth)
+void NativeSigningService::loadTrustList(const std::string& url, bool isLotl, TlCache& cache,
+                                         TlSignatureVerifier& verifier, int depth)
 {
     if (depth > kMaxTlRecursionDepth)
         return;
@@ -112,11 +109,9 @@ void NativeSigningService::loadTrustList(const std::string& url, bool isLotl,
     } else {
         // 2. Cache miss (expired or absent). Try conditional request with stale metadata.
         auto staleMeta = cache.loadMeta(url);
-        auto fetchResult = TrustedListParser::fetchRawConditional(
-            url,
-            staleMeta ? staleMeta->etag : std::string{},
-            staleMeta ? staleMeta->lastModified : std::string{},
-            kTlFetchTimeoutSeconds);
+        auto fetchResult = TrustedListParser::fetchRawConditional(url, staleMeta ? staleMeta->etag : std::string{},
+                                                                  staleMeta ? staleMeta->lastModified : std::string{},
+                                                                  kTlFetchTimeoutSeconds);
 
         if (fetchResult.notModified) {
             // Server confirmed the cached data is still valid — refresh timestamp
@@ -167,8 +162,7 @@ void NativeSigningService::loadTrustList(const std::string& url, bool isLotl,
 
     // 4. Verify XML-DSig
     if (!verifier.verify(xmlData, signingCert))
-        throw std::runtime_error("TL signature verification failed for " + url
-                                 + ": " + verifier.lastError());
+        throw std::runtime_error("TL signature verification failed for " + url + ": " + verifier.lastError());
 
     // 5. Parse authenticated TL
     auto tlInfo = TrustedListParser::parse(xmlData);
@@ -213,10 +207,8 @@ bool NativeSigningService::isAvailable() const
     return true;
 }
 
-SigningResult NativeSigningService::sign(const SigningRequest& request,
-                                         const std::string& pkcs11ModulePath,
-                                         std::span<const uint8_t> pin,
-                                         const std::string& keyAlias,
+SigningResult NativeSigningService::sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
+                                         std::span<const uint8_t> pin, const std::string& keyAlias,
                                          const std::string& tokenLabel)
 {
     try {

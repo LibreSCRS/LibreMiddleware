@@ -233,8 +233,7 @@ SigningResult JAdESModule::sign(const std::vector<uint8_t>& data, const std::str
             // ASCII octets — NOT the raw decoded signature bytes. We
             // already have `jws.signature` set to base64url(signatureBytes)
             // above; hash those octets.
-            auto sigHash =
-                sha256(reinterpret_cast<const uint8_t*>(jws.signature.data()), jws.signature.size());
+            auto sigHash = sha256(reinterpret_cast<const uint8_t*>(jws.signature.data()), jws.signature.size());
 
             TSAClient tsaClient;
             auto tsaResult = tsaClient.timestamp(sigHash, tsa.url, tsa.timeoutSeconds);

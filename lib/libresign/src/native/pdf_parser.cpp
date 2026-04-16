@@ -358,10 +358,17 @@ PdfValue PdfParser::resolvePageFromNode(const PdfValue& node, int& remaining) co
     // with deep nesting (or cycles via /Parent refs) would otherwise
     // overflow the stack. kMaxParseDepth (256) far exceeds any real page
     // tree.
-    struct DepthGuard {
+    struct DepthGuard
+    {
         int& d;
-        explicit DepthGuard(int& d_) : d(d_) { ++d; }
-        ~DepthGuard() { --d; }
+        explicit DepthGuard(int& d_) : d(d_)
+        {
+            ++d;
+        }
+        ~DepthGuard()
+        {
+            --d;
+        }
     };
     if (parseDepth >= kMaxParseDepth)
         throw std::runtime_error("PdfParser: page tree too deep");
@@ -447,10 +454,17 @@ int PdfParser::resolvePageObjNumFromNode(PdfRef nodeRef, int& remaining) const
 {
     // Same depth guard as resolvePageFromNode — deep /Kids nesting or
     // /Parent cycles would otherwise overflow the stack.
-    struct DepthGuard {
+    struct DepthGuard
+    {
         int& d;
-        explicit DepthGuard(int& d_) : d(d_) { ++d; }
-        ~DepthGuard() { --d; }
+        explicit DepthGuard(int& d_) : d(d_)
+        {
+            ++d;
+        }
+        ~DepthGuard()
+        {
+            --d;
+        }
     };
     if (parseDepth >= kMaxParseDepth)
         throw std::runtime_error("PdfParser: page tree too deep");
@@ -736,8 +750,7 @@ void PdfParser::parseXrefStream(size_t offset)
         for (size_t i = 0; i + 1 < arr.size(); i += 2) {
             if (arr[i].type() != PdfValueType::Int || arr[i + 1].type() != PdfValueType::Int)
                 throw std::runtime_error("PdfParser: xref stream /Index contains non-integer");
-            indexPairs.emplace_back(static_cast<int>(arr[i].asInt()),
-                                   static_cast<int>(arr[i + 1].asInt()));
+            indexPairs.emplace_back(static_cast<int>(arr[i].asInt()), static_cast<int>(arr[i + 1].asInt()));
         }
     } else {
         indexPairs.emplace_back(0, xrefSize);
@@ -796,9 +809,8 @@ void PdfParser::parseXrefStream(size_t offset)
         PdfValue predictorVal = decodeParms.get("Predictor");
         if (predictorVal.type() == PdfValueType::Int && predictorVal.asInt() >= 10) {
             PdfValue columnsVal = decodeParms.get("Columns");
-            int columns = (columnsVal.type() == PdfValueType::Int)
-                              ? static_cast<int>(columnsVal.asInt())
-                              : (w[0] + w[1] + w[2]);
+            int columns =
+                (columnsVal.type() == PdfValueType::Int) ? static_cast<int>(columnsVal.asInt()) : (w[0] + w[1] + w[2]);
             auto result = native_utils::reversePngPredictor(streamData, columns);
             if (!result)
                 throw std::runtime_error("PdfParser: reversePngPredictor failed on xref stream");
@@ -823,8 +835,7 @@ void PdfParser::parseXrefStream(size_t offset)
     }
 }
 
-void PdfParser::decodeXrefStreamEntries(std::span<const uint8_t> data,
-                                        const std::vector<int>& w,
+void PdfParser::decodeXrefStreamEntries(std::span<const uint8_t> data, const std::vector<int>& w,
                                         const std::vector<std::pair<int, int>>& indexPairs)
 {
     int entrySize = w[0] + w[1] + w[2];
@@ -868,8 +879,7 @@ void PdfParser::decodeXrefStreamEntries(std::span<const uint8_t> data,
             case 2:
                 // Compressed in object stream: field2 = stream obj num, field3 = index
                 if (compressedObjects.find(objNum) == compressedObjects.end())
-                    compressedObjects[objNum] = CompressedRef{static_cast<int>(field2),
-                                                              static_cast<int>(field3)};
+                    compressedObjects[objNum] = CompressedRef{static_cast<int>(field2), static_cast<int>(field3)};
                 break;
             default:
                 // Unknown type — skip (future PDF versions may define new types)
@@ -904,10 +914,17 @@ PdfValue PdfParser::parseValue(size_t& pos) const
     // ("[[[[[..." or "<<<<..."). A stack overflow from unbounded recursion
     // is uncatchable; we bail with a runtime error instead, which is then
     // caught by parse()'s try/catch and reported as a parse failure.
-    struct DepthGuard {
+    struct DepthGuard
+    {
         int& d;
-        explicit DepthGuard(int& d_) : d(d_) { ++d; }
-        ~DepthGuard() { --d; }
+        explicit DepthGuard(int& d_) : d(d_)
+        {
+            ++d;
+        }
+        ~DepthGuard()
+        {
+            --d;
+        }
     };
     if (parseDepth >= kMaxParseDepth)
         throw std::runtime_error("PdfParser: max parse depth exceeded");
@@ -1367,9 +1384,11 @@ PdfValue PdfParser::readFromObjectStream(int streamObjNum, int indexInStream) co
 
         size_t pos = it->second;
         skipWhitespaceAndComments(pos);
-        while (pos < raw.size() && raw[pos] >= '0' && raw[pos] <= '9') ++pos;
+        while (pos < raw.size() && raw[pos] >= '0' && raw[pos] <= '9')
+            ++pos;
         skipWhitespaceAndComments(pos);
-        while (pos < raw.size() && raw[pos] >= '0' && raw[pos] <= '9') ++pos;
+        while (pos < raw.size() && raw[pos] >= '0' && raw[pos] <= '9')
+            ++pos;
         skipWhitespaceAndComments(pos);
         if (!matchAt(pos, "obj"))
             throw std::runtime_error("PdfParser: expected 'obj' in object stream");
@@ -1424,8 +1443,8 @@ PdfValue PdfParser::readFromObjectStream(int streamObjNum, int indexInStream) co
     int n = static_cast<int>(cached.headerEntries.size());
 
     if (indexInStream < 0 || indexInStream >= n)
-        throw std::runtime_error(std::format("PdfParser: index {} out of range for object stream (N={})",
-                                              indexInStream, n));
+        throw std::runtime_error(
+            std::format("PdfParser: index {} out of range for object stream (N={})", indexInStream, n));
 
     size_t objPos = cached.first + cached.headerEntries[indexInStream].second;
     if (objPos >= cached.data.size())

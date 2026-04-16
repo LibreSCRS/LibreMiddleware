@@ -56,9 +56,9 @@ struct SigningResult
 struct TrustedListEntry
 {
     std::string url;
-    bool isLotl = false;              // TLSource vs LOTLSource
-    bool eager = true;                // sync vs background loading
-    std::string signingCertPath;      // optional: override pinned cert (PEM or DER file)
+    bool isLotl = false;         // TLSource vs LOTLSource
+    bool eager = true;           // sync vs background loading
+    std::string signingCertPath; // optional: override pinned cert (PEM or DER file)
 };
 
 struct TrustConfig

@@ -119,10 +119,10 @@ std::vector<uint8_t> canonicalizeSubtree(xmlDocPtr doc, xmlNodePtr node)
         return {};
 
     xpathCtx->node = node;
-    XPathObjPtr xpathObj(xmlXPathEvalExpression(
-        BAD_CAST "(. | ./descendant::* | ./descendant::text() | ./@* | ./descendant::*/@* "
-                  "| ./namespace::* | ./descendant::*/namespace::*)",
-        xpathCtx.get()));
+    XPathObjPtr xpathObj(
+        xmlXPathEvalExpression(BAD_CAST "(. | ./descendant::* | ./descendant::text() | ./@* | ./descendant::*/@* "
+                                        "| ./namespace::* | ./descendant::*/namespace::*)",
+                               xpathCtx.get()));
 
     if (!xpathObj || !xpathObj->nodesetval)
         return {};
@@ -160,8 +160,7 @@ std::vector<uint8_t> canonicalizeDoc(xmlDocPtr doc)
 
 } // namespace
 
-bool TlSignatureVerifier::verify(std::span<const uint8_t> xmlData,
-                                  std::span<const uint8_t> signingCertDer)
+bool TlSignatureVerifier::verify(std::span<const uint8_t> xmlData, std::span<const uint8_t> signingCertDer)
 {
     error.clear();
 
@@ -177,9 +176,8 @@ bool TlSignatureVerifier::verify(std::span<const uint8_t> xmlData,
     native_utils::ensureXmlInitialized();
 
     // Parse the XML document
-    XmlDocPtr doc(xmlReadMemory(reinterpret_cast<const char*>(xmlData.data()),
-                                 static_cast<int>(xmlData.size()), nullptr, nullptr,
-                                 XML_PARSE_NONET | XML_PARSE_NOCDATA));
+    XmlDocPtr doc(xmlReadMemory(reinterpret_cast<const char*>(xmlData.data()), static_cast<int>(xmlData.size()),
+                                nullptr, nullptr, XML_PARSE_NONET | XML_PARSE_NOCDATA));
     if (!doc) {
         error = "failed to parse XML document";
         return false;
@@ -346,8 +344,7 @@ bool TlSignatureVerifier::verify(std::span<const uint8_t> xmlData,
         }
 
         // Compare
-        if (digestLen != expectedDigest.size() ||
-            std::memcmp(digest, expectedDigest.data(), digestLen) != 0) {
+        if (digestLen != expectedDigest.size() || std::memcmp(digest, expectedDigest.data(), digestLen) != 0) {
             error = "reference digest mismatch for URI: " + (uri.empty() ? "(whole document)" : uri);
             return false;
         }

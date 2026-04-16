@@ -61,8 +61,7 @@ size_t headerCallback(char* buffer, size_t size, size_t nitems, void* userdata)
     auto colon = line.find(':');
     if (colon != std::string::npos) {
         std::string key = line.substr(0, colon);
-        std::transform(key.begin(), key.end(), key.begin(),
-                       [](unsigned char c) { return std::tolower(c); });
+        std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { return std::tolower(c); });
         std::string value = line.substr(colon + 1);
         // Trim leading whitespace from value
         size_t start = value.find_first_not_of(" \t");
@@ -75,7 +74,14 @@ size_t headerCallback(char* buffer, size_t size, size_t nitems, void* userdata)
     return totalSize;
 }
 
-struct CurlMimeDeleter { void operator()(curl_mime* p) const { if (p) curl_mime_free(p); } };
+struct CurlMimeDeleter
+{
+    void operator()(curl_mime* p) const
+    {
+        if (p)
+            curl_mime_free(p);
+    }
+};
 using CurlMimePtr = std::unique_ptr<curl_mime, CurlMimeDeleter>;
 
 } // namespace
@@ -165,10 +171,8 @@ HttpResponse HttpClient::get(const std::string& url, int timeoutSeconds, const s
     return resp;
 }
 
-HttpResponse HttpClient::getWithHeaders(const std::string& url,
-                                        const std::vector<std::string>& requestHeaders,
-                                        int timeoutSeconds,
-                                        const std::string& unixSocketPath) const
+HttpResponse HttpClient::getWithHeaders(const std::string& url, const std::vector<std::string>& requestHeaders,
+                                        int timeoutSeconds, const std::string& unixSocketPath) const
 {
     HttpResponse resp;
     WriteContext writeCtx;

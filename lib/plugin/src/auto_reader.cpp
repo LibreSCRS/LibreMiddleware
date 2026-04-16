@@ -53,9 +53,8 @@ void AutoReader::onMonitorEvent(const smartcard::MonitorEvent& event)
 
     auto cancelFlag = std::make_shared<std::atomic<bool>>(false);
 
-    auto future = std::async(
-        std::launch::async,
-        [this, readerName = std::move(readerName), atr = std::move(atr), cancelFlag]() {
+    auto future =
+        std::async(std::launch::async, [this, readerName = std::move(readerName), atr = std::move(atr), cancelFlag]() {
             constexpr int maxAttempts = 2;
             constexpr auto retryDelay = std::chrono::milliseconds(300);
 

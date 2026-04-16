@@ -1506,8 +1506,7 @@ CK_RV PKCS11Library::signUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, C
     constexpr size_t kMaxSignBuffer = 64 * 1024 * 1024; // 64 MB
     // Overflow-safe accumulation check: write the addition as a subtraction
     // against the cap so it cannot wrap when ulPartLen is huge.
-    if (ulPartLen > kMaxSignBuffer
-            || session.signState->buffer.size() > kMaxSignBuffer - ulPartLen) {
+    if (ulPartLen > kMaxSignBuffer || session.signState->buffer.size() > kMaxSignBuffer - ulPartLen) {
         session.signState.reset(); // Per spec: error terminates operation
         return CKR_DATA_LEN_RANGE;
     }
@@ -1596,7 +1595,7 @@ CK_RV PKCS11Library::signFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignatur
                 digestInfo = buildDigestInfo(localSignState.mechanism, localSignState.buffer.data(),
                                              static_cast<CK_ULONG>(localSignState.buffer.size()));
             auto sig = slots[slotID].provider->signMessage(obj.id, digestInfo, localSignState.buffer,
-                                                            localSignState.mechanism);
+                                                           localSignState.mechanism);
 
             if (*pulSignatureLen < sig.size()) {
                 *pulSignatureLen = static_cast<CK_ULONG>(sig.size());

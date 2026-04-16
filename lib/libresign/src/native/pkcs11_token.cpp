@@ -3,7 +3,6 @@
 
 #include "libresign/native/pkcs11_token.h"
 
-
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -74,15 +73,14 @@ struct Pkcs11Token::Impl
 
     void openSessionAndLogin(CK_SLOT_ID slotId, std::span<const uint8_t> pin)
     {
-        checkRv(funcs->C_OpenSession(slotId, CKF_SERIAL_SESSION | CKF_RW_SESSION,
-                                      nullptr, nullptr, &session), "C_OpenSession");
+        checkRv(funcs->C_OpenSession(slotId, CKF_SERIAL_SESSION | CKF_RW_SESSION, nullptr, nullptr, &session),
+                "C_OpenSession");
         // C_Login copies the PIN into the module's session state — we do not
         // retain the view, and the caller owns and cleanses the underlying
         // storage.
-        CK_RV rv = funcs->C_Login(session, CKU_USER,
-                                   reinterpret_cast<CK_UTF8CHAR_PTR>(
-                                       const_cast<uint8_t*>(pin.data())),
-                                   static_cast<CK_ULONG>(pin.size()));
+        CK_RV rv =
+            funcs->C_Login(session, CKU_USER, reinterpret_cast<CK_UTF8CHAR_PTR>(const_cast<uint8_t*>(pin.data())),
+                           static_cast<CK_ULONG>(pin.size()));
         checkRv(rv, "C_Login");
         loggedIn = true;
     }
@@ -110,10 +108,15 @@ struct Pkcs11Token::Impl
         // the session stays in find-active state, and subsequent
         // FindObjects calls on it fail with CKR_OPERATION_ACTIVE per
         // PKCS#11 §11.7.
-        struct FindFinalizer {
+        struct FindFinalizer
+        {
             CK_FUNCTION_LIST_PTR f;
             CK_SESSION_HANDLE s;
-            ~FindFinalizer() { if (f) f->C_FindObjectsFinal(s); }
+            ~FindFinalizer()
+            {
+                if (f)
+                    f->C_FindObjectsFinal(s);
+            }
         };
         FindFinalizer finalizer{funcs, session};
 
@@ -172,8 +175,8 @@ struct Pkcs11Token::Impl
     }
 };
 
-Pkcs11Token::Pkcs11Token(const std::string& modulePath, std::span<const uint8_t> pin,
-                         const std::string& keyAlias, int slotIndex)
+Pkcs11Token::Pkcs11Token(const std::string& modulePath, std::span<const uint8_t> pin, const std::string& keyAlias,
+                         int slotIndex)
     : impl(std::make_unique<Impl>())
 {
     impl->loadModule(modulePath);
@@ -199,8 +202,8 @@ Pkcs11Token::Pkcs11Token(const std::string& modulePath, std::span<const uint8_t>
     impl->findPrivateKey(keyAlias);
 }
 
-Pkcs11Token::Pkcs11Token(const std::string& modulePath, std::span<const uint8_t> pin,
-                         const std::string& keyAlias, const std::string& tokenLabel)
+Pkcs11Token::Pkcs11Token(const std::string& modulePath, std::span<const uint8_t> pin, const std::string& keyAlias,
+                         const std::string& tokenLabel)
     : impl(std::make_unique<Impl>())
 {
     impl->loadModule(modulePath);
@@ -219,8 +222,8 @@ std::vector<uint8_t> Pkcs11Token::sign(std::span<const uint8_t> hash, const std:
     // Previously we matched any string starting with "ES" which would
     // also accept "ES-PSS" or typos; narrow to the three canonical JWS
     // alg names plus OpenSSL "ECDSA…" variants.
-    const bool isEcdsa = algorithm.find("ECDSA") != std::string::npos || algorithm == "ES256" ||
-                         algorithm == "ES384" || algorithm == "ES512";
+    const bool isEcdsa = algorithm.find("ECDSA") != std::string::npos || algorithm == "ES256" || algorithm == "ES384" ||
+                         algorithm == "ES512";
     CK_MECHANISM mechanism;
     if (isEcdsa)
         mechanism = {CKM_ECDSA, nullptr, 0};
@@ -312,10 +315,15 @@ std::vector<std::vector<uint8_t>> Pkcs11Token::certificateChain() const
     // RAII: always call C_FindObjectsFinal on scope exit — same pattern as
     // findPrivateKey(). Without this, an exception from C_FindObjects
     // leaves the session in find-active state.
-    struct FindFinalizer {
+    struct FindFinalizer
+    {
         CK_FUNCTION_LIST_PTR f;
         CK_SESSION_HANDLE s;
-        ~FindFinalizer() { if (f) f->C_FindObjectsFinal(s); }
+        ~FindFinalizer()
+        {
+            if (f)
+                f->C_FindObjectsFinal(s);
+        }
     };
     FindFinalizer finalizer{impl->funcs, impl->session};
 

@@ -21,7 +21,6 @@ namespace pkcs15 {
 // smartcard::PinStringScrubber. Alias keeps local call sites terse.
 using ::smartcard::PinStringScrubber;
 
-
 // Translate PKCS#11 mechanism type to card-layer SignScheme.
 // Raw hex values used intentionally to avoid pkcs11t.h dependency in the pkcs15 library.
 // Values from PKCS#11 v2.40 Table 34: CKM_RSA_PKCS=0x0001, CKM_SHA1_RSA_PKCS=0x0006,

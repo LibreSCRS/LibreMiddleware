@@ -333,9 +333,11 @@ DSSServiceManager::CdsPaths DSSServiceManager::prepareCds()
     int lockFd = open(lockPath.c_str(), O_CREAT | O_RDWR, 0600);
     if (lockFd < 0)
         return {}; // can't lock — give up
-    struct LockGuard {
+    struct LockGuard
+    {
         int fd;
-        ~LockGuard() {
+        ~LockGuard()
+        {
             if (fd >= 0) {
                 flock(fd, LOCK_UN);
                 close(fd);
@@ -376,7 +378,8 @@ DSSServiceManager::CdsPaths DSSServiceManager::prepareCds()
         // certainly truncated, empty, or a placeholder.
         std::error_code szEc;
         auto bundledSize = fs::exists(bundledArchive) ? fs::file_size(bundledArchive, szEc) : 0;
-        if (szEc) bundledSize = 0;
+        if (szEc)
+            bundledSize = 0;
         if (fs::exists(bundledArchive) && bundledSize >= 1024) {
             fs::remove_all(cdsDir, ec);
             ec.clear();

@@ -16,10 +16,7 @@ namespace fs = std::filesystem;
 
 namespace libresign {
 
-TlCache::TlCache(const std::string& cacheDir, std::chrono::hours ttl)
-    : cacheDir(cacheDir), ttl(ttl)
-{
-}
+TlCache::TlCache(const std::string& cacheDir, std::chrono::hours ttl) : cacheDir(cacheDir), ttl(ttl) {}
 
 std::string TlCache::urlToFilename(const std::string& url) const
 {
@@ -54,9 +51,8 @@ std::optional<TlCache::CacheEntry> TlCache::load(const std::string& url) const
 
     // Check TTL
     auto timestamp = meta.value("timestamp", int64_t{0});
-    auto now = std::chrono::duration_cast<std::chrono::seconds>(
-                   std::chrono::system_clock::now().time_since_epoch())
-                   .count();
+    auto now =
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     auto ttlSeconds = std::chrono::duration_cast<std::chrono::seconds>(ttl).count();
     if (ttlSeconds == 0 || now - timestamp > ttlSeconds)
         return std::nullopt;
@@ -67,8 +63,7 @@ std::optional<TlCache::CacheEntry> TlCache::load(const std::string& url) const
         return std::nullopt;
 
     CacheEntry entry;
-    entry.data = std::vector<uint8_t>(std::istreambuf_iterator<char>(xmlFile),
-                                      std::istreambuf_iterator<char>());
+    entry.data = std::vector<uint8_t>(std::istreambuf_iterator<char>(xmlFile), std::istreambuf_iterator<char>());
     entry.etag = meta.value("etag", std::string{});
     entry.lastModified = meta.value("lastModified", std::string{});
 
@@ -126,9 +121,8 @@ bool TlCache::refreshTimestamp(const std::string& url)
     }
 
     // Update timestamp
-    auto now = std::chrono::duration_cast<std::chrono::seconds>(
-                   std::chrono::system_clock::now().time_since_epoch())
-                   .count();
+    auto now =
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     meta["timestamp"] = now;
 
     std::ofstream metaFile(metaPath);
@@ -138,8 +132,8 @@ bool TlCache::refreshTimestamp(const std::string& url)
     return true;
 }
 
-void TlCache::store(const std::string& url, std::span<const uint8_t> data,
-                    const std::string& etag, const std::string& lastModified)
+void TlCache::store(const std::string& url, std::span<const uint8_t> data, const std::string& etag,
+                    const std::string& lastModified)
 {
     if (data.empty())
         return;
@@ -158,14 +152,12 @@ void TlCache::store(const std::string& url, std::span<const uint8_t> data,
     std::ofstream xmlFile(xmlPath, std::ios::binary);
     if (!xmlFile)
         return;
-    xmlFile.write(reinterpret_cast<const char*>(data.data()),
-                  static_cast<std::streamsize>(data.size()));
+    xmlFile.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
     xmlFile.close();
 
     // Write meta JSON
-    auto now = std::chrono::duration_cast<std::chrono::seconds>(
-                   std::chrono::system_clock::now().time_since_epoch())
-                   .count();
+    auto now =
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 
     nlohmann::json meta;
     meta["etag"] = etag;

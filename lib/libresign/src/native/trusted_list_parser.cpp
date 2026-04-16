@@ -111,8 +111,7 @@ TrustedListInfo parseDoc(xmlDocPtr doc)
     // Extract pointers to other TSLs (LOTL), including per-pointer signing certs
     {
         XPathObjPtr pointerObj(xmlXPathEvalExpression(
-            reinterpret_cast<const xmlChar*>("//tsl:PointersToOtherTSL/tsl:OtherTSLPointer"),
-            ctx.get()));
+            reinterpret_cast<const xmlChar*>("//tsl:PointersToOtherTSL/tsl:OtherTSLPointer"), ctx.get()));
 
         if (pointerObj && pointerObj->nodesetval) {
             for (int i = 0; i < pointerObj->nodesetval->nodeNr; ++i) {
@@ -125,9 +124,8 @@ TrustedListInfo parseDoc(xmlDocPtr doc)
                 TslPointer pointer;
                 pointer.url = std::move(url);
 
-                std::string certB64 = xpathTextRelative(
-                    ctx.get(), pointerNode,
-                    "tsl:ServiceDigitalIdentity/tsl:DigitalId/tsl:X509Certificate");
+                std::string certB64 = xpathTextRelative(ctx.get(), pointerNode,
+                                                        "tsl:ServiceDigitalIdentity/tsl:DigitalId/tsl:X509Certificate");
                 if (!certB64.empty()) {
                     pointer.signingCertDer = base64Decode(certB64);
                 }
@@ -208,9 +206,8 @@ TrustedListInfo TrustedListParser::parse(const std::vector<uint8_t>& xmlData)
     if (xmlData.size() > static_cast<size_t>(INT_MAX)) {
         return {};
     }
-    XmlDocPtr doc(xmlReadMemory(reinterpret_cast<const char*>(xmlData.data()),
-                                 static_cast<int>(xmlData.size()),
-                                 nullptr, nullptr, kSafeXmlOptions));
+    XmlDocPtr doc(xmlReadMemory(reinterpret_cast<const char*>(xmlData.data()), static_cast<int>(xmlData.size()),
+                                nullptr, nullptr, kSafeXmlOptions));
     return parseDoc(doc.get());
 }
 
@@ -229,8 +226,8 @@ TrustedListInfo TrustedListParser::parse(const std::string& xmlString)
     if (xmlString.size() > static_cast<size_t>(INT_MAX)) {
         return {};
     }
-    XmlDocPtr doc(xmlReadMemory(xmlString.data(), static_cast<int>(xmlString.size()),
-                                 nullptr, nullptr, kSafeXmlOptions));
+    XmlDocPtr doc(
+        xmlReadMemory(xmlString.data(), static_cast<int>(xmlString.size()), nullptr, nullptr, kSafeXmlOptions));
     return parseDoc(doc.get());
 }
 
@@ -240,9 +237,9 @@ std::vector<uint8_t> TrustedListParser::fetchRaw(const std::string& url, int tim
     return std::move(result.data);
 }
 
-TrustedListParser::FetchResult TrustedListParser::fetchRawConditional(
-    const std::string& url, const std::string& etag,
-    const std::string& lastModified, int timeoutSeconds)
+TrustedListParser::FetchResult TrustedListParser::fetchRawConditional(const std::string& url, const std::string& etag,
+                                                                      const std::string& lastModified,
+                                                                      int timeoutSeconds)
 {
     HttpClient client;
     FetchResult result;
@@ -253,9 +250,8 @@ TrustedListParser::FetchResult TrustedListParser::fetchRawConditional(
     if (!lastModified.empty())
         headers.push_back("If-Modified-Since: " + lastModified);
 
-    auto response = headers.empty()
-                        ? client.get(url, timeoutSeconds)
-                        : client.getWithHeaders(url, headers, timeoutSeconds);
+    auto response =
+        headers.empty() ? client.get(url, timeoutSeconds) : client.getWithHeaders(url, headers, timeoutSeconds);
 
     if (response.statusCode == 304) {
         result.notModified = true;
@@ -314,7 +310,9 @@ bool TrustedListParser::isSafeTslUrl(const std::string& urlStr)
     // eventual DNS resolution are the last line of defense. This check is
     // defense-in-depth against literal-IP SSRF vectors (e.g.
     // https://169.254.169.254/...).
-    auto startsWith = [&](std::string_view pfx) { return host.size() >= pfx.size() && host.compare(0, pfx.size(), pfx) == 0; };
+    auto startsWith = [&](std::string_view pfx) {
+        return host.size() >= pfx.size() && host.compare(0, pfx.size(), pfx) == 0;
+    };
     if (host == "localhost" || startsWith("127.") || startsWith("10.") || startsWith("169.254.") ||
         startsWith("192.168.") || startsWith("0.") || host == "::1" || startsWith("[::1") || startsWith("[fc") ||
         startsWith("[fd"))

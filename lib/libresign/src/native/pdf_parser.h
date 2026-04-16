@@ -182,7 +182,7 @@ public:
 private:
     std::span<const uint8_t> raw;
     PdfValue trailerDict;
-    std::map<int, size_t> objectOffsets;          // objNum -> byte offset in raw
+    std::map<int, size_t> objectOffsets;            // objNum -> byte offset in raw
     std::map<int, CompressedRef> compressedObjects; // objNum -> object stream ref
 
     // Recursion / cycle guards against attacker-crafted PDFs.
@@ -209,8 +209,7 @@ private:
     void parseXrefTable(size_t xrefOffset);
     void parseXrefStream(size_t offset);
     void parseXrefAt(size_t offset);
-    void decodeXrefStreamEntries(std::span<const uint8_t> data,
-                                 const std::vector<int>& w,
+    void decodeXrefStreamEntries(std::span<const uint8_t> data, const std::vector<int>& w,
                                  const std::vector<std::pair<int, int>>& indexPairs);
 
     // Page tree traversal
@@ -222,9 +221,10 @@ private:
     PdfValue readFromObjectStream(int streamObjNum, int indexInStream) const;
 
     // Cache for decompressed object streams (avoid re-decompressing and re-parsing header)
-    struct ObjStreamEntry {
+    struct ObjStreamEntry
+    {
         std::vector<uint8_t> data;
-        size_t first = 0;                               // /First byte offset
+        size_t first = 0;                                  // /First byte offset
         std::vector<std::pair<int, size_t>> headerEntries; // (objNum, offset relative to /First)
     };
     mutable std::map<int, ObjStreamEntry> objStreamCache;

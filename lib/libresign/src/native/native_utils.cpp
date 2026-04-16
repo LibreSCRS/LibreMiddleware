@@ -117,8 +117,12 @@ std::string base64Encode(const uint8_t* data, size_t len)
     // RAII wrapper that calls BIO_free_all to walk and free the entire
     // chain. Since base64Encode runs dozens of times per signature (certs,
     // hashes, CRLs, OCSP, TSA token), the leak was non-trivial.
-    struct ChainFree {
-        void operator()(BIO* p) const { BIO_free_all(p); }
+    struct ChainFree
+    {
+        void operator()(BIO* p) const
+        {
+            BIO_free_all(p);
+        }
     };
     std::unique_ptr<BIO, ChainFree> chain(BIO_new(BIO_f_base64()));
     if (!chain)
@@ -162,8 +166,12 @@ std::vector<uint8_t> base64Decode(const std::string& input)
         return {};
 
     // Use chain-freeing RAII wrapper (same pattern as base64Encode)
-    struct ChainFree {
-        void operator()(BIO* p) const { BIO_free_all(p); }
+    struct ChainFree
+    {
+        void operator()(BIO* p) const
+        {
+            BIO_free_all(p);
+        }
     };
 
     BIO* b64 = BIO_new(BIO_f_base64());
@@ -306,11 +314,16 @@ int shaFamilyId(const std::string& mdName)
 std::span<const uint8_t> digestInfoPrefixForAlgo(const std::string& mdName)
 {
     switch (shaFamilyId(mdName)) {
-    case 256: return kDigestInfoSha256Prefix;
-    case 384: return kDigestInfoSha384Prefix;
-    case 512: return kDigestInfoSha512Prefix;
-    case 1:   return kDigestInfoSha1Prefix;
-    default:  return {};
+    case 256:
+        return kDigestInfoSha256Prefix;
+    case 384:
+        return kDigestInfoSha384Prefix;
+    case 512:
+        return kDigestInfoSha512Prefix;
+    case 1:
+        return kDigestInfoSha1Prefix;
+    default:
+        return {};
     }
 }
 
@@ -323,11 +336,15 @@ std::string tokenAlgorithm(int keyType, const std::string& mdName)
     // the correct algorithm string for semantic correctness.
     const char* suffix = isEc ? "withECDSA" : "withRSA";
     switch (shaFamilyId(mdName)) {
-    case 384: return std::string("SHA384") + suffix;
-    case 512: return std::string("SHA512") + suffix;
-    case 1:   return std::string("SHA1") + suffix;
+    case 384:
+        return std::string("SHA384") + suffix;
+    case 512:
+        return std::string("SHA512") + suffix;
+    case 1:
+        return std::string("SHA1") + suffix;
     case 256:
-    default:  return std::string("SHA256") + suffix; // 256 explicit + unknown-default
+    default:
+        return std::string("SHA256") + suffix; // 256 explicit + unknown-default
     }
 }
 
@@ -375,8 +392,7 @@ std::vector<uint8_t> signHashWithToken(libresign::Pkcs11Token& token, X509* cert
 
 // ---- FlateDecode (zlib decompression) ----
 
-std::optional<std::vector<uint8_t>> flateDecode(std::span<const uint8_t> compressed,
-                                                 size_t sizeHint)
+std::optional<std::vector<uint8_t>> flateDecode(std::span<const uint8_t> compressed, size_t sizeHint)
 {
     if (compressed.empty())
         return std::nullopt;
@@ -386,8 +402,7 @@ std::optional<std::vector<uint8_t>> flateDecode(std::span<const uint8_t> compres
 
     for (int attempt = 0; attempt < 8; ++attempt) {
         mz_ulong destLen = static_cast<mz_ulong>(output.size());
-        int rc = mz_uncompress(output.data(), &destLen,
-                               compressed.data(), static_cast<mz_ulong>(compressed.size()));
+        int rc = mz_uncompress(output.data(), &destLen, compressed.data(), static_cast<mz_ulong>(compressed.size()));
         if (rc == MZ_OK) {
             output.resize(destLen);
             return output;
@@ -401,8 +416,7 @@ std::optional<std::vector<uint8_t>> flateDecode(std::span<const uint8_t> compres
 
 // ---- PNG predictor reversal for PDF xref streams ----
 
-std::optional<std::vector<uint8_t>> reversePngPredictor(
-    std::span<const uint8_t> data, int columns)
+std::optional<std::vector<uint8_t>> reversePngPredictor(std::span<const uint8_t> data, int columns)
 {
     if (columns <= 0)
         return std::nullopt;
@@ -421,29 +435,36 @@ std::optional<std::vector<uint8_t>> reversePngPredictor(
 
         for (int c = 0; c < columns; ++c) {
             switch (filter) {
-            case 0: out[c] = raw[c]; break;                                        // None
-            case 1: out[c] = static_cast<uint8_t>(raw[c] + (c > 0 ? out[c - 1] : 0)); break; // Sub
-            case 2: out[c] = static_cast<uint8_t>(raw[c] + prevRow[c]); break;     // Up
-            case 3: { // Average
+            case 0:
+                out[c] = raw[c];
+                break; // None
+            case 1:
+                out[c] = static_cast<uint8_t>(raw[c] + (c > 0 ? out[c - 1] : 0));
+                break; // Sub
+            case 2:
+                out[c] = static_cast<uint8_t>(raw[c] + prevRow[c]);
+                break; // Up
+            case 3: {  // Average
                 uint8_t left = (c > 0) ? out[c - 1] : uint8_t{0};
                 out[c] = static_cast<uint8_t>(raw[c] + (left + prevRow[c]) / 2);
                 break;
             }
-            case 4: { // Paeth
-                int a = (c > 0) ? out[c - 1] : 0;     // left
-                int b = prevRow[c];                      // above
+            case 4: {                                   // Paeth
+                int a = (c > 0) ? out[c - 1] : 0;       // left
+                int b = prevRow[c];                     // above
                 int cc2 = (c > 0) ? prevRow[c - 1] : 0; // upper-left
                 int p = a + b - cc2;
                 int pa = std::abs(p - a);
                 int pb = std::abs(p - b);
                 int pc = std::abs(p - cc2);
                 uint8_t pr = (pa <= pb && pa <= pc) ? static_cast<uint8_t>(a)
-                           : (pb <= pc)             ? static_cast<uint8_t>(b)
+                             : (pb <= pc)           ? static_cast<uint8_t>(b)
                                                     : static_cast<uint8_t>(cc2);
                 out[c] = static_cast<uint8_t>(raw[c] + pr);
                 break;
             }
-            default: return std::nullopt; // Unsupported filter
+            default:
+                return std::nullopt; // Unsupported filter
             }
         }
         std::copy(out, out + columns, prevRow.begin());
