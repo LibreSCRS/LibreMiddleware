@@ -26,21 +26,26 @@ std::vector<uint8_t> readFile(const std::string& path)
     return {std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>()};
 }
 
-// Download Serbian TL if not cached.
+// Download Serbian TL if not cached. Returns empty if unavailable or not XML.
 std::vector<uint8_t> getSerbianTl()
 {
     const std::string cachePath = "/tmp/tsl-rs.xml";
     auto data = readFile(cachePath);
-    if (!data.empty())
+    if (!data.empty() && data.size() > 5 && data[0] == '<' && data[1] == '?')
         return data;
 
     // Try downloading
+    std::remove(cachePath.c_str());
     int rc = std::system(
         "curl -sS -o /tmp/tsl-rs.xml "
         "'https://www.mit.gov.rs/tsl/TSL-RS.xml' 2>/dev/null");
     if (rc != 0)
         return {};
-    return readFile(cachePath);
+    data = readFile(cachePath);
+    // Verify it's actually XML, not an HTML error page
+    if (data.size() < 100 || data[0] != '<' || data[1] != '?')
+        return {};
+    return data;
 }
 
 } // namespace
