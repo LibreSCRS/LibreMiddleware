@@ -228,6 +228,8 @@ add_executable(AutoReaderTests auto_reader_test.cpp)
 target_link_libraries(AutoReaderTests PRIVATE CardPlugin SmartCard GTest::gtest_main Threads::Threads)
 gtest_discover_tests(AutoReaderTests)
 
+option(BUILD_DSS_ORACLE "Build DSS validation oracle for testing (requires Java + DSS JAR)" ON)
+
 # Digital signing tests (only when BUILD_SIGNING is enabled)
 if(BUILD_SIGNING)
     add_executable(LibreSignTests libresign_test.cpp)
@@ -248,6 +250,10 @@ if(BUILD_SIGNING)
         GTest::gtest LibreSign)
     target_compile_definitions(SigningTestSupport PUBLIC
         CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+    if(BUILD_DSS_ORACLE AND NOT WIN32)
+        target_compile_definitions(SigningTestSupport PUBLIC LIBRESIGN_HAS_DSS_ORACLE=1)
+    endif()
 
     # Unified signing E2E tests (parameterized by backend, custom main)
     add_executable(SigningE2ETests signing_e2e_test.cpp)
@@ -297,6 +303,8 @@ if(BUILD_SIGNING)
         # LibreSign + OpenSSL directly.
         add_executable(NativeUtilsTests native_utils_test.cpp)
         target_link_libraries(NativeUtilsTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto)
+        target_include_directories(NativeUtilsTests PRIVATE
+            ${LibreMiddleware_SOURCE_DIR}/thirdparty/miniz)
         gtest_discover_tests(NativeUtilsTests)
 
         add_executable(Pkcs11TokenTests pkcs11_token_test.cpp)
@@ -339,6 +347,24 @@ if(BUILD_SIGNING)
         add_executable(TrustedListParserTests trusted_list_parser_test.cpp)
         target_link_libraries(TrustedListParserTests PRIVATE GTest::gtest_main LibreSign LibXml2::LibXml2)
         gtest_discover_tests(TrustedListParserTests)
+
+        add_executable(TlSignatureVerifierTests tl_signature_verifier_test.cpp)
+        target_link_libraries(TlSignatureVerifierTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto LibXml2::LibXml2)
+        target_include_directories(TlSignatureVerifierTests PRIVATE
+            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src/native)
+        gtest_discover_tests(TlSignatureVerifierTests)
+
+        add_executable(TlCacheTests tl_cache_test.cpp)
+        target_link_libraries(TlCacheTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto)
+        target_include_directories(TlCacheTests PRIVATE
+            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src/native)
+        gtest_discover_tests(TlCacheTests)
+
+        add_executable(TlConfigureTests tl_configure_test.cpp)
+        target_link_libraries(TlConfigureTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto)
+        target_compile_definitions(TlConfigureTests PRIVATE
+            CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+        gtest_discover_tests(TlConfigureTests)
 
         add_executable(CrossBackendTests cross_backend_test.cpp)
         target_link_libraries(CrossBackendTests PRIVATE GTest::gtest_main LibreSign)

@@ -4,6 +4,10 @@
 set(SIGNING_BACKEND "native" CACHE STRING "Signing backend: native, dss, or both")
 set_property(CACHE SIGNING_BACKEND PROPERTY STRINGS "native" "dss" "both")
 
+if(SIGNING_BACKEND STREQUAL "dss")
+    message(WARNING "DSS signing backend is deprecated and will be removed in a future release. Use 'native' (default).")
+endif()
+
 find_package(CURL REQUIRED)
 
 # --- Core sources (always built) ---
@@ -20,17 +24,25 @@ set(LIBRESIGN_HEADERS
     include/libresign/http_client.h
 )
 
-# --- DSS backend sources ---
-if(SIGNING_BACKEND STREQUAL "dss" OR SIGNING_BACKEND STREQUAL "both")
+# --- DSS manager/resolver (POSIX-only, always built for test oracle) ---
+if(NOT WIN32)
     list(APPEND LIBRESIGN_SOURCES
-        src/dss/dss_signing_service.cpp
         src/dss/dss_service_manager.cpp
         src/dss/dss_path_resolver.cpp
     )
     list(APPEND LIBRESIGN_HEADERS
         include/libresign/dss/dss_service_manager.h
-        include/libresign/dss/dss_signing_service.h
         include/libresign/dss/dss_path_resolver.h
+    )
+endif()
+
+# --- DSS backend sources ---
+if(SIGNING_BACKEND STREQUAL "dss" OR SIGNING_BACKEND STREQUAL "both")
+    list(APPEND LIBRESIGN_SOURCES
+        src/dss/dss_signing_service.cpp
+    )
+    list(APPEND LIBRESIGN_HEADERS
+        include/libresign/dss/dss_signing_service.h
     )
 endif()
 
@@ -49,7 +61,10 @@ if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
         src/native/xades_module.cpp
         src/native/asic_module.cpp
         ${LibreMiddleware_SOURCE_DIR}/thirdparty/miniz/miniz.c
+        src/native/pinned_tl_certs.cpp
         src/native/trusted_list_parser.cpp
+        src/native/tl_signature_verifier.cpp
+        src/native/tl_cache.cpp
         src/native/native_signing_service.cpp
     )
     list(APPEND LIBRESIGN_HEADERS

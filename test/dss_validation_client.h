@@ -3,8 +3,6 @@
 
 #pragma once
 
-#ifdef LIBRESIGN_HAS_DSS
-
 #include "libresign/http_client.h"
 
 #include <cstdint>
@@ -45,5 +43,3 @@ private:
     std::string socketPath;
     libresign::HttpClient httpClient;
 };
-
-#endif // LIBRESIGN_HAS_DSS

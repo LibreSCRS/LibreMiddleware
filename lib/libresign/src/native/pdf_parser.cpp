@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "pdf_parser.h"
+#include "native_utils.h"
 
 #include <algorithm>
 #include <cctype>
@@ -227,18 +228,43 @@ bool PdfParser::parse()
 {
     try {
         size_t xrefOffset = findStartXref();
-        parseXrefTable(xrefOffset);
+        parseXrefAt(xrefOffset);
         return true;
     } catch (...) {
         return false;
     }
 }
 
+const std::map<int, PdfParser::CompressedRef>& PdfParser::compressedObjectRefs() const
+{
+    return compressedObjects;
+}
+
+void PdfParser::parseXrefAt(size_t offset)
+{
+    if (offset >= raw.size())
+        throw std::runtime_error("PdfParser: xref offset out of range");
+
+    // Detect format: digit means xref stream object, 'x' means classic xref table
+    uint8_t c = raw[offset];
+    if (c >= '0' && c <= '9')
+        parseXrefStream(offset);
+    else if (c == 'x')
+        parseXrefTable(offset);
+    else
+        throw std::runtime_error("PdfParser: unexpected byte at xref offset");
+}
+
 PdfValue PdfParser::readObject(int objNum) const
 {
     auto it = objectOffsets.find(objNum);
-    if (it == objectOffsets.end())
+    if (it == objectOffsets.end()) {
+        // Check compressed objects (type-2 xref entries)
+        auto cit = compressedObjects.find(objNum);
+        if (cit != compressedObjects.end())
+            return readFromObjectStream(cit->second.streamObjNum, cit->second.indexInStream);
         return PdfValue::null();
+    }
 
     size_t pos = it->second;
 
@@ -628,11 +654,228 @@ void PdfParser::parseXrefTable(size_t xrefOffset)
     if (trailerDict.type() != PdfValueType::Dict)
         throw std::runtime_error("PdfParser: trailer is not a dictionary");
 
-    // Handle /Prev — chain to previous xref table for incremental updates
+    // Handle /Prev — chain to previous xref (may be table or stream)
     PdfValue prev = trailerDict.get("Prev");
     if (prev.type() == PdfValueType::Int) {
         size_t prevOffset = static_cast<size_t>(prev.asInt());
-        parseXrefTable(prevOffset);
+        parseXrefAt(prevOffset);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Xref stream parsing (ISO 32000-2 §7.5.8)
+// ---------------------------------------------------------------------------
+
+void PdfParser::parseXrefStream(size_t offset)
+{
+    // Cycle guard
+    if (!visitedXref.insert(offset).second)
+        return;
+
+    size_t pos = offset;
+
+    // Read the indirect object header: objNum genNum obj
+    skipWhitespaceAndComments(pos);
+    size_t numStart = pos;
+    while (pos < raw.size() && raw[pos] >= '0' && raw[pos] <= '9')
+        ++pos;
+    if (pos == numStart)
+        throw std::runtime_error("PdfParser: xref stream missing object number");
+
+    skipWhitespaceAndComments(pos);
+
+    // Generation number
+    numStart = pos;
+    while (pos < raw.size() && raw[pos] >= '0' && raw[pos] <= '9')
+        ++pos;
+    if (pos == numStart)
+        throw std::runtime_error("PdfParser: xref stream missing generation number");
+
+    skipWhitespaceAndComments(pos);
+
+    // Expect "obj"
+    if (!matchAt(pos, "obj"))
+        throw std::runtime_error("PdfParser: expected 'obj' in xref stream");
+    pos += 3;
+    skipWhitespaceAndComments(pos);
+
+    // Parse the stream dictionary
+    PdfValue streamDict = parseValue(pos);
+    if (streamDict.type() != PdfValueType::Dict)
+        throw std::runtime_error("PdfParser: xref stream object is not a dictionary");
+
+    // Verify /Type /XRef
+    PdfValue typeVal = streamDict.get("Type");
+    if (typeVal.type() != PdfValueType::Name || typeVal.asName() != "XRef")
+        throw std::runtime_error("PdfParser: xref stream /Type is not /XRef");
+
+    // Extract /W array (3 field widths)
+    PdfValue wVal = streamDict.get("W");
+    if (wVal.type() != PdfValueType::Array || wVal.asArray().size() != 3)
+        throw std::runtime_error("PdfParser: xref stream /W array invalid");
+    std::vector<int> w;
+    for (auto& v : wVal.asArray()) {
+        if (v.type() != PdfValueType::Int)
+            throw std::runtime_error("PdfParser: xref stream /W contains non-integer");
+        w.push_back(static_cast<int>(v.asInt()));
+    }
+
+    // Extract /Size
+    PdfValue sizeVal = streamDict.get("Size");
+    if (sizeVal.type() != PdfValueType::Int)
+        throw std::runtime_error("PdfParser: xref stream missing /Size");
+    int xrefSize = static_cast<int>(sizeVal.asInt());
+
+    // Extract /Index array (defaults to [0 Size])
+    std::vector<std::pair<int, int>> indexPairs;
+    PdfValue indexVal = streamDict.get("Index");
+    if (indexVal.type() == PdfValueType::Array) {
+        auto& arr = indexVal.asArray();
+        if (arr.size() % 2 != 0)
+            throw std::runtime_error("PdfParser: xref stream /Index has odd length");
+        for (size_t i = 0; i + 1 < arr.size(); i += 2) {
+            if (arr[i].type() != PdfValueType::Int || arr[i + 1].type() != PdfValueType::Int)
+                throw std::runtime_error("PdfParser: xref stream /Index contains non-integer");
+            indexPairs.emplace_back(static_cast<int>(arr[i].asInt()),
+                                   static_cast<int>(arr[i + 1].asInt()));
+        }
+    } else {
+        indexPairs.emplace_back(0, xrefSize);
+    }
+
+    // Extract /Length for raw stream bytes
+    PdfValue lengthVal = streamDict.get("Length");
+    if (lengthVal.type() != PdfValueType::Int)
+        throw std::runtime_error("PdfParser: xref stream missing /Length");
+    size_t streamLength = static_cast<size_t>(lengthVal.asInt());
+
+    // Find "stream" keyword and advance past it
+    skipWhitespaceAndComments(pos);
+    if (!matchAt(pos, "stream"))
+        throw std::runtime_error("PdfParser: expected 'stream' keyword in xref stream");
+    pos += 6; // strlen("stream")
+
+    // Stream data begins after the EOL following "stream"
+    // PDF spec: "stream" followed by a single EOL (CR, LF, or CRLF)
+    if (pos < raw.size() && raw[pos] == '\r')
+        ++pos;
+    if (pos < raw.size() && raw[pos] == '\n')
+        ++pos;
+
+    if (pos + streamLength > raw.size())
+        throw std::runtime_error("PdfParser: xref stream data exceeds file bounds");
+
+    std::span<const uint8_t> rawStream(raw.data() + pos, streamLength);
+
+    // Decompress if /Filter /FlateDecode
+    std::vector<uint8_t> decompressed;
+    PdfValue filterVal = streamDict.get("Filter");
+    bool isFlate = false;
+    if (filterVal.type() == PdfValueType::Name && filterVal.asName() == "FlateDecode")
+        isFlate = true;
+    else if (filterVal.type() == PdfValueType::Array && !filterVal.asArray().empty()) {
+        // Single-element filter array
+        auto& first = filterVal.asArray()[0];
+        if (first.type() == PdfValueType::Name && first.asName() == "FlateDecode")
+            isFlate = true;
+    }
+
+    std::span<const uint8_t> streamData = rawStream;
+    if (isFlate) {
+        auto result = native_utils::flateDecode(rawStream);
+        if (!result)
+            throw std::runtime_error("PdfParser: FlateDecode failed on xref stream");
+        decompressed = std::move(*result);
+        streamData = decompressed;
+    }
+
+    // Apply PNG predictor reversal if /DecodeParms has /Predictor >= 10
+    std::vector<uint8_t> unpredicted;
+    PdfValue decodeParms = streamDict.get("DecodeParms");
+    if (decodeParms.type() == PdfValueType::Dict) {
+        PdfValue predictorVal = decodeParms.get("Predictor");
+        if (predictorVal.type() == PdfValueType::Int && predictorVal.asInt() >= 10) {
+            PdfValue columnsVal = decodeParms.get("Columns");
+            int columns = (columnsVal.type() == PdfValueType::Int)
+                              ? static_cast<int>(columnsVal.asInt())
+                              : (w[0] + w[1] + w[2]);
+            auto result = native_utils::reversePngPredictor(streamData, columns);
+            if (!result)
+                throw std::runtime_error("PdfParser: reversePngPredictor failed on xref stream");
+            unpredicted = std::move(*result);
+            streamData = unpredicted;
+        }
+    }
+
+    // Decode the xref entries
+    decodeXrefStreamEntries(streamData, w, indexPairs);
+
+    // The xref stream dict doubles as the trailer dict
+    // Only store the first (most recent) trailer
+    if (trailerDict.type() != PdfValueType::Dict)
+        trailerDict = streamDict;
+
+    // Follow /Prev chain — the previous xref may be either a stream or a table
+    PdfValue prev = streamDict.get("Prev");
+    if (prev.type() == PdfValueType::Int) {
+        size_t prevOffset = static_cast<size_t>(prev.asInt());
+        parseXrefAt(prevOffset);
+    }
+}
+
+void PdfParser::decodeXrefStreamEntries(std::span<const uint8_t> data,
+                                        const std::vector<int>& w,
+                                        const std::vector<std::pair<int, int>>& indexPairs)
+{
+    int entrySize = w[0] + w[1] + w[2];
+    if (entrySize <= 0)
+        throw std::runtime_error("PdfParser: xref stream entry size is zero");
+
+    size_t dataPos = 0;
+
+    // Helper: read a big-endian unsigned integer of `width` bytes from data at dataPos
+    auto readField = [&](int width) -> int64_t {
+        int64_t val = 0;
+        for (int b = 0; b < width; ++b) {
+            if (dataPos >= data.size())
+                throw std::runtime_error("PdfParser: xref stream data truncated");
+            val = (val << 8) | data[dataPos++];
+        }
+        return val;
+    };
+
+    for (auto& [startObj, count] : indexPairs) {
+        for (int i = 0; i < count; ++i) {
+            // Type field: default is 1 if W[0] == 0
+            int64_t type = (w[0] == 0) ? 1 : readField(w[0]);
+            int64_t field2 = readField(w[1]);
+            int64_t field3 = readField(w[2]);
+
+            int64_t objNum64 = static_cast<int64_t>(startObj) + i;
+            if (objNum64 < 0 || objNum64 > 2147483647)
+                continue;
+            int objNum = static_cast<int>(objNum64);
+
+            switch (type) {
+            case 0:
+                // Free object — skip
+                break;
+            case 1:
+                // Uncompressed object: field2 = byte offset
+                if (objectOffsets.find(objNum) == objectOffsets.end())
+                    objectOffsets[objNum] = static_cast<size_t>(field2);
+                break;
+            case 2:
+                // Compressed in object stream: field2 = stream obj num, field3 = index
+                if (compressedObjects.find(objNum) == compressedObjects.end())
+                    compressedObjects[objNum] = CompressedRef{static_cast<int>(field2),
+                                                              static_cast<int>(field3)};
+                break;
+            default:
+                // Unknown type — skip (future PDF versions may define new types)
+                break;
+            }
+        }
     }
 }
 
@@ -1032,6 +1275,164 @@ PdfValue PdfParser::parseDict(size_t& pos) const
     }
 
     return PdfValue::dict(std::move(dict));
+}
+
+// ---------------------------------------------------------------------------
+// Object stream support (type-2 xref entries)
+// ---------------------------------------------------------------------------
+
+std::vector<uint8_t> PdfParser::extractStreamData(int objNum) const
+{
+    auto it = objectOffsets.find(objNum);
+    if (it == objectOffsets.end())
+        throw std::runtime_error(std::format("PdfParser: object stream {} not found in objectOffsets", objNum));
+
+    size_t pos = it->second;
+
+    // Parse "objNum genNum obj"
+    skipWhitespaceAndComments(pos);
+    while (pos < raw.size() && raw[pos] >= '0' && raw[pos] <= '9')
+        ++pos;
+    skipWhitespaceAndComments(pos);
+    while (pos < raw.size() && raw[pos] >= '0' && raw[pos] <= '9')
+        ++pos;
+    skipWhitespaceAndComments(pos);
+
+    if (!matchAt(pos, "obj"))
+        throw std::runtime_error("PdfParser: expected 'obj' in object stream header");
+    pos += 3;
+    skipWhitespaceAndComments(pos);
+
+    // Parse the stream dictionary
+    PdfValue streamDict = parseValue(pos);
+    if (streamDict.type() != PdfValueType::Dict)
+        throw std::runtime_error("PdfParser: object stream is not a dictionary");
+
+    // Get /Length
+    PdfValue lengthVal = streamDict.get("Length");
+    if (lengthVal.type() != PdfValueType::Int)
+        throw std::runtime_error("PdfParser: object stream missing /Length");
+    size_t streamLength = static_cast<size_t>(lengthVal.asInt());
+
+    // Find "stream" keyword
+    skipWhitespaceAndComments(pos);
+    if (!matchAt(pos, "stream"))
+        throw std::runtime_error("PdfParser: expected 'stream' keyword in object stream");
+    pos += 6;
+
+    // Advance past EOL after "stream"
+    if (pos < raw.size() && raw[pos] == '\r')
+        ++pos;
+    if (pos < raw.size() && raw[pos] == '\n')
+        ++pos;
+
+    if (pos + streamLength > raw.size())
+        throw std::runtime_error("PdfParser: object stream data exceeds file bounds");
+
+    std::span<const uint8_t> rawStream(raw.data() + pos, streamLength);
+
+    // Check /Filter for FlateDecode
+    PdfValue filterVal = streamDict.get("Filter");
+    bool isFlate = false;
+    if (filterVal.type() == PdfValueType::Name && filterVal.asName() == "FlateDecode")
+        isFlate = true;
+    else if (filterVal.type() == PdfValueType::Array && !filterVal.asArray().empty()) {
+        auto& first = filterVal.asArray()[0];
+        if (first.type() == PdfValueType::Name && first.asName() == "FlateDecode")
+            isFlate = true;
+    }
+
+    if (isFlate) {
+        auto result = native_utils::flateDecode(rawStream);
+        if (!result)
+            throw std::runtime_error("PdfParser: FlateDecode failed on object stream");
+        return std::move(*result);
+    }
+
+    return {rawStream.begin(), rawStream.end()};
+}
+
+PdfValue PdfParser::readFromObjectStream(int streamObjNum, int indexInStream) const
+{
+    // Check cache — stores decompressed data + parsed header
+    auto cacheIt = objStreamCache.find(streamObjNum);
+    if (cacheIt == objStreamCache.end()) {
+        ObjStreamEntry entry;
+        entry.data = extractStreamData(streamObjNum);
+
+        // Parse the object stream dictionary to get /N and /First
+        auto it = objectOffsets.find(streamObjNum);
+        if (it == objectOffsets.end())
+            throw std::runtime_error(std::format("PdfParser: object stream {} not found", streamObjNum));
+
+        size_t pos = it->second;
+        skipWhitespaceAndComments(pos);
+        while (pos < raw.size() && raw[pos] >= '0' && raw[pos] <= '9') ++pos;
+        skipWhitespaceAndComments(pos);
+        while (pos < raw.size() && raw[pos] >= '0' && raw[pos] <= '9') ++pos;
+        skipWhitespaceAndComments(pos);
+        if (!matchAt(pos, "obj"))
+            throw std::runtime_error("PdfParser: expected 'obj' in object stream");
+        pos += 3;
+        skipWhitespaceAndComments(pos);
+
+        PdfValue streamDict = parseValue(pos);
+        if (streamDict.type() != PdfValueType::Dict)
+            throw std::runtime_error("PdfParser: object stream dict is not a dictionary");
+
+        PdfValue nVal = streamDict.get("N");
+        if (nVal.type() != PdfValueType::Int)
+            throw std::runtime_error("PdfParser: object stream missing /N");
+        int n = static_cast<int>(nVal.asInt());
+
+        PdfValue firstVal = streamDict.get("First");
+        if (firstVal.type() != PdfValueType::Int)
+            throw std::runtime_error("PdfParser: object stream missing /First");
+        entry.first = static_cast<size_t>(firstVal.asInt());
+
+        // Parse the header: N pairs of (objNum, offset)
+        PdfParser tempParser(std::span<const uint8_t>(entry.data.data(), entry.data.size()));
+        size_t hdrPos = 0;
+        for (int i = 0; i < n; ++i) {
+            tempParser.skipWhitespaceAndComments(hdrPos);
+            size_t numStart = hdrPos;
+            while (hdrPos < entry.data.size() && entry.data[hdrPos] >= '0' && entry.data[hdrPos] <= '9')
+                ++hdrPos;
+            if (hdrPos == numStart)
+                throw std::runtime_error("PdfParser: object stream header truncated");
+            int entryObjNum = 0;
+            std::from_chars(reinterpret_cast<const char*>(entry.data.data() + numStart),
+                            reinterpret_cast<const char*>(entry.data.data() + hdrPos), entryObjNum);
+
+            tempParser.skipWhitespaceAndComments(hdrPos);
+            numStart = hdrPos;
+            while (hdrPos < entry.data.size() && entry.data[hdrPos] >= '0' && entry.data[hdrPos] <= '9')
+                ++hdrPos;
+            if (hdrPos == numStart)
+                throw std::runtime_error("PdfParser: object stream header truncated");
+            size_t entryOffset = 0;
+            std::from_chars(reinterpret_cast<const char*>(entry.data.data() + numStart),
+                            reinterpret_cast<const char*>(entry.data.data() + hdrPos), entryOffset);
+
+            entry.headerEntries.emplace_back(entryObjNum, entryOffset);
+        }
+
+        cacheIt = objStreamCache.emplace(streamObjNum, std::move(entry)).first;
+    }
+
+    const auto& cached = cacheIt->second;
+    int n = static_cast<int>(cached.headerEntries.size());
+
+    if (indexInStream < 0 || indexInStream >= n)
+        throw std::runtime_error(std::format("PdfParser: index {} out of range for object stream (N={})",
+                                              indexInStream, n));
+
+    size_t objPos = cached.first + cached.headerEntries[indexInStream].second;
+    if (objPos >= cached.data.size())
+        throw std::runtime_error("PdfParser: object offset in stream exceeds data");
+
+    PdfParser tempParser(std::span<const uint8_t>(cached.data.data(), cached.data.size()));
+    return tempParser.parseValue(objPos);
 }
 
 // ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -58,6 +59,9 @@ void ensureXmlInitialized();
 std::string base64Encode(const std::vector<uint8_t>& data);
 std::string base64Encode(const uint8_t* data, size_t len);
 
+// Base64 decoding (standard RFC 4648 section 4, whitespace-tolerant)
+std::vector<uint8_t> base64Decode(const std::string& input);
+
 // SHA-256 hash as base64-encoded string
 std::string sha256Base64(const std::vector<uint8_t>& data);
 
@@ -91,6 +95,14 @@ std::string tokenAlgorithm(int keyType, const std::string& mdName);
 // Returns the raw signature bytes.
 std::vector<uint8_t> signHashWithToken(libresign::Pkcs11Token& token, X509* cert, const std::vector<uint8_t>& hash,
                                        const std::string& hashAlgo = "SHA256");
+
+// Decompress FlateDecode (zlib) data. Returns nullopt on error.
+std::optional<std::vector<uint8_t>> flateDecode(std::span<const uint8_t> compressed,
+                                                 size_t sizeHint = 0);
+
+/// Reverse PNG row filters (predictor 10-15). columns = bytes per row (excluding filter byte).
+std::optional<std::vector<uint8_t>> reversePngPredictor(
+    std::span<const uint8_t> data, int columns);
 
 // DER-encode any OpenSSL object using its i2d function
 template <typename T, typename Fn>

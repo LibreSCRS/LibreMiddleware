@@ -3,8 +3,10 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <shared_mutex>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -46,6 +48,10 @@ public:
     void addUserStorePath(const std::string& path);
     void setCscaStorePath(const std::string& path);
 
+    /// Add a DER-encoded certificate from an authenticated Trust List to SIGNING scope.
+    /// Thread-safe: takes an exclusive lock.
+    void addTlCertificate(std::span<const uint8_t> certDer);
+
     const std::string& bundledDir() const
     {
         return bundledCertDir;
@@ -55,10 +61,13 @@ private:
     void loadDirectoryIntoStore(X509_STORE* store, const std::string& dirPath) const;
     void loadBundledCerts(X509_STORE* store) const;
 
-    mutable std::shared_mutex mutex_;
+    void loadTlCerts(X509_STORE* store) const;
+
+    mutable std::shared_mutex mtx;
     std::string bundledCertDir;
     std::string cscaPath;
     std::vector<std::string> userPaths;
+    std::vector<std::vector<uint8_t>> tlCerts; // DER certs from authenticated TLs
 };
 
 } // namespace libresign

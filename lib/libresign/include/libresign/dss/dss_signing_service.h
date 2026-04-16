@@ -13,6 +13,9 @@ namespace libresign {
 
 class HttpClient;
 
+/// @deprecated The DSS signing backend is deprecated. Use NativeSigningService (Backend::Native).
+/// DSS remains available for backward compatibility and may be removed in a future release.
+/// The DSS validation oracle (DSSValidationClient) remains supported for test verification.
 class DSSSigningService : public SigningService
 {
 public:

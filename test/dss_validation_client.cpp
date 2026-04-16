@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#ifdef LIBRESIGN_HAS_DSS
-
 #include "dss_validation_client.h"
 
 #include <json.hpp>
@@ -78,5 +76,3 @@ ValidationResult DSSValidationClient::validate(std::span<const uint8_t> signedDo
 
     return result;
 }
-
-#endif // LIBRESIGN_HAS_DSS

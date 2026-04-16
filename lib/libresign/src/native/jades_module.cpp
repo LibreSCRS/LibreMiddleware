@@ -277,11 +277,23 @@ SigningResult JAdESModule::sign(const std::vector<uint8_t>& data, const std::str
             }
         }
 
-        // 10. B-LTA: add archive timestamp
+        // 10. B-LTA: add archive timestamp per ETSI TS 119 182-1 §5.3.5
         if (level >= SignatureLevel::B_LTA) {
-            // First serialize the JWS as-is (with B-LT data) to hash
-            std::string jwsJson = serializeJws(jws);
-            auto archiveHash = sha256(jwsJson);
+            // The arcTst message imprint is computed over:
+            //   base64url(protected) + "." + base64url(payload) + "." + base64url(signature)
+            //   + canonicalized (JSON-sorted) etsiU components
+            std::string archiveInput = jws.protectedHeader + "." + jws.payload + "." + jws.signature;
+
+            // Append each existing etsiU component as canonicalized JSON
+            // (sorted keys, no whitespace — nlohmann::json::dump() default)
+            if (jws.unprotectedHeader.contains("etsiU")) {
+                for (const auto& entry : jws.unprotectedHeader["etsiU"]) {
+                    // Canonicalize: dump with sorted keys
+                    archiveInput += entry.dump(-1, ' ', false, nlohmann::json::error_handler_t::strict);
+                }
+            }
+
+            auto archiveHash = sha256(archiveInput);
 
             TSAClient tsaClient;
             auto tsaResult = tsaClient.timestamp(archiveHash, tsa.url, tsa.timeoutSeconds);

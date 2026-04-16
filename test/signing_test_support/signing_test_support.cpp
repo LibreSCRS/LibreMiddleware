@@ -7,7 +7,7 @@
 #include <iostream>
 #include <memory>
 
-#ifdef LIBRESIGN_HAS_DSS
+#ifdef LIBRESIGN_HAS_DSS_ORACLE
 #include "libresign/dss/dss_service_manager.h"
 #include "libresign/http_client.h"
 #include "../dss_validation_client.h"
@@ -91,7 +91,7 @@ const char* findSoftHsmPath()
 
 // ---- DSS validation environment ----
 
-#ifdef LIBRESIGN_HAS_DSS
+#ifdef LIBRESIGN_HAS_DSS_ORACLE
 
 struct SigningTestEnvironment::Impl
 {
@@ -225,7 +225,7 @@ void validateSignature(const SigningResult& result, const std::string& format, c
     }
 }
 
-#else // !LIBRESIGN_HAS_DSS
+#else // !LIBRESIGN_HAS_DSS_ORACLE
 
 struct SigningTestEnvironment::Impl
 {};
@@ -256,7 +256,7 @@ void validateSignature(const SigningResult& /*result*/, const std::string& /*for
     std::cerr << "[validateSignature] DSS not compiled, skipping validation\n";
 }
 
-#endif // LIBRESIGN_HAS_DSS
+#endif // LIBRESIGN_HAS_DSS_ORACLE
 
 // ---- Test data helpers ----
 

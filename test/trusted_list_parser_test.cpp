@@ -42,7 +42,7 @@ static const char* minimalTlXml = R"(<?xml version="1.0" encoding="UTF-8"?>
   </TrustServiceProviderList>
 </TrustServiceStatusList>)";
 
-// Minimal LOTL XML with pointers to other TLs
+// Minimal LOTL XML with pointers to other TLs (including signing certs)
 static const char* minimalLotlXml = R"(<?xml version="1.0" encoding="UTF-8"?>
 <TrustServiceStatusList xmlns="http://uri.etsi.org/02231/v2#">
   <SchemeInformation>
@@ -53,6 +53,11 @@ static const char* minimalLotlXml = R"(<?xml version="1.0" encoding="UTF-8"?>
   </SchemeInformation>
   <PointersToOtherTSL>
     <OtherTSLPointer>
+      <ServiceDigitalIdentity>
+        <DigitalId>
+          <X509Certificate>AQAB</X509Certificate>
+        </DigitalId>
+      </ServiceDigitalIdentity>
       <TSLLocation>https://example.com/tl1.xml</TSLLocation>
     </OtherTSLPointer>
     <OtherTSLPointer>
@@ -167,8 +172,10 @@ TEST(TrustedListParser, ParseLotlExtractsPointers)
 
     ASSERT_EQ(info.schemeTerritory, "EU");
     ASSERT_EQ(info.pointersToOtherTSL.size(), 2u);
-    ASSERT_EQ(info.pointersToOtherTSL[0], "https://example.com/tl1.xml");
-    ASSERT_EQ(info.pointersToOtherTSL[1], "https://example.com/tl2.xml");
+    ASSERT_EQ(info.pointersToOtherTSL[0].url, "https://example.com/tl1.xml");
+    ASSERT_FALSE(info.pointersToOtherTSL[0].signingCertDer.empty()); // has cert
+    ASSERT_EQ(info.pointersToOtherTSL[1].url, "https://example.com/tl2.xml");
+    ASSERT_TRUE(info.pointersToOtherTSL[1].signingCertDer.empty()); // no cert
     ASSERT_TRUE(info.services.empty());
 }
 

@@ -640,7 +640,13 @@ SigningResult XAdESModule::sign(const std::vector<uint8_t>& data, const std::str
                 }
             }
 
-            // 4. Canonicalized unsigned properties (excluding ArchiveTimeStamp)
+            // 4. Canonicalized SignedProperties (ETSI EN 319 132-1 §5.5.2.2)
+            if (ctx.signedPropsNode) {
+                auto c14nSignedProps = canonicalizeNode(ctx.doc.get(), ctx.signedPropsNode);
+                archiveInput.insert(archiveInput.end(), c14nSignedProps.begin(), c14nSignedProps.end());
+            }
+
+            // 5. Canonicalized unsigned properties (excluding ArchiveTimeStamp)
             xmlNsPtr nsXades = xmlSearchNsByHref(ctx.doc.get(), ctx.signatureNode, BAD_CAST kNsXades);
             xmlNsPtr nsDs = xmlSearchNsByHref(ctx.doc.get(), ctx.signatureNode, BAD_CAST kNsDs);
             xmlNodePtr unsignedProps = ensureUnsignedProperties(ctx.signatureNode, nsXades);
@@ -656,7 +662,7 @@ SigningResult XAdESModule::sign(const std::vector<uint8_t>& data, const std::str
                 archiveInput.insert(archiveInput.end(), c14nProp.begin(), c14nProp.end());
             }
 
-            // 5. Referenced data objects
+            // 6. Referenced data objects
             if (packaging == SignaturePackaging::DETACHED) {
                 // Detached: include raw document bytes
                 archiveInput.insert(archiveInput.end(), data.begin(), data.end());

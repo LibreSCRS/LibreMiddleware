@@ -18,6 +18,12 @@ struct TrustedServiceEntry
     std::vector<uint8_t> certDer; // DER-encoded X.509 certificate
 };
 
+struct TslPointer
+{
+    std::string url;
+    std::vector<uint8_t> signingCertDer; // certificate to verify this TL
+};
+
 struct TrustedListInfo
 {
     std::string schemeTerritory; // e.g., "RS", "EE", "DE"
@@ -25,40 +31,57 @@ struct TrustedListInfo
     std::string issueDate;
     std::string nextUpdate;
     std::vector<TrustedServiceEntry> services;
-    std::vector<std::string> pointersToOtherTSL; // LOTL: URLs of member state TLs
+    std::vector<TslPointer> pointersToOtherTSL; // LOTL: URLs of member state TLs
 };
 
-// WARNING — Trust path is currently unauthenticated.
+// This parser handles structural XML extraction of trust services from
+// TL/LOTL documents. It does NOT verify XML-DSig signatures itself —
+// signature verification is the caller's responsibility.
 //
-// This parser extracts trust services from a TL/LOTL XML document but does
-// NOT verify the XMLDSig ds:Signature on the document itself. Per eIDAS
-// (Regulation (EU) 910/2014) and ETSI EN 319 015, every TL/LOTL is signed
-// by its scheme operator and consumers MUST verify that signature before
-// trusting any extracted certificate as a CA.
-//
-// Until that verification is implemented (TODO: integrate xmlsec1
-// signature-verify path with the LOTL trust anchor pinned at compile time),
-// callers MUST NOT use the output of this parser as authoritative trust
-// material in production. The class is currently exposed only for
-// development and tests; the signing pipeline does not depend on it.
+// NativeSigningService::configure() uses TlSignatureVerifier (libxml2 C14N +
+// OpenSSL EVP) to authenticate each TL before passing it to this parser.
+// Pinned signing certificates and LoTL-derived certs provide the trust
+// anchors. See tl_signature_verifier.h and pinned_tl_certs.h.
 class TrustedListParser
 {
 public:
     // Parse a TL or LOTL XML document.
     // Returns empty TrustedListInfo on parse failure.
     //
-    // SECURITY: see warning above. The XML signature on the document is
-    // not verified — output is structurally extracted but not authenticated.
+    // Structural extraction only — caller must verify XML-DSig before trusting output.
     static TrustedListInfo parse(const std::vector<uint8_t>& xmlData);
     static TrustedListInfo parse(const std::string& xmlString);
 
     // Fetch and parse a TL from URL. SECURITY: see warning above.
     TrustedListInfo fetch(const std::string& url, int timeoutSeconds = 30);
 
+    /// Result of a fetchRaw() call with HTTP metadata for caching.
+    struct FetchResult {
+        std::vector<uint8_t> data;
+        std::string etag;
+        std::string lastModified;
+        bool notModified = false; ///< true when server returned 304
+    };
+
+    // Fetch raw XML bytes from a URL without parsing.
+    // Returns empty vector on failure (HTTP error or empty body).
+    static std::vector<uint8_t> fetchRaw(const std::string& url, int timeoutSeconds = 30);
+
+    /// Fetch raw XML bytes with HTTP conditional request support.
+    /// If etag/lastModified are non-empty, sends If-None-Match / If-Modified-Since.
+    /// On 304, returns FetchResult with notModified=true and empty data.
+    static FetchResult fetchRawConditional(const std::string& url,
+                                           const std::string& etag = {},
+                                           const std::string& lastModified = {},
+                                           int timeoutSeconds = 30);
+
     // Fetch LOTL, then fetch each member state TL.
     // Returns all entries from all member state TLs.
-    // SECURITY: see warning above.
+    // Structural extraction only — caller must verify XML-DSig before trusting output.
     std::vector<TrustedServiceEntry> fetchLotl(const std::string& lotlUrl, int timeoutSeconds = 30);
+
+    /// SSRF validation: reject non-HTTPS, private/loopback IPs.
+    static bool isSafeTslUrl(const std::string& url);
 };
 
 } // namespace libresign

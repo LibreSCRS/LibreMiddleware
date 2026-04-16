@@ -5,8 +5,11 @@
 
 #include <curl/curl.h>
 
+#include <algorithm>
+#include <cctype>
 #include <memory>
 #include <mutex>
+#include <vector>
 
 namespace libresign {
 
@@ -42,6 +45,34 @@ size_t writeCallback(char* ptr, size_t size, size_t nmemb, void* userdata)
     }
     ctx->body.append(ptr, incoming);
     return incoming;
+}
+
+// Capture response headers into a map (lowercase keys for easy lookup).
+size_t headerCallback(char* buffer, size_t size, size_t nitems, void* userdata)
+{
+    size_t totalSize = size * nitems;
+    auto* headers = static_cast<std::map<std::string, std::string>*>(userdata);
+
+    std::string line(buffer, totalSize);
+    // Trim trailing \r\n
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\n'))
+        line.pop_back();
+
+    auto colon = line.find(':');
+    if (colon != std::string::npos) {
+        std::string key = line.substr(0, colon);
+        std::transform(key.begin(), key.end(), key.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+        std::string value = line.substr(colon + 1);
+        // Trim leading whitespace from value
+        size_t start = value.find_first_not_of(" \t");
+        if (start != std::string::npos)
+            value = value.substr(start);
+        else
+            value.clear();
+        (*headers)[std::move(key)] = std::move(value);
+    }
+    return totalSize;
 }
 
 struct CurlMimeDeleter { void operator()(curl_mime* p) const { if (p) curl_mime_free(p); } };
@@ -117,6 +148,50 @@ HttpResponse HttpClient::get(const std::string& url, int timeoutSeconds, const s
     }
 
     CURLcode res = curl_easy_perform(c);
+    if (writeCtx.exceeded) {
+        resp.statusCode = 0;
+        resp.errorMessage = "response body exceeded maxBytes";
+        return resp;
+    }
+    if (res != CURLE_OK) {
+        resp.errorMessage = curl_easy_strerror(res);
+        return resp;
+    }
+
+    long statusCode = 0;
+    curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &statusCode);
+    resp.statusCode = static_cast<int>(statusCode);
+    resp.body = std::move(writeCtx.body);
+    return resp;
+}
+
+HttpResponse HttpClient::getWithHeaders(const std::string& url,
+                                        const std::vector<std::string>& requestHeaders,
+                                        int timeoutSeconds,
+                                        const std::string& unixSocketPath) const
+{
+    HttpResponse resp;
+    WriteContext writeCtx;
+    auto* c = impl->setupCommon(url, timeoutSeconds, unixSocketPath, &writeCtx);
+    if (!c) {
+        resp.errorMessage = "curl not initialized";
+        return resp;
+    }
+
+    // Set custom request headers
+    struct curl_slist* headers = nullptr;
+    for (const auto& h : requestHeaders)
+        headers = curl_slist_append(headers, h.c_str());
+    if (headers)
+        curl_easy_setopt(c, CURLOPT_HTTPHEADER, headers);
+
+    // Capture response headers
+    curl_easy_setopt(c, CURLOPT_HEADERFUNCTION, headerCallback);
+    curl_easy_setopt(c, CURLOPT_HEADERDATA, &resp.headers);
+
+    CURLcode res = curl_easy_perform(c);
+    curl_slist_free_all(headers);
+
     if (writeCtx.exceeded) {
         resp.statusCode = 0;
         resp.errorMessage = "response body exceeded maxBytes";

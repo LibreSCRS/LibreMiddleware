@@ -132,7 +132,7 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// PdfParser — lightweight parser for traditional xref-table PDFs
+// PdfParser — lightweight parser for PDF xref tables and xref streams
 // ---------------------------------------------------------------------------
 
 class PdfParser
@@ -167,10 +167,23 @@ public:
     // Handles (, ), \, CR, LF, tab, backspace, formfeed.
     static std::string escapeStringForPdf(const std::string& s);
 
+    // Compressed object reference for type-2 xref stream entries.
+    // The object lives inside an object stream; resolution is deferred.
+    struct CompressedRef
+    {
+        int streamObjNum;
+        int indexInStream;
+    };
+
+    // Objects stored in object streams (type-2 xref entries).
+    // Key = object number, value = which stream and index within it.
+    const std::map<int, CompressedRef>& compressedObjectRefs() const;
+
 private:
     std::span<const uint8_t> raw;
     PdfValue trailerDict;
-    std::map<int, size_t> objectOffsets; // objNum -> byte offset in raw
+    std::map<int, size_t> objectOffsets;          // objNum -> byte offset in raw
+    std::map<int, CompressedRef> compressedObjects; // objNum -> object stream ref
 
     // Recursion / cycle guards against attacker-crafted PDFs.
     // parseDepth bounds parseValue → parseArray/parseDict recursion; a PDF
@@ -194,10 +207,27 @@ private:
     // xref parsing
     size_t findStartXref() const;
     void parseXrefTable(size_t xrefOffset);
+    void parseXrefStream(size_t offset);
+    void parseXrefAt(size_t offset);
+    void decodeXrefStreamEntries(std::span<const uint8_t> data,
+                                 const std::vector<int>& w,
+                                 const std::vector<std::pair<int, int>>& indexPairs);
 
     // Page tree traversal
     PdfValue resolvePageFromNode(const PdfValue& node, int& remaining) const;
     int resolvePageObjNumFromNode(PdfRef nodeRef, int& remaining) const;
+
+    // Object stream support (type-2 xref entries)
+    std::vector<uint8_t> extractStreamData(int objNum) const;
+    PdfValue readFromObjectStream(int streamObjNum, int indexInStream) const;
+
+    // Cache for decompressed object streams (avoid re-decompressing and re-parsing header)
+    struct ObjStreamEntry {
+        std::vector<uint8_t> data;
+        size_t first = 0;                               // /First byte offset
+        std::vector<std::pair<int, size_t>> headerEntries; // (objNum, offset relative to /First)
+    };
+    mutable std::map<int, ObjStreamEntry> objStreamCache;
 
     // Utility
     bool matchAt(size_t pos, std::string_view s) const;

@@ -67,7 +67,7 @@ void TrustStoreManager::loadBundledCerts(X509_STORE* store) const
 
 X509StorePtr TrustStoreManager::buildStore(StoreScope scope) const
 {
-    std::shared_lock lock(mutex_);
+    std::shared_lock lock(mtx);
 
     switch (scope) {
     case StoreScope::EMRTD_PASSIVE_AUTH: {
@@ -108,6 +108,8 @@ X509StorePtr TrustStoreManager::buildStore(StoreScope scope) const
         // CSCA path
         if (!cscaPath.empty())
             loadDirectoryIntoStore(store.get(), cscaPath);
+        // Trust List derived certificates
+        loadTlCerts(store.get());
         return store;
     }
     }
@@ -116,7 +118,7 @@ X509StorePtr TrustStoreManager::buildStore(StoreScope scope) const
 
 std::vector<std::string> TrustStoreManager::certPathsForScope(StoreScope scope) const
 {
-    std::shared_lock lock(mutex_);
+    std::shared_lock lock(mtx);
 
     std::vector<std::string> paths;
 
@@ -155,14 +157,34 @@ std::vector<std::string> TrustStoreManager::certPathsForScope(StoreScope scope) 
 
 void TrustStoreManager::addUserStorePath(const std::string& path)
 {
-    std::unique_lock lock(mutex_);
+    std::unique_lock lock(mtx);
     userPaths.push_back(path);
 }
 
 void TrustStoreManager::setCscaStorePath(const std::string& path)
 {
-    std::unique_lock lock(mutex_);
+    std::unique_lock lock(mtx);
     cscaPath = path;
+}
+
+void TrustStoreManager::addTlCertificate(std::span<const uint8_t> certDer)
+{
+    if (certDer.empty())
+        return;
+
+    std::unique_lock lock(mtx);
+    tlCerts.emplace_back(certDer.begin(), certDer.end());
+}
+
+void TrustStoreManager::loadTlCerts(X509_STORE* store) const
+{
+    struct X509Free { void operator()(X509* p) const { X509_free(p); } };
+    for (const auto& der : tlCerts) {
+        const unsigned char* p = der.data();
+        std::unique_ptr<X509, X509Free> cert(d2i_X509(nullptr, &p, static_cast<long>(der.size())));
+        if (cert)
+            X509_STORE_add_cert(store, cert.get());
+    }
 }
 
 } // namespace libresign

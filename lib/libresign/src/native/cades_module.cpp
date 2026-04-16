@@ -18,7 +18,6 @@
 
 #include <climits>
 #include <cstring>
-#include <ctime>
 #include <memory>
 #include <stdexcept>
 
@@ -185,31 +184,25 @@ CMS_SignerInfo* getFirstSignerInfo(CMS_ContentInfo* cms)
 // Add an unsigned attribute to a CMS_SignerInfo
 void addUnsignedAttr(CMS_SignerInfo* si, const char* oid, const std::vector<uint8_t>& value)
 {
-    ASN1_OBJECT* obj = OBJ_txt2obj(oid, 1);
+    Asn1ObjectPtr obj(OBJ_txt2obj(oid, 1));
     if (!obj)
         throw std::runtime_error(std::string("OBJ_txt2obj failed for OID: ") + oid);
 
-    ASN1_STRING* str = ASN1_STRING_new();
-    if (!str) {
-        ASN1_OBJECT_free(obj);
+    Asn1StringPtr str(ASN1_STRING_new());
+    if (!str)
         throw std::runtime_error("ASN1_STRING_new() failed");
-    }
-    ASN1_STRING_set(str, value.data(), static_cast<int>(value.size()));
+    ASN1_STRING_set(str.get(), value.data(), static_cast<int>(value.size()));
 
     // CMS_unsigned_add1_attr_by_OBJ adds a copy, we free our originals
-    X509_ATTRIBUTE* attr = X509_ATTRIBUTE_create_by_OBJ(
-        nullptr, obj, V_ASN1_SEQUENCE, const_cast<unsigned char*>(ASN1_STRING_get0_data(str)), ASN1_STRING_length(str));
-    ASN1_STRING_free(str);
-    ASN1_OBJECT_free(obj);
+    X509AttributePtr attr(X509_ATTRIBUTE_create_by_OBJ(
+        nullptr, obj.get(), V_ASN1_SEQUENCE, const_cast<unsigned char*>(ASN1_STRING_get0_data(str.get())),
+        ASN1_STRING_length(str.get())));
 
     if (!attr)
         throw std::runtime_error("X509_ATTRIBUTE_create_by_OBJ() failed: " + opensslError());
 
-    if (!CMS_unsigned_add1_attr(si, attr)) {
-        X509_ATTRIBUTE_free(attr);
+    if (!CMS_unsigned_add1_attr(si, attr.get()))
         throw std::runtime_error("CMS_unsigned_add1_attr() failed: " + opensslError());
-    }
-    X509_ATTRIBUTE_free(attr);
 }
 
 } // namespace
@@ -253,21 +246,17 @@ std::vector<uint8_t> CAdESModule::signBB(const std::vector<uint8_t>& data, Pkcs1
     // 4. Add signing-certificate-v2 signed attribute (ETSI EN 319 122-1 §5.2.2)
     auto sigCertV2Der = buildSigningCertV2Attr(signerCert.get());
 
-    ASN1_OBJECT* sigCertV2Oid = OBJ_txt2obj("1.2.840.113549.1.9.16.2.47", 1);
+    Asn1ObjectPtr sigCertV2Oid(OBJ_txt2obj("1.2.840.113549.1.9.16.2.47", 1));
     if (!sigCertV2Oid)
         throw std::runtime_error("OBJ_txt2obj failed for signing-certificate-v2 OID");
 
-    X509_ATTRIBUTE* sigCertAttr = X509_ATTRIBUTE_create_by_OBJ(
-        nullptr, sigCertV2Oid, V_ASN1_SEQUENCE, sigCertV2Der.data(), static_cast<int>(sigCertV2Der.size()));
-    ASN1_OBJECT_free(sigCertV2Oid);
+    X509AttributePtr sigCertAttr(X509_ATTRIBUTE_create_by_OBJ(
+        nullptr, sigCertV2Oid.get(), V_ASN1_SEQUENCE, sigCertV2Der.data(), static_cast<int>(sigCertV2Der.size())));
     if (!sigCertAttr)
         throw std::runtime_error("X509_ATTRIBUTE_create_by_OBJ() failed: " + opensslError());
 
-    if (!CMS_signed_add1_attr(si, sigCertAttr)) {
-        X509_ATTRIBUTE_free(sigCertAttr);
+    if (!CMS_signed_add1_attr(si, sigCertAttr.get()))
         throw std::runtime_error("CMS_signed_add1_attr() failed: " + opensslError());
-    }
-    X509_ATTRIBUTE_free(sigCertAttr);
 
     // 5. Finalize — OpenSSL computes message-digest, adds signing-time,
     //    hashes signed attributes, and calls our PKCS#11-backed EVP_PKEY
@@ -414,8 +403,7 @@ std::vector<uint8_t> CAdESModule::addArchiveTimestamp(const std::vector<uint8_t>
     // 3. Hash each unsigned attribute DER, excluding archive timestamps
     std::vector<std::vector<uint8_t>> attrHashes;
     // OID for id-aa-ets-archiveTimestampV3: 1.2.840.113549.1.9.16.2.48
-    std::unique_ptr<ASN1_OBJECT, decltype(&ASN1_OBJECT_free)> archiveTstOid(
-        OBJ_txt2obj("1.2.840.113549.1.9.16.2.48", 1), ASN1_OBJECT_free);
+    Asn1ObjectPtr archiveTstOid(OBJ_txt2obj("1.2.840.113549.1.9.16.2.48", 1));
     int attrCount = CMS_unsigned_get_attr_count(si);
     for (int i = 0; i < attrCount; ++i) {
         X509_ATTRIBUTE* attr = CMS_unsigned_get_attr(si, i);
@@ -431,10 +419,68 @@ std::vector<uint8_t> CAdESModule::addArchiveTimestamp(const std::vector<uint8_t>
     // 4. Build ATSHashIndex attribute
     auto atsHashIndex = buildAtsHashIndex(certHashes, crlHashes, attrHashes);
 
-    // 5. Timestamp the entire CMS DER encoding
-    auto cmsHash = sha256(cmsBytes);
+    // 5. Build the archive timestamp message imprint per ETSI EN 319 122-1 §5.5.4:
+    //    hash( signature_value || eContentType || eContent || certificates || crls || ats-hash-index-v3 )
+    std::vector<uint8_t> archiveInput;
+
+    // 5a. SignerInfo.signature value (raw octets)
+    ASN1_OCTET_STRING* sigValue = CMS_SignerInfo_get0_signature(si);
+    if (!sigValue)
+        throw std::runtime_error("Cannot get signature value from SignerInfo");
+    const unsigned char* sigData = ASN1_STRING_get0_data(sigValue);
+    int sigLen = ASN1_STRING_length(sigValue);
+    if (!sigData || sigLen <= 0)
+        throw std::runtime_error("Signature value is empty");
+    archiveInput.insert(archiveInput.end(), sigData, sigData + sigLen);
+
+    // 5b. eContentType OID DER
+    const ASN1_OBJECT* eContentType = CMS_get0_eContentType(cms.get());
+    if (eContentType) {
+        auto eContentTypeDer = derEncode(i2d_ASN1_OBJECT, const_cast<ASN1_OBJECT*>(eContentType));
+        if (!eContentTypeDer.empty())
+            archiveInput.insert(archiveInput.end(), eContentTypeDer.begin(), eContentTypeDer.end());
+    }
+
+    // 5c. eContent (the signed data octets) — for detached signatures this
+    //     is absent from the CMS structure, so we skip it when not present.
+    ASN1_OCTET_STRING** eContentRef = CMS_get0_content(cms.get());
+    if (eContentRef && *eContentRef) {
+        const unsigned char* eData = ASN1_STRING_get0_data(*eContentRef);
+        int eLen = ASN1_STRING_length(*eContentRef);
+        if (eData && eLen > 0)
+            archiveInput.insert(archiveInput.end(), eData, eData + eLen);
+    }
+
+    // 5d. Certificate values (DER-encoded, in order)
+    STACK_OF(X509)* certsForHash = CMS_get1_certs(cms.get());
+    if (certsForHash) {
+        for (int i = 0; i < sk_X509_num(certsForHash); ++i) {
+            X509* cert = sk_X509_value(certsForHash, i);
+            auto der = derEncode(i2d_X509, cert);
+            if (!der.empty())
+                archiveInput.insert(archiveInput.end(), der.begin(), der.end());
+        }
+        sk_X509_pop_free(certsForHash, X509_free);
+    }
+
+    // 5e. CRL values (DER-encoded, in order)
+    STACK_OF(X509_CRL)* crlsForHash = CMS_get1_crls(cms.get());
+    if (crlsForHash) {
+        for (int i = 0; i < sk_X509_CRL_num(crlsForHash); ++i) {
+            X509_CRL* crl = sk_X509_CRL_value(crlsForHash, i);
+            auto der = derEncode(i2d_X509_CRL, crl);
+            if (!der.empty())
+                archiveInput.insert(archiveInput.end(), der.begin(), der.end());
+        }
+        sk_X509_CRL_pop_free(crlsForHash, X509_CRL_free);
+    }
+
+    // 5f. ats-hash-index-v3 DER
+    archiveInput.insert(archiveInput.end(), atsHashIndex.begin(), atsHashIndex.end());
+
+    auto archiveHash = sha256(archiveInput);
     TSAClient tsaClient;
-    auto tsaResult = tsaClient.timestamp(cmsHash, tsa.url, tsa.timeoutSeconds);
+    auto tsaResult = tsaClient.timestamp(archiveHash, tsa.url, tsa.timeoutSeconds);
     if (!tsaResult.success)
         throw std::runtime_error("Archive TSA timestamp failed: " + tsaResult.errorMessage);
 

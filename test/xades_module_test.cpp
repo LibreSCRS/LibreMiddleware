@@ -10,6 +10,8 @@
 #include "signing_test_support/signing_test_support.h"
 #include "libresign/signing_service.h"
 
+#include "../lib/libresign/src/native/native_utils.h"
+
 #include <libxml/parser.h>
 #include <libxml/tree.h>
 #include <libxml/xpath.h>
@@ -108,14 +110,10 @@ class XAdESModuleTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        xmlInitParser();
+        libresign::native_utils::ensureXmlInitialized();
         softHsmPath = libresign::test::findSoftHsmPath();
         if (!softHsmPath)
             GTEST_SKIP() << "SoftHSM2 not found";
-    }
-    void TearDown() override
-    {
-        xmlCleanupParser();
     }
     const char* softHsmPath = nullptr;
 };
@@ -341,11 +339,7 @@ class XAdESModuleStandaloneTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        xmlInitParser();
-    }
-    void TearDown() override
-    {
-        xmlCleanupParser();
+        libresign::native_utils::ensureXmlInitialized();
     }
 };
 

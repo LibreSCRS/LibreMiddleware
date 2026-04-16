@@ -7,6 +7,8 @@
 #include "libresign/native/revocation_client.h"
 #include "libresign/types.h"
 
+#include <miniz.h>
+
 #include <openssl/bio.h>
 #include <openssl/buffer.h>
 #include <openssl/err.h>
@@ -18,6 +20,7 @@
 #include <chrono>
 #include <cctype>
 #include <climits>
+#include <cstdlib>
 #include <cstring>
 #include <format>
 #include <mutex>
@@ -137,6 +140,51 @@ std::string base64Encode(const uint8_t* data, size_t len)
 std::string base64Encode(const std::vector<uint8_t>& data)
 {
     return base64Encode(data.data(), data.size());
+}
+
+std::vector<uint8_t> base64Decode(const std::string& input)
+{
+    // Strip whitespace
+    std::string cleaned;
+    cleaned.reserve(input.size());
+    for (char c : input) {
+        if (!std::isspace(static_cast<unsigned char>(c)))
+            cleaned += c;
+    }
+    if (cleaned.empty())
+        return {};
+
+    // Add padding if needed
+    while (cleaned.size() % 4 != 0)
+        cleaned += '=';
+
+    if (cleaned.size() > static_cast<size_t>(INT_MAX))
+        return {};
+
+    // Use chain-freeing RAII wrapper (same pattern as base64Encode)
+    struct ChainFree {
+        void operator()(BIO* p) const { BIO_free_all(p); }
+    };
+
+    BIO* b64 = BIO_new(BIO_f_base64());
+    if (!b64)
+        return {};
+    BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+
+    BIO* bmem = BIO_new_mem_buf(cleaned.data(), static_cast<int>(cleaned.size()));
+    if (!bmem) {
+        BIO_free_all(b64);
+        return {};
+    }
+    std::unique_ptr<BIO, ChainFree> chain(BIO_push(b64, bmem));
+
+    std::vector<uint8_t> result(cleaned.size()); // Overallocate, decoded is always smaller
+    int len = BIO_read(chain.get(), result.data(), static_cast<int>(result.size()));
+
+    if (len <= 0)
+        return {};
+    result.resize(static_cast<size_t>(len));
+    return result;
 }
 
 std::string sha256Base64(const std::vector<uint8_t>& data)
@@ -323,6 +371,84 @@ std::vector<uint8_t> signHashWithToken(libresign::Pkcs11Token& token, X509* cert
         // ECDSA: token handles DigestInfo internally
         return token.sign(hash, alg);
     }
+}
+
+// ---- FlateDecode (zlib decompression) ----
+
+std::optional<std::vector<uint8_t>> flateDecode(std::span<const uint8_t> compressed,
+                                                 size_t sizeHint)
+{
+    if (compressed.empty())
+        return std::nullopt;
+
+    size_t outSize = sizeHint > 0 ? sizeHint : compressed.size() * 4;
+    std::vector<uint8_t> output(outSize);
+
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        mz_ulong destLen = static_cast<mz_ulong>(output.size());
+        int rc = mz_uncompress(output.data(), &destLen,
+                               compressed.data(), static_cast<mz_ulong>(compressed.size()));
+        if (rc == MZ_OK) {
+            output.resize(destLen);
+            return output;
+        }
+        if (rc != MZ_BUF_ERROR)
+            return std::nullopt;
+        output.resize(output.size() * 2);
+    }
+    return std::nullopt;
+}
+
+// ---- PNG predictor reversal for PDF xref streams ----
+
+std::optional<std::vector<uint8_t>> reversePngPredictor(
+    std::span<const uint8_t> data, int columns)
+{
+    if (columns <= 0)
+        return std::nullopt;
+    const int rowBytes = columns + 1; // filter byte + data
+    if (data.empty() || data.size() % static_cast<size_t>(rowBytes) != 0)
+        return std::nullopt;
+
+    const int rows = static_cast<int>(data.size()) / rowBytes;
+    std::vector<uint8_t> output(static_cast<size_t>(rows) * static_cast<size_t>(columns));
+    std::vector<uint8_t> prevRow(static_cast<size_t>(columns), 0);
+
+    for (int r = 0; r < rows; ++r) {
+        uint8_t filter = data[static_cast<size_t>(r) * static_cast<size_t>(rowBytes)];
+        const uint8_t* raw = data.data() + static_cast<size_t>(r) * static_cast<size_t>(rowBytes) + 1;
+        uint8_t* out = output.data() + static_cast<size_t>(r) * static_cast<size_t>(columns);
+
+        for (int c = 0; c < columns; ++c) {
+            switch (filter) {
+            case 0: out[c] = raw[c]; break;                                        // None
+            case 1: out[c] = static_cast<uint8_t>(raw[c] + (c > 0 ? out[c - 1] : 0)); break; // Sub
+            case 2: out[c] = static_cast<uint8_t>(raw[c] + prevRow[c]); break;     // Up
+            case 3: { // Average
+                uint8_t left = (c > 0) ? out[c - 1] : uint8_t{0};
+                out[c] = static_cast<uint8_t>(raw[c] + (left + prevRow[c]) / 2);
+                break;
+            }
+            case 4: { // Paeth
+                int a = (c > 0) ? out[c - 1] : 0;     // left
+                int b = prevRow[c];                      // above
+                int cc2 = (c > 0) ? prevRow[c - 1] : 0; // upper-left
+                int p = a + b - cc2;
+                int pa = std::abs(p - a);
+                int pb = std::abs(p - b);
+                int pc = std::abs(p - cc2);
+                uint8_t pr = (pa <= pb && pa <= pc) ? static_cast<uint8_t>(a)
+                           : (pb <= pc)             ? static_cast<uint8_t>(b)
+                                                    : static_cast<uint8_t>(cc2);
+                out[c] = static_cast<uint8_t>(raw[c] + pr);
+                break;
+            }
+            default: return std::nullopt; // Unsupported filter
+            }
+        }
+        std::copy(out, out + columns, prevRow.begin());
+    }
+    return output;
 }
 
 } // namespace libresign::native_utils

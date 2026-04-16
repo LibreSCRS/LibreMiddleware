@@ -10,9 +10,6 @@
 #include <libxml/xpath.h>
 #include <libxml/xpathInternals.h>
 
-#include <openssl/bio.h>
-#include <openssl/evp.h>
-
 #include <algorithm>
 #include <climits>
 #include <memory>
@@ -26,62 +23,10 @@ namespace {
 using ::libresign::XmlDocPtr;
 using ::libresign::XPathCtxPtr;
 using ::libresign::XPathObjPtr;
+using native_utils::base64Decode;
 
 const auto* TSL_NS_X = BAD_CAST "http://uri.etsi.org/02231/v2#";
 const auto* TSL_PREFIX = BAD_CAST "tsl";
-
-// Base64 decode using OpenSSL BIO chain
-std::vector<uint8_t> base64Decode(const std::string& input)
-{
-    // Strip whitespace from input
-    std::string cleaned;
-    cleaned.reserve(input.size());
-    for (char c : input) {
-        if (!std::isspace(static_cast<unsigned char>(c))) {
-            cleaned += c;
-        }
-    }
-
-    if (cleaned.empty()) {
-        return {};
-    }
-
-    // Add padding if needed
-    while (cleaned.size() % 4 != 0) {
-        cleaned += '=';
-    }
-
-    if (cleaned.size() > static_cast<size_t>(INT_MAX)) {
-        return {};
-    }
-
-    // Null-check both BIO allocations before dereferencing. On OOM,
-    // BIO_new / BIO_new_mem_buf may return null; the original code would
-    // then crash in BIO_set_flags (a deref macro). Using BIO_free_all on
-    // a single owner of the chain matches the R7 base64Encode cleanup.
-    BIO* b64 = BIO_new(BIO_f_base64());
-    if (!b64)
-        return {};
-    BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
-
-    BIO* bmem = BIO_new_mem_buf(cleaned.data(), static_cast<int>(cleaned.size()));
-    if (!bmem) {
-        BIO_free_all(b64);
-        return {};
-    }
-    BIO* chain = BIO_push(b64, bmem);
-
-    std::vector<uint8_t> result(cleaned.size()); // Overallocate, decoded is always smaller
-    int len = BIO_read(chain, result.data(), static_cast<int>(result.size()));
-    BIO_free_all(chain);
-
-    if (len <= 0) {
-        return {};
-    }
-
-    result.resize(static_cast<size_t>(len));
-    return result;
-}
 
 // Extract text content from an XPath result (first match)
 std::string xpathText(xmlXPathContextPtr ctx, const char* expr)
@@ -163,19 +108,31 @@ TrustedListInfo parseDoc(xmlDocPtr doc)
     info.issueDate = xpathText(ctx.get(), "//tsl:SchemeInformation/tsl:ListIssueDateTime");
     info.nextUpdate = xpathText(ctx.get(), "//tsl:SchemeInformation/tsl:NextUpdate/tsl:dateTime");
 
-    // Extract pointers to other TSLs (LOTL)
+    // Extract pointers to other TSLs (LOTL), including per-pointer signing certs
     {
         XPathObjPtr pointerObj(xmlXPathEvalExpression(
-            reinterpret_cast<const xmlChar*>("//tsl:PointersToOtherTSL/tsl:OtherTSLPointer/tsl:TSLLocation"),
+            reinterpret_cast<const xmlChar*>("//tsl:PointersToOtherTSL/tsl:OtherTSLPointer"),
             ctx.get()));
 
         if (pointerObj && pointerObj->nodesetval) {
             for (int i = 0; i < pointerObj->nodesetval->nodeNr; ++i) {
-                xmlChar* content = xmlNodeGetContent(pointerObj->nodesetval->nodeTab[i]);
-                if (content) {
-                    info.pointersToOtherTSL.emplace_back(reinterpret_cast<const char*>(content));
-                    xmlFree(content);
+                xmlNodePtr pointerNode = pointerObj->nodesetval->nodeTab[i];
+
+                std::string url = xpathTextRelative(ctx.get(), pointerNode, "tsl:TSLLocation");
+                if (url.empty())
+                    continue;
+
+                TslPointer pointer;
+                pointer.url = std::move(url);
+
+                std::string certB64 = xpathTextRelative(
+                    ctx.get(), pointerNode,
+                    "tsl:ServiceDigitalIdentity/tsl:DigitalId/tsl:X509Certificate");
+                if (!certB64.empty()) {
+                    pointer.signingCertDer = base64Decode(certB64);
                 }
+
+                info.pointersToOtherTSL.push_back(std::move(pointer));
             }
         }
     }
@@ -277,6 +234,48 @@ TrustedListInfo TrustedListParser::parse(const std::string& xmlString)
     return parseDoc(doc.get());
 }
 
+std::vector<uint8_t> TrustedListParser::fetchRaw(const std::string& url, int timeoutSeconds)
+{
+    auto result = fetchRawConditional(url, {}, {}, timeoutSeconds);
+    return std::move(result.data);
+}
+
+TrustedListParser::FetchResult TrustedListParser::fetchRawConditional(
+    const std::string& url, const std::string& etag,
+    const std::string& lastModified, int timeoutSeconds)
+{
+    HttpClient client;
+    FetchResult result;
+
+    std::vector<std::string> headers;
+    if (!etag.empty())
+        headers.push_back("If-None-Match: " + etag);
+    if (!lastModified.empty())
+        headers.push_back("If-Modified-Since: " + lastModified);
+
+    auto response = headers.empty()
+                        ? client.get(url, timeoutSeconds)
+                        : client.getWithHeaders(url, headers, timeoutSeconds);
+
+    if (response.statusCode == 304) {
+        result.notModified = true;
+        return result;
+    }
+
+    if (response.statusCode != 200 || response.body.empty())
+        return result;
+
+    result.data = std::vector<uint8_t>(response.body.begin(), response.body.end());
+
+    // Extract response headers for caching
+    if (auto it = response.headers.find("etag"); it != response.headers.end())
+        result.etag = it->second;
+    if (auto it = response.headers.find("last-modified"); it != response.headers.end())
+        result.lastModified = it->second;
+
+    return result;
+}
+
 TrustedListInfo TrustedListParser::fetch(const std::string& url, int timeoutSeconds)
 {
     HttpClient client;
@@ -289,13 +288,11 @@ TrustedListInfo TrustedListParser::fetch(const std::string& url, int timeoutSeco
     return parse(response.body);
 }
 
-namespace {
-
 // LOTL pointers come from signed XML but are still attacker-controllable if
 // the signer is compromised or trust is misconfigured — treat them as
 // untrusted input. Reject non-https, private/loopback IPs, and cap the
 // pointer count (EU LOTL typically lists ~30 member states; 64 is plenty).
-bool isSafeTslUrl(const std::string& urlStr)
+bool TrustedListParser::isSafeTslUrl(const std::string& urlStr)
 {
     constexpr std::string_view kHttpsPrefix = "https://";
     if (urlStr.size() < kHttpsPrefix.size() + 1)
@@ -339,8 +336,8 @@ bool isSafeTslUrl(const std::string& urlStr)
     return true;
 }
 
+namespace {
 constexpr size_t kMaxTslPointers = 64;
-
 } // namespace
 
 std::vector<TrustedServiceEntry> TrustedListParser::fetchLotl(const std::string& lotlUrl, int timeoutSeconds)
@@ -356,12 +353,12 @@ std::vector<TrustedServiceEntry> TrustedListParser::fetchLotl(const std::string&
     // mitigate SSRF via a compromised or malformed LOTL that points at
     // cloud-metadata IPs, internal services, file://, etc.
     size_t fetched = 0;
-    for (const auto& tlUrl : lotlInfo.pointersToOtherTSL) {
+    for (const auto& pointer : lotlInfo.pointersToOtherTSL) {
         if (fetched >= kMaxTslPointers)
             break;
-        if (!isSafeTslUrl(tlUrl))
+        if (!isSafeTslUrl(pointer.url))
             continue;
-        auto tlInfo = fetch(tlUrl, timeoutSeconds);
+        auto tlInfo = fetch(pointer.url, timeoutSeconds);
         allEntries.insert(allEntries.end(), std::make_move_iterator(tlInfo.services.begin()),
                           std::make_move_iterator(tlInfo.services.end()));
         ++fetched;
