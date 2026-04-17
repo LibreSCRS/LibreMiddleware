@@ -39,4 +39,5 @@ set_target_properties(librescrs-pkcs11 PROPERTIES
     OUTPUT_NAME "rescrs-pkcs11"
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib/pkcs11"
 )
