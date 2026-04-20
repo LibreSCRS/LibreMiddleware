@@ -6,8 +6,8 @@
  *                      with the CardEdge PKI applet.
  *
  * Serbian eID, health insurance, and Chamber of Commerce cards use the
- * same CardEdge PKCS#15 applet.  Cards are matched either by ATR
- * (Gemalto 2014+ eID) or by AID selection.
+ * same CardEdge PKCS#15 applet.  Cards are matched by ATR whitelist,
+ * with a PKCS#15 AID select as a confirmation step.
  *
  * Apollo 2008 eID has no CardEdge applet and is NOT supported.
  *
@@ -87,21 +87,26 @@ static struct sc_card_driver librescrs_drv = {
     NULL                  /* dll         */
 };
 
-/*
- * ATR table.
- *
- * Gemalto (2014+) Serbian eID:  3B FF 94 ...
- * Mask FF FF FF matches the first 3 bytes; remaining bytes vary between
- * individual cards and are don't-cares.
- *
- * Other CardEdge cards have no distinct ATR and are identified via AID
- * selection in match_card().
- *
- * Apollo 2008 ATR 3B B9 18 ... is intentionally absent — no CardEdge applet.
- */
+/* Full ATR list provided by NetSeT (the CardEdge PKI applet vendor). Covers
+ * citizen eID, foreigner eID, PKS Chamber of Commerce, and RFZO health
+ * insurance cards across their various underlying card platforms. */
 static struct sc_atr_table librescrs_atrs[] = {
-    { "3B:FF:94",  "FF:FF:FF",  "Serbian eID (Gemalto 2014+)", SC_CARD_TYPE_UNKNOWN, 0, NULL },
-    { NULL, NULL, NULL, 0, 0, NULL }
+    {"3B:FF:94:00:00:81:31:80:43:80:31:80:65:B0:85:02:01:F3:12:0F:FF:82:90:00:79", NULL, "Serbian eID (Gemalto Multiapp 80K)",                    SC_CARD_TYPE_UNKNOWN, 0, NULL},
+    {"3B:F8:13:00:00:81:31:FE:45:4A:43:4F:50:76:32:34:31:B7",                      NULL, "Serbian eID (NXP JCOP v2.4.1 80K)",                     SC_CARD_TYPE_UNKNOWN, 0, NULL},
+    {"3B:FA:13:00:00:81:31:FE:45:4A:43:4F:50:32:31:56:32:33:31:91",                NULL, "Serbian eID (NXP JCOP21 v2.3.1)",                       SC_CARD_TYPE_UNKNOWN, 0, NULL},
+    {"3B:F4:13:00:00:81:31:FE:45:52:46:5A:4F:ED",                                  NULL, "Serbian health card (NXP JCOP21 v2.4.1)",               SC_CARD_TYPE_UNKNOWN, 0, NULL},
+    {"3B:7A:96:00:00:80:65:A2:01:01:02:3D:72:D6:43",                               NULL, "Serbian eID (Gemalto Multiapp 80K IDCore10)",           SC_CARD_TYPE_UNKNOWN, 0, NULL},
+    {"3B:F9:96:00:00:80:31:FE:45:53:43:45:37:20:47:43:4E:33:5E",                   NULL, "Serbian eID (SmartCafe Expert v7.0)",                   SC_CARD_TYPE_UNKNOWN, 0, NULL},
+    {"3B:FD:94:00:00:81:31:80:43:80:31:80:65:B1:F3:01:07:0F:83:01:90:00:17",       NULL, "Serbian eID (Gemalto Dual-Interface 144K Contact)",     SC_CARD_TYPE_UNKNOWN, 0, NULL},
+    {"3B:89:80:01:53:43:45:2E:37:20:20:20:20:44",                                  NULL, "Serbian eID (SmartCafe Expert v7.0 Contactless)",       SC_CARD_TYPE_UNKNOWN, 0, NULL},
+    {"3B:F9:96:00:00:80:31:FE:45:53:43:45:37:20:20:00:20:20:07",                   NULL, "Serbian eID (SmartCafe Expert v7.1)",                   SC_CARD_TYPE_UNKNOWN, 0, NULL},
+    {"3B:DE:97:00:80:31:FE:45:53:43:45:20:38:2E:30:2D:43:31:56:30:0D:0A:2E",       NULL, "Serbian PKS card (SmartCafe Expert v8.0 B)",            SC_CARD_TYPE_UNKNOWN, 0, NULL},
+    {"3B:9E:96:80:31:FE:45:53:43:45:20:38:2E:30:2D:43:31:56:30:0D:0A:6F",          NULL, "Serbian eID (SmartCafe Expert v8.0)",                   SC_CARD_TYPE_UNKNOWN, 0, NULL},
+    {"3B:9E:96:80:31:FE:45:53:43:45:20:38:2E:30:2D:43:32:56:30:0D:0A:6C",          NULL, "Serbian eID (SmartCafe Expert v8.0 C2)",                SC_CARD_TYPE_UNKNOWN, 0, NULL},
+    {"3B:D5:18:FF:81:91:FE:1F:C3:80:73:C8:21:10:0A",                               NULL, "Serbian eID (NXP JCOP4 P71)",                           SC_CARD_TYPE_UNKNOWN, 0, NULL},
+    {"3B:DE:97:00:80:31:FE:45:53:43:45:20:38:2E:30:2D:43:32:56:30:0D:0A:2D",       NULL, "Serbian PKS card (SmartCafe Expert v8.0 C2 B)",         SC_CARD_TYPE_UNKNOWN, 0, NULL},
+    {"3B:9E:97:80:31:FE:45:53:43:45:20:38:2E:30:2D:43:31:56:30:0D:0A:6E",          NULL, "Serbian health card (SmartCafe Expert v8.0 S)",         SC_CARD_TYPE_UNKNOWN, 0, NULL},
+    {NULL, NULL, NULL, 0, 0, NULL}
 };
 
 /* Select an AID and return the status word (0 on transport error). */
@@ -127,16 +132,11 @@ static int librescrs_select_aid(sc_card_t *card, const u8 *aid, size_t aid_len)
 
 static int librescrs_match_card(sc_card_t *card)
 {
-    /* ATR hit: Gemalto 2014+ Serbian eID (3B FF 94 ...) */
-    if (_sc_match_atr(card, librescrs_atrs, &card->type) >= 0)
-        return 1;
-
-    /* AID-based match for cards without a distinct ATR. */
-    if (librescrs_select_aid(card, AID_PKCS15, AID_PKCS15_LEN) == 0x9000) {
-        sc_log(card->ctx, "librescrs: CardEdge applet found via AID");
+    int i = _sc_match_atr(card, librescrs_atrs, &card->type);
+    if (i >= 0 && librescrs_select_aid(card, AID_PKCS15, AID_PKCS15_LEN) == 0x9000) {
+        card->name = librescrs_atrs[i].name;
         return 1;
     }
-
     return 0;
 }
 
