@@ -226,13 +226,92 @@ PdfParser::PdfParser(std::span<const uint8_t> data) : raw(data) {}
 
 bool PdfParser::parse()
 {
+    size_t xrefOffset = 0;
     try {
-        size_t xrefOffset = findStartXref();
-        parseXrefAt(xrefOffset);
-        return true;
+        xrefOffset = findStartXref();
     } catch (...) {
         return false;
     }
+
+    try {
+        parseXrefAt(xrefOffset);
+        resolvedXref = xrefOffset;
+        return true;
+    } catch (...) {
+        // Adobe-compatible fallback: the stored startxref offset may be stale
+        // (e.g. the file had a non-PDF prefix that was stripped, or the
+        // generator wrote the wrong offset). Scan the last ~10 KB for a
+        // standalone "xref" keyword at a line start, take the most recent
+        // match, and retry. If that also fails, preserve the original error
+        // surface by returning false (matches the previous behavior for
+        // truly broken PDFs).
+        //
+        // Reset any partial state accumulated by the failed attempt so we
+        // don't mix entries from two different xref tables.
+        objectOffsets.clear();
+        compressedObjects.clear();
+        trailerDict = PdfValue::null();
+        visitedXref.clear();
+
+        size_t fallbackOffset = findXrefKeywordNear();
+        if (fallbackOffset == std::string_view::npos)
+            return false;
+
+        try {
+            parseXrefAt(fallbackOffset);
+            resolvedXref = fallbackOffset;
+            return true;
+        } catch (...) {
+            return false;
+        }
+    }
+}
+
+size_t PdfParser::findXrefKeywordNear() const
+{
+    // Search the last ~10 KB of `raw` for a standalone "xref" keyword that
+    // appears at the start of a line (preceded by \n, \r, or buffer start)
+    // and is followed by whitespace. Returns the offset of the keyword, or
+    // std::string_view::npos if not found.
+    constexpr size_t kScanWindow = 10 * 1024;
+    constexpr std::string_view kKeyword = "xref";
+
+    size_t scanStart = (raw.size() > kScanWindow) ? raw.size() - kScanWindow : 0;
+    std::string_view window(reinterpret_cast<const char*>(raw.data() + scanStart), raw.size() - scanStart);
+
+    size_t bestMatch = std::string_view::npos;
+    size_t searchFrom = 0;
+    while (true) {
+        auto pos = window.find(kKeyword, searchFrom);
+        if (pos == std::string_view::npos)
+            break;
+
+        // Must be at line start: either position 0 in the window (and also
+        // at buffer start), or preceded by CR/LF.
+        bool atLineStart = false;
+        size_t absPos = scanStart + pos;
+        if (absPos == 0) {
+            atLineStart = true;
+        } else {
+            uint8_t prev = raw[absPos - 1];
+            atLineStart = (prev == '\n' || prev == '\r');
+        }
+
+        // Must be followed by whitespace (not part of "xrefstm" or similar).
+        bool okSuffix = false;
+        size_t after = absPos + kKeyword.size();
+        if (after < raw.size()) {
+            uint8_t nx = raw[after];
+            okSuffix = (nx == ' ' || nx == '\t' || nx == '\r' || nx == '\n');
+        }
+
+        if (atLineStart && okSuffix)
+            bestMatch = absPos; // keep updating → final value is the last match
+
+        searchFrom = pos + 1;
+    }
+
+    return bestMatch;
 }
 
 const std::map<int, PdfParser::CompressedRef>& PdfParser::compressedObjectRefs() const

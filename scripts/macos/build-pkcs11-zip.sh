@@ -8,7 +8,7 @@
 # Prerequisites:
 #   - CMake Release build already compiled in BUILD_DIR
 #
-# Output: LibreSCRS-pkcs11-<VERSION>-macos.zip in the project root.
+# Output: librescrs-pkcs11-<VERSION>-macos-universal.zip in the project root.
 
 set -euo pipefail
 
@@ -98,7 +98,7 @@ LICENSE
   LGPL-2.1-or-later  — see https://github.com/LibreSCRS/LibreMiddleware
 EOF
 
-OUTPUT="$PROJECT_ROOT/LibreSCRS-pkcs11-$VERSION-macos.zip"
+OUTPUT="$PROJECT_ROOT/librescrs-pkcs11-$VERSION-macos-universal.zip"
 echo "Creating ZIP..."
 (cd "$STAGING_PARENT" && zip -r -y "$OUTPUT" "$PKG_NAME")
 

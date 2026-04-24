@@ -122,7 +122,10 @@ PAdESModule::PreparedPdf PAdESModule::preparePdf(const std::vector<uint8_t>& pdf
     if (!parser.parse())
         throw std::runtime_error("PAdES: failed to parse input PDF");
 
-    size_t oldStartXref = PdfParser::findStartXref(pdfData);
+    // Use the xref offset that parse() actually resolved (may differ from the
+    // stored startxref value when the Adobe-compatible fallback scan kicked
+    // in — we must point /Prev at the real table, not the stale value).
+    size_t oldStartXref = parser.resolvedXrefOffset();
     size_t nextObjNum = static_cast<size_t>(parser.trailer().get("Size").asInt());
 
     auto rootRefVal = parser.trailer().get("Root").asRef();
@@ -442,14 +445,55 @@ PAdESModule::PreparedPdf PAdESModule::preparePdf(const std::vector<uint8_t>& pdf
 
 // ---- sign ----
 
-SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfData, Pkcs11Token& token, SignatureLevel level,
+SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, Pkcs11Token& token, SignatureLevel level,
                                 const TSAConfig& tsa, const VisualSignatureParams& visual)
 {
     try {
-        if (pdfData.size() < 5)
+        if (pdfDataIn.size() < 5)
             return {false, {}, "Input PDF is too small"};
 
-        // Verify PDF magic
+        // Adobe Acrobat Implementation Notes §H.3: tolerate up to 1024 bytes of
+        // non-PDF prefix before the "%PDF-" header (e.g. multipart/form-data
+        // wrappers from web-form uploads), and strip trailing junk after the
+        // last "%%EOF". This matches Acrobat, Foxit, qpdf, pdfinfo behavior.
+        //
+        // We work on a local copy so the caller's input is never mutated.
+        const std::string_view kPdfMagic = "%PDF-";
+        constexpr size_t kHeaderScanWindow = 1024;
+
+        size_t prefixLen = 0;
+        {
+            size_t scanLen = std::min(pdfDataIn.size(), kHeaderScanWindow);
+            std::string_view scan(reinterpret_cast<const char*>(pdfDataIn.data()), scanLen);
+            auto found = scan.find(kPdfMagic);
+            if (found == std::string_view::npos)
+                return {false, {}, "Input is not a valid PDF (missing %PDF- header)"};
+            prefixLen = found;
+        }
+
+        std::vector<uint8_t> pdfData(pdfDataIn.begin() + static_cast<long>(prefixLen), pdfDataIn.end());
+
+        // Strip trailing data after the last "%%EOF". Keep an optional single
+        // trailing CR/LF. If no "%%EOF" is present the PDF is structurally
+        // broken; leave the buffer as-is and let the parser surface the error.
+        {
+            const std::string_view kEof = "%%EOF";
+            std::string_view view(reinterpret_cast<const char*>(pdfData.data()), pdfData.size());
+            auto eofPos = view.rfind(kEof);
+            if (eofPos != std::string_view::npos) {
+                size_t keep = eofPos + kEof.size();
+                // Preserve one optional CR/LF / CRLF after %%EOF so consumers
+                // that expect a line-terminated marker still see one.
+                if (keep < pdfData.size() && pdfData[keep] == '\r')
+                    ++keep;
+                if (keep < pdfData.size() && pdfData[keep] == '\n')
+                    ++keep;
+                if (keep < pdfData.size())
+                    pdfData.resize(keep);
+            }
+        }
+
+        // Verify PDF magic at start of the normalized buffer (sanity check).
         std::string_view header(reinterpret_cast<const char*>(pdfData.data()), 5);
         if (header != "%PDF-")
             return {false, {}, "Input is not a valid PDF (missing %PDF- header)"};

@@ -8,7 +8,7 @@
 # Prerequisites:
 #   - CMake Release build already compiled in BUILD_DIR
 #
-# Output: LibreSCRS-pkcs11-<VERSION>-linux-<ARCH>.tar.gz in the project root.
+# Output: librescrs-pkcs11-<VERSION>-linux-<ARCH>.tar.gz in the project root.
 
 set -euo pipefail
 
@@ -118,7 +118,7 @@ LICENSE
   LGPL-2.1-or-later  — see https://github.com/LibreSCRS/LibreMiddleware
 EOF
 
-OUTPUT="$PROJECT_ROOT/LibreSCRS-pkcs11-$VERSION-linux-$ARCH.tar.gz"
+OUTPUT="$PROJECT_ROOT/librescrs-pkcs11-$VERSION-linux-$ARCH.tar.gz"
 echo "Creating tarball..."
 tar -czf "$OUTPUT" -C "$STAGING_PARENT" "$PKG_NAME"
 

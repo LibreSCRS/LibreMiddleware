@@ -899,3 +899,62 @@ TEST(PdfParserTest, ObjStreamCaching)
     EXPECT_EQ(obj5.get("Type").asName(), "Page");
     EXPECT_EQ(obj6.get("Type").asName(), "Font");
 }
+
+// ---- Adobe-compatible startxref fallback (§H.3 tolerance) ----
+
+// Build a minimal PDF, then bump the offset stored after "startxref" by the
+// given delta. Simulates a wrapped PDF whose generator wrote offsets relative
+// to the outer file rather than the inner PDF.
+static std::vector<uint8_t> bumpStartXrefOffset(const std::vector<uint8_t>& pdf, size_t delta)
+{
+    std::string s(pdf.begin(), pdf.end());
+    size_t sx = s.rfind("startxref");
+    if (sx == std::string::npos)
+        return pdf;
+    // Advance past "startxref" and the single newline that follows it.
+    size_t numStart = sx + std::string("startxref").size();
+    while (numStart < s.size() && (s[numStart] == '\n' || s[numStart] == '\r' || s[numStart] == ' '))
+        ++numStart;
+    size_t numEnd = numStart;
+    while (numEnd < s.size() && s[numEnd] >= '0' && s[numEnd] <= '9')
+        ++numEnd;
+    int64_t original = 0;
+    std::string numStr(s.begin() + numStart, s.begin() + numEnd);
+    original = std::stoll(numStr);
+    std::string replacement = std::to_string(original + static_cast<int64_t>(delta));
+    s.replace(numStart, numEnd - numStart, replacement);
+    return {s.begin(), s.end()};
+}
+
+TEST(PdfParserTest, ParsesWhenStartxrefOffsetIsStale)
+{
+    auto good = buildMinimalPdf();
+    // Offset stored in startxref is ~200 bytes too large — simulates an
+    // outer-relative xref offset left behind after a prefix strip.
+    auto bad = bumpStartXrefOffset(good, 200);
+
+    PdfParser parser(bad);
+    ASSERT_TRUE(parser.parse()) << "fallback scan should locate xref keyword";
+
+    auto trailer = parser.trailer();
+    ASSERT_EQ(trailer.type(), PdfValueType::Dict);
+    EXPECT_EQ(trailer.get("Size").asInt(), 5);
+
+    // resolvedXrefOffset should point at the actual "xref" keyword, not the
+    // stale stored value. Value should be the real xref offset from the PDF.
+    std::string_view view(reinterpret_cast<const char*>(bad.data()), bad.size());
+    size_t realXref = view.rfind("xref\n0 5");
+    ASSERT_NE(realXref, std::string_view::npos);
+    EXPECT_EQ(parser.resolvedXrefOffset(), realXref);
+}
+
+TEST(PdfParserTest, FailsOnRandomBytesNoHeader)
+{
+    std::vector<uint8_t> junk;
+    for (int i = 0; i < 2048; ++i)
+        junk.push_back(static_cast<uint8_t>((i * 37 + 11) & 0xFF));
+    // Make sure there's no "%PDF-" or "xref" in the random stream by accident.
+    // (The deterministic pattern above doesn't produce either substring.)
+    PdfParser parser(junk);
+    EXPECT_FALSE(parser.parse());
+}

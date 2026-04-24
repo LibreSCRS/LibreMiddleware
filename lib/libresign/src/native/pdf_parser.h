@@ -163,6 +163,18 @@ public:
     // Static overload operates on arbitrary data; instance method delegates to it.
     static size_t findStartXref(std::span<const uint8_t> data);
 
+    // Byte offset of the xref table that was actually parsed successfully by
+    // parse(). Usually equals findStartXref() value, but may differ when the
+    // Adobe-compatible fallback scan located the table at a different offset
+    // (e.g. after a prefix strip changed absolute byte positions). Callers
+    // that emit incremental updates should use this for /Prev rather than
+    // re-reading the potentially stale startxref value. Returns 0 before
+    // parse() succeeds.
+    size_t resolvedXrefOffset() const
+    {
+        return resolvedXref;
+    }
+
     // Escape a string for use inside a PDF parenthesized string literal.
     // Handles (, ), \, CR, LF, tab, backspace, formfeed.
     static std::string escapeStringForPdf(const std::string& s);
@@ -184,6 +196,7 @@ private:
     PdfValue trailerDict;
     std::map<int, size_t> objectOffsets;            // objNum -> byte offset in raw
     std::map<int, CompressedRef> compressedObjects; // objNum -> object stream ref
+    size_t resolvedXref = 0;                        // byte offset of xref table actually parsed
 
     // Recursion / cycle guards against attacker-crafted PDFs.
     // parseDepth bounds parseValue → parseArray/parseDict recursion; a PDF
@@ -209,6 +222,13 @@ private:
     void parseXrefTable(size_t xrefOffset);
     void parseXrefStream(size_t offset);
     void parseXrefAt(size_t offset);
+
+    // Adobe-compatible fallback: scan last ~10 KB for a standalone "xref"
+    // keyword at line start when the stored startxref offset is stale.
+    // Returns offset of the last valid match, or std::string_view::npos if
+    // no match is found. Xref streams without the plain-text keyword are
+    // not recovered by this fallback (rare; well-formed files are unaffected).
+    size_t findXrefKeywordNear() const;
     void decodeXrefStreamEntries(std::span<const uint8_t> data, const std::vector<int>& w,
                                  const std::vector<std::pair<int, int>>& indexPairs);
 
