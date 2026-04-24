@@ -186,7 +186,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: pkcs11-linux
-          path: LibreSCRS-pkcs11-*.tar.gz
+          path: librescrs-pkcs11-*.tar.gz
 
   pkcs11-macos:
     needs: test-macos
@@ -210,7 +210,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: pkcs11-macos
-          path: LibreSCRS-pkcs11-*.zip
+          path: librescrs-pkcs11-*.zip
 
   release:
     needs: [test-linux, test-macos, cardedge-opensc-linux, cardedge-opensc-macos, pkcs11-linux, pkcs11-macos]
