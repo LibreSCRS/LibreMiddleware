@@ -1,2 +1,0 @@
-/usr/bin/ar qc libPKSCard.a CMakeFiles/PKSCard.dir/src/pkscard.cpp.o
-/usr/bin/ranlib libPKSCard.a

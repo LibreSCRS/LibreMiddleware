@@ -1,2 +1,0 @@
-/usr/bin/ar qc libVehicleCard.a CMakeFiles/VehicleCard.dir/src/vehiclecard.cpp.o
-/usr/bin/ranlib libVehicleCard.a
