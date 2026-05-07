@@ -268,9 +268,24 @@ jobs:
             ! -name '*.sigstore.json' \
             -exec sh -c 'cosign sign-blob "$1" --bundle "$1.sigstore.json" --yes' _ {} \;
 
-      - uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: |
-            artifacts/*
-            artifacts/*.sigstore.json
+      - name: Create GitHub release with all signed artefacts
+        # Replaces softprops/action-gh-release@v2 — that action races
+        # between asset upload and metadata update; both rc1 attempts
+        # failed at "error updating release asset metadata: HttpError:
+        # Not Found" even though every `✅ Uploaded` line succeeded.
+        # `gh release create` does it deterministically in a single
+        # request that includes the assets, then exits.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Mark X.Y.Z-{rc,beta,alpha,…} as pre-release; everything else
+          # is a stable release.
+          PRERELEASE_FLAG=""
+          case "${{ github.ref_name }}" in
+              *-rc*|*-beta*|*-alpha*|*-pre*) PRERELEASE_FLAG="--prerelease" ;;
+          esac
+          gh release create "${{ github.ref_name }}" \
+              --title "${{ github.ref_name }}" \
+              --generate-notes \
+              $PRERELEASE_FLAG \
+              artifacts/*
