@@ -284,7 +284,7 @@ design.
 {
   "pluginId": "piv",
   "displayName": "PIV (NIST SP 800-73)",
-  "abiVersion": 7,
+  "abiVersion": 6,
   "capabilities": ["PKI", "PinManagement"],
   "preReadAuth": "None",
   "atrs": []

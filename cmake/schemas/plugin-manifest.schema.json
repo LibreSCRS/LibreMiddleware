@@ -7,7 +7,7 @@
   "properties": {
     "pluginId":    { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,30}$" },
     "displayName": { "type": "string", "minLength": 1 },
-    "abiVersion":  { "type": "integer", "const": 7 },
+    "abiVersion":  { "type": "integer", "const": 6 },
     "capabilities": {
       "type": "array",
       "items": { "enum": ["PKI", "PinManagement", "IdentityData", "EmrtdCrypto"] },
