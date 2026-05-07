@@ -13,33 +13,31 @@ LibreSCRS::Auth::AuthRequirement::forSigning(LibreSCRS::LocalizedText, int)
 LibreSCRS::Auth::AuthRequirement::forSigning(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, int)
 LibreSCRS::Auth::AuthRequirement::forUnblockPin(LibreSCRS::LocalizedText)
 LibreSCRS::Auth::AuthRequirement::forUnblockPin(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)
-LibreSCRS::CancelSource::~CancelSource()
 LibreSCRS::CancelSource::CancelSource()
-LibreSCRS::CancelSource::CancelSource(LibreSCRS::CancelSource&&)
 LibreSCRS::CancelSource::CancelSource(LibreSCRS::CancelSource const&)
+LibreSCRS::CancelSource::CancelSource(LibreSCRS::CancelSource&&)
 LibreSCRS::CancelSource::isCancelled() const
-LibreSCRS::CancelSource::operator=(LibreSCRS::CancelSource&&)
 LibreSCRS::CancelSource::operator=(LibreSCRS::CancelSource const&)
+LibreSCRS::CancelSource::operator=(LibreSCRS::CancelSource&&)
 LibreSCRS::CancelSource::requestCancel()
 LibreSCRS::CancelSource::token() const
-LibreSCRS::CancelToken::~CancelToken()
+LibreSCRS::CancelSource::~CancelSource()
 LibreSCRS::CancelToken::CancelToken()
-LibreSCRS::CancelToken::CancelToken(LibreSCRS::CancelToken&&)
 LibreSCRS::CancelToken::CancelToken(LibreSCRS::CancelToken const&)
-LibreSCRS::CancelToken::isCancellable() const
-LibreSCRS::CancelToken::isCancelled() const
-LibreSCRS::CancelToken::operator=(LibreSCRS::CancelToken&&)
-LibreSCRS::CancelToken::operator=(LibreSCRS::CancelToken const&)
-LibreSCRS::CancelToken::registerCallback(std::function<void ()>)
-LibreSCRS::CancelToken::Registration::operator=(LibreSCRS::CancelToken::Registration&&)
-LibreSCRS::CancelToken::Registration::~Registration()
+LibreSCRS::CancelToken::CancelToken(LibreSCRS::CancelToken&&)
 LibreSCRS::CancelToken::Registration::Registration()
 LibreSCRS::CancelToken::Registration::Registration(LibreSCRS::CancelToken::Registration&&)
-LibreSCRS::detail::stopTokenFrom(LibreSCRS::CancelToken const&)
+LibreSCRS::CancelToken::Registration::operator=(LibreSCRS::CancelToken::Registration&&)
+LibreSCRS::CancelToken::Registration::~Registration()
+LibreSCRS::CancelToken::isCancellable() const
+LibreSCRS::CancelToken::isCancelled() const
+LibreSCRS::CancelToken::operator=(LibreSCRS::CancelToken const&)
+LibreSCRS::CancelToken::operator=(LibreSCRS::CancelToken&&)
+LibreSCRS::CancelToken::registerCallback(std::function<void ()>)
+LibreSCRS::CancelToken::~CancelToken()
 LibreSCRS::LocalizedText::domain() const
 LibreSCRS::LocalizedText::interpolate[abi:cxx11](std::basic_string_view<char, std::char_traits<char> >) const
 LibreSCRS::Placeholder::formatted[abi:cxx11]() const
-LibreSCRS::Secure::Buffer::~Buffer()
 LibreSCRS::Secure::Buffer::Buffer()
 LibreSCRS::Secure::Buffer::Buffer(LibreSCRS::Secure::Buffer&&)
 LibreSCRS::Secure::Buffer::Buffer(std::basic_string_view<char, std::char_traits<char> >)
@@ -50,25 +48,26 @@ LibreSCRS::Secure::Buffer::operator bool() const
 LibreSCRS::Secure::Buffer::operator=(LibreSCRS::Secure::Buffer&&)
 LibreSCRS::Secure::Buffer::operator==(LibreSCRS::Secure::Buffer const&) const
 LibreSCRS::Secure::Buffer::size() const
+LibreSCRS::Secure::Buffer::~Buffer()
+LibreSCRS::Secure::String::String()
+LibreSCRS::Secure::String::String(LibreSCRS::Secure::String const&)
+LibreSCRS::Secure::String::String(LibreSCRS::Secure::String&&)
+LibreSCRS::Secure::String::String(char const*)
+LibreSCRS::Secure::String::String(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >&&)
+LibreSCRS::Secure::String::String(std::basic_string_view<char, std::char_traits<char> >)
 LibreSCRS::Secure::String::clear()
 LibreSCRS::Secure::String::empty() const
 LibreSCRS::Secure::String::equalConstantTime(LibreSCRS::Secure::String const&) const
 LibreSCRS::Secure::String::operator bool() const
-LibreSCRS::Secure::String::operator=(LibreSCRS::Secure::String&&)
 LibreSCRS::Secure::String::operator=(LibreSCRS::Secure::String const&)
+LibreSCRS::Secure::String::operator=(LibreSCRS::Secure::String&&)
 LibreSCRS::Secure::String::operator==(LibreSCRS::Secure::String const&) const
 LibreSCRS::Secure::String::size() const
-LibreSCRS::Secure::String::~String()
-LibreSCRS::Secure::String::String()
-LibreSCRS::Secure::String::String(char const*)
-LibreSCRS::Secure::String::String(LibreSCRS::Secure::String&&)
-LibreSCRS::Secure::String::String(LibreSCRS::Secure::String const&)
-LibreSCRS::Secure::String::String(std::basic_string_view<char, std::char_traits<char> >)
-LibreSCRS::Secure::String::String(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >&&)
 LibreSCRS::Secure::String::view() const
+LibreSCRS::Secure::String::~String()
+LibreSCRS::detail::stopTokenFrom(LibreSCRS::CancelToken const&)
 
 == libLibreSCRS_Certificate.a ==
-LibreSCRS::Certificate::detail::lookupOidName(std::basic_string_view<char, std::char_traits<char> >)
 LibreSCRS::Certificate::DistinguishedName::commonName[abi:cxx11]() const
 LibreSCRS::Certificate::DistinguishedName::country[abi:cxx11]() const
 LibreSCRS::Certificate::DistinguishedName::emailAddress[abi:cxx11]() const
@@ -76,8 +75,10 @@ LibreSCRS::Certificate::DistinguishedName::locality[abi:cxx11]() const
 LibreSCRS::Certificate::DistinguishedName::organization[abi:cxx11]() const
 LibreSCRS::Certificate::DistinguishedName::organizationalUnit[abi:cxx11]() const
 LibreSCRS::Certificate::DistinguishedName::stateOrProvince[abi:cxx11]() const
-LibreSCRS::Certificate::ObjectIdentifier::friendlyName[abi:cxx11]() const
 LibreSCRS::Certificate::ObjectIdentifier::ObjectIdentifier(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)
+LibreSCRS::Certificate::ObjectIdentifier::friendlyName[abi:cxx11]() const
+LibreSCRS::Certificate::ParsedCertificate::ParsedCertificate()
+LibreSCRS::Certificate::ParsedCertificate::ParsedCertificate(LibreSCRS::Certificate::ParsedCertificate&&)
 LibreSCRS::Certificate::ParsedCertificate::authorityKeyIdentifier() const
 LibreSCRS::Certificate::ParsedCertificate::basicConstraints() const
 LibreSCRS::Certificate::ParsedCertificate::caIssuersUrls[abi:cxx11]() const
@@ -88,42 +89,36 @@ LibreSCRS::Certificate::ParsedCertificate::extendedKeyUsage() const
 LibreSCRS::Certificate::ParsedCertificate::extensions() const
 LibreSCRS::Certificate::ParsedCertificate::findExtension(LibreSCRS::Certificate::ObjectIdentifier const&) const
 LibreSCRS::Certificate::ParsedCertificate::fromDer(std::span<unsigned char const, 18446744073709551615ul>)
-LibreSCRS::Certificate::ParsedCertificate::issuerAlternativeNames() const
 LibreSCRS::Certificate::ParsedCertificate::issuer() const
+LibreSCRS::Certificate::ParsedCertificate::issuerAlternativeNames() const
 LibreSCRS::Certificate::ParsedCertificate::keyUsage() const
 LibreSCRS::Certificate::ParsedCertificate::notAfter() const
 LibreSCRS::Certificate::ParsedCertificate::notBefore() const
 LibreSCRS::Certificate::ParsedCertificate::ocspResponderUrls[abi:cxx11]() const
 LibreSCRS::Certificate::ParsedCertificate::operator bool() const
 LibreSCRS::Certificate::ParsedCertificate::operator=(LibreSCRS::Certificate::ParsedCertificate&&)
-LibreSCRS::Certificate::ParsedCertificate::~ParsedCertificate()
-LibreSCRS::Certificate::ParsedCertificate::ParsedCertificate()
-LibreSCRS::Certificate::ParsedCertificate::ParsedCertificate(LibreSCRS::Certificate::ParsedCertificate&&)
 LibreSCRS::Certificate::ParsedCertificate::publicKey() const
 LibreSCRS::Certificate::ParsedCertificate::serialNumber() const
 LibreSCRS::Certificate::ParsedCertificate::signatureAlgorithmDescription[abi:cxx11]() const
 LibreSCRS::Certificate::ParsedCertificate::signatureAlgorithmOid() const
 LibreSCRS::Certificate::ParsedCertificate::signatureValue() const
-LibreSCRS::Certificate::ParsedCertificate::subjectAlternativeNames() const
 LibreSCRS::Certificate::ParsedCertificate::subject() const
+LibreSCRS::Certificate::ParsedCertificate::subjectAlternativeNames() const
 LibreSCRS::Certificate::ParsedCertificate::subjectKeyIdentifier() const
 LibreSCRS::Certificate::ParsedCertificate::version() const
+LibreSCRS::Certificate::ParsedCertificate::~ParsedCertificate()
+LibreSCRS::Certificate::detail::lookupOidName(std::basic_string_view<char, std::char_traits<char> >)
 
 == libLibreSCRS_Plugin.a ==
-LibreSCRS::Plugin::AutoReaderService::~AutoReaderService()
 LibreSCRS::Plugin::AutoReaderService::AutoReaderService(std::shared_ptr<LibreSCRS::SmartCard::MonitorService>, std::shared_ptr<LibreSCRS::Plugin::CardPluginService>, std::function<void (std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, LibreSCRS::Plugin::CardData const&)>, std::function<void (std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, LibreSCRS::Plugin::AutoReaderService::AutoReaderError const&)>)
 LibreSCRS::Plugin::AutoReaderService::isReading(std::basic_string_view<char, std::char_traits<char> >) const
+LibreSCRS::Plugin::AutoReaderService::~AutoReaderService()
 LibreSCRS::Plugin::SecurityStatus::computeOverall()
 
 == libLibreSCRS_Signing.a ==
-LibreSCRS::Signing::detail::mapFormat(LibreSCRS::Signing::SignatureFormat)
-LibreSCRS::Signing::detail::mapLevel(LibreSCRS::Signing::SignatureLevel)
-LibreSCRS::Signing::detail::mapPackaging(LibreSCRS::Signing::PackagingMode)
-LibreSCRS::Signing::detail::translatePublicRequestToLibresign(LibreSCRS::Signing::SigningRequest const&, libresign::SigningRequest&)
-LibreSCRS::Signing::SigningRequest::Builder::build() &&
-LibreSCRS::Signing::SigningRequest::Builder::~Builder()
 LibreSCRS::Signing::SigningRequest::Builder::Builder()
 LibreSCRS::Signing::SigningRequest::Builder::Builder(LibreSCRS::Signing::SigningRequest::Builder&&)
+LibreSCRS::Signing::SigningRequest::Builder::build() &&
 LibreSCRS::Signing::SigningRequest::Builder::certificateLabel(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)
 LibreSCRS::Signing::SigningRequest::Builder::contactInfo(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)
 LibreSCRS::Signing::SigningRequest::Builder::format(LibreSCRS::Signing::SignatureFormat)
@@ -136,6 +131,9 @@ LibreSCRS::Signing::SigningRequest::Builder::packaging(LibreSCRS::Signing::Packa
 LibreSCRS::Signing::SigningRequest::Builder::reason(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)
 LibreSCRS::Signing::SigningRequest::Builder::tsaOverride(std::function<LibreSCRS::Signing::TsaRequest (LibreSCRS::Signing::TsaContext const&)>)
 LibreSCRS::Signing::SigningRequest::Builder::visualParams(LibreSCRS::Signing::VisualSignatureParams&&)
+LibreSCRS::Signing::SigningRequest::Builder::~Builder()
+LibreSCRS::Signing::SigningRequest::SigningRequest()
+LibreSCRS::Signing::SigningRequest::SigningRequest(LibreSCRS::Signing::SigningRequest&&)
 LibreSCRS::Signing::SigningRequest::certificateLabel[abi:cxx11]() const
 LibreSCRS::Signing::SigningRequest::contactInfo[abi:cxx11]() const
 LibreSCRS::Signing::SigningRequest::format() const
@@ -147,97 +145,99 @@ LibreSCRS::Signing::SigningRequest::operator=(LibreSCRS::Signing::SigningRequest
 LibreSCRS::Signing::SigningRequest::outputFile[abi:cxx11]() const
 LibreSCRS::Signing::SigningRequest::packaging() const
 LibreSCRS::Signing::SigningRequest::reason[abi:cxx11]() const
-LibreSCRS::Signing::SigningRequest::~SigningRequest()
-LibreSCRS::Signing::SigningRequest::SigningRequest()
-LibreSCRS::Signing::SigningRequest::SigningRequest(LibreSCRS::Signing::SigningRequest&&)
 LibreSCRS::Signing::SigningRequest::tsaOverride() const
 LibreSCRS::Signing::SigningRequest::visualParams() const
-LibreSCRS::Signing::SigningService::operator bool() const
-LibreSCRS::Signing::SigningService::operator=(LibreSCRS::Signing::SigningService&&)
-LibreSCRS::Signing::SigningService::~SigningService()
+LibreSCRS::Signing::SigningRequest::~SigningRequest()
 LibreSCRS::Signing::SigningService::SigningService(LibreSCRS::Signing::SigningService&&)
 LibreSCRS::Signing::SigningService::SigningService(std::shared_ptr<LibreSCRS::Trust::TrustStoreService>, std::function<LibreSCRS::Signing::TsaRequest (LibreSCRS::Signing::TsaContext const&)>)
+LibreSCRS::Signing::SigningService::operator bool() const
+LibreSCRS::Signing::SigningService::operator=(LibreSCRS::Signing::SigningService&&)
 LibreSCRS::Signing::SigningService::sign(LibreSCRS::Signing::SigningRequest const&, std::function<LibreSCRS::Auth::CredentialResult (LibreSCRS::Auth::AuthRequirement const&)>, std::shared_ptr<LibreSCRS::Plugin::CardPlugin>, std::shared_ptr<LibreSCRS::SmartCard::CardSession>)
-LibreSCRS::Signing::staticTsaChecked(std::basic_string_view<char, std::char_traits<char> >)
-LibreSCRS::Signing::staticTsa(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)
-LibreSCRS::Signing::VisualSignatureParams::Builder::build() &&
-LibreSCRS::Signing::VisualSignatureParams::Builder::~Builder()
+LibreSCRS::Signing::SigningService::~SigningService()
 LibreSCRS::Signing::VisualSignatureParams::Builder::Builder()
 LibreSCRS::Signing::VisualSignatureParams::Builder::Builder(LibreSCRS::Signing::VisualSignatureParams::Builder&&)
+LibreSCRS::Signing::VisualSignatureParams::Builder::build() &&
 LibreSCRS::Signing::VisualSignatureParams::Builder::operator=(LibreSCRS::Signing::VisualSignatureParams::Builder&&)
 LibreSCRS::Signing::VisualSignatureParams::Builder::pageIndex(int)
 LibreSCRS::Signing::VisualSignatureParams::Builder::rect(LibreSCRS::Signing::Rect const&)
 LibreSCRS::Signing::VisualSignatureParams::Builder::textTemplate(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)
+LibreSCRS::Signing::VisualSignatureParams::Builder::~Builder()
+LibreSCRS::Signing::VisualSignatureParams::VisualSignatureParams()
+LibreSCRS::Signing::VisualSignatureParams::VisualSignatureParams(LibreSCRS::Signing::VisualSignatureParams const&)
+LibreSCRS::Signing::VisualSignatureParams::VisualSignatureParams(LibreSCRS::Signing::VisualSignatureParams&&)
 LibreSCRS::Signing::VisualSignatureParams::height() const
-LibreSCRS::Signing::VisualSignatureParams::operator=(LibreSCRS::Signing::VisualSignatureParams&&)
 LibreSCRS::Signing::VisualSignatureParams::operator=(LibreSCRS::Signing::VisualSignatureParams const&)
+LibreSCRS::Signing::VisualSignatureParams::operator=(LibreSCRS::Signing::VisualSignatureParams&&)
 LibreSCRS::Signing::VisualSignatureParams::pageIndex() const
 LibreSCRS::Signing::VisualSignatureParams::textTemplate[abi:cxx11]() const
-LibreSCRS::Signing::VisualSignatureParams::~VisualSignatureParams()
-LibreSCRS::Signing::VisualSignatureParams::VisualSignatureParams()
-LibreSCRS::Signing::VisualSignatureParams::VisualSignatureParams(LibreSCRS::Signing::VisualSignatureParams&&)
-LibreSCRS::Signing::VisualSignatureParams::VisualSignatureParams(LibreSCRS::Signing::VisualSignatureParams const&)
 LibreSCRS::Signing::VisualSignatureParams::width() const
 LibreSCRS::Signing::VisualSignatureParams::x() const
 LibreSCRS::Signing::VisualSignatureParams::y() const
+LibreSCRS::Signing::VisualSignatureParams::~VisualSignatureParams()
+LibreSCRS::Signing::detail::mapFormat(LibreSCRS::Signing::SignatureFormat)
+LibreSCRS::Signing::detail::mapLevel(LibreSCRS::Signing::SignatureLevel)
+LibreSCRS::Signing::detail::mapPackaging(LibreSCRS::Signing::PackagingMode)
+LibreSCRS::Signing::detail::translatePublicRequestToLibresign(LibreSCRS::Signing::SigningRequest const&, libresign::SigningRequest&)
+LibreSCRS::Signing::staticTsa(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)
+LibreSCRS::Signing::staticTsaChecked(std::basic_string_view<char, std::char_traits<char> >)
 
 == libLibreSCRS_SmartCard.a ==
-LibreSCRS::SmartCard::CardSession::atr() const
-LibreSCRS::SmartCard::CardSession::~CardSession()
 LibreSCRS::SmartCard::CardSession::CardSession()
 LibreSCRS::SmartCard::CardSession::CardSession(LibreSCRS::SmartCard::CardSession&&)
 LibreSCRS::SmartCard::CardSession::CardSession(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)
+LibreSCRS::SmartCard::CardSession::atr() const
 LibreSCRS::SmartCard::CardSession::isConnected() const
 LibreSCRS::SmartCard::CardSession::open(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)
 LibreSCRS::SmartCard::CardSession::operator=(LibreSCRS::SmartCard::CardSession&&)
 LibreSCRS::SmartCard::CardSession::readerName[abi:cxx11]() const
+LibreSCRS::SmartCard::CardSession::~CardSession()
+LibreSCRS::SmartCard::MonitorService::MonitorService()
+LibreSCRS::SmartCard::MonitorService::isRunning() const
+LibreSCRS::SmartCard::MonitorService::listReaders[abi:cxx11]() const
+LibreSCRS::SmartCard::MonitorService::operator bool() const
+LibreSCRS::SmartCard::MonitorService::subscribe(std::function<void (LibreSCRS::SmartCard::MonitorEvent const&)>)
+LibreSCRS::SmartCard::MonitorService::unsubscribe(LibreSCRS::SmartCard::MonitorService::SubscriptionId)
+LibreSCRS::SmartCard::MonitorService::unsubscribeAndDrain(LibreSCRS::SmartCard::MonitorService::SubscriptionId)
+LibreSCRS::SmartCard::MonitorService::~MonitorService()
+LibreSCRS::SmartCard::detail::PcscBridge::unwrap(LibreSCRS::SmartCard::CardSession const&)
+LibreSCRS::SmartCard::detail::PcscBridge::unwrap(LibreSCRS::SmartCard::CardSession&)
 LibreSCRS::SmartCard::detail::makeDetachedCardSession(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)
 LibreSCRS::SmartCard::detail::makeMonitorWithProvider(std::unique_ptr<smartcard::IPCSCScanProvider, std::default_delete<smartcard::IPCSCScanProvider> >)
 LibreSCRS::SmartCard::detail::makeSubscriptionIdForTest(unsigned long)
-LibreSCRS::SmartCard::detail::PcscBridge::unwrap(LibreSCRS::SmartCard::CardSession&)
-LibreSCRS::SmartCard::detail::PcscBridge::unwrap(LibreSCRS::SmartCard::CardSession const&)
 LibreSCRS::SmartCard::detail::sessionGeneration(LibreSCRS::SmartCard::CardSession const&)
-LibreSCRS::SmartCard::MonitorService::isRunning() const
-LibreSCRS::SmartCard::MonitorService::listReaders[abi:cxx11]() const
-LibreSCRS::SmartCard::MonitorService::~MonitorService()
-LibreSCRS::SmartCard::MonitorService::MonitorService()
-LibreSCRS::SmartCard::MonitorService::operator bool() const
-LibreSCRS::SmartCard::MonitorService::subscribe(std::function<void (LibreSCRS::SmartCard::MonitorEvent const&)>)
-LibreSCRS::SmartCard::MonitorService::unsubscribeAndDrain(LibreSCRS::SmartCard::MonitorService::SubscriptionId)
-LibreSCRS::SmartCard::MonitorService::unsubscribe(LibreSCRS::SmartCard::MonitorService::SubscriptionId)
 
 == libLibreSCRS_Trust.a ==
-LibreSCRS::Trust::detail::BundledCertsProvider::anchors() const
-LibreSCRS::Trust::detail::BundledCertsProvider::BundledCertsProvider(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)
-LibreSCRS::Trust::detail::TrustStoreInternalAccess::addProvider(LibreSCRS::Trust::TrustStore&, std::shared_ptr<LibreSCRS::Trust::detail::TrustAnchorProvider>)
-LibreSCRS::Trust::detail::TrustStoreInternalAccess::makeStore(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, bool)
-LibreSCRS::Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(LibreSCRS::Trust::TrustStore&, std::vector<LibreSCRS::Trust::TrustAnchor, std::allocator<LibreSCRS::Trust::TrustAnchor> >, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)
-LibreSCRS::Trust::TrustConfig::Builder::addTrustedListSource(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, bool, bool)
-LibreSCRS::Trust::TrustConfig::Builder::build() &&
-LibreSCRS::Trust::TrustConfig::Builder::~Builder()
 LibreSCRS::Trust::TrustConfig::Builder::Builder()
 LibreSCRS::Trust::TrustConfig::Builder::Builder(LibreSCRS::Trust::TrustConfig::Builder&&)
+LibreSCRS::Trust::TrustConfig::Builder::addTrustedListSource(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, bool, bool)
+LibreSCRS::Trust::TrustConfig::Builder::build() &&
 LibreSCRS::Trust::TrustConfig::Builder::operator=(LibreSCRS::Trust::TrustConfig::Builder&&)
 LibreSCRS::Trust::TrustConfig::Builder::setCacheDirectory(std::filesystem::__cxx11::path)
 LibreSCRS::Trust::TrustConfig::Builder::setIncludeSystemTrustStore(bool)
-LibreSCRS::Trust::TrustConfig::Builder::setTrustedListFileSigningCert(std::filesystem::__cxx11::path)
 LibreSCRS::Trust::TrustConfig::Builder::setTrustedListFile(std::filesystem::__cxx11::path)
+LibreSCRS::Trust::TrustConfig::Builder::setTrustedListFileSigningCert(std::filesystem::__cxx11::path)
+LibreSCRS::Trust::TrustConfig::Builder::~Builder()
+LibreSCRS::Trust::TrustStore::TrustStore(LibreSCRS::Trust::TrustStore&&)
+LibreSCRS::Trust::TrustStore::TrustStore(std::unique_ptr<LibreSCRS::Trust::TrustStore::Impl, std::default_delete<LibreSCRS::Trust::TrustStore::Impl> >)
 LibreSCRS::Trust::TrustStore::enumerableAnchors() const
 LibreSCRS::Trust::TrustStore::findIssuerOf(std::span<unsigned char const, 18446744073709551615ul>) const
 LibreSCRS::Trust::TrustStore::operator bool() const
 LibreSCRS::Trust::TrustStore::operator=(LibreSCRS::Trust::TrustStore&&)
+LibreSCRS::Trust::TrustStore::validateChain(std::span<std::span<unsigned char const, 18446744073709551615ul> const, 18446744073709551615ul>) const
+LibreSCRS::Trust::TrustStore::~TrustStore()
+LibreSCRS::Trust::TrustStoreService::Impl::runWorker(std::shared_ptr<LibreSCRS::Trust::TrustStoreService::Impl>, libresign::TrustedListEntry, std::stop_token)
+LibreSCRS::Trust::TrustStoreService::TrustStoreService(LibreSCRS::Trust::TrustConfig)
 LibreSCRS::Trust::TrustStoreService::addObserver(std::function<void (std::basic_string_view<char, std::char_traits<char> >, LibreSCRS::Trust::TrustStoreService::SourceStatus)>)
 LibreSCRS::Trust::TrustStoreService::config() const
 LibreSCRS::Trust::TrustStoreService::create(LibreSCRS::Trust::TrustConfig)
-LibreSCRS::Trust::TrustStoreService::Impl::runWorker(std::shared_ptr<LibreSCRS::Trust::TrustStoreService::Impl>, libresign::TrustedListEntry, std::stop_token)
 LibreSCRS::Trust::TrustStoreService::removeObserver(unsigned long)
 LibreSCRS::Trust::TrustStoreService::sourceStatuses[abi:cxx11]() const
 LibreSCRS::Trust::TrustStoreService::status() const
 LibreSCRS::Trust::TrustStoreService::trustStore() const
-LibreSCRS::Trust::TrustStoreService::~TrustStoreService()
-LibreSCRS::Trust::TrustStoreService::TrustStoreService(LibreSCRS::Trust::TrustConfig)
 LibreSCRS::Trust::TrustStoreService::waitForEagerFetches(std::chrono::duration<long, std::ratio<1l, 1000l> >, LibreSCRS::CancelToken) const
-LibreSCRS::Trust::TrustStore::~TrustStore()
-LibreSCRS::Trust::TrustStore::TrustStore(LibreSCRS::Trust::TrustStore&&)
-LibreSCRS::Trust::TrustStore::TrustStore(std::unique_ptr<LibreSCRS::Trust::TrustStore::Impl, std::default_delete<LibreSCRS::Trust::TrustStore::Impl> >)
-LibreSCRS::Trust::TrustStore::validateChain(std::span<std::span<unsigned char const, 18446744073709551615ul> const, 18446744073709551615ul>) const
+LibreSCRS::Trust::TrustStoreService::~TrustStoreService()
+LibreSCRS::Trust::detail::BundledCertsProvider::BundledCertsProvider(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)
+LibreSCRS::Trust::detail::BundledCertsProvider::anchors() const
+LibreSCRS::Trust::detail::TrustStoreInternalAccess::addProvider(LibreSCRS::Trust::TrustStore&, std::shared_ptr<LibreSCRS::Trust::detail::TrustAnchorProvider>)
+LibreSCRS::Trust::detail::TrustStoreInternalAccess::makeStore(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, bool)
+LibreSCRS::Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(LibreSCRS::Trust::TrustStore&, std::vector<LibreSCRS::Trust::TrustAnchor, std::allocator<LibreSCRS::Trust::TrustAnchor> >, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)

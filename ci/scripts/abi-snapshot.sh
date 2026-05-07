@@ -30,6 +30,14 @@
 
 set -euo pipefail
 
+# Force a deterministic, locale-independent sort so the baseline lines
+# up byte-for-byte across developer machines and CI runners. Without
+# LC_ALL=C, glibc's default UTF-8 collation interleaves alphabetic and
+# punctuation differently than ASCII (e.g. en_US.UTF-8 sorts
+# `…CancelSource const&)` before `…CancelSource&&)` while sr_RS sorts
+# the other way), and any diff against the baseline is pure noise.
+export LC_ALL=C
+
 ACTION="check"
 BUILD_DIR="build"
 
