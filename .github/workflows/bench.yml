@@ -38,17 +38,23 @@ jobs:
             -DBUILD_TESTING=OFF
 
       - name: Build
+        # bench_signing is gated on SoftHSM availability and not built in
+        # the default LibreSCRS_BUILD_BENCH=ON configuration; the four
+        # released bench binaries cover ParsedCertificate, validateChain
+        # depth 1/3/5, and TrustStoreService::create. Re-add to the
+        # target list when the bench harness for SigningService::sign
+        # B-B/B-T levels lands (tracked in BACKLOG).
         run: |
           cmake --build build-bench \
             --target bench_parsed_cert bench_trust_validate \
-                     bench_truststore_service bench_signing \
+                     bench_truststore_service \
             -j2
 
       - name: Run
         run: |
           mkdir -p bench-results
           for b in bench_parsed_cert bench_trust_validate \
-                   bench_truststore_service bench_signing; do
+                   bench_truststore_service; do
               ./build-bench/bench/$b \
                   --benchmark_min_time=0.5s \
                   --benchmark_format=json \

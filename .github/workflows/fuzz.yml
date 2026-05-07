@@ -30,23 +30,41 @@ jobs:
           - fuzz_tl_signature_verifier
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history so cmake's git-describe-derived version stamp
+          # has tags to discover; otherwise configure logs a warning.
+          fetch-depth: 0
 
       - name: Install build deps
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            clang lld cmake ninja-build pkg-config \
+            lld cmake ninja-build pkg-config \
             libcurl4-openssl-dev libssl-dev libxml2-dev libpcsclite-dev \
             uuid-dev openssl python3-jsonschema
 
+      - name: Install clang-21 (for std::expected support)
+        # Ubuntu 24.04 default `clang` ships against an older libstdc++
+        # whose <expected> probe fails. Pin clang-21 to match the rest
+        # of the LibreSCRS toolchain (CONTRIBUTING.md) and the
+        # check-std-expected.cpp toolchain probe.
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" | sudo tee /etc/apt/sources.list.d/llvm-21.list
+          sudo apt-get update
+          sudo apt-get install -y clang-21
+
       - name: Configure
+        # SIGNING_BACKEND stays at the default `native` — fuzz harnesses
+        # target ParsedCertificate / TrustedListParser / TlSignatureVerifier,
+        # none of which exercise the DSS test oracle. Avoids the JDK +
+        # Maven toolchain dependency.
         env:
-          CC: clang
-          CXX: clang++
+          CC: clang-21
+          CXX: clang++-21
         run: |
           cmake -B build-fuzz -S . -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DSIGNING_BACKEND=both \
             -DLIBRESCRS_BUILD_FUZZ=ON \
             -DBUILD_TESTING=OFF
 
