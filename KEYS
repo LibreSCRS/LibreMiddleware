@@ -1,0 +1,39 @@
+This file contains the OpenPGP keys used to sign LibreSCRS releases.
+
+Verify a release tag:
+    gpg --import KEYS
+    git verify-tag <TAG>
+
+Verify a release artifact (cosign keyless, no key import needed):
+    cosign verify-blob <artifact> \
+      --bundle <artifact>.sigstore.json \
+      --certificate-identity-regexp 'https://github\.com/LibreSCRS/.*\.github/workflows/release\.yml@refs/tags/.*' \
+      --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
+
+Project release signing key (4.0+):
+
+pub   ed25519 2026-04-27 [C] [expires: 2031-04-26]
+      6B05889AC9A6A7188DF639B06F27A989C2031D16
+uid           [ultimate] LibreSCRS Release Signing <librescrs@proton.me>
+sub   ed25519 2026-04-27 [S] [expires: 2028-04-26]
+      D95BE325E2EC2E90E1DC750422941CECE07A5167
+
+
+------------------------------------------------------------------
+
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+mDMEae+O2hYJKwYBBAHaRw8BAQdAsN4f9SALOUvZ3F3CHVZVJCXIZJ4noF3+bAsc
+tzWZ8zi0L0xpYnJlU0NSUyBSZWxlYXNlIFNpZ25pbmcgPGxpYnJlc2Nyc0Bwcm90
+b24ubWU+iJYEExYKAD4WIQRrBYiayaanGI32ObBvJ6mJwgMdFgUCae+O2gIbAQUJ
+CWYBgAULCQgHAgYVCgkICwIEFgIDAQIeAQIXgAAKCRBvJ6mJwgMdFgO5AP0QfKPl
+Tk3hz+evTXkQTOtgPOu4D6tL0AiTypBmucqF2AD/WC/yZ4WRnlwftZj8Cei0iynW
+INIHgH8FJIECZR3LwQS4MwRp7489FgkrBgEEAdpHDwEBB0DKW2VNF21Ja04rZPtn
+gGHLT6Rtoee6T3ri2/FzAiET9Yj1BBgWCgAmFiEEawWImsmmpxiN9jmwbyepicID
+HRYFAmnvjz0CGwIFCQPCZwAAgQkQbyepicIDHRZ2IAQZFgoAHRYhBNlb4yXi7C6Q
+4dx1BCKUHOzgelFnBQJp7489AAoJECKUHOzgelFnwNAA/iXAQXyX1uAMwvoGvPg0
+tqrJPflihE8cTXJKkROuDBbpAQC85jv1D5xZyrzsYQOwsqXycrJaFr0n46rzrLLS
+xBo+AGmqAP4+0cKomiJxM6BVhEXkY+9RdmjxPXzLu/c7dHoe+ABVUgD+NknfAEEx
+u0cLQuMev9KqFrBiBMacjEIeg5Sa1CCS1gI=
+=Tzhp
+-----END PGP PUBLIC KEY BLOCK-----

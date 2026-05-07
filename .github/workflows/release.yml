@@ -16,7 +16,26 @@ env:
   OPENSC_VERSION: ${{ inputs.opensc_version || '0.26.1' }}
 
 jobs:
+  verify-signature:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+
+      - name: Import LibreSCRS release public key
+        run: |
+          gpg --import KEYS
+          EXPECTED_FPR='6B05889AC9A6A7188DF639B06F27A989C2031D16'
+          gpg --list-keys --with-colons "$EXPECTED_FPR" | grep -q "^pub" \
+            || { echo "::error::Public key import failed or fingerprint mismatch"; exit 1; }
+
+      - name: Verify tag signature
+        run: git verify-tag "${{ github.ref_name }}"
+
   test-linux:
+    needs: verify-signature
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,7 +45,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libpcsclite-dev libcurl4-openssl-dev libxml2-dev \
-            cmake ninja-build
+            cmake ninja-build python3-jsonschema
 
       - name: Configure & Build
         run: |
@@ -37,6 +56,7 @@ jobs:
         run: ctest --output-on-failure --test-dir build/test
 
   test-macos:
+    needs: verify-signature
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,7 +73,7 @@ jobs:
         run: ctest --output-on-failure --test-dir build/test
 
   cardedge-opensc-linux:
-    needs: test-linux
+    needs: [verify-signature, test-linux]
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -70,7 +90,7 @@ jobs:
             libpcsclite-dev libssl-dev zlib1g-dev \
             libcurl4-openssl-dev libxml2-dev \
             pkg-config autoconf automake libtool \
-            cmake ninja-build
+            cmake ninja-build python3-jsonschema
 
       - name: Clone & build OpenSC ${{ matrix.opensc_version }}
         run: |
@@ -106,7 +126,7 @@ jobs:
           path: librescrs-cardedge-opensc-*.tar.gz
 
   cardedge-opensc-macos:
-    needs: test-macos
+    needs: [verify-signature, test-macos]
     runs-on: macos-latest
     strategy:
       matrix:
@@ -161,7 +181,7 @@ jobs:
           path: librescrs-cardedge-opensc-*.zip
 
   pkcs11-linux:
-    needs: test-linux
+    needs: [verify-signature, test-linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -173,7 +193,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libpcsclite-dev libcurl4-openssl-dev libxml2-dev \
-            cmake ninja-build
+            cmake ninja-build python3-jsonschema
 
       - name: Build
         run: |
@@ -189,7 +209,7 @@ jobs:
           path: librescrs-pkcs11-*.tar.gz
 
   pkcs11-macos:
-    needs: test-macos
+    needs: [verify-signature, test-macos]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -217,6 +237,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -224,7 +245,18 @@ jobs:
           merge-multiple: true
           path: artifacts
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v4.0.0
+
+      - name: Sign artifacts with cosign (keyless via Sigstore OIDC)
+        run: |
+          find artifacts -type f \
+            ! -name '*.sigstore.json' \
+            -exec sh -c 'cosign sign-blob "$1" --bundle "$1.sigstore.json" --yes' _ {} \;
+
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: artifacts/*
+          files: |
+            artifacts/*
+            artifacts/*.sigstore.json
