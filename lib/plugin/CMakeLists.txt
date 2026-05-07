@@ -23,7 +23,7 @@ target_compile_definitions(CardPlugin_Impl PRIVATE LIBRESCRS_INTERNAL_BUILD)
 # BUILD_INTERFACE-only so even internal LM libs that link CardPlugin_Impl as PUBLIC
 # do not re-export the top-level include/ tree into external packages.
 target_include_directories(CardPlugin_Impl PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/include
 )
 target_compile_features(CardPlugin_Impl PUBLIC cxx_std_23)
 target_link_libraries(CardPlugin_Impl PUBLIC ${CMAKE_DL_LIBS} SmartCard_Impl)

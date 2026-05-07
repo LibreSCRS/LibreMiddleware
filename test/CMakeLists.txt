@@ -436,7 +436,7 @@ if(BUILD_SIGNING)
     # native/*). Propagate the internal-build marker to every consumer so the
     # #error guard lets them through.
     target_compile_definitions(SigningTestSupport PUBLIC
-        CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        CMAKE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
         LIBRESCRS_INTERNAL_BUILD)
 
     if(BUILD_DSS_ORACLE AND NOT WIN32)
@@ -483,7 +483,7 @@ if(BUILD_SIGNING)
         target_include_directories(DSSIntegrationTests PRIVATE
             ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
         target_compile_definitions(DSSIntegrationTests PRIVATE
-            CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+            CMAKE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
             LIBRESCRS_INTERNAL_BUILD)
         gtest_discover_tests(DSSIntegrationTests)
 
@@ -491,7 +491,7 @@ if(BUILD_SIGNING)
         add_executable(SigningIntegrationTests signing_integration_test.cpp)
         target_link_libraries(SigningIntegrationTests PRIVATE SigningTestSupport GTest::gtest_main OpenSSL_Crypto)
         target_compile_definitions(SigningIntegrationTests PRIVATE
-            CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+            CMAKE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
             LIBREMIDDLEWARE_CERT_DIR="${LIBREMIDDLEWARE_CERTIFICATES_DIR}")
         gtest_discover_tests(SigningIntegrationTests)
     endif()
@@ -626,7 +626,7 @@ if(BUILD_SIGNING)
         target_include_directories(TlConfigureTests PRIVATE
             ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
         target_compile_definitions(TlConfigureTests PRIVATE
-            CMAKE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+            CMAKE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
             LIBRESCRS_INTERNAL_BUILD)
         gtest_discover_tests(TlConfigureTests)
 
@@ -807,8 +807,8 @@ add_executable(ManifestCodegenTests
 target_link_libraries(ManifestCodegenTests PRIVATE GTest::gtest_main)
 target_compile_definitions(ManifestCodegenTests PRIVATE
     LIBRESCRS_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/build_system/fixtures"
-    LIBRESCRS_MANIFEST2HEADER_PATH="${CMAKE_SOURCE_DIR}/tools/manifest2header/manifest2header.py"
-    LIBRESCRS_MANIFEST_SCHEMA_PATH="${CMAKE_SOURCE_DIR}/cmake/schemas/plugin-manifest.schema.json"
+    LIBRESCRS_MANIFEST2HEADER_PATH="${PROJECT_SOURCE_DIR}/tools/manifest2header/manifest2header.py"
+    LIBRESCRS_MANIFEST_SCHEMA_PATH="${PROJECT_SOURCE_DIR}/cmake/schemas/plugin-manifest.schema.json"
     LIBRESCRS_PYTHON_EXECUTABLE="${Python3_EXECUTABLE}"
 )
 gtest_discover_tests(ManifestCodegenTests)

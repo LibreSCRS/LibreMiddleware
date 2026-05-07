@@ -14,7 +14,13 @@ if(NOT DEFINED GIT_EXECUTABLE)
 endif()
 
 if(GIT_EXECUTABLE)
-  set(SRC_DIR "${CMAKE_SOURCE_DIR}") 
+  # CMAKE_CURRENT_LIST_DIR is the cmake/ subdir hosting this module, so
+  # `${CMAKE_CURRENT_LIST_DIR}/..` is LM root regardless of how LM is
+  # consumed. PROJECT_SOURCE_DIR is not yet set at the time this module
+  # is include()d (project() hasn't been called yet — it needs the
+  # version this file derives), and CMAKE_SOURCE_DIR would point at the
+  # consumer (LibreCelik) when LM is fetched via FetchContent.
+  set(SRC_DIR "${CMAKE_CURRENT_LIST_DIR}/..")
 
   execute_process(
     COMMAND ${GIT_EXECUTABLE} describe --tags --abbrev=0
