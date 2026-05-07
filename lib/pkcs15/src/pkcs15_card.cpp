@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include <pkcs15/pkcs15_card.h>
-#include <pkcs15/pkcs15_parser.h>
-#include <pkcs15/pkcs15_types.h>
-#include <smartcard/apdu.h>
+#include "pkcs15_card.h"
+#include "pkcs15_parser.h"
+#include "pkcs15_types.h"
+#include <apdu.h>
 #include <smartcard/pcsc_connection.h>
 #include <smartcard/secure_buffer.h>
 #include <openssl/evp.h>
@@ -350,7 +350,7 @@ int PKCS15Card::getPINTriesLeft(const PinInfo& pin)
     return -1; // unknown
 }
 
-PinResult PKCS15Card::verifyPIN(const PinInfo& pin, const std::string& pinValue)
+PinResult PKCS15Card::verifyPIN(const PinInfo& pin, std::string_view pinValue)
 {
     smartcard::CardTransaction tx(conn);
     if (!selectApplet())
@@ -385,7 +385,7 @@ PinResult PKCS15Card::verifyPIN(const PinInfo& pin, const std::string& pinValue)
     return {false, -1, false};
 }
 
-PinResult PKCS15Card::changePIN(const PinInfo& pin, const std::string& oldPin, const std::string& newPin)
+PinResult PKCS15Card::changePIN(const PinInfo& pin, std::string_view oldPin, std::string_view newPin)
 {
     smartcard::CardTransaction tx(conn);
     if (!selectApplet())
@@ -420,7 +420,7 @@ PinResult PKCS15Card::changePIN(const PinInfo& pin, const std::string& oldPin, c
     return {false, -1, false};
 }
 
-smartcard::SecureBuffer PKCS15Card::encodePIN(const std::string& pin, const PinInfo& pinInfo)
+smartcard::SecureBuffer PKCS15Card::encodePIN(std::string_view pin, const PinInfo& pinInfo)
 {
     smartcard::SecureBuffer pinData(pin);
     if (pinInfo.storedLength > 0 && static_cast<int>(pinData.size()) > pinInfo.storedLength)
@@ -501,7 +501,7 @@ std::vector<uint8_t> PKCS15Card::tryMsePso(uint8_t sigAlgo, const KeyRefInfo& ke
     return resp.isSuccess() ? resp.data : std::vector<uint8_t>{};
 }
 
-std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, const std::string& pin, const PinInfo& pinInfo,
+std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_view pin, const PinInfo& pinInfo,
                                       const std::vector<uint8_t>& digestInfo, const std::vector<uint8_t>& rawData,
                                       SignScheme scheme)
 {

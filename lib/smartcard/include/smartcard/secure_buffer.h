@@ -7,6 +7,7 @@
 #include <cstring>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <openssl/crypto.h>
 
@@ -22,6 +23,12 @@ public:
     explicit SecureBuffer(size_t size, uint8_t fill = 0) : buf(size, fill) {}
 
     SecureBuffer(const std::string& s) : buf(s.begin(), s.end()) {}
+
+    /// Copy the bytes viewed by @p s into the buffer. Enables constructing a
+    /// SecureBuffer directly from a @ref LibreSCRS::Secure::String::view()
+    /// without materialising an intermediate std::string that would escape
+    /// cleansing.
+    SecureBuffer(std::string_view s) : buf(s.begin(), s.end()) {}
 
     SecureBuffer(std::initializer_list<uint8_t> init) : buf(init) {}
 

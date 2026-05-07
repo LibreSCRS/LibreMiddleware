@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include <piv/piv_card.h>
-#include <piv/piv_types.h>
-#include <smartcard/ber.h>
+#include <piv_card.h>
+#include <piv_types.h>
+#include <ber.h>
 
 #include <gtest/gtest.h>
 

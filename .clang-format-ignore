@@ -1,1 +1,4 @@
 lib/cardedge-pkcs11/include/cardedge-pkcs11/*.h
+# Golden-output fixture: must be byte-identical to manifest2header.py emission.
+# Formatting it would break ManifestCodegen.GoldenOutputMatches.
+test/build_system/fixtures/expected_manifest.h

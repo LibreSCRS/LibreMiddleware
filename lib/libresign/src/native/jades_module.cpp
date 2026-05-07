@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include "libresign/native/jades_module.h"
-#include "libresign/native/pkcs11_token.h"
-#include "libresign/native/revocation_client.h"
-#include "libresign/native/tsa_client.h"
+#include "native/jades_module.h"
+#include "native/pkcs11_token.h"
+#include "native/revocation_client.h"
+#include "native/tsa_client.h"
 #include "native_utils.h"
 
 #include <json.hpp>
@@ -236,7 +236,7 @@ SigningResult JAdESModule::sign(const std::vector<uint8_t>& data, const std::str
             auto sigHash = sha256(reinterpret_cast<const uint8_t*>(jws.signature.data()), jws.signature.size());
 
             TSAClient tsaClient;
-            auto tsaResult = tsaClient.timestamp(sigHash, tsa.url, tsa.timeoutSeconds);
+            auto tsaResult = tsaClient.timestamp(sigHash, toTsaRequest(tsa));
             if (!tsaResult.success)
                 return {false, {}, "TSA timestamp failed: " + tsaResult.errorMessage};
 
@@ -295,7 +295,7 @@ SigningResult JAdESModule::sign(const std::vector<uint8_t>& data, const std::str
             auto archiveHash = sha256(archiveInput);
 
             TSAClient tsaClient;
-            auto tsaResult = tsaClient.timestamp(archiveHash, tsa.url, tsa.timeoutSeconds);
+            auto tsaResult = tsaClient.timestamp(archiveHash, toTsaRequest(tsa));
             if (!tsaResult.success)
                 return {false, {}, "Archive TSA timestamp failed: " + tsaResult.errorMessage};
 

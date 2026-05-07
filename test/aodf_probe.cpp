@@ -5,7 +5,7 @@
 // and probes VERIFY with different P2 values to discover PIN references.
 
 #include "smartcard/pcsc_connection.h"
-#include "smartcard/apdu.h"
+#include "apdu.h"
 
 #include <cstdio>
 #include <string>

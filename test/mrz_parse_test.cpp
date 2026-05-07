@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
-#include <emrtd/data_group.h>
+#include <data_group.h>
 
 using namespace emrtd;
 

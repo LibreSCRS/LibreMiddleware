@@ -7,8 +7,8 @@
 // This allows EVP_DigestSign* (used by CMS_sign/CMS_final) to transparently
 // route private key operations to Pkcs11Token::sign().
 
-#include "libresign/native/signing_provider.h"
-#include "libresign/native/pkcs11_token.h"
+#include "native/signing_provider.h"
+#include "native/pkcs11_token.h"
 #include "native_utils.h"
 
 #include <openssl/core.h>
@@ -48,7 +48,7 @@ namespace {
 // ---------------------------------------------------------------------------
 // Custom OSSL_PARAM key for passing the token pointer through keymgmt_import
 // ---------------------------------------------------------------------------
-constexpr const char* kParamTokenPtr = "libresc-token-ptr";
+constexpr const char* kParamTokenPtr = "librescrs-token-ptr";
 
 // DigestInfo prefixes are in native_utils (kDigestInfoSha256Prefix etc.)
 
@@ -206,7 +206,7 @@ static const OSSL_PARAM* kmGettableParams(void* /*provctx*/)
 }
 
 // keymgmt_import: receives public key params from EVP_PKEY_fromdata,
-// plus our custom "libresc-token-ptr" param with the Pkcs11Token pointer.
+// plus our custom "librescrs-token-ptr" param with the Pkcs11Token pointer.
 static int kmImport(void* keydata, int /*selection*/, const OSSL_PARAM params[])
 {
     auto* kd = static_cast<ProviderKeyData*>(keydata);
@@ -223,7 +223,7 @@ static int kmImport(void* keydata, int /*selection*/, const OSSL_PARAM params[])
     }
 
     // Extract key type
-    p = OSSL_PARAM_locate_const(params, "libresc-key-type");
+    p = OSSL_PARAM_locate_const(params, "librescrs-key-type");
     if (p != nullptr)
         OSSL_PARAM_get_int(p, &kd->keyType);
 
@@ -289,7 +289,7 @@ static int kmImport(void* keydata, int /*selection*/, const OSSL_PARAM params[])
 static const OSSL_PARAM* kmImportTypes(int /*selection*/)
 {
     static const OSSL_PARAM importable[] = {OSSL_PARAM_octet_ptr(kParamTokenPtr, nullptr, 0),
-                                            OSSL_PARAM_int("libresc-key-type", nullptr),
+                                            OSSL_PARAM_int("librescrs-key-type", nullptr),
                                             OSSL_PARAM_int(OSSL_PKEY_PARAM_BITS, nullptr),
                                             OSSL_PARAM_BN(OSSL_PKEY_PARAM_RSA_N, nullptr, 0),
                                             OSSL_PARAM_BN(OSSL_PKEY_PARAM_RSA_E, nullptr, 0),
@@ -727,13 +727,13 @@ static const OSSL_DISPATCH sigDispatch[] = {
 // ===========================================================================
 
 static const OSSL_ALGORITHM kmAlgorithms[] = {
-    {"RSA:rsaEncryption", "provider=libresc", kmDispatch, "LibreSCRS RSA keymgmt"},
-    {"EC:id-ecPublicKey", "provider=libresc", kmDispatch, "LibreSCRS EC keymgmt"},
+    {"RSA:rsaEncryption", "provider=librescrs", kmDispatch, "LibreSCRS RSA keymgmt"},
+    {"EC:id-ecPublicKey", "provider=librescrs", kmDispatch, "LibreSCRS EC keymgmt"},
     {nullptr, nullptr, nullptr, nullptr}};
 
 static const OSSL_ALGORITHM sigAlgorithms[] = {
-    {"RSA:rsaEncryption", "provider=libresc", sigDispatch, "LibreSCRS RSA signature"},
-    {"ECDSA", "provider=libresc", sigDispatch, "LibreSCRS ECDSA signature"},
+    {"RSA:rsaEncryption", "provider=librescrs", sigDispatch, "LibreSCRS RSA signature"},
+    {"ECDSA", "provider=librescrs", sigDispatch, "LibreSCRS ECDSA signature"},
     {nullptr, nullptr, nullptr, nullptr}};
 
 // ===========================================================================
@@ -769,8 +769,8 @@ static const OSSL_DISPATCH providerDispatch[] = {
 // Provider init entry point (extern "C" linkage via OSSL_provider_init_fn)
 // ===========================================================================
 
-static int librescProviderInit(const OSSL_CORE_HANDLE* /*handle*/, const OSSL_DISPATCH* /*in*/,
-                               const OSSL_DISPATCH** out, void** provctx)
+static int librescrsProviderInit(const OSSL_CORE_HANDLE* /*handle*/, const OSSL_DISPATCH* /*in*/,
+                                 const OSSL_DISPATCH** out, void** provctx)
 {
     *out = providerDispatch;
     *provctx = nullptr; // no per-provider state needed
@@ -788,17 +788,17 @@ void initSigningProvider()
     std::call_once(g_providerInitFlag, []() {
         // Load default provider FIRST so it has priority for standard RSA/EC
         // operations (X509_get0_pubkey, EVP_DigestVerify, etc.). Our provider
-        // is only used when explicitly requested via "provider=libresc" query.
+        // is only used when explicitly requested via "provider=librescrs" query.
         if (!OSSL_PROVIDER_available(nullptr, "default"))
             OSSL_PROVIDER_load(nullptr, "default");
 
-        if (!OSSL_PROVIDER_add_builtin(nullptr, "libresc", librescProviderInit))
-            throw std::runtime_error("Failed to register libresc provider");
+        if (!OSSL_PROVIDER_add_builtin(nullptr, "librescrs", librescrsProviderInit))
+            throw std::runtime_error("Failed to register librescrs provider");
 
         // Provider handles are intentionally not stored — they live for the
         // process lifetime and are owned by the default OSSL_LIB_CTX.
-        if (!OSSL_PROVIDER_load(nullptr, "libresc"))
-            throw std::runtime_error("Failed to load libresc provider");
+        if (!OSSL_PROVIDER_load(nullptr, "librescrs"))
+            throw std::runtime_error("Failed to load librescrs provider");
     });
 }
 
@@ -836,9 +836,9 @@ EvpPkeyPublicPtr createPkcs11EvpKey(Pkcs11Token& token, X509* cert)
     // Create EVP_PKEY_CTX targeting our provider via property query.
     // Wrapped in RAII so a std::bad_alloc from the params vector below
     // (or any other throw) can't leak the context.
-    EvpPkeyCtxPtr pctx(EVP_PKEY_CTX_new_from_name(nullptr, algoName, "provider=libresc"));
+    EvpPkeyCtxPtr pctx(EVP_PKEY_CTX_new_from_name(nullptr, algoName, "provider=librescrs"));
     if (!pctx)
-        throw std::runtime_error("EVP_PKEY_CTX_new_from_name failed for libresc");
+        throw std::runtime_error("EVP_PKEY_CTX_new_from_name failed for librescrs");
 
     // Build OSSL_PARAM array with token pointer, key metadata, and public
     // key components. The token pointer is passed as an OCTET_PTR so it goes
@@ -848,7 +848,7 @@ EvpPkeyPublicPtr createPkcs11EvpKey(Pkcs11Token& token, X509* cert)
     // Use a vector to build params dynamically based on key type
     std::vector<OSSL_PARAM> params;
     params.push_back(OSSL_PARAM_construct_octet_ptr(kParamTokenPtr, &tokenPtr, sizeof(void*)));
-    params.push_back(OSSL_PARAM_construct_int("libresc-key-type", &keyType));
+    params.push_back(OSSL_PARAM_construct_int("librescrs-key-type", &keyType));
     params.push_back(OSSL_PARAM_construct_int(OSSL_PKEY_PARAM_BITS, &keyBits));
 
     if (keyType == EVP_PKEY_RSA && !rsaN.empty() && !rsaE.empty()) {

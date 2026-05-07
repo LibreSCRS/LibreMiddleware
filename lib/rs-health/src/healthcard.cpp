@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include "rshealth/healthcard.h"
+#include "healthcard.h"
 #include "health_protocol.h"
-#include "smartcard/apdu.h"
+#include "apdu.h"
 #include "smartcard/pcsc_connection.h"
-#include "smartcard/tlv.h"
+#include "tlv.h"
 #include <algorithm>
 #include <stdexcept>
 

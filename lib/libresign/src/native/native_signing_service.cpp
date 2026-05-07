@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include "libresign/native/native_signing_service.h"
-#include "libresign/native/pkcs11_token.h"
-#include "libresign/native/trusted_list_parser.h"
-#include "libresign/native/cades_module.h"
-#include "libresign/native/pades_module.h"
-#include "libresign/native/xades_module.h"
-#include "libresign/native/jades_module.h"
-#include "libresign/native/asic_module.h"
-#include "libresign/trust_store_manager.h"
+#include "native/native_signing_service.h"
+#include "native/pkcs11_token.h"
+#include "native/trusted_list_parser.h"
+#include "native/cades_module.h"
+#include "native/pades_module.h"
+#include "native/xades_module.h"
+#include "native/jades_module.h"
+#include "native/asic_module.h"
+#include "trust/TrustedListProvider.h"
+#include "LibreSCRS/Trust/internal/TrustStoreInternalAccess.h"
 #include "native_utils.h" // parseCert (X509Ptr RAII) — avoids manual d2i_X509 / X509_free
 #include "pinned_tl_certs.h"
 #include "tl_cache.h"
@@ -97,38 +98,74 @@ void NativeSigningService::loadTrustList(const std::string& url, bool isLotl, Tl
     if (depth > kMaxTlRecursionDepth)
         return;
 
-    // 1. Check cache
+    // Locate the TrustConfig entry for this URL up-front: the file:// gating
+    // flag (set only when the public TrustConfig::trustedListFile bridge
+    // synthesised this entry) lives on the entry, not on the URL alone. The
+    // same entry pointer is reused below for the per-entry signing-cert
+    // override (see step 3); hoisting the lookup keeps both paths
+    // single-source.
+    auto entryIt = std::find_if(trustConfig.trustedLists.begin(), trustConfig.trustedLists.end(),
+                                [&url](const TrustedListEntry& e) { return e.url == url; });
+
+    // 1. Check cache (HTTP path) or read from disk (file:// path)
     std::vector<uint8_t> xmlData;
-    auto cached = cache.load(url);
     bool freshlyFetched = false;
     std::string responseEtag;
     std::string responseLastModified;
 
-    if (cached) {
-        xmlData = std::move(cached->data);
-    } else {
-        // 2. Cache miss (expired or absent). Try conditional request with stale metadata.
-        auto staleMeta = cache.loadMeta(url);
-        auto fetchResult = TrustedListParser::fetchRawConditional(url, staleMeta ? staleMeta->etag : std::string{},
-                                                                  staleMeta ? staleMeta->lastModified : std::string{},
-                                                                  kTlFetchTimeoutSeconds);
+    constexpr std::string_view kFileScheme = "file://";
+    const bool localFileBranch = entryIt != trustConfig.trustedLists.end() && entryIt->localFileOnly &&
+                                 url.compare(0, kFileScheme.size(), kFileScheme) == 0;
 
-        if (fetchResult.notModified) {
-            // Server confirmed the cached data is still valid — refresh timestamp
-            cache.refreshTimestamp(url);
-            auto refreshed = cache.load(url);
-            if (refreshed) {
-                xmlData = std::move(refreshed->data);
-            } else {
-                throw std::runtime_error("Cache refresh failed for TL: " + url);
-            }
-        } else if (!fetchResult.data.empty()) {
-            xmlData = std::move(fetchResult.data);
-            responseEtag = std::move(fetchResult.etag);
-            responseLastModified = std::move(fetchResult.lastModified);
-            freshlyFetched = true;
+    if (localFileBranch) {
+        // When @ref TrustConfig::trustedListFile is populated,
+        // the public bridge in @c LibreSCRS::Signing::SigningService::sign
+        // synthesises a @ref TrustedListEntry with @c localFileOnly=true and
+        // @c url="file://"+path. Read that path directly via std::ifstream,
+        // bypassing @ref HttpClient entirely. HttpClient still rejects
+        // @c file:// via @c CURLOPT_PROTOCOLS_STR="http,https" — defense in
+        // depth ensures @c file:// can never reach the network layer even
+        // if a future caller forgets to set @c localFileOnly. Public
+        // @c TrustedListSource entries (URL-fetched) leave the flag at the
+        // default @c false and stay on the HTTP path.
+        const std::string path(url.substr(kFileScheme.size()));
+        std::ifstream is(path, std::ios::binary);
+        if (!is)
+            throw std::runtime_error("Failed to read local TL file: " + path);
+        std::vector<uint8_t> buffer((std::istreambuf_iterator<char>(is)), std::istreambuf_iterator<char>());
+        if (buffer.empty())
+            throw std::runtime_error("Local TL file is empty: " + path);
+        xmlData = std::move(buffer);
+        // Local files don't participate in the on-disk cache: the source of
+        // truth is the caller-provided file itself. Skip cache.store() below.
+    } else {
+        auto cached = cache.load(url);
+        if (cached) {
+            xmlData = std::move(cached->data);
         } else {
-            throw std::runtime_error("Failed to fetch TL from " + url);
+            // 2. Cache miss (expired or absent). Try conditional request with stale metadata.
+            auto staleMeta = cache.loadMeta(url);
+            auto fetchResult = TrustedListParser::fetchRawConditional(
+                url, staleMeta ? staleMeta->etag : std::string{}, staleMeta ? staleMeta->lastModified : std::string{},
+                kTlFetchTimeoutSeconds);
+
+            if (fetchResult.notModified) {
+                // Server confirmed the cached data is still valid — refresh timestamp
+                cache.refreshTimestamp(url);
+                auto refreshed = cache.load(url);
+                if (refreshed) {
+                    xmlData = std::move(refreshed->data);
+                } else {
+                    throw std::runtime_error("Cache refresh failed for TL: " + url);
+                }
+            } else if (!fetchResult.data.empty()) {
+                xmlData = std::move(fetchResult.data);
+                responseEtag = std::move(fetchResult.etag);
+                responseLastModified = std::move(fetchResult.lastModified);
+                freshlyFetched = true;
+            } else {
+                throw std::runtime_error("Failed to fetch TL from " + url);
+            }
         }
     }
 
@@ -136,9 +173,7 @@ void NativeSigningService::loadTrustList(const std::string& url, bool isLotl, Tl
     std::vector<uint8_t> verificationCertOwned;
     std::span<const uint8_t> signingCert;
 
-    // Check user override from TrustConfig
-    auto entryIt = std::find_if(trustConfig.trustedLists.begin(), trustConfig.trustedLists.end(),
-                                [&url](const TrustedListEntry& e) { return e.url == url; });
+    // Check user override from TrustConfig (entryIt resolved at top of fn)
     if (entryIt != trustConfig.trustedLists.end() && !entryIt->signingCertPath.empty()) {
         verificationCertOwned = loadCertFromFile(entryIt->signingCertPath);
         if (!verificationCertOwned.empty()) {
@@ -167,13 +202,14 @@ void NativeSigningService::loadTrustList(const std::string& url, bool isLotl, Tl
     // 5. Parse authenticated TL
     auto tlInfo = TrustedListParser::parse(xmlData);
 
-    // 6. Extract certificates -> addTlCertificate to TrustStoreManager
-    if (trustStoreMgr) {
-        for (const auto& service : tlInfo.services) {
-            if (!service.certDer.empty()) {
-                trustStoreMgr->addTlCertificate(service.certDer);
-            }
-        }
+    // 6. Push TL-derived anchors into the public TrustStore (eagerly owned
+    //    by Trust::TrustStoreService; this lazy path merges into the same
+    //    underlying store via the friend mechanism). No-op when the host
+    //    did not pass a public store via setPublicTrustStore.
+    if (publicTrustStore) {
+        auto anchors = extractAnchorsFromTrustedList(tlInfo, "tl:" + url);
+        LibreSCRS::Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(*publicTrustStore,
+                                                                                    std::move(anchors), "tl:" + url);
     }
 
     // 7. Store in cache (only if freshly fetched, not from cache)

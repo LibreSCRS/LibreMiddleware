@@ -8,12 +8,12 @@
 #include <cardedge_protocol.h>
 #include <health_protocol.h>
 #include <eu_vrc_protocol.h>
-#include <emrtd/emrtd_card.h>
-#include <emrtd/emrtd_types.h>
-#include <emrtd/crypto/chip_auth.h>
+#include <emrtd_card.h>
+#include <emrtd_types.h>
+#include <chip_auth.h>
 
-#include <smartcard/apdu.h>
-#include <smartcard/tlv.h>
+#include <apdu.h>
+#include <tlv.h>
 
 #include <cstdlib>
 #include <format>

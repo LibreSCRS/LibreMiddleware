@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include <emrtd/crypto/bac.h>
+#include "bac.h"
 #include "crypto_utils.h"
 
-#include <smartcard/apdu.h>
+#include <apdu.h>
 #include <smartcard/pcsc_connection.h>
 
 #include <openssl/crypto.h>

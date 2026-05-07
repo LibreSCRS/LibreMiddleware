@@ -35,6 +35,8 @@ add_library(librescrs-cardedge-opensc SHARED
     src/librescrs_opensc.c
 )
 
+target_compile_definitions(librescrs-cardedge-opensc PRIVATE LIBRESCRS_INTERNAL_BUILD)
+
 target_include_directories(librescrs-cardedge-opensc PRIVATE ${OPENSC_INCLUDE_DIR})
 find_package(ZLIB REQUIRED)
 target_link_libraries(librescrs-cardedge-opensc PRIVATE ${OPENSC_LIB} ZLIB::ZLIB)

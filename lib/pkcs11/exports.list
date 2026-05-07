@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Apple ld(1) "exported_symbols_list" file for librescrs-pkcs11.dylib.
+#
+# Restricts the exported symbol set of the PKCS#11 module to the standard
+# PKCS#11 v2.40 / v3.0 C interface only. Without this allowlist the
+# statically linked OpenSSL crypto library and the LibreSCRS internal
+# implementation namespaces would all leak as dylib exports — a layering
+# / supply-chain smell that the API-policy explicitly forbids.
+#
+# Wildcard rules (Apple ld supports `*` and `?`):
+#   _C_*            — all PKCS#11 standard entry points (C_Initialize,
+#                     C_GetInfo, C_GetSlotList, …, C_DigestUpdate, …,
+#                     C_GetFunctionList — the alternate entry name the
+#                     spec defines for consumers that prefer not to dlsym
+#                     every individual C_* function).
+#
+# Anything else (OpenSSL ASN1_*, LibreSCRS::*, libresign::*, smartcard::*)
+# is hidden from the dynamic export table.
+_C_*

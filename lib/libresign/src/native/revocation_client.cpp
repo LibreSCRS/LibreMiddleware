@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include "libresign/native/revocation_client.h"
-#include "libresign/http_client.h"
+#include "native/revocation_client.h"
+#include "http_client.h"
 #include "native_utils.h"
 #include "openssl_raii.h"
 

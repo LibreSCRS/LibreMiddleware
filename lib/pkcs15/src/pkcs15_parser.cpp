@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include <pkcs15/pkcs15_parser.h>
+#include "pkcs15_parser.h"
 
-#include <smartcard/ber.h>
+#include <ber.h>
 
 #include <stdexcept>
 #include <string>

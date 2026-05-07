@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0 and LibreSCRS contributors
 
 #include "smartcard/monitor.h"
-#include "smartcard/pcsc_scan_provider.h"
+#include "pcsc_scan_provider.h"
 
 #include <cassert>
 #include <chrono>
@@ -69,6 +69,14 @@ bool Monitor::isRunning() const
 
 void Monitor::startThread()
 {
+    std::lock_guard lock(threadMtx);
+    if (monitorThread.joinable()) {
+        // A prior stopThread() on another thread has not yet completed the
+        // join. Wait it out here so `monitorThread = std::thread(...)` does
+        // not terminate(). In the common case monitorThread is default-
+        // constructed (not joinable) and this is a no-op.
+        monitorThread.join();
+    }
     previousReaderStates.clear();
     stopRequested = false;
     monitorThread = std::thread(&Monitor::run, this);
@@ -76,6 +84,7 @@ void Monitor::startThread()
 
 void Monitor::stopThread()
 {
+    std::lock_guard lock(threadMtx);
     if (!monitorThread.joinable()) {
         return;
     }
@@ -83,7 +92,7 @@ void Monitor::stopThread()
 
     SCARDCONTEXT ctx;
     {
-        std::lock_guard lock(contextMtx);
+        std::lock_guard ctxLock(contextMtx);
         ctx = hContext;
     }
     if (ctx)

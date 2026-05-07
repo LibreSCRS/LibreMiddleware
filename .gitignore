@@ -45,3 +45,5 @@ LibreSCRS-cardedge-pkcs11-*.zip
 
 # Java compiled classes
 *.class
+tools/__pycache__/
+Testing/

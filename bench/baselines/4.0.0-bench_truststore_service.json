@@ -1,0 +1,85 @@
+{
+  "context": {
+    "date": "2026-04-30T13:21:28+02:00",
+    "host_name": "earth",
+    "executable": "./build-bench/bench/bench_truststore_service",
+    "num_cpus": 8,
+    "mhz_per_cpu": 4200,
+    "cpu_scaling_enabled": true,
+    "aslr_enabled": false,
+    "caches": [
+      {
+        "type": "Data",
+        "level": 1,
+        "size": 32768,
+        "num_sharing": 2
+      },
+      {
+        "type": "Instruction",
+        "level": 1,
+        "size": 32768,
+        "num_sharing": 2
+      },
+      {
+        "type": "Unified",
+        "level": 2,
+        "size": 262144,
+        "num_sharing": 2
+      },
+      {
+        "type": "Unified",
+        "level": 3,
+        "size": 8388608,
+        "num_sharing": 8
+      }
+    ],
+    "load_avg": [3.64795,3.2915,4.22266],
+    "library_version": "v1.9.4",
+    "library_build_type": "release",
+    "json_schema_version": 1
+  },
+  "benchmarks": [
+    {
+      "name": "BM_TrustStoreService_Create_Empty",
+      "family_index": 0,
+      "per_family_instance_index": 0,
+      "run_name": "BM_TrustStoreService_Create_Empty",
+      "run_type": "iteration",
+      "repetitions": 1,
+      "repetition_index": 0,
+      "threads": 1,
+      "iterations": 255,
+      "real_time": 1.1192512707602161e+06,
+      "cpu_time": 1.1172994039215683e+06,
+      "time_unit": "ns"
+    },
+    {
+      "name": "BM_TrustStoreService_Create_WithSystemStore",
+      "family_index": 1,
+      "per_family_instance_index": 0,
+      "run_name": "BM_TrustStoreService_Create_WithSystemStore",
+      "run_type": "iteration",
+      "repetitions": 1,
+      "repetition_index": 0,
+      "threads": 1,
+      "iterations": 218,
+      "real_time": 1.0509978026074758e+06,
+      "cpu_time": 1.0487057798165141e+06,
+      "time_unit": "ns"
+    },
+    {
+      "name": "BM_TrustStoreService_Create_WithTLFile",
+      "family_index": 2,
+      "per_family_instance_index": 0,
+      "run_name": "BM_TrustStoreService_Create_WithTLFile",
+      "run_type": "iteration",
+      "repetitions": 1,
+      "repetition_index": 0,
+      "threads": 1,
+      "iterations": 252,
+      "real_time": 1.6242369366366239e+06,
+      "cpu_time": 1.1595401706349207e+06,
+      "time_unit": "ns"
+    }
+  ]
+}

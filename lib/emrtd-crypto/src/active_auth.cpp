@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include <emrtd/crypto/active_auth.h>
+#include "active_auth.h"
 
-#include <smartcard/apdu.h>
+#include <apdu.h>
 #include <smartcard/pcsc_connection.h>
 
 #include <openssl/crypto.h>

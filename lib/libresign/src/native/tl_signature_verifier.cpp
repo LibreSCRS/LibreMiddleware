@@ -42,17 +42,60 @@ struct XmlCharDeleter
 using XmlCharPtr = std::unique_ptr<xmlChar, XmlCharDeleter>;
 
 // ---- Algorithm URI to EVP_MD mapping ----
-
+//
+// Exact-match against the canonical W3C XMLDSIG / XMLEnc algorithm URIs
+// (substring `find()` matching is too loose — it admits arbitrary suffix
+// content and mixes digest with signature URIs). SHA-1 is REJECTED
+// outright: ETSI TL spec mandates SHA-256-or-better since 2017, and SHA-1
+// is exploitable via chosen-prefix collisions in the c14n'd SignedInfo
+// surface. SHA-256 / SHA-384 / SHA-512 only.
 const EVP_MD* digestFromUri(const std::string& uri)
 {
-    if (uri.find("sha512") != std::string::npos || uri.find("sha-512") != std::string::npos)
-        return EVP_sha512();
-    if (uri.find("sha384") != std::string::npos || uri.find("sha-384") != std::string::npos)
-        return EVP_sha384();
-    if (uri.find("sha256") != std::string::npos || uri.find("sha-256") != std::string::npos)
+    // Digest method URIs (xmlenc and xmldsig11)
+    if (uri == "http://www.w3.org/2001/04/xmlenc#sha256" ||
+        uri == "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256" ||
+        uri == "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256")
         return EVP_sha256();
-    if (uri.find("sha1") != std::string::npos || uri.find("sha-1") != std::string::npos)
-        return EVP_sha1();
+    if (uri == "http://www.w3.org/2001/04/xmldsig-more#sha384" ||
+        uri == "http://www.w3.org/2001/04/xmldsig-more#rsa-sha384" ||
+        uri == "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha384")
+        return EVP_sha384();
+    if (uri == "http://www.w3.org/2001/04/xmlenc#sha512" ||
+        uri == "http://www.w3.org/2001/04/xmldsig-more#rsa-sha512" ||
+        uri == "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha512")
+        return EVP_sha512();
+    // SHA-1 (and the SHA-1 RSA / DSA signature method URIs) are explicitly
+    // rejected. Caller logs the URI in the surrounding "unsupported …"
+    // diagnostic.
+    return nullptr;
+}
+
+// ---- Safe Id-attribute lookup ----
+//
+// Walks the document looking for the first element whose `Id` attribute
+// (literal name `Id`, as used in xmldsig) equals the supplied id string.
+// Used as a fallback when `xmlGetID` (which respects DTD-declared ID
+// attributes and `xml:id`) returns nothing. Treats `id` as an opaque
+// literal — never builds an XPath expression — so it cannot be tricked
+// by metacharacters in the URI fragment (the prior `//*[@Id='" + id + "']`
+// expression was an XPath-injection sink).
+xmlNodePtr findElementByIdAttr(xmlNodePtr root, const xmlChar* id)
+{
+    if (!root || !id)
+        return nullptr;
+    for (xmlNodePtr cur = root; cur; cur = cur->next) {
+        if (cur->type == XML_ELEMENT_NODE) {
+            for (xmlAttrPtr attr = cur->properties; attr; attr = attr->next) {
+                if (xmlStrcmp(attr->name, BAD_CAST "Id") == 0) {
+                    XmlCharPtr val(xmlNodeListGetString(cur->doc, attr->children, 1));
+                    if (val && xmlStrcmp(val.get(), id) == 0)
+                        return cur;
+                }
+            }
+            if (xmlNodePtr hit = findElementByIdAttr(cur->children, id))
+                return hit;
+        }
+    }
     return nullptr;
 }
 
@@ -301,14 +344,16 @@ bool TlSignatureVerifier::verify(std::span<const uint8_t> xmlData, std::span<con
             }
 
             if (!targetNode) {
-                // Fallback: XPath search for element with matching Id attribute
-                XPathCtxPtr xpCtx(xmlXPathNewContext(doc.get()));
-                if (xpCtx) {
-                    std::string expr = "//*[@Id='" + id + "']";
-                    XPathObjPtr xpObj(xmlXPathEvalExpression(BAD_CAST expr.c_str(), xpCtx.get()));
-                    if (xpObj && xpObj->nodesetval && xpObj->nodesetval->nodeNr > 0)
-                        targetNode = xpObj->nodesetval->nodeTab[0];
-                }
+                // Fallback: literal walk for the first element whose `Id`
+                // attribute matches. NEVER build an XPath expression from
+                // the user-supplied URI fragment — `id` is attacker-
+                // controlled (it arrives from the URI="#…" attribute of a
+                // possibly-untrusted XML reference) and the prior
+                // "//*[@Id='" + id + "']" expression was an XPath-
+                // injection sink (e.g. id="#'or'1'='1" matches every
+                // element).
+                xmlNodePtr root = xmlDocGetRootElement(doc.get());
+                targetNode = findElementByIdAttr(root, BAD_CAST id.c_str());
             }
 
             if (!targetNode) {

@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: LGPL-2.1
+name: CodeQL
+
+# GitHub CodeQL static analysis for the C++ surface, on every PR plus a
+# weekly schedule. Catches common security antipatterns (buffer/integer
+# issues, null deref, format-string, command injection) and CWE-mapped
+# findings beyond what -Wall -Wextra -Wpedantic surfaces.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly Sunday 03:00 UTC — picks up new query packs without blocking PRs
+    # if the queries themselves change between runs.
+    - cron: '0 3 * * 0'
+
+jobs:
+  analyze:
+    name: Analyze (cpp)
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    env:
+      OPENSC_VERSION: '0.26.1'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libpcsclite-dev libssl-dev zlib1g-dev \
+            libcurl4-openssl-dev libxml2-dev \
+            pkg-config autoconf automake libtool \
+            cmake ninja-build python3-jsonschema
+
+      - name: Build OpenSC ${{ env.OPENSC_VERSION }} from source
+        # CodeQL needs to observe the full compile graph, so we mirror the
+        # main CI's OpenSC bootstrap. Cached toolchains aren't reliable
+        # across CodeQL action upgrades; from-source is what's currently
+        # working in build-linux.
+        run: |
+          git clone --branch ${{ env.OPENSC_VERSION }} --depth 1 \
+            https://github.com/OpenSC/OpenSC /tmp/opensc-src
+          cd /tmp/opensc-src
+          ./bootstrap
+          ./configure --prefix=/tmp/opensc-install \
+            --enable-shared --disable-static --without-readline
+          make -j$(nproc) install
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: cpp
+          # security-and-quality is the broader pack (security + lint);
+          # security-extended is security-only with extended coverage.
+          queries: security-and-quality
+
+      - name: Configure & Build
+        # Manual build path — CodeQL autobuild guesses for CMake projects but
+        # gets the OPENSC_INCLUDE_DIR PRIVATE path wrong. Mirror build-linux.
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_PREFIX_PATH=/tmp/opensc-install \
+            -DOPENSC_INCLUDE_DIR=/tmp/opensc-src/src
+          cmake --build build -j4
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:cpp"

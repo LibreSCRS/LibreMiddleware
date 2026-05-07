@@ -8,13 +8,13 @@
 #include <cardedge_protocol.h>
 #include <health_protocol.h>
 #include <eu_vrc_protocol.h>
-#include <emrtd/emrtd_types.h>
+#include <emrtd_types.h>
 
-#include <pkcs15/pkcs15_card.h>
+#include <pkcs15_card.h>
 
-#include <smartcard/apdu.h>
-#include <smartcard/ber.h>
-#include <smartcard/tlv.h>
+#include <apdu.h>
+#include <ber.h>
+#include <tlv.h>
 
 #include <algorithm>
 #include <format>

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include "cardedge/cardedge_pkcs11_provider.h"
-#include "cardedge/cardedge.h"
-#include "cardedge/pki_applet_guard.h"
-#include "smartcard/apdu.h"
+#include "cardedge_pkcs11_provider.h"
+#include "cardedge.h"
+#include "pki_applet_guard.h"
+#include "apdu.h"
 #include "cardedge_protocol.h"
 #include <openssl/crypto.h>
 

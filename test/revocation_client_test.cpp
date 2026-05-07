@@ -5,7 +5,7 @@
 
 #ifdef LIBRESIGN_HAS_NATIVE
 
-#include "libresign/native/revocation_client.h"
+#include "native/revocation_client.h"
 
 using namespace libresign;
 

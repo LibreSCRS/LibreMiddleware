@@ -4,8 +4,8 @@
 #include "eu_vrc_detection.h"
 #include "eu_vrc_protocol.h"
 
-#include <smartcard/apdu.h>
-#include <smartcard/ber.h>
+#include <apdu.h>
+#include <ber.h>
 #include <smartcard/pcsc_connection.h>
 
 namespace euvrc {

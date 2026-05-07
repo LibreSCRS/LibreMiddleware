@@ -1,0 +1,5 @@
+oid	friendly_name	category	source
+1.3.6.1.4.1.32328	rs-mup-arc	rs-pki	LibreSCRS-curated
+1.3.6.1.4.1.32328.1	rs-mup-pki	rs-pki	LibreSCRS-curated
+1.3.6.1.4.1.32328.1.1	rs-mup-citizen-ca	rs-pki	LibreSCRS-curated
+1.3.6.1.4.1.32328.1.2	rs-mup-officer-ca	rs-pki	LibreSCRS-curated

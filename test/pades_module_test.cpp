@@ -5,10 +5,10 @@
 
 #ifdef LIBRESIGN_HAS_NATIVE
 
-#include "libresign/native/pades_module.h"
-#include "libresign/native/pkcs11_token.h"
+#include "native/pades_module.h"
+#include "native/pkcs11_token.h"
 #include "signing_test_support/signing_test_support.h"
-#include "libresign/signing_service.h"
+#include "signing_service.h"
 
 #include <cstring>
 #include <string>
@@ -94,6 +94,34 @@ TEST(PAdESModule, RejectsTrulyCorruptPdf)
     EXPECT_TRUE(result.errorMessage.find("missing %PDF- header") != std::string::npos) << result.errorMessage;
 }
 
+TEST(PAdESModule, AppearanceStreamIsUtf8DrivenFromVisualText)
+{
+    PAdESModule pades;
+    VisualSignatureParams v;
+    v.enabled = true;
+    v.page = 1;
+    v.width = 200;
+    v.height = 50;
+    v.text = "Potpisao: Hiršl\nDatum: 2026-04-24";
+
+    auto appearance = pades.createAppearanceStream(v);
+    std::string s(appearance.contentStream.begin(), appearance.contentStream.end());
+
+    // Must reference the Type0 font /F1.
+    EXPECT_NE(s.find("/F1 9 Tf"), std::string::npos);
+    // Text is emitted as hex-string Tj, not PDF literal strings (...) Tj.
+    EXPECT_NE(s.find("<"), std::string::npos);
+    EXPECT_NE(s.find("> Tj"), std::string::npos);
+    // No more legacy "Signed by:" / "Reason:" / "Location:" hardcoded prefixes.
+    EXPECT_EQ(s.find("Signed by:"), std::string::npos);
+    EXPECT_EQ(s.find("Reason:"), std::string::npos);
+    // Two lines means two Tj calls.
+    size_t first = s.find("> Tj");
+    ASSERT_NE(first, std::string::npos);
+    size_t second = s.find("> Tj", first + 1);
+    EXPECT_NE(second, std::string::npos);
+}
+
 // ---- SoftHSM-based tests ----
 
 class PAdESModuleSoftHSMTest : public ::testing::Test
@@ -150,7 +178,7 @@ TEST_F(PAdESModuleSoftHSMTest, SignPdf_BB_WithVisual)
     visual.y = 50;
     visual.width = 200;
     visual.height = 60;
-    visual.signerName = "Test Signer";
+    visual.text = "Signed by: Test Signer\nApproval\nBelgrade";
     visual.reason = "Approval";
     visual.location = "Belgrade";
 
@@ -160,8 +188,45 @@ TEST_F(PAdESModuleSoftHSMTest, SignPdf_BB_WithVisual)
     // Should contain visual signature elements
     ASSERT_TRUE(containsString(result.signedDocument, "/Type /XObject"));
     ASSERT_TRUE(containsString(result.signedDocument, "/Subtype /Form"));
-    ASSERT_TRUE(containsString(result.signedDocument, "/BaseFont /Helvetica"));
-    ASSERT_TRUE(containsString(result.signedDocument, "Signed by: Test Signer"));
+    // New Type0 font machinery replaces the old Helvetica Type1 font.
+    ASSERT_TRUE(containsString(result.signedDocument, "/Subtype /Type0"));
+    ASSERT_TRUE(containsString(result.signedDocument, "/Subtype /CIDFontType2"));
+    ASSERT_TRUE(containsString(result.signedDocument, "/FontFile2"));
+    ASSERT_FALSE(containsString(result.signedDocument, "/BaseFont /Helvetica"));
+}
+
+TEST_F(PAdESModuleSoftHSMTest, SignPdf_BB_WithUnicodeVisual)
+{
+    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", 0);
+    auto pdf = testPdfBytes();
+    PAdESModule pades;
+
+    VisualSignatureParams v;
+    v.enabled = true;
+    v.page = -1;
+    v.x = 50;
+    v.y = 50;
+    v.width = 200;
+    v.height = 50;
+    v.text = "Potpisao: Hiršl Ćirković\nDatum: 2026-04-24";
+
+    SigningRequest req;
+    req.document = pdf;
+    req.format = SignatureFormat::PAdES;
+    req.level = SignatureLevel::B_B;
+    req.visual = v;
+
+    auto result = pades.sign(req.document, token, SignatureLevel::B_B, {}, req.visual);
+    ASSERT_TRUE(result.success) << result.errorMessage;
+
+    auto& out = result.signedDocument;
+    // Output must contain the Type0 font machinery.
+    ASSERT_TRUE(containsString(out, "/Subtype /Type0"));
+    ASSERT_TRUE(containsString(out, "/Subtype /CIDFontType2"));
+    ASSERT_TRUE(containsString(out, "/FontFile2"));
+    ASSERT_TRUE(containsString(out, "/ToUnicode"));
+    // Must NOT contain the old Type1 Helvetica font anymore.
+    ASSERT_FALSE(containsString(out, "/BaseFont /Helvetica"));
 }
 
 TEST_F(PAdESModuleSoftHSMTest, SignPdf_BB_InvisibleSignature)

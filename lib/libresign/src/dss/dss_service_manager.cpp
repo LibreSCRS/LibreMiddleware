@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include "libresign/dss/dss_service_manager.h"
-#include "libresign/http_client.h"
+#include "dss/dss_service_manager.h"
+#include "http_client.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -75,7 +75,7 @@ static void prepareChildProcess(const std::string& logPath, int openFlags = O_TR
 {
     // Restrict file creation mode so that the Unix socket created by the
     // Java service (and any other files it creates) is owner-only (0600).
-    // This matters on Linux when we fall back to /tmp/libresc-dss-<uid>.sock
+    // This matters on Linux when we fall back to /tmp/librescrs-dss-<uid>.sock
     // where /tmp is world-writable and default permissions would let other
     // local users connect.
     umask(0077);
@@ -119,14 +119,14 @@ DSSServiceManager::StartResult DSSServiceManager::ensureRunning()
 #ifdef __APPLE__
         // macOS: $TMPDIR is already per-user (/var/folders/.../T/), no uid needed.
         // Keep path short for 104-byte sun_path limit.
-        socketPath = (fs::temp_directory_path() / "libresc-dss.sock").string();
+        socketPath = (fs::temp_directory_path() / "librescrs-dss.sock").string();
 #else
         // Linux: prefer $XDG_RUNTIME_DIR, fall back to /tmp with uid suffix.
         const char* xdgRuntime = std::getenv("XDG_RUNTIME_DIR");
         if (xdgRuntime && fs::exists(xdgRuntime))
-            socketPath = (fs::path(xdgRuntime) / "libresc-dss.sock").string();
+            socketPath = (fs::path(xdgRuntime) / "librescrs-dss.sock").string();
         else
-            socketPath = (fs::temp_directory_path() / ("libresc-dss-" + std::to_string(getuid()) + ".sock")).string();
+            socketPath = (fs::temp_directory_path() / ("librescrs-dss-" + std::to_string(getuid()) + ".sock")).string();
 #endif
     }
 
@@ -148,7 +148,7 @@ DSSServiceManager::StartResult DSSServiceManager::ensureRunning()
     // Resolve log file path next to the socket
     if (logPath.empty()) {
         auto socketDir = fs::path(socketPath).parent_path();
-        logPath = (socketDir / "libresc-dss.log").string();
+        logPath = (socketDir / "librescrs-dss.log").string();
     }
 
     // Try CDS-accelerated startup, fall back to plain JAR

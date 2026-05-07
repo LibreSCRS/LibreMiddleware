@@ -3,13 +3,13 @@
 
 #include "card_scanner.h"
 
-#include <smartcard/apdu.h>
+#include <apdu.h>
 
 #include <card_protocol.h>
 #include <cardedge_protocol.h>
 #include <health_protocol.h>
 #include <eu_vrc_protocol.h>
-#include <emrtd/emrtd_types.h>
+#include <emrtd_types.h>
 
 #include <gtest/gtest.h>
 

@@ -21,11 +21,42 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+# A5 (4.0 hardening): per-plugin manifest.json -> constexpr header codegen.
+# Python is the build-time host for the lowering script; jsonschema is an
+# optional runtime dep (the script warns and skips validation when missing).
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/LibreSCRSAddPlugin.cmake)
+
+# A2 (4.0 hardening): std::stop_token / std::stop_source ship behind
+# `-fexperimental-library` on Apple Clang's libc++. The flag toggles the
+# C++20 cancellation primitives without degrading them to a hand-rolled
+# `shared_ptr<atomic<bool>>` workaround. Per memory feedback
+# `feedback_apple_clang_experimental.md` (2026-04-15): use the standard
+# library and add the flag — never re-implement.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    add_compile_options(-fexperimental-library)
+    add_link_options(-fexperimental-library)
+endif()
+
+# Verify std::expected is available on this toolchain before any 4.0
+# code that uses it compiles. Probe added per 2026-05-03 spec R1.
+try_compile(LIBRESCRS_HAS_STD_EXPECTED
+    SOURCE_FROM_FILE check-std-expected.cpp ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check-std-expected.cpp
+    CXX_STANDARD 23
+    CXX_STANDARD_REQUIRED ON)
+if(NOT LIBRESCRS_HAS_STD_EXPECTED)
+    message(FATAL_ERROR
+        "std::expected is not available on this toolchain. "
+        "LibreMiddleware 4.0 requires C++23 with <expected>. "
+        "Update GCC to 13+, Clang/libc++ to 16+, or AppleClang to 16+.")
+endif()
+
 # Export certificates directory for consumers
 set(LIBREMIDDLEWARE_CERTIFICATES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/certificates"
     CACHE PATH "Path to bundled CA certificates" FORCE)
 
 add_subdirectory(thirdparty)
+add_subdirectory(lib/LibreSCRS)
 add_subdirectory(lib/plugin)
 
 # All card plugins build into a single directory for registry discovery
@@ -108,7 +139,62 @@ endif()
 
 option(BUILD_TESTING "Build tests" ON)
 if(BUILD_TESTING)
+    # Call enable_testing() at top level so add_test() calls in any
+    # subdirectory (test/, examples/) are discoverable by a single
+    # `ctest` run from the build root — previously only tests under
+    # build/test/ were visible because enable_testing() lived there.
+    enable_testing()
     add_subdirectory(test)
 endif()
 
+option(LIBRESCRS_BUILD_FUZZ
+    "Build libFuzzer harnesses for public parsers (Clang only)" OFF)
+if(LIBRESCRS_BUILD_FUZZ)
+    add_subdirectory(fuzz)
+endif()
+
+option(LIBRESCRS_BUILD_BENCH
+    "Build Google Benchmark micro-benchmarks for public hot paths" OFF)
+if(LIBRESCRS_BUILD_BENCH)
+    add_subdirectory(bench)
+endif()
+
+option(LIBRESCRS_BUILD_EXAMPLES "Build LibreMiddleware public-API consumer examples" OFF)
+# add_subdirectory unconditionally so IDE project trees (QtCreator, CLion)
+# populate the examples/ source files in their file-tree view even when the
+# build is disabled. The per-example CMakeLists gates its add_executable on
+# LIBRESCRS_BUILD_EXAMPLES so the actual target only materialises when the
+# option is ON — the source-file discovery cost is zero when disabled.
+add_subdirectory(examples/sdk-consumer)
+
 add_subdirectory(tools)
+
+# ──────────────────────────────────────────────────────────────────────────
+# SDK install rule for public headers.
+#
+# LibreMiddleware is consumed in-tree (FetchContent) by LibreCelik today, so
+# an install/export package is not the primary distribution channel. However,
+# the audit (Phase 10 / Finding M9) flagged that if/when an SDK package is
+# produced, the `include/LibreSCRS/**/detail/` sub-trees MUST be excluded —
+# those headers are compile-time-guarded with `#error !LIBRESCRS_INTERNAL_BUILD`
+# but must never ship in the public SDK package.
+#
+# This rule establishes the canonical install pattern up-front:
+#   * Public API lives under include/LibreSCRS/.
+#   * Internal detail/ sub-directories are excluded via PATTERN.
+#
+# Only activated when LIBRESCRS_INSTALL_SDK_HEADERS=ON to avoid surprising
+# downstream consumers that invoke `cmake --install` for other reasons.
+# ──────────────────────────────────────────────────────────────────────────
+option(LIBRESCRS_INSTALL_SDK_HEADERS
+    "Install LibreSCRS public SDK headers (detail/ sub-trees excluded)" OFF)
+if(LIBRESCRS_INSTALL_SDK_HEADERS)
+    include(GNUInstallDirs)
+    install(DIRECTORY include/LibreSCRS
+        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+        FILES_MATCHING
+            PATTERN "*.h"
+            PATTERN "*.hpp"
+        PATTERN "detail" EXCLUDE
+    )
+endif()

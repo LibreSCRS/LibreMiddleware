@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
-#include "libresign/native/signing_provider.h"
-#include "libresign/native/pkcs11_token.h"
-#include "libresign/signing_service.h"
+#include "native/signing_provider.h"
+#include "native/pkcs11_token.h"
+#include "signing_service.h"
 #include "signing_test_support/signing_test_support.h"
 
 #include <openssl/evp.h>

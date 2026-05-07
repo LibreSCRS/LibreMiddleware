@@ -5,7 +5,7 @@
 
 #ifdef LIBRESIGN_HAS_NATIVE
 
-#include "libresign/native/trusted_list_parser.h"
+#include "native/trusted_list_parser.h"
 
 #include <cstdlib>
 
@@ -205,6 +205,88 @@ TEST(TrustedListParser, ParseEmptyVectorReturnsEmpty)
     auto info = TrustedListParser::parse(empty);
     ASSERT_TRUE(info.schemeTerritory.empty());
     ASSERT_TRUE(info.services.empty());
+}
+
+// ---------------------------------------------------------------------------
+// F6: isSafeTslUrl — IPv6 bracket SSRF guard (pass-6 review)
+//
+// Pre-fix: the host extractor stopped at the first ':' inside an IPv6
+// bracket literal "[::1]" or "[fd00::1]:443/", returning "[" as the host
+// and bypassing every private-range check. The 4.0 fix routes bracketed
+// hosts through an IPv6-aware path that rejects loopback, link-local
+// fe80::/10, ULA fc00::/7, and IPv4-mapped private ranges.
+// ---------------------------------------------------------------------------
+
+TEST(TrustedListParserSafeUrl, RejectsBracketedIPv6Loopback)
+{
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("https://[::1]/path"));
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("https://[::1]:443/path"));
+}
+
+TEST(TrustedListParserSafeUrl, RejectsBracketedIPv6Unspecified)
+{
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("https://[::]/path"));
+}
+
+TEST(TrustedListParserSafeUrl, RejectsBracketedIPv6LinkLocal)
+{
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("https://[fe80::1]/path"));
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("https://[FE80::abcd]/path"));
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("https://[febf::1]:8443/x"));
+}
+
+TEST(TrustedListParserSafeUrl, RejectsBracketedIPv6UniqueLocal)
+{
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("https://[fc00::1]/path"));
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("https://[fd00::1]:443/"));
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("https://[FD12:3456:789a::1]/"));
+}
+
+TEST(TrustedListParserSafeUrl, RejectsBracketedIPv4MappedPrivate)
+{
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("https://[::ffff:127.0.0.1]/"));
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("https://[::ffff:10.0.0.1]/"));
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("https://[::ffff:192.168.1.1]/"));
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("https://[::ffff:169.254.169.254]/"));
+}
+
+TEST(TrustedListParserSafeUrl, AcceptsPublicIPv6Documentation)
+{
+    // 2001:db8::/32 is the documentation/example range. Not private; the
+    // guard only rejects loopback / link-local / ULA / IPv4-mapped private,
+    // and accepts everything else (DNS resolution + curl is the next layer).
+    EXPECT_TRUE(TrustedListParser::isSafeTslUrl("https://[2001:db8::1]/path"));
+    EXPECT_TRUE(TrustedListParser::isSafeTslUrl("https://[2001:db8::1]:8443/path"));
+}
+
+TEST(TrustedListParserSafeUrl, RejectsMalformedBracket)
+{
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("https://[::1/path")); // unterminated
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("https://[]/path"));   // empty body
+}
+
+TEST(TrustedListParserSafeUrl, ExistingIPv4PrivateChecksStillReject)
+{
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("https://127.0.0.1/path"));
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("https://10.0.0.1/path"));
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("https://192.168.1.1/x"));
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("https://169.254.169.254/latest/meta-data/"));
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("https://172.16.0.1/x"));
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("https://172.31.255.255/x"));
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("https://localhost/path"));
+}
+
+TEST(TrustedListParserSafeUrl, AcceptsPublicHostname)
+{
+    EXPECT_TRUE(TrustedListParser::isSafeTslUrl("https://www.mtt.gov.rs/download/CyrilicTSL.xml"));
+    EXPECT_TRUE(TrustedListParser::isSafeTslUrl("https://example.org/tl.xml"));
+}
+
+TEST(TrustedListParserSafeUrl, RejectsNonHttps)
+{
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("http://example.org/tl.xml"));
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("file:///etc/passwd"));
+    EXPECT_FALSE(TrustedListParser::isSafeTslUrl("ftp://example.org/x"));
 }
 
 // Live test -- fetch real Serbian TL (network required, may be slow)

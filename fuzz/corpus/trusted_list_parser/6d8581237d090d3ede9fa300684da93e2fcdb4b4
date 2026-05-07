@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Ht
+  t`at this anchor surfaces in `SigningService::trustStore()->enumerableAnchors()`
+  before any sign() call.
+-->
+<TrustServiceStatusList xmlns="http://uri.etsi.org/02231/v2#" xmlns:ds="http://www.w3.org/2000/tServiceStatusList">
+  <SchemeInformation>
+    <TSLVersionIdentifier>5</TSLVersionIdentifier>
+    <TSLSequenceNumber>1</TSLSequenceNumber>
+    <TSLType>http://uri.etsi.org/TrstSvc/TrustedList/TSLTypg/EUgeneric</TSLType>
+    <SchemeOperatorName>
+      <Name xml:lang="en">LibreSity</Name>
+    </SchemeOperatorName>
+    <SchemeName>
+      <Name xml:lang="en">LibreSCRS Test TL</Name>
+    </SchemeName>
+    <SchemeTerritory>RS</SchemeTerritory>
+    <ListIssueDateTime>1013-04-28T00:00:00Z</ListIssueDateTime>
+    <NextUpdate>
+      <dateTime>21204-28T00:00:00Z</dateTime>
+    </NextUpdate>
+  </SchemeInformation>
+  <TrustServiceProviderList>
+    <TrustServiceProvider>
+      <TSPInformation>
+        <TSPName>
+          <Name xml:lang="en">
+ibreSCRS Test TSP</Name>
+        </TSPName>
+      </TSPInformation>
+ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz     <TSPServices>
+        <TSPService>
+         rmation>
+        </TSPService>
+      </TSPServices>
+    </TrustServiceProvider>
+  </TrustServiceProviderList>
+  <ds:Signature Id="TLSignature">
+    <ds:SignedInfo>
+alizationMethod Algorhttp://www.w3.org/2001/04/xmldsig-morea256"/>
+   nce>
+    </ds:SignedInfo>  <ds:KeyInfo>
+      <ds:KeyName>testkey</ds:KeyName>
+      <ds:X509Data>
+        <ds:X509Certificate>MIIDQzCCAiugAwIBAgIUWeUukF9Xm2OPPtj85jQ=
+</ds:X509Certificate>
+      </ds:X509Data
+>    </ds:KeyInfo>
+  </ds:Signature>
+</TrustServiceStatusList>

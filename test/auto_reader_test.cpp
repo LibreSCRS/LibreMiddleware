@@ -2,25 +2,27 @@
 // SPDX-FileCopyrightText: 2026 hirashix0 and LibreSCRS contributors
 
 #include "mock_pcsc_scan_provider.h"
-#include <plugin/auto_reader.h>
-#include <plugin/card_plugin_registry.h>
+#include <LibreSCRS/Plugin/AutoReaderService.h>
+#include <LibreSCRS/Plugin/CardPluginService.h>
+#include <LibreSCRS/SmartCard/MonitorService.h>
+#include <LibreSCRS/SmartCard/detail/MonitorInjection.h>
 #include <gtest/gtest.h>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <filesystem>
 #include <mutex>
 #include <thread>
 
-using namespace smartcard;
-using namespace plugin;
+using namespace LibreSCRS::Plugin;
 
 // --- Test 1: SubscribesAndUnsubscribes ---
-// Create Monitor with mock (blocking action), create AutoReader, verify monitor is running,
+// Create MonitorService with mock (blocking action), create AutoReaderService, verify monitor is running,
 // destroy both. Expect cancel called.
 TEST(AutoReaderTest, SubscribesAndUnsubscribes)
 {
-    auto counters = std::make_shared<MockCounters>();
-    auto mock = std::make_unique<MockPCSCScanProvider>(counters);
+    auto counters = std::make_shared<smartcard::MockCounters>();
+    auto mock = std::make_unique<smartcard::MockPCSCScanProvider>(counters);
     mock->setReaders({"Reader A"});
 
     // PnP check
@@ -29,29 +31,33 @@ TEST(AutoReaderTest, SubscribesAndUnsubscribes)
     // Blocking call — will wait until cancel() is called
     mock->pushStatusChange({SCARD_S_SUCCESS, {}, true});
 
-    plugin::CardPluginRegistry registry;
+    // Empty registry for these tests — pass a nonexistent path so the
+    // span-of-paths ctor reports zero outcomes and the registry stays empty.
+    auto registry =
+        std::make_shared<LibreSCRS::Plugin::CardPluginService>(std::filesystem::path{"/nonexistent/librescrs-tests"});
 
     {
-        Monitor monitor(std::move(mock));
-        AutoReader autoReader(
-            monitor, registry, [](const std::string&, const plugin::CardData&) {},
-            [](const std::string&, const std::string&) {});
+        auto monitor = LibreSCRS::SmartCard::detail::makeMonitorWithProvider(std::move(mock));
+        ASSERT_NE(monitor, nullptr);
+        AutoReaderService autoReader(
+            monitor, registry, [](const std::string&, const LibreSCRS::Plugin::CardData&) {},
+            [](const std::string&, const LibreSCRS::Plugin::AutoReaderService::AutoReaderError&) {});
 
         // Let the monitor start and block
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        EXPECT_TRUE(monitor.isRunning());
-    } // AutoReader destructor unsubscribes, Monitor destructor calls cancel
+        EXPECT_TRUE(monitor->isRunning());
+    } // AutoReaderService destructor unsubscribes, MonitorService destructor calls cancel
 
     EXPECT_GE(counters->cancelCount.load(), 1);
 }
 
 // --- Test 2: CardInsertCallsErrorOnPCSCFailure ---
-// Monitor emits CardInserted for "NonExistentReader". AutoReader tries real PCSCConnection
+// MonitorService emits CardInserted for "NonExistentReader". AutoReaderService tries real PCSCConnection
 // which fails. Error callback should fire.
 TEST(AutoReaderTest, CardInsertCallsErrorOnPCSCFailure)
 {
-    auto counters = std::make_shared<MockCounters>();
-    auto mock = std::make_unique<MockPCSCScanProvider>(counters);
+    auto counters = std::make_shared<smartcard::MockCounters>();
+    auto mock = std::make_unique<smartcard::MockPCSCScanProvider>(counters);
     mock->setReaders({"NonExistentReader"});
 
     // PnP check
@@ -64,7 +70,10 @@ TEST(AutoReaderTest, CardInsertCallsErrorOnPCSCFailure)
     // Stop
     mock->pushStatusChange({LONG(SCARD_E_CANCELLED), {}, false});
 
-    plugin::CardPluginRegistry registry;
+    // Empty registry for these tests — pass a nonexistent path so the
+    // span-of-paths ctor reports zero outcomes and the registry stays empty.
+    auto registry =
+        std::make_shared<LibreSCRS::Plugin::CardPluginService>(std::filesystem::path{"/nonexistent/librescrs-tests"});
 
     std::mutex mtx;
     std::condition_variable cv;
@@ -72,14 +81,15 @@ TEST(AutoReaderTest, CardInsertCallsErrorOnPCSCFailure)
     std::string errorMsg;
 
     {
-        Monitor monitor(std::move(mock));
-        AutoReader autoReader(
+        auto monitor = LibreSCRS::SmartCard::detail::makeMonitorWithProvider(std::move(mock));
+        ASSERT_NE(monitor, nullptr);
+        AutoReaderService autoReader(
             monitor, registry,
-            [](const std::string&, const plugin::CardData&) { FAIL() << "Unexpected data callback"; },
-            [&](const std::string&, const std::string& error) {
+            [](const std::string&, const LibreSCRS::Plugin::CardData&) { FAIL() << "Unexpected data callback"; },
+            [&](const std::string&, const LibreSCRS::Plugin::AutoReaderService::AutoReaderError& error) {
                 std::lock_guard lock(mtx);
                 errorReceived = true;
-                errorMsg = error;
+                errorMsg = error.diagnosticDetail.value_or(std::string{});
                 cv.notify_all();
             });
 
@@ -97,11 +107,11 @@ TEST(AutoReaderTest, CardInsertCallsErrorOnPCSCFailure)
 }
 
 // --- Test 3: IgnoresCardRemoved ---
-// Monitor emits only CardRemoved. Neither data nor error callback should fire.
+// MonitorService emits only CardRemoved. Neither data nor error callback should fire.
 TEST(AutoReaderTest, IgnoresCardRemoved)
 {
-    auto counters = std::make_shared<MockCounters>();
-    auto mock = std::make_unique<MockPCSCScanProvider>(counters);
+    auto counters = std::make_shared<smartcard::MockCounters>();
+    auto mock = std::make_unique<smartcard::MockPCSCScanProvider>(counters);
     mock->setReaders({"Reader A"});
 
     // PnP check
@@ -113,16 +123,22 @@ TEST(AutoReaderTest, IgnoresCardRemoved)
     // Stop
     mock->pushStatusChange({LONG(SCARD_E_CANCELLED), {}, false});
 
-    plugin::CardPluginRegistry registry;
+    // Empty registry for these tests — pass a nonexistent path so the
+    // span-of-paths ctor reports zero outcomes and the registry stays empty.
+    auto registry =
+        std::make_shared<LibreSCRS::Plugin::CardPluginService>(std::filesystem::path{"/nonexistent/librescrs-tests"});
 
     std::atomic<bool> dataCalled{false};
     std::atomic<bool> errorCalled{false};
 
     {
-        Monitor monitor(std::move(mock));
-        AutoReader autoReader(
-            monitor, registry, [&](const std::string&, const plugin::CardData&) { dataCalled.store(true); },
-            [&](const std::string&, const std::string&) { errorCalled.store(true); });
+        auto monitor = LibreSCRS::SmartCard::detail::makeMonitorWithProvider(std::move(mock));
+        ASSERT_NE(monitor, nullptr);
+        AutoReaderService autoReader(
+            monitor, registry, [&](const std::string&, const LibreSCRS::Plugin::CardData&) { dataCalled.store(true); },
+            [&](const std::string&, const LibreSCRS::Plugin::AutoReaderService::AutoReaderError&) {
+                errorCalled.store(true);
+            });
 
         // Give monitor time to process events
         std::this_thread::sleep_for(std::chrono::milliseconds(500));

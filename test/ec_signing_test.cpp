@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
-#include "libresign/native/native_signing_service.h"
-#include "libresign/types.h"
+#include "native/native_signing_service.h"
+#include "types.h"
 #include "signing_test_support.h"
 
 #include <cstdlib>

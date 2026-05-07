@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
-#include <cardedge/cardedgetypes.h>
-#include <rseid/eidtypes.h>
+#include <cardedgetypes.h>
+#include <eidtypes.h>
 
 using namespace eidcard;
 using cardedge::CertificateData;

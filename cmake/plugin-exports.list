@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Apple ld(1) "exported_symbols_list" file shared by every plugin .dylib
+# produced via librescrs_add_plugin().
+#
+# A plugin .dylib's only public ABI is the trio of C entry points the
+# host's CardPluginRegistry::loadPluginsFromDirectory(...) looks up via
+# dlsym (see lib/plugin/src/card_plugin_registry.cpp; emitted by the
+# LIBRESCRS_DEFINE_CARD_PLUGIN macro in
+# include/LibreSCRS/Plugin/PluginExport.h):
+#
+#   create_card_plugin         — factory that returns a heap-allocated
+#                                 CardPlugin subclass; ownership transfers
+#                                 to the host.
+#   destroy_card_plugin        — paired deleter the host calls when it
+#                                 is done with the plugin instance.
+#   card_plugin_abi_version    — ABI version probe; the registry refuses
+#                                 to load a plugin whose returned value
+#                                 does not match the host's compile-time
+#                                 kCardPluginAbiVersion.
+#
+# After the host has the CardPlugin*, all communication is virtual
+# dispatch through the object's vtable. The plugin's vtable entries point
+# at implementations that live INSIDE the plugin .dylib at fixed
+# addresses; the addresses are reachable through the vptr indirection
+# regardless of whether those implementation functions are exported by
+# name. So the dynamic export table can hide everything else.
+#
+# Anything not in this list (LibreSCRS::Plugin / SmartCard / Auth /
+# Trust / Signing static-archive contents, plugin-specific helpers,
+# OpenSSL ASN1, …) is hidden from the .dylib's dynamic export table.
+#
+# Apple's symbol prefix convention: a leading underscore before each C
+# function name (_<name>) — this is the assembler-level mangled form
+# that ld(1) sees in the symbol table.
+_create_card_plugin
+_destroy_card_plugin
+_card_plugin_abi_version

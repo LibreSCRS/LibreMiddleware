@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include "libresign/native/asic_module.h"
-#include "libresign/native/cades_module.h"
-#include "libresign/native/pkcs11_token.h"
+#include "native/asic_module.h"
+#include "native/cades_module.h"
+#include "native/pkcs11_token.h"
 #include "native_utils.h"
 
 #include "miniz.h"

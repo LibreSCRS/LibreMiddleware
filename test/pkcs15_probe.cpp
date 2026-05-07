@@ -10,7 +10,7 @@
 // Usage: pkcs15_probe [reader-name]
 
 #include "smartcard/pcsc_connection.h"
-#include "smartcard/apdu.h"
+#include "apdu.h"
 
 #include <cstdio>
 #include <cstring>

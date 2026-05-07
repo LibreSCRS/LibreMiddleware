@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# EditorConfig: per-file editor defaults that match the LibreSCRS clang-format
+# configuration and existing repo conventions. See https://editorconfig.org/
+# for editor support.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# C/C++ sources and headers — match .clang-format (4-space indent, LF, UTF-8).
+[*.{cpp,cc,cxx,c,h,hpp,hxx}]
+indent_style = space
+indent_size = 4
+max_line_length = 120
+
+# CMake — 4-space indent matches existing repo style.
+[{CMakeLists.txt,*.cmake}]
+indent_style = space
+indent_size = 4
+
+# Shell — POSIX-friendly 4-space indent (matches ci/scripts/*.sh).
+[*.sh]
+indent_style = space
+indent_size = 4
+
+# Python — PEP-8 4-space indent (codegen helpers under tools/).
+[*.py]
+indent_style = space
+indent_size = 4
+
+# YAML — 2-space indent is the GitHub Actions / OpenAPI convention.
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
+
+# Markdown — 2-space indent for nested lists; trailing whitespace is
+# meaningful (line break) so don't trim it.
+[*.md]
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = false

@@ -1,0 +1,8 @@
+{
+  "pluginId": "emrtd",
+  "displayName": "Electronic Passport (eMRTD)",
+  "abiVersion": 7,
+  "capabilities": ["IdentityData", "EmrtdCrypto"],
+  "preReadAuth": "None",
+  "atrs": []
+}

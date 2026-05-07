@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "pkcs11_library.h"
-#include "cardedge/cardedge_pkcs11_provider.h"
-#include "pkcs15/pkcs15_pkcs11_provider.h"
-#include "piv/piv_pkcs11_provider.h"
+#include "cardedge_pkcs11_provider.h"
+#include "pkcs15_pkcs11_provider.h"
+#include "piv_pkcs11_provider.h"
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>

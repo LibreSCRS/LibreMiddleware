@@ -958,3 +958,177 @@ TEST(PdfParserTest, FailsOnRandomBytesNoHeader)
     PdfParser parser(junk);
     EXPECT_FALSE(parser.parse());
 }
+
+// ---------------------------------------------------------------------------
+// F21: escapeStringForPdf — UTF-16BE-with-BOM hex form for non-ASCII input.
+//
+// Pre-fix Cyrillic / Latin-Ext text in PDF dict-string fields rendered as
+// garbled bytes because raw UTF-8 was emitted into a parenthesised literal
+// that PDF readers parse under PDFDocEncoding. ISO 32000-1 §7.9.2.2
+// requires UTF-16BE-with-BOM hex form for any non-PDFDocEncoding string.
+// ---------------------------------------------------------------------------
+
+TEST(EscapeStringForPdf, AsciiInputUsesParenLiteral)
+{
+    EXPECT_EQ(PdfParser::escapeStringForPdf("Approval"), "(Approval)");
+}
+
+TEST(EscapeStringForPdf, AsciiEscapesMetacharacters)
+{
+    EXPECT_EQ(PdfParser::escapeStringForPdf("a(b)c\\d"), "(a\\(b\\)c\\\\d)");
+}
+
+TEST(EscapeStringForPdf, EmptyInputUsesParenLiteral)
+{
+    EXPECT_EQ(PdfParser::escapeStringForPdf(""), "()");
+}
+
+TEST(EscapeStringForPdf, CyrillicInputUsesUtf16BeHex)
+{
+    // "Одобрено" — Cyrillic for "Approved". Each codepoint is in the
+    // U+041E..U+0440 range, all BMP.
+    //   О=041E д=0434 о=043E б=0431 р=0440 е=0435 н=043D о=043E
+    std::string out = PdfParser::escapeStringForPdf("\xD0\x9E\xD0\xB4\xD0\xBE\xD0\xB1\xD1\x80\xD0\xB5\xD0\xBD\xD0\xBE");
+    std::string expected = "<FEFF"
+                           "041E" // О
+                           "0434" // д
+                           "043E" // о
+                           "0431" // б
+                           "0440" // р
+                           "0435" // е
+                           "043D" // н
+                           "043E" // о
+                           ">";
+    EXPECT_EQ(out, expected);
+}
+
+TEST(EscapeStringForPdf, MixedInputUsesUtf16BeHex)
+{
+    // "Hiršl works" — contains Latin Extended-A 'š' (U+0161). The entire
+    // string MUST be emitted as UTF-16BE hex; PDF readers do not allow
+    // a single field to mix encodings.
+    std::string out = PdfParser::escapeStringForPdf("Hir\xC5\xA1l works");
+    std::string expected = "<FEFF"
+                           "0048" // H
+                           "0069" // i
+                           "0072" // r
+                           "0161" // š
+                           "006C" // l
+                           "0020" // space
+                           "0077" // w
+                           "006F" // o
+                           "0072" // r
+                           "006B" // k
+                           "0073" // s
+                           ">";
+    EXPECT_EQ(out, expected);
+}
+
+TEST(EscapeStringForPdf, AstralCodepointEncodesAsSurrogatePair)
+{
+    // U+1F600 GRINNING FACE — outside the BMP. Must surrogate-pair encode.
+    // UTF-8: F0 9F 98 80
+    //   v = 0x1F600 - 0x10000 = 0x0F600
+    //   high = 0xD800 + (v >> 10) = 0xD83D
+    //   low  = 0xDC00 + (v & 0x3FF) = 0xDE00
+    std::string out = PdfParser::escapeStringForPdf("\xF0\x9F\x98\x80");
+    EXPECT_EQ(out, "<FEFFD83DDE00>");
+}
+
+// ---------------------------------------------------------------------------
+// Malicious /Length / /First values must not wrap to SIZE_MAX
+// ---------------------------------------------------------------------------
+//
+// A PDF with a negative or absurdly-large /Length in an xref or object
+// stream must be rejected. Prior to this fix, `static_cast<size_t>` of an
+// `int64_t -1` from `PdfValue::asInt()` produced `SIZE_MAX`, and the
+// subsequent `pos + streamLength > raw.size()` bounds check wrapped under
+// pointer arithmetic, silently passing. The result was a SIZE_MAX-byte
+// `std::span<const uint8_t>` fed to `flateDecode` — a remote denial-of-
+// service vector at minimum.
+
+namespace {
+
+// Same shape as buildXrefStreamPdf() but with a caller-provided /Length
+// substring. Used to inject malformed values without disturbing other
+// dictionary fields.
+std::vector<uint8_t> buildXrefStreamWithLengthLiteral(const std::string& lengthLiteral)
+{
+    std::string pdf;
+    pdf += "%PDF-1.7\n";
+    size_t obj1Off = pdf.size();
+    pdf += "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n";
+    size_t obj2Off = pdf.size();
+    pdf += "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n";
+    size_t obj3Off = pdf.size();
+    pdf += "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n";
+
+    size_t obj4Off = pdf.size();
+
+    std::vector<uint8_t> streamData;
+    writeBE(streamData, 0, 1);
+    writeBE(streamData, 0, 3);
+    writeBE(streamData, 0, 1);
+    writeBE(streamData, 1, 1);
+    writeBE(streamData, static_cast<int64_t>(obj1Off), 3);
+    writeBE(streamData, 0, 1);
+    writeBE(streamData, 1, 1);
+    writeBE(streamData, static_cast<int64_t>(obj2Off), 3);
+    writeBE(streamData, 0, 1);
+    writeBE(streamData, 1, 1);
+    writeBE(streamData, static_cast<int64_t>(obj3Off), 3);
+    writeBE(streamData, 0, 1);
+    writeBE(streamData, 1, 1);
+    writeBE(streamData, static_cast<int64_t>(obj4Off), 3);
+    writeBE(streamData, 0, 1);
+
+    std::string xrefObj;
+    xrefObj += "4 0 obj\n";
+    xrefObj += "<< /Type /XRef /Size 5 /W [1 3 1] /Root 1 0 R";
+    xrefObj += " /Length " + lengthLiteral;
+    xrefObj += " >>\nstream\n";
+
+    pdf += xrefObj;
+    std::vector<uint8_t> result(pdf.begin(), pdf.end());
+    result.insert(result.end(), streamData.begin(), streamData.end());
+
+    std::string tail = "\nendstream\nendobj\nstartxref\n";
+    tail += std::to_string(obj4Off) + "\n%%EOF\n";
+    result.insert(result.end(), tail.begin(), tail.end());
+
+    return result;
+}
+
+} // namespace
+
+// `PdfParser::parse()` catches `std::runtime_error` internally and returns
+// false on parse failure (see pdf_parser.cpp:339,344-345). Negative-/Length
+// rejection therefore manifests as a `false` return, not a thrown exception.
+TEST(PdfParserSecH6, NegativeXrefStreamLengthRejected)
+{
+    // /Length -1 — pre-fix would static_cast to SIZE_MAX and feed
+    // a SIZE_MAX-byte span to flateDecode.
+    auto data = buildXrefStreamWithLengthLiteral("-1");
+    PdfParser parser(data);
+    EXPECT_FALSE(parser.parse());
+}
+
+TEST(PdfParserSecH6, AbsurdlyLargeXrefStreamLengthRejected)
+{
+    // int64_t max — must reject either via ptrdiff-cap helper or via
+    // overflow-safe `fitsWithinBuffer` bounds check.
+    auto data = buildXrefStreamWithLengthLiteral("9223372036854775807");
+    PdfParser parser(data);
+    EXPECT_FALSE(parser.parse());
+}
+
+TEST(PdfParserSecH6, ValidXrefStreamLengthStillWorks)
+{
+    // Sanity: 5 entries × (1 + 3 + 1) bytes = 25 bytes of stream data.
+    // The literal-substitution path is self-contained — exercise it so the
+    // Regression suite locks both the rejection AND happy-path
+    // shapes, not just the rejection.
+    auto data = buildXrefStreamWithLengthLiteral("25");
+    PdfParser parser(data);
+    EXPECT_TRUE(parser.parse());
+}

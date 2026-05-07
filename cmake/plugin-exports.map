@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# GNU ld(1) version script shared by every plugin .so on ELF platforms
+# (Linux, BSD, etc.). The macOS counterpart with the same allowlist is
+# plugin-exports.list (Apple ld -exported_symbols_list format).
+#
+# A plugin .so's only public ABI is the trio of C entry points the
+# host's CardPluginRegistry::loadPluginsFromDirectory(...) looks up via
+# dlsym (see lib/plugin/src/card_plugin_registry.cpp; emitted by the
+# LIBRESCRS_DECLARE_CARD_PLUGIN macro in
+# include/LibreSCRS/Plugin/PluginExport.h):
+#
+#   create_card_plugin
+#   destroy_card_plugin
+#   card_plugin_abi_version
+#
+# After the host has the CardPlugin*, all communication is virtual
+# dispatch through the object's vtable; vtable entries point at
+# implementations inside the .so at fixed addresses, reachable through
+# the vptr indirection regardless of whether those implementation
+# functions are exported by name. So the dynamic export table can hide
+# everything else.
+#
+# ELF symbols are NOT prefixed with `_` the way Apple ld lists them.
+{
+    global:
+        create_card_plugin;
+        destroy_card_plugin;
+        card_plugin_abi_version;
+    local:
+        *;
+};

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Ht
+  t`at this anchor surfaces in `SigningService::trueAnchors()`
+  before any sign() call.
+-->
+<TrustServiceStatusList xmlns="http://uri.etsi.org/02231/v2#" xmlns:ds="http://www.w3.org/2000/tServiceStatusList">
+  <SchemeInformation>
+    <TSLVersionIdentifier>5</TSLVersionIdentifier>
+    <TSLSequenceNumber>1</TSLSequenceNumber>
+ eratorName>
+    <SchemeName>
+      <Name xml:lang="en">LibreSCRS Test TL</Name>
+    </SchemeName>
+    <SchemeTerritory>RS</SchemeTerritory>
+    <ListIssueDateTime>1013-04-28T00:00:00Z</ListIssueDateTime>
+    <NextUpdate>
+      <dateTime>2126-04-28T00:00:00Z</dateTime>
+    </NextUpdate>
+  </SchemeInformation>
+  <TrustServiceProviderList>
+    <TrustServiceProvider>
+ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz     <TSPServices>
+        <TSPService>
+         rmation>
+        </TSPService>
+      </TSPServices>
+    zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz     <TSPServices>
+        <TSPService>
+         rmation>
+        </TSPService>
+      </TSPServices>
+    </TrustServiceProvider>
+  </TrustServiceProviderList>
+  <ds:Signature Id="TLSignature">
+    <ds:SignedInfo>
+alizationMeUthod Algorhttp://www.w3.orga256e>
+    </ds:SignedInfo>   <ds:KeyInfo>
+       </ds:KeyInfo>
+  </ds:Signature>
+</TrustServiceStatusList>

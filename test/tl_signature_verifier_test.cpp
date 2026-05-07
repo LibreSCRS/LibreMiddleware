@@ -129,6 +129,72 @@ TEST_F(TlSignatureVerifierTest, InvalidXmlFails)
     EXPECT_FALSE(verifier.verify(garbage, certSpan));
 }
 
+// Build a minimal-but-valid xmldsig SignedInfo carrying the supplied
+// algorithm URIs (signature method + digest method) and a single
+// reference. Returns the serialised XML byte buffer.
+namespace {
+std::vector<uint8_t> buildXmlWithAlgo(const std::string& sigAlgoUri, const std::string& digestAlgoUri,
+                                      const std::string& referenceUri)
+{
+    std::string xml =
+        R"(<?xml version="1.0" encoding="UTF-8"?>
+<TrustServiceStatusList xmlns="http://uri.etsi.org/02231/v2#" Id="root">
+  <SchemeInformation/>
+  <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+    <ds:SignedInfo>
+      <ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
+      <ds:SignatureMethod Algorithm=")" +
+        sigAlgoUri + R"("/>
+      <ds:Reference URI=")" +
+        referenceUri + R"(">
+        <ds:DigestMethod Algorithm=")" +
+        digestAlgoUri + R"("/>
+        <ds:DigestValue>aGVsbG8=</ds:DigestValue>
+      </ds:Reference>
+    </ds:SignedInfo>
+    <ds:SignatureValue>YWFh</ds:SignatureValue>
+  </ds:Signature>
+</TrustServiceStatusList>
+)";
+    return {xml.begin(), xml.end()};
+}
+} // namespace
+
+TEST_F(TlSignatureVerifierTest, RejectsSha1SignatureMethod)
+{
+    auto xml =
+        buildXmlWithAlgo("http://www.w3.org/2000/09/xmldsig#rsa-sha1", "http://www.w3.org/2001/04/xmlenc#sha256", "");
+    auto certSpan = pinned_certs::kSerbianTlSigningCert;
+    EXPECT_FALSE(verifier.verify(xml, certSpan));
+    EXPECT_NE(verifier.lastError().find("unsupported signature algorithm"), std::string::npos)
+        << "got: " << verifier.lastError();
+}
+
+TEST_F(TlSignatureVerifierTest, RejectsSha1DigestMethod)
+{
+    auto xml = buildXmlWithAlgo("http://www.w3.org/2001/04/xmldsig-more#rsa-sha256",
+                                "http://www.w3.org/2000/09/xmldsig#sha1", "");
+    auto certSpan = pinned_certs::kSerbianTlSigningCert;
+    EXPECT_FALSE(verifier.verify(xml, certSpan));
+    EXPECT_NE(verifier.lastError().find("unsupported digest algorithm"), std::string::npos)
+        << "got: " << verifier.lastError();
+}
+
+TEST_F(TlSignatureVerifierTest, XPathInjectionInReferenceUriIsLiteralLookup)
+{
+    // The legacy fallback used the URI-fragment as an XPath substring; an
+    // attacker could supply id="' or '1'='1" to match the document root.
+    // The safe lookup treats `id` as an opaque literal — so it must NOT
+    // match any element (no element has Id literally equal to that string).
+    const std::string injectId = "' or '1'='1";
+    auto xml = buildXmlWithAlgo("http://www.w3.org/2001/04/xmldsig-more#rsa-sha256",
+                                "http://www.w3.org/2001/04/xmlenc#sha256", "#" + injectId);
+    auto certSpan = pinned_certs::kSerbianTlSigningCert;
+    EXPECT_FALSE(verifier.verify(xml, certSpan));
+    EXPECT_NE(verifier.lastError().find("could not resolve reference URI"), std::string::npos)
+        << "got: " << verifier.lastError();
+}
+
 #else
 
 TEST(TlSignatureVerifierTest, NativeNotEnabled)

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
-#include <smartcard/apdu.h>
+#include <apdu.h>
 
 TEST(SelectByFileId, DefaultP2Is0x00)
 {

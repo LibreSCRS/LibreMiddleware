@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include "libresign/dss/dss_signing_service.h"
-#include "libresign/dss/dss_path_resolver.h"
-#include "libresign/http_client.h"
+#include "dss/dss_signing_service.h"
+#include "dss/dss_path_resolver.h"
+#include "http_client.h"
 #include <smartcard/secure_buffer.h>
 
 #include <json.hpp>
@@ -57,6 +57,16 @@ std::string levelToString(SignatureLevel level)
     return "B_T";
 }
 
+// DSS is retained in 4.0 as a cross-verification oracle for tests; the
+// native backend is the production signing path. The DSS backend is
+// intentionally minimal: it does NOT forward TSA credentials (basicAuth /
+// bearerToken / mTLS / extraHeaders) or the PDF /ContactInfo
+// signature-dictionary field — feature parity with native is not a goal.
+// Also: reason / location / contactInfo are gated on visual.enabled here,
+// so invisible signatures lose those fields entirely on the DSS backend.
+// SigningService::sign() detects callers passing TSA credentials with
+// LIBRESCRS_SIGNING_BACKEND=dss and fails LOUD rather than silently
+// downgrading.
 void addTsaConfig(nlohmann::json& body, const SigningRequest& request)
 {
     if (request.level != SignatureLevel::B_B && !request.tsa.url.empty()) {
@@ -65,6 +75,9 @@ void addTsaConfig(nlohmann::json& body, const SigningRequest& request)
     }
 }
 
+// See note above addTsaConfig — addVisualConfig is also gated on
+// visual.enabled: invisible signatures lose reason/location, and contactInfo
+// is never emitted at all. The DSS oracle role does not require parity here.
 void addVisualConfig(nlohmann::json& body, const SigningRequest& request)
 {
     if (request.visual.enabled) {
@@ -73,7 +86,6 @@ void addVisualConfig(nlohmann::json& body, const SigningRequest& request)
         body["visual"]["y"] = request.visual.y;
         body["visual"]["width"] = request.visual.width;
         body["visual"]["height"] = request.visual.height;
-        body["visual"]["signerName"] = request.visual.signerName;
         body["visual"]["reason"] = request.visual.reason;
         body["visual"]["location"] = request.visual.location;
         if (!request.visual.text.empty())

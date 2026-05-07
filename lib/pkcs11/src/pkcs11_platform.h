@@ -3,6 +3,10 @@
 
 // Platform-specific PKCS#11 macros (must be defined before including pkcs11.h)
 
+#ifndef LIBRESCRS_INTERNAL_BUILD
+#error "This header is internal to LibreMiddleware. Public API: <LibreSCRS/...>"
+#endif
+
 #pragma once
 
 #define CK_PTR *

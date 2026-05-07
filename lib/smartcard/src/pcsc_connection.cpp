@@ -27,6 +27,11 @@ PCSCConnection::PCSCConnection(const std::string& readerName) : storedReaderName
     }
 }
 
+// Test-only ctor: no PC/SC calls, no context, no card. Used by CardSession
+// injection paths to produce a connection object whose address can be used
+// as a key while keeping readerName() functional.
+PCSCConnection::PCSCConnection(DetachedTag, const std::string& readerName) : storedReaderName(readerName) {}
+
 PCSCConnection::~PCSCConnection()
 {
     if (card) {

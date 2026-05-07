@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include <emrtd/crypto/passive_auth.h>
+#include "passive_auth.h"
 
 #include <openssl/bio.h>
 #include <openssl/cms.h>

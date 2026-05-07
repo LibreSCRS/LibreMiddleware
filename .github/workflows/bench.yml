@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# SPDX-FileCopyrightText: 2026 hirashix0
+#
+# Performance regression smoke. Builds the benchmark targets and uploads the
+# raw JSON output; a future pass will diff against bench/baselines/*.json
+# and gate on a configurable threshold.
+
+name: Bench
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  bench:
+    name: Google Benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build pkg-config \
+            libcurl4-openssl-dev libssl-dev libxml2-dev libpcsclite-dev \
+            uuid-dev openssl python3-jsonschema
+
+      - name: Configure
+        run: |
+          cmake -B build-bench -S . -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSIGNING_BACKEND=both \
+            -DLIBRESCRS_BUILD_BENCH=ON \
+            -DBUILD_TESTING=OFF
+
+      - name: Build
+        run: |
+          cmake --build build-bench \
+            --target bench_parsed_cert bench_trust_validate \
+                     bench_truststore_service bench_signing \
+            -j2
+
+      - name: Run
+        run: |
+          mkdir -p bench-results
+          for b in bench_parsed_cert bench_trust_validate \
+                   bench_truststore_service bench_signing; do
+              ./build-bench/bench/$b \
+                  --benchmark_min_time=0.5s \
+                  --benchmark_format=json \
+                  --benchmark_out=bench-results/$b.json || true
+          done
+
+      - name: Upload bench JSON
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: bench-results/

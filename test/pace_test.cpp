@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
-#include <emrtd/crypto/pace.h>
+#include <pace.h>
 
 // Internal header — needed to test KDF, AES-CMAC, padding directly
 #include "../lib/emrtd-crypto/src/crypto_utils.h"

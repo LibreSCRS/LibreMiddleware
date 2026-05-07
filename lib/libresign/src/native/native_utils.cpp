@@ -3,9 +3,9 @@
 
 #include "native_utils.h"
 
-#include "libresign/native/pkcs11_token.h"
-#include "libresign/native/revocation_client.h"
-#include "libresign/types.h"
+#include "native/pkcs11_token.h"
+#include "native/revocation_client.h"
+#include "types.h"
 
 #include <miniz.h>
 

@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
-#include <piv/piv_card.h>
-#include <piv/piv_types.h>
+#include <piv_card.h>
+#include <piv_types.h>
 #include <smartcard/pcsc_connection.h>
 
 #include <cstdlib>
@@ -135,10 +135,11 @@ TEST_F(PIVHardwareTest, VerifyPIN)
     auto pins = card->discoverPINs();
     ASSERT_FALSE(pins.empty());
 
-    auto result = card->verifyPIN(pins[0].keyReference, pin);
-    if (!result.success)
+    auto result = card->verifyPIN(pins[0].keyReference, LibreSCRS::Secure::String{pin});
+    if (!result.ok())
         g_pinFailed = true;
-    EXPECT_TRUE(result.success) << "PIN verification failed, retriesLeft=" << result.retriesLeft;
+    EXPECT_TRUE(result.ok()) << "PIN verification failed, retriesLeft="
+                             << (result.retriesLeft.has_value() ? std::to_string(*result.retriesLeft) : "unknown");
 }
 
 TEST_F(PIVHardwareTest, DiscoverKeys)

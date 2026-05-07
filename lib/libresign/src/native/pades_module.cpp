@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include "libresign/native/pades_module.h"
-#include "libresign/native/cades_module.h"
-#include "libresign/native/pkcs11_token.h"
-#include "libresign/native/revocation_client.h"
+#include "native/pades_module.h"
+#include "native/cades_module.h"
+#include "native/pkcs11_token.h"
+#include "native/revocation_client.h"
 #include "native_utils.h"
 
 #include <openssl/cms.h>
@@ -13,14 +13,21 @@
 #include <openssl/x509.h>
 
 #include <algorithm>
+#include <ranges>
+#include <array>
 #include <cstring>
 #include <format>
 #include <memory>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
+#include <unordered_set>
 
 #include "pdf_parser.h"
+#include "pdf_font.h"
+#include "ttf_subset.h"
+#include "liberation_sans_data.h"
 
 namespace libresign {
 
@@ -28,12 +35,38 @@ namespace {
 
 using namespace libresign::native_utils;
 
-// ---- Hex encoding ----
+// PDF resource tag for the embedded Liberation Sans Type0 font in the
+// visual signature appearance. /F1 follows PDF convention and is what
+// the appearance content stream's `/F1 N Tf` operator references; the
+// XObject Resources dict binds it to the Type0 font object.
+//
+// Typed as std::string_view for clean interop with std::format / stream
+// output without C-string truncation hazards.
+constexpr std::string_view kAppearanceFontTag = "F1";
 
-static const char kHexChars[] = "0123456789ABCDEF";
+// Signature widget annotation flags per PDF 32000-1:2008 §12.5.3 Table 165:
+//   bit 3 (4)   = Print     — annotation should print with the page
+//   bit 8 (128) = Locked    — annotation cannot be deleted/modified by UI
+// Combined: 4 + 128 = 132. Standard for digital signature widgets.
+constexpr int kSigFieldAnnotFlags = 132;
+
+// PDF text rendering parameters for the visual signature appearance.
+// 9pt font with 12-unit line advance gives ~1.33x leading at the chosen
+// size — matches the pre-Unicode 3.x renderer's visual layout. Origin
+// offset of 2 units from the left edge mirrors the prior renderer.
+constexpr int kAppearanceFontSize = 9;
+constexpr int kAppearanceLineHeight = 12;
+constexpr int kAppearanceLeftMargin = 2;
+
+// ---- Hex encoding ----
+//
+// kHexChars lives in native_utils.h (libresign::native_utils::kHexChars) so
+// the same nibble-to-ASCII table is shared across PAdES / XAdES / any
+// future internal hex emitter without duplicating the 16-byte literal.
 
 std::string hexEncode(const std::vector<uint8_t>& data)
 {
+    using libresign::native_utils::kHexChars;
     std::string result;
     result.reserve(data.size() * 2);
     for (uint8_t b : data) {
@@ -57,22 +90,34 @@ std::string xrefOffset(size_t offset)
     return std::format("{:010}", offset);
 }
 
-// Size of the /Contents hex placeholder: 32KB of DER space = 65536 hex chars.
-// Compute allocation size based on signature level.
-// B-B/B-T: ~8KB typical. B-LT/B-LTA: CRLs can be multi-megabyte.
+// Size of the /Contents hex placeholder.
+//
+// Indexed by SignatureLevel enumerator value so a future enumerator addition
+// triggers a compile error at the static_assert below — preferable to the
+// pre-4.0 switch + silent 2 MB default which had no signal-out for "I added
+// a new level and forgot to size its Contents block".
+//
+// Sizing rationale:
+//   - B-B / B-T: signing certificate + CMS structure ≈ 8 KB; the 32 KB / 64
+//     KB allotments give ~4× headroom.
+//   - B-LT: full chain + LTV revocation material (CRL fragments, OCSP
+//     responses) up to ~1.5 MB observed for some SR-issuing CAs; 2 MB
+//     covers them with margin.
+//   - B-LTA: archive timestamp adds another nested structure; 4 MB matches
+//     observed worst case + DSS dictionary growth.
+inline constexpr std::array<size_t, 4> kContentsAllocByLevel = {{
+    32768,   // B_B   —  32 KB
+    65536,   // B_T   —  64 KB
+    2097152, // B_LT  —   2 MB
+    4194304, // B_LTA —   4 MB
+}};
+static_assert(static_cast<size_t>(libresign::SignatureLevel::B_LTA) + 1 == kContentsAllocByLevel.size(),
+              "kContentsAllocByLevel must be sized to match libresign::SignatureLevel — "
+              "add an entry above when SignatureLevel grows.");
+
 size_t contentsAllocForLevel(libresign::SignatureLevel level)
 {
-    switch (level) {
-    case libresign::SignatureLevel::B_B:
-        return 32768; //  32KB
-    case libresign::SignatureLevel::B_T:
-        return 65536; //  64KB
-    case libresign::SignatureLevel::B_LT:
-        return 2097152; //   2MB
-    case libresign::SignatureLevel::B_LTA:
-        return 4194304; //   4MB
-    }
-    return 2097152;
+    return kContentsAllocByLevel[static_cast<size_t>(level)];
 }
 // These are set per-invocation, not constexpr
 // (see contentsAllocForLevel above)
@@ -82,34 +127,115 @@ size_t contentsAllocForLevel(libresign::SignatureLevel level)
 // Each placeholder is 10 chars wide + spaces.
 constexpr size_t kByteRangePlaceholderWidth = 10;
 
+// Decode one UTF-8 codepoint starting at @p i in @p line. Returns the
+// codepoint and the number of bytes consumed. Invalid sequences yield
+// U+FFFD with 1 byte consumed; truncated trailing sequences consume to
+// end-of-string with U+FFFD.
+std::pair<char32_t, size_t> decodeUtf8At(std::string_view line, size_t i)
+{
+    if (i >= line.size())
+        return {0, 0};
+    unsigned char c = static_cast<unsigned char>(line[i]);
+    char32_t cp = 0;
+    size_t n = 1;
+    if ((c & 0x80) == 0x00) {
+        cp = c;
+        n = 1;
+    } else if ((c & 0xE0) == 0xC0) {
+        cp = c & 0x1F;
+        n = 2;
+    } else if ((c & 0xF0) == 0xE0) {
+        cp = c & 0x0F;
+        n = 3;
+    } else if ((c & 0xF8) == 0xF0) {
+        cp = c & 0x07;
+        n = 4;
+    } else {
+        return {0xFFFD, 1};
+    }
+    if (i + n > line.size())
+        return {0xFFFD, line.size() - i};
+    for (size_t k = 1; k < n; ++k)
+        cp = (cp << 6) | (static_cast<unsigned char>(line[i + k]) & 0x3F);
+    return {cp, n};
+}
+
 } // namespace
 
 // ---- createAppearanceStream ----
 
-std::vector<uint8_t> PAdESModule::createAppearanceStream(const VisualSignatureParams& visual,
-                                                         const std::string& signerName)
+AppearanceData PAdESModule::createAppearanceStream(const VisualSignatureParams& visual) const
 {
-    std::string date = pdfDate();
-    // Build the content stream
+    // 1. Split visual.text into lines (LC produces '\n'-separated strings).
+    //    Strip trailing '\r' to handle '\r\n' (Windows / copy-paste) and bare
+    //    '\r' line endings without producing visible .notdef boxes.
+    std::vector<std::string> lines;
+    {
+        std::string line;
+        for (char c : visual.text) {
+            if (c == '\n') {
+                if (!line.empty() && line.back() == '\r')
+                    line.pop_back();
+                lines.push_back(std::move(line));
+                line.clear();
+            } else {
+                line.push_back(c);
+            }
+        }
+        if (!line.empty()) {
+            if (line.back() == '\r')
+                line.pop_back();
+            lines.push_back(std::move(line));
+        }
+    }
+
+    // 2. Collect used codepoints across all lines via UTF-8 decode.
+    std::unordered_set<char32_t> codepoints;
+    for (const auto& line : lines) {
+        for (size_t i = 0; i < line.size();) {
+            auto [cp, n] = decodeUtf8At(line, i);
+            if (n == 0)
+                break;
+            codepoints.insert(cp);
+            i += n;
+        }
+    }
+
+    // 3. Subset the bundled font for exactly these codepoints.
+    std::span<const uint8_t> fullTtf{LiberationSansRegular, LiberationSansRegularSize};
+    TtfSubset subset = subsetTtf(fullTtf, codepoints);
+
+    // 4. Emit the content stream: /<font> <size> Tf, Tm origin, one <hex> Tj
+    //    per line. Magic numbers come from kAppearanceFontTag,
+    //    kAppearanceFontSize, kAppearanceLineHeight, kAppearanceLeftMargin.
     std::ostringstream cs;
-    cs << "q\nBT\n/F1 9 Tf\n";
-    cs << "1 0 0 1 2 " << (visual.height - 12) << " Tm\n";
+    cs << "q\nBT\n/" << kAppearanceFontTag << " " << kAppearanceFontSize << " Tf\n";
+    cs << "1 0 0 1 " << kAppearanceLeftMargin << " " << (visual.height - kAppearanceLineHeight) << " Tm\n";
 
-    if (!signerName.empty())
-        cs << "(" << PdfParser::escapeStringForPdf("Signed by: " + signerName) << ") Tj\n0 -12 Td\n";
-
-    cs << "(" << PdfParser::escapeStringForPdf("Date: " + date) << ") Tj\n";
-
-    if (!visual.reason.empty())
-        cs << "0 -12 Td\n(" << PdfParser::escapeStringForPdf("Reason: " + visual.reason) << ") Tj\n";
-
-    if (!visual.location.empty())
-        cs << "0 -12 Td\n(" << PdfParser::escapeStringForPdf("Location: " + visual.location) << ") Tj\n";
-
+    bool firstLine = true;
+    for (const auto& line : lines) {
+        if (!firstLine)
+            cs << "0 -" << kAppearanceLineHeight << " Td\n";
+        firstLine = false;
+        cs << "<";
+        for (size_t i = 0; i < line.size();) {
+            auto [cp, n] = decodeUtf8At(line, i);
+            if (n == 0)
+                break;
+            auto it = subset.gidForCodepoint.find(cp);
+            NewGid gid = (it == subset.gidForCodepoint.end()) ? NewGid{0} : it->second;
+            cs << std::format("{:04X}", gid.raw());
+            i += n;
+        }
+        cs << "> Tj\n";
+    }
     cs << "ET\nQ\n";
 
     auto content = cs.str();
-    return {content.begin(), content.end()};
+    return AppearanceData{
+        .contentStream = std::vector<uint8_t>(content.begin(), content.end()),
+        .subset = std::move(subset),
+    };
 }
 
 // ---- preparePdf ----
@@ -146,16 +272,23 @@ PAdESModule::PreparedPdf PAdESModule::preparePdf(const std::vector<uint8_t>& pdf
     std::string pageRef = std::format("{} 0 R", origPageObjNum);
 
     // 2. Allocate object numbers
-    //    New objects: sigDict, sigField, catalog, [appearance, font]
+    //    New objects: sigDict, sigField, catalog, [appearance + 6 font objects]
     //    The page object reuses the original page's object number (incremental update).
     size_t sigDictObj = nextObjNum;
     size_t sigFieldObj = nextObjNum + 1;
     size_t catalogObj = nextObjNum + 2;
     size_t appearanceObj = nextObjNum + 3;
-    size_t fontObj = nextObjNum + 4;
+    // Six font objects, emitted by emitPdfFontObjects:
+    //   Type0, CIDFontType2, FontDescriptor, ToUnicode CMap, FontFile2, CIDSet
+    size_t type0Obj = nextObjNum + 4;
+    size_t cidFontObj = nextObjNum + 5;
+    size_t fontDescriptorObj = nextObjNum + 6;
+    size_t toUnicodeObj = nextObjNum + 7;
+    size_t fontFile2Obj = nextObjNum + 8;
+    size_t cidSetObj = nextObjNum + 9;
 
     bool hasVisual = visual.enabled;
-    size_t numNewObjs = hasVisual ? 5 : 3;
+    size_t numNewObjs = hasVisual ? 10 : 3;
 
     // 3. Build the incremental update
     std::ostringstream incr;
@@ -187,10 +320,16 @@ PAdESModule::PreparedPdf PAdESModule::preparePdf(const std::vector<uint8_t>& pdf
     sigDict << std::string((contentsAllocBytes * 2), '0');
     sigDict << ">\n";
     sigDict << "   /M (" << dateStr << ")\n";
+    // F21: escapeStringForPdf returns a complete PDF string token (either
+    // "(escaped)" for ASCII or "<FEFFhex>" for input containing any
+    // non-ASCII byte). Do not wrap with literal "(...)" — that would
+    // double-wrap the parenthesised form and corrupt the hex form.
     if (!visual.reason.empty())
-        sigDict << "   /Reason (" << PdfParser::escapeStringForPdf(visual.reason) << ")\n";
+        sigDict << "   /Reason " << PdfParser::escapeStringForPdf(visual.reason) << "\n";
     if (!visual.location.empty())
-        sigDict << "   /Location (" << PdfParser::escapeStringForPdf(visual.location) << ")\n";
+        sigDict << "   /Location " << PdfParser::escapeStringForPdf(visual.location) << "\n";
+    if (!visual.contactInfo.empty())
+        sigDict << "   /ContactInfo " << PdfParser::escapeStringForPdf(visual.contactInfo) << "\n";
     sigDict << ">>\nendobj\n";
 
     objOffsets.back().second = incr.str().size();
@@ -217,7 +356,7 @@ PAdESModule::PreparedPdf PAdESModule::preparePdf(const std::vector<uint8_t>& pdf
     }
 
     sigField << "   /P " << pageRef << "\n";
-    sigField << "   /F 132\n";
+    sigField << "   /F " << kSigFieldAnnotFlags << "\n";
     sigField << ">>\nendobj\n";
 
     incr << sigField.str();
@@ -226,29 +365,56 @@ PAdESModule::PreparedPdf PAdESModule::preparePdf(const std::vector<uint8_t>& pdf
     if (hasVisual) {
         objOffsets.push_back({appearanceObj, incr.str().size()});
 
-        auto stream = createAppearanceStream(visual, visual.signerName);
+        auto appearance = createAppearanceStream(visual);
         std::ostringstream apObj;
         apObj << appearanceObj << " 0 obj\n";
         apObj << "<< /Type /XObject\n";
         apObj << "   /Subtype /Form\n";
         apObj << "   /BBox [0 0 " << visual.width << " " << visual.height << "]\n";
-        apObj << "   /Resources << /Font << /F1 " << fontObj << " 0 R >> >>\n";
-        apObj << "   /Length " << stream.size() << "\n";
+        apObj << "   /Resources << /Font << /" << kAppearanceFontTag << " " << type0Obj << " 0 R >> >>\n";
+        apObj << "   /Length " << appearance.contentStream.size() << "\n";
         apObj << ">>\nstream\n";
-        apObj << std::string(stream.begin(), stream.end());
+        apObj << std::string(appearance.contentStream.begin(), appearance.contentStream.end());
         apObj << "\nendstream\nendobj\n";
 
         incr << apObj.str();
 
-        // -- Font resource --
-        objOffsets.push_back({fontObj, incr.str().size()});
+        // -- Font objects: Type0 + CIDFontType2 + FontDescriptor + ToUnicode + FontFile2 + CIDSet --
+        PdfFontObjects fontObjs;
+        emitPdfFontObjects(appearance.subset, static_cast<uint32_t>(type0Obj), fontObjs);
 
-        std::ostringstream fontObjStr;
-        fontObjStr << fontObj << " 0 obj\n";
-        fontObjStr << "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\n";
-        fontObjStr << "endobj\n";
+        auto emitObj = [&](size_t objNum, std::string_view body) {
+            objOffsets.push_back({objNum, incr.str().size()});
+            std::ostringstream o;
+            o << objNum << " 0 obj\n" << body << "\nendobj\n";
+            incr << o.str();
+        };
+        auto emitStreamObj = [&](size_t objNum, std::string_view dictPrefix, std::span<const uint8_t> body) {
+            objOffsets.push_back({objNum, incr.str().size()});
+            std::ostringstream o;
+            o << objNum << " 0 obj\n"
+              << "<< " << dictPrefix << " /Length " << body.size() << " >>\n"
+              << "stream\n";
+            incr << o.str();
+            incr.write(reinterpret_cast<const char*>(body.data()), static_cast<std::streamsize>(body.size()));
+            incr << "\nendstream\nendobj\n";
+        };
 
-        incr << fontObjStr.str();
+        // Type0
+        emitObj(type0Obj, fontObjs.type0Dict);
+        // CIDFontType2
+        emitObj(cidFontObj, fontObjs.cidFontDict);
+        // FontDescriptor
+        emitObj(fontDescriptorObj, fontObjs.fontDescriptorDict);
+        // ToUnicode — CMap stream (ASCII)
+        std::span<const uint8_t> toUniBytes(reinterpret_cast<const uint8_t*>(fontObjs.toUnicodeStream.data()),
+                                            fontObjs.toUnicodeStream.size());
+        emitStreamObj(toUnicodeObj, "", toUniBytes);
+        // FontFile2 — the TTF subset bytes
+        emitStreamObj(fontFile2Obj, "/Length1 " + std::to_string(fontObjs.fontFile2Stream.size()),
+                      fontObjs.fontFile2Stream);
+        // CIDSet bitmap stream — PDF/A-2/3 conformance (FontDescriptor /CIDSet)
+        emitStreamObj(cidSetObj, "", fontObjs.cidSetStream);
     }
 
     // -- Updated catalog with /AcroForm (ISO 32000-2 §12.7) --
@@ -345,7 +511,7 @@ PAdESModule::PreparedPdf PAdESModule::preparePdf(const std::vector<uint8_t>& pdf
     size_t baseOffset = pdfData.size(); // objects are appended after original PDF
 
     // Sort objOffsets by object number to build proper xref subsections
-    std::sort(objOffsets.begin(), objOffsets.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::ranges::sort(objOffsets, {}, &std::pair<size_t, size_t>::first);
 
     // Group into contiguous subsections
     std::ostringstream xrefTable;
@@ -414,6 +580,15 @@ PAdESModule::PreparedPdf PAdESModule::preparePdf(const std::vector<uint8_t>& pdf
     std::string br1 = std::format("{}", contentsOpenBracket);
     std::string br2 = std::format("{}", afterClose);
     std::string br3 = std::format("{}", totalLen - afterClose);
+
+    // Explicit overflow guard: each placeholder is kByteRangePlaceholderWidth
+    // (10) digits wide, supporting offsets up to ~10 GiB. Fail loudly with a
+    // diagnostic instead of silently truncating the value into the PDF.
+    if (br1.size() > kByteRangePlaceholderWidth || br2.size() > kByteRangePlaceholderWidth ||
+        br3.size() > kByteRangePlaceholderWidth) {
+        throw std::runtime_error(
+            "PAdES: PDF too large: ByteRange value exceeds 10-digit placeholder width (~10 GiB upper bound)");
+    }
 
     // Pad each to kByteRangePlaceholderWidth
     while (br1.size() < kByteRangePlaceholderWidth)

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include <piv/piv_card.h>
+#include "piv_card.h"
 #include "piv_protocol.h"
 
-#include <smartcard/apdu.h>
-#include <smartcard/ber.h>
+#include <apdu.h>
+#include <ber.h>
 #include <smartcard/pcsc_connection.h>
 #include <smartcard/secure_buffer.h>
 
@@ -396,25 +396,35 @@ std::vector<PINInfo> PIVCard::discoverPINs()
     return pins;
 }
 
-plugin::PINResult PIVCard::verifyPIN(uint8_t keyRef, const std::string& pin)
+LibreSCRS::Plugin::PINResult PIVCard::verifyPIN(uint8_t keyRef, const LibreSCRS::Secure::String& pin)
 {
+    // 4.0 hardening: pin is Secure::String — the .view() returns a
+    // std::string_view over the secure-allocator backing storage; we read
+    // bytes from it directly into the SecureBuffer pad (no widening copy).
+    auto pinView = pin.view();
     // Pad PIN with 0xFF to 8 bytes — SecureBuffer ensures zeroization even on exception.
+    // Source the PIN bytes directly from the Secure::String view so the PIN
+    // never lives in an unscrubbed std::string intermediate.
     smartcard::SecureBuffer paddedPin(8, 0xFF);
-    for (size_t i = 0; i < pin.size() && i < 8; ++i) {
-        paddedPin[i] = static_cast<uint8_t>(pin[i]);
+    for (size_t i = 0; i < pinView.size() && i < 8; ++i) {
+        paddedPin[i] = static_cast<uint8_t>(pinView[i]);
     }
 
     auto cmd = smartcard::verifyPIN(keyRef, paddedPin);
     auto resp = conn.transmit(cmd);
 
-    plugin::PINResult result;
+    LibreSCRS::Plugin::PINResult result;
     if (resp.isSuccess()) {
-        result.success = true;
+        result.outcome = LibreSCRS::Plugin::PINResultOutcome::Ok;
     } else if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0) {
         result.retriesLeft = resp.sw2 & 0x0F;
+        result.outcome = LibreSCRS::Plugin::PINResultOutcome::InvalidPin;
     } else if (resp.sw1 == 0x69 && resp.sw2 == 0x83) {
         result.blocked = true;
         result.retriesLeft = 0;
+        result.outcome = LibreSCRS::Plugin::PINResultOutcome::Blocked;
+    } else {
+        result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
     }
 
     return result;

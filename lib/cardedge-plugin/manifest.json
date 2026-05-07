@@ -1,0 +1,8 @@
+{
+  "pluginId": "cardedge",
+  "displayName": "CardEdge (Serbian PKI)",
+  "abiVersion": 7,
+  "capabilities": ["PKI", "PinManagement"],
+  "preReadAuth": "None",
+  "atrs": []
+}

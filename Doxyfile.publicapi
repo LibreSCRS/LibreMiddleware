@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Public-facing API reference (external SDK documentation).
+
+PROJECT_NAME           = "LibreSCRS SDK"
+PROJECT_NUMBER         = 4.0
+OUTPUT_DIRECTORY       = build/doc/publicapi
+
+INPUT                  = include/LibreSCRS
+RECURSIVE              = YES
+
+# detail/ subtrees are LM-internal helpers gated behind LIBRESCRS_INTERNAL_BUILD;
+# they are not part of the consumer-facing SDK surface and must not appear
+# in the public API reference. Excluded by directory name (matches every
+# nested detail/ directory under include/LibreSCRS).
+EXCLUDE_PATTERNS       = */detail/* */internal/*
+
+EXTRACT_ALL            = NO
+EXTRACT_PRIVATE        = NO
+INTERNAL_DOCS          = NO
+
+GENERATE_HTML          = YES
+GENERATE_XML           = YES
+GENERATE_LATEX         = NO
+
+# Tier 4 audit (Phase B): WARN_AS_ERROR = FAIL_ON_WARNINGS catches every
+# undocumented LIBRESCRS_PUBLIC_API member + every broken @ref / @copydoc /
+# @par-as-title use. Re-run with `doxygen Doxyfile.publicapi` before any
+# 4.0.x patch release; CI ingestion via the Hugo dev-guide build also
+# validates the XML output.
+WARN_IF_UNDOCUMENTED   = YES
+WARN_AS_ERROR          = FAIL_ON_WARNINGS
+
+QUIET                  = YES
+
+# Hugo ingestion: XML output in a stable path for website build
+XML_OUTPUT             = xml
+
+# Strip export-visibility macros so they don't appear in the parsed signature
+# and confuse reference resolution. LIBRESCRS_INTERNAL_BUILD is predefined
+# so that headers gated behind it (now excluded above) parse cleanly when
+# Doxygen does follow an #include chain into them transitively.
+ENABLE_PREPROCESSING   = YES
+MACRO_EXPANSION        = YES
+EXPAND_ONLY_PREDEF     = YES
+PREDEFINED             = LIBRESCRS_PUBLIC_API= \
+                         LIBRESCRS_INTERNAL_BUILD=1

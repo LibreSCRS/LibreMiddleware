@@ -1,0 +1,13 @@
+{
+  "pluginId": "rs-eid",
+  "displayName": "Serbian electronic ID",
+  "abiVersion": 7,
+  "capabilities": ["PKI", "PinManagement"],
+  "preReadAuth": "None",
+  "atrs": [
+    { "value": "3B 9F 96 80 0A B0 8B" },
+    { "value": "3B 9F 96 80 0A B0 8B 00 00",
+      "mask":  "FF FF FF FF FF FF FF 00 00",
+      "comment": "rev 2 chip family" }
+  ]
+}

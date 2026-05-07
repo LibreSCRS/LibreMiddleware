@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# GNU ld(1) version script for librescrs-pkcs11.so on ELF platforms
+# (Linux, BSD, etc.). The macOS counterpart with the same allowlist
+# is exports.list (Apple ld -exported_symbols_list format).
+#
+# Restricts the .so's exported symbol set to the standard PKCS#11
+# v2.40 / v3.0 C interface only. Without this allowlist the statically
+# linked OpenSSL crypto archive and the LibreSCRS internal namespaces
+# would all leak as .so exports.
+#
+# version-script semantics: declare `global:` symbols (allowlisted),
+# then `local: *` to hide everything else. The single anonymous version
+# tag ("{ ... };" with no name) is the conventional choice when no
+# versioned symbol contract is defined.
+#
+# Note: ELF symbols are NOT prefixed with `_` the way Apple ld lists
+# them, so the patterns below are bare names (`C_*`, not `_C_*`).
+{
+    global:
+        C_*;
+    local:
+        *;
+};

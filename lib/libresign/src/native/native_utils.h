@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
+#ifndef LIBRESCRS_INTERNAL_BUILD
+#error "This header is internal to LibreMiddleware. Public API: <LibreSCRS/...>"
+#endif
+
 #pragma once
 
 #include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "openssl_raii.h"
@@ -32,6 +37,12 @@ namespace libresign::native_utils {
 // Re-export from openssl_raii.h for existing callers
 using libresign::X509Deleter;
 using libresign::X509Ptr;
+
+/// @brief Uppercase hex digit table — `data[i]` is the ASCII character for
+///        the nibble value @p i (0..15). Used by every internal byte→hex
+///        encoder (PAdES /Contents, XAdES percent-encoder, …) to avoid
+///        re-defining the same 16-byte literal in multiple TUs.
+inline constexpr std::string_view kHexChars = "0123456789ABCDEF";
 
 // OpenSSL error string
 std::string opensslError();

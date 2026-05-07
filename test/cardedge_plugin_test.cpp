@@ -2,11 +2,12 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
-#include <plugin/card_plugin_registry.h>
+#include <LibreSCRS/Plugin/CardPluginService.h>
 
 #include <filesystem>
+#include <memory>
 
-using namespace plugin;
+using namespace LibreSCRS::Plugin;
 
 namespace {
 std::filesystem::path pluginDir()
@@ -14,9 +15,9 @@ std::filesystem::path pluginDir()
     return std::filesystem::path(PLUGIN_DIR);
 }
 
-CardPlugin* findCardEdge(CardPluginRegistry& registry)
+std::shared_ptr<CardPlugin> findCardEdge(CardPluginService& registry)
 {
-    for (auto* p : registry.plugins()) {
+    for (const auto& p : registry.plugins()) {
         if (p->pluginId() == "cardedge")
             return p;
     }
@@ -26,17 +27,15 @@ CardPlugin* findCardEdge(CardPluginRegistry& registry)
 
 TEST(CardEdgePluginTest, LoadsViaRegistry)
 {
-    CardPluginRegistry registry;
-    auto loaded = registry.loadPluginsFromDirectory(pluginDir());
-    EXPECT_GE(loaded, 1u);
+    CardPluginService registry{pluginDir()};
+    EXPECT_GE(registry.size(), 1u);
     ASSERT_NE(findCardEdge(registry), nullptr);
 }
 
 TEST(CardEdgePluginTest, Metadata)
 {
-    CardPluginRegistry registry;
-    registry.loadPluginsFromDirectory(pluginDir());
-    auto* p = findCardEdge(registry);
+    CardPluginService registry{pluginDir()};
+    auto p = findCardEdge(registry);
     ASSERT_NE(p, nullptr);
 
     EXPECT_EQ(p->pluginId(), "cardedge");
@@ -44,36 +43,35 @@ TEST(CardEdgePluginTest, Metadata)
     EXPECT_EQ(p->probePriority(), 840);
 }
 
-TEST(CardEdgePluginTest, SupportsPKI)
+TEST(CardEdgePluginTest, CapabilitiesIncludePKIAndPinManagement)
 {
-    CardPluginRegistry registry;
-    registry.loadPluginsFromDirectory(pluginDir());
-    auto* p = findCardEdge(registry);
+    CardPluginService registry{pluginDir()};
+    auto p = findCardEdge(registry);
     ASSERT_NE(p, nullptr);
 
-    EXPECT_TRUE(p->supportsPKI());
+    auto caps = p->capabilities();
+    EXPECT_TRUE(hasCapability(caps, CardCapabilities::PKI));
+    EXPECT_TRUE(hasCapability(caps, CardCapabilities::PinManagement));
 }
 
 TEST(CardEdgePluginTest, CanHandleAlwaysFalse)
 {
-    CardPluginRegistry registry;
-    registry.loadPluginsFromDirectory(pluginDir());
-    auto* p = findCardEdge(registry);
+    CardPluginService registry{pluginDir()};
+    auto p = findCardEdge(registry);
     ASSERT_NE(p, nullptr);
 
-    EXPECT_FALSE(p->canHandle({0x3B, 0xFF, 0x94}));
-    EXPECT_FALSE(p->canHandle({}));
+    EXPECT_FALSE(p->canHandle(std::vector<uint8_t>{0x3B, 0xFF, 0x94}));
+    EXPECT_FALSE(p->canHandle(std::vector<uint8_t>{}));
 }
 
 TEST(CardEdgePluginTest, PriorityBeforePKCS15)
 {
-    CardPluginRegistry registry;
-    registry.loadPluginsFromDirectory(pluginDir());
-    auto* p = findCardEdge(registry);
+    CardPluginService registry{pluginDir()};
+    auto p = findCardEdge(registry);
     ASSERT_NE(p, nullptr);
     EXPECT_EQ(p->probePriority(), 840);
 
-    for (auto* other : registry.plugins()) {
+    for (const auto& other : registry.plugins()) {
         if (other->pluginId() == "pkcs15") {
             EXPECT_LT(p->probePriority(), other->probePriority());
         }

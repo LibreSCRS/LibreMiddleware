@@ -4,10 +4,9 @@
 #include <gtest/gtest.h>
 #include "signing_test_support/signing_test_support.h"
 
-#include "libresign/dss/dss_service_manager.h"
-#include "libresign/dss/dss_signing_service.h"
-#include "libresign/http_client.h"
-#include "libresign/trust_store_manager.h"
+#include "dss/dss_service_manager.h"
+#include "dss/dss_signing_service.h"
+#include "http_client.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -34,77 +33,13 @@ static libresign::TrustConfig buildTestTrustConfig()
     return cfg;
 }
 
-// ============================================================================
-// TrustStoreManager integration tests — uses real bundled certificates
-// ============================================================================
-
-class TrustStoreIntegrationTest : public ::testing::Test
-{
-protected:
-    void SetUp() override
-    {
-        bundledDir = std::string(LIBREMIDDLEWARE_CERT_DIR);
-        ASSERT_TRUE(fs::exists(bundledDir));
-    }
-    std::string bundledDir;
-};
-
-TEST_F(TrustStoreIntegrationTest, CardVerificationStoreLoadsMupCerts)
-{
-    libresign::TrustStoreManager mgr(bundledDir);
-    auto store = mgr.buildStore(libresign::StoreScope::CARD_VERIFICATION);
-    ASSERT_NE(store, nullptr);
-
-    // Verify at least some MUP certs were loaded by checking store object count
-    auto* objs = X509_STORE_get0_objects(store.get());
-    int count = sk_X509_OBJECT_num(objs);
-    EXPECT_GT(count, 10) << "Expected >10 certificates loaded from rs-mup/ + rs-pks/ + rs-mup-format/";
-}
-
-TEST_F(TrustStoreIntegrationTest, ChainDisplayIncludesSystemCerts)
-{
-    libresign::TrustStoreManager mgr(bundledDir);
-    auto cardStore = mgr.buildStore(libresign::StoreScope::CARD_VERIFICATION);
-    auto chainStore = mgr.buildStore(libresign::StoreScope::CHAIN_DISPLAY);
-
-    ASSERT_NE(cardStore, nullptr);
-    ASSERT_NE(chainStore, nullptr);
-
-    int cardCount = sk_X509_OBJECT_num(X509_STORE_get0_objects(cardStore.get()));
-    int chainCount = sk_X509_OBJECT_num(X509_STORE_get0_objects(chainStore.get()));
-
-    // Chain display includes system certs — should be at least as many as bundled-only
-    EXPECT_GE(chainCount, cardCount) << "CHAIN_DISPLAY should include system store + bundled";
-}
-
-TEST_F(TrustStoreIntegrationTest, SigningScopeIncludesEverything)
-{
-    libresign::TrustStoreManager mgr(bundledDir);
-    auto signingStore = mgr.buildStore(libresign::StoreScope::SIGNING);
-    ASSERT_NE(signingStore, nullptr);
-
-    int count = sk_X509_OBJECT_num(X509_STORE_get0_objects(signingStore.get()));
-    EXPECT_GT(count, 10) << "Signing store should include system + bundled certs";
-}
-
-TEST_F(TrustStoreIntegrationTest, CertPathsContainExpectedSubdirs)
-{
-    libresign::TrustStoreManager mgr(bundledDir);
-    auto paths = mgr.certPathsForScope(libresign::StoreScope::CARD_VERIFICATION);
-
-    bool hasMup = false, hasPks = false, hasFormat = false;
-    for (const auto& p : paths) {
-        if (p.find("rs-mup-format") != std::string::npos)
-            hasFormat = true;
-        else if (p.find("rs-mup") != std::string::npos)
-            hasMup = true;
-        else if (p.find("rs-pks") != std::string::npos)
-            hasPks = true;
-    }
-    EXPECT_TRUE(hasMup) << "Expected rs-mup/ in cert paths";
-    EXPECT_TRUE(hasPks) << "Expected rs-pks/ in cert paths";
-    EXPECT_TRUE(hasFormat) << "Expected rs-mup-format/ in cert paths";
-}
+// The pre-4.0 TrustStoreManager-based integration tests
+// (CardVerificationStoreLoadsMupCerts, ChainDisplayIncludesSystemCerts,
+// SigningScopeIncludesEverything, CertPathsContainExpectedSubdirs) were
+// retired with the class itself. Bundled-cert + system-store coverage now
+// lives in TrustStoreServiceTests (default-CI hermetic) and the LM
+// X509_STORE-construction path is exercised end-to-end by the existing
+// signing E2E tests.
 
 // ============================================================================
 // DSS service integration — signing with test data (no card)

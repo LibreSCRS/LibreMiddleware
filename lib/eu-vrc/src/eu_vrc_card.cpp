@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include "eu-vrc/eu_vrc_card.h"
+#include "eu_vrc_card.h"
 #include "eu_vrc_detection.h"
 #include "eu_vrc_protocol.h"
 
-#include <smartcard/apdu.h>
-#include <smartcard/ber.h>
+#include <apdu.h>
+#include <ber.h>
 #include <smartcard/pcsc_connection.h>
 
 #include <algorithm>

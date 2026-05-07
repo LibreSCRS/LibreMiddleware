@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
-#include <emrtd/crypto/bac.h>
+#include <bac.h>
 
 using namespace emrtd::crypto;
 

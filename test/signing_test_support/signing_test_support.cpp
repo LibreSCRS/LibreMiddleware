@@ -8,8 +8,8 @@
 #include <memory>
 
 #ifdef LIBRESIGN_HAS_DSS_ORACLE
-#include "libresign/dss/dss_service_manager.h"
-#include "libresign/http_client.h"
+#include "dss/dss_service_manager.h"
+#include "http_client.h"
 #include "../dss_validation_client.h"
 #include <json.hpp>
 #endif

@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include <smartcard/apdu.h>
+#include <apdu.h>
 
 #include <string>
 #include <vector>

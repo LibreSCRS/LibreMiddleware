@@ -3,7 +3,7 @@
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "libresign/dss/dss_service_manager.h"
+#include "dss/dss_service_manager.h"
 
 TEST(DSSServiceManagerTest, ConstructWithConfig)
 {

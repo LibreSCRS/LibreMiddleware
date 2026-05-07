@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include <emrtd/emrtd_card.h>
-#include <emrtd/crypto/bac.h>
-#include <emrtd/crypto/pace.h>
-#include <smartcard/apdu.h>
-#include <smartcard/ber.h>
+#include "emrtd_card.h"
+#include <bac.h>
+#include <pace.h>
+#include <apdu.h>
+#include <ber.h>
 #include <smartcard/pcsc_connection.h>
 
 #include <openssl/crypto.h>

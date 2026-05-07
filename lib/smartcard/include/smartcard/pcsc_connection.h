@@ -36,6 +36,17 @@ class PCSCConnection
 {
 public:
     explicit PCSCConnection(const std::string& readerName);
+
+    /// Tag type used to construct a "detached" PCSCConnection that performs
+    /// no PC/SC calls. Intended exclusively for test-only injection paths
+    /// where a CardSession needs to be keyed by a real PCSCConnection address
+    /// (matching the plugins' per-session map shape) but no hardware is
+    /// available. Any transmit() call on a detached connection returns an
+    /// empty APDUResponse.
+    struct DetachedTag
+    {};
+    PCSCConnection(DetachedTag, const std::string& readerName);
+
     ~PCSCConnection();
 
     PCSCConnection(const PCSCConnection&) = delete;

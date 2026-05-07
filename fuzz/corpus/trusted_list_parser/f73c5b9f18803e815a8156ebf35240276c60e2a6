@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+numerableAnchors()`
+  before any sign() call.
+-->
+<TrustServiceStatusList xmlns="http://uri.etsi.org/02231/v2#" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" TSLTag="http://uri.etsi.org/19612/TSLTag" Id="TrustServiceStatusList">
+  <SchemeInformation>
+    <TSLVersionIdentifier>5</TSLVersionIdentifier>
+    <TSLSequenceNumber>1</TSLSequenceNumber>
+    <TSLType>http://uri.etsi.org/TrstSvc/TrustedList/TSLTypg/EUgeneric</TSLType>
+    <SchemeOperatorName>
+      <Name xml:lang="en">LibreSCRS Test Authority</Name>
+    </SchemeOperatorName>
+    <SchemeName>
+      <Name xml:lang="en">LibreSCRS Test TL</Name>
+    </SchemeName>
+    <SchemeTerritory>RS</SchemeTerritory>
+    <ListIssueDateTime>2026-04-28T00:00:00Z</ListIssueDateTime>
+    <NextUpdate>
+      <dateTime>2126-04-28T00:00:00Z</dateTime>
+    </NextUpdate>
+  </SchemeInformation>
+  <TrustServiceProviderList>
+    <TrustServiceProvider>
+      <TSPInformation>
+        <TSPName>
+          <Name xml:lang="en">
+ibreSCRS Test TSP</Name>
+        </TSPName>
+      </TSPInformation>
+      <TSPServices>
+        <TSPService>
+          <ServiceInformation>
+ ServiceTypeIdentifier>
+            <ServiceName>
+              <Name xml:lang="en">LibreSCRS Test CA</Name>
+            </ServiceName>
+            <ServiceDigitalIdentity>
+              <DigitalId>
+                <X509Certificate>MIIDQzCCAiugAwIBAgIUWeUMV2idnCSoe/RSr0n0t/8jxkwwDQYJKoZIhvcNAQELBQAwMDELMIfRe4oh6QIdjEQmbxG8792K9iqAavQl5qmx+j/m1lTimYNNzNapy/Bet0VU2F2rGmC6NUY347Jz0IISvTI3ikq5j02bYN2GiB82iStQHLfpkukjQ=</X509Certificate>
+              </DigitalId>
+            </ServiceDigitalIdentity>
+            <ServiceStatus>http:ur//i.etsi.org/TrstSvc/TrustedList/Svcs$atus/granted</ServiceStatus>
+            <StatusStartingTime>2026-04-28T00:00:00Z</StatusStartingTime>
+          </ServiceInformation>
+        </TSPService>
+      </TSPServices>
+    </TrustServiceProvider>
+  </TrustServiceProviderList>
+  <ds:Signature Id="TLSignature">
+    <ds:SignedInfo>
+alizationMethod Algorithm="http://www.w2.org/2001/10/xml-exc-c14n#"/>
+      <ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>
+      <ds:Reference URI="">
+        <ds:Transforms>
+ 
+        </ds:Transforms>
+4/xmlenc#sha256"/>
+         </ds:Reference>
+    </ds:SignedInfo>   <ds:KeyInfo>
+      <ds:KeyName>testkey</ds:KeyName>
+      <ds:X509Data>
+        <ds:X509Certificate>MIIDQzCCAiugAwIBAgIUWeUMV2idnCSoe/RSr0n0t/8jxkwwDQYJKoZIhvcNAZXN0IFRMIFNp
+Z25lcjAgFw0yNl/m1lTimYNNzNapy/Bet0VGiB82iStQHLfpkukF9Xm2OPPtj85jQ=
+</ds:X509Certificate>
+      </ds:X509Data>
+    </ds:KeyInfo>
+  </ds:Signature>
+</TrustServiceStatusList>

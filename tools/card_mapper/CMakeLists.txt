@@ -8,6 +8,12 @@ add_executable(card_mapper
     card_scanner.cpp
     apdu_logger.cpp
     scaffold_generator.cpp
+    cli_options.h
+    output_formatter.h
+    plugin_mapper.h
+    card_scanner.h
+    apdu_logger.h
+    scaffold_generator.h
 )
 
 target_include_directories(card_mapper PRIVATE
@@ -16,14 +22,20 @@ target_include_directories(card_mapper PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/cardedge/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/rs-health/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/eu-vrc/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/emrtd/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/pkcs15/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/emrtd/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/emrtd-crypto/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/pkcs15/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/smartcard/src
 )
 
-target_link_libraries(card_mapper PRIVATE SmartCard EMRTD PKCS15)
-target_compile_features(card_mapper PRIVATE cxx_std_20)
+target_link_libraries(card_mapper PRIVATE SmartCard_Impl EMRTD PKCS15)
+target_compile_features(card_mapper PRIVATE cxx_std_23)
+# LM-internal tool: reaches directly into lib/*/src/ for reflection, so it
+# must carry the internal-build marker to satisfy the #error guard on those
+# headers.
 target_compile_definitions(card_mapper PRIVATE
     CARD_MAPPER_VERSION="${PROJECT_VERSION}"
+    LIBRESCRS_INTERNAL_BUILD
 )
 
 # Tests
@@ -41,6 +53,12 @@ if(BUILD_TESTING)
         card_scanner.cpp
         apdu_logger.cpp
         scaffold_generator.cpp
+        cli_options.h
+        output_formatter.h
+        plugin_mapper.h
+        card_scanner.h
+        apdu_logger.h
+        scaffold_generator.h
     )
     target_include_directories(card_mapper_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
@@ -48,11 +66,14 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/cardedge/src
         ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/rs-health/src
         ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/eu-vrc/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/emrtd/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/pkcs15/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/emrtd/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/emrtd-crypto/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/pkcs15/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/smartcard/src
     )
-    target_link_libraries(card_mapper_tests PRIVATE GTest::gtest_main SmartCard EMRTD PKCS15)
-    target_compile_features(card_mapper_tests PRIVATE cxx_std_20)
+    target_link_libraries(card_mapper_tests PRIVATE GTest::gtest_main SmartCard_Impl EMRTD PKCS15)
+    target_compile_features(card_mapper_tests PRIVATE cxx_std_23)
+    target_compile_definitions(card_mapper_tests PRIVATE LIBRESCRS_INTERNAL_BUILD)
     include(GoogleTest)
     gtest_discover_tests(card_mapper_tests)
 endif()

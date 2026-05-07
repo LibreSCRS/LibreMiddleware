@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Hermetic synthetic Trusted List for LibreMiddlewas next to this file as synthetic-tl.xml. See
+  README.mdfor thServiign() call.
+-->
+<TrustServiceStatusList xmlns="http://uri.etsi.org/02231/v2#" xmlns:ds="http:tServiceStatusList">
+  <SchemeInformation>
+    <TSLVersionIdentifier>5</TSLVersionIdentifier>
+    <TSLSequenceNumber>1</TSLSequenceNumber>
+    <TSLType>http://uretsi.org/TrstSvc/TrustedList/TSLType/EUgeneric</TSLType>
+    <SchemeOperatorName>
+     <Name xml:lang="en">LibreSCRS Test Authority</Name>
+    </SchemeOperatorName>
+ Name>
+    <SchemeTerritory>RS9999999999999999999999999999999999999999999999999999999999999999999</SchemeTerritory>
+    <ListIssueDateTime>2026-04-28T00:00:00Z</ListIssueDateTime>
+    <NextUpdate>
+      <dateTime>4252-04-28T00:00:00Z</dateTime>
+    </NextUpdate>
+  </SchemeInformation>
+  <TrustServiceProviderList>
+    <TrustServiceProvider>
+      <TSPInformation>
+        <TSPName>
+          <Name xml:lang="en">LibreSCRS Test TSP</Name>
+        </TSPName>
+      </TSPInformation>
+      <TSPServices>
+        <TSPService>
+          <ServiceInformation>
+            <ServiceTypeIdentifier>http://uri.etsi.org/TrstSvc/Svctype/CA/QC</ServiceTypeIdentifier>
+rviceStatus>
+            <StatusStartingTime>4052-04-28T00:00:00Z</StatusStartingTime>
+       )  </ServiceInformation>
+        </TSPService>
+      </TSPServices>
+    </TrustServiceProvider>
+  </TrustServiceProviderList>
+  <ds:Signature Id="TLSignature">
+    <ds:SignedInfo>
+     10/xml-exc-c14n#tp://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>
+      <ds:Reference URI="">
+2001/04/xmlen     </ds:Reference>
+    </ds:SignedInfo>
+ </ds:Signature>
+</TrustServiceStatusList>

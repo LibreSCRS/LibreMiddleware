@@ -5,9 +5,9 @@
 
 #ifdef LIBRESIGN_HAS_NATIVE
 
-#include "libresign/native/pkcs11_token.h"
+#include "native/pkcs11_token.h"
 #include "signing_test_support/signing_test_support.h"
-#include "libresign/signing_service.h"
+#include "signing_service.h"
 
 using namespace libresign;
 

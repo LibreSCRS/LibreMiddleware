@@ -1197,24 +1197,24 @@ namespace {
 class SessionBusyGuard
 {
 public:
-    SessionBusyGuard(std::unique_lock<std::mutex>& sessLock, SessionEntry& session)
-        : sessLock_(sessLock), session_(session)
+    SessionBusyGuard(std::unique_lock<std::mutex>& sessLockArg, SessionEntry& sessionArg)
+        : sessLock(sessLockArg), session(sessionArg)
     {
-        sessLock_.unlock();
+        sessLock.unlock();
     }
 
     ~SessionBusyGuard()
     {
-        sessLock_.lock();
-        session_.busy = false;
+        sessLock.lock();
+        session.busy = false;
     }
 
     SessionBusyGuard(const SessionBusyGuard&) = delete;
     SessionBusyGuard& operator=(const SessionBusyGuard&) = delete;
 
 private:
-    std::unique_lock<std::mutex>& sessLock_;
-    SessionEntry& session_;
+    std::unique_lock<std::mutex>& sessLock;
+    SessionEntry& session;
 };
 
 } // anonymous namespace

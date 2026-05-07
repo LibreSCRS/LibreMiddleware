@@ -2,12 +2,12 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
-#include <emrtd/crypto/passive_auth.h>
-#include <emrtd/crypto/chip_auth.h>
-#include <emrtd/crypto/active_auth.h>
-#include <emrtd/crypto/secure_messaging.h>
-#include <emrtd/crypto/bac.h>
-#include <plugin/security_check.h>
+#include <passive_auth.h>
+#include <chip_auth.h>
+#include <active_auth.h>
+#include <secure_messaging.h>
+#include <bac.h>
+#include <LibreSCRS/Plugin/SecurityCheck.h>
 
 // ---------------------------------------------------------------------------
 // Passive Authentication tests
@@ -150,35 +150,39 @@ TEST(ActiveAuthTest, ParseDG15WrongTagReturnsUnknown)
 
 TEST(SecurityStatusTest, ComputeOverallAllPassed)
 {
-    plugin::SecurityStatus status;
-    status.checks.push_back({"pa.dg_hash.1", "data_integrity", plugin::SecurityCheck::PASSED, "DG1 Hash", "", ""});
-    status.checks.push_back({"pa.dg_hash.2", "data_integrity", plugin::SecurityCheck::PASSED, "DG2 Hash", "", ""});
-    status.checks.push_back(
-        {"pa.sod_signature", "data_authenticity", plugin::SecurityCheck::PASSED, "SOD Signature", "", ""});
-    status.checks.push_back({"ca.chip_auth", "chip_genuineness", plugin::SecurityCheck::PASSED, "Chip Auth", "", ""});
+    LibreSCRS::Plugin::SecurityStatus status;
+    status.checks.push_back({"pa.dg_hash.1", LibreSCRS::Plugin::SecurityCategory::DataIntegrity,
+                             LibreSCRS::Plugin::SecurityCheck::Status::Passed, "DG1 Hash", "", ""});
+    status.checks.push_back({"pa.dg_hash.2", LibreSCRS::Plugin::SecurityCategory::DataIntegrity,
+                             LibreSCRS::Plugin::SecurityCheck::Status::Passed, "DG2 Hash", "", ""});
+    status.checks.push_back({"pa.sod_signature", LibreSCRS::Plugin::SecurityCategory::Authenticity,
+                             LibreSCRS::Plugin::SecurityCheck::Status::Passed, "SOD Signature", "", ""});
+    status.checks.push_back({"ca.chip_auth", LibreSCRS::Plugin::SecurityCategory::Genuineness,
+                             LibreSCRS::Plugin::SecurityCheck::Status::Passed, "Chip Auth", "", ""});
     status.computeOverall();
-    EXPECT_EQ(status.overallIntegrity, plugin::SecurityCheck::PASSED);
-    EXPECT_EQ(status.overallAuthenticity, plugin::SecurityCheck::PASSED);
-    EXPECT_EQ(status.overallGenuineness, plugin::SecurityCheck::PASSED);
+    EXPECT_EQ(status.overallIntegrity, LibreSCRS::Plugin::SecurityCheck::Status::Passed);
+    EXPECT_EQ(status.overallAuthenticity, LibreSCRS::Plugin::SecurityCheck::Status::Passed);
+    EXPECT_EQ(status.overallGenuineness, LibreSCRS::Plugin::SecurityCheck::Status::Passed);
 }
 
 TEST(SecurityStatusTest, ComputeOverallOneFailed)
 {
-    plugin::SecurityStatus status;
-    status.checks.push_back({"pa.dg_hash.1", "data_integrity", plugin::SecurityCheck::PASSED, "DG1 Hash", "", ""});
-    status.checks.push_back(
-        {"pa.dg_hash.2", "data_integrity", plugin::SecurityCheck::FAILED, "DG2 Hash", "", "hash mismatch"});
+    LibreSCRS::Plugin::SecurityStatus status;
+    status.checks.push_back({"pa.dg_hash.1", LibreSCRS::Plugin::SecurityCategory::DataIntegrity,
+                             LibreSCRS::Plugin::SecurityCheck::Status::Passed, "DG1 Hash", "", ""});
+    status.checks.push_back({"pa.dg_hash.2", LibreSCRS::Plugin::SecurityCategory::DataIntegrity,
+                             LibreSCRS::Plugin::SecurityCheck::Status::Failed, "DG2 Hash", "", "hash mismatch"});
     status.computeOverall();
-    EXPECT_EQ(status.overallIntegrity, plugin::SecurityCheck::FAILED);
+    EXPECT_EQ(status.overallIntegrity, LibreSCRS::Plugin::SecurityCheck::Status::Failed);
 }
 
 TEST(SecurityStatusTest, ComputeOverallNotPerformed)
 {
-    plugin::SecurityStatus status;
+    LibreSCRS::Plugin::SecurityStatus status;
     status.computeOverall();
-    EXPECT_EQ(status.overallIntegrity, plugin::SecurityCheck::NOT_PERFORMED);
-    EXPECT_EQ(status.overallAuthenticity, plugin::SecurityCheck::NOT_PERFORMED);
-    EXPECT_EQ(status.overallGenuineness, plugin::SecurityCheck::NOT_PERFORMED);
+    EXPECT_EQ(status.overallIntegrity, LibreSCRS::Plugin::SecurityCheck::Status::NotPerformed);
+    EXPECT_EQ(status.overallAuthenticity, LibreSCRS::Plugin::SecurityCheck::Status::NotPerformed);
+    EXPECT_EQ(status.overallGenuineness, LibreSCRS::Plugin::SecurityCheck::Status::NotPerformed);
 }
 
 // ---------------------------------------------------------------------------

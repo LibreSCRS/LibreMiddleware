@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
-#include "libresign/http_client.h"
+#include "http_client.h"
 
 TEST(HttpClientTest, ConstructAndDestruct)
 {

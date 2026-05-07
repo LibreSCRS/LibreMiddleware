@@ -1,15 +1,13 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # SPDX-FileCopyrightText: 2026 hirashix0
 
-add_library(rs-eid-plugin SHARED
-    src/eid_card_plugin.cpp
-)
-target_link_libraries(rs-eid-plugin PRIVATE CardPlugin RsEId)
-target_compile_definitions(rs-eid-plugin PRIVATE
-    LIBREMIDDLEWARE_CERT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/certificates"
-)
-set_target_properties(rs-eid-plugin PROPERTIES
-    PREFIX "lib"
-    OUTPUT_NAME "rs-eid-plugin"
-    LIBRARY_OUTPUT_DIRECTORY "${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
+librescrs_add_plugin(rs-eid-plugin
+    MANIFEST ${CMAKE_CURRENT_SOURCE_DIR}/manifest.json
+    SOURCES  src/eid_card_plugin.cpp
+    INCLUDE_DIRS
+        ${PROJECT_SOURCE_DIR}/lib/rs-eid/src
+        ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+    LINK_LIBRARIES RsEId LibreSCRS_Trust
+    COMPILE_DEFINITIONS
+        LIBREMIDDLEWARE_CERT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/certificates"
 )

@@ -4,13 +4,29 @@
 // Quick CLI tool to test PIN operations on an inserted card.
 // Usage: ./pin_test_cli [reader_name]
 // If no reader_name is given, lists available readers.
+//
+// Security note: PIN material is read into LibreSCRS::Secure::String
+// (cleansing allocator) and the terminal
+// echo is suppressed during PIN entry on POSIX hosts. Windows console
+// echo suppression is not implemented — the tool is currently
+// POSIX-only-built per its CMake gate, but a SetConsoleMode-based
+// equivalent should land if it ever ports to Windows.
 
-#include <cardedge/cardedge.h>
-#include <cardedge/pki_applet_guard.h>
+#include <LibreSCRS/Secure/String.h>
+
+#include <cardedge.h>
+#include <pki_applet_guard.h>
 #include <smartcard/pcsc_connection.h>
+
+#include <cstring>
 #include <iostream>
 #include <string>
-#include <cstring>
+#include <string_view>
+
+#if defined(__unix__) || defined(__APPLE__)
+#include <termios.h>
+#include <unistd.h>
+#endif
 
 #ifdef __APPLE__
 #include <PCSC/wintypes.h>
@@ -18,6 +34,46 @@
 #else
 #include <winscard.h>
 #endif
+
+// Read a PIN with terminal echo suppressed on POSIX hosts. Returns a
+// LibreSCRS::Secure::String so the bytes are cleansed from heap on
+// destruction. The trailing newline that getline strips is fine —
+// std::getline consumes the newline without including it.
+static LibreSCRS::Secure::String readPinNoEcho(const char* prompt)
+{
+    std::cout << prompt;
+    std::cout.flush();
+
+#if defined(__unix__) || defined(__APPLE__)
+    termios oldt{};
+    termios newt{};
+    bool isTty = ::isatty(STDIN_FILENO) != 0;
+    if (isTty && ::tcgetattr(STDIN_FILENO, &oldt) == 0) {
+        newt = oldt;
+        newt.c_lflag &= ~static_cast<tcflag_t>(ECHO);
+        ::tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+    } else {
+        isTty = false; // tcgetattr failed — don't try to restore
+    }
+#endif
+
+    std::string raw;
+    std::getline(std::cin, raw);
+
+#if defined(__unix__) || defined(__APPLE__)
+    if (isTty) {
+        ::tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+        std::cout << std::endl; // echo a newline since we suppressed it
+    }
+#endif
+
+    // Adopt-and-cleanse: the std::string&& ctor zeroises the temporary's
+    // storage before raw goes out of scope. raw itself is local and
+    // reaches end-of-scope here, but the rvalue ctor handles the
+    // cleansing explicitly so the path is correct even if a future
+    // refactor reorders things.
+    return LibreSCRS::Secure::String{std::move(raw)};
+}
 
 static std::string listReaders()
 {
@@ -100,11 +156,9 @@ int main(int argc, char* argv[])
         std::cout << "\n--- Step 2: verifyPIN ---" << std::endl;
         std::cout << "WARNING: A wrong PIN will decrement retries (currently " << tries.retriesLeft << ")!"
                   << std::endl;
-        std::cout << "Enter PIN to verify (or 'q' to quit): ";
-        std::string pin;
-        std::getline(std::cin, pin);
+        auto pin = readPinNoEcho("Enter PIN to verify (or 'q' to quit): ");
 
-        if (pin == "q" || pin.empty()) {
+        if (pin.view() == "q" || pin.empty()) {
             std::cout << "Aborted." << std::endl;
             return 0;
         }
@@ -112,7 +166,7 @@ int main(int argc, char* argv[])
         cardedge::PINResult verifyResult;
         {
             cardedge::PkiAppletGuard guard(conn);
-            verifyResult = cardedge::verifyPIN(conn, pin);
+            verifyResult = cardedge::verifyPIN(conn, pin.view());
         }
         std::cout << "Result: success=" << verifyResult.success << ", retriesLeft=" << verifyResult.retriesLeft
                   << ", blocked=" << verifyResult.blocked << std::endl;
@@ -129,18 +183,14 @@ int main(int argc, char* argv[])
 
         // Step 3: Ask user whether to test changePIN
         std::cout << "\n--- Step 3: changePIN ---" << std::endl;
-        std::cout << "Enter NEW PIN (or 'q' to skip): ";
-        std::string newPin;
-        std::getline(std::cin, newPin);
+        auto newPin = readPinNoEcho("Enter NEW PIN (or 'q' to skip): ");
 
-        if (newPin == "q" || newPin.empty()) {
+        if (newPin.view() == "q" || newPin.empty()) {
             std::cout << "Skipped changePIN." << std::endl;
             return 0;
         }
 
-        std::cout << "Confirm NEW PIN: ";
-        std::string confirmPin;
-        std::getline(std::cin, confirmPin);
+        auto confirmPin = readPinNoEcho("Confirm NEW PIN: ");
 
         if (newPin != confirmPin) {
             std::cerr << "PINs do not match. Aborted." << std::endl;
@@ -150,7 +200,7 @@ int main(int argc, char* argv[])
         cardedge::PINResult changeResult;
         {
             cardedge::PkiAppletGuard guard(conn);
-            changeResult = cardedge::changePIN(conn, pin, newPin);
+            changeResult = cardedge::changePIN(conn, pin.view(), newPin.view());
         }
         std::cout << "Result: success=" << changeResult.success << ", retriesLeft=" << changeResult.retriesLeft
                   << ", blocked=" << changeResult.blocked << std::endl;
@@ -163,7 +213,7 @@ int main(int argc, char* argv[])
             cardedge::PINResult recheck;
             {
                 cardedge::PkiAppletGuard guard(conn);
-                recheck = cardedge::verifyPIN(conn, newPin);
+                recheck = cardedge::verifyPIN(conn, newPin.view());
             }
             std::cout << "Verify new PIN: success=" << recheck.success << std::endl;
 
@@ -172,7 +222,7 @@ int main(int argc, char* argv[])
             cardedge::PINResult revert;
             {
                 cardedge::PkiAppletGuard guard(conn);
-                revert = cardedge::changePIN(conn, newPin, pin);
+                revert = cardedge::changePIN(conn, newPin.view(), pin.view());
             }
             std::cout << "Revert: success=" << revert.success << std::endl;
             if (revert.success)

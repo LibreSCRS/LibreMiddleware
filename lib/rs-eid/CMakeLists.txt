@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright hirashix0@proton.me
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_library(RsEId STATIC
@@ -15,15 +15,17 @@ add_library(RsEId STATIC
     src/card_reader_gemalto.h
     src/card_reader_apollo.h
     src/card_verifier.h
-    # Public headers
-    include/rseid/eidcard.h
-    include/rseid/eidtypes.h
+    src/eidcard.h
+    src/eidtypes.h
 )
 
-target_include_directories(RsEId PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
+target_compile_definitions(RsEId PRIVATE LIBRESCRS_INTERNAL_BUILD)
+
+target_include_directories(RsEId PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src
 )
 
 set_target_properties(RsEId PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-target_link_libraries(RsEId PUBLIC SmartCard PRIVATE OpenSSL_Crypto z)
+target_link_libraries(RsEId PUBLIC SmartCard_Impl PRIVATE OpenSSL_Crypto z)

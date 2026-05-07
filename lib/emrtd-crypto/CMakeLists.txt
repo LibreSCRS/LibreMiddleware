@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # SPDX-FileCopyrightText: 2026 hirashix0
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_library(EMRTDCrypto STATIC
@@ -13,22 +13,25 @@ add_library(EMRTDCrypto STATIC
     src/secure_messaging.cpp
     src/chip_auth.cpp
     src/active_auth.cpp
-    include/emrtd/crypto/types.h
-    include/emrtd/crypto/bac.h
-    include/emrtd/crypto/pace.h
-    include/emrtd/crypto/passive_auth.h
-    include/emrtd/crypto/secure_messaging.h
-    include/emrtd/crypto/chip_auth.h
-    include/emrtd/crypto/active_auth.h
+    src/types.h
+    src/bac.h
+    src/pace.h
+    src/passive_auth.h
+    src/secure_messaging.h
+    src/chip_auth.h
+    src/active_auth.h
 )
 
-target_include_directories(EMRTDCrypto PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
+target_compile_definitions(EMRTDCrypto PRIVATE LIBRESCRS_INTERNAL_BUILD)
+
+target_include_directories(EMRTDCrypto PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src
 )
 
 set_target_properties(EMRTDCrypto PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 target_link_libraries(EMRTDCrypto
     PUBLIC OpenSSL_Crypto
-    PRIVATE SmartCard
+    PRIVATE SmartCard_Impl
 )

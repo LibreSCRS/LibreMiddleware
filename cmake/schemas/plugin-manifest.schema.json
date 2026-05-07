@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://librescrs.org/schemas/plugin-manifest-v1.json",
+  "title": "LibreSCRS Plugin Manifest",
+  "type": "object",
+  "required": ["pluginId", "displayName", "abiVersion", "capabilities", "atrs"],
+  "properties": {
+    "pluginId":    { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,30}$" },
+    "displayName": { "type": "string", "minLength": 1 },
+    "abiVersion":  { "type": "integer", "const": 7 },
+    "capabilities": {
+      "type": "array",
+      "items": { "enum": ["PKI", "PinManagement", "IdentityData", "EmrtdCrypto"] },
+      "uniqueItems": true
+    },
+    "preReadAuth": {
+      "enum": ["None", "BacMrz", "PaceCan"],
+      "default": "None"
+    },
+    "atrs": {
+      "type": "array",
+      "minItems": 0,
+      "items": {
+        "type": "object",
+        "required": ["value"],
+        "properties": {
+          "value":   { "type": "string", "pattern": "^([0-9A-Fa-f]{2}\\s)*[0-9A-Fa-f]{2}$" },
+          "mask":    { "oneOf": [{"type": "null"}, {"type": "string", "pattern": "^([0-9A-Fa-f]{2}\\s)*[0-9A-Fa-f]{2}$"}] },
+          "comment": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

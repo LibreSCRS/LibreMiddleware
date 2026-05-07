@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "libresign/http_client.h"
+#include "http_client.h"
 
 #include <cstdint>
 #include <span>

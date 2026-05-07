@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
+#ifndef LIBRESCRS_INTERNAL_BUILD
+#error "This header is internal to LibreMiddleware. Public API: <LibreSCRS/...>"
+#endif
+
 #pragma once
 
 #include <memory>
-#include <libresign/trust_store_manager.h>
 #include <openssl/bio.h>
 #include <openssl/bn.h>
 #include <openssl/cms.h>
@@ -214,6 +217,14 @@ using OcspCertIdPtr = std::unique_ptr<OCSP_CERTID, OcspCertIdDeleter>;
 using EvpMdCtxPtr = std::unique_ptr<EVP_MD_CTX, EvpMdCtxDeleter>;
 using AuthorityInfoAccessPtr = std::unique_ptr<AUTHORITY_INFO_ACCESS, AuthorityInfoAccessDeleter>;
 using CrlDistPointsPtr = std::unique_ptr<STACK_OF(DIST_POINT), CrlDistPointsDeleter>;
+// X509_STORE deleter, defined inline here. Self-contained — no #include cycles.
+struct X509StoreDeleter
+{
+    void operator()(X509_STORE* p) const
+    {
+        X509_STORE_free(p);
+    }
+};
 using X509StorePtr = std::unique_ptr<X509_STORE, X509StoreDeleter>;
 
 } // namespace libresign

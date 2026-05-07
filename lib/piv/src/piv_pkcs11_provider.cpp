@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include "piv/piv_pkcs11_provider.h"
-#include "piv/piv_card.h"
+#include "piv_pkcs11_provider.h"
+#include "piv_card.h"
+
+#include <LibreSCRS/Secure/String.h>
 
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/x509.h>
 #include <sstream>
 #include <iomanip>
+#include <string_view>
 
 namespace piv {
-
-// Shared PIN-string scrubber lives in smartcard/secure_buffer.h.
-using ::smartcard::PinStringScrubber;
 
 namespace {
 
@@ -182,12 +182,15 @@ unsigned long PivPKCS11Provider::login(unsigned long userType, const std::vector
 
     try {
         card->probe(); // Re-select PIV applet (may be lost after reconnect)
-        // SSO-safe + exception-safe via PinStringScrubber RAII.
-        std::string pinStr(pin.begin(), pin.end());
-        PinStringScrubber scrubber{pinStr};
-        auto result = card->verifyPIN(0x80, pinStr);
-        if (result.success) {
-            cachedPin = smartcard::SecureBuffer(pinStr);
+        // 4.0 hardening: wrap incoming PIN bytes in Secure::String so
+        // the cleansing boundary follows them all the way into PIVCard. The
+        // SecureBuffer cache below stores the same bytes (cleansed on dtor)
+        // for re-login.
+        std::string_view pinView(reinterpret_cast<const char*>(pin.data()), pin.size());
+        LibreSCRS::Secure::String securePin(pinView);
+        auto result = card->verifyPIN(0x80, securePin);
+        if (result.ok()) {
+            cachedPin = smartcard::SecureBuffer(pinView);
             return OK;
         }
         if (result.blocked)
@@ -219,11 +222,14 @@ std::vector<uint8_t> PivPKCS11Provider::signData(const std::vector<uint8_t>& key
     // Re-select applet and re-verify PIN in same sequence —
     // SELECT AID resets security status on most cards.
     card->probe();
-    // SSO-safe + exception-safe via PinStringScrubber RAII.
-    std::string pinStr(cachedPin.begin(), cachedPin.end());
-    PinStringScrubber scrubber{pinStr};
-    auto pinResult = card->verifyPIN(0x80, pinStr);
-    if (!pinResult.success)
+    // 4.0 hardening: use Secure::String for the re-verify path too.
+    // The string_view borrows from cachedPin (which is cleansed on dtor),
+    // and Secure::String's secure-allocator backing storage cleanses on its
+    // own destruction.
+    std::string_view cachedView(reinterpret_cast<const char*>(cachedPin.data()), cachedPin.size());
+    LibreSCRS::Secure::String securePin(cachedView);
+    auto pinResult = card->verifyPIN(0x80, securePin);
+    if (!pinResult.ok())
         throw std::runtime_error("PivPKCS11Provider: PIN re-verification failed");
 
     const auto& info = it->second;

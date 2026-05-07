@@ -1,33 +1,59 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Copyright hirashix0@proton.me
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(PCSC REQUIRED)
 find_package(Threads REQUIRED)
 
-add_library(SmartCard STATIC
+add_library(SmartCard_Impl STATIC
     src/apdu.cpp
     src/pcsc_connection.cpp
     src/tlv.cpp
     src/ber.cpp
     src/monitor.cpp
-    include/smartcard/apdu.h
+    # Bucket-B internal headers (LM-private)
+    src/apdu.h
+    src/ber.h
+    src/tlv.h
+    src/ipcsc_scan_provider.h
+    src/pcsc_scan_provider.h
+    src/pkcs11_card_provider.h
+    # Bucket-C headers: public within LM, LC bridge surface
     include/smartcard/pcsc_connection.h
-    include/smartcard/tlv.h
-    include/smartcard/ber.h
-    include/smartcard/pkcs11_card_provider.h
+    include/smartcard/secure_buffer.h
     include/smartcard/monitor_event.h
-    include/smartcard/ipcsc_scan_provider.h
-    include/smartcard/pcsc_scan_provider.h
     include/smartcard/monitor.h
 )
 
-target_include_directories(SmartCard PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
+target_compile_definitions(SmartCard_Impl PRIVATE LIBRESCRS_INTERNAL_BUILD)
+
+# PUBLIC include dir (BUILD_INTERFACE-wrapped) now carries only the four
+# surviving bucket-C headers (pcsc_connection, secure_buffer, monitor,
+# monitor_event). Internal LM consumers that link SmartCard_Impl still need
+# <smartcard/pcsc_connection.h> etc. while the LC bridge surface remains,
+# but external (non-LM) consumers cannot reach them — the headers
+# are not exported via install() or package config.
+#
+# NOTE: bucket-C headers (pcsc_connection, secure_buffer, monitor,
+# monitor_event) carry the LC bridge surface. The bucket-B headers (apdu,
+# ber, tlv, ipcsc_scan_provider, pcsc_scan_provider, pkcs11_card_provider)
+# live in src/ and require an explicit PRIVATE include of lib/smartcard/src
+# from consumers.
+target_include_directories(SmartCard_Impl PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 
-set_target_properties(SmartCard PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# PRIVATE: lets SmartCard_Impl's own .cpp files resolve "apdu.h" etc. and
+# lets pcsc_connection.h's `#include "apdu.h"` resolve when compiling our
+# own sources. External consumers that need to transitively resolve this
+# (because they include <smartcard/pcsc_connection.h>, which pulls apdu.h)
+# opt in by adding lib/smartcard/src to their own PRIVATE include dirs.
+target_include_directories(SmartCard_Impl PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
 
-target_link_libraries(SmartCard PUBLIC PCSC::PCSC Threads::Threads OpenSSL_Crypto)
+set_target_properties(SmartCard_Impl PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+target_link_libraries(SmartCard_Impl PUBLIC PCSC::PCSC Threads::Threads OpenSSL_Crypto)

@@ -2,11 +2,12 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
-#include <plugin/card_plugin_registry.h>
+#include <LibreSCRS/Plugin/CardPluginService.h>
 
 #include <filesystem>
+#include <memory>
 
-using namespace plugin;
+using namespace LibreSCRS::Plugin;
 
 namespace {
 std::filesystem::path pluginDir()
@@ -14,9 +15,9 @@ std::filesystem::path pluginDir()
     return std::filesystem::path(PLUGIN_DIR);
 }
 
-CardPlugin* findPkcs15(CardPluginRegistry& registry)
+std::shared_ptr<CardPlugin> findPkcs15(CardPluginService& registry)
 {
-    for (auto* p : registry.plugins()) {
+    for (const auto& p : registry.plugins()) {
         if (p->pluginId() == "pkcs15")
             return p;
     }
@@ -26,17 +27,15 @@ CardPlugin* findPkcs15(CardPluginRegistry& registry)
 
 TEST(PKCS15PluginTest, LoadsViaRegistry)
 {
-    CardPluginRegistry registry;
-    auto loaded = registry.loadPluginsFromDirectory(pluginDir());
-    EXPECT_GE(loaded, 1u);
+    CardPluginService registry{pluginDir()};
+    EXPECT_GE(registry.size(), 1u);
     ASSERT_NE(findPkcs15(registry), nullptr);
 }
 
 TEST(PKCS15PluginTest, Metadata)
 {
-    CardPluginRegistry registry;
-    registry.loadPluginsFromDirectory(pluginDir());
-    auto* p = findPkcs15(registry);
+    CardPluginService registry{pluginDir()};
+    auto p = findPkcs15(registry);
     ASSERT_NE(p, nullptr);
 
     EXPECT_EQ(p->pluginId(), "pkcs15");
@@ -44,36 +43,35 @@ TEST(PKCS15PluginTest, Metadata)
     EXPECT_EQ(p->probePriority(), 850);
 }
 
-TEST(PKCS15PluginTest, SupportsPKI)
+TEST(PKCS15PluginTest, CapabilitiesIncludePKIAndPinManagement)
 {
-    CardPluginRegistry registry;
-    registry.loadPluginsFromDirectory(pluginDir());
-    auto* p = findPkcs15(registry);
+    CardPluginService registry{pluginDir()};
+    auto p = findPkcs15(registry);
     ASSERT_NE(p, nullptr);
 
-    EXPECT_TRUE(p->supportsPKI());
+    auto caps = p->capabilities();
+    EXPECT_TRUE(hasCapability(caps, CardCapabilities::PKI));
+    EXPECT_TRUE(hasCapability(caps, CardCapabilities::PinManagement));
 }
 
 TEST(PKCS15PluginTest, CanHandleAlwaysFalse)
 {
-    CardPluginRegistry registry;
-    registry.loadPluginsFromDirectory(pluginDir());
-    auto* p = findPkcs15(registry);
+    CardPluginService registry{pluginDir()};
+    auto p = findPkcs15(registry);
     ASSERT_NE(p, nullptr);
 
-    EXPECT_FALSE(p->canHandle({0x3B, 0xFF, 0x94}));
-    EXPECT_FALSE(p->canHandle({}));
+    EXPECT_FALSE(p->canHandle(std::vector<uint8_t>{0x3B, 0xFF, 0x94}));
+    EXPECT_FALSE(p->canHandle(std::vector<uint8_t>{}));
 }
 
 TEST(PKCS15PluginTest, PriorityBetweenEMRTDAndOpenSC)
 {
-    CardPluginRegistry registry;
-    registry.loadPluginsFromDirectory(pluginDir());
-    auto* p = findPkcs15(registry);
+    CardPluginService registry{pluginDir()};
+    auto p = findPkcs15(registry);
     ASSERT_NE(p, nullptr);
     EXPECT_EQ(p->probePriority(), 850);
 
-    for (auto* other : registry.plugins()) {
+    for (const auto& other : registry.plugins()) {
         if (other->pluginId() == "emrtd") {
             EXPECT_LT(other->probePriority(), 850);
         }

@@ -70,6 +70,11 @@ private:
     std::map<SubscriptionId, Subscriber> subscribers;
     SubscriptionId nextId = 1;
 
+    // Serializes startThread/stopThread against each other so rapid
+    // last-unsubscribe → first-subscribe cycles cannot land a still-joinable
+    // monitorThread into startThread's `monitorThread = std::thread(...)`
+    // assignment (which would call std::terminate).
+    mutable std::mutex threadMtx;
     std::thread monitorThread;
 };
 

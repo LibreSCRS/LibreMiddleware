@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include "libresign/signing_service_factory.h"
+#include "signing_service_factory.h"
 
 #ifdef LIBRESIGN_HAS_DSS
-#include "libresign/dss/dss_signing_service.h"
+#include "dss/dss_signing_service.h"
 #endif
 
 #ifdef LIBRESIGN_HAS_NATIVE
-#include "libresign/native/native_signing_service.h"
+#include "native/native_signing_service.h"
 #endif
 
 #include <stdexcept>

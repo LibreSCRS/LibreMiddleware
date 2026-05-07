@@ -8,7 +8,7 @@
 #include "plugin_mapper.h"
 #include "scaffold_generator.h"
 
-#include <emrtd/emrtd_card.h>
+#include <emrtd_card.h>
 #include <smartcard/pcsc_connection.h>
 
 #include <cstdlib>

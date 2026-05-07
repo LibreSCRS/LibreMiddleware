@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include "rseid/eidcard.h"
+#include "eidcard.h"
 #include "card_protocol.h"
 #include "card_reader_base.h"
 #include "card_reader_gemalto.h"
 #include "card_reader_apollo.h"
 #include "card_verifier.h"
 #include "smartcard/pcsc_connection.h"
-#include "smartcard/tlv.h"
-#include "smartcard/apdu.h"
+#include "tlv.h"
+#include "apdu.h"
 #include <algorithm>
 
 namespace eidcard {

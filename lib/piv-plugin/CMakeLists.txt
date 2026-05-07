@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
+# SPDX-FileCopyrightText: 2026 hirashix0
 
-add_library(piv-plugin SHARED
-    src/piv_card_plugin.cpp
-)
-target_link_libraries(piv-plugin PRIVATE CardPlugin PIV)
-set_target_properties(piv-plugin PROPERTIES
-    PREFIX "lib"
-    OUTPUT_NAME "piv-plugin"
-    LIBRARY_OUTPUT_DIRECTORY "${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
+librescrs_add_plugin(piv-plugin
+    MANIFEST ${CMAKE_CURRENT_SOURCE_DIR}/manifest.json
+    SOURCES  src/piv_card_plugin.cpp
+    INCLUDE_DIRS
+        ${PROJECT_SOURCE_DIR}/lib/piv/src
+        ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+    LINK_LIBRARIES PIV
 )

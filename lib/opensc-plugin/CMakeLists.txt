@@ -1,14 +1,10 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # SPDX-FileCopyrightText: 2026 hirashix0
 
-add_library(opensc-plugin SHARED
-    src/opensc_card_plugin.cpp
-)
-target_link_libraries(opensc-plugin
-    PRIVATE CardPlugin SmartCard PkgConfig::OPENSC OpenSSL_Crypto
-)
-set_target_properties(opensc-plugin PROPERTIES
-    PREFIX "lib"
-    OUTPUT_NAME "opensc-plugin"
-    LIBRARY_OUTPUT_DIRECTORY "${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
+librescrs_add_plugin(opensc-plugin
+    MANIFEST ${CMAKE_CURRENT_SOURCE_DIR}/manifest.json
+    SOURCES  src/opensc_card_plugin.cpp
+    INCLUDE_DIRS
+        ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+    LINK_LIBRARIES SmartCard_Impl PkgConfig::OPENSC OpenSSL_Crypto
 )

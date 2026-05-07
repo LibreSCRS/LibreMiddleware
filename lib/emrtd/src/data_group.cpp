@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include <emrtd/data_group.h>
+#include "data_group.h"
 
 #include <algorithm>
 #include <cstring>

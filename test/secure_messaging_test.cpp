@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
-#include <emrtd/crypto/secure_messaging.h>
+#include <secure_messaging.h>
 
 using namespace emrtd::crypto;
 

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include "pkcs15/pkcs15_pkcs11_provider.h"
-#include "pkcs15/pkcs15_card.h"
-#include <emrtd/crypto/pace.h>
-#include <emrtd/crypto/secure_messaging.h>
+#include "pkcs15_pkcs11_provider.h"
+#include "pkcs15_card.h"
+#include <pace.h>
+#include <secure_messaging.h>
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>

@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include "cardedge/cardedge.h"
-#include "cardedge/pki_applet_guard.h"
+#include "cardedge.h"
+#include "pki_applet_guard.h"
 #include "cardedge_protocol.h"
 #include "smartcard/pcsc_connection.h"
-#include "smartcard/apdu.h"
+#include "apdu.h"
 #include "smartcard/secure_buffer.h"
 #include <algorithm>
 #include <cstring>
-#include <pkcs15/pkcs15_parser.h>
+#include <pkcs15_parser.h>
 #include <zlib.h>
 
 namespace cardedge {
@@ -158,7 +158,7 @@ static PINResult parsePINStatusWord(uint16_t sw)
 
 // Pad a PIN with 0x00 bytes to PIN_MAX_LENGTH (8 bytes).
 // Returns SecureBuffer for automatic zeroization on destruction.
-static smartcard::SecureBuffer padPIN(const std::string& pin)
+static smartcard::SecureBuffer padPIN(std::string_view pin)
 {
     smartcard::SecureBuffer padded(pin);
     padded.resize(protocol::PIN_MAX_LENGTH, 0x00);
@@ -304,14 +304,14 @@ PINResult getPINTriesLeft(smartcard::PCSCConnection& conn)
     return result;
 }
 
-PINResult verifyPIN(smartcard::PCSCConnection& conn, const std::string& pin)
+PINResult verifyPIN(smartcard::PCSCConnection& conn, std::string_view pin)
 {
     auto paddedPin = padPIN(pin);
     auto resp = conn.transmit(smartcard::verifyPIN(protocol::PKI_PIN_REFERENCE, paddedPin));
     return parsePINStatusWord(resp.statusWord());
 }
 
-PINResult changePIN(smartcard::PCSCConnection& conn, const std::string& oldPin, const std::string& newPin)
+PINResult changePIN(smartcard::PCSCConnection& conn, std::string_view oldPin, std::string_view newPin)
 {
     auto paddedOld = padPIN(oldPin);
     auto paddedNew = padPIN(newPin);

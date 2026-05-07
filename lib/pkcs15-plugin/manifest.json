@@ -1,0 +1,8 @@
+{
+  "pluginId": "pkcs15",
+  "displayName": "PKCS#15 (generic PKI)",
+  "abiVersion": 7,
+  "capabilities": ["PKI", "PinManagement", "IdentityData"],
+  "preReadAuth": "None",
+  "atrs": []
+}

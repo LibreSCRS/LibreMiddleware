@@ -8,9 +8,9 @@
 // Usage: pkcs15_after_pace_probe <CAN> [reader-name]
 
 #include "smartcard/pcsc_connection.h"
-#include "smartcard/apdu.h"
-#include <emrtd/emrtd_card.h>
-#include <emrtd/crypto/pace.h>
+#include "apdu.h"
+#include <emrtd_card.h>
+#include <pace.h>
 
 #include <cstdio>
 #include <cstring>

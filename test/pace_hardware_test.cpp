@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
-#include <emrtd/crypto/pace.h>
-#include <emrtd/data_group.h>
-#include <emrtd/emrtd_card.h>
-#include <emrtd/emrtd_types.h>
+#include <pace.h>
+#include <data_group.h>
+#include <emrtd_card.h>
+#include <emrtd_types.h>
 #include <smartcard/pcsc_connection.h>
 
 #include <algorithm>

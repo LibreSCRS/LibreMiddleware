@@ -2,11 +2,11 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
-#include <eu-vrc/eu_vrc_types.h>
-#include <eu-vrc/eu_vrc_card.h>
-#include <smartcard/ber.h>
+#include <eu_vrc_types.h>
+#include <eu_vrc_card.h>
+#include <ber.h>
 
-// Task 1: Data types tests
+// Data type tests
 
 TEST(EuVrcTypes, DefaultConstruction)
 {
@@ -26,7 +26,7 @@ TEST(EuVrcTypes, NationalExtensions)
     EXPECT_EQ(data.nationalTags[0].second, "0712978750036");
 }
 
-// Task 2: Detection tests
+// Detection tests
 
 #include "eu_vrc_detection.h"
 
@@ -68,7 +68,7 @@ TEST(EuVrcDetection, NationalExtensionFids)
     EXPECT_EQ(fids.size(), 4u);
 }
 
-// Task 3: Field extraction tests
+// Field extraction tests
 
 TEST(EuVrcCard, ExtractMandatoryFields)
 {

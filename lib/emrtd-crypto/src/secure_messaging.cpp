@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include <emrtd/crypto/secure_messaging.h>
+#include "secure_messaging.h"
 #include "crypto_utils.h"
 
 #include <openssl/crypto.h>

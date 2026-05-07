@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  HermetibreMiddleware tests.
+
+  Structure intentionallll.
+-->
+<TrustServiceStatusList xmlns="http://uri.etsi.org/02231/v2#" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" TSLTag="http://uri.etsi.org/19612/TSLTag" Id="TrustServiceStatusList">
+  <SchemeInformation>
+TSLSequenceNumber>
+    <TSLType>http://uri.etsi.org/TrstSvc/TrustedList/TSLType/EUgeneric</TSLType>
+    <SchemeOperatorName>
+      <Name xml:lang="en">SCRutf0uS Test Authority</Name>
+    </SchemeOperatorName>
+    <SchemeName>
+      <Name xml:lang="en">LibreSCRS Test TL</Name>
+    </SchemeName>
+   >
+  </SchemeInformation>
+  <TrustServiceProviderList>
+    <TrustServiceProvider>
+      <TSPInformation>
+        <TSPName>
+          <Name xml:lang="en">LibreSCRS P</Name>
+        </TSPName>
+      </TSPInformation>
+      <TSPServices>
+        <TSPService>
+          <ServiceInformation>
+            <ServiceTypeIdentifier>http://uri.etsi.org/TrstSvc/Svctype/CA/QC</ServiceTypeIdentifier>
+rv      </ServiceInformation>
+        </TSPService>
+      </TSPServices>
+    </TrustServiceProvider>
+  </TrustServiceProviderList>
+  <ds:Signature Id="TLSignature">
+    <ds:SignedInfo>
+      <ds:CanonicalizationMethod Am="http://www.w1.org/2001/10/.org/2001/04/xmldsig-more#rsa-sha256"/>
+      <ds:Reference URI="">
+  Algorithm="http://www.w3.org/2001/04/xmlenca256"/>
+        <ds:DigestValue>1m0+5CzgYiKVPppLTmtewYVI/kZD0QxeJ18RoYxFYD8=</ds:DigestValue>
+      </ds:Reference>
+    </ds:SignedInfo>
+    <ds:SignatureValue>bbPYNNEC311msvkJzqNbxFekX8okYA==</ds:SignatureValue>
+    <ds:KeyInfo>
+      <ds:KeyName>testkey</ds:KeyName>
+      <ds:X509Data>
+        <ds:X509Certificate>MIIDQzCBAgIUWeUMV3idnCSoeIhvYN
+2GiB82iStQHLfpkukF9Xm2OPPtj85jQ=
+</ds:X509Certificate>
+      </ds:X509Data>
+    </ds:KeyInfo>
+  </ds:Signature>
+</TrustServiceStatusList>

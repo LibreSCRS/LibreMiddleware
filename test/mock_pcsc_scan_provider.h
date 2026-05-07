@@ -4,7 +4,7 @@
 #ifndef SMARTCARD_MOCK_PCSC_SCAN_PROVIDER_H
 #define SMARTCARD_MOCK_PCSC_SCAN_PROVIDER_H
 
-#include <smartcard/ipcsc_scan_provider.h>
+#include <ipcsc_scan_provider.h>
 #include <atomic>
 #include <condition_variable>
 #include <cstring>

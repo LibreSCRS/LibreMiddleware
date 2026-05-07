@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
-#include <smartcard/apdu.h>
+#include <apdu.h>
 #include <array>
-#include <smartcard/tlv.h>
-#include <smartcard/ber.h>
+#include <tlv.h>
+#include <ber.h>
 
 using namespace smartcard;
 

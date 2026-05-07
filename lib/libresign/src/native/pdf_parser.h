@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
+#ifndef LIBRESCRS_INTERNAL_BUILD
+#error "This header is internal to LibreMiddleware. Public API: <LibreSCRS/...>"
+#endif
+
 #pragma once
 
 #include <cstdint>
@@ -175,8 +179,22 @@ public:
         return resolvedXref;
     }
 
-    // Escape a string for use inside a PDF parenthesized string literal.
-    // Handles (, ), \, CR, LF, tab, backspace, formfeed.
+    // Encode a UTF-8 string as a PDF string token.
+    //
+    // Pure-ASCII input (every byte < 0x80) is returned in the parenthesised
+    // literal form "(escaped)", with PDF metacharacters ( ) \ CR LF TAB BS
+    // FF backslash-escaped per ISO 32000-1 §7.3.4.2.
+    //
+    // Input containing any byte >= 0x80 is returned as a hex string token
+    // "<FEFF...>" with the UTF-16BE byte-order mark followed by the
+    // UTF-16BE encoding of the input, per ISO 32000-1 §7.9.2.2. Pre-fix
+    // (3.x and earlier 4.0 builds) Cyrillic / Latin-Ext text in PDF dict
+    // string fields rendered as garbled bytes because the raw UTF-8 was
+    // emitted into a parenthesised literal that PDF readers interpret
+    // under PDFDocEncoding by default.
+    //
+    // Callers receive a PDF-ready token — they must NOT wrap the result in
+    // an additional "(" / ")" pair.
     static std::string escapeStringForPdf(const std::string& s);
 
     // Compressed object reference for type-2 xref stream entries.

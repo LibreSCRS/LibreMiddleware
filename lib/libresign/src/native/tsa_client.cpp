@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include "libresign/native/tsa_client.h"
-#include "libresign/http_client.h"
+#include "native/tsa_client.h"
+#include "http_client.h"
 #include "native_utils.h"
 
 #include <openssl/err.h>
@@ -26,7 +26,7 @@ using ::libresign::TSRespPtr;
 
 } // namespace
 
-TSAResult TSAClient::timestamp(const std::vector<uint8_t>& hash, const std::string& tsaUrl, int timeoutSeconds)
+TSAResult TSAClient::timestamp(const std::vector<uint8_t>& hash, const TSARequest& request)
 {
     TSAResult result;
 
@@ -119,9 +119,16 @@ TSAResult TSAClient::timestamp(const std::vector<uint8_t>& hash, const std::stri
     }
     std::string reqBody(reinterpret_cast<const char*>(derReqBytes.data()), derReqBytes.size());
 
-    // 5. HTTP POST to TSA
+    // 5. HTTP POST to TSA.
+    //
+    // Both TSAClient and HttpClient consume the same internal
+    // TransportCredentials primitive (lib/libresign/src/credentials.h),
+    // so no struct translation is needed here. Layering invariant is
+    // preserved by credentials.h itself: it has no signing-domain
+    // includes, keeping http_client.h a pure transport primitive.
     HttpClient http;
-    auto response = http.postBinary(tsaUrl, reqBody, "application/timestamp-query", timeoutSeconds);
+    auto response = http.postBinaryWithCredentials(request.url, reqBody, "application/timestamp-query",
+                                                   request.credentials, request.timeoutSeconds);
 
     if (response.statusCode != 200) {
         result.errorMessage =

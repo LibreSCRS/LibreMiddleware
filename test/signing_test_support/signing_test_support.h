@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "libresign/types.h"
+#include "types.h"
 #include <gtest/gtest.h>
 #include <cstdint>
 #include <span>

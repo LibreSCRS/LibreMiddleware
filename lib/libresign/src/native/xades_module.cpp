@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include "libresign/native/xades_module.h"
-#include "libresign/native/pkcs11_token.h"
-#include "libresign/native/revocation_client.h"
-#include "libresign/native/tsa_client.h"
+#include "native/xades_module.h"
+#include "native/pkcs11_token.h"
+#include "native/revocation_client.h"
+#include "native/tsa_client.h"
 #include "native_utils.h"
 
 #include <libxml/c14n.h>
@@ -56,10 +56,12 @@ std::string percentEncodeUriFilename(const std::string& in)
         if (unreserved) {
             out.push_back(static_cast<char>(c));
         } else {
-            constexpr char kHex[] = "0123456789ABCDEF";
+            // Shared nibble-to-ASCII table from native_utils.h — same source
+            // of truth as pades_module.cpp::hexEncode (DRY: one literal, one
+            // place to fix).
             out.push_back('%');
-            out.push_back(kHex[c >> 4]);
-            out.push_back(kHex[c & 0x0F]);
+            out.push_back(kHexChars[c >> 4]);
+            out.push_back(kHexChars[c & 0x0F]);
         }
     }
     return out;
@@ -568,7 +570,7 @@ SigningResult XAdESModule::sign(const std::vector<uint8_t>& data, const std::str
             auto sigHash = sha256(reinterpret_cast<const uint8_t*>(c14nSigValue.data()), c14nSigValue.size());
 
             TSAClient tsaClient;
-            auto tsaResult = tsaClient.timestamp(sigHash, tsa.url, tsa.timeoutSeconds);
+            auto tsaResult = tsaClient.timestamp(sigHash, toTsaRequest(tsa));
             if (!tsaResult.success)
                 return {false, {}, "TSA timestamp failed: " + tsaResult.errorMessage};
 
@@ -690,7 +692,7 @@ SigningResult XAdESModule::sign(const std::vector<uint8_t>& data, const std::str
             auto archiveHash = sha256(archiveInput);
 
             TSAClient tsaClient;
-            auto tsaResult = tsaClient.timestamp(archiveHash, tsa.url, tsa.timeoutSeconds);
+            auto tsaResult = tsaClient.timestamp(archiveHash, toTsaRequest(tsa));
             if (!tsaResult.success)
                 return {false, {}, "Archive TSA timestamp failed: " + tsaResult.errorMessage};
 

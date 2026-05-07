@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 // Unit tests for native-backend internal utilities that the wider public
-// API does not exercise directly: the round-4 derEncodeLength rewrite
-// (now throws on ≥16 MiB), the round-4 sha256Base64 simplification, and
-// spot-checks on base64 primitives. These test the internal headers
+// API does not exercise directly: the derEncodeLength implementation
+// (throws on ≥16 MiB), sha256Base64, and spot-checks on base64
+// primitives. These test the internal headers
 // (lib/libresign/src/native/) via relative include because they are not
 // part of the public LibreSign include surface.
 
@@ -28,7 +28,7 @@ using libresign::native_utils::sha256;
 using libresign::native_utils::sha256Base64;
 
 // ---------------------------------------------------------------------------
-// derEncodeLength — round-4 R4-M4 fix: throw std::length_error on ≥ 16 MiB
+// derEncodeLength — throws std::length_error on ≥ 16 MiB
 // ---------------------------------------------------------------------------
 
 TEST(DerEncodeLength, ShortFormZero)
@@ -92,7 +92,7 @@ TEST(DerEncodeLength, ThrowsOnLargeValues)
 }
 
 // ---------------------------------------------------------------------------
-// sha256Base64 — round-4 R4-M5: equivalent to base64Encode(sha256(data))
+// sha256Base64 — equivalent to base64Encode(sha256(data))
 // ---------------------------------------------------------------------------
 
 TEST(Sha256Base64, EmptyInputParity)
@@ -173,7 +173,7 @@ TEST(Base64Decode, NoPadding)
 }
 
 // ---------------------------------------------------------------------------
-// derSequence / derOctetString — round-4 utilities. Each wraps content with
+// derSequence / derOctetString — each wraps content with
 // the DER tag + length from derEncodeLength, so correctness boils down to
 // the tag byte + preserving content.
 // ---------------------------------------------------------------------------
@@ -211,7 +211,7 @@ TEST(DerWrappers, SequenceLongForm)
 }
 
 // ---------------------------------------------------------------------------
-// digestInfoPrefixForAlgo — round-4 extraction. Maps OpenSSL MD name strings
+// digestInfoPrefixForAlgo — maps OpenSSL MD name strings
 // to PKCS#1 DigestInfo prefixes (RFC 8017 §9.2).
 // ---------------------------------------------------------------------------
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include "libresign/native/pkcs11_token.h"
+#include "native/pkcs11_token.h"
 
 #include <algorithm>
 #include <cstdio>

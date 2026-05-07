@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include "libresign/native/cades_module.h"
-#include "libresign/native/pkcs11_token.h"
-#include "libresign/native/signing_provider.h"
-#include "libresign/native/tsa_client.h"
+#include "native/cades_module.h"
+#include "native/pkcs11_token.h"
+#include "native/signing_provider.h"
+#include "native/tsa_client.h"
 #include "der_utils.h"
 #include "native_utils.h"
 
@@ -294,7 +294,7 @@ std::vector<uint8_t> CAdESModule::addTimestamp(const std::vector<uint8_t>& cmsBy
 
     // Request timestamp from TSA
     TSAClient tsaClient;
-    auto tsaResult = tsaClient.timestamp(sigHash, tsa.url, tsa.timeoutSeconds);
+    auto tsaResult = tsaClient.timestamp(sigHash, toTsaRequest(tsa));
     if (!tsaResult.success)
         throw std::runtime_error("TSA timestamp failed: " + tsaResult.errorMessage);
 
@@ -480,7 +480,7 @@ std::vector<uint8_t> CAdESModule::addArchiveTimestamp(const std::vector<uint8_t>
 
     auto archiveHash = sha256(archiveInput);
     TSAClient tsaClient;
-    auto tsaResult = tsaClient.timestamp(archiveHash, tsa.url, tsa.timeoutSeconds);
+    auto tsaResult = tsaClient.timestamp(archiveHash, toTsaRequest(tsa));
     if (!tsaResult.success)
         throw std::runtime_error("Archive TSA timestamp failed: " + tsaResult.errorMessage);
 

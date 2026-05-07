@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# SPDX-FileCopyrightText: 2026 hirashix0
+#
+# Short libFuzzer smoke session per PR / push to main / weekly cron.
+# Each harness runs for 60 s with the committed seed corpus. Crashes are
+# uploaded as artifacts; jobs fail on any libFuzzer-reported finding.
+
+name: Fuzz
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Mondays 03:00 UTC — slightly longer "soak" run.
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+jobs:
+  libfuzzer:
+    name: libFuzzer / ${{ matrix.harness }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        harness:
+          - fuzz_parsed_certificate
+          - fuzz_trusted_list_parser
+          - fuzz_tl_signature_verifier
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang lld cmake ninja-build pkg-config \
+            libcurl4-openssl-dev libssl-dev libxml2-dev libpcsclite-dev \
+            uuid-dev openssl python3-jsonschema
+
+      - name: Configure
+        env:
+          CC: clang
+          CXX: clang++
+        run: |
+          cmake -B build-fuzz -S . -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DSIGNING_BACKEND=both \
+            -DLIBRESCRS_BUILD_FUZZ=ON \
+            -DBUILD_TESTING=OFF
+
+      - name: Build harness
+        run: cmake --build build-fuzz --target ${{ matrix.harness }} -j2
+
+      - name: Determine corpus path
+        id: corpus
+        run: |
+          case "${{ matrix.harness }}" in
+            fuzz_parsed_certificate)     echo "path=fuzz/corpus/parsed_certificate" >>$GITHUB_OUTPUT;;
+            fuzz_trusted_list_parser)    echo "path=fuzz/corpus/trusted_list_parser" >>$GITHUB_OUTPUT;;
+            fuzz_tl_signature_verifier)  echo "path=fuzz/corpus/tl_signature_verifier" >>$GITHUB_OUTPUT;;
+          esac
+
+      - name: Run fuzzer (60 s)
+        run: |
+          mkdir -p fuzz-artifacts
+          ./build-fuzz/fuzz/${{ matrix.harness }} \
+            -max_total_time=60 \
+            -print_final_stats=1 \
+            -artifact_prefix=fuzz-artifacts/ \
+            ${{ steps.corpus.outputs.path }}
+
+      - name: Upload crash artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.harness }}-crashes
+          path: fuzz-artifacts/

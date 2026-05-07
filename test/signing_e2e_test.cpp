@@ -7,12 +7,12 @@
 #include <gtest/gtest.h>
 #include "signing_test_support.h"
 
-#include "libresign/signing_service.h"
-#include "libresign/signing_service_factory.h"
+#include "signing_service.h"
+#include "signing_service_factory.h"
 
 #ifdef LIBRESIGN_HAS_DSS
-#include "libresign/dss/dss_service_manager.h"
-#include "libresign/dss/dss_signing_service.h"
+#include "dss/dss_service_manager.h"
+#include "dss/dss_signing_service.h"
 #endif
 
 #include <filesystem>
@@ -526,7 +526,7 @@ TEST_P(SigningE2ETest, PAdES_BB_VisualSignature)
     req.visual.y = 50;
     req.visual.width = 200;
     req.visual.height = 60;
-    req.visual.signerName = "Test User";
+    req.visual.text = "Signed by: Test User\nE2E test\nBelgrade";
     req.visual.reason = "E2E test";
     req.visual.location = "Belgrade";
 
@@ -764,7 +764,7 @@ TEST_P(SigningE2ETest, PAdES_InvisibleThenVisual)
     req2.visual.y = 50;
     req2.visual.width = 200;
     req2.visual.height = 60;
-    req2.visual.signerName = "Second Signer";
+    req2.visual.text = "Signed by: Second Signer\nCounter-sign";
     req2.visual.reason = "Counter-sign";
 
     auto r2 =

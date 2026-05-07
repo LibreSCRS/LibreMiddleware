@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include "libresign/native/trusted_list_parser.h"
-#include "libresign/http_client.h"
+#include "native/trusted_list_parser.h"
+#include "http_client.h"
 #include "native_utils.h"
 
 #include <libxml/parser.h>
@@ -291,18 +291,94 @@ TrustedListInfo TrustedListParser::fetch(const std::string& url, int timeoutSeco
 bool TrustedListParser::isSafeTslUrl(const std::string& urlStr)
 {
     constexpr std::string_view kHttpsPrefix = "https://";
+    constexpr size_t kMaxHostLength = 253; // per RFC 1035 + safety margin
     if (urlStr.size() < kHttpsPrefix.size() + 1)
+        return false;
+    if (urlStr.size() > 2048) // sanity cap on full URL length
         return false;
     if (urlStr.compare(0, kHttpsPrefix.size(), kHttpsPrefix) != 0)
         return false;
 
-    // Extract host segment between "https://" and the next '/' or ':' or end.
     size_t hostStart = kHttpsPrefix.size();
+
+    // F6: IPv6-literal hosts are bracketed (e.g. "https://[::1]/..."). The
+    // pre-fix host extractor used find_first_of("/:?#", ...) which stopped
+    // at the first ':' inside the brackets — yielding "[" as the host and
+    // bypassing every private-range check. Detect bracket form first and
+    // apply IPv6-specific rejection rules to the body inside the brackets.
+    if (urlStr[hostStart] == '[') {
+        size_t closeBracket = urlStr.find(']', hostStart + 1);
+        if (closeBracket == std::string::npos)
+            return false; // malformed — unterminated bracket
+
+        std::string ipv6Body = urlStr.substr(hostStart + 1, closeBracket - hostStart - 1);
+        if (ipv6Body.empty() || ipv6Body.size() > 45) // INET6_ADDRSTRLEN ~= 46
+            return false;
+
+        // Lowercase copy for case-insensitive prefix matches.
+        std::string lower = ipv6Body;
+        for (auto& c : lower) {
+            if (c >= 'A' && c <= 'Z')
+                c = static_cast<char>(c - 'A' + 'a');
+        }
+
+        auto bodyStartsWith = [&](std::string_view pfx) {
+            return lower.size() >= pfx.size() && lower.compare(0, pfx.size(), pfx) == 0;
+        };
+
+        // Loopback (::1) and unspecified (::) addresses.
+        if (lower == "::1" || lower == "::")
+            return false;
+
+        // Link-local fe80::/10 — covers fe80::, fe81::..fe8f::, fe90::..feaf::,
+        // feb0::..febf::. The /10 range is fe80..febf in the leading bytes.
+        if (bodyStartsWith("fe8") || bodyStartsWith("fe9") || bodyStartsWith("fea") || bodyStartsWith("feb"))
+            return false;
+
+        // Unique-Local Address (ULA) fc00::/7 — fc00..fdff in the leading byte.
+        if (bodyStartsWith("fc") || bodyStartsWith("fd"))
+            return false;
+
+        // IPv4-mapped IPv6 (::ffff:a.b.c.d) — apply IPv4 private-range checks
+        // against the embedded IPv4 portion. Both lower-cased "::ffff:" and
+        // "0:0:0:0:0:ffff:" are common forms; only the canonical form is
+        // pattern-matched here — anything more obfuscated is rejected.
+        if (bodyStartsWith("::ffff:")) {
+            std::string ipv4 = ipv6Body.substr(7); // after "::ffff:"
+            // Reject obvious private ranges.
+            auto v4StartsWith = [&](std::string_view pfx) {
+                return ipv4.size() >= pfx.size() && ipv4.compare(0, pfx.size(), pfx) == 0;
+            };
+            if (v4StartsWith("127.") || v4StartsWith("10.") || v4StartsWith("169.254.") || v4StartsWith("192.168.") ||
+                v4StartsWith("0.") || ipv4 == "0.0.0.0")
+                return false;
+            if (v4StartsWith("172.")) {
+                size_t dot = ipv4.find('.', 4);
+                if (dot != std::string::npos) {
+                    try {
+                        int second = std::stoi(ipv4.substr(4, dot - 4));
+                        if (second >= 16 && second <= 31)
+                            return false;
+                    } catch (...) {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        // Past the bracket checks — the IPv6 body is allowed (e.g. a public
+        // 2001::/16 documentation/global address). Anything after ']' (port,
+        // path, query, fragment) is fine; we don't need to parse it for this
+        // SSRF guard.
+        return true;
+    }
+
+    // Non-bracketed: existing IPv4/hostname extraction logic.
     size_t hostEnd = urlStr.find_first_of("/:?#", hostStart);
     if (hostEnd == std::string::npos)
         hostEnd = urlStr.size();
     std::string host = urlStr.substr(hostStart, hostEnd - hostStart);
-    if (host.empty())
+    if (host.empty() || host.size() > kMaxHostLength)
         return false;
 
     // Reject obvious private/loopback literals. DNS names that resolve to
@@ -314,8 +390,7 @@ bool TrustedListParser::isSafeTslUrl(const std::string& urlStr)
         return host.size() >= pfx.size() && host.compare(0, pfx.size(), pfx) == 0;
     };
     if (host == "localhost" || startsWith("127.") || startsWith("10.") || startsWith("169.254.") ||
-        startsWith("192.168.") || startsWith("0.") || host == "::1" || startsWith("[::1") || startsWith("[fc") ||
-        startsWith("[fd"))
+        startsWith("192.168.") || startsWith("0.") || host == "::1")
         return false;
     // 172.16.0.0/12 — private range
     if (startsWith("172.")) {

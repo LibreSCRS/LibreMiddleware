@@ -9,9 +9,39 @@
 #include <charconv>
 #include <cstring>
 #include <format>
+#include <limits>
 #include <stdexcept>
 
 namespace libresign {
+
+namespace {
+
+// Reject negative or absurdly-large int64 values before casting to size_t
+// for use as a stream length / offset. A negative value silently wraps to
+// SIZE_MAX under static_cast, which then defeats the subsequent
+// `pos + streamLength > raw.size()` bounds check (the addition itself
+// wraps). Both failure modes turn an attacker-supplied PDF into a
+// SIZE_MAX-byte std::span fed to FlateDecode.
+//
+// `std::ptrdiff_t` is the largest signed type that maps cleanly to a size
+// argument; cap at its max so subsequent additions cannot overflow size_t
+// either (size_t is at least as large as ptrdiff_t).
+[[nodiscard]] size_t safeStreamSize(int64_t value, const char* what)
+{
+    if (value < 0)
+        throw std::runtime_error(std::format("PdfParser: {} is negative ({})", what, value));
+    if (value > std::numeric_limits<std::ptrdiff_t>::max())
+        throw std::runtime_error(std::format("PdfParser: {} exceeds ptrdiff_t max ({})", what, value));
+    return static_cast<size_t>(value);
+}
+
+// Overflow-safe `pos + len <= total` check.
+[[nodiscard]] bool fitsWithinBuffer(size_t pos, size_t len, size_t total) noexcept
+{
+    return pos <= total && len <= total - pos;
+}
+
+} // anonymous namespace
 
 // ===========================================================================
 // PdfValue implementation
@@ -114,10 +144,87 @@ PdfValue PdfValue::get(const std::string& key) const
 // Serialization
 // ---------------------------------------------------------------------------
 
+namespace {
+
+// F21: encode UTF-8 input as a PDF hex string with UTF-16BE-with-BOM
+// payload, e.g. "<FEFF041E0434...>". ISO 32000-1 §7.9.2.2 specifies that
+// PDF string fields containing any non-PDFDocEncoding character must be
+// emitted in this form so readers can decode the codepoints unambiguously.
+// Pre-fix Cyrillic / Latin-Ext text rendered as garbled bytes when emitted
+// raw into a parenthesised literal.
+std::string toPdfHexStringUtf16Be(std::string_view utf8Input)
+{
+    std::string out = "<FEFF";
+    out.reserve(8 + utf8Input.size() * 4);
+    size_t i = 0;
+    while (i < utf8Input.size()) {
+        unsigned char c = static_cast<unsigned char>(utf8Input[i]);
+        char32_t cp = 0;
+        size_t n = 1;
+        if ((c & 0x80) == 0x00) {
+            cp = c;
+            n = 1;
+        } else if ((c & 0xE0) == 0xC0) {
+            cp = c & 0x1F;
+            n = 2;
+        } else if ((c & 0xF0) == 0xE0) {
+            cp = c & 0x0F;
+            n = 3;
+        } else if ((c & 0xF8) == 0xF0) {
+            cp = c & 0x07;
+            n = 4;
+        } else {
+            // Invalid leading byte — substitute U+FFFD and resync on the
+            // next byte.
+            cp = 0xFFFD;
+            n = 1;
+        }
+        if (i + n > utf8Input.size()) {
+            cp = 0xFFFD;
+            n = utf8Input.size() - i;
+        } else {
+            for (size_t k = 1; k < n; ++k) {
+                cp = (cp << 6) | (static_cast<unsigned char>(utf8Input[i + k]) & 0x3F);
+            }
+        }
+        i += n;
+
+        if (cp <= 0xFFFF) {
+            out += std::format("{:04X}", static_cast<uint16_t>(cp));
+        } else {
+            uint32_t v = cp - 0x10000;
+            uint16_t high = static_cast<uint16_t>(0xD800 + (v >> 10));
+            uint16_t low = static_cast<uint16_t>(0xDC00 + (v & 0x3FF));
+            out += std::format("{:04X}{:04X}", high, low);
+        }
+    }
+    out += '>';
+    return out;
+}
+
+} // namespace
+
 std::string PdfParser::escapeStringForPdf(const std::string& s)
 {
+    // F21: detect non-ASCII input. PDF readers interpret parenthesised
+    // string literals under PDFDocEncoding by default, so raw UTF-8 bytes
+    // in `()` form render as garbage. Emit a UTF-16BE hex string for any
+    // input containing a byte >= 0x80; the form is backward-compatible
+    // (PDF readers accept either token form for any string field).
+    bool hasNonAscii = false;
+    for (unsigned char c : s) {
+        if (c >= 0x80) {
+            hasNonAscii = true;
+            break;
+        }
+    }
+    if (hasNonAscii)
+        return toPdfHexStringUtf16Be(s);
+
+    // Pure-ASCII path — historical parenthesised literal form.
     std::string out;
     out.reserve(s.size() + 8);
+    out.push_back('(');
     for (char c : s) {
         switch (c) {
         case '(':
@@ -149,6 +256,7 @@ std::string PdfParser::escapeStringForPdf(const std::string& s)
             break;
         }
     }
+    out.push_back(')');
     return out;
 }
 
@@ -181,7 +289,11 @@ std::string PdfValue::serialize() const
                 }
                 return s;
             } else if constexpr (std::is_same_v<T, std::string>) {
-                return "(" + PdfParser::escapeStringForPdf(arg) + ")";
+                // escapeStringForPdf returns a complete PDF string token —
+                // either "(escaped)" for ASCII input or "<FEFFhex>" for
+                // input containing any non-ASCII byte (F21). No outer
+                // wrapping required.
+                return PdfParser::escapeStringForPdf(arg);
             } else if constexpr (std::is_same_v<T, NameTag>) {
                 return "/" + arg.value;
             } else if constexpr (std::is_same_v<T, ArrayType>) {
@@ -750,7 +862,7 @@ void PdfParser::parseXrefTable(size_t xrefOffset)
     // Handle /Prev — chain to previous xref (may be table or stream)
     PdfValue prev = trailerDict.get("Prev");
     if (prev.type() == PdfValueType::Int) {
-        size_t prevOffset = static_cast<size_t>(prev.asInt());
+        size_t prevOffset = safeStreamSize(prev.asInt(), "/Prev offset");
         parseXrefAt(prevOffset);
     }
 }
@@ -839,7 +951,7 @@ void PdfParser::parseXrefStream(size_t offset)
     PdfValue lengthVal = streamDict.get("Length");
     if (lengthVal.type() != PdfValueType::Int)
         throw std::runtime_error("PdfParser: xref stream missing /Length");
-    size_t streamLength = static_cast<size_t>(lengthVal.asInt());
+    size_t streamLength = safeStreamSize(lengthVal.asInt(), "xref stream /Length");
 
     // Find "stream" keyword and advance past it
     skipWhitespaceAndComments(pos);
@@ -854,7 +966,7 @@ void PdfParser::parseXrefStream(size_t offset)
     if (pos < raw.size() && raw[pos] == '\n')
         ++pos;
 
-    if (pos + streamLength > raw.size())
+    if (!fitsWithinBuffer(pos, streamLength, raw.size()))
         throw std::runtime_error("PdfParser: xref stream data exceeds file bounds");
 
     std::span<const uint8_t> rawStream(raw.data() + pos, streamLength);
@@ -909,7 +1021,7 @@ void PdfParser::parseXrefStream(size_t offset)
     // Follow /Prev chain — the previous xref may be either a stream or a table
     PdfValue prev = streamDict.get("Prev");
     if (prev.type() == PdfValueType::Int) {
-        size_t prevOffset = static_cast<size_t>(prev.asInt());
+        size_t prevOffset = safeStreamSize(prev.asInt(), "/Prev offset");
         parseXrefAt(prevOffset);
     }
 }
@@ -1408,7 +1520,7 @@ std::vector<uint8_t> PdfParser::extractStreamData(int objNum) const
     PdfValue lengthVal = streamDict.get("Length");
     if (lengthVal.type() != PdfValueType::Int)
         throw std::runtime_error("PdfParser: object stream missing /Length");
-    size_t streamLength = static_cast<size_t>(lengthVal.asInt());
+    size_t streamLength = safeStreamSize(lengthVal.asInt(), "object stream /Length");
 
     // Find "stream" keyword
     skipWhitespaceAndComments(pos);
@@ -1422,7 +1534,7 @@ std::vector<uint8_t> PdfParser::extractStreamData(int objNum) const
     if (pos < raw.size() && raw[pos] == '\n')
         ++pos;
 
-    if (pos + streamLength > raw.size())
+    if (!fitsWithinBuffer(pos, streamLength, raw.size()))
         throw std::runtime_error("PdfParser: object stream data exceeds file bounds");
 
     std::span<const uint8_t> rawStream(raw.data() + pos, streamLength);
@@ -1486,7 +1598,9 @@ PdfValue PdfParser::readFromObjectStream(int streamObjNum, int indexInStream) co
         PdfValue firstVal = streamDict.get("First");
         if (firstVal.type() != PdfValueType::Int)
             throw std::runtime_error("PdfParser: object stream missing /First");
-        entry.first = static_cast<size_t>(firstVal.asInt());
+        entry.first = safeStreamSize(firstVal.asInt(), "object stream /First");
+        if (entry.first > entry.data.size())
+            throw std::runtime_error("PdfParser: object stream /First exceeds decompressed length");
 
         // Parse the header: N pairs of (objNum, offset)
         PdfParser tempParser(std::span<const uint8_t>(entry.data.data(), entry.data.size()));
