@@ -39,7 +39,7 @@ jobs:
             libpcsclite-dev libssl-dev zlib1g-dev \
             libcurl4-openssl-dev libxml2-dev \
             pkg-config autoconf automake libtool \
-            cmake ninja-build
+            cmake ninja-build python3-jsonschema
 
       - name: Build OpenSC ${{ env.OPENSC_VERSION }} from source
         run: |
@@ -58,8 +58,120 @@ jobs:
             -DOPENSC_INCLUDE_DIR=/tmp/opensc-src/src
           cmake --build build
 
+      - name: Check pimpl visibility
+        run: ./ci/scripts/check-impl-visibility.sh build
+
+      - name: Check ABI snapshot vs 4.0 baseline
+        # Locks the public C++ ABI for the 4.0.x patch series. Any T-binding
+        # symbol added/removed/changed (renamed types, signature drift, new
+        # public method, removed public method) fails the build until the
+        # baseline is intentionally regenerated.
+        run: ./ci/scripts/abi-snapshot.sh --check build
+
       - name: Test
         run: ctest --output-on-failure --test-dir build/test
+
+  build-linux-release:
+    # Mirrors `build-linux` but in Release mode (`-O2 -DNDEBUG`).
+    # Catches Release-only regressions the default-config Debug job
+    # misses — e.g. the TlCacheTest parallel-dir-clobber that read as a
+    # Release-mode bug pre-6bd21ed.
+    #
+    # SIGNING_BACKEND stays at the default `native`: production signs
+    # with the native backend; DSS is a cross-verification test oracle
+    # only, exercised in the local pre-tag pass (see
+    # `lib/libresign/CMakeLists.txt` warning). Keeping CI native-only
+    # avoids the JDK + Maven toolchain on every PR and aligns the gate
+    # with what users actually run.
+    runs-on: ubuntu-latest
+    env:
+      OPENSC_VERSION: '0.26.1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libpcsclite-dev libssl-dev zlib1g-dev \
+            libcurl4-openssl-dev libxml2-dev \
+            pkg-config autoconf automake libtool \
+            cmake ninja-build python3-jsonschema
+
+      - name: Build OpenSC ${{ env.OPENSC_VERSION }} from source
+        run: |
+          git clone --branch ${{ env.OPENSC_VERSION }} --depth 1 \
+            https://github.com/OpenSC/OpenSC /tmp/opensc-src
+          cd /tmp/opensc-src
+          ./bootstrap
+          ./configure --prefix=/tmp/opensc-install \
+            --enable-shared --disable-static --without-readline
+          make -j$(nproc) install
+
+      - name: Configure & Build (Release)
+        run: |
+          cmake -B build-release -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH=/tmp/opensc-install \
+            -DOPENSC_INCLUDE_DIR=/tmp/opensc-src/src
+          cmake --build build-release
+
+      - name: Check pimpl visibility
+        run: ./ci/scripts/check-impl-visibility.sh build-release
+
+      - name: Check ABI snapshot vs 4.0 baseline
+        run: ./ci/scripts/abi-snapshot.sh --check build-release
+
+      - name: Test
+        # No LIBRESCRS_TEST_PIN — CI runner has no smart card. PIN-gated
+        # tests skip cleanly via g_pinFailed / SKIP_IF_PIN_FAILED. Real-
+        # card validation happens locally on a developer machine before
+        # tag (see knowledge/memory/project_4_0_macos_release_findings).
+        run: ctest --output-on-failure --test-dir build-release/test
+
+  examples-build:
+    # Build the SDK-consumer example against the public LibreSCRS surface.
+    # Catches regressions where a public header silently grows a dependency
+    # on a private/internal header (the consumer-facing entry-point cannot
+    # compile any more) or where a header rename/move forgets to update the
+    # example.
+    runs-on: ubuntu-latest
+    env:
+      OPENSC_VERSION: '0.26.1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libpcsclite-dev libssl-dev zlib1g-dev \
+            libcurl4-openssl-dev libxml2-dev \
+            pkg-config autoconf automake libtool \
+            cmake ninja-build python3-jsonschema
+
+      - name: Build OpenSC ${{ env.OPENSC_VERSION }} from source
+        run: |
+          git clone --branch ${{ env.OPENSC_VERSION }} --depth 1 \
+            https://github.com/OpenSC/OpenSC /tmp/opensc-src
+          cd /tmp/opensc-src
+          ./bootstrap
+          ./configure --prefix=/tmp/opensc-install \
+            --enable-shared --disable-static --without-readline
+          make -j$(nproc) install
+
+      - name: Configure with examples enabled
+        run: |
+          cmake -B build -G Ninja \
+            -DLIBRESCRS_BUILD_EXAMPLES=ON \
+            -DCMAKE_PREFIX_PATH=/tmp/opensc-install \
+            -DOPENSC_INCLUDE_DIR=/tmp/opensc-src/src
+
+      - name: Build sdk-consumer
+        run: cmake --build build --target sdk-consumer
+
+      - name: Run sdk-consumer (smoke)
+        run: ./build/examples/sdk-consumer/sdk-consumer
 
   build-macos:
     runs-on: macos-latest
@@ -67,12 +179,24 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install build tools
-        run: brew install ninja opensc
-
-      - name: Configure & Build
         run: |
-          cmake -B build -G Ninja
+          brew install ninja opensc
+          # manifest2header.py hard-fails when jsonschema is missing
+          # (the schema gates the codegen step against malformed manifests).
+          python3 -m pip install --break-system-packages --user jsonschema
+
+      - name: Configure & Build (Release)
+        # Release matches the local pre-tag verification pass
+        # (`build-release/`). Native signing only — DSS is a cross-
+        # verification test oracle, not the production signing path
+        # (see `lib/libresign/CMakeLists.txt` warning); exercising it
+        # is a local pre-tag step, not a CI gate.
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build
+
+      - name: Check pimpl visibility
+        run: ./ci/scripts/check-impl-visibility.sh build
 
       - name: Test
         run: ctest --output-on-failure --test-dir build/test

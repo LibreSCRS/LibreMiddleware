@@ -14,6 +14,7 @@
 #include <fstream>
 #include <string>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 using namespace libresign;
@@ -32,7 +33,13 @@ class TlCacheTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        cacheDir = fs::temp_directory_path() / "libresign_tl_cache_test";
+        // Per-test unique cacheDir — bare PID would collide if gtest runs
+        // multiple TEST_Fs in the same process (different ctest -j4 worker
+        // re-invokes happen as separate processes, but defence-in-depth here
+        // is cheap). The test name is captured from gtest's TestInfo.
+        const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+        const std::string name = info != nullptr ? info->name() : "anon";
+        cacheDir = fs::temp_directory_path() / ("libresign_tl_cache_test_" + std::to_string(::getpid()) + "_" + name);
         fs::remove_all(cacheDir);
     }
 
