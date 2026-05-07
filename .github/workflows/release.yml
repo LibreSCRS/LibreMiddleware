@@ -284,7 +284,11 @@ jobs:
           case "${{ github.ref_name }}" in
               *-rc*|*-beta*|*-alpha*|*-pre*) PRERELEASE_FLAG="--prerelease" ;;
           esac
+          # --repo lets `gh` skip the .git autodetection — release job
+          # downloads artefacts but never checks out the repo, so there
+          # is no `.git` directory.
           gh release create "${{ github.ref_name }}" \
+              --repo "${{ github.repository }}" \
               --title "${{ github.ref_name }}" \
               --generate-notes \
               $PRERELEASE_FLAG \
