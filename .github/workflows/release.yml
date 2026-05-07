@@ -47,9 +47,9 @@ jobs:
             libpcsclite-dev libcurl4-openssl-dev libxml2-dev \
             cmake ninja-build python3-jsonschema
 
-      - name: Configure & Build
+      - name: Configure & Build (Release)
         run: |
-          cmake -B build -G Ninja
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build
 
       - name: Test
@@ -62,11 +62,15 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install build tools
-        run: brew install ninja
-
-      - name: Configure & Build
         run: |
-          cmake -B build -G Ninja
+          brew install ninja
+          # manifest2header.py hard-fails when jsonschema is missing
+          # (the schema gates the codegen step against malformed manifests).
+          python3 -m pip install --break-system-packages --user jsonschema
+
+      - name: Configure & Build (Release)
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build
 
       - name: Test
@@ -102,9 +106,10 @@ jobs:
             --enable-shared --disable-static --without-readline
           make -j$(nproc) install
 
-      - name: Configure & Build
+      - name: Configure & Build (Release)
         run: |
           cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH=/tmp/opensc-install \
             -DBUILD_CARDEDGE_OPENSC_DRIVER=ON \
             -DOPENSC_INCLUDE_DIR=/tmp/opensc-src/src
@@ -137,7 +142,11 @@ jobs:
           fetch-depth: 0
 
       - name: Install build tools
-        run: brew install ninja automake autoconf libtool
+        run: |
+          brew install ninja automake autoconf libtool
+          # manifest2header.py hard-fails when jsonschema is missing
+          # (the schema gates the codegen step against malformed manifests).
+          python3 -m pip install --break-system-packages --user jsonschema
 
       - name: Clone & build OpenSC ${{ matrix.opensc_version }} (universal)
         run: |
@@ -159,6 +168,7 @@ jobs:
       - name: Configure & Build
         run: |
           cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
             -DBUILD_CARDEDGE_OPENSC_DRIVER=ON \
             -DOPENSC_INCLUDE_DIR=/tmp/opensc-src/src \
@@ -217,7 +227,11 @@ jobs:
           fetch-depth: 0
 
       - name: Install build tools
-        run: brew install ninja
+        run: |
+          brew install ninja
+          # manifest2header.py hard-fails when jsonschema is missing
+          # (the schema gates the codegen step against malformed manifests).
+          python3 -m pip install --break-system-packages --user jsonschema
 
       - name: Build
         run: |
