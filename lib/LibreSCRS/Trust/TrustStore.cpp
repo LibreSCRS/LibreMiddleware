@@ -48,6 +48,30 @@ bool sameDn(const X509_NAME* a, const X509_NAME* b)
     return a && b && X509_NAME_cmp(a, b) == 0;
 }
 
+// eIDAS-issued QC certificates routinely carry the QCStatements extension
+// (id-pe-qcStatements, 1.3.6.1.5.5.7.1.3) marked CRITICAL per ETSI EN 319
+// 412-5. OpenSSL's chain verifier does NOT whitelist qcStatements as a
+// "supported" critical extension, so X509_verify_cert returns
+// X509_V_ERR_UNHANDLED_CRITICAL_EXTENSION (err=34) and the chain reads as
+// "invalid" even when every other check (issuer signature, validity,
+// revocation, KU) passes. We aren't a qualified-signature validator —
+// the LC certificate viewer's purpose is to show the user "is this cert
+// trusted by your trust anchors?" Downgrade the criticality bit on our
+// in-memory X509 copy before verify so OpenSSL stops failing on it.
+// We mutate only the parsed X509Ptr that lives in this scope; the
+// original DER bytes (and any on-disk copy) are untouched.
+void relaxKnownEidasCriticalExtensions(X509* cert)
+{
+    if (!cert)
+        return;
+    const int idx = X509_get_ext_by_NID(cert, NID_qcStatements, -1);
+    if (idx < 0)
+        return;
+    X509_EXTENSION* ext = X509_get_ext(cert, idx);
+    if (ext)
+        X509_EXTENSION_set_critical(ext, 0);
+}
+
 } // namespace
 
 TrustStore::TrustStore(std::unique_ptr<Impl> impl) : d(std::move(impl)) {}
@@ -86,6 +110,7 @@ TrustStore::ChainStatus TrustStore::validateChain(std::span<const CertificateVie
     auto leaf = parseDer(chain.front());
     if (!leaf)
         return ChainStatus::InvalidCertificate;
+    relaxKnownEidasCriticalExtensions(leaf.get());
 
     // Build STACK_OF(X509) for intermediates (chain elements 1..N-1).
     StackX509Ptr untrusted(sk_X509_new_null());
@@ -96,6 +121,7 @@ TrustStore::ChainStatus TrustStore::validateChain(std::span<const CertificateVie
         auto cert = parseDer(chain[i]);
         if (!cert)
             return ChainStatus::InvalidCertificate;
+        relaxKnownEidasCriticalExtensions(cert.get());
         sk_X509_push(untrusted.get(), cert.get());
         intermediates.push_back(std::move(cert));
     }
