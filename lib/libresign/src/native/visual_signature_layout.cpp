@@ -374,11 +374,11 @@ try {
     // any other exception escaping the body. Spec §8.1: "Any 'problem' is
     // encoded in the return value, never as a thrown exception." Return a
     // floor-clipped fallback. Allocation in the catch handler is minimised
-    // by reserving the lines vector once and emplacing an empty string (SSO,
-    // never heap-allocates the string itself); only the *vector grow* of
-    // capacity 0 → 1 can throw. If even that throws, std::terminate fires
-    // — the correct response, because the noexcept contract has been
-    // upheld locally and the process cannot proceed.
+    // by emplacing an empty std::string first (default-ctor is noexcept,
+    // SSO never heap-allocates the string itself); only the *vector grow*
+    // of capacity 0 → 1 can throw. If even that throws, std::terminate
+    // fires — the correct response, because the noexcept contract has
+    // been upheld locally and the process cannot proceed.
     VisualSignatureLayout fallback;
     fallback.fontSize = kFloorAppearanceFontSize;
     fallback.lineHeight = kFloorAppearanceFontSize * kAppearanceLineLeading;
