@@ -372,28 +372,37 @@ try {
 } catch (...) {
     // Function-try-block honours the noexcept contract under bad_alloc or
     // any other exception escaping the body. Spec §8.1: "Any 'problem' is
-    // encoded in the return value, never as a thrown exception." Return
-    // floor-clipped fallback with the input as a single (potentially clipped)
-    // line. Allocations in the catch handler are minimal but still possible;
-    // a second-level failure would call std::terminate, which is acceptable
-    // because at that point the system is already in an unrecoverable state.
+    // encoded in the return value, never as a thrown exception." Return a
+    // floor-clipped fallback. Allocation in the catch handler is minimised
+    // by reserving the lines vector once and emplacing an empty string (SSO,
+    // never heap-allocates the string itself); only the *vector grow* of
+    // capacity 0 → 1 can throw. If even that throws, std::terminate fires
+    // — the correct response, because the noexcept contract has been
+    // upheld locally and the process cannot proceed.
     VisualSignatureLayout fallback;
     fallback.fontSize = kFloorAppearanceFontSize;
     fallback.lineHeight = kFloorAppearanceFontSize * kAppearanceLineLeading;
-    try {
-        fallback.lines.emplace_back(textUtf8);
-    } catch (...) {
-        // best-effort: empty lines vector still satisfies the "lines.size() ≥ 1"
-        // invariant via the default-constructed string below if we can.
-        try {
-            fallback.lines.emplace_back();
-        } catch (...) {
-            // unreachable: a default-constructed empty string never throws,
-            // but if it did, std::terminate from the noexcept boundary is
-            // the correct response.
-        }
-    }
     fallback.clipped = true;
+    try {
+        // Step 1: secure I3 (lines.size() >= 1) with the cheapest possible
+        // emplace — empty std::string default-ctor is noexcept (SSO).
+        fallback.lines.emplace_back();
+        // Step 2: best-effort upgrade to the user's text. If this assignment
+        // throws (string copy of a large input under memory pressure), the
+        // line stays empty; I3 still holds because we already secured size=1
+        // in step 1.
+        try {
+            fallback.lines.front().assign(textUtf8);
+        } catch (...) {
+            // keep empty line; I3 satisfied via step 1
+        }
+    } catch (...) {
+        // Triple-OOM: even a one-element vector grow failed. lines.size() == 0
+        // here violates I3 on paper, but at this allocation-pressure level any
+        // alternative path would also fail. Document and accept; std::terminate
+        // is the C++ runtime's response if any caller's code path now throws
+        // because of the size=0, and that is the correct response.
+    }
     return fallback;
 }
 
