@@ -245,15 +245,14 @@ bool NativeSigningService::isAvailable() const
 
 SigningResult NativeSigningService::sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
                                          std::span<const uint8_t> pin, const std::string& keyAlias,
-                                         const std::string& tokenLabel)
+                                         const std::string& readerName)
 {
     try {
-        auto makeToken = [&]() -> Pkcs11Token {
-            if (tokenLabel.empty())
-                return Pkcs11Token(pkcs11ModulePath, pin, keyAlias, -1);
-            return Pkcs11Token(pkcs11ModulePath, pin, keyAlias, tokenLabel);
-        };
-        auto token = makeToken();
+        // Single mandatory ctor — legacy slotIndex=-1 / tokenLabel=""
+        // auto-pick paths were removed in 4.0 because they silently
+        // selected slots[0] under multi-card setups, routing PIN to
+        // the wrong card.
+        auto token = Pkcs11Token(pkcs11ModulePath, pin, keyAlias, readerName);
 
         // Certificate expiry enforcement. The native backend's CMS path
         // does not intrinsically reject expired signers — add an explicit

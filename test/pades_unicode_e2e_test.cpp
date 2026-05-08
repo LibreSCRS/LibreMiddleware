@@ -62,7 +62,7 @@ protected:
 
 TEST_F(PAdESUnicodeE2ETest, SerbianLatinSignerIsSearchable)
 {
-    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", 0);
+    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
     PAdESModule pades;
 
     VisualSignatureParams v;
@@ -93,7 +93,7 @@ TEST_F(PAdESUnicodeE2ETest, SerbianLatinSignerIsSearchable)
 
 TEST_F(PAdESUnicodeE2ETest, SerbianCyrillicSignerIsSearchable)
 {
-    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", 0);
+    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
     PAdESModule pades;
 
     VisualSignatureParams v;
@@ -123,7 +123,7 @@ TEST_F(PAdESUnicodeE2ETest, SerbianCyrillicSignerIsSearchable)
 
 TEST_F(PAdESUnicodeE2ETest, MixedSignerIsSearchable)
 {
-    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", 0);
+    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
     PAdESModule pades;
 
     VisualSignatureParams v;

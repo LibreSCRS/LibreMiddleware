@@ -397,7 +397,11 @@ SigningResult SigningService::sign(const SigningRequest& request, Auth::Credenti
         return SigningResult::trustStoreUnavailableDiagnosticOnly(std::string{"libresign rejected TrustConfig"});
     }
 
-    auto libResult = service->sign(libReq, resolvePkcs11Module(), pinBuffer, keyAlias);
+    // Pass the caller-chosen reader name through to libresign so its
+    // PKCS#11 slot lookup targets THIS card, not whichever card the
+    // PCSC daemon enumerated first. Without this, multi-card setups
+    // routed PIN to slots[0] and produced spurious "wrong PIN" errors.
+    auto libResult = service->sign(libReq, resolvePkcs11Module(), pinBuffer, keyAlias, session->readerName());
 
     if (!libResult.success) {
         // The classifier returns one of the SigningResult::Status values; map

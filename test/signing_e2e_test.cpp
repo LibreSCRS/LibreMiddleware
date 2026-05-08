@@ -95,7 +95,7 @@ protected:
         req.allowExpiredCertificate = true;
 
         auto result =
-            service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+            service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
         checkPinFailure(result);
         return result;
     }
@@ -298,7 +298,7 @@ TEST_P(SigningE2ETest, XAdES_BB_Detached)
     req.allowExpiredCertificate = true;
 
     auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
     std::string xml(result.signedDocument.begin(), result.signedDocument.end());
@@ -321,7 +321,7 @@ TEST_P(SigningE2ETest, XAdES_BT_Detached)
     req.allowExpiredCertificate = true;
 
     auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
     validateSignature(result, "XAdES", "DETACHED", req.document);
@@ -342,7 +342,7 @@ TEST_P(SigningE2ETest, XAdES_BLT_Detached)
     req.allowExpiredCertificate = true;
 
     auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
     validateSignature(result, "XAdES", "DETACHED", req.document);
@@ -363,7 +363,7 @@ TEST_P(SigningE2ETest, XAdES_BLTA_Detached)
     req.allowExpiredCertificate = true;
 
     auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
     validateSignature(result, "XAdES", "DETACHED", req.document);
@@ -384,7 +384,7 @@ TEST_P(SigningE2ETest, XAdES_BB_Enveloped)
     req.allowExpiredCertificate = true;
 
     auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
     std::string xml(result.signedDocument.begin(), result.signedDocument.end());
@@ -410,7 +410,7 @@ TEST_P(SigningE2ETest, XAdES_BT_Enveloped)
     req.allowExpiredCertificate = true;
 
     auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
     validateSignature(result, "XAdES");
@@ -432,7 +432,7 @@ TEST_P(SigningE2ETest, XAdES_BLT_Enveloped)
     req.allowExpiredCertificate = true;
 
     auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
     validateSignature(result, "XAdES");
@@ -454,7 +454,7 @@ TEST_P(SigningE2ETest, XAdES_BLTA_Enveloped)
     req.allowExpiredCertificate = true;
 
     auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
     validateSignature(result, "XAdES");
@@ -531,7 +531,7 @@ TEST_P(SigningE2ETest, PAdES_BB_VisualSignature)
     req.visual.location = "Belgrade";
 
     auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
     ASSERT_GT(result.signedDocument.size(), pdf.size());
@@ -566,7 +566,7 @@ TEST_P(SigningE2ETest, PAdES_MultipleSignatures_BB)
     req1.allowExpiredCertificate = true;
 
     auto result1 =
-        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result1);
     ASSERT_TRUE(result1.success) << "First signature: " << result1.errorMessage;
     ASSERT_GT(result1.signedDocument.size(), pdfVec.size());
@@ -580,7 +580,7 @@ TEST_P(SigningE2ETest, PAdES_MultipleSignatures_BB)
     req2.allowExpiredCertificate = true;
 
     auto result2 =
-        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result2);
     ASSERT_TRUE(result2.success) << "Second signature: " << result2.errorMessage;
     ASSERT_GT(result2.signedDocument.size(), result1.signedDocument.size());
@@ -612,7 +612,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BB_then_BT)
     req1.allowExpiredCertificate = true;
 
     auto result1 =
-        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result1);
     ASSERT_TRUE(result1.success) << "B-B signature: " << result1.errorMessage;
 
@@ -625,7 +625,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BB_then_BT)
     req2.allowExpiredCertificate = true;
 
     auto result2 =
-        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result2);
     ASSERT_TRUE(result2.success) << "B-T signature: " << result2.errorMessage;
     ASSERT_GT(result2.signedDocument.size(), result1.signedDocument.size());
@@ -647,7 +647,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BT_then_BB)
     req1.allowExpiredCertificate = true;
 
     auto r1 =
-        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(r1);
     ASSERT_TRUE(r1.success) << "B-T: " << r1.errorMessage;
 
@@ -659,7 +659,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BT_then_BB)
     req2.allowExpiredCertificate = true;
 
     auto r2 =
-        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(r2);
     ASSERT_TRUE(r2.success) << "B-B on top of B-T: " << r2.errorMessage;
     ASSERT_GT(r2.signedDocument.size(), r1.signedDocument.size());
@@ -682,7 +682,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BB_then_BLTA)
     req1.allowExpiredCertificate = true;
 
     auto r1 =
-        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(r1);
     ASSERT_TRUE(r1.success) << "B-B: " << r1.errorMessage;
 
@@ -695,7 +695,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BB_then_BLTA)
     req2.allowExpiredCertificate = true;
 
     auto r2 =
-        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(r2);
     ASSERT_TRUE(r2.success) << "B-LTA on top of B-B: " << r2.errorMessage;
     saveOutput(r2, GetParam().name + "-pades-bb-then-blta.pdf");
@@ -717,7 +717,7 @@ TEST_P(SigningE2ETest, PAdES_TripleSignature)
         req.allowExpiredCertificate = true;
 
         auto r =
-            service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+            service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
         checkPinFailure(r);
         ASSERT_TRUE(r.success) << "Signature " << (i + 1) << ": " << r.errorMessage;
         doc = r.signedDocument;
@@ -748,7 +748,7 @@ TEST_P(SigningE2ETest, PAdES_InvisibleThenVisual)
     req1.allowExpiredCertificate = true;
 
     auto r1 =
-        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(r1);
     ASSERT_TRUE(r1.success) << "Invisible: " << r1.errorMessage;
 
@@ -768,7 +768,7 @@ TEST_P(SigningE2ETest, PAdES_InvisibleThenVisual)
     req2.visual.reason = "Counter-sign";
 
     auto r2 =
-        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(r2);
     ASSERT_TRUE(r2.success) << "Visual on top: " << r2.errorMessage;
 
@@ -795,7 +795,7 @@ TEST_P(SigningE2ETest, XAdES_Enveloped_DoubleSignature)
     req1.allowExpiredCertificate = true;
 
     auto r1 =
-        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(r1);
     ASSERT_TRUE(r1.success) << "First XAdES: " << r1.errorMessage;
 
@@ -808,7 +808,7 @@ TEST_P(SigningE2ETest, XAdES_Enveloped_DoubleSignature)
     req2.allowExpiredCertificate = true;
 
     auto r2 =
-        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(r2);
     ASSERT_TRUE(r2.success) << "Second XAdES: " << r2.errorMessage;
 
@@ -843,7 +843,7 @@ TEST_P(SigningE2ETest, JAdES_SignTwice)
         req.allowExpiredCertificate = true;
 
         auto r =
-            service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.tokenLabel);
+            service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
         checkPinFailure(r);
         ASSERT_TRUE(r.success) << "JAdES #" << (i + 1) << ": " << r.errorMessage;
 
@@ -896,7 +896,7 @@ TEST(NativeFactoryTest, InvalidModuleFails)
     req.format = SignatureFormat::CAdES;
     req.level = SignatureLevel::B_B;
 
-    auto result = service->sign(req, "/nonexistent/pkcs11.so", libresign::as_pin("0000"), "key");
+    auto result = service->sign(req, "/nonexistent/pkcs11.so", libresign::as_pin("0000"), "key", "");
     EXPECT_FALSE(result.success);
     EXPECT_FALSE(result.errorMessage.empty());
 }

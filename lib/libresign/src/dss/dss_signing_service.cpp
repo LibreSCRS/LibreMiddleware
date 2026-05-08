@@ -157,7 +157,7 @@ bool DSSSigningService::isAvailable() const
 
 SigningResult DSSSigningService::sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
                                       std::span<const uint8_t> pin, const std::string& keyAlias,
-                                      const std::string& tokenLabel)
+                                      const std::string& readerName)
 {
     auto result = manager().ensureRunning();
     if (!result)
@@ -181,11 +181,15 @@ SigningResult DSSSigningService::sign(const SigningRequest& request, const std::
     meta["pkcs11ModulePath"] = pkcs11ModulePath;
     meta["pin"] = pinStr;
     meta["keyAlias"] = keyAlias;
-    // DSS Java service currently uses slot index only; pass tokenLabel for future use,
-    // fall back to slot -1 (auto-detect) when label is provided.
-    if (!tokenLabel.empty())
-        meta["tokenLabel"] = tokenLabel;
-    meta["slotIndex"] = -1;
+    // The DSS Java service is a cross-verification test oracle, not a
+    // production signing path. It accepts a PCSC reader name on the
+    // wire and routes the slot lookup the same way the native engine
+    // does (see lib/libresign/src/native/pkcs11_token.cpp's
+    // findSlotByReaderName). We do NOT replicate the slotIndex=-1
+    // legacy here — that path was the source of the multi-card
+    // "wrong PIN" bug; the DSS oracle has to behave the same as the
+    // native path for the cross-backend test to be meaningful.
+    meta["readerName"] = readerName;
 
     if (request.allowExpiredCertificate)
         meta["allowExpiredCertificate"] = true;

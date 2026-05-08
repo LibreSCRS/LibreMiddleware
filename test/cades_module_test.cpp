@@ -30,7 +30,7 @@ protected:
 
 TEST_F(CAdESModuleTest, SignBB_ProducesValidCMS)
 {
-    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", 0);
+    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
     CAdESModule cades;
 
     std::vector<uint8_t> data = {'H', 'e', 'l', 'l', 'o'};
@@ -74,7 +74,7 @@ TEST_F(CAdESModuleTest, SignBB_ProducesValidCMS)
 
 TEST_F(CAdESModuleTest, SignBB_IsDetached)
 {
-    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", 0);
+    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
     CAdESModule cades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
@@ -93,7 +93,7 @@ TEST_F(CAdESModuleTest, SignBB_IsDetached)
 
 TEST_F(CAdESModuleTest, Sign_BB_Convenience)
 {
-    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", 0);
+    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
     CAdESModule cades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
@@ -106,7 +106,7 @@ TEST_F(CAdESModuleTest, Sign_BB_Convenience)
 
 TEST_F(CAdESModuleTest, SignBB_DifferentDataProducesDifferentSignature)
 {
-    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", 0);
+    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
     CAdESModule cades;
 
     std::vector<uint8_t> data1 = {'A', 'B', 'C'};

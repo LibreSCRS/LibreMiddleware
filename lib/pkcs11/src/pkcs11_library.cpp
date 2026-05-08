@@ -5,6 +5,7 @@
 #include "pkcs11_version.h"
 #include "smartcard/pcsc_connection.h"
 #include "digest_info.h"
+#include <pkcs11/internal/slot_hash.h>
 #include <algorithm>
 #include <cstring>
 #include <memory>
@@ -133,7 +134,16 @@ CK_RV PKCS11Library::getSlotInfo(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pInfo)
     auto& slot = slots[slotID];
 
     std::memset(pInfo, 0, sizeof(CK_SLOT_INFO));
-    padString(pInfo->slotDescription, sizeof(pInfo->slotDescription), slot.readerName.c_str());
+    // slotDescription embeds an FNV-1a hash of the full reader name in a
+    // fixed-position `[<8-hex>] ` prefix (see internal/slot_hash.h). The
+    // hash is truncation-immune — even if two readers share an identical
+    // 64-byte slotDescription prefix (same model, serial-suffix beyond
+    // byte 64), they produce distinct hashes and Pkcs11Token can
+    // disambiguate them. The remaining 53 bytes hold a readable prefix
+    // of the reader name for management tools (`pkcs11-tool --list-slots`).
+    std::memset(pInfo->slotDescription, ' ', sizeof(pInfo->slotDescription));
+    librescrs::pkcs11::internal::formatSlotDescription(slot.readerName,
+                                                       reinterpret_cast<char*>(pInfo->slotDescription));
     padString(pInfo->manufacturerID, sizeof(pInfo->manufacturerID), "LibreSCRS");
 
     pInfo->flags = CKF_REMOVABLE_DEVICE | CKF_HW_SLOT;

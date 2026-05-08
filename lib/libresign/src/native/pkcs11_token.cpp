@@ -8,7 +8,10 @@
 #include <cstring>
 #include <dlfcn.h>
 #include <mutex>
+#include <sstream>
 #include <stdexcept>
+
+#include <pkcs11/internal/slot_hash.h>
 
 #define CK_PTR *
 #define CK_DECLARE_FUNCTION(returnType, name) returnType name
@@ -142,7 +145,19 @@ struct Pkcs11Token::Impl
         return keyId;
     }
 
-    CK_SLOT_ID findSlotByLabel(const std::string& tokenLabel)
+    /// @brief Look up the slot ID whose `slotDescription` was formatted by
+    ///        the LM PKCS#11 module to embed `fnv1a32(readerName)`.
+    ///
+    /// Iterates `C_GetSlotList`-reported slots, calls `C_GetSlotInfo` on
+    /// each, parses the `[<8-hex-hash>]` bracket out of `slotDescription`
+    /// (helper in `<pkcs11/internal/slot_hash.h>`), and compares the
+    /// embedded hash to @c fnv1a32(readerName). On a unique match,
+    /// returns the slot ID. On no match, throws with diagnostic that
+    /// lists the readable suffixes of every enumerated slot — making it
+    /// trivial to spot a typo or a reader-rename between LC's CardSession
+    /// open and this lookup. On the (astronomically unlikely) hash
+    /// collision case, also throws — never silently disambiguates.
+    CK_SLOT_ID findSlotByReaderName(const std::string& readerName)
     {
         CK_ULONG slotCount = 0;
         checkRv(funcs->C_GetSlotList(CK_TRUE, nullptr, &slotCount), "C_GetSlotList");
@@ -152,63 +167,82 @@ struct Pkcs11Token::Impl
         std::vector<CK_SLOT_ID> slots(slotCount);
         checkRv(funcs->C_GetSlotList(CK_TRUE, slots.data(), &slotCount), "C_GetSlotList");
 
+        const std::uint32_t targetHash = librescrs::pkcs11::internal::fnv1a32(readerName);
+
+        std::vector<CK_SLOT_ID> matches;
+        std::ostringstream enumeratedDescriptions;
+        bool anyHashCarrier = false;
+
         for (auto slotId : slots) {
-            CK_TOKEN_INFO tokenInfo;
-            std::memset(&tokenInfo, 0, sizeof(tokenInfo));
-            if (funcs->C_GetTokenInfo(slotId, &tokenInfo) != CKR_OK)
+            CK_SLOT_INFO slotInfo;
+            std::memset(&slotInfo, 0, sizeof(slotInfo));
+            if (funcs->C_GetSlotInfo(slotId, &slotInfo) != CKR_OK)
                 continue;
 
-            // CK_TOKEN_INFO.label is 32 bytes, space-padded, not null-terminated
-            std::string label(reinterpret_cast<char*>(tokenInfo.label), 32);
-            // Trim trailing spaces
-            auto end = label.find_last_not_of(' ');
-            if (end != std::string::npos)
-                label.resize(end + 1);
-            else
-                label.clear();
+            // CK_SLOT_INFO::slotDescription is char[64], blank-padded
+            // (not null-terminated). Wrap in a string_view of exactly 64
+            // bytes for the parser; trailing-space trim happens inside
+            // the parser only when needed.
+            const std::string_view rawDesc(reinterpret_cast<const char*>(slotInfo.slotDescription), 64);
+            const std::uint32_t slotHash = librescrs::pkcs11::internal::parseSlotHash(rawDesc);
 
-            if (label.find(tokenLabel) != std::string::npos)
-                return slotId;
+            if (slotHash != 0)
+                anyHashCarrier = true;
+
+            // For diagnostic logging: trim trailing spaces from the raw
+            // description so the error message reads cleanly.
+            std::string trimmed(rawDesc);
+            const auto last = trimmed.find_last_not_of(' ');
+            trimmed.resize(last == std::string::npos ? 0 : last + 1);
+            enumeratedDescriptions << "  slotID=" << slotId << " desc=\"" << trimmed << "\"\n";
+
+            if (slotHash == targetHash)
+                matches.push_back(slotId);
         }
 
-        throw std::runtime_error("No token with label containing '" + tokenLabel + "' found");
+        if (matches.size() == 1)
+            return matches[0];
+
+        std::ostringstream err;
+        if (matches.empty()) {
+            err << "PKCS#11 slot lookup: no slot matches reader \"" << readerName << "\" (fnv1a32=0x" << std::hex
+                << targetHash << ").";
+            if (!anyHashCarrier) {
+                err << " The loaded module does not embed LibreSCRS slot-identity hashes in slotDescription "
+                       "(third-party PKCS#11 module?). This signing path requires the LibreSCRS PKCS#11 module "
+                       "(librescrs-pkcs11.{so,dylib}).";
+            } else {
+                err << " Available slots:\n" << enumeratedDescriptions.str();
+            }
+        } else {
+            // Hash collision — shouldn't happen for fnv1a32 in practice
+            // (~5×10⁻⁶ for 100 readers; we have <10), but we refuse to
+            // silently pick one. If this ever triggers in real use,
+            // upgrade the hash width or change the algorithm.
+            err << "PKCS#11 slot lookup: " << matches.size() << " slots collided on hash 0x" << std::hex << targetHash
+                << " for reader \"" << readerName << "\". Refusing to pick arbitrarily. Slots:\n"
+                << enumeratedDescriptions.str();
+        }
+        throw std::runtime_error(err.str());
     }
 };
 
 Pkcs11Token::Pkcs11Token(const std::string& modulePath, std::span<const uint8_t> pin, const std::string& keyAlias,
-                         int slotIndex)
+                         const std::string& readerName)
     : impl(std::make_unique<Impl>())
 {
     impl->loadModule(modulePath);
-
-    CK_ULONG slotCount = 0;
-    checkRv(impl->funcs->C_GetSlotList(CK_TRUE, nullptr, &slotCount), "C_GetSlotList");
-    if (slotCount == 0)
-        throw std::runtime_error("No PKCS#11 slots with tokens found");
-
-    std::vector<CK_SLOT_ID> slots(slotCount);
-    checkRv(impl->funcs->C_GetSlotList(CK_TRUE, slots.data(), &slotCount), "C_GetSlotList");
-
-    CK_SLOT_ID slotId;
-    if (slotIndex >= 0) {
-        // Use slotIndex as the physical PKCS#11 slot ID directly
-        slotId = static_cast<CK_SLOT_ID>(slotIndex);
-    } else {
-        // Use first available token-present slot
-        slotId = slots[0];
-    }
-
+    CK_SLOT_ID slotId = impl->findSlotByReaderName(readerName);
     impl->openSessionAndLogin(slotId, pin);
     impl->findPrivateKey(keyAlias);
 }
 
 Pkcs11Token::Pkcs11Token(const std::string& modulePath, std::span<const uint8_t> pin, const std::string& keyAlias,
-                         const std::string& tokenLabel)
+                         TestSlotId rawSlotId)
     : impl(std::make_unique<Impl>())
 {
     impl->loadModule(modulePath);
-    CK_SLOT_ID slotId = impl->findSlotByLabel(tokenLabel);
-    impl->openSessionAndLogin(slotId, pin);
+    impl->openSessionAndLogin(static_cast<CK_SLOT_ID>(rawSlotId.slotId), pin);
     impl->findPrivateKey(keyAlias);
 }
 

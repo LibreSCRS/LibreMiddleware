@@ -28,7 +28,7 @@ public:
     bool configure(const TrustConfig& config) override;
 
     SigningResult sign(const SigningRequest& request, const std::string& pkcs11ModulePath, std::span<const uint8_t> pin,
-                       const std::string& keyAlias, const std::string& tokenLabel = "") override;
+                       const std::string& keyAlias, const std::string& readerName) override;
 
     bool isAvailable() const override;
 

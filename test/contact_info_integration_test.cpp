@@ -109,7 +109,7 @@ TEST_F(SigningContactInfoSoftHSMTest, SignedPdfCarriesContactInfoInSignatureDict
     lv.contactInfo = request.contactInfo();
 
     // 3. Sign via PAdESModule with a real (SoftHSM-backed) PKCS#11 token.
-    libresign::Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", 0);
+    libresign::Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
     auto pdf = testPdfBytes();
     libresign::PAdESModule pades;
 

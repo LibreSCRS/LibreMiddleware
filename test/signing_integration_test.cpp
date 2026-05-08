@@ -128,7 +128,7 @@ protected:
 
         testPin = cfgResult.config.pin;
         pkcs11Path = cfgResult.config.pkcs11Module;
-        tokenLabel = cfgResult.config.tokenLabel;
+        readerName = cfgResult.config.readerName;
 
         if (!fs::exists(pkcs11Path))
             GTEST_SKIP() << "PKCS#11 module not found: " << pkcs11Path;
@@ -136,7 +136,7 @@ protected:
 
     std::string testPin;
     std::string pkcs11Path;
-    std::string tokenLabel;
+    std::string readerName;
 };
 
 TEST_F(RealCardSigningTest, SignPdf_BB)
@@ -152,7 +152,7 @@ TEST_F(RealCardSigningTest, SignPdf_BB)
     req.level = libresign::SignatureLevel::B_B;
     req.allowExpiredCertificate = true;
 
-    auto result = svc.sign(req, pkcs11Path, libresign::as_pin(testPin), "", tokenLabel);
+    auto result = svc.sign(req, pkcs11Path, libresign::as_pin(testPin), "", readerName);
     checkPinFailure(result);
     EXPECT_TRUE(result.success) << "Signing failed: " << result.errorMessage;
     EXPECT_FALSE(result.signedDocument.empty());
@@ -189,7 +189,7 @@ TEST_F(RealCardSigningTest, SignPdf_BT)
     req.tsa.url = "http://timestamp.digicert.com";
     req.allowExpiredCertificate = true;
 
-    auto result = svc.sign(req, pkcs11Path, libresign::as_pin(testPin), "", tokenLabel);
+    auto result = svc.sign(req, pkcs11Path, libresign::as_pin(testPin), "", readerName);
     checkPinFailure(result);
     EXPECT_TRUE(result.success) << "B-T signing failed: " << result.errorMessage;
     EXPECT_FALSE(result.signedDocument.empty());
@@ -212,7 +212,7 @@ TEST_F(RealCardSigningTest, SignPdf_BLT)
     req.tsa.url = "http://timestamp.digicert.com";
     req.allowExpiredCertificate = true;
 
-    auto result = svc.sign(req, pkcs11Path, libresign::as_pin(testPin), "", tokenLabel);
+    auto result = svc.sign(req, pkcs11Path, libresign::as_pin(testPin), "", readerName);
     checkPinFailure(result);
     EXPECT_TRUE(result.success) << "B-LT signing failed: " << result.errorMessage;
     EXPECT_FALSE(result.signedDocument.empty());
@@ -245,7 +245,7 @@ TEST_F(RealCardSigningTest, SignPdf_BLTA)
     req.tsa.url = "http://timestamp.digicert.com";
     req.allowExpiredCertificate = true;
 
-    auto result = svc.sign(req, pkcs11Path, libresign::as_pin(testPin), "", tokenLabel);
+    auto result = svc.sign(req, pkcs11Path, libresign::as_pin(testPin), "", readerName);
     checkPinFailure(result);
     EXPECT_TRUE(result.success) << "B-LTA signing failed: " << result.errorMessage;
     EXPECT_FALSE(result.signedDocument.empty());
@@ -275,7 +275,7 @@ TEST_F(RealCardSigningTest, SignBinary_CAdES_BB)
     req.level = libresign::SignatureLevel::B_B;
     req.allowExpiredCertificate = true; // Gemalto test cert expired 2026-03-02
 
-    auto result = svc.sign(req, pkcs11Path, libresign::as_pin(testPin), "", tokenLabel);
+    auto result = svc.sign(req, pkcs11Path, libresign::as_pin(testPin), "", readerName);
     checkPinFailure(result);
     EXPECT_TRUE(result.success) << "CAdES signing failed: " << result.errorMessage;
     EXPECT_FALSE(result.signedDocument.empty()) << "CAdES .p7s should not be empty";
@@ -299,7 +299,7 @@ TEST_F(RealCardSigningTest, SignText_ASiCE_BLTA)
     req.tsa.url = "http://timestamp.digicert.com";
     req.allowExpiredCertificate = true;
 
-    auto result = svc.sign(req, pkcs11Path, libresign::as_pin(testPin), "", tokenLabel);
+    auto result = svc.sign(req, pkcs11Path, libresign::as_pin(testPin), "", readerName);
     checkPinFailure(result);
     EXPECT_TRUE(result.success) << "ASiC-E B-LTA signing failed: " << result.errorMessage;
     EXPECT_FALSE(result.signedDocument.empty());

@@ -21,7 +21,7 @@ namespace libresign::test {
 struct TestConfig
 {
     std::string pin;          // LIBRESCRS_TEST_PIN
-    std::string tokenLabel;   // LIBRESCRS_TEST_TOKEN (substring match)
+    std::string readerName;   // LIBRESCRS_TEST_READER (full PCSC reader name)
     std::string keyAlias;     // LIBRESCRS_TEST_KEY_ALIAS (empty = first signing key)
     std::string pkcs11Module; // auto-detected
     std::string dssJarPath;   // auto-detected

@@ -40,7 +40,7 @@ public:
     // Any std::string we form on the C++ side as part of the JSON request is
     // explicitly cleansed before return.
     SigningResult sign(const SigningRequest& request, const std::string& pkcs11ModulePath, std::span<const uint8_t> pin,
-                       const std::string& keyAlias, const std::string& tokenLabel = "") override;
+                       const std::string& keyAlias, const std::string& readerName) override;
 
     bool isAvailable() const override;
 

@@ -53,12 +53,12 @@ TestConfigResult readTestConfig()
     }
     r.config.pin = pin;
 
-    const char* token = std::getenv("LIBRESCRS_TEST_TOKEN");
-    if (!token || std::string(token).empty()) {
-        r.skipReason = "LIBRESCRS_TEST_TOKEN not set";
+    const char* reader = std::getenv("LIBRESCRS_TEST_READER");
+    if (!reader || std::string(reader).empty()) {
+        r.skipReason = "LIBRESCRS_TEST_READER not set";
         return r;
     }
-    r.config.tokenLabel = token;
+    r.config.readerName = reader;
 
     const char* alias = std::getenv("LIBRESCRS_TEST_KEY_ALIAS");
     if (alias)

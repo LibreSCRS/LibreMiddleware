@@ -43,10 +43,18 @@ public:
     //      service implementation MUST NOT retain the view past return and
     //      MUST cleanse any intermediate copies it creates internally.
     //
-    // tokenLabel: PKCS#11 token label for slot lookup (empty = auto-detect).
+    // readerName: the FULL PCSC reader name the caller wants to sign on.
+    // Mandatory: legacy auto-pick paths (`tokenLabel = ""` → slots[0])
+    // were removed in 4.0 — they routed PIN to whatever card the PCSC
+    // daemon enumerated first, which broke under any multi-card setup
+    // (the user's eID at port 02 vs another card at port 00 = silent
+    // PIN-to-wrong-card → spurious "wrong PIN"). The signing engine
+    // resolves the slot via FNV-1a hash of @p readerName embedded in
+    // the LM PKCS#11 module's slotDescription — see
+    // `lib/pkcs11/include/pkcs11/internal/slot_hash.h`.
     virtual SigningResult sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
                                std::span<const uint8_t> pin, const std::string& keyAlias,
-                               const std::string& tokenLabel = "") = 0;
+                               const std::string& readerName) = 0;
 
     virtual bool isAvailable() const = 0;
 };

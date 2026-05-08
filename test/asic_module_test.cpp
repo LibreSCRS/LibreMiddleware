@@ -31,7 +31,7 @@ protected:
 
 TEST_F(ASiCModuleSoftHSMTest, SignWithCAdES_ProducesValidZip)
 {
-    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", 0);
+    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
     ASiCModule asic;
 
     std::vector<uint8_t> data = {'H', 'e', 'l', 'l', 'o'};

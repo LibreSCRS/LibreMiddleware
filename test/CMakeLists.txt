@@ -212,6 +212,15 @@ add_executable(PKCS11Tests pkcs11_test.cpp)
 target_link_libraries(PKCS11Tests GTest::gtest_main librescrs-pkcs11)
 gtest_discover_tests(PKCS11Tests DISCOVERY_TIMEOUT 30)
 
+# Internal-only test for the slot-disambiguation hash helpers shared by
+# the LM PKCS#11 module and Pkcs11Token's reader-name lookup.
+add_executable(SlotHashTests slot_hash_test.cpp)
+target_link_libraries(SlotHashTests GTest::gtest_main)
+target_include_directories(SlotHashTests PRIVATE
+    ${PROJECT_SOURCE_DIR}/lib/pkcs11/include)
+target_compile_definitions(SlotHashTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(SlotHashTests)
+
 # CLI tool for manual PIN testing with a real card
 add_executable(pin_test_cli pin_test_cli.cpp)
 target_link_libraries(pin_test_cli CardEdge SmartCard_Impl LibreSCRS_Auth)
