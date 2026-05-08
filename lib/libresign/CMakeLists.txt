@@ -80,6 +80,7 @@ if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
         src/native/ttf_parser.cpp
         src/native/ttf_subset.cpp
         src/native/pdf_font.cpp
+        src/native/visual_signature_layout.cpp
         src/native/native_signing_service.cpp
     )
     list(APPEND LIBRESIGN_HEADERS

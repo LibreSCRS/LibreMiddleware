@@ -166,6 +166,7 @@ option(LIBRESCRS_BUILD_EXAMPLES "Build LibreMiddleware public-API consumer examp
 # LIBRESCRS_BUILD_EXAMPLES so the actual target only materialises when the
 # option is ON — the source-file discovery cost is zero when disabled.
 add_subdirectory(examples/sdk-consumer)
+add_subdirectory(examples/visual_signature_layout)
 
 add_subdirectory(tools)
 

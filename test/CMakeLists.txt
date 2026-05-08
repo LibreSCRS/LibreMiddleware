@@ -559,6 +559,16 @@ if(BUILD_SIGNING)
             GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
         gtest_discover_tests(PAdESUnicodeE2ETests)
 
+        # rc2 visual-signature FILL_BOX cross-backend oracle. Self-
+        # consistency (native emitter vs layoutVisualSignature) runs
+        # under SIGNING_BACKEND=native|both. Full DSS oracle skips
+        # silently unless SIGNING_BACKEND=both AND SoftHSM2 + DSS Java
+        # service are reachable (see feedback_dss_test_oracle.md).
+        add_executable(PAdESDssOracleTests pades_dss_oracle_test.cpp)
+        target_link_libraries(PAdESDssOracleTests
+            PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
+        gtest_discover_tests(PAdESDssOracleTests)
+
         add_executable(TtfParserTests ttf_parser_test.cpp)
         target_link_libraries(TtfParserTests PRIVATE GTest::gtest_main LibreSign)
         target_include_directories(TtfParserTests PRIVATE
@@ -579,6 +589,15 @@ if(BUILD_SIGNING)
             ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
         target_compile_definitions(PdfFontTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
         gtest_discover_tests(PdfFontTests)
+
+        # Public visual-signature auto-fit layout API (rc2). Pure tests
+        # over the LibreSCRS::Signing interface — no internals, no
+        # libresign:: include path; LibreSCRS_Signing transitively pulls
+        # the LibreSign archive at link time so the symbols resolve.
+        add_executable(VisualSignatureLayoutTests visual_signature_layout_test.cpp)
+        target_link_libraries(VisualSignatureLayoutTests
+            PRIVATE GTest::gtest_main LibreSCRS_Signing)
+        gtest_discover_tests(VisualSignatureLayoutTests)
 
         # Integration regression: public SigningRequest::contactInfo()
         # wired through the libresign bridge into the PDF /ContactInfo

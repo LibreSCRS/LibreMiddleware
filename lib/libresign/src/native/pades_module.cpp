@@ -29,6 +29,8 @@
 #include "ttf_subset.h"
 #include "liberation_sans_data.h"
 
+#include <LibreSCRS/Signing/VisualSignatureLayout.h>
+
 namespace libresign {
 
 namespace {
@@ -50,13 +52,13 @@ constexpr std::string_view kAppearanceFontTag = "F1";
 // Combined: 4 + 128 = 132. Standard for digital signature widgets.
 constexpr int kSigFieldAnnotFlags = 132;
 
-// PDF text rendering parameters for the visual signature appearance.
-// 9pt font with 12-unit line advance gives ~1.33x leading at the chosen
-// size — matches the pre-Unicode 3.x renderer's visual layout. Origin
-// offset of 2 units from the left edge mirrors the prior renderer.
-constexpr int kAppearanceFontSize = 9;
-constexpr int kAppearanceLineHeight = 12;
-constexpr int kAppearanceLeftMargin = 2;
+// PDF text rendering parameters for the visual signature appearance now
+// come from the public layout API
+// (LibreSCRS::Signing::layoutVisualSignature, rc2). The pre-rc2 fixed
+// `kAppearanceFontSize` / `kAppearanceLineHeight` / `kAppearanceLeftMargin`
+// constants are gone — the algorithm picks each per signing call, with
+// the floor / ceiling / margin / leading sentinels exposed as public
+// `kAppearance*` constants in <LibreSCRS/Signing/VisualSignatureLayout.h>.
 
 // ---- Hex encoding ----
 //
@@ -166,32 +168,17 @@ std::pair<char32_t, size_t> decodeUtf8At(std::string_view line, size_t i)
 
 AppearanceData PAdESModule::createAppearanceStream(const VisualSignatureParams& visual) const
 {
-    // 1. Split visual.text into lines (LC produces '\n'-separated strings).
-    //    Strip trailing '\r' to handle '\r\n' (Windows / copy-paste) and bare
-    //    '\r' line endings without producing visible .notdef boxes.
-    std::vector<std::string> lines;
-    {
-        std::string line;
-        for (char c : visual.text) {
-            if (c == '\n') {
-                if (!line.empty() && line.back() == '\r')
-                    line.pop_back();
-                lines.push_back(std::move(line));
-                line.clear();
-            } else {
-                line.push_back(c);
-            }
-        }
-        if (!line.empty()) {
-            if (line.back() == '\r')
-                line.pop_back();
-            lines.push_back(std::move(line));
-        }
-    }
+    // 1. Compute the auto-fit layout via the public LM layout API.
+    //    Single source of truth — LC preview consumes the same function.
+    LibreSCRS::Signing::Rect box{0, 0, static_cast<int>(visual.width), static_cast<int>(visual.height)};
+    auto layout = LibreSCRS::Signing::layoutVisualSignature(visual.text, box);
 
-    // 2. Collect used codepoints across all lines via UTF-8 decode.
+    // 2. Collect used codepoints across all wrapped lines via UTF-8 decode.
+    //    The wrapped lines may differ from the input (trailing whitespace
+    //    trimmed, paragraphs split, etc.), so codepoint collection runs
+    //    on the layout output rather than the raw input.
     std::unordered_set<char32_t> codepoints;
-    for (const auto& line : lines) {
+    for (const auto& line : layout.lines) {
         for (size_t i = 0; i < line.size();) {
             auto [cp, n] = decodeUtf8At(line, i);
             if (n == 0)
@@ -205,17 +192,39 @@ AppearanceData PAdESModule::createAppearanceStream(const VisualSignatureParams& 
     std::span<const uint8_t> fullTtf{LiberationSansRegular, LiberationSansRegularSize};
     TtfSubset subset = subsetTtf(fullTtf, codepoints);
 
-    // 4. Emit the content stream: /<font> <size> Tf, Tm origin, one <hex> Tj
-    //    per line. Magic numbers come from kAppearanceFontTag,
-    //    kAppearanceFontSize, kAppearanceLineHeight, kAppearanceLeftMargin.
+    // 4. Emit the content stream:
+    //      q                                 push graphics state
+    //      [<x0 y0 w h> re W n]              optional clipping path when
+    //                                        layout.clipped == true
+    //      BT                                begin text
+    //      /<font> <fontSize> Tf             pick the auto-fit font size
+    //      <lineHeight> TL                   set leading (Tj-aware T*)
+    //      1 0 0 1 <mx> <topY> Tm            position first baseline
+    //      <hex> Tj                          draw line[0]
+    //      T*  <hex> Tj                      draw line[i] (i >= 1)
+    //      ET                                end text
+    //      Q                                 restore state
+    const float fontSize = layout.fontSize;
+    const float lineHeight = layout.lineHeight;
+    const float margin = LibreSCRS::Signing::kAppearanceTextMargin;
+    const float topBaselineY = static_cast<float>(visual.height) - margin - fontSize;
+
     std::ostringstream cs;
-    cs << "q\nBT\n/" << kAppearanceFontTag << " " << kAppearanceFontSize << " Tf\n";
-    cs << "1 0 0 1 " << kAppearanceLeftMargin << " " << (visual.height - kAppearanceLineHeight) << " Tm\n";
+    cs << "q\n";
+    if (layout.clipped) {
+        // Clip to the entire annotation rect (origin 0,0 since the
+        // appearance form XObject's BBox is [0 0 w h]).
+        cs << std::format("0 0 {} {} re W n\n", visual.width, visual.height);
+    }
+    cs << "BT\n";
+    cs << std::format("/{} {:.2f} Tf\n", kAppearanceFontTag, fontSize);
+    cs << std::format("{:.2f} TL\n", lineHeight);
+    cs << std::format("1 0 0 1 {:.2f} {:.2f} Tm\n", margin, topBaselineY);
 
     bool firstLine = true;
-    for (const auto& line : lines) {
+    for (const auto& line : layout.lines) {
         if (!firstLine)
-            cs << "0 -" << kAppearanceLineHeight << " Td\n";
+            cs << "T*\n";
         firstLine = false;
         cs << "<";
         for (size_t i = 0; i < line.size();) {

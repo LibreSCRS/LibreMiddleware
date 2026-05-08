@@ -107,19 +107,107 @@ TEST(PAdESModule, AppearanceStreamIsUtf8DrivenFromVisualText)
     auto appearance = pades.createAppearanceStream(v);
     std::string s(appearance.contentStream.begin(), appearance.contentStream.end());
 
-    // Must reference the Type0 font /F1.
-    EXPECT_NE(s.find("/F1 9 Tf"), std::string::npos);
+    // Must reference the Type0 font /F1 with an auto-fit point size
+    // (rc2: layoutVisualSignature picks the size; previously hardcoded
+    // to 9pt). Match `/F1 <decimal> Tf` rather than a fixed integer.
+    auto tfPos = s.find("/F1 ");
+    ASSERT_NE(tfPos, std::string::npos);
+    auto tfEnd = s.find(" Tf", tfPos);
+    ASSERT_NE(tfEnd, std::string::npos);
+    auto sizeStr = s.substr(tfPos + 4, tfEnd - (tfPos + 4));
+    double parsedSize = std::stod(sizeStr);
+    EXPECT_GE(parsedSize, 6.0);  // floor
+    EXPECT_LE(parsedSize, 72.0); // ceiling
+
     // Text is emitted as hex-string Tj, not PDF literal strings (...) Tj.
     EXPECT_NE(s.find("<"), std::string::npos);
     EXPECT_NE(s.find("> Tj"), std::string::npos);
     // No more legacy "Signed by:" / "Reason:" / "Location:" hardcoded prefixes.
     EXPECT_EQ(s.find("Signed by:"), std::string::npos);
     EXPECT_EQ(s.find("Reason:"), std::string::npos);
-    // Two lines means two Tj calls.
+    // Two input lines wrap to ≥ 2 Tj calls.
     size_t first = s.find("> Tj");
     ASSERT_NE(first, std::string::npos);
     size_t second = s.find("> Tj", first + 1);
     EXPECT_NE(second, std::string::npos);
+}
+
+// ---- Auto-fit emitter tests (rc2 visual-signature FILL_BOX) ----
+
+#include <LibreSCRS/Signing/VisualSignatureLayout.h>
+
+namespace {
+
+// Count occurrences of @p needle in @p hay.
+size_t countSubstr(std::string_view hay, std::string_view needle)
+{
+    size_t count = 0;
+    for (size_t pos = 0;;) {
+        pos = hay.find(needle, pos);
+        if (pos == std::string_view::npos)
+            break;
+        ++count;
+        pos += needle.size();
+    }
+    return count;
+}
+
+VisualSignatureParams makeVisualParams(std::string text)
+{
+    VisualSignatureParams v;
+    v.enabled = true;
+    v.page = 1;
+    v.width = 200;
+    v.height = 50;
+    v.text = std::move(text);
+    return v;
+}
+
+} // namespace
+
+TEST(PAdESModule, AppearanceStreamMultilineTjMatchesLayoutLines)
+{
+    PAdESModule pades;
+    auto v = makeVisualParams("Digitally signed by NEMANJA HIRŠL\nDate: 2026-05-08 14:23:45");
+    auto appearance = pades.createAppearanceStream(v);
+    std::string s(appearance.contentStream.begin(), appearance.contentStream.end());
+
+    auto layout = LibreSCRS::Signing::layoutVisualSignature(
+        v.text, LibreSCRS::Signing::Rect{0, 0, static_cast<int>(v.width), static_cast<int>(v.height)});
+    EXPECT_EQ(countSubstr(s, "> Tj"), layout.lines.size());
+}
+
+TEST(PAdESModule, AppearanceStreamEmitsClipPathWhenClipped)
+{
+    PAdESModule pades;
+    auto v = makeVisualParams(std::string(200, 'X'));
+    auto appearance = pades.createAppearanceStream(v);
+    std::string s(appearance.contentStream.begin(), appearance.contentStream.end());
+    // Clipping path: "<x y w h> re W n" — assert "re W n" present.
+    EXPECT_NE(s.find("re W n"), std::string::npos);
+}
+
+TEST(PAdESModule, AppearanceStreamOmitsClipPathWhenNotClipped)
+{
+    PAdESModule pades;
+    auto v = makeVisualParams("Hi");
+    auto appearance = pades.createAppearanceStream(v);
+    std::string s(appearance.contentStream.begin(), appearance.contentStream.end());
+    EXPECT_EQ(s.find("re W n"), std::string::npos);
+}
+
+TEST(PAdESModule, AppearanceStreamFontSizeMatchesLayout)
+{
+    PAdESModule pades;
+    auto v = makeVisualParams("Sample text for layout");
+    auto appearance = pades.createAppearanceStream(v);
+    std::string s(appearance.contentStream.begin(), appearance.contentStream.end());
+
+    auto layout = LibreSCRS::Signing::layoutVisualSignature(
+        v.text, LibreSCRS::Signing::Rect{0, 0, static_cast<int>(v.width), static_cast<int>(v.height)});
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "/F1 %.2f Tf", static_cast<double>(layout.fontSize));
+    EXPECT_NE(s.find(buf), std::string::npos) << "stream:\n" << s;
 }
 
 // ---- SoftHSM-based tests ----
