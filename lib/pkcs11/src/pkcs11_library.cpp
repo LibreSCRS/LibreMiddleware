@@ -142,7 +142,7 @@ CK_RV PKCS11Library::getSlotInfo(CK_SLOT_ID slotID, CK_SLOT_INFO_PTR pInfo)
     // disambiguate them. The remaining 53 bytes hold a readable prefix
     // of the reader name for management tools (`pkcs11-tool --list-slots`).
     std::memset(pInfo->slotDescription, ' ', sizeof(pInfo->slotDescription));
-    librescrs::pkcs11::internal::formatSlotDescription(slot.readerName,
+    LibreSCRS::Pkcs11::Internal::formatSlotDescription(slot.readerName,
                                                        reinterpret_cast<char*>(pInfo->slotDescription));
     padString(pInfo->manufacturerID, sizeof(pInfo->manufacturerID), "LibreSCRS");
 

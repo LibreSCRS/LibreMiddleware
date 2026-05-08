@@ -209,11 +209,14 @@ std::vector<std::string> wrapAllParagraphs(const std::vector<std::string>& parag
 }
 
 // Check whether the wrapped @p lines fit in @p availW at @p fontSize.
-// All lines must measure ≤ availW.
+// All lines must measure ≤ availW (with a 1e-3 pt tolerance to absorb
+// IEEE-754 single-precision ULP drift across platforms — see spec §8.2 I7
+// determinism invariant).
 bool linesFit(const std::vector<std::string>& lines, float fontSize, float availW, const libresign::TtfSubset& subset)
 {
+    constexpr float kFitTolerancePt = 1.0e-3f;
     for (const auto& line : lines) {
-        if (libresign::measureTextWidth(subset, line, fontSize) > availW)
+        if (libresign::measureTextWidth(subset, line, fontSize) > availW + kFitTolerancePt)
             return false;
     }
     return true;
@@ -251,7 +254,7 @@ libresign::TtfSubset buildSubsetForInput(const std::unordered_set<char32_t>& cps
 } // namespace
 
 VisualSignatureLayout layoutVisualSignature(std::string_view textUtf8, Rect box) noexcept
-{
+try {
     VisualSignatureLayout out;
 
     // Compute available width/height after the per-edge margin inset.
@@ -366,6 +369,32 @@ VisualSignatureLayout layoutVisualSignature(std::string_view textUtf8, Rect box)
         out.lines.emplace_back();
     out.clipped = false;
     return out;
+} catch (...) {
+    // Function-try-block honours the noexcept contract under bad_alloc or
+    // any other exception escaping the body. Spec §8.1: "Any 'problem' is
+    // encoded in the return value, never as a thrown exception." Return
+    // floor-clipped fallback with the input as a single (potentially clipped)
+    // line. Allocations in the catch handler are minimal but still possible;
+    // a second-level failure would call std::terminate, which is acceptable
+    // because at that point the system is already in an unrecoverable state.
+    VisualSignatureLayout fallback;
+    fallback.fontSize = kFloorAppearanceFontSize;
+    fallback.lineHeight = kFloorAppearanceFontSize * kAppearanceLineLeading;
+    try {
+        fallback.lines.emplace_back(textUtf8);
+    } catch (...) {
+        // best-effort: empty lines vector still satisfies the "lines.size() ≥ 1"
+        // invariant via the default-constructed string below if we can.
+        try {
+            fallback.lines.emplace_back();
+        } catch (...) {
+            // unreachable: a default-constructed empty string never throws,
+            // but if it did, std::terminate from the noexcept boundary is
+            // the correct response.
+        }
+    }
+    fallback.clipped = true;
+    return fallback;
 }
 
 std::span<const std::byte> embeddedAppearanceFontData() noexcept

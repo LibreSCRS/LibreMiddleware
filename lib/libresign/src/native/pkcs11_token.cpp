@@ -167,7 +167,7 @@ struct Pkcs11Token::Impl
         std::vector<CK_SLOT_ID> slots(slotCount);
         checkRv(funcs->C_GetSlotList(CK_TRUE, slots.data(), &slotCount), "C_GetSlotList");
 
-        const std::uint32_t targetHash = librescrs::pkcs11::internal::fnv1a32(readerName);
+        const std::uint32_t targetHash = LibreSCRS::Pkcs11::Internal::fnv1a32(readerName);
 
         std::vector<CK_SLOT_ID> matches;
         std::ostringstream enumeratedDescriptions;
@@ -184,7 +184,7 @@ struct Pkcs11Token::Impl
             // bytes for the parser; trailing-space trim happens inside
             // the parser only when needed.
             const std::string_view rawDesc(reinterpret_cast<const char*>(slotInfo.slotDescription), 64);
-            const std::uint32_t slotHash = librescrs::pkcs11::internal::parseSlotHash(rawDesc);
+            const std::uint32_t slotHash = LibreSCRS::Pkcs11::Internal::parseSlotHash(rawDesc);
 
             if (slotHash != 0)
                 anyHashCarrier = true;

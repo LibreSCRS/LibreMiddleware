@@ -48,7 +48,7 @@ and discover slots via C_GetSlotList + C_GetSlotInfo."
 #include <cstdint>
 #include <string_view>
 
-namespace librescrs::pkcs11::internal {
+namespace LibreSCRS::Pkcs11::Internal {
 
 /// @brief FNV-1a 32-bit hash of the given byte sequence.
 ///
@@ -85,7 +85,7 @@ namespace librescrs::pkcs11::internal {
 [[nodiscard]] constexpr std::array<char, 8> toHex8(std::uint32_t hash) noexcept
 {
     constexpr std::array<char, 16> hexDigits{'0', '1', '2', '3', '4', '5', '6', '7',
-                                              '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+                                             '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
     std::array<char, 8> out{};
     for (int i = 7; i >= 0; --i) {
         out[i] = hexDigits[hash & 0xFu];
@@ -174,4 +174,4 @@ inline void formatSlotDescription(std::string_view readerName, char* out) noexce
     return hash;
 }
 
-} // namespace librescrs::pkcs11::internal
+} // namespace LibreSCRS::Pkcs11::Internal

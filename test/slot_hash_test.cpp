@@ -9,10 +9,10 @@
 #include <string>
 #include <string_view>
 
-using librescrs::pkcs11::internal::fnv1a32;
-using librescrs::pkcs11::internal::formatSlotDescription;
-using librescrs::pkcs11::internal::parseSlotHash;
-using librescrs::pkcs11::internal::toHex8;
+using LibreSCRS::Pkcs11::Internal::fnv1a32;
+using LibreSCRS::Pkcs11::Internal::formatSlotDescription;
+using LibreSCRS::Pkcs11::Internal::parseSlotHash;
+using LibreSCRS::Pkcs11::Internal::toHex8;
 
 TEST(SlotHash, Fnv1aCanonicalVectors)
 {
@@ -23,8 +23,10 @@ TEST(SlotHash, Fnv1aCanonicalVectors)
 
 TEST(SlotHash, Fnv1aDistinguishesSimilarReaderNames)
 {
-    const std::string a = "HID Global OMNIKEY 5422 Smartcard Reader [OMNIKEY 5422 Smartcard Reader] (IM0O2C00NF10456904) 02 00";
-    const std::string b = "HID Global OMNIKEY 5422 Smartcard Reader [OMNIKEY 5422 Smartcard Reader] (IM0O2C00NF10456904) 02 01";
+    const std::string a =
+        "HID Global OMNIKEY 5422 Smartcard Reader [OMNIKEY 5422 Smartcard Reader] (IM0O2C00NF10456904) 02 00";
+    const std::string b =
+        "HID Global OMNIKEY 5422 Smartcard Reader [OMNIKEY 5422 Smartcard Reader] (IM0O2C00NF10456904) 02 01";
     EXPECT_NE(fnv1a32(a), fnv1a32(b));
 }
 

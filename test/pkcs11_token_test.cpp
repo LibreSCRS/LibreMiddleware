@@ -25,14 +25,19 @@ protected:
 
 TEST_F(Pkcs11TokenTest, OpenAndClose)
 {
-    ASSERT_NO_THROW({ Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0}); });
+    ASSERT_NO_THROW({
+        Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
+    });
 }
 
 TEST(Pkcs11TokenStandalone, FailsWithInvalidModule)
 {
-    ASSERT_THROW({ Pkcs11Token token("/nonexistent.so", libresign::as_pin("1234"), "key",
-                                     libresign::Pkcs11Token::TestSlotId{0}); },
-                 std::runtime_error);
+    ASSERT_THROW(
+        {
+            Pkcs11Token token("/nonexistent.so", libresign::as_pin("1234"), "key",
+                              libresign::Pkcs11Token::TestSlotId{0});
+        },
+        std::runtime_error);
 }
 
 #else
