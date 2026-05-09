@@ -137,13 +137,13 @@ if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
         set_source_files_properties(
             ${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/miniz/miniz.c
             PROPERTIES
-                COMPILE_FLAGS "-Wno-strict-prototypes"
+                COMPILE_FLAGS "-Wno-strict-prototypes -Wno-unused-parameter"
         )
     else()
         set_source_files_properties(
             ${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/miniz/miniz.c
             PROPERTIES
-                COMPILE_FLAGS "-Wno-strict-prototypes"
+                COMPILE_FLAGS "-Wno-strict-prototypes -Wno-unused-parameter"
                 COMPILE_DEFINITIONS "_FILE_OFFSET_BITS=64;_LARGEFILE64_SOURCE"
         )
     endif()

@@ -196,7 +196,13 @@ TEST(SecureStringTest, CopyAssignCleansesPreviousDestinationContents)
 TEST(SecureStringTest, SelfCopyAssignIsNoop)
 {
     String s("keep-me");
-    s = s;
+    // The self-copy is the test contract; clang's -Wself-assign-overloaded
+    // fires on a literal `s = s`. Route through a reference alias so the
+    // compiler can no longer see source and destination as the same
+    // expression while semantically still exercising the self-copy-assign
+    // code path. Same workaround as SelfMoveAssignIsNoop below.
+    String& alias = s;
+    s = alias;
     EXPECT_EQ(s.view(), "keep-me");
 }
 
