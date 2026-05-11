@@ -80,17 +80,33 @@ public:
 
     /// @brief Look up the cached entry for @p key.
     /// @return The entry if present; @c std::nullopt otherwise.
-    [[nodiscard]] std::optional<CardMapEntry> get(const Key& key) const;
+    /// @par Thread-safety + noexcept contract
+    /// @c noexcept: the implementation wraps allocations (in @c flatten()
+    /// / @c unordered_map probe) in a top-level catch and degrades to
+    /// @c std::nullopt on failure per @c feedback_noexcept_alloc_contract.
+    /// Mutex acquisition cannot throw on an uncontended @c std::mutex
+    /// (libstdc++ / libc++ — see PKCS11Slot::isLoggedIn for the same
+    /// reliance).
+    [[nodiscard]] std::optional<CardMapEntry> get(const Key& key) const noexcept;
 
     /// @brief Install or overwrite the entry for @p key.
-    void put(const Key& key, CardMapEntry entry);
+    /// @par noexcept contract
+    /// Allocation failures during @c flatten / @c insert_or_assign are
+    /// caught and the entry is dropped silently; subsequent lookups
+    /// re-discover, preserving correctness at the cost of one extra
+    /// probe. See @c feedback_noexcept_alloc_contract.
+    void put(const Key& key, CardMapEntry entry) noexcept;
 
     /// @brief Remove the entry for @p key (no-op if absent).
-    void invalidate(const Key& key);
+    /// @par noexcept contract
+    /// Same as @ref put: any allocation failure during @c flatten /
+    /// @c erase is caught; the worst outcome is a stale entry that the
+    /// caller will overwrite on the next @ref put.
+    void invalidate(const Key& key) noexcept;
 
     /// @brief Drop every cached entry. Typically used at provider
     ///        teardown / `C_Finalize` time.
-    void invalidateAll();
+    void invalidateAll() noexcept;
 
 private:
     mutable std::mutex mu;

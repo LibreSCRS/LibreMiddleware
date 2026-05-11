@@ -14,6 +14,8 @@
 #include "pkcs15_types.h"
 
 #include <internal/Crv.h>
+#include <internal/DerWrap.h>
+#include <internal/MechanismConstants.h>
 #include <internal/PKCS11Card.h>
 
 #include <openssl/core_names.h>
@@ -71,48 +73,18 @@ namespace {
     }
 }
 
-/// @brief libresign-style DER OCTET STRING wrap for CKA_EC_POINT.
-///        Mirrors the helper used by @c pkcs11_library.cpp so the new
-///        @ref PKCS11ObjectInfo::ecPoint field carries an attribute the
-///        downstream library layer can hand back unchanged.
-[[nodiscard]] std::vector<std::uint8_t> derOctetStringWrap(std::span<const std::uint8_t> raw)
-{
-    std::vector<std::uint8_t> out;
-    out.reserve(raw.size() + 4);
-    out.push_back(0x04); // OCTET STRING tag.
-    if (raw.size() < 0x80) {
-        out.push_back(static_cast<std::uint8_t>(raw.size()));
-    } else if (raw.size() <= 0xFF) {
-        out.push_back(0x81);
-        out.push_back(static_cast<std::uint8_t>(raw.size()));
-    } else {
-        out.push_back(0x82);
-        out.push_back(static_cast<std::uint8_t>((raw.size() >> 8) & 0xFF));
-        out.push_back(static_cast<std::uint8_t>(raw.size() & 0xFF));
-    }
-    out.insert(out.end(), raw.begin(), raw.end());
-    return out;
-}
-
-/// @brief PKCS#11 v2.40 raw mechanism numeric values (kept here to
-///        avoid pulling pkcs11t.h into this TU).
-constexpr unsigned long kCkmRsaPkcs = 0x00000001UL;
-constexpr unsigned long kCkmRsaPkcsSha256 = 0x00000040UL;
-constexpr unsigned long kCkmRsaPkcsSha384 = 0x00000041UL;
-constexpr unsigned long kCkmRsaPkcsSha512 = 0x00000042UL;
-constexpr unsigned long kCkmRsaPssSha256 = 0x00000043UL;
-constexpr unsigned long kCkmRsaPssSha384 = 0x00000044UL;
-constexpr unsigned long kCkmRsaPssSha512 = 0x00000045UL;
-constexpr unsigned long kCkmEcdsa = 0x00001041UL;
-
-/// @brief PKCS#11 object class constants (CKO_*).
-constexpr unsigned long kCkoCertificate = 1UL;
-constexpr unsigned long kCkoPublicKey = 2UL;
-constexpr unsigned long kCkoPrivateKey = 3UL;
-
-/// @brief PKCS#11 key type constants (CKK_*).
-constexpr unsigned long kCkkRsa = 0UL;
-constexpr unsigned long kCkkEc = 3UL;
+using LibreSCRS::Pkcs11::Internal::kCkkEc;
+using LibreSCRS::Pkcs11::Internal::kCkkRsa;
+using LibreSCRS::Pkcs11::Internal::kCkmEcdsa;
+using LibreSCRS::Pkcs11::Internal::kCkmRsaPkcs;
+using LibreSCRS::Pkcs11::Internal::kCkmRsaPkcsSha256;
+using LibreSCRS::Pkcs11::Internal::kCkmRsaPkcsSha384;
+using LibreSCRS::Pkcs11::Internal::kCkmRsaPkcsSha512;
+using LibreSCRS::Pkcs11::Internal::kCkmRsaPssSha256;
+using LibreSCRS::Pkcs11::Internal::kCkmRsaPssSha384;
+using LibreSCRS::Pkcs11::Internal::kCkmRsaPssSha512;
+using LibreSCRS::Pkcs11::Internal::kCkoCertificate;
+using LibreSCRS::Pkcs11::Internal::kCkoPrivateKey;
 
 } // namespace
 
@@ -147,6 +119,38 @@ Pkcs15Slot::Pkcs15Slot(std::weak_ptr<LibreSCRS::Pkcs11::Internal::PKCS11Card> pa
 }
 
 Pkcs15Slot::~Pkcs15Slot() = default;
+
+void Pkcs15Slot::onCardReset() noexcept
+{
+    // RESET drops the card-side auth context AND invalidates our borrowed
+    // apdu pointer because Pkcs15Card::reconnectInline rebuilt the
+    // parent's std::unique_ptr<pkcs15::PKCS15Card> from scratch. The
+    // previous generation's raw apdu* held by every slot is now dangling;
+    // refresh it from the parent under slotMutex before any subsequent
+    // signData / enumerateObjects can dereference the old pointer.
+    //
+    // Lock order (slotMutex → cardMutex) is preserved by the caller:
+    // PKCS11Card::handleReset releases cardMutex before walking the
+    // slot list. We can therefore safely re-take cardMutex briefly to
+    // publish-read the parent's freshly-rebuilt apdu pointer.
+    auto parent = parentCard.lock();
+
+    std::scoped_lock slotLock(slotMutex);
+    cachedPin.clear();
+    loggedIn = false;
+
+    if (parent) {
+        std::scoped_lock cardLock(parentTransportMutex(*parent));
+        // For deferred-profile slots that have not yet logged in,
+        // parent->apdu may still be null; mirror that here. Otherwise
+        // pick up the freshly-rebuilt helper.
+        apdu = parentApduHelper(*parent);
+    } else {
+        // Parent gone — slot is effectively orphaned; clearing the
+        // borrow keeps subsequent calls from touching freed memory.
+        apdu = nullptr;
+    }
+}
 
 ::pkcs15::PKCS15Card* Pkcs15Slot::parentApduHelper(LibreSCRS::Pkcs11::Internal::PKCS11Card& parentBase) noexcept
 {
@@ -280,7 +284,7 @@ std::vector<LibreSCRS::Pkcs11::Internal::PKCS11ObjectInfo> Pkcs15Slot::enumerate
                                 std::vector<std::uint8_t> rawPoint(pointLen);
                                 EVP_PKEY_get_octet_string_param(pkey, OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY,
                                                                 rawPoint.data(), pointLen, &pointLen);
-                                ecPointDer = derOctetStringWrap(rawPoint);
+                                ecPointDer = LibreSCRS::Pkcs11::Internal::derOctetStringWrap(rawPoint);
                             }
                         }
                         EVP_PKEY_free(pkey);
@@ -405,20 +409,14 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
         // AODF and replace this with the on-card PinInfo.
         ::pkcs15::PinInfo pinInfoForVerify;
         if (deferredProfile && !pinInfo) {
-            // SafeSign User PIN defaults from documented AODF
-            // (knowledge/memory reference_gemalto_aodf.md, captured during
-            // 2026-03 Gemalto SafeSign integration):
-            //   - pinReference 0x03   (User PIN; SO PIN is 0x01)
-            //   - pinType Ascii
-            //   - storedLength 15     (PIN padded to fixed 15-byte block)
-            //   - padChar 0x00        (NUL padding, not 0xFF)
-            //   - minLength 4
-            // These match the SafeSign IC convention; AET-issued cards
-            // share this AODF default across hardware variants
-            // (JCOP21 vs Infineon SLE).
-            pinInfoForVerify.id = {0x03};
+            // SafeSign IC AODF defaults documented in the vendor token
+            // manual: the User PIN sits at reference kSafeSignDefaultUserPinRef
+            // (SO PIN at kSafeSignDefaultSoPinRef), ASCII encoding, 15-byte
+            // fixed stored length, NUL-padded, minimum 4 digits. JCOP21
+            // and Infineon SLE hardware variants share these AODF defaults.
+            pinInfoForVerify.id = {::pkcs15::kSafeSignDefaultUserPinRef};
             pinInfoForVerify.label = pinLabel;
-            pinInfoForVerify.pinReference = 0x03;
+            pinInfoForVerify.pinReference = ::pkcs15::kSafeSignDefaultUserPinRef;
             pinInfoForVerify.pinType = ::pkcs15::PinType::Ascii;
             pinInfoForVerify.padChar = 0x00;
             pinInfoForVerify.minLength = 4;

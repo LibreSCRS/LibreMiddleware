@@ -307,12 +307,12 @@ TEST_F(OpenSCFallbackPKS, Test05VerifyPINSucceeds)
                << ", outcome=" << static_cast<int>(result.outcome) << ". All subsequent PIN-consuming tests will SKIP.";
     }
 
-    // Post-verify tries_left reporting is unreliable on srbeid driver path —
-    // iso7816 pin_cmd GET_INFO returns SW=9000 when already logged in without
-    // updating tries_left, so the value may be nullopt or 3 after a
-    // successful verify. See project_opensc_retries_left_postverify.md for
-    // investigation + candidate fix. Success signal here is result.ok();
-    // sign in Test06 is the ultimate authentication proof.
+    // Post-verify tries_left reporting is unreliable on the srbeid driver
+    // path — the iso7816 pin_cmd GET_INFO handler returns SW=9000 when the
+    // card is already logged in without updating tries_left, so the value
+    // may surface as nullopt or 3 after a successful verify. Treat the
+    // success signal as result.ok() here; the sign smoke in Test06 is the
+    // ultimate authentication proof.
     const auto triesAfterOpt = plugin->getPINTriesLeft(*session);
     if (triesAfterOpt.has_value()) {
         EXPECT_EQ(*triesAfterOpt, 3) << "Post-verify getPINTriesLeft, when populated, should be 3; got "

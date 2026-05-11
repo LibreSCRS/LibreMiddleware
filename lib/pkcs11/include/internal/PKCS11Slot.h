@@ -190,6 +190,13 @@ public:
     /// subclasses whose only login bookkeeping is the inherited
     /// @ref loggedIn flag; subclasses with additional per-key or
     /// per-mode authentication state may override.
+    /// @note The @c noexcept decoration relies on the implementation
+    ///       guarantee that @c std::mutex::lock() does not throw on an
+    ///       uncontended acquisition (libstdc++ ≥ 9, libc++ ≥ 7). The
+    ///       C++ standard permits @c std::system_error from @c lock();
+    ///       if a strictly-conforming standard library is ever targeted,
+    ///       drop the @c noexcept on this declaration (and the matching
+    ///       definition in @c pkcs11_slot.cpp).
     /// @since 4.1
     [[nodiscard]] virtual bool isLoggedIn() const noexcept;
 

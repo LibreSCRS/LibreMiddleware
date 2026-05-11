@@ -28,6 +28,9 @@ add_library(librescrs-pkcs11 SHARED
     include/internal/PKCS11Card.h
     include/internal/PKCS11CardProvider.h
     include/internal/SlotIdHash.h
+    include/internal/DerWrap.h
+    include/internal/SlotKindClassifier.h
+    include/internal/MechanismConstants.h
 )
 
 target_compile_definitions(librescrs-pkcs11 PRIVATE LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD)

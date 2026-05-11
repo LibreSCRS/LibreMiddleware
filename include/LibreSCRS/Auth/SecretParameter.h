@@ -4,7 +4,7 @@
 #pragma once
 
 /// @file
-/// @brief @ref LibreSCRS::Auth::detail::SecretParameter — concept used as a
+/// @brief @ref LibreSCRS::Auth::SecretParameter — concept used as a
 ///        compile-time sentinel that pins credential-bearing parameters to
 ///        @ref LibreSCRS::Secure::String const&.
 ///
@@ -31,7 +31,7 @@
 #include <concepts>
 #include <type_traits>
 
-namespace LibreSCRS::Auth::detail {
+namespace LibreSCRS::Auth {
 
 /// @brief True iff @p T is exactly @c LibreSCRS::Secure::String const&.
 ///
@@ -53,4 +53,4 @@ template <typename T>
 concept SecretParameter = std::same_as<std::remove_cvref_t<T>, Secure::String> && std::is_lvalue_reference_v<T> &&
                           std::is_const_v<std::remove_reference_t<T>>;
 
-} // namespace LibreSCRS::Auth::detail
+} // namespace LibreSCRS::Auth

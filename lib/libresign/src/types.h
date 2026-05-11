@@ -66,7 +66,11 @@ struct SigningRequest
     SignatureLevel level = SignatureLevel::B_T;
     TSAConfig tsa;
     VisualSignatureParams visual;
-    bool allowExpiredCertificate = false; // for testing with expired certs
+    // Explicit user-consent gate for signing with an expired certificate.
+    // Default false rejects expired signers (DSS- and native-backend
+    // consistent); host GUI flips to true only after the user has
+    // acknowledged the expiry warning on the signing page.
+    bool allowExpiredCertificate = false;
 };
 
 struct SigningResult

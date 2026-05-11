@@ -20,6 +20,7 @@
 #include <internal/Crv.h>
 #include <internal/PKCS11TokenInfo.h>
 #include <internal/SlotIdHash.h>
+#include <internal/SlotKindClassifier.h>
 
 #include <pace.h>
 #include <secure_messaging.h>
@@ -44,6 +45,16 @@ constexpr unsigned long kCkfUserPinInitialized = 0x00000008UL;
 
 /// @brief Filter PKCS#15 PINs down to user-auth PINs (drop PUK / CAN /
 ///        PACE / SO entries).
+///
+/// @par Substring priority
+/// Early-returns are ordered to keep classification deterministic when a
+/// label contains more than one match cue. Drop priority (highest first):
+///   1. AODF @c unblockingPin bit set       → not a user PIN
+///   2. @c "puk"                            → unblock-credential, drop
+///   3. @c "can" / @c "pace"                → access-number, not a user PIN
+///   4. @c "so pin" / @c "so " prefix /
+///      @c "security officer" / @c "admin"  → SO PIN, drop
+///   5. otherwise                           → user PIN
 [[nodiscard]] bool isUserPin(const ::pkcs15::PinInfo& pin)
 {
     if (pin.unblockingPin)
@@ -66,23 +77,14 @@ constexpr unsigned long kCkfUserPinInitialized = 0x00000008UL;
     return true;
 }
 
-/// @brief Heuristic PKCS#15-PIN-label → @ref SlotKind classifier.
-///
-/// PKCS#15 does not encode a slot-kind concept; we infer it from the
-/// PIN label so the FNV-1a slot ID is stable across reconnects. Unknown
-/// labels default to @ref SlotKind::Generic.
+/// @brief PKCS#15-PIN-label → @ref SlotKind via the shared classifier.
+///        PKCS#15 does not encode a slot-kind concept; we infer it from
+///        the PIN label so the FNV-1a slot ID is stable across reconnects.
 [[nodiscard]] LibreSCRS::Pkcs11::Internal::SlotKind deriveSlotKind(const ::pkcs15::PinInfo& pin)
 {
     auto label = pin.label;
     std::transform(label.begin(), label.end(), label.begin(), [](unsigned char c) { return std::tolower(c); });
-    if (label.find("sign") != std::string::npos || label.find("qscd") != std::string::npos ||
-        label.find("nonrep") != std::string::npos)
-        return LibreSCRS::Pkcs11::Internal::SlotKind::Sign;
-    if (label.find("auth") != std::string::npos)
-        return LibreSCRS::Pkcs11::Internal::SlotKind::Auth;
-    if (label.find("enc") != std::string::npos || label.find("dec") != std::string::npos)
-        return LibreSCRS::Pkcs11::Internal::SlotKind::Enc;
-    return LibreSCRS::Pkcs11::Internal::SlotKind::Generic;
+    return LibreSCRS::Pkcs11::Internal::classifyFromLabel(label);
 }
 
 } // namespace

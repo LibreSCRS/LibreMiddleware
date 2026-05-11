@@ -15,7 +15,7 @@
 #include <string>
 #include <string_view>
 
-using LibreSCRS::Auth::detail::SecretParameter;
+using LibreSCRS::Auth::SecretParameter;
 using LibreSCRS::Secure::String;
 
 // Positive cases.

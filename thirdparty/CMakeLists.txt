@@ -20,9 +20,9 @@ endif()
 # ──────────────────────────────────────────────────────────────────────────
 # Vendored OpenSC (LibreSCRS fork, pinned commit f049d8677).
 #
-# Built as a STATIC archive via ExternalProject_Add so the future
-# librescrs-opensc-pkcs11 SHARED library (Phase C.2) can link it without
-# pulling a runtime dependency on the host distribution's libopensc.
+# Built as a STATIC archive via ExternalProject_Add so the
+# librescrs-opensc-pkcs11 SHARED library can link it without pulling a
+# runtime dependency on the host distribution's libopensc.
 #
 # See thirdparty/README.md for the pin rationale and update procedure.
 # ──────────────────────────────────────────────────────────────────────────
@@ -51,9 +51,10 @@ set(OPENSC_STATIC_LIB  ${OPENSC_INSTALL_DIR}/lib/libopensc.a)
 set(OPENSC_INCLUDE_SRC   ${OPENSC_SOURCE_DIR}/src)
 set(OPENSC_INCLUDE_BUILD ${OPENSC_BUILD_DIR})
 
-# PCSC strategy: Option A — vendored OpenSC owns its own PCSC session for
-# the cards it claims (rs-eid via srbeid driver, etc.). Phase C.4 of the
-# multi-pin plan will revisit if cross-process PCSC contention surfaces.
+# PCSC strategy: vendored OpenSC owns its own PCSC session for the cards
+# it claims (rs-eid via srbeid driver, etc.). Cross-process PCSC contention
+# is left to the host PC/SC daemon's existing session arbitration; no
+# explicit lock coordination across providers.
 # pkcs-lite is a system dep; presence verified by root CMakeLists' BUILD_OPENSC_PLUGIN
 # probe path, so libpcsclite-dev is expected on build hosts.
 set(OPENSC_CONFIGURE_FLAGS

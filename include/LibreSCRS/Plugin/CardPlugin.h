@@ -101,7 +101,7 @@ namespace LibreSCRS::Plugin {
 ///        - Credential-bearing virtuals (@ref verifyPIN, @ref changePIN,
 ///          @ref unblockPIN, @ref setCredentials) constrain their secret
 ///          parameters via the
-///          @ref LibreSCRS::Auth::detail::SecretParameter concept; only
+///          @ref LibreSCRS::Auth::SecretParameter concept; only
 ///          @c const @ref Secure::String& satisfies it.
 ///        - Per-plugin @c manifest.json drives @ref supportedAtrs,
 ///          capabilities, and identity through the @c librescrs_add_plugin
@@ -322,7 +322,7 @@ public:
         // `const std::string&` trips the assertion at the relaxed declaration's
         // own body — not at a sentinel that has no syntactic connection to
         // the changed line.
-        static_assert(LibreSCRS::Auth::detail::SecretParameter<decltype(pin)>,
+        static_assert(LibreSCRS::Auth::SecretParameter<decltype(pin)>,
                       "verifyPIN credential parameter must be Secure::String const&");
         (void)session;
         (void)pin;
@@ -360,9 +360,9 @@ public:
                                               const LibreSCRS::Secure::String& newPin) const
     {
         // 4.0 hardening: see verifyPIN above for rationale.
-        static_assert(LibreSCRS::Auth::detail::SecretParameter<decltype(oldPin)>,
+        static_assert(LibreSCRS::Auth::SecretParameter<decltype(oldPin)>,
                       "changePIN oldPin parameter must be Secure::String const&");
-        static_assert(LibreSCRS::Auth::detail::SecretParameter<decltype(newPin)>,
+        static_assert(LibreSCRS::Auth::SecretParameter<decltype(newPin)>,
                       "changePIN newPin parameter must be Secure::String const&");
         (void)session;
         (void)pinLabel;
@@ -482,7 +482,7 @@ public:
                                 const LibreSCRS::Secure::String& value)
     {
         // 4.0 hardening: see verifyPIN above for rationale.
-        static_assert(LibreSCRS::Auth::detail::SecretParameter<decltype(value)>,
+        static_assert(LibreSCRS::Auth::SecretParameter<decltype(value)>,
                       "setCredentials value parameter must be Secure::String const&");
         (void)session;
         (void)key;
@@ -521,9 +521,9 @@ public:
                                                const LibreSCRS::Secure::String& newPin) const
     {
         // 4.0 hardening: see verifyPIN above for rationale.
-        static_assert(LibreSCRS::Auth::detail::SecretParameter<decltype(puk)>,
+        static_assert(LibreSCRS::Auth::SecretParameter<decltype(puk)>,
                       "unblockPIN puk parameter must be Secure::String const&");
-        static_assert(LibreSCRS::Auth::detail::SecretParameter<decltype(newPin)>,
+        static_assert(LibreSCRS::Auth::SecretParameter<decltype(newPin)>,
                       "unblockPIN newPin parameter must be Secure::String const&");
         (void)session;
         (void)pinLabel;
@@ -667,7 +667,7 @@ private:
 // template constraints; static_assert in the function body gives the same
 // machine-check guarantee for the concrete API.
 
-static_assert(LibreSCRS::Auth::detail::SecretParameter<decltype(std::declval<const Secure::String&>())>,
+static_assert(LibreSCRS::Auth::SecretParameter<decltype(std::declval<const Secure::String&>())>,
               "SecretParameter concept must accept const Secure::String& (canonical credential reference)");
 
 // Every plugin .so must export THREE functions with C linkage:

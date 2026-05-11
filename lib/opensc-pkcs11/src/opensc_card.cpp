@@ -13,6 +13,7 @@
 #include <internal/Crv.h>
 #include <internal/PKCS11TokenInfo.h>
 #include <internal/SlotIdHash.h>
+#include <internal/SlotKindClassifier.h>
 
 #include <libopensc/errors.h>
 #include <libopensc/opensc.h>
@@ -20,6 +21,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -51,23 +54,38 @@ constexpr unsigned long kCkfUserPinInitialized = 0x00000008UL;
     return true;
 }
 
-/// @brief Heuristic PIN-label → @ref SlotKind classifier (mirrors the
-///        custom Pkcs15 provider's helper so stable IDs stay consistent
-///        across providers when both can see the same card).
+/// @brief PIN-label → @ref SlotKind via the shared classifier so the
+///        FNV-1a stable slot ID stays consistent with the in-tree
+///        custom Pkcs15 provider when both can see the same card.
 [[nodiscard]] LibreSCRS::Pkcs11::Internal::SlotKind deriveSlotKind(const char* labelCstr) noexcept
 {
     if (!labelCstr)
         return LibreSCRS::Pkcs11::Internal::SlotKind::Generic;
     std::string label(labelCstr);
     std::transform(label.begin(), label.end(), label.begin(), [](unsigned char c) { return std::tolower(c); });
-    if (label.find("sign") != std::string::npos || label.find("qscd") != std::string::npos ||
-        label.find("nonrep") != std::string::npos)
-        return LibreSCRS::Pkcs11::Internal::SlotKind::Sign;
-    if (label.find("auth") != std::string::npos)
-        return LibreSCRS::Pkcs11::Internal::SlotKind::Auth;
-    if (label.find("enc") != std::string::npos || label.find("dec") != std::string::npos)
-        return LibreSCRS::Pkcs11::Internal::SlotKind::Enc;
-    return LibreSCRS::Pkcs11::Internal::SlotKind::Generic;
+    return LibreSCRS::Pkcs11::Internal::classifyFromLabel(label);
+}
+
+/// @brief Maximum number of PKCS#15 objects fetched per @c sc_pkcs15_get_objects
+///        call. Realistic AODFs stay well under this; we still warn if a
+///        card hits the ceiling so silent truncation cannot mask a
+///        regression on future high-cardinality cards.
+constexpr std::size_t kMaxObjsLimit = 32;
+
+/// @brief Emit a one-shot stderr warning when @c sc_pkcs15_get_objects
+///        returned exactly the buffer ceiling (likely truncated). Gated
+///        by @c LIBRESCRS_OPENSC_DEBUG to keep production output clean.
+void warnIfBufferFull(int returned, std::size_t limit, const char* what) noexcept
+{
+    if (returned < 0 || static_cast<std::size_t>(returned) < limit)
+        return;
+    static const bool enabled = (std::getenv("LIBRESCRS_OPENSC_DEBUG") != nullptr);
+    if (!enabled)
+        return;
+    std::fprintf(stderr,
+                 "[opensc-pkcs11] WARNING: %s returned %d (== buffer ceiling %zu); "
+                 "AODF may have more entries that were silently truncated\n",
+                 what, returned, limit);
 }
 
 /// @brief Convert an @c sc_pkcs15_id to a @c std::vector<u8>.
@@ -161,28 +179,30 @@ unsigned long OpenScCard::populateSlotsFromAodf()
     if (!p15)
         return Crv::FunctionFailed;
 
-    constexpr std::size_t kMaxObjs = 32;
-
-    sc_pkcs15_object_t* pinObjs[kMaxObjs];
-    int pinCount = sc_pkcs15_get_objects(p15, SC_PKCS15_TYPE_AUTH_PIN, pinObjs, kMaxObjs);
+    sc_pkcs15_object_t* pinObjs[kMaxObjsLimit];
+    int pinCount = sc_pkcs15_get_objects(p15, SC_PKCS15_TYPE_AUTH_PIN, pinObjs, kMaxObjsLimit);
     if (pinCount < 0)
         return Crv::FunctionFailed;
+    warnIfBufferFull(pinCount, kMaxObjsLimit, "sc_pkcs15_get_objects(AUTH_PIN)");
 
     // Fetch all PrKey + Cert objects up-front; per-PIN filtering is by
     // auth_id matching below.
-    sc_pkcs15_object_t* prKeyObjs[kMaxObjs];
-    int prKeyRsaCount = sc_pkcs15_get_objects(p15, SC_PKCS15_TYPE_PRKEY_RSA, prKeyObjs, kMaxObjs);
+    sc_pkcs15_object_t* prKeyObjs[kMaxObjsLimit];
+    int prKeyRsaCount = sc_pkcs15_get_objects(p15, SC_PKCS15_TYPE_PRKEY_RSA, prKeyObjs, kMaxObjsLimit);
+    warnIfBufferFull(prKeyRsaCount, kMaxObjsLimit, "sc_pkcs15_get_objects(PRKEY_RSA)");
     std::vector<sc_pkcs15_object_t*> allKeys;
     if (prKeyRsaCount > 0)
         allKeys.insert(allKeys.end(), prKeyObjs, prKeyObjs + prKeyRsaCount);
 
-    sc_pkcs15_object_t* prKeyEcObjs[kMaxObjs];
-    int prKeyEcCount = sc_pkcs15_get_objects(p15, SC_PKCS15_TYPE_PRKEY_EC, prKeyEcObjs, kMaxObjs);
+    sc_pkcs15_object_t* prKeyEcObjs[kMaxObjsLimit];
+    int prKeyEcCount = sc_pkcs15_get_objects(p15, SC_PKCS15_TYPE_PRKEY_EC, prKeyEcObjs, kMaxObjsLimit);
+    warnIfBufferFull(prKeyEcCount, kMaxObjsLimit, "sc_pkcs15_get_objects(PRKEY_EC)");
     if (prKeyEcCount > 0)
         allKeys.insert(allKeys.end(), prKeyEcObjs, prKeyEcObjs + prKeyEcCount);
 
-    sc_pkcs15_object_t* certObjs[kMaxObjs];
-    int certCount = sc_pkcs15_get_objects(p15, SC_PKCS15_TYPE_CERT_X509, certObjs, kMaxObjs);
+    sc_pkcs15_object_t* certObjs[kMaxObjsLimit];
+    int certCount = sc_pkcs15_get_objects(p15, SC_PKCS15_TYPE_CERT_X509, certObjs, kMaxObjsLimit);
+    warnIfBufferFull(certCount, kMaxObjsLimit, "sc_pkcs15_get_objects(CERT_X509)");
     std::vector<sc_pkcs15_object_t*> allCerts;
     if (certCount > 0)
         allCerts.insert(allCerts.end(), certObjs, certObjs + certCount);
@@ -334,28 +354,30 @@ unsigned long OpenScCard::rebindSlotObjects()
     if (!p15)
         return Crv::FunctionFailed;
 
-    constexpr std::size_t kMaxObjs = 32;
-
     // Fetch all PIN / PrKey / Cert objects from the freshly bound
     // PKCS#15 card, then resolve each slot's borrowed pointers by ID.
-    sc_pkcs15_object_t* pinObjs[kMaxObjs];
-    int pinCount = sc_pkcs15_get_objects(p15, SC_PKCS15_TYPE_AUTH_PIN, pinObjs, kMaxObjs);
+    sc_pkcs15_object_t* pinObjs[kMaxObjsLimit];
+    int pinCount = sc_pkcs15_get_objects(p15, SC_PKCS15_TYPE_AUTH_PIN, pinObjs, kMaxObjsLimit);
     if (pinCount < 0)
         return Crv::FunctionFailed;
+    warnIfBufferFull(pinCount, kMaxObjsLimit, "sc_pkcs15_get_objects(AUTH_PIN) [rebind]");
 
-    sc_pkcs15_object_t* prKeyRsaObjs[kMaxObjs];
-    int prKeyRsaCount = sc_pkcs15_get_objects(p15, SC_PKCS15_TYPE_PRKEY_RSA, prKeyRsaObjs, kMaxObjs);
+    sc_pkcs15_object_t* prKeyRsaObjs[kMaxObjsLimit];
+    int prKeyRsaCount = sc_pkcs15_get_objects(p15, SC_PKCS15_TYPE_PRKEY_RSA, prKeyRsaObjs, kMaxObjsLimit);
+    warnIfBufferFull(prKeyRsaCount, kMaxObjsLimit, "sc_pkcs15_get_objects(PRKEY_RSA) [rebind]");
     std::vector<sc_pkcs15_object_t*> allKeys;
     if (prKeyRsaCount > 0)
         allKeys.insert(allKeys.end(), prKeyRsaObjs, prKeyRsaObjs + prKeyRsaCount);
 
-    sc_pkcs15_object_t* prKeyEcObjs[kMaxObjs];
-    int prKeyEcCount = sc_pkcs15_get_objects(p15, SC_PKCS15_TYPE_PRKEY_EC, prKeyEcObjs, kMaxObjs);
+    sc_pkcs15_object_t* prKeyEcObjs[kMaxObjsLimit];
+    int prKeyEcCount = sc_pkcs15_get_objects(p15, SC_PKCS15_TYPE_PRKEY_EC, prKeyEcObjs, kMaxObjsLimit);
+    warnIfBufferFull(prKeyEcCount, kMaxObjsLimit, "sc_pkcs15_get_objects(PRKEY_EC) [rebind]");
     if (prKeyEcCount > 0)
         allKeys.insert(allKeys.end(), prKeyEcObjs, prKeyEcObjs + prKeyEcCount);
 
-    sc_pkcs15_object_t* certObjs[kMaxObjs];
-    int certCount = sc_pkcs15_get_objects(p15, SC_PKCS15_TYPE_CERT_X509, certObjs, kMaxObjs);
+    sc_pkcs15_object_t* certObjs[kMaxObjsLimit];
+    int certCount = sc_pkcs15_get_objects(p15, SC_PKCS15_TYPE_CERT_X509, certObjs, kMaxObjsLimit);
+    warnIfBufferFull(certCount, kMaxObjsLimit, "sc_pkcs15_get_objects(CERT_X509) [rebind]");
     std::vector<sc_pkcs15_object_t*> allCerts;
     if (certCount > 0)
         allCerts.insert(allCerts.end(), certObjs, certObjs + certCount);

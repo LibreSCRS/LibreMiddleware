@@ -28,7 +28,7 @@ std::string flatten(const CardMap::Key& key)
 
 } // namespace
 
-std::optional<CardMapEntry> CardMap::get(const Key& key) const
+std::optional<CardMapEntry> CardMap::get(const Key& key) const noexcept
 {
     try {
         std::lock_guard lock(mu);
@@ -44,7 +44,7 @@ std::optional<CardMapEntry> CardMap::get(const Key& key) const
     }
 }
 
-void CardMap::put(const Key& key, CardMapEntry entry)
+void CardMap::put(const Key& key, CardMapEntry entry) noexcept
 {
     try {
         std::lock_guard lock(mu);
@@ -56,7 +56,7 @@ void CardMap::put(const Key& key, CardMapEntry entry)
     }
 }
 
-void CardMap::invalidate(const Key& key)
+void CardMap::invalidate(const Key& key) noexcept
 {
     try {
         std::lock_guard lock(mu);
@@ -69,10 +69,16 @@ void CardMap::invalidate(const Key& key)
     }
 }
 
-void CardMap::invalidateAll()
+void CardMap::invalidateAll() noexcept
 {
-    std::lock_guard lock(mu);
-    entries.clear();
+    try {
+        std::lock_guard lock(mu);
+        entries.clear();
+    } catch (...) {
+        // Allocation can occur in some hash-table teardown paths; the
+        // catch keeps the noexcept contract honest. Worst outcome is a
+        // partial clear that the next put() will overwrite.
+    }
 }
 
 } // namespace LibreSCRS::SmartCard

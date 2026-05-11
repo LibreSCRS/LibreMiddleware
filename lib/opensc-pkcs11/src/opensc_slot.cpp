@@ -10,6 +10,8 @@
 #include "opensc_card.h"
 
 #include <internal/Crv.h>
+#include <internal/DerWrap.h>
+#include <internal/MechanismConstants.h>
 #include <internal/PKCS11Card.h>
 
 #include <libopensc/errors.h>
@@ -27,26 +29,21 @@ namespace LibreSCRS::OpenSc::Pkcs11 {
 
 namespace {
 
-/// @brief PKCS#11 v2.40 raw mechanism numeric values.
-constexpr unsigned long kCkmRsaPkcs = 0x00000001UL;
-constexpr unsigned long kCkmRsaPkcsSha256 = 0x00000040UL;
-constexpr unsigned long kCkmRsaPkcsSha384 = 0x00000041UL;
-constexpr unsigned long kCkmRsaPkcsSha512 = 0x00000042UL;
-constexpr unsigned long kCkmRsaPssSha256 = 0x00000043UL;
-constexpr unsigned long kCkmRsaPssSha384 = 0x00000044UL;
-constexpr unsigned long kCkmRsaPssSha512 = 0x00000045UL;
-constexpr unsigned long kCkmEcdsa = 0x00001041UL;
-constexpr unsigned long kCkmEcdsaSha256 = 0x00001044UL;
-constexpr unsigned long kCkmEcdsaSha384 = 0x00001045UL;
-constexpr unsigned long kCkmEcdsaSha512 = 0x00001046UL;
-
-/// @brief PKCS#11 object class constants (CKO_*).
-constexpr unsigned long kCkoCertificate = 1UL;
-constexpr unsigned long kCkoPrivateKey = 3UL;
-
-/// @brief PKCS#11 key type constants (CKK_*).
-constexpr unsigned long kCkkRsa = 0UL;
-constexpr unsigned long kCkkEc = 3UL;
+using LibreSCRS::Pkcs11::Internal::kCkkEc;
+using LibreSCRS::Pkcs11::Internal::kCkkRsa;
+using LibreSCRS::Pkcs11::Internal::kCkmEcdsa;
+using LibreSCRS::Pkcs11::Internal::kCkmEcdsaSha256;
+using LibreSCRS::Pkcs11::Internal::kCkmEcdsaSha384;
+using LibreSCRS::Pkcs11::Internal::kCkmEcdsaSha512;
+using LibreSCRS::Pkcs11::Internal::kCkmRsaPkcs;
+using LibreSCRS::Pkcs11::Internal::kCkmRsaPkcsSha256;
+using LibreSCRS::Pkcs11::Internal::kCkmRsaPkcsSha384;
+using LibreSCRS::Pkcs11::Internal::kCkmRsaPkcsSha512;
+using LibreSCRS::Pkcs11::Internal::kCkmRsaPssSha256;
+using LibreSCRS::Pkcs11::Internal::kCkmRsaPssSha384;
+using LibreSCRS::Pkcs11::Internal::kCkmRsaPssSha512;
+using LibreSCRS::Pkcs11::Internal::kCkoCertificate;
+using LibreSCRS::Pkcs11::Internal::kCkoPrivateKey;
 
 /// @brief Translate a PKCS#11 mechanism + on-card key type into the
 ///        @c sc_pkcs15_compute_signature flags expected by libopensc.
@@ -85,28 +82,6 @@ constexpr unsigned long kCkkEc = 3UL;
     default:
         return std::nullopt;
     }
-}
-
-/// @brief libresign-style DER OCTET STRING wrap for CKA_EC_POINT. Mirrors
-///        the helper in the custom Pkcs15 slot so consumers handle
-///        ec_point identically across providers.
-[[nodiscard]] std::vector<std::uint8_t> derOctetStringWrap(std::span<const std::uint8_t> raw)
-{
-    std::vector<std::uint8_t> out;
-    out.reserve(raw.size() + 4);
-    out.push_back(0x04); // OCTET STRING tag.
-    if (raw.size() < 0x80) {
-        out.push_back(static_cast<std::uint8_t>(raw.size()));
-    } else if (raw.size() <= 0xFF) {
-        out.push_back(0x81);
-        out.push_back(static_cast<std::uint8_t>(raw.size()));
-    } else {
-        out.push_back(0x82);
-        out.push_back(static_cast<std::uint8_t>((raw.size() >> 8) & 0xFF));
-        out.push_back(static_cast<std::uint8_t>(raw.size() & 0xFF));
-    }
-    out.insert(out.end(), raw.begin(), raw.end());
-    return out;
 }
 
 [[nodiscard]] bool isEcKey(const sc_pkcs15_object_t* keyObj) noexcept
@@ -294,7 +269,8 @@ std::vector<LibreSCRS::Pkcs11::Internal::PKCS11ObjectInfo> OpenScSlot::enumerate
                     if (params.der.value && params.der.len > 0)
                         keyPkcs.ecParams.assign(params.der.value, params.der.value + params.der.len);
                     if (point.value && point.len > 0)
-                        keyPkcs.ecPoint = derOctetStringWrap(std::span<const std::uint8_t>{point.value, point.len});
+                        keyPkcs.ecPoint = LibreSCRS::Pkcs11::Internal::derOctetStringWrap(
+                            std::span<const std::uint8_t>{point.value, point.len});
                 }
             }
 

@@ -56,7 +56,11 @@ public:
     /// @param apdu    Borrowed reference to the parent's bound APDU
     ///                helper. Validity is bounded by parent lifetime;
     ///                the slot is destroyed first by base-class layout
-    ///                so the reference cannot dangle in normal use.
+    ///                so the reference cannot dangle on teardown.
+    ///                Across @ref Pkcs15Card::reconnectInline the parent
+    ///                rebuilds the owned @c unique_ptr; the slot's
+    ///                borrow is refreshed via @ref rebindApdu before
+    ///                any post-reconnect operation observes it.
     /// @param pinInfo Snapshot of the AODF entry for this PIN.
     /// @param keys    Subset of @c profile.privateKeys whose @c authId
     ///                references this PIN's @c id (single-PIN cards may
@@ -147,6 +151,23 @@ public:
     /// no card I/O.
     /// @since 4.1
     [[nodiscard]] std::size_t signatureSize(std::span<const std::uint8_t> keyId) const override;
+
+    /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11Slot::onCardReset
+    /// @par Implementation
+    /// Extends the base implementation: in addition to clearing the
+    /// cached PIN / @c loggedIn flag, refreshes the borrowed parent
+    /// @c apdu pointer because @ref Pkcs15Card::reconnectInline rebuilt
+    /// the parent's @c std::unique_ptr<pkcs15::PKCS15Card> from scratch.
+    /// Without this refresh every slot would dereference a dangling
+    /// pointer on the next @ref signData / @ref enumerateObjects.
+    /// Mirrors @c OpenScSlot::rebindObjects on the OpenSC provider.
+    /// @par Thread-safety
+    /// Acquires @c slotMutex (project lock order: @c slotMutex →
+    /// @c cardMutex). The base contract requires the caller (the parent
+    /// card's @c handleReset) to have released @c cardMutex before
+    /// invoking this method.
+    /// @since 4.1
+    void onCardReset() noexcept override;
 
 private:
     /// @brief Borrow the parent @ref Pkcs15Card's APDU helper. Used by

@@ -130,4 +130,14 @@ inline constexpr std::array<uint8_t, 12> kPkcs15Aid = {0xA0, 0x00, 0x00, 0x00, 0
 // PKCS#15 DF file ID
 inline constexpr std::array<uint8_t, 2> DF_PKCS15_FID = {0x50, 0x15};
 
+// SafeSign IC AODF defaults. Used by the deferred-profile path when the
+// applet refuses PKCS#15 directory reads pre-login: the slot must guess
+// a PinInfo to drive the VERIFY apdu, then read the real AODF once
+// authentication succeeds. The reference numbers below are the vendor
+// convention (SafeSign IC token manual, "User PIN" vs "SO PIN" sections);
+// both JCOP21 and Infineon SLE hardware variants ship with the same
+// AODF defaults.
+inline constexpr uint8_t kSafeSignDefaultUserPinRef = 0x03; // User PIN reference.
+inline constexpr uint8_t kSafeSignDefaultSoPinRef = 0x01;   // SO PIN reference.
+
 } // namespace pkcs15

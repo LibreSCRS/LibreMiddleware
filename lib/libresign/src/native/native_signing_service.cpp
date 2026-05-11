@@ -256,9 +256,10 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, const st
         // Certificate expiry enforcement. The native backend's CMS path
         // does not intrinsically reject expired signers — add an explicit
         // check so `allowExpiredCertificate=false` (the default) behaves
-        // consistently with the DSS backend. The flag is the test-build
-        // opt-in used by LibreCelik when the user accepts the
-        // expired-cert warning at the signing page.
+        // consistently with the DSS backend. The flag is the production
+        // user-consent opt-in: the host GUI sets it to true only after
+        // the user has acknowledged the expired-certificate warning on
+        // the signing page.
         {
             auto certDer = token.certificate();
             if (!certDer.empty()) {
