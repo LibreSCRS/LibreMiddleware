@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 /// @file
-/// @brief @ref PKCS11Library implementation routed through the new
-///        Card+Slot architecture (Phase B.6 atomic swap).
+/// @brief @ref PKCS11Library implementation routed through the
+///        multi-PIN Card+Slot architecture.
 
 #include "pkcs11_library.h"
 
@@ -615,6 +615,33 @@ void PKCS11Library::ensureSlotObjectsLoaded(CK_SLOT_ID slotID, LcInt::PKCS11Slot
         entry.objects.push_back(std::move(oe));
     }
     entry.loaded = true;
+}
+
+void PKCS11Library::notifyCardRemoved(const std::string& readerName)
+{
+    // Collect the slot IDs the departing card owned so we can drop
+    // their object caches outside cardSlotLibMutex.
+    std::vector<unsigned long> doomedSlotIds;
+    {
+        std::scoped_lock lk(cardSlotLibMutex);
+        auto cardIt = cardMap.find(readerName);
+        if (cardIt != cardMap.end() && cardIt->second) {
+            for (const auto& slot : cardIt->second->enumerateSlots()) {
+                if (slot)
+                    doomedSlotIds.push_back(slot->stableId());
+            }
+            cardMap.erase(cardIt);
+        }
+        for (auto id : doomedSlotIds)
+            slotMap.erase(id);
+        // Drop the once-flag so the next enumerateSlotIds reprobes.
+        // Resetting (rather than erasing-and-reinserting) keeps any
+        // racing reader alive on its shared_ptr until its call_once
+        // body returns; the next reader will allocate a fresh flag.
+        readerProbeFlags.erase(readerName);
+    }
+    for (auto id : doomedSlotIds)
+        invalidateSlotObjects(static_cast<CK_SLOT_ID>(id));
 }
 
 void PKCS11Library::invalidateSlotObjects(CK_SLOT_ID slotID)

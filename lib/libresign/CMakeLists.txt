@@ -185,8 +185,8 @@ target_compile_features(LibreSign PUBLIC cxx_std_23)
 # be able to resolve the public header — transitive propagation of
 # LibreSCRS_Auth's PUBLIC include directory is the least-friction fix.
 # LibreSCRS_Auth itself is a leaf on LibreSign (no circular dependency).
-# Cycle break (Phase 0 SHARED prerequisite, 2026-05-10): LibreSign no
-# longer PRIVATE-links LibreSCRS_Trust. Cross-target call edges that
+# SHARED-build cycle break: LibreSign no longer PRIVATE-links
+# LibreSCRS_Trust. Cross-target call edges that
 # previously reached into Trust::detail::TrustStoreInternalAccess have
 # been inverted via NativeSigningService::AnchorEmitter — libresign now
 # emits TL anchors and the LibreSCRS_Signing-side bridge owns the merge

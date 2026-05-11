@@ -4,9 +4,6 @@
 /// @file
 /// @brief Unit + property + golden tests for
 ///        @ref LibreSCRS::Signing::layoutVisualSignature.
-///
-/// Spec: knowledge/specs/2026-05-08-vis-sig-fillbox-design.md §8.2 / §8.3
-/// Plan: knowledge/plans/2026-05-08-vis-sig-fillbox-plan.md A5
 
 #include <gtest/gtest.h>
 

@@ -2,16 +2,13 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 /// @file
-/// @brief Phase B.7.5 integration tests for concurrency-safety of the
+/// @brief Integration tests for concurrency-safety of the
 ///        @ref LibreSCRS::Pkcs11::Internal::PKCS11Card +
-///        @ref LibreSCRS::Pkcs11::Internal::PKCS11Slot architecture
-///        (spec §5.3.6).
+///        @ref LibreSCRS::Pkcs11::Internal::PKCS11Slot architecture.
 ///
 /// These tests probe the lock-order invariant (slotMutex → cardMutex)
 /// and the per-slot serialisation contract. They are designed to be
-/// TSan-clean when compiled with @c -fsanitize=thread; TSan execution
-/// happens in a separate build dir during Phase B.8 wall-clock
-/// validation.
+/// TSan-clean when compiled with @c -fsanitize=thread.
 
 #include "MockPKCS11CardProvider.h"
 

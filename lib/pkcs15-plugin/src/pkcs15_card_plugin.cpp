@@ -54,7 +54,8 @@ SessionKey makeSessionKey(LibreSCRS::SmartCard::CardSession& session)
 /// whether a successful PACE handshake has installed an SM filter on
 /// the underlying PCSCConnection. The plugin can therefore re-install
 /// PACE on its own when the SM filter has been torn down between
-/// operations — the failure mode reported in Phase D.2 findings.
+/// operations — the failure mode is a torn-down SM channel between
+/// otherwise-independent plugin calls on the same card.
 struct SessionContext
 {
     LibreSCRS::Secure::String cachedCan;

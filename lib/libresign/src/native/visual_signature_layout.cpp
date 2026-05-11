@@ -5,9 +5,6 @@
 /// @brief Implementation of @ref LibreSCRS::Signing::layoutVisualSignature
 ///        and @ref LibreSCRS::Signing::embeddedAppearanceFontData.
 ///
-/// Spec: knowledge/specs/2026-05-08-vis-sig-fillbox-design.md
-/// Plan: knowledge/plans/2026-05-08-vis-sig-fillbox-plan.md
-///
 /// Public symbols are tagged `LIBRESCRS_PUBLIC_API` via the header. The
 /// translation unit lives inside libresign so it can use the internal
 /// `TtfParser`/`TtfSubset`/`measureTextWidth` machinery directly. The

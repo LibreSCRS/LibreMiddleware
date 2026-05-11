@@ -70,9 +70,8 @@ TEST(PKCS15PluginTest, CanHandleAlwaysFalse)
 // PACE-protected PKCS#15 cards (GEO QSCD, NAM): the override accepts
 // the "can" key without throwing and tolerates unknown keys silently,
 // matching the emrtd-plugin contract. End-to-end PACE re-installation
-// requires real hardware and is exercised manually per the multi-PIN
-// Phase D.2 validation matrix; no in-tree mock for PCSCConnection +
-// SecureMessaging exists.
+// requires real hardware and is exercised through the e2e real-card
+// suite; no in-tree mock for PCSCConnection + SecureMessaging exists.
 TEST(PKCS15PluginTest, SetCredentialsAcceptsCanAndIgnoresUnknownKeys)
 {
     CardPluginService registry{pluginDir()};

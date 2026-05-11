@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 /// @file
-/// @brief Phase B.7.2 integration tests for per-slot login isolation
-///        (spec §5.3.3). A successful login on one slot must not
+/// @brief Integration tests for per-slot login isolation on the
+///        multi-PIN PKCS#11 path. A successful login on one slot must not
 ///        authenticate sibling slots; logout is similarly per-slot;
 ///        failed-login retry counters and PIN-lock behaviour are
 ///        per-slot.

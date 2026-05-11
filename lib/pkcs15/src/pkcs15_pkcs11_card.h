@@ -142,9 +142,8 @@ private:
 ///        PKCS#15 family.
 ///
 /// @ref probe constructs a @ref Pkcs15Card and returns it on successful
-/// bind. The legacy @c LibreSCRS::SmartCard::Internal::PKCS11CardProvider surface (the older
-/// @c pkcs15::Pkcs15PKCS11Provider class) was retired in Phase B.6 — this
-/// is now the canonical PKCS#15 provider.
+/// bind. The canonical PKCS#15 provider on the multi-PIN
+/// @ref LibreSCRS::Pkcs11::Internal::PKCS11CardProvider surface.
 ///
 /// @since 4.1
 class Pkcs15PKCS11Provider final : public LibreSCRS::Pkcs11::Internal::PKCS11CardProvider

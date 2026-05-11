@@ -534,6 +534,51 @@ TEST(SigningRequestBuilderTest, CertificateLabelRoundTrips)
     EXPECT_EQ(req.certificateLabel(), "My Signing Cert");
 }
 
+TEST(SigningRequestBuilderTest, AllowExpiredCertDefaultsFalse)
+{
+    SigningRequest::Builder b;
+    b.inputFile("/tmp/in.pdf").outputFile("/tmp/out.pdf").format(SignatureFormat::Pades);
+    auto req = std::move(b).build();
+    EXPECT_FALSE(req.allowExpiredCert());
+}
+
+TEST(SigningRequestBuilderTest, AllowExpiredCertRoundTrips)
+{
+    SigningRequest::Builder b;
+    b.inputFile("/tmp/in.pdf").outputFile("/tmp/out.pdf").format(SignatureFormat::Pades).allowExpiredCert(true);
+    auto req = std::move(b).build();
+    EXPECT_TRUE(req.allowExpiredCert());
+}
+
+TEST(SigningServiceBridgeTranslationTest, ForwardsAllowExpiredCert)
+{
+    // Default request: bridge must produce allowExpiredCertificate=false.
+    {
+        LibreSCRS::Signing::SigningRequest::Builder b;
+        b.inputFile("/tmp/in.pdf");
+        b.outputFile("/tmp/out.pdf");
+        b.format(LibreSCRS::Signing::SignatureFormat::Pades);
+        auto request = std::move(b).build();
+
+        libresign::SigningRequest out;
+        LibreSCRS::Signing::detail::translatePublicRequestToLibresign(request, out);
+        EXPECT_FALSE(out.allowExpiredCertificate);
+    }
+    // Opt-in: bridge must propagate the flag.
+    {
+        LibreSCRS::Signing::SigningRequest::Builder b;
+        b.inputFile("/tmp/in.pdf");
+        b.outputFile("/tmp/out.pdf");
+        b.format(LibreSCRS::Signing::SignatureFormat::Pades);
+        b.allowExpiredCert(true);
+        auto request = std::move(b).build();
+
+        libresign::SigningRequest out;
+        LibreSCRS::Signing::detail::translatePublicRequestToLibresign(request, out);
+        EXPECT_TRUE(out.allowExpiredCertificate);
+    }
+}
+
 // A stub CardPlugin that advertises PKI but whose sign() is never reached —
 // we use it to satisfy the SigningService::sign signature. The bridge must
 // resolve the signing path through libresign, not by calling cardPlugin.sign().

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 /// @file
-/// @brief Phase A type-contract tests for the multi-PIN PKCS#11 base
+/// @brief Type-contract tests for the multi-PIN PKCS#11 base
 ///        classes. These tests exercise only the lifecycle / shape of
 ///        @ref LibreSCRS::Pkcs11::Internal::PKCS11Card and
 ///        @ref LibreSCRS::Pkcs11::Internal::PKCS11Slot — no real card I/O.
@@ -89,11 +89,9 @@ TEST_F(PKCS11LifecycleContract, MultipleSlotsAllDestroyed)
     EXPECT_EQ(cardDtorCount.load(), 1);
 }
 
-// -- Phase B.6b extension surface ----------------------------------
-// signWithDigestInfo / signatureSize / isLoggedIn are added to the
-// Slot contract before the legacy library swap (B.6c). The mock
-// returns deterministic values; the assertions below pin the surface
-// so subclasses cannot quietly drop overrides.
+// -- Extended slot contract: signWithDigestInfo / signatureSize / isLoggedIn
+// The mock returns deterministic values; the assertions below pin the
+// surface so subclasses cannot quietly drop overrides.
 
 TEST_F(PKCS11SlotContract, IsLoggedInDefaultsFalse)
 {

@@ -4,9 +4,11 @@
 /// @file
 /// @brief Default-implemented members of @ref LibreSCRS::Pkcs11::Internal::PKCS11Slot.
 ///
-/// Phase A introduces only the type contract — concrete login / logout /
-/// enumerateObjects / signData / mechanisms paths are left pure-virtual on
-/// the base and will be implemented per-card-family in subsequent phases.
+/// The abstract base implements only state common to every concrete
+/// slot — slotMutex bookkeeping, token-info snapshotting, the
+/// onCardReset() default. Per-card-family transport (login, logout,
+/// enumerateObjects, signData, mechanisms) is pure-virtual and lives
+/// in each concrete subclass.
 
 #include "internal/PKCS11Card.h"
 #include "internal/PKCS11Slot.h"
@@ -27,6 +29,18 @@ PKCS11TokenInfo PKCS11Slot::tokenInfo() const
     return cachedTokenInfo;
 }
 
+void PKCS11Slot::onCardReset() noexcept
+{
+    // RESET drops the card-side auth context; the cached PIN and
+    // loggedIn flag must mirror that. Acquired under slotMutex so the
+    // visibility of the writes is the same as the login() / logout()
+    // path. Caller (PKCS11Card::handleReset) does NOT hold cardMutex
+    // when invoking us (project lock order: slotMutex → cardMutex).
+    std::scoped_lock lock(slotMutex);
+    cachedPin.clear();
+    loggedIn = false;
+}
+
 bool PKCS11Slot::isLoggedIn() const noexcept
 {
     // Default implementation: the inherited @ref loggedIn flag is the
@@ -40,8 +54,8 @@ bool PKCS11Slot::isLoggedIn() const noexcept
     return loggedIn;
 }
 
-// Friend-mediated parent accessors (Phase B). PKCS11Slot is the friend
-// of PKCS11Card; concrete slot subclasses (Pkcs15Slot, CardEdgeSlot, ...)
+// Friend-mediated parent accessors. PKCS11Slot is the friend of
+// PKCS11Card; concrete slot subclasses (Pkcs15Slot, OpenScSlot, ...)
 // are NOT friends and route protected-state access through these
 // statics so the friendship boundary stays a single point.
 

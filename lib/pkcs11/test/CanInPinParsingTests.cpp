@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 /// @file
-/// @brief Phase B.7.3 integration tests for CAN-in-PIN parsing and PACE
-///        deferral (spec §5.3.4). Verifies that:
+/// @brief Integration tests for CAN-in-PIN parsing and PACE
+///        deferral on the multi-PIN PKCS#11 path. Verifies that:
 ///         - "CAN:PIN" splits correctly on PACE-needed cards;
 ///         - PACE runs exactly once for the first sibling, sibling slot
 ///           logins reuse the cached CAN (no second PACE);

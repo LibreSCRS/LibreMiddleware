@@ -57,17 +57,17 @@ static void pkcs11_debug(const char* fmt, ...)
 // Shared lock for concurrent C_* operations, exclusive lock for C_Initialize/C_Finalize.
 // Fine-grained locking (per-slot mutex, session mutex) lives inside PKCS11Library.
 //
-// Implemented: fine-grained locking via three-phase sign pattern.
+// Implemented: fine-grained locking via three-step sign pattern.
 //
 //   sign() and signFinal() use a SessionBusyGuard RAII class to release
-//   sessionMutex during card I/O (Phase B), holding only the per-slot
+//   sessionMutex during card I/O (step 2), holding only the per-slot
 //   mutex. A per-session `busy` flag prevents concurrent operations on the
 //   same session while card I/O is in progress. Operations on different
 //   sessions proceed without blocking.
 //
-//   Phase A (sessionMutex): validate, extract signState, set busy, unlock.
-//   Phase B (slot mutex only): card I/O via provider->signData/signMessage.
-//   Phase C (~SessionBusyGuard): relock sessionMutex, clear busy.
+//   Step 1 (sessionMutex): validate, extract signState, set busy, unlock.
+//   Step 2 (slot mutex only): card I/O via provider->signData/signMessage.
+//   Step 3 (~SessionBusyGuard): relock sessionMutex, clear busy.
 static std::shared_mutex libraryMutex;
 static std::unique_ptr<PKCS11Library> library;
 

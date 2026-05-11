@@ -19,8 +19,8 @@
 /// @par ABI rationale
 /// `std::stop_token` deliberately does NOT appear in any exported symbol
 /// of the LibreMiddleware public ABI: cross-toolchain `<stop_token>` ABI
-/// (libstdc++ vs Apple libc++ with `-fexperimental-library` per
-/// `feedback_apple_clang_experimental.md`) is the kind of standard-library
+/// (libstdc++ vs Apple libc++ with `-fexperimental-library`) is the
+/// kind of standard-library
 /// implementation detail the public API explicitly hides behind
 /// @ref LibreSCRS::CancelToken. Both @ref CancelTokenInternalAccess and
 /// @ref stopTokenFrom are therefore defined inline in this header so the

@@ -57,9 +57,9 @@ struct LIBRESCRS_PUBLIC_API CardMapEntry
 /// @par Ownership
 /// CardMap is intended for shared ownership across actors that touch the
 /// same card from different angles (CardPlugin entries and PKCS#11
-/// providers). Per @ref feedback_singleton_patterns.md it is NOT a
-/// global singleton; consumers receive a `std::shared_ptr<CardMap>` via
-/// constructor injection.
+/// providers). It is NOT a global singleton; consumers receive a
+/// `std::shared_ptr<CardMap>` via constructor injection per the
+/// project-wide DI policy.
 ///
 /// @par Lifetime
 /// Entries are invalidated explicitly via @ref invalidate (typically

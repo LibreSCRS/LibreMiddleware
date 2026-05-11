@@ -8,7 +8,8 @@
 /// Implements PACE / probe / bind by reusing the existing PKCS#15 APDU
 /// helper and distributes the per-PIN view across owned @ref Pkcs15Slot
 /// instances. Single-PIN path is exercised today (eID, NAM); multi-PIN
-/// path is real-card validated in Phase D.
+/// path is real-card validated against multi-PIN PKCS#15 cards in the
+/// E2E test suite.
 
 #include "pkcs15_pkcs11_card.h"
 
@@ -215,8 +216,8 @@ unsigned long Pkcs15Card::bind(const std::string& reader)
     if (needsPace && cachedCan.empty()) {
         // Defer applet-select until login() supplies CAN-in-PIN. No
         // slots are published yet; PKCS#11 layer surfaces an empty
-        // token list until login completes the bind. Phase D real-card
-        // validation will exercise this branch end-to-end.
+        // token list until login completes the bind. The deferred path
+        // is exercised by the multi-PIN E2E real-card suite.
         return Crv::Ok;
     }
 
@@ -231,7 +232,8 @@ unsigned long Pkcs15Card::bind(const std::string& reader)
     // in the process (same reader + ATR), seed the freshly-constructed
     // helper with the cached path/P2 so post-PACE SELECT picks up the
     // EF.DIR fallback without re-running the probe under the SM
-    // tunnel — the secondary blocker called out in Phase D.2 findings.
+    // tunnel — the SM-channel-aware probe path is the slow one on
+    // PACE-protected cards.
     if (cardMap) {
         const auto key = makeCardMapKey(reader, conn->getATR());
         if (auto entry = cardMap->get(key)) {

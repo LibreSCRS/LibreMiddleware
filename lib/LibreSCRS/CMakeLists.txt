@@ -377,7 +377,7 @@ target_link_libraries(LibreSCRS_All INTERFACE
 add_library(LibreSCRS::All ALIAS LibreSCRS_All)
 
 # ──────────────────────────────────────────────────────────────────────────
-# CMake Config-package export (Phase 0 of LibreKDE roadmap).
+# CMake Config-package export for downstream find_package consumers.
 #
 # Active when LIBREMIDDLEWARE_BUILD_SHARED=ON. Each of the six public
 # archive-or-shared targets plus the LibreSCRS_Secure INTERFACE

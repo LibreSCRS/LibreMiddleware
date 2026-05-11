@@ -246,9 +246,8 @@ void dispatchMonitorEvent(std::shared_ptr<AutoReaderWorker> worker, const LibreS
     //
     // Joining here would block the dispatch thread for the full duration
     // of the previous read cycle.
-    // On Linux SCardCancel() does not abort an in-progress SCardTransmit
-    // (per memory feedback_scard_cancel_linux), so cooperative
-    // cancelFlag-based cancellation can still leave the worker pinned for
+    // On Linux SCardCancel() does not abort an in-progress SCardTransmit,
+    // so cooperative cancelFlag-based cancellation can still leave the worker pinned for
     // up to ~30s waiting on the kernel-side PC/SC stack. Joining at this
     // seam serialised the whole monitor event loop behind that wait.
     //
@@ -259,8 +258,8 @@ void dispatchMonitorEvent(std::shared_ptr<AutoReaderWorker> worker, const LibreS
     // out at line 238) and are intentionally NOT joined by the dtor — they
     // self-clean up after cancelFlag releases the cooperative-cancel path
     // and the kernel returns from SCardTransmit. At process exit the OS
-    // reaps any still-running threads. This is the established "async
-    // cleanup" pattern documented in feedback_scard_cancel_linux.
+    // reaps any still-running threads. This is the async-cleanup pattern
+    // for the Linux SCardCancel limitation noted above.
     if (hadPrevious && previous.worker.joinable())
         previous.worker.detach();
 }

@@ -63,6 +63,7 @@ void translatePublicRequestToLibresign(const LibreSCRS::Signing::SigningRequest&
     out.format = mapFormat(request.format());
     out.packaging = mapPackaging(request.packaging());
     out.level = mapLevel(request.level());
+    out.allowExpiredCertificate = request.allowExpiredCert();
 
     // Signature-dictionary fields (ISO 32000-1:2008 §12.8.1): independent of
     // visual appearance. Always forwarded so an invisible signature can

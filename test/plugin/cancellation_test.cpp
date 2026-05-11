@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 /// @file
-/// @brief Phase 1 (LM 4.0 CancelToken migration): NVI + LibreSCRS::CancelToken
-///        cancellation.
+/// @brief NVI + LibreSCRS::CancelToken cancellation on the CardPlugin
+///        readCard wrapper.
 ///
 /// The public @ref LibreSCRS::Plugin::CardPlugin::readCard wraps the
 /// protected virtual @ref LibreSCRS::Plugin::CardPlugin::doReadCard.

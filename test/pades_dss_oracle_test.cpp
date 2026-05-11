@@ -2,12 +2,9 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 /// @file
-/// @brief Cross-backend oracle test for the rc2 visual-signature
-///        FILL_BOX layout. Compares the native PAdES emitter output
-///        against DSS (iText FILL_BOX) for the same `(text, box)`
-///        pair.
-///
-/// Spec §9 layer 4 / Plan B4 / feedback_dss_test_oracle.md.
+/// @brief Cross-backend oracle test for the visual-signature FILL_BOX
+///        layout. Compares the native PAdES emitter output against
+///        DSS (iText FILL_BOX) for the same `(text, box)` pair.
 ///
 /// Acceptance: line count exact match, font size within ±0.5 pt,
 /// total text height within ±5 %.
@@ -120,8 +117,7 @@ TEST(PAdESDssOracle, NativeEmitterMatchesLayoutAPI)
 //
 // SKIPPED unless: LIBRESIGN_HAS_DSS is defined AND the DSS Java
 // service is up AND SoftHSM2 is available. This is the explicit
-// `cmake -DSIGNING_BACKEND=both` test path documented in
-// feedback_dss_test_oracle.md.
+// `cmake -DSIGNING_BACKEND=both` test path.
 TEST(PAdESDssOracle, DSSCompareLayoutMetrics)
 {
     // The full DSS round-trip requires:
@@ -139,11 +135,10 @@ TEST(PAdESDssOracle, DSSCompareLayoutMetrics)
     // The infrastructure setup is non-trivial and lives in
     // SigningIntegrationTests.cpp under SIGNING_BACKEND=both. To
     // avoid duplicating the harness here, this test skips with a
-    // descriptive message — the manual rc2 release-gate workflow
+    // descriptive message — the manual release-gate workflow
     // covers it via the `signing_integration` suite.
     GTEST_SKIP() << "DSS cross-backend oracle requires SIGNING_BACKEND=both + SoftHSM2 + DSS service; "
-                 << "covered by SigningIntegrationTests under that build configuration. "
-                 << "See feedback_dss_test_oracle.md.";
+                 << "covered by SigningIntegrationTests under that build configuration.";
 }
 
 #else // LIBRESIGN_HAS_NATIVE

@@ -9,9 +9,8 @@
 
 /// @file
 /// @brief Header-only configurable mock provider, card, and slot used
-///        by the Phase B integration tests of the multi-PIN PKCS#11
-///        refactor (multi-slot, login isolation, CAN-in-PIN, reconnect,
-///        concurrency).
+///        by the multi-PIN PKCS#11 integration tests (multi-slot,
+///        login isolation, CAN-in-PIN, reconnect, concurrency).
 ///
 /// Each registered reader maps to a @ref CardSpec describing PACE flag,
 /// CAN, and per-slot PIN+label. The provider's @ref probe() returns a
@@ -278,7 +277,7 @@ private:
     bool signFaultPending{false};
 };
 
-/// @brief Configurable mock provider used by Phase B integration tests.
+/// @brief Configurable mock provider used by the multi-PIN integration tests.
 ///
 /// Each registered reader maps to a @ref MockCardSpec describing PACE
 /// flag, CAN, and per-slot PIN+label. @ref probe constructs and binds a

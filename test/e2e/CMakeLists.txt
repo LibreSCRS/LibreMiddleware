@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # SPDX-FileCopyrightText: 2026 hirashix0
 #
-# E2E real-card tests for the PKCS#11 multi-PIN refactor (Phase D.1).
+# E2E real-card tests for the multi-PIN PKCS#11 path.
 # Every test is gated by env vars (LIBRESCRS_TEST_PIN,
 # LIBRESCRS_TEST_PIN_QSCD, LIBRESCRS_TEST_CAN); without them set every
 # test calls GTEST_SKIP() so the suite is safe to run on CI / dev
@@ -23,12 +23,16 @@ include(GoogleTest)
 add_executable(librescrs_pkcs11_e2e_tests
     Pkcs11GeoMultiPinTests.cpp
     Pkcs11NamSignTests.cpp
+    Pkcs11PksSignTests.cpp
     pin_guard.h
 )
 
+# Pkcs11PksSignTests verifies signatures against the on-card cert's
+# public key with EVP_PKEY_verify, so this binary now needs OpenSSL.
 target_link_libraries(librescrs_pkcs11_e2e_tests PRIVATE
     GTest::gtest_main
     librescrs-pkcs11
+    OpenSSL_Crypto
 )
 
 target_include_directories(librescrs_pkcs11_e2e_tests PRIVATE

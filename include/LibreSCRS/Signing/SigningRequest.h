@@ -168,6 +168,21 @@ public:
     /// @since 4.0.
     [[nodiscard]] bool hasTsaOverride() const noexcept;
 
+    /// @brief When @c true, the signing service does not refuse a
+    ///        certificate whose @c notAfter is in the past.
+    ///
+    /// Default @c false: an expired signing certificate aborts the sign
+    /// with @ref SignStatus::SigningError. Callers that have surfaced an
+    /// explicit warning to the user and obtained acknowledgement may set
+    /// this flag to @c true to let the sign proceed. The resulting
+    /// signature will still be flagged invalid by standards-compliant
+    /// validators (eIDAS Article 26: a qualified signature requires a
+    /// certificate valid at the time of signing); the flag only suppresses
+    /// the @em local pre-flight refusal, it does not retroactively make
+    /// the produced signature valid downstream.
+    /// @since 4.1
+    [[nodiscard]] bool allowExpiredCert() const noexcept;
+
 private:
     friend class Builder;
     SigningRequest();
@@ -239,6 +254,15 @@ public:
     ///       @endcode
     /// @since 4.0
     Builder& tsaOverride(TsaProvider provider);
+    /// @brief Allow a sign to proceed even when the signing certificate's
+    ///        @c notAfter is in the past.
+    ///
+    /// Default behaviour (flag unset / @c false) refuses the sign with
+    /// @ref SignStatus::SigningError. Hosts that surface an explicit
+    /// expired-cert warning to the user and receive acknowledgement set
+    /// this flag to honour that consent.
+    /// @since 4.1
+    Builder& allowExpiredCert(bool allow) noexcept;
 
     /// @brief Validate and produce a @ref SigningRequest.
     /// @throws std::invalid_argument if required fields are missing or

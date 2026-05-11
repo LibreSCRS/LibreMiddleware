@@ -52,12 +52,11 @@ constexpr std::string_view kAppearanceFontTag = "F1";
 // Combined: 4 + 128 = 132. Standard for digital signature widgets.
 constexpr int kSigFieldAnnotFlags = 132;
 
-// PDF text rendering parameters for the visual signature appearance now
+// PDF text rendering parameters for the visual signature appearance
 // come from the public layout API
-// (LibreSCRS::Signing::layoutVisualSignature, rc2). The pre-rc2 fixed
-// `kAppearanceFontSize` / `kAppearanceLineHeight` / `kAppearanceLeftMargin`
-// constants are gone — the algorithm picks each per signing call, with
-// the floor / ceiling / margin / leading sentinels exposed as public
+// (LibreSCRS::Signing::layoutVisualSignature). The algorithm picks
+// font size / leading / left margin per signing call, with the
+// floor / ceiling / margin / leading sentinels exposed as public
 // `kAppearance*` constants in <LibreSCRS/Signing/VisualSignatureLayout.h>.
 
 // ---- Hex encoding ----

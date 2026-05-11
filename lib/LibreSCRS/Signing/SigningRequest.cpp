@@ -24,6 +24,7 @@ struct LIBRESCRS_INTERNAL SigningRequest::Impl
     std::string certificateLabel;
     std::optional<VisualSignatureParams> visualParams;
     TsaProvider tsaOverride;
+    bool allowExpiredCert = false;
 };
 
 SigningRequest::SigningRequest() : d(std::make_unique<Impl>()) {}
@@ -91,6 +92,11 @@ bool SigningRequest::hasTsaOverride() const noexcept
     return static_cast<bool>(d->tsaOverride);
 }
 
+bool SigningRequest::allowExpiredCert() const noexcept
+{
+    return d->allowExpiredCert;
+}
+
 struct LIBRESCRS_INTERNAL SigningRequest::Builder::Impl
 {
     SigningRequest req;
@@ -154,6 +160,11 @@ SigningRequest::Builder& SigningRequest::Builder::visualParams(VisualSignaturePa
 SigningRequest::Builder& SigningRequest::Builder::tsaOverride(TsaProvider provider)
 {
     d->req.d->tsaOverride = std::move(provider);
+    return *this;
+}
+SigningRequest::Builder& SigningRequest::Builder::allowExpiredCert(bool allow) noexcept
+{
+    d->req.d->allowExpiredCert = allow;
     return *this;
 }
 

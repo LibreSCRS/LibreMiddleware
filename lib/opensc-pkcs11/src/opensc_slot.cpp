@@ -450,7 +450,9 @@ std::vector<std::uint8_t> OpenScSlot::signWithDigestInfo(std::span<const std::ui
 
 std::size_t OpenScSlot::signatureSize(std::span<const std::uint8_t> keyId) const
 {
-    // Lock-free; keys vector immutable post-construction.
+    // keyObjects is mutated by rebindObjects() on reconnect; serialise
+    // the read under the same slotMutex other slot operations use.
+    std::scoped_lock lock(slotMutex);
     for (auto* k : keyObjects) {
         if (!keyMatchesId(k, keyId))
             continue;

@@ -35,9 +35,9 @@ namespace LibreSCRS::Pkcs11::Internal {
 /// @par Thread-safety
 /// The card owns @ref cardMutex which serialises low-level transport
 /// (APDU exchange, reconnect). Slots acquire it through controlled
-/// accessors introduced in Phase B; for now @ref PKCS11Slot is a
-/// @c friend so the boundary can be established without exposing
-/// transport internals through the public API.
+/// accessors mediated by friendship: @ref PKCS11Slot is a @c friend so
+/// the boundary can be established without exposing transport
+/// internals through the public API.
 ///
 /// @par Destruction order
 /// @ref slots is declared LAST among data members so it is destroyed

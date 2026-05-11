@@ -626,12 +626,14 @@ std::vector<std::uint8_t> Pkcs15Slot::signWithDigestInfo(std::span<const std::ui
 
 std::size_t Pkcs15Slot::signatureSize(std::span<const std::uint8_t> keyId) const
 {
-    // Pre-IO size derivation. Reads from the immutable `keys` snapshot
-    // populated at construction; no card I/O, no lock required for the
-    // const view (the vector is never re-bound). RSA path uses the
-    // PrKDF-reported keySizeBits / 8; ECDSA derives from the curve
-    // length implied by the keySizeBits field (PKCS#15 surfaces the
-    // bit length of the field, e.g. 256 for P-256).
+    // Pre-IO size derivation. `keys` may be populated lazily under the
+    // deferred-profile path (login() mutates it after a successful
+    // applet open), so the read must serialise under slotMutex with
+    // the writers. RSA path uses the PrKDF-reported keySizeBits / 8;
+    // ECDSA derives from the curve length implied by the keySizeBits
+    // field (PKCS#15 surfaces the bit length of the field, e.g. 256
+    // for P-256).
+    std::scoped_lock lock(slotMutex);
     for (const auto& k : keys) {
         if (k.id.size() != keyId.size())
             continue;

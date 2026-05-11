@@ -515,11 +515,11 @@ if(BUILD_SIGNING)
             GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
         gtest_discover_tests(PAdESUnicodeE2ETests)
 
-        # rc2 visual-signature FILL_BOX cross-backend oracle. Self-
+        # Visual-signature FILL_BOX cross-backend oracle. Self-
         # consistency (native emitter vs layoutVisualSignature) runs
         # under SIGNING_BACKEND=native|both. Full DSS oracle skips
         # silently unless SIGNING_BACKEND=both AND SoftHSM2 + DSS Java
-        # service are reachable (see feedback_dss_test_oracle.md).
+        # service are reachable.
         add_executable(PAdESDssOracleTests pades_dss_oracle_test.cpp)
         target_link_libraries(PAdESDssOracleTests
             PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
@@ -734,9 +734,8 @@ target_link_libraries(AtrMatchingTests PRIVATE
 )
 gtest_discover_tests(AtrMatchingTests)
 
-# Phase 1 (LM 4.0 CancelToken migration): NVI readCard wrapper observes a
-# LibreSCRS::CancelToken and short-circuits before dispatching to doReadCard
-# when isCancelled() returns true.
+# NVI readCard wrapper observes a LibreSCRS::CancelToken and short-circuits
+# before dispatching to doReadCard when isCancelled() returns true.
 add_executable(CancellationNviTests
     plugin/cancellation_test.cpp
 )
@@ -797,7 +796,7 @@ target_compile_definitions(ManifestCodegenTests PRIVATE
 )
 gtest_discover_tests(ManifestCodegenTests)
 
-# Phase D.1 (PKCS#11 multi-PIN) — real-card E2E tests against the live
+# Real-card E2E tests for the multi-PIN PKCS#11 path against the live
 # librescrs-pkcs11.so. Always built so the test exe compiles in CI;
 # every test SKIPs at runtime when the env vars (LIBRESCRS_TEST_PIN,
 # LIBRESCRS_TEST_PIN_QSCD, LIBRESCRS_TEST_CAN) are unset.

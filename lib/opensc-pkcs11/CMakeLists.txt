@@ -2,11 +2,11 @@
 # SPDX-FileCopyrightText: 2026 hirashix0
 #
 # OpenScPKCS11Provider — broadest-fallback PKCS#11 provider backed by the
-# vendored static OpenSC archive (Phase C.1 in the multi-PIN refactor).
-# Registered FIRST (priority 1) by lib/pkcs11 when LIBRESCRS_VENDOR_OPENSC
-# is on; any PKCS#15-shaped card that OpenSC's emulator chain or built-in
-# driver recognises gets a chance to surface here before the project's
-# custom Pkcs15PKCS11Provider runs.
+# vendored static OpenSC archive. Registered FIRST (priority 1) by
+# lib/pkcs11 when LIBRESCRS_VENDOR_OPENSC is on; any PKCS#15-shaped card
+# that OpenSC's emulator chain or built-in driver recognises gets a
+# chance to surface here before the project's custom Pkcs15PKCS11Provider
+# runs.
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

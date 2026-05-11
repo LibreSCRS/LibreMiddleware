@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 //
-// PIN-guard pattern per feedback_pin_guard_pattern.md:
+// PIN-guard pattern for real-card tests:
 // - g_pinFailed shared across the test binary
 // - SKIP_IF_PIN_FAILED first line of every real-card test
 // - LOGIN_OR_ABORT wraps real-card C_Login; aborts the suite on PIN

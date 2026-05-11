@@ -2,11 +2,11 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 /// @file
-/// @brief Phase B.7.1 integration tests for multi-slot enumeration via
+/// @brief Integration tests for multi-slot enumeration via
 ///        @ref LibreSCRS::Pkcs11::Internal::Test::MockPKCS11CardProvider.
-///        Tests pin the spec §5.3.2 contract: a card with N PINs surfaces
-///        N slots, each with a distinct, deterministic stable ID, and
-///        each slot's tokenInfo carries the matching PIN label.
+///        A card with N PINs surfaces N slots, each with a distinct,
+///        deterministic stable ID, and each slot's tokenInfo carries
+///        the matching PIN label.
 
 #include "MockPKCS11CardProvider.h"
 

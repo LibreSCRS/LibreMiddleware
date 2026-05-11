@@ -10,9 +10,6 @@
 ///        consumers that need to render the same font as the embedded PDF
 ///        subset.
 ///
-/// Spec:  knowledge/specs/2026-05-08-vis-sig-fillbox-design.md
-/// Plan:  knowledge/plans/2026-05-08-vis-sig-fillbox-plan.md
-///
 /// The PAdES native engine and every GUI preview surface (LibreCelik,
 /// LibreMac, future LibreKDE) feed the same `(text, box)` pair into
 /// @ref LibreSCRS::Signing::layoutVisualSignature and render the returned

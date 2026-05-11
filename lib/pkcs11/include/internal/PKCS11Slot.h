@@ -202,10 +202,28 @@ public:
     /// @since 4.1
     [[nodiscard]] virtual std::vector<unsigned long> mechanisms() const = 0;
 
+    /// @brief Invalidate per-slot authentication after the parent card
+    ///        has been reconnected / reset.
+    ///
+    /// PC/SC RESET drops the card-side security context, so any cached
+    /// PIN and the @ref loggedIn flag are no longer correct: PKCS#11
+    /// consumers must re-login before sign operations succeed. The base
+    /// implementation cleanses @ref cachedPin and clears @ref loggedIn
+    /// under @ref slotMutex; subclasses with extra authentication state
+    /// override and chain to the base.
+    /// @par Thread-safety
+    /// Caller MUST NOT hold the parent card's @c cardMutex when
+    /// invoking this method — it acquires @ref slotMutex, and the
+    /// project lock order is @c slotMutex → @c cardMutex.
+    /// @ref PKCS11Card::handleReset enforces this by releasing
+    /// @c cardMutex before walking the slot list.
+    /// @since 4.1
+    virtual void onCardReset() noexcept;
+
     /// @brief Stable slot ID (FNV-1a of reader || pinId || slotKind).
     /// @return Stable @c CK_SLOT_ID surfaced through the PKCS#11 ABI.
-    ///         Populated by subclasses during bind; defaulted to 0 in
-    ///         Phase A pending the FNV-1a wiring landing in Phase B.
+    ///         Populated by subclasses during bind via the FNV-1a hash
+    ///         in @ref slot_id_hash.h; defaults to 0 before bind.
     /// @par Thread-safety
     /// Lock-free; @ref stableSlotId is written exactly once during
     /// construction / bind and read-only thereafter.
@@ -304,8 +322,8 @@ protected:
     PKCS11TokenInfo cachedTokenInfo;
 
     /// @brief Stable PKCS#11 @c CK_SLOT_ID. Populated by the concrete
-    ///        slot subclass via FNV-1a hashing in Phase B; default
-    ///        zero-initialised in Phase A.
+    ///        slot subclass via the FNV-1a hash helper during bind;
+    ///        zero-initialised before bind.
     unsigned long stableSlotId{0};
 };
 

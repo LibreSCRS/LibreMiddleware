@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 /// @file
-/// @brief Phase B.7.4 integration tests for the reconnect / RESET path
-///        on @ref LibreSCRS::Pkcs11::Internal::PKCS11Card (spec §5.3.5).
+/// @brief Integration tests for the reconnect / RESET path on
+///        @ref LibreSCRS::Pkcs11::Internal::PKCS11Card.
 ///
 /// The mock provides a one-shot sign-fault injection (@c armSignFaultOnce)
 /// and a PACE-replaying @c reconnectInline override; together they let
@@ -101,8 +101,15 @@ TEST_F(Reconnect, NoPaceResetReplaysSign)
     asConfigurable(card).armSignFaultOnce();
     EXPECT_TRUE(slots[0]->signData(data, /*mechanism=*/0x01UL, keyId).empty());
 
-    // Recovery: handleReset() under cardMutex, then re-sign succeeds.
+    // Recovery: handleReset() under cardMutex re-establishes transport
+    // AND invalidates per-slot auth state (PC/SC RESET drops the
+    // card-side security context — consumers must re-login).
     EXPECT_EQ(card->handleReset(), Crv::Ok);
+    EXPECT_FALSE(slots[0]->isLoggedIn());
+    // Sign before re-login returns empty (mock surface for "not logged in").
+    EXPECT_TRUE(slots[0]->signData(data, /*mechanism=*/0x01UL, keyId).empty());
+    // After explicit re-login, sign succeeds again.
+    ASSERT_EQ(slots[0]->login(CkuUser, pinBytes("1234")), Crv::Ok);
     EXPECT_FALSE(slots[0]->signData(data, /*mechanism=*/0x01UL, keyId).empty());
 
     // Non-PACE card: PACE counter stays at zero across the full cycle.
@@ -131,7 +138,12 @@ TEST_F(Reconnect, PaceResetWithCachedCan)
     EXPECT_EQ(card->handleReset(), Crv::Ok);
     // Cached CAN was reused → PACE call count bumps from 1 to 2.
     EXPECT_EQ(paceCount(card), 2);
-    // Subsequent sign succeeds.
+    // PC/SC RESET invalidated slot-level auth; sign before re-login fails.
+    EXPECT_FALSE(slots[0]->isLoggedIn());
+    EXPECT_TRUE(slots[0]->signData(data, /*mechanism=*/0x01UL, keyId).empty());
+    // After re-login the slot signs again. CAN remains cached so PACE
+    // does not run a second time inside login() — counter stays at 2.
+    ASSERT_EQ(slots[0]->login(CkuUser, pinBytes("123456:1234")), Crv::Ok);
     EXPECT_FALSE(slots[0]->signData(data, /*mechanism=*/0x01UL, keyId).empty());
 }
 
