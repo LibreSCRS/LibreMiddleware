@@ -28,7 +28,7 @@ static void hexDump(const char* prefix, const std::vector<uint8_t>& data)
     printf("\n");
 }
 
-static void printSW(const smartcard::APDUResponse& resp)
+static void printSW(const LibreSCRS::SmartCard::Internal::APDUResponse& resp)
 {
     printf("  SW=%02X%02X", resp.sw1, resp.sw2);
     if (resp.isSuccess())
@@ -45,7 +45,7 @@ static void printSW(const smartcard::APDUResponse& resp)
 }
 
 // Try to SELECT an AID and report result
-static bool trySelectAID(smartcard::PCSCConnection& conn, const char* name, const std::vector<uint8_t>& aid)
+static bool trySelectAID(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const char* name, const std::vector<uint8_t>& aid)
 {
     printf("\n--- SELECT %s ---\n", name);
     printf("  AID: ");
@@ -66,7 +66,7 @@ static bool trySelectAID(smartcard::PCSCConnection& conn, const char* name, cons
 }
 
 // Read a file by FID (SELECT + READ BINARY in chunks)
-static std::vector<uint8_t> readFileByFID(smartcard::PCSCConnection& conn, uint16_t fid, const char* name)
+static std::vector<uint8_t> readFileByFID(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint16_t fid, const char* name)
 {
     printf("\n--- READ %s (FID %04X) ---\n", name, fid);
 
@@ -111,7 +111,7 @@ static std::vector<uint8_t> readFileByFID(smartcard::PCSCConnection& conn, uint1
 }
 
 // Read file using short FID (SFI) in READ BINARY P1
-static std::vector<uint8_t> readFileBySFI(smartcard::PCSCConnection& conn, uint8_t sfi, const char* name)
+static std::vector<uint8_t> readFileBySFI(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t sfi, const char* name)
 {
     printf("\n--- READ %s (SFI %02X) ---\n", name, sfi);
 
@@ -147,7 +147,7 @@ int main(int argc, char* argv[])
 {
     printf("=== PKCS#15 Applet Probe ===\n\n");
 
-    auto readers = smartcard::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
     if (readers.empty()) {
         fprintf(stderr, "No readers found.\n");
         return 1;
@@ -174,7 +174,7 @@ int main(int argc, char* argv[])
     printf("Using: %s\n", readerName.c_str());
 
     try {
-        smartcard::PCSCConnection conn(readerName);
+        LibreSCRS::SmartCard::Internal::PCSCConnection conn(readerName);
 
         auto atr = conn.getATR();
         printf("ATR: ");

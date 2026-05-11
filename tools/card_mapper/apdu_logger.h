@@ -15,11 +15,11 @@ class ApduLogger
 public:
     struct Entry
     {
-        smartcard::APDUCommand command;
-        smartcard::APDUResponse response;
+        LibreSCRS::SmartCard::Internal::APDUCommand command;
+        LibreSCRS::SmartCard::Internal::APDUResponse response;
     };
 
-    void log(const smartcard::APDUCommand& cmd, const smartcard::APDUResponse& resp);
+    void log(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, const LibreSCRS::SmartCard::Internal::APDUResponse& resp);
     std::string formatTrace() const;
     void clear();
 

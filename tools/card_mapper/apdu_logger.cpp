@@ -9,7 +9,7 @@
 
 namespace card_mapper {
 
-void ApduLogger::log(const smartcard::APDUCommand& cmd, const smartcard::APDUResponse& resp)
+void ApduLogger::log(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, const LibreSCRS::SmartCard::Internal::APDUResponse& resp)
 {
     entries.push_back({cmd, resp});
 }

@@ -155,7 +155,7 @@ void CardVerifier::loadTrustedCertificates()
 
 // --- High-level dispatch ---
 
-VerificationResult CardVerifier::verifyCard(smartcard::PCSCConnection& conn, CardReaderBase& reader, CardType cardType)
+VerificationResult CardVerifier::verifyCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, CardReaderBase& reader, CardType cardType)
 {
     try {
         switch (cardType) {
@@ -180,7 +180,7 @@ VerificationResult CardVerifier::verifyCard(smartcard::PCSCConnection& conn, Car
     }
 }
 
-VerificationResult CardVerifier::verifyFixedData(smartcard::PCSCConnection& conn, CardReaderBase& reader,
+VerificationResult CardVerifier::verifyFixedData(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, CardReaderBase& reader,
                                                  CardType cardType)
 {
     try {
@@ -212,7 +212,7 @@ VerificationResult CardVerifier::verifyFixedData(smartcard::PCSCConnection& conn
     }
 }
 
-VerificationResult CardVerifier::verifyVariableData(smartcard::PCSCConnection& conn, CardReaderBase& reader,
+VerificationResult CardVerifier::verifyVariableData(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, CardReaderBase& reader,
                                                     CardType cardType)
 {
     try {
@@ -243,7 +243,7 @@ VerificationResult CardVerifier::verifyVariableData(smartcard::PCSCConnection& c
 
 // --- Gemalto card-level certificate verification ---
 
-VerificationResult CardVerifier::verifyGemaltoCardCert(smartcard::PCSCConnection& conn, CardReaderBase& reader)
+VerificationResult CardVerifier::verifyGemaltoCardCert(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, CardReaderBase& reader)
 {
     // Read SOD FX block to extract the signer certificate
     auto sodRaw = reader.readFile(conn, protocol::FILE_SOD_FX_H, protocol::FILE_SOD_FX_L);
@@ -329,7 +329,7 @@ VerificationResult CardVerifier::verifyGemaltoCardCert(smartcard::PCSCConnection
 
 // --- Gemalto SOD (PKCS#7) verification ---
 
-VerificationResult CardVerifier::verifyGemaltoSOD(smartcard::PCSCConnection& conn, CardReaderBase& reader,
+VerificationResult CardVerifier::verifyGemaltoSOD(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, CardReaderBase& reader,
                                                   uint8_t sodFileH, uint8_t sodFileL,
                                                   const std::vector<std::pair<uint8_t, uint8_t>>& dataFileIds)
 {
@@ -463,7 +463,7 @@ VerificationResult CardVerifier::verifyGemaltoSOD(smartcard::PCSCConnection& con
 
 // --- Apollo card certificate verification ---
 
-VerificationResult CardVerifier::verifyApolloCardCert(smartcard::PCSCConnection& conn, CardReaderBase& reader)
+VerificationResult CardVerifier::verifyApolloCardCert(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, CardReaderBase& reader)
 {
     auto userCertData = reader.readFile(conn, protocol::FILE_USER_CERT1_H, protocol::FILE_USER_CERT1_L);
 #ifndef NDEBUG
@@ -487,7 +487,7 @@ VerificationResult CardVerifier::verifyApolloCardCert(smartcard::PCSCConnection&
 
 // --- Apollo signature verification ---
 
-VerificationResult CardVerifier::verifyApolloSignature(smartcard::PCSCConnection& conn, CardReaderBase& reader,
+VerificationResult CardVerifier::verifyApolloSignature(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, CardReaderBase& reader,
                                                        uint8_t sigFileH, uint8_t sigFileL, uint8_t certFileH,
                                                        uint8_t certFileL,
                                                        const std::vector<std::pair<uint8_t, uint8_t>>& dataFileIds)

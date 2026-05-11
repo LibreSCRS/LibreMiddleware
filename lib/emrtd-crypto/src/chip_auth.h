@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 class PCSCConnection;
 }
 
@@ -48,6 +48,6 @@ struct ChipAuthResult
 bool parseDG14(const std::vector<uint8_t>& dg14Raw, std::vector<ChipAuthInfo>& caInfos,
                std::vector<ChipAuthPublicKey>& caKeys);
 
-ChipAuthResult performChipAuth(smartcard::PCSCConnection& conn, const std::vector<uint8_t>& dg14Raw,
+ChipAuthResult performChipAuth(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const std::vector<uint8_t>& dg14Raw,
                                SecureMessaging& currentSM);
 } // namespace emrtd::crypto

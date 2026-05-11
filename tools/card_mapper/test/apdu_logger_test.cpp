@@ -18,7 +18,7 @@ TEST(ApduLogger, LogSingleEntry)
 {
     ApduLogger logger;
 
-    smartcard::APDUCommand cmd;
+    LibreSCRS::SmartCard::Internal::APDUCommand cmd;
     cmd.cla = 0x00;
     cmd.ins = 0xA4;
     cmd.p1 = 0x04;
@@ -27,7 +27,7 @@ TEST(ApduLogger, LogSingleEntry)
     cmd.le = 0;
     cmd.hasLe = true;
 
-    smartcard::APDUResponse resp;
+    LibreSCRS::SmartCard::Internal::APDUResponse resp;
     resp.data = {0x6F, 0x10};
     resp.sw1 = 0x90;
     resp.sw2 = 0x00;
@@ -47,18 +47,18 @@ TEST(ApduLogger, LogMultipleEntries)
 {
     ApduLogger logger;
 
-    smartcard::APDUCommand cmd1;
+    LibreSCRS::SmartCard::Internal::APDUCommand cmd1;
     cmd1.cla = 0x00;
     cmd1.ins = 0xA4;
     cmd1.p1 = 0x04;
     cmd1.p2 = 0x00;
     cmd1.hasLe = false;
 
-    smartcard::APDUResponse resp1;
+    LibreSCRS::SmartCard::Internal::APDUResponse resp1;
     resp1.sw1 = 0x90;
     resp1.sw2 = 0x00;
 
-    smartcard::APDUCommand cmd2;
+    LibreSCRS::SmartCard::Internal::APDUCommand cmd2;
     cmd2.cla = 0x00;
     cmd2.ins = 0xB0;
     cmd2.p1 = 0x00;
@@ -66,7 +66,7 @@ TEST(ApduLogger, LogMultipleEntries)
     cmd2.le = 0xFF;
     cmd2.hasLe = true;
 
-    smartcard::APDUResponse resp2;
+    LibreSCRS::SmartCard::Internal::APDUResponse resp2;
     resp2.data = {0x01, 0x02, 0x03};
     resp2.sw1 = 0x90;
     resp2.sw2 = 0x00;
@@ -88,14 +88,14 @@ TEST(ApduLogger, Clear)
 {
     ApduLogger logger;
 
-    smartcard::APDUCommand cmd;
+    LibreSCRS::SmartCard::Internal::APDUCommand cmd;
     cmd.cla = 0x00;
     cmd.ins = 0xA4;
     cmd.p1 = 0x00;
     cmd.p2 = 0x00;
     cmd.hasLe = false;
 
-    smartcard::APDUResponse resp;
+    LibreSCRS::SmartCard::Internal::APDUResponse resp;
     resp.sw1 = 0x90;
     resp.sw2 = 0x00;
 

@@ -18,7 +18,7 @@
 #include <variant>
 #include <vector>
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 class PCSCConnection;
 }
 
@@ -35,8 +35,8 @@ struct DGReadResult
 class EMRTDCard
 {
 public:
-    EMRTDCard(smartcard::PCSCConnection& conn, const MRZData& mrz);
-    EMRTDCard(smartcard::PCSCConnection& conn, const std::string& can);
+    EMRTDCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const MRZData& mrz);
+    EMRTDCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const std::string& can);
     ~EMRTDCard();
 
     AuthResult authenticate();
@@ -59,7 +59,7 @@ public:
     /// Transmit an APDUCommand through SM with real inner SW forwarding.
     /// Used by the SM TransmitFilter so that callers (e.g. PKCS#15 readSelectedFile)
     /// can see the real status word (e.g. 6282 end-of-file) from inside the SM envelope.
-    smartcard::APDUResponse transmitSecureAPDU(const smartcard::APDUCommand& cmd);
+    LibreSCRS::SmartCard::Internal::APDUResponse transmitSecureAPDU(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd);
 
     /// Replace the active Secure Messaging channel with new keys/algorithm.
     /// Used after Chip Authentication upgrades the session from BAC/PACE keys
@@ -81,13 +81,13 @@ public:
     }
 
     /// Access to the underlying PCSCConnection.
-    smartcard::PCSCConnection& connection()
+    LibreSCRS::SmartCard::Internal::PCSCConnection& connection()
     {
         return conn;
     }
 
 private:
-    smartcard::PCSCConnection& conn;
+    LibreSCRS::SmartCard::Internal::PCSCConnection& conn;
     std::variant<MRZData, std::string> credentials;
     std::unique_ptr<crypto::SecureMessaging> sm;
     crypto::SMAlgorithm smAlgo = crypto::SMAlgorithm::DES3;

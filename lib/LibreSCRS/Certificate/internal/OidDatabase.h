@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <LibreSCRS/Export.h>
+
 #include <cstddef>
 #include <string_view>
 
@@ -39,6 +41,8 @@ extern const OidNameTableHandle kOidNamesTable;
 
 /// @brief Lookup friendly name for @p oid (dotted-decimal string).
 /// @return Empty string_view when no entry matches.
-[[nodiscard]] std::string_view lookupOidName(std::string_view oid) noexcept;
+/// @note Exported via @ref LIBRESCRS_PUBLIC_API for the OID-database test
+/// suite which links across the SHARED LibreSCRS_Certificate boundary.
+[[nodiscard]] LIBRESCRS_PUBLIC_API std::string_view lookupOidName(std::string_view oid) noexcept;
 
 } // namespace LibreSCRS::Certificate::detail

@@ -21,8 +21,8 @@ using namespace LibreSCRS::Plugin;
 // destroy both. Expect cancel called.
 TEST(AutoReaderTest, SubscribesAndUnsubscribes)
 {
-    auto counters = std::make_shared<smartcard::MockCounters>();
-    auto mock = std::make_unique<smartcard::MockPCSCScanProvider>(counters);
+    auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
+    auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
     mock->setReaders({"Reader A"});
 
     // PnP check
@@ -56,8 +56,8 @@ TEST(AutoReaderTest, SubscribesAndUnsubscribes)
 // which fails. Error callback should fire.
 TEST(AutoReaderTest, CardInsertCallsErrorOnPCSCFailure)
 {
-    auto counters = std::make_shared<smartcard::MockCounters>();
-    auto mock = std::make_unique<smartcard::MockPCSCScanProvider>(counters);
+    auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
+    auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
     mock->setReaders({"NonExistentReader"});
 
     // PnP check
@@ -110,8 +110,8 @@ TEST(AutoReaderTest, CardInsertCallsErrorOnPCSCFailure)
 // MonitorService emits only CardRemoved. Neither data nor error callback should fire.
 TEST(AutoReaderTest, IgnoresCardRemoved)
 {
-    auto counters = std::make_shared<smartcard::MockCounters>();
-    auto mock = std::make_unique<smartcard::MockPCSCScanProvider>(counters);
+    auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
+    auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
     mock->setReaders({"Reader A"});
 
     // PnP check

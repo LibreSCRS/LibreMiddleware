@@ -33,7 +33,7 @@ struct ScanResult
 };
 
 // Scan unknown card: detect applets, walk file systems
-ScanResult discoverCard(smartcard::PCSCConnection& conn, bool verbose);
+ScanResult discoverCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, bool verbose);
 
 // Get list of FID ranges to probe
 std::vector<std::pair<uint16_t, uint16_t>> getProbeRanges();

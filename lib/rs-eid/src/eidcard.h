@@ -12,7 +12,7 @@
 #include <vector>
 #include "eidtypes.h"
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 class PCSCConnection;
 }
 
@@ -29,7 +29,7 @@ public:
     static bool probe(const std::string& readerName);
 
     explicit EIdCard(const std::string& readerName);
-    explicit EIdCard(smartcard::PCSCConnection& conn);
+    explicit EIdCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn);
     ~EIdCard();
 
     EIdCard(const EIdCard&) = delete;
@@ -51,8 +51,8 @@ public:
     VerificationResult verifyVariableData();
 
 private:
-    std::unique_ptr<smartcard::PCSCConnection> ownedConnection;
-    smartcard::PCSCConnection* conn = nullptr; // always valid: points to owned or borrowed
+    std::unique_ptr<LibreSCRS::SmartCard::Internal::PCSCConnection> ownedConnection;
+    LibreSCRS::SmartCard::Internal::PCSCConnection* conn = nullptr; // always valid: points to owned or borrowed
     std::unique_ptr<CardReaderBase> cardReader;
     std::unique_ptr<CardVerifier> verifier;
     std::string certFolderPath;

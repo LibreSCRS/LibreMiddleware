@@ -123,7 +123,7 @@ public:
 
             // SELECT eMRTD applet by AID (P2=0x0C: no FCI response)
             auto response = conn.transmit(
-                smartcard::selectByAID({emrtd::EMRTD_AID, emrtd::EMRTD_AID + emrtd::EMRTD_AID_LEN}, 0x0C));
+                LibreSCRS::SmartCard::Internal::selectByAID({emrtd::EMRTD_AID, emrtd::EMRTD_AID + emrtd::EMRTD_AID_LEN}, 0x0C));
             return response.isSuccess();
         } catch (...) {
             return false;
@@ -191,11 +191,11 @@ private:
             bool paceSupported = false;
             std::vector<std::string> paceOids;
             try {
-                smartcard::APDUCommand selectCmd{
+                LibreSCRS::SmartCard::Internal::APDUCommand selectCmd{
                     0x00, 0xA4, 0x04, 0x0C, {emrtd::EMRTD_AID, emrtd::EMRTD_AID + emrtd::EMRTD_AID_LEN}, 0, false};
                 conn.transmit(selectCmd);
 
-                smartcard::APDUCommand readCA{
+                LibreSCRS::SmartCard::Internal::APDUCommand readCA{
                     0x00, 0xB0, static_cast<uint8_t>(0x80 | emrtd::SFID_CARD_ACCESS), 0x00, {}, 0x00, true};
                 auto caResp = conn.transmit(readCA);
                 if (caResp.isSuccess() && !caResp.data.empty()) {
@@ -669,11 +669,11 @@ private:
         }
 
         // Install SM filter so PKI fallback plugins get SM wrapping transparently
-        conn.setTransmitFilter([this, filterKey = key](const smartcard::APDUCommand& cmd) {
+        conn.setTransmitFilter([this, filterKey = key](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd) {
             std::lock_guard lock(mtx);
             auto it = sessions.find(filterKey);
             if (it == sessions.end() || !it->second.emrTDCard)
-                return smartcard::APDUResponse{{}, 0x69, 0x82};
+                return LibreSCRS::SmartCard::Internal::APDUResponse{{}, 0x69, 0x82};
             return it->second.emrTDCard->transmitSecureAPDU(cmd);
         });
 

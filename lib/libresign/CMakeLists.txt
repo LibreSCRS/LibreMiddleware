@@ -117,6 +117,14 @@ add_library(LibreSign STATIC ${LIBRESIGN_SOURCES} ${LIBRESIGN_HEADERS})
 
 target_compile_definitions(LibreSign PRIVATE LIBRESCRS_INTERNAL_BUILD)
 
+# LibreSign is a static archive consumed by LibreSCRS_Trust and
+# LibreSCRS_Signing. When LIBREMIDDLEWARE_BUILD_SHARED=ON those become .so
+# libraries; their object archives must therefore be position-independent.
+# Sibling impl targets (SmartCard_Impl, CardPlugin_Impl) already carry
+# POSITION_INDEPENDENT_CODE for plugin-link reasons; LibreSign now follows
+# the same rule so it can be linked into a SHARED public-target .so.
+set_target_properties(LibreSign PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 # Vendored miniz.c was written against pre-C89 compilers and uses K&R-style
 # function declarations in two spots, which clang flags with
 # -Wstrict-prototypes under -Wall. Suppress the warning for just this file so
@@ -177,7 +185,19 @@ target_compile_features(LibreSign PUBLIC cxx_std_23)
 # be able to resolve the public header — transitive propagation of
 # LibreSCRS_Auth's PUBLIC include directory is the least-friction fix.
 # LibreSCRS_Auth itself is a leaf on LibreSign (no circular dependency).
-target_link_libraries(LibreSign PRIVATE OpenSSL_Crypto CURL::libcurl SmartCard_Impl LibreSCRS_Trust)
+# Cycle break (Phase 0 SHARED prerequisite, 2026-05-10): LibreSign no
+# longer PRIVATE-links LibreSCRS_Trust. Cross-target call edges that
+# previously reached into Trust::detail::TrustStoreInternalAccess have
+# been inverted via NativeSigningService::AnchorEmitter — libresign now
+# emits TL anchors and the LibreSCRS_Signing-side bridge owns the merge
+# into the public TrustStore. With this link edge gone, the
+# Trust ↔ LibreSign target cycle (tolerated by static archives, rejected
+# by CMake once a member becomes SHARED) dissolves into a one-way edge:
+# LibreSCRS_Trust  PRIVATE  LibreSign. The LibreSCRS::Trust::TrustAnchor
+# type used in the AnchorEmitter signature is reachable through
+# LibreSCRS_Auth's PUBLIC include directory; no link symbol is needed
+# for the data-only struct.
+target_link_libraries(LibreSign PRIVATE OpenSSL_Crypto CURL::libcurl SmartCard_Impl)
 target_link_libraries(LibreSign PUBLIC LibreSCRS_Auth)
 
 if(SIGNING_BACKEND STREQUAL "dss" OR SIGNING_BACKEND STREQUAL "both")

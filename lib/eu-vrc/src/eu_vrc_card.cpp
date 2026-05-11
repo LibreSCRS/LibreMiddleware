@@ -24,14 +24,14 @@ std::string formatVrcDate(const std::string& raw)
 bool EuVrcCard::probe(const std::string& readerName)
 {
     try {
-        smartcard::PCSCConnection conn(readerName);
+        LibreSCRS::SmartCard::Internal::PCSCConnection conn(readerName);
         return probe(conn);
     } catch (...) {
         return false;
     }
 }
 
-bool EuVrcCard::probe(smartcard::PCSCConnection& conn)
+bool EuVrcCard::probe(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
 {
     try {
         return euvrc::probe(conn);
@@ -42,7 +42,7 @@ bool EuVrcCard::probe(smartcard::PCSCConnection& conn)
 
 EuVrcCard::EuVrcCard(const std::string& readerName)
 {
-    ownedConnection = std::make_unique<smartcard::PCSCConnection>(readerName);
+    ownedConnection = std::make_unique<LibreSCRS::SmartCard::Internal::PCSCConnection>(readerName);
     conn = ownedConnection.get();
 
     if (!detect(*conn)) {
@@ -50,7 +50,7 @@ EuVrcCard::EuVrcCard(const std::string& readerName)
     }
 }
 
-EuVrcCard::EuVrcCard(smartcard::PCSCConnection& externalConn) : conn(&externalConn)
+EuVrcCard::EuVrcCard(LibreSCRS::SmartCard::Internal::PCSCConnection& externalConn) : conn(&externalConn)
 {
     if (!detect(*conn)) {
         throw std::runtime_error("EU VRC card initialization failed");
@@ -62,7 +62,7 @@ EuVrcCard::~EuVrcCard() = default;
 std::vector<uint8_t> EuVrcCard::readFile(uint8_t fidHi, uint8_t fidLo)
 {
     // SELECT file: P1=02 P2=04 no Le
-    smartcard::APDUCommand selectCmd{
+    LibreSCRS::SmartCard::Internal::APDUCommand selectCmd{
         .cla = 0x00, .ins = 0xA4, .p1 = 0x02, .p2 = 0x04, .data = {fidHi, fidLo}, .le = 0, .hasLe = false};
     auto selectResp = conn->transmit(selectCmd);
     if (!selectResp.isSuccess()) {
@@ -74,7 +74,7 @@ std::vector<uint8_t> EuVrcCard::readFile(uint8_t fidHi, uint8_t fidLo)
     size_t fileSize = 0;
     if (selectResp.data.size() >= 4) {
         try {
-            auto fci = smartcard::parseBER(selectResp.data.data(), selectResp.data.size());
+            auto fci = LibreSCRS::SmartCard::Internal::parseBER(selectResp.data.data(), selectResp.data.size());
             for (const auto& child : fci.children) {
                 if (child.tag == 0x62) {
                     for (const auto& field : child.children) {
@@ -93,7 +93,7 @@ std::vector<uint8_t> EuVrcCard::readFile(uint8_t fidHi, uint8_t fidLo)
     }
 
     // Read file header to determine data offset
-    auto headerResp = conn->transmit(smartcard::readBinary(0, protocol::FILE_HEADER_SIZE));
+    auto headerResp = conn->transmit(LibreSCRS::SmartCard::Internal::readBinary(0, protocol::FILE_HEADER_SIZE));
     if (!headerResp.isSuccess() || headerResp.data.size() < 2) {
         return {};
     }
@@ -104,7 +104,7 @@ std::vector<uint8_t> EuVrcCard::readFile(uint8_t fidHi, uint8_t fidLo)
     size_t dataOffset = 0;
     bool parsedFromZero = false;
     try {
-        auto testParse = smartcard::parseBER(hdr.data(), hdr.size());
+        auto testParse = LibreSCRS::SmartCard::Internal::parseBER(hdr.data(), hdr.size());
         if (!testParse.children.empty()) {
             parsedFromZero = true;
         }
@@ -172,7 +172,7 @@ std::vector<uint8_t> EuVrcCard::readFile(uint8_t fidHi, uint8_t fidLo)
         uint8_t thisChunk =
             static_cast<uint8_t>(std::min(static_cast<size_t>(chunkSize), totalToRead - fileData.size()));
 
-        auto readResp = conn->transmit(smartcard::readBinary(offset, thisChunk));
+        auto readResp = conn->transmit(LibreSCRS::SmartCard::Internal::readBinary(offset, thisChunk));
         if (!readResp.isSuccess()) {
             if (chunkSize == protocol::READ_CHUNK_LARGE) {
                 // Fall back to smaller chunk size
@@ -196,7 +196,7 @@ std::vector<uint8_t> EuVrcCard::readFile(uint8_t fidHi, uint8_t fidLo)
 EuVrcData EuVrcCard::readCard()
 {
     // Read all data files and merge BER trees
-    smartcard::BERField merged;
+    LibreSCRS::SmartCard::Internal::BERField merged;
     merged.tag = 0;
     merged.constructed = true;
 
@@ -209,16 +209,16 @@ EuVrcData EuVrcCard::readCard()
 
     auto parseBerFile = [&](const std::vector<uint8_t>& raw) {
         try {
-            auto parsed = smartcard::parseBER(raw.data(), raw.size());
-            smartcard::mergeBER(merged, parsed);
+            auto parsed = LibreSCRS::SmartCard::Internal::parseBER(raw.data(), raw.size());
+            LibreSCRS::SmartCard::Internal::mergeBER(merged, parsed);
         } catch (...) {
             // If BER parse fails from byte 0, try header-skip
             if (raw.size() > 2) {
                 size_t skipOffset = static_cast<size_t>(raw[1]) + 2;
                 if (skipOffset < raw.size()) {
                     try {
-                        auto parsed = smartcard::parseBER(raw.data() + skipOffset, raw.size() - skipOffset);
-                        smartcard::mergeBER(merged, parsed);
+                        auto parsed = LibreSCRS::SmartCard::Internal::parseBER(raw.data() + skipOffset, raw.size() - skipOffset);
+                        LibreSCRS::SmartCard::Internal::mergeBER(merged, parsed);
                     } catch (...) {
                     }
                 }
@@ -283,7 +283,7 @@ EuVrcData EuVrcCard::readCard()
 namespace {
 
 // Recursively collect national extension tags from all levels of a container
-void collectNationalTags(const smartcard::BERField& container, EuVrcData& data)
+void collectNationalTags(const LibreSCRS::SmartCard::Internal::BERField& container, EuVrcData& data)
 {
     for (const auto& child : container.children) {
         if (protocol::isNationalExtensionTag(child.tag) && !child.value.empty()) {
@@ -298,72 +298,72 @@ void collectNationalTags(const smartcard::BERField& container, EuVrcData& data)
 
 } // anonymous namespace
 
-EuVrcData extractFields(const smartcard::BERField& root)
+EuVrcData extractFields(const LibreSCRS::SmartCard::Internal::BERField& root)
 {
     EuVrcData data;
 
     // Metadata (can be in either 71 or 72)
-    data.version = smartcard::berFindString(root, {0x71, 0x80});
-    data.memberState = smartcard::berFindString(root, {0x71, 0x9F33});
-    data.competentAuthority = smartcard::berFindString(root, {0x71, 0x9F35});
-    data.issuingAuthority = smartcard::berFindString(root, {0x71, 0x9F36});
-    data.documentNumber = smartcard::berFindString(root, {0x71, 0x9F38});
-    data.previousDocument = smartcard::berFindString(root, {0x71, 0x9F34});
+    data.version = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x80});
+    data.memberState = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x9F33});
+    data.competentAuthority = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x9F35});
+    data.issuingAuthority = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x9F36});
+    data.documentNumber = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x9F38});
+    data.previousDocument = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x9F34});
 
     // EU mandatory (tag 71)
-    data.registrationNumber = smartcard::berFindString(root, {0x71, 0x81});
-    data.firstRegistration = formatVrcDate(smartcard::berFindString(root, {0x71, 0x82}));
-    data.holderName = smartcard::berFindString(root, {0x71, 0xA1, 0xA2, 0x83});
-    data.holderOtherNames = smartcard::berFindString(root, {0x71, 0xA1, 0xA2, 0x84});
-    data.holderAddress = smartcard::berFindString(root, {0x71, 0xA1, 0xA2, 0x85});
-    data.ownershipStatus = smartcard::berFindString(root, {0x71, 0x86});
-    data.vehicleMake = smartcard::berFindString(root, {0x71, 0xA3, 0x87});
-    data.vehicleType = smartcard::berFindString(root, {0x71, 0xA3, 0x88});
-    data.commercialDesc = smartcard::berFindString(root, {0x71, 0xA3, 0x89});
-    data.vin = smartcard::berFindString(root, {0x71, 0x8A});
-    data.maxLadenMass = smartcard::berFindString(root, {0x71, 0xA4, 0x8B});
-    data.vehicleMass = smartcard::berFindString(root, {0x71, 0x8C});
-    data.expiryDate = formatVrcDate(smartcard::berFindString(root, {0x71, 0x8D}));
-    data.registrationDate = formatVrcDate(smartcard::berFindString(root, {0x71, 0x8E}));
-    data.typeApproval = smartcard::berFindString(root, {0x71, 0x8F});
-    data.engineCapacity = smartcard::berFindString(root, {0x71, 0xA5, 0x90});
-    data.maxNetPower = smartcard::berFindString(root, {0x71, 0xA5, 0x91});
-    data.fuelType = smartcard::berFindString(root, {0x71, 0xA5, 0x92});
-    data.powerWeightRatio = smartcard::berFindString(root, {0x71, 0x93});
-    data.numberOfSeats = smartcard::berFindString(root, {0x71, 0xA6, 0x94});
-    data.standingPlaces = smartcard::berFindString(root, {0x71, 0xA6, 0x95});
+    data.registrationNumber = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x81});
+    data.firstRegistration = formatVrcDate(LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x82}));
+    data.holderName = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA1, 0xA2, 0x83});
+    data.holderOtherNames = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA1, 0xA2, 0x84});
+    data.holderAddress = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA1, 0xA2, 0x85});
+    data.ownershipStatus = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x86});
+    data.vehicleMake = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA3, 0x87});
+    data.vehicleType = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA3, 0x88});
+    data.commercialDesc = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA3, 0x89});
+    data.vin = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x8A});
+    data.maxLadenMass = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA4, 0x8B});
+    data.vehicleMass = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x8C});
+    data.expiryDate = formatVrcDate(LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x8D}));
+    data.registrationDate = formatVrcDate(LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x8E}));
+    data.typeApproval = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x8F});
+    data.engineCapacity = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA5, 0x90});
+    data.maxNetPower = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA5, 0x91});
+    data.fuelType = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA5, 0x92});
+    data.powerWeightRatio = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x93});
+    data.numberOfSeats = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA6, 0x94});
+    data.standingPlaces = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA6, 0x95});
 
     // EU optional (tag 72)
-    data.maxLadenMassService = smartcard::berFindString(root, {0x72, 0xA4, 0x96});
-    data.maxLadenMassWhole = smartcard::berFindString(root, {0x72, 0xA4, 0x97});
-    data.vehicleCategory = smartcard::berFindString(root, {0x72, 0x98});
-    data.numberOfAxles = smartcard::berFindString(root, {0x72, 0x99});
-    data.wheelbase = smartcard::berFindString(root, {0x72, 0x9A});
-    data.brakedTrailerMass = smartcard::berFindString(root, {0x72, 0x9B});
-    data.unbrakedTrailerMass = smartcard::berFindString(root, {0x72, 0x9C});
-    data.ratedEngineSpeed = smartcard::berFindString(root, {0x72, 0xA5, 0x9D});
-    data.engineIdNumber = smartcard::berFindString(root, {0x72, 0xA5, 0x9E});
-    data.colour = smartcard::berFindString(root, {0x72, 0x9F24});
-    data.maxSpeed = smartcard::berFindString(root, {0x72, 0x9F25});
-    data.stationarySoundLevel = smartcard::berFindString(root, {0x72, 0x9F26});
-    data.engineSpeedRef = smartcard::berFindString(root, {0x72, 0x9F27});
-    data.driveBySound = smartcard::berFindString(root, {0x72, 0x9F28});
-    data.fuelConsumption = smartcard::berFindString(root, {0x72, 0x9F2F});
-    data.co2 = smartcard::berFindString(root, {0x72, 0x9F30});
-    data.envCategory = smartcard::berFindString(root, {0x72, 0x9F31});
-    data.fuelTankCapacity = smartcard::berFindString(root, {0x72, 0x9F32});
+    data.maxLadenMassService = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0xA4, 0x96});
+    data.maxLadenMassWhole = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0xA4, 0x97});
+    data.vehicleCategory = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x98});
+    data.numberOfAxles = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x99});
+    data.wheelbase = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9A});
+    data.brakedTrailerMass = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9B});
+    data.unbrakedTrailerMass = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9C});
+    data.ratedEngineSpeed = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0xA5, 0x9D});
+    data.engineIdNumber = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0xA5, 0x9E});
+    data.colour = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9F24});
+    data.maxSpeed = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9F25});
+    data.stationarySoundLevel = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9F26});
+    data.engineSpeedRef = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9F27});
+    data.driveBySound = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9F28});
+    data.fuelConsumption = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9F2F});
+    data.co2 = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9F30});
+    data.envCategory = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9F31});
+    data.fuelTankCapacity = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9F32});
 
     // Owner2 (C.2)
-    data.owner2Name = smartcard::berFindString(root, {0x71, 0xA1, 0xA7, 0x83});
+    data.owner2Name = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA1, 0xA7, 0x83});
 
     // User (C.3) — try 71 first, fallback to 72
-    data.userName = smartcard::berFindString(root, {0x71, 0xA1, 0xA9, 0x83});
-    data.userOtherNames = smartcard::berFindString(root, {0x71, 0xA1, 0xA9, 0x84});
-    data.userAddress = smartcard::berFindString(root, {0x71, 0xA1, 0xA9, 0x85});
+    data.userName = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA1, 0xA9, 0x83});
+    data.userOtherNames = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA1, 0xA9, 0x84});
+    data.userAddress = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA1, 0xA9, 0x85});
     if (data.userName.empty() && data.userOtherNames.empty() && data.userAddress.empty()) {
-        data.userName = smartcard::berFindString(root, {0x72, 0xA1, 0xA9, 0x83});
-        data.userOtherNames = smartcard::berFindString(root, {0x72, 0xA1, 0xA9, 0x84});
-        data.userAddress = smartcard::berFindString(root, {0x72, 0xA1, 0xA9, 0x85});
+        data.userName = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0xA1, 0xA9, 0x83});
+        data.userOtherNames = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0xA1, 0xA9, 0x84});
+        data.userAddress = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0xA1, 0xA9, 0x85});
     }
 
     // National extensions — tags >= 0xC0, search recursively in both 71 and 72 containers

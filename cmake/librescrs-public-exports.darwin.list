@@ -1,0 +1,25 @@
+# Apple ld(1) -exported_symbols_list — counterpart of
+# cmake/librescrs-public-exports.map (GNU ld --version-script).
+#
+# Whitelists LM-public C++ symbols by mangled-name prefix:
+#   * `__ZN9LibreSCRS*` — every `LibreSCRS::*` namespace member
+#                         (the leading `_` is Apple's convention; the
+#                         Itanium-ABI mangling on Darwin is `_ZN9...` with
+#                         the extra `_` prefix making it `__ZN9...`).
+#                         Covers the LM-internal cross-`.so` ABI shared
+#                         with card plugins via the
+#                         `LibreSCRS::SmartCard::Internal::` namespace.
+#
+# Everything else (bundled OpenSSL, libresign internals, vendored
+# nlohmann / miniz / pugixml) collapses to hidden so the public macOS
+# ABI is the LibreSCRS namespace only — no symbol bleed-through from
+# statically linked third-party archives, no accidental coupling to
+# internal LibreSCRS namespaces that happen to live outside
+# `LibreSCRS::*`.
+
+__ZN9LibreSCRS*
+__ZNK9LibreSCRS*
+__ZNO9LibreSCRS*
+__ZTV*LibreSCRS*
+__ZTI*LibreSCRS*
+__ZTS*LibreSCRS*

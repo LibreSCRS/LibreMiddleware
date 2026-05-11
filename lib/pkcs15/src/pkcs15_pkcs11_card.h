@@ -21,7 +21,7 @@
 #include <string>
 #include <vector>
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 class PCSCConnection;
 }
 
@@ -112,7 +112,7 @@ private:
     ///        subsequent APDUs ride the established secure channel.
     void installSmFilter();
 
-    std::unique_ptr<smartcard::PCSCConnection> conn;
+    std::unique_ptr<LibreSCRS::SmartCard::Internal::PCSCConnection> conn;
     std::unique_ptr<pkcs15::PKCS15Card> apdu;
     std::unique_ptr<pkcs15::PKCS15Profile> profile;
 
@@ -142,7 +142,7 @@ private:
 ///        PKCS#15 family.
 ///
 /// @ref probe constructs a @ref Pkcs15Card and returns it on successful
-/// bind. The legacy @c smartcard::PKCS11CardProvider surface (the older
+/// bind. The legacy @c LibreSCRS::SmartCard::Internal::PKCS11CardProvider surface (the older
 /// @c pkcs15::Pkcs15PKCS11Provider class) was retired in Phase B.6 — this
 /// is now the canonical PKCS#15 provider.
 ///

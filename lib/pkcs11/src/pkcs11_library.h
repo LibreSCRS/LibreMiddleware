@@ -11,7 +11,7 @@
 /// @brief PKCS#11 v2.40 library facade. Routes every C entry point
 ///        through the @ref LibreSCRS::Pkcs11::Internal Card+Slot model.
 ///
-/// The legacy @c SlotEntry / @c smartcard::PKCS11CardProvider path was
+/// The legacy @c SlotEntry / @c LibreSCRS::SmartCard::Internal::PKCS11CardProvider path was
 /// retired in Phase B.6 (4.1 cycle); registered providers conform to
 /// @ref LibreSCRS::Pkcs11::Internal::PKCS11CardProvider and surface
 /// @ref LibreSCRS::Pkcs11::Internal::PKCS11Slot instances through the

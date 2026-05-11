@@ -25,7 +25,7 @@ std::string getReaderName(const CliOptions& opts)
         return opts.readerName;
     }
 
-    auto readers = smartcard::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
     if (readers.empty()) {
         throw std::runtime_error("no PC/SC readers found");
     }
@@ -48,7 +48,7 @@ void writeToFile(const std::string& path, const std::string& content)
 int runPluginMode(const CliOptions& opts)
 {
     auto readerName = getReaderName(opts);
-    smartcard::PCSCConnection conn(readerName);
+    LibreSCRS::SmartCard::Internal::PCSCConnection conn(readerName);
 
     auto appletInfo = card_mapper::mapPlugin(opts.pluginName, conn, opts.verbose);
     auto doc = card_mapper::formatAppletDoc(appletInfo);
@@ -65,7 +65,7 @@ int runPluginMode(const CliOptions& opts)
 int runDiscoverMode(const CliOptions& opts)
 {
     auto readerName = getReaderName(opts);
-    smartcard::PCSCConnection conn(readerName);
+    LibreSCRS::SmartCard::Internal::PCSCConnection conn(readerName);
 
     // PACE authentication + SM filter — enables scanning applets
     // that require prior authentication (e.g. PKCS#15 on contactless)
@@ -78,7 +78,7 @@ int runDiscoverMode(const CliOptions& opts)
         std::cerr << "PACE authentication: OK (SM active)\n";
 
         conn.setTransmitFilter(
-            [&emrTDCard](const smartcard::APDUCommand& cmd) { return emrTDCard->transmitSecureAPDU(cmd); });
+            [&emrTDCard](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd) { return emrTDCard->transmitSecureAPDU(cmd); });
     }
 
     auto scanResult = card_mapper::discoverCard(conn, opts.verbose);

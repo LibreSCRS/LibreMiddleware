@@ -172,7 +172,7 @@ SigningResult DSSSigningService::sign(const SigningRequest& request, const std::
     // the Java side parses the request — that's an inherent limitation of
     // the IPC architecture documented on the header.)
     std::string pinStr(reinterpret_cast<const char*>(pin.data()), pin.size());
-    smartcard::PinStringScrubber pinScrubber{pinStr};
+    LibreSCRS::SmartCard::Internal::PinStringScrubber pinScrubber{pinStr};
 
     nlohmann::json meta;
     meta["format"] = formatToString(request.format);

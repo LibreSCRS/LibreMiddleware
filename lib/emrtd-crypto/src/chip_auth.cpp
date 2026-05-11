@@ -453,7 +453,7 @@ static std::vector<uint8_t> extractECPoint(EVP_PKEY* pkey)
 // performChipAuth
 // ---------------------------------------------------------------------------
 
-ChipAuthResult performChipAuth(smartcard::PCSCConnection& conn, const std::vector<uint8_t>& dg14Raw,
+ChipAuthResult performChipAuth(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const std::vector<uint8_t>& dg14Raw,
                                SecureMessaging& currentSM)
 {
     ChipAuthResult result;
@@ -564,7 +564,7 @@ ChipAuthResult performChipAuth(smartcard::PCSCConnection& conn, const std::vecto
         mseData.insert(mseData.end(), keyIdTLV.begin(), keyIdTLV.end());
     }
 
-    smartcard::APDUCommand mseCmd{0x00, 0x22, 0x41, 0xA4, mseData, 0, false};
+    LibreSCRS::SmartCard::Internal::APDUCommand mseCmd{0x00, 0x22, 0x41, 0xA4, mseData, 0, false};
     auto mseApdu = currentSM.protect(mseCmd.toBytes());
 
     auto mseResp = conn.transmitRaw(mseApdu.data(), static_cast<unsigned long>(mseApdu.size()));
@@ -586,7 +586,7 @@ ChipAuthResult performChipAuth(smartcard::PCSCConnection& conn, const std::vecto
     // Command: 00 86 00 00 Lc {7C {80 <terminal_pubkey>}} 00
     auto pubKeyDO = buildTLV(0x80, terminalPubBytes);
     auto gaData = buildTLV(0x7C, pubKeyDO);
-    smartcard::APDUCommand gaCmd{0x00, 0x86, 0x00, 0x00, gaData, 0x00, true};
+    LibreSCRS::SmartCard::Internal::APDUCommand gaCmd{0x00, 0x86, 0x00, 0x00, gaData, 0x00, true};
     auto gaApdu = currentSM.protect(gaCmd.toBytes());
     auto gaResp = conn.transmitRaw(gaApdu.data(), static_cast<unsigned long>(gaApdu.size()));
 

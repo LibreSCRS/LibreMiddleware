@@ -48,7 +48,7 @@ BACKeys deriveBACKeys(const std::string& documentNumber, const std::string& date
     return keys;
 }
 
-std::optional<SessionKeys> performBAC(smartcard::PCSCConnection& conn, const BACKeys& keys)
+std::optional<SessionKeys> performBAC(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const BACKeys& keys)
 {
     // Scope guard to cleanse all key material on every exit path
     std::vector<uint8_t> rndICC, rndIFD, kIFD, kICC, kSeedSession;
@@ -70,7 +70,7 @@ std::optional<SessionKeys> performBAC(smartcard::PCSCConnection& conn, const BAC
     } keyCleaner{rndICC, rndIFD, kIFD, kICC, kSeedSession};
 
     // Step 1: GET CHALLENGE — receive 8-byte RND.ICC
-    smartcard::APDUCommand getChallenge{0x00, 0x84, 0x00, 0x00, {}, 0x08, true};
+    LibreSCRS::SmartCard::Internal::APDUCommand getChallenge{0x00, 0x84, 0x00, 0x00, {}, 0x08, true};
     auto response = conn.transmit(getChallenge);
     if (!response.isSuccess() || response.data.size() < 8)
         return std::nullopt;
@@ -98,7 +98,7 @@ std::optional<SessionKeys> performBAC(smartcard::PCSCConnection& conn, const BAC
     cmdData.insert(cmdData.end(), eIFD.begin(), eIFD.end());
     cmdData.insert(cmdData.end(), mIFD.begin(), mIFD.end());
 
-    smartcard::APDUCommand mutualAuth{0x00, 0x82, 0x00, 0x00, cmdData, 0x28, true};
+    LibreSCRS::SmartCard::Internal::APDUCommand mutualAuth{0x00, 0x82, 0x00, 0x00, cmdData, 0x28, true};
     response = conn.transmit(mutualAuth);
     if (!response.isSuccess() || response.data.size() < 40)
         return std::nullopt;

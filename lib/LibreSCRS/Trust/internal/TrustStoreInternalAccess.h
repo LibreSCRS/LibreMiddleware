@@ -9,6 +9,7 @@
 
 #include "TrustAnchorProvider.h"
 
+#include <LibreSCRS/Export.h>
 #include <LibreSCRS/Trust/TrustStore.h>
 
 #include <cstdint>
@@ -31,6 +32,8 @@ namespace detail {
 
 struct TrustStoreInternalAccess
 {
+    // Intra-LibreSCRS_Trust callers only — no LIBRESCRS_PUBLIC_API marker
+    // keeps the symbols hidden in the SHARED-build .so.
     static TrustStore makeStore(std::string bundledCertDir, bool includeSystemTrustStore);
     static void addProvider(TrustStore& store, std::shared_ptr<TrustAnchorProvider> provider);
 
@@ -42,17 +45,23 @@ struct TrustStoreInternalAccess
     ///        its own copy of the bytes.
     ///
     /// Used by both:
-    ///   - @ref TrustStoreService eager-fetch worker threads, and
-    ///   - @c libresign::NativeSigningService lazy-fetch path during sign().
+    ///   - @ref TrustStoreService eager-fetch worker threads
+    ///     (intra-LibreSCRS_Trust), and
+    ///   - the LibreSCRS::Signing bridge's anchor-emit lambda
+    ///     (LibreSCRS_Signing → LibreSCRS_Trust, cross-`.so` under SHARED).
     ///
-    /// The TL→DER extraction lives upstream (libresign's
-    /// @c TrustedListProvider mapping) so this entrypoint stays free of
-    /// libresign types and the cross-target link stays one-way.
+    /// The cross-`.so` call site is the only reason this symbol is
+    /// exported via @ref LIBRESCRS_PUBLIC_API; the surrounding
+    /// `internal/` header path + LIBRESCRS_INTERNAL_BUILD #error guard
+    /// keep external consumers from including it. Sibling
+    /// `makeStore`/`addProvider` are NOT marked because their callers all
+    /// live inside LibreSCRS_Trust itself; exporting them would widen
+    /// the visible symbol set without a use case.
     ///
     /// @par Thread-safety
     /// Takes an exclusive lock on the store's internal mutex.
-    static void mergeTrustedListAnchors(TrustStore& store, std::vector<TrustAnchor> anchors,
-                                        const std::string& sourceLabel);
+    LIBRESCRS_PUBLIC_API static void mergeTrustedListAnchors(TrustStore& store, std::vector<TrustAnchor> anchors,
+                                                             const std::string& sourceLabel);
 };
 
 } // namespace detail

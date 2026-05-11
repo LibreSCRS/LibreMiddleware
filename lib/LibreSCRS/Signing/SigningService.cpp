@@ -7,9 +7,11 @@
 #include "detail/ErrorClassifier.h"
 #include "detail/RequestBridge.h"
 
-// TrustStore construction now lives in
-// Trust::TrustStoreService (passed in via DI). The bridge no longer
-// needs the LM-internal friend header.
+// LM-internal Trust friend header used by the lazy-fetch-merge lambda
+// bound into libresign's NativeSigningService::setAnchorEmitter (below).
+// LibreSCRS_Signing already builds with LIBRESCRS_INTERNAL_BUILD, so this
+// internal include is allowed.
+#include "../Trust/internal/TrustStoreInternalAccess.h"
 #include "native/native_signing_service.h"
 
 #include <LibreSCRS/Auth/AuthRequirement.h>
@@ -260,7 +262,7 @@ SigningResult SigningService::sign(const SigningRequest& request, Auth::Credenti
     // intermediate std::string to escape cleansing. The Secure::String owned
     // by credResult.values cleanses its storage when the CredentialResult
     // goes out of scope; no manual OPENSSL_cleanse needed here.
-    smartcard::SecureBuffer pinBuffer(pinPtr->view());
+    LibreSCRS::SmartCard::Internal::SecureBuffer pinBuffer(pinPtr->view());
 
     // Translate TrustConfig to libresign::TrustConfig.
     libresign::TrustConfig libTrust;
@@ -382,15 +384,22 @@ SigningResult SigningService::sign(const SigningRequest& request, Auth::Credenti
         return SigningResult::signingEngineErrorDiagnosticOnly(
             std::string{"Failed to construct libresign::SigningService"});
     }
-    // hand the public TrustStore (owned by the
-    // TrustStoreService passed at construction) to the native backend so
-    // lazy TL fetches during configure() merge into the same store the
-    // cert viewer / plugin registry are reading. The service itself drives
-    // eager fetches; this path is for the lazy lookup path that runs only
-    // when sign() needs an anchor not yet in the eager set.
+    // Bind the lazy-fetch anchor-merge callback into libresign's native
+    // backend. libresign emits TL-extracted anchors via the AnchorEmitter
+    // (see NativeSigningService::setAnchorEmitter); this lambda merges them
+    // into the same TrustStore the eager-fetch worker
+    // (Trust::TrustStoreService) populates. Inverted call direction —
+    // libresign no longer reaches into Trust internals — keeps the
+    // libresign target free of any link edge to LibreSCRS_Trust.
     if (backend == libresign::Backend::Native) {
         if (auto* native = dynamic_cast<libresign::NativeSigningService*>(service.get())) {
-            native->setPublicTrustStore(std::const_pointer_cast<Trust::TrustStore>(d->trustService->trustStore()));
+            auto trustStore = std::const_pointer_cast<Trust::TrustStore>(d->trustService->trustStore());
+            native->setAnchorEmitter([trustStore](std::vector<Trust::TrustAnchor> anchors, std::string label) {
+                if (!trustStore)
+                    return;
+                Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(*trustStore, std::move(anchors),
+                                                                                 label);
+            });
         }
     }
     if (!service->configure(libTrust)) {

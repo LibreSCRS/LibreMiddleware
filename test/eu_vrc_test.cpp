@@ -73,20 +73,20 @@ TEST(EuVrcDetection, NationalExtensionFids)
 TEST(EuVrcCard, ExtractMandatoryFields)
 {
     // Build a minimal BER tree: tag 71 containing tag 81 (reg number) and 87 (make)
-    smartcard::BERField root;
-    smartcard::BERField mandatory;
+    LibreSCRS::SmartCard::Internal::BERField root;
+    LibreSCRS::SmartCard::Internal::BERField mandatory;
     mandatory.tag = 0x71;
     mandatory.constructed = true;
 
-    smartcard::BERField regNum;
+    LibreSCRS::SmartCard::Internal::BERField regNum;
     regNum.tag = 0x81;
     regNum.value = {'B', 'G', '-', '1', '2', '3'};
     mandatory.children.push_back(regNum);
 
-    smartcard::BERField vehicleContainer;
+    LibreSCRS::SmartCard::Internal::BERField vehicleContainer;
     vehicleContainer.tag = 0xA3;
     vehicleContainer.constructed = true;
-    smartcard::BERField make;
+    LibreSCRS::SmartCard::Internal::BERField make;
     make.tag = 0x87;
     make.value = {'V', 'W'};
     vehicleContainer.children.push_back(make);
@@ -101,19 +101,19 @@ TEST(EuVrcCard, ExtractMandatoryFields)
 
 TEST(EuVrcCard, ExtractNationalExtensions)
 {
-    smartcard::BERField root;
-    smartcard::BERField optional;
+    LibreSCRS::SmartCard::Internal::BERField root;
+    LibreSCRS::SmartCard::Internal::BERField optional;
     optional.tag = 0x72;
     optional.constructed = true;
 
     // EU tag
-    smartcard::BERField category;
+    LibreSCRS::SmartCard::Internal::BERField category;
     category.tag = 0x98;
     category.value = {'M', '1'};
     optional.children.push_back(category);
 
     // National extension tag (>= 0xC0)
-    smartcard::BERField jmbg;
+    LibreSCRS::SmartCard::Internal::BERField jmbg;
     jmbg.tag = 0xC2;
     jmbg.value = {'1', '2', '3', '4'};
     optional.children.push_back(jmbg);

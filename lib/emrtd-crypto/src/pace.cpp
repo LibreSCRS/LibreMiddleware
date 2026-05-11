@@ -608,7 +608,7 @@ static ECPointPtr ecdhSharedPoint(const EC_GROUP* group, const BIGNUM* privKey, 
 // performPACE
 // ---------------------------------------------------------------------------
 
-std::optional<SessionKeys> performPACE(smartcard::PCSCConnection& conn, const PACEParams& params)
+std::optional<SessionKeys> performPACE(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const PACEParams& params)
 {
     bool isDES3 = (paceOIDToSMAlgorithm(params.oid) == SMAlgorithm::DES3);
     size_t keyLen = keyLengthFromOID(params.oid);
@@ -629,13 +629,13 @@ std::optional<SessionKeys> performPACE(smartcard::PCSCConnection& conn, const PA
         mseData.insert(mseData.end(), paramIdTLV.begin(), paramIdTLV.end());
     }
 
-    smartcard::APDUCommand mseCmd{0x00, 0x22, 0xC1, 0xA4, mseData, 0, false};
+    LibreSCRS::SmartCard::Internal::APDUCommand mseCmd{0x00, 0x22, 0xC1, 0xA4, mseData, 0, false};
     auto resp = conn.transmit(mseCmd);
     if (!resp.isSuccess())
         return std::nullopt;
 
     // --- Step 2: General Authenticate Step 1 — get encrypted nonce ---
-    smartcard::APDUCommand ga1Cmd{0x10, 0x86, 0x00, 0x00, {0x7C, 0x00}, 0x00, true};
+    LibreSCRS::SmartCard::Internal::APDUCommand ga1Cmd{0x10, 0x86, 0x00, 0x00, {0x7C, 0x00}, 0x00, true};
     resp = conn.transmit(ga1Cmd);
     if (!resp.isSuccess())
         return std::nullopt;
@@ -721,7 +721,7 @@ std::optional<SessionKeys> performPACE(smartcard::PCSCConnection& conn, const PA
 
     // Send PK_map to card, receive PK_map_ICC
     auto ga2Data = buildTLV(0x7C, buildTLV(0x81, pkMapBytes));
-    smartcard::APDUCommand ga2Cmd{0x10, 0x86, 0x00, 0x00, ga2Data, 0x00, true};
+    LibreSCRS::SmartCard::Internal::APDUCommand ga2Cmd{0x10, 0x86, 0x00, 0x00, ga2Data, 0x00, true};
     resp = conn.transmit(ga2Cmd);
     if (!resp.isSuccess())
         return std::nullopt;
@@ -768,7 +768,7 @@ std::optional<SessionKeys> performPACE(smartcard::PCSCConnection& conn, const PA
 
     // Send PK_agree, receive PK_agree_ICC
     auto ga3Data = buildTLV(0x7C, buildTLV(0x83, pkAgreeBytes));
-    smartcard::APDUCommand ga3Cmd{0x10, 0x86, 0x00, 0x00, ga3Data, 0x00, true};
+    LibreSCRS::SmartCard::Internal::APDUCommand ga3Cmd{0x10, 0x86, 0x00, 0x00, ga3Data, 0x00, true};
     resp = conn.transmit(ga3Cmd);
     if (!resp.isSuccess())
         return std::nullopt;
@@ -804,7 +804,7 @@ std::optional<SessionKeys> performPACE(smartcard::PCSCConnection& conn, const PA
 
     // Send T_IFD, receive T_ICC
     auto ga4Data = buildTLV(0x7C, buildTLV(0x85, tIFD));
-    smartcard::APDUCommand ga4Cmd{0x00, 0x86, 0x00, 0x00, ga4Data, 0x00, true};
+    LibreSCRS::SmartCard::Internal::APDUCommand ga4Cmd{0x00, 0x86, 0x00, 0x00, ga4Data, 0x00, true};
     resp = conn.transmit(ga4Cmd);
     if (!resp.isSuccess())
         return std::nullopt;

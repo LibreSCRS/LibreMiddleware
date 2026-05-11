@@ -46,7 +46,7 @@ static void printSW(uint8_t sw1, uint8_t sw2)
 }
 
 // Build a raw SELECT FILE APDU with explicit P1, P2, data, Le
-static smartcard::APDUCommand selectRaw(uint8_t p1, uint8_t p2, const std::vector<uint8_t>& data, uint8_t le,
+static LibreSCRS::SmartCard::Internal::APDUCommand selectRaw(uint8_t p1, uint8_t p2, const std::vector<uint8_t>& data, uint8_t le,
                                         bool hasLe)
 {
     return {0x00, 0xA4, p1, p2, data, le, hasLe};
@@ -58,7 +58,7 @@ int main(int argc, char* argv[])
     printf("Purpose: determine if SELECT FILE ever returns ISO 7816-4\n");
     printf("         TLV-wrapped FCI (tag 0x6F or 0x62).\n\n");
 
-    auto readers = smartcard::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
     if (readers.empty()) {
         fprintf(stderr, "No readers found.\n");
         return 1;
@@ -80,7 +80,7 @@ int main(int argc, char* argv[])
     printf("Reader: %s\n", readerName.c_str());
 
     try {
-        smartcard::PCSCConnection conn(readerName);
+        LibreSCRS::SmartCard::Internal::PCSCConnection conn(readerName);
 
         auto atr = conn.getATR();
         printf("ATR:    ");
@@ -91,7 +91,7 @@ int main(int argc, char* argv[])
         // Select PKI applet first
         const std::vector<uint8_t> AID_PKCS15 = {0xA0, 0x00, 0x00, 0x00, 0x63, 0x50,
                                                  0x4B, 0x43, 0x53, 0x2D, 0x31, 0x35};
-        auto aidResp = conn.transmit(smartcard::selectByAID(AID_PKCS15));
+        auto aidResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(AID_PKCS15));
         printf("\nSELECT AID: SW=%02X%02X\n", aidResp.sw1, aidResp.sw2);
         if (!aidResp.isSuccess()) {
             fprintf(stderr, "PKI applet not found.\n");
@@ -165,7 +165,7 @@ int main(int argc, char* argv[])
                 for (const auto& p2v : p2Variants) {
                     for (const auto& lev : leVariants) {
                         // Re-select AID before each test
-                        conn.transmit(smartcard::selectByAID(AID_PKCS15));
+                        conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(AID_PKCS15));
 
                         printf("\n  %s | %s | %s\n", p1v.desc, p2v.desc, lev.desc);
                         auto resp = conn.transmit(selectRaw(p1v.p1, p2v.p2, {fidH, fidL}, lev.le, lev.hasLe));

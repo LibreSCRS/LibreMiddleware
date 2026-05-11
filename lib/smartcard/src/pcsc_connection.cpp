@@ -6,7 +6,7 @@
 #include <iomanip>
 #include <iostream>
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 
 PCSCConnection::PCSCConnection(const std::string& readerName) : storedReaderName(readerName)
 {
@@ -263,4 +263,4 @@ std::vector<std::string> PCSCConnection::listReaders()
     return readers;
 }
 
-} // namespace smartcard
+} // namespace LibreSCRS::SmartCard::Internal

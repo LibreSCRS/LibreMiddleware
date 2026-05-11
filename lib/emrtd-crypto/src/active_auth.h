@@ -12,7 +12,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 class PCSCConnection;
 }
 
@@ -27,6 +27,6 @@ struct AAPublicKey
 
 AAPublicKey parseDG15(const std::vector<uint8_t>& dg15Raw);
 
-ChipAuthResult performActiveAuth(smartcard::PCSCConnection& conn, const std::vector<uint8_t>& dg15Raw,
+ChipAuthResult performActiveAuth(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const std::vector<uint8_t>& dg15Raw,
                                  SecureMessaging& currentSM);
 } // namespace emrtd::crypto

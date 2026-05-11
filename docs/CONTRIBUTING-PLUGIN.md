@@ -208,7 +208,7 @@ protected:
 > active card connection. In-tree plugins built via the
 > `librescrs_add_plugin()` CMake helper inherit the
 > `LIBRESCRS_INTERNAL_BUILD` compile definition and obtain the raw
-> `smartcard::PCSCConnection&` via
+> `LibreSCRS::SmartCard::Internal::PCSCConnection&` via
 > `LibreSCRS::SmartCard::detail::unwrap(session)` — this is the standard
 > path for sending raw APDUs from a plugin.
 >
@@ -345,7 +345,7 @@ bool canHandleConnection(std::span<const std::uint8_t> /*atr*/,
 ```
 
 `LibreSCRS::SmartCard::detail::unwrap(session)` returns the underlying
-`smartcard::PCSCConnection&`. The unwrap header is gated by
+`LibreSCRS::SmartCard::Internal::PCSCConnection&`. The unwrap header is gated by
 `LIBRESCRS_INTERNAL_BUILD`, which the plugin target inherits from
 `librescrs_add_plugin()`. Once the raw connection is in hand, the
 plugin instantiates the in-tree `piv::PIVCard` core class
@@ -354,7 +354,7 @@ pattern is used in `doReadCard` (lines 89–180), `readCertificates`
 (lines 182–202), `getPINList` (lines 204–234), `verifyPIN` (lines
 236–252), `getPINTriesLeft` (lines 254–269), and `discoverKeyReferences`
 (lines 271–285) — every entry point on the adapter unwraps to the raw
-connection, opens a `smartcard::CardTransaction`, and delegates to the
+connection, opens a `LibreSCRS::SmartCard::Internal::CardTransaction`, and delegates to the
 core `PIVCard` methods.
 
 Note that `lib/piv/src/piv_card.h` itself starts with an

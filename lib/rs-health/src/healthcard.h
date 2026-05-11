@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 class PCSCConnection;
 }
 
@@ -22,10 +22,10 @@ class HealthCard
 {
 public:
     static bool probe(const std::string& readerName);
-    static bool probe(smartcard::PCSCConnection& conn);
+    static bool probe(LibreSCRS::SmartCard::Internal::PCSCConnection& conn);
 
     explicit HealthCard(const std::string& readerName);
-    explicit HealthCard(smartcard::PCSCConnection& conn);
+    explicit HealthCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn);
     ~HealthCard();
     HealthCard(const HealthCard&) = delete;
     HealthCard& operator=(const HealthCard&) = delete;
@@ -33,8 +33,8 @@ public:
     HealthDocumentData readDocumentData();
 
 private:
-    std::unique_ptr<smartcard::PCSCConnection> ownedConnection;
-    smartcard::PCSCConnection& conn;
+    std::unique_ptr<LibreSCRS::SmartCard::Internal::PCSCConnection> ownedConnection;
+    LibreSCRS::SmartCard::Internal::PCSCConnection& conn;
 
     void initCard();
     std::vector<uint8_t> readFile(const std::vector<uint8_t>& fileId);

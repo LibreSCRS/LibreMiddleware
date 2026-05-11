@@ -95,6 +95,9 @@ set_target_properties(librescrs-pkcs11 PROPERTIES
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib/pkcs11"
+    # Module installs one level below its sibling LibreSCRS_*.so.4 chain;
+    # relative RPATH avoids LD_LIBRARY_PATH at the call site.
+    INSTALL_RPATH "$<IF:$<PLATFORM_ID:Darwin>,@loader_path/..,$ORIGIN/..>"
 )
 
 if(BUILD_TESTING)
@@ -106,3 +109,21 @@ if(BUILD_TESTING)
     enable_testing()
     add_subdirectory(test)
 endif()
+
+# p11-kit module install rule. The .so lands in p11-kit's conventional
+# module path ${libdir}/pkcs11/; the matching `librescrs.module`
+# declaration installed by the root CMakeLists.txt references this
+# filename so p11-kit auto-resolves it via its standard module-load
+# path.
+#
+# Unconditional (not gated on LIBREMIDDLEWARE_BUILD_SHARED):
+# librescrs-pkcs11 is always SHARED — a PKCS#11 module is a
+# runtime-loaded .so by definition, self-contained (PRIVATE-links
+# vendored OpenSC / PKCS15 / OpenSSL static archives, no PUBLIC
+# linkage to LibreSCRS_*). Distros installing LM with `cmake --install`
+# should always get the .so so the p11-kit-aware app ecosystem
+# (Kleopatra, GnuPG, Firefox, ...) picks it up.
+include(GNUInstallDirs)
+install(TARGETS librescrs-pkcs11
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkcs11
+)

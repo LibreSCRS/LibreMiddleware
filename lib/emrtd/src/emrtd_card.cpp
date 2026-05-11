@@ -14,9 +14,9 @@
 
 namespace emrtd {
 
-EMRTDCard::EMRTDCard(smartcard::PCSCConnection& conn, const MRZData& mrz) : conn(conn), credentials(mrz) {}
+EMRTDCard::EMRTDCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const MRZData& mrz) : conn(conn), credentials(mrz) {}
 
-EMRTDCard::EMRTDCard(smartcard::PCSCConnection& conn, const std::string& can) : conn(conn), credentials(can) {}
+EMRTDCard::EMRTDCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const std::string& can) : conn(conn), credentials(can) {}
 
 EMRTDCard::~EMRTDCard()
 {
@@ -32,7 +32,7 @@ EMRTDCard::~EMRTDCard()
 
 bool EMRTDCard::selectApplet()
 {
-    smartcard::APDUCommand cmd{0x00, 0xA4, 0x04, 0x0C, {EMRTD_AID, EMRTD_AID + EMRTD_AID_LEN}, 0, false};
+    LibreSCRS::SmartCard::Internal::APDUCommand cmd{0x00, 0xA4, 0x04, 0x0C, {EMRTD_AID, EMRTD_AID + EMRTD_AID_LEN}, 0, false};
     auto resp = conn.transmit(cmd);
     return resp.isSuccess();
 }
@@ -40,22 +40,22 @@ bool EMRTDCard::selectApplet()
 std::vector<uint8_t> EMRTDCard::readCardAccess()
 {
     // Method 1: READ BINARY with short file identifier (SFID)
-    smartcard::APDUCommand cmd{0x00, 0xB0, static_cast<uint8_t>(0x80 | SFID_CARD_ACCESS), 0x00, {}, 0x00, true};
+    LibreSCRS::SmartCard::Internal::APDUCommand cmd{0x00, 0xB0, static_cast<uint8_t>(0x80 | SFID_CARD_ACCESS), 0x00, {}, 0x00, true};
     auto resp = conn.transmit(cmd);
     if (resp.isSuccess())
         return resp.data;
 
     // Method 2: SELECT MF (3F00) then SELECT EF.CardAccess by FID (011C) with P1=00 P2=00
     // Some cards (e.g. Georgian eID) require explicit MF selection before EF.CardAccess
-    smartcard::APDUCommand selectMF{0x00, 0xA4, 0x00, 0x00, {0x3F, 0x00}, 0x00, true};
+    LibreSCRS::SmartCard::Internal::APDUCommand selectMF{0x00, 0xA4, 0x00, 0x00, {0x3F, 0x00}, 0x00, true};
     conn.transmit(selectMF); // ignore result
 
-    smartcard::APDUCommand selectCmd{0x00, 0xA4, 0x00, 0x00, {0x01, 0x1C}, 0x00, true};
+    LibreSCRS::SmartCard::Internal::APDUCommand selectCmd{0x00, 0xA4, 0x00, 0x00, {0x01, 0x1C}, 0x00, true};
     auto selectResp = conn.transmit(selectCmd);
     if (selectResp.isSuccess()) {
         // Read entire file (CardAccess is typically <256 bytes)
         // Le=0x00 means 256 bytes; card returns what it has (62 82 = end of file)
-        smartcard::APDUCommand readAll{0x00, 0xB0, 0x00, 0x00, {}, 0x00, true};
+        LibreSCRS::SmartCard::Internal::APDUCommand readAll{0x00, 0xB0, 0x00, 0x00, {}, 0x00, true};
         auto readResp = conn.transmit(readAll);
         if (!readResp.data.empty())
             return readResp.data;
@@ -171,7 +171,7 @@ std::optional<std::vector<uint8_t>> EMRTDCard::transmitSecure(const std::vector<
     // Build APDUCommand from protected bytes
     if (protectedApdu.size() < 5)
         return std::nullopt;
-    smartcard::APDUCommand cmd;
+    LibreSCRS::SmartCard::Internal::APDUCommand cmd;
     cmd.cla = protectedApdu[0];
     cmd.ins = protectedApdu[1];
     cmd.p1 = protectedApdu[2];
@@ -182,10 +182,10 @@ std::optional<std::vector<uint8_t>> EMRTDCard::transmitSecure(const std::vector<
     cmd.le = protectedApdu.back();
     cmd.hasLe = true;
 
-    smartcard::APDUResponse resp;
+    LibreSCRS::SmartCard::Internal::APDUResponse resp;
     try {
         resp = conn.transmitRaw(cmd);
-    } catch (const smartcard::PCSCError&) {
+    } catch (const LibreSCRS::SmartCard::Internal::PCSCError&) {
         if (recovering)
             return std::nullopt;
         // Try recovery on card reset
@@ -204,7 +204,7 @@ std::optional<std::vector<uint8_t>> EMRTDCard::transmitSecure(const std::vector<
             cmd.data.assign(protectedApdu.begin() + 5, protectedApdu.begin() + 5 + lc);
             cmd.le = protectedApdu.back();
             resp = conn.transmitRaw(cmd);
-        } catch (const smartcard::PCSCError&) {
+        } catch (const LibreSCRS::SmartCard::Internal::PCSCError&) {
             return std::nullopt;
         }
     }
@@ -217,7 +217,7 @@ std::optional<std::vector<uint8_t>> EMRTDCard::transmitSecure(const std::vector<
     return sm->unprotect(respBytes);
 }
 
-smartcard::APDUResponse EMRTDCard::transmitSecureAPDU(const smartcard::APDUCommand& cmd)
+LibreSCRS::SmartCard::Internal::APDUResponse EMRTDCard::transmitSecureAPDU(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd)
 {
     if (!sm)
         return {{}, 0x69, 0x82};
@@ -428,7 +428,7 @@ DGReadResult EMRTDCard::readDataGroupSafe(int dgNumber)
     // SELECT file by FID via SM, then check the inner SW.
     // P2=0x04 (return FCP) ensures Le/DO'97 are present in SM — required by some
     // chips in CA-derived SM mode (e.g. Georgian eID rejects P2=0x0C with 6988).
-    smartcard::APDUCommand selectCmd{
+    LibreSCRS::SmartCard::Internal::APDUCommand selectCmd{
         0x00, 0xA4, 0x02, 0x04, {static_cast<uint8_t>(fid >> 8), static_cast<uint8_t>(fid & 0xFF)}, 0, true};
     auto selectResp = transmitSecureAPDU(selectCmd);
     uint16_t sw = selectResp.statusWord();
@@ -459,7 +459,7 @@ std::vector<ContactPerson> EMRTDCard::parseDG16(const std::vector<uint8_t>& raw)
     if (raw.empty())
         return persons;
 
-    auto root = smartcard::parseBER(raw.data(), raw.size());
+    auto root = LibreSCRS::SmartCard::Internal::parseBER(raw.data(), raw.size());
 
     // DG16 outer tag is 0x70, containing one or more constructed entries.
     // Each entry may have sub-tags for name (5F0E), telephone (5F12), address (5F42).

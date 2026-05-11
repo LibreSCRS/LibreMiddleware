@@ -11,7 +11,7 @@
 ///        signing-related methods.
 
 #include <LibreSCRS/Auth/AuthRequirement.h>
-#include <LibreSCRS/Auth/detail/SecretParameter.h>
+#include <LibreSCRS/Auth/SecretParameter.h>
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Export.h>
 #include <LibreSCRS/Plugin/CardData.h>
@@ -646,10 +646,10 @@ private:
     /// iff a previous call has already injected; the wrapper short-circuits
     /// in that case. atomic_flag is the lightest-weight C++ primitive that
     /// gives lock-free single-shot semantics (no atomic<bool> CAS loop).
-    /// Initialised to clear() — pre-C++20 required ATOMIC_FLAG_INIT in the
-    /// initializer list, but the default constructor is now contract-bound
-    /// to leave the flag in the unset state.
-    mutable std::atomic_flag trustStoreInjectedFlag = ATOMIC_FLAG_INIT;
+    /// Default-initialised to the clear state per C++20 §31.7
+    /// [atomics.flag]/4 — `ATOMIC_FLAG_INIT` removed: deprecated in C++20,
+    /// removed in C++26.
+    mutable std::atomic_flag trustStoreInjectedFlag;
 };
 
 // 4.0 compile-time audit: every credential-bearing parameter on

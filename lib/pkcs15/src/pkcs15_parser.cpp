@@ -14,7 +14,7 @@ namespace {
 
 // Extract the first OCTET STRING (tag 0x04) value from a BER field tree.
 // Searches children recursively through constructed SEQUENCEs.
-std::vector<uint8_t> findFirstOctetString(const smartcard::BERField& node)
+std::vector<uint8_t> findFirstOctetString(const LibreSCRS::SmartCard::Internal::BERField& node)
 {
     for (const auto& child : node.children) {
         if (child.tag == 0x04 && !child.constructed) {
@@ -31,7 +31,7 @@ std::vector<uint8_t> findFirstOctetString(const smartcard::BERField& node)
 }
 
 // Extract the first UTF8String (tag 0x0C) or UTF8-like string from a BER field's children.
-std::string findFirstString(const smartcard::BERField& node)
+std::string findFirstString(const LibreSCRS::SmartCard::Internal::BERField& node)
 {
     for (const auto& child : node.children) {
         // UTF8String (0x0C), PrintableString (0x13), IA5String (0x16)
@@ -49,7 +49,7 @@ std::string findFirstString(const smartcard::BERField& node)
 }
 
 // Find a child BER field by tag. Returns nullptr if not found.
-const smartcard::BERField* findChild(const smartcard::BERField& node, uint32_t tag)
+const LibreSCRS::SmartCard::Internal::BERField* findChild(const LibreSCRS::SmartCard::Internal::BERField& node, uint32_t tag)
 {
     for (const auto& child : node.children) {
         if (child.tag == tag) {
@@ -74,7 +74,7 @@ int64_t parseInteger(const std::vector<uint8_t>& bytes)
 
 // Extract path bytes from a typeAttributes [1] CONSTRUCTED node.
 // Structure: [1] { SEQUENCE { SEQUENCE { OCTET STRING path } [, ...] } }
-std::vector<uint8_t> extractPath(const smartcard::BERField& typeAttrs)
+std::vector<uint8_t> extractPath(const LibreSCRS::SmartCard::Internal::BERField& typeAttrs)
 {
     // typeAttrs is [1] CONSTRUCTED containing a SEQUENCE
     for (const auto& seq : typeAttrs.children) {
@@ -87,7 +87,7 @@ std::vector<uint8_t> extractPath(const smartcard::BERField& typeAttrs)
 
 // Extract key size from typeAttributes [1] CONSTRUCTED node.
 // Structure: [1] { SEQUENCE { SEQUENCE { OCTET STRING path }, INTEGER keySize } }
-uint16_t extractKeySize(const smartcard::BERField& typeAttrs)
+uint16_t extractKeySize(const LibreSCRS::SmartCard::Internal::BERField& typeAttrs)
 {
     for (const auto& outerSeq : typeAttrs.children) {
         if (outerSeq.tag == 0x30 && outerSeq.constructed) {
@@ -117,7 +117,7 @@ ObjectDirectory parseODF(std::span<const uint8_t> data)
     }
 
     ObjectDirectory odf;
-    auto root = smartcard::parseBER(data.data(), data.size());
+    auto root = LibreSCRS::SmartCard::Internal::parseBER(data.data(), data.size());
 
     for (const auto& entry : root.children) {
         auto path = findFirstOctetString(entry);
@@ -180,10 +180,10 @@ TokenInfo parseTokenInfo(std::span<const uint8_t> data)
     }
 
     TokenInfo info;
-    auto root = smartcard::parseBER(data.data(), data.size());
+    auto root = LibreSCRS::SmartCard::Internal::parseBER(data.data(), data.size());
 
     // The outer SEQUENCE should be the first child of root
-    const smartcard::BERField* seq = nullptr;
+    const LibreSCRS::SmartCard::Internal::BERField* seq = nullptr;
     for (const auto& child : root.children) {
         if (child.tag == 0x30 && child.constructed) {
             seq = &child;
@@ -231,7 +231,7 @@ std::vector<CertificateInfo> parseCDF(std::span<const uint8_t> data)
     }
 
     std::vector<CertificateInfo> certs;
-    auto root = smartcard::parseBER(data.data(), data.size());
+    auto root = LibreSCRS::SmartCard::Internal::parseBER(data.data(), data.size());
 
     for (const auto& entry : root.children) {
         if (entry.tag != 0x30 || !entry.constructed) {
@@ -287,7 +287,7 @@ std::vector<PrivateKeyInfo> parsePrKDF(std::span<const uint8_t> data)
     }
 
     std::vector<PrivateKeyInfo> keys;
-    auto root = smartcard::parseBER(data.data(), data.size());
+    auto root = LibreSCRS::SmartCard::Internal::parseBER(data.data(), data.size());
 
     for (const auto& entry : root.children) {
         if (entry.tag != 0x30 || !entry.constructed) {
@@ -389,7 +389,7 @@ std::vector<PinInfo> parseAODF(std::span<const uint8_t> data)
     }
 
     std::vector<PinInfo> pins;
-    auto root = smartcard::parseBER(data.data(), data.size());
+    auto root = LibreSCRS::SmartCard::Internal::parseBER(data.data(), data.size());
 
     for (const auto& entry : root.children) {
         if (entry.tag != 0x30 || !entry.constructed) {
@@ -429,7 +429,7 @@ std::vector<PinInfo> parseAODF(std::span<const uint8_t> data)
         }
 
         // Find the PinAttributes SEQUENCE inside [1]
-        const smartcard::BERField* pinAttrs = nullptr;
+        const LibreSCRS::SmartCard::Internal::BERField* pinAttrs = nullptr;
         for (const auto& child : typeAttrs->children) {
             if (child.tag == 0x30 && child.constructed) {
                 pinAttrs = &child;

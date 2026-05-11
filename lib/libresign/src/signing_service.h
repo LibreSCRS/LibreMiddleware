@@ -17,7 +17,7 @@ namespace libresign {
 
 // Helper for callers that have the PIN as a std::string_view (e.g. test
 // fixtures with string literals). Production callers SHOULD store the PIN in
-// a self-cleansing buffer (smartcard::SecureBuffer) and pass that directly
+// a self-cleansing buffer (LibreSCRS::SmartCard::Internal::SecureBuffer) and pass that directly
 // via its implicit span<const uint8_t> conversion — see LibreCelik signpage.
 inline std::span<const uint8_t> as_pin(std::string_view pin)
 {
@@ -39,7 +39,7 @@ public:
     // PKCS#11 path — backend drives the card session.
     //
     // pin: byte view into caller-owned storage. The caller is responsible for
-    //      cleansing that storage (e.g. via smartcard::SecureBuffer). The
+    //      cleansing that storage (e.g. via LibreSCRS::SmartCard::Internal::SecureBuffer). The
     //      service implementation MUST NOT retain the view past return and
     //      MUST cleanse any intermediate copies it creates internally.
     //

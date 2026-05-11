@@ -499,7 +499,7 @@ private:
     }
 
     mutable std::mutex mtx;
-    mutable std::map<const smartcard::PCSCConnection*, OpenSCSession> sessions;
+    mutable std::map<const LibreSCRS::SmartCard::Internal::PCSCConnection*, OpenSCSession> sessions;
 };
 
 } // namespace

@@ -12,7 +12,7 @@
 #include <optional>
 #include <string>
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 class PCSCConnection;
 }
 
@@ -26,7 +26,7 @@ BACKeys deriveBACKeys(const std::string& documentNumber, const std::string& date
 
 // Perform BAC mutual authentication with the card.
 // Returns session keys on success (3DES, SSC = 8 bytes).
-std::optional<SessionKeys> performBAC(smartcard::PCSCConnection& conn, const BACKeys& keys);
+std::optional<SessionKeys> performBAC(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const BACKeys& keys);
 
 namespace detail {
 int computeCheckDigit(const std::string& input);

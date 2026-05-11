@@ -14,6 +14,7 @@
 #                     spec defines for consumers that prefer not to dlsym
 #                     every individual C_* function).
 #
-# Anything else (OpenSSL ASN1_*, LibreSCRS::*, libresign::*, smartcard::*)
-# is hidden from the dynamic export table.
+# Anything else (OpenSSL ASN1_*, LibreSCRS::*, libresign::*,
+# LibreSCRS::SmartCard::Internal::*) is hidden from the dynamic export
+# table.
 _C_*

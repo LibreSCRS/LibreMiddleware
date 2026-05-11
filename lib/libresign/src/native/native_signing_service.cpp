@@ -10,7 +10,6 @@
 #include "native/jades_module.h"
 #include "native/asic_module.h"
 #include "trust/TrustedListProvider.h"
-#include "LibreSCRS/Trust/internal/TrustStoreInternalAccess.h"
 #include "native_utils.h" // parseCert (X509Ptr RAII) — avoids manual d2i_X509 / X509_free
 #include "pinned_tl_certs.h"
 #include "tl_cache.h"
@@ -202,14 +201,14 @@ void NativeSigningService::loadTrustList(const std::string& url, bool isLotl, Tl
     // 5. Parse authenticated TL
     auto tlInfo = TrustedListParser::parse(xmlData);
 
-    // 6. Push TL-derived anchors into the public TrustStore (eagerly owned
-    //    by Trust::TrustStoreService; this lazy path merges into the same
-    //    underlying store via the friend mechanism). No-op when the host
-    //    did not pass a public store via setPublicTrustStore.
-    if (publicTrustStore) {
+    // 6. Emit TL-derived anchors to the host (LibreSCRS::Signing bridge)
+    //    which merges them into the public TrustStore eagerly owned by
+    //    Trust::TrustStoreService. Inverted-callback shape: libresign
+    //    extracts anchors, the bridge owns the merge. No-op when the host
+    //    did not bind an emitter via setAnchorEmitter.
+    if (anchorEmitter) {
         auto anchors = extractAnchorsFromTrustedList(tlInfo, "tl:" + url);
-        LibreSCRS::Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(*publicTrustStore,
-                                                                                    std::move(anchors), "tl:" + url);
+        anchorEmitter(std::move(anchors), "tl:" + url);
     }
 
     // 7. Store in cache (only if freshly fetched, not from cache)

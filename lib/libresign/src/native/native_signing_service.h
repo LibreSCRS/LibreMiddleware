@@ -9,13 +9,12 @@
 
 #include "signing_service.h"
 
-#include <map>
-#include <memory>
+#include <LibreSCRS/Trust/TrustStore.h> // for LibreSCRS::Trust::TrustAnchor
 
-// Forward-declare the public Trust types for the optional setter.
-namespace LibreSCRS::Trust {
-class TrustStore;
-}
+#include <functional>
+#include <map>
+#include <utility>
+#include <vector>
 
 namespace libresign {
 
@@ -44,14 +43,19 @@ public:
         return configured && fullyConfigured;
     }
 
-    /// Set the public TrustStore that receives TL-derived certificates as a
-    /// TrustedListProvider. this is the lazy-fetch path;
-    /// eager fetches are owned by Trust::TrustStoreService. The store
-    /// pointer typically aliases the same shared_ptr the TrustStoreService
-    /// hands out via trustStore().
-    void setPublicTrustStore(std::shared_ptr<LibreSCRS::Trust::TrustStore> store)
+    /// Callback invoked when @ref loadTrustList successfully fetches+verifies+
+    /// parses a Trusted List and extracts trust anchors from it. The Signing-
+    /// side bridge (LibreSCRS::Signing::SigningService) binds a lambda that
+    /// merges the emitted anchors into its public TrustStore via the
+    /// LM-internal access shim. Inverting the call direction (libresign
+    /// emits, the bridge merges) keeps libresign free of any direct call
+    /// into LibreSCRS_Trust internals — critical for the SHARED-build
+    /// target graph since it removes the libresign → LibreSCRS_Trust link
+    /// edge, breaking the static-only-tolerated cycle.
+    using AnchorEmitter = std::function<void(std::vector<LibreSCRS::Trust::TrustAnchor>, std::string)>;
+    void setAnchorEmitter(AnchorEmitter emit)
     {
-        publicTrustStore = std::move(store);
+        anchorEmitter = std::move(emit);
     }
 
 private:
@@ -59,7 +63,7 @@ private:
     std::map<std::string, std::vector<uint8_t>> lotlDerivedCerts; // URL -> signing cert DER
     bool configured = false;
     bool fullyConfigured = false;
-    std::shared_ptr<LibreSCRS::Trust::TrustStore> publicTrustStore;
+    AnchorEmitter anchorEmitter;
 
     void loadTrustList(const std::string& url, bool isLotl, TlCache& cache, TlSignatureVerifier& verifier, int depth);
 };

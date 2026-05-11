@@ -342,7 +342,7 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
         // Stage the PIN bytes in a scrubbing std::string; if the parent
         // needs PACE we split CAN-in-PIN at the first ':'.
         std::string pinStr(pin.begin(), pin.end());
-        ::smartcard::PinStringScrubber pinScrub{pinStr};
+        ::LibreSCRS::SmartCard::Internal::PinStringScrubber pinScrub{pinStr};
 
         if (parentNeedsPace(*parent)) {
             // CAN-in-PIN format. If the parent already has a cachedCan
@@ -565,7 +565,7 @@ std::vector<std::uint8_t> Pkcs15Slot::signData(std::span<const std::uint8_t> dat
         // covers the exception path even before sign() returns).
         auto canView = cachedPin.view();
         std::string pinStr(canView.begin(), canView.end());
-        ::smartcard::PinStringScrubber pinScrub{pinStr};
+        ::LibreSCRS::SmartCard::Internal::PinStringScrubber pinScrub{pinStr};
 
         if (!apdu || !pinInfo)
             return {};
@@ -611,7 +611,7 @@ std::vector<std::uint8_t> Pkcs15Slot::signWithDigestInfo(std::span<const std::ui
 
         auto canView = cachedPin.view();
         std::string pinStr(canView.begin(), canView.end());
-        ::smartcard::PinStringScrubber pinScrub{pinStr};
+        ::LibreSCRS::SmartCard::Internal::PinStringScrubber pinScrub{pinStr};
 
         if (!apdu || !pinInfo)
             return {};

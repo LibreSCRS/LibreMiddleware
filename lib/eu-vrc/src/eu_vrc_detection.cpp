@@ -46,41 +46,41 @@ std::vector<FileFid> getNationalExtensionFids()
 namespace {
 
 // Try to discover AID from EF.DIR
-bool tryEfDir(smartcard::PCSCConnection& conn)
+bool tryEfDir(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
 {
     // SELECT MF
-    auto mfResp = conn.transmit(smartcard::selectByFileId(0x3F, 0x00));
+    auto mfResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x3F, 0x00));
     if (!mfResp.isSuccess())
         return false;
 
     // SELECT EF.DIR (2F00) by FID with P1=02 P2=04, no Le
-    smartcard::APDUCommand selectDir{
+    LibreSCRS::SmartCard::Internal::APDUCommand selectDir{
         .cla = 0x00, .ins = 0xA4, .p1 = 0x02, .p2 = 0x04, .data = {0x2F, 0x00}, .le = 0, .hasLe = false};
     auto dirResp = conn.transmit(selectDir);
 
     if (!dirResp.isSuccess()) {
         // Fallback: SELECT by path (P1=08)
-        dirResp = conn.transmit(smartcard::selectByPath(0x2F, 0x00));
+        dirResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByPath(0x2F, 0x00));
     }
 
     if (!dirResp.isSuccess())
         return false;
 
     // READ BINARY
-    auto readResp = conn.transmit(smartcard::readBinary(0, 0xFF));
+    auto readResp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 0xFF));
     if (!readResp.isSuccess() || readResp.data.empty())
         return false;
 
     // Parse BER-TLV — look for application template (tag 61) with AID (tag 4F)
     try {
-        auto dirTree = smartcard::parseBER(readResp.data.data(), readResp.data.size());
+        auto dirTree = LibreSCRS::SmartCard::Internal::parseBER(readResp.data.data(), readResp.data.size());
         for (const auto& tmpl : dirTree.children) {
             if (tmpl.tag == 0x61) // Application template
             {
                 for (const auto& field : tmpl.children) {
                     if (field.tag == 0x4F && !field.value.empty()) {
                         // Try to SELECT discovered AID
-                        auto selectAid = smartcard::selectByAID(field.value);
+                        auto selectAid = LibreSCRS::SmartCard::Internal::selectByAID(field.value);
                         auto aidResp = conn.transmit(selectAid);
                         if (aidResp.isSuccess())
                             return true;
@@ -96,14 +96,14 @@ bool tryEfDir(smartcard::PCSCConnection& conn)
 }
 
 // Try a single EU standard AID
-bool tryEuStandardAid(smartcard::PCSCConnection& conn)
+bool tryEuStandardAid(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
 {
-    auto resp = conn.transmit(smartcard::selectByAID(protocol::EU_VRC_AID));
+    auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(protocol::EU_VRC_AID));
     return resp.isSuccess();
 }
 
 // Try a multi-command AID sequence (all commands must succeed)
-bool tryAidSequence(smartcard::PCSCConnection& conn, const AidSequence& seq)
+bool tryAidSequence(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const AidSequence& seq)
 {
     for (size_t i = 0; i < seq.selectCommands.size(); ++i) {
         bool isLast = (i == seq.selectCommands.size() - 1);
@@ -111,7 +111,7 @@ bool tryAidSequence(smartcard::PCSCConnection& conn, const AidSequence& seq)
 
         if (isLast && p2 == 0x0C) {
             // Use raw APDU for P2=0x0C
-            smartcard::APDUCommand cmd{.cla = 0x00,
+            LibreSCRS::SmartCard::Internal::APDUCommand cmd{.cla = 0x00,
                                        .ins = 0xA4,
                                        .p1 = 0x04,
                                        .p2 = 0x0C,
@@ -121,7 +121,7 @@ bool tryAidSequence(smartcard::PCSCConnection& conn, const AidSequence& seq)
             auto resp = conn.transmit(cmd);
             // Don't check last response — some cards return warnings
         } else {
-            auto resp = conn.transmit(smartcard::selectByAID(seq.selectCommands[i], p2));
+            auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(seq.selectCommands[i], p2));
             if (!resp.isSuccess())
                 return false;
         }
@@ -131,7 +131,7 @@ bool tryAidSequence(smartcard::PCSCConnection& conn, const AidSequence& seq)
 
 } // anonymous namespace
 
-bool detect(smartcard::PCSCConnection& conn)
+bool detect(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
 {
     // Level 1: EF.DIR
     if (tryEfDir(conn))
@@ -152,7 +152,7 @@ bool detect(smartcard::PCSCConnection& conn)
     return false;
 }
 
-bool probe(smartcard::PCSCConnection& conn)
+bool probe(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
 {
     return detect(conn);
 }

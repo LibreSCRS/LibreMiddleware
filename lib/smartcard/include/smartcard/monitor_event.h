@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 
 struct MonitorEvent
 {
@@ -17,4 +17,4 @@ struct MonitorEvent
     std::vector<uint8_t> atr; // populated on CardInserted, empty on CardRemoved
 };
 
-} // namespace smartcard
+} // namespace LibreSCRS::SmartCard::Internal

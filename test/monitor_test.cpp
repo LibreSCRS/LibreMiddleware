@@ -9,7 +9,7 @@
 #include <thread>
 #include <vector>
 
-using namespace smartcard;
+using namespace LibreSCRS::SmartCard::Internal;
 
 class MonitorTestFixture : public ::testing::Test
 {

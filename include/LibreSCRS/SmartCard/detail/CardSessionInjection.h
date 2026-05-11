@@ -12,7 +12,7 @@
 ///        `LibreSCRS::SmartCard::detail::makeDetachedCardSession`.
 ///
 /// The detached-session factory returns a CardSession that owns a
-/// PCSCConnection constructed with `smartcard::PCSCConnection::DetachedTag`
+/// PCSCConnection constructed with `LibreSCRS::SmartCard::Internal::PCSCConnection::DetachedTag`
 /// — no SCard context, no card handle, no transmit I/O. The only purpose
 /// of such a session is to serve as a stable per-session key for plugins
 /// that maintain a `std::map<PCSCConnection*, ...>` per-session state

@@ -21,7 +21,7 @@ static void hexDump(const std::vector<uint8_t>& d)
     printf("\n");
 }
 
-static std::vector<uint8_t> readFile(smartcard::PCSCConnection& conn, uint16_t fid, const char* name)
+static std::vector<uint8_t> readFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint16_t fid, const char* name)
 {
     uint8_t fidH = static_cast<uint8_t>((fid >> 8) & 0xFF);
     uint8_t fidL = static_cast<uint8_t>(fid & 0xFF);
@@ -59,7 +59,7 @@ int main(int argc, char* argv[])
 {
     printf("=== AODF + PIN Reference Probe ===\n");
 
-    auto readers = smartcard::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
     if (readers.empty()) {
         fprintf(stderr, "No readers found.\n");
         return 1;
@@ -69,7 +69,7 @@ int main(int argc, char* argv[])
     printf("Using: %s\n", readerName.c_str());
 
     try {
-        smartcard::PCSCConnection conn(readerName);
+        LibreSCRS::SmartCard::Internal::PCSCConnection conn(readerName);
 
         auto atr = conn.getATR();
         printf("ATR: ");

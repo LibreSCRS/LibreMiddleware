@@ -14,7 +14,7 @@
 #include <string>
 #include <vector>
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 
 struct MockCounters
 {
@@ -184,6 +184,6 @@ private:
     bool cancelled = false;
 };
 
-} // namespace smartcard
+} // namespace LibreSCRS::SmartCard::Internal
 
 #endif // SMARTCARD_MOCK_PCSC_SCAN_PROVIDER_H

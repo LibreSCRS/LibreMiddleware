@@ -17,7 +17,7 @@
 
 #include "apdu.h"
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 
 class PCSCError : public std::runtime_error
 {
@@ -112,4 +112,4 @@ private:
     PCSCConnection& conn;
 };
 
-} // namespace smartcard
+} // namespace LibreSCRS::SmartCard::Internal

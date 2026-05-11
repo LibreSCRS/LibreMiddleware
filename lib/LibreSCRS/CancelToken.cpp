@@ -3,17 +3,21 @@
 
 #include <LibreSCRS/CancelToken.h>
 
+// CancelToken::Impl + CancelTokenInternalAccess + stopTokenFrom (all inline,
+// no exported symbols) live in this internal header so std::stop_token does
+// not appear in the public SHARED-build ABI surface.
+#include "detail/cancel_bridge.h"
+
 #include <optional>
 #include <stop_token>
 #include <utility>
 
 namespace LibreSCRS {
 
-class LIBRESCRS_INTERNAL CancelToken::Impl
-{
-public:
-    std::stop_source source;
-};
+// CancelToken::Impl and detail::CancelTokenInternalAccess live in
+// "detail/cancel_bridge.h" (see top-of-file include) so they can be
+// reused by inline std::stop_token bridge code without any symbol
+// being emitted by this translation unit.
 
 class LIBRESCRS_INTERNAL CancelToken::Registration::Impl
 {
@@ -21,15 +25,6 @@ public:
     // std::stop_callback is non-default-constructible; std::optional gives
     // an empty/disengaged state that matches the default Registration shape.
     std::optional<std::stop_callback<std::function<void()>>> callback;
-};
-
-class LIBRESCRS_INTERNAL detail::CancelTokenInternalAccess
-{
-public:
-    static std::shared_ptr<CancelToken::Impl> impl(const CancelToken& token) noexcept
-    {
-        return token.pImpl;
-    }
 };
 
 // ---------- CancelToken ----------
@@ -96,14 +91,8 @@ bool CancelSource::isCancelled() const noexcept
     return pImpl->source.stop_requested();
 }
 
-namespace detail {
-
-std::stop_token stopTokenFrom(const CancelToken& token) noexcept
-{
-    auto impl = CancelTokenInternalAccess::impl(token);
-    return impl ? impl->source.get_token() : std::stop_token{};
-}
-
-} // namespace detail
+// detail::stopTokenFrom is defined inline in detail/cancel_bridge.h
+// (header-only — the .so does not export an std::stop_token entry point;
+// public cooperative cancel uses LibreSCRS::CancelToken).
 
 } // namespace LibreSCRS

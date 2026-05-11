@@ -11,7 +11,7 @@
 #include <mutex>
 #include <stdexcept>
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 
 static constexpr DWORD SCAN_TIMEOUT = 3600 * 1000; // 1 hour
 static constexpr const char* PNP_READER = "\\\\?PnP?\\Notification";
@@ -438,4 +438,4 @@ void Monitor::notifyReaders(const std::vector<std::string>& readers)
     }
 }
 
-} // namespace smartcard
+} // namespace LibreSCRS::SmartCard::Internal

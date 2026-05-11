@@ -3,7 +3,7 @@
 
 #include "apdu.h"
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 
 std::vector<uint8_t> APDUCommand::toBytes() const
 {
@@ -145,4 +145,4 @@ bool isSelectRetryable(uint16_t sw)
            || sw == 0x6A86; // Incorrect parameters P1-P2
 }
 
-} // namespace smartcard
+} // namespace LibreSCRS::SmartCard::Internal

@@ -14,7 +14,7 @@
 #include <winscard.h>
 #endif
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 
 class IPCSCScanProvider
 {
@@ -29,4 +29,4 @@ public:
     virtual LONG cancel(SCARDCONTEXT hContext) = 0;
 };
 
-} // namespace smartcard
+} // namespace LibreSCRS::SmartCard::Internal

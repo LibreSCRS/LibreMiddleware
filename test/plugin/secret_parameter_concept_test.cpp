@@ -7,7 +7,7 @@
 ///        a structural reference test; the meaningful work is at compile
 ///        time, the runtime test merely confirms the binary builds.
 
-#include <LibreSCRS/Auth/detail/SecretParameter.h>
+#include <LibreSCRS/Auth/SecretParameter.h>
 #include <LibreSCRS/Secure/String.h>
 
 #include <gtest/gtest.h>

@@ -171,7 +171,7 @@ TEST(EMRTDHardwareTest, PaceMRZEndToEnd)
     if (!mrz)
         GTEST_SKIP() << "Set LIBRESCRS_TEST_MRZ_DOC, LIBRESCRS_TEST_MRZ_DOB, LIBRESCRS_TEST_MRZ_EXPIRY to run";
 
-    auto readers = smartcard::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
@@ -210,7 +210,7 @@ TEST(EMRTDHardwareTest, PassiveAuthEndToEnd)
     if (!mrz)
         GTEST_SKIP() << "Set LIBRESCRS_TEST_MRZ_DOC, LIBRESCRS_TEST_MRZ_DOB, LIBRESCRS_TEST_MRZ_EXPIRY to run";
 
-    auto readers = smartcard::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
@@ -263,7 +263,7 @@ TEST(EMRTDHardwareTest, ChipAuthEndToEnd)
     if (!mrz)
         GTEST_SKIP() << "Set LIBRESCRS_TEST_MRZ_DOC, LIBRESCRS_TEST_MRZ_DOB, LIBRESCRS_TEST_MRZ_EXPIRY to run";
 
-    auto readers = smartcard::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
@@ -324,7 +324,7 @@ TEST(EMRTDHardwareTest, StreamingGroupOrder)
     if (!mrz)
         GTEST_SKIP() << "Set LIBRESCRS_TEST_MRZ_DOC, LIBRESCRS_TEST_MRZ_DOB, LIBRESCRS_TEST_MRZ_EXPIRY to run";
 
-    auto readers = smartcard::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 

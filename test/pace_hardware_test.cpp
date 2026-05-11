@@ -32,11 +32,11 @@ TEST(PACEHardwareTest, PaceWithCAN)
     if (can.empty())
         GTEST_SKIP() << "Set LIBRESCRS_TEST_CAN to run";
 
-    auto readers = smartcard::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
-    smartcard::PCSCConnection conn(readers[0]);
+    LibreSCRS::SmartCard::Internal::PCSCConnection conn(readers[0]);
 
     // Read EF.CardAccess from MF
     conn.transmit({0x00, 0xA4, 0x00, 0x00, {0x3F, 0x00}, 0x00, true});
@@ -66,11 +66,11 @@ TEST(PACEHardwareTest, PaceAuthenticateAndReadCOM)
     if (can.empty())
         GTEST_SKIP() << "Set LIBRESCRS_TEST_CAN to run";
 
-    auto readers = smartcard::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
-    smartcard::PCSCConnection conn(readers[0]);
+    LibreSCRS::SmartCard::Internal::PCSCConnection conn(readers[0]);
     emrtd::EMRTDCard card(conn, can);
 
     auto result = card.authenticate();
@@ -94,11 +94,11 @@ TEST(PACEHardwareTest, ReadAndParseDG1)
     if (can.empty())
         GTEST_SKIP() << "Set LIBRESCRS_TEST_CAN to run";
 
-    auto readers = smartcard::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
-    smartcard::PCSCConnection conn(readers[0]);
+    LibreSCRS::SmartCard::Internal::PCSCConnection conn(readers[0]);
     emrtd::EMRTDCard card(conn, can);
 
     auto result = card.authenticate();
@@ -140,11 +140,11 @@ TEST(PACEHardwareTest, ReadDG2Photo)
     if (can.empty())
         GTEST_SKIP() << "Set LIBRESCRS_TEST_CAN to run";
 
-    auto readers = smartcard::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
-    smartcard::PCSCConnection conn(readers[0]);
+    LibreSCRS::SmartCard::Internal::PCSCConnection conn(readers[0]);
     emrtd::EMRTDCard card(conn, can);
 
     auto result = card.authenticate();

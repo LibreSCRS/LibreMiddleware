@@ -44,7 +44,7 @@ static void printSW(uint8_t sw1, uint8_t sw2)
     printf("\n");
 }
 
-static bool trySelect(smartcard::PCSCConnection& conn, const char* name, const std::vector<uint8_t>& aid)
+static bool trySelect(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const char* name, const std::vector<uint8_t>& aid)
 {
     printf("\n--- SELECT %s ---\n", name);
     auto resp = conn.transmit({0x00, 0xA4, 0x04, 0x00, aid, 0x00, true});
@@ -54,7 +54,7 @@ static bool trySelect(smartcard::PCSCConnection& conn, const char* name, const s
     return resp.isSuccess();
 }
 
-static bool trySelectByPath(smartcard::PCSCConnection& conn, const char* name, uint16_t fid)
+static bool trySelectByPath(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const char* name, uint16_t fid)
 {
     printf("\n--- SELECT %s (FID %04X) ---\n", name, fid);
     uint8_t fidH = static_cast<uint8_t>((fid >> 8) & 0xFF);
@@ -72,7 +72,7 @@ static bool trySelectByPath(smartcard::PCSCConnection& conn, const char* name, u
     return resp.isSuccess();
 }
 
-static std::vector<uint8_t> readBinary(smartcard::PCSCConnection& conn, const char* name)
+static std::vector<uint8_t> readBinary(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const char* name)
 {
     std::vector<uint8_t> fileData;
     size_t offset = 0;
@@ -106,7 +106,7 @@ int main(int argc, char* argv[])
     std::string can = argv[1];
     printf("CAN: %s\n", can.c_str());
 
-    auto readers = smartcard::PCSCConnection::listReaders();
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
     if (readers.empty()) {
         fprintf(stderr, "No readers found.\n");
         return 1;
@@ -125,7 +125,7 @@ int main(int argc, char* argv[])
     printf("Using: %s\n\n", readerName.c_str());
 
     try {
-        smartcard::PCSCConnection conn(readerName);
+        LibreSCRS::SmartCard::Internal::PCSCConnection conn(readerName);
 
         auto atr = conn.getATR();
         printf("ATR: ");

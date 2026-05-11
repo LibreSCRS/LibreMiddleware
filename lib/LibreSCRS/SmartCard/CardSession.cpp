@@ -29,7 +29,7 @@ std::uint64_t nextGeneration() noexcept
 
 struct LIBRESCRS_INTERNAL CardSession::Impl
 {
-    std::unique_ptr<smartcard::PCSCConnection> ownedConn;
+    std::unique_ptr<LibreSCRS::SmartCard::Internal::PCSCConnection> ownedConn;
     std::string readerName;
     std::vector<std::uint8_t> atr;
     std::uint64_t generation{nextGeneration()};
@@ -47,7 +47,7 @@ CardSession::CardSession(std::string readerName) : d(std::make_unique<Impl>())
 {
     d->readerName = std::move(readerName);
     try {
-        d->ownedConn = std::make_unique<smartcard::PCSCConnection>(d->readerName);
+        d->ownedConn = std::make_unique<LibreSCRS::SmartCard::Internal::PCSCConnection>(d->readerName);
     } catch (const std::exception& e) {
         throw std::runtime_error(std::string{"CardSession open failed: "} + e.what());
     }
@@ -63,7 +63,7 @@ namespace {
 // enum suitable for programmatic branching.
 OpenError::Kind classifyOpenError(std::string_view diag) noexcept
 {
-    // Match substrings emitted by smartcard::PCSCConnection — the canonical
+    // Match substrings emitted by LibreSCRS::SmartCard::Internal::PCSCConnection — the canonical
     // strings are "reader not found", "no smartcard", and "protocol" etc.
     // The matches are intentionally permissive: PC/SC error strings vary
     // across pcsc-lite / WinSCard / CryptoTokenKit revisions. Unknown
@@ -114,17 +114,17 @@ CardSession& CardSession::operator=(CardSession&&) noexcept = default;
 namespace detail {
 
 // PcscBridge is the LM-internal friend that unwraps CardSession into its
-// underlying PCSCConnection. smartcard::PCSCConnection no
+// underlying PCSCConnection. LibreSCRS::SmartCard::Internal::PCSCConnection no
 // longer appears in the public CardSession.h forward-declaration; LM-
 // internal sources go through this bridge instead. Callers MUST NOT pass
 // a moved-from CardSession; no defensive null-check (see public accessor
 // invariants).
-smartcard::PCSCConnection& PcscBridge::unwrap(CardSession& session) noexcept
+LibreSCRS::SmartCard::Internal::PCSCConnection& PcscBridge::unwrap(CardSession& session) noexcept
 {
     return *session.d->ownedConn;
 }
 
-const smartcard::PCSCConnection& PcscBridge::unwrap(const CardSession& session) noexcept
+const LibreSCRS::SmartCard::Internal::PCSCConnection& PcscBridge::unwrap(const CardSession& session) noexcept
 {
     return *session.d->ownedConn;
 }
@@ -134,7 +134,7 @@ std::shared_ptr<CardSession> makeDetachedCardSession(std::string readerName)
     auto session = std::shared_ptr<CardSession>(new CardSession());
     session->d->readerName = std::move(readerName);
     session->d->ownedConn =
-        std::make_unique<smartcard::PCSCConnection>(smartcard::PCSCConnection::DetachedTag{}, session->d->readerName);
+        std::make_unique<LibreSCRS::SmartCard::Internal::PCSCConnection>(LibreSCRS::SmartCard::Internal::PCSCConnection::DetachedTag{}, session->d->readerName);
     // atr stays empty — there is no card
     return session;
 }

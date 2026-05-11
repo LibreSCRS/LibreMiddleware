@@ -3,7 +3,7 @@
 
 #include "tlv.h"
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 
 std::string TLVField::asString() const
 {
@@ -59,4 +59,4 @@ std::vector<uint8_t> findBytes(const std::vector<TLVField>& fields, uint16_t tag
     return {};
 }
 
-} // namespace smartcard
+} // namespace LibreSCRS::SmartCard::Internal

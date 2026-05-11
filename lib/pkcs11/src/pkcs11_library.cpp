@@ -207,7 +207,7 @@ void PKCS11Library::registerProvider(std::shared_ptr<LcInt::PKCS11CardProvider> 
 std::vector<std::string> PKCS11Library::snapshotPcscReaders()
 {
     try {
-        return smartcard::PCSCConnection::listReaders();
+        return LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
     } catch (...) {
         return {};
     }

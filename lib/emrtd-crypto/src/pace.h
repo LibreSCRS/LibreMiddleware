@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 class PCSCConnection;
 }
 
@@ -27,7 +27,7 @@ std::vector<std::string> parseCardAccess(const std::vector<uint8_t>& cardAccess)
 std::vector<std::pair<std::string, int>> parseCardAccessWithParams(const std::vector<uint8_t>& cardAccess);
 
 // Perform PACE authentication.
-std::optional<SessionKeys> performPACE(smartcard::PCSCConnection& conn, const PACEParams& params);
+std::optional<SessionKeys> performPACE(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const PACEParams& params);
 
 // Map a PACE OID to the SM algorithm it produces
 SMAlgorithm paceOIDToSMAlgorithm(const std::string& oid);

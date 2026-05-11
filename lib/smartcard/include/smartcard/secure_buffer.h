@@ -11,7 +11,7 @@
 #include <vector>
 #include <openssl/crypto.h>
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 
 /// RAII wrapper around std::vector<uint8_t> that zeroizes memory on destruction.
 /// Use for PIN data and other secrets to ensure cleanup even on exception paths.
@@ -133,4 +133,4 @@ struct PinStringScrubber
     }
 };
 
-} // namespace smartcard
+} // namespace LibreSCRS::SmartCard::Internal

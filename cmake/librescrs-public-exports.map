@@ -1,0 +1,19 @@
+/* GNU ld version script for the public LibreSCRS_*.so libraries.
+ * Whitelists LM-public C++ namespaces; everything else (bundled OpenSSL,
+ * libresign internals, vendored nlohmann/miniz/pugixml, std-template
+ * instantiations on internal types) collapses to local linkage.
+ * See lib/LibreSCRS/CMakeLists.txt for full rationale.
+ *
+ * Syntax: GNU ld 2.46 — `extern "C++"` block matches against demangled
+ * names; the `Foo::*;` glob covers free functions, methods, types, vtable,
+ * typeinfo entries — everything tagged with namespace `Foo::`.
+ */
+
+LM_4 {
+    global:
+        extern "C++" {
+            LibreSCRS::*;
+        };
+    local:
+        *;
+};

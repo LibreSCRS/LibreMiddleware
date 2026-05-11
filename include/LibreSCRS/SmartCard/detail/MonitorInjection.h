@@ -7,13 +7,14 @@
 #error "LibreSCRS/SmartCard/detail/MonitorInjection.h is internal to LibreMiddleware"
 #endif
 
+#include <LibreSCRS/Export.h>
 #include <LibreSCRS/SmartCard/MonitorService.h>
 
 #include <memory>
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 class IPCSCScanProvider;
-} // namespace smartcard
+} // namespace LibreSCRS::SmartCard::Internal
 
 namespace LibreSCRS::SmartCard::detail {
 
@@ -23,7 +24,11 @@ namespace LibreSCRS::SmartCard::detail {
 /// the `#error` guard above. The full @c MonitorFactory definition lives in
 /// `lib/LibreSCRS/SmartCard/MonitorService.cpp`; this header forwards the two
 /// entry-points test code needs.
-std::shared_ptr<MonitorService> makeMonitorWithProvider(std::unique_ptr<smartcard::IPCSCScanProvider>);
+///
+/// @note Exported via @ref LIBRESCRS_PUBLIC_API so the SmartCard test suite
+/// resolves it across the SHARED LibreSCRS_SmartCard .so boundary.
+LIBRESCRS_PUBLIC_API std::shared_ptr<MonitorService>
+    makeMonitorWithProvider(std::unique_ptr<LibreSCRS::SmartCard::Internal::IPCSCScanProvider>);
 
 /// @brief Construct a `MonitorService::SubscriptionId` from a raw counter value.
 ///        Test-only; external callers obtain tokens exclusively via
@@ -34,6 +39,9 @@ std::shared_ptr<MonitorService> makeMonitorWithProvider(std::unique_ptr<smartcar
 /// as the rest of `MonitorFactory`). Because `MonitorFactory` is declared
 /// as a friend of `MonitorService::SubscriptionId` it can invoke the private ctor;
 /// the wrapper function here is the test's entry point.
-MonitorService::SubscriptionId makeSubscriptionIdForTest(std::uint64_t value) noexcept;
+///
+/// @note Exported via @ref LIBRESCRS_PUBLIC_API so the SmartCard test suite
+/// resolves it across the SHARED LibreSCRS_SmartCard .so boundary.
+LIBRESCRS_PUBLIC_API MonitorService::SubscriptionId makeSubscriptionIdForTest(std::uint64_t value) noexcept;
 
 } // namespace LibreSCRS::SmartCard::detail

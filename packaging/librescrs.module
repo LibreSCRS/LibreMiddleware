@@ -1,0 +1,8 @@
+# p11-kit module declaration for the LibreSCRS PKCS#11 provider.
+# Field reference: https://p11-glue.github.io/p11-glue/p11-kit/manual/modules.html
+#
+# priority 10 keeps LibreSCRS below vendor-shipped middleware (50+), so
+# proprietary stacks installed alongside us win automatic resolution.
+
+module: librescrs-pkcs11.so
+priority: 10

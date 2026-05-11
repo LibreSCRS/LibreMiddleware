@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 
 // ISO 7816-4 BER-TLV field (used by Serbian vehicle registration cards)
 struct BERField
@@ -35,4 +35,4 @@ void mergeBER(BERField& dst, const BERField& src);
 std::string berFindString(const BERField& root, std::initializer_list<uint32_t> path);
 std::vector<uint8_t> berFindBytes(const BERField& root, std::initializer_list<uint32_t> path);
 
-} // namespace smartcard
+} // namespace LibreSCRS::SmartCard::Internal

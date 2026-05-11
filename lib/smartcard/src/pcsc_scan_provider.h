@@ -9,7 +9,7 @@
 
 #include "ipcsc_scan_provider.h"
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 
 class PCSCScanProvider : public IPCSCScanProvider
 {
@@ -37,4 +37,4 @@ public:
     }
 };
 
-} // namespace smartcard
+} // namespace LibreSCRS::SmartCard::Internal

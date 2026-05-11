@@ -20,6 +20,6 @@ std::vector<std::string> getKnownPlugins();
 
 // Reads card and populates AppletInfo with actual values from card
 // Requires a connected PCSCConnection with card present
-AppletInfo mapPlugin(const std::string& pluginName, smartcard::PCSCConnection& conn, bool verbose);
+AppletInfo mapPlugin(const std::string& pluginName, LibreSCRS::SmartCard::Internal::PCSCConnection& conn, bool verbose);
 
 } // namespace card_mapper

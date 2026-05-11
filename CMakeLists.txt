@@ -55,9 +55,8 @@ endif()
 set(LIBREMIDDLEWARE_CERTIFICATES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/certificates"
     CACHE PATH "Path to bundled CA certificates" FORCE)
 
-# Vendored OpenSC fork (static archive) for the OpenScPKCS11Provider that
-# lands in Phase C.2 of the PKCS#11 multi-PIN refactor. Pinned at
-# thirdparty/opensc-source @ f049d8677. ON by default; set to OFF to skip
+# Vendored OpenSC fork (static archive) for the OpenScPKCS11Provider.
+# Pinned at thirdparty/opensc-source. ON by default; set to OFF to skip
 # the ~5-10 minute autoconf+make build (the resulting librescrs-opensc-pkcs11
 # fallback module then will not be built either).
 option(LIBRESCRS_VENDOR_OPENSC
@@ -75,6 +74,23 @@ if(NOT WIN32 AND LIBRESCRS_VENDOR_OPENSC)
     endif()
     message(STATUS "${_opensc_pin_out}")
 endif()
+
+# Shared-library mode for downstream consumers. Default OFF preserves
+# existing static-link behaviour for LibreCelik and tests. ON exports
+# the public LibreSCRS_* archive targets as SHARED libraries with
+# SOVERSION and CMake Config package, enabling downstream consumers
+# to use find_package(LibreMiddleware 4.0 CONFIG). Defined before any
+# add_subdirectory() so subordinate CMakeLists may read
+# ${LIBREMIDDLEWARE_LIB_TYPE} during their target declarations.
+option(LIBREMIDDLEWARE_BUILD_SHARED
+       "Build public LibreSCRS_* targets as shared libraries" OFF)
+
+if(LIBREMIDDLEWARE_BUILD_SHARED)
+    set(LIBREMIDDLEWARE_LIB_TYPE SHARED)
+else()
+    set(LIBREMIDDLEWARE_LIB_TYPE STATIC)
+endif()
+message(STATUS "LibreMiddleware public libraries: ${LIBREMIDDLEWARE_LIB_TYPE}")
 
 add_subdirectory(thirdparty)
 add_subdirectory(lib/LibreSCRS)
@@ -199,16 +215,21 @@ add_subdirectory(tools)
 # those headers are compile-time-guarded with `#error !LIBRESCRS_INTERNAL_BUILD`
 # but must never ship in the public SDK package.
 #
-# This rule establishes the canonical install pattern up-front:
-#   * Public API lives under include/LibreSCRS/.
-#   * Internal detail/ sub-directories are excluded via PATTERN.
+# Active when:
+#   * LIBRESCRS_INSTALL_SDK_HEADERS=ON       (explicit opt-in), OR
+#   * LIBREMIDDLEWARE_BUILD_SHARED=ON        (Config-package consumers like
+#                                             LibreKDE always need the
+#                                             headers when they pick up the
+#                                             shared libs)
 #
-# Only activated when LIBRESCRS_INSTALL_SDK_HEADERS=ON to avoid surprising
-# downstream consumers that invoke `cmake --install` for other reasons.
+# Public API lives under include/LibreSCRS/. Internal detail/ sub-directories
+# are excluded via PATTERN — the regex+exclude is functionally equivalent to
+# enumerating each public component subdir explicitly (Plan §7 considered
+# both shapes).
 # ──────────────────────────────────────────────────────────────────────────
 option(LIBRESCRS_INSTALL_SDK_HEADERS
     "Install LibreSCRS public SDK headers (detail/ sub-trees excluded)" OFF)
-if(LIBRESCRS_INSTALL_SDK_HEADERS)
+if(LIBRESCRS_INSTALL_SDK_HEADERS OR LIBREMIDDLEWARE_BUILD_SHARED)
     include(GNUInstallDirs)
     install(DIRECTORY include/LibreSCRS
         DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
@@ -216,5 +237,71 @@ if(LIBRESCRS_INSTALL_SDK_HEADERS)
             PATTERN "*.h"
             PATTERN "*.hpp"
         PATTERN "detail" EXCLUDE
+    )
+endif()
+
+# ──────────────────────────────────────────────────────────────────────────
+# CMake Config package generation (Phase 0 of LibreKDE roadmap).
+#
+# Active when LIBREMIDDLEWARE_BUILD_SHARED=ON. Produces a Config-package
+# pair (`LibreMiddlewareConfig.cmake` + `LibreMiddlewareConfigVersion.cmake`)
+# plus the namespaced Targets.cmake exported in lib/LibreSCRS/CMakeLists.txt
+# (`install(EXPORT LibreMiddlewareTargets …)`) so downstream consumers can:
+#
+#   find_package(LibreMiddleware 4.0 REQUIRED CONFIG)
+#   target_link_libraries(my_target PRIVATE LibreMiddleware::SmartCard …)
+#
+# Compatibility policy: SameMajorVersion. A consumer requesting 4.x.y is
+# compatible iff the installed major is 4. 5.0 ABI break => consumers
+# must update to a 5.x release first.
+# ──────────────────────────────────────────────────────────────────────────
+if(LIBREMIDDLEWARE_BUILD_SHARED)
+    include(GNUInstallDirs)
+    include(CMakePackageConfigHelpers)
+
+    set(LIBREMIDDLEWARE_CMAKE_CONFIG_DIR
+        "${CMAKE_INSTALL_LIBDIR}/cmake/LibreMiddleware")
+
+    configure_package_config_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/LibreMiddlewareConfig.cmake.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/LibreMiddlewareConfig.cmake"
+        INSTALL_DESTINATION "${LIBREMIDDLEWARE_CMAKE_CONFIG_DIR}"
+    )
+
+    write_basic_package_version_file(
+        "${CMAKE_CURRENT_BINARY_DIR}/LibreMiddlewareConfigVersion.cmake"
+        VERSION "${PROJECT_VERSION}"
+        COMPATIBILITY SameMajorVersion
+    )
+
+    install(FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/LibreMiddlewareConfig.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/LibreMiddlewareConfigVersion.cmake"
+        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindPCSC.cmake"
+        DESTINATION "${LIBREMIDDLEWARE_CMAKE_CONFIG_DIR}"
+    )
+endif()
+
+# ──────────────────────────────────────────────────────────────────────────
+# p11-kit module registration (LibreKDE Phase 1.5).
+#
+# Dropping `librescrs.module` into ${datadir}/p11-kit/modules/ makes every
+# p11-kit-aware application (Kleopatra, GnuPG / gpgsm, Firefox, Chromium,
+# Thunderbird, Evolution, KMail, …) auto-discover LibreSCRS-supported
+# smart cards alongside any other configured PKCS#11 token — with zero
+# application-side configuration.
+#
+# Default ON because (a) it's a single 3-line file with no downstream
+# cost when the .so isn't installed, and (b) the whole point of this
+# integration is "Kleopatra sees our cards" for distro users who don't
+# even have LibreCelik installed. Distro packagers who specifically want
+# to OFF it (e.g. for a stripped SDK package) can do so explicitly.
+# ──────────────────────────────────────────────────────────────────────────
+option(LIBREMIDDLEWARE_INSTALL_P11KIT_MODULE
+    "Install p11-kit module file so PKCS#11-aware applications auto-discover LibreSCRS cards" ON)
+if(LIBREMIDDLEWARE_INSTALL_P11KIT_MODULE)
+    include(GNUInstallDirs)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/librescrs.module"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/p11-kit/modules"
     )
 endif()

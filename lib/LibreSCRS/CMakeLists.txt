@@ -34,7 +34,7 @@ file(GLOB LIBRESCRS_TRUST_PUBLIC_HEADERS CONFIGURE_DEPENDS
 )
 
 # Auth: header-only types + compiled factory functions.
-add_library(LibreSCRS_Auth STATIC
+add_library(LibreSCRS_Auth ${LIBREMIDDLEWARE_LIB_TYPE}
     Auth/AuthRequirementFactory.cpp
     CancelToken.cpp
     LocalizedText.cpp
@@ -47,9 +47,14 @@ target_compile_definitions(LibreSCRS_Auth PRIVATE LIBRESCRS_BUILDING LIBRESCRS_I
 # targets for sibling consistency — prophylactic so future Auth/Secure
 # detail/*.h headers don't trip the #error guard later.
 target_include_directories(LibreSCRS_Auth PUBLIC
-    ${PROJECT_SOURCE_DIR}/include)
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_compile_features(LibreSCRS_Auth PUBLIC cxx_std_23)
-target_link_libraries(LibreSCRS_Auth PUBLIC OpenSSL_Crypto)
+# OpenSSL_Crypto is the bundled static archive (thirdparty/openssl-3.5.5);
+# baked into the .so / .a so downstream consumers don't need to link it.
+# BUILD_INTERFACE-only keeps Config-package consumers from seeing the
+# unresolved `-lOpenSSL_Crypto` reference at link time.
+target_link_libraries(LibreSCRS_Auth PUBLIC $<BUILD_INTERFACE:OpenSSL_Crypto>)
 # Plugins (card-*, eu-vrc-*, emrtd-*, rs-*, etc.) link LibreSCRS_Auth
 # transitively via LibreSCRS_SmartCard PUBLIC into dynamic .so artefacts, so
 # the static archive must be position-independent. Sibling targets
@@ -60,9 +65,18 @@ set_target_properties(LibreSCRS_Auth PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_options(LibreSCRS_Auth PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden -fvisibility-inlines-hidden>
 )
+if(LIBREMIDDLEWARE_BUILD_SHARED)
+    set_target_properties(LibreSCRS_Auth PROPERTIES
+        VERSION   ${PROJECT_VERSION}
+        SOVERSION ${PROJECT_VERSION_MAJOR}
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+    )
+endif()
 
 # Trust: public types + internal providers + composer + async lifecycle owner.
-add_library(LibreSCRS_Trust STATIC
+add_library(LibreSCRS_Trust ${LIBREMIDDLEWARE_LIB_TYPE}
     Trust/TrustConfig.cpp
     Trust/TrustStore.cpp
     Trust/TrustStoreService.cpp
@@ -72,7 +86,9 @@ add_library(LibreSCRS_Trust STATIC
 )
 target_compile_definitions(LibreSCRS_Trust PRIVATE LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD
     LIBREMIDDLEWARE_CERTIFICATES_DIR="${LIBREMIDDLEWARE_CERTIFICATES_DIR}")
-target_include_directories(LibreSCRS_Trust PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_include_directories(LibreSCRS_Trust PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 # Trust subsystem: TrustStoreService.cpp drives eager TL
 # fetches by calling libresign internals (fetch_and_verify_tl, the anchor-
 # extraction helper inside trust/TrustedListProvider.cpp). PRIVATE-include
@@ -86,11 +102,22 @@ target_compile_features(LibreSCRS_Trust PUBLIC cxx_std_23)
 # access for the lazy-fetch merge path). Adding a reverse PRIVATE link here
 # closes the loop used by TrustStoreService eager fetches; static archives
 # tolerate the cycle because the linker re-emits both archives in one pass.
-target_link_libraries(LibreSCRS_Trust PRIVATE OpenSSL_Crypto LibreSign)
+target_link_libraries(LibreSCRS_Trust PRIVATE
+    $<BUILD_INTERFACE:OpenSSL_Crypto>
+    $<BUILD_INTERFACE:LibreSign>)
 set_target_properties(LibreSCRS_Trust PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_options(LibreSCRS_Trust PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden -fvisibility-inlines-hidden>
 )
+if(LIBREMIDDLEWARE_BUILD_SHARED)
+    set_target_properties(LibreSCRS_Trust PROPERTIES
+        VERSION   ${PROJECT_VERSION}
+        SOVERSION ${PROJECT_VERSION_MAJOR}
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+    )
+endif()
 
 # Certificate: ParsedCertificate public types + OID name database.
 # OID database codegen: merges OpenSSL objects.txt + curated TSVs into a
@@ -120,7 +147,7 @@ add_custom_command(
     VERBATIM
 )
 
-add_library(LibreSCRS_Certificate STATIC
+add_library(LibreSCRS_Certificate ${LIBREMIDDLEWARE_LIB_TYPE}
     Certificate/ObjectIdentifier.cpp
     Certificate/DistinguishedName.cpp
     Certificate/ParsedCertificate.cpp
@@ -128,22 +155,35 @@ add_library(LibreSCRS_Certificate STATIC
     ${LIBRESCRS_OID_DB_GENERATED}
 )
 target_compile_definitions(LibreSCRS_Certificate PRIVATE LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD)
-target_include_directories(LibreSCRS_Certificate PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_include_directories(LibreSCRS_Certificate PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_include_directories(LibreSCRS_Certificate PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Certificate/internal)
 target_compile_features(LibreSCRS_Certificate PUBLIC cxx_std_23)
-target_link_libraries(LibreSCRS_Certificate PRIVATE OpenSSL_Crypto)
+target_link_libraries(LibreSCRS_Certificate PRIVATE $<BUILD_INTERFACE:OpenSSL_Crypto>)
 set_target_properties(LibreSCRS_Certificate PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_options(LibreSCRS_Certificate PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden -fvisibility-inlines-hidden>
 )
+if(LIBREMIDDLEWARE_BUILD_SHARED)
+    set_target_properties(LibreSCRS_Certificate PROPERTIES
+        VERSION   ${PROJECT_VERSION}
+        SOVERSION ${PROJECT_VERSION_MAJOR}
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+    )
+endif()
 
-add_library(LibreSCRS_SmartCard STATIC
+add_library(LibreSCRS_SmartCard ${LIBREMIDDLEWARE_LIB_TYPE}
     SmartCard/CardMap.cpp
     SmartCard/CardSession.cpp
     SmartCard/MonitorService.cpp
     ${LIBRESCRS_SMARTCARD_PUBLIC_HEADERS}
 )
-target_include_directories(LibreSCRS_SmartCard PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_include_directories(LibreSCRS_SmartCard PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 # PRIVATE: needed because MonitorService.cpp includes <smartcard/ipcsc_scan_provider.h>
 # (bucket-B, relocated to lib/smartcard/src in Chunk E) and because
 # <smartcard/pcsc_connection.h>/<smartcard/monitor.h> (bucket-C) transitively
@@ -159,19 +199,30 @@ set_target_properties(LibreSCRS_SmartCard PROPERTIES POSITION_INDEPENDENT_CODE O
 # MonitorService.cpp include detail/MonitorInjection.h and internal smartcard/* headers.
 target_link_libraries(LibreSCRS_SmartCard
     PUBLIC  LibreSCRS_Auth
-    PRIVATE SmartCard_Impl
+    PRIVATE $<BUILD_INTERFACE:SmartCard_Impl>
 )
 target_compile_options(LibreSCRS_SmartCard PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden -fvisibility-inlines-hidden>
 )
+if(LIBREMIDDLEWARE_BUILD_SHARED)
+    set_target_properties(LibreSCRS_SmartCard PROPERTIES
+        VERSION   ${PROJECT_VERSION}
+        SOVERSION ${PROJECT_VERSION_MAJOR}
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+    )
+endif()
 
 # Plugin: public AutoReaderService wrapper over the internal CardPluginService.
-add_library(LibreSCRS_Plugin STATIC
+add_library(LibreSCRS_Plugin ${LIBREMIDDLEWARE_LIB_TYPE}
     Plugin/AutoReaderService.cpp
     Plugin/SecurityCheck.cpp
     ${LIBRESCRS_PLUGIN_PUBLIC_HEADERS}
 )
-target_include_directories(LibreSCRS_Plugin PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_include_directories(LibreSCRS_Plugin PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_compile_features(LibreSCRS_Plugin PUBLIC cxx_std_23)
 target_compile_definitions(LibreSCRS_Plugin PRIVATE LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD)
 # LIBRESCRS_INTERNAL_BUILD: sibling-consistent with SmartCard + Signing.
@@ -181,14 +232,23 @@ target_compile_definitions(LibreSCRS_Plugin PRIVATE LIBRESCRS_BUILDING LIBRESCRS
 # detail/ additions work without a CMake edit.
 target_link_libraries(LibreSCRS_Plugin
     PUBLIC  LibreSCRS_Auth LibreSCRS_SmartCard LibreSCRS_Trust
-    PRIVATE CardPlugin_Impl
+    PRIVATE $<BUILD_INTERFACE:CardPlugin_Impl>
 )
 target_compile_options(LibreSCRS_Plugin PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden -fvisibility-inlines-hidden>
 )
+if(LIBREMIDDLEWARE_BUILD_SHARED)
+    set_target_properties(LibreSCRS_Plugin PROPERTIES
+        VERSION   ${PROJECT_VERSION}
+        SOVERSION ${PROJECT_VERSION_MAJOR}
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+    )
+endif()
 
 # Signing: opaque-pimpl request/response types + builders.
-add_library(LibreSCRS_Signing STATIC
+add_library(LibreSCRS_Signing ${LIBREMIDDLEWARE_LIB_TYPE}
     Signing/SigningRequest.cpp
     Signing/VisualSignatureParams.cpp
     Signing/TsaProvider.cpp
@@ -204,7 +264,8 @@ target_compile_definitions(LibreSCRS_Signing PRIVATE LIBRESCRS_BUILDING LIBRESCR
 # still referenced by smartcard/pcsc_connection.h) through the include graph
 # of CardPlugin_Impl/SmartCard_Impl headers.
 target_include_directories(LibreSCRS_Signing PUBLIC
-    ${PROJECT_SOURCE_DIR}/include)
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 # libresign has no PUBLIC include directory; its internal headers
 # (signing_service.h, signing_service_factory.h, types.h) live in
 # lib/libresign/src/. The bridge SigningService.cpp needs them to translate
@@ -221,10 +282,77 @@ target_compile_features(LibreSCRS_Signing PUBLIC cxx_std_23)
 # LibreSCRS::Plugin separately.
 target_link_libraries(LibreSCRS_Signing
     PUBLIC  LibreSCRS_Auth LibreSCRS_Trust
-    PRIVATE CardPlugin_Impl LibreSign SmartCard_Impl OpenSSL_Crypto)
+    PRIVATE
+        $<BUILD_INTERFACE:CardPlugin_Impl>
+        $<BUILD_INTERFACE:LibreSign>
+        $<BUILD_INTERFACE:SmartCard_Impl>
+        $<BUILD_INTERFACE:OpenSSL_Crypto>)
 target_compile_options(LibreSCRS_Signing PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden -fvisibility-inlines-hidden>
 )
+if(LIBREMIDDLEWARE_BUILD_SHARED)
+    set_target_properties(LibreSCRS_Signing PROPERTIES
+        VERSION   ${PROJECT_VERSION}
+        SOVERSION ${PROJECT_VERSION_MAJOR}
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+    )
+endif()
+
+# ──────────────────────────────────────────────────────────────────────────
+# SHARED-build symbol hygiene: namespace-allowlist version script.
+#
+# Without this, bundled OpenSSL (thirdparty/openssl-3.5.5/libcrypto.a) and
+# vendored nlohmann::json / miniz (carried in LibreSign.a) leak ~4400
+# default-visibility symbols (OPENSSL_*, EVP_*, X509_*, BN_*, ossl_*,
+# nlohmann::json_abi_v3_11_3::*, mz_*, …) into the public dynamic symbol
+# table — broadening the LibreMiddleware ABI to OpenSSL's surface,
+# letting any consumer dlsym() bundled OpenSSL helpers, and risking
+# symbol-interposition collisions against a host process's system OpenSSL.
+#
+# A namespace-allowlist version script is the cleanest fix:
+#   * Whitelist `LibreSCRS::*`     — public LM C++ API, including the
+#                                    cross-`.so` LibreSCRS::SmartCard::Internal::*
+#                                    helpers consumed by every card plugin
+#                                    via the DT_NEEDED edge on
+#                                    libLibreSCRS_SmartCard.so.
+#   * Local everything else        — OpenSSL, libresign::, nlohmann::,
+#                                    miniz, pugixml, std-template
+#                                    instantiations on internal types.
+#
+# `--exclude-libs` was tried and rejected: the public
+# `LibreSCRS::Signing::layoutVisualSignature` lives in libresign source
+# (lib/libresign/src/native/visual_signature_layout.cpp), so a
+# `--exclude-libs libLibreSign.a` would have hidden a documented public
+# symbol. Namespace-allowlist routes around that confusion by working in
+# C++-namespace space, not archive space.
+# ──────────────────────────────────────────────────────────────────────────
+if(LIBREMIDDLEWARE_BUILD_SHARED)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(_lm_export_filter "${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/librescrs-public-exports.map")
+        set(_lm_export_link_opt
+            "LINKER:--version-script=${_lm_export_filter}")
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+        # Apple ld counterpart — same allowlist intent, different syntax.
+        # Itanium-ABI mangled names with the leading Darwin `_` prefix
+        # (i.e. `__ZN9LibreSCRS…` / `__ZN9smartcard…`).
+        set(_lm_export_filter "${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/librescrs-public-exports.darwin.list")
+        set(_lm_export_link_opt
+            "LINKER:-exported_symbols_list,${_lm_export_filter}")
+    else()
+        set(_lm_export_filter "")
+    endif()
+
+    if(_lm_export_filter)
+        foreach(_lm_target Auth Trust Certificate SmartCard Plugin Signing)
+            target_link_options(LibreSCRS_${_lm_target} PRIVATE
+                "${_lm_export_link_opt}")
+            set_property(TARGET LibreSCRS_${_lm_target} APPEND PROPERTY
+                LINK_DEPENDS "${_lm_export_filter}")
+        endforeach()
+    endif()
+endif()
 
 # Public aliases — consumers use these.
 add_library(LibreSCRS::Auth      ALIAS LibreSCRS_Auth)
@@ -247,3 +375,47 @@ add_library(LibreSCRS_All INTERFACE)
 target_link_libraries(LibreSCRS_All INTERFACE
     LibreSCRS::Auth LibreSCRS::SmartCard LibreSCRS::Plugin LibreSCRS::Signing LibreSCRS::Trust LibreSCRS::Certificate)
 add_library(LibreSCRS::All ALIAS LibreSCRS_All)
+
+# ──────────────────────────────────────────────────────────────────────────
+# CMake Config-package export (Phase 0 of LibreKDE roadmap).
+#
+# Active when LIBREMIDDLEWARE_BUILD_SHARED=ON. Each of the six public
+# archive-or-shared targets plus the LibreSCRS_Secure INTERFACE
+# aggregator is exported under EXPORT LibreMiddlewareTargets, with
+# EXPORT_NAME remapping the in-tree LibreSCRS_X spelling to the
+# downstream LibreMiddleware::X spelling. The final install(EXPORT ...)
+# materialises Targets.cmake into the same dir as the Config + Version
+# files generated by the root CMakeLists.txt.
+# ──────────────────────────────────────────────────────────────────────────
+if(LIBREMIDDLEWARE_BUILD_SHARED)
+    include(GNUInstallDirs)
+
+    set_target_properties(LibreSCRS_Auth        PROPERTIES EXPORT_NAME Auth)
+    set_target_properties(LibreSCRS_Trust       PROPERTIES EXPORT_NAME Trust)
+    set_target_properties(LibreSCRS_Certificate PROPERTIES EXPORT_NAME Certificate)
+    set_target_properties(LibreSCRS_SmartCard   PROPERTIES EXPORT_NAME SmartCard)
+    set_target_properties(LibreSCRS_Plugin      PROPERTIES EXPORT_NAME Plugin)
+    set_target_properties(LibreSCRS_Signing     PROPERTIES EXPORT_NAME Signing)
+    set_target_properties(LibreSCRS_Secure      PROPERTIES EXPORT_NAME Secure)
+
+    foreach(_lm_target Auth Trust Certificate SmartCard Plugin Signing)
+        install(TARGETS LibreSCRS_${_lm_target}
+            EXPORT   LibreMiddlewareTargets
+            LIBRARY  DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            ARCHIVE  DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            RUNTIME  DESTINATION ${CMAKE_INSTALL_BINDIR}
+            INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+        )
+    endforeach()
+
+    install(TARGETS LibreSCRS_Secure
+        EXPORT   LibreMiddlewareTargets
+        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    )
+
+    install(EXPORT LibreMiddlewareTargets
+        FILE      LibreMiddlewareTargets.cmake
+        NAMESPACE LibreMiddleware::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/LibreMiddleware
+    )
+endif()

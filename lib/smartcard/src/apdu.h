@@ -11,7 +11,7 @@
 #include <span>
 #include <vector>
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 
 struct APDUCommand
 {
@@ -47,4 +47,4 @@ APDUCommand changeReferenceData(uint8_t pinRef, std::span<const uint8_t> oldPin,
 // (wrong P2/Le), meaning retrying with alternative P2/Le is appropriate.
 bool isSelectRetryable(uint16_t sw);
 
-} // namespace smartcard
+} // namespace LibreSCRS::SmartCard::Internal

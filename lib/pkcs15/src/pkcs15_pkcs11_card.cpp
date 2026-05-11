@@ -119,19 +119,19 @@ bool Pkcs15Card::probeForPace()
     if (!conn)
         return false;
 
-    auto r1 = conn->transmit(smartcard::selectByFileId(0x3F, 0x00, 0x0C));
+    auto r1 = conn->transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x3F, 0x00, 0x0C));
     if (!r1.isSuccess())
-        r1 = conn->transmit(smartcard::selectByFileId(0x3F, 0x00));
+        r1 = conn->transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x3F, 0x00));
     if (!r1.isSuccess())
         return false;
 
-    auto r2 = conn->transmit(smartcard::selectByFileId(0x01, 0x1C, 0x0C));
+    auto r2 = conn->transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x01, 0x1C, 0x0C));
     if (!r2.isSuccess())
-        r2 = conn->transmit(smartcard::selectByFileId(0x01, 0x1C));
+        r2 = conn->transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x01, 0x1C));
     if (r2.sw1 != 0x90 && r2.sw1 != 0x62)
         return false;
 
-    auto r3 = conn->transmit(smartcard::APDUCommand{0x00, 0xB0, 0x00, 0x00, {}, 0, true});
+    auto r3 = conn->transmit(LibreSCRS::SmartCard::Internal::APDUCommand{0x00, 0xB0, 0x00, 0x00, {}, 0, true});
     if (r3.data.empty())
         return false;
 
@@ -150,7 +150,8 @@ void Pkcs15Card::installSmFilter()
 
     auto* smPtr = sm.get();
     auto* connPtr = conn.get();
-    conn->setTransmitFilter([smPtr, connPtr](const smartcard::APDUCommand& cmd) -> smartcard::APDUResponse {
+    conn->setTransmitFilter([smPtr, connPtr](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd)
+                                -> LibreSCRS::SmartCard::Internal::APDUResponse {
         auto cmdBytes = cmd.toBytes();
         auto protectedApdu = smPtr->protect(cmdBytes);
         if (protectedApdu.size() < 5)
@@ -188,14 +189,14 @@ unsigned long Pkcs15Card::bind(const std::string& reader)
     readerName = reader;
 
     try {
-        conn = std::make_unique<smartcard::PCSCConnection>(reader);
+        conn = std::make_unique<LibreSCRS::SmartCard::Internal::PCSCConnection>(reader);
     } catch (...) {
         return Crv::TokenNotPresent;
     }
 
     // Probe AID first; if security-blocked (6982) try EF.CardAccess for PACE.
     std::vector<std::uint8_t> aid(::pkcs15::kPkcs15Aid.begin(), ::pkcs15::kPkcs15Aid.end());
-    auto aidResp = conn->transmit(smartcard::selectByAID(aid, 0x0C));
+    auto aidResp = conn->transmit(LibreSCRS::SmartCard::Internal::selectByAID(aid, 0x0C));
     bool aidOk = aidResp.isSuccess();
     bool securityBlocked = (aidResp.sw1 == 0x69 && aidResp.sw2 == 0x82);
 

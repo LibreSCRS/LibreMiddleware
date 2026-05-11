@@ -33,7 +33,7 @@ add_executable(sdk-consumer main.cpp)
 # Link ONLY the public umbrella target. Transitively provides
 # LibreSCRS::{Auth, SmartCard, Plugin, Signing} — and ONLY their public
 # include dirs (${PROJECT_SOURCE_DIR}/include). No lib/*/include, no
-# lib/*/src, no smartcard:: / libresign:: reachable.
+# lib/*/src, no LibreSCRS::SmartCard::Internal:: / libresign:: reachable.
 target_link_libraries(sdk-consumer PRIVATE LibreSCRS::All)
 
 # Registering sdk-consumer as a ctest entry makes its build + run part of

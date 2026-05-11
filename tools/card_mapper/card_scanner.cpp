@@ -73,7 +73,7 @@ bool aidContained(const std::vector<std::vector<uint8_t>>& detected, const std::
 // Try an AID probe: execute all SELECT commands in sequence.
 // Returns the P2 that worked for the last SELECT, or nullopt if probe failed.
 // When a SELECT returns a retryable error, tries alternative P2 values.
-std::optional<uint8_t> tryProbe(smartcard::PCSCConnection& conn, const AidProbe& probe)
+std::optional<uint8_t> tryProbe(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const AidProbe& probe)
 {
     constexpr uint8_t AID_P2_ALTS[] = {0x0C, 0x04, 0x00};
 
@@ -83,7 +83,7 @@ std::optional<uint8_t> tryProbe(smartcard::PCSCConnection& conn, const AidProbe&
         bool isLast = (i == probe.selectSequence.size() - 1);
         uint8_t preferredP2 = isLast ? probe.lastP2 : 0x00;
 
-        auto resp = conn.transmit(smartcard::selectByAID(probe.selectSequence[i], preferredP2));
+        auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(probe.selectSequence[i], preferredP2));
         if (resp.isSuccess() || resp.sw1 == 0x62 || resp.sw1 == 0x61) {
             if (isLast)
                 workingP2 = preferredP2;
@@ -91,14 +91,14 @@ std::optional<uint8_t> tryProbe(smartcard::PCSCConnection& conn, const AidProbe&
         }
 
         // Try alternative P2 values on retryable errors
-        if (!smartcard::isSelectRetryable(resp.statusWord()))
+        if (!LibreSCRS::SmartCard::Internal::isSelectRetryable(resp.statusWord()))
             return std::nullopt;
 
         bool found = false;
         for (uint8_t altP2 : AID_P2_ALTS) {
             if (altP2 == preferredP2)
                 continue;
-            resp = conn.transmit(smartcard::selectByAID(probe.selectSequence[i], altP2));
+            resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(probe.selectSequence[i], altP2));
             if (resp.isSuccess() || resp.sw1 == 0x62 || resp.sw1 == 0x61) {
                 if (isLast)
                     workingP2 = altP2;
@@ -113,23 +113,23 @@ std::optional<uint8_t> tryProbe(smartcard::PCSCConnection& conn, const AidProbe&
 }
 
 // SELECT variant for file selection — each combination of P1/P2/Le that cards may require.
-smartcard::APDUResponse trySelectVariant(smartcard::PCSCConnection& conn, uint8_t hi, uint8_t lo, int variant)
+LibreSCRS::SmartCard::Internal::APDUResponse trySelectVariant(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t hi, uint8_t lo, int variant)
 {
     switch (variant) {
     case 0: // P1=0x08, P2=0x00, Le=4 — SELECT by path from MF (eID, health)
-        return conn.transmit(smartcard::selectByPath(hi, lo));
+        return conn.transmit(LibreSCRS::SmartCard::Internal::selectByPath(hi, lo));
     case 1: // P1=0x02, P2=0x04, no Le — SELECT child EF, return FCP (vehicle)
-        return conn.transmit(smartcard::APDUCommand{
+        return conn.transmit(LibreSCRS::SmartCard::Internal::APDUCommand{
             .cla = 0x00, .ins = 0xA4, .p1 = 0x02, .p2 = 0x04, .data = {hi, lo}, .le = 0, .hasLe = false});
     case 2: // P1=0x00, P2=0x00, Le=0 — SELECT by FID, return FCI (generic)
-        return conn.transmit(smartcard::selectByFileId(hi, lo));
+        return conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(hi, lo));
     case 3: // P1=0x02, P2=0x0C, no Le — SELECT child EF, no response data (strict cards)
-        return conn.transmit(smartcard::APDUCommand{
+        return conn.transmit(LibreSCRS::SmartCard::Internal::APDUCommand{
             .cla = 0x00, .ins = 0xA4, .p1 = 0x02, .p2 = 0x0C, .data = {hi, lo}, .le = 0, .hasLe = false});
     case 4: // P1=0x00, P2=0x0C, no Le — SELECT by FID, no response data (strict cards)
-        return conn.transmit(smartcard::selectByFileId(hi, lo, 0x0C));
+        return conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(hi, lo, 0x0C));
     default:
-        return smartcard::APDUResponse{.data = {}, .sw1 = 0x6A, .sw2 = 0x82};
+        return LibreSCRS::SmartCard::Internal::APDUResponse{.data = {}, .sw1 = 0x6A, .sw2 = 0x82};
     }
 }
 
@@ -139,7 +139,7 @@ constexpr int FID_SELECT_VARIANT_COUNT = 5;
 // Permanently skips variants the card rejects (6700/6982/6A86 = format mismatch).
 // Still tries all accepted variants per FID since different P1 values search
 // different scopes (P1=0x00 searches MF, P1=0x02 searches current DF).
-smartcard::APDUResponse selectFile(smartcard::PCSCConnection& conn, uint8_t hi, uint8_t lo, int& cachedVariant,
+LibreSCRS::SmartCard::Internal::APDUResponse selectFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t hi, uint8_t lo, int& cachedVariant,
                                    uint32_t& rejectedMask)
 {
     // Fast path: try cached variant first (last variant that returned success)
@@ -162,30 +162,30 @@ smartcard::APDUResponse selectFile(smartcard::PCSCConnection& conn, uint8_t hi, 
             return resp;
         }
         // Permanently skip formats the card rejects (format mismatch)
-        if (smartcard::isSelectRetryable(resp.statusWord()))
+        if (LibreSCRS::SmartCard::Internal::isSelectRetryable(resp.statusWord()))
             rejectedMask |= (1u << v);
     }
 
-    return smartcard::APDUResponse{.data = {}, .sw1 = 0x6A, .sw2 = 0x82};
+    return LibreSCRS::SmartCard::Internal::APDUResponse{.data = {}, .sw1 = 0x6A, .sw2 = 0x82};
 }
 
 // Read file content with resilience: Le correction, chunk fallback, multi-chunk loop.
-std::vector<uint8_t> readFileContent(smartcard::PCSCConnection& conn)
+std::vector<uint8_t> readFileContent(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
 {
     constexpr size_t MAX_READ_SIZE = 65536;
     constexpr uint8_t CHUNK_SIZES[] = {0xFF, 0x80, 0x40, 0x20};
 
     // Determine working chunk size from first read
     uint8_t chunkSize = 0;
-    smartcard::APDUResponse firstResp{};
+    LibreSCRS::SmartCard::Internal::APDUResponse firstResp{};
 
     for (uint8_t cs : CHUNK_SIZES) {
-        firstResp = conn.transmit(smartcard::readBinary(0, cs));
+        firstResp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0, cs));
 
         // SW=6C XX: card tells us correct Le — use it
         if (firstResp.sw1 == 0x6C) {
             chunkSize = firstResp.sw2;
-            firstResp = conn.transmit(smartcard::readBinary(0, chunkSize));
+            firstResp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0, chunkSize));
             break;
         }
 
@@ -207,7 +207,7 @@ std::vector<uint8_t> readFileContent(smartcard::PCSCConnection& conn)
     // Multi-chunk read loop
     size_t offset = result.size();
     while (offset < MAX_READ_SIZE) {
-        auto resp = conn.transmit(smartcard::readBinary(static_cast<uint16_t>(offset), chunkSize));
+        auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(static_cast<uint16_t>(offset), chunkSize));
         if (resp.data.empty() || (!resp.isSuccess() && resp.statusWord() != 0x6282))
             break;
         result.insert(result.end(), resp.data.begin(), resp.data.end());
@@ -287,7 +287,7 @@ std::string lookupBERTagName(uint32_t tag)
 }
 
 // Recursively collect leaf tags from a BER tree into TagInfo entries
-void collectBERTags(const smartcard::BERField& node, DataFile& dataFile, const std::string& prefix)
+void collectBERTags(const LibreSCRS::SmartCard::Internal::BERField& node, DataFile& dataFile, const std::string& prefix)
 {
     for (const auto& child : node.children) {
         if (child.constructed && !child.children.empty()) {
@@ -307,7 +307,7 @@ void collectBERTags(const smartcard::BERField& node, DataFile& dataFile, const s
 // Parse file data into an EF node: try TLV, then BER-TLV, else mark binary
 void parseFileData(const std::vector<uint8_t>& fileData, FileNode& efNode, DataFile& dataFile)
 {
-    auto fields = smartcard::parseTLV(fileData.data(), fileData.size());
+    auto fields = LibreSCRS::SmartCard::Internal::parseTLV(fileData.data(), fileData.size());
     if (!fields.empty()) {
         efNode.format = "TLV (LE 16-bit)";
         for (const auto& field : fields) {
@@ -321,7 +321,7 @@ void parseFileData(const std::vector<uint8_t>& fileData, FileNode& efNode, DataF
         }
     } else {
         try {
-            auto berRoot = smartcard::parseBER(fileData.data(), fileData.size());
+            auto berRoot = LibreSCRS::SmartCard::Internal::parseBER(fileData.data(), fileData.size());
             if (!berRoot.children.empty()) {
                 efNode.format = "BER-TLV";
                 collectBERTags(berRoot, dataFile, "");
@@ -334,7 +334,7 @@ void parseFileData(const std::vector<uint8_t>& fileData, FileNode& efNode, DataF
     }
 }
 
-std::string probeCertPath(smartcard::PCSCConnection& conn, const std::vector<uint8_t>& path)
+std::string probeCertPath(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const std::vector<uint8_t>& path)
 {
     if (path.empty() || path.size() % 2 != 0)
         return "[invalid path]";
@@ -350,16 +350,16 @@ std::string probeCertPath(smartcard::PCSCConnection& conn, const std::vector<uin
         uint8_t lo = path[i + 1];
         std::string fid = formatFid(hi, lo);
 
-        auto resp = conn.transmit(smartcard::selectByFileId(hi, lo, 0x0C));
+        auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(hi, lo, 0x0C));
         if (!resp.isSuccess()) {
-            resp = conn.transmit(smartcard::selectByFileId(hi, lo, 0x00));
+            resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(hi, lo, 0x00));
         }
         if (!resp.isSuccess()) {
             return std::format("[SELECT {} failed: {:04X} under {}]", fid, resp.statusWord(), lastDf);
         }
 
         if (i + 2 >= path.size()) {
-            auto readResp = conn.transmit(smartcard::readBinary(0, 4));
+            auto readResp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 4));
             if (readResp.isSuccess() || readResp.statusWord() == 0x6282) {
                 return "[readable]";
             } else if (readResp.statusWord() == 0x6982) {
@@ -377,7 +377,7 @@ std::string probeCertPath(smartcard::PCSCConnection& conn, const std::vector<uin
 
 // PKCS#15 smart probe: use the PKCS#15 parser to navigate ODF→CDF/PrKDF/AODF
 // instead of brute-forcing FID ranges. Returns true if PKCS#15 structure was read.
-bool probePKCS15(smartcard::PCSCConnection& conn, FileNode& df, AppletInfo& applet)
+bool probePKCS15(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, FileNode& df, AppletInfo& applet)
 {
     try {
         pkcs15::PKCS15Card card(conn);
@@ -495,7 +495,7 @@ bool probePKCS15(smartcard::PCSCConnection& conn, FileNode& df, AppletInfo& appl
 }
 
 // PIV GET DATA probe: read known PIV data objects via INS=CB
-bool probePIV(smartcard::PCSCConnection& conn, FileNode& df, AppletInfo& applet)
+bool probePIV(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, FileNode& df, AppletInfo& applet)
 {
     struct PIVObject
     {
@@ -538,7 +538,7 @@ bool probePIV(smartcard::PCSCConnection& conn, FileNode& df, AppletInfo& applet)
         std::vector<uint8_t> data = {0x5C, static_cast<uint8_t>(obj.tag.size())};
         data.insert(data.end(), obj.tag.begin(), obj.tag.end());
 
-        smartcard::APDUCommand cmd{
+        LibreSCRS::SmartCard::Internal::APDUCommand cmd{
             .cla = 0x00, .ins = 0xCB, .p1 = 0x3F, .p2 = 0xFF, .data = data, .le = 0, .hasLe = true};
         auto resp = conn.transmit(cmd);
 
@@ -554,7 +554,7 @@ bool probePIV(smartcard::PCSCConnection& conn, FileNode& df, AppletInfo& applet)
 
             if (!resp.data.empty()) {
                 try {
-                    auto root = smartcard::parseBER(resp.data.data(), resp.data.size());
+                    auto root = LibreSCRS::SmartCard::Internal::parseBER(resp.data.data(), resp.data.size());
                     efNode.format = "BER-TLV";
                     collectBERTags(root, dataFile, "");
                 } catch (const std::exception&) {
@@ -578,7 +578,7 @@ bool probePIV(smartcard::PCSCConnection& conn, FileNode& df, AppletInfo& applet)
 }
 
 // Walk FID ranges for an applet: SELECT + READ each file, build file tree
-void walkFidRanges(smartcard::PCSCConnection& conn, FileNode& df, AppletInfo& applet)
+void walkFidRanges(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, FileNode& df, AppletInfo& applet)
 {
     int cachedFidVariant = -1;
     uint32_t rejectedFidMask = 0;
@@ -660,7 +660,7 @@ std::string matchProfile(const std::vector<std::vector<uint8_t>>& detectedAIDs)
     return "";
 }
 
-ScanResult discoverCard(smartcard::PCSCConnection& conn, bool verbose)
+ScanResult discoverCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, bool verbose)
 {
     ScanResult result;
     result.atr = conn.getATR();
@@ -668,7 +668,7 @@ ScanResult discoverCard(smartcard::PCSCConnection& conn, bool verbose)
     ApduLogger logger;
 
     if (verbose) {
-        conn.setTransmitFilter([&logger, &conn](const smartcard::APDUCommand& cmd) -> smartcard::APDUResponse {
+        conn.setTransmitFilter([&logger, &conn](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd) -> LibreSCRS::SmartCard::Internal::APDUResponse {
             auto resp = conn.transmitRaw(cmd);
             logger.log(cmd, resp);
             return resp;
@@ -681,7 +681,7 @@ ScanResult discoverCard(smartcard::PCSCConnection& conn, bool verbose)
     // Try reading EF.DIR (2F00) at MF level — ISO 7816-4 application directory
     // This lists all applications on the card regardless of country/vendor
     {
-        auto selectMF = smartcard::selectByFileId(0x3F, 0x00);
+        auto selectMF = LibreSCRS::SmartCard::Internal::selectByFileId(0x3F, 0x00);
         conn.transmit(selectMF);
 
         // Try SELECT EF.DIR by FID — multiple methods for strict cards
@@ -695,7 +695,7 @@ ScanResult discoverCard(smartcard::PCSCConnection& conn, bool verbose)
                 // Parse BER-TLV — EF.DIR contains application templates (tag 61)
                 // with AID (tag 4F) and optional label (tag 50)
                 try {
-                    auto dirTree = smartcard::parseBER(dirData.data(), dirData.size());
+                    auto dirTree = LibreSCRS::SmartCard::Internal::parseBER(dirData.data(), dirData.size());
                     for (const auto& tmpl : dirTree.children) {
                         if (tmpl.tag == 0x61) // Application template
                         {

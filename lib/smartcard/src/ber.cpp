@@ -4,7 +4,7 @@
 #include "ber.h"
 #include <stdexcept>
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 
 std::string BERField::asString() const
 {
@@ -188,4 +188,4 @@ std::vector<uint8_t> berFindBytes(const BERField& root, std::initializer_list<ui
     return current->value;
 }
 
-} // namespace smartcard
+} // namespace LibreSCRS::SmartCard::Internal

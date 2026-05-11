@@ -12,10 +12,10 @@
 #include <memory>
 #include <string>
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 class PCSCConnection;
 struct BERField;
-} // namespace smartcard
+} // namespace LibreSCRS::SmartCard::Internal
 
 namespace euvrc {
 
@@ -23,10 +23,10 @@ class EuVrcCard
 {
 public:
     static bool probe(const std::string& readerName);
-    static bool probe(smartcard::PCSCConnection& conn);
+    static bool probe(LibreSCRS::SmartCard::Internal::PCSCConnection& conn);
 
     explicit EuVrcCard(const std::string& readerName);
-    explicit EuVrcCard(smartcard::PCSCConnection& conn);
+    explicit EuVrcCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn);
     ~EuVrcCard();
 
     EuVrcCard(const EuVrcCard&) = delete;
@@ -35,14 +35,14 @@ public:
     EuVrcData readCard();
 
 private:
-    std::unique_ptr<smartcard::PCSCConnection> ownedConnection;
-    smartcard::PCSCConnection* conn = nullptr;
+    std::unique_ptr<LibreSCRS::SmartCard::Internal::PCSCConnection> ownedConnection;
+    LibreSCRS::SmartCard::Internal::PCSCConnection* conn = nullptr;
 
     std::vector<uint8_t> readFile(uint8_t fidHi, uint8_t fidLo);
 };
 
 // Extract EU VRC fields from a merged BER tree
-EuVrcData extractFields(const smartcard::BERField& root);
+EuVrcData extractFields(const LibreSCRS::SmartCard::Internal::BERField& root);
 
 // Convert YYYYMMDD -> DD.MM.YYYY
 std::string formatVrcDate(const std::string& yyyymmdd);

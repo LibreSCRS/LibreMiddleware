@@ -17,7 +17,7 @@
 #include <string_view>
 #include <vector>
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 class PCSCConnection;
 }
 
@@ -26,7 +26,7 @@ namespace pkcs15 {
 class PKCS15Card
 {
 public:
-    explicit PKCS15Card(smartcard::PCSCConnection& conn);
+    explicit PKCS15Card(LibreSCRS::SmartCard::Internal::PCSCConnection& conn);
 
     bool probe();        // Try AID SELECT, then EF.DIR fallback
     bool selectApplet(); // Re-select using the method that worked in probe()
@@ -67,15 +67,15 @@ private:
     static KeyRefInfo resolveKeyRef(const PrivateKeyInfo& key);
     std::vector<uint8_t> tryMsePso(uint8_t sigAlgo, const KeyRefInfo& keyRef, const std::vector<uint8_t>& psoData,
                                    uint16_t expectedSigLen, uint16_t& lastSW);
-    static smartcard::SecureBuffer encodePIN(std::string_view pin, const PinInfo& pinInfo);
+    static LibreSCRS::SmartCard::Internal::SecureBuffer encodePIN(std::string_view pin, const PinInfo& pinInfo);
     // Returns: 1=success, 0=wrong PIN (0x63Cx), -1=other failure
-    int verifyPinInline(const PinInfo& pinInfo, const smartcard::SecureBuffer& pinData);
+    int verifyPinInline(const PinInfo& pinInfo, const LibreSCRS::SmartCard::Internal::SecureBuffer& pinData);
     static std::vector<uint8_t> extractRawHash(const std::vector<uint8_t>& digestInfo);
     bool selectByPath(std::span<const uint8_t> path, uint8_t selectP2 = 0x00);
     std::vector<uint8_t> readSelectedFile();
     bool probeViaEfDir(); // EF.DIR fallback: read MF/2F00, find PKCS#15 path
 
-    smartcard::PCSCConnection& conn;
+    LibreSCRS::SmartCard::Internal::PCSCConnection& conn;
     std::vector<uint8_t> pkcs15Path; // Path discovered from EF.DIR (empty = use AID)
     uint8_t fileSelectP2 = 0x00;     // Discovered during probe/first selectByPath
 };

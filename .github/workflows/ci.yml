@@ -155,3 +155,29 @@ jobs:
 
       - name: Test
         run: ctest --output-on-failure --test-dir build/test
+
+  shared-config-package:
+    # Phase 0 of LibreKDE roadmap: build LibreMiddleware with
+    # LIBREMIDDLEWARE_BUILD_SHARED=ON, install to a workspace prefix,
+    # then run examples/sdk-consumer-config/build-and-run.sh which
+    # configures + builds + runs a downstream consumer via
+    # find_package(LibreMiddleware 4.0 REQUIRED CONFIG). Catches Phase 0
+    # regressions in target export, visibility, version pinning, and
+    # bundled-dep linkage end-to-end.
+    name: SHARED build + Config-package consumer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libpcsclite-dev libssl-dev zlib1g-dev \
+            libcurl4-openssl-dev libxml2-dev \
+            pkg-config cmake ninja-build python3-jsonschema
+
+      - name: Run consumer smoke test
+        # build-and-run.sh drives the full install -> consumer-configure
+        # -> build -> run cycle and exits ==> OK on success.
+        run: bash examples/sdk-consumer-config/build-and-run.sh

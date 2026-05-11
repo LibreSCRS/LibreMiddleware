@@ -7,14 +7,14 @@
 #include <tlv.h>
 #include <ber.h>
 
-using namespace smartcard;
+using namespace LibreSCRS::SmartCard::Internal;
 
 // --- APDU tests ---
 
 TEST(APDUTest, VerifyPINCommand)
 {
     std::array<uint8_t, 4> pin = {0x31, 0x32, 0x33, 0x34};
-    auto cmd = smartcard::verifyPIN(0x01, pin);
+    auto cmd = LibreSCRS::SmartCard::Internal::verifyPIN(0x01, pin);
     auto bytes = cmd.toBytes();
     // CLA=0x00, INS=0x20, P1=0x00, P2=0x01, Lc=4, data=31323334, no Le
     EXPECT_EQ(bytes[0], 0x00);
@@ -31,7 +31,7 @@ TEST(APDUTest, VerifyPINCommand)
 
 TEST(APDUTest, VerifyPINStatusCommand)
 {
-    auto cmd = smartcard::verifyPINStatus(0x01);
+    auto cmd = LibreSCRS::SmartCard::Internal::verifyPINStatus(0x01);
     auto bytes = cmd.toBytes();
     // 4 header bytes + Le=0x00 (Le required for SM — Case 1 triggers 6988 on some cards)
     EXPECT_EQ(bytes.size(), 5u);
@@ -46,7 +46,7 @@ TEST(APDUTest, ChangeReferenceDataCommand)
 {
     std::array<uint8_t, 4> oldPin = {0x31, 0x32, 0x33, 0x34};
     std::array<uint8_t, 4> newPin = {0x35, 0x36, 0x37, 0x38};
-    auto cmd = smartcard::changeReferenceData(0x01, oldPin, newPin);
+    auto cmd = LibreSCRS::SmartCard::Internal::changeReferenceData(0x01, oldPin, newPin);
     auto bytes = cmd.toBytes();
     EXPECT_EQ(bytes[0], 0x00);
     EXPECT_EQ(bytes[1], 0x24); // INS

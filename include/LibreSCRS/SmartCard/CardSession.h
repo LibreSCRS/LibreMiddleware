@@ -27,15 +27,15 @@ class CardSession;
 // befriends. The actual declarations and implementations live in internal-
 // only headers guarded by `#ifndef LIBRESCRS_INTERNAL_BUILD` so external
 // consumers never see the underlying types (the implementation-detail
-// `smartcard::PCSCConnection` no longer appears in this public header at
+// `LibreSCRS::SmartCard::Internal::PCSCConnection` no longer appears in this public header at
 // all — it is reached through @c detail::PcscBridge from internal sources
 // only). A friend declaration targeting `detail::name(...)` / `detail::Type`
 // still needs the namespace to exist for the friend lookup to match.
 /// @cond internal
 namespace detail {
-std::shared_ptr<CardSession> makeDetachedCardSession(std::string readerName);
+LIBRESCRS_PUBLIC_API std::shared_ptr<CardSession> makeDetachedCardSession(std::string readerName);
 struct PcscBridge;
-std::uint64_t sessionGeneration(const CardSession& session) noexcept;
+LIBRESCRS_PUBLIC_API std::uint64_t sessionGeneration(const CardSession& session) noexcept;
 } // namespace detail
 /// @endcond
 

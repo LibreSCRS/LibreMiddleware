@@ -111,7 +111,7 @@ AAPublicKey parseDG15(const std::vector<uint8_t>& dg15Raw)
 // performActiveAuth
 // ---------------------------------------------------------------------------
 
-ChipAuthResult performActiveAuth(smartcard::PCSCConnection& conn, const std::vector<uint8_t>& dg15Raw,
+ChipAuthResult performActiveAuth(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const std::vector<uint8_t>& dg15Raw,
                                  SecureMessaging& currentSM)
 {
     ChipAuthResult result;
@@ -145,7 +145,7 @@ ChipAuthResult performActiveAuth(smartcard::PCSCConnection& conn, const std::vec
 
     // --- Send INTERNAL AUTHENTICATE via Secure Messaging ---
     // Command: 00 88 00 00 08 <challenge> 00
-    smartcard::APDUCommand iaCmd{0x00, 0x88, 0x00, 0x00, challenge, 0x00, true};
+    LibreSCRS::SmartCard::Internal::APDUCommand iaCmd{0x00, 0x88, 0x00, 0x00, challenge, 0x00, true};
     auto iaApdu = currentSM.protect(iaCmd.toBytes());
     auto iaResp = conn.transmitRaw(iaApdu.data(), static_cast<unsigned long>(iaApdu.size()));
 

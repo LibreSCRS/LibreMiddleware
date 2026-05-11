@@ -25,7 +25,7 @@ static std::string formatDate(const std::string& raw)
 bool EIdCard::probe(const std::string& readerName)
 {
     try {
-        smartcard::PCSCConnection conn(readerName);
+        LibreSCRS::SmartCard::Internal::PCSCConnection conn(readerName);
         auto atr = conn.getATR();
         if (protocol::isGemaltoATR(atr) || protocol::isApolloATR(atr))
             return true;
@@ -59,12 +59,12 @@ void EIdCard::detectCardType()
 
 EIdCard::EIdCard(const std::string& readerName)
 {
-    ownedConnection = std::make_unique<smartcard::PCSCConnection>(readerName);
+    ownedConnection = std::make_unique<LibreSCRS::SmartCard::Internal::PCSCConnection>(readerName);
     conn = ownedConnection.get();
     detectCardType();
 }
 
-EIdCard::EIdCard(smartcard::PCSCConnection& externalConn) : conn(&externalConn)
+EIdCard::EIdCard(LibreSCRS::SmartCard::Internal::PCSCConnection& externalConn) : conn(&externalConn)
 {
     detectCardType();
 }
@@ -78,66 +78,66 @@ CardType EIdCard::getCardType() const
 
 DocumentData EIdCard::readDocumentData()
 {
-    smartcard::CardTransaction tx(*conn);
+    LibreSCRS::SmartCard::Internal::CardTransaction tx(*conn);
     auto raw = cardReader->readFile(*conn, protocol::FILE_DOCUMENT_DATA_H, protocol::FILE_DOCUMENT_DATA_L);
-    auto fields = smartcard::parseTLV(raw.data(), raw.size());
+    auto fields = LibreSCRS::SmartCard::Internal::parseTLV(raw.data(), raw.size());
 
     DocumentData doc;
-    doc.docRegNo = smartcard::findString(fields, protocol::TAG_DOC_REG_NO);
-    doc.documentType = smartcard::findString(fields, protocol::TAG_DOCUMENT_TYPE);
-    doc.documentSerialNumber = smartcard::findString(fields, protocol::TAG_DOCUMENT_SERIAL_NO);
-    doc.issuingDate = formatDate(smartcard::findString(fields, protocol::TAG_ISSUING_DATE));
-    doc.expiryDate = formatDate(smartcard::findString(fields, protocol::TAG_EXPIRY_DATE));
-    doc.issuingAuthority = smartcard::findString(fields, protocol::TAG_ISSUING_AUTHORITY);
-    doc.chipSerialNumber = smartcard::findString(fields, protocol::TAG_CHIP_SERIAL_NUMBER);
+    doc.docRegNo = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_DOC_REG_NO);
+    doc.documentType = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_DOCUMENT_TYPE);
+    doc.documentSerialNumber = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_DOCUMENT_SERIAL_NO);
+    doc.issuingDate = formatDate(LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_ISSUING_DATE));
+    doc.expiryDate = formatDate(LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_EXPIRY_DATE));
+    doc.issuingAuthority = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_ISSUING_AUTHORITY);
+    doc.chipSerialNumber = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_CHIP_SERIAL_NUMBER);
     return doc;
 }
 
 FixedPersonalData EIdCard::readFixedPersonalData()
 {
-    smartcard::CardTransaction tx(*conn);
+    LibreSCRS::SmartCard::Internal::CardTransaction tx(*conn);
     auto raw = cardReader->readFile(*conn, protocol::FILE_PERSONAL_DATA_H, protocol::FILE_PERSONAL_DATA_L);
-    auto fields = smartcard::parseTLV(raw.data(), raw.size());
+    auto fields = LibreSCRS::SmartCard::Internal::parseTLV(raw.data(), raw.size());
 
     FixedPersonalData fpd;
-    fpd.personalNumber = smartcard::findString(fields, protocol::TAG_PERSONAL_NUMBER);
-    fpd.surname = smartcard::findString(fields, protocol::TAG_SURNAME);
-    fpd.givenName = smartcard::findString(fields, protocol::TAG_GIVEN_NAME);
-    fpd.parentGivenName = smartcard::findString(fields, protocol::TAG_PARENT_GIVEN_NAME);
-    fpd.sex = smartcard::findString(fields, protocol::TAG_SEX);
-    fpd.placeOfBirth = smartcard::findString(fields, protocol::TAG_PLACE_OF_BIRTH);
-    fpd.communityOfBirth = smartcard::findString(fields, protocol::TAG_COMMUNITY_OF_BIRTH);
-    fpd.stateOfBirth = smartcard::findString(fields, protocol::TAG_STATE_OF_BIRTH);
-    fpd.dateOfBirth = formatDate(smartcard::findString(fields, protocol::TAG_DATE_OF_BIRTH));
-    fpd.nationalityFull = smartcard::findString(fields, protocol::TAG_NATIONALITY_FULL);
-    fpd.statusOfForeigner = smartcard::findString(fields, protocol::TAG_STATUS_OF_FOREIGNER);
+    fpd.personalNumber = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_PERSONAL_NUMBER);
+    fpd.surname = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_SURNAME);
+    fpd.givenName = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_GIVEN_NAME);
+    fpd.parentGivenName = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_PARENT_GIVEN_NAME);
+    fpd.sex = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_SEX);
+    fpd.placeOfBirth = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_PLACE_OF_BIRTH);
+    fpd.communityOfBirth = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_COMMUNITY_OF_BIRTH);
+    fpd.stateOfBirth = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_STATE_OF_BIRTH);
+    fpd.dateOfBirth = formatDate(LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_DATE_OF_BIRTH));
+    fpd.nationalityFull = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_NATIONALITY_FULL);
+    fpd.statusOfForeigner = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_STATUS_OF_FOREIGNER);
     return fpd;
 }
 
 VariablePersonalData EIdCard::readVariablePersonalData()
 {
-    smartcard::CardTransaction tx(*conn);
+    LibreSCRS::SmartCard::Internal::CardTransaction tx(*conn);
     auto raw = cardReader->readFile(*conn, protocol::FILE_VARIABLE_DATA_H, protocol::FILE_VARIABLE_DATA_L);
-    auto fields = smartcard::parseTLV(raw.data(), raw.size());
+    auto fields = LibreSCRS::SmartCard::Internal::parseTLV(raw.data(), raw.size());
 
     VariablePersonalData vpd;
-    vpd.state = smartcard::findString(fields, protocol::TAG_STATE);
-    vpd.community = smartcard::findString(fields, protocol::TAG_COMMUNITY);
-    vpd.place = smartcard::findString(fields, protocol::TAG_PLACE);
-    vpd.street = smartcard::findString(fields, protocol::TAG_STREET);
-    vpd.houseNumber = smartcard::findString(fields, protocol::TAG_HOUSE_NUMBER);
-    vpd.houseLetter = smartcard::findString(fields, protocol::TAG_HOUSE_LETTER);
-    vpd.entrance = smartcard::findString(fields, protocol::TAG_ENTRANCE);
-    vpd.floor = smartcard::findString(fields, protocol::TAG_FLOOR);
-    vpd.apartmentNumber = smartcard::findString(fields, protocol::TAG_APARTMENT_NUMBER);
-    vpd.addressDate = formatDate(smartcard::findString(fields, protocol::TAG_ADDRESS_DATE));
-    vpd.addressLabel = smartcard::findString(fields, protocol::TAG_ADDRESS_LABEL);
+    vpd.state = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_STATE);
+    vpd.community = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_COMMUNITY);
+    vpd.place = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_PLACE);
+    vpd.street = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_STREET);
+    vpd.houseNumber = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_HOUSE_NUMBER);
+    vpd.houseLetter = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_HOUSE_LETTER);
+    vpd.entrance = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_ENTRANCE);
+    vpd.floor = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_FLOOR);
+    vpd.apartmentNumber = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_APARTMENT_NUMBER);
+    vpd.addressDate = formatDate(LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_ADDRESS_DATE));
+    vpd.addressLabel = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_ADDRESS_LABEL);
     return vpd;
 }
 
 PhotoData EIdCard::readPortrait()
 {
-    smartcard::CardTransaction tx(*conn);
+    LibreSCRS::SmartCard::Internal::CardTransaction tx(*conn);
     auto raw = cardReader->readFile(*conn, protocol::FILE_PORTRAIT_H, protocol::FILE_PORTRAIT_L);
     // Photo file data has a 4-byte TLV header (tag + length); trim it
     if (raw.size() > 4) {

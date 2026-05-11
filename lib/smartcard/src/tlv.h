@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 
 // Custom Little-Endian 16-bit TLV used by Serbian cards (eID, vehicle, health)
 struct TLVField
@@ -27,4 +27,4 @@ std::vector<TLVField> parseTLV(const uint8_t* data, size_t length);
 std::string findString(const std::vector<TLVField>& fields, uint16_t tag);
 std::vector<uint8_t> findBytes(const std::vector<TLVField>& fields, uint16_t tag);
 
-} // namespace smartcard
+} // namespace LibreSCRS::SmartCard::Internal

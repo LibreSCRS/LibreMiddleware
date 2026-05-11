@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# SPDX-FileCopyrightText: 2026 hirashix0
+#
+# CMake Config-package template for LibreMiddleware. Substituted into
+# LibreMiddlewareConfig.cmake by configure_package_config_file(); the
+# result is installed to ${CMAKE_INSTALL_LIBDIR}/cmake/LibreMiddleware/
+# alongside the matching Version file and the auto-generated
+# LibreMiddlewareTargets.cmake export.
+#
+# Downstream consumers (third-party GUIs, packagers, integrators) pull
+# the package in via:
+#   find_package(LibreMiddleware 4.0 REQUIRED CONFIG)
+# and link against the namespaced LibreMiddleware::* imported targets,
+# which carry their own transitive dependency chain (OpenSSL, PCSC,
+# bundled vendored static archives) so the consumer doesn't have to
+# re-discover them.
+
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(OpenSSL 3.0 REQUIRED COMPONENTS Crypto)
+
+# PCSC: required for SmartCard. Bundled FindPCSC.cmake is installed next to
+# this Config file so downstream consumers' CMAKE_MODULE_PATH does not need
+# to ship its own copy.
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
+find_dependency(PCSC REQUIRED)
+
+include("${CMAKE_CURRENT_LIST_DIR}/LibreMiddlewareTargets.cmake")
+
+# Convenience aggregate alias matching the in-tree LibreSCRS::All target.
+# Consumers that don't want to reason about component boundaries can:
+#   target_link_libraries(my_consumer PRIVATE LibreMiddleware::All)
+if(NOT TARGET LibreMiddleware::All)
+    add_library(LibreMiddleware::All INTERFACE IMPORTED)
+    set_target_properties(LibreMiddleware::All PROPERTIES
+        INTERFACE_LINK_LIBRARIES
+            "LibreMiddleware::Auth;LibreMiddleware::SmartCard;LibreMiddleware::Plugin;LibreMiddleware::Signing;LibreMiddleware::Trust;LibreMiddleware::Certificate"
+    )
+endif()
+
+check_required_components(LibreMiddleware)

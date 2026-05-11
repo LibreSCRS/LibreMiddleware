@@ -114,4 +114,29 @@ function(librescrs_add_plugin name)
 
     # Track for downstream aggregation (e.g. a future manifests2plist tool).
     set_property(GLOBAL APPEND PROPERTY LIBRESCRS_PLUGIN_MANIFESTS "${LRS_PLUGIN_MANIFEST}")
+
+    # Install rule for card plugins.
+    #
+    # Active only when LIBREMIDDLEWARE_BUILD_SHARED=ON, mirroring the public
+    # LibreSCRS_*.so install rule. The plugin .so files land under
+    # `${CMAKE_INSTALL_LIBDIR}/librescrs/plugins/` — a standard, predictable
+    # path that distros and consumers can probe at runtime by:
+    #
+    #   1. honouring the LIBRESCRS_PLUGIN_PATH environment variable
+    #      (intended override for development / per-user installs), or
+    #   2. falling back to the install-tree convention
+    #      ${CMAKE_INSTALL_FULL_LIBDIR}/librescrs/plugins/, or
+    #   3. falling back to ${LIBREMIDDLEWARE_PLUGIN_DIR} (the build-tree
+    #      cache var, for in-tree FetchContent consumers like LibreCelik).
+    #
+    # The contract is documented in docs/SHARED-LIBRARY-CONSUMERS.md.
+    if(LIBREMIDDLEWARE_BUILD_SHARED)
+        include(GNUInstallDirs)
+        install(TARGETS ${name}
+            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/librescrs/plugins
+        )
+        install(FILES ${LRS_PLUGIN_MANIFEST}
+            DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/librescrs/plugins/${name}
+        )
+    endif()
 endfunction()

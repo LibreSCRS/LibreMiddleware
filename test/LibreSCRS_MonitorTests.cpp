@@ -81,8 +81,8 @@ TEST(MonitorTest, SubscriptionIdIsOrdered)
 // false after the last unsubscribe.
 TEST(MonitorTest, AutoStartStopLifecycle)
 {
-    auto counters = std::make_shared<smartcard::MockCounters>();
-    auto mock = std::make_unique<smartcard::MockPCSCScanProvider>(counters);
+    auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
+    auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
     mock->setReaders({"Reader A"});
     // A single blocking status-change so the poll thread can sit idle until
     // cancel() fires on unsubscribe.
@@ -113,8 +113,8 @@ TEST(MonitorTest, AutoStartStopLifecycle)
 // Unsubscribe one, drive another event, only the surviving callback fires.
 TEST(MonitorTest, MultipleSubscribersReceiveSameEvents)
 {
-    auto counters = std::make_shared<smartcard::MockCounters>();
-    auto mock = std::make_unique<smartcard::MockPCSCScanProvider>(counters);
+    auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
+    auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
     mock->setReaders({"Reader A"});
 
     // PnP probe (triggers initial reader-list dispatch).
@@ -199,8 +199,8 @@ TEST(MonitorTest, MultipleSubscribersReceiveSameEvents)
 // callback captures `this` can safely destroy the captured object next.
 TEST(MonitorTest, UnsubscribeAndDrainBlocksUntilCallbackCompletes)
 {
-    auto counters = std::make_shared<smartcard::MockCounters>();
-    auto mock = std::make_unique<smartcard::MockPCSCScanProvider>(counters);
+    auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
+    auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
     mock->setReaders({"Reader A"});
     mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false});
     mock->pushStatusChange({SCARD_S_SUCCESS, {}, true});

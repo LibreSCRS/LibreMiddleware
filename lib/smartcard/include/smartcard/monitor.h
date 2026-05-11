@@ -16,7 +16,7 @@
 #include <thread>
 #include <vector>
 
-namespace smartcard {
+namespace LibreSCRS::SmartCard::Internal {
 
 using MonitorCallback = std::function<void(const MonitorEvent&)>;
 using ReaderListCallback = std::function<void(const std::vector<std::string>&)>;
@@ -78,4 +78,4 @@ private:
     std::thread monitorThread;
 };
 
-} // namespace smartcard
+} // namespace LibreSCRS::SmartCard::Internal

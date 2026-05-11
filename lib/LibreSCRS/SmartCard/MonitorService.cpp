@@ -27,17 +27,17 @@ namespace LibreSCRS::SmartCard {
 
 namespace {
 
-// Internal smartcard::MonitorEvent has only Card{Inserted,Removed} types.
+// Internal LibreSCRS::SmartCard::Internal::MonitorEvent has only Card{Inserted,Removed} types.
 // Reader-list changes arrive via a separate ReaderListCallback — they are
 // diffed against the previous snapshot to synthesise Reader{Added,Removed}
 // public events. MonitorEvent::Kind::Error is reserved for future use (no
 // internal event maps onto it today).
-MonitorEvent::Kind mapCardEventKind(::smartcard::MonitorEvent::Type t)
+MonitorEvent::Kind mapCardEventKind(::LibreSCRS::SmartCard::Internal::MonitorEvent::Type t)
 {
     switch (t) {
-    case ::smartcard::MonitorEvent::Type::CardInserted:
+    case ::LibreSCRS::SmartCard::Internal::MonitorEvent::Type::CardInserted:
         return MonitorEvent::Kind::CardInserted;
-    case ::smartcard::MonitorEvent::Type::CardRemoved:
+    case ::LibreSCRS::SmartCard::Internal::MonitorEvent::Type::CardRemoved:
         return MonitorEvent::Kind::CardRemoved;
     }
     return MonitorEvent::Kind::Error;
@@ -47,11 +47,11 @@ MonitorEvent::Kind mapCardEventKind(::smartcard::MonitorEvent::Type t)
 
 struct LIBRESCRS_INTERNAL MonitorService::Impl
 {
-    std::unique_ptr<::smartcard::Monitor> internal;
+    std::unique_ptr<::LibreSCRS::SmartCard::Internal::Monitor> internal;
 
     std::mutex cbMtx;
     std::map<SubscriptionId, EventCallback> callbacks;
-    std::optional<::smartcard::Monitor::SubscriptionId> internalSubId;
+    std::optional<::LibreSCRS::SmartCard::Internal::Monitor::SubscriptionId> internalSubId;
     std::atomic<std::uint64_t> nextId{1};
 
     std::mutex readersMtx;
@@ -64,8 +64,8 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
     // deadlock if dispatch held cbMtx across invocation.
     std::mutex dispatchMtx;
 
-    explicit Impl(std::unique_ptr<::smartcard::IPCSCScanProvider> provider)
-        : internal(std::make_unique<::smartcard::Monitor>(std::move(provider)))
+    explicit Impl(std::unique_ptr<::LibreSCRS::SmartCard::Internal::IPCSCScanProvider> provider)
+        : internal(std::make_unique<::LibreSCRS::SmartCard::Internal::Monitor>(std::move(provider)))
     {}
 
     // Snapshot currently-registered (id, callback) pairs under the cbMtx lock.
@@ -153,7 +153,7 @@ MonitorService::~MonitorService()
     // smartcard/src/monitor.cpp) which joins the poll thread — that join is
     // what actually blocks until the in-flight PC/SC syscall completes. The
     // subsequent Impl destruction then releases the internal MonitorService cleanly.
-    std::optional<::smartcard::Monitor::SubscriptionId> subToDrop;
+    std::optional<::LibreSCRS::SmartCard::Internal::Monitor::SubscriptionId> subToDrop;
     {
         std::lock_guard<std::mutex> lock(d->cbMtx);
         d->callbacks.clear();
@@ -174,7 +174,7 @@ std::optional<std::vector<std::string>> MonitorService::listReaders() const noex
     // public boundary, which is undefined behaviour for consumers loaded
     // across a mismatched C++ standard library.
     try {
-        return ::smartcard::PCSCConnection::listReaders();
+        return ::LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
     } catch (...) {
         return std::nullopt;
     }
@@ -202,7 +202,7 @@ MonitorService::SubscriptionId MonitorService::subscribe(EventCallback callback)
             d->knownReaders.clear();
         }
         auto* impl = d.get();
-        auto eventCb = [impl](const ::smartcard::MonitorEvent& e) {
+        auto eventCb = [impl](const ::LibreSCRS::SmartCard::Internal::MonitorEvent& e) {
             MonitorEvent pub{
                 mapCardEventKind(e.type),
                 e.readerName,
@@ -229,7 +229,7 @@ MonitorService::SubscriptionId MonitorService::subscribe(EventCallback callback)
 
 void MonitorService::unsubscribe(SubscriptionId id)
 {
-    std::optional<::smartcard::Monitor::SubscriptionId> subToDrop;
+    std::optional<::LibreSCRS::SmartCard::Internal::Monitor::SubscriptionId> subToDrop;
     {
         std::lock_guard<std::mutex> lock(d->cbMtx);
         auto it = d->callbacks.find(id);
@@ -254,7 +254,7 @@ void MonitorService::unsubscribeAndDrain(SubscriptionId id)
     // dispatch completes (dispatch() takes dispatchMtx across the full
     // snapshot-and-invoke phase). Once we hold it, no callback is running
     // and no new snapshot can form until we release it.
-    std::optional<::smartcard::Monitor::SubscriptionId> subToDrop;
+    std::optional<::LibreSCRS::SmartCard::Internal::Monitor::SubscriptionId> subToDrop;
     {
         std::lock_guard<std::mutex> dispatchLock(d->dispatchMtx);
         std::lock_guard<std::mutex> cbLock(d->cbMtx);
@@ -291,12 +291,12 @@ namespace detail {
 class MonitorFactory
 {
 public:
-    static std::shared_ptr<MonitorService> withProvider(std::unique_ptr<::smartcard::IPCSCScanProvider> provider)
+    static std::shared_ptr<MonitorService> withProvider(std::unique_ptr<::LibreSCRS::SmartCard::Internal::IPCSCScanProvider> provider)
     {
         auto mon = std::shared_ptr<MonitorService>(new MonitorService());
         // Replace the default-constructed internal MonitorService with one wired to
         // the caller's provider. No subscribers yet, so no race.
-        mon->d->internal = std::make_unique<::smartcard::Monitor>(std::move(provider));
+        mon->d->internal = std::make_unique<::LibreSCRS::SmartCard::Internal::Monitor>(std::move(provider));
         return mon;
     }
 
@@ -311,7 +311,7 @@ public:
     }
 };
 
-std::shared_ptr<MonitorService> makeMonitorWithProvider(std::unique_ptr<::smartcard::IPCSCScanProvider> provider)
+std::shared_ptr<MonitorService> makeMonitorWithProvider(std::unique_ptr<::LibreSCRS::SmartCard::Internal::IPCSCScanProvider> provider)
 {
     return MonitorFactory::withProvider(std::move(provider));
 }

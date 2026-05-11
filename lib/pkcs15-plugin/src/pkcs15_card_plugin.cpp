@@ -76,10 +76,10 @@ enum class ProbeResult {
 /// @brief Quick reachability probe used to decide whether PACE is
 ///        required. Mirrors the logic in Pkcs15Card::bind without
 ///        committing to a full readProfile.
-ProbeResult probeApplet(smartcard::PCSCConnection& conn)
+ProbeResult probeApplet(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
 {
     std::vector<std::uint8_t> aid(pkcs15::kPkcs15Aid.begin(), pkcs15::kPkcs15Aid.end());
-    auto aidResp = conn.transmit(smartcard::selectByAID(aid, 0x0C));
+    auto aidResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(aid, 0x0C));
     if (aidResp.isSuccess())
         return ProbeResult::Ok;
     if (aidResp.sw1 == 0x69 && aidResp.sw2 == 0x82)
@@ -89,31 +89,32 @@ ProbeResult probeApplet(smartcard::PCSCConnection& conn)
 
 /// @brief Read EF.CardAccess from MF without authentication. Returns
 ///        empty on failure.
-std::vector<std::uint8_t> readCardAccess(smartcard::PCSCConnection& conn)
+std::vector<std::uint8_t> readCardAccess(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
 {
-    auto r1 = conn.transmit(smartcard::selectByFileId(0x3F, 0x00, 0x0C));
+    auto r1 = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x3F, 0x00, 0x0C));
     if (!r1.isSuccess())
-        r1 = conn.transmit(smartcard::selectByFileId(0x3F, 0x00));
+        r1 = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x3F, 0x00));
     if (!r1.isSuccess())
         return {};
 
-    auto r2 = conn.transmit(smartcard::selectByFileId(0x01, 0x1C, 0x0C));
+    auto r2 = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x01, 0x1C, 0x0C));
     if (!r2.isSuccess())
-        r2 = conn.transmit(smartcard::selectByFileId(0x01, 0x1C));
+        r2 = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x01, 0x1C));
     if (r2.sw1 != 0x90 && r2.sw1 != 0x62)
         return {};
 
-    auto r3 = conn.transmit(smartcard::APDUCommand{0x00, 0xB0, 0x00, 0x00, {}, 0, true});
+    auto r3 = conn.transmit(LibreSCRS::SmartCard::Internal::APDUCommand{0x00, 0xB0, 0x00, 0x00, {}, 0, true});
     return r3.data;
 }
 
 /// @brief Install @p sm as a transmit filter on @p conn so subsequent
 ///        plain APDUs ride the established secure channel.
-void installSmFilter(smartcard::PCSCConnection& conn, emrtd::crypto::SecureMessaging& sm)
+void installSmFilter(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, emrtd::crypto::SecureMessaging& sm)
 {
     auto* smPtr = &sm;
     auto* connPtr = &conn;
-    conn.setTransmitFilter([smPtr, connPtr](const smartcard::APDUCommand& cmd) -> smartcard::APDUResponse {
+    conn.setTransmitFilter([smPtr, connPtr](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd)
+                               -> LibreSCRS::SmartCard::Internal::APDUResponse {
         auto cmdBytes = cmd.toBytes();
         auto protectedApdu = smPtr->protect(cmdBytes);
         if (protectedApdu.size() < 5)
@@ -449,7 +450,8 @@ private:
     /// transparently wraps subsequent APDUs. Callers can then construct
     /// a fresh @c pkcs15::PKCS15Card and proceed as if PACE were never
     /// a concern.
-    bool ensurePaceIfNeeded(LibreSCRS::SmartCard::CardSession& session, smartcard::PCSCConnection& conn) const
+    bool ensurePaceIfNeeded(LibreSCRS::SmartCard::CardSession& session,
+                            LibreSCRS::SmartCard::Internal::PCSCConnection& conn) const
     {
         // Cheap probe: if AID SELECT works (or EF.DIR fallback would),
         // PACE is not required for this card.

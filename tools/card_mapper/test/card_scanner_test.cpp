@@ -188,11 +188,11 @@ TEST(CardScanner, MatchProfileUnknown)
 
 TEST(SmartCardApdu, IsSelectRetryable)
 {
-    EXPECT_TRUE(smartcard::isSelectRetryable(0x6700));  // Wrong length
-    EXPECT_TRUE(smartcard::isSelectRetryable(0x6982));  // Security status not satisfied
-    EXPECT_TRUE(smartcard::isSelectRetryable(0x6A86));  // Incorrect P1 P2
-    EXPECT_FALSE(smartcard::isSelectRetryable(0x6A82)); // File not found
-    EXPECT_FALSE(smartcard::isSelectRetryable(0x6A88)); // Referenced data not found
-    EXPECT_FALSE(smartcard::isSelectRetryable(0x9000)); // Success
-    EXPECT_FALSE(smartcard::isSelectRetryable(0x6282)); // Warning (end of file)
+    EXPECT_TRUE(LibreSCRS::SmartCard::Internal::isSelectRetryable(0x6700));  // Wrong length
+    EXPECT_TRUE(LibreSCRS::SmartCard::Internal::isSelectRetryable(0x6982));  // Security status not satisfied
+    EXPECT_TRUE(LibreSCRS::SmartCard::Internal::isSelectRetryable(0x6A86));  // Incorrect P1 P2
+    EXPECT_FALSE(LibreSCRS::SmartCard::Internal::isSelectRetryable(0x6A82)); // File not found
+    EXPECT_FALSE(LibreSCRS::SmartCard::Internal::isSelectRetryable(0x6A88)); // Referenced data not found
+    EXPECT_FALSE(LibreSCRS::SmartCard::Internal::isSelectRetryable(0x9000)); // Success
+    EXPECT_FALSE(LibreSCRS::SmartCard::Internal::isSelectRetryable(0x6282)); // Warning (end of file)
 }
