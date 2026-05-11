@@ -105,7 +105,7 @@ TEST_F(DSSSigningIntegrationTest, Pkcs11SignFailsWithInvalidModule)
     req.format = libresign::SignatureFormat::PAdES;
     req.level = libresign::SignatureLevel::B_B;
 
-    auto result = svc.sign(req, "/nonexistent/pkcs11.so", libresign::as_pin("0000"), "");
+    auto result = svc.sign(req, "/nonexistent/pkcs11.so", libresign::as_pin("0000"), "", "");
     EXPECT_FALSE(result.success);
     EXPECT_FALSE(result.errorMessage.empty());
 }
