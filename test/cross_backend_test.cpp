@@ -42,7 +42,7 @@ TEST(CrossBackendTest, BothBackendsRejectInvalidModule)
 
     auto native = createSigningService(Backend::Native);
     ASSERT_NE(native, nullptr);
-    auto nativeResult = native->sign(req, "/nonexistent/pkcs11.so", libresign::as_pin("0000"), "key");
+    auto nativeResult = native->sign(req, "/nonexistent/pkcs11.so", libresign::as_pin("0000"), "key", "");
     EXPECT_FALSE(nativeResult.success);
     EXPECT_FALSE(nativeResult.errorMessage.empty());
 
@@ -50,7 +50,7 @@ TEST(CrossBackendTest, BothBackendsRejectInvalidModule)
     ASSERT_NE(dss, nullptr);
     SigningResult dssResult;
     try {
-        dssResult = dss->sign(req, "/nonexistent/pkcs11.so", libresign::as_pin("0000"), "key");
+        dssResult = dss->sign(req, "/nonexistent/pkcs11.so", libresign::as_pin("0000"), "key", "");
     } catch (const std::runtime_error& e) {
         // The DSS path resolver throws when the service JAR isn't built.
         // The test's intent is graceful-rejection of bogus inputs, not JAR
