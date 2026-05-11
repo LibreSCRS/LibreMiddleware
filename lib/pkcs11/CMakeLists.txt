@@ -92,6 +92,15 @@ set_target_properties(librescrs-pkcs11 PROPERTIES
     VISIBILITY_INLINES_HIDDEN ON
     PREFIX "lib"
     OUTPUT_NAME "rescrs-pkcs11"
+    # Force `.so` on every POSIX (including macOS) — the convention
+    # LibreMiddleware follows for runtime-loaded plugin modules. A single
+    # packaging glob (`librescrs-pkcs11.so`) matches across Linux AppImage
+    # and macOS DMG; dyld accepts the `.so` suffix for dlopen() identically
+    # to `.dylib`. Without this, CMake defaults to `.dylib` on macOS while
+    # the resolver in lib/LibreSCRS/Signing/SigningService.cpp probes
+    # `librescrs-pkcs11.so` candidates — a name mismatch that the Linux
+    # CI matrix cannot catch.
+    SUFFIX ".so"
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib/pkcs11"

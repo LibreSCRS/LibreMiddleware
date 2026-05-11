@@ -32,45 +32,78 @@
 #include <fstream>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <system_error>
 #include <type_traits>
 #include <utility>
 #include <variant>
 
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
+
 namespace LibreSCRS::Signing {
 
 namespace {
 
-// Resolve the PKCS#11 module LibreMiddleware ships alongside the middleware.
-// Mirror-search same candidate list LC uses (src/signing/pkcs11utils.cpp); the
-// environment variable takes precedence so tests and packagers can override.
+// Resolve the PKCS#11 module LibreMiddleware ships alongside itself.
+// Consumers (LibreCelik, LibreKDE, third-party tools) do not need to know
+// where the module lives — LM owns its own resource discovery. The
+// LIBRESCRS_PKCS11_MODULE environment variable is the override escape
+// hatch for tests and packagers; otherwise the candidate list below covers
+// every standard deploy layout LM ships into.
 std::string resolvePkcs11Module()
 {
-#if defined(__APPLE__)
-    const std::string moduleName = "librescrs-pkcs11.dylib";
-#else
+    // PKCS#11 modules are named with the `.so` suffix on every POSIX
+    // platform (including macOS) — the convention LibreMiddleware follows
+    // for runtime-loaded plugin modules so a single packaging glob
+    // (`librescrs-pkcs11.so`) matches across Linux AppImage and macOS DMG.
+    // dyld accepts the `.so` suffix for dlopen() identically to `.dylib`,
+    // so the macOS install layout is unambiguous and forwards-compatible
+    // with the existing card-plugin convention.
     const std::string moduleName = "librescrs-pkcs11.so";
-#endif
     if (const char* env = std::getenv("LIBRESCRS_PKCS11_MODULE"); env && *env) {
         return std::string{env};
     }
 
-    // LibreMiddleware is typically installed alongside the consumer binary;
-    // the install-relative candidates match LC's pkcs11utils search order.
-#if defined(__linux__)
     std::error_code ec;
-    auto exePath = std::filesystem::canonical("/proc/self/exe", ec).parent_path();
+    std::filesystem::path exePath;
+#if defined(__linux__)
+    exePath = std::filesystem::canonical("/proc/self/exe", ec).parent_path();
     if (ec) {
         return moduleName;
     }
-    // Keep this list ordered by "most specific to least specific":
-    //   1-3: exe-relative flat + standard lib/Frameworks (deployed app bundles).
+#elif defined(__APPLE__)
+    {
+        std::uint32_t bufSize = 0;
+        _NSGetExecutablePath(nullptr, &bufSize);
+        std::string buf(bufSize, '\0');
+        if (_NSGetExecutablePath(buf.data(), &bufSize) != 0) {
+            return moduleName;
+        }
+        // _NSGetExecutablePath may return a symlinked path; canonicalise it
+        // so candidate-relative lookups land in the expected install layout.
+        auto resolved = std::filesystem::canonical(buf.c_str(), ec);
+        if (ec) {
+            return moduleName;
+        }
+        exePath = resolved.parent_path();
+    }
+#else
+    // Other platforms (Windows etc.) — defer to dyld search path.
+    return moduleName;
+#endif
+    // Candidate layouts, ordered most-specific to least-specific:
+    //   1-3: exe-relative flat + standard lib/Frameworks (deployed bundles).
     //   4-5: LM in-tree test layouts — `build/test/LibreSCRSSigningTests`
     //        locates the module at `build/lib/pkcs11/librescrs-pkcs11.so`, and
     //        an installed prefix keeps plugins at `${prefix}/lib/pkcs11/`.
-    //   6-7: LC FetchContent and LM-side-by-side layouts.
-    const std::array<std::filesystem::path, 7> candidates{
+    //   6-7: consumer FetchContent and side-by-side dev checkouts.
+    //   8:   macOS dev .app bundle — binary at
+    //        `build/src/Foo.app/Contents/MacOS/Foo`, module at
+    //        `build/lib/pkcs11/librescrs-pkcs11.so` (4 parents up).
+    const std::array<std::filesystem::path, 8> candidates{
         exePath / moduleName,
         exePath / ".." / "lib" / moduleName,
         exePath / ".." / "Frameworks" / moduleName,
@@ -78,6 +111,7 @@ std::string resolvePkcs11Module()
         exePath / "lib" / "pkcs11" / moduleName,
         exePath / ".." / "_deps" / "libremiddleware-build" / "lib" / "pkcs11" / moduleName,
         exePath / ".." / ".." / "LibreMiddleware" / "build" / "lib" / "pkcs11" / moduleName,
+        exePath / ".." / ".." / ".." / ".." / "lib" / "pkcs11" / moduleName,
     };
     for (const auto& p : candidates) {
         std::error_code cec;
@@ -86,7 +120,6 @@ std::string resolvePkcs11Module()
             return c.string();
         }
     }
-#endif
     return moduleName; // let the dynamic loader search path handle it
 }
 
