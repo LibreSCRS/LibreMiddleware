@@ -2,9 +2,15 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "pkcs11_library.h"
-#include "cardedge_pkcs11_provider.h"
-#include "pkcs15_pkcs11_provider.h"
-#include "piv_pkcs11_provider.h"
+
+#include "pkcs15_pkcs11_card.h"
+
+#include <LibreSCRS/SmartCard/CardMap.h>
+
+#if LIBRESCRS_HAS_VENDORED_OPENSC
+#include <internal/OpenScPKCS11Provider.h>
+#endif
+
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -65,13 +71,25 @@ static void pkcs11_debug(const char* fmt, ...)
 static std::shared_mutex libraryMutex;
 static std::unique_ptr<PKCS11Library> library;
 
-static std::vector<std::shared_ptr<smartcard::PKCS11CardProvider>> createDefaultProviders()
+static void registerDefaultProviders(PKCS11Library& lib)
 {
-    std::vector<std::shared_ptr<smartcard::PKCS11CardProvider>> providers;
-    providers.push_back(std::make_shared<cardedge::CardEdgePKCS11Provider>());
-    providers.push_back(std::make_shared<pkcs15::Pkcs15PKCS11Provider>());
-    providers.push_back(std::make_shared<piv::PivPKCS11Provider>());
-    return providers;
+    // Probe order: vendored-OpenSC fallback first (broadest, accepts any
+    // PKCS#15-shaped card OpenSC's emulator chain or built-in driver
+    // recognises — OpenPGP, generic PKCS#15, the bundled srbeid driver,
+    // upstream PIV driver), then the project's custom PKCS#15 provider for
+    // NAM / GEO and other PKCS#15-shaped cards. The first probe that
+    // returns a non-null Card wins.
+
+    // Shared per-process discovery cache. The PKCS#15 provider's bind()
+    // path consults it post-PACE to skip re-probing EF.DIR under the SM
+    // tunnel. One CardMap per library instance; lifetime is bounded by
+    // C_Initialize / C_Finalize.
+    auto cardMap = std::make_shared<LibreSCRS::SmartCard::CardMap>();
+
+#if LIBRESCRS_HAS_VENDORED_OPENSC
+    lib.registerProvider(std::make_shared<LibreSCRS::OpenSc::Pkcs11::OpenScPKCS11Provider>());
+#endif
+    lib.registerProvider(std::make_shared<LibreSCRS::Pkcs15::Pkcs11::Pkcs15PKCS11Provider>(cardMap));
 }
 
 // ---------------------------------------------------------------------------
@@ -96,7 +114,8 @@ CK_DECLARE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
             return CKR_CANT_LOCK;
     }
 
-    library = std::make_unique<PKCS11Library>(createDefaultProviders());
+    library = std::make_unique<PKCS11Library>();
+    registerDefaultProviders(*library);
     return CKR_OK;
     PKCS11_CATCH
 }

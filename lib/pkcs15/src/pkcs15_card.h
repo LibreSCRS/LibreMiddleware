@@ -30,6 +30,24 @@ public:
 
     bool probe();        // Try AID SELECT, then EF.DIR fallback
     bool selectApplet(); // Re-select using the method that worked in probe()
+
+    // CardMap interop: read / seed the discovered state so it survives
+    // across PKCS15Card instances against the same physical card.
+    // `path` empty == "AID-only SELECT worked"; `selectP2` is the
+    // probed SELECT FILE P2 value (0x0C with FCI, 0x00 without).
+    [[nodiscard]] const std::vector<uint8_t>& pkcs15PathView() const noexcept
+    {
+        return pkcs15Path;
+    }
+    [[nodiscard]] uint8_t fileSelectP2View() const noexcept
+    {
+        return fileSelectP2;
+    }
+    void seedDiscoveredState(std::vector<uint8_t> path, uint8_t selectP2) noexcept
+    {
+        pkcs15Path = std::move(path);
+        fileSelectP2 = selectP2;
+    }
     PKCS15Profile readProfile();
     TokenInfo readTokenInfo(); // Lightweight: reads only EF(TokenInfo), no certs/keys/PINs
     std::vector<uint8_t> readCertificate(const CertificateInfo& cert);

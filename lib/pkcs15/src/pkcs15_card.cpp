@@ -640,7 +640,12 @@ std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_vie
     }
 
     // Strategy 2: path-based — navigate to PIN's DF, verify, then navigate to
-    // PKCS#15 DF by path (NOT AID SELECT which resets security state on some cards).
+    // the key's DF (NOT AID SELECT which resets security state on some cards,
+    // and NOT the metadata PKCS#15 DF which would miss SSCD-bound keys whose
+    // file lives outside DF_PKCS15_FID — observed on GEO QSCD where the
+    // sign key path resolves under a sibling DF). When the key has no
+    // explicit path (or only a 2-byte FID) we fall back to the metadata
+    // DF so SR eID and other "key under DF_PKCS15_FID" cards keep working.
     if (!pinInfo.path.empty()) {
 #ifndef NDEBUG
         fprintf(stderr, "[PKCS15] Strategy 2: path-based\n");
@@ -650,7 +655,18 @@ std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_vie
         if (pinStatus == 0)
             throw std::runtime_error("PKCS15: wrong PIN");
         if (pinStatus == 1) {
-            selectByPath(DF_PKCS15_FID);
+            // Prefer the key's DF (drop the trailing 2-byte EF when the
+            // path ends with the key file itself). When key.path is
+            // empty or only encodes a bare 2-byte FID, fall back to the
+            // PKCS#15 metadata DF to preserve pre-4.1 behaviour for
+            // cards whose key file lives directly under it.
+            std::vector<std::uint8_t> targetPath;
+            if (key.path.size() >= 4 && (key.path.size() % 2) == 0) {
+                targetPath.assign(key.path.begin(), key.path.end() - 2);
+            } else {
+                targetPath.assign(DF_PKCS15_FID.begin(), DF_PKCS15_FID.end());
+            }
+            selectByPath(targetPath);
             auto result = tryAllAttempts();
             if (!result.empty())
                 return result;

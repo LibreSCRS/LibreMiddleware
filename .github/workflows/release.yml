@@ -76,120 +76,6 @@ jobs:
       - name: Test
         run: ctest --output-on-failure --test-dir build/test
 
-  cardedge-opensc-linux:
-    needs: [verify-signature, test-linux]
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        opensc_version: ['0.26.1', '0.27.1']
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libpcsclite-dev libssl-dev zlib1g-dev \
-            libcurl4-openssl-dev libxml2-dev \
-            pkg-config autoconf automake libtool \
-            cmake ninja-build python3-jsonschema
-
-      - name: Clone & build OpenSC ${{ matrix.opensc_version }}
-        run: |
-          git clone --branch ${{ matrix.opensc_version }} --depth 1 \
-            https://github.com/OpenSC/OpenSC /tmp/opensc-src
-          cd /tmp/opensc-src
-          ./bootstrap
-          ./configure --prefix=/tmp/opensc-install \
-            --enable-shared --disable-static --without-readline
-          make -j$(nproc) install
-
-      - name: Configure & Build (Release)
-        run: |
-          cmake -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH=/tmp/opensc-install \
-            -DBUILD_CARDEDGE_OPENSC_DRIVER=ON \
-            -DOPENSC_INCLUDE_DIR=/tmp/opensc-src/src
-          cmake --build build --target librescrs-cardedge-opensc
-
-      - name: Package
-        run: |
-          TAG="${{ github.ref_name }}"
-          PKG="librescrs-cardedge-opensc-${TAG}-opensc${{ matrix.opensc_version }}-linux-x86_64"
-          mkdir -p "$PKG"
-          cp build/lib/cardedge-opensc-driver/librescrs-cardedge-opensc.so "$PKG/"
-          cp lib/cardedge-opensc-driver/conf/librescrs.conf "$PKG/"
-          cp lib/cardedge-opensc-driver/README.md "$PKG/"
-          tar czf "${PKG}.tar.gz" "$PKG"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: cardedge-opensc-linux-${{ matrix.opensc_version }}
-          path: librescrs-cardedge-opensc-*.tar.gz
-
-  cardedge-opensc-macos:
-    needs: [verify-signature, test-macos]
-    runs-on: macos-latest
-    strategy:
-      matrix:
-        opensc_version: ['0.26.1', '0.27.1']
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install build tools
-        run: |
-          brew install ninja automake autoconf libtool
-          # manifest2header.py hard-fails when jsonschema is missing
-          # (the schema gates the codegen step against malformed manifests).
-          python3 -m pip install --break-system-packages --user jsonschema
-
-      - name: Clone & build OpenSC ${{ matrix.opensc_version }} (universal)
-        run: |
-          OPENSSL_DIR=${{ github.workspace }}/thirdparty/openssl-3.5.5/macosx
-          git clone --branch ${{ matrix.opensc_version }} --depth 1 \
-            https://github.com/OpenSC/OpenSC /tmp/opensc-src
-          cd /tmp/opensc-src
-          ./bootstrap
-          CFLAGS="-arch x86_64 -arch arm64 -include stdint.h" \
-          LDFLAGS="-arch x86_64 -arch arm64 -L${OPENSSL_DIR}/lib" \
-          CRYPTO_CFLAGS="-I${OPENSSL_DIR}/include" \
-          CRYPTO_LIBS="-L${OPENSSL_DIR}/lib -lcrypto" \
-          OPENSSL_CFLAGS="-I${OPENSSL_DIR}/include" \
-          OPENSSL_LIBS="-L${OPENSSL_DIR}/lib -lssl -lcrypto" \
-            ./configure --prefix=/tmp/opensc-install \
-              --enable-shared --disable-static --without-readline
-          make -j$(sysctl -n hw.ncpu) install
-
-      - name: Configure & Build
-        run: |
-          cmake -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
-            -DBUILD_CARDEDGE_OPENSC_DRIVER=ON \
-            -DOPENSC_INCLUDE_DIR=/tmp/opensc-src/src \
-            -DCMAKE_LIBRARY_PATH=/tmp/opensc-install/lib
-          cmake --build build --target librescrs-cardedge-opensc
-
-      - name: Package
-        run: |
-          TAG="${{ github.ref_name }}"
-          PKG="librescrs-cardedge-opensc-${TAG}-opensc${{ matrix.opensc_version }}-macos-universal"
-          mkdir -p "$PKG"
-          cp build/lib/cardedge-opensc-driver/librescrs-cardedge-opensc.dylib "$PKG/"
-          cp lib/cardedge-opensc-driver/conf/librescrs.conf "$PKG/"
-          cp lib/cardedge-opensc-driver/README.md "$PKG/"
-          zip -r "${PKG}.zip" "$PKG"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: cardedge-opensc-macos-${{ matrix.opensc_version }}
-          path: librescrs-cardedge-opensc-*.zip
-
   pkcs11-linux:
     needs: [verify-signature, test-linux]
     runs-on: ubuntu-latest
@@ -247,7 +133,7 @@ jobs:
           path: librescrs-pkcs11-*.zip
 
   release:
-    needs: [test-linux, test-macos, cardedge-opensc-linux, cardedge-opensc-macos, pkcs11-linux, pkcs11-macos]
+    needs: [test-linux, test-macos, pkcs11-linux, pkcs11-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write

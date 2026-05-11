@@ -1,0 +1,3 @@
+[submodule "thirdparty/opensc-source"]
+	path = thirdparty/opensc-source
+	url = https://github.com/LibreSCRS/OpenSC.git

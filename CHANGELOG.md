@@ -3,6 +3,41 @@
 Notable user-visible changes per release. Format follows
 [Keep a Changelog](https://keepachangelog.com/) loosely.
 
+## [Unreleased] — 4.1.0
+
+### Added
+
+- **PKCS#11 multi-PIN support.** Cards with multiple PIN gates (e.g.
+  Serbian GEO eID with separate Authentication and Signing (QSCD)
+  PINs) now expose each PIN as a distinct PKCS#11 slot. Per-slot
+  login state isolates Authentication from Signing without forcing
+  a single shared PIN. `C_GetSlotList` returns one slot per
+  (card × PIN); single-PIN cards (rs-eid Apollo, plain PKCS#15,
+  PIV) keep their single-slot shape unchanged.
+- **`PKCS11Card` + `PKCS11Slot` two-tier abstraction** (mirrors
+  OpenSC `sc_pkcs11_card` / `sc_pkcs11_slot`). `PKCS11Slot` owns
+  per-PIN `mechanisms`, `enumerateObjects`, `signData`,
+  `signWithDigestInfo`, `signatureSize`, `isLoggedIn`. Stable
+  PKCS#11 slot IDs are derived via FNV-1a over
+  `(reader name, PIN id, slot kind)` so the same card in the same
+  reader always yields the same slot IDs.
+- **Inline RESET-recovery retry-once** via `PKCS11Card::handleReset()`
+  in the `C_Sign` / `C_SignFinal` paths, restoring legacy parity
+  for transient PCSC `SCARD_W_RESET_CARD` faults.
+
+### Changed
+
+- **PKCS#11 internals refactored.** Legacy
+  `smartcard::PKCS11CardProvider` interface and `SlotEntry` struct
+  removed; replaced by
+  `LibreSCRS::Pkcs11::Internal::PKCS11CardProvider` whose `probe()`
+  returns bound `PKCS11Card` instances. C entry points reroute
+  through `findSlot(slotID) → PKCS11Slot` virtual dispatch.
+- **Per-slot object cache + global object handle map.** Cache is
+  invalidated on both `C_Login` and `C_Logout` for symmetric
+  private-object visibility on entry to and exit from the
+  logged-in state.
+
 ## [Unreleased] — 4.0.0-rc2
 
 ### Added

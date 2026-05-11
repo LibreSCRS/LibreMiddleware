@@ -7,5 +7,6 @@ librescrs_add_plugin(pkcs15-plugin
     INCLUDE_DIRS
         ${PROJECT_SOURCE_DIR}/lib/pkcs15/src
         ${PROJECT_SOURCE_DIR}/lib/smartcard/src
-    LINK_LIBRARIES PKCS15
+        ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src
+    LINK_LIBRARIES PKCS15 EMRTDCrypto
 )

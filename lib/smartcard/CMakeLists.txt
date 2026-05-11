@@ -19,7 +19,6 @@ add_library(SmartCard_Impl STATIC
     src/tlv.h
     src/ipcsc_scan_provider.h
     src/pcsc_scan_provider.h
-    src/pkcs11_card_provider.h
     # Bucket-C headers: public within LM, LC bridge surface
     include/smartcard/pcsc_connection.h
     include/smartcard/secure_buffer.h
@@ -38,9 +37,9 @@ target_compile_definitions(SmartCard_Impl PRIVATE LIBRESCRS_INTERNAL_BUILD)
 #
 # NOTE: bucket-C headers (pcsc_connection, secure_buffer, monitor,
 # monitor_event) carry the LC bridge surface. The bucket-B headers (apdu,
-# ber, tlv, ipcsc_scan_provider, pcsc_scan_provider, pkcs11_card_provider)
-# live in src/ and require an explicit PRIVATE include of lib/smartcard/src
-# from consumers.
+# ber, tlv, ipcsc_scan_provider, pcsc_scan_provider) live in src/ and
+# require an explicit PRIVATE include of lib/smartcard/src from
+# consumers.
 target_include_directories(SmartCard_Impl PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )

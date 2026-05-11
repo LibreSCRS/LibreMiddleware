@@ -138,6 +138,7 @@ target_compile_options(LibreSCRS_Certificate PRIVATE
 )
 
 add_library(LibreSCRS_SmartCard STATIC
+    SmartCard/CardMap.cpp
     SmartCard/CardSession.cpp
     SmartCard/MonitorService.cpp
     ${LIBRESCRS_SMARTCARD_PUBLIC_HEADERS}

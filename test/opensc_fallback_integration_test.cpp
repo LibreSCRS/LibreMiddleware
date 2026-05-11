@@ -5,11 +5,8 @@
 //
 // Preconditions for non-trivial tests:
 //   1. PKS card inserted in a reader
-//   2. libcardedge-plugin.so and libpkcs15-plugin.so relocated to
-//      build/plugins/disabled/ (automated by scripts/validate-opensc-fallback.sh)
-//   3. OPENSC_CONF pointing to opensc.conf that registers the bundled
-//      librescrs CardEdge driver (when the host's OpenSC predates the
-//      upstream srbeid merge)
+//   2. OPENSC_CONF pointing to opensc.conf that includes the upstream
+//      srbeid driver (OpenSC 0.27.0+)
 //
 // Environment:
 //   OPENSC_CONF          (required at runtime)
@@ -128,8 +125,9 @@ protected:
 
             // findAllCandidates does the two-phase probe (ATR first, then
             // canHandleConnection AID probe), de-duped and sorted by
-            // probePriority ascending. With cardedge+pkcs15 disabled, only
-            // opensc-plugin (900) returns true via sc_pkcs15_bind.
+            // probePriority ascending. opensc-plugin (900) claims the
+            // PKS card via sc_pkcs15_bind through the upstream srbeid
+            // driver.
             auto candidates = registry->findAllCandidates(opened->atr(), *opened);
             if (candidates.empty())
                 continue;
@@ -141,7 +139,7 @@ protected:
 
         registry.reset();
         GTEST_SKIP() << "No reader returned a card claimable by any loaded plugin — "
-                        "confirm PKS inserted and cardedge/pkcs15 plugins are disabled";
+                        "confirm PKS card is inserted";
     }
 
     static void TearDownTestSuite()
@@ -175,8 +173,7 @@ TEST_F(OpenSCFallbackPKS, Test01RegistryPicksOpenSCPlugin)
 {
     ASSERT_NE(plugin, nullptr);
     EXPECT_EQ(plugin->pluginId(), "opensc")
-        << "Expected opensc-plugin to claim PKS — got '" << plugin->pluginId()
-        << "'. Are libcardedge-plugin.so and libpkcs15-plugin.so moved to build/plugins/disabled/?";
+        << "Expected opensc-plugin to claim PKS — got '" << plugin->pluginId() << "'";
 }
 
 // ---------------------------------------------------------------------------

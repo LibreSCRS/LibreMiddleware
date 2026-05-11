@@ -6,10 +6,21 @@
 #include <LibreSCRS/Auth/ErrorKeys.h>
 #include <LibreSCRS/Plugin/CardPlugin.h>
 #include <LibreSCRS/Plugin/PluginExport.h>
+#include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
 #include <smartcard/pcsc_connection.h>
 
+#include <pace.h>
+#include <secure_messaging.h>
+
+#include <openssl/crypto.h>
+
 #include <algorithm>
+#include <compare>
+#include <cstdint>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 
@@ -20,6 +31,115 @@ namespace {
 // A5 (4.0 hardening): generic PKCS#15 matches via SELECT-DF probe in
 // canHandleConnection, never via ATR. kAtrs (from manifest.json) is
 // intentionally empty.
+
+/// @brief Per-session key — mirrors the emrtd-plugin shape.
+/// (reader, monotonic generation) is stable for a CardSession's
+/// lifetime and definitively distinct from any successor session.
+struct SessionKey
+{
+    std::string readerName;
+    std::uint64_t generation{0};
+
+    auto operator<=>(const SessionKey&) const = default;
+};
+
+SessionKey makeSessionKey(LibreSCRS::SmartCard::CardSession& session)
+{
+    return SessionKey{session.readerName(), LibreSCRS::SmartCard::detail::sessionGeneration(session)};
+}
+
+/// @brief Per-session plugin state.
+///
+/// Holds the CAN (only for PACE-protected cards) and a marker for
+/// whether a successful PACE handshake has installed an SM filter on
+/// the underlying PCSCConnection. The plugin can therefore re-install
+/// PACE on its own when the SM filter has been torn down between
+/// operations — the failure mode reported in Phase D.2 findings.
+struct SessionContext
+{
+    LibreSCRS::Secure::String cachedCan;
+    /// @brief Active SM channel installed by this plugin's most recent
+    ///        PACE handshake. @c nullptr means: PACE not yet run, or
+    ///        a sibling actor (emrtd-plugin, PKCS#11 module) ran PACE
+    ///        and owns the SM filter. The plugin only attempts to
+    ///        re-install PACE when @c cachedCan is non-empty.
+    std::unique_ptr<emrtd::crypto::SecureMessaging> sm;
+};
+
+/// @brief Result of an applet-reachability probe.
+enum class ProbeResult {
+    Ok,         ///< AID SELECT (or EF.DIR fallback) succeeded.
+    NeedsPace,  ///< Card returned 6982 — PACE must be run first.
+    Unreachable ///< Other failure; treat as not-PKCS#15.
+};
+
+/// @brief Quick reachability probe used to decide whether PACE is
+///        required. Mirrors the logic in Pkcs15Card::bind without
+///        committing to a full readProfile.
+ProbeResult probeApplet(smartcard::PCSCConnection& conn)
+{
+    std::vector<std::uint8_t> aid(pkcs15::kPkcs15Aid.begin(), pkcs15::kPkcs15Aid.end());
+    auto aidResp = conn.transmit(smartcard::selectByAID(aid, 0x0C));
+    if (aidResp.isSuccess())
+        return ProbeResult::Ok;
+    if (aidResp.sw1 == 0x69 && aidResp.sw2 == 0x82)
+        return ProbeResult::NeedsPace;
+    return ProbeResult::Unreachable;
+}
+
+/// @brief Read EF.CardAccess from MF without authentication. Returns
+///        empty on failure.
+std::vector<std::uint8_t> readCardAccess(smartcard::PCSCConnection& conn)
+{
+    auto r1 = conn.transmit(smartcard::selectByFileId(0x3F, 0x00, 0x0C));
+    if (!r1.isSuccess())
+        r1 = conn.transmit(smartcard::selectByFileId(0x3F, 0x00));
+    if (!r1.isSuccess())
+        return {};
+
+    auto r2 = conn.transmit(smartcard::selectByFileId(0x01, 0x1C, 0x0C));
+    if (!r2.isSuccess())
+        r2 = conn.transmit(smartcard::selectByFileId(0x01, 0x1C));
+    if (r2.sw1 != 0x90 && r2.sw1 != 0x62)
+        return {};
+
+    auto r3 = conn.transmit(smartcard::APDUCommand{0x00, 0xB0, 0x00, 0x00, {}, 0, true});
+    return r3.data;
+}
+
+/// @brief Install @p sm as a transmit filter on @p conn so subsequent
+///        plain APDUs ride the established secure channel.
+void installSmFilter(smartcard::PCSCConnection& conn, emrtd::crypto::SecureMessaging& sm)
+{
+    auto* smPtr = &sm;
+    auto* connPtr = &conn;
+    conn.setTransmitFilter([smPtr, connPtr](const smartcard::APDUCommand& cmd) -> smartcard::APDUResponse {
+        auto cmdBytes = cmd.toBytes();
+        auto protectedApdu = smPtr->protect(cmdBytes);
+        if (protectedApdu.size() < 5)
+            return {{}, 0x69, 0x82};
+
+        auto resp = connPtr->transmitRaw(protectedApdu.data(), static_cast<DWORD>(protectedApdu.size()));
+
+        while (resp.sw1 == 0x61) {
+            std::uint8_t getResponseApdu[] = {0x00, 0xC0, 0x00, 0x00, resp.sw2};
+            auto grResp = connPtr->transmitRaw(getResponseApdu, sizeof(getResponseApdu));
+            resp.data.insert(resp.data.end(), grResp.data.begin(), grResp.data.end());
+            resp.sw1 = grResp.sw1;
+            resp.sw2 = grResp.sw2;
+        }
+
+        std::vector<std::uint8_t> respBytes = resp.data;
+        respBytes.push_back(resp.sw1);
+        respBytes.push_back(resp.sw2);
+
+        auto result = smPtr->unprotectWithSW(respBytes);
+        if (!result)
+            return {{}, 0x69, 0x82};
+
+        return {std::move(result->data), result->sw1, result->sw2};
+    });
+}
 
 class PKCS15CardPlugin final : public LibreSCRS::Plugin::CardPlugin
 {
@@ -47,9 +167,43 @@ public:
         auto& conn = LibreSCRS::SmartCard::detail::unwrap(session);
         try {
             pkcs15::PKCS15Card card(conn);
-            return card.probe();
+            if (card.probe())
+                return true;
+            // Probe failed — if the card is PACE-gated (returns 6982 on
+            // AID SELECT), still claim the slot so LC's credential
+            // chooser drives setCredentials("can",...) which then runs
+            // PACE inline below.
+            return probeApplet(conn) == ProbeResult::NeedsPace;
         } catch (...) {
             return false;
+        }
+    }
+
+    void setCredentials(LibreSCRS::SmartCard::CardSession& session, std::string_view key,
+                        const LibreSCRS::Secure::String& value) override
+    {
+        if (key != "can")
+            return;
+        const auto mapKey = makeSessionKey(session);
+        std::lock_guard lock(stateMutex);
+        auto& ctx = sessions[mapKey];
+        // Copy into a fresh Secure::String — Secure::String::view() exposes
+        // the underlying bytes; we keep our own cleansing-on-destruction
+        // copy so the caller's buffer can be released independently.
+        ctx.cachedCan = LibreSCRS::Secure::String{value.view()};
+        // CAN was just supplied; drop any prior SM so the next entry
+        // point re-installs PACE with the (possibly updated) CAN.
+        ctx.sm.reset();
+    }
+
+    void clearCredentials(LibreSCRS::SmartCard::CardSession& session) noexcept override
+    {
+        try {
+            const auto mapKey = makeSessionKey(session);
+            std::lock_guard lock(stateMutex);
+            sessions.erase(mapKey);
+        } catch (...) {
+            // clearCredentials is noexcept; swallow allocator faults.
         }
     }
 
@@ -59,6 +213,9 @@ public:
         using LibreSCRS::Plugin::ReadResult;
         try {
             auto& conn = LibreSCRS::SmartCard::detail::unwrap(session);
+            if (auto rc = ensurePaceIfNeeded(session, conn); !rc)
+                return ReadResult::communicationError(LibreSCRS::Auth::ErrorKeys::genericComm(),
+                                                      "pkcs15 readCard: PACE handshake failed");
             pkcs15::PKCS15Card card(conn);
             auto profile = card.readProfile();
 
@@ -71,7 +228,6 @@ public:
                 data.groups.push_back(std::move(group));
             };
 
-            // Token info group
             {
                 LibreSCRS::Plugin::CardFieldGroup group;
                 group.groupKey = "token";
@@ -82,7 +238,6 @@ public:
                 emitGroup(std::move(group));
             }
 
-            // Certificates group
             if (!profile.certificates.empty()) {
                 LibreSCRS::Plugin::CardFieldGroup group;
                 group.groupKey = "certificates";
@@ -93,7 +248,6 @@ public:
                 emitGroup(std::move(group));
             }
 
-            // PINs group
             if (!profile.pins.empty()) {
                 LibreSCRS::Plugin::CardFieldGroup group;
                 group.groupKey = "pins";
@@ -119,6 +273,7 @@ public:
     LibreSCRS::Plugin::CardFieldGroup readTokenInfo(LibreSCRS::SmartCard::CardSession& session) const override
     {
         auto& conn = LibreSCRS::SmartCard::detail::unwrap(session);
+        ensurePaceIfNeeded(session, conn); // best-effort
         pkcs15::PKCS15Card card(conn);
         auto info = card.readTokenInfo();
 
@@ -135,6 +290,7 @@ public:
     readCertificates(LibreSCRS::SmartCard::CardSession& session) const override
     {
         auto& conn = LibreSCRS::SmartCard::detail::unwrap(session);
+        ensurePaceIfNeeded(session, conn);
         pkcs15::PKCS15Card card(conn);
         auto profile = card.readProfile();
 
@@ -148,15 +304,8 @@ public:
             cd.label = cert.label;
             cd.derBytes = std::move(der);
 
-            // Find matching private key by id
             for (const auto& key : profile.privateKeys) {
                 if (key.id == cert.id) {
-                    // keyFID = last 2 bytes of key path, or keyReference as fallback.
-                    // 4.0 ABI v6 uses std::optional<uint16_t> on CertificateData, so
-                    // "matched key exists but no concrete FID" is now a value of 1
-                    // (preserves previous behaviour) rather than a separate
-                    // sentinel — the optional is always engaged here because we
-                    // have located a matching key.
                     if (key.path.size() >= 2) {
                         cd.keyFID = static_cast<std::uint16_t>((key.path[key.path.size() - 2] << 8) |
                                                                key.path[key.path.size() - 1]);
@@ -180,6 +329,7 @@ public:
     std::vector<LibreSCRS::Plugin::PinStatusEntry> getPINList(LibreSCRS::SmartCard::CardSession& session) const override
     {
         auto& conn = LibreSCRS::SmartCard::detail::unwrap(session);
+        ensurePaceIfNeeded(session, conn);
         pkcs15::PKCS15Card card(conn);
         auto profile = card.readProfile();
 
@@ -216,6 +366,7 @@ public:
                                            const LibreSCRS::Secure::String& newPin) const override
     {
         auto& conn = LibreSCRS::SmartCard::detail::unwrap(session);
+        ensurePaceIfNeeded(session, conn);
         pkcs15::PKCS15Card card(conn);
         auto profile = card.readProfile();
 
@@ -247,6 +398,7 @@ public:
     std::optional<int> getPINTriesLeft(LibreSCRS::SmartCard::CardSession& session) const override
     {
         auto& conn = LibreSCRS::SmartCard::detail::unwrap(session);
+        ensurePaceIfNeeded(session, conn);
         pkcs15::PKCS15Card card(conn);
         auto profile = card.readProfile();
         auto* pin = findUserPin(profile);
@@ -263,6 +415,7 @@ public:
                                            const LibreSCRS::Secure::String& pin) const override
     {
         auto& conn = LibreSCRS::SmartCard::detail::unwrap(session);
+        ensurePaceIfNeeded(session, conn);
         pkcs15::PKCS15Card card(conn);
         auto profile = card.readProfile();
         auto* pinInfo = findUserPin(profile);
@@ -286,14 +439,92 @@ public:
     }
 
 private:
+    /// @brief Lazily install PACE on @p conn when this card is PACE-gated
+    ///        and the active session has a cached CAN but no live SM
+    ///        filter. Returns true if the card is reachable (either
+    ///        directly or after PACE), false otherwise.
+    ///
+    /// The single contract: after a true return, @p conn either
+    /// (a) accepts plain AID SELECT, or (b) carries an SM filter that
+    /// transparently wraps subsequent APDUs. Callers can then construct
+    /// a fresh @c pkcs15::PKCS15Card and proceed as if PACE were never
+    /// a concern.
+    bool ensurePaceIfNeeded(LibreSCRS::SmartCard::CardSession& session, smartcard::PCSCConnection& conn) const
+    {
+        // Cheap probe: if AID SELECT works (or EF.DIR fallback would),
+        // PACE is not required for this card.
+        const auto state = probeApplet(conn);
+        if (state == ProbeResult::Ok)
+            return true;
+        if (state == ProbeResult::Unreachable) {
+            // Probe says "not 6982" but also "not 9000" — likely a card
+            // that needs EF.DIR fallback. Defer to the helper's own
+            // probe inside the caller; report success here so the
+            // caller's PKCS15Card::probe() / selectApplet() take over.
+            return true;
+        }
+
+        // state == NeedsPace. We need a CAN.
+        const auto mapKey = makeSessionKey(session);
+        SessionContext* ctx = nullptr;
+        std::unique_lock lock(stateMutex);
+        auto it = sessions.find(mapKey);
+        if (it == sessions.end() || it->second.cachedCan.view().empty()) {
+            // No CAN; nothing we can do here. Either a sibling actor
+            // (emrtd-plugin) has already installed PACE on this conn —
+            // in which case the SM filter is live and AID SELECT would
+            // have succeeded above — or the credentials hand-off hasn't
+            // happened yet and the caller will see a 6982 downstream.
+            return false;
+        }
+        ctx = &it->second;
+
+        // If we have an SM channel already and AID SELECT still returned
+        // 6982, the channel was torn down by the card (reset / timeout).
+        // Drop the stale SM and re-handshake.
+        if (ctx->sm)
+            ctx->sm.reset();
+
+        auto cardAccess = readCardAccess(conn);
+        if (cardAccess.empty())
+            return false;
+
+        auto entries = emrtd::crypto::parseCardAccessWithParams(cardAccess);
+        if (entries.empty())
+            return false;
+
+        auto canView = ctx->cachedCan.view();
+        std::optional<emrtd::crypto::SessionKeys> sessionKeys;
+        std::string winningOid;
+        for (const auto& [oid, paramId] : entries) {
+            emrtd::crypto::PACEParams params;
+            params.oid = oid;
+            params.passwordType = emrtd::crypto::PACEPasswordType::CAN;
+            params.password = std::vector<std::uint8_t>(canView.begin(), canView.end());
+            params.paramId = paramId;
+            sessionKeys = emrtd::crypto::performPACE(conn, params);
+            if (!params.password.empty())
+                OPENSSL_cleanse(params.password.data(), params.password.size());
+            if (sessionKeys) {
+                winningOid = oid;
+                break;
+            }
+        }
+        if (!sessionKeys)
+            return false;
+
+        auto smAlgo = emrtd::crypto::paceOIDToSMAlgorithm(winningOid);
+        ctx->sm = std::make_unique<emrtd::crypto::SecureMessaging>(*sessionKeys, smAlgo);
+        installSmFilter(conn, *ctx->sm);
+        return true;
+    }
+
     static const pkcs15::PinInfo* findUserPin(const pkcs15::PKCS15Profile& profile)
     {
-        // Find first local + initialized PIN (User PIN)
         for (const auto& pin : profile.pins) {
             if (pin.local && pin.initialized)
                 return &pin;
         }
-        // Fallback: first initialized PIN
         for (const auto& pin : profile.pins) {
             if (pin.initialized)
                 return &pin;
@@ -301,23 +532,16 @@ private:
         return nullptr;
     }
 
-    // Resolve a @p pinLabel from changePIN to a specific PinInfo. Supports:
-    //   * the plugin's own "pin_<label>" format (as emitted by readCard)
-    //   * a "pin_<reference>" convention used by callers that only know the
-    //     numeric pinReference (e.g. LibreCelik's PIN-change UI).
-    // Returns nullptr if no match; caller falls back to findUserPin.
     static const pkcs15::PinInfo* findPinByLabel(const pkcs15::PKCS15Profile& profile, std::string_view pinLabel)
     {
         if (pinLabel.empty())
             return nullptr;
 
-        // 1. Exact label match on the PKCS#15 label.
         for (const auto& pin : profile.pins) {
             if (pin.label == pinLabel)
                 return &pin;
         }
 
-        // 2. "pin_<label>" prefix used by this plugin when it emits CardFieldGroup rows.
         constexpr std::string_view prefix = "pin_";
         if (pinLabel.starts_with(prefix)) {
             std::string_view suffix = pinLabel.substr(prefix.size());
@@ -325,7 +549,6 @@ private:
                 if (pin.label == suffix)
                     return &pin;
             }
-            // 3. "pin_<reference>" numeric convention.
             try {
                 std::string suffixStr{suffix};
                 size_t consumed = 0;
@@ -343,6 +566,9 @@ private:
 
         return nullptr;
     }
+
+    mutable std::mutex stateMutex;
+    mutable std::map<SessionKey, SessionContext> sessions;
 };
 
 } // namespace

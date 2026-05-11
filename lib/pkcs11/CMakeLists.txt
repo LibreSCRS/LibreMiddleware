@@ -15,9 +15,19 @@ add_library(librescrs-pkcs11 SHARED
     src/pkcs11_library.cpp
     src/pkcs11_library.h
     src/pkcs11_platform.h
+    src/pkcs11_slot.cpp
+    src/pkcs11_card.cpp
+    src/slot_id_hash.cpp
     include/pkcs11/pkcs11.h
     include/pkcs11/pkcs11t.h
     include/pkcs11/pkcs11f.h
+    include/internal/Crv.h
+    include/internal/PKCS11TokenInfo.h
+    include/internal/PKCS11ObjectInfo.h
+    include/internal/PKCS11Slot.h
+    include/internal/PKCS11Card.h
+    include/internal/PKCS11CardProvider.h
+    include/internal/SlotIdHash.h
 )
 
 target_compile_definitions(librescrs-pkcs11 PRIVATE LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD)
@@ -30,13 +40,20 @@ target_include_directories(librescrs-pkcs11 PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_BINARY_DIR}
     ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src/native
-    ${LibreMiddleware_SOURCE_DIR}/lib/piv/src
-    ${LibreMiddleware_SOURCE_DIR}/lib/cardedge/src
     ${LibreMiddleware_SOURCE_DIR}/lib/pkcs15/src
     ${LibreMiddleware_SOURCE_DIR}/lib/smartcard/src
 )
 
-target_link_libraries(librescrs-pkcs11 PRIVATE CardEdge PKCS15 PIV OpenSSL_Crypto)
+target_link_libraries(librescrs-pkcs11 PRIVATE PKCS15 OpenSSL_Crypto LibreSCRS::Secure)
+
+# Optional vendored-OpenSC fallback provider. When LIBRESCRS_VENDOR_OPENSC
+# is on, register the OpenScPKCS11Provider FIRST in C_Initialize (priority
+# 1) so it gets a chance at any PKCS#15-shaped card before the project's
+# custom Pkcs15PKCS11Provider runs.
+if(LIBRESCRS_VENDOR_OPENSC)
+    target_link_libraries(librescrs-pkcs11 PRIVATE librescrs-opensc-pkcs11)
+    target_compile_definitions(librescrs-pkcs11 PRIVATE LIBRESCRS_HAS_VENDORED_OPENSC=1)
+endif()
 
 # Restrict the dylib's exported symbol set to the PKCS#11 standard C
 # interface. Without this, statically linked OpenSSL crypto and the
@@ -54,10 +71,18 @@ target_link_libraries(librescrs-pkcs11 PRIVATE CardEdge PKCS15 PIV OpenSSL_Crypt
 if(APPLE)
     target_link_options(librescrs-pkcs11 PRIVATE
         "LINKER:-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/exports.list"
+        # Apple ld(1) dead-strips by default; -dead_strip is explicit form.
+        "LINKER:-dead_strip"
     )
 elseif(UNIX)
     target_link_options(librescrs-pkcs11 PRIVATE
         "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/exports.map"
+        # Pair with -ffunction-sections / -fdata-sections in vendored OpenSC
+        # (see thirdparty/CMakeLists.txt OPENSC_CFLAGS): drops unused OpenSC
+        # driver objects from the final .so. Hidden-visibility on LibreSCRS
+        # symbols already ensures the project's own code shrinks; this flag
+        # also reaches the bundled static archive.
+        "LINKER:--gc-sections"
     )
 endif()
 
@@ -71,3 +96,13 @@ set_target_properties(librescrs-pkcs11 PROPERTIES
     SOVERSION ${PROJECT_VERSION_MAJOR}
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib/pkcs11"
 )
+
+if(BUILD_TESTING)
+    # The root CMakeLists.txt calls enable_testing() AFTER add_subdirectory(lib/pkcs11)
+    # (alongside add_subdirectory(test)). We need testing enabled when this
+    # subdirectory's CTestTestfile.cmake is emitted, otherwise the gtest_discover_tests()
+    # below produces no add_test() entries. enable_testing() is idempotent, so calling
+    # it again from the root scope (later) is harmless. See CMake docs on enable_testing.
+    enable_testing()
+    add_subdirectory(test)
+endif()

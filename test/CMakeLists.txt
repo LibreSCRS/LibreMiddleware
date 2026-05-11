@@ -14,7 +14,6 @@ enable_testing()
 
 add_executable(LibreMiddlewareTests
     smartcard_test.cpp
-    eidcard_test.cpp
     eu_vrc_test.cpp
     healthcard_test.cpp
 )
@@ -22,7 +21,6 @@ add_executable(LibreMiddlewareTests
 target_link_libraries(LibreMiddlewareTests
     GTest::gtest_main
     RsEId
-    CardEdge
     EuVrc
     RsHealth
 )
@@ -31,7 +29,6 @@ target_include_directories(LibreMiddlewareTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/rs-eid/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/rs-health/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/eu-vrc/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/cardedge/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
 )
 # LM-internal test: includes bucket-B headers via lib/*/src/; advertise the
@@ -66,6 +63,12 @@ gtest_discover_tests(LibreSCRS_CancelTokenTests)
 add_executable(LibreSCRS_CredentialProviderTests LibreSCRS_CredentialProvider_test.cpp)
 target_link_libraries(LibreSCRS_CredentialProviderTests GTest::gtest_main LibreSCRS_Auth)
 gtest_discover_tests(LibreSCRS_CredentialProviderTests)
+
+# CardMap — process-local cache of per-card discovered state. Public LM type
+# consumed by both the pkcs15 card plugin and the internal PKCS#11 provider.
+add_executable(LibreSCRS_CardMapTests LibreSCRS_CardMapTests.cpp)
+target_link_libraries(LibreSCRS_CardMapTests GTest::gtest_main LibreSCRS::SmartCard)
+gtest_discover_tests(LibreSCRS_CardMapTests)
 
 # OID database lookup tests — superset of OpenSSL/Rust/BC/ETSI/ICAO/Serbian.
 add_executable(OidDatabaseTests oid_database_test.cpp)
@@ -173,16 +176,6 @@ if(TARGET pkcs15-plugin)
     target_compile_definitions(PluginIntegrationTests PRIVATE HAS_PKCS15_PLUGIN=1)
 endif()
 
-if(TARGET cardedge-plugin)
-    add_dependencies(PluginIntegrationTests cardedge-plugin)
-    target_compile_definitions(PluginIntegrationTests PRIVATE HAS_CARDEDGE_PLUGIN=1)
-endif()
-
-if(TARGET piv-plugin)
-    add_dependencies(PluginIntegrationTests piv-plugin)
-    target_compile_definitions(PluginIntegrationTests PRIVATE HAS_PIV_PLUGIN=1)
-endif()
-
 if(BUILD_OPENSC_PLUGIN AND OPENSC_FOUND)
     add_dependencies(PluginIntegrationTests opensc-plugin)
     target_compile_definitions(PluginIntegrationTests PRIVATE HAS_OPENSC_PLUGIN=1)
@@ -220,16 +213,6 @@ target_include_directories(SlotHashTests PRIVATE
     ${PROJECT_SOURCE_DIR}/lib/pkcs11/include)
 target_compile_definitions(SlotHashTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(SlotHashTests)
-
-# CLI tool for manual PIN testing with a real card
-add_executable(pin_test_cli pin_test_cli.cpp)
-target_link_libraries(pin_test_cli CardEdge SmartCard_Impl LibreSCRS_Auth)
-target_include_directories(pin_test_cli PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/cardedge/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/pkcs15/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
-)
-target_compile_definitions(pin_test_cli PRIVATE LIBRESCRS_INTERNAL_BUILD)
 
 # PKCS#15 card investigation probe (run with a physical card inserted)
 add_executable(pkcs15_probe pkcs15_probe.cpp)
@@ -307,36 +290,9 @@ target_include_directories(PKCS15ParserTests PRIVATE
 target_compile_definitions(PKCS15ParserTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(PKCS15ParserTests)
 
-# PIV parser tests
-add_executable(PIVParserTests piv_parser_test.cpp)
-target_link_libraries(PIVParserTests GTest::gtest_main PIV)
-target_include_directories(PIVParserTests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/piv/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
-)
-target_compile_definitions(PIVParserTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
-gtest_discover_tests(PIVParserTests)
-
-# PIV hardware tests (skipped when no PIV card present)
-add_executable(PIVHardwareTests piv_hardware_test.cpp)
-target_link_libraries(PIVHardwareTests GTest::gtest_main PIV SmartCard_Impl)
-target_include_directories(PIVHardwareTests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/piv/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
-)
-target_compile_definitions(PIVHardwareTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
-gtest_discover_tests(PIVHardwareTests)
-
-# CardEdge plugin tests
-add_executable(CardEdgePluginTests cardedge_plugin_test.cpp)
-target_link_libraries(CardEdgePluginTests GTest::gtest_main CardPlugin_Impl)
-target_compile_definitions(CardEdgePluginTests PRIVATE PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}")
-add_dependencies(CardEdgePluginTests cardedge-plugin)
-gtest_discover_tests(CardEdgePluginTests)
-
 # PKCS#15 plugin tests
 add_executable(PKCS15PluginTests pkcs15_plugin_test.cpp)
-target_link_libraries(PKCS15PluginTests GTest::gtest_main CardPlugin_Impl)
+target_link_libraries(PKCS15PluginTests GTest::gtest_main CardPlugin_Impl LibreSCRS::SmartCard LibreSCRS::Auth)
 target_compile_definitions(PKCS15PluginTests PRIVATE
     PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
 )
@@ -840,3 +796,9 @@ target_compile_definitions(ManifestCodegenTests PRIVATE
     LIBRESCRS_PYTHON_EXECUTABLE="${Python3_EXECUTABLE}"
 )
 gtest_discover_tests(ManifestCodegenTests)
+
+# Phase D.1 (PKCS#11 multi-PIN) — real-card E2E tests against the live
+# librescrs-pkcs11.so. Always built so the test exe compiles in CI;
+# every test SKIPs at runtime when the env vars (LIBRESCRS_TEST_PIN,
+# LIBRESCRS_TEST_PIN_QSCD, LIBRESCRS_TEST_CAN) are unset.
+add_subdirectory(e2e)

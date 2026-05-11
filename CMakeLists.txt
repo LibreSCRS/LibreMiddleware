@@ -55,6 +55,27 @@ endif()
 set(LIBREMIDDLEWARE_CERTIFICATES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/certificates"
     CACHE PATH "Path to bundled CA certificates" FORCE)
 
+# Vendored OpenSC fork (static archive) for the OpenScPKCS11Provider that
+# lands in Phase C.2 of the PKCS#11 multi-PIN refactor. Pinned at
+# thirdparty/opensc-source @ f049d8677. ON by default; set to OFF to skip
+# the ~5-10 minute autoconf+make build (the resulting librescrs-opensc-pkcs11
+# fallback module then will not be built either).
+option(LIBRESCRS_VENDOR_OPENSC
+    "Build vendored OpenSC fork as a static library for librescrs-opensc-pkcs11 fallback" ON)
+
+if(NOT WIN32 AND LIBRESCRS_VENDOR_OPENSC)
+    execute_process(
+        COMMAND ${CMAKE_COMMAND} -E env bash ${CMAKE_CURRENT_SOURCE_DIR}/tools/check-opensc-pin.sh
+        RESULT_VARIABLE _opensc_pin_rc
+        OUTPUT_VARIABLE _opensc_pin_out
+        ERROR_VARIABLE _opensc_pin_err
+    )
+    if(NOT _opensc_pin_rc EQUAL 0)
+        message(FATAL_ERROR "OpenSC pin check failed:\n${_opensc_pin_out}\n${_opensc_pin_err}")
+    endif()
+    message(STATUS "${_opensc_pin_out}")
+endif()
+
 add_subdirectory(thirdparty)
 add_subdirectory(lib/LibreSCRS)
 add_subdirectory(lib/plugin)
@@ -68,14 +89,12 @@ set(LIBREMIDDLEWARE_PLUGIN_DIR "${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}" CACHE PATH
     "Directory containing LibreMiddleware card plugins (for consumers)")
 
 add_subdirectory(lib/smartcard)
-add_subdirectory(lib/cardedge)
 add_subdirectory(lib/rs-eid)
 add_subdirectory(lib/eu-vrc)
 add_subdirectory(lib/rs-health)
 add_subdirectory(lib/emrtd-crypto)
 add_subdirectory(lib/emrtd)
 add_subdirectory(lib/pkcs15)
-add_subdirectory(lib/piv)
 # Digital signing support (LibreSign library + DSS integration).
 # pkcs11.so is always built — it's a standalone PKCS#11 module
 # used by Firefox, pkcs11-tool, etc.
@@ -90,17 +109,17 @@ endif()
 set(LIBREMIDDLEWARE_HAS_SIGNING ${BUILD_SIGNING} CACHE BOOL
     "Whether LibreMiddleware was built with signing support" FORCE)
 
+if(LIBRESCRS_VENDOR_OPENSC)
+    add_subdirectory(lib/opensc-pkcs11)
+endif()
 add_subdirectory(lib/pkcs11)
-add_subdirectory(lib/cardedge-opensc-driver)
 
 # Card plugins (shared libraries loaded at runtime)
 add_subdirectory(lib/rs-eid-plugin)
 add_subdirectory(lib/eu-vrc-plugin)
 add_subdirectory(lib/rs-health-plugin)
 add_subdirectory(lib/emrtd-plugin)
-add_subdirectory(lib/cardedge-plugin)
 add_subdirectory(lib/pkcs15-plugin)
-add_subdirectory(lib/piv-plugin)
 
 # OpenSC fallback plugin (optional, requires system libopensc)
 option(BUILD_OPENSC_PLUGIN "Build OpenSC fallback plugin" ON)

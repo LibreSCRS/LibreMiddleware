@@ -5,7 +5,7 @@
 #include "apdu_logger.h"
 
 #include <card_protocol.h>
-#include <cardedge_protocol.h>
+#include "cardedge_protocol_constants.h"
 #include <health_protocol.h>
 #include <eu_vrc_protocol.h>
 #include <emrtd_card.h>

@@ -19,7 +19,6 @@ add_executable(card_mapper
 target_include_directories(card_mapper PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/rs-eid/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/cardedge/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/rs-health/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/eu-vrc/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/emrtd/src
@@ -63,7 +62,6 @@ if(BUILD_TESTING)
     target_include_directories(card_mapper_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/rs-eid/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/cardedge/src
         ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/rs-health/src
         ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/eu-vrc/src
         ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/emrtd/src
