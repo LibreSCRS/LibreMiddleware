@@ -38,6 +38,15 @@ target_link_libraries(librescrs-opensc-pkcs11 PRIVATE
     LibreSCRS::Secure
 )
 
+# The vendored OpenSC archive references zlib symbols (compression.o,
+# pkcs15-actalis.o) whenever its autoconf detects libz on the host —
+# the default on macOS (SDK stub) and Linux (libz-dev). Consumers of
+# libopensc.a must therefore transitively link -lz. CMake ships
+# FindZLIB out of the box; the resulting ZLIB::ZLIB import target
+# resolves to the universal SDK stub on macOS and to libz.so on Linux.
+find_package(ZLIB REQUIRED)
+target_link_libraries(librescrs-opensc-pkcs11 PRIVATE ZLIB::ZLIB)
+
 # The vendored OpenSC archive may include notify.o (autoconf auto-detects
 # gio-2.0 unless --disable-notify is passed). When present, libopensc.a
 # pulls undefined references to g_application_*, g_notification_* and

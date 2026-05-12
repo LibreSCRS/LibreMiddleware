@@ -96,6 +96,26 @@ else()
     set(OPENSC_CFLAGS "-O2 -ffunction-sections -fdata-sections")
 endif()
 
+# macOS universal binary: clang produces fat .o files when given multiple
+# -arch flags, and autoconf's compile/link probes still pass because the
+# host runs the slice matching its hardware. Same approach as upstream
+# OpenSC's own packaging script (thirdparty/opensc-source/MacOSX/build).
+# Point autoconf at the bundled fat libcrypto via -L/-l (not a direct .a
+# path) so libtool treats it as a normal link target — passing the .a
+# directly makes libtool repack the fat archive as a single member of
+# every OpenSC module .dylib, which ranlib then rejects.
+set(OPENSC_LDFLAGS "")
+set(OPENSC_OPENSSL_CFLAGS "")
+set(OPENSC_OPENSSL_LIBS "")
+if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+    foreach(arch IN LISTS CMAKE_OSX_ARCHITECTURES)
+        string(APPEND OPENSC_CFLAGS  " -arch ${arch}")
+        string(APPEND OPENSC_LDFLAGS " -arch ${arch}")
+    endforeach()
+    set(OPENSC_OPENSSL_CFLAGS "-I${OPENSSL_ROOT}/macosx/include")
+    set(OPENSC_OPENSSL_LIBS   "-L${OPENSSL_ROOT}/macosx/lib -lcrypto")
+endif()
+
 ExternalProject_Add(opensc_external
     SOURCE_DIR        ${OPENSC_SOURCE_DIR}
     BINARY_DIR        ${OPENSC_BUILD_DIR}
@@ -103,7 +123,12 @@ ExternalProject_Add(opensc_external
     # bootstrap regenerates configure/Makefile.in via autoreconf; must run
     # in the source tree before configure.
     CONFIGURE_COMMAND ${CMAKE_COMMAND} -E chdir ${OPENSC_SOURCE_DIR} ./bootstrap
-              COMMAND ${CMAKE_COMMAND} -E env "CFLAGS=${OPENSC_CFLAGS}"
+              COMMAND ${CMAKE_COMMAND} -E env
+                      "CFLAGS=${OPENSC_CFLAGS}"
+                      "LDFLAGS=${OPENSC_LDFLAGS}"
+                      "OPENSSL_CFLAGS=${OPENSC_OPENSSL_CFLAGS}"
+                      "OPENSSL_LIBS=${OPENSC_OPENSSL_LIBS}"
+                      "MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}"
                       ${OPENSC_SOURCE_DIR}/configure ${OPENSC_CONFIGURE_FLAGS}
     BUILD_COMMAND     make -j4
     INSTALL_COMMAND   make install
