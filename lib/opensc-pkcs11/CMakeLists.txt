@@ -33,46 +33,9 @@ target_include_directories(librescrs-opensc-pkcs11 PRIVATE
 )
 
 target_link_libraries(librescrs-opensc-pkcs11 PRIVATE
-    opensc_static
-    OpenSSL_Crypto
+    opensc_static_with_deps
     LibreSCRS::Secure
 )
-
-# The vendored OpenSC archive references zlib symbols (compression.o,
-# pkcs15-actalis.o) whenever its autoconf detects libz on the host —
-# the default on macOS (SDK stub) and Linux (libz-dev). Consumers of
-# libopensc.a must therefore transitively link -lz. CMake ships
-# FindZLIB out of the box; the resulting ZLIB::ZLIB import target
-# resolves to the universal SDK stub on macOS and to libz.so on Linux.
-find_package(ZLIB REQUIRED)
-target_link_libraries(librescrs-opensc-pkcs11 PRIVATE ZLIB::ZLIB)
-
-# The vendored OpenSC archive may include notify.o (autoconf auto-detects
-# gio-2.0 unless --disable-notify is passed). When present, libopensc.a
-# pulls undefined references to g_application_*, g_notification_* and
-# g_object_unref into the consuming SHARED library. Resolve them by
-# transitively linking the GIO/GLib system stack here. We probe with
-# pkg-config and skip if absent (keeping the static-only build viable on
-# minimal CI hosts where notify was elided).
-find_package(PkgConfig QUIET)
-if(PkgConfig_FOUND)
-    pkg_check_modules(LIBRESCRS_OPENSC_GIO QUIET IMPORTED_TARGET gio-2.0)
-    if(LIBRESCRS_OPENSC_GIO_FOUND)
-        target_link_libraries(librescrs-opensc-pkcs11 PRIVATE PkgConfig::LIBRESCRS_OPENSC_GIO)
-    endif()
-endif()
-
-# OpenSC also depends on PC/SC (libpcsclite on Linux) at link time when
-# --enable-pcsc is passed (Option A; see thirdparty/CMakeLists.txt). The
-# system libopensc package would resolve this transitively; here we wire
-# it explicitly because the static archive carries undefined SCard*
-# references.
-if(PkgConfig_FOUND AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    pkg_check_modules(LIBRESCRS_OPENSC_PCSC QUIET IMPORTED_TARGET libpcsclite)
-    if(LIBRESCRS_OPENSC_PCSC_FOUND)
-        target_link_libraries(librescrs-opensc-pkcs11 PRIVATE PkgConfig::LIBRESCRS_OPENSC_PCSC)
-    endif()
-endif()
 
 set_target_properties(librescrs-opensc-pkcs11 PROPERTIES
     POSITION_INDEPENDENT_CODE ON

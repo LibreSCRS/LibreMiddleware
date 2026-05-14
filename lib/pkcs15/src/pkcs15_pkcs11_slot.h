@@ -26,7 +26,8 @@
 
 namespace pkcs15 {
 class PKCS15Card;
-}
+struct PKCS15Profile;
+} // namespace pkcs15
 
 namespace LibreSCRS::Pkcs15::Pkcs11 {
 
@@ -178,11 +179,20 @@ private:
     [[nodiscard]] static pkcs15::PKCS15Card*
     parentApduHelper(LibreSCRS::Pkcs11::Internal::PKCS11Card& parentBase) noexcept;
 
-    pkcs15::PKCS15Card* apdu{nullptr};        ///< Borrowed; owned by parent @ref Pkcs15Card. @c nullptr in deferred-profile mode pre-login.
+    /// @brief Borrow the parent @ref Pkcs15Card's PKCS#15 profile (read
+    ///        by @ref Pkcs15Card::resumeBind). Used by the placeholder
+    ///        self-transform path to discover user PINs / keys / certs
+    ///        without re-issuing APDUs.
+    /// @par Thread-safety Caller must hold the parent's @c cardMutex.
+    [[nodiscard]] static const pkcs15::PKCS15Profile*
+    parentProfile(LibreSCRS::Pkcs11::Internal::PKCS11Card& parentBase) noexcept;
+
+    pkcs15::PKCS15Card* apdu{
+        nullptr}; ///< Borrowed; owned by parent @ref Pkcs15Card. @c nullptr in deferred-profile mode pre-login.
     std::optional<pkcs15::PinInfo> pinInfo;   ///< @c nullopt in deferred-profile mode pre-login.
     std::vector<pkcs15::PrivateKeyInfo> keys; ///< Empty in deferred-profile mode pre-login.
     std::vector<pkcs15::CertificateInfo> certs;
-    bool deferredProfile{false};              ///< True if pinInfo/keys/certs/apdu must be lazily populated at first @ref login.
+    bool deferredProfile{false}; ///< True if pinInfo/keys/certs/apdu must be lazily populated at first @ref login.
 };
 
 } // namespace LibreSCRS::Pkcs15::Pkcs11

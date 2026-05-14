@@ -116,3 +116,16 @@ hook.
 ## License
 
 LGPL-2.1-or-later — see [LICENSE](LICENSE) for details.
+
+## Source availability
+
+LibreMiddleware is licensed under LGPL-2.1-or-later. It links statically
+against modified versions of LGPL-licensed components (notably OpenSC).
+
+The complete corresponding source code for this software, including
+all modified LGPL components, is publicly available at:
+
+- https://github.com/LibreSCRS/LibreMiddleware
+- https://github.com/LibreSCRS/LibreCelik
+
+This offer is valid for as long as we distribute this software.

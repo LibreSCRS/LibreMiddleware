@@ -176,7 +176,7 @@ if(TARGET pkcs15-plugin)
     target_compile_definitions(PluginIntegrationTests PRIVATE HAS_PKCS15_PLUGIN=1)
 endif()
 
-if(BUILD_OPENSC_PLUGIN AND OPENSC_FOUND)
+if(LIBRESCRS_VENDOR_OPENSC)
     add_dependencies(PluginIntegrationTests opensc-plugin)
     target_compile_definitions(PluginIntegrationTests PRIVATE HAS_OPENSC_PLUGIN=1)
 endif()
@@ -299,8 +299,8 @@ target_compile_definitions(PKCS15PluginTests PRIVATE
 add_dependencies(PKCS15PluginTests pkcs15-plugin)
 gtest_discover_tests(PKCS15PluginTests)
 
-# OpenSC fallback plugin tests (conditional on libopensc availability)
-if(BUILD_OPENSC_PLUGIN AND OPENSC_FOUND)
+# OpenSC fallback plugin tests (conditional on vendored OpenSC availability)
+if(LIBRESCRS_VENDOR_OPENSC)
     add_executable(OpenSCPluginTests
         opensc_plugin_test.cpp
     )
@@ -309,7 +309,7 @@ if(BUILD_OPENSC_PLUGIN AND OPENSC_FOUND)
         CardPlugin_Impl
         LibreSCRS_SmartCard
         SmartCard_Impl
-        PkgConfig::OPENSC
+        opensc_static_with_deps
     )
     target_compile_definitions(OpenSCPluginTests PRIVATE
         PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
@@ -320,7 +320,7 @@ if(BUILD_OPENSC_PLUGIN AND OPENSC_FOUND)
 endif()
 
 # OpenSC fallback hardware integration test (spec 2026-04-24)
-if(BUILD_OPENSC_PLUGIN AND OPENSC_FOUND)
+if(LIBRESCRS_VENDOR_OPENSC)
     add_executable(OpenSCFallbackIntegrationTest
         opensc_fallback_integration_test.cpp
     )
@@ -333,8 +333,7 @@ if(BUILD_OPENSC_PLUGIN AND OPENSC_FOUND)
         CardPlugin_Impl
         LibreSCRS_SmartCard
         SmartCard_Impl
-        PkgConfig::OPENSC
-        OpenSSL_Crypto
+        opensc_static_with_deps
     )
     target_compile_definitions(OpenSCFallbackIntegrationTest PRIVATE
         PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
@@ -343,6 +342,19 @@ if(BUILD_OPENSC_PLUGIN AND OPENSC_FOUND)
     gtest_discover_tests(OpenSCFallbackIntegrationTest
         PROPERTIES LABELS "HARDWARE"
     )
+endif()
+
+# Downstream-patch presence guard for vendored OpenSC. Pure source-text
+# inspection: no card, no opensc-static link; safe to run on every build.
+if(LIBRESCRS_VENDOR_OPENSC)
+    add_executable(PivAidPatchTest opensc-fallback/piv_aid_test.cpp)
+    target_link_libraries(PivAidPatchTest PRIVATE GTest::gtest_main)
+    target_compile_definitions(PivAidPatchTest PRIVATE
+        LIBRESCRS_OPENSC_CARD_PIV_C="${CMAKE_SOURCE_DIR}/thirdparty/opensc-source/src/libopensc/card-piv.c"
+    )
+    # Auto-apply hook runs at configure time on the source tree itself, so
+    # the source file is already patched before this test compiles.
+    gtest_discover_tests(PivAidPatchTest)
 endif()
 
 # SmartCard Monitor tests

@@ -20,10 +20,13 @@
 
 namespace {
 
-// A5 (4.0 hardening): OpenSC is the LAST-resort plugin (highest priority
-// numeric value); it never matches by ATR — relies on canHandleConnection
-// driving sc_pkcs15_bind() against the live session. kAtrs (from manifest.json)
-// is intentionally empty.
+// OpenSC fallback for unknown PKCS#15-shaped cards. Sits BELOW specific
+// plugins (rs-eid, rs-health, emrtd, eu-vrc — priorities 100-ish) but
+// ABOVE the generic LM PKCS#15 parser (pkcs15-plugin, priority 900):
+// OpenSC's full driver chain (srbeid, cardos, ias-ecc, openpgp, …)
+// handles card-specific quirks the generic parser does not. Never
+// matches by ATR — relies on canHandleConnection driving sc_pkcs15_bind()
+// against the live session. kAtrs (from manifest.json) is intentionally empty.
 
 std::string extractSubjectCN(const uint8_t* der, size_t len)
 {
@@ -61,7 +64,7 @@ public:
     {
         setIdentity(std::string{LibreSCRS::Plugin::generated::opensc::kPluginId},
                     std::string{LibreSCRS::Plugin::generated::opensc::kDisplayName},
-                    /*priority=*/900);
+                    /*priority=*/800);
     }
 
     ~OpenSCCardPlugin() override

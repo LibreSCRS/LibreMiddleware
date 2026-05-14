@@ -2,3 +2,7 @@ lib/cardedge-pkcs11/include/cardedge-pkcs11/*.h
 # Golden-output fixture: must be byte-identical to manifest2header.py emission.
 # Formatting it would break ManifestCodegen.GoldenOutputMatches.
 test/build_system/fixtures/expected_manifest.h
+# Vendored OpenSC source tree: upstream code, patched in place by
+# thirdparty/CMakeLists.txt. The subtree carries its own .clang-format
+# (OpenSC house style) which differs from LM's; never re-format it here.
+thirdparty/opensc-source/**

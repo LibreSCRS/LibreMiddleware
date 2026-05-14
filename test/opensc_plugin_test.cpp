@@ -65,7 +65,7 @@ TEST(OpenSCPluginTest, Metadata)
 
     EXPECT_EQ(opensc->pluginId(), "opensc");
     EXPECT_EQ(opensc->displayName(), "OpenSC (generic)");
-    EXPECT_EQ(opensc->probePriority(), 900);
+    EXPECT_EQ(opensc->probePriority(), 800);
 }
 
 TEST(OpenSCPluginTest, CanHandleAlwaysFalse)
@@ -87,18 +87,28 @@ TEST(OpenSCPluginTest, CanHandleAlwaysFalse)
     EXPECT_FALSE(opensc->canHandle(std::vector<uint8_t>{}));
 }
 
-TEST(OpenSCPluginTest, LowestPriority)
+TEST(OpenSCPluginTest, AboveGenericPkcs15)
 {
+    // opensc-plugin sits between specific plugins (rs-eid, rs-health, eu-vrc, emrtd)
+    // and the generic pkcs15-plugin last-resort. After the 2026-05 swap, opensc=800
+    // and pkcs15=900; the relative ordering (opensc < pkcs15) is what matters.
     CardPluginService registry{pluginDir()};
 
     auto plugins = registry.plugins();
     ASSERT_FALSE(plugins.empty());
 
+    int openscPriority = -1;
+    int pkcs15Priority = -1;
     for (const auto& p : plugins) {
-        if (p->pluginId() != "opensc") {
-            EXPECT_LT(p->probePriority(), 900) << p->pluginId() << " has priority >= 900";
-        }
+        if (p->pluginId() == "opensc")
+            openscPriority = p->probePriority();
+        if (p->pluginId() == "pkcs15")
+            pkcs15Priority = p->probePriority();
     }
+    ASSERT_NE(openscPriority, -1) << "opensc plugin not found";
+    ASSERT_NE(pkcs15Priority, -1) << "pkcs15 plugin not found";
+    EXPECT_LT(openscPriority, pkcs15Priority)
+        << "opensc (" << openscPriority << ") must be probed before pkcs15 (" << pkcs15Priority << ")";
 }
 
 // --- Integration tests (require libopensc, no hardware) ---

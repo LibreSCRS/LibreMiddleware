@@ -301,6 +301,24 @@ protected:
     /// @since 4.1
     [[nodiscard]] static unsigned long parentEstablishPACE(PKCS11Card& parent);
 
+    /// @brief Whether the parent card is in placeholder-slot mode
+    ///        (PACE required, no CAN yet).
+    /// @par Thread-safety
+    /// Caller must hold the parent's @c cardMutex. Concrete subclasses
+    /// (e.g. @c Pkcs15Card) expose the underlying sentinel; non-PACE
+    /// families return @c false.
+    /// @since 4.1
+    [[nodiscard]] static bool parentPlaceholderState(const PKCS11Card& parent) noexcept;
+
+    /// @brief Drive the parent's post-CAN bind tail (PACE establish +
+    ///        applet select + profile read).
+    /// @par Thread-safety
+    /// Caller must hold the parent's @c cardMutex. Delegates to the
+    /// concrete card's @c resumeBind() when one is provided; otherwise
+    /// returns @c Crv::FunctionNotSupported.
+    /// @since 4.1
+    [[nodiscard]] static unsigned long parentResumeBind(PKCS11Card& parent);
+
     /// @brief Weak back-reference to the owning card.
     std::weak_ptr<PKCS11Card> parentCard;
 

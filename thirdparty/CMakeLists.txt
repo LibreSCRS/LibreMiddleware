@@ -51,12 +51,77 @@ set(OPENSC_STATIC_LIB  ${OPENSC_INSTALL_DIR}/lib/libopensc.a)
 set(OPENSC_INCLUDE_SRC   ${OPENSC_SOURCE_DIR}/src)
 set(OPENSC_INCLUDE_BUILD ${OPENSC_BUILD_DIR})
 
+# Apply downstream patches to the vendored OpenSC source tree at configure
+# time, so the ExternalProject_Add bootstrap/configure/build step below sees
+# the patched sources. Each .patch in thirdparty/patches/ is applied in
+# lexicographic order; a `git apply --check -R` dry-run gates each patch so
+# re-configures are idempotent (already-applied patches skip silently). When
+# a patch is freshly applied, the OpenSC ExternalProject build + install
+# stamps are removed so the next build pass re-runs the build with the
+# patched source (otherwise the stamp file makes ExternalProject think the
+# build is already done and the new .c content never reaches libopensc.a).
+# See thirdparty/patches/NNNN-*-readme.md for rationale per patch.
+file(GLOB OPENSC_PATCHES ${CMAKE_CURRENT_SOURCE_DIR}/patches/*.patch)
+list(SORT OPENSC_PATCHES)
+set(_opensc_any_patch_applied FALSE)
+foreach(_patch ${OPENSC_PATCHES})
+    # If the patch is already applied, the reverse-apply dry-run succeeds;
+    # skip in that case. Otherwise the forward dry-run must succeed before
+    # we attempt the real apply, so a malformed/conflicting patch fails
+    # configure rather than half-applying.
+    execute_process(
+        COMMAND git apply --check -R ${_patch}
+        WORKING_DIRECTORY ${OPENSC_SOURCE_DIR}
+        RESULT_VARIABLE _patch_reverse_rc
+        OUTPUT_QUIET ERROR_QUIET
+    )
+    if(_patch_reverse_rc EQUAL 0)
+        message(STATUS "OpenSC: ${_patch} already applied; skipping")
+    else()
+        execute_process(
+            COMMAND git apply --check ${_patch}
+            WORKING_DIRECTORY ${OPENSC_SOURCE_DIR}
+            RESULT_VARIABLE _patch_check_rc
+            OUTPUT_QUIET ERROR_QUIET
+        )
+        if(NOT _patch_check_rc EQUAL 0)
+            message(FATAL_ERROR "OpenSC: ${_patch} cannot be applied cleanly to ${OPENSC_SOURCE_DIR}")
+        endif()
+        message(STATUS "OpenSC: applying ${_patch}")
+        execute_process(
+            COMMAND git apply ${_patch}
+            WORKING_DIRECTORY ${OPENSC_SOURCE_DIR}
+            RESULT_VARIABLE _patch_apply_rc
+        )
+        if(NOT _patch_apply_rc EQUAL 0)
+            message(FATAL_ERROR "OpenSC: ${_patch} failed to apply despite passing dry-run")
+        endif()
+        set(_opensc_any_patch_applied TRUE)
+    endif()
+endforeach()
+
+if(_opensc_any_patch_applied)
+    # ExternalProject_Add tracks step completion via stamp files. Once
+    # opensc_external-build exists, the build step is treated as done and
+    # not re-run even if the source tree was patched after the stamp was
+    # written. Delete the build + install + done stamps so the next build
+    # pass re-runs make → re-links libopensc.a with the patched source.
+    set(_opensc_stamp_dir
+        ${CMAKE_CURRENT_BINARY_DIR}/opensc_external-prefix/src/opensc_external-stamp)
+    file(REMOVE
+        ${_opensc_stamp_dir}/opensc_external-build
+        ${_opensc_stamp_dir}/opensc_external-install
+        ${_opensc_stamp_dir}/opensc_external-done)
+    message(STATUS "OpenSC: patch applied; invalidated build/install/done stamps")
+endif()
+
 # PCSC strategy: vendored OpenSC owns its own PCSC session for the cards
 # it claims (rs-eid via srbeid driver, etc.). Cross-process PCSC contention
 # is left to the host PC/SC daemon's existing session arbitration; no
 # explicit lock coordination across providers.
-# pkcs-lite is a system dep; presence verified by root CMakeLists' BUILD_OPENSC_PLUGIN
-# probe path, so libpcsclite-dev is expected on build hosts.
+# libpcsclite is a system dep (autoconf detects it via --enable-pcsc).
+# Presence is expected on Linux build hosts; consumers link it via the
+# `opensc_static_with_deps` wrapper below.
 set(OPENSC_CONFIGURE_FLAGS
     --prefix=${OPENSC_INSTALL_DIR}
     --disable-shared
@@ -145,3 +210,39 @@ set_target_properties(opensc_static PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${OPENSC_INCLUDE_SRC};${OPENSC_INCLUDE_BUILD}"
 )
 add_dependencies(opensc_static opensc_external)
+
+# Convenience wrapper bundling opensc_static with its transitive runtime
+# deps. libopensc.a references zlib (compression.o, pkcs15-actalis.o),
+# optionally GIO/GLib (notify.o when autoconf detected gio-2.0), and PC/SC
+# (SCard* via --enable-pcsc). Consumers linking the static archive into a
+# SHARED library must satisfy these symbols; depending on this INTERFACE
+# target does it once for the whole tree.
+add_library(opensc_static_with_deps INTERFACE)
+# libopensc.a and libcrypto.a are mutually recursive at link time
+# (libopensc → ERR_*, X509_*, BIO_*; libcrypto pulled fresh by libopensc
+# objects discovered later). When consumers also drag OpenSSL_Crypto in
+# earlier (via e.g. SmartCard_Impl), CMake deduplicates and the late
+# OpenSSL_Crypto reference is dropped — leaving libopensc.a's undefined
+# symbols unresolved. LINK_GROUP forces ld's --start-group/--end-group
+# rescan so the archives are scanned until the symbol set converges.
+target_link_libraries(opensc_static_with_deps INTERFACE
+    "$<LINK_GROUP:RESCAN,opensc_static,OpenSSL_Crypto>"
+)
+
+find_package(ZLIB REQUIRED)
+target_link_libraries(opensc_static_with_deps INTERFACE ZLIB::ZLIB)
+
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(LIBRESCRS_OPENSC_GIO QUIET IMPORTED_TARGET gio-2.0)
+    if(LIBRESCRS_OPENSC_GIO_FOUND)
+        target_link_libraries(opensc_static_with_deps INTERFACE PkgConfig::LIBRESCRS_OPENSC_GIO)
+    endif()
+endif()
+
+if(PkgConfig_FOUND AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    pkg_check_modules(LIBRESCRS_OPENSC_PCSC QUIET IMPORTED_TARGET libpcsclite)
+    if(LIBRESCRS_OPENSC_PCSC_FOUND)
+        target_link_libraries(opensc_static_with_deps INTERFACE PkgConfig::LIBRESCRS_OPENSC_PCSC)
+    endif()
+endif()

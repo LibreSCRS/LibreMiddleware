@@ -13,6 +13,8 @@
 #include <memory>
 #include <stdexcept>
 
+#include "probe_trace.h"
+
 namespace pkcs15 {
 
 namespace {
@@ -252,6 +254,11 @@ TokenInfo PKCS15Card::readTokenInfo()
 
 PKCS15Profile PKCS15Card::readProfile()
 {
+    {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "READPROFILE-ENTRY this=%p", static_cast<const void*>(this));
+        LibreSCRS::Internal::probeTrace(buf);
+    }
     LibreSCRS::SmartCard::Internal::CardTransaction tx(conn);
 
     if (!selectApplet())
@@ -764,7 +771,8 @@ std::vector<uint8_t> PKCS15Card::readSelectedFile()
     size_t offset = 0;
 
     while (true) {
-        auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(static_cast<uint16_t>(offset), READ_CHUNK_SIZE));
+        auto resp =
+            conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(static_cast<uint16_t>(offset), READ_CHUNK_SIZE));
 
         // 6282 = standard EOF; 6A86 = some tokens signal EOF this way
         bool isEof = resp.statusWord() == 0x6282 || (resp.statusWord() == 0x6A86 && !result.empty());

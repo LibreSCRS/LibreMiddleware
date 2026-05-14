@@ -125,11 +125,16 @@ protected:
 
             // findAllCandidates does the two-phase probe (ATR first, then
             // canHandleConnection AID probe), de-duped and sorted by
-            // probePriority ascending. opensc-plugin (900) claims the
-            // PKS card via sc_pkcs15_bind through the upstream srbeid
-            // driver.
+            // probePriority ascending. opensc-plugin (priority 800) claims
+            // the PKS card via sc_pkcs15_bind through the upstream srbeid
+            // driver. This fixture specifically tests the OpenSC fallback
+            // path, so we accept only readers where the front candidate is
+            // opensc-plugin — other cards (e.g., NAM CL claimed by emrtd
+            // for display) are skipped here even if a plugin claims them.
             auto candidates = registry->findAllCandidates(opened->atr(), *opened);
             if (candidates.empty())
+                continue;
+            if (candidates.front()->pluginId() != "opensc")
                 continue;
 
             session = std::move(*opened);
@@ -138,8 +143,8 @@ protected:
         }
 
         registry.reset();
-        GTEST_SKIP() << "No reader returned a card claimable by any loaded plugin — "
-                        "confirm PKS card is inserted";
+        GTEST_SKIP() << "No reader returned a card with opensc-plugin as front "
+                        "candidate — confirm PKS card is inserted";
     }
 
     static void TearDownTestSuite()

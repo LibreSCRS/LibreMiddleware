@@ -6,6 +6,8 @@
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/MonitorService.h>
 
+#include "probe_trace.h"
+
 #include <atomic>
 #include <chrono>
 #include <map>
@@ -134,6 +136,8 @@ void performCardRead(std::shared_ptr<AutoReaderWorker> worker, std::string reade
         }
 
         auto session = std::make_shared<LibreSCRS::SmartCard::CardSession>(std::move(*opened));
+        LibreSCRS::Internal::probeTrace(std::string{"PROBE-CALL caller=AutoReaderService reader="} + readerName +
+                                        " attempt=" + std::to_string(attempt));
         auto candidates = worker->registry->findAllCandidates(atr, *session);
 
         if (candidates.empty()) {

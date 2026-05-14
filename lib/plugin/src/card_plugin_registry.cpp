@@ -5,6 +5,8 @@
 
 #include <LibreSCRS/Export.h>
 
+#include "probe_trace.h"
+
 #include <algorithm>
 #include <array>
 #include <dlfcn.h>
@@ -307,9 +309,14 @@ CardPluginService::findAllCandidates(std::span<const std::uint8_t> atr,
     std::set<CardPlugin*> seen;
     std::vector<std::shared_ptr<CardPlugin>> result;
 
+    LibreSCRS::Internal::probeTrace(std::string{"PROBE-ENTRY atr="} + LibreSCRS::Internal::atrToHex(atr) +
+                                    " plugins=" + std::to_string(d->sortedPlugins.size()));
+
     // Phase 1: ATR matches
     for (const auto& plugin : d->sortedPlugins) {
         if (plugin->canHandle(atr)) {
+            LibreSCRS::Internal::probeTrace(std::string{"PROBE-ATR-HIT plugin="} + plugin->pluginId() +
+                                            " atr=" + LibreSCRS::Internal::atrToHex(atr));
             result.push_back(plugin);
             seen.insert(plugin.get());
         }
@@ -324,16 +331,24 @@ CardPluginService::findAllCandidates(std::span<const std::uint8_t> atr,
         if (seen.count(plugin.get()) > 0) {
             continue;
         }
+        LibreSCRS::Internal::probeTrace(std::string{"PROBE-PLUGIN plugin="} + plugin->pluginId() +
+                                        " priority=" + std::to_string(plugin->probePriority()));
+        bool matched = false;
+        bool threw = false;
         try {
-            if (plugin->canHandleConnection(sessionAtr, session)) {
+            matched = plugin->canHandleConnection(sessionAtr, session);
+            if (matched) {
                 result.push_back(plugin);
             }
         } catch (...) {
+            threw = true;
             // AID probe failed — skip this plugin. The 4.0 ABI v6 contract asks
             // plugins to return false rather than throw, but the registry
             // retains the safety net so a buggy plugin loaded across a
             // mismatched stdlib cannot abort the host process.
         }
+        LibreSCRS::Internal::probeTrace(std::string{"PROBE-RESULT plugin="} + plugin->pluginId() + " matched=" +
+                                        (matched ? "true" : "false") + " threw=" + (threw ? "true" : "false"));
     }
 
     // Sort within each phase independently — ATR matches before AID probes

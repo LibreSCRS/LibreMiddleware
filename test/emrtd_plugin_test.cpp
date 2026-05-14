@@ -153,7 +153,9 @@ TEST(EMRTDPluginTest, PriorityBetweenDedicatedAndOpenSC)
         if (p->pluginId() == "rs-eid" || p->pluginId() == "vehicle") {
             EXPECT_LT(p->probePriority(), 800);
         }
-        if (p->pluginId() == "opensc") {
+        // opensc-plugin shares the 800 priority bucket with emrtd post-2026-05 swap;
+        // pkcs15-plugin (900) is the new generic last-resort fallback.
+        if (p->pluginId() == "pkcs15") {
             EXPECT_GT(p->probePriority(), 800);
         }
     }

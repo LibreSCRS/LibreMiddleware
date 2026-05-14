@@ -6,5 +6,5 @@ librescrs_add_plugin(opensc-plugin
     SOURCES  src/opensc_card_plugin.cpp
     INCLUDE_DIRS
         ${PROJECT_SOURCE_DIR}/lib/smartcard/src
-    LINK_LIBRARIES SmartCard_Impl PkgConfig::OPENSC OpenSSL_Crypto
+    LINK_LIBRARIES SmartCard_Impl opensc_static_with_deps
 )

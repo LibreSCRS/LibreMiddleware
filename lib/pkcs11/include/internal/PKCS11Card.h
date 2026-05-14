@@ -152,6 +152,32 @@ protected:
     /// @guarded_by cardMutex
     Secure::String cachedCan;
 
+    /// @brief Whether this card is currently in placeholder-slot mode
+    ///        (PACE-required card whose CAN has not been supplied yet).
+    ///        Subclasses that publish a placeholder slot during @ref
+    ///        bind set this to @c true; the @ref PKCS11Slot::login
+    ///        dispatcher reads it to choose the CAN-in-PIN parse path
+    ///        and to delegate to @ref resumePostCan.
+    /// @guarded_by cardMutex
+    bool placeholderState = false;
+
+    /// @brief Resume bind after the slot's @ref login has cached a CAN.
+    ///
+    /// Concrete cards that publish a placeholder slot **override this hook**
+    /// to run their post-discovery tail (PACE establish + applet select +
+    /// profile read). The default returns @c Crv::FunctionFailed so
+    /// non-PACE families remain unaffected; the slot dispatcher checks
+    /// @ref placeholderState before invoking this hook.
+    ///
+    /// Concrete subclasses may name their private implementation freely
+    /// (e.g., @c Pkcs15Card::resumeBind is the Pkcs15 family's internal
+    /// helper). The contract honored by callers is on @ref resumePostCan;
+    /// internal helpers are an implementation detail.
+    /// @par Thread-safety
+    /// Caller must hold @ref cardMutex.
+    /// @since 4.1
+    [[nodiscard]] virtual unsigned long resumePostCan();
+
     /// @brief Owned PIN-gated slots. MUST be the last data member so
     ///        it is destroyed first; see class @par Destruction order.
     std::vector<std::shared_ptr<PKCS11Slot>> slots;

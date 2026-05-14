@@ -16,6 +16,13 @@ PKCS11Card::PKCS11Card() = default;
 
 PKCS11Card::~PKCS11Card() = default;
 
+unsigned long PKCS11Card::resumePostCan()
+{
+    // Non-PACE families do not publish placeholder slots; reaching this
+    // base implementation is a programming error in the slot dispatcher.
+    return Crv::FunctionFailed;
+}
+
 std::span<const std::shared_ptr<PKCS11Slot>> PKCS11Card::enumerateSlots() const noexcept
 {
     return std::span<const std::shared_ptr<PKCS11Slot>>{slots.data(), slots.size()};

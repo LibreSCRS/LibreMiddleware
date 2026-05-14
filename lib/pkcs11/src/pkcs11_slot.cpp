@@ -89,4 +89,14 @@ unsigned long PKCS11Slot::parentEstablishPACE(PKCS11Card& parent)
     return parent.establishPACE();
 }
 
+bool PKCS11Slot::parentPlaceholderState(const PKCS11Card& parent) noexcept
+{
+    return parent.placeholderState;
+}
+
+unsigned long PKCS11Slot::parentResumeBind(PKCS11Card& parent)
+{
+    return parent.resumePostCan();
+}
+
 } // namespace LibreSCRS::Pkcs11::Internal

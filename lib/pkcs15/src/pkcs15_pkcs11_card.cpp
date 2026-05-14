@@ -17,6 +17,8 @@
 #include "pkcs15_pkcs11_slot.h"
 #include "pkcs15_types.h"
 
+#include "probe_trace.h"
+
 #include <internal/Crv.h>
 #include <internal/PKCS11TokenInfo.h>
 #include <internal/SlotIdHash.h>
@@ -43,6 +45,18 @@ constexpr unsigned long kCkfTokenInitialized = 0x00000400UL;
 constexpr unsigned long kCkfLoginRequired = 0x00000004UL;
 constexpr unsigned long kCkfUserPinInitialized = 0x00000008UL;
 
+/// @brief PKCS#15-PIN-label → @ref SlotKind via the shared classifier.
+///        PKCS#15 does not encode a slot-kind concept; we infer it from
+///        the PIN label so the FNV-1a slot ID is stable across reconnects.
+[[nodiscard]] LibreSCRS::Pkcs11::Internal::SlotKind deriveSlotKind(const ::pkcs15::PinInfo& pin)
+{
+    auto label = pin.label;
+    std::transform(label.begin(), label.end(), label.begin(), [](unsigned char c) { return std::tolower(c); });
+    return LibreSCRS::Pkcs11::Internal::classifyFromLabel(label);
+}
+
+} // namespace
+
 /// @brief Filter PKCS#15 PINs down to user-auth PINs (drop PUK / CAN /
 ///        PACE / SO entries).
 ///
@@ -55,7 +69,7 @@ constexpr unsigned long kCkfUserPinInitialized = 0x00000008UL;
 ///   4. @c "so pin" / @c "so " prefix /
 ///      @c "security officer" / @c "admin"  → SO PIN, drop
 ///   5. otherwise                           → user PIN
-[[nodiscard]] bool isUserPin(const ::pkcs15::PinInfo& pin)
+bool isUserPin(const ::pkcs15::PinInfo& pin)
 {
     if (pin.unblockingPin)
         return false;
@@ -76,18 +90,6 @@ constexpr unsigned long kCkfUserPinInitialized = 0x00000008UL;
         return false;
     return true;
 }
-
-/// @brief PKCS#15-PIN-label → @ref SlotKind via the shared classifier.
-///        PKCS#15 does not encode a slot-kind concept; we infer it from
-///        the PIN label so the FNV-1a slot ID is stable across reconnects.
-[[nodiscard]] LibreSCRS::Pkcs11::Internal::SlotKind deriveSlotKind(const ::pkcs15::PinInfo& pin)
-{
-    auto label = pin.label;
-    std::transform(label.begin(), label.end(), label.begin(), [](unsigned char c) { return std::tolower(c); });
-    return LibreSCRS::Pkcs11::Internal::classifyFromLabel(label);
-}
-
-} // namespace
 
 Pkcs15Card::Pkcs15Card(std::shared_ptr<LibreSCRS::SmartCard::CardMap> cm) : cardMap(std::move(cm)) {}
 
@@ -151,12 +153,15 @@ void Pkcs15Card::installSmFilter()
     if (!conn || !sm)
         return;
 
-    auto* smPtr = sm.get();
+    // Capture sm by shared_ptr value so the lambda extends the SM's
+    // lifetime as long as it's installed. See sm member doc for the
+    // use-after-free rationale.
+    auto smShared = sm;
     auto* connPtr = conn.get();
-    conn->setTransmitFilter([smPtr, connPtr](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd)
+    conn->setTransmitFilter([sm = std::move(smShared), connPtr](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd)
                                 -> LibreSCRS::SmartCard::Internal::APDUResponse {
         auto cmdBytes = cmd.toBytes();
-        auto protectedApdu = smPtr->protect(cmdBytes);
+        auto protectedApdu = sm->protect(cmdBytes);
         if (protectedApdu.size() < 5)
             return {{}, 0x69, 0x82};
 
@@ -175,7 +180,7 @@ void Pkcs15Card::installSmFilter()
         respBytes.push_back(resp.sw1);
         respBytes.push_back(resp.sw2);
 
-        auto result = smPtr->unprotectWithSW(respBytes);
+        auto result = sm->unprotectWithSW(respBytes);
         if (!result)
             return {{}, 0x69, 0x82};
 
@@ -216,10 +221,35 @@ unsigned long Pkcs15Card::bind(const std::string& reader)
     }
 
     if (needsPace && cachedCan.empty()) {
-        // Defer applet-select until login() supplies CAN-in-PIN. No
-        // slots are published yet; PKCS#11 layer surfaces an empty
-        // token list until login completes the bind. The deferred path
-        // is exercised by the multi-PIN E2E real-card suite.
+        // PACE-required card without cached CAN: publish a single
+        // placeholder slot with CKF_LOGIN_REQUIRED so PKCS#11 consumers
+        // see the card before the user enters their CAN. The slot's
+        // first Pkcs15Slot::login parses CAN-in-PIN, calls resumeBind()
+        // to drive PACE + applet select + readProfile, then populates
+        // its own keys / certs from the resulting profile. The slot
+        // self-transforms (no slot-vector swap) so any CK_SLOT_ID
+        // already published to the consumer stays valid across login.
+        PKCS11TokenInfo placeholder;
+        placeholder.label = "PACE access required";
+        placeholder.manufacturerId = "";
+        placeholder.model = "PKCS#15";
+        placeholder.serialNumber = "0000000000000000";
+        placeholder.pinLabel = "CAN";
+        // No CKF_USER_PIN_INITIALIZED: the placeholder slot has no user
+        // PIN — only awaits a CAN. PKCS#11 v2.40 §3.2 reserves that flag
+        // for tokens with an initialised user PIN; consumers filtering on
+        // it must not see the placeholder as ready-to-sign.
+        placeholder.flags = kCkfTokenInitialized | kCkfLoginRequired;
+        placeholder.minPinLen = 4;
+        placeholder.maxPinLen = 32;
+
+        std::vector<std::uint8_t> placeholderPinId{};
+        unsigned long slotId =
+            static_cast<unsigned long>(computeSlotId(readerName, placeholderPinId, SlotKind::Generic));
+
+        slots.push_back(
+            std::make_shared<Pkcs15Slot>(weak_from_this(), std::string{"CAN"}, std::move(placeholder), slotId));
+        placeholderState = true;
         return Crv::Ok;
     }
 
@@ -267,6 +297,7 @@ unsigned long Pkcs15Card::bind(const std::string& reader)
     }
 
     try {
+        LibreSCRS::Internal::probeTrace("PROBE-READPROFILE call=pkcs11-card-init");
         profile = std::make_unique<::pkcs15::PKCS15Profile>(apdu->readProfile());
         if (profile->pins.empty() && profile->privateKeys.empty() && profile->certificates.empty()) {
             // Empty profile suggests the applet refuses directory reads
@@ -285,6 +316,103 @@ unsigned long Pkcs15Card::bind(const std::string& reader)
     }
 
     return completeBind();
+}
+
+unsigned long Pkcs15Card::resumePostCan()
+{
+    return resumeBind();
+}
+
+unsigned long Pkcs15Card::resumeBind()
+{
+    using namespace LibreSCRS::Pkcs11::Internal;
+
+    // Caller (Pkcs15Slot::login on a placeholder slot) holds cardMutex.
+    if (!conn)
+        return Crv::DeviceError;
+
+    // Pre-resume guards: bind() already ran probeForPace() and populated
+    // cardAccessData; do not re-probe under the (possibly already-active)
+    // SM tunnel. Only run PACE when no SM session exists yet, so a
+    // second login() on the same placeholder slot does not re-derive
+    // session keys nor double-install the transmit filter.
+    if (needsPace && !sm) {
+        if (cardAccessData.empty()) {
+            if (!probeForPace())
+                return Crv::DeviceError;
+        }
+        if (auto rc = establishPACE(); rc != Crv::Ok)
+            return rc;
+    }
+
+    // After this point an SM session may exist (just established here or
+    // carried over from a previous resumeBind invocation). Any failure
+    // return below must invalidate that session: otherwise a subsequent
+    // login() on the same placeholder slot would see (needsPace && !sm)
+    // == false, skip PACE entirely, and re-run selectApplet against an
+    // applet still expecting fresh PACE — wedging the slot in a recovery
+    // loop while leaving orphan session keys in heap memory.
+    auto onFailure = [this](unsigned long rc) -> unsigned long {
+        // Drop our sm ref. The filter on conn (if any) captures sm by
+        // shared_ptr so SM stays alive for any in-flight APDU. On the
+        // next placeholder login attempt, establishPACE will install a
+        // fresh filter (and SM) which REPLACES the prior filter
+        // atomically — old lambda destroyed → prior SM ref dropped.
+        // We do NOT clearTransmitFilter here: once SM is established it
+        // must be preserved for ALL subsequent traffic; breaking it
+        // mid-flight would leave the card-side SM context dangling and
+        // force a recovery path on any sibling operation.
+        sm.reset();
+        cardAccessData.clear();
+        return rc;
+    };
+
+    if (!apdu)
+        apdu = std::make_unique<::pkcs15::PKCS15Card>(*conn);
+
+    // CardMap fast-path: same logic as bind().
+    if (cardMap) {
+        const auto key = makeCardMapKey(readerName, conn->getATR());
+        if (auto entry = cardMap->get(key)) {
+            apdu->seedDiscoveredState(entry->pkcs15Path, entry->fileSelectP2);
+        }
+    }
+
+    if (!apdu->selectApplet()) {
+        if (!(apdu->probe() && apdu->selectApplet()))
+            return onFailure(Crv::FunctionFailed);
+    }
+
+    if (cardMap) {
+        const auto key = makeCardMapKey(readerName, conn->getATR());
+        LibreSCRS::SmartCard::CardMapEntry entry;
+        entry.pkcs15Path = apdu->pkcs15PathView();
+        entry.fileSelectP2 = apdu->fileSelectP2View();
+        cardMap->put(key, std::move(entry));
+    }
+
+    try {
+        LibreSCRS::Internal::probeTrace("PROBE-READPROFILE call=pkcs11-card-rebind");
+        profile = std::make_unique<::pkcs15::PKCS15Profile>(apdu->readProfile());
+        if (profile->pins.empty() && profile->privateKeys.empty() && profile->certificates.empty()) {
+            // Same fallback as bind(): treat empty profile as
+            // deferred-profile mode. Distinct from placeholderState.
+            profile.reset();
+            needsDeferredProfile = true;
+        }
+    } catch (...) {
+        // readProfile fallback to deferred-profile is correct (OLD-AET
+        // path), not a hard failure — keep the SM session live so the
+        // subsequent deferred-profile PIN verify rides the same channel.
+        profile.reset();
+        needsDeferredProfile = true;
+    }
+
+    // Sentinel reset: subsequent login()s on the same placeholder slot
+    // skip the CAN-parsing branch. The slot vector is NOT modified —
+    // the placeholder slot self-transforms inside Pkcs15Slot::login.
+    placeholderState = false;
+    return Crv::Ok;
 }
 
 unsigned long Pkcs15Card::establishPACE()
@@ -321,7 +449,7 @@ unsigned long Pkcs15Card::establishPACE()
         return Crv::PinIncorrect;
 
     auto smAlgo = emrtd::crypto::paceOIDToSMAlgorithm(entries.front().first);
-    sm = std::make_unique<emrtd::crypto::SecureMessaging>(*session, smAlgo);
+    sm = std::make_shared<emrtd::crypto::SecureMessaging>(*session, smAlgo);
     installSmFilter();
 
     return Crv::Ok;

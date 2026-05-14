@@ -88,13 +88,17 @@ TEST(PluginIntegrationTest, UnknownATRReturnsNull)
 }
 
 #ifdef HAS_OPENSC_PLUGIN
-TEST(PluginIntegrationTest, OpenSCIsLastInProbeOrder)
+TEST(PluginIntegrationTest, Pkcs15IsLastInProbeOrder)
 {
+    // After the 2026-05 priority swap, pkcs15-plugin (900) is the true
+    // last-resort generic PKCS#15 fallback. opensc-plugin (800) sits above it
+    // so unknown PKCS#15-shaped cards route through OpenSC's full driver chain
+    // (including srbeid) before falling through to generic PKCS#15 emulation.
     CardPluginService registry{pluginDir()};
 
     auto plugins = registry.plugins();
     ASSERT_FALSE(plugins.empty());
-    EXPECT_EQ(plugins.back()->pluginId(), "opensc");
+    EXPECT_EQ(plugins.back()->pluginId(), "pkcs15");
     EXPECT_EQ(plugins.back()->probePriority(), 900);
 }
 #endif

@@ -452,13 +452,21 @@ static CK_SLOT_ID findFirstUsableSlot()
             continue;
         CK_OBJECT_CLASS certClass = CKO_CERTIFICATE;
         CK_ATTRIBUTE tmpl = {CKA_CLASS, &certClass, sizeof(certClass)};
+        bool hasCert = false;
         if (C_FindObjectsInit(session, &tmpl, 1) == CKR_OK) {
+            CK_OBJECT_HANDLE obj = CK_INVALID_HANDLE;
+            CK_ULONG found = 0;
+            if (C_FindObjects(session, &obj, 1, &found) == CKR_OK && found > 0)
+                hasCert = true;
             C_FindObjectsFinal(session);
-            C_CloseSession(session);
+        }
+        C_CloseSession(session);
+        // Skip placeholder slots (PACE pre-login): they publish no
+        // certificates / no mechanisms until C_Login supplies CAN.
+        if (hasCert) {
             g_usableSlot = slot;
             break;
         }
-        C_CloseSession(session);
     }
 
     return g_usableSlot;

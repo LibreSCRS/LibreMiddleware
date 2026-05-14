@@ -223,6 +223,8 @@ add_library(LibreSCRS_Plugin ${LIBREMIDDLEWARE_LIB_TYPE}
 target_include_directories(LibreSCRS_Plugin PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+target_include_directories(LibreSCRS_Plugin PRIVATE
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/lib/plugin/src>)
 target_compile_features(LibreSCRS_Plugin PUBLIC cxx_std_23)
 target_compile_definitions(LibreSCRS_Plugin PRIVATE LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD)
 # LIBRESCRS_INTERNAL_BUILD: sibling-consistent with SmartCard + Signing.

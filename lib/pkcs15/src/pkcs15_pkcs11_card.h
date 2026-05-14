@@ -32,9 +32,19 @@ class SecureMessaging;
 namespace pkcs15 {
 class PKCS15Card;
 struct PKCS15Profile;
+struct PinInfo;
 } // namespace pkcs15
 
 namespace LibreSCRS::Pkcs15::Pkcs11 {
+
+/// @brief Classify a PKCS#15 PIN as a user-authentication PIN.
+///
+/// Returns @c false for unblock PINs (PUK / PUC), CAN / PACE
+/// access-numbers, and Security-Officer / admin PINs. The single source
+/// of user-PIN policy across the PKCS#15 PKCS#11 surface — consumed by
+/// both eager-bind (one slot per user PIN) and the placeholder
+/// self-transform path.
+[[nodiscard]] bool isUserPin(const ::pkcs15::PinInfo& pin);
 
 /// @brief Concrete @ref LibreSCRS::Pkcs11::Internal::PKCS11Card backed
 ///        by the existing @ref pkcs15::PKCS15Card APDU helper.
@@ -96,6 +106,15 @@ protected:
     /// @since 4.1
     [[nodiscard]] unsigned long completeBind() override;
 
+    /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11Card::resumePostCan
+    /// @par Implementation
+    /// Delegates to @ref resumeBind, which runs the post-discovery tail
+    /// of @ref bind (PACE establish + APDU helper construction + applet
+    /// select + profile read). The placeholder slot self-transforms in
+    /// @ref Pkcs15Slot::login after this hook returns @c Crv::Ok.
+    /// @since 4.1
+    [[nodiscard]] unsigned long resumePostCan() override;
+
 private:
     /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11Card::reconnectInline
     /// @since 4.1
@@ -123,12 +142,50 @@ private:
     ///        @ref Pkcs15Slot::login.
     bool needsDeferredProfile{false};
 
+    /// @brief When @c true the card requires PACE but no CAN has been
+    ///        supplied yet. @ref bind() publishes a single placeholder
+    ///        slot with @c CKF_LOGIN_REQUIRED so PKCS#11 consumers can
+    ///        observe the card pre-CAN; the first @ref Pkcs15Slot::login
+    ///        parses CAN-in-PIN, calls @ref resumeBind, then populates
+    ///        the slot's keys / certs in place. Distinct from
+    ///        @ref needsDeferredProfile (OLD-AET SafeSign path) — the
+    ///        two states never coalesce.
+    bool placeholderState{false};
+
+    /// @brief Resume bind after @ref Pkcs15Slot::login supplied a CAN.
+    ///
+    /// Runs the post-discovery tail of @ref bind (PACE establish, APDU
+    /// helper construction, applet select, profile read) on the parent
+    /// card. Does NOT touch @c slots — the caller (a self-transforming
+    /// placeholder slot) is responsible for populating its own state
+    /// from the freshly-populated @ref profile.
+    /// @return @ref Crv constant; @ref Crv::Ok on success.
+    /// @par Thread-safety
+    /// Caller must hold @c cardMutex (acquired by the slot before it
+    /// reaches into the parent's transport). The audit-recommended
+    /// pre-resume guards (@c !sm before PACE, @c !cardAccessData empty
+    /// before re-probe) keep this method safe to call exactly once per
+    /// placeholder-mode card; subsequent logins on the same slot bypass
+    /// it via the @c placeholderState sentinel.
+    /// @since 4.1
+    [[nodiscard]] unsigned long resumeBind();
+
     /// @brief Raw EF.CardAccess bytes captured at probe time. Populated
     ///        only when PACE is required; consumed by @ref establishPACE.
     std::vector<std::uint8_t> cardAccessData;
 
     /// @brief Active SM channel after a successful PACE handshake.
-    std::unique_ptr<emrtd::crypto::SecureMessaging> sm;
+    ///
+    /// `shared_ptr` so @ref installSmFilter can capture a ref-counted
+    /// handle into the lambda installed on @c conn. The SM stays alive
+    /// while either this member OR the connection's transmit-filter
+    /// holds it; this prevents a use-after-free SEGV when @c sm is
+    /// reset (e.g., the onFailure cleanup in @ref resumeBind) while a
+    /// stale filter is still active on @c conn. When a new filter is
+    /// installed (or @c clearTransmitFilter is called), the old lambda
+    /// is destroyed, the captured shared_ptr drops its ref, and the
+    /// SM is destroyed iff no other refs remain.
+    std::shared_ptr<emrtd::crypto::SecureMessaging> sm;
 
     /// @brief Optional shared cache of per-card discovered state.
     ///        Consulted by @ref bind() to skip EF.DIR fallback when

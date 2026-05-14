@@ -42,7 +42,7 @@ TEST(PKCS15PluginTest, Metadata)
 
     EXPECT_EQ(p->pluginId(), "pkcs15");
     EXPECT_EQ(p->displayName(), "PKCS#15 (generic PKI)");
-    EXPECT_EQ(p->probePriority(), 850);
+    EXPECT_EQ(p->probePriority(), 900);
 }
 
 TEST(PKCS15PluginTest, CapabilitiesIncludePKIAndPinManagement)
@@ -103,19 +103,22 @@ TEST(PKCS15PluginTest, SetCredentialsAcceptsCanAndIgnoresUnknownKeys)
     EXPECT_NO_THROW(p->clearCredentials(*result));
 }
 
-TEST(PKCS15PluginTest, PriorityBetweenEMRTDAndOpenSC)
+TEST(PKCS15PluginTest, IsLastResortFallback)
 {
+    // pkcs15-plugin is the true last-resort generic PKCS#15 reader. After the
+    // 2026-05 priority swap, opensc-plugin (priority 800) is probed first for
+    // unknown PKCS#15-shaped cards, so it can route them through OpenSC's full
+    // driver chain (e.g., srbeid). pkcs15 (priority 900) only fires when
+    // OpenSC also declined.
     CardPluginService registry{pluginDir()};
     auto p = findPkcs15(registry);
     ASSERT_NE(p, nullptr);
-    EXPECT_EQ(p->probePriority(), 850);
+    EXPECT_EQ(p->probePriority(), 900);
 
     for (const auto& other : registry.plugins()) {
-        if (other->pluginId() == "emrtd") {
-            EXPECT_LT(other->probePriority(), 850);
-        }
-        if (other->pluginId() == "opensc") {
-            EXPECT_GT(other->probePriority(), 850);
-        }
+        if (other->pluginId() == "pkcs15")
+            continue;
+        EXPECT_LT(other->probePriority(), 900)
+            << other->pluginId() << " has priority >= 900; pkcs15 must remain last-resort";
     }
 }

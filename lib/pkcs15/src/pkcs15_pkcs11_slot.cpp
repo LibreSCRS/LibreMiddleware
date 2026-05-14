@@ -13,6 +13,8 @@
 #include "pkcs15_parser.h"
 #include "pkcs15_types.h"
 
+#include "probe_trace.h"
+
 #include <internal/Crv.h>
 #include <internal/DerWrap.h>
 #include <internal/MechanismConstants.h>
@@ -156,6 +158,12 @@ void Pkcs15Slot::onCardReset() noexcept
 {
     auto* parent = static_cast<Pkcs15Card*>(&parentBase);
     return parent->apdu.get();
+}
+
+const ::pkcs15::PKCS15Profile* Pkcs15Slot::parentProfile(LibreSCRS::Pkcs11::Internal::PKCS11Card& parentBase) noexcept
+{
+    auto* parent = static_cast<Pkcs15Card*>(&parentBase);
+    return parent->profile.get();
 }
 
 std::vector<unsigned long> Pkcs15Slot::mechanisms() const
@@ -348,6 +356,148 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
         std::string pinStr(pin.begin(), pin.end());
         ::LibreSCRS::SmartCard::Internal::PinStringScrubber pinScrub{pinStr};
 
+        // PACE placeholder-slot self-transform path. Distinct from the
+        // OLD-AET deferred-profile path below: that path PIN-verifies
+        // against an applet that refuses pre-login directory reads;
+        // this path drives the parent's resumeBind() to perform PACE +
+        // applet select + readProfile after the CAN is supplied. After
+        // resumeBind succeeds the slot adopts the parent's freshly-read
+        // profile in place, keeping its CK_SLOT_ID stable so any
+        // session opened against the placeholder slot remains valid.
+        if (parentPlaceholderState(*parent)) {
+            // CAN-in-PIN. NAM CL (pure-PACE, no second PIN) accepts a
+            // bare CAN; cards that combine PACE with a card-side PIN
+            // accept "CAN:PIN". Either form is parsed here.
+            std::string can;
+            std::string realPin;
+            auto colon = pinStr.find(':');
+            if (colon == std::string::npos) {
+                can = pinStr;
+            } else {
+                can = pinStr.substr(0, colon);
+                realPin = pinStr.substr(colon + 1);
+            }
+            OPENSSL_cleanse(pinStr.data(), pinStr.size());
+
+            if (can.empty()) {
+                OPENSSL_cleanse(realPin.data(), realPin.size());
+                return Crv::PinInvalid;
+            }
+
+            parentCacheCan(*parent, LibreSCRS::Secure::String{std::move(can)});
+
+            auto rc = parentResumeBind(*parent);
+            if (rc != Crv::Ok) {
+                OPENSSL_cleanse(realPin.data(), realPin.size());
+                parentClearCan(*parent);
+                return rc;
+            }
+
+            // resumeBind has populated parent's apdu and (best-effort)
+            // profile. Borrow the apdu and transform self from profile.
+            apdu = parentApduHelper(*parent);
+            if (!apdu) {
+                OPENSSL_cleanse(realPin.data(), realPin.size());
+                // Cleanse the cached CAN: leaving it would let a future
+                // login on this placeholder slot skip PACE while the
+                // parent has no APDU helper, deadlocking the slot in a
+                // permanent DeviceError loop without retry recovery.
+                parentClearCan(*parent);
+                return Crv::DeviceError;
+            }
+
+            const auto* profile = parentProfile(*parent);
+            ::pkcs15::PinInfo* selectedPin = nullptr;
+            ::pkcs15::PKCS15Profile profileCopy;
+            if (profile) {
+                profileCopy = *profile;
+                // Single source of user-PIN truth: defer to isUserPin,
+                // matching the eager-bind code path (one slot per user
+                // PIN) so placeholder self-transform never selects a SO
+                // PIN, PUK, or CAN entry as the slot's owning PIN.
+                for (auto& p : profileCopy.pins) {
+                    if (isUserPin(p)) {
+                        selectedPin = &p;
+                        break;
+                    }
+                }
+                if (!selectedPin && !profileCopy.pins.empty())
+                    selectedPin = &profileCopy.pins.front();
+
+                if (selectedPin) {
+                    pinId = selectedPin->id;
+                    pinLabel = selectedPin->label;
+                    pinInfo = *selectedPin;
+
+                    // Mirror Pkcs15Card::completeBind cert/key pairing.
+                    // Keys attributed to this PIN (matching authId), or
+                    // to any PIN when the AODF lacks per-key authId
+                    // (single-PIN cards in scope here).
+                    for (const auto& key : profileCopy.privateKeys) {
+                        if (key.authId == selectedPin->id || key.authId.empty())
+                            keys.push_back(key);
+                    }
+                    // Strict id-match between cert and retained key. We
+                    // do NOT keep an orphan cert as a fallback: that
+                    // surfaces CA-chain entries (or the wrong cert when
+                    // multiple unattributed certs exist) as the slot's
+                    // identity, diverging from completeBind's semantics.
+                    for (const auto& cert : profileCopy.certificates) {
+                        for (const auto& key : keys) {
+                            if (cert.id == key.id) {
+                                certs.push_back(cert);
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!profileCopy.tokenInfo.label.empty())
+                        cachedTokenInfo.label = profileCopy.tokenInfo.label;
+                    else
+                        cachedTokenInfo.label = parent->reader();
+                    if (!profileCopy.tokenInfo.manufacturer.empty())
+                        cachedTokenInfo.manufacturerId = profileCopy.tokenInfo.manufacturer;
+                    if (!profileCopy.tokenInfo.serialNumber.empty())
+                        cachedTokenInfo.serialNumber = profileCopy.tokenInfo.serialNumber;
+                    cachedTokenInfo.pinLabel = selectedPin->label;
+                }
+            }
+
+            // The slot leaves placeholder mode regardless of profile
+            // shape — but if the post-resume profile yielded zero keys
+            // AND zero certs the slot has no signable objects, so the
+            // happy-path login would surface as CKR_OK on C_Login
+            // followed by CKR_KEY_HANDLE_INVALID on C_Sign. Fail the
+            // login explicitly so the consumer gets a single accurate
+            // error rather than a misleading two-step.
+            deferredProfile = false;
+
+            if (keys.empty() && certs.empty()) {
+                OPENSSL_cleanse(realPin.data(), realPin.size());
+                parentClearCan(*parent);
+                return Crv::DeviceError;
+            }
+
+            if (!realPin.empty() && selectedPin) {
+                // Optional PIN verify for PACE+PIN combo cards. NAM CL
+                // (pure-PACE) reaches this branch with realPin empty
+                // and skips verify entirely — PACE alone authenticates.
+                auto result = apdu->verifyPIN(*selectedPin, realPin);
+                if (!result.success) {
+                    OPENSSL_cleanse(realPin.data(), realPin.size());
+                    if (result.blocked)
+                        return Crv::PinLocked;
+                    return Crv::PinIncorrect;
+                }
+                cachedPin = LibreSCRS::Secure::String{std::move(realPin)};
+            } else {
+                OPENSSL_cleanse(realPin.data(), realPin.size());
+            }
+
+            loggedIn = true;
+            return Crv::Ok;
+        }
+
         if (parentNeedsPace(*parent)) {
             // CAN-in-PIN format. If the parent already has a cachedCan
             // (login earlier in this session, or pre-seeded) we accept a
@@ -442,21 +592,17 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
         // real PKCS#15 profile now and finalise this slot's state.
         if (deferredProfile) {
             try {
+                LibreSCRS::Internal::probeTrace("PROBE-READPROFILE call=slot-deferred");
                 auto profile = apdu->readProfile();
                 ::pkcs15::PinInfo* selectedPin = nullptr;
                 for (auto& p : profile.pins) {
-                    // Mirrors isUserPin in pkcs15_pkcs11_card.cpp: drop
-                    // unblock PINs (PUK/PUC) and label-named CAN/PACE.
-                    if (p.unblockingPin)
-                        continue;
-                    auto labelLower = p.label;
-                    std::transform(labelLower.begin(), labelLower.end(), labelLower.begin(),
-                                   [](unsigned char c) { return std::tolower(c); });
-                    if (labelLower.find("puk") != std::string::npos || labelLower.find("can") != std::string::npos ||
-                        labelLower.find("pace") != std::string::npos)
-                        continue;
-                    selectedPin = &p;
-                    break;
+                    // Single source of user-PIN truth: defer to isUserPin
+                    // so SO PIN / admin entries on AET SafeSign are not
+                    // selected as the slot's owning PIN.
+                    if (isUserPin(p)) {
+                        selectedPin = &p;
+                        break;
+                    }
                 }
                 if (!selectedPin && !profile.pins.empty())
                     selectedPin = &profile.pins.front();
@@ -473,17 +619,18 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
                         if (key.authId == selectedPin->id || key.authId.empty())
                             keys.push_back(key);
                     }
+                    // Strict id-match between cert and retained key. We
+                    // do NOT keep an orphan cert as a fallback: that
+                    // surfaces CA-chain entries (or the wrong cert when
+                    // multiple unattributed certs exist) as the slot's
+                    // identity, diverging from completeBind's semantics.
                     for (const auto& cert : profile.certificates) {
-                        bool kept = false;
                         for (const auto& key : keys) {
                             if (cert.id == key.id) {
                                 certs.push_back(cert);
-                                kept = true;
                                 break;
                             }
                         }
-                        if (!kept && certs.empty())
-                            certs.push_back(cert);
                     }
 
                     // Update cachedTokenInfo with real profile values.
