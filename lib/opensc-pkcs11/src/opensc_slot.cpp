@@ -66,13 +66,13 @@ using LibreSCRS::Pkcs11::Internal::kCkoPrivateKey;
     }
     switch (mechanism) {
     case kCkmRsaPkcs:
-        return SC_ALGORITHM_RSA_PAD_PKCS1 | SC_ALGORITHM_RSA_HASH_NONE;
+        return SC_ALGORITHM_RSA_PAD_PKCS1_TYPE_01 | SC_ALGORITHM_RSA_HASH_NONE;
     case kCkmRsaPkcsSha256:
-        return SC_ALGORITHM_RSA_PAD_PKCS1 | SC_ALGORITHM_RSA_HASH_SHA256;
+        return SC_ALGORITHM_RSA_PAD_PKCS1_TYPE_01 | SC_ALGORITHM_RSA_HASH_SHA256;
     case kCkmRsaPkcsSha384:
-        return SC_ALGORITHM_RSA_PAD_PKCS1 | SC_ALGORITHM_RSA_HASH_SHA384;
+        return SC_ALGORITHM_RSA_PAD_PKCS1_TYPE_01 | SC_ALGORITHM_RSA_HASH_SHA384;
     case kCkmRsaPkcsSha512:
-        return SC_ALGORITHM_RSA_PAD_PKCS1 | SC_ALGORITHM_RSA_HASH_SHA512;
+        return SC_ALGORITHM_RSA_PAD_PKCS1_TYPE_01 | SC_ALGORITHM_RSA_HASH_SHA512;
     case kCkmRsaPssSha256:
         return SC_ALGORITHM_RSA_PAD_PSS | SC_ALGORITHM_RSA_HASH_SHA256;
     case kCkmRsaPssSha384:
@@ -381,8 +381,32 @@ std::vector<std::uint8_t> OpenScSlot::signData(std::span<const std::uint8_t> dat
     }
 
     std::vector<std::uint8_t> out(outSize);
+
+    // Hold the card transaction across re-VERIFY + sign so no intervening APDU
+    // can clear card-side authentication state. NIST SP 800-73 §3.2.4 requires
+    // VERIFY immediately preceding General Authenticate for the PIV Digital
+    // Signature key (slot 0x9C "PIN ALWAYS"); without the surrounding lock,
+    // OpenSC's piv_card_reader_lock_obtained refreshes the Discovery Object
+    // between login and PSO and the card answers 6982. Re-VERIFY with the
+    // correct cached PIN does not decrement the retry counter; it is a no-op
+    // for cards that do not enforce PIN-ALWAYS.
+    int lockRc = sc_lock(p15->card);
+    if (lockRc != SC_SUCCESS)
+        return {};
+
+    if (loggedIn && pinObject && !cachedPin.empty()) {
+        auto pinView = cachedPin.view();
+        int vrc =
+            sc_pkcs15_verify_pin(p15, pinObject, reinterpret_cast<const std::uint8_t*>(pinView.data()), pinView.size());
+        if (vrc != SC_SUCCESS) {
+            sc_unlock(p15->card);
+            return {};
+        }
+    }
+
     int rc = sc_pkcs15_compute_signature(p15, targetKey, *flags, data.data(), data.size(), out.data(), out.size(),
                                          /*pMechanism=*/nullptr);
+    sc_unlock(p15->card);
     if (rc < 0)
         return {};
     out.resize(static_cast<std::size_t>(rc));

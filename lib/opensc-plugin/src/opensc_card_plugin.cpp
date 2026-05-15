@@ -430,8 +430,9 @@ public:
         size_t sigLen = keyInfo->modulus_length / 8; // RSA signature length in bytes
         std::vector<uint8_t> sig(sigLen);
 
-        int rc = sc_pkcs15_compute_signature(session.p15card, targetKey, SC_ALGORITHM_RSA_PAD_PKCS1, data.data(),
-                                             data.size(), sig.data(), sig.size(), nullptr);
+        int rc = sc_pkcs15_compute_signature(session.p15card, targetKey,
+                                             SC_ALGORITHM_RSA_PAD_PKCS1_TYPE_01 | SC_ALGORITHM_RSA_HASH_NONE,
+                                             data.data(), data.size(), sig.data(), sig.size(), nullptr);
 
         if (rc < 0)
             return pluginError();
