@@ -1,0 +1,42 @@
+diff --git a/src/libopensc/card-piv.c b/src/libopensc/card-piv.c
+--- a/src/libopensc/card-piv.c
++++ b/src/libopensc/card-piv.c
+@@ -2923,6 +2923,38 @@ static int piv_find_aid(sc_card_t * card)
+ 					}
+ 				}
+ 			}
++
++			/* ISO 7816-4 tag 0x79 (Coexistent Tag Allocation Authority template)
++			 * fallback. Some real-world cards implement NIST PIV's data model
++			 * under a vendor-specific PIX in tag 0x4F, and declare NIST PIV
++			 * namespace compatibility by placing the NIST PIV RID in tag 0x79
++			 * inside the Application Property Template (tag 0x61).
++			 *
++			 * Honor this fallback only when the card was already identified by
++			 * ATR table (card->type set to a specific PIV_II_* variant other
++			 * than BASE/GENERIC). This avoids accepting arbitrary unknown cards
++			 * that may happen to put the NIST PIV RID in tag 0x79. */
++			if (card->type != SC_CARD_TYPE_PIV_II_BASE
++					&& card->type != SC_CARD_TYPE_PIV_II_GENERIC) {
++				const u8 *coexistent;
++				size_t coexistent_len;
++				static const u8 nist_piv_rid[] = {0xA0, 0x00, 0x00, 0x03, 0x08};
++
++				coexistent = sc_asn1_find_tag(card->ctx, tag, taglen, 0x79, &coexistent_len);
++				if (coexistent != NULL && coexistent_len >= sizeof(nist_piv_rid)
++						&& memcmp(coexistent, nist_piv_rid, sizeof(nist_piv_rid)) == 0) {
++					sc_log(card->ctx,
++						   "found NIST PIV RID via coexistent tag 0x79; "
++						   "accepting vendor-PIX card->type=%d", card->type);
++					free(priv->aid_der.value);
++					if ((priv->aid_der.value = malloc(resplen)) == NULL) {
++						LOG_FUNC_RETURN(card->ctx, SC_ERROR_OUT_OF_MEMORY);
++					}
++					memcpy(priv->aid_der.value, rbuf, resplen);
++					priv->aid_der.len = resplen;
++					LOG_FUNC_RETURN(card->ctx, 0); /* index of NIST PIV in piv_aids[] */
++				}
++			}
+ 		}
+ 	}
+
