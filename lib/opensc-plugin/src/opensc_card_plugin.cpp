@@ -225,6 +225,28 @@ public:
                 emitGroup(std::move(certGroup));
             }
 
+            // PINs group — mirrors pkcs15-plugin layout: label → "tries left: N".
+            // tries_left == -1 (e.g. PIV iso7816 after VERIFY SUCCESS) renders as "unknown".
+            sc_pkcs15_object_t* pinObjsAll[8];
+            int pinCountAll = sc_pkcs15_get_objects(session.p15card, SC_PKCS15_TYPE_AUTH_PIN, pinObjsAll, 8);
+            if (pinCountAll > 0) {
+                LibreSCRS::Plugin::CardFieldGroup pinGroup;
+                pinGroup.groupKey = "pins";
+                pinGroup.groupLabel = "PINs";
+
+                for (int i = 0; i < pinCountAll; ++i) {
+                    auto* authInfo = static_cast<sc_pkcs15_auth_info_t*>(pinObjsAll[i]->data);
+                    std::string label = pinObjsAll[i]->label[0] ? pinObjsAll[i]->label : ("PIN " + std::to_string(i));
+                    std::string triesStr =
+                        (authInfo && authInfo->tries_left >= 0) ? std::to_string(authInfo->tries_left) : "unknown";
+                    std::string value = "tries left: " + triesStr;
+                    std::string key = "pin_" + label;
+                    pinGroup.fields.push_back(
+                        {key, label, LibreSCRS::Plugin::FieldType::Text, {value.begin(), value.end()}});
+                }
+                emitGroup(std::move(pinGroup));
+            }
+
             return ReadResult::ok(std::move(data));
         } catch (const std::exception& ex) {
             return ReadResult::communicationError(LibreSCRS::Auth::ErrorKeys::genericComm(),
@@ -312,6 +334,57 @@ public:
             result.outcome = LibreSCRS::Plugin::PINResultOutcome::InvalidPin;
         else
             result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
+        return result;
+    }
+
+    std::vector<LibreSCRS::Plugin::PinStatusEntry>
+    getPINList(LibreSCRS::SmartCard::CardSession& cardSession) const override
+    {
+        std::vector<LibreSCRS::Plugin::PinStatusEntry> result;
+
+        auto& conn = LibreSCRS::SmartCard::detail::unwrap(cardSession);
+        std::lock_guard lock(mtx);
+        auto it = sessions.find(&conn);
+        if (it == sessions.end() || !it->second.p15card)
+            return result;
+        auto& session = it->second;
+
+        sc_pkcs15_object_t* pinObjs[8];
+        int pinCount = sc_pkcs15_get_objects(session.p15card, SC_PKCS15_TYPE_AUTH_PIN, pinObjs, 8);
+        if (pinCount <= 0)
+            return result;
+
+        for (int i = 0; i < pinCount; ++i) {
+            auto* info = static_cast<const sc_pkcs15_auth_info_t*>(pinObjs[i]->data);
+            if (!info)
+                continue;
+
+            LibreSCRS::Plugin::PinStatusEntry entry;
+            entry.label = pinObjs[i]->label[0] ? pinObjs[i]->label : "PIN";
+            entry.reference = static_cast<std::uint8_t>(info->attrs.pin.reference & 0xff);
+
+            // tries_left semantics: -1 = unknown (e.g. PIV iso7816 after VERIFY
+            // SUCCESS — card does not surface remaining count); >= 0 = real count,
+            // 0 means blocked.
+            if (info->tries_left >= 0) {
+                entry.retriesLeft = info->tries_left;
+                entry.blocked = (info->tries_left == 0);
+            }
+
+            entry.initialized = (info->attrs.pin.flags & SC_PKCS15_PIN_FLAG_INITIALIZED) != 0;
+
+            if (info->attrs.pin.min_length > 0)
+                entry.minLength = info->attrs.pin.min_length;
+            if (info->attrs.pin.max_length > 0)
+                entry.maxLength = info->attrs.pin.max_length;
+
+            const bool isPuk = (info->attrs.pin.flags & SC_PKCS15_PIN_FLAG_UNBLOCKING_PIN) != 0;
+            const bool isSoPin = (info->attrs.pin.flags & SC_PKCS15_PIN_FLAG_SO_PIN) != 0;
+            const bool changeDisabled = (info->attrs.pin.flags & SC_PKCS15_PIN_FLAG_CHANGE_DISABLED) != 0;
+            entry.canChange = !isPuk && !isSoPin && !changeDisabled;
+
+            result.push_back(std::move(entry));
+        }
         return result;
     }
 
