@@ -335,9 +335,16 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
         if (parentPlaceholderState(*parent)) {
             // CAN-in-PIN. NAM CL (pure-PACE, no second PIN) accepts a
             // bare CAN; cards that combine PACE with a card-side PIN
-            // accept "CAN:PIN". Either form is parsed here.
+            // accept "CAN:PIN". Either form is parsed here. The local
+            // `can` and `realPin` std::strings carry secret bytes across
+            // non-noexcept calls (parentCacheCan, parentResumeBind,
+            // parentP15.acquireChannel, apdu.verifyPIN); wrap each in a
+            // PinStringScrubber so an exception still zeroises the
+            // intermediate before the std::string allocator releases it.
             std::string can;
+            ::LibreSCRS::SmartCard::Internal::PinStringScrubber canScrub{can};
             std::string realPin;
+            ::LibreSCRS::SmartCard::Internal::PinStringScrubber realPinScrub{realPin};
             auto colon = pinStr.find(':');
             if (colon == std::string::npos) {
                 can = pinStr;
@@ -475,8 +482,16 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
             auto colon = pinStr.find(':');
             if (colon == std::string::npos)
                 return Crv::PinInvalid;
-            std::string can = pinStr.substr(0, colon);
-            std::string realPin = pinStr.substr(colon + 1);
+            // Same rationale as Branch 1: the local `can` and `realPin`
+            // std::strings are alive across non-noexcept calls
+            // (parentCacheCan, parentEstablishPACE). The scrubbers fire
+            // on every exit path including exception unwind.
+            std::string can;
+            ::LibreSCRS::SmartCard::Internal::PinStringScrubber canScrub{can};
+            std::string realPin;
+            ::LibreSCRS::SmartCard::Internal::PinStringScrubber realPinScrub{realPin};
+            can = pinStr.substr(0, colon);
+            realPin = pinStr.substr(colon + 1);
             OPENSSL_cleanse(pinStr.data(), pinStr.size());
 
             // Cache CAN on the parent (under cardMutex, already held).

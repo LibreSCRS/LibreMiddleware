@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+#include <openssl/crypto.h>
+
 namespace emrtd::crypto {
 
 struct BACKeys
@@ -20,11 +22,44 @@ struct BACKeys
     std::vector<uint8_t> macKey; // 16 bytes (3DES two-key)
 };
 
+/// @brief Internal session-keys carrier consumed by @ref SecureMessaging.
+///
+/// Mirrors the public @ref LibreSCRS::SecureChannel::SessionKeys cleansing
+/// contract: the destructor zeroes every key field via OPENSSL_cleanse before
+/// the underlying std::vector allocator releases the storage. This closes the
+/// uncleansed-leak window that opens when an enclosing construction (typically
+/// @c std::make_unique<SecureMessaging> in @c SmChannelBody) throws after the
+/// SessionKeys local has been built but before ownership transfers — without
+/// this destructor, the local @c std::vector dtors would release the secret
+/// bytes through the default allocator without cleansing.
+///
+/// Move-from leaves the source vectors empty (data() either null or pointing
+/// to a 0-byte block), so the post-move cleanse is a no-op; live key material
+/// follows ownership into the destination which carries the same contract.
 struct SessionKeys
 {
     std::vector<uint8_t> encKey;
     std::vector<uint8_t> macKey;
     std::vector<uint8_t> ssc; // 8 bytes for BAC/3DES, 16+ bytes for PACE/AES
+
+    SessionKeys() = default;
+    SessionKeys(const SessionKeys&) = default;
+    SessionKeys(SessionKeys&&) noexcept = default;
+    SessionKeys& operator=(const SessionKeys&) = default;
+    SessionKeys& operator=(SessionKeys&&) noexcept = default;
+
+    ~SessionKeys()
+    {
+        if (!encKey.empty()) {
+            OPENSSL_cleanse(encKey.data(), encKey.size());
+        }
+        if (!macKey.empty()) {
+            OPENSSL_cleanse(macKey.data(), macKey.size());
+        }
+        if (!ssc.empty()) {
+            OPENSSL_cleanse(ssc.data(), ssc.size());
+        }
+    }
 };
 
 enum class SMAlgorithm { DES3, AES };

@@ -7,6 +7,7 @@
 #include <LibreSCRS/Plugin/CardPlugin.h>
 #include <LibreSCRS/Plugin/PluginExport.h>
 #include <LibreSCRS/Plugin/SecurityCheck.h>
+#include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SecureChannel/BacParams.h>
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
 #include <LibreSCRS/SecureChannel/ISecureChannel.h>
@@ -27,6 +28,7 @@
 #include <pace.h>
 #include <passive_auth.h>
 #include <smartcard/pcsc_connection.h>
+#include <smartcard/secure_buffer.h>
 
 #include <algorithm>
 #include <compare>
@@ -74,25 +76,68 @@ std::string formatMRZDate(const std::string& yymmdd, bool isExpiry = false)
     return dd + "." + mm + "." + std::to_string(fullYear);
 }
 
+// Plugin-local cleansing MRZ aggregate. F2: SessionContext must not retain
+// raw secret bytes in plain std::string fields; wrap the three MRZ inputs
+// in Secure::String so erase/overwrite paths zeroise the storage. The
+// upstream emrtd::MRZData (lib/emrtd/src/emrtd_types.h) keeps its
+// std::string fields for compatibility with the pre-4.0 BAC/PACE crypto
+// callers — this struct is the only plugin-side carrier.
+struct SecureMRZData
+{
+    LibreSCRS::Secure::String documentNumber;
+    LibreSCRS::Secure::String dateOfBirth;  // YYMMDD
+    LibreSCRS::Secure::String dateOfExpiry; // YYMMDD
+};
+
 // Compute the PACE MRZ-derived password (mrzInfo = paddedDocNo + cd + DOB +
 // cd + DOE + cd) per BSI TR-03110. Mirrors the formula in
 // emrtd::crypto::deriveBACKeys; both protocols hash the same construction
 // but BAC derives keys from it directly while PACE feeds it as the
 // password to its KDF.
-std::string buildMrzInfo(const std::string& docNumber, const std::string& dob, const std::string& doe)
+//
+// Returns a Secure::String built via the adopt-and-cleanse rvalue ctor; the
+// intermediate scratch std::string is wrapped in a PinStringScrubber so its
+// SSO / heap storage is zeroed on every exit path, including exceptions.
+LibreSCRS::Secure::String buildMrzInfo(std::string_view docNumber, std::string_view dob, std::string_view doe)
 {
-    std::string paddedDocNo = docNumber;
+    // Build the padded document-number into its own scratch so each
+    // computeCheckDigit invocation receives a stable const-ref input. All
+    // three scratch buffers are wrapped in PinStringScrubber so an
+    // exception from computeCheckDigit, the std::to_string allocations, or
+    // the final Secure::String construction still cleanses the secret
+    // bytes before the std::string allocators release them.
+    std::string paddedDocNo;
+    ::LibreSCRS::SmartCard::Internal::PinStringScrubber padScrub{paddedDocNo};
+    paddedDocNo.assign(docNumber);
     while (paddedDocNo.size() < 9)
         paddedDocNo += '<';
-    return paddedDocNo + std::to_string(emrtd::crypto::detail::computeCheckDigit(paddedDocNo)) + dob +
-           std::to_string(emrtd::crypto::detail::computeCheckDigit(dob)) + doe +
-           std::to_string(emrtd::crypto::detail::computeCheckDigit(doe));
+
+    std::string dobStr;
+    ::LibreSCRS::SmartCard::Internal::PinStringScrubber dobScrub{dobStr};
+    dobStr.assign(dob);
+
+    std::string doeStr;
+    ::LibreSCRS::SmartCard::Internal::PinStringScrubber doeScrub{doeStr};
+    doeStr.assign(doe);
+
+    std::string scratch;
+    ::LibreSCRS::SmartCard::Internal::PinStringScrubber scrub{scratch};
+    scratch.reserve(paddedDocNo.size() + dobStr.size() + doeStr.size() + 3);
+    scratch.append(paddedDocNo);
+    scratch += std::to_string(emrtd::crypto::detail::computeCheckDigit(paddedDocNo));
+    scratch.append(dobStr);
+    scratch += std::to_string(emrtd::crypto::detail::computeCheckDigit(dobStr));
+    scratch.append(doeStr);
+    scratch += std::to_string(emrtd::crypto::detail::computeCheckDigit(doeStr));
+    return LibreSCRS::Secure::String{std::move(scratch)};
 }
 
 struct SessionContext
 {
-    std::optional<std::variant<emrtd::MRZData, std::string>> credentials;
-    std::string pendingDocNum, pendingDob, pendingExpiry;
+    std::optional<std::variant<SecureMRZData, LibreSCRS::Secure::String>> credentials;
+    LibreSCRS::Secure::String pendingDocNum;
+    LibreSCRS::Secure::String pendingDob;
+    LibreSCRS::Secure::String pendingExpiry;
 };
 
 /// @brief Per-session state map key.
@@ -299,26 +344,27 @@ private:
             LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can}};
         bool isBacAttempt = false;
         bool isCan = false;
-        if (auto* can = std::get_if<std::string>(&creds)) {
-            cardSession.setPaceSecret(LibreSCRS::Auth::PaceSecretKind::Can, LibreSCRS::Secure::String{*can});
+        if (auto* can = std::get_if<LibreSCRS::Secure::String>(&creds)) {
+            cardSession.setPaceSecret(LibreSCRS::Auth::PaceSecretKind::Can, *can);
             protocol = LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can};
             isCan = true;
-        } else if (auto* mrz = std::get_if<emrtd::MRZData>(&creds)) {
-            // Push BAC inputs (the fallback path).
+        } else if (auto* mrz = std::get_if<SecureMRZData>(&creds)) {
+            // Push BAC inputs (the fallback path). The Secure::String copy
+            // ctor cleanses each per-copy block, so passing copies of the
+            // session-held secret fields into the BAC slot retains
+            // cleansing semantics throughout the lifetime of bacIn.
             LibreSCRS::SecureChannel::BacInput bacIn;
-            // BacInput uses Secure::String (4.1+) — wrap from the
-            // session-held MRZ scratch strings so the BAC slot retains
-            // cleansing storage. The source `mrz->*` strings live in an
-            // internal session struct (see `session.credentials`) and
-            // are released when the session is torn down.
-            bacIn.documentNumber = LibreSCRS::Secure::String{mrz->documentNumber};
-            bacIn.dateOfBirth = LibreSCRS::Secure::String{mrz->dateOfBirth};
-            bacIn.dateOfExpiry = LibreSCRS::Secure::String{mrz->dateOfExpiry};
+            bacIn.documentNumber = mrz->documentNumber;
+            bacIn.dateOfBirth = mrz->dateOfBirth;
+            bacIn.dateOfExpiry = mrz->dateOfExpiry;
             cardSession.setBacInput(std::move(bacIn));
             // Push PACE_MRZ password (mrzInfo encoding) — used if EF.CardAccess
-            // is present and PACE is supported.
-            auto mrzInfo = buildMrzInfo(mrz->documentNumber, mrz->dateOfBirth, mrz->dateOfExpiry);
-            cardSession.setPaceSecret(LibreSCRS::Auth::PaceSecretKind::Mrz, LibreSCRS::Secure::String{mrzInfo});
+            // is present and PACE is supported. buildMrzInfo returns a
+            // Secure::String built via the adopt-and-cleanse rvalue ctor; its
+            // scratch buffer is scrubbed on every exit path.
+            cardSession.setPaceSecret(
+                LibreSCRS::Auth::PaceSecretKind::Mrz,
+                buildMrzInfo(mrz->documentNumber.view(), mrz->dateOfBirth.view(), mrz->dateOfExpiry.view()));
             protocol = LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Mrz};
         } else {
             // Defensive: variant should always hold one of the two known
@@ -836,24 +882,23 @@ public:
         const auto mapKey = makeSessionKey(cardSession);
         std::lock_guard lock(mtx);
         auto& session = sessions[mapKey];
-        // Materialise the secret string_view into a local std::string; the
-        // EMRTD crypto paths below consume std::string for doc-number / DOB /
-        // expiry / CAN. These buffers live on SessionContext and are cleared
-        // via clearCredentials() on card removal.
-        std::string valueStr{value.view()};
+        // SessionContext now holds Secure::String for every secret field;
+        // the inbound value copy-constructs into cleansing storage and the
+        // pending fields are cleansed automatically on clear() / dtor /
+        // session erase. No plain std::string is materialised here.
         if (key == "can") {
-            session.credentials = std::move(valueStr);
+            session.credentials = value;
             session.pendingDocNum.clear();
             session.pendingDob.clear();
             session.pendingExpiry.clear();
         } else if (key == "mrz_doc_number") {
-            session.pendingDocNum = std::move(valueStr);
+            session.pendingDocNum = value;
             trySetMRZ(session);
         } else if (key == "mrz_dob") {
-            session.pendingDob = std::move(valueStr);
+            session.pendingDob = value;
             trySetMRZ(session);
         } else if (key == "mrz_expiry") {
-            session.pendingExpiry = std::move(valueStr);
+            session.pendingExpiry = value;
             trySetMRZ(session);
         }
     }
@@ -862,7 +907,18 @@ private:
     static void trySetMRZ(SessionContext& session)
     {
         if (!session.pendingDocNum.empty() && !session.pendingDob.empty() && !session.pendingExpiry.empty()) {
-            session.credentials = emrtd::MRZData{session.pendingDocNum, session.pendingDob, session.pendingExpiry};
+            SecureMRZData mrz;
+            mrz.documentNumber = std::move(session.pendingDocNum);
+            mrz.dateOfBirth = std::move(session.pendingDob);
+            mrz.dateOfExpiry = std::move(session.pendingExpiry);
+            session.credentials = std::move(mrz);
+            // After moving the secret bytes into the credentials variant,
+            // explicitly clear the (now moved-from) pending slots to keep
+            // the SessionContext snapshot consistent and to release the
+            // residual pimpl handles.
+            session.pendingDocNum.clear();
+            session.pendingDob.clear();
+            session.pendingExpiry.clear();
         }
     }
 
