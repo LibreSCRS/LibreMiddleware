@@ -49,7 +49,7 @@ namespace LibreSCRS::Pkcs11 {
 /// // attached.~SessionAttachment() detaches on scope exit.
 /// @endcode
 ///
-/// @since 4.2
+/// @since 4.1
 class LIBRESCRS_PUBLIC_API SessionAttachment final
 {
 public:
@@ -92,7 +92,7 @@ public:
     ///
     /// @return On success a @ref SessionAttachment whose destructor
     ///         detaches automatically. On failure, the structured @ref Error.
-    /// @since 4.2
+    /// @since 4.1
     [[nodiscard]] static std::expected<SessionAttachment, Error>
     attach(const std::filesystem::path& modulePath, std::string readerName,
            std::shared_ptr<LibreSCRS::SmartCard::CardSession> session) noexcept;
@@ -111,14 +111,14 @@ public:
     /// Not internally synchronised against the destructor on the same
     /// instance; callers must serialise.
     ///
-    /// @since 4.2
+    /// @since 4.1
     void detach() noexcept;
 
     /// @brief Reader this attachment was bound to.
     /// @return The reader name passed to @ref attach, or an empty string
     ///         after @ref detach has been called (including via the
     ///         destructor or a moved-from state).
-    /// @since 4.2
+    /// @since 4.1
     [[nodiscard]] const std::string& readerName() const noexcept
     {
         return reader;

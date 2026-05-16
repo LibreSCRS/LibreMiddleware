@@ -147,7 +147,7 @@ fi
 # Exact count of public libLibreSCRS_*.a archives expected. Fails LOUD
 # (not silently green) when the set drifts — e.g., Phase 7 LC migration
 # renames bucket-C archives, or a new public library is added / removed.
-EXPECTED_ARCHIVES=6
+EXPECTED_ARCHIVES=8
 
 leaks=0
 archives_scanned=0

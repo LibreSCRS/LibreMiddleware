@@ -191,7 +191,7 @@ protected:
     /// @par Thread-safety
     /// Caller (the @c parentCacheCan / @c parentClearCan static helper)
     /// holds @ref cardMutex; overrides may assume that lock state.
-    /// @since 4.2
+    /// @since 4.1
     virtual void onCachedCanChanged() noexcept;
 
     /// @brief Owned PIN-gated slots. MUST be the last data member so

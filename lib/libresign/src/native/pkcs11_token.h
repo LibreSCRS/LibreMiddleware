@@ -52,7 +52,7 @@ public:
     ///        provider's @c probe path adopts it instead of opening a
     ///        second standalone session against the same reader. When
     ///        null, the standalone path runs (legacy behaviour).
-    /// @since 4.2
+    /// @since 4.1
     Pkcs11Token(const std::string& modulePath, std::span<const uint8_t> pin, const std::string& keyAlias,
                 const std::string& readerName,
                 std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession = nullptr);

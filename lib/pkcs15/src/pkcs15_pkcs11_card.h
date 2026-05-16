@@ -143,7 +143,7 @@ public:
     ///
     /// @par Thread-safety
     /// Internally synchronised; takes @c cardMutex for the duration.
-    /// @since 4.2
+    /// @since 4.1
     [[nodiscard]] unsigned long bindFromInjectedSession(const std::string& readerName,
                                                         std::shared_ptr<LibreSCRS::SmartCard::CardSession> injected);
 
@@ -211,7 +211,7 @@ private:
     /// @c parentTransportMutex). The holder additionally locks the
     /// session's own mutex; project lock order is preserved
     /// (slotMutex → cardMutex → sessionMutex).
-    /// @since 4.2
+    /// @since 4.1
     [[nodiscard]] std::expected<LibreSCRS::SmartCard::ActiveChannelHolder,
                                 LibreSCRS::SecureChannel::ChannelActivationError>
     acquireChannel(LibreSCRS::CancelToken token = {});
@@ -222,7 +222,7 @@ private:
     ///        holder must reference a live channel.
     /// @par Thread-safety
     /// Caller must hold @c cardMutex.
-    /// @since 4.2
+    /// @since 4.1
     [[nodiscard]] unsigned long readProfileAndComplete(LibreSCRS::SmartCard::ActiveChannelHolder& holder);
 
     /// @brief Resume bind after @ref Pkcs15Slot::login supplied a CAN.
@@ -296,7 +296,7 @@ public:
     ///                       which is the normal mode for external
     ///                       consumers loading the module via dlopen
     ///                       without inject support.
-    /// @since 4.2
+    /// @since 4.1
     Pkcs15PKCS11Provider(std::shared_ptr<LibreSCRS::SmartCard::CardMap> cardMap,
                          std::shared_ptr<AttachRegistry> attachRegistry = nullptr) noexcept;
     ~Pkcs15PKCS11Provider() override = default;

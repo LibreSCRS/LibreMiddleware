@@ -181,8 +181,7 @@ std::vector<LibreSCRS::Pkcs11::Internal::PKCS11ObjectInfo> Pkcs15Slot::enumerate
         return objects;
     auto& parentP15 = static_cast<Pkcs15Card&>(*parent);
 
-    std::scoped_lock slotLock(slotMutex);
-    std::scoped_lock cardLock(parentTransportMutex(*parent));
+    std::scoped_lock locks(slotMutex, parentTransportMutex(*parent));
 
     if (deferredProfile)
         return objects; // Pre-login deferred-profile slot: nothing enumerated yet.
@@ -319,8 +318,7 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
         return Crv::DeviceError;
     auto& parentP15 = static_cast<Pkcs15Card&>(*parent);
 
-    std::scoped_lock slotLock(slotMutex);
-    std::scoped_lock cardLock(parentTransportMutex(*parent));
+    std::scoped_lock locks(slotMutex, parentTransportMutex(*parent));
 
     try {
         // Stage the PIN bytes in a scrubbing std::string; if the parent
@@ -629,8 +627,7 @@ std::vector<std::uint8_t> Pkcs15Slot::signData(std::span<const std::uint8_t> dat
         return {};
     auto& parentP15 = static_cast<Pkcs15Card&>(*parent);
 
-    std::scoped_lock slotLock(slotMutex);
-    std::scoped_lock cardLock(parentTransportMutex(*parent));
+    std::scoped_lock locks(slotMutex, parentTransportMutex(*parent));
 
     if (!loggedIn || !cachedPin)
         return {};
@@ -685,8 +682,7 @@ std::vector<std::uint8_t> Pkcs15Slot::signWithDigestInfo(std::span<const std::ui
         return {};
     auto& parentP15 = static_cast<Pkcs15Card&>(*parent);
 
-    std::scoped_lock slotLock(slotMutex);
-    std::scoped_lock cardLock(parentTransportMutex(*parent));
+    std::scoped_lock locks(slotMutex, parentTransportMutex(*parent));
 
     if (!loggedIn || !cachedPin)
         return {};

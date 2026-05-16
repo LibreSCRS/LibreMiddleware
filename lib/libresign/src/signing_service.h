@@ -65,7 +65,7 @@ public:
     // for PACE-protected cards where the active SecureChannel must
     // not be torn down between display and sign. Legacy callers that
     // omit this argument get the standalone-bind behaviour.
-    /// @since 4.2
+    /// @since 4.1
     virtual SigningResult sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
                                std::span<const uint8_t> pin, const std::string& keyAlias, const std::string& readerName,
                                std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession = nullptr) = 0;
