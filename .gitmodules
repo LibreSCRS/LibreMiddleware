@@ -1,3 +1,10 @@
 [submodule "thirdparty/opensc-source"]
 	path = thirdparty/opensc-source
 	url = https://github.com/LibreSCRS/OpenSC.git
+	# Configure-time `git apply` in thirdparty/CMakeLists.txt leaves the
+	# submodule working tree with patches applied. The downstream patches
+	# in thirdparty/patches/ are the source of truth; the submodule pointer
+	# tracks upstream HEAD only. `ignore = dirty` keeps outer `git status`
+	# clean — submodule pointer changes are still reported, working-tree
+	# drift is not.
+	ignore = dirty
