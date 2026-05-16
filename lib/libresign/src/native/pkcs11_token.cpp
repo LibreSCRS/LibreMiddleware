@@ -297,7 +297,8 @@ Pkcs11Token::Pkcs11Token(const std::string& modulePath, std::span<const uint8_t>
 
 Pkcs11Token::~Pkcs11Token() = default;
 
-std::vector<uint8_t> Pkcs11Token::sign(std::span<const uint8_t> hash, const std::string& algorithm)
+std::vector<uint8_t> Pkcs11Token::sign(std::span<const uint8_t> hash, const std::string& algorithm,
+                                       std::span<const uint8_t> rawData)
 {
     std::scoped_lock lock(impl->sessionMutex);
 
@@ -307,6 +308,56 @@ std::vector<uint8_t> Pkcs11Token::sign(std::span<const uint8_t> hash, const std:
     // alg names plus OpenSSL "ECDSA…" variants.
     const bool isEcdsa = algorithm.find("ECDSA") != std::string::npos || algorithm == "ES256" || algorithm == "ES384" ||
                          algorithm == "ES512";
+
+    // Combined-mechanism probe: when the caller supplied the raw bytes,
+    // try the CKM_SHA*_RSA_PKCS form first. This is the only working path
+    // on hash-on-card SSCDs (Cryptovision SCE 8.0-C2V0, German nPA family)
+    // where the card's PSO COMPUTE machinery insists on hashing the input
+    // itself; passing pre-built DigestInfo with CKM_RSA_PKCS surfaces as
+    // SW 6A80 / wrong-data-format on those cards. On any failure of the
+    // combined attempt (mechanism not supported, transport error, empty
+    // signature) we fall through to the legacy CKM_RSA_PKCS path with the
+    // pre-built @p hash, so cards that prefer pre-padded input keep
+    // working unchanged. ECDSA always takes the raw-hash path.
+    if (!isEcdsa && !rawData.empty()) {
+        CK_MECHANISM_TYPE combined = 0;
+        if (algorithm == "SHA256withRSA" || algorithm == "RS256")
+            combined = CKM_SHA256_RSA_PKCS;
+        else if (algorithm == "SHA384withRSA" || algorithm == "RS384")
+            combined = CKM_SHA384_RSA_PKCS;
+        else if (algorithm == "SHA512withRSA" || algorithm == "RS512")
+            combined = CKM_SHA512_RSA_PKCS;
+        else if (algorithm == "SHA1withRSA")
+            combined = CKM_SHA1_RSA_PKCS;
+
+        if (combined != 0) {
+            CK_MECHANISM mech{combined, nullptr, 0};
+            CK_RV initRv = impl->funcs->C_SignInit(impl->session, &mech, impl->privateKey);
+            if (initRv == CKR_OK) {
+                CK_ULONG sigLen = 0;
+                CK_RV sizeRv = impl->funcs->C_Sign(impl->session, const_cast<CK_BYTE_PTR>(rawData.data()),
+                                                   rawData.size(), nullptr, &sigLen);
+                if (sizeRv == CKR_OK && sigLen > 0) {
+                    std::vector<uint8_t> signature(sigLen);
+                    CK_RV signRv = impl->funcs->C_Sign(impl->session, const_cast<CK_BYTE_PTR>(rawData.data()),
+                                                       rawData.size(), signature.data(), &sigLen);
+                    if (signRv == CKR_OK) {
+                        signature.resize(sigLen);
+                        return signature;
+                    }
+                    // Sign failed but C_SignInit consumed state. PKCS#11 v2.40
+                    // §11.11: a failed C_Sign aborts the sign state regardless
+                    // of return code, so we can re-init for the fallback below.
+                }
+                // Size-query failure or sign failure: the spec leaves the sign
+                // state in an indeterminate state on some return codes; an
+                // explicit C_SignInit on the next attempt re-arms cleanly.
+            }
+            // initRv != CKR_OK (mechanism not supported, key handle invalid,
+            // etc.) — fall through to the legacy CKM_RSA_PKCS path.
+        }
+    }
+
     CK_MECHANISM mechanism;
     if (isEcdsa)
         mechanism = {CKM_ECDSA, nullptr, 0};

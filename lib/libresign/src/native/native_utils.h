@@ -102,10 +102,15 @@ std::span<const uint8_t> digestInfoPrefixForAlgo(const std::string& mdName);
 // keyType is EVP_PKEY_RSA or EVP_PKEY_EC; mdName uses OpenSSL-style names.
 std::string tokenAlgorithm(int keyType, const std::string& mdName);
 
-// Sign a SHA-256 hash with a PKCS#11 token, prepending DigestInfo for RSA.
-// Returns the raw signature bytes.
+// Sign a hash with a PKCS#11 token, prepending DigestInfo for RSA.
+// When @p rawData is non-empty, it is forwarded to Pkcs11Token::sign as
+// the "original data" hint so hash-on-card SSCDs (Cryptovision SCE 8.0,
+// German nPA family) can use the combined CKM_SHA*_RSA_PKCS mechanism
+// instead of the legacy pre-built DigestInfo path that those cards
+// reject with SW 6A80 / wrong-data-format. Returns the raw signature
+// bytes.
 std::vector<uint8_t> signHashWithToken(libresign::Pkcs11Token& token, X509* cert, const std::vector<uint8_t>& hash,
-                                       const std::string& hashAlgo = "SHA256");
+                                       const std::string& hashAlgo = "SHA256", std::span<const uint8_t> rawData = {});
 
 // Decompress FlateDecode (zlib) data. Returns nullopt on error.
 std::optional<std::vector<uint8_t>> flateDecode(std::span<const uint8_t> compressed, size_t sizeHint = 0);

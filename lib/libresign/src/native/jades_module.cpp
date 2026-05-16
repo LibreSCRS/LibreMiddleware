@@ -211,8 +211,13 @@ SigningResult JAdESModule::sign(const std::vector<uint8_t>& data, const std::str
             hashAlgo = "SHA256";
         }
 
-        // 6. Sign
-        auto signatureBytes = signHashWithToken(token, cert.get(), inputHash, hashAlgo);
+        // 6. Sign. Pass the JWS signing input as raw "to-be-signed" bytes so
+        //    hash-on-card SSCDs can use the combined CKM_SHA*_RSA_PKCS
+        //    mechanism; legacy cards fall through to the pre-built DigestInfo
+        //    path inside Pkcs11Token.
+        const std::span<const uint8_t> signingInputSpan{reinterpret_cast<const uint8_t*>(signingInput.data()),
+                                                        signingInput.size()};
+        auto signatureBytes = signHashWithToken(token, cert.get(), inputHash, hashAlgo, signingInputSpan);
 
         if (signatureBytes.empty())
             return {false, {}, "PKCS#11 token signing returned empty signature"};

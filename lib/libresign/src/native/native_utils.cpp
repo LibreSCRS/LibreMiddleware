@@ -369,7 +369,7 @@ libresign::RevocationData collectRevocationData(libresign::Pkcs11Token& token, c
 // ---- Sign a hash with PKCS#11 token (DigestInfo for RSA) ----
 
 std::vector<uint8_t> signHashWithToken(libresign::Pkcs11Token& token, X509* cert, const std::vector<uint8_t>& hash,
-                                       const std::string& hashAlgo)
+                                       const std::string& hashAlgo, std::span<const uint8_t> rawData)
 {
     EVP_PKEY* pubKey = X509_get0_pubkey(cert);
     int keyType = pubKey ? EVP_PKEY_base_id(pubKey) : EVP_PKEY_RSA;
@@ -383,7 +383,11 @@ std::vector<uint8_t> signHashWithToken(libresign::Pkcs11Token& token, X509* cert
 
         std::vector<uint8_t> digestInfo(prefix.begin(), prefix.end());
         digestInfo.insert(digestInfo.end(), hash.begin(), hash.end());
-        return token.sign(digestInfo);
+        // Pkcs11Token internally tries the combined CKM_SHA*_RSA_PKCS form
+        // first when @p rawData is supplied (hash-on-card SSCDs); on any
+        // failure or when the caller has no raw bytes, it falls back to
+        // the legacy CKM_RSA_PKCS path with the pre-built DigestInfo.
+        return token.sign(digestInfo, alg, rawData);
     } else {
         // ECDSA: token handles DigestInfo internally
         return token.sign(hash, alg);

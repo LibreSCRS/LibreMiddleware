@@ -547,8 +547,12 @@ SigningResult XAdESModule::sign(const std::vector<uint8_t>& data, const std::str
         auto signedInfoC14n = canonicalizeNode(parsedDoc, ctx.signedInfoNode);
         auto signedInfoHash = sha256(signedInfoC14n);
 
-        // 8. Sign with PKCS#11 token
-        auto signatureBytes = signHashWithToken(token, cert.get(), signedInfoHash);
+        // 8. Sign with PKCS#11 token. Pass canonicalised SignedInfo as the
+        //    raw "to-be-signed" bytes so hash-on-card SSCDs can use the
+        //    combined CKM_SHA256_RSA_PKCS mechanism; legacy cards fall
+        //    through to the pre-built DigestInfo path inside Pkcs11Token.
+        auto signatureBytes =
+            signHashWithToken(token, cert.get(), signedInfoHash, "SHA256", std::span<const uint8_t>{signedInfoC14n});
 
         if (signatureBytes.empty())
             return {false, {}, "PKCS#11 token signing returned empty signature"};

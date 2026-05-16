@@ -445,6 +445,15 @@ struct SignCtx
     std::string mdName;
     int padMode = kPadPKCS1v15;
 
+    /// Accumulator for the raw bytes streamed into the digest via
+    /// digest_sign_update. Captured so the sign-final callback can
+    /// forward them to Pkcs11Token alongside the computed hash — hash-on-
+    /// card SSCDs (Cryptovision SCE 8.0, German nPA) need this raw view
+    /// to drive the combined CKM_SHA*_RSA_PKCS mechanism. Memory cost is
+    /// the signed-attributes / PDF-byte-range size (≤ a few KB per
+    /// CMS_signerInfo), reset between signs by sigInitNewDigestSign.
+    std::vector<uint8_t> rawAccumulator;
+
     ~SignCtx()
     {
         if (mdCtx)
@@ -529,6 +538,7 @@ static int sigDigestSignInit(void* ctx, const char* mdname, void* provkey, const
     if (sc->mdCtx)
         EVP_MD_CTX_free(sc->mdCtx);
     sc->mdCtx = EVP_MD_CTX_new();
+    sc->rawAccumulator.clear();
     if (!sc->mdCtx)
         return 0;
 
@@ -551,13 +561,21 @@ static int sigDigestSignInit(void* ctx, const char* mdname, void* provkey, const
     return EVP_DigestInit_ex(sc->mdCtx, md, nullptr);
 }
 
-// digest_sign_update: feed data into the digest
+// digest_sign_update: feed data into the digest AND mirror it into the
+// raw accumulator so digest_sign_final has both views (hash + original
+// bytes). The mirror is bounded by the CMS_signerInfo / PDF byte-range
+// size — typically a few KB per sign — so the memory cost is negligible
+// against the keep-bytes-around win for hash-on-card SSCDs.
 static int sigDigestSignUpdate(void* ctx, const unsigned char* data, size_t datalen)
 {
     auto* sc = static_cast<SignCtx*>(ctx);
     if (!sc->mdCtx)
         return 0;
-
+    try {
+        sc->rawAccumulator.insert(sc->rawAccumulator.end(), data, data + datalen);
+    } catch (const std::bad_alloc&) {
+        return 0;
+    }
     return EVP_DigestUpdate(sc->mdCtx, data, datalen);
 }
 
@@ -602,7 +620,13 @@ static int sigDigestSignFinal(void* ctx, unsigned char* sig, size_t* siglen, siz
         }
 
         std::string algo = tokenAlgorithm(sc->keyData->keyType, sc->mdName);
-        auto result = sc->keyData->token->sign(signInput, algo);
+        // Pass the accumulated raw bytes so Pkcs11Token can use the combined
+        // CKM_SHA*_RSA_PKCS mechanism on hash-on-card SSCDs. Empty for ECDSA
+        // (raw-hash mechanism is already correct on every supported card).
+        std::span<const uint8_t> rawSpan;
+        if (sc->keyData->keyType == EVP_PKEY_RSA)
+            rawSpan = std::span<const uint8_t>{sc->rawAccumulator};
+        auto result = sc->keyData->token->sign(signInput, algo, rawSpan);
 
         if (result.empty())
             return 0;

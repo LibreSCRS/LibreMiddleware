@@ -281,10 +281,14 @@ TEST(Pkcs11InjectE2EGeoTestna, AttachAndSignThroughInjectedSession)
     // Stage 7 regression — the same C_Sign would fail today against the
     // standalone Stage 6 path. Attempt the sign and capture the outcome,
     // but do not fail the test on a known-issue card-side problem.
+    // Stage 7+ libresign fix: pass the raw payload so Pkcs11Token can try
+    // the combined CKM_SHA256_RSA_PKCS mechanism first (correct for hash-
+    // on-card SSCDs like Cryptovision SCE 8.0). Falls back to legacy
+    // CKM_RSA_PKCS with the pre-built DigestInfo on cards that prefer it.
     std::vector<std::uint8_t> signature;
     std::string signError;
     try {
-        signature = token->sign(signInput, "SHA256withRSA");
+        signature = token->sign(signInput, "SHA256withRSA", std::span<const std::uint8_t>{payload});
     } catch (const std::exception& e) {
         latchPinFailureFromException(e.what());
         signError = e.what();
