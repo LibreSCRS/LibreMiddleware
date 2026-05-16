@@ -241,6 +241,10 @@ public:
     ///       mutex and PC/SC transaction; see @ref ActiveChannelHolder
     ///       for the lifetime contract.
     ///
+    /// @throws std::bad_alloc on out-of-memory during channel construction
+    ///         or transaction setup. All other failure modes are surfaced
+    ///         through the returned @c std::expected.
+    ///
     /// @since 4.1
     [[nodiscard]] std::expected<ActiveChannelHolder, LibreSCRS::SecureChannel::ChannelActivationError>
     activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token);
@@ -253,6 +257,11 @@ public:
     /// @note The returned @ref ActiveChannelHolder borrows this session's
     ///       mutex and PC/SC transaction; see @ref ActiveChannelHolder
     ///       for the lifetime contract.
+    ///
+    /// @throws std::bad_alloc on out-of-memory during channel construction,
+    ///         credential-provider snapshot copy, or transaction setup. All
+    ///         other failure modes are surfaced through the returned
+    ///         @c std::expected.
     ///
     /// @since 4.1
     [[nodiscard]] std::expected<ActiveChannelHolder, LibreSCRS::SecureChannel::ChannelActivationError>

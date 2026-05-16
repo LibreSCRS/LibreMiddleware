@@ -18,7 +18,7 @@ namespace LibreSCRS::SecureChannel {
 /// @brief Cipher family carried by a @ref SessionKeys block.
 ///
 /// @since 4.1
-enum class SmCipher {
+enum class SmCipher : std::uint8_t {
     /// @brief Two-key 3DES with ISO 9797-1 MAC algorithm 3 (BAC).
     Des3,
     /// @brief AES-CBC + AES-CMAC at the configured key length (PACE).
@@ -52,8 +52,21 @@ struct LIBRESCRS_PUBLIC_API SessionKeys
     SessionKeys() = default;
     SessionKeys(const SessionKeys&) = default;
     SessionKeys(SessionKeys&&) noexcept = default;
-    SessionKeys& operator=(const SessionKeys&) = default;
-    SessionKeys& operator=(SessionKeys&&) noexcept = default;
+
+    /// @brief Copy-assign that cleanses the destination buffers before
+    ///        adopting the source key material.
+    ///
+    /// Default copy-assign would call `std::vector::operator=` which either
+    /// overwrites in place (capacity-sufficient) or frees the destination
+    /// allocation uncleansed (capacity-insufficient). For a type that
+    /// exists to be cleansed, that's a leak window.
+    /// @since 4.1
+    SessionKeys& operator=(const SessionKeys& other);
+
+    /// @brief Move-assign that cleanses the destination buffers before
+    ///        adopting the source key material. Source becomes empty.
+    /// @since 4.1
+    SessionKeys& operator=(SessionKeys&& other) noexcept;
 
     /// @brief Cleanse every key field before the vectors release their
     ///        allocations.
