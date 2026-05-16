@@ -20,6 +20,14 @@
 //   LIBRESCRS_TEST_PIV_PIN="569548" \
 //   ./Pkcs11MultiCardSignTests
 
+// pin_guard.h is included for its PIN-related helpers, but this test
+// deliberately does NOT invoke SKIP_IF_PIN_FAILED() at function entry.
+// The single TEST iterates multiple readers/profiles in one invocation
+// and uses a per-profile latch (g_latch.markFailed / hasFailed below)
+// as the equivalent fence: a PIN failure on profile X must NOT skip
+// subsequent profiles Y/Z on other readers. A global g_pinFailed gate
+// would conflate independent cards and abort the multi-card sweep
+// after the first failure, which defeats the whole point of this test.
 #include "pin_guard.h"
 
 #include <LibreSCRS/Auth/PaceSecretKind.h>

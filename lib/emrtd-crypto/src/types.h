@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <openssl/crypto.h>
@@ -45,10 +46,43 @@ struct SessionKeys
     SessionKeys() = default;
     SessionKeys(const SessionKeys&) = default;
     SessionKeys(SessionKeys&&) noexcept = default;
-    SessionKeys& operator=(const SessionKeys&) = default;
-    SessionKeys& operator=(SessionKeys&&) noexcept = default;
+
+    // Custom assignment that cleanses the destination before letting
+    // std::vector's allocator release the storage. The defaulted
+    // operator= would release the destination's existing key buffers
+    // through the std::vector allocator WITHOUT calling OPENSSL_cleanse
+    // on them first, opening exactly the leak window the destructor
+    // closes. Required because std::optional<SessionKeys> demands T
+    // be move-assignable for its own move-assign to be defined (see
+    // ChipAuthResult move-assign in chip_auth.cpp).
+    SessionKeys& operator=(const SessionKeys& other)
+    {
+        if (this != &other) {
+            cleanse();
+            encKey = other.encKey;
+            macKey = other.macKey;
+            ssc = other.ssc;
+        }
+        return *this;
+    }
+    SessionKeys& operator=(SessionKeys&& other) noexcept
+    {
+        if (this != &other) {
+            cleanse();
+            encKey = std::move(other.encKey);
+            macKey = std::move(other.macKey);
+            ssc = std::move(other.ssc);
+        }
+        return *this;
+    }
 
     ~SessionKeys()
+    {
+        cleanse();
+    }
+
+private:
+    void cleanse() noexcept
     {
         if (!encKey.empty()) {
             OPENSSL_cleanse(encKey.data(), encKey.size());

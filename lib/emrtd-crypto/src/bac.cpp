@@ -50,11 +50,18 @@ BACKeys deriveBACKeys(const std::string& documentNumber, const std::string& date
 
 std::optional<SessionKeys> performBAC(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const BACKeys& keys)
 {
-    // Scope guard to cleanse all key material on every exit path
+    // Scope guard to cleanse all key material on every exit path.
+    // Covers BOTH the long-lived randoms/halves and every intermediate
+    // buffer that transiently carries K.IFD / K.ICC plaintext or the
+    // 3DES ciphertext over them. Recovering K.IFD || K.ICC from freed
+    // heap would reproduce kSeedSession (= K.IFD XOR K.ICC) and thereby
+    // every session key derived below — so cleanse aggressively.
     std::vector<uint8_t> rndICC, rndIFD, kIFD, kICC, kSeedSession;
+    std::vector<uint8_t> s, eIFD, mIFD, cmdData, eICC, mICC, expectedMAC, r;
     struct KeyCleaner
     {
         std::vector<uint8_t>&rndICC, &rndIFD, &kIFD, &kICC, &kSeedSession;
+        std::vector<uint8_t>&s, &eIFD, &mIFD, &cmdData, &eICC, &mICC, &expectedMAC, &r;
         ~KeyCleaner()
         {
             auto cleanse = [](std::vector<uint8_t>& v) {
@@ -66,8 +73,16 @@ std::optional<SessionKeys> performBAC(LibreSCRS::SmartCard::Internal::PCSCConnec
             cleanse(kIFD);
             cleanse(kICC);
             cleanse(kSeedSession);
+            cleanse(s);
+            cleanse(eIFD);
+            cleanse(mIFD);
+            cleanse(cmdData);
+            cleanse(eICC);
+            cleanse(mICC);
+            cleanse(expectedMAC);
+            cleanse(r);
         }
-    } keyCleaner{rndICC, rndIFD, kIFD, kICC, kSeedSession};
+    } keyCleaner{rndICC, rndIFD, kIFD, kICC, kSeedSession, s, eIFD, mIFD, cmdData, eICC, mICC, expectedMAC, r};
 
     // Step 1: GET CHALLENGE — receive 8-byte RND.ICC
     LibreSCRS::SmartCard::Internal::APDUCommand getChallenge{0x00, 0x84, 0x00, 0x00, {}, 0x08, true};
@@ -83,18 +98,16 @@ std::optional<SessionKeys> performBAC(LibreSCRS::SmartCard::Internal::PCSCConnec
         return std::nullopt;
 
     // Step 3: Build S = RND.IFD || RND.ICC || K.IFD (32 bytes)
-    std::vector<uint8_t> s;
     s.insert(s.end(), rndIFD.begin(), rndIFD.end());
     s.insert(s.end(), rndICC.begin(), rndICC.end());
     s.insert(s.end(), kIFD.begin(), kIFD.end());
 
     // Step 4: Encrypt S (already 32 bytes = block-aligned, NO padding before encryption)
     // Then MAC the encrypted result (WITH padding for MAC input)
-    auto eIFD = detail::des3Encrypt(keys.encKey, s);
-    auto mIFD = detail::retailMAC(keys.macKey, detail::pad(eIFD, 8));
+    eIFD = detail::des3Encrypt(keys.encKey, s);
+    mIFD = detail::retailMAC(keys.macKey, detail::pad(eIFD, 8));
 
     // Step 5: MUTUAL AUTHENTICATE — send E.IFD || M.IFD (40 bytes)
-    std::vector<uint8_t> cmdData;
     cmdData.insert(cmdData.end(), eIFD.begin(), eIFD.end());
     cmdData.insert(cmdData.end(), mIFD.begin(), mIFD.end());
 
@@ -104,17 +117,17 @@ std::optional<SessionKeys> performBAC(LibreSCRS::SmartCard::Internal::PCSCConnec
         return std::nullopt;
 
     // Step 6: Extract E.ICC (32 bytes) and M.ICC (8 bytes)
-    std::vector<uint8_t> eICC(response.data.begin(), response.data.begin() + 32);
-    std::vector<uint8_t> mICC(response.data.begin() + 32, response.data.begin() + 40);
+    eICC.assign(response.data.begin(), response.data.begin() + 32);
+    mICC.assign(response.data.begin() + 32, response.data.begin() + 40);
 
     // Step 7: Verify M.ICC
-    auto expectedMAC = detail::retailMAC(keys.macKey, detail::pad(eICC, 8));
+    expectedMAC = detail::retailMAC(keys.macKey, detail::pad(eICC, 8));
     if (mICC.size() != expectedMAC.size() || CRYPTO_memcmp(mICC.data(), expectedMAC.data(), mICC.size()) != 0)
         return std::nullopt;
 
     // Step 8: Decrypt E.ICC → R = RND.ICC' || RND.IFD' || K.ICC
     // Data is exactly 32 bytes (block-aligned encryption without padding)
-    auto r = detail::des3Decrypt(keys.encKey, eICC);
+    r = detail::des3Decrypt(keys.encKey, eICC);
     if (r.size() < 32)
         return std::nullopt;
 

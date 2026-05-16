@@ -33,7 +33,11 @@ struct BNDeleter
 {
     void operator()(BIGNUM* p) const
     {
-        BN_free(p);
+        // Cleansing free: zeroises BIGNUM limb buffer before release.
+        // Plain BN_free leaks Chip Authentication ephemeral private
+        // keys on the heap; passive reconstruction of those defeats
+        // the recorded handshake.
+        BN_clear_free(p);
     }
 };
 struct BNCtxDeleter
@@ -54,7 +58,10 @@ struct ECPointDeleter
 {
     void operator()(EC_POINT* p) const
     {
-        EC_POINT_free(p);
+        // Cleansing free: zeroises affine coordinate buffers before
+        // release. EC_POINT_free leaks Chip Authentication ephemeral
+        // / shared-point coordinates on the heap.
+        EC_POINT_clear_free(p);
     }
 };
 struct EVPPKeyDeleter
