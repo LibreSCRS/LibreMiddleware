@@ -720,7 +720,13 @@ std::vector<std::uint8_t> Pkcs15Slot::signWithDigestInfo(std::span<const std::ui
         std::vector<std::uint8_t> digestVec(digestInfo.begin(), digestInfo.end());
         std::vector<std::uint8_t> rawVec(rawData.begin(), rawData.end());
         return apdu.sign(*matched, pinStr, *pinInfo, digestVec, rawVec, scheme);
+    } catch (const std::exception& e) {
+        if (std::getenv("LIBRESCRS_SIGN_TRACE"))
+            std::fprintf(stderr, "[Pkcs15Slot::signData] exception: %s\n", e.what());
+        return {};
     } catch (...) {
+        if (std::getenv("LIBRESCRS_SIGN_TRACE"))
+            std::fprintf(stderr, "[Pkcs15Slot::signData] unknown exception\n");
         return {};
     }
 }
