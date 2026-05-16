@@ -86,9 +86,9 @@ public:
     }
 
     /// @brief Byte-wise equality.
-    [[nodiscard]] bool operator==(const AppletAid&) const noexcept = default;
+    bool operator==(const AppletAid&) const noexcept = default;
     /// @brief Byte-wise lexicographic ordering (generates `<`, `<=`, `>`, `>=`).
-    [[nodiscard]] auto operator<=>(const AppletAid&) const noexcept = default;
+    auto operator<=>(const AppletAid&) const noexcept = default;
 
 private:
     std::vector<std::uint8_t> storage;

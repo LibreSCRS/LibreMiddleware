@@ -157,13 +157,12 @@ jobs:
         run: ctest --output-on-failure --test-dir build/test
 
   shared-config-package:
-    # Phase 0 of LibreKDE roadmap: build LibreMiddleware with
-    # LIBREMIDDLEWARE_BUILD_SHARED=ON, install to a workspace prefix,
-    # then run examples/sdk-consumer-config/build-and-run.sh which
-    # configures + builds + runs a downstream consumer via
-    # find_package(LibreMiddleware 4.0 REQUIRED CONFIG). Catches Phase 0
-    # regressions in target export, visibility, version pinning, and
-    # bundled-dep linkage end-to-end.
+    # Build LibreMiddleware with LIBREMIDDLEWARE_BUILD_SHARED=ON, install
+    # to a workspace prefix, then run examples/sdk-consumer-config/build-and-run.sh
+    # which configures + builds + runs a downstream consumer via
+    # find_package(LibreMiddleware 4.0 REQUIRED CONFIG). Catches regressions
+    # in target export, visibility, version pinning, and bundled-dep
+    # linkage end-to-end for shared-library consumers.
     name: SHARED build + Config-package consumer
     runs-on: ubuntu-latest
     steps:

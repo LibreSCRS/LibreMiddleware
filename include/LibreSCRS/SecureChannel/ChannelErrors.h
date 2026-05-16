@@ -7,12 +7,14 @@
 /// @brief Error taxonomy and lifecycle state for @ref
 ///        LibreSCRS::SecureChannel::ISecureChannel and its callers.
 
+#include <cstdint>
+
 namespace LibreSCRS::SecureChannel {
 
 /// @brief Lifecycle state of a secure channel.
 ///
 /// @since 4.1
-enum class ChannelState {
+enum class ChannelState : std::uint8_t {
     /// @brief Ready to wrap and unwrap APDUs.
     Open,
     /// @brief Explicitly closed by the owner. Subsequent transmits fail.
@@ -26,7 +28,7 @@ enum class ChannelState {
 ///        @ref LibreSCRS::SmartCard::CardSession.
 ///
 /// @since 4.1
-enum class ChannelActivationError {
+enum class ChannelActivationError : std::uint8_t {
     None,
     /// @brief Applet absent or SELECT rejected by the card. Terminal.
     SelectAppletFailed,
@@ -57,7 +59,7 @@ enum class ChannelActivationError {
 ///        by the holder/transmit wrapper layered above it).
 ///
 /// @since 4.1
-enum class ChannelOperationError {
+enum class ChannelOperationError : std::uint8_t {
     None,
     /// @brief Channel transitioned to @ref ChannelState::Failed. Caller
     ///        should drop and re-activate.
