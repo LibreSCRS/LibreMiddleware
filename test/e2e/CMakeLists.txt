@@ -91,4 +91,30 @@ if(LIBRESCRS_BUILD_REAL_CARD_TESTS)
     add_dependencies(Pkcs11InjectE2EGeoTestnaTests librescrs-pkcs11)
 
     # Deliberately NOT calling gtest_discover_tests — operator-only run.
+
+    # 4.1.0 multi-card regression smoke. Iterates every reader, classifies
+    # by ATR, runs sign on each recognised card profile with its own PIN
+    # latch — a failure on one card does not poison the others.
+    add_executable(Pkcs11MultiCardSignTests
+        Pkcs11MultiCardSignTests.cpp
+        pin_guard.h
+    )
+    target_link_libraries(Pkcs11MultiCardSignTests PRIVATE
+        GTest::gtest_main
+        LibreSCRS::Pkcs11Inject
+        LibreSCRS::SmartCard
+        LibreSign
+        OpenSSL_Crypto
+        ${CMAKE_DL_LIBS}
+    )
+    target_include_directories(Pkcs11MultiCardSignTests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+        ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/include
+    )
+    target_compile_definitions(Pkcs11MultiCardSignTests PRIVATE
+        LIBRESCRS_INTERNAL_BUILD=1
+        LIBRESCRS_PKCS11_MODULE_PATH="$<TARGET_FILE:librescrs-pkcs11>"
+    )
+    add_dependencies(Pkcs11MultiCardSignTests librescrs-pkcs11)
 endif()
