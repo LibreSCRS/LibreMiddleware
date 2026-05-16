@@ -216,7 +216,7 @@ if(LIBRESCRS_INSTALL_SDK_HEADERS OR LIBREMIDDLEWARE_BUILD_SHARED)
 endif()
 
 # ──────────────────────────────────────────────────────────────────────────
-# CMake Config package generation (Phase 0 of LibreKDE roadmap).
+# CMake Config package generation.
 #
 # Active when LIBREMIDDLEWARE_BUILD_SHARED=ON. Produces a Config-package
 # pair (`LibreMiddlewareConfig.cmake` + `LibreMiddlewareConfigVersion.cmake`)
@@ -258,7 +258,7 @@ if(LIBREMIDDLEWARE_BUILD_SHARED)
 endif()
 
 # ──────────────────────────────────────────────────────────────────────────
-# p11-kit module registration (LibreKDE Phase 1.5).
+# p11-kit module registration.
 #
 # Dropping `librescrs.module` into ${datadir}/p11-kit/modules/ makes every
 # p11-kit-aware application (Kleopatra, GnuPG / gpgsm, Firefox, Chromium,

@@ -105,11 +105,10 @@ TEST(PKCS15PluginTest, SetCredentialsAcceptsCanAndIgnoresUnknownKeys)
 
 TEST(PKCS15PluginTest, IsLastResortFallback)
 {
-    // pkcs15-plugin is the true last-resort generic PKCS#15 reader. After the
-    // 2026-05 priority swap, opensc-plugin (priority 800) is probed first for
-    // unknown PKCS#15-shaped cards, so it can route them through OpenSC's full
-    // driver chain (e.g., srbeid). pkcs15 (priority 900) only fires when
-    // OpenSC also declined.
+    // pkcs15-plugin is the true last-resort generic PKCS#15 reader.
+    // opensc-plugin (priority 800) is probed first for unknown PKCS#15-shaped
+    // cards, so it can route them through OpenSC's full driver chain (e.g.,
+    // srbeid). pkcs15 (priority 900) only fires when OpenSC also declined.
     CardPluginService registry{pluginDir()};
     auto p = findPkcs15(registry);
     ASSERT_NE(p, nullptr);
