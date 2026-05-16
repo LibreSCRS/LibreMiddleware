@@ -67,6 +67,12 @@ private:
     static KeyRefInfo resolveKeyRef(const PrivateKeyInfo& key);
     std::vector<uint8_t> tryMsePso(uint8_t sigAlgo, const KeyRefInfo& keyRef, const std::vector<uint8_t>& psoData,
                                    uint16_t expectedSigLen, uint16_t& lastSW);
+    /// @brief MSE:Set CT with an OID-style algorithm reference (DO 80 with a
+    ///        full BSI TR-03110 / ISO 7816-8 OID instead of the legacy 1-byte
+    ///        algo). Required by Cryptovision SCE 8.0-C2V0 SSCD and other
+    ///        BSI-aligned QSCD cards which reject the single-byte form.
+    std::vector<uint8_t> tryMsePsoOid(std::span<const uint8_t> algoOid, const KeyRefInfo& keyRef,
+                                      const std::vector<uint8_t>& psoData, uint16_t expectedSigLen, uint16_t& lastSW);
     static LibreSCRS::SmartCard::Internal::SecureBuffer encodePIN(std::string_view pin, const PinInfo& pinInfo);
     // Returns: 1=success, 0=wrong PIN (0x63Cx), -1=other failure
     int verifyPinInline(const PinInfo& pinInfo, const LibreSCRS::SmartCard::Internal::SecureBuffer& pinData);

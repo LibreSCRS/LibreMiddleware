@@ -478,6 +478,48 @@ PKCS15Card::KeyRefInfo PKCS15Card::resolveKeyRef(const PrivateKeyInfo& key)
     return {0x84, {0x00}};
 }
 
+std::vector<uint8_t> PKCS15Card::tryMsePsoOid(std::span<const uint8_t> algoOid, const KeyRefInfo& keyRef,
+                                              const std::vector<uint8_t>& psoData, uint16_t expectedSigLen,
+                                              uint16_t& lastSW)
+{
+    std::vector<uint8_t> mseData;
+    mseData.reserve(2 + algoOid.size() + 2 + keyRef.keyRefData.size());
+    mseData.push_back(0x80);
+    mseData.push_back(static_cast<uint8_t>(algoOid.size()));
+    mseData.insert(mseData.end(), algoOid.begin(), algoOid.end());
+    mseData.push_back(keyRef.keyTag);
+    mseData.push_back(static_cast<uint8_t>(keyRef.keyRefData.size()));
+    mseData.insert(mseData.end(), keyRef.keyRefData.begin(), keyRef.keyRefData.end());
+#ifndef NDEBUG
+    fprintf(stderr, "[PKCS15] MSE SET OID: oid=");
+    for (auto b : algoOid)
+        fprintf(stderr, "%02X", b);
+    fprintf(stderr, " keyTag=0x%02X keyRef=", keyRef.keyTag);
+    for (auto b : keyRef.keyRefData)
+        fprintf(stderr, "%02X", b);
+    fprintf(stderr, " psoDataLen=%zu\n", psoData.size());
+#endif
+    LibreSCRS::SmartCard::Internal::APDUCommand mseSet{
+        .cla = 0x00, .ins = 0x22, .p1 = 0x41, .p2 = 0xB6, .data = std::move(mseData), .le = 0, .hasLe = false};
+    auto resp = channel.transmit(mseSet, LibreSCRS::CancelToken{});
+#ifndef NDEBUG
+    fprintf(stderr, "[PKCS15] MSE SET OID SW=%04X\n", resp.statusWord());
+#endif
+    if (!resp.isSuccess()) {
+        lastSW = resp.statusWord();
+        return {};
+    }
+    uint16_t psoLe = (expectedSigLen <= 256) ? 0 : expectedSigLen;
+    LibreSCRS::SmartCard::Internal::APDUCommand pso{
+        .cla = 0x00, .ins = 0x2A, .p1 = 0x9E, .p2 = 0x9A, .data = psoData, .le = psoLe, .hasLe = true};
+    resp = channel.transmit(pso, LibreSCRS::CancelToken{});
+    lastSW = resp.statusWord();
+#ifndef NDEBUG
+    fprintf(stderr, "[PKCS15] PSO COMPUTE (OID) SW=%04X sigLen=%zu\n", resp.statusWord(), resp.data.size());
+#endif
+    return resp.isSuccess() ? resp.data : std::vector<uint8_t>{};
+}
+
 std::vector<uint8_t> PKCS15Card::tryMsePso(uint8_t sigAlgo, const KeyRefInfo& keyRef,
                                            const std::vector<uint8_t>& psoData, uint16_t expectedSigLen,
                                            uint16_t& lastSW)
@@ -545,12 +587,27 @@ std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_vie
         attempts.push_back({sig_algo::RSA_RAW, digestInfo});
         attempts.push_back({sig_algo::RSA_PKCS1_V15, digestInfo});
         // Some cards (e.g. SafeSign) accept algo 0x02 but expect full padded block
-        if (sigLen > digestInfo.size() + 11)
-            attempts.push_back({sig_algo::RSA_PKCS1_V15, applyPkcs1v15Padding(digestInfo, key.keySizeBits)});
+        if (sigLen > digestInfo.size() + 11) {
+            auto padded = applyPkcs1v15Padding(digestInfo, key.keySizeBits);
+            attempts.push_back({sig_algo::RSA_PKCS1_V15, padded});
+            // True-RAW path: pre-pad on host, card does only the RSA private
+            // operation. Required by some IAS-ECC SSCDs (Cryptovision
+            // SCE 8.0-C2V0) that lock down all hash-on-card algos but
+            // still expose raw RSA for SSCD use.
+            attempts.push_back({sig_algo::RSA_RAW, std::move(padded)});
+        }
         auto rawHash = extractRawHash(digestInfo);
         // Some cards expect only raw hash with algo 0x02, not DigestInfo
         if (!rawHash.empty())
             attempts.push_back({sig_algo::RSA_PKCS1_V15, rawHash});
+        // IAS-ECC SHA-256 PKCS#1 algo (Cryptovision SCE 8.0 family). Try
+        // this BEFORE the legacy 0x28 because some IAS-ECC cards quietly
+        // accept 0x28 as a custom mechanism that re-hashes the input
+        // (producing a structurally valid but semantically wrong signature
+        // that fails downstream verification). The tryAllAttempts loop
+        // returns on first non-empty signature, so ordering matters.
+        if (rawHash.size() == 32)
+            attempts.push_back({sig_algo::RSA_SHA256_PKCS1_IASECC, rawHash});
         uint8_t ha = 0;
         if (rawHash.size() == 20)
             ha = sig_algo::RSA_SHA1_PKCS1;
@@ -576,6 +633,7 @@ std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_vie
         attempts.push_back({sig_algo::RSA_PKCS1_V15, digestInfo});
         attempts.push_back({sig_algo::RSA_SHA256_PKCS1, rawData});
         attempts.push_back({sig_algo::RSA_SHA256_PKCS1, h});
+        attempts.push_back({sig_algo::RSA_SHA256_PKCS1_IASECC, h});
     } else if (scheme == SignScheme::RsaSha384Pkcs1) {
         auto h = computeHash(EVP_sha384(), rawData);
         attempts.push_back({sig_algo::RSA_RAW, digestInfo});
@@ -618,7 +676,75 @@ std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_vie
     if (keyRef.keyTag == 0x81)
         altKeyRef = {0x84, {key.keyReference != 0 ? key.keyReference : uint8_t(0x00)}};
 
+    // BSI TR-03110 / ISO 7816-8 algorithm OIDs for cards (Cryptovision
+    // SCE 8.0-C2V0 SSCD and family) that reject the legacy 1-byte algo
+    // reference. Each entry is paired with the canonical PSO input shape
+    // the OID implies (raw hash for hash-specific OIDs, DigestInfo /
+    // padded-block for the generic RSA OID).
+    struct OidAttempt
+    {
+        std::span<const uint8_t> oid;
+        std::vector<uint8_t> psoData;
+    };
+    auto rawHashForOid = extractRawHash(digestInfo);
+    std::vector<OidAttempt> oidAttempts;
+    if (scheme == SignScheme::RsaPkcs1 || scheme == SignScheme::RsaSha256Pkcs1) {
+        // sigS_PKCS1_V15_SHA_256 = 0.4.0.127.0.7.2.2.2.1.3
+        static constexpr uint8_t kSigPkcs1Sha256[] = {0x04, 0x00, 0x7F, 0x00, 0x07, 0x02, 0x02, 0x02, 0x01, 0x03};
+        if (rawHashForOid.size() == 32)
+            oidAttempts.push_back({kSigPkcs1Sha256, rawHashForOid});
+    }
+    if (scheme == SignScheme::RsaPkcs1 || scheme == SignScheme::RsaSha1Pkcs1) {
+        // sigS_PKCS1_V15_SHA_1 = 0.4.0.127.0.7.2.2.2.1.1
+        static constexpr uint8_t kSigPkcs1Sha1[] = {0x04, 0x00, 0x7F, 0x00, 0x07, 0x02, 0x02, 0x02, 0x01, 0x01};
+        if (rawHashForOid.size() == 20)
+            oidAttempts.push_back({kSigPkcs1Sha1, rawHashForOid});
+    }
+    if (scheme == SignScheme::RsaPkcs1 || scheme == SignScheme::RsaSha384Pkcs1) {
+        // sigS_PKCS1_V15_SHA_384 = 0.4.0.127.0.7.2.2.2.1.4
+        static constexpr uint8_t kSigPkcs1Sha384[] = {0x04, 0x00, 0x7F, 0x00, 0x07, 0x02, 0x02, 0x02, 0x01, 0x04};
+        if (rawHashForOid.size() == 48)
+            oidAttempts.push_back({kSigPkcs1Sha384, rawHashForOid});
+    }
+    if (scheme == SignScheme::RsaPkcs1 || scheme == SignScheme::RsaSha512Pkcs1) {
+        // sigS_PKCS1_V15_SHA_512 = 0.4.0.127.0.7.2.2.2.1.5
+        static constexpr uint8_t kSigPkcs1Sha512[] = {0x04, 0x00, 0x7F, 0x00, 0x07, 0x02, 0x02, 0x02, 0x01, 0x05};
+        if (rawHashForOid.size() == 64)
+            oidAttempts.push_back({kSigPkcs1Sha512, rawHashForOid});
+    }
+    if (scheme == SignScheme::RsaPssSha256) {
+        // sigS_PSS_SHA_256 = 0.4.0.127.0.7.2.2.2.2.3
+        static constexpr uint8_t kSigPssSha256[] = {0x04, 0x00, 0x7F, 0x00, 0x07, 0x02, 0x02, 0x02, 0x02, 0x03};
+        auto h = computeHash(EVP_sha256(), rawData);
+        oidAttempts.push_back({kSigPssSha256, std::move(h)});
+    }
+    if (scheme == SignScheme::RsaPssSha384) {
+        static constexpr uint8_t kSigPssSha384[] = {0x04, 0x00, 0x7F, 0x00, 0x07, 0x02, 0x02, 0x02, 0x02, 0x04};
+        auto h = computeHash(EVP_sha384(), rawData);
+        oidAttempts.push_back({kSigPssSha384, std::move(h)});
+    }
+    if (scheme == SignScheme::RsaPssSha512) {
+        static constexpr uint8_t kSigPssSha512[] = {0x04, 0x00, 0x7F, 0x00, 0x07, 0x02, 0x02, 0x02, 0x02, 0x05};
+        auto h = computeHash(EVP_sha512(), rawData);
+        oidAttempts.push_back({kSigPssSha512, std::move(h)});
+    }
+
     auto tryAllAttempts = [&]() -> std::vector<uint8_t> {
+        // OID-style attempts first — BSI TR-03110 cards reject legacy 1-byte
+        // algo references with SW 6A80 / wrong-padded-block on PSO. When
+        // none of the OID attempts succeed (the typical case on legacy
+        // cards that don't speak the OID dialect), fall through to the
+        // single-byte form.
+        for (const auto& a : oidAttempts) {
+            auto sig = tryMsePsoOid(a.oid, keyRef, a.psoData, sigLen, lastPsoSW);
+            if (!sig.empty())
+                return sig;
+        }
+        for (const auto& a : oidAttempts) {
+            auto sig = tryMsePsoOid(a.oid, altKeyRef, a.psoData, sigLen, lastPsoSW);
+            if (!sig.empty())
+                return sig;
+        }
         for (const auto& a : attempts) {
             auto sig = tryMsePso(a.sigAlgo, keyRef, a.psoData, sigLen, lastPsoSW);
             if (!sig.empty())
