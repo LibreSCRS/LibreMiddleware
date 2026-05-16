@@ -187,6 +187,7 @@ add_library(LibreSCRS_SecureChannel ${LIBREMIDDLEWARE_LIB_TYPE}
     SecureChannel/pace_channel.cpp
     SecureChannel/pace_params.cpp
     SecureChannel/bac_channel.cpp
+    SecureChannel/session_keys.cpp
     ${LIBRESCRS_SECURECHANNEL_PUBLIC_HEADERS}
 )
 target_include_directories(LibreSCRS_SecureChannel PUBLIC

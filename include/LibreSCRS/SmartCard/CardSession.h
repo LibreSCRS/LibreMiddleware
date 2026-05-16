@@ -237,6 +237,10 @@ public:
     /// returns an @ref ActiveChannelHolder whose destruction ends the
     /// transaction.
     ///
+    /// @note The returned @ref ActiveChannelHolder borrows this session's
+    ///       mutex and PC/SC transaction; see @ref ActiveChannelHolder
+    ///       for the lifetime contract.
+    ///
     /// @since 4.1
     [[nodiscard]] std::expected<ActiveChannelHolder, LibreSCRS::SecureChannel::ChannelActivationError>
     activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token);
@@ -245,6 +249,10 @@ public:
     ///        (PACE or BAC). On cache miss the credential provider is
     ///        invoked; on @c PaceWrongSecret the cache entry is evicted
     ///        and the prompt re-issued up to a small retry cap.
+    ///
+    /// @note The returned @ref ActiveChannelHolder borrows this session's
+    ///       mutex and PC/SC transaction; see @ref ActiveChannelHolder
+    ///       for the lifetime contract.
     ///
     /// @since 4.1
     [[nodiscard]] std::expected<ActiveChannelHolder, LibreSCRS::SecureChannel::ChannelActivationError>

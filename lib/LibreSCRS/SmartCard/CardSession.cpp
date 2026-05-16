@@ -509,16 +509,16 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
             }
 
             auto outcome = BacChannel::establish(*d->ownedConn, aid, *d->bacInput, token);
-            if (outcome.error == ChannelActivationError::None && outcome.channel) {
-                d->activeChannel = std::move(outcome.channel);
+            if (outcome) {
+                d->activeChannel = std::move(*outcome);
                 return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
             }
-            if (outcome.error == ChannelActivationError::PaceWrongSecret) {
+            if (outcome.error() == ChannelActivationError::PaceWrongSecret) {
                 d->bacInput.reset();
                 --retriesLeft;
                 continue;
             }
-            return std::unexpected{outcome.error};
+            return std::unexpected{outcome.error()};
         }
 
         if (d->paceCredentialsCache[static_cast<std::size_t>(kind)].empty()) {
@@ -606,13 +606,13 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
             params.paramId = paramId;
 
             auto outcome = PaceChannel::establish(*d->ownedConn, params, token);
-            if (outcome.error == ChannelActivationError::None && outcome.channel) {
-                freshChannel = std::move(outcome.channel);
+            if (outcome) {
+                freshChannel = std::move(*outcome);
                 break;
             }
-            lastError = outcome.error;
-            if (outcome.error != ChannelActivationError::PaceWrongSecret &&
-                outcome.error != ChannelActivationError::PaceProtocolFailure) {
+            lastError = outcome.error();
+            if (outcome.error() != ChannelActivationError::PaceWrongSecret &&
+                outcome.error() != ChannelActivationError::PaceProtocolFailure) {
                 // Hard terminal categories surface immediately; only the
                 // soft "wrong secret" / "protocol failure" categories
                 // justify trying the next OID.

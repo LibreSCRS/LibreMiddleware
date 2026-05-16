@@ -16,6 +16,7 @@
 #include <LibreSCRS/SecureChannel/ISecureChannel.h>
 #include <LibreSCRS/SecureChannel/SessionKeys.h>
 
+#include <expected>
 #include <memory>
 
 namespace LibreSCRS::SmartCard {
@@ -35,19 +36,6 @@ class BacChannelImpl;
 class LIBRESCRS_PUBLIC_API BacChannel final : public ISecureChannel
 {
 public:
-    /// @brief Outcome of @ref BacChannel::establish.
-    ///
-    /// On success @ref channel is a constructed @ref BacChannel and
-    /// @ref error is @ref ChannelActivationError::None. On failure the
-    /// channel is `nullptr` and @ref error carries the mapped category.
-    ///
-    /// @since 4.1
-    struct LIBRESCRS_PUBLIC_API HandshakeResult
-    {
-        std::unique_ptr<BacChannel> channel;
-        ChannelActivationError error = ChannelActivationError::None;
-    };
-
     BacChannel(LibreSCRS::SmartCard::IConnection& connection, LibreSCRS::SmartCard::AppletAid currentAppletAid,
                SessionKeys keys);
 
@@ -90,13 +78,15 @@ public:
     ///        expiry). Check digits are computed internally.
     /// @param token Cancellation token honoured before the handshake
     ///        starts.
-    /// @return On success a populated @ref HandshakeResult::channel; on
-    ///         failure @ref HandshakeResult::error carries the category.
+    /// @return On success a constructed @ref BacChannel; on failure the
+    ///         unexpected value carries the mapped
+    ///         @ref ChannelActivationError category. Mirrors sibling 4.1
+    ///         factories so consumers see one unified error idiom.
     ///
     /// @since 4.1
-    [[nodiscard]] static HandshakeResult establish(LibreSCRS::SmartCard::IConnection& connection,
-                                                   LibreSCRS::SmartCard::AppletAid appletAid, const BacInput& input,
-                                                   LibreSCRS::CancelToken token);
+    [[nodiscard]] static std::expected<std::unique_ptr<BacChannel>, ChannelActivationError>
+    establish(LibreSCRS::SmartCard::IConnection& connection, LibreSCRS::SmartCard::AppletAid appletAid,
+              const BacInput& input, LibreSCRS::CancelToken token) noexcept;
 
 private:
     std::unique_ptr<detail::BacChannelImpl> pImpl;

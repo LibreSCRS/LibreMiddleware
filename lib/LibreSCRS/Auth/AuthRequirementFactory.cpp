@@ -63,28 +63,48 @@ FieldDescriptor makeConfirmPin()
 
 AuthRequirement AuthRequirement::forPreRead(PreReadAuthMethod method) noexcept
 {
-    AuthRequirement r;
-    r.purposeValue = Purpose::PreRead;
-    if (method == PreReadAuthMethod::PaceCan) {
-        FieldDescriptor can;
-        can.id = "can";
-        can.type = CredentialFieldType::NumericCan;
-        can.secret = false;
-        can.minLength = std::size_t{6};
-        can.maxLength = std::size_t{6};
-        can.label.key = "librescrs.auth.label.can";
-        can.label.defaultText = "CAN";
-        r.fieldList.push_back(std::move(can));
-    } else if (method == PreReadAuthMethod::BacMrz) {
-        FieldDescriptor mrz;
-        mrz.id = "mrz";
-        mrz.type = CredentialFieldType::Mrz;
-        mrz.secret = false;
-        mrz.label.key = "librescrs.auth.label.mrz";
-        mrz.label.defaultText = "MRZ";
-        r.fieldList.push_back(std::move(mrz));
+    try {
+        AuthRequirement r;
+        r.purposeValue = Purpose::PreRead;
+        if (method == PreReadAuthMethod::PaceCan) {
+            FieldDescriptor can;
+            can.id = "can";
+            can.type = CredentialFieldType::NumericCan;
+            can.secret = false;
+            can.minLength = std::size_t{6};
+            can.maxLength = std::size_t{6};
+            can.label.key = "librescrs.auth.label.can";
+            can.label.defaultText = "CAN";
+            r.fieldList.push_back(std::move(can));
+        } else if (method == PreReadAuthMethod::BacMrz) {
+            FieldDescriptor mrz;
+            mrz.id = "mrz";
+            mrz.type = CredentialFieldType::Mrz;
+            mrz.secret = false;
+            mrz.label.key = "librescrs.auth.label.mrz";
+            mrz.label.defaultText = "MRZ";
+            r.fieldList.push_back(std::move(mrz));
+        }
+        return r;
+    } catch (...) {
+        // Allocation failure constructing the field list. The factory is
+        // declared `noexcept` (API-POLICY §5.1 — infallible factory over a
+        // closed enum), so we cannot let std::bad_alloc escape. Return a
+        // degraded-but-valid sentinel marked CustomExtension with an OOM
+        // marker key in `messageText`; downstream prompt code skips
+        // requirements with an empty field list and the marker informs
+        // diagnostics. Honest contract per the noexcept-alloc rule.
+        AuthRequirement r;
+        r.purposeValue = Purpose::CustomExtension;
+        try {
+            LocalizedText marker;
+            marker.key = "lc-auth-oom-fallback";
+            r.messageText = std::move(marker);
+        } catch (...) {
+            // Marker assignment also failed — leave the requirement bare.
+        }
+        return r;
     }
-    return r;
 }
 
 AuthRequirement AuthRequirement::forSigning(std::string pinLabel, int retriesLeft)
@@ -251,16 +271,35 @@ FieldDescriptor makePaceSecretField(PaceSecretKind kind)
 AuthRequirement AuthRequirement::forPaceSecret(LibreSCRS::SmartCard::AppletAid aid, PaceSecretKind kind,
                                                std::optional<int> retriesLeft, LocalizedText reasonForUser) noexcept
 {
-    AuthRequirement r;
-    r.purposeValue = Purpose::EstablishPaceChannel;
-    r.fieldList.push_back(makePaceSecretField(kind));
-    r.retriesValue = retriesLeft;
-    if (!reasonForUser.defaultText.empty() || !reasonForUser.key.empty()) {
-        r.messageText = std::move(reasonForUser);
+    try {
+        AuthRequirement r;
+        r.purposeValue = Purpose::EstablishPaceChannel;
+        r.fieldList.push_back(makePaceSecretField(kind));
+        r.retriesValue = retriesLeft;
+        if (!reasonForUser.defaultText.empty() || !reasonForUser.key.empty()) {
+            r.messageText = std::move(reasonForUser);
+        }
+        r.paceKindValue = kind;
+        r.paceAppletValue = std::move(aid);
+        return r;
+    } catch (...) {
+        // Allocation failure constructing the PACE/BAC prompt descriptor.
+        // The factory is declared `noexcept` (API-POLICY §5.1 — infallible
+        // by construction); honour the contract with a degraded-but-valid
+        // sentinel rather than terminating. CustomExtension purpose +
+        // empty field list signals "no actionable prompt"; the OOM marker
+        // key on `messageText` informs diagnostics.
+        AuthRequirement r;
+        r.purposeValue = Purpose::CustomExtension;
+        try {
+            LocalizedText marker;
+            marker.key = "lc-auth-oom-fallback";
+            r.messageText = std::move(marker);
+        } catch (...) {
+            // Marker assignment also failed — leave the requirement bare.
+        }
+        return r;
     }
-    r.paceKindValue = kind;
-    r.paceAppletValue = std::move(aid);
-    return r;
 }
 
 } // namespace LibreSCRS::Auth

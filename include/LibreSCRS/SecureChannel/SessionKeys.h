@@ -13,8 +13,6 @@
 #include <cstdint>
 #include <vector>
 
-#include <openssl/crypto.h>
-
 namespace LibreSCRS::SecureChannel {
 
 /// @brief Cipher family carried by a @ref SessionKeys block.
@@ -59,19 +57,12 @@ struct LIBRESCRS_PUBLIC_API SessionKeys
 
     /// @brief Cleanse every key field before the vectors release their
     ///        allocations.
+    ///
+    /// Defined out-of-line in @c session_keys.cpp so the public header
+    /// does not transitively pull @c <openssl/crypto.h> into downstream
+    /// consumers.
     /// @since 4.1
-    ~SessionKeys()
-    {
-        if (!encKey.empty()) {
-            OPENSSL_cleanse(encKey.data(), encKey.size());
-        }
-        if (!macKey.empty()) {
-            OPENSSL_cleanse(macKey.data(), macKey.size());
-        }
-        if (!ssc.empty()) {
-            OPENSSL_cleanse(ssc.data(), ssc.size());
-        }
-    }
+    ~SessionKeys() noexcept;
 };
 
 } // namespace LibreSCRS::SecureChannel

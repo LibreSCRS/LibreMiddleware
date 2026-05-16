@@ -232,8 +232,8 @@ TEST(PaceEstablishTests, NonPcscConnectionMapsToInternal)
     params.paramId = 13;
 
     auto outcome = PaceChannel::establish(fakeConn, params, CancelToken{});
-    EXPECT_EQ(outcome.channel, nullptr);
-    EXPECT_EQ(outcome.error, ChannelActivationError::Internal);
+    ASSERT_FALSE(outcome.has_value());
+    EXPECT_EQ(outcome.error(), ChannelActivationError::Internal);
 }
 
 TEST(PaceEstablishTests, AlreadyCancelledTokenSkipsHandshake)
@@ -253,8 +253,8 @@ TEST(PaceEstablishTests, AlreadyCancelledTokenSkipsHandshake)
     src.requestCancel();
 
     auto outcome = PaceChannel::establish(fakeConn, params, token);
-    EXPECT_EQ(outcome.channel, nullptr);
-    EXPECT_EQ(outcome.error, ChannelActivationError::Cancelled);
+    ASSERT_FALSE(outcome.has_value());
+    EXPECT_EQ(outcome.error(), ChannelActivationError::Cancelled);
     EXPECT_TRUE(fakeConn.history().empty());
 }
 
@@ -288,8 +288,8 @@ TEST(BacEstablishTests, NonPcscConnectionMapsToInternal)
     input.dateOfExpiry = LibreSCRS::Secure::String{"940623"};
 
     auto outcome = BacChannel::establish(fakeConn, makeNamEmrtdAid(), input, CancelToken{});
-    EXPECT_EQ(outcome.channel, nullptr);
-    EXPECT_EQ(outcome.error, ChannelActivationError::Internal);
+    ASSERT_FALSE(outcome.has_value());
+    EXPECT_EQ(outcome.error(), ChannelActivationError::Internal);
 }
 
 TEST(BacEstablishTests, AlreadyCancelledTokenSkipsHandshake)
@@ -308,8 +308,8 @@ TEST(BacEstablishTests, AlreadyCancelledTokenSkipsHandshake)
     src.requestCancel();
 
     auto outcome = BacChannel::establish(fakeConn, makeNamEmrtdAid(), input, token);
-    EXPECT_EQ(outcome.channel, nullptr);
-    EXPECT_EQ(outcome.error, ChannelActivationError::Cancelled);
+    ASSERT_FALSE(outcome.has_value());
+    EXPECT_EQ(outcome.error(), ChannelActivationError::Cancelled);
     EXPECT_TRUE(fakeConn.history().empty());
 }
 

@@ -47,61 +47,60 @@ void BacChannel::replaceKeys(SessionKeys keys) noexcept
     pImpl->replaceKeys(std::move(keys));
 }
 
-BacChannel::HandshakeResult BacChannel::establish(LibreSCRS::SmartCard::IConnection& connection,
-                                                  LibreSCRS::SmartCard::AppletAid appletAid, const BacInput& input,
-                                                  LibreSCRS::CancelToken token)
+std::expected<std::unique_ptr<BacChannel>, ChannelActivationError>
+BacChannel::establish(LibreSCRS::SmartCard::IConnection& connection, LibreSCRS::SmartCard::AppletAid appletAid,
+                      const BacInput& input, LibreSCRS::CancelToken token) noexcept
 {
-    HandshakeResult out;
-
-    if (token.isCancellable() && token.isCancelled()) {
-        out.error = ChannelActivationError::Cancelled;
-        return out;
-    }
-
-    auto* pcsc = dynamic_cast<LibreSCRS::SmartCard::Internal::PCSCConnection*>(&connection);
-    if (pcsc == nullptr) {
-        out.error = ChannelActivationError::Internal;
-        return out;
-    }
-
-    std::optional<emrtd::crypto::SessionKeys> derived;
     try {
-        // emrtd::crypto::deriveBACKeys takes const std::string& — materialise
-        // scrubbed scratch copies from the Secure::String fields and cleanse
-        // them on scope exit via PinStringScrubber so the MRZ bytes do not
-        // outlive this call frame.
-        std::string docNoScratch{input.documentNumber.view()};
-        std::string dobScratch{input.dateOfBirth.view()};
-        std::string doeScratch{input.dateOfExpiry.view()};
-        LibreSCRS::SmartCard::Internal::PinStringScrubber scrubDocNo{docNoScratch};
-        LibreSCRS::SmartCard::Internal::PinStringScrubber scrubDob{dobScratch};
-        LibreSCRS::SmartCard::Internal::PinStringScrubber scrubDoe{doeScratch};
-        auto bacKeys = emrtd::crypto::deriveBACKeys(docNoScratch, dobScratch, doeScratch);
-        derived = emrtd::crypto::performBAC(*pcsc, bacKeys);
+        if (token.isCancellable() && token.isCancelled()) {
+            return std::unexpected{ChannelActivationError::Cancelled};
+        }
+
+        auto* pcsc = dynamic_cast<LibreSCRS::SmartCard::Internal::PCSCConnection*>(&connection);
+        if (pcsc == nullptr) {
+            return std::unexpected{ChannelActivationError::Internal};
+        }
+
+        std::optional<emrtd::crypto::SessionKeys> derived;
+        try {
+            // emrtd::crypto::deriveBACKeys takes const std::string& —
+            // materialise scrubbed scratch copies from the Secure::String
+            // fields and cleanse them on scope exit via PinStringScrubber so
+            // the MRZ bytes do not outlive this call frame.
+            std::string docNoScratch{input.documentNumber.view()};
+            std::string dobScratch{input.dateOfBirth.view()};
+            std::string doeScratch{input.dateOfExpiry.view()};
+            LibreSCRS::SmartCard::Internal::PinStringScrubber scrubDocNo{docNoScratch};
+            LibreSCRS::SmartCard::Internal::PinStringScrubber scrubDob{dobScratch};
+            LibreSCRS::SmartCard::Internal::PinStringScrubber scrubDoe{doeScratch};
+            auto bacKeys = emrtd::crypto::deriveBACKeys(docNoScratch, dobScratch, doeScratch);
+            derived = emrtd::crypto::performBAC(*pcsc, bacKeys);
+        } catch (...) {
+            return std::unexpected{ChannelActivationError::PaceProtocolFailure};
+        }
+
+        if (!derived.has_value()) {
+            // BAC mutual-auth failure (wrong MRZ or card-side rejection)
+            // maps to PaceWrongSecret per the unified secret-failure
+            // category documented in the spec; the enum's "Pace" prefix is
+            // a slight misnomer for BAC but the retry semantics are
+            // identical (evict cached MRZ + re-prompt).
+            return std::unexpected{ChannelActivationError::PaceWrongSecret};
+        }
+
+        SessionKeys publicKeys;
+        publicKeys.encKey = std::move(derived->encKey);
+        publicKeys.macKey = std::move(derived->macKey);
+        publicKeys.ssc = std::move(derived->ssc);
+        publicKeys.cipher = SmCipher::Des3;
+
+        return std::make_unique<BacChannel>(connection, std::move(appletAid), std::move(publicKeys));
     } catch (...) {
-        out.error = ChannelActivationError::PaceProtocolFailure;
-        return out;
+        // Honour the `noexcept` contract (API-POLICY §5.1 noexcept-alloc
+        // rule): translate any escaping allocation failure into the
+        // Internal category rather than std::terminate.
+        return std::unexpected{ChannelActivationError::Internal};
     }
-
-    if (!derived.has_value()) {
-        // BAC mutual-auth failure (wrong MRZ or card-side rejection) maps
-        // to PaceWrongSecret per the unified secret-failure category
-        // documented in the spec; the enum's "Pace" prefix is a slight
-        // misnomer for BAC but the retry semantics are identical (evict
-        // cached MRZ + re-prompt).
-        out.error = ChannelActivationError::PaceWrongSecret;
-        return out;
-    }
-
-    SessionKeys publicKeys;
-    publicKeys.encKey = std::move(derived->encKey);
-    publicKeys.macKey = std::move(derived->macKey);
-    publicKeys.ssc = std::move(derived->ssc);
-    publicKeys.cipher = SmCipher::Des3;
-
-    out.channel = std::make_unique<BacChannel>(connection, std::move(appletAid), std::move(publicKeys));
-    out.error = ChannelActivationError::None;
-    return out;
 }
 
 } // namespace LibreSCRS::SecureChannel

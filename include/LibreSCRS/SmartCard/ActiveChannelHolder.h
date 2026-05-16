@@ -47,6 +47,24 @@ ActiveChannelHolder makeActiveChannelHolder(CardSession* session, std::unique_lo
 /// in scope guarantee that all @ref transmit calls go through the same
 /// active channel; the destructor surfaces no errors.
 ///
+/// @warning The holder MUST NOT outlive its originating @ref CardSession.
+/// The holder borrows a mutex and PC/SC transaction owned by the session;
+/// if the @ref CardSession is destructed or move-assigned-to while a
+/// holder is still alive, behaviour is undefined (use-after-free of the
+/// borrowed mutex and PC/SC transaction).
+///
+/// @par Lifetime
+/// Hosts must structure code so the @ref CardSession's lifetime strictly
+/// exceeds every @ref ActiveChannelHolder it produces:
+/// @code
+/// auto session = CardSession::open(reader).value();
+/// {
+///     auto holder = session.activateChannelWithSm(aid, req, tok).value();
+///     // ... use holder.transmit() ...
+/// } // holder destructs here, session still alive
+/// // session destructs here
+/// @endcode
+///
 /// @since 4.1
 class LIBRESCRS_PUBLIC_API ActiveChannelHolder
 {

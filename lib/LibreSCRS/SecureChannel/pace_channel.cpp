@@ -84,76 +84,78 @@ emrtd::crypto::PACEPasswordType toCryptoPwType(LibreSCRS::Auth::PaceSecretKind t
 
 } // namespace
 
-PaceChannel::HandshakeResult PaceChannel::establish(LibreSCRS::SmartCard::IConnection& connection,
-                                                    const PACEParams& params, LibreSCRS::CancelToken token)
+std::expected<std::unique_ptr<PaceChannel>, ChannelActivationError>
+PaceChannel::establish(LibreSCRS::SmartCard::IConnection& connection, const PACEParams& params,
+                       LibreSCRS::CancelToken token) noexcept
 {
-    HandshakeResult out;
-
-    if (token.isCancellable() && token.isCancelled()) {
-        out.error = ChannelActivationError::Cancelled;
-        return out;
-    }
-
-    // emrtd::crypto::performPACE binds to the concrete PCSCConnection
-    // because the underlying handshake issues several plain APDUs through
-    // it. IConnection is the seam used by the post-handshake transmit path
-    // (FakePCSCConnection), but the handshake itself requires the real
-    // transport. A non-PCSCConnection IConnection therefore surfaces as
-    // Internal — tests cover this path explicitly.
-    auto* pcsc = dynamic_cast<LibreSCRS::SmartCard::Internal::PCSCConnection*>(&connection);
-    if (pcsc == nullptr) {
-        out.error = ChannelActivationError::Internal;
-        return out;
-    }
-
-    auto view = params.password.view();
-    emrtd::crypto::PACEParams cryptoParams;
-    cryptoParams.oid = params.oid;
-    cryptoParams.passwordType = toCryptoPwType(params.passwordType);
-    cryptoParams.password.assign(view.begin(), view.end());
-    cryptoParams.paramId = params.paramId;
-
-    std::optional<emrtd::crypto::SessionKeys> derived;
     try {
-        derived = emrtd::crypto::performPACE(*pcsc, cryptoParams);
-    } catch (...) {
-        // Cleanse the local password copy before propagating the failure.
+        if (token.isCancellable() && token.isCancelled()) {
+            return std::unexpected{ChannelActivationError::Cancelled};
+        }
+
+        // emrtd::crypto::performPACE binds to the concrete PCSCConnection
+        // because the underlying handshake issues several plain APDUs
+        // through it. IConnection is the seam used by the post-handshake
+        // transmit path (FakePCSCConnection), but the handshake itself
+        // requires the real transport. A non-PCSCConnection IConnection
+        // therefore surfaces as Internal — tests cover this path explicitly.
+        auto* pcsc = dynamic_cast<LibreSCRS::SmartCard::Internal::PCSCConnection*>(&connection);
+        if (pcsc == nullptr) {
+            return std::unexpected{ChannelActivationError::Internal};
+        }
+
+        auto view = params.password.view();
+        emrtd::crypto::PACEParams cryptoParams;
+        cryptoParams.oid = params.oid;
+        cryptoParams.passwordType = toCryptoPwType(params.passwordType);
+        cryptoParams.password.assign(view.begin(), view.end());
+        cryptoParams.paramId = params.paramId;
+
+        std::optional<emrtd::crypto::SessionKeys> derived;
+        try {
+            derived = emrtd::crypto::performPACE(*pcsc, cryptoParams);
+        } catch (...) {
+            // Cleanse the local password copy before propagating the
+            // failure.
+            if (!cryptoParams.password.empty()) {
+                OPENSSL_cleanse(cryptoParams.password.data(), cryptoParams.password.size());
+            }
+            return std::unexpected{ChannelActivationError::PaceProtocolFailure};
+        }
+
         if (!cryptoParams.password.empty()) {
             OPENSSL_cleanse(cryptoParams.password.data(), cryptoParams.password.size());
         }
-        out.error = ChannelActivationError::PaceProtocolFailure;
-        return out;
+
+        if (!derived.has_value()) {
+            // emrtd::crypto::performPACE returns nullopt for any
+            // handshake-level failure (wrong CAN/MRZ, unsupported OID,
+            // card-side SW != 9000 at any step). Mapping all failures to
+            // PaceWrongSecret is consistent with the retry contract: the
+            // caller evicts the cached secret and re-prompts.
+            // PacePinBlocked / PaceUnsupported are reserved for future
+            // protocol-aware paths that can distinguish those categories at
+            // the wire level.
+            return std::unexpected{ChannelActivationError::PaceWrongSecret};
+        }
+
+        SessionKeys publicKeys;
+        publicKeys.encKey = std::move(derived->encKey);
+        publicKeys.macKey = std::move(derived->macKey);
+        publicKeys.ssc = std::move(derived->ssc);
+        publicKeys.cipher = cipherForPaceOid(params.oid);
+
+        // PACE is session-scoped, not applet-scoped: the channel emerges
+        // with an empty currentApplet. The caller
+        // (CardSession::activateChannelWithSm) issues a wrapped SELECT
+        // through the channel and updates the AID via setCurrentApplet.
+        return std::make_unique<PaceChannel>(connection, LibreSCRS::SmartCard::AppletAid{}, std::move(publicKeys));
+    } catch (...) {
+        // Honour the `noexcept` contract (API-POLICY §5.1 noexcept-alloc
+        // rule): translate any escaping allocation failure into the
+        // Internal category rather than std::terminate.
+        return std::unexpected{ChannelActivationError::Internal};
     }
-
-    if (!cryptoParams.password.empty()) {
-        OPENSSL_cleanse(cryptoParams.password.data(), cryptoParams.password.size());
-    }
-
-    if (!derived.has_value()) {
-        // emrtd::crypto::performPACE returns nullopt for any handshake-level
-        // failure (wrong CAN/MRZ, unsupported OID, card-side SW != 9000 at
-        // any step). Mapping all failures to PaceWrongSecret is consistent
-        // with the retry contract: the caller evicts the cached secret and
-        // re-prompts. PacePinBlocked / PaceUnsupported are reserved for
-        // future protocol-aware paths that can distinguish those categories
-        // at the wire level.
-        out.error = ChannelActivationError::PaceWrongSecret;
-        return out;
-    }
-
-    SessionKeys publicKeys;
-    publicKeys.encKey = std::move(derived->encKey);
-    publicKeys.macKey = std::move(derived->macKey);
-    publicKeys.ssc = std::move(derived->ssc);
-    publicKeys.cipher = cipherForPaceOid(params.oid);
-
-    // PACE is session-scoped, not applet-scoped: the channel emerges with
-    // an empty currentApplet. The caller (CardSession::activateChannelWithSm)
-    // issues a wrapped SELECT through the channel and updates the AID via
-    // setCurrentApplet.
-    out.channel = std::make_unique<PaceChannel>(connection, LibreSCRS::SmartCard::AppletAid{}, std::move(publicKeys));
-    out.error = ChannelActivationError::None;
-    return out;
 }
 
 } // namespace LibreSCRS::SecureChannel
