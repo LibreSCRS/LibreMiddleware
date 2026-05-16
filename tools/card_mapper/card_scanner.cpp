@@ -384,8 +384,8 @@ std::string probeCertPath(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, 
 bool probePKCS15(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, FileNode& df, AppletInfo& applet)
 {
     try {
-        // PKCS15Card now consumes ISecureChannel (Stage 5); wrap the raw
-        // PCSCConnection in a PlainChannel pass-through for this no-SM probe.
+        // PKCS15Card consumes ISecureChannel; wrap the raw PCSCConnection in
+        // a PlainChannel pass-through for this no-SM probe.
         LibreSCRS::SecureChannel::PlainChannel channel(conn, LibreSCRS::SmartCard::AppletAid{});
         pkcs15::PKCS15Card card(channel);
         if (!card.probe())

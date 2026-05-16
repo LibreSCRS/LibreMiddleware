@@ -45,7 +45,8 @@ static void printSW(const LibreSCRS::SmartCard::Internal::APDUResponse& resp)
 }
 
 // Try to SELECT an AID and report result
-static bool trySelectAID(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const char* name, const std::vector<uint8_t>& aid)
+static bool trySelectAID(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const char* name,
+                         const std::vector<uint8_t>& aid)
 {
     printf("\n--- SELECT %s ---\n", name);
     printf("  AID: ");
@@ -66,7 +67,8 @@ static bool trySelectAID(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, c
 }
 
 // Read a file by FID (SELECT + READ BINARY in chunks)
-static std::vector<uint8_t> readFileByFID(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint16_t fid, const char* name)
+static std::vector<uint8_t> readFileByFID(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint16_t fid,
+                                          const char* name)
 {
     printf("\n--- READ %s (FID %04X) ---\n", name, fid);
 
@@ -111,7 +113,8 @@ static std::vector<uint8_t> readFileByFID(LibreSCRS::SmartCard::Internal::PCSCCo
 }
 
 // Read file using short FID (SFI) in READ BINARY P1
-static std::vector<uint8_t> readFileBySFI(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t sfi, const char* name)
+static std::vector<uint8_t> readFileBySFI(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t sfi,
+                                          const char* name)
 {
     printf("\n--- READ %s (SFI %02X) ---\n", name, sfi);
 

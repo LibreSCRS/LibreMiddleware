@@ -5,10 +5,9 @@
 /// @brief Concrete @ref LibreSCRS::Pkcs15::Pkcs11::Pkcs15Card backed by
 ///        the existing @ref pkcs15::PKCS15Card APDU helper.
 ///
-/// Stage 6 (4.2) migrated transport ownership from a directly-held
-/// @c PCSCConnection + ad-hoc @c installSmFilter / @c performPACE pair to
-/// an owned @c CardSession that emits per-operation
-/// @c ActiveChannelHolder instances. PACE handshakes ride the session's
+/// Transport ownership lives on the owned @c CardSession that emits
+/// per-operation @c ActiveChannelHolder instances; this class never
+/// holds a raw @c PCSCConnection. PACE handshakes ride the session's
 /// per-process credential cache; SM wrap/unwrap lives inside the
 /// holder's @c PaceChannel rather than in a transmit-filter lambda
 /// installed on the raw connection.
@@ -62,7 +61,7 @@ constexpr unsigned long kCkfUserPinInitialized = 0x00000008UL;
 
 /// @brief Cheap reachability probe: can the card SELECT the standard
 ///        PKCS#15 AID without authentication? Mirrors the
-///        @c pkcs15-plugin Stage 5 probeApplet helper.
+///        @c pkcs15-plugin probeApplet helper.
 enum class ProbeResult : std::uint8_t {
     Ok,         ///< Plain SELECT succeeded — no SM needed for this card.
     NeedsPace,  ///< Card returned 6982 — PACE must be run first.
@@ -80,7 +79,7 @@ enum class ProbeResult : std::uint8_t {
     return ProbeResult::Unreachable;
 }
 
-/// @brief Translate a Stage 6 channel-activation failure to a PKCS#11
+/// @brief Translate a channel-activation failure to a PKCS#11
 ///        @c CKR_* code on the @ref Crv numeric domain. PACE-secret
 ///        failures map to @c PinIncorrect / @c PinLocked so the
 ///        consumer's normal "wrong PIN, try again" flow handles them
@@ -293,10 +292,11 @@ unsigned long Pkcs15Card::bindFromInjectedSession(const std::string& reader,
     // PACE SM context established by the host's display flow earlier.
     // CardSession::activateChannelFor closes the live activeChannel
     // before emitting a plain SELECT, which would destroy that SM
-    // context (Stage 5 trace: SW 6984). The probe order is therefore
-    // SM-first: activateChannelWithSm preserves a live PaceChannel via
-    // its Case 1 (target applet) / Case 2 (different applet, wrapped
-    // SELECT) fast paths, and its preflight returns CredentialsRequired
+    // context (empirically observed: the card returns 6984 on the next
+    // wrapped APDU). The probe order is therefore SM-first:
+    // activateChannelWithSm preserves a live PaceChannel via its same-
+    // applet / wrapped-SELECT fast paths, and its preflight returns
+    // CredentialsRequired
     // cheaply (no wire I/O) when no PACE credentials are deposited and
     // no usable channel exists. Only on CredentialsRequired do we fall
     // through to plain activation.
@@ -423,7 +423,7 @@ unsigned long Pkcs15Card::establishPACE()
 
     // Validate the deposited CAN by attempting a holder acquisition.
     // The session caches the derived SM keys on success so subsequent
-    // per-op holders fast-path through the §5.3b Case 1 wrapped-SELECT
+    // per-op holders fast-path through the same-applet / wrapped-SELECT
     // path rather than re-running the PACE handshake.
     auto holderResult = acquireChannel();
     if (!holderResult)

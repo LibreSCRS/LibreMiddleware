@@ -21,8 +21,7 @@ namespace LibreSCRS::Auth {
 /// dispatches on the channel protocol, not on the secret kind.
 ///
 /// @since 4.1
-enum class PaceSecretKind : std::uint8_t
-{
+enum class PaceSecretKind : std::uint8_t {
     Can = 0,
     Mrz = 1,
     Pin = 2,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 //
-// Stage 7e — real-card E2E smoke for the SessionAttachment inject path.
+// Real-card E2E smoke for the SessionAttachment inject path.
 //
 // Card under test:
 //   GEO testna SCE 8.0-C2V0 (contactless) — ATR
@@ -16,7 +16,7 @@
 //        a. dlopen(librescrs-pkcs11.so) + C_Initialize,
 //        b. attaches the live CardSession via SessionAttachment BEFORE
 //           the slot lookup so Pkcs15PKCS11Provider::probe adopts it
-//           (the §5.3b Case 1/2 fast-path inside bindFromInjectedSession),
+//           (the wrapped-SELECT fast-path inside bindFromInjectedSession),
 //        c. resolves the reader-name slot, opens a session, runs C_Login
 //           with the bare PIN bytes (CAN already cached on session).
 //   4. Read the on-card cert via Pkcs11Token::certificate().
@@ -270,20 +270,20 @@ TEST(Pkcs11InjectE2EGeoTestna, AttachAndSignThroughInjectedSession)
     signInput.insert(signInput.end(), kSha256DigestInfoPrefix.begin(), kSha256DigestInfoPrefix.end());
     signInput.insert(signInput.end(), digest.begin(), digest.end());
 
-    // Stage 7 acceptance milestone: every step up to here proves the
-    // inject path. The CardSession opened by this process is what the
-    // module's Pkcs15Card adopted (cert read above hit it via SM); the
-    // C_Login SM channel rode the same session via §5.3b Case 1/2.
+    // Acceptance milestone: every step up to here proves the inject path.
+    // The CardSession opened by this process is what the module's
+    // Pkcs15Card adopted (cert read above hit it via SM); the C_Login SM
+    // channel rode the same session through the wrapped-SELECT fast path.
     //
     // The actual C_Sign on GEO testna SCE 8.0-C2V0 is a pre-existing
-    // card-specific issue documented in project_geo_testna_pace_required
-    // ("End-to-end sign smoke deferred to next session"). It is NOT a
-    // Stage 7 regression — the same C_Sign would fail today against the
-    // standalone Stage 6 path. Attempt the sign and capture the outcome,
-    // but do not fail the test on a known-issue card-side problem.
-    // Stage 7+ libresign fix: pass the raw payload so Pkcs11Token can try
-    // the combined CKM_SHA256_RSA_PKCS mechanism first (correct for hash-
-    // on-card SSCDs like Cryptovision SCE 8.0). Falls back to legacy
+    // card-specific limitation (CAN required to open the secure channel
+    // before any PIN VERIFY can land; sign smoke deferred). It is NOT a
+    // regression against the standalone (non-inject) path — the same
+    // C_Sign would fail there too. Attempt the sign and capture the
+    // outcome, but do not fail the test on a known card-side problem.
+    // libresign passes the raw payload so Pkcs11Token can try the
+    // combined CKM_SHA256_RSA_PKCS mechanism first (correct for hash-on-
+    // card SSCDs like Cryptovision SCE 8.0). Falls back to legacy
     // CKM_RSA_PKCS with the pre-built DigestInfo on cards that prefer it.
     std::vector<std::uint8_t> signature;
     std::string signError;
@@ -373,14 +373,14 @@ TEST(Pkcs11InjectE2EGeoTestna, AttachAndSignThroughInjectedSession)
                                  "as a libresign mechanism-dispatch follow-up.\n");
         }
     } else {
-        // Sign failed without a PIN error. Acceptance for Stage 7 is the
-        // inject path through C_Login (proven by reaching this branch);
-        // sign on this card is a separate ticket. Surface as a warning
-        // line in the gtest output without failing the test.
+        // Sign failed without a PIN error. The test's primary acceptance
+        // criterion is the inject path through C_Login (proven by
+        // reaching this branch); sign on this card is a separate ticket.
+        // Surface as a warning line in the gtest output without failing.
         std::fprintf(stderr,
-                     "[Pkcs11InjectE2EGeoTestna] STAGE 7 ACCEPTANCE PARTIAL: inject + login + cert read OK; "
-                     "C_Sign on GEO testna failed with: %s  (pre-existing card-specific issue per "
-                     "project_geo_testna_pace_required; not a Stage 7 regression)\n",
+                     "[Pkcs11InjectE2EGeoTestna] INJECT + LOGIN + CERT READ OK; "
+                     "C_Sign on GEO testna failed with: %s  (pre-existing "
+                     "card-specific limitation, not a regression in the inject path)\n",
                      signError.c_str());
     }
 

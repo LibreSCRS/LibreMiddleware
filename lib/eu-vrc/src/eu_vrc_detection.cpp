@@ -112,12 +112,12 @@ bool tryAidSequence(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const 
         if (isLast && p2 == 0x0C) {
             // Use raw APDU for P2=0x0C
             LibreSCRS::SmartCard::Internal::APDUCommand cmd{.cla = 0x00,
-                                       .ins = 0xA4,
-                                       .p1 = 0x04,
-                                       .p2 = 0x0C,
-                                       .data = seq.selectCommands[i],
-                                       .le = 0,
-                                       .hasLe = false};
+                                                            .ins = 0xA4,
+                                                            .p1 = 0x04,
+                                                            .p2 = 0x0C,
+                                                            .data = seq.selectCommands[i],
+                                                            .le = 0,
+                                                            .hasLe = false};
             auto resp = conn.transmit(cmd);
             // Don't check last response — some cards return warnings
         } else {

@@ -70,7 +70,8 @@ bool HealthCard::probe(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
 }
 
 HealthCard::HealthCard(const std::string& readerName)
-    : ownedConnection(std::make_unique<LibreSCRS::SmartCard::Internal::PCSCConnection>(readerName)), conn(*ownedConnection)
+    : ownedConnection(std::make_unique<LibreSCRS::SmartCard::Internal::PCSCConnection>(readerName)),
+      conn(*ownedConnection)
 {
     initCard();
 }
@@ -163,7 +164,8 @@ HealthDocumentData HealthCard::readDocumentData()
 
     // Variable personal file
     d.validUntil = formatDate(LibreSCRS::SmartCard::Internal::findString(varPersFields, protocol::TAG_VALID_UNTIL));
-    d.permanentlyValid = (LibreSCRS::SmartCard::Internal::findString(varPersFields, protocol::TAG_PERMANENTLY_VALID) == "01");
+    d.permanentlyValid =
+        (LibreSCRS::SmartCard::Internal::findString(varPersFields, protocol::TAG_PERMANENTLY_VALID) == "01");
 
     // Variable admin file
     d.parentName = findUtf16String(varAdminFields, protocol::TAG_PARENT_NAME);
@@ -186,14 +188,17 @@ HealthDocumentData HealthCard::readDocumentData()
     d.insuranceBasisRzzo = LibreSCRS::SmartCard::Internal::findString(varAdminFields, protocol::TAG_INSURANCE_BASIS);
     d.insuranceDescription = findUtf16String(varAdminFields, protocol::TAG_INSURANCE_DESC);
     d.carrierRelationship = findUtf16String(varAdminFields, protocol::TAG_CARRIER_RELATION);
-    d.carrierFamilyMember = (LibreSCRS::SmartCard::Internal::findString(varAdminFields, protocol::TAG_CARRIER_FAMILY_MEMBER) == "01");
+    d.carrierFamilyMember =
+        (LibreSCRS::SmartCard::Internal::findString(varAdminFields, protocol::TAG_CARRIER_FAMILY_MEMBER) == "01");
     d.carrierIdNumber = LibreSCRS::SmartCard::Internal::findString(varAdminFields, protocol::TAG_CARRIER_ID_NO);
-    d.carrierInsurantNumber = LibreSCRS::SmartCard::Internal::findString(varAdminFields, protocol::TAG_CARRIER_INSURANT_NO);
+    d.carrierInsurantNumber =
+        LibreSCRS::SmartCard::Internal::findString(varAdminFields, protocol::TAG_CARRIER_INSURANT_NO);
     d.carrierFamilyName = findUtf16String(varAdminFields, protocol::TAG_CARRIER_FAMILY_NAME);
     d.carrierFamilyNameLatin = findUtf16String(varAdminFields, protocol::TAG_CARRIER_FAMILY_NAME_LAT);
     d.carrierGivenName = findUtf16String(varAdminFields, protocol::TAG_CARRIER_GIVEN_NAME);
     d.carrierGivenNameLatin = findUtf16String(varAdminFields, protocol::TAG_CARRIER_GIVEN_NAME_LAT);
-    d.insuranceStartDate = formatDate(LibreSCRS::SmartCard::Internal::findString(varAdminFields, protocol::TAG_INSURANCE_START));
+    d.insuranceStartDate =
+        formatDate(LibreSCRS::SmartCard::Internal::findString(varAdminFields, protocol::TAG_INSURANCE_START));
     d.country = findUtf16String(varAdminFields, protocol::TAG_COUNTRY);
     d.taxpayerName = findUtf16String(varAdminFields, protocol::TAG_TAXPAYER_NAME);
     d.taxpayerResidence = findUtf16String(varAdminFields, protocol::TAG_TAXPAYER_RES);

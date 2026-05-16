@@ -240,7 +240,7 @@ private:
         auto& session = sessions[key];
 
         if (!session.credentials) {
-            // Phase 1: no credentials — return auth_required (no streaming needed).
+            // First entry — no credentials yet, return auth_required (no streaming needed).
             // Reads EF.CardAccess via the raw PCSC connection because no SM is
             // active yet; this query informs the host UI which credential type
             // to prompt for.
@@ -286,7 +286,7 @@ private:
             return data;
         }
 
-        // Phase 2: credentials present — set them on CardSession's cache and
+        // Re-entry with credentials — install them in CardSession's cache and
         // activate the SM channel via CardSession::activateChannelWithSm.
         auto creds = *session.credentials;
         lock.unlock();
@@ -811,8 +811,8 @@ private:
         // Holder destruction at scope exit ends the PC/SC transaction and
         // releases CardSession's sessionMutex. The PaceChannel itself remains
         // installed on CardSession's activeChannel slot so that subsequent
-        // plugin activations (Stage 5: pkcs15-plugin sign) take the §5.3b
-        // Case 2 wrapped-SELECT fast path through the same SM tunnel.
+        // plugin activations (notably pkcs15-plugin sign on the same card)
+        // take the wrapped-SELECT fast path through the same SM tunnel.
         return data;
     }
 

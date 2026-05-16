@@ -312,7 +312,7 @@ CardPluginService::findAllCandidates(std::span<const std::uint8_t> atr,
     LibreSCRS::Internal::probeTrace(std::string{"PROBE-ENTRY atr="} + LibreSCRS::Internal::atrToHex(atr) +
                                     " plugins=" + std::to_string(d->sortedPlugins.size()));
 
-    // Phase 1: ATR matches
+    // Pass 1 — ATR-based matches.
     for (const auto& plugin : d->sortedPlugins) {
         if (plugin->canHandle(atr)) {
             LibreSCRS::Internal::probeTrace(std::string{"PROBE-ATR-HIT plugin="} + plugin->pluginId() +
@@ -322,10 +322,10 @@ CardPluginService::findAllCandidates(std::span<const std::uint8_t> atr,
         }
     }
 
-    // Phase 2: AID probe on remaining plugins. ATR is already known from
+    // Pass 2 — AID probe on the remaining plugins. ATR is already known from
     // the session we just opened, so pass it through — plugins that want to
     // combine an AID probe with a secondary ATR check avoid re-reading it.
-    const auto phase1Size = result.size();
+    const auto atrMatchCount = result.size();
     const auto& sessionAtr = session.atr();
     for (const auto& plugin : d->sortedPlugins) {
         if (seen.count(plugin.get()) > 0) {
@@ -351,11 +351,11 @@ CardPluginService::findAllCandidates(std::span<const std::uint8_t> atr,
                                         (matched ? "true" : "false") + " threw=" + (threw ? "true" : "false"));
     }
 
-    // Sort within each phase independently — ATR matches before AID probes
-    auto phase2Start = result.begin() + static_cast<ptrdiff_t>(phase1Size);
-    std::sort(result.begin(), phase2Start,
+    // Sort within each pass independently — ATR matches stay ahead of AID probes.
+    auto aidProbeStart = result.begin() + static_cast<ptrdiff_t>(atrMatchCount);
+    std::sort(result.begin(), aidProbeStart,
               [](const auto& a, const auto& b) { return a->probePriority() < b->probePriority(); });
-    std::sort(phase2Start, result.end(),
+    std::sort(aidProbeStart, result.end(),
               [](const auto& a, const auto& b) { return a->probePriority() < b->probePriority(); });
     return result;
 }

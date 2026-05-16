@@ -18,8 +18,7 @@ namespace LibreSCRS::SmartCard {
 ///
 /// @since 4.1
 struct BacRequest
-{
-};
+{};
 
 /// @brief Request PACE SM (BSI TR-03110) using @ref secretKind as the
 ///        shared-secret variant.

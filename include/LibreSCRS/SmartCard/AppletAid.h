@@ -14,6 +14,7 @@
 
 #include <LibreSCRS/Export.h>
 
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -55,10 +56,21 @@ public:
     }
 
     /// @brief Underlying storage (for builders that need a vector).
-    [[nodiscard]] const std::vector<std::uint8_t>& asVector() const noexcept { return storage; }
+    [[nodiscard]] const std::vector<std::uint8_t>& asVector() const noexcept
+    {
+        return storage;
+    }
 
-    [[nodiscard]] std::size_t size() const noexcept { return storage.size(); }
-    [[nodiscard]] bool empty() const noexcept { return storage.empty(); }
+    /// @brief Length of the AID in bytes (0 when no applet is set).
+    [[nodiscard]] std::size_t size() const noexcept
+    {
+        return storage.size();
+    }
+    /// @brief Whether the AID is empty (sentinel for "no applet selected").
+    [[nodiscard]] bool empty() const noexcept
+    {
+        return storage.empty();
+    }
 
     /// @brief Lower-case hex rendering (no separators). Diagnostic use.
     [[nodiscard]] std::string toHex() const
@@ -66,23 +78,17 @@ public:
         static constexpr char kHex[] = "0123456789abcdef";
         std::string out;
         out.reserve(storage.size() * 2);
-        for (std::uint8_t b : storage)
-        {
+        for (std::uint8_t b : storage) {
             out.push_back(kHex[(b >> 4) & 0x0F]);
             out.push_back(kHex[b & 0x0F]);
         }
         return out;
     }
 
-    friend bool operator==(const AppletAid& a, const AppletAid& b) noexcept
-    {
-        return a.storage == b.storage;
-    }
-    friend bool operator!=(const AppletAid& a, const AppletAid& b) noexcept { return !(a == b); }
-    friend bool operator<(const AppletAid& a, const AppletAid& b) noexcept
-    {
-        return a.storage < b.storage;
-    }
+    /// @brief Byte-wise equality.
+    [[nodiscard]] bool operator==(const AppletAid&) const noexcept = default;
+    /// @brief Byte-wise lexicographic ordering (generates `<`, `<=`, `>`, `>=`).
+    [[nodiscard]] auto operator<=>(const AppletAid&) const noexcept = default;
 
 private:
     std::vector<std::uint8_t> storage;

@@ -217,7 +217,8 @@ EuVrcData EuVrcCard::readCard()
                 size_t skipOffset = static_cast<size_t>(raw[1]) + 2;
                 if (skipOffset < raw.size()) {
                     try {
-                        auto parsed = LibreSCRS::SmartCard::Internal::parseBER(raw.data() + skipOffset, raw.size() - skipOffset);
+                        auto parsed =
+                            LibreSCRS::SmartCard::Internal::parseBER(raw.data() + skipOffset, raw.size() - skipOffset);
                         LibreSCRS::SmartCard::Internal::mergeBER(merged, parsed);
                     } catch (...) {
                     }

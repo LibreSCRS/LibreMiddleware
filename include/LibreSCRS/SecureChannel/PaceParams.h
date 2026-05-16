@@ -10,6 +10,7 @@
 ///        for-one so the public surface does not depend on emrtd-crypto's
 ///        internal header.
 
+#include <LibreSCRS/Auth/PaceSecretKind.h>
 #include <LibreSCRS/Export.h>
 #include <LibreSCRS/Secure/String.h>
 
@@ -20,16 +21,6 @@
 #include <vector>
 
 namespace LibreSCRS::SecureChannel {
-
-/// @brief Which shared-secret variant the card expects for PACE.
-///
-/// @since 4.1
-enum class PACEPasswordType : std::uint8_t {
-    Mrz = 1,
-    Can = 2,
-    Pin = 3,
-    Puk = 4,
-};
 
 /// @brief Inputs for a single PACE handshake attempt.
 ///
@@ -44,7 +35,7 @@ struct LIBRESCRS_PUBLIC_API PACEParams
     std::string oid;
 
     /// @brief Variant of the shared secret carried in @ref password.
-    PACEPasswordType passwordType = PACEPasswordType::Can;
+    LibreSCRS::Auth::PaceSecretKind passwordType = LibreSCRS::Auth::PaceSecretKind::Can;
 
     /// @brief Shared-secret bytes. Caller-owned; cleansed by the channel
     ///        on handshake completion.

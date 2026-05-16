@@ -35,16 +35,14 @@ LocalizedText emptyReason()
 
 TEST(AuthRequirementPaceTests, PurposeIsEstablishPaceChannel)
 {
-    auto req = AuthRequirement::forPaceSecret(makeNamEmrtdAid(), PaceSecretKind::Can,
-                                              std::nullopt, emptyReason());
+    auto req = AuthRequirement::forPaceSecret(makeNamEmrtdAid(), PaceSecretKind::Can, std::nullopt, emptyReason());
     EXPECT_EQ(req.purpose(), Purpose::EstablishPaceChannel);
 }
 
 TEST(AuthRequirementPaceTests, PaceKindAndAppletPopulated)
 {
     auto aid = makeNamEmrtdAid();
-    auto req = AuthRequirement::forPaceSecret(aid, PaceSecretKind::Can, std::nullopt,
-                                              emptyReason());
+    auto req = AuthRequirement::forPaceSecret(aid, PaceSecretKind::Can, std::nullopt, emptyReason());
     ASSERT_TRUE(req.paceKind().has_value());
     EXPECT_EQ(*req.paceKind(), PaceSecretKind::Can);
     ASSERT_TRUE(req.paceApplet().has_value());
@@ -53,8 +51,7 @@ TEST(AuthRequirementPaceTests, PaceKindAndAppletPopulated)
 
 TEST(AuthRequirementPaceTests, CanFieldShape)
 {
-    auto req = AuthRequirement::forPaceSecret(makeNamEmrtdAid(), PaceSecretKind::Can,
-                                              std::nullopt, emptyReason());
+    auto req = AuthRequirement::forPaceSecret(makeNamEmrtdAid(), PaceSecretKind::Can, std::nullopt, emptyReason());
     auto fields = req.fields();
     ASSERT_EQ(fields.size(), 1u);
     EXPECT_EQ(fields[0].id, "can");
@@ -67,8 +64,7 @@ TEST(AuthRequirementPaceTests, CanFieldShape)
 
 TEST(AuthRequirementPaceTests, MrzFieldShape)
 {
-    auto req = AuthRequirement::forPaceSecret(makeNamEmrtdAid(), PaceSecretKind::Mrz,
-                                              std::nullopt, emptyReason());
+    auto req = AuthRequirement::forPaceSecret(makeNamEmrtdAid(), PaceSecretKind::Mrz, std::nullopt, emptyReason());
     auto fields = req.fields();
     ASSERT_EQ(fields.size(), 1u);
     EXPECT_EQ(fields[0].id, "mrz");
@@ -77,8 +73,8 @@ TEST(AuthRequirementPaceTests, MrzFieldShape)
 
 TEST(AuthRequirementPaceTests, PinFieldIsSecret)
 {
-    auto req = AuthRequirement::forPaceSecret(makeNamEmrtdAid(), PaceSecretKind::Pin,
-                                              std::optional<int>{3}, emptyReason());
+    auto req =
+        AuthRequirement::forPaceSecret(makeNamEmrtdAid(), PaceSecretKind::Pin, std::optional<int>{3}, emptyReason());
     auto fields = req.fields();
     ASSERT_EQ(fields.size(), 1u);
     EXPECT_EQ(fields[0].id, "pin");
@@ -91,11 +87,9 @@ TEST(AuthRequirementPaceTests, ReasonForUserStoredAsMessage)
 {
     LocalizedText reason;
     reason.defaultText = "Insert the CAN printed on the back of your ID card";
-    auto req = AuthRequirement::forPaceSecret(makeNamEmrtdAid(), PaceSecretKind::Can,
-                                              std::nullopt, std::move(reason));
+    auto req = AuthRequirement::forPaceSecret(makeNamEmrtdAid(), PaceSecretKind::Can, std::nullopt, std::move(reason));
     ASSERT_TRUE(req.message().has_value());
-    EXPECT_EQ(req.message()->defaultText,
-              "Insert the CAN printed on the back of your ID card");
+    EXPECT_EQ(req.message()->defaultText, "Insert the CAN printed on the back of your ID card");
 }
 
 TEST(AuthRequirementPaceTests, OtherFactoriesLeavePaceFieldsEmpty)

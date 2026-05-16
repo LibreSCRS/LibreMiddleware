@@ -23,11 +23,9 @@ LibreSCRS::SmartCard::Internal::APDUResponse makeSentinel(std::uint8_t sw1, std:
 
 } // namespace
 
-PlainChannel::PlainChannel(LibreSCRS::SmartCard::IConnection& conn,
-                           LibreSCRS::SmartCard::AppletAid aid)
+PlainChannel::PlainChannel(LibreSCRS::SmartCard::IConnection& conn, LibreSCRS::SmartCard::AppletAid aid)
     : connection(conn), appletAid(std::move(aid))
-{
-}
+{}
 
 LibreSCRS::SmartCard::AppletAid PlainChannel::currentApplet() const noexcept
 {
@@ -40,19 +38,15 @@ ChannelState PlainChannel::state() const noexcept
 }
 
 LibreSCRS::SmartCard::Internal::APDUResponse
-PlainChannel::transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd,
-                       LibreSCRS::CancelToken token)
+PlainChannel::transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token)
 {
-    if (channelState == ChannelState::Closed)
-    {
+    if (channelState == ChannelState::Closed) {
         return makeSentinel(0x6F, 0x00); // channel closed
     }
-    if (channelState == ChannelState::Failed)
-    {
+    if (channelState == ChannelState::Failed) {
         return makeSentinel(0x6F, 0x02); // channel failed
     }
-    if (token.isCancellable() && token.isCancelled())
-    {
+    if (token.isCancellable() && token.isCancelled()) {
         return makeSentinel(0x6F, 0x01); // cancelled
     }
 

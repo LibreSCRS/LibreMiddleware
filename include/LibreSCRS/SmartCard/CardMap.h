@@ -83,10 +83,10 @@ public:
     /// @par Thread-safety + noexcept contract
     /// @c noexcept: the implementation wraps allocations (in @c flatten()
     /// / @c unordered_map probe) in a top-level catch and degrades to
-    /// @c std::nullopt on failure per @c feedback_noexcept_alloc_contract.
-    /// Mutex acquisition cannot throw on an uncontended @c std::mutex
-    /// (libstdc++ / libc++ — see PKCS11Slot::isLoggedIn for the same
-    /// reliance).
+    /// @c std::nullopt on failure rather than letting @c std::bad_alloc
+    /// escape and call @c std::terminate. Mutex acquisition cannot throw
+    /// on an uncontended @c std::mutex (libstdc++ / libc++ — see
+    /// PKCS11Slot::isLoggedIn for the same reliance).
     [[nodiscard]] std::optional<CardMapEntry> get(const Key& key) const noexcept;
 
     /// @brief Install or overwrite the entry for @p key.
@@ -94,7 +94,7 @@ public:
     /// Allocation failures during @c flatten / @c insert_or_assign are
     /// caught and the entry is dropped silently; subsequent lookups
     /// re-discover, preserving correctness at the cost of one extra
-    /// probe. See @c feedback_noexcept_alloc_contract.
+    /// probe. The bad_alloc never escapes this @c noexcept boundary.
     void put(const Key& key, CardMapEntry entry) noexcept;
 
     /// @brief Remove the entry for @p key (no-op if absent).

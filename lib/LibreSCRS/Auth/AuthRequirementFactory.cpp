@@ -207,8 +207,7 @@ namespace {
 FieldDescriptor makePaceSecretField(PaceSecretKind kind)
 {
     FieldDescriptor f;
-    switch (kind)
-    {
+    switch (kind) {
     case PaceSecretKind::Can:
         f.id = "can";
         f.type = CredentialFieldType::NumericCan;
@@ -249,18 +248,14 @@ FieldDescriptor makePaceSecretField(PaceSecretKind kind)
 
 } // namespace
 
-AuthRequirement AuthRequirement::forPaceSecret(
-    LibreSCRS::SmartCard::AppletAid aid,
-    PaceSecretKind kind,
-    std::optional<int> retriesLeft,
-    LocalizedText reasonForUser) noexcept
+AuthRequirement AuthRequirement::forPaceSecret(LibreSCRS::SmartCard::AppletAid aid, PaceSecretKind kind,
+                                               std::optional<int> retriesLeft, LocalizedText reasonForUser) noexcept
 {
     AuthRequirement r;
     r.purposeValue = Purpose::EstablishPaceChannel;
     r.fieldList.push_back(makePaceSecretField(kind));
     r.retriesValue = retriesLeft;
-    if (!reasonForUser.defaultText.empty() || !reasonForUser.key.empty())
-    {
+    if (!reasonForUser.defaultText.empty() || !reasonForUser.key.empty()) {
         r.messageText = std::move(reasonForUser);
     }
     r.paceKindValue = kind;

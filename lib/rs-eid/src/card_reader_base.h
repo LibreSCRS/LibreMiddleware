@@ -20,11 +20,13 @@ class CardReaderBase
 {
 public:
     virtual ~CardReaderBase() = default;
-    virtual std::vector<uint8_t> readFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1, uint8_t fileId2) = 0;
+    virtual std::vector<uint8_t> readFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1,
+                                          uint8_t fileId2) = 0;
 
     // Read file including the raw TLV header (from offset 0).
     // Needed for hash verification where the full file content must be hashed.
-    virtual std::vector<uint8_t> readFileRaw(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1, uint8_t fileId2) = 0;
+    virtual std::vector<uint8_t> readFileRaw(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1,
+                                             uint8_t fileId2) = 0;
 };
 
 } // namespace eidcard

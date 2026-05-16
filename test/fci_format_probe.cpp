@@ -46,8 +46,8 @@ static void printSW(uint8_t sw1, uint8_t sw2)
 }
 
 // Build a raw SELECT FILE APDU with explicit P1, P2, data, Le
-static LibreSCRS::SmartCard::Internal::APDUCommand selectRaw(uint8_t p1, uint8_t p2, const std::vector<uint8_t>& data, uint8_t le,
-                                        bool hasLe)
+static LibreSCRS::SmartCard::Internal::APDUCommand selectRaw(uint8_t p1, uint8_t p2, const std::vector<uint8_t>& data,
+                                                             uint8_t le, bool hasLe)
 {
     return {0x00, 0xA4, p1, p2, data, le, hasLe};
 }

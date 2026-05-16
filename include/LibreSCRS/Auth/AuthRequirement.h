@@ -240,11 +240,9 @@ public:
     ///       its types.
     ///
     /// @since 4.1
-    [[nodiscard]] static AuthRequirement forPaceSecret(
-        LibreSCRS::SmartCard::AppletAid aid,
-        PaceSecretKind kind,
-        std::optional<int> retriesLeft,
-        LocalizedText reasonForUser) noexcept;
+    [[nodiscard]] static AuthRequirement forPaceSecret(LibreSCRS::SmartCard::AppletAid aid, PaceSecretKind kind,
+                                                       std::optional<int> retriesLeft,
+                                                       LocalizedText reasonForUser) noexcept;
 
     // -- PACE/BAC accessors -------------------------------------------------
 

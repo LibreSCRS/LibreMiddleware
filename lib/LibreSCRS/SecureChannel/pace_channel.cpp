@@ -67,16 +67,16 @@ SmCipher cipherForPaceOid(const std::string& oid) noexcept
                                                                                         : SmCipher::Aes;
 }
 
-emrtd::crypto::PACEPasswordType toCryptoPwType(PACEPasswordType t) noexcept
+emrtd::crypto::PACEPasswordType toCryptoPwType(LibreSCRS::Auth::PaceSecretKind t) noexcept
 {
     switch (t) {
-    case PACEPasswordType::Mrz:
+    case LibreSCRS::Auth::PaceSecretKind::Mrz:
         return emrtd::crypto::PACEPasswordType::MRZ;
-    case PACEPasswordType::Can:
+    case LibreSCRS::Auth::PaceSecretKind::Can:
         return emrtd::crypto::PACEPasswordType::CAN;
-    case PACEPasswordType::Pin:
+    case LibreSCRS::Auth::PaceSecretKind::Pin:
         return emrtd::crypto::PACEPasswordType::PIN;
-    case PACEPasswordType::Puk:
+    case LibreSCRS::Auth::PaceSecretKind::Puk:
         return emrtd::crypto::PACEPasswordType::PUK;
     }
     return emrtd::crypto::PACEPasswordType::CAN;

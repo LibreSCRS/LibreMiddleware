@@ -37,7 +37,7 @@ std::string ReadFile(const std::filesystem::path& path)
     return buffer.str();
 }
 
-}  // namespace
+} // namespace
 
 TEST(PivAidPatch, GdSce7AtrPresentInPivAtrsTable)
 {
@@ -52,8 +52,7 @@ TEST(PivAidPatch, GdSce7AtrPresentInPivAtrsTable)
     // The patched ATR string for the Giesecke+Devrient PIV SCE7 variant.
     // See thirdparty/patches/0001-piv-add-gd-sce7-atr-readme.md for capture
     // context and rationale.
-    constexpr const char* kExpectedAtr =
-        "3B:F9:96:00:00:80:31:FE:45:53:43:45:37:20:0F:00:20:46:4E";
+    constexpr const char* kExpectedAtr = "3B:F9:96:00:00:80:31:FE:45:53:43:45:37:20:0F:00:20:46:4E";
     EXPECT_NE(contents.find(kExpectedAtr), std::string::npos)
         << "downstream patch 0001-piv-add-gd-sce7-atr is missing from "
            "vendored OpenSC source; re-run cmake to trigger the auto-apply "

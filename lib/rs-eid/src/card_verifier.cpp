@@ -155,7 +155,8 @@ void CardVerifier::loadTrustedCertificates()
 
 // --- High-level dispatch ---
 
-VerificationResult CardVerifier::verifyCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, CardReaderBase& reader, CardType cardType)
+VerificationResult CardVerifier::verifyCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
+                                            CardReaderBase& reader, CardType cardType)
 {
     try {
         switch (cardType) {
@@ -180,8 +181,8 @@ VerificationResult CardVerifier::verifyCard(LibreSCRS::SmartCard::Internal::PCSC
     }
 }
 
-VerificationResult CardVerifier::verifyFixedData(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, CardReaderBase& reader,
-                                                 CardType cardType)
+VerificationResult CardVerifier::verifyFixedData(LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
+                                                 CardReaderBase& reader, CardType cardType)
 {
     try {
         switch (cardType) {
@@ -212,8 +213,8 @@ VerificationResult CardVerifier::verifyFixedData(LibreSCRS::SmartCard::Internal:
     }
 }
 
-VerificationResult CardVerifier::verifyVariableData(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, CardReaderBase& reader,
-                                                    CardType cardType)
+VerificationResult CardVerifier::verifyVariableData(LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
+                                                    CardReaderBase& reader, CardType cardType)
 {
     try {
         switch (cardType) {
@@ -243,7 +244,8 @@ VerificationResult CardVerifier::verifyVariableData(LibreSCRS::SmartCard::Intern
 
 // --- Gemalto card-level certificate verification ---
 
-VerificationResult CardVerifier::verifyGemaltoCardCert(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, CardReaderBase& reader)
+VerificationResult CardVerifier::verifyGemaltoCardCert(LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
+                                                       CardReaderBase& reader)
 {
     // Read SOD FX block to extract the signer certificate
     auto sodRaw = reader.readFile(conn, protocol::FILE_SOD_FX_H, protocol::FILE_SOD_FX_L);
@@ -329,8 +331,8 @@ VerificationResult CardVerifier::verifyGemaltoCardCert(LibreSCRS::SmartCard::Int
 
 // --- Gemalto SOD (PKCS#7) verification ---
 
-VerificationResult CardVerifier::verifyGemaltoSOD(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, CardReaderBase& reader,
-                                                  uint8_t sodFileH, uint8_t sodFileL,
+VerificationResult CardVerifier::verifyGemaltoSOD(LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
+                                                  CardReaderBase& reader, uint8_t sodFileH, uint8_t sodFileL,
                                                   const std::vector<std::pair<uint8_t, uint8_t>>& dataFileIds)
 {
     // 1. Read SOD block from card
@@ -463,7 +465,8 @@ VerificationResult CardVerifier::verifyGemaltoSOD(LibreSCRS::SmartCard::Internal
 
 // --- Apollo card certificate verification ---
 
-VerificationResult CardVerifier::verifyApolloCardCert(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, CardReaderBase& reader)
+VerificationResult CardVerifier::verifyApolloCardCert(LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
+                                                      CardReaderBase& reader)
 {
     auto userCertData = reader.readFile(conn, protocol::FILE_USER_CERT1_H, protocol::FILE_USER_CERT1_L);
 #ifndef NDEBUG
@@ -487,9 +490,9 @@ VerificationResult CardVerifier::verifyApolloCardCert(LibreSCRS::SmartCard::Inte
 
 // --- Apollo signature verification ---
 
-VerificationResult CardVerifier::verifyApolloSignature(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, CardReaderBase& reader,
-                                                       uint8_t sigFileH, uint8_t sigFileL, uint8_t certFileH,
-                                                       uint8_t certFileL,
+VerificationResult CardVerifier::verifyApolloSignature(LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
+                                                       CardReaderBase& reader, uint8_t sigFileH, uint8_t sigFileL,
+                                                       uint8_t certFileH, uint8_t certFileL,
                                                        const std::vector<std::pair<uint8_t, uint8_t>>& dataFileIds)
 {
     // 1. Read the signing certificate from card

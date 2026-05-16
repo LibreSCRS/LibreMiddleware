@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 //
-// Real-card E2E tests for the GEO eID dual-PIN card. Per spec
-// `2026-05-09-pkcs11-multi-pin-card-slot-design.md` §5.4.1, GEO exposes
-// two PKCS#11 slots (Auth + Sign / QSCD) for one physical card. Tests
+// Real-card E2E tests for the GEO eID dual-PIN card. GEO exposes two
+// PKCS#11 slots (Auth + Sign / QSCD) for one physical card. Tests
 // here exercise the production `librescrs-pkcs11.so` through the C ABI
 // only — they never reach into LibreSCRS::Pkcs11::Internal types (the
 // dylib hides those via its symbol allowlist).

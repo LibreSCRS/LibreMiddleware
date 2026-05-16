@@ -19,7 +19,8 @@ public:
         LibreSCRS::SmartCard::Internal::APDUResponse response;
     };
 
-    void log(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, const LibreSCRS::SmartCard::Internal::APDUResponse& resp);
+    void log(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd,
+             const LibreSCRS::SmartCard::Internal::APDUResponse& resp);
     std::string formatTrace() const;
     void clear();
 

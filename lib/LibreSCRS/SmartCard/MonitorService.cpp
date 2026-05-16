@@ -291,7 +291,8 @@ namespace detail {
 class MonitorFactory
 {
 public:
-    static std::shared_ptr<MonitorService> withProvider(std::unique_ptr<::LibreSCRS::SmartCard::Internal::IPCSCScanProvider> provider)
+    static std::shared_ptr<MonitorService>
+    withProvider(std::unique_ptr<::LibreSCRS::SmartCard::Internal::IPCSCScanProvider> provider)
     {
         auto mon = std::shared_ptr<MonitorService>(new MonitorService());
         // Replace the default-constructed internal MonitorService with one wired to
@@ -311,7 +312,8 @@ public:
     }
 };
 
-std::shared_ptr<MonitorService> makeMonitorWithProvider(std::unique_ptr<::LibreSCRS::SmartCard::Internal::IPCSCScanProvider> provider)
+std::shared_ptr<MonitorService>
+makeMonitorWithProvider(std::unique_ptr<::LibreSCRS::SmartCard::Internal::IPCSCScanProvider> provider)
 {
     return MonitorFactory::withProvider(std::move(provider));
 }

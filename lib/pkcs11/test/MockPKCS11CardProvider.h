@@ -396,7 +396,7 @@ inline unsigned long MockConfigurableSlot::login(unsigned long /*userType*/, std
         pinPart.assign(pin.begin(), pin.end());
     }
 
-    // Stage 1: trigger PACE on the card if a CAN was extracted. Done
+    // Trigger PACE on the card if a CAN was extracted from the PIN. Done
     // OUTSIDE slotMutex to keep the documented lock order linear
     // (slotMutex never held while reaching into cardMutex).
     if (canExtracted && cardLocked) {
@@ -407,7 +407,7 @@ inline unsigned long MockConfigurableSlot::login(unsigned long /*userType*/, std
         }
     }
 
-    // Stage 2: gate / verify the PIN under slotMutex.
+    // Gate / verify the PIN under slotMutex.
     std::scoped_lock lock(slotMutex);
     if (locked) {
         return Crv::PinLocked;

@@ -34,7 +34,8 @@ CardType CardReaderGemalto::selectApplication(LibreSCRS::SmartCard::Internal::PC
 
 // SELECT file and read its 4-byte header.
 // On failure, retries with application re-selection and reconnect.
-static LibreSCRS::SmartCard::Internal::APDUResponse selectAndReadHeader(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1, uint8_t fileId2)
+static LibreSCRS::SmartCard::Internal::APDUResponse
+selectAndReadHeader(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1, uint8_t fileId2)
 {
     auto selectResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByPath(fileId1, fileId2, 4));
     if (selectResp.isSuccess()) {
@@ -67,8 +68,9 @@ static LibreSCRS::SmartCard::Internal::APDUResponse selectAndReadHeader(LibreSCR
 }
 
 // READ BINARY with retry: re-select app + file, then reconnect + re-select.
-static LibreSCRS::SmartCard::Internal::APDUResponse readBinaryWithRetry(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint16_t offset, uint8_t length,
-                                                   uint8_t fileId1, uint8_t fileId2)
+static LibreSCRS::SmartCard::Internal::APDUResponse
+readBinaryWithRetry(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint16_t offset, uint8_t length,
+                    uint8_t fileId1, uint8_t fileId2)
 {
     auto readResp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(offset, length));
     if (readResp.isSuccess())
@@ -89,7 +91,8 @@ static LibreSCRS::SmartCard::Internal::APDUResponse readBinaryWithRetry(LibreSCR
     return readResp;
 }
 
-std::vector<uint8_t> CardReaderGemalto::readFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1, uint8_t fileId2)
+std::vector<uint8_t> CardReaderGemalto::readFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1,
+                                                 uint8_t fileId2)
 {
     auto headerResp = selectAndReadHeader(conn, fileId1, fileId2);
 
@@ -128,7 +131,8 @@ std::vector<uint8_t> CardReaderGemalto::readFile(LibreSCRS::SmartCard::Internal:
     return fileData;
 }
 
-std::vector<uint8_t> CardReaderGemalto::readFileRaw(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1, uint8_t fileId2)
+std::vector<uint8_t> CardReaderGemalto::readFileRaw(LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
+                                                    uint8_t fileId1, uint8_t fileId2)
 {
     auto headerResp = selectAndReadHeader(conn, fileId1, fileId2);
 

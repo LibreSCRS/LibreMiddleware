@@ -69,8 +69,7 @@ TEST(CardSession_4_1_API, ActivateChannelForOnDeadSessionReturnsCardRemoved)
     LibreSCRS::SmartCard::AppletAid aid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
     auto result = src->activateChannelFor(std::move(aid), LibreSCRS::CancelToken{});
     ASSERT_FALSE(result.has_value());
-    EXPECT_EQ(result.error(),
-              LibreSCRS::SecureChannel::ChannelActivationError::CardRemoved);
+    EXPECT_EQ(result.error(), LibreSCRS::SecureChannel::ChannelActivationError::CardRemoved);
 }
 
 TEST(CardSession_4_1_API, ActivateChannelWithSmCacheMissNoProviderIsCredentialsRequired)
@@ -82,15 +81,13 @@ TEST(CardSession_4_1_API, ActivateChannelWithSmCacheMissNoProviderIsCredentialsR
 
     auto result = src->activateChannelWithSm(std::move(aid), req, LibreSCRS::CancelToken{});
     ASSERT_FALSE(result.has_value());
-    EXPECT_EQ(result.error(),
-              LibreSCRS::SecureChannel::ChannelActivationError::CredentialsRequired);
+    EXPECT_EQ(result.error(), LibreSCRS::SecureChannel::ChannelActivationError::CredentialsRequired);
 }
 
 TEST(CardSession_4_1_API, ClearCachedPaceCredentialsRestoresCredentialsRequired)
 {
     auto src = LibreSCRS::SmartCard::detail::makeDetachedCardSession("TestReader");
-    src->setPaceSecret(LibreSCRS::Auth::PaceSecretKind::Can,
-                       LibreSCRS::Secure::String{"123456"});
+    src->setPaceSecret(LibreSCRS::Auth::PaceSecretKind::Can, LibreSCRS::Secure::String{"123456"});
     src->clearCachedPaceCredentials();
 
     LibreSCRS::SmartCard::AppletAid aid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
@@ -99,8 +96,7 @@ TEST(CardSession_4_1_API, ClearCachedPaceCredentialsRestoresCredentialsRequired)
 
     auto result = src->activateChannelWithSm(std::move(aid), req, LibreSCRS::CancelToken{});
     ASSERT_FALSE(result.has_value());
-    EXPECT_EQ(result.error(),
-              LibreSCRS::SecureChannel::ChannelActivationError::CredentialsRequired);
+    EXPECT_EQ(result.error(), LibreSCRS::SecureChannel::ChannelActivationError::CredentialsRequired);
 }
 
 TEST(CardSession_4_1_API, BacRequestCacheMissNoProviderIsCredentialsRequired)
@@ -110,8 +106,7 @@ TEST(CardSession_4_1_API, BacRequestCacheMissNoProviderIsCredentialsRequired)
     LibreSCRS::SmartCard::SmProtocolRequest req = LibreSCRS::SmartCard::BacRequest{};
     auto result = src->activateChannelWithSm(std::move(aid), req, LibreSCRS::CancelToken{});
     ASSERT_FALSE(result.has_value());
-    EXPECT_EQ(result.error(),
-              LibreSCRS::SecureChannel::ChannelActivationError::CredentialsRequired);
+    EXPECT_EQ(result.error(), LibreSCRS::SecureChannel::ChannelActivationError::CredentialsRequired);
 }
 
 TEST(CardSession_4_1_API, SetBacInputThenClearReturnsCredentialsRequired)
@@ -132,8 +127,7 @@ TEST(CardSession_4_1_API, SetBacInputThenClearReturnsCredentialsRequired)
     LibreSCRS::SmartCard::SmProtocolRequest req = LibreSCRS::SmartCard::BacRequest{};
     auto result = src->activateChannelWithSm(std::move(aid), req, LibreSCRS::CancelToken{});
     ASSERT_FALSE(result.has_value());
-    EXPECT_EQ(result.error(),
-              LibreSCRS::SecureChannel::ChannelActivationError::CredentialsRequired);
+    EXPECT_EQ(result.error(), LibreSCRS::SecureChannel::ChannelActivationError::CredentialsRequired);
 }
 
 TEST(CardSession_4_1_API, ActiveChannelHolderIsMoveOnly)

@@ -195,12 +195,11 @@ bool CardSession::isConnected() const noexcept
 // This blocks cross-process callers from interleaving plain APDUs that would
 // silently destroy the card-side SM tunnel mid-flight.
 //
-// The state machine follows the three cases of spec §5.3b (amended
-// 2026-05-15): Case 1 is the same-applet fast path; Case 2 (PACE-only)
-// switches applets through wrapped SELECT on a live PaceChannel — PACE SM is
-// session-scoped at the card OS layer, so applet switches do NOT require a
-// fresh handshake; Case 3 falls back to a full handshake when no usable
-// channel exists. The retry loop evicts the credentials-cache slot on a
+// The state machine has three cases. Case 1 — same applet, channel still
+// live — is the no-op fast path. Case 2 — applet switch on a live PACE
+// channel — uses wrapped SELECT (PACE SM is session-scoped at the card OS
+// layer, so applet switches do NOT require a fresh handshake). Case 3
+// falls back to a full handshake when no usable channel exists. The retry loop evicts the credentials-cache slot on a
 // wrong-secret outcome and re-prompts via the credential provider before
 // falling back; on terminal errors the transaction RAII unwinds and no
 // channel is installed.
@@ -416,7 +415,7 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
     //         wrapped SELECT through the existing SM tunnel. PACE SM is
     //         session-scoped at the card OS layer; the applet selector
     //         inside a wrapped SELECT routes within the SM tunnel and does
-    //         not terminate it (BSI TR-03110 §3; spec §5.3b Case 2).
+    //         not terminate it (BSI TR-03110 §3).
     //
     //         BAC is intentionally excluded from Case 2: the BAC card matrix
     //         (classical eMRTD passports) is single-applet, so a cross-applet
@@ -451,8 +450,9 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
         if (isBac) {
             // BAC branch: consume the dedicated BacInput cache slot. On miss
             // re-prompt via the credential provider (fields: documentNumber /
-            // dateOfBirth / dateOfExpiry; the same id naming Stage 7 LC will
-            // produce). On wrong-secret evict the slot and retry. BAC
+            // dateOfBirth / dateOfExpiry — matching the field ids the GUI
+            // emits for BAC prompts). On wrong-secret evict the slot and
+            // retry. BAC
             // handshake targets the currently selected applet, so a plain
             // SELECT to the target AID precedes establish — safe here
             // because Case 3 has already torn down any prior SM tunnel.
@@ -548,9 +548,9 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
         // PACE branch: discover supported OIDs from EF.CardAccess at MF.
         // The handshake itself runs at MF level — PACE binds session keys
         // to the card-side SM tunnel for the entire card session, not to
-        // any particular applet (spec §2 constraint 2, amended 2026-05-15).
-        // The post-handshake wrapped SELECT below routes the target applet
-        // through the freshly installed channel.
+        // any particular applet, so the post-handshake wrapped SELECT
+        // below routes the target applet through the freshly installed
+        // channel without a second handshake.
         std::vector<std::pair<std::string, int>> oidParamPairs;
         try {
             auto cardAccess = readCardAccessFromMF(*d->ownedConn);
@@ -562,22 +562,6 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
             return std::unexpected{ChannelActivationError::PaceUnsupported};
         }
 
-        LibreSCRS::SecureChannel::PACEPasswordType pwType = LibreSCRS::SecureChannel::PACEPasswordType::Can;
-        switch (kind) {
-        case LibreSCRS::Auth::PaceSecretKind::Can:
-            pwType = LibreSCRS::SecureChannel::PACEPasswordType::Can;
-            break;
-        case LibreSCRS::Auth::PaceSecretKind::Mrz:
-            pwType = LibreSCRS::SecureChannel::PACEPasswordType::Mrz;
-            break;
-        case LibreSCRS::Auth::PaceSecretKind::Pin:
-            pwType = LibreSCRS::SecureChannel::PACEPasswordType::Pin;
-            break;
-        case LibreSCRS::Auth::PaceSecretKind::Puk:
-            pwType = LibreSCRS::SecureChannel::PACEPasswordType::Puk;
-            break;
-        }
-
         ChannelActivationError lastError = ChannelActivationError::PaceWrongSecret;
         std::unique_ptr<PaceChannel> freshChannel;
         for (const auto& [oid, paramId] : oidParamPairs) {
@@ -586,7 +570,7 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
             }
             LibreSCRS::SecureChannel::PACEParams params;
             params.oid = oid;
-            params.passwordType = pwType;
+            params.passwordType = kind;
             params.password = cachedSecret; // deep copy; cleansed when params goes out of scope
             params.paramId = paramId;
 
@@ -609,7 +593,7 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
             // Wrapped SELECT to the target applet through the freshly
             // installed channel. PACE handshake left currentApplet empty;
             // setCurrentApplet records the AID after a successful wrapped
-            // SELECT (spec §5.3b Case 3).
+            // SELECT so subsequent same-applet calls hit the fast path.
             auto wrappedSelect = freshChannel->transmit(buildSelectAppletCommand(aid), token);
             if (!wrappedSelect.isSuccess()) {
                 // Wrapped SELECT failed: the SM tunnel is established but

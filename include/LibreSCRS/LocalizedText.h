@@ -111,7 +111,9 @@ struct LIBRESCRS_PUBLIC_API LocalizedText
 {
     /// @brief Catalog key the host uses to fetch the translated template.
     /// @details Format: `<domain>.<category>.<id>` lowercase-dot;
-    ///          `<domain>` equals plugin's pluginId or "core" (per spec §5.2).
+    ///          `<domain>` equals the plugin's pluginId or `"core"` for
+    ///          middleware-owned strings, so host catalogs partition
+    ///          cleanly between plugins.
     std::string key;
 
     /// @brief English template used when `key` is absent from the host's catalog.

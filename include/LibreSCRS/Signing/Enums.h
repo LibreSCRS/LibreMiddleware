@@ -16,7 +16,8 @@
 
 namespace LibreSCRS::Signing {
 
-// Deliberately duplicated from libresign::SignatureFormat for ABI stability (spec §5.2, C3 decision).
+// Deliberately duplicated from libresign::SignatureFormat: the internal
+// enum can grow without breaking the public ABI of LibreSCRS::Signing.
 // ASiC-S intentionally absent — libresign does not support it (backlog item).
 
 /// @brief Advanced electronic signature container format.

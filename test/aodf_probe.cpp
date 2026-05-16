@@ -21,7 +21,8 @@ static void hexDump(const std::vector<uint8_t>& d)
     printf("\n");
 }
 
-static std::vector<uint8_t> readFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint16_t fid, const char* name)
+static std::vector<uint8_t> readFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint16_t fid,
+                                     const char* name)
 {
     uint8_t fidH = static_cast<uint8_t>((fid >> 8) & 0xFF);
     uint8_t fidL = static_cast<uint8_t>(fid & 0xFF);

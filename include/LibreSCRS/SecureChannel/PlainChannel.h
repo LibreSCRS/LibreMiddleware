@@ -22,15 +22,14 @@ namespace LibreSCRS::SecureChannel {
 ///        @ref LibreSCRS::SmartCard::IConnection without wrapping.
 ///
 /// The current applet AID is recorded at construction time; subsequent
-/// applet switches are out of scope (CardSession constructs a new
-/// PlainChannel per applet, per spec §4.5).
+/// applet switches are out of scope — CardSession constructs a new
+/// PlainChannel per selected applet.
 ///
 /// @since 4.1
 class LIBRESCRS_PUBLIC_API PlainChannel final : public ISecureChannel
 {
 public:
-    PlainChannel(LibreSCRS::SmartCard::IConnection& connection,
-                 LibreSCRS::SmartCard::AppletAid currentAppletAid);
+    PlainChannel(LibreSCRS::SmartCard::IConnection& connection, LibreSCRS::SmartCard::AppletAid currentAppletAid);
 
     ~PlainChannel() override = default;
 
@@ -38,8 +37,7 @@ public:
     [[nodiscard]] ChannelState state() const noexcept override;
 
     [[nodiscard]] LibreSCRS::SmartCard::Internal::APDUResponse
-    transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd,
-             LibreSCRS::CancelToken token) override;
+    transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token) override;
 
     void close() override;
 

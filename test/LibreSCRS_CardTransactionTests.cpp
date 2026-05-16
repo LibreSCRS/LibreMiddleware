@@ -36,7 +36,6 @@ TEST(CardTransactionTests, ReleaseIsNoexcept)
 TEST(CardTransactionTests, PCSCConnectionExposesIsTransactionHeld)
 {
     // Static probe: the accessor exists with the expected signature.
-    static_assert(
-        std::is_same_v<decltype(std::declval<const PCSCConnection&>().isTransactionHeld()), bool>);
+    static_assert(std::is_same_v<decltype(std::declval<const PCSCConnection&>().isTransactionHeld()), bool>);
     SUCCEED();
 }

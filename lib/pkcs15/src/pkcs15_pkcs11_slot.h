@@ -35,14 +35,13 @@ namespace LibreSCRS::Pkcs15::Pkcs11 {
 ///
 /// Holds the slot's authentication identity (one @ref pkcs15::PinInfo)
 /// and the subset of @ref pkcs15::PrivateKeyInfo / @ref pkcs15::CertificateInfo
-/// objects whose @c authId references this PIN. Stage 6 (4.2) removed
-/// the borrowed @c pkcs15::PKCS15Card pointer that earlier slots cached;
-/// every login / sign / enumerate operation now acquires its own
+/// objects whose @c authId references this PIN. Every login / sign /
+/// enumerate operation acquires its own
 /// @ref LibreSCRS::SmartCard::ActiveChannelHolder via the parent
 /// @ref Pkcs15Card and constructs a fresh @c pkcs15::PKCS15Card from
-/// @c holder.activeChannel(). Mirrors the @c pkcs15-plugin Stage 5
-/// pattern; eliminates the cross-reset dangling pointer hazard the
-/// previous @c onCardReset rebind step had to defend against.
+/// @c holder.activeChannel() — no borrowed pointer to the parent helper
+/// is cached, which eliminates the cross-reset dangling-pointer hazard
+/// that earlier designs had to defend against.
 ///
 /// @par Thread-safety
 /// Inherits @c slotMutex from the base. Login / sign paths acquire

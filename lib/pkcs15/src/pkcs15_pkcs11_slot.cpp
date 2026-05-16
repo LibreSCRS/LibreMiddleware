@@ -6,15 +6,13 @@
 ///        implementation. Provides per-slot semantics (login + sign +
 ///        enumerateObjects) reduced to a single PIN's view of the card.
 ///
-/// Stage 6 (4.2) replaced the borrowed @c pkcs15::PKCS15Card pointer with
-/// per-operation @c ActiveChannelHolder acquisition through the parent
-/// @c Pkcs15Card. Each public method now follows the same shape: lock
-/// slotMutex + cardMutex, acquire a holder, build a local
-/// @c pkcs15::PKCS15Card from @c holder.activeChannel(), perform one
-/// APDU exchange, and release. The holder also drives applet SELECT and
-/// — on PACE-gated cards — keeps the SM channel warm in the session's
-/// per-process cache so successive holders fast-path through §5.3b
-/// Case 1.
+/// Each public method follows the same shape: lock slotMutex + cardMutex,
+/// acquire a per-operation @c ActiveChannelHolder through the parent
+/// @c Pkcs15Card, build a local @c pkcs15::PKCS15Card from
+/// @c holder.activeChannel(), perform one APDU exchange, and release. The
+/// holder also drives applet SELECT and — on PACE-gated cards — keeps the
+/// SM channel warm in the session's per-process cache so successive
+/// holders fast-path through the same-applet path without re-handshaking.
 
 #include "pkcs15_pkcs11_slot.h"
 

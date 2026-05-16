@@ -27,10 +27,9 @@ namespace LibreSCRS::SecureChannel::detail {
 /// The actual SM wrap/unwrap is delegated to
 /// @c emrtd::crypto::SecureMessaging, which already implements both 3DES
 /// (BAC) and AES-CBC + CMAC (PACE) paths selected at construction by the
-/// SMAlgorithm parameter. Physical relocation of that primitive into
-/// LibreSCRS_SecureChannel is deferred (see plan Stage 2 Task 2.2);
-/// this shim keeps the public surface stable so plugins can migrate
-/// without waiting on the file move.
+/// SMAlgorithm parameter. This shim keeps the public surface stable while
+/// the primitive still lives in the eMRTD crypto module, so plugins can
+/// migrate without waiting on the physical file relocation.
 class SmChannelBody
 {
 public:
@@ -129,14 +128,19 @@ public:
     }
 
     void replaceKeys(SessionKeys keys) noexcept
-    {
+    try {
         emrtd::crypto::SessionKeys cryptoKeys;
         cryptoKeys.encKey = std::move(keys.encKey);
         cryptoKeys.macKey = std::move(keys.macKey);
         cryptoKeys.ssc = std::move(keys.ssc);
         auto algo = keys.cipher == SmCipher::Des3 ? emrtd::crypto::SMAlgorithm::DES3 : emrtd::crypto::SMAlgorithm::AES;
+        // make_unique may throw bad_alloc; the function is declared noexcept
+        // so an uncaught throw would call std::terminate. Degrade to Failed
+        // state instead and let the next transmit() surface the sentinel SW.
         sm = std::make_unique<emrtd::crypto::SecureMessaging>(std::move(cryptoKeys), algo);
         channelState = ChannelState::Open;
+    } catch (...) {
+        channelState = ChannelState::Failed;
     }
 
 private:

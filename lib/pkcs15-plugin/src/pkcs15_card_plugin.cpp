@@ -56,11 +56,11 @@ SessionKey makeSessionKey(LibreSCRS::SmartCard::CardSession& session)
 
 /// @brief Plugin-side memory of whether this card session is PACE-gated.
 ///
-/// Stage 5 moved PACE / SM ownership from this plugin to
-/// @ref LibreSCRS::SmartCard::CardSession. The plugin only needs to know
-/// *which* activation flavour to request for a given operation
-/// (plain vs. PACE-CAN). The CAN itself is held by CardSession via
-/// @ref CardSession::setPaceSecret. This struct is intentionally tiny.
+/// PACE / SM ownership lives on @ref LibreSCRS::SmartCard::CardSession;
+/// the plugin only needs to know *which* activation flavour to request
+/// for a given operation (plain vs. PACE-CAN). The CAN itself is held by
+/// CardSession via @ref CardSession::setPaceSecret. This struct is
+/// intentionally tiny.
 struct SessionContext
 {
     /// @brief @c true after a successful "PACE required" probe (canHandle
@@ -104,8 +104,9 @@ ProbeResult probeApplet(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
 /// been deposited in CardSession's cache via @ref setCredentials before
 /// this call; CardSession's preflight short-circuits with
 /// @c CredentialsRequired if neither a cached CAN nor a provider is
-/// available. The Stage 4 PaceChannel installed by emrtd-plugin (if the
-/// user came through the display flow first) is reused via §5.3b Case 2.
+/// available. A PaceChannel installed earlier by emrtd-plugin (when the
+/// user came through the display flow first) is reused via wrapped
+/// SELECT on the existing SM tunnel — no rePACE.
 std::expected<LibreSCRS::SmartCard::ActiveChannelHolder, LibreSCRS::SecureChannel::ChannelActivationError>
 acquireChannel(LibreSCRS::SmartCard::CardSession& session, bool requiresPace)
 {
@@ -184,10 +185,10 @@ public:
     {
         if (key != "can")
             return;
-        // CardSession owns the CAN cache from Stage 4 onwards; this plugin
-        // simply forwards the secret. Successful PACE activation through
-        // CardSession reuses the same cache slot whether the secret was
-        // deposited by emrtd-plugin (display flow) or by us (direct sign).
+        // CardSession owns the CAN cache; this plugin simply forwards the
+        // secret. Successful PACE activation through CardSession reuses
+        // the same cache slot whether the secret was deposited by
+        // emrtd-plugin (display flow) or by us (direct sign).
         session.setPaceSecret(LibreSCRS::Auth::PaceSecretKind::Can, LibreSCRS::Secure::String{value.view()});
         std::lock_guard lock(stateMutex);
         sessions[makeSessionKey(session)].requiresPace = true;

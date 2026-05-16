@@ -9,7 +9,8 @@
 
 namespace eidcard {
 
-std::vector<uint8_t> CardReaderApollo::readFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1, uint8_t fileId2)
+std::vector<uint8_t> CardReaderApollo::readFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1,
+                                                uint8_t fileId2)
 {
     // Apollo cards: SELECT by file ID (P1=0x00)
     auto selectResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(fileId1, fileId2));
@@ -65,7 +66,8 @@ std::vector<uint8_t> CardReaderApollo::readFile(LibreSCRS::SmartCard::Internal::
     return fileData;
 }
 
-std::vector<uint8_t> CardReaderApollo::readFileRaw(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1, uint8_t fileId2)
+std::vector<uint8_t> CardReaderApollo::readFileRaw(LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
+                                                   uint8_t fileId1, uint8_t fileId2)
 {
     // Apollo cards: SELECT by file ID (P1=0x00)
     auto selectResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(fileId1, fileId2));

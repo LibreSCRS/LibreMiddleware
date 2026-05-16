@@ -48,35 +48,35 @@ class SessionAttachmentTest : public ::testing::Test
 protected:
     static void SetUpTestSuite()
     {
-        moduleHandle_ = ::dlopen(LIBRESCRS_PKCS11_MODULE_PATH, RTLD_NOW);
-        ASSERT_NE(moduleHandle_, nullptr) << "dlopen failed: " << ::dlerror();
-        auto getFnList = reinterpret_cast<CK_C_GetFunctionList>(::dlsym(moduleHandle_, "C_GetFunctionList"));
+        moduleHandle = ::dlopen(LIBRESCRS_PKCS11_MODULE_PATH, RTLD_NOW);
+        ASSERT_NE(moduleHandle, nullptr) << "dlopen failed: " << ::dlerror();
+        auto getFnList = reinterpret_cast<CK_C_GetFunctionList>(::dlsym(moduleHandle, "C_GetFunctionList"));
         ASSERT_NE(getFnList, nullptr) << "dlsym(C_GetFunctionList) failed: " << ::dlerror();
-        CK_FUNCTION_LIST* funcs = nullptr;
-        ASSERT_EQ(getFnList(&funcs), CKR_OK);
-        ASSERT_NE(funcs, nullptr);
-        funcs_ = funcs;
-        ASSERT_EQ(funcs_->C_Initialize(nullptr), CKR_OK);
+        CK_FUNCTION_LIST* fnList = nullptr;
+        ASSERT_EQ(getFnList(&fnList), CKR_OK);
+        ASSERT_NE(fnList, nullptr);
+        funcs = fnList;
+        ASSERT_EQ(funcs->C_Initialize(nullptr), CKR_OK);
     }
 
     static void TearDownTestSuite()
     {
-        if (funcs_) {
-            funcs_->C_Finalize(nullptr);
+        if (funcs) {
+            funcs->C_Finalize(nullptr);
         }
-        if (moduleHandle_) {
-            ::dlclose(moduleHandle_);
+        if (moduleHandle) {
+            ::dlclose(moduleHandle);
         }
-        funcs_ = nullptr;
-        moduleHandle_ = nullptr;
+        funcs = nullptr;
+        moduleHandle = nullptr;
     }
 
-    static void* moduleHandle_;
-    static CK_FUNCTION_LIST* funcs_;
+    static void* moduleHandle;
+    static CK_FUNCTION_LIST* funcs;
 };
 
-void* SessionAttachmentTest::moduleHandle_ = nullptr;
-CK_FUNCTION_LIST* SessionAttachmentTest::funcs_ = nullptr;
+void* SessionAttachmentTest::moduleHandle = nullptr;
+CK_FUNCTION_LIST* SessionAttachmentTest::funcs = nullptr;
 
 // Pure validation: empty reader name is rejected before any dlopen.
 TEST_F(SessionAttachmentTest, AttachWithEmptyReaderReturnsInvalidArguments)

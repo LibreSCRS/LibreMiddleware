@@ -49,7 +49,8 @@ std::string findFirstString(const LibreSCRS::SmartCard::Internal::BERField& node
 }
 
 // Find a child BER field by tag. Returns nullptr if not found.
-const LibreSCRS::SmartCard::Internal::BERField* findChild(const LibreSCRS::SmartCard::Internal::BERField& node, uint32_t tag)
+const LibreSCRS::SmartCard::Internal::BERField* findChild(const LibreSCRS::SmartCard::Internal::BERField& node,
+                                                          uint32_t tag)
 {
     for (const auto& child : node.children) {
         if (child.tag == tag) {

@@ -2,10 +2,9 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 //
 // OpenSSL 3 provider for PKCS#11-backed signing.
-// Replaces the deprecated RSA_METHOD approach (pkcs11_evp_key.cpp) with a
-// proper provider that implements keymgmt + signature dispatch tables.
-// This allows EVP_DigestSign* (used by CMS_sign/CMS_final) to transparently
-// route private key operations to Pkcs11Token::sign().
+// Implements keymgmt + signature dispatch tables so that EVP_DigestSign*
+// (used by CMS_sign / CMS_final) transparently routes private-key
+// operations to Pkcs11Token::sign().
 
 #include "native/signing_provider.h"
 #include "native/pkcs11_token.h"

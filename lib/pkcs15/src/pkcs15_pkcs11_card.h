@@ -54,7 +54,7 @@ namespace LibreSCRS::Pkcs15::Pkcs11 {
 /// cards (Serbian eID, NAM) yield one slot; multi-PIN cards (GEO) yield
 /// one slot per AUTH PIN. PUK and CAN PINs are filtered.
 ///
-/// @par Transport ownership (Stage 6, 4.2)
+/// @par Transport ownership
 /// Owns a @ref LibreSCRS::SmartCard::CardSession for the card's lifetime.
 /// Every operation that touches the card acquires a fresh
 /// @ref LibreSCRS::SmartCard::ActiveChannelHolder via @ref acquireChannel
@@ -63,9 +63,9 @@ namespace LibreSCRS::Pkcs15::Pkcs11 {
 /// into the session's per-process cache through @ref onCachedCanChanged.
 /// No long-lived @c pkcs15::PKCS15Card helper / @c PCSCConnection /
 /// @c SecureMessaging is held; each holder constructs the helper from
-/// @c holder.activeChannel() and discards it on scope exit. This mirrors
-/// the @c pkcs15-plugin Stage 5 pattern (one PCSCConnection per
-/// CardSession in the LM consumer; one holder per operation).
+/// @c holder.activeChannel() and discards it on scope exit. Mirrors the
+/// @c pkcs15-plugin pattern (one PCSCConnection per CardSession in the
+/// LM consumer; one holder per operation).
 ///
 /// @par Thread-safety
 /// Inherits @c cardMutex from the base; APDU exchange is therefore
@@ -82,7 +82,7 @@ class AttachRegistry;
 class Pkcs15Card final : public LibreSCRS::Pkcs11::Internal::PKCS11Card
 {
     // Slots reach the parent's session and profile through controlled
-    // friend access; keeps the Stage-6 transport surface narrow.
+    // friend access; keeps the per-op transport surface narrow.
     friend class Pkcs15Slot;
 
 public:
@@ -91,8 +91,8 @@ public:
     ///                (PKCS#15 path / SELECT P2 / PIN labels). When
     ///                non-null, @ref bind() reuses any previously probed
     ///                state; when null, no cache is consulted. Reserved
-    ///                for future Stage 6+ work — currently unused now
-    ///                that holders SELECT the AID directly.
+    ///                for future cache-driven optimisations — currently
+    ///                unused now that holders SELECT the AID directly.
     /// @since 4.1
     explicit Pkcs15Card(std::shared_ptr<LibreSCRS::SmartCard::CardMap> cardMap = nullptr);
 
@@ -149,7 +149,7 @@ public:
 
 protected:
     /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11Card::establishPACE
-    /// @par Implementation (Stage 6)
+    /// @par Implementation
     /// Validates that PACE works on the freshly-deposited CAN by
     /// acquiring an @ref ActiveChannelHolder via @ref acquireChannel and
     /// immediately releasing it. The session's PACE cache retains the
@@ -178,7 +178,7 @@ protected:
     [[nodiscard]] unsigned long resumePostCan() override;
 
     /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11Card::onCachedCanChanged
-    /// @par Implementation (Stage 6)
+    /// @par Implementation
     /// Mirrors the inherited @c cachedCan into @ref session's per-process
     /// PACE cache via @c CardSession::setPaceSecret (or
     /// @c clearCachedPaceCredentials when the field was wiped) so the
@@ -188,7 +188,7 @@ protected:
 
 private:
     /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11Card::reconnectInline
-    /// @par Implementation (Stage 6)
+    /// @par Implementation
     /// Closes and reopens @ref session against the same @ref readerName.
     /// Any prior PACE session keys are correctly discarded — the
     /// card-side context was lost on RESET. Re-deposits @c cachedCan into
@@ -292,8 +292,9 @@ public:
     ///                       adopts it instead of opening a fresh PC/SC
     ///                       handle. @c nullptr disables the inject
     ///                       path — every probe falls through to the
-    ///                       standalone @c bind() (Stage 6 behaviour),
-    ///                       which is the normal mode for external
+    ///                       standalone @c bind() that opens its own
+    ///                       PC/SC handle, which is the normal mode for
+    ///                       external
     ///                       consumers loading the module via dlopen
     ///                       without inject support.
     /// @since 4.1

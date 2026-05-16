@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 //
-// Real-card E2E tests for the NAM contactless card. Per spec
-// `2026-05-09-pkcs11-multi-pin-card-slot-design.md` §5.4.1, NAM exposes
-// a single PKCS#11 slot, requires PACE on every transaction, and its
-// PIN guards both Auth and Sign keys (one PIN, two keys).
+// Real-card E2E tests for the NAM contactless card. NAM exposes a single
+// PKCS#11 slot, requires PACE on every transaction, and its PIN guards
+// both Auth and Sign keys (one PIN, two keys).
 
 #include "pin_guard.h"
 

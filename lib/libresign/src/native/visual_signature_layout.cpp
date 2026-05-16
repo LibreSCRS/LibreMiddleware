@@ -71,7 +71,8 @@ inline std::pair<char32_t, std::size_t> decodeUtf8At(std::string_view s, std::si
 }
 
 // Normalise raw input: collapse '\r\n' to '\n', drop bare '\r', map '\t'
-// to space. Per spec §8.3 line endings table.
+// to space. Matches the line-ending normalisation contract documented
+// for @ref layoutVisualSignature in the public header.
 std::string normaliseLineEndings(std::string_view in)
 {
     std::string out;
@@ -132,12 +133,12 @@ std::string_view trim(std::string_view s) noexcept
 // @p availW. Each line (after the first) is the longest run of
 // whitespace-separated tokens that fits `availW` when measured through
 // @p subset. Single tokens wider than @p availW are emitted on their
-// own line — this is by design per spec §6.1 (the binary search
-// shrinks the font size until they fit, or hits the floor).
+// own line — this is by design: the outer binary search shrinks the
+// font size until they fit, or hits the floor.
 //
-// Whitespace boundary: spaces only (per §8.3 we already mapped tabs to
-// spaces upstream). Multiple spaces collapse on wrap (the wrapper
-// re-joins tokens with a single space).
+// Whitespace boundary: spaces only (tabs were already mapped to spaces
+// upstream by normaliseLineEndings). Multiple spaces collapse on wrap
+// (the wrapper re-joins tokens with a single space).
 std::vector<std::string> wrapParagraph(std::string_view paragraph, float fontSize, float availW,
                                        const libresign::TtfSubset& subset)
 {
@@ -207,8 +208,8 @@ std::vector<std::string> wrapAllParagraphs(const std::vector<std::string>& parag
 
 // Check whether the wrapped @p lines fit in @p availW at @p fontSize.
 // All lines must measure ≤ availW (with a 1e-3 pt tolerance to absorb
-// IEEE-754 single-precision ULP drift across platforms — see spec §8.2 I7
-// determinism invariant).
+// IEEE-754 single-precision ULP drift across platforms — preserving the
+// cross-platform determinism invariant of the layout algorithm).
 bool linesFit(const std::vector<std::string>& lines, float fontSize, float availW, const libresign::TtfSubset& subset)
 {
     constexpr float kFitTolerancePt = 1.0e-3f;
@@ -238,10 +239,10 @@ std::unordered_set<char32_t> collectCodepoints(std::string_view normalised)
     return cps;
 }
 
-// Build a TtfSubset scoped to @p cps. Per spec §4.3 (G2): parsed
-// on-stack at the start of layoutVisualSignature, reused across binary
-// search iterations within the call. NO singletons, NO Meyers, NO
-// function-local statics, NO globals.
+// Build a TtfSubset scoped to @p cps. Parsed on-stack at the start of
+// layoutVisualSignature and reused across binary-search iterations
+// within the call. NO singletons, NO Meyers, NO function-local statics,
+// NO globals — keeps the layout function pure and re-entrant.
 libresign::TtfSubset buildSubsetForInput(const std::unordered_set<char32_t>& cps)
 {
     std::span<const std::uint8_t> ttfBytes{LiberationSansRegular, LiberationSansRegularSize};
@@ -289,7 +290,8 @@ try {
 
     // 3. Build a TtfSubset scoped to the codepoints in the input —
     //    parsed on-stack here, reused across the binary-search
-    //    iterations below. Per spec §4.3 (G2): no singletons.
+    //    iterations below. No singletons; the subset belongs to this
+    //    layout call exclusively.
     libresign::TtfSubset subset;
     try {
         const auto cps = collectCodepoints(normalised);
@@ -368,9 +370,9 @@ try {
     return out;
 } catch (...) {
     // Function-try-block honours the noexcept contract under bad_alloc or
-    // any other exception escaping the body. Spec §8.1: "Any 'problem' is
-    // encoded in the return value, never as a thrown exception." Return a
-    // floor-clipped fallback. Allocation in the catch handler is minimised
+    // any other exception escaping the body. The public contract is
+    // "any 'problem' is encoded in the return value, never thrown" — so
+    // return a floor-clipped fallback instead of escaping. Allocation in the catch handler is minimised
     // by emplacing an empty std::string first (default-ctor is noexcept,
     // SSO never heap-allocates the string itself); only the *vector grow*
     // of capacity 0 → 1 can throw. If even that throws, std::terminate

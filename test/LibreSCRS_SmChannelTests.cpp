@@ -220,14 +220,14 @@ TEST(BacChannelTests, Sw6988TransitionsToFailed)
 
 TEST(PaceEstablishTests, NonPcscConnectionMapsToInternal)
 {
+    using LibreSCRS::Auth::PaceSecretKind;
     using LibreSCRS::SecureChannel::ChannelActivationError;
     using LibreSCRS::SecureChannel::PACEParams;
-    using LibreSCRS::SecureChannel::PACEPasswordType;
 
     FakePCSCConnection fakeConn;
     PACEParams params;
     params.oid = "0.4.0.127.0.7.2.2.4.2.4";
-    params.passwordType = PACEPasswordType::Can;
+    params.passwordType = PaceSecretKind::Can;
     params.password = LibreSCRS::Secure::String{"123456"};
     params.paramId = 13;
 
@@ -238,14 +238,14 @@ TEST(PaceEstablishTests, NonPcscConnectionMapsToInternal)
 
 TEST(PaceEstablishTests, AlreadyCancelledTokenSkipsHandshake)
 {
+    using LibreSCRS::Auth::PaceSecretKind;
     using LibreSCRS::SecureChannel::ChannelActivationError;
     using LibreSCRS::SecureChannel::PACEParams;
-    using LibreSCRS::SecureChannel::PACEPasswordType;
 
     FakePCSCConnection fakeConn;
     PACEParams params;
     params.oid = "0.4.0.127.0.7.2.2.4.2.4";
-    params.passwordType = PACEPasswordType::Can;
+    params.passwordType = PaceSecretKind::Can;
     params.password = LibreSCRS::Secure::String{"123456"};
 
     CancelSource src;

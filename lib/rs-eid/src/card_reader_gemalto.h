@@ -18,9 +18,11 @@ public:
     // Try selecting an AID on the card. Returns the detected card type.
     static CardType selectApplication(LibreSCRS::SmartCard::Internal::PCSCConnection& conn);
 
-    std::vector<uint8_t> readFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1, uint8_t fileId2) override;
+    std::vector<uint8_t> readFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1,
+                                  uint8_t fileId2) override;
 
-    std::vector<uint8_t> readFileRaw(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1, uint8_t fileId2) override;
+    std::vector<uint8_t> readFileRaw(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1,
+                                     uint8_t fileId2) override;
 };
 
 } // namespace eidcard

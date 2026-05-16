@@ -46,7 +46,8 @@ struct LIBRESCRS_PUBLIC_API PcscBridge
 
     /// @brief Obtain a const reference to the underlying PC/SC connection.
     /// @pre @p session must NOT be in the moved-from state.
-    [[nodiscard]] static const LibreSCRS::SmartCard::Internal::PCSCConnection& unwrap(const CardSession& session) noexcept;
+    [[nodiscard]] static const LibreSCRS::SmartCard::Internal::PCSCConnection&
+    unwrap(const CardSession& session) noexcept;
 };
 
 /// @brief Convenience: free-function spelling exposed inside @c detail::.

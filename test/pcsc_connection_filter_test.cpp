@@ -8,7 +8,8 @@
 TEST(PCSCConnectionFilter, FilterAPIExists)
 {
     using Filter = LibreSCRS::SmartCard::Internal::PCSCConnection::TransmitFilter;
-    static_assert(std::is_invocable_r_v<LibreSCRS::SmartCard::Internal::APDUResponse, Filter, const LibreSCRS::SmartCard::Internal::APDUCommand&>);
+    static_assert(std::is_invocable_r_v<LibreSCRS::SmartCard::Internal::APDUResponse, Filter,
+                                        const LibreSCRS::SmartCard::Internal::APDUCommand&>);
     SUCCEED();
 }
 
