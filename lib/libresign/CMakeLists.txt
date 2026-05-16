@@ -198,6 +198,12 @@ target_compile_features(LibreSign PUBLIC cxx_std_23)
 # LibreSCRS_Auth's PUBLIC include directory; no link symbol is needed
 # for the data-only struct.
 target_link_libraries(LibreSign PRIVATE OpenSSL_Crypto CURL::libcurl SmartCard_Impl)
+# LibreSCRS::Pkcs11Inject — needed by native/pkcs11_token.cpp to forward
+# a live CardSession into the loaded librescrs-pkcs11 module via
+# SessionAttachment. PRIVATE because libresign exposes no public header
+# that surfaces the wrapper type — it's an internal implementation detail
+# of the PKCS#11-backed sign path.
+target_link_libraries(LibreSign PRIVATE LibreSCRS::Pkcs11Inject)
 target_link_libraries(LibreSign PUBLIC LibreSCRS_Auth)
 
 if(SIGNING_BACKEND STREQUAL "dss" OR SIGNING_BACKEND STREQUAL "both")

@@ -10,8 +10,10 @@
 ///        factories.
 
 #include <LibreSCRS/Auth/FieldDescriptor.h>
+#include <LibreSCRS/Auth/PaceSecretKind.h>
 #include <LibreSCRS/Export.h>
 #include <LibreSCRS/LocalizedText.h>
+#include <LibreSCRS/SmartCard/AppletAid.h>
 
 #include <cstdint>
 #include <optional>
@@ -24,11 +26,12 @@ namespace LibreSCRS::Auth {
 
 /// @brief Semantic category describing what the credential provider is being asked for.
 enum class Purpose : std::uint8_t {
-    PreRead,         ///< Unlock required before data-group reads (BAC/PACE).
-    Signing,         ///< PIN entry for a signing operation.
-    ChangePin,       ///< Old + new PIN entry for a PIN change.
-    UnblockPin,      ///< PUK + new PIN entry for an unblock-and-change flow.
-    CustomExtension, ///< Plugin-defined purpose outside the canonical set.
+    PreRead,              ///< Unlock required before data-group reads (BAC/PACE).
+    Signing,              ///< PIN entry for a signing operation.
+    ChangePin,            ///< Old + new PIN entry for a PIN change.
+    UnblockPin,           ///< PUK + new PIN entry for an unblock-and-change flow.
+    EstablishPaceChannel, ///< Per-applet PACE/BAC secret (CAN/MRZ/PIN/PUK).
+    CustomExtension,      ///< Plugin-defined purpose outside the canonical set.
 };
 
 /// @brief Pre-read unlock mechanisms for travel-document-style cards.
@@ -221,6 +224,46 @@ public:
     /// @since 4.0
     [[nodiscard]] static AuthRequirement forUnblockPin(LocalizedText pinLabel);
 
+    /// @brief Build a requirement for a PACE / BAC secret prompt keyed
+    ///        per-applet.
+    /// @param aid The applet whose secure channel is being established.
+    /// @param kind Which shared-secret variant the card expects
+    ///             (CAN / MRZ / PIN / PUK).
+    /// @param retriesLeft Card-reported retry count. PACE/BAC cards
+    ///        typically do not surface a counter; pass `std::nullopt`
+    ///        for the unknown case.
+    /// @param reasonForUser Optional explanatory message rendered alongside
+    ///        the prompt (e.g. "Insert the CAN printed on the back of your
+    ///        ID card"). May be the empty default-constructed value if the
+    ///        host has nothing to add.
+    /// @note Infallible — the input contract is structurally validated by
+    ///       its types.
+    ///
+    /// @since 4.1
+    [[nodiscard]] static AuthRequirement forPaceSecret(
+        LibreSCRS::SmartCard::AppletAid aid,
+        PaceSecretKind kind,
+        std::optional<int> retriesLeft,
+        LocalizedText reasonForUser) noexcept;
+
+    // -- PACE/BAC accessors -------------------------------------------------
+
+    /// @brief Which PACE/BAC secret kind the card needs. Populated only
+    ///        when @ref purpose returns @ref Purpose::EstablishPaceChannel.
+    /// @since 4.1
+    [[nodiscard]] std::optional<PaceSecretKind> paceKind() const noexcept
+    {
+        return paceKindValue;
+    }
+
+    /// @brief Which applet's channel is being established. Populated only
+    ///        when @ref purpose returns @ref Purpose::EstablishPaceChannel.
+    /// @since 4.1
+    [[nodiscard]] const std::optional<LibreSCRS::SmartCard::AppletAid>& paceApplet() const noexcept
+    {
+        return paceAppletValue;
+    }
+
 private:
     AuthRequirement() = default;
 
@@ -233,6 +276,8 @@ private:
     std::optional<int> retriesValue;
     std::optional<LocalizedText> messageText;
     std::optional<LocalizedText> titleText;
+    std::optional<PaceSecretKind> paceKindValue;
+    std::optional<LibreSCRS::SmartCard::AppletAid> paceAppletValue;
 };
 
 } // namespace LibreSCRS::Auth

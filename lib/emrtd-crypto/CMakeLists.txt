@@ -32,6 +32,6 @@ target_include_directories(EMRTDCrypto PRIVATE
 set_target_properties(EMRTDCrypto PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 target_link_libraries(EMRTDCrypto
-    PUBLIC OpenSSL_Crypto
+    PUBLIC OpenSSL_Crypto LibreSCRS_SecureChannel
     PRIVATE SmartCard_Impl
 )

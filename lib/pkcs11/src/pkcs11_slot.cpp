@@ -77,11 +77,13 @@ bool PKCS11Slot::parentCanIsEmpty(const PKCS11Card& parent) noexcept
 void PKCS11Slot::parentCacheCan(PKCS11Card& parent, Secure::String can) noexcept
 {
     parent.cachedCan = std::move(can);
+    parent.onCachedCanChanged();
 }
 
 void PKCS11Slot::parentClearCan(PKCS11Card& parent) noexcept
 {
     parent.cachedCan.clear();
+    parent.onCachedCanChanged();
 }
 
 unsigned long PKCS11Slot::parentEstablishPACE(PKCS11Card& parent)

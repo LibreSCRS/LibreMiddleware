@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
+// SPDX-FileCopyrightText: 2026 hirashix0 and LibreSCRS contributors
+
+#pragma once
+
+#include "apdu.h"
+
+namespace LibreSCRS::SmartCard {
+
+/// Abstract transmit seam shared by the production PC/SC connection
+/// and any test double. Channel implementations
+/// (PlainChannel / PaceChannel / BacChannel) consume this interface
+/// so they can be unit-tested without a real PC/SC stack.
+///
+/// The full set of operations on a connection (transaction control,
+/// ATR retrieval, reconnect, etc.) intentionally stays on the
+/// concrete PCSCConnection; only the byte-level transmit primitive
+/// is abstracted here because that is the only seam channels need.
+class IConnection
+{
+public:
+    virtual ~IConnection() = default;
+
+    /// Send a command APDU to the card and return the response.
+    /// Implementations are expected to be synchronous and to surface
+    /// PC/SC errors as exceptions (matching PCSCConnection's
+    /// long-standing contract).
+    virtual Internal::APDUResponse transmit(const Internal::APDUCommand& cmd) = 0;
+};
+
+} // namespace LibreSCRS::SmartCard

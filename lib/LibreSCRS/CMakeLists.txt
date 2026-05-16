@@ -175,7 +175,55 @@ if(LIBREMIDDLEWARE_BUILD_SHARED)
     )
 endif()
 
+# SecureChannel: ISecureChannel abstraction + PlainChannel/PaceChannel/
+# BacChannel implementations. Hosts the cross-plugin secure-channel
+# coordination surface owned by CardSession. Declared before SmartCard
+# because SmartCard PUBLIC-links it for the CardSession.h surface.
+file(GLOB LIBRESCRS_SECURECHANNEL_PUBLIC_HEADERS CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/include/LibreSCRS/SecureChannel/*.h"
+)
+add_library(LibreSCRS_SecureChannel ${LIBREMIDDLEWARE_LIB_TYPE}
+    SecureChannel/plain_channel.cpp
+    SecureChannel/pace_channel.cpp
+    SecureChannel/pace_params.cpp
+    SecureChannel/bac_channel.cpp
+    ${LIBRESCRS_SECURECHANNEL_PUBLIC_HEADERS}
+)
+target_include_directories(LibreSCRS_SecureChannel PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+# The internal APDUCommand/APDUResponse types live in lib/smartcard/src/.
+# The channel implementations operate on those types directly (matching
+# IConnection::transmit's signature), so the internal include path is a
+# private build-time dependency.
+target_include_directories(LibreSCRS_SecureChannel PRIVATE
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/include
+    ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src)
+target_compile_features(LibreSCRS_SecureChannel PUBLIC cxx_std_23)
+target_compile_definitions(LibreSCRS_SecureChannel PRIVATE
+    LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD)
+target_link_libraries(LibreSCRS_SecureChannel
+    PUBLIC  LibreSCRS_Auth
+    PRIVATE $<BUILD_INTERFACE:EMRTDCrypto>
+            $<BUILD_INTERFACE:SmartCard_Impl>
+)
+set_target_properties(LibreSCRS_SecureChannel PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_options(LibreSCRS_SecureChannel PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden -fvisibility-inlines-hidden>
+)
+if(LIBREMIDDLEWARE_BUILD_SHARED)
+    set_target_properties(LibreSCRS_SecureChannel PROPERTIES
+        VERSION   ${PROJECT_VERSION}
+        SOVERSION ${PROJECT_VERSION_MAJOR}
+        C_VISIBILITY_PRESET hidden
+        CXX_VISIBILITY_PRESET hidden
+        VISIBILITY_INLINES_HIDDEN ON
+    )
+endif()
+
 add_library(LibreSCRS_SmartCard ${LIBREMIDDLEWARE_LIB_TYPE}
+    SmartCard/ActiveChannelHolder.cpp
     SmartCard/CardMap.cpp
     SmartCard/CardSession.cpp
     SmartCard/MonitorService.cpp
@@ -198,7 +246,7 @@ set_target_properties(LibreSCRS_SmartCard PROPERTIES POSITION_INDEPENDENT_CODE O
 # LIBRESCRS_INTERNAL_BUILD lets CardSession.cpp include detail/Unwrap.h, and
 # MonitorService.cpp include detail/MonitorInjection.h and internal smartcard/* headers.
 target_link_libraries(LibreSCRS_SmartCard
-    PUBLIC  LibreSCRS_Auth
+    PUBLIC  LibreSCRS_Auth LibreSCRS_SecureChannel
     PRIVATE $<BUILD_INTERFACE:SmartCard_Impl>
 )
 target_compile_options(LibreSCRS_SmartCard PRIVATE
@@ -347,7 +395,7 @@ if(LIBREMIDDLEWARE_BUILD_SHARED)
     endif()
 
     if(_lm_export_filter)
-        foreach(_lm_target Auth Trust Certificate SmartCard Plugin Signing)
+        foreach(_lm_target Auth Trust Certificate SmartCard SecureChannel Plugin Signing)
             target_link_options(LibreSCRS_${_lm_target} PRIVATE
                 "${_lm_export_link_opt}")
             set_property(TARGET LibreSCRS_${_lm_target} APPEND PROPERTY
@@ -363,6 +411,7 @@ add_library(LibreSCRS::Plugin    ALIAS LibreSCRS_Plugin)
 add_library(LibreSCRS::Signing   ALIAS LibreSCRS_Signing)
 add_library(LibreSCRS::Trust     ALIAS LibreSCRS_Trust)
 add_library(LibreSCRS::Certificate ALIAS LibreSCRS_Certificate)
+add_library(LibreSCRS::SecureChannel ALIAS LibreSCRS_SecureChannel)
 
 # Secure namespace lives inside LibreSCRS_Auth (no separate compilation unit
 # cost; see Buffer.cpp being compiled into LibreSCRS_Auth target). A pure
@@ -375,7 +424,7 @@ add_library(LibreSCRS::Secure ALIAS LibreSCRS_Secure)
 # Umbrella for consumers who don't want to reason about component boundaries.
 add_library(LibreSCRS_All INTERFACE)
 target_link_libraries(LibreSCRS_All INTERFACE
-    LibreSCRS::Auth LibreSCRS::SmartCard LibreSCRS::Plugin LibreSCRS::Signing LibreSCRS::Trust LibreSCRS::Certificate)
+    LibreSCRS::Auth LibreSCRS::SmartCard LibreSCRS::SecureChannel LibreSCRS::Plugin LibreSCRS::Signing LibreSCRS::Trust LibreSCRS::Certificate)
 add_library(LibreSCRS::All ALIAS LibreSCRS_All)
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -396,11 +445,12 @@ if(LIBREMIDDLEWARE_BUILD_SHARED)
     set_target_properties(LibreSCRS_Trust       PROPERTIES EXPORT_NAME Trust)
     set_target_properties(LibreSCRS_Certificate PROPERTIES EXPORT_NAME Certificate)
     set_target_properties(LibreSCRS_SmartCard   PROPERTIES EXPORT_NAME SmartCard)
+    set_target_properties(LibreSCRS_SecureChannel PROPERTIES EXPORT_NAME SecureChannel)
     set_target_properties(LibreSCRS_Plugin      PROPERTIES EXPORT_NAME Plugin)
     set_target_properties(LibreSCRS_Signing     PROPERTIES EXPORT_NAME Signing)
     set_target_properties(LibreSCRS_Secure      PROPERTIES EXPORT_NAME Secure)
 
-    foreach(_lm_target Auth Trust Certificate SmartCard Plugin Signing)
+    foreach(_lm_target Auth Trust Certificate SmartCard SecureChannel Plugin Signing)
         install(TARGETS LibreSCRS_${_lm_target}
             EXPORT   LibreMiddlewareTargets
             LIBRARY  DESTINATION ${CMAKE_INSTALL_LIBDIR}

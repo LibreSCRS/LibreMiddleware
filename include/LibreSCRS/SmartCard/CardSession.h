@@ -9,8 +9,17 @@
 ///        @ref LibreSCRS::SmartCard::CardSession::open and the structured
 ///        @ref LibreSCRS::SmartCard::OpenError.
 
+#include <LibreSCRS/Auth/CredentialProvider.h>
+#include <LibreSCRS/Auth/PaceSecretKind.h>
+#include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Export.h>
 #include <LibreSCRS/LocalizedText.h>
+#include <LibreSCRS/Secure/String.h>
+#include <LibreSCRS/SecureChannel/BacParams.h>
+#include <LibreSCRS/SecureChannel/ChannelErrors.h>
+#include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
+#include <LibreSCRS/SmartCard/AppletAid.h>
+#include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 
 #include <cstdint>
 #include <expected>
@@ -19,9 +28,20 @@
 #include <string>
 #include <vector>
 
+namespace LibreSCRS::SecureChannel {
+class ISecureChannel;
+} // namespace LibreSCRS::SecureChannel
+
 namespace LibreSCRS::SmartCard {
 
 class CardSession;
+
+namespace Internal {
+struct APDUCommand;
+struct APDUResponse;
+APDUResponse transmitThroughActiveChannel(CardSession& session, const APDUCommand& cmd, LibreSCRS::CancelToken token);
+LibreSCRS::SecureChannel::ISecureChannel* activeChannelOf(CardSession& session) noexcept;
+} // namespace Internal
 
 // Forward-declare the LM-internal access points the public CardSession
 // befriends. The actual declarations and implementations live in internal-
@@ -190,6 +210,68 @@ public:
     ///       accessor on a moved-from session is undefined behaviour.
     [[nodiscard]] bool isConnected() const noexcept;
 
+    // -- Cross-plugin secure-channel coordination (4.1+) --------------------
+
+    /// @brief Install or replace the credential provider used by
+    ///        @ref activateChannelWithSm on cache miss. In PKCS#11 module
+    ///        context (where the host supplies "CAN:PIN" directly through
+    ///        @c C_Login) leave the provider unset and pre-populate the
+    ///        cache via @ref setPaceSecret instead.
+    /// @since 4.1
+    void setCredentialProvider(LibreSCRS::Auth::CredentialProvider provider);
+
+    /// @brief Activate the named applet under a plain (no-SM) channel.
+    ///
+    /// Suitable for non-PACE cards (RS eID, GEO CB without PACE, AET,
+    /// Zdravstvena, classical PKCS#15 over contact). Begins a PC/SC
+    /// transaction, SELECTs the AID, installs a @c PlainChannel, and
+    /// returns an @ref ActiveChannelHolder whose destruction ends the
+    /// transaction.
+    ///
+    /// @since 4.1
+    [[nodiscard]] std::expected<ActiveChannelHolder, LibreSCRS::SecureChannel::ChannelActivationError>
+    activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token);
+
+    /// @brief Activate the named applet under a secure-messaging channel
+    ///        (PACE or BAC). On cache miss the credential provider is
+    ///        invoked; on @c PaceWrongSecret the cache entry is evicted
+    ///        and the prompt re-issued up to a small retry cap.
+    ///
+    /// @since 4.1
+    [[nodiscard]] std::expected<ActiveChannelHolder, LibreSCRS::SecureChannel::ChannelActivationError>
+    activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, LibreSCRS::CancelToken token);
+
+    /// @brief Pre-populate the per-process PACE credentials cache.
+    ///        Used by the PKCS#11 module after parsing the host-supplied
+    ///        "CAN:PIN" string, and by plugins that have already collected
+    ///        the secret out-of-band.
+    /// @since 4.1
+    void setPaceSecret(LibreSCRS::Auth::PaceSecretKind kind, LibreSCRS::Secure::String value);
+
+    /// @brief Pre-populate the BAC handshake inputs (document number, dates
+    ///        of birth + expiry from the MRZ-Z line). BAC consumes a
+    ///        dedicated cache slot disjoint from the PACE credentials cache
+    ///        because the three MRZ components are structurally a tuple
+    ///        rather than a single shared secret.
+    /// @since 4.1
+    void setBacInput(LibreSCRS::SecureChannel::BacInput input);
+
+    /// @brief Wipe all cached PACE credentials and the BAC input. Each PACE
+    ///        slot is replaced with a default-constructed @c Secure::String,
+    ///        which zeroises its underlying buffer; the BAC input is reset
+    ///        to a default-constructed value.
+    /// @since 4.1
+    void clearCachedPaceCredentials();
+
+    /// @brief Mark the session dead. Invoked by @c AutoReaderService on
+    ///        a @c CardRemoved event; subsequent activation attempts
+    ///        return @c ChannelActivationError::CardRemoved.
+    /// @since 4.1
+    void markDead() noexcept;
+
+    /// @brief True once @ref markDead has fired.
+    [[nodiscard]] bool isDead() const noexcept;
+
 private:
     // Detail-namespace free functions are the internal access points for
     // test factories (makeDetachedCardSession) and plugin/signing bridges
@@ -201,6 +283,10 @@ private:
     friend std::shared_ptr<CardSession> detail::makeDetachedCardSession(std::string readerName);
     friend struct detail::PcscBridge;
     friend std::uint64_t detail::sessionGeneration(const CardSession& session) noexcept;
+    friend Internal::APDUResponse Internal::transmitThroughActiveChannel(CardSession& session,
+                                                                         const Internal::APDUCommand& cmd,
+                                                                         LibreSCRS::CancelToken token);
+    friend LibreSCRS::SecureChannel::ISecureChannel* Internal::activeChannelOf(CardSession& session) noexcept;
 
     CardSession();
     /// @brief Private constructor used by @ref open and the detail factories.

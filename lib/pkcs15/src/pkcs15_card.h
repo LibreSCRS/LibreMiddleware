@@ -17,8 +17,8 @@
 #include <string_view>
 #include <vector>
 
-namespace LibreSCRS::SmartCard::Internal {
-class PCSCConnection;
+namespace LibreSCRS::SecureChannel {
+class ISecureChannel;
 }
 
 namespace pkcs15 {
@@ -26,7 +26,7 @@ namespace pkcs15 {
 class PKCS15Card
 {
 public:
-    explicit PKCS15Card(LibreSCRS::SmartCard::Internal::PCSCConnection& conn);
+    explicit PKCS15Card(LibreSCRS::SecureChannel::ISecureChannel& channel);
 
     bool probe();        // Try AID SELECT, then EF.DIR fallback
     bool selectApplet(); // Re-select using the method that worked in probe()
@@ -75,7 +75,7 @@ private:
     std::vector<uint8_t> readSelectedFile();
     bool probeViaEfDir(); // EF.DIR fallback: read MF/2F00, find PKCS#15 path
 
-    LibreSCRS::SmartCard::Internal::PCSCConnection& conn;
+    LibreSCRS::SecureChannel::ISecureChannel& channel;
     std::vector<uint8_t> pkcs15Path; // Path discovered from EF.DIR (empty = use AID)
     uint8_t fileSelectP2 = 0x00;     // Discovered during probe/first selectByPath
 };

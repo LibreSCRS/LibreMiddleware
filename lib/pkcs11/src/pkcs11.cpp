@@ -3,7 +3,9 @@
 
 #include "pkcs11_library.h"
 
+#include "attach_registry.h"
 #include "pkcs15_pkcs11_card.h"
+#include "pkcs15_pkcs11_module_context.h"
 
 #include <LibreSCRS/SmartCard/CardMap.h>
 
@@ -71,6 +73,25 @@ static void pkcs11_debug(const char* fmt, ...)
 static std::shared_mutex libraryMutex;
 static std::unique_ptr<PKCS11Library> library;
 
+namespace {
+// Module-scope process-global state with explicit lifecycle. nullptr at
+// process load; populated by C_Initialize and freed by C_Finalize. The
+// single bridge between the PKCS#11 init contract and the extern "C"
+// inject hooks defined in lib/pkcs15/src/pkcs15_pkcs11_attach.cpp.
+// Explicitly NOT a Meyers singleton: there is no magic-static lazy init
+// and no instance() accessor; reachability is gated by libraryMutex
+// (held exclusively across C_Initialize / C_Finalize) and by the
+// nullptr-checks in the moduleContext() accessor below.
+std::unique_ptr<LibreSCRS::Pkcs15::Pkcs11::ModuleContext> g_module;
+} // namespace
+
+namespace LibreSCRS::Pkcs15::Pkcs11 {
+ModuleContext* moduleContext() noexcept
+{
+    return g_module.get();
+}
+} // namespace LibreSCRS::Pkcs15::Pkcs11
+
 static void registerDefaultProviders(PKCS11Library& lib)
 {
     // Probe order: vendored-OpenSC fallback first (broadest, accepts any
@@ -89,7 +110,11 @@ static void registerDefaultProviders(PKCS11Library& lib)
 #if LIBRESCRS_HAS_VENDORED_OPENSC
     lib.registerProvider(std::make_shared<LibreSCRS::OpenSc::Pkcs11::OpenScPKCS11Provider>());
 #endif
-    lib.registerProvider(std::make_shared<LibreSCRS::Pkcs15::Pkcs11::Pkcs15PKCS11Provider>(cardMap));
+    // Pass g_module->attachRegistry by shared_ptr so the provider can
+    // consult it on every probe(). g_module is guaranteed non-null here:
+    // C_Initialize allocates it before calling registerDefaultProviders().
+    lib.registerProvider(
+        std::make_shared<LibreSCRS::Pkcs15::Pkcs11::Pkcs15PKCS11Provider>(cardMap, g_module->attachRegistry));
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +139,8 @@ CK_DECLARE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
             return CKR_CANT_LOCK;
     }
 
+    g_module = std::make_unique<LibreSCRS::Pkcs15::Pkcs11::ModuleContext>();
+    g_module->attachRegistry = std::make_shared<LibreSCRS::Pkcs15::Pkcs11::AttachRegistry>();
     library = std::make_unique<PKCS11Library>();
     registerDefaultProviders(*library);
     return CKR_OK;
@@ -129,6 +156,15 @@ CK_DECLARE_FUNCTION(CK_RV, C_Finalize)(CK_VOID_PTR pReserved)
     if (pReserved != NULL_PTR)
         return CKR_ARGUMENTS_BAD;
     library.reset();
+    if (g_module) {
+        // Drop injected session refs first so any host-owned shared_ptr
+        // copies in the registry are released before the rest of the
+        // module-context state goes away. Order matters only for human
+        // legibility — both calls run under libraryMutex exclusive.
+        if (g_module->attachRegistry)
+            g_module->attachRegistry->clearAll();
+        g_module.reset();
+    }
     return CKR_OK;
     PKCS11_CATCH
 }

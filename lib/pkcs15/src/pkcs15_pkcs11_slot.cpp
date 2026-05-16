@@ -5,6 +5,16 @@
 /// @brief Concrete @ref LibreSCRS::Pkcs15::Pkcs11::Pkcs15Slot
 ///        implementation. Provides per-slot semantics (login + sign +
 ///        enumerateObjects) reduced to a single PIN's view of the card.
+///
+/// Stage 6 (4.2) replaced the borrowed @c pkcs15::PKCS15Card pointer with
+/// per-operation @c ActiveChannelHolder acquisition through the parent
+/// @c Pkcs15Card. Each public method now follows the same shape: lock
+/// slotMutex + cardMutex, acquire a holder, build a local
+/// @c pkcs15::PKCS15Card from @c holder.activeChannel(), perform one
+/// APDU exchange, and release. The holder also drives applet SELECT and
+/// — on PACE-gated cards — keeps the SM channel warm in the session's
+/// per-process cache so successive holders fast-path through §5.3b
+/// Case 1.
 
 #include "pkcs15_pkcs11_slot.h"
 
@@ -19,6 +29,10 @@
 #include <internal/DerWrap.h>
 #include <internal/MechanismConstants.h>
 #include <internal/PKCS11Card.h>
+
+#include <LibreSCRS/SecureChannel/ISecureChannel.h>
+#include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
+#include <smartcard/pcsc_connection.h>
 
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>
@@ -91,10 +105,10 @@ using LibreSCRS::Pkcs11::Internal::kCkoPrivateKey;
 } // namespace
 
 Pkcs15Slot::Pkcs15Slot(std::weak_ptr<LibreSCRS::Pkcs11::Internal::PKCS11Card> parent, std::vector<std::uint8_t> pinId,
-                       std::string pinLabel, ::pkcs15::PKCS15Card* apdu, ::pkcs15::PinInfo pinInfo,
-                       std::vector<::pkcs15::PrivateKeyInfo> keys, std::vector<::pkcs15::CertificateInfo> certs,
+                       std::string pinLabel, ::pkcs15::PinInfo pinInfo, std::vector<::pkcs15::PrivateKeyInfo> keys,
+                       std::vector<::pkcs15::CertificateInfo> certs,
                        LibreSCRS::Pkcs11::Internal::PKCS11TokenInfo tokenInfo, unsigned long slotId)
-    : LibreSCRS::Pkcs11::Internal::PKCS11Slot(std::move(parent), std::move(pinId), std::move(pinLabel)), apdu(apdu),
+    : LibreSCRS::Pkcs11::Internal::PKCS11Slot(std::move(parent), std::move(pinId), std::move(pinLabel)),
       pinInfo(std::move(pinInfo)), keys(std::move(keys)), certs(std::move(certs))
 {
     // Populate base-class protected state directly. We are the subclass
@@ -113,52 +127,13 @@ Pkcs15Slot::Pkcs15Slot(std::weak_ptr<LibreSCRS::Pkcs11::Internal::PKCS11Card> pa
       deferredProfile(true)
 {
     // Deferred-profile mode for AET SafeSign / Posta Srbija eID style cards
-    // that refuse PKCS#15 directory reads pre-login. apdu / pinInfo / keys /
-    // certs are populated lazily inside login() after PIN verification
-    // succeeds. The placeholder pinId is empty until the AODF is read.
+    // that refuse PKCS#15 directory reads pre-login. pinInfo / keys / certs
+    // are populated lazily inside login() after PIN verification succeeds.
     cachedTokenInfo = std::move(placeholderTokenInfo);
     stableSlotId = slotId;
 }
 
 Pkcs15Slot::~Pkcs15Slot() = default;
-
-void Pkcs15Slot::onCardReset() noexcept
-{
-    // RESET drops the card-side auth context AND invalidates our borrowed
-    // apdu pointer because Pkcs15Card::reconnectInline rebuilt the
-    // parent's std::unique_ptr<pkcs15::PKCS15Card> from scratch. The
-    // previous generation's raw apdu* held by every slot is now dangling;
-    // refresh it from the parent under slotMutex before any subsequent
-    // signData / enumerateObjects can dereference the old pointer.
-    //
-    // Lock order (slotMutex → cardMutex) is preserved by the caller:
-    // PKCS11Card::handleReset releases cardMutex before walking the
-    // slot list. We can therefore safely re-take cardMutex briefly to
-    // publish-read the parent's freshly-rebuilt apdu pointer.
-    auto parent = parentCard.lock();
-
-    std::scoped_lock slotLock(slotMutex);
-    cachedPin.clear();
-    loggedIn = false;
-
-    if (parent) {
-        std::scoped_lock cardLock(parentTransportMutex(*parent));
-        // For deferred-profile slots that have not yet logged in,
-        // parent->apdu may still be null; mirror that here. Otherwise
-        // pick up the freshly-rebuilt helper.
-        apdu = parentApduHelper(*parent);
-    } else {
-        // Parent gone — slot is effectively orphaned; clearing the
-        // borrow keeps subsequent calls from touching freed memory.
-        apdu = nullptr;
-    }
-}
-
-::pkcs15::PKCS15Card* Pkcs15Slot::parentApduHelper(LibreSCRS::Pkcs11::Internal::PKCS11Card& parentBase) noexcept
-{
-    auto* parent = static_cast<Pkcs15Card*>(&parentBase);
-    return parent->apdu.get();
-}
 
 const ::pkcs15::PKCS15Profile* Pkcs15Slot::parentProfile(LibreSCRS::Pkcs11::Internal::PKCS11Card& parentBase) noexcept
 {
@@ -199,37 +174,33 @@ std::vector<unsigned long> Pkcs15Slot::mechanisms() const
 std::vector<LibreSCRS::Pkcs11::Internal::PKCS11ObjectInfo> Pkcs15Slot::enumerateObjects()
 {
     using namespace LibreSCRS::Pkcs11::Internal;
-    // For every certificate paired with a key in this slot's filtered
-    // set, surface a (cert, private-key) pair. Slot-private object scope
-    // means we do NOT see keys from sibling slots (one PIN ⇒ one set).
     std::vector<PKCS11ObjectInfo> objects;
 
-    // Acquire cardMutex through the parent because readCertificate()
-    // issues APDUs. slotMutex is not required for keys/certs (immutable
-    // post-construction), but enumerateObjects() can race with login()
-    // on the same slot, so we still take it for ordering.
     auto parent = parentCard.lock();
     if (!parent)
         return objects;
+    auto& parentP15 = static_cast<Pkcs15Card&>(*parent);
+
     std::scoped_lock slotLock(slotMutex);
     std::scoped_lock cardLock(parentTransportMutex(*parent));
 
-    if (!apdu)
-        return objects; // Deferred-profile mode pre-login: nothing enumerated.
+    if (deferredProfile)
+        return objects; // Pre-login deferred-profile slot: nothing enumerated yet.
+
+    auto holderResult = parentP15.acquireChannel();
+    if (!holderResult)
+        return objects;
+    auto holder = std::move(*holderResult);
+    auto* channel = holder.activeChannel();
+    if (channel == nullptr)
+        return objects;
+    ::pkcs15::PKCS15Card apdu(*channel);
 
     try {
-        if (!apdu->selectApplet()) {
-            // Same recovery path as Pkcs15Slot::login — re-probe (EF.DIR
-            // fallback) when cached state from CardMap is stale relative
-            // to the current connection's SM state.
-            if (!(apdu->probe() && apdu->selectApplet()))
-                return objects;
-        }
-
         for (const auto& certInfo : certs) {
             std::vector<std::uint8_t> derBytes;
             try {
-                derBytes = apdu->readCertificate(certInfo);
+                derBytes = apdu.readCertificate(certInfo);
             } catch (...) {
                 continue; // Skip unreadable certs, continue with the rest.
             }
@@ -346,6 +317,7 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
     auto parent = parentCard.lock();
     if (!parent)
         return Crv::DeviceError;
+    auto& parentP15 = static_cast<Pkcs15Card&>(*parent);
 
     std::scoped_lock slotLock(slotMutex);
     std::scoped_lock cardLock(parentTransportMutex(*parent));
@@ -356,14 +328,14 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
         std::string pinStr(pin.begin(), pin.end());
         ::LibreSCRS::SmartCard::Internal::PinStringScrubber pinScrub{pinStr};
 
-        // PACE placeholder-slot self-transform path. Distinct from the
-        // OLD-AET deferred-profile path below: that path PIN-verifies
-        // against an applet that refuses pre-login directory reads;
-        // this path drives the parent's resumeBind() to perform PACE +
-        // applet select + readProfile after the CAN is supplied. After
-        // resumeBind succeeds the slot adopts the parent's freshly-read
-        // profile in place, keeping its CK_SLOT_ID stable so any
-        // session opened against the placeholder slot remains valid.
+        // Branch 1 — PACE placeholder-slot self-transform. Distinct from
+        // the OLD-AET deferred-profile path (Branch 3): that path
+        // PIN-verifies against an applet that refuses pre-login directory
+        // reads; this path drives the parent's resumeBind() to perform
+        // PACE + applet select + readProfile after the CAN is supplied.
+        // After resumeBind succeeds the slot adopts the parent's
+        // freshly-read profile in place, keeping its CK_SLOT_ID stable so
+        // any session opened against the placeholder slot remains valid.
         if (parentPlaceholderState(*parent)) {
             // CAN-in-PIN. NAM CL (pure-PACE, no second PIN) accepts a
             // bare CAN; cards that combine PACE with a card-side PIN
@@ -393,19 +365,9 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
                 return rc;
             }
 
-            // resumeBind has populated parent's apdu and (best-effort)
-            // profile. Borrow the apdu and transform self from profile.
-            apdu = parentApduHelper(*parent);
-            if (!apdu) {
-                OPENSSL_cleanse(realPin.data(), realPin.size());
-                // Cleanse the cached CAN: leaving it would let a future
-                // login on this placeholder slot skip PACE while the
-                // parent has no APDU helper, deadlocking the slot in a
-                // permanent DeviceError loop without retry recovery.
-                parentClearCan(*parent);
-                return Crv::DeviceError;
-            }
-
+            // resumeBind has populated parent's profile (best-effort).
+            // Adopt the user PIN view in place; the slot's CK_SLOT_ID
+            // stays anchored on the placeholder-derived stableSlotId.
             const auto* profile = parentProfile(*parent);
             ::pkcs15::PinInfo* selectedPin = nullptr;
             ::pkcs15::PKCS15Profile profileCopy;
@@ -482,7 +444,19 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
                 // Optional PIN verify for PACE+PIN combo cards. NAM CL
                 // (pure-PACE) reaches this branch with realPin empty
                 // and skips verify entirely — PACE alone authenticates.
-                auto result = apdu->verifyPIN(*selectedPin, realPin);
+                auto holderResult = parentP15.acquireChannel();
+                if (!holderResult) {
+                    OPENSSL_cleanse(realPin.data(), realPin.size());
+                    return Crv::DeviceError;
+                }
+                auto holder = std::move(*holderResult);
+                auto* channel = holder.activeChannel();
+                if (channel == nullptr) {
+                    OPENSSL_cleanse(realPin.data(), realPin.size());
+                    return Crv::DeviceError;
+                }
+                ::pkcs15::PKCS15Card apdu(*channel);
+                auto result = apdu.verifyPIN(*selectedPin, realPin);
                 if (!result.success) {
                     OPENSSL_cleanse(realPin.data(), realPin.size());
                     if (result.blocked)
@@ -498,65 +472,37 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
             return Crv::Ok;
         }
 
-        if (parentNeedsPace(*parent)) {
-            // CAN-in-PIN format. If the parent already has a cachedCan
-            // (login earlier in this session, or pre-seeded) we accept a
-            // bare PIN; otherwise we require "CAN:PIN".
-            if (parentCanIsEmpty(*parent)) {
-                auto colon = pinStr.find(':');
-                if (colon == std::string::npos)
-                    return Crv::PinInvalid;
-                std::string can = pinStr.substr(0, colon);
-                std::string realPin = pinStr.substr(colon + 1);
-                OPENSSL_cleanse(pinStr.data(), pinStr.size());
+        // Branch 2 — PACE eager-bind without yet-cached CAN. Parse
+        // CAN-in-PIN, deposit, validate via establishPACE, fall through
+        // with realPin held in pinStr for verifyPIN below.
+        if (parentNeedsPace(*parent) && parentCanIsEmpty(*parent)) {
+            auto colon = pinStr.find(':');
+            if (colon == std::string::npos)
+                return Crv::PinInvalid;
+            std::string can = pinStr.substr(0, colon);
+            std::string realPin = pinStr.substr(colon + 1);
+            OPENSSL_cleanse(pinStr.data(), pinStr.size());
 
-                // Cache CAN on the parent (under cardMutex, already held).
-                parentCacheCan(*parent, LibreSCRS::Secure::String{std::move(can)});
+            // Cache CAN on the parent (under cardMutex, already held).
+            // The hook forwards the secret to the session's PACE cache.
+            parentCacheCan(*parent, LibreSCRS::Secure::String{std::move(can)});
 
-                // Trigger PACE; on failure cleanse and bail.
-                auto rc = parentEstablishPACE(*parent);
-                if (rc != Crv::Ok) {
-                    OPENSSL_cleanse(realPin.data(), realPin.size());
-                    parentClearCan(*parent);
-                    return rc;
-                }
-
-                pinStr = std::move(realPin);
+            // Trigger PACE (validates the deposited CAN); on failure
+            // cleanse and bail.
+            auto rc = parentEstablishPACE(*parent);
+            if (rc != Crv::Ok) {
+                OPENSSL_cleanse(realPin.data(), realPin.size());
+                parentClearCan(*parent);
+                return rc;
             }
+
+            pinStr = std::move(realPin);
         }
 
-        // Deferred-profile mode (AET SafeSign / Posta Srbija):
-        // The applet refuses PKCS#15 directory reads pre-login. Borrow the
-        // parent card's APDU helper, run a single PIN verify with a
-        // generic PinInfo (reference 0x01, ASCII, padded with 0xFF — the
-        // SafeSign default), and on success read the AODF / PrKDF / CDF
-        // to populate this slot's pinInfo / keys / certs. Single-shot:
-        // we never retry a failed PIN inside one login() call so the
-        // card retry counter consumes at most one attempt per consumer
-        // C_Login invocation.
-        if (deferredProfile && !apdu) {
-            auto* parentApdu = parentApduHelper(*parent);
-            if (!parentApdu)
-                return Crv::DeviceError;
-            apdu = parentApdu;
-        }
-
-        if (!apdu)
-            return Crv::DeviceError;
-
-        if (!apdu->selectApplet()) {
-            // Cached state may be stale relative to the post-PACE SM
-            // tunnel (path / P2 probed pre-SM no longer accepted under
-            // SM, or vice versa). Re-run probe with EF.DIR fallback
-            // and retry — the CardMap consumed at bind() is the
-            // happy path; this is the recovery path.
-            if (!(apdu->probe() && apdu->selectApplet()))
-                return Crv::DeviceError;
-        }
-
-        // For deferred-profile mode build a generic PinInfo defaulting to
-        // SafeSign conventions. After successful verify we read the real
-        // AODF and replace this with the on-card PinInfo.
+        // Branch 3 — Deferred-profile (AET SafeSign) and standard
+        // eager-bind both reach here. Build a PinInfo to verify against,
+        // acquire a holder, run the verify; deferred-profile additionally
+        // reads the post-verify AODF to populate this slot.
         ::pkcs15::PinInfo pinInfoForVerify;
         if (deferredProfile && !pinInfo) {
             // SafeSign IC AODF defaults documented in the vendor token
@@ -580,7 +526,16 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
             return Crv::DeviceError;
         }
 
-        auto result = apdu->verifyPIN(pinInfoForVerify, pinStr);
+        auto holderResult = parentP15.acquireChannel();
+        if (!holderResult)
+            return Crv::DeviceError;
+        auto holder = std::move(*holderResult);
+        auto* channel = holder.activeChannel();
+        if (channel == nullptr)
+            return Crv::DeviceError;
+        ::pkcs15::PKCS15Card apdu(*channel);
+
+        auto result = apdu.verifyPIN(pinInfoForVerify, pinStr);
         if (!result.success) {
             OPENSSL_cleanse(pinStr.data(), pinStr.size());
             if (result.blocked)
@@ -589,16 +544,16 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
         }
 
         // PIN verified. If we entered in deferred-profile mode, read the
-        // real PKCS#15 profile now and finalise this slot's state.
+        // real PKCS#15 profile now and finalise this slot's state. The
+        // holder (which carries the post-verify auth context) is still
+        // alive, so readProfile rides the same channel that just won the
+        // verify — no risk of the SM session collapsing between the two.
         if (deferredProfile) {
             try {
                 LibreSCRS::Internal::probeTrace("PROBE-READPROFILE call=slot-deferred");
-                auto profile = apdu->readProfile();
+                auto profile = apdu.readProfile();
                 ::pkcs15::PinInfo* selectedPin = nullptr;
                 for (auto& p : profile.pins) {
-                    // Single source of user-PIN truth: defer to isUserPin
-                    // so SO PIN / admin entries on AET SafeSign are not
-                    // selected as the slot's owning PIN.
                     if (isUserPin(p)) {
                         selectedPin = &p;
                         break;
@@ -612,18 +567,10 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
                     pinLabel = selectedPin->label;
                     pinInfo = *selectedPin;
 
-                    // Filter keys + certs by matching authId (or accept all
-                    // when the AODF lacks per-key authId attribution —
-                    // single-PIN AET cards in scope here).
                     for (const auto& key : profile.privateKeys) {
                         if (key.authId == selectedPin->id || key.authId.empty())
                             keys.push_back(key);
                     }
-                    // Strict id-match between cert and retained key. We
-                    // do NOT keep an orphan cert as a fallback: that
-                    // surfaces CA-chain entries (or the wrong cert when
-                    // multiple unattributed certs exist) as the slot's
-                    // identity, diverging from completeBind's semantics.
                     for (const auto& cert : profile.certificates) {
                         for (const auto& key : keys) {
                             if (cert.id == key.id) {
@@ -633,7 +580,6 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
                         }
                     }
 
-                    // Update cachedTokenInfo with real profile values.
                     if (!profile.tokenInfo.label.empty())
                         cachedTokenInfo.label = profile.tokenInfo.label;
                     if (!profile.tokenInfo.manufacturer.empty())
@@ -650,12 +596,8 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
                 // consumed by the verify; falling through to loggedIn=true
                 // with empty keys/certs would surface as a silent zero-byte
                 // signature at signData(). Surface the failure to the
-                // consumer instead — caller sees CKR_DEVICE_ERROR rather
-                // than CKR_FUNCTION_FAILED with no diagnostic. Wipe the
-                // already-consumed PIN buffer to avoid leaving it in
-                // process memory, leave deferredProfile=true so a future
-                // (post-recovery) login can still retry once the
-                // underlying readProfile failure is resolved.
+                // consumer so they get a clean CKR_DEVICE_ERROR rather
+                // than CKR_FUNCTION_FAILED with no diagnostic.
                 OPENSSL_cleanse(pinStr.data(), pinStr.size());
                 return Crv::DeviceError;
             }
@@ -685,6 +627,7 @@ std::vector<std::uint8_t> Pkcs15Slot::signData(std::span<const std::uint8_t> dat
     auto parent = parentCard.lock();
     if (!parent)
         return {};
+    auto& parentP15 = static_cast<Pkcs15Card&>(*parent);
 
     std::scoped_lock slotLock(slotMutex);
     std::scoped_lock cardLock(parentTransportMutex(*parent));
@@ -700,7 +643,7 @@ std::vector<std::uint8_t> Pkcs15Slot::signData(std::span<const std::uint8_t> dat
             break;
         }
     }
-    if (!matched)
+    if (!matched || !pinInfo)
         return {};
 
     try {
@@ -712,11 +655,17 @@ std::vector<std::uint8_t> Pkcs15Slot::signData(std::span<const std::uint8_t> dat
         std::string pinStr(canView.begin(), canView.end());
         ::LibreSCRS::SmartCard::Internal::PinStringScrubber pinScrub{pinStr};
 
-        if (!apdu || !pinInfo)
+        auto holderResult = parentP15.acquireChannel();
+        if (!holderResult)
             return {};
+        auto holder = std::move(*holderResult);
+        auto* channel = holder.activeChannel();
+        if (channel == nullptr)
+            return {};
+        ::pkcs15::PKCS15Card apdu(*channel);
 
         std::vector<std::uint8_t> dataVec(data.begin(), data.end());
-        return apdu->sign(*matched, pinStr, *pinInfo, dataVec, dataVec, scheme);
+        return apdu.sign(*matched, pinStr, *pinInfo, dataVec, dataVec, scheme);
     } catch (...) {
         return {};
     }
@@ -734,6 +683,7 @@ std::vector<std::uint8_t> Pkcs15Slot::signWithDigestInfo(std::span<const std::ui
     auto parent = parentCard.lock();
     if (!parent)
         return {};
+    auto& parentP15 = static_cast<Pkcs15Card&>(*parent);
 
     std::scoped_lock slotLock(slotMutex);
     std::scoped_lock cardLock(parentTransportMutex(*parent));
@@ -748,7 +698,7 @@ std::vector<std::uint8_t> Pkcs15Slot::signWithDigestInfo(std::span<const std::ui
             break;
         }
     }
-    if (!matched)
+    if (!matched || !pinInfo)
         return {};
 
     try {
@@ -758,12 +708,18 @@ std::vector<std::uint8_t> Pkcs15Slot::signWithDigestInfo(std::span<const std::ui
         std::string pinStr(canView.begin(), canView.end());
         ::LibreSCRS::SmartCard::Internal::PinStringScrubber pinScrub{pinStr};
 
-        if (!apdu || !pinInfo)
+        auto holderResult = parentP15.acquireChannel();
+        if (!holderResult)
             return {};
+        auto holder = std::move(*holderResult);
+        auto* channel = holder.activeChannel();
+        if (channel == nullptr)
+            return {};
+        ::pkcs15::PKCS15Card apdu(*channel);
 
         std::vector<std::uint8_t> digestVec(digestInfo.begin(), digestInfo.end());
         std::vector<std::uint8_t> rawVec(rawData.begin(), rawData.end());
-        return apdu->sign(*matched, pinStr, *pinInfo, digestVec, rawVec, scheme);
+        return apdu.sign(*matched, pinStr, *pinInfo, digestVec, rawVec, scheme);
     } catch (...) {
         return {};
     }

@@ -20,6 +20,7 @@ add_library(SmartCard_Impl STATIC
     src/ipcsc_scan_provider.h
     src/pcsc_scan_provider.h
     # Bucket-C headers: public within LM, LC bridge surface
+    include/smartcard/i_connection.h
     include/smartcard/pcsc_connection.h
     include/smartcard/secure_buffer.h
     include/smartcard/monitor_event.h

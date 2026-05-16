@@ -16,6 +16,7 @@
 #endif
 
 #include "apdu.h"
+#include "i_connection.h"
 
 namespace LibreSCRS::SmartCard::Internal {
 
@@ -32,7 +33,7 @@ private:
     LONG errorCode;
 };
 
-class PCSCConnection
+class PCSCConnection : public IConnection
 {
 public:
     explicit PCSCConnection(const std::string& readerName);
@@ -52,7 +53,7 @@ public:
     PCSCConnection(const PCSCConnection&) = delete;
     PCSCConnection& operator=(const PCSCConnection&) = delete;
 
-    APDUResponse transmit(const APDUCommand& cmd);
+    APDUResponse transmit(const APDUCommand& cmd) override;
 
     using TransmitFilter = std::function<APDUResponse(const APDUCommand&)>;
     void setTransmitFilter(TransmitFilter filter);
@@ -73,8 +74,21 @@ public:
     // Acquire / release an exclusive PC/SC transaction on the card.
     // While a transaction is held, other connections' SCardTransmit calls block.
     // endTransaction() never throws; it is safe to call even after reconnect().
+    //
+    // These primitives are public for backwards compatibility but new call
+    // sites SHOULD use the RAII CardTransaction wrapper below — it preserves
+    // pairing and feeds the `callerHoldsTransaction` flag consulted by
+    // higher-level holders.
     void beginTransaction();
     void endTransaction() noexcept;
+
+    /// @brief True iff at least one live `CardTransaction` (or a balanced
+    ///        beginTransaction/endTransaction pair) currently holds an
+    ///        exclusive PC/SC transaction on this connection. Higher-level
+    ///        owners (e.g. `ActiveChannelHolder`) consult this to confirm
+    ///        their cross-process atomicity invariant before issuing the
+    ///        first wrapped APDU.
+    [[nodiscard]] bool isTransactionHeld() const noexcept { return callerHoldsTransaction; }
 
     // Abort any pending blocking PC/SC operation (SCardTransmit, etc.) on this
     // connection's context. Thread-safe: can be called from any thread.
@@ -88,28 +102,69 @@ private:
     SCARDCONTEXT context = 0;
     SCARDHANDLE card = 0;
     DWORD activeProtocol = 0;
+    bool callerHoldsTransaction = false;
+    friend class CardTransaction;
 };
 
 // RAII wrapper: begins a PC/SC transaction on construction, ends it on destruction.
 // Prevents APDU interleaving when multiple processes share the same card
 // (e.g., LibreCelik + Firefox PKCS#11 both using SCARD_SHARE_SHARED).
+//
+// Move-only with explicit release() — enables transferring transaction
+// ownership into longer-lived holders (e.g. ActiveChannelHolder) while
+// preserving full RAII unwind on error paths. After release(), the
+// transaction is no longer ended by this object's destructor; the caller
+// guarantees some other live owner will end it eventually.
 class CardTransaction
 {
 public:
-    explicit CardTransaction(PCSCConnection& conn) : conn(conn)
+    explicit CardTransaction(PCSCConnection& c) : conn(&c)
     {
-        conn.beginTransaction();
+        conn->beginTransaction();
+        conn->callerHoldsTransaction = true;
     }
     ~CardTransaction()
     {
-        conn.endTransaction();
+        if (conn)
+        {
+            conn->callerHoldsTransaction = false;
+            conn->endTransaction();
+        }
     }
 
     CardTransaction(const CardTransaction&) = delete;
     CardTransaction& operator=(const CardTransaction&) = delete;
 
+    CardTransaction(CardTransaction&& other) noexcept : conn(other.conn) { other.conn = nullptr; }
+
+    CardTransaction& operator=(CardTransaction&& other) noexcept
+    {
+        if (this != &other)
+        {
+            if (conn)
+            {
+                conn->callerHoldsTransaction = false;
+                conn->endTransaction();
+            }
+            conn = other.conn;
+            other.conn = nullptr;
+        }
+        return *this;
+    }
+
+    /// @brief Release ownership without ending the transaction. After this
+    ///        call, the destructor is a no-op. The transaction remains
+    ///        live on the underlying PCSCConnection; the caller assumes
+    ///        responsibility for ending it through some other live owner
+    ///        (typically a moved-to CardTransaction held by
+    ///        ActiveChannelHolder, whose own destructor ends it).
+    void release() noexcept { conn = nullptr; }
+
+    /// @brief True while this object still owns the transaction.
+    [[nodiscard]] bool owns() const noexcept { return conn != nullptr; }
+
 private:
-    PCSCConnection& conn;
+    PCSCConnection* conn;
 };
 
 } // namespace LibreSCRS::SmartCard::Internal

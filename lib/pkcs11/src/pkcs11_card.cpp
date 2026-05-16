@@ -23,6 +23,12 @@ unsigned long PKCS11Card::resumePostCan()
     return Crv::FunctionFailed;
 }
 
+void PKCS11Card::onCachedCanChanged() noexcept
+{
+    // No-op default. PACE-capable subclasses that own a secondary
+    // credential cache (e.g. CardSession::setPaceSecret) override this.
+}
+
 std::span<const std::shared_ptr<PKCS11Slot>> PKCS11Card::enumerateSlots() const noexcept
 {
     return std::span<const std::shared_ptr<PKCS11Slot>>{slots.data(), slots.size()};

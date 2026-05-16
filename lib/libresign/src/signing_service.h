@@ -10,8 +10,13 @@
 #include "types.h"
 
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <string_view>
+
+namespace LibreSCRS::SmartCard {
+class CardSession;
+}
 
 namespace libresign {
 
@@ -52,9 +57,18 @@ public:
     // resolves the slot via FNV-1a hash of @p readerName embedded in
     // the LM PKCS#11 module's slotDescription — see
     // `lib/pkcs11/include/pkcs11/internal/slot_hash.h`.
+    //
+    // sharedSession (optional, default null): live caller-owned
+    // CardSession to forward into the loaded librescrs-pkcs11 module
+    // so its PKCS#15 provider's probe can adopt it instead of opening
+    // a second standalone session against the same reader. Required
+    // for PACE-protected cards where the active SecureChannel must
+    // not be torn down between display and sign. Legacy callers that
+    // omit this argument get the standalone-bind behaviour.
+    /// @since 4.2
     virtual SigningResult sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
-                               std::span<const uint8_t> pin, const std::string& keyAlias,
-                               const std::string& readerName) = 0;
+                               std::span<const uint8_t> pin, const std::string& keyAlias, const std::string& readerName,
+                               std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession = nullptr) = 0;
 
     virtual bool isAvailable() const = 0;
 };

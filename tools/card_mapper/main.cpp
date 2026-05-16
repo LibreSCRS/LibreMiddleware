@@ -8,11 +8,9 @@
 #include "plugin_mapper.h"
 #include "scaffold_generator.h"
 
-#include <emrtd_card.h>
 #include <smartcard/pcsc_connection.h>
 
 #include <cstdlib>
-#include <memory>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -67,18 +65,17 @@ int runDiscoverMode(const CliOptions& opts)
     auto readerName = getReaderName(opts);
     LibreSCRS::SmartCard::Internal::PCSCConnection conn(readerName);
 
-    // PACE authentication + SM filter — enables scanning applets
-    // that require prior authentication (e.g. PKCS#15 on contactless)
-    std::unique_ptr<emrtd::EMRTDCard> emrTDCard;
+    // PACE pre-authentication was previously bootstrapped via emrtd::EMRTDCard
+    // and a PCSCConnection transmit filter. The 4.2 SecureChannel migration
+    // moved PACE state into CardSession; this tool has not yet been ported to
+    // that flow. Surfaces a clear refusal when a CAN argument is supplied so
+    // operators don't silently scan a card without the SM activation they
+    // requested.
     if (!opts.can.empty()) {
-        emrTDCard = std::make_unique<emrtd::EMRTDCard>(conn, opts.can);
-        auto authResult = emrTDCard->authenticate();
-        if (!authResult.success)
-            throw std::runtime_error("PACE failed: " + authResult.error);
-        std::cerr << "PACE authentication: OK (SM active)\n";
-
-        conn.setTransmitFilter(
-            [&emrTDCard](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd) { return emrTDCard->transmitSecureAPDU(cmd); });
+        throw std::runtime_error(
+            "card_mapper PACE pre-auth (CAN argument) is not yet ported to the 4.2 SecureChannel; "
+            "for PACE-protected card discovery use the pkcs15_after_pace_probe tool or run the card "
+            "through LibreCelik. Retry without --can to scan unauthenticated applets only.");
     }
 
     auto scanResult = card_mapper::discoverCard(conn, opts.verbose);

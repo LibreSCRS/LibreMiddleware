@@ -13,8 +13,14 @@
 #                     C_GetFunctionList — the alternate entry name the
 #                     spec defines for consumers that prefer not to dlsym
 #                     every individual C_* function).
+#   _librescrs_pkcs11_*
+#                   — LibreSCRS extensions to the PKCS#11 surface. Today
+#                     this covers the in-process CardSession injection
+#                     hooks (attach / detach); the prefix reserves the
+#                     namespace for future module-extension entry points.
 #
 # Anything else (OpenSSL ASN1_*, LibreSCRS::*, libresign::*,
 # LibreSCRS::SmartCard::Internal::*) is hidden from the dynamic export
 # table.
 _C_*
+_librescrs_pkcs11_*

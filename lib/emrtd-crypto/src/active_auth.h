@@ -12,8 +12,8 @@
 #include <cstdint>
 #include <vector>
 
-namespace LibreSCRS::SmartCard::Internal {
-class PCSCConnection;
+namespace LibreSCRS::SecureChannel {
+class ISecureChannel;
 }
 
 namespace emrtd::crypto {
@@ -27,6 +27,11 @@ struct AAPublicKey
 
 AAPublicKey parseDG15(const std::vector<uint8_t>& dg15Raw);
 
-ChipAuthResult performActiveAuth(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const std::vector<uint8_t>& dg15Raw,
-                                 SecureMessaging& currentSM);
+/// @brief Run ICAO Doc 9303 Active Authentication over the supplied secure
+///        channel. INTERNAL AUTHENTICATE flows through @p channel which
+///        owns the SM wrap/unwrap. Returns
+///        @ref ChipAuthResult::activeAuthentication status; no key
+///        rotation occurs on success.
+ChipAuthResult performActiveAuth(LibreSCRS::SecureChannel::ISecureChannel& channel,
+                                 const std::vector<uint8_t>& dg15Raw);
 } // namespace emrtd::crypto

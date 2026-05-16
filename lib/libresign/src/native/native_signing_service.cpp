@@ -244,14 +244,18 @@ bool NativeSigningService::isAvailable() const
 
 SigningResult NativeSigningService::sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
                                          std::span<const uint8_t> pin, const std::string& keyAlias,
-                                         const std::string& readerName)
+                                         const std::string& readerName,
+                                         std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession)
 {
     try {
         // Single mandatory ctor — legacy slotIndex=-1 / tokenLabel=""
         // auto-pick paths were removed in 4.0 because they silently
         // selected slots[0] under multi-card setups, routing PIN to
         // the wrong card.
-        auto token = Pkcs11Token(pkcs11ModulePath, pin, keyAlias, readerName);
+        // sharedSession (optional) is forwarded into the loaded
+        // librescrs-pkcs11 module via SessionAttachment; null falls
+        // through to standalone bind.
+        auto token = Pkcs11Token(pkcs11ModulePath, pin, keyAlias, readerName, std::move(sharedSession));
 
         // Certificate expiry enforcement. The native backend's CMS path
         // does not intrinsically reject expired signers — add an explicit

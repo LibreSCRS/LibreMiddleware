@@ -8,5 +8,5 @@ librescrs_add_plugin(emrtd-plugin
         ${PROJECT_SOURCE_DIR}/lib/emrtd/src
         ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src
         ${PROJECT_SOURCE_DIR}/lib/smartcard/src
-    LINK_LIBRARIES EMRTD LibreSCRS_Plugin
+    LINK_LIBRARIES EMRTD LibreSCRS_Plugin LibreSCRS_SmartCard LibreSCRS_SecureChannel
 )

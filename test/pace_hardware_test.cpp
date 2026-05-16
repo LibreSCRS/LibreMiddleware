@@ -8,6 +8,15 @@
 #include <emrtd_types.h>
 #include <smartcard/pcsc_connection.h>
 
+#include <LibreSCRS/Auth/PaceSecretKind.h>
+#include <LibreSCRS/CancelToken.h>
+#include <LibreSCRS/Secure/String.h>
+#include <LibreSCRS/SecureChannel/ChannelErrors.h>
+#include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
+#include <LibreSCRS/SmartCard/AppletAid.h>
+#include <LibreSCRS/SmartCard/CardSession.h>
+#include <LibreSCRS/SmartCard/SmProtocolRequest.h>
+
 #include <algorithm>
 #include <cstdlib>
 #include <iomanip>
@@ -60,6 +69,34 @@ TEST(PACEHardwareTest, PaceWithCAN)
     EXPECT_FALSE(session->ssc.empty());
 }
 
+namespace {
+
+// Establish a PACE-CAN channel via CardSession and return the holder + the
+// session. The holder must stay alive for the lifetime of any EMRTDCard
+// constructed from the channel; the session must outlive the holder.
+struct PaceFixture
+{
+    LibreSCRS::SmartCard::CardSession session;
+    LibreSCRS::SmartCard::ActiveChannelHolder holder;
+};
+
+std::optional<PaceFixture> openPaceCanFixture(const std::string& reader, const std::string& can)
+{
+    auto sessionResult = LibreSCRS::SmartCard::CardSession::open(reader);
+    if (!sessionResult.has_value())
+        return std::nullopt;
+    auto session = std::move(*sessionResult);
+    session.setPaceSecret(LibreSCRS::Auth::PaceSecretKind::Can, LibreSCRS::Secure::String{can});
+    LibreSCRS::SmartCard::AppletAid emrtdAid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
+    auto holderResult = session.activateChannelWithSm(
+        emrtdAid, LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can}, LibreSCRS::CancelToken{});
+    if (!holderResult)
+        return std::nullopt;
+    return PaceFixture{std::move(session), std::move(*holderResult)};
+}
+
+} // namespace
+
 TEST(PACEHardwareTest, PaceAuthenticateAndReadCOM)
 {
     auto can = getTestCAN();
@@ -70,12 +107,12 @@ TEST(PACEHardwareTest, PaceAuthenticateAndReadCOM)
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
-    LibreSCRS::SmartCard::Internal::PCSCConnection conn(readers[0]);
-    emrtd::EMRTDCard card(conn, can);
+    auto fixture = openPaceCanFixture(readers[0], can);
+    ASSERT_TRUE(fixture.has_value()) << "PACE channel activation failed";
+    auto* channel = fixture->holder.activeChannel();
+    ASSERT_NE(channel, nullptr);
 
-    auto result = card.authenticate();
-    ASSERT_TRUE(result.success) << "Authentication failed: " << result.error;
-    EXPECT_EQ(result.method, emrtd::AuthMethod::PACE_CAN);
+    emrtd::EMRTDCard card(*channel);
 
     // After PACE + applet selection, read COM (EF.COM lists available DGs)
     auto dgList = card.readCOM();
@@ -98,11 +135,12 @@ TEST(PACEHardwareTest, ReadAndParseDG1)
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
-    LibreSCRS::SmartCard::Internal::PCSCConnection conn(readers[0]);
-    emrtd::EMRTDCard card(conn, can);
+    auto fixture = openPaceCanFixture(readers[0], can);
+    ASSERT_TRUE(fixture.has_value()) << "PACE channel activation failed";
+    auto* channel = fixture->holder.activeChannel();
+    ASSERT_NE(channel, nullptr);
 
-    auto result = card.authenticate();
-    ASSERT_TRUE(result.success) << "Authentication failed: " << result.error;
+    emrtd::EMRTDCard card(*channel);
 
     // Read DG1 (MRZ data)
     auto dg1Raw = card.readDataGroup(1);
@@ -144,11 +182,12 @@ TEST(PACEHardwareTest, ReadDG2Photo)
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
-    LibreSCRS::SmartCard::Internal::PCSCConnection conn(readers[0]);
-    emrtd::EMRTDCard card(conn, can);
+    auto fixture = openPaceCanFixture(readers[0], can);
+    ASSERT_TRUE(fixture.has_value()) << "PACE channel activation failed";
+    auto* channel = fixture->holder.activeChannel();
+    ASSERT_NE(channel, nullptr);
 
-    auto result = card.authenticate();
-    ASSERT_TRUE(result.success) << "Authentication failed: " << result.error;
+    emrtd::EMRTDCard card(*channel);
 
     auto dg2Raw = card.readDataGroup(2);
     ASSERT_TRUE(dg2Raw.has_value()) << "Failed to read DG2";

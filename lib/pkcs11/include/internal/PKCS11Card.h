@@ -178,6 +178,22 @@ protected:
     /// @since 4.1
     [[nodiscard]] virtual unsigned long resumePostCan();
 
+    /// @brief Hook fired by @ref PKCS11Slot::parentCacheCan and
+    ///        @ref PKCS11Slot::parentClearCan after @ref cachedCan has
+    ///        been mutated.
+    ///
+    /// Subclasses that own a secondary credential cache (e.g. a
+    /// @c LibreSCRS::SmartCard::CardSession with its own per-process PACE
+    /// cache via @c CardSession::setPaceSecret) override this to keep both
+    /// caches in sync without re-introducing a separate friend boundary.
+    /// The default is a no-op; non-PACE families ignore it. An empty
+    /// @ref cachedCan means "wipe the secondary cache".
+    /// @par Thread-safety
+    /// Caller (the @c parentCacheCan / @c parentClearCan static helper)
+    /// holds @ref cardMutex; overrides may assume that lock state.
+    /// @since 4.2
+    virtual void onCachedCanChanged() noexcept;
+
     /// @brief Owned PIN-gated slots. MUST be the last data member so
     ///        it is destroyed first; see class @par Destruction order.
     std::vector<std::shared_ptr<PKCS11Slot>> slots;

@@ -202,4 +202,70 @@ AuthRequirement AuthRequirement::forUnblockPin(LocalizedText pinLabel)
     return r;
 }
 
+namespace {
+
+FieldDescriptor makePaceSecretField(PaceSecretKind kind)
+{
+    FieldDescriptor f;
+    switch (kind)
+    {
+    case PaceSecretKind::Can:
+        f.id = "can";
+        f.type = CredentialFieldType::NumericCan;
+        f.secret = false;
+        f.minLength = std::size_t{6};
+        f.maxLength = std::size_t{6};
+        f.label.key = "librescrs.auth.label.can";
+        f.label.defaultText = "CAN";
+        break;
+    case PaceSecretKind::Mrz:
+        f.id = "mrz";
+        f.type = CredentialFieldType::Mrz;
+        f.secret = false;
+        f.label.key = "librescrs.auth.label.mrz";
+        f.label.defaultText = "MRZ";
+        break;
+    case PaceSecretKind::Pin:
+        f.id = "pin";
+        f.type = CredentialFieldType::NumericPin;
+        f.secret = true;
+        f.minLength = std::size_t{4};
+        f.maxLength = std::size_t{12};
+        f.label.key = "librescrs.auth.label.pin";
+        f.label.defaultText = "PIN";
+        break;
+    case PaceSecretKind::Puk:
+        f.id = "puk";
+        f.type = CredentialFieldType::AlphaNumericPuk;
+        f.secret = true;
+        f.minLength = std::size_t{4};
+        f.maxLength = std::size_t{16};
+        f.label.key = "librescrs.auth.label.puk";
+        f.label.defaultText = "PUK";
+        break;
+    }
+    return f;
+}
+
+} // namespace
+
+AuthRequirement AuthRequirement::forPaceSecret(
+    LibreSCRS::SmartCard::AppletAid aid,
+    PaceSecretKind kind,
+    std::optional<int> retriesLeft,
+    LocalizedText reasonForUser) noexcept
+{
+    AuthRequirement r;
+    r.purposeValue = Purpose::EstablishPaceChannel;
+    r.fieldList.push_back(makePaceSecretField(kind));
+    r.retriesValue = retriesLeft;
+    if (!reasonForUser.defaultText.empty() || !reasonForUser.key.empty())
+    {
+        r.messageText = std::move(reasonForUser);
+    }
+    r.paceKindValue = kind;
+    r.paceAppletValue = std::move(aid);
+    return r;
+}
+
 } // namespace LibreSCRS::Auth

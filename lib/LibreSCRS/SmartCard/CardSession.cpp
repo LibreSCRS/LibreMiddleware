@@ -5,14 +5,27 @@
 #include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
 
-#include <smartcard/pcsc_connection.h>
+#include <LibreSCRS/Auth/AuthRequirement.h>
+#include <LibreSCRS/Auth/CredentialResult.h>
+#include <LibreSCRS/SecureChannel/BacChannel.h>
+#include <LibreSCRS/SecureChannel/PaceChannel.h>
+#include <LibreSCRS/SecureChannel/PaceParams.h>
+#include <LibreSCRS/SecureChannel/PlainChannel.h>
 
+#include "ActiveChannelHolderInternal.h"
+#include "apdu.h"
+#include "smartcard/pcsc_connection.h"
+
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 
 namespace LibreSCRS::SmartCard {
 
@@ -33,6 +46,17 @@ struct LIBRESCRS_INTERNAL CardSession::Impl
     std::string readerName;
     std::vector<std::uint8_t> atr;
     std::uint64_t generation{nextGeneration()};
+
+    // 4.1: cross-plugin secure-channel coordination state.
+    std::unique_ptr<LibreSCRS::SecureChannel::ISecureChannel> activeChannel;
+    std::array<LibreSCRS::Secure::String, LibreSCRS::Auth::kPaceSecretKindCount> paceCredentialsCache;
+    // BAC consumes a structurally distinct tuple (documentNumber + two dates)
+    // rather than a single secret, so it gets its own cache slot disjoint
+    // from the PACE credentials cache.
+    std::optional<LibreSCRS::SecureChannel::BacInput> bacInput;
+    std::optional<LibreSCRS::Auth::CredentialProvider> credentialProvider;
+    std::mutex sessionMutex;
+    std::atomic<bool> dead{false};
 };
 
 CardSession::CardSession() : d(std::make_unique<Impl>()) {}
@@ -133,8 +157,8 @@ std::shared_ptr<CardSession> makeDetachedCardSession(std::string readerName)
 {
     auto session = std::shared_ptr<CardSession>(new CardSession());
     session->d->readerName = std::move(readerName);
-    session->d->ownedConn =
-        std::make_unique<LibreSCRS::SmartCard::Internal::PCSCConnection>(LibreSCRS::SmartCard::Internal::PCSCConnection::DetachedTag{}, session->d->readerName);
+    session->d->ownedConn = std::make_unique<LibreSCRS::SmartCard::Internal::PCSCConnection>(
+        LibreSCRS::SmartCard::Internal::PCSCConnection::DetachedTag{}, session->d->readerName);
     // atr stays empty — there is no card
     return session;
 }
@@ -161,5 +185,458 @@ bool CardSession::isConnected() const noexcept
 {
     return d->ownedConn != nullptr;
 }
+
+// ----------------------------------------------------------------------------
+// Cross-plugin secure-channel coordination.
+//
+// activateChannelWithSm wraps the entire activation sequence (PACE handshake,
+// or BAC plain SELECT + handshake, plus the post-handshake wrapped SELECT to
+// the target applet) in a single PC/SC transaction held via CardTransaction.
+// This blocks cross-process callers from interleaving plain APDUs that would
+// silently destroy the card-side SM tunnel mid-flight.
+//
+// The state machine follows the three cases of spec §5.3b (amended
+// 2026-05-15): Case 1 is the same-applet fast path; Case 2 (PACE-only)
+// switches applets through wrapped SELECT on a live PaceChannel — PACE SM is
+// session-scoped at the card OS layer, so applet switches do NOT require a
+// fresh handshake; Case 3 falls back to a full handshake when no usable
+// channel exists. The retry loop evicts the credentials-cache slot on a
+// wrong-secret outcome and re-prompts via the credential provider before
+// falling back; on terminal errors the transaction RAII unwinds and no
+// channel is installed.
+// ----------------------------------------------------------------------------
+
+namespace {
+
+LibreSCRS::SmartCard::Internal::APDUCommand buildSelectAppletCommand(const AppletAid& aid)
+{
+    return LibreSCRS::SmartCard::Internal::selectByAID(aid.asVector(), 0x0C);
+}
+
+constexpr int kSmActivationMaxAttempts = 3;
+
+// Read EF.CardAccess (FID 011C) from the card's master file. Returns the
+// raw TLV bytes ready for emrtd::crypto::parseCardAccessWithParams. An
+// empty vector indicates the file is absent or unreadable (no PACE).
+std::vector<std::uint8_t> readCardAccessFromMF(LibreSCRS::SmartCard::Internal::PCSCConnection& conn) noexcept
+{
+    using LibreSCRS::SmartCard::Internal::APDUCommand;
+    using LibreSCRS::SmartCard::Internal::selectByFileId;
+    try {
+        auto mfSel = conn.transmit(selectByFileId(0x3F, 0x00, 0x0C));
+        if (!mfSel.isSuccess()) {
+            mfSel = conn.transmit(selectByFileId(0x3F, 0x00));
+        }
+        if (!mfSel.isSuccess()) {
+            return {};
+        }
+        auto efSel = conn.transmit(selectByFileId(0x01, 0x1C, 0x0C));
+        if (!efSel.isSuccess()) {
+            efSel = conn.transmit(selectByFileId(0x01, 0x1C));
+        }
+        if (efSel.sw1 != 0x90 && efSel.sw1 != 0x62) {
+            return {};
+        }
+        auto read = conn.transmit(APDUCommand{0x00, 0xB0, 0x00, 0x00, {}, 0, true});
+        return read.data;
+    } catch (...) {
+        return {};
+    }
+}
+
+} // namespace
+
+void CardSession::setCredentialProvider(LibreSCRS::Auth::CredentialProvider provider)
+{
+    std::lock_guard lock(d->sessionMutex);
+    d->credentialProvider = std::move(provider);
+}
+
+void CardSession::setPaceSecret(LibreSCRS::Auth::PaceSecretKind kind, LibreSCRS::Secure::String value)
+{
+    std::lock_guard lock(d->sessionMutex);
+    d->paceCredentialsCache[static_cast<std::size_t>(kind)] = std::move(value);
+}
+
+void CardSession::setBacInput(LibreSCRS::SecureChannel::BacInput input)
+{
+    std::lock_guard lock(d->sessionMutex);
+    d->bacInput = std::move(input);
+}
+
+void CardSession::clearCachedPaceCredentials()
+{
+    std::lock_guard lock(d->sessionMutex);
+    for (auto& slot : d->paceCredentialsCache) {
+        slot = LibreSCRS::Secure::String{};
+    }
+    d->bacInput.reset();
+}
+
+void CardSession::markDead() noexcept
+{
+    d->dead.store(true, std::memory_order_release);
+}
+
+bool CardSession::isDead() const noexcept
+{
+    return d->dead.load(std::memory_order_acquire);
+}
+
+std::expected<ActiveChannelHolder, LibreSCRS::SecureChannel::ChannelActivationError>
+CardSession::activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token)
+{
+    using LibreSCRS::SecureChannel::ChannelActivationError;
+    using LibreSCRS::SecureChannel::ChannelState;
+    using LibreSCRS::SecureChannel::PlainChannel;
+
+    if (token.isCancellable() && token.isCancelled()) {
+        return std::unexpected{ChannelActivationError::Cancelled};
+    }
+    if (d->dead.load(std::memory_order_acquire)) {
+        return std::unexpected{ChannelActivationError::CardRemoved};
+    }
+    if (!d->ownedConn) {
+        return std::unexpected{ChannelActivationError::ReaderError};
+    }
+
+    std::unique_lock lock(d->sessionMutex);
+
+    if (d->dead.load(std::memory_order_acquire)) {
+        return std::unexpected{ChannelActivationError::CardRemoved};
+    }
+
+    std::unique_ptr<LibreSCRS::SmartCard::Internal::CardTransaction> tx;
+    try {
+        tx = std::make_unique<LibreSCRS::SmartCard::Internal::CardTransaction>(*d->ownedConn);
+    } catch (const std::exception&) {
+        return std::unexpected{ChannelActivationError::ReaderError};
+    }
+
+    // Fast path: already on the right applet under a plain channel.
+    if (d->activeChannel && d->activeChannel->currentApplet() == aid &&
+        d->activeChannel->state() == ChannelState::Open &&
+        dynamic_cast<const PlainChannel*>(d->activeChannel.get()) != nullptr) {
+        return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
+    }
+
+    if (d->activeChannel) {
+        d->activeChannel->close();
+    }
+
+    auto selectResp = d->ownedConn->transmit(buildSelectAppletCommand(aid));
+    if (!selectResp.isSuccess()) {
+        return std::unexpected{ChannelActivationError::SelectAppletFailed};
+    }
+
+    d->activeChannel = std::make_unique<PlainChannel>(*d->ownedConn, aid);
+    return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
+}
+
+std::expected<ActiveChannelHolder, LibreSCRS::SecureChannel::ChannelActivationError>
+CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, LibreSCRS::CancelToken token)
+{
+    using LibreSCRS::SecureChannel::BacChannel;
+    using LibreSCRS::SecureChannel::ChannelActivationError;
+    using LibreSCRS::SecureChannel::ChannelState;
+    using LibreSCRS::SecureChannel::PaceChannel;
+
+    if (token.isCancellable() && token.isCancelled()) {
+        return std::unexpected{ChannelActivationError::Cancelled};
+    }
+    if (d->dead.load(std::memory_order_acquire)) {
+        return std::unexpected{ChannelActivationError::CardRemoved};
+    }
+    if (!d->ownedConn) {
+        return std::unexpected{ChannelActivationError::ReaderError};
+    }
+
+    // PACE consults the variant's secretKind against the PACE credentials
+    // cache. BAC consults a structurally distinct cache slot (BacInput tuple)
+    // because the three MRZ-Z components are a tuple, not a single shared
+    // secret; the kind value below is unused on the BAC branch.
+    LibreSCRS::Auth::PaceSecretKind kind = LibreSCRS::Auth::PaceSecretKind::Mrz;
+    const bool isBac = std::holds_alternative<BacRequest>(protocol);
+    if (auto* paceReq = std::get_if<PaceRequest>(&protocol)) {
+        kind = paceReq->secretKind;
+    }
+
+    std::unique_lock lock(d->sessionMutex);
+
+    if (d->dead.load(std::memory_order_acquire)) {
+        return std::unexpected{ChannelActivationError::CardRemoved};
+    }
+
+    auto channelMatchesProtocol = [&](const LibreSCRS::SecureChannel::ISecureChannel& ch) noexcept {
+        if (std::holds_alternative<PaceRequest>(protocol)) {
+            return dynamic_cast<const PaceChannel*>(&ch) != nullptr;
+        }
+        return dynamic_cast<const BacChannel*>(&ch) != nullptr;
+    };
+
+    // Cheap pre-flight: if no credentials are cached, no provider exists,
+    // AND no live SM channel could serve a fast / wrapped-SELECT path, the
+    // retry loop has no work to do. Short-circuiting here avoids burning a
+    // PC/SC transaction and matches the contract surfaced by detached
+    // sessions used by API-shape unit tests.
+    const bool cacheHit =
+        isBac ? d->bacInput.has_value() : !d->paceCredentialsCache[static_cast<std::size_t>(kind)].empty();
+    const bool hasUsableChannel = d->activeChannel && d->activeChannel->state() == ChannelState::Open &&
+                                  channelMatchesProtocol(*d->activeChannel);
+    if (!cacheHit && !d->credentialProvider && !hasUsableChannel) {
+        return std::unexpected{ChannelActivationError::CredentialsRequired};
+    }
+
+    std::unique_ptr<LibreSCRS::SmartCard::Internal::CardTransaction> tx;
+    try {
+        tx = std::make_unique<LibreSCRS::SmartCard::Internal::CardTransaction>(*d->ownedConn);
+    } catch (const std::exception&) {
+        return std::unexpected{ChannelActivationError::ReaderError};
+    }
+
+    // Case 1: live channel of correct protocol, already on the target applet
+    //         — fast path; reuse without touching the wire.
+    if (d->activeChannel && d->activeChannel->currentApplet() == aid &&
+        d->activeChannel->state() == ChannelState::Open && channelMatchesProtocol(*d->activeChannel)) {
+        return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
+    }
+
+    // Case 2: live PaceChannel of correct protocol on a different applet —
+    //         wrapped SELECT through the existing SM tunnel. PACE SM is
+    //         session-scoped at the card OS layer; the applet selector
+    //         inside a wrapped SELECT routes within the SM tunnel and does
+    //         not terminate it (BSI TR-03110 §3; spec §5.3b Case 2).
+    //
+    //         BAC is intentionally excluded from Case 2: the BAC card matrix
+    //         (classical eMRTD passports) is single-applet, so a cross-applet
+    //         switch on a live BAC channel does not arise in supported flows.
+    //         Cross-applet BAC, if needed later, falls through to Case 3.
+    if (!isBac && d->activeChannel && d->activeChannel->state() == ChannelState::Open) {
+        if (auto* pace = dynamic_cast<PaceChannel*>(d->activeChannel.get())) {
+            auto wrappedSelect = pace->transmit(buildSelectAppletCommand(aid), token);
+            if (!wrappedSelect.isSuccess()) {
+                return std::unexpected{ChannelActivationError::SelectAppletFailed};
+            }
+            pace->setCurrentApplet(aid);
+            return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
+        }
+    }
+
+    // Case 3: no usable channel of the right protocol — full rebuild. Close
+    //         and reset any incompatible / Failed channel first so we never
+    //         emit plain APDUs (the upcoming handshake or BAC plain SELECT)
+    //         while a live SM tunnel still believes it owns the wire.
+    if (d->activeChannel) {
+        d->activeChannel->close();
+        d->activeChannel.reset();
+    }
+
+    int retriesLeft = kSmActivationMaxAttempts;
+    while (retriesLeft > 0) {
+        if (token.isCancellable() && token.isCancelled()) {
+            return std::unexpected{ChannelActivationError::Cancelled};
+        }
+
+        if (isBac) {
+            // BAC branch: consume the dedicated BacInput cache slot. On miss
+            // re-prompt via the credential provider (fields: documentNumber /
+            // dateOfBirth / dateOfExpiry; the same id naming Stage 7 LC will
+            // produce). On wrong-secret evict the slot and retry. BAC
+            // handshake targets the currently selected applet, so a plain
+            // SELECT to the target AID precedes establish — safe here
+            // because Case 3 has already torn down any prior SM tunnel.
+            if (!d->bacInput.has_value()) {
+                if (!d->credentialProvider) {
+                    return std::unexpected{ChannelActivationError::CredentialsRequired};
+                }
+                auto requirement = LibreSCRS::Auth::AuthRequirement::forPaceSecret(
+                    aid, LibreSCRS::Auth::PaceSecretKind::Mrz, std::nullopt, LibreSCRS::LocalizedText{});
+                auto credResult = (*d->credentialProvider)(requirement);
+                if (credResult.status == LibreSCRS::Auth::CredentialResult::Status::UserCancelled) {
+                    return std::unexpected{ChannelActivationError::UserCancelled};
+                }
+                if (credResult.status != LibreSCRS::Auth::CredentialResult::Status::Ok) {
+                    return std::unexpected{ChannelActivationError::CredentialsRequired};
+                }
+                const auto* docNo = credResult.find("documentNumber");
+                const auto* dob = credResult.find("dateOfBirth");
+                const auto* doe = credResult.find("dateOfExpiry");
+                if (docNo == nullptr || dob == nullptr || doe == nullptr || docNo->empty() || dob->empty() ||
+                    doe->empty()) {
+                    return std::unexpected{ChannelActivationError::CredentialsRequired};
+                }
+                LibreSCRS::SecureChannel::BacInput input;
+                input.documentNumber = std::string{docNo->view()};
+                input.dateOfBirth = std::string{dob->view()};
+                input.dateOfExpiry = std::string{doe->view()};
+                d->bacInput = std::move(input);
+            }
+
+            auto selectResp = d->ownedConn->transmit(buildSelectAppletCommand(aid));
+            if (!selectResp.isSuccess()) {
+                return std::unexpected{ChannelActivationError::SelectAppletFailed};
+            }
+
+            auto outcome = BacChannel::establish(*d->ownedConn, aid, *d->bacInput, token);
+            if (outcome.error == ChannelActivationError::None && outcome.channel) {
+                d->activeChannel = std::move(outcome.channel);
+                return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
+            }
+            if (outcome.error == ChannelActivationError::PaceWrongSecret) {
+                d->bacInput.reset();
+                --retriesLeft;
+                continue;
+            }
+            return std::unexpected{outcome.error};
+        }
+
+        auto& cachedSecret = d->paceCredentialsCache[static_cast<std::size_t>(kind)];
+        if (cachedSecret.empty()) {
+            if (!d->credentialProvider) {
+                return std::unexpected{ChannelActivationError::CredentialsRequired};
+            }
+            auto requirement =
+                LibreSCRS::Auth::AuthRequirement::forPaceSecret(aid, kind, std::nullopt, LibreSCRS::LocalizedText{});
+            auto credResult = (*d->credentialProvider)(requirement);
+            if (credResult.status == LibreSCRS::Auth::CredentialResult::Status::UserCancelled) {
+                return std::unexpected{ChannelActivationError::UserCancelled};
+            }
+            if (credResult.status != LibreSCRS::Auth::CredentialResult::Status::Ok) {
+                return std::unexpected{ChannelActivationError::CredentialsRequired};
+            }
+
+            // Pick the field whose id matches the kind. The PACE secret
+            // factory emits ids "can" / "mrz" / "pin" / "puk" — one and
+            // only one of those is present in a forPaceSecret prompt.
+            const char* expectedId = "";
+            switch (kind) {
+            case LibreSCRS::Auth::PaceSecretKind::Can:
+                expectedId = "can";
+                break;
+            case LibreSCRS::Auth::PaceSecretKind::Mrz:
+                expectedId = "mrz";
+                break;
+            case LibreSCRS::Auth::PaceSecretKind::Pin:
+                expectedId = "pin";
+                break;
+            case LibreSCRS::Auth::PaceSecretKind::Puk:
+                expectedId = "puk";
+                break;
+            }
+            const auto* found = credResult.find(expectedId);
+            if (found == nullptr || found->empty()) {
+                return std::unexpected{ChannelActivationError::CredentialsRequired};
+            }
+            cachedSecret = *found;
+        }
+
+        // PACE branch: discover supported OIDs from EF.CardAccess at MF.
+        // The handshake itself runs at MF level — PACE binds session keys
+        // to the card-side SM tunnel for the entire card session, not to
+        // any particular applet (spec §2 constraint 2, amended 2026-05-15).
+        // The post-handshake wrapped SELECT below routes the target applet
+        // through the freshly installed channel.
+        std::vector<std::pair<std::string, int>> oidParamPairs;
+        try {
+            auto cardAccess = readCardAccessFromMF(*d->ownedConn);
+            oidParamPairs = LibreSCRS::SecureChannel::parsePaceOidsFromCardAccess(cardAccess);
+        } catch (const std::exception&) {
+            return std::unexpected{ChannelActivationError::PaceProtocolFailure};
+        }
+        if (oidParamPairs.empty()) {
+            return std::unexpected{ChannelActivationError::PaceUnsupported};
+        }
+
+        LibreSCRS::SecureChannel::PACEPasswordType pwType = LibreSCRS::SecureChannel::PACEPasswordType::Can;
+        switch (kind) {
+        case LibreSCRS::Auth::PaceSecretKind::Can:
+            pwType = LibreSCRS::SecureChannel::PACEPasswordType::Can;
+            break;
+        case LibreSCRS::Auth::PaceSecretKind::Mrz:
+            pwType = LibreSCRS::SecureChannel::PACEPasswordType::Mrz;
+            break;
+        case LibreSCRS::Auth::PaceSecretKind::Pin:
+            pwType = LibreSCRS::SecureChannel::PACEPasswordType::Pin;
+            break;
+        case LibreSCRS::Auth::PaceSecretKind::Puk:
+            pwType = LibreSCRS::SecureChannel::PACEPasswordType::Puk;
+            break;
+        }
+
+        ChannelActivationError lastError = ChannelActivationError::PaceWrongSecret;
+        std::unique_ptr<PaceChannel> freshChannel;
+        for (const auto& [oid, paramId] : oidParamPairs) {
+            if (token.isCancellable() && token.isCancelled()) {
+                return std::unexpected{ChannelActivationError::Cancelled};
+            }
+            LibreSCRS::SecureChannel::PACEParams params;
+            params.oid = oid;
+            params.passwordType = pwType;
+            params.password = cachedSecret; // deep copy; cleansed when params goes out of scope
+            params.paramId = paramId;
+
+            auto outcome = PaceChannel::establish(*d->ownedConn, params, token);
+            if (outcome.error == ChannelActivationError::None && outcome.channel) {
+                freshChannel = std::move(outcome.channel);
+                break;
+            }
+            lastError = outcome.error;
+            if (outcome.error != ChannelActivationError::PaceWrongSecret &&
+                outcome.error != ChannelActivationError::PaceProtocolFailure) {
+                // Hard terminal categories surface immediately; only the
+                // soft "wrong secret" / "protocol failure" categories
+                // justify trying the next OID.
+                break;
+            }
+        }
+
+        if (freshChannel) {
+            // Wrapped SELECT to the target applet through the freshly
+            // installed channel. PACE handshake left currentApplet empty;
+            // setCurrentApplet records the AID after a successful wrapped
+            // SELECT (spec §5.3b Case 3).
+            auto wrappedSelect = freshChannel->transmit(buildSelectAppletCommand(aid), token);
+            if (!wrappedSelect.isSuccess()) {
+                // Wrapped SELECT failed: the SM tunnel is established but
+                // the target applet is not reachable. Drop the channel and
+                // surface SelectAppletFailed; do not retry the handshake.
+                freshChannel->close();
+                return std::unexpected{ChannelActivationError::SelectAppletFailed};
+            }
+            freshChannel->setCurrentApplet(aid);
+            d->activeChannel = std::move(freshChannel);
+            return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
+        }
+        if (lastError == ChannelActivationError::PaceWrongSecret) {
+            cachedSecret = LibreSCRS::Secure::String{};
+            --retriesLeft;
+            continue;
+        }
+        return std::unexpected{lastError};
+    }
+
+    return std::unexpected{ChannelActivationError::PaceWrongSecret};
+}
+
+namespace Internal {
+
+APDUResponse transmitThroughActiveChannel(CardSession& session, const APDUCommand& cmd, LibreSCRS::CancelToken token)
+{
+    auto& impl = *session.d;
+    if (!impl.activeChannel) {
+        APDUResponse closed;
+        closed.sw1 = 0x6F;
+        closed.sw2 = 0x00;
+        return closed;
+    }
+    return impl.activeChannel->transmit(cmd, std::move(token));
+}
+
+LibreSCRS::SecureChannel::ISecureChannel* activeChannelOf(CardSession& session) noexcept
+{
+    return session.d->activeChannel.get();
+}
+
+} // namespace Internal
 
 } // namespace LibreSCRS::SmartCard

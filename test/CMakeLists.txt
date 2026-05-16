@@ -70,6 +70,52 @@ add_executable(LibreSCRS_CardMapTests LibreSCRS_CardMapTests.cpp)
 target_link_libraries(LibreSCRS_CardMapTests GTest::gtest_main LibreSCRS::SmartCard)
 gtest_discover_tests(LibreSCRS_CardMapTests)
 
+# PlainChannel — pass-through implementation of ISecureChannel; exercises
+# the FakePCSCConnection IConnection seam used by all SecureChannel tests.
+add_executable(LibreSCRS_PlainChannelTests LibreSCRS_PlainChannelTests.cpp)
+target_link_libraries(LibreSCRS_PlainChannelTests
+    GTest::gtest_main
+    LibreSCRS::SecureChannel
+    LibreSCRS::SmartCard
+    SmartCard_Impl)
+target_include_directories(LibreSCRS_PlainChannelTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/include)
+target_compile_definitions(LibreSCRS_PlainChannelTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(LibreSCRS_PlainChannelTests)
+
+# PaceChannel + BacChannel — SM-wrapping channels. Tests exercise state
+# transitions, sentinel SW codes, and SW 6987/6988 external-invalidation
+# detection. Full PACE/BAC handshake test vectors deferred (see plan
+# Stage 2 Task 2.3, requires BSI TR-03110 / ICAO Doc 9303 documents).
+add_executable(LibreSCRS_SmChannelTests LibreSCRS_SmChannelTests.cpp)
+target_link_libraries(LibreSCRS_SmChannelTests
+    GTest::gtest_main
+    LibreSCRS::SecureChannel
+    LibreSCRS::SmartCard
+    SmartCard_Impl)
+target_include_directories(LibreSCRS_SmChannelTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/include)
+target_compile_definitions(LibreSCRS_SmChannelTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(LibreSCRS_SmChannelTests)
+
+# CardTransaction static contract — move-only, release() noexcept, owns()
+# accessor present, PCSCConnection::isTransactionHeld() visible. Behavioural
+# tests against a real reader live in the hardware suite.
+add_executable(LibreSCRS_CardTransactionTests LibreSCRS_CardTransactionTests.cpp)
+target_link_libraries(LibreSCRS_CardTransactionTests GTest::gtest_main SmartCard_Impl)
+target_include_directories(LibreSCRS_CardTransactionTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src)
+target_compile_definitions(LibreSCRS_CardTransactionTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(LibreSCRS_CardTransactionTests)
+
+# AuthRequirement::forPaceSecret — PACE/BAC credential prompt factory.
+add_executable(LibreSCRS_AuthRequirementPaceTests LibreSCRS_AuthRequirementPaceTests.cpp)
+target_link_libraries(LibreSCRS_AuthRequirementPaceTests GTest::gtest_main LibreSCRS::Auth)
+gtest_discover_tests(LibreSCRS_AuthRequirementPaceTests)
+
 # OID database lookup tests — superset of OpenSSL/Rust/BC/ETSI/ICAO/Serbian.
 add_executable(OidDatabaseTests oid_database_test.cpp)
 target_link_libraries(OidDatabaseTests GTest::gtest_main LibreSCRS_Certificate)
@@ -223,7 +269,7 @@ target_compile_definitions(pkcs15_probe PRIVATE LIBRESCRS_INTERNAL_BUILD)
 
 # PKCS#15-after-PACE probe: authenticates via PACE then probes PKCS#15
 add_executable(pkcs15_after_pace_probe pkcs15_after_pace_probe.cpp)
-target_link_libraries(pkcs15_after_pace_probe SmartCard_Impl EMRTDCrypto EMRTD)
+target_link_libraries(pkcs15_after_pace_probe SmartCard_Impl EMRTDCrypto EMRTD LibreSCRS_SmartCard)
 target_include_directories(pkcs15_after_pace_probe PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src
@@ -272,6 +318,7 @@ add_executable(EMRTDTests
 target_link_libraries(EMRTDTests
     GTest::gtest_main
     EMRTD
+    LibreSCRS_SmartCard
 )
 target_include_directories(EMRTDTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd/src

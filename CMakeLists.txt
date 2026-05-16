@@ -135,6 +135,11 @@ if(LIBRESCRS_VENDOR_OPENSC)
 endif()
 add_subdirectory(lib/pkcs11)
 
+# Public C++ RAII wrapper around the librescrs-pkcs11 inject hook.
+# Declared after lib/pkcs11 so the test target can depend on
+# librescrs-pkcs11 via add_dependencies().
+add_subdirectory(lib/pkcs11_inject)
+
 # Card plugins (shared libraries loaded at runtime)
 add_subdirectory(lib/rs-eid-plugin)
 add_subdirectory(lib/eu-vrc-plugin)

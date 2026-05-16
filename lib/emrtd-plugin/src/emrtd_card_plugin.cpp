@@ -1,19 +1,31 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include <active_auth.h>
-#include <chip_auth.h>
-#include <pace.h>
-#include <passive_auth.h>
-#include <data_group.h>
-#include <emrtd_card.h>
-#include <emrtd_types.h>
 #include <LibreSCRS/Auth/ErrorKeys.h>
+#include <LibreSCRS/Auth/PaceSecretKind.h>
+#include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Plugin/CardPlugin.h>
 #include <LibreSCRS/Plugin/PluginExport.h>
 #include <LibreSCRS/Plugin/SecurityCheck.h>
+#include <LibreSCRS/SecureChannel/BacParams.h>
+#include <LibreSCRS/SecureChannel/ChannelErrors.h>
+#include <LibreSCRS/SecureChannel/ISecureChannel.h>
+#include <LibreSCRS/SecureChannel/SessionKeys.h>
+#include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
+#include <LibreSCRS/SmartCard/AppletAid.h>
+#include <LibreSCRS/SmartCard/CardSession.h>
+#include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
+
+#include <active_auth.h>
 #include <apdu.h>
+#include <chip_auth.h>
+#include <crypto_utils.h>
+#include <data_group.h>
+#include <emrtd_card.h>
+#include <emrtd_types.h>
+#include <pace.h>
+#include <passive_auth.h>
 #include <smartcard/pcsc_connection.h>
 
 #include <algorithm>
@@ -62,11 +74,25 @@ std::string formatMRZDate(const std::string& yymmdd, bool isExpiry = false)
     return dd + "." + mm + "." + std::to_string(fullYear);
 }
 
+// Compute the PACE MRZ-derived password (mrzInfo = paddedDocNo + cd + DOB +
+// cd + DOE + cd) per BSI TR-03110. Mirrors the formula in
+// emrtd::crypto::deriveBACKeys; both protocols hash the same construction
+// but BAC derives keys from it directly while PACE feeds it as the
+// password to its KDF.
+std::string buildMrzInfo(const std::string& docNumber, const std::string& dob, const std::string& doe)
+{
+    std::string paddedDocNo = docNumber;
+    while (paddedDocNo.size() < 9)
+        paddedDocNo += '<';
+    return paddedDocNo + std::to_string(emrtd::crypto::detail::computeCheckDigit(paddedDocNo)) + dob +
+           std::to_string(emrtd::crypto::detail::computeCheckDigit(dob)) + doe +
+           std::to_string(emrtd::crypto::detail::computeCheckDigit(doe));
+}
+
 struct SessionContext
 {
     std::optional<std::variant<emrtd::MRZData, std::string>> credentials;
     std::string pendingDocNum, pendingDob, pendingExpiry;
-    std::unique_ptr<emrtd::EMRTDCard> emrTDCard;
 };
 
 /// @brief Per-session state map key.
@@ -88,6 +114,50 @@ struct SessionKey
 SessionKey makeSessionKey(LibreSCRS::SmartCard::CardSession& session)
 {
     return SessionKey{session.readerName(), LibreSCRS::SmartCard::detail::sessionGeneration(session)};
+}
+
+LibreSCRS::SmartCard::AppletAid makeEmrtdAid()
+{
+    return LibreSCRS::SmartCard::AppletAid{emrtd::EMRTD_AID[0], emrtd::EMRTD_AID[1], emrtd::EMRTD_AID[2],
+                                           emrtd::EMRTD_AID[3], emrtd::EMRTD_AID[4], emrtd::EMRTD_AID[5],
+                                           emrtd::EMRTD_AID[6]};
+}
+
+// Map a ChannelActivationError to a short diagnostic string for the
+// host-visible error group. The category enum's "Pace" prefix is shared
+// across PACE and BAC handshake failures by design (see CardSession.cpp);
+// callers should treat PaceWrongSecret as "wrong shared secret regardless
+// of protocol".
+std::string activationErrorString(LibreSCRS::SecureChannel::ChannelActivationError err)
+{
+    using Err = LibreSCRS::SecureChannel::ChannelActivationError;
+    switch (err) {
+    case Err::None:
+        return "Success";
+    case Err::Cancelled:
+        return "Cancelled";
+    case Err::UserCancelled:
+        return "User cancelled credentials prompt";
+    case Err::CardRemoved:
+        return "Card was removed";
+    case Err::ReaderError:
+        return "Reader error";
+    case Err::SelectAppletFailed:
+        return "Failed to select eMRTD applet";
+    case Err::PaceWrongSecret:
+        return "Wrong CAN/MRZ — handshake failed";
+    case Err::PaceUnsupported:
+        return "Card does not advertise PACE in EF.CardAccess";
+    case Err::PacePinBlocked:
+        return "PACE PIN is blocked";
+    case Err::PaceProtocolFailure:
+        return "PACE protocol failure";
+    case Err::CredentialsRequired:
+        return "Credentials required";
+    case Err::Internal:
+        return "Internal error";
+    }
+    return "Unknown error";
 }
 
 class EMRTDCardPlugin final : public LibreSCRS::Plugin::CardPlugin
@@ -119,11 +189,10 @@ public:
             // Reset session for this key (new card insert = new session)
             std::lock_guard lock(mtx);
             sessions.erase(key);
-            conn.clearTransmitFilter();
 
             // SELECT eMRTD applet by AID (P2=0x0C: no FCI response)
-            auto response = conn.transmit(
-                LibreSCRS::SmartCard::Internal::selectByAID({emrtd::EMRTD_AID, emrtd::EMRTD_AID + emrtd::EMRTD_AID_LEN}, 0x0C));
+            auto response = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(
+                {emrtd::EMRTD_AID, emrtd::EMRTD_AID + emrtd::EMRTD_AID_LEN}, 0x0C));
             return response.isSuccess();
         } catch (...) {
             return false;
@@ -134,12 +203,6 @@ public:
                                              GroupCallback onGroup) const override
     {
         using LibreSCRS::Plugin::ReadResult;
-        // Delegate to the CardData-returning body, then classify the
-        // outcome: a group with groupKey "error" indicates authentication
-        // failure; "auth_required" indicates credentials are needed
-        // (AuthenticationFailed per the 4.0 ABI v6 taxonomy); everything else
-        // is Ok. This keeps the existing control flow intact while still
-        // honouring the no-exceptions-across-ABI contract.
         try {
             auto data = readCardImpl(cardSession, std::move(onGroup));
             for (const auto& g : data.groups) {
@@ -177,7 +240,10 @@ private:
         auto& session = sessions[key];
 
         if (!session.credentials) {
-            // Phase 1: no credentials — return auth_required (no streaming needed)
+            // Phase 1: no credentials — return auth_required (no streaming needed).
+            // Reads EF.CardAccess via the raw PCSC connection because no SM is
+            // active yet; this query informs the host UI which credential type
+            // to prompt for.
             LibreSCRS::Plugin::CardFieldGroup authGroup;
             authGroup.groupKey = "auth_required";
             authGroup.groupLabel = "Authentication Required";
@@ -220,33 +286,102 @@ private:
             return data;
         }
 
-        // Phase 2: credentials set — authenticate and read
+        // Phase 2: credentials present — set them on CardSession's cache and
+        // activate the SM channel via CardSession::activateChannelWithSm.
         auto creds = *session.credentials;
         lock.unlock();
 
-        std::unique_ptr<emrtd::EMRTDCard> localCard;
-        if (auto* mrz = std::get_if<emrtd::MRZData>(&creds)) {
-            localCard = std::make_unique<emrtd::EMRTDCard>(conn, *mrz);
-        } else if (auto* can = std::get_if<std::string>(&creds)) {
-            localCard = std::make_unique<emrtd::EMRTDCard>(conn, *can);
-        }
-        emrtd::EMRTDCard* card = nullptr;
-        {
-            std::lock_guard lk(mtx);
-            sessions[key].emrTDCard = std::move(localCard);
-            card = sessions[key].emrTDCard.get();
-        }
-
-        auto authResult = card->authenticate();
-        if (!authResult.success) {
+        // Decide preferred protocol from credential type. CAN → PACE_CAN only.
+        // MRZ → try PACE_MRZ first; if EF.CardAccess is absent (PaceUnsupported)
+        // fall back to BAC. Classical Serbian passports (BAC-only) take the
+        // fallback path; modern e-passports go through PACE_MRZ.
+        LibreSCRS::SmartCard::SmProtocolRequest protocol{
+            LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can}};
+        bool isBacAttempt = false;
+        bool isCan = false;
+        if (auto* can = std::get_if<std::string>(&creds)) {
+            cardSession.setPaceSecret(LibreSCRS::Auth::PaceSecretKind::Can, LibreSCRS::Secure::String{*can});
+            protocol = LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can};
+            isCan = true;
+        } else if (auto* mrz = std::get_if<emrtd::MRZData>(&creds)) {
+            // Push BAC inputs (the fallback path).
+            LibreSCRS::SecureChannel::BacInput bacIn;
+            bacIn.documentNumber = mrz->documentNumber;
+            bacIn.dateOfBirth = mrz->dateOfBirth;
+            bacIn.dateOfExpiry = mrz->dateOfExpiry;
+            cardSession.setBacInput(std::move(bacIn));
+            // Push PACE_MRZ password (mrzInfo encoding) — used if EF.CardAccess
+            // is present and PACE is supported.
+            auto mrzInfo = buildMrzInfo(mrz->documentNumber, mrz->dateOfBirth, mrz->dateOfExpiry);
+            cardSession.setPaceSecret(LibreSCRS::Auth::PaceSecretKind::Mrz, LibreSCRS::Secure::String{mrzInfo});
+            protocol = LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Mrz};
+        } else {
+            // Defensive: variant should always hold one of the two known
+            // alternatives once `session.credentials` is set. Surface as a
+            // structured error group.
             LibreSCRS::Plugin::CardFieldGroup errorGroup;
             errorGroup.groupKey = "error";
             errorGroup.groupLabel = "Authentication Failed";
-            std::string err = authResult.error;
+            std::string err = "No credentials";
             errorGroup.fields.push_back(
                 {"error", "Error", LibreSCRS::Plugin::FieldType::Text, {err.begin(), err.end()}});
             data.groups.push_back(std::move(errorGroup));
             return data;
+        }
+
+        auto emrtdAid = makeEmrtdAid();
+        auto holderResult = cardSession.activateChannelWithSm(emrtdAid, protocol, LibreSCRS::CancelToken{});
+
+        // PACE_MRZ → BAC fallback. Triggered when EF.CardAccess is absent or
+        // empty (PaceUnsupported) or PACE handshake fails outright with a
+        // protocol-level error; for soft "wrong secret" we surface to the
+        // host without falling back (the secret is the secret).
+        if (!holderResult && !isCan) {
+            auto err = holderResult.error();
+            if (err == LibreSCRS::SecureChannel::ChannelActivationError::PaceUnsupported ||
+                err == LibreSCRS::SecureChannel::ChannelActivationError::PaceProtocolFailure) {
+                protocol = LibreSCRS::SmartCard::BacRequest{};
+                isBacAttempt = true;
+                holderResult = cardSession.activateChannelWithSm(emrtdAid, protocol, LibreSCRS::CancelToken{});
+            }
+        }
+
+        if (!holderResult) {
+            LibreSCRS::Plugin::CardFieldGroup errorGroup;
+            errorGroup.groupKey = "error";
+            errorGroup.groupLabel = "Authentication Failed";
+            std::string err = activationErrorString(holderResult.error());
+            errorGroup.fields.push_back(
+                {"error", "Error", LibreSCRS::Plugin::FieldType::Text, {err.begin(), err.end()}});
+            data.groups.push_back(std::move(errorGroup));
+            return data;
+        }
+        auto holder = std::move(*holderResult);
+        auto* channel = holder.activeChannel();
+        if (channel == nullptr) {
+            LibreSCRS::Plugin::CardFieldGroup errorGroup;
+            errorGroup.groupKey = "error";
+            errorGroup.groupLabel = "Authentication Failed";
+            std::string err = "Channel not active after handshake";
+            errorGroup.fields.push_back(
+                {"error", "Error", LibreSCRS::Plugin::FieldType::Text, {err.begin(), err.end()}});
+            data.groups.push_back(std::move(errorGroup));
+            return data;
+        }
+
+        emrtd::EMRTDCard card(*channel);
+
+        // Auth method label for the security_status / presence group.
+        std::string authMethodLabel;
+        if (isBacAttempt) {
+            authMethodLabel = "BAC";
+        } else if (std::holds_alternative<LibreSCRS::SmartCard::PaceRequest>(protocol)) {
+            authMethodLabel = (std::get<LibreSCRS::SmartCard::PaceRequest>(protocol).secretKind ==
+                               LibreSCRS::Auth::PaceSecretKind::Can)
+                                  ? "PACE (CAN)"
+                                  : "PACE (MRZ)";
+        } else {
+            authMethodLabel = "BAC";
         }
 
         // --- ICAO-compliant reading flow ---
@@ -259,7 +394,7 @@ private:
         };
 
         // 1. Read COM → emit presence group
-        auto dgList = card->readCOM();
+        auto dgList = card.readCOM();
         {
             LibreSCRS::Plugin::CardFieldGroup g;
             g.groupKey = "presence";
@@ -271,15 +406,12 @@ private:
                 dgListStr += "DG" + std::to_string(dg);
             }
             addTextField(g, "data_groups", "Data Groups", dgListStr);
-            addTextField(g, "auth_method", "Authentication Method",
-                         authResult.method == emrtd::AuthMethod::BAC        ? "BAC"
-                         : authResult.method == emrtd::AuthMethod::PACE_MRZ ? "PACE (MRZ)"
-                                                                            : "PACE (CAN)");
+            addTextField(g, "auth_method", "Authentication Method", authMethodLabel);
             emitGroup(std::move(g));
         }
 
         // 2. Read SOD → store raw bytes
-        auto sodRaw = card->readSOD();
+        auto sodRaw = card.readSOD();
 
         // 3. Parse SOD → get authoritative DG list from hash entries
         std::vector<int> authoritativeDGs;
@@ -308,31 +440,34 @@ private:
         caResult.activeAuthentication = emrtd::crypto::ChipAuthResult::NOT_PERFORMED;
 
         if (hasDG14) {
-            auto dg14Result = card->readDataGroupSafe(14);
+            auto dg14Result = card.readDataGroupSafe(14);
             if (dg14Result.status == emrtd::DGReadStatus::OK && !dg14Result.data.empty()) {
                 dgRawData[14] = dg14Result.data;
-                if (card->hasSecureMessaging()) {
-                    caResult =
-                        emrtd::crypto::performChipAuth(card->connection(), dg14Result.data, card->secureMessaging());
-                    if (caResult.newSessionKeys) {
-                        card->replaceSM(*caResult.newSessionKeys, caResult.newAlgorithm);
-                    }
+                caResult = emrtd::crypto::performChipAuth(*channel, dg14Result.data);
+                if (caResult.chipAuthentication == emrtd::crypto::ChipAuthResult::PASSED && caResult.newSessionKeys) {
+                    // Promote channel SM keys to CA-derived keys. Maps the
+                    // emrtd::crypto cipher to the public-channel SmCipher.
+                    LibreSCRS::SecureChannel::SessionKeys newKeys;
+                    newKeys.encKey = std::move(caResult.newSessionKeys->encKey);
+                    newKeys.macKey = std::move(caResult.newSessionKeys->macKey);
+                    newKeys.ssc = std::move(caResult.newSessionKeys->ssc);
+                    newKeys.cipher = (caResult.newAlgorithm == emrtd::crypto::SMAlgorithm::DES3)
+                                         ? LibreSCRS::SecureChannel::SmCipher::Des3
+                                         : LibreSCRS::SecureChannel::SmCipher::Aes;
+                    channel->replaceKeys(std::move(newKeys));
                 }
             }
         }
 
         // 5. If no DG14 but DG15 present → Active Authentication
         if (caResult.chipAuthentication != emrtd::crypto::ChipAuthResult::PASSED && hasDG15) {
-            auto dg15Result = card->readDataGroupSafe(15);
+            auto dg15Result = card.readDataGroupSafe(15);
             if (dg15Result.status == emrtd::DGReadStatus::OK && !dg15Result.data.empty()) {
                 dgRawData[15] = dg15Result.data;
-                if (card->hasSecureMessaging()) {
-                    auto aaResult =
-                        emrtd::crypto::performActiveAuth(card->connection(), dg15Result.data, card->secureMessaging());
-                    caResult.activeAuthentication = aaResult.activeAuthentication;
-                    if (aaResult.errorDetail.size() > caResult.errorDetail.size())
-                        caResult.errorDetail = aaResult.errorDetail;
-                }
+                auto aaResult = emrtd::crypto::performActiveAuth(*channel, dg15Result.data);
+                caResult.activeAuthentication = aaResult.activeAuthentication;
+                if (aaResult.errorDetail.size() > caResult.errorDetail.size())
+                    caResult.errorDetail = aaResult.errorDetail;
             }
         }
 
@@ -342,7 +477,7 @@ private:
             if (dg == 14 || dg == 15)
                 continue;
 
-            auto dgResult = card->readDataGroupSafe(dg);
+            auto dgResult = card.readDataGroupSafe(dg);
             if (dgResult.status == emrtd::DGReadStatus::OK && !dgResult.data.empty()) {
                 dgRawData[dg] = dgResult.data;
             }
@@ -668,15 +803,11 @@ private:
             emitGroup(std::move(g));
         }
 
-        // Install SM filter so PKI fallback plugins get SM wrapping transparently
-        conn.setTransmitFilter([this, filterKey = key](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd) {
-            std::lock_guard lock(mtx);
-            auto it = sessions.find(filterKey);
-            if (it == sessions.end() || !it->second.emrTDCard)
-                return LibreSCRS::SmartCard::Internal::APDUResponse{{}, 0x69, 0x82};
-            return it->second.emrTDCard->transmitSecureAPDU(cmd);
-        });
-
+        // Holder destruction at scope exit ends the PC/SC transaction and
+        // releases CardSession's sessionMutex. The PaceChannel itself remains
+        // installed on CardSession's activeChannel slot so that subsequent
+        // plugin activations (Stage 5: pkcs15-plugin sign) take the §5.3b
+        // Case 2 wrapped-SELECT fast path through the same SM tunnel.
         return data;
     }
 

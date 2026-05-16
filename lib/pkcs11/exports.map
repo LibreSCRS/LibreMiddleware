@@ -18,6 +18,7 @@
 {
     global:
         C_*;
+        librescrs_pkcs11_*;
     local:
         *;
 };

@@ -4,8 +4,9 @@
 #include "chip_auth.h"
 #include "crypto_utils.h"
 
+#include <LibreSCRS/CancelToken.h>
+#include <LibreSCRS/SecureChannel/ISecureChannel.h>
 #include <apdu.h>
-#include <smartcard/pcsc_connection.h>
 
 #include <limits>
 
@@ -453,8 +454,7 @@ static std::vector<uint8_t> extractECPoint(EVP_PKEY* pkey)
 // performChipAuth
 // ---------------------------------------------------------------------------
 
-ChipAuthResult performChipAuth(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const std::vector<uint8_t>& dg14Raw,
-                               SecureMessaging& currentSM)
+ChipAuthResult performChipAuth(LibreSCRS::SecureChannel::ISecureChannel& channel, const std::vector<uint8_t>& dg14Raw)
 {
     ChipAuthResult result;
 
@@ -565,18 +565,9 @@ ChipAuthResult performChipAuth(LibreSCRS::SmartCard::Internal::PCSCConnection& c
     }
 
     LibreSCRS::SmartCard::Internal::APDUCommand mseCmd{0x00, 0x22, 0x41, 0xA4, mseData, 0, false};
-    auto mseApdu = currentSM.protect(mseCmd.toBytes());
+    auto mseResp = channel.transmit(mseCmd, LibreSCRS::CancelToken{});
 
-    auto mseResp = conn.transmitRaw(mseApdu.data(), static_cast<unsigned long>(mseApdu.size()));
-
-    // Reconstruct response for SM unprotect
-    std::vector<uint8_t> mseRespBytes;
-    mseRespBytes.insert(mseRespBytes.end(), mseResp.data.begin(), mseResp.data.end());
-    mseRespBytes.push_back(mseResp.sw1);
-    mseRespBytes.push_back(mseResp.sw2);
-
-    auto mseUnprot = currentSM.unprotect(mseRespBytes);
-    if (!mseUnprot && mseResp.sw1 != 0x90) {
+    if (mseResp.sw1 != 0x90 && mseResp.sw1 != 0x62) {
         result.chipAuthentication = ChipAuthResult::FAILED;
         result.errorDetail = "MSE:Set AT failed";
         return result;
@@ -587,18 +578,11 @@ ChipAuthResult performChipAuth(LibreSCRS::SmartCard::Internal::PCSCConnection& c
     auto pubKeyDO = buildTLV(0x80, terminalPubBytes);
     auto gaData = buildTLV(0x7C, pubKeyDO);
     LibreSCRS::SmartCard::Internal::APDUCommand gaCmd{0x00, 0x86, 0x00, 0x00, gaData, 0x00, true};
-    auto gaApdu = currentSM.protect(gaCmd.toBytes());
-    auto gaResp = conn.transmitRaw(gaApdu.data(), static_cast<unsigned long>(gaApdu.size()));
+    auto gaResp = channel.transmit(gaCmd, LibreSCRS::CancelToken{});
 
-    std::vector<uint8_t> gaRespBytes;
-    gaRespBytes.insert(gaRespBytes.end(), gaResp.data.begin(), gaResp.data.end());
-    gaRespBytes.push_back(gaResp.sw1);
-    gaRespBytes.push_back(gaResp.sw2);
-
-    auto gaUnprot = currentSM.unprotect(gaRespBytes);
-    if (!gaUnprot) {
+    if (gaResp.sw1 != 0x90 && gaResp.sw1 != 0x62) {
         result.chipAuthentication = ChipAuthResult::FAILED;
-        result.errorDetail = "General Authenticate response MAC verification failed";
+        result.errorDetail = "General Authenticate failed";
         return result;
     }
 

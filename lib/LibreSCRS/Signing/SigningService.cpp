@@ -443,7 +443,13 @@ SigningResult SigningService::sign(const SigningRequest& request, Auth::Credenti
     // PKCS#11 slot lookup targets THIS card, not whichever card the
     // PCSC daemon enumerated first. Without this, multi-card setups
     // routed PIN to slots[0] and produced spurious "wrong PIN" errors.
-    auto libResult = service->sign(libReq, resolvePkcs11Module(), pinBuffer, keyAlias, session->readerName());
+    // Forward the live display CardSession so libresign's PKCS#11
+    // path can adopt it via SessionAttachment instead of opening a
+    // second standalone session against the same reader (would tear
+    // down PACE on the eMRTD/RS eID/EU VRC families). Legacy callers
+    // that don't have a session in scope can pass nullptr — the
+    // standalone bind path then runs unchanged.
+    auto libResult = service->sign(libReq, resolvePkcs11Module(), pinBuffer, keyAlias, session->readerName(), session);
 
     if (!libResult.success) {
         // The classifier returns one of the SigningResult::Status values; map

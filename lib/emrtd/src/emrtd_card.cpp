@@ -2,267 +2,15 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "emrtd_card.h"
-#include <bac.h>
-#include <pace.h>
+
+#include <LibreSCRS/CancelToken.h>
+#include <LibreSCRS/SecureChannel/ISecureChannel.h>
 #include <apdu.h>
 #include <ber.h>
-#include <smartcard/pcsc_connection.h>
-
-#include <openssl/crypto.h>
-
-#include <stdexcept>
 
 namespace emrtd {
 
-EMRTDCard::EMRTDCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const MRZData& mrz) : conn(conn), credentials(mrz) {}
-
-EMRTDCard::EMRTDCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const std::string& can) : conn(conn), credentials(can) {}
-
-EMRTDCard::~EMRTDCard()
-{
-    // Securely clear credentials
-    if (auto* mrz = std::get_if<MRZData>(&credentials)) {
-        OPENSSL_cleanse(mrz->documentNumber.data(), mrz->documentNumber.size());
-        OPENSSL_cleanse(mrz->dateOfBirth.data(), mrz->dateOfBirth.size());
-        OPENSSL_cleanse(mrz->dateOfExpiry.data(), mrz->dateOfExpiry.size());
-    } else if (auto* can = std::get_if<std::string>(&credentials)) {
-        OPENSSL_cleanse(can->data(), can->size());
-    }
-}
-
-bool EMRTDCard::selectApplet()
-{
-    LibreSCRS::SmartCard::Internal::APDUCommand cmd{0x00, 0xA4, 0x04, 0x0C, {EMRTD_AID, EMRTD_AID + EMRTD_AID_LEN}, 0, false};
-    auto resp = conn.transmit(cmd);
-    return resp.isSuccess();
-}
-
-std::vector<uint8_t> EMRTDCard::readCardAccess()
-{
-    // Method 1: READ BINARY with short file identifier (SFID)
-    LibreSCRS::SmartCard::Internal::APDUCommand cmd{0x00, 0xB0, static_cast<uint8_t>(0x80 | SFID_CARD_ACCESS), 0x00, {}, 0x00, true};
-    auto resp = conn.transmit(cmd);
-    if (resp.isSuccess())
-        return resp.data;
-
-    // Method 2: SELECT MF (3F00) then SELECT EF.CardAccess by FID (011C) with P1=00 P2=00
-    // Some cards (e.g. Georgian eID) require explicit MF selection before EF.CardAccess
-    LibreSCRS::SmartCard::Internal::APDUCommand selectMF{0x00, 0xA4, 0x00, 0x00, {0x3F, 0x00}, 0x00, true};
-    conn.transmit(selectMF); // ignore result
-
-    LibreSCRS::SmartCard::Internal::APDUCommand selectCmd{0x00, 0xA4, 0x00, 0x00, {0x01, 0x1C}, 0x00, true};
-    auto selectResp = conn.transmit(selectCmd);
-    if (selectResp.isSuccess()) {
-        // Read entire file (CardAccess is typically <256 bytes)
-        // Le=0x00 means 256 bytes; card returns what it has (62 82 = end of file)
-        LibreSCRS::SmartCard::Internal::APDUCommand readAll{0x00, 0xB0, 0x00, 0x00, {}, 0x00, true};
-        auto readResp = conn.transmit(readAll);
-        if (!readResp.data.empty())
-            return readResp.data;
-    }
-
-    return {};
-}
-
-AuthResult EMRTDCard::authenticate()
-{
-    // Read EF.CardAccess BEFORE selecting eMRTD applet — it lives in MF context,
-    // not inside the applet. Some cards (e.g. Georgian eID) only allow reading
-    // CardAccess from MF, not from within the eMRTD applet.
-    auto cardAccess = readCardAccess();
-    auto paceEntries = crypto::parseCardAccessWithParams(cardAccess);
-
-    // Do NOT select eMRTD applet before PACE — MSE SET AT runs at card level (MF),
-    // not inside the applet. Applet selection happens AFTER PACE succeeds.
-
-    // If CardAccess is unavailable but user provided CAN, try PACE with common parameters.
-    // Many cards support PACE but restrict CardAccess before auth. Try all common variants.
-    bool hasCAN = std::holds_alternative<std::string>(credentials);
-    if (paceEntries.empty() && hasCAN) {
-        using namespace crypto::pace_oid;
-        // Try without paramId first (some cards reject explicit paramId)
-        paceEntries.emplace_back(ECDH_GM_AES_CBC_CMAC_256, -1);
-        paceEntries.emplace_back(ECDH_GM_AES_CBC_CMAC_128, -1);
-        paceEntries.emplace_back(ECDH_IM_AES_CBC_CMAC_256, -1);
-        paceEntries.emplace_back(ECDH_IM_AES_CBC_CMAC_128, -1);
-        paceEntries.emplace_back(ECDH_CAM_AES_CBC_CMAC_256, -1);
-        paceEntries.emplace_back(ECDH_CAM_AES_CBC_CMAC_128, -1);
-        // Then with explicit paramId=13 (brainpoolP256r1)
-        paceEntries.emplace_back(ECDH_GM_AES_CBC_CMAC_256, 13);
-        paceEntries.emplace_back(ECDH_GM_AES_CBC_CMAC_128, 13);
-    }
-
-    if (!paceEntries.empty()) {
-        // Derive password for PACE
-        std::vector<uint8_t> password;
-        crypto::PACEPasswordType pwType;
-
-        if (auto* mrz = std::get_if<MRZData>(&credentials)) {
-            // PACE with MRZ: password = MRZ_information string bytes
-            std::string paddedDocNo = mrz->documentNumber;
-            while (paddedDocNo.size() < 9)
-                paddedDocNo += '<';
-            auto cd = [](const std::string& s) { return crypto::detail::computeCheckDigit(s); };
-            std::string mrzInfo = paddedDocNo + std::to_string(cd(paddedDocNo)) + mrz->dateOfBirth +
-                                  std::to_string(cd(mrz->dateOfBirth)) + mrz->dateOfExpiry +
-                                  std::to_string(cd(mrz->dateOfExpiry));
-            password.assign(mrzInfo.begin(), mrzInfo.end());
-            pwType = crypto::PACEPasswordType::MRZ;
-        } else if (auto* can = std::get_if<std::string>(&credentials)) {
-            password.assign(can->begin(), can->end());
-            pwType = crypto::PACEPasswordType::CAN;
-        } else {
-            return {false, AuthMethod::BAC, "No credentials"};
-        }
-
-        // Try each PACE OID with its associated parameter ID
-        // PACE runs at card (MF) level, NOT inside the applet
-        for (const auto& [oid, paramId] : paceEntries) {
-
-            crypto::PACEParams params{oid, pwType, password, paramId};
-            std::optional<crypto::SessionKeys> session;
-            try {
-                session = crypto::performPACE(conn, params);
-            } catch (const std::exception&) {
-                continue;
-            }
-            if (session) {
-                OPENSSL_cleanse(password.data(), password.size());
-                smAlgo = crypto::paceOIDToSMAlgorithm(oid);
-                sm = std::make_unique<crypto::SecureMessaging>(*session, smAlgo);
-                // Select eMRTD applet AFTER PACE via SM (non-SM commands may invalidate session)
-                std::vector<uint8_t> selectAid = {0x00, 0xA4, 0x04, 0x0C, static_cast<uint8_t>(EMRTD_AID_LEN)};
-                selectAid.insert(selectAid.end(), EMRTD_AID, EMRTD_AID + EMRTD_AID_LEN);
-                transmitSecure(selectAid);
-                AuthMethod method =
-                    (pwType == crypto::PACEPasswordType::CAN) ? AuthMethod::PACE_CAN : AuthMethod::PACE_MRZ;
-                return {true, method, ""};
-            }
-        }
-        OPENSSL_cleanse(password.data(), password.size());
-        // PACE failed, fall through to BAC
-    }
-
-    // Try BAC (only with MRZ credentials)
-    if (auto* mrz = std::get_if<MRZData>(&credentials)) {
-        if (!selectApplet())
-            return {false, AuthMethod::BAC, "Failed to re-select applet for BAC"};
-
-        auto bacKeys = crypto::deriveBACKeys(mrz->documentNumber, mrz->dateOfBirth, mrz->dateOfExpiry);
-        auto session = crypto::performBAC(conn, bacKeys);
-        if (session) {
-            smAlgo = crypto::SMAlgorithm::DES3;
-            sm = std::make_unique<crypto::SecureMessaging>(*session, smAlgo);
-            return {true, AuthMethod::BAC, ""};
-        }
-        return {false, AuthMethod::BAC, "BAC authentication failed"};
-    }
-
-    return {false, AuthMethod::PACE_CAN, "PACE failed and BAC requires MRZ credentials"};
-}
-
-std::optional<std::vector<uint8_t>> EMRTDCard::transmitSecure(const std::vector<uint8_t>& apduBytes)
-{
-    if (!sm)
-        return std::nullopt;
-
-    auto protectedApdu = sm->protect(apduBytes);
-
-    // Build APDUCommand from protected bytes
-    if (protectedApdu.size() < 5)
-        return std::nullopt;
-    LibreSCRS::SmartCard::Internal::APDUCommand cmd;
-    cmd.cla = protectedApdu[0];
-    cmd.ins = protectedApdu[1];
-    cmd.p1 = protectedApdu[2];
-    cmd.p2 = protectedApdu[3];
-    // Lc is at [4], data follows, Le is last byte
-    uint8_t lc = protectedApdu[4];
-    cmd.data.assign(protectedApdu.begin() + 5, protectedApdu.begin() + 5 + lc);
-    cmd.le = protectedApdu.back();
-    cmd.hasLe = true;
-
-    LibreSCRS::SmartCard::Internal::APDUResponse resp;
-    try {
-        resp = conn.transmitRaw(cmd);
-    } catch (const LibreSCRS::SmartCard::Internal::PCSCError&) {
-        if (recovering)
-            return std::nullopt;
-        // Try recovery on card reset
-        try {
-            recover();
-            if (!sm)
-                return std::nullopt;
-            protectedApdu = sm->protect(apduBytes);
-            if (protectedApdu.size() < 5)
-                return std::nullopt;
-            cmd.cla = protectedApdu[0];
-            cmd.ins = protectedApdu[1];
-            cmd.p1 = protectedApdu[2];
-            cmd.p2 = protectedApdu[3];
-            lc = protectedApdu[4];
-            cmd.data.assign(protectedApdu.begin() + 5, protectedApdu.begin() + 5 + lc);
-            cmd.le = protectedApdu.back();
-            resp = conn.transmitRaw(cmd);
-        } catch (const LibreSCRS::SmartCard::Internal::PCSCError&) {
-            return std::nullopt;
-        }
-    }
-
-    // Build response bytes for unprotect: data + SW1 + SW2
-    std::vector<uint8_t> respBytes = resp.data;
-    respBytes.push_back(resp.sw1);
-    respBytes.push_back(resp.sw2);
-
-    return sm->unprotect(respBytes);
-}
-
-LibreSCRS::SmartCard::Internal::APDUResponse EMRTDCard::transmitSecureAPDU(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd)
-{
-    if (!sm)
-        return {{}, 0x69, 0x82};
-
-    auto cmdBytes = cmd.toBytes();
-    auto protectedApdu = sm->protect(cmdBytes);
-    if (protectedApdu.size() < 5)
-        return {{}, 0x69, 0x82};
-
-    // Send via transmitRaw to bypass TransmitFilter (avoids recursion)
-    auto resp = conn.transmitRaw(protectedApdu.data(), static_cast<DWORD>(protectedApdu.size()));
-
-    std::vector<uint8_t> respBytes = resp.data;
-    respBytes.push_back(resp.sw1);
-    respBytes.push_back(resp.sw2);
-
-    auto result = sm->unprotectWithSW(respBytes);
-    if (!result)
-        return {{}, 0x69, 0x82};
-
-    return {std::move(result->data), result->sw1, result->sw2};
-}
-
-void EMRTDCard::replaceSM(const crypto::SessionKeys& newKeys, crypto::SMAlgorithm newAlgo)
-{
-    sm = std::make_unique<crypto::SecureMessaging>(newKeys, newAlgo);
-    smAlgo = newAlgo;
-}
-
-void EMRTDCard::recover()
-{
-    recovering = true;
-    struct RecoveryGuard
-    {
-        bool& flag;
-        ~RecoveryGuard()
-        {
-            flag = false;
-        }
-    } guard{recovering};
-
-    conn.reconnect();
-    sm.reset();
-    authenticate();
-}
+EMRTDCard::EMRTDCard(LibreSCRS::SecureChannel::ISecureChannel& channel) : channel(channel) {}
 
 std::optional<std::vector<uint8_t>> EMRTDCard::readFile(uint16_t fid, bool skipSelect)
 {
@@ -271,9 +19,9 @@ std::optional<std::vector<uint8_t>> EMRTDCard::readFile(uint16_t fid, bool skipS
         // P2=0x04 makes this Case 4 (data + Le), ensuring DO'97 is included in SM.
         // Some chips (e.g. Georgian eID) require DO'97 in CA-derived SM mode;
         // P2=0x0C (no response) would be Case 3 (no Le, no DO'97) → rejected with 6988.
-        std::vector<uint8_t> selectApdu = {
-            0x00, 0xA4, 0x02, 0x04, 0x02, static_cast<uint8_t>(fid >> 8), static_cast<uint8_t>(fid & 0xFF), 0x00};
-        transmitSecure(selectApdu);
+        LibreSCRS::SmartCard::Internal::APDUCommand selectCmd{
+            0x00, 0xA4, 0x02, 0x04, {static_cast<uint8_t>(fid >> 8), static_cast<uint8_t>(fid & 0xFF)}, 0, true};
+        channel.transmit(selectCmd, LibreSCRS::CancelToken{});
     }
 
     // READ BINARY in chunks of 256 bytes (Le=0x00 = 256 in short APDU form)
@@ -286,13 +34,14 @@ std::optional<std::vector<uint8_t>> EMRTDCard::readFile(uint16_t fid, bool skipS
     while (true) {
         uint8_t p1 = static_cast<uint8_t>((offset >> 8) & 0x7F);
         uint8_t p2 = static_cast<uint8_t>(offset & 0xFF);
-        std::vector<uint8_t> readApdu = {0x00, 0xB0, p1, p2, READ_LE};
+        LibreSCRS::SmartCard::Internal::APDUCommand readCmd{0x00, 0xB0, p1, p2, {}, READ_LE, true};
 
-        auto chunk = transmitSecure(readApdu);
-        if (!chunk || chunk->empty())
+        auto resp = channel.transmit(readCmd, LibreSCRS::CancelToken{});
+        if (resp.data.empty()) {
             break;
+        }
 
-        fileData.insert(fileData.end(), chunk->begin(), chunk->end());
+        fileData.insert(fileData.end(), resp.data.begin(), resp.data.end());
 
         // Parse TLV length from first chunk to know total file size
         if (firstChunk && fileData.size() >= 4) {
@@ -319,7 +68,7 @@ std::optional<std::vector<uint8_t>> EMRTDCard::readFile(uint16_t fid, bool skipS
             }
         }
 
-        offset += chunk->size();
+        offset += resp.data.size();
 
         // Stop if we've read enough
         if (totalLength > 0 && fileData.size() >= totalLength) {
@@ -430,7 +179,7 @@ DGReadResult EMRTDCard::readDataGroupSafe(int dgNumber)
     // chips in CA-derived SM mode (e.g. Georgian eID rejects P2=0x0C with 6988).
     LibreSCRS::SmartCard::Internal::APDUCommand selectCmd{
         0x00, 0xA4, 0x02, 0x04, {static_cast<uint8_t>(fid >> 8), static_cast<uint8_t>(fid & 0xFF)}, 0, true};
-    auto selectResp = transmitSecureAPDU(selectCmd);
+    auto selectResp = channel.transmit(selectCmd, LibreSCRS::CancelToken{});
     uint16_t sw = selectResp.statusWord();
 
     // Access denied (security status not satisfied / command not allowed)

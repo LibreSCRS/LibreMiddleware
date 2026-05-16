@@ -8,18 +8,13 @@
 #pragma once
 
 #include "emrtd_types.h"
-#include <secure_messaging.h>
-#include <types.h>
 #include <apdu.h>
 
-#include <map>
-#include <memory>
 #include <optional>
-#include <variant>
 #include <vector>
 
-namespace LibreSCRS::SmartCard::Internal {
-class PCSCConnection;
+namespace LibreSCRS::SecureChannel {
+class ISecureChannel;
 }
 
 namespace emrtd {
@@ -32,14 +27,23 @@ struct DGReadResult
     std::vector<uint8_t> data;
 };
 
+/// @brief ICAO Doc 9303 data-group read protocol over a pre-established
+///        secure channel.
+///
+/// EMRTDCard is a thin protocol class: PACE / BAC handshakes and the
+/// PC/SC transaction are owned by @ref LibreSCRS::SmartCard::CardSession,
+/// not by this object. The caller passes an
+/// @ref LibreSCRS::SecureChannel::ISecureChannel reference (typically
+/// retrieved via @ref LibreSCRS::SmartCard::ActiveChannelHolder::activeChannel)
+/// and EMRTDCard issues wrapped SELECT FILE + READ BINARY APDUs through it.
+/// Chip Authentication's SM-key rotation is handled by the caller invoking
+/// @ref LibreSCRS::SecureChannel::ISecureChannel::replaceKeys after a
+/// successful @ref emrtd::crypto::performChipAuth.
 class EMRTDCard
 {
 public:
-    EMRTDCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const MRZData& mrz);
-    EMRTDCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const std::string& can);
-    ~EMRTDCard();
+    explicit EMRTDCard(LibreSCRS::SecureChannel::ISecureChannel& channel);
 
-    AuthResult authenticate();
     std::vector<int> readCOM();
     /// Reads EF.SOD (FID 011D) and returns raw bytes for PA processing
     std::optional<std::vector<uint8_t>> readSOD();
@@ -51,52 +55,10 @@ public:
     /// Parses DG16 (persons to notify) from raw bytes
     static std::vector<ContactPerson> parseDG16(const std::vector<uint8_t>& raw);
 
-    /// Transmit an APDU through the active Secure Messaging channel.
-    /// Returns decrypted response data, or nullopt on SM/transmit error.
-    /// An empty vector means success with no response data (e.g. SELECT with P2=0x0C).
-    std::optional<std::vector<uint8_t>> transmitSecure(const std::vector<uint8_t>& apdu);
-
-    /// Transmit an APDUCommand through SM with real inner SW forwarding.
-    /// Used by the SM TransmitFilter so that callers (e.g. PKCS#15 readSelectedFile)
-    /// can see the real status word (e.g. 6282 end-of-file) from inside the SM envelope.
-    LibreSCRS::SmartCard::Internal::APDUResponse transmitSecureAPDU(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd);
-
-    /// Replace the active Secure Messaging channel with new keys/algorithm.
-    /// Used after Chip Authentication upgrades the session from BAC/PACE keys
-    /// to CA-derived keys.
-    void replaceSM(const crypto::SessionKeys& newKeys, crypto::SMAlgorithm newAlgo);
-
-    /// True when Secure Messaging is established (after successful PACE/BAC).
-    bool hasSecureMessaging() const
-    {
-        return sm != nullptr;
-    }
-
-    /// Access to the underlying SM channel. Needed by Chip/Active Authentication
-    /// which must exchange APDUs through the existing SM session.
-    /// Caller must check hasSecureMessaging() first.
-    crypto::SecureMessaging& secureMessaging()
-    {
-        return *sm;
-    }
-
-    /// Access to the underlying PCSCConnection.
-    LibreSCRS::SmartCard::Internal::PCSCConnection& connection()
-    {
-        return conn;
-    }
-
 private:
-    LibreSCRS::SmartCard::Internal::PCSCConnection& conn;
-    std::variant<MRZData, std::string> credentials;
-    std::unique_ptr<crypto::SecureMessaging> sm;
-    crypto::SMAlgorithm smAlgo = crypto::SMAlgorithm::DES3;
+    LibreSCRS::SecureChannel::ISecureChannel& channel;
 
-    bool selectApplet();
-    std::vector<uint8_t> readCardAccess();
     std::optional<std::vector<uint8_t>> readFile(uint16_t fid, bool skipSelect = false);
-    void recover();
-    bool recovering = false;
 };
 
 } // namespace emrtd

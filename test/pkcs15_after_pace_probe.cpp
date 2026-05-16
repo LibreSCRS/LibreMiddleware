@@ -9,7 +9,15 @@
 
 #include "smartcard/pcsc_connection.h"
 #include "apdu.h"
-#include <emrtd_card.h>
+#include <LibreSCRS/Auth/PaceSecretKind.h>
+#include <LibreSCRS/CancelToken.h>
+#include <LibreSCRS/Secure/String.h>
+#include <LibreSCRS/SecureChannel/ChannelErrors.h>
+#include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
+#include <LibreSCRS/SmartCard/AppletAid.h>
+#include <LibreSCRS/SmartCard/CardSession.h>
+#include <LibreSCRS/SmartCard/SmProtocolRequest.h>
+#include <emrtd_types.h>
 #include <pace.h>
 
 #include <cstdio>
@@ -44,7 +52,8 @@ static void printSW(uint8_t sw1, uint8_t sw2)
     printf("\n");
 }
 
-static bool trySelect(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const char* name, const std::vector<uint8_t>& aid)
+static bool trySelect(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const char* name,
+                      const std::vector<uint8_t>& aid)
 {
     printf("\n--- SELECT %s ---\n", name);
     auto resp = conn.transmit({0x00, 0xA4, 0x04, 0x00, aid, 0x00, true});
@@ -158,18 +167,36 @@ int main(int argc, char* argv[])
         // ============================================================
         printf("\n======== PACE AUTHENTICATION ========\n");
 
-        emrtd::EMRTDCard card(conn, can);
-        auto authResult = card.authenticate();
-        printf("PACE result: %s\n", authResult.success ? "SUCCESS" : "FAILED");
-        if (!authResult.success) {
-            printf("Error: %s\n", authResult.error.c_str());
-            printf("Auth method: %d\n", static_cast<int>(authResult.method));
+        // Open a CardSession on the same reader. The pre-PACE raw probing
+        // above used a stand-alone PCSCConnection; we destroy it and replace
+        // it with a CardSession-managed one so PACE flows through the new
+        // SecureChannel layer. The post-PACE probing below uses raw
+        // `conn.transmit` against the CardSession's underlying connection
+        // (reached through detail::unwrap) — that is intentional misuse
+        // designed to test what happens to SM when a plain APDU is sent
+        // while a PaceChannel is live.
+        auto sessionResult = LibreSCRS::SmartCard::CardSession::open(readerName);
+        if (!sessionResult.has_value()) {
+            printf("Failed to open CardSession on %s\n", readerName.c_str());
             return 1;
         }
-        printf("Auth method: %s\n", authResult.method == emrtd::AuthMethod::PACE_CAN   ? "PACE_CAN"
-                                    : authResult.method == emrtd::AuthMethod::PACE_MRZ ? "PACE_MRZ"
-                                    : authResult.method == emrtd::AuthMethod::BAC      ? "BAC"
-                                                                                       : "unknown");
+        auto session = std::move(*sessionResult);
+        session.setPaceSecret(LibreSCRS::Auth::PaceSecretKind::Can, LibreSCRS::Secure::String{can});
+
+        LibreSCRS::SmartCard::AppletAid emrtdAid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
+        auto holderResult = session.activateChannelWithSm(
+            emrtdAid, LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can},
+            LibreSCRS::CancelToken{});
+        if (!holderResult) {
+            printf("PACE result: FAILED (channel error %d)\n", static_cast<int>(holderResult.error()));
+            return 1;
+        }
+        printf("PACE result: SUCCESS\n");
+        printf("Auth method: PACE_CAN\n");
+        // Release the holder so subsequent raw probing on `conn` can run; the
+        // PaceChannel remains installed on the session but no transaction is
+        // held — exactly the post-display state the probe wants to inspect.
+        holderResult->release();
 
         // ============================================================
         // Step 3: Try SELECT PKCS#15 AFTER authentication

@@ -12,6 +12,8 @@
 
 #include <pkcs15_card.h>
 
+#include <LibreSCRS/SecureChannel/PlainChannel.h>
+#include <LibreSCRS/SmartCard/AppletAid.h>
 #include <apdu.h>
 #include <ber.h>
 #include <tlv.h>
@@ -113,7 +115,8 @@ std::optional<uint8_t> tryProbe(LibreSCRS::SmartCard::Internal::PCSCConnection& 
 }
 
 // SELECT variant for file selection — each combination of P1/P2/Le that cards may require.
-LibreSCRS::SmartCard::Internal::APDUResponse trySelectVariant(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t hi, uint8_t lo, int variant)
+LibreSCRS::SmartCard::Internal::APDUResponse trySelectVariant(LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
+                                                              uint8_t hi, uint8_t lo, int variant)
 {
     switch (variant) {
     case 0: // P1=0x08, P2=0x00, Le=4 — SELECT by path from MF (eID, health)
@@ -139,8 +142,9 @@ constexpr int FID_SELECT_VARIANT_COUNT = 5;
 // Permanently skips variants the card rejects (6700/6982/6A86 = format mismatch).
 // Still tries all accepted variants per FID since different P1 values search
 // different scopes (P1=0x00 searches MF, P1=0x02 searches current DF).
-LibreSCRS::SmartCard::Internal::APDUResponse selectFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t hi, uint8_t lo, int& cachedVariant,
-                                   uint32_t& rejectedMask)
+LibreSCRS::SmartCard::Internal::APDUResponse selectFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
+                                                        uint8_t hi, uint8_t lo, int& cachedVariant,
+                                                        uint32_t& rejectedMask)
 {
     // Fast path: try cached variant first (last variant that returned success)
     if (cachedVariant >= 0) {
@@ -380,7 +384,10 @@ std::string probeCertPath(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, 
 bool probePKCS15(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, FileNode& df, AppletInfo& applet)
 {
     try {
-        pkcs15::PKCS15Card card(conn);
+        // PKCS15Card now consumes ISecureChannel (Stage 5); wrap the raw
+        // PCSCConnection in a PlainChannel pass-through for this no-SM probe.
+        LibreSCRS::SecureChannel::PlainChannel channel(conn, LibreSCRS::SmartCard::AppletAid{});
+        pkcs15::PKCS15Card card(channel);
         if (!card.probe())
             return false;
 
@@ -668,7 +675,8 @@ ScanResult discoverCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, bo
     ApduLogger logger;
 
     if (verbose) {
-        conn.setTransmitFilter([&logger, &conn](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd) -> LibreSCRS::SmartCard::Internal::APDUResponse {
+        conn.setTransmitFilter([&logger, &conn](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd)
+                                   -> LibreSCRS::SmartCard::Internal::APDUResponse {
             auto resp = conn.transmitRaw(cmd);
             logger.log(cmd, resp);
             return resp;

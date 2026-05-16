@@ -4,8 +4,9 @@
 #include "pkcs15_card.h"
 #include "pkcs15_parser.h"
 #include "pkcs15_types.h"
+#include <LibreSCRS/CancelToken.h>
+#include <LibreSCRS/SecureChannel/ISecureChannel.h>
 #include <apdu.h>
-#include <smartcard/pcsc_connection.h>
 #include <smartcard/secure_buffer.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
@@ -122,13 +123,13 @@ std::vector<uint8_t> applyPssPadding(const std::vector<uint8_t>& hash, const EVP
 
 } // namespace
 
-PKCS15Card::PKCS15Card(LibreSCRS::SmartCard::Internal::PCSCConnection& conn) : conn(conn) {}
+PKCS15Card::PKCS15Card(LibreSCRS::SecureChannel::ISecureChannel& channel) : channel(channel) {}
 
 bool PKCS15Card::probe()
 {
     // Strategy A: try AID SELECT first (fast path)
     std::vector<uint8_t> aid(kPkcs15Aid.begin(), kPkcs15Aid.end());
-    auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(aid, 0x0C));
+    auto resp = channel.transmit(LibreSCRS::SmartCard::Internal::selectByAID(aid, 0x0C), LibreSCRS::CancelToken{});
     if (resp.isSuccess()) {
         pkcs15Path.clear(); // AID works, no path needed
         fileSelectP2 = 0x0C;
@@ -136,7 +137,7 @@ bool PKCS15Card::probe()
     }
 
     // Fallback: try AID with P2=0x00 (some cards need FCI)
-    resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(aid));
+    resp = channel.transmit(LibreSCRS::SmartCard::Internal::selectByAID(aid), LibreSCRS::CancelToken{});
     if (resp.isSuccess()) {
         pkcs15Path.clear();
         fileSelectP2 = 0x00;
@@ -152,10 +153,10 @@ bool PKCS15Card::selectApplet()
     if (pkcs15Path.empty()) {
         // AID-based selection worked during probe
         std::vector<uint8_t> aid(kPkcs15Aid.begin(), kPkcs15Aid.end());
-        auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(aid, 0x0C));
+        auto resp = channel.transmit(LibreSCRS::SmartCard::Internal::selectByAID(aid, 0x0C), LibreSCRS::CancelToken{});
         if (resp.isSuccess())
             return true;
-        resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(aid));
+        resp = channel.transmit(LibreSCRS::SmartCard::Internal::selectByAID(aid), LibreSCRS::CancelToken{});
         return resp.isSuccess();
     }
 
@@ -166,19 +167,22 @@ bool PKCS15Card::selectApplet()
 bool PKCS15Card::probeViaEfDir()
 {
     // SELECT MF (3F00) — try default P2, then P2=0x0C
-    auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x3F, 0x00));
+    auto resp = channel.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x3F, 0x00), LibreSCRS::CancelToken{});
     if (!resp.isSuccess()) {
-        resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x3F, 0x00, 0x0C));
+        resp = channel.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x3F, 0x00, 0x0C),
+                                LibreSCRS::CancelToken{});
         if (!resp.isSuccess())
             return false;
         fileSelectP2 = 0x0C;
     }
 
     // SELECT EF.DIR (2F00) — use discovered P2
-    resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x2F, 0x00, fileSelectP2));
+    resp = channel.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x2F, 0x00, fileSelectP2),
+                            LibreSCRS::CancelToken{});
     if (!resp.isSuccess()) {
         uint8_t altP2 = (fileSelectP2 == 0x0C) ? 0x00 : 0x0C;
-        resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x2F, 0x00, altP2));
+        resp = channel.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x2F, 0x00, altP2),
+                                LibreSCRS::CancelToken{});
         if (!resp.isSuccess())
             return false;
         fileSelectP2 = altP2;
@@ -240,7 +244,6 @@ bool PKCS15Card::probeViaEfDir()
 
 TokenInfo PKCS15Card::readTokenInfo()
 {
-    LibreSCRS::SmartCard::Internal::CardTransaction tx(conn);
 
     if (!selectApplet())
         throw std::runtime_error("Failed to select PKCS#15 applet");
@@ -259,7 +262,6 @@ PKCS15Profile PKCS15Card::readProfile()
         std::snprintf(buf, sizeof(buf), "READPROFILE-ENTRY this=%p", static_cast<const void*>(this));
         LibreSCRS::Internal::probeTrace(buf);
     }
-    LibreSCRS::SmartCard::Internal::CardTransaction tx(conn);
 
     if (!selectApplet())
         throw std::runtime_error("Failed to select PKCS#15 applet");
@@ -317,7 +319,6 @@ PKCS15Profile PKCS15Card::readProfile()
 
 std::vector<uint8_t> PKCS15Card::readCertificate(const CertificateInfo& cert)
 {
-    LibreSCRS::SmartCard::Internal::CardTransaction tx(conn);
     if (!selectApplet())
         return {};
 
@@ -329,7 +330,6 @@ std::vector<uint8_t> PKCS15Card::readCertificate(const CertificateInfo& cert)
 
 int PKCS15Card::getPINTriesLeft(const PinInfo& pin)
 {
-    LibreSCRS::SmartCard::Internal::CardTransaction tx(conn);
     if (!selectApplet())
         throw std::runtime_error("PKCS15: failed to select applet");
 
@@ -338,7 +338,8 @@ int PKCS15Card::getPINTriesLeft(const PinInfo& pin)
         selectByPath(pin.path);
 
     // Try pinReference directly
-    auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::verifyPINStatus(pin.pinReference));
+    auto resp =
+        channel.transmit(LibreSCRS::SmartCard::Internal::verifyPINStatus(pin.pinReference), LibreSCRS::CancelToken{});
     if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
         return resp.sw2 & 0x0F;
     if (resp.isSuccess())
@@ -347,7 +348,7 @@ int PKCS15Card::getPINTriesLeft(const PinInfo& pin)
     // Fallback: strip local bit (0x80)
     uint8_t altRef = pin.pinReference & 0x7F;
     if (altRef != pin.pinReference) {
-        resp = conn.transmit(LibreSCRS::SmartCard::Internal::verifyPINStatus(altRef));
+        resp = channel.transmit(LibreSCRS::SmartCard::Internal::verifyPINStatus(altRef), LibreSCRS::CancelToken{});
         if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
             return resp.sw2 & 0x0F;
         if (resp.isSuccess())
@@ -359,7 +360,6 @@ int PKCS15Card::getPINTriesLeft(const PinInfo& pin)
 
 PinResult PKCS15Card::verifyPIN(const PinInfo& pin, std::string_view pinValue)
 {
-    LibreSCRS::SmartCard::Internal::CardTransaction tx(conn);
     if (!selectApplet())
         throw std::runtime_error("PKCS15: failed to select applet");
 
@@ -369,7 +369,8 @@ PinResult PKCS15Card::verifyPIN(const PinInfo& pin, std::string_view pinValue)
     auto pinData = encodePIN(pinValue, pin);
 
     // Try pinReference directly
-    auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::verifyPIN(pin.pinReference, pinData));
+    auto resp = channel.transmit(LibreSCRS::SmartCard::Internal::verifyPIN(pin.pinReference, pinData),
+                                 LibreSCRS::CancelToken{});
     if (resp.isSuccess())
         return {true, -1, false};
     if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
@@ -380,7 +381,7 @@ PinResult PKCS15Card::verifyPIN(const PinInfo& pin, std::string_view pinValue)
     // Fallback: strip local bit
     uint8_t altRef = pin.pinReference & 0x7F;
     if (altRef != pin.pinReference) {
-        resp = conn.transmit(LibreSCRS::SmartCard::Internal::verifyPIN(altRef, pinData));
+        resp = channel.transmit(LibreSCRS::SmartCard::Internal::verifyPIN(altRef, pinData), LibreSCRS::CancelToken{});
         if (resp.isSuccess())
             return {true, -1, false};
         if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
@@ -394,7 +395,6 @@ PinResult PKCS15Card::verifyPIN(const PinInfo& pin, std::string_view pinValue)
 
 PinResult PKCS15Card::changePIN(const PinInfo& pin, std::string_view oldPin, std::string_view newPin)
 {
-    LibreSCRS::SmartCard::Internal::CardTransaction tx(conn);
     if (!selectApplet())
         throw std::runtime_error("PKCS15: failed to select applet");
 
@@ -404,7 +404,9 @@ PinResult PKCS15Card::changePIN(const PinInfo& pin, std::string_view oldPin, std
     auto oldData = encodePIN(oldPin, pin);
     auto newData = encodePIN(newPin, pin);
 
-    auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::changeReferenceData(pin.pinReference, oldData, newData));
+    auto resp =
+        channel.transmit(LibreSCRS::SmartCard::Internal::changeReferenceData(pin.pinReference, oldData, newData),
+                         LibreSCRS::CancelToken{});
     if (resp.isSuccess())
         return {true, -1, false};
     if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
@@ -415,7 +417,8 @@ PinResult PKCS15Card::changePIN(const PinInfo& pin, std::string_view oldPin, std
     // Fallback: strip local bit — ONLY on reference-not-found errors
     uint8_t altRef = pin.pinReference & 0x7F;
     if (altRef != pin.pinReference && (resp.statusWord() == 0x6A86 || resp.statusWord() == 0x6A88)) {
-        resp = conn.transmit(LibreSCRS::SmartCard::Internal::changeReferenceData(altRef, oldData, newData));
+        resp = channel.transmit(LibreSCRS::SmartCard::Internal::changeReferenceData(altRef, oldData, newData),
+                                LibreSCRS::CancelToken{});
         if (resp.isSuccess())
             return {true, -1, false};
         if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
@@ -439,7 +442,8 @@ LibreSCRS::SmartCard::Internal::SecureBuffer PKCS15Card::encodePIN(std::string_v
 
 int PKCS15Card::verifyPinInline(const PinInfo& pinInfo, const LibreSCRS::SmartCard::Internal::SecureBuffer& pinData)
 {
-    auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::verifyPIN(pinInfo.pinReference, pinData));
+    auto resp = channel.transmit(LibreSCRS::SmartCard::Internal::verifyPIN(pinInfo.pinReference, pinData),
+                                 LibreSCRS::CancelToken{});
 #ifndef NDEBUG
     fprintf(stderr, "[PKCS15] verifyPIN ref=0x%02X pinLen=%zu SW=%04X\n", pinInfo.pinReference, pinData.size(),
             resp.statusWord());
@@ -452,7 +456,8 @@ int PKCS15Card::verifyPinInline(const PinInfo& pinInfo, const LibreSCRS::SmartCa
     // Primary reference was not recognized (6A86/6A88/etc.) — try stripping local bit
     uint8_t altRef = pinInfo.pinReference & 0x7F;
     if (altRef != pinInfo.pinReference) {
-        auto resp2 = conn.transmit(LibreSCRS::SmartCard::Internal::verifyPIN(altRef, pinData));
+        auto resp2 =
+            channel.transmit(LibreSCRS::SmartCard::Internal::verifyPIN(altRef, pinData), LibreSCRS::CancelToken{});
 #ifndef NDEBUG
         fprintf(stderr, "[PKCS15] verifyPIN altRef=0x%02X SW=%04X\n", altRef, resp2.statusWord());
 #endif
@@ -487,7 +492,7 @@ std::vector<uint8_t> PKCS15Card::tryMsePso(uint8_t sigAlgo, const KeyRefInfo& ke
 #endif
     LibreSCRS::SmartCard::Internal::APDUCommand mseSet{
         .cla = 0x00, .ins = 0x22, .p1 = 0x41, .p2 = 0xB6, .data = std::move(mseData), .le = 0, .hasLe = false};
-    auto resp = conn.transmit(mseSet);
+    auto resp = channel.transmit(mseSet, LibreSCRS::CancelToken{});
 #ifndef NDEBUG
     fprintf(stderr, "[PKCS15] MSE SET SW=%04X\n", resp.statusWord());
 #endif
@@ -500,7 +505,7 @@ std::vector<uint8_t> PKCS15Card::tryMsePso(uint8_t sigAlgo, const KeyRefInfo& ke
     uint16_t psoLe = (expectedSigLen <= 256) ? 0 : expectedSigLen;
     LibreSCRS::SmartCard::Internal::APDUCommand pso{
         .cla = 0x00, .ins = 0x2A, .p1 = 0x9E, .p2 = 0x9A, .data = psoData, .le = psoLe, .hasLe = true};
-    resp = conn.transmit(pso);
+    resp = channel.transmit(pso, LibreSCRS::CancelToken{});
     lastSW = resp.statusWord();
 #ifndef NDEBUG
     fprintf(stderr, "[PKCS15] PSO COMPUTE SW=%04X sigLen=%zu\n", resp.statusWord(), resp.data.size());
@@ -512,7 +517,6 @@ std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_vie
                                       const std::vector<uint8_t>& digestInfo, const std::vector<uint8_t>& rawData,
                                       SignScheme scheme)
 {
-    LibreSCRS::SmartCard::Internal::CardTransaction tx(conn);
     auto pinData = encodePIN(pin, pinInfo);
     auto keyRef = resolveKeyRef(key);
     uint16_t sigLen = key.keySizeBits > 0 ? (key.keySizeBits / 8) : 256;
@@ -746,14 +750,16 @@ bool PKCS15Card::selectByPath(std::span<const uint8_t> path, uint8_t selectP2)
     }
 
     for (size_t i = startIdx; i + 1 < path.size(); i += 2) {
-        auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(path[i], path[i + 1], p2));
+        auto resp = channel.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(path[i], path[i + 1], p2),
+                                     LibreSCRS::CancelToken{});
         if (resp.isSuccess())
             continue;
 
         // Try alternative P2 on retryable errors
         if (resp.statusWord() == 0x6700 || resp.statusWord() == 0x6A86) {
             uint8_t altP2 = (p2 == 0x0C) ? 0x00 : 0x0C;
-            resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(path[i], path[i + 1], altP2));
+            resp = channel.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(path[i], path[i + 1], altP2),
+                                    LibreSCRS::CancelToken{});
             if (resp.isSuccess()) {
                 fileSelectP2 = altP2;
                 p2 = altP2;
@@ -772,7 +778,8 @@ std::vector<uint8_t> PKCS15Card::readSelectedFile()
 
     while (true) {
         auto resp =
-            conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(static_cast<uint16_t>(offset), READ_CHUNK_SIZE));
+            channel.transmit(LibreSCRS::SmartCard::Internal::readBinary(static_cast<uint16_t>(offset), READ_CHUNK_SIZE),
+                             LibreSCRS::CancelToken{});
 
         // 6282 = standard EOF; 6A86 = some tokens signal EOF this way
         bool isEof = resp.statusWord() == 0x6282 || (resp.statusWord() == 0x6A86 && !result.empty());

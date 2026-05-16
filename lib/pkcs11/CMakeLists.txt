@@ -71,11 +71,25 @@ endif()
 # GNU ld(1):   --version-script <file>          (version-tagged sections)
 # Both formats encode the same allowlist; their syntax just differs. See
 # the per-platform allowlist files for the rationale + symbol list.
+#
+# Symbol-anchoring note: the LibreSCRS PKCS#11 extension hooks
+# (librescrs_pkcs11_attach_session, librescrs_pkcs11_detach_session)
+# live in lib/pkcs15/src/pkcs15_pkcs11_attach.cpp and reach the .so via
+# PRIVATE-linkage of the PKCS15 static archive. Nothing inside the .so
+# itself calls them — they exist solely to be resolved by external
+# dlsym() — so --gc-sections (Linux) and -dead_strip (macOS) would
+# discard them as unreferenced. Both linkers accept an explicit
+# "undefined symbol" anchor that forces inclusion: GNU ld --undefined,
+# Apple ld -u. Pair the anchor with the visibility allowlist
+# (exports.map / exports.list) so the symbols survive GC AND end up in
+# the export table.
 if(APPLE)
     target_link_options(librescrs-pkcs11 PRIVATE
         "LINKER:-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/exports.list"
         # Apple ld(1) dead-strips by default; -dead_strip is explicit form.
         "LINKER:-dead_strip"
+        "LINKER:-u,_librescrs_pkcs11_attach_session"
+        "LINKER:-u,_librescrs_pkcs11_detach_session"
     )
 elseif(UNIX)
     target_link_options(librescrs-pkcs11 PRIVATE
@@ -86,6 +100,8 @@ elseif(UNIX)
         # symbols already ensures the project's own code shrinks; this flag
         # also reaches the bundled static archive.
         "LINKER:--gc-sections"
+        "LINKER:--undefined=librescrs_pkcs11_attach_session"
+        "LINKER:--undefined=librescrs_pkcs11_detach_session"
     )
 endif()
 

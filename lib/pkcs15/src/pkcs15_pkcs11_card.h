@@ -15,19 +15,19 @@
 #include <internal/PKCS11Card.h>
 #include <internal/PKCS11CardProvider.h>
 
+#include <LibreSCRS/CancelToken.h>
+#include <LibreSCRS/SecureChannel/ChannelErrors.h>
+#include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
 #include <LibreSCRS/SmartCard/CardMap.h>
 
+#include <expected>
 #include <memory>
 #include <string>
 #include <vector>
 
-namespace LibreSCRS::SmartCard::Internal {
-class PCSCConnection;
-}
-
-namespace emrtd::crypto {
-class SecureMessaging;
-}
+namespace LibreSCRS::SmartCard {
+class CardSession;
+} // namespace LibreSCRS::SmartCard
 
 namespace pkcs15 {
 class PKCS15Card;
@@ -54,19 +54,35 @@ namespace LibreSCRS::Pkcs15::Pkcs11 {
 /// cards (Serbian eID, NAM) yield one slot; multi-PIN cards (GEO) yield
 /// one slot per AUTH PIN. PUK and CAN PINs are filtered.
 ///
+/// @par Transport ownership (Stage 6, 4.2)
+/// Owns a @ref LibreSCRS::SmartCard::CardSession for the card's lifetime.
+/// Every operation that touches the card acquires a fresh
+/// @ref LibreSCRS::SmartCard::ActiveChannelHolder via @ref acquireChannel
+/// — non-PACE families take the @c PlainChannel path, PACE-gated families
+/// (NAM CL, GEO CL) take the @c PaceChannel path with the CAN deposited
+/// into the session's per-process cache through @ref onCachedCanChanged.
+/// No long-lived @c pkcs15::PKCS15Card helper / @c PCSCConnection /
+/// @c SecureMessaging is held; each holder constructs the helper from
+/// @c holder.activeChannel() and discards it on scope exit. This mirrors
+/// the @c pkcs15-plugin Stage 5 pattern (one PCSCConnection per
+/// CardSession in the LM consumer; one holder per operation).
+///
 /// @par Thread-safety
-/// Inherits @c cardMutex from the base; APDU exchange and the underlying
-/// @ref pkcs15::PKCS15Card helper are therefore serialised. Slots reach
-/// the transport via @c friend access on the base class as documented in
-/// @ref PKCS11Card.
+/// Inherits @c cardMutex from the base; APDU exchange is therefore
+/// serialised across slots of the same physical card. Slots reach the
+/// transport via @c friend access on the base class as documented in
+/// @ref PKCS11Card; the per-op holder additionally locks the session's
+/// internal mutex (project lock order: slotMutex → cardMutex →
+/// sessionMutex).
 ///
 /// @since 4.1
 class Pkcs15Slot;
+class AttachRegistry;
 
 class Pkcs15Card final : public LibreSCRS::Pkcs11::Internal::PKCS11Card
 {
-    // Slots in deferred-profile mode borrow the parent's APDU helper at
-    // first login; controlled friend access keeps the boundary narrow.
+    // Slots reach the parent's session and profile through controlled
+    // friend access; keeps the Stage-6 transport surface narrow.
     friend class Pkcs15Slot;
 
 public:
@@ -74,15 +90,17 @@ public:
     /// @param cardMap Optional shared cache of per-card discovered state
     ///                (PKCS#15 path / SELECT P2 / PIN labels). When
     ///                non-null, @ref bind() reuses any previously probed
-    ///                state to avoid redundant EF.DIR fallback after
-    ///                PACE; if the entry is absent, @ref bind() probes
-    ///                normally and populates the map. When null, no
-    ///                cache is consulted (legacy single-shot behaviour).
+    ///                state; when null, no cache is consulted. Reserved
+    ///                for future Stage 6+ work — currently unused now
+    ///                that holders SELECT the AID directly.
     /// @since 4.1
     explicit Pkcs15Card(std::shared_ptr<LibreSCRS::SmartCard::CardMap> cardMap = nullptr);
 
-    /// @brief Releases PC/SC and wipes the cached PKCS#15 profile. Slots
-    ///        (declared LAST in the base) are destroyed first.
+    /// @brief Drops this card's reference to @ref session after slots
+    ///        (declared LAST in the base) have been destroyed. The PC/SC
+    ///        handle is released only when the last shared reference
+    ///        drops — host-side references (e.g. LibreCelik display) may
+    ///        keep the session alive past this destructor.
     /// @since 4.1
     ~Pkcs15Card() override;
 
@@ -92,106 +110,163 @@ public:
     /// @since 4.1
     [[nodiscard]] unsigned long bind(const std::string& readerName) override;
 
+    /// @brief Bind by adopting an externally-supplied live CardSession
+    ///        rather than opening a fresh PC/SC handle.
+    ///
+    /// Intended for in-process hosts (LibreCelik via @c SessionAttachment)
+    /// that already hold a live @c CardSession for the same reader. The
+    /// adopted session may already carry a live PACE SM context that the
+    /// host's display flow established earlier; the probe order is
+    /// designed to preserve that tunnel rather than destroy it.
+    ///
+    /// @par Probe order
+    /// Step 1 calls @c activateChannelWithSm with @c PaceRequest{Can}.
+    /// When the session has a live @c PaceChannel, this hits Case 1
+    /// (target applet) or Case 2 (different applet, wrapped SELECT) and
+    /// reuses the SM tunnel without any plain APDU. With a warm PACE
+    /// cache but no live channel it performs a full PACE handshake.
+    /// Otherwise the preflight returns @c CredentialsRequired cheaply
+    /// (no wire I/O) and Step 2 attempts @c activateChannelFor
+    /// (PlainChannel): a non-PACE card succeeds; a PACE-gated card with
+    /// no deposited CAN surfaces @c SelectAppletFailed which is mapped
+    /// to @c Crv::PinIncorrect so the consumer's normal "wrong PIN, try
+    /// again" flow re-prompts for the CAN. The truthful invariant is
+    /// "preserve a live SM tunnel by trying SM first; fall back to
+    /// plain only when SM has no credentials".
+    ///
+    /// @par Limitation
+    /// v1 hardcodes @c PaceSecretKind::Can — correct for the only PACE-
+    /// gated cards with current inject use cases (NAM CL, GEO testna).
+    /// Future cards using PIN/PUK as the PACE secret would require
+    /// querying the session's deposited secret kind or accepting it as
+    /// a parameter.
+    ///
+    /// @par Thread-safety
+    /// Internally synchronised; takes @c cardMutex for the duration.
+    /// @since 4.2
+    [[nodiscard]] unsigned long bindFromInjectedSession(const std::string& readerName,
+                                                        std::shared_ptr<LibreSCRS::SmartCard::CardSession> injected);
+
 protected:
     /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11Card::establishPACE
+    /// @par Implementation (Stage 6)
+    /// Validates that PACE works on the freshly-deposited CAN by
+    /// acquiring an @ref ActiveChannelHolder via @ref acquireChannel and
+    /// immediately releasing it. The session's PACE cache retains the
+    /// derived SM keys for subsequent per-op holders. Returns
+    /// @c Crv::PinIncorrect on @c PaceWrongSecret, @c Crv::PinLocked on
+    /// @c PacePinBlocked, @c Crv::DeviceError on transport failures.
     /// @par Thread-safety
-    /// Caller must hold @c cardMutex. Reads @c cachedCan; never logs it.
+    /// Caller must hold @c cardMutex.
     /// @since 4.1
     [[nodiscard]] unsigned long establishPACE() override;
 
     /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11Card::completeBind
     /// @par Thread-safety
-    /// Caller must hold @c cardMutex. Populates @c slots from the
-    /// PKCS#15 profile (one slot per user PIN).
+    /// Caller must hold @c cardMutex. Builds slots from the PKCS#15
+    /// profile read at @ref bind() time (one slot per user PIN).
     /// @since 4.1
     [[nodiscard]] unsigned long completeBind() override;
 
     /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11Card::resumePostCan
     /// @par Implementation
-    /// Delegates to @ref resumeBind, which runs the post-discovery tail
-    /// of @ref bind (PACE establish + APDU helper construction + applet
-    /// select + profile read). The placeholder slot self-transforms in
-    /// @ref Pkcs15Slot::login after this hook returns @c Crv::Ok.
+    /// Delegates to @ref resumeBind, which runs the post-CAN tail of
+    /// @ref bind (acquire SM holder, read profile). The placeholder slot
+    /// self-transforms in @ref Pkcs15Slot::login after this hook returns
+    /// @c Crv::Ok.
     /// @since 4.1
     [[nodiscard]] unsigned long resumePostCan() override;
 
+    /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11Card::onCachedCanChanged
+    /// @par Implementation (Stage 6)
+    /// Mirrors the inherited @c cachedCan into @ref session's per-process
+    /// PACE cache via @c CardSession::setPaceSecret (or
+    /// @c clearCachedPaceCredentials when the field was wiped) so the
+    /// per-op @ref acquireChannel finds the secret on its first call. No-op
+    /// when @ref session has not yet been opened.
+    void onCachedCanChanged() noexcept override;
+
 private:
     /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11Card::reconnectInline
+    /// @par Implementation (Stage 6)
+    /// Closes and reopens @ref session against the same @ref readerName.
+    /// Any prior PACE session keys are correctly discarded — the
+    /// card-side context was lost on RESET. Re-deposits @c cachedCan into
+    /// the fresh session via the @ref onCachedCanChanged hook so PACE-
+    /// gated cards can re-PACE on the next @ref acquireChannel.
     /// @since 4.1
     [[nodiscard]] unsigned long reconnectInline() override;
 
-    /// @brief Probe whether this card requires PACE (Serbian eID family).
+    /// @brief Acquire a per-operation @ref ActiveChannelHolder against
+    ///        the PKCS#15 AID.
     ///
-    /// Reads EF.CardAccess from MF without authentication; presence of
-    /// PACE security infos signals a contactless or PACE-gated card.
-    /// On success, @ref cardAccessData is populated. Does not run PACE.
-    [[nodiscard]] bool probeForPace();
+    /// Routes to @c CardSession::activateChannelWithSm with
+    /// @c PaceRequest{Can} when @ref needsPace, otherwise
+    /// @c CardSession::activateChannelFor (PlainChannel). The CAN — when
+    /// required — must already have been deposited via the inherited
+    /// @c parentCacheCan / @ref onCachedCanChanged path; cache miss
+    /// surfaces as @c ChannelActivationError::CredentialsRequired.
+    /// @par Thread-safety
+    /// Caller must hold @c cardMutex (slots acquire it via
+    /// @c parentTransportMutex). The holder additionally locks the
+    /// session's own mutex; project lock order is preserved
+    /// (slotMutex → cardMutex → sessionMutex).
+    /// @since 4.2
+    [[nodiscard]] std::expected<LibreSCRS::SmartCard::ActiveChannelHolder,
+                                LibreSCRS::SecureChannel::ChannelActivationError>
+    acquireChannel(LibreSCRS::CancelToken token = {});
 
-    /// @brief Wire @ref sm into @ref conn as a transmit filter so all
-    ///        subsequent APDUs ride the established secure channel.
-    void installSmFilter();
+    /// @brief Common tail of @ref bind and @ref bindFromInjectedSession:
+    ///        read the PKCS#15 profile under the supplied holder, store
+    ///        on @c profile, and dispatch to @ref completeBind. The
+    ///        holder must reference a live channel.
+    /// @par Thread-safety
+    /// Caller must hold @c cardMutex.
+    /// @since 4.2
+    [[nodiscard]] unsigned long readProfileAndComplete(LibreSCRS::SmartCard::ActiveChannelHolder& holder);
 
-    std::unique_ptr<LibreSCRS::SmartCard::Internal::PCSCConnection> conn;
-    std::unique_ptr<pkcs15::PKCS15Card> apdu;
+    /// @brief Resume bind after @ref Pkcs15Slot::login supplied a CAN.
+    ///
+    /// Acquires a holder via @ref acquireChannel (which drives the PACE
+    /// handshake on the deposited CAN), reads the PKCS#15 profile under
+    /// the holder's lifetime, and stores it on @c profile so the
+    /// placeholder slot can self-transform from the freshly-discovered
+    /// pins / keys / certs. Does NOT touch @c slots — the caller (a
+    /// self-transforming placeholder slot) populates its own state.
+    /// @return @ref Crv constant; @ref Crv::Ok on success.
+    /// @par Thread-safety
+    /// Caller (the placeholder slot) must hold @c cardMutex.
+    /// @since 4.1
+    [[nodiscard]] unsigned long resumeBind();
+
+    /// @brief PC/SC session. Owned outright when produced by
+    ///        @ref bind via @c CardSession::open (refcount 1, equivalent
+    ///        to @c unique_ptr semantics). Shared with the caller when
+    ///        produced by @ref bindFromInjectedSession — the host's
+    ///        display flow keeps a parallel reference so the underlying
+    ///        PC/SC handle outlives a sign-only @c Pkcs15Card. Destroyed
+    ///        before the inherited @c slots vector via natural
+    ///        reverse-declaration order.
+    std::shared_ptr<LibreSCRS::SmartCard::CardSession> session;
+
+    /// @brief PKCS#15 profile cached after the first successful read.
+    ///        Populated by @ref bind() (eager) or @ref resumeBind()
+    ///        (placeholder self-transform tail). Slots borrow this via
+    ///        @ref Pkcs15Slot::parentProfile to discover their
+    ///        per-operation pin / keys / certs without re-reading
+    ///        the AODF on every call.
     std::unique_ptr<pkcs15::PKCS15Profile> profile;
 
     /// @brief When @c true the parent applet refuses PKCS#15 directory
     ///        reads pre-login (e.g. AET SafeSign / Posta Srbija eID).
     ///        @ref bind() therefore publishes ONE placeholder slot and
     ///        defers the real profile read to that slot's first
-    ///        @ref Pkcs15Slot::login.
+    ///        @ref Pkcs15Slot::login. Distinct from the inherited
+    ///        @c placeholderState which marks the PACE-CAN-deferred path.
     bool needsDeferredProfile{false};
 
-    /// @brief When @c true the card requires PACE but no CAN has been
-    ///        supplied yet. @ref bind() publishes a single placeholder
-    ///        slot with @c CKF_LOGIN_REQUIRED so PKCS#11 consumers can
-    ///        observe the card pre-CAN; the first @ref Pkcs15Slot::login
-    ///        parses CAN-in-PIN, calls @ref resumeBind, then populates
-    ///        the slot's keys / certs in place. Distinct from
-    ///        @ref needsDeferredProfile (OLD-AET SafeSign path) — the
-    ///        two states never coalesce.
-    bool placeholderState{false};
-
-    /// @brief Resume bind after @ref Pkcs15Slot::login supplied a CAN.
-    ///
-    /// Runs the post-discovery tail of @ref bind (PACE establish, APDU
-    /// helper construction, applet select, profile read) on the parent
-    /// card. Does NOT touch @c slots — the caller (a self-transforming
-    /// placeholder slot) is responsible for populating its own state
-    /// from the freshly-populated @ref profile.
-    /// @return @ref Crv constant; @ref Crv::Ok on success.
-    /// @par Thread-safety
-    /// Caller must hold @c cardMutex (acquired by the slot before it
-    /// reaches into the parent's transport). The audit-recommended
-    /// pre-resume guards (@c !sm before PACE, @c !cardAccessData empty
-    /// before re-probe) keep this method safe to call exactly once per
-    /// placeholder-mode card; subsequent logins on the same slot bypass
-    /// it via the @c placeholderState sentinel.
-    /// @since 4.1
-    [[nodiscard]] unsigned long resumeBind();
-
-    /// @brief Raw EF.CardAccess bytes captured at probe time. Populated
-    ///        only when PACE is required; consumed by @ref establishPACE.
-    std::vector<std::uint8_t> cardAccessData;
-
-    /// @brief Active SM channel after a successful PACE handshake.
-    ///
-    /// `shared_ptr` so @ref installSmFilter can capture a ref-counted
-    /// handle into the lambda installed on @c conn. The SM stays alive
-    /// while either this member OR the connection's transmit-filter
-    /// holds it; this prevents a use-after-free SEGV when @c sm is
-    /// reset (e.g., the onFailure cleanup in @ref resumeBind) while a
-    /// stale filter is still active on @c conn. When a new filter is
-    /// installed (or @c clearTransmitFilter is called), the old lambda
-    /// is destroyed, the captured shared_ptr drops its ref, and the
-    /// SM is destroyed iff no other refs remain.
-    std::shared_ptr<emrtd::crypto::SecureMessaging> sm;
-
     /// @brief Optional shared cache of per-card discovered state.
-    ///        Consulted by @ref bind() to skip EF.DIR fallback when
-    ///        the same physical card has been probed earlier in the
-    ///        process (e.g. by the in-tree pkcs15 card plugin). @c
-    ///        nullptr disables caching.
+    ///        Reserved for cross-instance reuse on the same physical card.
     std::shared_ptr<LibreSCRS::SmartCard::CardMap> cardMap;
 };
 
@@ -206,14 +281,24 @@ private:
 class Pkcs15PKCS11Provider final : public LibreSCRS::Pkcs11::Internal::PKCS11CardProvider
 {
 public:
-    /// @brief Construct the provider with an optional shared card map.
-    /// @param cardMap Threaded through every @c Pkcs15Card created by
-    ///                @ref probe so per-card discovered state survives
-    ///                across operations on the same physical card (e.g.
-    ///                EF.DIR fallback after PACE). @c nullptr disables
-    ///                caching, matching the pre-4.1 single-shot probe.
-    /// @since 4.1
-    explicit Pkcs15PKCS11Provider(std::shared_ptr<LibreSCRS::SmartCard::CardMap> cardMap = nullptr) noexcept;
+    /// @brief Construct the provider with optional shared caches.
+    /// @param cardMap        Per-card discovered-state cache threaded
+    ///                       through every @c Pkcs15Card created by
+    ///                       @ref probe. Pass @c nullptr to disable.
+    /// @param attachRegistry In-process session registry consulted at
+    ///                       probe time. A registry hit means an
+    ///                       in-process host (LibreCelik) parked a live
+    ///                       @c CardSession for the reader; @ref probe
+    ///                       adopts it instead of opening a fresh PC/SC
+    ///                       handle. @c nullptr disables the inject
+    ///                       path — every probe falls through to the
+    ///                       standalone @c bind() (Stage 6 behaviour),
+    ///                       which is the normal mode for external
+    ///                       consumers loading the module via dlopen
+    ///                       without inject support.
+    /// @since 4.2
+    Pkcs15PKCS11Provider(std::shared_ptr<LibreSCRS::SmartCard::CardMap> cardMap,
+                         std::shared_ptr<AttachRegistry> attachRegistry = nullptr) noexcept;
     ~Pkcs15PKCS11Provider() override = default;
 
     /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11CardProvider::probe
@@ -223,6 +308,7 @@ public:
 
 private:
     std::shared_ptr<LibreSCRS::SmartCard::CardMap> cardMap;
+    std::shared_ptr<AttachRegistry> attachRegistry;
 };
 
 } // namespace LibreSCRS::Pkcs15::Pkcs11

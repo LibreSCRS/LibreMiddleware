@@ -3,8 +3,9 @@
 
 #include "active_auth.h"
 
+#include <LibreSCRS/CancelToken.h>
+#include <LibreSCRS/SecureChannel/ISecureChannel.h>
 #include <apdu.h>
-#include <smartcard/pcsc_connection.h>
 
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
@@ -111,8 +112,7 @@ AAPublicKey parseDG15(const std::vector<uint8_t>& dg15Raw)
 // performActiveAuth
 // ---------------------------------------------------------------------------
 
-ChipAuthResult performActiveAuth(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const std::vector<uint8_t>& dg15Raw,
-                                 SecureMessaging& currentSM)
+ChipAuthResult performActiveAuth(LibreSCRS::SecureChannel::ISecureChannel& channel, const std::vector<uint8_t>& dg15Raw)
 {
     ChipAuthResult result;
 
@@ -146,22 +146,15 @@ ChipAuthResult performActiveAuth(LibreSCRS::SmartCard::Internal::PCSCConnection&
     // --- Send INTERNAL AUTHENTICATE via Secure Messaging ---
     // Command: 00 88 00 00 08 <challenge> 00
     LibreSCRS::SmartCard::Internal::APDUCommand iaCmd{0x00, 0x88, 0x00, 0x00, challenge, 0x00, true};
-    auto iaApdu = currentSM.protect(iaCmd.toBytes());
-    auto iaResp = conn.transmitRaw(iaApdu.data(), static_cast<unsigned long>(iaApdu.size()));
+    auto iaResp = channel.transmit(iaCmd, LibreSCRS::CancelToken{});
 
-    std::vector<uint8_t> iaRespBytes;
-    iaRespBytes.insert(iaRespBytes.end(), iaResp.data.begin(), iaResp.data.end());
-    iaRespBytes.push_back(iaResp.sw1);
-    iaRespBytes.push_back(iaResp.sw2);
-
-    auto iaUnprot = currentSM.unprotect(iaRespBytes);
-    if (!iaUnprot || iaUnprot->empty()) {
+    if ((iaResp.sw1 != 0x90 && iaResp.sw1 != 0x62) || iaResp.data.empty()) {
         result.activeAuthentication = ChipAuthResult::FAILED;
         result.errorDetail = "INTERNAL AUTHENTICATE failed or empty response";
         return result;
     }
 
-    const auto& signature = *iaUnprot;
+    const auto& signature = iaResp.data;
 
     // --- Verify ECDSA signature over the challenge ---
     // Reconstruct the public key from DER

@@ -14,8 +14,8 @@
 #include <string>
 #include <vector>
 
-namespace LibreSCRS::SmartCard::Internal {
-class PCSCConnection;
+namespace LibreSCRS::SecureChannel {
+class ISecureChannel;
 }
 
 namespace emrtd::crypto {
@@ -48,6 +48,13 @@ struct ChipAuthResult
 bool parseDG14(const std::vector<uint8_t>& dg14Raw, std::vector<ChipAuthInfo>& caInfos,
                std::vector<ChipAuthPublicKey>& caKeys);
 
-ChipAuthResult performChipAuth(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const std::vector<uint8_t>& dg14Raw,
-                               SecureMessaging& currentSM);
+/// @brief Run BSI TR-03110 Chip Authentication over the supplied secure
+///        channel. The post-handshake SM key replacement is the caller's
+///        responsibility: on @ref ChipAuthResult::PASSED with
+///        @ref newSessionKeys populated, invoke
+///        @ref LibreSCRS::SecureChannel::ISecureChannel::replaceKeys with
+///        the new key block (mapping @ref newAlgorithm to the corresponding
+///        @c SmCipher). The protocol's General Authenticate APDUs flow
+///        through the channel — no separate SM wrap is performed here.
+ChipAuthResult performChipAuth(LibreSCRS::SecureChannel::ISecureChannel& channel, const std::vector<uint8_t>& dg14Raw);
 } // namespace emrtd::crypto

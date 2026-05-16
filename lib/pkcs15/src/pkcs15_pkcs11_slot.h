@@ -25,7 +25,6 @@
 #include <vector>
 
 namespace pkcs15 {
-class PKCS15Card;
 struct PKCS15Profile;
 } // namespace pkcs15
 
@@ -36,14 +35,21 @@ namespace LibreSCRS::Pkcs15::Pkcs11 {
 ///
 /// Holds the slot's authentication identity (one @ref pkcs15::PinInfo)
 /// and the subset of @ref pkcs15::PrivateKeyInfo / @ref pkcs15::CertificateInfo
-/// objects whose @c authId references this PIN. The owning
-/// @ref Pkcs15Card retains the underlying @ref pkcs15::PKCS15Card APDU
-/// helper; slots borrow it by reference under the parent's @c cardMutex.
+/// objects whose @c authId references this PIN. Stage 6 (4.2) removed
+/// the borrowed @c pkcs15::PKCS15Card pointer that earlier slots cached;
+/// every login / sign / enumerate operation now acquires its own
+/// @ref LibreSCRS::SmartCard::ActiveChannelHolder via the parent
+/// @ref Pkcs15Card and constructs a fresh @c pkcs15::PKCS15Card from
+/// @c holder.activeChannel(). Mirrors the @c pkcs15-plugin Stage 5
+/// pattern; eliminates the cross-reset dangling pointer hazard the
+/// previous @c onCardReset rebind step had to defend against.
 ///
 /// @par Thread-safety
 /// Inherits @c slotMutex from the base. Login / sign paths acquire
 /// @c slotMutex first, then the parent card's @c cardMutex (project-wide
-/// lock order; see @ref PKCS11Slot @par Lock order).
+/// lock order; see @ref PKCS11Slot @par Lock order). The per-op holder
+/// additionally locks the session's internal mutex, extending the chain
+/// to slotMutex → cardMutex → sessionMutex.
 ///
 /// @since 4.1
 class Pkcs15Slot final : public LibreSCRS::Pkcs11::Internal::PKCS11Slot
@@ -54,14 +60,6 @@ public:
     /// @param pinId   PKCS#15 PIN object identifier (CKA_ID gating
     ///                source). Mirrored into the base's @c pinId.
     /// @param pinLabel Human-readable PIN label.
-    /// @param apdu    Borrowed reference to the parent's bound APDU
-    ///                helper. Validity is bounded by parent lifetime;
-    ///                the slot is destroyed first by base-class layout
-    ///                so the reference cannot dangle on teardown.
-    ///                Across @ref Pkcs15Card::reconnectInline the parent
-    ///                rebuilds the owned @c unique_ptr; the slot's
-    ///                borrow is refreshed via @ref rebindApdu before
-    ///                any post-reconnect operation observes it.
     /// @param pinInfo Snapshot of the AODF entry for this PIN.
     /// @param keys    Subset of @c profile.privateKeys whose @c authId
     ///                references this PIN's @c id (single-PIN cards may
@@ -75,9 +73,9 @@ public:
     ///                installed into the base's @c stableSlotId.
     /// @since 4.1
     Pkcs15Slot(std::weak_ptr<LibreSCRS::Pkcs11::Internal::PKCS11Card> parent, std::vector<std::uint8_t> pinId,
-               std::string pinLabel, pkcs15::PKCS15Card* apdu, pkcs15::PinInfo pinInfo,
-               std::vector<pkcs15::PrivateKeyInfo> keys, std::vector<pkcs15::CertificateInfo> certs,
-               LibreSCRS::Pkcs11::Internal::PKCS11TokenInfo tokenInfo, unsigned long slotId);
+               std::string pinLabel, pkcs15::PinInfo pinInfo, std::vector<pkcs15::PrivateKeyInfo> keys,
+               std::vector<pkcs15::CertificateInfo> certs, LibreSCRS::Pkcs11::Internal::PKCS11TokenInfo tokenInfo,
+               unsigned long slotId);
 
     /// @brief Construct a slot in @b deferred-profile mode.
     ///
@@ -89,10 +87,10 @@ public:
     /// slot's @c pinInfo / @c keys / @c certs / @c cachedTokenInfo state.
     /// @par Lifecycle
     /// Until @ref login succeeds the slot's @c keys and @c certs are
-    /// empty, @c pinInfo is @c nullopt, and @c apdu is @c nullptr;
-    /// @ref enumerateObjects returns an empty list and @ref signatureSize
-    /// returns 0. After successful login they take their final values
-    /// and the slot behaves identically to an eager-profile @ref Pkcs15Slot.
+    /// empty and @c pinInfo is @c nullopt; @ref enumerateObjects returns
+    /// an empty list and @ref signatureSize returns 0. After successful
+    /// login they take their final values and the slot behaves
+    /// identically to an eager-profile @ref Pkcs15Slot.
     /// @since 4.1
     Pkcs15Slot(std::weak_ptr<LibreSCRS::Pkcs11::Internal::PKCS11Card> parent, std::string placeholderLabel,
                LibreSCRS::Pkcs11::Internal::PKCS11TokenInfo placeholderTokenInfo, unsigned long slotId);
@@ -109,7 +107,8 @@ public:
     /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11Slot::enumerateObjects
     /// @par Thread-safety
     /// Internally synchronised; reads @ref keys / @ref certs only,
-    /// pre-populated at construction time.
+    /// pre-populated at construction time. Acquires a holder via the
+    /// parent for the certificate read pass.
     /// @since 4.1
     [[nodiscard]] std::vector<LibreSCRS::Pkcs11::Internal::PKCS11ObjectInfo> enumerateObjects() override;
 
@@ -153,32 +152,7 @@ public:
     /// @since 4.1
     [[nodiscard]] std::size_t signatureSize(std::span<const std::uint8_t> keyId) const override;
 
-    /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11Slot::onCardReset
-    /// @par Implementation
-    /// Extends the base implementation: in addition to clearing the
-    /// cached PIN / @c loggedIn flag, refreshes the borrowed parent
-    /// @c apdu pointer because @ref Pkcs15Card::reconnectInline rebuilt
-    /// the parent's @c std::unique_ptr<pkcs15::PKCS15Card> from scratch.
-    /// Without this refresh every slot would dereference a dangling
-    /// pointer on the next @ref signData / @ref enumerateObjects.
-    /// Mirrors @c OpenScSlot::rebindObjects on the OpenSC provider.
-    /// @par Thread-safety
-    /// Acquires @c slotMutex (project lock order: @c slotMutex →
-    /// @c cardMutex). The base contract requires the caller (the parent
-    /// card's @c handleReset) to have released @c cardMutex before
-    /// invoking this method.
-    /// @since 4.1
-    void onCardReset() noexcept override;
-
 private:
-    /// @brief Borrow the parent @ref Pkcs15Card's APDU helper. Used by
-    ///        deferred-profile mode to wire @ref apdu lazily at first
-    ///        @ref login. Static so the friend boundary on @ref Pkcs15Card
-    ///        only needs to grant Pkcs15Slot, not free functions.
-    /// @par Thread-safety Caller must hold the parent's @c cardMutex.
-    [[nodiscard]] static pkcs15::PKCS15Card*
-    parentApduHelper(LibreSCRS::Pkcs11::Internal::PKCS11Card& parentBase) noexcept;
-
     /// @brief Borrow the parent @ref Pkcs15Card's PKCS#15 profile (read
     ///        by @ref Pkcs15Card::resumeBind). Used by the placeholder
     ///        self-transform path to discover user PINs / keys / certs
@@ -187,12 +161,10 @@ private:
     [[nodiscard]] static const pkcs15::PKCS15Profile*
     parentProfile(LibreSCRS::Pkcs11::Internal::PKCS11Card& parentBase) noexcept;
 
-    pkcs15::PKCS15Card* apdu{
-        nullptr}; ///< Borrowed; owned by parent @ref Pkcs15Card. @c nullptr in deferred-profile mode pre-login.
     std::optional<pkcs15::PinInfo> pinInfo;   ///< @c nullopt in deferred-profile mode pre-login.
     std::vector<pkcs15::PrivateKeyInfo> keys; ///< Empty in deferred-profile mode pre-login.
     std::vector<pkcs15::CertificateInfo> certs;
-    bool deferredProfile{false}; ///< True if pinInfo/keys/certs/apdu must be lazily populated at first @ref login.
+    bool deferredProfile{false}; ///< True if pinInfo/keys/certs must be lazily populated at first @ref login.
 };
 
 } // namespace LibreSCRS::Pkcs15::Pkcs11

@@ -3,11 +3,15 @@
 
 #include "native/pkcs11_token.h"
 
+#include <LibreSCRS/Pkcs11/SessionInjection.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <dlfcn.h>
+#include <iostream>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 
@@ -46,9 +50,22 @@ struct Pkcs11Token::Impl
     CK_OBJECT_HANDLE privateKey = 0;
     bool loggedIn = false;
     std::mutex sessionMutex;
+    /// Live forward of the caller's CardSession into the loaded
+    /// librescrs-pkcs11 module. Constructed after @c C_Initialize and
+    /// before any @c C_GetSlotList call so the PKCS#15 provider's
+    /// `probe` adopts the injected session instead of opening a second
+    /// standalone session against the same reader. Reset on Impl
+    /// destruction (the SessionAttachment dtor calls the matching
+    /// detach hook before the module is unloaded by @c C_Finalize +
+    /// @c dlclose below).
+    std::optional<LibreSCRS::Pkcs11::SessionAttachment> attachment;
 
     ~Impl()
     {
+        // Detach BEFORE C_Finalize / dlclose so the module-side
+        // AttachRegistry entry is cleared while the module is still
+        // mapped and its detach hook is callable.
+        attachment.reset();
         if (funcs) {
             if (loggedIn)
                 funcs->C_Logout(session);
@@ -72,6 +89,34 @@ struct Pkcs11Token::Impl
 
         checkRv(getList(&funcs), "C_GetFunctionList");
         checkRv(funcs->C_Initialize(nullptr), "C_Initialize");
+    }
+
+    /// @brief If @p sharedSession is non-null, attach it to the loaded
+    ///        module under @p readerName so the next @c C_GetSlotList /
+    ///        provider @c probe can adopt it.
+    ///
+    /// MUST be called after @ref loadModule (which calls @c C_Initialize)
+    /// and before @ref findSlotByReaderName (which calls
+    /// @c C_GetSlotList — the registry consultation point in the
+    /// provider's `probe`). Failure is non-fatal: the standalone bind
+    /// path will run and the sign may still succeed for non-PACE cards.
+    void attachSessionIfPresent(const std::string& modulePath, const std::string& readerName,
+                                std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession)
+    {
+        if (!sharedSession)
+            return;
+
+        auto attached = LibreSCRS::Pkcs11::SessionAttachment::attach(modulePath, readerName, std::move(sharedSession));
+        if (attached) {
+            attachment.emplace(std::move(*attached));
+        } else {
+            // Non-fatal: fall through to standalone bind. Log the
+            // categorised reason so multi-card / SHARED-build issues
+            // surface in the diagnostic log without breaking sign.
+            std::cerr << "libresign: WARNING: SessionAttachment::attach failed for reader \"" << readerName
+                      << "\" (error=" << static_cast<int>(attached.error())
+                      << "); continuing with standalone PKCS#11 bind" << std::endl;
+        }
     }
 
     void openSessionAndLogin(CK_SLOT_ID slotId, std::span<const uint8_t> pin)
@@ -228,10 +273,14 @@ struct Pkcs11Token::Impl
 };
 
 Pkcs11Token::Pkcs11Token(const std::string& modulePath, std::span<const uint8_t> pin, const std::string& keyAlias,
-                         const std::string& readerName)
+                         const std::string& readerName,
+                         std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession)
     : impl(std::make_unique<Impl>())
 {
     impl->loadModule(modulePath);
+    // Attach BEFORE the slot lookup: findSlotByReaderName triggers
+    // C_GetSlotList → provider::probe, which consults AttachRegistry.
+    impl->attachSessionIfPresent(modulePath, readerName, std::move(sharedSession));
     CK_SLOT_ID slotId = impl->findSlotByReaderName(readerName);
     impl->openSessionAndLogin(slotId, pin);
     impl->findPrivateKey(keyAlias);
