@@ -118,9 +118,9 @@ TEST(CardSession_4_1_API, SetBacInputThenClearReturnsCredentialsRequired)
 {
     auto src = LibreSCRS::SmartCard::detail::makeDetachedCardSession("TestReader");
     LibreSCRS::SecureChannel::BacInput input;
-    input.documentNumber = "L898902C3";
-    input.dateOfBirth = "740812";
-    input.dateOfExpiry = "120415";
+    input.documentNumber = LibreSCRS::Secure::String{"L898902C3"};
+    input.dateOfBirth = LibreSCRS::Secure::String{"740812"};
+    input.dateOfExpiry = LibreSCRS::Secure::String{"120415"};
     src->setBacInput(std::move(input));
 
     // No reader I/O happens against a detached session; clearing forces the

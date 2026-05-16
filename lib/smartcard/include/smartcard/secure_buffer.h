@@ -79,6 +79,14 @@ public:
 
     void resize(size_t n, uint8_t fill = 0)
     {
+        // On shrink, cleanse the tail that the underlying vector is about
+        // to drop. std::vector::resize(n<size) does NOT release storage
+        // (capacity is preserved), but the destructor's cleanse uses the
+        // NEW (smaller) size and would never reach the truncated bytes.
+        // Cleanse them here while we still know their location.
+        if (n < buf.size()) {
+            OPENSSL_cleanse(buf.data() + n, buf.size() - n);
+        }
         buf.resize(n, fill);
     }
 

@@ -62,8 +62,12 @@ void PCSCConnection::reconnect()
 APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
 {
 #ifndef NDEBUG
-    // Log sent APDU — mask data for VERIFY (0x20) and CHANGE REFERENCE DATA (0x24) to avoid PIN exposure
-    bool isSensitive = cmdLen >= 2 && (cmdBytes[1] == 0x20 || cmdBytes[1] == 0x24);
+    // Log sent APDU — mask data for INSes whose payload carries PIN /
+    // PUK / new-PIN bytes:
+    //   0x20 VERIFY
+    //   0x24 CHANGE REFERENCE DATA
+    //   0x2C RESET RETRY COUNTER (PUK + new PIN in P1=0x00/0x02 forms)
+    bool isSensitive = cmdLen >= 2 && (cmdBytes[1] == 0x20 || cmdBytes[1] == 0x24 || cmdBytes[1] == 0x2C);
     std::cerr << "[PCSC] TX (" << cmdLen << " bytes,"
               << " protocol=" << (activeProtocol == SCARD_PROTOCOL_T0 ? "T=0" : "T=1") << "):";
     DWORD headerLen = std::min(cmdLen, static_cast<DWORD>(isSensitive ? 5 : cmdLen));

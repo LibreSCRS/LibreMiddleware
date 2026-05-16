@@ -9,8 +9,7 @@
 ///        (ICAO Doc 9303 Part 11).
 
 #include <LibreSCRS/Export.h>
-
-#include <string>
+#include <LibreSCRS/Secure/String.h>
 
 namespace LibreSCRS::SecureChannel {
 
@@ -21,17 +20,28 @@ namespace LibreSCRS::SecureChannel {
 /// padded with '<' to 9 characters internally when shorter; the two date
 /// fields use the YYMMDD form printed on the MRZ.
 ///
+/// Field types are @ref LibreSCRS::Secure::String — the MRZ subset is
+/// scanned off a physical travel document and is a tracking-equivalent
+/// secret; storing it in cleansing storage prevents the bytes from
+/// surviving in the heap allocator after the struct is dropped.
+///
 /// @since 4.1
 struct LIBRESCRS_PUBLIC_API BacInput
 {
     /// @brief Travel document number from the MRZ line 2.
-    std::string documentNumber;
+    /// @since 4.1 (field type tightened from `std::string` to
+    ///        @ref LibreSCRS::Secure::String — 4.1 is the first release
+    ///        that ships @ref BacInput publicly, no consumers were
+    ///        broken).
+    LibreSCRS::Secure::String documentNumber;
 
     /// @brief Holder's date of birth (YYMMDD).
-    std::string dateOfBirth;
+    /// @since 4.1 (type tightened — see @ref documentNumber).
+    LibreSCRS::Secure::String dateOfBirth;
 
     /// @brief Document's date of expiry (YYMMDD).
-    std::string dateOfExpiry;
+    /// @since 4.1 (type tightened — see @ref documentNumber).
+    LibreSCRS::Secure::String dateOfExpiry;
 };
 
 } // namespace LibreSCRS::SecureChannel

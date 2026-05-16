@@ -283,9 +283,9 @@ TEST(BacEstablishTests, NonPcscConnectionMapsToInternal)
 
     FakePCSCConnection fakeConn;
     BacInput input;
-    input.documentNumber = "L898902C";
-    input.dateOfBirth = "690806";
-    input.dateOfExpiry = "940623";
+    input.documentNumber = LibreSCRS::Secure::String{"L898902C"};
+    input.dateOfBirth = LibreSCRS::Secure::String{"690806"};
+    input.dateOfExpiry = LibreSCRS::Secure::String{"940623"};
 
     auto outcome = BacChannel::establish(fakeConn, makeNamEmrtdAid(), input, CancelToken{});
     EXPECT_EQ(outcome.channel, nullptr);
@@ -299,9 +299,9 @@ TEST(BacEstablishTests, AlreadyCancelledTokenSkipsHandshake)
 
     FakePCSCConnection fakeConn;
     BacInput input;
-    input.documentNumber = "L898902C";
-    input.dateOfBirth = "690806";
-    input.dateOfExpiry = "940623";
+    input.documentNumber = LibreSCRS::Secure::String{"L898902C"};
+    input.dateOfBirth = LibreSCRS::Secure::String{"690806"};
+    input.dateOfExpiry = LibreSCRS::Secure::String{"940623"};
 
     CancelSource src;
     auto token = src.token();

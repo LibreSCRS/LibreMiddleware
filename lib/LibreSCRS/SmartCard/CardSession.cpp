@@ -276,6 +276,17 @@ void CardSession::clearCachedPaceCredentials()
 void CardSession::markDead() noexcept
 {
     d->dead.store(true, std::memory_order_release);
+    // Wipe cached PACE/BAC secrets on card-removal: a long-lived LC
+    // session would otherwise retain the MRZ / CAN / PIN material in RAM
+    // until the session is destructed, which can be many minutes for a
+    // GUI app sitting on an empty reader prompt. clearCachedPaceCredentials
+    // takes the session mutex internally and zeroes both
+    // paceCredentialsCache[] (Secure::String slots) and bacInput.
+    try {
+        clearCachedPaceCredentials();
+    } catch (...) {
+        // Cleansing must not throw; defensively swallow to honour noexcept.
+    }
 }
 
 bool CardSession::isDead() const noexcept
@@ -466,9 +477,13 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                     return std::unexpected{ChannelActivationError::CredentialsRequired};
                 }
                 LibreSCRS::SecureChannel::BacInput input;
-                input.documentNumber = std::string{docNo->view()};
-                input.dateOfBirth = std::string{dob->view()};
-                input.dateOfExpiry = std::string{doe->view()};
+                // Assign Secure::String directly (copy-construct from the
+                // credential-cache slot) — no std::string materialisation
+                // that would escape cleansing on the path between credential
+                // provider and BAC handshake.
+                input.documentNumber = *docNo;
+                input.dateOfBirth = *dob;
+                input.dateOfExpiry = *doe;
                 d->bacInput = std::move(input);
             }
 

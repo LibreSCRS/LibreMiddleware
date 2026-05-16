@@ -306,9 +306,14 @@ private:
         } else if (auto* mrz = std::get_if<emrtd::MRZData>(&creds)) {
             // Push BAC inputs (the fallback path).
             LibreSCRS::SecureChannel::BacInput bacIn;
-            bacIn.documentNumber = mrz->documentNumber;
-            bacIn.dateOfBirth = mrz->dateOfBirth;
-            bacIn.dateOfExpiry = mrz->dateOfExpiry;
+            // BacInput uses Secure::String (4.1+) — wrap from the
+            // session-held MRZ scratch strings so the BAC slot retains
+            // cleansing storage. The source `mrz->*` strings live in an
+            // internal session struct (see `session.credentials`) and
+            // are released when the session is torn down.
+            bacIn.documentNumber = LibreSCRS::Secure::String{mrz->documentNumber};
+            bacIn.dateOfBirth = LibreSCRS::Secure::String{mrz->dateOfBirth};
+            bacIn.dateOfExpiry = LibreSCRS::Secure::String{mrz->dateOfExpiry};
             cardSession.setBacInput(std::move(bacIn));
             // Push PACE_MRZ password (mrzInfo encoding) — used if EF.CardAccess
             // is present and PACE is supported.

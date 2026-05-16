@@ -7,7 +7,9 @@
 
 #include "bac.h"
 #include "smartcard/pcsc_connection.h"
+#include "smartcard/secure_buffer.h"
 
+#include <string>
 #include <utility>
 
 namespace LibreSCRS::SecureChannel {
@@ -64,7 +66,17 @@ BacChannel::HandshakeResult BacChannel::establish(LibreSCRS::SmartCard::IConnect
 
     std::optional<emrtd::crypto::SessionKeys> derived;
     try {
-        auto bacKeys = emrtd::crypto::deriveBACKeys(input.documentNumber, input.dateOfBirth, input.dateOfExpiry);
+        // emrtd::crypto::deriveBACKeys takes const std::string& — materialise
+        // scrubbed scratch copies from the Secure::String fields and cleanse
+        // them on scope exit via PinStringScrubber so the MRZ bytes do not
+        // outlive this call frame.
+        std::string docNoScratch{input.documentNumber.view()};
+        std::string dobScratch{input.dateOfBirth.view()};
+        std::string doeScratch{input.dateOfExpiry.view()};
+        LibreSCRS::SmartCard::Internal::PinStringScrubber scrubDocNo{docNoScratch};
+        LibreSCRS::SmartCard::Internal::PinStringScrubber scrubDob{dobScratch};
+        LibreSCRS::SmartCard::Internal::PinStringScrubber scrubDoe{doeScratch};
+        auto bacKeys = emrtd::crypto::deriveBACKeys(docNoScratch, dobScratch, doeScratch);
         derived = emrtd::crypto::performBAC(*pcsc, bacKeys);
     } catch (...) {
         out.error = ChannelActivationError::PaceProtocolFailure;
