@@ -253,8 +253,13 @@ SignOutcome signOnCard(ReaderCard& rc, const std::string& pin)
         return o;
     }
 
-    // For NAM CL: pre-deposit CAN portion via setPaceSecret so the
-    // module's bindFromInjectedSession routes via §5.3b Case 1/2.
+    // NAM CL eager-bind flow: pre-deposit the CAN portion via
+    // setPaceSecret (PACE is required even to read the AODF over CL),
+    // then pass the BARE PIN to C_Login. Real-AODF slot publishes
+    // maxPinLen=12; the 6-byte PIN fits. Passing the full 13-byte
+    // "CAN:PIN" here would hit the dispatcher's length gate
+    // (CKR_PIN_LEN_RANGE) before slot.login() runs.
+    std::string pinForLogin = pin;
     if (rc.profile == CardProfile::NAM_CL) {
         auto colon = pin.find(':');
         if (colon == std::string::npos) {
@@ -263,14 +268,11 @@ SignOutcome signOnCard(ReaderCard& rc, const std::string& pin)
         }
         std::string can = pin.substr(0, colon);
         rc.session->setPaceSecret(LibreSCRS::Auth::PaceSecretKind::Can, LibreSCRS::Secure::String{can});
+        pinForLogin = pin.substr(colon + 1);
     }
 
     std::unique_ptr<libresign::Pkcs11Token> token;
     try {
-        // For NAM CL, pass the full "CAN:PIN" to C_Login — the slot
-        // parses CAN-in-PIN on its first acquire. For PKS / PIV the
-        // input IS just the bare PIN.
-        std::string pinForLogin = pin;
         token = std::make_unique<libresign::Pkcs11Token>(
             modulePath(),
             std::span<const std::uint8_t>{reinterpret_cast<const std::uint8_t*>(pinForLogin.data()),
