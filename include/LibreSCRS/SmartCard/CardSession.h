@@ -217,6 +217,15 @@ public:
     ///        context (where the host supplies "CAN:PIN" directly through
     ///        @c C_Login) leave the provider unset and pre-populate the
     ///        cache via @ref setPaceSecret instead.
+    ///
+    /// @par Re-entrancy contract
+    /// The provider is invoked WITHOUT the session mutex held — the
+    /// activation path snapshots the provider, releases the mutex, calls
+    /// the snapshot, then re-acquires the mutex and re-checks invariants
+    /// the callback could have mutated. Implementations MAY therefore
+    /// safely call back into the same @ref CardSession instance
+    /// (e.g. @ref setPaceSecret, @ref setBacInput) without
+    /// self-deadlocking on the non-recursive @c sessionMutex.
     /// @since 4.1
     void setCredentialProvider(LibreSCRS::Auth::CredentialProvider provider);
 

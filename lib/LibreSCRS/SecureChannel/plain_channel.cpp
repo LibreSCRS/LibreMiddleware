@@ -27,7 +27,7 @@ PlainChannel::PlainChannel(LibreSCRS::SmartCard::IConnection& conn, LibreSCRS::S
     : connection(conn), appletAid(std::move(aid))
 {}
 
-LibreSCRS::SmartCard::AppletAid PlainChannel::currentApplet() const noexcept
+const LibreSCRS::SmartCard::AppletAid& PlainChannel::currentApplet() const noexcept
 {
     return appletAid;
 }

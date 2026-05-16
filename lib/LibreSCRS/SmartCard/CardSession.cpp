@@ -462,29 +462,45 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                 }
                 auto requirement = LibreSCRS::Auth::AuthRequirement::forPaceSecret(
                     aid, LibreSCRS::Auth::PaceSecretKind::Mrz, std::nullopt, LibreSCRS::LocalizedText{});
-                auto credResult = (*d->credentialProvider)(requirement);
+                // Snapshot the provider and drop the session mutex across the
+                // callback. The provider is permitted to call back into this
+                // CardSession (e.g. setBacInput / setPaceSecret) without
+                // self-deadlocking on the non-recursive sessionMutex.
+                auto providerSnapshot = *d->credentialProvider;
+                lock.unlock();
+                auto credResult = providerSnapshot(requirement);
+                lock.lock();
+                // Re-check invariants the provider may have mutated.
+                if (d->dead.load(std::memory_order_acquire)) {
+                    return std::unexpected{ChannelActivationError::CardRemoved};
+                }
                 if (credResult.status == LibreSCRS::Auth::CredentialResult::Status::UserCancelled) {
                     return std::unexpected{ChannelActivationError::UserCancelled};
                 }
                 if (credResult.status != LibreSCRS::Auth::CredentialResult::Status::Ok) {
                     return std::unexpected{ChannelActivationError::CredentialsRequired};
                 }
-                const auto* docNo = credResult.find("documentNumber");
-                const auto* dob = credResult.find("dateOfBirth");
-                const auto* doe = credResult.find("dateOfExpiry");
-                if (docNo == nullptr || dob == nullptr || doe == nullptr || docNo->empty() || dob->empty() ||
-                    doe->empty()) {
-                    return std::unexpected{ChannelActivationError::CredentialsRequired};
+                // The provider may already have populated bacInput via a
+                // re-entrant setBacInput(); honour that if so, otherwise
+                // build the BacInput from the returned credResult fields.
+                if (!d->bacInput.has_value()) {
+                    const auto* docNo = credResult.find("documentNumber");
+                    const auto* dob = credResult.find("dateOfBirth");
+                    const auto* doe = credResult.find("dateOfExpiry");
+                    if (docNo == nullptr || dob == nullptr || doe == nullptr || docNo->empty() || dob->empty() ||
+                        doe->empty()) {
+                        return std::unexpected{ChannelActivationError::CredentialsRequired};
+                    }
+                    LibreSCRS::SecureChannel::BacInput input;
+                    // Assign Secure::String directly (copy-construct from the
+                    // credential-cache slot) — no std::string materialisation
+                    // that would escape cleansing on the path between credential
+                    // provider and BAC handshake.
+                    input.documentNumber = *docNo;
+                    input.dateOfBirth = *dob;
+                    input.dateOfExpiry = *doe;
+                    d->bacInput = std::move(input);
                 }
-                LibreSCRS::SecureChannel::BacInput input;
-                // Assign Secure::String directly (copy-construct from the
-                // credential-cache slot) — no std::string materialisation
-                // that would escape cleansing on the path between credential
-                // provider and BAC handshake.
-                input.documentNumber = *docNo;
-                input.dateOfBirth = *dob;
-                input.dateOfExpiry = *doe;
-                d->bacInput = std::move(input);
             }
 
             auto selectResp = d->ownedConn->transmit(buildSelectAppletCommand(aid));
@@ -505,14 +521,24 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
             return std::unexpected{outcome.error};
         }
 
-        auto& cachedSecret = d->paceCredentialsCache[static_cast<std::size_t>(kind)];
-        if (cachedSecret.empty()) {
+        if (d->paceCredentialsCache[static_cast<std::size_t>(kind)].empty()) {
             if (!d->credentialProvider) {
                 return std::unexpected{ChannelActivationError::CredentialsRequired};
             }
             auto requirement =
                 LibreSCRS::Auth::AuthRequirement::forPaceSecret(aid, kind, std::nullopt, LibreSCRS::LocalizedText{});
-            auto credResult = (*d->credentialProvider)(requirement);
+            // Snapshot the provider and drop the session mutex across the
+            // callback. The provider is permitted to call back into this
+            // CardSession (e.g. setPaceSecret) without self-deadlocking on
+            // the non-recursive sessionMutex.
+            auto providerSnapshot = *d->credentialProvider;
+            lock.unlock();
+            auto credResult = providerSnapshot(requirement);
+            lock.lock();
+            // Re-check invariants the provider may have mutated.
+            if (d->dead.load(std::memory_order_acquire)) {
+                return std::unexpected{ChannelActivationError::CardRemoved};
+            }
             if (credResult.status == LibreSCRS::Auth::CredentialResult::Status::UserCancelled) {
                 return std::unexpected{ChannelActivationError::UserCancelled};
             }
@@ -520,30 +546,35 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                 return std::unexpected{ChannelActivationError::CredentialsRequired};
             }
 
-            // Pick the field whose id matches the kind. The PACE secret
-            // factory emits ids "can" / "mrz" / "pin" / "puk" — one and
-            // only one of those is present in a forPaceSecret prompt.
-            const char* expectedId = "";
-            switch (kind) {
-            case LibreSCRS::Auth::PaceSecretKind::Can:
-                expectedId = "can";
-                break;
-            case LibreSCRS::Auth::PaceSecretKind::Mrz:
-                expectedId = "mrz";
-                break;
-            case LibreSCRS::Auth::PaceSecretKind::Pin:
-                expectedId = "pin";
-                break;
-            case LibreSCRS::Auth::PaceSecretKind::Puk:
-                expectedId = "puk";
-                break;
+            // If the provider re-entered to populate the cache slot directly
+            // (e.g. via setPaceSecret) honour that; otherwise pull the field
+            // whose id matches the kind. The PACE secret factory emits ids
+            // "can" / "mrz" / "pin" / "puk" — one and only one of those is
+            // present in a forPaceSecret prompt.
+            if (d->paceCredentialsCache[static_cast<std::size_t>(kind)].empty()) {
+                const char* expectedId = "";
+                switch (kind) {
+                case LibreSCRS::Auth::PaceSecretKind::Can:
+                    expectedId = "can";
+                    break;
+                case LibreSCRS::Auth::PaceSecretKind::Mrz:
+                    expectedId = "mrz";
+                    break;
+                case LibreSCRS::Auth::PaceSecretKind::Pin:
+                    expectedId = "pin";
+                    break;
+                case LibreSCRS::Auth::PaceSecretKind::Puk:
+                    expectedId = "puk";
+                    break;
+                }
+                const auto* found = credResult.find(expectedId);
+                if (found == nullptr || found->empty()) {
+                    return std::unexpected{ChannelActivationError::CredentialsRequired};
+                }
+                d->paceCredentialsCache[static_cast<std::size_t>(kind)] = *found;
             }
-            const auto* found = credResult.find(expectedId);
-            if (found == nullptr || found->empty()) {
-                return std::unexpected{ChannelActivationError::CredentialsRequired};
-            }
-            cachedSecret = *found;
         }
+        auto& cachedSecret = d->paceCredentialsCache[static_cast<std::size_t>(kind)];
 
         // PACE branch: discover supported OIDs from EF.CardAccess at MF.
         // The handshake itself runs at MF level — PACE binds session keys

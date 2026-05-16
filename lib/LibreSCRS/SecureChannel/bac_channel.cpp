@@ -21,7 +21,7 @@ BacChannel::BacChannel(LibreSCRS::SmartCard::IConnection& connection, LibreSCRS:
 
 BacChannel::~BacChannel() = default;
 
-LibreSCRS::SmartCard::AppletAid BacChannel::currentApplet() const noexcept
+const LibreSCRS::SmartCard::AppletAid& BacChannel::currentApplet() const noexcept
 {
     return pImpl->currentApplet();
 }

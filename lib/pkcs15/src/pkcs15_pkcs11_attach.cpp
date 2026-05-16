@@ -21,12 +21,21 @@
 #include <LibreSCRS/SmartCard/CardSession.h>
 
 #include <memory>
+#include <mutex>
 #include <new>
+#include <shared_mutex>
 #include <string>
 
 extern "C" int librescrs_pkcs11_attach_session(const char* reader_name, const LibrescrsPkcs11AttachTokenV1* token)
 try {
     using namespace LibreSCRS::Pkcs15::Pkcs11;
+
+    // Take libraryMutex shared for the entire span in which the
+    // ModuleContext pointer is dereferenced. C_Finalize takes the same
+    // mutex exclusively before resetting g_module; without this lock the
+    // moduleContext() pointer could be freed under our feet between the
+    // accessor call and the put() that uses it.
+    std::shared_lock libraryLock(libraryMutex);
 
     auto* ctx = moduleContext();
     if (!ctx || !ctx->attachRegistry)
@@ -56,6 +65,10 @@ try {
 extern "C" int librescrs_pkcs11_detach_session(const char* reader_name)
 try {
     using namespace LibreSCRS::Pkcs15::Pkcs11;
+
+    // Same locking discipline as librescrs_pkcs11_attach_session above:
+    // shared on libraryMutex for the duration of the ModuleContext deref.
+    std::shared_lock libraryLock(libraryMutex);
 
     auto* ctx = moduleContext();
     if (!ctx || !ctx->attachRegistry)

@@ -64,7 +64,7 @@ public:
 
     ~PaceChannel() override;
 
-    [[nodiscard]] LibreSCRS::SmartCard::AppletAid currentApplet() const noexcept override;
+    [[nodiscard]] const LibreSCRS::SmartCard::AppletAid& currentApplet() const noexcept override;
     [[nodiscard]] ChannelState state() const noexcept override;
 
     [[nodiscard]] LibreSCRS::SmartCard::Internal::APDUResponse

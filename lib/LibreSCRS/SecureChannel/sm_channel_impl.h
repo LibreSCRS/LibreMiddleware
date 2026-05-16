@@ -44,7 +44,7 @@ public:
         sm = std::make_unique<emrtd::crypto::SecureMessaging>(std::move(cryptoKeys), algo);
     }
 
-    [[nodiscard]] LibreSCRS::SmartCard::AppletAid currentApplet() const noexcept
+    [[nodiscard]] const LibreSCRS::SmartCard::AppletAid& currentApplet() const noexcept
     {
         return appletAid;
     }

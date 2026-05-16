@@ -25,7 +25,7 @@ PaceChannel::PaceChannel(LibreSCRS::SmartCard::IConnection& connection,
 
 PaceChannel::~PaceChannel() = default;
 
-LibreSCRS::SmartCard::AppletAid PaceChannel::currentApplet() const noexcept
+const LibreSCRS::SmartCard::AppletAid& PaceChannel::currentApplet() const noexcept
 {
     return pImpl->currentApplet();
 }

@@ -63,6 +63,13 @@ public:
     ///
     /// After @ref release has been called, returns a sentinel response
     /// (SW 0x6F00) without touching the card.
+    ///
+    /// @throws std::bad_alloc on out-of-memory while wrapping the APDU
+    ///         (propagated from the underlying
+    ///         @ref LibreSCRS::SecureChannel::ISecureChannel::transmit).
+    ///         All other failure modes surface via the returned
+    ///         @c APDUResponse SW bytes or by the channel transitioning
+    ///         to @ref ChannelState::Failed.
     [[nodiscard]] LibreSCRS::SmartCard::Internal::APDUResponse
     transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token);
 

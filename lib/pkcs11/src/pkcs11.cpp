@@ -70,7 +70,15 @@ static void pkcs11_debug(const char* fmt, ...)
 //   Step 1 (sessionMutex): validate, extract signState, set busy, unlock.
 //   Step 2 (slot mutex only): card I/O via provider->signData/signMessage.
 //   Step 3 (~SessionBusyGuard): relock sessionMutex, clear busy.
-static std::shared_mutex libraryMutex;
+//
+// libraryMutex is exposed (non-static, namespace-scoped) so the extern "C"
+// inject hooks in pkcs15_pkcs11_attach.cpp can take a shared_lock around
+// their moduleContext() dereference, sequencing them safely against
+// C_Finalize. See pkcs15_pkcs11_module_context.h for the contract.
+namespace LibreSCRS::Pkcs15::Pkcs11 {
+std::shared_mutex libraryMutex;
+} // namespace LibreSCRS::Pkcs15::Pkcs11
+using LibreSCRS::Pkcs15::Pkcs11::libraryMutex;
 static std::unique_ptr<PKCS11Library> library;
 
 namespace {

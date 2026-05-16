@@ -23,6 +23,25 @@ public:
         : session(sessionPtr), lock(std::move(sessionLock)), transaction(std::move(tx)), active(true)
     {}
 
+    // Explicit destructor enforces the release ordering documented in
+    // ActiveChannelHolder.h: PC/SC transaction ends BEFORE the session
+    // mutex is dropped. The compiler-generated dtor would destroy members
+    // in reverse-declaration order, which happens to be correct today
+    // (active → transaction → lock), but a future field reordering
+    // could silently invert the order and leak a transaction across a
+    // mutex release window. release() is idempotent, so calling it from
+    // the destructor unconditionally is safe whether the holder is still
+    // active or already released.
+    ~Impl() noexcept
+    {
+        release();
+    }
+
+    Impl(const Impl&) = delete;
+    Impl& operator=(const Impl&) = delete;
+    Impl(Impl&&) = delete;
+    Impl& operator=(Impl&&) = delete;
+
     LibreSCRS::SmartCard::Internal::APDUResponse transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd,
                                                           LibreSCRS::CancelToken token)
     {

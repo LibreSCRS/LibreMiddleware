@@ -43,7 +43,12 @@ public:
     ISecureChannel& operator=(ISecureChannel&&) = delete;
 
     /// @brief The AID this channel is bound to.
-    [[nodiscard]] virtual LibreSCRS::SmartCard::AppletAid currentApplet() const noexcept = 0;
+    ///
+    /// Returned by const reference: the cached AID lives on the channel
+    /// body and outlives the call, so a reference-return is truly
+    /// `noexcept` (no allocation, no slicing). Consumers needing an
+    /// owning copy may `auto x = ch.currentApplet();` at the call site.
+    [[nodiscard]] virtual const LibreSCRS::SmartCard::AppletAid& currentApplet() const noexcept = 0;
 
     /// @brief Current lifecycle state.
     [[nodiscard]] virtual ChannelState state() const noexcept = 0;
@@ -56,6 +61,15 @@ public:
     /// the underlying protocol. Sentinel SW values are used to communicate
     /// channel-level conditions: 0x6F00 (closed), 0x6F01 (cancelled),
     /// 0x6F02 (failed).
+    ///
+    /// @throws std::bad_alloc on out-of-memory while wrapping the APDU or
+    ///         allocating SM scratch buffers. All other failure modes are
+    ///         signalled via the returned @c APDUResponse SW bytes or via
+    ///         a transition to @ref ChannelState::Failed (followed by the
+    ///         sentinel 0x6F02 on the next call). The function is
+    ///         deliberately NOT @c noexcept: a top-level catch-and-degrade
+    ///         shim would hide allocator pressure from callers that can
+    ///         meaningfully react to it.
     [[nodiscard]] virtual LibreSCRS::SmartCard::Internal::APDUResponse
     transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token) = 0;
 
