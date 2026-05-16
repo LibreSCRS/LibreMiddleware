@@ -87,7 +87,14 @@ public:
             return makeSentinel(0x6F, 0x02);
         }
 
-        LibreSCRS::SmartCard::Internal::APDUResponse raw = connection.transmit(parseWrapped(wrapped));
+        // Ship the wrapped bytes verbatim. Round-tripping through an
+        // APDUCommand structure here (parse → re-encode in connection.
+        // transmit) used to truncate extended-length wrapped APDUs
+        // (Case 4 sign with RSA-3072: SM protect emits a 0x00 LcH LcL
+        // prefix that the parser misread as Lc=0, dropping the entire
+        // encrypted DigestInfo body). transmitRaw goes straight to the
+        // wire and bypasses the host-side filter stack.
+        LibreSCRS::SmartCard::Internal::APDUResponse raw = connection.transmitRaw(wrapped);
 
         std::vector<std::uint8_t> respBytes = raw.data;
         respBytes.push_back(raw.sw1);
@@ -139,28 +146,6 @@ private:
         r.sw1 = sw1;
         r.sw2 = sw2;
         return r;
-    }
-
-    /// @brief Translate the raw wrapped bytes returned by SecureMessaging::protect
-    ///        back into an APDUCommand the connection layer expects.
-    static LibreSCRS::SmartCard::Internal::APDUCommand parseWrapped(const std::vector<std::uint8_t>& wrapped)
-    {
-        LibreSCRS::SmartCard::Internal::APDUCommand cmd;
-        cmd.cla = wrapped[0];
-        cmd.ins = wrapped[1];
-        cmd.p1 = wrapped[2];
-        cmd.p2 = wrapped[3];
-
-        // SecureMessaging::protect emits short-form Lc + data + Le for our
-        // current use; extended-length wrapping isn't required for the
-        // four-applet matrix this channel serves (NAM CL eMRTD/PKCS#15,
-        // GEO CL eMRTD/PKCS#15). Extended wrapping is a Stage 2 relocation
-        // follow-up alongside the physical move.
-        std::uint8_t lc = wrapped[4];
-        cmd.data.assign(wrapped.begin() + 5, wrapped.begin() + 5 + lc);
-        cmd.le = wrapped.back();
-        cmd.hasLe = true;
-        return cmd;
     }
 
     LibreSCRS::SmartCard::IConnection& connection;

@@ -5,6 +5,9 @@
 
 #include "apdu.h"
 
+#include <cstdint>
+#include <span>
+
 namespace LibreSCRS::SmartCard {
 
 /// Abstract transmit seam shared by the production PC/SC connection
@@ -26,6 +29,16 @@ public:
     /// PC/SC errors as exceptions (matching PCSCConnection's
     /// long-standing contract).
     virtual Internal::APDUResponse transmit(const Internal::APDUCommand& cmd) = 0;
+
+    /// Send a pre-encoded command APDU (already-wrapped bytes) to the
+    /// card and return the response. Used by SM channel implementations
+    /// to ship the wrapped output of SecureMessaging::protect directly
+    /// to the wire without round-tripping through APDUCommand /
+    /// toBytes — a round-trip that previously truncated extended-length
+    /// SM payloads when the wrapped Lc/Le fell in the extended-encoding
+    /// range. PC/SC filter chain is bypassed (mirrors the legacy
+    /// PCSCConnection::transmitRaw contract).
+    virtual Internal::APDUResponse transmitRaw(std::span<const std::uint8_t> cmdBytes) = 0;
 };
 
 } // namespace LibreSCRS::SmartCard

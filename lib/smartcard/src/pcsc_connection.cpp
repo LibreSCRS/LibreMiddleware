@@ -145,6 +145,11 @@ APDUResponse PCSCConnection::transmitRaw(const APDUCommand& cmd)
     return transmitRaw(bytes.data(), static_cast<DWORD>(bytes.size()));
 }
 
+APDUResponse PCSCConnection::transmitRaw(std::span<const std::uint8_t> cmdBytes)
+{
+    return transmitRaw(cmdBytes.data(), static_cast<DWORD>(cmdBytes.size()));
+}
+
 APDUResponse PCSCConnection::transmit(const APDUCommand& cmd)
 {
     if (transmitFilter)

@@ -64,6 +64,9 @@ public:
     APDUResponse transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen);
     APDUResponse transmitRaw(const APDUCommand& cmd);
 
+    // IConnection override — forwards to the byte-pointer transmitRaw above.
+    APDUResponse transmitRaw(std::span<const std::uint8_t> cmdBytes) override;
+
     void reconnect(); // prefers T=1, falls back to T=0
     std::vector<uint8_t> getATR() const;
     const std::string& readerName() const
@@ -88,7 +91,10 @@ public:
     ///        owners (e.g. `ActiveChannelHolder`) consult this to confirm
     ///        their cross-process atomicity invariant before issuing the
     ///        first wrapped APDU.
-    [[nodiscard]] bool isTransactionHeld() const noexcept { return callerHoldsTransaction; }
+    [[nodiscard]] bool isTransactionHeld() const noexcept
+    {
+        return callerHoldsTransaction;
+    }
 
     // Abort any pending blocking PC/SC operation (SCardTransmit, etc.) on this
     // connection's context. Thread-safe: can be called from any thread.
@@ -125,8 +131,7 @@ public:
     }
     ~CardTransaction()
     {
-        if (conn)
-        {
+        if (conn) {
             conn->callerHoldsTransaction = false;
             conn->endTransaction();
         }
@@ -135,14 +140,15 @@ public:
     CardTransaction(const CardTransaction&) = delete;
     CardTransaction& operator=(const CardTransaction&) = delete;
 
-    CardTransaction(CardTransaction&& other) noexcept : conn(other.conn) { other.conn = nullptr; }
+    CardTransaction(CardTransaction&& other) noexcept : conn(other.conn)
+    {
+        other.conn = nullptr;
+    }
 
     CardTransaction& operator=(CardTransaction&& other) noexcept
     {
-        if (this != &other)
-        {
-            if (conn)
-            {
+        if (this != &other) {
+            if (conn) {
                 conn->callerHoldsTransaction = false;
                 conn->endTransaction();
             }
@@ -158,10 +164,16 @@ public:
     ///        responsibility for ending it through some other live owner
     ///        (typically a moved-to CardTransaction held by
     ///        ActiveChannelHolder, whose own destructor ends it).
-    void release() noexcept { conn = nullptr; }
+    void release() noexcept
+    {
+        conn = nullptr;
+    }
 
     /// @brief True while this object still owns the transaction.
-    [[nodiscard]] bool owns() const noexcept { return conn != nullptr; }
+    [[nodiscard]] bool owns() const noexcept
+    {
+        return conn != nullptr;
+    }
 
 private:
     PCSCConnection* conn;
