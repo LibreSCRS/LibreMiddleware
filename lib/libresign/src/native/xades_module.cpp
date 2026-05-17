@@ -20,11 +20,15 @@
 #include <openssl/evp.h>
 #include <openssl/x509.h>
 
+#include <charconv>
 #include <climits>
 #include <cstring>
 #include <functional>
 #include <memory>
 #include <stdexcept>
+#include <string>
+#include <string_view>
+#include <system_error>
 
 #include "xml_raii.h"
 
@@ -161,6 +165,29 @@ xmlNodePtr addChildWithText(xmlNodePtr parent, xmlNsPtr ns, const char* name, co
 // Returns the xmlDoc and sets signedInfoNode/signedPropsNode for
 // later canonicalization and signing.
 
+// W3C XML 1.0 §3.3.1 requires xml:id attribute values to be unique within a
+// document. XAdES parallel sequential re-signing appends a new <ds:Signature>
+// alongside the existing one, so every ID we mint must be disambiguated from
+// the prior signature. Each call carries its own suffix and substitutes it
+// into every Id/URI/Target attribute that previously used "-1".
+struct SignatureIds
+{
+    std::string signature;        // "Signature-{suffix}"
+    std::string signedProperties; // "SignedProperties-{suffix}"
+    std::string signatureValue;   // "SignatureValue-{suffix}"
+    std::string reference;        // "Reference-{suffix}"
+};
+
+SignatureIds makeSignatureIds(std::string_view suffix)
+{
+    return {
+        std::string("Signature-") + std::string(suffix),
+        std::string("SignedProperties-") + std::string(suffix),
+        std::string("SignatureValue-") + std::string(suffix),
+        std::string("Reference-") + std::string(suffix),
+    };
+}
+
 struct XmlSignatureContext
 {
     XmlDocPtr doc;
@@ -170,13 +197,15 @@ struct XmlSignatureContext
     xmlNodePtr signatureValueNode = nullptr;
     xmlNodePtr dataRefDigestValueNode = nullptr;
     xmlNodePtr propsRefDigestValueNode = nullptr;
+    SignatureIds ids;
 };
 
 XmlSignatureContext buildSignatureXml(const std::vector<uint8_t>& certDer, X509* cert,
                                       const std::vector<std::vector<uint8_t>>& chainDer, const std::string& fileName,
-                                      SignaturePackaging packaging)
+                                      SignaturePackaging packaging, const SignatureIds& ids)
 {
     XmlSignatureContext ctx;
+    ctx.ids = ids;
 
     // Create document
     xmlDocPtr rawDoc = xmlNewDoc(BAD_CAST "1.0");
@@ -191,7 +220,7 @@ XmlSignatureContext buildSignatureXml(const std::vector<uint8_t>& certDer, X509*
     xmlNsPtr nsDs = xmlNewNs(sigNode, BAD_CAST kNsDs, BAD_CAST "ds");
     xmlNsPtr nsXades = xmlNewNs(sigNode, BAD_CAST kNsXades, BAD_CAST "xades");
     xmlSetNs(sigNode, nsDs);
-    xmlSetProp(sigNode, BAD_CAST "Id", BAD_CAST "Signature-1");
+    xmlSetProp(sigNode, BAD_CAST "Id", BAD_CAST ids.signature.c_str());
     ctx.signatureNode = sigNode;
 
     // ---- <ds:SignedInfo> ----
@@ -215,7 +244,7 @@ XmlSignatureContext buildSignatureXml(const std::vector<uint8_t>& certDer, X509*
 
     // <ds:Reference URI="" or URI="filename"> (data reference)
     xmlNodePtr dataRef = xmlNewChild(signedInfo, nsDs, BAD_CAST "Reference", nullptr);
-    xmlSetProp(dataRef, BAD_CAST "Id", BAD_CAST "Reference-1");
+    xmlSetProp(dataRef, BAD_CAST "Id", BAD_CAST ids.reference.c_str());
     if (packaging == SignaturePackaging::ENVELOPED) {
         xmlSetProp(dataRef, BAD_CAST "URI", BAD_CAST "");
         // Enveloped signature transform
@@ -237,9 +266,10 @@ XmlSignatureContext buildSignatureXml(const std::vector<uint8_t>& certDer, X509*
     xmlNodePtr dataDigestValue = xmlNewChild(dataRef, nsDs, BAD_CAST "DigestValue", nullptr);
     ctx.dataRefDigestValueNode = dataDigestValue;
 
-    // <ds:Reference URI="#SignedProperties-1"> (signed properties reference)
+    // <ds:Reference URI="#SignedProperties-{suffix}"> (signed properties reference)
     xmlNodePtr propsRef = xmlNewChild(signedInfo, nsDs, BAD_CAST "Reference", nullptr);
-    xmlSetProp(propsRef, BAD_CAST "URI", BAD_CAST "#SignedProperties-1");
+    std::string propsRefUri = "#" + ids.signedProperties;
+    xmlSetProp(propsRef, BAD_CAST "URI", BAD_CAST propsRefUri.c_str());
     xmlSetProp(propsRef, BAD_CAST "Type", BAD_CAST "http://uri.etsi.org/01903#SignedProperties");
 
     // Exclusive C14N transform — must match the canonicalization used for digest computation
@@ -254,7 +284,7 @@ XmlSignatureContext buildSignatureXml(const std::vector<uint8_t>& certDer, X509*
 
     // ---- <ds:SignatureValue> ----
     xmlNodePtr sigValue = xmlNewChild(sigNode, nsDs, BAD_CAST "SignatureValue", nullptr);
-    xmlSetProp(sigValue, BAD_CAST "Id", BAD_CAST "SignatureValue-1");
+    xmlSetProp(sigValue, BAD_CAST "Id", BAD_CAST ids.signatureValue.c_str());
     ctx.signatureValueNode = sigValue;
 
     // ---- <ds:KeyInfo> ----
@@ -270,11 +300,12 @@ XmlSignatureContext buildSignatureXml(const std::vector<uint8_t>& certDer, X509*
     xmlNodePtr object = xmlNewChild(sigNode, nsDs, BAD_CAST "Object", nullptr);
 
     xmlNodePtr qualProps = xmlNewChild(object, nsXades, BAD_CAST "QualifyingProperties", nullptr);
-    xmlSetProp(qualProps, BAD_CAST "Target", BAD_CAST "#Signature-1");
+    std::string qualPropsTarget = "#" + ids.signature;
+    xmlSetProp(qualProps, BAD_CAST "Target", BAD_CAST qualPropsTarget.c_str());
 
     // ---- <xades:SignedProperties> ----
     xmlNodePtr signedProps = xmlNewChild(qualProps, nsXades, BAD_CAST "SignedProperties", nullptr);
-    xmlSetProp(signedProps, BAD_CAST "Id", BAD_CAST "SignedProperties-1");
+    xmlSetProp(signedProps, BAD_CAST "Id", BAD_CAST ids.signedProperties.c_str());
     ctx.signedPropsNode = signedProps;
 
     // <xades:SignedSignatureProperties>
@@ -301,7 +332,8 @@ XmlSignatureContext buildSignatureXml(const std::vector<uint8_t>& certDer, X509*
     // <xades:SignedDataObjectProperties>
     xmlNodePtr signedDataObjProps = xmlNewChild(signedProps, nsXades, BAD_CAST "SignedDataObjectProperties", nullptr);
     xmlNodePtr dataObjFormat = xmlNewChild(signedDataObjProps, nsXades, BAD_CAST "DataObjectFormat", nullptr);
-    xmlSetProp(dataObjFormat, BAD_CAST "ObjectReference", BAD_CAST "#Reference-1");
+    std::string dataObjRef = "#" + ids.reference;
+    xmlSetProp(dataObjFormat, BAD_CAST "ObjectReference", BAD_CAST dataObjRef.c_str());
     addChildWithText(dataObjFormat, nsXades, "MimeType", mimeTypeFromFileName(fileName));
 
     return ctx;
@@ -387,31 +419,68 @@ SigningResult XAdESModule::sign(const std::vector<uint8_t>& data, const std::str
         if (chainDer.empty())
             chainDer.push_back(certDer); // at minimum include signer cert
 
-        // 2. Build the XML Signature structure
-        auto ctx = buildSignatureXml(certDer, cert.get(), chainDer, fileName, packaging);
-
-        // 3. For enveloped: embed Signature into original XML.
-        //    For detached: set data digest from raw bytes.
+        // For ENVELOPED re-sign, the input XML may already contain a previous
+        // <ds:Signature> with Id="Signature-1" etc. Pick the smallest positive
+        // integer suffix not yet present so every Id attribute remains unique
+        // (W3C XML 1.0 §3.3.1). DETACHED never has an input XML, so "1" is
+        // always safe.
+        std::string idSuffix = "1";
+        std::unique_ptr<xmlDoc, decltype(&xmlFreeDoc)> origDocPtr(nullptr, &xmlFreeDoc);
+        constexpr int kSafeXmlOptions = XML_PARSE_NONET | XML_PARSE_NOCDATA;
         if (packaging == SignaturePackaging::ENVELOPED) {
             if (data.size() > static_cast<size_t>(INT_MAX))
                 return {false, {}, "XAdES enveloped: input XML exceeds INT_MAX"};
-            // XML_PARSE_NONET: no network entity loading.
-            // XML_PARSE_NOCDATA: merge CDATA into text nodes.
-            // Entities are NOT expanded (no XML_PARSE_NOENT) and external DTDs
-            // are NOT loaded (no XML_PARSE_DTDLOAD), mitigating XXE and
-            // billion-laughs attacks when enveloped input is attacker-supplied.
-            constexpr int kSafeXmlOptions = XML_PARSE_NONET | XML_PARSE_NOCDATA;
             xmlDocPtr origDoc = xmlReadMemory(reinterpret_cast<const char*>(data.data()), static_cast<int>(data.size()),
                                               nullptr, nullptr, kSafeXmlOptions);
             if (!origDoc)
                 return {false, {}, "XAdES enveloped: failed to parse input XML"};
+            origDocPtr.reset(origDoc);
 
+            // Scan existing Id attributes for "Signature-N" / "SignedProperties-N"
+            // / "SignatureValue-N" / "Reference-N" and bump past the highest N.
+            int maxN = 0;
+            std::function<void(xmlNodePtr)> scan = [&](xmlNodePtr node) {
+                if (!node)
+                    return;
+                if (node->type == XML_ELEMENT_NODE) {
+                    xmlChar* idAttr = xmlGetProp(node, BAD_CAST "Id");
+                    if (idAttr) {
+                        std::string s(reinterpret_cast<const char*>(idAttr));
+                        xmlFree(idAttr);
+                        for (std::string_view prefix :
+                             {"Signature-", "SignedProperties-", "SignatureValue-", "Reference-"}) {
+                            if (s.starts_with(prefix)) {
+                                std::string_view suffix(s);
+                                suffix.remove_prefix(prefix.size());
+                                int n = 0;
+                                auto [p, ec] = std::from_chars(suffix.data(), suffix.data() + suffix.size(), n);
+                                if (ec == std::errc{} && p == suffix.data() + suffix.size() && n > maxN)
+                                    maxN = n;
+                                break;
+                            }
+                        }
+                    }
+                }
+                for (xmlNodePtr c = node->children; c; c = c->next)
+                    scan(c);
+            };
+            scan(xmlDocGetRootElement(origDoc));
+            idSuffix = std::to_string(maxN + 1);
+        }
+        SignatureIds ids = makeSignatureIds(idSuffix);
+
+        // 2. Build the XML Signature structure with the chosen IDs
+        auto ctx = buildSignatureXml(certDer, cert.get(), chainDer, fileName, packaging, ids);
+
+        // 3. For enveloped: embed Signature into original XML.
+        //    For detached: set data digest from raw bytes.
+        if (packaging == SignaturePackaging::ENVELOPED) {
             xmlNodePtr sigNode = xmlDocGetRootElement(ctx.doc.get());
             xmlUnlinkNode(sigNode);
-            xmlNodePtr origRoot = xmlDocGetRootElement(origDoc);
+            xmlNodePtr origRoot = xmlDocGetRootElement(origDocPtr.get());
             if (!xmlAddChild(origRoot, sigNode))
                 return {false, {}, "XAdES enveloped: failed to add Signature to document"};
-            ctx.doc.reset(origDoc);
+            ctx.doc.reset(origDocPtr.release());
 
             // Set placeholder digests so serialization has correct structure
             xmlNodeSetContent(ctx.dataRefDigestValueNode, BAD_CAST "PLACEHOLDER");
@@ -428,10 +497,6 @@ SigningResult XAdESModule::sign(const std::vector<uint8_t>& data, const std::str
         auto tempXml = serializeDoc(ctx.doc.get());
         if (tempXml.size() > static_cast<size_t>(INT_MAX))
             return {false, {}, "XAdES: serialized XML exceeds INT_MAX"};
-        // Same safe options as above: we serialized this ourselves so the
-        // input is not attacker-controlled, but staying consistent avoids
-        // accidental XXE if future code reuses this re-parse path.
-        constexpr int kSafeXmlOptions = XML_PARSE_NONET | XML_PARSE_NOCDATA;
         xmlDocPtr parsedDoc = xmlReadMemory(reinterpret_cast<const char*>(tempXml.data()),
                                             static_cast<int>(tempXml.size()), nullptr, nullptr, kSafeXmlOptions);
         if (!parsedDoc)
@@ -463,10 +528,10 @@ SigningResult XAdESModule::sign(const std::vector<uint8_t>& data, const std::str
             return walk(parsedRoot);
         };
 
-        ctx.signatureNode = findById("Signature-1");
+        ctx.signatureNode = findById(ctx.ids.signature.c_str());
         ctx.signedInfoNode = nullptr;
-        ctx.signedPropsNode = findById("SignedProperties-1");
-        ctx.signatureValueNode = findById("SignatureValue-1");
+        ctx.signedPropsNode = findById(ctx.ids.signedProperties.c_str());
+        ctx.signatureValueNode = findById(ctx.ids.signatureValue.c_str());
 
         // Find SignedInfo (first child of Signature named SignedInfo)
         if (ctx.signatureNode) {
@@ -490,7 +555,8 @@ SigningResult XAdESModule::sign(const std::vector<uint8_t>& data, const std::str
             xmlChar* uri = xmlGetProp(ref, BAD_CAST "URI");
             if (!uri)
                 continue;
-            bool isProps = xmlStrcmp(uri, BAD_CAST "#SignedProperties-1") == 0;
+            std::string thisPropsRefUri = "#" + ctx.ids.signedProperties;
+            bool isProps = xmlStrcmp(uri, BAD_CAST thisPropsRefUri.c_str()) == 0;
             bool isData = xmlStrcmp(uri, BAD_CAST "") == 0 || (uri[0] != '#' && xmlStrlen(uri) > 0);
             xmlFree(uri);
 

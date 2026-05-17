@@ -595,6 +595,20 @@ TEST_P(SigningE2ETest, PAdES_MultipleSignatures_BB)
         pos += 5;
     }
     EXPECT_GE(eofCount, 3u) << "Expected at least 3 %%EOF (original + 2 signatures)";
+
+    // Regression guard for the pre-4.1.0 trailer-overwrite bug
+    // (LibreMiddleware pdf_parser.cpp): the second sign would collide object
+    // numbers with the first because the chained trailer was lost, leaving
+    // the first signature unresolvable by Adobe-compatible validators.
+    // Both signatures must be present as DISTINCT /Sig dictionary objects.
+    size_t sigDictCount = 0;
+    pos = 0;
+    while ((pos = pdfStr.find("/Type /Sig", pos)) != std::string::npos) {
+        ++sigDictCount;
+        pos += 10;
+    }
+    EXPECT_GE(sigDictCount, 2u) << "Expected at least 2 /Type /Sig dictionaries (first signature must survive re-sign)";
+
     saveOutput(result2, GetParam().name + "-pades-multi-2sig.pdf");
 }
 
@@ -813,13 +827,39 @@ TEST_P(SigningE2ETest, XAdES_Enveloped_DoubleSignature)
     ASSERT_TRUE(r2.success) << "Second XAdES: " << r2.errorMessage;
 
     std::string xml(r2.signedDocument.begin(), r2.signedDocument.end());
+    // Count opening <ds:Signature> tags (followed by whitespace or '>'),
+    // not <ds:SignatureValue> or <ds:SignatureMethod> which share the prefix.
     size_t sigCount = 0;
     size_t pos = 0;
     while ((pos = xml.find("<ds:Signature", pos)) != std::string::npos) {
-        ++sigCount;
+        char next = (pos + 13 < xml.size()) ? xml[pos + 13] : '\0';
+        if (next == ' ' || next == '\t' || next == '\n' || next == '>')
+            ++sigCount;
         pos += 13;
     }
     EXPECT_GE(sigCount, 2u) << "Expected at least 2 <ds:Signature> elements";
+
+    // Regression guard: every Id attribute on a Signature/SignedProperties/
+    // SignatureValue/Reference element must be unique across the document
+    // (W3C XML 1.0 §3.3.1). Pre-4.1.0 XAdES re-sign produced duplicate
+    // "Signature-1", "SignedProperties-1", etc. which strict validators
+    // (DSS, libxmlsec, javax.xml.dsig) reject.
+    auto countId = [&xml](std::string_view id) {
+        size_t n = 0;
+        size_t p = 0;
+        std::string needle = std::string("Id=\"") + std::string(id) + "\"";
+        while ((p = xml.find(needle, p)) != std::string::npos) {
+            ++n;
+            p += needle.size();
+        }
+        return n;
+    };
+    EXPECT_EQ(countId("Signature-1"), 1u) << "Signature-1 must be unique (no duplicate xml:id from re-sign)";
+    EXPECT_EQ(countId("SignedProperties-1"), 1u);
+    EXPECT_EQ(countId("SignatureValue-1"), 1u);
+    EXPECT_EQ(countId("Reference-1"), 1u);
+    EXPECT_GE(countId("Signature-2"), 1u) << "Re-sign should mint a fresh Id, e.g. Signature-2";
+
     saveOutput(r2, GetParam().name + "-xades-double-enveloped.xml");
 }
 

@@ -855,12 +855,21 @@ void PdfParser::parseXrefTable(size_t xrefOffset)
     pos += 7; // strlen("trailer")
     skipWhitespaceAndComments(pos);
 
-    trailerDict = parseValue(pos);
-    if (trailerDict.type() != PdfValueType::Dict)
+    PdfValue thisTrailer = parseValue(pos);
+    if (thisTrailer.type() != PdfValueType::Dict)
         throw std::runtime_error("PdfParser: trailer is not a dictionary");
 
+    // ISO 32000-1 §7.5.6: in incrementally-updated PDFs (multiple xref
+    // sections chained via /Prev) the *most recent* trailer is authoritative
+    // — it carries the post-update /Size, /Root, /Info etc. parseXrefAt is
+    // entered for the latest xref first, then recurses backwards through
+    // /Prev, so the first trailer we see is the one to keep. Mirrors the
+    // matching guard in parseXrefStream below.
+    if (trailerDict.type() != PdfValueType::Dict)
+        trailerDict = thisTrailer;
+
     // Handle /Prev — chain to previous xref (may be table or stream)
-    PdfValue prev = trailerDict.get("Prev");
+    PdfValue prev = thisTrailer.get("Prev");
     if (prev.type() == PdfValueType::Int) {
         size_t prevOffset = safeStreamSize(prev.asInt(), "/Prev offset");
         parseXrefAt(prevOffset);
