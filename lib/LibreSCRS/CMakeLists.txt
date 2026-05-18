@@ -107,8 +107,18 @@ target_link_libraries(LibreSCRS_Trust PRIVATE
     $<BUILD_INTERFACE:LibreSign>)
 set_target_properties(LibreSCRS_Trust PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_options(LibreSCRS_Trust PRIVATE
-    $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden -fvisibility-inlines-hidden>
+    $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden -fvisibility-inlines-hidden -ffunction-sections -fdata-sections>
 )
+# Drop libresign sources Trust does not reference. Trust pulls in LibreSign
+# for TL fetch/verify/anchor helpers only; without dead-stripping the entire
+# static archive (Pkcs11Token, PAdES, CAdES, …) is mirrored into the .so.
+if(LIBREMIDDLEWARE_BUILD_SHARED)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+        target_link_options(LibreSCRS_Trust PRIVATE "LINKER:-dead_strip")
+    else()
+        target_link_options(LibreSCRS_Trust PRIVATE "LINKER:--gc-sections")
+    endif()
+endif()
 if(LIBREMIDDLEWARE_BUILD_SHARED)
     set_target_properties(LibreSCRS_Trust PROPERTIES
         VERSION   ${PROJECT_VERSION}

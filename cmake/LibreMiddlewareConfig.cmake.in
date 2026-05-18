@@ -35,8 +35,25 @@ if(NOT TARGET LibreMiddleware::All)
     add_library(LibreMiddleware::All INTERFACE IMPORTED)
     set_target_properties(LibreMiddleware::All PROPERTIES
         INTERFACE_LINK_LIBRARIES
-            "LibreMiddleware::Auth;LibreMiddleware::SmartCard;LibreMiddleware::Plugin;LibreMiddleware::Signing;LibreMiddleware::Trust;LibreMiddleware::Certificate"
+            "LibreMiddleware::Auth;LibreMiddleware::SmartCard;LibreMiddleware::SecureChannel;LibreMiddleware::Plugin;LibreMiddleware::Signing;LibreMiddleware::Trust;LibreMiddleware::Certificate"
     )
 endif()
+
+# Mirror every imported target under the LibreSCRS:: namespace so consumers
+# may use either spelling interchangeably. LibreSCRS:: matches the C++
+# namespace (LibreSCRS::Foo::Bar) and the in-tree target spelling
+# (lib/LibreSCRS/CMakeLists.txt) and is the preferred form for new code.
+# LibreMiddleware:: is retained for backward compatibility with code that
+# already links against the installed package.
+foreach(_lm_component
+        Auth SmartCard SecureChannel Plugin Signing Trust Certificate Secure All)
+    if(TARGET LibreMiddleware::${_lm_component}
+       AND NOT TARGET LibreSCRS::${_lm_component})
+        add_library(LibreSCRS::${_lm_component} INTERFACE IMPORTED)
+        set_target_properties(LibreSCRS::${_lm_component} PROPERTIES
+            INTERFACE_LINK_LIBRARIES "LibreMiddleware::${_lm_component}")
+    endif()
+endforeach()
+unset(_lm_component)
 
 check_required_components(LibreMiddleware)

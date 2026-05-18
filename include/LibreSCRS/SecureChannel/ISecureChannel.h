@@ -32,7 +32,7 @@ namespace LibreSCRS::SecureChannel {
 /// concrete-class concerns; the interface deliberately omits them.
 ///
 /// @since 4.1
-class ISecureChannel
+class LIBRESCRS_PUBLIC_API ISecureChannel
 {
 public:
     virtual ~ISecureChannel() = default;

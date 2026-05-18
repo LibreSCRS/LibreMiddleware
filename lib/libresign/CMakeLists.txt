@@ -139,6 +139,16 @@ target_compile_definitions(LibreSign PRIVATE LIBRESCRS_INTERNAL_BUILD)
 # the same rule so it can be linked into a SHARED public-target .so.
 set_target_properties(LibreSign PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# Per-function/data sections enable downstream --gc-sections to dead-strip
+# unreferenced TUs. LibreSCRS_Trust links only the TL-fetch/verify subset of
+# this archive; without section splitting, the entire archive (including
+# Pkcs11Token / PAdES / CAdES / etc.) lands in libLibreSCRS_Trust.so under
+# LIBREMIDDLEWARE_BUILD_SHARED=ON, duplicating sign-path symbols already
+# present in libLibreSCRS_Signing.so.
+target_compile_options(LibreSign PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-ffunction-sections -fdata-sections>
+)
+
 # Vendored miniz.c was written against pre-C89 compilers and uses K&R-style
 # function declarations in two spots, which clang flags with
 # -Wstrict-prototypes under -Wall. Suppress the warning for just this file so

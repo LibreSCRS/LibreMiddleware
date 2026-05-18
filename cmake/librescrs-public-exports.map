@@ -12,7 +12,22 @@
 LM_4 {
     global:
         extern "C++" {
-            LibreSCRS::*;
+            /* Wildcard prefix matches both bare names
+             *     `LibreSCRS::Foo::bar(...)`
+             * and Itanium-ABI RTTI / vtable artefacts demangled as
+             *     `typeinfo for LibreSCRS::Foo`
+             *     `typeinfo name for LibreSCRS::Foo`
+             *     `vtable for LibreSCRS::Foo`
+             *     `VTT for LibreSCRS::Foo`
+             *     `construction vtable for LibreSCRS::Foo`
+             * which are required for cross-SO polymorphism
+             * (dynamic_cast, exception catch, vtable lookup of public
+             * abstract bases such as `ISecureChannel`). A bare
+             * `LibreSCRS::*` glob misses the `... for LibreSCRS::*`
+             * forms and silently demotes class-level visibility to
+             * LOCAL in the .so, breaking link of consumers that
+             * downcast or instantiate the type. */
+            *LibreSCRS::*;
         };
     local:
         *;

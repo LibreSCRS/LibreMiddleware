@@ -92,7 +92,15 @@ public:
     ///         factories so consumers see one unified error idiom.
     ///
     /// @since 4.1
-    [[nodiscard]] LIBRESCRS_INTERNAL static std::expected<std::unique_ptr<BacChannel>, ChannelActivationError>
+    ///
+    /// @note Carries default visibility (not `LIBRESCRS_INTERNAL`) so the
+    ///       symbol is exported across LM shared-library boundaries:
+    ///       `LibreSCRS_SmartCard` (CardSession) is the in-tree caller and
+    ///       lives in a sibling .so under `LIBREMIDDLEWARE_BUILD_SHARED=ON`.
+    ///       External consumers cannot construct an `IConnection`
+    ///       (header lives outside `include/LibreSCRS/`), so the exported
+    ///       symbol remains effectively private to the project.
+    [[nodiscard]] LIBRESCRS_PUBLIC_API static std::expected<std::unique_ptr<BacChannel>, ChannelActivationError>
     establish(LibreSCRS::SmartCard::IConnection& connection, LibreSCRS::SmartCard::AppletAid appletAid,
               const BacInput& input, LibreSCRS::CancelToken token) noexcept;
 

@@ -27,11 +27,20 @@ target_compile_definitions(EMRTDCrypto PRIVATE LIBRESCRS_INTERNAL_BUILD)
 target_include_directories(EMRTDCrypto PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+    # SecureChannel public headers (ISecureChannel.h, SessionKeys.h, ...) —
+    # included via direct path rather than `LibreSCRS_SecureChannel` link to
+    # avoid a circular target dependency: LibreSCRS_SecureChannel privately
+    # links EMRTDCrypto for the BAC/PACE/CA protocol implementations. A
+    # static<->static cycle is permitted, but a SHARED LibreSCRS_SecureChannel
+    # cycle fails at generate time (LIBREMIDDLEWARE_BUILD_SHARED=ON / LibreKDE
+    # consumer mode). All downstream targets that link EMRTDCrypto also link
+    # LibreSCRS_SecureChannel directly, so no transitive surface is lost.
+    ${PROJECT_SOURCE_DIR}/include
 )
 
 set_target_properties(EMRTDCrypto PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 target_link_libraries(EMRTDCrypto
-    PUBLIC OpenSSL_Crypto LibreSCRS_SecureChannel
+    PUBLIC OpenSSL_Crypto
     PRIVATE SmartCard_Impl
 )
