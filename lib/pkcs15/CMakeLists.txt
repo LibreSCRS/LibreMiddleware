@@ -10,6 +10,7 @@ add_library(PKCS15 STATIC
     src/pkcs15_pkcs11_card.cpp
     src/pkcs15_pkcs11_slot.cpp
     src/pkcs15_pkcs11_attach.cpp
+    src/pin_classification.cpp
     # SessionRegistry implementation. The header lives in
     # lib/pkcs11/include/internal/ — its canonical cross-provider home.
     # The .cpp is built into PKCS15.a so the PKCS#11 module + every test
@@ -17,6 +18,7 @@ add_library(PKCS15 STATIC
     # archive. librescrs-pkcs11.so PRIVATE-links PKCS15 so the symbols
     # end up inside the .so transparently.
     ${PROJECT_SOURCE_DIR}/lib/pkcs11/src/session_registry.cpp
+    include/internal/PinClassification.h
     src/pkcs15_types.h
     src/pkcs15_parser.h
     src/pkcs15_card.h
@@ -27,12 +29,15 @@ add_library(PKCS15 STATIC
 
 target_compile_definitions(PKCS15 PRIVATE LIBRESCRS_INTERNAL_BUILD)
 
-target_include_directories(PKCS15 PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src
-    ${PROJECT_SOURCE_DIR}/lib/smartcard/src
-    ${PROJECT_SOURCE_DIR}/lib/pkcs11/include
-    ${PROJECT_SOURCE_DIR}/lib/plugin/src
+target_include_directories(PKCS15
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src
+        ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+        ${PROJECT_SOURCE_DIR}/lib/pkcs11/include
+        ${PROJECT_SOURCE_DIR}/lib/plugin/src
 )
 
 target_link_libraries(PKCS15 PUBLIC SmartCard_Impl LibreSCRS::SmartCard LibreSCRS_SecureChannel PRIVATE OpenSSL_Crypto EMRTDCrypto LibreSCRS::Secure)

@@ -22,6 +22,7 @@
 
 #include <internal/Crv.h>
 #include <internal/PKCS11TokenInfo.h>
+#include <internal/PinClassification.h>
 #include <internal/SessionRegistry.h>
 #include <internal/SlotIdHash.h>
 #include <internal/SlotKindClassifier.h>
@@ -118,27 +119,7 @@ enum class ProbeResult : std::uint8_t {
 
 } // namespace
 
-bool isUserPin(const ::pkcs15::PinInfo& pin)
-{
-    if (pin.unblockingPin)
-        return false;
-    auto label = pin.label;
-    std::transform(label.begin(), label.end(), label.begin(), [](unsigned char c) { return std::tolower(c); });
-    if (label.find("puk") != std::string::npos)
-        return false;
-    if (label.find("can") != std::string::npos || label.find("pace") != std::string::npos)
-        return false;
-    // Security Officer (admin) PIN — present on AET SafeSign cards as
-    // "SO Pin" alongside "User Pin". PKCS#11 consumers should never
-    // surface SO PINs as login slots; they are vendor-personalisation
-    // credentials and surfacing them as a duplicate slot causes user
-    // confusion + accidental retry-counter exhaustion if user picks the
-    // wrong slot for daily sign.
-    if (label == "so pin" || label.starts_with("so ") || label.find("security officer") != std::string::npos ||
-        label.find("admin") != std::string::npos)
-        return false;
-    return true;
-}
+using LibreSCRS::Pkcs15::Internal::isUserPin;
 
 Pkcs15Card::Pkcs15Card(std::shared_ptr<LibreSCRS::SmartCard::CardMap> cm) : cardMap(std::move(cm)) {}
 

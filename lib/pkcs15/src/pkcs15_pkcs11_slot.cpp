@@ -23,10 +23,14 @@
 
 #include "probe_trace.h"
 
+#include <cstdio>
+#include <cstdlib>
+
 #include <internal/Crv.h>
 #include <internal/DerWrap.h>
 #include <internal/MechanismConstants.h>
 #include <internal/PKCS11Card.h>
+#include <internal/PinClassification.h>
 
 #include <LibreSCRS/SecureChannel/ISecureChannel.h>
 #include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
@@ -44,6 +48,8 @@
 #include <utility>
 
 namespace LibreSCRS::Pkcs15::Pkcs11 {
+
+using LibreSCRS::Pkcs15::Internal::isUserPin;
 
 namespace {
 
@@ -324,6 +330,16 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
         std::string pinStr(pin.begin(), pin.end());
         ::LibreSCRS::SmartCard::Internal::PinStringScrubber pinScrub{pinStr};
 
+        if (std::getenv("LIBRESCRS_SIGN_TRACE")) {
+            const auto* p = parentProfile(*parent);
+            std::fprintf(stderr,
+                         "[PKCS15Slot] login entry: placeholder=%d needsPace=%d canEmpty=%d "
+                         "deferredProfile=%d pinInfo=%s parentProfile=%s pinLen=%zu\n",
+                         parentPlaceholderState(*parent) ? 1 : 0, parentNeedsPace(*parent) ? 1 : 0,
+                         parentCanIsEmpty(*parent) ? 1 : 0, deferredProfile ? 1 : 0, pinInfo ? "set" : "null",
+                         p ? "set" : "null", pin.size());
+        }
+
         // Branch 1 — PACE placeholder-slot self-transform. Distinct from
         // the OLD-AET deferred-profile path (Branch 3): that path
         // PIN-verifies against an applet that refuses pre-login directory
@@ -376,6 +392,38 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
             ::pkcs15::PKCS15Profile profileCopy;
             if (profile) {
                 profileCopy = *profile;
+                if (std::getenv("LIBRESCRS_SIGN_TRACE")) {
+                    std::fprintf(stderr, "[PKCS15Slot] AODF dump: %zu PINs, %zu keys, %zu certs\n",
+                                 profileCopy.pins.size(), profileCopy.privateKeys.size(),
+                                 profileCopy.certificates.size());
+                    for (const auto& p : profileCopy.pins) {
+                        std::string idHex;
+                        for (auto b : p.id) {
+                            char buf[4];
+                            std::snprintf(buf, sizeof(buf), "%02X", b);
+                            idHex += buf;
+                        }
+                        std::fprintf(stderr,
+                                     "[PKCS15Slot]   PIN: ref=0x%02X id=%s label=\"%s\" unblocking=%d isUser=%d\n",
+                                     p.pinReference, idHex.c_str(), p.label.c_str(), p.unblockingPin ? 1 : 0,
+                                     isUserPin(p) ? 1 : 0);
+                    }
+                    for (const auto& k : profileCopy.privateKeys) {
+                        std::string idHex, authIdHex;
+                        for (auto b : k.id) {
+                            char buf[4];
+                            std::snprintf(buf, sizeof(buf), "%02X", b);
+                            idHex += buf;
+                        }
+                        for (auto b : k.authId) {
+                            char buf[4];
+                            std::snprintf(buf, sizeof(buf), "%02X", b);
+                            authIdHex += buf;
+                        }
+                        std::fprintf(stderr, "[PKCS15Slot]   KEY: id=%s authId=%s ref=0x%02X label=\"%s\"\n",
+                                     idHex.c_str(), authIdHex.c_str(), k.keyReference, k.label.c_str());
+                    }
+                }
                 // Single source of user-PIN truth: defer to isUserPin,
                 // matching the eager-bind code path (one slot per user
                 // PIN) so placeholder self-transform never selects a SO
@@ -510,32 +558,65 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
             pinStr = std::move(realPin);
         }
 
-        // Branch 3 — Deferred-profile (AET SafeSign) and standard
-        // eager-bind both reach here. Build a PinInfo to verify against,
-        // acquire a holder, run the verify; deferred-profile additionally
-        // reads the post-verify AODF to populate this slot.
+        // Branch 3 — Deferred-profile and standard eager-bind both reach
+        // here. Build a PinInfo to verify against, acquire a holder, run
+        // the verify; deferred-profile additionally reads the post-verify
+        // AODF to populate this slot.
+        //
+        // Source-of-truth order for the PinInfo:
+        //   1. The slot's own cached pinInfo, if populated (eager-bind).
+        //   2. The parent card's profile (read post-display for PACE
+        //      cards like NAM CL — supplies the card's real PIN reference,
+        //      stored length, pad char, and applet path).
+        //   3. SafeSign vendor defaults — true deferred profile where the
+        //      AODF cannot be read until the User PIN is verified
+        //      (AET SafeSign).
         ::pkcs15::PinInfo pinInfoForVerify;
-        if (deferredProfile && !pinInfo) {
-            // SafeSign IC AODF defaults documented in the vendor token
-            // manual: the User PIN sits at reference kSafeSignDefaultUserPinRef
-            // (SO PIN at kSafeSignDefaultSoPinRef), ASCII encoding, 15-byte
-            // fixed stored length, NUL-padded, minimum 4 digits. JCOP21
-            // and Infineon SLE hardware variants share these AODF defaults.
-            pinInfoForVerify.id = {::pkcs15::kSafeSignDefaultUserPinRef};
-            pinInfoForVerify.label = pinLabel;
-            pinInfoForVerify.pinReference = ::pkcs15::kSafeSignDefaultUserPinRef;
-            pinInfoForVerify.pinType = ::pkcs15::PinType::Ascii;
-            pinInfoForVerify.padChar = 0x00;
-            pinInfoForVerify.minLength = 4;
-            pinInfoForVerify.storedLength = 15;
-            pinInfoForVerify.maxLength = 0;
-            pinInfoForVerify.hasMaxLength = false;
-            pinInfoForVerify.path = {};
-        } else if (pinInfo) {
+        if (pinInfo) {
             pinInfoForVerify = *pinInfo;
+        } else if (deferredProfile) {
+            const auto* parentP = parentProfile(*parent);
+            const ::pkcs15::PinInfo* userPinFromProfile = nullptr;
+            if (parentP) {
+                for (const auto& p : parentP->pins) {
+                    if (isUserPin(p)) {
+                        userPinFromProfile = &p;
+                        break;
+                    }
+                }
+                if (!userPinFromProfile && !parentP->pins.empty())
+                    userPinFromProfile = &parentP->pins.front();
+            }
+            if (userPinFromProfile) {
+                pinInfoForVerify = *userPinFromProfile;
+            } else {
+                // SafeSign IC AODF defaults documented in the vendor token
+                // manual: the User PIN sits at reference kSafeSignDefaultUserPinRef
+                // (SO PIN at kSafeSignDefaultSoPinRef), ASCII encoding,
+                // 15-byte fixed stored length, NUL-padded, minimum 4 digits.
+                // JCOP21 and Infineon SLE hardware variants share these
+                // AODF defaults.
+                pinInfoForVerify.id = {::pkcs15::kSafeSignDefaultUserPinRef};
+                pinInfoForVerify.label = pinLabel;
+                pinInfoForVerify.pinReference = ::pkcs15::kSafeSignDefaultUserPinRef;
+                pinInfoForVerify.pinType = ::pkcs15::PinType::Ascii;
+                pinInfoForVerify.padChar = 0x00;
+                pinInfoForVerify.minLength = 4;
+                pinInfoForVerify.storedLength = 15;
+                pinInfoForVerify.maxLength = 0;
+                pinInfoForVerify.hasMaxLength = false;
+                pinInfoForVerify.path = {};
+            }
         } else {
             return Crv::DeviceError;
         }
+        if (std::getenv("LIBRESCRS_SIGN_TRACE"))
+            std::fprintf(stderr,
+                         "[PKCS15Slot] Branch3 verify PinInfo ref=0x%02X label=\"%s\" stored=%d padChar=0x%02X "
+                         "source=%s\n",
+                         pinInfoForVerify.pinReference, pinInfoForVerify.label.c_str(), pinInfoForVerify.storedLength,
+                         static_cast<unsigned>(pinInfoForVerify.padChar) & 0xFF,
+                         pinInfo ? "slot-pinInfo" : (parentProfile(*parent) ? "parent-profile" : "safesign-defaults"));
 
         auto holderResult = parentP15.acquireChannel();
         if (!holderResult)

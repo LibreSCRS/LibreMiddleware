@@ -41,15 +41,6 @@ struct PinInfo;
 
 namespace LibreSCRS::Pkcs15::Pkcs11 {
 
-/// @brief Classify a PKCS#15 PIN as a user-authentication PIN.
-///
-/// Returns @c false for unblock PINs (PUK / PUC), CAN / PACE
-/// access-numbers, and Security-Officer / admin PINs. The single source
-/// of user-PIN policy across the PKCS#15 PKCS#11 surface — consumed by
-/// both eager-bind (one slot per user PIN) and the placeholder
-/// self-transform path.
-[[nodiscard]] bool isUserPin(const ::pkcs15::PinInfo& pin);
-
 /// @brief Concrete @ref LibreSCRS::Pkcs11::Internal::PKCS11Card backed
 ///        by the existing @ref pkcs15::PKCS15Card APDU helper.
 ///

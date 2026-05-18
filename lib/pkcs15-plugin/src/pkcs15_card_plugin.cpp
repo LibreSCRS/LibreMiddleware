@@ -4,6 +4,8 @@
 #include <pkcs15_card.h>
 #include <pkcs15_types.h>
 
+#include <internal/PinClassification.h>
+
 #include <LibreSCRS/Auth/ErrorKeys.h>
 #include <LibreSCRS/Auth/PaceSecretKind.h>
 #include <LibreSCRS/CancelToken.h>
@@ -537,12 +539,13 @@ private:
 
     static const pkcs15::PinInfo* findUserPin(const pkcs15::PKCS15Profile& profile)
     {
+        using LibreSCRS::Pkcs15::Internal::isUserPin;
         for (const auto& pin : profile.pins) {
-            if (pin.local && pin.initialized)
+            if (isUserPin(pin) && pin.local && pin.initialized)
                 return &pin;
         }
         for (const auto& pin : profile.pins) {
-            if (pin.initialized)
+            if (isUserPin(pin) && pin.initialized)
                 return &pin;
         }
         return nullptr;
