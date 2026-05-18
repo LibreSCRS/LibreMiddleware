@@ -8,15 +8,16 @@
 ///
 /// Both function bodies use a function-try-block to satisfy the C-linkage
 /// contract (no exception ever crosses the boundary). std::bad_alloc is
-/// the only realistic escape — AttachRegistry::put may rehash an
+/// the only realistic escape — SessionRegistry::put may rehash an
 /// std::unordered_map — so the catch translates to OUT_OF_MEMORY; any
 /// other escape (defensive `catch (...)`) maps to the same numeric code
 /// because the caller has no way to distinguish further.
 
 #include <LibreSCRS/Pkcs11/AttachHook.h>
 
-#include "attach_registry.h"
 #include "pkcs15_pkcs11_module_context.h"
+
+#include <internal/SessionRegistry.h>
 
 #include <LibreSCRS/SmartCard/CardSession.h>
 
@@ -38,7 +39,7 @@ try {
     std::shared_lock libraryLock(libraryMutex);
 
     auto* ctx = moduleContext();
-    if (!ctx || !ctx->attachRegistry)
+    if (!ctx || !ctx->sessionRegistry)
         return LIBRESCRS_PKCS11_ATTACH_NOT_INITIALIZED;
 
     if (!reader_name || !token)
@@ -54,7 +55,7 @@ try {
     if (!*sptr)
         return LIBRESCRS_PKCS11_ATTACH_NULL_PTR;
 
-    ctx->attachRegistry->put(std::string{reader_name}, *sptr);
+    ctx->sessionRegistry->put(std::string{reader_name}, *sptr);
     return LIBRESCRS_PKCS11_ATTACH_OK;
 } catch (const std::bad_alloc&) {
     return LIBRESCRS_PKCS11_ATTACH_OUT_OF_MEMORY;
@@ -71,12 +72,12 @@ try {
     std::shared_lock libraryLock(libraryMutex);
 
     auto* ctx = moduleContext();
-    if (!ctx || !ctx->attachRegistry)
+    if (!ctx || !ctx->sessionRegistry)
         return LIBRESCRS_PKCS11_ATTACH_NOT_INITIALIZED;
     if (!reader_name)
         return LIBRESCRS_PKCS11_ATTACH_NULL_PTR;
 
-    ctx->attachRegistry->remove(std::string{reader_name});
+    ctx->sessionRegistry->remove(std::string{reader_name});
     return LIBRESCRS_PKCS11_ATTACH_OK;
 } catch (const std::bad_alloc&) {
     return LIBRESCRS_PKCS11_ATTACH_OUT_OF_MEMORY;

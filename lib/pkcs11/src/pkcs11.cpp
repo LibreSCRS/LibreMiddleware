@@ -3,9 +3,10 @@
 
 #include "pkcs11_library.h"
 
-#include "attach_registry.h"
 #include "pkcs15_pkcs11_card.h"
 #include "pkcs15_pkcs11_module_context.h"
+
+#include <internal/SessionRegistry.h>
 
 #include <LibreSCRS/SmartCard/CardMap.h>
 
@@ -116,13 +117,23 @@ static void registerDefaultProviders(PKCS11Library& lib)
     auto cardMap = std::make_shared<LibreSCRS::SmartCard::CardMap>();
 
 #if LIBRESCRS_HAS_VENDORED_OPENSC
-    lib.registerProvider(std::make_shared<LibreSCRS::OpenSc::Pkcs11::OpenScPKCS11Provider>());
+    // Pass the shared SessionRegistry so the OpenSC fallback can detect
+    // readers whose parked CardSession is mid-secure-messaging and step
+    // aside. A second PC/SC handle against a card running a live SM
+    // tunnel invalidates the card-side SM context; the registry hand-off
+    // gates the skip on session->hasLiveSecureChannel(), so injected
+    // sessions without an active SM tunnel still get a normal probe.
+    {
+        auto registryCopy = g_module->sessionRegistry;
+        lib.registerProvider(
+            std::make_shared<LibreSCRS::OpenSc::Pkcs11::OpenScPKCS11Provider>(std::move(registryCopy)));
+    }
 #endif
-    // Pass g_module->attachRegistry by shared_ptr so the provider can
+    // Pass g_module->sessionRegistry by shared_ptr so the provider can
     // consult it on every probe(). g_module is guaranteed non-null here:
     // C_Initialize allocates it before calling registerDefaultProviders().
     lib.registerProvider(
-        std::make_shared<LibreSCRS::Pkcs15::Pkcs11::Pkcs15PKCS11Provider>(cardMap, g_module->attachRegistry));
+        std::make_shared<LibreSCRS::Pkcs15::Pkcs11::Pkcs15PKCS11Provider>(cardMap, g_module->sessionRegistry));
 }
 
 // ---------------------------------------------------------------------------
@@ -148,7 +159,7 @@ CK_DECLARE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
     }
 
     g_module = std::make_unique<LibreSCRS::Pkcs15::Pkcs11::ModuleContext>();
-    g_module->attachRegistry = std::make_shared<LibreSCRS::Pkcs15::Pkcs11::AttachRegistry>();
+    g_module->sessionRegistry = std::make_shared<LibreSCRS::Pkcs11::Internal::SessionRegistry>();
     library = std::make_unique<PKCS11Library>();
     registerDefaultProviders(*library);
     return CKR_OK;
@@ -169,8 +180,8 @@ CK_DECLARE_FUNCTION(CK_RV, C_Finalize)(CK_VOID_PTR pReserved)
         // copies in the registry are released before the rest of the
         // module-context state goes away. Order matters only for human
         // legibility — both calls run under libraryMutex exclusive.
-        if (g_module->attachRegistry)
-            g_module->attachRegistry->clearAll();
+        if (g_module->sessionRegistry)
+            g_module->sessionRegistry->clearAll();
         g_module.reset();
     }
     return CKR_OK;
@@ -284,7 +295,10 @@ CK_DECLARE_FUNCTION(CK_RV, C_OpenSession)
     std::shared_lock lock(libraryMutex);
     if (!library)
         return CKR_CRYPTOKI_NOT_INITIALIZED;
-    return library->openSession(slotID, flags, pApplication, Notify, phSession);
+    const auto rv = library->openSession(slotID, flags, pApplication, Notify, phSession);
+    pkcs11_debug("C_OpenSession slotID=%lu flags=0x%lx -> rv=0x%08lx session=%lu", (unsigned long)slotID,
+                 (unsigned long)flags, (unsigned long)rv, rv == CKR_OK && phSession ? (unsigned long)*phSession : 0UL);
+    return rv;
     PKCS11_CATCH
 }
 

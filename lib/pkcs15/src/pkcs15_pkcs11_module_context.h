@@ -16,13 +16,15 @@
 #include <memory>
 #include <shared_mutex>
 
-namespace LibreSCRS::Pkcs15::Pkcs11 {
+namespace LibreSCRS::Pkcs11::Internal {
+class SessionRegistry;
+} // namespace LibreSCRS::Pkcs11::Internal
 
-class AttachRegistry;
+namespace LibreSCRS::Pkcs15::Pkcs11 {
 
 struct ModuleContext
 {
-    std::shared_ptr<AttachRegistry> attachRegistry;
+    std::shared_ptr<LibreSCRS::Pkcs11::Internal::SessionRegistry> sessionRegistry;
     // Future fields: card-event subscribers, diagnostics, etc.
 };
 

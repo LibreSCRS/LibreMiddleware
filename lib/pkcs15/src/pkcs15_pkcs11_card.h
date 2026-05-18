@@ -29,6 +29,10 @@ namespace LibreSCRS::SmartCard {
 class CardSession;
 } // namespace LibreSCRS::SmartCard
 
+namespace LibreSCRS::Pkcs11::Internal {
+class SessionRegistry;
+} // namespace LibreSCRS::Pkcs11::Internal
+
 namespace pkcs15 {
 class PKCS15Card;
 struct PKCS15Profile;
@@ -77,7 +81,6 @@ namespace LibreSCRS::Pkcs15::Pkcs11 {
 ///
 /// @since 4.1
 class Pkcs15Slot;
-class AttachRegistry;
 
 class Pkcs15Card final : public LibreSCRS::Pkcs11::Internal::PKCS11Card
 {
@@ -285,21 +288,21 @@ public:
     /// @param cardMap        Per-card discovered-state cache threaded
     ///                       through every @c Pkcs15Card created by
     ///                       @ref probe. Pass @c nullptr to disable.
-    /// @param attachRegistry In-process session registry consulted at
-    ///                       probe time. A registry hit means an
-    ///                       in-process host (LibreCelik) parked a live
-    ///                       @c CardSession for the reader; @ref probe
-    ///                       adopts it instead of opening a fresh PC/SC
-    ///                       handle. @c nullptr disables the inject
-    ///                       path — every probe falls through to the
-    ///                       standalone @c bind() that opens its own
-    ///                       PC/SC handle, which is the normal mode for
-    ///                       external
-    ///                       consumers loading the module via dlopen
-    ///                       without inject support.
+    /// @param sessionRegistry In-process session registry consulted at
+    ///                        probe time. A registry hit means an
+    ///                        in-process host (LibreCelik) parked a live
+    ///                        @c CardSession for the reader; @ref probe
+    ///                        adopts it instead of opening a fresh PC/SC
+    ///                        handle. @c nullptr disables the inject
+    ///                        path — every probe falls through to the
+    ///                        standalone @c bind() that opens its own
+    ///                        PC/SC handle, which is the normal mode for
+    ///                        external consumers loading the module via
+    ///                        dlopen without inject support.
     /// @since 4.1
-    Pkcs15PKCS11Provider(std::shared_ptr<LibreSCRS::SmartCard::CardMap> cardMap,
-                         std::shared_ptr<AttachRegistry> attachRegistry = nullptr) noexcept;
+    Pkcs15PKCS11Provider(
+        std::shared_ptr<LibreSCRS::SmartCard::CardMap> cardMap,
+        std::shared_ptr<LibreSCRS::Pkcs11::Internal::SessionRegistry> sessionRegistry = nullptr) noexcept;
     ~Pkcs15PKCS11Provider() override = default;
 
     /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11CardProvider::probe
@@ -309,7 +312,7 @@ public:
 
 private:
     std::shared_ptr<LibreSCRS::SmartCard::CardMap> cardMap;
-    std::shared_ptr<AttachRegistry> attachRegistry;
+    std::shared_ptr<LibreSCRS::Pkcs11::Internal::SessionRegistry> sessionRegistry;
 };
 
 } // namespace LibreSCRS::Pkcs15::Pkcs11

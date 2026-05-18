@@ -14,7 +14,6 @@
 
 #include "pkcs15_pkcs11_card.h"
 
-#include "attach_registry.h"
 #include "pkcs15_card.h"
 #include "pkcs15_pkcs11_slot.h"
 #include "pkcs15_types.h"
@@ -23,6 +22,7 @@
 
 #include <internal/Crv.h>
 #include <internal/PKCS11TokenInfo.h>
+#include <internal/SessionRegistry.h>
 #include <internal/SlotIdHash.h>
 #include <internal/SlotKindClassifier.h>
 
@@ -183,21 +183,43 @@ unsigned long Pkcs15Card::readProfileAndComplete(LibreSCRS::SmartCard::ActiveCha
         return Crv::DeviceError;
 
     ::pkcs15::PKCS15Card apdu(*channel);
+    // The host's display flow has already issued several SELECT-BY-AID
+    // cycles through the same PACE-SM channel during card-data reads
+    // (readCertificates / getPINList / getPINTriesLeft). On NAM CL the
+    // card-OS refuses a follow-up SELECT-BY-AID through the same SM
+    // tunnel with SW 6988, which transitions the channel to Failed
+    // state. Plain SELECT FID under the same SM tunnel is accepted
+    // throughout. Pre-seed the PKCS#15 DF FID (5015 under MF 3F00) so
+    // readProfile's selectApplet uses path-based selection instead of
+    // re-issuing SELECT-BY-AID.
+    apdu.seedDiscoveredState({0x3F, 0x00, 0x50, 0x15}, 0x00);
     try {
         LibreSCRS::Internal::probeTrace("PROBE-READPROFILE call=pkcs11-card-init");
         profile = std::make_unique<::pkcs15::PKCS15Profile>(apdu.readProfile());
+        if (std::getenv("LIBRESCRS_SIGN_TRACE"))
+            std::fprintf(stderr, "[PKCS15Card::readProfileAndComplete] pins=%zu keys=%zu certs=%zu\n",
+                         profile->pins.size(), profile->privateKeys.size(), profile->certificates.size());
         if (profile->pins.empty() && profile->privateKeys.empty() && profile->certificates.empty()) {
             // Empty profile suggests the applet refuses directory reads
             // pre-login (AET SafeSign / Posta Srbija eID style). Fall
             // through to deferred-profile mode.
+            if (std::getenv("LIBRESCRS_SIGN_TRACE"))
+                std::fprintf(stderr, "[PKCS15Card::readProfileAndComplete] empty profile -> deferred fallback\n");
             profile.reset();
             needsDeferredProfile = true;
         }
-    } catch (...) {
+    } catch (const std::exception& e) {
+        if (std::getenv("LIBRESCRS_SIGN_TRACE"))
+            std::fprintf(stderr, "[PKCS15Card::readProfileAndComplete] readProfile threw: %s\n", e.what());
         // readProfile threw — treat as deferred-profile mode rather than
         // a hard failure. AET SafeSign returns non-PKCS#15 payloads
         // (literal text "please authenticate yourself") for every
         // structural read, which surfaces as parser exceptions here.
+        profile.reset();
+        needsDeferredProfile = true;
+    } catch (...) {
+        if (std::getenv("LIBRESCRS_SIGN_TRACE"))
+            std::fprintf(stderr, "[PKCS15Card::readProfileAndComplete] readProfile threw non-std exception\n");
         profile.reset();
         needsDeferredProfile = true;
     }
@@ -539,9 +561,10 @@ unsigned long Pkcs15Card::reconnectInline()
     return Crv::Ok;
 }
 
-Pkcs15PKCS11Provider::Pkcs15PKCS11Provider(std::shared_ptr<LibreSCRS::SmartCard::CardMap> cm,
-                                           std::shared_ptr<AttachRegistry> registry) noexcept
-    : cardMap(std::move(cm)), attachRegistry(std::move(registry))
+Pkcs15PKCS11Provider::Pkcs15PKCS11Provider(
+    std::shared_ptr<LibreSCRS::SmartCard::CardMap> cm,
+    std::shared_ptr<LibreSCRS::Pkcs11::Internal::SessionRegistry> registry) noexcept
+    : cardMap(std::move(cm)), sessionRegistry(std::move(registry))
 {}
 
 std::shared_ptr<LibreSCRS::Pkcs11::Internal::PKCS11Card> Pkcs15PKCS11Provider::probe(const std::string& readerName)
@@ -555,10 +578,16 @@ std::shared_ptr<LibreSCRS::Pkcs11::Internal::PKCS11Card> Pkcs15PKCS11Provider::p
     // avoids opening a second PC/SC handle on a card the host already
     // holds — a real concern for PACE-gated sessions where two parallel
     // SM contexts collide.
-    if (attachRegistry) {
-        if (auto adopted = attachRegistry->tryAdopt(readerName)) {
-            if (auto rc = card->bindFromInjectedSession(readerName, std::move(adopted)); rc != Crv::Ok)
+    //
+    // Lookup is non-consuming: peek() copies the shared_ptr without
+    // removing the entry. On bind success the registry entry is
+    // dropped (the card now owns the session); on failure the entry
+    // stays so any retry or replacement provider can still find it.
+    if (sessionRegistry) {
+        if (auto session = sessionRegistry->peek(readerName)) {
+            if (auto rc = card->bindFromInjectedSession(readerName, session); rc != Crv::Ok)
                 return nullptr;
+            sessionRegistry->remove(readerName);
             return card;
         }
     }

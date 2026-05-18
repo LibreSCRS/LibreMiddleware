@@ -34,6 +34,7 @@ target_include_directories(librescrs-opensc-pkcs11 PRIVATE
 
 target_link_libraries(librescrs-opensc-pkcs11 PRIVATE
     opensc_static_with_deps
+    LibreSCRS::SmartCard
     LibreSCRS::Secure
 )
 

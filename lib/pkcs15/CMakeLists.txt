@@ -9,14 +9,19 @@ add_library(PKCS15 STATIC
     src/pkcs15_card.cpp
     src/pkcs15_pkcs11_card.cpp
     src/pkcs15_pkcs11_slot.cpp
-    src/attach_registry.cpp
     src/pkcs15_pkcs11_attach.cpp
+    # SessionRegistry implementation. The header lives in
+    # lib/pkcs11/include/internal/ — its canonical cross-provider home.
+    # The .cpp is built into PKCS15.a so the PKCS#11 module + every test
+    # that links PKCS15 directly satisfies the symbols without a separate
+    # archive. librescrs-pkcs11.so PRIVATE-links PKCS15 so the symbols
+    # end up inside the .so transparently.
+    ${PROJECT_SOURCE_DIR}/lib/pkcs11/src/session_registry.cpp
     src/pkcs15_types.h
     src/pkcs15_parser.h
     src/pkcs15_card.h
     src/pkcs15_pkcs11_card.h
     src/pkcs15_pkcs11_slot.h
-    src/attach_registry.h
     src/pkcs15_pkcs11_module_context.h
 )
 

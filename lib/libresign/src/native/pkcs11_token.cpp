@@ -63,7 +63,7 @@ struct Pkcs11Token::Impl
     ~Impl()
     {
         // Detach BEFORE C_Finalize / dlclose so the module-side
-        // AttachRegistry entry is cleared while the module is still
+        // SessionRegistry entry is cleared while the module is still
         // mapped and its detach hook is callable.
         attachment.reset();
         if (funcs) {
@@ -245,8 +245,12 @@ struct Pkcs11Token::Impl
                 matches.push_back(slotId);
         }
 
-        if (matches.size() == 1)
+        if (matches.size() == 1) {
+            if (std::getenv("LIBRESCRS_SIGN_TRACE"))
+                std::cerr << "libresign: slot lookup reader=\"" << readerName << "\" fnv1a32=0x" << std::hex
+                          << targetHash << std::dec << " -> slotID=" << matches[0] << "\n";
             return matches[0];
+        }
 
         std::ostringstream err;
         if (matches.empty()) {
@@ -279,7 +283,7 @@ Pkcs11Token::Pkcs11Token(const std::string& modulePath, const LibreSCRS::Secure:
 {
     impl->loadModule(modulePath);
     // Attach BEFORE the slot lookup: findSlotByReaderName triggers
-    // C_GetSlotList → provider::probe, which consults AttachRegistry.
+    // C_GetSlotList → provider::probe, which consults SessionRegistry.
     impl->attachSessionIfPresent(modulePath, readerName, std::move(sharedSession));
     CK_SLOT_ID slotId = impl->findSlotByReaderName(readerName);
     impl->openSessionAndLogin(slotId, std::span<const uint8_t>{pin.data(), pin.size()});

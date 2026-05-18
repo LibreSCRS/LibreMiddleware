@@ -13,24 +13,24 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(GoogleTest)
 
-add_executable(AttachRegistryTests AttachRegistryTests.cpp)
+add_executable(SessionRegistryTests SessionRegistryTests.cpp)
 
-target_link_libraries(AttachRegistryTests PRIVATE
+target_link_libraries(SessionRegistryTests PRIVATE
     PKCS15
     LibreSCRS::SmartCard
     GTest::gtest_main
 )
 
-target_include_directories(AttachRegistryTests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+target_include_directories(SessionRegistryTests PRIVATE
+    ${PROJECT_SOURCE_DIR}/lib/pkcs11/include
 )
 
-# AttachRegistry's header carries the LIBRESCRS_INTERNAL_BUILD #error
+# SessionRegistry's header carries the LIBRESCRS_INTERNAL_BUILD #error
 # guard; the test is part of the LM build tree and may legitimately
 # reach into the internal namespace.
-target_compile_definitions(AttachRegistryTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+target_compile_definitions(SessionRegistryTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 
-gtest_discover_tests(AttachRegistryTests)
+gtest_discover_tests(SessionRegistryTests)
 
 # PKCS11 base-class symbols (PKCS11Card / PKCS11Slot) are produced into
 # librescrs-pkcs11 (the SHARED module) which restricts its export table

@@ -385,7 +385,7 @@ TEST(Pkcs11InjectE2EGeoTestna, AttachAndSignThroughInjectedSession)
     }
 
     // Token destruction at scope exit drops SessionAttachment first
-    // (clearing the module-side AttachRegistry entry while the module
+    // (clearing the module-side SessionRegistry entry while the module
     // is still mapped), then C_Finalize, then dlclose. We then drop
     // the CardSession. Any crash during teardown would surface here.
     token.reset();
