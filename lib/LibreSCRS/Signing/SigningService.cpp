@@ -408,8 +408,7 @@ SigningResult SigningService::sign(const SigningRequest& request, Auth::Credenti
         if (hasCredentials) {
             return SigningResult::signingEngineErrorDiagnosticOnly(
                 std::string{"DSS backend does not support TSA credentials or contactInfo — "
-                            "use Native backend (unset LIBRESCRS_SIGNING_BACKEND or set =native). "
-                            "See Path-A deprecation in 2026-04-22-pre-doc-design-decisions.md."});
+                            "use Native backend (unset LIBRESCRS_SIGNING_BACKEND or set =native)."});
         }
     }
 
@@ -698,8 +697,8 @@ SigningResult SigningService::appendSigner(const SigningRequest& request, std::s
 
     // Forward the live display CardSession to the engine so the PKCS#11
     // path adopts it via SessionAttachment — mandatory for PACE-protected
-    // re-signs (NAM CL / RS eID / eMRTD) where a standalone bind would
-    // tear down the host's SM channel before C_Login.
+    // re-signs where a standalone bind would tear down the host's SM
+    // channel before C_Login.
     auto libResult = service->appendSigner(libReq, priorSignature, originalDocument, pinBuffer, resolvePkcs11Module(),
                                            keyAlias, session->readerName(), session);
 

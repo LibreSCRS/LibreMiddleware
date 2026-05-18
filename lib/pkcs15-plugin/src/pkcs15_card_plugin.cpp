@@ -146,9 +146,10 @@ public:
         auto& conn = LibreSCRS::SmartCard::detail::unwrap(session);
         const auto mapKey = makeSessionKey(session);
         try {
-            // Cheap, no-SM probe to decide between PlainChannel (RS eID,
-            // PKS, AET) and PaceChannel (NAM CL, GEO CL) for subsequent
-            // operations. The actual applet selection happens later through
+            // Cheap, no-SM probe to decide between PlainChannel (contact
+            // PKCS#15 families) and PaceChannel (PACE-gated contactless
+            // families) for subsequent operations. The actual applet
+            // selection happens later through
             // CardSession::activateChannel{For,WithSm}.
             const auto state = probeApplet(conn);
             if (state == ProbeResult::Ok) {

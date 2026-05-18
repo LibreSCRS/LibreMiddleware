@@ -103,12 +103,12 @@ ModuleContext* moduleContext() noexcept
 
 static void registerDefaultProviders(PKCS11Library& lib)
 {
-    // Probe order: vendored-OpenSC fallback first (broadest, accepts any
-    // PKCS#15-shaped card OpenSC's emulator chain or built-in driver
-    // recognises — OpenPGP, generic PKCS#15, the bundled srbeid driver,
-    // upstream PIV driver), then the project's custom PKCS#15 provider for
-    // NAM / GEO and other PKCS#15-shaped cards. The first probe that
-    // returns a non-null Card wins.
+    // Probe order: vendored-OpenSC fallback first (broadest reach across
+    // OpenSC's emulator chain and built-in driver set), then the project's
+    // own PKCS#15 provider. The first probe that returns a non-null Card
+    // wins. SessionRegistry awareness on the fallback lets it defer to a
+    // specialised provider when a host-injected session carries a live SM
+    // tunnel, so the two providers compose without contention.
 
     // Shared per-process discovery cache. The PKCS#15 provider's bind()
     // path consults it post-PACE to skip re-probing EF.DIR under the SM

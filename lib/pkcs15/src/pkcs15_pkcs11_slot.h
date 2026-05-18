@@ -78,9 +78,9 @@ public:
 
     /// @brief Construct a slot in @b deferred-profile mode.
     ///
-    /// Some PKCS#15 applets (e.g. AET SafeSign / Posta Srbija eID) refuse
-    /// to expose @c TokenInfo / @c AODF / @c PrKDF / @c CDF before the
-    /// user has authenticated. For those cards the parent @ref Pkcs15Card
+    /// Some PKCS#15 applets refuse to expose @c TokenInfo / @c AODF /
+    /// @c PrKDF / @c CDF before the user has authenticated. For those
+    /// cards the parent @ref Pkcs15Card
     /// pushes a single placeholder slot at @c bind() time; @ref login()
     /// then reads the PKCS#15 profile post-PIN-verify and finalises the
     /// slot's @c pinInfo / @c keys / @c certs / @c cachedTokenInfo state.

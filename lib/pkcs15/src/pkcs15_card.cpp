@@ -11,6 +11,7 @@
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <stdexcept>
 
@@ -151,7 +152,7 @@ bool PKCS15Card::probe()
 bool PKCS15Card::selectApplet()
 {
     if (pkcs15Path.empty()) {
-        // AID-based selection worked during probe
+        // AID-based selection worked during probe.
         std::vector<uint8_t> aid(kPkcs15Aid.begin(), kPkcs15Aid.end());
         auto resp = channel.transmit(LibreSCRS::SmartCard::Internal::selectByAID(aid, 0x0C), LibreSCRS::CancelToken{});
         if (resp.isSuccess())
@@ -160,7 +161,7 @@ bool PKCS15Card::selectApplet()
         return resp.isSuccess();
     }
 
-    // Path-based selection (discovered from EF.DIR)
+    // Path-based selection (discovered from EF.DIR during probe).
     return selectByPath(pkcs15Path);
 }
 
@@ -257,21 +258,50 @@ TokenInfo PKCS15Card::readTokenInfo()
 
 PKCS15Profile PKCS15Card::readProfile()
 {
+    const bool trace = std::getenv("LIBRESCRS_SIGN_TRACE") != nullptr;
+    auto dumpHex = [](const std::vector<uint8_t>& v, std::size_t maxLen) {
+        std::string out;
+        const auto n = std::min(maxLen, v.size());
+        for (std::size_t i = 0; i < n; ++i) {
+            char buf[4];
+            std::snprintf(buf, sizeof(buf), "%02X", v[i]);
+            out += buf;
+        }
+        if (v.size() > n)
+            out += "...";
+        return out;
+    };
     {
         char buf[64];
         std::snprintf(buf, sizeof(buf), "READPROFILE-ENTRY this=%p", static_cast<const void*>(this));
         LibreSCRS::Internal::probeTrace(buf);
     }
+    if (trace)
+        std::fprintf(stderr, "[PKCS15::readProfile] entry this=%p\n", static_cast<const void*>(this));
 
-    if (!selectApplet())
+    if (!selectApplet()) {
+        if (trace)
+            std::fprintf(stderr, "[PKCS15::readProfile] selectApplet FAILED\n");
         throw std::runtime_error("Failed to select PKCS#15 applet");
+    }
+    if (trace)
+        std::fprintf(stderr, "[PKCS15::readProfile] selectApplet OK\n");
 
     // Read ODF (EF.ODF = 5031)
     const uint8_t odfFid[] = {0x50, 0x31};
-    if (!selectByPath(odfFid))
+    if (!selectByPath(odfFid)) {
+        if (trace)
+            std::fprintf(stderr, "[PKCS15::readProfile] selectByPath(EF.ODF 5031) FAILED\n");
         throw std::runtime_error("Failed to select EF.ODF");
+    }
     auto odfData = readSelectedFile();
+    if (trace)
+        std::fprintf(stderr, "[PKCS15::readProfile] EF.ODF %zuB head=%s\n", odfData.size(),
+                     dumpHex(odfData, 32).c_str());
     auto odf = parseODF(odfData);
+    if (trace)
+        std::fprintf(stderr, "[PKCS15::readProfile] parseODF: certsPath=%zuB keysPath=%zuB aodfPath=%zuB\n",
+                     odf.certificatesPath.size(), odf.privateKeysPath.size(), odf.authObjectsPath.size());
 
     // Re-select applet before reading TokenInfo
     if (!selectApplet())
@@ -282,6 +312,9 @@ PKCS15Profile PKCS15Card::readProfile()
     if (!selectByPath(tokenInfoFid))
         throw std::runtime_error("Failed to select EF.TokenInfo");
     auto tokenData = readSelectedFile();
+    if (trace)
+        std::fprintf(stderr, "[PKCS15::readProfile] EF.TokenInfo %zuB head=%s\n", tokenData.size(),
+                     dumpHex(tokenData, 32).c_str());
     auto tokenInfo = parseTokenInfo(tokenData);
 
     PKCS15Profile profile;
@@ -292,16 +325,30 @@ PKCS15Profile PKCS15Card::readProfile()
     if (!odf.certificatesPath.empty()) {
         if (!selectApplet())
             throw std::runtime_error("PKCS15: failed to select applet");
-        if (selectByPath(odf.certificatesPath))
-            profile.certificates = parseCDF(readSelectedFile());
+        if (selectByPath(odf.certificatesPath)) {
+            auto cdfData = readSelectedFile();
+            if (trace)
+                std::fprintf(stderr, "[PKCS15::readProfile] CDF %zuB head=%s\n", cdfData.size(),
+                             dumpHex(cdfData, 32).c_str());
+            profile.certificates = parseCDF(cdfData);
+        } else if (trace) {
+            std::fprintf(stderr, "[PKCS15::readProfile] selectByPath(CDF) FAILED\n");
+        }
     }
 
     // Read PrKDF if present
     if (!odf.privateKeysPath.empty()) {
         if (!selectApplet())
             throw std::runtime_error("PKCS15: failed to select applet");
-        if (selectByPath(odf.privateKeysPath))
-            profile.privateKeys = parsePrKDF(readSelectedFile());
+        if (selectByPath(odf.privateKeysPath)) {
+            auto prkdfData = readSelectedFile();
+            if (trace)
+                std::fprintf(stderr, "[PKCS15::readProfile] PrKDF %zuB head=%s\n", prkdfData.size(),
+                             dumpHex(prkdfData, 32).c_str());
+            profile.privateKeys = parsePrKDF(prkdfData);
+        } else if (trace) {
+            std::fprintf(stderr, "[PKCS15::readProfile] selectByPath(PrKDF) FAILED\n");
+        }
     }
 
     // Read AODF if present
@@ -310,9 +357,18 @@ PKCS15Profile PKCS15Card::readProfile()
             throw std::runtime_error("PKCS15: failed to select applet");
         if (selectByPath(odf.authObjectsPath)) {
             auto aodfData = readSelectedFile();
+            if (trace)
+                std::fprintf(stderr, "[PKCS15::readProfile] AODF %zuB head=%s\n", aodfData.size(),
+                             dumpHex(aodfData, 32).c_str());
             profile.pins = parseAODF(aodfData);
+        } else if (trace) {
+            std::fprintf(stderr, "[PKCS15::readProfile] selectByPath(AODF) FAILED\n");
         }
     }
+
+    if (trace)
+        std::fprintf(stderr, "[PKCS15::readProfile] DONE pins=%zu keys=%zu certs=%zu\n", profile.pins.size(),
+                     profile.privateKeys.size(), profile.certificates.size());
 
     return profile;
 }
@@ -368,9 +424,18 @@ PinResult PKCS15Card::verifyPIN(const PinInfo& pin, std::string_view pinValue)
 
     auto pinData = encodePIN(pinValue, pin);
 
+    if (std::getenv("LIBRESCRS_SIGN_TRACE"))
+        std::fprintf(
+            stderr,
+            "[PKCS15] verifyPIN ref=0x%02X label=\"%s\" path=%zuB rawLen=%zu encLen=%zu stored=%d padChar=0x%02X\n",
+            pin.pinReference, pin.label.c_str(), pin.path.size(), pinValue.size(), pinData.size(), pin.storedLength,
+            static_cast<unsigned>(pin.padChar) & 0xFF);
+
     // Try pinReference directly
     auto resp = channel.transmit(LibreSCRS::SmartCard::Internal::verifyPIN(pin.pinReference, pinData),
                                  LibreSCRS::CancelToken{});
+    if (std::getenv("LIBRESCRS_SIGN_TRACE"))
+        std::fprintf(stderr, "[PKCS15] verifyPIN ref=0x%02X SW=%04X\n", pin.pinReference, resp.statusWord());
     if (resp.isSuccess())
         return {true, -1, false};
     if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
@@ -382,6 +447,8 @@ PinResult PKCS15Card::verifyPIN(const PinInfo& pin, std::string_view pinValue)
     uint8_t altRef = pin.pinReference & 0x7F;
     if (altRef != pin.pinReference) {
         resp = channel.transmit(LibreSCRS::SmartCard::Internal::verifyPIN(altRef, pinData), LibreSCRS::CancelToken{});
+        if (std::getenv("LIBRESCRS_SIGN_TRACE"))
+            std::fprintf(stderr, "[PKCS15] verifyPIN altRef=0x%02X SW=%04X\n", altRef, resp.statusWord());
         if (resp.isSuccess())
             return {true, -1, false};
         if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
@@ -863,6 +930,7 @@ std::vector<uint8_t> PKCS15Card::extractRawHash(const std::vector<uint8_t>& dige
 
 bool PKCS15Card::selectByPath(std::span<const uint8_t> path, uint8_t selectP2)
 {
+    const bool trace = std::getenv("LIBRESCRS_SIGN_TRACE") != nullptr;
     if (path.empty() || path.size() % 2 != 0)
         return false;
 
@@ -878,6 +946,9 @@ bool PKCS15Card::selectByPath(std::span<const uint8_t> path, uint8_t selectP2)
     for (size_t i = startIdx; i + 1 < path.size(); i += 2) {
         auto resp = channel.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(path[i], path[i + 1], p2),
                                      LibreSCRS::CancelToken{});
+        if (trace)
+            std::fprintf(stderr, "[PKCS15::selectByPath] FID=%02X%02X P2=%02X SW=%04X\n", path[i], path[i + 1], p2,
+                         resp.statusWord());
         if (resp.isSuccess())
             continue;
 
@@ -886,6 +957,9 @@ bool PKCS15Card::selectByPath(std::span<const uint8_t> path, uint8_t selectP2)
             uint8_t altP2 = (p2 == 0x0C) ? 0x00 : 0x0C;
             resp = channel.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(path[i], path[i + 1], altP2),
                                     LibreSCRS::CancelToken{});
+            if (trace)
+                std::fprintf(stderr, "[PKCS15::selectByPath] FID=%02X%02X retry altP2=%02X SW=%04X\n", path[i],
+                             path[i + 1], altP2, resp.statusWord());
             if (resp.isSuccess()) {
                 fileSelectP2 = altP2;
                 p2 = altP2;

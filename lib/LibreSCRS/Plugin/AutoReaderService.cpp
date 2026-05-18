@@ -358,8 +358,6 @@ AutoReaderService::~AutoReaderService()
     // running through MonitorService, closing the spawn-after-dtor window.
     // Pending reads we already started are then drained below by joining
     // their std::threads, ensuring full callback quiescence on return.
-    //
-    // (Closes High-1 in the 2026-05-04 LM threading review.)
     d->worker->monitor->unsubscribeAndDrain(d->worker->subscriptionId);
 
     // Drain pending reads: cancel them, join their threads, then drop.

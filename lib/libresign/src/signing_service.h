@@ -111,12 +111,11 @@ public:
     ///                         routing contract as @ref sign.
     /// @param sharedSession    optional live CardSession to forward into the
     ///                         loaded PKCS#11 module; identical contract to
-    ///                         @ref sign. PACE-protected cards (NAM CL, RS
-    ///                         eID, eMRTD) require this — without it the
-    ///                         module opens a second standalone PC/SC
-    ///                         session and tears down the host's SM
-    ///                         channel, causing C_Login to fail on the
-    ///                         contactless interface.
+    ///                         @ref sign. PACE-protected cards require
+    ///                         this — without it the module opens a second
+    ///                         standalone PC/SC session and tears down the
+    ///                         host's SM channel, causing C_Login to fail
+    ///                         on the contactless interface.
     /// @return SigningResult — same shape as @ref sign.
     /// @since 4.2
     virtual SigningResult appendSigner(const SigningRequest& request, std::span<const uint8_t> priorSignature,

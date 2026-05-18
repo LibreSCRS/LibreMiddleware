@@ -130,9 +130,9 @@ Pkcs15Slot::Pkcs15Slot(std::weak_ptr<LibreSCRS::Pkcs11::Internal::PKCS11Card> pa
                                               std::move(placeholderLabel)),
       deferredProfile(true)
 {
-    // Deferred-profile mode for AET SafeSign / Posta Srbija eID style cards
-    // that refuse PKCS#15 directory reads pre-login. pinInfo / keys / certs
-    // are populated lazily inside login() after PIN verification succeeds.
+    // Deferred-profile mode for applets that refuse PKCS#15 directory
+    // reads pre-login. pinInfo / keys / certs are populated lazily inside
+    // login() after PIN verification succeeds.
     cachedTokenInfo = std::move(placeholderTokenInfo);
     stableSlotId = slotId;
 }
@@ -341,17 +341,17 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
         }
 
         // Branch 1 — PACE placeholder-slot self-transform. Distinct from
-        // the OLD-AET deferred-profile path (Branch 3): that path
-        // PIN-verifies against an applet that refuses pre-login directory
-        // reads; this path drives the parent's resumeBind() to perform
-        // PACE + applet select + readProfile after the CAN is supplied.
-        // After resumeBind succeeds the slot adopts the parent's
-        // freshly-read profile in place, keeping its CK_SLOT_ID stable so
-        // any session opened against the placeholder slot remains valid.
+        // the deferred-profile path (Branch 3): that path PIN-verifies
+        // against an applet that refuses pre-login directory reads; this
+        // path drives the parent's resumeBind() to perform PACE + applet
+        // select + readProfile after the CAN is supplied. After
+        // resumeBind succeeds the slot adopts the parent's freshly-read
+        // profile in place, keeping its CK_SLOT_ID stable so any session
+        // opened against the placeholder slot remains valid.
         if (parentPlaceholderState(*parent)) {
-            // CAN-in-PIN. NAM CL (pure-PACE, no second PIN) accepts a
-            // bare CAN; cards that combine PACE with a card-side PIN
-            // accept "CAN:PIN". Either form is parsed here. The local
+            // CAN-in-PIN. Pure-PACE cards (no second PIN) accept a bare
+            // CAN; cards that combine PACE with a card-side PIN accept
+            // "CAN:PIN". Either form is parsed here. The local
             // `can` and `realPin` std::strings carry secret bytes across
             // non-noexcept calls (parentCacheCan, parentResumeBind,
             // parentP15.acquireChannel, apdu.verifyPIN); wrap each in a
@@ -492,9 +492,9 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
             }
 
             if (!realPin.empty() && selectedPin) {
-                // Optional PIN verify for PACE+PIN combo cards. NAM CL
-                // (pure-PACE) reaches this branch with realPin empty
-                // and skips verify entirely — PACE alone authenticates.
+                // Optional PIN verify for PACE+PIN combo cards.
+                // Pure-PACE cards reach this branch with realPin empty
+                // and skip verify entirely — PACE alone authenticates.
                 auto holderResult = parentP15.acquireChannel();
                 if (!holderResult) {
                     OPENSSL_cleanse(realPin.data(), realPin.size());
@@ -565,12 +565,11 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
         //
         // Source-of-truth order for the PinInfo:
         //   1. The slot's own cached pinInfo, if populated (eager-bind).
-        //   2. The parent card's profile (read post-display for PACE
-        //      cards like NAM CL — supplies the card's real PIN reference,
+        //   2. The parent card's profile (read post-display for PACE-
+        //      gated cards — supplies the card's real PIN reference,
         //      stored length, pad char, and applet path).
-        //   3. SafeSign vendor defaults — true deferred profile where the
-        //      AODF cannot be read until the User PIN is verified
-        //      (AET SafeSign).
+        //   3. Vendor AODF defaults — true deferred profile where the
+        //      AODF cannot be read until the User PIN is verified.
         ::pkcs15::PinInfo pinInfoForVerify;
         if (pinInfo) {
             pinInfoForVerify = *pinInfo;
@@ -590,12 +589,10 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
             if (userPinFromProfile) {
                 pinInfoForVerify = *userPinFromProfile;
             } else {
-                // SafeSign IC AODF defaults documented in the vendor token
-                // manual: the User PIN sits at reference kSafeSignDefaultUserPinRef
-                // (SO PIN at kSafeSignDefaultSoPinRef), ASCII encoding,
-                // 15-byte fixed stored length, NUL-padded, minimum 4 digits.
-                // JCOP21 and Infineon SLE hardware variants share these
-                // AODF defaults.
+                // Vendor AODF defaults: the User PIN sits at reference
+                // kSafeSignDefaultUserPinRef (SO PIN at
+                // kSafeSignDefaultSoPinRef), ASCII encoding, 15-byte
+                // fixed stored length, NUL-padded, minimum 4 digits.
                 pinInfoForVerify.id = {::pkcs15::kSafeSignDefaultUserPinRef};
                 pinInfoForVerify.label = pinLabel;
                 pinInfoForVerify.pinReference = ::pkcs15::kSafeSignDefaultUserPinRef;

@@ -164,16 +164,6 @@ unsigned long Pkcs15Card::readProfileAndComplete(LibreSCRS::SmartCard::ActiveCha
         return Crv::DeviceError;
 
     ::pkcs15::PKCS15Card apdu(*channel);
-    // The host's display flow has already issued several SELECT-BY-AID
-    // cycles through the same PACE-SM channel during card-data reads
-    // (readCertificates / getPINList / getPINTriesLeft). On NAM CL the
-    // card-OS refuses a follow-up SELECT-BY-AID through the same SM
-    // tunnel with SW 6988, which transitions the channel to Failed
-    // state. Plain SELECT FID under the same SM tunnel is accepted
-    // throughout. Pre-seed the PKCS#15 DF FID (5015 under MF 3F00) so
-    // readProfile's selectApplet uses path-based selection instead of
-    // re-issuing SELECT-BY-AID.
-    apdu.seedDiscoveredState({0x3F, 0x00, 0x50, 0x15}, 0x00);
     try {
         LibreSCRS::Internal::probeTrace("PROBE-READPROFILE call=pkcs11-card-init");
         profile = std::make_unique<::pkcs15::PKCS15Profile>(apdu.readProfile());
@@ -181,9 +171,9 @@ unsigned long Pkcs15Card::readProfileAndComplete(LibreSCRS::SmartCard::ActiveCha
             std::fprintf(stderr, "[PKCS15Card::readProfileAndComplete] pins=%zu keys=%zu certs=%zu\n",
                          profile->pins.size(), profile->privateKeys.size(), profile->certificates.size());
         if (profile->pins.empty() && profile->privateKeys.empty() && profile->certificates.empty()) {
-            // Empty profile suggests the applet refuses directory reads
-            // pre-login (AET SafeSign / Posta Srbija eID style). Fall
-            // through to deferred-profile mode.
+            // Empty profile means the applet refuses directory reads
+            // pre-login. Fall through to deferred-profile mode so the
+            // first authenticated operation can populate slot state.
             if (std::getenv("LIBRESCRS_SIGN_TRACE"))
                 std::fprintf(stderr, "[PKCS15Card::readProfileAndComplete] empty profile -> deferred fallback\n");
             profile.reset();
@@ -193,9 +183,9 @@ unsigned long Pkcs15Card::readProfileAndComplete(LibreSCRS::SmartCard::ActiveCha
         if (std::getenv("LIBRESCRS_SIGN_TRACE"))
             std::fprintf(stderr, "[PKCS15Card::readProfileAndComplete] readProfile threw: %s\n", e.what());
         // readProfile threw — treat as deferred-profile mode rather than
-        // a hard failure. AET SafeSign returns non-PKCS#15 payloads
-        // (literal text "please authenticate yourself") for every
-        // structural read, which surfaces as parser exceptions here.
+        // a hard failure. Some applets return non-PKCS#15 payloads
+        // (e.g. a literal authenticate-first prompt) for every structural
+        // read, which surfaces as a parser exception here.
         profile.reset();
         needsDeferredProfile = true;
     } catch (...) {
@@ -403,9 +393,9 @@ unsigned long Pkcs15Card::resumeBind()
             needsDeferredProfile = true;
         }
     } catch (...) {
-        // readProfile fallback to deferred-profile is correct (OLD-AET
-        // path), not a hard failure — keep PACE secrets warm so the
-        // subsequent deferred-profile PIN verify rides the same channel.
+        // readProfile fallback to deferred-profile mode is correct, not a
+        // hard failure — keep PACE secrets warm so the subsequent
+        // deferred-profile PIN verify rides the same channel.
         profile.reset();
         needsDeferredProfile = true;
     }

@@ -348,15 +348,21 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, const st
         if (auto fmt = inferFormat(request.document); fmt && looksSignedAlready(request.document, *fmt)) {
             switch (*fmt) {
             case SignatureFormat::Pades:
+                // PAdES handles already-signed PDFs natively through the
+                // PDF incremental-update mechanism inside PAdESModule::sign.
+                // Falling through to the standard sign() path keeps the
+                // single Pkcs11Token construction the per-card PKCS#15
+                // session-attach flow expects; redirecting to appendSigner
+                // would trigger a second bindFromInjectedSession on PACE-
+                // gated contactless cards whose AODF read would then
+                // return an empty profile and surface as CKR_PIN_INCORRECT.
+                break;
             case SignatureFormat::Xades:
             case SignatureFormat::Jades:
             case SignatureFormat::AsicE:
                 // Forward sharedSession to the append-signer dispatcher
-                // so PACE-protected cards (NAM CL etc.) keep their SM
-                // channel across the redirected path. Without this,
-                // re-signing a previously-signed PDF on contactless NAM
-                // would open a standalone PC/SC bind and tear down PACE
-                // before C_Login.
+                // so PACE-protected cards keep their SM channel across
+                // the redirected path.
                 return appendSigner(request, request.document, {}, pin, pkcs11ModulePath, keyAlias, readerName,
                                     std::move(sharedSession));
             case SignatureFormat::Cades:
@@ -365,7 +371,6 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, const st
                                    "Use SigningService::appendSigner with the originalDocument argument "
                                    "to add a new signer to a prior CAdES signature.");
             }
-            std::unreachable();
         }
 
         // Single mandatory ctor — legacy slotIndex=-1 / tokenLabel=""

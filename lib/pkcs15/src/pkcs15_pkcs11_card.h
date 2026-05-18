@@ -45,17 +45,18 @@ namespace LibreSCRS::Pkcs15::Pkcs11 {
 ///        by the existing @ref pkcs15::PKCS15Card APDU helper.
 ///
 /// Wraps a single PC/SC reader's bound PKCS#15 surface and surfaces one
-/// @ref Pkcs15Slot per user PIN object discovered in the AODF. Single-PIN
-/// cards (Serbian eID, NAM) yield one slot; multi-PIN cards (GEO) yield
-/// one slot per AUTH PIN. PUK and CAN PINs are filtered.
+/// @ref Pkcs15Slot per user PIN object discovered in the AODF.
+/// Single-PIN card families yield one slot; multi-PIN families yield one
+/// slot per AUTH PIN. PUK and CAN PINs are filtered.
 ///
 /// @par Transport ownership
 /// Owns a @ref LibreSCRS::SmartCard::CardSession for the card's lifetime.
 /// Every operation that touches the card acquires a fresh
 /// @ref LibreSCRS::SmartCard::ActiveChannelHolder via @ref acquireChannel
-/// — non-PACE families take the @c PlainChannel path, PACE-gated families
-/// (NAM CL, GEO CL) take the @c PaceChannel path with the CAN deposited
-/// into the session's per-process cache through @ref onCachedCanChanged.
+/// — non-PACE families take the @c PlainChannel path, PACE-gated
+/// contactless families take the @c PaceChannel path with the CAN
+/// deposited into the session's per-process cache through
+/// @ref onCachedCanChanged.
 /// No long-lived @c pkcs15::PKCS15Card helper / @c PCSCConnection /
 /// @c SecureMessaging is held; each holder constructs the helper from
 /// @c holder.activeChannel() and discards it on scope exit. Mirrors the
@@ -129,9 +130,9 @@ public:
     /// plain only when SM has no credentials".
     ///
     /// @par Limitation
-    /// v1 hardcodes @c PaceSecretKind::Can — correct for the only PACE-
-    /// gated cards with current inject use cases (NAM CL, GEO testna).
-    /// Future cards using PIN/PUK as the PACE secret would require
+    /// v1 hardcodes @c PaceSecretKind::Can — correct for the
+    /// contactless PKCS#15 families currently supported via the inject
+    /// path. Cards using PIN/PUK as the PACE secret would require
     /// querying the session's deposited secret kind or accepting it as
     /// a parameter.
     ///
@@ -252,11 +253,11 @@ private:
     std::unique_ptr<pkcs15::PKCS15Profile> profile;
 
     /// @brief When @c true the parent applet refuses PKCS#15 directory
-    ///        reads pre-login (e.g. AET SafeSign / Posta Srbija eID).
-    ///        @ref bind() therefore publishes ONE placeholder slot and
-    ///        defers the real profile read to that slot's first
-    ///        @ref Pkcs15Slot::login. Distinct from the inherited
-    ///        @c placeholderState which marks the PACE-CAN-deferred path.
+    ///        reads pre-login. @ref bind() therefore publishes ONE
+    ///        placeholder slot and defers the real profile read to that
+    ///        slot's first @ref Pkcs15Slot::login. Distinct from the
+    ///        inherited @c placeholderState which marks the
+    ///        PACE-CAN-deferred path.
     bool needsDeferredProfile{false};
 
     /// @brief Optional shared cache of per-card discovered state.
