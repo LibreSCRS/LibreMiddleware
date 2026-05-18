@@ -116,6 +116,15 @@
             <version>${dss.version}</version>
         </dependency>
 
+        <!-- DSS 6.4 declares dss-policy-jaxb at test scope; we need the
+             default constraint.xml resource on the runtime classpath so
+             ValidationPolicyFacade can load the validation policy. -->
+        <dependency>
+            <groupId>eu.europa.ec.joinup.sd-dss</groupId>
+            <artifactId>dss-policy-jaxb</artifactId>
+            <version>${dss.version}</version>
+        </dependency>
+
 
         <!-- DSS 6.4 XAdES needs commons-lang3 3.18+ (Strings class) -->
         <dependency>
@@ -133,6 +142,15 @@
         <dependency>
             <groupId>eu.europa.ec.joinup.sd-dss</groupId>
             <artifactId>dss-asic-cades</artifactId>
+            <version>${dss.version}</version>
+        </dependency>
+        <!-- ASiC-E with XAdES inner signatures (LibreMiddleware default
+             container shape for asic.SigningEngine). Without this dep,
+             SignedDocumentValidator.fromDocument() falls through to the
+             generic ASiC-CAdES factory and reports signatureCount=0. -->
+        <dependency>
+            <groupId>eu.europa.ec.joinup.sd-dss</groupId>
+            <artifactId>dss-asic-xades</artifactId>
             <version>${dss.version}</version>
         </dependency>
 
