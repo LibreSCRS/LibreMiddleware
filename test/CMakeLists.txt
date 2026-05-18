@@ -86,8 +86,8 @@ gtest_discover_tests(LibreSCRS_PlainChannelTests)
 
 # PaceChannel + BacChannel — SM-wrapping channels. Tests exercise state
 # transitions, sentinel SW codes, and SW 6987/6988 external-invalidation
-# detection. Full PACE/BAC handshake test vectors deferred (see plan
-# Stage 2 Task 2.3, requires BSI TR-03110 / ICAO Doc 9303 documents).
+# detection. Full PACE/BAC handshake test vectors require BSI TR-03110 /
+# ICAO Doc 9303 documents and are deferred.
 add_executable(LibreSCRS_SmChannelTests LibreSCRS_SmChannelTests.cpp)
 target_link_libraries(LibreSCRS_SmChannelTests
     GTest::gtest_main
@@ -445,6 +445,7 @@ if(BUILD_SIGNING)
     # Shared test support library (must be defined before tests that use it)
     add_library(SigningTestSupport STATIC
         signing_test_support/signing_test_support.cpp
+        signing_test_support/pkcs11_token_mock.cpp
         dss_validation_client.cpp)
     # LibreSign's bucket-B internal headers (http_client.h, dss/*, native/*)
     # live in src/. Tests reach them via this PUBLIC include root so they
@@ -471,6 +472,15 @@ if(BUILD_SIGNING)
     add_executable(SigningE2ETests signing_e2e_test.cpp)
     target_link_libraries(SigningE2ETests PRIVATE SigningTestSupport)
     gtest_discover_tests(SigningE2ETests DISCOVERY_TIMEOUT 30)
+
+    # Cancellation / card-disconnect / concurrent-sign placeholders.
+    # Each test currently SKIPs at runtime because LibreMiddleware's
+    # libresign::Pkcs11Token is a concrete class; the mock interface in
+    # signing_test_support/pkcs11_token_mock.h documents the required
+    # surface so a future refactor can flip them to live tests in place.
+    add_executable(SigningCancellationTests cancellation_test.cpp)
+    target_link_libraries(SigningCancellationTests PRIVATE SigningTestSupport GTest::gtest_main)
+    gtest_discover_tests(SigningCancellationTests)
 
     # Signing provider unit tests
     add_executable(SigningProviderTests signing_provider_test.cpp)
@@ -554,6 +564,16 @@ if(BUILD_SIGNING)
         target_compile_definitions(TsaAuthIntegrationTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
         gtest_discover_tests(TsaAuthIntegrationTests)
 
+        # TSA / OCSP failure-mode coverage. Exercises body-parse rejection,
+        # unreachable endpoint, timeout, plus module-level "B-T requires TSA"
+        # contract via CAdES::addTimestamp throw site.
+        add_executable(TsaFailureModesTests tsa_failure_modes_test.cpp)
+        target_link_libraries(TsaFailureModesTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto)
+        target_include_directories(TsaFailureModesTests PRIVATE
+            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
+        target_compile_definitions(TsaFailureModesTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+        gtest_discover_tests(TsaFailureModesTests)
+
         add_executable(RevocationClientTests revocation_client_test.cpp)
         target_link_libraries(RevocationClientTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto)
         target_include_directories(RevocationClientTests PRIVATE
@@ -632,6 +652,16 @@ if(BUILD_SIGNING)
             ${LibreMiddleware_SOURCE_DIR}/thirdparty/nlohmann)
         gtest_discover_tests(JAdESModuleTests)
 
+        # JCS (RFC 8785) canonical JSON serializer — internal LibreSign TU,
+        # reached via LIBRESCRS_INTERNAL_BUILD plus the libresign src tree.
+        add_executable(JcsTests jcs_test.cpp)
+        target_link_libraries(JcsTests PRIVATE GTest::gtest_main LibreSign)
+        target_include_directories(JcsTests PRIVATE
+            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+            ${LibreMiddleware_SOURCE_DIR}/thirdparty/nlohmann)
+        target_compile_definitions(JcsTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+        gtest_discover_tests(JcsTests)
+
         find_package(LibXml2 REQUIRED)
         add_executable(XAdESModuleTests xades_module_test.cpp)
         target_link_libraries(XAdESModuleTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto LibXml2::LibXml2 SigningTestSupport)
@@ -707,6 +737,17 @@ target_include_directories(LibreSCRS_SigningTests PRIVATE
 # LIBRESCRS_INTERNAL_BUILD; this test unit is allowed to include it.
 target_compile_definitions(LibreSCRS_SigningTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(LibreSCRS_SigningTests)
+
+# SignFailureKind cardinality + bridge-mapping lock test. Same include /
+# definition pattern as LibreSCRS_SigningTests above — reaches into
+# lib/LibreSCRS/Signing/detail/ErrorClassifier.h and lib/libresign/src/types.h.
+add_executable(SigningFailureKindTests signing_failure_kind_test.cpp)
+target_link_libraries(SigningFailureKindTests PRIVATE GTest::gtest_main LibreSCRS_Signing LibreSign)
+target_include_directories(SigningFailureKindTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/Signing
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/libresign/src)
+target_compile_definitions(SigningFailureKindTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(SigningFailureKindTests)
 
 add_executable(LibreSCRS_SecureBufferTests
     LibreSCRS_SecureBufferTests.cpp

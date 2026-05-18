@@ -30,7 +30,7 @@ TEST_F(DSSSigningServiceTest, Pkcs11SignFailsWhenServiceDown)
     libresign::DSSSigningService svc(*manager);
     libresign::SigningRequest req;
     req.document = {0x25, 0x50, 0x44, 0x46}; // %PDF
-    req.format = libresign::SignatureFormat::PAdES;
+    req.format = libresign::SignatureFormat::Pades;
     req.level = libresign::SignatureLevel::B_B;
 
     auto result = svc.sign(req, "/path/to/pkcs11.so", libresign::as_pin("1234"), "key1", "");
@@ -45,7 +45,7 @@ TEST_F(DSSSigningServiceTest, FormatAndLevelStrings)
     libresign::DSSSigningService svc(*manager);
     libresign::SigningRequest req;
     req.document = {0x01};
-    req.format = libresign::SignatureFormat::CAdES;
+    req.format = libresign::SignatureFormat::Cades;
     req.level = libresign::SignatureLevel::B_LTA;
 
     auto result = svc.sign(req, "/p11.so", libresign::as_pin("pin"), "key", "");

@@ -6,6 +6,7 @@
 #include "types.h"
 #include <gtest/gtest.h>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -72,12 +73,39 @@ private:
     static std::unique_ptr<Impl> impl;
 };
 
-// Validate via DSS. Asserts not TOTAL_FAILED. If DSS unavailable, prints skip.
+/// Validate a signed document via the DSS oracle.
+///
+/// Asserts no signature reports `TOTAL_FAILED`. On oracle failure
+/// (transport / parse / configuration), trips `ADD_FAILURE()` with the
+/// diagnostic so the calling test fails loudly instead of being silently
+/// skipped — DSS is a hard requirement, not optional.
+///
+/// @param result            Signing result whose `signedDocument` is validated.
+/// @param format            ETSI signature format string (e.g. `"PAdES"`,
+///                          `"XAdES"`, `"CAdES"`, `"JAdES"`, `"ASiC_E"`).
+/// @param packaging         Packaging hint passed to the oracle
+///                          (`"ENVELOPED"`, `"ENVELOPING"`, `"DETACHED"`).
+/// @param originalDoc       Optional original document bytes — required for
+///                          DETACHED signatures so the oracle can resolve the
+///                          reference.
+/// @param expectedSigCount  If set, assert the DSS oracle reports exactly
+///                          this many signatures in the document.
+/// @param expectedBaselineLevel
+///                          If set, assert at least one signature reported by
+///                          the oracle carries this ETSI baseline level
+///                          string (e.g. `"PAdES_BASELINE_LT"`,
+///                          `"PAdES_BASELINE_LTA"`, `"XAdES_BASELINE_LTA"`).
 void validateSignature(const SigningResult& result, const std::string& format,
-                       const std::string& packaging = "ENVELOPED", std::span<const uint8_t> originalDoc = {});
+                       const std::string& packaging = "ENVELOPED", std::span<const uint8_t> originalDoc = {},
+                       std::optional<int> expectedSigCount = std::nullopt,
+                       std::optional<std::string> expectedBaselineLevel = std::nullopt);
 
 // ---- Test data helpers ----
 std::string buildTestPdf();
+/// Multi-page variant — emits a minimal PDF with @p pageCount pages, each
+/// 612 x 792 points. Used by the visual-signature tests that need to place
+/// a signature on a non-first page.
+std::string buildTestPdf(int pageCount);
 std::string buildTestXml();
 
 } // namespace libresign::test

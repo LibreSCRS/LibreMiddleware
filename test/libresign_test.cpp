@@ -15,7 +15,7 @@
 
 TEST(LibreSignTypes, SignatureFormatEnum)
 {
-    EXPECT_NE(libresign::SignatureFormat::PAdES, libresign::SignatureFormat::CAdES);
+    EXPECT_NE(libresign::SignatureFormat::Pades, libresign::SignatureFormat::Cades);
 }
 
 TEST(LibreSignTypes, SignatureLevelOrdering)
@@ -28,7 +28,7 @@ TEST(LibreSignTypes, SignatureLevelOrdering)
 TEST(LibreSignTypes, SigningRequestDefaults)
 {
     libresign::SigningRequest req;
-    EXPECT_EQ(req.format, libresign::SignatureFormat::PAdES);
+    EXPECT_EQ(req.format, libresign::SignatureFormat::Pades);
     EXPECT_EQ(req.level, libresign::SignatureLevel::B_T);
     EXPECT_TRUE(req.document.empty());
     EXPECT_TRUE(req.fileName.empty());

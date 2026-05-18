@@ -2,10 +2,13 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "signing_test_support.h"
+#include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <thread>
 
 #ifdef LIBRESIGN_HAS_DSS_ORACLE
 #include "dss/dss_service_manager.h"
@@ -75,6 +78,17 @@ TestConfigResult readTestConfig()
 
 const char* findSoftHsmPath()
 {
+    // `SOFTHSM2_LIB` is the canonical SoftHSM2 override env var (matches
+    // the upstream pkcs11-tool / opensc convention) — honour it first so
+    // CI / Nix / non-standard package layouts can point at their library
+    // without patching the hardcoded search list.
+    static std::string envPath;
+    if (const char* env = std::getenv("SOFTHSM2_LIB")) {
+        envPath = env;
+        if (!envPath.empty() && std::filesystem::exists(envPath))
+            return envPath.c_str();
+    }
+
     static const char* paths[] = {
         "/usr/lib/softhsm/libsofthsm2.so",
         "/usr/lib64/softhsm/libsofthsm2.so",
@@ -129,6 +143,29 @@ void SigningTestEnvironment::SetUp()
 
     impl->baseUrl = result.baseUrl;
     impl->socketPath = impl->dssManager->unixSocketPath();
+
+    // Spring Boot reactive bind can lag a few seconds behind subprocess
+    // spawn; under j4 parallel tests the very first POST otherwise sees
+    // "HTTP 0: Could not connect to server". Poll /health for up to 30s
+    // before declaring the oracle ready.
+    {
+        HttpClient probe;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        bool ready = false;
+        while (std::chrono::steady_clock::now() < deadline) {
+            auto h = probe.get(impl->baseUrl + "/health", 1, impl->socketPath);
+            if (h.statusCode == 200) {
+                ready = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+        if (!ready) {
+            std::cerr << "[SigningTestEnvironment] DSS oracle did not become ready within 30s\n";
+            impl->dssManager.reset();
+            return;
+        }
+    }
 
     // Configure trust with Serbian TL
     try {
@@ -186,8 +223,24 @@ bool SigningTestEnvironment::trustConfigured()
 
 // ---- Validate signature ----
 
+namespace {
+std::string joinLevels(const std::vector<ValidationSignatureInfo>& sigs)
+{
+    std::string out;
+    bool first = true;
+    for (const auto& s : sigs) {
+        if (!first)
+            out += ", ";
+        out += s.level.empty() ? "<empty>" : s.level;
+        first = false;
+    }
+    return out;
+}
+} // namespace
+
 void validateSignature(const SigningResult& result, const std::string& format, const std::string& packaging,
-                       std::span<const uint8_t> originalDoc)
+                       std::span<const uint8_t> originalDoc, std::optional<int> expectedSigCount,
+                       std::optional<std::string> expectedBaselineLevel)
 {
     if (!SigningTestEnvironment::available()) {
         std::cerr << "[validateSignature] DSS not available, skipping validation\n";
@@ -200,11 +253,24 @@ void validateSignature(const SigningResult& result, const std::string& format, c
     auto vr = client->validate(result.signedDocument, format, packaging, originalDoc);
 
     if (!vr.error.empty()) {
-        std::cerr << "[validateSignature] Validation error: " << vr.error << "\n";
+        ADD_FAILURE() << "DSS oracle failed: " << vr.error;
         return;
     }
 
     ASSERT_GT(vr.signatureCount, 0) << "Expected at least one signature";
+
+    if (expectedSigCount.has_value()) {
+        EXPECT_EQ(vr.signatureCount, *expectedSigCount)
+            << "DSS reports " << vr.signatureCount << " signatures; expected " << *expectedSigCount;
+    }
+
+    if (expectedBaselineLevel.has_value()) {
+        const bool found =
+            std::any_of(vr.signatures.begin(), vr.signatures.end(),
+                        [&](const ValidationSignatureInfo& s) { return s.level == *expectedBaselineLevel; });
+        EXPECT_TRUE(found) << "DSS signature levels [" << joinLevels(vr.signatures) << "] does not include expected "
+                           << *expectedBaselineLevel;
+    }
 
     for (size_t i = 0; i < vr.signatures.size(); ++i) {
         const auto& sig = vr.signatures[i];
@@ -214,6 +280,8 @@ void validateSignature(const SigningResult& result, const std::string& format, c
         std::cerr << "[validateSignature] Sig " << i << ": " << sig.indication;
         if (!sig.subIndication.empty())
             std::cerr << " (" << sig.subIndication << ")";
+        if (!sig.level.empty())
+            std::cerr << " level=" << sig.level;
         std::cerr << "\n";
 
         for (const auto& w : sig.warnings)
@@ -249,7 +317,8 @@ bool SigningTestEnvironment::trustConfigured()
 }
 
 void validateSignature(const SigningResult& /*result*/, const std::string& /*format*/, const std::string& /*packaging*/,
-                       std::span<const uint8_t> /*originalDoc*/)
+                       std::span<const uint8_t> /*originalDoc*/, std::optional<int> /*expectedSigCount*/,
+                       std::optional<std::string> /*expectedBaselineLevel*/)
 {
     std::cerr << "[validateSignature] DSS not compiled, skipping validation\n";
 }
@@ -288,6 +357,67 @@ std::string buildTestPdf()
     std::string trailer = "trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n" + std::to_string(xrefOff) + "\n%%EOF\n";
 
     return header + obj1 + obj2 + obj3 + xref + trailer;
+}
+
+std::string buildTestPdf(int pageCount)
+{
+    if (pageCount <= 1)
+        return buildTestPdf();
+
+    std::string header = "%PDF-1.4\n";
+    // Object 1 = Catalog, object 2 = Pages tree, objects 3..3+N-1 = pages.
+    std::string obj1 = "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n";
+
+    std::string kids;
+    for (int i = 0; i < pageCount; ++i) {
+        kids += std::to_string(3 + i) + " 0 R";
+        if (i + 1 < pageCount)
+            kids += " ";
+    }
+    std::string obj2 =
+        "2 0 obj\n<< /Type /Pages /Kids [" + kids + "] /Count " + std::to_string(pageCount) + " >>\nendobj\n";
+
+    std::vector<std::string> pageObjs;
+    pageObjs.reserve(static_cast<size_t>(pageCount));
+    for (int i = 0; i < pageCount; ++i) {
+        pageObjs.push_back(std::to_string(3 + i) + " 0 obj\n<< /Type /Page /Parent 2 0 R "
+                                                   "/MediaBox [0 0 612 792] >>\nendobj\n");
+    }
+
+    std::vector<size_t> offs;
+    offs.reserve(static_cast<size_t>(2 + pageCount));
+    size_t cur = header.size();
+    offs.push_back(cur);
+    cur += obj1.size();
+    offs.push_back(cur);
+    cur += obj2.size();
+    for (const auto& po : pageObjs) {
+        offs.push_back(cur);
+        cur += po.size();
+    }
+    size_t xrefOff = cur;
+
+    auto fmtOffset = [](size_t off) {
+        std::string s = std::to_string(off);
+        while (s.size() < 10)
+            s = "0" + s;
+        return s + " 00000 n \n";
+    };
+
+    int totalObjs = 2 + pageCount;
+    std::string xref = "xref\n0 " + std::to_string(totalObjs + 1) + "\n";
+    xref += "0000000000 65535 f \n";
+    for (size_t off : offs)
+        xref += fmtOffset(off);
+
+    std::string trailer = "trailer\n<< /Size " + std::to_string(totalObjs + 1) + " /Root 1 0 R >>\nstartxref\n" +
+                          std::to_string(xrefOff) + "\n%%EOF\n";
+
+    std::string out = header + obj1 + obj2;
+    for (const auto& po : pageObjs)
+        out += po;
+    out += xref + trailer;
+    return out;
 }
 
 std::string buildTestXml()

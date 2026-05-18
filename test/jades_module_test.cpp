@@ -35,7 +35,7 @@ TEST_F(JAdESModuleTest, SignBB_ProducesValidJWS)
     JAdESModule jades;
 
     std::vector<uint8_t> data = {'H', 'e', 'l', 'l', 'o'};
-    auto result = jades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::DETACHED, {});
+    auto result = jades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::Detached, {});
 
     ASSERT_TRUE(result.success) << result.errorMessage;
     ASSERT_FALSE(result.signedDocument.empty());
@@ -57,7 +57,7 @@ TEST_F(JAdESModuleTest, SignBB_DetachedHasEmptyPayload)
     JAdESModule jades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
-    auto result = jades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::DETACHED, {});
+    auto result = jades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::Detached, {});
 
     ASSERT_TRUE(result.success) << result.errorMessage;
 
@@ -75,7 +75,7 @@ TEST_F(JAdESModuleTest, SignBB_EnvelopedHasPayload)
     JAdESModule jades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
-    auto result = jades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::ENVELOPED, {});
+    auto result = jades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::Enveloped, {});
 
     ASSERT_TRUE(result.success) << result.errorMessage;
 
@@ -87,13 +87,13 @@ TEST_F(JAdESModuleTest, SignBB_EnvelopedHasPayload)
     EXPECT_FALSE(j["payload"].get<std::string>().empty());
 }
 
-TEST_F(JAdESModuleTest, SignBB_ProtectedHeaderContainsSigT)
+TEST_F(JAdESModuleTest, SignBB_ProtectedHeaderContainsRequiredFields)
 {
     Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
     JAdESModule jades;
 
     std::vector<uint8_t> data = {'H', 'e', 'l', 'l', 'o'};
-    auto result = jades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::DETACHED, {});
+    auto result = jades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::Detached, {});
 
     ASSERT_TRUE(result.success) << result.errorMessage;
 
@@ -125,10 +125,19 @@ TEST_F(JAdESModuleTest, SignBB_ProtectedHeaderContainsSigT)
     decoded.resize(static_cast<size_t>(decodedLen));
 
     auto headerParsed = nlohmann::json::parse(decoded.begin(), decoded.end());
-    EXPECT_TRUE(headerParsed.contains("sigT"));
-    EXPECT_TRUE(headerParsed.contains("crit"));
-    EXPECT_TRUE(headerParsed.contains("x5c"));
+    // ETSI TS 119 182-1 baseline B requires: alg, x5c or x5t#S256 (signing
+    // cert ref), and a claimed-signing-time. We emit iat (RFC 7519 numeric
+    // date) — sigT was deprecated in 2024 and dropped by DSS 6.4 after
+    // 2025-05-15. crit lists only non-registered header members; iat and
+    // x5t#S256 are JOSE-registered so they MUST NOT appear in crit.
     EXPECT_TRUE(headerParsed.contains("alg"));
+    EXPECT_TRUE(headerParsed.contains("x5c"));
+    EXPECT_TRUE(headerParsed.contains("x5t#S256"));
+    EXPECT_TRUE(headerParsed.contains("iat"));
+    EXPECT_FALSE(headerParsed.contains("sigT"));
+    // crit is required for detached (b64=false); for enveloped, no
+    // non-registered headers means crit MAY be omitted entirely.
+    EXPECT_TRUE(headerParsed.contains("crit"));
 }
 
 TEST_F(JAdESModuleTest, SignBB_DifferentDataProducesDifferentSignature)
@@ -139,8 +148,8 @@ TEST_F(JAdESModuleTest, SignBB_DifferentDataProducesDifferentSignature)
     std::vector<uint8_t> data1 = {'A', 'B', 'C'};
     std::vector<uint8_t> data2 = {'X', 'Y', 'Z'};
 
-    auto result1 = jades.sign(data1, "a.txt", token, SignatureLevel::B_B, SignaturePackaging::DETACHED, {});
-    auto result2 = jades.sign(data2, "b.txt", token, SignatureLevel::B_B, SignaturePackaging::DETACHED, {});
+    auto result1 = jades.sign(data1, "a.txt", token, SignatureLevel::B_B, SignaturePackaging::Detached, {});
+    auto result2 = jades.sign(data2, "b.txt", token, SignatureLevel::B_B, SignaturePackaging::Detached, {});
 
     ASSERT_TRUE(result1.success) << result1.errorMessage;
     ASSERT_TRUE(result2.success) << result2.errorMessage;
@@ -153,7 +162,7 @@ TEST_F(JAdESModuleTest, SignBB_NoEtsiUHeader)
     JAdESModule jades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
-    auto result = jades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::DETACHED, {});
+    auto result = jades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::Detached, {});
 
     ASSERT_TRUE(result.success) << result.errorMessage;
 
@@ -178,7 +187,7 @@ TEST(JAdESModuleStandalone, BTRequiresTSA)
 
     Pkcs11Token token(hsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
     TSAConfig emptyTsa; // empty URL
-    auto result = jades.sign(data, "test.txt", token, SignatureLevel::B_T, SignaturePackaging::DETACHED, emptyTsa);
+    auto result = jades.sign(data, "test.txt", token, SignatureLevel::B_T, SignaturePackaging::Detached, emptyTsa);
 
     // Should fail because TSA URL is empty
     EXPECT_FALSE(result.success);
@@ -194,7 +203,7 @@ TEST(JAdESModuleStandalone, RejectsEmptyInput)
     // Token is never touched — sign() returns early on empty input.
     alignas(Pkcs11Token) char storage[sizeof(Pkcs11Token)]{};
     auto& dummyToken = *reinterpret_cast<Pkcs11Token*>(storage);
-    auto result = jades.sign(empty, "test.json", dummyToken, SignatureLevel::B_B, SignaturePackaging::DETACHED, {});
+    auto result = jades.sign(empty, "test.json", dummyToken, SignatureLevel::B_B, SignaturePackaging::Detached, {});
     ASSERT_FALSE(result.success);
     EXPECT_NE(result.errorMessage.find("empty"), std::string::npos);
 }

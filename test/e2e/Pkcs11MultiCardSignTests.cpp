@@ -32,6 +32,7 @@
 
 #include <LibreSCRS/Auth/PaceSecretKind.h>
 #include <LibreSCRS/Pkcs11/SessionInjection.h>
+#include <LibreSCRS/Secure/Buffer.h>
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/MonitorService.h>
@@ -281,11 +282,9 @@ SignOutcome signOnCard(ReaderCard& rc, const std::string& pin)
 
     std::unique_ptr<libresign::Pkcs11Token> token;
     try {
-        token = std::make_unique<libresign::Pkcs11Token>(
-            modulePath(),
-            std::span<const std::uint8_t>{reinterpret_cast<const std::uint8_t*>(pinForLogin.data()),
-                                          pinForLogin.size()},
-            /*keyAlias=*/std::string{}, rc.reader, rc.session);
+        LibreSCRS::Secure::Buffer pinBuf(pinForLogin);
+        token = std::make_unique<libresign::Pkcs11Token>(modulePath(), pinBuf,
+                                                         /*keyAlias=*/std::string{}, rc.reader, rc.session);
         o.loggedIn = true;
         o.attached = true; // attachment is performed inside Pkcs11Token::Impl
     } catch (const std::exception& e) {

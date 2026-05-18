@@ -124,7 +124,7 @@ TEST_F(XAdESModuleTest, SignBB_ProducesValidXml)
     XAdESModule xades;
 
     std::vector<uint8_t> data = {'H', 'e', 'l', 'l', 'o'};
-    auto result = xades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::DETACHED, {});
+    auto result = xades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::Detached, {});
 
     ASSERT_TRUE(result.success) << result.errorMessage;
     ASSERT_FALSE(result.signedDocument.empty());
@@ -145,7 +145,7 @@ TEST_F(XAdESModuleTest, SignBB_HasRequiredElements)
     XAdESModule xades;
 
     std::vector<uint8_t> data = {'H', 'e', 'l', 'l', 'o'};
-    auto result = xades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::DETACHED, {});
+    auto result = xades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::Detached, {});
 
     ASSERT_TRUE(result.success) << result.errorMessage;
     auto doc = parseResult(result);
@@ -180,7 +180,7 @@ TEST_F(XAdESModuleTest, SignBB_HasXAdESQualifyingProperties)
     XAdESModule xades;
 
     std::vector<uint8_t> data = {'H', 'e', 'l', 'l', 'o'};
-    auto result = xades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::DETACHED, {});
+    auto result = xades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::Detached, {});
 
     ASSERT_TRUE(result.success) << result.errorMessage;
     auto doc = parseResult(result);
@@ -224,7 +224,7 @@ TEST_F(XAdESModuleTest, SignBB_HasDataObjectFormat)
     XAdESModule xades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
-    auto result = xades.sign(data, "document.pdf", token, SignatureLevel::B_B, SignaturePackaging::DETACHED, {});
+    auto result = xades.sign(data, "document.pdf", token, SignatureLevel::B_B, SignaturePackaging::Detached, {});
 
     ASSERT_TRUE(result.success) << result.errorMessage;
     auto doc = parseResult(result);
@@ -248,7 +248,7 @@ TEST_F(XAdESModuleTest, SignBB_DetachedHasFileNameReference)
     XAdESModule xades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
-    auto result = xades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::DETACHED, {});
+    auto result = xades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::Detached, {});
 
     ASSERT_TRUE(result.success) << result.errorMessage;
     auto doc = parseResult(result);
@@ -267,7 +267,7 @@ TEST_F(XAdESModuleTest, SignBB_DigestValuesAreNonEmpty)
     XAdESModule xades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
-    auto result = xades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::DETACHED, {});
+    auto result = xades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::Detached, {});
 
     ASSERT_TRUE(result.success) << result.errorMessage;
     auto doc = parseResult(result);
@@ -292,8 +292,8 @@ TEST_F(XAdESModuleTest, SignBB_DifferentDataProducesDifferentSignature)
     std::vector<uint8_t> data1 = {'A', 'B', 'C'};
     std::vector<uint8_t> data2 = {'X', 'Y', 'Z'};
 
-    auto result1 = xades.sign(data1, "a.txt", token, SignatureLevel::B_B, SignaturePackaging::DETACHED, {});
-    auto result2 = xades.sign(data2, "b.txt", token, SignatureLevel::B_B, SignaturePackaging::DETACHED, {});
+    auto result1 = xades.sign(data1, "a.txt", token, SignatureLevel::B_B, SignaturePackaging::Detached, {});
+    auto result2 = xades.sign(data2, "b.txt", token, SignatureLevel::B_B, SignaturePackaging::Detached, {});
 
     ASSERT_TRUE(result1.success) << result1.errorMessage;
     ASSERT_TRUE(result2.success) << result2.errorMessage;
@@ -306,7 +306,7 @@ TEST_F(XAdESModuleTest, SignBB_NoUnsignedProperties)
     XAdESModule xades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
-    auto result = xades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::DETACHED, {});
+    auto result = xades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::Detached, {});
 
     ASSERT_TRUE(result.success) << result.errorMessage;
     auto doc = parseResult(result);
@@ -325,7 +325,7 @@ TEST_F(XAdESModuleTest, BTRequiresTSA)
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
     TSAConfig emptyTsa; // empty URL
-    auto result = xades.sign(data, "test.txt", token, SignatureLevel::B_T, SignaturePackaging::DETACHED, emptyTsa);
+    auto result = xades.sign(data, "test.txt", token, SignatureLevel::B_T, SignaturePackaging::Detached, emptyTsa);
 
     // Should fail because TSA URL is empty
     EXPECT_FALSE(result.success);
@@ -354,7 +354,7 @@ TEST_F(XAdESModuleStandaloneTest, ProducesXmlOutput)
     XAdESModule xades;
 
     std::vector<uint8_t> data = {'X', 'M', 'L'};
-    auto result = xades.sign(data, "test.xml", token, SignatureLevel::B_B, SignaturePackaging::DETACHED, {});
+    auto result = xades.sign(data, "test.xml", token, SignatureLevel::B_B, SignaturePackaging::Detached, {});
 
     ASSERT_TRUE(result.success) << result.errorMessage;
     ASSERT_GT(result.signedDocument.size(), 5u);
@@ -373,7 +373,7 @@ TEST(XAdESModuleStandalone, RejectsEmptyInput)
     // Token is never touched — sign() returns early on empty input.
     alignas(Pkcs11Token) char storage[sizeof(Pkcs11Token)]{};
     auto& dummyToken = *reinterpret_cast<Pkcs11Token*>(storage);
-    auto result = xades.sign(empty, "test.xml", dummyToken, SignatureLevel::B_B, SignaturePackaging::ENVELOPED, {});
+    auto result = xades.sign(empty, "test.xml", dummyToken, SignatureLevel::B_B, SignaturePackaging::Enveloped, {});
     ASSERT_FALSE(result.success);
     EXPECT_NE(result.errorMessage.find("empty"), std::string::npos);
 }

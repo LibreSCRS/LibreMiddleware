@@ -186,9 +186,9 @@ int main(int argc, char* argv[])
         printf("\n");
 
         // ============================================================
-        // Phase 1: Probe known AIDs
+        // Stage 1: Probe known AIDs
         // ============================================================
-        printf("\n======== PHASE 1: AID PROBING ========\n");
+        printf("\n======== STAGE 1: AID PROBING ========\n");
 
         struct AIDEntry
         {
@@ -213,9 +213,9 @@ int main(int argc, char* argv[])
         }
 
         // ============================================================
-        // Phase 2: Read EF.DIR (MF level)
+        // Stage 2: Read EF.DIR (MF level)
         // ============================================================
-        printf("\n======== PHASE 2: EF.DIR (Application Directory) ========\n");
+        printf("\n======== STAGE 2: EF.DIR (Application Directory) ========\n");
 
         // SELECT MF first
         printf("\n--- SELECT MF ---\n");
@@ -229,10 +229,10 @@ int main(int argc, char* argv[])
         readFileBySFI(conn, 0x1E, "EF.DIR (SFI 30)");
 
         // ============================================================
-        // Phase 3: If PKCS#15 found, read its structure
+        // Stage 3: If PKCS#15 found, read its structure
         // ============================================================
         if (hasPKCS15) {
-            printf("\n======== PHASE 3: PKCS#15 STRUCTURE ========\n");
+            printf("\n======== STAGE 3: PKCS#15 STRUCTURE ========\n");
 
             // Re-select PKCS#15 applet
             conn.transmit({0x00,
@@ -268,7 +268,7 @@ int main(int argc, char* argv[])
             readFileBySFI(conn, 0x11, "EF.ODF (SFI 17)");
             readFileBySFI(conn, 0x12, "EF.TokenInfo (SFI 18)");
         } else {
-            printf("\n======== PHASE 3: SKIPPED (no PKCS#15 applet found) ========\n");
+            printf("\n======== STAGE 3: SKIPPED (no PKCS#15 applet found) ========\n");
 
             // Try reading PKCS#15-like files at MF level anyway
             printf("\nTrying PKCS#15 FIDs at MF level...\n");
@@ -278,9 +278,9 @@ int main(int argc, char* argv[])
         }
 
         // ============================================================
-        // Phase 4: Try to enumerate certificates
+        // Stage 4: Try to enumerate certificates
         // ============================================================
-        printf("\n======== PHASE 4: CERTIFICATE ENUMERATION ========\n");
+        printf("\n======== STAGE 4: CERTIFICATE ENUMERATION ========\n");
 
         // Common cert FIDs
         uint16_t certFids[] = {

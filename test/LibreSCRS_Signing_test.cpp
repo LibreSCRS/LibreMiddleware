@@ -457,9 +457,9 @@ TEST(SigningServiceBridgeTranslationTest, MapsFormatLevelPackagingCorrectly)
     libresign::SigningRequest out;
     LibreSCRS::Signing::detail::translatePublicRequestToLibresign(request, out);
 
-    EXPECT_EQ(out.format, libresign::SignatureFormat::XAdES);
+    EXPECT_EQ(out.format, libresign::SignatureFormat::Xades);
     EXPECT_EQ(out.level, libresign::SignatureLevel::B_LTA);
-    EXPECT_EQ(out.packaging, libresign::SignaturePackaging::DETACHED);
+    EXPECT_EQ(out.packaging, libresign::SignaturePackaging::Detached);
     EXPECT_EQ(out.fileName, "in.xml");
 }
 

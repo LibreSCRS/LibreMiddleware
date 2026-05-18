@@ -58,6 +58,7 @@
 
 #include <LibreSCRS/Auth/PaceSecretKind.h>
 #include <LibreSCRS/Pkcs11/SessionInjection.h>
+#include <LibreSCRS/Secure/Buffer.h>
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/MonitorService.h>
@@ -218,11 +219,10 @@ TEST(Pkcs11InjectE2EGeoTestna, AttachAndSignThroughInjectedSession)
     // would block.
     std::unique_ptr<libresign::Pkcs11Token> token;
     try {
-        token = std::make_unique<libresign::Pkcs11Token>(
-            modulePath(),
-            std::span<const std::uint8_t>{reinterpret_cast<const std::uint8_t*>(split.pin.data()), split.pin.size()},
-            /*keyAlias=*/std::string{}, // empty = first signing key
-            chosenReader, session);
+        LibreSCRS::Secure::Buffer pinBuf(split.pin);
+        token = std::make_unique<libresign::Pkcs11Token>(modulePath(), pinBuf,
+                                                         /*keyAlias=*/std::string{}, // empty = first signing key
+                                                         chosenReader, session);
     } catch (const std::exception& e) {
         latchPinFailureFromException(e.what());
         FAIL() << "Pkcs11Token construction failed: " << e.what()

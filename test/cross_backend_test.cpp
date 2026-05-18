@@ -37,7 +37,7 @@ TEST(CrossBackendTest, BothBackendsRejectInvalidModule)
     SigningRequest req;
     req.document = {'T', 'e', 's', 't'};
     req.fileName = "test.txt";
-    req.format = SignatureFormat::CAdES;
+    req.format = SignatureFormat::Cades;
     req.level = SignatureLevel::B_B;
 
     auto native = createSigningService(Backend::Native);

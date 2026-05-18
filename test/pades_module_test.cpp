@@ -300,7 +300,7 @@ TEST_F(PAdESModuleSoftHSMTest, SignPdf_BB_WithUnicodeVisual)
 
     SigningRequest req;
     req.document = pdf;
-    req.format = SignatureFormat::PAdES;
+    req.format = SignatureFormat::Pades;
     req.level = SignatureLevel::B_B;
     req.visual = v;
 
