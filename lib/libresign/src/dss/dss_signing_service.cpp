@@ -169,7 +169,8 @@ bool DSSSigningService::isAvailable() const
 
 SigningResult DSSSigningService::sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
                                       const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
-                                      const std::string& readerName)
+                                      const std::string& readerName,
+                                      std::shared_ptr<LibreSCRS::SmartCard::CardSession> /*sharedSession*/)
 {
     auto result = manager().ensureRunning();
     if (!result)
@@ -245,7 +246,8 @@ SigningResult DSSSigningService::appendSigner(const SigningRequest& /*request*/,
                                               std::span<const uint8_t> /*originalDocument*/,
                                               const LibreSCRS::Secure::Buffer& /*pin*/,
                                               const std::string& /*pkcs11Module*/, const std::string& /*keyAlias*/,
-                                              const std::string& /*readerName*/)
+                                              const std::string& /*readerName*/,
+                                              std::shared_ptr<LibreSCRS::SmartCard::CardSession> /*sharedSession*/)
 {
     return makeFailure(SignFailureKind::EngineError, "appendSigner not yet implemented in this backend");
 }

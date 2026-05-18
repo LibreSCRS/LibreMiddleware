@@ -351,7 +351,14 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, const st
             case SignatureFormat::Xades:
             case SignatureFormat::Jades:
             case SignatureFormat::AsicE:
-                return appendSigner(request, request.document, {}, pin, pkcs11ModulePath, keyAlias, readerName);
+                // Forward sharedSession to the append-signer dispatcher
+                // so PACE-protected cards (NAM CL etc.) keep their SM
+                // channel across the redirected path. Without this,
+                // re-signing a previously-signed PDF on contactless NAM
+                // would open a standalone PC/SC bind and tear down PACE
+                // before C_Login.
+                return appendSigner(request, request.document, {}, pin, pkcs11ModulePath, keyAlias, readerName,
+                                    std::move(sharedSession));
             case SignatureFormat::Cades:
                 return makeFailure(SignFailureKind::InvalidInput,
                                    "CAdES input is a detached CMS signature (no embedded payload). "
@@ -430,7 +437,8 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, const st
 SigningResult NativeSigningService::appendSigner(const SigningRequest& request, std::span<const uint8_t> priorSignature,
                                                  std::span<const uint8_t> originalDocument,
                                                  const LibreSCRS::Secure::Buffer& pin, const std::string& pkcs11Module,
-                                                 const std::string& keyAlias, const std::string& readerName)
+                                                 const std::string& keyAlias, const std::string& readerName,
+                                                 std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession)
 {
     try {
         auto fmt = inferFormat(priorSignature);
@@ -438,9 +446,13 @@ SigningResult NativeSigningService::appendSigner(const SigningRequest& request, 
             return makeFailure(SignFailureKind::InvalidInput,
                                "appendSigner: cannot infer signature format from prior bytes");
 
-        // Mirror sign()'s Pkcs11Token construction. No sharedSession on the
-        // append path — the public API does not surface it for re-sign yet.
-        auto token = Pkcs11Token(pkcs11Module, pin, keyAlias, readerName);
+        // Mirror sign()'s Pkcs11Token construction. sharedSession (when
+        // forwarded by the bridge or by the sign() auto-detect redirect)
+        // is critical for PACE-protected cards: without it the loaded
+        // PKCS#11 module would open a second standalone PC/SC session
+        // against the same reader and tear down the active SM channel
+        // before C_Login runs.
+        auto token = Pkcs11Token(pkcs11Module, pin, keyAlias, readerName, std::move(sharedSession));
 
         // Wire trust config to TSA/revocation parameters — the new signer
         // inherits the host's CRL/OCSP posture, identical to sign().

@@ -109,12 +109,21 @@ public:
     /// @param keyAlias         CKA_LABEL of the signer key on @p readerName.
     /// @param readerName       full PCSC reader name; same multi-card
     ///                         routing contract as @ref sign.
+    /// @param sharedSession    optional live CardSession to forward into the
+    ///                         loaded PKCS#11 module; identical contract to
+    ///                         @ref sign. PACE-protected cards (NAM CL, RS
+    ///                         eID, eMRTD) require this — without it the
+    ///                         module opens a second standalone PC/SC
+    ///                         session and tears down the host's SM
+    ///                         channel, causing C_Login to fail on the
+    ///                         contactless interface.
     /// @return SigningResult — same shape as @ref sign.
     /// @since 4.2
     virtual SigningResult appendSigner(const SigningRequest& request, std::span<const uint8_t> priorSignature,
                                        std::span<const uint8_t> originalDocument, const LibreSCRS::Secure::Buffer& pin,
                                        const std::string& pkcs11Module, const std::string& keyAlias,
-                                       const std::string& readerName) = 0;
+                                       const std::string& readerName,
+                                       std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession = nullptr) = 0;
 
     virtual bool isAvailable() const = 0;
 };

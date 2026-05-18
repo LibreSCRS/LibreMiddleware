@@ -696,8 +696,12 @@ SigningResult SigningService::appendSigner(const SigningRequest& request, std::s
         return SigningResult::trustStoreUnavailableDiagnosticOnly(std::string{"libresign rejected TrustConfig"});
     }
 
+    // Forward the live display CardSession to the engine so the PKCS#11
+    // path adopts it via SessionAttachment — mandatory for PACE-protected
+    // re-signs (NAM CL / RS eID / eMRTD) where a standalone bind would
+    // tear down the host's SM channel before C_Login.
     auto libResult = service->appendSigner(libReq, priorSignature, originalDocument, pinBuffer, resolvePkcs11Module(),
-                                           keyAlias, session->readerName());
+                                           keyAlias, session->readerName(), session);
 
     if (!libResult.success) {
         const auto classified = detail::classifyLibresignError(libResult);
