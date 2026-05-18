@@ -85,6 +85,14 @@ public:
 
     /// @brief Run a PACE handshake at MF level against @p connection.
     ///
+    /// @note Internal helper; consumers should use
+    ///       @ref LibreSCRS::SmartCard::CardSession::activateChannelFor or
+    ///       @ref LibreSCRS::SmartCard::CardSession::activateChannelWithSm,
+    ///       which dispatch to the appropriate channel factory internally.
+    ///       The @c IConnection parameter type is not part of the installed
+    ///       public surface and this overload is therefore not callable
+    ///       from external SDK consumers.
+    ///
     /// The handshake's plain APDUs (MSE:Set AT, General Authenticate
     /// rounds, Mutual Auth) travel through @p connection directly; only
     /// post-handshake APDUs sent via the returned channel are wrapped in
@@ -111,7 +119,7 @@ public:
     ///         factories so consumers see one unified error idiom.
     ///
     /// @since 4.1
-    [[nodiscard]] static std::expected<std::unique_ptr<PaceChannel>, ChannelActivationError>
+    [[nodiscard]] LIBRESCRS_INTERNAL static std::expected<std::unique_ptr<PaceChannel>, ChannelActivationError>
     establish(LibreSCRS::SmartCard::IConnection& connection, const PACEParams& params,
               LibreSCRS::CancelToken token) noexcept;
 

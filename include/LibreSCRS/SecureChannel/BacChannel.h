@@ -61,6 +61,14 @@ public:
     /// @brief Run a BAC handshake against @p connection and, on success,
     ///        return a ready-to-use @ref BacChannel bound to @p appletAid.
     ///
+    /// @note Internal helper; consumers should use
+    ///       @ref LibreSCRS::SmartCard::CardSession::activateChannelFor or
+    ///       @ref LibreSCRS::SmartCard::CardSession::activateChannelWithSm,
+    ///       which dispatch to the appropriate channel factory internally.
+    ///       The @c IConnection parameter type is not part of the installed
+    ///       public surface and this overload is therefore not callable
+    ///       from external SDK consumers.
+    ///
     /// BAC keys are derived from the three MRZ-Z field components carried
     /// in @p input (ICAO Doc 9303 Part 11 §4.3). The handshake's mutual-
     /// authentication APDUs travel through @p connection directly; only
@@ -84,7 +92,7 @@ public:
     ///         factories so consumers see one unified error idiom.
     ///
     /// @since 4.1
-    [[nodiscard]] static std::expected<std::unique_ptr<BacChannel>, ChannelActivationError>
+    [[nodiscard]] LIBRESCRS_INTERNAL static std::expected<std::unique_ptr<BacChannel>, ChannelActivationError>
     establish(LibreSCRS::SmartCard::IConnection& connection, LibreSCRS::SmartCard::AppletAid appletAid,
               const BacInput& input, LibreSCRS::CancelToken token) noexcept;
 
