@@ -293,6 +293,26 @@ bool CardSession::isDead() const noexcept
     return d->dead.load(std::memory_order_acquire);
 }
 
+void CardSession::clearActiveChannel() noexcept
+{
+    // Take the session mutex so the teardown is ordered against any in-
+    // flight activateChannel*() / transmitThroughActiveChannel() on
+    // another thread. close() drives the channel to ChannelState::Closed
+    // and zeroises the SM key material via SecureMessaging's dtor before
+    // the unique_ptr release runs the virtual destructor.
+    try {
+        std::lock_guard lock(d->sessionMutex);
+        if (d->activeChannel) {
+            d->activeChannel->close();
+            d->activeChannel.reset();
+        }
+    } catch (...) {
+        // noexcept contract: swallow any exception from close()/reset().
+        // The worst case is a leaked channel which is preferable to
+        // std::terminate.
+    }
+}
+
 std::expected<ActiveChannelHolder, LibreSCRS::SecureChannel::ChannelActivationError>
 CardSession::activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token)
 {

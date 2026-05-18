@@ -8,6 +8,7 @@
 // (rather than mirroring) eliminates the ABI-drift risk of two parallel
 // definitions falling out of sync.
 #include <LibreSCRS/Pkcs11/AttachHook.h>
+#include <LibreSCRS/SmartCard/CardSession.h>
 
 #include <dlfcn.h>
 
@@ -112,6 +113,21 @@ void SessionAttachment::detach() noexcept
     auto* detachFn = reinterpret_cast<DetachFn>(::dlsym(moduleHandle, "librescrs_pkcs11_detach_session"));
     if (detachFn && !reader.empty())
         (void)detachFn(reader.c_str());
+
+    // CRITICAL ordering: drop any secure channel installed on the session
+    // BEFORE dlclose. The PKCS#11 module statically links the SecureChannel
+    // TU and therefore ships its own copy of PaceChannel / BacChannel /
+    // PlainChannel vtables. A channel established by the module-side
+    // PKCS#15 provider holds a vptr into the module image. If we dlclose
+    // first, the host's later ~CardSession invokes the channel's virtual
+    // destructor through that now-unmapped vtable and crashes.
+    //
+    // heldSession is a shared_ptr alias of the host's CardSession — all
+    // other aliases (SignPage::session, the worker lambda's captured
+    // session, SigningService::sign's parameter) observe the same Impl,
+    // so clearing the channel here clears it for every alias.
+    if (heldSession)
+        heldSession->clearActiveChannel();
 
     ::dlclose(moduleHandle);
     moduleHandle = nullptr;

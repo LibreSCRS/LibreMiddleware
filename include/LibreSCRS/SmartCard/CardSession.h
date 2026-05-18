@@ -298,6 +298,21 @@ public:
     /// @brief True once @ref markDead has fired.
     [[nodiscard]] bool isDead() const noexcept;
 
+    /// @brief Close and release the currently installed secure channel, if
+    ///        any. The session remains usable; a subsequent
+    ///        @ref activateChannelFor / @ref activateChannelWithSm call will
+    ///        rebuild a fresh channel.
+    ///
+    /// @note This is the explicit teardown hook for callers that have
+    ///       reason to drop the channel ahead of session destruction —
+    ///       most notably the PKCS#11 attachment path, which must release
+    ///       any channel whose vtable resides in the soon-to-be-`dlclose`d
+    ///       module before the module is unmapped. Without this, the
+    ///       channel's virtual destructor dispatches through an unmapped
+    ///       vtable at session destruction time and crashes.
+    /// @since 4.1
+    void clearActiveChannel() noexcept;
+
 private:
     // Detail-namespace free functions are the internal access points for
     // test factories (makeDetachedCardSession) and plugin/signing bridges
