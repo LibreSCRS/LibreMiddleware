@@ -25,17 +25,31 @@ class CardSession;
 
 namespace Internal {
 
-/// @brief Cross-TU bridge: CardSession defines this to forward through its
-///        active channel without exposing channel internals to the holder.
-APDUResponse transmitThroughActiveChannel(CardSession& session, const APDUCommand& cmd, LibreSCRS::CancelToken token);
+/// @brief Friend-only access seam to a @ref CardSession's active channel.
+///
+/// All cross-TU bridge entry points that need to reach the session's
+/// `Impl::activeChannel` slot (the APDU forwarding path and the live-
+/// channel pointer surfaced through @ref ActiveChannelHolder::activeChannel)
+/// live here as static methods. The struct is forward-declared in the
+/// public @ref CardSession header so the @c CardSession class can befriend
+/// it without leaking @ref APDUCommand / @ref APDUResponse or the helper
+/// symbol names into the public SDK include tree.
+///
+/// @since 4.1
+struct ActiveChannelAccessor
+{
+    /// @brief Forwards @p cmd through @p session's currently installed
+    ///        secure channel and returns the unwrapped response. Returns
+    ///        sentinel SW 0x6F00 if no channel is installed.
+    [[nodiscard]] static APDUResponse transmit(CardSession& session, const APDUCommand& cmd,
+                                               LibreSCRS::CancelToken token);
 
-/// @brief Cross-TU bridge: returns a pointer to the session's currently
-///        installed @ref LibreSCRS::SecureChannel::ISecureChannel, or
-///        @c nullptr if no channel is active. Used by ActiveChannelHolder
-///        to surface the channel through @ref ActiveChannelHolder::activeChannel
-///        so that callers can invoke channel-level mutators (notably
-///        @ref ISecureChannel::replaceKeys after Chip Authentication).
-LibreSCRS::SecureChannel::ISecureChannel* activeChannelOf(CardSession& session) noexcept;
+    /// @brief Returns a pointer to @p session's currently installed
+    ///        @ref LibreSCRS::SecureChannel::ISecureChannel, or @c nullptr
+    ///        if no channel is active. Used by @ref ActiveChannelHolder to
+    ///        expose the channel through @ref ActiveChannelHolder::activeChannel.
+    [[nodiscard]] static LibreSCRS::SecureChannel::ISecureChannel* active(CardSession& session) noexcept;
+};
 
 /// @brief Friend-only factory invoked by CardSession to construct a holder
 ///        with the appropriate lock + transaction it has already acquired.

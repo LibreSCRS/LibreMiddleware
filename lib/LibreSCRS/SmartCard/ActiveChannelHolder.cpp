@@ -51,7 +51,7 @@ public:
             closed.sw2 = 0x00;
             return closed;
         }
-        return Internal::transmitThroughActiveChannel(*session, cmd, std::move(token));
+        return Internal::ActiveChannelAccessor::transmit(*session, cmd, std::move(token));
     }
 
     void release() noexcept
@@ -75,7 +75,7 @@ public:
         if (!active || !session) {
             return nullptr;
         }
-        return Internal::activeChannelOf(*session);
+        return Internal::ActiveChannelAccessor::active(*session);
     }
 
 private:

@@ -62,3 +62,39 @@ target_include_directories(Pkcs15CardInjectBindTests PRIVATE
 target_compile_definitions(Pkcs15CardInjectBindTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 
 gtest_discover_tests(Pkcs15CardInjectBindTests)
+
+# CrossProviderCoordinationTests — regression anchor for the joint
+# contract between SessionRegistry::peek, OpenScPKCS11Provider::probe,
+# Pkcs15PKCS11Provider::probe, and CardSession::activateChannel*. Locks
+# in the cross-provider invariants without hardware. Gated on
+# LIBRESCRS_VENDOR_OPENSC because the OpenSc provider lives behind that
+# option; the in-tree invariants it pins down are only at risk when that
+# provider is in the picture.
+if(LIBRESCRS_VENDOR_OPENSC)
+    add_executable(CrossProviderCoordinationTests
+        CrossProviderCoordinationTests.cpp
+        ${PROJECT_SOURCE_DIR}/lib/pkcs11/src/pkcs11_card.cpp
+        ${PROJECT_SOURCE_DIR}/lib/pkcs11/src/pkcs11_slot.cpp
+        ${PROJECT_SOURCE_DIR}/lib/pkcs11/src/slot_id_hash.cpp
+    )
+
+    target_link_libraries(CrossProviderCoordinationTests PRIVATE
+        PKCS15
+        librescrs-opensc-pkcs11
+        LibreSCRS::SmartCard
+        LibreSCRS::Secure
+        GTest::gtest_main
+    )
+
+    target_include_directories(CrossProviderCoordinationTests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src
+        ${PROJECT_SOURCE_DIR}/lib/pkcs11/include
+        ${PROJECT_SOURCE_DIR}/lib/pkcs11/src
+        ${PROJECT_SOURCE_DIR}/lib/opensc-pkcs11/include
+        ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+    )
+
+    target_compile_definitions(CrossProviderCoordinationTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+
+    gtest_discover_tests(CrossProviderCoordinationTests)
+endif()

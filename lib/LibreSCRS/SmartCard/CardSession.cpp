@@ -3,6 +3,7 @@
 
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
+#include <LibreSCRS/SmartCard/detail/ChannelInjection.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
 
 #include <LibreSCRS/Auth/AuthRequirement.h>
@@ -168,6 +169,25 @@ std::shared_ptr<CardSession> makeDetachedCardSession(std::string readerName)
 std::uint64_t sessionGeneration(const CardSession& session) noexcept
 {
     return session.d->generation;
+}
+
+void ChannelInjector::installForTesting(CardSession& session,
+                                        std::unique_ptr<LibreSCRS::SecureChannel::ISecureChannel> channel) noexcept
+{
+    // Mirrors the locking discipline of the activation paths so the install
+    // is ordered against any concurrent hasLiveSecureChannel /
+    // clearActiveChannel call from another thread. Any previously installed
+    // channel is dropped without an explicit close(); the regression tests
+    // that use this helper own the channel lifecycle and arrange teardown
+    // themselves when required.
+    try {
+        std::lock_guard lock(session.d->sessionMutex);
+        session.d->activeChannel = std::move(channel);
+    } catch (...) {
+        // noexcept contract: swallow any exception. Lock acquisition
+        // failure is the only realistic path here and is harmless for a
+        // test-only helper — the assignment simply does not happen.
+    }
 }
 
 } // namespace detail
@@ -352,7 +372,7 @@ bool CardSession::isDead() const noexcept
 void CardSession::clearActiveChannel() noexcept
 {
     // Take the session mutex so the teardown is ordered against any in-
-    // flight activateChannel*() / transmitThroughActiveChannel() on
+    // flight activateChannel*() / ActiveChannelAccessor::transmit on
     // another thread. close() drives the channel to ChannelState::Closed
     // and zeroises the SM key material via SecureMessaging's dtor before
     // the unique_ptr release runs the virtual destructor.
@@ -768,7 +788,7 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
 
 namespace Internal {
 
-APDUResponse transmitThroughActiveChannel(CardSession& session, const APDUCommand& cmd, LibreSCRS::CancelToken token)
+APDUResponse ActiveChannelAccessor::transmit(CardSession& session, const APDUCommand& cmd, LibreSCRS::CancelToken token)
 {
     auto& impl = *session.d;
     if (!impl.activeChannel) {
@@ -780,7 +800,7 @@ APDUResponse transmitThroughActiveChannel(CardSession& session, const APDUComman
     return impl.activeChannel->transmit(cmd, std::move(token));
 }
 
-LibreSCRS::SecureChannel::ISecureChannel* activeChannelOf(CardSession& session) noexcept
+LibreSCRS::SecureChannel::ISecureChannel* ActiveChannelAccessor::active(CardSession& session) noexcept
 {
     return session.d->activeChannel.get();
 }

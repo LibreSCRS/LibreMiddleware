@@ -36,26 +36,35 @@ namespace LibreSCRS::SmartCard {
 
 class CardSession;
 
-namespace Internal {
-struct APDUCommand;
-struct APDUResponse;
-APDUResponse transmitThroughActiveChannel(CardSession& session, const APDUCommand& cmd, LibreSCRS::CancelToken token);
-LibreSCRS::SecureChannel::ISecureChannel* activeChannelOf(CardSession& session) noexcept;
-} // namespace Internal
-
-// Forward-declare the LM-internal access points the public CardSession
+// Forward-declare LM-internal access points the public CardSession
 // befriends. The actual declarations and implementations live in internal-
 // only headers guarded by `#ifndef LIBRESCRS_INTERNAL_BUILD` so external
-// consumers never see the underlying types (the implementation-detail
-// `LibreSCRS::SmartCard::Internal::PCSCConnection` no longer appears in this public header at
-// all — it is reached through @c detail::PcscBridge from internal sources
-// only). A friend declaration targeting `detail::name(...)` / `detail::Type`
-// still needs the namespace to exist for the friend lookup to match.
+// consumers never see the underlying types or symbol names (notably
+// @c LibreSCRS::SmartCard::Internal::PCSCConnection is reached through
+// @c detail::PcscBridge from internal sources only). A friend declaration
+// targeting `Namespace::name(...)` / `Namespace::Type` still needs the
+// enclosing namespace to exist for the friend lookup to match — the
+// namespace declarations below are intentionally empty.
 /// @cond internal
+namespace Internal {
+// Friend-only access struct for the active-channel cross-TU bridge.
+// Methods are declared and defined in the internal-build-guarded header
+// `LibreSCRS/SmartCard/ActiveChannelHolderInternal.h`; the forward
+// declaration here exists solely so @c CardSession can befriend it
+// without leaking the underlying APDU types into the public surface.
+struct ActiveChannelAccessor;
+} // namespace Internal
+
 namespace detail {
 LIBRESCRS_PUBLIC_API std::shared_ptr<CardSession> makeDetachedCardSession(std::string readerName);
 struct PcscBridge;
 LIBRESCRS_PUBLIC_API std::uint64_t sessionGeneration(const CardSession& session) noexcept;
+// Friend-only access struct for the test-channel injection seam. Method
+// is declared and defined in the internal-build-guarded header
+// `LibreSCRS/SmartCard/detail/ChannelInjection.h`. Forward-declared here
+// so @c CardSession can befriend it without exporting the helper symbol
+// or its parameter type into the public SDK surface.
+struct ChannelInjector;
 } // namespace detail
 /// @endcond
 
@@ -347,10 +356,8 @@ private:
     friend std::shared_ptr<CardSession> detail::makeDetachedCardSession(std::string readerName);
     friend struct detail::PcscBridge;
     friend std::uint64_t detail::sessionGeneration(const CardSession& session) noexcept;
-    friend Internal::APDUResponse Internal::transmitThroughActiveChannel(CardSession& session,
-                                                                         const Internal::APDUCommand& cmd,
-                                                                         LibreSCRS::CancelToken token);
-    friend LibreSCRS::SecureChannel::ISecureChannel* Internal::activeChannelOf(CardSession& session) noexcept;
+    friend struct detail::ChannelInjector;
+    friend struct Internal::ActiveChannelAccessor;
 
     CardSession();
     /// @brief Private constructor used by @ref open and the detail factories.
