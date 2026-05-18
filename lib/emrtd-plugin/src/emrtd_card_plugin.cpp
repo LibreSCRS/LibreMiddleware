@@ -12,6 +12,7 @@
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
 #include <LibreSCRS/SecureChannel/ISecureChannel.h>
 #include <LibreSCRS/SecureChannel/SessionKeys.h>
+#include <LibreSCRS/SecureChannel/detail/ChannelStateMutator.h>
 #include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
@@ -505,7 +506,7 @@ private:
                     newKeys.cipher = (caResult.newAlgorithm == emrtd::crypto::SMAlgorithm::DES3)
                                          ? LibreSCRS::SecureChannel::SmCipher::Des3
                                          : LibreSCRS::SecureChannel::SmCipher::Aes;
-                    channel->replaceKeys(std::move(newKeys));
+                    LibreSCRS::SecureChannel::detail::ChannelStateMutator::replaceKeys(*channel, std::move(newKeys));
                 }
             }
         }

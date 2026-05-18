@@ -41,6 +41,24 @@ public:
 
     void close() override;
 
+protected:
+    /// @brief No-op: @ref PlainChannel has no SM tunnel and no cross-
+    ///        applet reuse. The activation path destroys and recreates a
+    ///        @ref PlainChannel for each applet switch, so the bound AID
+    ///        is constructor-fixed for the channel's lifetime.
+    /// @since 4.1
+    void setCurrentApplet(LibreSCRS::SmartCard::AppletAid /*aid*/) noexcept override
+    {
+        // intentionally empty — applet binding is constructor-fixed
+    }
+
+    /// @brief No-op: @ref PlainChannel has no SM session keys to rotate.
+    /// @since 4.1
+    void replaceKeys(SessionKeys /*keys*/) noexcept override
+    {
+        // intentionally empty — no SM key material exists on a plain channel
+    }
+
 private:
     LibreSCRS::SmartCard::IConnection& connection;
     LibreSCRS::SmartCard::AppletAid appletAid;

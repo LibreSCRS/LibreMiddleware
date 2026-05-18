@@ -210,6 +210,29 @@ public:
     ///       accessor on a moved-from session is undefined behaviour.
     [[nodiscard]] bool isConnected() const noexcept;
 
+    /// @brief True when this session currently owns an active secure-
+    ///        messaging channel (PACE / BAC) in
+    ///        @ref LibreSCRS::SecureChannel::ChannelState::Open.
+    ///
+    /// Cross-provider coordination check: hosts and PKCS#11 providers that
+    /// open or consume a second PC/SC handle against the same physical
+    /// reader MUST defer when this returns @c true, otherwise the card-
+    /// side SM tunnel may be invalidated by reader-level multiplexing
+    /// (notably observed on dual-slot contactless readers). Plain channels
+    /// always read as @c false here; only channels whose
+    /// @ref LibreSCRS::SecureChannel::ISecureChannel::carriesSm returns
+    /// true are counted.
+    ///
+    /// @note Acquires the session mutex for the duration of the call so it
+    ///       is safe to invoke concurrently with activation paths. On
+    ///       lock acquisition failure (allocator pressure inside
+    ///       @c std::mutex) the call returns @c false and skips the
+    ///       check — the noexcept contract is preserved at the cost of a
+    ///       conservative answer for a coordination predicate. Calling
+    ///       any accessor on a moved-from session is undefined behaviour.
+    /// @since 4.1
+    [[nodiscard]] bool hasLiveSecureChannel() const noexcept;
+
     // -- Cross-plugin secure-channel coordination (4.1+) --------------------
 
     /// @brief Install or replace the credential provider used by

@@ -42,6 +42,11 @@ void BacChannel::close()
     pImpl->close();
 }
 
+void BacChannel::setCurrentApplet(LibreSCRS::SmartCard::AppletAid aid) noexcept
+{
+    pImpl->setCurrentApplet(std::move(aid));
+}
+
 void BacChannel::replaceKeys(SessionKeys keys) noexcept
 {
     pImpl->replaceKeys(std::move(keys));

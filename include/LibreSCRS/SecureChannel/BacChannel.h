@@ -49,15 +49,48 @@ public:
 
     void close() override;
 
+    /// @brief BAC-derived channels maintain a card-side SM tunnel.
+    /// @return Always @c true.
+    /// @since 4.1
+    [[nodiscard]] bool carriesSm() const noexcept override
+    {
+        return true;
+    }
+
+    /// @brief BAC channels do NOT support cross-applet reuse: the BAC card
+    ///        matrix (classical eMRTD passports) is single-applet, so the
+    ///        AID is constructor-bound and cross-applet switches fall
+    ///        through to a fresh handshake.
+    /// @return Always @c false (inherited default kept explicit for
+    ///         documentation; the base default would suffice).
+    /// @since 4.1
+    [[nodiscard]] bool supportsCrossAppletReuse() const noexcept override
+    {
+        return false;
+    }
+
+protected:
+    /// @brief Update the channel's @ref currentApplet to reflect a new AID.
+    ///
+    /// Reached through
+    /// @ref LibreSCRS::SecureChannel::detail::ChannelStateMutator from
+    /// LM-internal sources only.
+    /// @since 4.1
+    void setCurrentApplet(LibreSCRS::SmartCard::AppletAid aid) noexcept override;
+
     /// @brief Replace the channel's SM session keys with @p keys.
     ///
     /// BAC has no Chip-Authentication-style key rotation in the classical
     /// ICAO Doc 9303 Part 11 flow, but the override exists so callers can
-    /// treat all SM channels uniformly. Symmetric with @ref PaceChannel::replaceKeys.
+    /// treat all SM channels uniformly. Symmetric with
+    /// @ref PaceChannel::replaceKeys. Reached through
+    /// @ref LibreSCRS::SecureChannel::detail::ChannelStateMutator from
+    /// LM-internal sources only.
     ///
     /// @since 4.1
     void replaceKeys(SessionKeys keys) noexcept override;
 
+public:
     /// @brief Run a BAC handshake against @p connection and, on success,
     ///        return a ready-to-use @ref BacChannel bound to @p appletAid.
     ///

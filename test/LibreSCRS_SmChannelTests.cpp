@@ -21,6 +21,7 @@
 #include <LibreSCRS/SecureChannel/BacChannel.h>
 #include <LibreSCRS/SecureChannel/PaceChannel.h>
 #include <LibreSCRS/SecureChannel/SessionKeys.h>
+#include <LibreSCRS/SecureChannel/detail/ChannelStateMutator.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
 
 #include "apdu.h"
@@ -268,11 +269,12 @@ TEST(PaceChannelTests, SetCurrentAppletUpdatesReportedAid)
     PaceChannel channel(fakeConn, AppletAid{}, makeFakeAesKeys());
     EXPECT_TRUE(channel.currentApplet().empty());
 
-    channel.setCurrentApplet(makeNamEmrtdAid());
+    using LibreSCRS::SecureChannel::detail::ChannelStateMutator;
+    ChannelStateMutator::setCurrentApplet(channel, makeNamEmrtdAid());
     EXPECT_EQ(channel.currentApplet(), makeNamEmrtdAid());
 
     AppletAid otherAid{0xA0, 0x00, 0x00, 0x00, 0x63, 0x50, 0x4B, 0x43, 0x53, 0x2D, 0x31, 0x35};
-    channel.setCurrentApplet(otherAid);
+    ChannelStateMutator::setCurrentApplet(channel, otherAid);
     EXPECT_EQ(channel.currentApplet(), otherAid);
 }
 

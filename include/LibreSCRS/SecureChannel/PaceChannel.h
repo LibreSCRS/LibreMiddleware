@@ -60,29 +60,50 @@ public:
 
     void close() override;
 
+    /// @brief PACE-derived channels maintain a card-side SM tunnel.
+    /// @return Always @c true.
+    /// @since 4.1
+    [[nodiscard]] bool carriesSm() const noexcept override
+    {
+        return true;
+    }
+
+    /// @brief PACE SM is session-scoped at the card OS layer (BSI TR-03110
+    ///        §3), so a wrapped SELECT routes the target applet through
+    ///        the existing tunnel without a fresh handshake.
+    /// @return Always @c true.
+    /// @since 4.1
+    [[nodiscard]] bool supportsCrossAppletReuse() const noexcept override
+    {
+        return true;
+    }
+
+protected:
     /// @brief Update the channel's @ref currentApplet to reflect the AID
-    ///        targeted by the most recent successful wrapped SELECT.
+    ///        targeted by the most recent successful wrapped @c SELECT.
     ///
-    /// Called by @ref LibreSCRS::SmartCard::CardSession after issuing a
-    /// wrapped `SELECT <aid>` through this channel (Cases 2 / 3 of
-    /// @ref CardSession::activateChannelWithSm). PACE SM is session-
-    /// scoped at the card OS layer; the AID is mutable channel state, not
-    /// a constructor-bound identity. Not part of the consumer API.
+    /// Called by @ref LibreSCRS::SmartCard::CardSession through
+    /// @ref LibreSCRS::SecureChannel::detail::ChannelStateMutator after
+    /// issuing a wrapped `SELECT <aid>` through this channel. PACE SM is
+    /// session-scoped at the card OS layer; the AID is mutable channel
+    /// state, not a constructor-bound identity.
     ///
     /// @since 4.1
-    void setCurrentApplet(LibreSCRS::SmartCard::AppletAid aid) noexcept;
+    void setCurrentApplet(LibreSCRS::SmartCard::AppletAid aid) noexcept override;
 
     /// @brief Replace the channel's SM session keys with @p keys.
     ///
     /// Called after Chip Authentication (BSI TR-03110 §4.4) derives fresh
-    /// CA-bound keys. The previous SM keys are zeroised through the
-    /// underlying primitive's destructor before installation. Idempotent
-    /// and leaves the channel in @ref ChannelState::Open on success.
-    /// Not part of the consumer API.
+    /// CA-bound keys, through
+    /// @ref LibreSCRS::SecureChannel::detail::ChannelStateMutator. The
+    /// previous SM keys are zeroised through the underlying primitive's
+    /// destructor before installation. Idempotent and leaves the channel
+    /// in @ref ChannelState::Open on success.
     ///
     /// @since 4.1
     void replaceKeys(SessionKeys keys) noexcept override;
 
+public:
     /// @brief Run a PACE handshake at MF level against @p connection.
     ///
     /// @note Internal helper; consumers should use

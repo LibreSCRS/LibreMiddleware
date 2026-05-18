@@ -191,12 +191,14 @@ endif()
 # because SmartCard PUBLIC-links it for the CardSession.h surface.
 file(GLOB LIBRESCRS_SECURECHANNEL_PUBLIC_HEADERS CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/include/LibreSCRS/SecureChannel/*.h"
+    "${PROJECT_SOURCE_DIR}/include/LibreSCRS/SecureChannel/detail/*.h"
 )
 add_library(LibreSCRS_SecureChannel ${LIBREMIDDLEWARE_LIB_TYPE}
     SecureChannel/plain_channel.cpp
     SecureChannel/pace_channel.cpp
     SecureChannel/pace_params.cpp
     SecureChannel/bac_channel.cpp
+    SecureChannel/channel_state_mutator.cpp
     SecureChannel/session_keys.cpp
     ${LIBRESCRS_SECURECHANNEL_PUBLIC_HEADERS}
 )
