@@ -6104,14 +6104,17 @@ mz_bool mz_zip_writer_add_mem_ex_v2(mz_zip_archive *pZip, const char *pArchive_n
     if ((int)level_and_flags < 0)
         level_and_flags = MZ_DEFAULT_LEVEL;
 
-    if (uncomp_size || (buf_size && !(level_and_flags & MZ_ZIP_FLAG_COMPRESSED_DATA)))
-        bit_flags |= MZ_ZIP_LDH_BIT_FLAG_HAS_LOCATOR;
-
     if (!(level_and_flags & MZ_ZIP_FLAG_ASCII_FILENAME))
         bit_flags |= MZ_ZIP_GENERAL_PURPOSE_BIT_FLAG_UTF8;
 
     level = level_and_flags & 0xF;
     store_data_uncompressed = ((!level) || (level_and_flags & MZ_ZIP_FLAG_COMPRESSED_DATA));
+
+    /* HAS_LOCATOR is set later, after the uncomp_size<=3 short-input
+     * fall-back has had a chance to flip the path to STORED, so we never
+     * end up with STORED + trailing data descriptor (rejected by DSS
+     * SecureContainerHandler with "only DEFLATED entries can have EXT
+     * descriptor"). See the deferred bit_flags |= … assignment below. */
 
     if ((!pZip) || (!pZip->m_pState) || (pZip->m_zip_mode != MZ_ZIP_MODE_WRITING) || ((buf_size) && (!pBuf)) || (!pArchive_name) || ((comment_size) && (!pComment)) || (level > MZ_UBER_COMPRESSION))
         return mz_zip_set_error(pZip, MZ_ZIP_INVALID_PARAMETER);
@@ -6166,6 +6169,16 @@ mz_bool mz_zip_writer_add_mem_ex_v2(mz_zip_archive *pZip, const char *pArchive_n
 			store_data_uncompressed = MZ_TRUE;
 		}
 	}
+
+    /* LibreSCRS local patch: deferred HAS_LOCATOR — only set the
+     * data-descriptor bit when we ACTUALLY need a trailing descriptor
+     * (DEFLATED entries whose comp_size is unknown before the stream
+     * finishes). STORED entries with size known up-front rewrite the
+     * local header in place after the data is written, so they MUST NOT
+     * carry HAS_LOCATOR — DSS 6.4 SecureContainerHandler rejects STORED
+     * + EXT descriptor entries from ASiC-E containers. */
+    if (!store_data_uncompressed && (uncomp_size || (buf_size && !(level_and_flags & MZ_ZIP_FLAG_COMPRESSED_DATA))))
+        bit_flags |= MZ_ZIP_LDH_BIT_FLAG_HAS_LOCATOR;
 
     archive_name_size = strlen(pArchive_name);
     if (archive_name_size > MZ_UINT16_MAX)
@@ -6323,12 +6336,10 @@ mz_bool mz_zip_writer_add_mem_ex_v2(mz_zip_archive *pZip, const char *pArchive_n
     pZip->m_pFree(pZip->m_pAlloc_opaque, pComp);
     pComp = NULL;
 
-    if (uncomp_size)
+    if (uncomp_size && (bit_flags & MZ_ZIP_LDH_BIT_FLAG_HAS_LOCATOR))
     {
         mz_uint8 local_dir_footer[MZ_ZIP_DATA_DESCRIPTER_SIZE64];
         mz_uint32 local_dir_footer_size = MZ_ZIP_DATA_DESCRIPTER_SIZE32;
-
-        MZ_ASSERT(bit_flags & MZ_ZIP_LDH_BIT_FLAG_HAS_LOCATOR);
 
         MZ_WRITE_LE32(local_dir_footer + 0, MZ_ZIP_DATA_DESCRIPTOR_ID);
         MZ_WRITE_LE32(local_dir_footer + 4, uncomp_crc32);
@@ -6351,6 +6362,27 @@ mz_bool mz_zip_writer_add_mem_ex_v2(mz_zip_archive *pZip, const char *pArchive_n
             return MZ_FALSE;
 
         cur_archive_file_ofs += local_dir_footer_size;
+    }
+    else if (uncomp_size && store_data_uncompressed)
+    {
+        /* LibreSCRS local patch: STORED-with-known-size path — rewrite the
+         * local file header in place with the populated CRC and sizes so
+         * readers (DSS SecureContainerHandler in particular) don't need a
+         * trailing data descriptor. The header was written with zeros
+         * upstream because the upstream design always sets HAS_LOCATOR;
+         * with the descriptor suppressed (see the bit_flags-set guard
+         * above) we have to back-fill the local header now. */
+        mz_uint8 fixed_header[MZ_ZIP_LOCAL_DIR_HEADER_SIZE];
+        if (!mz_zip_writer_create_local_dir_header(pZip, fixed_header, (mz_uint16)archive_name_size,
+                                                   pExtra_data != NULL ? (mz_uint16)(extra_size + user_extra_data_len)
+                                                                       : (mz_uint16)user_extra_data_len,
+                                                   uncomp_size, comp_size, uncomp_crc32, method, bit_flags, dos_time,
+                                                   dos_date))
+            return mz_zip_set_error(pZip, MZ_ZIP_INTERNAL_ERROR);
+
+        if (pZip->m_pWrite(pZip->m_pIO_opaque, local_dir_header_ofs, fixed_header, sizeof(fixed_header))
+            != sizeof(fixed_header))
+            return mz_zip_set_error(pZip, MZ_ZIP_FILE_WRITE_FAILED);
     }
 
     if (pExtra_data != NULL)

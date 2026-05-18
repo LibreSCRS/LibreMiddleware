@@ -15,10 +15,10 @@
 #
 # Runs after LM build; scans libLibreSCRS_*.a for:
 #   1) T-binding (global text) symbols whose demangled name contains
-#      `::Impl::` — the narrow guard originally added in Phase 3.
+#      `::Impl::`.
 #   2) W/V-binding (weak / vague-linkage) symbols whose demangled name is a
 #      `vtable for` / `typeinfo for` / `typeinfo name for` entry containing
-#      `::Impl` as a word segment — the widened guard added in Phase 7.4.
+#      `::Impl` as a word segment.
 #
 # Fails the build if any leaking symbol is found.
 #
@@ -29,38 +29,23 @@
 #     mis-behave — typeinfo identity depends on symbol interposition.
 #   - `dynamic_cast<>` across the SO boundary fails.
 #
-# Convention: binary-scanning guard — sibling of LibreCelik's
-# ci/scripts/check-api-boundary.sh (source-grep guard). Both live under
-# ci/scripts/ in their respective repos.
-#
 # Portability: uses `nm -U` which is supported by both GNU binutils and
 # BSD (macOS cctools) nm as the defined-only flag. `--defined-only` is
 # GNU-only and would break the macOS CI runner.
 #
-# TODO(phase-7): archive glob currently matches only `libLibreSCRS_*.a`.
-# Bucket-C archives (libSmartCard.a, libCardPlugin.a, libEMRTD.a, etc.)
-# are not yet renamed; widen once Phase 7 LC migration completes. When
-# that lands, bump EXPECTED_ARCHIVES below to match the new set.
+# Scope note: archive glob currently matches only `libLibreSCRS_*.a`.
+# Other archives (libSmartCard.a, libCardPlugin.a, libEMRTD.a, etc.)
+# are not yet renamed; widen and bump EXPECTED_ARCHIVES when they are.
 #
-# Tier 4 update (2026-04-30): EXPECTED_ARCHIVES bumped to 6 to cover
-# libLibreSCRS_Certificate.a + libLibreSCRS_Trust.a added during the
-# 4.0 hardening cycle. A known W/V (vague-linkage) leak exists in
-# libLibreSCRS_Trust.a from `std::shared_ptr<TrustStoreService::Impl>`
-# template instantiations (the Tier-3 generation-counter observer uses
-# shared-pimpl ownership for async-task lifetime correctness). Static
-# archives are not affected at link time; the leak would matter only
-# after the Phase 7 .so migration. We allow-list this one symbol-family
-# below so the guard remains effective for genuine new T-binding leaks
-# while documenting the pre-existing residual.
-#
-# 2026-05-07 update: same residual class observed in libLibreSCRS_Auth.a
-# from `std::make_shared<CancelToken::Impl>()` in CancelSource's ctor —
-# token() returns a CancelToken that shares the Impl with CancelSource,
-# so shared-pimpl ownership is part of the public semantics here too.
-# Allow-listed alongside Trust; same Phase 7 SO-migration follow-up
-# applies. Verified hidden-weak in the .o (`readelf -s`: WEAK HIDDEN)
-# and absent from every linked .so on Linux + every linked dylib on
-# macOS — confirming the residual is .a-level only.
+# Known residuals (allow-listed below): vague-linkage leaks from
+# `std::shared_ptr<TrustStoreService::Impl>` and
+# `std::shared_ptr<CancelToken::Impl>` template instantiations.
+# Shared-pimpl ownership is part of the public semantics in both cases
+# (TrustStoreService's async generation-counter observer; CancelSource
+# and CancelToken sharing Impl through token()). Symbols are emitted
+# WEAK HIDDEN in their respective .cpp.o files and are absent from every
+# linked .so on Linux + every linked dylib on macOS — confirmed residual
+# is .a-level only.
 
 set -euo pipefail
 
@@ -145,8 +130,8 @@ fi
 # Linux branch — scan static archives (GCC visibility propagates to .a).
 
 # Exact count of public libLibreSCRS_*.a archives expected. Fails LOUD
-# (not silently green) when the set drifts — e.g., Phase 7 LC migration
-# renames bucket-C archives, or a new public library is added / removed.
+# (not silently green) when the set drifts — e.g., when an archive is
+# renamed, or a new public library is added or removed.
 EXPECTED_ARCHIVES=8
 
 leaks=0
@@ -170,10 +155,9 @@ while IFS= read -r archive; do
     # (LIBRESCRS_INTERNAL on the class doesn't propagate to static-member
     # symbols, and applying the attribute on the function declaration is a
     # no-op in this position on GCC 13/14). Refactoring to anonymous-namespace
-    # would require breaking the private nested type, which we deferred. The
-    # Tier 4 polish pass acknowledges this as a static-archive-only residual
-    # (.a archives don't expose this symbol at link time). Re-evaluate when
-    # Phase 7 migrates LC to .so plugins.
+    # would require breaking the private nested type. Accepted as a
+    # static-archive-only residual (.a archives don't expose this symbol
+    # at link time); re-evaluate before any .so migration that exposes it.
     if [[ "$(basename "$archive")" == "libLibreSCRS_Trust.a" ]]; then
         t_leaks=$(printf '%s\n' "$t_leaks" \
             | grep -v '^LibreSCRS::Trust::TrustStoreService::Impl::runWorker' \
@@ -194,10 +178,10 @@ while IFS= read -r archive; do
         | sort -u || true)
 
     # ALLOW-LIST: std::shared_ptr<TrustStoreService::Impl> inplace-deleter
-    # vtable/typeinfo. The shared-pimpl pattern is a deliberate Tier-3 design
+    # vtable/typeinfo. The shared-pimpl pattern is a deliberate design
     # choice (async tasks must be able to extend Impl lifetime). Static
     # archives don't surface these symbols to the linker. See header note
-    # on EXPECTED_ARCHIVES bump above for the SO-migration follow-up.
+    # on known residuals for the SO-migration follow-up.
     if [[ "$(basename "$archive")" == "libLibreSCRS_Trust.a" ]]; then
         wv_leaks=$(printf '%s\n' "$wv_leaks" \
             | grep -vE '_Sp_counted_ptr_inplace<LibreSCRS::Trust::TrustStoreService::Impl' \
@@ -208,8 +192,8 @@ while IFS= read -r archive; do
     # vtable/typeinfo. Same rationale as Trust above — CancelSource and
     # CancelToken share Impl ownership by design (token() copies hand out
     # observers; the source keeps the writable side). Symbols are emitted
-    # WEAK HIDDEN in CancelToken.cpp.o and absent from every linked .so /
-    # .dylib; .a-level residual only.
+    # WEAK HIDDEN in CancelToken.cpp.o and are absent from every linked
+    # .so / .dylib; .a-level residual only.
     if [[ "$(basename "$archive")" == "libLibreSCRS_Auth.a" ]]; then
         wv_leaks=$(printf '%s\n' "$wv_leaks" \
             | grep -vE '_Sp_counted_ptr_inplace<LibreSCRS::CancelToken::Impl' \
@@ -232,7 +216,7 @@ done < <(find "$BUILD_DIR" -name 'libLibreSCRS_*.a' | sort)
 if [[ $archives_scanned -ne $EXPECTED_ARCHIVES ]]; then
     echo "ERROR: expected $EXPECTED_ARCHIVES libLibreSCRS_*.a archive(s) under '$BUILD_DIR'," >&2
     echo "       found $archives_scanned. Build broken, wrong dir, or archive set changed?" >&2
-    echo "       If intentional (e.g. Phase 7 LC migration bumped the set), update" >&2
+    echo "       If the archive set changed intentionally, update" >&2
     echo "       EXPECTED_ARCHIVES in $(basename "$0")." >&2
     exit 2
 fi

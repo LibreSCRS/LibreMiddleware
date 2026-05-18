@@ -15,7 +15,6 @@
 #include <openssl/x509.h>
 
 #include <cstring>
-#include <iostream>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -41,34 +40,49 @@ struct XmlCharDeleter
 };
 using XmlCharPtr = std::unique_ptr<xmlChar, XmlCharDeleter>;
 
-// ---- Algorithm URI to EVP_MD mapping ----
+} // namespace
+
+// ---- Public URI tables (declared in the header) ----
 //
-// Exact-match against the canonical W3C XMLDSIG / XMLEnc algorithm URIs
-// (substring `find()` matching is too loose — it admits arbitrary suffix
-// content and mixes digest with signature URIs). SHA-1 is REJECTED
-// outright: ETSI TL spec mandates SHA-256-or-better since 2017, and SHA-1
-// is exploitable via chosen-prefix collisions in the c14n'd SignedInfo
-// surface. SHA-256 / SHA-384 / SHA-512 only.
-const EVP_MD* digestFromUri(const std::string& uri)
+// Two intentionally-disjoint tables. The XMLDSig spec puts digest method
+// URIs and signature method URIs in different element @Algorithm slots
+// (ds:DigestMethod vs ds:SignatureMethod) — letting either lookup
+// accept the other's URIs is a category error that previously could
+// have admitted, e.g. `rsa-sha256` as a digest URI or `xmlenc#sha256`
+// as a signature URI. Substring matching is also avoided — every URI
+// must match a literal entry. SHA-1 is rejected outright because the
+// ETSI TL profile mandates SHA-256+ and SHA-1 is exploitable via
+// chosen-prefix collisions in the c14n'd SignedInfo surface.
+
+const EVP_MD* digestFromDigestMethodUri(const std::string& uri)
 {
-    // Digest method URIs (xmlenc and xmldsig11)
-    if (uri == "http://www.w3.org/2001/04/xmlenc#sha256" ||
-        uri == "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256" ||
-        uri == "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256")
+    if (uri == "http://www.w3.org/2001/04/xmlenc#sha256")
         return EVP_sha256();
-    if (uri == "http://www.w3.org/2001/04/xmldsig-more#sha384" ||
-        uri == "http://www.w3.org/2001/04/xmldsig-more#rsa-sha384" ||
-        uri == "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha384")
+    if (uri == "http://www.w3.org/2001/04/xmldsig-more#sha384")
         return EVP_sha384();
-    if (uri == "http://www.w3.org/2001/04/xmlenc#sha512" ||
-        uri == "http://www.w3.org/2001/04/xmldsig-more#rsa-sha512" ||
-        uri == "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha512")
+    if (uri == "http://www.w3.org/2001/04/xmlenc#sha512")
         return EVP_sha512();
-    // SHA-1 (and the SHA-1 RSA / DSA signature method URIs) are explicitly
-    // rejected. Caller logs the URI in the surrounding "unsupported …"
-    // diagnostic.
     return nullptr;
 }
+
+std::pair<const EVP_MD*, int> digestFromSignatureMethodUri(const std::string& uri)
+{
+    if (uri == "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256")
+        return {EVP_sha256(), EVP_PKEY_RSA};
+    if (uri == "http://www.w3.org/2001/04/xmldsig-more#rsa-sha384")
+        return {EVP_sha384(), EVP_PKEY_RSA};
+    if (uri == "http://www.w3.org/2001/04/xmldsig-more#rsa-sha512")
+        return {EVP_sha512(), EVP_PKEY_RSA};
+    if (uri == "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256")
+        return {EVP_sha256(), EVP_PKEY_EC};
+    if (uri == "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha384")
+        return {EVP_sha384(), EVP_PKEY_EC};
+    if (uri == "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha512")
+        return {EVP_sha512(), EVP_PKEY_EC};
+    return {nullptr, 0};
+}
+
+namespace {
 
 // ---- Safe Id-attribute lookup ----
 //
@@ -113,42 +127,53 @@ xmlNodePtr findDsChild(xmlNodePtr parent, const char* localName)
     return nullptr;
 }
 
-// ---- Get text content of a node as std::string ----
+// ---- Node text / attribute extraction (NUL-rejecting) ----
+//
+// Delegate to the shared helpers in native_utils. The previous local
+// `nodeText` / `nodeAttr` used the convenience `std::string(const
+// char*)` constructor, which silently truncates at the first embedded
+// NUL — so any post-extraction digest would have run over a different
+// payload than the one the upstream XML carried. The shared helpers
+// reject embedded NULs with std::runtime_error.
 
 std::string nodeText(xmlNodePtr node)
 {
-    if (!node)
-        return {};
-    XmlCharPtr content(xmlNodeGetContent(node));
-    if (!content)
-        return {};
-    return {reinterpret_cast<const char*>(content.get())};
+    return native_utils::xmlContentToString(node);
 }
-
-// ---- Get attribute value as std::string ----
 
 std::string nodeAttr(xmlNodePtr node, const char* attrName)
 {
-    if (!node)
-        return {};
-    XmlCharPtr val(xmlGetProp(node, BAD_CAST attrName));
-    if (!val)
-        return {};
-    return {reinterpret_cast<const char*>(val.get())};
+    return native_utils::xmlAttrToString(node, attrName);
 }
 
-// ---- Find the ds:Signature element anywhere in the document ----
-
-xmlNodePtr findSignatureNode(xmlDocPtr doc)
+// ---- Find the document-root-level ds:Signature element ----
+//
+// XPath is anchored at /*/ds:Signature — direct-child-of-root only —
+// to defeat the signature-wrapping attack class where a hostile XML
+// embeds an additional ds:Signature deep inside the body that the
+// verifier accidentally picks up as authoritative while the genuine
+// root-level signature actually covers different content. We also
+// refuse documents that carry multiple root-level signatures: a
+// well-formed ETSI TL has exactly one. Empty `errorOut` on success.
+xmlNodePtr findSignatureNode(xmlDocPtr doc, std::string& errorOut)
 {
     XPathCtxPtr ctx(xmlXPathNewContext(doc));
-    if (!ctx)
+    if (!ctx) {
+        errorOut = "xmlXPathNewContext failed";
         return nullptr;
+    }
     xmlXPathRegisterNs(ctx.get(), BAD_CAST "ds", BAD_CAST kNsDs);
 
-    XPathObjPtr obj(xmlXPathEvalExpression(BAD_CAST "//ds:Signature", ctx.get()));
-    if (!obj || !obj->nodesetval || obj->nodesetval->nodeNr == 0)
+    XPathObjPtr obj(xmlXPathEvalExpression(BAD_CAST "/*/ds:Signature", ctx.get()));
+    if (!obj || !obj->nodesetval || obj->nodesetval->nodeNr == 0) {
+        errorOut = "no ds:Signature element found at document root";
         return nullptr;
+    }
+    if (obj->nodesetval->nodeNr > 1) {
+        errorOut = "trust list carries " + std::to_string(obj->nodesetval->nodeNr) +
+                   " ds:Signature elements at document root; expected exactly one";
+        return nullptr;
+    }
     return obj->nodesetval->nodeTab[0];
 }
 
@@ -227,9 +252,10 @@ bool TlSignatureVerifier::verify(std::span<const uint8_t> xmlData, std::span<con
     }
 
     // Find ds:Signature
-    xmlNodePtr sigNode = findSignatureNode(doc.get());
+    xmlNodePtr sigNode = findSignatureNode(doc.get(), error);
     if (!sigNode) {
-        error = "no ds:Signature element found";
+        // `error` populated by findSignatureNode with the precise reason
+        // (none-found / multiple-found / xpath-context-init-failure).
         return false;
     }
 
@@ -261,13 +287,13 @@ bool TlSignatureVerifier::verify(std::span<const uint8_t> xmlData, std::span<con
         return false;
     }
     std::string sigMethodUri = nodeAttr(sigMethodNode, "Algorithm");
-    const EVP_MD* sigMd = digestFromUri(sigMethodUri);
+    auto [sigMd, expectedKeyTypeNid] = digestFromSignatureMethodUri(sigMethodUri);
     if (!sigMd) {
         error = "unsupported signature algorithm: " + sigMethodUri;
         return false;
     }
 
-    // ---- Phase 1: Reference Validation ----
+    // ---- 1. Reference Validation ----
     // Iterate over ds:Reference elements in ds:SignedInfo
     for (xmlNodePtr refNode = signedInfoNode->children; refNode; refNode = refNode->next) {
         if (refNode->type != XML_ELEMENT_NODE)
@@ -288,7 +314,7 @@ bool TlSignatureVerifier::verify(std::span<const uint8_t> xmlData, std::span<con
             return false;
         }
         std::string digestMethodUri = nodeAttr(digestMethodNode, "Algorithm");
-        const EVP_MD* refMd = digestFromUri(digestMethodUri);
+        const EVP_MD* refMd = digestFromDigestMethodUri(digestMethodUri);
         if (!refMd) {
             error = "unsupported digest algorithm: " + digestMethodUri;
             return false;
@@ -395,7 +421,7 @@ bool TlSignatureVerifier::verify(std::span<const uint8_t> xmlData, std::span<con
         }
     }
 
-    // ---- Phase 2: Signature Validation ----
+    // ---- 2. Signature Validation ----
     // Canonicalize ds:SignedInfo
     std::vector<uint8_t> c14nSignedInfo = canonicalizeSubtree(doc.get(), signedInfoNode);
     if (c14nSignedInfo.empty()) {
@@ -411,12 +437,18 @@ bool TlSignatureVerifier::verify(std::span<const uint8_t> xmlData, std::span<con
         return false;
     }
 
-    // Check cert validity — warn but don't fail on expired certs.
-    // An expired cert can still have mathematically valid signatures.
+    // Trust-list authenticity is a separate question from "can OpenSSL
+    // mathematically verify this signature blob?". An expired signing
+    // certificate means the issuer is no longer asserting responsibility
+    // for keys issued from this CA, so accepting the trust list would
+    // let an attacker replay a stale-but-cryptographically-valid TL even
+    // after the issuer has retired the signing key. Hard-fail.
     {
         const ASN1_TIME* notAfter = X509_get0_notAfter(cert.get());
         if (X509_cmp_current_time(notAfter) < 0) {
-            std::cerr << "libresign: WARNING: TL signing certificate has expired" << std::endl;
+            error = "TL signing certificate expired: notAfter has passed; "
+                    "trust list cannot be authenticated";
+            return false;
         }
     }
 
@@ -424,6 +456,18 @@ bool TlSignatureVerifier::verify(std::span<const uint8_t> xmlData, std::span<con
     EVP_PKEY* pubKey = X509_get0_pubkey(cert.get());
     if (!pubKey) {
         error = "failed to extract public key from certificate: " + native_utils::opensslError();
+        return false;
+    }
+
+    // Belt-and-braces: refuse a signature whose @Algorithm URI claims one
+    // key type but whose carrier certificate carries a key of a different
+    // family. OpenSSL would reject the math anyway, but failing earlier
+    // with a precise diagnostic shrinks the attack surface and makes
+    // mis-issued TLs immediately diagnosable.
+    int actualKeyTypeNid = EVP_PKEY_base_id(pubKey);
+    if (actualKeyTypeNid != expectedKeyTypeNid) {
+        error = "signature method " + sigMethodUri + " requires key type " + std::to_string(expectedKeyTypeNid) +
+                " but certificate carries key type " + std::to_string(actualKeyTypeNid);
         return false;
     }
 

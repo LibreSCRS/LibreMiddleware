@@ -36,15 +36,9 @@ std::string xpathText(xmlXPathContextPtr ctx, const char* expr)
         return {};
     }
 
-    xmlNodePtr node = obj->nodesetval->nodeTab[0];
-    xmlChar* content = xmlNodeGetContent(node);
-    if (!content) {
-        return {};
-    }
-
-    std::string result(reinterpret_cast<const char*>(content));
-    xmlFree(content);
-    return result;
+    // Use the centralised NUL-rejecting extractor — see
+    // native_utils::xmlContentToString for the rationale.
+    return native_utils::xmlContentToString(obj->nodesetval->nodeTab[0]);
 }
 
 // Extract text content from an XPath relative to a context node
@@ -61,15 +55,7 @@ std::string xpathTextRelative(xmlXPathContextPtr ctx, xmlNodePtr contextNode, co
         return {};
     }
 
-    xmlNodePtr node = obj->nodesetval->nodeTab[0];
-    xmlChar* content = xmlNodeGetContent(node);
-    if (!content) {
-        return {};
-    }
-
-    std::string result(reinterpret_cast<const char*>(content));
-    xmlFree(content);
-    return result;
+    return native_utils::xmlContentToString(obj->nodesetval->nodeTab[0]);
 }
 
 // Get all nodes matching an XPath relative to a context node

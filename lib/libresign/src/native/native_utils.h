@@ -19,6 +19,11 @@
 // Forward declarations for helper functions
 typedef struct x509_st X509;
 
+// Forward declarations for libxml2 — kept at global scope to match
+// libxml2's own typedef placement so callers that include libxml2
+// headers see the same type identity.
+struct _xmlNode;
+
 namespace libresign {
 class Pkcs11Token;
 struct TSAConfig;
@@ -38,6 +43,28 @@ namespace libresign::native_utils {
 using libresign::X509Deleter;
 using libresign::X509Ptr;
 
+/// @brief Returns the text content of @p node as a std::string,
+///        rejecting embedded NUL bytes.
+///
+/// libxml2's xmlNodeGetContent returns a C-style (NUL-terminated)
+/// xmlChar*, so any embedded NUL in the original XML CDATA / text
+/// segment is silently truncated when wrapped into std::string via the
+/// `const char*` constructor — and downstream digest / signature math
+/// would then run over a payload different from what the verifier
+/// thought it was checking. Use the explicit-length API instead and
+/// throw `std::runtime_error` if an embedded NUL is detected.
+///
+/// @throws std::runtime_error if the content carries an embedded NUL.
+std::string xmlContentToString(::_xmlNode* node);
+
+/// @brief Returns the named attribute's value as a std::string, with
+///        the same embedded-NUL rejection contract as
+///        xmlContentToString.
+///
+/// @throws std::runtime_error if the attribute value carries an
+///         embedded NUL.
+std::string xmlAttrToString(::_xmlNode* node, const char* attrName);
+
 /// @brief Uppercase hex digit table — `data[i]` is the ASCII character for
 ///        the nibble value @p i (0..15). Used by every internal byte→hex
 ///        encoder (PAdES /Contents, XAdES percent-encoder, …) to avoid
@@ -46,6 +73,11 @@ inline constexpr std::string_view kHexChars = "0123456789ABCDEF";
 
 // OpenSSL error string
 std::string opensslError();
+
+// SHA-1 hash
+std::vector<uint8_t> sha1(const uint8_t* data, size_t len);
+std::vector<uint8_t> sha1(const std::vector<uint8_t>& data);
+std::vector<uint8_t> sha1(const std::string& data);
 
 // SHA-256 hash
 std::vector<uint8_t> sha256(const uint8_t* data, size_t len);
@@ -75,6 +107,31 @@ std::vector<uint8_t> base64Decode(const std::string& input);
 
 // SHA-256 hash as base64-encoded string
 std::string sha256Base64(const std::vector<uint8_t>& data);
+
+// Base64url encoding (RFC 4648 §5): standard base64 alphabet with `+` → `-`
+// and `/` → `_`, trailing `=` padding stripped. JWS / JAdES (RFC 7515) uses
+// this form for the protected header, payload, and signature fields.
+std::string base64urlEncode(const std::vector<uint8_t>& data);
+std::string base64urlEncode(std::string_view str);
+
+// Base64url decoding (RFC 4648 §5): inverse of base64urlEncode. Restores
+// the standard base64 alphabet and re-pads to a 4-byte multiple before
+// delegating to base64Decode.
+std::vector<uint8_t> base64urlDecode(const std::string& input);
+
+// Hex-encode a byte span as a lowercase or uppercase ASCII string.
+// Uses libresign::native_utils::kHexChars (uppercase). PAdES /Contents
+// blobs, signature digests, and any callsite that needs `[0-9A-F]+` form.
+std::string hexEncode(std::span<const uint8_t> data);
+
+// Percent-encode a byte span per RFC 3986 §2.1. Bytes outside the
+// unreserved set (`A-Z`, `a-z`, `0-9`, `-`, `_`, `.`, `~`) are emitted as
+// `%HH` (uppercase). When @p preserveSlash is true, `/` is also emitted
+// verbatim — required for URI paths where `/` is a path separator
+// (ASiC `URI` attributes with embedded directories). When false, every
+// byte outside the unreserved set is percent-encoded (XAdES URI filename
+// references, single-segment URIs).
+std::string percentEncode(std::string_view in, bool preserveSlash = false);
 
 // Decomposed UTC time parts (from system_clock::now())
 struct UtcTimeParts
@@ -112,8 +169,15 @@ std::string tokenAlgorithm(int keyType, const std::string& mdName);
 std::vector<uint8_t> signHashWithToken(libresign::Pkcs11Token& token, X509* cert, const std::vector<uint8_t>& hash,
                                        const std::string& hashAlgo = "SHA256", std::span<const uint8_t> rawData = {});
 
-// Decompress FlateDecode (zlib) data. Returns nullopt on error.
-std::optional<std::vector<uint8_t>> flateDecode(std::span<const uint8_t> compressed, size_t sizeHint = 0);
+// Decompress FlateDecode (zlib) data. Returns nullopt on malformed input.
+// Throws std::runtime_error if the inflated output would exceed
+// @p maxOutputBytes — a streaming check that fail-fasts decompression
+// bombs (small compressed payload, huge expansion) before the allocator
+// is exhausted. The default 64 MiB cap matches the largest legitimate
+// PDF object stream any sane consumer should ever encounter; callers
+// embedded in narrower contexts should pass a tighter bound.
+std::optional<std::vector<uint8_t>> flateDecode(std::span<const uint8_t> compressed, size_t sizeHint = 0,
+                                                std::size_t maxOutputBytes = 64ULL * 1024 * 1024);
 
 /// Reverse PNG row filters (predictor 10-15). columns = bytes per row (excluding filter byte).
 std::optional<std::vector<uint8_t>> reversePngPredictor(std::span<const uint8_t> data, int columns);

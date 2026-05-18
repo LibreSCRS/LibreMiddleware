@@ -11,7 +11,7 @@
 #
 # This script generates a stable, sorted, human-readable text artefact
 # checked into the tree at:
-#   ci/abi/4.0-baseline.txt
+#   ci/abi/4.x-baseline.txt
 #
 # Use --check to compare a fresh build against the baseline; the script
 # fails non-zero on any difference. Use --update to regenerate the baseline.
@@ -59,7 +59,7 @@ if [[ ! -d "$BUILD_DIR" ]]; then
 fi
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-BASELINE="${REPO_ROOT}/ci/abi/4.0-baseline.txt"
+BASELINE="${REPO_ROOT}/ci/abi/4.x-baseline.txt"
 SCRATCH="$(mktemp -d)"
 trap 'rm -rf "$SCRATCH"' EXIT
 

@@ -69,11 +69,18 @@ jobs:
       - name: Check pimpl visibility
         run: ./ci/scripts/check-impl-visibility.sh build
 
-      - name: Check ABI snapshot vs 4.0 baseline
-        # Locks the public C++ ABI for the 4.0.x patch series. Any T-binding
-        # symbol added/removed/changed (renamed types, signature drift, new
-        # public method, removed public method) fails the build until the
-        # baseline is intentionally regenerated.
+      - name: Check pinned TL cert expiry
+        # Pre-empt the runtime hard-fail in tl_signature_verifier.cpp by
+        # alerting (build break) ~3 months before any pinned TL signing
+        # certificate's notAfter date, giving a comfortable rotation
+        # window for the cert refresh + release cut.
+        run: ./ci/check-pinned-cert-expiry.sh
+
+      - name: Check ABI snapshot vs 4.x baseline
+        # 4.x baseline — minor-version additions tracked; removals or
+        # signature drift forbidden. Additions land via an intentional
+        # baseline regeneration (`abi-snapshot.sh --update`) reviewed in
+        # the same commit as the new public symbol.
         run: ./ci/scripts/abi-snapshot.sh --check build
 
       - name: Test

@@ -17,12 +17,15 @@
 
 #include <libxml/parser.h>
 
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <cctype>
 #include <climits>
 #include <cstdlib>
 #include <cstring>
 #include <format>
+#include <limits>
 #include <mutex>
 #include <span>
 #include <stdexcept>
@@ -47,6 +50,28 @@ std::string opensslError()
         result += buf;
     }
     return result.empty() ? "unknown OpenSSL error" : result;
+}
+
+// ---- SHA-1 ----
+
+std::vector<uint8_t> sha1(const uint8_t* data, size_t len)
+{
+    std::vector<uint8_t> hash(EVP_MD_size(EVP_sha1()));
+    unsigned int hashLen = 0;
+    if (!EVP_Digest(data, len, hash.data(), &hashLen, EVP_sha1(), nullptr))
+        throw std::runtime_error("EVP_Digest SHA-1 failed: " + opensslError());
+    hash.resize(hashLen);
+    return hash;
+}
+
+std::vector<uint8_t> sha1(const std::vector<uint8_t>& data)
+{
+    return sha1(data.data(), data.size());
+}
+
+std::vector<uint8_t> sha1(const std::string& data)
+{
+    return sha1(reinterpret_cast<const uint8_t*>(data.data()), data.size());
 }
 
 // ---- SHA-256 ----
@@ -202,6 +227,73 @@ std::string sha256Base64(const std::vector<uint8_t>& data)
     // here. Both helpers throw on error, so any SHA-256 or encoding
     // failure still surfaces.
     return base64Encode(sha256(data));
+}
+
+// ---- Base64url (RFC 4648 §5) ----
+
+std::string base64urlEncode(const std::vector<uint8_t>& data)
+{
+    std::string b64 = base64Encode(data);
+    for (char& c : b64) {
+        if (c == '+')
+            c = '-';
+        else if (c == '/')
+            c = '_';
+    }
+    while (!b64.empty() && b64.back() == '=')
+        b64.pop_back();
+    return b64;
+}
+
+std::string base64urlEncode(std::string_view str)
+{
+    return base64urlEncode(std::vector<uint8_t>(reinterpret_cast<const uint8_t*>(str.data()),
+                                                reinterpret_cast<const uint8_t*>(str.data()) + str.size()));
+}
+
+std::vector<uint8_t> base64urlDecode(const std::string& input)
+{
+    std::string b64 = input;
+    for (char& c : b64) {
+        if (c == '-')
+            c = '+';
+        else if (c == '_')
+            c = '/';
+    }
+    while (b64.size() % 4 != 0)
+        b64.push_back('=');
+    return base64Decode(b64);
+}
+
+// ---- Hex / percent encoding ----
+
+std::string hexEncode(std::span<const uint8_t> data)
+{
+    std::string out;
+    out.reserve(data.size() * 2);
+    for (uint8_t b : data) {
+        out.push_back(kHexChars[(b >> 4) & 0x0F]);
+        out.push_back(kHexChars[b & 0x0F]);
+    }
+    return out;
+}
+
+std::string percentEncode(std::string_view in, bool preserveSlash)
+{
+    std::string out;
+    out.reserve(in.size());
+    for (unsigned char c : in) {
+        const bool unreserved = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                                c == '-' || c == '_' || c == '.' || c == '~';
+        if (unreserved || (preserveSlash && c == '/')) {
+            out.push_back(static_cast<char>(c));
+        } else {
+            out.push_back('%');
+            out.push_back(kHexChars[c >> 4]);
+            out.push_back(kHexChars[c & 0x0F]);
+        }
+    }
+    return out;
 }
 
 // ---- Certificate parsing ----
@@ -394,28 +486,149 @@ std::vector<uint8_t> signHashWithToken(libresign::Pkcs11Token& token, X509* cert
     }
 }
 
+// ---- libxml2 content / attribute extraction with embedded-NUL rejection ----
+
+namespace {
+struct XmlCharFreeDeleter
+{
+    void operator()(xmlChar* p) const
+    {
+        if (p)
+            xmlFree(p);
+    }
+};
+using XmlCharPtr = std::unique_ptr<xmlChar, XmlCharFreeDeleter>;
+
+// Walk the buffer for the first @p len bytes and throw if any byte is
+// NUL. The std::string-from-const-char* convenience constructor would
+// silently truncate at the first NUL, so the post-validation digest
+// would no longer match what the application "saw".
+[[noreturn]] void throwEmbeddedNul(std::string_view what)
+{
+    throw std::runtime_error(std::string{"native_utils: embedded NUL byte in "} + std::string{what} +
+                             " — refusing to truncate-construct a std::string");
+}
+} // namespace
+
+std::string xmlContentToString(xmlNode* node)
+{
+    if (!node)
+        return {};
+    // Use xmlBufContent + xmlBufNodeDump-style buffer access so we own
+    // the explicit byte length, not just the C-string view. The
+    // xmlBufferCreate / xmlNodeBufGetContent pair returns a buffer the
+    // caller can inspect with xmlBufferLength — if that length exceeds
+    // strlen of the same data, an embedded NUL was eaten by the
+    // C-string view and downstream digest/signature math would have
+    // run over a different payload than what we thought we were
+    // checking.
+    xmlBufferPtr buf = xmlBufferCreate();
+    if (!buf)
+        throw std::runtime_error("native_utils: xmlBufferCreate() failed");
+    struct BufFree
+    {
+        xmlBufferPtr p;
+        ~BufFree()
+        {
+            xmlBufferFree(p);
+        }
+    } guard{buf};
+
+    if (xmlNodeBufGetContent(buf, node) < 0)
+        throw std::runtime_error("native_utils: xmlNodeBufGetContent failed");
+
+    const xmlChar* raw = xmlBufferContent(buf);
+    int rawLen = xmlBufferLength(buf);
+    if (rawLen < 0)
+        throw std::runtime_error("native_utils: xmlBufferLength returned negative");
+    if (!raw)
+        return {};
+    std::size_t len = static_cast<std::size_t>(rawLen);
+    if (std::memchr(raw, 0, len))
+        throwEmbeddedNul("XML text content");
+    return std::string{reinterpret_cast<const char*>(raw), len};
+}
+
+std::string xmlAttrToString(xmlNode* node, const char* attrName)
+{
+    if (!node || !attrName)
+        return {};
+    XmlCharPtr val(xmlGetProp(node, reinterpret_cast<const xmlChar*>(attrName)));
+    if (!val)
+        return {};
+    const char* data = reinterpret_cast<const char*>(val.get());
+    std::size_t len = std::strlen(data);
+    if (std::memchr(data, 0, len))
+        throwEmbeddedNul(std::string{"XML @"} + attrName + " value");
+    return std::string{data, len};
+}
+
 // ---- FlateDecode (zlib decompression) ----
 
-std::optional<std::vector<uint8_t>> flateDecode(std::span<const uint8_t> compressed, size_t sizeHint)
+std::optional<std::vector<uint8_t>> flateDecode(std::span<const uint8_t> compressed, size_t sizeHint,
+                                                std::size_t maxOutputBytes)
 {
     if (compressed.empty())
         return std::nullopt;
+    if (maxOutputBytes == 0)
+        throw std::runtime_error("flateDecode: maxOutputBytes must be non-zero");
 
-    size_t outSize = sizeHint > 0 ? sizeHint : compressed.size() * 4;
-    std::vector<uint8_t> output(outSize);
+    // Streaming inflate: we grow @p output in fixed-size chunks and check
+    // the running total against @p maxOutputBytes after every step, so a
+    // decompression bomb (a few KiB compressed exploding to >GiB raw) is
+    // rejected as early as the inflater can be asked to produce one more
+    // chunk — never after the bomb has already been materialized in
+    // memory.
+    constexpr std::size_t kChunk = 64 * 1024;
 
-    for (int attempt = 0; attempt < 8; ++attempt) {
-        mz_ulong destLen = static_cast<mz_ulong>(output.size());
-        int rc = mz_uncompress(output.data(), &destLen, compressed.data(), static_cast<mz_ulong>(compressed.size()));
-        if (rc == MZ_OK) {
-            output.resize(destLen);
-            return output;
+    mz_stream stream{};
+    if (mz_inflateInit(&stream) != MZ_OK)
+        return std::nullopt;
+    struct InflateEndGuard
+    {
+        mz_stream* s;
+        ~InflateEndGuard()
+        {
+            mz_inflateEnd(s);
         }
-        if (rc != MZ_BUF_ERROR)
+    } guard{&stream};
+
+    stream.next_in = compressed.data();
+    stream.avail_in =
+        static_cast<unsigned int>(std::min<size_t>(compressed.size(), std::numeric_limits<unsigned int>::max()));
+    size_t inConsumed = stream.avail_in;
+
+    std::vector<uint8_t> output;
+    output.reserve(sizeHint > 0 ? std::min(sizeHint, maxOutputBytes) : std::min(compressed.size() * 4, maxOutputBytes));
+
+    std::array<uint8_t, kChunk> buffer{};
+    for (;;) {
+        stream.next_out = buffer.data();
+        stream.avail_out = static_cast<unsigned int>(buffer.size());
+
+        int rc = mz_inflate(&stream, MZ_NO_FLUSH);
+        size_t produced = buffer.size() - stream.avail_out;
+        if (produced > 0) {
+            if (output.size() + produced > maxOutputBytes)
+                throw std::runtime_error("flateDecode: output exceeds " + std::to_string(maxOutputBytes) + " byte cap");
+            output.insert(output.end(), buffer.data(), buffer.data() + produced);
+        }
+
+        if (rc == MZ_STREAM_END)
+            return output;
+        if (rc == MZ_BUF_ERROR && stream.avail_in == 0 && inConsumed < compressed.size()) {
+            // Refill from the tail of @p compressed if the size_t source
+            // didn't fit a single unsigned int.
+            stream.next_in = compressed.data() + inConsumed;
+            size_t remaining = compressed.size() - inConsumed;
+            stream.avail_in =
+                static_cast<unsigned int>(std::min<size_t>(remaining, std::numeric_limits<unsigned int>::max()));
+            inConsumed += stream.avail_in;
+            continue;
+        }
+        if (rc != MZ_OK)
             return std::nullopt;
-        output.resize(output.size() * 2);
     }
-    return std::nullopt;
 }
 
 // ---- PNG predictor reversal for PDF xref streams ----
