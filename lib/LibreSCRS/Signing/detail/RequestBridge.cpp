@@ -21,17 +21,17 @@ libresign::SignatureFormat mapFormat(LibreSCRS::Signing::SignatureFormat f)
     using S = LibreSCRS::Signing::SignatureFormat;
     switch (f) {
     case S::Pades:
-        return libresign::SignatureFormat::PAdES;
+        return libresign::SignatureFormat::Pades;
     case S::Cades:
-        return libresign::SignatureFormat::CAdES;
+        return libresign::SignatureFormat::Cades;
     case S::Xades:
-        return libresign::SignatureFormat::XAdES;
+        return libresign::SignatureFormat::Xades;
     case S::Jades:
-        return libresign::SignatureFormat::JAdES;
+        return libresign::SignatureFormat::Jades;
     case S::AsicE:
-        return libresign::SignatureFormat::ASiC_E;
+        return libresign::SignatureFormat::AsicE;
     }
-    return libresign::SignatureFormat::PAdES;
+    return libresign::SignatureFormat::Pades;
 }
 
 libresign::SignatureLevel mapLevel(LibreSCRS::Signing::SignatureLevel l)
@@ -53,7 +53,7 @@ libresign::SignatureLevel mapLevel(LibreSCRS::Signing::SignatureLevel l)
 libresign::SignaturePackaging mapPackaging(LibreSCRS::Signing::PackagingMode p)
 {
     using P = LibreSCRS::Signing::PackagingMode;
-    return p == P::Detached ? libresign::SignaturePackaging::DETACHED : libresign::SignaturePackaging::ENVELOPED;
+    return p == P::Detached ? libresign::SignaturePackaging::Detached : libresign::SignaturePackaging::Enveloped;
 }
 
 void translatePublicRequestToLibresign(const LibreSCRS::Signing::SigningRequest& request,

@@ -11,6 +11,7 @@
 #include "ttf_subset.h"
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -36,6 +37,28 @@ class PAdESModule
 public:
     SigningResult sign(const std::vector<uint8_t>& pdfData, Pkcs11Token& token, SignatureLevel level,
                        const TSAConfig& tsa, const VisualSignatureParams& visual);
+
+    /// @brief Append a new signer to an existing PAdES PDF.
+    ///
+    /// PAdES' incremental-update structure means a prior-signed PDF is itself
+    /// a valid input to @ref sign — the new sig field, widget, and CMS occupy
+    /// a fresh incremental update layered on top. This method is a thin
+    /// wrapper that documents the semantic intent and lets the per-format
+    /// dispatcher reach a uniform API.
+    ///
+    /// @param prior        the existing PDF (may carry one or more PAdES sigs)
+    /// @param originalDoc  may be empty (the original is recoverable from the
+    ///                     PAdES incremental structure); when non-empty, a
+    ///                     future enhancement can verify it matches the prior
+    ///                     PDF's signed range — currently informational only
+    /// @param token        signing token (already opened + logged in)
+    /// @param level        desired signature level for the NEW signature
+    /// @param tsa          TSA config for the new signature
+    /// @param visual       visual signature params for the new field
+    /// @return @ref SigningResult — same shape as @ref sign
+    [[nodiscard]] SigningResult appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
+                                             Pkcs11Token& token, SignatureLevel level, const TSAConfig& tsa,
+                                             const VisualSignatureParams& visual);
 
     /// @brief Build the PDF appearance content stream and the matching
     /// subsetted Liberation Sans font program.

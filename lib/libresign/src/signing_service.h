@@ -9,6 +9,8 @@
 
 #include "types.h"
 
+#include <LibreSCRS/Secure/Buffer.h>
+
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -22,11 +24,12 @@ namespace libresign {
 
 // Helper for callers that have the PIN as a std::string_view (e.g. test
 // fixtures with string literals). Production callers SHOULD store the PIN in
-// a self-cleansing buffer (LibreSCRS::SmartCard::Internal::SecureBuffer) and pass that directly
-// via its implicit span<const uint8_t> conversion — see LibreCelik signpage.
-inline std::span<const uint8_t> as_pin(std::string_view pin)
+// a @ref LibreSCRS::Secure::Buffer and forward it directly — the buffer's
+// cleansing-on-destroy contract is enforced at the type system, so no caller
+// discipline is required beyond keeping the buffer in scope across the call.
+inline LibreSCRS::Secure::Buffer as_pin(std::string_view pin)
 {
-    return {reinterpret_cast<const uint8_t*>(pin.data()), pin.size()};
+    return LibreSCRS::Secure::Buffer(pin);
 }
 
 class SigningService
@@ -43,10 +46,12 @@ public:
 
     // PKCS#11 path — backend drives the card session.
     //
-    // pin: byte view into caller-owned storage. The caller is responsible for
-    //      cleansing that storage (e.g. via LibreSCRS::SmartCard::Internal::SecureBuffer). The
-    //      service implementation MUST NOT retain the view past return and
-    //      MUST cleanse any intermediate copies it creates internally.
+    // pin: @ref LibreSCRS::Secure::Buffer borrowed from the caller. Its
+    //      storage is cleansed on destruction (cleansing-on-destroy is part of
+    //      the type contract — no caller-side discipline required). The
+    //      service implementation MUST NOT retain a pointer into the buffer
+    //      past return and MUST cleanse any intermediate copies it creates
+    //      internally (e.g. a std::string materialised for a JSON payload).
     //
     // readerName: the FULL PCSC reader name the caller wants to sign on.
     // Mandatory: legacy auto-pick paths (`tokenLabel = ""` → slots[0])
@@ -67,8 +72,49 @@ public:
     // omit this argument get the standalone-bind behaviour.
     /// @since 4.1
     virtual SigningResult sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
-                               std::span<const uint8_t> pin, const std::string& keyAlias, const std::string& readerName,
+                               const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
+                               const std::string& readerName,
                                std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession = nullptr) = 0;
+
+    /// @brief Append a new signer to a prior signature, producing a multi-
+    ///        signature document with the new signer's signature alongside
+    ///        the existing ones.
+    ///
+    /// For ENVELOPED packagings (PAdES, XAdES-Enveloped, JAdES-Enveloped,
+    /// ASiC-E) @p originalDocument may be empty — the original payload is
+    /// recoverable from @p priorSignature. When non-empty, implementations
+    /// SHOULD assert it matches the embedded original and reject the call
+    /// with @ref SignFailureKind::InvalidInput on mismatch (tamper detection).
+    ///
+    /// For DETACHED packagings (CAdES, XAdES-Detached, JAdES-Detached)
+    /// @p originalDocument is MANDATORY — RFC 7797 / ETSI EN 319 122 / etc.
+    /// detached blobs do not carry the original by spec. Implementations
+    /// MUST return @ref SignFailureKind::InvalidInput when the original is
+    /// absent.
+    ///
+    /// Format is INFERRED from @p priorSignature and overrides any value
+    /// in @p request.format.
+    ///
+    /// @param request          signing request — level / TSA / visual carry
+    ///                         over to the new signer; format is overridden
+    ///                         by inference, packaging is a hint for
+    ///                         ambiguous inputs only.
+    /// @param priorSignature   the existing signed document / signature
+    ///                         container being extended.
+    /// @param originalDocument the original payload (DETACHED: mandatory;
+    ///                         ENVELOPED: empty or tamper-check assertion).
+    /// @param pin              caller-owned, cleansing-on-destroy; same
+    ///                         contract as @ref sign.
+    /// @param pkcs11Module     PKCS#11 driver path.
+    /// @param keyAlias         CKA_LABEL of the signer key on @p readerName.
+    /// @param readerName       full PCSC reader name; same multi-card
+    ///                         routing contract as @ref sign.
+    /// @return SigningResult — same shape as @ref sign.
+    /// @since 4.2
+    virtual SigningResult appendSigner(const SigningRequest& request, std::span<const uint8_t> priorSignature,
+                                       std::span<const uint8_t> originalDocument, const LibreSCRS::Secure::Buffer& pin,
+                                       const std::string& pkcs11Module, const std::string& keyAlias,
+                                       const std::string& readerName) = 0;
 
     virtual bool isAvailable() const = 0;
 };

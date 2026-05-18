@@ -3,6 +3,8 @@
 
 #include "native/pades_module.h"
 #include "native/cades_module.h"
+#include "native/pdf_doc_timestamp.h"
+#include "native/pdf_dss.h"
 #include "native/pkcs11_token.h"
 #include "native/revocation_client.h"
 #include "native_utils.h"
@@ -59,23 +61,9 @@ constexpr int kSigFieldAnnotFlags = 132;
 // floor / ceiling / margin / leading sentinels exposed as public
 // `kAppearance*` constants in <LibreSCRS/Signing/VisualSignatureLayout.h>.
 
-// ---- Hex encoding ----
-//
-// kHexChars lives in native_utils.h (libresign::native_utils::kHexChars) so
-// the same nibble-to-ASCII table is shared across PAdES / XAdES / any
-// future internal hex emitter without duplicating the 16-byte literal.
-
-std::string hexEncode(const std::vector<uint8_t>& data)
-{
-    using libresign::native_utils::kHexChars;
-    std::string result;
-    result.reserve(data.size() * 2);
-    for (uint8_t b : data) {
-        result.push_back(kHexChars[(b >> 4) & 0x0F]);
-        result.push_back(kHexChars[b & 0x0F]);
-    }
-    return result;
-}
+// hexEncode lives in native_utils (libresign::native_utils::hexEncode) and
+// is reachable here via the `using namespace libresign::native_utils;` line
+// above.
 
 // ---- PDF date formatting (ISO 32000-2 sec. 7.9.4) ----
 
@@ -352,7 +340,37 @@ PAdESModule::PreparedPdf PAdESModule::preparePdf(const std::vector<uint8_t>& pdf
     sigField << "<< /Type /Annot\n";
     sigField << "   /Subtype /Widget\n";
     sigField << "   /FT /Sig\n";
-    sigField << "   /T (LibreSCRS_Sig)\n";
+    // PAdES multi-sign: every signature field MUST carry a unique /T
+    // name. DSS (and Adobe Acrobat) group signatures by field name; reusing
+    // "LibreSCRS_Sig" across incremental updates causes the second sig to
+    // be treated as a re-signing of the first, and the validator only
+    // reports one. Count prior sig fields in the existing AcroForm and
+    // suffix accordingly (LibreSCRS_Sig_1, _2, …) — the bare base name is
+    // kept for the first signature so existing PAdES single-sign outputs
+    // stay byte-compatible.
+    int priorSigFieldCount = 0;
+    if (catalog.type() == PdfValueType::Dict) {
+        auto existingAcroForm = catalog.get("AcroForm");
+        if (existingAcroForm.type() == PdfValueType::Dict) {
+            auto existingFields = existingAcroForm.get("Fields");
+            if (existingFields.type() == PdfValueType::Array) {
+                for (const auto& f : existingFields.asArray()) {
+                    if (f.type() == PdfValueType::Ref) {
+                        auto fieldObj = parser.readObject(f.asRef().objNum);
+                        if (fieldObj.type() == PdfValueType::Dict) {
+                            auto ft = fieldObj.get("FT");
+                            if (ft.type() == PdfValueType::Name && ft.asName() == "Sig")
+                                ++priorSigFieldCount;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    std::string sigFieldName = "LibreSCRS_Sig";
+    if (priorSigFieldCount > 0)
+        sigFieldName += "_" + std::to_string(priorSigFieldCount + 1);
+    sigField << "   /T (" << sigFieldName << ")\n";
     sigField << "   /V " << sigDictObj << " 0 R\n";
 
     if (hasVisual) {
@@ -393,17 +411,11 @@ PAdESModule::PreparedPdf PAdESModule::preparePdf(const std::vector<uint8_t>& pdf
 
         auto emitObj = [&](size_t objNum, std::string_view body) {
             objOffsets.push_back({objNum, incr.str().size()});
-            std::ostringstream o;
-            o << objNum << " 0 obj\n" << body << "\nendobj\n";
-            incr << o.str();
+            incr << std::format("{} 0 obj\n{}\nendobj\n", objNum, body);
         };
         auto emitStreamObj = [&](size_t objNum, std::string_view dictPrefix, std::span<const uint8_t> body) {
             objOffsets.push_back({objNum, incr.str().size()});
-            std::ostringstream o;
-            o << objNum << " 0 obj\n"
-              << "<< " << dictPrefix << " /Length " << body.size() << " >>\n"
-              << "stream\n";
-            incr << o.str();
+            incr << std::format("{} 0 obj\n<< {} /Length {} >>\nstream\n", objNum, dictPrefix, body.size());
             incr.write(reinterpret_cast<const char*>(body.data()), static_cast<std::streamsize>(body.size()));
             incr << "\nendstream\nendobj\n";
         };
@@ -461,12 +473,7 @@ PAdESModule::PreparedPdf PAdESModule::preparePdf(const std::vector<uint8_t>& pdf
         catDict["AcroForm"] = PdfValue::dict(std::move(acroForm));
 
         auto serialized = PdfValue::dict(std::move(catDict)).serialize();
-
-        std::ostringstream cat;
-        cat << catalogObj << " 0 obj\n";
-        cat << serialized << "\n";
-        cat << "endobj\n";
-        incr << cat.str();
+        incr << std::format("{} 0 obj\n{}\nendobj\n", catalogObj, serialized);
     }
 
     // -- Updated page with /Annots array (preserves all original attributes) --
@@ -633,7 +640,7 @@ SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, Pkcs11Tok
 {
     try {
         if (pdfDataIn.size() < 5)
-            return {false, {}, "Input PDF is too small"};
+            return makeFailure(SignFailureKind::InvalidInput, "Input PDF is too small");
 
         // Adobe Acrobat Implementation Notes §H.3: tolerate up to 1024 bytes of
         // non-PDF prefix before the "%PDF-" header (e.g. multipart/form-data
@@ -650,7 +657,7 @@ SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, Pkcs11Tok
             std::string_view scan(reinterpret_cast<const char*>(pdfDataIn.data()), scanLen);
             auto found = scan.find(kPdfMagic);
             if (found == std::string_view::npos)
-                return {false, {}, "Input is not a valid PDF (missing %PDF- header)"};
+                return makeFailure(SignFailureKind::InvalidInput, "Input is not a valid PDF (missing %PDF- header)");
             prefixLen = found;
         }
 
@@ -679,9 +686,28 @@ SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, Pkcs11Tok
         // Verify PDF magic at start of the normalized buffer (sanity check).
         std::string_view header(reinterpret_cast<const char*>(pdfData.data()), 5);
         if (header != "%PDF-")
-            return {false, {}, "Input is not a valid PDF (missing %PDF- header)"};
+            return makeFailure(SignFailureKind::InvalidInput, "Input is not a valid PDF (missing %PDF- header)");
 
-        // 1. Prepare the PDF with incremental update (sig dict, field, visual)
+        // 1. Prepare the PDF with the SIGNATURE incremental update (sig
+        //    dict, field, visual). DSS material is appended later in a
+        //    SECOND incremental update so its bytes sit outside the signed
+        //    /ByteRange — VRI keying requires knowing the final CMS bytes,
+        //    so the DSS must be emitted post-sign.
+        //
+        // For B-LT+ we still collect the cert chain + revocation material
+        // up front: the same RevocationData feeds both
+        // CAdESModule::addRevocationData (CMS-side embedding) and the DSS
+        // dictionary (PDF-side LTV anchor), so we pay one CRL/OCSP fetch.
+        PdfDssMaterial dssMat;
+        RevocationData revData;
+        const bool wantsLT = (level >= SignatureLevel::B_LT);
+        if (wantsLT) {
+            dssMat.certs = token.certificateChain();
+            revData = collectRevocationData(token, tsa);
+            dssMat.crls = revData.crls;
+            dssMat.ocspResponses = revData.ocspResponses;
+        }
+
         size_t contentsAllocBytes = contentsAllocForLevel(level);
         auto prepared = preparePdf(pdfData, visual, contentsAllocBytes);
 
@@ -699,13 +725,15 @@ SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, Pkcs11Tok
         // Also reject the empty / inverted range case (hexEnd <= hexStart)
         // which would silently produce a zero-byte signed range.
         if (hexStart == 0 || hexStart >= totalLen || hexEnd >= totalLen || hexEnd <= hexStart) {
-            return {false, {}, "Internal error: invalid /Contents byte range from PDF preparation"};
+            return makeFailure(SignFailureKind::PdfPreparationError,
+                               "Internal error: invalid /Contents byte range from PDF preparation");
         }
         size_t contentsOpen = hexStart - 1; // '<'
         size_t contentsClose = hexEnd;      // '>'
         size_t afterClose = contentsClose + 1;
         if (afterClose > totalLen) {
-            return {false, {}, "Internal error: /Contents close offset past end of prepared PDF"};
+            return makeFailure(SignFailureKind::PdfPreparationError,
+                               "Internal error: /Contents close offset past end of prepared PDF");
         }
 
         // Concatenate the two byte ranges for hashing
@@ -722,28 +750,28 @@ SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, Pkcs11Tok
         CAdESModule cades;
         auto cms = cades.signBB(signedData, token);
         if (cms.empty())
-            return {false, {}, "CAdES B-B signing produced empty output"};
+            return makeFailure(SignFailureKind::OpensslError, "CAdES B-B signing produced empty output");
 
         // 4. Upgrade to requested level
         if (level >= SignatureLevel::B_T) {
             cms = cades.addTimestamp(cms, tsa);
         }
 
-        if (level >= SignatureLevel::B_LT) {
-            auto revData = collectRevocationData(token, tsa);
+        if (wantsLT) {
+            // revData already collected pre-preparePdf for the DSS dictionary;
+            // reuse it here to avoid a redundant CRL/OCSP network round-trip.
             cms = cades.addRevocationData(cms, revData);
         }
 
-        if (level >= SignatureLevel::B_LTA) {
-            cms = cades.addArchiveTimestamp(cms, tsa);
-        }
+        // PAdES B-LTA does NOT embed a CAdES archive-timestamp; instead a
+        // second /DocTimeStamp incremental update is layered AFTER the B-LT
+        // pipeline below (ETSI EN 319 142-1 §5.5). Handled at the end.
 
         // 5. Verify CMS fits in the allocated space
         if (cms.size() > contentsAllocBytes)
-            return {false,
-                    {},
-                    std::format("CMS signature ({} bytes) exceeds allocated space ({} bytes)", cms.size(),
-                                contentsAllocBytes)};
+            return makeFailure(SignFailureKind::PdfPreparationError,
+                               std::format("CMS signature ({} bytes) exceeds allocated space ({} bytes)", cms.size(),
+                                           contentsAllocBytes));
 
         // 6. Hex-encode the CMS and embed into /Contents
         std::string hex = hexEncode(cms);
@@ -754,11 +782,167 @@ SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, Pkcs11Tok
         // Write hex into the prepared PDF bytes
         std::memcpy(prepared.bytes.data() + hexStart, hex.data(), (contentsAllocBytes * 2));
 
-        return {true, std::move(prepared.bytes), {}};
+        // 7. Append a SECOND incremental update with the Document Security
+        //    Store (ETSI EN 319 142-1 §5.4.2 / ISO 32000-2 §12.8.4.3) for
+        //    B-LT+. This sits outside the signed /ByteRange — Adobe's
+        //    "Add LTV information" flow uses the same shape — so the
+        //    signature hash stays valid.
+        if (wantsLT) {
+            // Re-parse the now-signed PDF to discover the post-signature
+            // object-number counter and the catalog reference. Cheaper than
+            // threading state out of preparePdf and immune to drift if the
+            // signature-update layout changes shape.
+            PdfParser sigParser(prepared.bytes);
+            if (!sigParser.parse())
+                return makeFailure(SignFailureKind::PdfPreparationError,
+                                   "DSS: failed to re-parse signed PDF for incremental update");
+
+            const size_t sigStartXref = sigParser.resolvedXrefOffset();
+            const size_t nextObj = static_cast<size_t>(sigParser.trailer().get("Size").asInt());
+            auto rootRefVal = sigParser.trailer().get("Root").asRef();
+            const size_t rootObjNum = rootRefVal.objNum;
+            const size_t rootGenNum = rootRefVal.genNum;
+            auto sigCatalog = sigParser.readObject(rootObjNum);
+
+            // ISO 32000-2 §12.8.4.3 VRI key: lowercase-hex SHA-1 of the
+            // signed /Contents bytes (raw CMS DER octets, not the hex
+            // envelope). iText / eu.europa.ec.dss / Adobe Acrobat all hash
+            // the binary CMS here.
+            auto sha1 = native_utils::sha1(cms);
+            std::string vriKey;
+            vriKey.reserve(sha1.size() * 2);
+            static constexpr char kHexLower[] = "0123456789abcdef";
+            for (auto b : sha1) {
+                vriKey.push_back(kHexLower[(b >> 4) & 0x0F]);
+                vriKey.push_back(kHexLower[b & 0x0F]);
+            }
+
+            // Allocate object numbers: DSS dict at nextObj, streams follow,
+            // catalog override at the very end so the xref subsections stay
+            // compact.
+            const size_t dssObj = nextObj;
+            const size_t streamCount = dssMat.certs.size() + dssMat.crls.size() + dssMat.ocspResponses.size();
+            const size_t newCatalogObj = dssObj + 1 + streamCount;
+
+            std::size_t dssObjNumOut = 0;
+            auto dssBytes = buildDssBlock(dssMat, dssObj, vriKey, dssObjNumOut);
+            // Empty DSS (no certs / no revocation) — skip the second update
+            // entirely; the signature is still a valid B-T-ish artefact.
+            if (!dssBytes.empty()) {
+                std::ostringstream incr2;
+                incr2 << "\n";
+                std::vector<std::pair<size_t, size_t>> objs2; // (objNum, offset_in_incr2)
+
+                const size_t dssBlockOffset = incr2.str().size();
+                // Stream object offsets, in textual order of buildDssBlock
+                // (certs, then CRLs, then OCSPs, then DSS dict).
+                std::string_view dssView(reinterpret_cast<const char*>(dssBytes.data()), dssBytes.size());
+                auto findObjStart = [&](std::size_t objNum) -> std::size_t {
+                    if (dssView.starts_with(std::format("{} 0 obj\n", objNum)))
+                        return 0;
+                    auto needle = std::format("\n{} 0 obj\n", objNum);
+                    auto p = dssView.find(needle);
+                    if (p == std::string_view::npos)
+                        throw std::runtime_error("DSS: object " + std::to_string(objNum) + " missing from block");
+                    return p + 1;
+                };
+                for (std::size_t i = 0; i < streamCount; ++i) {
+                    std::size_t objNum = dssObj + 1 + i;
+                    objs2.push_back({objNum, dssBlockOffset + findObjStart(objNum)});
+                }
+                objs2.push_back({dssObj, dssBlockOffset + findObjStart(dssObj)});
+                incr2.write(reinterpret_cast<const char*>(dssBytes.data()),
+                            static_cast<std::streamsize>(dssBytes.size()));
+
+                // Catalog override: copy existing catalog dictionary and
+                // splice in /DSS <ref>. Preserves AcroForm, Pages, Names,
+                // Outlines, etc. from the post-signature catalog.
+                {
+                    objs2.push_back({newCatalogObj, incr2.str().size()});
+                    PdfValue::DictType catDict;
+                    if (sigCatalog.type() == PdfValueType::Dict)
+                        catDict = sigCatalog.asDict();
+                    catDict["DSS"] = PdfValue::ref(static_cast<int>(dssObj));
+                    auto serialized = PdfValue::dict(std::move(catDict)).serialize();
+                    incr2 << std::format("{} 0 obj\n{}\nendobj\n", newCatalogObj, serialized);
+                }
+
+                // xref + trailer for incr2.
+                const size_t xref2Start = incr2.str().size();
+                const size_t baseOffset2 = prepared.bytes.size();
+                std::ranges::sort(objs2, {}, &std::pair<size_t, size_t>::first);
+
+                std::ostringstream xref2;
+                xref2 << "xref\n";
+                xref2 << "0 1\n0000000000 65535 f \n";
+                size_t k = 0;
+                while (k < objs2.size()) {
+                    size_t startObj = objs2[k].first;
+                    size_t count = 1;
+                    while (k + count < objs2.size() && objs2[k + count].first == startObj + count)
+                        ++count;
+                    xref2 << startObj << " " << count << "\n";
+                    for (size_t j = 0; j < count; ++j)
+                        xref2 << xrefOffset(baseOffset2 + objs2[k + j].second) << " 00000 n \n";
+                    k += count;
+                }
+
+                size_t maxObj2 = 0;
+                for (const auto& [o, _] : objs2)
+                    maxObj2 = std::max(maxObj2, o);
+                size_t newSize2 = std::max(nextObj + 1 + streamCount + 1, maxObj2 + 1);
+
+                xref2 << "trailer\n<< /Size " << newSize2 << " /Prev " << sigStartXref << " /Root " << newCatalogObj
+                      << " " << rootGenNum << " R >>\nstartxref\n"
+                      << (baseOffset2 + xref2Start) << "\n%%EOF\n";
+                incr2 << xref2.str();
+
+                auto incr2Str = incr2.str();
+                prepared.bytes.insert(prepared.bytes.end(), incr2Str.begin(), incr2Str.end());
+            }
+        }
+
+        // 8. PAdES B-LTA: layer a /DocTimeStamp second incremental update
+        //    over the now-complete B-LT PDF per ETSI EN 319 142-1 §5.5.
+        //    The TSA chain DSS material is empty for now — the resulting
+        //    document carries a valid /DocTimeStamp but a strict validator
+        //    may classify it as B-LT if it cannot independently build the
+        //    TSA chain. Revisit when TSAClient exposes the chain.
+        if (level >= SignatureLevel::B_LTA) {
+            try {
+                PdfDssMaterial tsaMat;
+                auto docTsBlock = libresign::appendDocTimeStamp(prepared.bytes, tsa, tsaMat);
+                prepared.bytes.insert(prepared.bytes.end(), docTsBlock.begin(), docTsBlock.end());
+            } catch (const std::runtime_error& e) {
+                std::string what = e.what();
+                // appendDocTimeStamp prefixes TSA transport failures with
+                // "appendDocTimeStamp: TSA failed:" (see pdf_doc_timestamp.cpp);
+                // every other throw is a parse / oversize / internal error.
+                if (what.find("TSA failed:") != std::string::npos ||
+                    what.find("TSA returned empty") != std::string::npos)
+                    return makeFailure(SignFailureKind::TsaUnreachable, std::string{"DocTimeStamp: "} + what);
+                return makeFailure(SignFailureKind::EngineError, std::string{"DocTimeStamp: "} + what);
+            }
+        }
+
+        return makeSuccess(std::move(prepared.bytes));
 
     } catch (const std::exception& e) {
-        return {false, {}, std::string("PAdES error: ") + e.what()};
+        return makeFailure(SignFailureKind::EngineError, std::string("PAdES error: ") + e.what());
     }
+}
+
+SigningResult PAdESModule::appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
+                                        Pkcs11Token& token, SignatureLevel level, const TSAConfig& tsa,
+                                        const VisualSignatureParams& visual)
+{
+    // The PAdES incremental-update model lets sign() handle a prior-signed PDF
+    // transparently: the new signature occupies a fresh incremental update
+    // layered on top of the prior /Contents region. originalDoc is recoverable
+    // from the prior PDF's signed byte range, so when supplied it is currently
+    // informational only.
+    (void)originalDoc;
+    return sign(std::vector<uint8_t>(prior.begin(), prior.end()), token, level, tsa, visual);
 }
 
 } // namespace libresign

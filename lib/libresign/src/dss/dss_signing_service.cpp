@@ -9,37 +9,49 @@
 #include <json.hpp>
 #include <openssl/crypto.h>
 #include <stdexcept>
+#include <utility>
 
 namespace libresign {
 
 namespace {
 
+// API-POLICY §9 forward-compat: exhaustive switches with no `default:` and
+// no fall-through return. Adding a new SignatureFormat / SignaturePackaging /
+// SignatureLevel value triggers a compile error here (gated by
+// -Werror=switch-enum on this TU) instead of silently mapping to a wrong
+// wire value — a generic `return "PAdES"` fallback would silently
+// downgrade a JAdES request to PAdES if a future hypothetical
+// SignatureFormat::PAdES_PDFA were added without touching this file.
+//
+// std::unreachable() (C++23) after the switch tells both the compiler and
+// any reader that no path leaves the switch without returning. This is
+// equivalent to __builtin_unreachable + a one-line documentation note.
 std::string formatToString(SignatureFormat format)
 {
     switch (format) {
-    case SignatureFormat::PAdES:
+    case SignatureFormat::Pades:
         return "PAdES";
-    case SignatureFormat::CAdES:
+    case SignatureFormat::Cades:
         return "CAdES";
-    case SignatureFormat::XAdES:
+    case SignatureFormat::Xades:
         return "XAdES";
-    case SignatureFormat::ASiC_E:
+    case SignatureFormat::AsicE:
         return "ASiC_E";
-    case SignatureFormat::JAdES:
+    case SignatureFormat::Jades:
         return "JAdES";
     }
-    return "PAdES";
+    std::unreachable();
 }
 
 std::string packagingToString(SignaturePackaging packaging)
 {
     switch (packaging) {
-    case SignaturePackaging::ENVELOPED:
+    case SignaturePackaging::Enveloped:
         return "ENVELOPED";
-    case SignaturePackaging::DETACHED:
+    case SignaturePackaging::Detached:
         return "DETACHED";
     }
-    return "ENVELOPED";
+    std::unreachable();
 }
 
 std::string levelToString(SignatureLevel level)
@@ -54,7 +66,7 @@ std::string levelToString(SignatureLevel level)
     case SignatureLevel::B_LTA:
         return "B_LTA";
     }
-    return "B_T";
+    std::unreachable();
 }
 
 // DSS is retained in 4.0 as a cross-verification oracle for tests; the
@@ -156,21 +168,23 @@ bool DSSSigningService::isAvailable() const
 }
 
 SigningResult DSSSigningService::sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
-                                      std::span<const uint8_t> pin, const std::string& keyAlias,
+                                      const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
                                       const std::string& readerName)
 {
     auto result = manager().ensureRunning();
     if (!result)
-        return {false, {}, result.error};
+        return makeFailure(SignFailureKind::EngineError, result.error);
 
     auto socketPath = manager().unixSocketPath();
 
-    // The Java DSS service expects the PIN as a JSON string field. We have
-    // to materialize a std::string here to feed nlohmann::json. Cleanse it
-    // unconditionally on scope exit so it doesn't outlive this stack frame
-    // even on exception. (The PIN still ends up in JVM String memory once
-    // the Java side parses the request — that's an inherent limitation of
-    // the IPC architecture documented on the header.)
+    // The Java DSS service expects the PIN as a JSON string field. We have to
+    // materialize a std::string here to feed nlohmann::json. The caller's
+    // Secure::Buffer cleanses its own storage on destruction, but THIS local
+    // std::string copy is born outside that contract — keep PinStringScrubber
+    // on `pinStr` so it's cleansed on scope exit even on exception. (The PIN
+    // still ends up in JVM String memory once the Java side parses the
+    // request — inherent limitation of the IPC architecture, documented on
+    // the header.)
     std::string pinStr(reinterpret_cast<const char*>(pin.data()), pin.size());
     LibreSCRS::SmartCard::Internal::PinStringScrubber pinScrubber{pinStr};
 
@@ -218,12 +232,22 @@ SigningResult DSSSigningService::sign(const SigningRequest& request, const std::
             msg += " (connection): " + resp.errorMessage;
         else
             msg += " (HTTP " + std::to_string(resp.statusCode) + ", no details)";
-        return {false, {}, msg};
+        return makeFailure(SignFailureKind::EngineError, msg);
     }
 
     // Response is raw binary (application/octet-stream)
     std::vector<uint8_t> doc(resp.body.begin(), resp.body.end());
-    return {true, std::move(doc), {}};
+    return makeSuccess(std::move(doc));
+}
+
+SigningResult DSSSigningService::appendSigner(const SigningRequest& /*request*/,
+                                              std::span<const uint8_t> /*priorSignature*/,
+                                              std::span<const uint8_t> /*originalDocument*/,
+                                              const LibreSCRS::Secure::Buffer& /*pin*/,
+                                              const std::string& /*pkcs11Module*/, const std::string& /*keyAlias*/,
+                                              const std::string& /*readerName*/)
+{
+    return makeFailure(SignFailureKind::EngineError, "appendSigner not yet implemented in this backend");
 }
 
 } // namespace libresign

@@ -272,8 +272,8 @@ struct Pkcs11Token::Impl
     }
 };
 
-Pkcs11Token::Pkcs11Token(const std::string& modulePath, std::span<const uint8_t> pin, const std::string& keyAlias,
-                         const std::string& readerName,
+Pkcs11Token::Pkcs11Token(const std::string& modulePath, const LibreSCRS::Secure::Buffer& pin,
+                         const std::string& keyAlias, const std::string& readerName,
                          std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession)
     : impl(std::make_unique<Impl>())
 {
@@ -282,16 +282,17 @@ Pkcs11Token::Pkcs11Token(const std::string& modulePath, std::span<const uint8_t>
     // C_GetSlotList → provider::probe, which consults AttachRegistry.
     impl->attachSessionIfPresent(modulePath, readerName, std::move(sharedSession));
     CK_SLOT_ID slotId = impl->findSlotByReaderName(readerName);
-    impl->openSessionAndLogin(slotId, pin);
+    impl->openSessionAndLogin(slotId, std::span<const uint8_t>{pin.data(), pin.size()});
     impl->findPrivateKey(keyAlias);
 }
 
-Pkcs11Token::Pkcs11Token(const std::string& modulePath, std::span<const uint8_t> pin, const std::string& keyAlias,
-                         TestSlotId rawSlotId)
+Pkcs11Token::Pkcs11Token(const std::string& modulePath, const LibreSCRS::Secure::Buffer& pin,
+                         const std::string& keyAlias, TestSlotId rawSlotId)
     : impl(std::make_unique<Impl>())
 {
     impl->loadModule(modulePath);
-    impl->openSessionAndLogin(static_cast<CK_SLOT_ID>(rawSlotId.slotId), pin);
+    impl->openSessionAndLogin(static_cast<CK_SLOT_ID>(rawSlotId.slotId),
+                              std::span<const uint8_t>{pin.data(), pin.size()});
     impl->findPrivateKey(keyAlias);
 }
 

@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <LibreSCRS/Secure/Buffer.h>
+
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -22,9 +24,11 @@ namespace libresign {
 class Pkcs11Token
 {
 public:
-    // pin: byte view into caller-owned, caller-cleansed storage. The token
-    // does not retain the view past construction; the bytes are passed
-    // straight to C_Login which copies them into the PKCS#11 module.
+    // pin: @ref LibreSCRS::Secure::Buffer borrowed from the caller. The token
+    // does not retain a pointer into the buffer past construction; the bytes
+    // are passed straight to C_Login which copies them into the PKCS#11
+    // module. The buffer's cleansing-on-destroy contract is enforced at the
+    // type system — no caller-side discipline required.
     //
     // readerName: the FULL PCSC reader name the caller wants to sign
     // on. The constructor enumerates the loaded module's slots, parses
@@ -53,7 +57,7 @@ public:
     ///        second standalone session against the same reader. When
     ///        null, the standalone path runs (legacy behaviour).
     /// @since 4.1
-    Pkcs11Token(const std::string& modulePath, std::span<const uint8_t> pin, const std::string& keyAlias,
+    Pkcs11Token(const std::string& modulePath, const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
                 const std::string& readerName,
                 std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession = nullptr);
 
@@ -70,7 +74,7 @@ public:
         unsigned long slotId; // PKCS#11 CK_SLOT_ID is `unsigned long`
         explicit constexpr TestSlotId(unsigned long id) noexcept : slotId(id) {}
     };
-    Pkcs11Token(const std::string& modulePath, std::span<const uint8_t> pin, const std::string& keyAlias,
+    Pkcs11Token(const std::string& modulePath, const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
                 TestSlotId rawSlotId);
 
     ~Pkcs11Token();

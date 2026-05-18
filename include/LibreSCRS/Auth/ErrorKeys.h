@@ -145,6 +145,70 @@ namespace LibreSCRS::Auth::ErrorKeys {
     return LocalizedText{"librescrs.error.sign.engine", "Signing engine reported an error.", {}};
 }
 
+/// @brief Signing failed because the configured Timestamp Authority (TSA)
+///        endpoint could not be reached or rejected the request.
+///
+/// Distinct from @ref signingEngineError so the GUI can surface a
+/// network/TSA-specific affordance (retry, switch TSA, fall back to a
+/// signature level that doesn't require timestamping).
+/// @since 4.2
+[[nodiscard]] inline LocalizedText tsaUnreachable()
+{
+    return LocalizedText{"librescrs.error.sign.tsa_unreachable", "The timestamp authority server is unreachable.", {}};
+}
+
+/// @brief Signing failed because the engine could not fetch certificate
+///        revocation data (CRL / OCSP) required by the signature level.
+/// @since 4.2
+[[nodiscard]] inline LocalizedText revocationFetchFailed()
+{
+    return LocalizedText{
+        "librescrs.error.sign.revocation_fetch_failed", "Certificate revocation data could not be fetched.", {}};
+}
+
+/// @brief Signing failed due to a low-level communication or APDU error
+///        with the smart card. Distinct from @ref pinIncorrect (wrong PIN)
+///        and @ref pinBlocked (PUK workflow) — this covers transport
+///        faults, card-removed-mid-operation, and unexpected SW1/SW2
+///        responses from the card.
+/// @since 4.2
+[[nodiscard]] inline LocalizedText cardError()
+{
+    return LocalizedText{"librescrs.error.sign.card_error", "Smart card communication error during signing.", {}};
+}
+
+/// @brief Signing failed because the card rejected the supplied PIN.
+///
+/// Distinct from @ref pinIncorrect (used during pre-sign authentication)
+/// because the signing-time PIN-verify path may need to surface a different
+/// affordance (e.g. the wizard's retry step rather than the card-open
+/// PIN dialog).
+/// @since 4.2
+[[nodiscard]] inline LocalizedText pinVerificationFailed()
+{
+    return LocalizedText{
+        "librescrs.error.sign.pin_verification_failed", "The PIN entered for signing is incorrect.", {}};
+}
+
+/// @brief Signing failed because the request was malformed or rejected
+///        by request validation (e.g. invalid output path, missing
+///        required fields, unsupported signature level for the input).
+/// @since 4.2
+[[nodiscard]] inline LocalizedText invalidRequest()
+{
+    return LocalizedText{"librescrs.error.sign.invalid_request", "The signing request is invalid.", {}};
+}
+
+/// @brief Signing failed because the inputs violate the configured
+///        signing policy (e.g. expired certificate at a level that
+///        requires fresh revocation, profile-disallowed algorithm).
+/// @since 4.2
+[[nodiscard]] inline LocalizedText policyViolation()
+{
+    return LocalizedText{
+        "librescrs.error.sign.policy_violation", "The signing request does not satisfy the configured policy.", {}};
+}
+
 /// @brief Generic "trust store unavailable" message.
 [[nodiscard]] inline LocalizedText trustStoreUnavailable()
 {

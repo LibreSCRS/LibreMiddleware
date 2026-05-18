@@ -60,13 +60,20 @@ endif()
 if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
     list(APPEND LIBRESIGN_SOURCES
         src/native/native_utils.cpp
+        src/native/pdf_value.cpp
+        src/native/pdf_tokens.cpp
         src/native/pdf_parser.cpp
         src/native/pkcs11_token.cpp
         src/native/signing_provider.cpp
+        src/native/signing_provider_keymgmt.cpp
+        src/native/signing_provider_signature.cpp
         src/native/tsa_client.cpp
         src/native/revocation_client.cpp
         src/native/cades_module.cpp
         src/native/pades_module.cpp
+        src/native/pdf_dss.cpp
+        src/native/pdf_doc_timestamp.cpp
+        src/native/jcs.cpp
         src/native/jades_module.cpp
         src/native/xades_module.cpp
         src/native/asic_module.cpp
@@ -86,10 +93,15 @@ if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
     list(APPEND LIBRESIGN_HEADERS
         src/native/pkcs11_token.h
         src/native/signing_provider.h
+        src/native/signing_provider_keymgmt.h
+        src/native/signing_provider_signature.h
         src/native/tsa_client.h
         src/native/revocation_client.h
         src/native/cades_module.h
         src/native/pades_module.h
+        src/native/pdf_dss.h
+        src/native/pdf_doc_timestamp.h
+        src/native/jcs.h
         src/native/jades_module.h
         src/native/xades_module.h
         src/native/asic_module.h
@@ -100,6 +112,8 @@ if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
         src/native/digest_info.h
         src/native/native_utils.h
         src/native/openssl_raii.h
+        src/native/pdf_value.h
+        src/native/pdf_tokens.h
         src/native/pdf_parser.h
         src/native/pinned_tl_certs.h
         src/native/tl_cache.h
@@ -155,6 +169,24 @@ if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
                 COMPILE_DEFINITIONS "_FILE_OFFSET_BITS=64;_LARGEFILE64_SOURCE"
         )
     endif()
+endif()
+
+# API-POLICY §9 forward-compat hardening: format/packaging/level switch
+# dispatchers must close over every enum value. Compiler-enforced.
+# -Werror=switch-enum is targeted to the two files with these switches so
+# the rest of LibreSign retains its existing -Wswitch posture (closed-on-
+# all-arms-with-default is still acceptable elsewhere).
+set_source_files_properties(
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/native/native_signing_service.cpp
+    PROPERTIES
+        COMPILE_OPTIONS "-Werror=switch-enum"
+)
+if(SIGNING_BACKEND STREQUAL "dss" OR SIGNING_BACKEND STREQUAL "both")
+    set_source_files_properties(
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/dss/dss_signing_service.cpp
+        PROPERTIES
+            COMPILE_OPTIONS "-Werror=switch-enum"
+    )
 endif()
 
 # LibreSign has no public surface. Internal headers (types.h,

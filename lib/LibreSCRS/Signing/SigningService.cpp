@@ -19,8 +19,8 @@
 #include <signing_service.h>
 #include <signing_service_factory.h>
 #include <types.h>
+#include <LibreSCRS/Secure/Buffer.h>
 #include <openssl/crypto.h>
-#include <smartcard/secure_buffer.h>
 
 #include <algorithm>
 #include <array>
@@ -291,11 +291,12 @@ SigningResult SigningService::sign(const SigningRequest& request, Auth::Credenti
             LocalizedText{"librescrs.signing.error.invalidRequest", "Signing request is missing required fields.", {}},
             std::string{"CredentialProvider returned Ok but no pin field"});
     }
-    // Go directly from Secure::String::view() into SecureBuffer — no
-    // intermediate std::string to escape cleansing. The Secure::String owned
-    // by credResult.values cleanses its storage when the CredentialResult
-    // goes out of scope; no manual OPENSSL_cleanse needed here.
-    LibreSCRS::SmartCard::Internal::SecureBuffer pinBuffer(pinPtr->view());
+    // Go directly from Secure::String::view() into Secure::Buffer — no
+    // intermediate std::string to escape cleansing. Both the source
+    // Secure::String (owned by credResult.values) and this Secure::Buffer
+    // cleanse their storage on destruction; no manual OPENSSL_cleanse needed
+    // here.
+    LibreSCRS::Secure::Buffer pinBuffer(pinPtr->view());
 
     // Translate TrustConfig to libresign::TrustConfig.
     libresign::TrustConfig libTrust;
@@ -456,17 +457,22 @@ SigningResult SigningService::sign(const SigningRequest& request, Auth::Credenti
         // each to its corresponding named factory so we keep the "factory is
         // the only way to construct" invariant end-to-end.
         const auto classified = detail::classifyLibresignError(libResult);
-        LocalizedText engineMsg{"librescrs.signing.error.engine", "Signing failed: see log for details.", {}};
+        // Derive the user-facing message from the typed failure kind when the
+        // module set one; fall back to the generic engine-error key for the
+        // legacy exception path (Pkcs11Token CKR throws that bypass the
+        // module's typed return shape).
+        LocalizedText userMsg = libResult.failureKind.has_value() ? detail::kindToUserMessage(*libResult.failureKind)
+                                                                  : LibreSCRS::Auth::ErrorKeys::signingEngineError();
         switch (classified) {
         case SigningResult::Status::PinVerificationFailed:
-            return SigningResult::pinVerificationFailed(std::move(engineMsg), libResult.errorMessage);
+            return SigningResult::pinVerificationFailed(std::move(userMsg), libResult.errorMessage);
         case SigningResult::Status::CardBlocked:
-            return SigningResult::cardBlocked(std::move(engineMsg), libResult.errorMessage);
+            return SigningResult::cardBlocked(std::move(userMsg), libResult.errorMessage);
         case SigningResult::Status::TsaUnreachable:
-            return SigningResult::tsaUnreachable(std::move(engineMsg), libResult.errorMessage);
+            return SigningResult::tsaUnreachable(std::move(userMsg), libResult.errorMessage);
         case SigningResult::Status::SigningEngineError:
         default:
-            return SigningResult::signingEngineError(std::move(engineMsg), libResult.errorMessage);
+            return SigningResult::signingEngineError(std::move(userMsg), libResult.errorMessage);
         }
     }
 
@@ -503,6 +509,238 @@ SigningResult SigningService::sign(const SigningRequest& request, Auth::Credenti
     if (renameEc) {
         std::error_code rmEc;
         std::filesystem::remove(tempPath, rmEc); // best-effort cleanup
+        return SigningResult::signingEngineErrorDiagnosticOnly(std::string{"Failed to rename output temp file: "} +
+                                                               renameEc.message());
+    }
+
+    return SigningResult::ok(request.outputFile());
+}
+
+SigningResult SigningService::appendSigner(const SigningRequest& request, std::span<const std::uint8_t> priorSignature,
+                                           std::span<const std::uint8_t> originalDocument,
+                                           Auth::CredentialProvider credentialProvider,
+                                           std::shared_ptr<LibreSCRS::Plugin::CardPlugin> cardPlugin,
+                                           std::shared_ptr<LibreSCRS::SmartCard::CardSession> session)
+{
+    // Same up-front guards as sign(): empty CredentialProvider, null
+    // plugin/session, and null TrustStoreService are all InvalidRequest /
+    // diagnostic-only failures rather than engine errors. Mirroring sign()
+    // keeps callers' error-handling switches identical between the two
+    // entry points.
+    if (!credentialProvider) {
+        return SigningResult::invalidRequest(
+            LocalizedText{"librescrs.signing.error.noCredentialProvider", "No credential provider was supplied.", {}});
+    }
+    if (!cardPlugin || !session) {
+        return SigningResult::invalidRequest(
+            LocalizedText{"librescrs.signing.error.invalidRequest", "Signing request is missing required fields.", {}},
+            std::string{"appendSigner(): cardPlugin or session shared_ptr is null"});
+    }
+    if (!d->trustService) {
+        return SigningResult::trustStoreUnavailableDiagnosticOnly(
+            std::string{"SigningService: TrustStoreService is null"});
+    }
+    if (priorSignature.empty()) {
+        return SigningResult::invalidRequest(
+            LocalizedText{"librescrs.signing.error.invalidRequest", "Signing request is missing required fields.", {}},
+            std::string{"appendSigner(): priorSignature span is empty"});
+    }
+    if (request.outputFile().empty()) {
+        return SigningResult::invalidRequest(
+            LocalizedText{"librescrs.signing.error.invalidRequest", "Signing request is missing required fields.", {}},
+            std::string{"appendSigner(): outputFile is empty"});
+    }
+
+    const Trust::TrustConfig& trustSnapshot = d->trustService->config();
+    TsaProvider tsaOverrideSnapshot = request.tsaOverride();
+    const TsaProvider& tsaSnapshot = tsaOverrideSnapshot ? tsaOverrideSnapshot : d->tsa;
+
+    // TSA probe + level-required guard — same contract as sign().
+    std::optional<TsaRequest> tsaOut;
+    if (tsaSnapshot) {
+        TsaContext tctx{request.format(), request.level(), {}};
+        tsaOut = tsaSnapshot(tctx);
+    }
+    if (request.level() != SignatureLevel::B_B && (!tsaOut || tsaOut->url.empty())) {
+        return SigningResult::tsaUnreachable(
+            LocalizedText{
+                "librescrs.signing.error.tsaUnreachable", "Time-stamping authority not configured or unreachable.", {}},
+            !tsaOut ? std::string{"TsaProvider is empty; B-T/B-LT/B-LTA requires a configured TSA"}
+                    : std::string{"TsaProvider returned empty URL; B-T/B-LT/B-LTA requires a reachable TSA"});
+    }
+
+    // PIN collection — same path as sign(); centralised AuthRequirement
+    // build so a retry-count change in sign() automatically applies here
+    // too. PIN flows from Secure::String → Secure::Buffer with no
+    // intermediate non-cleansing copy.
+    const int retriesLeft = cardPlugin->getPINTriesLeft(*session).value_or(-1);
+    auto authReq = Auth::AuthRequirement::forSigning(
+        LocalizedText{.key = "librescrs.signing.label.pin", .defaultText = "Signing PIN", .placeholders = {}},
+        retriesLeft);
+    auto credResult = credentialProvider(authReq);
+    if (credResult.status == Auth::CredentialResult::Status::UserCancelled) {
+        return SigningResult::userCancelled();
+    }
+    if (credResult.status != Auth::CredentialResult::Status::Ok) {
+        const auto& lt = credResult.userMessage;
+        std::string diag = !lt.defaultText.empty()
+                               ? lt.defaultText
+                               : (!lt.key.empty() ? lt.key : std::string{"CredentialProvider reported error"});
+        return SigningResult::signingEngineErrorDiagnosticOnly(std::move(diag));
+    }
+    const LibreSCRS::Secure::String* pinPtr = credResult.find("pin");
+    if (pinPtr == nullptr || pinPtr->empty()) {
+        return SigningResult::invalidRequest(
+            LocalizedText{"librescrs.signing.error.invalidRequest", "Signing request is missing required fields.", {}},
+            std::string{"CredentialProvider returned Ok but no pin field"});
+    }
+    LibreSCRS::Secure::Buffer pinBuffer(pinPtr->view());
+
+    // Trust translation — identical structure to sign(). Refactoring this
+    // into a helper is left for a follow-up; keeping the two flows visibly
+    // symmetric here keeps future per-format dispatcher work a strict diff.
+    libresign::TrustConfig libTrust;
+    for (const auto& src : trustSnapshot.trustedListSources) {
+        libresign::TrustedListEntry entry;
+        entry.url = src.url;
+        entry.isLotl = src.lotl;
+        entry.eager = src.eager;
+        libTrust.trustedLists.push_back(std::move(entry));
+    }
+    if (trustSnapshot.trustedListFile.has_value()) {
+        libresign::TrustedListEntry entry;
+        entry.url = "file://" + trustSnapshot.trustedListFile->string();
+        entry.isLotl = false;
+        entry.eager = true;
+        entry.localFileOnly = true;
+        if (trustSnapshot.trustedListFileSigningCert.has_value())
+            entry.signingCertPath = trustSnapshot.trustedListFileSigningCert->string();
+        libTrust.trustedLists.push_back(std::move(entry));
+    }
+    if (trustSnapshot.cacheDirectory.has_value()) {
+        libTrust.cacheDirectory = trustSnapshot.cacheDirectory->string();
+    }
+
+    const std::string& keyAlias = request.certificateLabel();
+
+    // For appendSigner the prior-signature bytes flow as a span; libReq.document
+    // is left empty (the per-format dispatcher reads from the priorSignature
+    // span instead). All other request-sourced fields (level, TSA, visual,
+    // contactInfo, fileName) still apply to the NEW signer and translate the
+    // same way they do for sign().
+    libresign::SigningRequest libReq;
+    detail::translatePublicRequestToLibresign(request, libReq);
+    if (tsaOut && !tsaOut->url.empty()) {
+        libReq.tsa.url = tsaOut->url;
+        if (tsaOut->credentials.basicAuth.has_value()) {
+            libresign::TransportCredentials::BasicAuth ba;
+            ba.user = std::move(tsaOut->credentials.basicAuth->user);
+            ba.password = std::move(tsaOut->credentials.basicAuth->password);
+            libReq.tsa.credentials.basicAuth = std::move(ba);
+        }
+        libReq.tsa.credentials.bearerToken = std::move(tsaOut->credentials.bearerToken);
+        auto translatePem =
+            [](LibreSCRS::Signing::TsaCredentials::PemSource&& src) -> libresign::TransportCredentials::PemSource {
+            return std::visit(
+                [](auto&& alt) -> libresign::TransportCredentials::PemSource {
+                    using Alt = std::decay_t<decltype(alt)>;
+                    if constexpr (std::is_same_v<Alt, std::filesystem::path>) {
+                        return libresign::TransportCredentials::PemSource{std::forward<decltype(alt)>(alt)};
+                    } else {
+                        return libresign::TransportCredentials::PemSource{
+                            std::make_shared<LibreSCRS::Secure::Buffer>(std::forward<decltype(alt)>(alt))};
+                    }
+                },
+                std::move(src));
+        };
+        if (tsaOut->credentials.clientCert.has_value()) {
+            libReq.tsa.credentials.clientCert = translatePem(std::move(*tsaOut->credentials.clientCert));
+        }
+        if (tsaOut->credentials.clientCertKey.has_value()) {
+            libReq.tsa.credentials.clientCertKey = translatePem(std::move(*tsaOut->credentials.clientCertKey));
+        }
+        libReq.tsa.credentials.extraHeaders = std::move(tsaOut->credentials.extraHeaders);
+        libReq.tsa.credentials.extraSecretHeaders = std::move(tsaOut->credentials.extraSecretHeaders);
+    }
+
+    const auto backend = chooseBackend();
+    if (backend == libresign::Backend::DSS) {
+        const bool hasCredentials =
+            libReq.tsa.credentials.basicAuth.has_value() || libReq.tsa.credentials.bearerToken.has_value() ||
+            libReq.tsa.credentials.clientCert.has_value() || libReq.tsa.credentials.clientCertKey.has_value() ||
+            !libReq.tsa.credentials.extraSecretHeaders.empty() || !request.contactInfo().empty();
+        if (hasCredentials) {
+            return SigningResult::signingEngineErrorDiagnosticOnly(
+                std::string{"DSS backend does not support TSA credentials or contactInfo — "
+                            "use Native backend (unset LIBRESCRS_SIGNING_BACKEND or set =native)."});
+        }
+    }
+
+    auto service = libresign::createSigningService(backend);
+    if (!service) {
+        return SigningResult::signingEngineErrorDiagnosticOnly(
+            std::string{"Failed to construct libresign::SigningService"});
+    }
+    if (backend == libresign::Backend::Native) {
+        if (auto* native = dynamic_cast<libresign::NativeSigningService*>(service.get())) {
+            auto trustStore = std::const_pointer_cast<Trust::TrustStore>(d->trustService->trustStore());
+            native->setAnchorEmitter([trustStore](std::vector<Trust::TrustAnchor> anchors, std::string label) {
+                if (!trustStore)
+                    return;
+                Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(*trustStore, std::move(anchors),
+                                                                                 label);
+            });
+        }
+    }
+    if (!service->configure(libTrust)) {
+        return SigningResult::trustStoreUnavailableDiagnosticOnly(std::string{"libresign rejected TrustConfig"});
+    }
+
+    auto libResult = service->appendSigner(libReq, priorSignature, originalDocument, pinBuffer, resolvePkcs11Module(),
+                                           keyAlias, session->readerName());
+
+    if (!libResult.success) {
+        const auto classified = detail::classifyLibresignError(libResult);
+        LocalizedText userMsg = libResult.failureKind.has_value() ? detail::kindToUserMessage(*libResult.failureKind)
+                                                                  : LibreSCRS::Auth::ErrorKeys::signingEngineError();
+        switch (classified) {
+        case SigningResult::Status::PinVerificationFailed:
+            return SigningResult::pinVerificationFailed(std::move(userMsg), libResult.errorMessage);
+        case SigningResult::Status::CardBlocked:
+            return SigningResult::cardBlocked(std::move(userMsg), libResult.errorMessage);
+        case SigningResult::Status::TsaUnreachable:
+            return SigningResult::tsaUnreachable(std::move(userMsg), libResult.errorMessage);
+        case SigningResult::Status::SigningEngineError:
+        default:
+            return SigningResult::signingEngineError(std::move(userMsg), libResult.errorMessage);
+        }
+    }
+
+    // Atomic write — same .tmp + rename(2) idiom as sign().
+    auto outputPath = request.outputFile();
+    auto tempPath = outputPath;
+    tempPath += ".tmp";
+    {
+        std::ofstream out(tempPath, std::ios::binary);
+        if (!out) {
+            return SigningResult::signingEngineErrorDiagnosticOnly(std::string{"Failed to open output temp file: "} +
+                                                                   tempPath.string());
+        }
+        out.write(reinterpret_cast<const char*>(libResult.signedDocument.data()),
+                  static_cast<std::streamsize>(libResult.signedDocument.size()));
+        out.close();
+        if (!out) {
+            std::error_code rmEc;
+            std::filesystem::remove(tempPath, rmEc);
+            return SigningResult::signingEngineErrorDiagnosticOnly(std::string{"Failed to write output temp file: "} +
+                                                                   tempPath.string());
+        }
+    }
+    std::error_code renameEc;
+    std::filesystem::rename(tempPath, outputPath, renameEc);
+    if (renameEc) {
+        std::error_code rmEc;
+        std::filesystem::remove(tempPath, rmEc);
         return SigningResult::signingEngineErrorDiagnosticOnly(std::string{"Failed to rename output temp file: "} +
                                                                renameEc.message());
     }

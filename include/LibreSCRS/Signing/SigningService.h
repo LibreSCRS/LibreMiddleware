@@ -20,7 +20,9 @@
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/Trust/TrustStoreService.h>
 
+#include <cstdint>
 #include <memory>
+#include <span>
 
 // Forward declaration for the plugin interface; full header stays out of this
 // public surface.
@@ -137,9 +139,76 @@ public:
     /// thread will freeze the UI for several seconds. There is no
     /// cancellation hook in 4.0 — see the project BACKLOG for the 4.1
     /// async overload that adds @ref LibreSCRS::CancelToken support.
+    /// @par XAdES DETACHED Reference URI constraint
+    /// When @p request.format selects XAdES with DETACHED packaging, the
+    /// emitted `ds:Reference URI` attribute names the original file by
+    /// its percent-encoded basename (e.g. `URI="my%20doc.bin"`).
+    /// Conformant XAdES validators (EU DSS, ETSI test bench, Adobe)
+    /// resolve that URI relative to the location of the `.xml` signature
+    /// file, so the original payload MUST be present alongside the
+    /// signature with the exact filename it carried at sign time.
+    /// Callers that hand the signed `.xml` to a recipient over the wire
+    /// must include the original file too; without it, validation fails
+    /// at the reference-resolution step before any cryptographic check
+    /// runs.
     [[nodiscard]] SigningResult sign(const SigningRequest& request, Auth::CredentialProvider credentialProvider,
                                      std::shared_ptr<LibreSCRS::Plugin::CardPlugin> cardPlugin,
                                      std::shared_ptr<LibreSCRS::SmartCard::CardSession> session);
+
+    /// @brief Append a new signer to a prior signature, producing a multi-
+    ///        signature document with the new signer's signature alongside
+    ///        the existing ones.
+    ///
+    /// For ENVELOPED formats (PAdES, XAdES-Enveloped, JAdES-Enveloped,
+    /// ASiC-E) @p originalDocument may be empty — the original payload is
+    /// recoverable from @p priorSignature. When non-empty, the engine
+    /// asserts it matches the embedded original and returns
+    /// @ref SigningResult::Status::InvalidRequest on mismatch (tamper
+    /// detection).
+    ///
+    /// For DETACHED formats (CAdES, XAdES-Detached, JAdES-Detached)
+    /// @p originalDocument is MANDATORY — RFC 7797 / ETSI EN 319 122 / etc.
+    /// detached blobs do not carry the original by spec. An empty
+    /// @p originalDocument against a detached prior returns
+    /// @ref SigningResult::Status::InvalidRequest naming the missing
+    /// original.
+    ///
+    /// Format is INFERRED from @p priorSignature (PDF / XML / JSON / CMS
+    /// SEQUENCE / ZIP magic) and overrides any value in
+    /// @p request.format. @p request supplies signer-side parameters
+    /// (level, TSA configuration, visual appearance, contactInfo) for the
+    /// new signer only; prior signers' attributes are left untouched.
+    ///
+    /// @param request           Immutable signing parameters for the new
+    ///                          signer.
+    /// @param priorSignature    The existing signed document / signature
+    ///                          container being extended. Borrowed for the
+    ///                          duration of the call; the implementation
+    ///                          does not retain the span past return.
+    /// @param originalDocument  The original payload bytes. Empty for the
+    ///                          common ENVELOPED case (use the original
+    ///                          recovered from @p priorSignature). Non-empty
+    ///                          for DETACHED priors (mandatory) or for
+    ///                          ENVELOPED tamper-check assertions.
+    /// @param credentialProvider Callback that collects the signing PIN
+    ///                          for the new signer (same contract as
+    ///                          @ref sign).
+    /// @return SigningResult whose @ref SigningResult::status is always
+    ///         set. Same status taxonomy as @ref sign, plus
+    ///         @ref SigningResult::Status::InvalidRequest for missing
+    ///         original / unrecognised prior-signature magic / tamper
+    ///         mismatch.
+    /// @par Blocking
+    /// Same blocking contract as @ref sign — PIN verification + APDU
+    /// signing + optional TSA round-trip + packaging. Call on a worker
+    /// thread from GUI hosts.
+    /// @since 4.2
+    [[nodiscard]] SigningResult appendSigner(const SigningRequest& request,
+                                             std::span<const std::uint8_t> priorSignature,
+                                             std::span<const std::uint8_t> originalDocument,
+                                             Auth::CredentialProvider credentialProvider,
+                                             std::shared_ptr<LibreSCRS::Plugin::CardPlugin> cardPlugin,
+                                             std::shared_ptr<LibreSCRS::SmartCard::CardSession> session);
 
     // @since 4.0: trustStore() getter removed — consumers obtain the trust
     // store from the @ref Trust::TrustStoreService they constructed and

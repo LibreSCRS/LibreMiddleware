@@ -26,9 +26,14 @@ class NativeSigningService : public SigningService
 public:
     bool configure(const TrustConfig& config) override;
 
-    SigningResult sign(const SigningRequest& request, const std::string& pkcs11ModulePath, std::span<const uint8_t> pin,
-                       const std::string& keyAlias, const std::string& readerName,
+    SigningResult sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
+                       const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias, const std::string& readerName,
                        std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession = nullptr) override;
+
+    SigningResult appendSigner(const SigningRequest& request, std::span<const uint8_t> priorSignature,
+                               std::span<const uint8_t> originalDocument, const LibreSCRS::Secure::Buffer& pin,
+                               const std::string& pkcs11Module, const std::string& keyAlias,
+                               const std::string& readerName) override;
 
     bool isAvailable() const override;
 

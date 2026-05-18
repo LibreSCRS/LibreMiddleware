@@ -19,8 +19,11 @@
 #include <openssl/x509.h>
 
 #include <algorithm>
+#include <cstring>
 #include <fstream>
+#include <optional>
 #include <stdexcept>
+#include <utility>
 
 namespace libresign {
 
@@ -58,6 +61,83 @@ std::vector<uint8_t> loadCertFromFile(const std::string& path)
         return {};
 
     return native_utils::derEncode(static_cast<int (*)(const X509*, unsigned char**)>(i2d_X509), cert.get());
+}
+
+// Sniff signature format from prior bytes' magic. Used by @ref
+// NativeSigningService::appendSigner — the public API does not carry a
+// SignatureFormat for the append path, so the dispatcher infers it from
+// the wire shape of the prior signature. Order matters: PDF and ZIP are
+// disjoint multi-byte magics; JSON (`{`) and DER (0x30) and XML (`<`)
+// each occupy one disambiguating leading byte; UTF-8 BOM gates an
+// alternative XAdES entry.
+std::optional<SignatureFormat> inferFormat(std::span<const uint8_t> prior)
+{
+    if (prior.size() >= 5 && std::memcmp(prior.data(), "%PDF-", 5) == 0)
+        return SignatureFormat::Pades;
+    if (prior.size() >= 4 && prior[0] == 'P' && prior[1] == 'K' && prior[2] == 0x03 && prior[3] == 0x04)
+        return SignatureFormat::AsicE;
+    if (!prior.empty() && prior.front() == '{')
+        return SignatureFormat::Jades;
+    if (!prior.empty() && prior.front() == 0x30) // ASN.1 SEQUENCE — DER CMS
+        return SignatureFormat::Cades;
+    if (!prior.empty() && prior.front() == '<')
+        return SignatureFormat::Xades;
+    if (prior.size() >= 3 && prior[0] == 0xEF && prior[1] == 0xBB && prior[2] == 0xBF)
+        return SignatureFormat::Xades;
+    return std::nullopt;
+}
+
+// Cheap "looks like an already-signed document of `fmt`" probe used by
+// @ref NativeSigningService::sign to lift the per-module multi-sign
+// auto-detect (previously inside xades_module / jades_module sign()
+// paths) up to the service-level dispatcher. When this returns true,
+// sign() routes the request to appendSigner instead of the per-format
+// sign() — which means an already-signed document never reaches the
+// fresh-sign code path through the public API.
+//
+// The checks are intentionally substring scans, not full parses:
+// inferFormat() has already gated on the magic bytes, so a false
+// positive (e.g. a PDF whose content stream literally contains the
+// "/Type /Sig" octets but has no signature dict) only redirects to
+// appendSigner, which then runs its own strict parse and fails with a
+// targeted InvalidInput rather than producing a malformed signature.
+// CAdES is special-cased: a DER SEQUENCE matched by inferFormat IS by
+// definition a signed CMS blob (no "unsigned CAdES" concept), so the
+// probe is unconditionally true.
+bool looksSignedAlready(std::span<const uint8_t> doc, SignatureFormat fmt)
+{
+    using namespace std::string_view_literals;
+    auto sv = std::string_view{reinterpret_cast<const char*>(doc.data()), doc.size()};
+    switch (fmt) {
+    case SignatureFormat::Pades:
+        // Adobe-spec /Type /Sig dictionary marker; both spaced and
+        // unspaced forms occur because PDF whitespace is optional
+        // between name token and value.
+        return sv.find("/Type /Sig"sv) != std::string_view::npos || sv.find("/Type/Sig"sv) != std::string_view::npos;
+    case SignatureFormat::AsicE:
+        // EN 319 162-1 ASiC-E containers carry signatures under
+        // META-INF/signature*.{p7s,xml}. The literal prefix appears
+        // verbatim in the central directory entries.
+        return sv.find("META-INF/signature"sv) != std::string_view::npos;
+    case SignatureFormat::Xades:
+        // XAdES is an XML-DSig profile — every signed XAdES document
+        // contains at least one <ds:Signature> (canonical prefix) or
+        // <Signature> (default-namespace) element.
+        return sv.find("<ds:Signature"sv) != std::string_view::npos ||
+               sv.find("<Signature"sv) != std::string_view::npos;
+    case SignatureFormat::Jades:
+        // JWS JSON General has a top-level "signatures" array. Plain
+        // (non-signed) JSON inputs that happen to embed the literal
+        // "signatures" substring fall through to JAdESModule's strict
+        // tryParseJwsGeneral check downstream.
+        return sv.find("\"signatures\""sv) != std::string_view::npos;
+    case SignatureFormat::Cades:
+        // Any input that inferFormat tagged as CAdES (DER SEQUENCE
+        // leading byte) is a signed CMS blob — there is no unsigned
+        // CAdES wire shape.
+        return true;
+    }
+    std::unreachable();
 }
 
 } // namespace
@@ -243,11 +323,44 @@ bool NativeSigningService::isAvailable() const
 }
 
 SigningResult NativeSigningService::sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
-                                         std::span<const uint8_t> pin, const std::string& keyAlias,
+                                         const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
                                          const std::string& readerName,
                                          std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession)
 {
     try {
+        // Multi-sign auto-detect, lifted from per-module sign() branches.
+        //
+        // If the input bytes already shape as a signed document in some
+        // format, route to appendSigner instead of the per-format sign().
+        // Done BEFORE Pkcs11Token construction so a DETACHED-CAdES (which
+        // we reject) never opens the card — saves a card session and a
+        // potential PIN attempt on inputs that cannot legally multi-sign
+        // without an originalDocument.
+        //
+        // ENVELOPED-capable formats (PAdES, XAdES, JAdES, ASiC-E): the
+        // per-format appendSigner extracts the original payload from the
+        // prior signature itself, so an empty originalDocument is fine.
+        //
+        // CAdES is by definition detached — the originalDocument cannot
+        // be recovered from a CMS SignedData, so the only path forward
+        // is the explicit appendSigner public API. Fail fast with a
+        // pointer at that API.
+        if (auto fmt = inferFormat(request.document); fmt && looksSignedAlready(request.document, *fmt)) {
+            switch (*fmt) {
+            case SignatureFormat::Pades:
+            case SignatureFormat::Xades:
+            case SignatureFormat::Jades:
+            case SignatureFormat::AsicE:
+                return appendSigner(request, request.document, {}, pin, pkcs11ModulePath, keyAlias, readerName);
+            case SignatureFormat::Cades:
+                return makeFailure(SignFailureKind::InvalidInput,
+                                   "CAdES input is a detached CMS signature (no embedded payload). "
+                                   "Use SigningService::appendSigner with the originalDocument argument "
+                                   "to add a new signer to a prior CAdES signature.");
+            }
+            std::unreachable();
+        }
+
         // Single mandatory ctor — legacy slotIndex=-1 / tokenLabel=""
         // auto-pick paths were removed in 4.0 because they silently
         // selected slots[0] under multi-card setups, routing PIN to
@@ -272,7 +385,7 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, const st
                     const int cmp = X509_cmp_current_time(X509_get0_notAfter(x509.get()));
                     const bool expired = (cmp <= 0); // -1 past, 0 malformed — treat both as expired
                     if (expired && !request.allowExpiredCertificate)
-                        return {false, {}, "Signing certificate has expired"};
+                        return makeFailure(SignFailureKind::PolicyViolation, "Signing certificate has expired");
                 }
             }
         }
@@ -282,34 +395,84 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, const st
         tsa.crlEnabled = trustConfig.crlEnabled;
         tsa.ocspEnabled = trustConfig.ocspEnabled;
 
+        // API-POLICY §9 forward-compat: exhaustive switch, no `default:`,
+        // std::unreachable() after — adding a new SignatureFormat value
+        // triggers a -Werror=switch-enum compile error here rather than
+        // silently returning "Unsupported signature format" at runtime.
         switch (request.format) {
-        case SignatureFormat::CAdES: {
+        case SignatureFormat::Cades: {
             CAdESModule cades;
             return cades.sign(request.document, token, request.level, tsa);
         }
-        case SignatureFormat::PAdES: {
+        case SignatureFormat::Pades: {
             PAdESModule pades;
             return pades.sign(request.document, token, request.level, tsa, request.visual);
         }
-        case SignatureFormat::XAdES: {
+        case SignatureFormat::Xades: {
             XAdESModule xades;
             return xades.sign(request.document, request.fileName, token, request.level, request.packaging, tsa);
         }
-
-        case SignatureFormat::JAdES: {
+        case SignatureFormat::Jades: {
             JAdESModule jades;
             return jades.sign(request.document, request.fileName, token, request.level, request.packaging, tsa);
         }
-
-        case SignatureFormat::ASiC_E: {
+        case SignatureFormat::AsicE: {
             ASiCModule asic;
             return asic.signWithCAdES(request.document, request.fileName, token, request.level, tsa);
         }
-        default:
-            return {false, {}, "Unsupported signature format"};
         }
+        std::unreachable();
     } catch (const std::exception& e) {
-        return {false, {}, std::string("Native signing error: ") + e.what()};
+        return makeFailure(SignFailureKind::EngineError, std::string("Native signing error: ") + e.what());
+    }
+}
+
+SigningResult NativeSigningService::appendSigner(const SigningRequest& request, std::span<const uint8_t> priorSignature,
+                                                 std::span<const uint8_t> originalDocument,
+                                                 const LibreSCRS::Secure::Buffer& pin, const std::string& pkcs11Module,
+                                                 const std::string& keyAlias, const std::string& readerName)
+{
+    try {
+        auto fmt = inferFormat(priorSignature);
+        if (!fmt)
+            return makeFailure(SignFailureKind::InvalidInput,
+                               "appendSigner: cannot infer signature format from prior bytes");
+
+        // Mirror sign()'s Pkcs11Token construction. No sharedSession on the
+        // append path — the public API does not surface it for re-sign yet.
+        auto token = Pkcs11Token(pkcs11Module, pin, keyAlias, readerName);
+
+        // Wire trust config to TSA/revocation parameters — the new signer
+        // inherits the host's CRL/OCSP posture, identical to sign().
+        auto tsa = request.tsa;
+        tsa.crlEnabled = trustConfig.crlEnabled;
+        tsa.ocspEnabled = trustConfig.ocspEnabled;
+
+        switch (*fmt) {
+        case SignatureFormat::Pades: {
+            PAdESModule pades;
+            return pades.appendSigner(priorSignature, originalDocument, token, request.level, tsa, request.visual);
+        }
+        case SignatureFormat::Cades: {
+            CAdESModule cades;
+            return cades.appendSigner(priorSignature, originalDocument, token, request.level, tsa);
+        }
+        case SignatureFormat::Xades: {
+            XAdESModule xades;
+            return xades.appendSigner(priorSignature, originalDocument, request.fileName, token, request.level, tsa);
+        }
+        case SignatureFormat::Jades: {
+            JAdESModule jades;
+            return jades.appendSigner(priorSignature, originalDocument, request.fileName, token, request.level, tsa);
+        }
+        case SignatureFormat::AsicE: {
+            ASiCModule asic;
+            return asic.appendSigner(priorSignature, originalDocument, token, request.level, tsa);
+        }
+        }
+        std::unreachable();
+    } catch (const std::exception& e) {
+        return makeFailure(SignFailureKind::EngineError, std::string("Native appendSigner error: ") + e.what());
     }
 }
 

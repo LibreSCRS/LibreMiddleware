@@ -39,8 +39,17 @@ public:
     // architecture; the Unix socket restricts exposure to the local machine.
     // Any std::string we form on the C++ side as part of the JSON request is
     // explicitly cleansed before return.
-    SigningResult sign(const SigningRequest& request, const std::string& pkcs11ModulePath, std::span<const uint8_t> pin,
-                       const std::string& keyAlias, const std::string& readerName) override;
+    SigningResult sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
+                       const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
+                       const std::string& readerName) override;
+
+    /// @brief DSS backend stub for appendSigner — returns EngineError.
+    /// The DSS oracle is retained for cross-verification only; multi-sign
+    /// is implemented in the Native backend.
+    SigningResult appendSigner(const SigningRequest& request, std::span<const uint8_t> priorSignature,
+                               std::span<const uint8_t> originalDocument, const LibreSCRS::Secure::Buffer& pin,
+                               const std::string& pkcs11Module, const std::string& keyAlias,
+                               const std::string& readerName) override;
 
     bool isAvailable() const override;
 

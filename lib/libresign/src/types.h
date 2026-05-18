@@ -10,15 +10,56 @@
 #include "credentials.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace libresign {
 
-enum class SignatureFormat { PAdES, CAdES, XAdES, ASiC_E, JAdES };
+/// @brief Typed classification of why an internal sign call failed.
+///
+/// Each module-level return path sets this at the point where the failure
+/// is known precisely (CMS_final returned 0, libxml2 reported parse fail,
+/// TSA HTTP returned 5xx, etc.). The bridge in
+/// LibreSCRS::Signing::SigningService::sign maps each kind to the public
+/// SigningResult::Status enum via a closed switch under -Wswitch-enum so
+/// adding a new kind triggers a compile error at the bridge.
+///
+/// Append-only across the 4.x cycle per API-POLICY §4 — new kinds land at
+/// the tail; reordering or removal requires a major bump.
+enum class SignFailureKind : std::uint8_t {
+    TsaUnreachable,
+    RevocationFetchFailed,
+    CardError,
+    PinFailed,
+    UserCancelled,
+    InvalidInput,
+    PdfPreparationError,
+    XmlSerializationError,
+    JsonSerializationError,
+    ZipBuildError,
+    OpensslError,
+    PolicyViolation,
+    EngineError
+};
 
-enum class SignaturePackaging { ENVELOPED, DETACHED };
+/// @brief Signature format taxonomy.
+///
+/// PascalCase per API-POLICY §7. The internal and public (LibreSCRS::Signing
+/// namespace) surfaces share the same names; the SCREAMING form
+/// (PAdES, CAdES, ...) is retained only on the DSS wire protocol.
+///
+/// Append-only across the 4.x cycle per §4 plugin-ABI rules — new formats
+/// land at the tail. The on-the-wire string form for the DSS bridge
+/// (`dss_signing_service.cpp::formatToString`) retains the legacy
+/// SCREAMING values for Java-side compatibility.
+enum class SignatureFormat { Pades, Cades, Xades, Jades, AsicE };
 
+enum class SignaturePackaging { Enveloped, Detached };
+
+/// @brief Baseline level. B_* form preserved (ETSI-token exception per
+/// API-POLICY §7) — underscores stand for the spec's hyphens.
 enum class SignatureLevel { B_B, B_T, B_LT, B_LTA };
 
 /// @brief Signing-engine TSA configuration.
@@ -61,8 +102,8 @@ struct SigningRequest
 {
     std::vector<uint8_t> document;
     std::string fileName;
-    SignatureFormat format = SignatureFormat::PAdES;
-    SignaturePackaging packaging = SignaturePackaging::ENVELOPED;
+    SignatureFormat format = SignatureFormat::Pades;
+    SignaturePackaging packaging = SignaturePackaging::Enveloped;
     SignatureLevel level = SignatureLevel::B_T;
     TSAConfig tsa;
     VisualSignatureParams visual;
@@ -77,8 +118,33 @@ struct SigningResult
 {
     bool success = false;
     std::vector<uint8_t> signedDocument;
+    /// @brief ASCII-for-logs diagnostic. Not user-facing — the user message
+    /// is derived from @ref failureKind via the bridge's kindToUserMessage.
+    /// Field ordering (success / signedDocument / errorMessage) is preserved
+    /// so legacy `{false, {}, "..."}` initializers remain compilable while a
+    /// module is converted to typed failures. When @ref failureKind is set,
+    /// the bridge prefers it over substring matching on this string.
     std::string errorMessage;
+    /// @brief Typed classification of failure. Set iff `!success`.
+    /// Bridge maps this to public SigningResult::Status + LocalizedText.
+    /// @since 4.2
+    std::optional<SignFailureKind> failureKind;
 };
+
+/// @brief Factory for typed failure results. Replaces the legacy shape
+/// `{false, {}, "..."}` at every return site. The diagnostic detail is
+/// preserved verbatim from the call site (it goes to logs); the user
+/// message is derived from @p kind via the bridge.
+inline SigningResult makeFailure(SignFailureKind kind, std::string detail = {})
+{
+    return SigningResult{false, {}, std::move(detail), kind};
+}
+
+/// @brief Factory for success results. Symmetric with @ref makeFailure.
+inline SigningResult makeSuccess(std::vector<uint8_t> bytes)
+{
+    return SigningResult{true, std::move(bytes), {}, std::nullopt};
+}
 
 struct TrustedListEntry
 {
