@@ -22,9 +22,22 @@ namespace LibreSCRS::Auth {
 ///
 /// @since 4.1
 enum class PaceSecretKind : std::uint8_t {
+    /// @brief Card Access Number — short numeric secret printed on the card
+    ///        (BSI TR-03110 §2.3, "non-blocking PACE password"). Used by
+    ///        contactless RS eID, GEO CB, NAM CL and other government cards.
     Can = 0,
+    /// @brief Machine Readable Zone subset (document number + date of birth +
+    ///        date of expiry) per ICAO Doc 9303 Part 11. Used both as the
+    ///        PACE password on PACE-only eMRTDs and as the BAC key seed on
+    ///        passports lacking PACE SecurityInfos.
     Mrz = 1,
+    /// @brief User PIN promoted to PACE-password role (BSI TR-03110 §2.3
+    ///        "PACE-PIN"). Blocks on consecutive failures; the host must
+    ///        track retries-left semantics on top of the channel.
     Pin = 2,
+    /// @brief PIN-Unblocking Key promoted to PACE-password role. Same
+    ///        retry/blocking semantics as @ref Pin; reserved for the PIN
+    ///        unblock workflow.
     Puk = 3,
 };
 

@@ -29,6 +29,8 @@ enum class ChannelState : std::uint8_t {
 ///
 /// @since 4.1
 enum class ChannelActivationError : std::uint8_t {
+    /// @brief Sentinel: no error. Reserved for callers that need a default-
+    ///        constructed value; never returned by an activation factory.
     None,
     /// @brief Applet absent or SELECT rejected by the card. Terminal.
     SelectAppletFailed,
@@ -60,6 +62,8 @@ enum class ChannelActivationError : std::uint8_t {
 ///
 /// @since 4.1
 enum class ChannelOperationError : std::uint8_t {
+    /// @brief Sentinel: no error. Reserved for callers that need a default-
+    ///        constructed value; never returned by an operation wrapper.
     None,
     /// @brief Channel transitioned to @ref ChannelState::Failed. Caller
     ///        should drop and re-activate.

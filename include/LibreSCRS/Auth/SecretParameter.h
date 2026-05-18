@@ -8,6 +8,8 @@
 ///        compile-time sentinel that pins credential-bearing parameters to
 ///        @ref LibreSCRS::Secure::String const&.
 ///
+/// @since 4.1 (promoted to public from `Auth/detail/SecretParameter.h`).
+///
 /// @par Design rationale
 /// Every credential-bearing virtual on @ref LibreSCRS::Plugin::CardPlugin
 /// takes @c Secure::String const&; this concept makes the rule
@@ -49,6 +51,8 @@ namespace LibreSCRS::Auth {
 ///   4. The referenced type is @c const (rules out @c Secure::String& —
 ///      mutable references invite the callee to overwrite the caller's
 ///      buffer).
+///
+/// @since 4.1
 template <typename T>
 concept SecretParameter = std::same_as<std::remove_cvref_t<T>, Secure::String> && std::is_lvalue_reference_v<T> &&
                           std::is_const_v<std::remove_reference_t<T>>;
