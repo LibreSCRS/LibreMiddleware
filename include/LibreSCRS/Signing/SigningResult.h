@@ -95,11 +95,24 @@ struct SigningResult
     // constructors for status-code results are marked noexcept so call-sites
     // in noexcept contexts (destructors, async pipelines) can use them
     // without exception-handler ceremony.
+    //
+    // Factories that internally build a @ref LocalizedText (via the
+    // @ref Auth::ErrorKeys helpers, which allocate std::string) wrap the
+    // body in a top-level try/catch returning a degraded-but-valid result
+    // (empty @c userMessage, same @c Status, no @c diagnosticDetail) on
+    // @c std::bad_alloc so the noexcept contract is honoured even under
+    // memory pressure. Factories that only move caller-supplied
+    // @ref LocalizedText do not need the wrap (move-construction is
+    // noexcept).
 
     /// @brief Successful signing; @p output is the written-to path.
     [[nodiscard]] static SigningResult ok(std::filesystem::path output) noexcept
     {
-        return SigningResult{Status::Ok, std::move(output), Auth::ErrorKeys::signOk(), std::nullopt};
+        try {
+            return SigningResult{Status::Ok, std::move(output), Auth::ErrorKeys::signOk(), std::nullopt};
+        } catch (...) {
+            return SigningResult{Status::Ok, std::nullopt, LocalizedText{}, std::nullopt};
+        }
     }
 
     /// @brief Request validation failed.
@@ -130,8 +143,12 @@ struct SigningResult
     /// @since 4.0
     [[nodiscard]] static SigningResult invalidRequestDiagnosticOnly(std::string diagnosticDetail) noexcept
     {
-        return SigningResult{Status::InvalidRequest, std::nullopt, Auth::ErrorKeys::invalidRequest(),
-                             std::move(diagnosticDetail)};
+        try {
+            return SigningResult{Status::InvalidRequest, std::nullopt, Auth::ErrorKeys::invalidRequest(),
+                                 std::move(diagnosticDetail)};
+        } catch (...) {
+            return SigningResult{Status::InvalidRequest, std::nullopt, LocalizedText{}, std::nullopt};
+        }
     }
 
     /// @brief Trust store could not be loaded (TL unreachable, cache unwritable, …).
@@ -154,14 +171,22 @@ struct SigningResult
     /// @since 4.0
     [[nodiscard]] static SigningResult trustStoreUnavailableDiagnosticOnly(std::string diagnosticDetail) noexcept
     {
-        return SigningResult{Status::TrustStoreUnavailable, std::nullopt, Auth::ErrorKeys::trustStoreUnavailable(),
-                             std::move(diagnosticDetail)};
+        try {
+            return SigningResult{Status::TrustStoreUnavailable, std::nullopt, Auth::ErrorKeys::trustStoreUnavailable(),
+                                 std::move(diagnosticDetail)};
+        } catch (...) {
+            return SigningResult{Status::TrustStoreUnavailable, std::nullopt, LocalizedText{}, std::nullopt};
+        }
     }
 
     /// @brief User cancelled the credential prompt.
     [[nodiscard]] static SigningResult userCancelled() noexcept
     {
-        return SigningResult{Status::UserCancelled, std::nullopt, Auth::ErrorKeys::userCancelled(), std::nullopt};
+        try {
+            return SigningResult{Status::UserCancelled, std::nullopt, Auth::ErrorKeys::userCancelled(), std::nullopt};
+        } catch (...) {
+            return SigningResult{Status::UserCancelled, std::nullopt, LocalizedText{}, std::nullopt};
+        }
     }
 
     /// @brief Operation cancelled via the caller-supplied @ref LibreSCRS::CancelToken.
@@ -176,7 +201,11 @@ struct SigningResult
     /// @since 4.1
     [[nodiscard]] static SigningResult cancelled() noexcept
     {
-        return SigningResult{Status::Cancelled, std::nullopt, Auth::ErrorKeys::cancelled(), std::nullopt};
+        try {
+            return SigningResult{Status::Cancelled, std::nullopt, Auth::ErrorKeys::cancelled(), std::nullopt};
+        } catch (...) {
+            return SigningResult{Status::Cancelled, std::nullopt, LocalizedText{}, std::nullopt};
+        }
     }
 
     /// @brief Card reported PIN-incorrect.
@@ -213,8 +242,12 @@ struct SigningResult
     /// @since 4.0
     [[nodiscard]] static SigningResult tsaUnreachableDiagnosticOnly(std::string diagnosticDetail) noexcept
     {
-        return SigningResult{Status::TsaUnreachable, std::nullopt, Auth::ErrorKeys::tsaUnreachable(),
-                             std::move(diagnosticDetail)};
+        try {
+            return SigningResult{Status::TsaUnreachable, std::nullopt, Auth::ErrorKeys::tsaUnreachable(),
+                                 std::move(diagnosticDetail)};
+        } catch (...) {
+            return SigningResult{Status::TsaUnreachable, std::nullopt, LocalizedText{}, std::nullopt};
+        }
     }
 
     /// @brief Signing engine reported an error not classified by the other statuses.
@@ -232,8 +265,12 @@ struct SigningResult
     /// @since 4.0
     [[nodiscard]] static SigningResult signingEngineErrorDiagnosticOnly(std::string diagnosticDetail) noexcept
     {
-        return SigningResult{Status::SigningEngineError, std::nullopt, Auth::ErrorKeys::signingEngineError(),
-                             std::move(diagnosticDetail)};
+        try {
+            return SigningResult{Status::SigningEngineError, std::nullopt, Auth::ErrorKeys::signingEngineError(),
+                                 std::move(diagnosticDetail)};
+        } catch (...) {
+            return SigningResult{Status::SigningEngineError, std::nullopt, LocalizedText{}, std::nullopt};
+        }
     }
 
     /// @brief Default construction is deleted — use a named factory. Security-

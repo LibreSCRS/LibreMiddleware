@@ -21,7 +21,7 @@ TEST(CredentialProviderIntegrationTest, ProviderSeesExpectedFieldsForChangePin)
         for (const auto& f : req.fields()) {
             seenFieldIds.push_back(f.id);
         }
-        std::vector<CredentialResult::Entry> values;
+        std::vector<CredentialEntry> values;
         for (const auto& f : req.fields()) {
             values.emplace_back(f.id, LibreSCRS::Secure::String{"test"});
         }
@@ -82,7 +82,7 @@ TEST(CredentialProviderIntegrationTest, EmptyValuesWithOkStatusIsLegal)
 TEST(CredentialProviderIntegrationTest, ExtraKeysAreIgnored)
 {
     CredentialProvider provider = [](const AuthRequirement&) {
-        std::vector<CredentialResult::Entry> values;
+        std::vector<CredentialEntry> values;
         values.emplace_back("currentPin", LibreSCRS::Secure::String{"1234"});
         values.emplace_back("newPin", LibreSCRS::Secure::String{"5678"});
         values.emplace_back("confirmPin", LibreSCRS::Secure::String{"5678"});
@@ -99,7 +99,7 @@ TEST(CredentialProviderIntegrationTest, ExtraKeysAreIgnored)
 TEST(CredentialProviderIntegrationTest, EmptyStringValueIsStoredAsIs)
 {
     CredentialProvider provider = [](const AuthRequirement&) {
-        std::vector<CredentialResult::Entry> values;
+        std::vector<CredentialEntry> values;
         values.emplace_back("pin", LibreSCRS::Secure::String{""});
         return CredentialResult::ok(std::move(values));
     };
@@ -141,7 +141,7 @@ TEST(CredentialProviderIntegrationTest, ResultIsNotDefaultConstructible)
 // CredentialResult::values is now a vector<pair> + find() helper.
 TEST(CredentialProviderIntegrationTest, FindHelperReturnsPointerOrNull)
 {
-    std::vector<CredentialResult::Entry> values;
+    std::vector<CredentialEntry> values;
     values.emplace_back("pin", LibreSCRS::Secure::String{"9876"});
     auto result = CredentialResult::ok(std::move(values));
     const auto* found = result.find("pin");
@@ -152,7 +152,7 @@ TEST(CredentialProviderIntegrationTest, FindHelperReturnsPointerOrNull)
 
 TEST(CredentialProviderIntegrationTest, InsertionOrderIsPreserved)
 {
-    std::vector<CredentialResult::Entry> values;
+    std::vector<CredentialEntry> values;
     values.emplace_back("b", LibreSCRS::Secure::String{"1"});
     values.emplace_back("a", LibreSCRS::Secure::String{"2"});
     values.emplace_back("c", LibreSCRS::Secure::String{"3"});

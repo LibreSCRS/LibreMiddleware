@@ -38,6 +38,9 @@ struct LIBRESCRS_PUBLIC_API DistinguishedNameComponent
     ObjectIdentifier oid;
     /// @brief UTF-8 encoded attribute value.
     std::string value;
+
+    /// @brief Defaulted byte-identity equality.
+    [[nodiscard]] bool operator==(const DistinguishedNameComponent&) const noexcept = default;
 };
 
 /// @brief A parsed Distinguished Name. Provides typed convenience accessors
@@ -74,6 +77,9 @@ struct LIBRESCRS_PUBLIC_API DistinguishedName
     /// @brief First emailAddress (E) attribute, or empty.
     /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::string emailAddress() const;
+
+    /// @brief Defaulted byte-identity equality (per-component over @ref components).
+    [[nodiscard]] bool operator==(const DistinguishedName&) const noexcept = default;
 };
 
 } // namespace LibreSCRS::Certificate

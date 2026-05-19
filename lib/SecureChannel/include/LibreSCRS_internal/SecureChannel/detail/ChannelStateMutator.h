@@ -12,6 +12,7 @@
 ///        friend-only access seam that LM internals use to mutate a live
 ///        channel's bound AID or rotate its SM session keys.
 
+#include <LibreSCRS/Export.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
@@ -44,7 +45,7 @@ namespace LibreSCRS::SecureChannel::detail {
 /// the duration of the call.
 ///
 /// @since 4.1
-struct ChannelStateMutator
+struct LIBRESCRS_PUBLIC_API ChannelStateMutator
 {
     /// @brief Update @p ch's bound AID to @p aid.
     ///

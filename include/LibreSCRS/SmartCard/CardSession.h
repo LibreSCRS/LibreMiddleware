@@ -113,6 +113,9 @@ struct OpenError
     OpenError(Kind k, LocalizedText msg, std::optional<std::string> diag = std::nullopt) noexcept
         : kind(k), userMessage(std::move(msg)), diagnosticDetail(std::move(diag))
     {}
+
+    /// @brief Defaulted byte-identity equality.
+    [[nodiscard]] bool operator==(const OpenError&) const noexcept = default;
 };
 
 /// @brief Opaque handle for an active PC/SC session against a reader.
@@ -184,7 +187,7 @@ public:
     /// behaviour. Consumers that move sessions into
     /// @c std::shared_ptr<CardSession> for signing should check the
     /// source-object state before the move if the source remains in scope.
-    /// @since 4.0.
+    /// @since 4.0
     explicit operator bool() const noexcept
     {
         return d != nullptr;
@@ -365,8 +368,7 @@ private:
     friend struct detail::ChannelInjector;
     friend struct Internal::ActiveChannelAccessor;
 
-    /// @brief Private; used by @ref detail::makeDetachedCardSession and the
-    ///        move-from path.
+    /// @brief Private; used by @ref detail::makeDetachedCardSession.
     CardSession();
     /// @brief Private constructor used by @ref open and the detail factories.
     ///        Not part of the public surface.

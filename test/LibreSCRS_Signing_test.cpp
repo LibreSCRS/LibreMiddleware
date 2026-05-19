@@ -663,7 +663,7 @@ TEST(SigningServiceBridgeTest, ReturnsInvalidRequestWhenInputMissing)
     auto request = makeBuiltRequest("/does/not/exist/input.pdf", "/tmp/out.pdf");
 
     auto provider = [](const LibreSCRS::Auth::AuthRequirement&) {
-        std::vector<LibreSCRS::Auth::CredentialResult::Entry> values;
+        std::vector<LibreSCRS::Auth::CredentialEntry> values;
         values.emplace_back("pin", LibreSCRS::Secure::String{"0000"});
         return LibreSCRS::Auth::CredentialResult::ok(std::move(values));
     };
@@ -773,7 +773,7 @@ TEST(SigningServiceBridgeTest, TsaUnreachableWhenNonBBLevelAndEmptyTsa)
     auto request = std::move(rb).build();
 
     auto provider = [](const LibreSCRS::Auth::AuthRequirement&) {
-        std::vector<LibreSCRS::Auth::CredentialResult::Entry> values;
+        std::vector<LibreSCRS::Auth::CredentialEntry> values;
         values.emplace_back("pin", LibreSCRS::Secure::String{"0000"});
         return LibreSCRS::Auth::CredentialResult::ok(std::move(values));
     };
@@ -825,7 +825,7 @@ TEST(SigningServiceBridgeTest, DssBackendFailsLoudWhenCredentialsSet)
     auto request = makeBuiltRequest(tmpIn, tmpIn.parent_path() / "out.asice");
 
     auto provider = [](const LibreSCRS::Auth::AuthRequirement&) {
-        std::vector<LibreSCRS::Auth::CredentialResult::Entry> values;
+        std::vector<LibreSCRS::Auth::CredentialEntry> values;
         values.emplace_back("pin", LibreSCRS::Secure::String{"0000"});
         return LibreSCRS::Auth::CredentialResult::ok(std::move(values));
     };

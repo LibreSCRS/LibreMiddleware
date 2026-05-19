@@ -29,6 +29,11 @@ using CertificateView = std::span<const std::uint8_t>;
 ///
 /// The label encodes where the anchor came from for diagnostics and audit;
 /// callers must not parse it as a structured identifier.
+///
+/// @par Thread-safety
+/// Thread-compatible per API-POLICY §8: distinct instances are independent;
+/// concurrent reads of the same instance are race-free.
+///
 /// @since 4.0
 struct LIBRESCRS_PUBLIC_API TrustAnchor
 {
@@ -37,6 +42,9 @@ struct LIBRESCRS_PUBLIC_API TrustAnchor
     /// @brief Human-readable provenance tag (e.g. "bundled:root-CA-A",
     ///        "tl:rs-mit-2026-04"). Diagnostics only — do not parse.
     std::string sourceLabel;
+
+    /// @brief Defaulted byte-identity equality.
+    [[nodiscard]] bool operator==(const TrustAnchor&) const noexcept = default;
 };
 
 namespace detail {

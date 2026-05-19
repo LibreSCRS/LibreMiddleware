@@ -109,7 +109,7 @@ public:
     /// @ref VisualSignatureParams, @ref LibreSCRS::SmartCard::CardSession,
     /// @ref LibreSCRS::SmartCard::MonitorService, @ref LibreSCRS::Secure::Buffer
     /// and @ref LibreSCRS::Secure::String.
-    /// @since 4.0.
+    /// @since 4.0
     explicit operator bool() const noexcept;
 
     /// @brief Produce a signature for @p request.

@@ -38,12 +38,15 @@ public:
     AppletAid() = default;
 
     /// @brief Construct from a byte vector.
+    /// @throws std::bad_alloc on allocation failure.
     explicit AppletAid(std::vector<std::uint8_t> bytes) : storage(std::move(bytes)) {}
 
     /// @brief Construct from an initializer list (literal AIDs in code).
+    /// @throws std::bad_alloc on allocation failure.
     AppletAid(std::initializer_list<std::uint8_t> bytes) : storage(bytes) {}
 
     /// @brief Factory: copy from a contiguous byte range.
+    /// @throws std::bad_alloc on allocation failure.
     static AppletAid fromBytes(std::span<const std::uint8_t> bytes)
     {
         return AppletAid(std::vector<std::uint8_t>(bytes.begin(), bytes.end()));

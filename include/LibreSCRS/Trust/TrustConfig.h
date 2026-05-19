@@ -24,6 +24,10 @@ namespace LibreSCRS::Trust {
 /// Populate when you want runtime TL fetching (the common case for eIDAS-
 /// qualified signing across multiple member states). For pre-fetched TL files
 /// on disk, use @ref TrustConfig::trustedListFile instead.
+///
+/// @par Thread-safety
+/// Thread-compatible per API-POLICY §8: distinct instances are independent;
+/// concurrent reads of the same instance are race-free.
 struct LIBRESCRS_PUBLIC_API TrustedListSource
 {
     /// @brief HTTPS URL of the Trusted List XML (or LOTL).
@@ -42,6 +46,9 @@ struct LIBRESCRS_PUBLIC_API TrustedListSource
     ///       deployments can opt back into eager fetch by setting this
     ///       field to @c true per source.
     bool eager = false;
+
+    /// @brief Defaulted byte-identity equality.
+    [[nodiscard]] bool operator==(const TrustedListSource&) const noexcept = default;
 };
 
 /// @brief Declarative trust-anchor configuration passed to the
@@ -54,6 +61,10 @@ struct LIBRESCRS_PUBLIC_API TrustedListSource
 /// tracked for 4.1+; they were removed from 4.0 because the engine silently
 /// ignored them, which is a security risk for SDK consumers assuming their
 /// trust policy applied.
+///
+/// @par Thread-safety
+/// Thread-compatible per API-POLICY §8: distinct instances are independent;
+/// concurrent reads of the same instance are race-free.
 struct LIBRESCRS_PUBLIC_API TrustConfig
 {
     /// @brief Optional pre-fetched ETSI Trusted List XML file on disk.
@@ -80,6 +91,9 @@ struct LIBRESCRS_PUBLIC_API TrustConfig
     ///       and Trusted-List-derived anchors participate in chain validation.
     /// @since 4.0
     bool includeSystemTrustStore = true;
+
+    /// @brief Defaulted byte-identity equality.
+    [[nodiscard]] bool operator==(const TrustConfig&) const noexcept = default;
 
     class Builder;
 };

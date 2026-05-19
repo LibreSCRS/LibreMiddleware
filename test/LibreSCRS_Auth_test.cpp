@@ -232,7 +232,7 @@ TEST(CredentialProviderTest, LambdaIsAssignable)
 TEST(CredentialProviderTest, LambdaReturnsSetValues)
 {
     CredentialProvider p = [](const AuthRequirement&) {
-        std::vector<CredentialResult::Entry> values;
+        std::vector<CredentialEntry> values;
         values.emplace_back("pin", LibreSCRS::Secure::String{"1234"});
         return CredentialResult::ok(std::move(values));
     };

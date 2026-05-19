@@ -81,7 +81,7 @@ public:
     /// callers defensively check for the moved-from state without incurring
     /// the UB — `if (!req)` is always well-defined.
     ///
-    /// @since 4.0.
+    /// @since 4.0
     explicit operator bool() const noexcept
     {
         return d != nullptr;
@@ -165,7 +165,7 @@ public:
     /// @c std::function. Prefer over `static_cast<bool>(req.tsaOverride())`
     /// for host code that only needs to branch on "did the caller supply
     /// an override?".
-    /// @since 4.0.
+    /// @since 4.0
     [[nodiscard]] bool hasTsaOverride() const noexcept;
 
     /// @brief When @c true, the signing service does not refuse a

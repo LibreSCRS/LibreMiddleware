@@ -63,7 +63,7 @@ struct ActiveChannelAccessor
 /// @ref LibreSCRS::SecureChannel::detail::ChannelStateMutator.
 ///
 /// @since 4.1
-struct HolderChannelAccessor
+struct LIBRESCRS_PUBLIC_API HolderChannelAccessor
 {
     /// @brief Pointer to @p holder's underlying secure channel, or
     ///        @c nullptr if the holder has been released or moved-from.

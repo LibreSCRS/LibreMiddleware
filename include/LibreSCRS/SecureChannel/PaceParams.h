@@ -117,6 +117,8 @@ struct PaceSecurityInfo
 ///
 /// This is a pure function over the input bytes; no card I/O.
 ///
+/// @throws std::bad_alloc on allocation failure.
+///
 /// @since 4.1
 [[nodiscard]] LIBRESCRS_PUBLIC_API std::vector<PaceSecurityInfo>
 parsePaceOidsFromCardAccess(std::span<const std::uint8_t> cardAccess);

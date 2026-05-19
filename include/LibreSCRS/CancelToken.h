@@ -177,14 +177,10 @@ private:
 ///        (e.g. @c QMetaObject::invokeMethod, Swift @c @MainActor).
 ///
 /// Grouped with @ref CancelToken because the two compose into the
-/// canonical async-API shape `(CancelToken, Completion<T>)`. The LM 4.0
-/// surface uses this pair for inherently async operations (e.g.
-/// @ref LibreSCRS::Trust::TrustStoreService eager fetch / observer
-/// notifications). Synchronous public APIs like
-/// @ref LibreSCRS::Signing::SigningService::sign currently block the
-/// caller — the corresponding async overload is tracked in the project
-/// BACKLOG ("`SigningService::sign` async overload — deferred to LM 4.1")
-/// and will adopt this `(CancelToken, Completion<T>)` shape when it lands.
+/// canonical async-API shape `(CancelToken, Completion<T>)`. Used by
+/// inherently async LibreMiddleware APIs (e.g.
+/// @ref LibreSCRS::Trust::TrustStoreService eager-fetch observer
+/// notifications); synchronous public APIs do not require this type.
 template <typename Result>
 using Completion = std::function<void(Result)>;
 

@@ -13,9 +13,9 @@
 /// @c Plugin::ReadResult, @c Plugin::AutoReaderError, @c Plugin::PinStatusEntry,
 /// @c Signing::SigningResult, etc.
 ///
-/// Design references:
-///  - Stroustrup, *A Tour of C++* 3rd ed. §6.4 (concrete classes — value-type
-///    aggregate appropriate when impl is final), §15.4 (`std::variant`)
+/// @par Thread-safety
+/// All types in this header are plain value aggregates; thread-compatible
+/// per API-POLICY §8.
 ///
 /// @since 4.0
 

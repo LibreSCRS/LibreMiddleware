@@ -442,6 +442,19 @@ if(LIBREMIDDLEWARE_BUILD_SHARED)
                 LINK_DEPENDS "${_lm_export_filter}")
         endforeach()
     endif()
+
+    # Darwin parity for the version-script `local:` block. Apple ld(1)'s
+    # `-unexported_symbol` supports glob patterns; this hides the three
+    # test-injection helpers (detail::makeMonitorWithProvider,
+    # detail::makeSubscriptionIdForTest, detail::ChannelInjector::
+    # installForTesting) from the public dylib export set so the macOS
+    # ABI matches the Linux SO's stripped surface.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+        target_link_options(LibreSCRS_SmartCard PRIVATE
+            "LINKER:-unexported_symbol,*makeMonitorWithProvider*"
+            "LINKER:-unexported_symbol,*makeSubscriptionIdForTest*"
+            "LINKER:-unexported_symbol,*installForTesting*")
+    endif()
 endif()
 
 # Public aliases — consumers use these.

@@ -170,7 +170,7 @@ public:
     /// @return @c true if a read for @p readerName is active right now.
     /// @note @c noexcept — the internal worker state is guarded by a mutex;
     ///       the lock-and-lookup path cannot throw.
-    /// @since 4.0.
+    /// @since 4.0
     [[nodiscard]] bool isReading(std::string_view readerName) const noexcept;
 
 private:

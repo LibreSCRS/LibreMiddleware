@@ -82,9 +82,19 @@ struct ReadResult
     std::optional<std::string> diagnosticDetail;
 
     /// @brief Construct a successful result carrying @p cardData.
+    ///
+    /// Internally builds a @ref LocalizedText via @ref Auth::ErrorKeys::readOk
+    /// (which allocates @c std::string). The body is wrapped in a top-level
+    /// try/catch so the @c noexcept contract holds even on
+    /// @c std::bad_alloc — the degraded outcome carries an empty
+    /// @c userMessage but preserves @c Status::Ok and @c data.
     [[nodiscard]] static ReadResult ok(CardData cardData) noexcept
     {
-        return ReadResult{Status::Ok, std::move(cardData), Auth::ErrorKeys::readOk(), std::nullopt};
+        try {
+            return ReadResult{Status::Ok, std::move(cardData), Auth::ErrorKeys::readOk(), std::nullopt};
+        } catch (...) {
+            return ReadResult{Status::Ok, std::nullopt, LocalizedText{}, std::nullopt};
+        }
     }
 
     /// @brief Construct a communication-error result (card I/O failure).
@@ -134,7 +144,11 @@ struct ReadResult
     /// then distinguish a clean user-cancel from a hardware I/O fault.
     [[nodiscard]] static ReadResult cancelled() noexcept
     {
-        return ReadResult{Status::Cancelled, std::nullopt, Auth::ErrorKeys::cancelled(), std::nullopt};
+        try {
+            return ReadResult{Status::Cancelled, std::nullopt, Auth::ErrorKeys::cancelled(), std::nullopt};
+        } catch (...) {
+            return ReadResult{Status::Cancelled, std::nullopt, LocalizedText{}, std::nullopt};
+        }
     }
 
     /// @brief Default construction is deleted — use a named factory to

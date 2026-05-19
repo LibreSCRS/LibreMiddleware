@@ -18,7 +18,10 @@ namespace LibreSCRS::SmartCard {
 ///
 /// @since 4.1
 struct BacRequest
-{};
+{
+    /// @brief Defaulted byte-identity equality.
+    [[nodiscard]] bool operator==(const BacRequest&) const noexcept = default;
+};
 
 /// @brief Request PACE SM (BSI TR-03110) using @ref secretKind as the
 ///        shared-secret variant.
@@ -27,6 +30,9 @@ struct BacRequest
 struct PaceRequest
 {
     LibreSCRS::Auth::PaceSecretKind secretKind = LibreSCRS::Auth::PaceSecretKind::Can;
+
+    /// @brief Defaulted byte-identity equality.
+    [[nodiscard]] bool operator==(const PaceRequest&) const noexcept = default;
 };
 
 /// @brief Variant tag chosen by the plugin to specify which protocol the

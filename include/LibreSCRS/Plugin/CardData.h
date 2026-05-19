@@ -205,7 +205,7 @@ struct CardData
     ///       than undefined behaviour. Hot-path callers that have already
     ///       bounds-checked may use @ref groupAtUnchecked for the noexcept,
     ///       no-overhead variant.
-    /// @since 4.0.
+    /// @since 4.0
     [[nodiscard]] CardFieldGroup& groupAt(std::size_t index)
     {
         return groups.at(index);
@@ -223,7 +223,7 @@ struct CardData
     /// @note @c noexcept hot-path variant. Use after a programmatic
     ///       bounds-check or with an index returned from @ref findGroup.
     ///       For host-supplied indices use @ref groupAt instead.
-    /// @since 4.0.
+    /// @since 4.0
     [[nodiscard]] CardFieldGroup& groupAtUnchecked(std::size_t index) noexcept
     {
         return groups[index];
@@ -240,7 +240,7 @@ struct CardData
     /// @return Reference to the indexed field.
     /// @throws std::out_of_range if either @p g or @p f is out of range.
     /// @note See @ref groupAt for the host-input rationale.
-    /// @since 4.0.
+    /// @since 4.0
     [[nodiscard]] CardField& fieldAt(std::size_t g, std::size_t f)
     {
         return groups.at(g).fields.at(f);
@@ -272,7 +272,7 @@ struct CardData
     /// @note @c noexcept hot-path variant. Use after a programmatic bounds
     ///       check or with indices returned from @ref findField. For
     ///       host-supplied indices use @ref fieldAt instead.
-    /// @since 4.0.
+    /// @since 4.0
     [[nodiscard]] CardField& fieldAtUnchecked(std::size_t g, std::size_t f) noexcept
     {
         return groups[g].fields[f];

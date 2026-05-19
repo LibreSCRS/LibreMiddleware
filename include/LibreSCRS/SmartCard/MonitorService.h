@@ -52,6 +52,9 @@ struct MonitorEvent
     ///        on every other @ref Kind value (@ref ReaderAdded,
     ///        @ref ReaderRemoved, @ref CardRemoved, @ref Error).
     std::optional<std::vector<std::uint8_t>> atr;
+
+    /// @brief Defaulted byte-identity equality.
+    [[nodiscard]] bool operator==(const MonitorEvent&) const noexcept = default;
 };
 
 /// @brief PC/SC reader and card-event listener with multi-subscriber fan-out.
@@ -193,7 +196,7 @@ public:
     /// @ref LibreSCRS::SmartCard::CardSession, @ref SubscriptionId) so
     /// downstream generic code can `if (obj)` without special-casing
     /// MonitorService.
-    /// @since 4.0.
+    /// @since 4.0
     explicit operator bool() const noexcept;
 
     /// @brief List currently available readers. Snapshot at call time.

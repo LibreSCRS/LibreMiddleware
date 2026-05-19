@@ -129,9 +129,15 @@ public:
     /// @throws std::bad_alloc on allocation failure.
     String(const String& other);
 
-    /// @brief Copy-assign. This String's current storage is cleansed before
-    ///        adopting a copy of @p other. After return, @p other is
-    ///        unchanged and this String holds a separate cleansed block.
+    /// @brief Copy-assign. Allocate-then-replace: this String first builds a
+    ///        new storage block holding a copy of @p other's bytes, then swaps
+    ///        it into place. On successful assignment, the previous storage
+    ///        is cleansed via the destructor of the replaced internal
+    ///        @c Impl. On @c std::bad_alloc the previous storage is NOT
+    ///        cleansed and remains accessible via this String — the strong
+    ///        exception guarantee preserves the assignee in its prior state.
+    ///        After successful return, @p other is unchanged and this String
+    ///        holds a separate cleansed block.
     /// @throws std::bad_alloc on allocation failure.
     String& operator=(const String& other);
 

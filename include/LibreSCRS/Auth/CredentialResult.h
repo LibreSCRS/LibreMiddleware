@@ -72,11 +72,6 @@ struct CredentialResult
         Error,         ///< Provider-internal failure; @ref userMessage may carry detail.
     };
 
-    /// @brief Transitional alias for @ref CredentialEntry (4.1 only;
-    ///        slated for removal in 4.2). New code should use
-    ///        @ref CredentialEntry directly.
-    using Entry = CredentialEntry;
-
     /// @brief Outcome classification. Always set by a factory.
     Status status;
     /// @brief Collected values keyed by @ref FieldDescriptor::id, in insertion
@@ -126,19 +121,30 @@ struct CredentialResult
     /// @brief Construct a successful result carrying @p values.
     /// @note Prefer this factory over field-wise initialisation — it
     ///       guarantees @ref status is set to @ref Status::Ok.
-    /// @note @c noexcept: body only moves already-constructed inputs into a
-    ///       locally-initialised aggregate. Per API-POLICY §5.3.
+    /// @note @c noexcept: internally builds a @ref LocalizedText via
+    ///       @ref Auth::ErrorKeys::credentialsCollected, which allocates
+    ///       @c std::string. The body is wrapped in a top-level try/catch
+    ///       so the contract holds even on @c std::bad_alloc — the degraded
+    ///       result carries an empty @c userMessage but preserves
+    ///       @c Status::Ok and the collected @c values.
     [[nodiscard]] static CredentialResult ok(std::vector<CredentialEntry> values) noexcept
     {
-        return CredentialResult{Status::Ok, std::move(values), Auth::ErrorKeys::credentialsCollected()};
+        try {
+            return CredentialResult{Status::Ok, std::move(values), Auth::ErrorKeys::credentialsCollected()};
+        } catch (...) {
+            return CredentialResult{Status::Ok, {}, LocalizedText{}};
+        }
     }
 
     /// @brief Construct a user-cancelled result (no @ref values).
-    /// @note @c noexcept: cannot throw; the generic message is a
-    ///       move-from-temporary.
+    /// @note @c noexcept: same noexcept-alloc-contract handling as @ref ok.
     [[nodiscard]] static CredentialResult cancelled() noexcept
     {
-        return CredentialResult{Status::UserCancelled, {}, Auth::ErrorKeys::userCancelled()};
+        try {
+            return CredentialResult{Status::UserCancelled, {}, Auth::ErrorKeys::userCancelled()};
+        } catch (...) {
+            return CredentialResult{Status::UserCancelled, {}, LocalizedText{}};
+        }
     }
 
     /// @brief Construct a provider-error result.

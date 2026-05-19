@@ -25,14 +25,12 @@ namespace LibreSCRS::SmartCard::detail {
 /// `lib/LibreSCRS/SmartCard/MonitorService.cpp`; this header forwards the two
 /// entry-points test code needs.
 ///
-/// @note Tagged @ref LIBRESCRS_INTERNAL (hidden visibility): the symbol is
-///       reachable by test executables that link the LibreSCRS_SmartCard
-///       static archive directly, but is not exported from any
-///       production-distributed shared library. The pre-existing
-///       `LIBRESCRS_INTERNAL_BUILD` `#error` guard above blocks source-level
-///       inclusion from external consumers; this visibility tag closes the
-///       complementary runtime `dlsym` path.
-LIBRESCRS_INTERNAL std::shared_ptr<MonitorService>
+/// @note Tagged @ref LIBRESCRS_PUBLIC_API so test executables reach the
+///       symbol across the SHARED LibreSCRS_SmartCard .so boundary; the
+///       `LIBRESCRS_INTERNAL_BUILD` `#error` guard above is the compile-time
+///       hardening that blocks external SDK consumers from seeing the
+///       declaration at all.
+LIBRESCRS_PUBLIC_API std::shared_ptr<MonitorService>
     makeMonitorWithProvider(std::unique_ptr<LibreSCRS::SmartCard::Internal::IPCSCScanProvider>);
 
 /// @brief Construct a `MonitorService::SubscriptionId` from a raw counter value.
@@ -45,8 +43,8 @@ LIBRESCRS_INTERNAL std::shared_ptr<MonitorService>
 /// as a friend of `MonitorService::SubscriptionId` it can invoke the private ctor;
 /// the wrapper function here is the test's entry point.
 ///
-/// @note Tagged @ref LIBRESCRS_INTERNAL (hidden visibility) — see the
-///       sibling note on @ref makeMonitorWithProvider for the rationale.
-LIBRESCRS_INTERNAL MonitorService::SubscriptionId makeSubscriptionIdForTest(std::uint64_t value) noexcept;
+/// @note Tagged @ref LIBRESCRS_PUBLIC_API — see the sibling note on
+///       @ref makeMonitorWithProvider for the rationale.
+LIBRESCRS_PUBLIC_API MonitorService::SubscriptionId makeSubscriptionIdForTest(std::uint64_t value) noexcept;
 
 } // namespace LibreSCRS::SmartCard::detail

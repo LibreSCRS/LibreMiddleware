@@ -83,7 +83,7 @@ public:
     /// @ref LibreSCRS::SmartCard::CardSession). `if (!params)` is always
     /// well-defined; accessors on a moved-from instance are undefined
     /// behaviour.
-    /// @since 4.0.
+    /// @since 4.0
     explicit operator bool() const noexcept
     {
         return d != nullptr;

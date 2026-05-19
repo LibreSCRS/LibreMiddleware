@@ -169,13 +169,21 @@ if(LIBRESCRS_BUILD_BENCH)
     add_subdirectory(bench)
 endif()
 
-option(LIBRESCRS_BUILD_EXAMPLES "Build LibreMiddleware public-API consumer examples" OFF)
+# Examples opt-in by default when SHARED build is active — the shared-build
+# CLI example doubles as a smoke test for the SHARED-library link path.
+if(LIBREMIDDLEWARE_BUILD_SHARED)
+    set(_lm_examples_default ON)
+else()
+    set(_lm_examples_default OFF)
+endif()
+option(LIBRESCRS_BUILD_EXAMPLES "Build LibreMiddleware public-API consumer examples" ${_lm_examples_default})
 # add_subdirectory unconditionally so IDE project trees (QtCreator, CLion)
 # populate the examples/ source files in their file-tree view even when the
 # build is disabled. The per-example CMakeLists gates its add_executable on
 # LIBRESCRS_BUILD_EXAMPLES so the actual target only materialises when the
 # option is ON — the source-file discovery cost is zero when disabled.
 add_subdirectory(examples/sdk-consumer)
+add_subdirectory(examples/shared-cli)
 add_subdirectory(examples/visual_signature_layout)
 
 add_subdirectory(tools)

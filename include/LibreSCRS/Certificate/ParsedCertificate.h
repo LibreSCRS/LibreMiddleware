@@ -89,6 +89,9 @@ struct LIBRESCRS_PUBLIC_API PublicKeyInfo
     ObjectIdentifier algorithmOid;
     /// @brief Named-curve OID for ECDSA/EdDSA keys; empty otherwise.
     std::string curveOid;
+
+    /// @brief Defaulted byte-identity equality.
+    [[nodiscard]] bool operator==(const PublicKeyInfo&) const noexcept = default;
 };
 
 /// @brief X.509 GeneralName CHOICE type tag (RFC 5280 §4.2.1.6).
@@ -121,6 +124,9 @@ struct LIBRESCRS_PUBLIC_API GeneralName
     std::string value;
     /// @brief Raw DER bytes for composite variants where #value is empty.
     std::vector<std::uint8_t> rawValue;
+
+    /// @brief Defaulted byte-identity equality.
+    [[nodiscard]] bool operator==(const GeneralName&) const noexcept = default;
 };
 
 /// @brief One X.509 v3 extension as a raw OID + critical flag + DER value.
@@ -137,6 +143,9 @@ struct LIBRESCRS_PUBLIC_API Extension
     bool critical{false};
     /// @brief Raw DER value of the extension's `extnValue` OCTET STRING.
     std::vector<std::uint8_t> value;
+
+    /// @brief Defaulted byte-identity equality.
+    [[nodiscard]] bool operator==(const Extension&) const noexcept = default;
 };
 
 /// @brief Parsed X.509 v3 certificate with typed accessors for the most
@@ -169,9 +178,7 @@ public:
             /// noexcept contract converts the throw into a structured
             /// failure rather than propagating across the public ABI
             /// boundary. Mostly hypothetical on production hardware.
-            /// @since 4.0 — symmetrises the fromDer noexcept contract
-            /// with sibling factories (CardSession::open,
-            /// TrustStoreService::create).
+            /// @since 4.0
             AllocationFailed,
         };
 
@@ -280,6 +287,9 @@ public:
         /// @brief Maximum number of non-self-issued intermediates that may
         ///        follow this certificate; absent means unconstrained.
         std::optional<int> pathLenConstraint;
+
+        /// @brief Defaulted byte-identity equality.
+        [[nodiscard]] bool operator==(const BasicConstraints&) const noexcept = default;
     };
     /// @brief BasicConstraints; `std::nullopt` if absent or malformed.
     [[nodiscard]] std::optional<BasicConstraints> basicConstraints() const;
