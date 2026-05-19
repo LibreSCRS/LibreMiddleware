@@ -36,10 +36,13 @@ namespace LibreSCRS::SmartCard::detail {
 /// Forward-declared in the public @ref CardSession header so @c CardSession
 /// can befriend it without leaking the helper symbol or its parameter type
 /// into the public SDK include tree. The single static method @ref
-/// installForTesting is tagged @ref LIBRESCRS_PUBLIC_API so test executables
-/// reach the symbol across the SHARED @c LibreSCRS_SmartCard .so boundary;
-/// the `LIBRESCRS_INTERNAL_BUILD` `#error` guard above is the compile-time
-/// hardening that blocks external SDK consumers from seeing the declaration.
+/// installForTesting has its body in the build-tree-only @c
+/// LibreSCRS_SmartCard_TestHelpers archive — production builds of
+/// @c libLibreSCRS_SmartCard therefore never carry the symbol in their
+/// dynamic export set. Test executables that need this seam link the
+/// archive alongside the production target. The `LIBRESCRS_INTERNAL_BUILD`
+/// `#error` guard above is the compile-time hardening that blocks external
+/// SDK consumers from seeing the declaration at all.
 ///
 /// @par Thread-safety
 /// @ref installForTesting takes the session mutex internally so the install
@@ -57,7 +60,7 @@ struct ChannelInjector
     ///        @c close() — tests that need explicit teardown should arrange
     ///        for it themselves.
     /// @since 4.1
-    LIBRESCRS_PUBLIC_API static void
+    LIBRESCRS_INTERNAL static void
     installForTesting(CardSession& session, std::unique_ptr<LibreSCRS::SecureChannel::ISecureChannel> channel) noexcept;
 };
 

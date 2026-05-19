@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <LibreSCRS/SmartCard/MonitorService.h>
-#include <LibreSCRS/SmartCard/detail/MonitorInjection.h>
+#include <LibreSCRS_internal/SmartCard/MonitorServiceImpl.h>
 
 #include <ipcsc_scan_provider.h>
 #include <smartcard/monitor.h>
@@ -45,100 +45,72 @@ MonitorEvent::Kind mapCardEventKind(::LibreSCRS::SmartCard::Internal::MonitorEve
 
 } // namespace
 
-struct LIBRESCRS_INTERNAL MonitorService::Impl
+// @ref MonitorService::Impl is defined in
+// `lib/SmartCard/include/LibreSCRS_internal/SmartCard/MonitorServiceImpl.h`
+// so the production translation unit and the test-helper translation unit
+// (built as a separate archive, @ref LibreSCRS_SmartCard_TestHelpers) share
+// the same layout. The dispatch / snapshot / reader-diff method bodies
+// remain in the production translation unit; they are not test-only.
+
+std::vector<std::pair<MonitorService::SubscriptionId, MonitorService::EventCallback>>
+MonitorService::Impl::snapshotCallbacks()
 {
-    std::unique_ptr<::LibreSCRS::SmartCard::Internal::Monitor> internal;
-
-    std::mutex cbMtx;
-    std::map<SubscriptionId, EventCallback> callbacks;
-    std::optional<::LibreSCRS::SmartCard::Internal::Monitor::SubscriptionId> internalSubId;
-    std::atomic<std::uint64_t> nextId{1};
-
-    std::mutex readersMtx;
-    std::set<std::string> knownReaders;
-
-    // Held for the full snapshot-and-invoke phase of @ref dispatch so that
-    // @ref MonitorService::unsubscribe (with @ref DrainPolicy::Drain) can
-    // block until any currently-running dispatch completes. Separate from
-    // cbMtx because subscribers must be free to call subscribe/unsubscribe
-    // from inside a callback, which would deadlock if dispatch held cbMtx
-    // across invocation.
-    std::mutex dispatchMtx;
-
-    explicit Impl(std::unique_ptr<::LibreSCRS::SmartCard::Internal::IPCSCScanProvider> provider)
-        : internal(std::make_unique<::LibreSCRS::SmartCard::Internal::Monitor>(std::move(provider)))
-    {}
-
-    // Snapshot currently-registered (id, callback) pairs under the cbMtx lock.
-    // Dispatch outside cbMtx so subscribers can re-enter subscribe/unsubscribe
-    // from within a callback without deadlocking.
-    std::vector<std::pair<SubscriptionId, EventCallback>> snapshotCallbacks()
-    {
-        std::lock_guard<std::mutex> lock(cbMtx);
-        std::vector<std::pair<SubscriptionId, EventCallback>> out;
-        out.reserve(callbacks.size());
-        for (const auto& [id, cb] : callbacks) {
-            out.emplace_back(id, cb);
-        }
-        return out;
+    std::lock_guard<std::mutex> lock(cbMtx);
+    std::vector<std::pair<SubscriptionId, EventCallback>> out;
+    out.reserve(callbacks.size());
+    for (const auto& [id, cb] : callbacks) {
+        out.emplace_back(id, cb);
     }
+    return out;
+}
 
-    // Full snapshot-and-invoke runs under dispatchMtx so @ref
-    // MonitorService::unsubscribe with @ref DrainPolicy::Drain can block on
-    // it to guarantee no callback is currently in flight.
-    //
-    // Each subscriber callback runs inside a try/catch shield. A
-    // subscriber that throws will not propagate out of the poll thread —
-    // that would otherwise terminate the program (an exception escaping
-    // the std::thread entry point invokes std::terminate). Error tokens
-    // are written to stderr as a defense-in-depth fallback because the
-    // SDK does not currently inject a logger across the public ABI
-    // boundary; the contract is documented on `MonitorService`'s @par
-    // Thread-safety section in the header.
-    void dispatch(const MonitorEvent& event)
-    {
-        std::lock_guard<std::mutex> dispatchLock(dispatchMtx);
-        auto snapshot = snapshotCallbacks();
-        for (const auto& [id, cb] : snapshot) {
-            (void)id;
-            if (!cb)
-                continue;
-            try {
-                cb(event);
-            } catch (const std::exception& e) {
-                std::fprintf(stderr, "LibreSCRS MonitorService: subscriber callback threw: %s\n", e.what());
-            } catch (...) {
-                std::fprintf(stderr, "LibreSCRS MonitorService: subscriber callback threw unknown exception\n");
-            }
+// Each subscriber callback runs inside a try/catch shield. A subscriber
+// that throws will not propagate out of the poll thread — that would
+// otherwise terminate the program (an exception escaping the std::thread
+// entry point invokes std::terminate). Error tokens are written to stderr
+// as a defense-in-depth fallback because the SDK does not currently inject
+// a logger across the public ABI boundary; the contract is documented on
+// `MonitorService`'s @par Thread-safety section in the header.
+void MonitorService::Impl::dispatch(const MonitorEvent& event)
+{
+    std::lock_guard<std::mutex> dispatchLock(dispatchMtx);
+    auto snapshot = snapshotCallbacks();
+    for (const auto& [id, cb] : snapshot) {
+        (void)id;
+        if (!cb)
+            continue;
+        try {
+            cb(event);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "LibreSCRS MonitorService: subscriber callback threw: %s\n", e.what());
+        } catch (...) {
+            std::fprintf(stderr, "LibreSCRS MonitorService: subscriber callback threw unknown exception\n");
         }
     }
+}
 
-    // Reader-list diff: synthesise ReaderAdded / ReaderRemoved events.
-    // Shared by the subscribe-time initial snapshot path and the internal
-    // ReaderListCallback path. knownReaders is updated under readersMtx.
-    void diffReadersAndDispatch(const std::vector<std::string>& readers)
+void MonitorService::Impl::diffReadersAndDispatch(const std::vector<std::string>& readers)
+{
+    std::set<std::string> current(readers.begin(), readers.end());
+    std::vector<std::string> added;
+    std::vector<std::string> removed;
     {
-        std::set<std::string> current(readers.begin(), readers.end());
-        std::vector<std::string> added;
-        std::vector<std::string> removed;
-        {
-            std::lock_guard<std::mutex> lock(readersMtx);
-            for (const auto& r : current) {
-                if (knownReaders.find(r) == knownReaders.end())
-                    added.push_back(r);
-            }
-            for (const auto& r : knownReaders) {
-                if (current.find(r) == current.end())
-                    removed.push_back(r);
-            }
-            knownReaders = std::move(current);
+        std::lock_guard<std::mutex> lock(readersMtx);
+        for (const auto& r : current) {
+            if (knownReaders.find(r) == knownReaders.end())
+                added.push_back(r);
         }
-        for (const auto& r : added)
-            dispatch(MonitorEvent{MonitorEvent::Kind::ReaderAdded, r, std::nullopt, std::nullopt});
-        for (const auto& r : removed)
-            dispatch(MonitorEvent{MonitorEvent::Kind::ReaderRemoved, r, std::nullopt, std::nullopt});
+        for (const auto& r : knownReaders) {
+            if (current.find(r) == current.end())
+                removed.push_back(r);
+        }
+        knownReaders = std::move(current);
     }
-};
+    for (const auto& r : added)
+        dispatch(MonitorEvent{MonitorEvent::Kind::ReaderAdded, r, std::nullopt, std::nullopt});
+    for (const auto& r : removed)
+        dispatch(MonitorEvent{MonitorEvent::Kind::ReaderRemoved, r, std::nullopt, std::nullopt});
+}
 
 MonitorService::MonitorService() : d(std::make_unique<Impl>(nullptr)) {}
 
@@ -285,43 +257,12 @@ bool MonitorService::isRunning() const noexcept
     }
 }
 
-namespace detail {
-
-class MonitorFactory
-{
-public:
-    static std::shared_ptr<MonitorService>
-    withProvider(std::unique_ptr<::LibreSCRS::SmartCard::Internal::IPCSCScanProvider> provider)
-    {
-        auto mon = std::shared_ptr<MonitorService>(new MonitorService());
-        // Replace the default-constructed internal MonitorService with one wired to
-        // the caller's provider. No subscribers yet, so no race.
-        mon->d->internal = std::make_unique<::LibreSCRS::SmartCard::Internal::Monitor>(std::move(provider));
-        return mon;
-    }
-
-    // 4.0 hardening: raw-int ctor on SubscriptionId is private. Test code
-    // that needs to probe unknown-id behaviour (e.g. unsubscribe(9999) on a
-    // never-issued value) goes through this factory, which is befriended by
-    // SubscriptionId. External SDK consumers never see this header
-    // (MonitorInjection.h is guarded by #error against LIBRESCRS_INTERNAL_BUILD).
-    static constexpr MonitorService::SubscriptionId makeSubscriptionId(std::uint64_t value) noexcept
-    {
-        return MonitorService::SubscriptionId{value};
-    }
-};
-
-std::shared_ptr<MonitorService>
-makeMonitorWithProvider(std::unique_ptr<::LibreSCRS::SmartCard::Internal::IPCSCScanProvider> provider)
-{
-    return MonitorFactory::withProvider(std::move(provider));
-}
-
-MonitorService::SubscriptionId makeSubscriptionIdForTest(std::uint64_t value) noexcept
-{
-    return MonitorFactory::makeSubscriptionId(value);
-}
-
-} // namespace detail
+// @ref detail::MonitorFactory and the test-helper free functions
+// (@ref detail::makeMonitorWithProvider, @ref detail::makeSubscriptionIdForTest)
+// are defined in `lib/LibreSCRS/SmartCard/test_helpers/monitor_test_helpers.cpp`,
+// compiled into the build-tree-only @ref LibreSCRS_SmartCard_TestHelpers
+// archive. Production builds of @c libLibreSCRS_SmartCard never carry those
+// symbols in their dynamic export set; test executables that need them
+// link the archive alongside the production target.
 
 } // namespace LibreSCRS::SmartCard

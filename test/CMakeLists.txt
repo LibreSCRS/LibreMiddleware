@@ -417,7 +417,7 @@ gtest_discover_tests(MonitorTests)
 
 # AutoReaderService tests
 add_executable(AutoReaderTests auto_reader_test.cpp)
-target_link_libraries(AutoReaderTests PRIVATE LibreSCRS_Plugin CardPlugin_Impl LibreSCRS_SmartCard SmartCard_Impl GTest::gtest_main Threads::Threads)
+target_link_libraries(AutoReaderTests PRIVATE LibreSCRS_Plugin CardPlugin_Impl LibreSCRS_SmartCard LibreSCRS_SmartCard_TestHelpers SmartCard_Impl GTest::gtest_main Threads::Threads)
 # Grants access to detail/MonitorInjection.h (test-only mock injection) and
 # to <ipcsc_scan_provider.h> used by the mock scan provider (relocated from
 # include/smartcard/ to src/ in Chunk E).
@@ -794,6 +794,7 @@ add_executable(LibreSCRS_MonitorTests
 target_link_libraries(LibreSCRS_MonitorTests PRIVATE
     GTest::gtest_main
     LibreSCRS_SmartCard
+    LibreSCRS_SmartCard_TestHelpers
     SmartCard_Impl
     Threads::Threads
 )

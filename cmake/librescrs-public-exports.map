@@ -30,23 +30,44 @@ LM_4 {
             *LibreSCRS::*;
         };
     local:
-        /* The three test-only injection helpers
-         *   `LibreSCRS::SmartCard::detail::makeMonitorWithProvider`
-         *   `LibreSCRS::SmartCard::detail::makeSubscriptionIdForTest`
-         *   `LibreSCRS::SmartCard::detail::ChannelInjector::installForTesting`
-         * are tagged @ref LIBRESCRS_PUBLIC_API on their declarations so
-         * test executables that link the SHARED LibreSCRS_SmartCard
-         * .so reach them across the .so boundary. The header
-         * `#ifndef LIBRESCRS_INTERNAL_BUILD #error` guard is the
-         * compile-time hardening that keeps external SDK consumers
-         * from seeing the declaration at all. A version-script
-         * `local:` strip is incompatible with linking against the
-         * .so under the SHARED-build profile: stripping these symbols
-         * from the dynamic export set makes the test executables
-         * unlinkable, defeating the validation matrix.
+        /* Strip test-only injection helpers from the dynamic export
+         * set. The `*LibreSCRS::*` global glob above would otherwise
+         * authoritatively override the per-declaration
+         * `LIBRESCRS_INTERNAL` hidden-visibility attribute and leak
+         * these dlsym-reachable footguns into the production shared
+         * library, defeating the documented runtime hardening of
+         * `LibreSCRS::SmartCard::MonitorService::SubscriptionId`
+         * (privatised raw-int ctor) and of
+         * `LibreSCRS::SmartCard::CardSession`'s channel install path.
          *
-         * Catch-all hides everything else not picked up by the
-         * `*LibreSCRS::*` global glob (bundled OpenSSL, vendored
-         * nlohmann / miniz / pugixml, libresign internals). */
+         * The helper bodies live in the build-tree-only
+         * `LibreSCRS_SmartCard_TestHelpers` archive: test executables
+         * that need them link the archive alongside the production
+         * target, so the symbols enter the test executable directly
+         * and never need to be found in the .so at link time.
+         *
+         * Note: the broader `*LibreSCRS::*::detail::*` glob would
+         * also be sound, but it would strip the legitimate
+         * cross-`.so` plugin-reach detail helpers (e.g.
+         * `SecureChannel::detail::ChannelStateMutator`,
+         * `SmartCard::detail::PcscBridge::unwrap`,
+         * `Certificate::detail::lookupOidName`,
+         * `Signing::detail::translatePublicRequestToLibresign`,
+         * `Trust::detail::TrustAnchorProvider`,
+         * `Trust::detail::TrustStoreInternalAccess`,
+         * `SmartCard::detail::sessionGeneration`,
+         * `SmartCard::detail::makeDetachedCardSession`), each of
+         * which is consumed by either a card plugin or a sibling
+         * `LibreSCRS_*.so` via the `DT_NEEDED` edge.
+         *
+         * The narrow per-symbol list captures only the three
+         * test-injection footguns plus the `MonitorFactory` friend
+         * bridge they go through. */
+        extern "C++" {
+            *LibreSCRS::SmartCard::detail::makeMonitorWithProvider*;
+            *LibreSCRS::SmartCard::detail::makeSubscriptionIdForTest*;
+            *LibreSCRS::SmartCard::detail::MonitorFactory*;
+            *LibreSCRS::SmartCard::detail::ChannelInjector::installForTesting*;
+        };
         *;
 };

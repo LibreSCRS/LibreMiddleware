@@ -82,6 +82,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
         PKCS15
         librescrs-opensc-pkcs11
         LibreSCRS::SmartCard
+        LibreSCRS_SmartCard_TestHelpers
         LibreSCRS::Secure
         GTest::gtest_main
     )

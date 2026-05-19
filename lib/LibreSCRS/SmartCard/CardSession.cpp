@@ -3,8 +3,8 @@
 
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
-#include <LibreSCRS/SmartCard/detail/ChannelInjection.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
+#include <LibreSCRS_internal/SmartCard/CardSessionImpl.h>
 
 #include <LibreSCRS/Auth/AuthRequirement.h>
 #include <LibreSCRS/Auth/CredentialResult.h>
@@ -33,35 +33,13 @@
 
 namespace LibreSCRS::SmartCard {
 
-namespace {
-// Process-wide monotonic counter. Starts at 0; nextGeneration() returns the
-// pre-increment value + 1 so the first CardSession's generation is 1 and 0
-// is reserved for "null / moved-from".
-std::uint64_t nextGeneration() noexcept
-{
-    static std::atomic<std::uint64_t> counter{0};
-    return counter.fetch_add(1, std::memory_order_relaxed) + 1;
-}
-} // namespace
-
-struct LIBRESCRS_INTERNAL CardSession::Impl
-{
-    std::unique_ptr<LibreSCRS::SmartCard::Internal::PCSCConnection> ownedConn;
-    std::string readerName;
-    std::vector<std::uint8_t> atr;
-    std::uint64_t generation{nextGeneration()};
-
-    // 4.1: cross-plugin secure-channel coordination state.
-    std::unique_ptr<LibreSCRS::SecureChannel::ISecureChannel> activeChannel;
-    std::array<LibreSCRS::Secure::String, LibreSCRS::Auth::kPaceSecretKindCount> paceCredentialsCache;
-    // BAC consumes a structurally distinct tuple (documentNumber + two dates)
-    // rather than a single secret, so it gets its own cache slot disjoint
-    // from the PACE credentials cache.
-    std::optional<LibreSCRS::SecureChannel::BacInput> bacInput;
-    std::optional<LibreSCRS::Auth::CredentialProvider> credentialProvider;
-    std::mutex sessionMutex;
-    std::atomic<bool> dead{false};
-};
+// @ref CardSession::Impl is defined in
+// `lib/SmartCard/include/LibreSCRS_internal/SmartCard/CardSessionImpl.h`
+// so the production translation unit and the test-helper translation unit
+// (built as a separate archive, @ref LibreSCRS_SmartCard_TestHelpers) share
+// the same layout. Production builds of @c libLibreSCRS_SmartCard never
+// carry the test-only @ref detail::ChannelInjector::installForTesting
+// symbol in their dynamic export set.
 
 CardSession::CardSession() : d(std::make_unique<Impl>()) {}
 
@@ -172,24 +150,9 @@ std::uint64_t sessionGeneration(const CardSession& session) noexcept
     return session.d->generation;
 }
 
-void ChannelInjector::installForTesting(CardSession& session,
-                                        std::unique_ptr<LibreSCRS::SecureChannel::ISecureChannel> channel) noexcept
-{
-    // Mirrors the locking discipline of the activation paths so the install
-    // is ordered against any concurrent hasLiveSecureChannel /
-    // clearActiveChannel call from another thread. Any previously installed
-    // channel is dropped without an explicit close(); the regression tests
-    // that use this helper own the channel lifecycle and arrange teardown
-    // themselves when required.
-    try {
-        std::lock_guard lock(session.d->sessionMutex);
-        session.d->activeChannel = std::move(channel);
-    } catch (...) {
-        // noexcept contract: swallow any exception. Lock acquisition
-        // failure is the only realistic path here and is harmless for a
-        // test-only helper — the assignment simply does not happen.
-    }
-}
+// @ref detail::ChannelInjector::installForTesting is defined in
+// `lib/LibreSCRS/SmartCard/test_helpers/channel_test_helpers.cpp`, compiled
+// into the build-tree-only @ref LibreSCRS_SmartCard_TestHelpers archive.
 
 } // namespace detail
 

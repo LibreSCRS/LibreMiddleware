@@ -444,18 +444,59 @@ if(LIBREMIDDLEWARE_BUILD_SHARED)
     endif()
 
     # Darwin parity for the version-script `local:` block. Apple ld(1)'s
-    # `-unexported_symbol` supports glob patterns; this hides the three
+    # `-unexported_symbol` supports glob patterns; this hides the
     # test-injection helpers (detail::makeMonitorWithProvider,
-    # detail::makeSubscriptionIdForTest, detail::ChannelInjector::
-    # installForTesting) from the public dylib export set so the macOS
-    # ABI matches the Linux SO's stripped surface.
+    # detail::makeSubscriptionIdForTest, detail::MonitorFactory,
+    # detail::ChannelInjector::installForTesting) from the public dylib
+    # export set so the macOS ABI matches the Linux SO's stripped surface.
     if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
         target_link_options(LibreSCRS_SmartCard PRIVATE
             "LINKER:-unexported_symbol,*makeMonitorWithProvider*"
             "LINKER:-unexported_symbol,*makeSubscriptionIdForTest*"
+            "LINKER:-unexported_symbol,*MonitorFactory*"
             "LINKER:-unexported_symbol,*installForTesting*")
     endif()
 endif()
+
+# ──────────────────────────────────────────────────────────────────────────
+# Test-only helper archive.
+#
+# The three test-injection helpers (detail::makeMonitorWithProvider,
+# detail::makeSubscriptionIdForTest, detail::ChannelInjector::
+# installForTesting) live here rather than in the production
+# libLibreSCRS_SmartCard so consumers of the released SDK never see the
+# helper symbols at link or runtime. Test executables that need the
+# helpers link this archive alongside the production target.
+#
+# The archive is OBJECT (not STATIC) so its symbols merge directly into
+# every test executable that links it, with no archive-level
+# whole-archive opt-in needed. Default visibility on the archive
+# (overriding the production target's hidden default) keeps the helper
+# symbols linkable from test executables; the production library's
+# version-script `local:` block on Linux and `-unexported_symbol` globs
+# on Darwin strip any stray definition that ever finds its way into the
+# .so / .dylib.
+#
+# Not installed (no install(TARGETS …) rule). Build-tree-only.
+# ──────────────────────────────────────────────────────────────────────────
+add_library(LibreSCRS_SmartCard_TestHelpers OBJECT
+    SmartCard/test_helpers/monitor_test_helpers.cpp
+    SmartCard/test_helpers/channel_test_helpers.cpp
+)
+target_link_libraries(LibreSCRS_SmartCard_TestHelpers
+    PUBLIC LibreSCRS_SmartCard
+    PRIVATE $<BUILD_INTERFACE:SmartCard_Impl>
+)
+target_include_directories(LibreSCRS_SmartCard_TestHelpers PRIVATE
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src)
+target_compile_features(LibreSCRS_SmartCard_TestHelpers PUBLIC cxx_std_23)
+target_compile_definitions(LibreSCRS_SmartCard_TestHelpers PRIVATE
+    LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD)
+set_target_properties(LibreSCRS_SmartCard_TestHelpers PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET default
+    VISIBILITY_INLINES_HIDDEN OFF
+)
 
 # Public aliases — consumers use these.
 add_library(LibreSCRS::Auth      ALIAS LibreSCRS_Auth)
