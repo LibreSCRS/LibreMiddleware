@@ -52,8 +52,8 @@ CancelToken::Registration CancelToken::registerCallback(std::function<void()> ca
     if (!pImpl) {
         return reg; // never-cancellable: no-op handle
     }
-    reg.pImpl = std::make_unique<Registration::Impl>();
-    reg.pImpl->callback.emplace(pImpl->source.get_token(), std::move(callback));
+    reg.d = std::make_unique<Registration::Impl>();
+    reg.d->callback.emplace(pImpl->source.get_token(), std::move(callback));
     return reg;
 }
 

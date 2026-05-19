@@ -130,7 +130,8 @@ public:
 private:
     friend class CancelToken;
     class Impl;
-    std::unique_ptr<Impl> pImpl;
+    /// @brief Pimpl pointer holding the wrapped @c std::stop_callback (if any).
+    std::unique_ptr<Impl> d;
 };
 
 /// @brief Mirrors @c std::stop_source. Copyable; copies share cancellation

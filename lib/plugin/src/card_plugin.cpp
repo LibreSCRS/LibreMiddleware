@@ -2,9 +2,10 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 /// @file
-/// @brief Out-of-line definitions for @ref LibreSCRS::Plugin::Atr::matches
-///        and the non-virtual base @ref LibreSCRS::Plugin::CardPlugin::canHandle
-///        (NVI over @ref LibreSCRS::Plugin::CardPlugin::supportedAtrs).
+/// @brief Out-of-line definitions for the non-virtual base
+///        @ref LibreSCRS::Plugin::CardPlugin::canHandle (NVI over
+///        @ref LibreSCRS::Plugin::CardPlugin::supportedAtrs) and the
+///        cancel-aware @c readCard / @c sign / @c setTrustStore funnels.
 ///
 /// Lives alongside @c card_plugin_key_function.cpp in the @c CardPlugin_Impl
 /// translation unit so consumers of the registry get the symbol "for free"
@@ -20,34 +21,12 @@
 #include <LibreSCRS/Plugin/ReadResult.h>
 #include <LibreSCRS/Trust/TrustStore.h>
 
-#include <algorithm>
 #include <atomic>
-#include <cstddef>
 #include <memory>
 #include <string>
 #include <utility>
 
 namespace LibreSCRS::Plugin {
-
-bool Atr::matches(std::span<const std::uint8_t> candidate) const noexcept
-{
-    if (candidate.size() != bytes.size()) {
-        return false;
-    }
-    if (!mask.has_value()) {
-        return std::equal(candidate.begin(), candidate.end(), bytes.begin());
-    }
-    if (mask->size() != bytes.size()) {
-        return false;
-    }
-    for (std::size_t i = 0; i < bytes.size(); ++i) {
-        const auto m = (*mask)[i];
-        if ((candidate[i] & m) != (bytes[i] & m)) {
-            return false;
-        }
-    }
-    return true;
-}
 
 bool CardPlugin::canHandle(std::span<const std::uint8_t> atr) const noexcept
 {

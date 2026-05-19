@@ -30,17 +30,16 @@ add_library(SmartCard_Impl STATIC
 target_compile_definitions(SmartCard_Impl PRIVATE LIBRESCRS_INTERNAL_BUILD)
 
 # PUBLIC include dir (BUILD_INTERFACE-wrapped) now carries only the four
-# surviving bucket-C headers (pcsc_connection, secure_buffer, monitor,
-# monitor_event). Internal LM consumers that link SmartCard_Impl still need
+# LC-bridge headers (pcsc_connection, secure_buffer, monitor, monitor_event).
+# Internal LM consumers that link SmartCard_Impl still need
 # <smartcard/pcsc_connection.h> etc. while the LC bridge surface remains,
 # but external (non-LM) consumers cannot reach them — the headers
 # are not exported via install() or package config.
 #
-# NOTE: bucket-C headers (pcsc_connection, secure_buffer, monitor,
-# monitor_event) carry the LC bridge surface. The bucket-B headers (apdu,
-# ber, tlv, ipcsc_scan_provider, pcsc_scan_provider) live in src/ and
-# require an explicit PRIVATE include of lib/smartcard/src from
-# consumers.
+# NOTE: the LC-bridge headers above carry the host-facing surface; the
+# transport-layer headers (apdu, ber, tlv, ipcsc_scan_provider,
+# pcsc_scan_provider) live in src/ and require an explicit PRIVATE include
+# of lib/smartcard/src from consumers.
 target_include_directories(SmartCard_Impl PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )

@@ -14,6 +14,7 @@
 # executables to opt in separately just to resolve ~CardPlugin() at link
 # time.
 add_library(CardPlugin_Impl STATIC
+    src/atr.cpp
     src/card_plugin.cpp
     src/card_plugin_key_function.cpp
     src/card_plugin_registry.cpp

@@ -55,8 +55,9 @@ struct ActiveChannelAccessor
 ///
 /// The public @ref ActiveChannelHolder surface no longer surfaces the
 /// channel pointer because @ref LibreSCRS::SecureChannel::ISecureChannel
-/// is internal to LibreMiddleware (Path 2 relocation: implementation
-/// headers moved under @c LibreSCRS_internal/). LM-internal callers
+/// is internal to LibreMiddleware: implementation headers live under
+/// @c lib/<target>/include/LibreSCRS_internal/<Target>/ per API-POLICY §6.
+/// LM-internal callers
 /// (plugin drivers, PKCS#15 provider, Chip-Authentication pipeline) use
 /// this accessor to reach the channel for state mutators routed through
 /// @ref LibreSCRS::SecureChannel::detail::ChannelStateMutator.

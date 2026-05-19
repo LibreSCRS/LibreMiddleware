@@ -216,8 +216,8 @@ add_library(LibreSCRS_SecureChannel ${LIBREMIDDLEWARE_LIB_TYPE}
 target_include_directories(LibreSCRS_SecureChannel PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
-# Internal header tree for the relocated channel implementation headers
-# (Path 2): on the BUILD_INTERFACE only. Consumers under
+# Internal header tree under lib/<target>/include/LibreSCRS_internal/<Target>/
+# (per API-POLICY §6): on the BUILD_INTERFACE only. Consumers under
 # LIBRESCRS_INTERNAL_BUILD reach <LibreSCRS_internal/SecureChannel/...>
 # through this path; external SDK consumers never see it.
 target_include_directories(LibreSCRS_SecureChannel PUBLIC
@@ -266,15 +266,15 @@ add_library(LibreSCRS_SmartCard ${LIBREMIDDLEWARE_LIB_TYPE}
 target_include_directories(LibreSCRS_SmartCard PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
-# Internal header tree (Path 2): exposes the LIBRESCRS_INTERNAL_BUILD-only
-# friend-accessor surface (ActiveChannelHolderInternal.h) to in-tree
-# consumers on the BUILD_INTERFACE only. External SDK consumers do not
-# see this path.
+# Internal header tree under lib/<target>/include/LibreSCRS_internal/<Target>/
+# (per API-POLICY §6): exposes the LIBRESCRS_INTERNAL_BUILD-only friend-accessor
+# surface (ActiveChannelHolderInternal.h) to in-tree consumers on the
+# BUILD_INTERFACE only. External SDK consumers do not see this path.
 target_include_directories(LibreSCRS_SmartCard PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/lib/SmartCard/include>)
-# PRIVATE: needed because MonitorService.cpp includes <smartcard/ipcsc_scan_provider.h>
-# (bucket-B, relocated to lib/smartcard/src in Chunk E) and because
-# <smartcard/pcsc_connection.h>/<smartcard/monitor.h> (bucket-C) transitively
+# PRIVATE: needed because MonitorService.cpp includes the internal
+# <smartcard/ipcsc_scan_provider.h> (lives under lib/smartcard/src) and
+# because <smartcard/pcsc_connection.h>/<smartcard/monitor.h> transitively
 # pull "apdu.h"/"ipcsc_scan_provider.h" from the same directory.
 target_include_directories(LibreSCRS_SmartCard PRIVATE
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src)
@@ -350,9 +350,9 @@ add_library(LibreSCRS_Signing ${LIBREMIDDLEWARE_LIB_TYPE}
 target_compile_definitions(LibreSCRS_Signing PRIVATE LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD
     LIBREMIDDLEWARE_CERTIFICATES_DIR="${LIBREMIDDLEWARE_CERTIFICATES_DIR}")
 # LIBRESCRS_INTERNAL_BUILD lets SigningService.cpp include the local
-# detail/ErrorClassifier.h (guarded) and transitively pull apdu.h (bucket-B
-# still referenced by smartcard/pcsc_connection.h) through the include graph
-# of CardPlugin_Impl/SmartCard_Impl headers.
+# detail/ErrorClassifier.h (guarded) and transitively pull the internal
+# apdu.h (still referenced by smartcard/pcsc_connection.h) through the
+# include graph of CardPlugin_Impl/SmartCard_Impl headers.
 target_include_directories(LibreSCRS_Signing PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
