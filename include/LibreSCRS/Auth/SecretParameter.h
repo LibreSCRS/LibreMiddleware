@@ -8,7 +8,7 @@
 ///        compile-time sentinel that pins credential-bearing parameters to
 ///        @ref LibreSCRS::Secure::String const&.
 ///
-/// @since 4.1 (promoted to public from `Auth/detail/SecretParameter.h`).
+/// @since 4.1
 ///
 /// @par Design rationale
 /// Every credential-bearing virtual on @ref LibreSCRS::Plugin::CardPlugin

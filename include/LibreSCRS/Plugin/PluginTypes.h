@@ -192,7 +192,7 @@ struct CertificateData
     /// @brief Human-readable label (PKCS#15 CDF label, where available).
     std::string label;
     /// @brief Certificate body in DER encoding.
-    std::vector<uint8_t> derBytes;
+    std::vector<std::uint8_t> derBytes;
     /// @brief File identifier of the matching private key, when known.
     ///
     /// Empty @c std::optional signals "unknown" — distinct from the 0-valued
@@ -278,7 +278,7 @@ enum class SignResultOutcome : std::uint8_t {
 struct SignResult
 {
     /// @brief Raw signature bytes (format depends on `SignMechanism`).
-    std::vector<uint8_t> signature;
+    std::vector<std::uint8_t> signature;
 
     /// @brief Structured outcome classification.
     SignResultOutcome outcome = SignResultOutcome::Unspecified;
@@ -303,9 +303,7 @@ struct SignResult
     /// (@ref ReadResult::ok, @ref ReadResult::communicationError,
     /// @ref ReadResult::parseError).
     ///
-    /// @since 4.0 — was constructed inline at the wrapper
-    /// site; the named factory removes the only call site that mutated
-    /// SignResult fields directly.
+    /// @since 4.0
     [[nodiscard]] static SignResult cancelled() noexcept
     {
         SignResult r;

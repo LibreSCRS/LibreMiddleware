@@ -3,6 +3,8 @@
 
 #include <LibreSCRS/SmartCard/CardMap.h>
 
+#include <mutex>
+#include <unordered_map>
 #include <utility>
 
 namespace LibreSCRS::SmartCard {
@@ -28,12 +30,23 @@ std::string flatten(const CardMap::Key& key)
 
 } // namespace
 
+struct CardMap::Impl
+{
+    mutable std::mutex mu;
+    std::unordered_map<std::string, CardMapEntry> entries;
+};
+
+CardMap::CardMap() : d(std::make_unique<Impl>()) {}
+CardMap::~CardMap() = default;
+CardMap::CardMap(CardMap&&) noexcept = default;
+CardMap& CardMap::operator=(CardMap&&) noexcept = default;
+
 std::optional<CardMapEntry> CardMap::get(const Key& key) const noexcept
 {
     try {
-        std::lock_guard lock(mu);
-        auto it = entries.find(flatten(key));
-        if (it == entries.end())
+        std::lock_guard lock(d->mu);
+        auto it = d->entries.find(flatten(key));
+        if (it == d->entries.end())
             return std::nullopt;
         return it->second;
     } catch (...) {
@@ -47,8 +60,8 @@ std::optional<CardMapEntry> CardMap::get(const Key& key) const noexcept
 void CardMap::put(const Key& key, CardMapEntry entry) noexcept
 {
     try {
-        std::lock_guard lock(mu);
-        entries.insert_or_assign(flatten(key), std::move(entry));
+        std::lock_guard lock(d->mu);
+        d->entries.insert_or_assign(flatten(key), std::move(entry));
     } catch (...) {
         // Allocation failure caching an entry — drop on the floor. The
         // next lookup re-discovers; correctness is preserved at the
@@ -59,8 +72,8 @@ void CardMap::put(const Key& key, CardMapEntry entry) noexcept
 void CardMap::invalidate(const Key& key) noexcept
 {
     try {
-        std::lock_guard lock(mu);
-        entries.erase(flatten(key));
+        std::lock_guard lock(d->mu);
+        d->entries.erase(flatten(key));
     } catch (...) {
         // Same rationale as put(): swallow allocation failures during
         // key flattening. invalidate is advisory; the worst outcome of
@@ -72,8 +85,8 @@ void CardMap::invalidate(const Key& key) noexcept
 void CardMap::invalidateAll() noexcept
 {
     try {
-        std::lock_guard lock(mu);
-        entries.clear();
+        std::lock_guard lock(d->mu);
+        d->entries.clear();
     } catch (...) {
         // Allocation can occur in some hash-table teardown paths; the
         // catch keeps the noexcept contract honest. Worst outcome is a

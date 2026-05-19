@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace LibreSCRS::Trust {
@@ -179,12 +180,15 @@ public:
     Builder& setTrustedListFileSigningCert(std::filesystem::path path);
 
     /// @brief Consume the builder and return a configured @ref TrustConfig.
-    /// @note @c noexcept: all invariants are checked at setter-invocation
-    ///       time; this call only assembles already-validated values into
-    ///       the aggregate. Per API-POLICY §5.1, validation that CAN be
-    ///       enforced at the setter level IS enforced there, making this
-    ///       call infallible.
-    [[nodiscard]] TrustConfig build() && noexcept;
+    /// @note Conditionally @c noexcept on @c TrustConfig's move constructor:
+    ///       all input invariants are checked at setter-invocation time per
+    ///       API-POLICY §5.1, so the assembly itself is logically
+    ///       infallible. The qualifier propagates whatever allocation /
+    ///       throw guarantees the underlying @ref TrustConfig type carries,
+    ///       so future fields with non-noexcept moves degrade the contract
+    ///       honestly instead of silently terminating via the previous
+    ///       hard-coded @c noexcept.
+    [[nodiscard]] TrustConfig build() && noexcept(std::is_nothrow_move_constructible_v<TrustConfig>);
 
 private:
     TrustConfig cfg;

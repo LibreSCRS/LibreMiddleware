@@ -94,7 +94,7 @@ TEST(AuthRequirementPaceTests, ReasonForUserStoredAsMessage)
 
 TEST(AuthRequirementPaceTests, OtherFactoriesLeavePaceFieldsEmpty)
 {
-    auto req = AuthRequirement::forSigning(std::string{"PIN1"}, 3);
+    auto req = AuthRequirement::forSigning(LocalizedText{"", "PIN1", {}}, 3);
     EXPECT_FALSE(req.paceKind().has_value());
     EXPECT_FALSE(req.paceApplet().has_value());
 }

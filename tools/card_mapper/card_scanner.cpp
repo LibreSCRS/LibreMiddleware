@@ -12,7 +12,7 @@
 
 #include <pkcs15_card.h>
 
-#include <LibreSCRS/SecureChannel/PlainChannel.h>
+#include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
 #include <apdu.h>
 #include <ber.h>

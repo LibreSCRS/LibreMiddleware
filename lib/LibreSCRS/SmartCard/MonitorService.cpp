@@ -58,10 +58,11 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
     std::set<std::string> knownReaders;
 
     // Held for the full snapshot-and-invoke phase of @ref dispatch so that
-    // @ref MonitorService::unsubscribeAndDrain can block until any currently-running
-    // dispatch completes. Separate from cbMtx because subscribers must be
-    // free to call subscribe/unsubscribe from inside a callback, which would
-    // deadlock if dispatch held cbMtx across invocation.
+    // @ref MonitorService::unsubscribe (with @ref DrainPolicy::Drain) can
+    // block until any currently-running dispatch completes. Separate from
+    // cbMtx because subscribers must be free to call subscribe/unsubscribe
+    // from inside a callback, which would deadlock if dispatch held cbMtx
+    // across invocation.
     std::mutex dispatchMtx;
 
     explicit Impl(std::unique_ptr<::LibreSCRS::SmartCard::Internal::IPCSCScanProvider> provider)
@@ -82,8 +83,9 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
         return out;
     }
 
-    // Full snapshot-and-invoke runs under dispatchMtx so unsubscribeAndDrain
-    // can block on it to guarantee no callback is currently in flight.
+    // Full snapshot-and-invoke runs under dispatchMtx so @ref
+    // MonitorService::unsubscribe with @ref DrainPolicy::Drain can block on
+    // it to guarantee no callback is currently in flight.
     //
     // Each subscriber callback runs inside a try/catch shield. A
     // subscriber that throws will not propagate out of the poll thread —
@@ -227,63 +229,60 @@ MonitorService::SubscriptionId MonitorService::subscribe(EventCallback callback)
     return newId;
 }
 
-void MonitorService::unsubscribe(SubscriptionId id)
+void MonitorService::unsubscribe(SubscriptionId id, DrainPolicy policy) noexcept
 {
-    std::optional<::LibreSCRS::SmartCard::Internal::Monitor::SubscriptionId> subToDrop;
-    {
+    try {
+        std::optional<::LibreSCRS::SmartCard::Internal::Monitor::SubscriptionId> subToDrop;
+        // DrainPolicy::Drain acquires dispatchMtx first: this blocks until any
+        // currently-running dispatch completes (dispatch() takes dispatchMtx
+        // across the full snapshot-and-invoke phase). Once we hold it, no
+        // callback is running and no new snapshot can form until we release it.
+        // FireAndForget skips dispatchMtx so a concurrent dispatch may still
+        // fire the callback once after this returns; the header documents
+        // this trade-off.
+        std::unique_lock<std::mutex> dispatchLock(d->dispatchMtx, std::defer_lock);
+        if (policy == DrainPolicy::Drain) {
+            dispatchLock.lock();
+        }
+        {
+            std::lock_guard<std::mutex> cbLock(d->cbMtx);
+            auto it = d->callbacks.find(id);
+            if (it == d->callbacks.end())
+                return;
+            d->callbacks.erase(it);
+            if (d->callbacks.empty()) {
+                subToDrop = d->internalSubId;
+                d->internalSubId.reset();
+            }
+        }
+        if (subToDrop) {
+            // Unsubscribe outside cbMtx; internal MonitorService may block
+            // for an in-flight dispatch which itself re-enters
+            // snapshotCallbacks. The Drain branch additionally holds
+            // dispatchMtx for the duration so the join is race-free.
+            d->internal->unsubscribe(*subToDrop);
+        }
+    } catch (...) {
+        // noexcept contract: mutex acquisition may throw std::system_error
+        // per [thread.req.exception]. Degraded-but-valid result here is "the
+        // call was a no-op"; the caller will observe the subscription still
+        // active on next dispatch and may retry. POSIX/Win32 mutexes do not
+        // fail in practice.
+    }
+}
+
+bool MonitorService::isRunning() const noexcept
+{
+    // noexcept with degraded result: std::mutex::lock is permitted to throw
+    // std::system_error per [thread.req.exception]; return false in that
+    // case so callers' "ready?" probes degrade safely. POSIX/Win32 mutexes
+    // do not fail in practice.
+    try {
         std::lock_guard<std::mutex> lock(d->cbMtx);
-        auto it = d->callbacks.find(id);
-        if (it == d->callbacks.end())
-            return;
-        d->callbacks.erase(it);
-        if (d->callbacks.empty()) {
-            subToDrop = d->internalSubId;
-            d->internalSubId.reset();
-        }
+        return d->internalSubId.has_value();
+    } catch (...) {
+        return false;
     }
-    if (subToDrop) {
-        // Unsubscribe outside cbMtx; internal MonitorService may block for an
-        // in-flight dispatch which itself re-enters snapshotCallbacks.
-        d->internal->unsubscribe(*subToDrop);
-    }
-}
-
-void MonitorService::unsubscribeAndDrain(SubscriptionId id)
-{
-    // Acquire dispatchMtx first: this blocks until any currently-running
-    // dispatch completes (dispatch() takes dispatchMtx across the full
-    // snapshot-and-invoke phase). Once we hold it, no callback is running
-    // and no new snapshot can form until we release it.
-    std::optional<::LibreSCRS::SmartCard::Internal::Monitor::SubscriptionId> subToDrop;
-    {
-        std::lock_guard<std::mutex> dispatchLock(d->dispatchMtx);
-        std::lock_guard<std::mutex> cbLock(d->cbMtx);
-        auto it = d->callbacks.find(id);
-        if (it == d->callbacks.end())
-            return;
-        d->callbacks.erase(it);
-        if (d->callbacks.empty()) {
-            subToDrop = d->internalSubId;
-            d->internalSubId.reset();
-        }
-        // Release both locks on scope exit: subsequent dispatches will no
-        // longer see this subscription in the snapshot.
-    }
-    if (subToDrop) {
-        // Unsubscribe outside both locks; internal MonitorService's unsubscribe
-        // joins the poll thread, which itself may be about to acquire
-        // dispatchMtx for a final dispatch cycle.
-        d->internal->unsubscribe(*subToDrop);
-    }
-}
-
-bool MonitorService::isRunning() const
-{
-    // Not noexcept: std::mutex::lock is permitted to throw std::system_error
-    // per [thread.req.exception]. Honest contract — POSIX/Win32 mutexes
-    // don't fail in practice, but the abstraction allows it.
-    std::lock_guard<std::mutex> lock(d->cbMtx);
-    return d->internalSubId.has_value();
 }
 
 namespace detail {

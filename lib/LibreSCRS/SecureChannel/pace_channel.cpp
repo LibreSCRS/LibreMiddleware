@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include <LibreSCRS/SecureChannel/PaceChannel.h>
+#include <LibreSCRS_internal/SecureChannel/PaceChannel.h>
 
 #include "sm_channel_impl.h"
 
@@ -9,10 +9,13 @@
 #include "secure_messaging.h"
 #include "smartcard/pcsc_connection.h"
 
+#include <LibreSCRS/Secure/Buffer.h>
+
 #include <openssl/crypto.h>
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -85,7 +88,7 @@ emrtd::crypto::PACEPasswordType toCryptoPwType(LibreSCRS::Auth::PaceSecretKind t
 } // namespace
 
 std::expected<std::unique_ptr<PaceChannel>, ChannelActivationError>
-PaceChannel::establish(LibreSCRS::SmartCard::IConnection& connection, const PACEParams& params,
+PaceChannel::establish(LibreSCRS::SmartCard::IConnection& connection, const PaceParams& params,
                        LibreSCRS::CancelToken token) noexcept
 {
     try {
@@ -109,7 +112,7 @@ PaceChannel::establish(LibreSCRS::SmartCard::IConnection& connection, const PACE
         cryptoParams.oid = params.oid;
         cryptoParams.passwordType = toCryptoPwType(params.passwordType);
         cryptoParams.password.assign(view.begin(), view.end());
-        cryptoParams.paramId = params.paramId;
+        cryptoParams.paramId = static_cast<int>(params.paramId);
 
         std::optional<emrtd::crypto::SessionKeys> derived;
         try {
@@ -140,9 +143,14 @@ PaceChannel::establish(LibreSCRS::SmartCard::IConnection& connection, const PACE
         }
 
         SessionKeys publicKeys;
-        publicKeys.encKey = std::move(derived->encKey);
-        publicKeys.macKey = std::move(derived->macKey);
-        publicKeys.ssc = std::move(derived->ssc);
+        // Buffer adopts a copy of the bytes through its cleansing
+        // allocator. The source emrtd::crypto::SessionKeys vectors are
+        // cleansed in turn by their own destructor when `derived` drops
+        // at end-of-scope; the two cleansing contracts cover the move
+        // boundary symmetrically.
+        publicKeys.encKey = LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{derived->encKey}};
+        publicKeys.macKey = LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{derived->macKey}};
+        publicKeys.ssc = LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{derived->ssc}};
         publicKeys.cipher = cipherForPaceOid(params.oid);
 
         // PACE is session-scoped, not applet-scoped: the channel emerges

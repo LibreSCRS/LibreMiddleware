@@ -13,10 +13,11 @@
 #include <LibreSCRS/Plugin/PluginExport.h>
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
-#include <LibreSCRS/SecureChannel/ISecureChannel.h>
-#include <LibreSCRS/SecureChannel/PlainChannel.h>
+#include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
+#include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
 #include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
+#include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
@@ -216,7 +217,7 @@ public:
             if (!holderResult)
                 return mapActivationError(holderResult.error(), "pkcs15 doReadCard");
             auto holder = std::move(*holderResult);
-            auto* channel = holder.activeChannel();
+            auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
             if (channel == nullptr)
                 return ReadResult::communicationError(LibreSCRS::Auth::ErrorKeys::genericComm(),
                                                       "pkcs15 doReadCard: channel not active after activation");
@@ -286,7 +287,7 @@ public:
         if (!holderResult)
             return group; // empty on activation failure; best-effort path
         auto holder = std::move(*holderResult);
-        auto* channel = holder.activeChannel();
+        auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
         if (channel == nullptr)
             return group;
 
@@ -306,7 +307,7 @@ public:
         if (!holderResult)
             return result;
         auto holder = std::move(*holderResult);
-        auto* channel = holder.activeChannel();
+        auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
         if (channel == nullptr)
             return result;
 
@@ -352,7 +353,7 @@ public:
         if (!holderResult)
             return result;
         auto holder = std::move(*holderResult);
-        auto* channel = holder.activeChannel();
+        auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
         if (channel == nullptr)
             return result;
 
@@ -398,7 +399,7 @@ public:
             return result;
         }
         auto holder = std::move(*holderResult);
-        auto* channel = holder.activeChannel();
+        auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
         if (channel == nullptr) {
             result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
             return result;
@@ -437,7 +438,7 @@ public:
         if (!holderResult)
             return std::nullopt;
         auto holder = std::move(*holderResult);
-        auto* channel = holder.activeChannel();
+        auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
         if (channel == nullptr)
             return std::nullopt;
 
@@ -464,7 +465,7 @@ public:
             return out;
         }
         auto holder = std::move(*holderResult);
-        auto* channel = holder.activeChannel();
+        auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
         if (channel == nullptr) {
             out.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
             return out;

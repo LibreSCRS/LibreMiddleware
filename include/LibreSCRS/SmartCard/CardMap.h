@@ -11,11 +11,10 @@
 #include <LibreSCRS/Export.h>
 
 #include <cstdint>
-#include <mutex>
+#include <memory>
 #include <optional>
 #include <string>
 #include <tuple>
-#include <unordered_map>
 #include <vector>
 
 namespace LibreSCRS::SmartCard {
@@ -27,8 +26,12 @@ namespace LibreSCRS::SmartCard {
 /// against the same physical card to avoid re-running EF.DIR fallback,
 /// SELECT FILE P2 probing, and PIN-label discovery on every entry point.
 ///
+/// @par ABI export
+/// Plain aggregate; carries no LIBRESCRS_PUBLIC_API annotation on the
+/// type itself per API-POLICY §6.
+///
 /// @since 4.1
-struct LIBRESCRS_PUBLIC_API CardMapEntry
+struct CardMapEntry
 {
     /// @brief Resolved path to the PKCS#15 DF. Empty when the card's
     ///        applet was reachable by AID-only SELECT (no EF.DIR
@@ -37,8 +40,7 @@ struct LIBRESCRS_PUBLIC_API CardMapEntry
 
     /// @brief Probed P2 value for SELECT FILE on this card. Defaults to
     ///        0x0C (no FCI); some cards require 0x00 instead. Stored
-    ///        once @ref pkcs15::PKCS15Card::probe() determines the
-    ///        working value.
+    ///        once the PKCS#15 probe path determines the working value.
     std::uint8_t fileSelectP2 = 0x0C;
 
     /// @brief PIN labels discovered in the AODF. Optional informational
@@ -68,8 +70,15 @@ struct LIBRESCRS_PUBLIC_API CardMapEntry
 /// during a context-wide reset.
 ///
 /// @par Thread-safety
-/// All public methods are internally synchronised by a single mutex.
-/// Concurrent readers and writers are safe.
+/// All public methods are internally synchronised by a single mutex
+/// held inside the pimpl body.
+///
+/// @par Implementation hiding
+/// Backing storage (mutex + hash table) lives behind a pimpl so the
+/// public header does not transitively pull `<mutex>` /
+/// `<unordered_map>` into downstream SDK consumers. The class is move-
+/// only (the underlying mutex is non-copyable; copying a cache also has
+/// no obvious correct semantics).
 ///
 /// @since 4.1
 class LIBRESCRS_PUBLIC_API CardMap
@@ -78,10 +87,23 @@ public:
     /// @brief Composite cache key: `(reader, atrHex, serial)`.
     using Key = std::tuple<std::string, std::string, std::string>;
 
+    /// @brief Construct an empty cache.
+    /// @since 4.1
+    CardMap();
+    /// @brief Destroy and release every cached entry. Cleansing is not
+    ///        required — discovered state is not secret material.
+    /// @since 4.1
+    ~CardMap();
+
+    CardMap(const CardMap&) = delete;
+    CardMap& operator=(const CardMap&) = delete;
+    CardMap(CardMap&&) noexcept;
+    CardMap& operator=(CardMap&&) noexcept;
+
     /// @brief Look up the cached entry for @p key.
     /// @return The entry if present; @c std::nullopt otherwise.
     /// @par Thread-safety + noexcept contract
-    /// @c noexcept: the implementation wraps allocations (in @c flatten()
+    /// @c noexcept: the implementation wraps allocations (in `flatten`
     /// / @c unordered_map probe) in a top-level catch and degrades to
     /// @c std::nullopt on failure rather than letting @c std::bad_alloc
     /// escape and call @c std::terminate. Mutex acquisition cannot throw
@@ -91,7 +113,7 @@ public:
 
     /// @brief Install or overwrite the entry for @p key.
     /// @par noexcept contract
-    /// Allocation failures during @c flatten / @c insert_or_assign are
+    /// Allocation failures during `flatten` / `insert_or_assign` are
     /// caught and the entry is dropped silently; subsequent lookups
     /// re-discover, preserving correctness at the cost of one extra
     /// probe. The bad_alloc never escapes this @c noexcept boundary.
@@ -99,8 +121,8 @@ public:
 
     /// @brief Remove the entry for @p key (no-op if absent).
     /// @par noexcept contract
-    /// Same as @ref put: any allocation failure during @c flatten /
-    /// @c erase is caught; the worst outcome is a stale entry that the
+    /// Same as @ref put: any allocation failure during `flatten` /
+    /// `erase` is caught; the worst outcome is a stale entry that the
     /// caller will overwrite on the next @ref put.
     void invalidate(const Key& key) noexcept;
 
@@ -109,8 +131,8 @@ public:
     void invalidateAll() noexcept;
 
 private:
-    mutable std::mutex mu;
-    std::unordered_map<std::string, CardMapEntry> entries;
+    struct Impl;
+    std::unique_ptr<Impl> d;
 };
 
 } // namespace LibreSCRS::SmartCard

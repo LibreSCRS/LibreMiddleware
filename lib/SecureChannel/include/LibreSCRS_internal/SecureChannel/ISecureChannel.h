@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
+#ifndef LIBRESCRS_INTERNAL_BUILD
+#error                                                                                                                 \
+    "LibreSCRS_internal/SecureChannel/ISecureChannel.h is internal to LibreMiddleware. Public API: <LibreSCRS/SecureChannel/...>"
+#endif
+
 #pragma once
 
 /// @file
@@ -10,8 +15,8 @@
 
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
-#include <LibreSCRS/SecureChannel/SessionKeys.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
+#include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
 
 namespace LibreSCRS::SmartCard::Internal {
 struct APDUCommand;

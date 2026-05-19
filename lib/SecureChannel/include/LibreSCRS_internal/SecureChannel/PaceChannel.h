@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
+#ifndef LIBRESCRS_INTERNAL_BUILD
+#error                                                                                                                 \
+    "LibreSCRS_internal/SecureChannel/PaceChannel.h is internal to LibreMiddleware. Public API: <LibreSCRS/SecureChannel/...>"
+#endif
+
 #pragma once
 
 /// @file
@@ -16,9 +21,9 @@
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Export.h>
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
-#include <LibreSCRS/SecureChannel/ISecureChannel.h>
 #include <LibreSCRS/SecureChannel/PaceParams.h>
-#include <LibreSCRS/SecureChannel/SessionKeys.h>
+#include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
+#include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
 
 #include <expected>
 #include <memory>
@@ -149,7 +154,7 @@ public:
     ///       (header lives outside `include/LibreSCRS/`), so the exported
     ///       symbol remains effectively private to the project.
     [[nodiscard]] LIBRESCRS_PUBLIC_API static std::expected<std::unique_ptr<PaceChannel>, ChannelActivationError>
-    establish(LibreSCRS::SmartCard::IConnection& connection, const PACEParams& params,
+    establish(LibreSCRS::SmartCard::IConnection& connection, const PaceParams& params,
               LibreSCRS::CancelToken token) noexcept;
 
 private:

@@ -7,8 +7,8 @@
 #error "This header is internal to LibreMiddleware."
 #endif
 
-#include <LibreSCRS/SecureChannel/ISecureChannel.h>
-#include <LibreSCRS/SecureChannel/SessionKeys.h>
+#include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
+#include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
 
 #include "apdu.h"
@@ -36,10 +36,14 @@ public:
     SmChannelBody(LibreSCRS::SmartCard::IConnection& connection, LibreSCRS::SmartCard::AppletAid aid, SessionKeys keys)
         : connection(connection), appletAid(std::move(aid))
     {
+        // Buffer → std::vector copy at the boundary: emrtd::crypto's
+        // SessionKeys consumes vectors directly through its own cleansing
+        // contract (types.h). Both sides cleanse on destruction, so the
+        // bytes never persist uncleansed across the move boundary.
         emrtd::crypto::SessionKeys cryptoKeys;
-        cryptoKeys.encKey = std::move(keys.encKey);
-        cryptoKeys.macKey = std::move(keys.macKey);
-        cryptoKeys.ssc = std::move(keys.ssc);
+        cryptoKeys.encKey.assign(keys.encKey.data(), keys.encKey.data() + keys.encKey.size());
+        cryptoKeys.macKey.assign(keys.macKey.data(), keys.macKey.data() + keys.macKey.size());
+        cryptoKeys.ssc.assign(keys.ssc.data(), keys.ssc.data() + keys.ssc.size());
         auto algo = keys.cipher == SmCipher::Des3 ? emrtd::crypto::SMAlgorithm::DES3 : emrtd::crypto::SMAlgorithm::AES;
         sm = std::make_unique<emrtd::crypto::SecureMessaging>(std::move(cryptoKeys), algo);
     }
@@ -130,9 +134,9 @@ public:
     void replaceKeys(SessionKeys keys) noexcept
     try {
         emrtd::crypto::SessionKeys cryptoKeys;
-        cryptoKeys.encKey = std::move(keys.encKey);
-        cryptoKeys.macKey = std::move(keys.macKey);
-        cryptoKeys.ssc = std::move(keys.ssc);
+        cryptoKeys.encKey.assign(keys.encKey.data(), keys.encKey.data() + keys.encKey.size());
+        cryptoKeys.macKey.assign(keys.macKey.data(), keys.macKey.data() + keys.macKey.size());
+        cryptoKeys.ssc.assign(keys.ssc.data(), keys.ssc.data() + keys.ssc.size());
         auto algo = keys.cipher == SmCipher::Des3 ? emrtd::crypto::SMAlgorithm::DES3 : emrtd::crypto::SMAlgorithm::AES;
         // make_unique may throw bad_alloc; the function is declared noexcept
         // so an uncaught throw would call std::terminate. Degrade to Failed

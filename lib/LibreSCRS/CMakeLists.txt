@@ -21,7 +21,6 @@ file(GLOB LIBRESCRS_SMARTCARD_PUBLIC_HEADERS CONFIGURE_DEPENDS
 )
 file(GLOB LIBRESCRS_PLUGIN_PUBLIC_HEADERS CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/include/LibreSCRS/Plugin/*.h"
-    "${PROJECT_SOURCE_DIR}/include/LibreSCRS/Plugin/detail/*.h"
 )
 file(GLOB LIBRESCRS_SIGNING_PUBLIC_HEADERS CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/include/LibreSCRS/Signing/*.h"
@@ -189,9 +188,21 @@ endif()
 # BacChannel implementations. Hosts the cross-plugin secure-channel
 # coordination surface owned by CardSession. Declared before SmartCard
 # because SmartCard PUBLIC-links it for the CardSession.h surface.
+#
+# Public headers (BacParams.h, PaceParams.h, ChannelErrors.h) live under
+# `include/LibreSCRS/SecureChannel/`. Implementation-private headers
+# (ISecureChannel.h, PlainChannel.h, PaceChannel.h, BacChannel.h,
+# SessionKeys.h, detail/ChannelStateMutator.h) live under
+# `lib/SecureChannel/include/LibreSCRS_internal/SecureChannel/` and are
+# guarded by `#ifndef LIBRESCRS_INTERNAL_BUILD #error`. Only the public
+# subset is installed; the internal subset is on the target's PRIVATE
+# include path for in-tree consumers.
 file(GLOB LIBRESCRS_SECURECHANNEL_PUBLIC_HEADERS CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/include/LibreSCRS/SecureChannel/*.h"
-    "${PROJECT_SOURCE_DIR}/include/LibreSCRS/SecureChannel/detail/*.h"
+)
+file(GLOB LIBRESCRS_SECURECHANNEL_INTERNAL_HEADERS CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/lib/SecureChannel/include/LibreSCRS_internal/SecureChannel/*.h"
+    "${PROJECT_SOURCE_DIR}/lib/SecureChannel/include/LibreSCRS_internal/SecureChannel/detail/*.h"
 )
 add_library(LibreSCRS_SecureChannel ${LIBREMIDDLEWARE_LIB_TYPE}
     SecureChannel/plain_channel.cpp
@@ -199,12 +210,18 @@ add_library(LibreSCRS_SecureChannel ${LIBREMIDDLEWARE_LIB_TYPE}
     SecureChannel/pace_params.cpp
     SecureChannel/bac_channel.cpp
     SecureChannel/channel_state_mutator.cpp
-    SecureChannel/session_keys.cpp
     ${LIBRESCRS_SECURECHANNEL_PUBLIC_HEADERS}
+    ${LIBRESCRS_SECURECHANNEL_INTERNAL_HEADERS}
 )
 target_include_directories(LibreSCRS_SecureChannel PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+# Internal header tree for the relocated channel implementation headers
+# (Path 2): on the BUILD_INTERFACE only. Consumers under
+# LIBRESCRS_INTERNAL_BUILD reach <LibreSCRS_internal/SecureChannel/...>
+# through this path; external SDK consumers never see it.
+target_include_directories(LibreSCRS_SecureChannel PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/lib/SecureChannel/include>)
 # The internal APDUCommand/APDUResponse types live in lib/smartcard/src/.
 # The channel implementations operate on those types directly (matching
 # IConnection::transmit's signature), so the internal include path is a
@@ -217,7 +234,7 @@ target_compile_features(LibreSCRS_SecureChannel PUBLIC cxx_std_23)
 target_compile_definitions(LibreSCRS_SecureChannel PRIVATE
     LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD)
 target_link_libraries(LibreSCRS_SecureChannel
-    PUBLIC  LibreSCRS_Auth
+    PUBLIC  LibreSCRS_Auth LibreSCRS::Secure
     PRIVATE $<BUILD_INTERFACE:EMRTDCrypto>
             $<BUILD_INTERFACE:SmartCard_Impl>
 )
@@ -235,16 +252,26 @@ if(LIBREMIDDLEWARE_BUILD_SHARED)
     )
 endif()
 
+file(GLOB LIBRESCRS_SMARTCARD_INTERNAL_HEADERS CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/lib/SmartCard/include/LibreSCRS_internal/SmartCard/*.h"
+)
 add_library(LibreSCRS_SmartCard ${LIBREMIDDLEWARE_LIB_TYPE}
     SmartCard/ActiveChannelHolder.cpp
     SmartCard/CardMap.cpp
     SmartCard/CardSession.cpp
     SmartCard/MonitorService.cpp
     ${LIBRESCRS_SMARTCARD_PUBLIC_HEADERS}
+    ${LIBRESCRS_SMARTCARD_INTERNAL_HEADERS}
 )
 target_include_directories(LibreSCRS_SmartCard PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+# Internal header tree (Path 2): exposes the LIBRESCRS_INTERNAL_BUILD-only
+# friend-accessor surface (ActiveChannelHolderInternal.h) to in-tree
+# consumers on the BUILD_INTERFACE only. External SDK consumers do not
+# see this path.
+target_include_directories(LibreSCRS_SmartCard PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/lib/SmartCard/include>)
 # PRIVATE: needed because MonitorService.cpp includes <smartcard/ipcsc_scan_provider.h>
 # (bucket-B, relocated to lib/smartcard/src in Chunk E) and because
 # <smartcard/pcsc_connection.h>/<smartcard/monitor.h> (bucket-C) transitively

@@ -89,7 +89,7 @@ TEST(AuthRequirementTest, ForPreReadNoneIsEmpty)
 
 TEST(AuthRequirementTest, ForSigningSingleField)
 {
-    auto r = AuthRequirement::forSigning("UserPIN", 3);
+    auto r = AuthRequirement::forSigning(LocalizedText{"", "UserPIN", {}}, 3);
     EXPECT_EQ(r.purpose(), Purpose::Signing);
     ASSERT_EQ(r.fields().size(), 1u);
     EXPECT_EQ(r.fields()[0].id, "pin");
@@ -99,7 +99,7 @@ TEST(AuthRequirementTest, ForSigningSingleField)
 
 TEST(AuthRequirementTest, ForChangePinThreeFieldsConfirmBound)
 {
-    auto r = AuthRequirement::forChangePin("UserPIN", 3);
+    auto r = AuthRequirement::forChangePin(LocalizedText{"", "UserPIN", {}}, 3);
     EXPECT_EQ(r.purpose(), Purpose::ChangePin);
     ASSERT_EQ(r.fields().size(), 3u);
     EXPECT_EQ(r.fields()[0].id, "currentPin");
@@ -111,7 +111,7 @@ TEST(AuthRequirementTest, ForChangePinThreeFieldsConfirmBound)
 
 TEST(AuthRequirementTest, ForUnblockPinThreeFieldsFirstIsPuk)
 {
-    auto r = AuthRequirement::forUnblockPin("UserPIN");
+    auto r = AuthRequirement::forUnblockPin(LocalizedText{"", "UserPIN", {}});
     EXPECT_EQ(r.purpose(), Purpose::UnblockPin);
     ASSERT_EQ(r.fields().size(), 3u);
     EXPECT_EQ(r.fields()[0].id, "puk");
@@ -236,7 +236,7 @@ TEST(CredentialProviderTest, LambdaReturnsSetValues)
         values.emplace_back("pin", LibreSCRS::Secure::String{"1234"});
         return CredentialResult::ok(std::move(values));
     };
-    auto result = p(AuthRequirement::forSigning("UserPIN", 3));
+    auto result = p(AuthRequirement::forSigning(LocalizedText{"", "UserPIN", {}}, 3));
     EXPECT_EQ(result.status, CredentialResult::Status::Ok);
     const auto* pin = result.find("pin");
     ASSERT_NE(pin, nullptr);
@@ -253,32 +253,32 @@ TEST(CredentialProviderTest, LambdaReturnsSetValues)
 
 TEST(AuthRequirementTest, ForChangePinWithUnknownRetriesLeavesNullopt)
 {
-    auto r = LibreSCRS::Auth::AuthRequirement::forChangePin("UserPIN", -1);
+    auto r = LibreSCRS::Auth::AuthRequirement::forChangePin(LocalizedText{"", "UserPIN", {}}, -1);
     EXPECT_FALSE(r.retriesLeft().has_value());
 }
 
 TEST(AuthRequirementTest, ForSigningWithUnknownRetriesLeavesNullopt)
 {
-    auto r = LibreSCRS::Auth::AuthRequirement::forSigning("UserPIN", -1);
+    auto r = LibreSCRS::Auth::AuthRequirement::forSigning(LocalizedText{"", "UserPIN", {}}, -1);
     EXPECT_FALSE(r.retriesLeft().has_value());
 }
 
 // §5.1 alignment: factories that validate caller-supplied inputs throw
 // std::invalid_argument with a message identifying the bad field.
 
-TEST(AuthRequirementTest, ForSigningThrowsOnEmptyPinLabel)
+TEST(AuthRequirementTest, ForSigningThrowsOnEmptyLabel)
 {
-    EXPECT_THROW((void)LibreSCRS::Auth::AuthRequirement::forSigning("", 3), std::invalid_argument);
+    EXPECT_THROW((void)LibreSCRS::Auth::AuthRequirement::forSigning(LocalizedText{}, 3), std::invalid_argument);
 }
 
-TEST(AuthRequirementTest, ForChangePinThrowsOnEmptyPinLabel)
+TEST(AuthRequirementTest, ForChangePinThrowsOnEmptyLabel)
 {
-    EXPECT_THROW((void)LibreSCRS::Auth::AuthRequirement::forChangePin("", 3), std::invalid_argument);
+    EXPECT_THROW((void)LibreSCRS::Auth::AuthRequirement::forChangePin(LocalizedText{}, 3), std::invalid_argument);
 }
 
-TEST(AuthRequirementTest, ForUnblockPinThrowsOnEmptyPinLabel)
+TEST(AuthRequirementTest, ForUnblockPinThrowsOnEmptyLabel)
 {
-    EXPECT_THROW((void)LibreSCRS::Auth::AuthRequirement::forUnblockPin(""), std::invalid_argument);
+    EXPECT_THROW((void)LibreSCRS::Auth::AuthRequirement::forUnblockPin(LocalizedText{}), std::invalid_argument);
 }
 
 // Pass-5 P4: LocalizedText overload preserves the i18n key end-to-end so

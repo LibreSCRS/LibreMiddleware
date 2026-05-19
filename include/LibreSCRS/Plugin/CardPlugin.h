@@ -213,7 +213,7 @@ public:
     /// 3e: provide a public non-virtual interface that calls a private
     /// virtual implementation).
     ///
-    /// @since 4.0 — was `virtual = 0`, now non-virtual final.
+    /// @since 4.0
     [[nodiscard]] bool canHandle(std::span<const std::uint8_t> atr) const noexcept;
 
     /// @brief Fallback match using AID selection on a live connection.
@@ -226,10 +226,7 @@ public:
     /// implementation returns false.
     /// @return @c true if this plugin recognises the card via AID probe;
     ///         @c false otherwise.
-    /// @since 4.0 — first parameter migrated from
-    ///        @c const std::vector<uint8_t>& to @c std::span<const std::uint8_t>
-    ///        for consistency with @ref canHandle (Stroustrup, A Tour of C++
-    ///        3e §11.3: prefer std::span for non-owning contiguous views).
+    /// @since 4.0
     [[nodiscard]] virtual bool canHandleConnection(std::span<const std::uint8_t> /*atr*/,
                                                    LibreSCRS::SmartCard::CardSession& /*session*/) const
     {
@@ -276,8 +273,8 @@ public:
     ///         plugin ABI boundary (the plugin is loaded via @c dlopen with
     ///         a potentially-mismatched C++ standard library) are undefined
     ///         behaviour.
-    /// @since 4.0 — was pure-virtual; now the NVI wrapper. Plugins override
-    ///        @ref doReadCard instead.
+    /// @since 4.0
+    /// @note NVI wrapper. Plugins override @ref doReadCard instead.
     [[nodiscard]] ReadResult readCard(LibreSCRS::SmartCard::CardSession& session, GroupCallback onGroup = {},
                                       CancelToken token = {}) const;
 
@@ -405,8 +402,8 @@ public:
     ///         any failure. The wrapper sets
     ///         @ref SignResultOutcome::Cancelled for the early short-circuit
     ///         case (since 4.0).
-    /// @since 4.0 — was virtual; now the NVI wrapper. Plugins override
-    ///        @ref doSign instead.
+    /// @since 4.0
+    /// @note NVI wrapper. Plugins override @ref doSign instead.
     [[nodiscard]] SignResult sign(LibreSCRS::SmartCard::CardSession& session, std::uint16_t keyReference,
                                   std::span<const std::uint8_t> data, SignMechanism mechanism,
                                   CancelToken token = {}) const;
@@ -431,10 +428,7 @@ public:
     /// @brief Enumerate on-card key references paired with a plugin-defined
     ///        label.
     ///
-    /// @since 4.0 — return type tightened from
-    ///        @c std::vector<std::pair<std::string,uint16_t>> to
-    ///        @c std::vector<KeyReference> so the two fields are named
-    ///        rather than positional at call-sites.
+    /// @since 4.0
     [[nodiscard]] virtual std::vector<KeyReference>
     discoverKeyReferences(LibreSCRS::SmartCard::CardSession& /*session*/) const
     {
@@ -580,7 +574,7 @@ public:
     /// observer hook, it will be added on the @ref LibreSCRS::Trust::TrustStore
     /// itself (NOT on this method) so plugins can subscribe directly.
     ///
-    /// @since 4.0 — was virtual non-noexcept with no enforcement.
+    /// @since 4.0
     /// @note @c noexcept: the wrapper performs only a single atomic flag
     ///       test-and-set plus an unqualified call to @ref doSetTrustStore,
     ///       which is itself contract-bound noexcept. Plugins whose trust-
@@ -589,17 +583,11 @@ public:
     ///       @c sign call as a Status::CommunicationError or equivalent.
     /// @see LibreSCRS::Trust::TrustStore::enumerableAnchors
     /// @see LibreSCRS::Trust::TrustStoreService::addObserver
-    void setTrustStore(std::shared_ptr<const LibreSCRS::Trust::TrustStore> trustStore) noexcept
-    {
-        // Single-shot: test_and_set returns the prior flag value. First
-        // caller observes false (publish path runs), every later caller
-        // observes true (no-op). std::memory_order_acq_rel pairs an
-        // acquire on this read with a release on doSetTrustStore's writes
-        // becoming visible to subsequent threads.
-        if (trustStoreInjectedFlag.test_and_set(std::memory_order_acq_rel))
-            return;
-        doSetTrustStore(std::move(trustStore));
-    }
+    ///
+    /// Body lives in @c lib/plugin/src/card_plugin.cpp so the public
+    /// header carries the declaration only and downstream consumers do
+    /// not transitively pull <atomic> through the inline definition.
+    void setTrustStore(std::shared_ptr<const LibreSCRS::Trust::TrustStore> trustStore) noexcept;
 
     /// @brief Override point for @ref setTrustStore.
     ///
@@ -649,7 +637,7 @@ private:
     /// Default-initialised to the clear state per C++20 §31.7
     /// [atomics.flag]/4 — `ATOMIC_FLAG_INIT` removed: deprecated in C++20,
     /// removed in C++26.
-    mutable std::atomic_flag trustStoreInjectedFlag;
+    std::atomic_flag trustStoreInjectedFlag;
 };
 
 // 4.0 compile-time audit: every credential-bearing parameter on

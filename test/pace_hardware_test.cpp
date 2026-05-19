@@ -14,6 +14,7 @@
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
 #include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
+#include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 
@@ -109,7 +110,7 @@ TEST(PACEHardwareTest, PaceAuthenticateAndReadCOM)
 
     auto fixture = openPaceCanFixture(readers[0], can);
     ASSERT_TRUE(fixture.has_value()) << "PACE channel activation failed";
-    auto* channel = fixture->holder.activeChannel();
+    auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(fixture->holder);
     ASSERT_NE(channel, nullptr);
 
     emrtd::EMRTDCard card(*channel);
@@ -137,7 +138,7 @@ TEST(PACEHardwareTest, ReadAndParseDG1)
 
     auto fixture = openPaceCanFixture(readers[0], can);
     ASSERT_TRUE(fixture.has_value()) << "PACE channel activation failed";
-    auto* channel = fixture->holder.activeChannel();
+    auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(fixture->holder);
     ASSERT_NE(channel, nullptr);
 
     emrtd::EMRTDCard card(*channel);
@@ -184,7 +185,7 @@ TEST(PACEHardwareTest, ReadDG2Photo)
 
     auto fixture = openPaceCanFixture(readers[0], can);
     ASSERT_TRUE(fixture.has_value()) << "PACE channel activation failed";
-    auto* channel = fixture->holder.activeChannel();
+    auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(fixture->holder);
     ASSERT_NE(channel, nullptr);
 
     emrtd::EMRTDCard card(*channel);

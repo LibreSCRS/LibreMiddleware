@@ -196,9 +196,7 @@ public:
     /// @brief Parse a DER-encoded X.509 certificate.
     /// @return On success, the parsed certificate. On failure, a
     /// @ref ParseError carrying the structured diagnostic.
-    /// @since 4.0 — was @c std::optional<ParsedCertificate>; the
-    ///         migration adds a structured failure-mode payload that
-    ///         the previous silent-nullopt shape lacked.
+    /// @since 4.0
     /// @par C++23 Idiom
     /// @code
     /// auto cert = ParsedCertificate::fromDer(derBytes);

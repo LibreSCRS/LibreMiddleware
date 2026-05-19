@@ -38,7 +38,7 @@
 int main()
 {
     // 1. Auth — request shape + i18n container.
-    auto req = LibreSCRS::Auth::AuthRequirement::forSigning("PIN", 3);
+    auto req = LibreSCRS::Auth::AuthRequirement::forSigning(LibreSCRS::LocalizedText{"", "PIN", {}}, 3);
     std::cout << "Auth: " << req.fields().size() << " field(s)\n";
 
     // 2. Secure::Buffer — secret material with cleanse-on-destruction.

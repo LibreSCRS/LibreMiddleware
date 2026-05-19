@@ -4,7 +4,7 @@
 #include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 
-#include "ActiveChannelHolderInternal.h"
+#include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
 
 #include "apdu.h"
 #include "smartcard/pcsc_connection.h"
@@ -41,18 +41,6 @@ public:
     Impl& operator=(const Impl&) = delete;
     Impl(Impl&&) = delete;
     Impl& operator=(Impl&&) = delete;
-
-    LibreSCRS::SmartCard::Internal::APDUResponse transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd,
-                                                          LibreSCRS::CancelToken token)
-    {
-        if (!active || !session) {
-            LibreSCRS::SmartCard::Internal::APDUResponse closed;
-            closed.sw1 = 0x6F;
-            closed.sw2 = 0x00;
-            return closed;
-        }
-        return Internal::ActiveChannelAccessor::transmit(*session, cmd, std::move(token));
-    }
 
     void release() noexcept
     {
@@ -91,18 +79,6 @@ ActiveChannelHolder::ActiveChannelHolder(ActiveChannelHolder&&) noexcept = defau
 ActiveChannelHolder& ActiveChannelHolder::operator=(ActiveChannelHolder&&) noexcept = default;
 ActiveChannelHolder::~ActiveChannelHolder() = default;
 
-LibreSCRS::SmartCard::Internal::APDUResponse
-ActiveChannelHolder::transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token)
-{
-    if (!pImpl) {
-        LibreSCRS::SmartCard::Internal::APDUResponse closed;
-        closed.sw1 = 0x6F;
-        closed.sw2 = 0x00;
-        return closed;
-    }
-    return pImpl->transmit(cmd, std::move(token));
-}
-
 void ActiveChannelHolder::release() noexcept
 {
     if (pImpl) {
@@ -115,14 +91,6 @@ bool ActiveChannelHolder::isActive() const noexcept
     return pImpl && pImpl->isActive();
 }
 
-LibreSCRS::SecureChannel::ISecureChannel* ActiveChannelHolder::activeChannel() noexcept
-{
-    if (!pImpl || !pImpl->isActive()) {
-        return nullptr;
-    }
-    return pImpl->activeChannel();
-}
-
 namespace Internal {
 
 ActiveChannelHolder makeActiveChannelHolder(CardSession* session, std::unique_lock<std::mutex> lock,
@@ -130,6 +98,14 @@ ActiveChannelHolder makeActiveChannelHolder(CardSession* session, std::unique_lo
 {
     auto impl = std::make_unique<ActiveChannelHolder::Impl>(session, std::move(lock), std::move(tx));
     return ActiveChannelHolder{std::move(impl)};
+}
+
+LibreSCRS::SecureChannel::ISecureChannel* HolderChannelAccessor::channel(ActiveChannelHolder& holder) noexcept
+{
+    if (!holder.pImpl || !holder.pImpl->isActive()) {
+        return nullptr;
+    }
+    return holder.pImpl->activeChannel();
 }
 
 } // namespace Internal

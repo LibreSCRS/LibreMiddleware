@@ -25,8 +25,9 @@ namespace LibreSCRS::Signing {
 /// @brief Outcome of @ref SigningService::sign.
 ///
 /// Construct via one of the named factories (@ref ok, @ref invalidRequest,
-/// @ref trustStoreUnavailable, @ref userCancelled, @ref pinVerificationFailed,
-/// @ref cardBlocked, @ref tsaUnreachable, @ref signingEngineError) to guarantee
+/// @ref trustStoreUnavailable, @ref userCancelled, @ref cancelled,
+/// @ref pinVerificationFailed, @ref cardBlocked, @ref tsaUnreachable,
+/// @ref signingEngineError) to guarantee
 /// @ref status is set at construction. The type is intentionally not
 /// default-constructible: a security-sensitive "undefined outcome" default is
 /// not permitted.
@@ -62,16 +63,23 @@ struct SigningResult
         /// Underlying signing engine reported an error not otherwise
         /// classified by the other @ref Status values.
         SigningEngineError,
+        /// @brief Operation cancelled via a @ref LibreSCRS::CancelToken supplied
+        ///        by the caller. Distinct from @ref UserCancelled (which
+        ///        denotes the credential provider returning
+        ///        `CredentialResult::Status::UserCancelled`); this status
+        ///        denotes externally-driven cooperative cancellation in any
+        ///        non-credential stage of the signing pipeline.
+        /// @since 4.1
+        Cancelled,
     };
 
     /// @brief Outcome classification. Always set by a factory.
     Status status;
     /// @brief Path to the output when @ref status is @ref Status::Ok.
     std::optional<std::filesystem::path> outputPath;
-    /// @brief Translator-friendly user-facing message. Mandatory in 4.0;
+    /// @brief Translator-friendly user-facing message. Always populated;
     ///        callers with no specific message pass one of the
     ///        @ref LibreSCRS::Auth::ErrorKeys builders.
-    /// @since 4.0 — was @c std::optional<LocalizedText> in 3.x.
     LocalizedText userMessage;
     /// @brief Technical detail suitable for logs; may be absent.
     std::optional<std::string> diagnosticDetail;
@@ -115,14 +123,10 @@ struct SigningResult
     /// only when the failure is purely a developer-facing contract violation
     /// (e.g. empty outputPath), where an English-only diagnostic is already
     /// the best we can do.
-    /// @since 4.0 — renamed from @c invalidRequest(std::string) to
-    /// make the "no user-specific message" trade-off visible at the call
-    /// site. In 4.0 the user message field is mandatory; this overload
-    /// substitutes a generic @ref Auth::ErrorKeys text.
+    /// @since 4.0
     [[nodiscard]] static SigningResult invalidRequestDiagnosticOnly(std::string diagnosticDetail) noexcept
     {
-        return SigningResult{Status::InvalidRequest, std::nullopt,
-                             LocalizedText{"librescrs.signing.error.invalidRequest", "Signing request is invalid.", {}},
+        return SigningResult{Status::InvalidRequest, std::nullopt, Auth::ErrorKeys::invalidRequest(),
                              std::move(diagnosticDetail)};
     }
 
@@ -143,9 +147,7 @@ struct SigningResult
     ///        the generic @ref Auth::ErrorKeys::trustStoreUnavailable text.
     ///        Use only when no card-specific message is available; prefer
     ///        the two-argument overload otherwise.
-    /// @since 4.0 — sibling pattern to
-    /// @ref signingEngineErrorDiagnosticOnly. Replaces the 3.x
-    /// `trustStoreUnavailable(std::optional<LocalizedText>)` shape.
+    /// @since 4.0
     [[nodiscard]] static SigningResult trustStoreUnavailableDiagnosticOnly(std::string diagnosticDetail) noexcept
     {
         return SigningResult{Status::TrustStoreUnavailable, std::nullopt, Auth::ErrorKeys::trustStoreUnavailable(),
@@ -156,6 +158,21 @@ struct SigningResult
     [[nodiscard]] static SigningResult userCancelled() noexcept
     {
         return SigningResult{Status::UserCancelled, std::nullopt, Auth::ErrorKeys::userCancelled(), std::nullopt};
+    }
+
+    /// @brief Operation cancelled via the caller-supplied @ref LibreSCRS::CancelToken.
+    ///
+    /// Mirrors @ref userCancelled in shape but is reserved for cooperative
+    /// cancellation surfaced by stages of the signing pipeline that observe
+    /// the token directly (card-side handshake, TSA round-trip, libresign
+    /// packaging). The credential-prompt path continues to use
+    /// @ref userCancelled so callers can distinguish "user said no at the PIN
+    /// prompt" from "host aborted the operation".
+    ///
+    /// @since 4.1
+    [[nodiscard]] static SigningResult cancelled() noexcept
+    {
+        return SigningResult{Status::Cancelled, std::nullopt, Auth::ErrorKeys::cancelled(), std::nullopt};
     }
 
     /// @brief Card reported PIN-incorrect.
@@ -189,15 +206,11 @@ struct SigningResult
     ///        generic timestamp-authority-unreachable message. Use only
     ///        when no signing-engine-specific text is available; prefer
     ///        the two-argument overload otherwise.
-    /// @since 4.0 — sibling pattern to
-    /// @ref signingEngineErrorDiagnosticOnly. Replaces the 3.x
-    /// `tsaUnreachable(std::optional<LocalizedText>)` shape.
+    /// @since 4.0
     [[nodiscard]] static SigningResult tsaUnreachableDiagnosticOnly(std::string diagnosticDetail) noexcept
     {
-        return SigningResult{
-            Status::TsaUnreachable, std::nullopt,
-            LocalizedText{"librescrs.signing.error.tsaUnreachable", "Timestamp authority is unreachable.", {}},
-            std::move(diagnosticDetail)};
+        return SigningResult{Status::TsaUnreachable, std::nullopt, Auth::ErrorKeys::tsaUnreachable(),
+                             std::move(diagnosticDetail)};
     }
 
     /// @brief Signing engine reported an error not classified by the other statuses.
@@ -212,8 +225,7 @@ struct SigningResult
     ///        @ref Auth::ErrorKeys::signingEngineError message. Use only
     ///        when no card-specific message is available; prefer the
     ///        two-argument overload otherwise.
-    /// @since 4.0 — replaces the 3.x single-argument
-    /// `signingEngineError(diag)` shape.
+    /// @since 4.0
     [[nodiscard]] static SigningResult signingEngineErrorDiagnosticOnly(std::string diagnosticDetail) noexcept
     {
         return SigningResult{Status::SigningEngineError, std::nullopt, Auth::ErrorKeys::signingEngineError(),
@@ -223,14 +235,6 @@ struct SigningResult
     /// @brief Default construction is deleted — use a named factory. Security-
     ///        sensitive default "undefined outcome" values are not permitted.
     SigningResult() = delete;
-
-    /// @brief Field-wise constructor used by the factories. Prefer the
-    ///        factories at call sites; this constructor is public only so
-    ///        `{...}` initialisation inside factories is expressible.
-    SigningResult(Status s, std::optional<std::filesystem::path> out, LocalizedText user,
-                  std::optional<std::string> diag)
-        : status(s), outputPath(std::move(out)), userMessage(std::move(user)), diagnosticDetail(std::move(diag))
-    {}
 
     /// @brief Move-construct from @p other.
     SigningResult(SigningResult&&) noexcept = default;
@@ -250,6 +254,17 @@ struct SigningResult
     /// @brief Copy-assign from @p other. Same rationale as the copy ctor.
     SigningResult& operator=(const SigningResult&) = default;
     ~SigningResult() = default;
+
+private:
+    // Field-wise ctor: private so external callers go through the named
+    // factories (@ref ok / @ref invalidRequest / ... / @ref signingEngineError)
+    // and the @ref status invariant holds at construction. The factories are
+    // member functions and thus retain access. Per API-POLICY §5.1 — closed
+    // construction surface for security-sensitive results.
+    SigningResult(Status s, std::optional<std::filesystem::path> out, LocalizedText user,
+                  std::optional<std::string> diag) noexcept
+        : status(s), outputPath(std::move(out)), userMessage(std::move(user)), diagnosticDetail(std::move(diag))
+    {}
 };
 
 } // namespace LibreSCRS::Signing

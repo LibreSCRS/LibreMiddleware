@@ -28,10 +28,6 @@
 #include <string>
 #include <vector>
 
-namespace LibreSCRS::SecureChannel {
-class ISecureChannel;
-} // namespace LibreSCRS::SecureChannel
-
 namespace LibreSCRS::SmartCard {
 
 class CardSession;
@@ -49,9 +45,10 @@ class CardSession;
 namespace Internal {
 // Friend-only access struct for the active-channel cross-TU bridge.
 // Methods are declared and defined in the internal-build-guarded header
-// `LibreSCRS/SmartCard/ActiveChannelHolderInternal.h`; the forward
-// declaration here exists solely so @c CardSession can befriend it
-// without leaking the underlying APDU types into the public surface.
+// <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>;
+// the forward declaration here exists solely so @c CardSession can
+// befriend it without leaking the underlying APDU types into the public
+// surface.
 struct ActiveChannelAccessor;
 } // namespace Internal
 
@@ -90,13 +87,9 @@ struct OpenError
     Kind kind;
     /// @brief Translator-friendly message suitable for a user notification.
     ///
-    /// Mandatory in 4.0; producers populate it unconditionally. Callers
-    /// without a card-specific text should use one of the
-    /// @ref LibreSCRS::Auth::ErrorKeys generic builders.
-    /// @note Renamed from @c message in 4.0 for cross-type consistency
-    ///       with @ref LibreSCRS::Signing::SigningResult::userMessage and
-    ///       @ref LibreSCRS::Auth::CredentialResult::userMessage.
-    /// @since 4.0 — was @c std::optional<LocalizedText> in 3.x.
+    /// Always populated by producers. Callers without a card-specific text
+    /// should use one of the @ref LibreSCRS::Auth::ErrorKeys generic
+    /// builders.
     LocalizedText userMessage;
     /// @brief Optional dev-facing diagnostic (PC/SC return code text, etc.).
     ///        Never includes secret material.
@@ -104,14 +97,12 @@ struct OpenError
 
     /// @brief Default constructor is deleted.
     ///
-    /// In 3.x the userMessage was @c std::optional<LocalizedText>; an
-    /// "absent" message was the explicit no-message state. In 4.0 the
-    /// field is mandatory @c LocalizedText, but a default-constructed
-    /// LocalizedText (empty key, empty fallback) is structurally a valid
-    /// userMessage that renders as an empty string. Deleting the default
-    /// ctor forces every production site to go through the field-wise
-    /// constructor below or named factories — the safety net the
-    /// optional-wrapper provided is preserved at the type system level.
+    /// A default-constructed @c LocalizedText (empty key, empty fallback)
+    /// is structurally a valid @ref userMessage but renders as an empty
+    /// string. Deleting the default ctor forces every production site to
+    /// go through the field-wise constructor below or named factories so
+    /// the type's invariants (kind classified, userMessage populated) are
+    /// established at construction.
     OpenError() = delete;
 
     /// @brief Field-wise constructor.
@@ -161,11 +152,7 @@ public:
     /// @return On success, the opened session. On failure, a fully
     /// populated @ref OpenError carrying classification, user-facing
     /// message, and dev-facing diagnostic.
-    /// @since 4.0 — was @c OpenSessionResult (deriving from
-    ///         @c std::variant<CardSession, OpenError>); migration to
-    ///         @c std::expected closes the asymmetry with sibling 4.0
-    ///         fallible factories @ref Certificate::ParsedCertificate::fromDer
-    ///         and @ref Trust::TrustStoreService::create.
+    /// @since 4.0
     /// @par C++23 Idiom
     /// @code
     /// auto result = CardSession::open(readerName);
@@ -263,11 +250,10 @@ public:
 
     /// @brief Activate the named applet under a plain (no-SM) channel.
     ///
-    /// Suitable for non-PACE cards (RS eID, GEO CB without PACE, AET,
-    /// Zdravstvena, classical PKCS#15 over contact). Begins a PC/SC
-    /// transaction, SELECTs the AID, installs a @c PlainChannel, and
-    /// returns an @ref ActiveChannelHolder whose destruction ends the
-    /// transaction.
+    /// Suitable for non-PACE cards (contact PKCS#15 and equivalent).
+    /// Begins a PC/SC transaction, SELECTs the AID, installs a
+    /// @c PlainChannel, and returns an @ref ActiveChannelHolder whose
+    /// destruction ends the transaction.
     ///
     /// @note The returned @ref ActiveChannelHolder borrows this session's
     ///       mutex and PC/SC transaction; see @ref ActiveChannelHolder

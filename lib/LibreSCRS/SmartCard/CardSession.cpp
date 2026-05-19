@@ -8,14 +8,15 @@
 
 #include <LibreSCRS/Auth/AuthRequirement.h>
 #include <LibreSCRS/Auth/CredentialResult.h>
-#include <LibreSCRS/SecureChannel/BacChannel.h>
-#include <LibreSCRS/SecureChannel/PaceChannel.h>
+#include <LibreSCRS_internal/SecureChannel/BacChannel.h>
+#include <LibreSCRS_internal/SecureChannel/PaceChannel.h>
 #include <LibreSCRS/SecureChannel/PaceParams.h>
-#include <LibreSCRS/SecureChannel/PlainChannel.h>
+#include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
 
-#include <LibreSCRS/SecureChannel/detail/ChannelStateMutator.h>
+#include <LibreSCRS_internal/SecureChannel/detail/ChannelStateMutator.h>
 
-#include "ActiveChannelHolderInternal.h"
+#include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
+
 #include "apdu.h"
 #include "smartcard/pcsc_connection.h"
 
@@ -720,28 +721,28 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
         // any particular applet, so the post-handshake wrapped SELECT
         // below routes the target applet through the freshly installed
         // channel without a second handshake.
-        std::vector<std::pair<std::string, int>> oidParamPairs;
+        std::vector<LibreSCRS::SecureChannel::PaceSecurityInfo> paceInfos;
         try {
             auto cardAccess = readCardAccessFromMF(d->activeChannel.get(), *d->ownedConn, token);
-            oidParamPairs = LibreSCRS::SecureChannel::parsePaceOidsFromCardAccess(cardAccess);
+            paceInfos = LibreSCRS::SecureChannel::parsePaceOidsFromCardAccess(cardAccess);
         } catch (const std::exception&) {
             return std::unexpected{ChannelActivationError::PaceProtocolFailure};
         }
-        if (oidParamPairs.empty()) {
+        if (paceInfos.empty()) {
             return std::unexpected{ChannelActivationError::PaceUnsupported};
         }
 
         ChannelActivationError lastError = ChannelActivationError::PaceWrongSecret;
         std::unique_ptr<PaceChannel> freshChannel;
-        for (const auto& [oid, paramId] : oidParamPairs) {
+        for (const auto& info : paceInfos) {
             if (token.isCancellable() && token.isCancelled()) {
                 return std::unexpected{ChannelActivationError::Cancelled};
             }
-            LibreSCRS::SecureChannel::PACEParams params;
-            params.oid = oid;
+            LibreSCRS::SecureChannel::PaceParams params;
+            params.oid = info.oid;
             params.passwordType = kind;
             params.password = cachedSecret; // deep copy; cleansed when params goes out of scope
-            params.paramId = paramId;
+            params.paramId = info.paramId;
 
             auto outcome = PaceChannel::establish(*d->ownedConn, params, token);
             if (outcome) {

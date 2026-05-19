@@ -99,7 +99,7 @@ TrustConfig::Builder& TrustConfig::Builder::setTrustedListFileSigningCert(std::f
     return *this;
 }
 
-TrustConfig TrustConfig::Builder::build() && noexcept
+TrustConfig TrustConfig::Builder::build() && noexcept(std::is_nothrow_move_constructible_v<TrustConfig>)
 {
     return std::move(cfg);
 }

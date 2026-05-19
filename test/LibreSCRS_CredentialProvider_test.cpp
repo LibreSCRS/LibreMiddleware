@@ -12,6 +12,7 @@
 #include <vector>
 
 using namespace LibreSCRS::Auth;
+using LibreSCRS::LocalizedText;
 
 TEST(CredentialProviderIntegrationTest, ProviderSeesExpectedFieldsForChangePin)
 {
@@ -27,7 +28,7 @@ TEST(CredentialProviderIntegrationTest, ProviderSeesExpectedFieldsForChangePin)
         return CredentialResult::ok(std::move(values));
     };
 
-    auto req = AuthRequirement::forChangePin("UserPIN", 3);
+    auto req = AuthRequirement::forChangePin(LocalizedText{"", "UserPIN", {}}, 3);
     auto result = provider(req);
 
     EXPECT_EQ(result.status, CredentialResult::Status::Ok);
@@ -39,7 +40,7 @@ TEST(CredentialProviderIntegrationTest, ProviderSeesExpectedFieldsForChangePin)
 
 TEST(CredentialProviderIntegrationTest, ProviderHonorsEqualToFieldIdContract)
 {
-    auto req = AuthRequirement::forUnblockPin("UserPIN");
+    auto req = AuthRequirement::forUnblockPin(LocalizedText{"", "UserPIN", {}});
     auto fields = req.fields();
     auto confirmField =
         std::find_if(fields.begin(), fields.end(), [](const FieldDescriptor& f) { return f.id == "confirmPin"; });
@@ -69,7 +70,7 @@ TEST(CredentialProviderIntegrationTest, EmptyValuesWithOkStatusIsLegal)
         // values intentionally empty
         return CredentialResult::ok({});
     };
-    auto req = AuthRequirement::forChangePin("UserPIN", 3);
+    auto req = AuthRequirement::forChangePin(LocalizedText{"", "UserPIN", {}}, 3);
     auto result = provider(req);
     EXPECT_EQ(result.status, CredentialResult::Status::Ok);
     EXPECT_TRUE(result.values.empty());
@@ -88,7 +89,7 @@ TEST(CredentialProviderIntegrationTest, ExtraKeysAreIgnored)
         values.emplace_back("unexpectedExtra", LibreSCRS::Secure::String{"garbage"});
         return CredentialResult::ok(std::move(values));
     };
-    auto req = AuthRequirement::forChangePin("UserPIN", 3);
+    auto req = AuthRequirement::forChangePin(LocalizedText{"", "UserPIN", {}}, 3);
     auto result = provider(req);
     EXPECT_EQ(result.status, CredentialResult::Status::Ok);
     // Consumer contract: extra keys beyond fields[] are silently ignored.
@@ -102,7 +103,7 @@ TEST(CredentialProviderIntegrationTest, EmptyStringValueIsStoredAsIs)
         values.emplace_back("pin", LibreSCRS::Secure::String{""});
         return CredentialResult::ok(std::move(values));
     };
-    auto req = AuthRequirement::forSigning("UserPIN", 3);
+    auto req = AuthRequirement::forSigning(LocalizedText{"", "UserPIN", {}}, 3);
     auto result = provider(req);
     const auto* pin = result.find("pin");
     ASSERT_NE(pin, nullptr);
@@ -121,7 +122,7 @@ TEST(CredentialProviderIntegrationTest, ErrorStatusCarriesMandatoryMessage)
     CredentialProvider provider = [](const AuthRequirement&) {
         return CredentialResult::error(LibreSCRS::Auth::ErrorKeys::genericComm());
     };
-    auto req = AuthRequirement::forSigning("UserPIN", 3);
+    auto req = AuthRequirement::forSigning(LocalizedText{"", "UserPIN", {}}, 3);
     auto result = provider(req);
     EXPECT_EQ(result.status, CredentialResult::Status::Error);
     EXPECT_FALSE(result.userMessage.key.empty());
@@ -157,7 +158,7 @@ TEST(CredentialProviderIntegrationTest, InsertionOrderIsPreserved)
     values.emplace_back("c", LibreSCRS::Secure::String{"3"});
     auto result = CredentialResult::ok(std::move(values));
     ASSERT_EQ(result.values.size(), 3u);
-    EXPECT_EQ(result.values[0].first, "b");
-    EXPECT_EQ(result.values[1].first, "a");
-    EXPECT_EQ(result.values[2].first, "c");
+    EXPECT_EQ(result.values[0].id, "b");
+    EXPECT_EQ(result.values[1].id, "a");
+    EXPECT_EQ(result.values[2].id, "c");
 }

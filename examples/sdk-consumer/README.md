@@ -15,7 +15,7 @@ Exercises one call per public target:
 
 | # | Target              | Call                                             |
 |---|---------------------|--------------------------------------------------|
-| 1 | `LibreSCRS::Auth`   | `AuthRequirement::forSigning("PIN", 3)`          |
+| 1 | `LibreSCRS::Auth`   | `AuthRequirement::forSigning(LocalizedText{"", "PIN", {}}, 3)` |
 | 2 | `LibreSCRS::Auth`   | `Secure::Buffer(8, 0x42)` (co-hosted in Auth lib)|
 | 3 | `LibreSCRS::SmartCard` | `Monitor::listReaders()`                       |
 | 4 | `LibreSCRS::Plugin` | `CardPluginService{path}`, `kCardPluginAbiVersion` |

@@ -107,20 +107,6 @@ AuthRequirement AuthRequirement::forPreRead(PreReadAuthMethod method) noexcept
     }
 }
 
-AuthRequirement AuthRequirement::forSigning(std::string pinLabel, int retriesLeft)
-{
-    if (pinLabel.empty()) {
-        throw std::invalid_argument("AuthRequirement::forSigning: pinLabel must not be empty");
-    }
-    AuthRequirement r;
-    r.purposeValue = Purpose::Signing;
-    r.fieldList.push_back(makePinField("pin", std::move(pinLabel)));
-    if (retriesLeft >= 0) {
-        r.retriesValue = retriesLeft;
-    }
-    return r;
-}
-
 AuthRequirement AuthRequirement::forSigning(LocalizedText pinLabel, int retriesLeft)
 {
     if (pinLabel.defaultText.empty() && pinLabel.key.empty()) {
@@ -137,22 +123,6 @@ AuthRequirement AuthRequirement::forSigning(LocalizedText pinLabel, int retriesL
     FieldDescriptor pin = makePinField("pin", pinLabel.defaultText);
     pin.label = std::move(pinLabel);
     r.fieldList.push_back(std::move(pin));
-    if (retriesLeft >= 0) {
-        r.retriesValue = retriesLeft;
-    }
-    return r;
-}
-
-AuthRequirement AuthRequirement::forChangePin(std::string pinLabel, int retriesLeft)
-{
-    if (pinLabel.empty()) {
-        throw std::invalid_argument("AuthRequirement::forChangePin: pinLabel must not be empty");
-    }
-    AuthRequirement r;
-    r.purposeValue = Purpose::ChangePin;
-    r.fieldList.push_back(makePinField("currentPin", std::string{"Current "} + pinLabel));
-    r.fieldList.push_back(makePinField("newPin", std::string{"New "} + pinLabel));
-    r.fieldList.push_back(makeConfirmPin());
     if (retriesLeft >= 0) {
         r.retriesValue = retriesLeft;
     }
@@ -187,19 +157,6 @@ AuthRequirement AuthRequirement::forChangePin(LocalizedText pinLabel, int retrie
     if (retriesLeft >= 0) {
         r.retriesValue = retriesLeft;
     }
-    return r;
-}
-
-AuthRequirement AuthRequirement::forUnblockPin(std::string pinLabel)
-{
-    if (pinLabel.empty()) {
-        throw std::invalid_argument("AuthRequirement::forUnblockPin: pinLabel must not be empty");
-    }
-    AuthRequirement r;
-    r.purposeValue = Purpose::UnblockPin;
-    r.fieldList.push_back(makePukField());
-    r.fieldList.push_back(makePinField("newPin", std::string{"New "} + pinLabel));
-    r.fieldList.push_back(makeConfirmPin());
     return r;
 }
 

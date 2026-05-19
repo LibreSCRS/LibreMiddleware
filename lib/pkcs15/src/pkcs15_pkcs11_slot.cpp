@@ -9,10 +9,9 @@
 /// Each public method follows the same shape: lock slotMutex + cardMutex,
 /// acquire a per-operation @c ActiveChannelHolder through the parent
 /// @c Pkcs15Card, build a local @c pkcs15::PKCS15Card from
-/// @c holder.activeChannel(), perform one APDU exchange, and release. The
-/// holder also drives applet SELECT and — on PACE-gated cards — keeps the
-/// SM channel warm in the session's per-process cache so successive
-/// holders fast-path through the same-applet path without re-handshaking.
+/// @c LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder), perform one APDU exchange, and release.
+/// The holder also drives applet SELECT and — on PACE-gated cards — keeps the SM channel warm in the session's
+/// per-process cache so successive holders fast-path through the same-applet path without re-handshaking.
 
 #include "pkcs15_pkcs11_slot.h"
 
@@ -32,8 +31,9 @@
 #include <internal/PKCS11Card.h>
 #include <internal/PinClassification.h>
 
-#include <LibreSCRS/SecureChannel/ISecureChannel.h>
+#include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
+#include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
 #include <smartcard/pcsc_connection.h>
 
 #include <openssl/core_names.h>
@@ -194,7 +194,7 @@ std::vector<LibreSCRS::Pkcs11::Internal::PKCS11ObjectInfo> Pkcs15Slot::enumerate
     if (!holderResult)
         return objects;
     auto holder = std::move(*holderResult);
-    auto* channel = holder.activeChannel();
+    auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
     if (channel == nullptr)
         return objects;
     ::pkcs15::PKCS15Card apdu(*channel);
@@ -501,7 +501,7 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
                     return Crv::DeviceError;
                 }
                 auto holder = std::move(*holderResult);
-                auto* channel = holder.activeChannel();
+                auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
                 if (channel == nullptr) {
                     OPENSSL_cleanse(realPin.data(), realPin.size());
                     return Crv::DeviceError;
@@ -619,7 +619,7 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
         if (!holderResult)
             return Crv::DeviceError;
         auto holder = std::move(*holderResult);
-        auto* channel = holder.activeChannel();
+        auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
         if (channel == nullptr)
             return Crv::DeviceError;
         ::pkcs15::PKCS15Card apdu(*channel);
@@ -747,7 +747,7 @@ std::vector<std::uint8_t> Pkcs15Slot::signData(std::span<const std::uint8_t> dat
         if (!holderResult)
             return {};
         auto holder = std::move(*holderResult);
-        auto* channel = holder.activeChannel();
+        auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
         if (channel == nullptr)
             return {};
         ::pkcs15::PKCS15Card apdu(*channel);
@@ -799,7 +799,7 @@ std::vector<std::uint8_t> Pkcs15Slot::signWithDigestInfo(std::span<const std::ui
         if (!holderResult)
             return {};
         auto holder = std::move(*holderResult);
-        auto* channel = holder.activeChannel();
+        auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
         if (channel == nullptr)
             return {};
         ::pkcs15::PKCS15Card apdu(*channel);

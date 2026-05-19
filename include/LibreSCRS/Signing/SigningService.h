@@ -116,13 +116,18 @@ public:
     /// @brief Produce a signature for @p request.
     /// @param request Immutable signing parameters.
     /// @param credentialProvider Callback that collects the signing PIN.
-    /// @param cardPlugin Plugin used to drive on-card operations. Shared
-    ///                   ownership: the service retains the plugin for the
-    ///                   duration of the call, which matters if internal
-    ///                   workers outlive the caller's stack frame.
-    /// @param session Live card session. Shared ownership mirrors @p cardPlugin
-    ///                — the session is kept alive until the sign operation
-    ///                fully completes, eliminating the UAF-on-shutdown class.
+    /// @param cardPlugin Plugin used to drive on-card operations. Borrowed
+    ///                   by const-reference per C++ Core Guidelines F.7 /
+    ///                   F.16 — the call-site keeps the shared owner; the
+    ///                   service copies internally only when an async
+    ///                   worker needs to outlive the call. Const-qualified
+    ///                   element type because @ref sign exercises only the
+    ///                   plugin's const interface.
+    /// @param session Live card session. Borrowed by const-reference, with
+    ///                the service copying internally only for worker
+    ///                hand-off. Element type is non-const because the
+    ///                signing engine mutates session state (current applet,
+    ///                cached secrets) as the sign flow progresses.
     /// @return SigningResult whose @ref SigningResult::status is always set.
     /// @note Returns @ref SigningResult::Status::TrustStoreUnavailable when
     ///       the libresign backend rejects the TrustConfig supplied at
@@ -152,8 +157,8 @@ public:
     /// at the reference-resolution step before any cryptographic check
     /// runs.
     [[nodiscard]] SigningResult sign(const SigningRequest& request, Auth::CredentialProvider credentialProvider,
-                                     std::shared_ptr<LibreSCRS::Plugin::CardPlugin> cardPlugin,
-                                     std::shared_ptr<LibreSCRS::SmartCard::CardSession> session);
+                                     const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,
+                                     const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session);
 
     /// @brief Append a new signer to a prior signature, producing a multi-
     ///        signature document with the new signer's signature alongside
@@ -207,8 +212,8 @@ public:
                                              std::span<const std::uint8_t> priorSignature,
                                              std::span<const std::uint8_t> originalDocument,
                                              Auth::CredentialProvider credentialProvider,
-                                             std::shared_ptr<LibreSCRS::Plugin::CardPlugin> cardPlugin,
-                                             std::shared_ptr<LibreSCRS::SmartCard::CardSession> session);
+                                             const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,
+                                             const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session);
 
     // @since 4.0: trustStore() getter removed — consumers obtain the trust
     // store from the @ref Trust::TrustStoreService they constructed and

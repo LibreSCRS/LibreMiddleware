@@ -177,10 +177,9 @@ public:
     ///         integer (lower numbers are probed first — "highest priority"
     ///         means the smallest numeric value), or nullptr if no plugin's
     ///         @ref CardPlugin::canHandle returns true for @p atr.
-    /// @since 4.0 — `atr` is now @c std::span<const std::uint8_t> for
+    /// @since 4.0 — `atr` is a @c std::span<const std::uint8_t> for
     ///        consistency with @ref CardPlugin::canHandle, @ref Atr::matches,
-    ///        and @ref CardPlugin::supportedAtrs. Pre-4.0 took
-    ///        @c const std::vector<uint8_t>&.
+    ///        and @ref CardPlugin::supportedAtrs.
     [[nodiscard]] std::shared_ptr<CardPlugin> findPluginForCard(std::span<const std::uint8_t> atr) const;
 
     /// @brief ATR-only overload (fast, no card I/O).

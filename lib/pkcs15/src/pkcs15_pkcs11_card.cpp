@@ -29,11 +29,12 @@
 
 #include <LibreSCRS/Auth/PaceSecretKind.h>
 #include <LibreSCRS/Secure/String.h>
-#include <LibreSCRS/SecureChannel/ISecureChannel.h>
+#include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
+#include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
 #include <smartcard/pcsc_connection.h>
 
 #include <algorithm>
@@ -159,7 +160,7 @@ unsigned long Pkcs15Card::readProfileAndComplete(LibreSCRS::SmartCard::ActiveCha
 {
     using namespace LibreSCRS::Pkcs11::Internal;
 
-    auto* channel = holder.activeChannel();
+    auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
     if (channel == nullptr)
         return Crv::DeviceError;
 
@@ -378,7 +379,7 @@ unsigned long Pkcs15Card::resumeBind()
     if (!holderResult)
         return onFailure(mapHolderErrorToCrv(holderResult.error()));
     auto holder = std::move(*holderResult);
-    auto* channel = holder.activeChannel();
+    auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
     if (channel == nullptr)
         return onFailure(Crv::DeviceError);
 

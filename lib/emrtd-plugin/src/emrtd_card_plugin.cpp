@@ -7,14 +7,16 @@
 #include <LibreSCRS/Plugin/CardPlugin.h>
 #include <LibreSCRS/Plugin/PluginExport.h>
 #include <LibreSCRS/Plugin/SecurityCheck.h>
+#include <LibreSCRS/Secure/Buffer.h>
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SecureChannel/BacParams.h>
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
-#include <LibreSCRS/SecureChannel/ISecureChannel.h>
-#include <LibreSCRS/SecureChannel/SessionKeys.h>
-#include <LibreSCRS/SecureChannel/detail/ChannelStateMutator.h>
+#include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
+#include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
+#include <LibreSCRS_internal/SecureChannel/detail/ChannelStateMutator.h>
 #include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
+#include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
@@ -39,6 +41,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <variant>
 
@@ -409,7 +412,7 @@ private:
             return data;
         }
         auto holder = std::move(*holderResult);
-        auto* channel = holder.activeChannel();
+        auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
         if (channel == nullptr) {
             LibreSCRS::Plugin::CardFieldGroup errorGroup;
             errorGroup.groupKey = "error";
@@ -497,12 +500,19 @@ private:
                 dgRawData[14] = dg14Result.data;
                 caResult = emrtd::crypto::performChipAuth(*channel, dg14Result.data);
                 if (caResult.chipAuthentication == emrtd::crypto::ChipAuthResult::PASSED && caResult.newSessionKeys) {
-                    // Promote channel SM keys to CA-derived keys. Maps the
-                    // emrtd::crypto cipher to the public-channel SmCipher.
+                    // Promote channel SM keys to CA-derived keys. The
+                    // public-channel SessionKeys carrier composes
+                    // cleansing Secure::Buffer fields; the emrtd::crypto
+                    // vectors are cleansed by their own destructor when
+                    // caResult drops, so the post-copy bytes never
+                    // persist uncleansed.
                     LibreSCRS::SecureChannel::SessionKeys newKeys;
-                    newKeys.encKey = std::move(caResult.newSessionKeys->encKey);
-                    newKeys.macKey = std::move(caResult.newSessionKeys->macKey);
-                    newKeys.ssc = std::move(caResult.newSessionKeys->ssc);
+                    newKeys.encKey =
+                        LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{caResult.newSessionKeys->encKey}};
+                    newKeys.macKey =
+                        LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{caResult.newSessionKeys->macKey}};
+                    newKeys.ssc =
+                        LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{caResult.newSessionKeys->ssc}};
                     newKeys.cipher = (caResult.newAlgorithm == emrtd::crypto::SMAlgorithm::DES3)
                                          ? LibreSCRS::SecureChannel::SmCipher::Des3
                                          : LibreSCRS::SecureChannel::SmCipher::Aes;

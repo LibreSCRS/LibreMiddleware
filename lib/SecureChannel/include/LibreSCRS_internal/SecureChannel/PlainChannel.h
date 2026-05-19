@@ -1,16 +1,21 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
+#ifndef LIBRESCRS_INTERNAL_BUILD
+#error                                                                                                                 \
+    "LibreSCRS_internal/SecureChannel/PlainChannel.h is internal to LibreMiddleware. Public API: <LibreSCRS/SecureChannel/...>"
+#endif
+
 #pragma once
 
 /// @file
 /// @brief @ref LibreSCRS::SecureChannel::PlainChannel — the no-secure-
 ///        messaging implementation of @ref ISecureChannel. Default for
-///        cards that do not require PACE/BAC (RS eID, GEO CB without
-///        PACE, AET, Zdravstvena, classical PKCS#15 over contact).
+///        cards that do not require PACE/BAC (contact PKCS#15 and
+///        equivalent).
 
 #include <LibreSCRS/Export.h>
-#include <LibreSCRS/SecureChannel/ISecureChannel.h>
+#include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 
 namespace LibreSCRS::SmartCard {
 class IConnection;

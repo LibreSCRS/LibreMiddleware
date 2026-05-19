@@ -5,7 +5,7 @@
 #include "pkcs15_parser.h"
 #include "pkcs15_types.h"
 #include <LibreSCRS/CancelToken.h>
-#include <LibreSCRS/SecureChannel/ISecureChannel.h>
+#include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <apdu.h>
 #include <smartcard/secure_buffer.h>
 #include <openssl/evp.h>

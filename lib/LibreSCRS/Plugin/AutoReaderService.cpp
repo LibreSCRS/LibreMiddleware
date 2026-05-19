@@ -69,6 +69,12 @@ struct AutoReaderWorker : std::enable_shared_from_this<AutoReaderWorker>
     std::mutex pendingMtx;
     std::map<std::string, PendingRead> pendingByReader;
 
+    // Set by ~AutoReaderService before draining; differentiates "card removed
+    // mid-read" (surfaces AutoReaderError::Kind::Cancelled to the host) from
+    // "host is tearing down" (silent return, no callback fire — destructor
+    // requires full callback quiescence on return).
+    std::atomic<bool> destroying{false};
+
     AutoReaderWorker(std::shared_ptr<LibreSCRS::SmartCard::MonitorService> monitor,
                      std::shared_ptr<CardPluginService> registry, AutoReaderService::OnCardData onData,
                      AutoReaderService::OnError onError)
@@ -81,6 +87,23 @@ struct AutoReaderWorker : std::enable_shared_from_this<AutoReaderWorker>
 // which does not embed AutoReaderService::Impl anywhere. The std::thread
 // instantiations below parameterise on this function pointer + its argument
 // types, keeping `::Impl` out of every resulting weak-symbol name.
+// Helper: surface a cooperative-cancellation error to the host. Skipped when
+// the worker is being torn down (destructor path) — that flow demands full
+// callback quiescence on return, so a late onError fire would race with the
+// host's own destruction of the captured closure state.
+void emitCancelledIfObservable(const std::shared_ptr<AutoReaderWorker>& worker, const std::string& readerName)
+{
+    if (worker->destroying.load(std::memory_order_acquire))
+        return;
+    if (!worker->onError)
+        return;
+    AutoReaderService::AutoReaderError err;
+    err.kind = AutoReaderService::AutoReaderError::Kind::Cancelled;
+    err.userMessage = LibreSCRS::Auth::ErrorKeys::cancelled();
+    err.diagnosticDetail = std::string{"Read cancelled before completion"};
+    worker->onError(readerName, err);
+}
+
 void performCardRead(std::shared_ptr<AutoReaderWorker> worker, std::string readerName, std::vector<std::uint8_t> atr,
                      std::shared_ptr<std::atomic<bool>> cancelFlag)
 {
@@ -105,8 +128,10 @@ void performCardRead(std::shared_ptr<AutoReaderWorker> worker, std::string reade
     }
 
     for (int attempt = 0; attempt < maxAttempts; ++attempt) {
-        if (cancelFlag->load())
+        if (cancelFlag->load()) {
+            emitCancelledIfObservable(worker, readerName);
             return;
+        }
 
         // Open the session via the 4.0 noexcept factory. On failure, retry
         // a couple of times (transient card-insertion settling) before
@@ -159,8 +184,10 @@ void performCardRead(std::shared_ptr<AutoReaderWorker> worker, std::string reade
         // remains so a buggy plugin that still throws (e.g. loaded across a
         // mismatched stdlib) cannot abort the host.
         for (const auto& plugin : candidates) {
-            if (cancelFlag->load())
+            if (cancelFlag->load()) {
+                emitCancelledIfObservable(worker, readerName);
                 return;
+            }
             try {
                 auto result = plugin->readCard(*session);
                 if (result.status == LibreSCRS::Plugin::ReadResult::Status::Ok && result.data.has_value()) {
@@ -255,8 +282,8 @@ void dispatchMonitorEvent(std::shared_ptr<AutoReaderWorker> worker, const LibreS
     // up to ~30s waiting on the kernel-side PC/SC stack. Joining at this
     // seam serialised the whole monitor event loop behind that wait.
     //
-    // AutoReaderService::~AutoReaderService uses unsubscribeAndDrain,
-    // which iterates pendingByReader and joins every
+    // AutoReaderService::~AutoReaderService uses unsubscribe with
+    // DrainPolicy::Drain, which iterates pendingByReader and joins every
     // *current* worker before the host's destructor returns. Detached
     // previous workers are no longer tracked in that map (they were moved
     // out at line 238) and are intentionally NOT joined by the dtor — they
@@ -354,11 +381,20 @@ AutoReaderService::~AutoReaderService()
     // ~AutoReaderService — so a host that has just torn down the state its
     // closures reference can still observe a `worker->onData(...)` call.
     //
-    // unsubscribeAndDrain blocks until any in-flight dispatch finishes
-    // running through MonitorService, closing the spawn-after-dtor window.
-    // Pending reads we already started are then drained below by joining
-    // their std::threads, ensuring full callback quiescence on return.
-    d->worker->monitor->unsubscribeAndDrain(d->worker->subscriptionId);
+    // unsubscribe with DrainPolicy::Drain blocks until any in-flight
+    // dispatch finishes running through MonitorService, closing the
+    // spawn-after-dtor window. Pending reads we already started are then
+    // drained below by joining their std::threads, ensuring full callback
+    // quiescence on return.
+    d->worker->monitor->unsubscribe(d->worker->subscriptionId,
+                                    LibreSCRS::SmartCard::MonitorService::DrainPolicy::Drain);
+
+    // Signal destruction BEFORE we set per-read cancelFlags so any pending
+    // performCardRead body that observes cancellation knows to return silently
+    // rather than firing the new Kind::Cancelled error path (which would
+    // breach the destructor's full-callback-quiescence contract by racing
+    // with the host's own teardown of the captured closure state).
+    d->worker->destroying.store(true, std::memory_order_release);
 
     // Drain pending reads: cancel them, join their threads, then drop.
     std::map<std::string, AutoReaderWorker::PendingRead> pending;

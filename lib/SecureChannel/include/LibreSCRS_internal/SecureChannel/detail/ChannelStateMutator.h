@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #ifndef LIBRESCRS_INTERNAL_BUILD
-#error "LibreSCRS/SecureChannel/detail/ChannelStateMutator.h is internal to LibreMiddleware."
+#error "LibreSCRS_internal/SecureChannel/detail/ChannelStateMutator.h is internal to LibreMiddleware."
 #endif
 
 #pragma once
@@ -12,9 +12,9 @@
 ///        friend-only access seam that LM internals use to mutate a live
 ///        channel's bound AID or rotate its SM session keys.
 
-#include <LibreSCRS/SecureChannel/ISecureChannel.h>
-#include <LibreSCRS/SecureChannel/SessionKeys.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
+#include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
+#include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
 
 namespace LibreSCRS::SecureChannel::detail {
 

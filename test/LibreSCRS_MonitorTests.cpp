@@ -193,11 +193,11 @@ TEST(MonitorTest, MultipleSubscribersReceiveSameEvents)
     (void)bBefore;
 }
 
-// unsubscribeAndDrain blocks until any in-flight dispatch
+// unsubscribe(id, DrainPolicy::Drain) blocks until any in-flight dispatch
 // targeting this subscription has completed. After return, the callback
 // is guaranteed never to be invoked again — Qt-style consumers whose
 // callback captures `this` can safely destroy the captured object next.
-TEST(MonitorTest, UnsubscribeAndDrainBlocksUntilCallbackCompletes)
+TEST(MonitorTest, UnsubscribeWithDrainBlocksUntilCallbackCompletes)
 {
     auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
     auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
@@ -232,17 +232,17 @@ TEST(MonitorTest, UnsubscribeAndDrainBlocksUntilCallbackCompletes)
     }
     ASSERT_TRUE(callbackEntered.load()) << "callback never entered";
 
-    // Fire unsubscribeAndDrain from another thread so we can check it blocks
-    // on the in-flight callback.
+    // Fire unsubscribe(id, Drain) from another thread so we can check it
+    // blocks on the in-flight callback.
     std::atomic<bool> drainReturned{false};
     std::thread drainThread([&] {
-        monitor->unsubscribeAndDrain(id);
+        monitor->unsubscribe(id, MonitorService::DrainPolicy::Drain);
         drainReturned.store(true);
     });
 
     // Drain must NOT return while the callback is still running.
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    EXPECT_FALSE(drainReturned.load()) << "unsubscribeAndDrain returned before in-flight callback finished";
+    EXPECT_FALSE(drainReturned.load()) << "unsubscribe(Drain) returned before in-flight callback finished";
     EXPECT_EQ(finishedCount.load(), 0);
 
     // Release the callback; drain must now return.
@@ -253,9 +253,10 @@ TEST(MonitorTest, UnsubscribeAndDrainBlocksUntilCallbackCompletes)
     EXPECT_EQ(finishedCount.load(), 1);
 }
 
-TEST(MonitorTest, UnsubscribeAndDrainUnknownIdIsNoOp)
+TEST(MonitorTest, UnsubscribeWithDrainUnknownIdIsNoOp)
 {
     MonitorService m;
-    EXPECT_NO_THROW(m.unsubscribeAndDrain(LibreSCRS::SmartCard::detail::makeSubscriptionIdForTest(9999)));
+    EXPECT_NO_THROW(m.unsubscribe(LibreSCRS::SmartCard::detail::makeSubscriptionIdForTest(9999),
+                                  MonitorService::DrainPolicy::Drain));
     EXPECT_FALSE(m.isRunning());
 }

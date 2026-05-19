@@ -82,9 +82,8 @@ enum class PreReadAuthMethod : std::uint8_t {
 /// freely passed across threads; concurrent reads of the same instance are
 /// race-free.
 ///
-/// @since 4.0 — private data + accessor API. Pre-4.0 code that used direct
-/// aggregate access (`req.fields`, `req.retriesLeft`, …) must migrate to
-/// the `fields()`, `retriesLeft()` accessors.
+/// @since 4.0 — private data + accessor API; consumers read via
+/// `fields()`, `retriesLeft()`, `message()`, `title()`.
 class LIBRESCRS_PUBLIC_API AuthRequirement
 {
 public:
@@ -145,83 +144,45 @@ public:
     [[nodiscard]] static AuthRequirement forPreRead(PreReadAuthMethod method) noexcept;
 
     /// @brief Build a requirement for collecting a single signing PIN.
-    /// @param pinLabel User-visible English fallback label (e.g. "UserPIN").
-    ///                 Must be non-empty.
-    /// @param retriesLeft Card-reported retry count, or a negative value
-    ///                    ("unknown") to leave @ref retriesLeft as
-    ///                    `std::nullopt`.
-    /// @throws std::invalid_argument if @p pinLabel is empty.
-    ///         See API-POLICY §5.1.
-    /// @note Convenience overload — internally constructs a
-    ///       @ref LocalizedText with an empty @c key and @p pinLabel as
-    ///       @c defaultText. Hosts that need a translatable label
-    ///       should prefer the @ref LocalizedText overload below.
-    [[nodiscard]] static AuthRequirement forSigning(std::string pinLabel, int retriesLeft);
-
-    /// @brief Build a requirement for collecting a single signing PIN, with a
-    ///        translatable label.
     /// @param pinLabel Translator-friendly bundle. The bundle's
     ///                 @ref LocalizedText::defaultText (or @ref
     ///                 LocalizedText::key if the fallback is empty)
     ///                 must be non-empty so the resulting credential prompt
-    ///                 has a renderable label.
+    ///                 has a renderable label. Hosts with a plain English
+    ///                 label and no translation key construct
+    ///                 `LocalizedText{"", "<label>", {}}` explicitly — the
+    ///                 empty key signals "no i18n routing" and the fallback
+    ///                 carries the literal text.
     /// @param retriesLeft Card-reported retry count, or a negative value
     ///                    ("unknown") to leave @ref retriesLeft as
     ///                    `std::nullopt`.
     /// @throws std::invalid_argument if both @p pinLabel.defaultText and
     ///         @p pinLabel.key are empty. See API-POLICY §5.1.
-    /// @since 4.0 — preferred entry point for hosts that surface translated
-    ///         PIN labels (e.g. "Signing PIN" / "ПИН за потпис"). Eliminates
-    ///         the implicit i18n leak the @c std::string overload introduced
-    ///         when callers wanted a translation key.
     [[nodiscard]] static AuthRequirement forSigning(LocalizedText pinLabel, int retriesLeft);
 
     /// @brief Build a requirement for a PIN change (current + new + confirm).
-    /// @param pinLabel User-visible English fallback label for the PIN being
-    ///                 changed. Must be non-empty.
+    /// @param pinLabel Translator-friendly bundle (see @ref forSigning for
+    ///                 the empty-bundle validation rule). The same label is
+    ///                 applied to all three fields; role is distinguished
+    ///                 via @ref FieldDescriptor::id values (`"currentPin"`,
+    ///                 `"newPin"`, `"confirmPin"`). Hosts that want "Current
+    ///                 X" / "New X" prefixed rendering must add role-aware
+    ///                 decoration in their own UI layer; this avoids
+    ///                 synthesising untranslatable English prefixes onto
+    ///                 i18n-aware labels.
     /// @param retriesLeft Card-reported retry count on the current PIN, or a
     ///                    negative value ("unknown") to leave
     ///                    @ref retriesLeft as `std::nullopt`.
-    /// @throws std::invalid_argument if @p pinLabel is empty.
-    ///         See API-POLICY §5.1.
-    [[nodiscard]] static AuthRequirement forChangePin(std::string pinLabel, int retriesLeft);
-
-    /// @brief Build a requirement for a PIN change with a translatable label.
-    /// @param pinLabel Translator-friendly bundle. The bundle's
-    ///                 @ref LocalizedText::defaultText (or @ref
-    ///                 LocalizedText::key if the fallback is empty)
-    ///                 must be non-empty so the resulting credential prompt
-    ///                 has a renderable label.
-    /// @param retriesLeft Card-reported retry count, or a negative value
-    ///                    ("unknown") to leave @ref retriesLeft as
-    ///                    `std::nullopt`.
     /// @throws std::invalid_argument if both @p pinLabel.defaultText and
     ///         @p pinLabel.key are empty. See API-POLICY §5.1.
-    /// @note Field-label policy. Unlike the @c std::string overload (which
-    ///       prepends English "Current "/"New " to the PIN label), the
-    ///       @ref LocalizedText overload assigns @p pinLabel as-is to all
-    ///       three fields and relies on @ref FieldDescriptor::id values
-    ///       (`"currentPin"`, `"newPin"`, `"confirmPin"`) for hosts to
-    ///       distinguish role. This avoids synthesising untranslatable
-    ///       English prefixes onto otherwise i18n-aware labels.
-    /// @since 4.0 — preferred entry point for hosts that surface translated
-    ///         PIN labels for PIN-change workflows.
     [[nodiscard]] static AuthRequirement forChangePin(LocalizedText pinLabel, int retriesLeft);
 
     /// @brief Build a requirement for a PUK-based unblock (PUK + new + confirm).
-    /// @param pinLabel User-visible English fallback label for the PIN being
-    ///                 unblocked. Must be non-empty.
-    /// @throws std::invalid_argument if @p pinLabel is empty.
-    ///         See API-POLICY §5.1.
-    [[nodiscard]] static AuthRequirement forUnblockPin(std::string pinLabel);
-
-    /// @brief Build a requirement for a PUK-based unblock with a translatable label.
-    /// @param pinLabel Translator-friendly bundle for the PIN being unblocked.
-    ///                 See @ref forChangePin LocalizedText overload for the
-    ///                 empty-bundle validation rule and the field-label policy.
+    /// @param pinLabel Translator-friendly bundle for the PIN being unblocked
+    ///                 (see @ref forSigning for the empty-bundle validation
+    ///                 rule and @ref forChangePin for the field-label policy).
     /// @throws std::invalid_argument if both @p pinLabel.defaultText and
     ///         @p pinLabel.key are empty. See API-POLICY §5.1.
-    /// @since 4.0
     [[nodiscard]] static AuthRequirement forUnblockPin(LocalizedText pinLabel);
 
     /// @brief Build a requirement for a PACE / BAC secret prompt keyed

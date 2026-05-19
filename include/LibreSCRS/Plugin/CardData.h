@@ -45,7 +45,7 @@ struct CardField
     /// @brief Presentation hint used by GUI widgets.
     FieldType type;
     /// @brief Raw value bytes; interpretation depends on @ref type.
-    std::vector<uint8_t> value;
+    std::vector<std::uint8_t> value;
 
     /// @brief Interpret @ref value as UTF-8 text when the field is textual.
     ///

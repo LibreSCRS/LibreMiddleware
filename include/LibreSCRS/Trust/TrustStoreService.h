@@ -127,11 +127,7 @@ public:
     /// @return On success, a non-null `std::shared_ptr<TrustStoreService>`.
     ///         On failure, a @ref CreateError carrying classification and
     ///         diagnostic.
-    /// @since 4.0 — was `std::shared_ptr<TrustStoreService>` (nullptr on
-    ///         failure), with the underlying impl unable to actually return
-    ///         null. The migration replaces the vestigial nullptr semantic
-    ///         with a structured failure-mode payload and a `noexcept`
-    ///         contract.
+    /// @since 4.0
     /// @par C++23 Idiom
     /// @code
     /// auto result = TrustStoreService::create(std::move(config));
@@ -224,6 +220,10 @@ public:
     /// @par Thread-safety
     /// Reentrant. The synthetic-replay invocation runs on the calling
     /// thread; subsequent settle events fire on internal worker threads.
+    /// @warning Do NOT call @ref addObserver or @ref removeObserver from
+    ///          within a `FetchObserver` invocation on the same service
+    ///          — this deadlocks. The implementation provides no runtime
+    ///          detection guard.
     /// @since 4.0
     [[nodiscard]] ObserverHandle addObserver(FetchObserver observer);
 

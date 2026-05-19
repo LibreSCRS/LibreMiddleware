@@ -8,7 +8,6 @@
 ///        three MRZ-Z field components needed to derive BAC session keys
 ///        (ICAO Doc 9303 Part 11).
 
-#include <LibreSCRS/Export.h>
 #include <LibreSCRS/Secure/String.h>
 
 namespace LibreSCRS::SecureChannel {
@@ -25,22 +24,25 @@ namespace LibreSCRS::SecureChannel {
 /// secret; storing it in cleansing storage prevents the bytes from
 /// surviving in the heap allocator after the struct is dropped.
 ///
+/// @par ABI export
+/// Plain aggregate; carries no LIBRESCRS_PUBLIC_API annotation on the
+/// type itself per API-POLICY §6 (Export.h policy on aggregates — type-
+/// level export attribute is meaningful only for classes with vtables /
+/// out-of-line member functions; aggregates carry only field storage).
+///
 /// @since 4.1
-struct LIBRESCRS_PUBLIC_API BacInput
+struct BacInput
 {
     /// @brief Travel document number from the MRZ line 2.
-    /// @since 4.1 (field type tightened from `std::string` to
-    ///        @ref LibreSCRS::Secure::String — 4.1 is the first release
-    ///        that ships @ref BacInput publicly, no consumers were
-    ///        broken).
+    /// @since 4.1
     LibreSCRS::Secure::String documentNumber;
 
     /// @brief Holder's date of birth (YYMMDD).
-    /// @since 4.1 (type tightened — see @ref documentNumber).
+    /// @since 4.1
     LibreSCRS::Secure::String dateOfBirth;
 
     /// @brief Document's date of expiry (YYMMDD).
-    /// @since 4.1 (type tightened — see @ref documentNumber).
+    /// @since 4.1
     LibreSCRS::Secure::String dateOfExpiry;
 };
 

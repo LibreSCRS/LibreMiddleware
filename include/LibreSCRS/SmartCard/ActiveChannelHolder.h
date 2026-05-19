@@ -12,30 +12,29 @@
 ///   - The session's @c sessionMutex is held (per-process serialisation).
 ///   - A PC/SC transaction is held on the underlying reader (cross-process
 ///     atomicity via @c SCardBeginTransaction).
-///   - The active @c ISecureChannel is bound to a specific applet AID; all
-///     APDUs sent via @ref transmit go through it.
+///   - The active secure channel is bound to a specific applet AID; all
+///     APDUs sent through the session-owned secure channel go through it.
 ///
 /// Destruction releases the transaction first (RAII), then the mutex
 /// (RAII). @ref release ends both immediately rather than at scope exit.
 
-#include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Export.h>
 
 #include <memory>
 #include <mutex>
-
-namespace LibreSCRS::SecureChannel {
-class ISecureChannel;
-} // namespace LibreSCRS::SecureChannel
 
 namespace LibreSCRS::SmartCard {
 
 class ActiveChannelHolder;
 class CardSession;
 namespace Internal {
-struct APDUCommand;
-struct APDUResponse;
 class CardTransaction;
+// Forward-decl: defined in the internal-build-guarded header
+// <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>.
+// Befriended on @ref ActiveChannelHolder so LM-internal sources can
+// reach the holder's underlying secure channel without leaking the
+// channel type into the public surface.
+struct HolderChannelAccessor;
 
 ActiveChannelHolder makeActiveChannelHolder(CardSession* session, std::unique_lock<std::mutex> lock,
                                             std::unique_ptr<CardTransaction> tx);
@@ -60,7 +59,7 @@ ActiveChannelHolder makeActiveChannelHolder(CardSession* session, std::unique_lo
 /// auto session = CardSession::open(reader).value();
 /// {
 ///     auto holder = session.activateChannelWithSm(aid, req, tok).value();
-///     // ... use holder.transmit() ...
+///     // ... operate on the session through plugin entry points ...
 /// } // holder destructs here, session still alive
 /// // session destructs here
 /// @endcode
@@ -77,33 +76,8 @@ public:
 
     ~ActiveChannelHolder();
 
-    /// @brief Send a command APDU through the active channel.
-    ///
-    /// After @ref release has been called, returns a sentinel response
-    /// (SW 0x6F00) without touching the card.
-    ///
-    /// @throws std::bad_alloc on out-of-memory while wrapping the APDU
-    ///         (propagated from the underlying
-    ///         @ref LibreSCRS::SecureChannel::ISecureChannel::transmit).
-    ///         All other failure modes surface via the returned
-    ///         @c APDUResponse SW bytes or by the channel transitioning
-    ///         to @ref ChannelState::Failed.
-    [[nodiscard]] LibreSCRS::SmartCard::Internal::APDUResponse
-    transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token);
-
-    /// @brief Pointer to the underlying secure channel, or @c nullptr after
-    ///        @ref release.
-    ///
-    /// Exposed so callers can invoke channel-level mutators (e.g.
-    /// @ref LibreSCRS::SecureChannel::ISecureChannel::replaceKeys after a
-    /// successful Chip Authentication). The returned reference is valid
-    /// only while this holder is alive and active; subsequent
-    /// @ref release calls or destruction invalidate it.
-    [[nodiscard]] LibreSCRS::SecureChannel::ISecureChannel* activeChannel() noexcept;
-
     /// @brief End the PC/SC transaction and release the session mutex
-    ///        before scope exit. Subsequent @ref transmit calls return a
-    ///        sentinel response.
+    ///        before scope exit.
     ///
     /// Does NOT close the underlying secure channel — the channel's SM
     /// keys persist for the next @ref CardSession::activateChannelFor
@@ -132,6 +106,12 @@ private:
     friend ActiveChannelHolder Internal::makeActiveChannelHolder(CardSession* session,
                                                                  std::unique_lock<std::mutex> lock,
                                                                  std::unique_ptr<Internal::CardTransaction> tx);
+
+    // LM-internal access to the holder's underlying secure channel goes
+    // through @ref Internal::HolderChannelAccessor declared in the
+    // internal-build-guarded `ActiveChannelHolderInternal.h`. No public
+    // surface exposes the channel pointer.
+    friend struct Internal::HolderChannelAccessor;
 };
 
 } // namespace LibreSCRS::SmartCard

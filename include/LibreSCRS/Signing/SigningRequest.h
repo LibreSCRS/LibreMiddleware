@@ -172,7 +172,8 @@ public:
     ///        certificate whose @c notAfter is in the past.
     ///
     /// Default @c false: an expired signing certificate aborts the sign
-    /// with @ref SignStatus::SigningError. Callers that have surfaced an
+    /// with @ref LibreSCRS::Signing::SigningResult::Status::SigningEngineError.
+    /// Callers that have surfaced an
     /// explicit warning to the user and obtained acknowledgement may set
     /// this flag to @c true to let the sign proceed. The resulting
     /// signature will still be flagged invalid by standards-compliant
@@ -258,7 +259,8 @@ public:
     ///        @c notAfter is in the past.
     ///
     /// Default behaviour (flag unset / @c false) refuses the sign with
-    /// @ref SignStatus::SigningError. Hosts that surface an explicit
+    /// @ref LibreSCRS::Signing::SigningResult::Status::SigningEngineError.
+    /// Hosts that surface an explicit
     /// expired-cert warning to the user and receive acknowledgement set
     /// this flag to honour that consent.
     /// @since 4.1

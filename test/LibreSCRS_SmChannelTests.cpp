@@ -18,10 +18,11 @@
 ///          and returns SW 6988.
 
 #include <LibreSCRS/CancelToken.h>
-#include <LibreSCRS/SecureChannel/BacChannel.h>
-#include <LibreSCRS/SecureChannel/PaceChannel.h>
-#include <LibreSCRS/SecureChannel/SessionKeys.h>
-#include <LibreSCRS/SecureChannel/detail/ChannelStateMutator.h>
+#include <LibreSCRS/Secure/Buffer.h>
+#include <LibreSCRS_internal/SecureChannel/BacChannel.h>
+#include <LibreSCRS_internal/SecureChannel/PaceChannel.h>
+#include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
+#include <LibreSCRS_internal/SecureChannel/detail/ChannelStateMutator.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
 
 #include "apdu.h"
@@ -53,9 +54,9 @@ AppletAid makeNamEmrtdAid()
 SessionKeys makeFakeAesKeys()
 {
     SessionKeys k;
-    k.encKey = std::vector<std::uint8_t>(16, 0x11);
-    k.macKey = std::vector<std::uint8_t>(16, 0x22);
-    k.ssc = std::vector<std::uint8_t>(16, 0x00);
+    k.encKey = LibreSCRS::Secure::Buffer{16, 0x11};
+    k.macKey = LibreSCRS::Secure::Buffer{16, 0x22};
+    k.ssc = LibreSCRS::Secure::Buffer{16, 0x00};
     k.cipher = SmCipher::Aes;
     return k;
 }
@@ -63,9 +64,9 @@ SessionKeys makeFakeAesKeys()
 SessionKeys makeFakeDes3Keys()
 {
     SessionKeys k;
-    k.encKey = std::vector<std::uint8_t>(16, 0x33);
-    k.macKey = std::vector<std::uint8_t>(16, 0x44);
-    k.ssc = std::vector<std::uint8_t>(8, 0x00);
+    k.encKey = LibreSCRS::Secure::Buffer{16, 0x33};
+    k.macKey = LibreSCRS::Secure::Buffer{16, 0x44};
+    k.ssc = LibreSCRS::Secure::Buffer{8, 0x00};
     k.cipher = SmCipher::Des3;
     return k;
 }
@@ -223,14 +224,14 @@ TEST(PaceEstablishTests, NonPcscConnectionMapsToInternal)
 {
     using LibreSCRS::Auth::PaceSecretKind;
     using LibreSCRS::SecureChannel::ChannelActivationError;
-    using LibreSCRS::SecureChannel::PACEParams;
+    using LibreSCRS::SecureChannel::PaceParams;
 
     FakePCSCConnection fakeConn;
-    PACEParams params;
+    PaceParams params;
     params.oid = "0.4.0.127.0.7.2.2.4.2.4";
     params.passwordType = PaceSecretKind::Can;
     params.password = LibreSCRS::Secure::String{"123456"};
-    params.paramId = 13;
+    params.paramId = LibreSCRS::SecureChannel::PaceStandardisedDomainParam::BrainpoolP256r1;
 
     auto outcome = PaceChannel::establish(fakeConn, params, CancelToken{});
     ASSERT_FALSE(outcome.has_value());
@@ -241,10 +242,10 @@ TEST(PaceEstablishTests, AlreadyCancelledTokenSkipsHandshake)
 {
     using LibreSCRS::Auth::PaceSecretKind;
     using LibreSCRS::SecureChannel::ChannelActivationError;
-    using LibreSCRS::SecureChannel::PACEParams;
+    using LibreSCRS::SecureChannel::PaceParams;
 
     FakePCSCConnection fakeConn;
-    PACEParams params;
+    PaceParams params;
     params.oid = "0.4.0.127.0.7.2.2.4.2.4";
     params.passwordType = PaceSecretKind::Can;
     params.password = LibreSCRS::Secure::String{"123456"};

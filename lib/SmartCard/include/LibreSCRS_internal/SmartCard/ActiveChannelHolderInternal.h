@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#pragma once
-
 #ifndef LIBRESCRS_INTERNAL_BUILD
-#error "This header is internal to LibreMiddleware."
+#error "LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h is internal to LibreMiddleware."
 #endif
+
+#pragma once
 
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
@@ -46,9 +46,29 @@ struct ActiveChannelAccessor
 
     /// @brief Returns a pointer to @p session's currently installed
     ///        @ref LibreSCRS::SecureChannel::ISecureChannel, or @c nullptr
-    ///        if no channel is active. Used by @ref ActiveChannelHolder to
-    ///        expose the channel through @ref ActiveChannelHolder::activeChannel.
+    ///        if no channel is active.
     [[nodiscard]] static LibreSCRS::SecureChannel::ISecureChannel* active(CardSession& session) noexcept;
+};
+
+/// @brief Friend-only access seam reaching a @ref ActiveChannelHolder's
+///        underlying secure channel from LM-internal sources.
+///
+/// The public @ref ActiveChannelHolder surface no longer surfaces the
+/// channel pointer because @ref LibreSCRS::SecureChannel::ISecureChannel
+/// is internal to LibreMiddleware (Path 2 relocation: implementation
+/// headers moved under @c LibreSCRS_internal/). LM-internal callers
+/// (plugin drivers, PKCS#15 provider, Chip-Authentication pipeline) use
+/// this accessor to reach the channel for state mutators routed through
+/// @ref LibreSCRS::SecureChannel::detail::ChannelStateMutator.
+///
+/// @since 4.1
+struct HolderChannelAccessor
+{
+    /// @brief Pointer to @p holder's underlying secure channel, or
+    ///        @c nullptr if the holder has been released or moved-from.
+    ///        The pointer is borrowed; lifetime is tied to the originating
+    ///        @ref CardSession.
+    [[nodiscard]] static LibreSCRS::SecureChannel::ISecureChannel* channel(ActiveChannelHolder& holder) noexcept;
 };
 
 /// @brief Friend-only factory invoked by CardSession to construct a holder

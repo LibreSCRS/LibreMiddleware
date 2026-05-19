@@ -89,16 +89,21 @@ public:
                                 ///< received but no plugin could be probed; surfaces an actionable
                                 ///< "no plugins installed" message rather than the ambiguous
                                 ///< "no plugin matched this card" code path.
+            Cancelled,          ///< @since 4.1. The in-flight read was aborted via cooperative
+                                ///< cancellation (e.g. card removed mid-read, or AutoReaderService
+                                ///< destructor cancelling outstanding work). Distinct from
+                                ///< @ref CardReadFailed — no plugin actually reported failure;
+                                ///< the read simply did not complete and should not be classified
+                                ///< as an I/O error in host UI.
         };
 
         /// @brief Classification of the failure.
         Kind kind = Kind::CardReadFailed;
-        /// @brief Translator-friendly user-facing message. Mandatory in 4.0;
+        /// @brief Translator-friendly user-facing message. Always populated;
         ///        callers without a card-specific message use one of the
         ///        @ref LibreSCRS::Auth::ErrorKeys builders (e.g.
         ///        @ref Auth::ErrorKeys::registryEmpty,
         ///        @ref Auth::ErrorKeys::cardReadFailed).
-        /// @since 4.0 — was @c std::optional<LocalizedText> in 3.x.
         LocalizedText userMessage;
         /// @brief Optional technical detail suitable for logs.
         std::optional<std::string> diagnosticDetail;

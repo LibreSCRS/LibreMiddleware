@@ -24,7 +24,7 @@ namespace LibreSCRS::Auth {
 enum class PaceSecretKind : std::uint8_t {
     /// @brief Card Access Number — short numeric secret printed on the card
     ///        (BSI TR-03110 §2.3, "non-blocking PACE password"). Used by
-    ///        contactless RS eID, GEO CB, NAM CL and other government cards.
+    ///        contactless government eID cards in PACE-protected jurisdictions.
     Can = 0,
     /// @brief Machine Readable Zone subset (document number + date of birth +
     ///        date of expiry) per ICAO Doc 9303 Part 11. Used both as the

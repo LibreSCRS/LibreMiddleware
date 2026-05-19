@@ -41,15 +41,15 @@
 ///        cross the library boundary.
 ///
 /// Expands to:
-///   - `__declspec(dllexport)` on Windows when `LIBRESCRS_BUILDING` is defined
-///     (compiling LibreSCRS's own public library targets);
-///   - `__declspec(dllimport)` on Windows when `LIBRESCRS_BUILDING` is unset
-///     (consumer builds);
 ///   - `__attribute__((visibility("default")))` on GCC/Clang (Linux/macOS) to
 ///     preserve exported symbols when the library is compiled with
 ///     `-fvisibility=hidden` (which public LibreSCRS targets are — see
 ///     `lib/LibreSCRS/CMakeLists.txt`);
 ///   - nothing on unknown toolchains.
+///
+/// Currently supported toolchains: GCC >= 13, Clang >= 16, AppleClang >= 16.
+/// The corresponding MSVC `__declspec(dllexport)`/`dllimport` branch will be
+/// added when Windows support lands (5.x consideration).
 ///
 /// @par When to apply LIBRESCRS_PUBLIC_API
 ///

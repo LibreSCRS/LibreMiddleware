@@ -153,7 +153,8 @@ struct TsaRequest
 /// @par See LibreSCRS::SyncProvider
 /// The invocation, thread-safety, empty-callable, and `CopyConstructible`
 /// contracts are documented once on the generic alias. The signing engine
-/// translates an empty `TsaProvider` to `SigningResult::Status::TsaProviderError`
+/// translates an empty `TsaProvider` to
+/// @ref LibreSCRS::Signing::SigningResult::Status::TsaUnreachable
 /// rather than letting `std::bad_function_call` propagate.
 using TsaProvider = SyncProvider<TsaRequest, TsaContext>;
 

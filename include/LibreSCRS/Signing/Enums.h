@@ -9,16 +9,17 @@
 ///        @ref LibreSCRS::Signing::SignatureLevel, and
 ///        @ref LibreSCRS::Signing::PackagingMode — exposed to the public
 ///        API so consumers never have to include the internal
-///        @c libresign headers.
+///        signing-engine headers.
 /// @since 4.0
 
 #include <cstdint>
 
 namespace LibreSCRS::Signing {
 
-// Deliberately duplicated from libresign::SignatureFormat: the internal
-// enum can grow without breaking the public ABI of LibreSCRS::Signing.
-// ASiC-S intentionally absent — libresign does not support it (backlog item).
+// Deliberately decoupled from the internal signing-engine enum: this
+// public form can grow without breaking the public ABI of
+// LibreSCRS::Signing. ASiC-S intentionally absent — the engine does not
+// support it (backlog item).
 
 /// @brief Advanced electronic signature container format.
 /// @note ASiC-S is intentionally absent; libresign does not currently support

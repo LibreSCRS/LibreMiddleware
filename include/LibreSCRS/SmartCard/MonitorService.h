@@ -47,9 +47,6 @@ struct MonitorEvent
     /// @brief PC/SC reader name the event refers to.
     std::string readerName;
     /// @brief Human-readable error description for @ref Kind::Error events.
-    /// @note Renamed from @c errorDetail in 4.0 for cross-type consistency
-    ///       with @ref LibreSCRS::Signing::SigningResult::diagnosticDetail
-    ///       and @ref LibreSCRS::SmartCard::OpenError::diagnosticDetail.
     std::optional<std::string> diagnosticDetail;
     /// @brief ATR bytes for @ref Kind::CardInserted events, empty otherwise.
     /// Reader-list events (Added/Removed) never carry an ATR.
@@ -76,9 +73,8 @@ struct MonitorEvent
 ///
 /// @par Thread-safety
 /// Thread-safe (see API-POLICY §8). Public methods — @ref subscribe,
-/// @ref unsubscribe, @ref unsubscribeAndDrain, @ref listReaders,
-/// @ref isRunning — may be called concurrently from multiple consumer
-/// threads. Subscriber callbacks are
+/// @ref unsubscribe, @ref listReaders, @ref isRunning — may be called
+/// concurrently from multiple consumer threads. Subscriber callbacks are
 /// invoked on the MonitorService's internal poll thread, never on the caller's
 /// thread; consumers integrating with a GUI toolkit MUST marshal events back
 /// to the UI thread (e.g. `QMetaObject::invokeMethod` with
@@ -117,8 +113,8 @@ public:
     ///
     /// The internal counter value is not part of the public API: the only
     /// operations external code should perform on a `SubscriptionId` are
-    /// pass-through to @ref unsubscribe / @ref unsubscribeAndDrain,
-    /// comparison, and storing in associative containers.
+    /// pass-through to @ref unsubscribe, comparison, and storing in
+    /// associative containers.
     class SubscriptionId
     {
     public:
@@ -220,44 +216,56 @@ public:
     ///       observe their first event delivery, not @ref isRunning.
     [[nodiscard]] SubscriptionId subscribe(EventCallback callback);
 
-    /// @brief Unregister the subscription identified by @p id.
-    /// @note After return, NEW events will not be delivered to this callback.
-    /// @note A dispatch that snapshotted the subscriber set before this call
-    ///       may still invoke the callback once after @ref unsubscribe
-    ///       returns. Callbacks that access resources destroyed shortly
-    ///       afterwards should use @ref unsubscribeAndDrain, weak ownership
-    ///       (e.g. a `weak_ptr` to their state), or an explicit cancellation
-    ///       flag rather than rely on @ref unsubscribe as a barrier.
-    /// @note The last unsubscribe stops the polling thread and blocks until
-    ///       the in-flight PC/SC syscall completes.
-    /// @note Unknown @p id → no-op.
-    void unsubscribe(SubscriptionId id);
+    /// @brief Cancellation policy for in-flight callbacks during unsubscribe.
+    ///
+    /// Selected by @ref unsubscribe's @p policy parameter. The default
+    /// preserves the historical fast-path semantics; pass @ref Drain when
+    /// the callback captures resources whose destruction must outlive any
+    /// outstanding dispatch.
+    ///
+    /// @since 4.1
+    enum class DrainPolicy : std::uint8_t {
+        /// Return immediately; in-flight callbacks for this subscription may
+        /// still fire after unsubscribe returns.
+        FireAndForget = 0,
+        /// Block until every in-flight callback for this subscription has
+        /// returned. Safe to destroy callback captures after the call.
+        Drain = 1,
+    };
 
-    /// @brief Unsubscribe and wait for any in-flight dispatch to this
-    ///        subscription to complete.
-    ///
-    /// Unlike @ref unsubscribe, this call blocks until the poll thread's
-    /// current dispatch cycle (if any) has finished invoking the callback
-    /// for this subscription. After return, the callback is guaranteed
-    /// never to be invoked again.
-    ///
-    /// @note Must not be called from within the callback itself (deadlock).
-    ///       Subscribers whose callback captures a @c this pointer of an
-    ///       object with a non-atomic destructor should use this variant
-    ///       instead of @ref unsubscribe.
-    /// @note The last drain stops the polling thread and blocks until the
-    ///       in-flight PC/SC syscall completes (same as @ref unsubscribe).
-    /// @note Unknown @p id → no-op (returns immediately without waiting).
-    void unsubscribeAndDrain(SubscriptionId id);
+    /// @brief Unregister the subscription identified by @p id.
+    /// @param id Subscription handle obtained from @ref subscribe.
+    /// @param policy Selects whether to wait for in-flight callbacks for
+    ///        this subscription to complete (@ref DrainPolicy::Drain) or
+    ///        return immediately (@ref DrainPolicy::FireAndForget, default).
+    /// @note After return, NEW events will not be delivered to this callback.
+    /// @note With @ref DrainPolicy::FireAndForget, a dispatch that snapshotted
+    ///       the subscriber set before this call may still invoke the callback
+    ///       once after @ref unsubscribe returns. Callbacks that access
+    ///       resources destroyed shortly afterwards should pass
+    ///       @ref DrainPolicy::Drain, use weak ownership (e.g. a `weak_ptr`
+    ///       to their state), or rely on an explicit cancellation flag.
+    /// @note With @ref DrainPolicy::Drain, this call blocks until the poll
+    ///       thread's current dispatch cycle (if any) has finished invoking
+    ///       the callback for this subscription; after return, the callback
+    ///       is guaranteed never to be invoked again. Must not be called from
+    ///       within the callback itself in @ref DrainPolicy::Drain mode
+    ///       (deadlock).
+    /// @note The last unsubscribe stops the polling thread and blocks until
+    ///       the in-flight PC/SC syscall completes (independent of @p policy).
+    /// @note Unknown @p id → no-op.
+    void unsubscribe(SubscriptionId id, DrainPolicy policy = DrainPolicy::FireAndForget) noexcept;
 
     /// @brief True when the polling thread is active.
     /// @note See @ref subscribe note about a brief false window immediately
     ///       after the first subscribe returns.
-    /// @note Not @c noexcept: this method takes an internal mutex and
-    ///       @c std::mutex::lock is permitted to throw @c std::system_error
-    ///       per [thread.req.exception]. In practice POSIX/Win32 mutexes
-    ///       do not fail, but the abstraction allows it.
-    [[nodiscard]] bool isRunning() const;
+    /// @note Returns @c false when the internal mutex cannot be acquired
+    ///       (@c std::mutex::lock may throw @c std::system_error per
+    ///       [thread.req.exception]); the degraded result is documented to
+    ///       preserve the @c noexcept contract per API-POLICY §5.3. POSIX /
+    ///       Win32 mutexes do not fail in practice, but the abstraction
+    ///       allows it.
+    [[nodiscard]] bool isRunning() const noexcept;
 
 private:
     friend class detail::MonitorFactory;

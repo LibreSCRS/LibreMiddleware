@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <LibreSCRS/CancelToken.h>
-#include <LibreSCRS/SecureChannel/PlainChannel.h>
+#include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
 
 #include "apdu.h"

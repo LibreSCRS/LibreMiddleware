@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include <LibreSCRS/SecureChannel/BacChannel.h>
+#include <LibreSCRS_internal/SecureChannel/BacChannel.h>
 
 #include "sm_channel_impl.h"
 
@@ -9,6 +9,10 @@
 #include "smartcard/pcsc_connection.h"
 #include "smartcard/secure_buffer.h"
 
+#include <LibreSCRS/Secure/Buffer.h>
+
+#include <cstdint>
+#include <span>
 #include <string>
 #include <utility>
 
@@ -94,9 +98,12 @@ BacChannel::establish(LibreSCRS::SmartCard::IConnection& connection, LibreSCRS::
         }
 
         SessionKeys publicKeys;
-        publicKeys.encKey = std::move(derived->encKey);
-        publicKeys.macKey = std::move(derived->macKey);
-        publicKeys.ssc = std::move(derived->ssc);
+        // Buffer copies through its cleansing allocator; the source
+        // emrtd::crypto::SessionKeys vectors are cleansed by their own
+        // destructor when `derived` drops at end-of-scope.
+        publicKeys.encKey = LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{derived->encKey}};
+        publicKeys.macKey = LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{derived->macKey}};
+        publicKeys.ssc = LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{derived->ssc}};
         publicKeys.cipher = SmCipher::Des3;
 
         return std::make_unique<BacChannel>(connection, std::move(appletAid), std::move(publicKeys));

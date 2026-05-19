@@ -23,22 +23,20 @@ namespace LibreSCRS::Plugin {
 
 /// @brief Plugin-returned outcome of @ref CardPlugin::readCard.
 ///
-/// @since 4.0 — supersedes the v5 "returns @ref CardData, may throw on I/O
-///              or parse errors" contract. Exceptions crossing a dlopen'd
-///              plugin boundary with a mismatched C++ standard library are
-///              undefined behaviour; the ABI-safe replacement is a status
-///              enum + optional payload. All 4.0 plugin implementations
-///              wrap their internal logic in a catch-all and convert throws
-///              into a @ref ReadResult::communicationError or
-///              @ref ReadResult::parseError outcome at the boundary.
+/// Exceptions crossing a dlopen'd plugin boundary with a mismatched C++
+/// standard library are undefined behaviour; the ABI-safe contract is a
+/// status enum + optional payload. Plugin implementations wrap their
+/// internal logic in a catch-all and convert throws into a
+/// @ref ReadResult::communicationError or @ref ReadResult::parseError
+/// outcome at the boundary.
 ///
 /// Construct via one of the named factories (@ref ok, @ref communicationError,
 /// @ref parseError, @ref unsupportedCard, @ref authenticationFailed) so the
 /// @ref status is guaranteed to be populated. Default construction is deleted
 /// — an "undefined outcome" for a security-sensitive result is a footgun.
 ///
-/// @par 4.0 mandatory userMessage
-/// @ref userMessage is no longer wrapped in @c std::optional. Every factory
+/// @par Mandatory userMessage
+/// @ref userMessage is never wrapped in @c std::optional. Every factory
 /// requires a @ref LibreSCRS::LocalizedText; callers with no card-specific
 /// message pass one of the centralised builders in
 /// @ref LibreSCRS::Auth::ErrorKeys (e.g. @ref Auth::ErrorKeys::genericComm).
@@ -48,15 +46,11 @@ struct ReadResult
 {
     /// @brief Outcome classification for a card-read attempt.
     ///
-    /// @since 4.0 — @ref Cancelled was added to mirror
-    /// @ref LibreSCRS::Signing::SigningResultOutcome::Cancelled (sibling
-    /// surface in @ref LibreSCRS::Plugin::SignResult). Pre-4.0 the
-    /// @ref CardPlugin::readCard wrapper folded user-cancel into
-    /// @ref CommunicationError with a sentinel
-    /// @ref LibreSCRS::Auth::ErrorKeys::cancelled diagnostic; that path
-    /// could not be distinguished from a real I/O fault by callers. The
-    /// dedicated @ref Cancelled value + @ref ReadResult::cancelled factory
-    /// closes the asymmetry.
+    /// @ref Cancelled mirrors the sibling cancellation surface on
+    /// @ref LibreSCRS::Signing::SigningResult::Status::Cancelled so caller-
+    /// driven cancellation is distinguishable from a real I/O fault. The
+    /// @ref LibreSCRS::Auth::ErrorKeys::cancelled diagnostic key remains
+    /// the canonical translator-facing message for this status.
     /// @note Append-only: new status values may be added in future minor
     ///       releases. Consumer @c switch statements must include a
     ///       @c default branch.
@@ -73,10 +67,9 @@ struct ReadResult
     Status status;
     /// @brief Populated iff @ref status is @ref Status::Ok.
     std::optional<CardData> data;
-    /// @brief Translator-friendly user-facing message. Mandatory in 4.0;
+    /// @brief Translator-friendly user-facing message. Always populated;
     ///        callers with no card-specific message pass one of the
     ///        @ref LibreSCRS::Auth::ErrorKeys builders.
-    /// @since 4.0 — was @c std::optional<LocalizedText> in 3.x.
     LocalizedText userMessage;
     /// @brief Optional diagnostic detail for logs / dev-tools.
     ///
@@ -146,13 +139,6 @@ struct ReadResult
     ///        @ref Signing::SigningResult.
     ReadResult() = delete;
 
-    /// @brief Field-wise constructor used by the factories. Public so
-    ///        brace-init inside the factory bodies is expressible; prefer
-    ///        the factories at call sites.
-    ReadResult(Status s, std::optional<CardData> d, LocalizedText msg, std::optional<std::string> diag) noexcept
-        : status(s), data(std::move(d)), userMessage(std::move(msg)), diagnosticDetail(std::move(diag))
-    {}
-
     /// @brief Copy-construct; independent copy of the payload.
     ReadResult(const ReadResult&) = default;
     /// @brief Move-construct; source is left in a valid but unspecified state.
@@ -163,6 +149,16 @@ struct ReadResult
     ReadResult& operator=(ReadResult&&) noexcept = default;
     /// @brief Destructor.
     ~ReadResult() = default;
+
+private:
+    // Field-wise ctor: private so external callers go through the named
+    // factories (@ref ok / @ref communicationError / ... / @ref cancelled)
+    // and the @ref status invariant holds at construction. The factories are
+    // member functions and thus retain access. Per API-POLICY §5.1 — closed
+    // construction surface for plugin-ABI results.
+    ReadResult(Status s, std::optional<CardData> d, LocalizedText msg, std::optional<std::string> diag) noexcept
+        : status(s), data(std::move(d)), userMessage(std::move(msg)), diagnosticDetail(std::move(diag))
+    {}
 };
 
 } // namespace LibreSCRS::Plugin

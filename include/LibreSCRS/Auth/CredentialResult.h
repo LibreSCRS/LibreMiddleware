@@ -22,6 +22,26 @@
 
 namespace LibreSCRS::Auth {
 
+/// @brief Key/value pair carrying a single prompt field.
+///
+/// Named struct + Secure::String value reads cleanly at call sites
+/// (`entry.id` / `entry.value` over `pair.first` / `pair.second`) and
+/// matches API-POLICY §7 on avoiding `std::pair` in public return types.
+/// Constructible via aggregate `{id, value}` or `emplace_back(id, value)`
+/// (C++20 parens-init for aggregates, P0960).
+///
+/// @since 4.1
+struct CredentialEntry
+{
+    /// @brief Field identifier matching the corresponding
+    ///        @ref FieldDescriptor::id from the issuing
+    ///        @ref AuthRequirement. Not secret.
+    std::string id;
+    /// @brief Collected secret value; cleansed when this entry (or the
+    ///        enclosing @ref CredentialResult) goes out of scope.
+    LibreSCRS::Secure::String value;
+};
+
 /// @brief Provider-side return value for a credential prompt.
 ///
 /// Construct via one of the named factories — @ref ok, @ref cancelled, or
@@ -42,8 +62,10 @@ struct CredentialResult
         Error,         ///< Provider-internal failure; @ref userMessage may carry detail.
     };
 
-    /// @brief Key/value pair carrying a single prompt field.
-    using Entry = std::pair<std::string, LibreSCRS::Secure::String>;
+    /// @brief Transitional alias for @ref CredentialEntry (4.1 only;
+    ///        slated for removal in 4.2). New code should use
+    ///        @ref CredentialEntry directly.
+    using Entry = CredentialEntry;
 
     /// @brief Outcome classification. Always set by a factory.
     Status status;
@@ -73,10 +95,6 @@ struct CredentialResult
     ///        every result has a non-empty user-renderable text.
     /// @warning Never include raw secret material in error messages; this
     ///          field is intended for diagnostics, logging, or UI display.
-    /// @since 4.0 — was @c std::optional<LocalizedText> in 3.x.
-    /// @note Renamed from @c errorMessage in 4.0 for cross-type consistency
-    ///       with @ref LibreSCRS::Signing::SigningResult::userMessage and
-    ///       @ref LibreSCRS::SmartCard::OpenError::userMessage.
     LocalizedText userMessage;
 
     /// @brief Locate a credential value by @p key.
@@ -87,9 +105,9 @@ struct CredentialResult
     ///         @ref CredentialResult going out of scope.
     [[nodiscard]] const LibreSCRS::Secure::String* find(std::string_view key) const noexcept
     {
-        for (const auto& [k, v] : values) {
-            if (k == key) {
-                return &v;
+        for (const auto& entry : values) {
+            if (entry.id == key) {
+                return &entry.value;
             }
         }
         return nullptr;
@@ -117,8 +135,6 @@ struct CredentialResult
     /// @param userMessage Translator-friendly user-facing message.
     ///        Pass one of the @ref Auth::ErrorKeys builders if no
     ///        provider-specific text is appropriate.
-    /// @since 4.0 — was @c std::optional<LocalizedText> in 3.x with
-    ///        a default of @c std::nullopt.
     /// @note @c noexcept: moves the already-constructed @p userMessage.
     [[nodiscard]] static CredentialResult error(LocalizedText userMessage) noexcept
     {
@@ -129,13 +145,6 @@ struct CredentialResult
     ///        guarantee @ref status is populated. Security-sensitive default
     ///        "undefined outcome" values are not permitted.
     CredentialResult() = delete;
-
-    /// @brief Field-wise constructor used by the factories. Prefer the
-    ///        factories at call sites; this constructor is public only so
-    ///        `{...}` initialisation inside factories is expressible.
-    CredentialResult(Status s, std::vector<Entry> v, LocalizedText msg) noexcept
-        : status(s), values(std::move(v)), userMessage(std::move(msg))
-    {}
 
     /// @brief Move-construct from @p other.
     CredentialResult(CredentialResult&&) noexcept = default;
@@ -167,6 +176,16 @@ struct CredentialResult
     ///        semantics as the copy ctor.
     CredentialResult& operator=(const CredentialResult&) = default;
     ~CredentialResult() = default;
+
+private:
+    // Field-wise ctor: private so external callers go through the named
+    // factories (@ref ok / @ref cancelled / @ref error) and the @ref status
+    // invariant holds at construction. The factories are member functions
+    // and thus retain access. Per API-POLICY §5.1 — closed construction
+    // surface for security-sensitive results.
+    CredentialResult(Status s, std::vector<Entry> v, LocalizedText msg) noexcept
+        : status(s), values(std::move(v)), userMessage(std::move(msg))
+    {}
 };
 
 } // namespace LibreSCRS::Auth

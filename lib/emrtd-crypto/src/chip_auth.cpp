@@ -5,7 +5,7 @@
 #include "crypto_utils.h"
 
 #include <LibreSCRS/CancelToken.h>
-#include <LibreSCRS/SecureChannel/ISecureChannel.h>
+#include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <apdu.h>
 
 #include <limits>

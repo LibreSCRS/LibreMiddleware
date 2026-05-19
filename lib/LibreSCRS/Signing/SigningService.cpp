@@ -177,8 +177,8 @@ SigningService::operator bool() const noexcept
 }
 
 SigningResult SigningService::sign(const SigningRequest& request, Auth::CredentialProvider credentialProvider,
-                                   std::shared_ptr<LibreSCRS::Plugin::CardPlugin> cardPlugin,
-                                   std::shared_ptr<LibreSCRS::SmartCard::CardSession> session)
+                                   const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,
+                                   const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session)
 {
     // Reject an empty std::function<> provider up front — calling it would throw
     // std::bad_function_call. A signing flow without a way to collect PIN/PUK from
@@ -518,8 +518,8 @@ SigningResult SigningService::sign(const SigningRequest& request, Auth::Credenti
 SigningResult SigningService::appendSigner(const SigningRequest& request, std::span<const std::uint8_t> priorSignature,
                                            std::span<const std::uint8_t> originalDocument,
                                            Auth::CredentialProvider credentialProvider,
-                                           std::shared_ptr<LibreSCRS::Plugin::CardPlugin> cardPlugin,
-                                           std::shared_ptr<LibreSCRS::SmartCard::CardSession> session)
+                                           const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,
+                                           const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session)
 {
     // Same up-front guards as sign(): empty CredentialProvider, null
     // plugin/session, and null TrustStoreService are all InvalidRequest /

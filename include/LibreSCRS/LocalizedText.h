@@ -48,7 +48,7 @@ struct LIBRESCRS_PUBLIC_API Count
 /// `std::variant` index corresponds to the `Type` enum returned by `type()`.
 ///
 /// @code
-///   Placeholder p{.name = "readerName", .value = std::string{"Omnikey 5422"}};
+///   Placeholder p{.name = "readerName", .value = std::string{"PC/SC Reader"}};
 ///   Placeholder n{.name = "count",       .value = Count{3}};
 /// @endcode
 struct LIBRESCRS_PUBLIC_API Placeholder
@@ -84,6 +84,8 @@ struct LIBRESCRS_PUBLIC_API Placeholder
     ///        and consumer-side log fallback).
     /// @details Returns: String → as-is; Int/Count → `std::to_string`; UInt → ditto;
     ///          Hex → uppercase hex bytes joined; Date → ISO 8601 UTC; Bool → "true"/"false".
+    /// @throws std::bad_alloc on allocation failure while building the
+    ///         returned string.
     [[nodiscard]] std::string formatted() const;
 
     /// @brief Value equality (default: `name` and `value`).
@@ -103,7 +105,7 @@ struct LIBRESCRS_PUBLIC_API Placeholder
 ///       .key         = "rs-eid.error.communication",
 ///       .defaultText = "Failed to communicate with reader '{readerName}'.",
 ///       .placeholders = {
-///           {.name = "readerName", .value = std::string{"Omnikey 5422"}},
+///           {.name = "readerName", .value = std::string{"PC/SC Reader"}},
 ///       },
 ///   };
 /// @endcode
@@ -140,9 +142,13 @@ struct LIBRESCRS_PUBLIC_API LocalizedText
     ///   auto rendered   = loctext.interpolate(std::string_view{translated.constData(),
     ///                                                          static_cast<size_t>(translated.size())});
     /// @endcode
+    /// @throws std::bad_alloc on allocation failure while building the
+    ///         returned string.
     [[nodiscard]] std::string interpolate(std::string_view format) const;
 
     /// @brief Convenience: interpolate placeholders into `defaultText`.
+    /// @throws std::bad_alloc on allocation failure (propagated from
+    ///         @ref interpolate).
     [[nodiscard]] std::string formattedDefault() const
     {
         return interpolate(defaultText);
