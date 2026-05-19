@@ -42,7 +42,8 @@ struct LIBRESCRS_PUBLIC_API ObjectIdentifier
 
     /// @brief Construct from a dotted-decimal OID string.
     /// @param oidString dotted-decimal form (e.g. "2.5.4.3"). Stored verbatim.
-    explicit ObjectIdentifier(std::string oidString);
+    /// @note @c noexcept: the body is a single move into the member.
+    explicit ObjectIdentifier(std::string oidString) noexcept;
 
     /// @brief Friendly name for well-known OIDs; empty for unknown.
     /// @note The known-name table is best-effort; callers must not assume

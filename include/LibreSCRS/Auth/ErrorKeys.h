@@ -151,7 +151,7 @@ namespace LibreSCRS::Auth::ErrorKeys {
 /// Distinct from @ref signingEngineError so the GUI can surface a
 /// network/TSA-specific affordance (retry, switch TSA, fall back to a
 /// signature level that doesn't require timestamping).
-/// @since 4.2
+/// @since 4.1
 [[nodiscard]] inline LocalizedText tsaUnreachable()
 {
     return LocalizedText{"librescrs.error.sign.tsa_unreachable", "The timestamp authority server is unreachable.", {}};
@@ -159,7 +159,7 @@ namespace LibreSCRS::Auth::ErrorKeys {
 
 /// @brief Signing failed because the engine could not fetch certificate
 ///        revocation data (CRL / OCSP) required by the signature level.
-/// @since 4.2
+/// @since 4.1
 [[nodiscard]] inline LocalizedText revocationFetchFailed()
 {
     return LocalizedText{
@@ -171,7 +171,7 @@ namespace LibreSCRS::Auth::ErrorKeys {
 ///        and @ref pinBlocked (PUK workflow) — this covers transport
 ///        faults, card-removed-mid-operation, and unexpected SW1/SW2
 ///        responses from the card.
-/// @since 4.2
+/// @since 4.1
 [[nodiscard]] inline LocalizedText cardError()
 {
     return LocalizedText{"librescrs.error.sign.card_error", "Smart card communication error during signing.", {}};
@@ -183,7 +183,7 @@ namespace LibreSCRS::Auth::ErrorKeys {
 /// because the signing-time PIN-verify path may need to surface a different
 /// affordance (e.g. the wizard's retry step rather than the card-open
 /// PIN dialog).
-/// @since 4.2
+/// @since 4.1
 [[nodiscard]] inline LocalizedText pinVerificationFailed()
 {
     return LocalizedText{
@@ -193,7 +193,7 @@ namespace LibreSCRS::Auth::ErrorKeys {
 /// @brief Signing failed because the request was malformed or rejected
 ///        by request validation (e.g. invalid output path, missing
 ///        required fields, unsupported signature level for the input).
-/// @since 4.2
+/// @since 4.1
 [[nodiscard]] inline LocalizedText invalidRequest()
 {
     return LocalizedText{"librescrs.error.sign.invalid_request", "The signing request is invalid.", {}};
@@ -202,7 +202,7 @@ namespace LibreSCRS::Auth::ErrorKeys {
 /// @brief Signing failed because the inputs violate the configured
 ///        signing policy (e.g. expired certificate at a level that
 ///        requires fresh revocation, profile-disallowed algorithm).
-/// @since 4.2
+/// @since 4.1
 [[nodiscard]] inline LocalizedText policyViolation()
 {
     return LocalizedText{

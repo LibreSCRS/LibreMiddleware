@@ -30,5 +30,37 @@ LM_4 {
             *LibreSCRS::*;
         };
     local:
+        /* Strip test-only injection helpers from the dynamic export
+         * set. The `*LibreSCRS::*` global glob above would otherwise
+         * authoritatively override the per-declaration
+         * `LIBRESCRS_INTERNAL` hidden-visibility attribute, leaking
+         * these dlsym-reachable footguns into the production shared
+         * library and defeating the documented runtime hardening of
+         * @ref LibreSCRS::SmartCard::MonitorService::SubscriptionId
+         * (privatised raw-int ctor) and of
+         * @ref LibreSCRS::SmartCard::CardSession's channel install
+         * path.
+         *
+         * Note: the broader `*LibreSCRS::*::detail::*` glob would
+         * also be sound, but it would strip the legitimate
+         * cross-`.so` plugin-reach detail helpers (e.g.
+         * `SecureChannel::detail::ChannelStateMutator`,
+         * `SmartCard::detail::PcscBridge::unwrap`,
+         * `Certificate::detail::lookupOidName`,
+         * `Signing::detail::translatePublicRequestToLibresign`,
+         * `Trust::detail::TrustAnchorProvider`,
+         * `Trust::detail::TrustStoreInternalAccess`,
+         * `SmartCard::detail::sessionGeneration`,
+         * `SmartCard::detail::makeDetachedCardSession`), each of
+         * which is consumed by either a card plugin or a sibling
+         * LibreSCRS_*.so via the DT_NEEDED edge.
+         *
+         * The narrow per-symbol list captures only the three
+         * test-injection footguns that have no plugin-reach use. */
+        extern "C++" {
+            *LibreSCRS::SmartCard::detail::makeMonitorWithProvider*;
+            *LibreSCRS::SmartCard::detail::makeSubscriptionIdForTest*;
+            *LibreSCRS::SmartCard::detail::ChannelInjector::installForTesting*;
+        };
         *;
 };

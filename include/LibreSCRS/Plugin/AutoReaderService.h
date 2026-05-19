@@ -69,9 +69,11 @@ class LIBRESCRS_PUBLIC_API AutoReaderService
 public:
     /// @brief Structured error delivered to the @ref OnError callback.
     ///
-    /// Replaces the earlier free-form `std::string` so hosts can switch on a
-    /// known set of failure modes, carry a translator-friendly user-facing
-    /// message, and keep a separate diagnostic detail for logs.
+    /// Carries a switchable failure-mode discriminator, a translator-friendly
+    /// user-facing message, and a separate diagnostic detail for logs.
+    ///
+    /// @par Thread-safety
+    /// Plain value aggregate; thread-compatible per API-POLICY §8.
     struct AutoReaderError
     {
         /// @brief Failure-mode classification.
@@ -107,6 +109,9 @@ public:
         LocalizedText userMessage;
         /// @brief Optional technical detail suitable for logs.
         std::optional<std::string> diagnosticDetail;
+
+        /// @brief Defaulted member-wise equality.
+        [[nodiscard]] bool operator==(const AutoReaderError&) const noexcept = default;
     };
 
     /// @brief Callback delivering a completed @ref CardData read for a named reader.

@@ -48,8 +48,8 @@ struct FieldDescriptor
     bool secret = true;
     /// @brief Minimum accepted length. @c std::nullopt means "no minimum enforced".
     ///
-    /// The `0` sentinel overload used pre-4.0 is gone — an explicit
-    /// @c std::nullopt is the only way to express "no bound".
+    /// An explicit @c std::nullopt is the only way to express "no bound";
+    /// there is no `0` sentinel overload.
     std::optional<std::size_t> minLength;
     /// @brief Maximum accepted length. @c std::nullopt means "no maximum enforced".
     std::optional<std::size_t> maxLength;

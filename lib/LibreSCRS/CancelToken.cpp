@@ -38,22 +38,22 @@ CancelToken::~CancelToken() = default;
 
 bool CancelToken::isCancelled() const noexcept
 {
-    return pImpl && pImpl->source.stop_requested();
+    return d && d->source.stop_requested();
 }
 
 bool CancelToken::isCancellable() const noexcept
 {
-    return static_cast<bool>(pImpl);
+    return static_cast<bool>(d);
 }
 
 CancelToken::Registration CancelToken::registerCallback(std::function<void()> callback)
 {
     Registration reg;
-    if (!pImpl) {
+    if (!d) {
         return reg; // never-cancellable: no-op handle
     }
     reg.d = std::make_unique<Registration::Impl>();
-    reg.d->callback.emplace(pImpl->source.get_token(), std::move(callback));
+    reg.d->callback.emplace(d->source.get_token(), std::move(callback));
     return reg;
 }
 
@@ -66,7 +66,7 @@ CancelToken::Registration::~Registration() = default;
 
 // ---------- CancelSource ----------
 
-CancelSource::CancelSource() : pImpl(std::make_shared<CancelToken::Impl>()) {}
+CancelSource::CancelSource() : d(std::make_shared<CancelToken::Impl>()) {}
 
 CancelSource::CancelSource(const CancelSource&) noexcept = default;
 CancelSource::CancelSource(CancelSource&&) noexcept = default;
@@ -77,18 +77,18 @@ CancelSource::~CancelSource() = default;
 CancelToken CancelSource::token() const noexcept
 {
     CancelToken t;
-    t.pImpl = pImpl;
+    t.d = d;
     return t;
 }
 
 bool CancelSource::requestCancel() noexcept
 {
-    return pImpl->source.request_stop();
+    return d->source.request_stop();
 }
 
 bool CancelSource::isCancelled() const noexcept
 {
-    return pImpl->source.stop_requested();
+    return d->source.stop_requested();
 }
 
 // detail::stopTokenFrom is defined inline in detail/cancel_bridge.h

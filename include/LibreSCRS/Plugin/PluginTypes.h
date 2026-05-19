@@ -10,6 +10,10 @@
 ///        @ref LibreSCRS::Plugin::PINResult,
 ///        @ref LibreSCRS::Plugin::SignResult, …) shared across plugins
 ///        without depending on @ref LibreSCRS::Plugin::CardPlugin.
+///
+/// @par Thread-safety
+/// All types in this header are plain value aggregates; thread-compatible
+/// per API-POLICY §8.
 
 #include <LibreSCRS/Export.h>
 
@@ -24,37 +28,15 @@ namespace LibreSCRS::Plugin {
 /// @brief Current plugin ABI revision.
 ///
 /// @note Plugin loaders MUST reject any plugin whose `card_plugin_abi_version()`
-///       differs from this value. Bumped from v5 (3.x line) to v6 for the
-///       4.0 major release. The v6 bump consolidates every CardPlugin ABI
-///       change introduced in 4.0: `CardPlugin` identity methods finalised
-///       via `setIdentity` at the base; boolean `supportsPKI()` replaced by
-///       the `CardCapabilities` bitfield; `readCard` + `readCardStreaming`
-///       collapsed into a single method with an optional `GroupCallback`;
-///       `readCard` returns a structured `ReadResult` (status enum + optional
-///       payload) instead of throwing; `canHandleConnection` takes the
-///       already-collected ATR bytes as its first argument so plugins never
-///       re-read; `PINResult` and `SignResult` lose the redundant
-///       `bool success` in favour of `ok()` derived from `outcome`;
-///       `CertificateData` swaps `uint16_t` zero-sentinels for
-///       `std::optional<uint16_t>`; `discoverKeyReferences` returns
-///       `std::vector<KeyReference>`; `setCredentials` and
-///       `clearCredentials` drop the meaningless `const` qualifier;
-///       `SignMechanism` reserves ECDSA-P256/P384/P521 alternatives;
-///       `create_card_plugin` is `noexcept` with a try/catch-to-nullptr
-///       wrapper emitted by `LIBRESCRS_DECLARE_CARD_PLUGIN`;
-///       `LocalizedText` aggregate rewritten to `key`/`defaultText`/typed
-///       `std::vector<Placeholder>` payload; `readCard` and `sign` virtual
-///       NVI overrides take `LibreSCRS::CancelToken` in place of
-///       `std::stop_token`. The v5→v6 bump means the loader rejects any
-///       plugin built against the 3.x ABI at load time.
-inline constexpr uint32_t kCardPluginAbiVersion = 6;
+///       differs from this value. ABI v6 spans the 4.0 + 4.1 cycles.
+inline constexpr std::uint32_t kCardPluginAbiVersion = 6;
 
 /// @brief Capability flags describing what a plugin can do.
 ///
-/// Replaces the v5 boolean `supportsPKI()` with a bitfield that lets callers
-/// ask more specific questions ("does this plugin read identity data?",
-/// "does it implement PIN management?") rather than inferring from a single
-/// PKI summary flag. Composable via `|`; testable via `hasCapability`.
+/// Bitfield letting callers ask specific questions ("does this plugin read
+/// identity data?", "does it implement PIN management?") rather than
+/// inferring from a single summary flag. Composable via `|`; testable via
+/// `hasCapability`.
 ///
 /// Plugins return their flag set from `CardPlugin::capabilities`. Callers
 /// wrap the result with `hasCapability` when checking a specific bit, or
@@ -136,6 +118,12 @@ struct LIBRESCRS_PUBLIC_API Atr
     ///       @ref mask is engaged) yields @c false rather than undefined
     ///       behaviour; see @ref mask for the upstream invariant.
     [[nodiscard]] bool matches(std::span<const std::uint8_t> candidate) const noexcept;
+
+    /// @brief Defaulted exact-equality on (bytes, mask). Distinct from
+    ///        @ref matches: this compares two descriptors for identity,
+    ///        not a descriptor against a candidate ATR.
+    /// @note Provided for test-fixture and container-key uses; per-byte.
+    [[nodiscard]] bool operator==(const Atr&) const noexcept = default;
 };
 
 /// @brief Structured outcome classification for PIN operations.
@@ -152,12 +140,8 @@ enum class PINResultOutcome : std::uint8_t {
 
 /// @brief Result of a PIN verify/change/unblock operation.
 ///
-/// @note The redundant `bool success` field was removed in the 4.0 ABI v6
-///       bump. Use @ref ok to
-///       query the success predicate — it is derived from @ref outcome so
-///       the two fields can never disagree (the pre-4.0 pair was a footgun:
-///       `success == true && outcome == Unspecified` was representable and
-///       meant two different things to different readers).
+/// @note Use @ref ok to query the success predicate — it is derived from
+///       @ref outcome so the two cannot disagree.
 struct PINResult
 {
     /// @brief Card-reported retries remaining; @c std::nullopt when unknown.
@@ -178,8 +162,7 @@ struct PINResult
     /// so call-sites read uniformly across `PINResult` and `SignResult` even
     /// though the underlying enum differs.
     ///
-    /// @since 4.0 — replaces the pre-4.0 `bool success` field. Removing
-    /// the separate flag means `success` and `outcome` can no longer disagree.
+    /// @since 4.0
     [[nodiscard]] bool ok() const noexcept
     {
         return outcome == PINResultOutcome::Ok;
@@ -195,33 +178,31 @@ struct CertificateData
     std::vector<std::uint8_t> derBytes;
     /// @brief File identifier of the matching private key, when known.
     ///
-    /// Empty @c std::optional signals "unknown" — distinct from the 0-valued
-    /// sentinel used in the 3.x ABI. Callers interpret an engaged
-    /// optional as a concrete FID; a disengaged optional means "no private
-    /// key associated" or "plugin cannot determine the FID" and the caller
-    /// should fall back to label-based matching or mark the cert as
-    /// verify-only.
+    /// An engaged optional carries a concrete FID; a disengaged optional
+    /// means "no private key associated" or "plugin cannot determine the
+    /// FID" and the caller should fall back to label-based matching or
+    /// mark the cert as verify-only.
     ///
-    /// @since 4.0 — replaces the `uint16_t keyFID = 0;` sentinel.
+    /// @since 4.0
     std::optional<std::uint16_t> keyFID;
     /// @brief Key size in bits, when known.
     ///
-    /// Empty @c std::optional signals "unknown"; an engaged optional carries
-    /// the bit-length reported by the card (typically 1024 / 2048 / 3072 /
-    /// 4096 for RSA, or 256 / 384 / 521 for ECDSA).
+    /// An engaged optional carries the bit-length reported by the card
+    /// (typically 1024 / 2048 / 3072 / 4096 for RSA, or 256 / 384 / 521
+    /// for ECDSA).
     ///
-    /// @since 4.0 — replaces the `uint16_t keySizeBits = 0;`
-    /// sentinel.
+    /// @since 4.0
     std::optional<std::uint16_t> keySizeBits;
+
+    /// @brief Defaulted member-wise equality.
+    [[nodiscard]] bool operator==(const CertificateData&) const noexcept = default;
 };
 
 /// @brief Discovered on-card key reference paired with a plugin-defined label.
 ///
 /// Returned from @ref CardPlugin::discoverKeyReferences.
 ///
-/// @since 4.0 — replaces
-/// `std::vector<std::pair<std::string, uint16_t>>` so the label and
-/// reference are named rather than positional.
+/// @since 4.0
 struct KeyReference
 {
     /// @brief Plugin-defined label (typically a PKCS#15 CDF label or a
@@ -230,6 +211,9 @@ struct KeyReference
     /// @brief Raw key reference value understood by the plugin's on-card
     ///        signing path.
     std::uint16_t reference = 0;
+
+    /// @brief Defaulted member-wise equality.
+    [[nodiscard]] bool operator==(const KeyReference&) const noexcept = default;
 };
 
 /// @brief Cryptographic mechanism for on-card signing.
@@ -250,11 +234,11 @@ enum class SignMechanism : std::uint8_t {
 
 /// @brief Structured outcome for on-card signing.
 ///
-/// @since 4.0 — added to distinguish "plugin does not implement signing"
-/// from a genuine signing failure. A plugin that advertises
-/// `CardCapabilities::PKI` but forgets to override `CardPlugin::sign`
-/// previously returned an empty @ref LibreSCRS::Plugin::SignResult
-/// indistinguishable from a real card-side failure.
+/// Distinguishes "plugin does not implement signing" from a genuine
+/// signing failure. A plugin that advertises `CardCapabilities::PKI`
+/// but does not override `CardPlugin::sign` returns @ref NotImplemented.
+///
+/// @since 4.0
 enum class SignResultOutcome : std::uint8_t {
     Unspecified,    ///< Default; caller has not classified the outcome.
     Ok,             ///< Signature produced successfully.
@@ -266,15 +250,13 @@ enum class SignResultOutcome : std::uint8_t {
     /// wrapper when the @c token argument reports @c isCancelled() at entry.
     /// PC/SC-backed plugins treat APDU exchange as atomic and do not observe
     /// cancellation mid-operation.
-    /// @since 4.0 — distinct from @ref NotImplemented.
+    /// @since 4.0
     Cancelled,
 };
 
 /// @brief Result of an on-card signing operation.
 ///
-/// @note The redundant `bool success` field was removed in the 4.0 ABI v6
-///       bump. Use @ref ok to
-///       query the success predicate.
+/// @note Use @ref ok to query the success predicate.
 struct SignResult
 {
     /// @brief Raw signature bytes (format depends on `SignMechanism`).
@@ -289,7 +271,7 @@ struct SignResult
     /// @ref PINResult::ok so downstream call-sites read the same across
     /// both types.
     ///
-    /// @since 4.0 — replaces the pre-4.0 `bool success` field.
+    /// @since 4.0
     [[nodiscard]] bool ok() const noexcept
     {
         return outcome == SignResultOutcome::Ok;

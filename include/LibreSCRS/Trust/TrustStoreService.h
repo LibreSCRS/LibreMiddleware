@@ -170,6 +170,8 @@ public:
     /// @note Only enumerates sources from the original @ref TrustConfig.
     /// @par Thread-safety
     /// Reentrant; reads under shared lock.
+    /// @throws std::bad_alloc on allocation failure while building the
+    ///         returned vector.
     /// @since 4.0
     [[nodiscard]] std::vector<std::pair<std::string, SourceStatus>> sourceStatuses() const;
 
@@ -224,6 +226,8 @@ public:
     ///          within a `FetchObserver` invocation on the same service
     ///          — this deadlocks. The implementation provides no runtime
     ///          detection guard.
+    /// @throws std::bad_alloc on allocation failure while copying the
+    ///         observer into internal storage.
     /// @since 4.0
     [[nodiscard]] ObserverHandle addObserver(FetchObserver observer);
 

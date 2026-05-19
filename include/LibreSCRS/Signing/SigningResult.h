@@ -8,6 +8,10 @@
 ///        signing attempt, with named factories for each @ref
 ///        LibreSCRS::Signing::SigningResult::Status value.
 ///
+/// @par Thread-safety
+/// All types in this header are plain value aggregates; thread-compatible
+/// per API-POLICY §8.
+///
 /// @since 4.0
 
 #include <LibreSCRS/Auth/ErrorKeys.h>

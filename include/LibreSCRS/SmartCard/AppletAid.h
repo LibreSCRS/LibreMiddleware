@@ -73,6 +73,7 @@ public:
     }
 
     /// @brief Lower-case hex rendering (no separators). Diagnostic use.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::string toHex() const
     {
         static constexpr char kHex[] = "0123456789abcdef";

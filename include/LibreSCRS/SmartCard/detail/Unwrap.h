@@ -33,11 +33,15 @@ namespace LibreSCRS::SmartCard::detail {
 /// @brief Bridge from public @ref CardSession to the LM-internal
 ///        @c LibreSCRS::SmartCard::Internal::PCSCConnection. LM-internal only.
 ///
-/// @note Exported via @ref LIBRESCRS_PUBLIC_API so card plugins
-/// (libcardedge-plugin.so, libpkcs15-plugin.so, …) — which load at
-/// runtime via dlopen and bind against libLibreSCRS_SmartCard.so — can
-/// resolve the unwrap entry point. The internal-only access contract
-/// is preserved by the @c #error guard above.
+/// @note Exported via @ref LIBRESCRS_PUBLIC_API by design: card plugins
+/// (libpkcs15-plugin.so, libemrtd-plugin.so, …) load at runtime via dlopen
+/// and bind against libLibreSCRS_SmartCard.so, so the unwrap entry point
+/// must be reachable as a dynamic symbol. Do NOT add this symbol to the
+/// version-script local-block in @c cmake/librescrs-public-exports.map —
+/// the cross-`.so` plugin-reach edge depends on it being globally
+/// exported. The internal-only access contract is preserved by the
+/// @c #error guard above (consumers outside @c LIBRESCRS_INTERNAL_BUILD
+/// cannot include this header).
 struct LIBRESCRS_PUBLIC_API PcscBridge
 {
     /// @brief Obtain a mutable reference to the underlying PC/SC connection.

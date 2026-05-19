@@ -57,7 +57,7 @@ class LIBRESCRS_INTERNAL CancelTokenInternalAccess
 public:
     [[nodiscard]] static std::shared_ptr<CancelToken::Impl> impl(const CancelToken& token) noexcept
     {
-        return token.pImpl;
+        return token.d;
     }
 };
 

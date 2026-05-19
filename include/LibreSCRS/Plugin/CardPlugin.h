@@ -65,51 +65,9 @@ namespace LibreSCRS::Plugin {
 /// concurrently — a plugin-scoped map keyed only by a credential label
 /// would corrupt cross-session state.
 ///
-/// @note ABI version is @c 6 (see `kCardPluginAbiVersion`). The v5 → v6
-///       bump is the 4.0 major release; it consolidates every CardPlugin
-///       interface change introduced in 4.0:
-///        - Identity methods finalised at the base (non-virtual accessors
-///          backed by @ref setIdentity).
-///        - @c readCardStreaming collapsed into @ref readCard with an
-///          optional `GroupCallback`; the boolean @c supportsPKI replaced
-///          by the `CardCapabilities` bitfield.
-///        - @ref readCard returns @ref ReadResult (status enum + optional
-///          payload) instead of throwing; @ref canHandleConnection takes
-///          the already-known ATR bytes as its first argument so the
-///          registry does not re-probe.
-///        - @ref setCredentials and @ref clearCredentials drop the
-///          meaningless `const` qualifier (they mutate per-session state).
-///        - @ref discoverKeyReferences returns @c std::vector<KeyReference>
-///          instead of @c std::vector<std::pair<std::string,uint16_t>>.
-///        - @ref PINResult and @ref SignResult lose the redundant
-///          `bool success` field; use `PINResult::ok()` / `SignResult::ok()`.
-///        - @ref CertificateData swaps `uint16_t` zero-sentinels for
-///          @c std::optional<uint16_t> on `keyFID` and `keySizeBits`.
-///        - @c SignMechanism reserves the ECDSA-P256/P384/P521 alternatives.
-///        - Secret material moved to @ref LibreSCRS::Secure::String.
-///        - @ref getPINTriesLeft returns an @c std::optional.
-///       Additive 4.0 changes folded into v6:
-///        - @ref Atr type + pure-virtual @ref supportedAtrs accessor;
-///          the previously-virtual @ref canHandle is now non-virtual final
-///          and derives from the static ATR set.
-///        - NVI pattern on @ref readCard and @ref sign; the virtual override
-///          (@ref doReadCard / @ref doSign) takes a
-///          @ref LibreSCRS::CancelToken.
-///        - @ref ReadResult and @ref SigningResult carry a mandatory
-///          @ref LibreSCRS::LocalizedText @c userMessage. Generic builders
-///          live in @c <LibreSCRS/Auth/ErrorKeys.h>.
-///        - Credential-bearing virtuals (@ref verifyPIN, @ref changePIN,
-///          @ref unblockPIN, @ref setCredentials) constrain their secret
-///          parameters via the
-///          @ref LibreSCRS::Auth::SecretParameter concept; only
-///          @c const @ref Secure::String& satisfies it.
-///        - Per-plugin @c manifest.json drives @ref supportedAtrs,
-///          capabilities, and identity through the @c librescrs_add_plugin
-///          CMake function; the generated @c manifest.h emits namespace-scope
-///          @c kAtrs / @c kPluginId / @c kDisplayName / @c kCapabilities.
-///       The v5→v6 bump means the loader rejects any plugin compiled
-///       against the 3.x ABI at load time, rather than crashing on a torn
-///       vtable.
+/// @note ABI version is @c 6 (see `kCardPluginAbiVersion`); spans the 4.0
+///       + 4.1 cycles. Plugin loaders reject any plugin whose
+///       `card_plugin_abi_version()` differs from this value.
 ///
 /// Method groups:
 ///  - Identification (@ref pluginId, @ref displayName, @ref probePriority) — set via @ref setIdentity
@@ -171,8 +129,7 @@ public:
 
     /// @brief Return the capability flags supported by this plugin.
     ///
-    /// Callers use `hasCapability` to test individual flags. Replaces the
-    /// pre-4.0 boolean `supportsPKI()`.
+    /// Callers use `hasCapability` to test individual flags.
     [[nodiscard]] virtual CardCapabilities capabilities() const = 0;
 
     // -- Card matching -------------------------------------------------------
@@ -555,11 +512,9 @@ public:
     /// not drop the shared_ptr until destruction.
     ///
     /// @par Re-injection
-    /// Hard-disallowed in 4.0 by the @c trustStoreInjected guard. A
-    /// second call returns immediately without re-invoking
-    /// @ref doSetTrustStore — the original injection wins. Plugins
-    /// authored against pre-4.0 prototypes that called @c setTrustStore
-    /// from inside their own ctor bodies are insulated by this guard.
+    /// Hard-disallowed by the @c trustStoreInjected guard. A second call
+    /// returns immediately without re-invoking @ref doSetTrustStore — the
+    /// original injection wins.
     ///
     /// @par Mutability of the underlying store
     /// @since 4.0. The trust store handed in here is **monotonically growing**. The
@@ -693,8 +648,7 @@ static_assert(LibreSCRS::Auth::SecretParameter<decltype(std::declval<const Secur
 // compiler or standard library mismatches.
 //
 // Plugin methods are const with respect to plugin identity and configuration.
-// Session state (mutable) may be cached across calls for performance — e.g.,
-// the OpenSC fallback plugin keeps sc_pkcs15_card_t* alive to avoid expensive
-// re-binding. Callers should batch related operations when possible.
+// Session state (mutable) may be cached across calls for performance.
+// Callers should batch related operations when possible.
 
 } // namespace LibreSCRS::Plugin

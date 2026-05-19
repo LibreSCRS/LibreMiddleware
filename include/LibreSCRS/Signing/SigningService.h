@@ -5,9 +5,9 @@
 
 /// @file
 /// @brief @ref LibreSCRS::Signing::SigningService — the public entry point
-///        for PAdES / XAdES / JAdES signing. Pure DI (@ref
-///        LibreSCRS::Trust::TrustConfig +
-///        @ref LibreSCRS::Signing::TsaProvider in the ctor, per-call
+///        for PAdES / XAdES / JAdES / CAdES / ASiC-E signing. Pure DI
+///        (@ref LibreSCRS::Trust::TrustStoreService (shared, async-owning)
+///        + @ref LibreSCRS::Signing::TsaProvider in the ctor, per-call
 ///        @ref LibreSCRS::Auth::CredentialProvider and @ref
 ///        LibreSCRS::Plugin::CardPlugin dependencies), move-only,
 ///        pimpl-backed.
@@ -51,8 +51,7 @@ namespace LibreSCRS::Signing {
 /// observer methods are reentrant); concurrent @ref sign calls share the
 /// same trust snapshot through @ref Trust::TrustStoreService::trustStore.
 /// No lazy global initialisation occurs in @ref sign — the public-trust
-/// pointer is plumbed via the constructor, eliminating the lazy-init race
-/// the previous TrustConfig-in-ctor design had.
+/// pointer is plumbed via the constructor.
 ///
 /// However, **multiple concurrent `sign()` calls must use distinct
 /// `cardPlugin` and `cardSession` arguments**: the `CardPlugin` /
@@ -130,20 +129,21 @@ public:
     ///                cached secrets) as the sign flow progresses.
     /// @return SigningResult whose @ref SigningResult::status is always set.
     /// @note Returns @ref SigningResult::Status::TrustStoreUnavailable when
-    ///       the libresign backend rejects the TrustConfig supplied at
-    ///       construction (for example, an unreachable Trusted List URL or
-    ///       an unwritable cache directory). Returns
-    ///       @ref SigningResult::Status::InvalidRequest if @p cardPlugin or
-    ///       @p session is null, or @p credentialProvider is empty.
+    ///       the libresign backend rejects the trust configuration vended by
+    ///       the @ref Trust::TrustStoreService supplied at construction (for
+    ///       example, an unreachable Trusted List URL or an unwritable cache
+    ///       directory). Returns @ref SigningResult::Status::InvalidRequest
+    ///       if @p cardPlugin or @p session is null, or
+    ///       @p credentialProvider is empty.
     /// @par Blocking
     /// This call blocks for the duration of the signing operation: PIN
     /// verification + APDU signing on the card (typically 1-3 s), plus
     /// any TSA round-trip for B-T / B-LT / B-LTA levels (typically
     /// 0.5-5 s, network-dependent), plus libresign packaging. GUI hosts
     /// must invoke @ref sign on a worker thread; calling it from the UI
-    /// thread will freeze the UI for several seconds. There is no
-    /// cancellation hook in 4.0 — see the project BACKLOG for the 4.1
-    /// async overload that adds @ref LibreSCRS::CancelToken support.
+    /// thread will freeze the UI for several seconds. A future
+    /// cancellation-aware async overload (@ref LibreSCRS::CancelToken) is
+    /// on the roadmap; the current API is synchronous.
     /// @par XAdES DETACHED Reference URI constraint
     /// When @p request.format selects XAdES with DETACHED packaging, the
     /// emitted `ds:Reference URI` attribute names the original file by
@@ -207,7 +207,7 @@ public:
     /// Same blocking contract as @ref sign — PIN verification + APDU
     /// signing + optional TSA round-trip + packaging. Call on a worker
     /// thread from GUI hosts.
-    /// @since 4.2
+    /// @since 4.1
     [[nodiscard]] SigningResult appendSigner(const SigningRequest& request,
                                              std::span<const std::uint8_t> priorSignature,
                                              std::span<const std::uint8_t> originalDocument,

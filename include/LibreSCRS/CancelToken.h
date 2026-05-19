@@ -110,7 +110,7 @@ private:
     friend class detail::CancelTokenInternalAccess;
 
     class Impl;
-    std::shared_ptr<Impl> pImpl; // nullptr <=> never-cancellable
+    std::shared_ptr<Impl> d; // nullptr <=> never-cancellable
 };
 
 /// @brief RAII handle for a registered cancellation callback.
@@ -169,7 +169,7 @@ public:
     [[nodiscard]] bool isCancelled() const noexcept;
 
 private:
-    std::shared_ptr<CancelToken::Impl> pImpl;
+    std::shared_ptr<CancelToken::Impl> d;
 };
 
 /// @brief Async completion callback. Always invoked on a LibreMiddleware-

@@ -322,31 +322,53 @@ std::vector<std::uint8_t> readCardAccessFromMF(LibreSCRS::SecureChannel::ISecure
 
 } // namespace
 
-void CardSession::setCredentialProvider(LibreSCRS::Auth::CredentialProvider provider)
+void CardSession::setCredentialProvider(LibreSCRS::Auth::CredentialProvider provider) noexcept
 {
-    std::lock_guard lock(d->sessionMutex);
-    d->credentialProvider = std::move(provider);
-}
-
-void CardSession::setPaceSecret(LibreSCRS::Auth::PaceSecretKind kind, LibreSCRS::Secure::String value)
-{
-    std::lock_guard lock(d->sessionMutex);
-    d->paceCredentialsCache[static_cast<std::size_t>(kind)] = std::move(value);
-}
-
-void CardSession::setBacInput(LibreSCRS::SecureChannel::BacInput input)
-{
-    std::lock_guard lock(d->sessionMutex);
-    d->bacInput = std::move(input);
-}
-
-void CardSession::clearCachedPaceCredentials()
-{
-    std::lock_guard lock(d->sessionMutex);
-    for (auto& slot : d->paceCredentialsCache) {
-        slot = LibreSCRS::Secure::String{};
+    try {
+        std::lock_guard lock(d->sessionMutex);
+        d->credentialProvider = std::move(provider);
+    } catch (...) {
+        // noexcept contract: degraded no-op on lock or allocation failure.
+        // The previously installed provider (if any) remains active; the
+        // next channel-activation pass falls through to it.
     }
-    d->bacInput.reset();
+}
+
+void CardSession::setPaceSecret(LibreSCRS::Auth::PaceSecretKind kind, LibreSCRS::Secure::String value) noexcept
+{
+    try {
+        std::lock_guard lock(d->sessionMutex);
+        d->paceCredentialsCache[static_cast<std::size_t>(kind)] = std::move(value);
+    } catch (...) {
+        // noexcept contract: degraded no-op on lock or allocation failure.
+        // The cache slot retains its previous content; the next activation
+        // pass falls through to the credential provider.
+    }
+}
+
+void CardSession::setBacInput(LibreSCRS::SecureChannel::BacInput input) noexcept
+{
+    try {
+        std::lock_guard lock(d->sessionMutex);
+        d->bacInput = std::move(input);
+    } catch (...) {
+        // noexcept contract: degraded no-op on lock or allocation failure.
+    }
+}
+
+void CardSession::clearCachedPaceCredentials() noexcept
+{
+    try {
+        std::lock_guard lock(d->sessionMutex);
+        for (auto& slot : d->paceCredentialsCache) {
+            slot = LibreSCRS::Secure::String{};
+        }
+        d->bacInput.reset();
+    } catch (...) {
+        // noexcept contract: degraded no-op on lock failure. The cache
+        // body is an in-place zeroise that does not itself allocate;
+        // only mutex acquisition can throw.
+    }
 }
 
 void CardSession::markDead() noexcept
@@ -357,12 +379,9 @@ void CardSession::markDead() noexcept
     // until the session is destructed, which can be many minutes for a
     // GUI app sitting on an empty reader prompt. clearCachedPaceCredentials
     // takes the session mutex internally and zeroes both
-    // paceCredentialsCache[] (Secure::String slots) and bacInput.
-    try {
-        clearCachedPaceCredentials();
-    } catch (...) {
-        // Cleansing must not throw; defensively swallow to honour noexcept.
-    }
+    // paceCredentialsCache[] (Secure::String slots) and bacInput; itself
+    // marked noexcept under the same noexcept-alloc contract.
+    clearCachedPaceCredentials();
 }
 
 bool CardSession::isDead() const noexcept

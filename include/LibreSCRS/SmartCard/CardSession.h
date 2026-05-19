@@ -245,8 +245,13 @@ public:
     /// safely call back into the same @ref CardSession instance
     /// (e.g. @ref setPaceSecret, @ref setBacInput) without
     /// self-deadlocking on the non-recursive @c sessionMutex.
+    /// @par noexcept contract
+    /// Marked @c noexcept per the noexcept-alloc rule (API-POLICY §8): the
+    /// body is wrapped in a top-level try/catch that returns a degraded
+    /// no-op on lock or allocation failure (subsequent channel activations
+    /// then fall through to the previously installed provider, if any).
     /// @since 4.1
-    void setCredentialProvider(LibreSCRS::Auth::CredentialProvider provider);
+    void setCredentialProvider(LibreSCRS::Auth::CredentialProvider provider) noexcept;
 
     /// @brief Activate the named applet under a plain (no-SM) channel.
     ///
@@ -289,23 +294,38 @@ public:
     ///        Used by the PKCS#11 module after parsing the host-supplied
     ///        "CAN:PIN" string, and by plugins that have already collected
     ///        the secret out-of-band.
+    /// @par noexcept contract
+    /// Marked @c noexcept per the noexcept-alloc rule (API-POLICY §8): the
+    /// body is wrapped in a top-level try/catch that returns a degraded
+    /// no-op (cache left unchanged) on lock or allocation failure; the
+    /// next channel-activation pass then falls through to the credential
+    /// provider.
     /// @since 4.1
-    void setPaceSecret(LibreSCRS::Auth::PaceSecretKind kind, LibreSCRS::Secure::String value);
+    void setPaceSecret(LibreSCRS::Auth::PaceSecretKind kind, LibreSCRS::Secure::String value) noexcept;
 
     /// @brief Pre-populate the BAC handshake inputs (document number, dates
     ///        of birth + expiry from the MRZ-Z line). BAC consumes a
     ///        dedicated cache slot disjoint from the PACE credentials cache
     ///        because the three MRZ components are structurally a tuple
     ///        rather than a single shared secret.
+    /// @par noexcept contract
+    /// Marked @c noexcept per the noexcept-alloc rule (API-POLICY §8): the
+    /// body is wrapped in a top-level try/catch that returns a degraded
+    /// no-op (cache left unchanged) on lock or allocation failure.
     /// @since 4.1
-    void setBacInput(LibreSCRS::SecureChannel::BacInput input);
+    void setBacInput(LibreSCRS::SecureChannel::BacInput input) noexcept;
 
     /// @brief Wipe all cached PACE credentials and the BAC input. Each PACE
     ///        slot is replaced with a default-constructed @c Secure::String,
     ///        which zeroises its underlying buffer; the BAC input is reset
     ///        to a default-constructed value.
+    /// @par noexcept contract
+    /// Marked @c noexcept per the noexcept-alloc rule (API-POLICY §8): the
+    /// body is wrapped in a top-level try/catch that returns a degraded
+    /// no-op on lock acquisition failure. The reset itself is an in-place
+    /// zeroise that does not allocate.
     /// @since 4.1
-    void clearCachedPaceCredentials();
+    void clearCachedPaceCredentials() noexcept;
 
     /// @brief Mark the session dead. Invoked by @c AutoReaderService on
     ///        a @c CardRemoved event; subsequent activation attempts
@@ -345,10 +365,11 @@ private:
     friend struct detail::ChannelInjector;
     friend struct Internal::ActiveChannelAccessor;
 
+    /// @brief Private; used by @ref detail::makeDetachedCardSession and the
+    ///        move-from path.
     CardSession();
     /// @brief Private constructor used by @ref open and the detail factories.
-    ///        Not part of the public surface: the throwing shape was
-    ///        replaced by the noexcept factory in 4.0.
+    ///        Not part of the public surface.
     explicit CardSession(std::string readerName);
 
     struct Impl;

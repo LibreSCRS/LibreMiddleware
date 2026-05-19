@@ -73,7 +73,7 @@ private:
     bool active = false;
 };
 
-ActiveChannelHolder::ActiveChannelHolder(std::unique_ptr<Impl> impl) noexcept : pImpl(std::move(impl)) {}
+ActiveChannelHolder::ActiveChannelHolder(std::unique_ptr<Impl> impl) noexcept : d(std::move(impl)) {}
 
 ActiveChannelHolder::ActiveChannelHolder(ActiveChannelHolder&&) noexcept = default;
 ActiveChannelHolder& ActiveChannelHolder::operator=(ActiveChannelHolder&&) noexcept = default;
@@ -81,14 +81,14 @@ ActiveChannelHolder::~ActiveChannelHolder() = default;
 
 void ActiveChannelHolder::release() noexcept
 {
-    if (pImpl) {
-        pImpl->release();
+    if (d) {
+        d->release();
     }
 }
 
 bool ActiveChannelHolder::isActive() const noexcept
 {
-    return pImpl && pImpl->isActive();
+    return d && d->isActive();
 }
 
 namespace Internal {
@@ -102,10 +102,10 @@ ActiveChannelHolder makeActiveChannelHolder(CardSession* session, std::unique_lo
 
 LibreSCRS::SecureChannel::ISecureChannel* HolderChannelAccessor::channel(ActiveChannelHolder& holder) noexcept
 {
-    if (!holder.pImpl || !holder.pImpl->isActive()) {
+    if (!holder.d || !holder.d->isActive()) {
         return nullptr;
     }
-    return holder.pImpl->activeChannel();
+    return holder.d->activeChannel();
 }
 
 } // namespace Internal

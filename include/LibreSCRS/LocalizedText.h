@@ -33,9 +33,10 @@ namespace LibreSCRS {
 /// @brief Strongly-typed wrapper around a plural-agreement count.
 /// @details Used as `Placeholder::value` payload at variant index 5
 ///          (`Type::Count`) so consumers can apply their host language's
-///          plural rule. Kept distinct from raw `std::int64_t` (which lives at
-///          variant index 1, `Type::Int`) so the variant discriminator
-///          remains reachable. Aggregate-init: `Count{3}`, `Count{n}`.
+///          plural rule. Carries an `int64_t` payload but is a distinct
+///          type from raw `std::int64_t` (which lives at variant index 1,
+///          `Type::Int`) so the variant discriminator remains reachable.
+///          Aggregate-init: `Count{3}`, `Count{n}`.
 struct LIBRESCRS_PUBLIC_API Count
 {
     std::int64_t value;

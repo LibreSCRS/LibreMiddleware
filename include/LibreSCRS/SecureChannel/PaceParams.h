@@ -97,6 +97,7 @@ struct PaceSecurityInfo
     ///        advertised by the card for @ref oid.
     PaceStandardisedDomainParam paramId;
 
+    /// @since 4.1
     [[nodiscard]] bool operator==(const PaceSecurityInfo&) const noexcept = default;
 };
 

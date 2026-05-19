@@ -7,6 +7,11 @@
 /// @brief @ref LibreSCRS::Auth::CredentialResult — secret-carrying outcome
 ///        of a @ref LibreSCRS::Auth::CredentialProvider callback, keyed by
 ///        @ref LibreSCRS::Auth::FieldDescriptor::id.
+///
+/// @par Thread-safety
+/// All types in this header are plain value aggregates; thread-compatible
+/// per API-POLICY §8. Embedded @ref LibreSCRS::Secure::String values carry
+/// their own thread-compatibility contract.
 
 #include <LibreSCRS/Auth/ErrorKeys.h>
 #include <LibreSCRS/LocalizedText.h>
@@ -40,6 +45,11 @@ struct CredentialEntry
     /// @brief Collected secret value; cleansed when this entry (or the
     ///        enclosing @ref CredentialResult) goes out of scope.
     LibreSCRS::Secure::String value;
+
+    /// @brief Defaulted byte-identity equality; per-member.
+    /// @note `Secure::String::operator==` is byte-wise NOT constant-time —
+    ///       see its docs for the side-channel discussion.
+    [[nodiscard]] bool operator==(const CredentialEntry&) const noexcept = default;
 };
 
 /// @brief Provider-side return value for a credential prompt.
@@ -88,7 +98,7 @@ struct CredentialResult
     /// a `QString` or `std::string` source remain responsible for cleansing
     /// their own copy — the constructor only cleanses storage owned by the
     /// @ref LibreSCRS::Secure::String itself.
-    std::vector<Entry> values;
+    std::vector<CredentialEntry> values;
     /// @brief Translator-friendly user-facing message. Mandatory in 4.0;
     ///        the @ref ok and @ref cancelled factories substitute generic
     ///        success / cancelled messages from @ref Auth::ErrorKeys, so
@@ -118,7 +128,7 @@ struct CredentialResult
     ///       guarantees @ref status is set to @ref Status::Ok.
     /// @note @c noexcept: body only moves already-constructed inputs into a
     ///       locally-initialised aggregate. Per API-POLICY §5.3.
-    [[nodiscard]] static CredentialResult ok(std::vector<Entry> values) noexcept
+    [[nodiscard]] static CredentialResult ok(std::vector<CredentialEntry> values) noexcept
     {
         return CredentialResult{Status::Ok, std::move(values), Auth::ErrorKeys::credentialsCollected()};
     }
@@ -183,7 +193,7 @@ private:
     // invariant holds at construction. The factories are member functions
     // and thus retain access. Per API-POLICY §5.1 — closed construction
     // surface for security-sensitive results.
-    CredentialResult(Status s, std::vector<Entry> v, LocalizedText msg) noexcept
+    CredentialResult(Status s, std::vector<CredentialEntry> v, LocalizedText msg) noexcept
         : status(s), values(std::move(v)), userMessage(std::move(msg))
     {}
 };

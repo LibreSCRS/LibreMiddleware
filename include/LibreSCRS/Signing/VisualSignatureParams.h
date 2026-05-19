@@ -32,11 +32,10 @@ struct Rect
 /// @brief Default annotation rectangle used when no explicit
 ///        @ref LibreSCRS::Signing::VisualSignatureParams::Builder::rect call is made.
 ///
-/// 200x50 at the origin (0,0) — a widely compatible bottom-left placement
-/// that matches the pre-4.0 engine default. Exposed so host code and tests
-/// can reference "the default" by name instead of duplicating the numeric
-/// literal.
-/// @since 4.0.
+/// 200x50 at the origin (0,0) — a widely compatible bottom-left placement.
+/// Exposed so host code and tests can reference "the default" by name
+/// instead of duplicating the numeric literal.
+/// @since 4.0
 inline constexpr Rect kDefaultVisualSignatureRect{0, 0, 200, 50};
 
 /// @brief Visual-appearance parameters for a PAdES signature annotation.

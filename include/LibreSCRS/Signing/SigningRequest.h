@@ -135,8 +135,8 @@ public:
     /// @note Copying a @c std::optional<VisualSignatureParams> may allocate
     ///       for the nested pimpl; the method is therefore NOT marked
     ///       @c noexcept even though it is a pure accessor — the exception
-    ///       exception in API-POLICY §5.3 for accessors that return by
-    ///       value applies here.
+    ///       in API-POLICY §5.3 for accessors that return by value applies
+    ///       here.
     [[nodiscard]] std::optional<VisualSignatureParams> visualParams() const;
 
     /// @brief Per-request TSA provider override, or empty std::function if

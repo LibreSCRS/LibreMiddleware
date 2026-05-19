@@ -18,12 +18,11 @@ namespace LibreSCRS::Signing {
 
 // Deliberately decoupled from the internal signing-engine enum: this
 // public form can grow without breaking the public ABI of
-// LibreSCRS::Signing. ASiC-S intentionally absent — the engine does not
-// support it (backlog item).
+// LibreSCRS::Signing. ASiC-S is not currently supported by the signing
+// engine.
 
 /// @brief Advanced electronic signature container format.
-/// @note ASiC-S is intentionally absent; libresign does not currently support
-///       it (tracked as a backlog item).
+/// @note ASiC-S is not currently supported by the signing engine.
 enum class SignatureFormat : std::uint8_t {
     Pades, ///< PDF Advanced Electronic Signature.
     Cades, ///< CMS Advanced Electronic Signature.
@@ -41,8 +40,7 @@ enum class SignatureLevel : std::uint8_t {
 };
 
 /// @brief How the signature is packaged relative to the signed payload.
-/// @note "Enveloping" is intentionally absent; libresign does not currently
-///       support it (tracked as a backlog item).
+/// @note "Enveloping" is not currently supported by the signing engine.
 enum class PackagingMode : std::uint8_t {
     Enveloped, ///< Signature embedded inside the signed document.
     Detached,  ///< Signature stored separately from the payload.

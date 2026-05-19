@@ -5,6 +5,7 @@
 
 /// @file
 /// @brief Export and visibility macros for the LibreSCRS public API.
+/// @since 4.0
 ///
 /// Defines two complementary macros:
 ///
@@ -104,15 +105,10 @@
 /// @brief Deprecation-marker macro. Expands to @c [[deprecated(msg)]] on
 ///        standard-C++14+ toolchains and to nothing on unknown compilers.
 ///
-/// 4.0 ships with zero deprecated symbols by design — the hardening break
-/// removes prior overloads outright rather than annotating them for later
-/// removal. The macro nevertheless exists because the LibreSCRS API policy
-/// (see `LibreSCRS.github.io/dev/api-policy` §3) commits to a deprecation
-/// cadence for subsequent minor releases: additions and removals both run
-/// through the policy's pre-announce window, and this macro is the canonical
-/// expression of that pre-announce marker. Expect first use in 4.1 or later;
-/// application in 4.0 is limited to tooling / test fixtures that exercise
-/// the macro's presence.
+/// The LibreSCRS API policy (see `LibreSCRS.github.io/dev/api-policy` §3)
+/// commits to a deprecation cadence: additions and removals both run
+/// through a pre-announce window, and this macro is the canonical
+/// expression of that pre-announce marker.
 #if defined(__cplusplus) && __cplusplus >= 201402L
 #define LIBRESCRS_DEPRECATED(msg) [[deprecated(msg)]]
 #else

@@ -6,6 +6,11 @@
 /// @file
 /// @brief @ref LibreSCRS::Plugin::PinStatusEntry — per-PIN state record
 ///        returned by @ref LibreSCRS::Plugin::CardPlugin::getPINList.
+///
+/// @par Thread-safety
+/// All types in this header are plain value aggregates; thread-compatible
+/// per API-POLICY §8.
+///
 /// @since 4.0
 
 #include <LibreSCRS/LocalizedText.h>
@@ -41,12 +46,11 @@ struct PinStatusEntry
     std::optional<std::size_t> maxLength;
     /// @brief True when the PIN value is user-changeable.
     ///
-    /// Conservative default: `false`. A plugin that does support PIN change
-    /// MUST set this explicitly. The inverted default (was `true` pre-4.0)
-    /// prevented a future plugin that forgets to populate the flag from
-    /// accidentally advertising a change capability it does not implement —
-    /// a @ref CardPlugin::changePIN call against such a plugin would then
-    /// reach the card layer and fail at protocol time instead of being
+    /// Conservative default: `false`. A plugin that supports PIN change
+    /// MUST set this explicitly so a plugin that forgets to populate the
+    /// flag does not accidentally advertise a change capability it does
+    /// not implement — a @ref CardPlugin::changePIN call would then reach
+    /// the card layer and fail at protocol time rather than being
     /// short-circuited by the host UI.
     bool canChange = false;
 
@@ -54,6 +58,9 @@ struct PinStatusEntry
     bool unblockable = false;
     /// @brief Optional message displayed when @ref blocked is true and unblock is unavailable.
     std::optional<LocalizedText> blockedGuidance;
+
+    /// @brief Defaulted member-wise equality.
+    [[nodiscard]] bool operator==(const PinStatusEntry&) const noexcept = default;
 };
 
 } // namespace LibreSCRS::Plugin

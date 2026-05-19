@@ -222,10 +222,13 @@ public:
 
     // Identity
     /// @brief Subject Distinguished Name.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] DistinguishedName subject() const;
     /// @brief Issuer Distinguished Name.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] DistinguishedName issuer() const;
     /// @brief Big-endian serial number bytes (sign bit included per ASN.1 INTEGER).
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::vector<std::uint8_t> serialNumber() const;
     /// @brief X.509 version number (typically 3 for v3, 1 for v1).
     [[nodiscard]] int version() const;
@@ -238,27 +241,35 @@ public:
 
     // Signature
     /// @brief OID of the signature algorithm used to sign the certificate.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] ObjectIdentifier signatureAlgorithmOid() const;
     /// @brief Human-readable signature algorithm description (e.g. "sha256WithRSAEncryption").
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::string signatureAlgorithmDescription() const;
     /// @brief Raw signature value bytes from the certificate.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::vector<std::uint8_t> signatureValue() const;
 
     // Public key
     /// @brief Parsed SubjectPublicKeyInfo (algorithm + bit length + curve).
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] PublicKeyInfo publicKey() const;
 
     // Typed extension accessors — return std::nullopt when extension absent
     // or malformed.
     /// @brief KeyUsage bits (RFC 5280 §4.2.1.3); `std::nullopt` if extension
     ///        absent or malformed.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::optional<std::vector<KeyUsageBit>> keyUsage() const;
     /// @brief ExtendedKeyUsage OIDs (RFC 5280 §4.2.1.12); `std::nullopt` if
     ///        absent or malformed.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::optional<std::vector<ObjectIdentifier>> extendedKeyUsage() const;
     /// @brief SubjectAltName GeneralNames; `std::nullopt` if absent or malformed.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::optional<std::vector<GeneralName>> subjectAlternativeNames() const;
     /// @brief IssuerAltName GeneralNames; `std::nullopt` if absent or malformed.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::optional<std::vector<GeneralName>> issuerAlternativeNames() const;
 
     /// @brief BasicConstraints extension (RFC 5280 §4.2.1.9) decoded form.
@@ -274,22 +285,30 @@ public:
     [[nodiscard]] std::optional<BasicConstraints> basicConstraints() const;
 
     /// @brief AuthorityKeyIdentifier keyIdentifier bytes; `std::nullopt` if absent.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> authorityKeyIdentifier() const;
     /// @brief SubjectKeyIdentifier bytes; `std::nullopt` if absent.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> subjectKeyIdentifier() const;
     /// @brief CRL DistributionPoint URI strings; `std::nullopt` if absent.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::optional<std::vector<std::string>> crlDistributionPoints() const;
     /// @brief AIA OCSP responder URI strings; `std::nullopt` if absent.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::optional<std::vector<std::string>> ocspResponderUrls() const;
     /// @brief AIA caIssuers URI strings; `std::nullopt` if absent.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::optional<std::vector<std::string>> caIssuersUrls() const;
     /// @brief CertificatePolicy OIDs; `std::nullopt` if absent.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::optional<std::vector<ObjectIdentifier>> certificatePolicies() const;
 
     // Generic extension access (covers all extensions, known or unknown).
     /// @brief All extensions in the order they appear in the certificate.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::vector<Extension> extensions() const;
     /// @brief Find a single extension by OID; first match wins.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::optional<Extension> findExtension(const ObjectIdentifier& oid) const;
 
     // Raw access

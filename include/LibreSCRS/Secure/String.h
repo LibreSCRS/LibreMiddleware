@@ -87,11 +87,13 @@ public:
 
     /// @brief Copy @p s into the string's storage.
     /// @note The caller's @p s is not cleansed by this constructor.
+    /// @throws std::bad_alloc on allocation failure.
     explicit String(std::string_view s);
 
     /// @brief Copy the null-terminated @p s into the string's storage.
     /// @param s Must be a valid null-terminated C string (not nullptr).
     /// @note The caller's @p s is not cleansed by this constructor.
+    /// @throws std::bad_alloc on allocation failure.
     explicit String(const char* s);
 
     /// @brief Adopt-and-cleanse from an rvalue @c std::string.
@@ -113,6 +115,9 @@ public:
     /// semantics); allocations cannot be moved between allocator domains, so
     /// this constructor copies bytes rather than transferring ownership of
     /// @p src's allocation.
+    /// @throws std::bad_alloc on allocation failure during the internal
+    ///         copy; @p src is still zeroised before propagation (see body
+    ///         description above).
     /// @since 4.0
     explicit String(std::string&& src);
 
@@ -121,11 +126,13 @@ public:
 
     /// @brief Copy-construct; @p other is not modified. This String owns a
     ///        separate, independently-cleansed storage block.
+    /// @throws std::bad_alloc on allocation failure.
     String(const String& other);
 
     /// @brief Copy-assign. This String's current storage is cleansed before
     ///        adopting a copy of @p other. After return, @p other is
     ///        unchanged and this String holds a separate cleansed block.
+    /// @throws std::bad_alloc on allocation failure.
     String& operator=(const String& other);
 
     /// @brief Move-construct; @p other is left empty (size() == 0).
@@ -144,7 +151,7 @@ public:
     /// — which remains well-defined on both unallocated and moved-from
     /// instances. Like the other accessors on this type, @ref empty,
     /// @ref size, @ref view and @ref clear are all null-safe.
-    /// @since 4.0.
+    /// @since 4.0
     explicit operator bool() const noexcept;
 
     /// @brief True when size() == 0.

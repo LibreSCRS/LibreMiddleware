@@ -8,6 +8,10 @@
 ///        @ref LibreSCRS::Plugin::CardPlugin::readCard, with named
 ///        factories for every @ref LibreSCRS::Plugin::ReadResult::Status
 ///        value so plugin ABI boundaries never see a raw exception.
+///
+/// @par Thread-safety
+/// All types in this header are plain value aggregates; thread-compatible
+/// per API-POLICY §8.
 
 #include <LibreSCRS/Auth/ErrorKeys.h>
 #include <LibreSCRS/Export.h>

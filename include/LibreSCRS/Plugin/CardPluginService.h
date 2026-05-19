@@ -36,9 +36,6 @@ namespace LibreSCRS::Plugin {
 /// returns the full list; callers iterate it to surface plugin-loading
 /// issues to users or logs instead of silently observing an empty registry.
 ///
-/// @note This type replaces the silent `size_t`-only return value of the
-///       removed `loadPluginsFromDirectory` setter — the 4.0 API exposes
-///       structured load diagnostics instead of a single count.
 struct LoadOutcome
 {
     /// @brief Absolute path to the plugin `.so` / `.dylib` that was probed.
@@ -72,6 +69,9 @@ struct LoadOutcome
     /// Example values: `dlerror()` text on `DlopenFailed`, "expected ABI N
     /// got M" on `AbiMismatch`.
     std::string diagnostic;
+
+    /// @brief Defaulted member-wise equality.
+    [[nodiscard]] bool operator==(const LoadOutcome&) const noexcept = default;
 };
 
 /// @brief Loads card-plugin `.so` files from one or more directories on
@@ -101,8 +101,8 @@ struct LoadOutcome
 /// `std::vector<std::shared_ptr<CardPlugin>>`. The shared_ptr's custom
 /// deleter runs the plugin's virtual destructor and then calls `dlclose`
 /// on the handle, so the underlying SO stays mapped at least until the
-/// last external reference is dropped — this eliminates the "registry
-/// owns, callers alias with a no-op-deleter" footgun that v5 forced at the
+/// last external reference is dropped — shared ownership eliminates the
+/// "registry owns, callers alias with a no-op-deleter" footgun at the
 /// @ref LibreSCRS::Signing::SigningService::sign seam.
 class LIBRESCRS_PUBLIC_API CardPluginService
 {
@@ -223,9 +223,9 @@ public:
     /// caller may wish to surface a diagnostic instead of treating
     /// "no matching plugin for this ATR" as the explanation.
     ///
-    /// @par Thread-safety thread-safe.
-    /// Pure read of the immutable post-construction snapshot; no locking
-    /// required.
+    /// @par Thread-safety
+    /// Thread-safe. Pure read of the immutable post-construction snapshot;
+    /// no locking required.
     /// @since 4.0
     [[nodiscard]] bool isUsable() const noexcept;
 

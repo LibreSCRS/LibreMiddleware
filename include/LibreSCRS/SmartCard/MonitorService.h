@@ -48,8 +48,9 @@ struct MonitorEvent
     std::string readerName;
     /// @brief Human-readable error description for @ref Kind::Error events.
     std::optional<std::string> diagnosticDetail;
-    /// @brief ATR bytes for @ref Kind::CardInserted events, empty otherwise.
-    /// Reader-list events (Added/Removed) never carry an ATR.
+    /// @brief ATR bytes for @ref Kind::CardInserted events; @c std::nullopt
+    ///        on every other @ref Kind value (@ref ReaderAdded,
+    ///        @ref ReaderRemoved, @ref CardRemoved, @ref Error).
     std::optional<std::vector<std::uint8_t>> atr;
 };
 

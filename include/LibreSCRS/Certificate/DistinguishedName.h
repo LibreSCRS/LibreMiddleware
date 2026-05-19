@@ -54,18 +54,25 @@ struct LIBRESCRS_PUBLIC_API DistinguishedName
     std::vector<DistinguishedNameComponent> components;
 
     /// @brief First commonName (CN) attribute, or empty.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::string commonName() const;
     /// @brief First organization (O) attribute, or empty.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::string organization() const;
     /// @brief First organizationalUnit (OU) attribute, or empty.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::string organizationalUnit() const;
     /// @brief First country (C) attribute, or empty.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::string country() const;
     /// @brief First stateOrProvinceName (ST) attribute, or empty.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::string stateOrProvince() const;
     /// @brief First locality (L) attribute, or empty.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::string locality() const;
     /// @brief First emailAddress (E) attribute, or empty.
+    /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::string emailAddress() const;
 };
 

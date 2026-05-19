@@ -99,7 +99,7 @@ private:
     class Impl;
     /// @endcond
 
-    std::unique_ptr<Impl> pImpl;
+    std::unique_ptr<Impl> d;
 
     explicit ActiveChannelHolder(std::unique_ptr<Impl> impl) noexcept;
 

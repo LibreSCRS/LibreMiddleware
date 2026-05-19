@@ -72,11 +72,13 @@ public:
     /// @param size Number of bytes to allocate.
     /// @param fill Byte value used to initialise every byte of the new
     ///             buffer. Defaults to @c 0.
+    /// @throws std::bad_alloc on allocation failure.
     /// @since 4.0
     explicit Buffer(std::size_t size, std::uint8_t fill = 0);
 
     /// @brief Copy @p s into the buffer's storage.
     /// @note The caller's `s` is not cleansed by this constructor.
+    /// @throws std::bad_alloc on allocation failure.
     explicit Buffer(std::string_view s);
 
     /// @brief Copy @p bytes into the buffer's storage.
@@ -86,7 +88,8 @@ public:
     /// caller-owned buffer that is naturally a byte span rather than a
     /// character range.
     /// @note The caller's @p bytes is not cleansed by this constructor.
-    /// @since 4.0.
+    /// @throws std::bad_alloc on allocation failure.
+    /// @since 4.0
     explicit Buffer(std::span<const std::uint8_t> bytes);
 
     /// @brief Cleanse the buffer's storage.
@@ -109,7 +112,7 @@ public:
     /// evaluates to @c true. Callers that need "is there any stored data?"
     /// should check @c size() > 0 instead. Accessors (@ref data, @ref size)
     /// remain safe to call on an unallocated buffer and report empty state.
-    /// @since 4.0.
+    /// @since 4.0
     explicit operator bool() const noexcept;
 
     /// @brief Pointer to the first byte, or nullptr when empty.

@@ -8,6 +8,10 @@
 ///        @ref LibreSCRS::Plugin::CardField,
 ///        @ref LibreSCRS::Plugin::CardFieldGroup, and the outer
 ///        @ref LibreSCRS::Plugin::CardData document returned by plugins.
+///
+/// @par Thread-safety
+/// All types in this header are plain value aggregates; thread-compatible
+/// per API-POLICY §8.
 
 #include <LibreSCRS/Export.h>
 
@@ -69,11 +73,7 @@ struct CardField
     /// replace invalid sub-sequences with U+FFFD or mis-render them. Callers
     /// that need strict validation should inspect @ref value directly.
     ///
-    /// @since 4.0 — replaces the unconditional `asString()` method that
-    /// returned binary bytes for Photo/Binary fields as if they were text.
-    /// 4.0 tightened the contract further by dropping Date from the
-    /// set of Text-compatible types: use @ref value with a date-format
-    /// parser of choice instead of relying on a string interpretation.
+    /// @since 4.0
     [[nodiscard]] std::optional<std::string> textValue() const
     {
         if (type != FieldType::Text) {
@@ -81,6 +81,9 @@ struct CardField
         }
         return std::string{value.begin(), value.end()};
     }
+
+    /// @brief Defaulted member-wise equality. Convenient for test fixtures.
+    [[nodiscard]] bool operator==(const CardField&) const noexcept = default;
 };
 
 /// @brief A labelled collection of related fields (e.g. demographic, PKI).
@@ -118,10 +121,7 @@ struct CardFieldGroup
     ///         behaviour; eager rejection turns the corner case into a
     ///         catchable programmer error.
     ///
-    /// @since 4.0 — replaces the `LibreSCRS::Plugin::addTextField`
-    /// free function; member form is consistent with the rest of the
-    /// `CardFieldGroup` API.
-    /// @since 4.0 — empty-key validation per API-POLICY §5.1.
+    /// @since 4.0
     CardField& addText(std::string_view key, std::string_view label, std::string_view val)
     {
         if (key.empty()) {
@@ -137,6 +137,9 @@ struct CardFieldGroup
         }
         return fields.back();
     }
+
+    /// @brief Defaulted member-wise equality. Convenient for test fixtures.
+    [[nodiscard]] bool operator==(const CardFieldGroup&) const noexcept = default;
 };
 
 /// @brief Aggregate card read result: a card type identifier and its field groups.
@@ -158,10 +161,7 @@ struct CardData
     ///       vector (`insert`/`erase`/`resize`/`clear`) invalidates previously-
     ///       obtained indices. `push_back`/`emplace_back` append at the end
     ///       and never invalidate existing indices.
-    /// @since 4.0 — replaces the `optional<reference_wrapper<...>>`
-    /// return introduced earlier in 4.0. An index is robust across container
-    /// mutation semantics and encodes the lifetime contract explicitly:
-    /// callers that want the group pay for the `groupAt` lookup.
+    /// @since 4.0
     [[nodiscard]] std::optional<std::size_t> findGroup(std::string_view key) const noexcept
     {
         for (std::size_t i = 0; i < groups.size(); ++i) {
@@ -182,8 +182,7 @@ struct CardData
     ///       @ref groups vector and the matched group's @c fields vector.
     ///       Any mutation of either vector that erases or inserts earlier
     ///       elements invalidates the pair.
-    /// @since 4.0 — replaces the `optional<reference_wrapper<...>>`
-    /// return introduced earlier in 4.0.
+    /// @since 4.0
     [[nodiscard]] std::optional<std::pair<std::size_t, std::size_t>> findField(std::string_view key) const noexcept
     {
         for (std::size_t g = 0; g < groups.size(); ++g) {

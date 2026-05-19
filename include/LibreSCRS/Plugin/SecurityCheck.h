@@ -79,6 +79,9 @@ struct SecurityCheck
     std::string detail;
     /// @brief Populated when @ref status is @ref Status::Failed.
     std::string errorDetail;
+
+    /// @brief Defaulted member-wise equality.
+    [[nodiscard]] bool operator==(const SecurityCheck&) const noexcept = default;
 };
 
 /// @brief Aggregate security evaluation over a set of @ref SecurityCheck entries.

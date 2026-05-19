@@ -12,7 +12,7 @@
 
 namespace LibreSCRS::Certificate {
 
-ObjectIdentifier::ObjectIdentifier(std::string oidString) : dottedDecimal(std::move(oidString)) {}
+ObjectIdentifier::ObjectIdentifier(std::string oidString) noexcept : dottedDecimal(std::move(oidString)) {}
 
 std::string ObjectIdentifier::friendlyName() const
 {
