@@ -6,14 +6,11 @@
 # Diff a fresh build against this baseline with: ci/scripts/abi-snapshot.sh --check
 
 == libLibreSCRS_Auth.a ==
-LibreSCRS::Auth::AuthRequirement::forChangePin(LibreSCRS::LocalizedText, int)
-LibreSCRS::Auth::AuthRequirement::forChangePin(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, int)
+LibreSCRS::Auth::AuthRequirement::forChangePin(LibreSCRS::LocalizedText, std::optional<int>)
 LibreSCRS::Auth::AuthRequirement::forPaceSecret(LibreSCRS::SmartCard::AppletAid, LibreSCRS::Auth::PaceSecretKind, std::optional<int>, LibreSCRS::LocalizedText)
 LibreSCRS::Auth::AuthRequirement::forPreRead(LibreSCRS::Auth::PreReadAuthMethod)
-LibreSCRS::Auth::AuthRequirement::forSigning(LibreSCRS::LocalizedText, int)
-LibreSCRS::Auth::AuthRequirement::forSigning(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, int)
+LibreSCRS::Auth::AuthRequirement::forSigning(LibreSCRS::LocalizedText, std::optional<int>)
 LibreSCRS::Auth::AuthRequirement::forUnblockPin(LibreSCRS::LocalizedText)
-LibreSCRS::Auth::AuthRequirement::forUnblockPin(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)
 LibreSCRS::CancelSource::CancelSource()
 LibreSCRS::CancelSource::CancelSource(LibreSCRS::CancelSource const&)
 LibreSCRS::CancelSource::CancelSource(LibreSCRS::CancelSource&&)
@@ -121,13 +118,14 @@ LibreSCRS::SecureChannel::BacChannel::close()
 LibreSCRS::SecureChannel::BacChannel::currentApplet() const
 LibreSCRS::SecureChannel::BacChannel::establish(LibreSCRS::SmartCard::IConnection&, LibreSCRS::SmartCard::AppletAid, LibreSCRS::SecureChannel::BacInput const&, LibreSCRS::CancelToken)
 LibreSCRS::SecureChannel::BacChannel::replaceKeys(LibreSCRS::SecureChannel::SessionKeys)
+LibreSCRS::SecureChannel::BacChannel::setCurrentApplet(LibreSCRS::SmartCard::AppletAid)
 LibreSCRS::SecureChannel::BacChannel::state() const
 LibreSCRS::SecureChannel::BacChannel::transmit(LibreSCRS::SmartCard::Internal::APDUCommand const&, LibreSCRS::CancelToken)
 LibreSCRS::SecureChannel::BacChannel::~BacChannel()
 LibreSCRS::SecureChannel::PaceChannel::PaceChannel(LibreSCRS::SmartCard::IConnection&, LibreSCRS::SmartCard::AppletAid, LibreSCRS::SecureChannel::SessionKeys)
 LibreSCRS::SecureChannel::PaceChannel::close()
 LibreSCRS::SecureChannel::PaceChannel::currentApplet() const
-LibreSCRS::SecureChannel::PaceChannel::establish(LibreSCRS::SmartCard::IConnection&, LibreSCRS::SecureChannel::PACEParams const&, LibreSCRS::CancelToken)
+LibreSCRS::SecureChannel::PaceChannel::establish(LibreSCRS::SmartCard::IConnection&, LibreSCRS::SecureChannel::PaceParams const&, LibreSCRS::CancelToken)
 LibreSCRS::SecureChannel::PaceChannel::replaceKeys(LibreSCRS::SecureChannel::SessionKeys)
 LibreSCRS::SecureChannel::PaceChannel::setCurrentApplet(LibreSCRS::SmartCard::AppletAid)
 LibreSCRS::SecureChannel::PaceChannel::state() const
@@ -138,10 +136,9 @@ LibreSCRS::SecureChannel::PlainChannel::close()
 LibreSCRS::SecureChannel::PlainChannel::currentApplet() const
 LibreSCRS::SecureChannel::PlainChannel::state() const
 LibreSCRS::SecureChannel::PlainChannel::transmit(LibreSCRS::SmartCard::Internal::APDUCommand const&, LibreSCRS::CancelToken)
-LibreSCRS::SecureChannel::SessionKeys::operator=(LibreSCRS::SecureChannel::SessionKeys const&)
-LibreSCRS::SecureChannel::SessionKeys::operator=(LibreSCRS::SecureChannel::SessionKeys&&)
-LibreSCRS::SecureChannel::SessionKeys::~SessionKeys()
-LibreSCRS::SecureChannel::parsePaceOidsFromCardAccess[abi:cxx11](std::span<unsigned char const, 18446744073709551615ul>)
+LibreSCRS::SecureChannel::detail::ChannelStateMutator::replaceKeys(LibreSCRS::SecureChannel::ISecureChannel&, LibreSCRS::SecureChannel::SessionKeys)
+LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(LibreSCRS::SecureChannel::ISecureChannel&, LibreSCRS::SmartCard::AppletAid)
+LibreSCRS::SecureChannel::parsePaceOidsFromCardAccess(std::span<unsigned char const, 18446744073709551615ul>)
 
 == libLibreSCRS_Signing.a ==
 LibreSCRS::Signing::SigningRequest::Builder::Builder()
@@ -180,10 +177,10 @@ LibreSCRS::Signing::SigningRequest::visualParams() const
 LibreSCRS::Signing::SigningRequest::~SigningRequest()
 LibreSCRS::Signing::SigningService::SigningService(LibreSCRS::Signing::SigningService&&)
 LibreSCRS::Signing::SigningService::SigningService(std::shared_ptr<LibreSCRS::Trust::TrustStoreService>, std::function<LibreSCRS::Signing::TsaRequest (LibreSCRS::Signing::TsaContext const&)>)
-LibreSCRS::Signing::SigningService::appendSigner(LibreSCRS::Signing::SigningRequest const&, std::span<unsigned char const, 18446744073709551615ul>, std::span<unsigned char const, 18446744073709551615ul>, std::function<LibreSCRS::Auth::CredentialResult (LibreSCRS::Auth::AuthRequirement const&)>, std::shared_ptr<LibreSCRS::Plugin::CardPlugin>, std::shared_ptr<LibreSCRS::SmartCard::CardSession>)
+LibreSCRS::Signing::SigningService::appendSigner(LibreSCRS::Signing::SigningRequest const&, std::span<unsigned char const, 18446744073709551615ul>, std::span<unsigned char const, 18446744073709551615ul>, std::function<LibreSCRS::Auth::CredentialResult (LibreSCRS::Auth::AuthRequirement const&)>, std::shared_ptr<LibreSCRS::Plugin::CardPlugin const> const&, std::shared_ptr<LibreSCRS::SmartCard::CardSession> const&)
 LibreSCRS::Signing::SigningService::operator bool() const
 LibreSCRS::Signing::SigningService::operator=(LibreSCRS::Signing::SigningService&&)
-LibreSCRS::Signing::SigningService::sign(LibreSCRS::Signing::SigningRequest const&, std::function<LibreSCRS::Auth::CredentialResult (LibreSCRS::Auth::AuthRequirement const&)>, std::shared_ptr<LibreSCRS::Plugin::CardPlugin>, std::shared_ptr<LibreSCRS::SmartCard::CardSession>)
+LibreSCRS::Signing::SigningService::sign(LibreSCRS::Signing::SigningRequest const&, std::function<LibreSCRS::Auth::CredentialResult (LibreSCRS::Auth::AuthRequirement const&)>, std::shared_ptr<LibreSCRS::Plugin::CardPlugin const> const&, std::shared_ptr<LibreSCRS::SmartCard::CardSession> const&)
 LibreSCRS::Signing::SigningService::~SigningService()
 LibreSCRS::Signing::VisualSignatureParams::Builder::Builder()
 LibreSCRS::Signing::VisualSignatureParams::Builder::Builder(LibreSCRS::Signing::VisualSignatureParams::Builder&&)
@@ -215,23 +212,27 @@ LibreSCRS::Signing::staticTsaChecked(std::basic_string_view<char, std::char_trai
 == libLibreSCRS_SmartCard.a ==
 LibreSCRS::SmartCard::ActiveChannelHolder::ActiveChannelHolder(LibreSCRS::SmartCard::ActiveChannelHolder&&)
 LibreSCRS::SmartCard::ActiveChannelHolder::ActiveChannelHolder(std::unique_ptr<LibreSCRS::SmartCard::ActiveChannelHolder::Impl, std::default_delete<LibreSCRS::SmartCard::ActiveChannelHolder::Impl> >)
-LibreSCRS::SmartCard::ActiveChannelHolder::activeChannel()
 LibreSCRS::SmartCard::ActiveChannelHolder::isActive() const
 LibreSCRS::SmartCard::ActiveChannelHolder::operator=(LibreSCRS::SmartCard::ActiveChannelHolder&&)
 LibreSCRS::SmartCard::ActiveChannelHolder::release()
-LibreSCRS::SmartCard::ActiveChannelHolder::transmit(LibreSCRS::SmartCard::Internal::APDUCommand const&, LibreSCRS::CancelToken)
 LibreSCRS::SmartCard::ActiveChannelHolder::~ActiveChannelHolder()
+LibreSCRS::SmartCard::CardMap::CardMap()
+LibreSCRS::SmartCard::CardMap::CardMap(LibreSCRS::SmartCard::CardMap&&)
 LibreSCRS::SmartCard::CardMap::get(std::tuple<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&) const
 LibreSCRS::SmartCard::CardMap::invalidate(std::tuple<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&)
 LibreSCRS::SmartCard::CardMap::invalidateAll()
+LibreSCRS::SmartCard::CardMap::operator=(LibreSCRS::SmartCard::CardMap&&)
 LibreSCRS::SmartCard::CardMap::put(std::tuple<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > const&, LibreSCRS::SmartCard::CardMapEntry)
+LibreSCRS::SmartCard::CardMap::~CardMap()
 LibreSCRS::SmartCard::CardSession::CardSession()
 LibreSCRS::SmartCard::CardSession::CardSession(LibreSCRS::SmartCard::CardSession&&)
 LibreSCRS::SmartCard::CardSession::CardSession(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)
 LibreSCRS::SmartCard::CardSession::activateChannelFor(LibreSCRS::SmartCard::AppletAid, LibreSCRS::CancelToken)
 LibreSCRS::SmartCard::CardSession::activateChannelWithSm(LibreSCRS::SmartCard::AppletAid, std::variant<LibreSCRS::SmartCard::BacRequest, LibreSCRS::SmartCard::PaceRequest>, LibreSCRS::CancelToken)
 LibreSCRS::SmartCard::CardSession::atr() const
+LibreSCRS::SmartCard::CardSession::clearActiveChannel()
 LibreSCRS::SmartCard::CardSession::clearCachedPaceCredentials()
+LibreSCRS::SmartCard::CardSession::hasLiveSecureChannel() const
 LibreSCRS::SmartCard::CardSession::isConnected() const
 LibreSCRS::SmartCard::CardSession::isDead() const
 LibreSCRS::SmartCard::CardSession::markDead()
@@ -242,22 +243,23 @@ LibreSCRS::SmartCard::CardSession::setBacInput(LibreSCRS::SecureChannel::BacInpu
 LibreSCRS::SmartCard::CardSession::setCredentialProvider(std::function<LibreSCRS::Auth::CredentialResult (LibreSCRS::Auth::AuthRequirement const&)>)
 LibreSCRS::SmartCard::CardSession::setPaceSecret(LibreSCRS::Auth::PaceSecretKind, LibreSCRS::Secure::String)
 LibreSCRS::SmartCard::CardSession::~CardSession()
-LibreSCRS::SmartCard::Internal::activeChannelOf(LibreSCRS::SmartCard::CardSession&)
+LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::active(LibreSCRS::SmartCard::CardSession&)
+LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::transmit(LibreSCRS::SmartCard::CardSession&, LibreSCRS::SmartCard::Internal::APDUCommand const&, LibreSCRS::CancelToken)
+LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(LibreSCRS::SmartCard::ActiveChannelHolder&)
 LibreSCRS::SmartCard::Internal::makeActiveChannelHolder(LibreSCRS::SmartCard::CardSession*, std::unique_lock<std::mutex>, std::unique_ptr<LibreSCRS::SmartCard::Internal::CardTransaction, std::default_delete<LibreSCRS::SmartCard::Internal::CardTransaction> >)
-LibreSCRS::SmartCard::Internal::transmitThroughActiveChannel(LibreSCRS::SmartCard::CardSession&, LibreSCRS::SmartCard::Internal::APDUCommand const&, LibreSCRS::CancelToken)
+LibreSCRS::SmartCard::MonitorService::Impl::diffReadersAndDispatch(std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > const&)
+LibreSCRS::SmartCard::MonitorService::Impl::dispatch(LibreSCRS::SmartCard::MonitorEvent const&)
+LibreSCRS::SmartCard::MonitorService::Impl::snapshotCallbacks()
 LibreSCRS::SmartCard::MonitorService::MonitorService()
 LibreSCRS::SmartCard::MonitorService::isRunning() const
 LibreSCRS::SmartCard::MonitorService::listReaders[abi:cxx11]() const
 LibreSCRS::SmartCard::MonitorService::operator bool() const
 LibreSCRS::SmartCard::MonitorService::subscribe(std::function<void (LibreSCRS::SmartCard::MonitorEvent const&)>)
-LibreSCRS::SmartCard::MonitorService::unsubscribe(LibreSCRS::SmartCard::MonitorService::SubscriptionId)
-LibreSCRS::SmartCard::MonitorService::unsubscribeAndDrain(LibreSCRS::SmartCard::MonitorService::SubscriptionId)
+LibreSCRS::SmartCard::MonitorService::unsubscribe(LibreSCRS::SmartCard::MonitorService::SubscriptionId, LibreSCRS::SmartCard::MonitorService::DrainPolicy)
 LibreSCRS::SmartCard::MonitorService::~MonitorService()
 LibreSCRS::SmartCard::detail::PcscBridge::unwrap(LibreSCRS::SmartCard::CardSession const&)
 LibreSCRS::SmartCard::detail::PcscBridge::unwrap(LibreSCRS::SmartCard::CardSession&)
 LibreSCRS::SmartCard::detail::makeDetachedCardSession(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)
-LibreSCRS::SmartCard::detail::makeMonitorWithProvider(std::unique_ptr<LibreSCRS::SmartCard::Internal::IPCSCScanProvider, std::default_delete<LibreSCRS::SmartCard::Internal::IPCSCScanProvider> >)
-LibreSCRS::SmartCard::detail::makeSubscriptionIdForTest(unsigned long)
 LibreSCRS::SmartCard::detail::sessionGeneration(LibreSCRS::SmartCard::CardSession const&)
 
 == libLibreSCRS_Trust.a ==

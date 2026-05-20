@@ -223,11 +223,23 @@ add_library(opensc_static_with_deps INTERFACE)
 # objects discovered later). When consumers also drag OpenSSL_Crypto in
 # earlier (via e.g. SmartCard_Impl), CMake deduplicates and the late
 # OpenSSL_Crypto reference is dropped — leaving libopensc.a's undefined
-# symbols unresolved. LINK_GROUP forces ld's --start-group/--end-group
-# rescan so the archives are scanned until the symbol set converges.
-target_link_libraries(opensc_static_with_deps INTERFACE
-    "$<LINK_GROUP:RESCAN,opensc_static,OpenSSL_Crypto>"
-)
+# symbols unresolved.
+#
+# On GNU ld / lld we force --start-group/--end-group rescan via
+# `$<LINK_GROUP:RESCAN,...>` so the archives are scanned until the symbol
+# set converges. Apple ld64 performs multi-pass archive linking on its own
+# (CMake's `$<LINK_GROUP>` is documented as not supported for the 'CXX'
+# link language on Apple), so the plain target ordering is sufficient —
+# ld64 will rescan both archives until no more symbols are pulled.
+if(APPLE)
+    target_link_libraries(opensc_static_with_deps INTERFACE
+        opensc_static OpenSSL_Crypto
+    )
+else()
+    target_link_libraries(opensc_static_with_deps INTERFACE
+        "$<LINK_GROUP:RESCAN,opensc_static,OpenSSL_Crypto>"
+    )
+endif()
 
 find_package(ZLIB REQUIRED)
 target_link_libraries(opensc_static_with_deps INTERFACE ZLIB::ZLIB)
