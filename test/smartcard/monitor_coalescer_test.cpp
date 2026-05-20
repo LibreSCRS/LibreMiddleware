@@ -11,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -107,6 +108,38 @@ TEST_F(CoalescerHarness, IndependentReadersDoNotCoalesce)
     std::this_thread::sleep_for(std::chrono::milliseconds(400));
 
     EXPECT_EQ(snapshot().size(), 2u) << "Coalescing is per-reader, not global";
+}
+
+TEST_F(CoalescerHarness, ReaderRemovedEvictsCoalesceState)
+{
+    // Hold a CardInserted on a soon-to-vanish reader. The held event sits
+    // in coalesceState[readerName] until either the window expires or the
+    // reader disappears.
+    const std::string fullName = std::string(kSyntheticReaderPrefix) + "Vanishing Reader";
+    emit(MonitorEvent::Kind::CardInserted, "Vanishing Reader");
+
+    const auto beforeSize = service->coalesceStateSizeForTest();
+    EXPECT_GE(beforeSize, 1u) << "CardInserted must populate coalesceState[Vanishing Reader]";
+
+    // Drive the reader-list diff path: first announce the reader so it
+    // becomes known, then announce an empty list so it is diffed out as
+    // ReaderRemoved — the same path used by the real PC/SC reader-list
+    // callback. The ReaderRemoved branch must erase the held entry under
+    // coalesceMtx so coalesceState does not accumulate forever across
+    // long-running sessions with USB reader churn.
+    service->publishReaderListForTest({fullName});
+    service->publishReaderListForTest({});
+
+    EXPECT_LT(service->coalesceStateSizeForTest(), beforeSize)
+        << "ReaderRemoved must evict coalesceState[Vanishing Reader]";
+
+    // And the held CardInserted must NOT surface after the original
+    // window elapses — the reader it referred to is now absent.
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    auto snap = snapshot();
+    for (const auto& ev : snap) {
+        EXPECT_NE(ev.readerName, fullName) << "Held CardInserted for a vanished reader must not reach subscribers";
+    }
 }
 
 TEST_F(CoalescerHarness, EnvVarZeroDisablesCoalescing)

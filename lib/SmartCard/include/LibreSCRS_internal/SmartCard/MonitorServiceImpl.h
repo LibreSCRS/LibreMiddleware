@@ -69,6 +69,9 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
     {
         std::optional<MonitorEvent> heldEvent;
         std::chrono::steady_clock::time_point heldUntil{};
+        // Reserved for the per-reader rate limiter follow-up
+        // (LIBRESCRS_MONITOR_MAX_EVENTS_PER_SEC, see @ref Config). Written
+        // by @ref dispatch / @ref runCoalesceFlusher; not yet read.
         MonitorEvent::Kind lastEmittedKind{MonitorEvent::Kind::Error};
         std::chrono::steady_clock::time_point lastEventAt{};
     };

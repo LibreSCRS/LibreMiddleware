@@ -21,7 +21,6 @@
 #include <mutex>
 #include <optional>
 #include <set>
-#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -223,6 +222,19 @@ void MonitorService::Impl::diffReadersAndDispatch(const std::vector<std::string>
     }
     for (const auto& r : added)
         dispatch(MonitorEvent{MonitorEvent::Kind::ReaderAdded, r, std::nullopt, std::nullopt});
+    if (!removed.empty()) {
+        // Evict per-reader coalescer entries for vanished readers so
+        // coalesceState does not accumulate forever across long-running
+        // sessions with USB reader churn (replug, Windows auto-renumbering,
+        // virtual readers). ReaderRemoved is the canonical "this reader is
+        // gone" signal — once the OS has dropped it from the list, any
+        // still-held Card event for it is referring to a now-absent device
+        // and must not surface to subscribers either.
+        std::scoped_lock lk(coalesceMtx);
+        for (const auto& r : removed) {
+            coalesceState.erase(r);
+        }
+    }
     for (const auto& r : removed)
         dispatch(MonitorEvent{MonitorEvent::Kind::ReaderRemoved, r, std::nullopt, std::nullopt});
 }
@@ -250,6 +262,21 @@ MonitorService::MonitorService(Config config) : d(std::make_unique<Impl>(nullptr
 void MonitorService::publishForTest(const MonitorEvent& ev)
 {
     d->dispatch(ev);
+}
+
+void MonitorService::publishReaderListForTest(const std::vector<std::string>& readers)
+{
+    d->diffReadersAndDispatch(readers);
+}
+
+std::size_t MonitorService::coalesceStateSizeForTest() const noexcept
+{
+    try {
+        std::scoped_lock lk(d->coalesceMtx);
+        return d->coalesceState.size();
+    } catch (...) {
+        return 0;
+    }
 }
 
 MonitorService::operator bool() const noexcept

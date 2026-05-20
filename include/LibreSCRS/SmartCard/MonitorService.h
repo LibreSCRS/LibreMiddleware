@@ -332,6 +332,24 @@ public:
     /// @since 4.1
     void publishForTest(const MonitorEvent& ev);
 
+    /// @brief Test seam: drive the reader-list diff path with a synthetic
+    ///        snapshot. Synthesises @ref MonitorEvent::Kind::ReaderAdded /
+    ///        @ref MonitorEvent::Kind::ReaderRemoved against the previously
+    ///        seen set, and evicts coalescer state for removed readers.
+    ///
+    /// Not for production use; mirrors @ref publishForTest as a way to
+    /// exercise the diff path without a live PC/SC source.
+    ///
+    /// @since 4.1
+    void publishReaderListForTest(const std::vector<std::string>& readers);
+
+    /// @brief Test seam: number of per-reader coalescer state entries.
+    ///        Used by eviction tests to assert that vanished readers no
+    ///        longer occupy a slot in @c Impl::coalesceState.
+    ///
+    /// @since 4.1
+    [[nodiscard]] std::size_t coalesceStateSizeForTest() const noexcept;
+
 private:
     friend class detail::MonitorFactory;
     // Impl is forward-declared above (near the top of this class body) so
