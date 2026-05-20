@@ -164,6 +164,21 @@ while IFS= read -r archive; do
             || true)
     fi
 
+    # ALLOW-LIST: MonitorService::Impl member functions
+    # (snapshotCallbacks, dispatch, diffReadersAndDispatch). Same GCC
+    # pattern as TrustStoreService::Impl::runWorker above. Impl is declared
+    # in an LM-internal header (lib/SmartCard/include/LibreSCRS_internal/
+    # SmartCard/MonitorServiceImpl.h) consumed by both the production
+    # translation unit AND the LibreSCRS_SmartCard_TestHelpers archive —
+    # so anonymous-namespace is not an option. The linker hides these
+    # symbols at .so link-edit time on GCC; confirmed absent from every
+    # build/plugins/*.so and from every build-shared/**/*.so.
+    if [[ "$(basename "$archive")" == "libLibreSCRS_SmartCard.a" ]]; then
+        t_leaks=$(printf '%s\n' "$t_leaks" \
+            | grep -v '^LibreSCRS::SmartCard::MonitorService::Impl::' \
+            || true)
+    fi
+
     # Pass 2 — W/V-binding (weak / vague-linkage) vtable/typeinfo
     # entries containing `::Impl` as a word segment. These are emitted
     # with DEFAULT visibility for std-template instantiations
