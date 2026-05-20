@@ -199,9 +199,10 @@ ExternalProject_Add(opensc_external
     INSTALL_COMMAND   make install
     BUILD_BYPRODUCTS  ${OPENSC_STATIC_LIB}
     BUILD_IN_SOURCE   FALSE
-    LOG_CONFIGURE     TRUE
-    LOG_BUILD         TRUE
-    LOG_INSTALL       TRUE
+    LOG_CONFIGURE         TRUE
+    LOG_BUILD             TRUE
+    LOG_INSTALL           TRUE
+    LOG_OUTPUT_ON_FAILURE TRUE
 )
 
 add_library(opensc_static STATIC IMPORTED GLOBAL)
