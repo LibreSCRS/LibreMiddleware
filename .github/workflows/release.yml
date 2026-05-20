@@ -70,7 +70,7 @@ jobs:
 
       - name: Install build tools
         run: |
-          brew install ninja
+          brew install ninja autoconf automake libtool pkg-config
           # manifest2header.py hard-fails when jsonschema is missing
           # (the schema gates the codegen step against malformed manifests).
           python3 -m pip install --break-system-packages --user jsonschema
@@ -123,7 +123,7 @@ jobs:
 
       - name: Install build tools
         run: |
-          brew install ninja
+          brew install ninja autoconf automake libtool pkg-config
           # manifest2header.py hard-fails when jsonschema is missing
           # (the schema gates the codegen step against malformed manifests).
           python3 -m pip install --break-system-packages --user jsonschema

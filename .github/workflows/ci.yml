@@ -154,7 +154,10 @@ jobs:
 
       - name: Install build tools
         run: |
-          brew install ninja opensc
+          # autoconf/automake/libtool/pkg-config are required by the vendored
+          # OpenSC autoconf bootstrap (thirdparty/opensc-source/bootstrap →
+          # autoreconf -fi). Homebrew's ninja covers the LM build itself.
+          brew install ninja opensc autoconf automake libtool pkg-config
           # manifest2header.py hard-fails when jsonschema is missing
           # (the schema gates the codegen step against malformed manifests).
           python3 -m pip install --break-system-packages --user jsonschema
