@@ -387,14 +387,22 @@ private:
         auto emrtdAid = makeEmrtdAid();
         auto holderResult = cardSession.activateChannelWithSm(emrtdAid, protocol, LibreSCRS::CancelToken{});
 
-        // PACE_MRZ → BAC fallback. Triggered when EF.CardAccess is absent or
-        // empty (PaceUnsupported) or PACE handshake fails outright with a
-        // protocol-level error; for soft "wrong secret" we surface to the
-        // host without falling back (the secret is the secret).
+        // PACE_MRZ → BAC fallback. Triggered on any non-cancel PACE failure
+        // when MRZ credentials are present. BAC uses the same MRZ inputs and
+        // is the natural second try; if the MRZ is truly wrong it will fail
+        // again and surface to the host. CredentialsRequired is included
+        // because CardSession's retry loop clears the cached PACE secret on
+        // PaceWrongSecret and — with no credentialProvider installed by the
+        // host (LC deposits secrets directly via setPaceSecret) — the next
+        // iteration sees an empty cache and returns CredentialsRequired
+        // rather than the underlying PaceWrongSecret. Restores 4.0.0's
+        // EMRTDCard::authenticate() semantics where PACE fall-through to BAC
+        // was unconditional after any PACE failure.
         if (!holderResult && !isCan) {
             auto err = holderResult.error();
-            if (err == LibreSCRS::SecureChannel::ChannelActivationError::PaceUnsupported ||
-                err == LibreSCRS::SecureChannel::ChannelActivationError::PaceProtocolFailure) {
+            if (err != LibreSCRS::SecureChannel::ChannelActivationError::Cancelled &&
+                err != LibreSCRS::SecureChannel::ChannelActivationError::UserCancelled &&
+                err != LibreSCRS::SecureChannel::ChannelActivationError::CardRemoved) {
                 protocol = LibreSCRS::SmartCard::BacRequest{};
                 isBacAttempt = true;
                 holderResult = cardSession.activateChannelWithSm(emrtdAid, protocol, LibreSCRS::CancelToken{});

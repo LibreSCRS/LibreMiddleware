@@ -298,3 +298,91 @@ TEST(PACECryptoTest, AesDecryptRoundTrip256)
     auto decrypted = detail::aesDecrypt(key, encrypted);
     EXPECT_EQ(decrypted, plaintext);
 }
+
+// ---------------------------------------------------------------------------
+// PACE-MRZ Known-Answer-Test scaffold (DISABLED — needs BSI vectors)
+//
+// Background: a Czech contactless eMRTD (ATR 3B8F8001…) fails PACE-MRZ at
+// GA4 mutual-authentication with SW=6300 even though every intermediate
+// APDU returns SW=9000. The same MRZ succeeds via BAC fallback, proving the
+// mrzInfo bytes (and thus SHA-1[0:16]→kSeed) are correct. All primitive
+// crypto tests (KdfAes128, AesCmac128Rfc4493) pass.
+//
+// The gap in coverage is the INTEGRATION of:
+//   SHA-1(mrzInfo)[0:16] → kdf(seed, 3, AES-128) → kpi
+//   aesDecrypt(kpi, encNonce) → nonce
+//   buildPublicKeyDataObject(oid, pkAgreeICC) → PKDO
+//   kdf(sharedK, 2, AES-128) → kMac
+//   aesCMAC(kMac, PKDO) → tIFD (truncated to 8 bytes)
+//
+// To eliminate our PACE impl as the cause, fill the placeholders below with
+// BSI TR-03110-3 (current revision) Annex G Worked Example bytes — Annex G.1
+// documents a full PACE-GM-AES-128-brainpoolP256r1 trace with a CAN
+// password; the same trace (minus the SHA-1 pre-hash step) exercises every
+// PACE-MRZ code path that runs after the kSeed is derived. The CAN-based
+// example is sufficient because the SHA-1 pre-hash for MRZ is a primitive
+// already covered elsewhere; what's untested is the chain that runs
+// AFTER kpiSeed is in hand.
+//
+// Source: BSI TR-03110-3 v2.21+ (Advanced Security Mechanisms for Machine
+// Readable Travel Documents, Part 3) Annex G.1. Public PDF available on
+// the BSI website. Section numbering and concrete byte values are stable
+// across patch revisions of v2.21.
+//
+// Enabling protocol:
+// 1. Fill each TODO_BSI_* literal with the matching hex octets from the
+//    spec, removing the comment marker on each EXPECT line.
+// 2. Remove the DISABLED_ prefix from each TEST name.
+// 3. Re-run ctest; failures mean a real defect in our composition layer
+//    even though primitive tests pass. Successes conclusively rule out
+//    our impl and shift the diagnosis to the card.
+//
+// Cross-check option: parallel run jmrtd or RFIDIOt against the same
+// physical card and diff APDU traces. See knowledge repo follow-up entry
+// project_czech_emrtd_pace_open_investigation.md for the captured Czech
+// session trace this scaffold was derived from.
+// ---------------------------------------------------------------------------
+
+TEST(DISABLED_PaceMrzKatBSI, StepKpiFromKseed)
+{
+    // BSI G.1 documents kSeed (16 bytes) → kPi (16 bytes) via
+    // detail::kdf(kSeed, 3, AES-128).
+    // std::vector<uint8_t> kSeed = { /* TODO_BSI_KSEED hex octets */ };
+    // std::vector<uint8_t> expectedKpi = { /* TODO_BSI_KPI hex octets */ };
+    // auto actual = detail::kdf(kSeed, 3, /*des3=*/false, /*keyLen=*/16);
+    // EXPECT_EQ(actual, expectedKpi);
+    GTEST_SKIP() << "Awaiting BSI TR-03110-3 Annex G.1 vectors";
+}
+
+TEST(DISABLED_PaceMrzKatBSI, StepDecryptNonce)
+{
+    // BSI G.1: aesDecrypt(kPi, encryptedNonce) → plaintext nonce.
+    // std::vector<uint8_t> kPi = { /* TODO_BSI_KPI hex octets */ };
+    // std::vector<uint8_t> encNonce = { /* TODO_BSI_ENC_NONCE hex octets */ };
+    // std::vector<uint8_t> expectedNonce = { /* TODO_BSI_PLAIN_NONCE hex octets */ };
+    // auto actual = detail::aesDecrypt(kPi, encNonce);
+    // EXPECT_EQ(actual, expectedNonce);
+    GTEST_SKIP() << "Awaiting BSI TR-03110-3 Annex G.1 vectors";
+}
+
+TEST(DISABLED_PaceMrzKatBSI, StepKMacFromSharedK)
+{
+    // BSI G.1: kdf(sharedK, 2, AES-128) → kMac.
+    // std::vector<uint8_t> sharedK = { /* TODO_BSI_SHAREDK x-coord octets */ };
+    // std::vector<uint8_t> expectedKMac = { /* TODO_BSI_KMAC octets */ };
+    // auto actual = detail::kdf(sharedK, 2, /*des3=*/false, /*keyLen=*/16);
+    // EXPECT_EQ(actual, expectedKMac);
+    GTEST_SKIP() << "Awaiting BSI TR-03110-3 Annex G.1 vectors";
+}
+
+TEST(DISABLED_PaceMrzKatBSI, StepAuthTokenTIFD)
+{
+    // BSI G.1: aesCMAC(kMac, PKDO_ICC)[0:8] → T_IFD.
+    // PKDO_ICC = 7F49 || 06 || <oid bytes> || 86 || <pkAgreeICC bytes>.
+    // std::vector<uint8_t> kMac = { /* TODO_BSI_KMAC octets */ };
+    // std::vector<uint8_t> pkdoIcc = { /* TODO_BSI_PKDO_ICC octets */ };
+    // std::vector<uint8_t> expectedTIfd = { /* TODO_BSI_TIFD 8 octets */ };
+    // auto actual = detail::aesCMAC(kMac, pkdoIcc);
+    // EXPECT_EQ(actual, expectedTIfd);
+    GTEST_SKIP() << "Awaiting BSI TR-03110-3 Annex G.1 vectors";
+}
