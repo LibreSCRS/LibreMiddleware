@@ -153,12 +153,13 @@ public:
     ///                 `LocalizedText{"", "<label>", {}}` explicitly — the
     ///                 empty key signals "no i18n routing" and the fallback
     ///                 carries the literal text.
-    /// @param retriesLeft Card-reported retry count, or a negative value
-    ///                    ("unknown") to leave @ref retriesLeft as
-    ///                    `std::nullopt`.
+    /// @param retriesLeft Card-reported retry count, or `std::nullopt`
+    ///                    when the card does not surface a counter. The
+    ///                    accessor @ref retriesLeft forwards the same
+    ///                    optional unchanged.
     /// @throws std::invalid_argument if both @p pinLabel.defaultText and
     ///         @p pinLabel.key are empty. See API-POLICY §5.1.
-    [[nodiscard]] static AuthRequirement forSigning(LocalizedText pinLabel, int retriesLeft);
+    [[nodiscard]] static AuthRequirement forSigning(LocalizedText pinLabel, std::optional<int> retriesLeft);
 
     /// @brief Build a requirement for a PIN change (current + new + confirm).
     /// @param pinLabel Translator-friendly bundle (see @ref forSigning for
@@ -170,12 +171,14 @@ public:
     ///                 decoration in their own UI layer; this avoids
     ///                 synthesising untranslatable English prefixes onto
     ///                 i18n-aware labels.
-    /// @param retriesLeft Card-reported retry count on the current PIN, or a
-    ///                    negative value ("unknown") to leave
-    ///                    @ref retriesLeft as `std::nullopt`.
+    /// @param retriesLeft Card-reported retry count on the current PIN,
+    ///                    or `std::nullopt` when the card does not
+    ///                    surface a counter. The accessor
+    ///                    @ref retriesLeft forwards the same optional
+    ///                    unchanged.
     /// @throws std::invalid_argument if both @p pinLabel.defaultText and
     ///         @p pinLabel.key are empty. See API-POLICY §5.1.
-    [[nodiscard]] static AuthRequirement forChangePin(LocalizedText pinLabel, int retriesLeft);
+    [[nodiscard]] static AuthRequirement forChangePin(LocalizedText pinLabel, std::optional<int> retriesLeft);
 
     /// @brief Build a requirement for a PUK-based unblock (PUK + new + confirm).
     /// @param pinLabel Translator-friendly bundle for the PIN being unblocked

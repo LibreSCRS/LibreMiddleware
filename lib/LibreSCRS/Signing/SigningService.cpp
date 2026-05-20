@@ -178,8 +178,8 @@ SigningService::operator bool() const noexcept
 
 SigningResult SigningService::sign(const SigningRequest& request, Auth::CredentialProvider credentialProvider,
                                    const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,
-                                   const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session)
-{
+                                   const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session) noexcept
+try {
     // Reject an empty std::function<> provider up front — calling it would throw
     // std::bad_function_call. A signing flow without a way to collect PIN/PUK from
     // the user is an InvalidRequest, not an engine error.
@@ -253,12 +253,9 @@ SigningResult SigningService::sign(const SigningRequest& request, Auth::Credenti
     }
 
     // Collect the PIN via the host-supplied CredentialProvider. Retry count comes
-    // from the card when the plugin can determine it; nullopt means "unknown"
-    // and AuthRequirement::forSigning converts to the host UI's "?" retries.
-    // AuthRequirement::forSigning takes a negative sentinel to indicate
-    // "unknown retry count"; collapse the plugin's optional back to -1 at this
-    // single bridge point.
-    const int retriesLeft = cardPlugin->getPINTriesLeft(*session).value_or(-1);
+    // from the card when the plugin can determine it; std::nullopt means
+    // "unknown" and forwards unchanged to the host UI for a "?" rendering.
+    const std::optional<int> retriesLeft = cardPlugin->getPINTriesLeft(*session);
     // Use the LocalizedText overload so the host receives a translatable
     // i18n key alongside the English fallback. Previously the std::string
     // overload synthesised key="librescrs.auth.label.pin" from the
@@ -513,14 +510,34 @@ SigningResult SigningService::sign(const SigningRequest& request, Auth::Credenti
     }
 
     return SigningResult::ok(request.outputFile());
+} catch (const std::bad_alloc&) {
+    // API-POLICY §5.3 noexcept-alloc contract: a noexcept public entry
+    // point that allocates internally MUST degrade to a non-Ok
+    // SigningResult rather than `std::terminate` on bad_alloc. The
+    // signing pipeline allocates in many places (libresign request
+    // construction, file I/O buffers, std::string formatting); any
+    // of them can surface bad_alloc on a memory-pressure machine.
+    // Surface as signingEngineError so the host UI sees a normal
+    // failure path rather than an opaque crash.
+    return SigningResult::signingEngineErrorDiagnosticOnly(
+        std::string{"sign(): out of memory during signing pipeline"});
+} catch (const std::exception& ex) {
+    // Defence in depth — any other std::exception derived class
+    // escaping the inner machinery (libresign throws, ifstream
+    // exceptions enabled by a future caller wrapper, etc.) must
+    // also surface as a structured signingEngineError rather than
+    // propagate through the noexcept contract.
+    return SigningResult::signingEngineErrorDiagnosticOnly(std::string{"sign(): unexpected exception: "} + ex.what());
+} catch (...) {
+    return SigningResult::signingEngineErrorDiagnosticOnly(std::string{"sign(): unexpected non-std::exception"});
 }
 
 SigningResult SigningService::appendSigner(const SigningRequest& request, std::span<const std::uint8_t> priorSignature,
                                            std::span<const std::uint8_t> originalDocument,
                                            Auth::CredentialProvider credentialProvider,
                                            const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,
-                                           const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session)
-{
+                                           const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session) noexcept
+try {
     // Same up-front guards as sign(): empty CredentialProvider, null
     // plugin/session, and null TrustStoreService are all InvalidRequest /
     // diagnostic-only failures rather than engine errors. Mirroring sign()
@@ -572,7 +589,7 @@ SigningResult SigningService::appendSigner(const SigningRequest& request, std::s
     // build so a retry-count change in sign() automatically applies here
     // too. PIN flows from Secure::String → Secure::Buffer with no
     // intermediate non-cleansing copy.
-    const int retriesLeft = cardPlugin->getPINTriesLeft(*session).value_or(-1);
+    const std::optional<int> retriesLeft = cardPlugin->getPINTriesLeft(*session);
     auto authReq = Auth::AuthRequirement::forSigning(
         LocalizedText{.key = "librescrs.signing.label.pin", .defaultText = "Signing PIN", .placeholders = {}},
         retriesLeft);
@@ -749,6 +766,16 @@ SigningResult SigningService::appendSigner(const SigningRequest& request, std::s
     }
 
     return SigningResult::ok(request.outputFile());
+} catch (const std::bad_alloc&) {
+    // API-POLICY §5.3 noexcept-alloc contract — same shape as sign().
+    return SigningResult::signingEngineErrorDiagnosticOnly(
+        std::string{"appendSigner(): out of memory during signing pipeline"});
+} catch (const std::exception& ex) {
+    return SigningResult::signingEngineErrorDiagnosticOnly(std::string{"appendSigner(): unexpected exception: "} +
+                                                           ex.what());
+} catch (...) {
+    return SigningResult::signingEngineErrorDiagnosticOnly(
+        std::string{"appendSigner(): unexpected non-std::exception"});
 }
 
 } // namespace LibreSCRS::Signing

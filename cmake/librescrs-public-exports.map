@@ -5,8 +5,96 @@
  * See lib/LibreSCRS/CMakeLists.txt for full rationale.
  *
  * Syntax: GNU ld 2.46 — `extern "C++"` block matches against demangled
- * names; the `Foo::*;` glob covers free functions, methods, types, vtable,
- * typeinfo entries — everything tagged with namespace `Foo::`.
+ * names. UNQUOTED patterns are glob wildcards (shell-style); DOUBLE-
+ * QUOTED patterns are LITERAL matches with NO wildcard interpretation
+ * (binutils `ld` info, §3.9 VERSION). Unquoted patterns cannot contain
+ * spaces, which forces the leading-wildcard `*LibreSCRS::*` idiom: it
+ * is the only single-line glob that simultaneously matches
+ *     `LibreSCRS::Foo::bar(...)`
+ * and the Itanium-ABI artefacts
+ *     `typeinfo for LibreSCRS::Foo`
+ *     `vtable for LibreSCRS::Foo`
+ *     `VTT for LibreSCRS::Foo`
+ *     `construction vtable for LibreSCRS::Foo`
+ * — all of which carry an internal space the linker grammar refuses
+ * to accept in an unquoted pattern. Anchored quoted entries
+ * (`"LibreSCRS::*"`, `"typeinfo for LibreSCRS::*"`) were attempted
+ * and rejected: they are LITERAL matches per ld docs and match
+ * nothing at runtime.
+ *
+ * Trade-off — IMPLEMENTABILITY-FORCED leading-wildcard surface:
+ *   The leading-wildcard glob also promotes any symbol whose
+ *   demangled name MENTIONS a `LibreSCRS::` type anywhere. Empirically
+ *   this leaks:
+ *     - `emrtd::crypto::performBAC(LibreSCRS::SmartCard::Internal::
+ *       PCSCConnection&, ...)` and `performPACE(...)` (statically
+ *       linked into LibreSCRS_SecureChannel.so via the EMRTDCrypto
+ *       archive)
+ *     - `libresign::Pkcs11Token::Pkcs11Token(..., LibreSCRS::Secure::
+ *       Buffer const&, ...)` and `libresign::NativeSigningService::
+ *       appendSigner(...)` (statically linked into
+ *       LibreSCRS_Signing.so via the libresign archive)
+ *     - STL template instantiations templated on
+ *       `LibreSCRS::SmartCard::Internal::Monitor` (specifically
+ *       `std::thread::_State_impl<...LibreSCRS::SmartCard::Internal::
+ *       Monitor...>::_M_run()` and its destructors / typeinfo /
+ *       vtable)
+ *   All three classes were investigated for stripping via:
+ *     (a) anonymous-version + named LM_4 block — REJECTED by GNU ld
+ *         2.46 ("anonymous version tag cannot be combined with other
+ *         version tags").
+ *     (b) multiple named-version blocks (`_DENY` before LM_4) — DID
+ *         NOT strip; named-version local: blocks do not override
+ *         later named-version global: matches for equally-non-
+ *         specific wildcards.
+ *     (c) intra-block `local:` with `emrtd::*` / `libresign::*` /
+ *         `smartcard::*` — DID NOT strip; intra-block GLOBAL
+ *         wildcard wins over intra-block LOCAL wildcard at equal
+ *         specificity in GNU ld.
+ *     (d) `--exclude-libs libLibreSign.a` / `--exclude-libs
+ *         libEMRTDCrypto.a` — REJECTED because the legitimately
+ *         public `LibreSCRS::Signing::layoutVisualSignature` lives
+ *         in libresign source.
+ *   The leaked symbols are NOT security-critical: they are functions
+ *   whose demangled names happen to mention `LibreSCRS::` types.
+ *   They cannot be invoked via dlsym without prior knowledge of their
+ *   mangled names, do not break abstract-base polymorphism, and do
+ *   not expose any LM private API to third-party `.so` consumers
+ *   (who would have to declare matching `emrtd::` / `libresign::` /
+ *   `smartcard::` namespaces and depend on internal-header types to
+ *   link against them — a far harder ABI break than any reasonable
+ *   third-party consumer would commit to). The trade-off is accepted
+ *   as the cost of GNU ld's grammar; if a future binutils release
+ *   admits an anchored-glob-with-RTTI-coverage form, this file
+ *   should be re-narrowed.
+ *
+ * Cross-`.so` ABI surface — INTENTIONAL Internal::/detail:: exports:
+ *   The LibreSCRS::*::Internal:: namespace IS part of the SHARED-build
+ *   ABI for cross-`.so` plugin reach and the test-helper archive.
+ *   Specifically:
+ *     - LibreSCRS::SmartCard::Internal::Monitor, PCSCScanProvider,
+ *       PCSCConnection, APDUCommand, APDUResponse, MonitorEvent —
+ *       required for plugin .so files and the test-helper archive to
+ *       link against shared LibreSCRS_SmartCard.
+ *     - LibreSCRS::SecureChannel::detail::ChannelStateMutator —
+ *       required for SmartCard.so + emrtd-plugin.so to call
+ *       SetCurrentApplet / ReplaceKeys.
+ *     - LibreSCRS::SmartCard::Internal::HolderChannelAccessor —
+ *       required for plugin .so files to obtain a channel pointer
+ *       from a holder.
+ *     - LibreSCRS::Trust::detail::TrustStoreInternalAccess::
+ *       mergeTrustedListAnchors — required for Signing.so to merge
+ *       anchors into Trust.so's store.
+ *     - LibreSCRS::Trust::detail::TrustAnchorProvider typeinfo —
+ *       required for cross-`.so` dynamic_cast on subclasses linked in
+ *       different .so files.
+ *     - LibreSCRS::Certificate::detail::lookupOidName — required for
+ *       the OidDatabase test which links against the SHARED
+ *       LibreSCRS_Certificate.
+ *   Third-party consumers MUST NOT rely on Internal:: or detail::
+ *   symbols; both are unstable across minor releases and are exported
+ *   only because the shared-build link graph mechanically requires
+ *   it.
  */
 
 LM_4 {
@@ -26,7 +114,10 @@ LM_4 {
              * `LibreSCRS::*` glob misses the `... for LibreSCRS::*`
              * forms and silently demotes class-level visibility to
              * LOCAL in the .so, breaking link of consumers that
-             * downcast or instantiate the type. */
+             * downcast or instantiate the type. See the file-header
+             * "Trade-off" block for the IMPLEMENTABILITY-FORCED side
+             * of this glob and the four narrowing approaches GNU ld
+             * 2.46 grammar rejected. */
             *LibreSCRS::*;
         };
     local:

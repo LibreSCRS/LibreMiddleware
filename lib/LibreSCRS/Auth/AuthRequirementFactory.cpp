@@ -107,7 +107,7 @@ AuthRequirement AuthRequirement::forPreRead(PreReadAuthMethod method) noexcept
     }
 }
 
-AuthRequirement AuthRequirement::forSigning(LocalizedText pinLabel, int retriesLeft)
+AuthRequirement AuthRequirement::forSigning(LocalizedText pinLabel, std::optional<int> retriesLeft)
 {
     if (pinLabel.defaultText.empty() && pinLabel.key.empty()) {
         throw std::invalid_argument("AuthRequirement::forSigning: pinLabel.defaultText and "
@@ -123,13 +123,11 @@ AuthRequirement AuthRequirement::forSigning(LocalizedText pinLabel, int retriesL
     FieldDescriptor pin = makePinField("pin", pinLabel.defaultText);
     pin.label = std::move(pinLabel);
     r.fieldList.push_back(std::move(pin));
-    if (retriesLeft >= 0) {
-        r.retriesValue = retriesLeft;
-    }
+    r.retriesValue = std::move(retriesLeft);
     return r;
 }
 
-AuthRequirement AuthRequirement::forChangePin(LocalizedText pinLabel, int retriesLeft)
+AuthRequirement AuthRequirement::forChangePin(LocalizedText pinLabel, std::optional<int> retriesLeft)
 {
     if (pinLabel.defaultText.empty() && pinLabel.key.empty()) {
         throw std::invalid_argument("AuthRequirement::forChangePin: pinLabel.defaultText and "
@@ -154,9 +152,7 @@ AuthRequirement AuthRequirement::forChangePin(LocalizedText pinLabel, int retrie
 
     r.fieldList.push_back(makeConfirmPin());
 
-    if (retriesLeft >= 0) {
-        r.retriesValue = retriesLeft;
-    }
+    r.retriesValue = std::move(retriesLeft);
     return r;
 }
 

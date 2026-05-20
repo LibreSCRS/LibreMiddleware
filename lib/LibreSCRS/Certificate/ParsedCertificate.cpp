@@ -342,7 +342,7 @@ std::vector<std::uint8_t> ParsedCertificate::signatureValue() const
     return {sigData, sigData + sigLen};
 }
 
-std::span<const std::uint8_t> ParsedCertificate::derBytes() const
+std::span<const std::uint8_t> ParsedCertificate::derBytes() const noexcept
 {
     if (!d)
         return {};

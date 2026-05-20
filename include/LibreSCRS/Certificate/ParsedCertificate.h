@@ -324,7 +324,11 @@ public:
     // Raw access
     /// @brief Original DER-encoded certificate bytes (read-only span into
     ///        the pimpl-owned buffer; valid for the lifetime of `*this`).
-    [[nodiscard]] std::span<const std::uint8_t> derBytes() const;
+    /// @par Thread-safety
+    /// Reentrant; noexcept. Pure read of the pimpl's stable original-DER
+    /// buffer with no allocation, lock acquisition, or shared mutable
+    /// state. Concurrent calls on the same instance are race-free.
+    [[nodiscard]] std::span<const std::uint8_t> derBytes() const noexcept;
 
 private:
     ParsedCertificate();

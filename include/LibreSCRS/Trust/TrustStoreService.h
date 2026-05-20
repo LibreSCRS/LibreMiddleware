@@ -207,14 +207,14 @@ public:
     /// @return Opaque handle; pass to @ref removeObserver to detach.
     ///
     /// @par Fire-once contract
-    /// Each observer is invoked AT MOST ONCE per (source, terminal-status)
-    /// transition, regardless of subscription order. A worker thread that
-    /// settles a source while @ref addObserver is mid-flight cannot fire
-    /// the new observer for the same generation that addObserver's
-    /// synthetic-replay path will fire — the implementation tracks a
-    /// per-source generation counter and a per-observer last-seen-generation
-    /// map under the service's state mutex. Once a (source, generation)
-    /// pair has been claimed by either path, the other path skips it.
+    /// Each observer is invoked AT MOST ONCE per `(sourceUrl, terminal
+    /// SourceStatus)` transition, regardless of subscription order.
+    /// `addObserver` atomically establishes the synthetic-replay set
+    /// against the snapshot of already-settled sources at call time; the
+    /// observer is fire-once per transition, meaning a worker-thread
+    /// `settle` for a `(source, generation)` tuple that has already
+    /// replayed to this observer through the synthetic-replay path does
+    /// not re-fire, and vice versa.
     ///
     /// @note Observers added AFTER a source has already settled receive
     ///       a synthetic invocation for that source's terminal status,

@@ -42,8 +42,16 @@ struct MonitorEvent
         Error          ///< MonitorService encountered an error.
     };
 
-    /// @brief Event category.
-    Kind kind;
+    /// @brief Event category. Default-initialised to @ref Kind::Error so
+    ///        a default-constructed @ref MonitorEvent has a deterministic
+    ///        identity for `std::vector<MonitorEvent>` resize sentinels and
+    ///        `std::optional<MonitorEvent>` empty-value queries; the
+    ///        defaulted @ref operator== would otherwise read an
+    ///        indeterminate byte. Error is the worst-case interpretation —
+    ///        a defaulted event MUST NOT be silently treated as a
+    ///        CardInserted / CardRemoved by a consumer that forgot to
+    ///        populate the field.
+    Kind kind = Kind::Error;
     /// @brief PC/SC reader name the event refers to.
     std::string readerName;
     /// @brief Human-readable error description for @ref Kind::Error events.

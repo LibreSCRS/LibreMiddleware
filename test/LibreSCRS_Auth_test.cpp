@@ -152,7 +152,7 @@ TEST(AuthRequirementTest, ForChangePinLocalizedTextI18nKeyOnly)
 {
     LocalizedText label;
     label.key = "auth.pin.label"; // defaultText intentionally empty
-    auto r = AuthRequirement::forChangePin(label, -1);
+    auto r = AuthRequirement::forChangePin(label, std::nullopt);
     ASSERT_EQ(r.fields().size(), 3u);
     EXPECT_EQ(r.fields()[0].label.key, "auth.pin.label");
     EXPECT_FALSE(r.retriesLeft().has_value());
@@ -253,13 +253,13 @@ TEST(CredentialProviderTest, LambdaReturnsSetValues)
 
 TEST(AuthRequirementTest, ForChangePinWithUnknownRetriesLeavesNullopt)
 {
-    auto r = LibreSCRS::Auth::AuthRequirement::forChangePin(LocalizedText{"", "UserPIN", {}}, -1);
+    auto r = LibreSCRS::Auth::AuthRequirement::forChangePin(LocalizedText{"", "UserPIN", {}}, std::nullopt);
     EXPECT_FALSE(r.retriesLeft().has_value());
 }
 
 TEST(AuthRequirementTest, ForSigningWithUnknownRetriesLeavesNullopt)
 {
-    auto r = LibreSCRS::Auth::AuthRequirement::forSigning(LocalizedText{"", "UserPIN", {}}, -1);
+    auto r = LibreSCRS::Auth::AuthRequirement::forSigning(LocalizedText{"", "UserPIN", {}}, std::nullopt);
     EXPECT_FALSE(r.retriesLeft().has_value());
 }
 
@@ -307,8 +307,8 @@ TEST(AuthRequirementTest, ForSigningLocalizedTextAcceptsKeyOnlyOrFallbackOnly)
 {
     LibreSCRS::LocalizedText keyOnly{.key = "k", .defaultText = "", .placeholders = {}};
     LibreSCRS::LocalizedText fallbackOnly{.key = "", .defaultText = "f", .placeholders = {}};
-    EXPECT_NO_THROW((void)LibreSCRS::Auth::AuthRequirement::forSigning(keyOnly, -1));
-    EXPECT_NO_THROW((void)LibreSCRS::Auth::AuthRequirement::forSigning(fallbackOnly, -1));
+    EXPECT_NO_THROW((void)LibreSCRS::Auth::AuthRequirement::forSigning(keyOnly, std::nullopt));
+    EXPECT_NO_THROW((void)LibreSCRS::Auth::AuthRequirement::forSigning(fallbackOnly, std::nullopt));
 }
 
 TEST(AuthRequirementTest, ForPreReadIsNoexcept)

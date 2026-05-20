@@ -156,9 +156,19 @@ public:
     /// must include the original file too; without it, validation fails
     /// at the reference-resolution step before any cryptographic check
     /// runs.
+    /// @par Exceptions
+    /// `noexcept`. Per API-POLICY §5.3 noexcept-alloc contract, internal
+    /// `std::bad_alloc` from libresign request construction, file I/O
+    /// buffers, or std::string formatting is caught and surfaced as
+    /// @ref SigningResult::Status::SigningEngineError; defence-in-depth
+    /// catches for `std::exception` and any other escaped throw map to
+    /// the same status with a diagnostic message. All functional failure
+    /// modes (trust unavailable, TSA unreachable, invalid request, user
+    /// cancel) surface as a non-Ok @ref SigningResult::Status without
+    /// involving the exception machinery.
     [[nodiscard]] SigningResult sign(const SigningRequest& request, Auth::CredentialProvider credentialProvider,
                                      const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,
-                                     const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session);
+                                     const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session) noexcept;
 
     /// @brief Append a new signer to a prior signature, producing a multi-
     ///        signature document with the new signer's signature alongside
@@ -207,13 +217,17 @@ public:
     /// Same blocking contract as @ref sign — PIN verification + APDU
     /// signing + optional TSA round-trip + packaging. Call on a worker
     /// thread from GUI hosts.
+    /// @par Exceptions
+    /// `noexcept`. Same noexcept-alloc contract as @ref sign: internal
+    /// `std::bad_alloc` and any other escaped throw degrade to
+    /// @ref SigningResult::Status::SigningEngineError with a diagnostic
+    /// message rather than crossing the noexcept boundary.
     /// @since 4.1
-    [[nodiscard]] SigningResult appendSigner(const SigningRequest& request,
-                                             std::span<const std::uint8_t> priorSignature,
-                                             std::span<const std::uint8_t> originalDocument,
-                                             Auth::CredentialProvider credentialProvider,
-                                             const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,
-                                             const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session);
+    [[nodiscard]] SigningResult
+    appendSigner(const SigningRequest& request, std::span<const std::uint8_t> priorSignature,
+                 std::span<const std::uint8_t> originalDocument, Auth::CredentialProvider credentialProvider,
+                 const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,
+                 const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session) noexcept;
 
     // @since 4.0: trustStore() getter removed — consumers obtain the trust
     // store from the @ref Trust::TrustStoreService they constructed and

@@ -53,11 +53,15 @@ namespace LibreSCRS::Secure {
 /// references to a shared instance.
 ///
 /// @par Cleanse semantics
-/// Cleanse-on-free is implemented at the allocator level (an internal
-/// `secure_allocator<T>`). Every freed allocation is passed through
-/// `OPENSSL_cleanse` before reaching `::operator delete`. Future growth
-/// APIs (`reserve`, `push_back`, etc.) automatically inherit this
-/// invariant; no per-method discipline is required.
+/// Cleansing happens in two places: the internal `secure_allocator<T>`'s
+/// `deallocate` hook for heap-allocated bytes (every freed allocation is
+/// passed through `OPENSSL_cleanse` before reaching `::operator delete`),
+/// and the embedding pimpl's destructor for in-line short-string-
+/// optimised (SSO) bytes that never reach the allocator. Together this
+/// guarantees every byte that ever held secret material is zeroised
+/// before the storage is freed. Future growth APIs (`reserve`,
+/// `push_back`, etc.) automatically inherit the allocator-level path; no
+/// per-method discipline is required.
 ///
 /// @warning @ref view returns a `std::string_view` that references memory
 ///          owned by this instance. The view is invalidated by any mutation
