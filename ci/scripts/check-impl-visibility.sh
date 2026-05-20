@@ -133,12 +133,31 @@ if [[ "$PLATFORM" == "Darwin" ]]; then
     exit 0
 fi
 
-# Linux branch — scan static archives (GCC visibility propagates to .a).
+# Linux branch — scan static archives (GCC visibility propagates to .a),
+# the plugin/pkcs11 .so files, AND, in shared-library builds, the LM core
+# .so files (Auth, Certificate, Plugin, SecureChannel, Signing, SmartCard,
+# Trust).
+#
+# Build-config detection: presence of $BUILD_DIR/lib/LibreSCRS/
+# libLibreSCRS_SmartCard.so indicates LIBREMIDDLEWARE_BUILD_SHARED=ON.
+# In that mode the seven LM core libraries are .so files and the only
+# remaining .a is the static helper LibreSCRS_Pkcs11Inject (linked into
+# the pkcs11 module; not distributed as a shared library). In the default
+# static mode, all eight LM libraries are .a archives.
+#
+# The expected counts are firm: LOUD failure on drift (renamed archive,
+# new public library added or removed) is preferred over silent green.
 
-# Exact count of public libLibreSCRS_*.a archives expected. Fails LOUD
-# (not silently green) when the set drifts — e.g., when an archive is
-# renamed, or a new public library is added or removed.
-EXPECTED_ARCHIVES=8
+if [[ -f "$BUILD_DIR/lib/LibreSCRS/libLibreSCRS_SmartCard.so" ]]; then
+    BUILD_CONFIG=shared
+    EXPECTED_ARCHIVES=1     # LibreSCRS_Pkcs11Inject only
+    EXPECTED_CORE_SOS=7     # Auth, Certificate, Plugin, SecureChannel,
+                            # Signing, SmartCard, Trust
+else
+    BUILD_CONFIG=static
+    EXPECTED_ARCHIVES=8
+    EXPECTED_CORE_SOS=0
+fi
 
 leaks=0
 archives_scanned=0
@@ -235,10 +254,11 @@ while IFS= read -r archive; do
 done < <(find "$BUILD_DIR" -name 'libLibreSCRS_*.a' | sort)
 
 if [[ $archives_scanned -ne $EXPECTED_ARCHIVES ]]; then
-    echo "ERROR: expected $EXPECTED_ARCHIVES libLibreSCRS_*.a archive(s) under '$BUILD_DIR'," >&2
-    echo "       found $archives_scanned. Build broken, wrong dir, or archive set changed?" >&2
-    echo "       If the archive set changed intentionally, update" >&2
-    echo "       EXPECTED_ARCHIVES in $(basename "$0")." >&2
+    echo "ERROR: expected $EXPECTED_ARCHIVES libLibreSCRS_*.a archive(s) under '$BUILD_DIR'" >&2
+    echo "       ($BUILD_CONFIG build), found $archives_scanned." >&2
+    echo "       Build broken, wrong dir, or archive set changed?" >&2
+    echo "       If the archive set changed intentionally, update the" >&2
+    echo "       expected counts in $(basename "$0")." >&2
     exit 2
 fi
 
@@ -253,25 +273,13 @@ if [[ $leaks -gt 0 ]]; then
     exit 1
 fi
 
-echo "Static archives clean — $archives_scanned scanned."
+echo "Static archives clean — $archives_scanned scanned ($BUILD_CONFIG build)."
 
-# Linux .so scan — plugin MODULE shared libraries and the librescrs-pkcs11.so
-# dynamic library. Parity with the macOS dylib scan above.
+# Helper: scan a single .so for ::Impl:: T-binding and vtable/typeinfo
+# W/V-binding leaks. Prints "LEAK in ..." on stdout when any found.
+# Returns 0 if clean, 1 if any leak was found.
 #
-# Why archive-cleanness is not sufficient: the .a-level allow-listed
-# residuals (shared_ptr<TrustStoreService::Impl> +
-# shared_ptr<CancelToken::Impl> vague-linkage entries, plus the
-# MonitorService::Impl member functions) are emitted WEAK HIDDEN in their
-# TUs; the linker strips them from the exported dynamic symbol table of
-# every .so. But a *new* `::Impl::` T-binding or `vtable for ...::Impl`
-# W/V-binding could slip into a plugin TU at any time (e.g. a refactor
-# that exposes an internal handle by value across an exported plugin
-# entry point). The pkcs11 module is even more sensitive — it is the
-# single .so consumed by every external host (Firefox, Thunderbird,
-# gpgsm, Kleopatra, etc.) and must export only the PKCS#11 v3 C_*
-# entry points.
-#
-# `nm -gU` here mirrors the macOS branch:
+# `nm -gU` mirrors the macOS branch:
 #   -g = external symbols only (the ELF dynamic symbol table on stripped
 #        .so; the combined static+dynamic export view otherwise)
 #   -U = defined symbols only
@@ -279,13 +287,13 @@ echo "Static archives clean — $archives_scanned scanned."
 # combined -gU view also catches unstripped local-but-default-visible
 # symbols that some build configurations leave behind.
 #
-# No allow-list: the Trust/Auth/SmartCard Impl residuals are
-# .a-archive-only by design — their presence in any .so is a real leak.
-
-so_leaks=0
-sos_scanned=0
-while IFS= read -r so; do
-    sos_scanned=$((sos_scanned + 1))
+# No allow-list: the .a-level Impl residuals (Trust, Auth, SmartCard)
+# are emitted WEAK HIDDEN in their TUs and the linker strips them from
+# every .so dynamic export table — so their presence in any .so here
+# is a real leak.
+scan_so_for_impl_leaks() {
+    local so="$1"
+    local t_leaks wv_leaks bad
 
     t_leaks=$(nm -gU "$so" 2>/dev/null \
         | awk '$2 == "T" { print $3 }' \
@@ -308,8 +316,63 @@ while IFS= read -r so; do
     if [[ -n "$bad" ]]; then
         echo "LEAK in $(basename "$so"):"
         echo "$bad" | sed 's/^/  /'
-        so_leaks=$((so_leaks + 1))
+        return 1
     fi
+    return 0
+}
+
+# LM core .so scan (shared build only). The core libraries become exported
+# .so files in shared builds; LIBRESCRS_INTERNAL on Impl structs is honored
+# by GCC at .so link-edit, so ANY ::Impl:: T-binding or vtable/typeinfo
+# over Impl reaching the export table is a real visibility hole.
+core_leaks=0
+core_sos_scanned=0
+if [[ $EXPECTED_CORE_SOS -gt 0 ]]; then
+    while IFS= read -r so; do
+        core_sos_scanned=$((core_sos_scanned + 1))
+        scan_so_for_impl_leaks "$so" || core_leaks=$((core_leaks + 1))
+    done < <(find "$BUILD_DIR/lib/LibreSCRS" \
+                  -maxdepth 1 -name 'libLibreSCRS_*.so' 2>/dev/null | sort)
+
+    if [[ $core_sos_scanned -ne $EXPECTED_CORE_SOS ]]; then
+        echo "ERROR: expected $EXPECTED_CORE_SOS LM core .so file(s) under" >&2
+        echo "       '$BUILD_DIR/lib/LibreSCRS/' (shared build), found" >&2
+        echo "       $core_sos_scanned. Build broken, wrong dir, or LM" >&2
+        echo "       core library set changed?" >&2
+        exit 2
+    fi
+
+    if [[ $core_leaks -gt 0 ]]; then
+        echo
+        echo "ERROR: $core_leaks LM core .so file(s) leaked pimpl Impl symbols." >&2
+        echo "  Apply LIBRESCRS_INTERNAL to leaked Impl structs, or refactor" >&2
+        echo "  std-template instantiations that embed internal Impl types." >&2
+        exit 1
+    fi
+
+    echo "LM core .so files clean — $core_sos_scanned scanned."
+fi
+
+# Plugin/pkcs11 .so scan (always — these are .so in both build configs).
+#
+# Why archive-cleanness is not sufficient: the .a-level allow-listed
+# residuals (shared_ptr<TrustStoreService::Impl> +
+# shared_ptr<CancelToken::Impl> vague-linkage entries, plus the
+# MonitorService::Impl member functions) are emitted WEAK HIDDEN in their
+# TUs; the linker strips them from the exported dynamic symbol table of
+# every .so. But a *new* ::Impl:: T-binding or `vtable for ...::Impl`
+# W/V-binding could slip into a plugin TU at any time (e.g. a refactor
+# that exposes an internal handle by value across an exported plugin
+# entry point). The pkcs11 module is even more sensitive — it is the
+# single .so consumed by every external host (Firefox, Thunderbird,
+# gpgsm, Kleopatra, Evolution via p11-kit) and must export only the
+# PKCS#11 v3 C_* entry points.
+
+so_leaks=0
+sos_scanned=0
+while IFS= read -r so; do
+    sos_scanned=$((sos_scanned + 1))
+    scan_so_for_impl_leaks "$so" || so_leaks=$((so_leaks + 1))
 done < <(find "$BUILD_DIR/lib/pkcs11" "$BUILD_DIR/plugins" \
               -maxdepth 2 -name '*.so' 2>/dev/null | sort)
 
@@ -328,4 +391,4 @@ if [[ $so_leaks -gt 0 ]]; then
 fi
 
 echo "Plugin/pkcs11 .so files clean — $sos_scanned scanned."
-echo "Impl visibility clean — $archives_scanned archive(s) + $sos_scanned .so file(s), no leaks."
+echo "Impl visibility clean — $archives_scanned archive(s) + $((core_sos_scanned + sos_scanned)) .so file(s), no leaks."
