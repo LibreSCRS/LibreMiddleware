@@ -13,12 +13,18 @@
 # the template arguments; `-fvisibility-inlines-hidden` does not override
 # this).
 #
-# Runs after LM build; scans libLibreSCRS_*.a for:
+# Runs after LM build; scans both static archives AND the linked plugin
+# / pkcs11 shared libraries for:
 #   1) T-binding (global text) symbols whose demangled name contains
 #      `::Impl::`.
 #   2) W/V-binding (weak / vague-linkage) symbols whose demangled name is a
 #      `vtable for` / `typeinfo for` / `typeinfo name for` entry containing
 #      `::Impl` as a word segment.
+#
+# Linux coverage: libLibreSCRS_*.a archives + plugins/*.so + lib/pkcs11/*.so.
+# macOS coverage: lib/pkcs11/*.dylib + plugins/*.dylib (Apple Clang enforces
+# visibility at link-edit, so the static-archive level is not informative on
+# macOS — see note below).
 #
 # Fails the build if any leaking symbol is found.
 #
@@ -247,4 +253,79 @@ if [[ $leaks -gt 0 ]]; then
     exit 1
 fi
 
-echo "Impl visibility clean — $archives_scanned archive(s) scanned, no leaks."
+echo "Static archives clean — $archives_scanned scanned."
+
+# Linux .so scan — plugin MODULE shared libraries and the librescrs-pkcs11.so
+# dynamic library. Parity with the macOS dylib scan above.
+#
+# Why archive-cleanness is not sufficient: the .a-level allow-listed
+# residuals (shared_ptr<TrustStoreService::Impl> +
+# shared_ptr<CancelToken::Impl> vague-linkage entries, plus the
+# MonitorService::Impl member functions) are emitted WEAK HIDDEN in their
+# TUs; the linker strips them from the exported dynamic symbol table of
+# every .so. But a *new* `::Impl::` T-binding or `vtable for ...::Impl`
+# W/V-binding could slip into a plugin TU at any time (e.g. a refactor
+# that exposes an internal handle by value across an exported plugin
+# entry point). The pkcs11 module is even more sensitive — it is the
+# single .so consumed by every external host (Firefox, Thunderbird,
+# gpgsm, Kleopatra, etc.) and must export only the PKCS#11 v3 C_*
+# entry points.
+#
+# `nm -gU` here mirrors the macOS branch:
+#   -g = external symbols only (the ELF dynamic symbol table on stripped
+#        .so; the combined static+dynamic export view otherwise)
+#   -U = defined symbols only
+# We deliberately do NOT use -D (dynamic-only, GNU-only) because the
+# combined -gU view also catches unstripped local-but-default-visible
+# symbols that some build configurations leave behind.
+#
+# No allow-list: the Trust/Auth/SmartCard Impl residuals are
+# .a-archive-only by design — their presence in any .so is a real leak.
+
+so_leaks=0
+sos_scanned=0
+while IFS= read -r so; do
+    sos_scanned=$((sos_scanned + 1))
+
+    t_leaks=$(nm -gU "$so" 2>/dev/null \
+        | awk '$2 == "T" { print $3 }' \
+        | c++filt 2>/dev/null \
+        | grep -F '::Impl::' \
+        | sort -u || true)
+
+    wv_leaks=$(nm -gU "$so" 2>/dev/null \
+        | awk '$2 == "W" || $2 == "V" { print $3 }' \
+        | c++filt 2>/dev/null \
+        | grep -E '^(vtable for|typeinfo (for|name for))\b.*::Impl\b' \
+        | sort -u || true)
+
+    bad="$t_leaks"
+    if [[ -n "$wv_leaks" ]]; then
+        [[ -n "$bad" ]] && bad+=$'\n'
+        bad+="$wv_leaks"
+    fi
+
+    if [[ -n "$bad" ]]; then
+        echo "LEAK in $(basename "$so"):"
+        echo "$bad" | sed 's/^/  /'
+        so_leaks=$((so_leaks + 1))
+    fi
+done < <(find "$BUILD_DIR/lib/pkcs11" "$BUILD_DIR/plugins" \
+              -maxdepth 2 -name '*.so' 2>/dev/null | sort)
+
+if [[ $sos_scanned -eq 0 ]]; then
+    echo "ERROR: no public .so files found under '$BUILD_DIR/lib/pkcs11/' or" >&2
+    echo "       '$BUILD_DIR/plugins/'. Build broken or wrong build dir?" >&2
+    exit 2
+fi
+
+if [[ $so_leaks -gt 0 ]]; then
+    echo
+    echo "ERROR: $so_leaks .so file(s) leaked pimpl Impl symbols." >&2
+    echo "  Apply LIBRESCRS_INTERNAL to leaked Impl structs, or refactor" >&2
+    echo "  std-template instantiations that embed internal Impl types." >&2
+    exit 1
+fi
+
+echo "Plugin/pkcs11 .so files clean — $sos_scanned scanned."
+echo "Impl visibility clean — $archives_scanned archive(s) + $sos_scanned .so file(s), no leaks."
