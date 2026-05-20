@@ -11,7 +11,9 @@
 
 #include <LibreSCRS/Export.h>
 
+#include <chrono>
 #include <compare>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -184,7 +186,45 @@ public:
         std::uint64_t valueInternal = 0;
     };
 
-    MonitorService();
+    /// @brief Tunable parameters for event coalescing and flood handling.
+    ///
+    /// The default-constructed @ref Config matches the values returned by
+    /// @ref fromEnv when no environment overrides are set. Construct with
+    /// designated initialisers to override individual fields, e.g.
+    /// @code
+    /// MonitorService svc{MonitorService::Config{
+    ///     .coalesceWindow = std::chrono::milliseconds(100)}};
+    /// @endcode
+    ///
+    /// @since 4.1
+    struct Config
+    {
+        /// @brief Inserted+Removed (or Removed+Inserted) pairs on the same
+        ///        reader within this window are suppressed as transient
+        ///        phantoms. Set to zero to disable coalescing entirely.
+        std::chrono::milliseconds coalesceWindow{250};
+
+        /// @brief Per-reader event-rate ceiling; reserved for the rate
+        ///        limiter wired in a follow-up change. Unused by the
+        ///        coalescer.
+        std::size_t maxEventsPerSecond{20};
+
+        /// @brief Cool-down applied once the rate limiter trips; reserved
+        ///        for the rate limiter wired in a follow-up change.
+        std::chrono::milliseconds backoffOnFlood{5000};
+
+        /// @brief Build a @ref Config from process environment overrides.
+        ///        @c LIBRESCRS_MONITOR_COALESCE_MS replaces
+        ///        @ref coalesceWindow when set to a non-negative integer.
+        ///        The literal value @c "0" disables coalescing. Unset or
+        ///        malformed values preserve the defaults.
+        [[nodiscard]] static Config fromEnv() noexcept;
+    };
+
+    /// @brief Construct a MonitorService. @p config tunes coalescing and
+    ///        flood handling; the default reads tunables from the
+    ///        process environment (see @ref Config::fromEnv).
+    explicit MonitorService(Config config = Config::fromEnv());
     ~MonitorService();
     MonitorService(const MonitorService&) = delete;
     MonitorService& operator=(const MonitorService&) = delete;
@@ -278,6 +318,19 @@ public:
     ///       Win32 mutexes do not fail in practice, but the abstraction
     ///       allows it.
     [[nodiscard]] bool isRunning() const noexcept;
+
+    /// @brief Test seam: inject a synthetic @ref MonitorEvent through the
+    ///        same dispatch funnel real PC/SC events use.
+    ///
+    /// Bypasses the PC/SC source so unit tests can exercise the dispatch
+    /// path (coalescing, fan-out, callback shielding) without a live
+    /// reader. Not for production use; the public ABI exposes it because
+    /// the alternative — a friend declaration on the internal Impl —
+    /// requires the consumer to include the @c LIBRESCRS_INTERNAL_BUILD
+    /// header, defeating the test-from-public-headers contract.
+    ///
+    /// @since 4.1
+    void publishForTest(const MonitorEvent& ev);
 
 private:
     friend class detail::MonitorFactory;

@@ -902,3 +902,4 @@ gtest_discover_tests(ManifestCodegenTests)
 # every test SKIPs at runtime when the env vars (LIBRESCRS_TEST_PIN,
 # LIBRESCRS_TEST_PIN_QSCD, LIBRESCRS_TEST_CAN) are unset.
 add_subdirectory(e2e)
+add_subdirectory(smartcard)

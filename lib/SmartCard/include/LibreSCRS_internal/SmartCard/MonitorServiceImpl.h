@@ -14,6 +14,8 @@
 #include <smartcard/monitor.h>
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -21,6 +23,8 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -52,9 +56,56 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
     // across invocation.
     std::mutex dispatchMtx;
 
+    /// @brief Per-reader coalescer state.
+    ///
+    /// A Card event is buffered for @ref Config::coalesceWindow before
+    /// being forwarded to subscribers. If the opposite kind arrives on the
+    /// same reader during that window, both the buffered event and the
+    /// arriving one are dropped as a transient phantom (PC/SC
+    /// dual-interface readers can emit dozens of Inserted+Removed pairs in
+    /// sub-second bursts). A same-kind repeat refreshes the buffered event
+    /// without emitting a duplicate.
+    struct ReaderCoalesceState
+    {
+        std::optional<MonitorEvent> heldEvent;
+        std::chrono::steady_clock::time_point heldUntil{};
+        MonitorEvent::Kind lastEmittedKind{MonitorEvent::Kind::Error};
+        std::chrono::steady_clock::time_point lastEventAt{};
+    };
+
+    mutable std::mutex coalesceMtx;
+    std::condition_variable coalesceCv;
+    std::unordered_map<std::string, ReaderCoalesceState> coalesceState;
+    MonitorService::Config config;
+    std::thread coalesceFlusher;
+    bool coalesceStop{false};
+
+    Impl(std::unique_ptr<::LibreSCRS::SmartCard::Internal::IPCSCScanProvider> provider, MonitorService::Config cfg)
+        : internal(std::make_unique<::LibreSCRS::SmartCard::Internal::Monitor>(std::move(provider))), config(cfg)
+    {
+        if (config.coalesceWindow.count() > 0) {
+            coalesceFlusher = std::thread(&Impl::runCoalesceFlusher, this);
+        }
+    }
+
+    // Backwards-compatible single-arg ctor used by the test-helper factory
+    // and any internal call site that did not pre-date the Config addition.
+    // Defaults the Config to the env-driven baseline.
     explicit Impl(std::unique_ptr<::LibreSCRS::SmartCard::Internal::IPCSCScanProvider> provider)
-        : internal(std::make_unique<::LibreSCRS::SmartCard::Internal::Monitor>(std::move(provider)))
+        : Impl(std::move(provider), MonitorService::Config::fromEnv())
     {}
+
+    ~Impl()
+    {
+        if (coalesceFlusher.joinable()) {
+            {
+                std::scoped_lock lk(coalesceMtx);
+                coalesceStop = true;
+            }
+            coalesceCv.notify_all();
+            coalesceFlusher.join();
+        }
+    }
 
     // Snapshot currently-registered (id, callback) pairs under the cbMtx lock.
     // Dispatch outside cbMtx so subscribers can re-enter subscribe/unsubscribe
@@ -65,6 +116,15 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
     // MonitorService::unsubscribe with @ref DrainPolicy::Drain can block on
     // it to guarantee no callback is currently in flight.
     void dispatch(const MonitorEvent& event);
+
+    // Bypasses the coalescer and pushes an event straight to subscribers.
+    // Used by the flusher thread when a held event's window expires.
+    void dispatchImmediate(const MonitorEvent& event);
+
+    // Background flusher loop: wakes on the earliest pending heldUntil and
+    // releases events whose window has expired. Exits when coalesceStop is
+    // set in the destructor.
+    void runCoalesceFlusher();
 
     // Reader-list diff: synthesise ReaderAdded / ReaderRemoved events.
     // Shared by the subscribe-time initial snapshot path and the internal

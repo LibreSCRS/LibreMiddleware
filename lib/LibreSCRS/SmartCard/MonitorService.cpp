@@ -11,15 +11,19 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <exception>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <set>
+#include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -71,7 +75,7 @@ MonitorService::Impl::snapshotCallbacks()
 // as a defense-in-depth fallback because the SDK does not currently inject
 // a logger across the public ABI boundary; the contract is documented on
 // `MonitorService`'s @par Thread-safety section in the header.
-void MonitorService::Impl::dispatch(const MonitorEvent& event)
+void MonitorService::Impl::dispatchImmediate(const MonitorEvent& event)
 {
     std::lock_guard<std::mutex> dispatchLock(dispatchMtx);
     auto snapshot = snapshotCallbacks();
@@ -86,6 +90,117 @@ void MonitorService::Impl::dispatch(const MonitorEvent& event)
         } catch (...) {
             std::fprintf(stderr, "LibreSCRS MonitorService: subscriber callback threw unknown exception\n");
         }
+    }
+}
+
+void MonitorService::Impl::dispatch(const MonitorEvent& event)
+{
+    // Per-reader transient-pair coalescer.
+    //
+    // Card events on a given reader are buffered for
+    // config.coalesceWindow before being forwarded to subscribers. If the
+    // opposite kind arrives on the same reader during the hold window, the
+    // buffered event and the arriving event are both dropped as a transient
+    // phantom. Some PC/SC readers (notably dual-interface contactless
+    // readers when a contact card is inserted) emit dozens of bogus
+    // Inserted+Removed pairs in sub-second bursts; surfacing them would
+    // thrash the UI and re-trigger expensive plugin probes for every flap.
+    //
+    // A same-kind repeat within the window refreshes the hold without
+    // double-emitting. Window of zero disables coalescing entirely — used
+    // by diagnostic builds that need the raw event stream. Reader-list
+    // events (ReaderAdded/Removed) and Error events always pass through.
+    const bool isCardEvent =
+        (event.kind == MonitorEvent::Kind::CardInserted || event.kind == MonitorEvent::Kind::CardRemoved);
+    if (config.coalesceWindow.count() <= 0 || !isCardEvent) {
+        dispatchImmediate(event);
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    bool wakeFlusher = false;
+    {
+        std::scoped_lock lk(coalesceMtx);
+        auto& state = coalesceState[event.readerName];
+        if (state.heldEvent.has_value()) {
+            const bool opposite = (state.heldEvent->kind == MonitorEvent::Kind::CardInserted &&
+                                   event.kind == MonitorEvent::Kind::CardRemoved) ||
+                                  (state.heldEvent->kind == MonitorEvent::Kind::CardRemoved &&
+                                   event.kind == MonitorEvent::Kind::CardInserted);
+            if (opposite) {
+                // Cancel the held event; drop the arriving one too. The
+                // pair is treated as a transient phantom — neither reaches
+                // subscribers.
+                state.heldEvent.reset();
+                state.lastEventAt = now;
+                return;
+            }
+            // Same-kind repeat — refresh the hold window so a follow-up
+            // opposite can still cancel within the original timeline.
+            state.heldEvent = event;
+            state.heldUntil = now + config.coalesceWindow;
+            state.lastEventAt = now;
+            wakeFlusher = true;
+        } else {
+            state.heldEvent = event;
+            state.heldUntil = now + config.coalesceWindow;
+            state.lastEventAt = now;
+            wakeFlusher = true;
+        }
+    }
+    if (wakeFlusher) {
+        coalesceCv.notify_all();
+    }
+}
+
+void MonitorService::Impl::runCoalesceFlusher()
+{
+    std::unique_lock<std::mutex> lk(coalesceMtx);
+    while (!coalesceStop) {
+        // Find the earliest pending hold deadline.
+        auto nextDeadline = std::chrono::steady_clock::time_point::max();
+        for (const auto& [name, state] : coalesceState) {
+            (void)name;
+            if (state.heldEvent.has_value() && state.heldUntil < nextDeadline) {
+                nextDeadline = state.heldUntil;
+            }
+        }
+        if (nextDeadline == std::chrono::steady_clock::time_point::max()) {
+            coalesceCv.wait(lk, [this] {
+                if (coalesceStop)
+                    return true;
+                for (const auto& [name, state] : coalesceState) {
+                    (void)name;
+                    if (state.heldEvent.has_value())
+                        return true;
+                }
+                return false;
+            });
+            continue;
+        }
+        if (coalesceCv.wait_until(lk, nextDeadline, [this] { return coalesceStop; })) {
+            // coalesceStop became true.
+            continue;
+        }
+        // Deadline reached — collect and emit every event whose hold has
+        // expired. Snapshot the events while holding the lock; emit after
+        // releasing it so subscriber callbacks cannot deadlock against
+        // dispatch re-entry.
+        std::vector<MonitorEvent> toEmit;
+        const auto now = std::chrono::steady_clock::now();
+        for (auto& [name, state] : coalesceState) {
+            (void)name;
+            if (state.heldEvent.has_value() && state.heldUntil <= now) {
+                toEmit.push_back(*state.heldEvent);
+                state.lastEmittedKind = state.heldEvent->kind;
+                state.heldEvent.reset();
+            }
+        }
+        lk.unlock();
+        for (const auto& ev : toEmit) {
+            dispatchImmediate(ev);
+        }
+        lk.lock();
     }
 }
 
@@ -112,7 +227,30 @@ void MonitorService::Impl::diffReadersAndDispatch(const std::vector<std::string>
         dispatch(MonitorEvent{MonitorEvent::Kind::ReaderRemoved, r, std::nullopt, std::nullopt});
 }
 
-MonitorService::MonitorService() : d(std::make_unique<Impl>(nullptr)) {}
+MonitorService::Config MonitorService::Config::fromEnv() noexcept
+{
+    Config c{};
+    if (const char* v = std::getenv("LIBRESCRS_MONITOR_COALESCE_MS")) {
+        try {
+            const auto ms = std::stoi(v);
+            if (ms >= 0) {
+                c.coalesceWindow = std::chrono::milliseconds(ms);
+            }
+        } catch (...) {
+            // Malformed value: keep default. Diagnostic env knob is
+            // intentionally forgiving so a stray export never breaks the
+            // service.
+        }
+    }
+    return c;
+}
+
+MonitorService::MonitorService(Config config) : d(std::make_unique<Impl>(nullptr, config)) {}
+
+void MonitorService::publishForTest(const MonitorEvent& ev)
+{
+    d->dispatch(ev);
+}
 
 MonitorService::operator bool() const noexcept
 {
