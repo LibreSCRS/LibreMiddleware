@@ -32,7 +32,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-        with:
           # Full history so cmake's git-describe-derived version stamp
           # has tags to discover; otherwise configure logs a warning.
           fetch-depth: 0
