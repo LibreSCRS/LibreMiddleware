@@ -35,7 +35,7 @@ target_link_libraries(bench_parsed_cert PRIVATE
     LibreSCRS_Certificate
     ${LIBRESCRS_BENCH_LIBS})
 target_compile_definitions(bench_parsed_cert PRIVATE
-    LIBRESCRS_BENCH_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/test/test-data")
+    LIBRESCRS_BENCH_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/test/test-data")
 
 # ---------------------------------------------------------------------------
 # bench_trust_validate: TrustStore::validateChain over 1/3/5-deep chains
@@ -43,13 +43,13 @@ target_compile_definitions(bench_parsed_cert PRIVATE
 add_executable(bench_trust_validate bench_trust_validate.cpp)
 target_compile_definitions(bench_trust_validate PRIVATE LIBRESCRS_INTERNAL_BUILD)
 target_include_directories(bench_trust_validate PRIVATE
-    ${CMAKE_SOURCE_DIR}/lib)
+    ${PROJECT_SOURCE_DIR}/lib)
 target_link_libraries(bench_trust_validate PRIVATE
     LibreSCRS_Trust
     LibreSCRS_Certificate
     ${LIBRESCRS_BENCH_LIBS})
 target_compile_definitions(bench_trust_validate PRIVATE
-    LIBRESCRS_BENCH_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/test/test-data")
+    LIBRESCRS_BENCH_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/test/test-data")
 
 # ---------------------------------------------------------------------------
 # bench_truststore_service: TrustStoreService::create() happy path
@@ -59,7 +59,7 @@ target_link_libraries(bench_truststore_service PRIVATE
     LibreSCRS_Trust
     ${LIBRESCRS_BENCH_LIBS})
 target_compile_definitions(bench_truststore_service PRIVATE
-    LIBRESCRS_BENCH_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/test/fixtures")
+    LIBRESCRS_BENCH_FIXTURES_DIR="${PROJECT_SOURCE_DIR}/test/fixtures")
 
 # bench_signing: deferred to LM 4.1.
 #

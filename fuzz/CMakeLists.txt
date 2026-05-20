@@ -40,7 +40,7 @@ set(LIBRESCRS_FUZZ_FLAGS
 # rather than depending on the CMake EmbedBinary helper because we want a
 # stable symbol name (kTlFuzzSigningCertDer) plus a separate ...Len constant.
 set(LIBRESCRS_FUZZ_TL_PEM
-    "${CMAKE_SOURCE_DIR}/test/fixtures/trust/test-tl-signing-cert.pem")
+    "${PROJECT_SOURCE_DIR}/test/fixtures/trust/test-tl-signing-cert.pem")
 set(LIBRESCRS_FUZZ_TL_DER
     "${CMAKE_CURRENT_BINARY_DIR}/test-tl-signing-cert.der")
 set(LIBRESCRS_FUZZ_TL_EMBED
@@ -64,9 +64,9 @@ add_custom_command(
             -DIN_FILE=${LIBRESCRS_FUZZ_TL_DER}
             -DOUT_FILE=${LIBRESCRS_FUZZ_TL_EMBED}
             -DSYMBOL=kTlFuzzSigningCertDer
-            -P ${CMAKE_SOURCE_DIR}/fuzz/EmbedFuzzCert.cmake
+            -P ${PROJECT_SOURCE_DIR}/fuzz/EmbedFuzzCert.cmake
     DEPENDS "${LIBRESCRS_FUZZ_TL_DER}"
-            "${CMAKE_SOURCE_DIR}/fuzz/EmbedFuzzCert.cmake"
+            "${PROJECT_SOURCE_DIR}/fuzz/EmbedFuzzCert.cmake"
     COMMENT "Embedding TL signing cert as C array for fuzz harness"
     VERBATIM)
 
@@ -86,7 +86,7 @@ target_compile_options(fuzz_trusted_list_parser PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_link_options(fuzz_trusted_list_parser PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_compile_definitions(fuzz_trusted_list_parser PRIVATE LIBRESCRS_INTERNAL_BUILD)
 target_include_directories(fuzz_trusted_list_parser PRIVATE
-    ${CMAKE_SOURCE_DIR}/lib/libresign/src
+    ${PROJECT_SOURCE_DIR}/lib/libresign/src
 )
 target_link_libraries(fuzz_trusted_list_parser PRIVATE LibreSign)
 
@@ -101,11 +101,11 @@ target_compile_options(fuzz_tl_signature_verifier PRIVATE ${LIBRESCRS_FUZZ_FLAGS
 target_link_options(fuzz_tl_signature_verifier PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_compile_definitions(fuzz_tl_signature_verifier PRIVATE LIBRESCRS_INTERNAL_BUILD)
 target_include_directories(fuzz_tl_signature_verifier PRIVATE
-    ${CMAKE_SOURCE_DIR}/lib/libresign/src
+    ${PROJECT_SOURCE_DIR}/lib/libresign/src
 )
 target_link_libraries(fuzz_tl_signature_verifier PRIVATE LibreSign)
 
 # Stage corpora next to the binaries so users can `cd build && ./fuzz/...`
 # without a long path argument.
-file(COPY "${CMAKE_SOURCE_DIR}/fuzz/corpus" DESTINATION
+file(COPY "${PROJECT_SOURCE_DIR}/fuzz/corpus" DESTINATION
     "${CMAKE_CURRENT_BINARY_DIR}/")

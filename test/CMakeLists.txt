@@ -397,7 +397,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
     add_executable(PivAidPatchTest opensc-fallback/piv_aid_test.cpp)
     target_link_libraries(PivAidPatchTest PRIVATE GTest::gtest_main)
     target_compile_definitions(PivAidPatchTest PRIVATE
-        LIBRESCRS_OPENSC_CARD_PIV_C="${CMAKE_SOURCE_DIR}/thirdparty/opensc-source/src/libopensc/card-piv.c"
+        LIBRESCRS_OPENSC_CARD_PIV_C="${PROJECT_SOURCE_DIR}/thirdparty/opensc-source/src/libopensc/card-piv.c"
     )
     # Auto-apply hook runs at configure time on the source tree itself, so
     # the source file is already patched before this test compiles.

@@ -14,7 +14,7 @@ add_library(LibreSCRS::Pkcs11Inject ALIAS LibreSCRS_Pkcs11Inject)
 
 target_include_directories(LibreSCRS_Pkcs11Inject
     PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
 )
 

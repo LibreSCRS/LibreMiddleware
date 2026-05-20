@@ -32,12 +32,20 @@ if [[ ! -d "$LIB_DIR" ]]; then
     exit 1
 fi
 
-# Find the real (non-symlink) versioned dylib
-DYLIB_VERSIONED=$(find "$LIB_DIR" -maxdepth 1 -name "librescrs-pkcs11.[0-9]*.dylib" ! -type l | sort -V | tail -1)
-if [[ -z "$DYLIB_VERSIONED" ]]; then
-    echo "ERROR: No versioned dylib found in $LIB_DIR"
+# Find the real (non-symlink) versioned shared object. lib/pkcs11/CMakeLists.txt
+# forces SUFFIX ".so" on every POSIX (including macOS) so the SigningService
+# probe path is uniform across Linux AppImage and macOS DMG; that pins the
+# file layout to `librescrs-pkcs11.so.<VERSION>` / `.so.<MAJOR>` / `.so`
+# regardless of platform.
+LIB_VERSIONED=$(find "$LIB_DIR" -maxdepth 1 -name "librescrs-pkcs11.so.[0-9]*" ! -type l | sort -V | tail -1)
+if [[ -z "$LIB_VERSIONED" ]]; then
+    echo "ERROR: No versioned librescrs-pkcs11.so found in $LIB_DIR"
     exit 1
 fi
+
+# Major version derived from PROJECT_VERSION (matches SOVERSION=PROJECT_VERSION_MAJOR
+# in lib/pkcs11/CMakeLists.txt). e.g. "4.1.0" → "4".
+MAJOR_VERSION="${VERSION%%.*}"
 
 PKCS11_HEADERS_DIR="$PROJECT_ROOT/lib/pkcs11/include/pkcs11"
 PKCS11_VERSION_H="$LIB_DIR/pkcs11_version.h"
@@ -50,15 +58,15 @@ STAGING="$STAGING_PARENT/$PKG_NAME"
 mkdir -p "$STAGING/lib" "$STAGING/include/pkcs11"
 
 echo "Staging library..."
-cp "$DYLIB_VERSIONED" "$STAGING/lib/librescrs-pkcs11.$VERSION.dylib"
+cp "$LIB_VERSIONED" "$STAGING/lib/librescrs-pkcs11.so.$VERSION"
 (
     cd "$STAGING/lib"
-    ln -sf "librescrs-pkcs11.$VERSION.dylib" "librescrs-pkcs11.1.dylib"
-    ln -sf "librescrs-pkcs11.1.dylib"        "librescrs-pkcs11.dylib"
+    ln -sf "librescrs-pkcs11.so.$VERSION"       "librescrs-pkcs11.so.$MAJOR_VERSION"
+    ln -sf "librescrs-pkcs11.so.$MAJOR_VERSION" "librescrs-pkcs11.so"
 )
 
 echo "Ad-hoc signing..."
-codesign --force --sign - "$STAGING/lib/librescrs-pkcs11.$VERSION.dylib"
+codesign --force --sign - "$STAGING/lib/librescrs-pkcs11.so.$VERSION"
 
 echo "Copying headers..."
 cp "$PKCS11_HEADERS_DIR/pkcs11.h"  "$STAGING/include/pkcs11/"
@@ -71,9 +79,9 @@ LibreSCRS PKCS#11 Module for macOS — version $VERSION
 ======================================================
 
 CONTENTS
-  lib/librescrs-pkcs11.$VERSION.dylib   Universal (arm64 + x86_64) PKCS#11 module
-  lib/librescrs-pkcs11.1.dylib          Soname symlink
-  lib/librescrs-pkcs11.dylib            Unversioned symlink
+  lib/librescrs-pkcs11.so.$VERSION       Universal (arm64 + x86_64) PKCS#11 module
+  lib/librescrs-pkcs11.so.$MAJOR_VERSION Soname symlink
+  lib/librescrs-pkcs11.so                Unversioned symlink
   include/pkcs11/                        Standard OASIS PKCS#11 v3.x headers
   include/pkcs11_version.h               LibreSCRS version macros
 
