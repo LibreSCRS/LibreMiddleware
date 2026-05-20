@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# SPDX-FileCopyrightText: 2026 hirashix0
+#
+# CodeQL configuration for the LibreSCRS C++ analysis.
+#
+# We vendor the OpenSC source tree under `thirdparty/opensc-source/` so the
+# `librescrs-opensc-pkcs11` fallback module can link a stable, patched
+# libopensc.a without a runtime dependency on the host's libopensc. The
+# vendored tree carries the full upstream OpenSC code (drivers, tools,
+# pkcs15init helpers, scconf). CodeQL alerts inside that tree are not
+# LibreSCRS code-quality findings — they're upstream issues we cannot
+# fix downstream without diverging from the merge base. Path-injection
+# warnings in OpenSC's CLI tools (pkcs11-tool, opensc-explorer, etc.)
+# are by design — those tools take filenames from the operator.
+#
+# Exclude `thirdparty/` from the analysis surface so security-tab alerts
+# track only LibreSCRS-authored code. Upstream OpenSC has its own CodeQL
+# pipeline in `thirdparty/opensc-source/.github/workflows/codeql.yml`.
+
+name: "LibreMiddleware CodeQL"
+
+paths-ignore:
+  - thirdparty

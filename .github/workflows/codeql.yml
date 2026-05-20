@@ -65,6 +65,9 @@ jobs:
           # security-and-quality is the broader pack (security + lint);
           # security-extended is security-only with extended coverage.
           queries: security-and-quality
+          # Exclude thirdparty/ (vendored upstream OpenSC) — those alerts
+          # are not LibreSCRS-authored code; see .github/codeql/codeql-config.yml
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Configure & Build
         # Manual build path — CodeQL autobuild guesses for CMake projects but
