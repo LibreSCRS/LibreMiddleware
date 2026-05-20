@@ -17,6 +17,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -69,11 +70,22 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
     {
         std::optional<MonitorEvent> heldEvent;
         std::chrono::steady_clock::time_point heldUntil{};
-        // Reserved for the per-reader rate limiter follow-up
-        // (LIBRESCRS_MONITOR_MAX_EVENTS_PER_SEC, see @ref Config). Written
-        // by @ref dispatch / @ref runCoalesceFlusher; not yet read.
         MonitorEvent::Kind lastEmittedKind{MonitorEvent::Kind::Error};
         std::chrono::steady_clock::time_point lastEventAt{};
+
+        // Per-reader rate-limit window: timestamps of card events that
+        // entered the dispatch path in the rolling 1-second trailing
+        // window. Entries older than 1s are evicted on every dispatch.
+        // When the window count first crosses @ref Config::maxEventsPerSecond
+        // the reader enters a @ref Config::backoffOnFlood cool-down during
+        // which further card events are dropped at the gate (never reach
+        // the coalescer or subscribers). @c floodLogged squelches the
+        // one-shot warning to a single line per flood episode; it resets
+        // on the first healthy event after the backoff expires so a
+        // recurring flood logs again.
+        std::deque<std::chrono::steady_clock::time_point> eventWindow;
+        std::chrono::steady_clock::time_point backoffUntil{};
+        bool floodLogged{false};
     };
 
     mutable std::mutex coalesceMtx;

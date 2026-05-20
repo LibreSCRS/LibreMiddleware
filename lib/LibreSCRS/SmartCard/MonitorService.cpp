@@ -15,7 +15,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <exception>
+#include <iostream>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -108,15 +110,74 @@ void MonitorService::Impl::dispatch(const MonitorEvent& event)
     // A same-kind repeat within the window refreshes the hold without
     // double-emitting. Window of zero disables coalescing entirely — used
     // by diagnostic builds that need the raw event stream. Reader-list
-    // events (ReaderAdded/Removed) and Error events always pass through.
+    // events (ReaderAdded/Removed) and Error events always pass through
+    // and bypass both the rate-limit gate and the coalescer.
     const bool isCardEvent =
         (event.kind == MonitorEvent::Kind::CardInserted || event.kind == MonitorEvent::Kind::CardRemoved);
-    if (config.coalesceWindow.count() <= 0 || !isCardEvent) {
+    if (!isCardEvent) {
         dispatchImmediate(event);
         return;
     }
 
     const auto now = std::chrono::steady_clock::now();
+
+    // Per-reader event-flood rate-limit safety net.
+    //
+    // Belt-and-suspenders behind the opposite-pair coalescer above: if a
+    // single reader emits more than config.maxEventsPerSecond card events
+    // in a rolling 1-second trailing window, drop subsequent events for
+    // config.backoffOnFlood and log a single warning. Catches the
+    // pathological case where the transient pattern is not strictly
+    // alternating (e.g. a flood of same-kind events the coalescer would
+    // happily refresh on without ever cancelling). The gate fires BEFORE
+    // any held-event manipulation so suppressed-by-flood events never
+    // enter the coalescer state and never reach dispatchImmediate.
+    {
+        std::scoped_lock lk(coalesceMtx);
+        auto& state = coalesceState[event.readerName];
+
+        // Evict timestamps older than the 1-second trailing window.
+        while (!state.eventWindow.empty() && (now - state.eventWindow.front()) > std::chrono::seconds(1)) {
+            state.eventWindow.pop_front();
+        }
+
+        // Inside an active backoff window: drop the event.
+        if (state.backoffUntil > now) {
+            return;
+        }
+
+        // Window count just crossed the ceiling: enter backoff, log
+        // once, drop this event.
+        if (state.eventWindow.size() >= config.maxEventsPerSecond) {
+            state.backoffUntil = now + config.backoffOnFlood;
+            if (!state.floodLogged) {
+                // LM core is Qt-free per workspace conventions, so emit
+                // to std::clog with a category prefix instead of
+                // qCWarning. The category mirrors the LC-side
+                // lcProbeQuieting Qt logging category so a downstream
+                // grep across both layers stays consistent.
+                std::clog << "[librescrs.monitor] reader event flood: " << event.readerName
+                          << " (>= " << config.maxEventsPerSecond << "/s) backing off " << config.backoffOnFlood.count()
+                          << "ms\n";
+                state.floodLogged = true;
+            }
+            return;
+        }
+
+        // Healthy event: record its timestamp in the rolling window and
+        // clear the one-shot flood-log latch so a future flood logs
+        // again rather than silently re-tripping.
+        state.eventWindow.push_back(now);
+        state.floodLogged = false;
+    }
+
+    // Coalescer disabled — forward immediately. The rate-limit gate
+    // above has already accepted this event into the 1s window.
+    if (config.coalesceWindow.count() <= 0) {
+        dispatchImmediate(event);
+        return;
+    }
+
     bool wakeFlusher = false;
     {
         std::scoped_lock lk(coalesceMtx);

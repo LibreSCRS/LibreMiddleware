@@ -142,6 +142,35 @@ TEST_F(CoalescerHarness, ReaderRemovedEvictsCoalesceState)
     }
 }
 
+TEST_F(CoalescerHarness, FloodTriggersBackoffWithWarning)
+{
+    setenv("LIBRESCRS_MONITOR_COALESCE_MS", "0", 1);
+    service->unsubscribe(subId);
+    service.reset();
+    service = std::make_unique<MonitorService>(MonitorService::Config{
+        .coalesceWindow = std::chrono::milliseconds(0),
+        .maxEventsPerSecond = 5,
+        .backoffOnFlood = std::chrono::milliseconds(500),
+    });
+    subId = service->subscribe([this](const MonitorEvent& ev) {
+        if (!isSyntheticCardEvent(ev))
+            return;
+        std::scoped_lock lk(mtx);
+        received.push_back(ev);
+    });
+
+    // Fire 20 events as fast as possible — limit is 5/s. The first ~5
+    // pass through; subsequent events in the 1s window trip the flood
+    // gate and enter backoff. Allow 1 extra event of boundary tolerance.
+    for (int i = 0; i < 20; ++i) {
+        emit(i % 2 == 0 ? MonitorEvent::Kind::CardInserted : MonitorEvent::Kind::CardRemoved, "Flood Reader");
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    EXPECT_LE(snapshot().size(), 6u) << "Flood detection must cap dispatched events near the threshold";
+    unsetenv("LIBRESCRS_MONITOR_COALESCE_MS");
+}
+
 TEST_F(CoalescerHarness, EnvVarZeroDisablesCoalescing)
 {
     setenv("LIBRESCRS_MONITOR_COALESCE_MS", "0", 1);
