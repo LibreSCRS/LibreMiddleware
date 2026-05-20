@@ -55,14 +55,16 @@ namespace {
 // every standard deploy layout LM ships into.
 std::string resolvePkcs11Module()
 {
-    // PKCS#11 modules are named with the `.so` suffix on every POSIX
-    // platform (including macOS) — the convention LibreMiddleware follows
-    // for runtime-loaded plugin modules so a single packaging glob
-    // (`librescrs-pkcs11.so`) matches across Linux AppImage and macOS DMG.
-    // dyld accepts the `.so` suffix for dlopen() identically to `.dylib`,
-    // so the macOS install layout is unambiguous and forwards-compatible
-    // with the existing card-plugin convention.
+    // PKCS#11 module filename uses each platform's native shared-library
+    // suffix: `.so` on Linux, `.dylib` on macOS. Matches what third-party
+    // PKCS#11 consumers (Firefox, Thunderbird, Adobe Acrobat, GnuPG,
+    // p11-kit) expect to see when the user picks a module file from a GUI
+    // dialog on the corresponding platform.
+#if defined(__APPLE__)
+    const std::string moduleName = "librescrs-pkcs11.dylib";
+#else
     const std::string moduleName = "librescrs-pkcs11.so";
+#endif
     if (const char* env = std::getenv("LIBRESCRS_PKCS11_MODULE"); env && *env) {
         return std::string{env};
     }

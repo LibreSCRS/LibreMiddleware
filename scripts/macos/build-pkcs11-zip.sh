@@ -32,15 +32,12 @@ if [[ ! -d "$LIB_DIR" ]]; then
     exit 1
 fi
 
-# Find the real (non-symlink) versioned shared object. lib/pkcs11/CMakeLists.txt
-# forces SUFFIX ".so" on every POSIX, but CMake's versioned-naming convention
-# is platform-dependent even with SUFFIX overridden:
-#   Linux:  librescrs-pkcs11.so.<VERSION>   (suffix.version)
-#   macOS:  librescrs-pkcs11.<VERSION>.so   (version.suffix)
-# This script targets macOS only, so match the macOS layout.
-LIB_VERSIONED=$(find "$LIB_DIR" -maxdepth 1 -name "librescrs-pkcs11.[0-9]*.so" ! -type l | sort -V | tail -1)
-if [[ -z "$LIB_VERSIONED" ]]; then
-    echo "ERROR: No versioned librescrs-pkcs11.so found in $LIB_DIR"
+# Find the real (non-symlink) versioned dylib. CMake on macOS produces the
+# library at librescrs-pkcs11.<VERSION>.dylib with .<MAJOR>.dylib and
+# .dylib symlinks alongside.
+DYLIB_VERSIONED=$(find "$LIB_DIR" -maxdepth 1 -name "librescrs-pkcs11.[0-9]*.dylib" ! -type l | sort -V | tail -1)
+if [[ -z "$DYLIB_VERSIONED" ]]; then
+    echo "ERROR: No versioned dylib found in $LIB_DIR"
     exit 1
 fi
 
@@ -59,15 +56,15 @@ STAGING="$STAGING_PARENT/$PKG_NAME"
 mkdir -p "$STAGING/lib" "$STAGING/include/pkcs11"
 
 echo "Staging library..."
-cp "$LIB_VERSIONED" "$STAGING/lib/librescrs-pkcs11.$VERSION.so"
+cp "$DYLIB_VERSIONED" "$STAGING/lib/librescrs-pkcs11.$VERSION.dylib"
 (
     cd "$STAGING/lib"
-    ln -sf "librescrs-pkcs11.$VERSION.so"       "librescrs-pkcs11.$MAJOR_VERSION.so"
-    ln -sf "librescrs-pkcs11.$MAJOR_VERSION.so" "librescrs-pkcs11.so"
+    ln -sf "librescrs-pkcs11.$VERSION.dylib"       "librescrs-pkcs11.$MAJOR_VERSION.dylib"
+    ln -sf "librescrs-pkcs11.$MAJOR_VERSION.dylib" "librescrs-pkcs11.dylib"
 )
 
 echo "Ad-hoc signing..."
-codesign --force --sign - "$STAGING/lib/librescrs-pkcs11.$VERSION.so"
+codesign --force --sign - "$STAGING/lib/librescrs-pkcs11.$VERSION.dylib"
 
 echo "Copying headers..."
 cp "$PKCS11_HEADERS_DIR/pkcs11.h"  "$STAGING/include/pkcs11/"
@@ -80,11 +77,11 @@ LibreSCRS PKCS#11 Module for macOS — version $VERSION
 ======================================================
 
 CONTENTS
-  lib/librescrs-pkcs11.$VERSION.so       Universal (arm64 + x86_64) PKCS#11 module
-  lib/librescrs-pkcs11.$MAJOR_VERSION.so Soname symlink
-  lib/librescrs-pkcs11.so                Unversioned symlink
-  include/pkcs11/                        Standard OASIS PKCS#11 v3.x headers
-  include/pkcs11_version.h               LibreSCRS version macros
+  lib/librescrs-pkcs11.$VERSION.dylib       Universal (arm64 + x86_64) PKCS#11 module
+  lib/librescrs-pkcs11.$MAJOR_VERSION.dylib Soname symlink
+  lib/librescrs-pkcs11.dylib                Unversioned symlink
+  include/pkcs11/                           Standard OASIS PKCS#11 v3.x headers
+  include/pkcs11_version.h                  LibreSCRS version macros
 
 INSTALLATION
   Copy the lib/ contents to a directory of your choice, e.g.:
