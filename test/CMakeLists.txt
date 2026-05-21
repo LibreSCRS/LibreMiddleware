@@ -545,6 +545,15 @@ if(BUILD_SIGNING)
         target_link_libraries(Pkcs11TokenTests PRIVATE GTest::gtest_main LibreSign SigningTestSupport)
         gtest_discover_tests(Pkcs11TokenTests)
 
+        add_executable(Pkcs11ModuleManagerTests pkcs11_module_manager_test.cpp)
+        target_link_libraries(Pkcs11ModuleManagerTests PRIVATE
+            GTest::gtest_main LibreSign SigningTestSupport)
+        target_include_directories(Pkcs11ModuleManagerTests PRIVATE
+            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+            ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/include)
+        target_compile_definitions(Pkcs11ModuleManagerTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+        gtest_discover_tests(Pkcs11ModuleManagerTests)
+
         add_executable(TSAClientTests tsa_client_test.cpp)
         target_link_libraries(TSAClientTests PRIVATE GTest::gtest_main LibreSign)
         target_include_directories(TSAClientTests PRIVATE

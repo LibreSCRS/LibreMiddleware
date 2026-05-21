@@ -65,6 +65,7 @@
 
 // libresign internal Pkcs11Token: gated by LIBRESCRS_INTERNAL_BUILD,
 // reached via the test target's PRIVATE include of lib/libresign/src.
+#include "native/pkcs11_module_manager.h"
 #include "native/pkcs11_token.h"
 
 #include <openssl/evp.h>
@@ -217,10 +218,15 @@ TEST(Pkcs11InjectE2EGeoTestna, AttachAndSignThroughInjectedSession)
     // pin-length range check (CKR_PIN_LEN_RANGE 0xA2) — host-side
     // rejection, no card APDU, no PIN-counter decrement, but the test
     // would block.
+    // The token must destruct BEFORE the manager (it holds a handle
+    // into the manager's loaded-module cache). Declaring the manager
+    // first guarantees that natural reverse-declaration order at scope
+    // exit destroys the token first, then the manager.
+    libresign::Pkcs11ModuleManager moduleManager;
     std::unique_ptr<libresign::Pkcs11Token> token;
     try {
         LibreSCRS::Secure::Buffer pinBuf(split.pin);
-        token = std::make_unique<libresign::Pkcs11Token>(modulePath(), pinBuf,
+        token = std::make_unique<libresign::Pkcs11Token>(moduleManager.acquire(modulePath()), pinBuf,
                                                          /*keyAlias=*/std::string{}, // empty = first signing key
                                                          chosenReader, session);
     } catch (const std::exception& e) {

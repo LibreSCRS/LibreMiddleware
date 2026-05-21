@@ -6,6 +6,7 @@
 #ifdef LIBRESIGN_HAS_NATIVE
 
 #include "native/jades_module.h"
+#include "native/pkcs11_module_manager.h"
 #include "native/pkcs11_token.h"
 #include "signing_test_support/signing_test_support.h"
 #include "signing_service.h"
@@ -27,11 +28,13 @@ protected:
             GTEST_SKIP() << "SoftHSM2 not found";
     }
     const char* softHsmPath = nullptr;
+    libresign::Pkcs11ModuleManager manager;
 };
 
 TEST_F(JAdESModuleTest, SignBB_ProducesValidJWS)
 {
-    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
+    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
+                      libresign::Pkcs11Token::TestSlotId{0});
     JAdESModule jades;
 
     std::vector<uint8_t> data = {'H', 'e', 'l', 'l', 'o'};
@@ -53,7 +56,8 @@ TEST_F(JAdESModuleTest, SignBB_ProducesValidJWS)
 
 TEST_F(JAdESModuleTest, SignBB_DetachedHasEmptyPayload)
 {
-    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
+    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
+                      libresign::Pkcs11Token::TestSlotId{0});
     JAdESModule jades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
@@ -71,7 +75,8 @@ TEST_F(JAdESModuleTest, SignBB_DetachedHasEmptyPayload)
 
 TEST_F(JAdESModuleTest, SignBB_EnvelopedHasPayload)
 {
-    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
+    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
+                      libresign::Pkcs11Token::TestSlotId{0});
     JAdESModule jades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
@@ -89,7 +94,8 @@ TEST_F(JAdESModuleTest, SignBB_EnvelopedHasPayload)
 
 TEST_F(JAdESModuleTest, SignBB_ProtectedHeaderContainsRequiredFields)
 {
-    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
+    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
+                      libresign::Pkcs11Token::TestSlotId{0});
     JAdESModule jades;
 
     std::vector<uint8_t> data = {'H', 'e', 'l', 'l', 'o'};
@@ -142,7 +148,8 @@ TEST_F(JAdESModuleTest, SignBB_ProtectedHeaderContainsRequiredFields)
 
 TEST_F(JAdESModuleTest, SignBB_DifferentDataProducesDifferentSignature)
 {
-    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
+    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
+                      libresign::Pkcs11Token::TestSlotId{0});
     JAdESModule jades;
 
     std::vector<uint8_t> data1 = {'A', 'B', 'C'};
@@ -158,7 +165,8 @@ TEST_F(JAdESModuleTest, SignBB_DifferentDataProducesDifferentSignature)
 
 TEST_F(JAdESModuleTest, SignBB_NoEtsiUHeader)
 {
-    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
+    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
+                      libresign::Pkcs11Token::TestSlotId{0});
     JAdESModule jades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
@@ -185,7 +193,9 @@ TEST(JAdESModuleStandalone, BTRequiresTSA)
     if (!hsmPath)
         GTEST_SKIP() << "SoftHSM2 not found";
 
-    Pkcs11Token token(hsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
+    libresign::Pkcs11ModuleManager localManager;
+    Pkcs11Token token(localManager.acquire(hsmPath), libresign::as_pin("1234"), "test-key",
+                      libresign::Pkcs11Token::TestSlotId{0});
     TSAConfig emptyTsa; // empty URL
     auto result = jades.sign(data, "test.txt", token, SignatureLevel::B_T, SignaturePackaging::Detached, emptyTsa);
 

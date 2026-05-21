@@ -18,6 +18,7 @@
 #include <LibreSCRS/Signing/SigningRequest.h>
 
 #include "native/pades_module.h"
+#include "native/pkcs11_module_manager.h"
 #include "native/pkcs11_token.h"
 #include "signing_service.h" // libresign::as_pin
 #include "signing_test_support/signing_test_support.h"
@@ -80,6 +81,7 @@ protected:
             GTEST_SKIP() << "SoftHSM2 not found";
     }
     const char* softHsmPath = nullptr;
+    libresign::Pkcs11ModuleManager manager;
 };
 
 TEST_F(SigningContactInfoSoftHSMTest, SignedPdfCarriesContactInfoInSignatureDict)
@@ -109,7 +111,7 @@ TEST_F(SigningContactInfoSoftHSMTest, SignedPdfCarriesContactInfoInSignatureDict
     lv.contactInfo = request.contactInfo();
 
     // 3. Sign via PAdESModule with a real (SoftHSM-backed) PKCS#11 token.
-    libresign::Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key",
+    libresign::Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
                                  libresign::Pkcs11Token::TestSlotId{0});
     auto pdf = testPdfBytes();
     libresign::PAdESModule pades;

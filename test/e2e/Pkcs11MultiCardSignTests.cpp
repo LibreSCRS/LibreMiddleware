@@ -48,6 +48,7 @@
 #endif
 #include "pkcs11/pkcs11.h"
 
+#include "native/pkcs11_module_manager.h"
 #include "native/pkcs11_token.h"
 
 #include <openssl/evp.h>
@@ -254,7 +255,12 @@ struct SignOutcome
 /// Run the full inject-path sign cycle on @p rc using @p pin. Latches
 /// the profile-specific PIN-failure flag on any PIN-related error so
 /// subsequent ops on the SAME card skip without burning more retries.
-SignOutcome signOnCard(ReaderCard& rc, const std::string& pin)
+/// @param moduleManager Shared loaded-module cache; passed by the test
+///                      so each per-card sign acquires a fresh handle
+///                      against the same C_Initialize-ed module —
+///                      mirrors the production NativeSigningService
+///                      composition.
+SignOutcome signOnCard(libresign::Pkcs11ModuleManager& moduleManager, ReaderCard& rc, const std::string& pin)
 {
     SignOutcome o;
     if (g_latch.isFailed(rc.profile)) {
@@ -283,7 +289,7 @@ SignOutcome signOnCard(ReaderCard& rc, const std::string& pin)
     std::unique_ptr<libresign::Pkcs11Token> token;
     try {
         LibreSCRS::Secure::Buffer pinBuf(pinForLogin);
-        token = std::make_unique<libresign::Pkcs11Token>(modulePath(), pinBuf,
+        token = std::make_unique<libresign::Pkcs11Token>(moduleManager.acquire(modulePath()), pinBuf,
                                                          /*keyAlias=*/std::string{}, rc.reader, rc.session);
         o.loggedIn = true;
         o.attached = true; // attachment is performed inside Pkcs11Token::Impl
@@ -413,6 +419,13 @@ TEST(Pkcs11MultiCardSign, AllPresentReadersIndependent)
     };
     std::vector<Result> results;
 
+    // Shared loaded-module cache for the whole multi-card sweep.
+    // Mirrors the production NativeSigningService composition so the
+    // module stays mapped across all per-card signs — critical for
+    // test #1 (two consecutive signs against the same module without
+    // a C_Finalize between them).
+    libresign::Pkcs11ModuleManager moduleManager;
+
     for (auto& rc : found) {
         const char* pin = pinFor(rc.profile);
         if (rc.profile == CardProfile::Unknown) {
@@ -424,7 +437,7 @@ TEST(Pkcs11MultiCardSign, AllPresentReadersIndependent)
             continue;
         }
         std::fprintf(stderr, "\n--- Signing on %s @ %s ---\n", profileName(rc.profile), rc.reader.c_str());
-        auto outcome = signOnCard(rc, pin);
+        auto outcome = signOnCard(moduleManager, rc, pin);
         std::fprintf(stderr, "    attached=%d login=%d cert=%d signed=%d verified=%d note=\"%s\" err=\"%s\"\n",
                      outcome.attached, outcome.loggedIn, outcome.certRead, outcome.signed_, outcome.verified,
                      outcome.note.c_str(), outcome.sigError.c_str());
@@ -453,4 +466,63 @@ TEST(Pkcs11MultiCardSign, AllPresentReadersIndependent)
     // testing the remaining cards even if one fails. The aggregate above
     // lets the operator audit each card independently.
     EXPECT_GT(verifiedCount, 0) << "At least one card whose PIN was supplied must produce a verifiable signature";
+}
+
+// Two consecutive signs against the SAME card MUST NOT re-prompt for
+// the CAN. Regression test for the per-Token dlopen+dlclose cycle that
+// previously tore down the loaded module's SessionRegistry between
+// signs and forced a fresh PACE handshake (with CAN re-prompt) on the
+// second sign. The shared loaded-module cache owned by the
+// Pkcs11ModuleManager is what keeps the module mapped across both
+// signs; if that invariant breaks, the second sign throws because the
+// SessionAttachment placed before sign 1 is gone by the time sign 2
+// constructs its Token.
+//
+// Operator protocol:
+//   LIBRESCRS_TEST_CARD=NAM_CL  // hard gate
+//   LIBRESCRS_TEST_NAM_PIN="CAN:PIN"
+//   ./Pkcs11MultiCardSignTests --gtest_filter=*PacePersistsAcrossTokens*
+//
+// PIN budget: 2 signs; both go through C_Login → 2 PIN counter
+// decrements on the card. Operator MUST ensure the PIN counter has
+// at least 2 fresh tries before invocation.
+TEST(Pkcs11MultiCardSign, NamSignTwicePacePersistsAcrossTokens)
+{
+    if (env("LIBRESCRS_TEST_CARD") != "NAM_CL")
+        GTEST_SKIP() << "LIBRESCRS_TEST_CARD != NAM_CL — refusing to PIN this card unguarded.";
+    const char* pin = std::getenv("LIBRESCRS_TEST_NAM_PIN");
+    if (!pin || !*pin)
+        GTEST_SKIP() << "LIBRESCRS_TEST_NAM_PIN not set (expected CAN:PIN format).";
+
+    auto found = discoverCards();
+    ReaderCard* nam = nullptr;
+    for (auto& rc : found) {
+        if (rc.profile == CardProfile::NAM_CL) {
+            nam = &rc;
+            break;
+        }
+    }
+    if (!nam)
+        GTEST_SKIP() << "No NAM CL card on any reader";
+
+    libresign::Pkcs11ModuleManager moduleManager;
+
+    auto first = signOnCard(moduleManager, *nam, pin);
+    std::fprintf(stderr, "[sign 1] attached=%d login=%d signed=%d verified=%d note=\"%s\" err=\"%s\"\n", first.attached,
+                 first.loggedIn, first.signed_, first.verified, first.note.c_str(), first.sigError.c_str());
+    ASSERT_TRUE(first.verified) << "First sign must verify before we attempt the second";
+
+    // Critical assertion: the session must still report a live SM
+    // channel between signs. If the previous Token destructor had
+    // dlclose-d the module (and the SessionAttachment destructor had
+    // followed the old clearActiveChannel path), this would now be
+    // false and the second sign would re-prompt for CAN.
+    ASSERT_TRUE(nam->session->hasLiveSecureChannel())
+        << "PACE SM channel was torn down between signs — Pkcs11ModuleManager invariant broken";
+
+    auto second = signOnCard(moduleManager, *nam, pin);
+    std::fprintf(stderr, "[sign 2] attached=%d login=%d signed=%d verified=%d note=\"%s\" err=\"%s\"\n",
+                 second.attached, second.loggedIn, second.signed_, second.verified, second.note.c_str(),
+                 second.sigError.c_str());
+    EXPECT_TRUE(second.verified) << "Second sign must verify without re-prompt for CAN";
 }

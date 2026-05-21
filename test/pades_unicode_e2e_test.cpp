@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include "native/pades_module.h"
+#include "native/pkcs11_module_manager.h"
 #include "native/pkcs11_token.h"
 #include "signing_test_support/signing_test_support.h"
 #include "signing_service.h"
@@ -56,13 +57,15 @@ protected:
             GTEST_SKIP() << "pdftotext (poppler-utils) not installed";
     }
     const char* softHsmPath = nullptr;
+    libresign::Pkcs11ModuleManager manager;
 };
 
 } // namespace
 
 TEST_F(PAdESUnicodeE2ETest, SerbianLatinSignerIsSearchable)
 {
-    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
+    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
+                      libresign::Pkcs11Token::TestSlotId{0});
     PAdESModule pades;
 
     VisualSignatureParams v;
@@ -93,7 +96,8 @@ TEST_F(PAdESUnicodeE2ETest, SerbianLatinSignerIsSearchable)
 
 TEST_F(PAdESUnicodeE2ETest, SerbianCyrillicSignerIsSearchable)
 {
-    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
+    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
+                      libresign::Pkcs11Token::TestSlotId{0});
     PAdESModule pades;
 
     VisualSignatureParams v;
@@ -123,7 +127,8 @@ TEST_F(PAdESUnicodeE2ETest, SerbianCyrillicSignerIsSearchable)
 
 TEST_F(PAdESUnicodeE2ETest, MixedSignerIsSearchable)
 {
-    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
+    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
+                      libresign::Pkcs11Token::TestSlotId{0});
     PAdESModule pades;
 
     VisualSignatureParams v;

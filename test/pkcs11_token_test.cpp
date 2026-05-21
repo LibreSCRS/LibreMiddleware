@@ -5,6 +5,7 @@
 
 #ifdef LIBRESIGN_HAS_NATIVE
 
+#include "native/pkcs11_module_manager.h"
 #include "native/pkcs11_token.h"
 #include "signing_test_support/signing_test_support.h"
 #include "signing_service.h"
@@ -21,23 +22,21 @@ protected:
             GTEST_SKIP() << "SoftHSM2 not found";
     }
     const char* softHsmPath = nullptr;
+    Pkcs11ModuleManager manager;
 };
 
 TEST_F(Pkcs11TokenTest, OpenAndClose)
 {
     ASSERT_NO_THROW({
-        Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
+        Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
+                          libresign::Pkcs11Token::TestSlotId{0});
     });
 }
 
 TEST(Pkcs11TokenStandalone, FailsWithInvalidModule)
 {
-    ASSERT_THROW(
-        {
-            Pkcs11Token token("/nonexistent.so", libresign::as_pin("1234"), "key",
-                              libresign::Pkcs11Token::TestSlotId{0});
-        },
-        std::runtime_error);
+    Pkcs11ModuleManager manager;
+    ASSERT_THROW({ (void)manager.acquire("/nonexistent.so"); }, std::runtime_error);
 }
 
 #else

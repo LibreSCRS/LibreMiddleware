@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
+#include "native/pkcs11_module_manager.h"
 #include "native/signing_provider.h"
 #include "native/pkcs11_token.h"
 #include "signing_service.h"
@@ -64,6 +65,7 @@ protected:
     }
 
     TestConfig config;
+    Pkcs11ModuleManager manager;
 };
 
 TEST_F(SigningProviderTest, InitProviderIsIdempotent)
@@ -75,7 +77,8 @@ TEST_F(SigningProviderTest, InitProviderIsIdempotent)
 TEST_F(SigningProviderTest, CreateEvpKeyFromCert)
 {
     SKIP_IF_PIN_FAILED();
-    Pkcs11Token token(config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    Pkcs11Token token(manager.acquire(config.pkcs11Module), libresign::as_pin(config.pin), config.keyAlias,
+                      config.readerName);
 
     auto cert = parseCertFromToken(token);
     ASSERT_NE(cert, nullptr);
@@ -90,7 +93,8 @@ TEST_F(SigningProviderTest, CreateEvpKeyFromCert)
 TEST_F(SigningProviderTest, DigestSignAndVerify)
 {
     SKIP_IF_PIN_FAILED();
-    Pkcs11Token token(config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    Pkcs11Token token(manager.acquire(config.pkcs11Module), libresign::as_pin(config.pin), config.keyAlias,
+                      config.readerName);
 
     auto cert = parseCertFromToken(token);
     ASSERT_NE(cert, nullptr);
@@ -133,6 +137,7 @@ TEST_F(SigningProviderTest, DigestSignAndVerify)
 
 TEST_F(SigningProviderTest, NullCertThrows)
 {
-    Pkcs11Token token(config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    Pkcs11Token token(manager.acquire(config.pkcs11Module), libresign::as_pin(config.pin), config.keyAlias,
+                      config.readerName);
     EXPECT_THROW(createPkcs11EvpKey(token, nullptr), std::runtime_error);
 }

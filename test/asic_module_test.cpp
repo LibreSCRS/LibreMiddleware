@@ -6,6 +6,7 @@
 #ifdef LIBRESIGN_HAS_NATIVE
 
 #include "native/asic_module.h"
+#include "native/pkcs11_module_manager.h"
 #include "native/pkcs11_token.h"
 #include "signing_test_support/signing_test_support.h"
 #include "signing_service.h"
@@ -27,11 +28,13 @@ protected:
             GTEST_SKIP() << "SoftHSM2 not found";
     }
     const char* softHsmPath = nullptr;
+    libresign::Pkcs11ModuleManager manager;
 };
 
 TEST_F(ASiCModuleSoftHSMTest, SignWithCAdES_ProducesValidZip)
 {
-    Pkcs11Token token(softHsmPath, libresign::as_pin("1234"), "test-key", libresign::Pkcs11Token::TestSlotId{0});
+    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
+                      libresign::Pkcs11Token::TestSlotId{0});
     ASiCModule asic;
 
     std::vector<uint8_t> data = {'H', 'e', 'l', 'l', 'o'};
