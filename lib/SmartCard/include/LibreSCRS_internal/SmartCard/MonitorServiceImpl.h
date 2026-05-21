@@ -95,32 +95,23 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
     std::thread coalesceFlusher;
     bool coalesceStop{false};
 
-    Impl(std::unique_ptr<::LibreSCRS::SmartCard::Internal::IPCSCScanProvider> provider, MonitorService::Config cfg)
-        : internal(std::make_unique<::LibreSCRS::SmartCard::Internal::Monitor>(std::move(provider))), config(cfg)
-    {
-        if (config.coalesceWindow.count() > 0) {
-            coalesceFlusher = std::thread(&Impl::runCoalesceFlusher, this);
-        }
-    }
+    // Ctor and dtor bodies live out-of-line in MonitorService.cpp so the
+    // std::thread::_State_impl<&Impl::runCoalesceFlusher, Impl*> template
+    // instantiation triggered by the coalescer thread spawn happens in a
+    // single TU compiled with -fvisibility=hidden default, instead of in
+    // every header includer. GCC computes std-template instantiation
+    // visibility from the instantiation context (not the LIBRESCRS_INTERNAL
+    // attribute on the template argument), so an inline ctor in this
+    // header would leak the vtable/typeinfo of that instantiation into the
+    // SHARED-build libLibreSCRS_SmartCard.so dynamic export table.
+    Impl(std::unique_ptr<::LibreSCRS::SmartCard::Internal::IPCSCScanProvider> provider, MonitorService::Config cfg);
 
     // Backwards-compatible single-arg ctor used by the test-helper factory
     // and any internal call site that did not pre-date the Config addition.
     // Defaults the Config to the env-driven baseline.
-    explicit Impl(std::unique_ptr<::LibreSCRS::SmartCard::Internal::IPCSCScanProvider> provider)
-        : Impl(std::move(provider), MonitorService::Config::fromEnv())
-    {}
+    explicit Impl(std::unique_ptr<::LibreSCRS::SmartCard::Internal::IPCSCScanProvider> provider);
 
-    ~Impl()
-    {
-        if (coalesceFlusher.joinable()) {
-            {
-                std::scoped_lock lk(coalesceMtx);
-                coalesceStop = true;
-            }
-            coalesceCv.notify_all();
-            coalesceFlusher.join();
-        }
-    }
+    ~Impl();
 
     // Snapshot currently-registered (id, callback) pairs under the cbMtx lock.
     // Dispatch outside cbMtx so subscribers can re-enter subscribe/unsubscribe

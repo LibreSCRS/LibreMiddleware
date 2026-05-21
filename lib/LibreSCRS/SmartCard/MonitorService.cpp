@@ -56,6 +56,50 @@ MonitorEvent::Kind mapCardEventKind(::LibreSCRS::SmartCard::Internal::MonitorEve
 // (built as a separate archive, @ref LibreSCRS_SmartCard_TestHelpers) share
 // the same layout. The dispatch / snapshot / reader-diff method bodies
 // remain in the production translation unit; they are not test-only.
+//
+// Ctor / dtor bodies are also out-of-line here (instead of inline in the
+// internal header) so the std::thread::_State_impl<...> template
+// instantiation triggered by `std::thread(&Impl::runCoalesceFlusher, this)`
+// is emitted only in this TU. The header's includers (the test-helper TU
+// and any future internal consumer) therefore do not each emit a copy of
+// that std-template vtable/typeinfo at default visibility, which would
+// otherwise leak through the SHARED-build libLibreSCRS_SmartCard.so
+// dynamic export table.
+MonitorService::Impl::Impl(std::unique_ptr<::LibreSCRS::SmartCard::Internal::IPCSCScanProvider> provider,
+                           MonitorService::Config cfg)
+    : internal(std::make_unique<::LibreSCRS::SmartCard::Internal::Monitor>(std::move(provider))), config(cfg)
+{
+    if (config.coalesceWindow.count() > 0) {
+        // Spawn via a local lambda so the std::thread::_State_impl<...>
+        // template instantiation is parameterised over the lambda's
+        // anonymous closure type (local to this TU, emitted hidden) rather
+        // than over `void (Impl::*)()` (which carries MonitorService::Impl
+        // as a template arg and triggers a vtable/typeinfo emission whose
+        // visibility GCC computes from the std-namespace instantiation
+        // context, not from Impl's LIBRESCRS_INTERNAL attribute — that is
+        // how the std::thread::_State_impl-over-Impl symbols would
+        // otherwise leak into the SHARED-build libLibreSCRS_SmartCard.so
+        // dynamic export table). Mirrors the allow-listed pattern in
+        // lib/smartcard/src/monitor.cpp's internal poller thread spawn.
+        coalesceFlusher = std::thread([this] { runCoalesceFlusher(); });
+    }
+}
+
+MonitorService::Impl::Impl(std::unique_ptr<::LibreSCRS::SmartCard::Internal::IPCSCScanProvider> provider)
+    : Impl(std::move(provider), MonitorService::Config::fromEnv())
+{}
+
+MonitorService::Impl::~Impl()
+{
+    if (coalesceFlusher.joinable()) {
+        {
+            std::scoped_lock lk(coalesceMtx);
+            coalesceStop = true;
+        }
+        coalesceCv.notify_all();
+        coalesceFlusher.join();
+    }
+}
 
 std::vector<std::pair<MonitorService::SubscriptionId, MonitorService::EventCallback>>
 MonitorService::Impl::snapshotCallbacks()

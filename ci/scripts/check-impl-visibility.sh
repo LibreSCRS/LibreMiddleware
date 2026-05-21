@@ -240,22 +240,6 @@ while IFS= read -r archive; do
             || true)
     fi
 
-    # ALLOW-LIST: std::thread::_State_impl over MonitorService::Impl.
-    # The monitor's background polling thread captures `Impl*` as the
-    # member-fn binding target. GCC emits the resulting
-    # std::thread::_State_impl<...> vtable + typeinfo with default
-    # visibility because std-template instantiations compute visibility
-    # from the instantiation context, not the template argument. The
-    # symbols are WEAK HIDDEN at TU level and absent from every linked
-    # .so (confirmed by nm -gU on plugins/*.so and lib/pkcs11/*.so);
-    # .a-level residual only. Mirrors the existing
-    # MonitorService::Impl::<member-fn> T-binding allow-list above.
-    if [[ "$(basename "$archive")" == "libLibreSCRS_SmartCard.a" ]]; then
-        wv_leaks=$(printf '%s\n' "$wv_leaks" \
-            | grep -vE 'std::thread::_State_impl<.*LibreSCRS::SmartCard::MonitorService::Impl' \
-            || true)
-    fi
-
     bad="$t_leaks"
     if [[ -n "$wv_leaks" ]]; then
         [[ -n "$bad" ]] && bad+=$'\n'
