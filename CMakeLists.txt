@@ -266,6 +266,42 @@ if(LIBREMIDDLEWARE_BUILD_SHARED)
 endif()
 
 # ──────────────────────────────────────────────────────────────────────────
+# Bundled CA certificates install rule.
+#
+# LibreMiddleware ships a curated set of root + intermediate CA certificates
+# under thirdparty/certificates/ (rs-mup/, rs-mup-format/, rs-pks/) that the
+# chain-validation paths consume — notably LibreKDE's CardEdge purpose plugin,
+# which needs the MUP intermediates to anchor RS eID certificate chains when
+# the system trust store lacks them. Packaged builds (AppImage, .deb, .rpm,
+# DMG) had no install rule for this tree, so the certificate directory pinned
+# into the binary at configure time (`LIBREMIDDLEWARE_CERTIFICATES_DIR`)
+# pointed at the build host's source checkout — a path that does not exist on
+# the end-user machine. The runtime certificate walker resolves the directory
+# dynamically by probing exe-relative, env-override, and FHS locations; this
+# install rule produces the FHS share/ destination that the walker checks for
+# system-wide installs.
+#
+# Destination: ${CMAKE_INSTALL_DATAROOTDIR}/librescrs/certificates (i.e.
+# /usr/share/librescrs/certificates on standard Linux prefixes,
+# /usr/local/share/librescrs/certificates on /usr/local prefixes,
+# Contents/Resources/share/librescrs/certificates inside the macOS bundle
+# layout). FILES_MATCHING preserves the rs-mup/ / rs-mup-format/ / rs-pks/
+# subdirectory layout that the walker expects. README files are skipped.
+# Component "runtime" lets distro packagers split docs/dev headers out into
+# separate sub-packages.
+# ──────────────────────────────────────────────────────────────────────────
+include(GNUInstallDirs)
+install(DIRECTORY thirdparty/certificates/
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/librescrs/certificates
+        COMPONENT runtime
+        FILES_MATCHING
+            PATTERN "*.crt"
+            PATTERN "*.pem"
+            PATTERN "*.cer"
+            PATTERN "*.der"
+            PATTERN "README*" EXCLUDE)
+
+# ──────────────────────────────────────────────────────────────────────────
 # p11-kit module registration.
 #
 # Dropping `librescrs.module` into ${datadir}/p11-kit/modules/ makes every
