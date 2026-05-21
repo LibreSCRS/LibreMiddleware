@@ -12,6 +12,7 @@
 
 #include <openssl/x509.h>
 
+#include <iostream>
 #include <map>
 #include <mutex>
 #include <string_view>
@@ -164,7 +165,11 @@ public:
             }
             auto& session = it->second;
 
-            // Token info group
+            // Token info group. Field keys ("label" / "serial_number" /
+            // "manufacturer") MUST match the well-known token-header keys
+            // GUI hosts use to localise the row labels; the same keys are
+            // emitted by readTokenInfo() below, keeping the two surfaces
+            // consistent.
             LibreSCRS::Plugin::CardFieldGroup tokenGroup;
             tokenGroup.groupKey = "token";
             tokenGroup.groupLabel = "Token Info";
@@ -179,8 +184,8 @@ public:
                     }
                 };
                 addField("label", "Label", ti->label);
+                addField("serial_number", "Serial Number", ti->serial_number);
                 addField("manufacturer", "Manufacturer", ti->manufacturer_id);
-                addField("serial", "Serial Number", ti->serial_number);
 
                 // Decode flags to human-readable string
                 std::string flagStr;
@@ -255,6 +260,54 @@ public:
             return ReadResult::communicationError(LibreSCRS::Auth::ErrorKeys::genericComm(),
                                                   std::string{"opensc readCard failed (unknown error)"});
         }
+    }
+
+    LibreSCRS::Plugin::CardFieldGroup readTokenInfo(LibreSCRS::SmartCard::CardSession& cardSession) const override
+    {
+        // Best-effort token-info read mirroring the pkcs15-plugin contract.
+        // The group key/label are populated up-front so the presentation
+        // layer can render its placeholder header from an empty group when
+        // nothing could be read (no bound p15card, no tokeninfo).
+        //
+        // Field keys ("label", "serial_number", "manufacturer") are the
+        // well-known token-header keys consumed by GUI hosts; cross-plugin
+        // key drift would silently demote to placeholder rendering even
+        // when the data is present.
+        LibreSCRS::Plugin::CardFieldGroup group;
+        group.groupKey = "token";
+        group.groupLabel = "Token Info";
+
+        auto& conn = LibreSCRS::SmartCard::detail::unwrap(cardSession);
+        std::lock_guard lock(mtx);
+        auto it = sessions.find(&conn);
+        if (it == sessions.end() || !it->second.p15card)
+            return group;
+
+        auto* ti = it->second.p15card->tokeninfo;
+        if (!ti)
+            return group;
+
+        // CardFieldGroup::addText throws on (empty value, empty fields) by
+        // design — skip empty values up-front so a single missing field can
+        // never cascade into a fully empty group.
+        auto safeAddText = [&](std::string_view key, std::string_view label, const char* value) {
+            if (!value || value[0] == '\0')
+                return;
+            std::string_view sv(value);
+            try {
+                group.addText(key, label, sv);
+            } catch (const std::exception& ex) {
+                std::clog << "[librescrs.opensc.plugin] readTokenInfo: addText(" << key << ") threw: " << ex.what()
+                          << "\n";
+            } catch (...) {
+                std::clog << "[librescrs.opensc.plugin] readTokenInfo: addText threw (non-std exception)\n";
+            }
+        };
+
+        safeAddText("label", "Label", ti->label);
+        safeAddText("serial_number", "Serial Number", ti->serial_number);
+        safeAddText("manufacturer", "Manufacturer", ti->manufacturer_id);
+        return group;
     }
 
     std::vector<LibreSCRS::Plugin::CertificateData>

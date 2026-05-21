@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
+#include <LibreSCRS/Plugin/CardData.h>
 #include <LibreSCRS/Plugin/CardPluginService.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
@@ -240,4 +241,37 @@ TEST(OpenSCPluginConcurrency, TwoThreadsTwoSessionsDoNotCollide)
     tB.join();
 
     EXPECT_FALSE(failed.load()) << "Per-session state aliased across threads";
+}
+
+// --- readTokenInfo defensive contract ---
+//
+// Mirrors test/pkcs15-plugin/readtokeninfo_partial_test.cpp for the opensc
+// plugin. The override populates the "token" group from sc_pkcs15_card_t::
+// tokeninfo when a session is bound; without a bound session (detached
+// CardSession → canHandleConnection short-circuits at sc_establish_context
+// or sc_connect_card with no hardware) it must return an empty group whose
+// key/label are still populated so the presentation layer can render its
+// placeholder header. Returning a default-constructed empty CardFieldGroup
+// (which is what the base class did before the override) would demote
+// every opensc-handled card to placeholder rows — the regression this
+// override fixes.
+TEST(OpenSCPluginTest, ReadTokenInfoNoBoundSessionReturnsEmptyGroupWithoutThrowing)
+{
+    CardPluginService registry{pluginDir()};
+    auto opensc = findOpenSC(registry);
+    ASSERT_NE(opensc, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Phantom Reader 0");
+    ASSERT_NE(session, nullptr);
+
+    LibreSCRS::Plugin::CardFieldGroup group;
+    EXPECT_NO_THROW({ group = opensc->readTokenInfo(*session); });
+
+    // Empty group — no tokeninfo can be read without a bound p15card.
+    EXPECT_TRUE(group.fields.empty());
+
+    // Group key/label populated up-front so LC's TokenSection placeholder
+    // header still renders from this empty group.
+    EXPECT_EQ(group.groupKey, "token");
+    EXPECT_FALSE(group.groupLabel.empty());
 }
