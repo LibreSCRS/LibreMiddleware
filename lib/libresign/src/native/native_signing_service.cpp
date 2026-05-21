@@ -380,7 +380,11 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, const st
         // sharedSession (optional) is forwarded into the loaded
         // librescrs-pkcs11 module via SessionAttachment; null falls
         // through to standalone bind.
-        auto token = Pkcs11Token(pkcs11ModulePath, pin, keyAlias, readerName, std::move(sharedSession));
+        // The module handle comes from the service-owned manager so
+        // the module stays mapped across consecutive signs, preserving
+        // the host-side CardSession deposited via SessionAttachment.
+        auto token =
+            Pkcs11Token(moduleManager.acquire(pkcs11ModulePath), pin, keyAlias, readerName, std::move(sharedSession));
 
         // Certificate expiry enforcement. The native backend's CMS path
         // does not intrinsically reject expired signers — add an explicit
@@ -457,7 +461,8 @@ SigningResult NativeSigningService::appendSigner(const SigningRequest& request, 
         // PKCS#11 module would open a second standalone PC/SC session
         // against the same reader and tear down the active SM channel
         // before C_Login runs.
-        auto token = Pkcs11Token(pkcs11Module, pin, keyAlias, readerName, std::move(sharedSession));
+        auto token =
+            Pkcs11Token(moduleManager.acquire(pkcs11Module), pin, keyAlias, readerName, std::move(sharedSession));
 
         // Wire trust config to TSA/revocation parameters — the new signer
         // inherits the host's CRL/OCSP posture, identical to sign().

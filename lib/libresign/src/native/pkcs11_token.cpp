@@ -8,7 +8,6 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
-#include <dlfcn.h>
 #include <iostream>
 #include <mutex>
 #include <optional>
@@ -44,63 +43,58 @@ void checkRv(CK_RV rv, const char* operation)
 
 struct Pkcs11Token::Impl
 {
-    void* module = nullptr;
+    /// Shared handle into the process-wide loaded-module cache. Keeps
+    /// the underlying mapping alive for the Token's lifetime; module
+    /// lifecycle (C_Initialize / C_Finalize / dlclose) belongs to the
+    /// owning @ref Pkcs11ModuleManager, NOT to this Token.
+    Pkcs11ModuleHandle module;
     CK_FUNCTION_LIST* funcs = nullptr;
     CK_SESSION_HANDLE session = 0;
     CK_OBJECT_HANDLE privateKey = 0;
     bool loggedIn = false;
     std::mutex sessionMutex;
     /// Live forward of the caller's CardSession into the loaded
-    /// librescrs-pkcs11 module. Constructed after @c C_Initialize and
-    /// before any @c C_GetSlotList call so the PKCS#15 provider's
-    /// `probe` adopts the injected session instead of opening a second
-    /// standalone session against the same reader. Reset on Impl
-    /// destruction (the SessionAttachment dtor calls the matching
-    /// detach hook before the module is unloaded by @c C_Finalize +
-    /// @c dlclose below).
+    /// librescrs-pkcs11 module. The PKCS#15 provider's @c probe adopts
+    /// the injected session instead of opening a second standalone
+    /// session against the same reader. Reset on Impl destruction —
+    /// the SessionAttachment dtor calls the matching detach hook
+    /// while the module is still mapped (the manager keeps the mapping
+    /// alive for the entire process lifetime, so the hook is always
+    /// callable).
     std::optional<LibreSCRS::Pkcs11::SessionAttachment> attachment;
 
     ~Impl()
     {
-        // Detach BEFORE C_Finalize / dlclose so the module-side
-        // SessionRegistry entry is cleared while the module is still
-        // mapped and its detach hook is callable.
+        // Detach FIRST so the module-side SessionRegistry entry for
+        // this Token's reader is cleared before we close our session.
+        // The manager owns the module mapping and outlives every
+        // Token, so the detach hook is guaranteed to be dispatchable.
         attachment.reset();
         if (funcs) {
             if (loggedIn)
                 funcs->C_Logout(session);
             if (session)
                 funcs->C_CloseSession(session);
-            funcs->C_Finalize(nullptr);
+            // Deliberately NO C_Finalize / dlclose here. The owning
+            // @ref Pkcs11ModuleManager drives the module-wide
+            // lifecycle so multiple consecutive Tokens against the
+            // same module share a single C_Initialize and the loaded
+            // module's SessionRegistry survives across sign calls —
+            // critical for PACE-gated cards whose host-side
+            // CardSession would otherwise be invalidated between
+            // signs.
         }
-        if (module)
-            dlclose(module);
-    }
-
-    void loadModule(const std::string& modulePath)
-    {
-        module = dlopen(modulePath.c_str(), RTLD_NOW);
-        if (!module)
-            throw std::runtime_error("Cannot load PKCS#11 module: " + std::string(dlerror()));
-
-        auto getList = reinterpret_cast<CK_C_GetFunctionList>(dlsym(module, "C_GetFunctionList"));
-        if (!getList)
-            throw std::runtime_error("C_GetFunctionList not found in module");
-
-        checkRv(getList(&funcs), "C_GetFunctionList");
-        checkRv(funcs->C_Initialize(nullptr), "C_Initialize");
     }
 
     /// @brief If @p sharedSession is non-null, attach it to the loaded
     ///        module under @p readerName so the next @c C_GetSlotList /
     ///        provider @c probe can adopt it.
     ///
-    /// MUST be called after @ref loadModule (which calls @c C_Initialize)
-    /// and before @ref findSlotByReaderName (which calls
+    /// MUST be called before @ref findSlotByReaderName (which calls
     /// @c C_GetSlotList — the registry consultation point in the
     /// provider's `probe`). Failure is non-fatal: the standalone bind
     /// path will run and the sign may still succeed for non-PACE cards.
-    void attachSessionIfPresent(const std::string& modulePath, const std::string& readerName,
+    void attachSessionIfPresent(const std::filesystem::path& modulePath, const std::string& readerName,
                                 std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession)
     {
         if (!sharedSession)
@@ -276,25 +270,37 @@ struct Pkcs11Token::Impl
     }
 };
 
-Pkcs11Token::Pkcs11Token(const std::string& modulePath, const LibreSCRS::Secure::Buffer& pin,
-                         const std::string& keyAlias, const std::string& readerName,
+Pkcs11Token::Pkcs11Token(Pkcs11ModuleHandle module, const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
+                         const std::string& readerName,
                          std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession)
     : impl(std::make_unique<Impl>())
 {
-    impl->loadModule(modulePath);
+    if (!module.valid())
+        throw std::runtime_error("Pkcs11Token: module handle is not bound to a loaded PKCS#11 module");
+    impl->module = std::move(module);
+    impl->funcs = static_cast<CK_FUNCTION_LIST*>(impl->module.functionList());
+    if (!impl->funcs)
+        throw std::runtime_error("Pkcs11Token: loaded module has no CK_FUNCTION_LIST");
+
     // Attach BEFORE the slot lookup: findSlotByReaderName triggers
     // C_GetSlotList → provider::probe, which consults SessionRegistry.
-    impl->attachSessionIfPresent(modulePath, readerName, std::move(sharedSession));
+    impl->attachSessionIfPresent(impl->module.path(), readerName, std::move(sharedSession));
     CK_SLOT_ID slotId = impl->findSlotByReaderName(readerName);
     impl->openSessionAndLogin(slotId, std::span<const uint8_t>{pin.data(), pin.size()});
     impl->findPrivateKey(keyAlias);
 }
 
-Pkcs11Token::Pkcs11Token(const std::string& modulePath, const LibreSCRS::Secure::Buffer& pin,
-                         const std::string& keyAlias, TestSlotId rawSlotId)
+Pkcs11Token::Pkcs11Token(Pkcs11ModuleHandle module, const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
+                         TestSlotId rawSlotId)
     : impl(std::make_unique<Impl>())
 {
-    impl->loadModule(modulePath);
+    if (!module.valid())
+        throw std::runtime_error("Pkcs11Token: module handle is not bound to a loaded PKCS#11 module");
+    impl->module = std::move(module);
+    impl->funcs = static_cast<CK_FUNCTION_LIST*>(impl->module.functionList());
+    if (!impl->funcs)
+        throw std::runtime_error("Pkcs11Token: loaded module has no CK_FUNCTION_LIST");
+
     impl->openSessionAndLogin(static_cast<CK_SLOT_ID>(rawSlotId.slotId),
                               std::span<const uint8_t>{pin.data(), pin.size()});
     impl->findPrivateKey(keyAlias);

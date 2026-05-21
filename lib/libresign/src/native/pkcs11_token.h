@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include "pkcs11_module_manager.h"
+
 #include <LibreSCRS/Secure/Buffer.h>
 
 #include <cstdint>
@@ -30,6 +32,13 @@ public:
     // module. The buffer's cleansing-on-destroy contract is enforced at the
     // type system — no caller-side discipline required.
     //
+    // module: live handle into the process-shared loaded module cache
+    // owned by @ref Pkcs11ModuleManager. The Token does NOT drive
+    // @c dlopen / @c dlclose / @c C_Initialize / @c C_Finalize — those
+    // are the manager's responsibility. The handle keeps the underlying
+    // mapping alive for the Token's lifetime; multiple concurrent Tokens
+    // built from the same module share one initialised CK_FUNCTION_LIST.
+    //
     // readerName: the FULL PCSC reader name the caller wants to sign
     // on. The constructor enumerates the loaded module's slots, parses
     // each `slotDescription`'s `[<8-hex-hash>]` prefix (set by LM's
@@ -49,15 +58,15 @@ public:
     //     are not supported on this signing path; their slot lookup
     //     would have to fall back to a different identification scheme).
     /// @param sharedSession Optional live CardSession owned by the caller
-    ///        (typically the LC display session). When non-null, after
-    ///        @c C_Initialize succeeds the token forwards the session to
-    ///        the loaded librescrs-pkcs11 module via
-    ///        @ref LibreSCRS::Pkcs11::SessionAttachment so the PKCS#15
-    ///        provider's @c probe path adopts it instead of opening a
-    ///        second standalone session against the same reader. When
-    ///        null, the standalone path runs (legacy behaviour).
+    ///        (typically the LC display session). When non-null, the
+    ///        token forwards the session to the loaded librescrs-pkcs11
+    ///        module via @ref LibreSCRS::Pkcs11::SessionAttachment so
+    ///        the PKCS#15 provider's @c probe path adopts it instead
+    ///        of opening a second standalone session against the same
+    ///        reader. When null, the standalone path runs (legacy
+    ///        behaviour).
     /// @since 4.1
-    Pkcs11Token(const std::string& modulePath, const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
+    Pkcs11Token(Pkcs11ModuleHandle module, const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
                 const std::string& readerName,
                 std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession = nullptr);
 
@@ -74,7 +83,7 @@ public:
         unsigned long slotId; // PKCS#11 CK_SLOT_ID is `unsigned long`
         explicit constexpr TestSlotId(unsigned long id) noexcept : slotId(id) {}
     };
-    Pkcs11Token(const std::string& modulePath, const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
+    Pkcs11Token(Pkcs11ModuleHandle module, const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
                 TestSlotId rawSlotId);
 
     ~Pkcs11Token();

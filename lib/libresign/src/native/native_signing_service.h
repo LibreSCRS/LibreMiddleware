@@ -8,6 +8,7 @@
 #pragma once
 
 #include "signing_service.h"
+#include "native/pkcs11_module_manager.h"
 
 #include <LibreSCRS/Trust/TrustStore.h> // for LibreSCRS::Trust::TrustAnchor
 
@@ -71,6 +72,14 @@ private:
     bool configured = false;
     bool fullyConfigured = false;
     AnchorEmitter anchorEmitter;
+
+    /// Process-shared loaded-module cache. Tokens constructed from
+    /// @ref sign / @ref appendSigner acquire a handle into this manager
+    /// so a single C_Initialize spans every sign call against the same
+    /// PKCS#11 module path. Destroyed AFTER any in-flight Token via
+    /// natural member-destruction order (Tokens are stack-scoped in
+    /// the sign methods and unwind before this service's dtor runs).
+    Pkcs11ModuleManager moduleManager;
 
     void loadTrustList(const std::string& url, bool isLotl, TlCache& cache, TlSignatureVerifier& verifier, int depth);
 };
