@@ -247,13 +247,22 @@ LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::active(LibreSCRS::SmartCa
 LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::transmit(LibreSCRS::SmartCard::CardSession&, LibreSCRS::SmartCard::Internal::APDUCommand const&, LibreSCRS::CancelToken)
 LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(LibreSCRS::SmartCard::ActiveChannelHolder&)
 LibreSCRS::SmartCard::Internal::makeActiveChannelHolder(LibreSCRS::SmartCard::CardSession*, std::unique_lock<std::mutex>, std::unique_ptr<LibreSCRS::SmartCard::Internal::CardTransaction, std::default_delete<LibreSCRS::SmartCard::Internal::CardTransaction> >)
+LibreSCRS::SmartCard::MonitorService::Config::fromEnv()
+LibreSCRS::SmartCard::MonitorService::Impl::Impl(std::unique_ptr<LibreSCRS::SmartCard::Internal::IPCSCScanProvider, std::default_delete<LibreSCRS::SmartCard::Internal::IPCSCScanProvider> >)
+LibreSCRS::SmartCard::MonitorService::Impl::Impl(std::unique_ptr<LibreSCRS::SmartCard::Internal::IPCSCScanProvider, std::default_delete<LibreSCRS::SmartCard::Internal::IPCSCScanProvider> >, LibreSCRS::SmartCard::MonitorService::Config)
 LibreSCRS::SmartCard::MonitorService::Impl::diffReadersAndDispatch(std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > const&)
 LibreSCRS::SmartCard::MonitorService::Impl::dispatch(LibreSCRS::SmartCard::MonitorEvent const&)
+LibreSCRS::SmartCard::MonitorService::Impl::dispatchImmediate(LibreSCRS::SmartCard::MonitorEvent const&)
+LibreSCRS::SmartCard::MonitorService::Impl::runCoalesceFlusher()
 LibreSCRS::SmartCard::MonitorService::Impl::snapshotCallbacks()
-LibreSCRS::SmartCard::MonitorService::MonitorService()
+LibreSCRS::SmartCard::MonitorService::Impl::~Impl()
+LibreSCRS::SmartCard::MonitorService::MonitorService(LibreSCRS::SmartCard::MonitorService::Config)
+LibreSCRS::SmartCard::MonitorService::coalesceStateSizeForTest() const
 LibreSCRS::SmartCard::MonitorService::isRunning() const
 LibreSCRS::SmartCard::MonitorService::listReaders[abi:cxx11]() const
 LibreSCRS::SmartCard::MonitorService::operator bool() const
+LibreSCRS::SmartCard::MonitorService::publishForTest(LibreSCRS::SmartCard::MonitorEvent const&)
+LibreSCRS::SmartCard::MonitorService::publishReaderListForTest(std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > const&)
 LibreSCRS::SmartCard::MonitorService::subscribe(std::function<void (LibreSCRS::SmartCard::MonitorEvent const&)>)
 LibreSCRS::SmartCard::MonitorService::unsubscribe(LibreSCRS::SmartCard::MonitorService::SubscriptionId, LibreSCRS::SmartCard::MonitorService::DrainPolicy)
 LibreSCRS::SmartCard::MonitorService::~MonitorService()
@@ -297,6 +306,7 @@ LibreSCRS::Trust::detail::BundledCertsProvider::anchors() const
 LibreSCRS::Trust::detail::TrustStoreInternalAccess::addProvider(LibreSCRS::Trust::TrustStore&, std::shared_ptr<LibreSCRS::Trust::detail::TrustAnchorProvider>)
 LibreSCRS::Trust::detail::TrustStoreInternalAccess::makeStore(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, bool)
 LibreSCRS::Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(LibreSCRS::Trust::TrustStore&, std::vector<LibreSCRS::Trust::TrustAnchor, std::allocator<LibreSCRS::Trust::TrustAnchor> >, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)
+LibreSCRS::Trust::detail::resolveBundledCertsDir[abi:cxx11]()
 
 == libLibreSCRS_Pkcs11Inject.a ==
 LibreSCRS::Pkcs11::SessionAttachment::SessionAttachment(LibreSCRS::Pkcs11::SessionAttachment&&)
