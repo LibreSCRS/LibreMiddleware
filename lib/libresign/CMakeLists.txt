@@ -63,6 +63,7 @@ if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
         src/native/pdf_value.cpp
         src/native/pdf_tokens.cpp
         src/native/pdf_parser.cpp
+        src/native/pkcs11_module_manager.cpp
         src/native/pkcs11_token.cpp
         src/native/signing_provider.cpp
         src/native/signing_provider_keymgmt.cpp
@@ -91,6 +92,7 @@ if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
         src/native/native_signing_service.cpp
     )
     list(APPEND LIBRESIGN_HEADERS
+        src/native/pkcs11_module_manager.h
         src/native/pkcs11_token.h
         src/native/signing_provider.h
         src/native/signing_provider_keymgmt.h
