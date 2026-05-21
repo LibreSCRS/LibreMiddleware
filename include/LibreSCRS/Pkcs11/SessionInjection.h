@@ -127,7 +127,13 @@ public:
 private:
     SessionAttachment() noexcept = default;
 
-    void* moduleHandle{nullptr}; ///< RTLD_NOLOAD retain; pinned while alive.
+    /// Path the host originally loaded the module from. Used at
+    /// @ref detach time to acquire a non-retaining handle into the
+    /// already-mapped module address space and dispatch the detach
+    /// hook. The module's lifecycle (dlopen / C_Initialize and the
+    /// matching teardown) is owned by the libresign-side module
+    /// manager, NOT by this attachment.
+    std::filesystem::path modulePath;
     std::string reader;
     std::shared_ptr<LibreSCRS::SmartCard::CardSession> heldSession;
 };

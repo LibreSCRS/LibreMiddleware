@@ -33,24 +33,28 @@ try {
     if (modulePath.empty() || readerName.empty() || !session)
         return std::unexpected(Error::InvalidArguments);
 
-    // RTLD_NOLOAD: pin the module mapping while this attachment lives.
-    // The libresign caller owns the original load lifecycle; this retain
-    // protects against a premature dlclose race that would otherwise
-    // SEGV inside ~SessionAttachment when the detach hook is dispatched.
-    void* handle = ::dlopen(modulePath.c_str(), RTLD_NOLOAD | RTLD_NOW);
-    if (!handle) {
-        // Defensive fallback: if the module is not yet mapped (rare —
-        // libresign always loads first, but external callers may invoke
-        // attach before any other module activity), perform a fresh load
-        // and let the dlopen refcount keep it pinned.
-        handle = ::dlopen(modulePath.c_str(), RTLD_NOW);
-        if (!handle)
-            return std::unexpected(Error::ModuleNotLoaded);
-    }
+    // The module's lifecycle (dlopen / dlclose / C_Initialize / C_Finalize)
+    // is driven by libresign::Pkcs11ModuleManager — the manager keeps the
+    // mapping alive across all signing operations. We acquire the
+    // attach/detach symbols through a non-retaining lookup that piggy-
+    // backs on the already-loaded mapping rather than driving our own
+    // dlopen+dlclose pair. RTLD_NOLOAD here is purely a probe: it succeeds
+    // iff the module is already in the process address space, without
+    // bumping its refcount. If the manager has not loaded the module
+    // (external caller skipping the libresign service entry point) we
+    // surface ModuleNotLoaded so the caller can route through the
+    // manager.
+    void* probe = ::dlopen(modulePath.c_str(), RTLD_NOLOAD | RTLD_NOW);
+    if (!probe)
+        return std::unexpected(Error::ModuleNotLoaded);
 
-    auto* attachFn = reinterpret_cast<AttachFn>(::dlsym(handle, "librescrs_pkcs11_attach_session"));
+    auto* attachFn = reinterpret_cast<AttachFn>(::dlsym(probe, "librescrs_pkcs11_attach_session"));
+    // The RTLD_NOLOAD probe itself bumps the loader-side refcount per
+    // POSIX (each successful dlopen, even non-retaining-style, requires
+    // a matching dlclose). Drop it immediately whether or not the
+    // symbol lookup succeeded — the manager retains the real mapping.
     if (!attachFn) {
-        ::dlclose(handle);
+        ::dlclose(probe);
         return std::unexpected(Error::DlsymFailed);
     }
 
@@ -63,13 +67,12 @@ try {
     token.flags = 0UL;
 
     const int rc = attachFn(readerName.c_str(), &token);
-    if (rc != kStatusOk) {
-        ::dlclose(handle);
+    ::dlclose(probe); // matches the RTLD_NOLOAD dlopen above
+    if (rc != kStatusOk)
         return std::unexpected(Error::Rejected);
-    }
 
     SessionAttachment sa;
-    sa.moduleHandle = handle;
+    sa.modulePath = modulePath;
     sa.reader = std::move(readerName);
     sa.heldSession = std::move(session);
     return sa;
@@ -80,9 +83,10 @@ try {
 }
 
 SessionAttachment::SessionAttachment(SessionAttachment&& other) noexcept
-    : moduleHandle(std::exchange(other.moduleHandle, nullptr)), reader(std::move(other.reader)),
+    : modulePath(std::move(other.modulePath)), reader(std::move(other.reader)),
       heldSession(std::move(other.heldSession))
 {
+    other.modulePath.clear();
     other.reader.clear();
     other.heldSession.reset();
 }
@@ -91,9 +95,10 @@ SessionAttachment& SessionAttachment::operator=(SessionAttachment&& other) noexc
 {
     if (this != &other) {
         detach();
-        moduleHandle = std::exchange(other.moduleHandle, nullptr);
+        modulePath = std::move(other.modulePath);
         reader = std::move(other.reader);
         heldSession = std::move(other.heldSession);
+        other.modulePath.clear();
         other.reader.clear();
         other.heldSession.reset();
     }
@@ -107,30 +112,32 @@ SessionAttachment::~SessionAttachment()
 
 void SessionAttachment::detach() noexcept
 {
-    if (!moduleHandle)
+    if (modulePath.empty() && reader.empty() && !heldSession)
         return;
 
-    auto* detachFn = reinterpret_cast<DetachFn>(::dlsym(moduleHandle, "librescrs_pkcs11_detach_session"));
-    if (detachFn && !reader.empty())
-        (void)detachFn(reader.c_str());
+    // Acquire a non-retaining probe into the module address space so we
+    // can dispatch the detach hook. The manager keeps the module mapped
+    // for the entire process lifetime, so RTLD_NOLOAD always succeeds
+    // here on a healthy host. If it fails (test harness manually
+    // unloaded the module, dynamic loader inconsistency), skip the
+    // hook — the module has no surviving SessionRegistry entry to
+    // clear, and the detach becomes a pure local cleanup.
+    if (!modulePath.empty() && !reader.empty()) {
+        if (void* probe = ::dlopen(modulePath.c_str(), RTLD_NOLOAD | RTLD_NOW)) {
+            if (auto* detachFn = reinterpret_cast<DetachFn>(::dlsym(probe, "librescrs_pkcs11_detach_session")))
+                (void)detachFn(reader.c_str());
+            ::dlclose(probe);
+        }
+    }
 
-    // CRITICAL ordering: drop any secure channel installed on the session
-    // BEFORE dlclose. The PKCS#11 module statically links the SecureChannel
-    // TU and therefore ships its own copy of PaceChannel / BacChannel /
-    // PlainChannel vtables. A channel established by the module-side
-    // PKCS#15 provider holds a vptr into the module image. If we dlclose
-    // first, the host's later ~CardSession invokes the channel's virtual
-    // destructor through that now-unmapped vtable and crashes.
-    //
-    // heldSession is a shared_ptr alias of the host's CardSession — all
-    // other aliases (SignPage::session, the worker lambda's captured
-    // session, SigningService::sign's parameter) observe the same Impl,
-    // so clearing the channel here clears it for every alias.
-    if (heldSession)
-        heldSession->clearActiveChannel();
-
-    ::dlclose(moduleHandle);
-    moduleHandle = nullptr;
+    // CardSession lifetime stays with the host. The module manager
+    // keeps the loaded PKCS#11 module mapped, so any SecureChannel
+    // installed on the session via the module-side PKCS#15 probe
+    // continues to point at a live vtable across this detach. We
+    // intentionally do NOT clear the session's active channel here —
+    // the host process owns the channel and may need it for the next
+    // sign or for cleanup at the host's own pace.
+    modulePath.clear();
     reader.clear();
     heldSession.reset();
 }
