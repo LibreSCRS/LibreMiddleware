@@ -903,3 +903,4 @@ gtest_discover_tests(ManifestCodegenTests)
 # LIBRESCRS_TEST_PIN_QSCD, LIBRESCRS_TEST_CAN) are unset.
 add_subdirectory(e2e)
 add_subdirectory(smartcard)
+add_subdirectory(pkcs15-plugin)
