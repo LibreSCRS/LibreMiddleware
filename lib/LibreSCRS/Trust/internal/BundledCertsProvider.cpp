@@ -7,9 +7,17 @@
 #include <openssl/pem.h>
 #include <openssl/x509.h>
 
+#include <climits>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+
+#ifdef __linux__
+#include <unistd.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 
 namespace LibreSCRS::Trust::detail {
 
@@ -109,6 +117,149 @@ BundledCertsProvider::BundledCertsProvider(std::string dir) : bundledCertDir(std
 std::vector<TrustAnchor> BundledCertsProvider::anchors() const
 {
     return cached; // copy — caller owns; cache itself is immutable post-ctor
+}
+
+namespace {
+
+/// @brief Absolute path to the running executable, or @c nullopt if the
+///        platform-specific lookup fails. Used only by @ref resolveBundledCertsDir
+///        to derive @c \<exe\>/../share or @c \<exe\>/../Resources candidate
+///        directories at runtime.
+[[nodiscard]] std::optional<fs::path> exePath() noexcept
+{
+#ifdef __linux__
+    char buf[PATH_MAX];
+    auto n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n <= 0)
+        return std::nullopt;
+    buf[n] = '\0';
+    try {
+        return fs::path(buf);
+    } catch (...) {
+        return std::nullopt;
+    }
+#elif defined(__APPLE__)
+    char buf[PATH_MAX];
+    std::uint32_t sz = sizeof(buf);
+    if (_NSGetExecutablePath(buf, &sz) != 0)
+        return std::nullopt;
+    try {
+        return fs::path(buf);
+    } catch (...) {
+        return std::nullopt;
+    }
+#else
+    return std::nullopt;
+#endif
+}
+
+/// @brief True when at least one regular file in @p dir has a cert-like
+///        extension (.crt / .pem / .cer / .der). Non-recursive — caller drives
+///        the one-level descent if needed.
+[[nodiscard]] bool dirContainsCertFile(const fs::path& dir) noexcept
+{
+    std::error_code ec;
+    fs::directory_iterator it(dir, ec);
+    if (ec)
+        return false;
+    const fs::directory_iterator end;
+    for (; it != end; it.increment(ec)) {
+        if (ec)
+            return false;
+        if (!it->is_regular_file(ec) || ec)
+            continue;
+        const auto ext = it->path().extension();
+        if (ext == ".crt" || ext == ".pem" || ext == ".cer" || ext == ".der")
+            return true;
+    }
+    return false;
+}
+
+/// @brief True when @p p exists as a directory and either it (or any of its
+///        immediate subdirectories — matching the constructor's one-level
+///        descent in @ref BundledCertsProvider) contains a file with a
+///        cert-like extension. Empty or missing directories return false so
+///        the walker rolls through to the next candidate.
+[[nodiscard]] bool isUsableCertsDir(const fs::path& p) noexcept
+{
+    std::error_code ec;
+    if (!fs::is_directory(p, ec))
+        return false;
+    if (dirContainsCertFile(p))
+        return true;
+    fs::directory_iterator it(p, ec);
+    if (ec)
+        return false;
+    const fs::directory_iterator end;
+    for (; it != end; it.increment(ec)) {
+        if (ec)
+            return false;
+        if (!it->is_directory(ec) || ec)
+            continue;
+        if (dirContainsCertFile(it->path()))
+            return true;
+    }
+    return false;
+}
+
+} // namespace
+
+std::optional<fs::path> resolveBundledCertsDir() noexcept
+{
+    // Whole-body try/catch: the @c noexcept contract here promises the caller
+    // a degraded-but-valid result on any allocation, filesystem, or path
+    // construction failure. The bare std::nullopt return is the
+    // "no bundled certs, fall back to system trust store" sentinel.
+    try {
+        // 1. env override — dev/test path; highest priority.
+        if (const char* env = std::getenv("LIBRESCRS_CERTIFICATES_DIR")) {
+            if (env[0] != '\0') {
+                fs::path p(env);
+                if (isUsableCertsDir(p))
+                    return p;
+            }
+        }
+
+        // 2. compile-time path — source-tree thirdparty/certificates for dev
+        //    builds. Empty define (the unset-fallback we installed at use
+        //    site) is filtered by the empty-string guard.
+#ifdef LIBREMIDDLEWARE_CERTIFICATES_DIR
+        {
+            const char* compiled = LIBREMIDDLEWARE_CERTIFICATES_DIR;
+            if (compiled != nullptr && compiled[0] != '\0') {
+                fs::path p(compiled);
+                if (isUsableCertsDir(p))
+                    return p;
+            }
+        }
+#endif
+
+        // 3. exe-relative candidates — packaged-runtime layouts.
+        //    macOS bundle: <exe>/../Resources/certificates (tried first on Darwin)
+        //    Linux FHS:    <exe>/../share/librescrs/certificates
+        if (auto exe = exePath()) {
+            const auto exeDir = exe->parent_path();
+            std::vector<fs::path> candidates;
+#ifdef __APPLE__
+            candidates.push_back(exeDir / ".." / "Resources" / "certificates");
+#endif
+            candidates.push_back(exeDir / ".." / "share" / "librescrs" / "certificates");
+            for (const auto& cand : candidates) {
+                std::error_code ec;
+                auto canonical = fs::weakly_canonical(cand, ec);
+                if (ec)
+                    continue;
+                if (isUsableCertsDir(canonical))
+                    return canonical;
+            }
+        }
+
+        return std::nullopt;
+    } catch (...) {
+        // Any filesystem_error / bad_alloc / path-construction throw degrades
+        // to "no bundled certs" — caller's system-trust fallback still works.
+        return std::nullopt;
+    }
 }
 
 } // namespace LibreSCRS::Trust::detail

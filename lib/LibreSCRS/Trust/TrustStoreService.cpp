@@ -6,6 +6,7 @@
 #include <LibreSCRS/Auth/ErrorKeys.h>
 #include <LibreSCRS/detail/cancel_bridge.h>
 
+#include "internal/BundledCertsProvider.h"
 #include "internal/TrustStoreInternalAccess.h"
 
 // Cross-target include into libresign internals — TrustStoreService is the
@@ -32,10 +33,6 @@
 #include <vector>
 
 namespace LibreSCRS::Trust {
-
-#ifndef LIBREMIDDLEWARE_CERTIFICATES_DIR
-#define LIBREMIDDLEWARE_CERTIFICATES_DIR ""
-#endif
 
 // File-scope anonymous namespace for implementation-local types whose
 // std-template instantiations (notably std::vector<ObserverEntry>) would
@@ -263,8 +260,17 @@ TrustStoreService::TrustStoreService(TrustConfig cfg) : d(std::make_shared<Impl>
 {
     // Build the local store synchronously — bundled certs walk + system flag.
     // Fast (filesystem-only); never blocks on network.
-    d->trustStore = std::make_shared<TrustStore>(detail::TrustStoreInternalAccess::makeStore(
-        LIBREMIDDLEWARE_CERTIFICATES_DIR, d->config.includeSystemTrustStore));
+    //
+    // The bundled-certs directory is resolved at runtime by
+    // @ref detail::resolveBundledCertsDir so packaged binaries (AppImage,
+    // DMG, distro-installed) locate the certs at the actual on-disk install
+    // location rather than the source-tree path baked in at build time. An
+    // empty resolved path is a legal "no bundled certs" sentinel; the system
+    // trust store still applies via @c includeSystemTrustStore.
+    auto certsDirOpt = detail::resolveBundledCertsDir();
+    std::string certsDir = certsDirOpt ? certsDirOpt->string() : std::string{};
+    d->trustStore = std::make_shared<TrustStore>(
+        detail::TrustStoreInternalAccess::makeStore(std::move(certsDir), d->config.includeSystemTrustStore));
 
     // Enumerate sources from config, populate initial status map.
     std::vector<libresign::TrustedListEntry> eagerSources;

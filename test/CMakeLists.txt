@@ -438,8 +438,7 @@ if(BUILD_SIGNING)
     target_include_directories(LibreSignTests PRIVATE
         ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
     target_compile_definitions(LibreSignTests PRIVATE
-        LIBRESCRS_INTERNAL_BUILD
-        LIBREMIDDLEWARE_CERT_DIR="${LIBREMIDDLEWARE_CERTIFICATES_DIR}")
+        LIBRESCRS_INTERNAL_BUILD)
     gtest_discover_tests(LibreSignTests)
 
     # Shared test support library (must be defined before tests that use it)
@@ -525,8 +524,7 @@ if(BUILD_SIGNING)
         add_executable(SigningIntegrationTests signing_integration_test.cpp)
         target_link_libraries(SigningIntegrationTests PRIVATE SigningTestSupport GTest::gtest_main OpenSSL_Crypto)
         target_compile_definitions(SigningIntegrationTests PRIVATE
-            CMAKE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
-            LIBREMIDDLEWARE_CERT_DIR="${LIBREMIDDLEWARE_CERTIFICATES_DIR}")
+            CMAKE_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
         gtest_discover_tests(SigningIntegrationTests)
     endif()
 
@@ -904,3 +902,4 @@ gtest_discover_tests(ManifestCodegenTests)
 add_subdirectory(e2e)
 add_subdirectory(smartcard)
 add_subdirectory(pkcs15-plugin)
+add_subdirectory(Trust)
