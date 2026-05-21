@@ -147,9 +147,23 @@ public:
     bool canHandleConnection(std::span<const std::uint8_t> /*atr*/,
                              LibreSCRS::SmartCard::CardSession& session) const override
     {
-        auto& conn = LibreSCRS::SmartCard::detail::unwrap(session);
         const auto mapKey = makeSessionKey(session);
         try {
+            // A live SM channel on the session means PACE has already been
+            // established (e.g. user came through the emrtd-plugin display
+            // flow first). A plain SELECT-AID over the raw connection would
+            // reset the card-side PACE SM context, breaking the next wrapped
+            // APDU. Honour the invariant and short-circuit to "PACE-required"
+            // without touching the wire — the subsequent acquireChannel()
+            // reuses the live channel via the SM activation fast path.
+            // See feedback_pace_sm_per_session_not_per_applet.
+            if (session.hasLiveSecureChannel()) {
+                std::lock_guard lock(stateMutex);
+                sessions[mapKey].requiresPace = true;
+                LibreSCRS::Internal::probeTrace("PROBE-PKCS15-CANHANDLE result=needsPace via=liveSm");
+                return true;
+            }
+            auto& conn = LibreSCRS::SmartCard::detail::unwrap(session);
             // Cheap, no-SM probe to decide between PlainChannel (contact
             // PKCS#15 families) and PaceChannel (PACE-gated contactless
             // families) for subsequent operations. The actual applet

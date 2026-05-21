@@ -49,6 +49,7 @@ add_executable(Pkcs15CardInjectBindTests
 target_link_libraries(Pkcs15CardInjectBindTests PRIVATE
     PKCS15
     LibreSCRS::SmartCard
+    LibreSCRS_SmartCard_TestHelpers
     LibreSCRS::Secure
     GTest::gtest_main
 )
@@ -57,6 +58,7 @@ target_include_directories(Pkcs15CardInjectBindTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
     ${PROJECT_SOURCE_DIR}/lib/pkcs11/include
     ${PROJECT_SOURCE_DIR}/lib/pkcs11/src
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src
 )
 
 target_compile_definitions(Pkcs15CardInjectBindTests PRIVATE LIBRESCRS_INTERNAL_BUILD)

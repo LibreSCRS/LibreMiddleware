@@ -218,9 +218,22 @@ unsigned long Pkcs15Card::bind(const std::string& reader)
     // Cheap reachability probe over the borrowed connection: SELECT-AID
     // tells us non-PACE-OK / PACE-required / not-PKCS#15 in one shot.
     // Holders are the long-term transport but the probe is one-shot, so
-    // a transient untransacted SELECT is fine here.
-    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*session);
-    const auto state = probeApplet(conn);
+    // a transient untransacted SELECT is normally fine here.
+    //
+    // The plain-SELECT path is, however, illegal when the session already
+    // carries a live SM channel: a non-wrapped APDU resets the card-side
+    // PACE SM context, breaking the next wrapped APDU with 6987/6988 and
+    // forcing a full rehandshake. See feedback_pace_sm_per_session_not_per_applet
+    // — a PACE channel once established MUST NOT be torn down by plain
+    // APDUs. Skip the probe and assume the SM-required disposition; the
+    // subsequent acquireChannel() will reuse the live channel.
+    ProbeResult state;
+    if (session->hasLiveSecureChannel()) {
+        state = ProbeResult::NeedsPace;
+    } else {
+        auto& conn = LibreSCRS::SmartCard::detail::unwrap(*session);
+        state = probeApplet(conn);
+    }
     if (state == ProbeResult::Unreachable)
         return Crv::TokenNotPresent;
     if (state == ProbeResult::NeedsPace)
