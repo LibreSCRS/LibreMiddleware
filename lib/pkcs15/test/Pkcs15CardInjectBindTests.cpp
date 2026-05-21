@@ -63,8 +63,9 @@ namespace {
 // Minimal SM-carrying channel for the probe-respect-SM regression. Counts
 // transmits so a regression that re-introduces a plain SELECT-AID during
 // the bind / probe path can be detected at the test seam — the production
-// invariant is "no plain APDU once a carriesSm() channel is Open"
-// (feedback_pace_sm_per_session_not_per_applet).
+// invariant is "no plain APDU once a carriesSm() channel is Open" (PACE
+// SM is session-scoped per BSI TR-03110 §3; a plain APDU resets card-side
+// SM context).
 class SmRespectingFakeChannel final : public LibreSCRS::SecureChannel::ISecureChannel
 {
 public:

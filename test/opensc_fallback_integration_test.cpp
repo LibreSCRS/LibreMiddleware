@@ -218,9 +218,10 @@ TEST_F(OpenSCFallbackPKS, Test02ReadCardReturnsTokenInfo)
     ASSERT_TRUE(labelText.has_value()) << "label field is not FieldType::Text (textValue returned nullopt)";
     EXPECT_FALSE(labelText->empty()) << "Token label empty";
 
-    // serial is optional in PKCS#15 TokenInfo (PKS cards don't populate it);
-    // if the plugin emits it, we still require it be non-empty.
-    const auto* serialField = fieldByKey("serial");
+    // serial_number is optional in PKCS#15 TokenInfo (PKS cards don't
+    // populate it); if the plugin emits it, we still require it be
+    // non-empty.
+    const auto* serialField = fieldByKey("serial_number");
     if (serialField != nullptr) {
         const auto serialText = serialField->textValue();
         if (serialText.has_value()) {
