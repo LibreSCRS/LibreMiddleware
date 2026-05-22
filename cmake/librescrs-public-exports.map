@@ -97,6 +97,20 @@
  *     - LibreSCRS::Certificate::detail::lookupOidName — required for
  *       the OidDatabase test which links against the SHARED
  *       LibreSCRS_Certificate.
+ *     - LibreSCRS::SmartCard::Internal::sessionTransmitImpl — the
+ *       intra-`.so` primitive shared between @ref CardSession's
+ *       activation paths and the @ref detail::sessionTransmit funnel
+ *       TU (`lib/smartcard/src/session_transmit.cpp`). Both
+ *       translation units link into `libLibreSCRS_SmartCard.so`; the
+ *       symbol has no cross-`.so` callers. Promoted to default
+ *       visibility only because the `*LibreSCRS::*` glob cannot
+ *       discriminate intra-`.so` from cross-`.so` namespace members.
+ *       Consumers cannot invoke it without an
+ *       `Internal::PCSCConnection&` argument (unobtainable from a
+ *       third-party `.so` without ALSO depending on internal LM
+ *       headers); the symbol is therefore harmless. Collapsing to a
+ *       `CardSession::transmitInternal()` member fn is the cleaner
+ *       long-term shape — tracked for 4.3.
  *   Third-party consumers MUST NOT rely on Internal:: or detail::
  *   symbols; both are unstable across minor releases and are exported
  *   only because the shared-build link graph mechanically requires

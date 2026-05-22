@@ -163,8 +163,20 @@ struct OpenError
 /// @c std::shared_ptr<CardSession> by value and assume the caller has
 /// already established that exclusivity for the duration of the call.
 ///
+/// @par Smart-pointer integration (since 4.2)
+/// Inherits @c std::enable_shared_from_this<CardSession> so the
+/// LM-internal SessionPresence registry can store a @c weak_ptr that
+/// auto-clears when the owning @c shared_ptr drops. @c shared_from_this()
+/// is callable only when the session is owned by a @c std::shared_ptr;
+/// value-stored sessions (the SwiftUI host's BridgeSession holds the
+/// session by value, for example) trigger @c std::bad_weak_ptr per the
+/// standard contract and are documented as a known SessionPresence
+/// no-op — auto-registration short-circuits without raising. Use
+/// @c weak_from_this() (safe in either case; returns empty on value
+/// storage) when only the lookup half is needed.
+///
 /// @since 4.0
-class LIBRESCRS_PUBLIC_API CardSession : public std::enable_shared_from_this<CardSession>
+class LIBRESCRS_PUBLIC_API CardSession final : public std::enable_shared_from_this<CardSession>
 {
 public:
     /// @brief Opens a PC/SC session against the named reader.
