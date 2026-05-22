@@ -28,7 +28,23 @@
 #include <string>
 #include <vector>
 
+#ifdef LIBRESCRS_INTERNAL_BUILD
+#include <mutex>
+#endif
+
+#ifdef LIBRESCRS_INTERNAL_BUILD
+namespace LibreSCRS::SecureChannel {
+class ISecureChannel;
+} // namespace LibreSCRS::SecureChannel
+#endif
+
 namespace LibreSCRS::SmartCard {
+
+#ifdef LIBRESCRS_INTERNAL_BUILD
+namespace Internal {
+class PCSCConnection;
+} // namespace Internal
+#endif
 
 class CardSession;
 
@@ -148,7 +164,7 @@ struct OpenError
 /// already established that exclusivity for the duration of the call.
 ///
 /// @since 4.0
-class LIBRESCRS_PUBLIC_API CardSession
+class LIBRESCRS_PUBLIC_API CardSession : public std::enable_shared_from_this<CardSession>
 {
 public:
     /// @brief Opens a PC/SC session against the named reader.
@@ -166,6 +182,16 @@ public:
     /// CardSession session = std::move(*result);
     /// @endcode
     [[nodiscard]] static std::expected<CardSession, OpenError> open(std::string readerName) noexcept;
+
+    /// @brief Shared-ptr factory for consumers that need shared ownership
+    ///        (e.g. LC's AsyncCardReader, LK's SmartCardHandler). Returns
+    ///        @c nullptr on open failure. Thin wrapper around @ref open
+    ///        + @c make_shared; the resulting session's
+    ///        @c enable_shared_from_this slot is populated, so the
+    ///        LM-internal SessionPresence service can auto-register it on
+    ///        secure-messaging activation.
+    /// @since 4.2
+    [[nodiscard]] static std::shared_ptr<CardSession> openShared(std::string readerName) noexcept;
 
     ~CardSession();
     CardSession(const CardSession&) = delete;
@@ -353,6 +379,20 @@ public:
     ///       vtable at session destruction time and crashes.
     /// @since 4.1
     void clearActiveChannel() noexcept;
+
+#ifdef LIBRESCRS_INTERNAL_BUILD
+    // LM-internal accessors used by @ref LibreSCRS::SmartCard::detail::sessionTransmit
+    // to snapshot the active-channel slot + the underlying PC/SC connection
+    // under @ref implMutex. Compiled away in external consumer builds
+    // because LIBRESCRS_INTERNAL_BUILD is only defined inside LM's own
+    // archives, plugin loader, and unit-test executables; the SDK surface
+    // therefore never gains an addressable handle on the connection.
+    /// @cond internal
+    [[nodiscard]] std::mutex& implMutex() noexcept;
+    [[nodiscard]] std::shared_ptr<LibreSCRS::SecureChannel::ISecureChannel> implActiveChannelSnapshot() noexcept;
+    [[nodiscard]] LibreSCRS::SmartCard::Internal::PCSCConnection* implOwnedConn() noexcept;
+    /// @endcond
+#endif
 
 private:
     // Detail-namespace free functions are the internal access points for

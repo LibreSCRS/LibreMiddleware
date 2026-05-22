@@ -29,10 +29,6 @@ namespace LibreSCRS::SmartCard {
 class CardSession;
 } // namespace LibreSCRS::SmartCard
 
-namespace LibreSCRS::Pkcs11::Internal {
-class SessionRegistry;
-} // namespace LibreSCRS::Pkcs11::Internal
-
 namespace pkcs15 {
 class PKCS15Card;
 struct PKCS15Profile;
@@ -105,40 +101,18 @@ public:
     /// @since 4.1
     [[nodiscard]] unsigned long bind(const std::string& readerName) override;
 
-    /// @brief Bind by adopting an externally-supplied live CardSession
-    ///        rather than opening a fresh PC/SC handle.
-    ///
-    /// Intended for in-process hosts (LibreCelik via @c SessionAttachment)
-    /// that already hold a live @c CardSession for the same reader. The
-    /// adopted session may already carry a live PACE SM context that the
-    /// host's display flow established earlier; the probe order is
-    /// designed to preserve that tunnel rather than destroy it.
-    ///
-    /// @par Probe order
-    /// Step 1 calls @c activateChannelWithSm with @c PaceRequest{Can}.
-    /// When the session has a live @c PaceChannel, this hits Case 1
-    /// (target applet) or Case 2 (different applet, wrapped SELECT) and
-    /// reuses the SM tunnel without any plain APDU. With a warm PACE
-    /// cache but no live channel it performs a full PACE handshake.
-    /// Otherwise the preflight returns @c CredentialsRequired cheaply
-    /// (no wire I/O) and Step 2 attempts @c activateChannelFor
-    /// (PlainChannel): a non-PACE card succeeds; a PACE-gated card with
-    /// no deposited CAN surfaces @c SelectAppletFailed which is mapped
-    /// to @c Crv::PinIncorrect so the consumer's normal "wrong PIN, try
-    /// again" flow re-prompts for the CAN. The truthful invariant is
-    /// "preserve a live SM tunnel by trying SM first; fall back to
-    /// plain only when SM has no credentials".
-    ///
-    /// @par Limitation
-    /// v1 hardcodes @c PaceSecretKind::Can — correct for the
-    /// contactless PKCS#15 families currently supported via the inject
-    /// path. Cards using PIN/PUK as the PACE secret would require
-    /// querying the session's deposited secret kind or accepting it as
-    /// a parameter.
-    ///
+    /// @brief Adopt an existing @ref CardSession instead of opening a
+    ///        fresh PC/SC handle. Used by the PKCS#11 provider probe when
+    ///        SessionPresence has a live session for the target reader —
+    ///        the host's display flow already established PACE there, so
+    ///        the sign path must reuse that session rather than open a
+    ///        parallel handle (which would tear down card-side SM).
+    ///        Tries SM-first activation to preserve a live PaceChannel;
+    ///        falls through to plain activation only on
+    ///        @c CredentialsRequired.
     /// @par Thread-safety
     /// Internally synchronised; takes @c cardMutex for the duration.
-    /// @since 4.1
+    /// @since 4.2
     [[nodiscard]] unsigned long bindFromInjectedSession(const std::string& readerName,
                                                         std::shared_ptr<LibreSCRS::SmartCard::CardSession> injected);
 
@@ -211,10 +185,9 @@ private:
                                 LibreSCRS::SecureChannel::ChannelActivationError>
     acquireChannel(LibreSCRS::CancelToken token = {});
 
-    /// @brief Common tail of @ref bind and @ref bindFromInjectedSession:
-    ///        read the PKCS#15 profile under the supplied holder, store
-    ///        on @c profile, and dispatch to @ref completeBind. The
-    ///        holder must reference a live channel.
+    /// @brief Common tail of @ref bind: read the PKCS#15 profile under the
+    ///        supplied holder, store on @c profile, and dispatch to
+    ///        @ref completeBind. The holder must reference a live channel.
     /// @par Thread-safety
     /// Caller must hold @c cardMutex.
     /// @since 4.1
@@ -236,12 +209,8 @@ private:
 
     /// @brief PC/SC session. Owned outright when produced by
     ///        @ref bind via @c CardSession::open (refcount 1, equivalent
-    ///        to @c unique_ptr semantics). Shared with the caller when
-    ///        produced by @ref bindFromInjectedSession — the host's
-    ///        display flow keeps a parallel reference so the underlying
-    ///        PC/SC handle outlives a sign-only @c Pkcs15Card. Destroyed
-    ///        before the inherited @c slots vector via natural
-    ///        reverse-declaration order.
+    ///        to @c unique_ptr semantics). Destroyed before the inherited
+    ///        @c slots vector via natural reverse-declaration order.
     std::shared_ptr<LibreSCRS::SmartCard::CardSession> session;
 
     /// @brief PKCS#15 profile cached after the first successful read.
@@ -276,25 +245,12 @@ private:
 class Pkcs15PKCS11Provider final : public LibreSCRS::Pkcs11::Internal::PKCS11CardProvider
 {
 public:
-    /// @brief Construct the provider with optional shared caches.
-    /// @param cardMap        Per-card discovered-state cache threaded
-    ///                       through every @c Pkcs15Card created by
-    ///                       @ref probe. Pass @c nullptr to disable.
-    /// @param sessionRegistry In-process session registry consulted at
-    ///                        probe time. A registry hit means an
-    ///                        in-process host (LibreCelik) parked a live
-    ///                        @c CardSession for the reader; @ref probe
-    ///                        adopts it instead of opening a fresh PC/SC
-    ///                        handle. @c nullptr disables the inject
-    ///                        path — every probe falls through to the
-    ///                        standalone @c bind() that opens its own
-    ///                        PC/SC handle, which is the normal mode for
-    ///                        external consumers loading the module via
-    ///                        dlopen without inject support.
+    /// @brief Construct the provider with an optional per-card cache.
+    /// @param cardMap Per-card discovered-state cache threaded through
+    ///                every @c Pkcs15Card created by @ref probe. Pass
+    ///                @c nullptr to disable.
     /// @since 4.1
-    Pkcs15PKCS11Provider(
-        std::shared_ptr<LibreSCRS::SmartCard::CardMap> cardMap,
-        std::shared_ptr<LibreSCRS::Pkcs11::Internal::SessionRegistry> sessionRegistry = nullptr) noexcept;
+    explicit Pkcs15PKCS11Provider(std::shared_ptr<LibreSCRS::SmartCard::CardMap> cardMap) noexcept;
     ~Pkcs15PKCS11Provider() override = default;
 
     /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11CardProvider::probe
@@ -304,7 +260,6 @@ public:
 
 private:
     std::shared_ptr<LibreSCRS::SmartCard::CardMap> cardMap;
-    std::shared_ptr<LibreSCRS::Pkcs11::Internal::SessionRegistry> sessionRegistry;
 };
 
 } // namespace LibreSCRS::Pkcs15::Pkcs11

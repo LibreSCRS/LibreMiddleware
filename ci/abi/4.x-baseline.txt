@@ -233,10 +233,14 @@ LibreSCRS::SmartCard::CardSession::atr() const
 LibreSCRS::SmartCard::CardSession::clearActiveChannel()
 LibreSCRS::SmartCard::CardSession::clearCachedPaceCredentials()
 LibreSCRS::SmartCard::CardSession::hasLiveSecureChannel() const
+LibreSCRS::SmartCard::CardSession::implActiveChannelSnapshot()
+LibreSCRS::SmartCard::CardSession::implMutex()
+LibreSCRS::SmartCard::CardSession::implOwnedConn()
 LibreSCRS::SmartCard::CardSession::isConnected() const
 LibreSCRS::SmartCard::CardSession::isDead() const
 LibreSCRS::SmartCard::CardSession::markDead()
 LibreSCRS::SmartCard::CardSession::open(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)
+LibreSCRS::SmartCard::CardSession::openShared(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)
 LibreSCRS::SmartCard::CardSession::operator=(LibreSCRS::SmartCard::CardSession&&)
 LibreSCRS::SmartCard::CardSession::readerName[abi:cxx11]() const
 LibreSCRS::SmartCard::CardSession::setBacInput(LibreSCRS::SecureChannel::BacInput)
@@ -244,9 +248,24 @@ LibreSCRS::SmartCard::CardSession::setCredentialProvider(std::function<LibreSCRS
 LibreSCRS::SmartCard::CardSession::setPaceSecret(LibreSCRS::Auth::PaceSecretKind, LibreSCRS::Secure::String)
 LibreSCRS::SmartCard::CardSession::~CardSession()
 LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::active(LibreSCRS::SmartCard::CardSession&)
+LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::registerLiveSm(LibreSCRS::SmartCard::CardSession&)
 LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::transmit(LibreSCRS::SmartCard::CardSession&, LibreSCRS::SmartCard::Internal::APDUCommand const&, LibreSCRS::CancelToken)
 LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(LibreSCRS::SmartCard::ActiveChannelHolder&)
+LibreSCRS::SmartCard::Internal::SessionPresence::Registration::Registration(LibreSCRS::SmartCard::Internal::SessionPresence*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)
+LibreSCRS::SmartCard::Internal::SessionPresence::Registration::Registration(LibreSCRS::SmartCard::Internal::SessionPresence::Registration&&)
+LibreSCRS::SmartCard::Internal::SessionPresence::Registration::operator=(LibreSCRS::SmartCard::Internal::SessionPresence::Registration&&)
+LibreSCRS::SmartCard::Internal::SessionPresence::Registration::~Registration()
+LibreSCRS::SmartCard::Internal::SessionPresence::SessionPresence()
+LibreSCRS::SmartCard::Internal::SessionPresence::clearAll()
+LibreSCRS::SmartCard::Internal::SessionPresence::hasLiveSm(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) const
+LibreSCRS::SmartCard::Internal::SessionPresence::insert(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::weak_ptr<LibreSCRS::SmartCard::CardSession>)
+LibreSCRS::SmartCard::Internal::SessionPresence::peek(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) const
+LibreSCRS::SmartCard::Internal::SessionPresence::remove(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)
+LibreSCRS::SmartCard::Internal::SessionPresence::~SessionPresence()
+LibreSCRS::SmartCard::Internal::ensureSessionPresenceInitialised()
 LibreSCRS::SmartCard::Internal::makeActiveChannelHolder(LibreSCRS::SmartCard::CardSession*, std::unique_lock<std::mutex>, std::unique_ptr<LibreSCRS::SmartCard::Internal::CardTransaction, std::default_delete<LibreSCRS::SmartCard::Internal::CardTransaction> >)
+LibreSCRS::SmartCard::Internal::sessionPresence()
+LibreSCRS::SmartCard::Internal::shutdownSessionPresenceForTest()
 LibreSCRS::SmartCard::MonitorService::Config::fromEnv()
 LibreSCRS::SmartCard::MonitorService::Impl::Impl(std::unique_ptr<LibreSCRS::SmartCard::Internal::IPCSCScanProvider, std::default_delete<LibreSCRS::SmartCard::Internal::IPCSCScanProvider> >)
 LibreSCRS::SmartCard::MonitorService::Impl::Impl(std::unique_ptr<LibreSCRS::SmartCard::Internal::IPCSCScanProvider, std::default_delete<LibreSCRS::SmartCard::Internal::IPCSCScanProvider> >, LibreSCRS::SmartCard::MonitorService::Config)
@@ -307,10 +326,3 @@ LibreSCRS::Trust::detail::TrustStoreInternalAccess::addProvider(LibreSCRS::Trust
 LibreSCRS::Trust::detail::TrustStoreInternalAccess::makeStore(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, bool)
 LibreSCRS::Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(LibreSCRS::Trust::TrustStore&, std::vector<LibreSCRS::Trust::TrustAnchor, std::allocator<LibreSCRS::Trust::TrustAnchor> >, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)
 LibreSCRS::Trust::detail::resolveBundledCertsDir[abi:cxx11]()
-
-== libLibreSCRS_Pkcs11Inject.a ==
-LibreSCRS::Pkcs11::SessionAttachment::SessionAttachment(LibreSCRS::Pkcs11::SessionAttachment&&)
-LibreSCRS::Pkcs11::SessionAttachment::attach(std::filesystem::__cxx11::path const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::shared_ptr<LibreSCRS::SmartCard::CardSession>)
-LibreSCRS::Pkcs11::SessionAttachment::detach()
-LibreSCRS::Pkcs11::SessionAttachment::operator=(LibreSCRS::Pkcs11::SessionAttachment&&)
-LibreSCRS::Pkcs11::SessionAttachment::~SessionAttachment()

@@ -2,17 +2,19 @@
 # SPDX-FileCopyrightText: 2026 hirashix0
 
 # card_plugin_key_function.cpp carries the out-of-line ~CardPlugin() key
-# function. One and only one TU defines it; the
-# Itanium C++ ABI uses it to anchor the CardPlugin vtable + typeinfo to
-# exactly one library target, so cross-.so dynamic_cast and typeinfo identity
-# work under macOS two-level namespaces and Windows dllimport-consumer
-# builds. See Itanium C++ ABI §5.1.
+# function. One and only one TU defines it; the Itanium C++ ABI uses it to
+# anchor the CardPlugin vtable + typeinfo to exactly one library target,
+# so cross-.so dynamic_cast and typeinfo identity work under macOS
+# two-level namespaces and Windows dllimport-consumer builds. See Itanium
+# C++ ABI §5.1.
 #
-# The key function lives here (not in LibreSCRS_Plugin) because every
-# CardPlugin consumer already links CardPlugin_Impl for the registry; adding
-# it to LibreSCRS_Plugin would create a dependency cycle and force
-# executables to opt in separately just to resolve ~CardPlugin() at link
-# time.
+# In STATIC builds every CardPlugin consumer links CardPlugin_Impl
+# directly for the registry, so the key function rides in through the
+# same dependency edge. In SHARED builds LibreSCRS_Plugin pulls the
+# whole CardPlugin_Impl archive (lib/LibreSCRS/CMakeLists.txt) so the
+# key function — and the vtable + typeinfo it anchors — also land in
+# libLibreSCRS_Plugin.so where the public version script promotes them
+# to default visibility for cross-`.so` consumers.
 add_library(CardPlugin_Impl STATIC
     src/atr.cpp
     src/card_plugin.cpp

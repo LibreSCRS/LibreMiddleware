@@ -3,14 +3,11 @@
 
 #include "native/pkcs11_token.h"
 
-#include <LibreSCRS/Pkcs11/SessionInjection.h>
-
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
 #include <mutex>
-#include <optional>
 #include <sstream>
 #include <stdexcept>
 
@@ -53,23 +50,9 @@ struct Pkcs11Token::Impl
     CK_OBJECT_HANDLE privateKey = 0;
     bool loggedIn = false;
     std::mutex sessionMutex;
-    /// Live forward of the caller's CardSession into the loaded
-    /// librescrs-pkcs11 module. The PKCS#15 provider's @c probe adopts
-    /// the injected session instead of opening a second standalone
-    /// session against the same reader. Reset on Impl destruction —
-    /// the SessionAttachment dtor calls the matching detach hook
-    /// while the module is still mapped (the manager keeps the mapping
-    /// alive for the entire process lifetime, so the hook is always
-    /// callable).
-    std::optional<LibreSCRS::Pkcs11::SessionAttachment> attachment;
 
     ~Impl()
     {
-        // Detach FIRST so the module-side SessionRegistry entry for
-        // this Token's reader is cleared before we close our session.
-        // The manager owns the module mapping and outlives every
-        // Token, so the detach hook is guaranteed to be dispatchable.
-        attachment.reset();
         if (funcs) {
             if (loggedIn)
                 funcs->C_Logout(session);
@@ -78,38 +61,7 @@ struct Pkcs11Token::Impl
             // Deliberately NO C_Finalize / dlclose here. The owning
             // @ref Pkcs11ModuleManager drives the module-wide
             // lifecycle so multiple consecutive Tokens against the
-            // same module share a single C_Initialize and the loaded
-            // module's SessionRegistry survives across sign calls —
-            // critical for PACE-gated cards whose host-side
-            // CardSession would otherwise be invalidated between
-            // signs.
-        }
-    }
-
-    /// @brief If @p sharedSession is non-null, attach it to the loaded
-    ///        module under @p readerName so the next @c C_GetSlotList /
-    ///        provider @c probe can adopt it.
-    ///
-    /// MUST be called before @ref findSlotByReaderName (which calls
-    /// @c C_GetSlotList — the registry consultation point in the
-    /// provider's `probe`). Failure is non-fatal: the standalone bind
-    /// path will run and the sign may still succeed for non-PACE cards.
-    void attachSessionIfPresent(const std::filesystem::path& modulePath, const std::string& readerName,
-                                std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession)
-    {
-        if (!sharedSession)
-            return;
-
-        auto attached = LibreSCRS::Pkcs11::SessionAttachment::attach(modulePath, readerName, std::move(sharedSession));
-        if (attached) {
-            attachment.emplace(std::move(*attached));
-        } else {
-            // Non-fatal: fall through to standalone bind. Log the
-            // categorised reason so multi-card / SHARED-build issues
-            // surface in the diagnostic log without breaking sign.
-            std::cerr << "libresign: WARNING: SessionAttachment::attach failed for reader \"" << readerName
-                      << "\" (error=" << static_cast<int>(attached.error())
-                      << "); continuing with standalone PKCS#11 bind" << std::endl;
+            // same module share a single C_Initialize.
         }
     }
 
@@ -282,9 +234,12 @@ Pkcs11Token::Pkcs11Token(Pkcs11ModuleHandle module, const LibreSCRS::Secure::Buf
     if (!impl->funcs)
         throw std::runtime_error("Pkcs11Token: loaded module has no CK_FUNCTION_LIST");
 
-    // Attach BEFORE the slot lookup: findSlotByReaderName triggers
-    // C_GetSlotList → provider::probe, which consults SessionRegistry.
-    impl->attachSessionIfPresent(impl->module.path(), readerName, std::move(sharedSession));
+    // sharedSession's auto-registration in SessionPresence (driven by
+    // CardSession::activateChannelWithSm on the host side) is the single
+    // hand-off mechanism into the in-process PKCS#11 module's provider
+    // probe path. libresign no longer attaches the session explicitly;
+    // the next C_GetSlotList consults SessionPresence directly.
+    (void)sharedSession;
     CK_SLOT_ID slotId = impl->findSlotByReaderName(readerName);
     impl->openSessionAndLogin(slotId, std::span<const uint8_t>{pin.data(), pin.size()});
     impl->findPrivateKey(keyAlias);

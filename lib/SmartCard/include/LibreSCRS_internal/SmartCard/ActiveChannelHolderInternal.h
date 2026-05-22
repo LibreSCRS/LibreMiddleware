@@ -48,6 +48,13 @@ struct ActiveChannelAccessor
     ///        @ref LibreSCRS::SecureChannel::ISecureChannel, or @c nullptr
     ///        if no channel is active.
     [[nodiscard]] static LibreSCRS::SecureChannel::ISecureChannel* active(CardSession& session) noexcept;
+
+    /// @brief Auto-register @p session in the process-local SessionPresence
+    ///        after its CardSession::activateChannelWithSm success path has
+    ///        committed an SM channel. Skips silently for value-stored
+    ///        CardSessions (LMAC bridge_session) whose @c weak_from_this()
+    ///        returns an empty weak_ptr.
+    static void registerLiveSm(CardSession& session);
 };
 
 /// @brief Friend-only access seam reaching a @ref ActiveChannelHolder's

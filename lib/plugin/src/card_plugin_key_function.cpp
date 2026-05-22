@@ -12,9 +12,14 @@ namespace LibreSCRS::Plugin {
 // typeinfo identity under macOS two-level namespaces and Windows dllimport-
 // consumer builds. See Itanium C++ ABI §5.1.
 //
-// Lives inside CardPlugin_Impl (not LibreSCRS_Plugin) so every existing
-// CardPlugin consumer — plugins, tests, the host application — pulls it in
-// transitively through the same target they already link for the registry.
+// Lives inside CardPlugin_Impl (STATIC) so every existing CardPlugin consumer
+// — plugins, tests, the host application — pulls it in transitively through
+// the same target they already link for the registry. SHARED-LM consumers
+// also see the symbol: lib/LibreSCRS/CMakeLists.txt links CardPlugin_Impl
+// into LibreSCRS_Plugin via $<LINK_LIBRARY:WHOLE_ARCHIVE,...> so all of the
+// archive's `LibreSCRS::Plugin::*` symbols (key function + vtable + typeinfo)
+// land in libLibreSCRS_Plugin.so, where the `*LibreSCRS::*` version-script
+// glob promotes them to default visibility.
 CardPlugin::~CardPlugin() = default;
 
 } // namespace LibreSCRS::Plugin

@@ -23,13 +23,14 @@
 #include <internal/Crv.h>
 #include <internal/PKCS11TokenInfo.h>
 #include <internal/PinClassification.h>
-#include <internal/SessionRegistry.h>
 #include <internal/SlotIdHash.h>
 #include <internal/SlotKindClassifier.h>
 
 #include <LibreSCRS/Auth/PaceSecretKind.h>
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
+#include <LibreSCRS_internal/SmartCard/SessionPresence.h>
+#include <LibreSCRS_internal/SmartCard/SmartCardServices.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
@@ -296,67 +297,46 @@ unsigned long Pkcs15Card::bindFromInjectedSession(const std::string& reader,
     readerName = reader;
     session = std::move(injected);
 
-    // Critical invariant: the injected session may already carry a live
-    // PACE SM context established by the host's display flow earlier.
-    // CardSession::activateChannelFor closes the live activeChannel
-    // before emitting a plain SELECT, which would destroy that SM
-    // context (empirically observed: the card returns 6984 on the next
-    // wrapped APDU). The probe order is therefore SM-first:
-    // activateChannelWithSm preserves a live PaceChannel via its same-
-    // applet / wrapped-SELECT fast paths, and its preflight returns
-    // CredentialsRequired
-    // cheaply (no wire I/O) when no PACE credentials are deposited and
-    // no usable channel exists. Only on CredentialsRequired do we fall
-    // through to plain activation.
-
-    // Step 1 — try SM activation first. For an injected session whose
-    // display flow established a PaceChannel earlier, this hits Case 1
-    // (target applet) or Case 2 (different applet, wrapped SELECT) of
-    // activateChannelWithSm and reuses the live SM tunnel without
-    // emitting any plain APDU. For a fresh injected session whose
-    // PACE cache is warm but channel is not, it does Case 3 (full
-    // handshake). For a non-PACE card or a session without a cached
-    // CAN and no provider, the preflight returns CredentialsRequired
-    // cheaply and we fall through to Step 2.
+    // Adopt the host's existing CardSession rather than opening a parallel
+    // PC/SC handle. The injected session may already carry a live PACE SM
+    // context from the host's display flow; activateChannelWithSm's fast
+    // paths (same applet / wrapped SELECT) preserve that tunnel without
+    // emitting any plain APDU on the wire. Plain SELECT on a card with
+    // live SM card-side returns 6984 on the next wrapped APDU.
+    //
+    // SM-first probe order: activateChannelWithSm hits the fast path for
+    // an adopted session with a live PaceChannel; for a session with a
+    // warm PACE cache but no live channel, it runs the full handshake;
+    // for a non-PACE card or one without deposited credentials, the
+    // preflight returns CredentialsRequired cheaply and we fall through.
     {
         auto holderResult = session->activateChannelWithSm(
             pkcs15AppletAid(), LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can},
             LibreSCRS::CancelToken{});
         if (holderResult) {
             needsPace = true;
-            // Mirror the "CAN is cached somewhere" state into the inherited
-            // cachedCan field so Pkcs15Slot::login does not require the
-            // CAN-in-PIN colon syntax at C_Login. The actual CAN value is
-            // opaque (it lives in the session's PACE cache, deposited by
-            // the host before attach); the marker is intentionally not the
-            // real CAN — direct field assignment bypasses parentCacheCan
-            // so the onCachedCanChanged hook does not fire and overwrite
-            // the session's authoritative copy. Slot dispatch only checks
-            // emptiness, never reads the value.
+            // Mirror "CAN cached somewhere" into cachedCan so Pkcs15Slot::login
+            // does not require the CAN-in-PIN colon syntax at C_Login. The
+            // marker is intentionally not the real CAN — direct field
+            // assignment bypasses parentCacheCan so the onCachedCanChanged
+            // hook does not fire and overwrite the session's authoritative
+            // copy. Slot dispatch only checks emptiness, never reads value.
             cachedCan = LibreSCRS::Secure::String{"\x01"};
             return readProfileAndComplete(*holderResult);
         }
         if (holderResult.error() != LibreSCRS::SecureChannel::ChannelActivationError::CredentialsRequired)
             return mapHolderErrorToCrv(holderResult.error());
-        // CredentialsRequired = either non-PACE card (no PACE cred needed)
-        // or PACE-gated card whose CAN hasn't been deposited yet. Step 2
-        // disambiguates by trying plain activation.
     }
 
-    // Step 2 — try plain activation. Reaches the fast path when the
+    // Fall-through: plain activation. Reaches the fast path when the
     // injected session has a live PlainChannel on the target applet
-    // (no wire I/O); otherwise emits a plain SELECT. If the card
-    // returns 6982 (PACE-required), activateChannelFor surfaces
-    // SelectAppletFailed — translate to PinIncorrect to signal
-    // "CAN required" rather than the more generic DeviceError.
+    // (no wire I/O). On 6982 from the card (PACE-required), surface as
+    // PinIncorrect so the consumer re-prompts.
     auto holderResult = session->activateChannelFor(pkcs15AppletAid(), LibreSCRS::CancelToken{});
     if (holderResult) {
         return readProfileAndComplete(*holderResult);
     }
     if (holderResult.error() == LibreSCRS::SecureChannel::ChannelActivationError::SelectAppletFailed) {
-        // CAN not yet deposited and card is PACE-gated; surface as
-        // PinIncorrect so the consumer's normal "wrong PIN, try
-        // again" flow re-prompts.
         needsPace = true;
         return Crv::PinIncorrect;
     }
@@ -547,37 +527,28 @@ unsigned long Pkcs15Card::reconnectInline()
     return Crv::Ok;
 }
 
-Pkcs15PKCS11Provider::Pkcs15PKCS11Provider(
-    std::shared_ptr<LibreSCRS::SmartCard::CardMap> cm,
-    std::shared_ptr<LibreSCRS::Pkcs11::Internal::SessionRegistry> registry) noexcept
-    : cardMap(std::move(cm)), sessionRegistry(std::move(registry))
+Pkcs15PKCS11Provider::Pkcs15PKCS11Provider(std::shared_ptr<LibreSCRS::SmartCard::CardMap> cm) noexcept
+    : cardMap(std::move(cm))
 {}
 
 std::shared_ptr<LibreSCRS::Pkcs11::Internal::PKCS11Card> Pkcs15PKCS11Provider::probe(const std::string& readerName)
 {
     using namespace LibreSCRS::Pkcs11::Internal;
 
+    // Adopt-or-bind: if SessionPresence has a live CardSession for this
+    // reader (the host's display flow established PACE there), adopt it
+    // via bindFromInjectedSession so the sign path reuses the existing
+    // SM tunnel rather than opening a parallel PC/SC handle (which would
+    // tear down the card-side SM context — BSI TR-03110 §3, session-
+    // scoped SM). Fresh bind runs only when no presence entry exists.
+    LibreSCRS::SmartCard::Internal::ensureSessionPresenceInitialised();
     auto card = std::make_shared<Pkcs15Card>(cardMap);
 
-    // Inject path: an in-process host (LibreCelik via SessionAttachment)
-    // may have parked a live CardSession for this reader. Adopting it
-    // avoids opening a second PC/SC handle on a card the host already
-    // holds — a real concern for PACE-gated sessions where two parallel
-    // SM contexts collide.
-    //
-    // Lookup is non-consuming: peek() copies the shared_ptr without
-    // removing the entry. On bind success the registry entry is
-    // dropped (the card now owns the session); on failure the entry
-    // stays so any retry or replacement provider can still find it.
-    if (sessionRegistry) {
-        if (auto session = sessionRegistry->peek(readerName)) {
-            if (auto rc = card->bindFromInjectedSession(readerName, session); rc != Crv::Ok)
-                return nullptr;
-            sessionRegistry->remove(readerName);
-            return card;
-        }
+    if (auto existing = LibreSCRS::SmartCard::Internal::sessionPresence().peek(readerName)) {
+        if (auto rc = card->bindFromInjectedSession(readerName, std::move(existing)); rc != Crv::Ok)
+            return nullptr;
+        return card;
     }
-
     if (auto rc = card->bind(readerName); rc != Crv::Ok)
         return nullptr;
     return card;

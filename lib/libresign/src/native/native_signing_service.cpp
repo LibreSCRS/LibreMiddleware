@@ -377,12 +377,13 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, const st
         // auto-pick paths were removed in 4.0 because they silently
         // selected slots[0] under multi-card setups, routing PIN to
         // the wrong card.
-        // sharedSession (optional) is forwarded into the loaded
-        // librescrs-pkcs11 module via SessionAttachment; null falls
-        // through to standalone bind.
-        // The module handle comes from the service-owned manager so
-        // the module stays mapped across consecutive signs, preserving
-        // the host-side CardSession deposited via SessionAttachment.
+        // sharedSession (optional) keeps the host-side CardSession alive
+        // across the slot lookup. SessionPresence auto-registration on
+        // the host side surfaces any live SM channel to the loaded
+        // librescrs-pkcs11 module's provider probe directly; no explicit
+        // attach call is needed. The module handle comes from the
+        // service-owned manager so the module stays mapped across
+        // consecutive signs.
         auto token =
             Pkcs11Token(moduleManager.acquire(pkcs11ModulePath), pin, keyAlias, readerName, std::move(sharedSession));
 

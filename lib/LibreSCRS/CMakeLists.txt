@@ -260,6 +260,8 @@ add_library(LibreSCRS_SmartCard ${LIBREMIDDLEWARE_LIB_TYPE}
     SmartCard/CardMap.cpp
     SmartCard/CardSession.cpp
     SmartCard/MonitorService.cpp
+    SmartCard/SessionPresence.cpp
+    SmartCard/SmartCardServices.cpp
     ${LIBRESCRS_SMARTCARD_PUBLIC_HEADERS}
     ${LIBRESCRS_SMARTCARD_INTERNAL_HEADERS}
 )
@@ -320,10 +322,29 @@ target_compile_definitions(LibreSCRS_Plugin PRIVATE LIBRESCRS_BUILDING LIBRESCRS
 # this uniform across all four public targets removes the silent-design-
 # inconsistency surfaced during 4.0 arch review and ensures future
 # detail/ additions work without a CMake edit.
-target_link_libraries(LibreSCRS_Plugin
-    PUBLIC  LibreSCRS_Auth LibreSCRS_SmartCard LibreSCRS_Trust
-    PRIVATE $<BUILD_INTERFACE:CardPlugin_Impl>
-)
+if(LIBREMIDDLEWARE_BUILD_SHARED)
+    # SHARED LM: force-pull CardPlugin_Impl so the key function (with
+    # ~CardPlugin() + vtable + typeinfo) physically lands inside
+    # libLibreSCRS_Plugin.so. Without WHOLE_ARCHIVE the linker only
+    # includes the .o files referenced by LibreSCRS_Plugin's own TUs —
+    # the key function is not referenced internally, so the symbol would
+    # be absent from the .so and cross-`.so` consumers (test executables,
+    # plugin `.so` files) could not link or dlopen against it.
+    target_link_libraries(LibreSCRS_Plugin
+        PUBLIC  LibreSCRS_Auth LibreSCRS_SmartCard LibreSCRS_Trust
+        PRIVATE $<BUILD_INTERFACE:$<LINK_LIBRARY:WHOLE_ARCHIVE,CardPlugin_Impl>>
+    )
+else()
+    # STATIC LM: linker resolves each ~CardPlugin() / vtable reference at
+    # the consumer's link step against the same CardPlugin_Impl.a that
+    # every CardPlugin consumer already links for the registry. No
+    # whole-archive pull needed; the on-demand .o selection keeps the
+    # final binary small.
+    target_link_libraries(LibreSCRS_Plugin
+        PUBLIC  LibreSCRS_Auth LibreSCRS_SmartCard LibreSCRS_Trust
+        PRIVATE $<BUILD_INTERFACE:CardPlugin_Impl>
+    )
+endif()
 target_compile_options(LibreSCRS_Plugin PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden -fvisibility-inlines-hidden>
 )
@@ -487,8 +508,9 @@ target_link_libraries(LibreSCRS_SmartCard_TestHelpers
     PUBLIC LibreSCRS_SmartCard
     PRIVATE $<BUILD_INTERFACE:SmartCard_Impl>
 )
-target_include_directories(LibreSCRS_SmartCard_TestHelpers PRIVATE
-    ${PROJECT_SOURCE_DIR}/lib/smartcard/src)
+target_include_directories(LibreSCRS_SmartCard_TestHelpers
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/SmartCard/test_helpers
+    PRIVATE ${PROJECT_SOURCE_DIR}/lib/smartcard/src)
 target_compile_features(LibreSCRS_SmartCard_TestHelpers PUBLIC cxx_std_23)
 target_compile_definitions(LibreSCRS_SmartCard_TestHelpers PRIVATE
     LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD)

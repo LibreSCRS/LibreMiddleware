@@ -31,7 +31,6 @@
 #include "pin_guard.h"
 
 #include <LibreSCRS/Auth/PaceSecretKind.h>
-#include <LibreSCRS/Pkcs11/SessionInjection.h>
 #include <LibreSCRS/Secure/Buffer.h>
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
@@ -292,7 +291,9 @@ SignOutcome signOnCard(libresign::Pkcs11ModuleManager& moduleManager, ReaderCard
         token = std::make_unique<libresign::Pkcs11Token>(moduleManager.acquire(modulePath()), pinBuf,
                                                          /*keyAlias=*/std::string{}, rc.reader, rc.session);
         o.loggedIn = true;
-        o.attached = true; // attachment is performed inside Pkcs11Token::Impl
+        o.attached = true; // session was passed to Token; SessionPresence
+                           // auto-registration on the host side makes it
+                           // visible to the in-process provider probe.
     } catch (const std::exception& e) {
         o.sigError = e.what();
         if (looksLikePinError(o.sigError)) {
@@ -470,13 +471,13 @@ TEST(Pkcs11MultiCardSign, AllPresentReadersIndependent)
 
 // Two consecutive signs against the SAME card MUST NOT re-prompt for
 // the CAN. Regression test for the per-Token dlopen+dlclose cycle that
-// previously tore down the loaded module's SessionRegistry between
-// signs and forced a fresh PACE handshake (with CAN re-prompt) on the
-// second sign. The shared loaded-module cache owned by the
-// Pkcs11ModuleManager is what keeps the module mapped across both
-// signs; if that invariant breaks, the second sign throws because the
-// SessionAttachment placed before sign 1 is gone by the time sign 2
-// constructs its Token.
+// previously tore down loaded-module state between signs and forced a
+// fresh PACE handshake (with CAN re-prompt) on the second sign. The
+// shared loaded-module cache owned by Pkcs11ModuleManager is what
+// keeps the module mapped across both signs; if that invariant breaks,
+// the second sign re-PACEs because the host-side CardSession's
+// SessionPresence registration would still be live but the loaded
+// module's cached slot state would have been torn down.
 //
 // Operator protocol:
 //   LIBRESCRS_TEST_CARD=NAM_CL  // hard gate
@@ -514,9 +515,8 @@ TEST(Pkcs11MultiCardSign, NamSignTwicePacePersistsAcrossTokens)
 
     // Critical assertion: the session must still report a live SM
     // channel between signs. If the previous Token destructor had
-    // dlclose-d the module (and the SessionAttachment destructor had
-    // followed the old clearActiveChannel path), this would now be
-    // false and the second sign would re-prompt for CAN.
+    // dlclose-d the module and the shared cache invariant had broken,
+    // the second sign would re-prompt for CAN.
     ASSERT_TRUE(nam->session->hasLiveSecureChannel())
         << "PACE SM channel was torn down between signs — Pkcs11ModuleManager invariant broken";
 

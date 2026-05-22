@@ -442,12 +442,13 @@ try {
     // PKCS#11 slot lookup targets THIS card, not whichever card the
     // PCSC daemon enumerated first. Without this, multi-card setups
     // routed PIN to slots[0] and produced spurious "wrong PIN" errors.
-    // Forward the live display CardSession so libresign's PKCS#11
-    // path can adopt it via SessionAttachment instead of opening a
-    // second standalone session against the same reader (would tear
-    // down PACE on the eMRTD/RS eID/EU VRC families). Legacy callers
-    // that don't have a session in scope can pass nullptr — the
-    // standalone bind path then runs unchanged.
+    // Forward the live display CardSession so its auto-registration in
+    // the process-local SessionPresence stays visible across the
+    // libresign call boundary — the in-process PKCS#11 provider probe
+    // refuses to open a parallel PC/SC handle on a reader carrying a
+    // live SM channel. Callers without a session in scope pass nullptr;
+    // no host-side SM tunnel exists, so the standalone bind path is
+    // safe to run.
     auto libResult = service->sign(libReq, resolvePkcs11Module(), pinBuffer, keyAlias, session->readerName(), session);
 
     if (!libResult.success) {
@@ -714,10 +715,12 @@ try {
         return SigningResult::trustStoreUnavailableDiagnosticOnly(std::string{"libresign rejected TrustConfig"});
     }
 
-    // Forward the live display CardSession to the engine so the PKCS#11
-    // path adopts it via SessionAttachment — mandatory for PACE-protected
-    // re-signs where a standalone bind would tear down the host's SM
-    // channel before C_Login.
+    // Forward the live display CardSession to the engine so its
+    // SessionPresence registration stays visible across the call - the
+    // in-process PKCS#11 provider probe defers to the host on any
+    // reader carrying a live SM channel. Mandatory for PACE-protected
+    // re-signs where a parallel PC/SC handle would invalidate the
+    // host's tunnel before C_Login.
     auto libResult = service->appendSigner(libReq, priorSignature, originalDocument, pinBuffer, resolvePkcs11Module(),
                                            keyAlias, session->readerName(), session);
 

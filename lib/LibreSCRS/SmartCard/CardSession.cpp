@@ -16,8 +16,11 @@
 #include <LibreSCRS_internal/SecureChannel/detail/ChannelStateMutator.h>
 
 #include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
+#include <LibreSCRS_internal/SmartCard/SessionPresence.h>
+#include <LibreSCRS_internal/SmartCard/SmartCardServices.h>
 
 #include "apdu.h"
+#include "session_transmit_internal.h"
 #include "smartcard/pcsc_connection.h"
 
 #include <array>
@@ -85,6 +88,22 @@ OpenError::Kind classifyOpenError(std::string_view diag) noexcept
 }
 
 } // namespace
+
+std::shared_ptr<CardSession> CardSession::openShared(std::string readerName) noexcept
+{
+    // Mirrors the @ref open path but materialises the result into a
+    // shared_ptr-managed object so @c enable_shared_from_this populates
+    // its weak slot. Calling @c make_shared<CardSession>(std::move(*opened))
+    // is impossible without exposing CardSession's move ctor to make_shared's
+    // internal allocator wrapper; instead, route through the private string
+    // ctor on a raw @c new with the same throw-on-failure shape that
+    // @ref open already catches.
+    try {
+        return std::shared_ptr<CardSession>(new CardSession(std::move(readerName)));
+    } catch (...) {
+        return nullptr;
+    }
+}
 
 std::expected<CardSession, OpenError> CardSession::open(std::string readerName) noexcept
 {
@@ -223,33 +242,11 @@ LibreSCRS::SmartCard::Internal::APDUCommand buildSelectAppletCommand(const Apple
 
 constexpr int kSmActivationMaxAttempts = 3;
 
-// Unified SM-aware transmit helper. When a live SM channel exists (state ==
-// Open) APDUs must be wrapped through it; mixing plain transmits with an
-// Open SM tunnel desynchronises the card-side send-sequence counter and
-// corrupts the channel. When no Open SM channel is present, APDUs are sent
-// plain through the underlying PC/SC connection. Every CardSession-level
-// transmit must route through here so the wrapped-vs-plain choice cannot
-// drift out of sync with channel state.
-//
-// Takes the active-channel pointer + raw connection (rather than a
-// CardSession::Impl reference) because Impl is a private member type.
-LibreSCRS::SmartCard::Internal::APDUResponse sessionTransmit(LibreSCRS::SecureChannel::ISecureChannel* activeChannel,
-                                                             LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
-                                                             const LibreSCRS::SmartCard::Internal::APDUCommand& cmd,
-                                                             LibreSCRS::CancelToken token)
-{
-    using LibreSCRS::SecureChannel::ChannelState;
-    if (activeChannel != nullptr && activeChannel->state() == ChannelState::Open) {
-        return activeChannel->transmit(cmd, std::move(token));
-    }
-    return conn.transmit(cmd);
-}
-
 // Read EF.CardAccess (FID 011C) from the card's master file. Returns the
 // raw TLV bytes ready for emrtd::crypto::parseCardAccessWithParams. An
 // empty vector indicates the file is absent or unreadable (no PACE).
 //
-// Routes through @ref sessionTransmit so that a live PACE channel is not
+// Routes through @ref sessionTransmitImpl so that a live PACE channel is not
 // bypassed when the caller is still resolving handshake parameters and
 // has not yet taken a wrapped-SELECT path. PACE SM is session-scoped at
 // the card OS layer (BSI TR-03110), so MF/EF.CardAccess is reachable
@@ -261,22 +258,23 @@ std::vector<std::uint8_t> readCardAccessFromMF(LibreSCRS::SecureChannel::ISecure
 {
     using LibreSCRS::SmartCard::Internal::APDUCommand;
     using LibreSCRS::SmartCard::Internal::selectByFileId;
+    using LibreSCRS::SmartCard::Internal::sessionTransmitImpl;
     try {
-        auto mfSel = sessionTransmit(activeChannel, conn, selectByFileId(0x3F, 0x00, 0x0C), token);
+        auto mfSel = sessionTransmitImpl(activeChannel, conn, selectByFileId(0x3F, 0x00, 0x0C), token);
         if (!mfSel.isSuccess()) {
-            mfSel = sessionTransmit(activeChannel, conn, selectByFileId(0x3F, 0x00), token);
+            mfSel = sessionTransmitImpl(activeChannel, conn, selectByFileId(0x3F, 0x00), token);
         }
         if (!mfSel.isSuccess()) {
             return {};
         }
-        auto efSel = sessionTransmit(activeChannel, conn, selectByFileId(0x01, 0x1C, 0x0C), token);
+        auto efSel = sessionTransmitImpl(activeChannel, conn, selectByFileId(0x01, 0x1C, 0x0C), token);
         if (!efSel.isSuccess()) {
-            efSel = sessionTransmit(activeChannel, conn, selectByFileId(0x01, 0x1C), token);
+            efSel = sessionTransmitImpl(activeChannel, conn, selectByFileId(0x01, 0x1C), token);
         }
         if (efSel.sw1 != 0x90 && efSel.sw1 != 0x62) {
             return {};
         }
-        auto read = sessionTransmit(activeChannel, conn, APDUCommand{0x00, 0xB0, 0x00, 0x00, {}, 0, true}, token);
+        auto read = sessionTransmitImpl(activeChannel, conn, APDUCommand{0x00, 0xB0, 0x00, 0x00, {}, 0, true}, token);
         return read.data;
     } catch (...) {
         return {};
@@ -284,6 +282,38 @@ std::vector<std::uint8_t> readCardAccessFromMF(LibreSCRS::SecureChannel::ISecure
 }
 
 } // namespace
+
+namespace Internal {
+
+// Register the session in the process-local SessionPresence after a
+// successful PACE/BAC handshake. Skips when the session is not managed by
+// a shared_ptr (LMAC's value-stored SessionHandle): weak_from_this()
+// returns an empty weak_ptr there, and registering an immediately-expired
+// entry would burn an unordered_map slot for no observable benefit.
+//
+// Called under d->sessionMutex from the activateChannelWithSm success
+// branches, after d->activeChannel has been committed but before the
+// transaction holder is returned to the caller. bad_alloc is swallowed —
+// the SM activation already succeeded; losing the cross-reader guard for
+// this one session is preferable to terminating.
+void ActiveChannelAccessor::registerLiveSm(CardSession& session)
+{
+    auto& d = *session.d;
+    try {
+        ensureSessionPresenceInitialised();
+        auto weak = session.weak_from_this();
+        if (weak.expired()) {
+            // Value-stored CardSession (e.g. LMAC bridge_session). No
+            // shared_ptr exists to anchor the weak_ptr; documented gap.
+            return;
+        }
+        d.presence.emplace(sessionPresence().insert(d.readerName, std::move(weak)));
+    } catch (...) {
+        // bad_alloc on insert or unordered_map rehash: skip registration.
+    }
+}
+
+} // namespace Internal
 
 void CardSession::setCredentialProvider(LibreSCRS::Auth::CredentialProvider provider) noexcept
 {
@@ -345,6 +375,16 @@ void CardSession::markDead() noexcept
     // paceCredentialsCache[] (Secure::String slots) and bacInput; itself
     // marked noexcept under the same noexcept-alloc contract.
     clearCachedPaceCredentials();
+    // Defensive: drop the SessionPresence entry even if no subsequent
+    // clearActiveChannel call fires. ~Impl will also reset presence; this
+    // is the safety net for the card-removal path where the channel may
+    // still be nominally Open in the session state.
+    try {
+        std::lock_guard lock(d->sessionMutex);
+        d->presence.reset();
+    } catch (...) {
+        // noexcept contract.
+    }
 }
 
 bool CardSession::isDead() const noexcept
@@ -365,11 +405,35 @@ void CardSession::clearActiveChannel() noexcept
             d->activeChannel->close();
             d->activeChannel.reset();
         }
+        // Drop the SessionPresence entry alongside the channel: in-process
+        // PKCS#11 probes must see "no live SM" once the channel is gone,
+        // even if this CardSession remains alive on the host side.
+        d->presence.reset();
     } catch (...) {
         // noexcept contract: swallow any exception from close()/reset().
         // The worst case is a leaked channel which is preferable to
         // std::terminate.
     }
+}
+
+// LM-internal accessors used by detail::sessionTransmit (in
+// lib/smartcard/src/session_transmit.cpp). Exposing thin shims rather
+// than a friend reach into Impl keeps the accessor surface auditable: a
+// single grep on these three names shows every external translation
+// unit that snapshots session state.
+std::mutex& CardSession::implMutex() noexcept
+{
+    return d->sessionMutex;
+}
+
+std::shared_ptr<LibreSCRS::SecureChannel::ISecureChannel> CardSession::implActiveChannelSnapshot() noexcept
+{
+    return d->activeChannel;
+}
+
+LibreSCRS::SmartCard::Internal::PCSCConnection* CardSession::implOwnedConn() noexcept
+{
+    return d->ownedConn.get();
 }
 
 std::expected<ActiveChannelHolder, LibreSCRS::SecureChannel::ChannelActivationError>
@@ -427,16 +491,17 @@ CardSession::activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token)
         d->activeChannel->close();
     }
 
-    // sessionTransmit short-circuits to ownedConn here because the preceding
-    // close() leaves the active channel in ChannelState::Closed. Routed via
-    // the helper for architectural consistency: every CardSession-level
-    // APDU goes through one funnel.
-    auto selectResp = sessionTransmit(d->activeChannel.get(), *d->ownedConn, buildSelectAppletCommand(aid), token);
+    // sessionTransmitImpl short-circuits to ownedConn here because the
+    // preceding close() leaves the active channel in ChannelState::Closed.
+    // Routed via the helper for architectural consistency: every
+    // CardSession-level APDU goes through one funnel.
+    auto selectResp =
+        Internal::sessionTransmitImpl(d->activeChannel.get(), *d->ownedConn, buildSelectAppletCommand(aid), token);
     if (!selectResp.isSuccess()) {
         return std::unexpected{ChannelActivationError::SelectAppletFailed};
     }
 
-    d->activeChannel = std::make_unique<PlainChannel>(*d->ownedConn, aid);
+    d->activeChannel = std::make_shared<PlainChannel>(*d->ownedConn, aid);
     return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
 }
 
@@ -619,12 +684,12 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                 }
             }
 
-            // sessionTransmit short-circuits to ownedConn here because the
-            // active channel has just been reset or was already null; the
-            // plain SELECT before BAC handshake therefore cannot collide
-            // with a live SM tunnel.
-            auto selectResp =
-                sessionTransmit(d->activeChannel.get(), *d->ownedConn, buildSelectAppletCommand(aid), token);
+            // sessionTransmitImpl short-circuits to ownedConn here because
+            // the active channel has just been reset or was already null;
+            // the plain SELECT before BAC handshake therefore cannot
+            // collide with a live SM tunnel.
+            auto selectResp = Internal::sessionTransmitImpl(d->activeChannel.get(), *d->ownedConn,
+                                                            buildSelectAppletCommand(aid), token);
             if (!selectResp.isSuccess()) {
                 return std::unexpected{ChannelActivationError::SelectAppletFailed};
             }
@@ -632,6 +697,11 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
             auto outcome = BacChannel::establish(*d->ownedConn, aid, *d->bacInput, token);
             if (outcome) {
                 d->activeChannel = std::move(*outcome);
+                // Cross-reader guard: a shared_ptr-managed CardSession with a
+                // live SM channel must be visible to in-process PKCS#11
+                // probes so they refuse to open a second PC/SC handle on
+                // this reader (BSI TR-03110 §3 — SM is session-scoped).
+                Internal::ActiveChannelAccessor::registerLiveSm(*this);
                 return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
             }
             if (outcome.error() == ChannelActivationError::PaceWrongSecret) {
@@ -756,6 +826,9 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
             }
             LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(*freshChannel, aid);
             d->activeChannel = std::move(freshChannel);
+            // Cross-reader guard: see the matching call in the BAC success
+            // branch above for the rationale.
+            Internal::ActiveChannelAccessor::registerLiveSm(*this);
             return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
         }
         if (lastError == ChannelActivationError::PaceWrongSecret) {

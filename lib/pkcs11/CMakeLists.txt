@@ -27,7 +27,6 @@ add_library(librescrs-pkcs11 SHARED
     include/internal/PKCS11Slot.h
     include/internal/PKCS11Card.h
     include/internal/PKCS11CardProvider.h
-    include/internal/SessionRegistry.h
     include/internal/SlotIdHash.h
     include/internal/DerWrap.h
     include/internal/SlotKindClassifier.h
@@ -62,7 +61,7 @@ endif()
 # Restrict the dylib's exported symbol set to the PKCS#11 standard C
 # interface. Without this, statically linked OpenSSL crypto and the
 # LibreSCRS internal namespaces all surface as exported symbols of the
-# .dylib — a layering / supply-chain smell. CXX_VISIBILITY_PRESET hidden
+# .dylib - a layering / supply-chain smell. CXX_VISIBILITY_PRESET hidden
 # above hides LibreSCRS-built symbols, but it does NOT hide symbols
 # brought in from the bundled static OpenSSL archive (those were compiled
 # with default visibility into libcrypto.a). The allowlist approach below
@@ -72,25 +71,11 @@ endif()
 # GNU ld(1):   --version-script <file>          (version-tagged sections)
 # Both formats encode the same allowlist; their syntax just differs. See
 # the per-platform allowlist files for the rationale + symbol list.
-#
-# Symbol-anchoring note: the LibreSCRS PKCS#11 extension hooks
-# (librescrs_pkcs11_attach_session, librescrs_pkcs11_detach_session)
-# live in lib/pkcs15/src/pkcs15_pkcs11_attach.cpp and reach the .so via
-# PRIVATE-linkage of the PKCS15 static archive. Nothing inside the .so
-# itself calls them — they exist solely to be resolved by external
-# dlsym() — so --gc-sections (Linux) and -dead_strip (macOS) would
-# discard them as unreferenced. Both linkers accept an explicit
-# "undefined symbol" anchor that forces inclusion: GNU ld --undefined,
-# Apple ld -u. Pair the anchor with the visibility allowlist
-# (exports.map / exports.list) so the symbols survive GC AND end up in
-# the export table.
 if(APPLE)
     target_link_options(librescrs-pkcs11 PRIVATE
         "LINKER:-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/exports.list"
         # Apple ld(1) dead-strips by default; -dead_strip is explicit form.
         "LINKER:-dead_strip"
-        "LINKER:-u,_librescrs_pkcs11_attach_session"
-        "LINKER:-u,_librescrs_pkcs11_detach_session"
     )
 elseif(UNIX)
     target_link_options(librescrs-pkcs11 PRIVATE
@@ -101,8 +86,6 @@ elseif(UNIX)
         # symbols already ensures the project's own code shrinks; this flag
         # also reaches the bundled static archive.
         "LINKER:--gc-sections"
-        "LINKER:--undefined=librescrs_pkcs11_attach_session"
-        "LINKER:--undefined=librescrs_pkcs11_detach_session"
     )
 endif()
 

@@ -43,55 +43,19 @@ target_include_directories(librescrs_pkcs11_e2e_tests PRIVATE
 gtest_discover_tests(librescrs_pkcs11_e2e_tests)
 
 # ---------------------------------------------------------------------------
-# Stage 7e — real-card E2E for the SessionAttachment inject path.
+# Opt-in real-card E2E tests.
 #
-# Opt-in only: gated on LIBRESCRS_BUILD_REAL_CARD_TESTS=ON because this
-# binary is intended to be invoked manually with a real card present and
-# correct PIN env vars; see the file's header comment for the operator
-# protocol. NOT registered with gtest_discover_tests so a routine
-# `ctest` invocation does not accidentally trigger card I/O.
-#
-# Manual run (operator-controlled, with PIN-safety discipline):
-#   LIBRESCRS_TEST_CARD=GEO_TESTNA \
-#   LIBRESCRS_TEST_PIN="123456:654321" \
-#   ./Pkcs11InjectE2EGeoTestnaTests
+# Gated on LIBRESCRS_BUILD_REAL_CARD_TESTS=ON because they are intended
+# to be invoked manually with a real card present and correct PIN env
+# vars; see each file's header comment for the operator protocol.
+# NOT registered with gtest_discover_tests so a routine `ctest`
+# invocation does not accidentally trigger card I/O.
 # ---------------------------------------------------------------------------
 option(LIBRESCRS_BUILD_REAL_CARD_TESTS
     "Build opt-in real-card E2E tests (manual operator runs only; not in default ctest set)"
     OFF)
 
 if(LIBRESCRS_BUILD_REAL_CARD_TESTS)
-    add_executable(Pkcs11InjectE2EGeoTestnaTests
-        Pkcs11InjectE2EGeoTestnaTests.cpp
-        pin_guard.h
-    )
-
-    # Reach into libresign internals (native/pkcs11_token.h) — gated by
-    # LIBRESCRS_INTERNAL_BUILD on the source side. Mirrors the test/
-    # CMakeLists pattern for SigningTestSupport / Pkcs11TokenTests.
-    target_link_libraries(Pkcs11InjectE2EGeoTestnaTests PRIVATE
-        GTest::gtest_main
-        LibreSCRS::Pkcs11Inject
-        LibreSCRS::SmartCard
-        LibreSign
-        OpenSSL_Crypto
-        ${CMAKE_DL_LIBS}
-    )
-
-    target_include_directories(Pkcs11InjectE2EGeoTestnaTests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
-    )
-
-    target_compile_definitions(Pkcs11InjectE2EGeoTestnaTests PRIVATE
-        LIBRESCRS_INTERNAL_BUILD=1
-        LIBRESCRS_PKCS11_MODULE_PATH="$<TARGET_FILE:librescrs-pkcs11>"
-    )
-
-    add_dependencies(Pkcs11InjectE2EGeoTestnaTests librescrs-pkcs11)
-
-    # Deliberately NOT calling gtest_discover_tests — operator-only run.
-
     # 4.1.0 multi-card regression smoke. Iterates every reader, classifies
     # by ATR, runs sign on each recognised card profile with its own PIN
     # latch — a failure on one card does not poison the others.
@@ -101,7 +65,6 @@ if(LIBRESCRS_BUILD_REAL_CARD_TESTS)
     )
     target_link_libraries(Pkcs11MultiCardSignTests PRIVATE
         GTest::gtest_main
-        LibreSCRS::Pkcs11Inject
         LibreSCRS::SmartCard
         LibreSign
         OpenSSL_Crypto

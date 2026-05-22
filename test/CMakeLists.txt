@@ -795,6 +795,62 @@ target_link_libraries(LibreSCRS_CardSessionTests PRIVATE
 target_compile_definitions(LibreSCRS_CardSessionTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(LibreSCRS_CardSessionTests)
 
+# SessionPresenceTest — unit tests for the process-local registry that
+# CardSession self-registers into on SM activation. Exercises the
+# weak_ptr storage contract, RAII Registration auto-removal, and the
+# hasLiveSm reflection through CardSession::hasLiveSecureChannel.
+add_executable(SessionPresenceTest SessionPresenceTest.cpp)
+target_link_libraries(SessionPresenceTest PRIVATE
+    GTest::gtest_main
+    LibreSCRS_SmartCard
+)
+target_compile_definitions(SessionPresenceTest PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(SessionPresenceTest)
+
+# SessionTransmitTest — drives the routing matrix of the SM-aware transmit
+# funnel: live SM channel path, closed channel / no channel path,
+# moved-from / detached session path, and the snapshot-keeps-channel-alive
+# contract. Links against LibreSCRS_SmartCard_TestHelpers for the
+# detail::ChannelInjector helper that swaps the active channel slot from
+# outside the production translation unit.
+add_executable(SessionTransmitTest SessionTransmitTest.cpp)
+target_link_libraries(SessionTransmitTest PRIVATE
+    GTest::gtest_main
+    LibreSCRS_SmartCard
+    LibreSCRS_SmartCard_TestHelpers
+    LibreSCRS_SecureChannel
+    SmartCard_Impl
+)
+target_include_directories(SessionTransmitTest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+)
+target_compile_definitions(SessionTransmitTest PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(SessionTransmitTest)
+
+# CardSessionApiInvariantTest — load-bearing compile-time check that the
+# public @ref CardSession surface never sprouts a connection() /
+# pcscConnection() accessor that would re-expose the PC/SC transport.
+# The static_assert at namespace scope is the actual test; the
+# placeholder TEST() exists only so gtest_main has a TU body to link.
+add_executable(CardSessionApiInvariantTest CardSessionApiInvariantTest.cpp)
+target_link_libraries(CardSessionApiInvariantTest PRIVATE
+    GTest::gtest_main
+    LibreSCRS_SmartCard
+)
+gtest_discover_tests(CardSessionApiInvariantTest)
+
+# PkcsAttachApiDeletedTest — compile-time guard that the legacy
+# SessionAttachment + AttachHook C ABI stays deleted. The
+# SessionPresence auto-registration only holds its invariant if
+# consumers cannot reach a manual-attach surface; reintroducing the
+# headers or the SessionAttachment::attach member fails this TU at
+# build time via the SFINAE-on-sentinel static_assert.
+add_executable(PkcsAttachApiDeletedTest PkcsAttachApiDeletedTest.cpp)
+target_link_libraries(PkcsAttachApiDeletedTest PRIVATE
+    GTest::gtest_main
+)
+gtest_discover_tests(PkcsAttachApiDeletedTest)
+
 add_executable(LibreSCRS_MonitorTests
     LibreSCRS_MonitorTests.cpp
 )

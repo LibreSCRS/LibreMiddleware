@@ -12,26 +12,20 @@
 ///        single @c C_Initialize per module, shared across every
 ///        @ref libresign::Pkcs11Token built against the same path.
 ///
-/// Lifts the @c dlopen + @c C_Initialize cost — and, more critically,
-/// the corresponding @c C_Finalize + @c dlclose that tears down the
-/// loaded module's @c SessionRegistry between consecutive sign
-/// operations — out of the per-Token critical path. Each per-sign
-/// Token acquires a handle from the manager; the handle's refcount
-/// keeps the underlying @c LoadedModule alive while the Token uses
-/// it. The module stays mapped until the owning manager is destroyed
-/// (typically at host-process exit).
+/// Lifts the @c dlopen + @c C_Initialize cost out of the per-Token
+/// critical path. Each per-sign Token acquires a handle from the
+/// manager; the handle's refcount keeps the underlying @c LoadedModule
+/// alive while the Token uses it. The module stays mapped until the
+/// owning manager is destroyed (typically at host-process exit).
 ///
 /// @par Why per-Token @c dlclose is a regression vector
-/// The librescrs-pkcs11 module's @c SessionRegistry is module-static
-/// state. When a Token's @c ~Impl runs @c C_Finalize + @c dlclose, the
-/// module is unloaded and the next sign reloads a fresh copy with an
-/// empty registry — invalidating any host-side @c CardSession that the
-/// LC GUI previously deposited via @c SessionAttachment. PACE-gated
-/// contactless cards observe this as a re-prompt for CAN on every
-/// subsequent sign, even though the underlying @c CardSession on the
-/// host side carries a live SM channel. This manager eliminates that
-/// teardown by keeping the module mapped for the lifetime of its
-/// owner.
+/// Per-Token @c C_Finalize + @c dlclose unmaps the module and forces
+/// the next sign to reload a fresh copy with empty in-module state.
+/// PACE-gated contactless cards observe this as latency spikes and as
+/// vtable churn for any per-module service. The host's
+/// @c SessionPresence is process-local (not module-local) so the
+/// cross-reader SM guard survives a module reload, but the dlopen
+/// round-trip itself is wasteful; this manager eliminates it.
 
 #include <filesystem>
 #include <memory>

@@ -13,6 +13,7 @@
 #include <LibreSCRS/SecureChannel/PaceParams.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS_internal/SecureChannel/BacChannel.h>
+#include <LibreSCRS_internal/SmartCard/SessionPresence.h>
 
 #include "smartcard/pcsc_connection.h"
 
@@ -61,7 +62,13 @@ struct LIBRESCRS_INTERNAL CardSession::Impl
     std::uint64_t generation{Internal::nextCardSessionGeneration()};
 
     // 4.1: cross-plugin secure-channel coordination state.
-    std::unique_ptr<LibreSCRS::SecureChannel::ISecureChannel> activeChannel;
+    //
+    // shared_ptr (not unique_ptr) so that the SM-aware transmit funnel can
+    // snapshot the channel under the session mutex, release the mutex, and
+    // dispatch the transmit on a pinned pointer that survives a concurrent
+    // teardown on another thread. The session is the sole conceptual owner;
+    // shared_ptr is purely a lifetime-pinning vehicle for the snapshot.
+    std::shared_ptr<LibreSCRS::SecureChannel::ISecureChannel> activeChannel;
     std::array<LibreSCRS::Secure::String, LibreSCRS::Auth::kPaceSecretKindCount> paceCredentialsCache;
     // BAC consumes a structurally distinct tuple (documentNumber + two dates)
     // rather than a single secret, so it gets its own cache slot disjoint
@@ -70,6 +77,15 @@ struct LIBRESCRS_INTERNAL CardSession::Impl
     std::optional<LibreSCRS::Auth::CredentialProvider> credentialProvider;
     std::mutex sessionMutex;
     std::atomic<bool> dead{false};
+
+    // SessionPresence registration: populated when this session activates a
+    // secure-messaging channel through a shared_ptr-managed CardSession. The
+    // RAII handle removes the entry from the process-local registry on
+    // destruction; ~Impl therefore covers session teardown automatically,
+    // and clearActiveChannel/markDead reset the optional explicitly so the
+    // registry reflects the absence of a live SM channel even if the
+    // shared_ptr outlives the channel.
+    std::optional<LibreSCRS::SmartCard::Internal::SessionPresence::Registration> presence;
 };
 
 } // namespace LibreSCRS::SmartCard

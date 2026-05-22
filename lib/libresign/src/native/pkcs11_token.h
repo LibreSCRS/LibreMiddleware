@@ -58,13 +58,14 @@ public:
     //     are not supported on this signing path; their slot lookup
     //     would have to fall back to a different identification scheme).
     /// @param sharedSession Optional live CardSession owned by the caller
-    ///        (typically the LC display session). When non-null, the
-    ///        token forwards the session to the loaded librescrs-pkcs11
-    ///        module via @ref LibreSCRS::Pkcs11::SessionAttachment so
-    ///        the PKCS#15 provider's @c probe path adopts it instead
-    ///        of opening a second standalone session against the same
-    ///        reader. When null, the standalone path runs (legacy
-    ///        behaviour).
+    ///        (typically the LC display session). The session auto-
+    ///        registers in the process-local SessionPresence on PACE/BAC
+    ///        handshake commit, so the loaded librescrs-pkcs11 module's
+    ///        @c C_GetSlotList probe path sees the live SM tunnel
+    ///        without any explicit forwarding from this Token. The
+    ///        parameter is preserved so the caller's shared_ptr is
+    ///        kept alive across the slot lookup; pass @c nullptr when
+    ///        no host-side session exists.
     /// @since 4.1
     Pkcs11Token(Pkcs11ModuleHandle module, const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
                 const std::string& readerName,

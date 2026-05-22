@@ -4,9 +4,6 @@
 #include "pkcs11_library.h"
 
 #include "pkcs15_pkcs11_card.h"
-#include "pkcs15_pkcs11_module_context.h"
-
-#include <internal/SessionRegistry.h>
 
 #include <LibreSCRS/SmartCard/CardMap.h>
 
@@ -72,43 +69,20 @@ static void pkcs11_debug(const char* fmt, ...)
 //   Step 2 (slot mutex only): card I/O via provider->signData/signMessage.
 //   Step 3 (~SessionBusyGuard): relock sessionMutex, clear busy.
 //
-// libraryMutex is exposed (non-static, namespace-scoped) so the extern "C"
-// inject hooks in pkcs15_pkcs11_attach.cpp can take a shared_lock around
-// their moduleContext() dereference, sequencing them safely against
-// C_Finalize. See pkcs15_pkcs11_module_context.h for the contract.
-namespace LibreSCRS::Pkcs15::Pkcs11 {
-std::shared_mutex libraryMutex;
-} // namespace LibreSCRS::Pkcs15::Pkcs11
-using LibreSCRS::Pkcs15::Pkcs11::libraryMutex;
+// Shared mutex held exclusively across C_Initialize / C_Finalize and
+// shared by every other C_* entry point. Fine-grained locking inside
+// PKCS11Library handles per-session and per-slot serialisation.
+static std::shared_mutex libraryMutex;
 static std::unique_ptr<PKCS11Library> library;
-
-namespace {
-// Module-scope process-global state with explicit lifecycle. nullptr at
-// process load; populated by C_Initialize and freed by C_Finalize. The
-// single bridge between the PKCS#11 init contract and the extern "C"
-// inject hooks defined in lib/pkcs15/src/pkcs15_pkcs11_attach.cpp.
-// Explicitly NOT a Meyers singleton: there is no magic-static lazy init
-// and no instance() accessor; reachability is gated by libraryMutex
-// (held exclusively across C_Initialize / C_Finalize) and by the
-// nullptr-checks in the moduleContext() accessor below.
-std::unique_ptr<LibreSCRS::Pkcs15::Pkcs11::ModuleContext> g_module;
-} // namespace
-
-namespace LibreSCRS::Pkcs15::Pkcs11 {
-ModuleContext* moduleContext() noexcept
-{
-    return g_module.get();
-}
-} // namespace LibreSCRS::Pkcs15::Pkcs11
 
 static void registerDefaultProviders(PKCS11Library& lib)
 {
     // Probe order: vendored-OpenSC fallback first (broadest reach across
     // OpenSC's emulator chain and built-in driver set), then the project's
     // own PKCS#15 provider. The first probe that returns a non-null Card
-    // wins. SessionRegistry awareness on the fallback lets it defer to a
-    // specialised provider when a host-injected session carries a live SM
-    // tunnel, so the two providers compose without contention.
+    // wins. Both providers consult the process-local SessionPresence on
+    // every probe so they refuse to open a parallel PC/SC handle on a
+    // reader that already carries a live host-side SM channel.
 
     // Shared per-process discovery cache. The PKCS#15 provider's bind()
     // path consults it post-PACE to skip re-probing EF.DIR under the SM
@@ -117,23 +91,20 @@ static void registerDefaultProviders(PKCS11Library& lib)
     auto cardMap = std::make_shared<LibreSCRS::SmartCard::CardMap>();
 
 #if LIBRESCRS_HAS_VENDORED_OPENSC
-    // Pass the shared SessionRegistry so the OpenSC fallback can detect
-    // readers whose parked CardSession is mid-secure-messaging and step
-    // aside. A second PC/SC handle against a card running a live SM
-    // tunnel invalidates the card-side SM context; the registry hand-off
-    // gates the skip on session->hasLiveSecureChannel(), so injected
-    // sessions without an active SM tunnel still get a normal probe.
-    {
-        auto registryCopy = g_module->sessionRegistry;
-        lib.registerProvider(
-            std::make_shared<LibreSCRS::OpenSc::Pkcs11::OpenScPKCS11Provider>(std::move(registryCopy)));
-    }
+    // The OpenSC fallback consults the process-local SessionPresence on
+    // every probe so it short-circuits when another in-process CardSession
+    // holds a live SM channel on the queried reader. A second PC/SC handle
+    // against a card running a live SM tunnel would invalidate the
+    // card-side SM context (BSI TR-03110 §3); SessionPresence routes the
+    // skip through CardSession's auto-registration, so display-flow
+    // sessions are visible without any per-provider wiring.
+    lib.registerProvider(std::make_shared<LibreSCRS::OpenSc::Pkcs11::OpenScPKCS11Provider>());
 #endif
-    // Pass g_module->sessionRegistry by shared_ptr so the provider can
-    // consult it on every probe(). g_module is guaranteed non-null here:
-    // C_Initialize allocates it before calling registerDefaultProviders().
-    lib.registerProvider(
-        std::make_shared<LibreSCRS::Pkcs15::Pkcs11::Pkcs15PKCS11Provider>(cardMap, g_module->sessionRegistry));
+    // The custom PKCS#15 provider runs after OpenSC and consults the same
+    // process-local SessionPresence directly. No per-provider registry is
+    // threaded any more; auto-registration in CardSession is the single
+    // source of truth.
+    lib.registerProvider(std::make_shared<LibreSCRS::Pkcs15::Pkcs11::Pkcs15PKCS11Provider>(cardMap));
 }
 
 // ---------------------------------------------------------------------------
@@ -158,8 +129,6 @@ CK_DECLARE_FUNCTION(CK_RV, C_Initialize)(CK_VOID_PTR pInitArgs)
             return CKR_CANT_LOCK;
     }
 
-    g_module = std::make_unique<LibreSCRS::Pkcs15::Pkcs11::ModuleContext>();
-    g_module->sessionRegistry = std::make_shared<LibreSCRS::Pkcs11::Internal::SessionRegistry>();
     library = std::make_unique<PKCS11Library>();
     registerDefaultProviders(*library);
     return CKR_OK;
@@ -175,15 +144,6 @@ CK_DECLARE_FUNCTION(CK_RV, C_Finalize)(CK_VOID_PTR pReserved)
     if (pReserved != NULL_PTR)
         return CKR_ARGUMENTS_BAD;
     library.reset();
-    if (g_module) {
-        // Drop injected session refs first so any host-owned shared_ptr
-        // copies in the registry are released before the rest of the
-        // module-context state goes away. Order matters only for human
-        // legibility — both calls run under libraryMutex exclusive.
-        if (g_module->sessionRegistry)
-            g_module->sessionRegistry->clearAll();
-        g_module.reset();
-    }
     return CKR_OK;
     PKCS11_CATCH
 }
