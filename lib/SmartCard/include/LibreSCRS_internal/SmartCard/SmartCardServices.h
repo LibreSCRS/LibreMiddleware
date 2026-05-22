@@ -27,7 +27,6 @@ class SessionPresence;
 ///        Allocates the heap-owned process instance via a function-local
 ///        std::call_once + std::unique_ptr; reachability is gated by an
 ///        explicit lifecycle, NOT by Meyers magic-static semantics.
-///        Mirrors the @c g_module precedent in @c lib/pkcs11/src/pkcs11.cpp.
 LIBRESCRS_PUBLIC_API void ensureSessionPresenceInitialised() noexcept;
 
 /// @brief Test-only: clear every entry in the process-local instance.

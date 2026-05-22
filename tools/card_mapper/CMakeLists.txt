@@ -37,8 +37,9 @@ target_compile_definitions(card_mapper PRIVATE
     LIBRESCRS_INTERNAL_BUILD
 )
 
-# Tests
-if(BUILD_TESTING)
+# Tests (GTest is fetched by the top-level test/ subdir; skipped when
+# the monolithic SDK build elides it).
+if(BUILD_TESTING AND LIBREMIDDLEWARE_BUILD_PLUGINS)
     add_executable(card_mapper_tests
         test/cli_test.cpp
         test/output_formatter_test.cpp

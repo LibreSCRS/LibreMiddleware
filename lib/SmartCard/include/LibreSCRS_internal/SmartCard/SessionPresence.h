@@ -10,7 +10,9 @@
 #include <LibreSCRS/Export.h>
 
 #include <memory>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 
 namespace LibreSCRS::SmartCard {
 class CardSession;
@@ -25,8 +27,7 @@ namespace LibreSCRS::SmartCard::Internal {
 ///
 /// @note Single-process invariant only. Cross-process scenarios (Firefox
 ///       loading librescrs-pkcs11.so, macOS CryptoTokenKit XPC appex,
-///       gpg-agent, etc.) fall back to the detect-and-reprompt path defined
-///       in the 4.2 SM teardown remediation design.
+///       gpg-agent, etc.) fall back to the detect-and-reprompt path.
 ///
 /// @par Storage
 /// Entries are @c std::weak_ptr — the registry does not extend session
@@ -36,14 +37,15 @@ namespace LibreSCRS::SmartCard::Internal {
 /// reports @c false.
 ///
 /// @par ABI
-/// Pimpl-backed for SOVERSION stability: the map / mutex live in the .cpp,
-/// so adding fields to the implementation does not move @ref Registration's
-/// owner pointer or break LM 4.x consumers of `libLibreSCRS_SmartCard.so.4`.
 /// Annotated @ref LIBRESCRS_PUBLIC_API so cross-`.so` consumers (the in-tree
 /// PKCS#11 module, plugin shared libraries, libresign) resolve the symbol
-/// against the one true SHARED-LM instance rather than each carrying their
-/// own statically-linked copy of the registry — the ODR failure that defeats
-/// the auto-register design without exported symbols.
+/// against the one SHARED-LM instance rather than each carrying their own
+/// statically-linked copy of the registry — the ODR failure that defeats
+/// the auto-register design without exported symbols. The map + mutex live
+/// inline because the header is `LIBRESCRS_INTERNAL_BUILD`-gated (no external
+/// SDK consumer ever sees the layout) and the SHARED `.so` SOVERSION is the
+/// stable surface for the 4.x cycle — pimpl would not buy additional ABI
+/// stability inside that cycle.
 ///
 /// @since 4.2
 class LIBRESCRS_PUBLIC_API SessionPresence
@@ -68,8 +70,8 @@ public:
         std::string readerName{};
     };
 
-    SessionPresence();
-    ~SessionPresence();
+    SessionPresence() = default;
+    ~SessionPresence() = default;
     SessionPresence(const SessionPresence&) = delete;
     SessionPresence& operator=(const SessionPresence&) = delete;
     SessionPresence(SessionPresence&&) = delete;
@@ -98,8 +100,8 @@ private:
 
     void remove(const std::string& readerName) noexcept;
 
-    struct Impl;
-    std::unique_ptr<Impl> d;
+    mutable std::mutex mu;
+    std::unordered_map<std::string, std::weak_ptr<CardSession>> entries;
 };
 
 } // namespace LibreSCRS::SmartCard::Internal

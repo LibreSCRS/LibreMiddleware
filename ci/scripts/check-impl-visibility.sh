@@ -140,22 +140,23 @@ fi
 #
 # Build-config detection: presence of $BUILD_DIR/lib/LibreSCRS/
 # libLibreSCRS_SmartCard.so indicates LIBREMIDDLEWARE_BUILD_SHARED=ON.
-# In that mode the seven LM core libraries are .so files and the only
-# remaining .a is the static helper LibreSCRS_Pkcs11Inject (linked into
-# the pkcs11 module; not distributed as a shared library). In the default
-# static mode, all eight LM libraries are .a archives.
+# In that mode the seven LM core libraries are .so files; no public
+# static archive ships separately (the SessionRegistry / AttachHook
+# `Pkcs11Inject` archive was deleted with the legacy C-ABI manual-attach
+# surface). Static mode emits the same seven libraries as .a archives.
 #
 # The expected counts are firm: LOUD failure on drift (renamed archive,
 # new public library added or removed) is preferred over silent green.
 
 if [[ -f "$BUILD_DIR/lib/LibreSCRS/libLibreSCRS_SmartCard.so" ]]; then
     BUILD_CONFIG=shared
-    EXPECTED_ARCHIVES=1     # LibreSCRS_Pkcs11Inject only
+    EXPECTED_ARCHIVES=0
     EXPECTED_CORE_SOS=7     # Auth, Certificate, Plugin, SecureChannel,
                             # Signing, SmartCard, Trust
 else
     BUILD_CONFIG=static
-    EXPECTED_ARCHIVES=8
+    EXPECTED_ARCHIVES=7     # Auth, Certificate, Plugin, SecureChannel,
+                            # Signing, SmartCard, Trust
     EXPECTED_CORE_SOS=0
 fi
 

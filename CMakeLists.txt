@@ -75,15 +75,44 @@ if(NOT WIN32 AND LIBRESCRS_VENDOR_OPENSC)
     message(STATUS "${_opensc_pin_out}")
 endif()
 
-# Shared-library mode for downstream consumers. Default OFF preserves
-# existing static-link behaviour for LibreCelik and tests. ON exports
-# the public LibreSCRS_* archive targets as SHARED libraries with
-# SOVERSION and CMake Config package, enabling downstream consumers
-# to use find_package(LibreMiddleware 4.0 CONFIG). Defined before any
-# add_subdirectory() so subordinate CMakeLists may read
-# ${LIBREMIDDLEWARE_LIB_TYPE} during their target declarations.
+# Shared-library mode. Default ON because LibreMiddleware is a plugin-
+# oriented architecture: card plugins and the in-tree PKCS#11 module are
+# always dynamic .so files, and SessionPresence (the in-process registry
+# coordinating cross-reader secure messaging) is a process-local
+# singleton whose ODR correctness requires a single SHARED definition
+# visible to every plugin via DT_NEEDED. Static LibreMiddleware is only
+# viable with LIBREMIDDLEWARE_BUILD_PLUGINS=OFF (monolithic SDK build).
+# Defined before any add_subdirectory() so subordinate CMakeLists may
+# read ${LIBREMIDDLEWARE_LIB_TYPE} during their target declarations.
 option(LIBREMIDDLEWARE_BUILD_SHARED
-       "Build public LibreSCRS_* targets as shared libraries" OFF)
+       "Build public LibreSCRS_* targets as shared libraries" ON)
+
+# Plugin and in-tree PKCS#11 module shared objects are built by default.
+# Set OFF for monolithic SDK consumers (single-binary CLI tools, embedded
+# hosts) that statically link LM and do not enumerate plugin .so files
+# at runtime. STATIC + plugins is an unsupported configuration because
+# the cross-`.so` SessionPresence singleton fractures across each
+# plugin's privately-linked LM copy (see message below).
+option(LIBREMIDDLEWARE_BUILD_PLUGINS
+       "Build card plugins and the in-tree PKCS#11 module as shared libraries" ON)
+
+if(NOT LIBREMIDDLEWARE_BUILD_SHARED AND LIBREMIDDLEWARE_BUILD_PLUGINS)
+    message(FATAL_ERROR
+        "STATIC LibreMiddleware (LIBREMIDDLEWARE_BUILD_SHARED=OFF) is "
+        "incompatible with plugin .so files. SessionPresence (the in-process "
+        "registry that gates cross-reader secure-messaging coordination) is a "
+        "singleton whose correctness requires exactly one definition per "
+        "process. With STATIC LM each plugin .so statically links its own copy "
+        "and the registry silently fractures across modules.\n"
+        "\n"
+        "Resolution:\n"
+        "  * Production builds: -DLIBREMIDDLEWARE_BUILD_SHARED=ON\n"
+        "  * Monolithic SDK builds: -DLIBREMIDDLEWARE_BUILD_PLUGINS=OFF\n"
+        "    (forgoes pkcs15-plugin/eu-vrc-plugin/etc. plus the in-tree "
+        "    PKCS#11 module; you commit to single-binary linkage)\n"
+        "\n"
+        "See docs/SHARED-LIBRARY-CONSUMERS.md.")
+endif()
 
 if(LIBREMIDDLEWARE_BUILD_SHARED)
     set(LIBREMIDDLEWARE_LIB_TYPE SHARED)
@@ -91,6 +120,8 @@ else()
     set(LIBREMIDDLEWARE_LIB_TYPE STATIC)
 endif()
 message(STATUS "LibreMiddleware public libraries: ${LIBREMIDDLEWARE_LIB_TYPE}")
+message(STATUS "LibreMiddleware plugins: "
+    "${LIBREMIDDLEWARE_BUILD_PLUGINS}")
 
 add_subdirectory(thirdparty)
 add_subdirectory(lib/LibreSCRS)
@@ -125,7 +156,7 @@ endif()
 set(LIBREMIDDLEWARE_HAS_SIGNING ${BUILD_SIGNING} CACHE BOOL
     "Whether LibreMiddleware was built with signing support" FORCE)
 
-if(LIBRESCRS_VENDOR_OPENSC)
+if(LIBRESCRS_VENDOR_OPENSC AND LIBREMIDDLEWARE_BUILD_PLUGINS)
     add_subdirectory(lib/opensc-pkcs11)
     # OpenSC fallback card plugin shares the vendored static archive with
     # the PKCS#11 module — both link `opensc_static_with_deps`. No system
@@ -133,14 +164,19 @@ if(LIBRESCRS_VENDOR_OPENSC)
     # (CardPlugin chain → display) and Stack B (PKCS#11 providers → sign).
     add_subdirectory(lib/opensc-plugin)
 endif()
-add_subdirectory(lib/pkcs11)
 
-# Card plugins (shared libraries loaded at runtime)
-add_subdirectory(lib/rs-eid-plugin)
-add_subdirectory(lib/eu-vrc-plugin)
-add_subdirectory(lib/rs-health-plugin)
-add_subdirectory(lib/emrtd-plugin)
-add_subdirectory(lib/pkcs15-plugin)
+# Card plugins + in-tree PKCS#11 module. The hard guard at the top of
+# this file rejects LIBREMIDDLEWARE_BUILD_SHARED=OFF + BUILD_PLUGINS=ON,
+# so reaching the OFF branch here implies a deliberate monolithic-SDK
+# configuration.
+if(LIBREMIDDLEWARE_BUILD_PLUGINS)
+    add_subdirectory(lib/pkcs11)
+    add_subdirectory(lib/rs-eid-plugin)
+    add_subdirectory(lib/eu-vrc-plugin)
+    add_subdirectory(lib/rs-health-plugin)
+    add_subdirectory(lib/emrtd-plugin)
+    add_subdirectory(lib/pkcs15-plugin)
+endif()
 
 option(BUILD_TESTING "Build tests" ON)
 if(BUILD_TESTING)
@@ -149,7 +185,15 @@ if(BUILD_TESTING)
     # `ctest` run from the build root — previously only tests under
     # build/test/ were visible because enable_testing() lived there.
     enable_testing()
-    add_subdirectory(test)
+    if(LIBREMIDDLEWARE_BUILD_PLUGINS)
+        add_subdirectory(test)
+    else()
+        # Monolithic SDK build (BUILD_PLUGINS=OFF). The in-tree test suite
+        # exercises plugin loading and the in-tree PKCS#11 module, which do
+        # not exist in this configuration. Downstream SDK consumers build
+        # their own tests against the public LibreSCRS::* API instead.
+        message(STATUS "LibreMiddleware tests: skipped (BUILD_PLUGINS=OFF)")
+    endif()
 endif()
 
 option(LIBRESCRS_BUILD_FUZZ

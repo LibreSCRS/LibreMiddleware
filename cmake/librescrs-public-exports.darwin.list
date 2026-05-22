@@ -16,6 +16,22 @@
 # statically linked third-party archives, no accidental coupling to
 # internal LibreSCRS namespaces that happen to live outside
 # `LibreSCRS::*`.
+#
+# Linux parity note: cmake/librescrs-public-exports.map (the GNU ld
+# version-script counterpart) operates on DEMANGLED names via a
+# `*LibreSCRS::*` glob and therefore exports any symbol whose
+# demangled name mentions `LibreSCRS::` anywhere — including
+# `emrtd::crypto::performBAC(LibreSCRS::SmartCard::Internal::
+# PCSCConnection&, ...)`, `libresign::Pkcs11Token::Pkcs11Token(...,
+# LibreSCRS::Secure::Buffer const&, ...)`, and similar (see the
+# Linux file-header "IMPLEMENTABILITY-FORCED leading-wildcard"
+# trade-off essay for the full enumeration). The Darwin
+# `-exported_symbols_list` matches MANGLED prefixes, so those same
+# `emrtd::` / `libresign::` / `std::thread<...Monitor...>`
+# instantiations stay hidden on macOS — Darwin is STRICTER by
+# construction. Both modes preserve the same intentional cross-`.so`
+# `LibreSCRS::*::Internal::` reach surface via the `__ZN9LibreSCRS*`
+# prefix family below.
 
 __ZN9LibreSCRS*
 __ZNK9LibreSCRS*

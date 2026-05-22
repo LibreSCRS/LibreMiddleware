@@ -89,22 +89,6 @@ OpenError::Kind classifyOpenError(std::string_view diag) noexcept
 
 } // namespace
 
-std::shared_ptr<CardSession> CardSession::openShared(std::string readerName) noexcept
-{
-    // Mirrors the @ref open path but materialises the result into a
-    // shared_ptr-managed object so @c enable_shared_from_this populates
-    // its weak slot. Calling @c make_shared<CardSession>(std::move(*opened))
-    // is impossible without exposing CardSession's move ctor to make_shared's
-    // internal allocator wrapper; instead, route through the private string
-    // ctor on a raw @c new with the same throw-on-failure shape that
-    // @ref open already catches.
-    try {
-        return std::shared_ptr<CardSession>(new CardSession(std::move(readerName)));
-    } catch (...) {
-        return nullptr;
-    }
-}
-
 std::expected<CardSession, OpenError> CardSession::open(std::string readerName) noexcept
 {
     // 4.0 hardening: OpenError() is deleted; construction goes
@@ -282,38 +266,6 @@ std::vector<std::uint8_t> readCardAccessFromMF(LibreSCRS::SecureChannel::ISecure
 }
 
 } // namespace
-
-namespace Internal {
-
-// Register the session in the process-local SessionPresence after a
-// successful PACE/BAC handshake. Skips when the session is not managed by
-// a shared_ptr (LMAC's value-stored SessionHandle): weak_from_this()
-// returns an empty weak_ptr there, and registering an immediately-expired
-// entry would burn an unordered_map slot for no observable benefit.
-//
-// Called under d->sessionMutex from the activateChannelWithSm success
-// branches, after d->activeChannel has been committed but before the
-// transaction holder is returned to the caller. bad_alloc is swallowed —
-// the SM activation already succeeded; losing the cross-reader guard for
-// this one session is preferable to terminating.
-void ActiveChannelAccessor::registerLiveSm(CardSession& session)
-{
-    auto& d = *session.d;
-    try {
-        ensureSessionPresenceInitialised();
-        auto weak = session.weak_from_this();
-        if (weak.expired()) {
-            // Value-stored CardSession (e.g. LMAC bridge_session). No
-            // shared_ptr exists to anchor the weak_ptr; documented gap.
-            return;
-        }
-        d.presence.emplace(sessionPresence().insert(d.readerName, std::move(weak)));
-    } catch (...) {
-        // bad_alloc on insert or unordered_map rehash: skip registration.
-    }
-}
-
-} // namespace Internal
 
 void CardSession::setCredentialProvider(LibreSCRS::Auth::CredentialProvider provider) noexcept
 {
@@ -701,7 +653,19 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                 // live SM channel must be visible to in-process PKCS#11
                 // probes so they refuse to open a second PC/SC handle on
                 // this reader (BSI TR-03110 §3 — SM is session-scoped).
-                Internal::ActiveChannelAccessor::registerLiveSm(*this);
+                // Skip silently for value-stored sessions (LMAC bridge):
+                // weak_from_this() is empty when no shared_ptr anchors the
+                // session, and registering an immediately-expired weak_ptr
+                // would burn a registry slot for no observable benefit.
+                try {
+                    Internal::ensureSessionPresenceInitialised();
+                    if (auto weak = weak_from_this(); !weak.expired())
+                        d->presence.emplace(Internal::sessionPresence().insert(d->readerName, std::move(weak)));
+                } catch (...) {
+                    // bad_alloc on insert / rehash: SM already established;
+                    // losing the cross-reader guard for this one session is
+                    // preferable to terminating.
+                }
                 return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
             }
             if (outcome.error() == ChannelActivationError::PaceWrongSecret) {
@@ -826,9 +790,14 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
             }
             LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(*freshChannel, aid);
             d->activeChannel = std::move(freshChannel);
-            // Cross-reader guard: see the matching call in the BAC success
-            // branch above for the rationale.
-            Internal::ActiveChannelAccessor::registerLiveSm(*this);
+            // Cross-reader guard: see the matching block in the BAC success
+            // branch above for the rationale and lifecycle invariants.
+            try {
+                Internal::ensureSessionPresenceInitialised();
+                if (auto weak = weak_from_this(); !weak.expired())
+                    d->presence.emplace(Internal::sessionPresence().insert(d->readerName, std::move(weak)));
+            } catch (...) {
+            }
             return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
         }
         if (lastError == ChannelActivationError::PaceWrongSecret) {

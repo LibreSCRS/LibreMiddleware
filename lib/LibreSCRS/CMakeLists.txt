@@ -322,29 +322,10 @@ target_compile_definitions(LibreSCRS_Plugin PRIVATE LIBRESCRS_BUILDING LIBRESCRS
 # this uniform across all four public targets removes the silent-design-
 # inconsistency surfaced during 4.0 arch review and ensures future
 # detail/ additions work without a CMake edit.
-if(LIBREMIDDLEWARE_BUILD_SHARED)
-    # SHARED LM: force-pull CardPlugin_Impl so the key function (with
-    # ~CardPlugin() + vtable + typeinfo) physically lands inside
-    # libLibreSCRS_Plugin.so. Without WHOLE_ARCHIVE the linker only
-    # includes the .o files referenced by LibreSCRS_Plugin's own TUs —
-    # the key function is not referenced internally, so the symbol would
-    # be absent from the .so and cross-`.so` consumers (test executables,
-    # plugin `.so` files) could not link or dlopen against it.
-    target_link_libraries(LibreSCRS_Plugin
-        PUBLIC  LibreSCRS_Auth LibreSCRS_SmartCard LibreSCRS_Trust
-        PRIVATE $<BUILD_INTERFACE:$<LINK_LIBRARY:WHOLE_ARCHIVE,CardPlugin_Impl>>
-    )
-else()
-    # STATIC LM: linker resolves each ~CardPlugin() / vtable reference at
-    # the consumer's link step against the same CardPlugin_Impl.a that
-    # every CardPlugin consumer already links for the registry. No
-    # whole-archive pull needed; the on-demand .o selection keeps the
-    # final binary small.
-    target_link_libraries(LibreSCRS_Plugin
-        PUBLIC  LibreSCRS_Auth LibreSCRS_SmartCard LibreSCRS_Trust
-        PRIVATE $<BUILD_INTERFACE:CardPlugin_Impl>
-    )
-endif()
+target_link_libraries(LibreSCRS_Plugin
+    PUBLIC  LibreSCRS_Auth LibreSCRS_SmartCard LibreSCRS_Trust
+    PRIVATE $<BUILD_INTERFACE:CardPlugin_Impl>
+)
 target_compile_options(LibreSCRS_Plugin PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden -fvisibility-inlines-hidden>
 )

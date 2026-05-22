@@ -1,21 +1,20 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # SPDX-FileCopyrightText: 2026 hirashix0
 
-# card_plugin_key_function.cpp carries the out-of-line ~CardPlugin() key
-# function. One and only one TU defines it; the Itanium C++ ABI uses it to
-# anchor the CardPlugin vtable + typeinfo to exactly one library target,
-# so cross-.so dynamic_cast and typeinfo identity work under macOS
-# two-level namespaces and Windows dllimport-consumer builds. See Itanium
-# C++ ABI §5.1.
+# CardPlugin_Impl: registry + ATR matching + plugin loading machinery +
+# the out-of-line ~CardPlugin() key function (Itanium C++ ABI §5.1 vtable +
+# typeinfo anchor for cross-`.so` dynamic_cast / typeinfo identity).
 #
-# In STATIC builds every CardPlugin consumer links CardPlugin_Impl
-# directly for the registry, so the key function rides in through the
-# same dependency edge. In SHARED builds LibreSCRS_Plugin pulls the
-# whole CardPlugin_Impl archive (lib/LibreSCRS/CMakeLists.txt) so the
-# key function — and the vtable + typeinfo it anchors — also land in
-# libLibreSCRS_Plugin.so where the public version script promotes them
-# to default visibility for cross-`.so` consumers.
-add_library(CardPlugin_Impl STATIC
+# Built as OBJECT so consumers (LibreSCRS_Plugin SHARED, plugin .so files,
+# test executables) absorb the .o files directly via
+# target_link_libraries(... PRIVATE CardPlugin_Impl). The OBJECT linkage
+# pulls every TU into the consumer — including the key function — so the
+# vtable + typeinfo land in libLibreSCRS_Plugin.so where the
+# `*LibreSCRS::*` version-script glob promotes them to default visibility.
+# No archive-extraction policy or `--whole-archive` generator expression
+# needed (mirrors the LibreSCRS_SmartCard_TestHelpers OBJECT pattern in
+# ../LibreSCRS/CMakeLists.txt).
+add_library(CardPlugin_Impl OBJECT
     src/atr.cpp
     src/card_plugin.cpp
     src/card_plugin_key_function.cpp

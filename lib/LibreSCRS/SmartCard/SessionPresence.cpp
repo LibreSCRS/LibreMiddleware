@@ -4,20 +4,9 @@
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS_internal/SmartCard/SessionPresence.h>
 
-#include <mutex>
-#include <unordered_map>
 #include <utility>
 
 namespace LibreSCRS::SmartCard::Internal {
-
-struct SessionPresence::Impl
-{
-    mutable std::mutex mu;
-    std::unordered_map<std::string, std::weak_ptr<CardSession>> entries;
-};
-
-SessionPresence::SessionPresence() : d(std::make_unique<Impl>()) {}
-SessionPresence::~SessionPresence() = default;
 
 SessionPresence::Registration::Registration(SessionPresence* o, std::string r) noexcept
     : owner(o), readerName(std::move(r))
@@ -49,16 +38,16 @@ SessionPresence::Registration::~Registration()
 
 SessionPresence::Registration SessionPresence::insert(std::string readerName, std::weak_ptr<CardSession> session)
 {
-    std::lock_guard lock(d->mu);
-    d->entries[readerName] = std::move(session);
+    std::lock_guard lock(mu);
+    entries[readerName] = std::move(session);
     return Registration{this, std::move(readerName)};
 }
 
 std::shared_ptr<CardSession> SessionPresence::peek(const std::string& readerName) const noexcept
 {
-    std::lock_guard lock(d->mu);
-    auto it = d->entries.find(readerName);
-    if (it == d->entries.end())
+    std::lock_guard lock(mu);
+    auto it = entries.find(readerName);
+    if (it == entries.end())
         return nullptr;
     return it->second.lock();
 }
@@ -77,14 +66,14 @@ bool SessionPresence::hasLiveSm(const std::string& readerName) const noexcept
 
 void SessionPresence::clearAll() noexcept
 {
-    std::lock_guard lock(d->mu);
-    d->entries.clear();
+    std::lock_guard lock(mu);
+    entries.clear();
 }
 
 void SessionPresence::remove(const std::string& readerName) noexcept
 {
-    std::lock_guard lock(d->mu);
-    d->entries.erase(readerName);
+    std::lock_guard lock(mu);
+    entries.erase(readerName);
 }
 
 } // namespace LibreSCRS::SmartCard::Internal

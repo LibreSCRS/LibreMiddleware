@@ -35,11 +35,13 @@ target_link_libraries(PKCS15 PUBLIC SmartCard_Impl LibreSCRS::SmartCard LibreSCR
 
 set_target_properties(PKCS15 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-if(BUILD_TESTING)
+if(BUILD_TESTING AND LIBREMIDDLEWARE_BUILD_PLUGINS)
     # Root CMakeLists.txt enables testing AFTER add_subdirectory(lib/pkcs15);
     # call enable_testing() here so this subdirectory's CTestTestfile.cmake
     # is emitted with add_test() entries from gtest_discover_tests below.
     # Idempotent — second invocation from the root scope is a no-op.
+    # Gated on BUILD_PLUGINS because GTest is fetched in test/CMakeLists.txt
+    # (skipped in monolithic SDK mode).
     enable_testing()
     add_subdirectory(test)
 endif()

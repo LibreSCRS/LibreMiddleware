@@ -183,16 +183,6 @@ public:
     /// @endcode
     [[nodiscard]] static std::expected<CardSession, OpenError> open(std::string readerName) noexcept;
 
-    /// @brief Shared-ptr factory for consumers that need shared ownership
-    ///        (e.g. LC's AsyncCardReader, LK's SmartCardHandler). Returns
-    ///        @c nullptr on open failure. Thin wrapper around @ref open
-    ///        + @c make_shared; the resulting session's
-    ///        @c enable_shared_from_this slot is populated, so the
-    ///        LM-internal SessionPresence service can auto-register it on
-    ///        secure-messaging activation.
-    /// @since 4.2
-    [[nodiscard]] static std::shared_ptr<CardSession> openShared(std::string readerName) noexcept;
-
     ~CardSession();
     CardSession(const CardSession&) = delete;
     CardSession& operator=(const CardSession&) = delete;

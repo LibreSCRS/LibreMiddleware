@@ -31,9 +31,15 @@
  *       linked into LibreSCRS_SecureChannel.so via the EMRTDCrypto
  *       archive)
  *     - `libresign::Pkcs11Token::Pkcs11Token(..., LibreSCRS::Secure::
- *       Buffer const&, ...)` and `libresign::NativeSigningService::
- *       appendSigner(...)` (statically linked into
- *       LibreSCRS_Signing.so via the libresign archive)
+ *       Buffer const&, ...)` plus the symmetric
+ *       `libresign::NativeSigningService::{appendSigner,sign}(...)` and
+ *       `libresign::DSSSigningService::{appendSigner,sign}(...)` paths
+ *       (statically linked into LibreSCRS_Signing.so via the libresign
+ *       archive). The same `libresign::Pkcs11Token::Pkcs11Token` leak
+ *       also surfaces in LibreSCRS_Trust.so because Trust PRIVATE-links
+ *       LibreSign for the TL fetch/verify path and `--gc-sections`
+ *       cannot drop the constructor through that archive without
+ *       breaking `LibreSCRS::Signing::layoutVisualSignature` symmetry.
  *     - STL template instantiations templated on
  *       `LibreSCRS::SmartCard::Internal::Monitor` (specifically
  *       `std::thread::_State_impl<...LibreSCRS::SmartCard::Internal::

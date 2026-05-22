@@ -72,19 +72,47 @@ snapshot="${SCRATCH}/snapshot.txt"
     echo "# section per public archive / SO, header line '== <basename> =='."
     echo "# Re-generate with: ci/scripts/abi-snapshot.sh --update <build_dir>"
     echo "# Diff a fresh build against this baseline with: ci/scripts/abi-snapshot.sh --check"
+    echo "#"
+    echo "# Scans whichever LibreSCRS_* surface is present in <build_dir>:"
+    echo "#   * SHARED build → libLibreSCRS_*.so.<MAJOR>.<MINOR>.<PATCH> dynamic"
+    echo "#     T-binding symbols (the distro-installable ABI surface)."
+    echo "#   * STATIC build → libLibreSCRS_*.a archive T-binding symbols (the"
+    echo "#     monolithic SDK ABI surface; useful only when"
+    echo "#     LIBREMIDDLEWARE_BUILD_PLUGINS=OFF — see the FATAL_ERROR guard"
+    echo "#     in the root CMakeLists.txt)."
+    echo "# Both paths funnel through the same 'nm | c++filt | awk T | sort -u'"
+    echo "# pipeline so a single baseline applies to whichever mode CI runs."
 
-    # Public static archives — T-binding only (global text). Internal
-    # functions (anonymous-namespace, static, LIBRESCRS_INTERNAL) carry
-    # 't' (lowercase, file-local) and are excluded by design.
-    while IFS= read -r archive; do
-        name="$(basename "$archive")"
-        echo
-        echo "== $name =="
-        nm -U "$archive" 2>/dev/null \
-            | awk '$2 == "T" { print $3 }' \
-            | c++filt 2>/dev/null \
-            | sort -u
-    done < <(find "$BUILD_DIR" -name 'libLibreSCRS_*.a' | sort)
+    # Prefer the SHARED .so surface when present (the distro-installable
+    # ABI). Fall back to STATIC .a archives only when no SHARED .so files
+    # exist (monolithic SDK build).
+    so_count=$(find "$BUILD_DIR/lib/LibreSCRS" -maxdepth 1 -name 'libLibreSCRS_*.so.[0-9]*.[0-9]*.[0-9]*' 2>/dev/null | wc -l)
+    if [[ "$so_count" -gt 0 ]]; then
+        while IFS= read -r so; do
+            name="$(basename "$so")"
+            # Strip the trailing `.X.Y.Z` so the baseline carries the
+            # stable soname (libLibreSCRS_<Module>.so) rather than the
+            # patch-version filename — keeps the baseline insensitive to
+            # 4.x point releases.
+            stable_name="${name%.*.*.*}"
+            echo
+            echo "== $stable_name =="
+            nm -D -U "$so" 2>/dev/null \
+                | awk '$2 == "T" { print $3 }' \
+                | c++filt 2>/dev/null \
+                | sort -u
+        done < <(find "$BUILD_DIR/lib/LibreSCRS" -maxdepth 1 -name 'libLibreSCRS_*.so.[0-9]*.[0-9]*.[0-9]*' | sort)
+    else
+        while IFS= read -r archive; do
+            name="$(basename "$archive")"
+            echo
+            echo "== $name =="
+            nm -U "$archive" 2>/dev/null \
+                | awk '$2 == "T" { print $3 }' \
+                | c++filt 2>/dev/null \
+                | sort -u
+        done < <(find "$BUILD_DIR" -name 'libLibreSCRS_*.a' | sort)
+    fi
 
     # PKCS#11 shared object — dynamic symbols (T-binding) only.
     # PKCS#11 has a fixed C ABI (the C_* function table); we still
