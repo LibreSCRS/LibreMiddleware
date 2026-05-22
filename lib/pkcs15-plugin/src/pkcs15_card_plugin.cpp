@@ -20,12 +20,15 @@
 #include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
+#include <LibreSCRS/SmartCard/detail/SessionTransmit.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
+#include <apdu.h>
 #include <smartcard/pcsc_connection.h>
 
 #include <algorithm>
 #include <compare>
 #include <cstdint>
+#include <cstdio>
 #include <exception>
 #include <expected>
 #include <iostream>
@@ -149,19 +152,37 @@ public:
     {
         const auto mapKey = makeSessionKey(session);
         try {
-            // A live SM channel on the session means PACE has already been
-            // established (e.g. user came through the emrtd-plugin display
-            // flow first). PACE SM is session-scoped per BSI TR-03110 §3 —
-            // a plain SELECT-AID over the raw connection would reset the
-            // card-side PACE SM context, breaking the next wrapped APDU.
-            // Honour the invariant and short-circuit to "PACE-required"
-            // without touching the wire — the subsequent acquireChannel()
-            // reuses the live channel via the SM activation fast path.
+            // A live SM channel on the session means PACE/BAC has already
+            // been established (e.g. user came through the emrtd-plugin
+            // display flow first). PACE SM is session-scoped per BSI
+            // TR-03110 §3 — a plain SELECT-AID over the raw connection
+            // would reset the card-side SM context, breaking the next
+            // wrapped APDU. Probe the PKCS#15 applet through the SM-aware
+            // sessionTransmit funnel instead: wrapped SELECT-AID stays
+            // inside the SM tunnel and the response SW distinguishes
+            // "applet present" (0x9000 — Serbian eID and similar hybrid
+            // cards, accept the candidate and route subsequent
+            // acquireChannel() through the SM activation fast path) from
+            // "applet absent" (e.g. 0x6A82 — foreign passport that exposes
+            // only the eMRTD LDS and no PKCS#15 layer; decline so the host
+            // does not attach an empty Token section to a card it cannot
+            // actually read certificates from).
             if (session.hasLiveSecureChannel()) {
-                std::lock_guard lock(stateMutex);
-                sessions[mapKey].requiresPace = true;
-                LibreSCRS::Internal::probeTrace("PROBE-PKCS15-CANHANDLE result=needsPace via=liveSm");
-                return true;
+                std::vector<std::uint8_t> probeAid(::pkcs15::kPkcs15Aid.begin(), ::pkcs15::kPkcs15Aid.end());
+                auto probeResp = LibreSCRS::SmartCard::detail::sessionTransmit(
+                    session, LibreSCRS::SmartCard::Internal::selectByAID(probeAid, /*p2=*/0x0C));
+                if (probeResp.isSuccess()) {
+                    std::lock_guard lock(stateMutex);
+                    sessions[mapKey].requiresPace = true;
+                    LibreSCRS::Internal::probeTrace("PROBE-PKCS15-CANHANDLE result=needsPace via=liveSm-wrapped-probe");
+                    return true;
+                }
+                char swBuf[12];
+                std::snprintf(swBuf, sizeof(swBuf), "0x%04X", probeResp.statusWord());
+                LibreSCRS::Internal::probeTrace(std::string{"PROBE-PKCS15-CANHANDLE result=false "
+                                                            "via=liveSm-wrapped-probe SW="} +
+                                                swBuf);
+                return false;
             }
             auto& conn = LibreSCRS::SmartCard::detail::unwrap(session);
             // Cheap, no-SM probe to decide between PlainChannel (contact
