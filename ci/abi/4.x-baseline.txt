@@ -312,9 +312,6 @@ LibreSCRS::SmartCard::CardSession::atr() const@@LM_4
 LibreSCRS::SmartCard::CardSession::clearActiveChannel()@@LM_4
 LibreSCRS::SmartCard::CardSession::clearCachedPaceCredentials()@@LM_4
 LibreSCRS::SmartCard::CardSession::hasLiveSecureChannel() const@@LM_4
-LibreSCRS::SmartCard::CardSession::implActiveChannelSnapshot()@@LM_4
-LibreSCRS::SmartCard::CardSession::implMutex()@@LM_4
-LibreSCRS::SmartCard::CardSession::implOwnedConn()@@LM_4
 LibreSCRS::SmartCard::CardSession::isConnected() const@@LM_4
 LibreSCRS::SmartCard::CardSession::isDead() const@@LM_4
 LibreSCRS::SmartCard::CardSession::markDead()@@LM_4
@@ -324,6 +321,7 @@ LibreSCRS::SmartCard::CardSession::readerName[abi:cxx11]() const@@LM_4
 LibreSCRS::SmartCard::CardSession::setBacInput(LibreSCRS::SecureChannel::BacInput)@@LM_4
 LibreSCRS::SmartCard::CardSession::setCredentialProvider(std::function<LibreSCRS::Auth::CredentialResult (LibreSCRS::Auth::AuthRequirement const&)>)@@LM_4
 LibreSCRS::SmartCard::CardSession::setPaceSecret(LibreSCRS::Auth::PaceSecretKind, LibreSCRS::Secure::String)@@LM_4
+LibreSCRS::SmartCard::CardSession::transmitInternal(LibreSCRS::SmartCard::Internal::APDUCommand const&, LibreSCRS::CancelToken)@@LM_4
 LibreSCRS::SmartCard::CardSession::~CardSession()@@LM_4
 LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(LibreSCRS::SmartCard::ActiveChannelHolder&)@@LM_4
 LibreSCRS::SmartCard::Internal::Monitor::Monitor(std::unique_ptr<LibreSCRS::SmartCard::Internal::IPCSCScanProvider, std::default_delete<LibreSCRS::SmartCard::Internal::IPCSCScanProvider> >)@@LM_4
@@ -354,7 +352,6 @@ LibreSCRS::SmartCard::Internal::SessionPresence::peek(std::__cxx11::basic_string
 LibreSCRS::SmartCard::Internal::SessionPresence::remove(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)@@LM_4
 LibreSCRS::SmartCard::Internal::ensureSessionPresenceInitialised()@@LM_4
 LibreSCRS::SmartCard::Internal::sessionPresence()@@LM_4
-LibreSCRS::SmartCard::Internal::sessionTransmitImpl(LibreSCRS::SecureChannel::ISecureChannel*, LibreSCRS::SmartCard::Internal::PCSCConnection&, LibreSCRS::SmartCard::Internal::APDUCommand const&, LibreSCRS::CancelToken)@@LM_4
 LibreSCRS::SmartCard::Internal::shutdownSessionPresenceForTest()@@LM_4
 LibreSCRS::SmartCard::MonitorService::Config::fromEnv()@@LM_4
 LibreSCRS::SmartCard::MonitorService::MonitorService(LibreSCRS::SmartCard::MonitorService::Config)@@LM_4
@@ -371,7 +368,6 @@ LibreSCRS::SmartCard::detail::PcscBridge::unwrap(LibreSCRS::SmartCard::CardSessi
 LibreSCRS::SmartCard::detail::PcscBridge::unwrap(LibreSCRS::SmartCard::CardSession&)@@LM_4
 LibreSCRS::SmartCard::detail::makeDetachedCardSession(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)@@LM_4
 LibreSCRS::SmartCard::detail::sessionGeneration(LibreSCRS::SmartCard::CardSession const&)@@LM_4
-LibreSCRS::SmartCard::detail::sessionTransmit(LibreSCRS::SmartCard::CardSession&, LibreSCRS::SmartCard::Internal::APDUCommand const&, LibreSCRS::CancelToken)@@LM_4
 
 == libLibreSCRS_Trust.so ==
 LibreSCRS::Trust::TrustConfig::Builder::Builder()@@LM_4

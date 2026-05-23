@@ -13,12 +13,10 @@ add_library(SmartCard_Impl STATIC
     src/tlv.cpp
     src/ber.cpp
     src/monitor.cpp
-    src/session_transmit.cpp
     # Bucket-B internal headers (LM-private)
     src/apdu.h
     src/ber.h
     src/tlv.h
-    src/session_transmit_internal.h
     src/ipcsc_scan_provider.h
     src/pcsc_scan_provider.h
     # Bucket-C headers: public within LM, LC bridge surface
@@ -51,17 +49,8 @@ target_include_directories(SmartCard_Impl PUBLIC
 # own sources. External consumers that need to transitively resolve this
 # (because they include <smartcard/pcsc_connection.h>, which pulls apdu.h)
 # opt in by adding lib/smartcard/src to their own PRIVATE include dirs.
-#
-# session_transmit.cpp additionally needs:
-#  * <LibreSCRS/SmartCard/CardSession.h> + <LibreSCRS/SmartCard/detail/SessionTransmit.h>
-#    from the public include tree, so it can call into the impl accessors
-#    on CardSession and define the funnel's public-internal symbol.
-#  * <LibreSCRS_internal/SecureChannel/ISecureChannel.h> for the SM
-#    channel interface that the snapshot dispatches through.
 target_include_directories(SmartCard_Impl PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${PROJECT_SOURCE_DIR}/include
-    ${PROJECT_SOURCE_DIR}/lib/SecureChannel/include
 )
 
 set_target_properties(SmartCard_Impl PROPERTIES POSITION_INDEPENDENT_CODE ON)

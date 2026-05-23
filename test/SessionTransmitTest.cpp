@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 /// @file
-/// @brief Unit tests for @ref LibreSCRS::SmartCard::detail::sessionTransmit.
+/// @brief Unit tests for @ref LibreSCRS::SmartCard::CardSession::transmitInternal.
 ///
 /// Drives the routing matrix of the SM-aware transmit funnel:
 ///   1. Live SM channel installed via @ref ChannelInjector — APDU goes
@@ -26,7 +26,6 @@
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/detail/ChannelInjection.h>
-#include <LibreSCRS/SmartCard/detail/SessionTransmit.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 
 #include <apdu.h>
@@ -47,7 +46,6 @@ using LibreSCRS::SmartCard::AppletAid;
 using LibreSCRS::SmartCard::CardSession;
 using LibreSCRS::SmartCard::detail::ChannelInjector;
 using LibreSCRS::SmartCard::detail::makeDetachedCardSession;
-using LibreSCRS::SmartCard::detail::sessionTransmit;
 using LibreSCRS::SmartCard::Internal::APDUCommand;
 using LibreSCRS::SmartCard::Internal::APDUResponse;
 
@@ -76,7 +74,7 @@ TEST_F(SessionTransmitTest, routesThroughSmWhenChannelLive)
     auto* observer = channel.get();
     ChannelInjector::installForTesting(*session, std::move(channel));
 
-    auto resp = sessionTransmit(*session, makeProbeCommand());
+    auto resp = session->transmitInternal(makeProbeCommand());
 
     EXPECT_EQ(observer->lastWrappedCommand().ins, 0xA4);
     EXPECT_EQ(observer->transmits(), 1);
@@ -89,7 +87,7 @@ TEST_F(SessionTransmitTest, returnsSw6F00OnDetachedSessionWithoutLiveChannel)
     // No injected channel + detached PCSC connection: the null-conn /
     // closed-channel guard short-circuits to SW=6F00 rather than emitting
     // a real PC/SC transmit.
-    auto resp = sessionTransmit(*session, makeProbeCommand());
+    auto resp = session->transmitInternal(makeProbeCommand());
     EXPECT_EQ(resp.sw1, 0x6F);
     EXPECT_EQ(resp.sw2, 0x00);
 }
@@ -104,7 +102,7 @@ TEST_F(SessionTransmitTest, returnsSw6F00OnClosedChannel)
     auto* observer = channel.get();
     ChannelInjector::installForTesting(*session, std::move(channel));
 
-    auto resp = sessionTransmit(*session, makeProbeCommand());
+    auto resp = session->transmitInternal(makeProbeCommand());
     EXPECT_EQ(observer->transmits(), 0);
     EXPECT_EQ(resp.sw1, 0x6F);
     EXPECT_EQ(resp.sw2, 0x00);
@@ -126,7 +124,7 @@ TEST_F(SessionTransmitTest, channelResetMidSnapshotKeepsChannelAlive)
     };
     ChannelInjector::installForTesting(*session, std::move(channel));
 
-    auto resp = sessionTransmit(*session, makeProbeCommand());
+    auto resp = session->transmitInternal(makeProbeCommand());
 
     EXPECT_EQ(observer->lastWrappedCommand().ins, 0xA4);
     EXPECT_EQ(observer->transmits(), 1);

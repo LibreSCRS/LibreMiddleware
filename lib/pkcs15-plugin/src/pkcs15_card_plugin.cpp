@@ -20,7 +20,6 @@
 #include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
-#include <LibreSCRS/SmartCard/detail/SessionTransmit.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
 #include <apdu.h>
 #include <smartcard/pcsc_connection.h>
@@ -158,19 +157,19 @@ public:
             // TR-03110 §3 — a plain SELECT-AID over the raw connection
             // would reset the card-side SM context, breaking the next
             // wrapped APDU. Probe the PKCS#15 applet through the SM-aware
-            // sessionTransmit funnel instead: wrapped SELECT-AID stays
-            // inside the SM tunnel and the response SW distinguishes
-            // "applet present" (0x9000 — Serbian eID and similar hybrid
-            // cards, accept the candidate and route subsequent
-            // acquireChannel() through the SM activation fast path) from
-            // "applet absent" (e.g. 0x6A82 — foreign passport that exposes
-            // only the eMRTD LDS and no PKCS#15 layer; decline so the host
-            // does not attach an empty Token section to a card it cannot
-            // actually read certificates from).
+            // CardSession::transmitInternal funnel instead: wrapped
+            // SELECT-AID stays inside the SM tunnel and the response SW
+            // distinguishes "applet present" (0x9000 — Serbian eID and
+            // similar hybrid cards, accept the candidate and route
+            // subsequent acquireChannel() through the SM activation fast
+            // path) from "applet absent" (e.g. 0x6A82 — foreign passport
+            // that exposes only the eMRTD LDS and no PKCS#15 layer;
+            // decline so the host does not attach an empty Token section
+            // to a card it cannot actually read certificates from).
             if (session.hasLiveSecureChannel()) {
                 std::vector<std::uint8_t> probeAid(::pkcs15::kPkcs15Aid.begin(), ::pkcs15::kPkcs15Aid.end());
-                auto probeResp = LibreSCRS::SmartCard::detail::sessionTransmit(
-                    session, LibreSCRS::SmartCard::Internal::selectByAID(probeAid, /*p2=*/0x0C));
+                auto probeResp =
+                    session.transmitInternal(LibreSCRS::SmartCard::Internal::selectByAID(probeAid, /*p2=*/0x0C));
                 if (probeResp.isSuccess()) {
                     std::lock_guard lock(stateMutex);
                     sessions[mapKey].requiresPace = true;

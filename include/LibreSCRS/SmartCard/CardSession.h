@@ -29,22 +29,13 @@
 #include <vector>
 
 #ifdef LIBRESCRS_INTERNAL_BUILD
-#include <mutex>
-#endif
-
-#ifdef LIBRESCRS_INTERNAL_BUILD
-namespace LibreSCRS::SecureChannel {
-class ISecureChannel;
-} // namespace LibreSCRS::SecureChannel
+namespace LibreSCRS::SmartCard::Internal {
+struct APDUCommand;
+struct APDUResponse;
+} // namespace LibreSCRS::SmartCard::Internal
 #endif
 
 namespace LibreSCRS::SmartCard {
-
-#ifdef LIBRESCRS_INTERNAL_BUILD
-namespace Internal {
-class PCSCConnection;
-} // namespace Internal
-#endif
 
 class CardSession;
 
@@ -383,16 +374,54 @@ public:
     void clearActiveChannel() noexcept;
 
 #ifdef LIBRESCRS_INTERNAL_BUILD
-    // LM-internal accessors used by @ref LibreSCRS::SmartCard::detail::sessionTransmit
-    // to snapshot the active-channel slot + the underlying PC/SC connection
-    // under @ref implMutex. Compiled away in external consumer builds
-    // because LIBRESCRS_INTERNAL_BUILD is only defined inside LM's own
-    // archives, plugin loader, and unit-test executables; the SDK surface
-    // therefore never gains an addressable handle on the connection.
+    /// @brief SM-aware APDU transmit funnel for LM-internal callers.
+    ///
+    /// Snapshots the active secure-messaging channel under the session
+    /// mutex, releases the mutex, then dispatches the APDU through the
+    /// channel when one is live (state == Open); otherwise falls through
+    /// to the underlying PC/SC connection. The snapshot @c shared_ptr
+    /// pins the channel object's lifetime for the duration of the call,
+    /// so a concurrent teardown on another thread (e.g. via
+    /// @ref clearActiveChannel) cannot dangle the channel out from under
+    /// the in-flight dispatch. The mutex is NOT held across the wire —
+    /// that would serialise plugin reach through one global lock and
+    /// turn @c CardSession into a contention bottleneck.
+    ///
+    /// LM-internal callers (plugins, in-tree LM consumers) use this
+    /// member in place of the older "unwrap to @c PCSCConnection& then
+    /// call @c transmit()" pattern. SM correctness is preserved by
+    /// construction — no caller path can mix plain APDUs against a live
+    /// SM tunnel by accident.
+    ///
+    /// @param cmd   APDU to send.
+    /// @param token Optional cancel token forwarded to the channel /
+    ///              connection layer.
+    /// @returns The APDU response. When the session has no underlying
+    ///          PC/SC connection (moved-from / detached / never-attached),
+    ///          or when an exception (reader gone, card removed mid-
+    ///          transmit) escapes the dispatch, returns @c SW=0x6F00
+    ///          without propagating the exception across the LM-internal
+    ///          funnel boundary.
+    ///
+    /// @pre Callers must serialise concurrent transmits on the same
+    ///      session themselves — the funnel does NOT internally
+    ///      serialise. Violating callers see a defined SM-failure path
+    ///      (channel state goes @c Failed) rather than undefined
+    ///      behaviour. PC/SC @c SCardBeginTransaction already serialises
+    ///      at the connection layer for in-process callers that hold a
+    ///      transaction via @ref ActiveChannelHolder.
+    ///
+    /// @note Internal-only — gated by @c LIBRESCRS_INTERNAL_BUILD so
+    ///       external SDK consumers cannot reach it. Compiled into
+    ///       libLibreSCRS_SmartCard.so; cross-`.so` plugin callers
+    ///       (which also define @c LIBRESCRS_INTERNAL_BUILD) reach it
+    ///       via the same @c DT_NEEDED edge that already carries the
+    ///       public @ref CardSession surface.
+    ///
+    /// @since 4.3
     /// @cond internal
-    [[nodiscard]] std::mutex& implMutex() noexcept;
-    [[nodiscard]] std::shared_ptr<LibreSCRS::SecureChannel::ISecureChannel> implActiveChannelSnapshot() noexcept;
-    [[nodiscard]] LibreSCRS::SmartCard::Internal::PCSCConnection* implOwnedConn() noexcept;
+    [[nodiscard]] LibreSCRS::SmartCard::Internal::APDUResponse
+    transmitInternal(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token = {});
     /// @endcond
 #endif
 

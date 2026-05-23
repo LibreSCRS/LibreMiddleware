@@ -20,7 +20,6 @@
 #include <LibreSCRS_internal/SmartCard/SmartCardServices.h>
 
 #include "apdu.h"
-#include "session_transmit_internal.h"
 #include "smartcard/pcsc_connection.h"
 
 #include <array>
@@ -226,14 +225,34 @@ LibreSCRS::SmartCard::Internal::APDUCommand buildSelectAppletCommand(const Apple
 
 constexpr int kSmActivationMaxAttempts = 3;
 
+// TU-local SM-aware transmit primitive. When @p activeChannel is non-null
+// and reports @c ChannelState::Open the APDU is dispatched through the
+// channel (which wraps + unwraps under the current SM tunnel); otherwise
+// the APDU is sent plain through @p conn. Anonymous-namespace static
+// linkage keeps the helper out of the dynamic symbol table — its previous
+// public-internal incarnation (@c LibreSCRS::SmartCard::Internal::
+// sessionTransmitImpl, exported via the @c *LibreSCRS::* version-script
+// glob) is gone in 4.3 along with the free-function transmit funnel.
+LibreSCRS::SmartCard::Internal::APDUResponse
+dispatchOverChannelOrConn(LibreSCRS::SecureChannel::ISecureChannel* activeChannel,
+                          LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
+                          const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token)
+{
+    using LibreSCRS::SecureChannel::ChannelState;
+    if (activeChannel != nullptr && activeChannel->state() == ChannelState::Open) {
+        return activeChannel->transmit(cmd, std::move(token));
+    }
+    return conn.transmit(cmd);
+}
+
 // Read EF.CardAccess (FID 011C) from the card's master file. Returns the
 // raw TLV bytes ready for emrtd::crypto::parseCardAccessWithParams. An
 // empty vector indicates the file is absent or unreadable (no PACE).
 //
-// Routes through @ref sessionTransmitImpl so that a live PACE channel is not
-// bypassed when the caller is still resolving handshake parameters and
-// has not yet taken a wrapped-SELECT path. PACE SM is session-scoped at
-// the card OS layer (BSI TR-03110), so MF/EF.CardAccess is reachable
+// Routes through @ref dispatchOverChannelOrConn so that a live PACE channel
+// is not bypassed when the caller is still resolving handshake parameters
+// and has not yet taken a wrapped-SELECT path. PACE SM is session-scoped
+// at the card OS layer (BSI TR-03110), so MF/EF.CardAccess is reachable
 // through the SM tunnel. When no SM channel exists, plain reads of
 // MF/EF.CardAccess are equally safe.
 std::vector<std::uint8_t> readCardAccessFromMF(LibreSCRS::SecureChannel::ISecureChannel* activeChannel,
@@ -242,23 +261,23 @@ std::vector<std::uint8_t> readCardAccessFromMF(LibreSCRS::SecureChannel::ISecure
 {
     using LibreSCRS::SmartCard::Internal::APDUCommand;
     using LibreSCRS::SmartCard::Internal::selectByFileId;
-    using LibreSCRS::SmartCard::Internal::sessionTransmitImpl;
     try {
-        auto mfSel = sessionTransmitImpl(activeChannel, conn, selectByFileId(0x3F, 0x00, 0x0C), token);
+        auto mfSel = dispatchOverChannelOrConn(activeChannel, conn, selectByFileId(0x3F, 0x00, 0x0C), token);
         if (!mfSel.isSuccess()) {
-            mfSel = sessionTransmitImpl(activeChannel, conn, selectByFileId(0x3F, 0x00), token);
+            mfSel = dispatchOverChannelOrConn(activeChannel, conn, selectByFileId(0x3F, 0x00), token);
         }
         if (!mfSel.isSuccess()) {
             return {};
         }
-        auto efSel = sessionTransmitImpl(activeChannel, conn, selectByFileId(0x01, 0x1C, 0x0C), token);
+        auto efSel = dispatchOverChannelOrConn(activeChannel, conn, selectByFileId(0x01, 0x1C, 0x0C), token);
         if (!efSel.isSuccess()) {
-            efSel = sessionTransmitImpl(activeChannel, conn, selectByFileId(0x01, 0x1C), token);
+            efSel = dispatchOverChannelOrConn(activeChannel, conn, selectByFileId(0x01, 0x1C), token);
         }
         if (efSel.sw1 != 0x90 && efSel.sw1 != 0x62) {
             return {};
         }
-        auto read = sessionTransmitImpl(activeChannel, conn, APDUCommand{0x00, 0xB0, 0x00, 0x00, {}, 0, true}, token);
+        auto read =
+            dispatchOverChannelOrConn(activeChannel, conn, APDUCommand{0x00, 0xB0, 0x00, 0x00, {}, 0, true}, token);
         return read.data;
     } catch (...) {
         return {};
@@ -368,24 +387,42 @@ void CardSession::clearActiveChannel() noexcept
     }
 }
 
-// LM-internal accessors used by detail::sessionTransmit (in
-// lib/smartcard/src/session_transmit.cpp). Exposing thin shims rather
-// than a friend reach into Impl keeps the accessor surface auditable: a
-// single grep on these three names shows every external translation
-// unit that snapshots session state.
-std::mutex& CardSession::implMutex() noexcept
+// LM-internal SM-aware transmit funnel. Snapshots the active-channel slot
+// + the underlying PC/SC connection pointer under the session mutex, then
+// releases the mutex before dispatching. The shared_ptr snapshot pins the
+// channel object's lifetime for the duration of the call so a concurrent
+// clearActiveChannel on another thread cannot dangle it. The mutex is NOT
+// held across the wire — that would serialise plugin reach through one
+// global lock and turn CardSession into a contention bottleneck.
+LibreSCRS::SmartCard::Internal::APDUResponse
+CardSession::transmitInternal(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token)
 {
-    return d->sessionMutex;
-}
+    std::shared_ptr<LibreSCRS::SecureChannel::ISecureChannel> channelSnap;
+    LibreSCRS::SmartCard::Internal::PCSCConnection* connPtr = nullptr;
+    {
+        std::lock_guard lock(d->sessionMutex);
+        channelSnap = d->activeChannel;
+        connPtr = d->ownedConn.get();
+        if (connPtr == nullptr) {
+            // Moved-from / detached / never-attached session: surface a
+            // defined "no card available" status word rather than emitting
+            // UB. Mirrors the ActiveChannelAccessor null-check shape
+            // elsewhere in the SmartCard surface.
+            return LibreSCRS::SmartCard::Internal::APDUResponse{.data = {}, .sw1 = 0x6F, .sw2 = 0x00};
+        }
+    }
 
-std::shared_ptr<LibreSCRS::SecureChannel::ISecureChannel> CardSession::implActiveChannelSnapshot() noexcept
-{
-    return d->activeChannel;
-}
-
-LibreSCRS::SmartCard::Internal::PCSCConnection* CardSession::implOwnedConn() noexcept
-{
-    return d->ownedConn.get();
+    try {
+        return dispatchOverChannelOrConn(channelSnap.get(), *connPtr, cmd, std::move(token));
+    } catch (...) {
+        // A bare std::runtime_error from PCSCConnection::transmit (reader
+        // gone, card removed mid-transmit, detached test connection)
+        // surfaces here. Mirror the null-conn guard above: return a
+        // defined "no card" status word rather than propagating the
+        // exception across the LM-internal funnel boundary, where plugin
+        // callers expect a value-returning shape.
+        return LibreSCRS::SmartCard::Internal::APDUResponse{.data = {}, .sw1 = 0x6F, .sw2 = 0x00};
+    }
 }
 
 std::expected<ActiveChannelHolder, LibreSCRS::SecureChannel::ChannelActivationError>
@@ -443,12 +480,12 @@ CardSession::activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token)
         d->activeChannel->close();
     }
 
-    // sessionTransmitImpl short-circuits to ownedConn here because the
+    // dispatchOverChannelOrConn short-circuits to ownedConn here because the
     // preceding close() leaves the active channel in ChannelState::Closed.
     // Routed via the helper for architectural consistency: every
     // CardSession-level APDU goes through one funnel.
     auto selectResp =
-        Internal::sessionTransmitImpl(d->activeChannel.get(), *d->ownedConn, buildSelectAppletCommand(aid), token);
+        dispatchOverChannelOrConn(d->activeChannel.get(), *d->ownedConn, buildSelectAppletCommand(aid), token);
     if (!selectResp.isSuccess()) {
         return std::unexpected{ChannelActivationError::SelectAppletFailed};
     }
@@ -636,12 +673,12 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                 }
             }
 
-            // sessionTransmitImpl short-circuits to ownedConn here because
-            // the active channel has just been reset or was already null;
-            // the plain SELECT before BAC handshake therefore cannot
+            // dispatchOverChannelOrConn short-circuits to ownedConn here
+            // because the active channel has just been reset or was already
+            // null; the plain SELECT before BAC handshake therefore cannot
             // collide with a live SM tunnel.
-            auto selectResp = Internal::sessionTransmitImpl(d->activeChannel.get(), *d->ownedConn,
-                                                            buildSelectAppletCommand(aid), token);
+            auto selectResp = dispatchOverChannelOrConn(d->activeChannel.get(), *d->ownedConn,
+                                                        buildSelectAppletCommand(aid), token);
             if (!selectResp.isSuccess()) {
                 return std::unexpected{ChannelActivationError::SelectAppletFailed};
             }

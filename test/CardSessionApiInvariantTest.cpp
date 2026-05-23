@@ -18,8 +18,8 @@
 ///
 /// The invariant matters because every cross-`.so` reach into the PC/SC
 /// transport from outside @c CardSession.cpp must funnel through the
-/// SM-aware @ref LibreSCRS::SmartCard::detail::sessionTransmit so that a
-/// live PACE / BAC channel cannot be bypassed by a plain transmit
+/// SM-aware @ref LibreSCRS::SmartCard::CardSession::transmitInternal so
+/// that a live PACE / BAC channel cannot be bypassed by a plain transmit
 /// against the connection.
 
 #include <LibreSCRS/SmartCard/CardSession.h>
@@ -59,10 +59,10 @@ struct has_pcsc_accessor<T, std::void_t<decltype(std::declval<T&>().pcscConnecti
 
 static_assert(!has_connection_accessor<LibreSCRS::SmartCard::CardSession>::value,
               "CardSession must not expose connection() — the public surface intentionally hides "
-              "the underlying PC/SC transport. Use detail::sessionTransmit instead.");
+              "the underlying PC/SC transport. Use CardSession::transmitInternal instead.");
 static_assert(!has_pcsc_accessor<LibreSCRS::SmartCard::CardSession>::value,
               "CardSession must not expose pcscConnection() — the public surface intentionally hides "
-              "the underlying PC/SC transport. Use detail::sessionTransmit instead.");
+              "the underlying PC/SC transport. Use CardSession::transmitInternal instead.");
 
 TEST(CardSessionApiInvariant, PlaceholderForLinkage)
 {
