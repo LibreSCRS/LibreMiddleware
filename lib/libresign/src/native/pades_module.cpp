@@ -4,6 +4,7 @@
 #include "native/pades_module.h"
 #include "native/cades_module.h"
 #include "native/pdf_doc_timestamp.h"
+#include "utf8.h"
 #include "native/pdf_dss.h"
 #include "native/pkcs11_token.h"
 #include "native/revocation_client.h"
@@ -116,39 +117,6 @@ size_t contentsAllocForLevel(libresign::SignatureLevel level)
 // Each placeholder is 10 chars wide + spaces.
 constexpr size_t kByteRangePlaceholderWidth = 10;
 
-// Decode one UTF-8 codepoint starting at @p i in @p line. Returns the
-// codepoint and the number of bytes consumed. Invalid sequences yield
-// U+FFFD with 1 byte consumed; truncated trailing sequences consume to
-// end-of-string with U+FFFD.
-std::pair<char32_t, size_t> decodeUtf8At(std::string_view line, size_t i)
-{
-    if (i >= line.size())
-        return {0, 0};
-    unsigned char c = static_cast<unsigned char>(line[i]);
-    char32_t cp = 0;
-    size_t n = 1;
-    if ((c & 0x80) == 0x00) {
-        cp = c;
-        n = 1;
-    } else if ((c & 0xE0) == 0xC0) {
-        cp = c & 0x1F;
-        n = 2;
-    } else if ((c & 0xF0) == 0xE0) {
-        cp = c & 0x0F;
-        n = 3;
-    } else if ((c & 0xF8) == 0xF0) {
-        cp = c & 0x07;
-        n = 4;
-    } else {
-        return {0xFFFD, 1};
-    }
-    if (i + n > line.size())
-        return {0xFFFD, line.size() - i};
-    for (size_t k = 1; k < n; ++k)
-        cp = (cp << 6) | (static_cast<unsigned char>(line[i + k]) & 0x3F);
-    return {cp, n};
-}
-
 } // namespace
 
 // ---- createAppearanceStream ----
@@ -167,7 +135,7 @@ AppearanceData PAdESModule::createAppearanceStream(const VisualSignatureParams& 
     std::unordered_set<char32_t> codepoints;
     for (const auto& line : layout.lines) {
         for (size_t i = 0; i < line.size();) {
-            auto [cp, n] = decodeUtf8At(line, i);
+            auto [cp, n] = ::libresign::utf8::decodeAt(line, i);
             if (n == 0)
                 break;
             codepoints.insert(cp);
@@ -215,7 +183,7 @@ AppearanceData PAdESModule::createAppearanceStream(const VisualSignatureParams& 
         firstLine = false;
         cs << "<";
         for (size_t i = 0; i < line.size();) {
-            auto [cp, n] = decodeUtf8At(line, i);
+            auto [cp, n] = ::libresign::utf8::decodeAt(line, i);
             if (n == 0)
                 break;
             auto it = subset.gidForCodepoint.find(cp);

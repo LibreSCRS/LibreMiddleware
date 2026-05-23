@@ -14,6 +14,7 @@
 
 #include <LibreSCRS/Signing/VisualSignatureLayout.h>
 
+#include "../utf8.h"
 #include "liberation_sans_data.h"
 #include "pdf_font.h"
 #include "ttf_parser.h"
@@ -33,42 +34,7 @@ namespace LibreSCRS::Signing {
 
 namespace {
 
-// Decode one UTF-8 codepoint at byte offset @p i in @p s. Returns
-// (codepoint, bytesConsumed). Mirrors the helper in pdf_font.cpp /
-// pades_module.cpp; duplicated locally to keep this TU self-contained
-// without exposing yet another public-ish helper.
-inline std::pair<char32_t, std::size_t> decodeUtf8At(std::string_view s, std::size_t i) noexcept
-{
-    if (i >= s.size())
-        return {0, 0};
-    unsigned char c = static_cast<unsigned char>(s[i]);
-    char32_t cp = 0;
-    std::size_t n = 1;
-    if ((c & 0x80) == 0x00) {
-        cp = c;
-        n = 1;
-    } else if ((c & 0xE0) == 0xC0) {
-        cp = c & 0x1F;
-        n = 2;
-    } else if ((c & 0xF0) == 0xE0) {
-        cp = c & 0x0F;
-        n = 3;
-    } else if ((c & 0xF8) == 0xF0) {
-        cp = c & 0x07;
-        n = 4;
-    } else {
-        return {0xFFFD, 1};
-    }
-    if (i + n > s.size())
-        return {0xFFFD, s.size() - i};
-    for (std::size_t k = 1; k < n; ++k) {
-        unsigned char cc = static_cast<unsigned char>(s[i + k]);
-        if ((cc & 0xC0) != 0x80)
-            return {0xFFFD, 1};
-        cp = (cp << 6) | (cc & 0x3F);
-    }
-    return {cp, n};
-}
+using ::libresign::utf8::decodeAt;
 
 // Normalise raw input: collapse '\r\n' to '\n', drop bare '\r', map '\t'
 // to space. Matches the line-ending normalisation contract documented
@@ -229,7 +195,7 @@ std::unordered_set<char32_t> collectCodepoints(std::string_view normalised)
     cps.reserve(64);
     cps.insert(U' '); // wrapper joins tokens with spaces; ensure present
     for (std::size_t i = 0; i < normalised.size();) {
-        auto [cp, n] = decodeUtf8At(normalised, i);
+        auto [cp, n] = decodeAt(normalised, i);
         if (n == 0)
             break;
         if (cp != U'\n')

@@ -3,6 +3,8 @@
 
 #include "pdf_font.h"
 
+#include "../utf8.h"
+
 #include <algorithm>
 #include <format>
 #include <sstream>
@@ -176,49 +178,6 @@ void emitPdfFontObjects(const TtfSubset& subset, uint32_t firstObjNum, PdfFontOb
     out.fontFile2Stream = subset.bytes;
 }
 
-namespace {
-
-// Decode one UTF-8 codepoint at byte offset @p i in @p s. Returns the
-// codepoint and the number of bytes consumed. Invalid leading bytes
-// produce U+FFFD with 1 byte consumed; truncated trailing sequences
-// consume to end-of-string with U+FFFD. Mirrors decodeUtf8At() in
-// pades_module.cpp; duplicated locally to keep pdf_font internally
-// self-contained without a new header.
-inline std::pair<char32_t, std::size_t> decodeOneUtf8(std::string_view s, std::size_t i) noexcept
-{
-    if (i >= s.size())
-        return {0, 0};
-    unsigned char c = static_cast<unsigned char>(s[i]);
-    char32_t cp = 0;
-    std::size_t n = 1;
-    if ((c & 0x80) == 0x00) {
-        cp = c;
-        n = 1;
-    } else if ((c & 0xE0) == 0xC0) {
-        cp = c & 0x1F;
-        n = 2;
-    } else if ((c & 0xF0) == 0xE0) {
-        cp = c & 0x0F;
-        n = 3;
-    } else if ((c & 0xF8) == 0xF0) {
-        cp = c & 0x07;
-        n = 4;
-    } else {
-        return {0xFFFD, 1};
-    }
-    if (i + n > s.size())
-        return {0xFFFD, s.size() - i};
-    for (std::size_t k = 1; k < n; ++k) {
-        unsigned char cc = static_cast<unsigned char>(s[i + k]);
-        if ((cc & 0xC0) != 0x80)
-            return {0xFFFD, 1};
-        cp = (cp << 6) | (cc & 0x3F);
-    }
-    return {cp, n};
-}
-
-} // namespace
-
 float measureTextWidth(const TtfSubset& subset, std::string_view utf8, float fontSize) noexcept
 {
     if (utf8.empty() || subset.unitsPerEm == 0 || subset.widthForGid.empty())
@@ -230,7 +189,7 @@ float measureTextWidth(const TtfSubset& subset, std::string_view utf8, float fon
     const std::uint16_t notdefWidth = subset.widthForGid[0];
 
     for (std::size_t i = 0; i < utf8.size();) {
-        auto [cp, n] = decodeOneUtf8(utf8, i);
+        auto [cp, n] = ::libresign::utf8::decodeAt(utf8, i);
         if (n == 0)
             break;
 

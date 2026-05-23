@@ -84,11 +84,15 @@ fi
 PLATFORM="$(uname -s)"
 
 if [[ "$PLATFORM" == "Darwin" ]]; then
-    leaks=0
-    binaries_scanned=0
-    while IFS= read -r dylib; do
-        binaries_scanned=$((binaries_scanned + 1))
-
+    # Darwin Impl-visibility check covers the same surface as the Linux
+    # branch: plugin/pkcs11 dylibs PLUS, in SHARED-LM builds, the seven
+    # LM core dylibs (libLibreSCRS_*.dylib). The leak pattern is
+    # identical — Mach-O `nm -gU` produces the same `T`/`W`/`V` letter
+    # codes for global/weak/vague symbols, so the awk + c++filt + grep
+    # pipeline transfers byte-for-byte.
+    scan_dylib() {
+        local dylib="$1"
+        local t_leaks wv_leaks bad
         t_leaks=$(nm -gU "$dylib" 2>/dev/null \
             | awk '$2 == "T" { print $3 }' \
             | c++filt 2>/dev/null \
@@ -110,14 +114,37 @@ if [[ "$PLATFORM" == "Darwin" ]]; then
         if [[ -n "$bad" ]]; then
             echo "LEAK in $(basename "$dylib"):"
             echo "$bad" | sed 's/^/  /'
-            leaks=$((leaks + 1))
+            return 1
         fi
+        return 0
+    }
+
+    leaks=0
+    plugin_count=0
+    core_count=0
+
+    # Plugins + standalone PKCS#11 module (present in both STATIC and
+    # SHARED LM modes — they're plugin .dylib regardless).
+    while IFS= read -r dylib; do
+        plugin_count=$((plugin_count + 1))
+        scan_dylib "$dylib" || leaks=$((leaks + 1))
     done < <(find "$BUILD_DIR/lib/pkcs11" "$BUILD_DIR/plugins" \
                   -maxdepth 2 -name '*.dylib' 2>/dev/null | sort)
 
-    if [[ $binaries_scanned -eq 0 ]]; then
-        echo "ERROR: no public dylibs found under '$BUILD_DIR/lib/pkcs11/' or" >&2
-        echo "       '$BUILD_DIR/plugins/'. Build broken or wrong build dir?" >&2
+    # LM core dylibs — present only when LIBREMIDDLEWARE_BUILD_SHARED=ON.
+    # Detect by probing for the SmartCard module's SOVERSION'd dylib.
+    if [[ -f "$BUILD_DIR/lib/LibreSCRS/libLibreSCRS_SmartCard.dylib" ]]; then
+        while IFS= read -r dylib; do
+            core_count=$((core_count + 1))
+            scan_dylib "$dylib" || leaks=$((leaks + 1))
+        done < <(find "$BUILD_DIR/lib/LibreSCRS" -maxdepth 1 \
+                      -name 'libLibreSCRS_*.dylib' 2>/dev/null | sort)
+    fi
+
+    if [[ $plugin_count -eq 0 && $core_count -eq 0 ]]; then
+        echo "ERROR: no public dylibs found under '$BUILD_DIR/lib/pkcs11/'," >&2
+        echo "       '$BUILD_DIR/plugins/', or '$BUILD_DIR/lib/LibreSCRS/'." >&2
+        echo "       Build broken or wrong build dir?" >&2
         exit 2
     fi
 
@@ -129,7 +156,7 @@ if [[ "$PLATFORM" == "Darwin" ]]; then
         exit 1
     fi
 
-    echo "Impl visibility clean — $binaries_scanned dylib(s) scanned, no leaks."
+    echo "Impl visibility clean — $plugin_count plugin dylib(s) + $core_count LM core dylib(s) scanned, no leaks."
     exit 0
 fi
 
