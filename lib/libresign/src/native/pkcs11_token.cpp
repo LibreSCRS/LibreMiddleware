@@ -223,8 +223,7 @@ struct Pkcs11Token::Impl
 };
 
 Pkcs11Token::Pkcs11Token(Pkcs11ModuleHandle module, const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
-                         const std::string& readerName,
-                         std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession)
+                         const std::string& readerName)
     : impl(std::make_unique<Impl>())
 {
     if (!module.valid())
@@ -234,12 +233,12 @@ Pkcs11Token::Pkcs11Token(Pkcs11ModuleHandle module, const LibreSCRS::Secure::Buf
     if (!impl->funcs)
         throw std::runtime_error("Pkcs11Token: loaded module has no CK_FUNCTION_LIST");
 
-    // sharedSession's auto-registration in SessionPresence (driven by
-    // CardSession::activateChannelWithSm on the host side) is the single
-    // hand-off mechanism into the in-process PKCS#11 module's provider
-    // probe path. libresign no longer attaches the session explicitly;
-    // the next C_GetSlotList consults SessionPresence directly.
-    (void)sharedSession;
+    // The host's live PACE/BAC CardSession (if any) reaches us through
+    // the process-local SessionPresence registry — populated upstream by
+    // CardSession::activateChannelWithSm on the display flow — so the
+    // loaded librescrs-pkcs11 module's provider probe adopts it during
+    // findSlotByReaderName instead of opening a parallel PC/SC handle
+    // and tearing down the live SM tunnel.
     CK_SLOT_ID slotId = impl->findSlotByReaderName(readerName);
     impl->openSessionAndLogin(slotId, std::span<const uint8_t>{pin.data(), pin.size()});
     impl->findPrivateKey(keyAlias);

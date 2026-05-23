@@ -289,11 +289,12 @@ SignOutcome signOnCard(libresign::Pkcs11ModuleManager& moduleManager, ReaderCard
     try {
         LibreSCRS::Secure::Buffer pinBuf(pinForLogin);
         token = std::make_unique<libresign::Pkcs11Token>(moduleManager.acquire(modulePath()), pinBuf,
-                                                         /*keyAlias=*/std::string{}, rc.reader, rc.session);
+                                                         /*keyAlias=*/std::string{}, rc.reader);
         o.loggedIn = true;
-        o.attached = true; // session was passed to Token; SessionPresence
-                           // auto-registration on the host side makes it
-                           // visible to the in-process provider probe.
+        o.attached = true; // SessionPresence auto-registration from rc.session's
+                           // activateChannelWithSm makes the live SM visible
+                           // to the in-process provider probe; the rc.session
+                           // shared_ptr stays alive in scope for that lookup.
     } catch (const std::exception& e) {
         o.sigError = e.what();
         if (looksLikePinError(o.sigError)) {

@@ -57,19 +57,17 @@ public:
     //     LibreSCRS hash-bracket convention (third-party PKCS#11 modules
     //     are not supported on this signing path; their slot lookup
     //     would have to fall back to a different identification scheme).
-    /// @param sharedSession Optional live CardSession owned by the caller
-    ///        (typically the LC display session). The session auto-
-    ///        registers in the process-local SessionPresence on PACE/BAC
-    ///        handshake commit, so the loaded librescrs-pkcs11 module's
-    ///        @c C_GetSlotList probe path sees the live SM tunnel
-    ///        without any explicit forwarding from this Token. The
-    ///        parameter is preserved so the caller's shared_ptr is
-    ///        kept alive across the slot lookup; pass @c nullptr when
-    ///        no host-side session exists.
+    //
+    // The host's display-flow CardSession (if any) is found by the loaded
+    // module's @c C_GetSlotList probe via the process-local SessionPresence
+    // registry — the host populates that registry transparently when
+    // @c CardSession::activateChannelWithSm commits a PACE/BAC handshake,
+    // and the caller's `shared_ptr<CardSession>` simply has to outlive
+    // this Token construction so the registry's `weak_ptr` lookup
+    // resolves to a live entry.
     /// @since 4.1
     Pkcs11Token(Pkcs11ModuleHandle module, const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
-                const std::string& readerName,
-                std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession = nullptr);
+                const std::string& readerName);
 
     /// @brief Strong-typed wrapper for the test-only raw-slot-ID ctor.
     ///

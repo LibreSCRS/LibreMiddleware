@@ -449,7 +449,7 @@ try {
     // live SM channel. Callers without a session in scope pass nullptr;
     // no host-side SM tunnel exists, so the standalone bind path is
     // safe to run.
-    auto libResult = service->sign(libReq, resolvePkcs11Module(), pinBuffer, keyAlias, session->readerName(), session);
+    auto libResult = service->sign(libReq, resolvePkcs11Module(), pinBuffer, keyAlias, session->readerName());
 
     if (!libResult.success) {
         // The classifier returns one of the SigningResult::Status values; map
@@ -722,7 +722,7 @@ try {
     // re-signs where a parallel PC/SC handle would invalidate the
     // host's tunnel before C_Login.
     auto libResult = service->appendSigner(libReq, priorSignature, originalDocument, pinBuffer, resolvePkcs11Module(),
-                                           keyAlias, session->readerName(), session);
+                                           keyAlias, session->readerName());
 
     if (!libResult.success) {
         const auto classified = detail::classifyLibresignError(libResult);

@@ -63,18 +63,18 @@ public:
     // the LM PKCS#11 module's slotDescription — see
     // `lib/pkcs11/include/pkcs11/internal/slot_hash.h`.
     //
-    // sharedSession (optional, default null): live caller-owned
-    // CardSession to forward into the loaded librescrs-pkcs11 module
-    // so its PKCS#15 provider's probe can adopt it instead of opening
-    // a second standalone session against the same reader. Required
-    // for PACE-protected cards where the active SecureChannel must
-    // not be torn down between display and sign. Legacy callers that
-    // omit this argument get the standalone-bind behaviour.
-    /// @since 4.1
+    // The PACE/BAC SecureChannel established by the host's display flow
+    // is preserved across the libresign call boundary automatically: the
+    // CardSession that owns the live channel auto-registers in the
+    // process-local SessionPresence on `activateChannelWithSm` success,
+    // and the in-process PKCS#11 provider's probe path adopts it from
+    // there instead of opening a second standalone session. Callers
+    // must keep at least one `std::shared_ptr<CardSession>` ref alive
+    // across the sign call so the registry's `weak_ptr` lookup resolves.
+    /// @since 4.2
     virtual SigningResult sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
                                const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
-                               const std::string& readerName,
-                               std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession = nullptr) = 0;
+                               const std::string& readerName) = 0;
 
     /// @brief Append a new signer to a prior signature, producing a multi-
     ///        signature document with the new signer's signature alongside
@@ -108,21 +108,17 @@ public:
     /// @param pkcs11Module     PKCS#11 driver path.
     /// @param keyAlias         CKA_LABEL of the signer key on @p readerName.
     /// @param readerName       full PCSC reader name; same multi-card
-    ///                         routing contract as @ref sign.
-    /// @param sharedSession    optional live CardSession to forward into the
-    ///                         loaded PKCS#11 module; identical contract to
-    ///                         @ref sign. PACE-protected cards require
-    ///                         this — without it the module opens a second
-    ///                         standalone PC/SC session and tears down the
-    ///                         host's SM channel, causing C_Login to fail
-    ///                         on the contactless interface.
+    ///                         routing contract as @ref sign. The
+    ///                         SessionPresence registry handles the
+    ///                         display-flow PACE handoff transparently;
+    ///                         see @ref sign for the lifetime contract
+    ///                         the host must honour for that to work.
     /// @return SigningResult — same shape as @ref sign.
     /// @since 4.2
     virtual SigningResult appendSigner(const SigningRequest& request, std::span<const uint8_t> priorSignature,
                                        std::span<const uint8_t> originalDocument, const LibreSCRS::Secure::Buffer& pin,
                                        const std::string& pkcs11Module, const std::string& keyAlias,
-                                       const std::string& readerName,
-                                       std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession = nullptr) = 0;
+                                       const std::string& readerName) = 0;
 
     virtual bool isAvailable() const = 0;
 };

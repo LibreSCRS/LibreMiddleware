@@ -324,8 +324,7 @@ bool NativeSigningService::isAvailable() const
 
 SigningResult NativeSigningService::sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
                                          const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
-                                         const std::string& readerName,
-                                         std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession)
+                                         const std::string& readerName)
 {
     try {
         // Multi-sign auto-detect, lifted from per-module sign() branches.
@@ -360,11 +359,10 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, const st
             case SignatureFormat::Xades:
             case SignatureFormat::Jades:
             case SignatureFormat::AsicE:
-                // Forward sharedSession to the append-signer dispatcher
-                // so PACE-protected cards keep their SM channel across
-                // the redirected path.
-                return appendSigner(request, request.document, {}, pin, pkcs11ModulePath, keyAlias, readerName,
-                                    std::move(sharedSession));
+                // SessionPresence handoff carries any live SM channel
+                // across the redirected path automatically; the host's
+                // shared_ptr<CardSession> just needs to outlive this call.
+                return appendSigner(request, request.document, {}, pin, pkcs11ModulePath, keyAlias, readerName);
             case SignatureFormat::Cades:
                 return makeFailure(SignFailureKind::InvalidInput,
                                    "CAdES input is a detached CMS signature (no embedded payload). "
@@ -377,15 +375,14 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, const st
         // auto-pick paths were removed in 4.0 because they silently
         // selected slots[0] under multi-card setups, routing PIN to
         // the wrong card.
-        // sharedSession (optional) keeps the host-side CardSession alive
-        // across the slot lookup. SessionPresence auto-registration on
-        // the host side surfaces any live SM channel to the loaded
-        // librescrs-pkcs11 module's provider probe directly; no explicit
-        // attach call is needed. The module handle comes from the
-        // service-owned manager so the module stays mapped across
-        // consecutive signs.
-        auto token =
-            Pkcs11Token(moduleManager.acquire(pkcs11ModulePath), pin, keyAlias, readerName, std::move(sharedSession));
+        //
+        // SessionPresence auto-registration on the host side surfaces any
+        // live SM channel to the loaded librescrs-pkcs11 module's provider
+        // probe directly; the host's shared_ptr<CardSession> just needs to
+        // outlive this call so the registry's weak_ptr lookup resolves.
+        // The module handle comes from the service-owned manager so the
+        // module stays mapped across consecutive signs.
+        auto token = Pkcs11Token(moduleManager.acquire(pkcs11ModulePath), pin, keyAlias, readerName);
 
         // Certificate expiry enforcement. The native backend's CMS path
         // does not intrinsically reject expired signers — add an explicit
@@ -447,8 +444,7 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, const st
 SigningResult NativeSigningService::appendSigner(const SigningRequest& request, std::span<const uint8_t> priorSignature,
                                                  std::span<const uint8_t> originalDocument,
                                                  const LibreSCRS::Secure::Buffer& pin, const std::string& pkcs11Module,
-                                                 const std::string& keyAlias, const std::string& readerName,
-                                                 std::shared_ptr<LibreSCRS::SmartCard::CardSession> sharedSession)
+                                                 const std::string& keyAlias, const std::string& readerName)
 {
     try {
         auto fmt = inferFormat(priorSignature);
@@ -456,14 +452,12 @@ SigningResult NativeSigningService::appendSigner(const SigningRequest& request, 
             return makeFailure(SignFailureKind::InvalidInput,
                                "appendSigner: cannot infer signature format from prior bytes");
 
-        // Mirror sign()'s Pkcs11Token construction. sharedSession (when
-        // forwarded by the bridge or by the sign() auto-detect redirect)
-        // is critical for PACE-protected cards: without it the loaded
-        // PKCS#11 module would open a second standalone PC/SC session
-        // against the same reader and tear down the active SM channel
-        // before C_Login runs.
-        auto token =
-            Pkcs11Token(moduleManager.acquire(pkcs11Module), pin, keyAlias, readerName, std::move(sharedSession));
+        // Mirror sign()'s Pkcs11Token construction. SessionPresence
+        // carries any live PACE/BAC SM channel from the host's display
+        // flow into the in-process PKCS#11 module's provider probe
+        // transparently — the caller's shared_ptr<CardSession> just needs
+        // to outlive this call so the registry's weak_ptr resolves.
+        auto token = Pkcs11Token(moduleManager.acquire(pkcs11Module), pin, keyAlias, readerName);
 
         // Wire trust config to TSA/revocation parameters — the new signer
         // inherits the host's CRL/OCSP posture, identical to sign().
