@@ -8,7 +8,7 @@
 ///        the type-system contract (move-only, release() noexcept,
 ///        isTransactionHeld() flag visible).
 
-#include <smartcard/pcsc_connection.h>
+#include <pcsc_connection.h>
 
 #include <gtest/gtest.h>
 

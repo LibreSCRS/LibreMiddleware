@@ -3,10 +3,21 @@
 
 #pragma once
 
-#include "apdu.h"
-
 #include <cstdint>
 #include <span>
+
+namespace LibreSCRS::SmartCard::Internal {
+
+// Forward declarations: the `apdu.h` definitions live in lib/smartcard/src/
+// (bucket-B, LIBRESCRS_INTERNAL_BUILD-gated) and pulling them in here would
+// transitively force every consumer of <smartcard/i_connection.h> through
+// the bucket-B header. The abstract method signatures below only need
+// declarations — every caller that actually invokes transmit/transmitRaw
+// has to include <apdu.h> in its own translation unit anyway.
+struct APDUCommand;
+struct APDUResponse;
+
+} // namespace LibreSCRS::SmartCard::Internal
 
 namespace LibreSCRS::SmartCard {
 

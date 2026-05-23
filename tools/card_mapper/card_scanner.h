@@ -5,7 +5,7 @@
 
 #include "output_formatter.h"
 
-#include <smartcard/pcsc_connection.h>
+#include <pcsc_connection.h>
 
 #include <string>
 #include <utility>

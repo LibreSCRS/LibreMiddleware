@@ -13,42 +13,47 @@ add_library(SmartCard_Impl STATIC
     src/tlv.cpp
     src/ber.cpp
     src/monitor.cpp
-    # Bucket-B internal headers (LM-private)
+    # Bucket-B internal headers (LM-private; #error-guarded against external
+    # use, reached through the PRIVATE lib/smartcard/src include path that
+    # every LIBRESCRS_INTERNAL_BUILD consumer already carries).
     src/apdu.h
     src/ber.h
     src/tlv.h
     src/ipcsc_scan_provider.h
     src/pcsc_scan_provider.h
-    # Bucket-C headers: public within LM, LC bridge surface
+    src/pcsc_connection.h
+    src/monitor.h
+    # Bucket-C LC-bridge surface: small, dependency-free leaf types that
+    # may be reached from external consumers via the PUBLIC include path
+    # below. All three are self-contained — IConnection forward-declares
+    # APDUCommand/APDUResponse, secure_buffer is a leaf RAII wrapper, and
+    # monitor_event is a POD — so the bucket-C surface no longer
+    # transitively drags bucket-B headers into LM-internal consumers.
     include/smartcard/i_connection.h
-    include/smartcard/pcsc_connection.h
     include/smartcard/secure_buffer.h
     include/smartcard/monitor_event.h
-    include/smartcard/monitor.h
 )
 
 target_compile_definitions(SmartCard_Impl PRIVATE LIBRESCRS_INTERNAL_BUILD)
 
-# PUBLIC include dir (BUILD_INTERFACE-wrapped) now carries only the four
-# LC-bridge headers (pcsc_connection, secure_buffer, monitor, monitor_event).
-# Internal LM consumers that link SmartCard_Impl still need
-# <smartcard/pcsc_connection.h> etc. while the LC bridge surface remains,
-# but external (non-LM) consumers cannot reach them — the headers
-# are not exported via install() or package config.
-#
-# NOTE: the LC-bridge headers above carry the host-facing surface; the
-# transport-layer headers (apdu, ber, tlv, ipcsc_scan_provider,
-# pcsc_scan_provider) live in src/ and require an explicit PRIVATE include
-# of lib/smartcard/src from consumers.
+# PUBLIC include dir (BUILD_INTERFACE-wrapped) now carries only the two
+# LC-bridge leaf headers (secure_buffer, monitor_event). The IConnection /
+# PCSCConnection / Monitor surfaces moved to src/ once it became clear they
+# transitively pull bucket-B types (apdu, ipcsc_scan_provider) and that LC
+# no longer reaches for them directly — the public Monitor surface lives
+# at <LibreSCRS/SmartCard/MonitorService.h> instead.
 target_include_directories(SmartCard_Impl PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
 
-# PRIVATE: lets SmartCard_Impl's own .cpp files resolve "apdu.h" etc. and
-# lets pcsc_connection.h's `#include "apdu.h"` resolve when compiling our
-# own sources. External consumers that need to transitively resolve this
-# (because they include <smartcard/pcsc_connection.h>, which pulls apdu.h)
-# opt in by adding lib/smartcard/src to their own PRIVATE include dirs.
+# PRIVATE: lets SmartCard_Impl's own .cpp files resolve "apdu.h" /
+# "pcsc_connection.h" / "monitor.h" etc., and lets the bucket-B headers'
+# `<smartcard/i_connection.h>` / `<smartcard/monitor_event.h>` includes
+# resolve when compiling our own sources. External LM-internal consumers
+# that include `<pcsc_connection.h>` etc. opt in by adding
+# lib/smartcard/src to their own PRIVATE include dirs (already done — the
+# path was previously needed to resolve the bucket-B transport headers
+# pulled transitively by the old bucket-C surface).
 target_include_directories(SmartCard_Impl PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )

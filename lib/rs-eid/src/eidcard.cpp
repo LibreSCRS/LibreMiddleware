@@ -7,7 +7,7 @@
 #include "card_reader_gemalto.h"
 #include "card_reader_apollo.h"
 #include "card_verifier.h"
-#include "smartcard/pcsc_connection.h"
+#include <pcsc_connection.h>
 #include "tlv.h"
 #include "apdu.h"
 #include <algorithm>

@@ -30,7 +30,7 @@
 #include <emrtd_types.h>
 #include <pace.h>
 #include <passive_auth.h>
-#include <smartcard/pcsc_connection.h>
+#include <pcsc_connection.h>
 #include <smartcard/secure_buffer.h>
 
 #include <algorithm>

@@ -10,7 +10,7 @@
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
 
-#include "smartcard/pcsc_connection.h"
+#include <pcsc_connection.h>
 
 #include <memory>
 #include <mutex>

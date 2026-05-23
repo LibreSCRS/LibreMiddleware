@@ -5,9 +5,9 @@
 #include <LibreSCRS_internal/SmartCard/MonitorServiceImpl.h>
 
 #include <ipcsc_scan_provider.h>
-#include <smartcard/monitor.h>
+#include <monitor.h>
 #include <smartcard/monitor_event.h>
-#include <smartcard/pcsc_connection.h>
+#include <pcsc_connection.h>
 
 #include <algorithm>
 #include <atomic>

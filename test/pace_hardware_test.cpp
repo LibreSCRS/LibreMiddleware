@@ -6,7 +6,7 @@
 #include <data_group.h>
 #include <emrtd_card.h>
 #include <emrtd_types.h>
-#include <smartcard/pcsc_connection.h>
+#include <pcsc_connection.h>
 
 #include <LibreSCRS/Auth/PaceSecretKind.h>
 #include <LibreSCRS/CancelToken.h>

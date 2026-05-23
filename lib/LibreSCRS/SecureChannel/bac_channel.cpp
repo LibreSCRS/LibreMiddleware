@@ -6,7 +6,7 @@
 #include "sm_channel_impl.h"
 
 #include "bac.h"
-#include "smartcard/pcsc_connection.h"
+#include <pcsc_connection.h>
 #include "smartcard/secure_buffer.h"
 
 #include <LibreSCRS/Secure/Buffer.h>

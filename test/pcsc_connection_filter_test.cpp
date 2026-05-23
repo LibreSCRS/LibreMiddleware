@@ -3,7 +3,7 @@
 
 #include <gtest/gtest.h>
 #include <apdu.h>
-#include <smartcard/pcsc_connection.h>
+#include <pcsc_connection.h>
 
 TEST(PCSCConnectionFilter, FilterAPIExists)
 {

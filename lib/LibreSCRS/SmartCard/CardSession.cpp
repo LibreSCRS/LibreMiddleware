@@ -20,7 +20,7 @@
 #include <LibreSCRS_internal/SmartCard/SmartCardServices.h>
 
 #include "apdu.h"
-#include "smartcard/pcsc_connection.h"
+#include <pcsc_connection.h>
 
 #include <array>
 #include <atomic>

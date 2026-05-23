@@ -5,7 +5,7 @@
 #include <LibreSCRS/Plugin/CardPlugin.h>
 #include <LibreSCRS/Plugin/PluginExport.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
-#include <smartcard/pcsc_connection.h>
+#include <pcsc_connection.h>
 #include <eu_vrc_card.h>
 #include <eu_vrc_types.h>
 

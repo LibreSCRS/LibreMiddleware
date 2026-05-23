@@ -15,7 +15,7 @@
 #include <LibreSCRS_internal/SecureChannel/BacChannel.h>
 #include <LibreSCRS_internal/SmartCard/SessionPresence.h>
 
-#include "smartcard/pcsc_connection.h"
+#include <pcsc_connection.h>
 
 #include <array>
 #include <atomic>

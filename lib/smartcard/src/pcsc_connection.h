@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
+#ifndef LIBRESCRS_INTERNAL_BUILD
+#error "This header is internal to LibreMiddleware. Public API: <LibreSCRS/...>"
+#endif
+
 #pragma once
 
 #include <functional>
@@ -16,7 +20,7 @@
 #endif
 
 #include "apdu.h"
-#include "i_connection.h"
+#include <smartcard/i_connection.h>
 
 namespace LibreSCRS::SmartCard::Internal {
 

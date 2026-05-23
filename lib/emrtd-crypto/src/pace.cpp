@@ -5,7 +5,7 @@
 #include "crypto_utils.h"
 
 #include <apdu.h>
-#include <smartcard/pcsc_connection.h>
+#include <pcsc_connection.h>
 
 #include <openssl/bn.h>
 #include <openssl/crypto.h>

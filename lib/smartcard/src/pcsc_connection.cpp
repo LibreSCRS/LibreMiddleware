@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include "smartcard/pcsc_connection.h"
+#include "pcsc_connection.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>

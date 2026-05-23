@@ -22,7 +22,7 @@
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
 #include <apdu.h>
-#include <smartcard/pcsc_connection.h>
+#include <pcsc_connection.h>
 
 #include <algorithm>
 #include <compare>

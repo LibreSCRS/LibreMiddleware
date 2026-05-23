@@ -7,7 +7,7 @@
 //
 // Usage: pkcs15_after_pace_probe <CAN> [reader-name]
 
-#include "smartcard/pcsc_connection.h"
+#include <pcsc_connection.h>
 #include "apdu.h"
 #include <LibreSCRS/Auth/PaceSecretKind.h>
 #include <LibreSCRS/CancelToken.h>

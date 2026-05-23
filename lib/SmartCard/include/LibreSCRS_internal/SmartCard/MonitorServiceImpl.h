@@ -11,7 +11,7 @@
 #include <LibreSCRS/SmartCard/MonitorService.h>
 
 #include <ipcsc_scan_provider.h>
-#include <smartcard/monitor.h>
+#include <monitor.h>
 
 #include <atomic>
 #include <chrono>

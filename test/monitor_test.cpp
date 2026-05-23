@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0 and LibreSCRS contributors
 
 #include "mock_pcsc_scan_provider.h"
-#include <smartcard/monitor.h>
+#include <monitor.h>
 #include <gtest/gtest.h>
 #include <chrono>
 #include <mutex>

@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0 and LibreSCRS contributors
 
+#ifndef LIBRESCRS_INTERNAL_BUILD
+#error "This header is internal to LibreMiddleware. Public API: <LibreSCRS/...>"
+#endif
+
 #pragma once
 
 #include "ipcsc_scan_provider.h"
-#include "monitor_event.h"
+#include <smartcard/monitor_event.h>
 
 #include <atomic>
 #include <cstdint>

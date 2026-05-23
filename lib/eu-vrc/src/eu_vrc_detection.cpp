@@ -6,7 +6,7 @@
 
 #include <apdu.h>
 #include <ber.h>
-#include <smartcard/pcsc_connection.h>
+#include <pcsc_connection.h>
 
 namespace euvrc {
 

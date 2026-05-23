@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0 and LibreSCRS contributors
 
-#include "smartcard/monitor.h"
+#include "monitor.h"
 #include "pcsc_scan_provider.h"
 
 #include <cassert>

@@ -4,7 +4,7 @@
 #include "card_reader_gemalto.h"
 #include "card_protocol.h"
 #include "apdu.h"
-#include "smartcard/pcsc_connection.h"
+#include <pcsc_connection.h>
 #include <stdexcept>
 
 namespace eidcard {

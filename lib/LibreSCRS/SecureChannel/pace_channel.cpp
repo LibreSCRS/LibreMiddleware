@@ -7,7 +7,7 @@
 
 #include "pace.h"
 #include "secure_messaging.h"
-#include "smartcard/pcsc_connection.h"
+#include <pcsc_connection.h>
 
 #include <LibreSCRS/Secure/Buffer.h>
 

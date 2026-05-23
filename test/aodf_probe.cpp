@@ -4,7 +4,7 @@
 // AODF + PIN reference probe: reads the real authObjects file from ODF
 // and probes VERIFY with different P2 values to discover PIN references.
 
-#include "smartcard/pcsc_connection.h"
+#include <pcsc_connection.h>
 #include "apdu.h"
 
 #include <cstdio>

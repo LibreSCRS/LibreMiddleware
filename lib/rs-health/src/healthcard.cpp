@@ -4,7 +4,7 @@
 #include "healthcard.h"
 #include "health_protocol.h"
 #include "apdu.h"
-#include "smartcard/pcsc_connection.h"
+#include <pcsc_connection.h>
 #include "tlv.h"
 #include <algorithm>
 #include <stdexcept>

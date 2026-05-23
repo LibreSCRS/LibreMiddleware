@@ -36,7 +36,7 @@
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
 #include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
-#include <smartcard/pcsc_connection.h>
+#include <pcsc_connection.h>
 
 #include <algorithm>
 #include <cctype>

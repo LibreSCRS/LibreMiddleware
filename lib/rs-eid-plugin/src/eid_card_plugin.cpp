@@ -8,7 +8,7 @@
 #include <LibreSCRS/Plugin/PluginExport.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
 #include <LibreSCRS/Trust/TrustStore.h>
-#include <smartcard/pcsc_connection.h>
+#include <pcsc_connection.h>
 
 #include <filesystem>
 #include <fstream>

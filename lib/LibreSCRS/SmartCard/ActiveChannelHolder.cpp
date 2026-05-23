@@ -7,7 +7,7 @@
 #include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
 
 #include "apdu.h"
-#include "smartcard/pcsc_connection.h"
+#include <pcsc_connection.h>
 
 #include <memory>
 #include <mutex>

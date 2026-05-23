@@ -18,7 +18,7 @@
 #include <internal/PKCS11TokenInfo.h>
 #include <pkcs11/internal/slot_hash.h>
 
-#include "smartcard/pcsc_connection.h"
+#include <pcsc_connection.h>
 
 #include <openssl/crypto.h>
 #include <openssl/evp.h>

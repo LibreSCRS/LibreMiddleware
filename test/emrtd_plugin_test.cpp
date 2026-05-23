@@ -8,7 +8,7 @@
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
-#include <smartcard/pcsc_connection.h>
+#include <pcsc_connection.h>
 
 #include <algorithm>
 #include <cstdlib>

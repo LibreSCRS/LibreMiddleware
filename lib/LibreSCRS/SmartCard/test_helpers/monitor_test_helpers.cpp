@@ -18,7 +18,7 @@
 #include <LibreSCRS_internal/SmartCard/MonitorServiceImpl.h>
 
 #include <ipcsc_scan_provider.h>
-#include <smartcard/monitor.h>
+#include <monitor.h>
 
 #include <cstdint>
 #include <memory>

@@ -34,7 +34,7 @@
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
 #include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
-#include <smartcard/pcsc_connection.h>
+#include <pcsc_connection.h>
 
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>

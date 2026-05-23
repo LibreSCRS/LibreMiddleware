@@ -4,7 +4,7 @@
 #include "card_verifier.h"
 #include "card_protocol.h"
 #include "card_reader_base.h"
-#include "smartcard/pcsc_connection.h"
+#include <pcsc_connection.h>
 
 #include <openssl/bio.h>
 #include <openssl/err.h>

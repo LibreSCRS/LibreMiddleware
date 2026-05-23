@@ -8,7 +8,7 @@
 #include "plugin_mapper.h"
 #include "scaffold_generator.h"
 
-#include <smartcard/pcsc_connection.h>
+#include <pcsc_connection.h>
 
 #include <cstdlib>
 #include <filesystem>

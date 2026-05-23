@@ -14,7 +14,7 @@
 //
 // Usage: fci_format_probe [reader-name]
 
-#include "smartcard/pcsc_connection.h"
+#include <pcsc_connection.h>
 #include "apdu.h"
 
 #include <cstdio>
