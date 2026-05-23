@@ -292,17 +292,8 @@ public:
                 emitGroup(std::move(group));
             }
 
-            if (!profile.pins.empty()) {
-                LibreSCRS::Plugin::CardFieldGroup group;
-                group.groupKey = "pins";
-                group.groupLabel = "PINs";
-                for (const auto& pin : profile.pins) {
-                    int tries = card.getPINTriesLeft(pin);
-                    std::string triesStr = (tries >= 0) ? std::to_string(tries) : "unknown";
-                    group.addText("pin_" + pin.label, pin.label, "tries left: " + triesStr);
-                }
-                emitGroup(std::move(group));
-            }
+            // PIN state is surfaced via the typed getPINList() override
+            // (PinStatusEntry vector), not via the readCard() data groups.
 
             return ReadResult::ok(std::move(data));
         } catch (const std::exception& ex) {

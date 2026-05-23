@@ -183,8 +183,9 @@ TEST_F(OpenSCFallbackPKS, Test01RegistryPicksOpenSCPlugin)
 
 // ---------------------------------------------------------------------------
 // Test 2 — readCard returns populated token info (label).
-// PIN min/max length are not exposed via the CardPlugin interface for
-// opensc-plugin (getPINList not overridden), so we don't assert on them.
+// PIN state is surfaced via the typed CardPlugin::getPINList() override
+// (PinStatusEntry vector), not via the readCard() data groups; this test
+// exercises the token-info group only.
 // ---------------------------------------------------------------------------
 
 TEST_F(OpenSCFallbackPKS, Test02ReadCardReturnsTokenInfo)

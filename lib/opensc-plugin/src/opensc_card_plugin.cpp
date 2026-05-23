@@ -230,27 +230,8 @@ public:
                 emitGroup(std::move(certGroup));
             }
 
-            // PINs group — mirrors pkcs15-plugin layout: label → "tries left: N".
-            // tries_left == -1 (e.g. PIV iso7816 after VERIFY SUCCESS) renders as "unknown".
-            sc_pkcs15_object_t* pinObjsAll[8];
-            int pinCountAll = sc_pkcs15_get_objects(session.p15card, SC_PKCS15_TYPE_AUTH_PIN, pinObjsAll, 8);
-            if (pinCountAll > 0) {
-                LibreSCRS::Plugin::CardFieldGroup pinGroup;
-                pinGroup.groupKey = "pins";
-                pinGroup.groupLabel = "PINs";
-
-                for (int i = 0; i < pinCountAll; ++i) {
-                    auto* authInfo = static_cast<sc_pkcs15_auth_info_t*>(pinObjsAll[i]->data);
-                    std::string label = pinObjsAll[i]->label[0] ? pinObjsAll[i]->label : ("PIN " + std::to_string(i));
-                    std::string triesStr =
-                        (authInfo && authInfo->tries_left >= 0) ? std::to_string(authInfo->tries_left) : "unknown";
-                    std::string value = "tries left: " + triesStr;
-                    std::string key = "pin_" + label;
-                    pinGroup.fields.push_back(
-                        {key, label, LibreSCRS::Plugin::FieldType::Text, {value.begin(), value.end()}});
-                }
-                emitGroup(std::move(pinGroup));
-            }
+            // PIN state is surfaced via the typed getPINList() override
+            // (PinStatusEntry vector), not via the readCard() data groups.
 
             return ReadResult::ok(std::move(data));
         } catch (const std::exception& ex) {
