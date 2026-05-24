@@ -14,8 +14,8 @@ baseline only requires checking out the same commit.
 | `bench_truststore_service`   | `TrustStoreService::create()` happy path with empty,     |
 |                              | system-store, and file:// TL fixture configs             |
 | `bench_signing`              | `SigningService::sign()` happy path (skipped when no     |
-|                              | SoftHSM is configured; CI hostes do not currently        |
-|                              | bootstrap one — backlog item for 4.1)                    |
+|                              | SoftHSM is configured; CI hosts do not currently         |
+|                              | bootstrap one — tracked in `knowledge/docs/BACKLOG.md`)  |
 
 ## Build
 
@@ -35,11 +35,11 @@ for b in bench_parsed_cert bench_trust_validate bench_truststore_service bench_s
     ./build-bench/bench/$b \
         --benchmark_min_time=1s \
         --benchmark_format=json \
-        --benchmark_out=bench/baselines/4.0.0-$b.json
+        --benchmark_out=bench/baselines/4.2-$b.json
 done
 ```
 
-The committed `bench/baselines/4.0.0-*.json` files were captured on the
+The committed `bench/baselines/4.2-*.json` files were captured on the
 release-build environment listed in the JSON's `context` block. **Absolute
 numbers vary by machine**: a slower CPU produces larger nanosecond timings.
 CI tracks the *delta* between a candidate run and the latest committed
@@ -56,9 +56,9 @@ configurable threshold (default 20%, see `.github/workflows/bench.yml`).
 4. If a deliberate trade-off (e.g. extra defensive copies for thread safety):
    document the rationale in the commit message and update the baseline.
 
-## SoftHSM bootstrap (TODO)
+## SoftHSM bootstrap
 
 The signing benchmark currently emits SKIP unless `SOFTHSM2_CONF` is set. A
 hermetic bootstrap script that initialises a SoftHSM token with a known
-keypair is tracked in the backlog; once landed, the bench will measure the
-full PKCS#11 + B-B / B-T / B-LT / B-LTA latency curve.
+keypair is tracked in `knowledge/docs/BACKLOG.md`; once landed, the bench
+will measure the full PKCS#11 + B-B / B-T / B-LT / B-LTA latency curve.

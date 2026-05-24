@@ -1,6 +1,6 @@
 {
   "context": {
-    "date": "2026-04-30T13:21:28+02:00",
+    "date": "2026-05-23T15:57:54+02:00",
     "host_name": "earth",
     "executable": "./build-bench/bench/bench_truststore_service",
     "num_cpus": 8,
@@ -33,7 +33,7 @@
         "num_sharing": 8
       }
     ],
-    "load_avg": [3.64795,3.2915,4.22266],
+    "load_avg": [2.55371,3.38281,4.90869],
     "library_version": "v1.9.4",
     "library_build_type": "release",
     "json_schema_version": 1
@@ -48,9 +48,9 @@
       "repetitions": 1,
       "repetition_index": 0,
       "threads": 1,
-      "iterations": 255,
-      "real_time": 1.1192512707602161e+06,
-      "cpu_time": 1.1172994039215683e+06,
+      "iterations": 668,
+      "real_time": 1.0291410853279738e+06,
+      "cpu_time": 1.0232497844311380e+06,
       "time_unit": "ns"
     },
     {
@@ -62,9 +62,9 @@
       "repetitions": 1,
       "repetition_index": 0,
       "threads": 1,
-      "iterations": 218,
-      "real_time": 1.0509978026074758e+06,
-      "cpu_time": 1.0487057798165141e+06,
+      "iterations": 672,
+      "real_time": 1.0262146309536374e+06,
+      "cpu_time": 1.0226928258928572e+06,
       "time_unit": "ns"
     },
     {
@@ -76,9 +76,9 @@
       "repetitions": 1,
       "repetition_index": 0,
       "threads": 1,
-      "iterations": 252,
-      "real_time": 1.6242369366366239e+06,
-      "cpu_time": 1.1595401706349207e+06,
+      "iterations": 630,
+      "real_time": 1.6188522968265703e+06,
+      "cpu_time": 1.1477123523809521e+06,
       "time_unit": "ns"
     }
   ]

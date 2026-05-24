@@ -59,6 +59,67 @@ jobs:
       - name: Test
         run: ctest --output-on-failure --test-dir build/test
 
+  shared-linux:
+    # Mirror of test-linux but with LIBREMIDDLEWARE_BUILD_SHARED=ON, so
+    # the GNU ld version-script (cmake/librescrs-public-exports.map) and
+    # macOS counterpart (.darwin.list) are linker-exercised on every
+    # release. The static (.a) test-linux build above never invokes those
+    # files, which means a public-symbol leak or accidental hidden-public
+    # symbol can slip past CI until a downstream consumer tries to link
+    # the shared LM and the symbol is missing or extra.
+    #
+    # Extra verification step: nm | c++filt against the SmartCard .so to
+    # confirm the SM-aware transmit funnel still exports ONLY
+    # CardSession::transmitInternal — the legacy sessionTransmitImpl /
+    # detail::sessionTransmit overloads (intentionally stripped in 4.x)
+    # must stay out of the dynamic export set per the rationale block in
+    # cmake/librescrs-public-exports.map.
+    needs: verify-signature
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libpcsclite-dev libcurl4-openssl-dev libxml2-dev \
+            cmake ninja-build python3-jsonschema binutils
+
+      - name: Configure & Build (Release, SHARED)
+        run: |
+          cmake -B build-shared -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLIBREMIDDLEWARE_BUILD_SHARED=ON
+          cmake --build build-shared
+
+      - name: Check pimpl visibility (SHARED)
+        run: ./ci/scripts/check-impl-visibility.sh build-shared
+
+      - name: Verify SmartCard transmit-funnel export allowlist
+        # Per cmake/librescrs-public-exports.map header: only
+        # CardSession::transmitInternal must remain in the dynamic export
+        # set; legacy sessionTransmitImpl / detail::sessionTransmit are
+        # forbidden. If either reappears the version-script rationale is
+        # invalidated and the comment + map need a coordinated fix.
+        run: |
+          SO=build-shared/lib/LibreSCRS/libLibreSCRS_SmartCard.so
+          test -f "$SO" || { echo "::error::missing $SO"; exit 1; }
+          if nm -D --defined-only "$SO" | c++filt \
+              | grep -E '(sessionTransmitImpl|detail::sessionTransmit)' ; then
+              echo "::error::Forbidden sessionTransmit symbol leaked into shared LibreSCRS_SmartCard.so"
+              exit 1
+          fi
+          nm -D --defined-only "$SO" | c++filt \
+              | grep -F 'CardSession::transmitInternal' \
+              || { echo "::error::Expected CardSession::transmitInternal export not found"; exit 1; }
+
+      - name: Test
+        run: ctest --output-on-failure --test-dir build-shared/test
+
   test-macos:
     needs: verify-signature
     runs-on: macos-latest
@@ -142,7 +203,7 @@ jobs:
           path: librescrs-pkcs11-*.zip
 
   release:
-    needs: [test-linux, test-macos, pkcs11-linux, pkcs11-macos]
+    needs: [test-linux, shared-linux, test-macos, pkcs11-linux, pkcs11-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write

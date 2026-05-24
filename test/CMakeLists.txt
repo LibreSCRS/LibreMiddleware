@@ -249,6 +249,11 @@ gtest_discover_tests(EMRTDPluginTests)
 
 add_executable(PKCS11Tests pkcs11_test.cpp)
 target_link_libraries(PKCS11Tests GTest::gtest_main librescrs-pkcs11)
+# Shared PIN-guard header lives under test/include/ — see test/e2e/CMakeLists.txt
+# for the matching consumer. Per feedback_pin_guard_pattern the helper must
+# stay byte-identical across real-card test binaries.
+target_include_directories(PKCS11Tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include)
 gtest_discover_tests(PKCS11Tests DISCOVERY_TIMEOUT 30)
 
 # Internal-only test for the slot-disambiguation hash helpers shared by

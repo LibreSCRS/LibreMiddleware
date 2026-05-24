@@ -17,6 +17,12 @@
 #include <string>
 #include <vector>
 
+// Shared PIN-guard helpers (test/include/pin_guard.h). Used by both this
+// PKCS#11 unit-test exe and the e2e binaries under test/e2e/ — single
+// source of truth for g_pinFailed / SKIP_IF_PIN_FAILED per
+// feedback_pin_guard_pattern.
+#include "pin_guard.h"
+
 // ---------------------------------------------------------------------------
 // C_GetFunctionList
 // ---------------------------------------------------------------------------
@@ -952,10 +958,9 @@ TEST_F(PKCS11CardTest, CertKeyPairShareID)
 // Helper: get PIN from environment variable (never hardcode PINs!)
 // Returns empty string if LIBRESCRS_TEST_PIN is not set.
 //
-// NOTE: This PIN guard infrastructure (getTestPIN, g_pinFailed, loginWithAbort,
-// SKIP_IF_PIN_FAILED) duplicates signing_test_support.h. It is kept local
-// because pkcs11_test links against the raw PKCS#11 C API and does not link
-// SigningTestSupport. Consolidation is tracked as a backlog item.
+// g_pinFailed / SKIP_IF_PIN_FAILED live in test/include/pin_guard.h (shared
+// with test/e2e/*). loginWithAbort below is the PKCS#11-C-API-flavoured
+// wrapper that drives the shared flag.
 // ---------------------------------------------------------------------------
 
 static std::string getTestPIN()
@@ -964,13 +969,6 @@ static std::string getTestPIN()
     return pin ? std::string(pin) : std::string();
 }
 
-// ---------------------------------------------------------------------------
-// Global flag: set when a wrong PIN is detected. All subsequent PIN-dependent
-// tests will be skipped to prevent burning remaining PIN retries.
-// ---------------------------------------------------------------------------
-
-static bool g_pinFailed = false;
-
 // Helper: attempt login, set g_pinFailed on wrong PIN.
 // Returns CKR_OK on success, or the actual error code.
 static CK_RV loginWithAbort(CK_SESSION_HANDLE hSession, const std::string& pin)
@@ -978,7 +976,7 @@ static CK_RV loginWithAbort(CK_SESSION_HANDLE hSession, const std::string& pin)
     std::vector<CK_UTF8CHAR> pinVec(pin.begin(), pin.end());
     CK_RV rv = C_Login(hSession, CKU_USER, pinVec.data(), static_cast<CK_ULONG>(pinVec.size()));
     if (rv == CKR_PIN_INCORRECT || rv == CKR_PIN_LOCKED) {
-        g_pinFailed = true;
+        ::LibreSCRS::Tests::E2E::g_pinFailed.store(true, std::memory_order_relaxed);
         std::cerr << "\n*** PIN VERIFICATION FAILED (rv=0x" << std::hex << rv << std::dec
                   << "). Aborting all subsequent PIN tests. ***\n"
                   << "*** Check LIBRESCRS_TEST_PIN environment variable. ***\n"
@@ -986,12 +984,6 @@ static CK_RV loginWithAbort(CK_SESSION_HANDLE hSession, const std::string& pin)
     }
     return rv;
 }
-
-#define SKIP_IF_PIN_FAILED()                                                                                           \
-    do {                                                                                                               \
-        if (g_pinFailed)                                                                                               \
-            GTEST_SKIP() << "Skipped: previous PIN verification failed";                                               \
-    } while (0)
 
 // ---------------------------------------------------------------------------
 // C_SignInit / C_Sign — error cases (no hardware needed)
@@ -1148,7 +1140,7 @@ TEST_F(PKCS11CardTest, SignInitWithPrivateKey)
 
             // Login-dependent part requires LIBRESCRS_TEST_PIN
             auto testPIN = getTestPIN();
-            if (!testPIN.empty() && !g_pinFailed) {
+            if (!testPIN.empty() && !::LibreSCRS::Tests::E2E::g_pinFailed.load(std::memory_order_relaxed)) {
                 CK_RV loginRv = loginWithAbort(hSession, testPIN);
                 if (loginRv == CKR_OK) {
                     // Re-find objects — login invalidates cached objects (PACE cards)
@@ -1735,7 +1727,7 @@ TEST_F(PKCS11CardTest, SignUpdateRejectsSinglePartMechanism)
         EXPECT_EQ(C_OpenSession(slot, CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
 
         auto testPIN = getTestPIN();
-        if (!testPIN.empty() && !g_pinFailed) {
+        if (!testPIN.empty() && !::LibreSCRS::Tests::E2E::g_pinFailed.load(std::memory_order_relaxed)) {
             CK_RV loginRv = loginWithAbort(hSession, testPIN);
             if (loginRv == CKR_OK) {
                 CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
@@ -1974,7 +1966,7 @@ TEST_F(PKCS11CardTest, SignFinalRejectsSinglePartMechanism)
         EXPECT_EQ(C_OpenSession(slot, CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
 
         auto testPIN = getTestPIN();
-        if (!testPIN.empty() && !g_pinFailed) {
+        if (!testPIN.empty() && !::LibreSCRS::Tests::E2E::g_pinFailed.load(std::memory_order_relaxed)) {
             CK_RV loginRv = loginWithAbort(hSession, testPIN);
             if (loginRv == CKR_OK) {
                 CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;

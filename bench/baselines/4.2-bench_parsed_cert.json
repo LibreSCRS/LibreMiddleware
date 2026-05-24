@@ -1,6 +1,6 @@
 {
   "context": {
-    "date": "2026-04-30T13:21:26+02:00",
+    "date": "2026-05-23T15:57:45+02:00",
     "host_name": "earth",
     "executable": "./build-bench/bench/bench_parsed_cert",
     "num_cpus": 8,
@@ -33,7 +33,7 @@
         "num_sharing": 8
       }
     ],
-    "load_avg": [3.70459,3.29688,4.22949],
+    "load_avg": [2.47217,3.39648,4.93018],
     "library_version": "v1.9.4",
     "library_build_type": "release",
     "json_schema_version": 1
@@ -48,11 +48,11 @@
       "repetitions": 1,
       "repetition_index": 0,
       "threads": 1,
-      "iterations": 15240,
-      "real_time": 1.9306010037130160e+04,
-      "cpu_time": 1.9278519291338587e+04,
+      "iterations": 42543,
+      "real_time": 1.7094840490791066e+04,
+      "cpu_time": 1.7008599628611057e+04,
       "time_unit": "ns",
-      "bytes_per_second": 5.4205407801702663e+07
+      "bytes_per_second": 6.1439508414446473e+07
     },
     {
       "name": "BM_FromDerEcdsa",
@@ -63,11 +63,11 @@
       "repetitions": 1,
       "repetition_index": 0,
       "threads": 1,
-      "iterations": 8260,
-      "real_time": 3.3025806414563274e+04,
-      "cpu_time": 3.2975591525423726e+04,
+      "iterations": 25609,
+      "real_time": 2.7891854426074922e+04,
+      "cpu_time": 2.7757117302510836e+04,
       "time_unit": "ns",
-      "bytes_per_second": 1.3525155406420538e+07
+      "bytes_per_second": 1.6067950974132895e+07
     },
     {
       "name": "BM_FromDerSerbianEid",
@@ -78,11 +78,11 @@
       "repetitions": 1,
       "repetition_index": 0,
       "threads": 1,
-      "iterations": 8976,
-      "real_time": 3.1847352941840913e+04,
-      "cpu_time": 3.1800010138146161e+04,
+      "iterations": 21789,
+      "real_time": 3.3867572720166390e+04,
+      "cpu_time": 3.3688617192161160e+04,
       "time_unit": "ns",
-      "bytes_per_second": 5.7075453501909129e+07
+      "bytes_per_second": 5.3875764316688053e+07
     },
     {
       "name": "BM_FromDerWithExtensionsScan",
@@ -93,9 +93,9 @@
       "repetitions": 1,
       "repetition_index": 0,
       "threads": 1,
-      "iterations": 13469,
-      "real_time": 2.2064328238747505e+04,
-      "cpu_time": 2.2033253693666953e+04,
+      "iterations": 31065,
+      "real_time": 2.2686504039922558e+04,
+      "cpu_time": 2.2558924287783677e+04,
       "time_unit": "ns"
     }
   ]

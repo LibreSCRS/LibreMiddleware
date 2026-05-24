@@ -24,7 +24,7 @@ add_executable(librescrs_pkcs11_e2e_tests
     Pkcs11GeoMultiPinTests.cpp
     Pkcs11NamSignTests.cpp
     Pkcs11PksSignTests.cpp
-    pin_guard.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include/pin_guard.h
 )
 
 # Pkcs11PksSignTests verifies signatures against the on-card cert's
@@ -37,6 +37,7 @@ target_link_libraries(librescrs_pkcs11_e2e_tests PRIVATE
 
 target_include_directories(librescrs_pkcs11_e2e_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
     ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/include
 )
 
@@ -61,7 +62,7 @@ if(LIBRESCRS_BUILD_REAL_CARD_TESTS)
     # latch — a failure on one card does not poison the others.
     add_executable(Pkcs11MultiCardSignTests
         Pkcs11MultiCardSignTests.cpp
-        pin_guard.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include/pin_guard.h
     )
     target_link_libraries(Pkcs11MultiCardSignTests PRIVATE
         GTest::gtest_main
@@ -72,6 +73,7 @@ if(LIBRESCRS_BUILD_REAL_CARD_TESTS)
     )
     target_include_directories(Pkcs11MultiCardSignTests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
         ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
         ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/include
     )
