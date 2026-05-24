@@ -307,6 +307,7 @@ endif()
 # Plugin: public AutoReaderService wrapper over the internal CardPluginService.
 add_library(LibreSCRS_Plugin ${LIBREMIDDLEWARE_LIB_TYPE}
     Plugin/AutoReaderService.cpp
+    Plugin/CardDataAccess.cpp
     Plugin/SecurityCheck.cpp
     ${LIBRESCRS_PLUGIN_PUBLIC_HEADERS}
 )

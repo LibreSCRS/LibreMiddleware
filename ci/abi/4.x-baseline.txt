@@ -139,6 +139,8 @@ LibreSCRS::Plugin::CardPluginService::plugins() const@@LM_4
 LibreSCRS::Plugin::CardPluginService::size() const@@LM_4
 LibreSCRS::Plugin::CardPluginService::~CardPluginService()@@LM_4
 LibreSCRS::Plugin::SecurityStatus::computeOverall()@@LM_4
+LibreSCRS::Plugin::textValueAt[abi:cxx11](LibreSCRS::Plugin::CardData const&, unsigned long, std::basic_string_view<char, std::char_traits<char> >)@@LM_4
+LibreSCRS::Plugin::textValue[abi:cxx11](LibreSCRS::Plugin::CardData const&, std::basic_string_view<char, std::char_traits<char> >, std::basic_string_view<char, std::char_traits<char> >)@@LM_4
 
 == libLibreSCRS_SecureChannel.so ==
 LibreSCRS::SecureChannel::BacChannel::BacChannel(LibreSCRS::SmartCard::IConnection&, LibreSCRS::SmartCard::AppletAid, LibreSCRS::SecureChannel::SessionKeys)@@LM_4
@@ -362,7 +364,9 @@ LibreSCRS::SmartCard::MonitorService::operator bool() const@@LM_4
 LibreSCRS::SmartCard::MonitorService::publishForTest(LibreSCRS::SmartCard::MonitorEvent const&)@@LM_4
 LibreSCRS::SmartCard::MonitorService::publishReaderListForTest(std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > const&)@@LM_4
 LibreSCRS::SmartCard::MonitorService::subscribe(std::function<void (LibreSCRS::SmartCard::MonitorEvent const&)>)@@LM_4
+LibreSCRS::SmartCard::MonitorService::subscribeReaderList(std::function<void (std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > const&)>)@@LM_4
 LibreSCRS::SmartCard::MonitorService::unsubscribe(LibreSCRS::SmartCard::MonitorService::SubscriptionId, LibreSCRS::SmartCard::MonitorService::DrainPolicy)@@LM_4
+LibreSCRS::SmartCard::MonitorService::unsubscribeReaderList(LibreSCRS::SmartCard::MonitorService::SubscriptionId, LibreSCRS::SmartCard::MonitorService::DrainPolicy)@@LM_4
 LibreSCRS::SmartCard::MonitorService::~MonitorService()@@LM_4
 LibreSCRS::SmartCard::detail::PcscBridge::unwrap(LibreSCRS::SmartCard::CardSession const&)@@LM_4
 LibreSCRS::SmartCard::detail::PcscBridge::unwrap(LibreSCRS::SmartCard::CardSession&)@@LM_4

@@ -43,6 +43,12 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
 
     std::mutex cbMtx;
     std::map<SubscriptionId, EventCallback> callbacks;
+    // Snapshot-style subscribers registered via subscribeReaderList. Keyed
+    // by the same opaque SubscriptionId token as `callbacks` so the same
+    // unsubscribe-arity disambiguates by lookup (a token is in exactly one
+    // map). Sharing the nextId counter guarantees the per-event and
+    // reader-list maps never collide on a token value.
+    std::map<SubscriptionId, MonitorService::ReaderListCallback> readerListCallbacks;
     std::optional<::LibreSCRS::SmartCard::Internal::Monitor::SubscriptionId> internalSubId;
     std::atomic<std::uint64_t> nextId{1};
 
@@ -117,6 +123,18 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
     // Dispatch outside cbMtx so subscribers can re-enter subscribe/unsubscribe
     // from within a callback without deadlocking.
     std::vector<std::pair<SubscriptionId, EventCallback>> snapshotCallbacks();
+
+    // Snapshot currently-registered (id, reader-list callback) pairs under
+    // cbMtx. Mirrors @ref snapshotCallbacks for the reader-list subscriber
+    // population so dispatch can run outside the cbMtx lock.
+    std::vector<std::pair<SubscriptionId, MonitorService::ReaderListCallback>> snapshotReaderListCallbacks();
+
+    // Dispatch a full post-change reader-list snapshot to every
+    // @ref MonitorService::subscribeReaderList subscriber under the
+    // dispatchMtx serialisation gate (so Drain semantics extend to the
+    // snapshot callback population uniformly). Subscriber callbacks that
+    // throw are caught and logged; the dispatch loop continues.
+    void dispatchReaderListSnapshot(const std::vector<std::string>& snapshot);
 
     // Full snapshot-and-invoke runs under dispatchMtx so @ref
     // MonitorService::unsubscribe with @ref DrainPolicy::Drain can block on

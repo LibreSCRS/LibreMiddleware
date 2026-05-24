@@ -113,6 +113,39 @@ MonitorService::Impl::snapshotCallbacks()
     return out;
 }
 
+std::vector<std::pair<MonitorService::SubscriptionId, MonitorService::ReaderListCallback>>
+MonitorService::Impl::snapshotReaderListCallbacks()
+{
+    std::lock_guard<std::mutex> lock(cbMtx);
+    std::vector<std::pair<SubscriptionId, MonitorService::ReaderListCallback>> out;
+    out.reserve(readerListCallbacks.size());
+    for (const auto& [id, cb] : readerListCallbacks) {
+        out.emplace_back(id, cb);
+    }
+    return out;
+}
+
+void MonitorService::Impl::dispatchReaderListSnapshot(const std::vector<std::string>& snapshot)
+{
+    // Runs under dispatchMtx so unsubscribe(..., DrainPolicy::Drain) can
+    // block on an in-flight snapshot dispatch identically to how it blocks
+    // on an in-flight per-event dispatch (see @ref dispatchImmediate).
+    std::lock_guard<std::mutex> dispatchLock(dispatchMtx);
+    auto subs = snapshotReaderListCallbacks();
+    for (const auto& [id, cb] : subs) {
+        (void)id;
+        if (!cb)
+            continue;
+        try {
+            cb(snapshot);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "LibreSCRS MonitorService: reader-list subscriber callback threw: %s\n", e.what());
+        } catch (...) {
+            std::fprintf(stderr, "LibreSCRS MonitorService: reader-list subscriber callback threw unknown exception\n");
+        }
+    }
+}
+
 // Each subscriber callback runs inside a try/catch shield. A subscriber
 // that throws will not propagate out of the poll thread — that would
 // otherwise terminate the program (an exception escaping the std::thread
@@ -342,6 +375,22 @@ void MonitorService::Impl::diffReadersAndDispatch(const std::vector<std::string>
     }
     for (const auto& r : removed)
         dispatch(MonitorEvent{MonitorEvent::Kind::ReaderRemoved, r, std::nullopt, std::nullopt});
+
+    // Fire the aggregated post-change reader-list snapshot AFTER every
+    // per-reader Added/Removed event has been dispatched (see
+    // @ref MonitorService::subscribeReaderList contract). When neither
+    // added nor removed produced any entries the membership is unchanged
+    // and we suppress the snapshot to avoid spurious fan-out on every PnP
+    // probe; the explicit first-subscribe bootstrap in
+    // @ref MonitorService::subscribeReaderList handles the late-join case.
+    if (!added.empty() || !removed.empty()) {
+        std::vector<std::string> snapshot;
+        {
+            std::lock_guard<std::mutex> lock(readersMtx);
+            snapshot.assign(knownReaders.begin(), knownReaders.end());
+        }
+        dispatchReaderListSnapshot(snapshot);
+    }
 }
 
 MonitorService::Config MonitorService::Config::fromEnv() noexcept
@@ -392,7 +441,8 @@ MonitorService::operator bool() const noexcept
 MonitorService::~MonitorService()
 {
     // Non-movable (see header): MonitorService always owns its Impl. Clear public
-    // subscribers, then explicitly unsubscribe from the internal MonitorService.
+    // subscribers (both per-event and reader-list flavours), then explicitly
+    // unsubscribe from the internal MonitorService.
     // The internal unsubscribe calls stopThread() (see
     // smartcard/src/monitor.cpp) which joins the poll thread — that join is
     // what actually blocks until the in-flight PC/SC syscall completes. The
@@ -401,6 +451,7 @@ MonitorService::~MonitorService()
     {
         std::lock_guard<std::mutex> lock(d->cbMtx);
         d->callbacks.clear();
+        d->readerListCallbacks.clear();
         subToDrop = d->internalSubId;
         d->internalSubId.reset();
     }
@@ -437,7 +488,10 @@ MonitorService::SubscriptionId MonitorService::subscribe(EventCallback callback)
     {
         std::lock_guard<std::mutex> lock(d->cbMtx);
         d->callbacks.emplace(newId, std::move(callback));
-        firstSubscriber = (d->callbacks.size() == 1);
+        // Auto-start applies to the union of per-event and reader-list
+        // subscriber populations: the poll thread is required whenever
+        // any subscriber (of either flavour) exists.
+        firstSubscriber = (d->callbacks.size() + d->readerListCallbacks.size() == 1);
     }
 
     if (firstSubscriber) {
@@ -492,7 +546,9 @@ void MonitorService::unsubscribe(SubscriptionId id, DrainPolicy policy) noexcept
             if (it == d->callbacks.end())
                 return;
             d->callbacks.erase(it);
-            if (d->callbacks.empty()) {
+            // Auto-stop the internal Monitor only when BOTH the per-event
+            // and reader-list subscriber populations are empty.
+            if (d->callbacks.empty() && d->readerListCallbacks.empty()) {
                 subToDrop = d->internalSubId;
                 d->internalSubId.reset();
             }
@@ -510,6 +566,112 @@ void MonitorService::unsubscribe(SubscriptionId id, DrainPolicy policy) noexcept
         // call was a no-op"; the caller will observe the subscription still
         // active on next dispatch and may retry. POSIX/Win32 mutexes do not
         // fail in practice.
+    }
+}
+
+MonitorService::SubscriptionId MonitorService::subscribeReaderList(ReaderListCallback callback)
+{
+    SubscriptionId newId{d->nextId.fetch_add(1)};
+
+    bool firstSubscriber = false;
+    std::vector<std::string> bootstrapSnapshot;
+    bool haveBootstrap = false;
+    {
+        std::lock_guard<std::mutex> lock(d->cbMtx);
+        d->readerListCallbacks.emplace(newId, std::move(callback));
+        firstSubscriber = (d->callbacks.size() + d->readerListCallbacks.size() == 1);
+        // Bootstrap fire path: when joining after the internal monitor has
+        // already produced an initial knownReaders snapshot, deliver the
+        // current snapshot immediately so the late-joining subscriber does
+        // not have to wait for the next reader-list change to observe the
+        // baseline membership.
+        if (!firstSubscriber) {
+            std::lock_guard<std::mutex> readersLock(d->readersMtx);
+            bootstrapSnapshot.assign(d->knownReaders.begin(), d->knownReaders.end());
+            haveBootstrap = true;
+        }
+    }
+
+    if (firstSubscriber) {
+        // First subscriber (counting both per-event and reader-list
+        // populations) — wire up the internal monitor identically to the
+        // per-event subscribe path. The internal readersCb will fire on
+        // the initial PnP probe and synthesise the bootstrap snapshot
+        // through @ref Impl::diffReadersAndDispatch on its own.
+        {
+            std::lock_guard<std::mutex> lock(d->readersMtx);
+            d->knownReaders.clear();
+        }
+        auto* impl = d.get();
+        auto eventCb = [impl](const ::LibreSCRS::SmartCard::Internal::MonitorEvent& e) {
+            MonitorEvent pub{
+                mapCardEventKind(e.type),
+                e.readerName,
+                std::nullopt,
+                std::nullopt,
+            };
+            if (pub.kind == MonitorEvent::Kind::CardInserted) {
+                pub.atr = e.atr;
+            }
+            impl->dispatch(pub);
+        };
+        auto readersCb = [impl](const std::vector<std::string>& readers) { impl->diffReadersAndDispatch(readers); };
+        auto internalId = d->internal->subscribe(std::move(eventCb), std::move(readersCb));
+        std::lock_guard<std::mutex> lock(d->cbMtx);
+        d->internalSubId = internalId;
+    } else if (haveBootstrap) {
+        // Deliver the current snapshot to the new subscriber only (not the
+        // entire population — others have already been notified of the
+        // current state via prior diffReadersAndDispatch calls). Look the
+        // callback up by token to avoid racing with a concurrent
+        // unsubscribeReaderList.
+        ReaderListCallback toFire;
+        {
+            std::lock_guard<std::mutex> lock(d->cbMtx);
+            if (auto it = d->readerListCallbacks.find(newId); it != d->readerListCallbacks.end()) {
+                toFire = it->second;
+            }
+        }
+        if (toFire) {
+            std::lock_guard<std::mutex> dispatchLock(d->dispatchMtx);
+            try {
+                toFire(bootstrapSnapshot);
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "LibreSCRS MonitorService: reader-list subscriber callback threw: %s\n", e.what());
+            } catch (...) {
+                std::fprintf(stderr,
+                             "LibreSCRS MonitorService: reader-list subscriber callback threw unknown exception\n");
+            }
+        }
+    }
+
+    return newId;
+}
+
+void MonitorService::unsubscribeReaderList(SubscriptionId id, DrainPolicy policy) noexcept
+{
+    try {
+        std::optional<::LibreSCRS::SmartCard::Internal::Monitor::SubscriptionId> subToDrop;
+        std::unique_lock<std::mutex> dispatchLock(d->dispatchMtx, std::defer_lock);
+        if (policy == DrainPolicy::Drain) {
+            dispatchLock.lock();
+        }
+        {
+            std::lock_guard<std::mutex> cbLock(d->cbMtx);
+            auto it = d->readerListCallbacks.find(id);
+            if (it == d->readerListCallbacks.end())
+                return;
+            d->readerListCallbacks.erase(it);
+            if (d->callbacks.empty() && d->readerListCallbacks.empty()) {
+                subToDrop = d->internalSubId;
+                d->internalSubId.reset();
+            }
+        }
+        if (subToDrop) {
+            d->internal->unsubscribe(*subToDrop);
+        }
+    } catch (...) {
+        // noexcept contract: see @ref unsubscribe for the rationale.
     }
 }
 

@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 #include <LibreSCRS/Plugin/CardData.h>
+#include <LibreSCRS/Plugin/CardDataAccess.h>
 
 #include <stdexcept>
 #include <type_traits>
@@ -188,4 +189,111 @@ TEST(CardDataBoundsTest, FieldAtUncheckedNoexcept)
                   "fieldAtUnchecked must be noexcept on the hot-path");
     static_assert(noexcept(std::declval<const CardData&>().fieldAtUnchecked(0, 0)),
                   "const fieldAtUnchecked must be noexcept on the hot-path");
+}
+
+// --- CardDataAccess.h convenience accessors (Wave 6 / 6.2) ---
+//
+// textValue(data, groupKey, fieldKey) collapses the "findGroup -> groupAt ->
+// find field -> textValue" dance LC's carddatautils.h previously did by
+// hand. The Qt-free LM helper lets the LC adapter become a thin QString
+// wrapper. These tests cover the contract on the LM side.
+
+namespace {
+CardData makeSampleData()
+{
+    CardData data;
+    data.cardType = "rs-eid";
+    CardFieldGroup personal;
+    personal.groupKey = "personal";
+    personal.groupLabel = "Personal Data";
+    personal.fields.push_back({"surname", "Surname", FieldType::Text, {'D', 'o', 'e'}});
+    personal.fields.push_back({"given_name", "Given Name", FieldType::Text, {'J', 'a', 'n', 'e'}});
+    personal.fields.push_back({"birth_date", "DOB", FieldType::Date, {'1', '9', '9', '0', '0', '1', '0', '1'}});
+    personal.fields.push_back({"empty_text", "Empty", FieldType::Text, {}});
+    data.groups.push_back(std::move(personal));
+    CardFieldGroup document;
+    document.groupKey = "document";
+    document.groupLabel = "Document";
+    document.fields.push_back({"serial", "Serial", FieldType::Text, {'A', 'B', 'C'}});
+    data.groups.push_back(std::move(document));
+    return data;
+}
+} // namespace
+
+TEST(CardDataAccessTest, TextValueNormalCase)
+{
+    const auto data = makeSampleData();
+    auto v = LibreSCRS::Plugin::textValue(data, "personal", "given_name");
+    ASSERT_TRUE(v.has_value());
+    EXPECT_EQ(*v, "Jane");
+}
+
+TEST(CardDataAccessTest, TextValueMissingGroup)
+{
+    const auto data = makeSampleData();
+    EXPECT_FALSE(LibreSCRS::Plugin::textValue(data, "nonexistent_group", "any").has_value());
+}
+
+TEST(CardDataAccessTest, TextValueMissingField)
+{
+    const auto data = makeSampleData();
+    EXPECT_FALSE(LibreSCRS::Plugin::textValue(data, "personal", "nonexistent_field").has_value());
+}
+
+TEST(CardDataAccessTest, TextValueNonTextFieldReturnsNullopt)
+{
+    // Date field exists in the personal group; the accessor must NOT
+    // reinterpret its bytes as text, matching CardField::textValue() behaviour.
+    const auto data = makeSampleData();
+    EXPECT_FALSE(LibreSCRS::Plugin::textValue(data, "personal", "birth_date").has_value());
+}
+
+TEST(CardDataAccessTest, TextValueEmptyTextFieldYieldsEmptyString)
+{
+    const auto data = makeSampleData();
+    auto v = LibreSCRS::Plugin::textValue(data, "personal", "empty_text");
+    ASSERT_TRUE(v.has_value()) << "empty Text value is still a Text value — must produce an engaged optional";
+    EXPECT_TRUE(v->empty());
+}
+
+TEST(CardDataAccessTest, TextValueFirstMatchWinsOnDuplicateGroupKeys)
+{
+    // findGroup returns the FIRST match when multiple groups share a key;
+    // the convenience accessor inherits that semantic.
+    CardData data;
+    CardFieldGroup g1;
+    g1.groupKey = "personal";
+    g1.fields.push_back({"name", "N", FieldType::Text, {'1'}});
+    data.groups.push_back(std::move(g1));
+    CardFieldGroup g2;
+    g2.groupKey = "personal"; // duplicate
+    g2.fields.push_back({"name", "N", FieldType::Text, {'2'}});
+    data.groups.push_back(std::move(g2));
+
+    auto v = LibreSCRS::Plugin::textValue(data, "personal", "name");
+    ASSERT_TRUE(v.has_value());
+    EXPECT_EQ(*v, "1") << "first-match semantics must mirror CardData::findGroup";
+
+    // textValueAt with explicit index reaches the second group.
+    auto v2 = LibreSCRS::Plugin::textValueAt(data, 1, "name");
+    ASSERT_TRUE(v2.has_value());
+    EXPECT_EQ(*v2, "2");
+}
+
+TEST(CardDataAccessTest, TextValueAtOutOfRangeReturnsNullopt)
+{
+    const auto data = makeSampleData();
+    EXPECT_FALSE(LibreSCRS::Plugin::textValueAt(data, data.groups.size(), "any").has_value());
+    EXPECT_FALSE(LibreSCRS::Plugin::textValueAt(data, 99, "any").has_value());
+}
+
+TEST(CardDataAccessTest, TextValueAccessorsAreNoexcept)
+{
+    static_assert(
+        noexcept(LibreSCRS::Plugin::textValue(std::declval<const CardData&>(), std::string_view{}, std::string_view{})),
+        "textValue must be noexcept per API-POLICY public-boundary rule");
+    static_assert(
+        noexcept(LibreSCRS::Plugin::textValueAt(std::declval<const CardData&>(), std::size_t{0}, std::string_view{})),
+        "textValueAt must be noexcept per API-POLICY public-boundary rule");
+    SUCCEED();
 }

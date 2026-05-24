@@ -121,6 +121,23 @@ public:
     /// @brief Host-supplied callback invoked for each @ref MonitorEvent.
     using EventCallback = std::function<void(const MonitorEvent&)>;
 
+    /// @brief Host-supplied callback invoked with the full post-change
+    ///        reader-list snapshot whenever the aggregate set of PC/SC
+    ///        readers known to this MonitorService changes.
+    ///
+    /// Delivered in addition to (not instead of) the per-reader
+    /// @ref MonitorEvent::Kind::ReaderAdded / @ref MonitorEvent::Kind::ReaderRemoved
+    /// stream surfaced via @ref EventCallback. Use this listener variant
+    /// when the consumer needs the authoritative reader-list snapshot
+    /// after each change without maintaining its own running set (the
+    /// previous-to-4.2 idiom was to subscribe with @ref EventCallback and
+    /// fold per-reader Added / Removed events into a host-managed
+    /// `std::set<std::string>` to recover the snapshot for downstream
+    /// signalling).
+    ///
+    /// @since 4.2
+    using ReaderListCallback = std::function<void(const std::vector<std::string>&)>;
+
     /// @brief Opaque subscription handle. Returned by @ref subscribe, passed
     ///        to @ref unsubscribe. Comparable (ordered/equal) and hashable
     ///        via the @c std::hash specialisation defined below.
@@ -307,6 +324,65 @@ public:
     ///       the in-flight PC/SC syscall completes (independent of @p policy).
     /// @note Unknown @p id → no-op.
     void unsubscribe(SubscriptionId id, DrainPolicy policy = DrainPolicy::FireAndForget) noexcept;
+
+    /// @brief Register @p callback to receive the full post-change reader-list
+    ///        snapshot whenever the aggregate set of PC/SC readers changes.
+    ///
+    /// Fires once on registration with the current snapshot (which may be
+    /// empty when no readers are plugged in), then on every subsequent
+    /// change with the post-change snapshot. The first-fire bootstrap lets
+    /// consumers that join late still observe the initial reader inventory
+    /// without polling @ref listReaders themselves.
+    ///
+    /// Within a single reader-list change, the per-reader
+    /// @ref MonitorEvent::Kind::ReaderAdded / @ref MonitorEvent::Kind::ReaderRemoved
+    /// events are dispatched FIRST through any @ref subscribe callbacks,
+    /// and the aggregated post-change snapshot is dispatched AFTERWARDS
+    /// through every @ref subscribeReaderList callback. Consumers that
+    /// register both kinds of callback can therefore rely on the snapshot
+    /// observing every prior per-reader event for the same change.
+    ///
+    /// @return Handle for @ref unsubscribeReaderList. The returned handle
+    ///         shares the same token space as @ref subscribe — handles
+    ///         minted by either method are pairwise distinct and must be
+    ///         passed to their matching unsubscribe overload.
+    ///
+    /// @note First subscriber (counting both @ref subscribe and
+    ///       @ref subscribeReaderList) triggers auto-start of the polling
+    ///       thread. The brief "isRunning may return false" window
+    ///       documented on @ref subscribe applies here too.
+    ///
+    /// @par Example
+    /// @code
+    /// LibreSCRS::SmartCard::MonitorService monitor;
+    /// // LC-style consumer: receive the authoritative reader list after
+    /// // each change without maintaining a local std::set<std::string>.
+    /// auto id = monitor.subscribeReaderList(
+    ///     [](const std::vector<std::string>& readers) {
+    ///         // marshal to GUI thread, e.g. via QMetaObject::invokeMethod
+    ///         emitReaderListChanged(readers);
+    ///     });
+    /// // ... later, on shutdown:
+    /// monitor.unsubscribeReaderList(id);
+    /// @endcode
+    ///
+    /// @since 4.2
+    // TODO(docs): add Hugo dev-guide page at /docs/api/monitor-reader-list.md (EN+SR) before 4.2 release
+    [[nodiscard]] SubscriptionId subscribeReaderList(ReaderListCallback callback);
+
+    /// @brief Unregister the reader-list snapshot subscription identified by @p id.
+    /// @param id Subscription handle obtained from @ref subscribeReaderList.
+    /// @param policy Selects whether to wait for in-flight callbacks for this
+    ///        subscription to complete (@ref DrainPolicy::Drain) or return
+    ///        immediately (@ref DrainPolicy::FireAndForget, default).
+    /// @note After return, NEW snapshots will not be delivered to this callback.
+    /// @note Drain / FireAndForget semantics mirror @ref unsubscribe verbatim.
+    /// @note Unknown @p id → no-op. Passing a handle minted by @ref subscribe
+    ///       (i.e. a per-event subscription) is treated as unknown and is a
+    ///       no-op as well; consumers must pair each subscribe variant with
+    ///       its matching unsubscribe.
+    /// @since 4.2
+    void unsubscribeReaderList(SubscriptionId id, DrainPolicy policy = DrainPolicy::FireAndForget) noexcept;
 
     /// @brief True when the polling thread is active.
     /// @note See @ref subscribe note about a brief false window immediately

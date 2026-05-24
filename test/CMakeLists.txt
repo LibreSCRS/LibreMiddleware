@@ -215,7 +215,11 @@ add_executable(PluginTests
 target_link_libraries(PluginTests
     GTest::gtest_main
     CardPlugin_Impl
+    LibreSCRS_Plugin
 )
+# LibreSCRS_Plugin link: needed for the LibreSCRS::Plugin::textValue /
+# textValueAt convenience accessors exercised by the CardDataAccessTest
+# suite in card_data_test.cpp (Wave 6 / 6.2).
 target_compile_definitions(PluginTests PRIVATE
     MOCK_PLUGIN_DIR="$<TARGET_FILE_DIR:mock-card-plugin>"
 )
