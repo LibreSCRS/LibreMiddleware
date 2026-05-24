@@ -198,7 +198,7 @@ std::optional<std::vector<GeneralName>> readGeneralNamesExt(const X509* x509, in
 
 } // namespace
 
-struct ParsedCertificate::Impl
+struct LIBRESCRS_INTERNAL ParsedCertificate::Impl
 {
     X509Ptr x509{nullptr, X509_free};
     std::vector<std::uint8_t> originalDer;

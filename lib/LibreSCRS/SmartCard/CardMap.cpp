@@ -30,7 +30,7 @@ std::string flatten(const CardMap::Key& key)
 
 } // namespace
 
-struct CardMap::Impl
+struct LIBRESCRS_INTERNAL CardMap::Impl
 {
     mutable std::mutex mu;
     std::unordered_map<std::string, CardMapEntry> entries;

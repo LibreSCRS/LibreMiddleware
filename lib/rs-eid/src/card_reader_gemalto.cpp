@@ -5,6 +5,7 @@
 #include "card_protocol.h"
 #include "apdu.h"
 #include <pcsc_connection.h>
+#include <smartcard/chunked_read.h>
 #include <stdexcept>
 
 namespace eidcard {
@@ -32,10 +33,12 @@ CardType CardReaderGemalto::selectApplication(LibreSCRS::SmartCard::Internal::PC
     return CardType::Unknown;
 }
 
+namespace {
+
 // SELECT file and read its 4-byte header.
 // On failure, retries with application re-selection and reconnect.
-static LibreSCRS::SmartCard::Internal::APDUResponse
-selectAndReadHeader(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1, uint8_t fileId2)
+LibreSCRS::SmartCard::Internal::APDUResponse selectAndReadHeader(LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
+                                                                 uint8_t fileId1, uint8_t fileId2)
 {
     auto selectResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByPath(fileId1, fileId2, 4));
     if (selectResp.isSuccess()) {
@@ -68,9 +71,9 @@ selectAndReadHeader(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_
 }
 
 // READ BINARY with retry: re-select app + file, then reconnect + re-select.
-static LibreSCRS::SmartCard::Internal::APDUResponse
-readBinaryWithRetry(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint16_t offset, uint8_t length,
-                    uint8_t fileId1, uint8_t fileId2)
+LibreSCRS::SmartCard::Internal::APDUResponse readBinaryWithRetry(LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
+                                                                 uint16_t offset, uint8_t length, uint8_t fileId1,
+                                                                 uint8_t fileId2)
 {
     auto readResp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(offset, length));
     if (readResp.isSuccess())
@@ -91,85 +94,41 @@ readBinaryWithRetry(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint16
     return readResp;
 }
 
-std::vector<uint8_t> CardReaderGemalto::readFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1,
-                                                 uint8_t fileId2)
+// Shared Gemalto file read: 4-byte header, LE u16 content length at offset 2,
+// 64 KB sanity cap, per-chunk re-select retry policy.
+std::vector<uint8_t> readGemaltoFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1,
+                                     uint8_t fileId2, bool includeHeader)
 {
     auto headerResp = selectAndReadHeader(conn, fileId1, fileId2);
 
-    // File data length is at header bytes 2-3 in LITTLE-ENDIAN format
-    uint32_t dataLength = static_cast<uint32_t>(headerResp.data[2]) | (static_cast<uint32_t>(headerResp.data[3]) << 8);
+    LibreSCRS::SmartCard::Internal::ChunkedReadOptions opts;
+    opts.headerSpec.headerSize = 4;
+    opts.headerSpec.lengthOffset = 2;
+    opts.headerSpec.lengthBytes = 2;
+    opts.headerSpec.maxContentLength = 65535;
+    opts.includeHeaderInResult = includeHeader;
+    opts.chunkSize = protocol::READ_CHUNK_SIZE;
+    opts.errorPrefix = "Gemalto";
+    opts.headerOverride = std::move(headerResp.data);
+    opts.readChunk = [&conn, fileId1, fileId2](uint16_t offset, uint8_t length) {
+        return readBinaryWithRetry(conn, offset, length, fileId1, fileId2);
+    };
 
-    if (dataLength > 65535)
-        throw std::runtime_error("Gemalto: file size exceeds maximum (65535 bytes)");
+    return LibreSCRS::SmartCard::Internal::readChunkedFile(conn, opts);
+}
 
-    if (dataLength == 0) {
-        return {};
-    }
+} // namespace
 
-    // Read file data starting after the 4-byte header
-    std::vector<uint8_t> fileData;
-    fileData.reserve(dataLength);
-    uint32_t offset = 4;
-
-    while (fileData.size() < dataLength) {
-        uint8_t chunkSize = static_cast<uint8_t>(std::min(static_cast<uint32_t>(protocol::READ_CHUNK_SIZE),
-                                                          dataLength - static_cast<uint32_t>(fileData.size())));
-
-        auto readResp = readBinaryWithRetry(conn, offset, chunkSize, fileId1, fileId2);
-        if (!readResp.isSuccess()) {
-            throw std::runtime_error("Gemalto: READ BINARY failed at offset " + std::to_string(offset));
-        }
-
-        if (readResp.data.empty()) {
-            break;
-        }
-
-        fileData.insert(fileData.end(), readResp.data.begin(), readResp.data.end());
-        offset += static_cast<uint32_t>(readResp.data.size());
-    }
-
-    return fileData;
+std::vector<uint8_t> CardReaderGemalto::readFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1,
+                                                 uint8_t fileId2)
+{
+    return readGemaltoFile(conn, fileId1, fileId2, /*includeHeader=*/false);
 }
 
 std::vector<uint8_t> CardReaderGemalto::readFileRaw(LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
                                                     uint8_t fileId1, uint8_t fileId2)
 {
-    auto headerResp = selectAndReadHeader(conn, fileId1, fileId2);
-
-    // File data length is at header bytes 2-3 in LITTLE-ENDIAN format
-    uint32_t dataLength = static_cast<uint32_t>(headerResp.data[2]) | (static_cast<uint32_t>(headerResp.data[3]) << 8);
-
-    // Build result starting with the 4-byte header
-    uint32_t totalLength = 4 + dataLength;
-    std::vector<uint8_t> fileData;
-    fileData.reserve(totalLength);
-    fileData.insert(fileData.end(), headerResp.data.begin(), headerResp.data.begin() + 4);
-
-    if (dataLength == 0) {
-        return fileData;
-    }
-
-    // Read remaining data starting after the header
-    uint32_t offset = 4;
-
-    while (fileData.size() < totalLength) {
-        uint8_t chunkSize = static_cast<uint8_t>(std::min(static_cast<uint32_t>(protocol::READ_CHUNK_SIZE),
-                                                          totalLength - static_cast<uint32_t>(fileData.size())));
-
-        auto readResp = readBinaryWithRetry(conn, offset, chunkSize, fileId1, fileId2);
-        if (!readResp.isSuccess()) {
-            throw std::runtime_error("Gemalto: READ BINARY failed at offset " + std::to_string(offset));
-        }
-
-        if (readResp.data.empty()) {
-            break;
-        }
-
-        fileData.insert(fileData.end(), readResp.data.begin(), readResp.data.end());
-        offset += static_cast<uint32_t>(readResp.data.size());
-    }
-
-    return fileData;
+    return readGemaltoFile(conn, fileId1, fileId2, /*includeHeader=*/true);
 }
 
 } // namespace eidcard

@@ -15,7 +15,7 @@
 
 namespace LibreSCRS::SmartCard {
 
-class ActiveChannelHolder::Impl
+class LIBRESCRS_INTERNAL ActiveChannelHolder::Impl
 {
 public:
     Impl(CardSession* sessionPtr, std::unique_lock<std::mutex> sessionLock,

@@ -21,7 +21,7 @@
 
 namespace LibreSCRS::Trust {
 
-struct TrustStore::Impl
+struct LIBRESCRS_INTERNAL TrustStore::Impl
 {
     mutable std::shared_mutex mtx;
     std::vector<std::shared_ptr<detail::TrustAnchorProvider>> providers;

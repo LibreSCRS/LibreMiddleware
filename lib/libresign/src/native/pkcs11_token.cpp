@@ -3,6 +3,8 @@
 
 #include "native/pkcs11_token.h"
 
+#include <LibreSCRS/Export.h>
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -38,7 +40,7 @@ void checkRv(CK_RV rv, const char* operation)
 
 } // namespace
 
-struct Pkcs11Token::Impl
+struct LIBRESCRS_INTERNAL Pkcs11Token::Impl
 {
     /// Shared handle into the process-wide loaded-module cache. Keeps
     /// the underlying mapping alive for the Token's lifetime; module

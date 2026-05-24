@@ -12,6 +12,7 @@ add_library(SmartCard_Impl STATIC
     src/pcsc_connection.cpp
     src/tlv.cpp
     src/ber.cpp
+    src/chunked_read.cpp
     src/monitor.cpp
     # Internal core-transport headers (LM-private; #error-guarded against
     # external use, reached through the PRIVATE lib/smartcard/src include
@@ -33,6 +34,11 @@ add_library(SmartCard_Impl STATIC
     include/smartcard/i_connection.h
     include/smartcard/secure_buffer.h
     include/smartcard/monitor_event.h
+    # Internal helper: SmartCard_Impl-private chunked file-read loop,
+    # LIBRESCRS_INTERNAL_BUILD-gated. Placed under include/ so that
+    # LIBRESCRS_INTERNAL_BUILD consumers reach it via <smartcard/...>
+    # without each adding lib/smartcard/src to their include path.
+    include/smartcard/chunked_read.h
 )
 
 target_compile_definitions(SmartCard_Impl PRIVATE LIBRESCRS_INTERNAL_BUILD)

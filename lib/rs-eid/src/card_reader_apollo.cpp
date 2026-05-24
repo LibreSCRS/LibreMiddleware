@@ -5,122 +5,52 @@
 #include "card_protocol.h"
 #include "apdu.h"
 #include <pcsc_connection.h>
+#include <smartcard/chunked_read.h>
 #include <stdexcept>
 
 namespace eidcard {
 
-std::vector<uint8_t> CardReaderApollo::readFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1,
-                                                uint8_t fileId2)
+namespace {
+
+// Shared Apollo file read: 6-byte header, LE u16 content length at offset 4,
+// 0xFF marker at offset 4 = empty file, 64 KB sanity cap.
+std::vector<uint8_t> readApolloFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1,
+                                    uint8_t fileId2, bool includeHeader)
 {
-    // Apollo cards: SELECT by file ID (P1=0x00)
+    // Apollo cards: SELECT by file ID (P1=0x00). Apollo may return
+    // 0x61XX (more data available) or 0x9000; both indicate SELECT OK.
     auto selectResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(fileId1, fileId2));
-    // Apollo may return 0x61XX (more data available) or 0x9000
     if (selectResp.sw1 != 0x90 && selectResp.sw1 != 0x61) {
         throw std::runtime_error("Apollo: SELECT file failed, SW=" + std::to_string(selectResp.statusWord()));
     }
 
-    // Read 6-byte header to get total file length
-    auto headerResp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 6));
-    if (!headerResp.isSuccess() || headerResp.data.size() < 6) {
-        throw std::runtime_error("Apollo: Cannot read file header");
-    }
+    LibreSCRS::SmartCard::Internal::ChunkedReadOptions opts;
+    opts.headerSpec.headerSize = 6;
+    opts.headerSpec.lengthOffset = 4;
+    opts.headerSpec.lengthBytes = 2;
+    opts.headerSpec.hasEmptyMarker = true;
+    opts.headerSpec.emptyMarkerOffset = 4;
+    opts.headerSpec.emptyMarkerValue = 0xFF;
+    opts.headerSpec.maxContentLength = 64 * 1024; // 64KB reasonable max for eID files
+    opts.includeHeaderInResult = includeHeader;
+    opts.chunkSize = protocol::READ_CHUNK_SIZE;
+    opts.errorPrefix = "Apollo";
 
-    // Check for empty file marker (0xFF at offset 4)
-    if (headerResp.data[4] == 0xFF) {
-        return {};
-    }
+    return LibreSCRS::SmartCard::Internal::readChunkedFile(conn, opts);
+}
 
-    // File data length from header bytes 4-5 in LITTLE-ENDIAN format
-    uint32_t dataLength = static_cast<uint32_t>(headerResp.data[4]) | (static_cast<uint32_t>(headerResp.data[5]) << 8);
+} // namespace
 
-    constexpr uint32_t maxFileSize = 64 * 1024; // 64KB reasonable max for eID files
-    if (dataLength > maxFileSize)
-        throw std::runtime_error("Apollo: file size exceeds maximum (" + std::to_string(dataLength) + " bytes)");
-
-    if (dataLength == 0) {
-        return {};
-    }
-
-    // Read file data starting after the 6-byte header
-    std::vector<uint8_t> fileData;
-    fileData.reserve(dataLength);
-    uint16_t offset = 6;
-
-    while (fileData.size() < dataLength) {
-        uint8_t chunkSize = static_cast<uint8_t>(std::min(static_cast<uint32_t>(protocol::READ_CHUNK_SIZE),
-                                                          dataLength - static_cast<uint32_t>(fileData.size())));
-
-        auto readResp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(offset, chunkSize));
-        if (!readResp.isSuccess()) {
-            throw std::runtime_error("Apollo: READ BINARY failed at offset " + std::to_string(offset));
-        }
-
-        fileData.insert(fileData.end(), readResp.data.begin(), readResp.data.end());
-        offset += static_cast<uint16_t>(readResp.data.size());
-
-        if (readResp.data.empty()) {
-            break;
-        }
-    }
-
-    return fileData;
+std::vector<uint8_t> CardReaderApollo::readFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1,
+                                                uint8_t fileId2)
+{
+    return readApolloFile(conn, fileId1, fileId2, /*includeHeader=*/false);
 }
 
 std::vector<uint8_t> CardReaderApollo::readFileRaw(LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
                                                    uint8_t fileId1, uint8_t fileId2)
 {
-    // Apollo cards: SELECT by file ID (P1=0x00)
-    auto selectResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(fileId1, fileId2));
-    if (selectResp.sw1 != 0x90 && selectResp.sw1 != 0x61) {
-        throw std::runtime_error("Apollo: SELECT file failed, SW=" + std::to_string(selectResp.statusWord()));
-    }
-
-    // Read 6-byte header
-    auto headerResp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0, 6));
-    if (!headerResp.isSuccess() || headerResp.data.size() < 6) {
-        throw std::runtime_error("Apollo: Cannot read file header");
-    }
-
-    if (headerResp.data[4] == 0xFF) {
-        return {};
-    }
-
-    uint32_t dataLength = static_cast<uint32_t>(headerResp.data[4]) | (static_cast<uint32_t>(headerResp.data[5]) << 8);
-
-    constexpr uint32_t maxFileSize = 64 * 1024;
-    if (dataLength > maxFileSize)
-        throw std::runtime_error("Apollo: file size exceeds maximum (" + std::to_string(dataLength) + " bytes)");
-
-    // Build result starting with the 6-byte header
-    uint32_t totalLength = 6 + dataLength;
-    std::vector<uint8_t> fileData;
-    fileData.reserve(totalLength);
-    fileData.insert(fileData.end(), headerResp.data.begin(), headerResp.data.begin() + 6);
-
-    if (dataLength == 0) {
-        return fileData;
-    }
-
-    uint16_t offset = 6;
-
-    while (fileData.size() < totalLength) {
-        uint8_t chunkSize = static_cast<uint8_t>(std::min(static_cast<uint32_t>(protocol::READ_CHUNK_SIZE),
-                                                          totalLength - static_cast<uint32_t>(fileData.size())));
-
-        auto readResp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(offset, chunkSize));
-        if (!readResp.isSuccess()) {
-            throw std::runtime_error("Apollo: READ BINARY failed at offset " + std::to_string(offset));
-        }
-
-        fileData.insert(fileData.end(), readResp.data.begin(), readResp.data.end());
-        offset += static_cast<uint16_t>(readResp.data.size());
-
-        if (readResp.data.empty()) {
-            break;
-        }
-    }
-
-    return fileData;
+    return readApolloFile(conn, fileId1, fileId2, /*includeHeader=*/true);
 }
 
 } // namespace eidcard

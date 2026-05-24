@@ -28,6 +28,16 @@ struct BERField
 // Parse BER-TLV data. Returns a synthetic root node containing all top-level fields as children.
 BERField parseBER(const uint8_t* data, size_t length);
 
+// Parse a single BER tag (1, 2, or 3 bytes) starting at `offset`.
+// Returns the tag value and advances `offset` past the tag bytes.
+// Throws std::runtime_error on truncated/oversized input.
+uint32_t parseTag(const uint8_t* data, size_t length, size_t& offset);
+
+// Parse a BER length (short or long form) starting at `offset`.
+// Returns the length value and advances `offset` past the length bytes.
+// Throws std::runtime_error on indefinite/oversized/truncated encodings.
+size_t parseLength(const uint8_t* data, size_t length, size_t& offset);
+
 // Merge two BER trees: appends src's children into dst
 void mergeBER(BERField& dst, const BERField& src);
 

@@ -3,6 +3,8 @@
 
 #include "http_client.h"
 
+#include <LibreSCRS/Export.h>
+
 #include <curl/curl.h>
 #include <openssl/crypto.h>
 
@@ -347,7 +349,7 @@ curl_slist* applyCredentials(CURL* c, const TransportCredentials& creds, curl_sl
 
 } // namespace
 
-struct HttpClient::Impl
+struct LIBRESCRS_INTERNAL HttpClient::Impl
 {
     void* curl = nullptr;
 

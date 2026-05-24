@@ -5,6 +5,7 @@
 #include "health_protocol.h"
 #include "apdu.h"
 #include <pcsc_connection.h>
+#include <smartcard/chunked_read.h>
 #include "tlv.h"
 #include <algorithm>
 #include <stdexcept>
@@ -101,35 +102,15 @@ std::vector<uint8_t> HealthCard::readFile(const std::vector<uint8_t>& fileId)
         throw std::runtime_error("Health card: SELECT file failed for fileId " + std::to_string(fileId[0]) + "/" +
                                  std::to_string(fileId[1]) + " SW=" + std::to_string(selectResp.statusWord()));
 
-    // Read 4-byte header: bytes [2:3] (LE) hold the content length
-    auto headerResp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0, protocol::FILE_HEADER_SIZE));
-    if (!headerResp.isSuccess() || headerResp.data.size() < protocol::FILE_HEADER_SIZE)
-        throw std::runtime_error("Health card: Cannot read file header");
+    // 4-byte header, LE u16 content length at offset 2, body-only result.
+    LibreSCRS::SmartCard::Internal::ChunkedReadOptions opts;
+    opts.headerSpec.headerSize = protocol::FILE_HEADER_SIZE;
+    opts.headerSpec.lengthOffset = 2;
+    opts.headerSpec.lengthBytes = 2;
+    opts.chunkSize = protocol::READ_CHUNK_SIZE;
+    opts.errorPrefix = "Health card";
 
-    uint16_t contentLength =
-        static_cast<uint16_t>(headerResp.data[2]) | (static_cast<uint16_t>(headerResp.data[3]) << 8);
-
-    if (contentLength == 0)
-        return {};
-
-    // Read content in 255-byte chunks starting right after the 4-byte header
-    std::vector<uint8_t> fileData;
-    fileData.reserve(contentLength);
-    uint16_t offset = protocol::FILE_HEADER_SIZE;
-
-    while (fileData.size() < contentLength) {
-        uint8_t chunkSize = static_cast<uint8_t>(
-            std::min(static_cast<size_t>(protocol::READ_CHUNK_SIZE), contentLength - fileData.size()));
-        auto readResp = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(offset, chunkSize));
-        if (!readResp.isSuccess())
-            throw std::runtime_error("Health card: READ BINARY failed");
-        if (readResp.data.empty())
-            break;
-        fileData.insert(fileData.end(), readResp.data.begin(), readResp.data.end());
-        offset += static_cast<uint16_t>(readResp.data.size());
-    }
-
-    return fileData;
+    return LibreSCRS::SmartCard::Internal::readChunkedFile(conn, opts);
 }
 
 HealthDocumentData HealthCard::readDocumentData()

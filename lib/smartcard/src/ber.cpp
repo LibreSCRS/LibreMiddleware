@@ -11,8 +11,6 @@ std::string BERField::asString() const
     return std::string(value.begin(), value.end());
 }
 
-namespace {
-
 // Parse a BER tag (1, 2, or 3 bytes). Returns tag value and advances offset.
 uint32_t parseTag(const uint8_t* data, size_t length, size_t& offset)
 {
@@ -71,6 +69,8 @@ size_t parseLength(const uint8_t* data, size_t length, size_t& offset)
     }
     return len;
 }
+
+namespace {
 
 // Recursively parse BER fields. maxDepth prevents stack exhaustion from malicious card data.
 std::vector<BERField> parseFields(const uint8_t* data, size_t length, int maxDepth = 32)
