@@ -335,6 +335,33 @@ void MonitorService::Impl::runCoalesceFlusher()
         }
         lk.unlock();
         for (const auto& ev : toEmit) {
+            // Re-validate against coalesceState before dispatching. The
+            // poll thread can dispatch ReaderRemoved for `ev.readerName`
+            // between our snapshot above (which reset heldEvent but left
+            // the coalesceState entry in place) and this dispatch. When a
+            // reader is removed, diffReadersAndDispatch ERASES the whole
+            // coalesceState[reader] entry; a normal flush only resets
+            // heldEvent and leaves the entry present. So entry-absence
+            // distinguishes "reader removed during the flush gap" from
+            // "ordinary flush". Suppress the former: dispatching a stale
+            // CardInserted/CardRemoved for an already-removed reader
+            // creates a phantom in consumer state (consumers maintaining
+            // their own reader set re-add the reader, then never receive
+            // a matching CardRemoved because PCSC will never send one).
+            //
+            // The check is coalescer-internal (coalesceState, not
+            // knownReaders) so the coalescer keeps its unit-test isolation
+            // — only card events flow through the coalescer, and a card
+            // event for a reader always has a coalesceState entry until
+            // that reader is removed. coalesceMtx is acquired and released
+            // here BEFORE dispatchImmediate takes dispatchMtx, preserving
+            // the established no-nesting order between the two. See spec §3.
+            {
+                std::scoped_lock<std::mutex> coalesceLk(coalesceMtx);
+                if (coalesceState.find(ev.readerName) == coalesceState.end()) {
+                    continue;
+                }
+            }
             dispatchImmediate(ev);
         }
         lk.lock();
@@ -558,8 +585,28 @@ MonitorService::SubscriptionId MonitorService::subscribe(EventCallback callback)
             }
         };
         auto internalId = d->internal->subscribe(std::move(eventCb), std::move(readersCb));
-        std::lock_guard<std::mutex> lock(d->cbMtx);
-        d->internalSubId = internalId;
+        std::optional<::LibreSCRS::SmartCard::Internal::Monitor::SubscriptionId> orphanedSub;
+        {
+            std::lock_guard<std::mutex> lock(d->cbMtx);
+            d->internalSubId = internalId;
+            // TOCTOU recovery: a concurrent unsubscribe(newId) may have
+            // executed between the first cbMtx release (after
+            // callbacks.emplace, above) and this re-acquire, observing an
+            // empty subscriber population WHILE internalSubId was still
+            // nullopt. In that case unsubscribe could not call
+            // internal->unsubscribe, so without this check we would orphan
+            // the just-started poll thread (it runs forever, PCSC context
+            // leaked until ~MonitorService). Re-check: if both maps are
+            // empty now, the racing unsubscribe already happened and we
+            // must drop the internal subscription ourselves. See spec §4.
+            if (d->callbacks.empty() && d->readerListCallbacks.empty()) {
+                orphanedSub = d->internalSubId;
+                d->internalSubId.reset();
+            }
+        }
+        if (orphanedSub) {
+            d->internal->unsubscribe(*orphanedSub);
+        }
     }
 
     return newId;
@@ -596,8 +643,31 @@ void MonitorService::unsubscribe(SubscriptionId id, DrainPolicy policy) noexcept
         if (subToDrop) {
             // Unsubscribe outside cbMtx; internal MonitorService may block
             // for an in-flight dispatch which itself re-enters
-            // snapshotCallbacks. The Drain branch additionally holds
-            // dispatchMtx for the duration so the join is race-free.
+            // snapshotCallbacks.
+            //
+            // This call joins the internal poll thread while we (in the
+            // Drain branch) still hold dispatchMtx. That is safe — but NOT
+            // because holding dispatchMtx makes the join "race-free" (an
+            // earlier comment claimed this; it was wrong and could imply a
+            // deadlock if you trace only this layer). The actual invariant
+            // lives one layer down: Monitor::unsubscribe erases our
+            // readers/event callbacks from its subscriber map BEFORE it
+            // calls stopThread()/join() (see lib/smartcard/src/monitor.cpp
+            // unsubscribe()). After that erase, the poll thread's
+            // notifyReaders/notifyEvent iterate an empty subscriber set and
+            // never re-invoke diffReadersAndDispatch -> dispatchReaderListSnapshot,
+            // so the poll thread cannot block trying to re-acquire the
+            // dispatchMtx we hold. The join therefore completes regardless
+            // of whether we hold dispatchMtx.
+            //
+            // CAUTION: this safety is a cross-layer dependency on
+            // Monitor::unsubscribe's erase-before-stop ordering. If that
+            // ordering ever changes to stop-before-erase, holding
+            // dispatchMtx here WOULD deadlock (poll thread trapped in
+            // dispatchReaderListSnapshot waiting for dispatchMtx, join
+            // waiting for the poll thread). The
+            // UnsubscribeDrainDoesNotDeadlockWhenPollReEnters regression
+            // test guards that ordering.
             d->internal->unsubscribe(*subToDrop);
         }
     } catch (...) {
@@ -683,8 +753,28 @@ MonitorService::SubscriptionId MonitorService::subscribeReaderList(ReaderListCal
             }
         };
         auto internalId = d->internal->subscribe(std::move(eventCb), std::move(readersCb));
-        std::lock_guard<std::mutex> lock(d->cbMtx);
-        d->internalSubId = internalId;
+        std::optional<::LibreSCRS::SmartCard::Internal::Monitor::SubscriptionId> orphanedSub;
+        {
+            std::lock_guard<std::mutex> lock(d->cbMtx);
+            d->internalSubId = internalId;
+            // TOCTOU recovery: a concurrent unsubscribe(newId) may have
+            // executed between the first cbMtx release (after
+            // callbacks.emplace, above) and this re-acquire, observing an
+            // empty subscriber population WHILE internalSubId was still
+            // nullopt. In that case unsubscribe could not call
+            // internal->unsubscribe, so without this check we would orphan
+            // the just-started poll thread (it runs forever, PCSC context
+            // leaked until ~MonitorService). Re-check: if both maps are
+            // empty now, the racing unsubscribe already happened and we
+            // must drop the internal subscription ourselves. See spec §4.
+            if (d->callbacks.empty() && d->readerListCallbacks.empty()) {
+                orphanedSub = d->internalSubId;
+                d->internalSubId.reset();
+            }
+        }
+        if (orphanedSub) {
+            d->internal->unsubscribe(*orphanedSub);
+        }
     } else if (haveBootstrap) {
         // Deliver the current snapshot to the new subscriber only (not the
         // entire population — others have already been notified of the
@@ -734,6 +824,10 @@ void MonitorService::unsubscribeReaderList(SubscriptionId id, DrainPolicy policy
             }
         }
         if (subToDrop) {
+            // Joins the internal poll thread; safe to call while holding
+            // dispatchMtx because Monitor::unsubscribe erases our callbacks
+            // before stopThread()/join — see the detailed cross-layer
+            // invariant note in unsubscribe().
             d->internal->unsubscribe(*subToDrop);
         }
     } catch (...) {

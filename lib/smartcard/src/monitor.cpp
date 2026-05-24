@@ -39,11 +39,22 @@ Monitor::~Monitor()
 
 Monitor::SubscriptionId Monitor::subscribe(MonitorCallback onEvent, ReaderListCallback onReaders)
 {
-    std::lock_guard lock(subscribersMtx);
-    auto id = nextId++;
-    assert(subscribers.find(id) == subscribers.end()); // overflow guard
-    subscribers[id] = {std::move(onEvent), std::move(onReaders)};
-    if (subscribers.size() == 1) {
+    bool needsStart = false;
+    SubscriptionId id;
+    {
+        std::lock_guard lock(subscribersMtx);
+        id = nextId++;
+        assert(subscribers.find(id) == subscribers.end()); // overflow guard
+        subscribers[id] = {std::move(onEvent), std::move(onReaders)};
+        // Capture the first-subscriber flag under subscribersMtx, but call
+        // startThread() outside the lock. startThread() acquires threadMtx
+        // and may join a prior poll thread that is blocked in notifyReaders/
+        // notifyEvent trying to acquire subscribersMtx — holding both
+        // subscribersMtx and waiting for threadMtx (which stopThread holds
+        // while joining that same poll thread) forms an ABBA deadlock.
+        needsStart = (subscribers.size() == 1);
+    }
+    if (needsStart) {
         startThread();
     }
     return id;
@@ -72,9 +83,31 @@ void Monitor::startThread()
     std::lock_guard lock(threadMtx);
     if (monitorThread.joinable()) {
         // A prior stopThread() on another thread has not yet completed the
-        // join. Wait it out here so `monitorThread = std::thread(...)` does
-        // not terminate(). In the common case monitorThread is default-
-        // constructed (not joinable) and this is a no-op.
+        // join. Two cases:
+        //
+        // (a) Normal: stopThread already set stopRequested=true and
+        //     cancelled, but the OS hasn't scheduled the poll thread to
+        //     exit yet. Just join and let it finish.
+        //
+        // (b) Race: startThread acquired threadMtx BEFORE a concurrent
+        //     stopThread (i.e. subscribe/startThread raced unsubscribe/
+        //     stopThread for threadMtx and won). The poll thread is still
+        //     running with stopRequested=false; if we join now we block
+        //     forever because the concurrent stopThread — which would have
+        //     set stopRequested=true and cancelled — cannot acquire
+        //     threadMtx while we hold it. Detect this by checking
+        //     stopRequested and set it + cancel ourselves so the join
+        //     can complete.
+        if (!stopRequested.load()) {
+            stopRequested = true;
+            SCARDCONTEXT ctx;
+            {
+                std::lock_guard ctxLock(contextMtx);
+                ctx = hContext;
+            }
+            if (ctx)
+                pcsc->cancel(ctx);
+        }
         monitorThread.join();
     }
     previousReaderStates.clear();
@@ -103,16 +136,36 @@ void Monitor::stopThread()
 
 void Monitor::run()
 {
+    bool contextEstablished = false;
     while (!stopRequested.load()) {
         try {
             establishContext();
+            contextEstablished = true;
             break;
         } catch (...) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
     }
-    if (stopRequested.load())
+    if (stopRequested.load()) {
+        // stopThread() (or startThread() fixing the startThread/stopThread
+        // race) set stopRequested between establishContext() returning and
+        // the break, or before the loop ran at all. If this invocation
+        // established a context, release it now — otherwise
+        // establishContextCount and releaseContextCount are permanently
+        // unbalanced by one per occurrence. See monitor.cpp TOCTOU note.
+        if (contextEstablished) {
+            SCARDCONTEXT ctx;
+            {
+                std::lock_guard<std::mutex> ctxLock(contextMtx);
+                ctx = hContext;
+                hContext = 0;
+            }
+            if (ctx) {
+                pcsc->releaseContext(ctx);
+            }
+        }
         return;
+    }
 
     try {
         bool pnp = checkPnPSupport();

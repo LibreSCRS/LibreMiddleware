@@ -12,6 +12,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <type_traits>
@@ -684,4 +685,250 @@ TEST(MonitorServiceBootstrapRace, SubscribeReaderListZeroReadersAtBootThenPlug)
             sawReaderA = true;
     }
     EXPECT_TRUE(sawReaderA) << "Expected at least one snapshot containing {\"Reader A\"} after plug-in";
+}
+
+// Regression for spec §2: unsubscribe(Drain) must not deadlock when the
+// poll thread re-enters dispatch after processEvents returns "re-enumerate"
+// while Drain holds dispatchMtx. The sequence:
+//
+//   1. processEvents returns true (PnP-CHANGED re-enumerate signal).
+//   2. Poll thread enters second outer-loop enumerateReaders() — blocked
+//      by mock inside listReaders.
+//   3. Test worker calls unsubscribe(Drain) → acquires dispatchMtx.
+//   4. Mock releases listReaders block.
+//   5. Poll thread: listReaders returns, notifyReaders fires, which calls
+//      diffReadersAndDispatch → dispatch(ReaderAdded "Reader Y") →
+//      dispatchImmediate → tries dispatchMtx → BLOCKS (Drain holds it).
+//   6. Drain's internal->unsubscribe → stopThread → join → BLOCKS (poll
+//      thread stuck waiting for dispatchMtx).
+//   7. DEADLOCK (pre-fix); post-fix: Drain releases dispatchMtx before
+//      join or poll thread checks stopRequested before acquiring it.
+//
+// Mock timeline:
+//   Action 0 — PnP check: success, no SCARD_STATE_UNKNOWN → pnp=true.
+//   Action 1 — processEvents first probe: PnP slot CHANGED → re-enumerate
+//              and adds "Reader Y" to the reader list so the second outer
+//              loop's notifyReaders emits ReaderAdded (bypasses coalescer →
+//              dispatchImmediate → dispatchMtx).
+//
+// Spec: knowledge/specs/2026-05-24-lm-monitor-3-additional-races.md §2
+TEST(MonitorServiceAdditionalRaces, UnsubscribeDrainDoesNotDeadlockWhenPollReEnters)
+{
+    using LibreSCRS::SmartCard::MonitorEvent;
+    using LibreSCRS::SmartCard::MonitorService;
+
+    auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
+    auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
+    auto* mockPtr = mock.get();
+    mock->setReaders({"Reader X"});
+
+    // Action 0: PnP check — no SCARD_STATE_UNKNOWN → pnp = true.
+    mock->pushStatusChange({SCARD_S_SUCCESS, {0}, false});
+    // Action 1: processEvents first probe (timeout=0) with 2 states
+    // (Reader X at idx 0, PnP at idx 1). PnP slot CHANGED triggers
+    // re-enumerate; newReaders adds "Reader Y" so the second outer-loop
+    // notifyReaders dispatches ReaderAdded which bypasses the coalescer
+    // and calls dispatchImmediate (needs dispatchMtx).
+    mock->pushStatusChange(
+        {SCARD_S_SUCCESS, {0, SCARD_STATE_CHANGED}, false, std::vector<std::string>{"Reader X", "Reader Y"}});
+
+    auto monitor = LibreSCRS::SmartCard::detail::makeMonitorWithProvider(std::move(mock));
+    ASSERT_NE(monitor, nullptr);
+
+    auto eventSubId = monitor->subscribe([](const MonitorEvent&) {});
+
+    // Wait until the first enumerateReaders() has run both listReaders
+    // calls (size-probe + buffer). enumerateReaders() increments
+    // listReadersCount twice per call.
+    auto firstDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
+    while (counters->listReadersCount.load() < 2 && std::chrono::steady_clock::now() < firstDeadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_GE(counters->listReadersCount.load(), 2) << "First enumerateReaders() never completed";
+
+    // Now arm the block so the second outer-loop's enumerateReaders() stalls
+    // inside listReaders. processEvents will pop Action 1 and trigger
+    // re-enumerate; the second enumerateReaders hits the block.
+    mockPtr->setListReadersBlocking(true);
+
+    // Wait until the poll thread reaches listReaders (count >= 3).
+    auto blockDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(3000);
+    while (counters->listReadersCount.load() < 3 && std::chrono::steady_clock::now() < blockDeadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_GE(counters->listReadersCount.load(), 3)
+        << "Poll thread did not reach second-enumerate listReaders within 3s";
+
+    // Worker acquires dispatchMtx (Drain mode). Poll thread is still
+    // blocked in listReaders so dispatch hasn't fired yet.
+    std::atomic<bool> workerCompleted{false};
+    std::thread worker([&monitor, eventSubId, &workerCompleted] {
+        monitor->unsubscribe(eventSubId, MonitorService::DrainPolicy::Drain);
+        workerCompleted.store(true);
+    });
+
+    // Give the worker time to acquire dispatchMtx before we release the
+    // listReaders block.
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+
+    // Release: poll thread finishes listReaders, calls notifyReaders →
+    // diffReadersAndDispatch → dispatch(ReaderAdded "Reader Y") →
+    // dispatchImmediate → tries dispatchMtx → blocks (Drain holds it) →
+    // Drain's join waits for poll thread → DEADLOCK pre-fix.
+    mockPtr->setListReadersBlocking(false);
+    mockPtr->releaseListReadersBlock();
+
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!workerCompleted.load() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    if (!workerCompleted.load()) {
+        worker.detach();
+        FAIL() << "Drain unsubscribe deadlocked — worker did not complete "
+                  "within 5 seconds. Pre-fix bug present.";
+    }
+    worker.join();
+    SUCCEED();
+}
+
+// Regression for spec §3: coalescer flusher must not dispatch a
+// CardInserted for a reader that has been removed in the race window
+// between flusher snapshot (under coalesceMtx) and flusher dispatch
+// (under dispatchMtx after coalesceMtx released).
+//
+// Mock timeline (initial readers = {"Reader Q"}, pnp=true):
+//   Action 0 — PnP check: success, no SCARD_STATE_UNKNOWN → pnp=true.
+//   Action 1 — processEvents first probe: Reader Q (idx 0) gets
+//              PRESENT|CHANGED → CardInserted queued in coalescer (250 ms
+//              hold). PnP slot (idx 1) not changed → continue.
+//   Action 2 — processEvents main poll (SCAN_TIMEOUT wait): PnP slot
+//              CHANGED → re-enumerate; newReaders={} → readerNames clears.
+//   Second outer loop: enumerateReaders() → [] → notifyReaders([]) →
+//   diffReadersAndDispatch([]) → erases "Reader Q" from coalesceState →
+//   dispatch(ReaderRemoved "Reader Q"). After 250 ms the flusher wakes
+//   with the previously-snapshotted CardInserted and calls dispatchImmediate
+//   — this arrives AFTER ReaderRemoved (pre-fix). Post-fix: the erase
+//   races the flusher snapshot; flusher must verify the reader is still
+//   known before dispatching.
+//
+// The assertion is: if CardInserted ever fires, it must precede
+// ReaderRemoved. A timing-dependent test (may pass even pre-fix if the
+// erase wins the race), but reliably fails in sanitiser or debug builds.
+//
+// Spec: knowledge/specs/2026-05-24-lm-monitor-3-additional-races.md §3
+TEST(MonitorServiceAdditionalRaces, CoalescerFlusherSuppressesStaleEventAfterReaderRemoved)
+{
+    using LibreSCRS::SmartCard::MonitorEvent;
+    using LibreSCRS::SmartCard::MonitorService;
+
+    auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
+    auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
+    mock->setReaders({"Reader Q"});
+
+    // Action 0: PnP check — no UNKNOWN → pnp=true.
+    mock->pushStatusChange({SCARD_S_SUCCESS, {0}, false});
+    // Action 1: processEvents first probe (timeout=0). 2 states: Reader Q
+    // (idx 0) gets PRESENT|CHANGED → CardInserted via coalescer. PnP
+    // slot (idx 1) unchanged → no re-enumerate yet.
+    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED, 0}, false});
+    // Action 2: processEvents blocking wait (SCAN_TIMEOUT). PnP slot
+    // CHANGED → re-enumerate. newReaders={} empties the reader list so
+    // the next enumerateReaders returns [] and triggers ReaderRemoved.
+    mock->pushStatusChange({SCARD_S_SUCCESS, {0, SCARD_STATE_CHANGED}, false, std::vector<std::string>{}});
+
+    auto monitor = LibreSCRS::SmartCard::detail::makeMonitorWithProvider(std::move(mock));
+    ASSERT_NE(monitor, nullptr);
+
+    std::mutex evMtx;
+    std::vector<MonitorEvent> received;
+    auto eventSubId = monitor->subscribe([&](const MonitorEvent& e) {
+        std::lock_guard<std::mutex> lock(evMtx);
+        received.push_back(e);
+    });
+
+    // Allow enough time for the coalescer's 250 ms hold window to expire
+    // and for the flusher to dispatch the CardInserted (if pre-fix stale
+    // dispatch occurs it will land after ReaderRemoved).
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+
+    monitor->unsubscribe(eventSubId, MonitorService::DrainPolicy::Drain);
+
+    std::lock_guard<std::mutex> lock(evMtx);
+
+    auto findFirst = [&](MonitorEvent::Kind k) -> std::optional<size_t> {
+        for (size_t i = 0; i < received.size(); ++i) {
+            if (received[i].kind == k && received[i].readerName == "Reader Q") {
+                return i;
+            }
+        }
+        return std::nullopt;
+    };
+    auto readerRemovedIdx = findFirst(MonitorEvent::Kind::ReaderRemoved);
+    auto cardInsertedIdx = findFirst(MonitorEvent::Kind::CardInserted);
+
+    ASSERT_TRUE(readerRemovedIdx.has_value()) << "ReaderRemoved never dispatched — check mock timeline";
+
+    if (cardInsertedIdx.has_value()) {
+        EXPECT_LT(*cardInsertedIdx, *readerRemovedIdx) << "CardInserted dispatched AFTER ReaderRemoved — stale event "
+                                                          "from coalescer flusher (Race B not fixed).";
+    }
+}
+
+// Regression for spec §4: subscribe firstSubscriber branch must not
+// orphan the internal subscription if a concurrent unsubscribe runs
+// between the initial cbMtx release (after callbacks.emplace) and the
+// second cbMtx acquire (where internalSubId is written).
+//
+// Strategy: spawn multiple threads each running tight subscribe→unsubscribe
+// loops. The race window is narrow (two cbMtx regions in the firstSubscriber
+// path); hammering it 1000× across concurrent threads surfaces orphaned
+// internal subscriptions via the invariant: establishContextCount must equal
+// releaseContextCount after all threads finish. Each iteration where
+// unsubscribe sees nullopt internalSubId silently leaks one establish.
+//
+// Spec: knowledge/specs/2026-05-24-lm-monitor-3-additional-races.md §4
+TEST(MonitorServiceAdditionalRaces, SubscribeFirstSubscriberRaceWithImmediateUnsubscribe)
+{
+    using LibreSCRS::SmartCard::MonitorEvent;
+    using LibreSCRS::SmartCard::MonitorService;
+
+    auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
+    auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
+    mock->setReaders({});
+    for (int i = 0; i < 4000; ++i) {
+        mock->pushStatusChange({LONG(SCARD_E_CANCELLED), {}, false});
+    }
+
+    auto monitor = LibreSCRS::SmartCard::detail::makeMonitorWithProvider(std::move(mock));
+    ASSERT_NE(monitor, nullptr);
+
+    constexpr int kThreads = 4;
+    constexpr int kIterationsPerThread = 250;
+
+    std::vector<std::thread> threads;
+    threads.reserve(kThreads);
+
+    for (int t = 0; t < kThreads; ++t) {
+        threads.emplace_back([&monitor]() {
+            for (int i = 0; i < kIterationsPerThread; ++i) {
+                auto id = monitor->subscribe([](const MonitorEvent&) {});
+                std::this_thread::yield();
+                monitor->unsubscribe(id);
+            }
+        });
+    }
+
+    for (auto& th : threads) {
+        th.join();
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    int established = counters->establishContextCount.load();
+    int released = counters->releaseContextCount.load();
+    EXPECT_EQ(established, released) << "Orphaned internal subscriptions detected: established=" << established
+                                     << " released=" << released
+                                     << " (likely TOCTOU race in subscribe firstSubscriber branch — "
+                                        "Race C not fixed).";
 }
