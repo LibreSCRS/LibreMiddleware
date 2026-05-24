@@ -91,6 +91,34 @@ target_include_directories(fuzz_trusted_list_parser PRIVATE
 target_link_libraries(fuzz_trusted_list_parser PRIVATE LibreSign)
 
 # ---------------------------------------------------------------------------
+# Harness: pkcs15 parser (parseODF / parseTokenInfo / parseCDF / parsePrKDF /
+# parseAODF). External-byte attack surface — a hostile PKCS#15 card can put
+# any bytes in any directory file.
+# ---------------------------------------------------------------------------
+add_executable(fuzz_pkcs15_parser fuzz_pkcs15_parser.cpp)
+target_compile_options(fuzz_pkcs15_parser PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_link_options(fuzz_pkcs15_parser PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_compile_definitions(fuzz_pkcs15_parser PRIVATE LIBRESCRS_INTERNAL_BUILD)
+target_include_directories(fuzz_pkcs15_parser PRIVATE
+    ${PROJECT_SOURCE_DIR}/lib/pkcs15/src
+)
+target_link_libraries(fuzz_pkcs15_parser PRIVATE PKCS15)
+
+# ---------------------------------------------------------------------------
+# Harness: emrtd parseDataGroups + parseMRZ. External-byte attack surface —
+# DG file contents are card-controlled bytes that dispatch into per-DG
+# sub-parsers.
+# ---------------------------------------------------------------------------
+add_executable(fuzz_emrtd_dg_parser fuzz_emrtd_dg_parser.cpp)
+target_compile_options(fuzz_emrtd_dg_parser PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_link_options(fuzz_emrtd_dg_parser PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_compile_definitions(fuzz_emrtd_dg_parser PRIVATE LIBRESCRS_INTERNAL_BUILD)
+target_include_directories(fuzz_emrtd_dg_parser PRIVATE
+    ${PROJECT_SOURCE_DIR}/lib/emrtd/src
+)
+target_link_libraries(fuzz_emrtd_dg_parser PRIVATE EMRTD)
+
+# ---------------------------------------------------------------------------
 # Harness: TlSignatureVerifier::verify (with constant signing cert)
 # ---------------------------------------------------------------------------
 add_executable(fuzz_tl_signature_verifier

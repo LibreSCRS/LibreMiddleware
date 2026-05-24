@@ -302,6 +302,12 @@ TEST(PACECryptoTest, AesDecryptRoundTrip256)
 // ---------------------------------------------------------------------------
 // PACE-MRZ Known-Answer-Test scaffold (DISABLED — needs BSI vectors)
 //
+// TODO(coverage): obtain BSI TR-03110-3 v2.21+ Annex G.1 worked-example bytes
+//   and fill the TODO_BSI_* literals below. Sitting since ≥4.0 (tracked in
+//   the Wave 5 audit). Source PDF: https://www.bsi.bund.de/EN/Themen/
+//   Unternehmen-und-Organisationen/Standards-und-Zertifizierung/
+//   Technische-Richtlinien/TR-nach-Thema-sortiert/tr03110/TR-03110_node.html
+//
 // Background: a Czech contactless eMRTD (ATR 3B8F8001…) fails PACE-MRZ at
 // GA4 mutual-authentication with SW=6300 even though every intermediate
 // APDU returns SW=9000. The same MRZ succeeds via BAC fallback, proving the

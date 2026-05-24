@@ -23,6 +23,7 @@ target_link_libraries(LibreMiddlewareTests
     RsEId
     EuVrc
     RsHealth
+    SmartCard_Impl
 )
 
 target_include_directories(LibreMiddlewareTests PRIVATE
@@ -31,12 +32,38 @@ target_include_directories(LibreMiddlewareTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/eu-vrc/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
 )
-# LM-internal test: includes bucket-B headers via lib/*/src/; advertise the
+# LM-internal test: includes internal headers via lib/*/src/; advertise the
 # internal-build marker to satisfy the #error guard on those headers.
 target_compile_definitions(LibreMiddlewareTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 
 include(GoogleTest)
 gtest_discover_tests(LibreMiddlewareTests)
+
+# rs-eid driver unit tests (Wave 5.1 — flagship Serbian eID coverage).
+# Drives CardReaderApollo / CardReaderGemalto / CardVerifier through a
+# detached PCSCConnection with a TransmitFilter intercepting every APDU.
+add_executable(RsEidDriverTests
+    rs-eid/protocol_test.cpp
+    rs-eid/card_reader_apollo_test.cpp
+    rs-eid/card_reader_gemalto_test.cpp
+    rs-eid/card_verifier_test.cpp
+)
+target_link_libraries(RsEidDriverTests
+    GTest::gtest_main
+    RsEId
+    SmartCard_Impl
+    OpenSSL_Crypto
+)
+target_include_directories(RsEidDriverTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/rs-eid/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/include
+)
+target_compile_definitions(RsEidDriverTests PRIVATE
+    LIBRESCRS_INTERNAL_BUILD
+    LIBREMIDDLEWARE_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/test/test-data"
+)
+gtest_discover_tests(RsEidDriverTests)
 
 add_executable(LibreSCRS_AuthTests LibreSCRS_Auth_test.cpp)
 target_link_libraries(LibreSCRS_AuthTests GTest::gtest_main LibreSCRS_Auth CardPlugin_Impl SmartCard_Impl)
@@ -351,6 +378,35 @@ target_compile_definitions(PKCS15PluginTests PRIVATE
 add_dependencies(PKCS15PluginTests pkcs15-plugin)
 gtest_discover_tests(PKCS15PluginTests)
 
+# opensc-pkcs11 driver unit tests (Wave 5.2 — fills the 0-dedicated-file
+# gap for the shipped libresc-pkcs11.so). Deep bind/sign coverage already
+# lives in lib/pkcs15/test/CrossProviderCoordinationTests.cpp and the
+# hardware-gated opensc_fallback_integration_test.cpp; this binary pins
+# down the unit-tier surface that runs without any PC/SC traffic.
+if(LIBRESCRS_VENDOR_OPENSC)
+    add_executable(OpenScPkcs11UnitTests
+        opensc-pkcs11/sc_lock_guard_test.cpp
+        opensc-pkcs11/provider_test.cpp
+        ${PROJECT_SOURCE_DIR}/lib/pkcs11/src/pkcs11_card.cpp
+        ${PROJECT_SOURCE_DIR}/lib/pkcs11/src/pkcs11_slot.cpp
+        ${PROJECT_SOURCE_DIR}/lib/pkcs11/src/slot_id_hash.cpp
+    )
+    target_link_libraries(OpenScPkcs11UnitTests PRIVATE
+        GTest::gtest_main
+        librescrs-opensc-pkcs11
+        opensc_static_with_deps
+        LibreSCRS::Secure
+    )
+    target_include_directories(OpenScPkcs11UnitTests PRIVATE
+        ${PROJECT_SOURCE_DIR}/lib/opensc-pkcs11/src
+        ${PROJECT_SOURCE_DIR}/lib/opensc-pkcs11/include
+        ${PROJECT_SOURCE_DIR}/lib/pkcs11/include
+        ${PROJECT_SOURCE_DIR}/lib/pkcs11/src
+    )
+    target_compile_definitions(OpenScPkcs11UnitTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+    gtest_discover_tests(OpenScPkcs11UnitTests)
+endif()
+
 # OpenSC fallback plugin tests (conditional on vendored OpenSC availability)
 if(LIBRESCRS_VENDOR_OPENSC)
     add_executable(OpenSCPluginTests
@@ -477,14 +533,11 @@ if(BUILD_SIGNING)
     target_link_libraries(SigningE2ETests PRIVATE SigningTestSupport)
     gtest_discover_tests(SigningE2ETests DISCOVERY_TIMEOUT 30)
 
-    # Cancellation / card-disconnect / concurrent-sign placeholders.
-    # Each test currently SKIPs at runtime because LibreMiddleware's
-    # libresign::Pkcs11Token is a concrete class; the mock interface in
-    # signing_test_support/pkcs11_token_mock.h documents the required
-    # surface so a future refactor can flip them to live tests in place.
-    add_executable(SigningCancellationTests cancellation_test.cpp)
-    target_link_libraries(SigningCancellationTests PRIVATE SigningTestSupport GTest::gtest_main)
-    gtest_discover_tests(SigningCancellationTests)
+    # Signing-side cancellation / disconnect / concurrent-sign axes are not
+    # yet wired to a mockable IPkcs11Token. The mock skeleton lives at
+    # test/signing_test_support/pkcs11_token_mock.h; the in-tree CardPlugin
+    # NVI cancellation contract is exercised by CancellationNviTests
+    # (test/plugin/cancellation_test.cpp).
 
     # Signing provider unit tests
     add_executable(SigningProviderTests signing_provider_test.cpp)
