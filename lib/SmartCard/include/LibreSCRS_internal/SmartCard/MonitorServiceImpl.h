@@ -55,6 +55,49 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
     std::mutex readersMtx;
     std::set<std::string> knownReaders;
 
+    /// @brief True once the internal poll thread has completed its first
+    ///        @ref diffReadersAndDispatch invocation in the current polling
+    ///        session (i.e. `knownReaders` reflects an actual PC/SC scan
+    ///        outcome, even if the outcome was "zero readers").
+    ///
+    /// Gates the bootstrap-fire branch in @ref MonitorService::subscribeReaderList:
+    /// late joiners only receive a synchronous bootstrap snapshot once we
+    /// know the cached `knownReaders` set reflects a real enumeration
+    /// result, not the empty post-`clear()` state held while the poll
+    /// thread starts up. Late joiners arriving in the race window between
+    /// poll-thread start and first scan completion receive nothing
+    /// synchronously; they will receive a snapshot via the poll thread's
+    /// next dispatch — which fires whenever membership actually changes
+    /// (per @ref diffReadersAndDispatch's suppress-when-unchanged guard).
+    /// In the steady-state zero-readers-at-boot scenario specifically,
+    /// such late joiners receive nothing until a reader is plugged in;
+    /// this is acceptable because once `initialPollComplete` is set, any
+    /// FURTHER subscriber will hit the bootstrap branch and learn the
+    /// current (possibly-empty) membership synchronously.
+    ///
+    /// @par Lifecycle (monotonic per polling session, NOT per object lifetime)
+    /// - Constructed `false`.
+    /// - Set `true` at the end of `diffReadersAndDispatch` after the first
+    ///   successful enumerate-cycle in a polling session.
+    /// - Reset to `false` whenever the poll thread stops and `knownReaders`
+    ///   is cleared (i.e. inside the `firstSubscriber == true` branch of
+    ///   `subscribe` / `subscribeReaderList`, paired with `knownReaders.clear()`).
+    ///
+    /// @par Memory ordering
+    /// The atomic provides the synchronisation edge that gates whether
+    /// `subscribeReaderList` even attempts the bootstrap branch. The actual
+    /// `knownReaders` data race-freedom is provided by `readersMtx`: the
+    /// poll thread mutates `knownReaders` under `readersMtx`, releases it,
+    /// then later release-stores the flag; the subscriber acquire-loads
+    /// the flag, then takes `readersMtx` to read `knownReaders`. The mutex
+    /// alone is sufficient to publish the data; the acquire/release pair
+    /// is load-bearing only as a one-way gate ("has the poll thread
+    /// produced a real enumeration yet?").
+    ///
+    /// @since 4.2 — fix for the subscribeReaderList bootstrap-race
+    /// regression. See knowledge/specs/2026-05-24-lm-monitor-bootstrap-race.md
+    std::atomic<bool> initialPollComplete{false};
+
     // Held for the full snapshot-and-invoke phase of @ref dispatch so that
     // @ref MonitorService::unsubscribe (with @ref DrainPolicy::Drain) can
     // block until any currently-running dispatch completes. Separate from

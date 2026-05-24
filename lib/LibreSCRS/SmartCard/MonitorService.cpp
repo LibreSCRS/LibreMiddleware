@@ -391,6 +391,25 @@ void MonitorService::Impl::diffReadersAndDispatch(const std::vector<std::string>
         }
         dispatchReaderListSnapshot(snapshot);
     }
+
+    // Latch first-completion exactly once per polling session. MUST fire
+    // even when membership was unchanged (zero readers, or steady-state
+    // re-poll). Placing this inside the dispatch conditional above
+    // would mean a service that starts with no readers attached never
+    // satisfies the gate in subscribeReaderList, permanently suppressing
+    // bootstrap-fires for late joiners — see spec §5.2 Change B and
+    // regression test SubscribeReaderListZeroReadersAtBootThenPlug.
+    //
+    // compare_exchange_strong is defensive: the function is single-
+    // threaded inside the poll loop, so a plain store would suffice;
+    // the CAS documents the once-only intent and survives any future
+    // refactor that calls diffReadersAndDispatch off the poll thread.
+    // Release pairs with the acquire in subscribeReaderList.
+    bool expected = false;
+    initialPollComplete.compare_exchange_strong(
+        expected, true,
+        std::memory_order_release,
+        std::memory_order_relaxed);
 }
 
 MonitorService::Config MonitorService::Config::fromEnv() noexcept
@@ -499,6 +518,13 @@ MonitorService::SubscriptionId MonitorService::subscribe(EventCallback callback)
             std::lock_guard<std::mutex> lock(d->readersMtx);
             d->knownReaders.clear();
         }
+        // Reset the latch alongside the knownReaders clear so the next
+        // polling session re-establishes the bootstrap gate from scratch.
+        // Without this reset, a subscribeReaderList that races a follow-up
+        // firstSubscriber start would observe a stale true and bootstrap-
+        // fire from the just-cleared empty knownReaders — same race this
+        // fix closes (spec §5.2 Change C).
+        d->initialPollComplete.store(false, std::memory_order_release);
         auto* impl = d.get();
         auto eventCb = [impl](const ::LibreSCRS::SmartCard::Internal::MonitorEvent& e) {
             MonitorEvent pub{
@@ -602,11 +628,17 @@ MonitorService::SubscriptionId MonitorService::subscribeReaderList(ReaderListCal
         // current snapshot immediately so the late-joining subscriber does
         // not have to wait for the next reader-list change to observe the
         // baseline membership.
-        if (!firstSubscriber) {
+        if (!firstSubscriber && d->initialPollComplete.load(std::memory_order_acquire)) {
             std::lock_guard<std::mutex> readersLock(d->readersMtx);
             bootstrapSnapshot.assign(d->knownReaders.begin(), d->knownReaders.end());
             haveBootstrap = true;
         }
+        // When initialPollComplete == false (we joined during the first-poll
+        // window), skip the synchronous bootstrap. The poll thread's next
+        // diffReadersAndDispatch dispatch (i.e. the next genuine membership
+        // change) will deliver the snapshot to this subscriber alongside
+        // any prior ones via the normal fan-out — see
+        // Impl::initialPollComplete contract.
     }
 
     if (firstSubscriber) {
@@ -619,6 +651,9 @@ MonitorService::SubscriptionId MonitorService::subscribeReaderList(ReaderListCal
             std::lock_guard<std::mutex> lock(d->readersMtx);
             d->knownReaders.clear();
         }
+        // Reset the latch — see Change C rationale at the subscribe()
+        // firstSubscriber branch.
+        d->initialPollComplete.store(false, std::memory_order_release);
         auto* impl = d.get();
         auto eventCb = [impl](const ::LibreSCRS::SmartCard::Internal::MonitorEvent& e) {
             MonitorEvent pub{
