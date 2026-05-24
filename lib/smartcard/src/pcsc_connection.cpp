@@ -446,23 +446,70 @@ std::vector<uint8_t> PCSCConnection::getATR() const
     return std::vector<uint8_t>(atr, atr + atrLen);
 }
 
+// RAII wrapper for an SCARDCONTEXT established via SCardEstablishContext.
+// Pairs the call with SCardReleaseContext on scope exit so any throwable
+// allocation between (e.g. std::vector<char> buffer(readersLen) on
+// bad_alloc) does not leak the PC/SC context handle.
+//
+// Non-copyable, non-movable on purpose: the listReaders use is a single
+// scoped owner; broader use would have to wrap the SCARDCONTEXT in a
+// std::optional or convert to move-only and is outside this scope.
+namespace {
+
+class PCSCContextHandle
+{
+public:
+    PCSCContextHandle() noexcept : context_{}, ok_{false}
+    {
+        const LONG rv = SCardEstablishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &context_);
+        ok_ = (rv == SCARD_S_SUCCESS);
+    }
+
+    ~PCSCContextHandle() noexcept
+    {
+        if (ok_) {
+            SCardReleaseContext(context_);
+        }
+    }
+
+    PCSCContextHandle(const PCSCContextHandle&) = delete;
+    PCSCContextHandle& operator=(const PCSCContextHandle&) = delete;
+    PCSCContextHandle(PCSCContextHandle&&) = delete;
+    PCSCContextHandle& operator=(PCSCContextHandle&&) = delete;
+
+    [[nodiscard]] bool ok() const noexcept
+    {
+        return ok_;
+    }
+
+    [[nodiscard]] SCARDCONTEXT get() const noexcept
+    {
+        return context_;
+    }
+
+private:
+    SCARDCONTEXT context_;
+    bool ok_;
+};
+
+} // namespace
+
 std::vector<std::string> PCSCConnection::listReaders()
 {
-    SCARDCONTEXT ctx;
-    LONG rv = SCardEstablishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &ctx);
-    if (rv != SCARD_S_SUCCESS)
+    PCSCContextHandle ctx;
+    if (!ctx.ok())
         return {};
 
     DWORD readersLen = 0;
-    rv = SCardListReaders(ctx, nullptr, nullptr, &readersLen);
-    if (rv != SCARD_S_SUCCESS) {
-        SCardReleaseContext(ctx);
+    LONG rv = SCardListReaders(ctx.get(), nullptr, nullptr, &readersLen);
+    if (rv != SCARD_S_SUCCESS)
         return {};
-    }
 
+    // vector<char> buffer(readersLen) may throw std::bad_alloc on a card
+    // with a multi-string-larger-than-available-memory; PCSCContextHandle's
+    // dtor handles SCardReleaseContext on unwind.
     std::vector<char> buffer(readersLen);
-    rv = SCardListReaders(ctx, nullptr, buffer.data(), &readersLen);
-    SCardReleaseContext(ctx);
+    rv = SCardListReaders(ctx.get(), nullptr, buffer.data(), &readersLen);
     if (rv != SCARD_S_SUCCESS)
         return {};
 

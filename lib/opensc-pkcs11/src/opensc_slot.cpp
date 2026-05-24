@@ -8,6 +8,7 @@
 #include "opensc_slot.h"
 
 #include "opensc_card.h"
+#include "sc_lock_guard.h"
 
 #include <internal/Crv.h>
 #include <internal/DerWrap.h>
@@ -390,8 +391,11 @@ std::vector<std::uint8_t> OpenScSlot::signData(std::span<const std::uint8_t> dat
     // between login and PSO and the card answers 6982. Re-VERIFY with the
     // correct cached PIN does not decrement the retry counter; it is a no-op
     // for cards that do not enforce PIN-ALWAYS.
-    int lockRc = sc_lock(p15->card);
-    if (lockRc != SC_SUCCESS)
+    //
+    // ScLockGuard pairs sc_lock + sc_unlock under a non-movable scope so the
+    // unlock survives an exception thrown between the verify and the sign.
+    ScLockGuard txn(p15->card);
+    if (!txn.locked())
         return {};
 
     if (loggedIn && pinObject && !cachedPin.empty()) {
@@ -399,14 +403,12 @@ std::vector<std::uint8_t> OpenScSlot::signData(std::span<const std::uint8_t> dat
         int vrc =
             sc_pkcs15_verify_pin(p15, pinObject, reinterpret_cast<const std::uint8_t*>(pinView.data()), pinView.size());
         if (vrc != SC_SUCCESS) {
-            sc_unlock(p15->card);
             return {};
         }
     }
 
     int rc = sc_pkcs15_compute_signature(p15, targetKey, *flags, data.data(), data.size(), out.data(), out.size(),
                                          /*pMechanism=*/nullptr);
-    sc_unlock(p15->card);
     if (rc < 0)
         return {};
     out.resize(static_cast<std::size_t>(rc));

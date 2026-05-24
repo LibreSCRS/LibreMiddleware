@@ -24,6 +24,7 @@ target_compile_definitions(RsEId PRIVATE LIBRESCRS_INTERNAL_BUILD)
 target_include_directories(RsEId PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+    ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
 )
 
 set_target_properties(RsEId PROPERTIES POSITION_INDEPENDENT_CODE ON)

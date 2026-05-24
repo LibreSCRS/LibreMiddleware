@@ -6,6 +6,8 @@
 #include "card_reader_base.h"
 #include <pcsc_connection.h>
 
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+
 #include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
@@ -22,6 +24,14 @@
 #include <iostream>
 
 namespace eidcard {
+
+using LibreSCRS::Internal::Crypto::BioPtr;
+using LibreSCRS::Internal::Crypto::EvpMdCtxPtr;
+using LibreSCRS::Internal::Crypto::EvpPkeyPtr;
+using LibreSCRS::Internal::Crypto::Pkcs7Ptr;
+using LibreSCRS::Internal::Crypto::StackX509Ptr;
+using LibreSCRS::Internal::Crypto::X509Ptr;
+using LibreSCRS::Internal::Crypto::X509StoreCtxPtr;
 
 // The card file data returned by readFile() has the outer 4-byte TLV header
 // (2-byte file ID + 2-byte LE length) already stripped (readFile reads from offset 4).
@@ -555,7 +565,7 @@ bool CardVerifier::verifyCertificateChain(const std::vector<uint8_t>& certDER)
         return false;
 
     const uint8_t* p = certDER.data();
-    X509* cert = d2i_X509(nullptr, &p, static_cast<long>(certDER.size()));
+    X509Ptr cert(d2i_X509(nullptr, &p, static_cast<long>(certDER.size())));
     if (!cert) {
 #ifndef NDEBUG
         std::cerr << "[CardVerifier] Failed to parse DER certificate (" << certDER.size() << " bytes)" << std::endl;
@@ -563,27 +573,24 @@ bool CardVerifier::verifyCertificateChain(const std::vector<uint8_t>& certDER)
         return false;
     }
 
-    X509_STORE_CTX* ctx = X509_STORE_CTX_new();
+    X509StoreCtxPtr ctx(X509_STORE_CTX_new());
     if (!ctx) {
-        X509_free(cert);
         return false;
     }
 
-    int rc = X509_STORE_CTX_init(ctx, certStore->store, cert, nullptr);
+    int rc = X509_STORE_CTX_init(ctx.get(), certStore->store, cert.get(), nullptr);
     bool valid = false;
     if (rc == 1) {
-        valid = (X509_verify_cert(ctx) == 1);
+        valid = (X509_verify_cert(ctx.get()) == 1);
 #ifndef NDEBUG
         if (!valid) {
-            int err = X509_STORE_CTX_get_error(ctx);
+            int err = X509_STORE_CTX_get_error(ctx.get());
             std::cerr << "[CardVerifier] X509_verify_cert error: " << X509_verify_cert_error_string(err) << " (" << err
                       << ")" << std::endl;
         }
 #endif
     }
 
-    X509_STORE_CTX_free(ctx);
-    X509_free(cert);
     return valid;
 }
 
@@ -592,9 +599,11 @@ bool CardVerifier::verifyPKCS7Signature(const std::vector<uint8_t>& pkcs7DER, st
     if (!certStore || !certStore->store)
         return false;
 
-    // Parse PKCS#7 structure
+    // Parse PKCS#7 structure. Pkcs7Ptr keeps it live across every
+    // throwable line below (extractedContent.assign on bad_alloc was the
+    // documented leak path before this rewrite).
     const uint8_t* p = pkcs7DER.data();
-    PKCS7* pkcs7 = d2i_PKCS7(nullptr, &p, static_cast<long>(pkcs7DER.size()));
+    Pkcs7Ptr pkcs7(d2i_PKCS7(nullptr, &p, static_cast<long>(pkcs7DER.size())));
     if (!pkcs7) {
 #ifndef NDEBUG
         std::cerr << "[CardVerifier] Failed to parse PKCS#7 data (" << pkcs7DER.size() << " bytes)" << std::endl;
@@ -606,45 +615,47 @@ bool CardVerifier::verifyPKCS7Signature(const std::vector<uint8_t>& pkcs7DER, st
     }
 
     // Create output BIO for extracted content
-    BIO* contentBio = BIO_new(BIO_s_mem());
+    BioPtr contentBio(BIO_new(BIO_s_mem()));
     if (!contentBio) {
-        PKCS7_free(pkcs7);
         return false;
     }
 
     // Step 1: Verify the PKCS#7 signature (PKCS7_NOVERIFY = don't check cert chain yet)
-    int rc = PKCS7_verify(pkcs7, nullptr, nullptr, nullptr, contentBio, PKCS7_NOVERIFY);
+    int rc = PKCS7_verify(pkcs7.get(), nullptr, nullptr, nullptr, contentBio.get(), PKCS7_NOVERIFY);
     if (rc != 1) {
 #ifndef NDEBUG
         unsigned long err = ERR_get_error();
         std::cerr << "[CardVerifier] PKCS7_verify failed: " << (err ? ERR_error_string(err, nullptr) : "unknown error")
                   << std::endl;
 #endif
-        BIO_free(contentBio);
-        PKCS7_free(pkcs7);
         return false;
     }
 
-    // Extract the signed content
+    // Extract the signed content. extractedContent.assign() may throw
+    // std::bad_alloc; with raw owning pointers this leaked pkcs7 +
+    // signerCerts. The RAII guards above and below take over on unwind.
     BUF_MEM* bptr = nullptr;
-    BIO_get_mem_ptr(contentBio, &bptr);
+    BIO_get_mem_ptr(contentBio.get(), &bptr);
     if (bptr && bptr->length > 0) {
         extractedContent.assign(reinterpret_cast<const uint8_t*>(bptr->data),
                                 reinterpret_cast<const uint8_t*>(bptr->data) + bptr->length);
     }
-    BIO_free(contentBio);
 
 #ifndef NDEBUG
     std::cerr << "[CardVerifier] PKCS7 signature verified, extracted content: " << extractedContent.size() << " bytes"
               << std::endl;
 #endif
 
-    // Step 2: Verify the signer certificate chain against our trusted CAs
-    STACK_OF(X509)* signerCerts = PKCS7_get0_signers(pkcs7, nullptr, 0);
+    // Step 2: Verify the signer certificate chain against our trusted CAs.
+    // PKCS7_get0_signers returns a STACK_OF(X509) of borrowed cert pointers
+    // (owned by the parent pkcs7); the stack itself must be sk_X509_free'd
+    // (NOT sk_X509_pop_free, which would double-free the borrowed certs).
+    // StackX509Ptr's deleter is sk_X509_free for exactly this reason.
+    StackX509Ptr signerCerts(PKCS7_get0_signers(pkcs7.get(), nullptr, 0));
     bool chainValid = false;
 
-    if (signerCerts && sk_X509_num(signerCerts) > 0) {
-        X509* signerCert = sk_X509_value(signerCerts, 0);
+    if (signerCerts && sk_X509_num(signerCerts.get()) > 0) {
+        X509* signerCert = sk_X509_value(signerCerts.get(), 0);
 
 #ifndef NDEBUG
         // Print signer cert subject for debugging
@@ -655,30 +666,25 @@ bool CardVerifier::verifyPKCS7Signature(const std::vector<uint8_t>& pkcs7DER, st
         }
 #endif
 
-        X509_STORE_CTX* ctx = X509_STORE_CTX_new();
+        X509StoreCtxPtr ctx(X509_STORE_CTX_new());
         if (ctx) {
-            rc = X509_STORE_CTX_init(ctx, certStore->store, signerCert, nullptr);
+            rc = X509_STORE_CTX_init(ctx.get(), certStore->store, signerCert, nullptr);
             if (rc == 1) {
-                chainValid = (X509_verify_cert(ctx) == 1);
+                chainValid = (X509_verify_cert(ctx.get()) == 1);
 #ifndef NDEBUG
                 if (!chainValid) {
-                    int err = X509_STORE_CTX_get_error(ctx);
+                    int err = X509_STORE_CTX_get_error(ctx.get());
                     std::cerr << "[CardVerifier] Signer cert chain error: " << X509_verify_cert_error_string(err)
                               << " (" << err << ")" << std::endl;
                 }
 #endif
             }
-            X509_STORE_CTX_free(ctx);
         }
     } else {
 #ifndef NDEBUG
         std::cerr << "[CardVerifier] No signer certificates found in PKCS#7" << std::endl;
 #endif
     }
-
-    if (signerCerts)
-        sk_X509_free(signerCerts);
-    PKCS7_free(pkcs7);
 
 #ifndef NDEBUG
     std::cerr << "[CardVerifier] Signer cert chain: " << (chainValid ? "VALID" : "INVALID") << std::endl;
@@ -691,42 +697,38 @@ bool CardVerifier::verifyRSASignature(const std::vector<uint8_t>& certDER, const
 {
     // Parse certificate to extract public key
     const uint8_t* p = certDER.data();
-    X509* cert = d2i_X509(nullptr, &p, static_cast<long>(certDER.size()));
+    X509Ptr cert(d2i_X509(nullptr, &p, static_cast<long>(certDER.size())));
     if (!cert)
         return false;
 
-    EVP_PKEY* pkey = X509_get_pubkey(cert);
-    X509_free(cert);
+    EvpPkeyPtr pkey(X509_get_pubkey(cert.get()));
     if (!pkey)
         return false;
 
-    EVP_MD_CTX* mdctx = EVP_MD_CTX_new();
+    EvpMdCtxPtr mdctx(EVP_MD_CTX_new());
     if (!mdctx) {
-        EVP_PKEY_free(pkey);
         return false;
     }
 
     bool valid = false;
 
     // Try SHA-256 first (newer cards)
-    if (EVP_DigestVerifyInit(mdctx, nullptr, EVP_sha256(), nullptr, pkey) == 1 &&
-        EVP_DigestVerifyUpdate(mdctx, data.data(), data.size()) == 1 &&
-        EVP_DigestVerifyFinal(mdctx, signature.data(), signature.size()) == 1) {
+    if (EVP_DigestVerifyInit(mdctx.get(), nullptr, EVP_sha256(), nullptr, pkey.get()) == 1 &&
+        EVP_DigestVerifyUpdate(mdctx.get(), data.data(), data.size()) == 1 &&
+        EVP_DigestVerifyFinal(mdctx.get(), signature.data(), signature.size()) == 1) {
         valid = true;
     }
 
     // If SHA-256 fails, try SHA-1 (some older Apollo cards may use it)
     if (!valid) {
-        EVP_MD_CTX_reset(mdctx);
-        if (EVP_DigestVerifyInit(mdctx, nullptr, EVP_sha1(), nullptr, pkey) == 1 &&
-            EVP_DigestVerifyUpdate(mdctx, data.data(), data.size()) == 1 &&
-            EVP_DigestVerifyFinal(mdctx, signature.data(), signature.size()) == 1) {
+        EVP_MD_CTX_reset(mdctx.get());
+        if (EVP_DigestVerifyInit(mdctx.get(), nullptr, EVP_sha1(), nullptr, pkey.get()) == 1 &&
+            EVP_DigestVerifyUpdate(mdctx.get(), data.data(), data.size()) == 1 &&
+            EVP_DigestVerifyFinal(mdctx.get(), signature.data(), signature.size()) == 1) {
             valid = true;
         }
     }
 
-    EVP_MD_CTX_free(mdctx);
-    EVP_PKEY_free(pkey);
     return valid;
 }
 
@@ -734,22 +736,20 @@ std::vector<uint8_t> CardVerifier::computeSHA256(const std::vector<uint8_t>& dat
 {
     std::vector<uint8_t> hash(EVP_MD_size(EVP_sha256()));
 
-    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    EvpMdCtxPtr ctx(EVP_MD_CTX_new());
     if (!ctx)
         return {};
 
-    if (EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) != 1 || EVP_DigestUpdate(ctx, data.data(), data.size()) != 1) {
-        EVP_MD_CTX_free(ctx);
+    if (EVP_DigestInit_ex(ctx.get(), EVP_sha256(), nullptr) != 1 ||
+        EVP_DigestUpdate(ctx.get(), data.data(), data.size()) != 1) {
         return {};
     }
 
     unsigned int len = 0;
-    if (EVP_DigestFinal_ex(ctx, hash.data(), &len) != 1) {
-        EVP_MD_CTX_free(ctx);
+    if (EVP_DigestFinal_ex(ctx.get(), hash.data(), &len) != 1) {
         return {};
     }
 
-    EVP_MD_CTX_free(ctx);
     hash.resize(len);
     return hash;
 }

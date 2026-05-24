@@ -31,6 +31,7 @@
 #include <internal/PKCS11Card.h>
 #include <internal/PinClassification.h>
 
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
 #include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
@@ -233,45 +234,51 @@ std::vector<LibreSCRS::Pkcs11::Internal::PKCS11ObjectInfo> Pkcs15Slot::enumerate
             std::vector<std::uint8_t> ecParamsDer;
             std::vector<std::uint8_t> ecPointDer;
             if (hasKey && !derBytes.empty()) {
+                using LibreSCRS::Internal::Crypto::BnPtr;
+                using LibreSCRS::Internal::Crypto::EvpPkeyPtr;
+                using LibreSCRS::Internal::Crypto::X509Ptr;
+
                 const unsigned char* dp = derBytes.data();
-                X509* x509 = d2i_X509(nullptr, &dp, static_cast<long>(derBytes.size()));
+                X509Ptr x509(d2i_X509(nullptr, &dp, static_cast<long>(derBytes.size())));
                 if (x509) {
-                    EVP_PKEY* pkey = X509_get_pubkey(x509);
+                    EvpPkeyPtr pkey(X509_get_pubkey(x509.get()));
                     if (pkey) {
-                        const int baseId = EVP_PKEY_base_id(pkey);
+                        const int baseId = EVP_PKEY_base_id(pkey.get());
                         if (baseId == EVP_PKEY_RSA) {
-                            BIGNUM* n = nullptr;
-                            if (EVP_PKEY_get_bn_param(pkey, "n", &n) == 1 && n) {
-                                rsaModulus.resize(static_cast<std::size_t>(BN_num_bytes(n)));
-                                BN_bn2bin(n, rsaModulus.data());
-                                BN_free(n);
+                            // rsaModulus.resize() may throw std::bad_alloc; BnPtr
+                            // guarantees BN_free runs on unwind. Prior raw-owning
+                            // code leaked the BIGNUM `n` plus the enclosing pkey
+                            // and x509 on the throw path.
+                            BIGNUM* nRaw = nullptr;
+                            if (EVP_PKEY_get_bn_param(pkey.get(), "n", &nRaw) == 1 && nRaw) {
+                                BnPtr n(nRaw);
+                                rsaModulus.resize(static_cast<std::size_t>(BN_num_bytes(n.get())));
+                                BN_bn2bin(n.get(), rsaModulus.data());
                             }
-                            BIGNUM* e = nullptr;
-                            if (EVP_PKEY_get_bn_param(pkey, "e", &e) == 1 && e) {
-                                rsaExponent.resize(static_cast<std::size_t>(BN_num_bytes(e)));
-                                BN_bn2bin(e, rsaExponent.data());
-                                BN_free(e);
+                            BIGNUM* eRaw = nullptr;
+                            if (EVP_PKEY_get_bn_param(pkey.get(), "e", &eRaw) == 1 && eRaw) {
+                                BnPtr e(eRaw);
+                                rsaExponent.resize(static_cast<std::size_t>(BN_num_bytes(e.get())));
+                                BN_bn2bin(e.get(), rsaExponent.data());
                             }
                         } else if (baseId == EVP_PKEY_EC) {
                             unsigned char* paramsDer = nullptr;
-                            const int pLen = i2d_KeyParams(pkey, &paramsDer);
+                            const int pLen = i2d_KeyParams(pkey.get(), &paramsDer);
                             if (pLen > 0 && paramsDer) {
                                 ecParamsDer.assign(paramsDer, paramsDer + pLen);
                                 OPENSSL_free(paramsDer);
                             }
                             std::size_t pointLen = 0;
-                            if (EVP_PKEY_get_octet_string_param(pkey, OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY, nullptr, 0,
-                                                                &pointLen) == 1 &&
+                            if (EVP_PKEY_get_octet_string_param(pkey.get(), OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY, nullptr,
+                                                                0, &pointLen) == 1 &&
                                 pointLen > 0) {
                                 std::vector<std::uint8_t> rawPoint(pointLen);
-                                EVP_PKEY_get_octet_string_param(pkey, OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY,
+                                EVP_PKEY_get_octet_string_param(pkey.get(), OSSL_PKEY_PARAM_ENCODED_PUBLIC_KEY,
                                                                 rawPoint.data(), pointLen, &pointLen);
                                 ecPointDer = LibreSCRS::Pkcs11::Internal::derOctetStringWrap(rawPoint);
                             }
                         }
-                        EVP_PKEY_free(pkey);
                     }
-                    X509_free(x509);
                 }
             }
 

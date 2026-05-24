@@ -29,6 +29,7 @@ target_include_directories(PKCS15
         ${PROJECT_SOURCE_DIR}/lib/smartcard/src
         ${PROJECT_SOURCE_DIR}/lib/pkcs11/include
         ${PROJECT_SOURCE_DIR}/lib/plugin/src
+        ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
 )
 
 target_link_libraries(PKCS15 PUBLIC SmartCard_Impl LibreSCRS::SmartCard LibreSCRS_SecureChannel PRIVATE OpenSSL_Crypto EMRTDCrypto LibreSCRS::Secure)

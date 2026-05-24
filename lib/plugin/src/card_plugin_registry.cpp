@@ -11,6 +11,7 @@
 #include <array>
 #include <dlfcn.h>
 #include <exception>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <shared_mutex>
@@ -24,6 +25,22 @@ namespace {
 using CreateFunc = CardPlugin* (*)();
 using DestroyFunc = void (*)(CardPlugin*);
 using AbiVersionFunc = uint32_t (*)();
+
+// POSIX RAII for the dlopen handle. Defined TU-local on purpose so the
+// project-wide `*LibreSCRS::*` visibility glob (cmake/librescrs-public-
+// exports.map) does not promote the inline template instantiations into
+// the libLibreSCRS_Plugin.so export surface. Keeps the SO handle alive
+// across throwable allocations between dlopen and the shared_ptr handoff.
+struct DlCloser
+{
+    void operator()(void* handle) const noexcept
+    {
+        if (handle) {
+            ::dlclose(handle);
+        }
+    }
+};
+using DlHandle = std::unique_ptr<void, DlCloser>;
 
 // Free function at file scope — the std::shared_ptr custom deleter does not
 // capture, so no Impl-dependent closure type leaks. Both the SO handle and
@@ -114,7 +131,13 @@ void CardPluginService::Impl::loadDirectory(const std::filesystem::path& dir)
         // namespace. Constraint: plugins must not carry vendored static
         // copies of shared system libraries (e.g., OpenSSL), as each plugin
         // would get its own copy.
-        void* handle = ::dlopen(entry.path().c_str(), RTLD_NOW | RTLD_LOCAL);
+        //
+        // DlHandle owns the dlopen handle across every throwable line in
+        // this scope (report.push_back, std::to_string, std::string
+        // construction). Ownership transfers via .release() to the
+        // shared_ptr custom deleter once both factory + destroyer
+        // symbols have resolved and the plugin instance is alive.
+        DlHandle handle(::dlopen(entry.path().c_str(), RTLD_NOW | RTLD_LOCAL));
         if (!handle) {
             const char* err = ::dlerror();
             outcome.status = LoadOutcome::Status::DlopenFailed;
@@ -123,11 +146,10 @@ void CardPluginService::Impl::loadDirectory(const std::filesystem::path& dir)
             continue;
         }
 
-        auto abiFunc = reinterpret_cast<AbiVersionFunc>(::dlsym(handle, "card_plugin_abi_version"));
+        auto abiFunc = reinterpret_cast<AbiVersionFunc>(::dlsym(handle.get(), "card_plugin_abi_version"));
         if (!abiFunc) {
             outcome.status = LoadOutcome::Status::MissingFactory;
             outcome.diagnostic = "missing card_plugin_abi_version()";
-            ::dlclose(handle);
             report.push_back(std::move(outcome));
             continue;
         }
@@ -137,16 +159,14 @@ void CardPluginService::Impl::loadDirectory(const std::filesystem::path& dir)
             outcome.status = LoadOutcome::Status::AbiMismatch;
             outcome.diagnostic = "ABI version mismatch (got " + std::to_string(version) + ", expected " +
                                  std::to_string(kCardPluginAbiVersion) + ")";
-            ::dlclose(handle);
             report.push_back(std::move(outcome));
             continue;
         }
 
-        auto createFunc = reinterpret_cast<CreateFunc>(::dlsym(handle, "create_card_plugin"));
+        auto createFunc = reinterpret_cast<CreateFunc>(::dlsym(handle.get(), "create_card_plugin"));
         if (!createFunc) {
             outcome.status = LoadOutcome::Status::MissingFactory;
             outcome.diagnostic = "missing create_card_plugin()";
-            ::dlclose(handle);
             report.push_back(std::move(outcome));
             continue;
         }
@@ -156,11 +176,10 @@ void CardPluginService::Impl::loadDirectory(const std::filesystem::path& dir)
         // plugin that is missing this symbol is rejected with the same
         // MissingFactory status so the deployment issue is surfaced to the
         // host operator.
-        auto destroyFunc = reinterpret_cast<DestroyFunc>(::dlsym(handle, "destroy_card_plugin"));
+        auto destroyFunc = reinterpret_cast<DestroyFunc>(::dlsym(handle.get(), "destroy_card_plugin"));
         if (!destroyFunc) {
             outcome.status = LoadOutcome::Status::MissingFactory;
             outcome.diagnostic = "missing destroy_card_plugin()";
-            ::dlclose(handle);
             report.push_back(std::move(outcome));
             continue;
         }
@@ -174,13 +193,11 @@ void CardPluginService::Impl::loadDirectory(const std::filesystem::path& dir)
         } catch (const std::exception& ex) {
             outcome.status = LoadOutcome::Status::FactoryThrew;
             outcome.diagnostic = std::string{"create_card_plugin() threw: "} + ex.what();
-            ::dlclose(handle);
             report.push_back(std::move(outcome));
             continue;
         } catch (...) {
             outcome.status = LoadOutcome::Status::FactoryThrew;
             outcome.diagnostic = "create_card_plugin() threw non-std::exception";
-            ::dlclose(handle);
             report.push_back(std::move(outcome));
             continue;
         }
@@ -188,7 +205,6 @@ void CardPluginService::Impl::loadDirectory(const std::filesystem::path& dir)
         if (!raw) {
             outcome.status = LoadOutcome::Status::FactoryThrew;
             outcome.diagnostic = "create_card_plugin() returned nullptr";
-            ::dlclose(handle);
             report.push_back(std::move(outcome));
             continue;
         }
@@ -199,12 +215,19 @@ void CardPluginService::Impl::loadDirectory(const std::filesystem::path& dir)
         // its control block once; if that allocation throws, the catch
         // runs destroyLoadedPlugin directly to match the success-path
         // cleanup exactly (same destroy function, same dlclose order).
+        //
+        // handle.release() must run only on the success path: if the
+        // shared_ptr construction throws, the catch destroys the plugin
+        // and DlHandle's dtor closes the SO during stack unwind.
         std::shared_ptr<CardPlugin> plugin;
         try {
+            void* rawHandle = handle.get();
             plugin = std::shared_ptr<CardPlugin>(
-                raw, [destroyFunc, handle](CardPlugin* p) { destroyLoadedPlugin(p, destroyFunc, handle); });
+                raw, [destroyFunc, rawHandle](CardPlugin* p) { destroyLoadedPlugin(p, destroyFunc, rawHandle); });
+            // Success — transfer SO ownership into the shared_ptr deleter.
+            (void)handle.release();
         } catch (...) {
-            destroyLoadedPlugin(raw, destroyFunc, handle);
+            destroyLoadedPlugin(raw, destroyFunc, nullptr); // dtor of handle closes SO.
             outcome.status = LoadOutcome::Status::FactoryThrew;
             outcome.diagnostic = "failed to construct shared_ptr for plugin";
             report.push_back(std::move(outcome));
