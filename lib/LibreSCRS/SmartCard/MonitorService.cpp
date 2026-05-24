@@ -406,10 +406,7 @@ void MonitorService::Impl::diffReadersAndDispatch(const std::vector<std::string>
     // refactor that calls diffReadersAndDispatch off the poll thread.
     // Release pairs with the acquire in subscribeReaderList.
     bool expected = false;
-    initialPollComplete.compare_exchange_strong(
-        expected, true,
-        std::memory_order_release,
-        std::memory_order_relaxed);
+    initialPollComplete.compare_exchange_strong(expected, true, std::memory_order_release, std::memory_order_relaxed);
 }
 
 MonitorService::Config MonitorService::Config::fromEnv() noexcept

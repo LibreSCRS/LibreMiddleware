@@ -528,11 +528,10 @@ TEST(MonitorServiceBootstrapRace, SubscribeReaderListAfterSubscribeNoEmptyBootst
     //     bootstrap-fires `[]` because knownReaders is still empty
     //     (poll thread is parked in listReaders, hasn't called
     //     diffReadersAndDispatch yet).
-    auto rlSubId = monitor->subscribeReaderList(
-        [&snapshotsMtx, &snapshots](const std::vector<std::string>& readers) {
-            std::lock_guard<std::mutex> lock(snapshotsMtx);
-            snapshots.push_back(readers);
-        });
+    auto rlSubId = monitor->subscribeReaderList([&snapshotsMtx, &snapshots](const std::vector<std::string>& readers) {
+        std::lock_guard<std::mutex> lock(snapshotsMtx);
+        snapshots.push_back(readers);
+    });
 
     // (3) Disarm the listReaders gate first (so any future re-enumerate
     //     call from the poll thread won't block again), then release the
@@ -573,8 +572,7 @@ TEST(MonitorServiceBootstrapRace, SubscribeReaderListAfterSubscribeNoEmptyBootst
     std::lock_guard<std::mutex> lock(snapshotsMtx);
     ASSERT_FALSE(snapshots.empty()) << "No reader-list snapshot was delivered at all";
     for (size_t i = 0; i < snapshots.size(); ++i) {
-        EXPECT_FALSE(snapshots[i].empty())
-            << "Snapshot #" << i << " was empty — bootstrap race not fixed";
+        EXPECT_FALSE(snapshots[i].empty()) << "Snapshot #" << i << " was empty — bootstrap race not fixed";
     }
     bool sawPopulated = false;
     for (const auto& s : snapshots) {
@@ -616,8 +614,7 @@ TEST(MonitorServiceBootstrapRace, SubscribeReaderListZeroReadersAtBootThenPlug)
     // PnP check (no membership change yet — first enumerate returns {}).
     mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false});
     // Then "Reader A" gets plugged in — drives the second enumerate cycle.
-    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false,
-                            std::vector<std::string>{"Reader A"}});
+    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false, std::vector<std::string>{"Reader A"}});
     // Stop.
     mock->pushStatusChange({LONG(SCARD_E_CANCELLED), {}, false});
 
@@ -635,12 +632,10 @@ TEST(MonitorServiceBootstrapRace, SubscribeReaderListZeroReadersAtBootThenPlug)
     //     not sleep. Sleeps are flaky under CI load; the counter
     //     observation strictly happens-after the mock's listReaders impl.
     auto enumerateDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(5000);
-    while (counters->listReadersCount.load() < 1 &&
-           std::chrono::steady_clock::now() < enumerateDeadline) {
+    while (counters->listReadersCount.load() < 1 && std::chrono::steady_clock::now() < enumerateDeadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
-    ASSERT_GE(counters->listReadersCount.load(), 1)
-        << "Poll thread never reached listReaders within 5s";
+    ASSERT_GE(counters->listReadersCount.load(), 1) << "Poll thread never reached listReaders within 5s";
 
     // (3) Snapshot subscription registered AFTER first enumerate completed.
     //     Post-correct-fix: knownReaders == {} (truthful), initialPollComplete
@@ -648,11 +643,10 @@ TEST(MonitorServiceBootstrapRace, SubscribeReaderListZeroReadersAtBootThenPlug)
     //     Post-naïve-fix: initialPollComplete still false (latch was inside
     //     dispatch conditional, dispatch didn't fire on empty enumerate),
     //     so bootstrap is SKIPPED — assertion below will fail.
-    auto rlSubId = monitor->subscribeReaderList(
-        [&snapshotsMtx, &snapshots](const std::vector<std::string>& readers) {
-            std::lock_guard<std::mutex> lock(snapshotsMtx);
-            snapshots.push_back(readers);
-        });
+    auto rlSubId = monitor->subscribeReaderList([&snapshotsMtx, &snapshots](const std::vector<std::string>& readers) {
+        std::lock_guard<std::mutex> lock(snapshotsMtx);
+        snapshots.push_back(readers);
+    });
 
     // (4) Wait for the "Reader A plugged in" cycle to dispatch.
     auto pluggedDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(5000);
@@ -680,9 +674,8 @@ TEST(MonitorServiceBootstrapRace, SubscribeReaderListZeroReadersAtBootThenPlug)
     // something between registration (step 3) and the "Reader A plugged
     // in" cycle. If snapshots is empty, Change B's latch did not fire on
     // the empty first enumerate — the naïve-placement regression is back.
-    ASSERT_FALSE(snapshots.empty())
-        << "No snapshot delivered to late joiner — Change B latch did not "
-           "fire on empty first enumerate (regression to naïve placement).";
+    ASSERT_FALSE(snapshots.empty()) << "No snapshot delivered to late joiner — Change B latch did not "
+                                       "fire on empty first enumerate (regression to naïve placement).";
 
     // Sanity: at least one populated snapshot with Reader A was observed.
     bool sawReaderA = false;
@@ -690,6 +683,5 @@ TEST(MonitorServiceBootstrapRace, SubscribeReaderListZeroReadersAtBootThenPlug)
         if (s.size() == 1 && s[0] == "Reader A")
             sawReaderA = true;
     }
-    EXPECT_TRUE(sawReaderA)
-        << "Expected at least one snapshot containing {\"Reader A\"} after plug-in";
+    EXPECT_TRUE(sawReaderA) << "Expected at least one snapshot containing {\"Reader A\"} after plug-in";
 }
