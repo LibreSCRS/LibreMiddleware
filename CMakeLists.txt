@@ -232,10 +232,10 @@ add_subdirectory(tools)
 #
 # LibreMiddleware is consumed in-tree (FetchContent) by LibreCelik today, so
 # an install/export package is not the primary distribution channel. However,
-# the audit (Phase 10 / Finding M9) flagged that if/when an SDK package is
-# produced, the `include/LibreSCRS/**/detail/` sub-trees MUST be excluded —
-# those headers are compile-time-guarded with `#error !LIBRESCRS_INTERNAL_BUILD`
-# but must never ship in the public SDK package.
+# if/when an SDK package is produced, the `include/LibreSCRS/**/detail/`
+# sub-trees MUST be excluded — those headers are compile-time-guarded with
+# `#error !LIBRESCRS_INTERNAL_BUILD` but must never ship in the public SDK
+# package.
 #
 # Active when:
 #   * LIBRESCRS_INSTALL_SDK_HEADERS=ON       (explicit opt-in), OR

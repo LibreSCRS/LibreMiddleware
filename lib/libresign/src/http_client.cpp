@@ -580,7 +580,7 @@ HttpResponse HttpClient::postBinaryWithCredentials(const std::string& url, const
         return resp;
     }
 
-    // Body-size guard (Finding M1). CURLOPT_POSTFIELDSIZE takes
+    // Body-size guard. CURLOPT_POSTFIELDSIZE takes
     // `long`; on LLP64 (Windows) `long` is 32-bit, so
     // static_cast<long>(size_t) would truncate for >2 GiB bodies and
     // libcurl would send the wrong Content-Length. Mirror the

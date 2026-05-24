@@ -102,19 +102,15 @@
  *   only because the shared-build link graph mechanically requires
  *   it.
  *
- *   4.3 cleanup: the previous round-2 enumeration of
- *   `LibreSCRS::SmartCard::Internal::sessionTransmitImpl` is gone
- *   along with the @ref detail::sessionTransmit free function. The
- *   SM-aware transmit funnel now lives inside CardSession as
+ *   SM-aware transmit funnel: the only exported entry point is
  *   `CardSession::transmitInternal()` (internal-build-gated public
- *   member); the snapshot/dispatch primitive collapsed into a TU-
- *   local anonymous-namespace helper inside `CardSession.cpp` with
- *   no exported symbol. Net effect on this allowlist: the
- *   `*LibreSCRS::*` glob still authoritatively promotes
- *   `transmitInternal`, but the previously-enumerated `Internal::`
- *   sibling, the `detail::sessionTransmit` free function, and the
- *   three `CardSession::impl{Mutex,ActiveChannelSnapshot,OwnedConn}`
- *   accessors are all gone from the dynamic export set.
+ *   member), promoted authoritatively by the `*LibreSCRS::*` glob.
+ *   The snapshot/dispatch primitive is a TU-local anonymous-namespace
+ *   helper inside `CardSession.cpp` and is not exported; the legacy
+ *   `LibreSCRS::SmartCard::Internal::sessionTransmitImpl` free
+ *   function, the `detail::sessionTransmit` overload, and the
+ *   `CardSession::impl{Mutex,ActiveChannelSnapshot,OwnedConn}`
+ *   accessors are intentionally absent from the dynamic export set.
  */
 
 LM_4 {

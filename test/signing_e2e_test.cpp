@@ -1475,14 +1475,14 @@ TEST_P(SigningE2ETest, JAdES_AppendSigner_OriginalMismatch_RejectsExplicitly)
 
 // ---- S2.8 — JAdES JSON input size cap (DoS hardening) ----
 //
-// Pre-Bucket-A: nlohmann::json::parse had no input-size or depth limit,
-// so a 1 GiB JSON or a `[[[[…]]]]` pathological input could exhaust
-// memory / overflow the parse stack from the multi-sign detection
-// branch. Caps live in `tryParseJwsGeneral` — exceeding any cap returns
-// nullopt so the multi-sign branch silently falls through to fresh-sign
-// (which itself either succeeds on the raw bytes or fails on a different
-// shape check). What we assert here is "bounded time / no crash /
-// no OOM-kill" — the precise outcome is fine either way.
+// Input-size and depth caps live in `tryParseJwsGeneral` — exceeding any
+// cap returns nullopt so the multi-sign branch silently falls through to
+// fresh-sign (which itself either succeeds on the raw bytes or fails on
+// a different shape check). What we assert here is "bounded time / no
+// crash / no OOM-kill" — the precise outcome is fine either way. Without
+// the caps, a 1 GiB JSON or a `[[[[…]]]]` pathological input could
+// exhaust memory / overflow the parse stack from the multi-sign
+// detection branch.
 TEST_P(SigningE2ETest, JAdES_MultiSign_RejectsOversizedJsonInput)
 {
     SKIP_IF_PIN_FAILED();
@@ -1595,13 +1595,13 @@ TEST_P(SigningE2ETest, ASiCE_MultiSign_PreservesPriorSignatures)
 
 // ---- ASiC-E zip-slip regression guard for preserved META-INF entries ----
 //
-// Pre-Bucket-A: `tryParseAsic` enumerated every META-INF entry from an
-// attacker-controlled ASiC and forwarded the names verbatim to the writer,
-// allowing `META-INF/../../etc/cron.d/pwn` or `META-INF/x\0evil` to ride
-// into the re-signed output under the signer's authority. The fix routes
-// every preserved name through `isValidAsicEntryName`. This test crafts a
-// malicious ASiC and asserts the parser refuses → caller falls back to
-// fresh-sign-wrap-as-data (the original "succeed-but-wrong" behaviour),
+// `tryParseAsic` routes every preserved META-INF entry name from an
+// attacker-controlled ASiC through `isValidAsicEntryName` before
+// forwarding to the writer; without the guard, names like
+// `META-INF/../../etc/cron.d/pwn` or `META-INF/x\0evil` could ride
+// into the re-signed output under the signer's authority. This test
+// crafts a malicious ASiC and asserts the parser refuses → caller
+// falls back to fresh-sign-wrap-as-data (the original "succeed-but-wrong" behaviour),
 // which is preferable to silently emitting a zip-slip-carrying archive.
 TEST_P(SigningE2ETest, ASiCE_MultiSign_RejectsZipSlipInPreservedEntries)
 {
@@ -1860,8 +1860,8 @@ TEST_P(SigningE2ETest, XAdES_MultiLevel_BB_then_BLTA_Enveloped)
     checkPinFailure(r2);
     ASSERT_TRUE(r2.success) << "XAdES B-LTA second sign: " << r2.errorMessage;
 
-    // XAdES multi-sign auto-detect (Bucket A) routes the second request
-    // through the append path. The new signer carries the requested level
+    // XAdES multi-sign auto-detect routes the second request through
+    // the append path. The new signer carries the requested level
     // for its OWN sigTst / sigRefs slots, but DSS's per-signature level
     // classification reports the BEST level it can independently verify;
     // without a live OCSP/CRL responder for the PKS chain Sig 0 stays at

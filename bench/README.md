@@ -56,9 +56,9 @@ configurable threshold (default 20%, see `.github/workflows/bench.yml`).
 4. If a deliberate trade-off (e.g. extra defensive copies for thread safety):
    document the rationale in the commit message and update the baseline.
 
-## SoftHSM bootstrap (TODO 4.1)
+## SoftHSM bootstrap (TODO)
 
 The signing benchmark currently emits SKIP unless `SOFTHSM2_CONF` is set. A
 hermetic bootstrap script that initialises a SoftHSM token with a known
-keypair is in the 4.1 backlog; once landed, the bench will measure the full
-PKCS#11 + B-B / B-T / B-LT / B-LTA latency curve.
+keypair is tracked in the backlog; once landed, the bench will measure the
+full PKCS#11 + B-B / B-T / B-LT / B-LTA latency curve.
