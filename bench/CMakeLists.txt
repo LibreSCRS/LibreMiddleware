@@ -61,13 +61,10 @@ target_link_libraries(bench_truststore_service PRIVATE
 target_compile_definitions(bench_truststore_service PRIVATE
     LIBRESCRS_BENCH_FIXTURES_DIR="${PROJECT_SOURCE_DIR}/test/fixtures")
 
-# bench_signing: deferred to LM 4.1.
+# bench_signing: intentionally absent.
 #
-# The earlier stub at bench/bench_signing.cpp recorded a "skip when SoftHSM
-# is unreachable" baseline. Per the 2026-05-05 round-2 necessity review
-# (LM-DEAD-8): a benchmark that always either skips or runs an empty
-# for-loop is half-finished. Per memory feedback_aggressive_legacy_removal
-# 4.0 ships zero half-finished implementations.
-#
-# When a hermetic SoftHSM bootstrap script lands under bench/ in 4.1, the
-# benchmark + its baseline JSON come back in lockstep.
+# SigningService::sign() requires a working PKCS#11 token (SoftHSM in
+# CI), and the bench host does not currently bootstrap one. A benchmark
+# that always SKIPs offers no signal, so the target is omitted until a
+# hermetic SoftHSM bootstrap lands under bench/. When it does, the
+# benchmark binary + its baseline JSON come back in lockstep.

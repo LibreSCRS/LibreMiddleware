@@ -28,6 +28,8 @@ jobs:
           - fuzz_parsed_certificate
           - fuzz_trusted_list_parser
           - fuzz_tl_signature_verifier
+          - fuzz_pkcs15_parser
+          - fuzz_emrtd_dg_parser
     steps:
       - uses: actions/checkout@v4
         with:
@@ -79,6 +81,8 @@ jobs:
             fuzz_parsed_certificate)     echo "path=fuzz/corpus/parsed_certificate" >>$GITHUB_OUTPUT;;
             fuzz_trusted_list_parser)    echo "path=fuzz/corpus/trusted_list_parser" >>$GITHUB_OUTPUT;;
             fuzz_tl_signature_verifier)  echo "path=fuzz/corpus/tl_signature_verifier" >>$GITHUB_OUTPUT;;
+            fuzz_pkcs15_parser)          echo "path=fuzz/corpus/pkcs15_parser" >>$GITHUB_OUTPUT;;
+            fuzz_emrtd_dg_parser)        echo "path=fuzz/corpus/emrtd_dg_parser" >>$GITHUB_OUTPUT;;
           esac
 
       - name: Run fuzzer (60 s)

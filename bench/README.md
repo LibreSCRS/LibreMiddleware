@@ -13,9 +13,6 @@ baseline only requires checking out the same commit.
 |                              | `findIssuerOf`                                           |
 | `bench_truststore_service`   | `TrustStoreService::create()` happy path with empty,     |
 |                              | system-store, and file:// TL fixture configs             |
-| `bench_signing`              | `SigningService::sign()` happy path (skipped when no     |
-|                              | SoftHSM is configured; CI hosts do not currently         |
-|                              | bootstrap one — tracked in `knowledge/docs/BACKLOG.md`)  |
 
 ## Build
 
@@ -25,13 +22,13 @@ cmake -B build-bench -S . -DCMAKE_BUILD_TYPE=Release \
     -DLIBRESCRS_BUILD_BENCH=ON \
     -DBUILD_TESTING=OFF
 cmake --build build-bench --target bench_parsed_cert bench_trust_validate \
-    bench_truststore_service bench_signing -j4
+    bench_truststore_service -j4
 ```
 
 ## Run / capture baseline
 
 ```bash
-for b in bench_parsed_cert bench_trust_validate bench_truststore_service bench_signing; do
+for b in bench_parsed_cert bench_trust_validate bench_truststore_service; do
     ./build-bench/bench/$b \
         --benchmark_min_time=1s \
         --benchmark_format=json \
@@ -56,9 +53,11 @@ configurable threshold (default 20%, see `.github/workflows/bench.yml`).
 4. If a deliberate trade-off (e.g. extra defensive copies for thread safety):
    document the rationale in the commit message and update the baseline.
 
-## SoftHSM bootstrap
+## Signing benchmark — deferred
 
-The signing benchmark currently emits SKIP unless `SOFTHSM2_CONF` is set. A
-hermetic bootstrap script that initialises a SoftHSM token with a known
-keypair is tracked in `knowledge/docs/BACKLOG.md`; once landed, the bench
-will measure the full PKCS#11 + B-B / B-T / B-LT / B-LTA latency curve.
+A `SigningService::sign()` micro-benchmark is intentionally absent: it
+needs a working PKCS#11 token (SoftHSM in CI) and the bench host does
+not currently bootstrap one. A hermetic SoftHSM bootstrap script is
+tracked in `knowledge/docs/BACKLOG.md`; once landed, the signing
+benchmark binary + its baseline JSON come back together and measure
+the full PKCS#11 + B-B / B-T / B-LT / B-LTA latency curve.

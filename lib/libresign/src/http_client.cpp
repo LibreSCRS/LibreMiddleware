@@ -573,10 +573,9 @@ HttpResponse HttpClient::postBinaryWithCredentials(const std::string& url, const
 {
     HttpResponse resp;
 
-    // Pre-flight credential validation (Finding I1 + I2). Reject
-    // CR/LF/NUL in any header value and reject extraHeaders-based
-    // Authorization override of a configured primary auth. No
-    // network I/O happens on failure.
+    // Pre-flight credential validation. Reject CR/LF/NUL in any header
+    // value and reject extraHeaders-based Authorization override of a
+    // configured primary auth. No network I/O happens on failure.
     if (auto reason = validateCredentials(credentials); !reason.empty()) {
         resp.errorMessage = "Credential validation failed: " + reason;
         return resp;

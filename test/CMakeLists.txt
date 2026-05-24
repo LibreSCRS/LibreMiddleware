@@ -450,6 +450,11 @@ if(LIBRESCRS_VENDOR_OPENSC)
     target_compile_definitions(OpenSCFallbackIntegrationTest PRIVATE
         PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
     )
+    # Shared PIN-guard header (single source of truth across real-card
+    # test binaries) per feedback_pin_guard_pattern.
+    target_include_directories(OpenSCFallbackIntegrationTest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
     add_dependencies(OpenSCFallbackIntegrationTest opensc-plugin)
     gtest_discover_tests(OpenSCFallbackIntegrationTest
         PROPERTIES LABELS "HARDWARE"

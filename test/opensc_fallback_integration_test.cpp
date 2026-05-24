@@ -14,6 +14,8 @@
 
 #include <gtest/gtest.h>
 
+#include "pin_guard.h"
+
 #include <LibreSCRS/Plugin/CardPlugin.h>
 #include <LibreSCRS/Plugin/CardPluginService.h>
 #include <LibreSCRS/Plugin/PluginTypes.h>
@@ -48,18 +50,10 @@ using LibreSCRS::Plugin::SignResult;
 using LibreSCRS::SmartCard::CardSession;
 using LibreSCRS::SmartCard::MonitorService;
 
-// ---------------------------------------------------------------------------
-// PIN guard. Latches on first failure, forces subsequent PIN-consuming
-// tests to SKIP to preserve retries.
-// ---------------------------------------------------------------------------
-
-[[maybe_unused]] static bool g_pinFailed = false;
-
-#define SKIP_IF_PIN_FAILED()                                                                                           \
-    do {                                                                                                               \
-        if (g_pinFailed)                                                                                               \
-            GTEST_SKIP() << "earlier PIN operation failed — skipping to preserve retries";                             \
-    } while (0)
+// PIN guard: g_pinFailed / SKIP_IF_PIN_FAILED come from the shared
+// test/include/pin_guard.h per feedback_pin_guard_pattern (single source
+// of truth across real-card test binaries). Local re-definitions were
+// pre-Wave-2 leftovers.
 
 // ---------------------------------------------------------------------------
 // Diagnostics helpers (anonymous namespace).
@@ -277,7 +271,7 @@ TEST_F(OpenSCFallbackPKS, Test04GetPINTriesLeftBaseline)
     const auto triesOpt = plugin->getPINTriesLeft(*session);
     ASSERT_TRUE(triesOpt.has_value()) << "getPINTriesLeft returned nullopt — plugin did not report a PIN retry count";
     if (*triesOpt < 3) {
-        g_pinFailed = true;
+        ::LibreSCRS::Tests::E2E::g_pinFailed.store(true, std::memory_order_relaxed);
         FAIL() << "PIN tries-left baseline is " << *triesOpt
                << " (expected 3) — card partially used; refusing to run PIN-consuming tests";
     }
@@ -307,7 +301,7 @@ TEST_F(OpenSCFallbackPKS, Test05VerifyPINSucceeds)
 
     const auto result = plugin->verifyPIN(*session, pin);
     if (!result.ok()) {
-        g_pinFailed = true;
+        ::LibreSCRS::Tests::E2E::g_pinFailed.store(true, std::memory_order_relaxed);
         FAIL() << "verifyPIN failed. retriesLeft="
                << (result.retriesLeft.has_value() ? std::to_string(*result.retriesLeft) : std::string("nullopt"))
                << ", blocked=" << (result.blocked ? "true" : "false") << ", triesBefore=" << triesBefore

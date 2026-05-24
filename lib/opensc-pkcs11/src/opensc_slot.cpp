@@ -8,6 +8,7 @@
 #include "opensc_slot.h"
 
 #include "opensc_card.h"
+#include "pkcs15_cert_ptr.h"
 #include "sc_lock_guard.h"
 
 #include <internal/Crv.h>
@@ -220,10 +221,19 @@ std::vector<LibreSCRS::Pkcs11::Internal::PKCS11ObjectInfo> OpenScSlot::enumerate
             }
         }
 
-        sc_pkcs15_cert_t* cert = nullptr;
-        int rc = sc_pkcs15_read_certificate(p15, certInfo, /*private_obj=*/0, &cert);
-        if (rc < 0 || !cert)
+        sc_pkcs15_cert_t* certRaw = nullptr;
+        int rc = sc_pkcs15_read_certificate(p15, certInfo, /*private_obj=*/0, &certRaw);
+        if (rc < 0 || !certRaw)
             continue;
+
+        // Pkcs15CertPtr keeps the cert live across every throwable line
+        // below — two std::vector ctors, two PKCS11ObjectInfo assignments
+        // (vector::assign + string field copies), and two
+        // objects.push_back(std::move(...)) of fully-built infos. Any
+        // std::bad_alloc among those previously leaked the cert because
+        // the manual sc_pkcs15_free_certificate at loop end never ran on
+        // stack unwind.
+        LibreSCRS::OpenSc::Pkcs15CertPtr cert(certRaw);
 
         std::vector<std::uint8_t> ckaId(certInfo->id.value, certInfo->id.value + certInfo->id.len);
         std::vector<std::uint8_t> derBytes(cert->data.value, cert->data.value + cert->data.len);
@@ -277,8 +287,6 @@ std::vector<LibreSCRS::Pkcs11::Internal::PKCS11ObjectInfo> OpenScSlot::enumerate
 
             objects.push_back(std::move(keyPkcs));
         }
-
-        sc_pkcs15_free_certificate(cert);
     }
 
     return objects;

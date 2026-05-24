@@ -6,5 +6,12 @@ librescrs_add_plugin(opensc-plugin
     SOURCES  src/opensc_card_plugin.cpp
     INCLUDE_DIRS
         ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+        # pkcs15_cert_ptr.h was relocated to the sibling opensc-pkcs11
+        # internal source dir so a second OpenSC consumer
+        # (OpenScSlot::enumerateObjects) can reuse the Pkcs15CertPtr
+        # RAII wrapper without duplicating it. Header-only, hidden visibility.
+        ${PROJECT_SOURCE_DIR}/lib/opensc-pkcs11/src
+        # OpenSslPtr.h (X509Ptr) for extractSubjectCN exception safety.
+        ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
     LINK_LIBRARIES SmartCard_Impl opensc_static_with_deps
 )

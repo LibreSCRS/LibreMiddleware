@@ -459,16 +459,16 @@ namespace {
 class PCSCContextHandle
 {
 public:
-    PCSCContextHandle() noexcept : context_{}, ok_{false}
+    PCSCContextHandle() noexcept : context{}, established{false}
     {
-        const LONG rv = SCardEstablishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &context_);
-        ok_ = (rv == SCARD_S_SUCCESS);
+        const LONG rv = SCardEstablishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &context);
+        established = (rv == SCARD_S_SUCCESS);
     }
 
     ~PCSCContextHandle() noexcept
     {
-        if (ok_) {
-            SCardReleaseContext(context_);
+        if (established) {
+            SCardReleaseContext(context);
         }
     }
 
@@ -479,17 +479,17 @@ public:
 
     [[nodiscard]] bool ok() const noexcept
     {
-        return ok_;
+        return established;
     }
 
     [[nodiscard]] SCARDCONTEXT get() const noexcept
     {
-        return context_;
+        return context;
     }
 
 private:
-    SCARDCONTEXT context_;
-    bool ok_;
+    SCARDCONTEXT context;
+    bool established;
 };
 
 } // namespace

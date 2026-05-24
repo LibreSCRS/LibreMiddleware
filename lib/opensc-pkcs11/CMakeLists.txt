@@ -19,6 +19,7 @@ add_library(librescrs-opensc-pkcs11 STATIC
     src/opensc_card.h
     src/opensc_slot.h
     src/sc_lock_guard.h
+    src/pkcs15_cert_ptr.h
 )
 
 target_compile_definitions(librescrs-opensc-pkcs11 PRIVATE

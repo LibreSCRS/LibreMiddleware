@@ -12,6 +12,8 @@
 
 #include <openssl/x509.h>
 
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+
 #include <iostream>
 #include <map>
 #include <mutex>
@@ -22,7 +24,8 @@
 
 namespace {
 
-using LibreSCRS::OpenSc::Plugin::Pkcs15CertPtr;
+using LibreSCRS::Internal::Crypto::X509Ptr;
+using LibreSCRS::OpenSc::Pkcs15CertPtr;
 
 // OpenSC fallback for unknown PKCS#15-shaped cards. Sits BELOW specific
 // plugins (rs-eid, rs-health, emrtd, eu-vrc — priorities 100-ish) but
@@ -34,17 +37,20 @@ using LibreSCRS::OpenSc::Plugin::Pkcs15CertPtr;
 
 std::string extractSubjectCN(const uint8_t* der, size_t len)
 {
+    // X509Ptr keeps the parsed cert alive across the std::string ctor at
+    // the bottom of this function, which can throw std::bad_alloc on a
+    // pathological allocator. The previous raw-X509* path leaked the
+    // cert on that unwind because the explicit X509_free was unreachable.
     const uint8_t* p = der;
-    X509* cert = d2i_X509(nullptr, &p, static_cast<long>(len));
+    X509Ptr cert(d2i_X509(nullptr, &p, static_cast<long>(len)));
     if (!cert)
         return "(unreadable)";
 
-    X509_NAME* subject = X509_get_subject_name(cert);
+    X509_NAME* subject = X509_get_subject_name(cert.get());
     char buf[256] = {};
     X509_NAME_get_text_by_NID(subject, NID_commonName, buf, sizeof(buf));
 
     std::string cn(buf);
-    X509_free(cert);
     return cn.empty() ? "(no CN)" : cn;
 }
 

@@ -13,8 +13,7 @@ configures a `TrustedListEntry` for it (LibreCelik does so by default).
 
 Certificates that already appear in the Serbian TL by exact
 SHA-256(DER) match are NOT shipped here, to avoid duplication and to
-keep the trust surface in one place. Such redundant copies were pruned
-in Tier 2 Phase 6 of the LibreSCRS 4.0 trust-consolidation work.
+keep the trust surface in one place.
 
 ## What stays bundled
 

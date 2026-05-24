@@ -272,9 +272,19 @@ VerificationResult CardVerifier::verifyGemaltoCardCert(LibreSCRS::SmartCard::Int
               << std::endl;
 #endif
 
-    // Parse PKCS#7 to extract signer certificate
+    // Parse PKCS#7 to extract signer certificate. Pkcs7Ptr / StackX509Ptr /
+    // X509StoreCtxPtr keep their handles alive across every throwable line
+    // below — most importantly the std::cerr stream operations
+    // (which can throw under std::ios_base::failure with fail-on-throw
+    // exception masks) and the X509_NAME_oneline path that allocates an
+    // OpenSSL string. With raw owning pointers any C++ exception between
+    // d2i_PKCS7 and the manual *_free calls leaked the PKCS7 + signer
+    // stack. Mirrors the Wave 4 rewrite of the sibling
+    // verifyPKCS7Signature() in this file. StackX509Ptr's deleter is
+    // sk_X509_free (not sk_X509_pop_free) because PKCS7_get0_signers
+    // returns borrowed certs owned by the parent PKCS7.
     const uint8_t* p = sodData.data();
-    PKCS7* pkcs7 = d2i_PKCS7(nullptr, &p, static_cast<long>(sodData.size()));
+    Pkcs7Ptr pkcs7(d2i_PKCS7(nullptr, &p, static_cast<long>(sodData.size())));
     if (!pkcs7) {
 #ifndef NDEBUG
         std::cerr << "[CardVerifier] Gemalto card cert: failed to parse PKCS#7" << std::endl;
@@ -284,21 +294,20 @@ VerificationResult CardVerifier::verifyGemaltoCardCert(LibreSCRS::SmartCard::Int
 
     // Verify PKCS#7 signature — PKCS7_NOVERIFY skips cert chain validation
     // (chain is verified separately below), but the CMS signature itself IS checked.
-    int rc = PKCS7_verify(pkcs7, nullptr, nullptr, nullptr, nullptr, PKCS7_NOVERIFY);
+    int rc = PKCS7_verify(pkcs7.get(), nullptr, nullptr, nullptr, nullptr, PKCS7_NOVERIFY);
     if (rc != 1) {
 #ifndef NDEBUG
         std::cerr << "[CardVerifier] Gemalto card cert: PKCS#7 structure invalid" << std::endl;
 #endif
-        PKCS7_free(pkcs7);
         return VerificationResult::Invalid;
     }
 
     // Extract signer certificate and verify chain
-    STACK_OF(X509)* signerCerts = PKCS7_get0_signers(pkcs7, nullptr, 0);
+    StackX509Ptr signerCerts(PKCS7_get0_signers(pkcs7.get(), nullptr, 0));
     bool chainValid = false;
 
-    if (signerCerts && sk_X509_num(signerCerts) > 0) {
-        X509* signerCert = sk_X509_value(signerCerts, 0);
+    if (signerCerts && sk_X509_num(signerCerts.get()) > 0) {
+        X509* signerCert = sk_X509_value(signerCerts.get(), 0);
 
 #ifndef NDEBUG
         char* subject = X509_NAME_oneline(X509_get_subject_name(signerCert), nullptr, 0);
@@ -308,30 +317,25 @@ VerificationResult CardVerifier::verifyGemaltoCardCert(LibreSCRS::SmartCard::Int
         }
 #endif
 
-        X509_STORE_CTX* ctx = X509_STORE_CTX_new();
+        X509StoreCtxPtr ctx(X509_STORE_CTX_new());
         if (ctx) {
-            rc = X509_STORE_CTX_init(ctx, certStore->store, signerCert, nullptr);
+            rc = X509_STORE_CTX_init(ctx.get(), certStore->store, signerCert, nullptr);
             if (rc == 1) {
-                chainValid = (X509_verify_cert(ctx) == 1);
+                chainValid = (X509_verify_cert(ctx.get()) == 1);
 #ifndef NDEBUG
                 if (!chainValid) {
-                    int err = X509_STORE_CTX_get_error(ctx);
+                    int err = X509_STORE_CTX_get_error(ctx.get());
                     std::cerr << "[CardVerifier] Gemalto card cert chain error: " << X509_verify_cert_error_string(err)
                               << " (" << err << ")" << std::endl;
                 }
 #endif
             }
-            X509_STORE_CTX_free(ctx);
         }
     } else {
 #ifndef NDEBUG
         std::cerr << "[CardVerifier] Gemalto card cert: no signer certificates found" << std::endl;
 #endif
     }
-
-    if (signerCerts)
-        sk_X509_free(signerCerts);
-    PKCS7_free(pkcs7);
 
 #ifndef NDEBUG
     std::cerr << "[CardVerifier] Gemalto card cert chain: " << (chainValid ? "VALID" : "INVALID") << std::endl;

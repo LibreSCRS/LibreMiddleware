@@ -516,7 +516,24 @@ MonitorService::SubscriptionId MonitorService::subscribe(EventCallback callback)
             }
             impl->dispatch(pub);
         };
-        auto readersCb = [impl](const std::vector<std::string>& readers) { impl->diffReadersAndDispatch(readers); };
+        // Poll-thread entry: shield against std::bad_alloc from the
+        // std::set construction, snapshot.assign, snapshotReaderListCallbacks
+        // reserve/emplace, and added/removed vector push_back inside
+        // diffReadersAndDispatch. The per-subscriber-callback bodies are
+        // already shielded inside dispatchReaderListSnapshot /
+        // dispatchImmediate, but an allocation failure outside those
+        // bodies would escape the std::thread entry and invoke
+        // std::terminate. Same rationale as the noexcept catch on
+        // unsubscribe()/[thread.req.exception].
+        auto readersCb = [impl](const std::vector<std::string>& readers) {
+            try {
+                impl->diffReadersAndDispatch(readers);
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "LibreSCRS MonitorService: reader-list dispatch threw: %s\n", e.what());
+            } catch (...) {
+                std::fprintf(stderr, "LibreSCRS MonitorService: reader-list dispatch threw unknown exception\n");
+            }
+        };
         auto internalId = d->internal->subscribe(std::move(eventCb), std::move(readersCb));
         std::lock_guard<std::mutex> lock(d->cbMtx);
         d->internalSubId = internalId;
@@ -615,7 +632,24 @@ MonitorService::SubscriptionId MonitorService::subscribeReaderList(ReaderListCal
             }
             impl->dispatch(pub);
         };
-        auto readersCb = [impl](const std::vector<std::string>& readers) { impl->diffReadersAndDispatch(readers); };
+        // Poll-thread entry: shield against std::bad_alloc from the
+        // std::set construction, snapshot.assign, snapshotReaderListCallbacks
+        // reserve/emplace, and added/removed vector push_back inside
+        // diffReadersAndDispatch. The per-subscriber-callback bodies are
+        // already shielded inside dispatchReaderListSnapshot /
+        // dispatchImmediate, but an allocation failure outside those
+        // bodies would escape the std::thread entry and invoke
+        // std::terminate. Same rationale as the noexcept catch on
+        // unsubscribe()/[thread.req.exception].
+        auto readersCb = [impl](const std::vector<std::string>& readers) {
+            try {
+                impl->diffReadersAndDispatch(readers);
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "LibreSCRS MonitorService: reader-list dispatch threw: %s\n", e.what());
+            } catch (...) {
+                std::fprintf(stderr, "LibreSCRS MonitorService: reader-list dispatch threw unknown exception\n");
+            }
+        };
         auto internalId = d->internal->subscribe(std::move(eventCb), std::move(readersCb));
         std::lock_guard<std::mutex> lock(d->cbMtx);
         d->internalSubId = internalId;

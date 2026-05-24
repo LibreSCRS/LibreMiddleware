@@ -35,17 +35,17 @@ namespace LibreSCRS::OpenSc::Pkcs11 {
 class ScLockGuard
 {
 public:
-    explicit ScLockGuard(sc_card_t* card) noexcept : card_(card), ok_(false)
+    explicit ScLockGuard(sc_card_t* cardArg) noexcept : card(cardArg), ok(false)
     {
-        if (card_) {
-            ok_ = (sc_lock(card_) == SC_SUCCESS);
+        if (card) {
+            ok = (sc_lock(card) == SC_SUCCESS);
         }
     }
 
     ~ScLockGuard() noexcept
     {
-        if (ok_ && card_) {
-            sc_unlock(card_);
+        if (ok && card) {
+            sc_unlock(card);
         }
     }
 
@@ -57,12 +57,12 @@ public:
     /// @brief True iff the underlying @c sc_lock succeeded.
     [[nodiscard]] bool locked() const noexcept
     {
-        return ok_;
+        return ok;
     }
 
 private:
-    sc_card_t* card_;
-    bool ok_;
+    sc_card_t* card;
+    bool ok;
 };
 
 } // namespace LibreSCRS::OpenSc::Pkcs11
