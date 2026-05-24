@@ -52,6 +52,29 @@ public:
         listReadersRv = rv;
     }
 
+    /// @brief Block any incoming `listReaders` call inside the mock until
+    /// `releaseListReadersBlock` is invoked. Used in regression tests for
+    /// the `MonitorService::subscribeReaderList` bootstrap race
+    /// (knowledge/specs/2026-05-24-lm-monitor-bootstrap-race.md) where the
+    /// test needs to hold the internal poll thread mid-enumeration while a
+    /// late-joining snapshot subscriber registers.
+    void setListReadersBlocking(bool b)
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        listReadersBlocking = b;
+    }
+
+    /// @brief Release a `listReaders` call previously blocked by
+    /// `setListReadersBlocking(true)`. No-op if no call is currently waiting.
+    void releaseListReadersBlock()
+    {
+        {
+            std::lock_guard<std::mutex> lock(listReadersBlockMtx);
+            listReadersBlocked = false;
+        }
+        listReadersBlockCv.notify_all();
+    }
+
     void pushStatusChange(StatusChangeAction action)
     {
         std::lock_guard<std::mutex> lock(mtx);
@@ -73,8 +96,25 @@ public:
 
     LONG listReaders(SCARDCONTEXT, LPCSTR, LPSTR mszReaders, LPDWORD pcchReaders) override
     {
+        // Snapshot blocking flag under `mtx`, then RELEASE `mtx` before
+        // waiting on the block condvar — otherwise a concurrent test-thread
+        // call to `setListReadersBlocking(false)` (which also takes `mtx`)
+        // would deadlock. The wait uses its own `listReadersBlockMtx`, so
+        // there is no lock-ordering inversion.
+        bool shouldBlock = false;
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            counters->listReadersCount++;
+            shouldBlock = listReadersBlocking;
+        }
+
+        if (shouldBlock) {
+            std::unique_lock<std::mutex> waitLock(listReadersBlockMtx);
+            listReadersBlocked = true;
+            listReadersBlockCv.wait(waitLock, [this] { return !listReadersBlocked; });
+        }
+
         std::lock_guard<std::mutex> lock(mtx);
-        counters->listReadersCount++;
 
         if (listReadersRv != SCARD_S_SUCCESS) {
             return listReadersRv;
@@ -182,6 +222,15 @@ private:
     std::condition_variable blockCv;
     bool blocked = false;
     bool cancelled = false;
+
+    // Separate condvar pair for `listReaders` blocking — see
+    // setListReadersBlocking / listReaders / releaseListReadersBlock.
+    // Distinct from `blockMtx`/`blockCv` so a test can independently
+    // gate listReaders vs getStatusChange.
+    std::mutex listReadersBlockMtx;
+    std::condition_variable listReadersBlockCv;
+    bool listReadersBlocking = false;
+    bool listReadersBlocked = false;
 };
 
 } // namespace LibreSCRS::SmartCard::Internal
