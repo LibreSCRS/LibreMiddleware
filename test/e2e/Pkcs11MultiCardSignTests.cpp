@@ -33,8 +33,11 @@
 #include <LibreSCRS/Auth/PaceSecretKind.h>
 #include <LibreSCRS/Secure/Buffer.h>
 #include <LibreSCRS/Secure/String.h>
+#include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
+#include <LibreSCRS/SmartCard/AppletAid.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/MonitorService.h>
+#include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 
 #include <dlfcn.h>
 
@@ -269,10 +272,26 @@ SignOutcome signOnCard(libresign::Pkcs11ModuleManager& moduleManager, ReaderCard
 
     // NAM CL eager-bind flow: pre-deposit the CAN portion via
     // setPaceSecret (PACE is required even to read the AODF over CL),
-    // then pass the BARE PIN to C_Login. Real-AODF slot publishes
+    // then ESTABLISH the host session's SM channel before C_Login, and
+    // finally pass the BARE PIN to the token. Real-AODF slot publishes
     // maxPinLen=12; the 6-byte PIN fits. Passing the full 13-byte
     // "CAN:PIN" here would hit the dispatcher's length gate
     // (CKR_PIN_LEN_RANGE) before slot.login() runs.
+    //
+    // Establishing SM here mirrors the product (LC GUI): a single
+    // CardSession runs PACE once, then every in-process PKCS#11 consumer
+    // reuses that live SM via the process-local SessionPresence registry.
+    // We do NOT keep the ActiveChannelHolder alive across the token
+    // login: the holder borrows the session's (non-recursive) mutex and
+    // PC/SC transaction, and the loaded module's adopt path
+    // (Pkcs15Card::bindFromInjectedSession) re-enters
+    // CardSession::activateChannelWithSm on the SAME session — holding
+    // the holder would self-deadlock on sessionMutex. Releasing it at
+    // the end of this scope leaves the live PaceChannel (with its SM
+    // keys) and the SessionPresence registration intact on the session,
+    // so hasLiveSm() stays true, the opensc-pkcs11 provider defers, and
+    // the token's sign reuses the host SM via the same-applet /
+    // wrapped-SELECT fast path — no second PACE, SM never interrupted.
     std::string pinForLogin = pin;
     if (rc.profile == CardProfile::NAM_CL) {
         auto colon = pin.find(':');
@@ -283,6 +302,25 @@ SignOutcome signOnCard(libresign::Pkcs11ModuleManager& moduleManager, ReaderCard
         std::string can = pin.substr(0, colon);
         rc.session->setPaceSecret(LibreSCRS::Auth::PaceSecretKind::Can, LibreSCRS::Secure::String{can});
         pinForLogin = pin.substr(colon + 1);
+
+        // PKCS#15 applet AID: A0 00 00 00 63 50 4B 43 53 2D 31 35
+        // ("PKCS-15"). Run PACE/CAN to bring up the SM tunnel on the host
+        // session, then release the holder (scope exit) so the channel
+        // and registry entry survive for the token to reuse.
+        const LibreSCRS::SmartCard::AppletAid pkcs15Aid{
+            std::vector<std::uint8_t>{0xA0, 0x00, 0x00, 0x00, 0x63, 0x50, 0x4B, 0x43, 0x53, 0x2D, 0x31, 0x35}};
+        auto holderResult = rc.session->activateChannelWithSm(
+            pkcs15Aid, LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can},
+            LibreSCRS::CancelToken{});
+        if (!holderResult) {
+            // SM/PACE setup failed (e.g. SW=0x6300 at GENERAL AUTHENTICATE).
+            // This is NOT a PIN failure — the CAN has no retry counter and
+            // VERIFY never ran — so do NOT latch the profile.
+            o.note = "host SM establish (PACE/CAN) failed before token login";
+            return o;
+        }
+        // holderResult goes out of scope here, releasing the session mutex
+        // and PC/SC transaction; the live SM channel persists on the session.
     }
 
     std::unique_ptr<libresign::Pkcs11Token> token;
@@ -291,10 +329,12 @@ SignOutcome signOnCard(libresign::Pkcs11ModuleManager& moduleManager, ReaderCard
         token = std::make_unique<libresign::Pkcs11Token>(moduleManager.acquire(modulePath()), pinBuf,
                                                          /*keyAlias=*/std::string{}, rc.reader);
         o.loggedIn = true;
-        o.attached = true; // SessionPresence auto-registration from rc.session's
-                           // activateChannelWithSm makes the live SM visible
-                           // to the in-process provider probe; the rc.session
-                           // shared_ptr stays alive in scope for that lookup.
+        o.attached = true; // For NAM_CL the host session above established SM,
+                           // so SessionPresence reports a live SM and the
+                           // in-process provider probe adopts rc.session
+                           // instead of opening a parallel PC/SC handle; the
+                           // rc.session shared_ptr stays alive in scope for
+                           // that lookup.
     } catch (const std::exception& e) {
         o.sigError = e.what();
         if (looksLikePinError(o.sigError)) {
