@@ -111,6 +111,24 @@ target_include_directories(LibreSCRS_PlainChannelTests PRIVATE
 target_compile_definitions(LibreSCRS_PlainChannelTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(LibreSCRS_PlainChannelTests)
 
+# AET SafeSign QSCD attestation unlock — verifies selectApplet() replies to
+# the lock prompt with the fixed PUT DATA attestation, exactly once, and stays
+# inert for unlocked / generic cards. Links PKCS15 for pkcs15::PKCS15Card.
+add_executable(LibreSCRS_AetAttestationTests LibreSCRS_AetAttestationTests.cpp)
+target_link_libraries(LibreSCRS_AetAttestationTests
+    GTest::gtest_main
+    PKCS15
+    LibreSCRS::SecureChannel
+    LibreSCRS::SmartCard
+    SmartCard_Impl)
+target_include_directories(LibreSCRS_AetAttestationTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/pkcs15/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/SecureChannel/include)
+target_compile_definitions(LibreSCRS_AetAttestationTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(LibreSCRS_AetAttestationTests)
+
 # PaceChannel + BacChannel — SM-wrapping channels. Tests exercise state
 # transitions, sentinel SW codes, and SW 6987/6988 external-invalidation
 # detection. Full PACE/BAC handshake test vectors require BSI TR-03110 /

@@ -10,10 +10,14 @@
 #include <smartcard/secure_buffer.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <iostream>
 #include <memory>
+#include <span>
 #include <stdexcept>
+#include <string_view>
 
 #include "probe_trace.h"
 
@@ -23,6 +27,48 @@ namespace {
 // ISO 7816-4 READ BINARY short form: P1 bits 0–6 = offset high byte → max offset 32767.
 constexpr size_t MAX_FILE_SIZE = 32767;
 constexpr uint8_t READ_CHUNK_SIZE = 128;
+
+// AET SafeSign QSCD applet: a locked card answers SELECT AID with this prompt
+// in the response body; an unlocked card answers with empty data. Detection
+// keys strictly on this string, so the branch is inert for every other card.
+constexpr std::string_view kAetAttestationPrompt = "authenticate yourself";
+
+// Fixed software-attestation the AET SafeSign QSCD applet requires once per
+// session before it will serve any file. PUT DATA (00 DA 01 00) body:
+// "I am A.E.T. Europe B.V. SafeSign or BlueX approved software."
+constexpr std::array<std::uint8_t, 60> kAetSoftwareAttestation = {
+    0x49, 0x20, 0x61, 0x6D, 0x20, 0x41, 0x2E, 0x45, 0x2E, 0x54, 0x2E, 0x20, 0x45, 0x75, 0x72,
+    0x6F, 0x70, 0x65, 0x20, 0x42, 0x2E, 0x56, 0x2E, 0x20, 0x53, 0x61, 0x66, 0x65, 0x53, 0x69,
+    0x67, 0x6E, 0x20, 0x6F, 0x72, 0x20, 0x42, 0x6C, 0x75, 0x65, 0x58, 0x20, 0x61, 0x70, 0x70,
+    0x72, 0x6F, 0x76, 0x65, 0x64, 0x20, 0x73, 0x6F, 0x66, 0x74, 0x77, 0x61, 0x72, 0x65, 0x2E,
+};
+
+// If a SELECT AID response carries the AET lock prompt, reply with the
+// attestation PUT DATA so the applet unlocks for the rest of the session.
+// No-op for any card that does not return that exact prompt. The prompt only
+// appears while locked, so this fires at most once per session — a re-send
+// would draw 6D00, which this guard prevents.
+void maybeSendAetAttestation(LibreSCRS::SecureChannel::ISecureChannel& channel,
+                             std::span<const std::uint8_t> selectResponse)
+{
+    if (selectResponse.empty()) // unlocked applet answers with empty data — nothing to do
+        return;
+    const std::string_view body(reinterpret_cast<const char*>(selectResponse.data()), selectResponse.size());
+    if (body.find(kAetAttestationPrompt) == std::string_view::npos)
+        return;
+
+    LibreSCRS::SmartCard::Internal::APDUCommand cmd;
+    cmd.cla = 0x00;
+    cmd.ins = 0xDA; // PUT DATA
+    cmd.p1 = 0x01;
+    cmd.p2 = 0x00;
+    cmd.data.assign(kAetSoftwareAttestation.begin(), kAetSoftwareAttestation.end());
+    cmd.hasLe = false;
+
+    const auto resp = channel.transmit(cmd, LibreSCRS::CancelToken{});
+    if (!resp.isSuccess())
+        std::clog << "pkcs15: AET attestation rejected SW=" << std::hex << resp.statusWord() << std::dec << '\n';
+}
 
 std::vector<uint8_t> computeHash(const EVP_MD* md, const std::vector<uint8_t>& data)
 {
@@ -155,10 +201,16 @@ bool PKCS15Card::selectApplet()
         // AID-based selection worked during probe.
         std::vector<uint8_t> aid(kPkcs15Aid.begin(), kPkcs15Aid.end());
         auto resp = channel.transmit(LibreSCRS::SmartCard::Internal::selectByAID(aid, 0x0C), LibreSCRS::CancelToken{});
-        if (resp.isSuccess())
+        if (resp.isSuccess()) {
+            maybeSendAetAttestation(channel, resp.data);
             return true;
+        }
         resp = channel.transmit(LibreSCRS::SmartCard::Internal::selectByAID(aid), LibreSCRS::CancelToken{});
-        return resp.isSuccess();
+        if (resp.isSuccess()) {
+            maybeSendAetAttestation(channel, resp.data);
+            return true;
+        }
+        return false;
     }
 
     // Path-based selection (discovered from EF.DIR during probe).
