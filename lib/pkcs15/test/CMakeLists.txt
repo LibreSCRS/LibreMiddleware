@@ -48,3 +48,30 @@ if(LIBRESCRS_VENDOR_OPENSC)
 
     gtest_discover_tests(CrossProviderCoordinationTests)
 endif()
+
+# cardsession_reentrancy_test — regression anchor for the same-thread
+# re-entrancy guard on CardSession. Independent of the OpenSc provider:
+# it only needs the public CardSession surface plus the build-tree-only
+# TestHelpers archive (detached-session factory + holder-acquisition seam).
+add_executable(cardsession_reentrancy_test
+    cardsession_reentrancy_test.cpp
+)
+
+target_link_libraries(cardsession_reentrancy_test PRIVATE
+    LibreSCRS::SmartCard
+    LibreSCRS::SecureChannel
+    LibreSCRS_SmartCard_TestHelpers
+    LibreSCRS::Secure
+    PCSC::PCSC
+    GTest::gtest_main
+)
+
+target_include_directories(cardsession_reentrancy_test PRIVATE
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/include
+    ${PROJECT_SOURCE_DIR}/lib/SecureChannel/include
+)
+
+target_compile_definitions(cardsession_reentrancy_test PRIVATE LIBRESCRS_INTERNAL_BUILD)
+
+gtest_discover_tests(cardsession_reentrancy_test)

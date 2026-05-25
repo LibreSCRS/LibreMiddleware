@@ -55,6 +55,12 @@ enum class ChannelActivationError : std::uint8_t {
     CredentialsRequired,
     /// @brief Caller-visible bug. Terminal.
     Internal,
+    /// @brief The calling thread already holds this session's ActiveChannelHolder.
+    ///        Re-entering CardSession on the same thread would self-deadlock on
+    ///        the non-recursive session mutex. Release the holder first.
+    ///        Terminal; indicates a caller bug.
+    /// @since 4.x
+    ReentrantAccess,
 };
 
 /// @brief Error categories surfaced by @ref ISecureChannel::transmit (and

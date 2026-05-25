@@ -408,6 +408,13 @@ APDUResponse PCSCConnection::transmit(const APDUCommand& cmd)
 
 void PCSCConnection::beginTransaction()
 {
+    // Detached test connection (DetachedTag ctor): no card handle, no PC/SC
+    // I/O. Treat the transaction as held without touching the (null) handle
+    // so test-only holder acquisition through the CardTransaction RAII
+    // wrapper works without a live reader.
+    if (card == 0) {
+        return;
+    }
     LONG rv = SCardBeginTransaction(card);
     if (rv == static_cast<LONG>(SCARD_W_RESET_CARD)) {
         // Card was reset externally (reader firmware, or prior SCARD_RESET_CARD by another
@@ -422,6 +429,10 @@ void PCSCConnection::beginTransaction()
 
 void PCSCConnection::endTransaction() noexcept
 {
+    // Detached test connection: no card handle to release (see beginTransaction).
+    if (card == 0) {
+        return;
+    }
     SCardEndTransaction(card, SCARD_LEAVE_CARD);
 }
 

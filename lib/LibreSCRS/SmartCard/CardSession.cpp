@@ -24,12 +24,14 @@
 
 #include <array>
 #include <atomic>
+#include <cassert>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <variant>
 
@@ -183,6 +185,9 @@ bool CardSession::hasLiveSecureChannel() const noexcept
     // conservative "no live SM" answer will at worst skip a defer it could
     // have honoured; mid-activation races on the activation thread itself
     // are handled by the activation path's own invariants.
+    assert(!d->callerOwnsActiveChannel() && "CardSession re-entered on the thread holding its ActiveChannelHolder "
+                                            "— would self-deadlock on the non-recursive sessionMutex. Release the "
+                                            "holder before re-entering the session.");
     try {
         std::lock_guard lock(d->sessionMutex);
         if (!d->activeChannel) {
@@ -288,6 +293,9 @@ std::vector<std::uint8_t> readCardAccessFromMF(LibreSCRS::SecureChannel::ISecure
 
 void CardSession::setCredentialProvider(LibreSCRS::Auth::CredentialProvider provider) noexcept
 {
+    assert(!d->callerOwnsActiveChannel() && "CardSession re-entered on the thread holding its ActiveChannelHolder "
+                                            "— would self-deadlock on the non-recursive sessionMutex. Release the "
+                                            "holder before re-entering the session.");
     try {
         std::lock_guard lock(d->sessionMutex);
         d->credentialProvider = std::move(provider);
@@ -300,6 +308,9 @@ void CardSession::setCredentialProvider(LibreSCRS::Auth::CredentialProvider prov
 
 void CardSession::setPaceSecret(LibreSCRS::Auth::PaceSecretKind kind, LibreSCRS::Secure::String value) noexcept
 {
+    assert(!d->callerOwnsActiveChannel() && "CardSession re-entered on the thread holding its ActiveChannelHolder "
+                                            "— would self-deadlock on the non-recursive sessionMutex. Release the "
+                                            "holder before re-entering the session.");
     try {
         std::lock_guard lock(d->sessionMutex);
         d->paceCredentialsCache[static_cast<std::size_t>(kind)] = std::move(value);
@@ -312,6 +323,9 @@ void CardSession::setPaceSecret(LibreSCRS::Auth::PaceSecretKind kind, LibreSCRS:
 
 void CardSession::setBacInput(LibreSCRS::SecureChannel::BacInput input) noexcept
 {
+    assert(!d->callerOwnsActiveChannel() && "CardSession re-entered on the thread holding its ActiveChannelHolder "
+                                            "— would self-deadlock on the non-recursive sessionMutex. Release the "
+                                            "holder before re-entering the session.");
     try {
         std::lock_guard lock(d->sessionMutex);
         d->bacInput = std::move(input);
@@ -322,6 +336,9 @@ void CardSession::setBacInput(LibreSCRS::SecureChannel::BacInput input) noexcept
 
 void CardSession::clearCachedPaceCredentials() noexcept
 {
+    assert(!d->callerOwnsActiveChannel() && "CardSession re-entered on the thread holding its ActiveChannelHolder "
+                                            "— would self-deadlock on the non-recursive sessionMutex. Release the "
+                                            "holder before re-entering the session.");
     try {
         std::lock_guard lock(d->sessionMutex);
         for (auto& slot : d->paceCredentialsCache) {
@@ -337,6 +354,9 @@ void CardSession::clearCachedPaceCredentials() noexcept
 
 void CardSession::markDead() noexcept
 {
+    assert(!d->callerOwnsActiveChannel() && "CardSession re-entered on the thread holding its ActiveChannelHolder "
+                                            "— would self-deadlock on the non-recursive sessionMutex. Release the "
+                                            "holder before re-entering the session.");
     d->dead.store(true, std::memory_order_release);
     // Wipe cached PACE/BAC secrets on card-removal: a long-lived LC
     // session would otherwise retain the MRZ / CAN / PIN material in RAM
@@ -370,6 +390,9 @@ void CardSession::clearActiveChannel() noexcept
     // another thread. close() drives the channel to ChannelState::Closed
     // and zeroises the SM key material via SecureMessaging's dtor before
     // the unique_ptr release runs the virtual destructor.
+    assert(!d->callerOwnsActiveChannel() && "CardSession re-entered on the thread holding its ActiveChannelHolder "
+                                            "— would self-deadlock on the non-recursive sessionMutex. Release the "
+                                            "holder before re-entering the session.");
     try {
         std::lock_guard lock(d->sessionMutex);
         if (d->activeChannel) {
@@ -397,6 +420,9 @@ void CardSession::clearActiveChannel() noexcept
 LibreSCRS::SmartCard::Internal::APDUResponse
 CardSession::transmitInternal(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token)
 {
+    assert(!d->callerOwnsActiveChannel() && "CardSession re-entered on the thread holding its ActiveChannelHolder "
+                                            "— would self-deadlock on the non-recursive sessionMutex. Release the "
+                                            "holder before re-entering the session.");
     std::shared_ptr<LibreSCRS::SecureChannel::ISecureChannel> channelSnap;
     LibreSCRS::SmartCard::Internal::PCSCConnection* connPtr = nullptr;
     {
@@ -440,6 +466,12 @@ CardSession::activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token)
     }
     if (!d->ownedConn) {
         return std::unexpected{ChannelActivationError::ReaderError};
+    }
+    // Re-entrancy guard: a caller already holding this session's
+    // ActiveChannelHolder on this thread would self-deadlock on the
+    // non-recursive sessionMutex below. Refuse cleanly instead of hanging.
+    if (d->callerOwnsActiveChannel()) {
+        return std::unexpected{ChannelActivationError::ReentrantAccess};
     }
 
     std::unique_lock lock(d->sessionMutex);
@@ -510,6 +542,12 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
     }
     if (!d->ownedConn) {
         return std::unexpected{ChannelActivationError::ReaderError};
+    }
+    // Re-entrancy guard: a caller already holding this session's
+    // ActiveChannelHolder on this thread would self-deadlock on the
+    // non-recursive sessionMutex below. Refuse cleanly instead of hanging.
+    if (d->callerOwnsActiveChannel()) {
+        return std::unexpected{ChannelActivationError::ReentrantAccess};
     }
 
     // PACE consults the variant's secretKind against the PACE credentials
@@ -677,8 +715,8 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
             // because the active channel has just been reset or was already
             // null; the plain SELECT before BAC handshake therefore cannot
             // collide with a live SM tunnel.
-            auto selectResp = dispatchOverChannelOrConn(d->activeChannel.get(), *d->ownedConn,
-                                                        buildSelectAppletCommand(aid), token);
+            auto selectResp =
+                dispatchOverChannelOrConn(d->activeChannel.get(), *d->ownedConn, buildSelectAppletCommand(aid), token);
             if (!selectResp.isSuccess()) {
                 return std::unexpected{ChannelActivationError::SelectAppletFailed};
             }
@@ -865,6 +903,16 @@ APDUResponse ActiveChannelAccessor::transmit(CardSession& session, const APDUCom
 LibreSCRS::SecureChannel::ISecureChannel* ActiveChannelAccessor::active(CardSession& session) noexcept
 {
     return session.d->activeChannel.get();
+}
+
+void ActiveChannelAccessor::markOwner(CardSession& session) noexcept
+{
+    session.d->activeChannelOwner.store(std::this_thread::get_id(), std::memory_order_release);
+}
+
+void ActiveChannelAccessor::clearOwner(CardSession& session) noexcept
+{
+    session.d->activeChannelOwner.store(std::thread::id{}, std::memory_order_release);
 }
 
 } // namespace Internal

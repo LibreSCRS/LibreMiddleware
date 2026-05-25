@@ -205,6 +205,8 @@ std::string activationErrorString(LibreSCRS::SecureChannel::ChannelActivationErr
         return "Credentials required";
     case Err::Internal:
         return "Internal error";
+    case Err::ReentrantAccess:
+        return "Re-entrant session access (caller bug)";
     }
     return "Unknown error";
 }

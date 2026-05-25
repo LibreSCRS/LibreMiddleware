@@ -48,6 +48,17 @@ struct ActiveChannelAccessor
     ///        @ref LibreSCRS::SecureChannel::ISecureChannel, or @c nullptr
     ///        if no channel is active.
     [[nodiscard]] static LibreSCRS::SecureChannel::ISecureChannel* active(CardSession& session) noexcept;
+
+    /// @brief Records the calling thread as the owner of @p session's
+    ///        active-channel lock. Invoked when a holder takes ownership of
+    ///        the session mutex (see @ref makeActiveChannelHolder). The
+    ///        re-entrancy guard reads this to refuse same-thread re-entry.
+    static void markOwner(CardSession& session) noexcept;
+
+    /// @brief Clears the active-channel owner on @p session. Invoked when the
+    ///        owning holder releases the lock (see
+    ///        @ref ActiveChannelHolder::Impl::release).
+    static void clearOwner(CardSession& session) noexcept;
 };
 
 /// @brief Friend-only access seam reaching a @ref ActiveChannelHolder's

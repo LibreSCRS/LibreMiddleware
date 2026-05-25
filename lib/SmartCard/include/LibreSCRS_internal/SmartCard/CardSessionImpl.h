@@ -24,6 +24,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace LibreSCRS::SecureChannel {
@@ -77,6 +78,19 @@ struct LIBRESCRS_INTERNAL CardSession::Impl
     std::optional<LibreSCRS::Auth::CredentialProvider> credentialProvider;
     std::mutex sessionMutex;
     std::atomic<bool> dead{false};
+
+    // Thread currently owning the active-channel lock (holds the live
+    // ActiveChannelHolder). std::thread::id{} == no owner. Set (release) when
+    // a holder takes the lock, cleared (release) when that holder releases.
+    // Read (acquire) by the re-entrancy guard BEFORE locking sessionMutex, so
+    // it must be readable without sessionMutex — hence atomic. Off the wire
+    // path; lock-freedom not required.
+    std::atomic<std::thread::id> activeChannelOwner{};
+
+    [[nodiscard]] bool callerOwnsActiveChannel() const noexcept
+    {
+        return activeChannelOwner.load(std::memory_order_acquire) == std::this_thread::get_id();
+    }
 
     // SessionPresence registration: populated when this session activates a
     // secure-messaging channel through a shared_ptr-managed CardSession. The

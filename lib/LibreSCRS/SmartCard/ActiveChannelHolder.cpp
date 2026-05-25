@@ -46,6 +46,13 @@ public:
     {
         if (active) {
             active = false;
+            // Clear the session's active-channel owner before dropping the
+            // lock. Gated on the `active` flag, so this is idempotent and
+            // a moved-from holder (Impl owns nothing, never reached here)
+            // never clears the live owner of the moved-to holder.
+            if (session) {
+                Internal::ActiveChannelAccessor::clearOwner(*session);
+            }
             transaction.reset(); // unique_ptr<CardTransaction>::reset ends PC/SC tx
             if (lock.owns_lock()) {
                 lock.unlock();
@@ -97,6 +104,15 @@ ActiveChannelHolder makeActiveChannelHolder(CardSession* session, std::unique_lo
                                             std::unique_ptr<LibreSCRS::SmartCard::Internal::CardTransaction> tx)
 {
     auto impl = std::make_unique<ActiveChannelHolder::Impl>(session, std::move(lock), std::move(tx));
+    // Record the calling thread as the active-channel owner now that the
+    // holder owns the session lock. The re-entrancy guard at every public
+    // CardSession entry point reads this to refuse same-thread re-entry
+    // (which would self-deadlock on the non-recursive sessionMutex). Set
+    // here — after all of the activation's internal lock-drop / provider-
+    // callback logic has completed — so no internal re-entry false-positives.
+    if (session) {
+        Internal::ActiveChannelAccessor::markOwner(*session);
+    }
     return ActiveChannelHolder{std::move(impl)};
 }
 

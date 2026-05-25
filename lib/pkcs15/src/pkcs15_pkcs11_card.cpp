@@ -107,6 +107,7 @@ enum class ProbeResult : std::uint8_t {
     case Err::PaceProtocolFailure:
     case Err::ReaderError:
     case Err::Internal:
+    case Err::ReentrantAccess:
     case Err::None:
     default:
         return Crv::DeviceError;
