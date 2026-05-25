@@ -82,4 +82,46 @@ if(LIBRESCRS_BUILD_REAL_CARD_TESTS)
         LIBRESCRS_PKCS11_MODULE_PATH="$<TARGET_FILE:librescrs-pkcs11>"
     )
     add_dependencies(Pkcs11MultiCardSignTests librescrs-pkcs11)
+
+    # Two-reader SM-survival confirmation (CAN-only, NO PIN). Brings up a
+    # live PACE SM on reader A (NAM CL), binds reader B (PKS / cardedge)
+    # through OpenScPKCS11Provider::probe (the exact product path:
+    # SessionPresence guard + OpenScCard::bind = sc_establish_context
+    # all-reader enumeration + sc_connect_card(B)), then asserts A's SM
+    # survived. Links the static librescrs-opensc-pkcs11 archive directly
+    # to reach the provider's internal probe() seam.
+    #
+    # The PKCS11Card / PKCS11Slot abstract-base implementations that
+    # OpenScCard / OpenScSlot derive from live in the librescrs-pkcs11
+    # SHARED module, whose symbol allowlist (exports.map) exports ONLY the
+    # C ABI — the internal LibreSCRS:: base symbols are hidden, so linking
+    # the .so would not resolve them. Following the lib/pkcs11/test pattern
+    # (recompile the needed .cpp sources straight into the test exe), we
+    # compile the three base sources directly. They pull in only headers
+    # from lib/pkcs11/include, so there is no further dependency cascade.
+    add_executable(TwoReaderSmSurvivalTest
+        two_reader_sm_survival_test.cpp
+        ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/src/pkcs11_card.cpp
+        ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/src/pkcs11_slot.cpp
+        ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/src/slot_id_hash.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include/pin_guard.h
+    )
+    target_link_libraries(TwoReaderSmSurvivalTest PRIVATE
+        GTest::gtest_main
+        LibreSCRS::SmartCard
+        LibreSCRS::Secure
+        librescrs-opensc-pkcs11
+        # PRIVATE link deps of the opensc-pkcs11 STATIC archive are not
+        # propagated transitively; re-declare what its objects reference.
+        opensc_static_with_deps
+    )
+    target_include_directories(TwoReaderSmSurvivalTest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+        ${LibreMiddleware_SOURCE_DIR}/lib/opensc-pkcs11/include
+        ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/include
+    )
+    target_compile_definitions(TwoReaderSmSurvivalTest PRIVATE
+        LIBRESCRS_INTERNAL_BUILD=1
+    )
 endif()
