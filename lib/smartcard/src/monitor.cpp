@@ -75,6 +75,11 @@ void Monitor::unsubscribe(SubscriptionId id)
 
 bool Monitor::isRunning() const
 {
+    // Take threadMtx: startThread/stopThread mutate monitorThread under this
+    // lock, so reading monitorThread.joinable() without it is a data race.
+    // isRunning is never called from a threadMtx-holding path (only by
+    // MonitorService and tests), so there is no self-deadlock.
+    std::lock_guard<std::mutex> lock(threadMtx);
     return monitorThread.joinable() && !stopRequested.load();
 }
 
@@ -220,9 +225,36 @@ void Monitor::run()
             }
         }
 
-        pcsc->releaseContext(hContext);
+        // Zero hContext under contextMtx before releasing so a concurrent
+        // stopThread() cannot read the handle and SCardCancel a context this
+        // path has already released (undefined behaviour). Mirrors the
+        // early-stop path above.
+        {
+            SCARDCONTEXT ctx;
+            {
+                std::lock_guard<std::mutex> ctxLock(contextMtx);
+                ctx = hContext;
+                hContext = 0;
+            }
+            if (ctx) {
+                pcsc->releaseContext(ctx);
+            }
+        }
     } catch (...) {
-        pcsc->releaseContext(hContext);
+        // Same teardown discipline on the exception path: zero under
+        // contextMtx before release so a concurrent stopThread() cannot
+        // SCardCancel a released context.
+        {
+            SCARDCONTEXT ctx;
+            {
+                std::lock_guard<std::mutex> ctxLock(contextMtx);
+                ctx = hContext;
+                hContext = 0;
+            }
+            if (ctx) {
+                pcsc->releaseContext(ctx);
+            }
+        }
     }
 }
 
@@ -234,7 +266,20 @@ void Monitor::setContext(SCARDCONTEXT ctx)
 
 void Monitor::reEstablishContext()
 {
-    pcsc->releaseContext(hContext);
+    // Snapshot and zero hContext under contextMtx before releasing, so a
+    // concurrent stopThread() cannot read and SCardCancel the released
+    // handle, and so a throw from the re-establish below cannot leave a
+    // stale released handle visible to a concurrent reader.
+    SCARDCONTEXT old;
+    {
+        std::lock_guard<std::mutex> ctxLock(contextMtx);
+        old = hContext;
+        hContext = 0;
+    }
+    if (old) {
+        pcsc->releaseContext(old);
+    }
+
     SCARDCONTEXT ctx = 0;
     LONG rv = pcsc->establishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &ctx);
     if (rv != kScSuccess) {
