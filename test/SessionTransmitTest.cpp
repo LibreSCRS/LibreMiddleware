@@ -116,18 +116,24 @@ TEST_F(SessionTransmitTest, channelResetMidSnapshotKeepsChannelAlive)
     AppletAid aid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
     auto channel = std::make_unique<FakeChannel>(aid, ChannelState::Open, /*carriesSm=*/true);
     auto* observer = channel.get();
-    observer->onTransmitCallback = [this]() {
-        // Mid-transmit: drop the session's active-channel slot. The
-        // installed channel only survives the call because the funnel
-        // holds a shared_ptr snapshot of it on the stack.
+    // The funnel's snapshot shared_ptr is the channel's LAST reference once
+    // clearActiveChannel drops d->activeChannel mid-transmit; reading
+    // @c observer after the call returns is UAF (the snapshot dies with the
+    // call). Sample the observable channel state INSIDE the callback while
+    // the snapshot still pins the object alive.
+    std::uint8_t observedIns = 0;
+    int observedTransmits = 0;
+    observer->onTransmitCallback = [&, this]() {
+        observedIns = observer->lastWrappedCommand().ins;
+        observedTransmits = observer->transmits();
         session->clearActiveChannel();
     };
     ChannelInjector::installForTesting(*session, std::move(channel));
 
     auto resp = session->transmitInternal(makeProbeCommand());
 
-    EXPECT_EQ(observer->lastWrappedCommand().ins, 0xA4);
-    EXPECT_EQ(observer->transmits(), 1);
+    EXPECT_EQ(observedIns, 0xA4);
+    EXPECT_EQ(observedTransmits, 1);
     EXPECT_EQ(resp.sw1, 0x90);
     EXPECT_EQ(resp.sw2, 0x00);
 }
