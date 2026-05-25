@@ -1,0 +1,46 @@
+From 7b50f5b86de1447b01b129849e8b86d9777f4904 Mon Sep 17 00:00:00 2001
+From: hirashix0 <hirashix0@proton.me>
+Date: Fri, 22 May 2026 09:22:59 +0200
+Subject: [PATCH] ctx: LIBRESCRS_PCSC_TRACE apdu trace point
+
+Adds a LIBRESCRS_PCSC_TRACE-gated trace point in sc_transmit_apdu for
+downstream cross-validation tooling. Logs reader name + APDU header to
+stderr when the environment variable is set; zero runtime cost (cached
+comparison on the hot path) when it is unset.
+---
+ src/libopensc/apdu.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/src/libopensc/apdu.c b/src/libopensc/apdu.c
+index 51b3aaac1..397e66aa3 100644
+--- a/src/libopensc/apdu.c
++++ b/src/libopensc/apdu.c
+@@ -547,6 +547,26 @@ int sc_transmit_apdu(sc_card_t *card, sc_apdu_t *apdu)
+ 	if (card == NULL || apdu == NULL)
+ 		return SC_ERROR_INVALID_ARGUMENTS;
+ 
++	/* Downstream env-gated APDU trace for cross-validation tooling.
++	 * Logs reader name + APDU header to stderr when LIBRESCRS_PCSC_TRACE
++	 * is set in the environment. Side-effect-free when the variable is
++	 * unset (cached comparison on the hot path). */
++	{
++		static int trace_enabled = -1;
++		if (trace_enabled == -1) {
++			const char *e = getenv("LIBRESCRS_PCSC_TRACE");
++			trace_enabled = (e && e[0] != '\0' && strcmp(e, "0") != 0) ? 1 : 0;
++		}
++		if (trace_enabled) {
++			fprintf(stderr,
++				"[PCSC_TRACE_LIBOPENSC] reader=%s cla=%02X ins=%02X p1=%02X p2=%02X lc=%zu le=%zu\n",
++				(card->reader && card->reader->name) ? card->reader->name : "(null)",
++				(unsigned)apdu->cla, (unsigned)apdu->ins,
++				(unsigned)apdu->p1, (unsigned)apdu->p2,
++				apdu->lc, apdu->le);
++		}
++	}
++
+ 	LOG_FUNC_CALLED(card->ctx);
+ 
+ 	/* determine the APDU type if necessary, i.e. to use
+--
+2.54.0
