@@ -130,6 +130,14 @@ set(OPENSC_CONFIGURE_FLAGS
     --disable-doc
     --disable-man
     --enable-pcsc
+    # Headless backend embedding has no use for OpenSC's desktop-notification
+    # feature. Leaving it at autoconf's `detect` default makes notify.c pull in
+    # GIO/GLib whenever the build host happens to ship gio-2.0, which then
+    # leaves the static-archive consumers (OpenScPkcs11UnitTests, …) with
+    # undefined g_application_*/g_notification_* references unless every
+    # consuming environment also provides gio on its link line. Disabling it
+    # outright keeps the link deterministic and drops the GIO/GLib edge.
+    --disable-notify
     --with-pic
     # Redirect p11-kit module install into the staging dir; otherwise OpenSC
     # tries to write opensc.module into /usr/share/p11-kit/modules/ during
@@ -213,11 +221,11 @@ set_target_properties(opensc_static PROPERTIES
 add_dependencies(opensc_static opensc_external)
 
 # Convenience wrapper bundling opensc_static with its transitive runtime
-# deps. libopensc.a references zlib (compression.o, pkcs15-actalis.o),
-# optionally GIO/GLib (notify.o when autoconf detected gio-2.0), and PC/SC
-# (SCard* via --enable-pcsc). Consumers linking the static archive into a
-# SHARED library must satisfy these symbols; depending on this INTERFACE
-# target does it once for the whole tree.
+# deps. libopensc.a references zlib (compression.o, pkcs15-actalis.o) and
+# PC/SC (SCard* via --enable-pcsc). Consumers linking the static archive
+# into a SHARED library must satisfy these symbols; depending on this
+# INTERFACE target does it once for the whole tree. (The notify backend is
+# built with --disable-notify, so there is no GIO/GLib link edge.)
 add_library(opensc_static_with_deps INTERFACE)
 # libopensc.a and libcrypto.a are mutually recursive at link time
 # (libopensc → ERR_*, X509_*, BIO_*; libcrypto pulled fresh by libopensc
@@ -255,13 +263,6 @@ else()
 endif()
 
 find_package(PkgConfig QUIET)
-if(PkgConfig_FOUND)
-    pkg_check_modules(LIBRESCRS_OPENSC_GIO QUIET IMPORTED_TARGET gio-2.0)
-    if(LIBRESCRS_OPENSC_GIO_FOUND)
-        target_link_libraries(opensc_static_with_deps INTERFACE PkgConfig::LIBRESCRS_OPENSC_GIO)
-    endif()
-endif()
-
 if(PkgConfig_FOUND AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     pkg_check_modules(LIBRESCRS_OPENSC_PCSC QUIET IMPORTED_TARGET libpcsclite)
     if(LIBRESCRS_OPENSC_PCSC_FOUND)
