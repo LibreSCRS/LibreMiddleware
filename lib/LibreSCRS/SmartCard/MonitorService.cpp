@@ -456,6 +456,19 @@ MonitorService::Config MonitorService::Config::fromEnv() noexcept
 
 MonitorService::MonitorService(Config config) : d(std::make_unique<Impl>(nullptr, config)) {}
 
+// publishForTest / publishReaderListForTest / coalesceStateSizeForTest are
+// test-only injection seams. They must be compiled in this production TU
+// because they reach the hidden-visibility MonitorService::Impl dispatch /
+// reader-diff methods, which are not exported and so cannot be linked from a
+// separate archive. The declarations are gated behind LIBRESCRS_INTERNAL_BUILD
+// in the public header (matching the CardSession::transmitInternal precedent),
+// so external SDK consumers — which compile the public headers WITHOUT that
+// marker — can neither name nor call them. The production .so itself defines
+// LIBRESCRS_INTERNAL_BUILD (to reach internal headers), so these symbols are
+// still emitted into and exported by the shared library, the same way
+// transmitInternal is; they are reachable only by callers that already opt
+// into the internal build contract.
+#ifdef LIBRESCRS_INTERNAL_BUILD
 void MonitorService::publishForTest(const MonitorEvent& ev)
 {
     d->dispatch(ev);
@@ -475,6 +488,7 @@ std::size_t MonitorService::coalesceStateSizeForTest() const noexcept
         return 0;
     }
 }
+#endif
 
 MonitorService::operator bool() const noexcept
 {

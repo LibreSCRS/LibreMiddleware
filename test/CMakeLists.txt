@@ -870,6 +870,9 @@ add_executable(SessionPresenceTest SessionPresenceTest.cpp)
 target_link_libraries(SessionPresenceTest PRIVATE
     GTest::gtest_main
     LibreSCRS_SmartCard
+    # shutdownSessionPresenceForTest now lives in the build-tree-only
+    # test-helpers archive instead of the production shared library.
+    LibreSCRS_SmartCard_TestHelpers
 )
 target_compile_definitions(SessionPresenceTest PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(SessionPresenceTest)

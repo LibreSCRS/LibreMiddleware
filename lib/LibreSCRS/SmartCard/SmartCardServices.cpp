@@ -40,10 +40,11 @@ SessionPresence& sessionPresence() noexcept
     return *g_presence;
 }
 
-void shutdownSessionPresenceForTest() noexcept
-{
-    if (g_presence)
-        g_presence->clearAll();
-}
+// shutdownSessionPresenceForTest() is a test-only seam: its definition lives
+// in the build-tree-only LibreSCRS_SmartCard_TestHelpers archive
+// (SmartCard/test_helpers/session_presence_test_helpers.cpp), so the
+// production shared library never carries the symbol in its dynamic export
+// table. It reaches the registry through the exported sessionPresence() /
+// ensureSessionPresenceInitialised() accessors.
 
 } // namespace LibreSCRS::SmartCard::Internal

@@ -485,6 +485,7 @@ endif()
 add_library(LibreSCRS_SmartCard_TestHelpers OBJECT
     SmartCard/test_helpers/monitor_test_helpers.cpp
     SmartCard/test_helpers/channel_test_helpers.cpp
+    SmartCard/test_helpers/session_presence_test_helpers.cpp
 )
 target_link_libraries(LibreSCRS_SmartCard_TestHelpers
     PUBLIC LibreSCRS_SmartCard

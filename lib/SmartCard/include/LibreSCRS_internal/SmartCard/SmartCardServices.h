@@ -33,6 +33,12 @@ LIBRESCRS_PUBLIC_API void ensureSessionPresenceInitialised() noexcept;
 ///        Production code does not call this; test fixtures use it to
 ///        guarantee a clean slate between cases without paying for a
 ///        full reinitialisation of the @c std::once_flag.
-LIBRESCRS_PUBLIC_API void shutdownSessionPresenceForTest() noexcept;
+///
+/// @note Not @c LIBRESCRS_PUBLIC_API: the definition lives in the
+///       build-tree-only @c LibreSCRS_SmartCard_TestHelpers archive
+///       (so it is never compiled into or exported from the production
+///       shared library) and is linked directly into the test
+///       executables that use it.
+void shutdownSessionPresenceForTest() noexcept;
 
 } // namespace LibreSCRS::SmartCard::Internal

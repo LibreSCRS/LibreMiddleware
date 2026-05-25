@@ -395,15 +395,16 @@ public:
     ///       allows it.
     [[nodiscard]] bool isRunning() const noexcept;
 
+#ifdef LIBRESCRS_INTERNAL_BUILD
     /// @brief Test seam: inject a synthetic @ref MonitorEvent through the
     ///        same dispatch funnel real PC/SC events use.
     ///
     /// Bypasses the PC/SC source so unit tests can exercise the dispatch
     /// path (coalescing, fan-out, callback shielding) without a live
-    /// reader. Not for production use; the public ABI exposes it because
-    /// the alternative — a friend declaration on the internal Impl —
-    /// requires the consumer to include the @c LIBRESCRS_INTERNAL_BUILD
-    /// header, defeating the test-from-public-headers contract.
+    /// reader. Not for production use; gated behind @c LIBRESCRS_INTERNAL_BUILD
+    /// (matching the @ref CardSession::transmitInternal precedent) so external
+    /// SDK consumers neither compile nor reach it. Test targets that drive the
+    /// dispatch path define the marker.
     ///
     /// @since 4.1
     void publishForTest(const MonitorEvent& ev);
@@ -414,7 +415,8 @@ public:
     ///        seen set, and evicts coalescer state for removed readers.
     ///
     /// Not for production use; mirrors @ref publishForTest as a way to
-    /// exercise the diff path without a live PC/SC source.
+    /// exercise the diff path without a live PC/SC source. Gated behind
+    /// @c LIBRESCRS_INTERNAL_BUILD.
     ///
     /// @since 4.1
     void publishReaderListForTest(const std::vector<std::string>& readers);
@@ -423,8 +425,11 @@ public:
     ///        Used by eviction tests to assert that vanished readers no
     ///        longer occupy a slot in @c Impl::coalesceState.
     ///
+    /// Not for production use; gated behind @c LIBRESCRS_INTERNAL_BUILD.
+    ///
     /// @since 4.1
     [[nodiscard]] std::size_t coalesceStateSizeForTest() const noexcept;
+#endif
 
 private:
     friend class detail::MonitorFactory;

@@ -354,7 +354,6 @@ LibreSCRS::SmartCard::Internal::SessionPresence::peek(std::__cxx11::basic_string
 LibreSCRS::SmartCard::Internal::SessionPresence::remove(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)@@LM_4
 LibreSCRS::SmartCard::Internal::ensureSessionPresenceInitialised()@@LM_4
 LibreSCRS::SmartCard::Internal::sessionPresence()@@LM_4
-LibreSCRS::SmartCard::Internal::shutdownSessionPresenceForTest()@@LM_4
 LibreSCRS::SmartCard::MonitorService::Config::fromEnv()@@LM_4
 LibreSCRS::SmartCard::MonitorService::MonitorService(LibreSCRS::SmartCard::MonitorService::Config)@@LM_4
 LibreSCRS::SmartCard::MonitorService::coalesceStateSizeForTest() const@@LM_4

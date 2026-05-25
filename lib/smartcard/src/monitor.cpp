@@ -112,7 +112,12 @@ void Monitor::startThread()
     }
     previousReaderStates.clear();
     stopRequested = false;
-    monitorThread = std::thread(&Monitor::run, this);
+    // Spawn via a local lambda so the std::thread::_State_impl<...> template
+    // instantiation parameterises over the anonymous closure (local linkage)
+    // rather than over the internal Monitor type, which the *LibreSCRS::*
+    // export glob would otherwise promote to a global SHARED-build symbol.
+    // Mirrors the coalesceFlusher spawn in lib/LibreSCRS/SmartCard/MonitorService.cpp.
+    monitorThread = std::thread([this] { run(); });
 }
 
 void Monitor::stopThread()

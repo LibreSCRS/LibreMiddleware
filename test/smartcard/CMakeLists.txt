@@ -9,4 +9,8 @@ target_link_libraries(monitor_coalescer_test
         GTest::gtest
         GTest::gtest_main
 )
+# publishForTest / publishReaderListForTest / coalesceStateSizeForTest are
+# now gated behind LIBRESCRS_INTERNAL_BUILD (matching transmitInternal); the
+# test drives those seams, so it must define the marker to see them.
+target_compile_definitions(monitor_coalescer_test PRIVATE LIBRESCRS_INTERNAL_BUILD)
 add_test(NAME monitor_coalescer_test COMMAND monitor_coalescer_test)

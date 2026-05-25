@@ -40,12 +40,18 @@
  *       LibreSign for the TL fetch/verify path and `--gc-sections`
  *       cannot drop the constructor through that archive without
  *       breaking `LibreSCRS::Signing::layoutVisualSignature` symmetry.
- *     - STL template instantiations templated on
+ *     - (HISTORICAL) STL template instantiations templated on
  *       `LibreSCRS::SmartCard::Internal::Monitor` (specifically
  *       `std::thread::_State_impl<...LibreSCRS::SmartCard::Internal::
  *       Monitor...>::_M_run()` and its destructors / typeinfo /
- *       vtable)
- *   All three classes were investigated for stripping via:
+ *       vtable). MITIGATED: the internal poll thread is now spawned via
+ *       a local lambda (`std::thread([this]{ run(); })` in
+ *       lib/smartcard/src/monitor.cpp), so the `_State_impl<...>`
+ *       instantiation parameterises over an anonymous closure with
+ *       local linkage instead of over the internal Monitor type — the
+ *       symbol no longer reaches the export glob and no longer leaks.
+ *       Listed here only as a record of the prior accepted leak.
+ *   The remaining classes were investigated for stripping via:
  *     (a) anonymous-version + named LM_4 block — REJECTED by GNU ld
  *         2.46 ("anonymous version tag cannot be combined with other
  *         version tags").
