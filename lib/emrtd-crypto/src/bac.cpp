@@ -19,15 +19,8 @@ namespace emrtd::crypto {
 BACKeys deriveBACKeys(const std::string& documentNumber, const std::string& dateOfBirth,
                       const std::string& dateOfExpiry)
 {
-    // Pad document number to 9 characters with '<'
-    std::string paddedDocNo = documentNumber;
-    while (paddedDocNo.size() < 9)
-        paddedDocNo += '<';
-
-    // Build MRZ_information
-    std::string mrzInfo = paddedDocNo + std::to_string(detail::computeCheckDigit(paddedDocNo)) + dateOfBirth +
-                          std::to_string(detail::computeCheckDigit(dateOfBirth)) + dateOfExpiry +
-                          std::to_string(detail::computeCheckDigit(dateOfExpiry));
+    // MRZ_information — single source of truth (also used by the PACE-MRZ path).
+    std::string mrzInfo = detail::buildMrzInformation(documentNumber, dateOfBirth, dateOfExpiry);
 
     // K_seed = SHA-1(MRZ_information)[0:16]
     std::vector<uint8_t> mrzBytes(mrzInfo.begin(), mrzInfo.end());

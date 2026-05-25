@@ -98,6 +98,21 @@ int computeCheckDigit(const std::string& input)
     return sum % 10;
 }
 
+// ---- buildMrzInformation ----
+
+std::string buildMrzInformation(std::string_view documentNumber, std::string_view dateOfBirth,
+                                std::string_view dateOfExpiry)
+{
+    std::string paddedDocNo(documentNumber);
+    while (paddedDocNo.size() < 9)
+        paddedDocNo += '<';
+
+    std::string dob(dateOfBirth);
+    std::string doe(dateOfExpiry);
+    return paddedDocNo + std::to_string(computeCheckDigit(paddedDocNo)) + dob + std::to_string(computeCheckDigit(dob)) +
+           doe + std::to_string(computeCheckDigit(doe));
+}
+
 // ---- pad / unpad ----
 
 std::vector<uint8_t> pad(const std::vector<uint8_t>& data, size_t blockSize)

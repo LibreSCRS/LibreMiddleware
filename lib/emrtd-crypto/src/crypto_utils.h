@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace emrtd::crypto::detail {
@@ -22,6 +23,14 @@ std::vector<uint8_t> kdf(const std::vector<uint8_t>& seed, uint32_t counter, boo
 
 // ICAO 9303 check digit computation for MRZ fields
 int computeCheckDigit(const std::string& input);
+
+// Build ICAO 9303 MRZ_information: padded document number (9 chars, '<' filler)
+// + its check digit, date of birth + check digit, date of expiry + check digit.
+// The exact preimage BAC SHA-1-hashes for K_seed and PACE feeds as its MRZ
+// password — single source of truth for both. Signature carries no LibreSCRS::
+// type, so the symbol stays hidden (not ABI-exported).
+std::string buildMrzInformation(std::string_view documentNumber, std::string_view dateOfBirth,
+                                std::string_view dateOfExpiry);
 
 // ISO 9797-1 Method 2 padding
 std::vector<uint8_t> pad(const std::vector<uint8_t>& data, size_t blockSize);

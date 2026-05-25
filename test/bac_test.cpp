@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 #include <bac.h>
+#include <crypto_utils.h>
 
 using namespace emrtd::crypto;
 
@@ -19,6 +20,20 @@ TEST(BACTest, CheckDigitComputation)
     EXPECT_EQ(detail::computeCheckDigit("740727"), 3);
     // 1×7+2×3+0×1+7×7+1×3+4×1 = 69 % 10 = 9
     EXPECT_EQ(detail::computeCheckDigit("120714"), 9);
+}
+
+TEST(BACTest, MrzInformationConstruction)
+{
+    // ICAO worked example: padded docNo(9,'<') + cd, DOB + cd, DOE + cd.
+    // computeCheckDigit("L898902C<")=3, ("740727")=3, ("120714")=9.
+    EXPECT_EQ(detail::buildMrzInformation("L898902C", "740727", "120714"), "L898902C<374072731207149");
+    // Short document number is '<'-padded to 9 before its check digit.
+    EXPECT_EQ(detail::buildMrzInformation("AB1234", "800101", "250101").substr(0, 10),
+              std::string("AB1234<<<") + std::to_string(detail::computeCheckDigit("AB1234<<<")));
+    // Document number already > 9 chars: no truncation, no padding — check digit
+    // computed over the full string (untested branch elsewhere).
+    EXPECT_EQ(detail::buildMrzInformation("1234567890", "800101", "250101").substr(0, 11),
+              std::string("1234567890") + std::to_string(detail::computeCheckDigit("1234567890")));
 }
 
 TEST(BACTest, KeySeedDerivation)

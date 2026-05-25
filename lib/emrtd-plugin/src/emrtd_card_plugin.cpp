@@ -93,46 +93,17 @@ struct SecureMRZData
     LibreSCRS::Secure::String dateOfExpiry; // YYMMDD
 };
 
-// Compute the PACE MRZ-derived password (mrzInfo = paddedDocNo + cd + DOB +
-// cd + DOE + cd) per BSI TR-03110. Mirrors the formula in
-// emrtd::crypto::deriveBACKeys; both protocols hash the same construction
-// but BAC derives keys from it directly while PACE feeds it as the
-// password to its KDF.
+// Compute the PACE MRZ-derived password via the canonical
+// emrtd::crypto::detail::buildMrzInformation (mrzInfo = paddedDocNo + cd + DOB
+// + cd + DOE + cd, BSI TR-03110) — the same construction BAC hashes for
+// K_seed, so the two protocols can never drift.
 //
-// Returns a Secure::String built via the adopt-and-cleanse rvalue ctor; the
-// intermediate scratch std::string is wrapped in a PinStringScrubber so its
-// SSO / heap storage is zeroed on every exit path, including exceptions.
+// Secure::String's adopt-and-cleanse rvalue ctor copies the scratch into
+// cleansing storage and zeroes the source on every exit path (incl.
+// exceptions), so no PinStringScrubber is needed here.
 LibreSCRS::Secure::String buildMrzInfo(std::string_view docNumber, std::string_view dob, std::string_view doe)
 {
-    // Build the padded document-number into its own scratch so each
-    // computeCheckDigit invocation receives a stable const-ref input. All
-    // three scratch buffers are wrapped in PinStringScrubber so an
-    // exception from computeCheckDigit, the std::to_string allocations, or
-    // the final Secure::String construction still cleanses the secret
-    // bytes before the std::string allocators release them.
-    std::string paddedDocNo;
-    ::LibreSCRS::SmartCard::Internal::PinStringScrubber padScrub{paddedDocNo};
-    paddedDocNo.assign(docNumber);
-    while (paddedDocNo.size() < 9)
-        paddedDocNo += '<';
-
-    std::string dobStr;
-    ::LibreSCRS::SmartCard::Internal::PinStringScrubber dobScrub{dobStr};
-    dobStr.assign(dob);
-
-    std::string doeStr;
-    ::LibreSCRS::SmartCard::Internal::PinStringScrubber doeScrub{doeStr};
-    doeStr.assign(doe);
-
-    std::string scratch;
-    ::LibreSCRS::SmartCard::Internal::PinStringScrubber scrub{scratch};
-    scratch.reserve(paddedDocNo.size() + dobStr.size() + doeStr.size() + 3);
-    scratch.append(paddedDocNo);
-    scratch += std::to_string(emrtd::crypto::detail::computeCheckDigit(paddedDocNo));
-    scratch.append(dobStr);
-    scratch += std::to_string(emrtd::crypto::detail::computeCheckDigit(dobStr));
-    scratch.append(doeStr);
-    scratch += std::to_string(emrtd::crypto::detail::computeCheckDigit(doeStr));
+    std::string scratch = emrtd::crypto::detail::buildMrzInformation(docNumber, dob, doe);
     return LibreSCRS::Secure::String{std::move(scratch)};
 }
 
