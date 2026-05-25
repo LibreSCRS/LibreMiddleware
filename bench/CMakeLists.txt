@@ -40,13 +40,27 @@ target_compile_definitions(bench_parsed_cert PRIVATE
 # ---------------------------------------------------------------------------
 # bench_trust_validate: TrustStore::validateChain over 1/3/5-deep chains
 # ---------------------------------------------------------------------------
-add_executable(bench_trust_validate bench_trust_validate.cpp)
+# The benchmark drives the LM-internal TrustStoreInternalAccess::makeStore
+# seam, which is intentionally *not* exported from libLibreSCRS_Trust.so
+# (only mergeTrustedListAnchors carries LIBRESCRS_PUBLIC_API; makeStore stays
+# hidden under -fvisibility=hidden — see TrustStoreInternalAccess.h). Under
+# the SHARED LM build (default since the 4.2 minimal-API-surface wave) a
+# consumer that merely links the .so cannot resolve the hidden makeStore.
+# Mirror the established test/Trust/bundled_certs_walker_test pattern: compile
+# the internal-access TU directly into the bench binary so the symbol has
+# internal linkage here, instead of widening the public .so ABI.
+add_executable(bench_trust_validate
+    bench_trust_validate.cpp
+    ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/Trust/internal/TrustStoreInternalAccess.cpp
+    ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/Trust/internal/BundledCertsProvider.cpp)
 target_compile_definitions(bench_trust_validate PRIVATE LIBRESCRS_INTERNAL_BUILD)
 target_include_directories(bench_trust_validate PRIVATE
-    ${PROJECT_SOURCE_DIR}/lib)
+    ${PROJECT_SOURCE_DIR}/lib
+    ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/Trust)
 target_link_libraries(bench_trust_validate PRIVATE
     LibreSCRS_Trust
     LibreSCRS_Certificate
+    OpenSSL_Crypto
     ${LIBRESCRS_BENCH_LIBS})
 target_compile_definitions(bench_trust_validate PRIVATE
     LIBRESCRS_BENCH_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/test/test-data")
@@ -54,9 +68,18 @@ target_compile_definitions(bench_trust_validate PRIVATE
 # ---------------------------------------------------------------------------
 # bench_truststore_service: TrustStoreService::create() happy path
 # ---------------------------------------------------------------------------
+# bench_truststore_service::waitForEagerFetches takes a defaulted
+# `CancelToken token = {}`, so the bench TU instantiates CancelToken's
+# out-of-line ctor/dtor. Those live in libLibreSCRS_Auth (CancelToken.cpp).
+# Under the SHARED LM build (default since the 4.2 minimal-API-surface wave)
+# the defining DSO must appear on the link line directly — Trust.so only
+# PRIVATE-links Auth, so GNU ld reports the versioned CancelToken symbol as
+# "DSO missing from command line". Link Auth explicitly; mirrors how
+# TrustStoreServiceTests links the same transitive dependencies.
 add_executable(bench_truststore_service bench_truststore_service.cpp)
 target_link_libraries(bench_truststore_service PRIVATE
     LibreSCRS_Trust
+    LibreSCRS_Auth
     ${LIBRESCRS_BENCH_LIBS})
 target_compile_definitions(bench_truststore_service PRIVATE
     LIBRESCRS_BENCH_FIXTURES_DIR="${PROJECT_SOURCE_DIR}/test/fixtures")
