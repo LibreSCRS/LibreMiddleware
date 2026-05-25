@@ -1,0 +1,4 @@
+{ "components": [
+  {"match": "libopensc*", "name": "OpenSC", "spdx": "LGPL-2.1-or-later",
+   "text": "opensc-source/COPYING", "sha256": "376b54d4c5f4aa99421823fa4da93e3ab73096fce2400e89858632aa7da24a14"}
+] }
