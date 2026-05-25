@@ -232,18 +232,27 @@ add_library(opensc_static_with_deps INTERFACE)
 # (CMake's `$<LINK_GROUP>` is documented as not supported for the 'CXX'
 # link language on Apple), so the plain target ordering is sufficient —
 # ld64 will rescan both archives until no more symbols are pulled.
+#
+# ZLIB::ZLIB MUST sit inside the rescan group, not after it: libopensc.a's
+# compression.o / pkcs15-actalis.o reference inflate/uncompress/inflateInit2_
+# /inflateEnd, and those objects are pulled in mid-scan. With zlib appended
+# *after* --end-group the resolution only works by luck of link ordering
+# (e.g. when CMake happens to emit libz.so before the group, where a shared
+# lib's symbols stay available). Under a different consumer/link order — as
+# CodeQL's traced build produced for OpenScPkcs11UnitTests — the trailing
+# libz lands past the closed group and the zlib refs go undefined. Folding
+# zlib into the group makes the link order-independent and correct on every
+# consumer.
+find_package(ZLIB REQUIRED)
 if(APPLE)
     target_link_libraries(opensc_static_with_deps INTERFACE
-        opensc_static OpenSSL_Crypto
+        opensc_static OpenSSL_Crypto ZLIB::ZLIB
     )
 else()
     target_link_libraries(opensc_static_with_deps INTERFACE
-        "$<LINK_GROUP:RESCAN,opensc_static,OpenSSL_Crypto>"
+        "$<LINK_GROUP:RESCAN,opensc_static,OpenSSL_Crypto,ZLIB::ZLIB>"
     )
 endif()
-
-find_package(ZLIB REQUIRED)
-target_link_libraries(opensc_static_with_deps INTERFACE ZLIB::ZLIB)
 
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
