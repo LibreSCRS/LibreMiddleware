@@ -1,4 +1,8 @@
 { "components": [
   {"match": "libopensc*", "name": "OpenSC", "spdx": "LGPL-2.1-or-later",
-   "text": "opensc-source/COPYING", "sha256": "376b54d4c5f4aa99421823fa4da93e3ab73096fce2400e89858632aa7da24a14"}
+   "text": "opensc-source/COPYING", "sha256": "376b54d4c5f4aa99421823fa4da93e3ab73096fce2400e89858632aa7da24a14"},
+  {"match": "openssl-static-3.5.5", "name": "OpenSSL", "spdx": "Apache-2.0",
+   "text": "openssl-3.5.5/LICENSE.txt", "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a"},
+  {"match": "liberation-sans-data", "name": "Liberation Sans", "spdx": "OFL-1.1",
+   "text": "liberation-sans/LICENSE-OFL-1.1.txt", "sha256": "93fed46019c38bbe566b479d22148e2e8a1e85ada614accb0211c37b2c61c19b"}
 ] }
