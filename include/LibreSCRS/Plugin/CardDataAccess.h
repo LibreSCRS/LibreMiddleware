@@ -71,7 +71,6 @@ namespace LibreSCRS::Plugin {
 /// @endcode
 ///
 /// @since 4.2
-// TODO(docs): add Hugo dev-guide page at /docs/api/card-data-access.md (EN+SR) before 4.2 release
 [[nodiscard]] LIBRESCRS_PUBLIC_API std::optional<std::string> textValue(const CardData& data, std::string_view groupKey,
                                                                         std::string_view fieldKey) noexcept;
 

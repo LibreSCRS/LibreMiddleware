@@ -367,7 +367,6 @@ public:
     /// @endcode
     ///
     /// @since 4.2
-    // TODO(docs): add Hugo dev-guide page at /docs/api/monitor-reader-list.md (EN+SR) before 4.2 release
     [[nodiscard]] SubscriptionId subscribeReaderList(ReaderListCallback callback);
 
     /// @brief Unregister the reader-list snapshot subscription identified by @p id.
