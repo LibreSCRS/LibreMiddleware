@@ -4,7 +4,7 @@
 #include <LibreSCRS/Plugin/PluginTypes.h>
 #include <gtest/gtest.h>
 
-TEST(PluginAbiVersion, IsSix)
+TEST(PluginAbiVersion, IsSeven)
 {
-    EXPECT_EQ(LibreSCRS::Plugin::kCardPluginAbiVersion, 6u);
+    EXPECT_EQ(LibreSCRS::Plugin::kCardPluginAbiVersion, 7u);
 }

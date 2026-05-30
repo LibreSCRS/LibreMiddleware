@@ -122,6 +122,7 @@ LibreSCRS::Plugin::AutoReaderService::AutoReaderService(std::shared_ptr<LibreSCR
 LibreSCRS::Plugin::AutoReaderService::isReading(std::basic_string_view<char, std::char_traits<char> >) const@@LM_4
 LibreSCRS::Plugin::AutoReaderService::~AutoReaderService()@@LM_4
 LibreSCRS::Plugin::CardPlugin::canHandle(std::span<unsigned char const, 18446744073709551615ul>) const@@LM_4
+LibreSCRS::Plugin::CardPlugin::preReadAuth(LibreSCRS::SmartCard::CardSession&) const@@LM_4
 LibreSCRS::Plugin::CardPlugin::readCard(LibreSCRS::SmartCard::CardSession&, std::function<void (std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, LibreSCRS::Plugin::CardFieldGroup const&)>, LibreSCRS::CancelToken) const@@LM_4
 LibreSCRS::Plugin::CardPlugin::setTrustStore(std::shared_ptr<LibreSCRS::Trust::TrustStore const>)@@LM_4
 LibreSCRS::Plugin::CardPlugin::sign(LibreSCRS::SmartCard::CardSession&, unsigned short, std::span<unsigned char const, 18446744073709551615ul>, LibreSCRS::Plugin::SignMechanism, LibreSCRS::CancelToken) const@@LM_4
@@ -139,6 +140,9 @@ LibreSCRS::Plugin::CardPluginService::plugins() const@@LM_4
 LibreSCRS::Plugin::CardPluginService::size() const@@LM_4
 LibreSCRS::Plugin::CardPluginService::~CardPluginService()@@LM_4
 LibreSCRS::Plugin::SecurityStatus::computeOverall()@@LM_4
+LibreSCRS::Plugin::acquireChannelForProfile(LibreSCRS::SmartCard::CardSession&, LibreSCRS::Plugin::ActivationProfile const&, LibreSCRS::CancelToken)@@LM_4
+LibreSCRS::Plugin::isStopError(LibreSCRS::SecureChannel::ChannelActivationError)@@LM_4
+LibreSCRS::Plugin::shouldTryFallback(LibreSCRS::Plugin::ActivationProfile const&, LibreSCRS::SecureChannel::ChannelActivationError)@@LM_4
 LibreSCRS::Plugin::textValueAt[abi:cxx11](LibreSCRS::Plugin::CardData const&, unsigned long, std::basic_string_view<char, std::char_traits<char> >)@@LM_4
 LibreSCRS::Plugin::textValue[abi:cxx11](LibreSCRS::Plugin::CardData const&, std::basic_string_view<char, std::char_traits<char> >, std::basic_string_view<char, std::char_traits<char> >)@@LM_4
 
@@ -201,6 +205,7 @@ emrtd::crypto::performPACE(LibreSCRS::SmartCard::Internal::PCSCConnection&, emrt
 == libLibreSCRS_Signing.so ==
 LibreSCRS::Plugin::Atr::matches(std::span<unsigned char const, 18446744073709551615ul>) const@@LM_4
 LibreSCRS::Plugin::CardPlugin::canHandle(std::span<unsigned char const, 18446744073709551615ul>) const@@LM_4
+LibreSCRS::Plugin::CardPlugin::preReadAuth(LibreSCRS::SmartCard::CardSession&) const@@LM_4
 LibreSCRS::Plugin::CardPlugin::readCard(LibreSCRS::SmartCard::CardSession&, std::function<void (std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, LibreSCRS::Plugin::CardFieldGroup const&)>, LibreSCRS::CancelToken) const@@LM_4
 LibreSCRS::Plugin::CardPlugin::setTrustStore(std::shared_ptr<LibreSCRS::Trust::TrustStore const>)@@LM_4
 LibreSCRS::Plugin::CardPlugin::sign(LibreSCRS::SmartCard::CardSession&, unsigned short, std::span<unsigned char const, 18446744073709551615ul>, LibreSCRS::Plugin::SignMechanism, LibreSCRS::CancelToken) const@@LM_4
@@ -217,6 +222,9 @@ LibreSCRS::Plugin::CardPluginService::operator=(LibreSCRS::Plugin::CardPluginSer
 LibreSCRS::Plugin::CardPluginService::plugins() const@@LM_4
 LibreSCRS::Plugin::CardPluginService::size() const@@LM_4
 LibreSCRS::Plugin::CardPluginService::~CardPluginService()@@LM_4
+LibreSCRS::Plugin::acquireChannelForProfile(LibreSCRS::SmartCard::CardSession&, LibreSCRS::Plugin::ActivationProfile const&, LibreSCRS::CancelToken)@@LM_4
+LibreSCRS::Plugin::isStopError(LibreSCRS::SecureChannel::ChannelActivationError)@@LM_4
+LibreSCRS::Plugin::shouldTryFallback(LibreSCRS::Plugin::ActivationProfile const&, LibreSCRS::SecureChannel::ChannelActivationError)@@LM_4
 LibreSCRS::Signing::SigningRequest::Builder::Builder()@@LM_4
 LibreSCRS::Signing::SigningRequest::Builder::Builder(LibreSCRS::Signing::SigningRequest::Builder&&)@@LM_4
 LibreSCRS::Signing::SigningRequest::Builder::allowExpiredCert(bool)@@LM_4
@@ -308,9 +316,11 @@ LibreSCRS::SmartCard::CardSession::CardSession(LibreSCRS::SmartCard::CardSession
 LibreSCRS::SmartCard::CardSession::CardSession(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)@@LM_4
 LibreSCRS::SmartCard::CardSession::activateChannelFor(LibreSCRS::SmartCard::AppletAid, LibreSCRS::CancelToken)@@LM_4
 LibreSCRS::SmartCard::CardSession::activateChannelWithSm(LibreSCRS::SmartCard::AppletAid, std::variant<LibreSCRS::SmartCard::BacRequest, LibreSCRS::SmartCard::PaceRequest>, LibreSCRS::CancelToken)@@LM_4
+LibreSCRS::SmartCard::CardSession::activatedProtocol() const@@LM_4
 LibreSCRS::SmartCard::CardSession::atr() const@@LM_4
 LibreSCRS::SmartCard::CardSession::clearActiveChannel()@@LM_4
 LibreSCRS::SmartCard::CardSession::clearCachedPaceCredentials()@@LM_4
+LibreSCRS::SmartCard::CardSession::hasCredentialProvider() const@@LM_4
 LibreSCRS::SmartCard::CardSession::hasLiveSecureChannel() const@@LM_4
 LibreSCRS::SmartCard::CardSession::isConnected() const@@LM_4
 LibreSCRS::SmartCard::CardSession::isDead() const@@LM_4
@@ -323,6 +333,10 @@ LibreSCRS::SmartCard::CardSession::setCredentialProvider(std::function<LibreSCRS
 LibreSCRS::SmartCard::CardSession::setPaceSecret(LibreSCRS::Auth::PaceSecretKind, LibreSCRS::Secure::String)@@LM_4
 LibreSCRS::SmartCard::CardSession::transmitInternal(LibreSCRS::SmartCard::Internal::APDUCommand const&, LibreSCRS::CancelToken)@@LM_4
 LibreSCRS::SmartCard::CardSession::~CardSession()@@LM_4
+LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::activatedProtocol(LibreSCRS::SmartCard::CardSession&)@@LM_4
+LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::active(LibreSCRS::SmartCard::CardSession&)@@LM_4
+LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::clearOwner(LibreSCRS::SmartCard::CardSession&)@@LM_4
+LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::markOwner(LibreSCRS::SmartCard::CardSession&)@@LM_4
 LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(LibreSCRS::SmartCard::ActiveChannelHolder&)@@LM_4
 LibreSCRS::SmartCard::Internal::Monitor::Monitor(std::unique_ptr<LibreSCRS::SmartCard::Internal::IPCSCScanProvider, std::default_delete<LibreSCRS::SmartCard::Internal::IPCSCScanProvider> >)@@LM_4
 LibreSCRS::SmartCard::Internal::Monitor::checkPnPSupport()@@LM_4

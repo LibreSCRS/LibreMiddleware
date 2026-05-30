@@ -22,8 +22,10 @@
 
 #include <LibreSCRS/Export.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
+#include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 
 #include <memory>
+#include <optional>
 
 namespace LibreSCRS::SecureChannel {
 class ISecureChannel;
@@ -59,9 +61,18 @@ struct ChannelInjector
     ///        installed channel (if any) is dropped without calling
     ///        @c close() — tests that need explicit teardown should arrange
     ///        for it themselves.
+    ///
+    /// @param recordedProtocol  When set, records it as the session's
+    ///        @ref CardSession::activatedProtocol under the same lock,
+    ///        mirroring the activation paths that stamp the protocol alongside
+    ///        the live channel. Defaults to @c std::nullopt so existing callers
+    ///        that only need a channel state are unaffected. Lets the
+    ///        @c activatedProtocol-staleness regression construct a session
+    ///        whose recorded protocol outlives a non-live channel.
     /// @since 4.1
     LIBRESCRS_INTERNAL static void
-    installForTesting(CardSession& session, std::unique_ptr<LibreSCRS::SecureChannel::ISecureChannel> channel) noexcept;
+    installForTesting(CardSession& session, std::unique_ptr<LibreSCRS::SecureChannel::ISecureChannel> channel,
+                      std::optional<SmProtocolRequest> recordedProtocol = std::nullopt) noexcept;
 };
 
 } // namespace LibreSCRS::SmartCard::detail

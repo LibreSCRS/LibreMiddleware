@@ -53,6 +53,7 @@
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -93,12 +94,16 @@ AppletAid makeOtherAid()
 
 // Convenience: install a Pace-shaped fake (carriesSm=true) in the desired
 // state and return a raw pointer for later assertions. The session retains
-// ownership; raw pointer is for inspection only.
-FakeChannel* installPaceFake(CardSession& session, ChannelState state)
+// ownership; raw pointer is for inspection only. @p recordedProtocol, when
+// set, is stamped as the session's activatedProtocol under the same lock —
+// mirroring the activation paths so a test can reconstruct a
+// recorded-protocol-but-non-live-channel window.
+FakeChannel* installPaceFake(CardSession& session, ChannelState state,
+                             std::optional<SmProtocolRequest> recordedProtocol = std::nullopt)
 {
     auto channel = std::make_unique<FakeChannel>(makeAid(), state, /*carriesSm=*/true);
     auto* ptr = channel.get();
-    ChannelInjector::installForTesting(session, std::move(channel));
+    ChannelInjector::installForTesting(session, std::move(channel), std::move(recordedProtocol));
     return ptr;
 }
 
@@ -216,6 +221,46 @@ TEST_F(CrossProviderCoordination, HasLiveSecureChannelMatrix)
         auto session = makeDetachedCardSession(kReader);
         installPaceFake(*session, ChannelState::Failed);
         EXPECT_FALSE(session->hasLiveSecureChannel());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Invariant #3b — activatedProtocol is self-consistent with
+// hasLiveSecureChannel. An installed SM channel can transition to Failed (or
+// Closed) on its own during a holder transmit (card-side 6987/6988 /
+// MAC-unwrap failure) with NO teardown call, leaving activeChannel set and
+// activatedProtocol still recorded. In that window hasLiveSecureChannel() is
+// false; the accessor MUST mirror it and report nullopt rather than the stale
+// recorded protocol. The Open case is the positive control: a recorded
+// protocol on a live SM channel reads back intact.
+// ---------------------------------------------------------------------------
+
+TEST_F(CrossProviderCoordination, ActivatedProtocolGatedOnLiveSmChannel)
+{
+    const SmProtocolRequest recorded = PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can};
+    {
+        SCOPED_TRACE("recorded protocol on Open SM channel reads back intact");
+        auto session = makeDetachedCardSession(kReader);
+        installPaceFake(*session, ChannelState::Open, recorded);
+        ASSERT_TRUE(session->hasLiveSecureChannel());
+        ASSERT_TRUE(session->activatedProtocol().has_value());
+        EXPECT_EQ(*session->activatedProtocol(), recorded);
+    }
+    {
+        // REQUIRED regression: recorded protocol but Failed channel — accessor
+        // must return nullopt even though d->activatedProtocol is set.
+        SCOPED_TRACE("recorded protocol on Failed SM channel reports nullopt");
+        auto session = makeDetachedCardSession(kReader);
+        installPaceFake(*session, ChannelState::Failed, recorded);
+        ASSERT_FALSE(session->hasLiveSecureChannel());
+        EXPECT_FALSE(session->activatedProtocol().has_value());
+    }
+    {
+        SCOPED_TRACE("recorded protocol on Closed SM channel reports nullopt");
+        auto session = makeDetachedCardSession(kReader);
+        installPaceFake(*session, ChannelState::Closed, recorded);
+        ASSERT_FALSE(session->hasLiveSecureChannel());
+        EXPECT_FALSE(session->activatedProtocol().has_value());
     }
 }
 

@@ -9,11 +9,13 @@
 
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
+#include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 
 #include <pcsc_connection.h>
 
 #include <memory>
 #include <mutex>
+#include <optional>
 
 namespace LibreSCRS::SecureChannel {
 class ISecureChannel;
@@ -41,24 +43,38 @@ struct ActiveChannelAccessor
     /// @brief Forwards @p cmd through @p session's currently installed
     ///        secure channel and returns the unwrapped response. Returns
     ///        sentinel SW 0x6F00 if no channel is installed.
+    /// @note Hidden visibility: an LM-internal funnel with no cross-`.so`
+    ///       caller. Deliberately NOT exported (the APDU types stay off the
+    ///       public ABI surface); only @ref active / @ref activatedProtocol
+    ///       (and the owner-marker pair used by the in-tree re-entrancy test)
+    ///       carry @ref LIBRESCRS_PUBLIC_API for cross-`.so` reach.
     [[nodiscard]] static APDUResponse transmit(CardSession& session, const APDUCommand& cmd,
                                                LibreSCRS::CancelToken token);
 
     /// @brief Returns a pointer to @p session's currently installed
     ///        @ref LibreSCRS::SecureChannel::ISecureChannel, or @c nullptr
     ///        if no channel is active.
-    [[nodiscard]] static LibreSCRS::SecureChannel::ISecureChannel* active(CardSession& session) noexcept;
+    [[nodiscard]] LIBRESCRS_PUBLIC_API static LibreSCRS::SecureChannel::ISecureChannel*
+    active(CardSession& session) noexcept;
+
+    /// @brief The SM protocol that established @p session's currently-live channel
+    ///        (after any BAC fallback), or nullopt if no live SM channel — read
+    ///        WITHOUT taking the session mutex, so it is safe to call from a plugin
+    ///        running inside a held ActiveChannelHolder (the owner thread). Mirrors
+    ///        @ref active in being lock-free and owner-tolerant.
+    [[nodiscard]] LIBRESCRS_PUBLIC_API static std::optional<LibreSCRS::SmartCard::SmProtocolRequest>
+    activatedProtocol(CardSession& session) noexcept;
 
     /// @brief Records the calling thread as the owner of @p session's
     ///        active-channel lock. Invoked when a holder takes ownership of
     ///        the session mutex (see @ref makeActiveChannelHolder). The
     ///        re-entrancy guard reads this to refuse same-thread re-entry.
-    static void markOwner(CardSession& session) noexcept;
+    LIBRESCRS_PUBLIC_API static void markOwner(CardSession& session) noexcept;
 
     /// @brief Clears the active-channel owner on @p session. Invoked when the
     ///        owning holder releases the lock (see
     ///        @ref ActiveChannelHolder::Impl::release).
-    static void clearOwner(CardSession& session) noexcept;
+    LIBRESCRS_PUBLIC_API static void clearOwner(CardSession& session) noexcept;
 };
 
 /// @brief Friend-only access seam reaching a @ref ActiveChannelHolder's

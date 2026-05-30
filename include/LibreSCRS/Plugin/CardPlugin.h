@@ -14,6 +14,7 @@
 #include <LibreSCRS/Auth/SecretParameter.h>
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Export.h>
+#include <LibreSCRS/Plugin/ActivationProfile.h>
 #include <LibreSCRS/Plugin/CardData.h>
 #include <LibreSCRS/Plugin/PinStatusEntry.h>
 #include <LibreSCRS/Plugin/PluginTypes.h>
@@ -65,9 +66,11 @@ namespace LibreSCRS::Plugin {
 /// concurrently — a plugin-scoped map keyed only by a credential label
 /// would corrupt cross-session state.
 ///
-/// @note ABI version is @c 6 (see `kCardPluginAbiVersion`); spans the 4.0
-///       + 4.1 cycles. Plugin loaders reject any plugin whose
-///       `card_plugin_abi_version()` differs from this value.
+/// @note ABI version is @c 7 (see `kCardPluginAbiVersion`). Plugin loaders
+///       reject any plugin whose `card_plugin_abi_version()` differs from
+///       this value. v7 adds the @ref activationProfile / @ref
+///       seedCredentials activation virtuals consumed by the @ref readCard
+///       NVI wrapper.
 ///
 /// Method groups:
 ///  - Identification (@ref pluginId, @ref displayName, @ref probePriority) — set via @ref setIdentity
@@ -447,15 +450,76 @@ public:
     /// @ref setCredentials for why.
     virtual void clearCredentials(LibreSCRS::SmartCard::CardSession& /*session*/) noexcept {}
 
+protected:
+    // -- Channel activation --------------------------------------------------
+
+    /// @brief Declare the secure-messaging (or plain) channel this plugin
+    ///        needs before reading @p session.
+    ///
+    /// The @ref readCard NVI wrapper consults this once per read: a profile
+    /// that @ref ActivationProfile::requiresActivation drives the wrapper's
+    /// channel-acquisition path (@ref seedCredentials then
+    /// @ref acquireChannelForProfile), keeping the acquired channel alive for
+    /// the duration of @ref doReadCard. A plain profile (the default) short-
+    /// circuits the wrapper straight to @ref doReadCard with no channel.
+    ///
+    /// The same profile feeds the @ref preReadAuth derivation, so a plugin
+    /// declares its activation requirement in exactly one place.
+    ///
+    /// @param session Live card session (unused by the default).
+    /// @return The activation descriptor; @ref ActivationProfile::plain by
+    ///         default (no secure messaging).
+    [[nodiscard]] virtual ActivationProfile activationProfile(LibreSCRS::SmartCard::CardSession& /*session*/) const
+    {
+        return ActivationProfile::plain();
+    }
+
+    /// @brief Push any plugin-stored secrets into the session's per-session
+    ///        credential cache before channel activation.
+    ///
+    /// Called by the @ref readCard NVI wrapper immediately before
+    /// @ref acquireChannelForProfile, and only when @p profile
+    /// @ref ActivationProfile::requiresActivation. Plugins that retain a
+    /// secret captured during an earlier prompt (e.g. a CAN entered for a
+    /// prior read on the same reader) seed it here so the activation walk
+    /// finds it in the cache rather than re-prompting. Default is a no-op for
+    /// plugins that carry no retained secrets.
+    ///
+    /// @par Mutation
+    /// May mutate the plugin's per-session store (the same store backing
+    /// @ref setCredentials). The method is @c const on the plugin's identity
+    /// but is permitted to update session-keyed mutable storage under the
+    /// plugin's internal mutex, consistent with the per-session-cache
+    /// invariant documented on @ref setCredentials.
+    ///
+    /// @par Ordering
+    /// MUST run before activation so the seeded secrets are visible to
+    /// @ref acquireChannelForProfile's cache-or-provider resolution.
+    ///
+    /// @param session Live card session — the per-session key for any seeded
+    ///                credential storage.
+    /// @param profile The activation profile about to be driven.
+    virtual void seedCredentials(LibreSCRS::SmartCard::CardSession& /*session*/,
+                                 const ActivationProfile& /*profile*/) const
+    {}
+
+public:
     // -- Pre-read auth / unblock --------------------------------------------
 
     /// @brief Describe the pre-read authentication this card requires.
-    /// @return The unlock method required before data reads; default is None.
-    /// @note Safe default: inherited behaviour reports no pre-read auth needed.
-    [[nodiscard]] virtual Auth::PreReadAuthMethod preReadAuth(LibreSCRS::SmartCard::CardSession& /*session*/) const
-    {
-        return Auth::PreReadAuthMethod::None;
-    }
+    ///
+    /// Derived from the plugin's @ref activationProfile: a plain profile
+    /// reports @ref Auth::PreReadAuthMethod::None; a PACE profile keyed on a
+    /// CAN reports @ref Auth::PreReadAuthMethod::PaceCan; any other activating
+    /// profile reports @ref Auth::PreReadAuthMethod::BacMrz. Plugins declare
+    /// their requirement once via @ref activationProfile; they do not override
+    /// this method.
+    ///
+    /// @return The unlock method required before data reads.
+    ///
+    /// Defined out-of-line in @c lib/plugin/src/card_plugin.cpp so the
+    /// derivation lives next to the activation machinery it mirrors.
+    [[nodiscard]] virtual Auth::PreReadAuthMethod preReadAuth(LibreSCRS::SmartCard::CardSession& session) const;
 
     /// @brief Unblock @p pinLabel using a PUK-based flow.
     ///

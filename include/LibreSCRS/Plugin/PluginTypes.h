@@ -28,8 +28,10 @@ namespace LibreSCRS::Plugin {
 /// @brief Current plugin ABI revision.
 ///
 /// @note Plugin loaders MUST reject any plugin whose `card_plugin_abi_version()`
-///       differs from this value. ABI v6 spans the 4.0 + 4.1 cycles.
-inline constexpr std::uint32_t kCardPluginAbiVersion = 6;
+///       differs from this value. v7 adds the activation-profile virtuals
+///       (`activationProfile` / `seedCredentials`) to @ref
+///       LibreSCRS::Plugin::CardPlugin, changing its vtable layout.
+inline constexpr std::uint32_t kCardPluginAbiVersion = 7;
 
 /// @brief Capability flags describing what a plugin can do.
 ///

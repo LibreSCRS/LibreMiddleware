@@ -15,6 +15,7 @@
 # needed (mirrors the LibreSCRS_SmartCard_TestHelpers OBJECT pattern in
 # ../LibreSCRS/CMakeLists.txt).
 add_library(CardPlugin_Impl OBJECT
+    src/activation_profile.cpp
     src/atr.cpp
     src/card_plugin.cpp
     src/card_plugin_key_function.cpp
@@ -31,3 +32,15 @@ target_compile_features(CardPlugin_Impl PUBLIC cxx_std_23)
 target_link_libraries(CardPlugin_Impl PUBLIC ${CMAKE_DL_LIBS} SmartCard_Impl)
 target_link_libraries(CardPlugin_Impl PUBLIC LibreSCRS_Auth LibreSCRS_SmartCard)
 set_target_properties(CardPlugin_Impl PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+if(BUILD_TESTING AND LIBREMIDDLEWARE_BUILD_PLUGINS)
+    # Mirrors lib/pkcs15/CMakeLists.txt: the root CMakeLists.txt enables
+    # testing AFTER add_subdirectory(lib/plugin), so call enable_testing()
+    # here to emit this subdirectory's CTestTestfile.cmake with the
+    # add_test() entries from gtest_discover_tests below. Idempotent — a
+    # second invocation from the root scope is a no-op. Gated on
+    # BUILD_PLUGINS because GTest is fetched in test/CMakeLists.txt
+    # (skipped in monolithic SDK mode).
+    enable_testing()
+    add_subdirectory(test)
+endif()

@@ -58,12 +58,6 @@ CAPABILITY_TO_ENUM = {
     "EmrtdCrypto": "CardCapabilities::EmrtdCrypto",
 }
 
-PRE_READ_AUTH_TO_ENUM = {
-    "None": "Auth::PreReadAuthMethod::None",
-    "BacMrz": "Auth::PreReadAuthMethod::BacMrz",
-    "PaceCan": "Auth::PreReadAuthMethod::PaceCan",
-}
-
 
 def hex_string_to_bytes(s: str) -> list[int]:
     return [int(token, 16) for token in s.split()]
@@ -139,13 +133,11 @@ def render(manifest: dict) -> str:
         " | ".join(CAPABILITY_TO_ENUM[c] for c in capabilities)
         if capabilities else "CardCapabilities::None"
     )
-    pre_read_auth = PRE_READ_AUTH_TO_ENUM[manifest.get("preReadAuth", "None")]
     n_atrs = len(manifest["atrs"])
     atr_body = emit_atr_array(manifest["atrs"])
 
     header = f"""// Generated from manifest.json. Do not edit.
 #pragma once
-#include <LibreSCRS/Auth/AuthRequirement.h>
 #include <LibreSCRS/Plugin/PluginTypes.h>
 #include <array>
 #include <cstdint>
@@ -158,7 +150,6 @@ namespace LibreSCRS::Plugin::generated::{namespace_id} {{
 inline constexpr std::string_view kPluginId    = "{cpp_string_escape(plugin_id)}";
 inline constexpr std::string_view kDisplayName = "{cpp_string_escape(manifest["displayName"])}";
 inline constexpr CardCapabilities kCapabilities = {capabilities_expr};
-inline constexpr Auth::PreReadAuthMethod kPreReadAuth = {pre_read_auth};
 
 """
 

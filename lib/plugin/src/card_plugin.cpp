@@ -16,15 +16,19 @@
 
 #include <LibreSCRS/Auth/ErrorKeys.h>
 #include <LibreSCRS/LocalizedText.h>
+#include <LibreSCRS/Plugin/ActivationProfile.h>
 #include <LibreSCRS/Plugin/CardPlugin.h>
 #include <LibreSCRS/Plugin/PluginTypes.h>
 #include <LibreSCRS/Plugin/ReadResult.h>
+#include <LibreSCRS/SecureChannel/ChannelErrors.h>
+#include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 #include <LibreSCRS/Trust/TrustStore.h>
 
 #include <atomic>
 #include <memory>
 #include <string>
 #include <utility>
+#include <variant>
 
 namespace LibreSCRS::Plugin {
 
@@ -38,10 +42,50 @@ bool CardPlugin::canHandle(std::span<const std::uint8_t> atr) const noexcept
     return false;
 }
 
+Auth::PreReadAuthMethod CardPlugin::preReadAuth(SmartCard::CardSession& session) const
+{
+    const ActivationProfile profile = activationProfile(session);
+    if (!profile.requiresActivation()) {
+        return Auth::PreReadAuthMethod::None;
+    }
+    // A CAN-keyed PACE profile maps to the CAN unlock prompt; every other
+    // activating profile (MRZ-keyed PACE, PIN/PUK-as-PACE, or plain BAC)
+    // collects the MRZ as its pre-read secret.
+    if (const auto* pace = std::get_if<SmartCard::PaceRequest>(&profile.primary)) {
+        return pace->secretKind == Auth::PaceSecretKind::Can ? Auth::PreReadAuthMethod::PaceCan
+                                                             : Auth::PreReadAuthMethod::BacMrz;
+    }
+    return Auth::PreReadAuthMethod::BacMrz;
+}
+
 ReadResult CardPlugin::readCard(SmartCard::CardSession& session, GroupCallback onGroup, CancelToken token) const
 {
-    if (token.isCancelled())
+    if (token.isCancelled()) {
         return ReadResult::cancelled();
+    }
+
+    const ActivationProfile profile = activationProfile(session);
+    if (!profile.requiresActivation()) {
+        // Plain channel: no secure-messaging activation; read directly.
+        return doReadCard(session, std::move(onGroup));
+    }
+
+    // Seed any plugin-retained secrets into the per-session cache before the
+    // activation walk resolves credentials, then acquire the channel.
+    seedCredentials(session, profile);
+    auto holder = acquireChannelForProfile(session, profile, token);
+    if (!holder) {
+        using E = SecureChannel::ChannelActivationError;
+        if (holder.error() == E::UserCancelled || holder.error() == E::Cancelled) {
+            return ReadResult::cancelled();
+        }
+        return ReadResult::authenticationFailed(Auth::ErrorKeys::authFailed(),
+                                                std::string{"channel activation failed"});
+    }
+
+    // `holder` is a named local that lives to function end, so the active
+    // secure channel stays open for the whole read; doReadCard transmits over
+    // the live channel and must never re-activate.
     return doReadCard(session, std::move(onGroup));
 }
 

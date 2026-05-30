@@ -202,6 +202,52 @@ bool CardSession::hasLiveSecureChannel() const noexcept
     }
 }
 
+std::optional<SmProtocolRequest> CardSession::activatedProtocol() const noexcept
+{
+    // Reports the SM protocol that established the currently-live channel
+    // (after any BAC fallback). Locks the session mutex so the read is
+    // ordered against activation / teardown paths on other threads. On lock
+    // failure (allocator pressure inside std::mutex) the noexcept contract is
+    // honoured by returning nullopt — the conservative "no protocol" answer.
+    assert(!d->callerOwnsActiveChannel() && "CardSession re-entered on the thread holding its ActiveChannelHolder "
+                                            "— would self-deadlock on the non-recursive sessionMutex. Release the "
+                                            "holder before re-entering the session.");
+    try {
+        std::lock_guard lock(d->sessionMutex);
+        // Self-consistent with hasLiveSecureChannel(): an installed SM channel
+        // can transition to ChannelState::Failed on its own during a holder
+        // transmit (card-side 6987/6988 / MAC-unwrap failure) with no teardown
+        // call, leaving d->activeChannel set and d->activatedProtocol recorded.
+        // Gate on the same live-Open-SM predicate so the recorded protocol is
+        // never reported for a non-live channel.
+        if (d->activeChannel && d->activeChannel->state() == LibreSCRS::SecureChannel::ChannelState::Open &&
+            d->activeChannel->carriesSm()) {
+            return d->activatedProtocol;
+        }
+        return std::nullopt;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+bool CardSession::hasCredentialProvider() const noexcept
+{
+    // Reports whether a credential provider has been installed via
+    // setCredentialProvider. Locks the session mutex so the read is ordered
+    // against setCredentialProvider on other threads. On lock failure
+    // (allocator pressure inside std::mutex) the noexcept contract is honoured
+    // by returning false — the conservative "no provider" answer.
+    assert(!d->callerOwnsActiveChannel() && "CardSession re-entered on the thread holding its ActiveChannelHolder "
+                                            "— would self-deadlock on the non-recursive sessionMutex. Release the "
+                                            "holder before re-entering the session.");
+    try {
+        std::lock_guard lock(d->sessionMutex);
+        return static_cast<bool>(d->credentialProvider);
+    } catch (...) {
+        return false;
+    }
+}
+
 // ----------------------------------------------------------------------------
 // Cross-plugin secure-channel coordination.
 //
@@ -373,6 +419,11 @@ void CardSession::markDead() noexcept
     try {
         std::lock_guard lock(d->sessionMutex);
         d->presence.reset();
+        // Card removed: the SM tunnel is dead, so clear the recorded protocol
+        // alongside the presence entry. The active channel itself is dropped by
+        // a subsequent clearActiveChannel / ~Impl; this keeps the accessor from
+        // reporting a stale protocol in the window before that fires.
+        d->activatedProtocol.reset();
     } catch (...) {
         // noexcept contract.
     }
@@ -399,6 +450,9 @@ void CardSession::clearActiveChannel() noexcept
             d->activeChannel->close();
             d->activeChannel.reset();
         }
+        // The channel is gone; clear the recorded protocol so the accessor
+        // does not report a stale SM family for a torn-down channel.
+        d->activatedProtocol.reset();
         // Drop the SessionPresence entry alongside the channel: in-process
         // PKCS#11 probes must see "no live SM" once the channel is gone,
         // even if this CardSession remains alive on the host side.
@@ -505,6 +559,9 @@ CardSession::activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token)
     if (d->activeChannel && d->activeChannel->currentApplet() == aid &&
         d->activeChannel->state() == ChannelState::Open &&
         dynamic_cast<const PlainChannel*>(d->activeChannel.get()) != nullptr) {
+        // Plain channel carries no SM context — the accessor must report no
+        // active SM protocol regardless of any prior SM channel's record.
+        d->activatedProtocol.reset();
         return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
     }
 
@@ -523,6 +580,10 @@ CardSession::activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token)
     }
 
     d->activeChannel = std::make_shared<PlainChannel>(*d->ownedConn, aid);
+    // A freshly installed plain channel carries no SM context; clear any
+    // protocol recorded for a previously closed SM channel so the accessor
+    // reports nullopt for this plain activation.
+    d->activatedProtocol.reset();
     return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
 }
 
@@ -609,6 +670,9 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
     //         — fast path; reuse without touching the wire.
     if (d->activeChannel && d->activeChannel->currentApplet() == aid &&
         d->activeChannel->state() == ChannelState::Open && channelMatchesProtocol(*d->activeChannel)) {
+        // Reused channel: re-record the protocol so a fast-path return still
+        // reports the SM family that owns the live tunnel.
+        d->activatedProtocol = protocol;
         return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
     }
 
@@ -628,6 +692,9 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
             return std::unexpected{ChannelActivationError::SelectAppletFailed};
         }
         LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(*d->activeChannel, aid);
+        // Cross-applet wrapped-SELECT reuse keeps the same SM tunnel; re-record
+        // the protocol so the accessor stays consistent across applet switches.
+        d->activatedProtocol = protocol;
         return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
     }
 
@@ -646,6 +713,10 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
         }
         d->activeChannel->close();
         d->activeChannel.reset();
+        // Channel torn down ahead of the fresh-handshake retry loop; clear the
+        // recorded protocol. A success below re-records it; a failure leaves it
+        // cleared so the accessor reports nullopt for the now-channelless session.
+        d->activatedProtocol.reset();
     }
 
     int retriesLeft = kSmActivationMaxAttempts;
@@ -741,6 +812,10 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                     // losing the cross-reader guard for this one session is
                     // preferable to terminating.
                 }
+                // Record the protocol that won this channel. On the BAC branch
+                // `protocol` is the BacRequest the caller passed (BAC is the
+                // fallback path), so the accessor reports BAC after a fallback.
+                d->activatedProtocol = protocol;
                 return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
             }
             if (outcome.error() == ChannelActivationError::PaceWrongSecret) {
@@ -873,6 +948,10 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                     d->presence.emplace(Internal::sessionPresence().insert(d->readerName, std::move(weak)));
             } catch (...) {
             }
+            // Record the protocol that won this channel. On the PACE branch
+            // `protocol` is the PaceRequest the caller passed (its secretKind
+            // distinguishes PACE-CAN / PACE-MRZ / PACE-PIN for label callers).
+            d->activatedProtocol = protocol;
             return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
         }
         if (lastError == ChannelActivationError::PaceWrongSecret) {
@@ -903,6 +982,27 @@ APDUResponse ActiveChannelAccessor::transmit(CardSession& session, const APDUCom
 LibreSCRS::SecureChannel::ISecureChannel* ActiveChannelAccessor::active(CardSession& session) noexcept
 {
     return session.d->activeChannel.get();
+}
+
+std::optional<SmProtocolRequest> ActiveChannelAccessor::activatedProtocol(CardSession& session) noexcept
+{
+    // Lock-free, owner-tolerant sibling of the public CardSession::activatedProtocol
+    // accessor. Reaches d through the same friendship path active() uses, gates on
+    // the identical live-Open-SM predicate (so a recorded protocol is never reported
+    // for a Closed/Failed channel), and returns the recorded protocol — all WITHOUT
+    // locking the session mutex. Safe because the holder-owner is the only thread
+    // that can mutate session state while the holder is held; this is the accessor a
+    // plugin calls from inside a held ActiveChannelHolder where the public,
+    // mutex-locking accessor would self-deadlock on the non-recursive sessionMutex.
+    auto* d = session.d.get();
+    if (d == nullptr) {
+        return std::nullopt;
+    }
+    if (d->activeChannel && d->activeChannel->state() == LibreSCRS::SecureChannel::ChannelState::Open &&
+        d->activeChannel->carriesSm()) {
+        return d->activatedProtocol;
+    }
+    return std::nullopt;
 }
 
 void ActiveChannelAccessor::markOwner(CardSession& session) noexcept

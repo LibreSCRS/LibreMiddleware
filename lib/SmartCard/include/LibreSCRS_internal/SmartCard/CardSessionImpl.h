@@ -70,6 +70,13 @@ struct LIBRESCRS_INTERNAL CardSession::Impl
     // teardown on another thread. The session is the sole conceptual owner;
     // shared_ptr is purely a lifetime-pinning vehicle for the snapshot.
     std::shared_ptr<LibreSCRS::SecureChannel::ISecureChannel> activeChannel;
+    // SM protocol that established @ref activeChannel (after any BAC fallback).
+    // Recorded at activation time alongside every makeActiveChannelHolder
+    // return that hands back a live SM channel, and reset everywhere
+    // activeChannel is reset/closed (clearActiveChannel, the Case-3 teardown,
+    // markDead). Mirrors the activeChannel lifetime so the public
+    // CardSession::activatedProtocol accessor never reports a stale protocol.
+    std::optional<LibreSCRS::SmartCard::SmProtocolRequest> activatedProtocol;
     std::array<LibreSCRS::Secure::String, LibreSCRS::Auth::kPaceSecretKindCount> paceCredentialsCache;
     // BAC consumes a structurally distinct tuple (documentNumber + two dates)
     // rather than a single secret, so it gets its own cache slot disjoint

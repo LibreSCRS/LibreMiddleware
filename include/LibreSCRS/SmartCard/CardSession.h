@@ -251,6 +251,33 @@ public:
     /// @since 4.1
     [[nodiscard]] bool hasLiveSecureChannel() const noexcept;
 
+    /// @brief The SM protocol that established the currently-live channel
+    ///        (after any BAC fallback), or nullopt if no SM channel is active.
+    ///        Recorded at activation time; cleared on channel teardown / markDead.
+    ///
+    /// @note Acquires the session mutex for the duration of the call so it is
+    ///       safe to invoke concurrently with activation paths. On lock
+    ///       acquisition failure (allocator pressure inside @c std::mutex) the
+    ///       call returns @c nullopt — the noexcept contract is preserved at the
+    ///       cost of a conservative answer. Calling any accessor on a moved-from
+    ///       session is undefined behaviour.
+    /// @since 4.3
+    [[nodiscard]] std::optional<SmProtocolRequest> activatedProtocol() const noexcept;
+
+    /// @brief True when a credential provider is installed via
+    ///        @ref setCredentialProvider. Lets plugins distinguish a broker that
+    ///        will supply secrets on demand from a host that pre-deposits them.
+    ///
+    /// @note Acquires the session mutex for the duration of the call so it is
+    ///       safe to invoke concurrently with @ref setCredentialProvider on
+    ///       another thread. On lock acquisition failure (allocator pressure
+    ///       inside @c std::mutex) the call returns @c false — the noexcept
+    ///       contract is preserved at the cost of a conservative answer.
+    ///       Calling any accessor on a moved-from session is undefined
+    ///       behaviour.
+    /// @since 4.3
+    [[nodiscard]] bool hasCredentialProvider() const noexcept;
+
     // -- Cross-plugin secure-channel coordination (4.1+) --------------------
 
     /// @brief Install or replace the credential provider used by

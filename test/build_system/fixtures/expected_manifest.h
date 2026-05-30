@@ -1,6 +1,5 @@
 // Generated from manifest.json. Do not edit.
 #pragma once
-#include <LibreSCRS/Auth/AuthRequirement.h>
 #include <LibreSCRS/Plugin/PluginTypes.h>
 #include <array>
 #include <cstdint>
@@ -13,7 +12,6 @@ namespace LibreSCRS::Plugin::generated::rs_eid {
 inline constexpr std::string_view kPluginId    = "rs-eid";
 inline constexpr std::string_view kDisplayName = "Serbian electronic ID";
 inline constexpr CardCapabilities kCapabilities = CardCapabilities::PKI | CardCapabilities::PinManagement;
-inline constexpr Auth::PreReadAuthMethod kPreReadAuth = Auth::PreReadAuthMethod::None;
 
 inline const std::array<Atr, 2> kAtrs{{
     Atr{ {0x3B, 0x9F, 0x96, 0x80, 0x0A, 0xB0, 0x8B}, std::nullopt },

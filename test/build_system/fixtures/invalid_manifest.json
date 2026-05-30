@@ -1,7 +1,7 @@
 {
   "pluginId": "INVALID UPPERCASE WITH SPACES",
   "displayName": "x",
-  "abiVersion": 6,
+  "abiVersion": 7,
   "capabilities": [],
   "atrs": []
 }

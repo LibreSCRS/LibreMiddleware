@@ -15,7 +15,7 @@
 #   ${CMAKE_CURRENT_BINARY_DIR}/generated/manifest.h
 # and added to the target's PRIVATE include path. Plugin sources can
 #   #include "manifest.h"
-# and consume kPluginId, kDisplayName, kCapabilities, kPreReadAuth, kAtrs
+# and consume kPluginId, kDisplayName, kCapabilities, kAtrs
 # from the LibreSCRS::Plugin::generated::<id> namespace.
 #
 # A global CMake property LIBRESCRS_PLUGIN_MANIFESTS records every manifest

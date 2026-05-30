@@ -1,7 +1,7 @@
 {
   "pluginId": "evil}; namespace pwn { void hax(); } namespace x",
   "displayName": "Innocent Display",
-  "abiVersion": 6,
+  "abiVersion": 7,
   "capabilities": [],
   "atrs": []
 }
