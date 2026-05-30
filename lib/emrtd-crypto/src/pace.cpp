@@ -612,6 +612,38 @@ static ECPointPtr ecdhSharedPoint(const EC_GROUP* group, const BIGNUM* privKey, 
 }
 
 // ---------------------------------------------------------------------------
+// derivePaceKpiSeed
+// ---------------------------------------------------------------------------
+
+std::optional<std::vector<uint8_t>> derivePaceKpiSeed(PACEPasswordType passwordType,
+                                                      const std::vector<uint8_t>& password)
+{
+    if (passwordType != PACEPasswordType::MRZ) {
+        // CAN / PIN / PUK use the raw password bytes as the seed (ICAO 9303
+        // Part 11 §9.7.1.1). No pre-hash, no truncation.
+        return password;
+    }
+    // PACE-MRZ: π = SHA-1(MRZ_info), full 20 bytes. Critical: BAC truncates
+    // to 16 here (BSI TR-03110-3 §A.3.3), PACE does NOT. Truncating yields a
+    // wrong K_π and a silent GA4 token mismatch (SW=6300) — covered by
+    // PACETest::KpiSeedMrzMatchesSha1Kat regression vector.
+    unsigned char pwSha1[20] = {};
+    size_t sha1Len = 0;
+    if (!EVP_Q_digest(nullptr, "SHA1", nullptr, password.data(), password.size(), pwSha1, &sha1Len)) {
+        // Cleanse even the partial buffer — EVP leaves output unspecified on
+        // failure, treat as sensitive intermediate state.
+        OPENSSL_cleanse(pwSha1, sizeof(pwSha1));
+        return std::nullopt;
+    }
+    std::vector<uint8_t> seed(pwSha1, pwSha1 + sha1Len);
+    // Zeroise the stack copy now that ownership has transferred into the
+    // returned vector. The caller is responsible for zeroising the vector
+    // when it has consumed the seed (KeyCleaner RAII in performPACE).
+    OPENSSL_cleanse(pwSha1, sizeof(pwSha1));
+    return seed;
+}
+
+// ---------------------------------------------------------------------------
 // performPACE
 // ---------------------------------------------------------------------------
 
@@ -682,25 +714,10 @@ std::optional<SessionKeys> performPACE(LibreSCRS::SmartCard::Internal::PCSCConne
         }
     } keyCleaner{kpiSeed, kPi, nonce, sharedK, kEnc, kMAC};
 
-    if (params.passwordType == PACEPasswordType::MRZ) {
-        static constexpr size_t PACE_KEY_SEED_LEN = 16;
-        unsigned char pwSha1[20] = {};
-        size_t sha1Len = 0;
-        if (!EVP_Q_digest(nullptr, "SHA1", nullptr, params.password.data(), params.password.size(), pwSha1, &sha1Len)) {
-            // Cleanse the partial / zero buffer even on hash failure — the
-            // EVP digest is documented to leave the output buffer in an
-            // unspecified state on failure, so treat it as containing
-            // sensitive intermediate state.
-            OPENSSL_cleanse(pwSha1, sizeof(pwSha1));
-            return std::nullopt;
-        }
-        kpiSeed.assign(pwSha1, pwSha1 + PACE_KEY_SEED_LEN);
-        // Zeroise the stack copy of the MRZ-derived seed; the value has
-        // been transferred into kpiSeed (which itself is cleansed by the
-        // KeyCleaner RAII guard at function exit).
-        OPENSSL_cleanse(pwSha1, sizeof(pwSha1));
+    if (auto seed = derivePaceKpiSeed(params.passwordType, params.password)) {
+        kpiSeed = std::move(*seed);
     } else {
-        kpiSeed = params.password;
+        return std::nullopt;
     }
     kPi = detail::kdf(kpiSeed, 3, isDES3, keyLen);
 

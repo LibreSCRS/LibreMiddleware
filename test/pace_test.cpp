@@ -7,6 +7,9 @@
 // Internal header — needed to test KDF, AES-CMAC, padding directly
 #include "../lib/emrtd-crypto/src/crypto_utils.h"
 
+#include <algorithm>
+#include <array>
+
 using namespace emrtd::crypto;
 
 TEST(PACETest, ParseCardAccessEmpty)
@@ -140,6 +143,48 @@ TEST(PACETest, OIDToSMAlgorithm)
     EXPECT_EQ(paceOIDToSMAlgorithm(pace_oid::ECDH_GM_AES_CBC_CMAC_128), SMAlgorithm::AES);
     EXPECT_EQ(paceOIDToSMAlgorithm(pace_oid::ECDH_GM_AES_CBC_CMAC_192), SMAlgorithm::AES);
     EXPECT_EQ(paceOIDToSMAlgorithm(pace_oid::ECDH_GM_AES_CBC_CMAC_256), SMAlgorithm::AES);
+}
+
+// ---------------------------------------------------------------------------
+// derivePaceKpiSeed — regression coverage for BSI TR-03110-3 §A.3.3 /
+// ICAO 9303-11 §9.7.1.1 (PACE-MRZ uses the FULL 20-byte SHA-1 of MRZ_info;
+// BAC truncates to 16 but PACE must NOT — silent GA4 token mismatch).
+// ---------------------------------------------------------------------------
+
+TEST(PACETest, KpiSeedMrzMatchesSha1Kat)
+{
+    // RFC 3174 §7.3 known-answer vector: SHA-1("abc") =
+    //   A9 99 3E 36 47 06 81 6A BA 3E 25 71 78 50 C2 6C 9C D0 D8 9D
+    const std::vector<uint8_t> input{'a', 'b', 'c'};
+    constexpr std::array<uint8_t, 20> expected{0xA9, 0x99, 0x3E, 0x36, 0x47, 0x06, 0x81, 0x6A, 0xBA, 0x3E,
+                                               0x25, 0x71, 0x78, 0x50, 0xC2, 0x6C, 0x9C, 0xD0, 0xD8, 0x9D};
+
+    auto seed = derivePaceKpiSeed(PACEPasswordType::MRZ, input);
+    ASSERT_TRUE(seed.has_value());
+    // Regression guard: the BAC rule truncates to 16; PACE must keep all 20.
+    EXPECT_EQ(seed->size(), 20U);
+    EXPECT_TRUE(std::equal(seed->begin(), seed->end(), expected.begin()));
+}
+
+TEST(PACETest, KpiSeedCanPassesPasswordThrough)
+{
+    // CAN takes the else branch — no SHA-1, no truncation, raw bytes.
+    const std::vector<uint8_t> can{'1', '2', '3', '4', '5', '6'};
+    auto seed = derivePaceKpiSeed(PACEPasswordType::CAN, can);
+    ASSERT_TRUE(seed.has_value());
+    EXPECT_EQ(*seed, can);
+}
+
+TEST(PACETest, KpiSeedPinAndPukPassPasswordThrough)
+{
+    // Same else branch as CAN — PIN / PUK are raw bytes, no hash.
+    const std::vector<uint8_t> secret{'9', '9', '9', '9'};
+    auto pinSeed = derivePaceKpiSeed(PACEPasswordType::PIN, secret);
+    auto pukSeed = derivePaceKpiSeed(PACEPasswordType::PUK, secret);
+    ASSERT_TRUE(pinSeed.has_value());
+    ASSERT_TRUE(pukSeed.has_value());
+    EXPECT_EQ(*pinSeed, secret);
+    EXPECT_EQ(*pukSeed, secret);
 }
 
 // ---------------------------------------------------------------------------

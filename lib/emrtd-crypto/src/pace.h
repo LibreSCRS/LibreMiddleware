@@ -26,6 +26,18 @@ std::vector<std::string> parseCardAccess(const std::vector<uint8_t>& cardAccess)
 // paramId is -1 if the optional parameter INTEGER is absent.
 std::vector<std::pair<std::string, int>> parseCardAccessWithParams(const std::vector<uint8_t>& cardAccess);
 
+// Derive the PACE K_π input seed from the password, per BSI TR-03110-3
+// §A.3.3 / ICAO 9303 Part 11 §9.7.1.1:
+//   - MRZ: full 20-byte SHA-1(MRZ_info).
+//   - CAN / PIN / PUK: raw password bytes.
+//
+// Returns nullopt only if the SHA-1 hash operation fails (unreachable on a
+// healthy OpenSSL provider, but the EVP API returns int). The result is
+// sensitive intermediate material — callers should manage its lifetime
+// behind the same RAII zeroising guard used for K_π / K_MAC.
+[[nodiscard]] std::optional<std::vector<uint8_t>> derivePaceKpiSeed(PACEPasswordType passwordType,
+                                                                    const std::vector<uint8_t>& password);
+
 // Perform PACE authentication.
 std::optional<SessionKeys> performPACE(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const PACEParams& params);
 
