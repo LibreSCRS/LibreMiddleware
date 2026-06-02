@@ -305,34 +305,22 @@ TEST(CAdESSignClassification, BT_TsaFailure_IsTsaUnreachable)
         << (result.failureKind ? static_cast<int>(*result.failureKind) : -1) << " msg=" << result.errorMessage;
 }
 
-// ---- CAdES timestamp-step message partition ----
+// ---- CAdES timestamp-step typed-failure partition ----
 //
 // CAdESModule::sign discriminates the throws from addTimestamp /
-// addArchiveTimestamp on the message: a TSA failure (missing URL or failed
-// RFC 3161 round-trip) classifies as TsaUnreachable, while every other throw
-// (malformed SignerInfo, CMS parse / encode, OpenSSL) is re-thrown so the
-// outer catch maps it to EngineError. That discrimination relies on the
-// TSA-failure throws carrying one of the recognised prefixes and the internal
-// faults carrying none of them. These token-free helper-level tests pin that
-// message partition so a future message reword can't silently mis-classify an
-// internal fault as TsaUnreachable (or vice versa). The end-to-end
-// non-TSA-fault -> EngineError branch through sign() needs a live token and a
-// malformed-CMS production seam to drive, so it is covered by mirroring the
-// PAdES appendDocTimeStamp catch plus the message partition asserted here;
-// the SoftHSM CI host additionally exercises the TSA-failure -> TsaUnreachable
-// branch via CAdESSignClassification.BT_TsaFailure_IsTsaUnreachable above.
+// addArchiveTimestamp by exception TYPE, not by message: a TSA failure (missing
+// URL or failed RFC 3161 round-trip) throws SignFailureException carrying a
+// precise SignFailureKind (InvalidInput for the missing URL, TsaUnreachable for
+// a failed round-trip), which sign()'s typed catch arm maps straight through.
+// Every other throw (malformed SignerInfo, CMS parse / encode, OpenSSL) is a
+// plain std::runtime_error (NOT a SignFailureException) and falls through to the
+// generic arm -> EngineError. These token-free helper-level tests pin that type
+// partition so a refactor can't silently mis-classify an internal fault as
+// TsaUnreachable (or vice versa). The SoftHSM CI host additionally exercises the
+// TSA-failure -> TsaUnreachable branch via
+// CAdESSignClassification.BT_TsaFailure_IsTsaUnreachable above.
 
-namespace {
-// Mirrors the file-local discrimination predicate in cades_module.cpp.
-bool looksLikeTsaFailure(const std::string& what)
-{
-    return what.find("TSA URL is required") != std::string::npos ||
-           what.find("TSA timestamp failed:") != std::string::npos ||
-           what.find("Archive TSA timestamp failed:") != std::string::npos;
-}
-} // namespace
-
-TEST(CAdESTimestampPartition, MissingUrlIsTsaFailure)
+TEST(CAdESTimestampPartition, MissingUrlThrowsTypedInvalidInput)
 {
     CAdESModule cades;
     TSAConfig tsa; // empty url
@@ -341,53 +329,59 @@ TEST(CAdESTimestampPartition, MissingUrlIsTsaFailure)
     bool threw = false;
     try {
         cades.addTimestamp(fakeCms, tsa);
-    } catch (const std::exception& e) {
+    } catch (const libresign::SignFailureException& e) {
         threw = true;
-        EXPECT_TRUE(looksLikeTsaFailure(e.what()))
-            << "missing-TSA-URL throw must classify as a TSA failure, msg=" << e.what();
+        EXPECT_EQ(e.kind, SignFailureKind::InvalidInput)
+            << "missing-TSA-URL must throw a typed InvalidInput, msg=" << e.what();
     }
-    EXPECT_TRUE(threw) << "addTimestamp must throw on an empty TSA URL";
+    EXPECT_TRUE(threw) << "addTimestamp must throw SignFailureException on an empty TSA URL";
 
     threw = false;
     try {
         cades.addArchiveTimestamp(fakeCms, tsa);
-    } catch (const std::exception& e) {
+    } catch (const libresign::SignFailureException& e) {
         threw = true;
-        EXPECT_TRUE(looksLikeTsaFailure(e.what()))
-            << "missing-TSA-URL throw must classify as a TSA failure, msg=" << e.what();
+        EXPECT_EQ(e.kind, SignFailureKind::InvalidInput)
+            << "missing-TSA-URL must throw a typed InvalidInput, msg=" << e.what();
     }
-    EXPECT_TRUE(threw) << "addArchiveTimestamp must throw on an empty TSA URL";
+    EXPECT_TRUE(threw) << "addArchiveTimestamp must throw SignFailureException on an empty TSA URL";
 }
 
-TEST(CAdESTimestampPartition, InternalFaultIsNotTsaFailure)
+TEST(CAdESTimestampPartition, InternalFaultIsNotTypedFailure)
 {
     CAdESModule cades;
     TSAConfig tsa;
     tsa.url = "http://127.0.0.1:1/tsa"; // non-empty: get past the URL guard
     // A non-CMS body forces an internal parse fault inside the helper, after
     // the URL guard and before any TSA round-trip — the same shape as the
-    // SignerInfo / CMS / OpenSSL throws that must stay EngineError.
+    // SignerInfo / CMS / OpenSSL throws that must stay EngineError. It must be a
+    // plain std::exception, NOT a SignFailureException, so sign()'s generic
+    // catch arm maps it to EngineError.
     std::vector<uint8_t> garbageCms{0x01, 0x02, 0x03, 0x04};
 
-    bool threw = false;
+    bool threwTyped = false;
+    bool threwPlain = false;
     try {
         cades.addTimestamp(garbageCms, tsa);
-    } catch (const std::exception& e) {
-        threw = true;
-        EXPECT_FALSE(looksLikeTsaFailure(e.what()))
-            << "internal (non-TSA) fault must NOT classify as a TSA failure, msg=" << e.what();
+    } catch (const libresign::SignFailureException&) {
+        threwTyped = true;
+    } catch (const std::exception&) {
+        threwPlain = true;
     }
-    EXPECT_TRUE(threw) << "addTimestamp must throw on a malformed CMS";
+    EXPECT_FALSE(threwTyped) << "internal (non-TSA) fault must NOT be a typed SignFailureException";
+    EXPECT_TRUE(threwPlain) << "addTimestamp must throw a plain exception on a malformed CMS";
 
-    threw = false;
+    threwTyped = false;
+    threwPlain = false;
     try {
         cades.addArchiveTimestamp(garbageCms, tsa);
-    } catch (const std::exception& e) {
-        threw = true;
-        EXPECT_FALSE(looksLikeTsaFailure(e.what()))
-            << "internal (non-TSA) fault must NOT classify as a TSA failure, msg=" << e.what();
+    } catch (const libresign::SignFailureException&) {
+        threwTyped = true;
+    } catch (const std::exception&) {
+        threwPlain = true;
     }
-    EXPECT_TRUE(threw) << "addArchiveTimestamp must throw on a malformed CMS";
+    EXPECT_FALSE(threwTyped) << "internal (non-TSA) fault must NOT be a typed SignFailureException";
+    EXPECT_TRUE(threwPlain) << "addArchiveTimestamp must throw a plain exception on a malformed CMS";
 }
 
 #else

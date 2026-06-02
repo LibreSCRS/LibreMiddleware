@@ -141,8 +141,6 @@ LibreSCRS::Plugin::CardPluginService::size() const@@LM_4
 LibreSCRS::Plugin::CardPluginService::~CardPluginService()@@LM_4
 LibreSCRS::Plugin::SecurityStatus::computeOverall()@@LM_4
 LibreSCRS::Plugin::acquireChannelForProfile(LibreSCRS::SmartCard::CardSession&, LibreSCRS::Plugin::ActivationProfile const&, LibreSCRS::CancelToken)@@LM_4
-LibreSCRS::Plugin::isStopError(LibreSCRS::SecureChannel::ChannelActivationError)@@LM_4
-LibreSCRS::Plugin::shouldTryFallback(LibreSCRS::Plugin::ActivationProfile const&, LibreSCRS::SecureChannel::ChannelActivationError)@@LM_4
 LibreSCRS::Plugin::textValueAt[abi:cxx11](LibreSCRS::Plugin::CardData const&, unsigned long, std::basic_string_view<char, std::char_traits<char> >)@@LM_4
 LibreSCRS::Plugin::textValue[abi:cxx11](LibreSCRS::Plugin::CardData const&, std::basic_string_view<char, std::char_traits<char> >, std::basic_string_view<char, std::char_traits<char> >)@@LM_4
 
@@ -223,8 +221,6 @@ LibreSCRS::Plugin::CardPluginService::plugins() const@@LM_4
 LibreSCRS::Plugin::CardPluginService::size() const@@LM_4
 LibreSCRS::Plugin::CardPluginService::~CardPluginService()@@LM_4
 LibreSCRS::Plugin::acquireChannelForProfile(LibreSCRS::SmartCard::CardSession&, LibreSCRS::Plugin::ActivationProfile const&, LibreSCRS::CancelToken)@@LM_4
-LibreSCRS::Plugin::isStopError(LibreSCRS::SecureChannel::ChannelActivationError)@@LM_4
-LibreSCRS::Plugin::shouldTryFallback(LibreSCRS::Plugin::ActivationProfile const&, LibreSCRS::SecureChannel::ChannelActivationError)@@LM_4
 LibreSCRS::Signing::SigningRequest::Builder::Builder()@@LM_4
 LibreSCRS::Signing::SigningRequest::Builder::Builder(LibreSCRS::Signing::SigningRequest::Builder&&)@@LM_4
 LibreSCRS::Signing::SigningRequest::Builder::allowExpiredCert(bool)@@LM_4

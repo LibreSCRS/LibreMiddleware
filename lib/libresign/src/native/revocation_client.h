@@ -13,6 +13,7 @@
 #include <vector>
 
 typedef struct x509_st X509;
+typedef struct X509_crl_st X509_CRL;
 typedef struct asn1_string_st ASN1_TIME;
 
 namespace libresign {
@@ -47,6 +48,13 @@ public:
     static bool crlWindowValid(const ASN1_TIME* thisUpdate, const ASN1_TIME* nextUpdate, std::time_t now,
                                long skewSeconds);
 
+    // True iff @p crl lists @p cert (by serial) as revoked. fetchCrl calls this
+    // after signature + freshness verification and fails closed when it returns
+    // true — symmetric with the OCSP path's V_OCSP_CERTSTATUS_GOOD gate so a CRL
+    // that revokes the signer is never embedded as positive evidence. Exposed
+    // static for deterministic unit testing (mirrors @ref crlWindowValid).
+    static bool crlRevokesCert(X509_CRL* crl, X509* cert);
+
     // Extract CRL Distribution Point URLs from certificate
     static std::vector<std::string> extractCrlUrls(X509* cert);
 
@@ -54,14 +62,18 @@ public:
     static std::vector<std::string> extractOcspUrls(X509* cert);
 
     // Fetch a CRL from URL and verify its signature against the issuer's
-    // public key. Returns DER bytes on success (signature verified), empty on
-    // any failure including verification failure.
+    // public key, then confirm @p cert is NOT listed as revoked. Returns DER
+    // bytes on success (signature verified + freshness OK + cert not revoked),
+    // empty on any failure including verification failure or a REVOKED entry.
     //
     // Per ETSI EN 319 102-1 §6, revocation information embedded in long-term
     // signatures (B-LT/B-LTA) MUST be authenticated before being incorporated.
     // Without verification, an attacker controlling the CRL endpoint could
-    // inject a "valid" claim for an actually-revoked signing cert.
-    std::vector<uint8_t> fetchCrl(const std::string& url, X509* issuer, int timeoutSeconds = 10);
+    // inject a "valid" claim for an actually-revoked signing cert. The revoked-
+    // serial check keeps this path symmetric with the OCSP path's
+    // V_OCSP_CERTSTATUS_GOOD gate — a CRL that revokes the cert must NOT be
+    // embedded as positive evidence.
+    std::vector<uint8_t> fetchCrl(const std::string& url, X509* cert, X509* issuer, int timeoutSeconds = 10);
 
     // Fetch an OCSP response for cert/issuer and verify both that the signature
     // chain validates against `chain` and that the response is for the cert ID

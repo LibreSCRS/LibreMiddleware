@@ -3,8 +3,8 @@
 #pragma once
 
 /// @file
-/// @brief Declarative activation descriptor a plugin publishes, plus (in later
-///        tasks) the shared channel-acquisition helper the readCard NVI wrapper drives.
+/// @brief Declarative activation descriptor a plugin publishes, plus the shared
+///        channel-acquisition helper the readCard NVI wrapper drives.
 
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Export.h>
@@ -42,14 +42,21 @@ struct ActivationProfile
     }
 };
 
+#ifdef LIBRESCRS_INTERNAL_BUILD
 /// @brief True when @p e is a terminal error that must abort the walk
 ///        (no BAC fallback): user/host cancellation or card removal.
-[[nodiscard]] LIBRESCRS_PUBLIC_API bool isStopError(LibreSCRS::SecureChannel::ChannelActivationError e) noexcept;
+/// @internal Implementation detail of @ref acquireChannelForProfile; declared
+///           only inside the LibreMiddleware build (hidden visibility, not part
+///           of the public ABI). Reached by build-tree tests that link the
+///           CardPlugin_Impl object archive.
+[[nodiscard]] LIBRESCRS_INTERNAL bool isStopError(LibreSCRS::SecureChannel::ChannelActivationError e) noexcept;
 
 /// @brief True when, after @p primary failed with @p e, the BAC fallback
 ///        should be attempted: the profile allows it and @p e is not a stop error.
-[[nodiscard]] LIBRESCRS_PUBLIC_API bool shouldTryFallback(const ActivationProfile& profile,
-                                                          LibreSCRS::SecureChannel::ChannelActivationError e) noexcept;
+/// @internal See @ref isStopError — internal, hidden, not public ABI.
+[[nodiscard]] LIBRESCRS_INTERNAL bool shouldTryFallback(const ActivationProfile& profile,
+                                                        LibreSCRS::SecureChannel::ChannelActivationError e) noexcept;
+#endif // LIBRESCRS_INTERNAL_BUILD
 
 /// @brief Acquire a secure-messaging channel per @p profile, with a single
 ///        BAC fallback when @ref ActivationProfile::allowBacFallback is set.

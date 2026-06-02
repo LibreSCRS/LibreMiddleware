@@ -269,7 +269,20 @@ TEST_F(OpenSCFallbackPKS, Test04GetPINTriesLeftBaseline)
     ASSERT_TRUE(session.has_value());
 
     const auto triesOpt = plugin->getPINTriesLeft(*session);
-    ASSERT_TRUE(triesOpt.has_value()) << "getPINTriesLeft returned nullopt — plugin did not report a PIN retry count";
+    if (!triesOpt.has_value()) {
+        // A nullopt retry count here is not a card failure (this is a non-PIN
+        // GET_INFO read, no lockout): on a dev box with a PKS card seated but
+        // OPENSC_CONF unset, the srbeid driver is unwired so the count is
+        // simply unreadable. Skip rather than hard-fail — mirrors the effective
+        // driver-wiring guard the PIN-consuming Test05/Test06 rely on. When the
+        // driver IS wired the count is readable and the assertions below still
+        // apply (we do NOT weaken them in that case).
+        if (const char* conf = std::getenv("OPENSC_CONF"); !conf || *conf == '\0')
+            GTEST_SKIP() << "getPINTriesLeft returned nullopt and OPENSC_CONF is unset — srbeid driver "
+                            "unwired, PIN retry count unreadable; skipping baseline";
+        FAIL() << "getPINTriesLeft returned nullopt — plugin did not report a PIN retry count "
+                  "(OPENSC_CONF is set, so the srbeid driver should be wired)";
+    }
     if (*triesOpt < 3) {
         ::LibreSCRS::Tests::E2E::g_pinFailed.store(true, std::memory_order_relaxed);
         FAIL() << "PIN tries-left baseline is " << *triesOpt

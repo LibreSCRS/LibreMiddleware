@@ -14,6 +14,7 @@
 
 #include <functional>
 #include <map>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -21,6 +22,7 @@ namespace libresign {
 
 class TlCache;
 class TlSignatureVerifier;
+class Pkcs11Token;
 
 class NativeSigningService : public SigningService
 {
@@ -87,6 +89,16 @@ private:
     Pkcs11ModuleManager moduleManager;
 
     void loadTrustList(const std::string& url, bool isLotl, TlCache& cache, TlSignatureVerifier& verifier, int depth);
+
+    /// Complete the token's certificate chain from the configured Trusted-List
+    /// anchors for long-term (B-LT/B-LTA) levels, then install it via
+    /// @ref Pkcs11Token::setResolvedChain. Shared by @ref sign and
+    /// @ref appendSigner so the fail-closed policy stays single-sourced.
+    /// @returns std::nullopt when there is nothing to do (level below B_LT or no
+    ///          TL configured) or the chain completed successfully; a populated
+    ///          @ref SigningResult (fail-closed failure) when the issuing CA was
+    ///          not found in the configured Trusted List(s).
+    std::optional<SigningResult> completeLongTermChain(Pkcs11Token& token, SignatureLevel level);
 };
 
 } // namespace libresign

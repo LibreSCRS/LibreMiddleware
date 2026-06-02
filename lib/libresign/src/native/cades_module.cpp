@@ -21,7 +21,6 @@
 #include <memory>
 #include <span>
 #include <stdexcept>
-#include <string_view>
 
 namespace libresign {
 
@@ -33,18 +32,6 @@ using ::libresign::BioPtr;
 using ::libresign::CmsPtr;
 using ::libresign::EvpPkeyPtr;
 using ::libresign::StackX509Ptr;
-
-// True when an exception message raised inside addTimestamp /
-// addArchiveTimestamp reports a TSA failure (missing URL or failed RFC 3161
-// round-trip) rather than an internal engine fault. The prefixes match the
-// only TSA-failure throws in those helpers; every other throw (malformed
-// SignerInfo, CMS parse / encode, OpenSSL) lacks them and stays EngineError.
-bool isTsaFailureMessage(std::string_view what)
-{
-    return what.find("TSA URL is required") != std::string_view::npos ||
-           what.find("TSA timestamp failed:") != std::string_view::npos ||
-           what.find("Archive TSA timestamp failed:") != std::string_view::npos;
-}
 
 // Encode CMS to DER
 std::vector<uint8_t> encodeCms(CMS_ContentInfo* cms)
@@ -297,7 +284,7 @@ std::vector<uint8_t> CAdESModule::signBB(const std::vector<uint8_t>& data, Pkcs1
 std::vector<uint8_t> CAdESModule::addTimestamp(const std::vector<uint8_t>& cmsBytes, const TSAConfig& tsa)
 {
     if (tsa.url.empty())
-        throw std::runtime_error("TSA URL is required for B-T level");
+        throw SignFailureException(SignFailureKind::InvalidInput, "TSA URL is required for B-T level");
 
     CmsPtr cms = parseCms(cmsBytes);
     CMS_SignerInfo* si = getFirstSignerInfo(cms.get());
@@ -319,7 +306,7 @@ std::vector<uint8_t> CAdESModule::addTimestamp(const std::vector<uint8_t>& cmsBy
     TSAClient tsaClient;
     auto tsaResult = tsaClient.timestamp(sigHash, toTsaRequest(tsa));
     if (!tsaResult.success)
-        throw std::runtime_error("TSA timestamp failed: " + tsaResult.errorMessage);
+        throw SignFailureException(SignFailureKind::TsaUnreachable, "TSA timestamp failed: " + tsaResult.errorMessage);
 
     // Add as unsigned attribute: id-smime-aa-signatureTimeStamp (1.2.840.113549.1.9.16.2.14)
     addUnsignedAttr(si, "1.2.840.113549.1.9.16.2.14", tsaResult.token);
@@ -412,7 +399,7 @@ std::vector<uint8_t> buildAtsHashIndex(const std::vector<std::vector<uint8_t>>& 
 std::vector<uint8_t> CAdESModule::addArchiveTimestamp(const std::vector<uint8_t>& cmsBytes, const TSAConfig& tsa)
 {
     if (tsa.url.empty())
-        throw std::runtime_error("TSA URL is required for B-LTA level");
+        throw SignFailureException(SignFailureKind::InvalidInput, "TSA URL is required for B-LTA level");
 
     // ETSI EN 319 122-1 section 5.5.2: build ats-hash-index-v3 by hashing
     // individual SignedData components (certificates, CRLs, unsigned attrs).
@@ -527,7 +514,8 @@ std::vector<uint8_t> CAdESModule::addArchiveTimestamp(const std::vector<uint8_t>
     TSAClient tsaClient;
     auto tsaResult = tsaClient.timestamp(archiveHash, toTsaRequest(tsa));
     if (!tsaResult.success)
-        throw std::runtime_error("Archive TSA timestamp failed: " + tsaResult.errorMessage);
+        throw SignFailureException(SignFailureKind::TsaUnreachable,
+                                   "Archive TSA timestamp failed: " + tsaResult.errorMessage);
 
     // 6. Add both attributes: ats-hash-index-v3 and archive timestamp
     // id-aa-ATSHashIndex: 0.4.0.1733.2.5
@@ -553,22 +541,14 @@ SigningResult CAdESModule::sign(const std::vector<uint8_t>& data, Pkcs11Token& t
 
         // The B-T signature timestamp and B-LTA archive timestamp drive an
         // RFC 3161 round-trip through TSAClient inside addTimestamp /
-        // addArchiveTimestamp. A missing TSA URL or a failed round-trip is
-        // classified as TsaUnreachable so a failing TSA surfaces the same way
-        // as on the XAdES / JAdES / PAdES paths; every other throw from those
-        // helpers (e.g. malformed SignerInfo, CMS parse / encode, OpenSSL
-        // faults) is an internal engine error and is re-thrown so the outer
-        // catch maps it to EngineError. Discriminate on the message prefix,
-        // mirroring the PAdES appendDocTimeStamp catch (pades_module.cpp).
-        if (level >= SignatureLevel::B_T) {
-            try {
-                cms = addTimestamp(cms, tsa);
-            } catch (const std::exception& e) {
-                if (isTsaFailureMessage(e.what()))
-                    return makeFailure(SignFailureKind::TsaUnreachable, e.what());
-                throw;
-            }
-        }
+        // addArchiveTimestamp. A missing TSA URL or a failed round-trip throws
+        // a typed SignFailureException (InvalidInput / TsaUnreachable), caught
+        // below and mapped to the precise kind so a failing TSA surfaces the
+        // same way as on the XAdES / JAdES / PAdES paths. Every other throw
+        // from those helpers (malformed SignerInfo, CMS parse / encode, OpenSSL
+        // faults) is a plain std::exception and falls through to EngineError.
+        if (level >= SignatureLevel::B_T)
+            cms = addTimestamp(cms, tsa);
 
         if (level >= SignatureLevel::B_LT) {
             auto revData = collectRevocationData(token, tsa);
@@ -578,17 +558,16 @@ SigningResult CAdESModule::sign(const std::vector<uint8_t>& data, Pkcs11Token& t
             cms = addRevocationData(cms, revData);
         }
 
-        if (level >= SignatureLevel::B_LTA) {
-            try {
-                cms = addArchiveTimestamp(cms, tsa);
-            } catch (const std::exception& e) {
-                if (isTsaFailureMessage(e.what()))
-                    return makeFailure(SignFailureKind::TsaUnreachable, e.what());
-                throw;
-            }
-        }
+        if (level >= SignatureLevel::B_LTA)
+            cms = addArchiveTimestamp(cms, tsa);
 
         return makeSuccess(std::move(cms));
+    } catch (const SignFailureException& e) {
+        // Typed failure (TSA unreachable / missing URL) — preserve its precise
+        // kind. MUST precede the std::exception arm: SignFailureException
+        // derives from std::runtime_error, so the generic arm would otherwise
+        // collapse it back to EngineError.
+        return makeFailure(e.kind, e.what());
     } catch (const std::exception& e) {
         return makeFailure(SignFailureKind::EngineError, std::string("CAdES error: ") + e.what());
     }

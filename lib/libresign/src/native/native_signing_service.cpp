@@ -329,6 +329,28 @@ bool NativeSigningService::isAvailable() const
     return true;
 }
 
+std::optional<SigningResult> NativeSigningService::completeLongTermChain(Pkcs11Token& token, SignatureLevel level)
+{
+    // Long-term levels (B-LT/B-LTA) embed the full certificate chain. Cards
+    // typically carry only the signer cert, so complete the chain from the
+    // Trusted-List anchors before any format module reads
+    // token.certificateChain(). Fail closed if the issuing CA is not in the
+    // configured TL(s): a long-term signature with an unverifiable chain
+    // cannot reach the LT validation level. Skipped when no TL is configured
+    // (tlAnchorCerts empty) — the chain then stays as the card provided it,
+    // preserving pre-TL behaviour; the revocation gate still applies.
+    if (level < SignatureLevel::B_LT || tlAnchorCerts.empty())
+        return std::nullopt;
+
+    auto ordered = native_utils::buildOrderedChain(token.certificateChain(), tlAnchorCerts);
+    if (ordered.empty())
+        return makeFailure(SignFailureKind::EngineError,
+                           "long-term signing requires a complete certificate chain, but the signer's "
+                           "issuing CA was not found in the configured Trusted List(s)");
+    token.setResolvedChain(std::move(ordered));
+    return std::nullopt;
+}
+
 SigningResult NativeSigningService::sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
                                          const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
                                          const std::string& readerName)
@@ -416,22 +438,8 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, const st
         tsa.crlEnabled = trustConfig.crlEnabled;
         tsa.ocspEnabled = trustConfig.ocspEnabled;
 
-        // Long-term levels (B-LT/B-LTA) embed the full certificate chain. Cards
-        // typically carry only the signer cert, so complete the chain from the
-        // Trusted-List anchors before any format module reads
-        // token.certificateChain(). Fail closed if the issuing CA is not in the
-        // configured TL(s): a long-term signature with an unverifiable chain
-        // cannot reach the LT validation level. Skipped when no TL is configured
-        // (tlAnchorCerts empty) — the chain then stays as the card provided it,
-        // preserving pre-TL behaviour; the revocation gate still applies.
-        if (request.level >= SignatureLevel::B_LT && !tlAnchorCerts.empty()) {
-            auto ordered = native_utils::buildOrderedChain(token.certificateChain(), tlAnchorCerts);
-            if (ordered.empty())
-                return makeFailure(SignFailureKind::EngineError,
-                                   "long-term signing requires a complete certificate chain, but the signer's "
-                                   "issuing CA was not found in the configured Trusted List(s)");
-            token.setResolvedChain(std::move(ordered));
-        }
+        if (auto failure = completeLongTermChain(token, request.level))
+            return *failure;
 
         // API-POLICY §9 forward-compat: exhaustive switch, no `default:`,
         // std::unreachable() after — adding a new SignatureFormat value
@@ -497,14 +505,8 @@ SigningResult NativeSigningService::appendSigner(const SigningRequest& request, 
         // Complete the new signer's chain from the Trusted List for long-term
         // levels, identical to sign() — otherwise a B-LT counter-signature would
         // embed a leaf-only chain. Fail closed when the issuing CA is absent.
-        if (request.level >= SignatureLevel::B_LT && !tlAnchorCerts.empty()) {
-            auto ordered = native_utils::buildOrderedChain(token.certificateChain(), tlAnchorCerts);
-            if (ordered.empty())
-                return makeFailure(SignFailureKind::EngineError,
-                                   "long-term signing requires a complete certificate chain, but the signer's "
-                                   "issuing CA was not found in the configured Trusted List(s)");
-            token.setResolvedChain(std::move(ordered));
-        }
+        if (auto failure = completeLongTermChain(token, request.level))
+            return *failure;
 
         switch (*fmt) {
         case SignatureFormat::Pades: {

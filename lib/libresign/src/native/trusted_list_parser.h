@@ -83,8 +83,21 @@ public:
     // Structural extraction only — caller must verify XML-DSig before trusting output.
     std::vector<TrustedServiceEntry> fetchLotl(const std::string& lotlUrl, int timeoutSeconds = 30);
 
-    /// SSRF validation: reject non-HTTPS, private/loopback IPs.
+    /// SSRF validation for Trusted-List pointers: reject non-HTTPS,
+    /// private/loopback IP literals. Thin https-only wrapper over
+    /// @ref isSafeFetchUrl.
     static bool isSafeTslUrl(const std::string& url);
+
+    /// Scheme-agnostic SSRF guard shared by the TSL fetch path and the
+    /// revocation (CRL/OCSP) fetch path. Validates the URL length, extracts the
+    /// host, and rejects loopback / link-local / RFC1918 / ULA / multicast IP
+    /// literals (IPv4 and IPv6, including IPv4-mapped). @p allowPlainHttp selects
+    /// the accepted scheme set: false = https-only (Trusted Lists); true = http
+    /// OR https (RFC 5280 CRL CDPs and OCSP/AIA endpoints are legitimately served
+    /// over plain http). DNS names that resolve to private addresses are not
+    /// caught here — curl's protocol allow-list + resolution are the last line of
+    /// defense; this is defense-in-depth against literal-IP SSRF vectors.
+    static bool isSafeFetchUrl(const std::string& url, bool allowPlainHttp);
 };
 
 } // namespace libresign

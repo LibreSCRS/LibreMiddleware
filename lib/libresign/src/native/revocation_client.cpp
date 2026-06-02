@@ -3,6 +3,7 @@
 
 #include "native/revocation_client.h"
 #include "http_client.h"
+#include "native/trusted_list_parser.h" // isSafeFetchUrl — shared SSRF host/IP-literal gate
 #include "native_utils.h"
 #include "openssl_raii.h"
 
@@ -51,6 +52,16 @@ bool RevocationClient::crlWindowValid(const ASN1_TIME* thisUpdate, const ASN1_TI
     }
 
     return true;
+}
+
+bool RevocationClient::crlRevokesCert(X509_CRL* crl, X509* cert)
+{
+    if (!crl || !cert)
+        return false;
+    // X509_CRL_get0_by_cert returns 1 when a revoked entry matching cert's
+    // serial number is present in the CRL (0 = not found, <0 = error).
+    X509_REVOKED* rev = nullptr;
+    return X509_CRL_get0_by_cert(crl, &rev, cert) == 1;
 }
 
 std::vector<std::string> RevocationClient::extractCrlUrls(X509* cert)
@@ -115,9 +126,19 @@ std::vector<std::string> RevocationClient::extractOcspUrls(X509* cert)
     return urls;
 }
 
-std::vector<uint8_t> RevocationClient::fetchCrl(const std::string& url, X509* issuer, int timeoutSeconds)
+std::vector<uint8_t> RevocationClient::fetchCrl(const std::string& url, X509* cert, X509* issuer, int timeoutSeconds)
 {
-    if (!issuer)
+    if (!cert || !issuer)
+        return {};
+
+    // SSRF guard: the CRL Distribution Point URL comes from the cert (attacker-
+    // influenceable). Reject loopback/link-local/RFC1918/ULA/multicast IP
+    // literals before issuing the request — shared with the TSL fetch path.
+    // allowPlainHttp=true: RFC 5280 CRL CDPs are legitimately plain http (the
+    // CRL is signature-verified below, so transport confidentiality is moot).
+    // HttpClient does not auto-follow redirects, so this initial-URL check
+    // covers every URL we actually fetch; a 3xx returns non-200 → empty below.
+    if (!TrustedListParser::isSafeFetchUrl(url, /*allowPlainHttp=*/true))
         return {};
 
     HttpClient http;
@@ -151,6 +172,13 @@ std::vector<uint8_t> RevocationClient::fetchCrl(const std::string& url, X509* is
                         300L))
         return {};
 
+    // Fail closed if THIS cert is listed as revoked. Symmetric with the OCSP
+    // path's `certStatus != V_OCSP_CERTSTATUS_GOOD` gate (see fetchOcsp): a CRL
+    // that revokes the signer must NOT be embedded as positive "not revoked"
+    // evidence. Keep these two paths in lockstep so they cannot drift.
+    if (crlRevokesCert(crl.get(), cert))
+        return {};
+
     // Re-encode to canonical DER
     return derEncode(i2d_X509_CRL, crl.get());
 }
@@ -159,6 +187,12 @@ std::vector<uint8_t> RevocationClient::fetchOcsp(X509* cert, X509* issuer, const
                                                  const std::string& ocspUrl, int timeoutSeconds)
 {
     if (!cert || !issuer)
+        return {};
+
+    // SSRF guard: the OCSP responder URL comes from the cert's AIA extension
+    // (attacker-influenceable). Same scheme-agnostic host/IP-literal gate as
+    // fetchCrl — AIA/OCSP endpoints are also legitimately plain http.
+    if (!TrustedListParser::isSafeFetchUrl(ocspUrl, /*allowPlainHttp=*/true))
         return {};
 
     // 1. Create OCSP request
@@ -295,7 +329,7 @@ RevocationData RevocationClient::collectForChain(const std::vector<X509*>& chain
         if (crlEnabled) {
             auto crlUrls = extractCrlUrls(cert);
             for (const auto& url : crlUrls) {
-                auto crl = fetchCrl(url, issuer);
+                auto crl = fetchCrl(url, cert, issuer);
                 if (!crl.empty()) {
                     data.crls.push_back(std::move(crl));
                     gotRevocation = true;

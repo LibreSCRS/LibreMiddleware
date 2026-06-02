@@ -685,7 +685,9 @@ std::optional<SessionKeys> performPACE(LibreSCRS::SmartCard::Internal::PCSCConne
 
     // --- Step 3: Decrypt nonce ---
     // BSI TR-03110 Part 3, Table A.2:
-    //   MRZ: keySeed = SHA-1(MRZ_info)[0:16]
+    //   MRZ: keySeed = SHA-1(MRZ_info), the FULL 20 bytes (NOT truncated to 16
+    //        as BAC does — see bac.cpp). derivePaceKpiSeed() is the single
+    //        source of truth for this derivation.
     //   CAN/PIN/PUK: keySeed = raw password bytes (ICAO 9303)
     // Then K_pi = KDF(keySeed, 3) where KDF uses cipher-appropriate hash.
     std::vector<uint8_t> kpiSeed;

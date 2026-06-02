@@ -485,10 +485,18 @@ std::vector<std::vector<uint8_t>> buildOrderedChain(const std::vector<std::vecto
             // null), so the guard is the try/catch, not the if.
         }
     };
-    for (std::size_t i = 1; i < tokenChain.size(); ++i)
-        addPool(tokenChain[i], /*candidate=*/false);
+    // Add Trusted-List candidates to the pool BEFORE the token's own
+    // path-material. The issuer search below scans the pool in order and stops
+    // on the first verifying match, so seeding candidates first means that
+    // whenever a TL anchor and a token-supplied cert both satisfy current's
+    // issuer (same subject DN + same key, e.g. a cross-signed CA), the anchor
+    // wins and the walk terminates successfully. This resolves same-subject/
+    // key collisions and the greedy no-backtracking gap where a token
+    // intermediate could otherwise out-order a valid anchor and dead-end.
     for (const auto& der : candidateCas)
         addPool(der, /*candidate=*/true);
+    for (std::size_t i = 1; i < tokenChain.size(); ++i)
+        addPool(tokenChain[i], /*candidate=*/false);
 
     X509Ptr leaf;
     try {
@@ -506,9 +514,14 @@ std::vector<std::vector<uint8_t>> buildOrderedChain(const std::vector<std::vecto
     std::vector<bool> used(pool.size(), false);
     constexpr int kMaxDepth = 16; // guard against pathological / looping inputs
     for (int depth = 0; depth < kMaxDepth; ++depth) {
-        // A self-signed cert is its own anchor — the chain terminates here.
+        // A self-signed cert (issuer DN == subject DN) reached at this point is
+        // NOT a Trusted-List anchor, so fail closed. A legitimate self-signed TL
+        // root never reaches here: it is appended via the isCandidate path and
+        // terminates the walk at the isCandidate immediate-return below before it
+        // can become `current`. Anything self-signed that survives to here is an
+        // arbitrary root that must not be allowed to complete a long-term chain.
         if (X509_NAME_cmp(X509_get_issuer_name(current), X509_get_subject_name(current)) == 0)
-            return result;
+            return {};
 
         // The issuer is the cert whose subject matches current's issuer AND
         // whose key actually verifies current's signature. The signature check

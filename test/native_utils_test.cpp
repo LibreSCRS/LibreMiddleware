@@ -169,6 +169,54 @@ TEST(BuildOrderedChain, WalksTokenIntermediateToCandidateRoot)
     EXPECT_EQ(chain[2], rootDer);
 }
 
+// A self-signed root supplied only as token path-material (NOT a Trusted-List
+// candidate) must NOT terminate the chain successfully — that would bypass the
+// TL-anchor gate and let any self-signed root complete a long-term chain.
+TEST(BuildOrderedChain, RejectsSelfSignedRootThatIsNotATrustedListAnchor)
+{
+    auto rootKey = makeEcKey();
+    auto leafKey = makeEcKey();
+    ASSERT_TRUE(rootKey && leafKey);
+    auto rootDer = makeCertDer("Rogue Root", "Rogue Root", rootKey.get(), rootKey.get()); // self-signed
+    auto leafDer = makeCertDer("Leaf", "Rogue Root", leafKey.get(), rootKey.get());       // issued by root
+
+    // Card carries leaf + its self-signed root, but the candidate set is empty
+    // (no TL configured this root). Must fail closed.
+    auto chain = buildOrderedChain({leafDer, rootDer}, {});
+    EXPECT_TRUE(chain.empty());
+
+    // Same, but with an unrelated candidate present — still fail closed.
+    auto otherKey = makeEcKey();
+    ASSERT_TRUE(otherKey);
+    auto unrelatedDer = makeCertDer("Other CA", "Other CA", otherKey.get(), otherKey.get());
+    auto chain2 = buildOrderedChain({leafDer, rootDer}, {unrelatedDer});
+    EXPECT_TRUE(chain2.empty());
+}
+
+// When both a token-supplied intermediate and a Trusted-List anchor satisfy the
+// leaf's issuer (same subject DN + same signing key — a cross-issued CA), the
+// TL anchor must win and the walk must complete via it, regardless of the
+// intermediate's position in the token chain.
+TEST(BuildOrderedChain, PrefersTrustedListAnchorOverTokenPathMaterial)
+{
+    auto caKey = makeEcKey();
+    auto leafKey = makeEcKey();
+    ASSERT_TRUE(caKey && leafKey);
+    // The CA cert appears twice with identical subject DN and key: once as a
+    // self-signed anchor (the TL candidate) and once as a token-supplied copy.
+    auto anchorDer = makeCertDer("Shared CA", "Shared CA", caKey.get(), caKey.get());
+    auto tokenCaDer = makeCertDer("Shared CA", "Shared CA", caKey.get(), caKey.get());
+    auto leafDer = makeCertDer("Leaf", "Shared CA", leafKey.get(), caKey.get());
+
+    // Token carries leaf + a copy of the CA; the anchor is the TL candidate.
+    auto chain = buildOrderedChain({leafDer, tokenCaDer}, {anchorDer});
+
+    ASSERT_EQ(chain.size(), 2u);
+    EXPECT_EQ(chain[0], leafDer);
+    // Must terminate via the TL anchor, not the token-supplied copy.
+    EXPECT_EQ(chain[1], anchorDer);
+}
+
 // ---------------------------------------------------------------------------
 // revocationFailClosed — the pure B-LT/B-LTA revocation-completeness gate that
 // the format modules apply right after collectRevocationData. A non-empty

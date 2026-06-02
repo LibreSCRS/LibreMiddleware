@@ -276,16 +276,32 @@ TrustedListInfo TrustedListParser::fetch(const std::string& url, int timeoutSeco
 // pointer count (EU LOTL typically lists ~30 member states; 64 is plenty).
 bool TrustedListParser::isSafeTslUrl(const std::string& urlStr)
 {
+    // Trusted-List pointers are https-only.
+    return isSafeFetchUrl(urlStr, /*allowPlainHttp=*/false);
+}
+
+bool TrustedListParser::isSafeFetchUrl(const std::string& urlStr, bool allowPlainHttp)
+{
     constexpr std::string_view kHttpsPrefix = "https://";
+    constexpr std::string_view kHttpPrefix = "http://";
     constexpr size_t kMaxHostLength = 253; // per RFC 1035 + safety margin
-    if (urlStr.size() < kHttpsPrefix.size() + 1)
-        return false;
-    if (urlStr.size() > 2048) // sanity cap on full URL length
-        return false;
-    if (urlStr.compare(0, kHttpsPrefix.size(), kHttpsPrefix) != 0)
+    if (urlStr.size() > 2048)              // sanity cap on full URL length
         return false;
 
-    size_t hostStart = kHttpsPrefix.size();
+    // Scheme gate. Trusted Lists are https-only; CRL/OCSP fetches additionally
+    // accept plain http because RFC 5280 CRL CDPs and OCSP/AIA endpoints are
+    // routinely published over http (the CRL/OCSP payload itself is signature-
+    // verified by the caller, so transport confidentiality is not required —
+    // only the SSRF host gate below matters).
+    size_t hostStart = 0;
+    if (urlStr.compare(0, kHttpsPrefix.size(), kHttpsPrefix) == 0)
+        hostStart = kHttpsPrefix.size();
+    else if (allowPlainHttp && urlStr.compare(0, kHttpPrefix.size(), kHttpPrefix) == 0)
+        hostStart = kHttpPrefix.size();
+    else
+        return false;
+    if (urlStr.size() < hostStart + 1)
+        return false;
 
     // F6: IPv6-literal hosts are bracketed (e.g. "https://[::1]/..."). The
     // pre-fix host extractor used find_first_of("/:?#", ...) which stopped
@@ -325,6 +341,10 @@ bool TrustedListParser::isSafeTslUrl(const std::string& urlStr)
         if (bodyStartsWith("fc") || bodyStartsWith("fd"))
             return false;
 
+        // Multicast ff00::/8 — the leading byte is ff.
+        if (bodyStartsWith("ff"))
+            return false;
+
         // IPv4-mapped IPv6 (::ffff:a.b.c.d) — apply IPv4 private-range checks
         // against the embedded IPv4 portion. Both lower-cased "::ffff:" and
         // "0:0:0:0:0:ffff:" are common forms; only the canonical form is
@@ -344,6 +364,19 @@ bool TrustedListParser::isSafeTslUrl(const std::string& urlStr)
                     try {
                         int second = std::stoi(ipv4.substr(4, dot - 4));
                         if (second >= 16 && second <= 31)
+                            return false;
+                    } catch (...) {
+                        return false;
+                    }
+                }
+            }
+            // Multicast 224.0.0.0/4 — first octet 224..239.
+            {
+                size_t dot = ipv4.find('.');
+                if (dot != std::string::npos) {
+                    try {
+                        int first = std::stoi(ipv4.substr(0, dot));
+                        if (first >= 224 && first <= 239)
                             return false;
                     } catch (...) {
                         return false;
@@ -389,6 +422,22 @@ bool TrustedListParser::isSafeTslUrl(const std::string& urlStr)
             } catch (...) {
                 // malformed host, reject
                 return false;
+            }
+        }
+    }
+    // Multicast 224.0.0.0/4 — first octet 224..239 (literal-IP form only).
+    {
+        size_t dot = host.find('.');
+        if (dot != std::string::npos && dot > 0) {
+            const char c = host[0];
+            if (c >= '0' && c <= '9') { // only attempt for dotted-quad literals
+                try {
+                    int first = std::stoi(host.substr(0, dot));
+                    if (first >= 224 && first <= 239)
+                        return false;
+                } catch (...) {
+                    return false;
+                }
             }
         }
     }

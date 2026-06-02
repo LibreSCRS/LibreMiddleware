@@ -124,15 +124,15 @@ struct SigningResult
 
     /// @brief Successful in-memory signing (the buffer-sign overload): the signed
     ///        artifact is returned in @ref signedDocumentBytes rather than written
-    ///        to disk. @p output is the nominal path the request named
-    ///        (informational only; no file is written). @since 4.3
-    [[nodiscard]] static SigningResult okWithBytes(std::vector<std::uint8_t> bytes,
-                                                   std::optional<std::filesystem::path> output = std::nullopt) noexcept
+    ///        to disk. @ref outputPath is always @c std::nullopt — no file is
+    ///        written, so consumers branching on @c outputPath.has_value() see a
+    ///        consistent "in-memory" result. @since 4.3
+    [[nodiscard]] static SigningResult okWithBytes(std::vector<std::uint8_t> bytes) noexcept
     {
         // Only Auth::ErrorKeys::signOk() can throw (bad_alloc); it runs before
         // `bytes` is touched, so the catch path still owns `bytes` intact.
         try {
-            SigningResult r{Status::Ok, std::move(output), Auth::ErrorKeys::signOk(), std::nullopt};
+            SigningResult r{Status::Ok, std::nullopt, Auth::ErrorKeys::signOk(), std::nullopt};
             r.signedDocumentBytes = std::move(bytes);
             return r;
         } catch (...) {
