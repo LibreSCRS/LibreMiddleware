@@ -13,10 +13,12 @@
 #include <LibreSCRS/Signing/TsaProvider.h>
 #include <LibreSCRS/Signing/VisualSignatureParams.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace LibreSCRS::Signing {
 
@@ -120,6 +122,20 @@ public:
     /// @note Empty when the backend should auto-select (single-cert cards).
     /// @note Pure accessor, @c noexcept per API-POLICY §5.3.
     [[nodiscard]] const std::string& certificateLabel() const noexcept;
+    /// @brief Card-side CKA_ID of the signing key/cert pair — the REUSE-SAFE
+    ///        discriminator that selects the EXACT key. The label is NOT unique
+    ///        on multi-cert cards (sign + auth cert may share or omit a label),
+    ///        so a label-only selection can silently pick the wrong key; when
+    ///        @ref keyId is set the backend selects the private key (and its
+    ///        paired certificate) by CKA_ID and refuses ambiguity — more than
+    ///        one match on either the key or the certificate fails the
+    ///        operation rather than signing with an arbitrary first match.
+    ///        Binding the chosen certificate to an intended identity (its DER)
+    ///        is the caller's responsibility. Empty selects by label /
+    ///        auto-select.
+    /// @note Pure accessor, @c noexcept per API-POLICY §5.3.
+    /// @since 4.3
+    [[nodiscard]] const std::vector<std::uint8_t>& keyId() const noexcept;
     /// @brief Access the visual signature parameters, if any were set.
     /// @return An optional value — empty when @ref Builder::visualParams was
     ///         not called, populated when it was (only valid for PAdES
@@ -242,6 +258,10 @@ public:
     Builder& contactInfo(std::string info);
     /// @brief Set the certificate label / PKCS#11 key alias used to select the signing key.
     Builder& certificateLabel(std::string label);
+    /// @brief Set the card-side CKA_ID that selects the EXACT signing key
+    ///        (reuse-safe; preferred over the non-unique @ref certificateLabel
+    ///        on multi-cert cards). @since 4.3
+    Builder& keyId(std::vector<std::uint8_t> id);
     /// @brief Attach visual signature parameters (PAdES only). Takes ownership by move;
     /// call with `std::move(params)`. Passing an lvalue is a compile error.
     Builder& visualParams(VisualSignatureParams&& params);
@@ -271,6 +291,15 @@ public:
     ///         combinations are invalid (e.g., @ref visualParams set on a
     ///         non-PAdES request). Per API-POLICY §5.1.
     [[nodiscard]] SigningRequest build() &&;
+
+    /// @brief Validate and produce a @ref SigningRequest for the buffer-sign
+    ///        path (@ref SigningService::sign taking a byte span). Unlike
+    ///        @ref build, the @c inputFile / @c outputFile required-field checks
+    ///        are skipped — buffer mode carries the document and the signed
+    ///        result in memory, not on disk.
+    /// @throws std::invalid_argument only for invalid field combinations
+    ///         (e.g. @ref visualParams on a non-PAdES request). @since 4.3
+    [[nodiscard]] SigningRequest buildForBufferSign() &&;
 
 private:
     struct Impl;

@@ -171,6 +171,18 @@ SigningResult DSSSigningService::sign(const SigningRequest& request, const std::
                                       const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
                                       const std::string& readerName)
 {
+    // CKA_ID exact-key selection is honoured only by the native backend; the
+    // DSS Java oracle does not yet route C_FindObjects through CKA_ID. Rather
+    // than forward the discriminator and let the oracle silently fall back to
+    // a label / first-of-N match — the exact wrong-key hazard the
+    // discriminator exists to prevent — refuse here (fail-closed). Tests that
+    // exercise CKA_ID selection must use the native backend (the authoritative
+    // implementation); DSS gains CKA_ID honouring alongside the oracle work.
+    if (!request.keyId.empty())
+        return makeFailure(SignFailureKind::EngineError,
+                           "CKA_ID key selection is not supported by the DSS test-oracle backend; "
+                           "use the native backend (unset LIBRESCRS_SIGNING_BACKEND or set =native).");
+
     auto result = manager().ensureRunning();
     if (!result)
         return makeFailure(SignFailureKind::EngineError, result.error);

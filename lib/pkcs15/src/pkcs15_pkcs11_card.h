@@ -29,6 +29,10 @@ namespace LibreSCRS::SmartCard {
 class CardSession;
 } // namespace LibreSCRS::SmartCard
 
+namespace LibreSCRS::SmartCard::Internal {
+class SessionPresence;
+} // namespace LibreSCRS::SmartCard::Internal
+
 namespace pkcs15 {
 class PKCS15Card;
 struct PKCS15Profile;
@@ -245,12 +249,24 @@ private:
 class Pkcs15PKCS11Provider final : public LibreSCRS::Pkcs11::Internal::PKCS11CardProvider
 {
 public:
-    /// @brief Construct the provider with an optional per-card cache.
+    /// @brief Construct the provider with an optional per-card cache and the
+    ///        process-local SessionPresence it consults on every probe.
     /// @param cardMap Per-card discovered-state cache threaded through
     ///                every @c Pkcs15Card created by @ref probe. Pass
     ///                @c nullptr to disable.
+    /// @param sessionPresence Registry of CardSessions carrying a live
+    ///                secure-messaging channel. @ref probe peeks it and adopts
+    ///                an existing session (reusing the host's PACE/BAC SM
+    ///                tunnel) rather than opening a parallel PC/SC handle that
+    ///                would tear the card-side SM context down (BSI TR-03110
+    ///                §3). Injected by reference (ctor DI, not a global lookup)
+    ///                so the adopt-or-bind contract is unit-testable; the
+    ///                caller guarantees @ref ensureSessionPresenceInitialised
+    ///                has run and that the instance — a process-lifetime
+    ///                singleton — outlives this provider.
     /// @since 4.1
-    explicit Pkcs15PKCS11Provider(std::shared_ptr<LibreSCRS::SmartCard::CardMap> cardMap) noexcept;
+    Pkcs15PKCS11Provider(std::shared_ptr<LibreSCRS::SmartCard::CardMap> cardMap,
+                         LibreSCRS::SmartCard::Internal::SessionPresence& sessionPresence) noexcept;
     ~Pkcs15PKCS11Provider() override = default;
 
     /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11CardProvider::probe
@@ -260,6 +276,7 @@ public:
 
 private:
     std::shared_ptr<LibreSCRS::SmartCard::CardMap> cardMap;
+    LibreSCRS::SmartCard::Internal::SessionPresence& sessionPresence;
 };
 
 } // namespace LibreSCRS::Pkcs15::Pkcs11

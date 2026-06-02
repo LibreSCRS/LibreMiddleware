@@ -209,6 +209,17 @@ namespace LibreSCRS::Auth::ErrorKeys {
         "librescrs.error.sign.policy_violation", "The signing request does not satisfy the configured policy.", {}};
 }
 
+/// @brief Signing failed because more than one private key on the token
+///        matched the requested CKA_ID discriminator, so the signing key
+///        could not be resolved unambiguously. The engine refuses rather
+///        than sign with an arbitrary match.
+/// @since 4.3
+[[nodiscard]] inline LocalizedText keyAmbiguous()
+{
+    return LocalizedText{
+        "librescrs.error.sign.key_ambiguous", "The signing key could not be uniquely identified on the card.", {}};
+}
+
 /// @brief Generic "trust store unavailable" message.
 [[nodiscard]] inline LocalizedText trustStoreUnavailable()
 {

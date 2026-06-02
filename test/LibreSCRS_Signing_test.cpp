@@ -845,3 +845,81 @@ TEST(SigningServiceBridgeTest, DssBackendFailsLoudWhenCredentialsSet)
 
     // No cleanup needed: svc is per-test (pure DI), goes out of scope here.
 }
+
+// ---------------------------------------------------------------------------
+// Buffer-sign overload (4.3): span in -> SigningResult::signedDocumentBytes,
+// no file touched. These two cases exercise the overload's input seam and the
+// SHARED validate+pipeline core WITHOUT a PC/SC reader: a detached CardSession
+// drives the path, and both assertions land on early returns that fire before
+// any card I/O. The signed-bytes-equal-file-output round-trip and the CKA_ID
+// key-selection matrix require a real token and are covered by the HW matrix.
+// ---------------------------------------------------------------------------
+
+namespace {
+// Minimal trust service for the buffer-sign early-return tests. The
+// InvalidRequest / UserCancelled paths short-circuit before libresign ever
+// reads the trust store, so only a non-null service is required.
+std::shared_ptr<LibreSCRS::Signing::SigningService> makeBufferSignService()
+{
+    LibreSCRS::Trust::TrustConfig trust;
+    trust.trustedListSources.push_back({"https://www.mit.gov.rs/TrustedList/TSL-RS.xml", false, false});
+    auto trustResult = LibreSCRS::Trust::TrustStoreService::create(std::move(trust));
+    if (!trustResult.has_value())
+        return nullptr;
+    return std::make_shared<LibreSCRS::Signing::SigningService>(*trustResult, LibreSCRS::Signing::TsaProvider{});
+}
+
+LibreSCRS::Signing::SigningRequest makeBufferSignRequest()
+{
+    LibreSCRS::Signing::SigningRequest::Builder b;
+    b.format(LibreSCRS::Signing::SignatureFormat::Pades)
+        .level(LibreSCRS::Signing::SignatureLevel::B_B)
+        .packaging(LibreSCRS::Signing::PackagingMode::Enveloped);
+    // buildForBufferSign skips the inputFile/outputFile required-field checks.
+    return std::move(b).buildForBufferSign();
+}
+} // namespace
+
+TEST(SigningServiceBufferSignTest, ReturnsInvalidRequestWhenBufferEmpty)
+{
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    auto svc = makeBufferSignService();
+    ASSERT_NE(svc, nullptr);
+    auto request = makeBufferSignRequest();
+
+    auto provider = [](const LibreSCRS::Auth::AuthRequirement&) {
+        std::vector<LibreSCRS::Auth::CredentialEntry> values;
+        values.emplace_back("pin", LibreSCRS::Secure::String{"0000"});
+        return LibreSCRS::Auth::CredentialResult::ok(std::move(values));
+    };
+    auto plugin = std::make_shared<StubPkiPlugin>();
+
+    const std::span<const std::uint8_t> emptyInput;
+    auto result = svc->sign(request, emptyInput, provider, plugin, session);
+
+    EXPECT_EQ(result.status, LibreSCRS::Signing::SigningResult::Status::InvalidRequest);
+    // No artifact is produced on the error path.
+    EXPECT_FALSE(result.signedDocumentBytes.has_value());
+}
+
+TEST(SigningServiceBufferSignTest, ReturnsUserCancelledWhenProviderCancels)
+{
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    auto svc = makeBufferSignService();
+    ASSERT_NE(svc, nullptr);
+    auto request = makeBufferSignRequest();
+
+    // A non-empty buffer drives the shared pipeline up to PIN collection; the
+    // cancelling provider returns before any card I/O — proving the buffer
+    // overload reuses the same validate+pipeline core as the file path.
+    auto cancellingProvider = [](const LibreSCRS::Auth::AuthRequirement&) {
+        return LibreSCRS::Auth::CredentialResult::cancelled();
+    };
+    auto plugin = std::make_shared<StubPkiPlugin>();
+
+    const std::vector<std::uint8_t> document{'h', 'e', 'l', 'l', 'o'};
+    auto result = svc->sign(request, std::span<const std::uint8_t>{document}, cancellingProvider, plugin, session);
+
+    EXPECT_EQ(result.status, LibreSCRS::Signing::SigningResult::Status::UserCancelled);
+    EXPECT_FALSE(result.signedDocumentBytes.has_value());
+}

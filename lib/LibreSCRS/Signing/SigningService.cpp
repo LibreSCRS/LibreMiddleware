@@ -32,12 +32,14 @@
 #include <fstream>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <type_traits>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
@@ -146,6 +148,18 @@ libresign::Backend chooseBackend()
 // production translation without standing up a PC/SC reader or PKCS#11
 // token. See that header for the visibility rationale.
 
+// Outcome of the shared signing pipeline (runSignPipeline). Exactly one of
+// the two members is meaningful: when @ref failure is engaged the caller
+// returns it verbatim; otherwise @ref signedDocument carries the finished
+// artifact for the caller's output seam (atomic file write or in-memory
+// bytes). SigningResult is factory-only (no default ctor), hence the
+// std::optional wrapper.
+struct SignPipelineOutcome
+{
+    std::optional<SigningResult> failure;
+    std::vector<std::uint8_t> signedDocument;
+};
+
 } // namespace
 
 // Pure DI: configuration is injected at construction and immutable afterwards.
@@ -159,6 +173,37 @@ struct LIBRESCRS_INTERNAL SigningService::Impl
 {
     std::shared_ptr<Trust::TrustStoreService> trustService;
     TsaProvider tsa;
+
+    // Shared signing core for both sign() overloads (file path + byte span).
+    // They differ ONLY at the input seam (file read vs span copy) and the
+    // output seam (atomic .tmp+rename vs in-memory bytes); everything in
+    // between — preconditions, the single TSA resolve, PIN collection, trust
+    // translation, backend dispatch and error classification — is identical
+    // and lives here so the buffer overload is not a clone of the ~350-line
+    // file path.
+    //
+    // validateAndResolveTsa runs the document-independent preconditions
+    // (credential provider, plugin/session, trust service) and resolves the
+    // TSA exactly once into @p tsaOut (the level-required guard depends on
+    // it; the TsaProvider may be a nondeterministic std::function, so it must
+    // be invoked once). Returns an engaged result on early failure, else
+    // std::nullopt to proceed.
+    [[nodiscard]] std::optional<SigningResult>
+    validateAndResolveTsa(const SigningRequest& request, const Auth::CredentialProvider& credentialProvider,
+                          const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,
+                          const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session,
+                          std::optional<TsaRequest>& tsaOut) const;
+
+    // runSignPipeline collects the PIN, translates trust, builds the
+    // libresign request from @p document (moved in) + the resolved
+    // @p tsaOut (moved in so its credentials can be moved into the request),
+    // selects + configures the backend, drives the in-process sign, and
+    // classifies any failure. Returns an engaged failure or the signed bytes.
+    [[nodiscard]] SignPipelineOutcome
+    runSignPipeline(const SigningRequest& request, const Auth::CredentialProvider& credentialProvider,
+                    const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,
+                    const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session,
+                    std::vector<std::uint8_t> document, std::optional<TsaRequest> tsaOut) const;
 };
 
 SigningService::SigningService(std::shared_ptr<Trust::TrustStoreService> trustService, TsaProvider tsa)
@@ -178,10 +223,11 @@ SigningService::operator bool() const noexcept
     return d != nullptr;
 }
 
-SigningResult SigningService::sign(const SigningRequest& request, Auth::CredentialProvider credentialProvider,
-                                   const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,
-                                   const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session) noexcept
-try {
+std::optional<SigningResult> SigningService::Impl::validateAndResolveTsa(
+    const SigningRequest& request, const Auth::CredentialProvider& credentialProvider,
+    const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,
+    const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session, std::optional<TsaRequest>& tsaOut) const
+{
     // Reject an empty std::function<> provider up front — calling it would throw
     // std::bad_function_call. A signing flow without a way to collect PIN/PUK from
     // the user is an InvalidRequest, not an engine error.
@@ -200,20 +246,18 @@ try {
     // lifetime contract, matching visualParams()). A per-request TSA override
     // (SigningRequest::Builder::tsaOverride) takes precedence over the service-
     // level provider supplied at construction.
-    if (!d->trustService) {
+    if (!trustService) {
         return SigningResult::trustStoreUnavailableDiagnosticOnly(
             std::string{"SigningService: TrustStoreService is null"});
     }
-    const Trust::TrustConfig& trustSnapshot = d->trustService->config();
     TsaProvider tsaOverrideSnapshot = request.tsaOverride();
-    const TsaProvider& tsaSnapshot = tsaOverrideSnapshot ? tsaOverrideSnapshot : d->tsa;
+    const TsaProvider& tsaSnapshot = tsaOverrideSnapshot ? tsaOverrideSnapshot : tsa;
 
     // Resolve TSA once, up front. For B-T / B-LT / B-LTA the call is
     // mandatory; for B-B it's harmless (unused by libresign). Invoking the
     // provider here (rather than deeper in the bridge) centralises the
     // level-required guard below and avoids double-calling a user-supplied
     // std::function that may be nondeterministic.
-    std::optional<TsaRequest> tsaOut;
     if (tsaSnapshot) {
         TsaContext tctx{request.format(), request.level(), {}};
         tsaOut = tsaSnapshot(tctx);
@@ -232,27 +276,16 @@ try {
                     : std::string{"TsaProvider returned empty URL; B-T/B-LT/B-LTA requires a reachable TSA"});
     }
 
-    if (request.inputFile().empty() || request.outputFile().empty()) {
-        return SigningResult::invalidRequest(
-            LocalizedText{"librescrs.signing.error.invalidRequest", "Signing request is missing required fields.", {}});
-    }
+    return std::nullopt;
+}
 
-    // Read input (with 256 MiB cap, matching LC's pre-migration limit).
-    constexpr std::uintmax_t maxBytes = 256ULL * 1024 * 1024;
-    std::error_code fsErr;
-    auto sz = std::filesystem::file_size(request.inputFile(), fsErr);
-    if (fsErr || sz == 0 || sz > maxBytes) {
-        return SigningResult::invalidRequest(
-            LocalizedText{"librescrs.signing.error.invalidRequest", "Signing request is missing required fields.", {}},
-            fsErr ? fsErr.message() : std::string{"Input file is empty or exceeds 256 MiB cap"});
-    }
-    std::vector<uint8_t> document(sz);
-    std::ifstream in(request.inputFile(), std::ios::binary);
-    if (!in.read(reinterpret_cast<char*>(document.data()), static_cast<std::streamsize>(sz))) {
-        return SigningResult::invalidRequest(
-            LocalizedText{"librescrs.signing.error.invalidRequest", "Signing request is missing required fields.", {}},
-            std::string{"Failed to read input file"});
-    }
+SignPipelineOutcome
+SigningService::Impl::runSignPipeline(const SigningRequest& request, const Auth::CredentialProvider& credentialProvider,
+                                      const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,
+                                      const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session,
+                                      std::vector<std::uint8_t> document, std::optional<TsaRequest> tsaOut) const
+{
+    const Trust::TrustConfig& trustSnapshot = trustService->config();
 
     // Collect the PIN via the host-supplied CredentialProvider. Retry count comes
     // from the card when the plugin can determine it; std::nullopt means
@@ -269,7 +302,7 @@ try {
 
     auto credResult = credentialProvider(authReq);
     if (credResult.status == Auth::CredentialResult::Status::UserCancelled) {
-        return SigningResult::userCancelled();
+        return {SigningResult::userCancelled(), {}};
     }
     if (credResult.status != Auth::CredentialResult::Status::Ok) {
         // CredentialResult::userMessage is mandatory in 4.0 —
@@ -282,13 +315,15 @@ try {
         std::string diag = !lt.defaultText.empty()
                                ? lt.defaultText
                                : (!lt.key.empty() ? lt.key : std::string{"CredentialProvider reported error"});
-        return SigningResult::signingEngineErrorDiagnosticOnly(std::move(diag));
+        return {SigningResult::signingEngineErrorDiagnosticOnly(std::move(diag)), {}};
     }
     const LibreSCRS::Secure::String* pinPtr = credResult.find("pin");
     if (pinPtr == nullptr || pinPtr->empty()) {
-        return SigningResult::invalidRequest(
-            LocalizedText{"librescrs.signing.error.invalidRequest", "Signing request is missing required fields.", {}},
-            std::string{"CredentialProvider returned Ok but no pin field"});
+        return {SigningResult::invalidRequest(LocalizedText{"librescrs.signing.error.invalidRequest",
+                                                            "Signing request is missing required fields.",
+                                                            {}},
+                                              std::string{"CredentialProvider returned Ok but no pin field"}),
+                {}};
     }
     // Go directly from Secure::String::view() into Secure::Buffer — no
     // intermediate std::string to escape cleansing. Both the source
@@ -328,20 +363,23 @@ try {
     // Resolve the PKCS#11 key alias from the request. LC populates this from the
     // user-selected certificate's label (CertificateData::label). When absent,
     // libresign's auto-select path picks the first signing-capable key on the
-    // token — the common case for single-cert cards.
+    // token — the common case for single-cert cards. The reuse-safe CKA_ID
+    // discriminator (SigningRequest::keyId) is carried into libReq by the
+    // request bridge and consumed by the native Pkcs11Token key search.
     const std::string& keyAlias = request.certificateLabel();
 
     libresign::SigningRequest libReq;
     // Translate all request-sourced fields (fileName, format, packaging,
-    // level, signature-dictionary fields, and visual appearance when
-    // configured) via the extracted bridge helper. Document bytes and TSA
-    // configuration are populated below because they draw on state that
-    // lives outside the public SigningRequest (the loaded input file and
-    // the service-level TsaProvider snapshot).
+    // level, signature-dictionary fields, the CKA_ID key discriminator, and
+    // visual appearance when configured) via the extracted bridge helper.
+    // Document bytes and TSA configuration are populated below because they
+    // draw on state that lives outside the public SigningRequest (the loaded
+    // input bytes and the service-level TsaProvider snapshot).
     detail::translatePublicRequestToLibresign(request, libReq);
     libReq.document = std::move(document);
-    // Use the TSA probe cached at the top of sign() (avoids double-calling
-    // the TsaProvider std::function; see level-required guard above).
+    // Use the TSA probe resolved up front (avoids double-calling the
+    // TsaProvider std::function; see the level-required guard in
+    // validateAndResolveTsa).
     if (tsaOut && !tsaOut->url.empty()) {
         libReq.tsa.url = tsaOut->url;
         // Basic-auth pair invariant is type-enforced via the BasicAuth
@@ -405,16 +443,18 @@ try {
             libReq.tsa.credentials.clientCert.has_value() || libReq.tsa.credentials.clientCertKey.has_value() ||
             !libReq.tsa.credentials.extraSecretHeaders.empty() || !request.contactInfo().empty();
         if (hasCredentials) {
-            return SigningResult::signingEngineErrorDiagnosticOnly(
-                std::string{"DSS backend does not support TSA credentials or contactInfo — "
-                            "use Native backend (unset LIBRESCRS_SIGNING_BACKEND or set =native)."});
+            return {SigningResult::signingEngineErrorDiagnosticOnly(
+                        std::string{"DSS backend does not support TSA credentials or contactInfo — "
+                                    "use Native backend (unset LIBRESCRS_SIGNING_BACKEND or set =native)."}),
+                    {}};
         }
     }
 
     auto service = libresign::createSigningService(backend);
     if (!service) {
-        return SigningResult::signingEngineErrorDiagnosticOnly(
-            std::string{"Failed to construct libresign::SigningService"});
+        return {SigningResult::signingEngineErrorDiagnosticOnly(
+                    std::string{"Failed to construct libresign::SigningService"}),
+                {}};
     }
     // Bind the lazy-fetch anchor-merge callback into libresign's native
     // backend. libresign emits TL-extracted anchors via the AnchorEmitter
@@ -425,7 +465,7 @@ try {
     // libresign target free of any link edge to LibreSCRS_Trust.
     if (backend == libresign::Backend::Native) {
         if (auto* native = dynamic_cast<libresign::NativeSigningService*>(service.get())) {
-            auto trustStore = std::const_pointer_cast<Trust::TrustStore>(d->trustService->trustStore());
+            auto trustStore = std::const_pointer_cast<Trust::TrustStore>(trustService->trustStore());
             native->setAnchorEmitter([trustStore](std::vector<Trust::TrustAnchor> anchors, std::string label) {
                 if (!trustStore)
                     return;
@@ -435,7 +475,7 @@ try {
         }
     }
     if (!service->configure(libTrust)) {
-        return SigningResult::trustStoreUnavailableDiagnosticOnly(std::string{"libresign rejected TrustConfig"});
+        return {SigningResult::trustStoreUnavailableDiagnosticOnly(std::string{"libresign rejected TrustConfig"}), {}};
     }
 
     // Pass the caller-chosen reader name through to libresign so its
@@ -464,24 +504,65 @@ try {
                                                                   : LibreSCRS::Auth::ErrorKeys::signingEngineError();
         switch (classified) {
         case SigningResult::Status::PinVerificationFailed:
-            return SigningResult::pinVerificationFailed(std::move(userMsg), libResult.errorMessage);
+            return {SigningResult::pinVerificationFailed(std::move(userMsg), libResult.errorMessage), {}};
         case SigningResult::Status::CardBlocked:
-            return SigningResult::cardBlocked(std::move(userMsg), libResult.errorMessage);
+            return {SigningResult::cardBlocked(std::move(userMsg), libResult.errorMessage), {}};
         case SigningResult::Status::TsaUnreachable:
-            return SigningResult::tsaUnreachable(std::move(userMsg), libResult.errorMessage);
+            return {SigningResult::tsaUnreachable(std::move(userMsg), libResult.errorMessage), {}};
         case SigningResult::Status::SigningEngineError:
         default:
-            return SigningResult::signingEngineError(std::move(userMsg), libResult.errorMessage);
+            return {SigningResult::signingEngineError(std::move(userMsg), libResult.errorMessage), {}};
         }
     }
 
-    // Atomic write: stream the signed PDF into <output>.tmp, flush + close,
-    // then rename(2) it into place. POSIX rename() and NTFS same-volume
-    // MoveFileEx() are atomic, so observers never see a half-written file
-    // even if the process is killed between write and rename. Without this,
-    // a partial-write failure (full disk, ENOSPC mid-write, kill mid-stream)
-    // leaves a truncated PDF at the user-visible output path — which a
-    // downstream verifier cannot distinguish from a tampered document.
+    return {std::nullopt, std::move(libResult.signedDocument)};
+}
+
+SigningResult SigningService::sign(const SigningRequest& request, Auth::CredentialProvider credentialProvider,
+                                   const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,
+                                   const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session) noexcept
+try {
+    std::optional<TsaRequest> tsaOut;
+    if (auto early = d->validateAndResolveTsa(request, credentialProvider, cardPlugin, session, tsaOut); early) {
+        return std::move(*early);
+    }
+
+    // Input seam (file path): validate the named files and load the document.
+    if (request.inputFile().empty() || request.outputFile().empty()) {
+        return SigningResult::invalidRequest(
+            LocalizedText{"librescrs.signing.error.invalidRequest", "Signing request is missing required fields.", {}});
+    }
+    // Read input (with 256 MiB cap, matching LC's pre-migration limit).
+    constexpr std::uintmax_t maxBytes = 256ULL * 1024 * 1024;
+    std::error_code fsErr;
+    auto sz = std::filesystem::file_size(request.inputFile(), fsErr);
+    if (fsErr || sz == 0 || sz > maxBytes) {
+        return SigningResult::invalidRequest(
+            LocalizedText{"librescrs.signing.error.invalidRequest", "Signing request is missing required fields.", {}},
+            fsErr ? fsErr.message() : std::string{"Input file is empty or exceeds 256 MiB cap"});
+    }
+    std::vector<std::uint8_t> document(sz);
+    std::ifstream in(request.inputFile(), std::ios::binary);
+    if (!in.read(reinterpret_cast<char*>(document.data()), static_cast<std::streamsize>(sz))) {
+        return SigningResult::invalidRequest(
+            LocalizedText{"librescrs.signing.error.invalidRequest", "Signing request is missing required fields.", {}},
+            std::string{"Failed to read input file"});
+    }
+
+    auto outcome =
+        d->runSignPipeline(request, credentialProvider, cardPlugin, session, std::move(document), std::move(tsaOut));
+    if (outcome.failure) {
+        return std::move(*outcome.failure);
+    }
+
+    // Output seam (file path): atomic write. Stream the signed bytes into
+    // <output>.tmp, flush + close, then rename(2) into place. POSIX rename()
+    // and NTFS same-volume MoveFileEx() are atomic, so observers never see a
+    // half-written file even if the process is killed between write and
+    // rename. Without this, a partial-write failure (full disk, ENOSPC
+    // mid-write, kill mid-stream) leaves a truncated PDF at the user-visible
+    // output path — which a downstream verifier cannot distinguish from a
+    // tampered document.
     auto outputPath = request.outputFile();
     auto tempPath = outputPath;
     tempPath += ".tmp";
@@ -492,8 +573,8 @@ try {
             return SigningResult::signingEngineErrorDiagnosticOnly(std::string{"Failed to open output temp file: "} +
                                                                    tempPath.string());
         }
-        out.write(reinterpret_cast<const char*>(libResult.signedDocument.data()),
-                  static_cast<std::streamsize>(libResult.signedDocument.size()));
+        out.write(reinterpret_cast<const char*>(outcome.signedDocument.data()),
+                  static_cast<std::streamsize>(outcome.signedDocument.size()));
         out.close();
         if (!out) {
             std::error_code rmEc;
@@ -530,6 +611,49 @@ try {
     // exceptions enabled by a future caller wrapper, etc.) must
     // also surface as a structured signingEngineError rather than
     // propagate through the noexcept contract.
+    return SigningResult::signingEngineErrorDiagnosticOnly(std::string{"sign(): unexpected exception: "} + ex.what());
+} catch (...) {
+    return SigningResult::signingEngineErrorDiagnosticOnly(std::string{"sign(): unexpected non-std::exception"});
+}
+
+SigningResult SigningService::sign(const SigningRequest& request, std::span<const std::uint8_t> input,
+                                   Auth::CredentialProvider credentialProvider,
+                                   const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,
+                                   const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session) noexcept
+try {
+    std::optional<TsaRequest> tsaOut;
+    if (auto early = d->validateAndResolveTsa(request, credentialProvider, cardPlugin, session, tsaOut); early) {
+        return std::move(*early);
+    }
+
+    // Input seam (byte span): the document is already in memory; no file is
+    // named or read. Same 256 MiB cap and zero-byte rejection as the file
+    // path. inputFile()/outputFile() are not required here — the buffer-sign
+    // request is built via SigningRequest::Builder::buildForBufferSign().
+    constexpr std::uintmax_t maxBytes = 256ULL * 1024 * 1024;
+    if (input.empty() || input.size() > maxBytes) {
+        return SigningResult::invalidRequest(
+            LocalizedText{"librescrs.signing.error.invalidRequest", "Signing request is missing required fields.", {}},
+            input.empty() ? std::string{"Input buffer is empty"} : std::string{"Input buffer exceeds 256 MiB cap"});
+    }
+    std::vector<std::uint8_t> document(input.begin(), input.end());
+
+    auto outcome =
+        d->runSignPipeline(request, credentialProvider, cardPlugin, session, std::move(document), std::move(tsaOut));
+    if (outcome.failure) {
+        return std::move(*outcome.failure);
+    }
+
+    // Output seam (byte span): return the finished artifact in memory — no
+    // file is written (the document never touches disk; the agent seals it
+    // into a memfd). The nominal output path is omitted: this overload is
+    // for callers that own the artifact's destination.
+    return SigningResult::okWithBytes(std::move(outcome.signedDocument));
+} catch (const std::bad_alloc&) {
+    // API-POLICY §5.3 noexcept-alloc contract — same shape as the file path.
+    return SigningResult::signingEngineErrorDiagnosticOnly(
+        std::string{"sign(): out of memory during signing pipeline"});
+} catch (const std::exception& ex) {
     return SigningResult::signingEngineErrorDiagnosticOnly(std::string{"sign(): unexpected exception: "} + ex.what());
 } catch (...) {
     return SigningResult::signingEngineErrorDiagnosticOnly(std::string{"sign(): unexpected non-std::exception"});
@@ -615,9 +739,15 @@ try {
     }
     LibreSCRS::Secure::Buffer pinBuffer(pinPtr->view());
 
-    // Trust translation — identical structure to sign(). Refactoring this
-    // into a helper is left for a follow-up; keeping the two flows visibly
-    // symmetric here keeps future per-format dispatcher work a strict diff.
+    // NOTE: sign() now factors its preconditions + pipeline into the private
+    // Impl::validateAndResolveTsa / runSignPipeline helpers; appendSigner
+    // deliberately retains its inline form for now and does NOT share that
+    // decomposition (its libresign entry point and span inputs differ). The
+    // two are therefore asymmetric: any change to the shared sign() core
+    // (error classification, trust translation, the CKA_ID/KeyAmbiguous path)
+    // must be mirrored here until appendSigner is folded into the shared core
+    // alongside the per-format dispatcher and a buffer-append overload in a
+    // future cleanup. The blocks below intentionally mirror runSignPipeline.
     libresign::TrustConfig libTrust;
     for (const auto& src : trustSnapshot.trustedListSources) {
         libresign::TrustedListEntry entry;

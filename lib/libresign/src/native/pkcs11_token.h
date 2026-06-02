@@ -65,9 +65,18 @@ public:
     // and the caller's `shared_ptr<CardSession>` simply has to outlive
     // this Token construction so the registry's `weak_ptr` lookup
     // resolves to a live entry.
+    //
+    // keyId: card-side CKA_ID of the signing key/cert pair. When non-empty
+    // the private-key search selects by CKA_ID (the reuse-safe exact-key
+    // discriminator) and refuses ambiguity — >1 matching key throws
+    // @ref SignFailureException with @ref SignFailureKind::KeyAmbiguous; the
+    // @p keyAlias is then a display hint only. When empty, the legacy
+    // CKA_LABEL (or signing-capable auto-select) path runs — the label is
+    // NOT unique on multi-cert cards, so callers that must sign with one
+    // exact key pass @p keyId.
     /// @since 4.1
     Pkcs11Token(Pkcs11ModuleHandle module, const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
-                const std::string& readerName);
+                const std::string& readerName, const std::vector<uint8_t>& keyId = {});
 
     /// @brief Strong-typed wrapper for the test-only raw-slot-ID ctor.
     ///
@@ -83,7 +92,7 @@ public:
         explicit constexpr TestSlotId(unsigned long id) noexcept : slotId(id) {}
     };
     Pkcs11Token(Pkcs11ModuleHandle module, const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
-                TestSlotId rawSlotId);
+                TestSlotId rawSlotId, const std::vector<uint8_t>& keyId = {});
 
     ~Pkcs11Token();
 

@@ -23,6 +23,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace LibreSCRS::Signing {
 
@@ -87,6 +88,12 @@ struct SigningResult
     LocalizedText userMessage;
     /// @brief Technical detail suitable for logs; may be absent.
     std::optional<std::string> diagnosticDetail;
+    /// @brief Signed artifact bytes, set only by the buffer-sign overload
+    ///        (@ref SigningService::sign taking a byte span); absent for the
+    ///        file-based path, which writes to @ref outputPath instead.
+    ///        Append-only data member (since 4.3); default @c std::nullopt keeps
+    ///        every existing factory source- and ABI-compatible.
+    std::optional<std::vector<std::uint8_t>> signedDocumentBytes;
 
     // -- Named factories ---------------------------------------------------
     //
@@ -112,6 +119,26 @@ struct SigningResult
             return SigningResult{Status::Ok, std::move(output), Auth::ErrorKeys::signOk(), std::nullopt};
         } catch (...) {
             return SigningResult{Status::Ok, std::nullopt, LocalizedText{}, std::nullopt};
+        }
+    }
+
+    /// @brief Successful in-memory signing (the buffer-sign overload): the signed
+    ///        artifact is returned in @ref signedDocumentBytes rather than written
+    ///        to disk. @p output is the nominal path the request named
+    ///        (informational only; no file is written). @since 4.3
+    [[nodiscard]] static SigningResult okWithBytes(std::vector<std::uint8_t> bytes,
+                                                   std::optional<std::filesystem::path> output = std::nullopt) noexcept
+    {
+        // Only Auth::ErrorKeys::signOk() can throw (bad_alloc); it runs before
+        // `bytes` is touched, so the catch path still owns `bytes` intact.
+        try {
+            SigningResult r{Status::Ok, std::move(output), Auth::ErrorKeys::signOk(), std::nullopt};
+            r.signedDocumentBytes = std::move(bytes);
+            return r;
+        } catch (...) {
+            SigningResult r{Status::Ok, std::nullopt, LocalizedText{}, std::nullopt};
+            r.signedDocumentBytes = std::move(bytes);
+            return r;
         }
     }
 

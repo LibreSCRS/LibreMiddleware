@@ -315,3 +315,55 @@ TEST_F(CrossProviderCoordination, ActivateChannelForRefusesOnLiveSmChannel)
     EXPECT_TRUE(session->hasLiveSecureChannel());
     EXPECT_EQ(fake->state(), ChannelState::Open);
 }
+
+// ---------------------------------------------------------------------------
+// Invariant #6 — Pkcs15PKCS11Provider consults the SessionPresence it was
+// constructed with (ctor DI), peeking BEFORE bind. The registry is injected
+// by reference rather than reached through the process-global accessor, so
+// the adopt-or-bind decision is unit-testable here without a PC/SC reader.
+//
+// Sibling of OpenScProbeShortCircuitsWhenSessionHasLiveSm, but for the
+// adopt-not-defer contract: where the OpenSc provider returns nullptr
+// (defers to the PKCS#15 provider) on a live SM channel, the PKCS#15
+// provider ADOPTS the injected session and reuses its SM tunnel instead of
+// opening a parallel PC/SC handle.
+// ---------------------------------------------------------------------------
+
+TEST_F(CrossProviderCoordination, Pkcs15ProbeFreshBindsWhenInjectedPresenceEmpty)
+{
+    // Empty injected registry -> peek misses -> fresh bind. The phantom
+    // reader has no PC/SC handle, so the fresh bind fails deterministically
+    // and probe returns nullptr. Proves the provider uses the ctor-injected
+    // reference and falls through to bind when it has no entry.
+    LibreSCRS::SmartCard::Internal::SessionPresence injectedSp;
+    LibreSCRS::Pkcs15::Pkcs11::Pkcs15PKCS11Provider provider(/*cardMap=*/nullptr, injectedSp);
+
+    auto card = provider.probe(kReader);
+    EXPECT_EQ(card, nullptr);
+}
+
+TEST_F(CrossProviderCoordination, Pkcs15ProbePreservesInjectedSessionLiveSm)
+{
+    // A live-SM session registered in the *injected* registry drives the
+    // adopt branch (peek hits -> bindFromInjectedSession), which reuses the
+    // adopted session's SM channel rather than opening a parallel PC/SC
+    // handle. The load-bearing security property: probe must NOT tear that
+    // live SM tunnel down (BSI TR-03110 §3 — a parallel handle would). Here
+    // the channel survives the probe and the injected registry still reports
+    // it live. (The detached fake's bind ultimately fails without a real
+    // card, so the returned card is not asserted; full adopt success is
+    // validated against real hardware.)
+    LibreSCRS::SmartCard::Internal::SessionPresence injectedSp;
+    auto session = makeDetachedCardSession(kReader);
+    auto* fake = installPaceFake(*session, ChannelState::Open);
+    auto reg = injectedSp.insert(kReader, session);
+    ASSERT_TRUE(injectedSp.hasLiveSm(kReader));
+
+    LibreSCRS::Pkcs15::Pkcs11::Pkcs15PKCS11Provider provider(/*cardMap=*/nullptr, injectedSp);
+    (void)provider.probe(kReader);
+
+    // Live SM channel is sacred: the adopt path never closes it.
+    EXPECT_EQ(fake->state(), ChannelState::Open);
+    EXPECT_TRUE(session->hasLiveSecureChannel());
+    EXPECT_TRUE(injectedSp.hasLiveSm(kReader));
+}

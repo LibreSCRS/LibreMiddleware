@@ -64,6 +64,10 @@ void translatePublicRequestToLibresign(const LibreSCRS::Signing::SigningRequest&
     out.packaging = mapPackaging(request.packaging());
     out.level = mapLevel(request.level());
     out.allowExpiredCertificate = request.allowExpiredCert();
+    // CKA_ID discriminator (reuse-safe exact-key selector). Empty on the
+    // common single-cert / label path; non-empty routes the native backend's
+    // key search through CKA_ID instead of the non-unique CKA_LABEL.
+    out.keyId = request.keyId();
 
     // Signature-dictionary fields (ISO 32000-1:2008 §12.8.1): independent of
     // visual appearance. Always forwarded so an invisible signature can

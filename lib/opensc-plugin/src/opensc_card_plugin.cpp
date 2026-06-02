@@ -394,6 +394,10 @@ public:
             LibreSCRS::Plugin::CertificateData cd;
             cd.label = certObjs[i]->label;
             cd.derBytes.assign(cert->data.value, cert->data.value + cert->data.len);
+            // The PKCS#15 object id IS the PKCS#11 CKA_ID — surface it so the
+            // in-process sign path selects THIS exact key by CKA_ID rather than
+            // the non-unique label.
+            cd.ckaId.assign(certInfo->id.value, certInfo->id.value + certInfo->id.len);
 
             // Try to find associated private key for FID and key size
             sc_pkcs15_object_t* keyObj = nullptr;

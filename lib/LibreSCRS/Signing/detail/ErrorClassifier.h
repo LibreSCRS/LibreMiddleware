@@ -67,6 +67,13 @@ inline LibreSCRS::Signing::SigningResult::Status classifyLibresignError(const li
             return S::InvalidRequest;
         case SignFailureKind::PolicyViolation:
             return S::InvalidRequest;
+        // Ambiguous key selection is a terminal, non-retriable engine outcome
+        // (the card carries >1 key for the requested CKA_ID); the public enum
+        // gains no dedicated value (LC's -Wswitch-enum consumers would break),
+        // so it maps to the "not otherwise classified" engine bucket while the
+        // dedicated user-message key below carries the precise distinction.
+        case SignFailureKind::KeyAmbiguous:
+            return S::SigningEngineError;
         case SignFailureKind::CardError:
         case SignFailureKind::RevocationFetchFailed:
         case SignFailureKind::PdfPreparationError:
@@ -135,6 +142,8 @@ inline LibreSCRS::LocalizedText kindToUserMessage(libresign::SignFailureKind k)
         return EK::invalidRequest();
     case SignFailureKind::PolicyViolation:
         return EK::policyViolation();
+    case SignFailureKind::KeyAmbiguous:
+        return EK::keyAmbiguous();
     case SignFailureKind::PdfPreparationError:
     case SignFailureKind::XmlSerializationError:
     case SignFailureKind::JsonSerializationError:

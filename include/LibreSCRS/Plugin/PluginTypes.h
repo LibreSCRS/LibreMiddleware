@@ -196,6 +196,22 @@ struct CertificateData
     /// @since 4.0
     std::optional<std::uint16_t> keySizeBits;
 
+    /// @brief Card-side CKA_ID of this certificate's key/cert pair — the
+    ///        PKCS#15 object identifier (iD), which the PKCS#11 bridge surfaces
+    ///        verbatim as @c CKA_ID.
+    ///
+    /// This is the reuse-safe discriminator to hand to
+    /// @ref LibreSCRS::Signing::SigningRequest::Builder::keyId so the signing
+    /// engine selects THIS exact key — the label is not unique on multi-cert
+    /// cards. **Distinct from @ref keyFID**, which is the matching key's *file*
+    /// identifier (a different value): @ref keyFID is the on-card file selector,
+    /// @ref ckaId is the PKCS#11 object selector used on the in-process signing
+    /// path. Empty when the plugin cannot determine the object id (the caller
+    /// then falls back to label / auto-select).
+    ///
+    /// @since 4.3
+    std::vector<std::uint8_t> ckaId;
+
     /// @brief Defaulted member-wise equality.
     [[nodiscard]] bool operator==(const CertificateData&) const noexcept = default;
 };

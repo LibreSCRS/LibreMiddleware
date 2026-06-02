@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -41,7 +42,13 @@ enum class SignFailureKind : std::uint8_t {
     ZipBuildError,
     OpensslError,
     PolicyViolation,
-    EngineError
+    EngineError,
+    /// @brief More than one private key on the token matched the requested
+    ///        CKA_ID discriminator, so the signing key cannot be resolved
+    ///        unambiguously. The engine refuses rather than sign with an
+    ///        arbitrary first match (a label-keyed first-of-N was the latent
+    ///        wrong-key hazard this discriminator closes). @since 4.3
+    KeyAmbiguous
 };
 
 /// @brief Signature format taxonomy.
@@ -112,6 +119,14 @@ struct SigningRequest
     // consistent); host GUI flips to true only after the user has
     // acknowledged the expiry warning on the signing page.
     bool allowExpiredCertificate = false;
+    // Card-side CKA_ID of the signing key/cert pair — the reuse-safe
+    // discriminator that selects the EXACT key. The PKCS#15 label is not
+    // unique on multi-cert cards, so a label-keyed first-of-N match can
+    // silently pick the wrong key; when this is non-empty the native backend
+    // selects the private key by CKA_ID instead. Empty preserves the legacy
+    // label / auto-select path. Carried verbatim from the public
+    // LibreSCRS::Signing::SigningRequest::keyId() via the request bridge.
+    std::vector<uint8_t> keyId;
 };
 
 struct SigningResult
@@ -145,6 +160,18 @@ inline SigningResult makeSuccess(std::vector<uint8_t> bytes)
 {
     return SigningResult{true, std::move(bytes), {}, std::nullopt};
 }
+
+/// @brief Carries a typed @ref SignFailureKind out of deep card-layer code
+///        (e.g. @ref Pkcs11Token key selection) so the NativeSigningService
+///        try/catch can map it to a precise @ref makeFailure instead of
+///        collapsing it into the generic @ref SignFailureKind::EngineError
+///        bucket. The @ref what string becomes the result's diagnostic detail.
+/// @since 4.3
+struct SignFailureException : std::runtime_error
+{
+    SignFailureKind kind;
+    SignFailureException(SignFailureKind k, const std::string& detail) : std::runtime_error(detail), kind(k) {}
+};
 
 struct TrustedListEntry
 {

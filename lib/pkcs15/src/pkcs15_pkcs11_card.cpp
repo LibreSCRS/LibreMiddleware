@@ -528,8 +528,9 @@ unsigned long Pkcs15Card::reconnectInline()
     return Crv::Ok;
 }
 
-Pkcs15PKCS11Provider::Pkcs15PKCS11Provider(std::shared_ptr<LibreSCRS::SmartCard::CardMap> cm) noexcept
-    : cardMap(std::move(cm))
+Pkcs15PKCS11Provider::Pkcs15PKCS11Provider(std::shared_ptr<LibreSCRS::SmartCard::CardMap> cm,
+                                           LibreSCRS::SmartCard::Internal::SessionPresence& sp) noexcept
+    : cardMap(std::move(cm)), sessionPresence(sp)
 {}
 
 std::shared_ptr<LibreSCRS::Pkcs11::Internal::PKCS11Card> Pkcs15PKCS11Provider::probe(const std::string& readerName)
@@ -542,10 +543,13 @@ std::shared_ptr<LibreSCRS::Pkcs11::Internal::PKCS11Card> Pkcs15PKCS11Provider::p
     // SM tunnel rather than opening a parallel PC/SC handle (which would
     // tear down the card-side SM context — BSI TR-03110 §3, session-
     // scoped SM). Fresh bind runs only when no presence entry exists.
-    LibreSCRS::SmartCard::Internal::ensureSessionPresenceInitialised();
+    //
+    // The registry is the ctor-injected `sessionPresence` (not the global
+    // accessor): the caller owns its lifecycle (ensureSessionPresenceInitialised)
+    // so this peek-before-bind contract is unit-testable with a local instance.
     auto card = std::make_shared<Pkcs15Card>(cardMap);
 
-    if (auto existing = LibreSCRS::SmartCard::Internal::sessionPresence().peek(readerName)) {
+    if (auto existing = sessionPresence.peek(readerName)) {
         if (auto rc = card->bindFromInjectedSession(readerName, std::move(existing)); rc != Crv::Ok)
             return nullptr;
         return card;

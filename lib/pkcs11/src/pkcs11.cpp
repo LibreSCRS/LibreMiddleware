@@ -6,6 +6,7 @@
 #include "pkcs15_pkcs11_card.h"
 
 #include <LibreSCRS/SmartCard/CardMap.h>
+#include <LibreSCRS_internal/SmartCard/SmartCardServices.h> // ensureSessionPresenceInitialised + sessionPresence()
 
 #if LIBRESCRS_HAS_VENDORED_OPENSC
 #include <internal/OpenScPKCS11Provider.h>
@@ -101,10 +102,14 @@ static void registerDefaultProviders(PKCS11Library& lib)
     lib.registerProvider(std::make_shared<LibreSCRS::OpenSc::Pkcs11::OpenScPKCS11Provider>());
 #endif
     // The custom PKCS#15 provider runs after OpenSC and consults the same
-    // process-local SessionPresence directly. No per-provider registry is
-    // threaded any more; auto-registration in CardSession is the single
-    // source of truth.
-    lib.registerProvider(std::make_shared<LibreSCRS::Pkcs15::Pkcs11::Pkcs15PKCS11Provider>(cardMap));
+    // process-local SessionPresence — injected by reference (ctor DI) rather
+    // than reached through the global accessor, so the adopt-or-bind contract
+    // is unit-testable. Auto-registration in CardSession remains the single
+    // source of truth for what the registry contains; we only own its
+    // one-shot initialisation here before handing the reference over.
+    LibreSCRS::SmartCard::Internal::ensureSessionPresenceInitialised();
+    lib.registerProvider(std::make_shared<LibreSCRS::Pkcs15::Pkcs11::Pkcs15PKCS11Provider>(
+        cardMap, LibreSCRS::SmartCard::Internal::sessionPresence()));
 }
 
 // ---------------------------------------------------------------------------

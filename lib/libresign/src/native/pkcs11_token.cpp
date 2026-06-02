@@ -3,6 +3,8 @@
 
 #include "native/pkcs11_token.h"
 
+#include "types.h" // SignFailureKind / SignFailureException for typed KeyAmbiguous
+
 #include <LibreSCRS/Export.h>
 
 #include <algorithm>
@@ -81,15 +83,25 @@ struct LIBRESCRS_INTERNAL Pkcs11Token::Impl
         loggedIn = true;
     }
 
-    void findPrivateKey(const std::string& keyAlias)
+    void findPrivateKey(const std::string& keyAlias, const std::vector<uint8_t>& keyId)
     {
         CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
         CK_BBOOL canSign = CK_TRUE;
 
+        // CKA_ID is the reuse-safe exact-key discriminator and takes
+        // precedence over the non-unique CKA_LABEL: a multi-cert card can
+        // carry sign + auth keys that share (or omit) a label, so a
+        // label-keyed first-of-N match is a latent wrong-key hazard. When no
+        // CKA_ID is supplied the legacy label / signing-capable auto-select
+        // path runs unchanged.
+        const bool byId = !keyId.empty();
+
         std::vector<CK_ATTRIBUTE> keyTemplate;
         keyTemplate.push_back({CKA_CLASS, &keyClass, sizeof(keyClass)});
 
-        if (!keyAlias.empty()) {
+        if (byId) {
+            keyTemplate.push_back({CKA_ID, const_cast<uint8_t*>(keyId.data()), static_cast<CK_ULONG>(keyId.size())});
+        } else if (!keyAlias.empty()) {
             keyTemplate.push_back(
                 {CKA_LABEL, const_cast<char*>(keyAlias.c_str()), static_cast<CK_ULONG>(keyAlias.size())});
         } else {
@@ -116,12 +128,26 @@ struct LIBRESCRS_INTERNAL Pkcs11Token::Impl
         };
         FindFinalizer finalizer{funcs, session};
 
+        // CKA_ID selection asks for TWO matches so an ambiguous card (more
+        // than one private key sharing the requested CKA_ID) is detected and
+        // refused rather than silently signing with the first — the safety
+        // contract the discriminator exists to provide. The label / auto
+        // path keeps the single-match request (legacy behaviour).
+        CK_OBJECT_HANDLE handles[2] = {0, 0};
         CK_ULONG found = 0;
-        checkRv(funcs->C_FindObjects(session, &privateKey, 1, &found), "C_FindObjects");
+        checkRv(funcs->C_FindObjects(session, handles, byId ? 2 : 1, &found), "C_FindObjects");
 
-        if (found == 0)
+        if (found == 0) {
+            if (byId)
+                throw std::runtime_error("No private key with the requested CKA_ID found on token");
             throw std::runtime_error(keyAlias.empty() ? "No signing private key found on token"
                                                       : "Private key '" + keyAlias + "' not found on token");
+        }
+        if (byId && found > 1)
+            throw SignFailureException(SignFailureKind::KeyAmbiguous,
+                                       "More than one private key matches the requested CKA_ID on the token");
+
+        privateKey = handles[0];
     }
 
     std::vector<uint8_t> getKeyId()
@@ -225,7 +251,7 @@ struct LIBRESCRS_INTERNAL Pkcs11Token::Impl
 };
 
 Pkcs11Token::Pkcs11Token(Pkcs11ModuleHandle module, const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
-                         const std::string& readerName)
+                         const std::string& readerName, const std::vector<uint8_t>& keyId)
     : impl(std::make_unique<Impl>())
 {
     if (!module.valid())
@@ -243,11 +269,11 @@ Pkcs11Token::Pkcs11Token(Pkcs11ModuleHandle module, const LibreSCRS::Secure::Buf
     // and tearing down the live SM tunnel.
     CK_SLOT_ID slotId = impl->findSlotByReaderName(readerName);
     impl->openSessionAndLogin(slotId, std::span<const uint8_t>{pin.data(), pin.size()});
-    impl->findPrivateKey(keyAlias);
+    impl->findPrivateKey(keyAlias, keyId);
 }
 
 Pkcs11Token::Pkcs11Token(Pkcs11ModuleHandle module, const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
-                         TestSlotId rawSlotId)
+                         TestSlotId rawSlotId, const std::vector<uint8_t>& keyId)
     : impl(std::make_unique<Impl>())
 {
     if (!module.valid())
@@ -259,7 +285,7 @@ Pkcs11Token::Pkcs11Token(Pkcs11ModuleHandle module, const LibreSCRS::Secure::Buf
 
     impl->openSessionAndLogin(static_cast<CK_SLOT_ID>(rawSlotId.slotId),
                               std::span<const uint8_t>{pin.data(), pin.size()});
-    impl->findPrivateKey(keyAlias);
+    impl->findPrivateKey(keyAlias, keyId);
 }
 
 Pkcs11Token::~Pkcs11Token() = default;
@@ -364,21 +390,49 @@ std::vector<uint8_t> Pkcs11Token::certificate() const
         return {};
 
     CK_OBJECT_HANDLE certHandle = 0;
-    CK_ULONG found = 0;
-    CK_RV rv = impl->funcs->C_FindObjects(impl->session, &certHandle, 1, &found);
-    impl->funcs->C_FindObjectsFinal(impl->session);
+    {
+        // RAII: finalize the search on every exit from this block — including
+        // the KeyAmbiguous throw below — so the session never lingers in
+        // find-active state (PKCS#11 §11.7) even if a future edit adds a
+        // throwing call here. Scoping the find to this block also guarantees
+        // C_FindObjectsFinal runs BEFORE the attribute reads further down.
+        struct FindFinalizer
+        {
+            CK_FUNCTION_LIST_PTR f;
+            CK_SESSION_HANDLE s;
+            ~FindFinalizer()
+            {
+                if (f)
+                    f->C_FindObjectsFinal(s);
+            }
+        } finalizer{impl->funcs, impl->session};
 
-    // Fallback: if CKA_ID filter matched nothing, retry without it
-    if ((rv != CKR_OK || found == 0) && !keyId.empty()) {
-        CK_ATTRIBUTE fallbackTemplate[] = {{CKA_CLASS, &certClass, sizeof(certClass)}};
-        if (impl->funcs->C_FindObjectsInit(impl->session, fallbackTemplate, 1) != CKR_OK)
+        // When the cert is selected by the signing key's CKA_ID, ask for two
+        // matches so a card carrying more than one certificate under that CKA_ID
+        // is refused rather than silently picking the first — the cert-side
+        // analogue of the private-key ambiguity guard. Without a CKA_ID
+        // (single-cert cards / tokens that omit IDs) the legacy single-match
+        // request runs. There is deliberately NO fallback to "any certificate":
+        // a CKA_ID that matches no certificate is a hard miss (returns empty),
+        // never a silent substitution of an unrelated cert.
+        CK_OBJECT_HANDLE certHandles[2] = {0, 0};
+        CK_ULONG found = 0;
+        const CK_ULONG want = keyId.empty() ? 1u : 2u;
+        const CK_RV rv = impl->funcs->C_FindObjects(impl->session, certHandles, want, &found);
+
+        // Trust `found` only when the search itself succeeded: PKCS#11 leaves
+        // pulObjectCount undefined on a non-CKR_OK return, so the hard-miss
+        // return must gate the ambiguity throw (otherwise a stale/garbage
+        // count on an errored search could spuriously raise KeyAmbiguous).
+        if (rv != CKR_OK || found == 0)
             return {};
-        rv = impl->funcs->C_FindObjects(impl->session, &certHandle, 1, &found);
-        impl->funcs->C_FindObjectsFinal(impl->session);
-    }
 
-    if (rv != CKR_OK || found == 0)
-        return {};
+        if (!keyId.empty() && found > 1)
+            throw SignFailureException(SignFailureKind::KeyAmbiguous,
+                                       "More than one certificate matches the signing key's CKA_ID on the token");
+
+        certHandle = certHandles[0];
+    }
 
     CK_ATTRIBUTE valueAttr = {CKA_VALUE, nullptr, 0};
     if (impl->funcs->C_GetAttributeValue(impl->session, certHandle, &valueAttr, 1) != CKR_OK)

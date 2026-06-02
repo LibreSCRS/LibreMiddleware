@@ -170,6 +170,44 @@ public:
                                      const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,
                                      const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session) noexcept;
 
+    /// @brief Produce a signature entirely in memory: the document to sign
+    ///        is supplied as a byte span and the finished artifact is
+    ///        returned in @ref SigningResult::signedDocumentBytes — no file
+    ///        is read or written.
+    ///
+    /// Shares the full signing pipeline with the file-based @ref sign
+    /// overload (same preconditions, PIN-as-consent, TSA resolution, trust
+    /// configuration, in-process backend dispatch and error taxonomy); the
+    /// two differ only at the I/O seams. Build the @p request with
+    /// @ref SigningRequest::Builder::buildForBufferSign so the
+    /// `inputFile`/`outputFile` required-field checks are skipped; an
+    /// `inputFile` may still be set purely as a name hint (it drives the
+    /// XAdES/JAdES detached `ds:Reference URI` basename — see the file
+    /// overload's note), but it is never opened.
+    ///
+    /// @param request Immutable signing parameters (build via
+    ///                @ref SigningRequest::Builder::buildForBufferSign).
+    /// @param input The document bytes to sign. Borrowed for the duration of
+    ///              the call; the service does not retain the span past
+    ///              return. Empty input or input exceeding the 256 MiB cap
+    ///              returns @ref SigningResult::Status::InvalidRequest.
+    /// @param credentialProvider Callback that collects the signing PIN.
+    /// @param cardPlugin Plugin used to drive on-card operations (same
+    ///                   borrow/const contract as the file overload).
+    /// @param session Live card session (same borrow contract as the file
+    ///                overload).
+    /// @return SigningResult whose @ref SigningResult::status is always set;
+    ///         on @ref SigningResult::Status::Ok the artifact is in
+    ///         @ref SigningResult::signedDocumentBytes and
+    ///         @ref SigningResult::outputPath is absent.
+    /// @par Blocking / Exceptions
+    /// Identical to the file-based @ref sign overload.
+    /// @since 4.3
+    [[nodiscard]] SigningResult sign(const SigningRequest& request, std::span<const std::uint8_t> input,
+                                     Auth::CredentialProvider credentialProvider,
+                                     const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,
+                                     const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session) noexcept;
+
     /// @brief Append a new signer to a prior signature, producing a multi-
     ///        signature document with the new signer's signature alongside
     ///        the existing ones.

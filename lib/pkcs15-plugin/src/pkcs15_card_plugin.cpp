@@ -414,6 +414,11 @@ public:
             LibreSCRS::Plugin::CertificateData cd;
             cd.label = cert.label;
             cd.derBytes = std::move(der);
+            // The PKCS#15 object id IS the PKCS#11 CKA_ID the bridge exposes
+            // (see pkcs15_pkcs11_slot.cpp) — surface it so the in-process sign
+            // path can select THIS exact key by CKA_ID rather than the
+            // non-unique label.
+            cd.ckaId = cert.id;
 
             for (const auto& key : profile.privateKeys) {
                 if (key.id == cert.id) {

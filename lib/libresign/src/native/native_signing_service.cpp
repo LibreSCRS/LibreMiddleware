@@ -382,7 +382,7 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, const st
         // outlive this call so the registry's weak_ptr lookup resolves.
         // The module handle comes from the service-owned manager so the
         // module stays mapped across consecutive signs.
-        auto token = Pkcs11Token(moduleManager.acquire(pkcs11ModulePath), pin, keyAlias, readerName);
+        auto token = Pkcs11Token(moduleManager.acquire(pkcs11ModulePath), pin, keyAlias, readerName, request.keyId);
 
         // Certificate expiry enforcement. The native backend's CMS path
         // does not intrinsically reject expired signers — add an explicit
@@ -436,6 +436,11 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, const st
         }
         }
         std::unreachable();
+    } catch (const SignFailureException& e) {
+        // Typed failure escaping the card layer (e.g. ambiguous CKA_ID key
+        // selection) — preserve its precise kind instead of collapsing it
+        // into the generic EngineError bucket below.
+        return makeFailure(e.kind, e.what());
     } catch (const std::exception& e) {
         return makeFailure(SignFailureKind::EngineError, std::string("Native signing error: ") + e.what());
     }
@@ -457,7 +462,7 @@ SigningResult NativeSigningService::appendSigner(const SigningRequest& request, 
         // flow into the in-process PKCS#11 module's provider probe
         // transparently — the caller's shared_ptr<CardSession> just needs
         // to outlive this call so the registry's weak_ptr resolves.
-        auto token = Pkcs11Token(moduleManager.acquire(pkcs11Module), pin, keyAlias, readerName);
+        auto token = Pkcs11Token(moduleManager.acquire(pkcs11Module), pin, keyAlias, readerName, request.keyId);
 
         // Wire trust config to TSA/revocation parameters — the new signer
         // inherits the host's CRL/OCSP posture, identical to sign().
@@ -488,6 +493,10 @@ SigningResult NativeSigningService::appendSigner(const SigningRequest& request, 
         }
         }
         std::unreachable();
+    } catch (const SignFailureException& e) {
+        // Typed failure escaping the card layer (e.g. ambiguous CKA_ID key
+        // selection) — preserve its precise kind, same as sign().
+        return makeFailure(e.kind, e.what());
     } catch (const std::exception& e) {
         return makeFailure(SignFailureKind::EngineError, std::string("Native appendSigner error: ") + e.what());
     }

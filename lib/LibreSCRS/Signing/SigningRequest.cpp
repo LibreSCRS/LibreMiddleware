@@ -5,9 +5,11 @@
 #include <LibreSCRS/Signing/TsaProvider.h>
 #include <LibreSCRS/Signing/VisualSignatureParams.h>
 
+#include <cstdint>
 #include <optional>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace LibreSCRS::Signing {
 
@@ -22,6 +24,7 @@ struct LIBRESCRS_INTERNAL SigningRequest::Impl
     std::string location;
     std::string contactInfo;
     std::string certificateLabel;
+    std::vector<std::uint8_t> keyId; // CKA_ID of the signing key/cert pair (reuse-safe selector)
     std::optional<VisualSignatureParams> visualParams;
     TsaProvider tsaOverride;
     bool allowExpiredCert = false;
@@ -67,6 +70,10 @@ const std::string& SigningRequest::contactInfo() const noexcept
 const std::string& SigningRequest::certificateLabel() const noexcept
 {
     return d->certificateLabel;
+}
+const std::vector<std::uint8_t>& SigningRequest::keyId() const noexcept
+{
+    return d->keyId;
 }
 std::optional<VisualSignatureParams> SigningRequest::visualParams() const
 {
@@ -152,6 +159,11 @@ SigningRequest::Builder& SigningRequest::Builder::certificateLabel(std::string l
     d->req.d->certificateLabel = std::move(label);
     return *this;
 }
+SigningRequest::Builder& SigningRequest::Builder::keyId(std::vector<std::uint8_t> id)
+{
+    d->req.d->keyId = std::move(id);
+    return *this;
+}
 SigningRequest::Builder& SigningRequest::Builder::visualParams(VisualSignatureParams&& v)
 {
     d->req.d->visualParams.emplace(std::move(v));
@@ -176,6 +188,17 @@ SigningRequest SigningRequest::Builder::build() &&
     if (d->req.d->outputFile.empty()) {
         throw std::invalid_argument("SigningRequest: outputFile is required");
     }
+    if (d->req.d->visualParams && d->req.d->format != SignatureFormat::Pades) {
+        throw std::invalid_argument("SigningRequest: visualParams are only valid for PAdES format");
+    }
+    return std::move(d->req);
+}
+
+SigningRequest SigningRequest::Builder::buildForBufferSign() &&
+{
+    // Buffer-sign mode carries the document + signed result in memory, so the
+    // inputFile/outputFile required-field checks of build() do not apply; only
+    // the cross-field combination check remains.
     if (d->req.d->visualParams && d->req.d->format != SignatureFormat::Pades) {
         throw std::invalid_argument("SigningRequest: visualParams are only valid for PAdES format");
     }
