@@ -29,6 +29,12 @@ public:
     // Upgrade B-B -> B-T: add signature timestamp.
     std::vector<uint8_t> addTimestamp(const std::vector<uint8_t>& cms, const TSAConfig& tsa);
 
+    // Embed the issuing CA chain (chainDer[1..], leaf already carried by the
+    // SignerInfo) in the CMS certificates set so a B-LT signature is
+    // self-contained for path building. No-op for a chain of <= 1 cert.
+    std::vector<uint8_t> addCertificateChain(const std::vector<uint8_t>& cms,
+                                             const std::vector<std::vector<uint8_t>>& chainDer);
+
     // Upgrade B-T -> B-LT: add revocation data.
     std::vector<uint8_t> addRevocationData(const std::vector<uint8_t>& cms, const RevocationData& revData);
 

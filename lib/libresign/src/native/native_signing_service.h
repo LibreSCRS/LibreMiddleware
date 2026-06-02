@@ -68,6 +68,12 @@ public:
 private:
     TrustConfig trustConfig;
     std::map<std::string, std::vector<uint8_t>> lotlDerivedCerts; // URL -> signing cert DER
+
+    // DER of every CA cert extracted from the configured Trusted List(s),
+    // retained at configure() time. Long-term (B-LT/B-LTA) signing uses these
+    // as the candidate issuer set to complete the card's signer chain — cards
+    // typically carry only the leaf, so the issuing CA must come from the TL.
+    std::vector<std::vector<uint8_t>> tlAnchorCerts;
     bool configured = false;
     bool fullyConfigured = false;
     AnchorEmitter anchorEmitter;

@@ -10,12 +10,19 @@
 
 #include "../lib/libresign/src/native/der_utils.h"
 #include "../lib/libresign/src/native/native_utils.h"
+#include "../lib/libresign/src/native/openssl_raii.h"
+#include "../lib/libresign/src/native/revocation_client.h"
 
 #include <miniz.h>
+#include <openssl/evp.h>
+#include <openssl/x509.h>
 
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <cstdlib>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -24,8 +31,169 @@
 using libresign::derEncodeLength;
 using libresign::native_utils::base64Decode;
 using libresign::native_utils::base64Encode;
+using libresign::native_utils::buildOrderedChain;
+using libresign::native_utils::revocationFailClosed;
 using libresign::native_utils::sha256;
 using libresign::native_utils::sha256Base64;
+
+// ---------------------------------------------------------------------------
+// buildOrderedChain — completes the card's signer chain up to a Trusted-List
+// CA so a long-term signature can embed the full path. Cards typically carry
+// only the leaf; the issuing CA comes from the TL candidate set.
+// ---------------------------------------------------------------------------
+
+namespace {
+using libresign::EvpPkeyPtr;
+using libresign::X509Ptr;
+
+EvpPkeyPtr makeEcKey()
+{
+    return EvpPkeyPtr(EVP_EC_gen("P-256"));
+}
+
+// Build a v3 cert CN=subjectCn issued by CN=issuerCn, public key @p subjectKey,
+// signed with @p issuerKey (pass the subject's own key + subjectCn==issuerCn for
+// a self-signed CA). Returns canonical DER.
+std::vector<uint8_t> makeCertDer(const std::string& subjectCn, const std::string& issuerCn, EVP_PKEY* subjectKey,
+                                 EVP_PKEY* issuerKey)
+{
+    X509Ptr x(X509_new());
+    X509_set_version(x.get(), 2); // X.509 v3
+    ASN1_INTEGER_set(X509_get_serialNumber(x.get()), 1);
+    X509_gmtime_adj(X509_getm_notBefore(x.get()), -3600);
+    X509_gmtime_adj(X509_getm_notAfter(x.get()), 60L * 60 * 24 * 365);
+    X509_set_pubkey(x.get(), subjectKey);
+    X509_NAME_add_entry_by_txt(X509_get_subject_name(x.get()), "CN", MBSTRING_ASC,
+                               reinterpret_cast<const unsigned char*>(subjectCn.c_str()), -1, -1, 0);
+    X509_NAME_add_entry_by_txt(X509_get_issuer_name(x.get()), "CN", MBSTRING_ASC,
+                               reinterpret_cast<const unsigned char*>(issuerCn.c_str()), -1, -1, 0);
+    X509_sign(x.get(), issuerKey, EVP_sha256());
+
+    int len = i2d_X509(x.get(), nullptr);
+    std::vector<uint8_t> der(static_cast<size_t>(len));
+    unsigned char* p = der.data();
+    i2d_X509(x.get(), &p);
+    return der;
+}
+} // namespace
+
+TEST(BuildOrderedChain, CompletesLeafWithCandidateIssuer)
+{
+    auto caKey = makeEcKey();
+    auto leafKey = makeEcKey();
+    ASSERT_TRUE(caKey && leafKey);
+    auto caDer = makeCertDer("Test CA", "Test CA", caKey.get(), caKey.get());  // self-signed CA
+    auto leafDer = makeCertDer("Leaf", "Test CA", leafKey.get(), caKey.get()); // issued by CA
+
+    auto chain = buildOrderedChain({leafDer}, {caDer});
+
+    ASSERT_EQ(chain.size(), 2u);
+    EXPECT_EQ(chain[0], leafDer);
+    EXPECT_EQ(chain[1], caDer);
+}
+
+TEST(BuildOrderedChain, ReturnsEmptyWhenIssuerNotAmongCandidates)
+{
+    auto caKey = makeEcKey();
+    auto leafKey = makeEcKey();
+    auto otherKey = makeEcKey();
+    ASSERT_TRUE(caKey && leafKey && otherKey);
+    auto leafDer = makeCertDer("Leaf", "Test CA", leafKey.get(), caKey.get());
+    auto unrelatedDer = makeCertDer("Other CA", "Other CA", otherKey.get(), otherKey.get());
+
+    auto chain = buildOrderedChain({leafDer}, {unrelatedDer});
+
+    EXPECT_TRUE(chain.empty());
+}
+
+// A subject-DN match alone is not enough: a candidate whose name matches the
+// leaf's issuer but whose key did NOT sign the leaf must be rejected.
+TEST(BuildOrderedChain, RejectsNameCollisionThatDidNotSignTheLeaf)
+{
+    auto realCaKey = makeEcKey();
+    auto impostorKey = makeEcKey();
+    auto leafKey = makeEcKey();
+    ASSERT_TRUE(realCaKey && impostorKey && leafKey);
+    auto leafDer = makeCertDer("Leaf", "Test CA", leafKey.get(), realCaKey.get());
+    // Same subject DN ("Test CA") but a different key — never signed the leaf.
+    auto impostorDer = makeCertDer("Test CA", "Test CA", impostorKey.get(), impostorKey.get());
+
+    auto chain = buildOrderedChain({leafDer}, {impostorDer});
+
+    EXPECT_TRUE(chain.empty());
+}
+
+// HW/integration: when LIBRESCRS_HW_LEAF_DER + LIBRESCRS_HW_CA_DER point at
+// real DER files (a card's signer leaf and a Trusted-List CA), confirm
+// buildOrderedChain completes the leaf-only card chain up to that CA. Skips
+// when unset — exercises the real card + TL data path without a fixture.
+TEST(BuildOrderedChain, HwCompletesRealCardLeafToTrustedListCa)
+{
+    const char* leafEnv = std::getenv("LIBRESCRS_HW_LEAF_DER");
+    const char* caEnv = std::getenv("LIBRESCRS_HW_CA_DER");
+    if (!leafEnv || !caEnv)
+        GTEST_SKIP() << "set LIBRESCRS_HW_LEAF_DER + LIBRESCRS_HW_CA_DER to real DER files";
+
+    auto readFile = [](const char* p) {
+        std::ifstream f(p, std::ios::binary);
+        return std::vector<uint8_t>(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    };
+    auto leaf = readFile(leafEnv);
+    auto ca = readFile(caEnv);
+    ASSERT_FALSE(leaf.empty());
+    ASSERT_FALSE(ca.empty());
+
+    auto chain = buildOrderedChain({leaf}, {ca});
+
+    ASSERT_EQ(chain.size(), 2u);
+    EXPECT_EQ(chain[0], leaf);
+    EXPECT_EQ(chain[1], ca);
+}
+
+TEST(BuildOrderedChain, WalksTokenIntermediateToCandidateRoot)
+{
+    auto rootKey = makeEcKey();
+    auto intKey = makeEcKey();
+    auto leafKey = makeEcKey();
+    ASSERT_TRUE(rootKey && intKey && leafKey);
+    auto rootDer = makeCertDer("Root", "Root", rootKey.get(), rootKey.get());
+    auto intDer = makeCertDer("Int", "Root", intKey.get(), rootKey.get());
+    auto leafDer = makeCertDer("Leaf", "Int", leafKey.get(), intKey.get());
+
+    // Card carries leaf + intermediate; the root is the only TL candidate.
+    auto chain = buildOrderedChain({leafDer, intDer}, {rootDer});
+
+    ASSERT_EQ(chain.size(), 3u);
+    EXPECT_EQ(chain[0], leafDer);
+    EXPECT_EQ(chain[1], intDer);
+    EXPECT_EQ(chain[2], rootDer);
+}
+
+// ---------------------------------------------------------------------------
+// revocationFailClosed — the pure B-LT/B-LTA revocation-completeness gate that
+// the format modules apply right after collectRevocationData. A non-empty
+// RevocationData::certsWithoutRevocation must produce a RevocationFetchFailed
+// failure; a fully-covered chain must produce nothing (the module proceeds).
+// ---------------------------------------------------------------------------
+
+TEST(RevocationFailClosed, NulloptWhenEveryChainCertIsCovered)
+{
+    libresign::RevocationData rev; // certsWithoutRevocation is empty
+    EXPECT_FALSE(revocationFailClosed(rev).has_value());
+}
+
+TEST(RevocationFailClosed, FailsClosedWhenAnyChainCertLacksRevocation)
+{
+    libresign::RevocationData rev;
+    rev.certsWithoutRevocation = {0, 2};
+
+    auto result = revocationFailClosed(rev);
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_FALSE(result->success);
+    ASSERT_TRUE(result->failureKind.has_value());
+    EXPECT_EQ(*result->failureKind, libresign::SignFailureKind::RevocationFetchFailed);
+}
 
 // ---------------------------------------------------------------------------
 // derEncodeLength — throws std::length_error on ≥ 16 MiB

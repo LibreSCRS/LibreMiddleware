@@ -672,6 +672,8 @@ SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, Pkcs11Tok
         if (wantsLT) {
             dssMat.certs = token.certificateChain();
             revData = collectRevocationData(token, tsa);
+            if (auto failure = revocationFailClosed(revData))
+                return *failure;
             dssMat.crls = revData.crls;
             dssMat.ocspResponses = revData.ocspResponses;
         }

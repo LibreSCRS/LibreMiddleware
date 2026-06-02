@@ -114,6 +114,14 @@ public:
     std::vector<uint8_t> certificate() const;
     std::vector<std::vector<uint8_t>> certificateChain() const;
 
+    /// @brief Override the chain returned by @ref certificateChain with a
+    ///        caller-resolved one (DER, leaf-first). The signing service uses
+    ///        this for long-term levels: cards usually carry only the leaf, so
+    ///        the chain is completed against the Trusted List before any format
+    ///        module embeds it. Passing an empty vector restores the on-token
+    ///        query behaviour.
+    void setResolvedChain(std::vector<std::vector<uint8_t>> chain);
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl;

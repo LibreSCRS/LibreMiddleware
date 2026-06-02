@@ -660,7 +660,7 @@ if(BUILD_SIGNING)
         # unreachable endpoint, timeout, plus module-level "B-T requires TSA"
         # contract via CAdES::addTimestamp throw site.
         add_executable(TsaFailureModesTests tsa_failure_modes_test.cpp)
-        target_link_libraries(TsaFailureModesTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto)
+        target_link_libraries(TsaFailureModesTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
         target_include_directories(TsaFailureModesTests PRIVATE
             ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
         target_compile_definitions(TsaFailureModesTests PRIVATE LIBRESCRS_INTERNAL_BUILD)

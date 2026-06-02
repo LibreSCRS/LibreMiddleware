@@ -458,6 +458,99 @@ libresign::RevocationData collectRevocationData(libresign::Pkcs11Token& token, c
     return revClient.collectForChain(chain);
 }
 
+std::vector<std::vector<uint8_t>> buildOrderedChain(const std::vector<std::vector<uint8_t>>& tokenChain,
+                                                    const std::vector<std::vector<uint8_t>>& candidateCas)
+{
+    if (tokenChain.empty())
+        return {};
+
+    // Pool of certs we may append: the token's own non-signer certs (path
+    // material) and the Trusted-List candidates (anchors). `isCandidate` marks
+    // a TL anchor — once the walk appends one the chain is complete.
+    struct Node
+    {
+        const std::vector<uint8_t>* der;
+        X509Ptr x;
+        bool isCandidate;
+    };
+    std::vector<Node> pool;
+    auto addPool = [&](const std::vector<uint8_t>& der, bool candidate) {
+        try {
+            if (auto x = parseCert(der))
+                pool.push_back({&der, std::move(x), candidate});
+        } catch (const std::exception&) {
+            // Skip a malformed candidate/token cert rather than aborting the
+            // whole walk — one bad Trusted-List entry must not block every
+            // long-term sign. parseCert throws on bad DER (it never returns
+            // null), so the guard is the try/catch, not the if.
+        }
+    };
+    for (std::size_t i = 1; i < tokenChain.size(); ++i)
+        addPool(tokenChain[i], /*candidate=*/false);
+    for (const auto& der : candidateCas)
+        addPool(der, /*candidate=*/true);
+
+    X509Ptr leaf;
+    try {
+        leaf = parseCert(tokenChain[0]);
+    } catch (const std::exception&) {
+        // Fall through to the empty-chain (fail-closed) return below.
+    }
+    if (!leaf)
+        return {};
+
+    std::vector<std::vector<uint8_t>> result;
+    result.push_back(tokenChain[0]);
+
+    X509* current = leaf.get();
+    std::vector<bool> used(pool.size(), false);
+    constexpr int kMaxDepth = 16; // guard against pathological / looping inputs
+    for (int depth = 0; depth < kMaxDepth; ++depth) {
+        // A self-signed cert is its own anchor — the chain terminates here.
+        if (X509_NAME_cmp(X509_get_issuer_name(current), X509_get_subject_name(current)) == 0)
+            return result;
+
+        // The issuer is the cert whose subject matches current's issuer AND
+        // whose key actually verifies current's signature. The signature check
+        // is essential: a subject-DN match alone would accept a name-colliding
+        // impostor that never signed this cert.
+        int found = -1;
+        for (std::size_t i = 0; i < pool.size(); ++i) {
+            if (used[i])
+                continue;
+            if (X509_NAME_cmp(X509_get_subject_name(pool[i].x.get()), X509_get_issuer_name(current)) != 0)
+                continue;
+            EVP_PKEY* issuerKey = X509_get0_pubkey(pool[i].x.get());
+            if (issuerKey && X509_verify(current, issuerKey) == 1) {
+                found = static_cast<int>(i);
+                break;
+            }
+        }
+        if (found < 0)
+            return {}; // issuer unresolvable — chain incomplete (caller fails closed)
+
+        used[static_cast<std::size_t>(found)] = true;
+        result.push_back(*pool[static_cast<std::size_t>(found)].der);
+        if (pool[static_cast<std::size_t>(found)].isCandidate)
+            return result; // reached a Trusted-List anchor — chain complete
+        current = pool[static_cast<std::size_t>(found)].x.get();
+    }
+
+    return {}; // depth guard tripped — treat as incomplete
+}
+
+std::optional<libresign::SigningResult> revocationFailClosed(const libresign::RevocationData& rev)
+{
+    if (rev.certsWithoutRevocation.empty())
+        return std::nullopt;
+
+    return libresign::makeFailure(libresign::SignFailureKind::RevocationFetchFailed,
+                                  "long-term (B-LT/B-LTA) signing requires verified revocation evidence for every "
+                                  "chain certificate; " +
+                                      std::to_string(rev.certsWithoutRevocation.size()) +
+                                      " certificate(s) could not be covered");
+}
+
 // ---- Sign a hash with PKCS#11 token (DigestInfo for RSA) ----
 
 std::vector<uint8_t> signHashWithToken(libresign::Pkcs11Token& token, X509* cert, const std::vector<uint8_t>& hash,

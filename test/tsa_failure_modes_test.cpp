@@ -6,7 +6,11 @@
 #ifdef LIBRESIGN_HAS_NATIVE
 
 #include "native/cades_module.h"
+#include "native/pkcs11_module_manager.h"
+#include "native/pkcs11_token.h"
 #include "native/tsa_client.h"
+#include "signing_service.h"
+#include "signing_test_support/signing_test_support.h"
 #include "types.h"
 
 #include <arpa/inet.h>
@@ -265,6 +269,125 @@ TEST(CAdESModuleStandalone, BTRequiresTSA)
     EXPECT_THROW(
         { cades.addTimestamp(fakeCms, tsa); }, std::runtime_error)
         << "B-T addTimestamp must throw when TSA URL is empty";
+}
+
+// ---- CAdES sign() failure-kind classification for a failing TSA ----
+//
+// A reachable-but-failing TSA must surface from CAdESModule::sign as
+// SignFailureKind::TsaUnreachable, the same classification the XAdES, JAdES
+// and PAdES paths already produce for the equivalent timestamp-step failure.
+// MockHttpServer (GarbageBody) replies HTTP 200 with a body that is not a
+// TimeStampResp, so TSAClient parses it and reports failure — driving the
+// addTimestamp throw inside sign() without any live network. signBB still
+// needs a real token, so this is SoftHSM-gated like the other module tests.
+TEST(CAdESSignClassification, BT_TsaFailure_IsTsaUnreachable)
+{
+    const char* softHsmPath = libresign::test::findSoftHsmPath();
+    if (!softHsmPath)
+        GTEST_SKIP() << "SoftHSM2 not found";
+
+    libresign::Pkcs11ModuleManager manager;
+    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
+                      libresign::Pkcs11Token::TestSlotId{0});
+
+    MockHttpServer server(MockHttpServer::Mode::GarbageBody);
+    TSAConfig tsa;
+    tsa.url = "http://127.0.0.1:" + std::to_string(server.port()) + "/tsa";
+    tsa.timeoutSeconds = 5;
+
+    CAdESModule cades;
+    std::vector<uint8_t> data = {'H', 'e', 'l', 'l', 'o'};
+    auto result = cades.sign(data, token, SignatureLevel::B_T, tsa);
+
+    ASSERT_FALSE(result.success);
+    EXPECT_EQ(result.failureKind, SignFailureKind::TsaUnreachable)
+        << "B-T TSA round-trip failure must classify as TsaUnreachable, got kind="
+        << (result.failureKind ? static_cast<int>(*result.failureKind) : -1) << " msg=" << result.errorMessage;
+}
+
+// ---- CAdES timestamp-step message partition ----
+//
+// CAdESModule::sign discriminates the throws from addTimestamp /
+// addArchiveTimestamp on the message: a TSA failure (missing URL or failed
+// RFC 3161 round-trip) classifies as TsaUnreachable, while every other throw
+// (malformed SignerInfo, CMS parse / encode, OpenSSL) is re-thrown so the
+// outer catch maps it to EngineError. That discrimination relies on the
+// TSA-failure throws carrying one of the recognised prefixes and the internal
+// faults carrying none of them. These token-free helper-level tests pin that
+// message partition so a future message reword can't silently mis-classify an
+// internal fault as TsaUnreachable (or vice versa). The end-to-end
+// non-TSA-fault -> EngineError branch through sign() needs a live token and a
+// malformed-CMS production seam to drive, so it is covered by mirroring the
+// PAdES appendDocTimeStamp catch plus the message partition asserted here;
+// the SoftHSM CI host additionally exercises the TSA-failure -> TsaUnreachable
+// branch via CAdESSignClassification.BT_TsaFailure_IsTsaUnreachable above.
+
+namespace {
+// Mirrors the file-local discrimination predicate in cades_module.cpp.
+bool looksLikeTsaFailure(const std::string& what)
+{
+    return what.find("TSA URL is required") != std::string::npos ||
+           what.find("TSA timestamp failed:") != std::string::npos ||
+           what.find("Archive TSA timestamp failed:") != std::string::npos;
+}
+} // namespace
+
+TEST(CAdESTimestampPartition, MissingUrlIsTsaFailure)
+{
+    CAdESModule cades;
+    TSAConfig tsa; // empty url
+    std::vector<uint8_t> fakeCms{0x30, 0x00};
+
+    bool threw = false;
+    try {
+        cades.addTimestamp(fakeCms, tsa);
+    } catch (const std::exception& e) {
+        threw = true;
+        EXPECT_TRUE(looksLikeTsaFailure(e.what()))
+            << "missing-TSA-URL throw must classify as a TSA failure, msg=" << e.what();
+    }
+    EXPECT_TRUE(threw) << "addTimestamp must throw on an empty TSA URL";
+
+    threw = false;
+    try {
+        cades.addArchiveTimestamp(fakeCms, tsa);
+    } catch (const std::exception& e) {
+        threw = true;
+        EXPECT_TRUE(looksLikeTsaFailure(e.what()))
+            << "missing-TSA-URL throw must classify as a TSA failure, msg=" << e.what();
+    }
+    EXPECT_TRUE(threw) << "addArchiveTimestamp must throw on an empty TSA URL";
+}
+
+TEST(CAdESTimestampPartition, InternalFaultIsNotTsaFailure)
+{
+    CAdESModule cades;
+    TSAConfig tsa;
+    tsa.url = "http://127.0.0.1:1/tsa"; // non-empty: get past the URL guard
+    // A non-CMS body forces an internal parse fault inside the helper, after
+    // the URL guard and before any TSA round-trip — the same shape as the
+    // SignerInfo / CMS / OpenSSL throws that must stay EngineError.
+    std::vector<uint8_t> garbageCms{0x01, 0x02, 0x03, 0x04};
+
+    bool threw = false;
+    try {
+        cades.addTimestamp(garbageCms, tsa);
+    } catch (const std::exception& e) {
+        threw = true;
+        EXPECT_FALSE(looksLikeTsaFailure(e.what()))
+            << "internal (non-TSA) fault must NOT classify as a TSA failure, msg=" << e.what();
+    }
+    EXPECT_TRUE(threw) << "addTimestamp must throw on a malformed CMS";
+
+    threw = false;
+    try {
+        cades.addArchiveTimestamp(garbageCms, tsa);
+    } catch (const std::exception& e) {
+        threw = true;
+        EXPECT_FALSE(looksLikeTsaFailure(e.what()))
+            << "internal (non-TSA) fault must NOT classify as a TSA failure, msg=" << e.what();
+    }
+    EXPECT_TRUE(threw) << "addArchiveTimestamp must throw on a malformed CMS";
 }
 
 #else

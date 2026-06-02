@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "openssl_raii.h"
+#include "types.h" // SigningResult / SignFailureKind for revocationFailClosed
 
 // Forward declarations for helper functions
 typedef struct x509_st X509;
@@ -150,6 +151,26 @@ std::string mimeTypeFromFileName(const std::string& fileName);
 
 // Collect revocation data (CRLs + OCSP) for the token's certificate chain.
 libresign::RevocationData collectRevocationData(libresign::Pkcs11Token& token, const libresign::TSAConfig& tsa);
+
+// Fail-closed gate for long-term (B-LT/B-LTA) signatures: returns a
+// RevocationFetchFailed failure result when @p rev reports any non-root chain
+// certificate without verified revocation evidence
+// (RevocationData::certsWithoutRevocation non-empty); std::nullopt when every
+// required certificate is covered and the caller may embed @p rev. Splitting
+// the policy out of the format modules keeps it card-free and unit-tested.
+std::optional<libresign::SigningResult> revocationFailClosed(const libresign::RevocationData& rev);
+
+// Build an ordered, completed certificate chain (DER, leaf-first) for a
+// long-term signature. Starting from the card's signer cert (@p tokenChain[0]),
+// walk issuers found among the remaining token certs and the supplied
+// @p candidateCas (sourced from the Trusted List), appending each cert that
+// cryptographically signed the current one, and stop at the first issuer that
+// is a supplied candidate (a TL trust anchor) or is self-signed. Returns the
+// ordered chain on success; returns EMPTY when the leaf's issuer cannot be
+// resolved — the caller fails closed for B-LT/B-LTA. A subject-DN match is NOT
+// trusted unless the candidate's key actually verifies the issued certificate.
+std::vector<std::vector<uint8_t>> buildOrderedChain(const std::vector<std::vector<uint8_t>>& tokenChain,
+                                                    const std::vector<std::vector<uint8_t>>& candidateCas);
 
 // Return the DigestInfo prefix for the given digest name, or empty span if unknown.
 // Accepts OpenSSL-style names: SHA256, SHA-256, SHA2-256, etc. (case-insensitive).

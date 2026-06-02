@@ -396,6 +396,8 @@ SigningResult JAdESModule::sign(const std::vector<uint8_t>& data, const std::str
         // 3. B-LT: add revocation data
         if (level >= SignatureLevel::B_LT) {
             auto revData = collectRevocationData(token, tsa);
+            if (auto failure = revocationFailClosed(revData))
+                return *failure;
 
             nlohmann::json rVals;
             if (!revData.crls.empty()) {

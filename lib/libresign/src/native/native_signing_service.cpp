@@ -145,6 +145,7 @@ bool looksSignedAlready(std::span<const uint8_t> doc, SignatureFormat fmt)
 bool NativeSigningService::configure(const TrustConfig& config)
 {
     trustConfig = config;
+    tlAnchorCerts.clear(); // rebuilt from the TLs loaded below
 
     TlCache cache(config.cacheDirectory);
     TlSignatureVerifier verifier;
@@ -286,9 +287,15 @@ void NativeSigningService::loadTrustList(const std::string& url, bool isLotl, Tl
     //    Trust::TrustStoreService. Inverted-callback shape: libresign
     //    extracts anchors, the bridge owns the merge. No-op when the host
     //    did not bind an emitter via setAnchorEmitter.
-    if (anchorEmitter) {
+    {
         auto anchors = extractAnchorsFromTrustedList(tlInfo, "tl:" + url);
-        anchorEmitter(std::move(anchors), "tl:" + url);
+        // Retain the anchor DERs for long-term chain completion (used even when
+        // no host emitter is bound, e.g. native-only signing).
+        for (const auto& a : anchors)
+            if (!a.certificateDer.empty())
+                tlAnchorCerts.push_back(a.certificateDer);
+        if (anchorEmitter)
+            anchorEmitter(std::move(anchors), "tl:" + url);
     }
 
     // 7. Store in cache (only if freshly fetched, not from cache)
@@ -409,6 +416,23 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, const st
         tsa.crlEnabled = trustConfig.crlEnabled;
         tsa.ocspEnabled = trustConfig.ocspEnabled;
 
+        // Long-term levels (B-LT/B-LTA) embed the full certificate chain. Cards
+        // typically carry only the signer cert, so complete the chain from the
+        // Trusted-List anchors before any format module reads
+        // token.certificateChain(). Fail closed if the issuing CA is not in the
+        // configured TL(s): a long-term signature with an unverifiable chain
+        // cannot reach the LT validation level. Skipped when no TL is configured
+        // (tlAnchorCerts empty) — the chain then stays as the card provided it,
+        // preserving pre-TL behaviour; the revocation gate still applies.
+        if (request.level >= SignatureLevel::B_LT && !tlAnchorCerts.empty()) {
+            auto ordered = native_utils::buildOrderedChain(token.certificateChain(), tlAnchorCerts);
+            if (ordered.empty())
+                return makeFailure(SignFailureKind::EngineError,
+                                   "long-term signing requires a complete certificate chain, but the signer's "
+                                   "issuing CA was not found in the configured Trusted List(s)");
+            token.setResolvedChain(std::move(ordered));
+        }
+
         // API-POLICY §9 forward-compat: exhaustive switch, no `default:`,
         // std::unreachable() after — adding a new SignatureFormat value
         // triggers a -Werror=switch-enum compile error here rather than
@@ -469,6 +493,18 @@ SigningResult NativeSigningService::appendSigner(const SigningRequest& request, 
         auto tsa = request.tsa;
         tsa.crlEnabled = trustConfig.crlEnabled;
         tsa.ocspEnabled = trustConfig.ocspEnabled;
+
+        // Complete the new signer's chain from the Trusted List for long-term
+        // levels, identical to sign() — otherwise a B-LT counter-signature would
+        // embed a leaf-only chain. Fail closed when the issuing CA is absent.
+        if (request.level >= SignatureLevel::B_LT && !tlAnchorCerts.empty()) {
+            auto ordered = native_utils::buildOrderedChain(token.certificateChain(), tlAnchorCerts);
+            if (ordered.empty())
+                return makeFailure(SignFailureKind::EngineError,
+                                   "long-term signing requires a complete certificate chain, but the signer's "
+                                   "issuing CA was not found in the configured Trusted List(s)");
+            token.setResolvedChain(std::move(ordered));
+        }
 
         switch (*fmt) {
         case SignatureFormat::Pades: {

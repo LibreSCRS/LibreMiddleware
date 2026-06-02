@@ -21,6 +21,7 @@
 #include <memory>
 #include <span>
 #include <stdexcept>
+#include <string_view>
 
 namespace libresign {
 
@@ -32,6 +33,18 @@ using ::libresign::BioPtr;
 using ::libresign::CmsPtr;
 using ::libresign::EvpPkeyPtr;
 using ::libresign::StackX509Ptr;
+
+// True when an exception message raised inside addTimestamp /
+// addArchiveTimestamp reports a TSA failure (missing URL or failed RFC 3161
+// round-trip) rather than an internal engine fault. The prefixes match the
+// only TSA-failure throws in those helpers; every other throw (malformed
+// SignerInfo, CMS parse / encode, OpenSSL) lacks them and stays EngineError.
+bool isTsaFailureMessage(std::string_view what)
+{
+    return what.find("TSA URL is required") != std::string_view::npos ||
+           what.find("TSA timestamp failed:") != std::string_view::npos ||
+           what.find("Archive TSA timestamp failed:") != std::string_view::npos;
+}
 
 // Encode CMS to DER
 std::vector<uint8_t> encodeCms(CMS_ContentInfo* cms)
@@ -314,6 +327,28 @@ std::vector<uint8_t> CAdESModule::addTimestamp(const std::vector<uint8_t>& cmsBy
     return encodeCms(cms.get());
 }
 
+// ---- addCertificateChain ----
+
+std::vector<uint8_t> CAdESModule::addCertificateChain(const std::vector<uint8_t>& cmsBytes,
+                                                      const std::vector<std::vector<uint8_t>>& chainDer)
+{
+    // chainDer[0] is the signer leaf — CMS_add1_signer already placed it in the
+    // SignedData certificates set. Embed the remaining path (issuing CA up to
+    // the trust anchor) so a B-LT signature carries the certificates a verifier
+    // needs to build the path without external fetching.
+    if (chainDer.size() <= 1)
+        return cmsBytes;
+
+    CmsPtr cms = parseCms(cmsBytes);
+    for (std::size_t i = 1; i < chainDer.size(); ++i) {
+        X509Ptr cert = parseCert(chainDer[i]);
+        if (cert && CMS_add1_cert(cms.get(), cert.get()) != 1)
+            throw std::runtime_error("CMS_add1_cert() failed: " + opensslError());
+    }
+
+    return encodeCms(cms.get());
+}
+
 // ---- addRevocationData ----
 
 std::vector<uint8_t> CAdESModule::addRevocationData(const std::vector<uint8_t>& cmsBytes, const RevocationData& revData)
@@ -516,17 +551,41 @@ SigningResult CAdESModule::sign(const std::vector<uint8_t>& data, Pkcs11Token& t
         if (cms.empty())
             return makeFailure(SignFailureKind::OpensslError, "CAdES B-B signing produced empty output");
 
+        // The B-T signature timestamp and B-LTA archive timestamp drive an
+        // RFC 3161 round-trip through TSAClient inside addTimestamp /
+        // addArchiveTimestamp. A missing TSA URL or a failed round-trip is
+        // classified as TsaUnreachable so a failing TSA surfaces the same way
+        // as on the XAdES / JAdES / PAdES paths; every other throw from those
+        // helpers (e.g. malformed SignerInfo, CMS parse / encode, OpenSSL
+        // faults) is an internal engine error and is re-thrown so the outer
+        // catch maps it to EngineError. Discriminate on the message prefix,
+        // mirroring the PAdES appendDocTimeStamp catch (pades_module.cpp).
         if (level >= SignatureLevel::B_T) {
-            cms = addTimestamp(cms, tsa);
+            try {
+                cms = addTimestamp(cms, tsa);
+            } catch (const std::exception& e) {
+                if (isTsaFailureMessage(e.what()))
+                    return makeFailure(SignFailureKind::TsaUnreachable, e.what());
+                throw;
+            }
         }
 
         if (level >= SignatureLevel::B_LT) {
             auto revData = collectRevocationData(token, tsa);
+            if (auto failure = revocationFailClosed(revData))
+                return *failure;
+            cms = addCertificateChain(cms, token.certificateChain());
             cms = addRevocationData(cms, revData);
         }
 
         if (level >= SignatureLevel::B_LTA) {
-            cms = addArchiveTimestamp(cms, tsa);
+            try {
+                cms = addArchiveTimestamp(cms, tsa);
+            } catch (const std::exception& e) {
+                if (isTsaFailureMessage(e.what()))
+                    return makeFailure(SignFailureKind::TsaUnreachable, e.what());
+                throw;
+            }
         }
 
         return makeSuccess(std::move(cms));

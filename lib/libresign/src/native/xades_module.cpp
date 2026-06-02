@@ -945,6 +945,8 @@ SigningResult XAdESModule::signWithSuffix(const std::vector<uint8_t>& data, cons
         // 11. B-LT: add revocation data
         if (level >= SignatureLevel::B_LT) {
             auto revData = collectRevocationData(token, tsa);
+            if (auto failure = revocationFailClosed(revData))
+                return *failure;
 
             if (!revData.crls.empty() || !revData.ocspResponses.empty()) {
                 xmlNsPtr nsXades = xmlSearchNsByHref(ctx.doc.get(), ctx.signatureNode, BAD_CAST kNsXades);

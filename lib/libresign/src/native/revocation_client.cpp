@@ -22,6 +22,37 @@ using namespace libresign::native_utils;
 
 } // namespace
 
+bool RevocationClient::crlWindowValid(const ASN1_TIME* thisUpdate, const ASN1_TIME* nextUpdate, std::time_t now,
+                                      long skewSeconds)
+{
+    // A CRL must carry a thisUpdate; without it the window is undefined.
+    if (!thisUpdate)
+        return false;
+
+    // thisUpdate must not be in the future: reject if it is later than
+    // now + skew. X509_cmp_time returns >0 when the first arg is later than
+    // the reference time, <0 when earlier, and 0 on a parse error — treat that
+    // error as a reject (fail-closed), matching OCSP_check_validity, rather
+    // than letting an unparseable-but-signed time slip through the window.
+    std::time_t future = now + skewSeconds;
+    int thisCmp = X509_cmp_time(thisUpdate, &future);
+    if (thisCmp == 0 || thisCmp > 0)
+        return false;
+
+    // nextUpdate, when present, must not have already elapsed: reject if it is
+    // earlier than now - skew (or unparseable). A null nextUpdate is accepted —
+    // freshness can't be bounded but the CRL is not proven stale (mirrors
+    // OCSP_check_validity with an unbounded max-age, which the OCSP path uses).
+    if (nextUpdate) {
+        std::time_t past = now - skewSeconds;
+        int nextCmp = X509_cmp_time(nextUpdate, &past);
+        if (nextCmp == 0 || nextCmp < 0)
+            return false;
+    }
+
+    return true;
+}
+
 std::vector<std::string> RevocationClient::extractCrlUrls(X509* cert)
 {
     std::vector<std::string> urls;
@@ -109,6 +140,15 @@ std::vector<uint8_t> RevocationClient::fetchCrl(const std::string& url, X509* is
     // signed document and trusted by every downstream verifier.
     EVP_PKEY* issuerKey = X509_get0_pubkey(issuer);
     if (!issuerKey || X509_CRL_verify(crl.get(), issuerKey) != 1)
+        return {};
+
+    // Reject a stale (or not-yet-valid) CRL: a long-term signature must embed
+    // revocation evidence that is fresh at signing time. The OCSP path already
+    // enforces this via OCSP_check_validity; mirror it for CRLs with the same
+    // 5-minute clock-skew tolerance. An unfresh CRL is treated as "no evidence"
+    // (returns empty), which collectForChain records as a fail-closed gap.
+    if (!crlWindowValid(X509_CRL_get0_lastUpdate(crl.get()), X509_CRL_get0_nextUpdate(crl.get()), std::time(nullptr),
+                        300L))
         return {};
 
     // Re-encode to canonical DER
@@ -249,6 +289,7 @@ RevocationData RevocationClient::collectForChain(const std::vector<X509*>& chain
     for (size_t i = 0; i + 1 < chain.size(); ++i) {
         X509* cert = chain[i];
         X509* issuer = chain[i + 1];
+        bool gotRevocation = false;
 
         // Try CRL — verified against issuer's public key inside fetchCrl
         if (crlEnabled) {
@@ -257,6 +298,7 @@ RevocationData RevocationClient::collectForChain(const std::vector<X509*>& chain
                 auto crl = fetchCrl(url, issuer);
                 if (!crl.empty()) {
                     data.crls.push_back(std::move(crl));
+                    gotRevocation = true;
                     break; // one CRL per cert is sufficient
                 }
             }
@@ -269,10 +311,18 @@ RevocationData RevocationClient::collectForChain(const std::vector<X509*>& chain
                 auto resp = fetchOcsp(cert, issuer, chain, url);
                 if (!resp.empty()) {
                     data.ocspResponses.push_back(std::move(resp));
+                    gotRevocation = true;
                     break; // one OCSP response per cert is sufficient
                 }
             }
         }
+
+        // Record a fail-closed gap: this non-root cert produced no
+        // signature-verified revocation evidence (no endpoint, all endpoints
+        // unreachable, or every response failed verification/freshness). The
+        // B-LT/B-LTA caller turns a non-empty list into RevocationFetchFailed.
+        if (!gotRevocation)
+            data.certsWithoutRevocation.push_back(i);
     }
 
     return data;

@@ -55,6 +55,13 @@ struct LIBRESCRS_INTERNAL Pkcs11Token::Impl
     bool loggedIn = false;
     std::mutex sessionMutex;
 
+    /// Optional caller-resolved certificate chain (DER, leaf-first). When
+    /// non-empty, @ref certificateChain returns it verbatim instead of querying
+    /// the token — the signing service sets it for long-term levels after
+    /// completing the card's chain against the Trusted List (cards usually
+    /// carry only the leaf). Empty preserves the on-token query behaviour.
+    std::vector<std::vector<uint8_t>> resolvedChain;
+
     ~Impl()
     {
         if (funcs) {
@@ -453,9 +460,20 @@ std::vector<uint8_t> Pkcs11Token::certificate() const
     return certData;
 }
 
+void Pkcs11Token::setResolvedChain(std::vector<std::vector<uint8_t>> chain)
+{
+    std::scoped_lock lock(impl->sessionMutex);
+    impl->resolvedChain = std::move(chain);
+}
+
 std::vector<std::vector<uint8_t>> Pkcs11Token::certificateChain() const
 {
     std::scoped_lock lock(impl->sessionMutex);
+
+    // A caller-resolved chain (set by the signing service for long-term levels)
+    // takes precedence over the on-token query — see setResolvedChain.
+    if (!impl->resolvedChain.empty())
+        return impl->resolvedChain;
 
     // Get CKA_ID from private key to identify the signer certificate
     auto keyId = impl->getKeyId();

@@ -16,7 +16,10 @@
 #endif
 
 #include <json.hpp>
+#include <openssl/cms.h>
+#include <openssl/x509.h>
 
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string_view>
@@ -133,6 +136,67 @@ protected:
     std::unique_ptr<DSSSigningService> dssService;
 #endif
 };
+
+#ifdef LIBRESIGN_HAS_NATIVE
+// HW + Trusted-List: a native CAdES B-LT sign on a real card must complete the
+// signer chain from the Serbian TL and embed the issuing CA in the CMS (cards
+// carry only the leaf). Reads PIN/reader from env; skips when absent or when
+// the TL can't load. Fail-closed outcomes (issuer not in TL, leaf revocation
+// unreachable) are correct and skip rather than fail.
+TEST(SigningHwNativeBLT, CAdESEmbedsTrustedListChain)
+{
+    SKIP_IF_PIN_FAILED();
+    auto cfgResult = readTestConfig();
+    if (!cfgResult.valid)
+        GTEST_SKIP() << cfgResult.skipReason;
+    auto cfg = cfgResult.config;
+    if (!fs::exists(cfg.pkcs11Module))
+        GTEST_SKIP() << "PKCS#11 module not found: " << cfg.pkcs11Module;
+
+    auto svc = createSigningService(Backend::Native);
+    if (!svc || !svc->isAvailable())
+        GTEST_SKIP() << "native backend unavailable";
+
+    TrustConfig tl;
+    TrustedListEntry entry;
+    entry.url = "https://www.mit.gov.rs/TrustedList/TSL-RS.xml";
+    entry.isLotl = false;
+    entry.eager = true;
+    tl.trustedLists.push_back(entry);
+    tl.cacheDirectory = (fs::temp_directory_path() / "librescrs-hw-blt").string();
+    tl.crlEnabled = true;
+    tl.ocspEnabled = true;
+    if (!svc->configure(tl))
+        GTEST_SKIP() << "Serbian Trusted List could not be loaded (offline?)";
+
+    const std::string content = "CAdES B-LT Trusted-List chain-completion HW test";
+    SigningRequest req;
+    req.document.assign(content.begin(), content.end());
+    req.fileName = "test.txt";
+    req.format = SignatureFormat::Cades;
+    req.level = SignatureLevel::B_LT;
+    req.tsa.url = "http://timestamp.digicert.com";
+    req.allowExpiredCertificate = true;
+
+    auto result = svc->sign(req, cfg.pkcs11Module, as_pin(cfg.pin), cfg.keyAlias, cfg.readerName);
+    checkPinFailure(result);
+    if (!result.success)
+        GTEST_SKIP() << "B-LT not produced (fail-closed / network): " << result.errorMessage;
+    ASSERT_FALSE(result.signedDocument.empty());
+
+    // The completed chain must now be embedded: at least the leaf + issuing CA.
+    const unsigned char* p = result.signedDocument.data();
+    CMS_ContentInfo* cms = d2i_CMS_ContentInfo(nullptr, &p, static_cast<long>(result.signedDocument.size()));
+    ASSERT_NE(cms, nullptr);
+    STACK_OF(X509)* certs = CMS_get1_certs(cms);
+    const int certCount = certs ? sk_X509_num(certs) : 0;
+    std::fprintf(stderr, "[HW] CAdES B-LT embedded certificates: %d\n", certCount);
+    EXPECT_GE(certCount, 2) << "B-LT CMS should embed the leaf and its issuing CA";
+    if (certs)
+        sk_X509_pop_free(certs, X509_free);
+    CMS_ContentInfo_free(cms);
+}
+#endif
 
 // ===========================================================================
 // CAdES

@@ -8,10 +8,12 @@
 #pragma once
 
 #include <cstdint>
+#include <ctime>
 #include <string>
 #include <vector>
 
 typedef struct x509_st X509;
+typedef struct asn1_string_st ASN1_TIME;
 
 namespace libresign {
 
@@ -19,6 +21,14 @@ struct RevocationData
 {
     std::vector<std::vector<uint8_t>> crls;          // DER-encoded CRLs
     std::vector<std::vector<uint8_t>> ocspResponses; // DER-encoded OCSP responses
+
+    // Indices (into the chain passed to collectForChain) of the non-root certs
+    // for which NO revocation information could be obtained — neither a
+    // signature-verified CRL nor a "good" OCSP response. Empty means every
+    // non-root cert is covered. A long-term signature (B-LT/B-LTA) MUST treat a
+    // non-empty value as fail-closed: embedding a chain with unrevocable links
+    // produces a signature that cannot reach the LT validation level.
+    std::vector<std::size_t> certsWithoutRevocation;
 };
 
 class RevocationClient
@@ -26,6 +36,16 @@ class RevocationClient
 public:
     bool crlEnabled = true;
     bool ocspEnabled = true;
+
+    // True iff a CRL's validity window is currently usable for embedding in a
+    // long-term signature: @p thisUpdate is not in the future and, when
+    // present, @p nextUpdate has not already elapsed — both within @p
+    // skewSeconds of @p now to tolerate clock skew. A null @p nextUpdate is
+    // accepted (freshness cannot be bounded but is not proven stale), mirroring
+    // OCSP_check_validity with an unbounded max-age. A null @p thisUpdate is
+    // rejected. @p now/@p skewSeconds are explicit for deterministic testing.
+    static bool crlWindowValid(const ASN1_TIME* thisUpdate, const ASN1_TIME* nextUpdate, std::time_t now,
+                               long skewSeconds);
 
     // Extract CRL Distribution Point URLs from certificate
     static std::vector<std::string> extractCrlUrls(X509* cert);
