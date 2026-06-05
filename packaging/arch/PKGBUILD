@@ -1,0 +1,104 @@
+# Maintainer: hirashix0 <hirashix0@proton.me>
+#
+# librescrs-middleware — the Qt-free C++23 smart-card core of the LibreSCRS
+# stack plus its card plugins and the in-tree PKCS#11 module. This is the
+# bottom of the dependency chain:
+#
+#     librescrs-middleware  <=  librelinux  <=  librekde
+#
+# NOTE ON THE VENDORED OpenSC SUBMODULE
+# -------------------------------------
+# thirdparty/opensc-source is a git SUBMODULE (LibreSCRS/OpenSC fork). A
+# GitHub release tarball (archive/refs/tags/v$pkgver.tar.gz) does NOT include
+# submodule contents, so a second source entry below pulls the pinned OpenSC
+# fork separately and prepare() drops it into place. The submodule commit pin
+# (and its sha256) MUST be refreshed at tag time alongside the main tarball.
+
+pkgname=librescrs-middleware
+pkgver=4.2.0
+pkgrel=1
+pkgdesc="Qt-free C++23 smart-card middleware, card plugins, and PKCS#11 module for LibreSCRS (eID, ePassports, PIV, PKCS#15)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/LibreSCRS/LibreMiddleware"
+license=('LGPL-2.1-or-later' 'Apache-2.0' 'OFL-1.1')
+# Runtime: system libs the LibreSCRS_* shared objects + plugins link against.
+# OpenSSL (libcrypto) is BUNDLED statically (thirdparty/openssl-3.5.5) and is
+# therefore NOT a runtime depend.
+depends=(
+    'pcsclite'      # PCSC::PCSC — APDU transport
+    'curl'          # CURL::libcurl — LibreSign TSP/CRL/OCSP fetch
+    'libxml2'       # native AdES signing (XAdES/manifest)
+    'zlib'          # RsEId + vendored OpenSC link `z`
+    'gcc-libs'
+    'glibc'
+)
+# Build host tooling. The vendored OpenSC fork is bootstrapped with autotools
+# (autoreconf via ./bootstrap) at build time, hence the autotools chain.
+makedepends=(
+    'cmake'
+    'ninja'
+    'git'           # GitVersion.cmake derives the version from tags
+    'python'        # build-time manifest.json -> constexpr header codegen (REQUIRED)
+    'autoconf'      # vendored OpenSC ./bootstrap
+    'automake'
+    'libtool'
+    'pkgconf'
+)
+# p11-kit drop-in lets PKCS#11-aware apps (Kleopatra, gpgsm, Firefox, ...)
+# auto-discover LibreSCRS cards. Not a hard dep of the libraries.
+optdepends=(
+    'p11-kit: auto-discovery of LibreSCRS cards by PKCS#11-aware applications'
+)
+options=('!lto')   # vendored OpenSC static archive + IPO can conflict; keep it simple
+source=(
+    "$pkgname-$pkgver.tar.gz::https://github.com/LibreSCRS/LibreMiddleware/archive/refs/tags/v$pkgver.tar.gz"
+    # Vendored OpenSC fork — pinned submodule commit, fetched separately
+    # because the release tarball omits submodule trees. Pin matches
+    # `git -C thirdparty/opensc-source rev-parse HEAD` at tag time.
+    "opensc-source-$pkgver.tar.gz::https://github.com/LibreSCRS/OpenSC/archive/a7586e080720f946a6bdb31d2d4641a4a9493a6f.tar.gz"
+)
+# Placeholders — real checksums are filled in at tag time with `updpkgsums`
+# (or `makepkg -g`). 'SKIP' keeps the release-shaped PKGBUILD parseable now,
+# before the v4.2.0 tag and the OpenSC submodule tarball exist upstream.
+sha256sums=(
+    'SKIP'
+    'SKIP'
+)
+
+prepare() {
+    cd "$srcdir/LibreMiddleware-$pkgver"
+    # Drop the separately-fetched OpenSC fork into the submodule path so the
+    # vendored static build (thirdparty/CMakeLists.txt) finds its source tree.
+    if [ -d ../OpenSC-a7586e080720f946a6bdb31d2d4641a4a9493a6f ]; then
+        rmdir thirdparty/opensc-source 2>/dev/null || true
+        cp -aT ../OpenSC-a7586e080720f946a6bdb31d2d4641a4a9493a6f thirdparty/opensc-source
+    fi
+}
+
+build() {
+    cd "$srcdir/LibreMiddleware-$pkgver"
+    cmake -S . -B build -G Ninja \
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DLIBRESCRS_BUILD_EXAMPLES=OFF \
+        -DINSTALL_GTEST=OFF
+    cmake --build build -j4
+}
+
+check() {
+    cd "$srcdir/LibreMiddleware-$pkgver"
+    # Card-hardware / live-PIN suites self-skip without a reader + the
+    # LIBRESCRS_TEST_* env vars; the rest are pure unit tests. QT_QPA is
+    # harmless here (the core is Qt-free) but kept for a uniform check() shape.
+    QT_QPA_PLATFORM=offscreen ctest --test-dir build --output-on-failure -j4
+}
+
+package() {
+    cd "$srcdir/LibreMiddleware-$pkgver"
+    DESTDIR="$pkgdir" cmake --install build
+    # cmake --install already lays down: /usr/lib/libLibreSCRS_*.so,
+    # /usr/lib/librescrs/plugins/*.so, /usr/lib/pkcs11/librescrs-pkcs11.so,
+    # /usr/include/LibreSCRS/**, /usr/lib/cmake/LibreMiddleware/**,
+    # /usr/share/librescrs/certificates/**, /usr/share/p11-kit/modules/librescrs.module.
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

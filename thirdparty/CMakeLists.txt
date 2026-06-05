@@ -18,7 +18,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 # ──────────────────────────────────────────────────────────────────────────
-# Vendored OpenSC (LibreSCRS fork, pinned commit f049d8677).
+# Vendored OpenSC (LibreSCRS fork, pinned commit a7586e08).
 #
 # Built as a STATIC archive via ExternalProject_Add so the
 # librescrs-opensc-pkcs11 SHARED library can link it without pulling a
