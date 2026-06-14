@@ -481,7 +481,8 @@ TEST(MonitorTest, UnsubscribeReaderListUnknownIdIsNoOp)
 // subscribers (early and late) uniformly. Exactly one emission with
 // the populated reader list.
 //
-// Spec: knowledge/specs/2026-05-24-lm-monitor-bootstrap-race.md §6.2.1
+// Guards: a late-joining reader-list subscriber must receive the populated
+// snapshot, never a spurious empty bootstrap, during the first-poll window.
 TEST(MonitorServiceBootstrapRace, SubscribeReaderListAfterSubscribeNoEmptyBootstrap)
 {
     using LibreSCRS::SmartCard::MonitorEvent;
@@ -600,7 +601,8 @@ TEST(MonitorServiceBootstrapRace, SubscribeReaderListAfterSubscribeNoEmptyBootst
 // unconditionally): empty bootstrap delivered, then populated when
 // reader plugs — passes.
 //
-// Spec: knowledge/specs/2026-05-24-lm-monitor-bootstrap-race.md §6.2.2
+// Guards: with zero readers at boot, a subscriber still gets the empty
+// bootstrap and then the populated list when a reader later plugs in.
 TEST(MonitorServiceBootstrapRace, SubscribeReaderListZeroReadersAtBootThenPlug)
 {
     using LibreSCRS::SmartCard::MonitorEvent;
@@ -711,7 +713,8 @@ TEST(MonitorServiceBootstrapRace, SubscribeReaderListZeroReadersAtBootThenPlug)
 //              loop's notifyReaders emits ReaderAdded (bypasses coalescer →
 //              dispatchImmediate → dispatchMtx).
 //
-// Spec: knowledge/specs/2026-05-24-lm-monitor-3-additional-races.md §2
+// Guards: unsubscribe drain must not deadlock when the poll thread
+// re-enters dispatch while the drain holds the dispatch mutex.
 TEST(MonitorServiceAdditionalRaces, UnsubscribeDrainDoesNotDeadlockWhenPollReEnters)
 {
     using LibreSCRS::SmartCard::MonitorEvent;
@@ -816,7 +819,9 @@ TEST(MonitorServiceAdditionalRaces, UnsubscribeDrainDoesNotDeadlockWhenPollReEnt
 // ReaderRemoved. A timing-dependent test (may pass even pre-fix if the
 // erase wins the race), but reliably fails in sanitiser or debug builds.
 //
-// Spec: knowledge/specs/2026-05-24-lm-monitor-3-additional-races.md §3
+// Guards: the coalescer flusher must suppress a stale CardInserted event
+// for a reader that has already been removed (CardInserted must precede
+// ReaderRemoved if it fires at all).
 TEST(MonitorServiceAdditionalRaces, CoalescerFlusherSuppressesStaleEventAfterReaderRemoved)
 {
     using LibreSCRS::SmartCard::MonitorEvent;
@@ -887,7 +892,8 @@ TEST(MonitorServiceAdditionalRaces, CoalescerFlusherSuppressesStaleEventAfterRea
 // releaseContextCount after all threads finish. Each iteration where
 // unsubscribe sees nullopt internalSubId silently leaks one establish.
 //
-// Spec: knowledge/specs/2026-05-24-lm-monitor-3-additional-races.md §4
+// Guards: the first-subscriber subscribe/unsubscribe race must not leak an
+// internal subscription (establishContextCount == releaseContextCount).
 TEST(MonitorServiceAdditionalRaces, SubscribeFirstSubscriberRaceWithImmediateUnsubscribe)
 {
     using LibreSCRS::SmartCard::MonitorEvent;

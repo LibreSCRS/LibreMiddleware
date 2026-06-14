@@ -389,9 +389,8 @@ TEST(PACECryptoTest, AesDecryptRoundTrip256)
 //    our impl and shift the diagnosis to the card.
 //
 // Cross-check option: parallel run jmrtd or RFIDIOt against the same
-// physical card and diff APDU traces. See knowledge repo follow-up entry
-// project_czech_emrtd_pace_open_investigation.md for the captured Czech
-// session trace this scaffold was derived from.
+// physical card and diff APDU traces. This scaffold was derived from a
+// captured Czech eMRTD PACE session trace.
 // ---------------------------------------------------------------------------
 
 TEST(DISABLED_PaceMrzKatBSI, StepKpiFromKseed)

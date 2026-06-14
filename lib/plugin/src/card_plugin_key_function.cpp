@@ -14,8 +14,9 @@ namespace LibreSCRS::Plugin {
 //
 // Lives inside CardPlugin_Impl (STATIC) so every existing CardPlugin consumer
 // — plugins, tests, the host application — pulls it in transitively through
-// the same target they already link for the registry. SHARED-LM consumers
-// also see the symbol: lib/LibreSCRS/CMakeLists.txt links CardPlugin_Impl
+// the same target they already link for the registry. Consumers of the single
+// shared LibreMiddleware instance also see the symbol:
+// lib/LibreSCRS/CMakeLists.txt links CardPlugin_Impl
 // into LibreSCRS_Plugin via $<LINK_LIBRARY:WHOLE_ARCHIVE,...> so all of the
 // archive's `LibreSCRS::Plugin::*` symbols (key function + vtable + typeinfo)
 // land in libLibreSCRS_Plugin.so, where the `*LibreSCRS::*` version-script

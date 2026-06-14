@@ -95,7 +95,7 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
     /// produced a real enumeration yet?").
     ///
     /// @since 4.2 — fix for the subscribeReaderList bootstrap-race
-    /// regression. See knowledge/specs/2026-05-24-lm-monitor-bootstrap-race.md
+    /// regression.
     std::atomic<bool> initialPollComplete{false};
 
     // Held for the full snapshot-and-invoke phase of @ref dispatch so that

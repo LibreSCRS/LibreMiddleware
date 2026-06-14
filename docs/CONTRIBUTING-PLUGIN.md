@@ -12,9 +12,7 @@
 > authoring is **not supported in 4.0**: the surface required to support
 > it (a public APDU API and a stable plugin C++ ABI) is reserved for a
 > future 4.x cycle, to be informed by a concrete real consumer rather
-> than guessed pre-emptively. See
-> `knowledge/specs/2026-05-04-lm-4.0-plugin-contract-reframe.md` for
-> rationale.
+> than guessed pre-emptively.
 >
 > This document is therefore a **guide for in-tree contributors** —
 > contributors adding support for additional national document types,
@@ -215,7 +213,7 @@ protected:
 > Translation units that do not carry `LIBRESCRS_INTERNAL_BUILD` cannot
 > use `detail::unwrap`. There is no public alternative in LM 4.0; out-
 > of-tree plugin authoring requires a public APDU API which is deferred
-> to a future 4.x cycle (tracked in `knowledge/docs/BACKLOG.md`).
+> to a future 4.x cycle.
 
 **Detection strategy:** Populate the `atrs` array in `manifest.json` for fast
 ATR-based matching (`canHandle()` derives its result from `supportedAtrs()`,
@@ -466,9 +464,7 @@ When and if a real out-of-tree consumer materialises (a community
 contributor with a named card platform, a partner program, or a
 sandboxed extension like the future macOS CTK appex), a public APDU
 surface and a stable plugin ABI will be designed in 4.x informed by
-that consumer's actual shape. That work is tracked in
-`knowledge/docs/BACKLOG.md` under "Public plugin contract — deferred to
-4.x post-real-partner".
+that consumer's actual shape.
 
 ---
 

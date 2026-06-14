@@ -19,7 +19,7 @@ namespace {
 //
 // noexcept body wraps the std::string copy inside CardField::textValue()
 // (the returned std::optional<std::string> moves/copies a std::string)
-// per feedback_noexcept_alloc_contract: declared noexcept here, so any
+// and is declared noexcept here, so any
 // std::bad_alloc must degrade to std::nullopt rather than propagate and
 // call std::terminate. textValueInGroup is the inner helper for the two
 // public noexcept entry points below and therefore must hold the same
@@ -55,7 +55,7 @@ std::optional<std::string> textValue(const CardData& data, std::string_view grou
     } catch (...) {
         // textValueInGroup is itself noexcept now, but keep the guard so a
         // future refactor that adds allocating logic here cannot regress
-        // the public-API noexcept contract per feedback_noexcept_alloc_contract.
+        // the public-API noexcept contract.
         return std::nullopt;
     }
 }

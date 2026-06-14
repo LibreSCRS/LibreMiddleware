@@ -155,7 +155,7 @@ TEST(RevocationClient, CrlWindowValidRejectsUnparseableNextUpdate)
     EXPECT_FALSE(RevocationClient::crlWindowValid(thisU.get(), bad.get(), kFixedNow, kSkew));
 }
 
-// ---- P1.2: SSRF guard on CRL CDP / OCSP AIA URLs ----
+// ---- SSRF guard on CRL CDP / OCSP AIA URLs ----
 
 // The cloud-metadata service (169.254.169.254, AWS/GCP/Azure) is the canonical
 // SSRF target. A CRL Distribution Point or OCSP/AIA URL pointing at it — or any
@@ -194,7 +194,7 @@ TEST(RevocationClient, SsrfGuardRejectsCloudMetadataAndPrivateLiterals)
     EXPECT_TRUE(client.fetchOcsp(cert.get(), issuer.get(), chain, "http://169.254.169.254/ocsp", 1).empty());
 }
 
-// ---- P1.3: CRL-revoked fail-closed (crlRevokesCert) ----
+// ---- CRL-revoked fail-closed (crlRevokesCert) ----
 
 namespace {
 // Build a CA cert + key, then a leaf issued by it; return all three. Serial of

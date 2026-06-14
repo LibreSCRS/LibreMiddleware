@@ -104,7 +104,7 @@ TEST(CardDataTest, FindFieldByKey)
     EXPECT_FALSE(data.findField("nonexistent").has_value());
 }
 
-// Pass-5 A6: addText now eagerly rejects an empty key per API-POLICY §5.1.
+// addText now eagerly rejects an empty key per API-POLICY §5.1.
 // A field without a stable key is unreachable to GUI widgets afterwards;
 // silently returning the last existing field on an empty-key call hid
 // this caller bug.

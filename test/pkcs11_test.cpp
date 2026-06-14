@@ -19,8 +19,7 @@
 
 // Shared PIN-guard helpers (test/include/pin_guard.h). Used by both this
 // PKCS#11 unit-test exe and the e2e binaries under test/e2e/ — single
-// source of truth for g_pinFailed / SKIP_IF_PIN_FAILED per
-// feedback_pin_guard_pattern.
+// source of truth for g_pinFailed / SKIP_IF_PIN_FAILED.
 #include "pin_guard.h"
 
 // ---------------------------------------------------------------------------

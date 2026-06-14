@@ -30,7 +30,7 @@ directory. It cannot be used to forge a real Trusted List because:
 ## Rotating the key
 
 ```bash
-cd /home/nhirsl/Dev/Code/LibreSCRS/LibreMiddleware/test/fixtures/trust
+cd test/fixtures/trust   # from the LibreMiddleware repo root
 openssl genrsa -out test-tl-signing-key.pem 2048
 openssl req -x509 -new -key test-tl-signing-key.pem -days 36500 \
     -subj "/C=RS/CN=LibreSCRS Test TL Signer" \

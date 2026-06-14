@@ -54,8 +54,7 @@ public:
 
     /// @brief Block any incoming `listReaders` call inside the mock until
     /// `releaseListReadersBlock` is invoked. Used in regression tests for
-    /// the `MonitorService::subscribeReaderList` bootstrap race
-    /// (knowledge/specs/2026-05-24-lm-monitor-bootstrap-race.md) where the
+    /// the `MonitorService::subscribeReaderList` bootstrap race, where the
     /// test needs to hold the internal poll thread mid-enumeration while a
     /// late-joining snapshot subscriber registers.
     void setListReadersBlocking(bool b)

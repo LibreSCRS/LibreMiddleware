@@ -281,7 +281,7 @@ TEST(AuthRequirementTest, ForUnblockPinThrowsOnEmptyLabel)
     EXPECT_THROW((void)LibreSCRS::Auth::AuthRequirement::forUnblockPin(LocalizedText{}), std::invalid_argument);
 }
 
-// Pass-5 P4: LocalizedText overload preserves the i18n key end-to-end so
+// LocalizedText overload preserves the i18n key end-to-end so
 // hosts can translate the PIN label without the std::string overload's
 // implicit "synthesise key from field id" leak.
 TEST(AuthRequirementTest, ForSigningLocalizedTextPreservesI18nKey)

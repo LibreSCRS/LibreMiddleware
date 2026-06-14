@@ -18,8 +18,8 @@ class SessionPresence;
 ///        Callers in CardSession invoke @c ensure... before reaching here.
 ///
 /// Annotated @ref LIBRESCRS_PUBLIC_API so cross-`.so` callers (plugins,
-/// libresign, the in-tree PKCS#11 module) resolve against the one SHARED-LM
-/// instance instead of each linking a private static-LM copy that would
+/// libresign, the in-tree PKCS#11 module) resolve against the single shared
+/// LibreMiddleware instance instead of each linking a private static-LM copy that would
 /// give every `.so` its own registry (silent ODR — defeats the whole design).
 [[nodiscard]] LIBRESCRS_PUBLIC_API SessionPresence& sessionPresence() noexcept;
 

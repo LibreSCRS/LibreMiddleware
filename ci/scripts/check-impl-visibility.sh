@@ -85,7 +85,7 @@ PLATFORM="$(uname -s)"
 
 if [[ "$PLATFORM" == "Darwin" ]]; then
     # Darwin Impl-visibility check covers the same surface as the Linux
-    # branch: plugin/pkcs11 dylibs PLUS, in SHARED-LM builds, the seven
+    # branch: plugin/pkcs11 dylibs PLUS, in shared-instance builds, the seven
     # LM core dylibs (libLibreSCRS_*.dylib). The leak pattern is
     # identical — Mach-O `nm -gU` produces the same `T`/`W`/`V` letter
     # codes for global/weak/vague symbols, so the awk + c++filt + grep

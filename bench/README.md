@@ -58,6 +58,6 @@ configurable threshold (default 20%, see `.github/workflows/bench.yml`).
 A `SigningService::sign()` micro-benchmark is intentionally absent: it
 needs a working PKCS#11 token (SoftHSM in CI) and the bench host does
 not currently bootstrap one. A hermetic SoftHSM bootstrap script is
-tracked in `knowledge/docs/BACKLOG.md`; once landed, the signing
+tracked in the project backlog; once landed, the signing
 benchmark binary + its baseline JSON come back together and measure
 the full PKCS#11 + B-B / B-T / B-LT / B-LTA latency curve.

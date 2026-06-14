@@ -39,7 +39,7 @@ namespace LibreSCRS::SmartCard::Internal {
 /// @par ABI
 /// Annotated @ref LIBRESCRS_PUBLIC_API so cross-`.so` consumers (the in-tree
 /// PKCS#11 module, plugin shared libraries, libresign) resolve the symbol
-/// against the one SHARED-LM instance rather than each carrying their own
+/// against the single shared LibreMiddleware instance rather than each carrying their own
 /// statically-linked copy of the registry — the ODR failure that defeats
 /// the auto-register design without exported symbols. The map + mutex live
 /// inline because the header is `LIBRESCRS_INTERNAL_BUILD`-gated (no external

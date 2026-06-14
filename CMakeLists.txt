@@ -30,9 +30,8 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/LibreSCRSAddPlugin.cmake)
 # A2 (4.0 hardening): std::stop_token / std::stop_source ship behind
 # `-fexperimental-library` on Apple Clang's libc++. The flag toggles the
 # C++20 cancellation primitives without degrading them to a hand-rolled
-# `shared_ptr<atomic<bool>>` workaround. Per memory feedback
-# `feedback_apple_clang_experimental.md` (2026-04-15): use the standard
-# library and add the flag — never re-implement.
+# `shared_ptr<atomic<bool>>` workaround. Use the standard library and
+# add the flag — never re-implement.
 if(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
     add_compile_options(-fexperimental-library)
     add_link_options(-fexperimental-library)

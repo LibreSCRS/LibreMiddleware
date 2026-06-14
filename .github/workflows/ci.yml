@@ -93,7 +93,7 @@ jobs:
         # No LIBRESCRS_TEST_PIN — CI runner has no smart card. PIN-gated
         # tests skip cleanly via g_pinFailed / SKIP_IF_PIN_FAILED. Real-
         # card validation happens locally on a developer machine before
-        # tag (see knowledge/memory/project_4_0_macos_release_findings).
+        # tag.
         run: ctest --output-on-failure --test-dir build/test
 
   examples-build:
