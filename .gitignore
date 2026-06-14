@@ -23,6 +23,7 @@
 # Build
 build/
 build-*/
+install/
 CMakeLists.txt.user
 
 # Persistent cache for fetched+built libxmlsec1 (universal static).

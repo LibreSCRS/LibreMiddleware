@@ -29,7 +29,7 @@ leaves `thirdparty/opensc-source/` empty and `build()` dies at OpenSC's
 
 So the dogfood recipe supplies the pinned OpenSC fork as a **second local
 git source**, named `OpenSC-<fullhash>` so its clone lands at
-`$srcdir/OpenSC-a7586e080720f946a6bdb31d2d4641a4a9493a6f` — exactly the
+`$srcdir/OpenSC-1b2d5c5b9aa22fb174ca1f70534148e25fad1a22` — exactly the
 directory the release `prepare()` already copies into
 `thirdparty/opensc-source`. Because the two source dirs are named to match
 what `prepare()` and the four phase `cd` lines already expect,
@@ -38,7 +38,7 @@ what `prepare()` and the four phase `cd` lines already expect,
 
 This assumes the LibreSCRS/OpenSC fork is cloned as a **sibling** of this
 repo at `../OpenSC`, with the pinned commit reachable offline (verify with
-`git -C ../OpenSC cat-file -t a7586e080720f946a6bdb31d2d4641a4a9493a6f`).
+`git -C ../OpenSC cat-file -t 1b2d5c5b9aa22fb174ca1f70534148e25fad1a22`).
 If your OpenSC clone lives elsewhere, adjust the `git+file://` path of the
 second source accordingly.
 
@@ -55,7 +55,7 @@ cd /tmp/lm-arch
 # sibling OpenSC fork pinned to the submodule commit and named OpenSC-<hash>
 # (matches prepare()'s copy dir) so prepare() is unchanged.
 sed -i \
-  -e "/^source=(/,/^)/c\\source=(\"LibreMiddleware-\$pkgver::git+file://$REPO\"\n        \"OpenSC-a7586e080720f946a6bdb31d2d4641a4a9493a6f::git+file://$REPO/../OpenSC#commit=a7586e080720f946a6bdb31d2d4641a4a9493a6f\")" \
+  -e "/^source=(/,/^)/c\\source=(\"LibreMiddleware-\$pkgver::git+file://$REPO\"\n        \"OpenSC-1b2d5c5b9aa22fb174ca1f70534148e25fad1a22::git+file://$REPO/../OpenSC#commit=1b2d5c5b9aa22fb174ca1f70534148e25fad1a22\")" \
   -e "/^sha256sums=(/,/^)/c\\sha256sums=('SKIP' 'SKIP')" \
   PKGBUILD
 makepkg -si
@@ -63,9 +63,9 @@ makepkg -si
 
 > Why this works: the PKGBUILD `cd`s into `$srcdir/LibreMiddleware-$pkgver`
 > in all four phase functions, and `prepare()` copies
-> `../OpenSC-a7586e08…` into `thirdparty/opensc-source`. The first git
+> `../OpenSC-1b2d5c5b…` into `thirdparty/opensc-source`. The first git
 > source checks out to exactly `$srcdir/LibreMiddleware-$pkgver`; the second,
-> named `OpenSC-a7586e08…`, checks out to `$srcdir/OpenSC-a7586e08…` —
+> named `OpenSC-1b2d5c5b…`, checks out to `$srcdir/OpenSC-1b2d5c5b…` —
 > precisely where `prepare()` looks. makepkg does NOT carry submodules, so
 > this explicit second source is what makes the vendored OpenSC tree present
 > for the static build. Both arrays stay two-element, so `sha256sums` is two

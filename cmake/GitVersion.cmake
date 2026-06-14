@@ -13,15 +13,15 @@ if(NOT DEFINED GIT_EXECUTABLE)
     find_package(Git QUIET REQUIRED)
 endif()
 
-if(GIT_EXECUTABLE)
-  # CMAKE_CURRENT_LIST_DIR is the cmake/ subdir hosting this module, so
-  # `${CMAKE_CURRENT_LIST_DIR}/..` is LM root regardless of how LM is
-  # consumed. PROJECT_SOURCE_DIR is not yet set at the time this module
-  # is include()d (project() hasn't been called yet — it needs the
-  # version this file derives), and CMAKE_SOURCE_DIR would point at the
-  # consumer (LibreCelik) when LM is fetched via FetchContent.
-  set(SRC_DIR "${CMAKE_CURRENT_LIST_DIR}/..")
+# CMAKE_CURRENT_LIST_DIR is the cmake/ subdir hosting this module, so
+# `${CMAKE_CURRENT_LIST_DIR}/..` is LM root regardless of how LM is
+# consumed. PROJECT_SOURCE_DIR is not yet set at the time this module
+# is include()d (project() hasn't been called yet — it needs the
+# version this file derives), and CMAKE_SOURCE_DIR would point at the
+# consumer (LibreCelik) when LM is fetched via FetchContent.
+set(SRC_DIR "${CMAKE_CURRENT_LIST_DIR}/..")
 
+if(GIT_EXECUTABLE)
   execute_process(
     COMMAND ${GIT_EXECUTABLE} describe --tags --abbrev=0
     WORKING_DIRECTORY ${SRC_DIR}
@@ -37,8 +37,23 @@ if(GIT_EXECUTABLE)
 endif()
 
 if(NOT DEFINED PROJECT_VERSION)
+  # Release tarballs (makepkg, GitHub source archives) ship WITHOUT a .git tree,
+  # so `git describe` above cannot run. The committed top-level VERSION file is
+  # the authoritative fallback BEFORE the 0.0.1 last-resort: without it a tarball
+  # build silently yields SOVERSION 0 (libLibreSCRS_*.so.0), which breaks every
+  # downstream `find_package(LibreMiddleware 4.x CONFIG)` at configure time.
+  # VERSION mirrors the most recent release tag and is bumped in lockstep with
+  # each new tag as part of the release process.
+  if(EXISTS "${SRC_DIR}/VERSION")
+    file(STRINGS "${SRC_DIR}/VERSION" PROJECT_VERSION LIMIT_COUNT 1)
+    string(STRIP "${PROJECT_VERSION}" PROJECT_VERSION)
+    string(REGEX REPLACE "^v" "" PROJECT_VERSION "${PROJECT_VERSION}")
+  endif()
+endif()
+
+if(NOT PROJECT_VERSION)
   set(PROJECT_VERSION 0.0.1)
-  message(WARNING "Failed to determine PROJECT_VERSION from Git tags. Using default version \"${PROJECT_VERSION}\".")
+  message(WARNING "Failed to determine PROJECT_VERSION from Git tags or the VERSION file. Using default version \"${PROJECT_VERSION}\".")
 endif()
 
 # Extract semantic version components; strip pre-release for CMake project(VERSION ...)

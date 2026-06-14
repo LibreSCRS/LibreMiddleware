@@ -12,6 +12,7 @@
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <limits>
 #include <memory>
@@ -363,6 +364,25 @@ struct LIBRESCRS_INTERNAL HttpClient::Impl
 
         auto* c = static_cast<CURL*>(curl);
         curl_easy_reset(c);
+
+        // TLS chain validation is pinned PER REQUEST: curl_easy_reset() above
+        // clears every option, so a constructor-time setopt would not survive.
+        // Pinning here means an attacker who flips a libcurl global default
+        // cannot weaken validation for any request this client issues.
+        curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 1L);
+        curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 2L);
+        // CA trust store for the statically-vendored libcurl. The build bakes a
+        // CURL_CA_BUNDLE/CURL_CA_PATH default (the build host's) with
+        // CURL_CA_FALLBACK ON. To keep the static binary portable across distros
+        // and to macOS/AppImage/DMG (where the baked POSIX path does not exist
+        // and there is no system OpenSSL store), honour the de-facto OpenSSL env
+        // overrides: a packager ships a CA bundle (e.g. Mozilla cacert.pem) and
+        // points SSL_CERT_FILE / SSL_CERT_DIR at it. Verification stays ON.
+        if (const char* caFile = std::getenv("SSL_CERT_FILE"); caFile != nullptr && *caFile != '\0')
+            curl_easy_setopt(c, CURLOPT_CAINFO, caFile);
+        if (const char* caDir = std::getenv("SSL_CERT_DIR"); caDir != nullptr && *caDir != '\0')
+            curl_easy_setopt(c, CURLOPT_CAPATH, caDir);
+
         curl_easy_setopt(c, CURLOPT_URL, url.c_str());
         curl_easy_setopt(c, CURLOPT_TIMEOUT, static_cast<long>(timeoutSeconds));
         curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
@@ -399,16 +419,10 @@ HttpClient::HttpClient() : impl(std::make_unique<Impl>())
 {
     ensureCurlInit();
     impl->curl = curl_easy_init();
-    if (impl->curl) {
-        // Defense-in-depth: pin TLS chain validation per-handle. libcurl
-        // defaults CURLOPT_SSL_VERIFYPEER=1 and CURLOPT_SSL_VERIFYHOST=2,
-        // but a future global setopt override or environment carry-over
-        // could quietly relax those. Setting them explicitly per-handle
-        // pins TLS chain validation for every request issued by this client
-        // — an attacker who flips a global default cannot weaken our path.
-        curl_easy_setopt(static_cast<CURL*>(impl->curl), CURLOPT_SSL_VERIFYPEER, 1L);
-        curl_easy_setopt(static_cast<CURL*>(impl->curl), CURLOPT_SSL_VERIFYHOST, 2L);
-    }
+    // NB: TLS chain validation (CURLOPT_SSL_VERIFYPEER/VERIFYHOST) and the CA
+    // trust store (CURLOPT_CAINFO/CAPATH from SSL_CERT_FILE/SSL_CERT_DIR) are
+    // pinned PER REQUEST in Impl::configureHandle, because every request begins
+    // with curl_easy_reset() which clears any handle-level options set here.
 }
 
 HttpClient::~HttpClient()

@@ -8,3 +8,6 @@
 	# clean — submodule pointer changes are still reported, working-tree
 	# drift is not.
 	ignore = dirty
+[submodule "thirdparty/curl-source"]
+	path = thirdparty/curl-source
+	url = https://github.com/curl/curl.git

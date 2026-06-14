@@ -20,13 +20,15 @@ pkgrel=1
 pkgdesc="Qt-free C++23 smart-card middleware, card plugins, and PKCS#11 module for LibreSCRS (eID, ePassports, PIV, PKCS#15)"
 arch=('x86_64' 'aarch64')
 url="https://github.com/LibreSCRS/LibreMiddleware"
-license=('LGPL-2.1-or-later' 'Apache-2.0' 'OFL-1.1')
+license=('LGPL-2.1-or-later' 'Apache-2.0' 'OFL-1.1' 'MIT')   # MIT = vendored curl (curl license)
 # Runtime: system libs the LibreSCRS_* shared objects + plugins link against.
 # OpenSSL (libcrypto) is BUNDLED statically (thirdparty/openssl-3.5.5) and is
 # therefore NOT a runtime depend.
 depends=(
     'pcsclite'      # PCSC::PCSC — APDU transport
-    'curl'          # CURL::libcurl — LibreSign TSP/CRL/OCSP fetch
+    # curl is BUNDLED statically (thirdparty/curl-source, built against the
+    # bundled OpenSSL) — NOT a runtime depend; only its transitive system zlib
+    # remains below.
     'libxml2'       # native AdES signing (XAdES/manifest)
     'zlib'          # RsEId + vendored OpenSC link `z`
     'gcc-libs'
@@ -52,26 +54,32 @@ optdepends=(
 options=('!lto')   # vendored OpenSC static archive + IPO can conflict; keep it simple
 source=(
     "$pkgname-$pkgver.tar.gz::https://github.com/LibreSCRS/LibreMiddleware/archive/refs/tags/v$pkgver.tar.gz"
-    # Vendored OpenSC fork — pinned submodule commit, fetched separately
-    # because the release tarball omits submodule trees. Pin matches
-    # `git -C thirdparty/opensc-source rev-parse HEAD` at tag time.
-    "opensc-source-$pkgver.tar.gz::https://github.com/LibreSCRS/OpenSC/archive/a7586e080720f946a6bdb31d2d4641a4a9493a6f.tar.gz"
+    # Vendored submodules — pinned commits, fetched separately because the
+    # release tarball omits submodule trees. Pins match
+    # `git -C thirdparty/<sub> rev-parse HEAD` at tag time.
+    "opensc-source-$pkgver.tar.gz::https://github.com/LibreSCRS/OpenSC/archive/bdab0aad1606c15d657256e0e2744656bdd9edad.tar.gz"
+    "curl-source-$pkgver.tar.gz::https://github.com/curl/curl/archive/75a2079d5c28debb2eaa848ca9430f1fe0d7844c.tar.gz"
 )
 # Placeholders — real checksums are filled in at tag time with `updpkgsums`
 # (or `makepkg -g`). 'SKIP' keeps the release-shaped PKGBUILD parseable now,
-# before the v4.2.0 tag and the OpenSC submodule tarball exist upstream.
+# before the v4.2.0 tag and the vendored submodule tarballs exist upstream.
 sha256sums=(
+    'SKIP'
     'SKIP'
     'SKIP'
 )
 
 prepare() {
     cd "$srcdir/LibreMiddleware-$pkgver"
-    # Drop the separately-fetched OpenSC fork into the submodule path so the
-    # vendored static build (thirdparty/CMakeLists.txt) finds its source tree.
-    if [ -d ../OpenSC-a7586e080720f946a6bdb31d2d4641a4a9493a6f ]; then
+    # Drop the separately-fetched submodule sources into their paths so the
+    # vendored static builds (thirdparty/CMakeLists.txt) find their source trees.
+    if [ -d ../OpenSC-bdab0aad1606c15d657256e0e2744656bdd9edad ]; then
         rmdir thirdparty/opensc-source 2>/dev/null || true
-        cp -aT ../OpenSC-a7586e080720f946a6bdb31d2d4641a4a9493a6f thirdparty/opensc-source
+        cp -aT ../OpenSC-bdab0aad1606c15d657256e0e2744656bdd9edad thirdparty/opensc-source
+    fi
+    if [ -d ../curl-75a2079d5c28debb2eaa848ca9430f1fe0d7844c ]; then
+        rmdir thirdparty/curl-source 2>/dev/null || true
+        cp -aT ../curl-75a2079d5c28debb2eaa848ca9430f1fe0d7844c thirdparty/curl-source
     fi
 }
 

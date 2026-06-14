@@ -52,7 +52,7 @@ After this change: `piv_find_aid` checks for tag 0x79 with NIST PIV RID as a fal
 
 ## Empirical validation (2026-05-15)
 
-Trace captured at `knowledge/audits/captured-card-traces/2026-05-15-piv-gd-sce7-bind/` after build with this patch applied:
+Trace captured after build with this patch applied:
 
 ```
 card-piv.c:2948: piv_find_aid: found NIST PIV RID via coexistent tag 0x79;
@@ -73,4 +73,4 @@ Not submitted yet. Pre-upstream cleanup: split this combined downstream patch ba
 1. `piv-add-gd-sce7-atr.patch` — one ATR row addition (trivial, one-line).
 2. `piv-tag-79-coexistent-fallback.patch` — `piv_find_aid` fallback (generic, NIST §2.1 / ISO 7816-4 aligned, benefits any vendor PIV card using the coexistent tag scheme to declare NIST PIV data-model compatibility — including potential future Yubikey / Oberthur / Gemalto cards using the same pattern).
 
-Per `[[feedback_opensc_contribution_quality]]`: sample additional G+D firmware variants and at least one non-G+D vendor PIV using tag 0x79 before submitting. The combined downstream form here exists for our build only.
+Before submitting, sample additional G+D firmware variants and at least one non-G+D vendor PIV using tag 0x79. The combined downstream form here exists for our build only.

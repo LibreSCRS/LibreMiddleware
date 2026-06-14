@@ -17,8 +17,148 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     )
 endif()
 
+# Bundled OpenSSL TLS (static). curl's TLS backend references SSL_* symbols
+# that live in libssl.a, which is separate from libcrypto.a (OpenSSL_Crypto).
+add_library(OpenSSL_Ssl STATIC IMPORTED GLOBAL)
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    set_target_properties(OpenSSL_Ssl PROPERTIES
+        IMPORTED_LOCATION ${OPENSSL_ROOT}/macosx/lib/libssl.a
+        INTERFACE_INCLUDE_DIRECTORIES ${OPENSSL_ROOT}/macosx/include
+    )
+endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set_target_properties(OpenSSL_Ssl PROPERTIES
+        IMPORTED_LOCATION ${OPENSSL_ROOT}/linux/lib/libssl.a
+        INTERFACE_INCLUDE_DIRECTORIES ${OPENSSL_ROOT}/linux/include
+    )
+endif()
+
 # ──────────────────────────────────────────────────────────────────────────
-# Vendored OpenSC (LibreSCRS fork, pinned commit a7586e08).
+# Vendored libcurl (pinned curl-8_11_1), built STATIC against the BUNDLED
+# OpenSSL above.
+#
+# Rationale (consistency, not a bug-fix): a system libcurl.so drags the host
+# distribution's libssl/libcrypto.so into every consuming process, so the
+# LibreSign signing engine would run with TWO OpenSSL instances — the bundled
+# static OpenSSL 3.5.5 AND the host's dynamic OpenSSL. The native engine
+# registers a custom OpenSSL provider ("librescrs") in the bundled OpenSSL's
+# default OSSL_LIB_CTX; a second, unrelated OpenSSL in the same address space
+# is a latent hazard and a portability inconsistency (macOS universal builds
+# have no system OpenSSL at all and already use the bundled one). Vendoring
+# curl against the bundled OpenSSL guarantees exactly ONE OpenSSL per process
+# on every platform. curl is reached only by the TSA / CRL / OCSP / Trusted-
+# List HTTP paths (B-T and higher); B-B detached signing never calls it.
+#
+# See thirdparty/README.md for the pin rationale and update procedure.
+# ──────────────────────────────────────────────────────────────────────────
+option(LIBRESCRS_VENDOR_CURL
+    "Build a static libcurl against the bundled OpenSSL so exactly one OpenSSL is loaded per process" ON)
+if(LIBRESCRS_VENDOR_CURL)
+    include(ExternalProject)
+    # Resolve system zlib up front: the bundled static libcrypto.a references
+    # zlib (COMP), so curl's static-OpenSSL symbol check needs ZLIB_LIBRARY
+    # resolved during OpenSSL detection — before curl's own find_package(ZLIB).
+    find_package(ZLIB REQUIRED)
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+        set(CURL_OPENSSL_DIR ${OPENSSL_ROOT}/macosx)
+    else()
+        set(CURL_OPENSSL_DIR ${OPENSSL_ROOT}/linux)
+    endif()
+    set(CURL_SOURCE_DIR  ${CMAKE_CURRENT_SOURCE_DIR}/curl-source)
+    set(CURL_BUILD_DIR   ${CMAKE_CURRENT_BINARY_DIR}/curl-build)
+    set(CURL_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/curl-install)
+    set(CURL_STATIC_LIB  ${CURL_INSTALL_DIR}/lib/libcurl.a)
+    # IMPORTED INTERFACE_INCLUDE_DIRECTORIES must exist at configure time even
+    # though ExternalProject populates it at build time.
+    file(MAKE_DIRECTORY ${CURL_INSTALL_DIR}/include)
+
+    set(_curl_osx_args "")
+    if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+        set(_curl_osx_args
+            -DCMAKE_OSX_ARCHITECTURES=${CMAKE_OSX_ARCHITECTURES}
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET})
+    endif()
+
+    # Minimal HTTPS-only curl: OpenSSL TLS against the bundled tree, no extra
+    # protocol/codec deps (no ldap/psl/ssh/nghttp2/brotli/zstd/idn2). zlib IS
+    # enabled (system) — the bundled static libcrypto.a references zlib (COMP),
+    # so the static archive pulls in libssl/libcrypto + system zlib + libc.
+    ExternalProject_Add(curl_external
+        SOURCE_DIR  ${CURL_SOURCE_DIR}
+        BINARY_DIR  ${CURL_BUILD_DIR}
+        INSTALL_DIR ${CURL_INSTALL_DIR}
+        CMAKE_ARGS
+            -DCMAKE_INSTALL_PREFIX=${CURL_INSTALL_DIR}
+            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+            -DBUILD_SHARED_LIBS=OFF
+            -DBUILD_STATIC_LIBS=ON
+            -DBUILD_CURL_EXE=OFF
+            -DBUILD_TESTING=OFF
+            -DBUILD_LIBCURL_DOCS=OFF
+            -DENABLE_CURL_MANUAL=OFF
+            -DCURL_USE_OPENSSL=ON
+            -DOPENSSL_ROOT_DIR=${CURL_OPENSSL_DIR}
+            -DOPENSSL_USE_STATIC_LIBS=ON
+            # The baked CA default is the build host's; CURL_CA_FALLBACK lets a
+            # target whose layout differs fall back to the bundled OpenSSL's
+            # default store instead of hard-failing TLS. Cross-platform / macOS /
+            # AppImage portability is completed by HttpClient honouring
+            # SSL_CERT_FILE / SSL_CERT_DIR at runtime (a packager ships cacert.pem).
+            -DCURL_CA_PATH=auto
+            -DCURL_CA_BUNDLE=auto
+            -DCURL_CA_FALLBACK=ON
+            -DCURL_DISABLE_LDAP=ON
+            -DCURL_DISABLE_LDAPS=ON
+            -DCURL_USE_LIBPSL=OFF
+            -DCURL_USE_LIBSSH2=OFF
+            -DCURL_USE_LIBSSH=OFF
+            -DCURL_USE_GSSAPI=OFF
+            -DUSE_NGHTTP2=OFF
+            -DUSE_NGTCP2=OFF
+            -DCURL_BROTLI=OFF
+            -DCURL_ZSTD=OFF
+            # zlib (system) is REQUIRED: the bundled static libcrypto.a was
+            # built with zlib (COMP) support, so curl's static-OpenSSL link
+            # check needs -lz. zlib carries no OpenSSL dependency, so linking
+            # the system zlib does NOT reintroduce a second OpenSSL.
+            -DCURL_ZLIB=ON
+            -DZLIB_LIBRARY=${ZLIB_LIBRARIES}
+            -DZLIB_INCLUDE_DIR=${ZLIB_INCLUDE_DIRS}
+            -DUSE_LIBIDN2=OFF
+            ${_curl_osx_args}
+        BUILD_BYPRODUCTS  ${CURL_STATIC_LIB}
+        LOG_CONFIGURE         TRUE
+        LOG_BUILD             TRUE
+        LOG_INSTALL           TRUE
+        LOG_OUTPUT_ON_FAILURE TRUE
+    )
+
+    add_library(curl_static STATIC IMPORTED GLOBAL)
+    set_target_properties(curl_static PROPERTIES
+        IMPORTED_LOCATION             ${CURL_STATIC_LIB}
+        INTERFACE_INCLUDE_DIRECTORIES ${CURL_INSTALL_DIR}/include
+    )
+    add_dependencies(curl_static curl_external)
+
+    # libcurl.a ↔ libssl.a ↔ libcrypto.a are mutually recursive at link time;
+    # rescan group on GNU ld/lld, plain ordering on Apple ld64 (multi-pass by
+    # default) — same strategy as opensc_static_with_deps below. ZLIB::ZLIB
+    # (system, resolved above) sits inside the group: the bundled libcrypto.a's
+    # COMP objects reference inflate/deflate, pulled mid-scan.
+    add_library(curl_static_with_deps INTERFACE)
+    if(APPLE)
+        target_link_libraries(curl_static_with_deps INTERFACE
+            curl_static OpenSSL_Ssl OpenSSL_Crypto ZLIB::ZLIB)
+    else()
+        target_link_libraries(curl_static_with_deps INTERFACE
+            "$<LINK_GROUP:RESCAN,curl_static,OpenSSL_Ssl,OpenSSL_Crypto,ZLIB::ZLIB>")
+    endif()
+endif()
+
+# ──────────────────────────────────────────────────────────────────────────
+# Vendored OpenSC (LibreSCRS fork, pinned commit 1b2d5c5b).
 #
 # Built as a STATIC archive via ExternalProject_Add so the
 # librescrs-opensc-pkcs11 SHARED library can link it without pulling a
@@ -100,19 +240,52 @@ foreach(_patch ${OPENSC_PATCHES})
     endif()
 endforeach()
 
-if(_opensc_any_patch_applied)
-    # ExternalProject_Add tracks step completion via stamp files. Once
-    # opensc_external-build exists, the build step is treated as done and
-    # not re-run even if the source tree was patched after the stamp was
-    # written. Delete the build + install + done stamps so the next build
-    # pass re-runs make → re-links libopensc.a with the patched source.
-    set(_opensc_stamp_dir
-        ${CMAKE_CURRENT_BINARY_DIR}/opensc_external-prefix/src/opensc_external-stamp)
+set(_opensc_stamp_dir
+    ${CMAKE_CURRENT_BINARY_DIR}/opensc_external-prefix/src/opensc_external-stamp)
+
+# ExternalProject_Add tracks step completion via stamp files. Once
+# opensc_external-build exists, the build step is treated as done and not
+# re-run even if the source tree changed after the stamp was written. Two
+# things can change the vendored source after a stamp exists:
+#
+#   1. A freshly-applied patch (handled by _opensc_any_patch_applied).
+#   2. A DIRECT edit to the vendored fork's own files — the parts we maintain
+#      in-tree rather than via a .patch (e.g. src/libopensc/card-srbeid.c).
+#      autoconf/ExternalProject has no dependency edge from these to the build
+#      stamp, so an edited driver silently never reaches libopensc.a and the
+#      built backend keeps running the stale object. (This is what hid the
+#      256-byte PSO:DECIPHER fix: the srbeid driver carried the short-Lc
+#      P2-stripping but libopensc.a predated the edit, so the agent kept
+#      aborting the decipher before the PSO.)
+#
+# Guard against (2) by invalidating the build/install/done stamps whenever any
+# of the directly-maintained vendored sources is newer than the build stamp.
+# Build-only: it only controls WHEN `make` re-runs; it cannot change runtime
+# behaviour or the produced code (so it cannot regress sign / NAM / AET).
+set(_opensc_vendored_sources
+    ${OPENSC_SOURCE_DIR}/src/libopensc/card-srbeid.c
+    ${OPENSC_SOURCE_DIR}/src/libopensc/card-srbeid.h)
+set(_opensc_sources_changed FALSE)
+if(EXISTS ${_opensc_stamp_dir}/opensc_external-build)
+    foreach(_src ${_opensc_vendored_sources})
+        if(EXISTS ${_src} AND ${_src} IS_NEWER_THAN ${_opensc_stamp_dir}/opensc_external-build)
+            set(_opensc_sources_changed TRUE)
+        endif()
+    endforeach()
+endif()
+
+if(_opensc_any_patch_applied OR _opensc_sources_changed)
+    # Delete the build + install + done stamps so the next build pass re-runs
+    # make → re-links libopensc.a with the current source.
     file(REMOVE
         ${_opensc_stamp_dir}/opensc_external-build
         ${_opensc_stamp_dir}/opensc_external-install
         ${_opensc_stamp_dir}/opensc_external-done)
-    message(STATUS "OpenSC: patch applied; invalidated build/install/done stamps")
+    if(_opensc_any_patch_applied)
+        message(STATUS "OpenSC: patch applied; invalidated build/install/done stamps")
+    else()
+        message(STATUS "OpenSC: vendored source newer than build stamp; invalidated build/install/done stamps")
+    endif()
 endif()
 
 # PCSC strategy: vendored OpenSC owns its own PCSC session for the cards

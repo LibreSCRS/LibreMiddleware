@@ -8,7 +8,9 @@ if(SIGNING_BACKEND STREQUAL "dss")
     message(WARNING "DSS signing backend is intended as a cross-verification test oracle; the production signing path is 'native' (default). Set SIGNING_BACKEND=native unless you are running cross-backend tests.")
 endif()
 
-find_package(CURL REQUIRED)
+# libcurl is vendored (thirdparty/curl-source), built static against the
+# bundled OpenSSL so the process loads exactly one OpenSSL. Linked below via
+# the `curl_static_with_deps` INTERFACE target (NOT system find_package(CURL)).
 
 include(${LibreMiddleware_SOURCE_DIR}/cmake/EmbedBinary.cmake)
 
@@ -131,6 +133,11 @@ endif()
 # --- Build library ---
 add_library(LibreSign STATIC ${LIBRESIGN_SOURCES} ${LIBRESIGN_HEADERS})
 
+# Ensure the vendored static libcurl is built before LibreSign links it.
+if(TARGET curl_external)
+    add_dependencies(LibreSign curl_external)
+endif()
+
 target_compile_definitions(LibreSign PRIVATE LIBRESCRS_INTERNAL_BUILD)
 
 # LibreSign is a static archive consumed by LibreSCRS_Trust and
@@ -241,7 +248,7 @@ target_compile_features(LibreSign PUBLIC cxx_std_23)
 # type used in the AnchorEmitter signature is reachable through
 # LibreSCRS_Auth's PUBLIC include directory; no link symbol is needed
 # for the data-only struct.
-target_link_libraries(LibreSign PRIVATE OpenSSL_Crypto CURL::libcurl SmartCard_Impl)
+target_link_libraries(LibreSign PRIVATE OpenSSL_Crypto curl_static_with_deps SmartCard_Impl)
 target_link_libraries(LibreSign PUBLIC LibreSCRS_Auth)
 
 if(SIGNING_BACKEND STREQUAL "dss" OR SIGNING_BACKEND STREQUAL "both")
