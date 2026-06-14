@@ -56,3 +56,30 @@ target_link_libraries(PreReadAuthDerivationTests PRIVATE
 target_include_directories(PreReadAuthDerivationTests PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_compile_definitions(PreReadAuthDerivationTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(PreReadAuthDerivationTests)
+
+# DecipherTypesTest — anchors the value-type contract for the raw on-card
+# decrypt surface (DecipherResult::ok predicate, DecipherMechanism enum
+# closedness). Pure header types, so it needs only the public Plugin surface.
+add_executable(DecipherTypesTest DecipherTypesTest.cpp)
+target_link_libraries(DecipherTypesTest PRIVATE
+    LibreSCRS::Plugin
+    GTest::gtest_main
+)
+target_include_directories(DecipherTypesTest PRIVATE ${PROJECT_SOURCE_DIR}/include)
+gtest_discover_tests(DecipherTypesTest)
+
+# CardPluginDecipherDefaultTest — anchors the CardPlugin::decipher NVI default
+# (NotImplemented) through the public wrapper, mirroring PreReadAuthDerivation's
+# minimal-concrete-plugin shape. Uses the LM-internal detached-session factory
+# so the wrapper receives a real (cancellable) CardSession reference.
+add_executable(CardPluginDecipherDefaultTest CardPluginDecipherDefaultTest.cpp)
+target_link_libraries(CardPluginDecipherDefaultTest PRIVATE
+    LibreSCRS::Plugin
+    LibreSCRS::SmartCard
+    LibreSCRS_SmartCard_TestHelpers
+    LibreSCRS::Secure
+    GTest::gtest_main
+)
+target_include_directories(CardPluginDecipherDefaultTest PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_compile_definitions(CardPluginDecipherDefaultTest PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(CardPluginDecipherDefaultTest)

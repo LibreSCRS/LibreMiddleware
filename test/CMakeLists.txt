@@ -299,8 +299,8 @@ gtest_discover_tests(EMRTDPluginTests)
 add_executable(PKCS11Tests pkcs11_test.cpp)
 target_link_libraries(PKCS11Tests GTest::gtest_main librescrs-pkcs11)
 # Shared PIN-guard header lives under test/include/ — see test/e2e/CMakeLists.txt
-# for the matching consumer. Per feedback_pin_guard_pattern the helper must
-# stay byte-identical across real-card test binaries.
+# for the matching consumer. The helper must stay byte-identical across
+# real-card test binaries.
 target_include_directories(PKCS11Tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
 gtest_discover_tests(PKCS11Tests DISCOVERY_TIMEOUT 30)
@@ -449,6 +449,28 @@ if(LIBRESCRS_VENDOR_OPENSC)
     gtest_discover_tests(OpenSCPluginTests)
 endif()
 
+# Single-session bridge unit tests (no hardware): sc_apdu<->APDUCommand
+# mapping + lock-nesting against a DetachedTag PCSCConnection. Compiles the
+# bridge source directly so the ops/helpers can be driven in isolation.
+if(LIBRESCRS_VENDOR_OPENSC)
+    add_executable(OpenScBridgeTests
+        opensc_bridge_test.cpp
+        ${PROJECT_SOURCE_DIR}/lib/opensc-plugin/src/opensc_reader_bridge.cpp
+    )
+    target_include_directories(OpenScBridgeTests PRIVATE
+        ${PROJECT_SOURCE_DIR}/lib/opensc-plugin/src
+        ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+    )
+    target_link_libraries(OpenScBridgeTests
+        GTest::gtest_main
+        LibreSCRS_SmartCard
+        SmartCard_Impl
+        opensc_static_with_deps
+    )
+    target_compile_definitions(OpenScBridgeTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+    gtest_discover_tests(OpenScBridgeTests)
+endif()
+
 # OpenSC fallback hardware integration test (spec 2026-04-24)
 if(LIBRESCRS_VENDOR_OPENSC)
     add_executable(OpenSCFallbackIntegrationTest
@@ -469,7 +491,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
         PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
     )
     # Shared PIN-guard header (single source of truth across real-card
-    # test binaries) per feedback_pin_guard_pattern.
+    # test binaries).
     target_include_directories(OpenSCFallbackIntegrationTest PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )

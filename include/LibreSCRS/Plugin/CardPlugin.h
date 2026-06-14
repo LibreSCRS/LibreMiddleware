@@ -66,7 +66,7 @@ namespace LibreSCRS::Plugin {
 /// concurrently — a plugin-scoped map keyed only by a credential label
 /// would corrupt cross-session state.
 ///
-/// @note ABI version is @c 7 (see `kCardPluginAbiVersion`). Plugin loaders
+/// @note ABI version is @c 8 (see `kCardPluginAbiVersion`). Plugin loaders
 ///       reject any plugin whose `card_plugin_abi_version()` differs from
 ///       this value. v7 adds the @ref activationProfile / @ref
 ///       seedCredentials activation virtuals consumed by the @ref readCard
@@ -368,6 +368,21 @@ public:
                                   std::span<const std::uint8_t> data, SignMechanism mechanism,
                                   CancelToken token = {}) const;
 
+    /// @brief Raw RSA decrypt with the on-card key @p keyReference.
+    ///
+    /// Public NVI (mirrors @ref sign): the wrapper observes @p token and
+    /// short-circuits to @ref DecipherResultOutcome::Cancelled before
+    /// dispatching to @ref doDecipher. @p ciphertext is the RSA block to
+    /// decrypt; the backend strips PKCS#1 v1.5 padding and returns the
+    /// recovered plaintext. The wrapper does NOT cleanse @p ciphertext (it is
+    /// not secret) but the RECOVERED plaintext is sensitive — the caller owns
+    /// cleansing the returned bytes.
+    /// @since 4.3
+    /// @note NVI wrapper. Plugins override @ref doDecipher instead.
+    [[nodiscard]] DecipherResult decipher(LibreSCRS::SmartCard::CardSession& session, std::uint16_t keyReference,
+                                          std::span<const std::uint8_t> ciphertext, DecipherMechanism mechanism,
+                                          CancelToken token = {}) const;
+
 protected:
     /// @brief Plugin-side implementation of @ref sign. Operation is treated as
     ///        atomic; the base wrapper handles the pre-dispatch short-circuit.
@@ -623,6 +638,29 @@ public:
     ///
     /// @since 4.0 (NVI seam introduced).
     virtual void doSetTrustStore(std::shared_ptr<const LibreSCRS::Trust::TrustStore> /*trustStore*/) noexcept {}
+
+protected:
+    /// @brief Plugin-side implementation of @ref decipher. Treated as atomic;
+    ///        the base wrapper handles the pre-dispatch cancel short-circuit.
+    ///
+    /// @note Declared as the LAST virtual in the class so this 4.3 addition
+    ///       appends a single vtable slot (ABI-additive, ABI v8) rather than
+    ///       shifting the existing slots. Do not relocate it above an existing
+    ///       virtual.
+    /// @since 4.3
+    [[nodiscard]] virtual DecipherResult doDecipher(LibreSCRS::SmartCard::CardSession& session,
+                                                    std::uint16_t keyReference,
+                                                    std::span<const std::uint8_t> ciphertext,
+                                                    DecipherMechanism mechanism) const
+    {
+        (void)session;
+        (void)keyReference;
+        (void)ciphertext;
+        (void)mechanism;
+        DecipherResult r;
+        r.outcome = DecipherResultOutcome::NotImplemented;
+        return r;
+    }
 
 protected:
     /// @brief Derived classes call this in their ctor to publish identity.

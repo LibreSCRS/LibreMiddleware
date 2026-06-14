@@ -98,6 +98,16 @@ SignResult CardPlugin::sign(SmartCard::CardSession& session, std::uint16_t keyRe
     return doSign(session, keyReference, data, mechanism);
 }
 
+DecipherResult CardPlugin::decipher(SmartCard::CardSession& session, std::uint16_t keyReference,
+                                    std::span<const std::uint8_t> ciphertext, DecipherMechanism mechanism,
+                                    CancelToken token) const
+{
+    if (token.isCancelled()) {
+        return DecipherResult::cancelled();
+    }
+    return doDecipher(session, keyReference, ciphertext, mechanism);
+}
+
 void CardPlugin::setTrustStore(std::shared_ptr<const LibreSCRS::Trust::TrustStore> trustStore) noexcept
 {
     // Single-shot: test_and_set returns the prior flag value. First

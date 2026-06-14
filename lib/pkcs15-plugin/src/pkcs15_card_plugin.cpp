@@ -551,6 +551,26 @@ public:
         return tries;
     }
 
+    // Raw on-card RSA decrypt is not yet implemented for the generic PKCS#15
+    // fallback family. Unlike the opensc plugin (which binds an
+    // sc_pkcs15_card_t and delegates to sc_pkcs15_decipher), this plugin
+    // operates over the LM-native pkcs15::PKCS15Card abstraction on an SM
+    // channel and has no libopensc card handle. A raw-decrypt path would
+    // require a dedicated MSE:Set-CT (P2=0xB8) + PSO DECIPHER APDU sequence on
+    // pkcs15::PKCS15Card mirroring its sign() path — new on-card crypto rather
+    // than a delegation — so it is deferred. Returning NotImplemented
+    // explicitly (rather than inheriting the base default) keeps the gap
+    // visible to callers and documents the reason at the override site.
+    LibreSCRS::Plugin::DecipherResult doDecipher(LibreSCRS::SmartCard::CardSession& /*session*/,
+                                                 std::uint16_t /*keyReference*/,
+                                                 std::span<const std::uint8_t> /*ciphertext*/,
+                                                 LibreSCRS::Plugin::DecipherMechanism /*mechanism*/) const override
+    {
+        LibreSCRS::Plugin::DecipherResult r;
+        r.outcome = LibreSCRS::Plugin::DecipherResultOutcome::NotImplemented;
+        return r;
+    }
+
     LibreSCRS::Plugin::PINResult verifyPIN(LibreSCRS::SmartCard::CardSession& session,
                                            const LibreSCRS::Secure::String& pin) const override
     {

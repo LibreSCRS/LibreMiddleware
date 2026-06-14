@@ -30,8 +30,10 @@ namespace LibreSCRS::Plugin {
 /// @note Plugin loaders MUST reject any plugin whose `card_plugin_abi_version()`
 ///       differs from this value. v7 adds the activation-profile virtuals
 ///       (`activationProfile` / `seedCredentials`) to @ref
-///       LibreSCRS::Plugin::CardPlugin, changing its vtable layout.
-inline constexpr std::uint32_t kCardPluginAbiVersion = 7;
+///       LibreSCRS::Plugin::CardPlugin, changing its vtable layout. v8 appends
+///       the `doDecipher` virtual as the final vtable slot (raw on-card RSA
+///       decrypt surface).
+inline constexpr std::uint32_t kCardPluginAbiVersion = 8;
 
 /// @brief Capability flags describing what a plugin can do.
 ///
@@ -308,6 +310,45 @@ struct SignResult
     {
         SignResult r;
         r.outcome = SignResultOutcome::Cancelled;
+        return r;
+    }
+};
+
+/// @brief Cryptographic mechanism for on-card RSA decryption.
+/// @note SR cards are PKCS#1 v1.5 only (no OAEP). A future card+driver that
+///       reports OAEP support would extend this enum; until then the proxy
+///       advertises only v1.5 decrypt.
+/// @since 4.3
+enum class DecipherMechanism : std::uint8_t {
+    RSA_PKCS1_V15, ///< RSA decrypt, PKCS#1 v1.5 padding stripped by the backend.
+};
+
+/// @brief Structured outcome for on-card decryption (mirrors @ref SignResult).
+/// @since 4.3
+enum class DecipherResultOutcome : std::uint8_t {
+    Unspecified,
+    Ok,
+    NotImplemented, ///< Plugin base default hit — no decipher override.
+    PluginError,    ///< Plugin-internal / card-side failure.
+    Cancelled,      ///< Cancellation observed via CancelToken at the wrapper.
+};
+
+/// @brief Result of an on-card decryption operation.
+/// @since 4.3
+struct DecipherResult
+{
+    std::vector<std::uint8_t> plaintext;
+    DecipherResultOutcome outcome = DecipherResultOutcome::Unspecified;
+    [[nodiscard]] bool ok() const noexcept
+    {
+        return outcome == DecipherResultOutcome::Ok;
+    }
+    /// @brief Cancellation result (mirrors @ref SignResult::cancelled).
+    /// @since 4.3
+    [[nodiscard]] static DecipherResult cancelled() noexcept
+    {
+        DecipherResult r;
+        r.outcome = DecipherResultOutcome::Cancelled;
         return r;
     }
 };

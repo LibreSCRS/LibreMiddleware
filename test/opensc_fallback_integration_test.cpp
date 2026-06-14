@@ -51,9 +51,8 @@ using LibreSCRS::SmartCard::CardSession;
 using LibreSCRS::SmartCard::MonitorService;
 
 // PIN guard: g_pinFailed / SKIP_IF_PIN_FAILED come from the shared
-// test/include/pin_guard.h per feedback_pin_guard_pattern (single source
-// of truth across real-card test binaries). Local re-definitions were
-// pre-Wave-2 leftovers.
+// test/include/pin_guard.h (single source of truth across real-card
+// test binaries). Local re-definitions were legacy leftovers.
 
 // ---------------------------------------------------------------------------
 // Diagnostics helpers (anonymous namespace).
@@ -85,6 +84,68 @@ std::string opensslLastError()
     char buf[256];
     ERR_error_string_n(e, buf, sizeof(buf));
     return std::string(buf);
+}
+
+// Sign a fixed SHA-256 DigestInfo("test") with @p keyRef through the (now
+// bridged) opensc plugin and verify the PKCS#1 v1.5 signature against the
+// certificate's RSA public key. Returns an AssertionResult so callers can
+// EXPECT_TRUE it inside a loop with a descriptive message. Mirrors Test06's
+// single-shot logic; reused by the repeat-no-corruption regression (Test07).
+::testing::AssertionResult signVerifyOnce(CardPlugin& plugin, CardSession& session, std::uint16_t keyRef,
+                                          const std::vector<std::uint8_t>& certDer)
+{
+    const std::vector<uint8_t> payload = {'t', 'e', 's', 't'};
+    unsigned char digest[32];
+    {
+        EVP_MD_CTX* md = EVP_MD_CTX_new();
+        if (!md)
+            return ::testing::AssertionFailure() << "EVP_MD_CTX_new failed";
+        unsigned int n = 0;
+        const bool ok = EVP_DigestInit_ex(md, EVP_sha256(), nullptr) == 1 &&
+                        EVP_DigestUpdate(md, payload.data(), payload.size()) == 1 &&
+                        EVP_DigestFinal_ex(md, digest, &n) == 1 && n == 32u;
+        EVP_MD_CTX_free(md);
+        if (!ok)
+            return ::testing::AssertionFailure() << "SHA-256 of payload failed";
+    }
+
+    // DigestInfo DER prefix for SHA-256 (RFC 3447 §9.2, table A.2.4).
+    static constexpr std::array<uint8_t, 19> kSha256DigestInfoPrefix = {0x30, 0x31, 0x30, 0x0D, 0x06, 0x09, 0x60,
+                                                                        0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02,
+                                                                        0x01, 0x05, 0x00, 0x04, 0x20};
+    std::vector<uint8_t> signInput;
+    signInput.reserve(kSha256DigestInfoPrefix.size() + 32);
+    signInput.insert(signInput.end(), kSha256DigestInfoPrefix.begin(), kSha256DigestInfoPrefix.end());
+    signInput.insert(signInput.end(), digest, digest + 32);
+
+    const auto sigResult = plugin.sign(session, keyRef, signInput, SignMechanism::RSA_PKCS);
+    if (!sigResult.ok())
+        return ::testing::AssertionFailure() << "sign outcome != Ok (" << static_cast<int>(sigResult.outcome) << ")";
+    if (sigResult.signature.empty())
+        return ::testing::AssertionFailure() << "empty signature despite Ok outcome";
+
+    using X509Ptr = std::unique_ptr<X509, decltype(&X509_free)>;
+    using EvpPkeyPtr = std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)>;
+    using EvpPkeyCtxPtr = std::unique_ptr<EVP_PKEY_CTX, decltype(&EVP_PKEY_CTX_free)>;
+
+    const unsigned char* p = certDer.data();
+    X509Ptr x{d2i_X509(nullptr, &p, static_cast<long>(certDer.size())), &X509_free};
+    if (!x)
+        return ::testing::AssertionFailure() << "d2i_X509 failed";
+    EvpPkeyPtr pkey{X509_get_pubkey(x.get()), &EVP_PKEY_free};
+    if (!pkey)
+        return ::testing::AssertionFailure() << "X509_get_pubkey failed";
+    EvpPkeyCtxPtr vctx{EVP_PKEY_CTX_new(pkey.get(), nullptr), &EVP_PKEY_CTX_free};
+    if (!vctx || EVP_PKEY_verify_init(vctx.get()) != 1 ||
+        EVP_PKEY_CTX_set_rsa_padding(vctx.get(), RSA_PKCS1_PADDING) != 1 ||
+        EVP_PKEY_CTX_set_signature_md(vctx.get(), EVP_sha256()) != 1)
+        return ::testing::AssertionFailure() << "verify context setup failed: " << opensslLastError();
+
+    const int vres = EVP_PKEY_verify(vctx.get(), sigResult.signature.data(), sigResult.signature.size(), digest, 32);
+    if (vres != 1)
+        return ::testing::AssertionFailure() << "signature did not verify (sig " << firstHexBytes(sigResult.signature)
+                                             << "); OpenSSL: " << opensslLastError();
+    return ::testing::AssertionSuccess();
 }
 
 } // namespace
@@ -427,4 +488,55 @@ TEST_F(OpenSCFallbackPKS, Test06SignRSAAuthKeyProducesValidSignature)
                        << "Payload: 'test'. "
                        << "KeyRef: 0x" << std::hex << firstKeyRef << std::dec << ". "
                        << "OpenSSL: " << opensslLastError();
+}
+
+// ---------------------------------------------------------------------------
+// Test 7 — single-session bridge regression (2026-06-12 HW smoke).
+//
+// Before the bridge, the opensc plugin opened its OWN second libopensc
+// connection; a raw sign on that path could corrupt pcscd state so EVERY
+// subsequent CardSession::open failed ("Could not establish the card channel")
+// until pcscd was restarted, and the sign itself intermittently failed because
+// nothing serialised the second connection against the agent's held session.
+//
+// With the bridge there is exactly one connection. This test signs five times
+// in a row (each verified against the cert pubkey) and then confirms a FRESH
+// CardSession::open on the same reader still succeeds — the direct
+// no-session-corruption check. Reuses Test05's warm PIN session.
+// SKIPs if LIBRESCRS_TEST_PIN unset or g_pinFailed latched.
+// ---------------------------------------------------------------------------
+
+TEST_F(OpenSCFallbackPKS, Test07BridgedSignRepeatsWithoutSessionCorruption)
+{
+    SKIP_IF_PIN_FAILED();
+    ASSERT_NE(plugin, nullptr);
+    ASSERT_TRUE(session.has_value());
+
+    const char* pin = std::getenv("LIBRESCRS_TEST_PIN");
+    if (!pin || *pin == '\0')
+        GTEST_SKIP() << "LIBRESCRS_TEST_PIN not set";
+
+    const auto keyRefs = plugin->discoverKeyReferences(*session);
+    ASSERT_FALSE(keyRefs.empty()) << "discoverKeyReferences returned no keys";
+    const std::uint16_t keyRef = keyRefs.front().reference;
+
+    const auto certs = plugin->readCertificates(*session);
+    ASSERT_FALSE(certs.empty());
+    const std::vector<std::uint8_t> certDer = certs.front().derBytes;
+
+    const std::string readerName = session->readerName();
+
+    // Five back-to-back signs, each fully verified. Pre-bridge this loop would
+    // wedge the card session partway through.
+    for (int i = 0; i < 5; ++i) {
+        EXPECT_TRUE(signVerifyOnce(*plugin, *session, keyRef, certDer))
+            << "bridged sign iteration " << i << " of 5 failed";
+    }
+
+    // The card must remain openable — a fresh connection on the same reader
+    // succeeds (this is exactly what failed pre-bridge until a pcscd restart).
+    auto reopened = CardSession::open(readerName);
+    EXPECT_TRUE(reopened.has_value())
+        << "CardSession::open('" << readerName
+        << "') failed after five signs — session corruption regressed (would need a pcscd restart)";
 }

@@ -3,7 +3,7 @@
 
 librescrs_add_plugin(opensc-plugin
     MANIFEST ${CMAKE_CURRENT_SOURCE_DIR}/manifest.json
-    SOURCES  src/opensc_card_plugin.cpp
+    SOURCES  src/opensc_card_plugin.cpp src/opensc_reader_bridge.cpp
     INCLUDE_DIRS
         ${PROJECT_SOURCE_DIR}/lib/smartcard/src
         # pkcs15_cert_ptr.h was relocated to the sibling opensc-pkcs11
