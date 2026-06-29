@@ -22,8 +22,11 @@ endif()
 set(SRC_DIR "${CMAKE_CURRENT_LIST_DIR}/..")
 
 if(GIT_EXECUTABLE)
+  # Only consider release-style semver tags (e.g. 4.2.0, v4.2.0-rc1); never
+  # local rollback tags (backup/*, pre-*, …) which are not version strings and
+  # would otherwise yield an empty "..".  version on reconfigure.
   execute_process(
-    COMMAND ${GIT_EXECUTABLE} describe --tags --abbrev=0
+    COMMAND ${GIT_EXECUTABLE} describe --tags --abbrev=0 --match "[0-9]*" --match "v[0-9]*"
     WORKING_DIRECTORY ${SRC_DIR}
     OUTPUT_VARIABLE GIT_DESCRIBE_VERSION
     RESULT_VARIABLE GIT_DESCRIBE_ERROR_CODE
