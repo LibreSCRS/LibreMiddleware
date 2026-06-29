@@ -117,6 +117,39 @@ TEST_F(MonitorTestFixture, CardInsertedHasATR)
     EXPECT_EQ(result.events[0].atr, expectedAtr);
 }
 
+// --- A card already seated when monitoring starts must still emit
+// CardInserted, even when the same first poll also reports a PnP reader-arrival
+// change. Pre-fix, the PnP "changed" branch re-enumerated before the per-reader
+// card states were processed, so a card present at startup (or in a reader
+// hot-plugged with a card already in it) was silently never reported until a
+// physical re-seat. ---
+TEST_F(MonitorTestFixture, CardPresentAtStartupWithReaderArrivalEmitsCardInserted)
+{
+    auto mock = std::make_unique<MockPCSCScanProvider>(counters);
+    mock->setReaders({"Reader A"});
+
+    // PnP check: supported
+    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false});
+
+    // First poll: the card is already PRESENT AND the PnP pseudo-reader signals
+    // a reader-arrival change at the same time (the real start-up / hot-plug
+    // case). The card state MUST be reported before the re-enumeration.
+    MockPCSCScanProvider::StatusChangeAction cardAction;
+    cardAction.returnValue = SCARD_S_SUCCESS;
+    cardAction.eventStates = {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED, SCARD_STATE_CHANGED /* PnP arrival */};
+    cardAction.atrData = {{0x3B, 0x00}};
+    mock->pushStatusChange(std::move(cardAction));
+
+    // Stop
+    mock->pushStatusChange({LONG(SCARD_E_CANCELLED), {}, false});
+
+    auto result = runMonitor(std::move(mock));
+
+    ASSERT_FALSE(result.events.empty()) << "card present at startup was never reported";
+    EXPECT_EQ(result.events[0].type, MonitorEvent::Type::CardInserted);
+    EXPECT_EQ(result.events[0].readerName, "Reader A");
+}
+
 // --- Test 3: One reader, card removed ---
 TEST_F(MonitorTestFixture, CardRemoved)
 {

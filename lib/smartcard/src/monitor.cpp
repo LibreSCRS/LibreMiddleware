@@ -385,22 +385,12 @@ bool Monitor::processEvents(std::vector<SCARD_READERSTATE>& states, int readerCo
     LONG rv = pcsc->getStatusChange(hContext, 0, states.data(), totalStates);
 
     while ((rv == kScSuccess) || (rv == kScTimeout)) {
-        if (pnp) {
-            if (states[readerCount].dwEventState & SCARD_STATE_CHANGED) {
-                return true; // re-enumerate
-            }
-        } else {
-            auto currentReaders = enumerateReaders();
-            std::vector<std::string> knownReaders;
-            knownReaders.reserve(readerCount);
-            for (int i = 0; i < readerCount; i++) {
-                knownReaders.emplace_back(states[i].szReader);
-            }
-            if (currentReaders != knownReaders) {
-                return true; // re-enumerate
-            }
-        }
-
+        // Process per-reader card-state transitions FIRST so a card already
+        // present in a reader — at start-up, or when a reader is hot-plugged
+        // with a card already seated — is reported before a PnP / reader-list
+        // change short-circuits this poll with a re-enumeration. (Previously the
+        // re-enumerate check ran first, so an initially-present card was never
+        // reported until a physical re-seat.)
         bool needReEnumeration = false;
         for (int i = 0; i < readerCount; i++) {
             DWORD dwPrevState = states[i].dwCurrentState;
@@ -461,6 +451,23 @@ bool Monitor::processEvents(std::vector<SCARD_READERSTATE>& states, int readerCo
 
         if (needReEnumeration) {
             return true;
+        }
+
+        // Then handle reader topology changes (plug / unplug) by re-enumerating.
+        if (pnp) {
+            if (states[readerCount].dwEventState & SCARD_STATE_CHANGED) {
+                return true; // re-enumerate
+            }
+        } else {
+            auto currentReaders = enumerateReaders();
+            std::vector<std::string> knownReaders;
+            knownReaders.reserve(readerCount);
+            for (int i = 0; i < readerCount; i++) {
+                knownReaders.emplace_back(states[i].szReader);
+            }
+            if (currentReaders != knownReaders) {
+                return true; // re-enumerate
+            }
         }
 
         if (stopRequested.load())
