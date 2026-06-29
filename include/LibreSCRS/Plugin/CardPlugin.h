@@ -523,12 +523,20 @@ public:
 
     /// @brief Describe the pre-read authentication this card requires.
     ///
-    /// Derived from the plugin's @ref activationProfile: a plain profile
-    /// reports @ref Auth::PreReadAuthMethod::None; a PACE profile keyed on a
-    /// CAN reports @ref Auth::PreReadAuthMethod::PaceCan; any other activating
-    /// profile reports @ref Auth::PreReadAuthMethod::BacMrz. Plugins declare
-    /// their requirement once via @ref activationProfile; they do not override
-    /// this method.
+    /// The base derives this from the plugin's @ref activationProfile: a plain
+    /// profile reports @ref Auth::PreReadAuthMethod::None; a PACE profile keyed
+    /// on a CAN reports @ref Auth::PreReadAuthMethod::PaceCan; any other
+    /// activating profile reports @ref Auth::PreReadAuthMethod::BacMrz. Most
+    /// plugins therefore declare their requirement once via @ref
+    /// activationProfile and leave this method alone.
+    ///
+    /// @note A plugin that decides its channel requirement at RUNTIME (e.g. a
+    ///       generic PKCS#15 plugin that probes the card to tell a plain card
+    ///       from a PACE-CAN IAS-ECC SSCD) MAY override this method when the
+    ///       static @ref activationProfile derivation would under-report — the
+    ///       pkcs15 plugin is the canonical in-tree example, returning PaceCan
+    ///       once its probe has established the card needs PACE. Overrides must
+    ///       remain consistent with the channel the plugin actually activates.
     ///
     /// @return The unlock method required before data reads.
     ///

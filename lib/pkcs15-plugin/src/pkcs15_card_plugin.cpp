@@ -70,6 +70,18 @@ struct SessionContext
     ///        @ref activateChannelFor (PlainChannel) instead of
     ///        @ref activateChannelWithSm.
     bool requiresPace{false};
+
+    /// @brief The signing PIN, deposited per-session by the caller via
+    ///        @ref setCredentials("pin", ...) immediately before a sign.
+    ///
+    /// Held here (not on @ref CardSession, which only owns PACE secrets) as a
+    /// transient, session-scoped @ref LibreSCRS::Secure::String: it is consumed
+    /// by @ref doSign (hash-on-card RSA-SHA256, where the lower
+    /// @c PKCS15Card::sign owns the atomic verify+sign and therefore needs the
+    /// PIN) and wiped when the session entry is erased by
+    /// @ref clearCredentials. The map is keyed by session, so no cross-reader
+    /// bleed. @since 4.3
+    LibreSCRS::Secure::String pin;
 };
 
 LibreSCRS::SmartCard::AppletAid pkcs15AppletAid()
@@ -132,6 +144,19 @@ public:
     LibreSCRS::Plugin::CardCapabilities capabilities() const override
     {
         return LibreSCRS::Plugin::generated::pkcs15::kCapabilities;
+    }
+
+    // NAM / IAS-ECC and other PACE-gated PKCS#15 cards require the CAN (PACE)
+    // before any read; plain PKCS#15 cards do not. The base derives this from a
+    // STATIC activation profile (plain -> None), but this plugin decides PACE at
+    // RUNTIME via the probe (see canHandle / requiresPaceFor), so the static
+    // derivation under-reports as None. Report it correctly here: PaceCan when
+    // the card needs PACE (which is also the signal that selects on-card SHA-256
+    // signing — IAS-ECC SSCDs hash the message on-card), else None.
+    LibreSCRS::Auth::PreReadAuthMethod preReadAuth(LibreSCRS::SmartCard::CardSession& session) const override
+    {
+        return requiresPaceFor(session) ? LibreSCRS::Auth::PreReadAuthMethod::PaceCan
+                                        : LibreSCRS::Auth::PreReadAuthMethod::None;
     }
 
     std::span<const LibreSCRS::Plugin::Atr> supportedAtrs() const noexcept override
@@ -217,15 +242,27 @@ public:
     void setCredentials(LibreSCRS::SmartCard::CardSession& session, std::string_view key,
                         const LibreSCRS::Secure::String& value) override
     {
-        if (key != "can")
+        if (key == "can") {
+            // CardSession owns the CAN cache; this plugin simply forwards the
+            // secret. Successful PACE activation through CardSession reuses
+            // the same cache slot whether the secret was deposited by
+            // emrtd-plugin (display flow) or by us (direct sign).
+            session.setPaceSecret(LibreSCRS::Auth::PaceSecretKind::Can, LibreSCRS::Secure::String{value.view()});
+            std::lock_guard lock(stateMutex);
+            sessions[makeSessionKey(session)].requiresPace = true;
             return;
-        // CardSession owns the CAN cache; this plugin simply forwards the
-        // secret. Successful PACE activation through CardSession reuses
-        // the same cache slot whether the secret was deposited by
-        // emrtd-plugin (display flow) or by us (direct sign).
-        session.setPaceSecret(LibreSCRS::Auth::PaceSecretKind::Can, LibreSCRS::Secure::String{value.view()});
-        std::lock_guard lock(stateMutex);
-        sessions[makeSessionKey(session)].requiresPace = true;
+        }
+        if (key == "pin") {
+            // The signing PIN: held per-session for the immediately following
+            // hash-on-card sign (see @ref doSign), where the lower
+            // PKCS15Card::sign owns the atomic verify+MSE+PSO and therefore
+            // needs the PIN. Wiped by clearCredentials. CardSession only owns
+            // PACE secrets, so the eSign PIN lives here (session-keyed map ->
+            // no cross-reader bleed), NOT in the PACE cache.
+            std::lock_guard lock(stateMutex);
+            sessions[makeSessionKey(session)].pin = LibreSCRS::Secure::String{value.view()};
+            return;
+        }
     }
 
     void clearCredentials(LibreSCRS::SmartCard::CardSession& session) noexcept override
@@ -555,6 +592,113 @@ public:
         LibreSCRS::Plugin::DecipherResult r;
         r.outcome = LibreSCRS::Plugin::DecipherResultOutcome::NotImplemented;
         return r;
+    }
+
+    // Hash-on-card RSA-SHA256 signing for the IAS-ECC / PKCS#15 family
+    // (NAM: Cryptovision SCE 8.0-C2V0 SSCD). The caller deposits the signing
+    // PIN via setCredentials("pin", ...) immediately before this call (the same
+    // per-session seam used for the CAN). PKCS15Card::sign owns the atomic
+    // select + verifyPIN + MSE(0x28) + PSO over the RAW message — the exact
+    // EVP-verified sequence the LibreCelik / AdES path uses — so we do NOT
+    // pre-verify here. Only RSA_SHA256 (raw message, card hashes) is honoured;
+    // a caller-supplied DigestInfo (RSA_PKCS) is rejected by these cards, so
+    // that mechanism inherits the base NotImplemented.
+    LibreSCRS::Plugin::SignResult doSign(LibreSCRS::SmartCard::CardSession& session, std::uint16_t keyReference,
+                                         std::span<const std::uint8_t> data,
+                                         LibreSCRS::Plugin::SignMechanism mechanism) const override
+    {
+        LibreSCRS::Plugin::SignResult r;
+        // Honour RSA_SHA256 ONLY for cards that actually hash on-card — i.e.
+        // PACE-gated IAS-ECC SSCDs (NAM). For any other mechanism, OR a plain
+        // PKCS#15 card (no PACE) that expects a caller-built DigestInfo, return
+        // NotImplemented so the agent falls back to its verify + RSA_PKCS
+        // DigestInfo path. This matters because RsaSha256Pkcs1's on-card attempt
+        // set (pkcs15_card.cpp) is narrower than RsaPkcs1 and brute-forces
+        // hash-on-card algos, which is wrong for a DigestInfo card; gating here
+        // keeps the fallback alive for the rest of the PKCS#15 family (only the
+        // NAM hash-on-card path is exercised + HW-verified today).
+        if (mechanism != LibreSCRS::Plugin::SignMechanism::RSA_SHA256 || !requiresPaceFor(session)) {
+            r.outcome = LibreSCRS::Plugin::SignResultOutcome::NotImplemented;
+            return r;
+        }
+        // Pull the per-session signing PIN deposited by setCredentials("pin").
+        LibreSCRS::Secure::String pin;
+        {
+            std::lock_guard lock(stateMutex);
+            auto it = sessions.find(makeSessionKey(session));
+            if (it != sessions.end())
+                pin = LibreSCRS::Secure::String{it->second.pin.view()};
+        }
+        if (pin.view().empty()) {
+            r.outcome = LibreSCRS::Plugin::SignResultOutcome::PluginError; // no PIN deposited
+            return r;
+        }
+        try {
+            auto holderResult = acquireChannel(session, requiresPaceFor(session));
+            if (!holderResult) {
+                r.outcome = LibreSCRS::Plugin::SignResultOutcome::PluginError;
+                return r;
+            }
+            auto holder = std::move(*holderResult);
+            auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
+            if (channel == nullptr) {
+                r.outcome = LibreSCRS::Plugin::SignResultOutcome::PluginError;
+                return r;
+            }
+            pkcs15::PKCS15Card card(*channel);
+            auto profile = card.readProfile();
+
+            // Resolve the private key whose on-card file id matches keyReference
+            // (the keyFID readCertificates surfaced from the PrKDF path).
+            const pkcs15::PrivateKeyInfo* matched = nullptr;
+            for (const auto& key : profile.privateKeys) {
+                std::uint16_t fid;
+                if (key.path.size() >= 2)
+                    fid = static_cast<std::uint16_t>((key.path[key.path.size() - 2] << 8) |
+                                                     key.path[key.path.size() - 1]);
+                else if (key.keyReference != 0)
+                    fid = static_cast<std::uint16_t>(key.keyReference);
+                else
+                    fid = std::uint16_t{1};
+                if (fid == keyReference) {
+                    matched = &key;
+                    break;
+                }
+            }
+            const pkcs15::PinInfo* pinInfo = findUserPin(profile);
+            if (matched == nullptr || pinInfo == nullptr) {
+                r.outcome = LibreSCRS::Plugin::SignResultOutcome::PluginError;
+                return r;
+            }
+
+            // PKCS15Card::sign takes both a DigestInfo and the raw data; for the
+            // RsaSha256Pkcs1 scheme the winning attempt on a hash-on-card SSCD
+            // is {algo 0x28, rawData} (the card hashes). Pass the raw message in
+            // both slots, mirroring the EVP-verified in-process path
+            // (Pkcs15Slot::signData). pin.view() references `pin`, alive here.
+            std::vector<std::uint8_t> dataVec(data.begin(), data.end());
+            auto sig = card.sign(*matched, pin.view(), *pinInfo, dataVec, dataVec, pkcs15::SignScheme::RsaSha256Pkcs1);
+            if (sig.empty()) {
+                r.outcome = LibreSCRS::Plugin::SignResultOutcome::PluginError;
+                return r;
+            }
+            r.signature = std::move(sig);
+            r.outcome = LibreSCRS::Plugin::SignResultOutcome::Ok;
+            return r;
+        } catch (...) {
+            // PKCS15Card::sign throws a generic runtime_error on wrong PIN /
+            // exhausted attempts. LIMITATION (constrained by the no-ABI-bump
+            // rule — SignResultOutcome has no AuthFailed variant and the throw
+            // is untyped): a wrong eSign PIN folds to PluginError here, which the
+            // agent maps to CardError -> CKR_DEVICE_ERROR, NOT CKR_PIN_INCORRECT.
+            // Counter-safety is preserved per op: the agent does a SINGLE attempt
+            // (no retry on PluginError; the DigestInfo fallback fires only on
+            // NotImplemented), so the card's PIN counter is touched at most once,
+            // and the HW test's g_pinFailed latch blocks further attempts. A host
+            // must NOT auto-retry on CKR_DEVICE_ERROR (it is not a PIN-retry hint).
+            r.outcome = LibreSCRS::Plugin::SignResultOutcome::PluginError;
+            return r;
+        }
     }
 
     LibreSCRS::Plugin::PINResult verifyPIN(LibreSCRS::SmartCard::CardSession& session,

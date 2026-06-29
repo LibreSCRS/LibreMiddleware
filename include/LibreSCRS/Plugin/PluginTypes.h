@@ -250,6 +250,22 @@ enum class SignMechanism : std::uint8_t {
     ECDSA_SHA384,
     /// @brief ECDSA over SHA-512 (NIST P-521 / secp521r1 typical).
     ECDSA_SHA512,
+    /// @brief RSA PKCS#1 v1.5 over SHA-256, **hashed on-card**.
+    ///
+    /// Unlike @ref RSA_PKCS (where `data` is a complete caller-built
+    /// DigestInfo the card signs verbatim), here `data` is the **raw message**:
+    /// the card computes SHA-256 internally and produces the PKCS#1 v1.5
+    /// signature. This is the only form accepted by hash-on-card SSCDs
+    /// (IAS-ECC, e.g. Cryptovision SCE 8.0-C2V0) that reject a caller-supplied
+    /// DigestInfo. Plugins without a hash-on-card sign primitive MUST return
+    /// @ref SignResultOutcome::NotImplemented for this mechanism.
+    ///
+    /// @note Appended last so this is an ABI-additive enumerator (the enum's
+    ///       `std::uint8_t` layout is unchanged); it does not require a
+    ///       `kCardPluginAbiVersion` bump. Plugins built against an older enum
+    ///       simply never receive this value.
+    /// @since 4.3
+    RSA_SHA256,
 };
 
 /// @brief Structured outcome for on-card signing.
