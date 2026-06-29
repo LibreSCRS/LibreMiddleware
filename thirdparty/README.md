@@ -34,24 +34,23 @@ git add thirdparty/curl-source
 
 ## opensc-source
 
-**Upstream:** https://github.com/OpenSC/OpenSC (canonical upstream)
-**Pinned commit:** `bdab0aad1` on `srbeid-raw-signing` (LibreSCRS/OpenSC) — includes the merged srbeid PRs:
-  - PR #3595 (commit `82d8fb895`): Serbian CardEdge driver introduction
-  - PR #3662 (commit `28ace0595`): bound CardEdge dir entry count before allocation (Coverity CID 503167)
-  - PR #3665 (commit `7d5d10ef3`): match by ATR whitelist, drop AID fallback (issue #3663)
-  - PR #3701 (commit `bdab0aad1`): srbeid RSA-2048 raw signing + decryption — advertise
-    PKCS#1 *and* raw RSA, pick the MSE algorithm byte from the requested flags, and only
-    carry the first cryptogram byte in P2 for the 256-byte block (a smaller DigestInfo is
-    sent as-is). Supersedes the earlier `1b2d5c5b9` which always split the first byte into
-    P2, malforming the PSO APDU for non-256-byte raw-sign inputs.
-  ... plus subsequent upstream OpenSC fixes folded in via the #3701 range.
+**Upstream:** https://github.com/OpenSC/OpenSC (canonical upstream — tracked directly)
+**Pinned commit:** `07d0d40b0` (upstream `master`). NO downstream patches and NO fork:
+every contribution we need is merged upstream —
+  - Serbian CardEdge (srbeid) driver: `card-srbeid.c` / `pkcs15-srbeid.c`
+    (introduced `82d8fb895`, hardened `28ace0595`, ATR-whitelist match `7d5d10ef3`).
+  - srbeid RSA-2048 raw signing + decryption (`08b3debef`): advertise PKCS#1 *and* raw
+    RSA, pick the MSE algorithm byte from the requested flags, P2 carries only the first
+    cryptogram byte of a 256-byte block.
+  - Giesecke & Devrient SCE7 PIV support in `card-piv.c` (G&D Sm@rtCafe Expert v7.0).
 **License:** LGPL-2.1
-**Vendored on:** 2026-05-10 (re-pointed from LibreSCRS/OpenSC fork to upstream)
+**Vendored on:** 2026-06-29 (re-pointed from the LibreSCRS/OpenSC fork to upstream master;
+dropped both downstream patches — the PIV SCE7 and APDU-trace patches are no longer needed).
 
-Why vendored: avoid runtime dependency on system OpenSC version; pin to the
-specific commit where our merged srbeid CardEdge support lives so the bundled
-`librescrs-opensc-pkcs11.so` always picks up rs-eid / PKS / RFZO via the
-upstream srbeid driver irrespective of the host distribution's OpenSC age.
+Why vendored: avoid a runtime dependency on the host OpenSC version; pin to a known
+upstream commit so the bundled `librescrs-opensc-pkcs11.so` always picks up
+rs-eid / PKS / RFZO via the upstream srbeid driver irrespective of the host
+distribution's OpenSC age. No patch/fork to maintain.
 
 Update procedure:
 ```

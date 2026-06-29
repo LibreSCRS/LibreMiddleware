@@ -19,7 +19,7 @@ At tag time you MUST also refresh the OpenSC submodule pin in the second
 ## Local dogfood build (no remote, no tag — build from this checkout)
 
 The release `PKGBUILD` fetches two tarballs (the project + the vendored
-OpenSC fork, which a GitHub archive omits because it lives in a git
+upstream OpenSC, which a GitHub archive omits because it lives in a git
 submodule). The dogfood recipe must mirror that **two-source** structure,
 not collapse it into one: makepkg's `git+file://` VCS handler does **not**
 fetch git submodules (see `/usr/share/makepkg/source/git.sh` — it has no
@@ -27,18 +27,18 @@ submodule handling at all), so a single `git+file://` clone of this repo
 leaves `thirdparty/opensc-source/` empty and `build()` dies at OpenSC's
 `./bootstrap`.
 
-So the dogfood recipe supplies the pinned OpenSC fork as a **second local
+So the dogfood recipe supplies the pinned upstream OpenSC as a **second local
 git source**, named `OpenSC-<fullhash>` so its clone lands at
-`$srcdir/OpenSC-1b2d5c5b9aa22fb174ca1f70534148e25fad1a22` — exactly the
+`$srcdir/OpenSC-07d0d40b0e4051f6fe11f3a92cec56d320670d85` — exactly the
 directory the release `prepare()` already copies into
 `thirdparty/opensc-source`. Because the two source dirs are named to match
 what `prepare()` and the four phase `cd` lines already expect,
 **neither `prepare()` nor any phase function needs editing** — only the
 `source`/`sha256sums` arrays are swapped for local git equivalents.
 
-This assumes the LibreSCRS/OpenSC fork is cloned as a **sibling** of this
+This assumes upstream OpenSC (OpenSC/OpenSC) is cloned as a **sibling** of this
 repo at `../OpenSC`, with the pinned commit reachable offline (verify with
-`git -C ../OpenSC cat-file -t 1b2d5c5b9aa22fb174ca1f70534148e25fad1a22`).
+`git -C ../OpenSC cat-file -t 07d0d40b0e4051f6fe11f3a92cec56d320670d85`).
 If your OpenSC clone lives elsewhere, adjust the `git+file://` path of the
 second source accordingly.
 
@@ -52,10 +52,10 @@ cd /tmp/lm-arch
 # so the WHOLE array is replaced (a single-line s### would only touch the
 # first line and corrupt the array). Source 1 is this repo named
 # LibreMiddleware-$pkgver (matches the phase `cd` lines); source 2 is the
-# sibling OpenSC fork pinned to the submodule commit and named OpenSC-<hash>
+# sibling upstream OpenSC pinned to the submodule commit and named OpenSC-<hash>
 # (matches prepare()'s copy dir) so prepare() is unchanged.
 sed -i \
-  -e "/^source=(/,/^)/c\\source=(\"LibreMiddleware-\$pkgver::git+file://$REPO\"\n        \"OpenSC-1b2d5c5b9aa22fb174ca1f70534148e25fad1a22::git+file://$REPO/../OpenSC#commit=1b2d5c5b9aa22fb174ca1f70534148e25fad1a22\")" \
+  -e "/^source=(/,/^)/c\\source=(\"LibreMiddleware-\$pkgver::git+file://$REPO\"\n        \"OpenSC-07d0d40b0e4051f6fe11f3a92cec56d320670d85::git+file://$REPO/../OpenSC#commit=07d0d40b0e4051f6fe11f3a92cec56d320670d85\")" \
   -e "/^sha256sums=(/,/^)/c\\sha256sums=('SKIP' 'SKIP')" \
   PKGBUILD
 makepkg -si
@@ -63,9 +63,9 @@ makepkg -si
 
 > Why this works: the PKGBUILD `cd`s into `$srcdir/LibreMiddleware-$pkgver`
 > in all four phase functions, and `prepare()` copies
-> `../OpenSC-1b2d5c5b…` into `thirdparty/opensc-source`. The first git
+> `../OpenSC-07d0d40b…` into `thirdparty/opensc-source`. The first git
 > source checks out to exactly `$srcdir/LibreMiddleware-$pkgver`; the second,
-> named `OpenSC-1b2d5c5b…`, checks out to `$srcdir/OpenSC-1b2d5c5b…` —
+> named `OpenSC-07d0d40b…`, checks out to `$srcdir/OpenSC-07d0d40b…` —
 > precisely where `prepare()` looks. makepkg does NOT carry submodules, so
 > this explicit second source is what makes the vendored OpenSC tree present
 > for the static build. Both arrays stay two-element, so `sha256sums` is two
@@ -85,5 +85,5 @@ makepkg -si
 - `share/p11-kit/modules/librescrs.module` — p11-kit auto-discovery drop-in
 
 OpenSSL (libcrypto) is **statically bundled** (`thirdparty/openssl-3.5.5`) and
-is not a runtime dependency. The vendored OpenSC fork is built as a static
+is not a runtime dependency. The vendored upstream OpenSC is built as a static
 archive and linked in; there is no `system libopensc` dependency.

@@ -1,12 +1,11 @@
 [submodule "thirdparty/opensc-source"]
 	path = thirdparty/opensc-source
-	url = https://github.com/LibreSCRS/OpenSC.git
-	# Configure-time `git apply` in thirdparty/CMakeLists.txt leaves the
-	# submodule working tree with patches applied. The downstream patches
-	# in thirdparty/patches/ are the source of truth; the submodule pointer
-	# tracks upstream HEAD only. `ignore = dirty` keeps outer `git status`
-	# clean — submodule pointer changes are still reported, working-tree
-	# drift is not.
+	url = https://github.com/OpenSC/OpenSC.git
+	# Tracks upstream OpenSC directly: the Serbian eID (srbeid) CardEdge
+	# driver, its RSA-2048 raw signing/decryption, and the G&D SCE7 PIV
+	# support are all merged upstream, so no downstream patches or fork are
+	# needed. `ignore = dirty` keeps outer `git status` clean against the
+	# autotools bootstrap artifacts the vendored build writes into the tree.
 	ignore = dirty
 [submodule "thirdparty/curl-source"]
 	path = thirdparty/curl-source

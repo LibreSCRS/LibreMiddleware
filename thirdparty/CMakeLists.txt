@@ -191,54 +191,11 @@ set(OPENSC_STATIC_LIB  ${OPENSC_INSTALL_DIR}/lib/libopensc.a)
 set(OPENSC_INCLUDE_SRC   ${OPENSC_SOURCE_DIR}/src)
 set(OPENSC_INCLUDE_BUILD ${OPENSC_BUILD_DIR})
 
-# Apply downstream patches to the vendored OpenSC source tree at configure
-# time, so the ExternalProject_Add bootstrap/configure/build step below sees
-# the patched sources. Each .patch in thirdparty/patches/ is applied in
-# lexicographic order; a `git apply --check -R` dry-run gates each patch so
-# re-configures are idempotent (already-applied patches skip silently). When
-# a patch is freshly applied, the OpenSC ExternalProject build + install
-# stamps are removed so the next build pass re-runs the build with the
-# patched source (otherwise the stamp file makes ExternalProject think the
-# build is already done and the new .c content never reaches libopensc.a).
-# See thirdparty/patches/NNNN-*-readme.md for rationale per patch.
-file(GLOB OPENSC_PATCHES ${CMAKE_CURRENT_SOURCE_DIR}/patches/*.patch)
-list(SORT OPENSC_PATCHES)
+# The vendored OpenSC tracks upstream directly (no downstream patches): the
+# srbeid CardEdge driver, its RSA-2048 raw signing/decryption, and the G&D SCE7
+# PIV support are all merged upstream. The stamp-invalidation guard below still
+# tracks the vendored sources by mtime so a submodule bump re-links libopensc.a.
 set(_opensc_any_patch_applied FALSE)
-foreach(_patch ${OPENSC_PATCHES})
-    # If the patch is already applied, the reverse-apply dry-run succeeds;
-    # skip in that case. Otherwise the forward dry-run must succeed before
-    # we attempt the real apply, so a malformed/conflicting patch fails
-    # configure rather than half-applying.
-    execute_process(
-        COMMAND git apply --check -R ${_patch}
-        WORKING_DIRECTORY ${OPENSC_SOURCE_DIR}
-        RESULT_VARIABLE _patch_reverse_rc
-        OUTPUT_QUIET ERROR_QUIET
-    )
-    if(_patch_reverse_rc EQUAL 0)
-        message(STATUS "OpenSC: ${_patch} already applied; skipping")
-    else()
-        execute_process(
-            COMMAND git apply --check ${_patch}
-            WORKING_DIRECTORY ${OPENSC_SOURCE_DIR}
-            RESULT_VARIABLE _patch_check_rc
-            OUTPUT_QUIET ERROR_QUIET
-        )
-        if(NOT _patch_check_rc EQUAL 0)
-            message(FATAL_ERROR "OpenSC: ${_patch} cannot be applied cleanly to ${OPENSC_SOURCE_DIR}")
-        endif()
-        message(STATUS "OpenSC: applying ${_patch}")
-        execute_process(
-            COMMAND git apply ${_patch}
-            WORKING_DIRECTORY ${OPENSC_SOURCE_DIR}
-            RESULT_VARIABLE _patch_apply_rc
-        )
-        if(NOT _patch_apply_rc EQUAL 0)
-            message(FATAL_ERROR "OpenSC: ${_patch} failed to apply despite passing dry-run")
-        endif()
-        set(_opensc_any_patch_applied TRUE)
-    endif()
-endforeach()
 
 set(_opensc_stamp_dir
     ${CMAKE_CURRENT_BINARY_DIR}/opensc_external-prefix/src/opensc_external-stamp)
