@@ -8,10 +8,10 @@
 #
 # NOTE ON THE VENDORED OpenSC SUBMODULE
 # -------------------------------------
-# thirdparty/opensc-source is a git SUBMODULE (LibreSCRS/OpenSC fork). A
+# thirdparty/opensc-source is a git SUBMODULE (upstream OpenSC/OpenSC). A
 # GitHub release tarball (archive/refs/tags/v$pkgver.tar.gz) does NOT include
 # submodule contents, so a second source entry below pulls the pinned OpenSC
-# fork separately and prepare() drops it into place. The submodule commit pin
+# commit separately and prepare() drops it into place. The submodule commit pin
 # (and its sha256) MUST be refreshed at tag time alongside the main tarball.
 
 pkgname=librescrs-middleware
@@ -34,7 +34,7 @@ depends=(
     'gcc-libs'
     'glibc'
 )
-# Build host tooling. The vendored OpenSC fork is bootstrapped with autotools
+# Build host tooling. The vendored OpenSC is bootstrapped with autotools
 # (autoreconf via ./bootstrap) at build time, hence the autotools chain.
 makedepends=(
     'cmake'
@@ -57,12 +57,12 @@ source=(
     # Vendored submodules — pinned commits, fetched separately because the
     # release tarball omits submodule trees. Pins match
     # `git -C thirdparty/<sub> rev-parse HEAD` at tag time.
-    "opensc-source-$pkgver.tar.gz::https://github.com/LibreSCRS/OpenSC/archive/bdab0aad1606c15d657256e0e2744656bdd9edad.tar.gz"
+    "opensc-source-$pkgver.tar.gz::https://github.com/OpenSC/OpenSC/archive/07d0d40b0e4051f6fe11f3a92cec56d320670d85.tar.gz"
     "curl-source-$pkgver.tar.gz::https://github.com/curl/curl/archive/75a2079d5c28debb2eaa848ca9430f1fe0d7844c.tar.gz"
 )
 # Placeholders — real checksums are filled in at tag time with `updpkgsums`
 # (or `makepkg -g`). 'SKIP' keeps the release-shaped PKGBUILD parseable now,
-# before the v4.2.0 tag and the vendored submodule tarballs exist upstream.
+# before a release tag and the vendored submodule tarballs exist upstream.
 sha256sums=(
     'SKIP'
     'SKIP'
@@ -73,9 +73,9 @@ prepare() {
     cd "$srcdir/LibreMiddleware-$pkgver"
     # Drop the separately-fetched submodule sources into their paths so the
     # vendored static builds (thirdparty/CMakeLists.txt) find their source trees.
-    if [ -d ../OpenSC-bdab0aad1606c15d657256e0e2744656bdd9edad ]; then
+    if [ -d ../OpenSC-07d0d40b0e4051f6fe11f3a92cec56d320670d85 ]; then
         rmdir thirdparty/opensc-source 2>/dev/null || true
-        cp -aT ../OpenSC-bdab0aad1606c15d657256e0e2744656bdd9edad thirdparty/opensc-source
+        cp -aT ../OpenSC-07d0d40b0e4051f6fe11f3a92cec56d320670d85 thirdparty/opensc-source
     fi
     if [ -d ../curl-75a2079d5c28debb2eaa848ca9430f1fe0d7844c ]; then
         rmdir thirdparty/curl-source 2>/dev/null || true
