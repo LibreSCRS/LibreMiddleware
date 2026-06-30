@@ -66,8 +66,9 @@ namespace detail {
 // it is reached only from in-tree test translation units through the internal-
 // build-guarded <LibreSCRS/SmartCard/detail/CardSessionInjection.h>, never from
 // a shipped plugin or sibling LibreSCRS_*.so. External SDK consumers therefore
-// never see the prototype, and the symbol is stripped from the production .so
-// dynamic export set by cmake/librescrs-public-exports.map.
+// never see the prototype (it is compiled out without @c LIBRESCRS_INTERNAL_BUILD)
+// and cannot call it; the definition itself is still present in the .so dynamic
+// export set selected by cmake/librescrs-public-exports.map.
 LIBRESCRS_PUBLIC_API std::shared_ptr<CardSession> makeDetachedCardSession(std::string readerName);
 #endif
 struct PcscBridge;

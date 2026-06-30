@@ -229,7 +229,7 @@ public:
 private:
     AuthRequirement() = default;
 
-    // Project convention (CLAUDE.md): no trailing underscores on member
+    // Project convention: no trailing underscores on member
     // variables. The accessor names (`purpose()`, `fields()`, `retriesLeft()`,
     // `message()`, `title()`) necessarily differ from the data members, so
     // we use descriptive non-conflicting names instead of an `m_` prefix.

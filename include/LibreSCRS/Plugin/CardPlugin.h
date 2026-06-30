@@ -68,9 +68,10 @@ namespace LibreSCRS::Plugin {
 ///
 /// @note ABI version is @c 8 (see `kCardPluginAbiVersion`). Plugin loaders
 ///       reject any plugin whose `card_plugin_abi_version()` differs from
-///       this value. v7 adds the @ref activationProfile / @ref
+///       this value. v7 added the @ref activationProfile / @ref
 ///       seedCredentials activation virtuals consumed by the @ref readCard
-///       NVI wrapper.
+///       NVI wrapper; v8 appends the @ref doDecipher vtable slot
+///       (ABI-additive — see the note on @ref decipher).
 ///
 /// Method groups:
 ///  - Identification (@ref pluginId, @ref displayName, @ref probePriority) — set via @ref setIdentity
@@ -684,7 +685,7 @@ protected:
     }
 
 private:
-    // Project convention (CLAUDE.md): no trailing underscores on member
+    // Project convention: no trailing underscores on member
     // variables. The `*Value` suffix mirrors the convention already
     // established for `purposeValue` / `fieldList` / `retriesValue` in
     // AuthRequirement.h, and addresses the ergonomic concern that a
