@@ -8,6 +8,7 @@
 #pragma once
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 #include <stdexcept>
@@ -21,6 +22,13 @@
 
 #include "apdu.h"
 #include <smartcard/i_connection.h>
+
+namespace LibreSCRS::SmartCard {
+// The single sanctioned opener of a real PC/SC connection (CardSession::open).
+// Friended below so PCSCConnection's reader-name ctor can stay private — that
+// is the type-level enforcement of the one-session-per-reader invariant.
+class CardSession;
+} // namespace LibreSCRS::SmartCard
 
 namespace LibreSCRS::SmartCard::Internal {
 
@@ -40,17 +48,26 @@ private:
 class PCSCConnection : public IConnection
 {
 public:
-    explicit PCSCConnection(const std::string& readerName);
-
     /// Tag type used to construct a "detached" PCSCConnection that performs
     /// no PC/SC calls. Intended exclusively for test-only injection paths
     /// where a CardSession needs to be keyed by a real PCSCConnection address
     /// (matching the plugins' per-session map shape) but no hardware is
     /// available. Any transmit() call on a detached connection returns an
-    /// empty APDUResponse.
+    /// empty APDUResponse. Public because a detached connection opens NO path
+    /// to a card, so it is outside the one-session-per-reader invariant.
     struct DetachedTag
     {};
     PCSCConnection(DetachedTag, const std::string& readerName);
+
+    /// @brief Open a real PC/SC connection OUTSIDE the CardSession single-
+    ///        session machinery. The ONLY sanctioned callers are the
+    ///        diagnostic CLI tools (tools/) and hardware-probe tests (test/);
+    ///        production libraries MUST open through CardSession::open so the
+    ///        one-session-per-reader invariant holds. ci/scripts/
+    ///        check-raw-pcsc-open.sh fails the build if any lib/ source names
+    ///        this factory, and the reader-name ctor below is private +
+    ///        friended to CardSession so it cannot be reached another way.
+    [[nodiscard]] static std::unique_ptr<PCSCConnection> openRawDiagnostic(const std::string& readerName);
 
     ~PCSCConnection();
 
@@ -107,6 +124,11 @@ public:
     static std::vector<std::string> listReaders();
 
 private:
+    // Real reader-name ctor: opens a live PC/SC handle. Private so the only
+    // production opener is CardSession (the single-session keystone); the
+    // diagnostic tools/tests reach it via the openRawDiagnostic() factory.
+    explicit PCSCConnection(const std::string& readerName);
+
     TransmitFilter transmitFilter;
     std::string storedReaderName;
     SCARDCONTEXT context = 0;
@@ -114,6 +136,7 @@ private:
     DWORD activeProtocol = 0;
     bool callerHoldsTransaction = false;
     friend class CardTransaction;
+    friend class ::LibreSCRS::SmartCard::CardSession;
 };
 
 // RAII wrapper: begins a PC/SC transaction on construction, ends it on destruction.

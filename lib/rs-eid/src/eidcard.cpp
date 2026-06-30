@@ -8,35 +8,15 @@
 #include "card_reader_apollo.h"
 #include "card_verifier.h"
 #include <pcsc_connection.h>
+#include "date_format.h"
 #include "tlv.h"
 #include "apdu.h"
-#include <algorithm>
 
 namespace eidcard {
 
-// Format "DDMMYYYY" → "DD.MM.YYYY", pass through anything else unchanged
-static std::string formatDate(const std::string& raw)
-{
-    if (raw.size() == 8 && std::all_of(raw.begin(), raw.end(), ::isdigit))
-        return raw.substr(0, 2) + "." + raw.substr(2, 2) + "." + raw.substr(4, 4);
-    return raw;
-}
+using LibreSCRS::SmartCard::Internal::formatDateDMY;
 
-bool EIdCard::probe(const std::string& readerName)
-{
-    try {
-        LibreSCRS::SmartCard::Internal::PCSCConnection conn(readerName);
-        auto atr = conn.getATR();
-        if (protocol::isGemaltoATR(atr) || protocol::isApolloATR(atr))
-            return true;
-        // Unknown ATR — try Gemalto AID selection as fallback
-        return CardReaderGemalto::selectApplication(conn) != CardType::Unknown;
-    } catch (...) {
-        return false;
-    }
-}
-
-// Shared init logic for both constructors
+// Init logic for the constructor
 void EIdCard::detectCardType()
 {
     auto atr = conn->getATR();
@@ -55,13 +35,6 @@ void EIdCard::detectCardType()
             throw std::runtime_error("Unknown card type, ATR not recognized");
         }
     }
-}
-
-EIdCard::EIdCard(const std::string& readerName)
-{
-    ownedConnection = std::make_unique<LibreSCRS::SmartCard::Internal::PCSCConnection>(readerName);
-    conn = ownedConnection.get();
-    detectCardType();
 }
 
 EIdCard::EIdCard(LibreSCRS::SmartCard::Internal::PCSCConnection& externalConn) : conn(&externalConn)
@@ -86,8 +59,8 @@ DocumentData EIdCard::readDocumentData()
     doc.docRegNo = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_DOC_REG_NO);
     doc.documentType = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_DOCUMENT_TYPE);
     doc.documentSerialNumber = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_DOCUMENT_SERIAL_NO);
-    doc.issuingDate = formatDate(LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_ISSUING_DATE));
-    doc.expiryDate = formatDate(LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_EXPIRY_DATE));
+    doc.issuingDate = formatDateDMY(LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_ISSUING_DATE));
+    doc.expiryDate = formatDateDMY(LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_EXPIRY_DATE));
     doc.issuingAuthority = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_ISSUING_AUTHORITY);
     doc.chipSerialNumber = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_CHIP_SERIAL_NUMBER);
     return doc;
@@ -108,7 +81,7 @@ FixedPersonalData EIdCard::readFixedPersonalData()
     fpd.placeOfBirth = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_PLACE_OF_BIRTH);
     fpd.communityOfBirth = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_COMMUNITY_OF_BIRTH);
     fpd.stateOfBirth = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_STATE_OF_BIRTH);
-    fpd.dateOfBirth = formatDate(LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_DATE_OF_BIRTH));
+    fpd.dateOfBirth = formatDateDMY(LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_DATE_OF_BIRTH));
     fpd.nationalityFull = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_NATIONALITY_FULL);
     fpd.statusOfForeigner = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_STATUS_OF_FOREIGNER);
     return fpd;
@@ -130,7 +103,7 @@ VariablePersonalData EIdCard::readVariablePersonalData()
     vpd.entrance = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_ENTRANCE);
     vpd.floor = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_FLOOR);
     vpd.apartmentNumber = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_APARTMENT_NUMBER);
-    vpd.addressDate = formatDate(LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_ADDRESS_DATE));
+    vpd.addressDate = formatDateDMY(LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_ADDRESS_DATE));
     vpd.addressLabel = LibreSCRS::SmartCard::Internal::findString(fields, protocol::TAG_ADDRESS_LABEL);
     return vpd;
 }

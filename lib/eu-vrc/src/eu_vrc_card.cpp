@@ -7,29 +7,17 @@
 
 #include <apdu.h>
 #include <ber.h>
+#include <date_format.h>
 #include <pcsc_connection.h>
 #include <smartcard/chunked_read.h>
 
-#include <algorithm>
 #include <stdexcept>
 
 namespace euvrc {
 
 std::string formatVrcDate(const std::string& raw)
 {
-    if (raw.size() == 8 && std::all_of(raw.begin(), raw.end(), ::isdigit))
-        return raw.substr(6, 2) + "." + raw.substr(4, 2) + "." + raw.substr(0, 4);
-    return raw;
-}
-
-bool EuVrcCard::probe(const std::string& readerName)
-{
-    try {
-        LibreSCRS::SmartCard::Internal::PCSCConnection conn(readerName);
-        return probe(conn);
-    } catch (...) {
-        return false;
-    }
+    return LibreSCRS::SmartCard::Internal::formatDateYMD(raw);
 }
 
 bool EuVrcCard::probe(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
@@ -38,16 +26,6 @@ bool EuVrcCard::probe(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
         return euvrc::probe(conn);
     } catch (...) {
         return false;
-    }
-}
-
-EuVrcCard::EuVrcCard(const std::string& readerName)
-{
-    ownedConnection = std::make_unique<LibreSCRS::SmartCard::Internal::PCSCConnection>(readerName);
-    conn = ownedConnection.get();
-
-    if (!detect(*conn)) {
-        throw std::runtime_error("EU VRC card initialization failed on reader: " + readerName);
     }
 }
 

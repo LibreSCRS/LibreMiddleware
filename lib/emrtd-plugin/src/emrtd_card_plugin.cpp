@@ -6,6 +6,7 @@
 #include <LibreSCRS/Plugin/CardPlugin.h>
 #include <LibreSCRS/Plugin/PluginExport.h>
 #include <LibreSCRS/Plugin/SecurityCheck.h>
+#include <LibreSCRS/Plugin/SessionKey.h>
 #include <LibreSCRS/Secure/Buffer.h>
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SecureChannel/BacParams.h>
@@ -23,6 +24,7 @@
 #include <chip_auth.h>
 #include <crypto_utils.h>
 #include <data_group.h>
+#include <date_format.h>
 #include <emrtd_card.h>
 #include <emrtd_types.h>
 #include <pace.h>
@@ -112,26 +114,10 @@ struct SessionContext
     LibreSCRS::Secure::String pendingExpiry;
 };
 
-/// @brief Per-session state map key.
-///
-/// Combining reader name with the CardSession's monotonic generation
-/// counter yields a key that is stable for the lifetime of the session
-/// and definitively distinct from any successor session — even when the
-/// OS reissues the same PCSCConnection address to a freshly opened
-/// reader. Raw-pointer keying used to silently leak credentials in that
-/// scenario.
-struct SessionKey
-{
-    std::string readerName;
-    std::uint64_t generation{0};
-
-    auto operator<=>(const SessionKey&) const = default;
-};
-
-SessionKey makeSessionKey(LibreSCRS::SmartCard::CardSession& session)
-{
-    return SessionKey{session.readerName(), LibreSCRS::SmartCard::detail::sessionGeneration(session)};
-}
+// Per-session state-map key + factory — the sanctioned plugin-support shape
+// shared with the other CardPlugin implementations.
+using LibreSCRS::Plugin::makeSessionKey;
+using LibreSCRS::Plugin::SessionKey;
 
 LibreSCRS::SmartCard::AppletAid makeEmrtdAid()
 {
@@ -632,7 +618,7 @@ private:
                     addTextField(g, "issuing_authority", "Issuing Authority", parsed.dg12->issuingAuthority);
                     std::string doi = parsed.dg12->dateOfIssue;
                     if (doi.size() == 8)
-                        doi = doi.substr(6, 2) + "." + doi.substr(4, 2) + "." + doi.substr(0, 4);
+                        doi = LibreSCRS::SmartCard::Internal::formatDateYMD(doi);
                     else if (doi.size() == 6)
                         doi = formatMRZDate(doi, true);
                     addTextField(g, "date_of_issue", "Date of Issue", doi);

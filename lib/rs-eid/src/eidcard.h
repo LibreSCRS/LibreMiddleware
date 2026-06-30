@@ -25,10 +25,6 @@ class CardVerifier;
 class EIdCard
 {
 public:
-    // Check if an eID card is present on the given reader without opening a full session.
-    static bool probe(const std::string& readerName);
-
-    explicit EIdCard(const std::string& readerName);
     explicit EIdCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn);
     ~EIdCard();
 
@@ -51,8 +47,7 @@ public:
     VerificationResult verifyVariableData();
 
 private:
-    std::unique_ptr<LibreSCRS::SmartCard::Internal::PCSCConnection> ownedConnection;
-    LibreSCRS::SmartCard::Internal::PCSCConnection* conn = nullptr; // always valid: points to owned or borrowed
+    LibreSCRS::SmartCard::Internal::PCSCConnection* conn = nullptr; // borrowed: the single card session's connection
     std::unique_ptr<CardReaderBase> cardReader;
     std::unique_ptr<CardVerifier> verifier;
     std::string certFolderPath;

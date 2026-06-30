@@ -57,7 +57,11 @@ CardSession::CardSession(std::string readerName) : d(std::make_unique<Impl>())
 {
     d->readerName = std::move(readerName);
     try {
-        d->ownedConn = std::make_unique<LibreSCRS::SmartCard::Internal::PCSCConnection>(d->readerName);
+        // CardSession is the sole sanctioned opener: the reader-name ctor is
+        // private + friended to this class, so it must be reached via `new`
+        // here (std::make_unique is not a friend and cannot call it).
+        d->ownedConn = std::unique_ptr<LibreSCRS::SmartCard::Internal::PCSCConnection>(
+            new LibreSCRS::SmartCard::Internal::PCSCConnection(d->readerName));
     } catch (const std::exception& e) {
         throw std::runtime_error(std::string{"CardSession open failed: "} + e.what());
     }

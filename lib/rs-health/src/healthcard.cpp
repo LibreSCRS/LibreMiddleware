@@ -6,11 +6,13 @@
 #include "apdu.h"
 #include <pcsc_connection.h>
 #include <smartcard/chunked_read.h>
+#include "date_format.h"
 #include "tlv.h"
-#include <algorithm>
 #include <stdexcept>
 
 namespace healthcard {
+
+using LibreSCRS::SmartCard::Internal::formatDateDMY;
 
 // Decode UTF-16 LE bytes → UTF-8 string (BMP only, covers all Serbian script)
 static std::string decodeUtf16Le(const std::vector<uint8_t>& bytes)
@@ -33,14 +35,6 @@ static std::string decodeUtf16Le(const std::vector<uint8_t>& bytes)
     return out;
 }
 
-// Format "DDMMYYYY" → "DD.MM.YYYY", pass through anything else unchanged
-static std::string formatDate(const std::string& raw)
-{
-    if (raw.size() == 8 && std::all_of(raw.begin(), raw.end(), ::isdigit))
-        return raw.substr(0, 2) + "." + raw.substr(2, 2) + "." + raw.substr(4, 4);
-    return raw;
-}
-
 // Find a TLV field value and decode it as a UTF-16 LE string
 static std::string findUtf16String(const std::vector<LibreSCRS::SmartCard::Internal::TLVField>& fields, uint16_t tag)
 {
@@ -48,16 +42,6 @@ static std::string findUtf16String(const std::vector<LibreSCRS::SmartCard::Inter
     if (bytes.empty())
         return {};
     return decodeUtf16Le(bytes);
-}
-
-bool HealthCard::probe(const std::string& readerName)
-{
-    try {
-        LibreSCRS::SmartCard::Internal::PCSCConnection conn(readerName);
-        return probe(conn);
-    } catch (...) {
-        return false;
-    }
 }
 
 bool HealthCard::probe(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
@@ -68,13 +52,6 @@ bool HealthCard::probe(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
     } catch (...) {
         return false;
     }
-}
-
-HealthCard::HealthCard(const std::string& readerName)
-    : ownedConnection(std::make_unique<LibreSCRS::SmartCard::Internal::PCSCConnection>(readerName)),
-      conn(*ownedConnection)
-{
-    initCard();
 }
 
 HealthCard::HealthCard(LibreSCRS::SmartCard::Internal::PCSCConnection& externalConn) : conn(externalConn)
@@ -131,8 +108,8 @@ HealthDocumentData HealthCard::readDocumentData()
     d.insurerName = findUtf16String(docFields, protocol::TAG_INSURER_NAME);
     d.insurerId = LibreSCRS::SmartCard::Internal::findString(docFields, protocol::TAG_INSURER_ID);
     d.cardId = LibreSCRS::SmartCard::Internal::findString(docFields, protocol::TAG_CARD_ID);
-    d.dateOfIssue = formatDate(LibreSCRS::SmartCard::Internal::findString(docFields, protocol::TAG_DATE_OF_ISSUE));
-    d.dateOfExpiry = formatDate(LibreSCRS::SmartCard::Internal::findString(docFields, protocol::TAG_DATE_OF_EXPIRY));
+    d.dateOfIssue = formatDateDMY(LibreSCRS::SmartCard::Internal::findString(docFields, protocol::TAG_DATE_OF_ISSUE));
+    d.dateOfExpiry = formatDateDMY(LibreSCRS::SmartCard::Internal::findString(docFields, protocol::TAG_DATE_OF_EXPIRY));
     d.printLanguage = LibreSCRS::SmartCard::Internal::findString(docFields, protocol::TAG_PRINT_LANGUAGE);
 
     // Fixed personal file
@@ -141,10 +118,10 @@ HealthDocumentData HealthCard::readDocumentData()
     d.familyNameLatin = findUtf16String(fixedFields, protocol::TAG_FAMILY_NAME_LAT);
     d.givenName = findUtf16String(fixedFields, protocol::TAG_GIVEN_NAME);
     d.givenNameLatin = findUtf16String(fixedFields, protocol::TAG_GIVEN_NAME_LAT);
-    d.dateOfBirth = formatDate(LibreSCRS::SmartCard::Internal::findString(fixedFields, protocol::TAG_DATE_OF_BIRTH));
+    d.dateOfBirth = formatDateDMY(LibreSCRS::SmartCard::Internal::findString(fixedFields, protocol::TAG_DATE_OF_BIRTH));
 
     // Variable personal file
-    d.validUntil = formatDate(LibreSCRS::SmartCard::Internal::findString(varPersFields, protocol::TAG_VALID_UNTIL));
+    d.validUntil = formatDateDMY(LibreSCRS::SmartCard::Internal::findString(varPersFields, protocol::TAG_VALID_UNTIL));
     d.permanentlyValid =
         (LibreSCRS::SmartCard::Internal::findString(varPersFields, protocol::TAG_PERMANENTLY_VALID) == "01");
 
@@ -179,7 +156,7 @@ HealthDocumentData HealthCard::readDocumentData()
     d.carrierGivenName = findUtf16String(varAdminFields, protocol::TAG_CARRIER_GIVEN_NAME);
     d.carrierGivenNameLatin = findUtf16String(varAdminFields, protocol::TAG_CARRIER_GIVEN_NAME_LAT);
     d.insuranceStartDate =
-        formatDate(LibreSCRS::SmartCard::Internal::findString(varAdminFields, protocol::TAG_INSURANCE_START));
+        formatDateDMY(LibreSCRS::SmartCard::Internal::findString(varAdminFields, protocol::TAG_INSURANCE_START));
     d.country = findUtf16String(varAdminFields, protocol::TAG_COUNTRY);
     d.taxpayerName = findUtf16String(varAdminFields, protocol::TAG_TAXPAYER_NAME);
     d.taxpayerResidence = findUtf16String(varAdminFields, protocol::TAG_TAXPAYER_RES);

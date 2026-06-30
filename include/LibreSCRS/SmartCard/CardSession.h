@@ -60,7 +60,16 @@ struct ActiveChannelAccessor;
 } // namespace Internal
 
 namespace detail {
+#ifdef LIBRESCRS_INTERNAL_BUILD
+// Test-only detached/alternate-session factory. Gated behind
+// @c LIBRESCRS_INTERNAL_BUILD exactly like @ref CardSession::transmitInternal:
+// it is reached only from in-tree test translation units through the internal-
+// build-guarded <LibreSCRS/SmartCard/detail/CardSessionInjection.h>, never from
+// a shipped plugin or sibling LibreSCRS_*.so. External SDK consumers therefore
+// never see the prototype, and the symbol is stripped from the production .so
+// dynamic export set by cmake/librescrs-public-exports.map.
 LIBRESCRS_PUBLIC_API std::shared_ptr<CardSession> makeDetachedCardSession(std::string readerName);
+#endif
 struct PcscBridge;
 LIBRESCRS_PUBLIC_API std::uint64_t sessionGeneration(const CardSession& session) noexcept;
 // Friend-only access struct for the test-channel injection seam. Method
@@ -460,7 +469,12 @@ private:
     // internal-only headers under `LibreSCRS/SmartCard/detail/`; friend
     // declarations here inject the names at enclosing-namespace scope
     // without leaking any prototypes into the public include tree.
+#ifdef LIBRESCRS_INTERNAL_BUILD
+    // Friend for the internal-build-only detached-session test factory; gated
+    // in lockstep with its declaration above so the public surface neither
+    // names nor befriends a symbol absent from the SDK.
     friend std::shared_ptr<CardSession> detail::makeDetachedCardSession(std::string readerName);
+#endif
     friend struct detail::PcscBridge;
     friend std::uint64_t detail::sessionGeneration(const CardSession& session) noexcept;
     friend struct detail::ChannelInjector;

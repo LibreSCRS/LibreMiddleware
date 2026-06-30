@@ -267,13 +267,15 @@ std::vector<uint8_t> base64urlDecode(const std::string& input)
 
 // ---- Hex / percent encoding ----
 
-std::string hexEncode(std::span<const uint8_t> data)
+std::string hexEncode(std::span<const uint8_t> data, bool lowercase)
 {
+    static constexpr std::string_view kHexCharsLower = "0123456789abcdef";
+    const std::string_view chars = lowercase ? kHexCharsLower : kHexChars;
     std::string out;
     out.reserve(data.size() * 2);
     for (uint8_t b : data) {
-        out.push_back(kHexChars[(b >> 4) & 0x0F]);
-        out.push_back(kHexChars[b & 0x0F]);
+        out.push_back(chars[(b >> 4) & 0x0F]);
+        out.push_back(chars[b & 0x0F]);
     }
     return out;
 }

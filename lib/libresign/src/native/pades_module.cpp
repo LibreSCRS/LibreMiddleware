@@ -779,13 +779,7 @@ SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, Pkcs11Tok
             // envelope). iText / eu.europa.ec.dss / Adobe Acrobat all hash
             // the binary CMS here.
             auto sha1 = native_utils::sha1(cms);
-            std::string vriKey;
-            vriKey.reserve(sha1.size() * 2);
-            static constexpr char kHexLower[] = "0123456789abcdef";
-            for (auto b : sha1) {
-                vriKey.push_back(kHexLower[(b >> 4) & 0x0F]);
-                vriKey.push_back(kHexLower[b & 0x0F]);
-            }
+            std::string vriKey = native_utils::hexEncode(sha1, /*lowercase=*/true);
 
             // Allocate object numbers: DSS dict at nextObj, streams follow,
             // catalog override at the very end so the xref subsections stay

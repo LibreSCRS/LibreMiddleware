@@ -38,13 +38,4 @@ std::vector<LibreSCRS::Trust::TrustAnchor> extractAnchorsFromTrustedList(const T
     return out;
 }
 
-TrustedListProvider::TrustedListProvider(TrustedListInfo info, std::string sourceLabel)
-    : cached(extractAnchorsFromTrustedList(info, sourceLabel))
-{}
-
-std::vector<LibreSCRS::Trust::TrustAnchor> TrustedListProvider::anchors() const
-{
-    return cached;
-}
-
 } // namespace libresign

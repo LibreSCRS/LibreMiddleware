@@ -53,21 +53,6 @@ std::string xrefOffset(std::size_t offset)
     return std::format("{:010}", offset);
 }
 
-// Lowercase-hex encoding of a byte buffer. Local helper — the regular
-// signature path open-codes the same loop with native_utils::kHexChars;
-// duplicating the trivial loop here keeps the TU self-contained.
-std::string toHexLower(const std::vector<std::uint8_t>& data)
-{
-    static constexpr char kHexLower[] = "0123456789abcdef";
-    std::string out;
-    out.reserve(data.size() * 2);
-    for (auto b : data) {
-        out.push_back(kHexLower[(b >> 4) & 0x0F]);
-        out.push_back(kHexLower[b & 0x0F]);
-    }
-    return out;
-}
-
 void appendCStr(std::vector<std::uint8_t>& out, std::string_view s)
 {
     out.insert(out.end(), s.begin(), s.end());
@@ -358,7 +343,7 @@ std::vector<std::uint8_t> appendDocTimeStamp(const std::vector<std::uint8_t>& bl
     }
 
     // 7. Hex-embed the TST into the /Contents placeholder, pad to alloc.
-    std::string tstHex = toHexLower(tst);
+    std::string tstHex = native_utils::hexEncode(tst, /*lowercase=*/true);
     while (tstHex.size() < (kDocTimestampContentsAlloc * 2))
         tstHex.push_back('0');
     std::memcpy(full.data() + hexStart, tstHex.data(), kDocTimestampContentsAlloc * 2);
@@ -369,7 +354,7 @@ std::vector<std::uint8_t> appendDocTimeStamp(const std::vector<std::uint8_t>& bl
     //    DER TimeStampToken itself.
     if (emitDss) {
         auto tstSha1 = native_utils::sha1(tst);
-        std::string vriKeyHex = toHexLower(tstSha1);
+        std::string vriKeyHex = native_utils::hexEncode(tstSha1, /*lowercase=*/true);
         if (vriKeyHex.size() != kVriKeyHexLen)
             throw std::runtime_error("appendDocTimeStamp: VRI key SHA-1 hex length mismatch");
         const std::size_t vriAbsoluteOffset = baseOffset + vriPlaceholderOffsetInIncr;

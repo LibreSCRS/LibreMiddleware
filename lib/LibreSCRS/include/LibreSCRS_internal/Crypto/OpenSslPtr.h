@@ -63,13 +63,6 @@ struct EvpMdCtxDeleter
         EVP_MD_CTX_free(p);
     }
 };
-struct EvpCipherCtxDeleter
-{
-    void operator()(EVP_CIPHER_CTX* p) const noexcept
-    {
-        EVP_CIPHER_CTX_free(p);
-    }
-};
 struct BnDeleter
 {
     void operator()(BIGNUM* p) const noexcept
@@ -107,7 +100,6 @@ using X509Ptr = std::unique_ptr<X509, X509Deleter>;
 using EvpPkeyPtr = std::unique_ptr<EVP_PKEY, EvpPkeyDeleter>;
 using BioPtr = std::unique_ptr<BIO, BioDeleter>;
 using EvpMdCtxPtr = std::unique_ptr<EVP_MD_CTX, EvpMdCtxDeleter>;
-using EvpCipherCtxPtr = std::unique_ptr<EVP_CIPHER_CTX, EvpCipherCtxDeleter>;
 using BnPtr = std::unique_ptr<BIGNUM, BnDeleter>;
 using Pkcs7Ptr = std::unique_ptr<PKCS7, Pkcs7Deleter>;
 using X509StoreCtxPtr = std::unique_ptr<X509_STORE_CTX, X509StoreCtxDeleter>;

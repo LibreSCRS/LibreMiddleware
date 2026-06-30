@@ -46,7 +46,8 @@ TEST(PACEHardwareTest, PaceWithCAN)
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
-    LibreSCRS::SmartCard::Internal::PCSCConnection conn(readers[0]);
+    auto connOwner = LibreSCRS::SmartCard::Internal::PCSCConnection::openRawDiagnostic(readers[0]);
+    auto& conn = *connOwner;
 
     // Read EF.CardAccess from MF
     conn.transmit({0x00, 0xA4, 0x00, 0x00, {0x3F, 0x00}, 0x00, true});

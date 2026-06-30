@@ -134,7 +134,8 @@ int main(int argc, char* argv[])
     printf("Using: %s\n\n", readerName.c_str());
 
     try {
-        LibreSCRS::SmartCard::Internal::PCSCConnection conn(readerName);
+        auto connOwner = LibreSCRS::SmartCard::Internal::PCSCConnection::openRawDiagnostic(readerName);
+        auto& conn = *connOwner;
 
         auto atr = conn.getATR();
         printf("ATR: ");

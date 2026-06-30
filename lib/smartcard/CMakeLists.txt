@@ -12,6 +12,7 @@ add_library(SmartCard_Impl STATIC
     src/pcsc_connection.cpp
     src/tlv.cpp
     src/ber.cpp
+    src/date_format.cpp
     src/chunked_read.cpp
     src/monitor.cpp
     # Internal core-transport headers (LM-private; #error-guarded against
@@ -20,6 +21,7 @@ add_library(SmartCard_Impl STATIC
     src/apdu.h
     src/ber.h
     src/tlv.h
+    src/date_format.h
     src/ipcsc_scan_provider.h
     src/pcsc_scan_provider.h
     src/pcsc_connection.h

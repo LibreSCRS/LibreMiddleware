@@ -3,6 +3,7 @@
 
 #include <LibreSCRS/Auth/ErrorKeys.h>
 #include <LibreSCRS/Plugin/CardPlugin.h>
+#include <LibreSCRS/Plugin/PinOutcome.h>
 #include <LibreSCRS/Plugin/PluginExport.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
 #include <pcsc_connection.h>
@@ -466,14 +467,7 @@ public:
         if (authInfo->tries_left >= 0)
             result.retriesLeft = authInfo->tries_left;
         result.blocked = (authInfo->tries_left == 0);
-        if (rc == 0)
-            result.outcome = LibreSCRS::Plugin::PINResultOutcome::Ok;
-        else if (result.blocked)
-            result.outcome = LibreSCRS::Plugin::PINResultOutcome::Blocked;
-        else if (result.retriesLeft.has_value())
-            result.outcome = LibreSCRS::Plugin::PINResultOutcome::InvalidPin;
-        else
-            result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
+        result.outcome = LibreSCRS::Plugin::classifyPinOutcome(result, rc == 0);
         return result;
     }
 
@@ -562,14 +556,7 @@ public:
         if (authInfo->tries_left >= 0)
             result.retriesLeft = authInfo->tries_left;
         result.blocked = (authInfo->tries_left == 0);
-        if (rc == 0)
-            result.outcome = LibreSCRS::Plugin::PINResultOutcome::Ok;
-        else if (result.blocked)
-            result.outcome = LibreSCRS::Plugin::PINResultOutcome::Blocked;
-        else if (result.retriesLeft.has_value())
-            result.outcome = LibreSCRS::Plugin::PINResultOutcome::InvalidPin;
-        else
-            result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
+        result.outcome = LibreSCRS::Plugin::classifyPinOutcome(result, rc == 0);
         return result;
     }
 

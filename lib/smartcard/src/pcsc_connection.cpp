@@ -11,6 +11,7 @@
 #include <functional>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <span>
 #include <thread>
 #include <unistd.h>
@@ -211,6 +212,14 @@ PCSCConnection::PCSCConnection(const std::string& readerName) : storedReaderName
         SCardReleaseContext(context);
         throw PCSCError("SCardConnect failed on reader: " + readerName, rv);
     }
+}
+
+// Diagnostic-only escape hatch (see header): opens a real PC/SC connection
+// for the CLI tools / hardware-probe tests under tools/ and test/. A static
+// member can reach the private reader-name ctor; production code cannot.
+std::unique_ptr<PCSCConnection> PCSCConnection::openRawDiagnostic(const std::string& readerName)
+{
+    return std::unique_ptr<PCSCConnection>(new PCSCConnection(readerName));
 }
 
 // Test-only ctor: no PC/SC calls, no context, no card. Used by CardSession

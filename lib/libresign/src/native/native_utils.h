@@ -120,10 +120,12 @@ std::string base64urlEncode(std::string_view str);
 // delegating to base64Decode.
 std::vector<uint8_t> base64urlDecode(const std::string& input);
 
-// Hex-encode a byte span as a lowercase or uppercase ASCII string.
-// Uses libresign::native_utils::kHexChars (uppercase). PAdES /Contents
-// blobs, signature digests, and any callsite that needs `[0-9A-F]+` form.
-std::string hexEncode(std::span<const uint8_t> data);
+// Hex-encode a byte span as an ASCII string. With @p lowercase false
+// (default) emits uppercase `[0-9A-F]+` — PAdES /Contents blobs and any
+// callsite that needs the uppercase form. With @p lowercase true emits
+// `[0-9a-f]+` — the ISO 32000-2 §12.8.4.3 DSS/VRI key (lowercase-hex
+// SHA-1 of the signed /Contents), matching iText / eu.europa.ec.dss.
+std::string hexEncode(std::span<const uint8_t> data, bool lowercase = false);
 
 // Percent-encode a byte span per RFC 3986 §2.1. Bytes outside the
 // unreserved set (`A-Z`, `a-z`, `0-9`, `-`, `_`, `.`, `~`) are emitted as

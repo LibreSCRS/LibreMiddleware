@@ -46,7 +46,8 @@ void writeToFile(const std::string& path, const std::string& content)
 int runPluginMode(const CliOptions& opts)
 {
     auto readerName = getReaderName(opts);
-    LibreSCRS::SmartCard::Internal::PCSCConnection conn(readerName);
+    auto connOwner = LibreSCRS::SmartCard::Internal::PCSCConnection::openRawDiagnostic(readerName);
+    auto& conn = *connOwner;
 
     auto appletInfo = card_mapper::mapPlugin(opts.pluginName, conn, opts.verbose);
     auto doc = card_mapper::formatAppletDoc(appletInfo);
@@ -63,7 +64,8 @@ int runPluginMode(const CliOptions& opts)
 int runDiscoverMode(const CliOptions& opts)
 {
     auto readerName = getReaderName(opts);
-    LibreSCRS::SmartCard::Internal::PCSCConnection conn(readerName);
+    auto connOwner = LibreSCRS::SmartCard::Internal::PCSCConnection::openRawDiagnostic(readerName);
+    auto& conn = *connOwner;
 
     // PACE pre-authentication was previously bootstrapped via emrtd::EMRTDCard
     // and a PCSCConnection transmit filter. The 4.2 SecureChannel migration

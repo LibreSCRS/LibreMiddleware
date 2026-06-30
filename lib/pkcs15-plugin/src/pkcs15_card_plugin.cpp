@@ -10,7 +10,9 @@
 #include <LibreSCRS/Auth/PaceSecretKind.h>
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Plugin/CardPlugin.h>
+#include <LibreSCRS/Plugin/PinOutcome.h>
 #include <LibreSCRS/Plugin/PluginExport.h>
+#include <LibreSCRS/Plugin/SessionKey.h>
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
@@ -48,19 +50,10 @@ namespace {
 // canHandleConnection, never via ATR. kAtrs (from manifest.json) is
 // intentionally empty.
 
-/// @brief Per-session key — mirrors the emrtd-plugin shape.
-struct SessionKey
-{
-    std::string readerName;
-    std::uint64_t generation{0};
-
-    auto operator<=>(const SessionKey&) const = default;
-};
-
-SessionKey makeSessionKey(LibreSCRS::SmartCard::CardSession& session)
-{
-    return SessionKey{session.readerName(), LibreSCRS::SmartCard::detail::sessionGeneration(session)};
-}
+// Per-session state-map key + factory — the sanctioned plugin-support shape
+// shared with the other CardPlugin implementations.
+using LibreSCRS::Plugin::makeSessionKey;
+using LibreSCRS::Plugin::SessionKey;
 
 /// @brief Plugin-side memory of whether this card session is PACE-gated.
 ///
@@ -517,14 +510,7 @@ public:
         if (r.retriesLeft >= 0)
             result.retriesLeft = r.retriesLeft;
         result.blocked = r.blocked;
-        if (r.success)
-            result.outcome = LibreSCRS::Plugin::PINResultOutcome::Ok;
-        else if (result.blocked)
-            result.outcome = LibreSCRS::Plugin::PINResultOutcome::Blocked;
-        else if (result.retriesLeft.has_value())
-            result.outcome = LibreSCRS::Plugin::PINResultOutcome::InvalidPin;
-        else
-            result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
+        result.outcome = LibreSCRS::Plugin::classifyPinOutcome(result, r.success);
         return result;
     }
 
@@ -598,14 +584,7 @@ public:
         if (r.retriesLeft >= 0)
             out.retriesLeft = r.retriesLeft;
         out.blocked = r.blocked;
-        if (r.success)
-            out.outcome = LibreSCRS::Plugin::PINResultOutcome::Ok;
-        else if (out.blocked)
-            out.outcome = LibreSCRS::Plugin::PINResultOutcome::Blocked;
-        else if (out.retriesLeft.has_value())
-            out.outcome = LibreSCRS::Plugin::PINResultOutcome::InvalidPin;
-        else
-            out.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
+        out.outcome = LibreSCRS::Plugin::classifyPinOutcome(out, r.success);
         return out;
     }
 

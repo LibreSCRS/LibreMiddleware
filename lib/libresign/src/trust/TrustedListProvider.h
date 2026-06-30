@@ -7,32 +7,20 @@
 
 #pragma once
 
-#include "../../LibreSCRS/Trust/internal/TrustAnchorProvider.h"
 #include "../native/trusted_list_parser.h"
 
+#include <LibreSCRS/Trust/TrustStore.h> // for TrustAnchor
+
 #include <string>
+#include <vector>
 
 namespace libresign {
 
-/// @brief Provider that wraps a successfully-fetched + parsed TL.
-/// Maps TrustedServiceEntry items by serviceType to TrustAnchor instances.
-class TrustedListProvider : public LibreSCRS::Trust::detail::TrustAnchorProvider
-{
-public:
-    TrustedListProvider(TrustedListInfo info, std::string sourceLabel);
-
-    [[nodiscard]] std::vector<LibreSCRS::Trust::TrustAnchor> anchors() const override;
-
-private:
-    std::vector<LibreSCRS::Trust::TrustAnchor> cached;
-};
-
 /// @brief Stateless helper: extract qualified-CA / qualified-TSA anchors
-///        from a parsed @ref TrustedListInfo. Same selection rules the
-///        @ref TrustedListProvider constructor applies. Used by
+///        from a parsed @ref TrustedListInfo. Maps @c TrustedServiceEntry
+///        items by @c serviceType to @c TrustAnchor instances. Used by
 ///        @c TrustStoreService eager-fetch workers to hand pre-mapped
-///        anchors to @c TrustStoreInternalAccess::mergeTrustedListAnchors
-///        without instantiating the provider class.
+///        anchors to @c TrustStoreInternalAccess::mergeTrustedListAnchors.
 [[nodiscard]] std::vector<LibreSCRS::Trust::TrustAnchor> extractAnchorsFromTrustedList(const TrustedListInfo& info,
                                                                                        const std::string& sourceLabel);
 

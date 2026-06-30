@@ -75,6 +75,12 @@ jobs:
       - name: Check pimpl visibility
         run: ./ci/scripts/check-impl-visibility.sh build
 
+      - name: Check raw PC/SC open confinement
+        # Production code must open the card via CardSession::open (single
+        # session per reader); only the diagnostic tools/tests may use the
+        # PCSCConnection::openRawDiagnostic escape hatch.
+        run: ./ci/scripts/check-raw-pcsc-open.sh
+
       - name: Check pinned TL cert expiry
         # Pre-empt the runtime hard-fail in tl_signature_verifier.cpp by
         # alerting (build break) ~3 months before any pinned TL signing

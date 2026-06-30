@@ -22,10 +22,8 @@ namespace healthcard {
 class HealthCard
 {
 public:
-    static bool probe(const std::string& readerName);
     static bool probe(LibreSCRS::SmartCard::Internal::PCSCConnection& conn);
 
-    explicit HealthCard(const std::string& readerName);
     explicit HealthCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn);
     ~HealthCard();
     HealthCard(const HealthCard&) = delete;
@@ -34,7 +32,6 @@ public:
     HealthDocumentData readDocumentData();
 
 private:
-    std::unique_ptr<LibreSCRS::SmartCard::Internal::PCSCConnection> ownedConnection;
     LibreSCRS::SmartCard::Internal::PCSCConnection& conn;
 
     void initCard();
