@@ -75,8 +75,15 @@ if(LIBRESCRS_VENDOR_CURL)
 
     set(_curl_osx_args "")
     if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+        # CMAKE_OSX_ARCHITECTURES is a ;-list ("x86_64;arm64"). Passed verbatim
+        # through ExternalProject_Add's CMAKE_ARGS, the ';' is taken as an
+        # argument separator, so curl's sub-CMake would see only the first arch
+        # and build a NON-universal libcurl.a (undefined _curl_* for the dropped
+        # slice). Re-encode the list with '|' and declare LIST_SEPARATOR below so
+        # the full arch list reaches curl intact.
+        string(REPLACE ";" "|" _curl_osx_arch "${CMAKE_OSX_ARCHITECTURES}")
         set(_curl_osx_args
-            -DCMAKE_OSX_ARCHITECTURES=${CMAKE_OSX_ARCHITECTURES}
+            -DCMAKE_OSX_ARCHITECTURES=${_curl_osx_arch}
             -DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET})
     endif()
 
@@ -88,6 +95,9 @@ if(LIBRESCRS_VENDOR_CURL)
         SOURCE_DIR  ${CURL_SOURCE_DIR}
         BINARY_DIR  ${CURL_BUILD_DIR}
         INSTALL_DIR ${CURL_INSTALL_DIR}
+        # '|' carries the ;-separated CMAKE_OSX_ARCHITECTURES list into the
+        # sub-CMake without it being split as an argument separator (see above).
+        LIST_SEPARATOR |
         CMAKE_ARGS
             -DCMAKE_INSTALL_PREFIX=${CURL_INSTALL_DIR}
             -DCMAKE_BUILD_TYPE=Release
@@ -273,6 +283,14 @@ set(OPENSC_CONFIGURE_FLAGS
     # consuming environment also provides gio on its link line. Disabling it
     # outright keeps the link deterministic and drops the GIO/GLib edge.
     --disable-notify
+    # OpenSC auto-detects libeac/openpace (EAC / PACE) whenever the build host
+    # ships its headers — Arch's `opensc` package pulls them in, Ubuntu's does
+    # not — which makes libopensc.a reference CVC_*/EAC_*/PACE_*/TA_* and leaves
+    # the static-archive consumers (librescrs-opensc-pkcs11, …) with undefined
+    # references unless every consuming environment also links -leac. LibreSCRS
+    # performs its own PACE, so disable it outright to keep the link
+    # deterministic and drop the libeac edge (same reasoning as --disable-notify).
+    --disable-openpace
     --with-pic
     # Redirect p11-kit module install into the staging dir; otherwise OpenSC
     # tries to write opensc.module into /usr/share/p11-kit/modules/ during
