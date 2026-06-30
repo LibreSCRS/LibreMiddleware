@@ -4,27 +4,18 @@
 
 Qt-free C++23 static libraries for reading smart cards via direct PC/SC APDU communication.
 
-## Supported Cards
+## Supported cards
 
-- **eMRTD / ePassport** — ICAO 9303 compliant passports and national ID cards (PACE, BAC, Secure Messaging)
-- **Serbian eID** — Gemalto 2014+, IF2020 Foreigner (personal data, photo, certificates)
-- **Serbian Vehicle Registration (EU VRC)** — EU Directive 2003/127/EC (all mandatory and optional fields)
-- **Serbian Health Insurance (RFZO)** — insured person, employer, insurance details
-- **PIV (NIST SP 800-73)** — certificates, photo, fingerprints, PIN management
-- **PKCS#15** — generic PKI card support (certificate discovery, PIN management, digital signing)
+**Full PKI through OpenSC.** OpenSC is the PKI engine. It works with every card OpenSC supports — the Serbian CardEdge cards (eID, qualified-signature/PKS, health) via the `srbeid` driver, plus IAS-ECC, CardOS, PIV, OpenPGP and more. Where OpenSC does not cover something, a built-in PKCS#15 plugin fills the gap (for example, on-card SHA-256 signing on the NAM card).
+
+**Card data through plugins.** Built-in plugins read the document data: Serbian eID, Serbian health insurance, EU vehicle registration, and electronic passports (eMRTD, with PACE/BAC).
 
 ## Libraries
 
 - **SmartCard** — PC/SC connection management, APDU, TLV/BER-TLV encoding
-- **RsEId** — Serbian eID card protocol
-- **EuVrc** — EU vehicle registration card protocol
-- **RsHealth** — Serbian health insurance card protocol
-- **eMRTD** — electronic travel document protocol with cryptographic authentication
-- **PIV** — NIST PIV card protocol
-- **PKCS15** — PKCS#15 token operations
-- **CardEdge** — CardEdge applet operations (PIN management, signing, certificate discovery)
-- **CardEdge PKCS#11** — shared library for Firefox, Thunderbird, and other PKCS#11-aware applications
-- **CardEdge OpenSC Driver** — external OpenSC driver for CardEdge-based cards
+- **Card plugins** — data readers (Serbian eID, EU vehicle, Serbian health, eMRTD passport) and PKI backends (`opensc`, which drives OpenSC's driver chain; `pkcs15`, the generic gap-fill)
+- **PKCS#11 module** — a standard PKCS#11 library for Firefox, Thunderbird, and other PKCS#11-aware applications
+- **Signing / Trust** — AdES signing (XAdES, PAdES, CAdES, JAdES, ASiC-E), timestamping, and the async trust store
 
 ## Public C++ SDK (4.0)
 
