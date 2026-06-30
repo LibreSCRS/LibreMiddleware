@@ -1,7 +1,7 @@
 {
   "pluginId": "rs-eid",
   "displayName": "Serbian eID",
-  "abiVersion": 7,
+  "abiVersion": 8,
   "capabilities": ["IdentityData"],
   "atrs": [
     { "value": "3B B9 18 00",

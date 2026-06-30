@@ -1,7 +1,7 @@
 {
   "pluginId": "opensc",
   "displayName": "OpenSC (generic)",
-  "abiVersion": 7,
+  "abiVersion": 8,
   "capabilities": ["PKI", "PinManagement"],
   "atrs": []
 }

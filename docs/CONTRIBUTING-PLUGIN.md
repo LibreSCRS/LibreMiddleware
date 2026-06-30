@@ -282,7 +282,7 @@ design.
 {
   "pluginId": "piv",
   "displayName": "PIV (NIST SP 800-73)",
-  "abiVersion": 6,
+  "abiVersion": 8,
   "capabilities": ["PKI", "PinManagement"],
   "preReadAuth": "None",
   "atrs": []
@@ -290,7 +290,10 @@ design.
 ```
 
 `abiVersion` must equal the current `LibreSCRS::Plugin::kCardPluginAbiVersion`
-the loader expects; the value is checked at load time. The `atrs` array
+the plugin is built against; the manifest schema validates it at build time.
+(The loader's runtime ABI gate compares the compiled `card_plugin_abi_version()`
+symbol that `LIBRESCRS_DECLARE_CARD_PLUGIN` emits — not this JSON field.) The
+`atrs` array
 is intentionally empty for PIV because PIV cards have no distinguishing
 ATR — detection runs through `canHandleConnection()` instead (see below).
 The manifest is consumed by `manifest2header.py`, which generates the

@@ -1,7 +1,7 @@
 {
   "pluginId": "eu-vrc",
   "displayName": "Vehicle Registration (EU VRC)",
-  "abiVersion": 7,
+  "abiVersion": 8,
   "capabilities": ["IdentityData"],
   "atrs": []
 }
