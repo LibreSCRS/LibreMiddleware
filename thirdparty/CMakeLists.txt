@@ -149,8 +149,13 @@ if(LIBRESCRS_VENDOR_CURL)
     # COMP objects reference inflate/deflate, pulled mid-scan.
     add_library(curl_static_with_deps INTERFACE)
     if(APPLE)
+        # curl's macOS backend (Curl_macos_init) calls SCDynamicStoreCopyProxies
+        # (SystemConfiguration) for system-proxy discovery and CFRelease
+        # (CoreFoundation); a static libcurl.a does not carry those frameworks,
+        # so every consumer of curl must link them explicitly.
         target_link_libraries(curl_static_with_deps INTERFACE
-            curl_static OpenSSL_Ssl OpenSSL_Crypto ZLIB::ZLIB)
+            curl_static OpenSSL_Ssl OpenSSL_Crypto ZLIB::ZLIB
+            "-framework CoreFoundation" "-framework SystemConfiguration")
     else()
         target_link_libraries(curl_static_with_deps INTERFACE
             "$<LINK_GROUP:RESCAN,curl_static,OpenSSL_Ssl,OpenSSL_Crypto,ZLIB::ZLIB>")
@@ -158,7 +163,7 @@ if(LIBRESCRS_VENDOR_CURL)
 endif()
 
 # ──────────────────────────────────────────────────────────────────────────
-# Vendored OpenSC (LibreSCRS fork, pinned commit 1b2d5c5b).
+# Vendored OpenSC (upstream OpenSC/OpenSC, pinned commit 07d0d40b).
 #
 # Built as a STATIC archive via ExternalProject_Add so the
 # librescrs-opensc-pkcs11 SHARED library can link it without pulling a
