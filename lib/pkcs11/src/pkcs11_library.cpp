@@ -1224,12 +1224,20 @@ CK_RV PKCS11Library::sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULON
         session.signState.reset();
         return CKR_FUNCTION_FAILED;
     }
-    if (pulSignatureLen == nullptr)
+    // PKCS#11 v2.40 §11.11: C_Sign terminates the active sign operation on any
+    // failure other than CKR_BUFFER_TOO_SMALL / the length-query call — so an
+    // argument-validation failure must drop signState (matching the multiPart
+    // guard above and the signUpdate sibling), not leave the operation dangling.
+    if (pulSignatureLen == nullptr) {
+        session.signState.reset();
         return CKR_ARGUMENTS_BAD;
+    }
     // pData may be null only for an empty input; a null pointer with a non-zero
     // length would otherwise reach buildDigestInfo -> EVP_DigestUpdate(nullptr).
-    if (pData == nullptr && ulDataLen > 0)
+    if (pData == nullptr && ulDataLen > 0) {
+        session.signState.reset();
         return CKR_ARGUMENTS_BAD;
+    }
 
     auto handle = session.signState->keyHandle;
     auto mech = session.signState->mechanism;

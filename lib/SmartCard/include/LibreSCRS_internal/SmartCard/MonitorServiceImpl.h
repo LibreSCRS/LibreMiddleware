@@ -204,8 +204,10 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
     // TOCTOU orphan-recovery if a concurrent unsubscribe emptied the subscriber
     // population between the caller's first cbMtx release and this start. Call
     // ONLY when firstSubscriber is true, and OUTSIDE cbMtx — it takes
-    // readersMtx and cbMtx itself. (Register-first ordering per
-    // feedback_subscribereaderlist_ordering must be preserved by callers.)
+    // readersMtx and cbMtx itself. Register-first ordering is mandatory: callers
+    // MUST emplace their callback into the subscriber map (under cbMtx) BEFORE
+    // calling this, so the internal monitor's initial bootstrap dispatch never
+    // observes an empty subscriber population.
     void startInternalMonitor();
 };
 

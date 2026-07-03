@@ -1057,6 +1057,53 @@ TEST_F(PKCS11CardTest, SignInitDoubleInit)
     }
 }
 
+// Reaching C_Sign's argument validation requires a set signState, i.e. a
+// successful C_SignInit — which needs a logged-in session with a signing key,
+// so this is hardware-gated like the happy-path sign tests. It asserts the
+// guard added in the post-review remediation: a null data pointer with a
+// non-zero length is rejected with CKR_ARGUMENTS_BAD (before any card I/O or
+// buildDigestInfo -> EVP_DigestUpdate(nullptr)) AND the sign operation is
+// terminated (PKCS#11 v2.40 §11.11), so a subsequent C_Sign returns
+// CKR_OPERATION_NOT_INITIALIZED rather than resuming.
+TEST_F(PKCS11CardTest, SignRejectsNullDataWithNonZeroLength)
+{
+    SKIP_IF_PIN_FAILED();
+    auto testPIN = getTestPIN();
+    if (testPIN.empty())
+        GTEST_SKIP() << "Set LIBRESCRS_TEST_PIN to run";
+    if (slot == static_cast<CK_SLOT_ID>(-1))
+        GTEST_SKIP() << "No card slot present";
+
+    CK_SESSION_HANDLE hSession;
+    ASSERT_EQ(C_OpenSession(slot, CKF_SERIAL_SESSION, nullptr, nullptr, &hSession), CKR_OK);
+    CK_RV loginRv = loginWithAbort(hSession, testPIN);
+    if (loginRv == CKR_OK) {
+        CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
+        CK_BBOOL ckTrue = CK_TRUE;
+        CK_ATTRIBUTE findTmpl[] = {
+            {CKA_CLASS, &keyClass, sizeof(keyClass)},
+            {CKA_SIGN, &ckTrue, sizeof(ckTrue)},
+        };
+        EXPECT_EQ(C_FindObjectsInit(hSession, findTmpl, 2), CKR_OK);
+        CK_OBJECT_HANDLE keyObj;
+        CK_ULONG count = 0;
+        EXPECT_EQ(C_FindObjects(hSession, &keyObj, 1, &count), CKR_OK);
+        C_FindObjectsFinal(hSession);
+
+        if (count > 0) {
+            CK_MECHANISM mech = {CKM_RSA_PKCS, nullptr, 0};
+            ASSERT_EQ(C_SignInit(hSession, &mech, keyObj), CKR_OK);
+            CK_BYTE sig[512];
+            CK_ULONG sigLen = sizeof(sig);
+            EXPECT_EQ(C_Sign(hSession, nullptr, 32, sig, &sigLen), CKR_ARGUMENTS_BAD);
+            // The failed C_Sign must have terminated the operation.
+            EXPECT_EQ(C_Sign(hSession, nullptr, 32, sig, &sigLen), CKR_OPERATION_NOT_INITIALIZED);
+        }
+        C_Logout(hSession);
+    }
+    C_CloseSession(hSession);
+}
+
 // ---------------------------------------------------------------------------
 // C_SignInit / C_Sign — happy-path tests (hardware-guarded)
 // ---------------------------------------------------------------------------

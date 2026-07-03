@@ -89,11 +89,9 @@ BacChannel::establish(LibreSCRS::SmartCard::IConnection& connection, LibreSCRS::
         }
 
         if (!derived.has_value()) {
-            // BAC mutual-auth failure (wrong MRZ or card-side rejection)
-            // maps to WrongSecret per the unified secret-failure
-            // category documented in the spec; the enum's "Pace" prefix is
-            // a slight misnomer for BAC but the retry semantics are
-            // identical (evict cached MRZ + re-prompt).
+            // BAC mutual-auth failure (wrong MRZ or card-side rejection) maps to
+            // the protocol-neutral WrongSecret category — the retry semantics are
+            // the same as the PACE path (evict the cached secret + re-prompt).
             return std::unexpected{ChannelActivationError::WrongSecret};
         }
 
