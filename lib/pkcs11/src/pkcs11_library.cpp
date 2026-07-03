@@ -142,6 +142,36 @@ private:
     SessionEntry& session;
 };
 
+/// @brief Signature-size probe shared by @ref PKCS11Library::sign and
+///        @ref PKCS11Library::signFinal: the slot's declared signature size,
+///        or a mechanism-family default when the slot cannot report one
+///        (ECDSA = 2*field + DER overhead; RSA = modulus length).
+[[nodiscard]] CK_ULONG estimateSignatureSize(std::size_t probedSize, bool isEc) noexcept
+{
+    if (probedSize != 0)
+        return static_cast<CK_ULONG>(probedSize);
+    return isEc ? 72u : 256u;
+}
+
+/// @brief Final signature emit shared by @ref PKCS11Library::sign and
+///        @ref PKCS11Library::signFinal. An empty @p sig is the slot's
+///        transport-failure signal (mapped to @c CKR_DEVICE_ERROR); otherwise
+///        the caller buffer is bounds-checked and the signature copied. The
+///        output length is always updated to the actual signature size.
+[[nodiscard]] CK_RV finishSignatureOutput(const std::vector<std::uint8_t>& sig, CK_BYTE_PTR pSignature,
+                                          CK_ULONG_PTR pulSignatureLen)
+{
+    if (sig.empty())
+        return CKR_DEVICE_ERROR;
+    if (*pulSignatureLen < sig.size()) {
+        *pulSignatureLen = static_cast<CK_ULONG>(sig.size());
+        return CKR_DEVICE_ERROR;
+    }
+    std::memcpy(pSignature, sig.data(), sig.size());
+    *pulSignatureLen = static_cast<CK_ULONG>(sig.size());
+    return CKR_OK;
+}
+
 /// @brief PKCS#11 v2.40 numeric constants reused on the new path.
 constexpr unsigned long kCkoCertificate = 1UL;
 constexpr unsigned long kCkoPrivateKey = 3UL;
@@ -1217,12 +1247,7 @@ CK_RV PKCS11Library::sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULON
         return CKR_SLOT_ID_INVALID;
     }
 
-    CK_ULONG sigSize = static_cast<CK_ULONG>(slot->signatureSize(info->id));
-    if (sigSize == 0) {
-        // Reasonable defaults: RSA = modulus length (256 = 2048-bit) /
-        // ECDSA = 2*field + 8 DER overhead.
-        sigSize = info->keyType == kCkkEc ? 72u : 256u;
-    }
+    CK_ULONG sigSize = estimateSignatureSize(slot->signatureSize(info->id), info->keyType == kCkkEc);
 
     if (pSignature == nullptr) {
         *pulSignatureLen = sigSize;
@@ -1279,15 +1304,7 @@ CK_RV PKCS11Library::sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULON
             }
         }
 
-        if (sig.empty())
-            return CKR_DEVICE_ERROR;
-        if (*pulSignatureLen < sig.size()) {
-            *pulSignatureLen = static_cast<CK_ULONG>(sig.size());
-            return CKR_DEVICE_ERROR;
-        }
-        std::memcpy(pSignature, sig.data(), sig.size());
-        *pulSignatureLen = static_cast<CK_ULONG>(sig.size());
-        return CKR_OK;
+        return finishSignatureOutput(sig, pSignature, pulSignatureLen);
     } catch (...) {
         return CKR_DEVICE_ERROR;
     }
@@ -1359,9 +1376,7 @@ CK_RV PKCS11Library::signFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignatur
         return CKR_SLOT_ID_INVALID;
     }
 
-    CK_ULONG sigSize = static_cast<CK_ULONG>(slot->signatureSize(info->id));
-    if (sigSize == 0)
-        sigSize = info->keyType == kCkkEc ? 72u : 256u;
+    CK_ULONG sigSize = estimateSignatureSize(slot->signatureSize(info->id), info->keyType == kCkkEc);
 
     if (pSignature == nullptr) {
         *pulSignatureLen = sigSize;
@@ -1396,15 +1411,7 @@ CK_RV PKCS11Library::signFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignatur
             }
         }
 
-        if (sig.empty())
-            return CKR_DEVICE_ERROR;
-        if (*pulSignatureLen < sig.size()) {
-            *pulSignatureLen = static_cast<CK_ULONG>(sig.size());
-            return CKR_DEVICE_ERROR;
-        }
-        std::memcpy(pSignature, sig.data(), sig.size());
-        *pulSignatureLen = static_cast<CK_ULONG>(sig.size());
-        return CKR_OK;
+        return finishSignatureOutput(sig, pSignature, pulSignatureLen);
     } catch (...) {
         return CKR_DEVICE_ERROR;
     }
