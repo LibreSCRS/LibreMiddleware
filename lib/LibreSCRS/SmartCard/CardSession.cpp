@@ -92,19 +92,26 @@ OpenError::Kind classifyOpenError(std::string_view diag) noexcept
     return OpenError::Kind::ReaderUnavailable;
 }
 
+// Shared failure message for CardSession::open(). Constructed once at load
+// (LocalizedText allocates two std::strings) so open()'s noexcept body never
+// runs a throwing first-call static initialisation — a load-time OOM here
+// terminates before main(), never a per-call terminate in the noexcept path.
+// The neutral translator-friendly key surfaces to hosts, which are free to
+// refine based on @ref OpenError::kind; the defaultText is a plain sentence so
+// an untranslated host still has readable text.
+const LocalizedText kOpenFailedMsg{
+    "librescrs.smartcard.error.openFailed",
+    "Failed to open the card session. Check that the reader is connected and a card is inserted.",
+    {}};
+
 } // namespace
 
 std::expected<CardSession, OpenError> CardSession::open(std::string readerName) noexcept
 {
     // 4.0 hardening: OpenError() is deleted; construction goes
     // through the field-wise ctor so userMessage cannot be silently empty.
-    // The neutral translator-friendly key surfaces here — hosts are free
-    // to refine based on @ref OpenError::kind. The defaultText is a
-    // plain sentence so an untranslated host still has readable text.
-    static const LocalizedText kOpenFailedMsg{
-        "librescrs.smartcard.error.openFailed",
-        "Failed to open the card session. Check that the reader is connected and a card is inserted.",
-        {}};
+    // The shared failure message (@ref kOpenFailedMsg) is a load-time constant
+    // so this noexcept body performs no throwing static initialisation.
     // std::expected<CardSession, OpenError> implicitly converts from a
     // CardSession rvalue (success) and from std::unexpected<OpenError>
     // (failure). No in-place tag dispatch is needed in the C++23 form.
@@ -559,10 +566,12 @@ CardSession::activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token)
         return std::unexpected{ChannelActivationError::ReaderError};
     }
 
-    // Fast path: already on the right applet under a plain channel.
+    // Fast path: already on the right applet under a plain channel. Use the
+    // carriesSm() predicate (as every other branch does) rather than an RTTI
+    // type-probe — the real condition is "no SM context", not "the concrete
+    // PlainChannel type".
     if (d->activeChannel && d->activeChannel->currentApplet() == aid &&
-        d->activeChannel->state() == ChannelState::Open &&
-        dynamic_cast<const PlainChannel*>(d->activeChannel.get()) != nullptr) {
+        d->activeChannel->state() == ChannelState::Open && !d->activeChannel->carriesSm()) {
         // Plain channel carries no SM context — the accessor must report no
         // active SM protocol regardless of any prior SM channel's record.
         d->activatedProtocol.reset();

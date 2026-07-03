@@ -32,6 +32,9 @@ namespace LibreSCRS::Signing {
 ///
 /// Uniform callback shape with `LibreSCRS::Auth::CredentialProvider`:
 /// runtime secrets are never stored in config, only produced on demand.
+///
+/// @par Thread-safety
+/// thread-compatible (see API-POLICY §8).
 struct TsaContext
 {
     /// @brief Signature format requested by the engine.

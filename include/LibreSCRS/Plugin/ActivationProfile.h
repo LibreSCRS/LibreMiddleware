@@ -21,6 +21,9 @@ namespace LibreSCRS::Plugin {
 
 /// @brief Declarative description of the secure-messaging (or plain) channel a
 ///        plugin needs before a card operation. Carries no secret values.
+///
+/// @par Thread-safety
+/// thread-compatible (see API-POLICY §8).
 struct ActivationProfile
 {
     /// Applet to activate against; empty means "plain channel / no SM".

@@ -1196,6 +1196,10 @@ CK_RV PKCS11Library::sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULON
     }
     if (pulSignatureLen == nullptr)
         return CKR_ARGUMENTS_BAD;
+    // pData may be null only for an empty input; a null pointer with a non-zero
+    // length would otherwise reach buildDigestInfo -> EVP_DigestUpdate(nullptr).
+    if (pData == nullptr && ulDataLen > 0)
+        return CKR_ARGUMENTS_BAD;
 
     auto handle = session.signState->keyHandle;
     auto mech = session.signState->mechanism;

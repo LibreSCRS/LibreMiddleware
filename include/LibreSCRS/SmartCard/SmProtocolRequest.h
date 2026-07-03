@@ -16,6 +16,9 @@ namespace LibreSCRS::SmartCard {
 
 /// @brief Request BAC SM (ICAO Doc 9303 Part 11). Always keyed on MRZ.
 ///
+/// @par Thread-safety
+/// thread-compatible (see API-POLICY §8).
+///
 /// @since 4.1
 struct BacRequest
 {
@@ -25,6 +28,9 @@ struct BacRequest
 
 /// @brief Request PACE SM (BSI TR-03110) using @ref secretKind as the
 ///        shared-secret variant.
+///
+/// @par Thread-safety
+/// thread-compatible (see API-POLICY §8).
 ///
 /// @since 4.1
 struct PaceRequest

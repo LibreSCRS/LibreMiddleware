@@ -30,6 +30,9 @@ namespace LibreSCRS::SmartCard {
 /// either a `std::vector<std::uint8_t>` or a `std::span<const std::uint8_t>`
 /// to discourage implicit conversions from arbitrary byte sequences.
 ///
+/// @par Thread-safety
+/// thread-compatible (see API-POLICY §8).
+///
 /// @since 4.1
 class LIBRESCRS_PUBLIC_API AppletAid
 {

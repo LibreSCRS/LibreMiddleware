@@ -64,6 +64,14 @@ ActiveChannelHolder makeActiveChannelHolder(CardSession* session, std::unique_lo
 /// // session destructs here
 /// @endcode
 ///
+/// @par Thread-safety
+/// single-threaded (see API-POLICY §8). The holder owns a live PC/SC
+/// transaction and holds the originating @ref CardSession's mutex for its
+/// entire lifetime; it must be constructed, used, and destroyed on one
+/// thread and never shared or accessed concurrently. This is one of the rare
+/// LM public types in the single-threaded category, justified by the
+/// thread-affine PC/SC transaction it guards.
+///
 /// @since 4.1
 class LIBRESCRS_PUBLIC_API ActiveChannelHolder
 {

@@ -30,6 +30,9 @@ namespace LibreSCRS::SecureChannel {
 /// level export attribute is meaningful only for classes with vtables /
 /// out-of-line member functions; aggregates carry only field storage).
 ///
+/// @par Thread-safety
+/// thread-compatible (see API-POLICY §8).
+///
 /// @since 4.1
 struct BacInput
 {

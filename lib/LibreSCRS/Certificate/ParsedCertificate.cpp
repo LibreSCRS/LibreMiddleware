@@ -218,21 +218,25 @@ ParsedCertificate::fromDer(std::span<const std::uint8_t> der) noexcept
 {
     using Auth::ErrorKeys::derInvalid;
 
-    if (der.empty()) {
-        return std::unexpected{ParseError{ParseError::Kind::Invalid, derInvalid(), std::string{"DER input is empty"}}};
-    }
-    const std::uint8_t* p = der.data();
-    X509Ptr x509(d2i_X509(nullptr, &p, static_cast<long>(der.size())), X509_free);
-    if (!x509) {
-        return std::unexpected{
-            ParseError{ParseError::Kind::Invalid, derInvalid(), std::string{"d2i_X509 rejected DER input"}}};
-    }
-
-    // The Impl construction + originalDer copy below can throw bad_alloc.
-    // The noexcept contract on this factory requires translating any such
-    // throw into a structured ParseError::Kind::AllocationFailed rather
-    // than propagating across the public ABI boundary.
+    // The whole body runs inside the try: the validation early-returns build a
+    // LocalizedText + std::string (both allocate), and the Impl construction +
+    // originalDer copy can throw bad_alloc. The noexcept contract on this
+    // factory requires translating any such throw into a structured
+    // ParseError::Kind::AllocationFailed rather than propagating across the
+    // public ABI boundary. Normal validation failures return Kind::Invalid
+    // without throwing; only an allocation shortfall reaches the catch.
     try {
+        if (der.empty()) {
+            return std::unexpected{
+                ParseError{ParseError::Kind::Invalid, derInvalid(), std::string{"DER input is empty"}}};
+        }
+        const std::uint8_t* p = der.data();
+        X509Ptr x509(d2i_X509(nullptr, &p, static_cast<long>(der.size())), X509_free);
+        if (!x509) {
+            return std::unexpected{
+                ParseError{ParseError::Kind::Invalid, derInvalid(), std::string{"d2i_X509 rejected DER input"}}};
+        }
+
         ParsedCertificate cert;
         cert.d = std::make_unique<Impl>();
         cert.d->x509 = std::move(x509);

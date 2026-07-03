@@ -38,6 +38,9 @@ enum class CredentialFieldType : std::uint8_t {
 /// one authentication step. Factories in @ref AuthRequirement guarantee that
 /// field ids within a single requirement are unique and that any
 /// @ref equalToFieldId references resolve.
+///
+/// @par Thread-safety
+/// thread-compatible (see API-POLICY §8).
 struct FieldDescriptor
 {
     /// @brief Stable identifier used as the key in CredentialResult::values.
