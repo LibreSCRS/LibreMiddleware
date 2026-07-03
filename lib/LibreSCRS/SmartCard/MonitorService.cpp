@@ -532,6 +532,78 @@ std::optional<std::vector<std::string>> MonitorService::listReaders() const noex
     }
 }
 
+void MonitorService::Impl::startInternalMonitor()
+{
+    {
+        std::lock_guard<std::mutex> lock(readersMtx);
+        knownReaders.clear();
+    }
+    // Reset the latch alongside the knownReaders clear so the next
+    // polling session re-establishes the bootstrap gate from scratch.
+    // Without this reset, a subscribeReaderList that races a follow-up
+    // firstSubscriber start would observe a stale true and bootstrap-
+    // fire from the just-cleared empty knownReaders — same race this
+    // fix closes (spec §5.2 Change C).
+    initialPollComplete.store(false, std::memory_order_release);
+    auto eventCb = [this](const ::LibreSCRS::SmartCard::Internal::MonitorEvent& e) {
+        MonitorEvent pub{
+            mapCardEventKind(e.type),
+            e.readerName,
+            std::nullopt,
+            std::nullopt,
+        };
+        // Always populate atr on CardInserted (even when the card returns
+        // an empty ATR byte sequence) — the header contract promises
+        // `atr.has_value()` on CardInserted, and consumers rely on it
+        // (e.g. AutoReaderService dereferences via `event.atr.value()`).
+        if (pub.kind == MonitorEvent::Kind::CardInserted) {
+            pub.atr = e.atr;
+        }
+        dispatch(pub);
+    };
+    // Poll-thread entry: shield against std::bad_alloc from the
+    // std::set construction, snapshot.assign, snapshotReaderListCallbacks
+    // reserve/emplace, and added/removed vector push_back inside
+    // diffReadersAndDispatch. The per-subscriber-callback bodies are
+    // already shielded inside dispatchReaderListSnapshot /
+    // dispatchImmediate, but an allocation failure outside those
+    // bodies would escape the std::thread entry and invoke
+    // std::terminate. Same rationale as the noexcept catch on
+    // unsubscribe()/[thread.req.exception].
+    auto readersCb = [this](const std::vector<std::string>& readers) {
+        try {
+            diffReadersAndDispatch(readers);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "LibreSCRS MonitorService: reader-list dispatch threw: %s\n", e.what());
+        } catch (...) {
+            std::fprintf(stderr, "LibreSCRS MonitorService: reader-list dispatch threw unknown exception\n");
+        }
+    };
+    auto internalId = internal->subscribe(std::move(eventCb), std::move(readersCb));
+    std::optional<::LibreSCRS::SmartCard::Internal::Monitor::SubscriptionId> orphanedSub;
+    {
+        std::lock_guard<std::mutex> lock(cbMtx);
+        internalSubId = internalId;
+        // TOCTOU recovery: a concurrent unsubscribe(newId) may have
+        // executed between the first cbMtx release (after
+        // callbacks.emplace at the call site) and this re-acquire, observing
+        // an empty subscriber population WHILE internalSubId was still
+        // nullopt. In that case unsubscribe could not call
+        // internal->unsubscribe, so without this check we would orphan
+        // the just-started poll thread (it runs forever, PCSC context
+        // leaked until ~MonitorService). Re-check: if both maps are
+        // empty now, the racing unsubscribe already happened and we
+        // must drop the internal subscription ourselves. See spec §4.
+        if (callbacks.empty() && readerListCallbacks.empty()) {
+            orphanedSub = internalSubId;
+            internalSubId.reset();
+        }
+    }
+    if (orphanedSub) {
+        internal->unsubscribe(*orphanedSub);
+    }
+}
+
 MonitorService::SubscriptionId MonitorService::subscribe(EventCallback callback)
 {
     // Mint a new SubscriptionId. 4.0 hardening privatised the raw-int
@@ -552,75 +624,7 @@ MonitorService::SubscriptionId MonitorService::subscribe(EventCallback callback)
     }
 
     if (firstSubscriber) {
-        {
-            std::lock_guard<std::mutex> lock(d->readersMtx);
-            d->knownReaders.clear();
-        }
-        // Reset the latch alongside the knownReaders clear so the next
-        // polling session re-establishes the bootstrap gate from scratch.
-        // Without this reset, a subscribeReaderList that races a follow-up
-        // firstSubscriber start would observe a stale true and bootstrap-
-        // fire from the just-cleared empty knownReaders — same race this
-        // fix closes (spec §5.2 Change C).
-        d->initialPollComplete.store(false, std::memory_order_release);
-        auto* impl = d.get();
-        auto eventCb = [impl](const ::LibreSCRS::SmartCard::Internal::MonitorEvent& e) {
-            MonitorEvent pub{
-                mapCardEventKind(e.type),
-                e.readerName,
-                std::nullopt,
-                std::nullopt,
-            };
-            // Always populate atr on CardInserted (even when the card returns
-            // an empty ATR byte sequence) — the header contract promises
-            // `atr.has_value()` on CardInserted, and consumers rely on it
-            // (e.g. AutoReaderService dereferences via `event.atr.value()`).
-            if (pub.kind == MonitorEvent::Kind::CardInserted) {
-                pub.atr = e.atr;
-            }
-            impl->dispatch(pub);
-        };
-        // Poll-thread entry: shield against std::bad_alloc from the
-        // std::set construction, snapshot.assign, snapshotReaderListCallbacks
-        // reserve/emplace, and added/removed vector push_back inside
-        // diffReadersAndDispatch. The per-subscriber-callback bodies are
-        // already shielded inside dispatchReaderListSnapshot /
-        // dispatchImmediate, but an allocation failure outside those
-        // bodies would escape the std::thread entry and invoke
-        // std::terminate. Same rationale as the noexcept catch on
-        // unsubscribe()/[thread.req.exception].
-        auto readersCb = [impl](const std::vector<std::string>& readers) {
-            try {
-                impl->diffReadersAndDispatch(readers);
-            } catch (const std::exception& e) {
-                std::fprintf(stderr, "LibreSCRS MonitorService: reader-list dispatch threw: %s\n", e.what());
-            } catch (...) {
-                std::fprintf(stderr, "LibreSCRS MonitorService: reader-list dispatch threw unknown exception\n");
-            }
-        };
-        auto internalId = d->internal->subscribe(std::move(eventCb), std::move(readersCb));
-        std::optional<::LibreSCRS::SmartCard::Internal::Monitor::SubscriptionId> orphanedSub;
-        {
-            std::lock_guard<std::mutex> lock(d->cbMtx);
-            d->internalSubId = internalId;
-            // TOCTOU recovery: a concurrent unsubscribe(newId) may have
-            // executed between the first cbMtx release (after
-            // callbacks.emplace, above) and this re-acquire, observing an
-            // empty subscriber population WHILE internalSubId was still
-            // nullopt. In that case unsubscribe could not call
-            // internal->unsubscribe, so without this check we would orphan
-            // the just-started poll thread (it runs forever, PCSC context
-            // leaked until ~MonitorService). Re-check: if both maps are
-            // empty now, the racing unsubscribe already happened and we
-            // must drop the internal subscription ourselves. See spec §4.
-            if (d->callbacks.empty() && d->readerListCallbacks.empty()) {
-                orphanedSub = d->internalSubId;
-                d->internalSubId.reset();
-            }
-        }
-        if (orphanedSub) {
-            d->internal->unsubscribe(*orphanedSub);
-        }
+        d->startInternalMonitor();
     }
 
     return newId;
@@ -728,67 +732,7 @@ MonitorService::SubscriptionId MonitorService::subscribeReaderList(ReaderListCal
         // per-event subscribe path. The internal readersCb will fire on
         // the initial PnP probe and synthesise the bootstrap snapshot
         // through @ref Impl::diffReadersAndDispatch on its own.
-        {
-            std::lock_guard<std::mutex> lock(d->readersMtx);
-            d->knownReaders.clear();
-        }
-        // Reset the latch — see Change C rationale at the subscribe()
-        // firstSubscriber branch.
-        d->initialPollComplete.store(false, std::memory_order_release);
-        auto* impl = d.get();
-        auto eventCb = [impl](const ::LibreSCRS::SmartCard::Internal::MonitorEvent& e) {
-            MonitorEvent pub{
-                mapCardEventKind(e.type),
-                e.readerName,
-                std::nullopt,
-                std::nullopt,
-            };
-            if (pub.kind == MonitorEvent::Kind::CardInserted) {
-                pub.atr = e.atr;
-            }
-            impl->dispatch(pub);
-        };
-        // Poll-thread entry: shield against std::bad_alloc from the
-        // std::set construction, snapshot.assign, snapshotReaderListCallbacks
-        // reserve/emplace, and added/removed vector push_back inside
-        // diffReadersAndDispatch. The per-subscriber-callback bodies are
-        // already shielded inside dispatchReaderListSnapshot /
-        // dispatchImmediate, but an allocation failure outside those
-        // bodies would escape the std::thread entry and invoke
-        // std::terminate. Same rationale as the noexcept catch on
-        // unsubscribe()/[thread.req.exception].
-        auto readersCb = [impl](const std::vector<std::string>& readers) {
-            try {
-                impl->diffReadersAndDispatch(readers);
-            } catch (const std::exception& e) {
-                std::fprintf(stderr, "LibreSCRS MonitorService: reader-list dispatch threw: %s\n", e.what());
-            } catch (...) {
-                std::fprintf(stderr, "LibreSCRS MonitorService: reader-list dispatch threw unknown exception\n");
-            }
-        };
-        auto internalId = d->internal->subscribe(std::move(eventCb), std::move(readersCb));
-        std::optional<::LibreSCRS::SmartCard::Internal::Monitor::SubscriptionId> orphanedSub;
-        {
-            std::lock_guard<std::mutex> lock(d->cbMtx);
-            d->internalSubId = internalId;
-            // TOCTOU recovery: a concurrent unsubscribe(newId) may have
-            // executed between the first cbMtx release (after
-            // callbacks.emplace, above) and this re-acquire, observing an
-            // empty subscriber population WHILE internalSubId was still
-            // nullopt. In that case unsubscribe could not call
-            // internal->unsubscribe, so without this check we would orphan
-            // the just-started poll thread (it runs forever, PCSC context
-            // leaked until ~MonitorService). Re-check: if both maps are
-            // empty now, the racing unsubscribe already happened and we
-            // must drop the internal subscription ourselves. See spec §4.
-            if (d->callbacks.empty() && d->readerListCallbacks.empty()) {
-                orphanedSub = d->internalSubId;
-                d->internalSubId.reset();
-            }
-        }
-        if (orphanedSub) {
-            d->internal->unsubscribe(*orphanedSub);
-        }
+        d->startInternalMonitor();
     } else if (haveBootstrap) {
         // Deliver the current snapshot to the new subscriber only (not the
         // entire population — others have already been notified of the

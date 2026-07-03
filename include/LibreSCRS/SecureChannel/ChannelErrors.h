@@ -35,11 +35,13 @@ enum class ChannelActivationError : std::uint8_t {
     /// @brief Applet absent or SELECT rejected by the card. Terminal.
     SelectAppletFailed,
     /// @brief Wrong CAN/MRZ/PIN/PUK. Retry-eligible inside activation.
-    PaceWrongSecret,
+    ///        Protocol-neutral: surfaced by both PACE and BAC activation.
+    WrongSecret,
     /// @brief PIN-as-PACE counter exhausted. Terminal (reserved for 4.x).
     PacePinBlocked,
     /// @brief Cryptographic or protocol failure during handshake. Terminal.
-    PaceProtocolFailure,
+    ///        Protocol-neutral: surfaced by both PACE and BAC activation.
+    ProtocolFailure,
     /// @brief Card does not support the requested PACE mode. Terminal.
     PaceUnsupported,
     /// @brief Credential provider returned a user-cancel. Terminal.

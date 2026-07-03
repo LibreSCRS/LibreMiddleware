@@ -123,7 +123,7 @@ PaceChannel::establish(LibreSCRS::SmartCard::IConnection& connection, const Pace
             if (!cryptoParams.password.empty()) {
                 OPENSSL_cleanse(cryptoParams.password.data(), cryptoParams.password.size());
             }
-            return std::unexpected{ChannelActivationError::PaceProtocolFailure};
+            return std::unexpected{ChannelActivationError::ProtocolFailure};
         }
 
         if (!cryptoParams.password.empty()) {
@@ -134,12 +134,12 @@ PaceChannel::establish(LibreSCRS::SmartCard::IConnection& connection, const Pace
             // emrtd::crypto::performPACE returns nullopt for any
             // handshake-level failure (wrong CAN/MRZ, unsupported OID,
             // card-side SW != 9000 at any step). Mapping all failures to
-            // PaceWrongSecret is consistent with the retry contract: the
+            // WrongSecret is consistent with the retry contract: the
             // caller evicts the cached secret and re-prompts.
             // PacePinBlocked / PaceUnsupported are reserved for future
             // protocol-aware paths that can distinguish those categories at
             // the wire level.
-            return std::unexpected{ChannelActivationError::PaceWrongSecret};
+            return std::unexpected{ChannelActivationError::WrongSecret};
         }
 
         SessionKeys publicKeys;

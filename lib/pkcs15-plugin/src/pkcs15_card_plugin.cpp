@@ -752,7 +752,7 @@ private:
             suffix = "user cancelled";
             return ReadResult::authenticationFailed(LibreSCRS::Auth::ErrorKeys::authFailed(),
                                                     std::string{what} + ": " + suffix);
-        case Err::PaceWrongSecret:
+        case Err::WrongSecret:
             suffix = "wrong CAN";
             return ReadResult::authenticationFailed(LibreSCRS::Auth::ErrorKeys::authFailed(),
                                                     std::string{what} + ": " + suffix);

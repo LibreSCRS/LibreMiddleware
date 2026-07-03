@@ -127,7 +127,7 @@ protected:
     /// acquiring an @ref ActiveChannelHolder via @ref acquireChannel and
     /// immediately releasing it. The session's PACE cache retains the
     /// derived SM keys for subsequent per-op holders. Returns
-    /// @c Crv::PinIncorrect on @c PaceWrongSecret, @c Crv::PinLocked on
+    /// @c Crv::PinIncorrect on @c WrongSecret, @c Crv::PinLocked on
     /// @c PacePinBlocked, @c Crv::DeviceError on transport failures.
     /// @par Thread-safety
     /// Caller must hold @c cardMutex.

@@ -197,6 +197,16 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
     // Shared by the subscribe-time initial snapshot path and the internal
     // ReaderListCallback path. knownReaders is updated under readersMtx.
     void diffReadersAndDispatch(const std::vector<std::string>& readers);
+
+    // First-subscriber bootstrap, shared verbatim by subscribe() and
+    // subscribeReaderList(): clear knownReaders, reset the initial-poll latch,
+    // wire the internal monitor's event + reader-list callbacks, then perform
+    // TOCTOU orphan-recovery if a concurrent unsubscribe emptied the subscriber
+    // population between the caller's first cbMtx release and this start. Call
+    // ONLY when firstSubscriber is true, and OUTSIDE cbMtx — it takes
+    // readersMtx and cbMtx itself. (Register-first ordering per
+    // feedback_subscribereaderlist_ordering must be preserved by callers.)
+    void startInternalMonitor();
 };
 
 namespace detail {

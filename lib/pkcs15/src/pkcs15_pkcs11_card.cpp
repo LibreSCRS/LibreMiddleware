@@ -92,7 +92,7 @@ enum class ProbeResult : std::uint8_t {
     using namespace LibreSCRS::Pkcs11::Internal;
     using Err = LibreSCRS::SecureChannel::ChannelActivationError;
     switch (err) {
-    case Err::PaceWrongSecret:
+    case Err::WrongSecret:
     case Err::CredentialsRequired:
         return Crv::PinIncorrect;
     case Err::PacePinBlocked:
@@ -104,7 +104,7 @@ enum class ProbeResult : std::uint8_t {
         return Crv::Cancel;
     case Err::SelectAppletFailed:
     case Err::PaceUnsupported:
-    case Err::PaceProtocolFailure:
+    case Err::ProtocolFailure:
     case Err::ReaderError:
     case Err::Internal:
     case Err::ReentrantAccess:
