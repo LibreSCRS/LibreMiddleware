@@ -56,6 +56,21 @@ TEST(PKCS15PluginTest, CapabilitiesIncludePKIAndPinManagement)
     EXPECT_TRUE(hasCapability(caps, CardCapabilities::PinManagement));
 }
 
+// IdentityData means "readCard returns useful identity/document fields"
+// (PluginTypes.h). This plugin's readCard emits only token-info and
+// certificate groups — it has no identity read path for any card — so it
+// must not advertise IdentityData. Over-declaring it makes hosts render an
+// empty identity surface for pure-PKI PKCS#15 cards; hybrid cards get the
+// flag from their identity plugin (rs-eid, emrtd, rs-health) instead.
+TEST(PKCS15PluginTest, CapabilitiesExcludeIdentityData)
+{
+    CardPluginService registry{pluginDir()};
+    auto p = findPkcs15(registry);
+    ASSERT_NE(p, nullptr);
+
+    EXPECT_FALSE(hasCapability(p->capabilities(), CardCapabilities::IdentityData));
+}
+
 TEST(PKCS15PluginTest, CanHandleAlwaysFalse)
 {
     CardPluginService registry{pluginDir()};

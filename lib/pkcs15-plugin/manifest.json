@@ -2,6 +2,6 @@
   "pluginId": "pkcs15",
   "displayName": "PKCS#15 (generic PKI)",
   "abiVersion": 8,
-  "capabilities": ["PKI", "PinManagement", "IdentityData"],
+  "capabilities": ["PKI", "PinManagement"],
   "atrs": []
 }
