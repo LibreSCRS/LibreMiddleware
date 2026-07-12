@@ -40,7 +40,7 @@ TEST(StopErrorTest, StopSetIsExactlyCancelUserCancelCardRemoved)
     EXPECT_TRUE(isStopError(ChannelActivationError::Cancelled));
     EXPECT_TRUE(isStopError(ChannelActivationError::UserCancelled));
     EXPECT_TRUE(isStopError(ChannelActivationError::CardRemoved));
-    EXPECT_FALSE(isStopError(ChannelActivationError::WrongSecret));
+    EXPECT_FALSE(isStopError(ChannelActivationError::PaceWrongSecret));
     EXPECT_FALSE(isStopError(ChannelActivationError::CredentialsRequired));
     EXPECT_FALSE(isStopError(ChannelActivationError::SelectAppletFailed));
     EXPECT_FALSE(isStopError(ChannelActivationError::Internal));
@@ -54,8 +54,8 @@ TEST(ShouldTryFallbackTest, OnlyWhenAllowedAndNotStop)
     ActivationProfile noFallback = withFallback;
     noFallback.allowBacFallback = false;
 
-    EXPECT_TRUE(shouldTryFallback(withFallback, ChannelActivationError::WrongSecret));
+    EXPECT_TRUE(shouldTryFallback(withFallback, ChannelActivationError::PaceWrongSecret));
     EXPECT_TRUE(shouldTryFallback(withFallback, ChannelActivationError::CredentialsRequired));
     EXPECT_FALSE(shouldTryFallback(withFallback, ChannelActivationError::UserCancelled));
-    EXPECT_FALSE(shouldTryFallback(noFallback, ChannelActivationError::WrongSecret));
+    EXPECT_FALSE(shouldTryFallback(noFallback, ChannelActivationError::PaceWrongSecret));
 }

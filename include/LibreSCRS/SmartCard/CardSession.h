@@ -333,7 +333,7 @@ public:
 
     /// @brief Activate the named applet under a secure-messaging channel
     ///        (PACE or BAC). On cache miss the credential provider is
-    ///        invoked; on @c WrongSecret the cache entry is evicted
+    ///        invoked; on @c PaceWrongSecret the cache entry is evicted
     ///        and the prompt re-issued up to a small retry cap.
     ///
     /// @note The returned @ref ActiveChannelHolder borrows this session's

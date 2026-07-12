@@ -85,14 +85,15 @@ BacChannel::establish(LibreSCRS::SmartCard::IConnection& connection, LibreSCRS::
             auto bacKeys = emrtd::crypto::deriveBACKeys(docNoScratch, dobScratch, doeScratch);
             derived = emrtd::crypto::performBAC(*pcsc, bacKeys);
         } catch (...) {
-            return std::unexpected{ChannelActivationError::ProtocolFailure};
+            return std::unexpected{ChannelActivationError::PaceProtocolFailure};
         }
 
         if (!derived.has_value()) {
             // BAC mutual-auth failure (wrong MRZ or card-side rejection) maps to
-            // the protocol-neutral WrongSecret category — the retry semantics are
-            // the same as the PACE path (evict the cached secret + re-prompt).
-            return std::unexpected{ChannelActivationError::WrongSecret};
+            // the protocol-neutral PaceWrongSecret category (the "Pace" prefix is
+            // a misnomer for BAC) — the retry semantics are the same as the PACE
+            // path (evict the cached secret + re-prompt).
+            return std::unexpected{ChannelActivationError::PaceWrongSecret};
         }
 
         SessionKeys publicKeys;

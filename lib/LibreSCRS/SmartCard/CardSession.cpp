@@ -831,7 +831,7 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                 d->activatedProtocol = protocol;
                 return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
             }
-            if (outcome.error() == ChannelActivationError::WrongSecret) {
+            if (outcome.error() == ChannelActivationError::PaceWrongSecret) {
                 d->bacInput.reset();
                 --retriesLeft;
                 continue;
@@ -905,13 +905,13 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
             auto cardAccess = readCardAccessFromMF(d->activeChannel.get(), *d->ownedConn, token);
             paceInfos = LibreSCRS::SecureChannel::parsePaceOidsFromCardAccess(cardAccess);
         } catch (const std::exception&) {
-            return std::unexpected{ChannelActivationError::ProtocolFailure};
+            return std::unexpected{ChannelActivationError::PaceProtocolFailure};
         }
         if (paceInfos.empty()) {
             return std::unexpected{ChannelActivationError::PaceUnsupported};
         }
 
-        ChannelActivationError lastError = ChannelActivationError::WrongSecret;
+        ChannelActivationError lastError = ChannelActivationError::PaceWrongSecret;
         std::unique_ptr<PaceChannel> freshChannel;
         for (const auto& info : paceInfos) {
             if (token.isCancellable() && token.isCancelled()) {
@@ -929,8 +929,8 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                 break;
             }
             lastError = outcome.error();
-            if (outcome.error() != ChannelActivationError::WrongSecret &&
-                outcome.error() != ChannelActivationError::ProtocolFailure) {
+            if (outcome.error() != ChannelActivationError::PaceWrongSecret &&
+                outcome.error() != ChannelActivationError::PaceProtocolFailure) {
                 // Hard terminal categories surface immediately; only the
                 // soft "wrong secret" / "protocol failure" categories
                 // justify trying the next OID.
@@ -967,7 +967,7 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
             d->activatedProtocol = protocol;
             return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
         }
-        if (lastError == ChannelActivationError::WrongSecret) {
+        if (lastError == ChannelActivationError::PaceWrongSecret) {
             cachedSecret = LibreSCRS::Secure::String{};
             --retriesLeft;
             continue;
@@ -975,7 +975,7 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
         return std::unexpected{lastError};
     }
 
-    return std::unexpected{ChannelActivationError::WrongSecret};
+    return std::unexpected{ChannelActivationError::PaceWrongSecret};
 }
 
 namespace Internal {
