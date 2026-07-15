@@ -30,6 +30,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <memory>
 #include <optional>
 #include <span>
@@ -124,6 +125,15 @@ std::string resolvePkcs11Module()
             return c.string();
         }
     }
+    // No packaged layout matched — a deployment that ships the module outside
+    // every known candidate, or does not ship it at all. Resolution now falls
+    // to the dynamic loader search path; if that also misses, the subsequent
+    // sign fails with an opaque engine error. Emit a breadcrumb so the
+    // misconfiguration is visible instead of silent.
+    std::clog << "[librescrs.signing] PKCS#11 module \"" << moduleName
+              << "\" not found at any candidate path (exe dir: " << exePath.string()
+              << "); falling back to bare name and relying on the dynamic loader search path. "
+                 "Set LIBRESCRS_PKCS11_MODULE to override.\n";
     return moduleName; // let the dynamic loader search path handle it
 }
 
