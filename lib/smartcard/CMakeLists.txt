@@ -15,6 +15,7 @@ add_library(SmartCard_Impl STATIC
     src/date_format.cpp
     src/chunked_read.cpp
     src/monitor.cpp
+    src/secure_wipe.cpp
     # Internal core-transport headers (LM-private; #error-guarded against
     # external use, reached through the PRIVATE lib/smartcard/src include
     # path that every LIBRESCRS_INTERNAL_BUILD consumer already carries).
@@ -35,6 +36,7 @@ add_library(SmartCard_Impl STATIC
     # LM-internal consumers.
     include/smartcard/i_connection.h
     include/smartcard/secure_buffer.h
+    include/smartcard/secure_wipe.h
     include/smartcard/monitor_event.h
     # Internal helper: SmartCard_Impl-private chunked file-read loop,
     # LIBRESCRS_INTERNAL_BUILD-gated. Placed under include/ so that
@@ -68,4 +70,4 @@ target_include_directories(SmartCard_Impl PRIVATE
 
 set_target_properties(SmartCard_Impl PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-target_link_libraries(SmartCard_Impl PUBLIC PCSC::PCSC Threads::Threads OpenSSL_Crypto)
+target_link_libraries(SmartCard_Impl PUBLIC PCSC::PCSC Threads::Threads PRIVATE OpenSSL_Crypto)

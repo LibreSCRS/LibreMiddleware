@@ -9,7 +9,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
-#include <openssl/crypto.h>
+#include <smartcard/secure_wipe.h>
 
 namespace LibreSCRS::SmartCard::Internal {
 
@@ -85,7 +85,7 @@ public:
         // NEW (smaller) size and would never reach the truncated bytes.
         // Cleanse them here while we still know their location.
         if (n < buf.size()) {
-            OPENSSL_cleanse(buf.data() + n, buf.size() - n);
+            secureWipe(buf.data() + n, buf.size() - n);
         }
         buf.resize(n, fill);
     }
@@ -117,7 +117,7 @@ private:
     void cleanse()
     {
         if (!buf.empty())
-            OPENSSL_cleanse(buf.data(), buf.size());
+            secureWipe(buf.data(), buf.size());
     }
 
     std::vector<uint8_t> buf;
@@ -125,7 +125,7 @@ private:
 
 /// RAII wrapper that zeroizes a std::string on scope exit. Use when a PIN
 /// (or other short secret) must be materialized as a std::string to cross a
-/// C++ API boundary — OPENSSL_cleanse runs on every exit path including
+/// C++ API boundary — secureWipe runs on every exit path including
 /// exceptions, so the intermediate buffer never outlives the call.
 ///
 /// Note: SSO-safe for PINs shorter than std::string's SSO capacity
@@ -137,7 +137,7 @@ struct PinStringScrubber
     ~PinStringScrubber()
     {
         if (!s.empty())
-            OPENSSL_cleanse(s.data(), s.size());
+            secureWipe(s.data(), s.size());
     }
 };
 

@@ -246,6 +246,11 @@ target_compile_definitions(PluginTests PRIVATE
 add_dependencies(PluginTests mock-card-plugin)
 gtest_discover_tests(PluginTests)
 
+# SmartCard secure-wipe primitive (openssl confined to secure_wipe.cpp).
+add_executable(SecureWipeTests secure_wipe_test.cpp)
+target_link_libraries(SecureWipeTests GTest::gtest_main SmartCard_Impl)
+gtest_discover_tests(SecureWipeTests)
+
 # Integration test: loads all 4 real card plugins
 add_executable(PluginIntegrationTests
     plugin_integration_test.cpp
@@ -488,6 +493,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
         LibreSCRS_SmartCard
         SmartCard_Impl
         opensc_static_with_deps
+        OpenSSL_Crypto
     )
     target_compile_definitions(OpenSCFallbackIntegrationTest PRIVATE
         PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"

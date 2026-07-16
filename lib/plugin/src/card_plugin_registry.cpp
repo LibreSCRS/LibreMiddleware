@@ -11,11 +11,14 @@
 #include <array>
 #include <dlfcn.h>
 #include <exception>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <set>
 #include <shared_mutex>
 #include <string>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <utility>
 
 namespace LibreSCRS::Plugin {
@@ -116,7 +119,40 @@ void CardPluginService::Impl::loadDirectory(const std::filesystem::path& dir)
         return;
     }
 
+    // Refuse a plugin directory that is not owned by us or root, or that is
+    // group/other-writable: a writable plugin dir lets any local user drop a
+    // malicious .so we would dlopen into the host process. This defends the
+    // real threat (write access to the dir); the per-entry symlink reject
+    // below closes the narrower symlink-swap vector.
+    struct ::stat dirStat{};
+    if (::stat(dir.c_str(), &dirStat) != 0) {
+        return;
+    }
+    if (dirStat.st_uid != ::geteuid() && dirStat.st_uid != 0) {
+        std::clog << "[librescrs.plugin] refusing plugin directory not owned by "
+                     "the current user or root: "
+                  << dir.string() << '\n';
+        return;
+    }
+    // Reject a directory writable by anyone other than its owner. Other-writable
+    // is always rejected. Group-writable is rejected only when the directory is
+    // NOT owned by us: a dir we own that is group-writable is our own
+    // configuration and is safe on the common user-private-group + umask 002
+    // setup where CMake emits 0775 build/test dirs — rejecting it there would
+    // break plugin loading with no security gain.
+    const bool ownedByUs = dirStat.st_uid == ::geteuid();
+    if ((dirStat.st_mode & S_IWOTH) != 0 || ((dirStat.st_mode & S_IWGRP) != 0 && !ownedByUs)) {
+        std::clog << "[librescrs.plugin] refusing world-writable or non-owner-writable plugin directory: "
+                  << dir.string() << '\n';
+        return;
+    }
+
     for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+        if (entry.is_symlink(ec)) {
+            std::clog << "[librescrs.plugin] skipping symlinked plugin entry: " << entry.path().string() << '\n';
+            continue;
+        }
+
         if (!entry.is_regular_file())
             continue;
 

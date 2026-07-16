@@ -6,6 +6,10 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <string>
+#include <sys/stat.h>
+#include <unistd.h>
 
 using namespace LibreSCRS::Plugin;
 
@@ -195,4 +199,58 @@ TEST(CardPluginRegistryTest, PluginDeleterRunsOnReleaseWithoutDoubleFree)
     // missing or the deleter skipped, ASan would abort the test process;
     // the weak_ptr check below verifies ownership is fully released.
     EXPECT_TRUE(weak.expired()) << "plugin shared_ptr must be released once both registry and local copies drop";
+}
+
+namespace {
+// Fresh 0700 temp directory unique to this process+tag.
+std::filesystem::path makeTempPluginDir(int tag)
+{
+    auto base = std::filesystem::temp_directory_path() /
+                ("lm_plugin_loader_test_" + std::to_string(::getpid()) + "_" + std::to_string(tag));
+    std::filesystem::remove_all(base);
+    std::filesystem::create_directories(base);
+    ::chmod(base.c_str(), 0700);
+    return base;
+}
+
+// A regular file with a .so name but garbage contents: dlopen fails
+// deterministically, so a DlopenFailed outcome is recorded IFF the loader
+// reached dlopen for it. Empty loadReport() therefore means "skipped before
+// dlopen", distinguishing a guard-skip from a load-failure.
+void writeGarbageSo(const std::filesystem::path& p)
+{
+    std::ofstream(p) << "not an ELF object";
+}
+} // namespace
+
+TEST(CardPluginRegistryHardeningTest, AttemptsRegularSoInOwnedDir)
+{
+    auto dir = makeTempPluginDir(1);
+    writeGarbageSo(dir / "junk.so");
+    CardPluginService registry{dir};
+    ASSERT_EQ(registry.loadReport().size(), 1u);
+    EXPECT_EQ(registry.loadReport()[0].status, LoadOutcome::Status::DlopenFailed);
+    std::filesystem::remove_all(dir);
+}
+
+TEST(CardPluginRegistryHardeningTest, SkipsSymlinkedEntry)
+{
+    auto dir = makeTempPluginDir(2);
+    auto ext = makeTempPluginDir(20);
+    writeGarbageSo(ext / "real.so");
+    std::filesystem::create_symlink(ext / "real.so", dir / "evil.so");
+    CardPluginService registry{dir};
+    EXPECT_TRUE(registry.loadReport().empty());
+    std::filesystem::remove_all(dir);
+    std::filesystem::remove_all(ext);
+}
+
+TEST(CardPluginRegistryHardeningTest, RefusesWorldWritableDir)
+{
+    auto dir = makeTempPluginDir(3);
+    writeGarbageSo(dir / "junk.so");
+    ::chmod(dir.c_str(), 0777);
+    CardPluginService registry{dir};
+    EXPECT_TRUE(registry.loadReport().empty());
+    std::filesystem::remove_all(dir);
 }

@@ -224,6 +224,40 @@ jobs:
             ! -name '*.sigstore.json' \
             -exec sh -c 'cosign sign-blob "$1" --bundle "$1.sigstore.json" --yes' _ {} \;
 
+      - name: Check out CHANGELOG
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+          # Check out into a SUBDIR. The root workspace already holds the
+          # downloaded + cosigned artifacts/, and actions/checkout wipes its
+          # target directory whenever there is no pre-existing .git there
+          # (clean:false does NOT suppress that path). Isolating the checkout
+          # in _changelog/ leaves artifacts/ untouched.
+          path: _changelog
+
+      - name: Prepare release notes from CHANGELOG
+        # Extract the section whose `## ` header contains the tag version
+        # (matches `## [X.Y.Z]`, `## [X.Y.Z] — date`, or
+        # `## [Unreleased] — X.Y.Z`). Fall back to auto-generated notes when
+        # the CHANGELOG has no section for this tag so a release never ships
+        # empty notes. --generate-notes and --notes-file are mutually
+        # exclusive, hence the shell branch.
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          # Match a `## ` header where the version is delimited by a bracket or
+          # whitespace on each side, so tag 4.2.0 matches `## [4.2.0]` /
+          # `## [Unreleased] — 4.2.0` but NOT `## [4.2.0-rc1]` or `## [14.2.0]`.
+          awk -v ver="$VER" \
+            '/^## / { if ($0 ~ ("(\\[|[[:space:]])" ver "(\\]|[[:space:]]|$)")) {f=1; next} else if (f) exit } f' \
+            _changelog/CHANGELOG.md > "$RUNNER_TEMP/relnotes.md"
+          if [ -s "$RUNNER_TEMP/relnotes.md" ]; then
+            echo "NOTES_ARG=--notes-file $RUNNER_TEMP/relnotes.md" >> "$GITHUB_ENV"
+          else
+            echo "No CHANGELOG section for $VER — falling back to --generate-notes"
+            echo "NOTES_ARG=--generate-notes" >> "$GITHUB_ENV"
+          fi
+
       - name: Create GitHub release with all signed artefacts
         # Replaces softprops/action-gh-release@v2 — that action races
         # between asset upload and metadata update; both rc1 attempts
@@ -246,6 +280,6 @@ jobs:
           gh release create "${{ github.ref_name }}" \
               --repo "${{ github.repository }}" \
               --title "${{ github.ref_name }}" \
-              --generate-notes \
+              $NOTES_ARG \
               $PRERELEASE_FLAG \
               artifacts/*
