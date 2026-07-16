@@ -194,6 +194,7 @@ LibreSCRS::SmartCard::Internal::PCSCConnection::~PCSCConnection()@@LM_4
 LibreSCRS::SmartCard::Internal::changeReferenceData(unsigned char, std::span<unsigned char const, 18446744073709551615ul>, std::span<unsigned char const, 18446744073709551615ul>)@@LM_4
 LibreSCRS::SmartCard::Internal::isSelectRetryable(unsigned short)@@LM_4
 LibreSCRS::SmartCard::Internal::readBinary(unsigned short, unsigned char)@@LM_4
+LibreSCRS::SmartCard::Internal::secureWipe(void*, unsigned long)@@LM_4
 LibreSCRS::SmartCard::Internal::selectByAID(std::vector<unsigned char, std::allocator<unsigned char> > const&, unsigned char)@@LM_4
 LibreSCRS::SmartCard::Internal::selectByFileId(unsigned char, unsigned char, unsigned char)@@LM_4
 LibreSCRS::SmartCard::Internal::selectByPath(unsigned char, unsigned char, unsigned char)@@LM_4
