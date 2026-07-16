@@ -201,9 +201,10 @@ public:
                 emitGroup(std::move(photoGroup));
             }
 
-            // 6. Verification — feed unified trust anchors from injected TrustStore.
-            //    In-memory query against the SigningService-owned TrustStore
-            //    (bundled certs + Trusted-List-derived anchors + system store).
+            // 6. Verification — feed trust anchors from the injected TrustStore.
+            //    enumerableAnchors() returns the provider anchors only (bundled certs +
+            //    Trusted-List-derived anchors); the OS system store is NOT included (it
+            //    is consulted only by TrustStore::validateChain, a different surface).
             //    If no TrustStore was injected (registry constructed without one,
             //    e.g. minimal test harnesses), card verification proceeds without
             //    trust anchors — chain validation will mark all chains untrusted.

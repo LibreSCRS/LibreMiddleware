@@ -47,6 +47,8 @@ add_executable(RsEidDriverTests
     rs-eid/card_reader_apollo_test.cpp
     rs-eid/card_reader_gemalto_test.cpp
     rs-eid/card_verifier_test.cpp
+    rs-eid/document_signer_policy_test.cpp
+    rs-eid/card_verifier_pin_test.cpp
 )
 target_link_libraries(RsEidDriverTests
     GTest::gtest_main

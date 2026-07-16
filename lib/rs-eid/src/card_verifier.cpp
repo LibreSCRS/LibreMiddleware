@@ -4,6 +4,7 @@
 #include "card_verifier.h"
 #include "card_protocol.h"
 #include "card_reader_base.h"
+#include "detail/document_signer_policy.h"
 #include <pcsc_connection.h>
 
 #include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
@@ -32,6 +33,50 @@ using LibreSCRS::Internal::Crypto::Pkcs7Ptr;
 using LibreSCRS::Internal::Crypto::StackX509Ptr;
 using LibreSCRS::Internal::Crypto::X509Ptr;
 using LibreSCRS::Internal::Crypto::X509StoreCtxPtr;
+
+// Validate a card Security-Object signer against `store`, then pin it to the MUP
+// document-signer (resources) domain. This is the single authority for the card-data
+// trust decision — both the SOD and the card-cert paths route through it.
+//   Valid   — chain is cryptographically valid AND the signer is a MUP document-signer.
+//   Unknown — chain is valid but the signer is outside the resources domain (a citizen
+//             or officials cert, or a non-MUP CA): the data cannot be attributed to MUP,
+//             but there is no evidence of tampering, so this is indeterminate, not Invalid.
+//   Invalid — no store/signer, or the chain does not validate.
+// Unconditional production logic (NOT under NDEBUG): the security decision must hold in
+// release builds.
+static VerificationResult verifySignerChainAndDomain(X509_STORE* store, X509* signerCert)
+{
+    if (!store || !signerCert)
+        return VerificationResult::Invalid;
+
+    X509StoreCtxPtr ctx(X509_STORE_CTX_new());
+    if (!ctx)
+        return VerificationResult::Invalid;
+    if (X509_STORE_CTX_init(ctx.get(), store, signerCert, nullptr) != 1)
+        return VerificationResult::Invalid;
+    if (X509_verify_cert(ctx.get()) != 1) {
+#ifndef NDEBUG
+        const int err = X509_STORE_CTX_get_error(ctx.get());
+        std::cerr << "[CardVerifier] signer chain error: " << X509_verify_cert_error_string(err) << " (" << err << ")"
+                  << std::endl;
+#endif
+        return VerificationResult::Invalid;
+    }
+
+    if (!detail::signerIsMupDocumentSigner(signerCert)) {
+        // Copy the issuer into a std::string and free the OpenSSL buffer BEFORE the
+        // stream write, so a throwing std::clog cannot leak it (matches this file's
+        // RAII discipline on the other X509_NAME_oneline sites).
+        char* issuerRaw = X509_NAME_oneline(X509_get_issuer_name(signerCert), nullptr, 0);
+        const std::string issuer = issuerRaw ? issuerRaw : "?";
+        if (issuerRaw)
+            OPENSSL_free(issuerRaw);
+        std::clog << "[librescrs.rs-eid] card SOD signer not attributable to MUP: issuer \"" << issuer
+                  << "\" is outside the document-signer (resources) domain\n";
+        return VerificationResult::Unknown;
+    }
+    return VerificationResult::Valid;
+}
 
 // The card file data returned by readFile() has the outer 4-byte TLV header
 // (2-byte file ID + 2-byte LE length) already stripped (readFile reads from offset 4).
@@ -302,45 +347,26 @@ VerificationResult CardVerifier::verifyGemaltoCardCert(LibreSCRS::SmartCard::Int
         return VerificationResult::Invalid;
     }
 
-    // Extract signer certificate and verify chain
+    // Extract the single signer and route through the shared chain + domain-pin decision.
     StackX509Ptr signerCerts(PKCS7_get0_signers(pkcs7.get(), nullptr, 0));
-    bool chainValid = false;
-
-    if (signerCerts && sk_X509_num(signerCerts.get()) > 0) {
-        X509* signerCert = sk_X509_value(signerCerts.get(), 0);
-
+    if (!signerCerts || sk_X509_num(signerCerts.get()) != 1) {
 #ifndef NDEBUG
-        char* subject = X509_NAME_oneline(X509_get_subject_name(signerCert), nullptr, 0);
-        if (subject) {
-            std::cerr << "[CardVerifier] Gemalto card signer: " << subject << std::endl;
-            OPENSSL_free(subject);
-        }
+        std::cerr << "[CardVerifier] Gemalto card cert: expected exactly one signer, got "
+                  << (signerCerts ? sk_X509_num(signerCerts.get()) : 0) << std::endl;
 #endif
-
-        X509StoreCtxPtr ctx(X509_STORE_CTX_new());
-        if (ctx) {
-            rc = X509_STORE_CTX_init(ctx.get(), certStore->store, signerCert, nullptr);
-            if (rc == 1) {
-                chainValid = (X509_verify_cert(ctx.get()) == 1);
-#ifndef NDEBUG
-                if (!chainValid) {
-                    int err = X509_STORE_CTX_get_error(ctx.get());
-                    std::cerr << "[CardVerifier] Gemalto card cert chain error: " << X509_verify_cert_error_string(err)
-                              << " (" << err << ")" << std::endl;
-                }
-#endif
-            }
-        }
-    } else {
-#ifndef NDEBUG
-        std::cerr << "[CardVerifier] Gemalto card cert: no signer certificates found" << std::endl;
-#endif
+        return VerificationResult::Invalid;
     }
+    X509* signerCert = sk_X509_value(signerCerts.get(), 0);
 
 #ifndef NDEBUG
-    std::cerr << "[CardVerifier] Gemalto card cert chain: " << (chainValid ? "VALID" : "INVALID") << std::endl;
+    char* subject = X509_NAME_oneline(X509_get_subject_name(signerCert), nullptr, 0);
+    if (subject) {
+        std::cerr << "[CardVerifier] Gemalto card signer: " << subject << std::endl;
+        OPENSSL_free(subject);
+    }
 #endif
-    return chainValid ? VerificationResult::Valid : VerificationResult::Invalid;
+
+    return verifySignerChainAndDomain(certStore->store, signerCert);
 }
 
 // --- Gemalto SOD (PKCS#7) verification ---
@@ -368,13 +394,17 @@ VerificationResult CardVerifier::verifyGemaltoSOD(LibreSCRS::SmartCard::Internal
     std::cerr << "[CardVerifier] PKCS#7 size after strip: " << sodData.size() << " bytes" << std::endl;
 #endif
 
-    // 2. Verify PKCS#7 signature and extract signed content (hash array)
+    // 2. Verify PKCS#7 signature + signer domain, and extract signed content (hash array).
+    // A non-Valid signer result short-circuits: Invalid (bad signature / broken chain) or
+    // Unknown (chain valid but signer outside the MUP document-signer domain) — in either
+    // case the data-group hashes are not worth checking.
     std::vector<uint8_t> signedContent;
-    if (!verifyPKCS7Signature(sodData, signedContent)) {
+    auto signerResult = verifyPKCS7Signature(sodData, signedContent);
+    if (signerResult != VerificationResult::Valid) {
 #ifndef NDEBUG
-        std::cerr << "[CardVerifier] PKCS#7 signature verification FAILED" << std::endl;
+        std::cerr << "[CardVerifier] PKCS#7 signer verification not Valid" << std::endl;
 #endif
-        return VerificationResult::Invalid;
+        return signerResult;
     }
 #ifndef NDEBUG
     std::cerr << "[CardVerifier] PKCS#7 signature OK, signed content size: " << signedContent.size() << " bytes"
@@ -598,10 +628,11 @@ bool CardVerifier::verifyCertificateChain(const std::vector<uint8_t>& certDER)
     return valid;
 }
 
-bool CardVerifier::verifyPKCS7Signature(const std::vector<uint8_t>& pkcs7DER, std::vector<uint8_t>& extractedContent)
+VerificationResult CardVerifier::verifyPKCS7Signature(const std::vector<uint8_t>& pkcs7DER,
+                                                      std::vector<uint8_t>& extractedContent)
 {
     if (!certStore || !certStore->store)
-        return false;
+        return VerificationResult::Invalid;
 
     // Parse PKCS#7 structure. Pkcs7Ptr keeps it live across every
     // throwable line below (extractedContent.assign on bad_alloc was the
@@ -615,13 +646,13 @@ bool CardVerifier::verifyPKCS7Signature(const std::vector<uint8_t>& pkcs7DER, st
         if (err)
             std::cerr << "[CardVerifier] OpenSSL error: " << ERR_error_string(err, nullptr) << std::endl;
 #endif
-        return false;
+        return VerificationResult::Invalid;
     }
 
     // Create output BIO for extracted content
     BioPtr contentBio(BIO_new(BIO_s_mem()));
     if (!contentBio) {
-        return false;
+        return VerificationResult::Invalid;
     }
 
     // Step 1: Verify the PKCS#7 signature (PKCS7_NOVERIFY = don't check cert chain yet)
@@ -632,7 +663,7 @@ bool CardVerifier::verifyPKCS7Signature(const std::vector<uint8_t>& pkcs7DER, st
         std::cerr << "[CardVerifier] PKCS7_verify failed: " << (err ? ERR_error_string(err, nullptr) : "unknown error")
                   << std::endl;
 #endif
-        return false;
+        return VerificationResult::Invalid;
     }
 
     // Extract the signed content. extractedContent.assign() may throw
@@ -650,50 +681,32 @@ bool CardVerifier::verifyPKCS7Signature(const std::vector<uint8_t>& pkcs7DER, st
               << std::endl;
 #endif
 
-    // Step 2: Verify the signer certificate chain against our trusted CAs.
+    // Step 2: Verify the signer chain AND pin it to the MUP document-signer domain.
     // PKCS7_get0_signers returns a STACK_OF(X509) of borrowed cert pointers
     // (owned by the parent pkcs7); the stack itself must be sk_X509_free'd
     // (NOT sk_X509_pop_free, which would double-free the borrowed certs).
     // StackX509Ptr's deleter is sk_X509_free for exactly this reason.
     StackX509Ptr signerCerts(PKCS7_get0_signers(pkcs7.get(), nullptr, 0));
-    bool chainValid = false;
-
-    if (signerCerts && sk_X509_num(signerCerts.get()) > 0) {
-        X509* signerCert = sk_X509_value(signerCerts.get(), 0);
-
+    // A genuine card SOD carries exactly one signer. Require it: a multi-signer SOD is
+    // not a shape we accept, and pinning only signers[0] would leave the rest unexamined.
+    if (!signerCerts || sk_X509_num(signerCerts.get()) != 1) {
 #ifndef NDEBUG
-        // Print signer cert subject for debugging
-        char* subject = X509_NAME_oneline(X509_get_subject_name(signerCert), nullptr, 0);
-        if (subject) {
-            std::cerr << "[CardVerifier] Signer cert subject: " << subject << std::endl;
-            OPENSSL_free(subject);
-        }
+        std::cerr << "[CardVerifier] expected exactly one PKCS#7 signer, got "
+                  << (signerCerts ? sk_X509_num(signerCerts.get()) : 0) << std::endl;
 #endif
-
-        X509StoreCtxPtr ctx(X509_STORE_CTX_new());
-        if (ctx) {
-            rc = X509_STORE_CTX_init(ctx.get(), certStore->store, signerCert, nullptr);
-            if (rc == 1) {
-                chainValid = (X509_verify_cert(ctx.get()) == 1);
-#ifndef NDEBUG
-                if (!chainValid) {
-                    int err = X509_STORE_CTX_get_error(ctx.get());
-                    std::cerr << "[CardVerifier] Signer cert chain error: " << X509_verify_cert_error_string(err)
-                              << " (" << err << ")" << std::endl;
-                }
-#endif
-            }
-        }
-    } else {
-#ifndef NDEBUG
-        std::cerr << "[CardVerifier] No signer certificates found in PKCS#7" << std::endl;
-#endif
+        return VerificationResult::Invalid;
     }
+    X509* signerCert = sk_X509_value(signerCerts.get(), 0);
 
 #ifndef NDEBUG
-    std::cerr << "[CardVerifier] Signer cert chain: " << (chainValid ? "VALID" : "INVALID") << std::endl;
+    char* subject = X509_NAME_oneline(X509_get_subject_name(signerCert), nullptr, 0);
+    if (subject) {
+        std::cerr << "[CardVerifier] Signer cert subject: " << subject << std::endl;
+        OPENSSL_free(subject);
+    }
 #endif
-    return chainValid;
+
+    return verifySignerChainAndDomain(certStore->store, signerCert);
 }
 
 bool CardVerifier::verifyRSASignature(const std::vector<uint8_t>& certDER, const std::vector<uint8_t>& data,
