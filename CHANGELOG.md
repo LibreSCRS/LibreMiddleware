@@ -3,6 +3,63 @@
 Notable user-visible changes per release. Format follows
 [Keep a Changelog](https://keepachangelog.com/) loosely.
 
+## [Unreleased] — 4.3.0
+
+### Added
+
+- **Buffer-based signing.** New `sign()` overload accepts an in-memory
+  document as bytes and returns the signed document bytes directly, in
+  addition to the existing file-based path. Suits callers that never
+  touch the filesystem.
+- **AdES long-term signature levels.** B-T (timestamped), B-LT and
+  B-LTA (long-term / archival validation material) are produced by
+  composing the certificate chain from the Trusted List, extending the
+  prior B-B baseline profile.
+- **Uniform credential activation across plugins.** Cards protected by a
+  Card Access Number (CAN) — such as the contactless NAM vehicle card —
+  now share a single credential-activation architecture, so the CAN is
+  supplied the same way regardless of plugin.
+- **On-card SHA-256 RSA signing** for hash-on-card IAS-ECC cards that
+  compute the digest on the card rather than accepting a pre-hashed
+  value.
+- **On-card RSA decipher** over a single-session libopensc bridge.
+- **CKA_ID key selection** for PKCS#11 signing, so a specific key can be
+  targeted by its identifier when a card exposes several.
+- **`eid-sod-verify` diagnostic tool.** A standalone PC/SC utility that
+  independently reads and verifies the eID Security Object (SOD),
+  useful for troubleshooting card trust outside the signing path.
+- **Arch Linux packaging.** A release-shaped `PKGBUILD` for
+  `librescrs-middleware`.
+
+### Changed
+
+- **Invalid input documents fail fast.** Malformed or unsupported input
+  documents now surface a distinct `InvalidDocument` outcome instead of
+  a generic failure, letting callers tell a bad input apart from a
+  signing error.
+- **eID SOD signer is pinned** to the MUP document-signer domain,
+  rejecting Security Objects signed outside the expected issuer domain.
+- **Long-term signing path hardened** — fail-closed behaviour and
+  SSRF-resistant fetching when gathering B-LT/B-LTA validation material.
+- Signing now **warns when a PKCS#11 module is resolved by bare name**
+  rather than an absolute path, flagging a fragile module lookup.
+
+### Fixed
+
+- **PACE-MRZ key derivation** now uses the full 20-byte SHA-1 of the MRZ
+  information per BSI/ICAO, fixing PACE with MRZ-derived keys.
+- **Cards already present at startup are reported.** Reader monitoring
+  now signals cards that were inserted before monitoring began, not only
+  those inserted afterwards.
+- The PKCS#15 plugin manifest no longer **over-declares `IdentityData`**.
+- Error paths are noexcept-safe and a PKCS#11 argument guard was added,
+  hardening behaviour under allocation failure and bad arguments.
+
+### Removed
+
+- Malformed and expired MUP certificates were archived out of the active
+  certificate bundle.
+
 ## [Unreleased] — 4.1.0
 
 ### Added

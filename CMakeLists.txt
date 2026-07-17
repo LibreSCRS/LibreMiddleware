@@ -21,7 +21,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-# A5 (4.0 hardening): per-plugin manifest.json -> constexpr header codegen.
+# 4.0 hardening: per-plugin manifest.json -> constexpr header codegen.
 # Python is the build-time host for the lowering script; jsonschema is an
 # optional runtime dep (the script warns and skips validation when missing).
 find_package(Python3 REQUIRED COMPONENTS Interpreter)

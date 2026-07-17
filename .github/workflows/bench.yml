@@ -46,7 +46,7 @@ jobs:
         # released bench binaries cover ParsedCertificate, validateChain
         # depth 1/3/5, and TrustStoreService::create. Re-add to the
         # target list when the bench harness for SigningService::sign
-        # B-B/B-T levels lands (tracked in BACKLOG).
+        # B-B/B-T levels lands (planned follow-up).
         run: |
           cmake --build build-bench \
             --target bench_parsed_cert bench_trust_validate \

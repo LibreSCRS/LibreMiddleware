@@ -1062,7 +1062,7 @@ target_link_libraries(SecretParameterConceptTests PRIVATE
 )
 gtest_discover_tests(SecretParameterConceptTests)
 
-# A5 (4.0 hardening): codegen golden-output test for manifest2header.py.
+# 4.0 hardening: codegen golden-output test for manifest2header.py.
 # The test invokes the Python tool against a fixture manifest at runtime
 # and diffs the output against expected_manifest.h, then re-invokes with
 # an invalid fixture and confirms the schema gate rejects it.

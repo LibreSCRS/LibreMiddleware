@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 //
-// A5 (4.0 hardening): codegen golden-output test for manifest2header.py.
+// 4.0 hardening: codegen golden-output test for manifest2header.py.
 // The Python tool lowers the per-plugin manifest.json into a constexpr
 // header consumed by the plugin's supportedAtrs() override; this test
 // pins the exact textual output and confirms invalid manifests are

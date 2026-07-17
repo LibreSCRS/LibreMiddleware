@@ -9,7 +9,7 @@
 #     [COMPILE_DEFINITIONS <def1> [<def2> ...]]
 # )
 #
-# A5 (4.0 hardening). Wraps the previous boilerplate (add_library SHARED +
+# 4.0 hardening. Wraps the previous boilerplate (add_library SHARED +
 # LIBRESCRS_INTERNAL_BUILD define + LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR + the
 # manifest.json -> manifest.h codegen). The generated header is placed at
 #   ${CMAKE_CURRENT_BINARY_DIR}/generated/manifest.h

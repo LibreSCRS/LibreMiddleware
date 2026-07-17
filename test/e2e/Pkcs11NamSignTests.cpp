@@ -170,7 +170,7 @@ TEST_F(Pkcs11NamFixture, NamContactless_SlotDiscoverableAmongMultipleCards)
 
 // Pre-login the placeholder slot must surface as CKF_LOGIN_REQUIRED so
 // PKCS#11 clients (libresign, p11-kit, Kleopatra) can discover the card
-// before the CAN is supplied. Regression guard for the WS-B placeholder
+// before the CAN is supplied. Regression guard for the PACE-placeholder-slot
 // fix: prior behaviour returned an empty slot list and broke sign.
 TEST_F(Pkcs11NamFixture, NamContactless_PlaceholderSlot_LoginRequiredFlag)
 {
@@ -188,8 +188,8 @@ TEST_F(Pkcs11NamFixture, NamContactless_PlaceholderSlot_LoginRequiredFlag)
     EXPECT_NE(info.flags & 0x00000004UL, 0u) << "Placeholder token must publish CKF_LOGIN_REQUIRED";
 }
 
-/// Real-card placeholder-slot self-transform smoke. With the WS-B
-/// placeholder design, the slot enumerated pre-login exposes
+/// Real-card placeholder-slot self-transform smoke. With the
+/// PACE-placeholder-slot design, the slot enumerated pre-login exposes
 /// CKF_LOGIN_REQUIRED; after C_Login(CAN[:PIN]) the same slot publishes
 /// the card's real keys / certs and is signable through the same
 /// CK_SLOT_ID (no slot-vector swap).

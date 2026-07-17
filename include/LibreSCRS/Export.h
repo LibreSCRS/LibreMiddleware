@@ -100,17 +100,3 @@
 #else
 #define LIBRESCRS_INTERNAL
 #endif
-
-/// @def LIBRESCRS_DEPRECATED(msg)
-/// @brief Deprecation-marker macro. Expands to @c [[deprecated(msg)]] on
-///        standard-C++14+ toolchains and to nothing on unknown compilers.
-///
-/// The LibreSCRS API policy (see `LibreSCRS.github.io/dev/api-policy` §3)
-/// commits to a deprecation cadence: additions and removals both run
-/// through a pre-announce window, and this macro is the canonical
-/// expression of that pre-announce marker.
-#if defined(__cplusplus) && __cplusplus >= 201402L
-#define LIBRESCRS_DEPRECATED(msg) [[deprecated(msg)]]
-#else
-#define LIBRESCRS_DEPRECATED(msg)
-#endif

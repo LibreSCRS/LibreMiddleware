@@ -340,7 +340,7 @@ TEST(Sha256Base64, ParityWithSha256PlusBase64)
 }
 
 // ---------------------------------------------------------------------------
-// base64Decode — M1: consolidated from duplicated anonymous-namespace copies
+// base64Decode — consolidated from duplicated anonymous-namespace copies
 // ---------------------------------------------------------------------------
 
 TEST(Base64Decode, RoundTrip)
