@@ -4,6 +4,7 @@
 #include <LibreSCRS/Signing/SigningService.h>
 #include <LibreSCRS/Signing/VisualSignatureParams.h>
 
+#include "detail/DocumentPrecheck.h"
 #include "detail/ErrorClassifier.h"
 #include "detail/RequestBridge.h"
 
@@ -519,6 +520,8 @@ SigningService::Impl::runSignPipeline(const SigningRequest& request, const Auth:
             return {SigningResult::cardBlocked(std::move(userMsg), libResult.errorMessage), {}};
         case SigningResult::Status::TsaUnreachable:
             return {SigningResult::tsaUnreachable(std::move(userMsg), libResult.errorMessage), {}};
+        case SigningResult::Status::InvalidDocument:
+            return {SigningResult::invalidDocument(std::move(userMsg), libResult.errorMessage), {}};
         case SigningResult::Status::SigningEngineError:
         default:
             return {SigningResult::signingEngineError(std::move(userMsg), libResult.errorMessage), {}};
@@ -557,6 +560,13 @@ try {
         return SigningResult::invalidRequest(
             LocalizedText{"librescrs.signing.error.invalidRequest", "Signing request is missing required fields.", {}},
             std::string{"Failed to read input file"});
+    }
+
+    // Fail-fast document pre-check (#6): reject an obviously-wrong document
+    // (e.g. a non-PDF for PAdES) before any card/PIN interaction, so the caller
+    // gets a precise InvalidDocument instead of an opaque deep-parse failure.
+    if (auto bad = detail::documentPrecheck(request.format(), document)) {
+        return SigningResult::invalidDocument(Auth::ErrorKeys::invalidDocument(), std::move(*bad));
     }
 
     auto outcome =
@@ -646,6 +656,14 @@ try {
             LocalizedText{"librescrs.signing.error.invalidRequest", "Signing request is missing required fields.", {}},
             input.empty() ? std::string{"Input buffer is empty"} : std::string{"Input buffer exceeds 256 MiB cap"});
     }
+
+    // Fail-fast document pre-check (#6): reject an obviously-wrong document
+    // (e.g. a non-PDF for PAdES) before any card/PIN interaction. Sits after the
+    // empty-buffer guard so a zero-byte input still surfaces as InvalidRequest.
+    if (auto bad = detail::documentPrecheck(request.format(), input)) {
+        return SigningResult::invalidDocument(Auth::ErrorKeys::invalidDocument(), std::move(*bad));
+    }
+
     std::vector<std::uint8_t> document(input.begin(), input.end());
 
     auto outcome =
@@ -875,6 +893,8 @@ try {
             return SigningResult::cardBlocked(std::move(userMsg), libResult.errorMessage);
         case SigningResult::Status::TsaUnreachable:
             return SigningResult::tsaUnreachable(std::move(userMsg), libResult.errorMessage);
+        case SigningResult::Status::InvalidDocument:
+            return SigningResult::invalidDocument(std::move(userMsg), libResult.errorMessage);
         case SigningResult::Status::SigningEngineError:
         default:
             return SigningResult::signingEngineError(std::move(userMsg), libResult.errorMessage);

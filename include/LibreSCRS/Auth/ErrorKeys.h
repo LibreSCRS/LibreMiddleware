@@ -199,6 +199,18 @@ namespace LibreSCRS::Auth::ErrorKeys {
     return LocalizedText{"librescrs.error.sign.invalid_request", "The signing request is invalid.", {}};
 }
 
+/// @brief Signing failed because the document to be signed is invalid or
+///        unreadable (wrong type, corrupt, unparseable, or empty). The user
+///        should check or replace the input file. Distinct from
+///        @ref invalidRequest (malformed request parameters) and
+///        @ref signingEngineError (unclassified engine fault).
+/// @since 4.3
+[[nodiscard]] inline LocalizedText invalidDocument()
+{
+    return LocalizedText{
+        "librescrs.error.sign.invalid_document", "The document to be signed is invalid or unreadable.", {}};
+}
+
 /// @brief Signing failed because the inputs violate the configured
 ///        signing policy (e.g. expired certificate at a level that
 ///        requires fresh revocation, profile-disallowed algorithm).

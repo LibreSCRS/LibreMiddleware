@@ -84,7 +84,7 @@ public:
     /// ASiC-E) @p originalDocument may be empty — the original payload is
     /// recoverable from @p priorSignature. When non-empty, implementations
     /// SHOULD assert it matches the embedded original and reject the call
-    /// with @ref SignFailureKind::InvalidInput on mismatch (tamper detection).
+    /// with @ref SignFailureKind::InvalidDocument on mismatch (tamper detection).
     ///
     /// For DETACHED packagings (CAdES, XAdES-Detached, JAdES-Detached)
     /// @p originalDocument is MANDATORY — RFC 7797 / ETSI EN 319 122 / etc.

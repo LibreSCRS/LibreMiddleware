@@ -74,9 +74,14 @@ inline LibreSCRS::Signing::SigningResult::Status classifyLibresignError(const li
         // dedicated user-message key below carries the precise distinction.
         case SignFailureKind::KeyAmbiguous:
             return S::SigningEngineError;
+        // Document-content faults: the bytes are not a valid document of the
+        // requested format. Client-input, user-fixable — its own status so the
+        // client says "fix your file", not "engine error".
+        case SignFailureKind::PdfPreparationError:
+        case SignFailureKind::InvalidDocument:
+            return S::InvalidDocument;
         case SignFailureKind::CardError:
         case SignFailureKind::RevocationFetchFailed:
-        case SignFailureKind::PdfPreparationError:
         case SignFailureKind::XmlSerializationError:
         case SignFailureKind::JsonSerializationError:
         case SignFailureKind::ZipBuildError:
@@ -118,11 +123,14 @@ inline LibreSCRS::Signing::SigningResult::Status classifyLibresignError(const li
 /// mapping is updated — keeping the user-facing message contract aligned
 /// with the engine-side classification.
 ///
-/// Catch-all engine-side categories (PdfPreparationError, *SerializationError,
-/// ZipBuildError, OpensslError, EngineError) collapse onto the generic
+/// Catch-all engine-side categories (*SerializationError, ZipBuildError,
+/// OpensslError, EngineError) collapse onto the generic
 /// @ref Auth::ErrorKeys::signingEngineError message: the GUI surfaces
 /// "see log for details" because these are bug-class failures the user
-/// cannot recover from at the UI layer.
+/// cannot recover from at the UI layer. Document-content faults
+/// (PdfPreparationError, InvalidDocument) instead map to
+/// @ref Auth::ErrorKeys::invalidDocument — a user-fixable "replace the file"
+/// class distinct from the engine bucket.
 inline LibreSCRS::LocalizedText kindToUserMessage(libresign::SignFailureKind k)
 {
     using libresign::SignFailureKind;
@@ -145,6 +153,8 @@ inline LibreSCRS::LocalizedText kindToUserMessage(libresign::SignFailureKind k)
     case SignFailureKind::KeyAmbiguous:
         return EK::keyAmbiguous();
     case SignFailureKind::PdfPreparationError:
+    case SignFailureKind::InvalidDocument:
+        return EK::invalidDocument();
     case SignFailureKind::XmlSerializationError:
     case SignFailureKind::JsonSerializationError:
     case SignFailureKind::ZipBuildError:

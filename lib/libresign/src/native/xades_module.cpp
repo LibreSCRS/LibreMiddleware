@@ -649,7 +649,7 @@ SigningResult XAdESModule::signWithSuffix(const std::vector<uint8_t>& data, cons
                                           const TSAConfig& tsa, std::string_view forcedIdSuffix)
 {
     if (data.empty())
-        return makeFailure(SignFailureKind::InvalidInput, "Input data is empty");
+        return makeFailure(SignFailureKind::InvalidDocument, "Input data is empty");
 
     try {
         native_utils::ensureXmlInitialized();
@@ -677,11 +677,11 @@ SigningResult XAdESModule::signWithSuffix(const std::vector<uint8_t>& data, cons
         constexpr int kSafeXmlOptions = XML_PARSE_NONET | XML_PARSE_NOCDATA;
         if (packaging == SignaturePackaging::Enveloped) {
             if (data.size() > static_cast<size_t>(INT_MAX))
-                return makeFailure(SignFailureKind::InvalidInput, "XAdES enveloped: input XML exceeds INT_MAX");
+                return makeFailure(SignFailureKind::InvalidDocument, "XAdES enveloped: input XML exceeds INT_MAX");
             xmlDocPtr origDoc = xmlReadMemory(reinterpret_cast<const char*>(data.data()), static_cast<int>(data.size()),
                                               nullptr, nullptr, kSafeXmlOptions);
             if (!origDoc)
-                return makeFailure(SignFailureKind::InvalidInput, "XAdES enveloped: failed to parse input XML");
+                return makeFailure(SignFailureKind::InvalidDocument, "XAdES enveloped: failed to parse input XML");
             origDocPtr.reset(origDoc);
         }
         if (packaging == SignaturePackaging::Enveloped && forcedIdSuffix.empty()) {
@@ -1110,7 +1110,7 @@ SigningResult XAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
                                         const TSAConfig& tsa)
 {
     if (prior.empty())
-        return makeFailure(SignFailureKind::InvalidInput, "XAdES appendSigner: empty prior");
+        return makeFailure(SignFailureKind::InvalidDocument, "XAdES appendSigner: empty prior");
 
     try {
         native_utils::ensureXmlInitialized();
@@ -1123,17 +1123,17 @@ SigningResult XAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
         // - anything else           -> ENVELOPED (host XML carries the
         //                              ds:Signature subtree(s) as descendants)
         if (prior.size() > static_cast<size_t>(INT_MAX))
-            return makeFailure(SignFailureKind::InvalidInput, "XAdES appendSigner: prior exceeds INT_MAX");
+            return makeFailure(SignFailureKind::InvalidDocument, "XAdES appendSigner: prior exceeds INT_MAX");
 
         constexpr int kSafeXmlOptions = XML_PARSE_NONET | XML_PARSE_NOCDATA;
         XmlDocPtr probeDoc(xmlReadMemory(reinterpret_cast<const char*>(prior.data()), static_cast<int>(prior.size()),
                                          "prior.xml", nullptr, kSafeXmlOptions));
         if (!probeDoc)
-            return makeFailure(SignFailureKind::InvalidInput, "XAdES appendSigner: prior XML parse failed");
+            return makeFailure(SignFailureKind::InvalidDocument, "XAdES appendSigner: prior XML parse failed");
 
         xmlNodePtr root = xmlDocGetRootElement(probeDoc.get());
         if (!root)
-            return makeFailure(SignFailureKind::InvalidInput, "XAdES appendSigner: prior has no root element");
+            return makeFailure(SignFailureKind::InvalidDocument, "XAdES appendSigner: prior has no root element");
 
         const bool isDsSignatureRoot = (xmlStrcmp(root->name, BAD_CAST "Signature") == 0);
         const bool isAsicSignaturesRoot = (xmlStrcmp(root->name, BAD_CAST "Signatures") == 0);
@@ -1166,7 +1166,7 @@ SigningResult XAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
                                                    static_cast<int>(prior.size()), "prior.xml", nullptr,
                                                    kSafeXmlOptions));
             if (!priorIdScanDoc)
-                return makeFailure(SignFailureKind::InvalidInput,
+                return makeFailure(SignFailureKind::InvalidDocument,
                                    "XAdES detached appendSigner: prior re-parse for Id scan failed");
             auto occupiedIds = collectAllIds(xmlDocGetRootElement(priorIdScanDoc.get()));
             priorIdScanDoc.reset();

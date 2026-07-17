@@ -269,7 +269,7 @@ SigningResult JAdESModule::sign(const std::vector<uint8_t>& data, const std::str
                                 SignatureLevel level, SignaturePackaging packaging, const TSAConfig& tsa)
 {
     if (data.empty())
-        return makeFailure(SignFailureKind::InvalidInput, "Input data is empty");
+        return makeFailure(SignFailureKind::InvalidDocument, "Input data is empty");
 
     try {
         // ---- Multi-sign branch (ETSI TS 119 182-1 / RFC 7515 §3.2) ----
@@ -327,7 +327,7 @@ SigningResult JAdESModule::sign(const std::vector<uint8_t>& data, const std::str
             const bool hasPayload = prior->contains("payload") && (*prior)["payload"].is_string() &&
                                     !(*prior)["payload"].get<std::string>().empty();
             if (!hasPayload) {
-                return makeFailure(SignFailureKind::InvalidInput,
+                return makeFailure(SignFailureKind::InvalidDocument,
                                    "JAdES DETACHED multi-sign cannot recover the original document from the prior "
                                    "JWS (RFC 7797 §4.2 detached form omits the payload field). Pass the original "
                                    "alongside the prior signature via SigningService::appendSigner (4.2 API), or "
@@ -336,7 +336,7 @@ SigningResult JAdESModule::sign(const std::vector<uint8_t>& data, const std::str
             std::string priorPayloadB64 = (*prior)["payload"].get<std::string>();
             std::vector<uint8_t> priorPayload = base64urlDecode(priorPayloadB64);
             if (priorPayload.empty())
-                return makeFailure(SignFailureKind::InvalidInput,
+                return makeFailure(SignFailureKind::InvalidDocument,
                                    "JAdES multi-sign: failed to decode prior payload (invalid base64url)");
 
             DepthGuard guard(multiSignDepth);
@@ -473,7 +473,7 @@ SigningResult JAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
     (void)fileName; // JAdES does not carry a per-signer file name in B-B
     (void)tsa;      // B-T+ gated below; tsa unused at B-B
     if (prior.empty())
-        return makeFailure(SignFailureKind::InvalidInput, "JAdES appendSigner: empty prior");
+        return makeFailure(SignFailureKind::InvalidDocument, "JAdES appendSigner: empty prior");
 
     // Per-signer etsiU upgrades (B-T / B-LT / B-LTA) are not yet wired: the
     // existing sign() etsiU helpers operate on the sole signer of a fresh
@@ -495,7 +495,7 @@ SigningResult JAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
         std::vector<uint8_t> priorBytes(prior.begin(), prior.end());
         auto parsed = tryParseJwsGeneral(priorBytes);
         if (!parsed.has_value())
-            return makeFailure(SignFailureKind::InvalidInput,
+            return makeFailure(SignFailureKind::InvalidDocument,
                                "JAdES appendSigner: prior is not a well-formed JWS JSON General serialization");
         nlohmann::json priorJws = std::move(*parsed);
 
@@ -514,22 +514,22 @@ SigningResult JAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
             payload.assign(originalDoc.begin(), originalDoc.end());
         } else {
             if (!priorJws["payload"].is_string())
-                return makeFailure(SignFailureKind::InvalidInput,
+                return makeFailure(SignFailureKind::InvalidDocument,
                                    "JAdES appendSigner: prior payload field is not a string");
             std::string priorPayloadB64 = priorJws["payload"].get<std::string>();
             payload = base64urlDecode(priorPayloadB64);
             if (payload.empty())
-                return makeFailure(SignFailureKind::InvalidInput,
+                return makeFailure(SignFailureKind::InvalidDocument,
                                    "JAdES appendSigner: failed to decode prior payload (invalid base64url)");
             // Optional integrity check: if the caller supplied originalDoc
             // for an ENVELOPED prior, assert it matches the decoded payload
             // byte-for-byte. Mismatch is a tampering / wrong-document hint
-            // and the API contract says we reject with InvalidInput.
+            // and the API contract says we reject with InvalidDocument.
             if (!originalDoc.empty()) {
                 if (payload.size() != originalDoc.size() ||
                     std::memcmp(payload.data(), originalDoc.data(), payload.size()) != 0) {
                     return makeFailure(
-                        SignFailureKind::InvalidInput,
+                        SignFailureKind::InvalidDocument,
                         "JAdES appendSigner: originalDocument does not match the prior signers' payload");
                 }
             }

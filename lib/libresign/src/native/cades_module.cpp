@@ -532,7 +532,7 @@ SigningResult CAdESModule::sign(const std::vector<uint8_t>& data, Pkcs11Token& t
                                 const TSAConfig& tsa)
 {
     if (data.empty())
-        return makeFailure(SignFailureKind::InvalidInput, "Input data is empty");
+        return makeFailure(SignFailureKind::InvalidDocument, "Input data is empty");
 
     try {
         auto cms = signBB(data, token);
@@ -581,13 +581,13 @@ SigningResult CAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
     (void)tsa; // reserved for the per-signer B-T+ rework — see header doc
 
     if (prior.empty())
-        return makeFailure(SignFailureKind::InvalidInput, "CAdES appendSigner: empty prior signature");
+        return makeFailure(SignFailureKind::InvalidDocument, "CAdES appendSigner: empty prior signature");
     if (originalDoc.empty())
         return makeFailure(SignFailureKind::InvalidInput, "CAdES detached appendSigner requires originalDocument");
     if (prior.size() > static_cast<size_t>(LONG_MAX))
-        return makeFailure(SignFailureKind::InvalidInput, "CAdES appendSigner: prior signature too large");
+        return makeFailure(SignFailureKind::InvalidDocument, "CAdES appendSigner: prior signature too large");
     if (originalDoc.size() > static_cast<size_t>(INT_MAX))
-        return makeFailure(SignFailureKind::InvalidInput, "CAdES appendSigner: originalDocument too large");
+        return makeFailure(SignFailureKind::InvalidDocument, "CAdES appendSigner: originalDocument too large");
 
     // Gate level upgrades above B-B. The existing addTimestamp /
     // addRevocationData / addArchiveTimestamp helpers target the FIRST
@@ -606,7 +606,7 @@ SigningResult CAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
         const unsigned char* p = prior.data();
         CmsPtr cms(d2i_CMS_ContentInfo(nullptr, &p, static_cast<long>(prior.size())));
         if (!cms)
-            return makeFailure(SignFailureKind::InvalidInput,
+            return makeFailure(SignFailureKind::InvalidDocument,
                                "CAdES appendSigner: prior is not valid CMS: " + opensslError());
 
         // 2. Verify the prior CMS is DETACHED. For an attached CMS,

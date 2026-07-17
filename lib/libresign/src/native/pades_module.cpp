@@ -608,7 +608,7 @@ SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, Pkcs11Tok
 {
     try {
         if (pdfDataIn.size() < 5)
-            return makeFailure(SignFailureKind::InvalidInput, "Input PDF is too small");
+            return makeFailure(SignFailureKind::InvalidDocument, "Input PDF is too small");
 
         // Adobe Acrobat Implementation Notes §H.3: tolerate up to 1024 bytes of
         // non-PDF prefix before the "%PDF-" header (e.g. multipart/form-data
@@ -625,7 +625,7 @@ SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, Pkcs11Tok
             std::string_view scan(reinterpret_cast<const char*>(pdfDataIn.data()), scanLen);
             auto found = scan.find(kPdfMagic);
             if (found == std::string_view::npos)
-                return makeFailure(SignFailureKind::InvalidInput, "Input is not a valid PDF (missing %PDF- header)");
+                return makeFailure(SignFailureKind::InvalidDocument, "Input is not a valid PDF (missing %PDF- header)");
             prefixLen = found;
         }
 
@@ -654,7 +654,7 @@ SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, Pkcs11Tok
         // Verify PDF magic at start of the normalized buffer (sanity check).
         std::string_view header(reinterpret_cast<const char*>(pdfData.data()), 5);
         if (header != "%PDF-")
-            return makeFailure(SignFailureKind::InvalidInput, "Input is not a valid PDF (missing %PDF- header)");
+            return makeFailure(SignFailureKind::InvalidDocument, "Input is not a valid PDF (missing %PDF- header)");
 
         // 1. Prepare the PDF with the SIGNATURE incremental update (sig
         //    dict, field, visual). DSS material is appended later in a

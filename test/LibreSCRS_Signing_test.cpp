@@ -310,9 +310,28 @@ TEST(SigningResultTest, FactoriesSetStatus)
 }
 
 #include <LibreSCRS/Signing/SigningService.h>
+#include "detail/DocumentPrecheck.h"
 #include "detail/ErrorClassifier.h"
 #include "detail/RequestBridge.h"
 #include <types.h>
+
+TEST(DocumentPrecheck, RejectsNonPdfForPadesButNotOtherFormats)
+{
+    using LibreSCRS::Signing::SignatureFormat;
+    namespace det = LibreSCRS::Signing::detail;
+    const std::vector<std::uint8_t> notPdf{'h', 'e', 'l', 'l', 'o'};
+    EXPECT_TRUE(det::documentPrecheck(SignatureFormat::Pades, notPdf).has_value()); // fast reject, no card
+
+    const std::vector<std::uint8_t> pdfish{'%', 'P', 'D', 'F', '-', '1', '.', '7'};
+    EXPECT_FALSE(det::documentPrecheck(SignatureFormat::Pades, pdfish).has_value());
+
+    // Non-PAdES formats have NO magic gate — arbitrary bytes are a valid input
+    // to enveloping/detached/container signing. Must NOT be rejected here.
+    EXPECT_FALSE(det::documentPrecheck(SignatureFormat::AsicE, notPdf).has_value());
+    EXPECT_FALSE(det::documentPrecheck(SignatureFormat::Cades, notPdf).has_value());
+    EXPECT_FALSE(det::documentPrecheck(SignatureFormat::Xades, notPdf).has_value());
+    EXPECT_FALSE(det::documentPrecheck(SignatureFormat::Jades, notPdf).has_value());
+}
 
 TEST(SigningServiceClassifierTest, MapsCKRHexCodesToPinErrors)
 {
@@ -691,11 +710,14 @@ TEST(SigningServiceBridgeTest, ReturnsUserCancelledWhenProviderCancels)
     ASSERT_TRUE(trustResult.has_value());
     auto svc = std::make_shared<LibreSCRS::Signing::SigningService>(*trustResult, LibreSCRS::Signing::TsaProvider{});
 
-    // Create a real tiny input file so the input-file check passes.
-    auto tmpIn = std::filesystem::temp_directory_path() / "librescrs-bridge-input.txt";
+    // Create a real tiny input file so the input-file check passes. A %PDF-
+    // header clears the fail-fast document pre-check (makeBuiltRequest signs as
+    // PAdES) so this test still exercises the provider-cancel path rather than
+    // the InvalidDocument reject path.
+    auto tmpIn = std::filesystem::temp_directory_path() / "librescrs-bridge-input.pdf";
     {
         std::ofstream f(tmpIn);
-        f << "dummy";
+        f << "%PDF-1.7\n";
     }
     auto request = makeBuiltRequest(tmpIn, tmpIn.parent_path() / "out.asice");
 
@@ -816,11 +838,14 @@ TEST(SigningServiceBridgeTest, DssBackendFailsLoudWhenCredentialsSet)
     auto svc = std::make_shared<LibreSCRS::Signing::SigningService>(*trustResult, std::move(tsaProvider));
 
     // Create a real tiny input file so the input-file check passes and we
-    // reach the backend-guard block inside sign().
-    auto tmpIn = std::filesystem::temp_directory_path() / "librescrs-dss-guard-input.txt";
+    // reach the backend-guard block inside sign(). A %PDF- header clears the
+    // fail-fast document pre-check (makeBuiltRequest signs as PAdES) so this
+    // test still reaches the DSS backend guard rather than the InvalidDocument
+    // reject path.
+    auto tmpIn = std::filesystem::temp_directory_path() / "librescrs-dss-guard-input.pdf";
     {
         std::ofstream f(tmpIn);
-        f << "dummy";
+        f << "%PDF-1.7\n";
     }
     auto request = makeBuiltRequest(tmpIn, tmpIn.parent_path() / "out.asice");
 
@@ -917,9 +942,44 @@ TEST(SigningServiceBufferSignTest, ReturnsUserCancelledWhenProviderCancels)
     };
     auto plugin = std::make_shared<StubPkiPlugin>();
 
-    const std::vector<std::uint8_t> document{'h', 'e', 'l', 'l', 'o'};
+    // A %PDF--prefixed buffer clears the fail-fast document pre-check so this
+    // test still exercises the provider-cancel path (not the InvalidDocument
+    // reject path). The bytes need not be a valid PDF — the provider cancels
+    // before the deep parse ever runs.
+    const std::vector<std::uint8_t> document{'%', 'P', 'D', 'F', '-', '1', '.', '7', '\n', '%', 0xE2, 0xE3};
     auto result = svc->sign(request, std::span<const std::uint8_t>{document}, cancellingProvider, plugin, session);
 
     EXPECT_EQ(result.status, LibreSCRS::Signing::SigningResult::Status::UserCancelled);
     EXPECT_FALSE(result.signedDocumentBytes.has_value());
+}
+
+TEST(SigningResultFactories, InvalidDocumentCarriesStatusAndKey)
+{
+    using LibreSCRS::Signing::SigningResult;
+    auto r = SigningResult::invalidDocument(LibreSCRS::Auth::ErrorKeys::invalidDocument(), "broken pdf xref");
+    EXPECT_EQ(r.status, SigningResult::Status::InvalidDocument);
+    EXPECT_EQ(r.userMessage.key, "librescrs.error.sign.invalid_document");
+    ASSERT_TRUE(r.diagnosticDetail.has_value());
+    EXPECT_EQ(*r.diagnosticDetail, "broken pdf xref");
+
+    auto d = SigningResult::invalidDocumentDiagnosticOnly("only-detail");
+    EXPECT_EQ(d.status, SigningResult::Status::InvalidDocument);
+    EXPECT_EQ(d.userMessage.key, "librescrs.error.sign.invalid_document");
+}
+
+// Document-content faults (bad/unparseable document bytes) route to the public
+// InvalidDocument status, distinct from request-parameter faults (InvalidInput
+// -> InvalidRequest) and genuine engine faults (EngineError -> SigningEngineError).
+TEST(ErrorClassifier, DocumentContentKindsMapToInvalidDocument)
+{
+    using S = LibreSCRS::Signing::SigningResult::Status;
+    using libresign::SignFailureKind;
+    namespace det = LibreSCRS::Signing::detail;
+    auto kind = [](SignFailureKind k) { return libresign::SigningResult{false, {}, "detail", k}; };
+    EXPECT_EQ(S::InvalidDocument, det::classifyLibresignError(kind(SignFailureKind::InvalidDocument)));
+    EXPECT_EQ(S::InvalidDocument, det::classifyLibresignError(kind(SignFailureKind::PdfPreparationError)));
+    // Request-param problems (e.g. "TSA URL required") stay InvalidRequest.
+    EXPECT_EQ(S::InvalidRequest, det::classifyLibresignError(kind(SignFailureKind::InvalidInput)));
+    // Genuine engine faults stay SigningEngineError.
+    EXPECT_EQ(S::SigningEngineError, det::classifyLibresignError(kind(SignFailureKind::EngineError)));
 }

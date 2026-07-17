@@ -76,6 +76,12 @@ struct SigningResult
         ///        non-credential stage of the signing pipeline.
         /// @since 4.1
         Cancelled,
+        /// @brief The document supplied for signing is invalid or unreadable
+        ///        (wrong file type, corrupt, unparseable, or empty). Distinct
+        ///        from @ref InvalidRequest (malformed request parameters) and
+        ///        @ref SigningEngineError (unclassified engine fault). The user
+        ///        fixes the input file. Append-only. @since 4.3
+        InvalidDocument,
     };
 
     /// @brief Outcome classification. Always set by a factory.
@@ -297,6 +303,29 @@ struct SigningResult
                                  std::move(diagnosticDetail)};
         } catch (...) {
             return SigningResult{Status::SigningEngineError, std::nullopt, LocalizedText{}, std::nullopt};
+        }
+    }
+
+    /// @brief The document to be signed is invalid or unreadable.
+    /// @param userMessage Translator-friendly user-facing message.
+    /// @param diagnosticDetail Optional dev-facing diagnostic string for logs.
+    [[nodiscard]] static SigningResult
+    invalidDocument(LocalizedText userMessage, std::optional<std::string> diagnosticDetail = std::nullopt) noexcept
+    {
+        return SigningResult{Status::InvalidDocument, std::nullopt, std::move(userMessage),
+                             std::move(diagnosticDetail)};
+    }
+
+    /// @brief Diagnostic-only invalid-document variant — substitutes the
+    ///        generic @ref Auth::ErrorKeys::invalidDocument message.
+    /// @since 4.3
+    [[nodiscard]] static SigningResult invalidDocumentDiagnosticOnly(std::string diagnosticDetail) noexcept
+    {
+        try {
+            return SigningResult{Status::InvalidDocument, std::nullopt, Auth::ErrorKeys::invalidDocument(),
+                                 std::move(diagnosticDetail)};
+        } catch (...) {
+            return SigningResult{Status::InvalidDocument, std::nullopt, LocalizedText{}, std::nullopt};
         }
     }
 

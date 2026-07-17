@@ -486,7 +486,7 @@ SigningResult NativeSigningService::appendSigner(const SigningRequest& request, 
     try {
         auto fmt = inferFormat(priorSignature);
         if (!fmt)
-            return makeFailure(SignFailureKind::InvalidInput,
+            return makeFailure(SignFailureKind::InvalidDocument,
                                "appendSigner: cannot infer signature format from prior bytes");
 
         // Mirror sign()'s Pkcs11Token construction. SessionPresence

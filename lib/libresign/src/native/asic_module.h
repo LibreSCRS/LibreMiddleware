@@ -47,7 +47,7 @@ public:
     /// @param level        desired signature level for the new signature
     /// @param tsa          TSA config for the new signature
     /// @return @ref SigningResult containing the new ASiC-E ZIP bytes, or
-    ///         a failure with @ref SignFailureKind::InvalidInput when
+    ///         a failure with @ref SignFailureKind::InvalidDocument when
     ///         @p prior is empty
     [[nodiscard]] SigningResult appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
                                              Pkcs11Token& token, SignatureLevel level, const TSAConfig& tsa);

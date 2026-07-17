@@ -383,7 +383,7 @@ SigningResult ASiCModule::signWithCAdES(const std::vector<uint8_t>& data, const 
                             ++rootDataFiles;
                         }
                         if (rootDataFiles > 1)
-                            return makeFailure(SignFailureKind::InvalidInput,
+                            return makeFailure(SignFailureKind::InvalidDocument,
                                                "ASiC-E re-sign rejects containers with multiple root data files (ETSI "
                                                "EN 319 162-1 §A.4 supports only one data file per container)");
                     }
@@ -583,7 +583,7 @@ SigningResult ASiCModule::appendSigner(std::span<const uint8_t> prior, std::span
                                        Pkcs11Token& token, SignatureLevel level, const TSAConfig& tsa)
 {
     if (prior.empty())
-        return makeFailure(SignFailureKind::InvalidInput, "ASiC-E appendSigner: empty prior container");
+        return makeFailure(SignFailureKind::InvalidDocument, "ASiC-E appendSigner: empty prior container");
 
     // ETSI EN 319 162-1 §A.4: signWithCAdES already detects an ASiC-E prior
     // via tryParseAsic, then appends signature{maxNNN+1}.p7s + matching

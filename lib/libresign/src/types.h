@@ -48,7 +48,13 @@ enum class SignFailureKind : std::uint8_t {
     ///        unambiguously. The engine refuses rather than sign with an
     ///        arbitrary first match (a label-keyed first-of-N was the latent
     ///        wrong-key hazard this discriminator closes). @since 4.3
-    KeyAmbiguous
+    KeyAmbiguous,
+    /// @brief The input (or prior/original) document is not a valid document of
+    ///        the requested format — wrong magic, truncated, unparseable, or
+    ///        empty. A client-input fault the user fixes by replacing the file;
+    ///        distinct from @ref InvalidInput (reserved for request-parameter
+    ///        problems such as a missing TSA URL). Append-only. @since 4.3
+    InvalidDocument
 };
 
 /// @brief Signature format taxonomy.

@@ -33,11 +33,12 @@ constexpr SignFailureKind kAll[] = {
     SignFailureKind::PolicyViolation,
     SignFailureKind::EngineError,
     SignFailureKind::KeyAmbiguous,
+    SignFailureKind::InvalidDocument,
 };
 
 TEST(SignFailureKindTest, ArrayLocksCardinality)
 {
-    EXPECT_EQ(sizeof(kAll) / sizeof(kAll[0]), 14u);
+    EXPECT_EQ(sizeof(kAll) / sizeof(kAll[0]), 15u);
 }
 
 TEST(SignFailureKindTest, EveryKindMapsToNonEmptyUserMessage)
@@ -61,6 +62,23 @@ TEST(SignFailureKindTest, EveryKindMapsToNonOkStatus)
         EXPECT_NE(LibreSCRS::Signing::detail::classifyLibresignError(r), S::Ok)
             << "SignFailureKind value " << static_cast<int>(k) << " unexpectedly classified as Status::Ok";
     }
+}
+
+// Document-content faults (bad/unparseable document bytes) route to the public
+// InvalidDocument status; request-parameter faults (InvalidInput) stay
+// InvalidRequest. Locks the disentangled classifier mapping.
+TEST(SignFailureKindTest, DocumentContentKindsClassifyToInvalidDocument)
+{
+    using S = LibreSCRS::Signing::SigningResult::Status;
+    auto classify = [](SignFailureKind k) {
+        libresign::SigningResult r;
+        r.success = false;
+        r.failureKind = k;
+        return LibreSCRS::Signing::detail::classifyLibresignError(r);
+    };
+    EXPECT_EQ(classify(SignFailureKind::InvalidDocument), S::InvalidDocument);
+    EXPECT_EQ(classify(SignFailureKind::PdfPreparationError), S::InvalidDocument);
+    EXPECT_EQ(classify(SignFailureKind::InvalidInput), S::InvalidRequest);
 }
 
 } // namespace
