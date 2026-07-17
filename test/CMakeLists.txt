@@ -12,6 +12,13 @@ FetchContent_Declare(googletest
 FetchContent_MakeAvailable(googletest)
 enable_testing()
 
+# Defer gtest test discovery to ctest time. The default build-time (POST_BUILD)
+# discovery launches every freshly linked test binary in the middle of the
+# heavily parallel build; on macOS CI runners that intermittently produces an
+# empty test-list JSON and fails the build. PRE_TEST discovers serially when
+# ctest starts, off the build's critical path.
+set(CMAKE_GTEST_DISCOVER_TESTS_DISCOVERY_MODE PRE_TEST)
+
 add_executable(LibreMiddlewareTests
     smartcard_test.cpp
     eu_vrc_test.cpp
