@@ -898,7 +898,7 @@ std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_vie
     // Strategy 2: path-based — navigate to PIN's DF, verify, then navigate to
     // the key's DF (NOT AID SELECT which resets security state on some cards,
     // and NOT the metadata PKCS#15 DF which would miss SSCD-bound keys whose
-    // file lives outside DF_PKCS15_FID — observed on GEO QSCD where the
+    // file lives outside DF_PKCS15_FID — observed on a suite-1 QSCD where the
     // sign key path resolves under a sibling DF). When the key has no
     // explicit path (or only a 2-byte FID) we fall back to the metadata
     // DF so SR eID and other "key under DF_PKCS15_FID" cards keep working.

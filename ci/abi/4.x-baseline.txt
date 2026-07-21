@@ -140,6 +140,14 @@ LibreSCRS::Plugin::CardPluginService::operator=(LibreSCRS::Plugin::CardPluginSer
 LibreSCRS::Plugin::CardPluginService::plugins() const@@LM_4
 LibreSCRS::Plugin::CardPluginService::size() const@@LM_4
 LibreSCRS::Plugin::CardPluginService::~CardPluginService()@@LM_4
+LibreSCRS::Plugin::Internal::FamilyQuirks::blockedGuidance(LibreSCRS::Plugin::PinKind) const@@LM_4
+LibreSCRS::Plugin::Internal::FamilyQuirks::blockedRecovery(LibreSCRS::Plugin::PinKind) const@@LM_4
+LibreSCRS::Plugin::Internal::FamilyQuirks::canChange(LibreSCRS::Plugin::PinKind) const@@LM_4
+LibreSCRS::Plugin::Internal::FamilyQuirks::retriesMax(LibreSCRS::Plugin::PinKind) const@@LM_4
+LibreSCRS::Plugin::Internal::FamilyQuirks::rrcVariantKnown(LibreSCRS::Plugin::PinKind) const@@LM_4
+LibreSCRS::Plugin::Internal::FamilyQuirks::unblockStyle(LibreSCRS::Plugin::PinKind) const@@LM_4
+LibreSCRS::Plugin::Internal::derivePinStatus(LibreSCRS::Plugin::Internal::PinEvidence const&, std::vector<LibreSCRS::Plugin::Internal::PinEvidence, std::allocator<LibreSCRS::Plugin::Internal::PinEvidence> > const&, LibreSCRS::Plugin::Internal::FamilyQuirks const*)@@LM_4
+LibreSCRS::Plugin::Internal::findFamilyQuirks(LibreSCRS::Plugin::Internal::FamilyId)@@LM_4
 LibreSCRS::Plugin::SecurityStatus::computeOverall()@@LM_4
 LibreSCRS::Plugin::acquireChannelForProfile(LibreSCRS::SmartCard::CardSession&, LibreSCRS::Plugin::ActivationProfile const&, LibreSCRS::CancelToken)@@LM_4
 LibreSCRS::Plugin::textValueAt[abi:cxx11](LibreSCRS::Plugin::CardData const&, unsigned long, std::basic_string_view<char, std::char_traits<char> >)@@LM_4
@@ -224,6 +232,14 @@ LibreSCRS::Plugin::CardPluginService::operator=(LibreSCRS::Plugin::CardPluginSer
 LibreSCRS::Plugin::CardPluginService::plugins() const@@LM_4
 LibreSCRS::Plugin::CardPluginService::size() const@@LM_4
 LibreSCRS::Plugin::CardPluginService::~CardPluginService()@@LM_4
+LibreSCRS::Plugin::Internal::FamilyQuirks::blockedGuidance(LibreSCRS::Plugin::PinKind) const@@LM_4
+LibreSCRS::Plugin::Internal::FamilyQuirks::blockedRecovery(LibreSCRS::Plugin::PinKind) const@@LM_4
+LibreSCRS::Plugin::Internal::FamilyQuirks::canChange(LibreSCRS::Plugin::PinKind) const@@LM_4
+LibreSCRS::Plugin::Internal::FamilyQuirks::retriesMax(LibreSCRS::Plugin::PinKind) const@@LM_4
+LibreSCRS::Plugin::Internal::FamilyQuirks::rrcVariantKnown(LibreSCRS::Plugin::PinKind) const@@LM_4
+LibreSCRS::Plugin::Internal::FamilyQuirks::unblockStyle(LibreSCRS::Plugin::PinKind) const@@LM_4
+LibreSCRS::Plugin::Internal::derivePinStatus(LibreSCRS::Plugin::Internal::PinEvidence const&, std::vector<LibreSCRS::Plugin::Internal::PinEvidence, std::allocator<LibreSCRS::Plugin::Internal::PinEvidence> > const&, LibreSCRS::Plugin::Internal::FamilyQuirks const*)@@LM_4
+LibreSCRS::Plugin::Internal::findFamilyQuirks(LibreSCRS::Plugin::Internal::FamilyId)@@LM_4
 LibreSCRS::Plugin::acquireChannelForProfile(LibreSCRS::SmartCard::CardSession&, LibreSCRS::Plugin::ActivationProfile const&, LibreSCRS::CancelToken)@@LM_4
 LibreSCRS::Signing::SigningRequest::Builder::Builder()@@LM_4
 LibreSCRS::Signing::SigningRequest::Builder::Builder(LibreSCRS::Signing::SigningRequest::Builder&&)@@LM_4

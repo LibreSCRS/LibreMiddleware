@@ -7,7 +7,7 @@
 
 #include "pin_guard.h"
 
-// PKCS#11 platform macros (see Pkcs11GeoMultiPinTests.cpp for rationale).
+// PKCS#11 platform macros (see Pkcs11Suite1MultiPinTests.cpp for rationale).
 #define CK_PTR *
 #define CK_DECLARE_FUNCTION(returnType, name) returnType name
 #define CK_DECLARE_FUNCTION_POINTER(returnType, name) returnType(*name)

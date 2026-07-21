@@ -21,7 +21,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(GoogleTest)
 
 add_executable(librescrs_pkcs11_e2e_tests
-    Pkcs11GeoMultiPinTests.cpp
+    Pkcs11Suite1MultiPinTests.cpp
     Pkcs11NamSignTests.cpp
     Pkcs11PksSignTests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/pin_guard.h

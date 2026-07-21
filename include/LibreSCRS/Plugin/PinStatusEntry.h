@@ -114,7 +114,12 @@ struct PinStatusEntry
     std::optional<int> unblocksLeft;
     /// @brief Unblock behaviour; Unknown unless @ref unblockable.
     UnblockStyle unblockStyle = UnblockStyle::Unknown;
-    /// @brief Transport→operational activation supported AND currently available.
+    /// @brief Transport→operational activation is supported by this
+    ///        credential's family and the credential is in
+    ///        @ref PinState::Transport. Family-level capability, NOT a
+    ///        live availability claim: the stack may still answer the
+    ///        activation call with an Unsupported outcome in this
+    ///        increment.
     bool activatable = false;
     /// @brief The associated signing key is still deactivated (bring-up incomplete).
     bool keyActivationPending = false;

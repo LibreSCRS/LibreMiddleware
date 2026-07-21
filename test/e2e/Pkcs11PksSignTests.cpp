@@ -24,7 +24,7 @@
 // included (the header is OASIS-portable and asks consumers to define
 // CK_PTR / CK_DECLARE_FUNCTION / CK_DECLARE_FUNCTION_POINTER /
 // CK_CALLBACK_FUNCTION / NULL_PTR themselves). Mirrors the preamble
-// in Pkcs11NamSignTests.cpp / Pkcs11GeoMultiPinTests.cpp.
+// in Pkcs11NamSignTests.cpp / Pkcs11Suite1MultiPinTests.cpp.
 #define CK_PTR *
 #define CK_DECLARE_FUNCTION(returnType, name) returnType name
 #define CK_DECLARE_FUNCTION_POINTER(returnType, name) returnType(*name)

@@ -652,10 +652,12 @@ protected:
     /// @brief Plugin-side implementation of @ref decipher. Treated as atomic;
     ///        the base wrapper handles the pre-dispatch cancel short-circuit.
     ///
-    /// @note Declared as the LAST virtual in the class so this 4.3 addition
-    ///       appends a single vtable slot (ABI-additive, ABI v8) rather than
-    ///       shifting the existing slots. Do not relocate it above an existing
-    ///       virtual.
+    /// @note Appended as a single new vtable slot in 4.3 (ABI-additive,
+    ///       ABI v8) rather than shifting the existing slots. Do not
+    ///       relocate it above an existing virtual. Later additions
+    ///       (@ref activateTransportPin, @ref activateSigningKey) appended
+    ///       after it; the append anchor for future virtuals sits on
+    ///       @ref activateSigningKey — the true LAST virtual.
     /// @since 4.3
     [[nodiscard]] virtual DecipherResult doDecipher(LibreSCRS::SmartCard::CardSession& session,
                                                     std::uint16_t keyReference,
@@ -712,6 +714,9 @@ public:
     ///         fails (retriesLeft refers to the SIGN PIN);
     ///         `KeyActivationFailed` when VERIFY succeeded but ACTIVATE failed.
     /// @note Safe default: `PINResultOutcome::Unsupported`.
+    /// @note Declared as the LAST virtual in the class: future virtuals
+    ///       must be appended AFTER this one so every existing vtable
+    ///       slot keeps its position (ABI-additive evolution).
     /// @since 4.x
     [[nodiscard]] virtual PINResult activateSigningKey(LibreSCRS::SmartCard::CardSession& session,
                                                        const LibreSCRS::Secure::String& signPin) const

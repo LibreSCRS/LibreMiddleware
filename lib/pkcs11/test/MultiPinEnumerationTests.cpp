@@ -24,7 +24,7 @@ namespace {
 class MultiPinEnumeration : public ::testing::Test
 {
 protected:
-    static MockCardSpec twoSlotGEOSpec()
+    static MockCardSpec twoSlotSuite1Spec()
     {
         MockCardSpec spec;
         spec.needsPace = false;
@@ -44,10 +44,10 @@ protected:
     }
 };
 
-TEST_F(MultiPinEnumeration, TwoSlotGEOEmits2SlotIds)
+TEST_F(MultiPinEnumeration, TwoSlotSuite1Emits2SlotIds)
 {
     auto provider = std::make_shared<MockPKCS11CardProvider>();
-    provider->registerCard("Mock Reader 0", twoSlotGEOSpec());
+    provider->registerCard("Mock Reader 0", twoSlotSuite1Spec());
 
     auto card = provider->probe("Mock Reader 0");
     ASSERT_NE(card, nullptr);
@@ -61,7 +61,7 @@ TEST_F(MultiPinEnumeration, TwoSlotGEOEmits2SlotIds)
 TEST_F(MultiPinEnumeration, EachSlotsTokenInfoReportsCorrectPinLabel)
 {
     auto provider = std::make_shared<MockPKCS11CardProvider>();
-    provider->registerCard("Mock Reader 0", twoSlotGEOSpec());
+    provider->registerCard("Mock Reader 0", twoSlotSuite1Spec());
 
     auto card = provider->probe("Mock Reader 0");
     ASSERT_NE(card, nullptr);
@@ -75,7 +75,7 @@ TEST_F(MultiPinEnumeration, EachSlotsTokenInfoReportsCorrectPinLabel)
 TEST_F(MultiPinEnumeration, SlotStableIdsDistinctAndDeterministic)
 {
     auto provider = std::make_shared<MockPKCS11CardProvider>();
-    provider->registerCard("Mock Reader 0", twoSlotGEOSpec());
+    provider->registerCard("Mock Reader 0", twoSlotSuite1Spec());
 
     auto card1 = provider->probe("Mock Reader 0");
     ASSERT_NE(card1, nullptr);
@@ -114,8 +114,8 @@ TEST_F(MultiPinEnumeration, MixedSinglePlusMultiPinFlatList)
     });
     provider->registerCard("Mock Reader 0", std::move(singleSpec));
 
-    // Reader 1: two-slot GEO-style card.
-    provider->registerCard("Mock Reader 1", twoSlotGEOSpec());
+    // Reader 1: two-slot suite-1-style card.
+    provider->registerCard("Mock Reader 1", twoSlotSuite1Spec());
 
     auto card0 = provider->probe("Mock Reader 0");
     auto card1 = provider->probe("Mock Reader 1");

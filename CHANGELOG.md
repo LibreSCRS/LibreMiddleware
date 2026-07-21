@@ -65,7 +65,7 @@ Notable user-visible changes per release. Format follows
 ### Added
 
 - **PKCS#11 multi-PIN support.** Cards with multiple PIN gates (e.g.
-  Serbian GEO eID with separate Authentication and Signing (QSCD)
+  dual-PIN eID profiles with separate Authentication and Signing (QSCD)
   PINs) now expose each PIN as a distinct PKCS#11 slot. Per-slot
   login state isolates Authentication from Signing without forcing
   a single shared PIN. `C_GetSlotList` returns one slot per
