@@ -11,6 +11,7 @@
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SecureChannel/BacParams.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
+#include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
 #include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
 #include <LibreSCRS_internal/SecureChannel/detail/ChannelStateMutator.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
@@ -112,6 +113,14 @@ struct SessionContext
     LibreSCRS::Secure::String pendingDocNum;
     LibreSCRS::Secure::String pendingDob;
     LibreSCRS::Secure::String pendingExpiry;
+    /// Discovery-probe verdict on plain LDS readability. On the contact
+    /// interface of dual-interface documents the LDS carries the "Always"
+    /// access condition, so EF.COM reads succeed without PACE; on the
+    /// contactless interface the same read fails (6982) until PACE runs.
+    /// Tri-state via the paired flag: an unprobed session keeps today's
+    /// conservative SM activation.
+    bool plainProbeDone{false};
+    bool plainLdsReadable{false};
 };
 
 // Per-session state-map key + factory — the sanctioned plugin-support shape
@@ -152,14 +161,53 @@ public:
         try {
             auto& conn = LibreSCRS::SmartCard::detail::unwrap(session);
             const auto key = makeSessionKey(session);
-            // Reset session for this key (new card insert = new session)
-            std::lock_guard lock(mtx);
-            sessions.erase(key);
+            {
+                // New card insert on this reader: drop the state of EVERY
+                // predecessor generation (generations are monotonic, so any
+                // other entry under this reader name belongs to a dead
+                // session). Keeps the per-session map bounded on hosts that
+                // never call clearCredentials on dying sessions.
+                std::lock_guard lock(mtx);
+                std::erase_if(sessions, [&key](const auto& kv) { return kv.first.readerName == key.readerName; });
+            }
+
+            // One PC/SC transaction spans the applet SELECT and the probe so
+            // no other client's APDUs can interleave between them and skew
+            // the verdict. No plugin lock is held across card I/O: a wedged
+            // transmit must not stall other sessions' activationProfile /
+            // setCredentials calls.
+            LibreSCRS::SmartCard::Internal::CardTransaction tx(conn);
 
             // SELECT eMRTD applet by AID (P2=0x0C: no FCI response)
             auto response = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(
                 {emrtd::EMRTD_AID, emrtd::EMRTD_AID + emrtd::EMRTD_AID_LEN}, 0x0C));
-            return response.isSuccess();
+            if (!response.isSuccess())
+                return false;
+
+            // Interface probe: a plain EF.COM read succeeding right here is
+            // the empirical signal that this session's interface exposes the
+            // LDS without PACE (contact "Always" access) — cached for the
+            // session lifetime (a new card insert re-probes). A transport
+            // fault leaves the verdict UNKNOWN (conservative SM default, a
+            // later re-insert re-probes); only completed probe I/O records a
+            // positive readable/not-readable fact.
+            bool probeDone = false;
+            bool readable = false;
+            try {
+                LibreSCRS::SecureChannel::PlainChannel probeChannel(conn, makeEmrtdAid());
+                emrtd::EMRTDCard probeCard(probeChannel);
+                readable = !probeCard.readCOM().empty();
+                probeDone = true;
+            } catch (...) {
+                // verdict stays unknown
+            }
+            if (probeDone) {
+                std::lock_guard lock(mtx);
+                auto& ctx = sessions[key];
+                ctx.plainProbeDone = true;
+                ctx.plainLdsReadable = readable;
+            }
+            return true;
         } catch (...) {
             return false;
         }
@@ -190,13 +238,18 @@ public:
     ///        the plugin's per-session credential store and the session's
     ///        installed credential provider.
     ///
-    /// Three cases, mirroring the host integrations:
+    /// Cases, mirroring the host integrations:
     ///  - Deposited MRZ → PACE (MRZ) with BAC fallback (classical passports).
     ///  - Deposited CAN → PACE (CAN).
-    ///  - Empty store + a credential provider installed (broker/agent) →
-    ///    PACE (CAN); the provider supplies the CAN on cache miss.
+    ///  - Empty store + a credential provider installed (broker/agent):
+    ///    when the discovery probe proved the LDS plain-readable on this
+    ///    interface (contact "Always" access) → plain, no CAN prompt;
+    ///    otherwise → PACE (CAN); the provider supplies the CAN on cache
+    ///    miss. PACE protects the contactless interface — the contact
+    ///    interface of dual-interface documents reads without it.
     ///  - Empty store + no provider (host discovery first call) → plain: the
-    ///    wrapper performs no activation and @ref doReadCard returns the
+    ///    wrapper performs no activation and @ref doReadCard either reads the
+    ///    LDS directly (plain-readable interface) or returns the
     ///    `auth_required` probe.
     ///
     /// Lock ordering: the plugin store is read under @ref mtx, which is then
@@ -212,15 +265,19 @@ public:
         const auto key = makeSessionKey(cardSession);
         bool haveCan = false;
         bool haveMrz = false;
+        bool plainReadable = false;
         {
             std::lock_guard lock(mtx);
             auto it = sessions.find(key);
-            if (it != sessions.end() && it->second.credentials) {
-                // SessionContext::credentials is variant<SecureMRZData, Secure::String>;
-                // the MRZ alternative drives PACE (MRZ), the other (Secure::String)
-                // carries the CAN.
-                haveMrz = std::holds_alternative<SecureMRZData>(*it->second.credentials);
-                haveCan = !haveMrz;
+            if (it != sessions.end()) {
+                if (it->second.credentials) {
+                    // SessionContext::credentials is variant<SecureMRZData, Secure::String>;
+                    // the MRZ alternative drives PACE (MRZ), the other (Secure::String)
+                    // carries the CAN.
+                    haveMrz = std::holds_alternative<SecureMRZData>(*it->second.credentials);
+                    haveCan = !haveMrz;
+                }
+                plainReadable = it->second.plainProbeDone && it->second.plainLdsReadable;
             }
         }
 
@@ -234,9 +291,16 @@ public:
             return p;
         }
         // Empty store: a broker/agent path (provider installed) activates
-        // PACE (CAN) — the provider supplies the CAN on cache miss. Host
-        // discovery (no provider) instead probes via the plain path.
-        if (cardSession.hasCredentialProvider()) {
+        // PACE (CAN) — the provider supplies the CAN on cache miss — unless
+        // the discovery probe proved the LDS plain-readable on this
+        // interface (contact "Always" access) AND no SM tunnel is live: then
+        // no activation is needed and no CAN is ever prompted. With a live
+        // SM tunnel the PACE profile is kept even on a plain-readable
+        // interface — the activation walk's wrapped SELECT re-binds the
+        // shared tunnel to this applet (another plugin may have moved it),
+        // which a plain profile would silently skip.
+        const bool plainNow = plainReadable && !cardSession.activatedProtocol().has_value();
+        if (cardSession.hasCredentialProvider() && !plainNow) {
             p.primary = LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can};
             return p;
         }
@@ -304,9 +368,54 @@ private:
         // The readCard NVI wrapper has already consulted activationProfile():
         // a profile that requires activation seeded credentials and acquired
         // the SM channel before dispatching here. So an active channel means
-        // "read over it"; no active channel means this is the host discovery
-        // first call (plain profile) and we return the auth_required probe.
+        // "read over it"; no active channel means the profile was plain —
+        // either a plain-readable interface (contact) or the host discovery
+        // first call, which falls back to the auth_required probe below.
         auto* channel = LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::active(cardSession);
+        std::optional<LibreSCRS::SmartCard::ActiveChannelHolder> plainHolder;
+        bool plainRead = false;
+
+        if (!LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::activatedProtocol(cardSession).has_value()) {
+            // No live SM tunnel. When the discovery probe proved the LDS
+            // plain-readable on this interface (contact "Always" access),
+            // acquire a plain holder for the whole read: activateChannelFor
+            // supplies the PC/SC transaction, the applet SELECT, and a
+            // correctly bound plain channel in one move — and thereby also
+            // heals a stale plain channel another plugin left installed
+            // (bound to its own applet), which would otherwise be read
+            // blindly. Unknown or not-readable verdicts keep today's paths
+            // (SM activation with a provider, auth_required probe without).
+            bool plainReadable = false;
+            {
+                std::lock_guard lock(mtx);
+                auto it = sessions.find(makeSessionKey(cardSession));
+                plainReadable = it != sessions.end() && it->second.plainProbeDone && it->second.plainLdsReadable;
+            }
+            if (plainReadable) {
+                // From here on the pre-acquire channel pointer is dead: the
+                // acquire below may CLOSE or REPLACE a previously installed
+                // channel (destroying the object it pointed at), so any
+                // non-committed attempt must fall through to the
+                // auth_required probe with NO channel — never read over the
+                // stale pointer.
+                channel = nullptr;
+                if (auto holder = cardSession.activateChannelFor(makeEmrtdAid(), LibreSCRS::CancelToken{})) {
+                    if (auto* held = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(*holder);
+                        held != nullptr) {
+                        // Corroborate before committing: the probe verdict
+                        // may be stale (card swapped mid-session). An empty
+                        // COM read releases the holder and falls back to the
+                        // auth_required probe below.
+                        emrtd::EMRTDCard probeCard(*held);
+                        if (!probeCard.readCOM().empty()) {
+                            plainHolder = std::move(*holder);
+                            channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(*plainHolder);
+                            plainRead = true;
+                        }
+                    }
+                }
+            }
+        }
 
         if (channel == nullptr) {
             // No SM channel — discovery probe. Reads EF.CardAccess via the raw
@@ -364,7 +473,12 @@ private:
         // public CardSession::activatedProtocol() (which locks the non-recursive
         // session mutex on the owner thread) would self-deadlock.
         std::string authMethodLabel = "BAC";
-        if (auto proto = LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::activatedProtocol(cardSession)) {
+        if (plainRead) {
+            // Interface-neutral honesty: the readability probe proves plain
+            // access, not the physical interface (a PACE-less legacy document
+            // can be plain-readable over RF too).
+            authMethodLabel = "None (plain read)";
+        } else if (auto proto = LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::activatedProtocol(cardSession)) {
             if (const auto* pace = std::get_if<LibreSCRS::SmartCard::PaceRequest>(&*proto))
                 authMethodLabel =
                     (pace->secretKind == LibreSCRS::Auth::PaceSecretKind::Can) ? "PACE (CAN)" : "PACE (MRZ)";
@@ -429,7 +543,14 @@ private:
             auto dg14Result = card.readDataGroupSafe(14);
             if (dg14Result.status == emrtd::DGReadStatus::OK && !dg14Result.data.empty()) {
                 dgRawData[14] = dg14Result.data;
-                caResult = emrtd::crypto::performChipAuth(*channel, dg14Result.data);
+                // Genuineness protocols run only over SM: Chip Authentication's
+                // session-key replacement is a documented no-op on a plain
+                // channel, so any verdict there would be unverifiable. The raw
+                // DG14 bytes above feed passive authentication whenever EF.SOD
+                // is itself readable; documents that SM-gate EF.SOD in plain
+                // skip PA entirely and report it NOT_PERFORMED.
+                if (!plainRead)
+                    caResult = emrtd::crypto::performChipAuth(*channel, dg14Result.data);
                 if (caResult.chipAuthentication == emrtd::crypto::ChipAuthResult::PASSED && caResult.newSessionKeys) {
                     // Promote channel SM keys to CA-derived keys. The
                     // public-channel SessionKeys carrier composes
@@ -457,10 +578,14 @@ private:
             auto dg15Result = card.readDataGroupSafe(15);
             if (dg15Result.status == emrtd::DGReadStatus::OK && !dg15Result.data.empty()) {
                 dgRawData[15] = dg15Result.data;
-                auto aaResult = emrtd::crypto::performActiveAuth(*channel, dg15Result.data);
-                caResult.activeAuthentication = aaResult.activeAuthentication;
-                if (aaResult.errorDetail.size() > caResult.errorDetail.size())
-                    caResult.errorDetail = aaResult.errorDetail;
+                // Same SM-only rule as Chip Authentication above: no
+                // genuineness verdict from a plain channel.
+                if (!plainRead) {
+                    auto aaResult = emrtd::crypto::performActiveAuth(*channel, dg15Result.data);
+                    caResult.activeAuthentication = aaResult.activeAuthentication;
+                    if (aaResult.errorDetail.size() > caResult.errorDetail.size())
+                        caResult.errorDetail = aaResult.errorDetail;
+                }
             }
         }
 
@@ -810,7 +935,21 @@ public:
         try {
             const auto mapKey = makeSessionKey(cardSession);
             std::lock_guard lock(mtx);
-            sessions.erase(mapKey);
+            auto it = sessions.find(mapKey);
+            if (it == sessions.end())
+                return;
+            // Wipe the secrets but keep the interface-probe verdict: plain
+            // LDS readability is a property of the reader interface, not a
+            // credential, and losing it here would silently revert a contact
+            // session to CAN prompting for the rest of its lifetime.
+            const bool probeDone = it->second.plainProbeDone;
+            const bool readable = it->second.plainLdsReadable;
+            sessions.erase(it);
+            if (probeDone) {
+                auto& ctx = sessions[mapKey];
+                ctx.plainProbeDone = true;
+                ctx.plainLdsReadable = readable;
+            }
         } catch (...) {
             // clearCredentials is noexcept — swallow any failure while
             // computing the session key or taking the mutex. The lock_guard

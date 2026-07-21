@@ -21,7 +21,13 @@ std::optional<std::vector<uint8_t>> EMRTDCard::readFile(uint16_t fid, bool skipS
         // P2=0x0C (no response) would be Case 3 (no Le, no DO'97) → rejected with 6988.
         LibreSCRS::SmartCard::Internal::APDUCommand selectCmd{
             0x00, 0xA4, 0x02, 0x04, {static_cast<uint8_t>(fid >> 8), static_cast<uint8_t>(fid & 0xFF)}, 0, true};
-        channel.transmit(selectCmd, LibreSCRS::CancelToken{});
+        auto selectResp = channel.transmit(selectCmd, LibreSCRS::CancelToken{});
+        // A failed SELECT leaves the PREVIOUS file current on many card OSes
+        // — reading on would return the wrong file's bytes (e.g. a 6982 on
+        // EF.SOD after a successful EF.COM read would re-read EF.COM and
+        // hand it up as the "SOD"). Accept success and 62xx warnings only.
+        if (selectResp.sw1 != 0x90 && selectResp.sw1 != 0x62)
+            return std::nullopt;
     }
 
     // READ BINARY in chunks of 256 bytes (Le=0x00 = 256 in short APDU form)
