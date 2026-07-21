@@ -132,14 +132,15 @@ struct LIBRESCRS_PUBLIC_API Atr
 
 /// @brief Structured outcome classification for PIN operations.
 enum class PINResultOutcome : std::uint8_t {
-    Unspecified,   ///< Default; caller has not classified the outcome.
-    Ok,            ///< PIN operation succeeded.
-    UserCancelled, ///< User cancelled the credential prompt.
-    MissingFields, ///< Provider returned Ok but required fields were absent.
-    InvalidPin,    ///< Card rejected the PIN.
-    Blocked,       ///< Card reports the PIN is now blocked.
-    PluginError,   ///< Plugin-internal error (e.g., APDU failure).
-    Unsupported,   ///< Plugin does not implement this PIN flow (default base impl).
+    Unspecified,         ///< Default; caller has not classified the outcome.
+    Ok,                  ///< PIN operation succeeded.
+    UserCancelled,       ///< User cancelled the credential prompt.
+    MissingFields,       ///< Provider returned Ok but required fields were absent.
+    InvalidPin,          ///< Card rejected the PIN.
+    Blocked,             ///< Card reports the PIN is now blocked.
+    PluginError,         ///< Plugin-internal error (e.g., APDU failure).
+    Unsupported,         ///< Plugin does not implement this PIN flow (default base impl).
+    KeyActivationFailed, ///< PIN verify succeeded but the key ACTIVATE step failed.
 };
 
 /// @brief Result of a PIN verify/change/unblock operation.

@@ -64,6 +64,12 @@ struct PinInfo
     bool initialized = false;
     bool unblockDisabled = false;
     bool unblockingPin = false;
+    bool soPin = false;          // pinFlags soPin bit
+    bool changeDisabled = false; // pinFlags change-disabled bit
+    // Protecting object's id from CommonObjectAttributes (the auth object
+    // this PIN is protected/unblocked by — mirrors PrivateKeyInfo.authId).
+    // Empty when the entry carries no authId.
+    std::vector<uint8_t> authId;
 };
 
 struct ObjectDirectory

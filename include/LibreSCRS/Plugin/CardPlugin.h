@@ -671,6 +671,60 @@ protected:
         return r;
     }
 
+public:
+    // -- Credential lifecycle ------------------------------------------------
+
+    /// @brief Activate a transport-mode PIN: set the holder's value using
+    ///        the issuance transport value (card op: CHANGE REFERENCE DATA;
+    ///        exact command form is family-specific).
+    /// @param session         Live card session.
+    /// @param pinLabel        PIN selector (plugin-specific; not secret).
+    /// @param transportValue  Transport PIN value; cleansed on destruction.
+    /// @param newPin          Holder's new PIN value; cleansed on destruction.
+    /// @note Safe default: `PINResultOutcome::Unsupported` (base not overridden).
+    /// @since 4.x
+    [[nodiscard]] virtual PINResult activateTransportPin(LibreSCRS::SmartCard::CardSession& session,
+                                                         std::string_view pinLabel,
+                                                         const LibreSCRS::Secure::String& transportValue,
+                                                         const LibreSCRS::Secure::String& newPin) const
+    {
+        static_assert(LibreSCRS::Auth::SecretParameter<decltype(transportValue)>,
+                      "activateTransportPin transportValue parameter must be Secure::String const&");
+        static_assert(LibreSCRS::Auth::SecretParameter<decltype(newPin)>,
+                      "activateTransportPin newPin parameter must be Secure::String const&");
+        (void)session;
+        (void)pinLabel;
+        (void)transportValue;
+        (void)newPin;
+        PINResult r;
+        r.outcome = PINResultOutcome::Unsupported;
+        return r;
+    }
+
+    /// @brief Activate the (deactivated) signing key: VERIFY the operational
+    ///        SIGN PIN and perform the key ACTIVATE, self-contained within
+    ///        one locked session/transaction (PIN-ALWAYS lock discipline).
+    ///        On success the plugin clears any security state it established
+    ///        before returning.
+    /// @param session  Live card session.
+    /// @param signPin  Operational SIGN PIN; cleansed on destruction.
+    /// @return `Ok` on success; `InvalidPin`/`Blocked` when the VERIFY step
+    ///         fails (retriesLeft refers to the SIGN PIN);
+    ///         `KeyActivationFailed` when VERIFY succeeded but ACTIVATE failed.
+    /// @note Safe default: `PINResultOutcome::Unsupported`.
+    /// @since 4.x
+    [[nodiscard]] virtual PINResult activateSigningKey(LibreSCRS::SmartCard::CardSession& session,
+                                                       const LibreSCRS::Secure::String& signPin) const
+    {
+        static_assert(LibreSCRS::Auth::SecretParameter<decltype(signPin)>,
+                      "activateSigningKey signPin parameter must be Secure::String const&");
+        (void)session;
+        (void)signPin;
+        PINResult r;
+        r.outcome = PINResultOutcome::Unsupported;
+        return r;
+    }
+
 protected:
     /// @brief Derived classes call this in their ctor to publish identity.
     ///

@@ -1093,3 +1093,120 @@ add_subdirectory(e2e)
 add_subdirectory(smartcard)
 add_subdirectory(pkcs15-plugin)
 add_subdirectory(Trust)
+
+# Opensc-plugin PIN lifecycle classification tests (no hardware).
+# Compiles the plugin translation unit directly (OpenScBridgeTests
+# precedent) so the internal evidence-building seam can be driven with
+# synthetic sc_pkcs15 objects — pure struct input, no card I/O,
+# preserving the getPINList non-consumption invariant. Link list mirrors
+# OpenSCFallbackIntegrationTest; the generated manifest.h include dir and
+# the opensc-plugin dependency come from the plugin target this TU
+# normally builds into.
+if(LIBRESCRS_VENDOR_OPENSC)
+    add_executable(OpenscPinLifecycleTests
+        OpenscPinLifecycleTests.cpp
+        ${PROJECT_SOURCE_DIR}/lib/opensc-plugin/src/opensc_card_plugin.cpp
+        ${PROJECT_SOURCE_DIR}/lib/opensc-plugin/src/opensc_reader_bridge.cpp
+    )
+    target_include_directories(OpenscPinLifecycleTests PRIVATE
+        ${PROJECT_BINARY_DIR}/lib/opensc-plugin/generated
+        ${PROJECT_SOURCE_DIR}/lib/opensc-plugin/src
+        ${PROJECT_SOURCE_DIR}/lib/opensc-pkcs11/src
+        ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+        ${PROJECT_SOURCE_DIR}/lib/plugin/src
+        ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
+    )
+    target_link_libraries(OpenscPinLifecycleTests PRIVATE
+        GTest::gtest_main
+        CardPlugin_Impl
+        LibreSCRS_SmartCard
+        SmartCard_Impl
+        opensc_static_with_deps
+        OpenSSL_Crypto
+    )
+    target_compile_definitions(OpenscPinLifecycleTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+    add_dependencies(OpenscPinLifecycleTests opensc-plugin)
+    gtest_discover_tests(OpenscPinLifecycleTests)
+endif()
+
+# pkcs15-plugin PIN lifecycle classification tests (no hardware).
+# Drives the plugin .so through the registry (PKCS15PluginTests wiring)
+# against a scripted PKCS#15 card: detached CardSession + injected
+# PlainChannel (LibreSCRS_SmartCard_TestHelpers seams, the
+# lib/pkcs15/test harness pattern) with a PCSCConnection transmit filter
+# serving the hardware-scanned suite-1 EF.AODF fixture.
+add_executable(Pkcs15PinLifecycleTests Pkcs15PinLifecycleTests.cpp)
+target_link_libraries(Pkcs15PinLifecycleTests PRIVATE
+    GTest::gtest_main
+    CardPlugin_Impl
+    LibreSCRS_SmartCard
+    LibreSCRS_SmartCard_TestHelpers
+    LibreSCRS_SecureChannel
+    SmartCard_Impl
+)
+target_include_directories(Pkcs15PinLifecycleTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+)
+target_compile_definitions(Pkcs15PinLifecycleTests PRIVATE
+    PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
+    LIBRESCRS_INTERNAL_BUILD
+)
+add_dependencies(Pkcs15PinLifecycleTests pkcs15-plugin)
+gtest_discover_tests(Pkcs15PinLifecycleTests)
+
+# Opensc-plugin changePIN selector-correctness tests (no hardware).
+# Same TU-compilation harness as OpenscPinLifecycleTests: drives the
+# plugin's change-dispatch seam with synthetic sc_pkcs15 auth objects and
+# injected driver entry points, so the addressed-object contract (and the
+# unknown-selector refusal) is asserted without any card I/O.
+if(LIBRESCRS_VENDOR_OPENSC)
+    add_executable(OpenscChangePinSelectorTests
+        OpenscChangePinSelectorTests.cpp
+        ${PROJECT_SOURCE_DIR}/lib/opensc-plugin/src/opensc_card_plugin.cpp
+        ${PROJECT_SOURCE_DIR}/lib/opensc-plugin/src/opensc_reader_bridge.cpp
+    )
+    target_include_directories(OpenscChangePinSelectorTests PRIVATE
+        ${PROJECT_BINARY_DIR}/lib/opensc-plugin/generated
+        ${PROJECT_SOURCE_DIR}/lib/opensc-plugin/src
+        ${PROJECT_SOURCE_DIR}/lib/opensc-pkcs11/src
+        ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+        ${PROJECT_SOURCE_DIR}/lib/plugin/src
+        ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
+    )
+    target_link_libraries(OpenscChangePinSelectorTests PRIVATE
+        GTest::gtest_main
+        CardPlugin_Impl
+        LibreSCRS_SmartCard
+        SmartCard_Impl
+        opensc_static_with_deps
+        OpenSSL_Crypto
+    )
+    target_compile_definitions(OpenscChangePinSelectorTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+    add_dependencies(OpenscChangePinSelectorTests opensc-plugin)
+    gtest_discover_tests(OpenscChangePinSelectorTests)
+endif()
+
+# pkcs15-plugin changePIN selector-correctness tests (no hardware).
+# Same harness as Pkcs15PinLifecycleTests (plugin .so via the registry,
+# detached CardSession + injected PlainChannel, scripted transmit
+# filter); the scripted card additionally answers CHANGE REFERENCE DATA
+# so the default-PIN regression guard can observe the mutation on the
+# wire.
+add_executable(Pkcs15ChangePinSelectorTests Pkcs15ChangePinSelectorTests.cpp)
+target_link_libraries(Pkcs15ChangePinSelectorTests PRIVATE
+    GTest::gtest_main
+    CardPlugin_Impl
+    LibreSCRS_SmartCard
+    LibreSCRS_SmartCard_TestHelpers
+    LibreSCRS_SecureChannel
+    SmartCard_Impl
+)
+target_include_directories(Pkcs15ChangePinSelectorTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+)
+target_compile_definitions(Pkcs15ChangePinSelectorTests PRIVATE
+    PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
+    LIBRESCRS_INTERNAL_BUILD
+)
+add_dependencies(Pkcs15ChangePinSelectorTests pkcs15-plugin)
+gtest_discover_tests(Pkcs15ChangePinSelectorTests)

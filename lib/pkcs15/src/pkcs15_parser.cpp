@@ -378,10 +378,13 @@ std::vector<PrivateKeyInfo> parsePrKDF(std::span<const uint8_t> data)
 //   }
 // }
 //
-// pinFlags bit positions (PKCS#15):
+// pinFlags bit positions (PKCS#15, MSB-first in the first content byte):
 //   bit 1 = local
-//   bit 4 = initialized
+//   bit 2 = change-disabled
 //   bit 3 = unblock-disabled
+//   bit 4 = initialized
+//   bit 6 = unblockingPin
+//   bit 7 = soPin
 // =============================================================================
 std::vector<PinInfo> parseAODF(std::span<const uint8_t> data)
 {
@@ -399,9 +402,24 @@ std::vector<PinInfo> parseAODF(std::span<const uint8_t> data)
 
         PinInfo pin;
 
-        // Child 0: CommonObjectAttributes SEQUENCE { UTF8String label }
+        // Child 0: CommonObjectAttributes SEQUENCE { label [, flags]
+        // [, authId] [, accessControlRules] }
         if (entry.children.size() >= 1 && entry.children[0].tag == 0x30) {
             pin.label = findFirstString(entry.children[0]);
+            // Protecting-object authId — the OCTET STRING after the label
+            // (and optional BIT STRING flags) among the DIRECT children.
+            // Mirrors parsePrKDF's CommonObjectAttributes extraction; the
+            // accessControlRules' nested OCTET STRINGs sit one level
+            // deeper inside a constructed SEQUENCE and are not picked up.
+            bool pastLabel = false;
+            for (const auto& child : entry.children[0].children) {
+                if (!pastLabel && (child.tag == 0x0C || child.tag == 0x13 || child.tag == 0x16)) {
+                    pastLabel = true;
+                } else if (pastLabel && child.tag == 0x04 && !child.constructed) {
+                    pin.authId = child.value;
+                    break;
+                }
+            }
         }
 
         // CommonAuthObjectAttributes — the SEQUENCE between CommonObjectAttributes and [1] typeAttributes
@@ -452,9 +470,11 @@ std::vector<PinInfo> parseAODF(std::span<const uint8_t> data)
             if (field.tag == 0x03 && !field.constructed && field.value.size() >= 2) {
                 uint8_t flagsByte = field.value[1];
                 pin.local = (flagsByte & 0x40) != 0;
+                pin.changeDisabled = (flagsByte & 0x20) != 0;
                 pin.unblockDisabled = (flagsByte & 0x10) != 0;
                 pin.initialized = (flagsByte & 0x08) != 0;
                 pin.unblockingPin = (flagsByte & 0x02) != 0;
+                pin.soPin = (flagsByte & 0x01) != 0;
             } else if (field.tag == 0x0A && !field.constructed) {
                 auto val = parseInteger(field.value);
                 if (val >= 0 && val <= 4) {

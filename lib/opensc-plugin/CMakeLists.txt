@@ -13,5 +13,8 @@ librescrs_add_plugin(opensc-plugin
         ${PROJECT_SOURCE_DIR}/lib/opensc-pkcs11/src
         # OpenSslPtr.h (X509Ptr) for extractSubjectCN exception safety.
         ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
+        # Internal derivation engine + quirk table headers (same
+        # consumption pattern as pkcs15-plugin).
+        ${PROJECT_SOURCE_DIR}/lib/plugin/src
     LINK_LIBRARIES SmartCard_Impl opensc_static_with_deps
 )

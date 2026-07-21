@@ -20,6 +20,8 @@ add_library(CardPlugin_Impl OBJECT
     src/card_plugin.cpp
     src/card_plugin_key_function.cpp
     src/card_plugin_registry.cpp
+    src/pin_family_quirks.cpp
+    src/pin_lifecycle_derivation.cpp
 )
 target_compile_definitions(CardPlugin_Impl PRIVATE LIBRESCRS_INTERNAL_BUILD)
 # PRIVATE include: public consumers get LibreSCRS/Plugin/*.h via LibreSCRS::Plugin.

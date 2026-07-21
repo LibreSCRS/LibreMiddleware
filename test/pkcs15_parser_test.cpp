@@ -3,6 +3,7 @@
 
 #include <pkcs15_parser.h>
 
+#include "fixtures/veridos_suite1_aodf_20260718.h"
 #include "pkcs15_test_vectors.h"
 
 #include <gtest/gtest.h>
@@ -327,7 +328,7 @@ TEST(ParseAODF, GemaltoToken_ChallengeResponseKey)
     ASSERT_EQ(pins.size(), 2u);
 }
 
-TEST(ParseAODF, GeorgiaEID_HasMaxLength)
+TEST(ParseAODF, Suite1Aodf_HasMaxLength)
 {
     auto pins = parseAODF(SAMPLE_AODF);
     ASSERT_EQ(pins.size(), 4u);
@@ -335,4 +336,41 @@ TEST(ParseAODF, GeorgiaEID_HasMaxLength)
     EXPECT_EQ(pins[0].maxLength, 12);
     EXPECT_TRUE(pins[1].hasMaxLength);
     EXPECT_EQ(pins[1].maxLength, 6);
+}
+
+TEST(ParseAODF, LifecycleEvidenceFields)
+{
+    // Hardware-scanned suite-1 EF.AODF: soPin (pinFlags 0x01) and
+    // change-disabled (pinFlags 0x20) bits, plus the protecting-object
+    // authId from CommonObjectAttributes (the unblock-authority chain).
+    // The accessControlRules' nested OCTET STRINGs must NOT be mistaken
+    // for the authId.
+    auto pins = parseAODF(librescrs::test::fixtures::kSuite1Aodf20260718);
+    ASSERT_EQ(pins.size(), 4u);
+
+    // PACE CAN: change-disabled + unblock-disabled; no protecting object.
+    EXPECT_TRUE(pins[0].changeDisabled);
+    EXPECT_TRUE(pins[0].unblockDisabled);
+    EXPECT_FALSE(pins[0].soPin);
+    EXPECT_TRUE(pins[0].authId.empty());
+    EXPECT_EQ(pins[0].id, (std::vector<uint8_t>{0x02}));
+
+    // User PIN: protected/unblocked by object 0x03 (the Global PUK).
+    EXPECT_FALSE(pins[1].soPin);
+    EXPECT_FALSE(pins[1].changeDisabled);
+    EXPECT_EQ(pins[1].authId, (std::vector<uint8_t>{0x03}));
+    EXPECT_EQ(pins[1].id, (std::vector<uint8_t>{0x06}));
+
+    // Global PUK: soPin + unblock-disabled; own id 0x03; not protected by
+    // anything (CommonObjectAttributes carries no authId).
+    EXPECT_TRUE(pins[2].soPin);
+    EXPECT_TRUE(pins[2].unblockDisabled);
+    EXPECT_FALSE(pins[2].changeDisabled);
+    EXPECT_TRUE(pins[2].authId.empty());
+    EXPECT_EQ(pins[2].id, (std::vector<uint8_t>{0x03}));
+
+    // Signature PIN: chained to the same PUK object.
+    EXPECT_FALSE(pins[3].soPin);
+    EXPECT_EQ(pins[3].authId, (std::vector<uint8_t>{0x03}));
+    EXPECT_EQ(pins[3].id, (std::vector<uint8_t>{0x22}));
 }

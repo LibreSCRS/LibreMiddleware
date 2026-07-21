@@ -22,6 +22,22 @@ target_include_directories(ActivationProfileTests PRIVATE ${PROJECT_SOURCE_DIR}/
 target_compile_definitions(ActivationProfileTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(ActivationProfileTests)
 
+# PinLifecycleFieldsTests — anchors the credential-lifecycle value contract
+# on PinStatusEntry (conservative Unknown/false/nullopt defaults, member-wise
+# equality over the appended fields, Unknown == 0 for every lifecycle enum).
+# Mirrors the ActivationProfileTests wiring.
+add_executable(PinLifecycleFieldsTests PinLifecycleFieldsTests.cpp)
+target_link_libraries(PinLifecycleFieldsTests PRIVATE
+    LibreSCRS::Plugin
+    $<BUILD_INTERFACE:CardPlugin_Impl>
+    LibreSCRS::SmartCard
+    LibreSCRS::Secure
+    GTest::gtest_main
+)
+target_include_directories(PinLifecycleFieldsTests PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_compile_definitions(PinLifecycleFieldsTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(PinLifecycleFieldsTests)
+
 # ActivatedProtocolTests — anchors the CardSession::activatedProtocol()
 # no-channel contract (nullopt on a freshly detached session) that the
 # eMRTD plugin's protocol-label fallback relies on. Reaches the LM-internal
@@ -83,3 +99,66 @@ target_link_libraries(CardPluginDecipherDefaultTest PRIVATE
 target_include_directories(CardPluginDecipherDefaultTest PRIVATE ${PROJECT_SOURCE_DIR}/include)
 target_compile_definitions(CardPluginDecipherDefaultTest PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(CardPluginDecipherDefaultTest)
+
+# PinLifecycleVirtualsTests — anchors the CardPlugin credential-lifecycle
+# base defaults (activateTransportPin / activateSigningKey report
+# Unsupported when not overridden), mirroring CardPluginDecipherDefaultTest's
+# minimal-concrete-plugin shape. Uses the LM-internal detached-session
+# factory so the defaults receive a real CardSession reference.
+add_executable(PinLifecycleVirtualsTests PinLifecycleVirtualsTests.cpp)
+target_link_libraries(PinLifecycleVirtualsTests PRIVATE
+    LibreSCRS::Plugin
+    LibreSCRS::SmartCard
+    LibreSCRS_SmartCard_TestHelpers
+    LibreSCRS::Secure
+    GTest::gtest_main
+)
+target_include_directories(PinLifecycleVirtualsTests PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_compile_definitions(PinLifecycleVirtualsTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(PinLifecycleVirtualsTests)
+
+# PinFamilyQuirksTests — anchors the static per-family credential quirk
+# table consumed by the lifecycle derivation: conservative rows (no family
+# advertises an unverified unblock command form), Unknown family has no
+# row. The table lives in an internal header under lib/plugin/src, so the
+# test adds that src dir to its include path and compiles with
+# LIBRESCRS_INTERNAL_BUILD, absorbing the table definition from the
+# CardPlugin_Impl object archive — mirrors the ActivationProfileTests
+# wiring.
+add_executable(PinFamilyQuirksTests PinFamilyQuirksTests.cpp)
+target_link_libraries(PinFamilyQuirksTests PRIVATE
+    LibreSCRS::Plugin
+    $<BUILD_INTERFACE:CardPlugin_Impl>
+    LibreSCRS::SmartCard
+    LibreSCRS::Secure
+    GTest::gtest_main
+)
+target_include_directories(PinFamilyQuirksTests PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/lib/plugin/src
+)
+target_compile_definitions(PinFamilyQuirksTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(PinFamilyQuirksTests)
+
+# PinLifecycleDerivationTests — anchors the credential-lifecycle derivation
+# engine (evidence + family quirks → PinStatusEntry): kind classification,
+# state precedence, and the conservative unblock rule (chain + verified
+# command form + presentable PUK, never advertised otherwise). The engine
+# lives in an internal header under lib/plugin/src, so the test adds that
+# src dir to its include path and compiles with LIBRESCRS_INTERNAL_BUILD,
+# absorbing the definitions from the CardPlugin_Impl object archive —
+# mirrors the PinFamilyQuirksTests wiring.
+add_executable(PinLifecycleDerivationTests PinLifecycleDerivationTests.cpp)
+target_link_libraries(PinLifecycleDerivationTests PRIVATE
+    LibreSCRS::Plugin
+    $<BUILD_INTERFACE:CardPlugin_Impl>
+    LibreSCRS::SmartCard
+    LibreSCRS::Secure
+    GTest::gtest_main
+)
+target_include_directories(PinLifecycleDerivationTests PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/lib/plugin/src
+)
+target_compile_definitions(PinLifecycleDerivationTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(PinLifecycleDerivationTests)
