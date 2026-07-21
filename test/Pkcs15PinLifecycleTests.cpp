@@ -157,11 +157,9 @@ bool logHasProbeFor(const std::vector<APDUCommand>& log, std::uint8_t ref)
                        [ref](const APDUCommand& c) { return isEmptyVerifyProbe(c) && c.p2 == ref; });
 }
 
-// Kind-lookup helper. NOTE: on a plain (non-PACE) session the CAN entry
-// also classifies as PinKind::UserPin (see the CAN commentary above), so
-// this is only unambiguous for kinds unique per entry set (e.g. Puk,
-// SignPin). Callers needing the "User PIN" object specifically (as
-// distinct from a degraded CAN) should use findByLabel instead. On a
+// Kind-lookup helper. On a suite-1 (usesPace) card the CAN classifies as
+// PinKind::Can on any interface, so Can is unique per suite-1 entry set.
+// Callers needing a specific object by label should use findByLabel. On a
 // miss, records a non-fatal failure and returns a default-constructed
 // sentinel entry rather than dereferencing end().
 const LibreSCRS::Plugin::PinStatusEntry& findByKind(const std::vector<LibreSCRS::Plugin::PinStatusEntry>& entries,
@@ -376,19 +374,18 @@ TEST(Pkcs15PinLifecycle, Suite1AodfProducesClassifiedEntries)
     const auto& puk = entries[2];
     const auto& sign = entries[3];
 
-    // CAN record on a PLAIN session: the Can kind requires session-level
-    // PACE evidence (the plain probe answered 6982, or PACE was already
-    // established) corroborated by the AODF's disabled-flags shape — the
-    // flags ALONE must not overclaim a PACE pseudo-credential. Without
-    // that evidence the record degrades to an (unchangeable) user
-    // credential; the probe finds no VERIFY-able reference, so its
-    // counter stays absent.
+    // CAN record on a PLAIN session: recognised as Can via the family's
+    // card-level PACE signal (usesPace) corroborated by the AODF's
+    // change-disabled + unblock-disabled shape. The flags ALONE never
+    // overclaim — a non-PACE family keeps a disabled service PIN as a PIN.
+    // The CAN has no VERIFY-able reference, so its counter stays absent.
     EXPECT_EQ(can.label, "PACE CAN");
     EXPECT_EQ(can.reference, 0x02);
-    EXPECT_EQ(can.kind, PinKind::UserPin);
-    EXPECT_FALSE(can.canChange); // change-disabled AODF veto
+    EXPECT_EQ(can.kind, PinKind::Can);
+    EXPECT_FALSE(can.canChange); // change-disabled AODF veto + Can is never changeable
     EXPECT_FALSE(can.unblockable);
     EXPECT_EQ(can.retriesLeft, std::nullopt); // not a VERIFY-able reference
+    EXPECT_EQ(can.retriesMax, std::nullopt);  // Can borrows no retry ceiling from the user row
     EXPECT_FALSE(can.blocked);
 
     // User PIN: global user credential; the suite-1 row advertises change
@@ -448,6 +445,32 @@ TEST(Pkcs15PinLifecycle, Suite1AodfProducesClassifiedEntries)
     EXPECT_TRUE(logHasProbeFor(rig.card->log, 0x92));
     EXPECT_TRUE(logHasProbeFor(rig.card->log, 0x93));
     EXPECT_TRUE(std::none_of(rig.card->log.begin(), rig.card->log.end(), isRealVerify));
+}
+
+// ---------------------------------------------------------------------------
+// A change-disabled + unblock-disabled auth object on a card whose family is
+// Unknown (token label resolves to no quirk row) must NOT be promoted to Can —
+// the flags shape alone never overclaims. This is the "fixed service PIN on a
+// non-PACE card stays a PIN" guard the usesPace/paceGated OR-form must honour.
+// ---------------------------------------------------------------------------
+
+TEST(Pkcs15PinLifecycle, DisabledServicePinOnNonPaceCardStaysUserPin)
+{
+    CardPluginService registry{std::filesystem::path(PLUGIN_DIR)};
+    auto plugin = loadPkcs15Plugin(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    // "PKI Token" resolves to FamilyId::Unknown (no quirk row -> usesPace
+    // unavailable); the plain session means paceGated is false too.
+    auto rig = makeRig(
+        "Pkcs15 Lifecycle NonPace Reader 0",
+        {{0x5031, odfPointingAtAodf()}, {0x5032, tokenInfoWithLabel("PKI Token")}, {0x4408, serviceDisabledPinAodf()}},
+        {{0x03, 3}});
+    const auto entries = plugin->getPINList(*rig.session);
+    ASSERT_EQ(entries.size(), 1u);
+    EXPECT_EQ(entries[0].reference, 0x03);
+    EXPECT_EQ(entries[0].kind, PinKind::UserPin); // NOT Can
+    EXPECT_FALSE(entries[0].canChange);           // change-disabled veto
 }
 
 // ---------------------------------------------------------------------------

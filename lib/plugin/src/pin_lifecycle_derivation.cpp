@@ -48,7 +48,11 @@ PinStatusEntry derivePinStatus(const PinEvidence& e, const std::vector<PinEviden
     // The quirk table currently carries no kind knowledge, so evidence
     // rules stand alone; a kind-override step slots in here if a family
     // ever needs one.
-    if (e.paceEvidence) {
+    if (e.paceEvidence && !e.soPinFlag && !e.unblockingPinFlag) {
+        // A CAN is a PACE password: never an SO PIN, never an unblocking
+        // authority. Excluding those keeps a PUK/SO-PIN that happens to carry
+        // the change+unblock-disabled shape from being captured as a CAN — the
+        // PUK signal below then classifies it correctly.
         out.kind = PinKind::Can;
     } else if (e.unblockingPinFlag) { // primary PUK signal (soPin corroborates only)
         out.kind = PinKind::Puk;

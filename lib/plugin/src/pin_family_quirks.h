@@ -82,6 +82,12 @@ struct FamilyQuirks
     bool supportsTransportPin = false;
     /// @brief Retry-counter queries are known safe (non-consuming) here.
     bool probeSafe = false;
+    /// @brief The family's cards use PACE and expose a CAN (PACE password)
+    ///        as an AODF auth object. Interface-independent — true on a
+    ///        contact session too. OR-ed with the plugin's session PACE
+    ///        signal to classify the CAN; the AODF disabled-flag shape gates
+    ///        it so a fixed service PIN on a non-PACE card is never a CAN.
+    bool usesPace = false;
     /// @brief Per-kind knowledge, indexed by static_cast<std::size_t>(PinKind).
     std::array<FamilyKindQuirks, kPinKindCount> kinds{};
     /// @brief Family-level guidance shown while the signing key awaits

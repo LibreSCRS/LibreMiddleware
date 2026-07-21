@@ -74,6 +74,7 @@ FamilyQuirks makeVeridosAppletSuite1()
     q.id = FamilyId::VeridosAppletSuite1;
     q.supportsTransportPin = true;
     q.probeSafe = true;
+    q.usesPace = true; // PACE applet suite; carries a CAN (recognised on contact too)
     auto& user = q.kinds[kindIndex(PinKind::UserPin)];
     user.canChange = true;
     user.retriesMax = 3;
@@ -95,6 +96,10 @@ FamilyQuirks makeVeridosAppletSuite2()
     q.id = FamilyId::VeridosAppletSuite2;
     q.supportsTransportPin = true;
     q.probeSafe = false;
+    // Same PACE applet-suite lineage — correct family metadata. Dormant until
+    // a Suite2 token-label resolver marker exists (no card resolves to Suite2
+    // today); consistent with this row's other currently-unreached facts.
+    q.usesPace = true;
     auto& user = q.kinds[kindIndex(PinKind::UserPin)];
     user.canChange = true;
     user.retriesMax = 3;

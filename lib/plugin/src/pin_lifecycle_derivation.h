@@ -63,8 +63,10 @@ struct PinEvidence
     bool changeDisabledFlag = false;
     bool initialized = true;
     bool blocked = false;
-    /// @brief PACE OID present for the app AND PACE-password
-    ///        encoding/corroboration.
+    /// @brief The card uses PACE and this object has the CAN shape. Set by
+    ///        the caller as (session-required-PACE OR family-uses-PACE) AND
+    ///        the AODF change-disabled + unblock-disabled flags. Gates the CAN
+    ///        kind, which additionally excludes SO/unblocking objects.
     bool paceEvidence = false;
     /// @brief FULL id bytes of the protecting auth object; see the
     ///        chain-resolution contract in the struct documentation.

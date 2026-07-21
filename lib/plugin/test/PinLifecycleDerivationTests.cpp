@@ -94,6 +94,29 @@ TEST(PinLifecycleDerivation, BareLowReferenceIsNotACan)
     EXPECT_NE(derivePinStatus(e, {e}, nullptr).kind, PinKind::Can);
 }
 
+TEST(PinLifecycleDerivation, PaceEvidenceDoesNotOverrideAPukOrSoPin)
+{
+    // The CAN rule must not capture a PUK/SO-PIN that happens to carry the
+    // change+unblock-disabled shape — a real PUK can be a fixed, non-changeable,
+    // non-unblockable value. An unblocking authority stays Puk...
+    PinEvidence puk = suite1Puk();
+    puk.changeDisabledFlag = true; // now BOTH disabled flags present
+    puk.paceEvidence = true;       // as the plugin would set on a usesPace family
+    EXPECT_EQ(derivePinStatus(puk, {puk}, nullptr).kind, PinKind::Puk)
+        << "an unblocking object with the PACE shape must stay Puk, not Can";
+
+    // ...and a soPin-only object is never a CAN either (stays Unknown, the
+    // conservative soPin-only default).
+    PinEvidence so;
+    so.label = "SO PIN";
+    so.reference = 0x01;
+    so.soPinFlag = true;
+    so.changeDisabledFlag = true;
+    so.unblockDisabledFlag = true;
+    so.paceEvidence = true;
+    EXPECT_NE(derivePinStatus(so, {so}, nullptr).kind, PinKind::Can);
+}
+
 TEST(PinLifecycleDerivation, UnblockableRequiresChainKnownVariantAndPresentablePuk)
 {
     auto all = suite1All();

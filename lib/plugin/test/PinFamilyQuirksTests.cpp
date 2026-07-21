@@ -65,3 +65,24 @@ TEST(PinFamilyQuirks, IssuerToolFamilyCarriesKeyActivationGuidance)
     EXPECT_TRUE(q->keyActivationGuidance.has_value());
     EXPECT_FALSE(q->probeSafe);
 }
+
+TEST(PinFamilyQuirks, PaceFamiliesFlagUsesPace)
+{
+    // The CAN classifier needs an interface-independent "this card uses PACE"
+    // signal so a CAN is recognised on the contact interface too. It is set
+    // only for the PACE-capable applet suites; every other family (and the
+    // no-row Unknown) must leave it false so a fixed service PIN on a
+    // non-PACE card is never promoted to a CAN.
+    const auto* s1 = findFamilyQuirks(FamilyId::VeridosAppletSuite1);
+    const auto* s2 = findFamilyQuirks(FamilyId::VeridosAppletSuite2);
+    ASSERT_NE(s1, nullptr);
+    ASSERT_NE(s2, nullptr);
+    EXPECT_TRUE(s1->usesPace);
+    EXPECT_TRUE(s2->usesPace);
+
+    for (auto id : {FamilyId::CurrentLkCardEdge, FamilyId::Piv, FamilyId::AetPosta}) {
+        const auto* q = findFamilyQuirks(id);
+        ASSERT_NE(q, nullptr);
+        EXPECT_FALSE(q->usesPace) << "non-PACE family must not set usesPace";
+    }
+}

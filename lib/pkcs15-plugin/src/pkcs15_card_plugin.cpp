@@ -561,14 +561,15 @@ public:
             e.unblockDisabledFlag = pin.unblockDisabled;
             e.changeDisabledFlag = pin.changeDisabled;
             e.initialized = pin.initialized;
-            // PACE evidence needs BOTH halves: the session-level PACE
-            // requirement (the plain probe answered 6982, or PACE was
-            // already established for this session) AND the AODF's CAN
-            // shape — change-disabled + unblock-disabled (a value printed
-            // on the card can be neither changed nor unblocked). The
-            // flag shape alone must not overclaim: a fixed service PIN on
-            // a non-PACE card keeps its PIN classification.
-            e.paceEvidence = paceGated && pin.changeDisabled && pin.unblockDisabled;
+            // CAN evidence needs card-level PACE nature AND the AODF's CAN
+            // shape — change-disabled + unblock-disabled (a value printed on
+            // the card can be neither changed nor unblocked). "Card-level" =
+            // the session used PACE (paceGated, e.g. contactless) OR this
+            // family's cards use PACE (usesPace) — the latter recognises the
+            // CAN on the contact interface too, where no PACE handshake
+            // occurs. The shape gate keeps a fixed service PIN on a non-PACE
+            // card from ever being promoted to a CAN.
+            e.paceEvidence = (paceGated || (quirks && quirks->usesPace)) && pin.changeDisabled && pin.unblockDisabled;
 
             LibreSCRS::Plugin::CredentialCounters cardCounters;
             if (pin.initialized && quirks && quirks->probeSafe) {
