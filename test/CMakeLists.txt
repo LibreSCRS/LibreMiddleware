@@ -405,6 +405,16 @@ target_include_directories(PKCS15ParserTests PRIVATE
 target_compile_definitions(PKCS15ParserTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(PKCS15ParserTests)
 
+# DOCP counter parser tests — pure TLV walker over a GET DATA (ODD)
+# response, no card I/O. Links PKCS15 only for the docp_parser.cpp TU.
+add_executable(DocpParserTests DocpParserTests.cpp)
+target_link_libraries(DocpParserTests GTest::gtest_main PKCS15)
+target_include_directories(DocpParserTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/pkcs15/src
+)
+target_compile_definitions(DocpParserTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(DocpParserTests)
+
 # PKCS#15 plugin tests
 add_executable(PKCS15PluginTests pkcs15_plugin_test.cpp)
 target_link_libraries(PKCS15PluginTests GTest::gtest_main CardPlugin_Impl LibreSCRS::SmartCard LibreSCRS::Auth)

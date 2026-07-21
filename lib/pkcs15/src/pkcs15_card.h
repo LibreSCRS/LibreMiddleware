@@ -9,6 +9,7 @@
 
 #include "pkcs15_types.h"
 
+#include <LibreSCRS/Plugin/CredentialCounters.h>
 #include <smartcard/secure_buffer.h>
 
 #include <cstdint>
@@ -54,6 +55,9 @@ public:
     PinResult verifyPIN(const PinInfo& pin, std::string_view pinValue);
     PinResult changePIN(const PinInfo& pin, std::string_view oldPin, std::string_view newPin);
     int getPINTriesLeft(const PinInfo& pin);
+    // Read the credential's full DOCP counters. Non-9000 / parse miss ⇒ all
+    // absent (graceful). Read-only; never decrements a counter.
+    LibreSCRS::Plugin::CredentialCounters readCounters(const PinInfo& pin);
     std::vector<uint8_t> sign(const PrivateKeyInfo& key, std::string_view pin, const PinInfo& pinInfo,
                               const std::vector<uint8_t>& digestInfo, const std::vector<uint8_t>& rawData,
                               SignScheme scheme);

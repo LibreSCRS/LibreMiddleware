@@ -234,8 +234,12 @@ contents are `OPENSSL_cleanse`d on destruction. `verifyPIN`, `changePIN`,
 parameters; labels (PIN identifiers like `"UserPIN"`) are
 `std::string_view` since they are not secrets.
 
-`getPINTriesLeft()` returns `std::optional<int>` — use `std::nullopt` when
-the card cannot report the retry count.
+`readCounters()` is the entry point for lifecycle counters: it returns a
+`CredentialCounters` (retries / uses / unblocks, each `std::optional<int>` —
+use `std::nullopt` for anything the card cannot report). `getPINTriesLeft()`
+is superseded by `readCounters(session).retriesLeft` and retained only for
+source compatibility. Cards with transport PINs or activatable signing keys
+should also override `activateTransportPin()` and `activateSigningKey()`.
 
 **Credentials:** If the card requires authentication before reading (e.g.,
 PACE for eMRTD), override `setCredentials()` to accept key-value pairs

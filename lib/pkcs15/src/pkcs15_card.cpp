@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
+#include "docp_parser.h"
 #include "pkcs15_card.h"
 #include "pkcs15_parser.h"
 #include "pkcs15_types.h"
@@ -464,6 +465,20 @@ int PKCS15Card::getPINTriesLeft(const PinInfo& pin)
     }
 
     return -1; // unknown
+}
+
+LibreSCRS::Plugin::CredentialCounters PKCS15Card::readCounters(const PinInfo& pin)
+{
+    LibreSCRS::Plugin::CredentialCounters counters;
+    if (!selectApplet())
+        return counters;
+    if (!pin.path.empty())
+        selectByPath(pin.path); // honors the Signature PIN's 0DF5
+    const std::uint8_t orf = static_cast<std::uint8_t>(pin.pinReference & 0x1F);
+    auto resp = channel.transmit(LibreSCRS::SmartCard::Internal::getDataDocp(orf), LibreSCRS::CancelToken{});
+    if (!resp.isSuccess())
+        return counters; // 6982 / 6A88 / etc → absent
+    return LibreSCRS::pkcs15::parseDocpCounters(resp.data);
 }
 
 PinResult PKCS15Card::verifyPIN(const PinInfo& pin, std::string_view pinValue)

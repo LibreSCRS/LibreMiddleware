@@ -345,7 +345,7 @@ TEST(ParseAODF, LifecycleEvidenceFields)
     // authId from CommonObjectAttributes (the unblock-authority chain).
     // The accessControlRules' nested OCTET STRINGs must NOT be mistaken
     // for the authId.
-    auto pins = parseAODF(librescrs::test::fixtures::kSuite1Aodf20260718);
+    auto pins = parseAODF(LibreSCRS::test::fixtures::kSuite1Aodf20260718);
     ASSERT_EQ(pins.size(), 4u);
 
     // PACE CAN: change-disabled + unblock-disabled; no protecting object.

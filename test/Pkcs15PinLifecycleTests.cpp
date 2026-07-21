@@ -17,6 +17,7 @@
 // status probe, and only on probeSafe families.
 
 #include "fixtures/veridos_suite1_aodf_20260718.h"
+#include "fixtures/veridos_suite1_docp_20260721.h"
 
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Plugin/CardPlugin.h>
@@ -42,6 +43,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -78,6 +80,10 @@ struct ScriptedPkcs15Card
     /// Empty-VERIFY probe answers: PIN reference → remaining tries
     /// (answered as SW 63 Cx). References absent here answer 6A88.
     std::map<std::uint8_t, int> probeTries;
+    /// GET DATA (ODD) DOCP answers: ORF (pinReference & 0x1F) → the raw
+    /// DOCP TLV payload, returned with SW 9000. ORFs absent here answer
+    /// 6A88 (readCounters sees a non-success SW and returns all-absent).
+    std::map<std::uint8_t, std::vector<std::uint8_t>> docpByOrf;
     /// Every APDU seen, copied by value (snapshot — the UAF-safe form).
     std::vector<APDUCommand> log;
 
@@ -120,6 +126,17 @@ struct ScriptedPkcs15Card
             return {{}, 0x63, static_cast<std::uint8_t>(0xC0 | (it->second & 0x0F))};
         }
 
+        if (cmd.ins == 0xCB && cmd.p1 == 0x3F && cmd.p2 == 0xFF) { // GET DATA (ODD) — DOCP
+            // Wire shape (apdu.cpp getDataDocp): data = 4D 08 70 06 BF 80 <orf> 02 62 80.
+            if (cmd.data.size() < 7)
+                return {{}, 0x6A, 0x88};
+            const auto orf = cmd.data[6];
+            const auto it = docpByOrf.find(orf);
+            if (it == docpByOrf.end())
+                return {{}, 0x6A, 0x88};
+            return {it->second, 0x90, 0x00};
+        }
+
         return {{}, 0x6D, 0x00}; // anything else: instruction not supported
     }
 };
@@ -138,6 +155,31 @@ bool logHasProbeFor(const std::vector<APDUCommand>& log, std::uint8_t ref)
 {
     return std::any_of(log.begin(), log.end(),
                        [ref](const APDUCommand& c) { return isEmptyVerifyProbe(c) && c.p2 == ref; });
+}
+
+// Kind-lookup helper. NOTE: on a plain (non-PACE) session the CAN entry
+// also classifies as PinKind::UserPin (see the CAN commentary above), so
+// this is only unambiguous for kinds unique per entry set (e.g. Puk,
+// SignPin). Callers needing the "User PIN" object specifically (as
+// distinct from a degraded CAN) should use findByLabel instead. On a
+// miss, records a non-fatal failure and returns a default-constructed
+// sentinel entry rather than dereferencing end().
+const LibreSCRS::Plugin::PinStatusEntry& findByKind(const std::vector<LibreSCRS::Plugin::PinStatusEntry>& entries,
+                                                    PinKind kind)
+{
+    static const LibreSCRS::Plugin::PinStatusEntry sentinel{};
+    const auto it = std::find_if(entries.begin(), entries.end(), [kind](const auto& e) { return e.kind == kind; });
+    EXPECT_NE(it, entries.end()) << "no entry with the requested PinKind";
+    return it == entries.end() ? sentinel : *it;
+}
+
+const LibreSCRS::Plugin::PinStatusEntry& findByLabel(const std::vector<LibreSCRS::Plugin::PinStatusEntry>& entries,
+                                                     std::string_view label)
+{
+    static const LibreSCRS::Plugin::PinStatusEntry sentinel{};
+    const auto it = std::find_if(entries.begin(), entries.end(), [label](const auto& e) { return e.label == label; });
+    EXPECT_NE(it, entries.end()) << "no entry with the requested label";
+    return it == entries.end() ? sentinel : *it;
 }
 
 // ---------------------------------------------------------------------------
@@ -257,12 +299,30 @@ FakeCardRig makeRig(const char* readerName, std::map<std::uint16_t, std::vector<
 // non-VERIFY-able object — the real card answers 6A88).
 FakeCardRig makeSuite1Rig(const char* readerName)
 {
-    const auto& aodf = librescrs::test::fixtures::kSuite1Aodf20260718;
+    const auto& aodf = LibreSCRS::test::fixtures::kSuite1Aodf20260718;
     return makeRig(readerName,
                    {{0x5031, odfPointingAtAodf()},
                     {0x5032, tokenInfoWithLabel("SSCDv1 PACE MD")},
                     {0x4408, {aodf.begin(), aodf.end()}}},
                    {{0x86, 3}, {0x92, 3}, {0x93, 5}});
+}
+
+// Same suite-1 rig, PLUS a scripted DOCP answer for the PUK (ORF 0x13, ref
+// 0x93 & 0x1F) and the User PIN (ORF 0x06, ref 0x86 & 0x1F): readCounters
+// now resolves retriesLeft (and, for the PUK, uses/unblocks) from the DOCP
+// itself, so the empty-VERIFY fallback probe never reaches those two
+// references. The Signature PIN (ORF 0x12) and CAN (ORF 0x02) have no
+// DOCP entry and keep going through the empty-VERIFY probe, same as the
+// plain suite-1 rig. Kept separate from makeSuite1Rig so the other
+// suite-1 tests (which assert the empty-VERIFY probe reaches 0x86/0x93)
+// are unaffected.
+FakeCardRig makeSuite1RigWithDocp(const char* readerName)
+{
+    auto rig = makeSuite1Rig(readerName);
+    const auto& pukDocp = LibreSCRS::test::fixtures::kSuite1PukDocp;
+    const auto& userPinDocp = LibreSCRS::test::fixtures::kSuite1UserPinDocp;
+    rig.card->docpByOrf = {{0x13, {pukDocp.begin(), pukDocp.end()}}, {0x06, {userPinDocp.begin(), userPinDocp.end()}}};
+    return rig;
 }
 
 // Unseen generic PKCS#15 card: one plain PIN, no family row. The probe
@@ -349,14 +409,27 @@ TEST(Pkcs15PinLifecycle, Suite1AodfProducesClassifiedEntries)
     // NOT a user PIN; never changeable, never itself unblockable. The kind
     // is evidence-driven (soPin + unblock chain); the row supplies
     // retriesMax=5 and the probe answers 5.
+    //
+    // This rig has NO scripted DOCP (makeSuite1Rig, not *WithDocp): GET
+    // DATA (ODD) answers 6A88, so readCounters comes back all-absent and
+    // retriesLeft/retriesMax fall all the way back to the empty-VERIFY
+    // probe (5) and the suite-1 quirk row (5) respectively — the graceful-
+    // degradation path. usesLeft/usesMax/unblocksLeft have no fallback
+    // source at all (derivePinStatus never sets them; only the post-
+    // derivation DOCP merge in getPINList does) and MUST stay absent —
+    // the regression guard against a DOCP-less card spuriously reporting
+    // usage/unblock counters it never asserted.
     EXPECT_EQ(puk.label, "Global PUK");
     EXPECT_EQ(puk.reference, 0x93);
     EXPECT_EQ(puk.kind, PinKind::Puk);
     EXPECT_EQ(puk.state, PinState::Operational);
     EXPECT_FALSE(puk.canChange);
     EXPECT_FALSE(puk.unblockable);
-    EXPECT_EQ(puk.retriesLeft, std::optional<int>{5});
-    EXPECT_EQ(puk.retriesMax, std::optional<int>{5});
+    EXPECT_EQ(puk.retriesLeft, std::optional<int>{5}); // VERIFY fallback
+    EXPECT_EQ(puk.retriesMax, std::optional<int>{5});  // quirk fallback
+    EXPECT_FALSE(puk.usesLeft.has_value());
+    EXPECT_FALSE(puk.usesMax.has_value());
+    EXPECT_FALSE(puk.unblocksLeft.has_value());
 
     // Signature PIN: the resolved family activates the signature-DF marker
     // (path 3F00 0DF5), separating it from a user PIN; the row advertises
@@ -506,4 +579,35 @@ TEST(Pkcs15PinLifecycle, EmptyAodfLabelAdvertisesReferenceSelector)
     EXPECT_EQ(entries[0].reference, 0x01);
     EXPECT_EQ(entries[1].label, "pin_5");
     EXPECT_EQ(entries[1].reference, 0x05);
+}
+
+// ---------------------------------------------------------------------------
+// The PUK's full DOCP (uses + unblocks + usesMax, on top of retries) reaches
+// getPINList via PKCS15Card::readCounters, and the fallback path (no DOCP
+// script entry for a reference) leaves the User PIN's uses/unblocks absent
+// — only retriesLeft/retriesMax are ever populated for it (via the
+// empty-VERIFY probe / the suite-1 family row), same as before this DOCP
+// script existed.
+// ---------------------------------------------------------------------------
+
+TEST(Pkcs15PinLifecycle, PukSurfacesUsageAndUnblockCounters)
+{
+    CardPluginService registry{std::filesystem::path(PLUGIN_DIR)};
+    auto plugin = loadPkcs15Plugin(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto rig = makeSuite1RigWithDocp("Pkcs15 Lifecycle Counters Reader 0");
+    const auto entries = plugin->getPINList(*rig.session);
+    ASSERT_EQ(entries.size(), 4u);
+
+    const auto& puk = findByKind(entries, PinKind::Puk);
+    EXPECT_EQ(puk.retriesLeft, std::optional<int>{5});
+    EXPECT_EQ(puk.retriesMax, std::optional<int>{5});
+    EXPECT_EQ(puk.usesLeft, std::optional<int>{16});
+    EXPECT_EQ(puk.usesMax, std::optional<int>{20});
+    EXPECT_EQ(puk.unblocksLeft, std::optional<int>{5});
+
+    const auto& user = findByLabel(entries, "User PIN");
+    EXPECT_FALSE(user.usesLeft.has_value());
+    EXPECT_FALSE(user.unblocksLeft.has_value());
 }

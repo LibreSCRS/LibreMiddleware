@@ -747,27 +747,33 @@ public:
                                                         &sc_pkcs15_change_pin, &sc_pkcs15_get_pin_info);
     }
 
-    std::optional<int> getPINTriesLeft(LibreSCRS::SmartCard::CardSession& cardSession) const override
+    LibreSCRS::Plugin::CredentialCounters readCounters(LibreSCRS::SmartCard::CardSession& cardSession,
+                                                       std::string_view /*pinLabel*/) const override
     {
         auto& conn = LibreSCRS::SmartCard::detail::unwrap(cardSession);
         std::lock_guard lock(mtx);
         auto it = sessions.find(&conn);
         if (it == sessions.end() || !it->second.p15card)
-            return std::nullopt;
+            return {};
         auto& session = it->second;
 
         sc_pkcs15_object_t* pinObjs[4];
         int count = sc_pkcs15_get_objects(session.p15card, SC_PKCS15_TYPE_AUTH_PIN, pinObjs, 4);
         if (count <= 0)
-            return std::nullopt;
+            return {};
 
         int rc = sc_pkcs15_get_pin_info(session.p15card, pinObjs[0]);
         if (rc < 0)
-            return std::nullopt;
+            return {};
         auto* authInfo = static_cast<sc_pkcs15_auth_info_t*>(pinObjs[0]->data);
-        if (authInfo->tries_left < 0)
-            return std::nullopt;
-        return authInfo->tries_left;
+        LibreSCRS::Plugin::CredentialCounters c;
+        if (authInfo->tries_left >= 0)
+            c.retriesLeft = authInfo->tries_left;
+        if (authInfo->max_tries > 0)
+            c.retriesMax = authInfo->max_tries;
+        // OpenSC's sc_pkcs15_auth_info models no usage/reset counter, so
+        // uses*/unblocksLeft stay absent — the documented OpenSC limit.
+        return c;
     }
 
     LibreSCRS::Plugin::SignResult doSign(LibreSCRS::SmartCard::CardSession& cardSession, std::uint16_t keyReference,

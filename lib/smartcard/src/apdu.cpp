@@ -122,6 +122,18 @@ APDUCommand verifyPINStatus(uint8_t pinRef)
                        .hasLe = true}; // Le required for SM — Case 1 (no Le) triggers 6988 on some cards
 }
 
+APDUCommand getDataDocp(uint8_t orf)
+{
+    // 00 CB 3F FF | 4D 08 70 06 BF 80 <orf> 02 62 80 | 00
+    return APDUCommand{.cla = 0x00,
+                       .ins = 0xCB, // GET DATA (ODD)
+                       .p1 = 0x3F,
+                       .p2 = 0xFF,
+                       .data = {0x4D, 0x08, 0x70, 0x06, 0xBF, 0x80, orf, 0x02, 0x62, 0x80},
+                       .le = 0,
+                       .hasLe = true};
+}
+
 APDUCommand changeReferenceData(uint8_t pinRef, std::span<const uint8_t> oldPin, std::span<const uint8_t> newPin)
 {
     std::vector<uint8_t> data;

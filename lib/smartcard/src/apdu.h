@@ -41,6 +41,8 @@ APDUCommand readBinary(uint16_t offset, uint8_t length);
 // PIN management commands (ISO 7816-4)
 APDUCommand verifyPIN(uint8_t pinRef, std::span<const uint8_t> pin);
 APDUCommand verifyPINStatus(uint8_t pinRef);
+// GET DATA (ODD, INS CB) reading a credential SDO's DOCP counters.
+APDUCommand getDataDocp(uint8_t orf);
 APDUCommand changeReferenceData(uint8_t pinRef, std::span<const uint8_t> oldPin, std::span<const uint8_t> newPin);
 
 // Returns true if the status word indicates a SELECT format mismatch

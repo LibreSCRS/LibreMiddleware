@@ -529,15 +529,19 @@ public:
         const auto family = resolveFamilyId(profile);
         const auto* quirks = LibreSCRS::Plugin::Internal::findFamilyQuirks(family);
 
-        // Evidence pass: one entry per AODF object, plus the retry-counter
-        // probe — GATED on the family's verified probe safety. The probe is
-        // the empty-VERIFY status form (non-consuming on probeSafe families);
-        // without a quirk row it never reaches the wire and counters stay
-        // absent (getPINList must not consume retry/usage budget).
+        // Evidence pass: one entry per AODF object, plus the counter probe —
+        // GATED on the family's verified probe safety. The probe reads the
+        // full DOCP (CV family: retries/uses/unblocks; non-DOCP cards: all
+        // absent), falling back to the empty-VERIFY status form for
+        // retriesLeft when DOCP yields none — the no-regression guard so a
+        // probeSafe family that is not a DOCP card never loses retriesLeft.
+        // Both forms are non-consuming on probeSafe families; without a
+        // quirk row neither ever reaches the wire and counters stay absent
+        // (getPINList must not consume retry/usage budget).
         std::vector<PinEvidence> evidence;
-        std::vector<std::optional<int>> triesLeft;
+        std::vector<LibreSCRS::Plugin::CredentialCounters> countersById;
         evidence.reserve(profile.pins.size());
-        triesLeft.reserve(profile.pins.size());
+        countersById.reserve(profile.pins.size());
         for (const auto& pin : profile.pins) {
             PinEvidence e;
             // An empty AODF label must never be advertised verbatim: the
@@ -566,18 +570,21 @@ public:
             // a non-PACE card keeps its PIN classification.
             e.paceEvidence = paceGated && pin.changeDisabled && pin.unblockDisabled;
 
-            std::optional<int> tries;
+            LibreSCRS::Plugin::CredentialCounters cardCounters;
             if (pin.initialized && quirks && quirks->probeSafe) {
                 try {
-                    const int t = card.getPINTriesLeft(pin);
-                    if (t >= 0)
-                        tries = t;
+                    cardCounters = card.readCounters(pin); // DOCP (CV: full; non-DOCP: empty)
+                    if (!cardCounters.retriesLeft.has_value()) {
+                        const int tries = card.getPINTriesLeft(pin); // VERIFY fallback
+                        if (tries >= 0)
+                            cardCounters.retriesLeft = tries;
+                    }
                 } catch (...) {
-                    // leave unset — counters stay absent
+                    // leave absent — graceful
                 }
             }
-            e.blocked = tries.has_value() && *tries == 0;
-            triesLeft.push_back(tries);
+            e.blocked = cardCounters.retriesLeft.has_value() && *cardCounters.retriesLeft == 0;
+            countersById.push_back(cardCounters); // parallel to `evidence`
             evidence.push_back(std::move(e));
         }
 
@@ -603,7 +610,17 @@ public:
         // cross-object rules (PUK presentability) see every entry.
         for (std::size_t i = 0; i < evidence.size(); ++i) {
             auto entry = LibreSCRS::Plugin::Internal::derivePinStatus(evidence[i], evidence, quirks);
-            entry.retriesLeft = triesLeft[i];
+            const auto& cc = countersById[i];
+            if (cc.retriesLeft.has_value())
+                entry.retriesLeft = cc.retriesLeft;
+            if (cc.retriesMax.has_value())
+                entry.retriesMax = cc.retriesMax; // card-first; else derivation's quirk value stands
+            if (cc.usesLeft.has_value())
+                entry.usesLeft = cc.usesLeft;
+            if (cc.usesMax.has_value())
+                entry.usesMax = cc.usesMax;
+            if (cc.unblocksLeft.has_value())
+                entry.unblocksLeft = cc.unblocksLeft;
             const auto& pin = profile.pins[i];
             if (pin.minLength > 0)
                 entry.minLength = static_cast<std::size_t>(pin.minLength);
@@ -659,27 +676,37 @@ public:
         return result;
     }
 
-    std::optional<int> getPINTriesLeft(LibreSCRS::SmartCard::CardSession& session) const override
+    LibreSCRS::Plugin::CredentialCounters readCounters(LibreSCRS::SmartCard::CardSession& session,
+                                                       std::string_view pinLabel) const override
     {
         auto holderResult = acquireChannel(session, requiresPaceFor(session));
         if (!holderResult)
-            return std::nullopt;
+            return {};
         auto holder = std::move(*holderResult);
         auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
         if (channel == nullptr)
-            return std::nullopt;
-
+            return {};
         pkcs15::PKCS15Card card(*channel);
-        LibreSCRS::Internal::probeTrace("PROBE-READPROFILE call=getPINTriesLeft");
+        LibreSCRS::Internal::probeTrace("PROBE-READPROFILE call=readCounters");
         auto profile = card.readProfile();
-        auto* pin = findUserPin(profile);
+        const pkcs15::PinInfo* pin = pinLabel.empty() ? findUserPin(profile) : findPinByLabel(profile, pinLabel);
         if (!pin)
-            return std::nullopt;
-
-        int tries = card.getPINTriesLeft(*pin);
-        if (tries < 0)
-            return std::nullopt;
-        return tries;
+            return {};
+        // CV family: full DOCP read. Fall back to the VERIFY (63 Cx) retry
+        // read whenever DOCP is unavailable (non-CV card, gated object, parse
+        // miss) so retriesLeft NEVER regresses for non-DOCP cards / the
+        // signing path. This is the no-regression guard.
+        const auto family = resolveFamilyId(profile);
+        const auto* quirks = LibreSCRS::Plugin::Internal::findFamilyQuirks(family);
+        LibreSCRS::Plugin::CredentialCounters c;
+        if (quirks && quirks->probeSafe)
+            c = card.readCounters(*pin);
+        if (!c.retriesLeft.has_value()) {
+            const int tries = card.getPINTriesLeft(*pin);
+            if (tries >= 0)
+                c.retriesLeft = tries;
+        }
+        return c;
     }
 
     // Raw on-card RSA decrypt is not yet implemented for the generic PKCS#15

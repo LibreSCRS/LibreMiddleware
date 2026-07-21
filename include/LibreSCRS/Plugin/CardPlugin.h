@@ -16,6 +16,7 @@
 #include <LibreSCRS/Export.h>
 #include <LibreSCRS/Plugin/ActivationProfile.h>
 #include <LibreSCRS/Plugin/CardData.h>
+#include <LibreSCRS/Plugin/CredentialCounters.h>
 #include <LibreSCRS/Plugin/PinStatusEntry.h>
 #include <LibreSCRS/Plugin/PluginTypes.h>
 #include <LibreSCRS/Plugin/ReadResult.h>
@@ -330,13 +331,28 @@ public:
         r.outcome = PINResultOutcome::Unsupported;
         return r;
     }
+    /// Read counters for one credential (empty @p pinLabel = the default
+    /// user PIN). Backends fill what they can: native DOCP fills all;
+    /// OpenSC fills retries only. Default: nothing exposed.
+    [[nodiscard]] virtual CredentialCounters readCounters(LibreSCRS::SmartCard::CardSession& /*session*/,
+                                                          std::string_view /*pinLabel*/ = {}) const
+    {
+        return {};
+    }
+
     /// @brief Card-reported retries remaining for the default PIN.
     ///
     /// Returns @c std::nullopt when the plugin cannot determine the count;
     /// callers should render this as "unknown" rather than a sentinel integer.
-    [[nodiscard]] virtual std::optional<int> getPINTriesLeft(LibreSCRS::SmartCard::CardSession& /*session*/) const
+    ///
+    /// @deprecated Superseded by @ref readCounters — use
+    ///             `readCounters(session).retriesLeft`. Retained for source
+    ///             compatibility; the default delegates to readCounters so a
+    ///             plugin overriding only readCounters keeps a working value.
+    [[deprecated("use readCounters(session).retriesLeft")]] [[nodiscard]] virtual std::optional<int>
+    getPINTriesLeft(LibreSCRS::SmartCard::CardSession& session) const
     {
-        return std::nullopt;
+        return readCounters(session).retriesLeft;
     }
     /// @brief Perform on-card signing with the key identified by @p keyReference.
     ///

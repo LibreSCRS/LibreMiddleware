@@ -301,7 +301,7 @@ SigningService::Impl::runSignPipeline(const SigningRequest& request, const Auth:
     // Collect the PIN via the host-supplied CredentialProvider. Retry count comes
     // from the card when the plugin can determine it; std::nullopt means
     // "unknown" and forwards unchanged to the host UI for a "?" rendering.
-    const std::optional<int> retriesLeft = cardPlugin->getPINTriesLeft(*session);
+    const std::optional<int> retriesLeft = cardPlugin->readCounters(*session).retriesLeft;
     // Use the LocalizedText overload so the host receives a translatable
     // i18n key alongside the English fallback. Previously the std::string
     // overload synthesised key="librescrs.auth.label.pin" from the
@@ -744,7 +744,7 @@ try {
     // build so a retry-count change in sign() automatically applies here
     // too. PIN flows from Secure::String → Secure::Buffer with no
     // intermediate non-cleansing copy.
-    const std::optional<int> retriesLeft = cardPlugin->getPINTriesLeft(*session);
+    const std::optional<int> retriesLeft = cardPlugin->readCounters(*session).retriesLeft;
     auto authReq = Auth::AuthRequirement::forSigning(
         LocalizedText{.key = "librescrs.signing.label.pin", .defaultText = "Signing PIN", .placeholders = {}},
         retriesLeft);

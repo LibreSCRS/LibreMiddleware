@@ -601,8 +601,8 @@ TEST(SigningServiceBridgeTranslationTest, ForwardsAllowExpiredCert)
 // A stub CardPlugin that advertises PKI but whose sign() is never reached —
 // we use it to satisfy the SigningService::sign signature. The bridge must
 // resolve the signing path through libresign, not by calling cardPlugin.sign().
-// getPINTriesLeft is overridden to return nullopt so the bridge never
-// dereferences the connection reference for tests that exercise
+// readCounters is overridden to return {} (nullopt retriesLeft) so the bridge
+// never dereferences the connection reference for tests that exercise
 // InvalidRequest / UserCancelled paths.
 namespace {
 class StubPkiPlugin : public LibreSCRS::Plugin::CardPlugin
@@ -627,12 +627,13 @@ public:
     {
         return LibreSCRS::Plugin::ReadResult::ok(LibreSCRS::Plugin::CardData{});
     }
-    std::optional<int> getPINTriesLeft(LibreSCRS::SmartCard::CardSession&) const override
+    LibreSCRS::Plugin::CredentialCounters readCounters(LibreSCRS::SmartCard::CardSession&,
+                                                       std::string_view) const override
     {
         // Return without touching the session — the bridge tests below pass a
         // live session (or skip when no reader is available), but we don't
         // want to generate APDU traffic.
-        return std::nullopt;
+        return {};
     }
 };
 

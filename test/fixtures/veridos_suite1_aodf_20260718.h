@@ -33,7 +33,7 @@
 #include <array>
 #include <cstdint>
 
-namespace librescrs::test::fixtures {
+namespace LibreSCRS::test::fixtures {
 
 inline constexpr std::array<std::uint8_t, 280> kSuite1Aodf20260718 = {
     // --- entry 1: "PACE CAN" ---------------------------------------------
@@ -323,4 +323,4 @@ inline constexpr std::array<std::uint8_t, 280> kSuite1Aodf20260718 = {
     0xF5, //     path 3F00/0DF5 }
 };
 
-} // namespace librescrs::test::fixtures
+} // namespace LibreSCRS::test::fixtures

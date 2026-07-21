@@ -110,6 +110,9 @@ struct PinStatusEntry
     /// @brief Remaining usage budget of this credential itself (PUK usage
     ///        counter); @c nullopt when not exposed or not safely readable.
     std::optional<int> usesLeft;
+    /// @brief Maximum usage budget of this credential (PUK max uses);
+    ///        @c nullopt when not exposed.
+    std::optional<int> usesMax;
     /// @brief Remaining times this PIN may be unblocked; @c nullopt unknown.
     std::optional<int> unblocksLeft;
     /// @brief Unblock behaviour; Unknown unless @ref unblockable.

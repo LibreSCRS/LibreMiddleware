@@ -329,7 +329,7 @@ TEST_F(OpenSCFallbackPKS, Test04GetPINTriesLeftBaseline)
     ASSERT_NE(plugin, nullptr);
     ASSERT_TRUE(session.has_value());
 
-    const auto triesOpt = plugin->getPINTriesLeft(*session);
+    const auto triesOpt = plugin->readCounters(*session).retriesLeft;
     if (!triesOpt.has_value()) {
         // A nullopt retry count here is not a card failure (this is a non-PIN
         // GET_INFO read, no lockout): on a dev box with a PKS card seated but
@@ -370,7 +370,7 @@ TEST_F(OpenSCFallbackPKS, Test05VerifyPINSucceeds)
 
     LibreSCRS::Secure::String pin{std::string_view{pinEnv}};
 
-    const auto triesBeforeOpt = plugin->getPINTriesLeft(*session);
+    const auto triesBeforeOpt = plugin->readCounters(*session).retriesLeft;
     const int triesBefore = triesBeforeOpt.value_or(-1);
 
     const auto result = plugin->verifyPIN(*session, pin);
@@ -388,7 +388,7 @@ TEST_F(OpenSCFallbackPKS, Test05VerifyPINSucceeds)
     // may surface as nullopt or 3 after a successful verify. Treat the
     // success signal as result.ok() here; the sign smoke in Test06 is the
     // ultimate authentication proof.
-    const auto triesAfterOpt = plugin->getPINTriesLeft(*session);
+    const auto triesAfterOpt = plugin->readCounters(*session).retriesLeft;
     if (triesAfterOpt.has_value()) {
         EXPECT_EQ(*triesAfterOpt, 3) << "Post-verify getPINTriesLeft, when populated, should be 3; got "
                                      << *triesAfterOpt;
