@@ -1149,6 +1149,7 @@ add_executable(Pkcs15PinLifecycleTests Pkcs15PinLifecycleTests.cpp)
 target_link_libraries(Pkcs15PinLifecycleTests PRIVATE
     GTest::gtest_main
     CardPlugin_Impl
+    PKCS15
     LibreSCRS_SmartCard
     LibreSCRS_SmartCard_TestHelpers
     LibreSCRS_SecureChannel
@@ -1156,6 +1157,7 @@ target_link_libraries(Pkcs15PinLifecycleTests PRIVATE
 )
 target_include_directories(Pkcs15PinLifecycleTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/pkcs15/src
 )
 target_compile_definitions(Pkcs15PinLifecycleTests PRIVATE
     PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"

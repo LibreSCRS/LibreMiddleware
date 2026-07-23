@@ -54,6 +54,72 @@ public:
     std::vector<uint8_t> readCertificate(const CertificateInfo& cert);
     PinResult verifyPIN(const PinInfo& pin, std::string_view pinValue);
     PinResult changePIN(const PinInfo& pin, std::string_view oldPin, std::string_view newPin);
+    /// @brief RESET RETRY COUNTER (unblock).
+    ///
+    /// Mirrors changePIN's select/transmit/SW-map shape exactly, swapping in
+    /// the RESET RETRY COUNTER builder.
+    ///
+    /// @param pin    The PUK-protected PIN being unblocked.
+    /// @param puk    Current PUK value. NOT run through encodePIN: it
+    ///               belongs to a DIFFERENT credential (the PUK) whose
+    ///               storedLength/padChar are not carried by @p pin, so
+    ///               padding it under the target PIN's own AODF attributes
+    ///               would risk corrupting the secret — the raw bytes
+    ///               travel as-is.
+    /// @param newPin New PIN value; may be empty for reset-only unblock
+    ///               styles. Like @p puk, NOT run through encodePIN.
+    /// @param p1     RESET RETRY COUNTER P1. Caller-supplied: the
+    ///               pkcs15-plugin resolves it from the family quirk
+    ///               table's per-unblock-style row — never hardcoded here.
+    /// @return The resulting PinResult (retriesLeft attributed to the PUK).
+    PinResult resetRetryCounter(const PinInfo& pin, std::string_view puk, std::string_view newPin, uint8_t p1);
+    /// @brief CHANGE REFERENCE DATA (transport-PIN activation).
+    ///
+    /// Mirrors changePIN's select/transmit/SW-map shape exactly. Unlike
+    /// resetRetryCounter, @p oldValue and @p newValue belong to THIS SAME
+    /// credential (the transport-born SIGN PIN activating to its holder
+    /// value, not a cross-credential PUK/newPin pair), so both run through
+    /// encodePIN under @p pin's own storedLength/padChar — exactly like
+    /// changePIN's oldPin/newPin.
+    ///
+    /// @param pin      The transport-born PIN being activated.
+    /// @param oldValue Transport PIN value. May be empty for the P1=0x01
+    ///                 prior-auth form (the transport value was already
+    ///                 consumed by a preceding VERIFY): the old-data block
+    ///                 is omitted entirely in that case, NOT padded to
+    ///                 storedLength — padding would send a bogus
+    ///                 padChar-filled block instead of the ISO command's
+    ///                 true "old absent" shape.
+    /// @param newValue Holder's new PIN value.
+    /// @param p1       CHANGE REFERENCE DATA P1. Caller-supplied: the
+    ///                 pkcs15-plugin resolves it from the family quirk
+    ///                 table's transportChangeP1 row — never hardcoded
+    ///                 here.
+    /// @return The resulting PinResult.
+    PinResult changeReferenceData(const PinInfo& pin, std::string_view oldValue, std::string_view newValue, uint8_t p1);
+    /// @brief ISO ACTIVATE (INS 0x44) for the deactivated SIGN key.
+    ///
+    /// Mirrors resetRetryCounter/changeReferenceData's select/path/transmit
+    /// shape: selects the applet then navigates to @p signPin's own DF —
+    /// the SIGN key lives alongside its guarding PIN in the signature DF —
+    /// before transmitting.
+    ///
+    /// @param signPin The SIGN PIN guarding the key's DF (selects the path;
+    ///                not itself VERIFYed here — the caller VERIFYs
+    ///                separately).
+    /// @param p1      ACTIVATE P1. Caller-supplied: the pkcs15-plugin
+    ///                resolves it from the family quirk table's
+    ///                keyActivate row — never hardcoded here.
+    /// @param p2      ACTIVATE P2. Same provenance as @p p1.
+    /// @return The resulting PinResult. Unlike
+    ///         verifyPIN/changePIN/resetRetryCounter/changeReferenceData,
+    ///         ACTIVATE carries no PIN-retry-shaped SW semantics of its own
+    ///         (retriesLeft/blocked stay at their sentinel defaults in the
+    ///         returned PinResult): @c 9000 is a fresh activation and
+    ///         @c 6985 is the idempotent already-active case — BOTH are
+    ///         reported as @c success so the caller can map either to an
+    ///         already-succeeded outcome; anything else is a failure.
+    PinResult activate(const PinInfo& signPin, uint8_t p1, uint8_t p2);
     int getPINTriesLeft(const PinInfo& pin);
     // Read the credential's full DOCP counters. Non-9000 / parse miss ⇒ all
     // absent (graceful). Read-only; never decrements a counter.

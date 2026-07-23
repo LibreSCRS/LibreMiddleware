@@ -134,7 +134,8 @@ APDUCommand getDataDocp(uint8_t orf)
                        .hasLe = true};
 }
 
-APDUCommand changeReferenceData(uint8_t pinRef, std::span<const uint8_t> oldPin, std::span<const uint8_t> newPin)
+APDUCommand changeReferenceData(uint8_t pinRef, std::span<const uint8_t> oldPin, std::span<const uint8_t> newPin,
+                                uint8_t p1)
 {
     std::vector<uint8_t> data;
     data.reserve(oldPin.size() + newPin.size());
@@ -143,9 +144,36 @@ APDUCommand changeReferenceData(uint8_t pinRef, std::span<const uint8_t> oldPin,
 
     return APDUCommand{.cla = 0x00,
                        .ins = 0x24, // CHANGE REFERENCE DATA
-                       .p1 = 0x00,
+                       .p1 = p1,
                        .p2 = pinRef,
                        .data = std::move(data),
+                       .le = 0,
+                       .hasLe = false};
+}
+
+APDUCommand resetRetryCounter(uint8_t p1, uint8_t pinRef, std::span<const uint8_t> puk, std::span<const uint8_t> newPin)
+{
+    std::vector<uint8_t> data;
+    data.reserve(puk.size() + newPin.size());
+    data.insert(data.end(), puk.begin(), puk.end());
+    data.insert(data.end(), newPin.begin(), newPin.end());
+
+    return APDUCommand{.cla = 0x00,
+                       .ins = 0x2C, // RESET RETRY COUNTER
+                       .p1 = p1,
+                       .p2 = pinRef,
+                       .data = std::move(data),
+                       .le = 0,
+                       .hasLe = false};
+}
+
+APDUCommand activate(uint8_t p1, uint8_t p2, std::span<const uint8_t> objectRef)
+{
+    return APDUCommand{.cla = 0x00,
+                       .ins = 0x44, // ACTIVATE (ISO 7816-9)
+                       .p1 = p1,
+                       .p2 = p2,
+                       .data = {objectRef.begin(), objectRef.end()},
                        .le = 0,
                        .hasLe = false};
 }

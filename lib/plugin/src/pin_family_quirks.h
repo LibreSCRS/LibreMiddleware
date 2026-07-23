@@ -94,6 +94,36 @@ struct FamilyQuirks
     ///        issuer-side activation (issuer-tool-only families).
     std::optional<LocalizedText> keyActivationGuidance;
 
+    /// @brief Number of @ref LibreSCRS::Plugin::UnblockStyle members covered
+    ///        by @ref rrcP1. Sized to the real enum (Unknown, ResetOnly,
+    ///        SetsNewPin, UnblockAndChange) — see the static_assert below the
+    ///        struct that ties this to the enum's actual last member.
+    static constexpr int kUnblockStyleCount = 4;
+
+    /// @brief RESET RETRY COUNTER P1, indexed by
+    ///        `static_cast<std::size_t>(UnblockStyle)`. [HW-VERIFY]: ISO
+    ///        defaults, not yet confirmed against real cards.
+    std::uint8_t rrcP1[kUnblockStyleCount] = {};
+    /// @brief CHANGE REFERENCE DATA P1 used for transport-PIN activation.
+    ///        [HW-VERIFY]: ISO default, not yet confirmed against real cards.
+    std::uint8_t transportChangeP1 = 0;
+    /// @brief ISO ACTIVATE command bytes for the signing key. [HW-VERIFY]:
+    ///        ISO defaults, not yet confirmed against real cards. AUTH key
+    ///        life-cycle at creation is [HW-VERIFY] — do not assert active.
+    struct
+    {
+        std::uint8_t ins = 0;
+        std::uint8_t p1 = 0;
+        std::uint8_t p2 = 0;
+    } keyActivate;
+    /// @brief How the security state is cleared after a mutating card verb
+    ///        (RESET RETRY COUNTER / CHANGE REFERENCE DATA / ACTIVATE).
+    ///        [HW-VERIFY]: exact method not yet confirmed against real cards.
+    enum class SecStateClear : std::uint8_t {
+        ReselectApplet, ///< Re-select the applet to drop stale PIN-verified state.
+    };
+    SecStateClear secStateClear = SecStateClear::ReselectApplet;
+
     /// @name Per-kind accessors (conservative defaults for kinds beyond the table)
     /// @{
     [[nodiscard]] bool canChange(PinKind k) const noexcept;
@@ -105,6 +135,11 @@ struct FamilyQuirks
     [[nodiscard]] std::optional<int> retriesMax(PinKind k) const noexcept;
     /// @}
 };
+
+static_assert(static_cast<std::size_t>(UnblockStyle::UnblockAndChange) ==
+                  static_cast<std::size_t>(FamilyQuirks::kUnblockStyleCount) - 1,
+              "FamilyQuirks::kUnblockStyleCount must cover "
+              "UnblockStyle::Unknown..UnblockAndChange (update rrcP1's size if UnblockStyle gains a member)");
 
 /// @brief Looks up the static quirk row for @p id.
 /// @return Pointer to a static const row, or nullptr for

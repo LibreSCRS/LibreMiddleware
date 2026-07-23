@@ -43,7 +43,14 @@ APDUCommand verifyPIN(uint8_t pinRef, std::span<const uint8_t> pin);
 APDUCommand verifyPINStatus(uint8_t pinRef);
 // GET DATA (ODD, INS CB) reading a credential SDO's DOCP counters.
 APDUCommand getDataDocp(uint8_t orf);
-APDUCommand changeReferenceData(uint8_t pinRef, std::span<const uint8_t> oldPin, std::span<const uint8_t> newPin);
+// p1 defaults to 0x00 (ordinary change); transport activation passes an explicit P1.
+APDUCommand changeReferenceData(uint8_t pinRef, std::span<const uint8_t> oldPin, std::span<const uint8_t> newPin,
+                                uint8_t p1 = 0x00);
+// RESET RETRY COUNTER (unblock). data = puk || newPin (newPin empty for the reset-only P1 case).
+APDUCommand resetRetryCounter(uint8_t p1, uint8_t pinRef, std::span<const uint8_t> puk,
+                              std::span<const uint8_t> newPin = {});
+// ACTIVATE (ISO 7816-9). Emits exactly the passed P1/P2 and optional object-reference data.
+APDUCommand activate(uint8_t p1, uint8_t p2, std::span<const uint8_t> objectRef = {});
 
 // Returns true if the status word indicates a SELECT format mismatch
 // (wrong P2/Le), meaning retrying with alternative P2/Le is appropriate.

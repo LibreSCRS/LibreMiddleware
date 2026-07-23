@@ -30,6 +30,9 @@
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
 #include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
 
+#include "fake_pcsc_connection.h"
+#include "pkcs15_card.h"
+
 #include <apdu.h>
 #include <pcsc_connection.h>
 
@@ -53,6 +56,7 @@ using LibreSCRS::Plugin::CardPluginService;
 using LibreSCRS::Plugin::PinKind;
 using LibreSCRS::Plugin::PinState;
 using LibreSCRS::SecureChannel::PlainChannel;
+using LibreSCRS::SecureChannel::TestSupport::FakePCSCConnection;
 using LibreSCRS::SmartCard::AppletAid;
 using LibreSCRS::SmartCard::CardSession;
 using LibreSCRS::SmartCard::detail::ChannelInjector;
@@ -84,6 +88,12 @@ struct ScriptedPkcs15Card
     /// DOCP TLV payload, returned with SW 9000. ORFs absent here answer
     /// 6A88 (readCounters sees a non-success SW and returns all-absent).
     std::map<std::uint8_t, std::vector<std::uint8_t>> docpByOrf;
+    /// CHANGE REFERENCE DATA (INS 0x24) acceptance: the ONE P1 this double
+    /// accepts (returns SW 9000 for); absent (the default) or any other P1
+    /// answers 6A86 — the same "independently models acceptance, rejects
+    /// wrong P1" anti-tautology technique as Pkcs15ResetRetryCounter's
+    /// scripted doubles, applied at the plugin-funnel level.
+    std::optional<std::uint8_t> acceptedChangeRefP1;
     /// Every APDU seen, copied by value (snapshot — the UAF-safe form).
     std::vector<APDUCommand> log;
 
@@ -126,6 +136,12 @@ struct ScriptedPkcs15Card
             return {{}, 0x63, static_cast<std::uint8_t>(0xC0 | (it->second & 0x0F))};
         }
 
+        if (cmd.ins == 0x24) { // CHANGE REFERENCE DATA
+            if (!acceptedChangeRefP1.has_value() || cmd.p1 != *acceptedChangeRefP1)
+                return {{}, 0x6A, 0x86};
+            return {{}, 0x90, 0x00};
+        }
+
         if (cmd.ins == 0xCB && cmd.p1 == 0x3F && cmd.p2 == 0xFF) { // GET DATA (ODD) — DOCP
             // Wire shape (apdu.cpp getDataDocp): data = 4D 08 70 06 BF 80 <orf> 02 62 80.
             if (cmd.data.size() < 7)
@@ -149,6 +165,34 @@ bool isEmptyVerifyProbe(const APDUCommand& cmd)
 bool isRealVerify(const APDUCommand& cmd)
 {
     return cmd.ins == 0x20 && !cmd.data.empty();
+}
+
+bool isResetRetryCounterCmd(const APDUCommand& cmd)
+{
+    return cmd.ins == 0x2C; // ISO RESET RETRY COUNTER
+}
+
+bool isChangeReferenceDataCmd(const APDUCommand& cmd)
+{
+    return cmd.ins == 0x24; // ISO CHANGE REFERENCE DATA
+}
+
+bool isActivateCmd(const APDUCommand& cmd)
+{
+    return cmd.ins == 0x44; // ISO ACTIVATE
+}
+
+// SELECT BY FID for the AODF (0x4408, per odfPointingAtAodf() below) —
+// reaching the wire proves a call actually engaged card.readProfile(),
+// distinguishing "the override ran its full evidence-scan/derivation logic
+// and correctly found no keyActivatable candidate" from "the call never
+// reached the override at all" (the base CardPlugin::activateSigningKey
+// default touches the session/channel not at all, so it could never
+// produce this SELECT either) — needed because both paths otherwise report
+// the SAME PINResultOutcome::Unsupported.
+bool isSelectAodfFid(const APDUCommand& cmd)
+{
+    return cmd.ins == 0xA4 && cmd.p1 == 0x00 && cmd.data.size() == 2 && cmd.data[0] == 0x44 && cmd.data[1] == 0x08;
 }
 
 bool logHasProbeFor(const std::vector<APDUCommand>& log, std::uint8_t ref)
@@ -259,6 +303,31 @@ std::vector<std::uint8_t> emptyLabelSecondPinAodf()
     return out;
 }
 
+// Synthetic AODF: ONE SIGN PIN ("Sign PIN", ref 0x92) local + in the
+// signature DF (path 3F00/0DF5, matching kAppletSuiteGen1SignatureDf), with
+// pinFlags 0x40 (local bit set, initialized bit CLEAR) — a transport-state
+// credential, unlike the hardware-captured AppletSuiteGen1 fixture's
+// Signature PIN (pinFlags 0x48: local + initialized, i.e. already
+// personalized). Paired with the "SSCDv1 PACE MD" token label this
+// resolves FamilyId::AppletSuiteGen1 (supportsTransportPin=true), so
+// derivePinStatus classifies kind=SignPin, state=Transport,
+// activatable=true — the plugin-level activateTransportPin "success" path.
+std::vector<std::uint8_t> transportSignPinAodf()
+{
+    return {0x30, 0x30,                                      // SEQUENCE (48)
+            0x30, 0x0A, 0x0C, 0x08, 0x53, 0x69, 0x67, 0x6E,  //   CommonObjectAttributes
+            0x20, 0x50, 0x49, 0x4E,                          //     UTF8String "Sign PIN"
+            0x30, 0x03, 0x04, 0x01, 0x92,                    //   CommonAuthObjectAttributes: id 92
+            0xA1, 0x1D, 0x30, 0x1B,                          //   [1] { PinAttributes
+            0x03, 0x02, 0x00, 0x40,                          //     pinFlags 0x40 (local, NOT initialized)
+            0x0A, 0x01, 0x01,                                //     pinType ascii
+            0x02, 0x01, 0x04,                                //     minLength 4
+            0x02, 0x01, 0x04,                                //     storedLength 4
+            0x02, 0x01, 0x08,                                //     maxLength 8
+            0x80, 0x01, 0x92,                                //     pinReference 0x92
+            0x30, 0x06, 0x04, 0x04, 0x3F, 0x00, 0x0D, 0xF5}; //     path 3F00/0DF5 }
+}
+
 // ---------------------------------------------------------------------------
 // Harness.
 // ---------------------------------------------------------------------------
@@ -331,6 +400,22 @@ FakeCardRig makeUnknownRig(const char* readerName)
     return makeRig(readerName,
                    {{0x5031, odfPointingAtAodf()}, {0x5032, tokenInfoWithLabel("PKI Token")}, {0x4408, plainPinAodf()}},
                    {{0x01, 3}});
+}
+
+// AppletSuiteGen1 card with a single transport-state Signature PIN
+// (transportSignPinAodf): same hardware-captured token label as
+// makeAppletSuiteGen1Rig (resolves FamilyId::AppletSuiteGen1,
+// supportsTransportPin=true), but the AODF itself is synthetic — a
+// not-yet-initialized SIGN PIN, unlike the real hardware capture's
+// already-personalized one. Used only by activateTransportPin's success
+// tests; no probe script needed (activation never reads counters).
+FakeCardRig makeAppletSuiteGen1TransportSignRig(const char* readerName)
+{
+    return makeRig(readerName,
+                   {{0x5031, odfPointingAtAodf()},
+                    {0x5032, tokenInfoWithLabel("SSCDv1 PACE MD")},
+                    {0x4408, transportSignPinAodf()}},
+                   {});
 }
 
 std::shared_ptr<CardPlugin> loadPkcs15Plugin(CardPluginService& registry)
@@ -633,4 +718,900 @@ TEST(Pkcs15PinLifecycle, PukSurfacesUsageAndUnblockCounters)
     const auto& user = findByLabel(entries, "User PIN");
     EXPECT_FALSE(user.usesLeft.has_value());
     EXPECT_FALSE(user.unblocksLeft.has_value());
+}
+
+// ---------------------------------------------------------------------------
+// Plan D Task 11 — pkcs15::PKCS15Card::resetRetryCounter (ISO RESET RETRY
+// COUNTER, the RRC verb behind pkcs15-plugin's unblockPIN override), tested
+// directly against a minimal scripted connection (same technique as
+// LibreSCRS_AetAttestationTests: FakePCSCConnection + a real PlainChannel,
+// production selectApplet()/transmit path unmodified) — independent of
+// family/quirk resolution, which the plugin-level tests further below cover.
+//
+// Anti-tautology: the double enforces its OWN, independently chosen "correct"
+// P1 for each style (0x01 = ResetOnly, 0x00 = SetsNewPin — the ISO 7816-4
+// §7.5.10 conventions the family quirk table's applyIsoExecutionDefaults
+// encodes) and rejects anything else with 6A86, exactly like a real card
+// refusing an unrecognised P1/P2 combination — so a passing test proves the
+// caller-supplied P1 actually reached the wire, not merely that the
+// production code and the test read the same constant. The PIN reference
+// asserted on the wire is the data-driven value from the PinInfo the test
+// builds, never a family default.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+pkcs15::PinInfo makeUnblockTargetPinInfo(std::uint8_t pinRef)
+{
+    pkcs15::PinInfo pin;
+    pin.label = "User PIN";
+    pin.pinReference = pinRef;
+    pin.initialized = true;
+    return pin; // path left empty: selectByPath is a no-op, matching these
+                // isolated tests' scope (the DF-selection dance is already
+                // covered by the shared selectApplet()/selectByPath() paths
+                // changePIN/verifyPIN exercise elsewhere).
+}
+
+std::vector<std::uint8_t> asBytes(std::string_view s)
+{
+    return {s.begin(), s.end()};
+}
+
+} // namespace
+
+TEST(Pkcs15ResetRetryCounter, ResetOnlyStyleSendsPukOnlyAtTheGivenP1)
+{
+    constexpr std::uint8_t kResetOnlyP1 = 0x01;
+    constexpr std::uint8_t kDataDrivenPinRef = 0x86; // NOT a family default — this object's own reference.
+
+    FakePCSCConnection conn;
+    conn.setResponder([&](const APDUCommand& cmd) -> APDUResponse {
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x04) // SELECT AID
+            return {{}, 0x90, 0x00};
+        if (cmd.ins == 0x2C) { // RESET RETRY COUNTER
+            if (cmd.p1 != kResetOnlyP1)
+                return {{}, 0x6A, 0x86};
+            return {{}, 0x90, 0x00};
+        }
+        return {{}, 0x6D, 0x00};
+    });
+
+    PlainChannel channel(conn, AppletAid{});
+    pkcs15::PKCS15Card card(channel);
+    auto pinInfo = makeUnblockTargetPinInfo(kDataDrivenPinRef);
+
+    auto result = card.resetRetryCounter(pinInfo, "12345678", /*newPin=*/"", kResetOnlyP1);
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.retriesLeft, -1);
+    EXPECT_FALSE(result.blocked);
+
+    const auto& log = conn.history();
+    const auto it = std::find_if(log.begin(), log.end(), [](const APDUCommand& c) { return c.ins == 0x2C; });
+    ASSERT_NE(it, log.end());
+    EXPECT_EQ(it->p1, kResetOnlyP1);
+    EXPECT_EQ(it->p2, kDataDrivenPinRef); // data-driven pinRef, not a constant
+    EXPECT_EQ(it->data, asBytes("12345678"));
+}
+
+TEST(Pkcs15ResetRetryCounter, SetsNewPinStyleSendsPukThenNewPin)
+{
+    constexpr std::uint8_t kSetsNewPinP1 = 0x00;
+    constexpr std::uint8_t kDataDrivenPinRef = 0x92;
+
+    FakePCSCConnection conn;
+    conn.setResponder([&](const APDUCommand& cmd) -> APDUResponse {
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x04)
+            return {{}, 0x90, 0x00};
+        if (cmd.ins == 0x2C) {
+            if (cmd.p1 != kSetsNewPinP1)
+                return {{}, 0x6A, 0x86};
+            return {{}, 0x90, 0x00};
+        }
+        return {{}, 0x6D, 0x00};
+    });
+
+    PlainChannel channel(conn, AppletAid{});
+    pkcs15::PKCS15Card card(channel);
+    auto pinInfo = makeUnblockTargetPinInfo(kDataDrivenPinRef);
+
+    auto result = card.resetRetryCounter(pinInfo, "12345678", "4321", kSetsNewPinP1);
+    EXPECT_TRUE(result.success);
+
+    const auto& log = conn.history();
+    const auto it = std::find_if(log.begin(), log.end(), [](const APDUCommand& c) { return c.ins == 0x2C; });
+    ASSERT_NE(it, log.end());
+    EXPECT_EQ(it->p2, kDataDrivenPinRef);
+    EXPECT_EQ(it->data, asBytes("123456784321")); // puk || newPin, concatenated raw
+}
+
+TEST(Pkcs15ResetRetryCounter, WrongP1IsRejectedAndMapsToGenericFailureNotInvalidPin)
+{
+    // The double only ever accepts P1==0x01 (ResetOnly); calling with 0x00
+    // on purpose proves a form-rejection (6A86) is NOT misread as a wrong-PUK
+    // retry count.
+    FakePCSCConnection conn;
+    conn.setResponder([](const APDUCommand& cmd) -> APDUResponse {
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x04)
+            return {{}, 0x90, 0x00};
+        if (cmd.ins == 0x2C)
+            return cmd.p1 == 0x01 ? APDUResponse{{}, 0x90, 0x00} : APDUResponse{{}, 0x6A, 0x86};
+        return {{}, 0x6D, 0x00};
+    });
+
+    PlainChannel channel(conn, AppletAid{});
+    pkcs15::PKCS15Card card(channel);
+    auto pinInfo = makeUnblockTargetPinInfo(0x86);
+
+    auto result = card.resetRetryCounter(pinInfo, "12345678", "", /*wrong on purpose=*/0x00);
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.retriesLeft, -1); // NOT a retry count — 6A86 is a form/parameter error
+    EXPECT_FALSE(result.blocked);
+}
+
+TEST(Pkcs15ResetRetryCounter, WrongPukSwMapsToInvalidPinShapedResultAttributedToPuk)
+{
+    FakePCSCConnection conn;
+    conn.setResponder([](const APDUCommand& cmd) -> APDUResponse {
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x04)
+            return {{}, 0x90, 0x00};
+        if (cmd.ins == 0x2C)
+            return {{}, 0x63, 0xC5}; // wrong PUK, 5 PUK retries left
+        return {{}, 0x6D, 0x00};
+    });
+
+    PlainChannel channel(conn, AppletAid{});
+    pkcs15::PKCS15Card card(channel);
+    auto pinInfo = makeUnblockTargetPinInfo(0x86);
+
+    auto result = card.resetRetryCounter(pinInfo, "wrongpuk", "", 0x01);
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.retriesLeft, 5);
+    EXPECT_FALSE(result.blocked);
+}
+
+TEST(Pkcs15ResetRetryCounter, PukExhaustedSwMapsToBlocked)
+{
+    FakePCSCConnection conn;
+    conn.setResponder([](const APDUCommand& cmd) -> APDUResponse {
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x04)
+            return {{}, 0x90, 0x00};
+        if (cmd.ins == 0x2C)
+            return {{}, 0x69, 0x83};
+        return {{}, 0x6D, 0x00};
+    });
+
+    PlainChannel channel(conn, AppletAid{});
+    pkcs15::PKCS15Card card(channel);
+    auto pinInfo = makeUnblockTargetPinInfo(0x86);
+
+    auto result = card.resetRetryCounter(pinInfo, "anything", "", 0x01);
+    EXPECT_FALSE(result.success);
+    EXPECT_TRUE(result.blocked);
+}
+
+TEST(Pkcs15ResetRetryCounter, ReferenceNotFoundSwMapsToGenericFailureNotInvalidPin)
+{
+    // 6A88 (and by the same code path 6985/6984/6A81/6D00) must never be
+    // misread as a wrong-PUK retry signal.
+    FakePCSCConnection conn;
+    conn.setResponder([](const APDUCommand& cmd) -> APDUResponse {
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x04)
+            return {{}, 0x90, 0x00};
+        if (cmd.ins == 0x2C)
+            return {{}, 0x6A, 0x88};
+        return {{}, 0x6D, 0x00};
+    });
+
+    PlainChannel channel(conn, AppletAid{});
+    pkcs15::PKCS15Card card(channel);
+    auto pinInfo = makeUnblockTargetPinInfo(0x86);
+
+    auto result = card.resetRetryCounter(pinInfo, "anything", "", 0x01);
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.retriesLeft, -1);
+    EXPECT_FALSE(result.blocked);
+}
+
+// ---------------------------------------------------------------------------
+// Plan D Task 12 — pkcs15::PKCS15Card::changeReferenceData (ISO CHANGE
+// REFERENCE DATA, the verb behind pkcs15-plugin's activateTransportPin
+// override), tested directly against a minimal scripted connection — same
+// technique as the Pkcs15ResetRetryCounter block above, independent of
+// family/quirk resolution, which the plugin-level tests further below
+// cover.
+//
+// Anti-tautology: the double enforces its OWN, independently chosen
+// "correct" P1 per test (0x00 = one-shot, 0x01 = prior-auth — the ISO
+// 7816-4 §7.5.7 conventions the family quirk table's
+// applyIsoExecutionDefaults / a future HW-verified row would encode) and
+// rejects anything else with 6A86, so a passing test proves the
+// caller-supplied P1 actually reached the wire. The PIN reference asserted
+// on the wire is the data-driven value from the PinInfo the test builds,
+// never a family default.
+// ---------------------------------------------------------------------------
+
+TEST(Pkcs15ChangeReferenceDataActivation, OneShotFormSendsTransportThenNewAtTheGivenP1)
+{
+    constexpr std::uint8_t kOneShotP1 = 0x00;
+    constexpr std::uint8_t kDataDrivenPinRef = 0x92; // NOT a family default — this object's own reference.
+
+    FakePCSCConnection conn;
+    conn.setResponder([&](const APDUCommand& cmd) -> APDUResponse {
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x04) // SELECT AID
+            return {{}, 0x90, 0x00};
+        if (cmd.ins == 0x24) { // CHANGE REFERENCE DATA
+            if (cmd.p1 != kOneShotP1)
+                return {{}, 0x6A, 0x86};
+            return {{}, 0x90, 0x00};
+        }
+        return {{}, 0x6D, 0x00};
+    });
+
+    PlainChannel channel(conn, AppletAid{});
+    pkcs15::PKCS15Card card(channel);
+    auto pinInfo = makeUnblockTargetPinInfo(kDataDrivenPinRef);
+
+    auto result = card.changeReferenceData(pinInfo, "transport1", "4321", kOneShotP1);
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.retriesLeft, -1);
+    EXPECT_FALSE(result.blocked);
+
+    const auto& log = conn.history();
+    const auto it = std::find_if(log.begin(), log.end(), [](const APDUCommand& c) { return c.ins == 0x24; });
+    ASSERT_NE(it, log.end());
+    EXPECT_EQ(it->p1, kOneShotP1);
+    EXPECT_EQ(it->p2, kDataDrivenPinRef); // data-driven pinRef, not a constant
+    EXPECT_EQ(it->data, asBytes("transport14321"));
+}
+
+TEST(Pkcs15ChangeReferenceDataActivation, PriorAuthFormSendsNewOnlyAtTheGivenP1)
+{
+    constexpr std::uint8_t kPriorAuthP1 = 0x01;
+    constexpr std::uint8_t kDataDrivenPinRef = 0x92;
+
+    FakePCSCConnection conn;
+    conn.setResponder([&](const APDUCommand& cmd) -> APDUResponse {
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x04)
+            return {{}, 0x90, 0x00};
+        if (cmd.ins == 0x24) {
+            if (cmd.p1 != kPriorAuthP1)
+                return {{}, 0x6A, 0x86};
+            return {{}, 0x90, 0x00};
+        }
+        return {{}, 0x6D, 0x00};
+    });
+
+    PlainChannel channel(conn, AppletAid{});
+    pkcs15::PKCS15Card card(channel);
+    auto pinInfo = makeUnblockTargetPinInfo(kDataDrivenPinRef);
+
+    // oldValue is empty: the prior-auth form's transport value was already
+    // consumed by a separate VERIFY (the plugin-level orchestration below),
+    // so this call carries new-only data.
+    auto result = card.changeReferenceData(pinInfo, /*oldValue=*/"", "4321", kPriorAuthP1);
+    EXPECT_TRUE(result.success);
+
+    const auto& log = conn.history();
+    const auto it = std::find_if(log.begin(), log.end(), [](const APDUCommand& c) { return c.ins == 0x24; });
+    ASSERT_NE(it, log.end());
+    EXPECT_EQ(it->p2, kDataDrivenPinRef);
+    EXPECT_EQ(it->data, asBytes("4321")); // new-only — old block genuinely absent, not padded
+}
+
+TEST(Pkcs15ChangeReferenceDataActivation, WrongP1IsRejectedAndMapsToGenericFailureNotInvalidPin)
+{
+    // The double only ever accepts P1==0x01; calling with 0x00 on purpose
+    // proves a form-rejection (6A86) is NOT misread as a wrong-transport-
+    // value retry count.
+    FakePCSCConnection conn;
+    conn.setResponder([](const APDUCommand& cmd) -> APDUResponse {
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x04)
+            return {{}, 0x90, 0x00};
+        if (cmd.ins == 0x24)
+            return cmd.p1 == 0x01 ? APDUResponse{{}, 0x90, 0x00} : APDUResponse{{}, 0x6A, 0x86};
+        return {{}, 0x6D, 0x00};
+    });
+
+    PlainChannel channel(conn, AppletAid{});
+    pkcs15::PKCS15Card card(channel);
+    auto pinInfo = makeUnblockTargetPinInfo(0x92);
+
+    auto result = card.changeReferenceData(pinInfo, "transport1", "4321", /*wrong on purpose=*/0x00);
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.retriesLeft, -1); // NOT a retry count — 6A86 is a form/parameter error
+    EXPECT_FALSE(result.blocked);
+}
+
+TEST(Pkcs15ChangeReferenceDataActivation, WrongTransportValueSwMapsToInvalidPinShapedResultAttributedToTransport)
+{
+    FakePCSCConnection conn;
+    conn.setResponder([](const APDUCommand& cmd) -> APDUResponse {
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x04)
+            return {{}, 0x90, 0x00};
+        if (cmd.ins == 0x24)
+            return {{}, 0x63, 0xC5}; // wrong transport value, 5 retries left
+        return {{}, 0x6D, 0x00};
+    });
+
+    PlainChannel channel(conn, AppletAid{});
+    pkcs15::PKCS15Card card(channel);
+    auto pinInfo = makeUnblockTargetPinInfo(0x92);
+
+    auto result = card.changeReferenceData(pinInfo, "wrongtransport", "4321", 0x00);
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.retriesLeft, 5);
+    EXPECT_FALSE(result.blocked);
+}
+
+TEST(Pkcs15ChangeReferenceDataActivation, TransportExhaustedSwMapsToBlocked)
+{
+    FakePCSCConnection conn;
+    conn.setResponder([](const APDUCommand& cmd) -> APDUResponse {
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x04)
+            return {{}, 0x90, 0x00};
+        if (cmd.ins == 0x24)
+            return {{}, 0x69, 0x83};
+        return {{}, 0x6D, 0x00};
+    });
+
+    PlainChannel channel(conn, AppletAid{});
+    pkcs15::PKCS15Card card(channel);
+    auto pinInfo = makeUnblockTargetPinInfo(0x92);
+
+    auto result = card.changeReferenceData(pinInfo, "anything", "4321", 0x00);
+    EXPECT_FALSE(result.success);
+    EXPECT_TRUE(result.blocked);
+}
+
+TEST(Pkcs15ChangeReferenceDataActivation, ReferenceNotFoundSwMapsToGenericFailureNotInvalidPin)
+{
+    // 6A88 (and by the same code path 6985/6984/6A81/6D00) must never be
+    // misread as a wrong-transport-value retry signal.
+    FakePCSCConnection conn;
+    conn.setResponder([](const APDUCommand& cmd) -> APDUResponse {
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x04)
+            return {{}, 0x90, 0x00};
+        if (cmd.ins == 0x24)
+            return {{}, 0x6A, 0x88};
+        return {{}, 0x6D, 0x00};
+    });
+
+    PlainChannel channel(conn, AppletAid{});
+    pkcs15::PKCS15Card card(channel);
+    auto pinInfo = makeUnblockTargetPinInfo(0x92);
+
+    auto result = card.changeReferenceData(pinInfo, "anything", "4321", 0x00);
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.retriesLeft, -1);
+    EXPECT_FALSE(result.blocked);
+}
+
+// The plugin's activateTransportPin leak guard (P1=0x01 prior-auth form)
+// wraps VERIFY-then-CHANGE in a try/catch: an intra-verb transport drop
+// between the successful VERIFY and the follow-up CHANGE must trigger a
+// best-effort security-state clear rather than leaving a verified secret's
+// state dangling on the card. No real family currently sets
+// transportChangeP1=0x01 (both AppletSuiteGen1 and AppletSuiteGen2 use the
+// ISO-default 0x00 via applyIsoExecutionDefaults — see
+// pin_family_quirks.cpp), so that plugin-level orchestration has no
+// reachable end-to-end path through the registry funnel today (the same
+// documented gap as unblockPIN's RRC variants below: resolveFamilyId /
+// findFamilyQuirks are non-parametric static lookups with no production
+// injection seam). This test instead proves the two underlying facts the
+// guard depends on, directly at the card-verb layer: (1) an intra-verb
+// drop surfaces as a propagating exception — never silently misread as a
+// wrong-transport-value SW — so the plugin's catch block has something
+// real to catch, and (2) a subsequent applet re-select (the exact
+// mechanism performSecStateClear's ReselectApplet variant uses) recovers
+// once the transport is back. A companion plugin-funnel leak-guard test
+// belongs alongside these once a real HW-verified P1=0x01 family exists.
+TEST(Pkcs15ChangeReferenceDataActivation, PriorAuthFormIntraVerbDropAfterVerifyPropagatesAndReselectRecovers)
+{
+    bool dropSelect = false;
+
+    FakePCSCConnection conn;
+    conn.setResponder([&](const APDUCommand& cmd) -> APDUResponse {
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x04) { // SELECT AID (either P2 form)
+            if (dropSelect)
+                return {{}, 0x6A, 0x82}; // applet not found — transport dropped
+            return {{}, 0x90, 0x00};
+        }
+        if (cmd.ins == 0x20 && !cmd.data.empty()) // VERIFY (the transport value)
+            return {{}, 0x90, 0x00};
+        if (cmd.ins == 0x24) // CHANGE REFERENCE DATA
+            return {{}, 0x90, 0x00};
+        return {{}, 0x6D, 0x00};
+    });
+
+    PlainChannel channel(conn, AppletAid{});
+    pkcs15::PKCS15Card card(channel);
+    auto pinInfo = makeUnblockTargetPinInfo(0x92);
+
+    auto verifyResult = card.verifyPIN(pinInfo, "transport1");
+    ASSERT_TRUE(verifyResult.success);
+
+    dropSelect = true; // simulate the intra-verb transport drop
+    EXPECT_THROW(card.changeReferenceData(pinInfo, "", "4321", 0x01), std::runtime_error);
+
+    dropSelect = false; // transport is back
+    EXPECT_TRUE(card.selectApplet());
+}
+
+// ---------------------------------------------------------------------------
+// Plan D Task 13 — pkcs15::PKCS15Card::activate (ISO ACTIVATE, the verb
+// behind pkcs15-plugin's activateSigningKey override), tested directly
+// against a minimal scripted connection — same technique as the
+// Pkcs15ResetRetryCounter / Pkcs15ChangeReferenceDataActivation blocks
+// above, independent of family/quirk resolution.
+//
+// Anti-tautology: the double enforces its OWN, independently chosen
+// "correct" P1/P2 (the ISO 7816-9 ACTIVATE convention the family quirk
+// table's applyIsoExecutionDefaults encodes: `keyActivate = {0x44, 0x00,
+// 0x00}`) and rejects anything else with 6A86, so a passing test proves
+// the caller-supplied P1/P2 actually reached the wire.
+//
+// Coverage note (front-loaded — read before the plugin-funnel section
+// further below): per derivePinStatus's own doc comment
+// (pin_lifecycle_derivation.cpp), PinStatusEntry::keyActivatable /
+// keyActivationPending keep their conservative FALSE default for EVERY
+// family today — there is no FamilyQuirks/PinEvidence field at all whose
+// value could flip them (unlike unblockPIN's rrcVariantKnown, which a
+// future hardware campaign COULD flip). So pkcs15-plugin's
+// activateSigningKey override has NO reachable success path through the
+// real registry funnel for any family, including AppletSuiteGen1 — the
+// plugin-funnel tests below only ever observe the Unsupported gate. The
+// tests in THIS block instead prove the two facts that override's body
+// composes, unbranched, into its result: PKCS15Card::activate's own SW
+// mapping (9000 / 6985-idempotent / other-failure) and — reusing
+// verifyPIN, already exercised via changePIN/unblockPIN elsewhere — the
+// VERIFY-side 63Cx-to-retry-shaped-failure mapping
+// LibreSCRS::Plugin::classifyPinOutcome then turns into InvalidPin.
+// ---------------------------------------------------------------------------
+
+TEST(Pkcs15KeyActivation, OkSwActivatesAtTheGivenP1P2)
+{
+    constexpr std::uint8_t kP1 = 0x00; // AppletSuiteGen1's keyActivate.p1 (Task 8's ISO default).
+    constexpr std::uint8_t kP2 = 0x00; // ditto keyActivate.p2 — caller-supplied, never a PKCS15Card constant.
+    constexpr std::uint8_t kDataDrivenPinRef = 0x92; // the guarding SIGN PIN's own reference (path navigation only).
+
+    FakePCSCConnection conn;
+    conn.setResponder([&](const APDUCommand& cmd) -> APDUResponse {
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x04) // SELECT AID
+            return {{}, 0x90, 0x00};
+        if (cmd.ins == 0x44) { // ACTIVATE
+            if (cmd.p1 != kP1 || cmd.p2 != kP2)
+                return {{}, 0x6A, 0x86};
+            return {{}, 0x90, 0x00};
+        }
+        return {{}, 0x6D, 0x00};
+    });
+
+    PlainChannel channel(conn, AppletAid{});
+    pkcs15::PKCS15Card card(channel);
+    auto pinInfo = makeUnblockTargetPinInfo(kDataDrivenPinRef);
+
+    auto result = card.activate(pinInfo, kP1, kP2);
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.retriesLeft, -1);
+    EXPECT_FALSE(result.blocked);
+
+    const auto& log = conn.history();
+    const auto it = std::find_if(log.begin(), log.end(), [](const APDUCommand& c) { return c.ins == 0x44; });
+    ASSERT_NE(it, log.end());
+    EXPECT_EQ(it->p1, kP1);
+    EXPECT_EQ(it->p2, kP2);
+}
+
+TEST(Pkcs15KeyActivation, AlreadyActiveSwIsIdempotentSuccess)
+{
+    // ISO ACTIVATE on an already-operational key answers 6985 (conditions
+    // of use not satisfied) — the "reachable/retry case" spec §5.3 pins:
+    // a client retry (or a card that was already activated by a previous
+    // attempt) must be treated as success, not failure, so it never
+    // surfaces a spurious KeyActivationFailed for a key that is, in fact,
+    // already active.
+    FakePCSCConnection conn;
+    conn.setResponder([](const APDUCommand& cmd) -> APDUResponse {
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x04)
+            return {{}, 0x90, 0x00};
+        if (cmd.ins == 0x44)
+            return {{}, 0x69, 0x85};
+        return {{}, 0x6D, 0x00};
+    });
+
+    PlainChannel channel(conn, AppletAid{});
+    pkcs15::PKCS15Card card(channel);
+    auto pinInfo = makeUnblockTargetPinInfo(0x92);
+
+    auto result = card.activate(pinInfo, 0x00, 0x00);
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.retriesLeft, -1);
+    EXPECT_FALSE(result.blocked);
+}
+
+TEST(Pkcs15KeyActivation, WrongP1P2IsRejectedAndMapsToFailureNotSuccess)
+{
+    // The double only ever accepts P1==0x00/P2==0x00; calling with
+    // different values on purpose proves a form-rejection (6A86) reaches
+    // `success=false`, not a silently-accepted activation.
+    FakePCSCConnection conn;
+    conn.setResponder([](const APDUCommand& cmd) -> APDUResponse {
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x04)
+            return {{}, 0x90, 0x00};
+        if (cmd.ins == 0x44)
+            return (cmd.p1 == 0x00 && cmd.p2 == 0x00) ? APDUResponse{{}, 0x90, 0x00} : APDUResponse{{}, 0x6A, 0x86};
+        return {{}, 0x6D, 0x00};
+    });
+
+    PlainChannel channel(conn, AppletAid{});
+    pkcs15::PKCS15Card card(channel);
+    auto pinInfo = makeUnblockTargetPinInfo(0x92);
+
+    auto result = card.activate(pinInfo, /*wrong on purpose=*/0x01, 0x02);
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.retriesLeft, -1);
+    EXPECT_FALSE(result.blocked);
+}
+
+TEST(Pkcs15KeyActivation, ReferenceNotFoundSwMapsToFailure)
+{
+    // 6A88 (and by the same code path 6A81/6D00/anything else non-9000,
+    // non-6985) is a genuine ACTIVATE failure — VERIFY succeeded but the
+    // key ACTIVATE step failed (KeyActivationFailed, at the plugin layer).
+    FakePCSCConnection conn;
+    conn.setResponder([](const APDUCommand& cmd) -> APDUResponse {
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x04)
+            return {{}, 0x90, 0x00};
+        if (cmd.ins == 0x44)
+            return {{}, 0x6A, 0x88};
+        return {{}, 0x6D, 0x00};
+    });
+
+    PlainChannel channel(conn, AppletAid{});
+    pkcs15::PKCS15Card card(channel);
+    auto pinInfo = makeUnblockTargetPinInfo(0x92);
+
+    auto result = card.activate(pinInfo, 0x00, 0x00);
+    EXPECT_FALSE(result.success);
+}
+
+TEST(Pkcs15KeyActivation, VerifySignPinWrongValueMapsToRetryShapedFailure)
+{
+    // Proves the VERIFY-side fact activateSigningKey's classification
+    // depends on: PKCS15Card::verifyPIN maps 63Cx to a retry-shaped
+    // failure (success=false, retriesLeft=N), which
+    // LibreSCRS::Plugin::classifyPinOutcome (reused verbatim, unchanged,
+    // by every sibling override) turns into InvalidPin, attributed to the
+    // SIGN PIN.
+    FakePCSCConnection conn;
+    conn.setResponder([](const APDUCommand& cmd) -> APDUResponse {
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x04)
+            return {{}, 0x90, 0x00};
+        if (cmd.ins == 0x20 && !cmd.data.empty())
+            return {{}, 0x63, 0xC5};
+        return {{}, 0x6D, 0x00};
+    });
+
+    PlainChannel channel(conn, AppletAid{});
+    pkcs15::PKCS15Card card(channel);
+    auto pinInfo = makeUnblockTargetPinInfo(0x92);
+
+    auto result = card.verifyPIN(pinInfo, "wrongpin");
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.retriesLeft, 5);
+    EXPECT_FALSE(result.blocked);
+}
+
+TEST(Pkcs15KeyActivation, IntraVerbDropAfterVerifyPropagatesAndReselectRecovers)
+{
+    // The plugin's activateSigningKey leak guard wraps VERIFY-then-ACTIVATE
+    // in a try/catch: an intra-verb transport drop between the successful
+    // VERIFY and the follow-up ACTIVATE must trigger a best-effort
+    // security-state clear rather than leaving a verified SIGN PIN's state
+    // dangling on the card. Same technique as
+    // Pkcs15ChangeReferenceDataActivation's
+    // PriorAuthFormIntraVerbDropAfterVerifyPropagatesAndReselectRecovers:
+    // (1) the drop surfaces as a propagating exception — never silently
+    // misread as an ACTIVATE-rejected SW — so the plugin's catch block has
+    // something real to catch, and (2) a subsequent applet re-select (the
+    // exact mechanism performSecStateClear's ReselectApplet variant uses)
+    // recovers once the transport is back.
+    bool dropSelect = false;
+
+    FakePCSCConnection conn;
+    conn.setResponder([&](const APDUCommand& cmd) -> APDUResponse {
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x04) {
+            if (dropSelect)
+                return {{}, 0x6A, 0x82}; // applet not found — transport dropped
+            return {{}, 0x90, 0x00};
+        }
+        if (cmd.ins == 0x20 && !cmd.data.empty()) // VERIFY (the SIGN PIN)
+            return {{}, 0x90, 0x00};
+        if (cmd.ins == 0x44) // ACTIVATE
+            return {{}, 0x90, 0x00};
+        return {{}, 0x6D, 0x00};
+    });
+
+    PlainChannel channel(conn, AppletAid{});
+    pkcs15::PKCS15Card card(channel);
+    auto pinInfo = makeUnblockTargetPinInfo(0x92);
+
+    auto verifyResult = card.verifyPIN(pinInfo, "signpin1");
+    ASSERT_TRUE(verifyResult.success);
+
+    dropSelect = true; // simulate the intra-verb transport drop
+    EXPECT_THROW(card.activate(pinInfo, 0x00, 0x00), std::runtime_error);
+
+    dropSelect = false; // transport is back
+    EXPECT_TRUE(card.selectApplet());
+}
+
+// ---------------------------------------------------------------------------
+// pkcs15-plugin's unblockPIN override, driven end-to-end (plugin .so via the
+// registry) against the SAME AppletSuiteGen1 / unknown-family fixtures as
+// getPINList above.
+//
+// Credential resolution mirrors changePIN's hard-fail contract exactly. The
+// family-gated fallback is the observable, HONEST current-state behaviour:
+// the real AppletSuiteGen1 quirk row deliberately withholds a
+// hardware-verified RRC variant (pin_family_quirks.cpp — rrcVariantKnown
+// stays false for UserPin/SignPin pending a hardware campaign, even though
+// Task 8/9 already seeded the ISO-default P1 bytes and the RESET RETRY
+// COUNTER builder), so unblockPIN correctly reports Unsupported for it
+// today. Critically, NO RESET RETRY COUNTER APDU reaches the wire in that
+// case — proving the style resolution (derivePinStatus, the SAME function
+// getPINList's advertisement uses) is genuinely data-driven rather than an
+// unconditional attempt: an accidental hardcode (e.g. "always try P1=0x00")
+// would send the APDU regardless of rrcVariantKnown and would be caught by
+// the isResetRetryCounterCmd assertions below. Once a future hardware
+// campaign flips that row's rrcVariantKnown/unblockStyle for a kind, this
+// same code path starts succeeding — no unblockPIN change required — and a
+// companion "success" fixture test belongs alongside these at that time.
+// ---------------------------------------------------------------------------
+
+TEST(Pkcs15PinLifecycle, UnblockPinNonEmptySelectorMissIsHardFailure)
+{
+    CardPluginService registry{std::filesystem::path(PLUGIN_DIR)};
+    auto plugin = loadPkcs15Plugin(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto rig = makeAppletSuiteGen1Rig("Pkcs15 Unblock SelectorMiss Reader 0");
+    LibreSCRS::Secure::String puk{std::string_view{"12345678"}};
+    LibreSCRS::Secure::String newPin{std::string_view{"4321"}};
+    const auto result = plugin->unblockPIN(*rig.session, "Not A Real Label", puk, newPin);
+    EXPECT_EQ(result.outcome, LibreSCRS::Plugin::PINResultOutcome::PluginError);
+    EXPECT_TRUE(std::none_of(rig.card->log.begin(), rig.card->log.end(), isResetRetryCounterCmd));
+}
+
+TEST(Pkcs15PinLifecycle, UnblockPinAppletSuiteGen1FallsBackToUnsupportedUntilHwVerified)
+{
+    CardPluginService registry{std::filesystem::path(PLUGIN_DIR)};
+    auto plugin = loadPkcs15Plugin(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto rig = makeAppletSuiteGen1Rig("Pkcs15 Unblock AppletSuiteGen1 Reader 0");
+    LibreSCRS::Secure::String puk{std::string_view{"12345678"}};
+    LibreSCRS::Secure::String newPin{std::string_view{"4321"}};
+    const auto result = plugin->unblockPIN(*rig.session, "User PIN", puk, newPin);
+    EXPECT_EQ(result.outcome, LibreSCRS::Plugin::PINResultOutcome::Unsupported);
+    // No RRC attempt, and no consumption of the read surface either.
+    EXPECT_TRUE(std::none_of(rig.card->log.begin(), rig.card->log.end(), isResetRetryCounterCmd));
+    EXPECT_TRUE(std::none_of(rig.card->log.begin(), rig.card->log.end(), isRealVerify));
+}
+
+TEST(Pkcs15PinLifecycle, UnblockPinUnknownFamilyFallsBackToUnsupported)
+{
+    CardPluginService registry{std::filesystem::path(PLUGIN_DIR)};
+    auto plugin = loadPkcs15Plugin(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto rig = makeUnknownRig("Pkcs15 Unblock Unknown Reader 0");
+    LibreSCRS::Secure::String puk{std::string_view{"12345678"}};
+    LibreSCRS::Secure::String newPin{std::string_view{"4321"}};
+    const auto result = plugin->unblockPIN(*rig.session, "PIN", puk, newPin);
+    EXPECT_EQ(result.outcome, LibreSCRS::Plugin::PINResultOutcome::Unsupported);
+    EXPECT_TRUE(std::none_of(rig.card->log.begin(), rig.card->log.end(), isResetRetryCounterCmd));
+}
+
+// ---------------------------------------------------------------------------
+// Plan D Task 12 — pkcs15-plugin's activateTransportPin override, driven
+// end-to-end (plugin .so via the registry) against the SAME
+// AppletSuiteGen1 / unknown-family fixtures as getPINList/unblockPIN
+// above, plus the synthetic transportSignPinAodf() rig for the one
+// reachable success form.
+//
+// Credential resolution hard-fails on ANY findPinByLabel miss — including
+// the EMPTY selector, unlike changePIN/unblockPIN's legacy default-PIN
+// fallback (see the override's doc comment in pkcs15_card_plugin.cpp for
+// why: findUserPin() requires pin.initialized, which a transport-state
+// SIGN PIN by definition is not).
+//
+// The non-activatable fallback is the anti-hardcode proof: the REAL
+// hardware-captured AppletSuiteGen1 Signature PIN (already personalized,
+// pinFlags 0x48) resolves state=Operational, not Transport, so
+// activateTransportPin correctly reports Unsupported for it even though
+// the family's supportsTransportPin is true — proving the gate reads
+// live evidence rather than merely the family flag. Critically, NO CHANGE
+// REFERENCE DATA APDU reaches the wire in that case.
+//
+// The one-shot (P1=0x00) success path IS reachable today (unlike
+// unblockPIN's RRC forms): AppletSuiteGen1's row already carries
+// transportChangeP1=0x00 (Task 8's ISO default), so a genuinely
+// transport-state SIGN PIN (transportSignPinAodf) drives a real CHANGE
+// REFERENCE DATA through the plugin. The P1=0x01 prior-auth form's
+// VERIFY-then-CHANGE orchestration and its intra-verb-drop leak guard have
+// no such reachable path (no real family sets transportChangeP1=0x01) —
+// see the Pkcs15ChangeReferenceDataActivation card-verb-layer tests above
+// for that coverage.
+// ---------------------------------------------------------------------------
+
+TEST(Pkcs15PinLifecycle, ActivateTransportPinNonEmptySelectorMissIsHardFailure)
+{
+    CardPluginService registry{std::filesystem::path(PLUGIN_DIR)};
+    auto plugin = loadPkcs15Plugin(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto rig = makeAppletSuiteGen1Rig("Pkcs15 Activate SelectorMiss Reader 0");
+    LibreSCRS::Secure::String transport{std::string_view{"87654321"}};
+    LibreSCRS::Secure::String newPin{std::string_view{"4321"}};
+    const auto result = plugin->activateTransportPin(*rig.session, "Not A Real Label", transport, newPin);
+    EXPECT_EQ(result.outcome, LibreSCRS::Plugin::PINResultOutcome::PluginError);
+    EXPECT_TRUE(std::none_of(rig.card->log.begin(), rig.card->log.end(), isChangeReferenceDataCmd));
+}
+
+TEST(Pkcs15PinLifecycle, ActivateTransportPinEmptySelectorIsAlsoHardFailure)
+{
+    // Unlike changePIN/unblockPIN, there is no "empty selector -> default
+    // PIN" fallback for activation (findUserPin() requires initialized,
+    // which a transport-state SIGN PIN never is) — an empty selector is
+    // therefore ALSO a hard-fail here, not merely the non-empty-miss case.
+    CardPluginService registry{std::filesystem::path(PLUGIN_DIR)};
+    auto plugin = loadPkcs15Plugin(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto rig = makeAppletSuiteGen1TransportSignRig("Pkcs15 Activate EmptySelector Reader 0");
+    LibreSCRS::Secure::String transport{std::string_view{"87654321"}};
+    LibreSCRS::Secure::String newPin{std::string_view{"4321"}};
+    const auto result = plugin->activateTransportPin(*rig.session, "", transport, newPin);
+    EXPECT_EQ(result.outcome, LibreSCRS::Plugin::PINResultOutcome::PluginError);
+    EXPECT_TRUE(std::none_of(rig.card->log.begin(), rig.card->log.end(), isChangeReferenceDataCmd));
+}
+
+TEST(Pkcs15PinLifecycle, ActivateTransportPinAlreadyOperationalSignPinFallsBackToUnsupported)
+{
+    CardPluginService registry{std::filesystem::path(PLUGIN_DIR)};
+    auto plugin = loadPkcs15Plugin(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    // The real hardware-captured AppletSuiteGen1 Signature PIN is already
+    // personalized (pinFlags 0x48: local + initialized) -> state=Operational,
+    // not Transport, even though the family DOES support transport PINs in
+    // general. The gate must read the credential's OWN evidence, never just
+    // the family flag.
+    auto rig = makeAppletSuiteGen1Rig("Pkcs15 Activate AlreadyOperational Reader 0");
+    LibreSCRS::Secure::String transport{std::string_view{"87654321"}};
+    LibreSCRS::Secure::String newPin{std::string_view{"4321"}};
+    const auto result = plugin->activateTransportPin(*rig.session, "Signature PIN", transport, newPin);
+    EXPECT_EQ(result.outcome, LibreSCRS::Plugin::PINResultOutcome::Unsupported);
+    EXPECT_TRUE(std::none_of(rig.card->log.begin(), rig.card->log.end(), isChangeReferenceDataCmd));
+    EXPECT_TRUE(std::none_of(rig.card->log.begin(), rig.card->log.end(), isRealVerify));
+}
+
+TEST(Pkcs15PinLifecycle, ActivateTransportPinUnknownFamilyFallsBackToUnsupported)
+{
+    CardPluginService registry{std::filesystem::path(PLUGIN_DIR)};
+    auto plugin = loadPkcs15Plugin(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto rig = makeUnknownRig("Pkcs15 Activate Unknown Reader 0");
+    LibreSCRS::Secure::String transport{std::string_view{"87654321"}};
+    LibreSCRS::Secure::String newPin{std::string_view{"4321"}};
+    const auto result = plugin->activateTransportPin(*rig.session, "PIN", transport, newPin);
+    EXPECT_EQ(result.outcome, LibreSCRS::Plugin::PINResultOutcome::Unsupported);
+    EXPECT_TRUE(std::none_of(rig.card->log.begin(), rig.card->log.end(), isChangeReferenceDataCmd));
+}
+
+TEST(Pkcs15PinLifecycle, ActivateTransportPinOneShotFormSucceedsAndSendsTransportThenNew)
+{
+    CardPluginService registry{std::filesystem::path(PLUGIN_DIR)};
+    auto plugin = loadPkcs15Plugin(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto rig = makeAppletSuiteGen1TransportSignRig("Pkcs15 Activate OneShot Reader 0");
+    rig.card->acceptedChangeRefP1 = 0x00; // AppletSuiteGen1's transportChangeP1 (Task 8's ISO default)
+
+    // transportSignPinAodf's storedLength is 4 (minLength=4/storedLength=4/
+    // maxLength=8): both values are exactly 4 chars so encodePIN neither
+    // truncates nor pads either side, keeping the on-wire data assertion
+    // below a direct, unambiguous concatenation.
+    LibreSCRS::Secure::String transport{std::string_view{"8765"}};
+    LibreSCRS::Secure::String newPin{std::string_view{"4321"}};
+    const auto result = plugin->activateTransportPin(*rig.session, "Sign PIN", transport, newPin);
+    EXPECT_EQ(result.outcome, LibreSCRS::Plugin::PINResultOutcome::Ok);
+
+    const auto& log = rig.card->log;
+    const auto it = std::find_if(log.begin(), log.end(), isChangeReferenceDataCmd);
+    ASSERT_NE(it, log.end());
+    EXPECT_EQ(it->p1, 0x00);
+    EXPECT_EQ(it->p2, 0x92); // data-driven signPinRef from the AODF, not a constant
+    const std::vector<std::uint8_t> expectedData = {'8', '7', '6', '5', '4', '3', '2', '1'};
+    EXPECT_EQ(it->data, expectedData); // transport || new, concatenated raw
+    // One-shot form: no separate VERIFY precedes the CHANGE.
+    EXPECT_TRUE(std::none_of(log.begin(), log.end(), isRealVerify));
+    // Exactly one CHANGE REFERENCE DATA reached the wire.
+    EXPECT_EQ(std::count_if(log.begin(), log.end(), isChangeReferenceDataCmd), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Plan D Task 13 — pkcs15-plugin's activateSigningKey override, driven
+// end-to-end (plugin .so via the registry) against the SAME
+// AppletSuiteGen1 / unknown-family fixtures as getPINList/unblockPIN/
+// activateTransportPin above.
+//
+// Unlike unblockPIN and activateTransportPin, this override's base virtual
+// signature carries NO pin-label selector (CardPlugin.h ~737): there is no
+// "selector miss" case to test here — the credential is resolved entirely
+// from the derived evidence set (PinStatusEntry::keyActivatable), never a
+// caller-supplied label.
+//
+// Both tests below observe the SAME outcome (Unsupported, zero ACTIVATE
+// APDUs) for a different reason each: the first because the family is
+// unrecognized at all; the second — the anti-hardcode proof — because the
+// AppletSuiteGen1 family row already carries ISO-default `keyActivate`
+// bytes (Task 8, still [HW-VERIFY]) yet still correctly reports
+// Unsupported, since no credential's derived record ever asserts
+// keyActivatable today (see the Pkcs15KeyActivation block's coverage note
+// above, and unblockPIN's identically-shaped documented gap). A "success"
+// fixture test belongs alongside these once a future increment teaches
+// derivePinStatus to assert keyActivatable from real key/certificate
+// evidence — no activateSigningKey change required at that point, exactly
+// as unblockPIN's own gap note promises for rrcVariantKnown.
+// ---------------------------------------------------------------------------
+
+TEST(Pkcs15PinLifecycle, ActivateSigningKeyUnknownFamilyFallsBackToUnsupported)
+{
+    CardPluginService registry{std::filesystem::path(PLUGIN_DIR)};
+    auto plugin = loadPkcs15Plugin(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto rig = makeUnknownRig("Pkcs15 ActivateKey Unknown Reader 0");
+    LibreSCRS::Secure::String signPin{std::string_view{"1234"}};
+    const auto result = plugin->activateSigningKey(*rig.session, signPin);
+    EXPECT_EQ(result.outcome, LibreSCRS::Plugin::PINResultOutcome::Unsupported);
+    // The AODF SELECT DOES reach the wire (readProfile runs first, to
+    // resolve the family) — proving the call reached the override's own
+    // body rather than the inherited base default (which touches the
+    // session/channel not at all); the family then resolves to Unknown, so
+    // no quirk row exists and the override exits before any VERIFY/ACTIVATE.
+    EXPECT_TRUE(std::any_of(rig.card->log.begin(), rig.card->log.end(), isSelectAodfFid));
+    EXPECT_TRUE(std::none_of(rig.card->log.begin(), rig.card->log.end(), isActivateCmd));
+    EXPECT_TRUE(std::none_of(rig.card->log.begin(), rig.card->log.end(), isRealVerify));
+}
+
+TEST(Pkcs15PinLifecycle, ActivateSigningKeyAppletSuiteGen1FallsBackToUnsupportedUntilKeyEvidenceExists)
+{
+    CardPluginService registry{std::filesystem::path(PLUGIN_DIR)};
+    auto plugin = loadPkcs15Plugin(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    // The AppletSuiteGen1 rig (hardware-captured AODF): the family row DOES
+    // carry the ISO-default keyActivate bytes (Task 8, still [HW-VERIFY]), but no AODF
+    // object's derived record is ever keyActivatable (derivePinStatus keeps
+    // it conservatively false for every family today) — proving the gate
+    // reads live derived evidence, never just "this family supports key
+    // activation in general".
+    auto rig = makeAppletSuiteGen1Rig("Pkcs15 ActivateKey AppletSuiteGen1 Reader 0");
+    LibreSCRS::Secure::String signPin{std::string_view{"1234"}};
+    const auto result = plugin->activateSigningKey(*rig.session, signPin);
+    EXPECT_EQ(result.outcome, LibreSCRS::Plugin::PINResultOutcome::Unsupported);
+    // The profile IS read and the family IS resolved + quirk-matched (this
+    // rig's label positively resolves AppletSuiteGen1, unlike the unknown-
+    // family test above) — proving the override engaged the full
+    // evidence-scan/derivation path and STILL correctly found no
+    // keyActivatable credential, rather than short-circuiting on a missing
+    // quirk row. No ACTIVATE attempt, and no VERIFY consumption either.
+    EXPECT_TRUE(std::any_of(rig.card->log.begin(), rig.card->log.end(), isSelectAodfFid));
+    EXPECT_TRUE(std::none_of(rig.card->log.begin(), rig.card->log.end(), isActivateCmd));
+    EXPECT_TRUE(std::none_of(rig.card->log.begin(), rig.card->log.end(), isRealVerify));
 }

@@ -169,6 +169,49 @@ bool inFamilySignatureDf(LibreSCRS::Plugin::Internal::FamilyId family, const std
     return false;
 }
 
+/// @brief Builds the AODF-evidence fields @c unblockPIN, @c
+///        activateTransportPin and @c activateSigningKey all fill
+///        IDENTICALLY for one already-resolved credential (Task 12 review
+///        Minor: this ~11-line block was verbatim-duplicated between
+///        @c unblockPIN and @c activateTransportPin; extracted here so a
+///        third override doesn't copy it a third time).
+///
+/// Deliberately does NOT set @ref
+/// LibreSCRS::Plugin::Internal::PinEvidence::authIdChainTarget (only @c
+/// unblockPIN's PUK chain-resolution needs it — set by that call site
+/// after calling this) nor @c blocked (only @c getPINList's counter-probe
+/// pass populates that; a mutation call never probes counters, so the
+/// conservative @c false default stands).
+///
+/// @param pinInfo   The already-resolved credential (by label or, for
+///                  @c activateSigningKey, by scanning for the
+///                  holder-activatable record).
+/// @param family    Resolved family, for the signature-DF marker.
+/// @param quirks    The family's quirk row; @c nullptr is tolerated
+///                  (mirrors @c getPINList's own inline construction)
+///                  though every current call site has already null-checked it.
+/// @param paceGated Session-level PACE requirement (@c requiresPaceFor).
+LibreSCRS::Plugin::Internal::PinEvidence buildPinEvidence(const pkcs15::PinInfo& pinInfo,
+                                                          LibreSCRS::Plugin::Internal::FamilyId family,
+                                                          const LibreSCRS::Plugin::Internal::FamilyQuirks* quirks,
+                                                          bool paceGated)
+{
+    using LibreSCRS::Plugin::Internal::PinEvidence;
+    PinEvidence e;
+    e.label = pinInfo.label;
+    e.reference = pinInfo.pinReference;
+    e.ownId = pinInfo.id;
+    e.localScope = pinInfo.local;
+    e.inQscdDf = inFamilySignatureDf(family, pinInfo.path);
+    e.soPinFlag = pinInfo.soPin;
+    e.unblockingPinFlag = pinInfo.unblockingPin;
+    e.unblockDisabledFlag = pinInfo.unblockDisabled;
+    e.changeDisabledFlag = pinInfo.changeDisabled;
+    e.initialized = pinInfo.initialized;
+    e.paceEvidence = (paceGated || (quirks && quirks->usesPace)) && pinInfo.changeDisabled && pinInfo.unblockDisabled;
+    return e;
+}
+
 class PKCS15CardPlugin final : public LibreSCRS::Plugin::CardPlugin
 {
 public:
@@ -678,6 +721,417 @@ public:
         return result;
     }
 
+    /// @brief PUK-based unblock via ISO RESET RETRY COUNTER.
+    ///
+    /// Mirrors changePIN above exactly for credential resolution / channel /
+    /// transaction (acquireChannel, readProfile, findPinByLabel with the
+    /// same hard-fail-on-selector-miss contract) and swaps in
+    /// card.resetRetryCounter (Task 9's builder) in place of
+    /// card.changePIN. The unblock STYLE — and therefore the RESET RETRY
+    /// COUNTER P1 and the resulting on-wire data shape — is resolved by
+    /// calling the SAME derivation function getPINList uses
+    /// (derivePinStatus), fed the SAME evidence shape, never a hardcoded
+    /// switch.
+    ///
+    /// @note Only takes effect for a family whose quirk row has verified
+    ///       RRC knowledge for this credential's kind (currently: none —
+    ///       AppletSuiteGen1's row deliberately withholds rrcVariantKnown
+    ///       until a hardware campaign confirms the byte values Task 8
+    ///       seeded as ISO defaults, i.e. still [HW-VERIFY]); everything
+    ///       else — including a genuinely unknown family — falls back to
+    ///       the base Unsupported contract untouched.
+    LibreSCRS::Plugin::PINResult unblockPIN(LibreSCRS::SmartCard::CardSession& session, std::string_view pinLabel,
+                                            const LibreSCRS::Secure::String& puk,
+                                            const LibreSCRS::Secure::String& newPin) const override
+    {
+        LibreSCRS::Plugin::PINResult result;
+        auto holderResult = acquireChannel(session, requiresPaceFor(session));
+        if (!holderResult) {
+            result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
+            return result;
+        }
+        auto holder = std::move(*holderResult);
+        auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
+        if (channel == nullptr) {
+            result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
+            return result;
+        }
+
+        pkcs15::PKCS15Card card(*channel);
+        LibreSCRS::Internal::probeTrace("PROBE-READPROFILE call=unblockPIN");
+        auto profile = card.readProfile();
+
+        const pkcs15::PinInfo* pinInfo = findPinByLabel(profile, pinLabel);
+        if (!pinInfo && !pinLabel.empty()) {
+            // Same hard-fail contract as changePIN: a non-empty selector
+            // that matches no AODF object is a refusal, never a fallback.
+            result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
+            return result;
+        }
+        if (!pinInfo)
+            pinInfo = findUserPin(profile);
+        if (!pinInfo) {
+            result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
+            return result;
+        }
+
+        const auto family = resolveFamilyId(profile);
+        const auto* quirks = LibreSCRS::Plugin::Internal::findFamilyQuirks(family);
+        if (quirks == nullptr) {
+            // No family knowledge at all: this plugin has no verified
+            // unblock command form for this card. Same contract as the base
+            // CardPlugin::unblockPIN default.
+            result.outcome = LibreSCRS::Plugin::PINResultOutcome::Unsupported;
+            return result;
+        }
+
+        // Evidence for the addressed credential PLUS its resolved PUK (if
+        // the AODF names one via authId) — exactly the fields getPINList's
+        // evidence pass fills for these two objects, just without the
+        // counter probe (this call doesn't need retriesLeft/usesLeft). The
+        // PUK sub-entry below deliberately omits .blocked too (unlike
+        // getPINList's evidence pass, which populates it from the card
+        // counters): this is safe because the RRC attempt below is the
+        // authoritative state check regardless — a truly exhausted PUK gets
+        // classified via the 6983 branch, never a stale/absent pre-check
+        // here.
+        using LibreSCRS::Plugin::Internal::PinEvidence;
+        PinEvidence target = buildPinEvidence(*pinInfo, family, quirks, requiresPaceFor(session));
+        if (!pinInfo->authId.empty())
+            target.authIdChainTarget = pinInfo->authId;
+
+        std::vector<PinEvidence> allEvidence{target};
+        if (!pinInfo->authId.empty()) {
+            for (const auto& p : profile.pins) {
+                if (p.id == pinInfo->authId) {
+                    PinEvidence pukEvidence;
+                    pukEvidence.ownId = p.id;
+                    allEvidence.push_back(pukEvidence);
+                    break;
+                }
+            }
+        }
+
+        const auto entry = LibreSCRS::Plugin::Internal::derivePinStatus(allEvidence.front(), allEvidence, quirks);
+        if (!entry.unblockable) {
+            // No verified RRC variant for this credential's kind (or its PUK
+            // isn't chain-resolvable / is vetoed) — Unsupported, and
+            // critically, no APDU reaches the wire: the style is genuinely
+            // data-driven, never assumed.
+            result.outcome = LibreSCRS::Plugin::PINResultOutcome::Unsupported;
+            return result;
+        }
+
+        // Style -> (P1, on-wire data shape) decision, extracted to a pure
+        // free function (Task 11 review fix) so it is unit-testable without
+        // card I/O or a production injection seam — see resolveUnblockApdu's
+        // doc comment for the classifyPinOutcome-precedent rationale.
+        const auto apdu =
+            LibreSCRS::Plugin::Internal::resolveUnblockApdu(entry.unblockStyle, *quirks, puk.view(), newPin.view());
+
+        auto r = card.resetRetryCounter(*pinInfo, apdu.puk, apdu.newPin, apdu.p1);
+        if (r.retriesLeft >= 0)
+            result.retriesLeft = r.retriesLeft; // attributed to the PUK
+        result.blocked = r.blocked;
+        result.outcome = LibreSCRS::Plugin::classifyPinOutcome(result, r.success);
+
+        // secStateClear: best-effort cleanup, per quirks->secStateClear.
+        // performSecStateClear returns void by design — see its comment —
+        // so a cleanup failure structurally cannot flip `result.outcome`
+        // away from the RRC's own classification (mutation-success is
+        // authoritative: never cause the client to re-prompt and burn
+        // another PUK use over a cosmetic re-select failure).
+        performSecStateClear(card, *quirks);
+
+        return result;
+    }
+
+    /// @brief Transport-born SIGN PIN activation via ISO CHANGE REFERENCE
+    ///        DATA.
+    ///
+    /// Mirrors changePIN/unblockPIN's credential-resolution / channel /
+    /// transaction shape (acquireChannel, readProfile, findPinByLabel),
+    /// using the new PKCS15Card::changeReferenceData(p1) verb (this task's
+    /// sibling to Task 11's resetRetryCounter) — a new verb, not a
+    /// replacement for card.changePIN, which this override never calls.
+    /// Unlike changePIN/unblockPIN, there is no legacy "empty selector ->
+    /// default PIN" fallback here: findUserPin() requires pin.initialized,
+    /// which a transport-state SIGN PIN by definition is NOT, so it could
+    /// never resolve the addressed credential anyway — an empty selector
+    /// is therefore ALSO a hard-fail, not merely the non-empty-miss case
+    /// changePIN/unblockPIN carve out.
+    ///
+    /// Gating and the P1-driven data shape are resolved by calling the
+    /// SAME derivation getPINList/unblockPIN use (derivePinStatus / the
+    /// sibling resolveTransportChangeApdu pure function beside
+    /// resolveUnblockApdu), never a hardcoded switch.
+    ///
+    /// @note Only takes effect for a family whose quirk row asserts
+    ///       supportsTransportPin AND whose evidence resolves this
+    ///       credential's kind/state to SignPin/Transport; everything
+    ///       else — including a genuinely unknown family, or this SAME
+    ///       family once the credential is already personalized — falls
+    ///       back to the base Unsupported contract untouched, and
+    ///       critically no CHANGE REFERENCE DATA APDU reaches the wire in
+    ///       that case.
+    LibreSCRS::Plugin::PINResult activateTransportPin(LibreSCRS::SmartCard::CardSession& session,
+                                                      std::string_view pinLabel,
+                                                      const LibreSCRS::Secure::String& transportValue,
+                                                      const LibreSCRS::Secure::String& newPin) const override
+    {
+        LibreSCRS::Plugin::PINResult result;
+        auto holderResult = acquireChannel(session, requiresPaceFor(session));
+        if (!holderResult) {
+            result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
+            return result;
+        }
+        auto holder = std::move(*holderResult);
+        auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
+        if (channel == nullptr) {
+            result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
+            return result;
+        }
+
+        pkcs15::PKCS15Card card(*channel);
+        LibreSCRS::Internal::probeTrace("PROBE-READPROFILE call=activateTransportPin");
+        auto profile = card.readProfile();
+
+        const pkcs15::PinInfo* pinInfo = findPinByLabel(profile, pinLabel);
+        if (!pinInfo) {
+            // Hard-fail on ANY resolution miss, empty selector included —
+            // see the override's doc comment above for why no default-PIN
+            // fallback exists here.
+            result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
+            return result;
+        }
+
+        const auto family = resolveFamilyId(profile);
+        const auto* quirks = LibreSCRS::Plugin::Internal::findFamilyQuirks(family);
+        if (quirks == nullptr) {
+            // No family knowledge at all: same contract as the base
+            // CardPlugin::activateTransportPin default.
+            result.outcome = LibreSCRS::Plugin::PINResultOutcome::Unsupported;
+            return result;
+        }
+
+        // Evidence for the addressed credential — exactly the fields
+        // getPINList's evidence pass fills for kind/state classification (no
+        // counter probe: this is a mutation call, not a read).
+        using LibreSCRS::Plugin::Internal::PinEvidence;
+        const PinEvidence target = buildPinEvidence(*pinInfo, family, quirks, requiresPaceFor(session));
+
+        const std::vector<PinEvidence> allEvidence{target};
+        const auto entry = LibreSCRS::Plugin::Internal::derivePinStatus(target, allEvidence, quirks);
+        if (!entry.activatable) {
+            // Not a transport-state SIGN PIN on a transport-capable family —
+            // Unsupported, and the style resolution is genuinely
+            // data-driven, never assumed.
+            result.outcome = LibreSCRS::Plugin::PINResultOutcome::Unsupported;
+            return result;
+        }
+
+        // Form -> (P1, on-wire data shape) decision, extracted to a pure
+        // free function up front (mirrors Task 11's resolveUnblockApdu) so
+        // it is unit-testable without card I/O.
+        const auto apdu = LibreSCRS::Plugin::Internal::resolveTransportChangeApdu(quirks->transportChangeP1,
+                                                                                  transportValue.view(), newPin.view());
+
+        if (apdu.p1 == 0x01) {
+            // Prior-auth form: VERIFY the transport value first, THEN
+            // CHANGE with new-only data.
+            auto vr = card.verifyPIN(*pinInfo, transportValue.view());
+            if (!vr.success) {
+                if (vr.retriesLeft >= 0)
+                    result.retriesLeft = vr.retriesLeft; // attributed to the transport value
+                result.blocked = vr.blocked;
+                result.outcome = LibreSCRS::Plugin::classifyPinOutcome(result, false);
+                return result;
+            }
+            // VERIFY established a verified security state on the card. An
+            // intra-verb drop between here and the CHANGE below must not
+            // leave that state leaked on the card — best-effort
+            // secStateClear before reporting failure truthfully.
+            try {
+                auto r = card.changeReferenceData(*pinInfo, apdu.oldData, apdu.newData, apdu.p1);
+                if (r.retriesLeft >= 0)
+                    result.retriesLeft = r.retriesLeft;
+                result.blocked = r.blocked;
+                result.outcome = LibreSCRS::Plugin::classifyPinOutcome(result, r.success);
+            } catch (...) {
+                performSecStateClear(card, *quirks);
+                result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
+                return result;
+            }
+        } else {
+            // One-shot form: a single CHANGE REFERENCE DATA call carries
+            // transport||new — no separate VERIFY, so no intervening
+            // verified state can leak.
+            auto r = card.changeReferenceData(*pinInfo, apdu.oldData, apdu.newData, apdu.p1);
+            if (r.retriesLeft >= 0)
+                result.retriesLeft = r.retriesLeft;
+            result.blocked = r.blocked;
+            result.outcome = LibreSCRS::Plugin::classifyPinOutcome(result, r.success);
+        }
+
+        // secStateClear: best-effort cleanup, per quirks->secStateClear.
+        // Mutation-success is authoritative: a later clear failure must
+        // never flip an already-successful outcome (same guarantee as
+        // unblockPIN).
+        performSecStateClear(card, *quirks);
+        return result;
+    }
+
+    /// @brief Deactivated SIGN key activation via ISO ACTIVATE.
+    ///
+    /// Mirrors unblockPIN/activateTransportPin's
+    /// channel/transaction/quirks-lookup shape, but the base virtual
+    /// (CardPlugin.h ~737) takes NO pin label: the credential to
+    /// VERIFY+ACTIVATE is resolved ENTIRELY internally, by building the
+    /// SAME evidence set getPINList/unblockPIN/activateTransportPin build
+    /// (buildPinEvidence, reused verbatim — Part A's DRY fix) for EVERY
+    /// AODF object and running it through the SAME derivePinStatus,
+    /// looking for the one whose derived record is holder-activatable
+    /// (@ref LibreSCRS::Plugin::PinStatusEntry::keyActivatable — "Holder
+    /// can activate that key through this software", PinStatusEntry.h:131)
+    /// — never a hardcoded label or PinKind.
+    ///
+    /// @note [Documented gap, the same shape as unblockPIN's RRC gap
+    ///       above — see that override's doc comment.] Per
+    ///       derivePinStatus's own comment
+    ///       (pin_lifecycle_derivation.cpp ~101-108), keyActivatable (and
+    ///       keyActivationPending) keep their conservative FALSE default
+    ///       for EVERY family today: asserting a deactivated signing key
+    ///       needs key/certificate-state evidence no plugin reads yet.
+    ///       Unlike unblockPIN's rrcVariantKnown — a per-family bool a
+    ///       future hardware campaign could flip — there is today no
+    ///       FamilyQuirks/PinEvidence field at all whose value could make
+    ///       keyActivatable true; the derivation function simply never
+    ///       computes it from evidence. So this override IS genuinely
+    ///       data-driven (it reuses the shared derivation engine end to
+    ///       end and never special-cases a credential by label or kind),
+    ///       but has NO reachable success path through the real registry
+    ///       funnel — for ANY family, including AppletSuiteGen1 even
+    ///       though its quirk row already carries ISO-default keyActivate
+    ///       bytes (Task 8, still [HW-VERIFY], i.e. NOT hardware-confirmed)
+    ///       — until a future increment teaches derivePinStatus to assert
+    ///       keyActivatable from real key/certificate evidence. See the
+    ///       Pkcs15KeyActivation card-verb-layer tests (mirroring the
+    ///       Pkcs15ResetRetryCounter / Pkcs15ChangeReferenceDataActivation
+    ///       precedent) for the coverage this gap requires instead of an
+    ///       end-to-end fixture: they prove PKCS15Card::activate's own SW
+    ///       mapping (9000 / 6985-idempotent / other-failure) and the
+    ///       VERIFY-side classifyPinOutcome fact this override composes,
+    ///       unbranched, into its Ok / KeyActivationFailed result below.
+    LibreSCRS::Plugin::PINResult activateSigningKey(LibreSCRS::SmartCard::CardSession& session,
+                                                    const LibreSCRS::Secure::String& signPin) const override
+    {
+        LibreSCRS::Plugin::PINResult result;
+        const bool paceGated = requiresPaceFor(session);
+        auto holderResult = acquireChannel(session, paceGated);
+        if (!holderResult) {
+            result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
+            return result;
+        }
+        auto holder = std::move(*holderResult);
+        auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
+        if (channel == nullptr) {
+            result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
+            return result;
+        }
+
+        pkcs15::PKCS15Card card(*channel);
+        LibreSCRS::Internal::probeTrace("PROBE-READPROFILE call=activateSigningKey");
+        auto profile = card.readProfile();
+
+        const auto family = resolveFamilyId(profile);
+        const auto* quirks = LibreSCRS::Plugin::Internal::findFamilyQuirks(family);
+        if (quirks == nullptr) {
+            // No family knowledge at all: same contract as the base
+            // CardPlugin::activateSigningKey default.
+            result.outcome = LibreSCRS::Plugin::PINResultOutcome::Unsupported;
+            return result;
+        }
+
+        // Evidence pass over EVERY AODF object (buildPinEvidence), plus the
+        // same chain-resolution pass getPINList runs, so a future
+        // derivation change that makes keyActivatable chain-dependent sees
+        // a fully-formed evidence set here too — never special-cased for
+        // this verb.
+        using LibreSCRS::Plugin::Internal::PinEvidence;
+        std::vector<PinEvidence> evidence;
+        evidence.reserve(profile.pins.size());
+        for (const auto& pin : profile.pins)
+            evidence.push_back(buildPinEvidence(pin, family, quirks, paceGated));
+        for (std::size_t i = 0; i < profile.pins.size(); ++i) {
+            const auto& protecting = profile.pins[i].authId;
+            if (protecting.empty())
+                continue;
+            for (std::size_t j = 0; j < profile.pins.size(); ++j) {
+                if (j == i || profile.pins[j].id != protecting)
+                    continue;
+                evidence[i].authIdChainTarget = protecting;
+                evidence[j].unblockingPinFlag = true;
+                break;
+            }
+        }
+
+        // Resolve the ONE credential whose derived record is holder-
+        // activatable — never a hardcoded label/kind (see the doc comment
+        // above: no family asserts this today, so this loop always falls
+        // through to Unsupported in production).
+        const pkcs15::PinInfo* signPinInfo = nullptr;
+        for (std::size_t i = 0; i < profile.pins.size(); ++i) {
+            if (LibreSCRS::Plugin::Internal::derivePinStatus(evidence[i], evidence, quirks).keyActivatable) {
+                signPinInfo = &profile.pins[i];
+                break;
+            }
+        }
+        if (signPinInfo == nullptr) {
+            result.outcome = LibreSCRS::Plugin::PINResultOutcome::Unsupported;
+            return result;
+        }
+
+        // Self-contained, ONE lock (PIV-PIN-ALWAYS discipline): VERIFY the
+        // operational SIGN PIN, then ACTIVATE the key, against this SAME
+        // `card`/channel/transaction — never CardPlugin::verifyPIN, which
+        // would be a second, separate transaction.
+        auto vr = card.verifyPIN(*signPinInfo, signPin.view());
+        if (!vr.success) {
+            if (vr.retriesLeft >= 0)
+                result.retriesLeft = vr.retriesLeft; // attributed to the SIGN PIN
+            result.blocked = vr.blocked;
+            result.outcome = LibreSCRS::Plugin::classifyPinOutcome(result, false);
+            return result;
+        }
+
+        // VERIFY established a verified security state on the card. An
+        // intra-verb drop between here and ACTIVATE must not leave it
+        // leaked — best-effort secStateClear before reporting failure
+        // truthfully (same guard as activateTransportPin's prior-auth
+        // form).
+        try {
+            auto ar = card.activate(*signPinInfo, quirks->keyActivate.p1, quirks->keyActivate.p2);
+            // 6985 is the idempotent already-active case
+            // (PKCS15Card::activate folds it into `success` — see its doc
+            // comment); both that and a fresh 9000 report Ok here.
+            // Anything else is KeyActivationFailed: VERIFY succeeded but
+            // the key ACTIVATE step failed.
+            result.outcome = ar.success ? LibreSCRS::Plugin::PINResultOutcome::Ok
+                                        : LibreSCRS::Plugin::PINResultOutcome::KeyActivationFailed;
+        } catch (...) {
+            performSecStateClear(card, *quirks);
+            result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
+            return result;
+        }
+
+        // secStateClear: best-effort cleanup, per quirks->secStateClear.
+        // Mutation-success is authoritative: a later clear failure must
+        // never flip an already-successful outcome (same guarantee as
+        // unblockPIN/activateTransportPin).
+        performSecStateClear(card, *quirks);
+        return result;
+    }
+
     LibreSCRS::Plugin::CredentialCounters readCounters(LibreSCRS::SmartCard::CardSession& session,
                                                        std::string_view pinLabel) const override
     {
@@ -875,6 +1329,32 @@ private:
         std::lock_guard lock(stateMutex);
         auto it = sessions.find(makeSessionKey(session));
         return it != sessions.end() && it->second.requiresPace;
+    }
+
+    // Clears any security state a mutating card verb (RESET RETRY COUNTER /
+    // CHANGE REFERENCE DATA / ACTIVATE) established, per the family's
+    // quirks->secStateClear method. Returns void BY DESIGN: this is a
+    // best-effort cleanup step, never a classifier — a caller cannot flip an
+    // already-computed PINResult::outcome using a value this function
+    // doesn't return, which is the structural guarantee behind the
+    // "mutation-success is authoritative" invariant (see unblockPIN). Only
+    // logs on failure.
+    static void performSecStateClear(pkcs15::PKCS15Card& card,
+                                     const LibreSCRS::Plugin::Internal::FamilyQuirks& quirks) noexcept
+    {
+        using SecStateClear = LibreSCRS::Plugin::Internal::FamilyQuirks::SecStateClear;
+        switch (quirks.secStateClear) {
+        case SecStateClear::ReselectApplet:
+            try {
+                if (!card.selectApplet())
+                    std::clog << "[librescrs.pkcs15.plugin] secStateClear: re-select failed\n";
+            } catch (const std::exception& ex) {
+                std::clog << "[librescrs.pkcs15.plugin] secStateClear: re-select threw: " << ex.what() << "\n";
+            } catch (...) {
+                std::clog << "[librescrs.pkcs15.plugin] secStateClear: re-select threw (non-std exception)\n";
+            }
+            break;
+        }
     }
 
     static LibreSCRS::Plugin::ReadResult mapActivationError(LibreSCRS::SecureChannel::ChannelActivationError err,

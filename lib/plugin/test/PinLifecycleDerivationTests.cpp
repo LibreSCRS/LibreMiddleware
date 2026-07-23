@@ -245,6 +245,41 @@ TEST(PinLifecycleDerivation, StatePrecedenceBlockedOverTransport)
     EXPECT_FALSE(s.activatable); // not while blocked
 }
 
+// Plan D Task 11 (post-unblock classification, spec §5.1): the derivation
+// needs no new code for this — it already classifies purely from the
+// `initialized` evidence bit (plus the family's supportsTransportPin +
+// SignPin kind), and that bit is exactly what a fresh getPINList / AODF
+// re-read reports after an unblock completes. An unblock that only resets
+// the retry counter (resetOnly / UnblockAndChange-without-a-new-value)
+// leaves the transport value in place -> the card still reports
+// initialized=false next read -> Transport, activatable=true (still needs
+// activateTransportPin). An unblock that also sets a new value (setsNewPin /
+// UnblockAndChange-with-a-new-value) personalizes the credential -> the card
+// reports initialized=true -> Operational, activatable=false. No unblockPIN
+// return path needs to special-case this: the NEXT getPINList call re-derives
+// it from card evidence alone.
+TEST(PinLifecycleDerivation, PostUnblockTransportVsOperationalClassification)
+{
+    const auto* q = findFamilyQuirks(FamilyId::AppletSuiteGen1); // supportsTransportPin=true
+    ASSERT_NE(q, nullptr);
+
+    // resetOnly-shaped unblock: counter reset only, value still transport.
+    PinEvidence stillTransport = appletSuiteGen1SignPin();
+    stillTransport.initialized = false;
+    stillTransport.blocked = false;
+    const auto transportEntry = derivePinStatus(stillTransport, appletSuiteGen1All(), q);
+    EXPECT_EQ(transportEntry.state, PinState::Transport);
+    EXPECT_TRUE(transportEntry.activatable);
+
+    // setsNewPin-shaped unblock: a new value was set, credential personalized.
+    PinEvidence nowOperational = appletSuiteGen1SignPin();
+    nowOperational.initialized = true;
+    nowOperational.blocked = false;
+    const auto operationalEntry = derivePinStatus(nowOperational, appletSuiteGen1All(), q);
+    EXPECT_EQ(operationalEntry.state, PinState::Operational);
+    EXPECT_FALSE(operationalEntry.activatable);
+}
+
 TEST(PinLifecycleDerivation, NeedsChangeSignalPropagatesAndBlockedWins)
 {
     const auto all = appletSuiteGen1All();
@@ -372,4 +407,105 @@ TEST(PinLifecycleDerivation, KeyActivationGuidanceNotOnPukOrCan)
     can.unblockDisabledFlag = true;
     can.paceEvidence = true;
     EXPECT_FALSE(derivePinStatus(can, {can}, q).keyActivationGuidance.has_value());
+}
+
+// ---------------------------------------------------------------------------
+// Task 11 review fix: resolveUnblockApdu — the RESET RETRY COUNTER P1 +
+// on-wire data-shape decision extracted from pkcs15-plugin's unblockPIN
+// override. Mirrors the classifyPinOutcome extraction precedent
+// (<LibreSCRS/Plugin/PinOutcome.h>): a pure free function living beside the
+// derivation engine, unit-tested directly rather than through the plugin
+// funnel — the plugin-funnel route is NOT achievable here because
+// resolveFamilyId/findFamilyQuirks are non-parametric static lookups (no
+// production injection seam). A synthetic quirk row exercises
+// rrcVariantKnown=true + each UnblockStyle WITHOUT touching the real
+// AppletSuiteGen1 row (which deliberately withholds rrcVariantKnown pending
+// hardware verification) and without flipping any [HW-VERIFY] flag on it.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+FamilyQuirks syntheticUnblockQuirks(UnblockStyle style, std::uint8_t p1)
+{
+    FamilyQuirks q;
+    q.id = FamilyId::AppletSuiteGen1; // arbitrary — resolveUnblockApdu reads only rrcP1[]
+    auto& user = q.kinds[static_cast<std::size_t>(PinKind::UserPin)];
+    user.rrcVariantKnown = true; // mirrors the shape of a real unblockable case
+    user.unblockStyle = style;
+    q.rrcP1[static_cast<std::size_t>(style)] = p1;
+    return q;
+}
+
+} // namespace
+
+TEST(ResolveUnblockApdu, ResetOnlyIsPukOnlyAtTheRowsP1)
+{
+    const auto quirks = syntheticUnblockQuirks(UnblockStyle::ResetOnly, 0x01);
+    const auto apdu = resolveUnblockApdu(UnblockStyle::ResetOnly, quirks, "12345678", "4321");
+    EXPECT_EQ(apdu.p1, quirks.rrcP1[static_cast<std::size_t>(UnblockStyle::ResetOnly)]);
+    EXPECT_EQ(apdu.puk, "12345678");
+    EXPECT_TRUE(apdu.newPin.empty()) << "ResetOnly never sends a new PIN, even when the caller supplied one";
+}
+
+TEST(ResolveUnblockApdu, SetsNewPinIsPukPlusNewPinAtTheRowsP1)
+{
+    const auto quirks = syntheticUnblockQuirks(UnblockStyle::SetsNewPin, 0x02);
+    const auto apdu = resolveUnblockApdu(UnblockStyle::SetsNewPin, quirks, "12345678", "4321");
+    EXPECT_EQ(apdu.p1, quirks.rrcP1[static_cast<std::size_t>(UnblockStyle::SetsNewPin)]);
+    EXPECT_EQ(apdu.puk, "12345678");
+    EXPECT_EQ(apdu.newPin, "4321");
+}
+
+TEST(ResolveUnblockApdu, UnblockAndChangeSendsNewPinOnlyWhenCallerSuppliesOne)
+{
+    const auto quirks = syntheticUnblockQuirks(UnblockStyle::UnblockAndChange, 0x03);
+
+    const auto withNewPin = resolveUnblockApdu(UnblockStyle::UnblockAndChange, quirks, "12345678", "4321");
+    EXPECT_EQ(withNewPin.p1, quirks.rrcP1[static_cast<std::size_t>(UnblockStyle::UnblockAndChange)]);
+    EXPECT_EQ(withNewPin.puk, "12345678");
+    EXPECT_EQ(withNewPin.newPin, "4321");
+
+    const auto resetOnlyChoice = resolveUnblockApdu(UnblockStyle::UnblockAndChange, quirks, "12345678", "");
+    EXPECT_EQ(resetOnlyChoice.p1, quirks.rrcP1[static_cast<std::size_t>(UnblockStyle::UnblockAndChange)]);
+    EXPECT_EQ(resetOnlyChoice.puk, "12345678");
+    EXPECT_TRUE(resetOnlyChoice.newPin.empty()) << "holder chose reset-only: no new PIN supplied";
+}
+
+// ---------------------------------------------------------------------------
+// Plan D Task 12 — resolveTransportChangeApdu: the CHANGE REFERENCE DATA P1
+// + on-wire data-shape decision extracted from pkcs15-plugin's
+// activateTransportPin override, up front this time (following the
+// resolveUnblockApdu precedent immediately above rather than needing a
+// review round to arrive at it). Pure function over its arguments — no
+// FamilyQuirks lookup involved beyond the raw P1 byte the caller passes in,
+// so these tests exercise arbitrary P1 values directly, exactly like
+// resolveUnblockApdu's tests exercise arbitrary rrcP1 rows via a synthetic
+// quirk row.
+// ---------------------------------------------------------------------------
+
+TEST(ResolveTransportChangeApdu, OneShotFormAtP1ZeroSendsTransportThenNew)
+{
+    const auto apdu = resolveTransportChangeApdu(0x00, "transport1", "4321");
+    EXPECT_EQ(apdu.p1, 0x00);
+    EXPECT_EQ(apdu.oldData, "transport1");
+    EXPECT_EQ(apdu.newData, "4321");
+}
+
+TEST(ResolveTransportChangeApdu, PriorAuthFormAtP1OneSendsNewOnly)
+{
+    const auto apdu = resolveTransportChangeApdu(0x01, "transport1", "4321");
+    EXPECT_EQ(apdu.p1, 0x01);
+    EXPECT_TRUE(apdu.oldData.empty()) << "prior-auth form: old-data block omitted, not padded";
+    EXPECT_EQ(apdu.newData, "4321");
+}
+
+TEST(ResolveTransportChangeApdu, AnyOtherP1ConservativelyBehavesAsOneShot)
+{
+    // Only 0x01 is the special prior-auth form; any other family-supplied
+    // byte (including values ISO doesn't define) conservatively takes the
+    // "send everything" one-shot shape rather than silently dropping data.
+    const auto apdu = resolveTransportChangeApdu(0x02, "transport1", "4321");
+    EXPECT_EQ(apdu.p1, 0x02);
+    EXPECT_EQ(apdu.oldData, "transport1");
+    EXPECT_EQ(apdu.newData, "4321");
 }

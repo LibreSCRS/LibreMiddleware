@@ -14,6 +14,25 @@ constexpr std::size_t kindIndex(PinKind k) noexcept
     return static_cast<std::size_t>(k);
 }
 
+constexpr std::size_t unblockIndex(UnblockStyle s) noexcept
+{
+    return static_cast<std::size_t>(s);
+}
+
+/// ISO card-verb execution defaults shared by both applet-suite generations.
+/// [HW-VERIFY]: placeholders pending a hardware campaign; AUTH key
+/// life-cycle at creation is [HW-VERIFY] — do not assert active.
+void applyIsoExecutionDefaults(FamilyQuirks& q) noexcept
+{
+    q.rrcP1[unblockIndex(UnblockStyle::Unknown)] = 0x00;
+    q.rrcP1[unblockIndex(UnblockStyle::ResetOnly)] = 0x01;
+    q.rrcP1[unblockIndex(UnblockStyle::SetsNewPin)] = 0x00;
+    q.rrcP1[unblockIndex(UnblockStyle::UnblockAndChange)] = 0x00;
+    q.transportChangeP1 = 0x00;
+    q.keyActivate = {.ins = 0x44, .p1 = 0x00, .p2 = 0x00};
+    q.secStateClear = FamilyQuirks::SecStateClear::ReselectApplet;
+}
+
 /// Conservative fallback for PinKind members beyond the table (PinKind is
 /// append-only; the table is rebuilt when a kind gains real knowledge).
 const FamilyKindQuirks& kindQuirksOrDefault(const std::array<FamilyKindQuirks, kPinKindCount>& kinds,
@@ -82,6 +101,9 @@ FamilyQuirks makeAppletSuiteGen1()
     sign.canChange = true;
     sign.retriesMax = 3;
     q.kinds[kindIndex(PinKind::Puk)].retriesMax = 5;
+    // Card-verb execution bytes: ISO defaults only, [HW-VERIFY]. AUTH key
+    // life-cycle at creation is [HW-VERIFY] — do not assert active.
+    applyIsoExecutionDefaults(q);
     return q;
 }
 
@@ -108,6 +130,12 @@ FamilyQuirks makeAppletSuiteGen2()
     sign.canChange = true;
     sign.retriesMax = 3;
     q.kinds[kindIndex(PinKind::Puk)].retriesMax = 5;
+    // Card-verb execution bytes: same clean-room stance as generation 1 —
+    // shared ISO defaults only, [HW-VERIFY]. No per-personalization value
+    // (PIN refs, retry, budgets) belongs here; those are runtime AODF/DOCP
+    // facts. AUTH key life-cycle at creation is [HW-VERIFY] — do not assert
+    // active.
+    applyIsoExecutionDefaults(q);
     return q;
 }
 

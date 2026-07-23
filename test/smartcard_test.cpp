@@ -58,6 +58,93 @@ TEST(APDUTest, ChangeReferenceDataCommand)
     EXPECT_EQ(bytes.size(), 13u); // 4 header + 1 Lc + 8 data, no Le
 }
 
+TEST(APDUTest, ChangeReferenceDataCommandDefaultP1IsByteIdentical)
+{
+    // Regression: extending changeReferenceData with a trailing defaulted P1
+    // must not change a single byte of the pre-existing (no-P1-arg) call.
+    std::array<uint8_t, 4> oldPin = {0x31, 0x32, 0x33, 0x34};
+    std::array<uint8_t, 4> newPin = {0x35, 0x36, 0x37, 0x38};
+    auto cmdDefault = LibreSCRS::SmartCard::Internal::changeReferenceData(0x01, oldPin, newPin);
+    auto cmdExplicitZero = LibreSCRS::SmartCard::Internal::changeReferenceData(0x01, oldPin, newPin, 0x00);
+    EXPECT_EQ(cmdDefault.toBytes(), cmdExplicitZero.toBytes());
+    EXPECT_EQ(cmdDefault.toBytes()[2], 0x00); // P1
+}
+
+TEST(APDUTest, ChangeReferenceDataCommandExplicitP1)
+{
+    // Transport activation passes a non-zero P1; everything else is unchanged.
+    std::array<uint8_t, 4> oldPin = {0x31, 0x32, 0x33, 0x34};
+    std::array<uint8_t, 4> newPin = {0x35, 0x36, 0x37, 0x38};
+    auto cmd = LibreSCRS::SmartCard::Internal::changeReferenceData(0x01, oldPin, newPin, 0x02);
+    auto bytes = cmd.toBytes();
+    EXPECT_EQ(bytes[0], 0x00);
+    EXPECT_EQ(bytes[1], 0x24); // INS
+    EXPECT_EQ(bytes[2], 0x02); // P1 (caller-supplied)
+    EXPECT_EQ(bytes[3], 0x01); // P2 = pinRef
+    EXPECT_EQ(bytes[4], 0x08); // Lc = 4+4
+    EXPECT_EQ(bytes[5], 0x31);
+    EXPECT_EQ(bytes[9], 0x35);
+    EXPECT_EQ(bytes.size(), 13u);
+}
+
+TEST(APDUTest, ResetRetryCounterCommandWithNewPin)
+{
+    std::array<uint8_t, 4> puk = {0x39, 0x38, 0x37, 0x36};
+    std::array<uint8_t, 4> newPin = {0x31, 0x32, 0x33, 0x34};
+    auto cmd = LibreSCRS::SmartCard::Internal::resetRetryCounter(0x03, 0x05, puk, newPin);
+    auto bytes = cmd.toBytes();
+    EXPECT_EQ(bytes[0], 0x00);
+    EXPECT_EQ(bytes[1], 0x2C);    // INS = RESET RETRY COUNTER
+    EXPECT_EQ(bytes[2], 0x03);    // P1 (caller-supplied)
+    EXPECT_EQ(bytes[3], 0x05);    // P2 = pinRef
+    EXPECT_EQ(bytes[4], 0x08);    // Lc = 4 (puk) + 4 (newPin)
+    EXPECT_EQ(bytes[5], 0x39);    // puk[0]
+    EXPECT_EQ(bytes[9], 0x31);    // newPin[0]
+    EXPECT_EQ(bytes.size(), 13u); // 4 header + 1 Lc + 8 data, no Le
+}
+
+TEST(APDUTest, ResetRetryCounterCommandResetOnly)
+{
+    // newPin omitted entirely: data field is PUK only.
+    std::array<uint8_t, 4> puk = {0x39, 0x38, 0x37, 0x36};
+    auto cmd = LibreSCRS::SmartCard::Internal::resetRetryCounter(0x01, 0x07, puk);
+    auto bytes = cmd.toBytes();
+    EXPECT_EQ(bytes[0], 0x00);
+    EXPECT_EQ(bytes[1], 0x2C);
+    EXPECT_EQ(bytes[2], 0x01); // P1
+    EXPECT_EQ(bytes[3], 0x07); // P2 = pinRef
+    EXPECT_EQ(bytes[4], 0x04); // Lc = 4 (puk only)
+    EXPECT_EQ(bytes[5], 0x39);
+    EXPECT_EQ(bytes.size(), 9u); // 4 header + 1 Lc + 4 data, no Le
+}
+
+TEST(APDUTest, ActivateCommandWithObjectRef)
+{
+    std::array<uint8_t, 2> objRef = {0xAA, 0xBB};
+    auto cmd = LibreSCRS::SmartCard::Internal::activate(0x04, 0x06, objRef);
+    auto bytes = cmd.toBytes();
+    EXPECT_EQ(bytes[0], 0x00);
+    EXPECT_EQ(bytes[1], 0x44); // INS = ACTIVATE
+    EXPECT_EQ(bytes[2], 0x04); // P1 (caller-supplied)
+    EXPECT_EQ(bytes[3], 0x06); // P2 (caller-supplied)
+    EXPECT_EQ(bytes[4], 0x02); // Lc
+    EXPECT_EQ(bytes[5], 0xAA);
+    EXPECT_EQ(bytes[6], 0xBB);
+    EXPECT_EQ(bytes.size(), 7u); // 4 header + 1 Lc + 2 data, no Le
+}
+
+TEST(APDUTest, ActivateCommandNoObjectRef)
+{
+    // No ref data: bare header, no Lc, no Le (Case 1).
+    auto cmd = LibreSCRS::SmartCard::Internal::activate(0x04, 0x06);
+    auto bytes = cmd.toBytes();
+    EXPECT_EQ(bytes.size(), 4u);
+    EXPECT_EQ(bytes[0], 0x00);
+    EXPECT_EQ(bytes[1], 0x44);
+    EXPECT_EQ(bytes[2], 0x04);
+    EXPECT_EQ(bytes[3], 0x06);
+}
+
 // --- TLV tests ---
 
 TEST(TLVTest, ParseEmptyData)

@@ -118,4 +118,35 @@ PinStatusEntry derivePinStatus(const PinEvidence& e, const std::vector<PinEviden
     return out;
 }
 
+UnblockApdu resolveUnblockApdu(UnblockStyle style, const FamilyQuirks& quirks, std::string_view puk,
+                               std::string_view newPin) noexcept
+{
+    UnblockApdu out;
+    out.p1 = quirks.rrcP1[static_cast<std::size_t>(style)];
+    out.puk = puk;
+    // Data shape per style (spec §5.1): ResetOnly -> PUK only; SetsNewPin ->
+    // PUK||newPin; UnblockAndChange -> PUK||newPin if the caller supplied
+    // one, else PUK only.
+    if (style == UnblockStyle::SetsNewPin || (style == UnblockStyle::UnblockAndChange && !newPin.empty())) {
+        out.newPin = newPin;
+    }
+    return out;
+}
+
+TransportChangeApdu resolveTransportChangeApdu(std::uint8_t transportChangeP1, std::string_view transport,
+                                               std::string_view newPin) noexcept
+{
+    TransportChangeApdu out;
+    out.p1 = transportChangeP1;
+    out.newData = newPin;
+    // P1=0x01 (prior-auth): the transport value is VERIFYed in a separate
+    // call before this one, so the CHANGE's own data carries the new value
+    // only — the old-data block is omitted, never padded. Every other value
+    // (the 0x00 ISO-default one-shot form, and conservatively any other
+    // family-supplied byte) sends transport||new in this one call.
+    if (transportChangeP1 != 0x01)
+        out.oldData = transport;
+    return out;
+}
+
 } // namespace LibreSCRS::Plugin::Internal

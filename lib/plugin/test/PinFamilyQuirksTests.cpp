@@ -11,6 +11,7 @@ using LibreSCRS::Plugin::PinKind;
 using LibreSCRS::Plugin::PinRecovery;
 using LibreSCRS::Plugin::UnblockStyle;
 using LibreSCRS::Plugin::Internal::FamilyId;
+using LibreSCRS::Plugin::Internal::FamilyQuirks;
 using LibreSCRS::Plugin::Internal::findFamilyQuirks;
 
 TEST(PinFamilyQuirks, CurrentLkBlockedIsIssuerProcess)
@@ -84,5 +85,31 @@ TEST(PinFamilyQuirks, PaceFamiliesFlagUsesPace)
         const auto* q = findFamilyQuirks(id);
         ASSERT_NE(q, nullptr);
         EXPECT_FALSE(q->usesPace) << "non-PACE family must not set usesPace";
+    }
+}
+
+TEST(PinFamilyQuirks, AppletSuiteGenerationsCarryIsoExecutionDefaults)
+{
+    // Both applet-suite generations share the same ISO command-form
+    // defaults for the card verbs the credential-lifecycle derivation will
+    // eventually issue (RESET RETRY COUNTER / CHANGE REFERENCE DATA /
+    // ACTIVATE). These are [HW-VERIFY] placeholders, not confirmed
+    // per-family behaviour; a later hardware campaign may flip them.
+    for (auto id : {FamilyId::AppletSuiteGen1, FamilyId::AppletSuiteGen2}) {
+        const auto* q = findFamilyQuirks(id);
+        ASSERT_NE(q, nullptr);
+
+        EXPECT_EQ(q->rrcP1[static_cast<std::size_t>(UnblockStyle::Unknown)], 0x00);
+        EXPECT_EQ(q->rrcP1[static_cast<std::size_t>(UnblockStyle::ResetOnly)], 0x01);
+        EXPECT_EQ(q->rrcP1[static_cast<std::size_t>(UnblockStyle::SetsNewPin)], 0x00);
+        EXPECT_EQ(q->rrcP1[static_cast<std::size_t>(UnblockStyle::UnblockAndChange)], 0x00);
+
+        EXPECT_EQ(q->transportChangeP1, 0x00);
+
+        EXPECT_EQ(q->keyActivate.ins, 0x44);
+        EXPECT_EQ(q->keyActivate.p1, 0x00);
+        EXPECT_EQ(q->keyActivate.p2, 0x00);
+
+        EXPECT_EQ(q->secStateClear, FamilyQuirks::SecStateClear::ReselectApplet);
     }
 }

@@ -564,6 +564,102 @@ PinResult PKCS15Card::changePIN(const PinInfo& pin, std::string_view oldPin, std
     return {false, -1, false};
 }
 
+PinResult PKCS15Card::resetRetryCounter(const PinInfo& pin, std::string_view puk, std::string_view newPin, uint8_t p1)
+{
+    if (!selectApplet())
+        throw std::runtime_error("PKCS15: failed to select applet");
+
+    if (!pin.path.empty())
+        selectByPath(pin.path);
+
+    // Raw bytes, not encodePIN — see the header comment: the PUK / new-PIN
+    // storedLength & padChar are not this credential's (`pin`'s) to assume.
+    LibreSCRS::SmartCard::Internal::SecureBuffer pukData(puk);
+    LibreSCRS::SmartCard::Internal::SecureBuffer newPinData(newPin);
+
+    auto resp =
+        channel.transmit(LibreSCRS::SmartCard::Internal::resetRetryCounter(p1, pin.pinReference, pukData, newPinData),
+                         LibreSCRS::CancelToken{});
+    if (resp.isSuccess())
+        return {true, -1, false};
+    if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
+        return {false, resp.sw2 & 0x0F, false};
+    if (resp.statusWord() == 0x6983)
+        return {false, 0, true};
+
+    // Every other SW (6985/6984/6A81/6A88/6D00/anything else) is a
+    // plugin-level condition, never a PIN-guess signal: retriesLeft stays
+    // absent so the caller's classifier lands on PluginError, not InvalidPin.
+    return {false, -1, false};
+}
+
+PinResult PKCS15Card::changeReferenceData(const PinInfo& pin, std::string_view oldValue, std::string_view newValue,
+                                          uint8_t p1)
+{
+    if (!selectApplet())
+        throw std::runtime_error("PKCS15: failed to select applet");
+
+    if (!pin.path.empty())
+        selectByPath(pin.path);
+
+    // Same credential on both sides (transport activation, not a
+    // cross-credential PUK/newPin pair): encodePIN applies to whichever
+    // side is actually present. An empty oldValue (the P1=0x01 prior-auth
+    // form) is sent as a genuinely empty block — NOT padded via encodePIN,
+    // which would fabricate a bogus padChar-filled "old" block instead of
+    // the true "old absent" shape the ISO command needs.
+    auto newData = encodePIN(newValue, pin);
+    LibreSCRS::SmartCard::Internal::SecureBuffer oldData;
+    if (!oldValue.empty())
+        oldData = encodePIN(oldValue, pin);
+
+    auto resp =
+        channel.transmit(LibreSCRS::SmartCard::Internal::changeReferenceData(pin.pinReference, oldData, newData, p1),
+                         LibreSCRS::CancelToken{});
+    if (resp.isSuccess())
+        return {true, -1, false};
+    if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
+        return {false, resp.sw2 & 0x0F, false};
+    if (resp.statusWord() == 0x6983)
+        return {false, 0, true};
+
+    // Fallback: strip local bit — ONLY on reference-not-found errors
+    uint8_t altRef = pin.pinReference & 0x7F;
+    if (altRef != pin.pinReference && (resp.statusWord() == 0x6A86 || resp.statusWord() == 0x6A88)) {
+        resp = channel.transmit(LibreSCRS::SmartCard::Internal::changeReferenceData(altRef, oldData, newData, p1),
+                                LibreSCRS::CancelToken{});
+        if (resp.isSuccess())
+            return {true, -1, false};
+        if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
+            return {false, resp.sw2 & 0x0F, false};
+        if (resp.statusWord() == 0x6983)
+            return {false, 0, true};
+    }
+
+    return {false, -1, false};
+}
+
+PinResult PKCS15Card::activate(const PinInfo& signPin, uint8_t p1, uint8_t p2)
+{
+    if (!selectApplet())
+        throw std::runtime_error("PKCS15: failed to select applet");
+
+    if (!signPin.path.empty())
+        selectByPath(signPin.path);
+
+    auto resp = channel.transmit(LibreSCRS::SmartCard::Internal::activate(p1, p2), LibreSCRS::CancelToken{});
+    // 6985 (conditions of use not satisfied) is the idempotent
+    // already-active case for ACTIVATE on this key model — a retry or a
+    // card that reaches this call post-bring-up finds the key already
+    // operational. Every other non-9000 SW (6A88 reference not found,
+    // 6A81 function not supported, etc.) is a genuine failure; retriesLeft
+    // stays absent (ACTIVATE has no retry-counter shape of its own) so the
+    // caller's classifier never misreads it as a PIN-guess signal.
+    if (resp.isSuccess() || resp.statusWord() == 0x6985)
+        return {true, -1, false};
+    return {false, -1, false};
+}
+
 LibreSCRS::SmartCard::Internal::SecureBuffer PKCS15Card::encodePIN(std::string_view pin, const PinInfo& pinInfo)
 {
     LibreSCRS::SmartCard::Internal::SecureBuffer pinData(pin);
