@@ -96,8 +96,8 @@ struct SignCtx
 
     /// Accumulator for the raw bytes streamed into the digest via
     /// digest_sign_update. Captured so the sign-final callback can
-    /// forward them to Pkcs11Token alongside the computed hash — hash-on-
-    /// card SSCDs (Cryptovision SCE 8.0, German nPA) need this raw view
+    /// forward them to Pkcs11Token alongside the computed hash — certain
+    /// IAS-ECC hash-on-card SSCDs (German nPA) need this raw view
     /// to drive the combined CKM_SHA*_RSA_PKCS mechanism. Memory cost is
     /// the signed-attributes / PDF-byte-range size (≤ a few KB per
     /// CMS_signerInfo), reset between signs by sigInitNewDigestSign.

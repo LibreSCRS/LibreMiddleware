@@ -8,8 +8,8 @@
 // the other readers continue independently — no cross-contamination.
 //
 // Card → PIN map (operator-supplied via env or compiled-in fallback):
-//   PKS  (CardEdge, SmartCafe Expert v8.0 B)  → bare PIN
-//   NAM  (Cryptovision SCE 8.0-C2V0 CL)       → CAN:PIN (PACE then verify)
+//   PKS  (CardEdge platform)                  → bare PIN
+//   NAM  (SCE 8.0-C2V0 CL)                    → CAN:PIN (PACE then verify)
 //   PIV  (G+D SCE7)                           → bare PIN (PIV-aware path)
 //
 // Opt-in: gated on LIBRESCRS_BUILD_REAL_CARD_TESTS=ON. NOT in default
@@ -113,17 +113,17 @@ CardProfile classifyByAtr(const std::vector<std::uint8_t>& atr)
         return false;
     };
 
-    // SCE 8.0-C2V0 contactless = NAM CL (Cryptovision Veridos Suite SSCD).
+    // SCE 8.0-C2V0 contactless = NAM CL (an IAS-ECC hash-on-card SSCD).
     // Hist bytes literally spell "SCE 8.0-C2V0".
     if (contains({0x53, 0x43, 0x45, 0x20, 0x38, 0x2E, 0x30, 0x2D, 0x43, 0x32, 0x56, 0x30}))
         return CardProfile::NAM_CL;
 
-    // SCE 8.0-C1V0 contact = PKS (Serbian PKS, SmartCafe Expert v8.0 B
-    // per OpenSC card-srbeid.c).
+    // SCE 8.0-C1V0 contact = PKS (Serbian PKS card per OpenSC
+    // card-srbeid.c).
     if (contains({0x53, 0x43, 0x45, 0x20, 0x38, 0x2E, 0x30, 0x2D, 0x43, 0x31, 0x56, 0x30}))
         return CardProfile::PKS;
 
-    // SmartCafe Expert v7 platform with G+D PIV applet personalisation.
+    // The v7 chip platform with G+D PIV applet personalisation.
     // Hist bytes start with "SCE7 " — common to multiple v7 variants;
     // disambiguation against non-PIV v7 cards (legacy Serbian eID v7)
     // would need a probing SELECT-AID — for the test matrix the operator

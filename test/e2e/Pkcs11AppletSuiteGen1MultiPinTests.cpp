@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 //
-// Real-card E2E tests for the suite-1 eID dual-PIN card. It exposes two
+// Real-card E2E tests for the AppletSuiteGen1 eID dual-PIN card. It exposes two
 // PKCS#11 slots (Auth + Sign / QSCD) for one physical card. Tests
 // here exercise the production `librescrs-pkcs11.so` through the C ABI
 // only — they never reach into LibreSCRS::Pkcs11::Internal types (the
@@ -46,11 +46,11 @@ namespace {
 
 // ---------------------------------------------------------------------------
 // Fixture — initialises the live `librescrs-pkcs11.so` once per test, locates
-// the suite-1 card by enumerating slots with tokens present, and tears down via
-// C_Finalize. We require exactly two slots reported by the .so for a suite-1
+// the AppletSuiteGen1 card by enumerating slots with tokens present, and tears down via
+// C_Finalize. We require exactly two slots reported by the .so for a AppletSuiteGen1
 // card; the spec guarantees this (Auth + QSCD).
 // ---------------------------------------------------------------------------
-class Pkcs11Suite1Fixture : public ::testing::Test
+class Pkcs11AppletSuiteGen1Fixture : public ::testing::Test
 {
 protected:
     void SetUp() override
@@ -125,10 +125,10 @@ std::string canInPin(const std::string& can, const std::string& pin)
 } // namespace
 
 // ===========================================================================
-// Contact-interface tests (no PACE) — suite-1 inserted in a contact reader.
+// Contact-interface tests (no PACE) — AppletSuiteGen1 inserted in a contact reader.
 // ===========================================================================
 
-TEST_F(Pkcs11Suite1Fixture, Suite1Contact_GetSlotList_ReturnsTwoSlots)
+TEST_F(Pkcs11AppletSuiteGen1Fixture, AppletSuiteGen1Contact_GetSlotList_ReturnsTwoSlots)
 {
     SKIP_IF_PIN_FAILED();
     REQUIRE_ENV("LIBRESCRS_TEST_PIN");
@@ -136,53 +136,55 @@ TEST_F(Pkcs11Suite1Fixture, Suite1Contact_GetSlotList_ReturnsTwoSlots)
 
     const auto slots = slotsWithToken();
     if (slots.empty())
-        GTEST_SKIP() << "No PKCS#11 slots with tokens present (no suite-1 card inserted?)";
+        GTEST_SKIP() << "No PKCS#11 slots with tokens present (no AppletSuiteGen1 card inserted?)";
 
-    // Suite-1 is the only card in our reference matrix expected to expose
+    // AppletSuiteGen1 is the only card in our reference matrix expected to expose
     // two slots from a single physical card. If we see exactly one slot
-    // the inserted card is likely eID/NAM and this suite-1-specific test
+    // the inserted card is likely eID/NAM and this AppletSuiteGen1-specific test
     // does not apply — skip rather than fail.
     if (slots.size() < 2)
-        GTEST_SKIP() << "Suite-1 requires 2 slots; got " << slots.size() << " (probably non-suite-1 card inserted).";
+        GTEST_SKIP() << "AppletSuiteGen1 requires 2 slots; got " << slots.size()
+                     << " (probably non-AppletSuiteGen1 card inserted).";
 
-    EXPECT_EQ(slots.size(), 2u) << "suite-1 card must expose exactly 2 PKCS#11 slots (Auth + Sign).";
+    EXPECT_EQ(slots.size(), 2u) << "AppletSuiteGen1 card must expose exactly 2 PKCS#11 slots (Auth + Sign).";
 }
 
-TEST_F(Pkcs11Suite1Fixture, Suite1Contact_AuthSlotPinLabel)
+TEST_F(Pkcs11AppletSuiteGen1Fixture, AppletSuiteGen1Contact_AuthSlotPinLabel)
 {
     SKIP_IF_PIN_FAILED();
     REQUIRE_ENV("LIBRESCRS_TEST_PIN");
-    REQUIRE_ENV("LIBRESCRS_TEST_PIN_QSCD"); // suite-1 sentinel: only set on multi-PIN suite-1 test setups.
+    REQUIRE_ENV(
+        "LIBRESCRS_TEST_PIN_QSCD"); // AppletSuiteGen1 sentinel: only set on multi-PIN AppletSuiteGen1 test setups.
 
     const auto slots = slotsWithToken();
     if (slots.size() < 2)
-        GTEST_SKIP() << "Need suite-1 2-slot card for this test.";
+        GTEST_SKIP() << "Need AppletSuiteGen1 2-slot card for this test.";
 
     EXPECT_TRUE(labelContainsAny(slots[0], {"auth", "authentication"}))
         << "Slot 0 token label should reference Auth/Authentication PIN.";
 }
 
-TEST_F(Pkcs11Suite1Fixture, Suite1Contact_SignSlotPinLabel)
+TEST_F(Pkcs11AppletSuiteGen1Fixture, AppletSuiteGen1Contact_SignSlotPinLabel)
 {
     SKIP_IF_PIN_FAILED();
     REQUIRE_ENV("LIBRESCRS_TEST_PIN_QSCD");
 
     const auto slots = slotsWithToken();
     if (slots.size() < 2)
-        GTEST_SKIP() << "Need suite-1 2-slot card for this test.";
+        GTEST_SKIP() << "Need AppletSuiteGen1 2-slot card for this test.";
 
     EXPECT_TRUE(labelContainsAny(slots[1], {"sign", "qscd", "signing"}))
         << "Slot 1 token label should reference Sign / QSCD.";
 }
 
-TEST_F(Pkcs11Suite1Fixture, Suite1Contact_AuthSlotLogin_DoesNotAffectSignSlot)
+TEST_F(Pkcs11AppletSuiteGen1Fixture, AppletSuiteGen1Contact_AuthSlotLogin_DoesNotAffectSignSlot)
 {
     SKIP_IF_PIN_FAILED();
     REQUIRE_ENV("LIBRESCRS_TEST_PIN");
 
     const auto slots = slotsWithToken();
     if (slots.size() < 2)
-        GTEST_SKIP() << "Need suite-1 2-slot card for this test.";
+        GTEST_SKIP() << "Need AppletSuiteGen1 2-slot card for this test.";
 
     CK_SESSION_HANDLE authSession = CK_INVALID_HANDLE;
     CK_SESSION_HANDLE signSession = CK_INVALID_HANDLE;
@@ -210,14 +212,14 @@ TEST_F(Pkcs11Suite1Fixture, Suite1Contact_AuthSlotLogin_DoesNotAffectSignSlot)
 /// real-card end-to-end verification awaits hardware availability.
 /// Re-enable by removing the DISABLED_ prefix once the sign matrix is
 /// covered.
-TEST_F(Pkcs11Suite1Fixture, DISABLED_Suite1Contact_SignSlotSignsWithQscdKey)
+TEST_F(Pkcs11AppletSuiteGen1Fixture, DISABLED_AppletSuiteGen1Contact_SignSlotSignsWithQscdKey)
 {
     SKIP_IF_PIN_FAILED();
     REQUIRE_ENV("LIBRESCRS_TEST_PIN_QSCD");
 
     const auto slots = slotsWithToken();
     if (slots.size() < 2)
-        GTEST_SKIP() << "Need suite-1 2-slot card for this test.";
+        GTEST_SKIP() << "Need AppletSuiteGen1 2-slot card for this test.";
 
     CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
     ASSERT_EQ(C_OpenSession(slots[1], CKF_SERIAL_SESSION, nullptr, nullptr, &session), CKR_OK);
@@ -235,7 +237,7 @@ TEST_F(Pkcs11Suite1Fixture, DISABLED_Suite1Contact_SignSlotSignsWithQscdKey)
     CK_ULONG found = 0;
     ASSERT_EQ(C_FindObjects(session, &key, 1, &found), CKR_OK);
     ASSERT_EQ(C_FindObjectsFinal(session), CKR_OK);
-    ASSERT_GT(found, 0u) << "suite-1 Sign slot should expose at least one private RSA key.";
+    ASSERT_GT(found, 0u) << "AppletSuiteGen1 Sign slot should expose at least one private RSA key.";
 
     CK_MECHANISM mech{CKM_RSA_PKCS, nullptr, 0};
     ASSERT_EQ(C_SignInit(session, &mech, key), CKR_OK);
@@ -262,10 +264,10 @@ TEST_F(Pkcs11Suite1Fixture, DISABLED_Suite1Contact_SignSlotSignsWithQscdKey)
 }
 
 // ===========================================================================
-// Contactless tests — suite-1 on an NFC reader; PACE required.
+// Contactless tests — AppletSuiteGen1 on an NFC reader; PACE required.
 // ===========================================================================
 
-TEST_F(Pkcs11Suite1Fixture, Suite1Contactless_CanInPinSplits)
+TEST_F(Pkcs11AppletSuiteGen1Fixture, AppletSuiteGen1Contactless_CanInPinSplits)
 {
     SKIP_IF_PIN_FAILED();
     REQUIRE_ENV("LIBRESCRS_TEST_PIN_QSCD");
@@ -273,7 +275,7 @@ TEST_F(Pkcs11Suite1Fixture, Suite1Contactless_CanInPinSplits)
 
     const auto slots = slotsWithToken();
     if (slots.size() < 2)
-        GTEST_SKIP() << "Need suite-1 2-slot card on contactless reader for this test.";
+        GTEST_SKIP() << "Need AppletSuiteGen1 2-slot card on contactless reader for this test.";
 
     CK_SESSION_HANDLE session = CK_INVALID_HANDLE;
     ASSERT_EQ(C_OpenSession(slots[1], CKF_SERIAL_SESSION, nullptr, nullptr, &session), CKR_OK);
@@ -293,7 +295,7 @@ TEST_F(Pkcs11Suite1Fixture, Suite1Contactless_CanInPinSplits)
     (void)C_CloseSession(session);
 }
 
-TEST_F(Pkcs11Suite1Fixture, Suite1Contactless_PaceCachedAcrossSiblingLogins)
+TEST_F(Pkcs11AppletSuiteGen1Fixture, AppletSuiteGen1Contactless_PaceCachedAcrossSiblingLogins)
 {
     SKIP_IF_PIN_FAILED();
     REQUIRE_ENV("LIBRESCRS_TEST_PIN");
@@ -302,7 +304,7 @@ TEST_F(Pkcs11Suite1Fixture, Suite1Contactless_PaceCachedAcrossSiblingLogins)
 
     const auto slots = slotsWithToken();
     if (slots.size() < 2)
-        GTEST_SKIP() << "Need suite-1 2-slot card on contactless reader for this test.";
+        GTEST_SKIP() << "Need AppletSuiteGen1 2-slot card on contactless reader for this test.";
 
     // Login on the Auth slot with CAN-in-PIN — this establishes PACE on
     // the parent Card. The Sign slot login should then succeed with PIN

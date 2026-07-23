@@ -16,8 +16,8 @@
 // (INS 0x20 with data); the only permitted INS 0x20 form is the empty
 // status probe, and only on probeSafe families.
 
-#include "fixtures/veridos_suite1_aodf_20260718.h"
-#include "fixtures/veridos_suite1_docp_20260721.h"
+#include "fixtures/appletsuitegen1_aodf_20260718.h"
+#include "fixtures/appletsuitegen1_docp_20260721.h"
 
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Plugin/CardPlugin.h>
@@ -157,8 +157,8 @@ bool logHasProbeFor(const std::vector<APDUCommand>& log, std::uint8_t ref)
                        [ref](const APDUCommand& c) { return isEmptyVerifyProbe(c) && c.p2 == ref; });
 }
 
-// Kind-lookup helper. On a suite-1 (usesPace) card the CAN classifies as
-// PinKind::Can on any interface, so Can is unique per suite-1 entry set.
+// Kind-lookup helper. On a AppletSuiteGen1 (usesPace) card the CAN classifies as
+// PinKind::Can on any interface, so Can is unique per AppletSuiteGen1 entry set.
 // Callers needing a specific object by label should use findByLabel. On a
 // miss, records a non-fatal failure and returns a default-constructed
 // sentinel entry rather than dereferencing end().
@@ -288,16 +288,16 @@ FakeCardRig makeRig(const char* readerName, std::map<std::uint16_t, std::vector<
     return rig;
 }
 
-// Suite-1 scripted card: hardware-scanned AODF (kSuite1Aodf20260718) behind
+// AppletSuiteGen1 scripted card: hardware-scanned AODF (kAppletSuiteGen1Aodf20260718) behind
 // the hardware-captured EF.TokenInfo label "SSCDv1 PACE MD" (contact scan
 // 2026-07-20, production readProfile path) — resolveFamilyId classifies it
-// FamilyId::VeridosAppletSuite1, opening the probe gate (probeSafe family
+// FamilyId::AppletSuiteGen1, opening the probe gate (probeSafe family
 // row), so the probe script (User PIN 3, Signature PIN 3, PUK 5) supplies
 // the counters. The CAN reference is deliberately absent from the script (a
 // non-VERIFY-able object — the real card answers 6A88).
-FakeCardRig makeSuite1Rig(const char* readerName)
+FakeCardRig makeAppletSuiteGen1Rig(const char* readerName)
 {
-    const auto& aodf = LibreSCRS::test::fixtures::kSuite1Aodf20260718;
+    const auto& aodf = LibreSCRS::test::fixtures::kAppletSuiteGen1Aodf20260718;
     return makeRig(readerName,
                    {{0x5031, odfPointingAtAodf()},
                     {0x5032, tokenInfoWithLabel("SSCDv1 PACE MD")},
@@ -305,20 +305,20 @@ FakeCardRig makeSuite1Rig(const char* readerName)
                    {{0x86, 3}, {0x92, 3}, {0x93, 5}});
 }
 
-// Same suite-1 rig, PLUS a scripted DOCP answer for the PUK (ORF 0x13, ref
+// Same AppletSuiteGen1 rig, PLUS a scripted DOCP answer for the PUK (ORF 0x13, ref
 // 0x93 & 0x1F) and the User PIN (ORF 0x06, ref 0x86 & 0x1F): readCounters
 // now resolves retriesLeft (and, for the PUK, uses/unblocks) from the DOCP
 // itself, so the empty-VERIFY fallback probe never reaches those two
 // references. The Signature PIN (ORF 0x12) and CAN (ORF 0x02) have no
 // DOCP entry and keep going through the empty-VERIFY probe, same as the
-// plain suite-1 rig. Kept separate from makeSuite1Rig so the other
-// suite-1 tests (which assert the empty-VERIFY probe reaches 0x86/0x93)
+// plain AppletSuiteGen1 rig. Kept separate from makeAppletSuiteGen1Rig so the other
+// AppletSuiteGen1 tests (which assert the empty-VERIFY probe reaches 0x86/0x93)
 // are unaffected.
-FakeCardRig makeSuite1RigWithDocp(const char* readerName)
+FakeCardRig makeAppletSuiteGen1RigWithDocp(const char* readerName)
 {
-    auto rig = makeSuite1Rig(readerName);
-    const auto& pukDocp = LibreSCRS::test::fixtures::kSuite1PukDocp;
-    const auto& userPinDocp = LibreSCRS::test::fixtures::kSuite1UserPinDocp;
+    auto rig = makeAppletSuiteGen1Rig(readerName);
+    const auto& pukDocp = LibreSCRS::test::fixtures::kAppletSuiteGen1PukDocp;
+    const auto& userPinDocp = LibreSCRS::test::fixtures::kAppletSuiteGen1UserPinDocp;
     rig.card->docpByOrf = {{0x13, {pukDocp.begin(), pukDocp.end()}}, {0x06, {userPinDocp.begin(), userPinDocp.end()}}};
     return rig;
 }
@@ -345,10 +345,10 @@ std::shared_ptr<CardPlugin> loadPkcs15Plugin(CardPluginService& registry)
 } // namespace
 
 // ---------------------------------------------------------------------------
-// Suite-1 AODF + the hardware-captured token label → the plugin resolves
-// FamilyId::VeridosAppletSuite1 and entries combine card-asserted evidence
+// AppletSuiteGen1 AODF + the hardware-captured token label → the plugin resolves
+// FamilyId::AppletSuiteGen1 and entries combine card-asserted evidence
 // (PUK via soPin + the unblock chain, Signature PIN via the family
-// signature-DF marker) with the suite-1 family row: change advertised for
+// signature-DF marker) with the AppletSuiteGen1 family row: change advertised for
 // User/Signature PIN, retriesMax from the row, counters from the
 // (probe-safe) empty-VERIFY probe. Unblock stays un-advertised — the
 // RESET RETRY COUNTER variant is not hardware-verified for this family.
@@ -358,13 +358,13 @@ std::shared_ptr<CardPlugin> loadPkcs15Plugin(CardPluginService& registry)
 // card cannot complete a real PACE handshake).
 // ---------------------------------------------------------------------------
 
-TEST(Pkcs15PinLifecycle, Suite1AodfProducesClassifiedEntries)
+TEST(Pkcs15PinLifecycle, AppletSuiteGen1AodfProducesClassifiedEntries)
 {
     CardPluginService registry{std::filesystem::path(PLUGIN_DIR)};
     auto plugin = loadPkcs15Plugin(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto rig = makeSuite1Rig("Pkcs15 Lifecycle Suite1 Reader 0");
+    auto rig = makeAppletSuiteGen1Rig("Pkcs15 Lifecycle AppletSuiteGen1 Reader 0");
     const auto entries = plugin->getPINList(*rig.session);
     ASSERT_EQ(entries.size(), 4u);
 
@@ -388,7 +388,7 @@ TEST(Pkcs15PinLifecycle, Suite1AodfProducesClassifiedEntries)
     EXPECT_EQ(can.retriesMax, std::nullopt);  // Can borrows no retry ceiling from the user row
     EXPECT_FALSE(can.blocked);
 
-    // User PIN: global user credential; the suite-1 row advertises change
+    // User PIN: global user credential; the AppletSuiteGen1 row advertises change
     // and retriesMax=3, the open probe gate supplies retriesLeft. Unblock is
     // NOT advertised (RRC variant not hardware-verified) even though the
     // AODF chains it to the PUK.
@@ -407,10 +407,10 @@ TEST(Pkcs15PinLifecycle, Suite1AodfProducesClassifiedEntries)
     // is evidence-driven (soPin + unblock chain); the row supplies
     // retriesMax=5 and the probe answers 5.
     //
-    // This rig has NO scripted DOCP (makeSuite1Rig, not *WithDocp): GET
+    // This rig has NO scripted DOCP (makeAppletSuiteGen1Rig, not *WithDocp): GET
     // DATA (ODD) answers 6A88, so readCounters comes back all-absent and
     // retriesLeft/retriesMax fall all the way back to the empty-VERIFY
-    // probe (5) and the suite-1 quirk row (5) respectively — the graceful-
+    // probe (5) and the AppletSuiteGen1 quirk row (5) respectively — the graceful-
     // degradation path. usesLeft/usesMax/unblocksLeft have no fallback
     // source at all (derivePinStatus never sets them; only the post-
     // derivation DOCP merge in getPINList does) and MUST stay absent —
@@ -514,7 +514,7 @@ TEST(Pkcs15PinLifecycle, UnknownCardEntriesStayConservative)
 // The tries-left probe is gated on family probe-safety: a card without a
 // resolved family (probeSafe unavailable) sends NO empty-VERIFY APDU and
 // retriesLeft stays unset, no matter how willing the card's script is. The
-// gate-OPEN half runs against the suite-1 rig, whose captured label resolves
+// gate-OPEN half runs against the AppletSuiteGen1 rig, whose captured label resolves
 // a probe-safe family row: the counters flow through, and an arbitrary
 // unrecognized label on the SAME card shape must still keep the gate shut
 // (guards against a regression that re-introduces an unverified matcher).
@@ -536,9 +536,9 @@ TEST(Pkcs15PinLifecycle, TriesLeftProbeGatedByProbeSafe)
         EXPECT_TRUE(std::none_of(rig.card->log.begin(), rig.card->log.end(), isEmptyVerifyProbe));
     }
     {
-        // Suite-1 card, captured label → probe-safe family row → gate OPEN:
+        // AppletSuiteGen1 card, captured label → probe-safe family row → gate OPEN:
         // per-reference probes leave getPINList and the counters land.
-        auto rig = makeSuite1Rig("Pkcs15 Lifecycle Gate Reader 1");
+        auto rig = makeAppletSuiteGen1Rig("Pkcs15 Lifecycle Gate Reader 1");
         const auto entries = plugin->getPINList(*rig.session);
         ASSERT_EQ(entries.size(), 4u);
         EXPECT_TRUE(logHasProbeFor(rig.card->log, 0x86));
@@ -609,7 +609,7 @@ TEST(Pkcs15PinLifecycle, EmptyAodfLabelAdvertisesReferenceSelector)
 // getPINList via PKCS15Card::readCounters, and the fallback path (no DOCP
 // script entry for a reference) leaves the User PIN's uses/unblocks absent
 // — only retriesLeft/retriesMax are ever populated for it (via the
-// empty-VERIFY probe / the suite-1 family row), same as before this DOCP
+// empty-VERIFY probe / the AppletSuiteGen1 family row), same as before this DOCP
 // script existed.
 // ---------------------------------------------------------------------------
 
@@ -619,7 +619,7 @@ TEST(Pkcs15PinLifecycle, PukSurfacesUsageAndUnblockCounters)
     auto plugin = loadPkcs15Plugin(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto rig = makeSuite1RigWithDocp("Pkcs15 Lifecycle Counters Reader 0");
+    auto rig = makeAppletSuiteGen1RigWithDocp("Pkcs15 Lifecycle Counters Reader 0");
     const auto entries = plugin->getPINList(*rig.session);
     ASSERT_EQ(entries.size(), 4u);
 

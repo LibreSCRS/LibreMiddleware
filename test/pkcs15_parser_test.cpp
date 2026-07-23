@@ -3,7 +3,7 @@
 
 #include <pkcs15_parser.h>
 
-#include "fixtures/veridos_suite1_aodf_20260718.h"
+#include "fixtures/appletsuitegen1_aodf_20260718.h"
 #include "pkcs15_test_vectors.h"
 
 #include <gtest/gtest.h>
@@ -328,7 +328,7 @@ TEST(ParseAODF, GemaltoToken_ChallengeResponseKey)
     ASSERT_EQ(pins.size(), 2u);
 }
 
-TEST(ParseAODF, Suite1Aodf_HasMaxLength)
+TEST(ParseAODF, AppletSuiteGen1Aodf_HasMaxLength)
 {
     auto pins = parseAODF(SAMPLE_AODF);
     ASSERT_EQ(pins.size(), 4u);
@@ -340,12 +340,12 @@ TEST(ParseAODF, Suite1Aodf_HasMaxLength)
 
 TEST(ParseAODF, LifecycleEvidenceFields)
 {
-    // Hardware-scanned suite-1 EF.AODF: soPin (pinFlags 0x01) and
+    // Hardware-scanned AppletSuiteGen1 EF.AODF: soPin (pinFlags 0x01) and
     // change-disabled (pinFlags 0x20) bits, plus the protecting-object
     // authId from CommonObjectAttributes (the unblock-authority chain).
     // The accessControlRules' nested OCTET STRINGs must NOT be mistaken
     // for the authId.
-    auto pins = parseAODF(LibreSCRS::test::fixtures::kSuite1Aodf20260718);
+    auto pins = parseAODF(LibreSCRS::test::fixtures::kAppletSuiteGen1Aodf20260718);
     ASSERT_EQ(pins.size(), 4u);
 
     // PACE CAN: change-disabled + unblock-disabled; no protecting object.

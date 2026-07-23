@@ -725,8 +725,8 @@ std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_vie
             auto padded = applyPkcs1v15Padding(digestInfo, key.keySizeBits);
             attempts.push_back({sig_algo::RSA_PKCS1_V15, padded});
             // True-RAW path: pre-pad on host, card does only the RSA private
-            // operation. Required by some IAS-ECC SSCDs (Cryptovision
-            // SCE 8.0-C2V0) that lock down all hash-on-card algos but
+            // operation. Required by certain IAS-ECC hash-on-card SSCDs
+            // (e.g. SCE 8.0-C2V0) that lock down all hash-on-card algos but
             // still expose raw RSA for SSCD use.
             attempts.push_back({sig_algo::RSA_RAW, std::move(padded)});
         }
@@ -734,7 +734,7 @@ std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_vie
         // Some cards expect only raw hash with algo 0x02, not DigestInfo
         if (!rawHash.empty())
             attempts.push_back({sig_algo::RSA_PKCS1_V15, rawHash});
-        // IAS-ECC SHA-256 PKCS#1 algo (Cryptovision SCE 8.0 family). Try
+        // IAS-ECC SHA-256 PKCS#1 algo (certain IAS-ECC hash-on-card SSCDs). Try
         // this BEFORE the legacy 0x28 because some IAS-ECC cards quietly
         // accept 0x28 as a custom mechanism that re-hashes the input
         // (producing a structurally valid but semantically wrong signature
@@ -810,9 +810,9 @@ std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_vie
     if (keyRef.keyTag == 0x81)
         altKeyRef = {0x84, {key.keyReference != 0 ? key.keyReference : uint8_t(0x00)}};
 
-    // BSI TR-03110 / ISO 7816-8 algorithm OIDs for cards (Cryptovision
-    // SCE 8.0-C2V0 SSCD and family) that reject the legacy 1-byte algo
-    // reference. Each entry is paired with the canonical PSO input shape
+    // BSI TR-03110 / ISO 7816-8 algorithm OIDs for certain IAS-ECC
+    // hash-on-card SSCDs (e.g. SCE 8.0-C2V0) that reject the legacy 1-byte
+    // algo reference. Each entry is paired with the canonical PSO input shape
     // the OID implies (raw hash for hash-specific OIDs, DigestInfo /
     // padded-block for the generic RSA OID).
     struct OidAttempt
@@ -913,10 +913,11 @@ std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_vie
     // Strategy 2: path-based — navigate to PIN's DF, verify, then navigate to
     // the key's DF (NOT AID SELECT which resets security state on some cards,
     // and NOT the metadata PKCS#15 DF which would miss SSCD-bound keys whose
-    // file lives outside DF_PKCS15_FID — observed on a suite-1 QSCD where the
-    // sign key path resolves under a sibling DF). When the key has no
-    // explicit path (or only a 2-byte FID) we fall back to the metadata
-    // DF so SR eID and other "key under DF_PKCS15_FID" cards keep working.
+    // file lives outside DF_PKCS15_FID — observed on certain IAS-ECC
+    // hash-on-card SSCDs where the sign key path resolves under a sibling
+    // DF). When the key has no explicit path (or only a 2-byte FID) we
+    // fall back to the metadata DF so SR eID and other "key under
+    // DF_PKCS15_FID" cards keep working.
     if (!pinInfo.path.empty()) {
 #ifndef NDEBUG
         fprintf(stderr, "[PKCS15] Strategy 2: path-based\n");

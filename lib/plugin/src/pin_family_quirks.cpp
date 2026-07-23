@@ -68,10 +68,10 @@ FamilyQuirks makeCurrentLkCardEdge()
 // Applet-suite generation 1: transport-born SIGN PIN model. Unblock authority
 // is the PUK, but the RESET RETRY COUNTER variant is not hardware-verified yet,
 // so no unblock form is advertised; recovery stays evidence-derived.
-FamilyQuirks makeVeridosAppletSuite1()
+FamilyQuirks makeAppletSuiteGen1()
 {
     FamilyQuirks q;
-    q.id = FamilyId::VeridosAppletSuite1;
+    q.id = FamilyId::AppletSuiteGen1;
     q.supportsTransportPin = true;
     q.probeSafe = true;
     q.usesPace = true; // PACE applet suite; carries a CAN (recognised on contact too)
@@ -90,15 +90,16 @@ FamilyQuirks makeVeridosAppletSuite1()
 // safety — is unverified until the dedicated driver track lands, so the
 // probe gate stays shut (probeSafe=false) and nothing beyond the
 // spec-published counters is advertised.
-FamilyQuirks makeVeridosAppletSuite2()
+FamilyQuirks makeAppletSuiteGen2()
 {
     FamilyQuirks q;
-    q.id = FamilyId::VeridosAppletSuite2;
+    q.id = FamilyId::AppletSuiteGen2;
     q.supportsTransportPin = true;
     q.probeSafe = false;
     // Same PACE applet-suite lineage — correct family metadata. Dormant until
-    // a Suite2 token-label resolver marker exists (no card resolves to Suite2
-    // today); consistent with this row's other currently-unreached facts.
+    // an AppletSuiteGen2 token-label resolver marker exists (no card resolves
+    // to AppletSuiteGen2 today); consistent with this row's other
+    // currently-unreached facts.
     q.usesPace = true;
     auto& user = q.kinds[kindIndex(PinKind::UserPin)];
     user.canChange = true;
@@ -147,7 +148,7 @@ FamilyQuirks makeAetPosta()
 const std::array<FamilyQuirks, 5>& familyRows()
 {
     static const std::array<FamilyQuirks, 5> kRows{
-        makeCurrentLkCardEdge(), makeVeridosAppletSuite1(), makeVeridosAppletSuite2(), makePiv(), makeAetPosta(),
+        makeCurrentLkCardEdge(), makeAppletSuiteGen1(), makeAppletSuiteGen2(), makePiv(), makeAetPosta(),
     };
     return kRows;
 }

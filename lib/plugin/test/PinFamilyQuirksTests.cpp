@@ -36,8 +36,8 @@ TEST(PinFamilyQuirks, UnknownFamilyHasNoRow)
 
 TEST(PinFamilyQuirks, NoFamilyAdvertisesUnverifiedRrc)
 {
-    for (auto id : {FamilyId::CurrentLkCardEdge, FamilyId::VeridosAppletSuite1, FamilyId::VeridosAppletSuite2,
-                    FamilyId::AetPosta}) {
+    for (auto id :
+         {FamilyId::CurrentLkCardEdge, FamilyId::AppletSuiteGen1, FamilyId::AppletSuiteGen2, FamilyId::AetPosta}) {
         const auto* q = findFamilyQuirks(id);
         ASSERT_NE(q, nullptr);
         EXPECT_FALSE(q->rrcVariantKnown(PinKind::UserPin));
@@ -51,7 +51,7 @@ TEST(PinFamilyQuirks, SecondSuiteStaysProbeUnsafeUntilVerified)
     // including counter-probe safety — is unverified until the dedicated
     // driver track lands. An unverified probe could consume retry/usage
     // budget, so the gate must stay shut.
-    const auto* q = findFamilyQuirks(FamilyId::VeridosAppletSuite2);
+    const auto* q = findFamilyQuirks(FamilyId::AppletSuiteGen2);
     ASSERT_NE(q, nullptr);
     EXPECT_FALSE(q->probeSafe);
 }
@@ -73,8 +73,8 @@ TEST(PinFamilyQuirks, PaceFamiliesFlagUsesPace)
     // only for the PACE-capable applet suites; every other family (and the
     // no-row Unknown) must leave it false so a fixed service PIN on a
     // non-PACE card is never promoted to a CAN.
-    const auto* s1 = findFamilyQuirks(FamilyId::VeridosAppletSuite1);
-    const auto* s2 = findFamilyQuirks(FamilyId::VeridosAppletSuite2);
+    const auto* s1 = findFamilyQuirks(FamilyId::AppletSuiteGen1);
+    const auto* s2 = findFamilyQuirks(FamilyId::AppletSuiteGen2);
     ASSERT_NE(s1, nullptr);
     ASSERT_NE(s2, nullptr);
     EXPECT_TRUE(s1->usesPace);

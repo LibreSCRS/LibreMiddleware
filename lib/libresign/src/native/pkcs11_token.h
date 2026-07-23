@@ -103,8 +103,8 @@ public:
     ///        ECDSA: caller passes raw hash). When @p rawData is non-empty AND
     ///        @p algorithm names a hash (e.g. "SHA256withRSA"), the token first
     ///        tries the combined CKM_SHA*_RSA_PKCS mechanism with @p rawData
-    ///        (correct for hash-on-card SSCDs such as Cryptovision SCE 8.0,
-    ///        German nPA, several QSCDs); on @c CKR_MECHANISM_INVALID or token
+    ///        (correct for certain IAS-ECC hash-on-card SSCDs such as
+    ///        German nPA and several other QSCDs); on @c CKR_MECHANISM_INVALID or token
     ///        failure it falls back to the legacy CKM_RSA_PKCS path with the
     ///        pre-built @p hash. Callers that lack the raw bytes (OpenSSL CMS
     ///        provider sign callback) pass an empty span and get the legacy

@@ -256,8 +256,8 @@ enum class SignMechanism : std::uint8_t {
     /// Unlike @ref RSA_PKCS (where `data` is a complete caller-built
     /// DigestInfo the card signs verbatim), here `data` is the **raw message**:
     /// the card computes SHA-256 internally and produces the PKCS#1 v1.5
-    /// signature. This is the only form accepted by hash-on-card SSCDs
-    /// (IAS-ECC, e.g. Cryptovision SCE 8.0-C2V0) that reject a caller-supplied
+    /// signature. This is the only form accepted by certain IAS-ECC
+    /// hash-on-card SSCDs (e.g. SCE 8.0-C2V0) that reject a caller-supplied
     /// DigestInfo. Plugins without a hash-on-card sign primitive MUST return
     /// @ref SignResultOutcome::NotImplemented for this mechanism.
     ///

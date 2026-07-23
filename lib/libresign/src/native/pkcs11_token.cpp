@@ -311,7 +311,7 @@ std::vector<uint8_t> Pkcs11Token::sign(std::span<const uint8_t> hash, const std:
 
     // Combined-mechanism probe: when the caller supplied the raw bytes,
     // try the CKM_SHA*_RSA_PKCS form first. This is the only working path
-    // on hash-on-card SSCDs (Cryptovision SCE 8.0-C2V0, German nPA family)
+    // on certain IAS-ECC hash-on-card SSCDs (e.g. SCE 8.0-C2V0, German nPA)
     // where the card's PSO COMPUTE machinery insists on hashing the input
     // itself; passing pre-built DigestInfo with CKM_RSA_PKCS surfaces as
     // SW 6A80 / wrong-data-format on those cards. On any failure of the

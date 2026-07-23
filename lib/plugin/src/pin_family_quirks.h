@@ -32,12 +32,12 @@ namespace LibreSCRS::Plugin::Internal {
 
 /// @brief Identity of a credential family with a static quirk row.
 enum class FamilyId : std::uint8_t {
-    Unknown,             ///< No family evidence — @ref findFamilyQuirks returns nullptr.
-    CurrentLkCardEdge,   ///< Current Serbian eID applet (CardEdge, single-PIN model).
-    VeridosAppletSuite1, ///< ePasslet applet-suite generation 1 (PKCS#15 with transport-born SIGN PIN).
-    VeridosAppletSuite2, ///< ePasslet applet-suite generation 2 (SRB-eID V2.00).
-    Piv,                 ///< NIST PIV.
-    AetPosta,            ///< Postal CA card profile (issuer-tool key activation).
+    Unknown,           ///< No family evidence — @ref findFamilyQuirks returns nullptr.
+    CurrentLkCardEdge, ///< Current Serbian eID applet (CardEdge, single-PIN model).
+    AppletSuiteGen1,   ///< applet-suite generation 1 (PKCS#15 with transport-born SIGN PIN).
+    AppletSuiteGen2,   ///< applet-suite generation 2 (SRB-eID V2.00).
+    Piv,               ///< NIST PIV.
+    AetPosta,          ///< Postal CA card profile (issuer-tool key activation).
 };
 
 /// @brief Per-@ref PinKind static knowledge for one family.

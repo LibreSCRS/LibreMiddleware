@@ -146,10 +146,11 @@ LibreSCRS::Plugin::Internal::FamilyId resolveFamilyId(const pkcs15::PKCS15Profil
         std::string_view marker;
         LibreSCRS::Plugin::Internal::FamilyId family;
     };
-    // "SSCDv1 PACE MD": EF.TokenInfo label captured 2026-07-20 from a
-    // suite-1 card over the contact interface (production readProfile path).
+    // "SSCDv1 PACE MD": EF.TokenInfo label captured 2026-07-20 from certain
+    // IAS-ECC hash-on-card SSCDs over the contact interface (production
+    // readProfile path).
     static constexpr std::array<LabelMarker, 1> kMarkers{
-        {{"SSCDv1 PACE MD", LibreSCRS::Plugin::Internal::FamilyId::VeridosAppletSuite1}}};
+        {{"SSCDv1 PACE MD", LibreSCRS::Plugin::Internal::FamilyId::AppletSuiteGen1}}};
     for (const auto& m : kMarkers)
         if (profile.tokenInfo.label.find(m.marker) != std::string_view::npos)
             return m.family;
@@ -160,10 +161,10 @@ LibreSCRS::Plugin::Internal::FamilyId resolveFamilyId(const pkcs15::PKCS15Profil
 ///        prefix comparison against the family's signature-DF path.
 bool inFamilySignatureDf(LibreSCRS::Plugin::Internal::FamilyId family, const std::vector<std::uint8_t>& path)
 {
-    if (family == LibreSCRS::Plugin::Internal::FamilyId::VeridosAppletSuite1) {
-        static constexpr std::array<std::uint8_t, 4> kSuite1SignatureDf{0x3F, 0x00, 0x0D, 0xF5};
-        return path.size() >= kSuite1SignatureDf.size() &&
-               std::equal(kSuite1SignatureDf.begin(), kSuite1SignatureDf.end(), path.begin());
+    if (family == LibreSCRS::Plugin::Internal::FamilyId::AppletSuiteGen1) {
+        static constexpr std::array<std::uint8_t, 4> kAppletSuiteGen1SignatureDf{0x3F, 0x00, 0x0D, 0xF5};
+        return path.size() >= kAppletSuiteGen1SignatureDf.size() &&
+               std::equal(kAppletSuiteGen1SignatureDf.begin(), kAppletSuiteGen1SignatureDf.end(), path.begin());
     }
     return false;
 }
@@ -731,7 +732,7 @@ public:
     }
 
     // Hash-on-card RSA-SHA256 signing for the IAS-ECC / PKCS#15 family
-    // (NAM: Cryptovision SCE 8.0-C2V0 SSCD). The caller deposits the signing
+    // (NAM: SCE 8.0-C2V0 SSCD). The caller deposits the signing
     // PIN via setCredentials("pin", ...) immediately before this call (the same
     // per-session seam used for the CAN). PKCS15Card::sign owns the atomic
     // select + verifyPIN + MSE(0x28) + PSO over the RAW message — the exact

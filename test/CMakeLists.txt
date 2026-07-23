@@ -1144,7 +1144,7 @@ endif()
 # against a scripted PKCS#15 card: detached CardSession + injected
 # PlainChannel (LibreSCRS_SmartCard_TestHelpers seams, the
 # lib/pkcs15/test harness pattern) with a PCSCConnection transmit filter
-# serving the hardware-scanned suite-1 EF.AODF fixture.
+# serving the hardware-scanned AppletSuiteGen1 EF.AODF fixture.
 add_executable(Pkcs15PinLifecycleTests Pkcs15PinLifecycleTests.cpp)
 target_link_libraries(Pkcs15PinLifecycleTests PRIVATE
     GTest::gtest_main

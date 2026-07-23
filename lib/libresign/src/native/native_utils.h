@@ -184,8 +184,8 @@ std::string tokenAlgorithm(int keyType, const std::string& mdName);
 
 // Sign a hash with a PKCS#11 token, prepending DigestInfo for RSA.
 // When @p rawData is non-empty, it is forwarded to Pkcs11Token::sign as
-// the "original data" hint so hash-on-card SSCDs (Cryptovision SCE 8.0,
-// German nPA family) can use the combined CKM_SHA*_RSA_PKCS mechanism
+// the "original data" hint so certain IAS-ECC hash-on-card SSCDs
+// (German nPA family) can use the combined CKM_SHA*_RSA_PKCS mechanism
 // instead of the legacy pre-built DigestInfo path that those cards
 // reject with SW 6A80 / wrong-data-format. Returns the raw signature
 // bytes.

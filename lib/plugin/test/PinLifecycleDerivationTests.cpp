@@ -15,8 +15,8 @@ using namespace LibreSCRS::Plugin::Internal;
 
 namespace {
 
-// Suite-1 card AODF facts (hardware-scanned 2026-07-18).
-PinEvidence suite1UserPin()
+// AppletSuiteGen1 card AODF facts (hardware-scanned 2026-07-18).
+PinEvidence appletSuiteGen1UserPin()
 {
     PinEvidence e;
     e.label = "User PIN";
@@ -27,7 +27,7 @@ PinEvidence suite1UserPin()
     e.authIdChainTarget = std::vector<std::uint8_t>{0x03};
     return e;
 }
-PinEvidence suite1Puk()
+PinEvidence appletSuiteGen1Puk()
 {
     PinEvidence e;
     e.label = "Global PUK";
@@ -39,7 +39,7 @@ PinEvidence suite1Puk()
     e.initialized = true;
     return e;
 }
-PinEvidence suite1SignPin()
+PinEvidence appletSuiteGen1SignPin()
 {
     PinEvidence e;
     e.label = "Signature PIN";
@@ -49,7 +49,7 @@ PinEvidence suite1SignPin()
     e.initialized = true;
     return e;
 }
-PinEvidence suite1Can()
+PinEvidence appletSuiteGen1Can()
 {
     PinEvidence e;
     e.label = "PACE CAN";
@@ -59,21 +59,21 @@ PinEvidence suite1Can()
     e.paceEvidence = true;
     return e;
 }
-std::vector<PinEvidence> suite1All()
+std::vector<PinEvidence> appletSuiteGen1All()
 {
-    return {suite1UserPin(), suite1Puk(), suite1SignPin(), suite1Can()};
+    return {appletSuiteGen1UserPin(), appletSuiteGen1Puk(), appletSuiteGen1SignPin(), appletSuiteGen1Can()};
 }
 
 } // namespace
 
-TEST(PinLifecycleDerivation, Suite1KindClassification)
+TEST(PinLifecycleDerivation, AppletSuiteGen1KindClassification)
 {
-    const auto all = suite1All();
-    const auto* q = findFamilyQuirks(FamilyId::VeridosAppletSuite1);
-    EXPECT_EQ(derivePinStatus(suite1UserPin(), all, q).kind, PinKind::UserPin);
-    EXPECT_EQ(derivePinStatus(suite1Puk(), all, q).kind, PinKind::Puk);
-    EXPECT_EQ(derivePinStatus(suite1SignPin(), all, q).kind, PinKind::SignPin);
-    EXPECT_EQ(derivePinStatus(suite1Can(), all, q).kind, PinKind::Can);
+    const auto all = appletSuiteGen1All();
+    const auto* q = findFamilyQuirks(FamilyId::AppletSuiteGen1);
+    EXPECT_EQ(derivePinStatus(appletSuiteGen1UserPin(), all, q).kind, PinKind::UserPin);
+    EXPECT_EQ(derivePinStatus(appletSuiteGen1Puk(), all, q).kind, PinKind::Puk);
+    EXPECT_EQ(derivePinStatus(appletSuiteGen1SignPin(), all, q).kind, PinKind::SignPin);
+    EXPECT_EQ(derivePinStatus(appletSuiteGen1Can(), all, q).kind, PinKind::Can);
 }
 
 TEST(PinLifecycleDerivation, SoPinAloneIsNotAPuk)
@@ -99,7 +99,7 @@ TEST(PinLifecycleDerivation, PaceEvidenceDoesNotOverrideAPukOrSoPin)
     // The CAN rule must not capture a PUK/SO-PIN that happens to carry the
     // change+unblock-disabled shape — a real PUK can be a fixed, non-changeable,
     // non-unblockable value. An unblocking authority stays Puk...
-    PinEvidence puk = suite1Puk();
+    PinEvidence puk = appletSuiteGen1Puk();
     puk.changeDisabledFlag = true; // now BOTH disabled flags present
     puk.paceEvidence = true;       // as the plugin would set on a usesPace family
     EXPECT_EQ(derivePinStatus(puk, {puk}, nullptr).kind, PinKind::Puk)
@@ -119,24 +119,24 @@ TEST(PinLifecycleDerivation, PaceEvidenceDoesNotOverrideAPukOrSoPin)
 
 TEST(PinLifecycleDerivation, UnblockableRequiresChainKnownVariantAndPresentablePuk)
 {
-    auto all = suite1All();
+    auto all = appletSuiteGen1All();
     // The real table deliberately advertises no verified unblock command
     // form yet, so build a synthetic family row that does — the quirks
     // aggregate is test-constructible for exactly this.
     FamilyQuirks synthetic;
-    synthetic.id = FamilyId::VeridosAppletSuite1;
+    synthetic.id = FamilyId::AppletSuiteGen1;
     auto& userKind = synthetic.kinds[static_cast<std::size_t>(PinKind::UserPin)];
     userKind.rrcVariantKnown = true;
     userKind.unblockStyle = UnblockStyle::UnblockAndChange;
     const auto* q = &synthetic;
 
-    auto user = derivePinStatus(suite1UserPin(), all, q);
+    auto user = derivePinStatus(appletSuiteGen1UserPin(), all, q);
     EXPECT_TRUE(user.unblockable);
     EXPECT_EQ(user.recovery, PinRecovery::HolderViaPuk);
 
     // Same card, but the PUK itself is blocked → degrade.
     all[1].blocked = true;
-    auto degraded = derivePinStatus(suite1UserPin(), all, q);
+    auto degraded = derivePinStatus(appletSuiteGen1UserPin(), all, q);
     EXPECT_FALSE(degraded.unblockable);
     EXPECT_NE(degraded.recovery, PinRecovery::HolderViaPuk);
 }
@@ -218,39 +218,39 @@ TEST(PinLifecycleDerivation, ChainTargetAbsentFromEvidenceIsNotUnblockable)
 
 TEST(PinLifecycleDerivation, UnblockDisabledFlagVetoes)
 {
-    auto all = suite1All();
-    auto user = suite1UserPin();
+    auto all = appletSuiteGen1All();
+    auto user = appletSuiteGen1UserPin();
     user.unblockDisabledFlag = true;
-    EXPECT_FALSE(derivePinStatus(user, all, findFamilyQuirks(FamilyId::VeridosAppletSuite1)).unblockable);
+    EXPECT_FALSE(derivePinStatus(user, all, findFamilyQuirks(FamilyId::AppletSuiteGen1)).unblockable);
 }
 
 TEST(PinLifecycleDerivation, NoQuirksMeansNoUnblockAdvertised)
 {
     // Chain evidence present but family unknown (no RRC variant known):
     // never advertise what we cannot execute.
-    const auto all = suite1All();
-    auto user = derivePinStatus(suite1UserPin(), all, nullptr);
+    const auto all = appletSuiteGen1All();
+    auto user = derivePinStatus(appletSuiteGen1UserPin(), all, nullptr);
     EXPECT_FALSE(user.unblockable);
     EXPECT_EQ(user.recovery, PinRecovery::Unknown);
 }
 
 TEST(PinLifecycleDerivation, StatePrecedenceBlockedOverTransport)
 {
-    PinEvidence e = suite1SignPin();
+    PinEvidence e = appletSuiteGen1SignPin();
     e.initialized = false; // transport-born
     e.blocked = true;      // and exhausted
-    const auto* q = findFamilyQuirks(FamilyId::VeridosAppletSuite1);
-    auto s = derivePinStatus(e, suite1All(), q);
+    const auto* q = findFamilyQuirks(FamilyId::AppletSuiteGen1);
+    auto s = derivePinStatus(e, appletSuiteGen1All(), q);
     EXPECT_EQ(s.state, PinState::Blocked);
     EXPECT_FALSE(s.activatable); // not while blocked
 }
 
 TEST(PinLifecycleDerivation, NeedsChangeSignalPropagatesAndBlockedWins)
 {
-    const auto all = suite1All();
-    const auto* q = findFamilyQuirks(FamilyId::VeridosAppletSuite1);
+    const auto all = appletSuiteGen1All();
+    const auto* q = findFamilyQuirks(FamilyId::AppletSuiteGen1);
 
-    auto user = suite1UserPin();
+    auto user = appletSuiteGen1UserPin();
     user.needsChangeSignal = true;
     EXPECT_EQ(derivePinStatus(user, all, q).state, PinState::NeedsChange);
 

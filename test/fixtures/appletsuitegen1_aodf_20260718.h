@@ -3,7 +3,7 @@
 
 #pragma once
 
-// Suite-1 card EF.AODF, hardware-scanned 2026-07-18.
+// AppletSuiteGen1 card EF.AODF, hardware-scanned 2026-07-18.
 //
 // Raw bytes of the card's EF.AODF (FID 4408 inside the PKCS#15 DF), status
 // words stripped, trailing 0x00 file padding trimmed. Four ASN.1 SEQUENCE
@@ -35,7 +35,7 @@
 
 namespace LibreSCRS::test::fixtures {
 
-inline constexpr std::array<std::uint8_t, 280> kSuite1Aodf20260718 = {
+inline constexpr std::array<std::uint8_t, 280> kAppletSuiteGen1Aodf20260718 = {
     // --- entry 1: "PACE CAN" ---------------------------------------------
     0x30,
     0x2F, // SEQUENCE (47)

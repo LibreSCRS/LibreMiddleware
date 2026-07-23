@@ -149,7 +149,7 @@ TEST(SecureMessagingTest, ProtectCase3OmitsDO97)
 {
     // Case 3: Lc + data, no Le (e.g. SELECT with P2=0x0C: 00 A4 04 0C 07 ...)
     // ICAO 9303 Part 11: DO'97 only present when original command includes Le.
-    // Some cards (e.g. suite-1 ePasslet eIDs) reject DO'97 on Case 3 MSE:Set AT with SW=6700.
+    // Some PACE-family eIDs reject DO'97 on Case 3 MSE:Set AT with SW=6700.
     SessionKeys keys;
     keys.encKey = std::vector<uint8_t>(16, 0x01);
     keys.macKey = std::vector<uint8_t>(16, 0x02);

@@ -205,7 +205,7 @@ std::vector<uint8_t> SecureMessaging::protect(const std::vector<uint8_t>& comman
 
     // DO'97: Le — only present when the original command expects response data (Case 2/4).
     // ICAO 9303 Part 11 Section 9.8.6: "If the command APDU includes Le: Construct DO'97".
-    // Case 1/3 commands (no Le) must NOT include DO'97 — some cards (e.g. suite-1 ePasslet eIDs)
+    // Case 1/3 commands (no Le) must NOT include DO'97 — some PACE-family eIDs
     // reject it with SW=6700 on MSE:Set AT.
     std::vector<uint8_t> do97;
     bool extendedLe = false;

@@ -123,8 +123,9 @@ constexpr uint8_t RSA_SHA1_PKCS1 = 0x0A;   // RSA PKCS#1 v1.5 with SHA-1
 constexpr uint8_t RSA_SHA256_PKCS1 = 0x28; // RSA PKCS#1 v1.5 with SHA-256 (non-IAS-ECC vendors)
 constexpr uint8_t RSA_SHA384_PKCS1 = 0x29; // RSA PKCS#1 v1.5 with SHA-384 (non-IAS-ECC vendors)
 constexpr uint8_t RSA_SHA512_PKCS1 = 0x2A; // RSA PKCS#1 v1.5 with SHA-512 (non-IAS-ECC vendors)
-// IAS-ECC convention (Cryptovision SCE 8.0-C2V0 SSCD, German nPA, several
-// QSCDs) combines a base RSA algorithm with a hash flag:
+// IAS-ECC convention (certain hash-on-card SSCDs such as SCE 8.0-C2V0,
+// German nPA, and several other QSCDs) combines a base RSA algorithm
+// with a hash flag:
 //   RSA_PKCS=0x02 | SHA1=0x10 -> 0x12   (same as RSA_SHA1_PKCS1 by coincidence)
 //   RSA_PKCS=0x02 | SHA2=0x40 -> 0x42   (the SHA-256 PKCS#1 algo on IAS-ECC)
 // Sign emits both legacy (0x28) and IAS-ECC (0x42) attempts so a single
