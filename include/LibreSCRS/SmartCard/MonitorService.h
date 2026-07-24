@@ -221,13 +221,21 @@ public:
         ///        phantoms. Set to zero to disable coalescing entirely.
         std::chrono::milliseconds coalesceWindow{250};
 
-        /// @brief Per-reader event-rate ceiling; reserved for the rate
-        ///        limiter wired in a follow-up change. Unused by the
-        ///        coalescer.
+        /// @brief Per-reader card-event-rate ceiling. Once a single reader
+        ///        produces this many card events inside a rolling 1-second
+        ///        window, the reader enters a @ref backoffOnFlood cool-down
+        ///        during which further card events are suppressed at the
+        ///        gate (only the most recent one is remembered for
+        ///        reconciliation).
         std::size_t maxEventsPerSecond{20};
 
-        /// @brief Cool-down applied once the rate limiter trips; reserved
-        ///        for the rate limiter wired in a follow-up change.
+        /// @brief Cool-down applied once the @ref maxEventsPerSecond flood
+        ///        gate trips. Card events arriving during the cool-down are
+        ///        suppressed; when it expires, the last suppressed event is
+        ///        reconciled to subscribers if it changes the card-presence
+        ///        belief. This duration therefore also bounds how long a
+        ///        settled terminal card state can stay invisible to
+        ///        subscribers after a flood.
         std::chrono::milliseconds backoffOnFlood{5000};
 
         /// @brief Build a @ref Config from process environment overrides.

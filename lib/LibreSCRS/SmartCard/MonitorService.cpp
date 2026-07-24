@@ -209,6 +209,7 @@ void MonitorService::Impl::dispatch(const MonitorEvent& event)
     // happily refresh on without ever cancelling). The gate fires BEFORE
     // any held-event manipulation so suppressed-by-flood events never
     // enter the coalescer state and never reach dispatchImmediate.
+    bool reconcileWake = false;
     {
         std::scoped_lock lk(coalesceMtx);
         auto& state = coalesceState[event.readerName];
@@ -218,15 +219,21 @@ void MonitorService::Impl::dispatch(const MonitorEvent& event)
             state.eventWindow.pop_front();
         }
 
-        // Inside an active backoff window: drop the event.
+        // Inside an active backoff window: drop the event, but remember it as
+        // the reader's latest state. When the backoff expires the flusher
+        // reconciles it (see runCoalesceFlusher) so a card that settled PRESENT
+        // during a bogus dual-interface burst is not lost until a manual
+        // re-seat. Only the LAST dropped event is kept — the intervening
+        // transients stay suppressed.
         if (state.backoffUntil > now) {
-            return;
-        }
-
-        // Window count just crossed the ceiling: enter backoff, log
-        // once, drop this event.
-        if (state.eventWindow.size() >= config.maxEventsPerSecond) {
+            state.floodPending = event;
+            reconcileWake = true;
+        } else if (state.eventWindow.size() >= config.maxEventsPerSecond) {
+            // Window count just crossed the ceiling: enter backoff, log once,
+            // drop this event — but keep it as the pending terminal state too.
             state.backoffUntil = now + config.backoffOnFlood;
+            state.floodPending = event;
+            reconcileWake = true;
             if (!state.floodLogged) {
                 // LM core is Qt-free per workspace conventions, so emit
                 // to std::clog with a category prefix instead of
@@ -238,14 +245,33 @@ void MonitorService::Impl::dispatch(const MonitorEvent& event)
                           << "ms\n";
                 state.floodLogged = true;
             }
-            return;
+        } else {
+            // Healthy event: record its timestamp in the rolling window and
+            // clear the one-shot flood-log latch so a future flood logs
+            // again rather than silently re-tripping. A genuine accepted
+            // event also supersedes any suppressed terminal state left over
+            // from an expired backoff — without this reset the flusher
+            // would emit the OLDER floodPending AFTER this newer event,
+            // inverting the subscriber's presence belief. It also keeps the
+            // ordering invariant the flusher relies on: whenever heldEvent
+            // and floodPending coexist for a reader, the floodPending is
+            // the NEWER of the two (only the flood gate arms it, and every
+            // accepted event clears it before being held below). Falls
+            // through to the coalescer below.
+            state.eventWindow.push_back(now);
+            state.floodLogged = false;
+            state.floodPending.reset();
         }
-
-        // Healthy event: record its timestamp in the rolling window and
-        // clear the one-shot flood-log latch so a future flood logs
-        // again rather than silently re-tripping.
-        state.eventWindow.push_back(now);
-        state.floodLogged = false;
+    }
+    // Flood-suppressed: wake the flusher so it schedules the backoff-expiry
+    // reconcile, then stop here (the event itself is not forwarded now).
+    // Known limitation: with coalescing disabled (coalesceWindow == 0) no
+    // flusher thread exists, so a terminal state suppressed during a backoff
+    // is never reconciled — the diagnostic mode deliberately trades
+    // reconciliation for raw event flow.
+    if (reconcileWake) {
+        coalesceCv.notify_all();
+        return;
     }
 
     // Coalescer disabled — forward immediately. The rate-limit gate
@@ -294,12 +320,17 @@ void MonitorService::Impl::runCoalesceFlusher()
 {
     std::unique_lock<std::mutex> lk(coalesceMtx);
     while (!coalesceStop) {
-        // Find the earliest pending hold deadline.
+        // Find the earliest pending deadline: a held-event's coalesce window,
+        // OR a flood backoff's expiry (after which a pending terminal state
+        // must be reconciled to subscribers).
         auto nextDeadline = std::chrono::steady_clock::time_point::max();
         for (const auto& [name, state] : coalesceState) {
             (void)name;
             if (state.heldEvent.has_value() && state.heldUntil < nextDeadline) {
                 nextDeadline = state.heldUntil;
+            }
+            if (state.floodPending.has_value() && state.backoffUntil < nextDeadline) {
+                nextDeadline = state.backoffUntil;
             }
         }
         if (nextDeadline == std::chrono::steady_clock::time_point::max()) {
@@ -308,15 +339,28 @@ void MonitorService::Impl::runCoalesceFlusher()
                     return true;
                 for (const auto& [name, state] : coalesceState) {
                     (void)name;
-                    if (state.heldEvent.has_value())
+                    if (state.heldEvent.has_value() || state.floodPending.has_value())
                         return true;
                 }
                 return false;
             });
             continue;
         }
-        if (coalesceCv.wait_until(lk, nextDeadline, [this] { return coalesceStop; })) {
-            // coalesceStop became true.
+        const auto now = std::chrono::steady_clock::now();
+        if (now < nextDeadline) {
+            // Deadlines are NOT monotonic: a flood backoff's expiry lies
+            // seconds out while a held-event window is milliseconds out, so
+            // a deadline created while we sleep can be EARLIER than the one
+            // we went to sleep on. Wait without a predicate and loop back so
+            // EVERY wake — notify, timeout or spurious — recomputes the
+            // earliest deadline before sleeping again. This cannot
+            // busy-spin: a wake that finds nothing new re-parks on the same
+            // recomputed deadline, and dispatch() only notifies after
+            // mutating coalesceState under the lock held here, so each
+            // notify funds at most one recompute. Shutdown stays covered:
+            // the destructor sets coalesceStop under the lock and notifies,
+            // and the loop condition re-checks it on every wake.
+            coalesceCv.wait_until(lk, nextDeadline);
             continue;
         }
         // Deadline reached — collect and emit every event whose hold has
@@ -324,13 +368,40 @@ void MonitorService::Impl::runCoalesceFlusher()
         // releasing it so subscriber callbacks cannot deadlock against
         // dispatch re-entry.
         std::vector<MonitorEvent> toEmit;
-        const auto now = std::chrono::steady_clock::now();
         for (auto& [name, state] : coalesceState) {
             (void)name;
             if (state.heldEvent.has_value() && state.heldUntil <= now) {
                 toEmit.push_back(*state.heldEvent);
                 state.lastEmittedKind = state.heldEvent->kind;
                 state.heldEvent.reset();
+            }
+            // Reconcile a terminal card state that was suppressed during a
+            // flood backoff. Deliver it only if it changes the subscriber's
+            // card-presence belief (present iff last emitted was CardInserted)
+            // — so a settled CardInserted after a bogus burst always surfaces,
+            // while a redundant repeat or a phantom Removed-with-no-prior-card
+            // does not create spurious events. When a held event coexists with
+            // the floodPending it is always the OLDER of the two (the healthy
+            // path in dispatch() clears floodPending before holding an event;
+            // only the flood gate re-arms it), so the reconcile flushes any
+            // still-held event first — regardless of its remaining hold time —
+            // before comparing beliefs. That keeps the emission order
+            // chronological and the comparison up to date for EVERY
+            // coalesceWindow/backoffOnFlood combination; the ordering is
+            // enforced structurally here, not assumed from the configuration.
+            if (state.floodPending.has_value() && state.backoffUntil <= now) {
+                if (state.heldEvent.has_value()) {
+                    toEmit.push_back(*state.heldEvent);
+                    state.lastEmittedKind = state.heldEvent->kind;
+                    state.heldEvent.reset();
+                }
+                const bool pendingPresent = (state.floodPending->kind == MonitorEvent::Kind::CardInserted);
+                const bool knownPresent = (state.lastEmittedKind == MonitorEvent::Kind::CardInserted);
+                if (pendingPresent != knownPresent) {
+                    toEmit.push_back(*state.floodPending);
+                    state.lastEmittedKind = state.floodPending->kind;
+                }
+                state.floodPending.reset();
             }
         }
         lk.unlock();
@@ -355,7 +426,7 @@ void MonitorService::Impl::runCoalesceFlusher()
             // event for a reader always has a coalesceState entry until
             // that reader is removed. coalesceMtx is acquired and released
             // here BEFORE dispatchImmediate takes dispatchMtx, preserving
-            // the established no-nesting order between the two. See spec §3.
+            // the established no-nesting order between the two.
             {
                 std::scoped_lock<std::mutex> coalesceLk(coalesceMtx);
                 if (coalesceState.find(ev.readerName) == coalesceState.end()) {
@@ -424,8 +495,8 @@ void MonitorService::Impl::diffReadersAndDispatch(const std::vector<std::string>
     // re-poll). Placing this inside the dispatch conditional above
     // would mean a service that starts with no readers attached never
     // satisfies the gate in subscribeReaderList, permanently suppressing
-    // bootstrap-fires for late joiners — see spec §5.2 Change B and
-    // regression test SubscribeReaderListZeroReadersAtBootThenPlug.
+    // bootstrap-fires for late joiners — see regression test
+    // SubscribeReaderListZeroReadersAtBootThenPlug.
     //
     // compare_exchange_strong is defensive: the function is single-
     // threaded inside the poll loop, so a plain store would suffice;
@@ -543,7 +614,7 @@ void MonitorService::Impl::startInternalMonitor()
     // Without this reset, a subscribeReaderList that races a follow-up
     // firstSubscriber start would observe a stale true and bootstrap-
     // fire from the just-cleared empty knownReaders — same race this
-    // fix closes (spec §5.2 Change C).
+    // fix closes.
     initialPollComplete.store(false, std::memory_order_release);
     auto eventCb = [this](const ::LibreSCRS::SmartCard::Internal::MonitorEvent& e) {
         MonitorEvent pub{
@@ -593,7 +664,7 @@ void MonitorService::Impl::startInternalMonitor()
         // the just-started poll thread (it runs forever, PCSC context
         // leaked until ~MonitorService). Re-check: if both maps are
         // empty now, the racing unsubscribe already happened and we
-        // must drop the internal subscription ourselves. See spec §4.
+        // must drop the internal subscription ourselves.
         if (callbacks.empty() && readerListCallbacks.empty()) {
             orphanedSub = internalSubId;
             internalSubId.reset();

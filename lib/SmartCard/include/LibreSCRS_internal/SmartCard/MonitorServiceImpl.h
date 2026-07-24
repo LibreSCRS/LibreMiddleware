@@ -135,6 +135,21 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
         std::deque<std::chrono::steady_clock::time_point> eventWindow;
         std::chrono::steady_clock::time_point backoffUntil{};
         bool floodLogged{false};
+
+        // The most recent card event dropped while the reader was inside its
+        // flood backoff. A dual-interface contactless reader can burst dozens
+        // of bogus Inserted/Removed pairs when a card lands, tripping the
+        // backoff, and then SETTLE with the card present — that terminal
+        // CardInserted arrives during the cool-down and would otherwise be
+        // dropped forever (the card is present but invisible until a manual
+        // re-seat / restart). When the backoff expires the flusher reconciles:
+        // if this pending terminal state disagrees with @c lastEmittedKind
+        // about card presence, it is delivered. Transients are still
+        // suppressed — only the settled final state survives. A genuine
+        // event accepted after the backoff expires supersedes it (the
+        // healthy path in dispatch() resets it), so a coexisting heldEvent
+        // is always older than the floodPending.
+        std::optional<MonitorEvent> floodPending;
     };
 
     mutable std::mutex coalesceMtx;
@@ -188,8 +203,11 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
     // Used by the flusher thread when a held event's window expires.
     void dispatchImmediate(const MonitorEvent& event);
 
-    // Background flusher loop: wakes on the earliest pending heldUntil and
-    // releases events whose window has expired. Exits when coalesceStop is
+    // Background flusher loop: wakes on the earliest pending deadline (a
+    // held-event's coalesce window or a flood backoff's expiry), releases
+    // events whose window has expired and reconciles suppressed terminal
+    // states. Recomputes the earliest deadline on every wake — deadlines
+    // are not monotonic across the two sources. Exits when coalesceStop is
     // set in the destructor.
     void runCoalesceFlusher();
 
