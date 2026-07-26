@@ -48,12 +48,12 @@ const FamilyKindQuirks& kindQuirksOrDefault(const std::array<FamilyKindQuirks, k
 // Serbian (ćirilica) source strings for the client catalogs are kept next
 // to each key as comments.
 
-// sr (ћирилица): "Деблокаду обавља издавалац картице (шалтер полиције)."
-LocalizedText issuerCounterUnblockGuidance()
+// sr (ћирилица): "Деблокаду обавља издавалац картице."
+LocalizedText issuerUnblockGuidance()
 {
     return LocalizedText{
         .key = "librescrs.pin.blocked.issuer",
-        .defaultText = "Unblocking is done by the issuer (police counter).",
+        .defaultText = "Unblocking is done by the issuer.",
         .placeholders = {},
     };
 }
@@ -80,7 +80,7 @@ FamilyQuirks makeCurrentLkCardEdge()
     auto& user = q.kinds[kindIndex(PinKind::UserPin)];
     user.canChange = true;
     user.blockedRecovery = PinRecovery::IssuerProcess;
-    user.blockedGuidance = issuerCounterUnblockGuidance();
+    user.blockedGuidance = issuerUnblockGuidance();
     return q;
 }
 
