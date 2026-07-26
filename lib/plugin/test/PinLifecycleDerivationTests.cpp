@@ -245,7 +245,7 @@ TEST(PinLifecycleDerivation, StatePrecedenceBlockedOverTransport)
     EXPECT_FALSE(s.activatable); // not while blocked
 }
 
-// Plan D Task 11 (post-unblock classification, spec §5.1): the derivation
+// Post-unblock classification: the derivation
 // needs no new code for this — it already classifies purely from the
 // `initialized` evidence bit (plus the family's supportsTransportPin +
 // SignPin kind), and that bit is exactly what a fresh getPINList / AODF
@@ -410,7 +410,7 @@ TEST(PinLifecycleDerivation, KeyActivationGuidanceNotOnPukOrCan)
 }
 
 // ---------------------------------------------------------------------------
-// Task 11 review fix: resolveUnblockApdu — the RESET RETRY COUNTER P1 +
+// resolveUnblockApdu — the RESET RETRY COUNTER P1 +
 // on-wire data-shape decision extracted from pkcs15-plugin's unblockPIN
 // override. Mirrors the classifyPinOutcome extraction precedent
 // (<LibreSCRS/Plugin/PinOutcome.h>): a pure free function living beside the
@@ -472,7 +472,7 @@ TEST(ResolveUnblockApdu, UnblockAndChangeSendsNewPinOnlyWhenCallerSuppliesOne)
 }
 
 // ---------------------------------------------------------------------------
-// Plan D Task 12 — resolveTransportChangeApdu: the CHANGE REFERENCE DATA P1
+// resolveTransportChangeApdu: the CHANGE REFERENCE DATA P1
 // + on-wire data-shape decision extracted from pkcs15-plugin's
 // activateTransportPin override, up front this time (following the
 // resolveUnblockApdu precedent immediately above rather than needing a

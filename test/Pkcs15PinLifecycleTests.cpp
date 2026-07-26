@@ -721,7 +721,7 @@ TEST(Pkcs15PinLifecycle, PukSurfacesUsageAndUnblockCounters)
 }
 
 // ---------------------------------------------------------------------------
-// Plan D Task 11 — pkcs15::PKCS15Card::resetRetryCounter (ISO RESET RETRY
+// pkcs15::PKCS15Card::resetRetryCounter (ISO RESET RETRY
 // COUNTER, the RRC verb behind pkcs15-plugin's unblockPIN override), tested
 // directly against a minimal scripted connection (same technique as
 // LibreSCRS_AetAttestationTests: FakePCSCConnection + a real PlainChannel,
@@ -914,7 +914,7 @@ TEST(Pkcs15ResetRetryCounter, ReferenceNotFoundSwMapsToGenericFailureNotInvalidP
 }
 
 // ---------------------------------------------------------------------------
-// Plan D Task 12 — pkcs15::PKCS15Card::changeReferenceData (ISO CHANGE
+// pkcs15::PKCS15Card::changeReferenceData (ISO CHANGE
 // REFERENCE DATA, the verb behind pkcs15-plugin's activateTransportPin
 // override), tested directly against a minimal scripted connection — same
 // technique as the Pkcs15ResetRetryCounter block above, independent of
@@ -1139,7 +1139,7 @@ TEST(Pkcs15ChangeReferenceDataActivation, PriorAuthFormIntraVerbDropAfterVerifyP
 }
 
 // ---------------------------------------------------------------------------
-// Plan D Task 13 — pkcs15::PKCS15Card::activate (ISO ACTIVATE, the verb
+// pkcs15::PKCS15Card::activate (ISO ACTIVATE, the verb
 // behind pkcs15-plugin's activateSigningKey override), tested directly
 // against a minimal scripted connection — same technique as the
 // Pkcs15ResetRetryCounter / Pkcs15ChangeReferenceDataActivation blocks
@@ -1171,7 +1171,7 @@ TEST(Pkcs15ChangeReferenceDataActivation, PriorAuthFormIntraVerbDropAfterVerifyP
 
 TEST(Pkcs15KeyActivation, OkSwActivatesAtTheGivenP1P2)
 {
-    constexpr std::uint8_t kP1 = 0x00; // AppletSuiteGen1's keyActivate.p1 (Task 8's ISO default).
+    constexpr std::uint8_t kP1 = 0x00; // AppletSuiteGen1's keyActivate.p1 (the family table's ISO default).
     constexpr std::uint8_t kP2 = 0x00; // ditto keyActivate.p2 — caller-supplied, never a PKCS15Card constant.
     constexpr std::uint8_t kDataDrivenPinRef = 0x92; // the guarding SIGN PIN's own reference (path navigation only).
 
@@ -1206,7 +1206,7 @@ TEST(Pkcs15KeyActivation, OkSwActivatesAtTheGivenP1P2)
 TEST(Pkcs15KeyActivation, AlreadyActiveSwIsIdempotentSuccess)
 {
     // ISO ACTIVATE on an already-operational key answers 6985 (conditions
-    // of use not satisfied) — the "reachable/retry case" spec §5.3 pins:
+    // of use not satisfied) — the "reachable/retry case" pins:
     // a client retry (or a card that was already activated by a previous
     // attempt) must be treated as success, not failure, so it never
     // surfaces a spurious KeyActivationFailed for a key that is, in fact,
@@ -1357,7 +1357,7 @@ TEST(Pkcs15KeyActivation, IntraVerbDropAfterVerifyPropagatesAndReselectRecovers)
 // the real AppletSuiteGen1 quirk row deliberately withholds a
 // hardware-verified RRC variant (pin_family_quirks.cpp — rrcVariantKnown
 // stays false for UserPin/SignPin pending a hardware campaign, even though
-// Task 8/9 already seeded the ISO-default P1 bytes and the RESET RETRY
+// The family quirk table already seeds the ISO-default P1 bytes and the RESET RETRY
 // COUNTER builder), so unblockPIN correctly reports Unsupported for it
 // today. Critically, NO RESET RETRY COUNTER APDU reaches the wire in that
 // case — proving the style resolution (derivePinStatus, the SAME function
@@ -1415,7 +1415,7 @@ TEST(Pkcs15PinLifecycle, UnblockPinUnknownFamilyFallsBackToUnsupported)
 }
 
 // ---------------------------------------------------------------------------
-// Plan D Task 12 — pkcs15-plugin's activateTransportPin override, driven
+// pkcs15-plugin's activateTransportPin override, driven
 // end-to-end (plugin .so via the registry) against the SAME
 // AppletSuiteGen1 / unknown-family fixtures as getPINList/unblockPIN
 // above, plus the synthetic transportSignPinAodf() rig for the one
@@ -1437,7 +1437,7 @@ TEST(Pkcs15PinLifecycle, UnblockPinUnknownFamilyFallsBackToUnsupported)
 //
 // The one-shot (P1=0x00) success path IS reachable today (unlike
 // unblockPIN's RRC forms): AppletSuiteGen1's row already carries
-// transportChangeP1=0x00 (Task 8's ISO default), so a genuinely
+// transportChangeP1=0x00 (the family table's ISO default), so a genuinely
 // transport-state SIGN PIN (transportSignPinAodf) drives a real CHANGE
 // REFERENCE DATA through the plugin. The P1=0x01 prior-auth form's
 // VERIFY-then-CHANGE orchestration and its intra-verb-drop leak guard have
@@ -1519,7 +1519,7 @@ TEST(Pkcs15PinLifecycle, ActivateTransportPinOneShotFormSucceedsAndSendsTranspor
     ASSERT_NE(plugin, nullptr);
 
     auto rig = makeAppletSuiteGen1TransportSignRig("Pkcs15 Activate OneShot Reader 0");
-    rig.card->acceptedChangeRefP1 = 0x00; // AppletSuiteGen1's transportChangeP1 (Task 8's ISO default)
+    rig.card->acceptedChangeRefP1 = 0x00; // AppletSuiteGen1's transportChangeP1 (the family table's ISO default)
 
     // transportSignPinAodf's storedLength is 4 (minLength=4/storedLength=4/
     // maxLength=8): both values are exactly 4 chars so encodePIN neither
@@ -1544,7 +1544,7 @@ TEST(Pkcs15PinLifecycle, ActivateTransportPinOneShotFormSucceedsAndSendsTranspor
 }
 
 // ---------------------------------------------------------------------------
-// Plan D Task 13 — pkcs15-plugin's activateSigningKey override, driven
+// pkcs15-plugin's activateSigningKey override, driven
 // end-to-end (plugin .so via the registry) against the SAME
 // AppletSuiteGen1 / unknown-family fixtures as getPINList/unblockPIN/
 // activateTransportPin above.
@@ -1559,7 +1559,7 @@ TEST(Pkcs15PinLifecycle, ActivateTransportPinOneShotFormSucceedsAndSendsTranspor
 // APDUs) for a different reason each: the first because the family is
 // unrecognized at all; the second — the anti-hardcode proof — because the
 // AppletSuiteGen1 family row already carries ISO-default `keyActivate`
-// bytes (Task 8, still [HW-VERIFY]) yet still correctly reports
+// bytes (still [HW-VERIFY]) yet still correctly reports
 // Unsupported, since no credential's derived record ever asserts
 // keyActivatable today (see the Pkcs15KeyActivation block's coverage note
 // above, and unblockPIN's identically-shaped documented gap). A "success"
@@ -1596,7 +1596,7 @@ TEST(Pkcs15PinLifecycle, ActivateSigningKeyAppletSuiteGen1FallsBackToUnsupported
     ASSERT_NE(plugin, nullptr);
 
     // The AppletSuiteGen1 rig (hardware-captured AODF): the family row DOES
-    // carry the ISO-default keyActivate bytes (Task 8, still [HW-VERIFY]), but no AODF
+    // carry the ISO-default keyActivate bytes (still [HW-VERIFY]), but no AODF
     // object's derived record is ever keyActivatable (derivePinStatus keeps
     // it conservatively false for every family today) — proving the gate
     // reads live derived evidence, never just "this family supports key

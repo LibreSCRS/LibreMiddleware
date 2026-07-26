@@ -171,7 +171,7 @@ bool inFamilySignatureDf(LibreSCRS::Plugin::Internal::FamilyId family, const std
 
 /// @brief Builds the AODF-evidence fields @c unblockPIN, @c
 ///        activateTransportPin and @c activateSigningKey all fill
-///        IDENTICALLY for one already-resolved credential (Task 12 review
+///        IDENTICALLY for one already-resolved credential (review
 ///        Minor: this ~11-line block was verbatim-duplicated between
 ///        @c unblockPIN and @c activateTransportPin; extracted here so a
 ///        third override doesn't copy it a third time).
@@ -726,7 +726,7 @@ public:
     /// Mirrors changePIN above exactly for credential resolution / channel /
     /// transaction (acquireChannel, readProfile, findPinByLabel with the
     /// same hard-fail-on-selector-miss contract) and swaps in
-    /// card.resetRetryCounter (Task 9's builder) in place of
+    /// card.resetRetryCounter (the APDU builder) in place of
     /// card.changePIN. The unblock STYLE — and therefore the RESET RETRY
     /// COUNTER P1 and the resulting on-wire data shape — is resolved by
     /// calling the SAME derivation function getPINList uses
@@ -736,7 +736,7 @@ public:
     /// @note Only takes effect for a family whose quirk row has verified
     ///       RRC knowledge for this credential's kind (currently: none —
     ///       AppletSuiteGen1's row deliberately withholds rrcVariantKnown
-    ///       until a hardware campaign confirms the byte values Task 8
+    ///       until a hardware campaign confirms the byte values the family
     ///       seeded as ISO defaults, i.e. still [HW-VERIFY]); everything
     ///       else — including a genuinely unknown family — falls back to
     ///       the base Unsupported contract untouched.
@@ -823,7 +823,7 @@ public:
         }
 
         // Style -> (P1, on-wire data shape) decision, extracted to a pure
-        // free function (Task 11 review fix) so it is unit-testable without
+        // free function so it is unit-testable without
         // card I/O or a production injection seam — see resolveUnblockApdu's
         // doc comment for the classifyPinOutcome-precedent rationale.
         const auto apdu =
@@ -852,7 +852,7 @@ public:
     /// Mirrors changePIN/unblockPIN's credential-resolution / channel /
     /// transaction shape (acquireChannel, readProfile, findPinByLabel),
     /// using the new PKCS15Card::changeReferenceData(p1) verb (this task's
-    /// sibling to Task 11's resetRetryCounter) — a new verb, not a
+    /// sibling to resetRetryCounter) — a new verb, not a
     /// replacement for card.changePIN, which this override never calls.
     /// Unlike changePIN/unblockPIN, there is no legacy "empty selector ->
     /// default PIN" fallback here: findUserPin() requires pin.initialized,
@@ -931,7 +931,7 @@ public:
         }
 
         // Form -> (P1, on-wire data shape) decision, extracted to a pure
-        // free function up front (mirrors Task 11's resolveUnblockApdu) so
+        // free function up front (mirrors resolveUnblockApdu) so
         // it is unit-testable without card I/O.
         const auto apdu = LibreSCRS::Plugin::Internal::resolveTransportChangeApdu(quirks->transportChangeP1,
                                                                                   transportValue.view(), newPin.view());
@@ -1012,7 +1012,7 @@ public:
     ///       but has NO reachable success path through the real registry
     ///       funnel — for ANY family, including AppletSuiteGen1 even
     ///       though its quirk row already carries ISO-default keyActivate
-    ///       bytes (Task 8, still [HW-VERIFY], i.e. NOT hardware-confirmed)
+    ///       bytes (still [HW-VERIFY], i.e. NOT hardware-confirmed)
     ///       — until a future increment teaches derivePinStatus to assert
     ///       keyActivatable from real key/certificate evidence. See the
     ///       Pkcs15KeyActivation card-verb-layer tests (mirroring the

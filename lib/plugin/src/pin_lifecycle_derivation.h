@@ -90,7 +90,7 @@ struct PinEvidence
 /// @brief Resolved RESET RETRY COUNTER P1 + on-wire data shape for one
 ///        unblock attempt.
 ///
-/// Extracted from pkcs15-plugin's @c unblockPIN override (Task 11 review
+/// Extracted from pkcs15-plugin's @c unblockPIN override (review
 /// fix) so the style→(P1, data-shape) decision is unit-testable without
 /// card I/O or a production injection seam — the same "pure decision
 /// function living beside the derivation engine" shape as @ref
@@ -109,7 +109,7 @@ struct UnblockApdu
 };
 
 /// @brief Resolves the RESET RETRY COUNTER P1 and on-wire data shape for
-///        @p style (spec §5.1): @ref UnblockStyle::ResetOnly -> PUK only;
+///        @p style: @ref UnblockStyle::ResetOnly -> PUK only;
 ///        @ref UnblockStyle::SetsNewPin -> PUK||newPin; @ref
 ///        UnblockStyle::UnblockAndChange -> PUK||newPin when the caller
 ///        supplied one, else PUK only.
@@ -131,11 +131,11 @@ struct UnblockApdu
                                              std::string_view newPin) noexcept;
 
 /// @brief Resolved CHANGE REFERENCE DATA P1 + on-wire data shape for one
-///        transport-PIN activation attempt (spec §5.2/§6).
+///        transport-PIN activation attempt.
 ///
 /// Extracted from pkcs15-plugin's @c activateTransportPin override up
-/// front (Task 12), following the exact @ref resolveUnblockApdu precedent
-/// (itself the Task 11 review fix) rather than repeating that lesson: the
+/// front, following the exact @ref resolveUnblockApdu precedent
+/// (itself a review fix) rather than repeating that lesson: the
 /// form -> (P1, data-shape) decision is a pure function living beside the
 /// derivation engine, unit-testable without card I/O or a production
 /// injection seam — the same shape as the @ref classifyPinOutcome
@@ -156,7 +156,7 @@ struct TransportChangeApdu
 };
 
 /// @brief Resolves the CHANGE REFERENCE DATA P1 and on-wire data shape for
-///        @p transportChangeP1 (spec §5.2/§6): `0x01` (prior-auth) ->
+///        @p transportChangeP1: `0x01` (prior-auth) ->
 ///        new-only (the transport value was already VERIFYed by the
 ///        caller); anything else (the `0x00` ISO-default one-shot form,
 ///        and conservatively any other family-supplied byte) ->

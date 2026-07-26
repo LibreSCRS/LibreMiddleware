@@ -124,7 +124,7 @@ UnblockApdu resolveUnblockApdu(UnblockStyle style, const FamilyQuirks& quirks, s
     UnblockApdu out;
     out.p1 = quirks.rrcP1[static_cast<std::size_t>(style)];
     out.puk = puk;
-    // Data shape per style (spec §5.1): ResetOnly -> PUK only; SetsNewPin ->
+    // Data shape per style: ResetOnly -> PUK only; SetsNewPin ->
     // PUK||newPin; UnblockAndChange -> PUK||newPin if the caller supplied
     // one, else PUK only.
     if (style == UnblockStyle::SetsNewPin || (style == UnblockStyle::UnblockAndChange && !newPin.empty())) {
