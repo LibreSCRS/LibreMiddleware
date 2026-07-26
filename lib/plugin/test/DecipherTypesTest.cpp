@@ -17,7 +17,7 @@ TEST(DecipherTypes, OkPredicateMatchesOutcome)
 
 TEST(DecipherTypes, RsaPkcs1V15IsTheOnlyMechanismThisRelease)
 {
-    // SR cards are PKCS#1 v1.5 only (spec §10 OAEP=no). The enum carries the
-    // v1.5 mechanism; OAEP is reserved for a future card that advertises it.
+    // No card this release advertises OAEP, so the enum carries only the
+    // PKCS#1 v1.5 mechanism; OAEP is reserved for a card that advertises it.
     EXPECT_EQ(static_cast<int>(DecipherMechanism::RSA_PKCS1_V15), 0);
 }
