@@ -148,6 +148,8 @@ LibreSCRS::Plugin::Internal::FamilyQuirks::rrcVariantKnown(LibreSCRS::Plugin::Pi
 LibreSCRS::Plugin::Internal::FamilyQuirks::unblockStyle(LibreSCRS::Plugin::PinKind) const@@LM_4
 LibreSCRS::Plugin::Internal::derivePinStatus(LibreSCRS::Plugin::Internal::PinEvidence const&, std::vector<LibreSCRS::Plugin::Internal::PinEvidence, std::allocator<LibreSCRS::Plugin::Internal::PinEvidence> > const&, LibreSCRS::Plugin::Internal::FamilyQuirks const*)@@LM_4
 LibreSCRS::Plugin::Internal::findFamilyQuirks(LibreSCRS::Plugin::Internal::FamilyId)@@LM_4
+LibreSCRS::Plugin::Internal::resolveTransportChangeApdu(unsigned char, std::basic_string_view<char, std::char_traits<char> >, std::basic_string_view<char, std::char_traits<char> >)@@LM_4
+LibreSCRS::Plugin::Internal::resolveUnblockApdu(LibreSCRS::Plugin::UnblockStyle, LibreSCRS::Plugin::Internal::FamilyQuirks const&, std::basic_string_view<char, std::char_traits<char> >, std::basic_string_view<char, std::char_traits<char> >)@@LM_4
 LibreSCRS::Plugin::SecurityStatus::computeOverall()@@LM_4
 LibreSCRS::Plugin::acquireChannelForProfile(LibreSCRS::SmartCard::CardSession&, LibreSCRS::Plugin::ActivationProfile const&, LibreSCRS::CancelToken)@@LM_4
 LibreSCRS::Plugin::textValueAt[abi:cxx11](LibreSCRS::Plugin::CardData const&, unsigned long, std::basic_string_view<char, std::char_traits<char> >)@@LM_4
@@ -199,10 +201,12 @@ LibreSCRS::SmartCard::Internal::PCSCConnection::transmitRaw(LibreSCRS::SmartCard
 LibreSCRS::SmartCard::Internal::PCSCConnection::transmitRaw(std::span<unsigned char const, 18446744073709551615ul>)@@LM_4
 LibreSCRS::SmartCard::Internal::PCSCConnection::transmitRaw(unsigned char const*, unsigned long)@@LM_4
 LibreSCRS::SmartCard::Internal::PCSCConnection::~PCSCConnection()@@LM_4
-LibreSCRS::SmartCard::Internal::changeReferenceData(unsigned char, std::span<unsigned char const, 18446744073709551615ul>, std::span<unsigned char const, 18446744073709551615ul>)@@LM_4
+LibreSCRS::SmartCard::Internal::activate(unsigned char, unsigned char, std::span<unsigned char const, 18446744073709551615ul>)@@LM_4
+LibreSCRS::SmartCard::Internal::changeReferenceData(unsigned char, std::span<unsigned char const, 18446744073709551615ul>, std::span<unsigned char const, 18446744073709551615ul>, unsigned char)@@LM_4
 LibreSCRS::SmartCard::Internal::getDataDocp(unsigned char)@@LM_4
 LibreSCRS::SmartCard::Internal::isSelectRetryable(unsigned short)@@LM_4
 LibreSCRS::SmartCard::Internal::readBinary(unsigned short, unsigned char)@@LM_4
+LibreSCRS::SmartCard::Internal::resetRetryCounter(unsigned char, unsigned char, std::span<unsigned char const, 18446744073709551615ul>, std::span<unsigned char const, 18446744073709551615ul>)@@LM_4
 LibreSCRS::SmartCard::Internal::secureWipe(void*, unsigned long)@@LM_4
 LibreSCRS::SmartCard::Internal::selectByAID(std::vector<unsigned char, std::allocator<unsigned char> > const&, unsigned char)@@LM_4
 LibreSCRS::SmartCard::Internal::selectByFileId(unsigned char, unsigned char, unsigned char)@@LM_4
@@ -241,6 +245,8 @@ LibreSCRS::Plugin::Internal::FamilyQuirks::rrcVariantKnown(LibreSCRS::Plugin::Pi
 LibreSCRS::Plugin::Internal::FamilyQuirks::unblockStyle(LibreSCRS::Plugin::PinKind) const@@LM_4
 LibreSCRS::Plugin::Internal::derivePinStatus(LibreSCRS::Plugin::Internal::PinEvidence const&, std::vector<LibreSCRS::Plugin::Internal::PinEvidence, std::allocator<LibreSCRS::Plugin::Internal::PinEvidence> > const&, LibreSCRS::Plugin::Internal::FamilyQuirks const*)@@LM_4
 LibreSCRS::Plugin::Internal::findFamilyQuirks(LibreSCRS::Plugin::Internal::FamilyId)@@LM_4
+LibreSCRS::Plugin::Internal::resolveTransportChangeApdu(unsigned char, std::basic_string_view<char, std::char_traits<char> >, std::basic_string_view<char, std::char_traits<char> >)@@LM_4
+LibreSCRS::Plugin::Internal::resolveUnblockApdu(LibreSCRS::Plugin::UnblockStyle, LibreSCRS::Plugin::Internal::FamilyQuirks const&, std::basic_string_view<char, std::char_traits<char> >, std::basic_string_view<char, std::char_traits<char> >)@@LM_4
 LibreSCRS::Plugin::acquireChannelForProfile(LibreSCRS::SmartCard::CardSession&, LibreSCRS::Plugin::ActivationProfile const&, LibreSCRS::CancelToken)@@LM_4
 LibreSCRS::Signing::SigningRequest::Builder::Builder()@@LM_4
 LibreSCRS::Signing::SigningRequest::Builder::Builder(LibreSCRS::Signing::SigningRequest::Builder&&)@@LM_4
