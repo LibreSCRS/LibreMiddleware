@@ -52,10 +52,10 @@ Auth::PreReadAuthMethod CardPlugin::preReadAuth(SmartCard::CardSession& session)
     // activating profile (MRZ-keyed PACE, PIN/PUK-as-PACE, or plain BAC)
     // collects the MRZ as its pre-read secret.
     if (const auto* pace = std::get_if<SmartCard::PaceRequest>(&profile.primary)) {
-        return pace->secretKind == Auth::PaceSecretKind::Can ? Auth::PreReadAuthMethod::PaceCan
-                                                             : Auth::PreReadAuthMethod::BacMrz;
+        return pace->secretKind == Auth::PaceSecretKind::Can ? Auth::PreReadAuthMethod::Can
+                                                             : Auth::PreReadAuthMethod::Mrz;
     }
-    return Auth::PreReadAuthMethod::BacMrz;
+    return Auth::PreReadAuthMethod::Mrz;
 }
 
 ReadResult CardPlugin::readCard(SmartCard::CardSession& session, GroupCallback onGroup, CancelToken token) const

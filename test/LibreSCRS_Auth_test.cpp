@@ -64,9 +64,9 @@ TEST(FieldDescriptorTest, EqualToFieldIdBinds)
     EXPECT_EQ(*f.equalToFieldId, "newPin");
 }
 
-TEST(AuthRequirementTest, ForPreReadPaceCanHasOneCanField)
+TEST(AuthRequirementTest, ForPreReadCanHasOneCanField)
 {
-    auto r = AuthRequirement::forPreRead(PreReadAuthMethod::PaceCan);
+    auto r = AuthRequirement::forPreRead(PreReadAuthMethod::Can);
     EXPECT_EQ(r.purpose(), Purpose::PreRead);
     ASSERT_EQ(r.fields().size(), 1u);
     EXPECT_EQ(r.fields()[0].id, "can");
@@ -74,9 +74,9 @@ TEST(AuthRequirementTest, ForPreReadPaceCanHasOneCanField)
     EXPECT_FALSE(r.fields()[0].secret);
 }
 
-TEST(AuthRequirementTest, ForPreReadBacMrzHasOneMrzField)
+TEST(AuthRequirementTest, ForPreReadMrzHasOneMrzField)
 {
-    auto r = AuthRequirement::forPreRead(PreReadAuthMethod::BacMrz);
+    auto r = AuthRequirement::forPreRead(PreReadAuthMethod::Mrz);
     ASSERT_EQ(r.fields().size(), 1u);
     EXPECT_EQ(r.fields()[0].type, CredentialFieldType::Mrz);
 }
@@ -317,8 +317,8 @@ TEST(AuthRequirementTest, ForPreReadIsNoexcept)
                   "forPreRead must be noexcept — closed enum, no validation");
     // Sanity: exercise all three enum values at runtime.
     auto none = LibreSCRS::Auth::AuthRequirement::forPreRead(LibreSCRS::Auth::PreReadAuthMethod::None);
-    auto bac = LibreSCRS::Auth::AuthRequirement::forPreRead(LibreSCRS::Auth::PreReadAuthMethod::BacMrz);
-    auto pace = LibreSCRS::Auth::AuthRequirement::forPreRead(LibreSCRS::Auth::PreReadAuthMethod::PaceCan);
+    auto bac = LibreSCRS::Auth::AuthRequirement::forPreRead(LibreSCRS::Auth::PreReadAuthMethod::Mrz);
+    auto pace = LibreSCRS::Auth::AuthRequirement::forPreRead(LibreSCRS::Auth::PreReadAuthMethod::Can);
     EXPECT_TRUE(none.fields().empty());
     EXPECT_EQ(bac.fields().size(), 1u);
     EXPECT_EQ(pace.fields().size(), 1u);

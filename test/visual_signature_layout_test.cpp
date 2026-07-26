@@ -268,11 +268,11 @@ TEST(VisualSignatureLayout, EmbeddedFontDataStableAcrossCalls)
     EXPECT_EQ(a.size(), b.size());
 }
 
-// ---- Performance (spec G2: < 1 ms per call typical) ----
+// ---- Performance (target: < 1 ms per call typical) ----
 
 TEST(VisualSignatureLayout, Performance_TypicalInputUnderOneMillisecondMedian)
 {
-    // Warm-up + 50-call median, mirroring the spec G2 budget at default
+    // Warm-up + 50-call median, mirroring the performance budget at default
     // 200×50 box with a 4-line English-style appearance string.
     constexpr const char* kInput = "Digitally signed by NEMANJA HIRŠL\n"
                                    "Reason: Document integrity\n"
@@ -305,5 +305,5 @@ TEST(VisualSignatureLayout, Performance_TypicalInputUnderOneMillisecondMedian)
 #endif
     std::printf("[layoutVisualSignature perf] median = %lld µs over %d samples (budget %lld µs)\n", medianUs, N,
                 budgetUs);
-    EXPECT_LT(medianUs, budgetUs) << "layoutVisualSignature median exceeds the budget; investigate (spec §4.3 G2)";
+    EXPECT_LT(medianUs, budgetUs) << "layoutVisualSignature median exceeds the performance budget; investigate";
 }

@@ -542,8 +542,8 @@ public:
     ///
     /// The base derives this from the plugin's @ref activationProfile: a plain
     /// profile reports @ref Auth::PreReadAuthMethod::None; a PACE profile keyed
-    /// on a CAN reports @ref Auth::PreReadAuthMethod::PaceCan; any other
-    /// activating profile reports @ref Auth::PreReadAuthMethod::BacMrz. Most
+    /// on a CAN reports @ref Auth::PreReadAuthMethod::Can; any other
+    /// activating profile reports @ref Auth::PreReadAuthMethod::Mrz. Most
     /// plugins therefore declare their requirement once via @ref
     /// activationProfile and leave this method alone.
     ///
@@ -551,7 +551,7 @@ public:
     ///       generic PKCS#15 plugin that probes the card to tell a plain card
     ///       from a PACE-CAN IAS-ECC SSCD) MAY override this method when the
     ///       static @ref activationProfile derivation would under-report — the
-    ///       pkcs15 plugin is the canonical in-tree example, returning PaceCan
+    ///       pkcs15 plugin is the canonical in-tree example, returning Can
     ///       once its probe has established the card needs PACE. Overrides must
     ///       remain consistent with the channel the plugin actually activates.
     ///

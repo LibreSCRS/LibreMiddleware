@@ -66,7 +66,7 @@ AuthRequirement AuthRequirement::forPreRead(PreReadAuthMethod method) noexcept
     try {
         AuthRequirement r;
         r.purposeValue = Purpose::PreRead;
-        if (method == PreReadAuthMethod::PaceCan) {
+        if (method == PreReadAuthMethod::Can) {
             FieldDescriptor can;
             can.id = "can";
             can.type = CredentialFieldType::NumericCan;
@@ -76,7 +76,7 @@ AuthRequirement AuthRequirement::forPreRead(PreReadAuthMethod method) noexcept
             can.label.key = "librescrs.auth.label.can";
             can.label.defaultText = "CAN";
             r.fieldList.push_back(std::move(can));
-        } else if (method == PreReadAuthMethod::BacMrz) {
+        } else if (method == PreReadAuthMethod::Mrz) {
             FieldDescriptor mrz;
             mrz.id = "mrz";
             mrz.type = CredentialFieldType::Mrz;

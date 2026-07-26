@@ -231,12 +231,12 @@ public:
     // before any read; plain PKCS#15 cards do not. The base derives this from a
     // STATIC activation profile (plain -> None), but this plugin decides PACE at
     // RUNTIME via the probe (see canHandle / requiresPaceFor), so the static
-    // derivation under-reports as None. Report it correctly here: PaceCan when
+    // derivation under-reports as None. Report it correctly here: Can when
     // the card needs PACE (which is also the signal that selects on-card SHA-256
     // signing — IAS-ECC SSCDs hash the message on-card), else None.
     LibreSCRS::Auth::PreReadAuthMethod preReadAuth(LibreSCRS::SmartCard::CardSession& session) const override
     {
-        return requiresPaceFor(session) ? LibreSCRS::Auth::PreReadAuthMethod::PaceCan
+        return requiresPaceFor(session) ? LibreSCRS::Auth::PreReadAuthMethod::Can
                                         : LibreSCRS::Auth::PreReadAuthMethod::None;
     }
 

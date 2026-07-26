@@ -82,7 +82,7 @@ struct PaceFixture
     LibreSCRS::SmartCard::ActiveChannelHolder holder;
 };
 
-std::optional<PaceFixture> openPaceCanFixture(const std::string& reader, const std::string& can)
+std::optional<PaceFixture> openPaceWithCanFixture(const std::string& reader, const std::string& can)
 {
     auto sessionResult = LibreSCRS::SmartCard::CardSession::open(reader);
     if (!sessionResult.has_value())
@@ -109,7 +109,7 @@ TEST(PACEHardwareTest, PaceAuthenticateAndReadCOM)
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
-    auto fixture = openPaceCanFixture(readers[0], can);
+    auto fixture = openPaceWithCanFixture(readers[0], can);
     ASSERT_TRUE(fixture.has_value()) << "PACE channel activation failed";
     auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(fixture->holder);
     ASSERT_NE(channel, nullptr);
@@ -137,7 +137,7 @@ TEST(PACEHardwareTest, ReadAndParseDG1)
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
-    auto fixture = openPaceCanFixture(readers[0], can);
+    auto fixture = openPaceWithCanFixture(readers[0], can);
     ASSERT_TRUE(fixture.has_value()) << "PACE channel activation failed";
     auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(fixture->holder);
     ASSERT_NE(channel, nullptr);
@@ -184,7 +184,7 @@ TEST(PACEHardwareTest, ReadDG2Photo)
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
-    auto fixture = openPaceCanFixture(readers[0], can);
+    auto fixture = openPaceWithCanFixture(readers[0], can);
     ASSERT_TRUE(fixture.has_value()) << "PACE channel activation failed";
     auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(fixture->holder);
     ASSERT_NE(channel, nullptr);

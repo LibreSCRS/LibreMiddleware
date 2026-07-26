@@ -9,8 +9,8 @@
 /// @c preReadAuth is no longer an independently-stored value: the base class
 /// derives the pre-read unlock method from the profile a plugin returns from
 /// @ref LibreSCRS::Plugin::CardPlugin::activationProfile. A plain profile (no
-/// activation) yields @c None; a PACE-CAN profile yields @c PaceCan; any other
-/// activating profile yields @c BacMrz. This test pins those mappings via a
+/// activation) yields @c None; a PACE-CAN profile yields @c Can; any other
+/// activating profile yields @c Mrz. This test pins those mappings via a
 /// minimal concrete plugin that overrides only the pure virtuals plus
 /// @c activationProfile.
 ///
@@ -82,7 +82,7 @@ TEST(PreReadAuthDerivationTest, PlainProfileYieldsNone)
     EXPECT_EQ(plugin.preReadAuth(*session), LibreSCRS::Auth::PreReadAuthMethod::None);
 }
 
-TEST(PreReadAuthDerivationTest, PaceCanProfileYieldsPaceCan)
+TEST(PreReadAuthDerivationTest, CanProfileYieldsCan)
 {
     LibreSCRS::Plugin::ActivationProfile profile;
     profile.aid = LibreSCRS::SmartCard::AppletAid::fromBytes(std::array<std::uint8_t, 1>{0xA0});
@@ -92,10 +92,10 @@ TEST(PreReadAuthDerivationTest, PaceCanProfileYieldsPaceCan)
     FakeProfilePlugin plugin{std::move(profile)};
     auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
     ASSERT_NE(session, nullptr);
-    EXPECT_EQ(plugin.preReadAuth(*session), LibreSCRS::Auth::PreReadAuthMethod::PaceCan);
+    EXPECT_EQ(plugin.preReadAuth(*session), LibreSCRS::Auth::PreReadAuthMethod::Can);
 }
 
-TEST(PreReadAuthDerivationTest, PaceMrzProfileYieldsBacMrz)
+TEST(PreReadAuthDerivationTest, PaceMrzProfileYieldsMrz)
 {
     LibreSCRS::Plugin::ActivationProfile profile;
     profile.aid = LibreSCRS::SmartCard::AppletAid::fromBytes(std::array<std::uint8_t, 1>{0xA0});
@@ -105,10 +105,10 @@ TEST(PreReadAuthDerivationTest, PaceMrzProfileYieldsBacMrz)
     FakeProfilePlugin plugin{std::move(profile)};
     auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
     ASSERT_NE(session, nullptr);
-    EXPECT_EQ(plugin.preReadAuth(*session), LibreSCRS::Auth::PreReadAuthMethod::BacMrz);
+    EXPECT_EQ(plugin.preReadAuth(*session), LibreSCRS::Auth::PreReadAuthMethod::Mrz);
 }
 
-TEST(PreReadAuthDerivationTest, BacProfileYieldsBacMrz)
+TEST(PreReadAuthDerivationTest, BacProfileYieldsMrz)
 {
     LibreSCRS::Plugin::ActivationProfile profile;
     profile.aid = LibreSCRS::SmartCard::AppletAid::fromBytes(std::array<std::uint8_t, 1>{0xA0});
@@ -117,5 +117,5 @@ TEST(PreReadAuthDerivationTest, BacProfileYieldsBacMrz)
     FakeProfilePlugin plugin{std::move(profile)};
     auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
     ASSERT_NE(session, nullptr);
-    EXPECT_EQ(plugin.preReadAuth(*session), LibreSCRS::Auth::PreReadAuthMethod::BacMrz);
+    EXPECT_EQ(plugin.preReadAuth(*session), LibreSCRS::Auth::PreReadAuthMethod::Mrz);
 }

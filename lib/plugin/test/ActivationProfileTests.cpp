@@ -21,7 +21,7 @@ TEST(ActivationProfileTest, PlainRequiresNoActivation)
     EXPECT_FALSE(p.allowBacFallback);
 }
 
-TEST(ActivationProfileTest, PaceCanProfileRequiresActivation)
+TEST(ActivationProfileTest, CanProfileRequiresActivation)
 {
     ActivationProfile p;
     p.aid = AppletAid::fromBytes(std::array<std::uint8_t, 1>{0xA0});

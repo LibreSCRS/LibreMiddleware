@@ -35,10 +35,15 @@ enum class Purpose : std::uint8_t {
 };
 
 /// @brief Pre-read unlock mechanisms for travel-document-style cards.
+///
+/// Each value names the *credential* the host must collect, not the
+/// protocol run against the card — a plugin may use either BAC or PACE
+/// to consume an MRZ-derived secret, and which protocol is actually
+/// selected is plugin business, not something this enum encodes.
 enum class PreReadAuthMethod : std::uint8_t {
-    None,    ///< No pre-read authentication required.
-    BacMrz,  ///< ICAO 9303 Basic Access Control derived from MRZ.
-    PaceCan, ///< PACE using a Card Access Number.
+    None, ///< No pre-read authentication required.
+    Mrz,  ///< MRZ-derived secret (ICAO 9303 Basic Access Control or PACE).
+    Can,  ///< Card Access Number (PACE).
 };
 
 /// @brief Authoritative description of a credential prompt.
@@ -137,8 +142,8 @@ public:
 
     /// @brief Build a requirement for pre-read unlock using the given method.
     /// @param method Pre-read unlock mechanism. `None` yields a no-field
-    ///               requirement; `BacMrz` yields a single MRZ field;
-    ///               `PaceCan` yields a single 6-digit CAN field.
+    ///               requirement; `Mrz` yields a single MRZ field;
+    ///               `Can` yields a single 6-digit CAN field.
     /// @note Infallible — the input is a closed enum with no invalid values.
     ///       See API-POLICY §5.1.
     [[nodiscard]] static AuthRequirement forPreRead(PreReadAuthMethod method) noexcept;
