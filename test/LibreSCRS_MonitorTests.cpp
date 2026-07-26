@@ -584,7 +584,7 @@ TEST(MonitorServiceBootstrapRace, SubscribeReaderListAfterSubscribeNoEmptyBootst
     EXPECT_TRUE(sawPopulated) << "Expected at least one snapshot containing both readers";
 }
 
-// Regression guard for spec §5.2 Change B placement: ensures the latch
+// Regression guard for the initial-poll latch placement: ensures the latch
 // fires even when the first poll cycle returns zero readers, so a
 // subscribeReaderList that registers AFTER first enumerate but BEFORE
 // any reader is plugged still receives the synchronous (empty)
@@ -642,7 +642,8 @@ TEST(MonitorServiceBootstrapRace, SubscribeReaderListZeroReadersAtBootThenPlug)
 
     // (3) Snapshot subscription registered AFTER first enumerate completed.
     //     Post-correct-fix: knownReaders == {} (truthful), initialPollComplete
-    //     == true (latched by Change B), so bootstrap-fires {} synchronously.
+    //     == true (the latch is set after every enumerate, not only when
+    //     dispatch fires), so bootstrap-fires {} synchronously.
     //     Post-naïve-fix: initialPollComplete still false (latch was inside
     //     dispatch conditional, dispatch didn't fire on empty enumerate),
     //     so bootstrap is SKIPPED — assertion below will fail.
@@ -675,9 +676,9 @@ TEST(MonitorServiceBootstrapRace, SubscribeReaderListZeroReadersAtBootThenPlug)
     std::lock_guard<std::mutex> lock(snapshotsMtx);
     // Load-bearing assertion: the snapshot subscriber MUST have observed
     // something between registration (step 3) and the "Reader A plugged
-    // in" cycle. If snapshots is empty, Change B's latch did not fire on
-    // the empty first enumerate — the naïve-placement regression is back.
-    ASSERT_FALSE(snapshots.empty()) << "No snapshot delivered to late joiner — Change B latch did not "
+    // in" cycle. If snapshots is empty, the initial-poll latch did not fire
+    // on the empty first enumerate — the naïve-placement regression is back.
+    ASSERT_FALSE(snapshots.empty()) << "No snapshot delivered to late joiner — initial-poll latch did not "
                                        "fire on empty first enumerate (regression to naïve placement).";
 
     // Sanity: at least one populated snapshot with Reader A was observed.
@@ -689,7 +690,7 @@ TEST(MonitorServiceBootstrapRace, SubscribeReaderListZeroReadersAtBootThenPlug)
     EXPECT_TRUE(sawReaderA) << "Expected at least one snapshot containing {\"Reader A\"} after plug-in";
 }
 
-// Regression for spec §2: unsubscribe(Drain) must not deadlock when the
+// Regression: unsubscribe(Drain) must not deadlock when the
 // poll thread re-enters dispatch after processEvents returns "re-enumerate"
 // while Drain holds dispatchMtx. The sequence:
 //
@@ -795,7 +796,7 @@ TEST(MonitorServiceAdditionalRaces, UnsubscribeDrainDoesNotDeadlockWhenPollReEnt
     SUCCEED();
 }
 
-// Regression for spec §3: coalescer flusher must not dispatch a
+// Regression: the coalescer flusher must not dispatch a
 // CardInserted for a reader that has been removed in the race window
 // between flusher snapshot (under coalesceMtx) and flusher dispatch
 // (under dispatchMtx after coalesceMtx released).
@@ -876,11 +877,12 @@ TEST(MonitorServiceAdditionalRaces, CoalescerFlusherSuppressesStaleEventAfterRea
 
     if (cardInsertedIdx.has_value()) {
         EXPECT_LT(*cardInsertedIdx, *readerRemovedIdx) << "CardInserted dispatched AFTER ReaderRemoved — stale event "
-                                                          "from coalescer flusher (Race B not fixed).";
+                                                          "from coalescer flusher (removal-during-coalesce race "
+                                                          "not fixed).";
     }
 }
 
-// Regression for spec §4: subscribe firstSubscriber branch must not
+// Regression: the subscribe firstSubscriber branch must not
 // orphan the internal subscription if a concurrent unsubscribe runs
 // between the initial cbMtx release (after callbacks.emplace) and the
 // second cbMtx acquire (where internalSubId is written).
@@ -935,6 +937,5 @@ TEST(MonitorServiceAdditionalRaces, SubscribeFirstSubscriberRaceWithImmediateUns
     int released = counters->releaseContextCount.load();
     EXPECT_EQ(established, released) << "Orphaned internal subscriptions detected: established=" << established
                                      << " released=" << released
-                                     << " (likely TOCTOU race in subscribe firstSubscriber branch — "
-                                        "Race C not fixed).";
+                                     << " (likely TOCTOU race in subscribe firstSubscriber branch).";
 }

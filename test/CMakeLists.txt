@@ -183,7 +183,7 @@ target_compile_definitions(ParsedCertificateTests PRIVATE
 gtest_discover_tests(ParsedCertificateTests)
 
 # ParsedCertificate::fromDer std::expected error-shape regression tests
-# (locks SOTA invariant per spec §6.1: fallible factory returns
+# (locks the fallible-factory invariant: the factory returns
 # std::expected<T, E>; failure E carries Kind + LocalizedText + diag).
 add_executable(ParsedCertificateExpectedTests
     ${CMAKE_CURRENT_SOURCE_DIR}/cert/parsed_certificate_expected_test.cpp)
@@ -203,7 +203,8 @@ target_compile_definitions(TrustStoreServiceTests PRIVATE
 gtest_discover_tests(TrustStoreServiceTests)
 
 # TrustStoreService::create std::expected error-shape regression tests
-# (locks SOTA invariant per spec §6.1; mirrors ParsedCertificateExpectedTests).
+# (locks the same fallible-factory invariant; mirrors
+# ParsedCertificateExpectedTests).
 add_executable(TrustStoreServiceCreateExpectedTests
     ${CMAKE_CURRENT_SOURCE_DIR}/trust/trust_store_service_create_expected_test.cpp)
 target_link_libraries(TrustStoreServiceCreateExpectedTests PRIVATE
@@ -495,7 +496,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
     gtest_discover_tests(OpenScBridgeTests)
 endif()
 
-# OpenSC fallback hardware integration test (spec 2026-04-24)
+# OpenSC fallback hardware integration test.
 if(LIBRESCRS_VENDOR_OPENSC)
     add_executable(OpenSCFallbackIntegrationTest
         opensc_fallback_integration_test.cpp

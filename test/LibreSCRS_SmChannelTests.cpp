@@ -264,8 +264,8 @@ TEST(PaceChannelTests, SetCurrentAppletUpdatesReportedAid)
 {
     // Channels emerge from establish() with an empty currentApplet because
     // PACE binds session keys at MF, not to any particular applet. The
-    // wrapped-SELECT applet-switch path (spec §5.3b Cases 2/3) updates the
-    // tracked AID through setCurrentApplet.
+    // wrapped-SELECT applet-switch path updates the tracked AID through
+    // setCurrentApplet.
     FakePCSCConnection fakeConn;
     PaceChannel channel(fakeConn, AppletAid{}, makeFakeAesKeys());
     EXPECT_TRUE(channel.currentApplet().empty());

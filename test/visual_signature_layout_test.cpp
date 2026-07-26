@@ -62,7 +62,7 @@ bool isValidUtf8(std::string_view s) noexcept
 
 } // namespace
 
-// ---- Invariants (spec §8.2) ----
+// ---- Invariants ----
 
 TEST(VisualSignatureLayout, I1_FontSizeInRange)
 {
@@ -140,7 +140,7 @@ TEST(VisualSignatureLayout, I8_ThreadSafetyParallelCallsAgree)
     }
 }
 
-// ---- Edge cases (spec §8.3) ----
+// ---- Edge cases ----
 
 TEST(VisualSignatureLayout, EdgeCase_Empty)
 {

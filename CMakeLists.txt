@@ -245,8 +245,7 @@ add_subdirectory(tools)
 #
 # Public API lives under include/LibreSCRS/. Internal detail/ sub-directories
 # are excluded via PATTERN — the regex+exclude is functionally equivalent to
-# enumerating each public component subdir explicitly (Plan §7 considered
-# both shapes).
+# enumerating each public component subdir explicitly.
 # ──────────────────────────────────────────────────────────────────────────
 option(LIBRESCRS_INSTALL_SDK_HEADERS
     "Install LibreSCRS public SDK headers (detail/ sub-trees excluded)" OFF)

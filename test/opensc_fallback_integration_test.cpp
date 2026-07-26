@@ -215,7 +215,8 @@ protected:
 
     // Suite-wide state — initialized by SetUpTestSuite, shared across all
     // TEST_F cases in this fixture so Test05's PIN session is reused by
-    // Test06 (see spec §3.1 PIN budget rationale).
+    // Test06 rather than spending a second verification against the card's
+    // PIN retry budget.
     static std::unique_ptr<CardPluginService> registry;
     static std::optional<CardSession> session;
     static std::shared_ptr<CardPlugin> plugin;
