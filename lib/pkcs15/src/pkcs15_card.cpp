@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string_view>
@@ -481,6 +482,27 @@ LibreSCRS::Plugin::CredentialCounters PKCS15Card::readCounters(const PinInfo& pi
     return LibreSCRS::pkcs15::parseDocpCounters(resp.data);
 }
 
+namespace {
+
+// Shared SW classification for the ISO PIN verbs (VERIFY / CHANGE REFERENCE
+// DATA / RESET RETRY COUNTER): 9000 → success; 63Cx → wrong value with x
+// retries left; 6983 → blocked. Any other SW yields std::nullopt so each
+// verb applies its own fallback / default mapping (every unclassified SW is
+// a plugin-level condition, never a PIN-guess signal: retriesLeft stays
+// absent so the caller's classifier lands on PluginError, not InvalidPin).
+std::optional<PinResult> classifyPinSw(const LibreSCRS::SmartCard::Internal::APDUResponse& resp)
+{
+    if (resp.isSuccess())
+        return PinResult{true, -1, false};
+    if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
+        return PinResult{false, resp.sw2 & 0x0F, false};
+    if (resp.statusWord() == 0x6983)
+        return PinResult{false, 0, true};
+    return std::nullopt;
+}
+
+} // namespace
+
 PinResult PKCS15Card::verifyPIN(const PinInfo& pin, std::string_view pinValue)
 {
     if (!selectApplet())
@@ -503,12 +525,8 @@ PinResult PKCS15Card::verifyPIN(const PinInfo& pin, std::string_view pinValue)
                                  LibreSCRS::CancelToken{});
     if (std::getenv("LIBRESCRS_SIGN_TRACE"))
         std::fprintf(stderr, "[PKCS15] verifyPIN ref=0x%02X SW=%04X\n", pin.pinReference, resp.statusWord());
-    if (resp.isSuccess())
-        return {true, -1, false};
-    if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
-        return {false, resp.sw2 & 0x0F, false};
-    if (resp.statusWord() == 0x6983)
-        return {false, 0, true};
+    if (auto mapped = classifyPinSw(resp))
+        return *mapped;
 
     // Fallback: strip local bit
     uint8_t altRef = pin.pinReference & 0x7F;
@@ -516,12 +534,8 @@ PinResult PKCS15Card::verifyPIN(const PinInfo& pin, std::string_view pinValue)
         resp = channel.transmit(LibreSCRS::SmartCard::Internal::verifyPIN(altRef, pinData), LibreSCRS::CancelToken{});
         if (std::getenv("LIBRESCRS_SIGN_TRACE"))
             std::fprintf(stderr, "[PKCS15] verifyPIN altRef=0x%02X SW=%04X\n", altRef, resp.statusWord());
-        if (resp.isSuccess())
-            return {true, -1, false};
-        if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
-            return {false, resp.sw2 & 0x0F, false};
-        if (resp.statusWord() == 0x6983)
-            return {false, 0, true};
+        if (auto mapped = classifyPinSw(resp))
+            return *mapped;
     }
 
     return {false, -1, false};
@@ -529,39 +543,11 @@ PinResult PKCS15Card::verifyPIN(const PinInfo& pin, std::string_view pinValue)
 
 PinResult PKCS15Card::changePIN(const PinInfo& pin, std::string_view oldPin, std::string_view newPin)
 {
-    if (!selectApplet())
-        throw std::runtime_error("PKCS15: failed to select applet");
-
-    if (!pin.path.empty())
-        selectByPath(pin.path);
-
-    auto oldData = encodePIN(oldPin, pin);
-    auto newData = encodePIN(newPin, pin);
-
-    auto resp =
-        channel.transmit(LibreSCRS::SmartCard::Internal::changeReferenceData(pin.pinReference, oldData, newData),
-                         LibreSCRS::CancelToken{});
-    if (resp.isSuccess())
-        return {true, -1, false};
-    if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
-        return {false, resp.sw2 & 0x0F, false};
-    if (resp.statusWord() == 0x6983)
-        return {false, 0, true};
-
-    // Fallback: strip local bit — ONLY on reference-not-found errors
-    uint8_t altRef = pin.pinReference & 0x7F;
-    if (altRef != pin.pinReference && (resp.statusWord() == 0x6A86 || resp.statusWord() == 0x6A88)) {
-        resp = channel.transmit(LibreSCRS::SmartCard::Internal::changeReferenceData(altRef, oldData, newData),
-                                LibreSCRS::CancelToken{});
-        if (resp.isSuccess())
-            return {true, -1, false};
-        if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
-            return {false, resp.sw2 & 0x0F, false};
-        if (resp.statusWord() == 0x6983)
-            return {false, 0, true};
-    }
-
-    return {false, -1, false};
+    // Ordinary CHANGE REFERENCE DATA (P1=0x00): identical select/transmit/
+    // classify/alt-ref-fallback body as the explicit-P1 activation form, so
+    // delegate instead of duplicating it. Both sides belong to this same
+    // credential and run through encodePIN there.
+    return changeReferenceData(pin, oldPin, newPin, 0x00);
 }
 
 PinResult PKCS15Card::resetRetryCounter(const PinInfo& pin, std::string_view puk, std::string_view newPin, uint8_t p1)
@@ -580,16 +566,11 @@ PinResult PKCS15Card::resetRetryCounter(const PinInfo& pin, std::string_view puk
     auto resp =
         channel.transmit(LibreSCRS::SmartCard::Internal::resetRetryCounter(p1, pin.pinReference, pukData, newPinData),
                          LibreSCRS::CancelToken{});
-    if (resp.isSuccess())
-        return {true, -1, false};
-    if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
-        return {false, resp.sw2 & 0x0F, false};
-    if (resp.statusWord() == 0x6983)
-        return {false, 0, true};
+    if (auto mapped = classifyPinSw(resp))
+        return *mapped;
 
     // Every other SW (6985/6984/6A81/6A88/6D00/anything else) is a
-    // plugin-level condition, never a PIN-guess signal: retriesLeft stays
-    // absent so the caller's classifier lands on PluginError, not InvalidPin.
+    // plugin-level condition — see classifyPinSw.
     return {false, -1, false};
 }
 
@@ -616,24 +597,16 @@ PinResult PKCS15Card::changeReferenceData(const PinInfo& pin, std::string_view o
     auto resp =
         channel.transmit(LibreSCRS::SmartCard::Internal::changeReferenceData(pin.pinReference, oldData, newData, p1),
                          LibreSCRS::CancelToken{});
-    if (resp.isSuccess())
-        return {true, -1, false};
-    if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
-        return {false, resp.sw2 & 0x0F, false};
-    if (resp.statusWord() == 0x6983)
-        return {false, 0, true};
+    if (auto mapped = classifyPinSw(resp))
+        return *mapped;
 
     // Fallback: strip local bit — ONLY on reference-not-found errors
     uint8_t altRef = pin.pinReference & 0x7F;
     if (altRef != pin.pinReference && (resp.statusWord() == 0x6A86 || resp.statusWord() == 0x6A88)) {
         resp = channel.transmit(LibreSCRS::SmartCard::Internal::changeReferenceData(altRef, oldData, newData, p1),
                                 LibreSCRS::CancelToken{});
-        if (resp.isSuccess())
-            return {true, -1, false};
-        if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
-            return {false, resp.sw2 & 0x0F, false};
-        if (resp.statusWord() == 0x6983)
-            return {false, 0, true};
+        if (auto mapped = classifyPinSw(resp))
+            return *mapped;
     }
 
     return {false, -1, false};

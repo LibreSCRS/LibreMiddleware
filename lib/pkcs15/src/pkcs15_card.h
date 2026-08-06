@@ -56,8 +56,8 @@ public:
     PinResult changePIN(const PinInfo& pin, std::string_view oldPin, std::string_view newPin);
     /// @brief RESET RETRY COUNTER (unblock).
     ///
-    /// Mirrors changePIN's select/transmit/SW-map shape exactly, swapping in
-    /// the RESET RETRY COUNTER builder.
+    /// Mirrors changeReferenceData's select/transmit/SW-map shape, swapping
+    /// in the RESET RETRY COUNTER builder.
     ///
     /// @param pin    The PUK-protected PIN being unblocked.
     /// @param puk    Current PUK value. NOT run through encodePIN: it
@@ -75,7 +75,8 @@ public:
     PinResult resetRetryCounter(const PinInfo& pin, std::string_view puk, std::string_view newPin, uint8_t p1);
     /// @brief CHANGE REFERENCE DATA (transport-PIN activation).
     ///
-    /// Mirrors changePIN's select/transmit/SW-map shape exactly. Unlike
+    /// Shared select/transmit/SW-map body for the ordinary change and the
+    /// activation forms — changePIN delegates here with P1=0x00. Unlike
     /// resetRetryCounter, @p oldValue and @p newValue belong to THIS SAME
     /// credential (the transport-born SIGN PIN activating to its holder
     /// value, not a cross-credential PUK/newPin pair), so both run through
