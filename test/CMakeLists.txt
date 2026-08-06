@@ -223,6 +223,20 @@ target_include_directories(pcsc_connection_filter_test PRIVATE
 target_compile_definitions(pcsc_connection_filter_test PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(pcsc_connection_filter_test)
 
+# T=0 SW=6C retry semantics — drives the real PCSCConnection::transmit()
+# against link-time SCardTransmit/SCardReconnect stubs defined in the test
+# binary itself (the executable's definitions take precedence over
+# libpcsclite's), so no PC/SC daemon or card I/O is involved. Own binary:
+# the stubs interpose for the whole executable.
+add_executable(pcsc_6c_retry_test pcsc_6c_retry_test.cpp)
+target_link_libraries(pcsc_6c_retry_test SmartCard_Impl GTest::gtest_main)
+target_include_directories(pcsc_6c_retry_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src)
+# LM-internal test: reaches directly into lib/smartcard/src; must advertise
+# the internal-build marker so the #error guard in apdu.h lets it in.
+target_compile_definitions(pcsc_6c_retry_test PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(pcsc_6c_retry_test)
+
 # selectByFileId P2 parameter test
 add_executable(apdu_select_p2_test apdu_select_p2_test.cpp)
 target_link_libraries(apdu_select_p2_test SmartCard_Impl GTest::gtest_main)

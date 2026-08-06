@@ -406,10 +406,18 @@ APDUResponse PCSCConnection::transmit(const APDUCommand& cmd)
         }
     }
 
-    // SW1=6C: wrong Le — resend command with corrected Le (T=0 specific)
-    if (activeProtocol == SCARD_PROTOCOL_T0 && response.sw1 == 0x6C) {
-        cmdBytes.back() = response.sw2;
-        response = transmitRaw(cmdBytes.data(), static_cast<DWORD>(cmdBytes.size()));
+    // SW1=6C: wrong Le — resend command with corrected Le (T=0 specific).
+    // ISO 7816-4 defines this only for commands that carry an Le byte; an
+    // Le-less command (case 1 / case 3 — every PIN verb) has DATA (or P2)
+    // as its last serialized byte, so it must never be rewritten. For those
+    // the status word is surfaced to the caller unchanged. The retry is
+    // rebuilt from the APDU model rather than patched into the serialized
+    // buffer so extended-Le encodings are corrected as a whole.
+    if (activeProtocol == SCARD_PROTOCOL_T0 && response.sw1 == 0x6C && cmd.hasLe) {
+        APDUCommand retry = cmd;
+        retry.le = response.sw2; // exact length announced by the card (0x00 = 256)
+        const auto retryBytes = retry.toBytes();
+        response = transmitRaw(retryBytes.data(), static_cast<DWORD>(retryBytes.size()));
     }
 
     return response;
