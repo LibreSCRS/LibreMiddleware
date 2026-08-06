@@ -24,6 +24,11 @@
 build/
 build-*/
 install/
+install-*/
+
+# Working notes live in the private knowledge repo, never in a public one.
+# A stray copy here is one `git add -A` away from shipping in LGPL history.
+knowledge/
 CMakeLists.txt.user
 
 # Persistent cache for fetched+built libxmlsec1 (universal static).
