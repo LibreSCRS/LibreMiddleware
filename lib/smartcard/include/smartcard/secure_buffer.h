@@ -32,6 +32,11 @@ public:
 
     SecureBuffer(std::initializer_list<uint8_t> init) : buf(init) {}
 
+    /// Adopt an existing byte vector (e.g. an APDU serialization from
+    /// APDUCommand::toBytes()) so its storage is cleansed on every exit
+    /// path. The moved-from vector holds no secret bytes afterwards.
+    explicit SecureBuffer(std::vector<uint8_t>&& bytes) noexcept : buf(std::move(bytes)) {}
+
     ~SecureBuffer()
     {
         cleanse();
@@ -111,6 +116,15 @@ public:
     operator std::span<const uint8_t>() const
     {
         return {buf.data(), buf.size()};
+    }
+
+    /// Read-only view of the underlying vector for APIs that require a
+    /// `const std::vector<uint8_t>&` (e.g. SecureMessaging::protect).
+    /// The reference aliases storage owned by this buffer and is
+    /// invalidated by resize, move-assign, or destruction.
+    const std::vector<uint8_t>& vector() const noexcept
+    {
+        return buf;
     }
 
 private:

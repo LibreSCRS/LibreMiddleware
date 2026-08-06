@@ -11,6 +11,8 @@
 #include <span>
 #include <vector>
 
+#include <smartcard/secure_wipe.h>
+
 namespace LibreSCRS::SmartCard::Internal {
 
 struct APDUCommand
@@ -19,6 +21,21 @@ struct APDUCommand
     std::vector<uint8_t> data; // Lc data (empty = no data field)
     uint16_t le = 0;           // Expected response length (0 = max, >255 = extended)
     bool hasLe = true;
+
+    // PIN verbs (VERIFY, CHANGE REFERENCE DATA, RESET RETRY COUNTER) carry
+    // PIN/PUK bytes in `data`, so every command wipes its payload before the
+    // vector frees it — otherwise the SecureBuffer guarantee upheld by the
+    // callers would be dropped at this layer. Cheap for the non-secret
+    // majority (SELECT / READ commands carry a few bytes). A user-declared
+    // destructor keeps the type an aggregate (designated initializers stay
+    // valid) but suppresses the implicit move constructor: APDUCommand
+    // "moves" degrade to copies, each of which is itself wiped on
+    // destruction.
+    ~APDUCommand()
+    {
+        if (!data.empty())
+            secureWipe(data.data(), data.size());
+    }
 
     std::vector<uint8_t> toBytes() const;
 };

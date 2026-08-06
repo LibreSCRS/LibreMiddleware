@@ -13,6 +13,7 @@
 
 #include "apdu.h"
 #include <smartcard/i_connection.h>
+#include <smartcard/secure_buffer.h>
 
 #include "secure_messaging.h"
 
@@ -83,8 +84,12 @@ public:
             return makeSentinel(0x6F, 0x02);
         }
 
-        auto plainBytes = cmd.toBytes();
-        auto wrapped = sm->protect(plainBytes);
+        // SecureBuffer adoption: the plaintext serialization may carry
+        // PIN/PUK bytes (PIN verbs through an SM channel), so it is
+        // cleansed on every exit path. `wrapped` is SM ciphertext and
+        // needs no cleansing.
+        const LibreSCRS::SmartCard::Internal::SecureBuffer plainBytes(cmd.toBytes());
+        auto wrapped = sm->protect(plainBytes.vector());
         if (wrapped.size() < 5) {
             channelState = ChannelState::Failed;
             return makeSentinel(0x6F, 0x02);

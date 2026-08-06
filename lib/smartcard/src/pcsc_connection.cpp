@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "pcsc_connection.h"
+#include <smartcard/secure_buffer.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -358,7 +360,9 @@ void PCSCConnection::clearTransmitFilter()
 
 APDUResponse PCSCConnection::transmitRaw(const APDUCommand& cmd)
 {
-    auto bytes = cmd.toBytes();
+    // SecureBuffer adoption: the serialization may carry PIN/PUK bytes
+    // (PIN verbs), so the wire copy is cleansed on every exit path.
+    SecureBuffer bytes(cmd.toBytes());
     return transmitRaw(bytes.data(), static_cast<DWORD>(bytes.size()));
 }
 
@@ -372,7 +376,9 @@ APDUResponse PCSCConnection::transmit(const APDUCommand& cmd)
     if (transmitFilter)
         return transmitFilter(cmd);
 
-    auto cmdBytes = cmd.toBytes();
+    // SecureBuffer adoption: the serialization may carry PIN/PUK bytes
+    // (PIN verbs), so the wire copy is cleansed on every exit path.
+    SecureBuffer cmdBytes(cmd.toBytes());
     auto response = transmitRaw(cmdBytes.data(), static_cast<DWORD>(cmdBytes.size()));
 
     // SW1=61: response data available — send GET RESPONSE to retrieve it.
@@ -416,7 +422,7 @@ APDUResponse PCSCConnection::transmit(const APDUCommand& cmd)
     if (activeProtocol == SCARD_PROTOCOL_T0 && response.sw1 == 0x6C && cmd.hasLe) {
         APDUCommand retry = cmd;
         retry.le = response.sw2; // exact length announced by the card (0x00 = 256)
-        const auto retryBytes = retry.toBytes();
+        const SecureBuffer retryBytes(retry.toBytes());
         response = transmitRaw(retryBytes.data(), static_cast<DWORD>(retryBytes.size()));
     }
 
