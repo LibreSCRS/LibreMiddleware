@@ -365,12 +365,15 @@ DSSServiceManager::CdsPaths DSSServiceManager::prepareCds()
     if (upToDate)
         return {extractedJar.string(), archiveFile.string()};
 
-    // Try copying pre-built CDS from bundle (instant first launch)
+    // Try copying pre-built CDS from bundle (instant first launch).
     //
-    // TODO(security): verify bundled CDS integrity. Currently we trust that
-    // the bundled archive shipped with the application binary is intact.
-    // Future: ship a SHA-256 of the bundled CDS in a separate manifest file
-    // at build time and verify here before copying.
+    // Bundled CDS integrity is NOT cryptographically verified: the only
+    // check applied is the size sanity gate below (>= 1 KiB), which rejects
+    // truncated, empty, or placeholder archives. Beyond that the archive is
+    // trusted because it ships alongside the application binary in the same
+    // package — an attacker able to substitute the bundled CDS could
+    // equally substitute the binary itself, so a hash check here would not
+    // extend the trust boundary.
     if (!config.bundledCdsPath.empty()) {
         auto bundledArchive = fs::path(config.bundledCdsPath) / "application.jsa";
         // Basic sanity check: refuse to consume a suspiciously small archive.

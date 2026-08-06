@@ -141,10 +141,12 @@ public:
     /// same reason — typed equality without unwrapping the secret).
     ///
     /// @note Like @ref Secure::String::operator==, this comparator is
-    ///       byte-wise NOT constant-time. For PIN/MAC/secret-equality
+    ///       byte-wise NOT constant-time, and @ref Buffer provides no
+    ///       constant-time alternative. For PIN/MAC/secret-equality
     ///       checks against an attacker-controlled side channel, use a
-    ///       dedicated constant-time helper rather than this operator.
-    ///       A constant-time comparator is on the 4.1 backlog.
+    ///       dedicated constant-time helper — e.g.
+    ///       @ref Secure::String::equalConstantTime for text secrets —
+    ///       rather than this operator.
     ///
     /// @since 4.0
     [[nodiscard]] bool operator==(const Buffer& other) const noexcept;
