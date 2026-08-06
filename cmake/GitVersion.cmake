@@ -31,6 +31,7 @@ if(GIT_EXECUTABLE)
     OUTPUT_VARIABLE GIT_DESCRIBE_VERSION
     RESULT_VARIABLE GIT_DESCRIBE_ERROR_CODE
     OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET # silence git "fatal: No names found" on fresh/untagged repos
     )
   if(NOT GIT_DESCRIBE_ERROR_CODE)
     # Strip leading 'v' if present (e.g. v3.0.0-rc1 → 3.0.0-rc1)
