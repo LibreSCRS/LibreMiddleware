@@ -85,12 +85,12 @@ consumer.
 
 ## API stability
 
-The 4.0 surface is locked by an ABI snapshot baseline at
-`ci/abi/4.0-baseline.txt`. The CI's `abi-stability-check` job diffs
-every pull request against the baseline and fails on any add /remove /
-signature change to the public C++ surface. Intentional API changes
-require a baseline update via
-`ci/scripts/abi-snapshot.sh --update build`.
+The 4.x surface is locked by an ABI snapshot baseline at
+`ci/abi/4.x-baseline.txt`. CI diffs every pull request against the
+baseline and fails on any add / remove / signature change to the
+public C++ surface. Intentional API changes require a baseline update
+via `ci/scripts/abi-snapshot.sh --update build`, reviewed in the same
+commit as the change.
 
 The public surface follows the conventions documented in the
 [LibreSCRS API Policy](https://LibreSCRS.github.io/developer-guide/sdk-reference/api-policy/):

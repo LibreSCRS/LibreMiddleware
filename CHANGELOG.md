@@ -60,7 +60,42 @@ Notable user-visible changes per release. Format follows
 - Malformed and expired MUP certificates were archived out of the active
   certificate bundle.
 
-## [Unreleased] — 4.1.0
+## [4.2.0] — 2026-05-29
+
+### Added
+
+- **AET SafeSign QSCD signing.** The attestation-locked signing key on
+  AET SafeSign cards is now unlocked automatically via the card's
+  software-attestation prompt, so signing works out of the box.
+- **Reader-list snapshot API.** `MonitorService` exposes a snapshot of
+  the current reader list, and `CardDataAccess` gains convenience
+  accessors for common field lookups.
+- **CardSession same-thread re-entrancy guard.** Re-entrant `open()`
+  on the thread that already holds a session fails fast instead of
+  deadlocking.
+
+### Changed
+
+- **Cross-reader secure-messaging teardown** was remediated so an SM
+  channel established on one reader can no longer leak APDUs onto a
+  connection that was repurposed for another reader or applet.
+- **Minimal public API surface.** The 4.2 review wave trimmed
+  incidental exports and enforces the public-surface policy from CMake;
+  internal OpenSSL/OpenSC/PC/SC/dlopen handles moved to RAII wrappers.
+- **Vendored component licenses** (OpenSC, OpenSSL, Liberation Sans)
+  are declared in the license bundle manifest.
+- The vendored OpenSC build **no longer links GIO/GLib** (its notify
+  backend is disabled), slimming packaging dependencies.
+
+### Fixed
+
+- The PKCS#15 plugin's SM-wrapped applet probe **rejects foreign
+  passports** instead of misclaiming them.
+- **Reader monitoring lifecycle hardening:** subscription bootstrap no
+  longer races the initial poll, reader-list delivery is consistent,
+  and the poll thread's PC/SC context is torn down on all exit paths.
+
+## [4.1.0] — 2026-05-21
 
 ### Added
 
@@ -95,7 +130,7 @@ Notable user-visible changes per release. Format follows
   private-object visibility on entry to and exit from the
   logged-in state.
 
-## [Unreleased] — 4.0.0-rc2
+## [4.0.0-rc2] — 2026-05-09
 
 ### Added
 
