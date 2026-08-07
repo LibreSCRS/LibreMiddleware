@@ -17,6 +17,7 @@
 
 #include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
 #include <LibreSCRS_internal/SmartCard/CardAccessReader.h>
+#include <LibreSCRS_internal/SmartCard/PaceDowngradeVerdict.h>
 #include <LibreSCRS_internal/SmartCard/SessionPresence.h>
 #include <LibreSCRS_internal/SmartCard/SmartCardServices.h>
 
@@ -702,6 +703,42 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
         d->activatedProtocol.reset();
     }
 
+    // Hoist the PACE EF.CardAccess capability read OUT of the retry loop and
+    // ABOVE credential resolution. PACE binds SM at MF for the whole session, so
+    // the advertised OID set is loop-invariant; d->activeChannel is null here
+    // (any prior channel was torn down above), so the read is plain. BAC skips
+    // this entirely: its downgrade check is the post-establish SM re-read.
+    //
+    // The security payoff: when the read DEFINITIVELY confirms the document is
+    // PACE-less — a clean 6A82 at MF, OR a complete well-formed EF.CardAccess
+    // advertising no PACE OID (exactly the pre-auth capability probe's "Absent"
+    // verdict) — PaceUnsupported surfaces BEFORE the credential provider is ever
+    // invoked, so no CAN/MRZ prompt is burned on a card that cannot do PACE, on
+    // every host. An UNKNOWN read (unreadable / malformed / truncated / a PACE
+    // OID with no usable parameterId) is NOT definitive: it falls through to the
+    // fail-closed-to-PACE-CAN path, which prompts and only then surfaces
+    // PaceUnsupported once the empty OID set is reached below — byte-identical
+    // to the pre-hoist mapping. An Unknown verdict must keep the provider-driven
+    // PACE attempt.
+    std::vector<LibreSCRS::SecureChannel::PaceSecurityInfo> paceInfos;
+    if (!isBac) {
+        bool definitivelyNoPace = false;
+        try {
+            const auto read =
+                LibreSCRS::SmartCard::Internal::readCardAccessDetailed(d->activeChannel.get(), *d->ownedConn, token);
+            paceInfos = LibreSCRS::SecureChannel::parsePaceOidsFromCardAccess(read.data);
+            definitivelyNoPace =
+                read.efDefinitivelyAbsent || (read.readSucceeded && !read.data.empty() && read.data[0] == 0x31 &&
+                                              Internal::cardAccessOuterLengthContained(read.data) &&
+                                              !Internal::cardAccessAdvertisesPaceOrIsMalformed(read.data));
+        } catch (const std::exception&) {
+            return std::unexpected{ChannelActivationError::PaceProtocolFailure};
+        }
+        if (definitivelyNoPace) {
+            return std::unexpected{ChannelActivationError::PaceUnsupported};
+        }
+    }
+
     int retriesLeft = kSmActivationMaxAttempts;
     while (retriesLeft > 0) {
         if (token.isCancellable() && token.isCancelled()) {
@@ -799,6 +836,44 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                 // `protocol` is the BacRequest the caller passed (BAC is the
                 // fallback path), so the accessor reports BAC after a fallback.
                 d->activatedProtocol = protocol;
+
+                // Post-BAC SM-tunnel downgrade cross-check. The
+                // pre-auth "PACE absent" verdict that routed us to BAC is
+                // unauthenticated and forgeable by a contactless MITM. Re-read
+                // EF.CardAccess THROUGH the just-established SM channel (the
+                // shared MF-scoped helper dispatched over d->activeChannel — SM-
+                // wrapped by construction): an attacker who forced BAC without
+                // the MRZ can garble but not forge an SM-authenticated answer.
+                // The pure verdict fails closed on anything but an
+                // SM-authenticated definitive absence.
+                {
+                    const auto reread = LibreSCRS::SmartCard::Internal::readCardAccessDetailed(d->activeChannel.get(),
+                                                                                               *d->ownedConn, token);
+                    bool proceed = LibreSCRS::SmartCard::Internal::classifyPostBacCardAccess(reread) ==
+                                   LibreSCRS::SmartCard::Internal::PaceDowngradeVerdict::Proceed;
+                    // On a genuine BAC-only document the re-read left the MF
+                    // selected; restore the target applet before the holder is
+                    // handed back (the helper documents this caller obligation).
+                    // A failed SM re-SELECT is itself an integrity anomaly on the
+                    // tunnel, so it fails closed too.
+                    if (proceed) {
+                        proceed = d->activeChannel->transmit(buildSelectAppletCommand(aid), token).isSuccess();
+                    }
+                    if (!proceed) {
+                        // Forged downgrade (or SM anomaly): tear the tunnel down
+                        // and surface PaceDowngradeDetected. This is NOT a
+                        // wrong-credential condition — it is RETURNED (never
+                        // continued, so no retry re-enters) and the plugin maps
+                        // it to a non-auth failure, never markCredentialWrong.
+                        d->presence.reset();
+                        d->activatedProtocol.reset();
+                        if (d->activeChannel) {
+                            d->activeChannel->close();
+                            d->activeChannel.reset();
+                        }
+                        return std::unexpected{ChannelActivationError::PaceDowngradeDetected};
+                    }
+                }
                 return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
             }
             if (outcome.error() == ChannelActivationError::PaceWrongSecret) {
@@ -864,24 +939,20 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
         }
         auto& cachedSecret = d->paceCredentialsCache[static_cast<std::size_t>(kind)];
 
-        // PACE branch: discover supported OIDs from EF.CardAccess at MF.
-        // The handshake itself runs at MF level — PACE binds session keys
-        // to the card-side SM tunnel for the entire card session, not to
-        // any particular applet, so the post-handshake wrapped SELECT
-        // below routes the target applet through the freshly installed
-        // channel without a second handshake.
-        std::vector<LibreSCRS::SecureChannel::PaceSecurityInfo> paceInfos;
-        try {
-            auto cardAccess =
-                LibreSCRS::SmartCard::Internal::readCardAccessFromMF(d->activeChannel.get(), *d->ownedConn, token);
-            paceInfos = LibreSCRS::SecureChannel::parsePaceOidsFromCardAccess(cardAccess);
-        } catch (const std::exception&) {
-            return std::unexpected{ChannelActivationError::PaceProtocolFailure};
-        }
+        // An UNKNOWN capability read (an empty OID set the hoisted check did not
+        // classify as a definitive absence) resolves to PaceUnsupported here,
+        // AFTER the provider prompt — byte-identical to the pre-hoist mapping,
+        // so an Unknown verdict still drives the provider-prompted PACE attempt.
         if (paceInfos.empty()) {
             return std::unexpected{ChannelActivationError::PaceUnsupported};
         }
 
+        // PACE branch: the supported-OID set (@ref paceInfos) was read from
+        // EF.CardAccess at MF once, above the loop — it is loop-invariant
+        // because PACE binds session keys to the card-side SM tunnel for the
+        // entire card session, not to any particular applet, so the
+        // post-handshake wrapped SELECT below routes the target applet through
+        // the freshly installed channel without a second handshake.
         ChannelActivationError lastError = ChannelActivationError::PaceWrongSecret;
         std::unique_ptr<PaceChannel> freshChannel;
         for (const auto& info : paceInfos) {

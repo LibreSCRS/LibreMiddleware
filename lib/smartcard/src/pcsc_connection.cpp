@@ -265,6 +265,16 @@ void PCSCConnection::reconnect()
 
 APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
 {
+    // Detached test seam: play the card side of a live SM tunnel. Taken ONLY
+    // by a detached connection (card == 0, no PC/SC handle) with a responder
+    // installed via setDetachedRawResponder — a production connection has
+    // card != 0 so this branch is unreachable and the wire path below is
+    // byte-identical; a detached connection with no responder falls through to
+    // the (handle-less) SCardTransmit path exactly as before.
+    if (card == 0 && detachedRawResponder) {
+        return detachedRawResponder(std::span<const std::uint8_t>(cmdBytes, cmdLen));
+    }
+
     // PCSC_TRACE hook is installed on this lowest-level overload because
     // every wire APDU passes through here regardless of which higher-level
     // caller produced it — including Secure-Messaging wrappers which
@@ -356,6 +366,11 @@ void PCSCConnection::setTransmitFilter(TransmitFilter filter)
 void PCSCConnection::clearTransmitFilter()
 {
     transmitFilter = nullptr;
+}
+
+void PCSCConnection::setDetachedRawResponder(RawResponder responder)
+{
+    detachedRawResponder = std::move(responder);
 }
 
 APDUResponse PCSCConnection::transmitRaw(const APDUCommand& cmd)

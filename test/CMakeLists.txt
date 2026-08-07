@@ -939,7 +939,13 @@ add_executable(LibreSCRS_CardSessionTests
 target_link_libraries(LibreSCRS_CardSessionTests PRIVATE
     GTest::gtest_main
     LibreSCRS_SmartCard
+    SmartCard_Impl
 )
+# The CardSessionPaceCapabilityHoist tests script a card via PCSCConnection::setTransmitFilter
+# (the same detached-session seam the eMRTD plugin tests use); expose apdu.h /
+# pcsc_connection.h from the low-level SmartCard_Impl source tree.
+target_include_directories(LibreSCRS_CardSessionTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src)
 # Grants access to detail/CardSessionInjection.h for detached-session
 # regression tests that exercise moved-from semantics without real hardware.
 target_compile_definitions(LibreSCRS_CardSessionTests PRIVATE LIBRESCRS_INTERNAL_BUILD)

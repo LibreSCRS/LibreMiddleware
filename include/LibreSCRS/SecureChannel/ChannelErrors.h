@@ -63,6 +63,16 @@ enum class ChannelActivationError : std::uint8_t {
     ///        Terminal; indicates a caller bug.
     /// @since 4.x
     ReentrantAccess,
+    /// @brief BAC established, but the SM-authenticated EF.CardAccess re-read
+    ///        showed PACE — the unauthenticated pre-auth "PACE absent" verdict
+    ///        that selected BAC was forged by a contactless man-in-the-middle
+    ///        (or the SM answer failed integrity). The channel was torn down.
+    ///        Terminal, and deliberately DISTINCT from @ref PaceUnsupported so
+    ///        the narrowed BAC fallback never falls back on it. NOT a
+    ///        wrong-credential condition: callers map it to a non-auth failure
+    ///        surface and never mark the credential wrong.
+    /// @since 4.x
+    PaceDowngradeDetected,
 };
 
 /// @brief Error categories surfaced by @ref ISecureChannel::transmit (and

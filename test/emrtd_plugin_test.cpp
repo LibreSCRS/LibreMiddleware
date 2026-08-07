@@ -13,16 +13,26 @@
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 #include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
+#include <LibreSCRS/SecureChannel/BacParams.h>
+#include <LibreSCRS/SecureChannel/ChannelErrors.h>
 #include <LibreSCRS_internal/Plugin/CardPluginActivationAccessor.h>
+#include <LibreSCRS_internal/SmartCard/CardAccessReader.h>
+#include <LibreSCRS_internal/SmartCard/PaceDowngradeVerdict.h>
+#include <bac.h>
+#include <crypto_utils.h>
 #include <pace.h>
 #include <pcsc_connection.h>
+#include <types.h>
 
 #include <algorithm>
+#include <array>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1278,4 +1288,358 @@ TEST(EmrtdInterfaceActivation, HostDiscoveryLegReportsPaceSupportedFromMf)
     EXPECT_EQ(fieldText(*rr.data, "auth_required", "pace_supported").value_or(""), "true");
     EXPECT_FALSE(fieldText(*rr.data, "auth_required", "pace_oids").value_or("").empty())
         << "pace_oids must be reported from the MF-scoped EF.CardAccess read";
+}
+
+// ---------------------------------------------------------------------------
+// Post-BAC SM-tunnel downgrade cross-check.
+//
+// Two layers:
+//  (A) The pure fail-closed verdict `classifyPostBacCardAccess` is proven
+//      DIRECTLY over hand-built CardAccessReadResult values — no channel.
+//  (B) The `BacDowngradeGuard` suite drives the REAL activation path: a
+//      card-role BAC oracle (emrtd::crypto) answers the BAC handshake through
+//      the typed-transmit filter and answers the SM-wrapped EF.CardAccess
+//      re-read through the detached raw-responder seam, so establish ->
+//      re-read -> verdict -> teardown is exercised end to end.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+using LibreSCRS::SecureChannel::ChannelActivationError;
+using LibreSCRS::SmartCard::Internal::CardAccessReadResult;
+using LibreSCRS::SmartCard::Internal::classifyPostBacCardAccess;
+using LibreSCRS::SmartCard::Internal::PaceDowngradeVerdict;
+
+CardAccessReadResult makeReadResult(bool mfSelected, bool efDefinitivelyAbsent, bool readSucceeded,
+                                    std::vector<std::uint8_t> data)
+{
+    CardAccessReadResult r;
+    r.mfSelected = mfSelected;
+    r.efDefinitivelyAbsent = efDefinitivelyAbsent;
+    r.readSucceeded = readSucceeded;
+    r.data = std::move(data);
+    return r;
+}
+
+} // namespace
+
+// (A) Pure verdict — the three-outcome fail-closed security logic, proven
+// directly. Proceed ONLY on an SM-authenticated definitive absence or a
+// complete well-formed no-PACEInfo read; everything else is a downgrade.
+
+TEST(PaceDowngradeVerdict, DefinitiveAbsenceProceeds)
+{
+    // Clean 6A82 after a real MF selection inside valid SM.
+    EXPECT_EQ(classifyPostBacCardAccess(makeReadResult(true, true, false, {})), PaceDowngradeVerdict::Proceed);
+}
+
+TEST(PaceDowngradeVerdict, CompleteNoPaceReadProceeds)
+{
+    // A well-formed EF.CardAccess whose only SecurityInfo is non-PACE.
+    ASSERT_TRUE(emrtd::crypto::parseCardAccess(presentNoPaceCardAccess()).empty());
+    EXPECT_EQ(classifyPostBacCardAccess(makeReadResult(true, false, true, presentNoPaceCardAccess())),
+              PaceDowngradeVerdict::Proceed);
+}
+
+TEST(PaceDowngradeVerdict, PaceOidPresentDowngrades)
+{
+    // >=1 PACE OID in the SM-authenticated answer -> forged Absent -> downgrade.
+    ASSERT_FALSE(emrtd::crypto::parseCardAccess(presentPaceCardAccess()).empty());
+    EXPECT_EQ(classifyPostBacCardAccess(makeReadResult(true, false, true, presentPaceCardAccess())),
+              PaceDowngradeVerdict::Downgrade);
+}
+
+TEST(PaceDowngradeVerdict, ReadFailureDowngradesFailClosed)
+{
+    // MAC failure / anomaly: the helper reports readSucceeded == false and no
+    // definitive absence -> fail closed.
+    EXPECT_EQ(classifyPostBacCardAccess(makeReadResult(true, false, false, {})), PaceDowngradeVerdict::Downgrade);
+    // MF selection itself never landed.
+    EXPECT_EQ(classifyPostBacCardAccess(makeReadResult(false, false, false, {})), PaceDowngradeVerdict::Downgrade);
+}
+
+TEST(PaceDowngradeVerdict, EmptyOrNonSetReadDowngrades)
+{
+    // Read "succeeded" but yielded nothing, or not a SecurityInfos SET.
+    EXPECT_EQ(classifyPostBacCardAccess(makeReadResult(true, false, true, {})), PaceDowngradeVerdict::Downgrade);
+    EXPECT_EQ(classifyPostBacCardAccess(makeReadResult(true, false, true, {0x30, 0x03, 0x02, 0x01, 0x00})),
+              PaceDowngradeVerdict::Downgrade);
+}
+
+TEST(PaceDowngradeVerdict, TruncatedReadDowngradesFailClosed)
+{
+    // Outer BER length declares 256 content bytes, only 6 present: a truncated
+    // read a lenient scan would silently treat as "no PACE". Must fail closed.
+    EXPECT_EQ(classifyPostBacCardAccess(makeReadResult(true, false, true, {0x31, 0x82, 0x01, 0x00, 0x30, 0x03})),
+              PaceDowngradeVerdict::Downgrade);
+}
+
+// ---------------------------------------------------------------------------
+// (B) Card-role BAC oracle + BacDowngradeGuard integration suite.
+//
+// The oracle plays the CARD side of ICAO 9303-11 BAC using emrtd::crypto:
+//   * the typed-transmit filter answers GET CHALLENGE (fixed RND.ICC) and
+//     EXTERNAL AUTHENTICATE (decrypts E.IFD to recover RND.IFD / K.IFD,
+//     returns E.ICC || M.ICC, and derives the SAME session keys + SSC as
+//     LM's BacChannel::establish);
+//   * the detached raw-responder answers the SM-wrapped EF.CardAccess re-read
+//     with LM's own SM framing (DO'87 / DO'99 / DO'8E over the shared session
+//     keys, SSC advanced in lockstep).
+// Correctness is cross-validated by LM's INDEPENDENT SecureMessaging accepting
+// the oracle's frames (a wrong key/MAC/SSC would make establish or the SM
+// re-read fail, reddening the proceed test); the ICAO worked-example vector
+// test pins the key derivation against the published constants.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// ICAO Doc 9303-11 BAC worked example (Appendix D): the document whose MRZ
+// derives the published K_ENC / K_MAC below.
+constexpr const char* kIcaoDocNo = "L898902C";
+constexpr const char* kIcaoDob = "690806";
+constexpr const char* kIcaoDoe = "940623";
+
+enum class SmRereadScenario {
+    AbsentConfirmed, // SM re-read: EF.CardAccess 6A82 -> proceed
+    PacePresent,     // SM re-read: EF.CardAccess carries a PACE OID -> downgrade
+    GarbledRead      // SM re-read: READ BINARY response MAC corrupted -> downgrade
+};
+
+// BER length prefix for the DO'87 body (mirrors secure_messaging.cpp).
+void appendBerLength(std::vector<std::uint8_t>& out, std::size_t len)
+{
+    if (len < 0x80) {
+        out.push_back(static_cast<std::uint8_t>(len));
+    } else {
+        out.push_back(0x81);
+        out.push_back(static_cast<std::uint8_t>(len));
+    }
+}
+
+// The card side of a BAC session. Shared (shared_ptr) by the typed-transmit
+// filter and the detached raw-responder so the handshake-derived session keys
+// reach the SM phase.
+struct BacCardOracle
+{
+    std::vector<std::uint8_t> rndICC = std::vector<std::uint8_t>(8, 0xA5); // fixed card challenge
+    std::vector<std::uint8_t> kICC = std::vector<std::uint8_t>(16, 0x5A);  // fixed card key
+    emrtd::crypto::BACKeys bacKeys;                                        // deriveBACKeys(doc, dob, doe)
+
+    // Session state populated during EXTERNAL AUTHENTICATE.
+    std::vector<std::uint8_t> sessEnc, sessMac, ssc;
+    bool established = false;
+
+    SmRereadScenario scenario = SmRereadScenario::AbsentConfirmed;
+    int selectCount = 0;   // MF-scoped selects seen in the SM phase
+    int smInvocations = 0; // wrapped APDUs the raw-responder handled
+
+    // Handshake + pre-establish plain SELECT (typed transmit()).
+    APDUResponse onTransmit(const APDUCommand& cmd)
+    {
+        namespace det = emrtd::crypto::detail;
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x04) {
+            return APDUResponse{{}, 0x90, 0x00}; // pre-establish plain SELECT by AID
+        }
+        if (cmd.ins == 0x84) {
+            return APDUResponse{rndICC, 0x90, 0x00}; // GET CHALLENGE
+        }
+        if (cmd.ins == 0x82) { // EXTERNAL AUTHENTICATE: E.IFD(32) || M.IFD(8)
+            if (cmd.data.size() < 40)
+                return APDUResponse{{}, 0x6A, 0x80};
+            std::vector<std::uint8_t> eIFD(cmd.data.begin(), cmd.data.begin() + 32);
+            const auto s = det::des3Decrypt(bacKeys.encKey, eIFD); // 32 bytes, no unpad
+            std::vector<std::uint8_t> rndIFD(s.begin(), s.begin() + 8);
+            std::vector<std::uint8_t> kIFD(s.begin() + 16, s.begin() + 32);
+
+            std::vector<std::uint8_t> kSeed(16);
+            for (std::size_t i = 0; i < 16; ++i)
+                kSeed[i] = static_cast<std::uint8_t>(kIFD[i] ^ kICC[i]);
+            sessEnc = det::kdf(kSeed, 1, true);
+            sessMac = det::kdf(kSeed, 2, true);
+            ssc.assign(8, 0);
+            std::copy(rndICC.begin() + 4, rndICC.end(), ssc.begin());
+            std::copy(rndIFD.begin() + 4, rndIFD.end(), ssc.begin() + 4);
+
+            std::vector<std::uint8_t> r; // RND.ICC || RND.IFD || K.ICC
+            r.insert(r.end(), rndICC.begin(), rndICC.end());
+            r.insert(r.end(), rndIFD.begin(), rndIFD.end());
+            r.insert(r.end(), kICC.begin(), kICC.end());
+            auto eICC = det::des3Encrypt(bacKeys.encKey, r);
+            auto mICC = det::retailMAC(bacKeys.macKey, det::pad(eICC, 8));
+            mICC.resize(8);
+            std::vector<std::uint8_t> resp;
+            resp.insert(resp.end(), eICC.begin(), eICC.end());
+            resp.insert(resp.end(), mICC.begin(), mICC.end());
+            established = true;
+            return APDUResponse{resp, 0x90, 0x00};
+        }
+        return APDUResponse{{}, 0x6D, 0x00};
+    }
+
+    // SM-wrapped EF.CardAccess re-read (detached raw-responder).
+    APDUResponse onTransmitRaw(std::span<const std::uint8_t> wrapped)
+    {
+        ++smInvocations;
+        if (wrapped.size() < 4)
+            return APDUResponse{{}, 0x6F, 0x00};
+        const std::uint8_t ins = wrapped[1];
+        const std::uint8_t p1 = wrapped[2];
+
+        std::vector<std::uint8_t> data;
+        std::uint8_t sw1 = 0x90, sw2 = 0x00;
+        bool corruptMac = false;
+
+        if (ins == 0xA4 && p1 == 0x04) {
+            // restore SELECT by AID after the MF navigation -> success
+        } else if (ins == 0xA4 && p1 == 0x00) {
+            const bool isMf = (selectCount == 0);
+            ++selectCount;
+            if (!isMf && scenario == SmRereadScenario::AbsentConfirmed) {
+                sw1 = 0x6A;
+                sw2 = 0x82; // definitive absence
+            }
+        } else if (ins == 0xB0) {
+            if (scenario == SmRereadScenario::PacePresent) {
+                data = presentPaceCardAccess();
+            } else if (scenario == SmRereadScenario::GarbledRead) {
+                data = presentPaceCardAccess();
+                corruptMac = true; // a genuine bad-MAC frame, not a throw
+            }
+        }
+        return wrapResponse(data, sw1, sw2, corruptMac);
+    }
+
+    // Build an SM-protected response frame that LM's unprotectWithSW accepts:
+    // MAC over SSC || DO'87 || DO'99 (padded), SSC advanced twice per round to
+    // stay in lockstep with the reader (protect +1, unprotect +1).
+    APDUResponse wrapResponse(const std::vector<std::uint8_t>& data, std::uint8_t sw1, std::uint8_t sw2, bool corrupt)
+    {
+        namespace det = emrtd::crypto::detail;
+        det::incrementSSC(ssc);
+        det::incrementSSC(ssc);
+
+        std::vector<std::uint8_t> do87;
+        if (!data.empty()) {
+            auto ct = det::des3Encrypt(sessEnc, det::pad(data, 8));
+            do87.push_back(0x87);
+            appendBerLength(do87, 1 + ct.size());
+            do87.push_back(0x01);
+            do87.insert(do87.end(), ct.begin(), ct.end());
+        }
+        std::vector<std::uint8_t> do99 = {0x99, 0x02, sw1, sw2};
+
+        std::vector<std::uint8_t> macInput;
+        macInput.insert(macInput.end(), ssc.begin(), ssc.end());
+        macInput.insert(macInput.end(), do87.begin(), do87.end());
+        macInput.insert(macInput.end(), do99.begin(), do99.end());
+        auto mac = det::retailMAC(sessMac, det::pad(macInput, 8));
+        mac.resize(8);
+        if (corrupt)
+            mac[0] = static_cast<std::uint8_t>(mac[0] ^ 0xFF);
+
+        std::vector<std::uint8_t> do8e = {0x8E, 0x08};
+        do8e.insert(do8e.end(), mac.begin(), mac.end());
+
+        std::vector<std::uint8_t> body;
+        body.insert(body.end(), do87.begin(), do87.end());
+        body.insert(body.end(), do99.begin(), do99.end());
+        body.insert(body.end(), do8e.begin(), do8e.end());
+        return APDUResponse{body, 0x90, 0x00};
+    }
+};
+
+std::shared_ptr<BacCardOracle> armBacDowngradeSession(LibreSCRS::SmartCard::CardSession& session,
+                                                      SmRereadScenario scenario)
+{
+    auto oracle = std::make_shared<BacCardOracle>();
+    oracle->scenario = scenario;
+    oracle->bacKeys = emrtd::crypto::deriveBACKeys(kIcaoDocNo, kIcaoDob, kIcaoDoe);
+
+    // Pre-cache the BAC input so activation drives establish without prompting.
+    LibreSCRS::SecureChannel::BacInput input;
+    input.documentNumber = LibreSCRS::Secure::String{kIcaoDocNo};
+    input.dateOfBirth = LibreSCRS::Secure::String{kIcaoDob};
+    input.dateOfExpiry = LibreSCRS::Secure::String{kIcaoDoe};
+    session.setBacInput(std::move(input));
+
+    auto& conn = LibreSCRS::SmartCard::detail::unwrap(session);
+    conn.setTransmitFilter([oracle](const APDUCommand& cmd) { return oracle->onTransmit(cmd); });
+    conn.setDetachedRawResponder([oracle](std::span<const std::uint8_t> b) { return oracle->onTransmitRaw(b); });
+    return oracle;
+}
+
+LibreSCRS::SmartCard::AppletAid emrtdAid()
+{
+    return LibreSCRS::SmartCard::AppletAid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
+}
+
+} // namespace
+
+// The oracle's key derivation matches the ICAO Doc 9303-11 worked example —
+// pins the fixture against published constants (independent of LM's own path).
+TEST(BacDowngradeGuard, OracleDerivesIcao9303WorkedExampleKeys)
+{
+    const auto keys = emrtd::crypto::deriveBACKeys(kIcaoDocNo, kIcaoDob, kIcaoDoe);
+    const std::vector<std::uint8_t> expectedEnc = {0xAB, 0x94, 0xFD, 0xEC, 0xF2, 0x67, 0x4F, 0xDF,
+                                                   0xB9, 0xB3, 0x91, 0xF8, 0x5D, 0x7F, 0x76, 0xF2};
+    const std::vector<std::uint8_t> expectedMac = {0x79, 0x62, 0xD9, 0xEC, 0xE0, 0x3D, 0x1A, 0xCD,
+                                                   0x4C, 0x76, 0x08, 0x9D, 0xCE, 0x13, 0x15, 0x43};
+    EXPECT_EQ(keys.encKey, expectedEnc);
+    EXPECT_EQ(keys.macKey, expectedMac);
+}
+
+// Forged-Absent: BAC establishes, but the SM-authenticated EF.CardAccess
+// re-read carries a PACE OID -> abort via the PACE-detected verdict branch,
+// channel torn down. The abort fires from a genuine authenticated re-read
+// (the oracle was invoked), not the old throw path.
+TEST(BacDowngradeGuard, BacEstablishAbortsWhenSmCardAccessShowsPace)
+{
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto oracle = armBacDowngradeSession(*session, SmRereadScenario::PacePresent);
+
+    auto result =
+        session->activateChannelWithSm(emrtdAid(), LibreSCRS::SmartCard::BacRequest{}, LibreSCRS::CancelToken{});
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), ChannelActivationError::PaceDowngradeDetected);
+    EXPECT_TRUE(oracle->established) << "BAC must genuinely establish before the downgrade cross-check";
+    EXPECT_GT(oracle->smInvocations, 0) << "the SM re-read must reach the card over the authenticated tunnel";
+    EXPECT_FALSE(session->hasLiveSecureChannel()) << "the SM channel must be torn down on a detected downgrade";
+}
+
+// Garbled: BAC establishes, but the SM re-read's READ BINARY response carries a
+// corrupted MAC -> abort via the fail-closed (read-failure) verdict branch, a
+// DIFFERENT branch from the PACE-OID case, both landing PaceDowngradeDetected.
+TEST(BacDowngradeGuard, BacEstablishAbortsOnGarbledSmReread)
+{
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto oracle = armBacDowngradeSession(*session, SmRereadScenario::GarbledRead);
+
+    auto result =
+        session->activateChannelWithSm(emrtdAid(), LibreSCRS::SmartCard::BacRequest{}, LibreSCRS::CancelToken{});
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), ChannelActivationError::PaceDowngradeDetected);
+    EXPECT_TRUE(oracle->established);
+    EXPECT_GT(oracle->smInvocations, 0) << "a real garbled frame must be delivered, not a transport throw";
+    EXPECT_FALSE(session->hasLiveSecureChannel());
+}
+
+// Genuine BAC-only document: the SM re-read confirms EF.CardAccess is
+// definitively absent (clean 6A82) -> activation proceeds, holder returned.
+TEST(BacDowngradeGuard, BacEstablishProceedsWhenSmRereadConfirmsAbsence)
+{
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto oracle = armBacDowngradeSession(*session, SmRereadScenario::AbsentConfirmed);
+
+    {
+        auto result =
+            session->activateChannelWithSm(emrtdAid(), LibreSCRS::SmartCard::BacRequest{}, LibreSCRS::CancelToken{});
+        ASSERT_TRUE(result.has_value()) << "a genuine BAC-only document must not be punished by the downgrade guard";
+        EXPECT_TRUE(oracle->established);
+        EXPECT_GT(oracle->smInvocations, 0) << "the SM re-read must have actually run over the tunnel";
+        // The holder owns the session lock; drop it before probing liveness.
+    }
+    EXPECT_TRUE(session->hasLiveSecureChannel()) << "the established BAC channel survives a confirmed-absence re-read";
 }

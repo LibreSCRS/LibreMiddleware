@@ -80,6 +80,20 @@ public:
     void setTransmitFilter(TransmitFilter filter);
     void clearTransmitFilter();
 
+    // Test-only raw-byte responder for DETACHED connections. The SM layer
+    // ships already-wrapped APDUs through transmitRaw(), which deliberately
+    // bypasses the TransmitFilter (setTransmitFilter only intercepts the typed
+    // transmit()). On a detached connection there is no card handle for those
+    // bytes to reach, so — and ONLY when card == 0 AND a responder has been
+    // installed — transmitRaw() hands the raw bytes here instead. This lets a
+    // test play the card side of a live SM tunnel (e.g. the BAC downgrade-guard
+    // oracle). A production connection has card != 0, so the branch is never
+    // taken and the wire path stays byte-identical; a detached connection with
+    // no responder installed falls through to the (handle-less) SCardTransmit
+    // path exactly as before.
+    using RawResponder = std::function<APDUResponse(std::span<const std::uint8_t>)>;
+    void setDetachedRawResponder(RawResponder responder);
+
     // Low-level transmit that bypasses the TransmitFilter.
     // Used by SM layer to send already-wrapped APDUs without recursive filtering.
     APDUResponse transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen);
@@ -130,6 +144,7 @@ private:
     explicit PCSCConnection(const std::string& readerName);
 
     TransmitFilter transmitFilter;
+    RawResponder detachedRawResponder;
     std::string storedReaderName;
     SCARDCONTEXT context = 0;
     SCARDHANDLE card = 0;
