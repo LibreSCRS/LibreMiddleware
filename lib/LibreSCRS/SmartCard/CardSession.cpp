@@ -16,6 +16,7 @@
 #include <LibreSCRS_internal/SecureChannel/detail/ChannelStateMutator.h>
 
 #include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
+#include <LibreSCRS_internal/SmartCard/CardAccessReader.h>
 #include <LibreSCRS_internal/SmartCard/SessionPresence.h>
 #include <LibreSCRS_internal/SmartCard/SmartCardServices.h>
 
@@ -307,44 +308,13 @@ dispatchOverChannelOrConn(LibreSCRS::SecureChannel::ISecureChannel* activeChanne
     return conn.transmit(cmd);
 }
 
-// Read EF.CardAccess (FID 011C) from the card's master file. Returns the
-// raw TLV bytes ready for emrtd::crypto::parseCardAccessWithParams. An
-// empty vector indicates the file is absent or unreadable (no PACE).
-//
-// Routes through @ref dispatchOverChannelOrConn so that a live PACE channel
-// is not bypassed when the caller is still resolving handshake parameters
-// and has not yet taken a wrapped-SELECT path. PACE SM is session-scoped
-// at the card OS layer (BSI TR-03110), so MF/EF.CardAccess is reachable
-// through the SM tunnel. When no SM channel exists, plain reads of
-// MF/EF.CardAccess are equally safe.
-std::vector<std::uint8_t> readCardAccessFromMF(LibreSCRS::SecureChannel::ISecureChannel* activeChannel,
-                                               LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
-                                               LibreSCRS::CancelToken token) noexcept
-{
-    using LibreSCRS::SmartCard::Internal::APDUCommand;
-    using LibreSCRS::SmartCard::Internal::selectByFileId;
-    try {
-        auto mfSel = dispatchOverChannelOrConn(activeChannel, conn, selectByFileId(0x3F, 0x00, 0x0C), token);
-        if (!mfSel.isSuccess()) {
-            mfSel = dispatchOverChannelOrConn(activeChannel, conn, selectByFileId(0x3F, 0x00), token);
-        }
-        if (!mfSel.isSuccess()) {
-            return {};
-        }
-        auto efSel = dispatchOverChannelOrConn(activeChannel, conn, selectByFileId(0x01, 0x1C, 0x0C), token);
-        if (!efSel.isSuccess()) {
-            efSel = dispatchOverChannelOrConn(activeChannel, conn, selectByFileId(0x01, 0x1C), token);
-        }
-        if (efSel.sw1 != 0x90 && efSel.sw1 != 0x62) {
-            return {};
-        }
-        auto read =
-            dispatchOverChannelOrConn(activeChannel, conn, APDUCommand{0x00, 0xB0, 0x00, 0x00, {}, 0, true}, token);
-        return read.data;
-    } catch (...) {
-        return {};
-    }
-}
+// The MF-scoped EF.CardAccess reader (SELECT 3F00 -> SELECT 011C -> READ
+// BINARY) now lives in the shared internal header
+// <LibreSCRS_internal/SmartCard/CardAccessReader.h> so the PACE path here,
+// the eMRTD plugin's pre-auth capability probe, and the plugin host leg all
+// read the SAME file the SAME way. The PACE branch below consumes the
+// byte-vector convenience wrapper @ref Internal::readCardAccessFromMF, whose
+// behaviour is byte-identical to the reader previously defined here.
 
 } // namespace
 
@@ -902,7 +872,8 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
         // channel without a second handshake.
         std::vector<LibreSCRS::SecureChannel::PaceSecurityInfo> paceInfos;
         try {
-            auto cardAccess = readCardAccessFromMF(d->activeChannel.get(), *d->ownedConn, token);
+            auto cardAccess =
+                LibreSCRS::SmartCard::Internal::readCardAccessFromMF(d->activeChannel.get(), *d->ownedConn, token);
             paceInfos = LibreSCRS::SecureChannel::parsePaceOidsFromCardAccess(cardAccess);
         } catch (const std::exception&) {
             return std::unexpected{ChannelActivationError::PaceProtocolFailure};

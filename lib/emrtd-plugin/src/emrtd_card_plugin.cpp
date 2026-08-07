@@ -16,6 +16,7 @@
 #include <LibreSCRS_internal/SecureChannel/detail/ChannelStateMutator.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
 #include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
+#include <LibreSCRS_internal/SmartCard/CardAccessReader.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
@@ -107,6 +108,11 @@ LibreSCRS::Secure::String buildMrzInfo(std::string_view docNumber, std::string_v
     return LibreSCRS::Secure::String{std::move(scratch)};
 }
 
+// Pre-auth EF.CardAccess capability verdict. Drives BAC ONLY when PACE is
+// DEFINITIVELY absent — never a blanket fallback; Unknown fails closed to
+// PACE-CAN.
+enum class PaceCapability : std::uint8_t { Unknown, Present, Absent };
+
 struct SessionContext
 {
     std::optional<std::variant<SecureMRZData, LibreSCRS::Secure::String>> credentials;
@@ -121,6 +127,10 @@ struct SessionContext
     /// conservative SM activation.
     bool plainProbeDone{false};
     bool plainLdsReadable{false};
+    /// Pre-auth EF.CardAccess capability verdict cached by the discovery
+    /// probe. Unknown until the probe completes a definitive read; a throw
+    /// leaves it Unknown (fail closed to PACE-CAN).
+    PaceCapability paceCapability{PaceCapability::Unknown};
 };
 
 // Per-session state-map key + factory — the sanctioned plugin-support shape
@@ -133,6 +143,75 @@ LibreSCRS::SmartCard::AppletAid makeEmrtdAid()
     return LibreSCRS::SmartCard::AppletAid{emrtd::EMRTD_AID[0], emrtd::EMRTD_AID[1], emrtd::EMRTD_AID[2],
                                            emrtd::EMRTD_AID[3], emrtd::EMRTD_AID[4], emrtd::EMRTD_AID[5],
                                            emrtd::EMRTD_AID[6]};
+}
+
+struct CardAccessProbe
+{
+    PaceCapability capability{PaceCapability::Unknown};
+    std::vector<std::string> paceOids; // non-empty iff Present
+};
+
+// True iff the outer DER length octet(s) at @p data[1..] describe a value
+// wholly contained in @p data. @p data[0] is assumed to be 0x31 already.
+// Rejects the indefinite form (illegal in DER) and any >64 KiB length (a
+// single READ BINARY can never return the whole file) — both Unknown.
+bool outerBerLengthContained(const std::vector<std::uint8_t>& data)
+{
+    if (data.size() < 2)
+        return false;
+    const std::uint8_t lead = data[1];
+    std::size_t header = 2;
+    std::size_t contentLen = 0;
+    if (lead < 0x80) {
+        contentLen = lead;
+    } else if (lead == 0x81) {
+        if (data.size() < 3)
+            return false;
+        header = 3;
+        contentLen = data[2];
+    } else if (lead == 0x82) {
+        if (data.size() < 4)
+            return false;
+        header = 4;
+        contentLen = (static_cast<std::size_t>(data[2]) << 8) | data[3];
+    } else {
+        return false; // 0x80 indefinite, or 0x83+ (>64 KiB)
+    }
+    return header + contentLen <= data.size();
+}
+
+// Pre-auth (unauthenticated) EF.CardAccess capability probe. The verdict is
+// the security contract — BAC ONLY when PACE is DEFINITIVELY absent, never by
+// blanket fallback; anything ambiguous fails closed to PACE-CAN:
+//   Present = MF-scoped read ok AND parseCardAccess yields >=1 PACE OID.
+//   Absent  = DEFINITIVE only: a clean 6A82 on the EF.CardAccess selection
+//             after a real MF selection, OR a COMPLETE well-formed read
+//             (first byte 0x31, outer BER length fully contained) whose
+//             parse yields ZERO PACE OIDs.
+//   Unknown = everything else: read ok but first byte != 0x31; outer BER
+//             length exceeds the returned bytes (single-READ truncation or a
+//             >256-byte file); MF-selection failure; any other SW; empty
+//             data; any throw. Fails closed to PACE-CAN downstream.
+// The MF-scoped reader leaves the MF selected; the caller re-SELECTs the AID.
+CardAccessProbe probeCardAccess(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
+{
+    CardAccessProbe probe;
+    // No SM tunnel is live pre-auth, so the read is plain (activeChannel = nullptr).
+    const auto read = LibreSCRS::SmartCard::Internal::readCardAccessDetailed(nullptr, conn, LibreSCRS::CancelToken{});
+    if (!read.mfSelected)
+        return probe; // Unknown: could not even select the MF
+    if (read.efDefinitivelyAbsent) {
+        probe.capability = PaceCapability::Absent; // clean 6A82 -> definitive
+        return probe;
+    }
+    const auto& data = read.data;
+    if (data.empty() || data[0] != 0x31)
+        return probe; // Unknown: not a SecurityInfos SET
+    if (!outerBerLengthContained(data))
+        return probe; // Unknown: truncated / >256 B
+    probe.paceOids = emrtd::crypto::parseCardAccess(data);
+    probe.capability = probe.paceOids.empty() ? PaceCapability::Absent : PaceCapability::Present;
+    return probe;
 }
 
 class EMRTDCardPlugin final : public LibreSCRS::Plugin::CardPlugin
@@ -201,11 +280,33 @@ public:
             } catch (...) {
                 // verdict stays unknown
             }
-            if (probeDone) {
+
+            // Pre-auth EF.CardAccess capability probe (MF-scoped,
+            // unauthenticated), inside this same transaction so no other
+            // client interleaves. Completed I/O only: a throw leaves the
+            // verdict Unknown (fail closed to PACE-CAN downstream).
+            PaceCapability capability = PaceCapability::Unknown;
+            try {
+                capability = probeCardAccess(conn).capability;
+            } catch (...) {
+                // verdict stays Unknown
+            }
+            // The probe reads at the master file and leaves it selected;
+            // restore the applet DF context the read path assumes.
+            try {
+                conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(
+                    {emrtd::EMRTD_AID, emrtd::EMRTD_AID + emrtd::EMRTD_AID_LEN}, 0x0C));
+            } catch (...) {
+            }
+
+            {
                 std::lock_guard lock(mtx);
                 auto& ctx = sessions[key];
-                ctx.plainProbeDone = true;
-                ctx.plainLdsReadable = readable;
+                if (probeDone) {
+                    ctx.plainProbeDone = true;
+                    ctx.plainLdsReadable = readable;
+                }
+                ctx.paceCapability = capability;
             }
             return true;
         } catch (...) {
@@ -266,6 +367,7 @@ public:
         bool haveCan = false;
         bool haveMrz = false;
         bool plainReadable = false;
+        PaceCapability capability = PaceCapability::Unknown;
         {
             std::lock_guard lock(mtx);
             auto it = sessions.find(key);
@@ -278,12 +380,19 @@ public:
                     haveCan = !haveMrz;
                 }
                 plainReadable = it->second.plainProbeDone && it->second.plainLdsReadable;
+                capability = it->second.paceCapability;
             }
         }
 
         if (haveMrz) {
             p.primary = LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Mrz};
-            p.allowBacFallback = true;
+            // Capability-gated: a deposited/renegotiated MRZ on a
+            // PACE-capable (or Unknown) document keeps the BAC fallback OFF,
+            // so a MITM forcing PaceUnsupported mid-walk cannot land a fresh
+            // MRZ on BAC. Only a genuinely PACE-absent document keeps the
+            // legacy deposit path (PACE attempt -> structural PaceUnsupported
+            // -> BAC) functional. Was: unconditional true.
+            p.allowBacFallback = (capability == PaceCapability::Absent);
             return p;
         }
         if (haveCan) {
@@ -301,6 +410,17 @@ public:
         // which a plain profile would silently skip.
         const bool plainNow = plainReadable && !cardSession.activatedProtocol().has_value();
         if (cardSession.hasCredentialProvider() && !plainNow) {
+            if (capability == PaceCapability::Absent) {
+                // BAC by capability: a document whose EF.CardAccess is
+                // DEFINITIVELY absent activates BAC, so the
+                // walk's BAC leg prompts kind-Mrz once — no wasted PACE-CAN.
+                // allowBacFallback stays false (BAC is the primary, not a
+                // fallback).
+                p.primary = LibreSCRS::SmartCard::BacRequest{};
+                return p;
+            }
+            // Present or Unknown: PACE (CAN) exactly as today. Unknown fails
+            // CLOSED to PACE-CAN — never BAC. allowBacFallback stays false.
             p.primary = LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can};
             return p;
         }
@@ -434,17 +554,22 @@ private:
             bool paceSupported = false;
             std::vector<std::string> paceOids;
             try {
-                LibreSCRS::SmartCard::Internal::APDUCommand selectCmd{
-                    0x00, 0xA4, 0x04, 0x0C, {emrtd::EMRTD_AID, emrtd::EMRTD_AID + emrtd::EMRTD_AID_LEN}, 0, false};
-                conn.transmit(selectCmd);
-
-                LibreSCRS::SmartCard::Internal::APDUCommand readCA{
-                    0x00, 0xB0, static_cast<uint8_t>(0x80 | emrtd::SFID_CARD_ACCESS), 0x00, {}, 0x00, true};
-                auto caResp = conn.transmit(readCA);
-                if (caResp.isSuccess() && !caResp.data.empty()) {
-                    paceOids = emrtd::crypto::parseCardAccess(caResp.data);
-                    paceSupported = !paceOids.empty();
-                }
+                // MF-scoped EF.CardAccess read. The previous reader here
+                // issued a short-FID READ inside the AID-selected DF, so it
+                // reported pace_supported=false for every passport
+                // whose EF.CardAccess lives only at the MF (i.e. all of them).
+                // The shared probe reads at 3F00/011C and yields the correct
+                // verdict; pace_supported is true only for a definitive
+                // Present.
+                const auto probe = probeCardAccess(conn);
+                paceOids = probe.paceOids;
+                paceSupported = (probe.capability == PaceCapability::Present);
+            } catch (...) {
+            }
+            // The probe leaves the MF selected; restore the applet DF context.
+            try {
+                conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(
+                    {emrtd::EMRTD_AID, emrtd::EMRTD_AID + emrtd::EMRTD_AID_LEN}, 0x0C));
             } catch (...) {
             }
 

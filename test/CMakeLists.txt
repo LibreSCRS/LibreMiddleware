@@ -315,9 +315,12 @@ target_link_libraries(EMRTDPluginTests
     GTest::gtest_main
     CardPlugin_Impl
     SmartCard_Impl
+    EMRTDCrypto
 )
 target_include_directories(EMRTDPluginTests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src)
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/plugin/include)
 target_compile_definitions(EMRTDPluginTests PRIVATE
     PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
     LIBRESCRS_INTERNAL_BUILD

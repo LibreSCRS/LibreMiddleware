@@ -43,6 +43,18 @@ class TrustStore;
 
 namespace LibreSCRS::Plugin {
 
+namespace detail {
+// Friend-only test seam to @ref CardPlugin's protected activation surface.
+// Forward-declared here so @ref CardPlugin can befriend it; DEFINED inline in
+// the NON-installed internal header
+// <LibreSCRS_internal/Plugin/CardPluginActivationAccessor.h>, so the
+// protected @ref CardPlugin::activationProfile stays out of the public SDK.
+// Mirrors the sanctioned @ref LibreSCRS::SmartCard::Internal::ActiveChannelAccessor
+// idiom (see CardSession.h). ABI-inert: a friend declaration adds no exported
+// symbol and no vtable slot.
+struct CardPluginActivationAccessor;
+} // namespace detail
+
 /// @brief Abstract base class implemented by each card-family plugin.
 ///
 /// Plugins are instantiated once by @ref CardPluginService and shared across
@@ -760,6 +772,13 @@ protected:
     }
 
 private:
+    // Test seam: the internal accessor reaches the protected @ref
+    // activationProfile so in-tree (LIBRESCRS_INTERNAL_BUILD) tests can pin
+    // the profile verdict without the base class exposing it to SDK
+    // consumers. Defined in the non-installed internal header noted at its
+    // forward declaration above.
+    friend struct detail::CardPluginActivationAccessor;
+
     // Project convention: no trailing underscores on member
     // variables. The `*Value` suffix mirrors the convention already
     // established for `purposeValue` / `fieldList` / `retriesValue` in

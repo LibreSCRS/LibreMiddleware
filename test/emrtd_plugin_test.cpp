@@ -2,14 +2,19 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
+#include <LibreSCRS/Auth/AuthRequirement.h>
 #include <LibreSCRS/Auth/CredentialProvider.h>
 #include <LibreSCRS/Auth/CredentialResult.h>
+#include <LibreSCRS/Auth/PaceSecretKind.h>
 #include <LibreSCRS/Plugin/CardPluginService.h>
 #include <LibreSCRS/Plugin/SecurityCheck.h>
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
+#include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 #include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
+#include <LibreSCRS_internal/Plugin/CardPluginActivationAccessor.h>
+#include <pace.h>
 #include <pcsc_connection.h>
 
 #include <algorithm>
@@ -484,12 +489,57 @@ std::vector<uint8_t> dg1Fixture()
     return dg1;
 }
 
+// Scripted EF.CardAccess behaviour for the MF-scoped capability probe.
+// The default SoftFail keeps every pre-existing rig test byte-for-byte
+// identical: those tests never emit an MF-scoped (P1=0x00) SELECT, so the
+// knob is inert for them. A test that wants a definitive verdict MUST set
+// the knob explicitly — an unset knob asserts Unknown, not Absent.
+enum class CardAccessMode {
+    AbsentNotFound, // MF ok; SELECT 011C -> 6A82 (definitive absence)
+    PresentPace,    // MF ok; 011C holds a valid PACEInfo (PACE-CAN OID)
+    PresentNoPace,  // MF ok; 011C holds a well-formed CardAccess, zero PACEInfo
+    MalformedData,  // MF ok; 011C read ok but first byte != 0x31 (junk)
+    Truncated,      // MF ok; 011C outer BER length > returned bytes
+    SoftFail        // MF selection chain fails 6982 (rig default)
+};
+
+// A minimal EF.CardAccess: a SecurityInfos SET (0x31) carrying one PACEInfo
+// SEQUENCE whose first element is the standard PACE-ECDH-GM-AES-CBC-CMAC-128
+// OID (0.4.0.127.0.7.2.2.4.2.2). emrtd::crypto::parseCardAccess is the OID
+// oracle; PaceOracleAccepts* assertions feed it this fixture before any
+// Present verdict relies on it.
+std::vector<uint8_t> presentPaceCardAccess()
+{
+    return {0x31, 0x11,                                                 // SET, 17 content bytes
+            0x30, 0x0F,                                                 // SEQUENCE (PACEInfo), 15 content bytes
+            0x06, 0x0A, 0x04, 0x00, 0x7F, 0x00, 0x07, 0x02, 0x02, 0x04, // OID PACE-ECDH-GM-AES-CBC-CMAC-128
+            0x02, 0x02,                                                 // ...OID tail
+            0x02, 0x01, 0x02};                                          // INTEGER version = 2
+}
+
+// A well-formed EF.CardAccess SET whose single SecurityInfo carries a
+// NON-PACE OID (Chip Authentication 0.4.0.127.0.7.2.2.3.2.1): a definitive
+// "PACE not offered" document, NOT an anomaly. parseCardAccess yields zero
+// PACE OIDs -> Absent.
+std::vector<uint8_t> presentNoPaceCardAccess()
+{
+    return {0x31, 0x11,                                                 // SET, 17 content bytes
+            0x30, 0x0F,                                                 // SEQUENCE, 15 content bytes
+            0x06, 0x0A, 0x04, 0x00, 0x7F, 0x00, 0x07, 0x02, 0x02, 0x03, // OID id-CA-ECDH (non-PACE)
+            0x02, 0x01,                                                 // ...OID tail
+            0x02, 0x01, 0x01};                                          // INTEGER version = 1
+}
+
 struct LdsRigState
 {
     bool plainLds = true;
     std::vector<APDUCommand> log;
     std::map<uint16_t, std::vector<uint8_t>> files;
     const std::vector<uint8_t>* current = nullptr;
+    // MF-scoped EF.CardAccess model. @ref cardAccessData holds the
+    // EF.CardAccess bytes served for Present*/Malformed/Truncated modes.
+    CardAccessMode cardAccess = CardAccessMode::SoftFail;
+    std::vector<uint8_t> cardAccessData;
 };
 
 APDUResponse ldsRigTransmit(LdsRigState& st, const APDUCommand& cmd)
@@ -505,6 +555,31 @@ APDUResponse ldsRigTransmit(LdsRigState& st, const APDUCommand& cmd)
         if (cmd.data == kEmrtdAidBytes || cmd.data == kSiblingAidBytes)
             return ok();
         return sw(0x6A, 0x82);
+    }
+    if (cmd.ins == 0xA4 && cmd.p1 == 0x00) { // SELECT by FID (MF-scoped: EF.CardAccess probe)
+        // The MF-scoped EF.CardAccess reader (readCardAccessDetailed) emits
+        // SELECT 3F00 -> SELECT 011C -> plain READ BINARY, all P1=0x00.
+        // EF.CardAccess is unprotected by construction, so 011C stays
+        // pre-auth readable here even on contactless (carved out of the
+        // whole-LDS SM gate the P1=0x02 branch applies below).
+        if (cmd.data.size() != 2)
+            return sw(0x6A, 0x86);
+        if (st.cardAccess == CardAccessMode::SoftFail)
+            return sw(0x69, 0x82); // MF selection chain fails (rig default)
+        const uint16_t fid = static_cast<uint16_t>((cmd.data[0] << 8) | cmd.data[1]);
+        if (fid == 0x3F00) { // master file
+            st.current = nullptr;
+            return ok();
+        }
+        if (fid == 0x011C) { // EF.CardAccess at MF
+            if (st.cardAccess == CardAccessMode::AbsentNotFound) {
+                st.current = nullptr;
+                return sw(0x6A, 0x82); // definitive absence
+            }
+            st.current = &st.cardAccessData;
+            return ok();
+        }
+        return sw(0x6A, 0x82); // any other MF-scoped FID: absent
     }
     if (cmd.ins == 0xA4 && cmd.p1 == 0x02) { // SELECT EF by FID
         // Model the ISO 7816-4 behavior real card OSes exhibit: a FAILED
@@ -549,6 +624,32 @@ std::shared_ptr<LdsRigState> installLdsRig(LibreSCRS::SmartCard::CardSession& se
     return st;
 }
 
+// Arm the MF-scoped EF.CardAccess model for a given verdict. Loads the
+// EF.CardAccess bytes the READ BINARY at MF returns (empty for the
+// absent/soft-fail modes, which never reach a read).
+void setCardAccessMode(LdsRigState& st, CardAccessMode mode)
+{
+    st.cardAccess = mode;
+    switch (mode) {
+    case CardAccessMode::PresentPace:
+        st.cardAccessData = presentPaceCardAccess();
+        break;
+    case CardAccessMode::PresentNoPace:
+        st.cardAccessData = presentNoPaceCardAccess();
+        break;
+    case CardAccessMode::MalformedData:
+        st.cardAccessData = {0x30, 0x03, 0x02, 0x01, 0x00}; // a SEQUENCE, not a SET (first byte != 0x31)
+        break;
+    case CardAccessMode::Truncated:
+        st.cardAccessData = {0x31, 0x82, 0x01, 0x00, 0x30, 0x03}; // declares 256 content bytes, 6 present
+        break;
+    case CardAccessMode::AbsentNotFound:
+    case CardAccessMode::SoftFail:
+        st.cardAccessData.clear();
+        break;
+    }
+}
+
 bool logContainsIns(const LdsRigState& st, uint8_t ins)
 {
     return std::any_of(st.log.begin(), st.log.end(), [ins](const APDUCommand& c) { return c.ins == ins; });
@@ -560,6 +661,34 @@ bool logContainsSelectFid(const LdsRigState& st, uint16_t fid)
         return c.ins == 0xA4 && c.p1 == 0x02 && c.data.size() == 2 &&
                static_cast<uint16_t>((c.data[0] << 8) | c.data[1]) == fid;
     });
+}
+
+// MF-scoped (P1=0x00) SELECT of @p fid — the shape the EF.CardAccess reader
+// emits for SELECT 3F00 / SELECT 011C.
+bool logContainsMfScopedSelect(const LdsRigState& st, uint16_t fid)
+{
+    return std::any_of(st.log.begin(), st.log.end(), [fid](const APDUCommand& c) {
+        return c.ins == 0xA4 && c.p1 == 0x00 && c.data.size() == 2 &&
+               static_cast<uint16_t>((c.data[0] << 8) | c.data[1]) == fid;
+    });
+}
+
+template <typename Pred>
+std::optional<size_t> logIndexOfFirst(const LdsRigState& st, Pred pred)
+{
+    for (size_t i = 0; i < st.log.size(); ++i)
+        if (pred(st.log[i]))
+            return i;
+    return std::nullopt;
+}
+
+template <typename Pred>
+std::optional<size_t> logIndexOfLast(const LdsRigState& st, Pred pred)
+{
+    for (size_t i = st.log.size(); i-- > 0;)
+        if (pred(st.log[i]))
+            return i;
+    return std::nullopt;
 }
 
 std::optional<std::string> fieldText(const CardData& data, const std::string& groupKey, const std::string& fieldKey)
@@ -804,4 +933,349 @@ TEST(EmrtdInterfaceActivation, ContactDiscoveryWithoutProviderReadsIdentity)
     EXPECT_FALSE(rr.data->findGroup("auth_required").has_value());
     EXPECT_FALSE(logContainsIns(*rig, 0x22));
     EXPECT_FALSE(logContainsIns(*rig, 0x86));
+}
+
+// ---------------------------------------------------------------------------
+// MF-scoped EF.CardAccess capability probe (tri-state) driving the
+// BAC-by-capability provider branch and the capability-gated deposit branch.
+// ---------------------------------------------------------------------------
+
+// A definitively PACE-absent document (clean 6A82 on EF.CardAccess at MF) on
+// the provider branch activates BAC — one Mrz prompt, no wasted PACE-CAN —
+// and never opens a blanket BAC fallback.
+TEST(EmrtdInterfaceActivation, BacOnlyDocumentYieldsBacProfileOnProviderBranch)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/false);
+    setCardAccessMode(*rig, CardAccessMode::AbsentNotFound);
+
+    session->setCredentialProvider(
+        [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    const auto p = LibreSCRS::Plugin::detail::CardPluginActivationAccessor::profile(*plugin, *session);
+
+    EXPECT_NE(std::get_if<LibreSCRS::SmartCard::BacRequest>(&p.primary), nullptr)
+        << "a definitively PACE-absent document must activate BAC on the provider branch";
+    EXPECT_FALSE(p.allowBacFallback);
+}
+
+// EF.CardAccess present but carrying NO PACEInfo is also a definitive no-PACE
+// verdict — same BAC activation.
+TEST(EmrtdInterfaceActivation, CardAccessWithoutPaceInfoAlsoYieldsBacProfile)
+{
+    ASSERT_TRUE(emrtd::crypto::parseCardAccess(presentNoPaceCardAccess()).empty())
+        << "the no-PACE fixture must parse to zero PACE OIDs (definitive, not anomaly)";
+
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/false);
+    setCardAccessMode(*rig, CardAccessMode::PresentNoPace);
+
+    session->setCredentialProvider(
+        [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    const auto p = LibreSCRS::Plugin::detail::CardPluginActivationAccessor::profile(*plugin, *session);
+
+    EXPECT_NE(std::get_if<LibreSCRS::SmartCard::BacRequest>(&p.primary), nullptr);
+    EXPECT_FALSE(p.allowBacFallback);
+}
+
+// A PACE-capable document keeps today's PACE-CAN provider path — the
+// regression pin proving the probe does not over-trigger BAC.
+TEST(EmrtdInterfaceActivation, PacePresentKeepsPaceCanOnProviderBranch)
+{
+    ASSERT_FALSE(emrtd::crypto::parseCardAccess(presentPaceCardAccess()).empty())
+        << "parseCardAccess must accept the Present fixture (the oracle contract)";
+
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/false);
+    setCardAccessMode(*rig, CardAccessMode::PresentPace);
+
+    session->setCredentialProvider(
+        [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    const auto p = LibreSCRS::Plugin::detail::CardPluginActivationAccessor::profile(*plugin, *session);
+
+    const auto* pace = std::get_if<LibreSCRS::SmartCard::PaceRequest>(&p.primary);
+    ASSERT_NE(pace, nullptr);
+    EXPECT_EQ(pace->secretKind, LibreSCRS::Auth::PaceSecretKind::Can);
+    EXPECT_FALSE(p.allowBacFallback);
+}
+
+// An unknown verdict (probe could not complete) fails CLOSED to PACE-CAN,
+// never BAC.
+TEST(EmrtdInterfaceActivation, UnknownCapabilityFailsClosedToPaceCan)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/false);
+    setCardAccessMode(*rig, CardAccessMode::SoftFail);
+
+    session->setCredentialProvider(
+        [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    const auto p = LibreSCRS::Plugin::detail::CardPluginActivationAccessor::profile(*plugin, *session);
+
+    const auto* pace = std::get_if<LibreSCRS::SmartCard::PaceRequest>(&p.primary);
+    ASSERT_NE(pace, nullptr) << "unknown capability must fail closed to PACE, never BAC";
+    EXPECT_EQ(pace->secretKind, LibreSCRS::Auth::PaceSecretKind::Can);
+    EXPECT_FALSE(p.allowBacFallback);
+}
+
+// A read that succeeds but is not a SecurityInfos SET (first byte != 0x31) is
+// an ANOMALY, not a definitive absence — Unknown, fail closed to PACE-CAN.
+TEST(EmrtdInterfaceActivation, MalformedCardAccessFailsClosedToPaceCan)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/false);
+    setCardAccessMode(*rig, CardAccessMode::MalformedData);
+
+    session->setCredentialProvider(
+        [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    const auto p = LibreSCRS::Plugin::detail::CardPluginActivationAccessor::profile(*plugin, *session);
+
+    const auto* pace = std::get_if<LibreSCRS::SmartCard::PaceRequest>(&p.primary);
+    ASSERT_NE(pace, nullptr) << "malformed EF.CardAccess is Unknown, never Absent";
+    EXPECT_EQ(pace->secretKind, LibreSCRS::Auth::PaceSecretKind::Can);
+    EXPECT_FALSE(p.allowBacFallback);
+}
+
+// A read whose outer BER length exceeds the returned bytes (single-READ
+// truncation or a >256-byte file) is Unknown — fail closed to PACE-CAN.
+TEST(EmrtdInterfaceActivation, TruncatedCardAccessFailsClosedToPaceCan)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/false);
+    setCardAccessMode(*rig, CardAccessMode::Truncated);
+
+    session->setCredentialProvider(
+        [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    const auto p = LibreSCRS::Plugin::detail::CardPluginActivationAccessor::profile(*plugin, *session);
+
+    const auto* pace = std::get_if<LibreSCRS::SmartCard::PaceRequest>(&p.primary);
+    ASSERT_NE(pace, nullptr) << "truncated EF.CardAccess is Unknown, never Absent";
+    EXPECT_EQ(pace->secretKind, LibreSCRS::Auth::PaceSecretKind::Can);
+    EXPECT_FALSE(p.allowBacFallback);
+}
+
+// preReadAuth becomes truthful for free: a BAC-only document reports Mrz, a
+// PACE-capable document reports Can.
+TEST(EmrtdInterfaceActivation, PreReadAuthReportsMrzForBacOnlyDocument)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    {
+        auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+        ASSERT_NE(session, nullptr);
+        auto rig = installLdsRig(*session, /*plainLds=*/false);
+        setCardAccessMode(*rig, CardAccessMode::AbsentNotFound);
+        session->setCredentialProvider(
+            [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+        ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+        EXPECT_EQ(plugin->preReadAuth(*session), LibreSCRS::Auth::PreReadAuthMethod::Mrz);
+    }
+    {
+        auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+        ASSERT_NE(session, nullptr);
+        auto rig = installLdsRig(*session, /*plainLds=*/false);
+        setCardAccessMode(*rig, CardAccessMode::PresentPace);
+        session->setCredentialProvider(
+            [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+        ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+        EXPECT_EQ(plugin->preReadAuth(*session), LibreSCRS::Auth::PreReadAuthMethod::Can);
+    }
+}
+
+// The probe reads at the MASTER FILE, inside the discovery transaction, and
+// re-SELECTs the applet AID afterwards — the SELECT-3F00 assertion. A
+// probe reading inside the applet DF could never emit the MF chain.
+TEST(EmrtdInterfaceActivation, CapabilityProbeRunsInsideTheProbeTransaction)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/false);
+    setCardAccessMode(*rig, CardAccessMode::PresentPace);
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+
+    EXPECT_TRUE(logContainsMfScopedSelect(*rig, 0x3F00)) << "the probe must SELECT the master file (3F00)";
+    EXPECT_TRUE(logContainsMfScopedSelect(*rig, 0x011C)) << "the probe must SELECT EF.CardAccess (011C) at MF";
+    EXPECT_TRUE(std::any_of(rig->log.begin(), rig->log.end(), [](const APDUCommand& c) {
+        return c.ins == 0xB0 && (c.p1 & 0x80) == 0;
+    })) << "the probe must issue a plain READ BINARY at the MF-selected EF";
+
+    const auto mfIdx = logIndexOfFirst(*rig, [](const APDUCommand& c) {
+        return c.ins == 0xA4 && c.p1 == 0x00 && c.data.size() == 2 && c.data[0] == 0x3F && c.data[1] == 0x00;
+    });
+    const auto lastAidIdx = logIndexOfLast(
+        *rig, [](const APDUCommand& c) { return c.ins == 0xA4 && c.p1 == 0x04 && c.data == kEmrtdAidBytes; });
+    ASSERT_TRUE(mfIdx.has_value());
+    ASSERT_TRUE(lastAidIdx.has_value());
+    EXPECT_GT(*lastAidIdx, *mfIdx) << "the applet AID must be re-SELECTed after the MF-scoped probe";
+}
+
+// A plain-readable contact interface stays plain even when EF.CardAccess is
+// absent — the plainNow guard outranks the capability verdict.
+TEST(EmrtdInterfaceActivation, PlainReadableContactStaysPlainEvenWhenAbsent)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/true);
+    setCardAccessMode(*rig, CardAccessMode::AbsentNotFound);
+
+    session->setCredentialProvider(
+        [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    const auto p = LibreSCRS::Plugin::detail::CardPluginActivationAccessor::profile(*plugin, *session);
+
+    EXPECT_FALSE(p.requiresActivation()) << "a plain-readable interface must stay plain regardless of capability";
+    EXPECT_FALSE(p.aid.has_value());
+}
+
+// Deposit branch: a deposited MRZ on a PACE-capable document keeps the BAC
+// fallback OFF — a MITM forcing PaceUnsupported cannot land it on BAC.
+TEST(EmrtdInterfaceActivation, DepositedMrzOnPaceDocumentKeepsFallbackOff)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/false);
+    setCardAccessMode(*rig, CardAccessMode::PresentPace);
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    plugin->setCredentials(*session, "mrz_doc_number", LibreSCRS::Secure::String{"L898902C3"});
+    plugin->setCredentials(*session, "mrz_dob", LibreSCRS::Secure::String{"740812"});
+    plugin->setCredentials(*session, "mrz_expiry", LibreSCRS::Secure::String{"120415"});
+    const auto p = LibreSCRS::Plugin::detail::CardPluginActivationAccessor::profile(*plugin, *session);
+
+    const auto* pace = std::get_if<LibreSCRS::SmartCard::PaceRequest>(&p.primary);
+    ASSERT_NE(pace, nullptr);
+    EXPECT_EQ(pace->secretKind, LibreSCRS::Auth::PaceSecretKind::Mrz);
+    EXPECT_FALSE(p.allowBacFallback) << "a PACE-capable document must not open a BAC fallback for a deposited MRZ";
+}
+
+// Deposit branch fail-closed: an unknown-capability document keeps the BAC
+// fallback OFF for a deposited MRZ too.
+TEST(EmrtdInterfaceActivation, DepositedMrzOnUnknownDocumentKeepsFallbackOff)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/false);
+    setCardAccessMode(*rig, CardAccessMode::SoftFail);
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    plugin->setCredentials(*session, "mrz_doc_number", LibreSCRS::Secure::String{"L898902C3"});
+    plugin->setCredentials(*session, "mrz_dob", LibreSCRS::Secure::String{"740812"});
+    plugin->setCredentials(*session, "mrz_expiry", LibreSCRS::Secure::String{"120415"});
+    const auto p = LibreSCRS::Plugin::detail::CardPluginActivationAccessor::profile(*plugin, *session);
+
+    const auto* pace = std::get_if<LibreSCRS::SmartCard::PaceRequest>(&p.primary);
+    ASSERT_NE(pace, nullptr);
+    EXPECT_EQ(pace->secretKind, LibreSCRS::Auth::PaceSecretKind::Mrz);
+    EXPECT_FALSE(p.allowBacFallback) << "an unknown-capability document must fail closed (no BAC fallback)";
+}
+
+// Deposit branch on a genuine BAC-only document: the legacy deposit path
+// stays functional — a PACE-MRZ attempt with the BAC fallback ENABLED.
+TEST(EmrtdInterfaceActivation, DepositedMrzOnBacOnlyDocumentEnablesFallback)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/false);
+    setCardAccessMode(*rig, CardAccessMode::AbsentNotFound);
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    plugin->setCredentials(*session, "mrz_doc_number", LibreSCRS::Secure::String{"L898902C3"});
+    plugin->setCredentials(*session, "mrz_dob", LibreSCRS::Secure::String{"740812"});
+    plugin->setCredentials(*session, "mrz_expiry", LibreSCRS::Secure::String{"120415"});
+    const auto p = LibreSCRS::Plugin::detail::CardPluginActivationAccessor::profile(*plugin, *session);
+
+    const auto* pace = std::get_if<LibreSCRS::SmartCard::PaceRequest>(&p.primary);
+    ASSERT_NE(pace, nullptr);
+    EXPECT_EQ(pace->secretKind, LibreSCRS::Auth::PaceSecretKind::Mrz);
+    EXPECT_TRUE(p.allowBacFallback) << "a genuine BAC-only document must keep the legacy deposit fallback";
+}
+
+// Host-discovery leg: the auth_required probe reports PACE supported from the
+// MF-scoped read, not the old applet-DF SFID read (which reported false for
+// every MF-only EF.CardAccess document).
+TEST(EmrtdInterfaceActivation, HostDiscoveryLegReportsPaceSupportedFromMf)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/false);
+    setCardAccessMode(*rig, CardAccessMode::PresentPace);
+
+    // No provider: the read falls through to the host-discovery auth_required
+    // probe.
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    auto rr = plugin->readCard(*session);
+    ASSERT_EQ(rr.status, ReadResult::Status::Ok);
+    ASSERT_TRUE(rr.data.has_value());
+    ASSERT_TRUE(rr.data->findGroup("auth_required").has_value());
+    EXPECT_EQ(fieldText(*rr.data, "auth_required", "pace_supported").value_or(""), "true");
+    EXPECT_FALSE(fieldText(*rr.data, "auth_required", "pace_oids").value_or("").empty())
+        << "pace_oids must be reported from the MF-scoped EF.CardAccess read";
 }
