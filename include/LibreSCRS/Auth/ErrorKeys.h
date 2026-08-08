@@ -295,6 +295,25 @@ namespace LibreSCRS::Auth::ErrorKeys {
         "librescrs.error.preRead.authFailed", "Card authentication failed before reading could begin.", {}};
 }
 
+/// @brief Structural: the document exposes no PACE (EF.CardAccess absent or
+///        empty). NOT a wrong-credential condition — consumers must not treat
+///        it as one (no credential eviction / retry punishment).
+[[nodiscard]] inline LocalizedText paceUnsupported()
+{
+    return LocalizedText{"librescrs.error.preRead.paceUnsupported", "This document does not support PACE", {}};
+}
+
+/// @brief Structural / security: BAC established but the SM-verified
+///        EF.CardAccess showed PACE, so activation was aborted (a detected
+///        downgrade). NOT a wrong-credential condition — carried on a non-auth
+///        failure so flows never evict or punish a credential for an attack
+///        signal.
+[[nodiscard]] inline LocalizedText paceDowngradeDetected()
+{
+    return LocalizedText{
+        "librescrs.error.preRead.paceDowngradeDetected", "Secure-channel downgrade detected; the read was aborted", {}};
+}
+
 /// @brief Generic "DER certificate could not be parsed" message used by
 ///        @ref Certificate::ParsedCertificate::fromDer when the input
 ///        is structurally invalid (truncated TLV, unsupported sig algo,

@@ -79,6 +79,20 @@ ReadResult CardPlugin::readCard(SmartCard::CardSession& session, GroupCallback o
         if (holder.error() == E::UserCancelled || holder.error() == E::Cancelled) {
             return ReadResult::cancelled();
         }
+        if (holder.error() == E::PaceUnsupported) {
+            // Structural: the document exposes no PACE. Distinct from a
+            // wrong-credential rejection so downstream flows stop punishing the
+            // credential (they map this to an unsupported-card outcome).
+            return ReadResult::authenticationFailed(Auth::ErrorKeys::paceUnsupported(),
+                                                    std::string{"document does not support PACE"});
+        }
+        if (holder.error() == E::PaceDowngradeDetected) {
+            // A detected secure-channel downgrade is an attack signal, not a
+            // wrong credential: surface it on the generic (non-auth) failure
+            // shape so nothing evicts or marks the credential wrong.
+            return ReadResult::communicationError(Auth::ErrorKeys::paceDowngradeDetected(),
+                                                  std::string{"secure-channel downgrade detected"});
+        }
         return ReadResult::authenticationFailed(Auth::ErrorKeys::authFailed(),
                                                 std::string{"channel activation failed"});
     }

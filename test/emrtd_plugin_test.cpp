@@ -6,7 +6,10 @@
 #include <LibreSCRS/Auth/CredentialProvider.h>
 #include <LibreSCRS/Auth/CredentialResult.h>
 #include <LibreSCRS/Auth/PaceSecretKind.h>
+#include <LibreSCRS/Plugin/ActivationProfile.h>
+#include <LibreSCRS/Plugin/CardPlugin.h>
 #include <LibreSCRS/Plugin/CardPluginService.h>
+#include <LibreSCRS/Plugin/ReadResult.h>
 #include <LibreSCRS/Plugin/SecurityCheck.h>
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
@@ -1642,4 +1645,102 @@ TEST(BacDowngradeGuard, BacEstablishProceedsWhenSmRereadConfirmsAbsence)
         // The holder owns the session lock; drop it before probing liveness.
     }
     EXPECT_TRUE(session->hasLiveSecureChannel()) << "the established BAC channel survives a confirmed-absence re-read";
+}
+
+// ---------------------------------------------------------------------------
+// Structural activation-failure surface (M4 LM half): a PACE-less document and
+// a detected downgrade must NOT present as a wrong-credential failure — each
+// carries its own structural message key, and the downgrade never wears the
+// authenticationFailed shape (so downstream flows never punish the credential).
+// ---------------------------------------------------------------------------
+
+// A PACE-less (or unknown-then-empty) document surfaces PaceUnsupported after
+// the credential prompt; the readCard mapping must name it distinctly rather
+// than fold it into the generic authentication-failed key. SoftFail keeps the
+// capability Unknown (fails closed to PACE-CAN, Task 1); the MF EF.CardAccess
+// read then yields no PACEInfo -> PaceUnsupported.
+TEST(EmrtdInterfaceActivation, PaceUnsupportedReadCarriesStructuralKey)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/false);
+    setCardAccessMode(*rig, CardAccessMode::SoftFail); // Unknown -> PaceRequest{Can}, fallback off
+
+    session->setCredentialProvider([](const LibreSCRS::Auth::AuthRequirement&) {
+        std::vector<LibreSCRS::Auth::CredentialEntry> values;
+        values.push_back({"can", LibreSCRS::Secure::String{"123456"}});
+        return LibreSCRS::Auth::CredentialResult::ok(std::move(values));
+    });
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    auto rr = plugin->readCard(*session);
+
+    EXPECT_EQ(rr.status, ReadResult::Status::AuthenticationFailed);
+    EXPECT_EQ(rr.userMessage.key, "librescrs.error.preRead.paceUnsupported")
+        << "a structurally PACE-less document must not fold into the generic auth-failed key";
+}
+
+namespace {
+
+// Minimal concrete plugin whose activationProfile is a fixed BAC request, so
+// the base-class readCard mapping of a channel-activation error can be observed
+// in isolation at the seam where it lives (CardPlugin::readCard).
+class BacProfilePlugin final : public LibreSCRS::Plugin::CardPlugin
+{
+public:
+    BacProfilePlugin()
+    {
+        setIdentity("fake-bac", "FakeBac", 0);
+    }
+
+    LibreSCRS::Plugin::CardCapabilities capabilities() const override
+    {
+        return {};
+    }
+
+    std::span<const LibreSCRS::Plugin::Atr> supportedAtrs() const noexcept override
+    {
+        return {};
+    }
+
+protected:
+    LibreSCRS::Plugin::ActivationProfile
+    activationProfile(LibreSCRS::SmartCard::CardSession& /*session*/) const override
+    {
+        LibreSCRS::Plugin::ActivationProfile profile;
+        profile.aid = emrtdAid();
+        profile.primary = LibreSCRS::SmartCard::SmProtocolRequest{LibreSCRS::SmartCard::BacRequest{}};
+        return profile;
+    }
+
+    LibreSCRS::Plugin::ReadResult doReadCard(LibreSCRS::SmartCard::CardSession& /*session*/,
+                                             GroupCallback /*onGroup*/) const override
+    {
+        return LibreSCRS::Plugin::ReadResult::ok({});
+    }
+};
+
+} // namespace
+
+// The :77-84 downgrade arm: BAC establishes, the SM-authenticated EF.CardAccess
+// re-read shows PACE -> PaceDowngradeDetected. The readCard mapping must name it
+// with the downgrade key AND must NOT use the authenticationFailed shape — an
+// attack signal must never evict or punish a credential.
+TEST(BacDowngradeGuard, PaceDowngradeReadCarriesStructuralKeyNotAuthFailed)
+{
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto oracle = armBacDowngradeSession(*session, SmRereadScenario::PacePresent);
+
+    BacProfilePlugin plugin;
+    auto rr = plugin.readCard(*session);
+
+    EXPECT_TRUE(oracle->established) << "BAC must genuinely establish before the downgrade cross-check";
+    EXPECT_NE(rr.status, ReadResult::Status::AuthenticationFailed)
+        << "a detected downgrade must not present as a wrong-credential failure";
+    EXPECT_EQ(rr.userMessage.key, "librescrs.error.preRead.paceDowngradeDetected");
 }
