@@ -1046,6 +1046,26 @@ target_link_libraries(PluginAbiVersionTest PRIVATE
 )
 gtest_discover_tests(PluginAbiVersionTest)
 
+# M3: narrowed BAC-fallback policy — shouldTryFallback fires ONLY on the
+# structural PaceUnsupported verdict (no downgrade on any other non-stop
+# error). Reaches the internal shouldTryFallback predicate the same way
+# lib/plugin/test/ActivationProfileTests.cpp does (CardPlugin_Impl object
+# archive + LIBRESCRS_INTERNAL_BUILD), but registers under the top-level
+# test/ tree so it runs in the CI-literal `ctest --test-dir build/test` gate.
+add_executable(ActivationFallbackPolicyTests
+    plugin/activation_profile_test.cpp
+)
+target_link_libraries(ActivationFallbackPolicyTests PRIVATE
+    GTest::gtest_main
+    LibreSCRS::Plugin
+    CardPlugin_Impl
+    LibreSCRS::SmartCard
+    LibreSCRS::Secure
+)
+target_include_directories(ActivationFallbackPolicyTests PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_compile_definitions(ActivationFallbackPolicyTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(ActivationFallbackPolicyTests)
+
 # A1 (4.0 hardening): Atr::matches semantics — exact + masked match cases.
 add_executable(AtrMatchingTests
     plugin/atr_matching_test.cpp

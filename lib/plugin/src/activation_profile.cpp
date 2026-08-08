@@ -20,7 +20,15 @@ bool isStopError(ChannelActivationError e) noexcept
 
 bool shouldTryFallback(const ActivationProfile& profile, ChannelActivationError e) noexcept
 {
-    return profile.allowBacFallback && !isStopError(e);
+    // Fall back to BAC ONLY when the document is structurally without PACE
+    // (PaceUnsupported). BAC derives its keys from the document's printed
+    // access data — a strictly weaker channel than PACE — so falling back on
+    // any other non-stop error is a silent protocol-downgrade surface: a
+    // transient failure, a wrong secret, or (worst) a detected downgrade would
+    // otherwise coax a PACE-capable document onto the weaker channel. A
+    // detected downgrade in particular (PaceDowngradeDetected) must never be
+    // answered by retrying the very protocol the downgrade aimed for.
+    return profile.allowBacFallback && e == ChannelActivationError::PaceUnsupported;
 }
 
 std::expected<LibreSCRS::SmartCard::ActiveChannelHolder, ChannelActivationError>

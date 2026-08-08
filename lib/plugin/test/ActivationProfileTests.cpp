@@ -46,7 +46,7 @@ TEST(StopErrorTest, StopSetIsExactlyCancelUserCancelCardRemoved)
     EXPECT_FALSE(isStopError(ChannelActivationError::Internal));
 }
 
-TEST(ShouldTryFallbackTest, OnlyWhenAllowedAndNotStop)
+TEST(ShouldTryFallbackTest, OnlyWhenAllowedAndPaceUnsupported)
 {
     ActivationProfile withFallback;
     withFallback.aid = AppletAid::fromBytes(std::array<std::uint8_t, 1>{0xA0});
@@ -54,8 +54,13 @@ TEST(ShouldTryFallbackTest, OnlyWhenAllowedAndNotStop)
     ActivationProfile noFallback = withFallback;
     noFallback.allowBacFallback = false;
 
-    EXPECT_TRUE(shouldTryFallback(withFallback, ChannelActivationError::PaceWrongSecret));
-    EXPECT_TRUE(shouldTryFallback(withFallback, ChannelActivationError::CredentialsRequired));
+    // Narrowed policy: the fallback fires ONLY on the structural PaceUnsupported
+    // verdict, never on another non-stop error (that would be a silent
+    // protocol downgrade). Comprehensive per-error coverage lives in the
+    // CI-run test/plugin/activation_profile_test.cpp.
+    EXPECT_TRUE(shouldTryFallback(withFallback, ChannelActivationError::PaceUnsupported));
+    EXPECT_FALSE(shouldTryFallback(withFallback, ChannelActivationError::PaceWrongSecret));
+    EXPECT_FALSE(shouldTryFallback(withFallback, ChannelActivationError::CredentialsRequired));
     EXPECT_FALSE(shouldTryFallback(withFallback, ChannelActivationError::UserCancelled));
-    EXPECT_FALSE(shouldTryFallback(noFallback, ChannelActivationError::PaceWrongSecret));
+    EXPECT_FALSE(shouldTryFallback(noFallback, ChannelActivationError::PaceUnsupported));
 }

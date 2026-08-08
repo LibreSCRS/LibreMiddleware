@@ -30,7 +30,9 @@ struct ActivationProfile
     std::optional<LibreSCRS::SmartCard::AppletAid> aid;
     /// Primary protocol to try. Read ONLY when @ref requiresActivation().
     LibreSCRS::SmartCard::SmProtocolRequest primary{};
-    /// When true and @ref primary fails with a non-stop error, retry once with BAC.
+    /// When true and @ref primary fails because the document is structurally
+    /// without PACE (PaceUnsupported), retry once with BAC. No other error
+    /// triggers the fallback — see @ref shouldTryFallback.
     bool allowBacFallback = false;
 
     /// @brief A profile that performs no activation (plain channel).
@@ -54,8 +56,12 @@ struct ActivationProfile
 ///           CardPlugin_Impl object archive.
 [[nodiscard]] LIBRESCRS_INTERNAL bool isStopError(LibreSCRS::SecureChannel::ChannelActivationError e) noexcept;
 
-/// @brief True when, after @p primary failed with @p e, the BAC fallback
-///        should be attempted: the profile allows it and @p e is not a stop error.
+/// @brief True when, after @p primary failed with @p e, the BAC fallback should
+///        be attempted: the profile allows it and @p e is @c PaceUnsupported —
+///        the document is structurally without PACE. Any other error (a
+///        transient failure, a wrong secret, or a detected downgrade) keeps the
+///        walk on the requested credential rather than silently downgrading to
+///        the weaker BAC channel.
 /// @internal See @ref isStopError — internal, hidden, not public ABI.
 [[nodiscard]] LIBRESCRS_INTERNAL bool shouldTryFallback(const ActivationProfile& profile,
                                                         LibreSCRS::SecureChannel::ChannelActivationError e) noexcept;
