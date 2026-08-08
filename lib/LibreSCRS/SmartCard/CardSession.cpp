@@ -8,6 +8,7 @@
 
 #include <LibreSCRS/Auth/AuthRequirement.h>
 #include <LibreSCRS/Auth/CredentialResult.h>
+#include <LibreSCRS/Auth/ErrorKeys.h>
 #include <LibreSCRS_internal/SecureChannel/BacChannel.h>
 #include <LibreSCRS_internal/SecureChannel/PaceChannel.h>
 #include <LibreSCRS/SecureChannel/PaceParams.h>
@@ -740,6 +741,11 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
     }
 
     int retriesLeft = kSmActivationMaxAttempts;
+    // Loop-local: set true ONLY by the wrong-secret retry paths below, so a
+    // re-prompt that follows a rejection carries a rejected-retry reason while
+    // the first prompt (and any prompt on a fresh activation call) carries the
+    // empty reason. Consumed at the two forPaceSecret prompt sites.
+    bool previousAttemptRejected = false;
     while (retriesLeft > 0) {
         if (token.isCancellable() && token.isCancelled()) {
             return std::unexpected{ChannelActivationError::Cancelled};
@@ -760,7 +766,9 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                     return std::unexpected{ChannelActivationError::CredentialsRequired};
                 }
                 auto requirement = LibreSCRS::Auth::AuthRequirement::forPaceSecret(
-                    aid, LibreSCRS::Auth::PaceSecretKind::Mrz, std::nullopt, LibreSCRS::LocalizedText{});
+                    aid, LibreSCRS::Auth::PaceSecretKind::Mrz, std::nullopt,
+                    previousAttemptRejected ? LibreSCRS::Auth::ErrorKeys::preReadAuthFailed()
+                                            : LibreSCRS::LocalizedText{});
                 // Snapshot the provider and drop the session mutex across the
                 // callback. The provider is permitted to call back into this
                 // CardSession (e.g. setBacInput / setPaceSecret) without
@@ -878,6 +886,7 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
             }
             if (outcome.error() == ChannelActivationError::PaceWrongSecret) {
                 d->bacInput.reset();
+                previousAttemptRejected = true;
                 --retriesLeft;
                 continue;
             }
@@ -888,8 +897,9 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
             if (!d->credentialProvider) {
                 return std::unexpected{ChannelActivationError::CredentialsRequired};
             }
-            auto requirement =
-                LibreSCRS::Auth::AuthRequirement::forPaceSecret(aid, kind, std::nullopt, LibreSCRS::LocalizedText{});
+            auto requirement = LibreSCRS::Auth::AuthRequirement::forPaceSecret(
+                aid, kind, std::nullopt,
+                previousAttemptRejected ? LibreSCRS::Auth::ErrorKeys::preReadAuthFailed() : LibreSCRS::LocalizedText{});
             // Snapshot the provider and drop the session mutex across the
             // callback. The provider is permitted to call back into this
             // CardSession (e.g. setPaceSecret) without self-deadlocking on
@@ -1011,6 +1021,7 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
         }
         if (lastError == ChannelActivationError::PaceWrongSecret) {
             cachedSecret = LibreSCRS::Secure::String{};
+            previousAttemptRejected = true;
             --retriesLeft;
             continue;
         }
