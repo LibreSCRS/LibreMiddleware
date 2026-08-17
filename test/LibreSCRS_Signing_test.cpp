@@ -569,6 +569,47 @@ TEST(SigningRequestBuilderTest, AllowExpiredCertRoundTrips)
     EXPECT_TRUE(req.allowExpiredCert());
 }
 
+TEST(SigningRequestBuilderTest, DocumentNameDefaultsEmpty)
+{
+    // Default is empty on BOTH build paths — the bridge then derives the
+    // engine-visible name from inputFile() exactly as it did before 4.3.
+    {
+        SigningRequest::Builder b;
+        b.format(SignatureFormat::AsicE);
+        auto req = std::move(b).buildForBufferSign();
+        EXPECT_TRUE(req.documentName().empty());
+    }
+    {
+        SigningRequest::Builder b;
+        b.inputFile("/tmp/in.pdf").outputFile("/tmp/out.pdf").format(SignatureFormat::Pades);
+        auto req = std::move(b).build();
+        EXPECT_TRUE(req.documentName().empty());
+    }
+}
+
+TEST(SigningRequestBuilderTest, DocumentNameRoundTripsOnBufferSignPath)
+{
+    SigningRequest::Builder b;
+    b.format(SignatureFormat::AsicE).documentName("report.docx");
+    auto req = std::move(b).buildForBufferSign();
+    EXPECT_EQ(req.documentName(), "report.docx");
+}
+
+TEST(SigningRequestBuilderTest, DocumentNameIsOptionalInFileMode)
+{
+    // documentName adds NO required-field or cross-field constraint: build()
+    // accepts it and accepts its absence. The accessor round-trips the raw
+    // string the caller supplied; the path-component strip happens at
+    // translation time, not in the setter.
+    SigningRequest::Builder b;
+    b.inputFile("/tmp/in.pdf")
+        .outputFile("/tmp/out.pdf")
+        .format(SignatureFormat::Pades)
+        .documentName("a/b/override.pdf");
+    auto req = std::move(b).build();
+    EXPECT_EQ(req.documentName(), "a/b/override.pdf");
+}
+
 TEST(SigningServiceBridgeTranslationTest, ForwardsAllowExpiredCert)
 {
     // Default request: bridge must produce allowExpiredCertificate=false.
@@ -596,6 +637,126 @@ TEST(SigningServiceBridgeTranslationTest, ForwardsAllowExpiredCert)
         LibreSCRS::Signing::detail::translatePublicRequestToLibresign(request, out);
         EXPECT_TRUE(out.allowExpiredCertificate);
     }
+}
+
+TEST(SigningServiceBridgeTranslationTest, DocumentNameNamesTheInMemoryDocument)
+{
+    // Buffer-sign requests carry no inputFile, so the pre-4.3 bridge handed the
+    // engine an EMPTY fileName and ASiC-E container creation failed ("Invalid
+    // filename for ASiC entry"). documentName is the buffer path's name source.
+    LibreSCRS::Signing::SigningRequest::Builder b;
+    b.format(LibreSCRS::Signing::SignatureFormat::AsicE).documentName("report.docx");
+    auto request = std::move(b).buildForBufferSign();
+
+    libresign::SigningRequest out;
+    LibreSCRS::Signing::detail::translatePublicRequestToLibresign(request, out);
+
+    EXPECT_EQ(out.fileName, "report.docx");
+}
+
+TEST(SigningServiceBridgeTranslationTest, DocumentNameStripsPathComponents)
+{
+    // Only the final path component reaches the engine. A caller cannot inject
+    // directory separators (or a "../" traversal) into an ASiC container entry
+    // name or a XAdES/JAdES detached reference — the strip is what makes the
+    // knob foolproof, and it happens in the bridge so BOTH sign() overloads and
+    // appendSigner() get it for free.
+    auto engineFileNameFor = [](std::string name) {
+        LibreSCRS::Signing::SigningRequest::Builder b;
+        b.format(LibreSCRS::Signing::SignatureFormat::AsicE).documentName(std::move(name));
+        auto request = std::move(b).buildForBufferSign();
+        libresign::SigningRequest out;
+        LibreSCRS::Signing::detail::translatePublicRequestToLibresign(request, out);
+        return out.fileName;
+    };
+
+    EXPECT_EQ(engineFileNameFor("a/b/report.docx"), "report.docx");
+    EXPECT_EQ(engineFileNameFor("../../etc/passwd"), "passwd");
+    EXPECT_EQ(engineFileNameFor("/absolute/path/doc.pdf"), "doc.pdf");
+}
+
+TEST(SigningServiceBridgeTranslationTest, DegenerateDocumentNameIsTreatedAsUnset)
+{
+    // Post-strip degenerate finals are NOT usable entry names: "a/b/" strips to
+    // nothing, while "." and ".." survive the strip verbatim — and a "." or
+    // ".." ZIP entry name is exactly the class the strip exists to prevent. All
+    // are treated as absent, so the request falls back to the inputFile
+    // derivation. Buffer mode has no inputFile, so the fallback yields the
+    // honest nameless failure rather than a poisoned container entry.
+    auto engineFileNameFor = [](std::string name) {
+        LibreSCRS::Signing::SigningRequest::Builder b;
+        b.format(LibreSCRS::Signing::SignatureFormat::AsicE).documentName(std::move(name));
+        auto request = std::move(b).buildForBufferSign();
+        libresign::SigningRequest out;
+        // Sentinel proves the bridge OVERWRITES fileName rather than leaving a
+        // stale value behind on the fallback path.
+        out.fileName = "sentinel";
+        LibreSCRS::Signing::detail::translatePublicRequestToLibresign(request, out);
+        return out.fileName;
+    };
+
+    EXPECT_EQ(engineFileNameFor("a/b/"), "");
+    EXPECT_EQ(engineFileNameFor("."), "");
+    EXPECT_EQ(engineFileNameFor(".."), "");
+    EXPECT_EQ(engineFileNameFor("../.."), "");
+    EXPECT_EQ(engineFileNameFor("a/b/."), "");
+}
+
+TEST(SigningServiceBridgeTranslationTest, DegenerateDocumentNameFallsBackToInputFileInFileMode)
+{
+    // Same three degenerate finals in file mode: they fall back to the
+    // inputFile-derived name, exactly as an unset documentName does.
+    auto engineFileNameFor = [](std::string name) {
+        LibreSCRS::Signing::SigningRequest::Builder b;
+        b.inputFile("/tmp/dir/contract.pdf");
+        b.outputFile("/tmp/dir/out.asice");
+        b.format(LibreSCRS::Signing::SignatureFormat::AsicE);
+        b.documentName(std::move(name));
+        auto request = std::move(b).build();
+        libresign::SigningRequest out;
+        LibreSCRS::Signing::detail::translatePublicRequestToLibresign(request, out);
+        return out.fileName;
+    };
+
+    EXPECT_EQ(engineFileNameFor("a/b/"), "contract.pdf");
+    EXPECT_EQ(engineFileNameFor("."), "contract.pdf");
+    EXPECT_EQ(engineFileNameFor(".."), "contract.pdf");
+    // A non-degenerate name still overrides — the fallback is narrow.
+    EXPECT_EQ(engineFileNameFor("a/b/Ugovor.docx"), "Ugovor.docx");
+}
+
+TEST(SigningServiceBridgeTranslationTest, EmptyDocumentNameFallsBackToInputFile)
+{
+    // The 4.0 behaviour is preserved verbatim when documentName is unset.
+    LibreSCRS::Signing::SigningRequest::Builder b;
+    b.inputFile("/tmp/dir/in.xml");
+    b.outputFile("/tmp/dir/out.xml");
+    b.format(LibreSCRS::Signing::SignatureFormat::Xades);
+    auto request = std::move(b).build();
+    ASSERT_TRUE(request.documentName().empty());
+
+    libresign::SigningRequest out;
+    LibreSCRS::Signing::detail::translatePublicRequestToLibresign(request, out);
+
+    EXPECT_EQ(out.fileName, "in.xml");
+}
+
+TEST(SigningServiceBridgeTranslationTest, DocumentNameOverridesInputFileDerivedName)
+{
+    // File mode: a non-empty documentName intentionally wins over the
+    // inputFile-derived name, so a host can sign /tmp/scratch-1234.tmp while
+    // the container entry carries the name the user actually sees.
+    LibreSCRS::Signing::SigningRequest::Builder b;
+    b.inputFile("/tmp/scratch-1234.tmp");
+    b.outputFile("/tmp/out.asice");
+    b.format(LibreSCRS::Signing::SignatureFormat::AsicE);
+    b.documentName("Ugovor.docx");
+    auto request = std::move(b).build();
+
+    libresign::SigningRequest out;
+    LibreSCRS::Signing::detail::translatePublicRequestToLibresign(request, out);
+
+    EXPECT_EQ(out.fileName, "Ugovor.docx");
 }
 
 // A stub CardPlugin that advertises PKI but whose sign() is never reached —

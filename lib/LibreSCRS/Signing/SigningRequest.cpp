@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -24,6 +25,7 @@ struct LIBRESCRS_INTERNAL SigningRequest::Impl
     std::string location;
     std::string contactInfo;
     std::string certificateLabel;
+    std::string documentName;        // names the in-memory document on the buffer-sign path
     std::vector<std::uint8_t> keyId; // CKA_ID of the signing key/cert pair (reuse-safe selector)
     std::optional<VisualSignatureParams> visualParams;
     TsaProvider tsaOverride;
@@ -70,6 +72,10 @@ const std::string& SigningRequest::contactInfo() const noexcept
 const std::string& SigningRequest::certificateLabel() const noexcept
 {
     return d->certificateLabel;
+}
+const std::string& SigningRequest::documentName() const noexcept
+{
+    return d->documentName;
 }
 const std::vector<std::uint8_t>& SigningRequest::keyId() const noexcept
 {
@@ -157,6 +163,14 @@ SigningRequest::Builder& SigningRequest::Builder::contactInfo(std::string info)
 SigningRequest::Builder& SigningRequest::Builder::certificateLabel(std::string label)
 {
     d->req.d->certificateLabel = std::move(label);
+    return *this;
+}
+SigningRequest::Builder& SigningRequest::Builder::documentName(std::string name)
+{
+    // Stored verbatim. The path-component strip that makes the knob safe for
+    // container entry names happens at translation time (RequestBridge), so
+    // the accessor keeps returning exactly what the caller supplied.
+    d->req.d->documentName = std::move(name);
     return *this;
 }
 SigningRequest::Builder& SigningRequest::Builder::keyId(std::vector<std::uint8_t> id)

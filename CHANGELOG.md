@@ -11,6 +11,14 @@ Notable user-visible changes per release. Format follows
   document as bytes and returns the signed document bytes directly, in
   addition to the existing file-based path. Suits callers that never
   touch the filesystem.
+- **Document name on a signing request.** A request can now carry an
+  explicit document name. It names the in-memory document on the
+  buffer-based signing path — where there is no input file to derive a
+  name from — and supplies the ASiC-E container entry name and the
+  detached XAdES/JAdES reference basename. Only the final path component
+  is kept, so a name can never introduce directory separators into a
+  container. Without it, buffer-mode container signing had no name at
+  all and ASiC-E packaging failed.
 - **AdES long-term signature levels.** B-T (timestamped), B-LT and
   B-LTA (long-term / archival validation material) are produced by
   composing the certificate chain from the Trusted List, extending the

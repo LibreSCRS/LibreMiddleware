@@ -14,6 +14,10 @@
 
 #include "RequestBridge.h"
 
+#include <filesystem>
+#include <string>
+#include <utility>
+
 namespace LibreSCRS::Signing::detail {
 
 libresign::SignatureFormat mapFormat(LibreSCRS::Signing::SignatureFormat f)
@@ -59,7 +63,32 @@ libresign::SignaturePackaging mapPackaging(LibreSCRS::Signing::PackagingMode p)
 void translatePublicRequestToLibresign(const LibreSCRS::Signing::SigningRequest& request,
                                        libresign::SigningRequest& out)
 {
-    out.fileName = request.inputFile().filename().string();
+    // Document name seam. The buffer-sign path (Builder::buildForBufferSign)
+    // has NO inputFile, so deriving from inputFile().filename() alone handed
+    // the ASiC-E / XAdES / JAdES engines an empty name and container creation
+    // failed outright ("Invalid filename for ASiC entry"). An explicit
+    // documentName is therefore the name source when set, in both modes.
+    //
+    // The filename() call is the path-component strip: it keeps only the final
+    // component, so no caller — however hostile or careless — can push a
+    // directory separator or a `../` traversal into a container entry name or
+    // a detached-reference basename. Doing it HERE (rather than in the setter)
+    // means every consumer of the public request, both sign() overloads and
+    // appendSigner(), gets the guarantee from one place.
+    //
+    // A degenerate final component is treated as ABSENT, not as a name: a
+    // trailing separator ("a/b/") strips to nothing, and "." / ".." survive the
+    // strip verbatim — a "." or ".." ZIP entry is precisely the shape the strip
+    // exists to prevent. All three fall back to the inputFile derivation, which
+    // in buffer mode is empty: an honest nameless failure identical to the
+    // pre-4.3 behaviour, rather than a poisoned entry name.
+    std::string documentName;
+    if (!request.documentName().empty()) {
+        documentName = std::filesystem::path(request.documentName()).filename().string();
+        if (documentName == "." || documentName == "..")
+            documentName.clear();
+    }
+    out.fileName = documentName.empty() ? request.inputFile().filename().string() : std::move(documentName);
     out.format = mapFormat(request.format());
     out.packaging = mapPackaging(request.packaging());
     out.level = mapLevel(request.level());

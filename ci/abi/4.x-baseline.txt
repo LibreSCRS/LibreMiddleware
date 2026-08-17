@@ -256,6 +256,7 @@ LibreSCRS::Signing::SigningRequest::Builder::build() &&@@LM_4
 LibreSCRS::Signing::SigningRequest::Builder::buildForBufferSign() &&@@LM_4
 LibreSCRS::Signing::SigningRequest::Builder::certificateLabel(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)@@LM_4
 LibreSCRS::Signing::SigningRequest::Builder::contactInfo(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)@@LM_4
+LibreSCRS::Signing::SigningRequest::Builder::documentName(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)@@LM_4
 LibreSCRS::Signing::SigningRequest::Builder::format(LibreSCRS::Signing::SignatureFormat)@@LM_4
 LibreSCRS::Signing::SigningRequest::Builder::inputFile(std::filesystem::__cxx11::path)@@LM_4
 LibreSCRS::Signing::SigningRequest::Builder::keyId(std::vector<unsigned char, std::allocator<unsigned char> >)@@LM_4
@@ -273,6 +274,7 @@ LibreSCRS::Signing::SigningRequest::SigningRequest(LibreSCRS::Signing::SigningRe
 LibreSCRS::Signing::SigningRequest::allowExpiredCert() const@@LM_4
 LibreSCRS::Signing::SigningRequest::certificateLabel[abi:cxx11]() const@@LM_4
 LibreSCRS::Signing::SigningRequest::contactInfo[abi:cxx11]() const@@LM_4
+LibreSCRS::Signing::SigningRequest::documentName[abi:cxx11]() const@@LM_4
 LibreSCRS::Signing::SigningRequest::format() const@@LM_4
 LibreSCRS::Signing::SigningRequest::hasTsaOverride() const@@LM_4
 LibreSCRS::Signing::SigningRequest::inputFile[abi:cxx11]() const@@LM_4

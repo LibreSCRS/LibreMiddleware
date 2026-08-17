@@ -136,6 +136,36 @@ public:
     /// @note Pure accessor, @c noexcept per API-POLICY §5.3.
     /// @since 4.3
     [[nodiscard]] const std::vector<std::uint8_t>& keyId() const noexcept;
+    /// @brief Name of the document being signed — the ONLY name source on the
+    ///        buffer-sign path (@ref Builder::buildForBufferSign), where there
+    ///        is no @ref inputFile to derive one from.
+    ///
+    ///        The signing engines consume this as the document's identity
+    ///        inside the produced artifact: it becomes the ASiC-E container
+    ///        entry name and the basename of the XAdES / JAdES detached
+    ///        reference. Left empty on the buffer path, ASiC-E container
+    ///        creation fails outright ("Invalid filename for ASiC entry"), so
+    ///        buffer-mode callers targeting a container format must set it.
+    /// @note Only the FINAL path component is honoured — any directory
+    ///       components are stripped at translation time, so a caller cannot
+    ///       inject path separators (or a `../` traversal) into a container
+    ///       entry name. This accessor returns the raw string as supplied;
+    ///       the strip happens on the way to the engine, not in the setter.
+    /// @note Degenerate names — those that are empty after the strip (a
+    ///       trailing separator, e.g. `"a/b/"`), or that strip down to `"."`
+    ///       or `".."` — are treated as UNSET and take the fallback below;
+    ///       they are never handed to the engine as a name.
+    /// @note Empty (the default) falls back to deriving the name from
+    ///       @ref inputFile — the pre-4.3 behaviour, unchanged. A NON-empty
+    ///       value intentionally overrides the @ref inputFile-derived name
+    ///       even in file mode, so a host can sign a scratch temp file while
+    ///       the artifact carries the name the user actually sees.
+    /// @note This is a NAME, not a location: the document is never opened,
+    ///       resolved or written through it.
+    /// @note Returned reference is valid while this object is alive.
+    /// @note Pure accessor, @c noexcept per API-POLICY §5.3.
+    /// @since 4.3
+    [[nodiscard]] const std::string& documentName() const noexcept;
     /// @brief Access the visual signature parameters, if any were set.
     /// @return An optional value — empty when @ref Builder::visualParams was
     ///         not called, populated when it was (only valid for PAdES
@@ -262,6 +292,22 @@ public:
     ///        (reuse-safe; preferred over the non-unique @ref certificateLabel
     ///        on multi-cert cards). @since 4.3
     Builder& keyId(std::vector<std::uint8_t> id);
+    /// @brief Name the document being signed.
+    ///
+    /// Required on the buffer-sign path (@ref buildForBufferSign) for
+    /// container formats: with no @ref inputFile to derive from, this is what
+    /// names the ASiC-E container entry and the XAdES / JAdES detached
+    /// reference. Optional everywhere else.
+    /// @note Only the final path component is honoured — directory components
+    ///       are stripped at translation time, so callers cannot inject path
+    ///       separators into container entries. Degenerate names (empty after
+    ///       the strip, `"."` or `".."`) are treated as unset.
+    /// @note Empty (the default) falls back to the @ref inputFile-derived
+    ///       name; a non-empty value overrides it even in file mode.
+    /// @note Names the in-memory document only — nothing is opened or written
+    ///       through this string.
+    /// @since 4.3
+    Builder& documentName(std::string name);
     /// @brief Attach visual signature parameters (PAdES only). Takes ownership by move;
     /// call with `std::move(params)`. Passing an lvalue is a compile error.
     Builder& visualParams(VisualSignatureParams&& params);
@@ -297,6 +343,10 @@ public:
     ///        @ref build, the @c inputFile / @c outputFile required-field checks
     ///        are skipped — buffer mode carries the document and the signed
     ///        result in memory, not on disk.
+    /// @note Because there is no @c inputFile to derive a name from, set
+    ///       @ref documentName when the target format embeds the document's
+    ///       name (ASiC-E entry, XAdES / JAdES detached reference).
+    ///       @ref documentName stays OPTIONAL — it is not validated here.
     /// @throws std::invalid_argument only for invalid field combinations
     ///         (e.g. @ref visualParams on a non-PAdES request). @since 4.3
     [[nodiscard]] SigningRequest buildForBufferSign() &&;
