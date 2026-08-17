@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
+#include "health_groups.h"
+
 #include <healthcard.h>
 #include <healthtypes.h>
 #include <LibreSCRS/Auth/ErrorKeys.h>
@@ -56,96 +58,15 @@ public:
             healthcard::HealthCard card(conn);
             auto doc = card.readDocumentData();
 
-            LibreSCRS::Plugin::CardData data;
-            data.cardType = "rs-health";
-
-            auto emitGroup = [&](LibreSCRS::Plugin::CardFieldGroup&& group) {
-                if (onGroup)
+            // The group shape lives in the tested builder (health_groups.h):
+            // guarded adds — a self-carrier card has every carrier field
+            // empty, and an unguarded addText on that shape throws — and
+            // empty groups are never emitted.
+            LibreSCRS::Plugin::CardData data = healthcard::buildHealthGroups(doc);
+            if (onGroup) {
+                for (const auto& group : data.groups)
                     onGroup(data.cardType, group);
-                data.groups.push_back(std::move(group));
-            };
-
-            {
-                LibreSCRS::Plugin::CardFieldGroup personal;
-                personal.groupKey = "personal";
-                personal.groupLabel = "Personal Data";
-                personal.addText("given_name", "Given Name", doc.givenName);
-                personal.addText("given_name_latin", "Given Name (Latin)", doc.givenNameLatin);
-                personal.addText("family_name", "Family Name", doc.familyName);
-                personal.addText("family_name_latin", "Family Name (Latin)", doc.familyNameLatin);
-                personal.addText("parent_name", "Parent Name", doc.parentName);
-                personal.addText("parent_name_latin", "Parent Name (Latin)", doc.parentNameLatin);
-                personal.addText("date_of_birth", "Date of Birth", doc.dateOfBirth);
-                personal.addText("gender", "Gender", doc.gender);
-                personal.addText("personal_number", "JMBG", doc.personalNumber);
-                personal.addText("insurant_number", "LBO", doc.insurantNumber);
-                emitGroup(std::move(personal));
             }
-
-            {
-                LibreSCRS::Plugin::CardFieldGroup insurance;
-                insurance.groupKey = "insurance";
-                insurance.groupLabel = "Insurance";
-                insurance.addText("insurer_name", "Insurer", doc.insurerName);
-                insurance.addText("insurer_id", "Insurer ID", doc.insurerId);
-                insurance.addText("card_id", "Card ID", doc.cardId);
-                insurance.addText("date_of_issue", "Date of Issue", doc.dateOfIssue);
-                insurance.addText("date_of_expiry", "Date of Expiry", doc.dateOfExpiry);
-                insurance.addText("valid_until", "Valid Until", doc.validUntil);
-                if (doc.permanentlyValid) {
-                    insurance.fields.push_back({"permanently_valid",
-                                                "Permanently Valid",
-                                                LibreSCRS::Plugin::FieldType::Text,
-                                                {'t', 'r', 'u', 'e'}});
-                }
-                insurance.addText("insurance_basis_rzzo", "Basis", doc.insuranceBasisRzzo);
-                insurance.addText("insurance_description", "Description", doc.insuranceDescription);
-                insurance.addText("insurance_start_date", "Start Date", doc.insuranceStartDate);
-                emitGroup(std::move(insurance));
-            }
-
-            {
-                LibreSCRS::Plugin::CardFieldGroup address;
-                address.groupKey = "address";
-                address.groupLabel = "Address";
-                address.addText("street", "Street", doc.street);
-                address.addText("address_number", "Number", doc.addressNumber);
-                address.addText("apartment", "Apartment", doc.apartment);
-                address.addText("place", "Place", doc.place);
-                address.addText("municipality", "Municipality", doc.municipality);
-                address.addText("country", "Country", doc.country);
-                emitGroup(std::move(address));
-            }
-
-            {
-                LibreSCRS::Plugin::CardFieldGroup carrier;
-                carrier.groupKey = "carrier";
-                carrier.groupLabel = "Carrier";
-                if (doc.carrierFamilyMember) {
-                    carrier.fields.push_back({"carrier_family_member",
-                                              "Family Member",
-                                              LibreSCRS::Plugin::FieldType::Text,
-                                              {'t', 'r', 'u', 'e'}});
-                }
-                carrier.addText("carrier_given_name", "Given Name", doc.carrierGivenName);
-                carrier.addText("carrier_family_name", "Family Name", doc.carrierFamilyName);
-                carrier.addText("carrier_relationship", "Relationship", doc.carrierRelationship);
-                carrier.addText("carrier_id_number", "ID Number", doc.carrierIdNumber);
-                carrier.addText("carrier_insurant_number", "LBO", doc.carrierInsurantNumber);
-                emitGroup(std::move(carrier));
-            }
-
-            {
-                LibreSCRS::Plugin::CardFieldGroup taxpayer;
-                taxpayer.groupKey = "taxpayer";
-                taxpayer.groupLabel = "Taxpayer";
-                taxpayer.addText("taxpayer_name", "Name", doc.taxpayerName);
-                taxpayer.addText("taxpayer_id_number", "ID Number", doc.taxpayerIdNumber);
-                taxpayer.addText("taxpayer_residence", "Residence", doc.taxpayerResidence);
-                taxpayer.addText("taxpayer_activity_code", "Activity Code", doc.taxpayerActivityCode);
-                emitGroup(std::move(taxpayer));
-            }
-
             return ReadResult::ok(std::move(data));
         } catch (const std::exception& ex) {
             return ReadResult::communicationError(LibreSCRS::Auth::ErrorKeys::genericComm(),

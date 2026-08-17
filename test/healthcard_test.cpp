@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include "apdu.h"
+#include "health_groups.h"
 #include "health_protocol.h"
 #include "healthcard.h"
 #include "healthtypes.h"
@@ -75,6 +76,52 @@ std::vector<uint8_t> asciiBytes(const std::string& s)
 } // namespace
 
 // --- Type / construction tests (preserved from previous coverage) ---
+
+TEST(HealthGroups, SelfCarrierDocumentBuildsWithoutCarrierOrTaxpayerGroups)
+{
+    // The Leg-7 bench catch (2026-08-17): an insurant who is their OWN
+    // insurance carrier has every carrier field empty, so the carrier
+    // group's FIRST addText call carried an empty value — the documented
+    // CardFieldGroup::addText corner (std::logic_error: no reference to
+    // return) — and the whole read died as CommunicationError after the
+    // address group. The builder must survive that document shape, and a
+    // group with no surviving fields must not be emitted at all.
+    healthcard::HealthDocumentData doc;
+    doc.givenName = "NEMANJA";
+    doc.familyName = "HIRSL";
+    doc.insurerName = "RFZO";
+    doc.street = "ULICA";
+    // carrier* and taxpayer* stay empty — the self-carrier shape.
+
+    const LibreSCRS::Plugin::CardData data = healthcard::buildHealthGroups(doc);
+    EXPECT_EQ(data.cardType, "rs-health");
+    ASSERT_EQ(data.groups.size(), 3u);
+    EXPECT_EQ(data.groups[0].groupKey, "personal");
+    EXPECT_EQ(data.groups[1].groupKey, "insurance");
+    EXPECT_EQ(data.groups[2].groupKey, "address");
+}
+
+TEST(HealthGroups, FullDocumentBuildsAllFiveGroupsInCanonicalOrder)
+{
+    healthcard::HealthDocumentData doc;
+    doc.givenName = "NEMANJA";
+    doc.insurerName = "RFZO";
+    doc.street = "ULICA";
+    doc.carrierFamilyMember = true;
+    doc.carrierGivenName = "NOSILAC";
+    doc.taxpayerName = "OBVEZNIK";
+
+    const LibreSCRS::Plugin::CardData data = healthcard::buildHealthGroups(doc);
+    ASSERT_EQ(data.groups.size(), 5u);
+    EXPECT_EQ(data.groups[0].groupKey, "personal");
+    EXPECT_EQ(data.groups[1].groupKey, "insurance");
+    EXPECT_EQ(data.groups[2].groupKey, "address");
+    EXPECT_EQ(data.groups[3].groupKey, "carrier");
+    EXPECT_EQ(data.groups[4].groupKey, "taxpayer");
+    // The carrier flag is a real field, so a family-member carrier with no
+    // other carrier data still emits the group.
+    EXPECT_EQ(data.groups[3].fields.front().key, "carrier_family_member");
+}
 
 TEST(HealthDocumentData, DefaultConstruct)
 {

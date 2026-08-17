@@ -36,6 +36,8 @@ target_link_libraries(LibreMiddlewareTests
 target_include_directories(LibreMiddlewareTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/rs-eid/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/rs-health/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/rs-health-plugin/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/eu-vrc/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
 )
