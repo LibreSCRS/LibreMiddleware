@@ -333,6 +333,42 @@ TEST(DocumentPrecheck, RejectsNonPdfForPadesButNotOtherFormats)
     EXPECT_FALSE(det::documentPrecheck(SignatureFormat::Jades, notPdf).has_value());
 }
 
+TEST(DocumentPrecheck, ToleratesTheSameLeadingPrefixAsThePadesEngine)
+{
+    // PAdESModule::sign tolerates up to libresign::kPdfHeaderScanWindow bytes
+    // of non-PDF prefix before the "%PDF-" header (Adobe Acrobat Implementation
+    // Notes §H.3 — multipart/form-data wrappers from web-form uploads are the
+    // real-world source) and strips it before parsing. A precheck demanding the
+    // header at byte 0 would fail-fast on documents the engine signs happily,
+    // so the gate must scan the SAME window off the SAME constant.
+    using LibreSCRS::Signing::SignatureFormat;
+    namespace det = LibreSCRS::Signing::detail;
+
+    auto docWithPrefix = [](std::size_t prefixLen) {
+        std::vector<std::uint8_t> doc(prefixLen, static_cast<std::uint8_t>('X'));
+        const std::string header = "%PDF-1.7\n%\xE2\xE3\n";
+        doc.insert(doc.end(), header.begin(), header.end());
+        return doc;
+    };
+
+    // Header at byte 0 — the classic case — stays accepted.
+    EXPECT_FALSE(det::documentPrecheck(SignatureFormat::Pades, docWithPrefix(0)).has_value());
+    // A small wrapper in front of the header must NOT be rejected.
+    EXPECT_FALSE(det::documentPrecheck(SignatureFormat::Pades, docWithPrefix(100)).has_value());
+    // Last offset at which the whole 5-byte magic still fits in the window.
+    EXPECT_FALSE(
+        det::documentPrecheck(SignatureFormat::Pades, docWithPrefix(libresign::kPdfHeaderScanWindow - 5)).has_value());
+    // One byte further and the engine's own scan misses it too — reject, so the
+    // caller gets the cheap InvalidDocument instead of a deep-parse failure.
+    EXPECT_TRUE(
+        det::documentPrecheck(SignatureFormat::Pades, docWithPrefix(libresign::kPdfHeaderScanWindow - 4)).has_value());
+    EXPECT_TRUE(det::documentPrecheck(SignatureFormat::Pades, docWithPrefix(4096)).has_value());
+
+    // No header anywhere: still rejected, however long the document is.
+    const std::vector<std::uint8_t> headerless(2048, static_cast<std::uint8_t>('X'));
+    EXPECT_TRUE(det::documentPrecheck(SignatureFormat::Pades, headerless).has_value());
+}
+
 TEST(SigningServiceClassifierTest, MapsCKRHexCodesToPinErrors)
 {
     using LibreSCRS::Signing::SigningResult;

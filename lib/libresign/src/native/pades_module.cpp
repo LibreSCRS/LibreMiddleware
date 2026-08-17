@@ -610,18 +610,18 @@ SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, Pkcs11Tok
         if (pdfDataIn.size() < 5)
             return makeFailure(SignFailureKind::InvalidDocument, "Input PDF is too small");
 
-        // Adobe Acrobat Implementation Notes §H.3: tolerate up to 1024 bytes of
-        // non-PDF prefix before the "%PDF-" header (e.g. multipart/form-data
-        // wrappers from web-form uploads), and strip trailing junk after the
-        // last "%%EOF". This matches Acrobat, Foxit, qpdf, pdfinfo behavior.
+        // Adobe Acrobat Implementation Notes §H.3: tolerate a non-PDF prefix
+        // before the "%PDF-" header (e.g. multipart/form-data wrappers from
+        // web-form uploads), and strip trailing junk after the last "%%EOF".
+        // This matches Acrobat, Foxit, qpdf, pdfinfo behavior. The window is
+        // shared (types.h) with the fail-fast gate in
+        // LibreSCRS::Signing::detail::documentPrecheck so the two cannot drift
+        // — a stricter gate would reject documents this code signs.
         //
         // We work on a local copy so the caller's input is never mutated.
-        const std::string_view kPdfMagic = "%PDF-";
-        constexpr size_t kHeaderScanWindow = 1024;
-
         size_t prefixLen = 0;
         {
-            size_t scanLen = std::min(pdfDataIn.size(), kHeaderScanWindow);
+            size_t scanLen = std::min(pdfDataIn.size(), kPdfHeaderScanWindow);
             std::string_view scan(reinterpret_cast<const char*>(pdfDataIn.data()), scanLen);
             auto found = scan.find(kPdfMagic);
             if (found == std::string_view::npos)

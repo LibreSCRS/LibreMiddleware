@@ -54,6 +54,12 @@ Notable user-visible changes per release. Format follows
 
 ### Fixed
 
+- **PDFs carrying a leading wrapper are no longer refused up front.** The
+  fail-fast input check demanded the `%PDF-` header at the very first
+  byte, while the PAdES engine itself accepts it anywhere in the first
+  1024 bytes — the tolerance Acrobat and friends apply to files wrapped
+  by web-form uploads. Documents the engine can sign are no longer
+  rejected before signing begins; both sides now read one shared window.
 - **PACE-MRZ key derivation** now uses the full 20-byte SHA-1 of the MRZ
   information per BSI/ICAO, fixing PACE with MRZ-derived keys.
 - **Cards already present at startup are reported.** Reader monitoring

@@ -8,8 +8,12 @@
 
 #include <LibreSCRS/Signing/Enums.h> // LibreSCRS::Signing::SignatureFormat
 
+#include <types.h> // libresign::kPdfMagic / kPdfHeaderScanWindow
+
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
-#include <cstring>
+#include <format>
 #include <optional>
 #include <span>
 #include <string>
@@ -33,10 +37,26 @@ namespace LibreSCRS::Signing::detail {
     // would false-reject valid input. Emptiness is left to the existing entry
     // guards. No parse; allocation only on the (rare) reject path.
     if (format == SignatureFormat::Pades) {
-        static constexpr std::string_view kPdfMagic = "%PDF-";
-        const bool ok = doc.size() >= 8 && std::memcmp(doc.data(), kPdfMagic.data(), kPdfMagic.size()) == 0;
+        // The header need NOT sit at byte 0. PAdESModule::sign tolerates a
+        // non-PDF prefix ahead of "%PDF-" (Adobe Acrobat Implementation Notes
+        // §H.3 — multipart/form-data wrappers from web-form uploads are the
+        // real-world source) and strips it before parsing, matching Acrobat,
+        // Foxit, qpdf and pdfinfo. This gate scans the SAME window off the SAME
+        // constants (libresign::kPdfHeaderScanWindow / kPdfMagic) so the two
+        // cannot drift: a stricter gate fail-fasts documents the engine signs
+        // happily, a looser one stops failing fast.
+        //
+        // The 8-byte floor is the pre-existing cheap minimum-size reject
+        // ("%PDF-" plus a version), independent of where the header sits. It
+        // also short-circuits the view construction on an empty span.
+        static constexpr std::size_t kMinPdfBytes = 8;
+        const bool ok =
+            doc.size() >= kMinPdfBytes && std::string_view(reinterpret_cast<const char*>(doc.data()),
+                                                           std::min(doc.size(), libresign::kPdfHeaderScanWindow))
+                                                  .find(libresign::kPdfMagic) != std::string_view::npos;
         if (!ok)
-            return std::string{"Input is not a PDF (missing %PDF- header or too small)"};
+            return std::format("Input is not a PDF (no {} header in the first {} bytes, or too small)",
+                               libresign::kPdfMagic, libresign::kPdfHeaderScanWindow);
     }
     return std::nullopt;
 }

@@ -9,10 +9,12 @@
 
 #include "credentials.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -70,6 +72,27 @@ enum class SignFailureKind : std::uint8_t {
 enum class SignatureFormat { Pades, Cades, Xades, Jades, AsicE };
 
 enum class SignaturePackaging { Enveloped, Detached };
+
+/// @brief The PDF file-header magic.
+inline constexpr std::string_view kPdfMagic = "%PDF-";
+
+/// @brief Number of leading bytes scanned for @ref kPdfMagic when deciding
+///        whether a byte buffer is a PDF.
+///
+/// Adobe Acrobat Implementation Notes §H.3: a PDF may carry up to 1024 bytes
+/// of non-PDF prefix ahead of its header — multipart/form-data wrappers from
+/// web-form uploads are the common real-world source. Acrobat, Foxit, qpdf and
+/// pdfinfo all accept those files, and so does @c PAdESModule::sign, which
+/// strips the prefix before parsing.
+///
+/// The whole 5-byte magic must fall inside the window, so the last accepted
+/// header offset is `kPdfHeaderScanWindow - kPdfMagic.size()`.
+///
+/// Shared rather than duplicated so the cheap fail-fast gate in
+/// @c LibreSCRS::Signing::detail::documentPrecheck applies exactly the
+/// tolerance the engine applies: a narrower gate rejects documents the engine
+/// would sign, and a wider one defeats the point of failing fast.
+inline constexpr std::size_t kPdfHeaderScanWindow = 1024;
 
 /// @brief Baseline level. B_* form preserved (ETSI-token exception per
 /// API-POLICY §7) — underscores stand for the spec's hyphens.
