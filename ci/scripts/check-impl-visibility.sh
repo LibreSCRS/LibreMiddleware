@@ -13,22 +13,24 @@
 # the template arguments; `-fvisibility-inlines-hidden` does not override
 # this).
 #
-# Runs after LM build; scans both static archives AND the linked plugin
-# / pkcs11 shared libraries for:
+# Runs after LM build; scans every binary artefact the build produced for:
 #   1) T-binding (global text) symbols whose demangled name contains
 #      `::Impl::`.
 #   2) W/V-binding (weak / vague-linkage) symbols whose demangled name is a
 #      `vtable for` / `typeinfo for` / `typeinfo name for` entry containing
 #      `::Impl` as a word segment.
 #
-# Linux coverage: libLibreSCRS_*.a archives + plugins/*.so + lib/pkcs11/*.so.
-# macOS coverage: lib/pkcs11/*.dylib + plugins/*.dylib (Apple Clang enforces
+# Linux coverage: libLibreSCRS_*.a archives (static builds) or the seven
+# libLibreSCRS_*.so core libraries (shared builds), plus plugins/*.so and
+# lib/pkcs11/*.so in either config.
+# macOS coverage: the libLibreSCRS_*.dylib core libraries in shared builds,
+# plus lib/pkcs11/*.dylib and plugins/*.dylib (Apple Clang enforces
 # visibility at link-edit, so the static-archive level is not informative on
 # macOS — see note below).
 #
 # Fails the build if any leaking symbol is found.
 #
-# Why this matters under the planned .so transition:
+# Why this matters now that the core libraries ship as .so:
 #   - Two `.so`s each embedding a leaking `Impl` collide on these weak
 #     symbols at load time.
 #   - Exceptions thrown across the SO boundary carrying any leaking type
@@ -39,19 +41,56 @@
 # BSD (macOS cctools) nm as the defined-only flag. `--defined-only` is
 # GNU-only and would break the macOS CI runner.
 #
+# Why the archive scan stays, even though no consumer static-links LM
+# today: LibreCelik's main line links the shared libraries, the agent
+# client branch dropped LM entirely, LibreKDE is LM-free, and LibreLinux
+# consumes an installed shared LM. But LibreCelik pulls LM in through
+# FetchContent, and that path builds LM with the default
+# BUILD_SHARED_LIBS=OFF unless the consumer overrides it — which produces
+# exactly these archives. Static consumption therefore remains a
+# supported configuration and keeps its gate.
+#
 # Scope note: archive glob currently matches only `libLibreSCRS_*.a`.
 # Other archives (libSmartCard.a, libCardPlugin.a, libEMRTD.a, etc.)
 # are not yet renamed; widen and bump EXPECTED_ARCHIVES when they are.
 #
-# Known residuals (allow-listed below): vague-linkage leaks from
-# `std::shared_ptr<TrustStoreService::Impl>` and
-# `std::shared_ptr<CancelToken::Impl>` template instantiations.
-# Shared-pimpl ownership is part of the public semantics in both cases
-# (TrustStoreService's async generation-counter observer; CancelSource
-# and CancelToken sharing Impl through token()). Symbols are emitted
-# WEAK HIDDEN in their respective .cpp.o files and are absent from every
-# linked .so on Linux + every linked dylib on macOS — confirmed residual
-# is .a-level only.
+# ── Allow-lists ───────────────────────────────────────────────────────
+# Four blocks, ALL of them scoped to a single named archive and applied
+# ONLY to the static-archive pass. Two are T-binding (a real function
+# symbol at default visibility), two are W/V-binding (vague-linkage
+# vtable/typeinfo over a std template instantiated on an Impl type).
+#
+#   T-binding, libLibreSCRS_Trust.a — TrustStoreService::Impl::runWorker.
+#     GCC does not propagate LIBRESCRS_INTERNAL from the class to its
+#     static-member symbols, and the attribute is a no-op on the function
+#     declaration in this position. Hiding it the other way — moving the
+#     worker into an anonymous namespace — would mean breaking up the
+#     private nested type it operates on.
+#
+#   T-binding, libLibreSCRS_SmartCard.a — MonitorService::Impl:: members.
+#     Same GCC behaviour, but anonymous-namespace is not merely awkward
+#     here, it is impossible: Impl lives in an LM-internal header
+#     (LibreSCRS_internal/SmartCard/MonitorServiceImpl.h) that the
+#     production TU and the LibreSCRS_SmartCard_TestHelpers archive both
+#     include, so the definition must have external linkage.
+#
+#   W/V-binding, libLibreSCRS_Trust.a — the inplace-deleter vtable and
+#     typeinfo for std::shared_ptr<TrustStoreService::Impl>.
+#   W/V-binding, libLibreSCRS_Auth.a — the same for
+#     std::shared_ptr<CancelToken::Impl>.
+#     Shared-pimpl ownership is part of the public semantics in both
+#     cases (TrustStoreService's async generation-counter observer;
+#     CancelSource and CancelToken sharing Impl through token()), so
+#     these instantiations are not going away.
+#
+# All four are emitted WEAK HIDDEN or link-edit-hidden in their own
+# object files and the linker strips them from every exported dynamic
+# symbol table. That is what makes them .a-level residuals rather than
+# real leaks — and it is why the .so scan below carries NO allow-list at
+# all: on a linked shared object any of these names appearing in the
+# export table would be a genuine visibility hole. The .so side is
+# already at its end state; the allow-lists exist only because a static
+# archive shows the linker's input rather than its output.
 
 set -euo pipefail
 
