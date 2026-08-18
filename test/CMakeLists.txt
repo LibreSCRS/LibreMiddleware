@@ -1283,3 +1283,27 @@ target_compile_definitions(Pkcs15ChangePinSelectorTests PRIVATE
 )
 add_dependencies(Pkcs15ChangePinSelectorTests pkcs15-plugin)
 gtest_discover_tests(Pkcs15ChangePinSelectorTests)
+
+# pkcs15-plugin EF.ODF re-read census (no hardware).
+# Same harness as Pkcs15PinLifecycleTests (plugin .so via the registry,
+# detached CardSession + injected PlainChannel, scripted transmit filter).
+# Counts SELECT-by-FID of EF.ODF — emitted by PKCS15Card::readProfile and
+# by nothing else — to measure profile reads per public entry point.
+add_executable(Pkcs15ProfileReadCensusTests Pkcs15ProfileReadCensusTests.cpp)
+target_link_libraries(Pkcs15ProfileReadCensusTests PRIVATE
+    GTest::gtest_main
+    CardPlugin_Impl
+    LibreSCRS_SmartCard
+    LibreSCRS_SmartCard_TestHelpers
+    LibreSCRS_SecureChannel
+    SmartCard_Impl
+)
+target_include_directories(Pkcs15ProfileReadCensusTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+)
+target_compile_definitions(Pkcs15ProfileReadCensusTests PRIVATE
+    PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
+    LIBRESCRS_INTERNAL_BUILD
+)
+add_dependencies(Pkcs15ProfileReadCensusTests pkcs15-plugin)
+gtest_discover_tests(Pkcs15ProfileReadCensusTests)
