@@ -1936,20 +1936,57 @@ TEST_P(SigningE2ETest, XAdES_MultiLevel_BB_then_BLTA_Enveloped)
     saveOutput(r2, GetParam().name + "-xades-bb-then-blta-enveloped.xml");
 }
 
-TEST_P(SigningE2ETest, JAdES_MultiLevel_BB_then_BLTA_Enveloped)
+// B-LT is the ceiling appendSigner can reach for the new signer: sigTst and
+// rVals go into the appended entry's own etsiU, but an arcTst seals a document
+// state that appending a signature entry changes for every signer already
+// present (see JAdESModule::appendSigner). B-LTA on append is refused, so this
+// exercises the highest level it does emit.
+TEST_P(SigningE2ETest, JAdES_MultiLevel_BB_then_BLT_Enveloped)
 {
     SKIP_IF_PIN_FAILED();
     if (needsTrustForLta(GetParam()) && !SigningTestEnvironment::trustConfigured())
-        GTEST_SKIP() << "B-LTA requires trust store (DSS trust not configured)";
+        GTEST_SKIP() << "B-LT requires trust store (DSS trust not configured)";
 
-    // JAdESModule::appendSigner gates B-T+ with PolicyViolation: per-signer
-    // etsiU upgrades (sigTst / rVals / arcTst) would attach at the document
-    // level and conformance validators would attribute them to every prior
-    // signer too, whose PKCS#11 sessions we no longer hold. The per-signer-
-    // indexed etsiU helpers needed to do this correctly are deferred to a
-    // future cycle (see jades_module.cpp::appendSigner gate). Skip until
-    // that's implemented.
-    GTEST_SKIP() << "JAdES appendSigner B-T+ requires per-signer etsiU helpers (deferred to next cycle)";
+    auto original = buildTestPayload();
+
+    SigningRequest req1;
+    req1.document = original;
+    req1.fileName = "test.bin";
+    req1.format = SignatureFormat::Jades;
+    req1.level = SignatureLevel::B_B;
+    req1.packaging = SignaturePackaging::Enveloped;
+    req1.allowExpiredCertificate = true;
+
+    auto r1 =
+        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    checkPinFailure(r1);
+    ASSERT_TRUE(r1.success) << "JAdES B-B first sign: " << r1.errorMessage;
+
+    SigningRequest req2 = req1;
+    req2.level = SignatureLevel::B_LT;
+    req2.tsa.url = "http://timestamp.digicert.com";
+
+    auto r2 =
+        service->appendSigner(req2, std::span<const uint8_t>{r1.signedDocument}, std::span<const uint8_t>{original},
+                              libresign::as_pin(config.pin), config.pkcs11Module, config.keyAlias, config.readerName);
+    checkPinFailure(r2);
+    ASSERT_TRUE(r2.success) << "JAdES B-LT appendSigner: " << r2.errorMessage;
+
+    // Structural contract only: DSS reports the best level it can
+    // INDEPENDENTLY verify per signature, which depends on live OCSP/CRL
+    // reachability for the PKS chain rather than on what was emitted (the
+    // XAdES sibling above documents the same effect). Two signatures surviving
+    // each other is what this test is here to prove.
+    validateSignature(r2, "JAdES", "ENVELOPED", original, 2);
+    saveOutput(r2, GetParam().name + "-jades-bb-then-blt-enveloped.json");
+}
+
+// A B-LTA append is refused outright rather than emitted wrong: the archive
+// timestamp would seal a document state the prior signers' own arcTst no
+// longer describes, and recomputing theirs would need their PKCS#11 sessions.
+TEST_P(SigningE2ETest, JAdES_AppendSigner_RejectsArchiveLevel)
+{
+    SKIP_IF_PIN_FAILED();
 
     auto original = buildTestPayload();
 
@@ -1974,10 +2011,9 @@ TEST_P(SigningE2ETest, JAdES_MultiLevel_BB_then_BLTA_Enveloped)
         service->appendSigner(req2, std::span<const uint8_t>{r1.signedDocument}, std::span<const uint8_t>{original},
                               libresign::as_pin(config.pin), config.pkcs11Module, config.keyAlias, config.readerName);
     checkPinFailure(r2);
-    ASSERT_TRUE(r2.success) << "JAdES B-LTA appendSigner: " << r2.errorMessage;
-
-    validateSignature(r2, "JAdES", "ENVELOPED", original, 2, std::string{"JAdES_BASELINE_LTA"});
-    saveOutput(r2, GetParam().name + "-jades-bb-then-blta-enveloped.json");
+    EXPECT_FALSE(r2.success) << "B-LTA must not be emitted on the append path";
+    ASSERT_TRUE(r2.failureKind.has_value()) << r2.errorMessage;
+    EXPECT_EQ(*r2.failureKind, SignFailureKind::PolicyViolation) << r2.errorMessage;
 }
 
 TEST_P(SigningE2ETest, ASiCE_MultiLevel_BLT_then_BLTA)
@@ -2016,12 +2052,13 @@ TEST_P(SigningE2ETest, ASiCE_MultiLevel_BLT_then_BLTA)
     checkPinFailure(r2);
     ASSERT_TRUE(r2.success) << "ASiC-E B-LTA second sign: " << r2.errorMessage;
 
-    // ASiC-E carries CAdES (not XAdES) inner signatures via signWithCAdES,
-    // and the multi-sign append path tops out at B-T for the new signer
-    // (per-signer LT/LTA upgrades would require re-acquiring every prior
-    // signer's PKCS#11 session and are explicitly out of scope). Validate
-    // that Sig 0 stays at its original B-LT level and Sig 1 lands at the
-    // highest level appendSigner can actually emit (B-T).
+    // ASiC-E carries CAdES (not XAdES) inner signatures. Its append path does
+    // not go through CAdESModule::appendSigner at all: signWithCAdES mints a
+    // fresh single-signer CMS for a new signatureNNN.p7s entry, so the CAdES
+    // append ceiling never applies here and the new signer's level is whatever
+    // CAdESModule::sign emits. What DSS then reports per signature is the best
+    // level it can INDEPENDENTLY verify, which without a live OCSP/CRL
+    // responder for the PKS chain settles at CAdES_BASELINE_T.
     validateSignature(r2, "ASiC_E", "DETACHED", data, 2, std::string{"CAdES_BASELINE_T"});
     saveOutput(r2, GetParam().name + "-asice-blt-then-blta.zip");
 }

@@ -354,14 +354,14 @@ std::optional<SigningResult> NativeSigningService::completeLongTermChain(Pkcs11T
     // (tlAnchorCerts empty) — the chain then stays as the card provided it,
     // and the revocation gate fails closed on any tail the chain cannot prove
     // (an unproven terminal is the chain-incomplete failure, not a silent
-    // pass). Both entry points reach here and both reach that gate: every
-    // appendSigner that accepts a long-term level delegates to the same
-    // per-format sign path the sign() entry point uses (PAdES and XAdES
-    // enveloped call sign() directly, XAdES detached calls signWithSuffix,
-    // ASiC-E calls signWithCAdES which calls CAdESModule::sign), while CAdES
-    // and JAdES appendSigner refuse anything above B-B outright until their
-    // per-signer upgrade helpers land. So the gate is never bypassed by the
-    // append path — it is reached by delegation.
+    // pass). Both entry points reach here and both reach that gate. PAdES,
+    // XAdES and ASiC-E get there by delegation — their appendSigner re-enters
+    // the same per-format sign path the sign() entry point uses (PAdES and
+    // XAdES enveloped call sign() directly, XAdES detached calls
+    // signWithSuffix, ASiC-E calls signWithCAdES which calls
+    // CAdESModule::sign). CAdES and JAdES get there directly: their
+    // appendSigner runs the same per-signer level ladder their sign() runs,
+    // which reaches the gate at B-LT. No format bypasses it.
     if (level < SignatureLevel::B_LT || tlAnchorCerts.empty())
         return std::nullopt;
 

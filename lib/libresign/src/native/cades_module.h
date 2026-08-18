@@ -26,6 +26,14 @@ public:
     // Returns DER-encoded CMS SignedData.
     std::vector<uint8_t> signBB(const std::vector<uint8_t>& data, Pkcs11Token& token);
 
+    // The three upgrade helpers below act on the CMS's FIRST SignerInfo, which
+    // is unambiguous only on a single-signer document (the PAdES path, where
+    // each PDF signature is its own CMS). Multi-signer documents go through
+    // sign() / appendSigner(), whose shared ladder targets one signer by
+    // pointer — a SignerInfo's position is not stable across a DER encode,
+    // because signerInfos is an ASN.1 SET OF and DER writes SET OF members in
+    // sorted-encoding order.
+
     // Upgrade B-B -> B-T: add signature timestamp.
     std::vector<uint8_t> addTimestamp(const std::vector<uint8_t>& cms, const TSAConfig& tsa);
 
@@ -53,23 +61,27 @@ public:
     /// its own signing-cert ESS attribute and its own optional B-T / B-LT /
     /// B-LTA unsigned attributes.
     ///
-    /// B-B for the new signer is fully implemented. Level upgrades above
-    /// B-B for a single signer require @ref addTimestamp /
-    /// @ref addRevocationData / @ref addArchiveTimestamp to grow per-signer
-    /// targeting (today they operate on the first SignerInfo only). Until
-    /// that rework lands, this method fails fast with
-    /// @ref SignFailureKind::PolicyViolation when @p level is above
-    /// @c SignatureLevel::B_B rather than silently producing a spec-wrong
-    /// document.
+    /// B-B, B-T and B-LT are supported for the new signer: the signature
+    /// timestamp and the revocation values are per-signer unsigned attributes,
+    /// applied to the appended SignerInfo alone through the same ladder
+    /// sign() uses. B-LT additionally embeds the new signer's path material,
+    /// which is a union into the shared certificate set — prior signers'
+    /// certificates are never evicted.
+    ///
+    /// B-LTA fails fast with @ref SignFailureKind::PolicyViolation. The
+    /// archive-timestamp message imprint of ETSI EN 319 122-1 §5.5.4 is
+    /// computed over the whole SignedData, certificate set included, so an
+    /// archive timestamp minted for an appended signer would describe a
+    /// document state the prior signers' archive timestamps do not — and
+    /// theirs cannot be recomputed without their PKCS#11 sessions.
     ///
     /// @param prior        DER-encoded prior CMS ContentInfo (detached)
     /// @param originalDoc  the original payload — MUST match what the prior
     ///                     signers signed; empty input is rejected because
     ///                     a detached CMS does not carry the payload
     /// @param token        signing token (already opened + logged in)
-    /// @param level        desired level for the NEW signer (B-B only)
-    /// @param tsa          TSA config — unused at B-B; reserved for the
-    ///                     per-signer B-T+ rework
+    /// @param level        desired level for the NEW signer (B-B, B-T or B-LT)
+    /// @param tsa          TSA config — required from B-T upwards
     /// @return @ref SigningResult — DER-encoded CMS with the appended signer
     [[nodiscard]] SigningResult appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
                                              Pkcs11Token& token, SignatureLevel level, const TSAConfig& tsa);

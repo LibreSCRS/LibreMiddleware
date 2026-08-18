@@ -261,6 +261,112 @@ JwsComponents buildJwsBB(const std::vector<uint8_t>& payload, bool isDetached, P
     return jws;
 }
 
+// ---- etsiU level upgrades (ETSI TS 119 182-1 §5.3) ----
+//
+// The ONE definition of what each SignatureLevel adds on top of B-B, shared by
+// sign() and appendSigner() so the two entry points cannot drift apart.
+//
+// Every component lands in @p entry's own unprotected header, which
+// serializeJws / appendSigner emit as that signature's `header` member.
+// Per-signature placement is what TS 119 182-1 requires: a document-level
+// etsiU would be attributed to every signer, including prior ones whose
+// PKCS#11 sessions the caller no longer holds.
+//
+// Returns a failure result for the fail-closed policy stops, std::nullopt when
+// @p entry reached @p level.
+std::optional<SigningResult> applyEtsiU(JwsComponents& entry, Pkcs11Token& token, SignatureLevel level,
+                                        const TSAConfig& tsa)
+{
+    // B-T: add signature timestamp
+    if (level >= SignatureLevel::B_T) {
+        if (tsa.url.empty())
+            return makeFailure(SignFailureKind::InvalidInput, "TSA URL is required for B-T level or above");
+
+        // Per ETSI TS 119 182-1 §5.1.10, the sigTst message imprint is
+        // computed over the base64url-encoded JWS signature value as
+        // ASCII octets — NOT the raw decoded signature bytes. We
+        // already have `entry.signature` set to base64urlEncode(signatureBytes)
+        // above; hash those octets.
+        auto sigHash = sha256(reinterpret_cast<const uint8_t*>(entry.signature.data()), entry.signature.size());
+
+        TSAClient tsaClient;
+        auto tsaResult = tsaClient.timestamp(sigHash, toTsaRequest(tsa));
+        if (!tsaResult.success)
+            return makeFailure(SignFailureKind::TsaUnreachable, "TSA timestamp failed: " + tsaResult.errorMessage);
+
+        // Build etsiU with sigTst
+        nlohmann::json sigTst;
+        sigTst["sigTst"]["tstTokens"] = nlohmann::json::array({{{"val", base64Encode(tsaResult.token)}}});
+
+        nlohmann::json etsiU = nlohmann::json::array({sigTst});
+        entry.unprotectedHeader["etsiU"] = etsiU;
+    }
+
+    // B-LT: add revocation data
+    if (level >= SignatureLevel::B_LT) {
+        auto revData = collectRevocationData(token, tsa);
+        if (auto failure = revocationFailClosed(revData))
+            return failure;
+
+        nlohmann::json rVals;
+        if (!revData.crls.empty()) {
+            nlohmann::json crlVals = nlohmann::json::array();
+            for (const auto& crl : revData.crls)
+                crlVals.push_back(base64Encode(crl));
+            rVals["crlVals"] = crlVals;
+        }
+        if (!revData.ocspResponses.empty()) {
+            nlohmann::json ocspVals = nlohmann::json::array();
+            for (const auto& ocsp : revData.ocspResponses)
+                ocspVals.push_back(base64Encode(ocsp));
+            rVals["ocspVals"] = ocspVals;
+        }
+
+        if (!rVals.empty()) {
+            nlohmann::json rValsEntry;
+            rValsEntry["rVals"] = rVals;
+
+            if (!entry.unprotectedHeader.contains("etsiU"))
+                entry.unprotectedHeader["etsiU"] = nlohmann::json::array();
+            entry.unprotectedHeader["etsiU"].push_back(rValsEntry);
+        }
+    }
+
+    // B-LTA: add archive timestamp per ETSI TS 119 182-1 §5.3.5
+    if (level >= SignatureLevel::B_LTA) {
+        // The arcTst message imprint is computed over:
+        //   base64urlEncode(protected) + "." + base64urlEncode(payload) + "." + base64urlEncode(signature)
+        //   + canonicalized (JSON-sorted) etsiU components
+        std::string archiveInput = entry.protectedHeader + "." + entry.payload + "." + entry.signature;
+
+        // Append each existing etsiU component as RFC 8785 (JCS)
+        // canonical JSON so strict validators that recompute the
+        // arcTst imprint over JCS-canonical etsiU members agree.
+        if (entry.unprotectedHeader.contains("etsiU")) {
+            for (const auto& component : entry.unprotectedHeader["etsiU"]) {
+                archiveInput += jcsDump(component);
+            }
+        }
+
+        auto archiveHash = sha256(archiveInput);
+
+        TSAClient tsaClient;
+        auto tsaResult = tsaClient.timestamp(archiveHash, toTsaRequest(tsa));
+        if (!tsaResult.success)
+            return makeFailure(SignFailureKind::TsaUnreachable,
+                               "Archive TSA timestamp failed: " + tsaResult.errorMessage);
+
+        nlohmann::json arcTst;
+        arcTst["arcTst"]["tstTokens"] = nlohmann::json::array({{{"val", base64Encode(tsaResult.token)}}});
+
+        if (!entry.unprotectedHeader.contains("etsiU"))
+            entry.unprotectedHeader["etsiU"] = nlohmann::json::array();
+        entry.unprotectedHeader["etsiU"].push_back(arcTst);
+    }
+
+    return std::nullopt;
+}
+
 } // namespace
 
 // ---- JAdESModule::sign ----
@@ -368,94 +474,11 @@ SigningResult JAdESModule::sign(const std::vector<uint8_t>& data, const std::str
         bool isDetached = (packaging == SignaturePackaging::Detached);
         JwsComponents jws = buildJwsBB(data, isDetached, token);
 
-        // 2. B-T: add signature timestamp
-        if (level >= SignatureLevel::B_T) {
-            if (tsa.url.empty())
-                return makeFailure(SignFailureKind::InvalidInput, "TSA URL is required for B-T level or above");
+        // 2. Level upgrades, into this signature's own unprotected header.
+        if (auto failure = applyEtsiU(jws, token, level, tsa))
+            return *failure;
 
-            // Per ETSI TS 119 182-1 §5.1.10, the sigTst message imprint is
-            // computed over the base64url-encoded JWS signature value as
-            // ASCII octets — NOT the raw decoded signature bytes. We
-            // already have `jws.signature` set to base64urlEncode(signatureBytes)
-            // above; hash those octets.
-            auto sigHash = sha256(reinterpret_cast<const uint8_t*>(jws.signature.data()), jws.signature.size());
-
-            TSAClient tsaClient;
-            auto tsaResult = tsaClient.timestamp(sigHash, toTsaRequest(tsa));
-            if (!tsaResult.success)
-                return makeFailure(SignFailureKind::TsaUnreachable, "TSA timestamp failed: " + tsaResult.errorMessage);
-
-            // Build etsiU with sigTst
-            nlohmann::json sigTst;
-            sigTst["sigTst"]["tstTokens"] = nlohmann::json::array({{{"val", base64Encode(tsaResult.token)}}});
-
-            nlohmann::json etsiU = nlohmann::json::array({sigTst});
-            jws.unprotectedHeader["etsiU"] = etsiU;
-        }
-
-        // 3. B-LT: add revocation data
-        if (level >= SignatureLevel::B_LT) {
-            auto revData = collectRevocationData(token, tsa);
-            if (auto failure = revocationFailClosed(revData))
-                return *failure;
-
-            nlohmann::json rVals;
-            if (!revData.crls.empty()) {
-                nlohmann::json crlVals = nlohmann::json::array();
-                for (const auto& crl : revData.crls)
-                    crlVals.push_back(base64Encode(crl));
-                rVals["crlVals"] = crlVals;
-            }
-            if (!revData.ocspResponses.empty()) {
-                nlohmann::json ocspVals = nlohmann::json::array();
-                for (const auto& ocsp : revData.ocspResponses)
-                    ocspVals.push_back(base64Encode(ocsp));
-                rVals["ocspVals"] = ocspVals;
-            }
-
-            if (!rVals.empty()) {
-                nlohmann::json rValsEntry;
-                rValsEntry["rVals"] = rVals;
-
-                if (!jws.unprotectedHeader.contains("etsiU"))
-                    jws.unprotectedHeader["etsiU"] = nlohmann::json::array();
-                jws.unprotectedHeader["etsiU"].push_back(rValsEntry);
-            }
-        }
-
-        // 4. B-LTA: add archive timestamp per ETSI TS 119 182-1 §5.3.5
-        if (level >= SignatureLevel::B_LTA) {
-            // The arcTst message imprint is computed over:
-            //   base64urlEncode(protected) + "." + base64urlEncode(payload) + "." + base64urlEncode(signature)
-            //   + canonicalized (JSON-sorted) etsiU components
-            std::string archiveInput = jws.protectedHeader + "." + jws.payload + "." + jws.signature;
-
-            // Append each existing etsiU component as RFC 8785 (JCS)
-            // canonical JSON so strict validators that recompute the
-            // arcTst imprint over JCS-canonical etsiU members agree.
-            if (jws.unprotectedHeader.contains("etsiU")) {
-                for (const auto& entry : jws.unprotectedHeader["etsiU"]) {
-                    archiveInput += jcsDump(entry);
-                }
-            }
-
-            auto archiveHash = sha256(archiveInput);
-
-            TSAClient tsaClient;
-            auto tsaResult = tsaClient.timestamp(archiveHash, toTsaRequest(tsa));
-            if (!tsaResult.success)
-                return makeFailure(SignFailureKind::TsaUnreachable,
-                                   "Archive TSA timestamp failed: " + tsaResult.errorMessage);
-
-            nlohmann::json arcTst;
-            arcTst["arcTst"]["tstTokens"] = nlohmann::json::array({{{"val", base64Encode(tsaResult.token)}}});
-
-            if (!jws.unprotectedHeader.contains("etsiU"))
-                jws.unprotectedHeader["etsiU"] = nlohmann::json::array();
-            jws.unprotectedHeader["etsiU"].push_back(arcTst);
-        }
-
-        // 5. Final serialization
+        // 3. Final serialization
         std::string result = serializeJws(jws);
         return makeSuccess(std::vector<uint8_t>(result.begin(), result.end()));
 
@@ -470,22 +493,23 @@ SigningResult JAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
                                         const std::string& fileName, Pkcs11Token& token, SignatureLevel level,
                                         const TSAConfig& tsa)
 {
-    (void)fileName; // JAdES does not carry a per-signer file name in B-B
-    (void)tsa;      // B-T+ gated below; tsa unused at B-B
+    (void)fileName; // JAdES does not carry a per-signer file name
     if (prior.empty())
         return makeFailure(SignFailureKind::InvalidDocument, "JAdES appendSigner: empty prior");
 
-    // Per-signer etsiU upgrades (B-T / B-LT / B-LTA) are not yet wired: the
-    // existing sign() etsiU helpers operate on the sole signer of a fresh
-    // single-signer JWS. Applying them in this path would attach sigTst /
-    // rVals / arcTst at the document level, which conformance validators
-    // would attribute to every signer — including the prior ones whose
-    // PKCS#11 sessions we no longer hold. Gate with PolicyViolation; the
-    // per-signer-index helpers are planned for the next cycle.
-    if (level > SignatureLevel::B_B)
+    // sigTst and rVals are per-signature etsiU components (ETSI TS 119 182-1
+    // §5.3) and are applied to the appended entry's own unprotected header
+    // below, leaving every prior entry untouched. arcTst is different: an
+    // archive timestamp seals a document state, and appending a signature
+    // entry changes that state for every signer already present, whose own
+    // arcTst cannot be recomputed without their PKCS#11 sessions. Refuse
+    // B-LTA rather than emit a document whose prior archive timestamps no
+    // longer describe it — the same ceiling the CAdES append path applies.
+    if (level > SignatureLevel::B_LT)
         return makeFailure(SignFailureKind::PolicyViolation,
-                           "JAdES appendSigner: only B-B is supported for the new signer; per-signer etsiU upgrades "
-                           "(B-T / B-LT / B-LTA) are planned for the next cycle");
+                           "JAdES appendSigner: B-LTA is not supported for an appended signer — an archive "
+                           "timestamp seals the document state, which appending a signature entry changes; "
+                           "use B-LT or lower");
 
     try {
         // Parse prior JWS JSON General. Reuse tryParseJwsGeneral so we get
@@ -540,6 +564,13 @@ SigningResult JAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
         // signer JWS so the new entry is byte-compatible with the prior
         // entries (same alg selection, same x5c shape, same crit set).
         JwsComponents newJws = buildJwsBB(payload, isDetached, token);
+
+        // Level upgrades for the NEW signer only, through the same ladder
+        // sign() uses. Components land in newJws.unprotectedHeader, which
+        // becomes this entry's `header` member below — the prior entries are
+        // never read or rewritten.
+        if (auto failure = applyEtsiU(newJws, token, level, tsa))
+            return *failure;
 
         // Append the new signature entry to signatures[]. Each entry is the
         // JWS JSON General per-signature object: {"protected", "signature",

@@ -37,10 +37,15 @@ public:
     ///   detached JWS JSON General with N+1 signature entries over the same
     ///   detached payload. @p originalDoc is mandatory here.
     ///
-    /// Level upgrades above `B_B` are gated with `PolicyViolation` for the new
-    /// signer because the existing JAdES `etsiU` helpers target the only signer
-    /// in a fresh single-signer JWS; per-signer-index `etsiU` is planned for the
-    /// next cycle.
+    /// `B_B`, `B_T` and `B_LT` are supported for the new signer: `sigTst` and
+    /// `rVals` are per-signature `etsiU` components (ETSI TS 119 182-1 §5.3)
+    /// and are written into the appended entry's own unprotected header,
+    /// leaving every prior entry byte-identical.
+    ///
+    /// `B_LTA` is gated with `PolicyViolation`: an archive timestamp seals a
+    /// document state, and appending a signature entry changes that state for
+    /// every signer already present, whose own `arcTst` cannot be recomputed
+    /// without their PKCS#11 sessions.
     ///
     /// @param prior        JWS JSON General document (with or without `payload`)
     /// @param originalDoc  payload bytes (mandatory for DETACHED, optional for
@@ -48,8 +53,8 @@ public:
     /// @param fileName     file name hint (unused on the JAdES path; carried for
     ///                     interface symmetry with sibling modules)
     /// @param token        signing token
-    /// @param level        desired level for the new signer (only `B_B` supported)
-    /// @param tsa          TSA config (unused at `B_B`; carried for symmetry)
+    /// @param level        desired level for the new signer (`B_B`, `B_T` or `B_LT`)
+    /// @param tsa          TSA config — required from `B_T` upwards
     /// @return @ref SigningResult containing the updated JWS JSON General document
     [[nodiscard]] SigningResult appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
                                              const std::string& fileName, Pkcs11Token& token, SignatureLevel level,

@@ -173,13 +173,34 @@ std::vector<uint8_t> buildRevocationValues(const RevocationData& revData)
     return derSequence(content);
 }
 
-// Get the first CMS_SignerInfo from a CMS structure
-CMS_SignerInfo* getFirstSignerInfo(CMS_ContentInfo* cms)
+// Get the CMS_SignerInfo at @p index (0-based) from a CMS structure.
+//
+// Positional lookup is only meaningful on a CMS that was just parsed: the
+// SignedData signerInfos field is an ASN.1 SET OF, and DER requires SET OF
+// members to be written in sorted-encoding order, so OpenSSL reorders them
+// inside i2d_CMS_ContentInfo. An index is therefore valid against the DER a
+// caller holds right now, and NOT across an encode. Callers that need to keep
+// hold of one signer while the document changes must carry the
+// CMS_SignerInfo* itself — see applyLevelUpgrades().
+CMS_SignerInfo* signerInfoAt(CMS_ContentInfo* cms, int index)
 {
     STACK_OF(CMS_SignerInfo)* signerInfos = CMS_get0_SignerInfos(cms);
-    if (!signerInfos || sk_CMS_SignerInfo_num(signerInfos) == 0)
+    const int count = signerInfos ? sk_CMS_SignerInfo_num(signerInfos) : 0;
+    if (count == 0)
         throw std::runtime_error("CMS has no SignerInfos");
-    return sk_CMS_SignerInfo_value(signerInfos, 0);
+    if (index < 0 || index >= count)
+        throw std::runtime_error("CMS has no SignerInfo at index " + std::to_string(index));
+    return sk_CMS_SignerInfo_value(signerInfos, index);
+}
+
+// An absent TSA URL is a caller error, not a document error: check it before
+// touching the CMS bytes so it surfaces as InvalidInput even when the document
+// is also malformed.
+void requireTsaUrl(const TSAConfig& tsa, const char* levelName)
+{
+    if (tsa.url.empty())
+        throw SignFailureException(SignFailureKind::InvalidInput,
+                                   std::string("TSA URL is required for ") + levelName + " level");
 }
 
 // Attach the ESS signing-certificate-v2 signed attribute (ETSI EN 319 122-1
@@ -281,14 +302,13 @@ std::vector<uint8_t> CAdESModule::signBB(const std::vector<uint8_t>& data, Pkcs1
 
 // ---- addTimestamp ----
 
-std::vector<uint8_t> CAdESModule::addTimestamp(const std::vector<uint8_t>& cmsBytes, const TSAConfig& tsa)
+namespace {
+
+// Attach the RFC 3161 signature timestamp (ETSI EN 319 122-1 §5.3.1) to
+// @p si. Operates on the live SignerInfo so the caller can target one signer
+// of several — see signerInfoAt() on why an index cannot do that.
+void addTimestampTo(CMS_SignerInfo* si, const TSAConfig& tsa)
 {
-    if (tsa.url.empty())
-        throw SignFailureException(SignFailureKind::InvalidInput, "TSA URL is required for B-T level");
-
-    CmsPtr cms = parseCms(cmsBytes);
-    CMS_SignerInfo* si = getFirstSignerInfo(cms.get());
-
     // Get the signature value to timestamp
     ASN1_OCTET_STRING* sigValue = CMS_SignerInfo_get0_signature(si);
     if (!sigValue)
@@ -310,33 +330,65 @@ std::vector<uint8_t> CAdESModule::addTimestamp(const std::vector<uint8_t>& cmsBy
 
     // Add as unsigned attribute: id-smime-aa-signatureTimeStamp (1.2.840.113549.1.9.16.2.14)
     addUnsignedAttr(si, "1.2.840.113549.1.9.16.2.14", tsaResult.token);
-
-    return encodeCms(cms.get());
 }
 
-// ---- addCertificateChain ----
-
-std::vector<uint8_t> CAdESModule::addCertificateChain(const std::vector<uint8_t>& cmsBytes,
-                                                      const std::vector<std::vector<uint8_t>>& chainDer)
+// Embed @p chainDer[1..] in the SignedData certificates set. UNION, never
+// replace: the set is shared by every signer, so evicting an entry would strip
+// path material a prior signer's verifier still needs. CMS_add1_cert is
+// idempotent on a certificate already in the set, so overlapping chains
+// between signers collapse instead of duplicating.
+void addCertificateChainTo(CMS_ContentInfo* cms, const std::vector<std::vector<uint8_t>>& chainDer)
 {
     // chainDer[0] is the signer leaf — CMS_add1_signer already placed it in the
     // SignedData certificates set. Embed the remaining path (issuing CA up to
     // the trust anchor) so a B-LT signature carries the certificates a verifier
     // needs to build the path without external fetching.
+    for (std::size_t i = 1; i < chainDer.size(); ++i) {
+        X509Ptr cert = parseCert(chainDer[i]);
+        if (cert && CMS_add1_cert(cms, cert.get()) != 1)
+            throw std::runtime_error("CMS_add1_cert() failed: " + opensslError());
+    }
+}
+
+// Attach the revocation values (ETSI EN 319 122-1 §5.4.2) to @p si.
+void addRevocationDataTo(CMS_SignerInfo* si, const RevocationData& revData)
+{
+    if (revData.crls.empty() && revData.ocspResponses.empty())
+        return; // nothing to add
+
+    // Build RevocationValues ASN.1 and add as unsigned attribute
+    // OID: id-smime-aa-ets-revValues (1.2.840.113549.1.9.16.2.24)
+    auto revValues = buildRevocationValues(revData);
+    addUnsignedAttr(si, "1.2.840.113549.1.9.16.2.24", revValues);
+}
+
+} // namespace
+
+// ---- byte-oriented wrappers ----
+//
+// Single-signer entry points kept for the callers that hand a whole document
+// across a module boundary (the PAdES path embeds a CMS built one signature at
+// a time). They parse, resolve signer 0 — unambiguous on a single-signer CMS —
+// delegate to the core above, and re-encode.
+
+std::vector<uint8_t> CAdESModule::addTimestamp(const std::vector<uint8_t>& cmsBytes, const TSAConfig& tsa)
+{
+    requireTsaUrl(tsa, "B-T");
+    CmsPtr cms = parseCms(cmsBytes);
+    addTimestampTo(signerInfoAt(cms.get(), 0), tsa);
+    return encodeCms(cms.get());
+}
+
+std::vector<uint8_t> CAdESModule::addCertificateChain(const std::vector<uint8_t>& cmsBytes,
+                                                      const std::vector<std::vector<uint8_t>>& chainDer)
+{
     if (chainDer.size() <= 1)
         return cmsBytes;
 
     CmsPtr cms = parseCms(cmsBytes);
-    for (std::size_t i = 1; i < chainDer.size(); ++i) {
-        X509Ptr cert = parseCert(chainDer[i]);
-        if (cert && CMS_add1_cert(cms.get(), cert.get()) != 1)
-            throw std::runtime_error("CMS_add1_cert() failed: " + opensslError());
-    }
-
+    addCertificateChainTo(cms.get(), chainDer);
     return encodeCms(cms.get());
 }
-
-// ---- addRevocationData ----
 
 std::vector<uint8_t> CAdESModule::addRevocationData(const std::vector<uint8_t>& cmsBytes, const RevocationData& revData)
 {
@@ -344,13 +396,7 @@ std::vector<uint8_t> CAdESModule::addRevocationData(const std::vector<uint8_t>& 
         return cmsBytes; // nothing to add
 
     CmsPtr cms = parseCms(cmsBytes);
-    CMS_SignerInfo* si = getFirstSignerInfo(cms.get());
-
-    // Build RevocationValues ASN.1 and add as unsigned attribute
-    // OID: id-smime-aa-ets-revValues (1.2.840.113549.1.9.16.2.24)
-    auto revValues = buildRevocationValues(revData);
-    addUnsignedAttr(si, "1.2.840.113549.1.9.16.2.24", revValues);
-
+    addRevocationDataTo(signerInfoAt(cms.get(), 0), revData);
     return encodeCms(cms.get());
 }
 
@@ -396,19 +442,25 @@ std::vector<uint8_t> buildAtsHashIndex(const std::vector<std::vector<uint8_t>>& 
     return ::libresign::derSequence(content);
 }
 
-std::vector<uint8_t> CAdESModule::addArchiveTimestamp(const std::vector<uint8_t>& cmsBytes, const TSAConfig& tsa)
-{
-    if (tsa.url.empty())
-        throw SignFailureException(SignFailureKind::InvalidInput, "TSA URL is required for B-LTA level");
+namespace {
 
+// Attach the ats-hash-index-v3 and archive-timestamp unsigned attributes
+// (ETSI EN 319 122-1 §5.5.2 / §5.5.4) to @p si.
+//
+// Note the asymmetry with the two cores above: the archive timestamp's message
+// imprint is computed over the WHOLE SignedData — certificates and CRLs
+// included — not just over @p si. That is why an archive timestamp cannot be
+// minted for a signer appended to an existing document: adding a signer adds
+// its certificate to the set the imprint covers, so the prior signers' archive
+// timestamps would no longer describe the document they were computed over.
+void addArchiveTimestampTo(CMS_ContentInfo* cms, CMS_SignerInfo* si, const TSAConfig& tsa)
+{
     // ETSI EN 319 122-1 section 5.5.2: build ats-hash-index-v3 by hashing
     // individual SignedData components (certificates, CRLs, unsigned attrs).
-    CmsPtr cms = parseCms(cmsBytes);
-    CMS_SignerInfo* si = getFirstSignerInfo(cms.get());
 
     // 1. Hash each certificate DER individually
     std::vector<std::vector<uint8_t>> certHashes;
-    STACK_OF(X509)* certs = CMS_get1_certs(cms.get());
+    STACK_OF(X509)* certs = CMS_get1_certs(cms);
     if (certs) {
         for (int i = 0; i < sk_X509_num(certs); ++i) {
             X509* cert = sk_X509_value(certs, i);
@@ -421,7 +473,7 @@ std::vector<uint8_t> CAdESModule::addArchiveTimestamp(const std::vector<uint8_t>
 
     // 2. Hash each CRL DER individually
     std::vector<std::vector<uint8_t>> crlHashes;
-    STACK_OF(X509_CRL)* crls = CMS_get1_crls(cms.get());
+    STACK_OF(X509_CRL)* crls = CMS_get1_crls(cms);
     if (crls) {
         for (int i = 0; i < sk_X509_CRL_num(crls); ++i) {
             X509_CRL* crl = sk_X509_CRL_value(crls, i);
@@ -466,7 +518,7 @@ std::vector<uint8_t> CAdESModule::addArchiveTimestamp(const std::vector<uint8_t>
     archiveInput.insert(archiveInput.end(), sigData, sigData + sigLen);
 
     // 5b. eContentType OID DER
-    const ASN1_OBJECT* eContentType = CMS_get0_eContentType(cms.get());
+    const ASN1_OBJECT* eContentType = CMS_get0_eContentType(cms);
     if (eContentType) {
         auto eContentTypeDer = derEncode(i2d_ASN1_OBJECT, const_cast<ASN1_OBJECT*>(eContentType));
         if (!eContentTypeDer.empty())
@@ -475,7 +527,7 @@ std::vector<uint8_t> CAdESModule::addArchiveTimestamp(const std::vector<uint8_t>
 
     // 5c. eContent (the signed data octets) — for detached signatures this
     //     is absent from the CMS structure, so we skip it when not present.
-    ASN1_OCTET_STRING** eContentRef = CMS_get0_content(cms.get());
+    ASN1_OCTET_STRING** eContentRef = CMS_get0_content(cms);
     if (eContentRef && *eContentRef) {
         const unsigned char* eData = ASN1_STRING_get0_data(*eContentRef);
         int eLen = ASN1_STRING_length(*eContentRef);
@@ -484,7 +536,7 @@ std::vector<uint8_t> CAdESModule::addArchiveTimestamp(const std::vector<uint8_t>
     }
 
     // 5d. Certificate values (DER-encoded, in order)
-    STACK_OF(X509)* certsForHash = CMS_get1_certs(cms.get());
+    STACK_OF(X509)* certsForHash = CMS_get1_certs(cms);
     if (certsForHash) {
         for (int i = 0; i < sk_X509_num(certsForHash); ++i) {
             X509* cert = sk_X509_value(certsForHash, i);
@@ -496,7 +548,7 @@ std::vector<uint8_t> CAdESModule::addArchiveTimestamp(const std::vector<uint8_t>
     }
 
     // 5e. CRL values (DER-encoded, in order)
-    STACK_OF(X509_CRL)* crlsForHash = CMS_get1_crls(cms.get());
+    STACK_OF(X509_CRL)* crlsForHash = CMS_get1_crls(cms);
     if (crlsForHash) {
         for (int i = 0; i < sk_X509_CRL_num(crlsForHash); ++i) {
             X509_CRL* crl = sk_X509_CRL_value(crlsForHash, i);
@@ -522,7 +574,61 @@ std::vector<uint8_t> CAdESModule::addArchiveTimestamp(const std::vector<uint8_t>
     addUnsignedAttr(si, "0.4.0.1733.2.5", atsHashIndex);
     // id-aa-ets-archiveTimestampV3: 1.2.840.113549.1.9.16.2.48
     addUnsignedAttr(si, "1.2.840.113549.1.9.16.2.48", tsaResult.token);
+}
 
+// ---- the level-upgrade ladder ----
+//
+// The ONE definition of what each SignatureLevel adds on top of B-B, shared by
+// sign() and appendSigner() so the two entry points cannot drift apart.
+//
+// Everything runs against the live @p cms / @p si: a signer is identified by
+// pointer, never by position. The SignedData signerInfos field is an ASN.1
+// SET OF, so i2d_CMS_ContentInfo writes its members in sorted-encoding order
+// rather than insertion order — a position obtained before an encode does not
+// survive it, and shifts again whenever a step changes a SignerInfo's encoding
+// (adding a timestamp is exactly such a change). Encoding once, at the end,
+// keeps @p si valid for the whole ladder.
+//
+// Returns a failure result for the fail-closed policy stops, std::nullopt when
+// the document reached @p level. Throws SignFailureException on TSA faults.
+std::optional<SigningResult> applyLevelUpgrades(CMS_ContentInfo* cms, CMS_SignerInfo* si, Pkcs11Token& token,
+                                                SignatureLevel level, const TSAConfig& tsa)
+{
+    // The B-T signature timestamp and B-LTA archive timestamp drive an RFC 3161
+    // round-trip through TSAClient. A missing TSA URL or a failed round-trip
+    // throws a typed SignFailureException (InvalidInput / TsaUnreachable) which
+    // both callers map to the precise kind, so a failing TSA surfaces the same
+    // way as on the XAdES / JAdES / PAdES paths. Every other throw from these
+    // helpers (malformed SignerInfo, CMS encode, OpenSSL faults) is a plain
+    // std::exception and falls through to EngineError.
+    if (level >= SignatureLevel::B_T) {
+        requireTsaUrl(tsa, "B-T");
+        addTimestampTo(si, tsa);
+    }
+
+    if (level >= SignatureLevel::B_LT) {
+        auto revData = collectRevocationData(token, tsa);
+        if (auto failure = revocationFailClosed(revData))
+            return failure;
+        addCertificateChainTo(cms, token.certificateChain());
+        addRevocationDataTo(si, revData);
+    }
+
+    if (level >= SignatureLevel::B_LTA) {
+        requireTsaUrl(tsa, "B-LTA");
+        addArchiveTimestampTo(cms, si, tsa);
+    }
+
+    return std::nullopt;
+}
+
+} // namespace
+
+std::vector<uint8_t> CAdESModule::addArchiveTimestamp(const std::vector<uint8_t>& cmsBytes, const TSAConfig& tsa)
+{
+    requireTsaUrl(tsa, "B-LTA");
+    CmsPtr cms = parseCms(cmsBytes);
+    addArchiveTimestampTo(cms.get(), signerInfoAt(cms.get(), 0), tsa);
     return encodeCms(cms.get());
 }
 
@@ -535,33 +641,17 @@ SigningResult CAdESModule::sign(const std::vector<uint8_t>& data, Pkcs11Token& t
         return makeFailure(SignFailureKind::InvalidDocument, "Input data is empty");
 
     try {
-        auto cms = signBB(data, token);
-        if (cms.empty())
+        auto cmsBytes = signBB(data, token);
+        if (cmsBytes.empty())
             return makeFailure(SignFailureKind::OpensslError, "CAdES B-B signing produced empty output");
 
-        // The B-T signature timestamp and B-LTA archive timestamp drive an
-        // RFC 3161 round-trip through TSAClient inside addTimestamp /
-        // addArchiveTimestamp. A missing TSA URL or a failed round-trip throws
-        // a typed SignFailureException (InvalidInput / TsaUnreachable), caught
-        // below and mapped to the precise kind so a failing TSA surfaces the
-        // same way as on the XAdES / JAdES / PAdES paths. Every other throw
-        // from those helpers (malformed SignerInfo, CMS parse / encode, OpenSSL
-        // faults) is a plain std::exception and falls through to EngineError.
-        if (level >= SignatureLevel::B_T)
-            cms = addTimestamp(cms, tsa);
+        // signBB emits exactly one SignerInfo, so index 0 names it
+        // unambiguously. From here the ladder works on the live pointer.
+        CmsPtr cms = parseCms(cmsBytes);
+        if (auto failure = applyLevelUpgrades(cms.get(), signerInfoAt(cms.get(), 0), token, level, tsa))
+            return *failure;
 
-        if (level >= SignatureLevel::B_LT) {
-            auto revData = collectRevocationData(token, tsa);
-            if (auto failure = revocationFailClosed(revData))
-                return *failure;
-            cms = addCertificateChain(cms, token.certificateChain());
-            cms = addRevocationData(cms, revData);
-        }
-
-        if (level >= SignatureLevel::B_LTA)
-            cms = addArchiveTimestamp(cms, tsa);
-
-        return makeSuccess(std::move(cms));
+        return makeSuccess(encodeCms(cms.get()));
     } catch (const SignFailureException& e) {
         // Typed failure (TSA unreachable / missing URL) — preserve its precise
         // kind. MUST precede the std::exception arm: SignFailureException
@@ -578,8 +668,6 @@ SigningResult CAdESModule::sign(const std::vector<uint8_t>& data, Pkcs11Token& t
 SigningResult CAdESModule::appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
                                         Pkcs11Token& token, SignatureLevel level, const TSAConfig& tsa)
 {
-    (void)tsa; // reserved for the per-signer B-T+ rework — see header doc
-
     if (prior.empty())
         return makeFailure(SignFailureKind::InvalidDocument, "CAdES appendSigner: empty prior signature");
     if (originalDoc.empty())
@@ -589,17 +677,19 @@ SigningResult CAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
     if (originalDoc.size() > static_cast<size_t>(INT_MAX))
         return makeFailure(SignFailureKind::InvalidDocument, "CAdES appendSigner: originalDocument too large");
 
-    // Gate level upgrades above B-B. The existing addTimestamp /
-    // addRevocationData / addArchiveTimestamp helpers target the FIRST
-    // SignerInfo (see getFirstSignerInfo()), which would attach the new
-    // signer's timestamp / revocation data to the wrong SignerInfo. Per-
-    // signer targeting is a planned follow-up — until then, B-T+ via
-    // appendSigner is rejected rather than silently producing a spec-wrong
-    // document.
-    if (level != SignatureLevel::B_B)
+    // B-T and B-LT carry per-signer unsigned attributes and are applied to the
+    // appended SignerInfo alone. B-LTA is not: the ETSI EN 319 122-1 §5.5.4
+    // archive-timestamp message imprint is computed over the whole SignedData,
+    // certificate set included, and appending a signer adds a certificate to
+    // that set. An archive timestamp minted here would therefore describe a
+    // document state that the prior signers' own archive timestamps do not,
+    // and recomputing theirs would need PKCS#11 sessions we no longer hold.
+    // Refuse rather than emit a spec-wrong document.
+    if (level > SignatureLevel::B_LT)
         return makeFailure(SignFailureKind::PolicyViolation,
-                           "CAdES appendSigner: level upgrade above B-B requires per-signer helper "
-                           "rework (planned for next cycle); use level=B_B for now");
+                           "CAdES appendSigner: B-LTA is not supported for an appended signer — the ETSI "
+                           "EN 319 122-1 §5.5.4 archive-timestamp imprint covers the SignedData certificate "
+                           "set, which appending a signer changes; use B-LT or lower");
 
     try {
         // 1. Parse the prior CMS ContentInfo.
@@ -680,8 +770,26 @@ SigningResult CAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
             return makeFailure(SignFailureKind::OpensslError,
                                "CAdES appendSigner: CMS_SignerInfo_sign failed: " + opensslError());
 
-        // 8. Serialise to DER.
+        // 8. Apply the requested level upgrades to the NEW SignerInfo only,
+        //    through the same ladder sign() uses. `si` is the pointer
+        //    CMS_add1_signer just handed back, which is what makes this
+        //    correct: the appended signer cannot be named by position because
+        //    the DER encode below reorders the signerInfos SET OF.
+        //
+        //    Adding this signer already mutated the SignedData certificate set
+        //    that any archive timestamp a PRIOR signer carries was computed
+        //    over — true at every level, B-B included. Appending to a document
+        //    whose existing signers hold archive timestamps is outside what
+        //    this method can keep intact.
+        if (auto failure = applyLevelUpgrades(cms.get(), si, token, level, tsa))
+            return *failure;
+
+        // 9. Serialise to DER.
         return makeSuccess(encodeCms(cms.get()));
+    } catch (const SignFailureException& e) {
+        // Typed failure (TSA unreachable / missing URL) — preserve its precise
+        // kind. MUST precede the std::exception arm, same as sign().
+        return makeFailure(e.kind, e.what());
     } catch (const std::exception& e) {
         return makeFailure(SignFailureKind::EngineError, std::string("CAdES appendSigner error: ") + e.what());
     }
