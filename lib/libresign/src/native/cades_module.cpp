@@ -453,14 +453,41 @@ namespace {
 // minted for a signer appended to an existing document: adding a signer adds
 // its certificate to the set the imprint covers, so the prior signers' archive
 // timestamps would no longer describe the document they were computed over.
+//
+// The imprint is hashed over a re-parsed copy of @p cms rather than over the
+// live structure. SignedData's certificates and crls fields, and a SignerInfo's
+// unsignedAttrs, are ASN.1 SET OFs: DER writes SET OF members in sorted-encoding
+// order, so i2d_CMS_ContentInfo sorts them on the way out and leaves the
+// in-memory stacks in insertion order. Hashing the live stacks would describe an
+// order the emitted document does not carry as soon as anything was added out of
+// sorted order — which is exactly what the level ladder does when it embeds a
+// certificate chain next to the signer's leaf — and the resulting imprint is
+// then unreproducible for every verifier, which only ever sees the emitted DER.
+// Encoding and re-parsing once here makes OpenSSL's own encoder the authority on
+// that order; nothing below alters the certificates or the CRLs, so the copy's
+// order is the order the final encode writes.
 void addArchiveTimestampTo(CMS_ContentInfo* cms, CMS_SignerInfo* si, const TSAConfig& tsa)
 {
+    // Resolving the copy's signer by position is sound only on a single-signer
+    // SignedData — and that is the only shape an archive timestamp is ever
+    // minted for: signBB emits exactly one SignerInfo, and appendSigner refuses
+    // B-LTA outright because the §5.5.4 imprint covers the certificate set an
+    // append mutates. State the invariant instead of silently stamping an
+    // imprint that describes a different signer's attributes.
+    STACK_OF(CMS_SignerInfo)* signers = CMS_get0_SignerInfos(cms);
+    if (!signers || sk_CMS_SignerInfo_num(signers) != 1 || sk_CMS_SignerInfo_value(signers, 0) != si)
+        throw std::runtime_error("An archive timestamp requires a single-signer SignedData whose SignerInfo is the "
+                                 "upgrade target");
+
+    CmsPtr emitted = parseCms(encodeCms(cms));
+    CMS_SignerInfo* emittedSi = signerInfoAt(emitted.get(), 0);
+
     // ETSI EN 319 122-1 section 5.5.2: build ats-hash-index-v3 by hashing
     // individual SignedData components (certificates, CRLs, unsigned attrs).
 
     // 1. Hash each certificate DER individually
     std::vector<std::vector<uint8_t>> certHashes;
-    STACK_OF(X509)* certs = CMS_get1_certs(cms);
+    STACK_OF(X509)* certs = CMS_get1_certs(emitted.get());
     if (certs) {
         for (int i = 0; i < sk_X509_num(certs); ++i) {
             X509* cert = sk_X509_value(certs, i);
@@ -473,7 +500,7 @@ void addArchiveTimestampTo(CMS_ContentInfo* cms, CMS_SignerInfo* si, const TSACo
 
     // 2. Hash each CRL DER individually
     std::vector<std::vector<uint8_t>> crlHashes;
-    STACK_OF(X509_CRL)* crls = CMS_get1_crls(cms);
+    STACK_OF(X509_CRL)* crls = CMS_get1_crls(emitted.get());
     if (crls) {
         for (int i = 0; i < sk_X509_CRL_num(crls); ++i) {
             X509_CRL* crl = sk_X509_CRL_value(crls, i);
@@ -488,9 +515,9 @@ void addArchiveTimestampTo(CMS_ContentInfo* cms, CMS_SignerInfo* si, const TSACo
     std::vector<std::vector<uint8_t>> attrHashes;
     // OID for id-aa-ets-archiveTimestampV3: 1.2.840.113549.1.9.16.2.48
     Asn1ObjectPtr archiveTstOid(OBJ_txt2obj("1.2.840.113549.1.9.16.2.48", 1));
-    int attrCount = CMS_unsigned_get_attr_count(si);
+    int attrCount = CMS_unsigned_get_attr_count(emittedSi);
     for (int i = 0; i < attrCount; ++i) {
-        X509_ATTRIBUTE* attr = CMS_unsigned_get_attr(si, i);
+        X509_ATTRIBUTE* attr = CMS_unsigned_get_attr(emittedSi, i);
         ASN1_OBJECT* attrObj = X509_ATTRIBUTE_get0_object(attr);
         // Skip existing archive timestamps
         if (OBJ_cmp(attrObj, archiveTstOid.get()) == 0)
@@ -508,7 +535,7 @@ void addArchiveTimestampTo(CMS_ContentInfo* cms, CMS_SignerInfo* si, const TSACo
     std::vector<uint8_t> archiveInput;
 
     // 5a. SignerInfo.signature value (raw octets)
-    ASN1_OCTET_STRING* sigValue = CMS_SignerInfo_get0_signature(si);
+    ASN1_OCTET_STRING* sigValue = CMS_SignerInfo_get0_signature(emittedSi);
     if (!sigValue)
         throw std::runtime_error("Cannot get signature value from SignerInfo");
     const unsigned char* sigData = ASN1_STRING_get0_data(sigValue);
@@ -518,7 +545,7 @@ void addArchiveTimestampTo(CMS_ContentInfo* cms, CMS_SignerInfo* si, const TSACo
     archiveInput.insert(archiveInput.end(), sigData, sigData + sigLen);
 
     // 5b. eContentType OID DER
-    const ASN1_OBJECT* eContentType = CMS_get0_eContentType(cms);
+    const ASN1_OBJECT* eContentType = CMS_get0_eContentType(emitted.get());
     if (eContentType) {
         auto eContentTypeDer = derEncode(i2d_ASN1_OBJECT, const_cast<ASN1_OBJECT*>(eContentType));
         if (!eContentTypeDer.empty())
@@ -527,7 +554,7 @@ void addArchiveTimestampTo(CMS_ContentInfo* cms, CMS_SignerInfo* si, const TSACo
 
     // 5c. eContent (the signed data octets) — for detached signatures this
     //     is absent from the CMS structure, so we skip it when not present.
-    ASN1_OCTET_STRING** eContentRef = CMS_get0_content(cms);
+    ASN1_OCTET_STRING** eContentRef = CMS_get0_content(emitted.get());
     if (eContentRef && *eContentRef) {
         const unsigned char* eData = ASN1_STRING_get0_data(*eContentRef);
         int eLen = ASN1_STRING_length(*eContentRef);
@@ -535,8 +562,8 @@ void addArchiveTimestampTo(CMS_ContentInfo* cms, CMS_SignerInfo* si, const TSACo
             archiveInput.insert(archiveInput.end(), eData, eData + eLen);
     }
 
-    // 5d. Certificate values (DER-encoded, in order)
-    STACK_OF(X509)* certsForHash = CMS_get1_certs(cms);
+    // 5d. Certificate values (DER-encoded, in the order the document carries)
+    STACK_OF(X509)* certsForHash = CMS_get1_certs(emitted.get());
     if (certsForHash) {
         for (int i = 0; i < sk_X509_num(certsForHash); ++i) {
             X509* cert = sk_X509_value(certsForHash, i);
@@ -547,8 +574,8 @@ void addArchiveTimestampTo(CMS_ContentInfo* cms, CMS_SignerInfo* si, const TSACo
         sk_X509_pop_free(certsForHash, X509_free);
     }
 
-    // 5e. CRL values (DER-encoded, in order)
-    STACK_OF(X509_CRL)* crlsForHash = CMS_get1_crls(cms);
+    // 5e. CRL values (DER-encoded, in the order the document carries)
+    STACK_OF(X509_CRL)* crlsForHash = CMS_get1_crls(emitted.get());
     if (crlsForHash) {
         for (int i = 0; i < sk_X509_CRL_num(crlsForHash); ++i) {
             X509_CRL* crl = sk_X509_CRL_value(crlsForHash, i);

@@ -18,8 +18,12 @@
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/objects.h>
+#include <openssl/pkcs7.h>
+#include <openssl/ts.h>
 #include <openssl/x509.h>
 
+#include <algorithm>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -30,6 +34,11 @@ namespace {
 // id-smime-aa-signatureTimeStamp (RFC 3161 token carrier, ETSI EN 319 122-1
 // §5.3.1) — the unsigned attribute a B-T upgrade attaches to ONE SignerInfo.
 constexpr const char* kSignatureTimeStampOid = "1.2.840.113549.1.9.16.2.14";
+
+// id-aa-ATSHashIndex (ETSI EN 319 122-1 §5.5.2) and
+// id-aa-ets-archiveTimestampV3 (§5.5.4) — the pair a B-LTA upgrade attaches.
+constexpr const char* kAtsHashIndexOid = "0.4.0.1733.2.5";
+constexpr const char* kArchiveTimeStampOid = "1.2.840.113549.1.9.16.2.48";
 
 /// Parse a DER CMS or fail the calling test.
 libresign::CmsPtr parseCmsOrDie(const std::vector<uint8_t>& der)
@@ -122,6 +131,136 @@ std::vector<uint8_t> makeSelfSignedCaDer(const std::string& cn)
                                reinterpret_cast<const unsigned char*>(cn.c_str()), -1, -1, 0);
     X509_sign(x.get(), key.get(), EVP_sha256());
     return libresign::native_utils::derEncode(i2d_X509, x.get());
+}
+
+/// Every certificate of the SignedData set, DER, in the stack's own order.
+/// On a freshly parsed document that IS the order the DER carries.
+std::vector<std::vector<uint8_t>> cmsCertDers(CMS_ContentInfo* cms)
+{
+    std::vector<std::vector<uint8_t>> out;
+    STACK_OF(X509)* certs = CMS_get1_certs(cms);
+    if (!certs)
+        return out;
+    for (int i = 0; i < sk_X509_num(certs); ++i)
+        out.push_back(libresign::native_utils::derEncode(i2d_X509, sk_X509_value(certs, i)));
+    sk_X509_pop_free(certs, X509_free);
+    return out;
+}
+
+/// Raw value octets of the first unsigned attribute carrying @p oid — for the
+/// two archive-level attributes that is the complete DER of the ATSHashIndex
+/// structure resp. of the RFC 3161 TimeStampToken. Empty when absent.
+std::vector<uint8_t> unsignedAttrValue(CMS_SignerInfo* si, const char* oid)
+{
+    libresign::Asn1ObjectPtr want(OBJ_txt2obj(oid, 1));
+    if (!want)
+        return {};
+    const int count = CMS_unsigned_get_attr_count(si);
+    for (int i = 0; i < count; ++i) {
+        X509_ATTRIBUTE* attr = CMS_unsigned_get_attr(si, i);
+        if (!attr || OBJ_cmp(X509_ATTRIBUTE_get0_object(attr), want.get()) != 0)
+            continue;
+        auto* value = static_cast<ASN1_STRING*>(X509_ATTRIBUTE_get0_data(attr, 0, V_ASN1_SEQUENCE, nullptr));
+        if (!value)
+            return {};
+        const unsigned char* data = ASN1_STRING_get0_data(value);
+        const int len = ASN1_STRING_length(value);
+        if (!data || len <= 0)
+            return {};
+        return std::vector<uint8_t>(data, data + len);
+    }
+    return {};
+}
+
+/// The message imprint an RFC 3161 TimeStampToken was minted over — i.e. the
+/// hash the TSA was actually asked to stamp. Read straight out of the token's
+/// TSTInfo so the assertion does not depend on the mock's bookkeeping.
+std::vector<uint8_t> tokenMessageImprint(const std::vector<uint8_t>& tokenDer)
+{
+    const unsigned char* p = tokenDer.data();
+    std::unique_ptr<PKCS7, decltype(&PKCS7_free)> token(d2i_PKCS7(nullptr, &p, static_cast<long>(tokenDer.size())),
+                                                        PKCS7_free);
+    if (!token)
+        return {};
+    std::unique_ptr<TS_TST_INFO, decltype(&TS_TST_INFO_free)> info(PKCS7_to_TS_TST_INFO(token.get()), TS_TST_INFO_free);
+    if (!info)
+        return {};
+    TS_MSG_IMPRINT* imprint = TS_TST_INFO_get_msg_imprint(info.get());
+    if (!imprint)
+        return {};
+    ASN1_OCTET_STRING* msg = TS_MSG_IMPRINT_get_msg(imprint);
+    if (!msg || ASN1_STRING_length(msg) <= 0)
+        return {};
+    const unsigned char* data = ASN1_STRING_get0_data(msg);
+    return std::vector<uint8_t>(data, data + ASN1_STRING_length(msg));
+}
+
+/// Recompute the ETSI EN 319 122-1 §5.5.4 archive-timestamp message imprint
+/// the way a verifier must: over the document it is holding, in the order that
+/// document's own DER carries. Independent of the module's construction order
+/// by design — reproducing the imprint from the emitted bytes is the whole
+/// obligation an archive timestamp places on the signer.
+std::vector<uint8_t> recomputeArchiveImprint(CMS_ContentInfo* cms, CMS_SignerInfo* si)
+{
+    std::vector<uint8_t> input;
+
+    ASN1_OCTET_STRING* sig = CMS_SignerInfo_get0_signature(si);
+    if (!sig || ASN1_STRING_length(sig) <= 0)
+        return {};
+    const unsigned char* sigData = ASN1_STRING_get0_data(sig);
+    input.insert(input.end(), sigData, sigData + ASN1_STRING_length(sig));
+
+    const ASN1_OBJECT* eContentType = CMS_get0_eContentType(cms);
+    if (eContentType) {
+        auto der = libresign::native_utils::derEncode(i2d_ASN1_OBJECT, const_cast<ASN1_OBJECT*>(eContentType));
+        input.insert(input.end(), der.begin(), der.end());
+    }
+
+    // eContent — absent on a detached signature, hence contributing nothing.
+    ASN1_OCTET_STRING** eContent = CMS_get0_content(cms);
+    if (eContent && *eContent && ASN1_STRING_length(*eContent) > 0) {
+        const unsigned char* data = ASN1_STRING_get0_data(*eContent);
+        input.insert(input.end(), data, data + ASN1_STRING_length(*eContent));
+    }
+
+    for (const auto& der : cmsCertDers(cms))
+        input.insert(input.end(), der.begin(), der.end());
+
+    STACK_OF(X509_CRL)* crls = CMS_get1_crls(cms);
+    if (crls) {
+        for (int i = 0; i < sk_X509_CRL_num(crls); ++i) {
+            auto der = libresign::native_utils::derEncode(i2d_X509_CRL, sk_X509_CRL_value(crls, i));
+            input.insert(input.end(), der.begin(), der.end());
+        }
+        sk_X509_CRL_pop_free(crls, X509_CRL_free);
+    }
+
+    const auto atsHashIndex = unsignedAttrValue(si, kAtsHashIndexOid);
+    if (atsHashIndex.empty())
+        return {};
+    input.insert(input.end(), atsHashIndex.begin(), atsHashIndex.end());
+
+    return libresign::native_utils::sha256(input);
+}
+
+/// Swap the adjacent byte blocks @p first and @p second inside @p buf. Returns
+/// false unless @p first is present and immediately followed by @p second — the
+/// caller asserts on that, because the fixture depends on the two certificates
+/// sitting back to back inside the certificates SET OF. The swap preserves the
+/// total length, so every enclosing DER length stays valid.
+bool swapAdjacentBlocks(std::vector<uint8_t>& buf, const std::vector<uint8_t>& first,
+                        const std::vector<uint8_t>& second)
+{
+    auto begin = std::search(buf.begin(), buf.end(), first.begin(), first.end());
+    if (begin == buf.end())
+        return false;
+    auto mid = begin + static_cast<std::ptrdiff_t>(first.size());
+    if (static_cast<std::size_t>(buf.end() - mid) < second.size())
+        return false;
+    if (!std::equal(second.begin(), second.end(), mid))
+        return false;
+    std::rotate(begin, mid, mid + static_cast<std::ptrdiff_t>(second.size()));
+    return true;
 }
 
 } // namespace
@@ -409,6 +548,75 @@ TEST_F(CAdESModuleTest, AppendSignerRejectsArchiveLevel)
     EXPECT_FALSE(appended.success);
     ASSERT_TRUE(appended.failureKind.has_value()) << appended.errorMessage;
     EXPECT_EQ(*appended.failureKind, SignFailureKind::PolicyViolation) << appended.errorMessage;
+}
+
+// ---- Archive timestamp (ETSI EN 319 122-1 §5.5.4) ----
+
+// The archive-timestamp message imprint runs over the SignedData's certificate
+// and CRL values in order. SignedData.certificates is an ASN.1 SET OF, and DER
+// writes SET OF members in sorted-encoding order: OpenSSL sorts inside
+// i2d_CMS_ContentInfo and leaves the in-memory stack in insertion order. An
+// imprint is only reproducible by a verifier when it was computed over the
+// order the EMITTED document carries — the order i2d chose, never the order the
+// certificates happened to be added in.
+//
+// Reaching that state needs a document whose certificate stack is not in sorted
+// order. Every module entry point hands back DER (hence sorted), so the fixture
+// swaps the two certificate blobs inside the encoded SignedData: they sit back
+// to back inside the certificates SET OF and the swap preserves every length,
+// so the document still parses — into a stack whose order differs from the one
+// the next encode writes. The level ladder reaches the same divergence without
+// any splicing, by embedding a chain into a certificate set that already holds
+// the signer's leaf.
+TEST_F(CAdESModuleTest, ArchiveTimestampImprintDescribesTheEmittedCertificateOrder)
+{
+    libresign::test::MockTsaServer tsaServer;
+    CAdESModule cades;
+    const std::vector<uint8_t> data = {'A', 'r', 'c', 'h', 'i', 'v', 'e'};
+
+    std::vector<uint8_t> signerCert;
+    auto bb = signFirst(data, signerCert);
+    ASSERT_FALSE(bb.empty());
+
+    const auto extraCa = makeSelfSignedCaDer("LibreSCRS CAdES Archive Order Test CA");
+    ASSERT_FALSE(extraCa.empty());
+    const auto sorted = cades.addCertificateChain(bb, {signerCert, extraCa});
+    auto sortedCms = parseCmsOrDie(sorted);
+    ASSERT_NE(sortedCms.get(), nullptr);
+    ASSERT_EQ(cmsCertCount(sortedCms.get()), 2) << "certificate order only has meaning with two or more of them";
+
+    auto unsorted = sorted;
+    ASSERT_TRUE(swapAdjacentBlocks(unsorted, signerCert, extraCa) || swapAdjacentBlocks(unsorted, extraCa, signerCert))
+        << "fixture: the two certificates are not adjacent inside the encoded SignedData";
+    ASSERT_EQ(unsorted.size(), sorted.size()) << "fixture: the swap must preserve every enclosing DER length";
+
+    auto unsortedCms = parseCmsOrDie(unsorted);
+    ASSERT_NE(unsortedCms.get(), nullptr) << "a SET OF in non-sorted order must still parse";
+    ASSERT_NE(cmsCertDers(unsortedCms.get()), cmsCertDers(sortedCms.get()))
+        << "precondition: the parsed order must differ from the order an encode writes, or the test "
+           "cannot tell a document-order imprint from an insertion-order one";
+
+    TSAConfig tsa;
+    tsa.url = tsaServer.url();
+    const auto stamped = cades.addArchiveTimestamp(unsorted, tsa);
+    ASSERT_FALSE(stamped.empty());
+    EXPECT_EQ(tsaServer.servedCount(), 1) << "exactly one RFC 3161 round-trip, for the archive timestamp";
+
+    auto emitted = parseCmsOrDie(stamped);
+    ASSERT_NE(emitted.get(), nullptr);
+    CMS_SignerInfo* si = signerInfoForCert(emitted.get(), signerCert);
+    ASSERT_NE(si, nullptr);
+    ASSERT_NE(cmsCertDers(emitted.get()), cmsCertDers(unsortedCms.get()))
+        << "the encode did not re-sort the certificate set — the fixture no longer reproduces the divergence";
+
+    const auto token = unsignedAttrValue(si, kArchiveTimeStampOid);
+    ASSERT_FALSE(token.empty()) << "the archive timestamp attribute is missing";
+    const auto stampedImprint = tokenMessageImprint(token);
+    ASSERT_EQ(stampedImprint.size(), 32u) << "SHA-256 message imprint expected";
+
+    EXPECT_EQ(recomputeArchiveImprint(emitted.get(), si), stampedImprint)
+        << "the archive timestamp was minted over an order the emitted document does not carry, so no "
+           "verifier can reproduce the ETSI EN 319 122-1 §5.5.4 imprint from the document it holds";
 }
 
 // Non-SoftHSM tests
