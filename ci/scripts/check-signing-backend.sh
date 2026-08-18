@@ -19,11 +19,18 @@
 # is missing AND when an unexpected one is present, so it cannot be satisfied
 # by a build that simply defines everything.
 #
-# Usage: check-signing-backend.sh <build-dir> <native|dss|both>
+# Usage: check-signing-backend.sh <build-dir> <native|dss|both> [dss-oracle ON|OFF] [werror ON|OFF]
+#
+# The two optional arguments extend the same fail-closed discipline to the
+# OTHER configure flags the CI matrix passes: -DBUILD_DSS_ORACLE and
+# -DLIBREMIDDLEWARE_WERROR are equally silent when their names are mistyped,
+# and a silently-disarmed WERROR undoes the warnings gate with no signal.
 set -euo pipefail
 
-build_dir="${1:?usage: check-signing-backend.sh <build-dir> <native|dss|both>}"
-expected="${2:?usage: check-signing-backend.sh <build-dir> <native|dss|both>}"
+build_dir="${1:?usage: check-signing-backend.sh <build-dir> <native|dss|both> [dss-oracle ON|OFF] [werror ON|OFF]}"
+expected="${2:?usage: check-signing-backend.sh <build-dir> <native|dss|both> [dss-oracle ON|OFF] [werror ON|OFF]}"
+expected_oracle="${3:-}"
+expected_werror="${4:-}"
 
 case "$expected" in
     native | dss | both) ;;
@@ -62,6 +69,40 @@ if [ "$actual" != "$expected" ]; then
     grep '^SIGNING_BACKEND' "$cache" >&2 || true
     exit 1
 fi
+
+# Same exact-match rule for the optional flags: exactly one cache entry, whole
+# value comparison against what the workflow says it passed.
+check_bool_cache_entry() {
+    local name="$1" want="$2"
+    [ -n "$want" ] || return 0
+    case "$want" in
+        ON | OFF) ;;
+        *)
+            echo "FAIL: expected value for $name must be ON or OFF (got '$want')" >&2
+            return 1
+            ;;
+    esac
+    local entries
+    entries="$(grep -c "^$name:" "$cache" || true)"
+    if [ "$entries" != "1" ]; then
+        echo "FAIL: expected exactly one $name cache entry, found $entries" >&2
+        return 1
+    fi
+    # Type-tag agnostic: a -D flag passed before the option() declaration is
+    # recorded as UNINITIALIZED, not BOOL, and the value is what matters.
+    local got
+    got="$(sed -n "s/^$name:[A-Z]*=//p" "$cache")"
+    if [ "$got" != "$want" ]; then
+        echo "FAIL: $name is '$got', expected '$want'." >&2
+        echo "      A mistyped -D flag name does not fail configure; check the" >&2
+        echo "      flag spelling in the workflow." >&2
+        return 1
+    fi
+    echo "  ok: $name=$got (expected $want)"
+}
+
+check_bool_cache_entry BUILD_DSS_ORACLE "$expected_oracle"
+check_bool_cache_entry LIBREMIDDLEWARE_WERROR "$expected_werror"
 
 # ---------------------------------------------------------------------------
 # 2. The compile definitions must have actually reached the generated build.

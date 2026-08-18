@@ -115,7 +115,7 @@ jobs:
         # so a misspelled flag name above would not fail configure: CMake would
         # record the stray variable, keep the "native" default, and this job
         # would pass forever while silently testing one backend twice.
-        run: ./ci/scripts/check-signing-backend.sh build ${{ matrix.signing_backend }}
+        run: ./ci/scripts/check-signing-backend.sh build ${{ matrix.signing_backend }} ${{ matrix.dss_oracle }} ON
 
       - name: Check pimpl visibility
         if: matrix.release_gates

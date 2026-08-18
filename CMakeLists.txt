@@ -92,9 +92,10 @@ set(LIBREMIDDLEWARE_CERTIFICATES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/cer
 # to compute this value. The module is idempotent and its cache entries are
 # already created by the later include, so this only moves them earlier.
 include(GNUInstallDirs)
-set(LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR
-    "${CMAKE_INSTALL_FULL_DATAROOTDIR}/librescrs/certificates"
-    CACHE PATH "Installed location of the bundled CA certificates" FORCE)
+# Plain set(), not a cache entry: a FORCE-overwritten cache variable would
+# advertise itself as user-configurable in cmake-gui while never honouring an
+# override. The value is derived, not chosen.
+set(LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR "${CMAKE_INSTALL_FULL_DATAROOTDIR}/librescrs/certificates")
 
 # Vendored OpenSC fork (static archive) for the OpenScPKCS11Provider.
 # Pinned at thirdparty/opensc-source. ON by default; set to OFF to skip
