@@ -82,6 +82,10 @@ inline LibreSCRS::Signing::SigningResult::Status classifyLibresignError(const li
             return S::InvalidDocument;
         case SignFailureKind::CardError:
         case SignFailureKind::RevocationFetchFailed:
+        // Chain-incomplete keeps the engine-error status (LC's -Wswitch-enum
+        // consumers gain no public enum value); the dedicated user-message
+        // key below carries the actionable distinction.
+        case SignFailureKind::CertificateChainIncomplete:
         case SignFailureKind::XmlSerializationError:
         case SignFailureKind::JsonSerializationError:
         case SignFailureKind::ZipBuildError:
@@ -140,6 +144,8 @@ inline LibreSCRS::LocalizedText kindToUserMessage(libresign::SignFailureKind k)
         return EK::tsaUnreachable();
     case SignFailureKind::RevocationFetchFailed:
         return EK::revocationFetchFailed();
+    case SignFailureKind::CertificateChainIncomplete:
+        return EK::certificateChainIncomplete();
     case SignFailureKind::CardError:
         return EK::cardError();
     case SignFailureKind::PinFailed:

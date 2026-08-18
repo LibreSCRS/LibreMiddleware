@@ -338,7 +338,11 @@ std::optional<SigningResult> NativeSigningService::completeLongTermChain(Pkcs11T
     // configured TL(s): a long-term signature with an unverifiable chain
     // cannot reach the LT validation level. Skipped when no TL is configured
     // (tlAnchorCerts empty) — the chain then stays as the card provided it,
-    // preserving pre-TL behaviour; the revocation gate still applies.
+    // and on the SIGN paths the revocation gate fails closed on any tail the
+    // chain cannot prove (an unproven terminal is the chain-incomplete
+    // failure, not a silent pass). The appendSigner path reaches here too but
+    // has no revocation gate at all — a separate pre-existing gap, tracked in
+    // the backlog, NOT closed by this skip.
     if (level < SignatureLevel::B_LT || tlAnchorCerts.empty())
         return std::nullopt;
 
@@ -347,7 +351,9 @@ std::optional<SigningResult> NativeSigningService::completeLongTermChain(Pkcs11T
         return makeFailure(SignFailureKind::EngineError,
                            "long-term signing requires a complete certificate chain, but the signer's "
                            "issuing CA was not found in the configured Trusted List(s)");
-    token.setResolvedChain(std::move(ordered));
+    // The ONE place that can assert the anchor termination: buildOrderedChain's
+    // only non-empty return ends at a Trusted-List candidate by construction.
+    token.setResolvedChain(std::move(ordered), ChainTermination::AnchorTerminated);
     return std::nullopt;
 }
 

@@ -3,6 +3,8 @@
 
 #include "native/pkcs11_token.h"
 
+#include "native_utils.h" // orderOnTokenChain — the issuer-verified fallback ordering
+
 #include "types.h" // SignFailureKind / SignFailureException for typed KeyAmbiguous
 
 #include <LibreSCRS/Export.h>
@@ -61,6 +63,9 @@ struct LIBRESCRS_INTERNAL Pkcs11Token::Impl
     /// completing the card's chain against the Trusted List (cards usually
     /// carry only the leaf). Empty preserves the on-token query behaviour.
     std::vector<std::vector<uint8_t>> resolvedChain;
+    /// The termination the resolvedChain's caller asserted (Unterminated
+    /// whenever the on-token fallback is active).
+    ChainTermination resolvedTermination = ChainTermination::Unterminated;
 
     ~Impl()
     {
@@ -460,10 +465,20 @@ std::vector<uint8_t> Pkcs11Token::certificate() const
     return certData;
 }
 
-void Pkcs11Token::setResolvedChain(std::vector<std::vector<uint8_t>> chain)
+void Pkcs11Token::setResolvedChain(std::vector<std::vector<uint8_t>> chain, ChainTermination termination)
 {
     std::scoped_lock lock(impl->sessionMutex);
     impl->resolvedChain = std::move(chain);
+    // An empty chain restores the on-token fallback, whose walk proves
+    // nothing about the tail — never let a stale assertion outlive the chain
+    // it was made for.
+    impl->resolvedTermination = impl->resolvedChain.empty() ? ChainTermination::Unterminated : termination;
+}
+
+ChainTermination Pkcs11Token::chainTermination() const
+{
+    std::scoped_lock lock(impl->sessionMutex);
+    return impl->resolvedChain.empty() ? ChainTermination::Unterminated : impl->resolvedTermination;
 }
 
 std::vector<std::vector<uint8_t>> Pkcs11Token::certificateChain() const
@@ -524,7 +539,7 @@ std::vector<std::vector<uint8_t>> Pkcs11Token::certificateChain() const
         return {};
 
     // Read each certificate and check if its CKA_ID matches the private key
-    std::vector<std::vector<uint8_t>> chain;
+    std::vector<std::vector<uint8_t>> certs;
     int signerIndex = -1;
 
     for (CK_OBJECT_HANDLE handle : allHandles) {
@@ -550,19 +565,27 @@ std::vector<std::vector<uint8_t>> Pkcs11Token::certificateChain() const
                 certIdAttr.pValue = certId.data();
                 if (impl->funcs->C_GetAttributeValue(impl->session, handle, &certIdAttr, 1) == CKR_OK &&
                     certId == keyId) {
-                    signerIndex = static_cast<int>(chain.size());
+                    signerIndex = static_cast<int>(certs.size());
                 }
             }
         }
 
-        chain.push_back(std::move(certData));
+        certs.push_back(std::move(certData));
     }
 
-    // Move signer certificate to front of chain
-    if (signerIndex > 0)
-        std::swap(chain[0], chain[static_cast<size_t>(signerIndex)]);
+    if (certs.empty())
+        return certs;
 
-    return chain;
+    // Order the fallback chain by ISSUER VERIFICATION instead of returning
+    // every token cert with the signer merely swapped to the front. On a
+    // multi-cert card the raw object list places unrelated siblings (an
+    // encipherment cert of the same holder) next to the signer, and every
+    // consumer that treats element i+1 as element i's issuer then verifies
+    // revocation evidence against the wrong key. When no CKA_ID matched, the
+    // presumed signer stays at element 0 — the historic behavior.
+    if (signerIndex > 0)
+        std::swap(certs[0], certs[static_cast<size_t>(signerIndex)]);
+    return native_utils::orderOnTokenChain(std::move(certs));
 }
 
 } // namespace libresign

@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include "../types.h" // ChainTermination
 #include "pkcs11_module_manager.h"
 
 #include <LibreSCRS/Secure/Buffer.h>
@@ -119,8 +120,20 @@ public:
     ///        this for long-term levels: cards usually carry only the leaf, so
     ///        the chain is completed against the Trusted List before any format
     ///        module embeds it. Passing an empty vector restores the on-token
-    ///        query behaviour.
-    void setResolvedChain(std::vector<std::vector<uint8_t>> chain);
+    ///        query behaviour (and resets the termination to Unterminated).
+    ///
+    ///        @p termination is the CALLER's proof obligation: assert
+    ///        AnchorTerminated ONLY for a chain whose last element is a
+    ///        Trusted-List anchor by construction (the resolver's success
+    ///        return). The revocation gate exempts the chain's tail on this
+    ///        assertion — a wrong claim reopens a fail-open.
+    void setResolvedChain(std::vector<std::vector<uint8_t>> chain, ChainTermination termination);
+
+    /// @brief Termination provenance of the chain @ref certificateChain
+    ///        currently returns: the value asserted by the last
+    ///        @ref setResolvedChain, or Unterminated when the on-token
+    ///        fallback is active (its walk proves nothing about the tail).
+    [[nodiscard]] ChainTermination chainTermination() const;
 
 private:
     struct Impl;

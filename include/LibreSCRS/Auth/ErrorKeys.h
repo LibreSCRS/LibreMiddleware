@@ -166,6 +166,21 @@ namespace LibreSCRS::Auth::ErrorKeys {
         "librescrs.error.sign.revocation_fetch_failed", "Certificate revocation data could not be fetched.", {}};
 }
 
+/// @brief A long-term signature was requested but the signing certificate's
+///        chain is incomplete: no Trusted List completed it and the card did
+///        not provide a verified full chain, so the revocation evidence the
+///        level requires cannot be verified at all. Distinct from
+///        @ref revocationFetchFailed — fetching is not the problem and a
+///        retry will not help; configuring a Trusted List (or a card with
+///        its full chain) is. @since 4.3
+[[nodiscard]] inline LocalizedText certificateChainIncomplete()
+{
+    return LocalizedText{"librescrs.error.sign.certificate_chain_incomplete",
+                         "The signing certificate's chain is incomplete; configure a Trusted List or use a card "
+                         "that provides its full certificate chain.",
+                         {}};
+}
+
 /// @brief Signing failed due to a low-level communication or APDU error
 ///        with the smart card. Distinct from @ref pinIncorrect (wrong PIN)
 ///        and @ref pinBlocked (PUK workflow) — this covers transport

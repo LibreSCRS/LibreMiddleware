@@ -3,6 +3,7 @@
 
 #include "native_utils.h"
 
+#include "native/issuer_resolution.h"
 #include "native/pkcs11_token.h"
 #include "native/revocation_client.h"
 #include "types.h"
@@ -457,7 +458,65 @@ libresign::RevocationData collectRevocationData(libresign::Pkcs11Token& token, c
     libresign::RevocationClient revClient;
     revClient.crlEnabled = tsa.crlEnabled;
     revClient.ocspEnabled = tsa.ocspEnabled;
-    return revClient.collectForChain(chain);
+    // The termination provenance travels from the ONE place that can prove
+    // it (completeLongTermChain's Trusted-List resolution) through the token;
+    // the on-token fallback is always Unterminated and the gate proves (or
+    // fails) the tail itself.
+    return revClient.collectForChain(chain, token.chainTermination());
+}
+
+std::vector<std::vector<uint8_t>> orderOnTokenChain(std::vector<std::vector<uint8_t>> certs)
+{
+    if (certs.empty())
+        return certs;
+
+    struct PoolEntry
+    {
+        const std::vector<uint8_t>* der;
+        X509Ptr x;
+    };
+    std::vector<PoolEntry> pool;
+    for (std::size_t i = 1; i < certs.size(); ++i) {
+        try {
+            pool.push_back({&certs[i], parseCert(certs[i])});
+        } catch (const std::exception&) {
+            // Undecodable DER never enters the pool — it could not be
+            // verified as an issuer of anything.
+        }
+    }
+
+    std::vector<std::vector<uint8_t>> chain;
+    chain.push_back(certs[0]);
+    X509Ptr leaf;
+    try {
+        leaf = parseCert(certs[0]);
+    } catch (const std::exception&) {
+        return chain; // unparseable signer: bare-signer chain, the gate fails the tail
+    }
+
+    X509* current = leaf.get();
+    std::vector<bool> used(pool.size(), false);
+    constexpr int kMaxDepth = 16; // cross-signed pairs / pathological tokens terminate here
+    for (int depth = 0; depth < kMaxDepth; ++depth) {
+        if (isSelfSignedSelfVerifying(current))
+            break; // reached a self-signed root — terminal
+        int found = -1;
+        for (std::size_t i = 0; i < pool.size(); ++i) {
+            if (used[i])
+                continue;
+            if (issuerSignedSubject(pool[i].x.get(), current)) {
+                found = static_cast<int>(i);
+                break;
+            }
+        }
+        if (found < 0)
+            break; // no issuer on the token — partial chain
+        used[static_cast<std::size_t>(found)] = true;
+        chain.push_back(*pool[static_cast<std::size_t>(found)].der);
+        current = pool[static_cast<std::size_t>(found)].x.get();
+    }
+
+    return chain;
 }
 
 std::vector<std::vector<uint8_t>> buildOrderedChain(const std::vector<std::vector<uint8_t>>& tokenChain,
@@ -526,17 +585,14 @@ std::vector<std::vector<uint8_t>> buildOrderedChain(const std::vector<std::vecto
             return {};
 
         // The issuer is the cert whose subject matches current's issuer AND
-        // whose key actually verifies current's signature. The signature check
-        // is essential: a subject-DN match alone would accept a name-colliding
-        // impostor that never signed this cert.
+        // whose key actually verifies current's signature (the shared
+        // predicate — a subject-DN match alone would accept a name-colliding
+        // impostor that never signed this cert).
         int found = -1;
         for (std::size_t i = 0; i < pool.size(); ++i) {
             if (used[i])
                 continue;
-            if (X509_NAME_cmp(X509_get_subject_name(pool[i].x.get()), X509_get_issuer_name(current)) != 0)
-                continue;
-            EVP_PKEY* issuerKey = X509_get0_pubkey(pool[i].x.get());
-            if (issuerKey && X509_verify(current, issuerKey) == 1) {
+            if (issuerSignedSubject(pool[i].x.get(), current)) {
                 found = static_cast<int>(i);
                 break;
             }
@@ -556,6 +612,20 @@ std::vector<std::vector<uint8_t>> buildOrderedChain(const std::vector<std::vecto
 
 std::optional<libresign::SigningResult> revocationFailClosed(const libresign::RevocationData& rev)
 {
+    // An unverifiable tail wins over per-cert gaps: it is the actionable root
+    // cause (no trusted terminal exists, so no evidence for the tail could
+    // ever be verified — retrying fetches cannot help). Any gap count rides
+    // along in the diagnostic detail.
+    if (rev.unverifiableTail) {
+        std::string detail = "long-term (B-LT/B-LTA) signing requires a certificate chain with a proven "
+                             "terminal (a Trusted-List anchor or a verified self-signed root), but the "
+                             "chain is incomplete";
+        if (!rev.certsWithoutRevocation.empty())
+            detail += "; additionally " + std::to_string(rev.certsWithoutRevocation.size()) +
+                      " chain certificate(s) lack verified revocation evidence";
+        return libresign::makeFailure(libresign::SignFailureKind::CertificateChainIncomplete, std::move(detail));
+    }
+
     if (rev.certsWithoutRevocation.empty())
         return std::nullopt;
 

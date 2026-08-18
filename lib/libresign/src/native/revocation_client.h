@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include "../types.h" // ChainTermination
+
 #include <cstdint>
 #include <ctime>
 #include <string>
@@ -23,13 +25,23 @@ struct RevocationData
     std::vector<std::vector<uint8_t>> crls;          // DER-encoded CRLs
     std::vector<std::vector<uint8_t>> ocspResponses; // DER-encoded OCSP responses
 
-    // Indices (into the chain passed to collectForChain) of the non-root certs
-    // for which NO revocation information could be obtained — neither a
-    // signature-verified CRL nor a "good" OCSP response. Empty means every
-    // non-root cert is covered. A long-term signature (B-LT/B-LTA) MUST treat a
-    // non-empty value as fail-closed: embedding a chain with unrevocable links
-    // produces a signature that cannot reach the LT validation level.
+    // Indices (into the chain passed to collectForChain) of the certs with a
+    // known issuer for which NO revocation information could be obtained —
+    // neither a signature-verified CRL nor a "good" OCSP response. Empty means
+    // every such cert is covered. A long-term signature (B-LT/B-LTA) MUST
+    // treat a non-empty value as fail-closed: embedding a chain with
+    // unrevocable links produces a signature that cannot reach the LT
+    // validation level.
     std::vector<std::size_t> certsWithoutRevocation;
+
+    // The chain has NO proven terminal (deliberately a bare flag, not a cert
+    // reference — the empty-chain case has nothing to point at): the caller
+    // did not assert a Trusted-List anchor termination and the last element
+    // is not a self-verifying self-signed root reached through at least one
+    // issuer hop. Revocation evidence for such a tail cannot be
+    // signature-verified AT ALL, so a long-term signature MUST fail closed
+    // with the chain-incomplete (not fetch-failed) failure.
+    bool unverifiableTail = false;
 };
 
 class RevocationClient
@@ -84,8 +96,18 @@ public:
                                    const std::string& ocspUrl, int timeoutSeconds = 10);
 
     // Collect all revocation data for a certificate chain.
-    // chain[0] = signer cert, chain[1] = intermediate, ..., chain[n] = root
-    RevocationData collectForChain(const std::vector<X509*>& chain);
+    // chain[0] = signer cert, chain[1] = intermediate, ..., chain[n] = terminal.
+    //
+    // The LAST element is exempt from evidence collection ONLY when the
+    // termination is PROVEN: either @p termination says the caller completed
+    // the chain against a Trusted List (AnchorTerminated — assert it only at
+    // that proof point), or the last element is a self-signed,
+    // self-verifying root reached through at least one issuer hop (a
+    // self-signed SIGNER alone never self-exempts). Otherwise the tail —
+    // including the whole chain when it is empty or a bare signer — is
+    // recorded as RevocationData::unverifiableTail and the long-term caller
+    // fails closed with the chain-incomplete failure.
+    RevocationData collectForChain(const std::vector<X509*>& chain, ChainTermination termination);
 };
 
 } // namespace libresign

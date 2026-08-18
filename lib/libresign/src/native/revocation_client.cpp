@@ -3,6 +3,7 @@
 
 #include "native/revocation_client.h"
 #include "http_client.h"
+#include "native/issuer_resolution.h"   // isSelfSignedSelfVerifying — the tail-exemption proof
 #include "native/trusted_list_parser.h" // isSafeFetchUrl — shared SSRF host/IP-literal gate
 #include "native_utils.h"
 #include "openssl_raii.h"
@@ -315,11 +316,32 @@ std::vector<uint8_t> RevocationClient::fetchOcsp(X509* cert, X509* issuer, const
     return derEncode(i2d_OCSP_RESPONSE, resp.get());
 }
 
-RevocationData RevocationClient::collectForChain(const std::vector<X509*>& chain)
+RevocationData RevocationClient::collectForChain(const std::vector<X509*>& chain, ChainTermination termination)
 {
     RevocationData data;
 
-    // Process every cert except the root (last in chain)
+    // A chain with nothing in it has no verifiable tail by definition; the
+    // long-term caller must fail closed as chain-incomplete, never pass
+    // silently (the on-token query can transiently return nothing while the
+    // signer cert itself resolved).
+    if (chain.empty()) {
+        data.unverifiableTail = true;
+        return data;
+    }
+
+    // The last element is exempt from evidence collection ONLY when the
+    // termination is proven (see the header contract): a Trusted-List anchor
+    // asserted by the completer, or a self-verifying self-signed root reached
+    // through at least one issuer hop. A self-signed SIGNER alone (length-1)
+    // must NOT self-exempt — no evidence for it could ever be verified, and
+    // exempting it would recreate the silent length-1 pass this gate exists
+    // to close.
+    const bool lastExempt = termination == ChainTermination::AnchorTerminated ||
+                            (chain.size() >= 2 && native_utils::isSelfSignedSelfVerifying(chain.back()));
+    if (!lastExempt)
+        data.unverifiableTail = true;
+
+    // Process every cert that has a known issuer (all but the last).
     for (size_t i = 0; i + 1 < chain.size(); ++i) {
         X509* cert = chain[i];
         X509* issuer = chain[i + 1];

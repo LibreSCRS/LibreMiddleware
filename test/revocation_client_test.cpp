@@ -14,6 +14,8 @@
 #include <openssl/x509v3.h>
 
 #include <ctime>
+#include <memory>
+#include <string>
 #include <vector>
 
 using namespace libresign;
@@ -48,38 +50,149 @@ TEST(RevocationClient, FetchOcspFromInvalidUrlReturnsEmpty)
     ASSERT_TRUE(resp.empty());
 }
 
-// A bare X509 carries no CRL Distribution Point and no OCSP AIA extension, so
-// extractCrlUrls/extractOcspUrls yield nothing and collectForChain attempts no
-// network at all — the cert is simply unrevocable. For a long-term (B-LT)
-// signature that is a fail-closed condition: collectForChain must REPORT the
-// gap (by chain index) rather than silently returning empty revocation data.
-TEST(RevocationClient, CollectForChainReportsNonRootCertWithoutRevocationEndpoints)
+// ---- collectForChain tail semantics ----------------------------------------
+//
+// The last element is exempt from evidence collection ONLY when the chain's
+// termination is proven: asserted AnchorTerminated by the Trusted-List
+// completer, or a self-verifying self-signed root reached through at least
+// one issuer hop. Everything else — bare signer, sibling tail, empty chain —
+// is an UNVERIFIABLE TAIL: no issuer key exists against which any CRL/OCSP
+// for it could be verified, and the long-term caller must fail closed as
+// chain-incomplete. The historic behavior (skip the last element always,
+// report nothing for a single-cert chain) silently produced B-LT/B-LTA
+// signatures with ZERO revocation evidence on no-Trusted-List setups; these
+// pins exist so that fail-open cannot be reintroduced as a "simplification".
+
+namespace {
+
+// Build a minimal signed cert CN=subjectCn issued by CN=issuerCn (pass the
+// subject's own key + equal CNs for a self-signed root). Mirrors the
+// native_utils_test helper.
+libresign::X509Ptr makeCert(const std::string& subjectCn, const std::string& issuerCn, EVP_PKEY* subjectKey,
+                            EVP_PKEY* issuerKey)
+{
+    libresign::X509Ptr x(X509_new());
+    X509_set_version(x.get(), 2);
+    ASN1_INTEGER_set(X509_get_serialNumber(x.get()), 1);
+    X509_gmtime_adj(X509_getm_notBefore(x.get()), -3600);
+    X509_gmtime_adj(X509_getm_notAfter(x.get()), 60L * 60 * 24 * 365);
+    X509_set_pubkey(x.get(), subjectKey);
+    X509_NAME_add_entry_by_txt(X509_get_subject_name(x.get()), "CN", MBSTRING_ASC,
+                               reinterpret_cast<const unsigned char*>(subjectCn.c_str()), -1, -1, 0);
+    X509_NAME_add_entry_by_txt(X509_get_issuer_name(x.get()), "CN", MBSTRING_ASC,
+                               reinterpret_cast<const unsigned char*>(issuerCn.c_str()), -1, -1, 0);
+    X509_sign(x.get(), issuerKey, EVP_sha256());
+    return x;
+}
+
+struct EvpFree
+{
+    void operator()(EVP_PKEY* p) const
+    {
+        EVP_PKEY_free(p);
+    }
+};
+using KeyPtr = std::unique_ptr<EVP_PKEY, EvpFree>;
+
+KeyPtr makeKey()
+{
+    return KeyPtr(EVP_EC_gen("P-256"));
+}
+
+} // namespace
+
+// An anchor-terminated chain keeps the historic exemption: the completer
+// proved the tail, so only the certs with known issuers need evidence — and a
+// bare pair without endpoints reports exactly the leaf gap.
+TEST(RevocationClient, CollectForChainAnchorTerminatedExemptsTailAndReportsLeafGap)
 {
     X509Ptr leaf(X509_new());
     X509Ptr issuer(X509_new());
     ASSERT_TRUE(leaf && issuer);
 
     std::vector<X509*> chain{leaf.get(), issuer.get()};
-    RevocationClient client;
-    auto data = client.collectForChain(chain);
+    auto data = RevocationClient{}.collectForChain(chain, ChainTermination::AnchorTerminated);
 
-    // The leaf (index 0) is the only non-root cert; it has no endpoints, so it
-    // is the lone gap. The trailing issuer is treated as the root and skipped.
     EXPECT_EQ(data.certsWithoutRevocation, (std::vector<std::size_t>{0}));
+    EXPECT_FALSE(data.unverifiableTail);
     EXPECT_TRUE(data.crls.empty());
     EXPECT_TRUE(data.ocspResponses.empty());
 }
 
-// A single-cert chain has no non-root cert to revoke, so there is no gap.
-TEST(RevocationClient, CollectForChainSingleCertHasNoRevocationGap)
+// Without the anchor assertion, a tail that is not a self-verifying
+// self-signed root is unverifiable — reported as such alongside the leaf gap.
+TEST(RevocationClient, CollectForChainUnterminatedTailIsUnverifiable)
+{
+    X509Ptr leaf(X509_new());
+    X509Ptr issuer(X509_new());
+    ASSERT_TRUE(leaf && issuer);
+
+    std::vector<X509*> chain{leaf.get(), issuer.get()};
+    auto data = RevocationClient{}.collectForChain(chain, ChainTermination::Unterminated);
+
+    EXPECT_EQ(data.certsWithoutRevocation, (std::vector<std::size_t>{0}));
+    EXPECT_TRUE(data.unverifiableTail);
+}
+
+// A single-cert unterminated chain — the typical no-Trusted-List card that
+// carries only its signer — FAILS CLOSED as an unverifiable tail. This
+// deliberately REVERSES the historic pin ("single cert ⇒ no gap"): that shape
+// let a long-term signature pass with no revocation evidence at all.
+TEST(RevocationClient, CollectForChainSingleCertFailsClosedAsUnverifiableTail)
 {
     X509Ptr only(X509_new());
     ASSERT_TRUE(only);
 
     std::vector<X509*> chain{only.get()};
-    auto data = RevocationClient{}.collectForChain(chain);
+    auto data = RevocationClient{}.collectForChain(chain, ChainTermination::Unterminated);
+
+    EXPECT_TRUE(data.certsWithoutRevocation.empty()) << "no cert with a known issuer exists to record a gap for";
+    EXPECT_TRUE(data.unverifiableTail) << "a bare signer has no verifiable tail and must fail closed";
+}
+
+// A SELF-SIGNED signer alone must not self-exempt: no evidence for it could
+// ever be signature-verified, and exempting it would recreate the silent
+// single-cert pass through the side door.
+TEST(RevocationClient, CollectForChainSelfSignedSignerAloneStillFailsClosed)
+{
+    auto key = makeKey();
+    ASSERT_TRUE(key);
+    auto selfSigned = makeCert("Self Signer", "Self Signer", key.get(), key.get());
+    ASSERT_TRUE(selfSigned);
+
+    std::vector<X509*> chain{selfSigned.get()};
+    auto data = RevocationClient{}.collectForChain(chain, ChainTermination::Unterminated);
+
+    EXPECT_TRUE(data.unverifiableTail);
+}
+
+// A self-verifying self-signed ROOT reached through an issuer hop is a proven
+// terminal: exempt, with the leaf still processed (and gapped — no endpoints).
+TEST(RevocationClient, CollectForChainSelfSignedRootExemptsTail)
+{
+    auto rootKey = makeKey();
+    auto leafKey = makeKey();
+    ASSERT_TRUE(rootKey && leafKey);
+    auto root = makeCert("Test Root CA", "Test Root CA", rootKey.get(), rootKey.get());
+    auto leaf = makeCert("Test Leaf", "Test Root CA", leafKey.get(), rootKey.get());
+    ASSERT_TRUE(root && leaf);
+
+    std::vector<X509*> chain{leaf.get(), root.get()};
+    auto data = RevocationClient{}.collectForChain(chain, ChainTermination::Unterminated);
+
+    EXPECT_EQ(data.certsWithoutRevocation, (std::vector<std::size_t>{0}));
+    EXPECT_FALSE(data.unverifiableTail) << "a verified self-signed root is a proven terminal";
+}
+
+// An empty chain has no verifiable tail by definition — never a silent pass
+// (the on-token query can transiently return nothing).
+TEST(RevocationClient, CollectForChainEmptyChainFailsClosed)
+{
+    std::vector<X509*> chain;
+    auto data = RevocationClient{}.collectForChain(chain, ChainTermination::Unterminated);
 
     EXPECT_TRUE(data.certsWithoutRevocation.empty());
+    EXPECT_TRUE(data.unverifiableTail);
 }
 
 // ---- CRL freshness (crlWindowValid) ----

@@ -223,6 +223,90 @@ TEST(BuildOrderedChain, PrefersTrustedListAnchorOverTokenPathMaterial)
 // RevocationData::certsWithoutRevocation must produce a RevocationFetchFailed
 // failure; a fully-covered chain must produce nothing (the module proceeds).
 // ---------------------------------------------------------------------------
+// orderOnTokenChain — the on-token fallback ordering: from the signer at
+// element 0, append only certs that VERIFY as issuers; unrelated same-holder
+// siblings (the multi-cert-card hazard) can never enter, so no downstream
+// consumer ever verifies revocation evidence against a sibling's key.
+// ---------------------------------------------------------------------------
+
+TEST(OrderOnTokenChain, DropsUnrelatedSiblingCert)
+{
+    auto signerKey = makeEcKey();
+    auto siblingKey = makeEcKey();
+    auto caKey = makeEcKey();
+    // The signer and an encipherment sibling of the same holder, both issued
+    // by an off-token CA — the sibling is NOT the signer's issuer.
+    auto signerDer = makeCertDer("Holder Sign", "Off Token CA", signerKey.get(), caKey.get());
+    auto siblingDer = makeCertDer("Holder Enc", "Off Token CA", siblingKey.get(), caKey.get());
+
+    auto chain = libresign::native_utils::orderOnTokenChain({signerDer, siblingDer});
+
+    ASSERT_EQ(chain.size(), 1u) << "a sibling must never ride along as a pseudo-issuer";
+    EXPECT_EQ(chain[0], signerDer);
+}
+
+TEST(OrderOnTokenChain, OrdersLeafIntermediateRoot)
+{
+    auto rootKey = makeEcKey();
+    auto intKey = makeEcKey();
+    auto leafKey = makeEcKey();
+    auto rootDer = makeCertDer("Root CA", "Root CA", rootKey.get(), rootKey.get());
+    auto intDer = makeCertDer("Intermediate CA", "Root CA", intKey.get(), rootKey.get());
+    auto leafDer = makeCertDer("Leaf", "Intermediate CA", leafKey.get(), intKey.get());
+
+    // Deliberately scrambled path material after the signer.
+    auto chain = libresign::native_utils::orderOnTokenChain({leafDer, rootDer, intDer});
+
+    ASSERT_EQ(chain.size(), 3u);
+    EXPECT_EQ(chain[0], leafDer);
+    EXPECT_EQ(chain[1], intDer);
+    EXPECT_EQ(chain[2], rootDer);
+}
+
+TEST(OrderOnTokenChain, RejectsNameCollidingImpostorIssuer)
+{
+    auto caKey = makeEcKey();
+    auto impostorKey = makeEcKey();
+    auto leafKey = makeEcKey();
+    // The impostor carries the issuing CA's NAME but a different key — a
+    // subject-DN match alone would accept it; the signature check must not.
+    auto leafDer = makeCertDer("Leaf", "Real CA", leafKey.get(), caKey.get());
+    auto impostorDer = makeCertDer("Real CA", "Real CA", impostorKey.get(), impostorKey.get());
+
+    auto chain = libresign::native_utils::orderOnTokenChain({leafDer, impostorDer});
+
+    ASSERT_EQ(chain.size(), 1u) << "a name-colliding non-signer must never resolve as the issuer";
+}
+
+TEST(OrderOnTokenChain, CrossSignedPairTerminates)
+{
+    // A signs B and B signs A (neither self-signed): the used-set must
+    // terminate the walk instead of looping.
+    auto keyA = makeEcKey();
+    auto keyB = makeEcKey();
+    auto certA = makeCertDer("CA A", "CA B", keyA.get(), keyB.get());
+    auto certB = makeCertDer("CA B", "CA A", keyB.get(), keyA.get());
+
+    auto chain = libresign::native_utils::orderOnTokenChain({certA, certB});
+
+    ASSERT_EQ(chain.size(), 2u);
+    EXPECT_EQ(chain[0], certA);
+    EXPECT_EQ(chain[1], certB);
+}
+
+TEST(OrderOnTokenChain, BareSignerAndEmptyInputAreLegalReturns)
+{
+    auto key = makeEcKey();
+    auto leafDer = makeCertDer("Leaf", "Absent CA", key.get(), key.get());
+
+    auto bare = libresign::native_utils::orderOnTokenChain({leafDer});
+    ASSERT_EQ(bare.size(), 1u);
+    EXPECT_EQ(bare[0], leafDer);
+
+    EXPECT_TRUE(libresign::native_utils::orderOnTokenChain({}).empty());
+}
+
+// ---------------------------------------------------------------------------
 
 TEST(RevocationFailClosed, NulloptWhenEveryChainCertIsCovered)
 {
@@ -241,6 +325,38 @@ TEST(RevocationFailClosed, FailsClosedWhenAnyChainCertLacksRevocation)
     EXPECT_FALSE(result->success);
     ASSERT_TRUE(result->failureKind.has_value());
     EXPECT_EQ(*result->failureKind, libresign::SignFailureKind::RevocationFetchFailed);
+}
+
+TEST(RevocationFailClosed, UnverifiableTailFailsClosedAsChainIncomplete)
+{
+    libresign::RevocationData rev;
+    rev.unverifiableTail = true;
+
+    auto result = revocationFailClosed(rev);
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_FALSE(result->success);
+    ASSERT_TRUE(result->failureKind.has_value());
+    EXPECT_EQ(*result->failureKind, libresign::SignFailureKind::CertificateChainIncomplete)
+        << "an unprovable tail is a chain problem, not a fetch problem";
+}
+
+TEST(RevocationFailClosed, ChainIncompleteWinsOverGapCount)
+{
+    // Both conditions at once: the missing terminal is the actionable root
+    // cause (no retry can help), so the chain-incomplete kind wins and the
+    // gap count rides along in the diagnostic detail.
+    libresign::RevocationData rev;
+    rev.unverifiableTail = true;
+    rev.certsWithoutRevocation = {0};
+
+    auto result = revocationFailClosed(rev);
+
+    ASSERT_TRUE(result.has_value());
+    ASSERT_TRUE(result->failureKind.has_value());
+    EXPECT_EQ(*result->failureKind, libresign::SignFailureKind::CertificateChainIncomplete);
+    EXPECT_NE(result->errorMessage.find("1 chain certificate(s)"), std::string::npos)
+        << "the gap count must survive in the diagnostic detail";
 }
 
 // ---------------------------------------------------------------------------

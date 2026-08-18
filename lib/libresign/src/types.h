@@ -56,8 +56,26 @@ enum class SignFailureKind : std::uint8_t {
     ///        empty. A client-input fault the user fixes by replacing the file;
     ///        distinct from @ref InvalidInput (reserved for request-parameter
     ///        problems such as a missing TSA URL). Append-only. @since 4.3
-    InvalidDocument
+    InvalidDocument,
+    /// @brief A long-term (B-LT/B-LTA) signature was requested but the
+    ///        signer's certificate chain has no PROVEN terminal — no Trusted
+    ///        List anchor completed it and the card-provided chain does not
+    ///        end in a verified self-signed root — so revocation evidence for
+    ///        the tail cannot be signature-verified at all. Distinct from
+    ///        @ref RevocationFetchFailed (evidence endpoints failed for a
+    ///        cert WITH a known issuer): the user-actionable fix is to
+    ///        configure a Trusted List or use a card that provides its full
+    ///        chain, not to retry the fetch. @since 4.3
+    CertificateChainIncomplete
 };
+
+/// @brief Provenance of a certificate chain handed to the revocation gate:
+///        how (whether) its LAST element is proven to be the chain's trust
+///        terminal. AnchorTerminated is asserted ONLY by the caller that
+///        completed the chain against a Trusted List (the resolver's success
+///        return appends the anchor by construction); everything else is
+///        Unterminated and the gate proves (or fails) the tail itself.
+enum class ChainTermination : std::uint8_t { Unterminated, AnchorTerminated };
 
 /// @brief Signature format taxonomy.
 ///

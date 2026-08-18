@@ -162,6 +162,20 @@ libresign::RevocationData collectRevocationData(libresign::Pkcs11Token& token, c
 // the policy out of the format modules keeps it card-free and unit-tested.
 std::optional<libresign::SigningResult> revocationFailClosed(const libresign::RevocationData& rev);
 
+// Order a token's certificate objects into an issuer-verified chain (DER,
+// leaf-first) for the on-token fallback. @p certs[0] is the signer; every
+// further element is candidate path material. Starting from the signer,
+// repeatedly append the cert whose subject DN matches the current cert's
+// issuer DN AND whose key verifies its signature (the same predicate the
+// Trusted-List walk applies; a used-set plus a depth cap terminates
+// cross-signed pairs), stopping at a self-verifying self-signed root.
+// Unrelated same-holder siblings (e.g. an encipherment cert) can never
+// enter. A partial chain — down to the bare signer — is a legal return: the
+// revocation gate proves or fails the tail. Proves NOTHING about the
+// termination (the result is always ChainTermination::Unterminated
+// territory).
+std::vector<std::vector<uint8_t>> orderOnTokenChain(std::vector<std::vector<uint8_t>> certs);
+
 // Build an ordered, completed certificate chain (DER, leaf-first) for a
 // long-term signature. Starting from the card's signer cert (@p tokenChain[0]),
 // walk issuers found among the remaining token certs and the supplied
