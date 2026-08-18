@@ -509,6 +509,11 @@ std::vector<uint8_t> dg1Fixture()
 // the knob explicitly — an unset knob asserts Unknown, not Absent.
 enum class CardAccessMode {
     AbsentNotFound, // MF ok; SELECT 011C -> 6A82 (definitive absence)
+    Deactivated,    // MF ok; SELECT 011C -> 6283 (file deactivated: definitive
+                    // absence; the reader must NOT attempt READ BINARY —
+                    // the rig fails the poison counter if it does)
+    Terminated6285, // MF ok; SELECT 011C -> 6285 (termination warning: NOT
+                    // definitive; the reader proceeds to READ, which fails)
     PresentPace,    // MF ok; 011C holds a valid PACEInfo (PACE-CAN OID)
     PresentNoPace,  // MF ok; 011C holds a well-formed CardAccess, zero PACEInfo
     MalformedData,  // MF ok; 011C read ok but first byte != 0x31 (junk)
@@ -553,6 +558,12 @@ struct LdsRigState
     // EF.CardAccess bytes served for Present*/Malformed/Truncated modes.
     CardAccessMode cardAccess = CardAccessMode::SoftFail;
     std::vector<uint8_t> cardAccessData;
+    // Poison counter for the Deactivated mode: a READ BINARY issued while the
+    // deactivated EF.CardAccess is the immediately-preceding selection is a
+    // contract violation (content of a deactivated file must never be read) —
+    // tests assert this stays 0. Any subsequent SELECT clears the arming.
+    int deactivatedReadAttempts = 0;
+    bool deactivatedSelectArmed = false;
 };
 
 APDUResponse ldsRigTransmit(LdsRigState& st, const APDUCommand& cmd)
@@ -560,6 +571,12 @@ APDUResponse ldsRigTransmit(LdsRigState& st, const APDUCommand& cmd)
     st.log.push_back(cmd);
     auto ok = [](std::vector<uint8_t> d = {}) { return APDUResponse{std::move(d), 0x90, 0x00}; };
     auto sw = [](uint8_t a, uint8_t b) { return APDUResponse{{}, a, b}; };
+
+    // Any SELECT disarms the deactivated-read poison; only the 6283 return
+    // below re-arms it, so the counter names exactly the forbidden
+    // read-right-after-deactivated-select shape.
+    if (cmd.ins == 0xA4)
+        st.deactivatedSelectArmed = false;
 
     if (cmd.ins == 0xA4 && cmd.p1 == 0x04) { // SELECT by AID
         st.current = nullptr;
@@ -589,6 +606,15 @@ APDUResponse ldsRigTransmit(LdsRigState& st, const APDUCommand& cmd)
                 st.current = nullptr;
                 return sw(0x6A, 0x82); // definitive absence
             }
+            if (st.cardAccess == CardAccessMode::Deactivated) {
+                st.current = nullptr;
+                st.deactivatedSelectArmed = true;
+                return sw(0x62, 0x83); // file deactivated (both select variants)
+            }
+            if (st.cardAccess == CardAccessMode::Terminated6285) {
+                st.current = nullptr;
+                return sw(0x62, 0x85); // termination warning: NOT definitive
+            }
             st.current = &st.cardAccessData;
             return ok();
         }
@@ -610,6 +636,12 @@ APDUResponse ldsRigTransmit(LdsRigState& st, const APDUCommand& cmd)
         return ok();
     }
     if (cmd.ins == 0xB0) { // READ BINARY
+        if (st.deactivatedSelectArmed) {
+            // Forbidden shape: reading a file the chip just declared
+            // deactivated. Count it (tests assert 0) and fail the read.
+            ++st.deactivatedReadAttempts;
+            return sw(0x69, 0x85);
+        }
         if (cmd.p1 & 0x80) // short-FID read (EF.CardAccess probe): not present on the rig
             return sw(0x69, 0x82);
         if (st.current == nullptr)
@@ -657,6 +689,8 @@ void setCardAccessMode(LdsRigState& st, CardAccessMode mode)
         st.cardAccessData = {0x31, 0x82, 0x01, 0x00, 0x30, 0x03}; // declares 256 content bytes, 6 present
         break;
     case CardAccessMode::AbsentNotFound:
+    case CardAccessMode::Deactivated:
+    case CardAccessMode::Terminated6285:
     case CardAccessMode::SoftFail:
         st.cardAccessData.clear();
         break;
@@ -1004,6 +1038,75 @@ TEST(EmrtdInterfaceActivation, CardAccessWithoutPaceInfoAlsoYieldsBacProfile)
     EXPECT_FALSE(p.allowBacFallback);
 }
 
+// SW 6283 ("selected file invalidated/deactivated") on the EF.CardAccess
+// selection after a real MF chain is the chip's OWN declaration that the file
+// is unusable: PACE parameters are unobtainable, so the verdict is as
+// definitive as a clean 6A82. Observed on real BAC-only personalizations of a
+// PACE-capable OS. The reader must NOT attempt READ BINARY: content of a
+// deactivated file is not a valid source of PACEInfo, and skipping the read
+// keeps the definitive signal free of attacker-influenceable bits under SM.
+TEST(EmrtdInterfaceActivation, HelperReportsDeactivatedCardAccessDefinitive)
+{
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/false);
+    setCardAccessMode(*rig, CardAccessMode::Deactivated);
+
+    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*session);
+    const auto read = LibreSCRS::SmartCard::Internal::readCardAccessDetailed(nullptr, conn, LibreSCRS::CancelToken{});
+
+    EXPECT_TRUE(read.mfSelected);
+    EXPECT_TRUE(read.efDefinitivelyAbsent) << "6283 after a real MF selection must be definitive absence";
+    EXPECT_FALSE(read.readSucceeded);
+    EXPECT_TRUE(read.data.empty());
+    EXPECT_EQ(rig->deactivatedReadAttempts, 0) << "the reader must not READ a file the chip declared deactivated";
+}
+
+// Scope guard at the reader: the widening is EXACTLY 6283. The neighbouring
+// termination warning 6285 stays non-definitive — the reader proceeds to READ
+// (which this personalization fails) and the verdict falls to Unknown
+// downstream (fail closed to PACE-CAN).
+TEST(EmrtdInterfaceActivation, HelperKeepsTerminationWarningNonDefinitive)
+{
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/false);
+    setCardAccessMode(*rig, CardAccessMode::Terminated6285);
+
+    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*session);
+    const auto read = LibreSCRS::SmartCard::Internal::readCardAccessDetailed(nullptr, conn, LibreSCRS::CancelToken{});
+
+    EXPECT_TRUE(read.mfSelected);
+    EXPECT_FALSE(read.efDefinitivelyAbsent) << "6285 is not part of the definitive-absence acceptance set";
+    EXPECT_FALSE(read.readSucceeded);
+}
+
+// A deactivated EF.CardAccess on the provider branch activates BAC — same
+// routing as the clean-6A82 document: one Mrz prompt, no wasted PACE-CAN, no
+// blanket fallback.
+TEST(EmrtdInterfaceActivation, DeactivatedCardAccessYieldsBacProfileOnProviderBranch)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/false);
+    setCardAccessMode(*rig, CardAccessMode::Deactivated);
+
+    session->setCredentialProvider(
+        [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    const auto p = LibreSCRS::Plugin::detail::CardPluginActivationAccessor::profile(*plugin, *session);
+
+    EXPECT_NE(std::get_if<LibreSCRS::SmartCard::BacRequest>(&p.primary), nullptr)
+        << "a deactivated EF.CardAccess must activate BAC on the provider branch";
+    EXPECT_FALSE(p.allowBacFallback);
+    EXPECT_EQ(rig->deactivatedReadAttempts, 0);
+}
+
 // A PACE-capable document keeps today's PACE-CAN provider path — the
 // regression pin proving the probe does not over-trigger BAC.
 TEST(EmrtdInterfaceActivation, PacePresentKeepsPaceCanOnProviderBranch)
@@ -1267,6 +1370,33 @@ TEST(EmrtdInterfaceActivation, DepositedMrzOnBacOnlyDocumentEnablesFallback)
     EXPECT_TRUE(p.allowBacFallback) << "a genuine BAC-only document must keep the legacy deposit fallback";
 }
 
+// Deposit branch on a deactivated-EF.CardAccess document: same definitive
+// no-PACE routing as the clean-6A82 case — the legacy deposit path keeps the
+// BAC fallback armed, which is what carries a deposited MRZ onto BAC once the
+// PACE attempt surfaces its structural failure.
+TEST(EmrtdInterfaceActivation, DepositedMrzOnDeactivatedDocumentEnablesFallback)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/false);
+    setCardAccessMode(*rig, CardAccessMode::Deactivated);
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    plugin->setCredentials(*session, "mrz_doc_number", LibreSCRS::Secure::String{"L898902C3"});
+    plugin->setCredentials(*session, "mrz_dob", LibreSCRS::Secure::String{"740812"});
+    plugin->setCredentials(*session, "mrz_expiry", LibreSCRS::Secure::String{"120415"});
+    const auto p = LibreSCRS::Plugin::detail::CardPluginActivationAccessor::profile(*plugin, *session);
+
+    const auto* pace = std::get_if<LibreSCRS::SmartCard::PaceRequest>(&p.primary);
+    ASSERT_NE(pace, nullptr);
+    EXPECT_EQ(pace->secretKind, LibreSCRS::Auth::PaceSecretKind::Mrz);
+    EXPECT_TRUE(p.allowBacFallback) << "a deactivated EF.CardAccess document must keep the deposit fallback";
+}
+
 // Host-discovery leg: the auth_required probe reports PACE supported from the
 // MF-scoped read, not the old applet-DF SFID read (which reported false for
 // every MF-only EF.CardAccess document).
@@ -1291,6 +1421,104 @@ TEST(EmrtdInterfaceActivation, HostDiscoveryLegReportsPaceSupportedFromMf)
     EXPECT_EQ(fieldText(*rr.data, "auth_required", "pace_supported").value_or(""), "true");
     EXPECT_FALSE(fieldText(*rr.data, "auth_required", "pace_oids").value_or("").empty())
         << "pace_oids must be reported from the MF-scoped EF.CardAccess read";
+}
+
+// ---------------------------------------------------------------------------
+// preReadAuth truthfulness: the property answers "what WILL the user be
+// asked", so it derives from the SAME profile computation as activation with
+// exactly one predicate forced — "a credential provider is installed". A
+// provider-less presence session must not report "None" for a document whose
+// read will prompt (the agent's presence pass has no provider by design).
+// ---------------------------------------------------------------------------
+
+TEST(EmrtdPreReadAuth, ReportsMrzForDeactivatedDocument)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/false);
+    setCardAccessMode(*rig, CardAccessMode::Deactivated);
+
+    // Presence pass: no provider, no deposited credentials.
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    EXPECT_EQ(plugin->preReadAuth(*session), LibreSCRS::Auth::PreReadAuthMethod::Mrz)
+        << "a definitively PACE-less document will BAC-prompt for the MRZ";
+}
+
+TEST(EmrtdPreReadAuth, ReportsCanForPaceDocument)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/false);
+    setCardAccessMode(*rig, CardAccessMode::PresentPace);
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    EXPECT_EQ(plugin->preReadAuth(*session), LibreSCRS::Auth::PreReadAuthMethod::Can)
+        << "a PACE-capable document will PACE-CAN-prompt";
+}
+
+TEST(EmrtdPreReadAuth, ReportsNoneForPlainReadableContact)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/true);
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    EXPECT_EQ(plugin->preReadAuth(*session), LibreSCRS::Auth::PreReadAuthMethod::None)
+        << "a plain-readable contact interface genuinely asks nothing";
+}
+
+TEST(EmrtdPreReadAuth, ReportsMrzForDepositedMrz)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/false);
+    setCardAccessMode(*rig, CardAccessMode::PresentPace);
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    plugin->setCredentials(*session, "mrz_doc_number", LibreSCRS::Secure::String{"L898902C3"});
+    plugin->setCredentials(*session, "mrz_dob", LibreSCRS::Secure::String{"740812"});
+    plugin->setCredentials(*session, "mrz_expiry", LibreSCRS::Secure::String{"120415"});
+    EXPECT_EQ(plugin->preReadAuth(*session), LibreSCRS::Auth::PreReadAuthMethod::Mrz)
+        << "deposited-credential sessions keep the base-equivalent truthful answer";
+}
+
+// Host-discovery leg on a deactivated EF.CardAccess: truthful
+// pace_supported=false (the file is chip-declared unusable), with no READ
+// attempted against the deactivated file.
+TEST(EmrtdInterfaceActivation, HostDiscoveryLegReportsPaceUnsupportedWhenDeactivated)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/false);
+    setCardAccessMode(*rig, CardAccessMode::Deactivated);
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    auto rr = plugin->readCard(*session);
+    ASSERT_EQ(rr.status, ReadResult::Status::Ok);
+    ASSERT_TRUE(rr.data.has_value());
+    ASSERT_TRUE(rr.data->findGroup("auth_required").has_value());
+    EXPECT_EQ(fieldText(*rr.data, "auth_required", "pace_supported").value_or(""), "false");
+    EXPECT_EQ(rig->deactivatedReadAttempts, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1403,9 +1631,13 @@ constexpr const char* kIcaoDob = "690806";
 constexpr const char* kIcaoDoe = "940623";
 
 enum class SmRereadScenario {
-    AbsentConfirmed, // SM re-read: EF.CardAccess 6A82 -> proceed
-    PacePresent,     // SM re-read: EF.CardAccess carries a PACE OID -> downgrade
-    GarbledRead      // SM re-read: READ BINARY response MAC corrupted -> downgrade
+    AbsentConfirmed,      // SM re-read: EF.CardAccess 6A82 -> proceed
+    DeactivatedConfirmed, // SM re-read: EF.CardAccess 6283 (authentic, MACed)
+                          // -> proceed; READ must never be issued
+    Terminated6285Read,   // SM re-read: EF.CardAccess 6285 + failing READ
+                          // -> downgrade (scope guard: widening is exactly 6283)
+    PacePresent,          // SM re-read: EF.CardAccess carries a PACE OID -> downgrade
+    GarbledRead           // SM re-read: READ BINARY response MAC corrupted -> downgrade
 };
 
 // BER length prefix for the DO'87 body (mirrors secure_messaging.cpp).
@@ -1433,8 +1665,10 @@ struct BacCardOracle
     bool established = false;
 
     SmRereadScenario scenario = SmRereadScenario::AbsentConfirmed;
-    int selectCount = 0;   // MF-scoped selects seen in the SM phase
-    int smInvocations = 0; // wrapped APDUs the raw-responder handled
+    int selectCount = 0;     // MF-scoped selects seen in the SM phase
+    int smInvocations = 0;   // wrapped APDUs the raw-responder handled
+    int rawReadAttempts = 0; // SM READ BINARYs seen in the DeactivatedConfirmed
+                             // scenario — the reader must never issue one
 
     // Handshake + pre-establish plain SELECT (typed transmit()).
     APDUResponse onTransmit(const APDUCommand& cmd)
@@ -1500,6 +1734,12 @@ struct BacCardOracle
             if (!isMf && scenario == SmRereadScenario::AbsentConfirmed) {
                 sw1 = 0x6A;
                 sw2 = 0x82; // definitive absence
+            } else if (!isMf && scenario == SmRereadScenario::DeactivatedConfirmed) {
+                sw1 = 0x62;
+                sw2 = 0x83; // authentic "file deactivated" for BOTH EF selects
+            } else if (!isMf && scenario == SmRereadScenario::Terminated6285Read) {
+                sw1 = 0x62;
+                sw2 = 0x85; // termination warning: reader proceeds to READ
             }
         } else if (ins == 0xB0) {
             if (scenario == SmRereadScenario::PacePresent) {
@@ -1507,6 +1747,13 @@ struct BacCardOracle
             } else if (scenario == SmRereadScenario::GarbledRead) {
                 data = presentPaceCardAccess();
                 corruptMac = true; // a genuine bad-MAC frame, not a throw
+            } else if (scenario == SmRereadScenario::DeactivatedConfirmed) {
+                ++rawReadAttempts; // forbidden: reading a deactivated file
+                sw1 = 0x69;
+                sw2 = 0x85;
+            } else if (scenario == SmRereadScenario::Terminated6285Read) {
+                sw1 = 0x69; // authentic failing READ after the 6285 warning
+                sw2 = 0x86;
             }
         }
         return wrapResponse(data, sw1, sw2, corruptMac);
@@ -1645,6 +1892,74 @@ TEST(BacDowngradeGuard, BacEstablishProceedsWhenSmRereadConfirmsAbsence)
         // The holder owns the session lock; drop it before probing liveness.
     }
     EXPECT_TRUE(session->hasLiveSecureChannel()) << "the established BAC channel survives a confirmed-absence re-read";
+}
+
+// Genuine BAC-only personalization with a DEACTIVATED EF.CardAccess: the
+// SM-authenticated 6283 is the chip's own MAC-covered declaration that the
+// file is unusable — as definitive as a clean 6A82. Activation proceeds, no
+// READ is ever issued against the deactivated file, and a MITM cannot forge
+// this signal (the DO'99 status word is covered by the response MAC; a bare
+// outer 6283 dies on the missing-DO'8E sentinel path).
+TEST(BacDowngradeGuard, BacEstablishProceedsWhenSmRereadConfirmsDeactivation)
+{
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto oracle = armBacDowngradeSession(*session, SmRereadScenario::DeactivatedConfirmed);
+
+    {
+        auto result =
+            session->activateChannelWithSm(emrtdAid(), LibreSCRS::SmartCard::BacRequest{}, LibreSCRS::CancelToken{});
+        ASSERT_TRUE(result.has_value()) << "an authenticated deactivated EF.CardAccess must not abort BAC";
+        EXPECT_TRUE(oracle->established);
+        EXPECT_GT(oracle->smInvocations, 0) << "the SM re-read must have actually run over the tunnel";
+        EXPECT_EQ(oracle->rawReadAttempts, 0) << "the reader must not READ a file the chip declared deactivated";
+    }
+    EXPECT_TRUE(session->hasLiveSecureChannel()) << "the established BAC channel survives a deactivated re-read";
+}
+
+// Scope guard on the authenticated side: the acceptance set widens by EXACTLY
+// 6283. A 6285 termination warning followed by a failing READ stays a
+// fail-closed downgrade abort.
+TEST(BacDowngradeGuard, BacEstablishAbortsOnTerminationWarningSmReread)
+{
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto oracle = armBacDowngradeSession(*session, SmRereadScenario::Terminated6285Read);
+
+    auto result =
+        session->activateChannelWithSm(emrtdAid(), LibreSCRS::SmartCard::BacRequest{}, LibreSCRS::CancelToken{});
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), ChannelActivationError::PaceDowngradeDetected);
+    EXPECT_TRUE(oracle->established);
+    EXPECT_GT(oracle->smInvocations, 0);
+    EXPECT_FALSE(session->hasLiveSecureChannel());
+}
+
+// Consumer (3) of the definitive-absence signal: CardSession's hoisted
+// pre-prompt EF.CardAccess check. On a PACE-primary activation over a
+// deactivated EF.CardAccess, PaceUnsupported surfaces BEFORE the credential
+// provider is ever consulted — no prompt is burned on a card that cannot
+// negotiate PACE.
+TEST(BacDowngradeGuard, DeactivatedCardAccessSurfacesPaceUnsupportedBeforePrompt)
+{
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/false);
+    setCardAccessMode(*rig, CardAccessMode::Deactivated);
+
+    bool providerInvoked = false;
+    session->setCredentialProvider([&providerInvoked](const LibreSCRS::Auth::AuthRequirement&) {
+        providerInvoked = true;
+        return LibreSCRS::Auth::CredentialResult::cancelled();
+    });
+
+    auto result = session->activateChannelWithSm(
+        emrtdAid(), LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can}, LibreSCRS::CancelToken{});
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), ChannelActivationError::PaceUnsupported)
+        << "a deactivated EF.CardAccess must surface the structural PACE absence pre-prompt";
+    EXPECT_FALSE(providerInvoked) << "no credential prompt may be burned on a definitively PACE-less card";
+    EXPECT_EQ(rig->deactivatedReadAttempts, 0);
 }
 
 // ---------------------------------------------------------------------------

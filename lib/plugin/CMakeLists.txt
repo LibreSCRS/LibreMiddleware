@@ -30,6 +30,13 @@ target_compile_definitions(CardPlugin_Impl PRIVATE LIBRESCRS_INTERNAL_BUILD)
 target_include_directories(CardPlugin_Impl PRIVATE
     ${PROJECT_SOURCE_DIR}/include
 )
+# Internal header tree under lib/plugin/include/LibreSCRS_internal/Plugin/
+# (per API-POLICY §6, mirroring lib/SmartCard): exposes the
+# LIBRESCRS_INTERNAL_BUILD-only surface (activation accessor, the shared
+# profile->pre-read-auth mapping) to in-tree consumers on the BUILD_INTERFACE
+# only. External SDK consumers do not see this path.
+target_include_directories(CardPlugin_Impl PUBLIC
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/lib/plugin/include>)
 target_compile_features(CardPlugin_Impl PUBLIC cxx_std_23)
 target_link_libraries(CardPlugin_Impl PUBLIC ${CMAKE_DL_LIBS} SmartCard_Impl)
 target_link_libraries(CardPlugin_Impl PUBLIC LibreSCRS_Auth LibreSCRS_SmartCard)

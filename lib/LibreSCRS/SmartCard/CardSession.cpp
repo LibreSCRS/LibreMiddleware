@@ -314,9 +314,9 @@ dispatchOverChannelOrConn(LibreSCRS::SecureChannel::ISecureChannel* activeChanne
 // BINARY) now lives in the shared internal header
 // <LibreSCRS_internal/SmartCard/CardAccessReader.h> so the PACE path here,
 // the eMRTD plugin's pre-auth capability probe, and the plugin host leg all
-// read the SAME file the SAME way. The PACE branch below consumes the
-// byte-vector convenience wrapper @ref Internal::readCardAccessFromMF, whose
-// behaviour is byte-identical to the reader previously defined here.
+// read the SAME file the SAME way. The PACE branch below consumes
+// @ref Internal::readCardAccessDetailed directly — the outcome detail (not
+// just the bytes) feeds the pre-prompt definitive-absence check.
 
 } // namespace
 
@@ -711,11 +711,13 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
     // this entirely: its downgrade check is the post-establish SM re-read.
     //
     // The security payoff: when the read DEFINITIVELY confirms the document is
-    // PACE-less — a clean 6A82 at MF, OR a complete well-formed EF.CardAccess
-    // advertising no PACE OID (exactly the pre-auth capability probe's "Absent"
-    // verdict) — PaceUnsupported surfaces BEFORE the credential provider is ever
-    // invoked, so no CAN/MRZ prompt is burned on a card that cannot do PACE, on
-    // every host. An UNKNOWN read (unreadable / malformed / truncated / a PACE
+    // PACE-less — a clean 6A82 at MF, a 6283 "file deactivated" answer on the
+    // EF selection (the chip's own declaration that PACE parameters are
+    // unobtainable; no READ is attempted), OR a complete well-formed
+    // EF.CardAccess advertising no PACE OID (exactly the pre-auth capability
+    // probe's "Absent" verdict) — PaceUnsupported surfaces BEFORE the
+    // credential provider is ever invoked, so no CAN/MRZ prompt is burned on a
+    // card that cannot do PACE, on every host. An UNKNOWN read (unreadable / malformed / truncated / a PACE
     // OID with no usable parameterId) is NOT definitive: it falls through to the
     // fail-closed-to-PACE-CAN path, which prompts and only then surfaces
     // PaceUnsupported once the empty OID set is reached below — byte-identical

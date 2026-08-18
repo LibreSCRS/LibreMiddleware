@@ -19,10 +19,13 @@
 /// an SM-authenticated answer, so the verdict fails closed on anything but an
 /// SM-authenticated definitive absence:
 ///
-///   - definitive absence (clean 6A82 after a real MF selection), OR a
-///     COMPLETE well-formed read whose parse yields ZERO PACE OIDs -> Proceed;
+///   - definitive absence (clean 6A82, or 6283 "file deactivated", after a
+///     real MF selection — both SWs arrive MAC-covered in DO'99 inside the
+///     tunnel), OR a COMPLETE well-formed read whose parse yields ZERO PACE
+///     OIDs -> Proceed;
 ///   - >= 1 PACE OID in the SM-authenticated answer -> Downgrade (forged);
-///   - anything else — MAC/integrity failure, undecodable, truncated,
+///   - anything else — MAC/integrity failure (surfaced as the channel's
+///     sentinel SWs, never as an accepted status), undecodable, truncated,
 ///     not-a-SecurityInfos-SET, empty, or any throw -> Downgrade (fail closed).
 ///
 /// The verdict is a pure function over the reader's outcome detail; the caller
@@ -177,8 +180,9 @@ namespace detail {
 [[nodiscard]] inline PaceDowngradeVerdict classifyPostBacCardAccess(const CardAccessReadResult& read) noexcept
 {
     try {
-        // Definitive absence: a clean 6A82 on EF.CardAccess after a real MF
-        // selection, delivered inside the authenticated SM tunnel.
+        // Definitive absence: a clean 6A82 (no such file) or 6283 (file
+        // deactivated) on EF.CardAccess after a real MF selection, delivered
+        // inside the authenticated SM tunnel.
         if (read.efDefinitivelyAbsent)
             return PaceDowngradeVerdict::Proceed;
         // Everything below requires a COMPLETE, well-formed successful read.

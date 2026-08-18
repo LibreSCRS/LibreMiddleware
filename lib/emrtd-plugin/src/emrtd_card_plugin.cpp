@@ -15,6 +15,7 @@
 #include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
 #include <LibreSCRS_internal/SecureChannel/detail/ChannelStateMutator.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
+#include <LibreSCRS_internal/Plugin/PreReadAuthDerivation.h>
 #include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
 #include <LibreSCRS_internal/SmartCard/CardAccessReader.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
@@ -185,13 +186,16 @@ bool outerBerLengthContained(const std::vector<std::uint8_t>& data)
 // blanket fallback; anything ambiguous fails closed to PACE-CAN:
 //   Present = MF-scoped read ok AND parseCardAccess yields >=1 PACE OID.
 //   Absent  = DEFINITIVE only: a clean 6A82 on the EF.CardAccess selection
-//             after a real MF selection, OR a COMPLETE well-formed read
-//             (first byte 0x31, outer BER length fully contained) whose
-//             parse yields ZERO PACE OIDs.
+//             after a real MF selection, a 6283 "file deactivated" answer on
+//             that selection (the chip's own unusability declaration; no READ
+//             is attempted — BAC-only personalizations of PACE-capable OSes),
+//             OR a COMPLETE well-formed read (first byte 0x31, outer BER
+//             length fully contained) whose parse yields ZERO PACE OIDs.
 //   Unknown = everything else: read ok but first byte != 0x31; outer BER
 //             length exceeds the returned bytes (single-READ truncation or a
-//             >256-byte file); MF-selection failure; any other SW; empty
-//             data; any throw. Fails closed to PACE-CAN downstream.
+//             >256-byte file); MF-selection failure; any other SW (incl. the
+//             6285 termination warning); empty data; any throw. Fails closed
+//             to PACE-CAN downstream.
 // The MF-scoped reader leaves the MF selected; the caller re-SELECTs the AID.
 CardAccessProbe probeCardAccess(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
 {
@@ -201,7 +205,7 @@ CardAccessProbe probeCardAccess(LibreSCRS::SmartCard::Internal::PCSCConnection& 
     if (!read.mfSelected)
         return probe; // Unknown: could not even select the MF
     if (read.efDefinitivelyAbsent) {
-        probe.capability = PaceCapability::Absent; // clean 6A82 -> definitive
+        probe.capability = PaceCapability::Absent; // clean 6A82 or 6283 -> definitive
         return probe;
     }
     const auto& data = read.data;
@@ -360,6 +364,26 @@ public:
     LibreSCRS::Plugin::ActivationProfile
     activationProfile(LibreSCRS::SmartCard::CardSession& cardSession) const override
     {
+        return profileFor(cardSession, cardSession.hasCredentialProvider());
+    }
+
+    /// @brief Truthful pre-read reporting: the SAME profile computation with
+    ///        the provider predicate forced. A provider-less presence session
+    ///        must answer "what WILL the user be asked" (Can/Mrz by
+    ///        capability), not "nothing" — the agent's presence pass installs
+    ///        no provider by design, and a legacy direct host deposits and
+    ///        then activates exactly the way the forced profile predicts.
+    ///        One decision function + one shared mapping: the report can
+    ///        never diverge from activation on the same session state.
+    LibreSCRS::Auth::PreReadAuthMethod preReadAuth(LibreSCRS::SmartCard::CardSession& cardSession) const override
+    {
+        return LibreSCRS::Plugin::detail::preReadAuthForProfile(profileFor(cardSession, /*assumeProvider=*/true));
+    }
+
+private:
+    LibreSCRS::Plugin::ActivationProfile profileFor(LibreSCRS::SmartCard::CardSession& cardSession,
+                                                    bool assumeProvider) const
+    {
         LibreSCRS::Plugin::ActivationProfile p;
         p.aid = makeEmrtdAid();
 
@@ -409,7 +433,7 @@ public:
         // shared tunnel to this applet (another plugin may have moved it),
         // which a plain profile would silently skip.
         const bool plainNow = plainReadable && !cardSession.activatedProtocol().has_value();
-        if (cardSession.hasCredentialProvider() && !plainNow) {
+        if (assumeProvider && !plainNow) {
             if (capability == PaceCapability::Absent) {
                 // BAC by capability: a document whose EF.CardAccess is
                 // DEFINITIVELY absent activates BAC, so the
@@ -427,6 +451,7 @@ public:
         return LibreSCRS::Plugin::ActivationProfile::plain();
     }
 
+public:
     /// @brief Push any deposited CAN/MRZ secret into the session credential
     ///        cache so the activation walk finds it instead of re-prompting.
     ///

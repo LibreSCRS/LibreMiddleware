@@ -19,11 +19,23 @@
 /// capability verdict computed pre-auth by the plugin cannot diverge from
 /// what CardSession reads at handshake time.
 ///
-/// A bare byte-vector return cannot tell "the file is DEFINITIVELY absent"
-/// (a clean 6A82 on the EF selection AFTER a real MF selection) apart from
-/// "something went wrong" (MF select failed, transport threw, a short read).
-/// The tri-state capability verdict needs that distinction, so this reader
-/// reports the selection/read outcome alongside the bytes.
+/// A bare byte-vector return cannot tell "the file is DEFINITIVELY unusable
+/// for PACE" apart from "something went wrong" (MF select failed, transport
+/// threw, a short read). The tri-state capability verdict needs that
+/// distinction, so this reader reports the selection/read outcome alongside
+/// the bytes. Exactly TWO chip-authoritative signals are definitive, both
+/// requiring a real, successful MF selection first:
+///   - a clean 6A82 on the EF selection ("no such file"), and
+///   - SW 6283 on the EF selection ("selected file invalidated/deactivated",
+///     ISO 7816-4): the file exists but the chip itself declares it unusable
+///     — observed on BAC-only personalizations of PACE-capable OSes. No READ
+///     BINARY is attempted after 6283: content of a deactivated file is not a
+///     valid source of PACEInfo (ISO 7816-9 life-cycle), and skipping the
+///     read keeps the definitive signal free of attacker-influenceable bits
+///     when the reader runs over an SM tunnel (a select SW arrives MAC-
+///     covered in DO'99; a read FAILURE is inducible by garbling).
+/// Every other warning (including 6285 "termination state") stays
+/// non-definitive and falls through to the read -> Unknown downstream.
 
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
@@ -42,8 +54,10 @@ struct CardAccessReadResult
 {
     /// The master file (3F00) selection succeeded.
     bool mfSelected = false;
-    /// EF.CardAccess (011C) selection returned a clean 6A82 AFTER a
-    /// successful MF selection — the only DEFINITIVE "no such file" signal.
+    /// EF.CardAccess (011C) selection, AFTER a successful MF selection,
+    /// answered with one of the two DEFINITIVE "PACE parameters
+    /// unobtainable" signals: a clean 6A82 (no such file) or SW 6283 (file
+    /// deactivated — no READ attempted; see the file-level contract).
     bool efDefinitivelyAbsent = false;
     /// A READ BINARY was issued at the MF-selected EF.CardAccess and
     /// returned success (90 00). @ref data then holds its bytes.
@@ -92,10 +106,20 @@ readCardAccessDetailed(LibreSCRS::SecureChannel::ISecureChannel* activeChannel, 
         auto efSel = detail::cardAccessDispatch(activeChannel, conn, selectByFileId(0x01, 0x1C, 0x0C), token);
         if (!efSel.isSuccess())
             efSel = detail::cardAccessDispatch(activeChannel, conn, selectByFileId(0x01, 0x1C), token);
+        // SW 6283 "selected file invalidated/deactivated" (ISO 7816-4) on the
+        // FINAL selection attempt: the chip's own declaration that
+        // EF.CardAccess is unusable — the second definitive signal. Return
+        // WITHOUT reading: a deactivated file's content is not a valid
+        // PACEInfo source, and the early return keeps the signal select-SW
+        // only (MAC-authentic under SM). Exactly 6283 — other 62xx warnings
+        // (incl. 6285) fall through to the read below.
+        if (efSel.sw1 == 0x62 && efSel.sw2 == 0x83) {
+            result.efDefinitivelyAbsent = true;
+            return result;
+        }
         if (efSel.sw1 != 0x90 && efSel.sw1 != 0x62) {
             // A clean 6A82 after a real MF selection is the definitive
-            // "file not found" — the only pre-auth signal that PACE is
-            // genuinely absent. Any other SW is an anomaly (Unknown).
+            // "file not found" signal. Any other SW is an anomaly (Unknown).
             if (efSel.sw1 == 0x6A && efSel.sw2 == 0x82)
                 result.efDefinitivelyAbsent = true;
             return result;
@@ -109,16 +133,6 @@ readCardAccessDetailed(LibreSCRS::SecureChannel::ISecureChannel* activeChannel, 
     } catch (...) {
         return CardAccessReadResult{};
     }
-}
-
-/// @brief Behaviour-preserving convenience for the PACE path: the raw
-///        EF.CardAccess bytes only (empty on absence/anomaly), exactly as the
-///        pre-extraction @c readCardAccessFromMF returned them.
-[[nodiscard]] inline std::vector<std::uint8_t>
-readCardAccessFromMF(LibreSCRS::SecureChannel::ISecureChannel* activeChannel, PCSCConnection& conn,
-                     LibreSCRS::CancelToken token) noexcept
-{
-    return readCardAccessDetailed(activeChannel, conn, std::move(token)).data;
 }
 
 } // namespace LibreSCRS::SmartCard::Internal

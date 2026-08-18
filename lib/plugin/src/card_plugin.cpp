@@ -23,6 +23,7 @@
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 #include <LibreSCRS/Trust/TrustStore.h>
+#include <LibreSCRS_internal/Plugin/PreReadAuthDerivation.h>
 
 #include <atomic>
 #include <memory>
@@ -44,18 +45,10 @@ bool CardPlugin::canHandle(std::span<const std::uint8_t> atr) const noexcept
 
 Auth::PreReadAuthMethod CardPlugin::preReadAuth(SmartCard::CardSession& session) const
 {
-    const ActivationProfile profile = activationProfile(session);
-    if (!profile.requiresActivation()) {
-        return Auth::PreReadAuthMethod::None;
-    }
-    // A CAN-keyed PACE profile maps to the CAN unlock prompt; every other
-    // activating profile (MRZ-keyed PACE, PIN/PUK-as-PACE, or plain BAC)
-    // collects the MRZ as its pre-read secret.
-    if (const auto* pace = std::get_if<SmartCard::PaceRequest>(&profile.primary)) {
-        return pace->secretKind == Auth::PaceSecretKind::Can ? Auth::PreReadAuthMethod::Can
-                                                             : Auth::PreReadAuthMethod::Mrz;
-    }
-    return Auth::PreReadAuthMethod::Mrz;
+    // The mapping lives in the shared internal header so report-side
+    // overrides (answering from a hypothetical profile) can never diverge
+    // from this base derivation on the same profile.
+    return detail::preReadAuthForProfile(activationProfile(session));
 }
 
 ReadResult CardPlugin::readCard(SmartCard::CardSession& session, GroupCallback onGroup, CancelToken token) const
