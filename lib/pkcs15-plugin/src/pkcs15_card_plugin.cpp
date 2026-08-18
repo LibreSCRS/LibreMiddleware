@@ -134,26 +134,49 @@ acquireChannel(LibreSCRS::SmartCard::CardSession& session, bool requiresPace)
     return session.activateChannelFor(aid, LibreSCRS::CancelToken{});
 }
 
-/// Suite label markers come exclusively from hardware-captured EF.TokenInfo
-/// labels — never invented or inferred: a marker enters this table only
+/// EF.TokenInfo field a family marker is matched against.
+///
+/// A closed set, and the choice per marker is a privacy decision as much
+/// as a technical one: on a personalised card the label holds the
+/// cardholder's name and a national identifier, so it may only carry a
+/// marker whose captured value is demonstrably a product string.
+/// manufacturerID is vendor-level and holds no personal data, which makes
+/// it the field a new marker should use.
+enum class MarkerField : std::uint8_t { Label, ManufacturerId };
+
+/// Family markers come exclusively from hardware-captured EF.TokenInfo
+/// fields — never invented or inferred: a marker enters this table only
 /// after being read off a physical card through this very plugin's
-/// SM/PACE path. Unmatched cards stay FamilyId::Unknown (conservative
+/// SM/PACE path. Each marker is matched against its own declared field and
+/// against no other. Unmatched cards stay FamilyId::Unknown (conservative
 /// derivation only).
 LibreSCRS::Plugin::Internal::FamilyId resolveFamilyId(const pkcs15::PKCS15Profile& profile)
 {
-    struct LabelMarker
+    struct FamilyMarker
     {
+        MarkerField field;
         std::string_view marker;
         LibreSCRS::Plugin::Internal::FamilyId family;
     };
-    // "SSCDv1 PACE MD": EF.TokenInfo label captured 2026-07-20 from certain
-    // IAS-ECC hash-on-card SSCDs over the contact interface (production
-    // readProfile path).
-    static constexpr std::array<LabelMarker, 1> kMarkers{
-        {{"SSCDv1 PACE MD", LibreSCRS::Plugin::Internal::FamilyId::AppletSuiteGen1}}};
-    for (const auto& m : kMarkers)
-        if (profile.tokenInfo.label.find(m.marker) != std::string_view::npos)
+    static constexpr std::array<FamilyMarker, 2> kMarkers{{
+        // EF.TokenInfo label captured 2026-07-20 from certain IAS-ECC
+        // hash-on-card SSCDs over the contact interface (production
+        // readProfile path) — a product string, not holder data.
+        {MarkerField::Label, "SSCDv1 PACE MD", LibreSCRS::Plugin::Internal::FamilyId::AppletSuiteGen1},
+        // EF.TokenInfo manufacturerID captured 2026-05-10 from the postal
+        // CA card profile over the contact interface. Matched on
+        // manufacturerID precisely because that card's LABEL is holder
+        // data. Resolving this family is display-only: its row keeps
+        // probeSafe false, so no retry-counter query reaches the card
+        // until one is measured non-consuming there.
+        {MarkerField::ManufacturerId, "A.E.T. Europe B.V.", LibreSCRS::Plugin::Internal::FamilyId::AetPosta},
+    }};
+    for (const auto& m : kMarkers) {
+        const std::string& field =
+            m.field == MarkerField::Label ? profile.tokenInfo.label : profile.tokenInfo.manufacturer;
+        if (field.find(m.marker) != std::string::npos)
             return m.family;
+    }
     return LibreSCRS::Plugin::Internal::FamilyId::Unknown;
 }
 

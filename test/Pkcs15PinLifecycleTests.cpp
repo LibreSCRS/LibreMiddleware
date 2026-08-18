@@ -247,6 +247,41 @@ std::vector<std::uint8_t> tokenInfoWithLabel(const std::string& label)
     return out;
 }
 
+// EF.TokenInfo carrying BOTH optional identification fields, in PKCS#15
+// order: SEQUENCE { INTEGER 0, OCTET STRING serial,
+// UTF8String manufacturerID, [0] IMPLICIT label }. Needed because the
+// plugin's family markers are matched per FIELD — a fixture that can only
+// set the label cannot tell the two dimensions apart.
+// Callers keep both strings short: the single-byte DER length form below
+// caps the SEQUENCE at 127 content bytes.
+std::vector<std::uint8_t> tokenInfoWithManufacturerAndLabel(const std::string& manufacturer, const std::string& label)
+{
+    std::vector<std::uint8_t> inner = {0x02, 0x01, 0x00, 0x04, 0x02, 0x30, 0x31};
+    inner.push_back(0x0C); // UTF8String manufacturerID
+    inner.push_back(static_cast<std::uint8_t>(manufacturer.size()));
+    inner.insert(inner.end(), manufacturer.begin(), manufacturer.end());
+    inner.push_back(0x80); // [0] IMPLICIT label
+    inner.push_back(static_cast<std::uint8_t>(label.size()));
+    inner.insert(inner.end(), label.begin(), label.end());
+    EXPECT_LE(inner.size(), 127u) << "fixture exceeds the single-byte DER length form";
+    std::vector<std::uint8_t> out = {0x30, static_cast<std::uint8_t>(inner.size())};
+    out.insert(out.end(), inner.begin(), inner.end());
+    return out;
+}
+
+// The hardware-captured EF.TokenInfo manufacturerID that resolves the
+// issuer-tool key-activation family (contact capture 2026-05-10). Kept as
+// one constant so the "matched" and "must not match" fixtures below cannot
+// drift apart.
+constexpr std::string_view kIssuerToolManufacturerId = "A.E.T. Europe B.V.";
+
+// Stand-in for that card's EF.TokenInfo label. On the real card the label
+// is the cardholder's name followed by a national identifier; it is
+// replaced here by an obviously synthetic string, and the point of the
+// tests below is that NO code path ever looks at this field for family
+// resolution.
+constexpr std::string_view kSyntheticHolderLabel = "Synthetic Holder 000000000";
+
 // Synthetic AODF of an unseen PKCS#15 card: ONE plain PIN ("PIN", ref 0x01,
 // initialized, 4/4/8, path 3F00) with no soPin / unblocking / PACE marks.
 std::vector<std::uint8_t> plainPinAodf()
@@ -416,6 +451,20 @@ FakeCardRig makeAppletSuiteGen1TransportSignRig(const char* readerName)
                     {0x5032, tokenInfoWithLabel("SSCDv1 PACE MD")},
                     {0x4408, transportSignPinAodf()}},
                    {});
+}
+
+// Issuer-tool key-activation family rig: one plain PIN behind an
+// EF.TokenInfo whose manufacturerID is the hardware capture and whose
+// label is a synthetic holder string. The probe script WOULD answer
+// tries=3 — that row's probeSafe is false, so nothing may ask.
+FakeCardRig makeIssuerToolFamilyRig(const char* readerName)
+{
+    return makeRig(readerName,
+                   {{0x5031, odfPointingAtAodf()},
+                    {0x5032, tokenInfoWithManufacturerAndLabel(std::string(kIssuerToolManufacturerId),
+                                                               std::string(kSyntheticHolderLabel))},
+                    {0x4408, plainPinAodf()}},
+                   {{0x01, 3}});
 }
 
 std::shared_ptr<CardPlugin> loadPkcs15Plugin(CardPluginService& registry)
@@ -634,6 +683,128 @@ TEST(Pkcs15PinLifecycle, TriesLeftProbeGatedByProbeSafe)
         EXPECT_EQ(entries[3].retriesLeft, std::optional<int>{3});
         EXPECT_TRUE(std::none_of(rig.card->log.begin(), rig.card->log.end(), isRealVerify));
     }
+}
+
+// ---------------------------------------------------------------------------
+// The issuer-tool key-activation family resolves from the hardware-captured
+// EF.TokenInfo manufacturerID. Family resolution is observable through
+// getPINList as the row's key-activation guidance reaching the entry: a card
+// with no family row leaves that field absent (UnknownCardEntriesStayConservative
+// above covers the quirkless shape), so the guidance IS the marker's effect.
+// ---------------------------------------------------------------------------
+
+TEST(Pkcs15PinLifecycle, IssuerToolFamilyResolvesFromCapturedManufacturerId)
+{
+    CardPluginService registry{std::filesystem::path(PLUGIN_DIR)};
+    auto plugin = loadPkcs15Plugin(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto rig = makeIssuerToolFamilyRig("Pkcs15 Lifecycle ManufacturerMarker Reader 0");
+    const auto entries = plugin->getPINList(*rig.session);
+    ASSERT_EQ(entries.size(), 1u);
+
+    const auto& pin = entries[0];
+    EXPECT_EQ(pin.label, "PIN");
+    EXPECT_EQ(pin.reference, 0x01);
+    EXPECT_EQ(pin.kind, PinKind::UserPin);
+    // The family row's display-only guidance: present exactly because the
+    // manufacturerID marker matched.
+    EXPECT_TRUE(pin.keyActivationGuidance.has_value());
+    // Resolution alone must not assert a pending activation — that needs key
+    // or certificate state evidence no plugin reads yet.
+    EXPECT_FALSE(pin.keyActivationPending);
+    EXPECT_FALSE(pin.keyActivatable);
+
+    // Control: the SAME AODF and probe script behind a generic
+    // manufacturerID stays quirkless, so the guidance is attributable to the
+    // marker and not to the card shape.
+    auto control = makeRig("Pkcs15 Lifecycle ManufacturerMarker Reader 1",
+                           {{0x5031, odfPointingAtAodf()},
+                            {0x5032, tokenInfoWithManufacturerAndLabel("Generic Vendor", "Generic Token")},
+                            {0x4408, plainPinAodf()}},
+                           {{0x01, 3}});
+    const auto controlEntries = plugin->getPINList(*control.session);
+    ASSERT_EQ(controlEntries.size(), 1u);
+    EXPECT_FALSE(controlEntries[0].keyActivationGuidance.has_value());
+}
+
+// ---------------------------------------------------------------------------
+// Field discipline: every family marker is matched against ONE declared
+// EF.TokenInfo field and never against the others. The load-bearing case is
+// the label — on a personalised card it holds the cardholder's name and a
+// national identifier, so it must never become a match key for this family.
+// Both directions are asserted: the manufacturerID marker text placed in the
+// label must not resolve, and the label-dimension marker text placed in the
+// manufacturerID must not resolve either (a "search every field" regression
+// would pass one direction and fail the other).
+//
+// The second block is the sharper of the two: the label-dimension family is
+// probe-safe, so a cross-over match would also open the counter-probe gate —
+// the empty-VERIFY assertion catches it on the wire, not just in a field.
+// ---------------------------------------------------------------------------
+
+TEST(Pkcs15PinLifecycle, HolderLabelIsNeverUsedAsAFamilyMarker)
+{
+    CardPluginService registry{std::filesystem::path(PLUGIN_DIR)};
+    auto plugin = loadPkcs15Plugin(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    {
+        // manufacturerID marker text sitting in the LABEL: no resolution.
+        auto rig = makeRig(
+            "Pkcs15 Lifecycle MarkerField Reader 0",
+            {{0x5031, odfPointingAtAodf()},
+             {0x5032, tokenInfoWithManufacturerAndLabel("Generic Vendor", std::string(kIssuerToolManufacturerId))},
+             {0x4408, plainPinAodf()}},
+            {{0x01, 3}});
+        const auto entries = plugin->getPINList(*rig.session);
+        ASSERT_EQ(entries.size(), 1u);
+        EXPECT_FALSE(entries[0].keyActivationGuidance.has_value());
+        EXPECT_FALSE(entries[0].probeSafe);
+        EXPECT_EQ(entries[0].retriesLeft, std::nullopt);
+        EXPECT_TRUE(std::none_of(rig.card->log.begin(), rig.card->log.end(), isEmptyVerifyProbe));
+    }
+    {
+        // Label-dimension marker text sitting in the manufacturerID: no
+        // resolution, and — since that family is probe-safe — no probe.
+        auto rig = makeRig("Pkcs15 Lifecycle MarkerField Reader 1",
+                           {{0x5031, odfPointingAtAodf()},
+                            {0x5032, tokenInfoWithManufacturerAndLabel("SSCDv1 PACE MD", "Generic Token")},
+                            {0x4408, plainPinAodf()}},
+                           {{0x01, 3}});
+        const auto entries = plugin->getPINList(*rig.session);
+        ASSERT_EQ(entries.size(), 1u);
+        EXPECT_FALSE(entries[0].probeSafe);
+        EXPECT_EQ(entries[0].retriesLeft, std::nullopt);
+        EXPECT_EQ(entries[0].retriesMax, std::nullopt);
+        EXPECT_TRUE(std::none_of(rig.card->log.begin(), rig.card->log.end(), isEmptyVerifyProbe));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The invariant that lets the marker ship on its own: resolving the
+// issuer-tool family opens NO counter probe. Its row's probeSafe stays false
+// until a retry-counter query is measured non-consuming on that card, so
+// getPINList must leave the counters absent and put no INS 0x20 of any form
+// on the wire — the scripted card's willingness to answer notwithstanding.
+// ---------------------------------------------------------------------------
+
+TEST(Pkcs15PinLifecycle, IssuerToolFamilyCountersStayAbsentAndUnprobed)
+{
+    CardPluginService registry{std::filesystem::path(PLUGIN_DIR)};
+    auto plugin = loadPkcs15Plugin(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto rig = makeIssuerToolFamilyRig("Pkcs15 Lifecycle IssuerToolProbe Reader 0");
+    const auto entries = plugin->getPINList(*rig.session);
+    ASSERT_EQ(entries.size(), 1u);
+
+    EXPECT_FALSE(entries[0].probeSafe);
+    EXPECT_EQ(entries[0].retriesLeft, std::nullopt);
+    EXPECT_EQ(entries[0].retriesMax, std::nullopt);
+    EXPECT_FALSE(entries[0].blocked);
+    EXPECT_TRUE(std::none_of(rig.card->log.begin(), rig.card->log.end(), isEmptyVerifyProbe));
+    EXPECT_TRUE(std::none_of(rig.card->log.begin(), rig.card->log.end(), isRealVerify));
 }
 
 // ---------------------------------------------------------------------------

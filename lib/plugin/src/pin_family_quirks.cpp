@@ -161,8 +161,11 @@ FamilyQuirks makePiv()
 // the guidance text below (display-only) while keeping
 // keyActivationPending/keyActivatable conservatively off — asserting a
 // deactivated key needs key/certificate state evidence no plugin reads
-// yet. No resolver maps this family so far: family markers are admitted
-// only from hardware captures, and none exists for this profile.
+// yet. The pkcs15 resolver maps this family from a hardware-captured
+// EF.TokenInfo manufacturerID — never from the label, which is holder
+// data on these cards. probeSafe stays false regardless: the
+// no-decrement evidence on record was measured on an earlier applet
+// generation, so it says nothing about the current one.
 FamilyQuirks makeAetPosta()
 {
     FamilyQuirks q;
