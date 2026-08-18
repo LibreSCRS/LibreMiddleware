@@ -8,6 +8,7 @@
 #include "native/xades_module.h"
 #include "native/pkcs11_module_manager.h"
 #include "native/pkcs11_token.h"
+#include "signing_test_support/mock_tsa_server.h"
 #include "signing_test_support/signing_test_support.h"
 #include "signing_service.h"
 
@@ -346,6 +347,60 @@ TEST_F(XAdESModuleTest, BTRequiresTSA)
     // Should fail because TSA URL is empty
     EXPECT_FALSE(result.success);
     EXPECT_FALSE(result.errorMessage.empty());
+}
+
+// Harness pin for MockTsaServer: a B-T signature completes end to end against
+// it, so the timestamp step is a working step and not a hole the tests below
+// happen to fall through. B-T stops one level short of the revocation gate,
+// which isolates the RFC 3161 round-trip from everything after it.
+TEST_F(XAdESModuleTest, BTSignsAgainstMockTsa)
+{
+    libresign::test::MockTsaServer tsaServer;
+    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
+                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    XAdESModule xades;
+
+    std::vector<uint8_t> data = {'T', 'i', 'm', 'e'};
+    TSAConfig tsa;
+    tsa.url = tsaServer.url();
+    auto result = xades.sign(data, "test.xml", token, SignatureLevel::B_T, SignaturePackaging::Detached, tsa);
+
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    EXPECT_EQ(tsaServer.servedCount(), 1);
+
+    auto doc = parseResult(result);
+    ASSERT_NE(doc.get(), nullptr);
+    auto ctx = createXPathCtx(doc.get());
+    EXPECT_EQ(xpathCount(ctx.get(), "//xades:SignatureTimeStamp"), 1);
+    EXPECT_EQ(xpathCount(ctx.get(), "//xades:EncapsulatedTimeStamp"), 1);
+}
+
+// The long-term revocation gate is reached through appendSigner on the XAdES
+// path too, but only once the RFC 3161 step ahead of it can succeed: B-LT
+// implies B-T, so without a reachable TSA the append fails at the timestamp
+// and never reaches the gate. With one supplied, the SoftHSM token's single
+// self-signed leaf is a chain of length one — no Trusted-List anchor completed
+// it and no issuer hop reaches a verified root — so the tail is unprovable and
+// the gate must fail closed rather than emit a long-term signature with no
+// verifiable revocation evidence.
+TEST_F(XAdESModuleTest, AppendSignerAtLongTermRejectsUnterminatedChain)
+{
+    libresign::test::MockTsaServer tsaServer;
+    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
+                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    XAdESModule xades;
+
+    const auto xml = libresign::test::buildTestXml();
+    std::vector<uint8_t> data(xml.begin(), xml.end());
+    auto prior = xades.sign(data, "test.xml", token, SignatureLevel::B_B, SignaturePackaging::Enveloped, {});
+    ASSERT_TRUE(prior.success) << prior.errorMessage;
+
+    TSAConfig tsa;
+    tsa.url = tsaServer.url();
+    auto appended = xades.appendSigner(prior.signedDocument, {}, "test.xml", token, SignatureLevel::B_LT, tsa);
+    EXPECT_FALSE(appended.success);
+    ASSERT_TRUE(appended.failureKind.has_value()) << appended.errorMessage;
+    EXPECT_EQ(*appended.failureKind, SignFailureKind::CertificateChainIncomplete) << appended.errorMessage;
 }
 
 // ---- Standalone tests (no SoftHSM required) ----

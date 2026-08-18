@@ -8,6 +8,7 @@
 #include "native/asic_module.h"
 #include "native/pkcs11_module_manager.h"
 #include "native/pkcs11_token.h"
+#include "signing_test_support/mock_tsa_server.h"
 #include "signing_test_support/signing_test_support.h"
 #include "signing_service.h"
 
@@ -107,6 +108,35 @@ TEST_F(ASiCModuleSoftHSMTest, SignWithCAdES_ProducesValidZip)
     free(sigData); // NOLINT
 
     mz_zip_reader_end(&zip);
+}
+
+// The long-term revocation gate is reached through appendSigner on the ASiC-E
+// path too, by delegation: appendSigner re-enters signWithCAdES, which calls
+// CAdESModule::sign, which runs the fail-closed check. Reaching it needs a
+// working RFC 3161 step first — B-LT implies B-T, and CAdESModule::sign
+// timestamps before it collects revocation material, so with no TSA the append
+// fails at the timestamp and never gets to the gate. With one supplied, the
+// SoftHSM token's single self-signed leaf is a chain of length one: no
+// Trusted-List anchor completed it and no issuer hop reaches a verified root,
+// so the tail is unprovable and the gate must fail closed rather than emit a
+// long-term signature with no verifiable revocation evidence.
+TEST_F(ASiCModuleSoftHSMTest, AppendSignerAtLongTermRejectsUnterminatedChain)
+{
+    libresign::test::MockTsaServer tsaServer;
+    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
+                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    ASiCModule asic;
+
+    std::vector<uint8_t> data = {'A', 'S', 'i', 'C'};
+    auto prior = asic.signWithCAdES(data, "test.txt", token, SignatureLevel::B_B, {});
+    ASSERT_TRUE(prior.success) << prior.errorMessage;
+
+    TSAConfig tsa;
+    tsa.url = tsaServer.url();
+    auto appended = asic.appendSigner(prior.signedDocument, {}, token, SignatureLevel::B_LT, tsa);
+    EXPECT_FALSE(appended.success);
+    ASSERT_TRUE(appended.failureKind.has_value()) << appended.errorMessage;
+    EXPECT_EQ(*appended.failureKind, SignFailureKind::CertificateChainIncomplete) << appended.errorMessage;
 }
 
 #else

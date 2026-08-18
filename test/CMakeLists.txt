@@ -600,6 +600,7 @@ if(BUILD_SIGNING)
     add_library(SigningTestSupport STATIC
         signing_test_support/signing_test_support.cpp
         signing_test_support/pkcs11_token_mock.cpp
+        signing_test_support/mock_tsa_server.cpp
         dss_validation_client.cpp)
     # LibreSign's bucket-B internal headers (http_client.h, dss/*, native/*)
     # live in src/. Tests reach them via this PUBLIC include root so they
@@ -613,8 +614,11 @@ if(BUILD_SIGNING)
     # the support TU needs the PKCS#11 headers LibreSign keeps PRIVATE.
     target_include_directories(SigningTestSupport PRIVATE
         ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/include)
+    # mock_tsa_server.cpp drives OpenSSL's RFC 3161 responder API
+    # (TS_RESP_CTX) and mints its own signing certificate, so the support
+    # library needs libcrypto directly rather than transitively.
     target_link_libraries(SigningTestSupport PUBLIC
-        GTest::gtest LibreSign)
+        GTest::gtest LibreSign OpenSSL_Crypto)
     # Support library reaches into bucket-B libresign internals (dss/*,
     # native/*). Propagate the internal-build marker to every consumer so the
     # #error guard lets them through.
