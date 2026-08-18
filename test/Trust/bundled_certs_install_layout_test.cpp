@@ -66,6 +66,47 @@ TEST_F(BundledCertsInstallLayoutTest, InstalledLocationIsTheResolvedDirectory)
     EXPECT_EQ(*resolved, fs::weakly_canonical(kStagedCertsDir, ec));
 }
 
+#ifdef __linux__
+// A self-contained relocatable package (an AppImage staged with prefix /usr)
+// carries its payload NEXT TO its binaries while the baked install path
+// points at the HOST system. The self-relative candidates must therefore
+// outrank the absolute installed location, or a relocated package silently
+// loads the host's trust anchors instead of its own. This binary compiles
+// the resolver in directly, so dladdr collapses the library rung into the
+// exe rung — staging the payload exe-relative exercises the same ordering
+// property (self-relative before installed) through the same ladder walk.
+TEST_F(BundledCertsInstallLayoutTest, SelfRelativePayloadOutranksInstalledLocation)
+{
+    std::error_code ec;
+    const auto exePath = fs::read_symlink("/proc/self/exe", ec);
+    ASSERT_FALSE(ec) << "cannot locate the test binary";
+
+    const auto shareDir = fs::weakly_canonical(exePath.parent_path() / ".." / "share", ec);
+    ASSERT_FALSE(ec);
+    const auto candidate = shareDir / "librescrs" / "certificates";
+    // Premise guard: the candidate must not pre-exist, or this test would
+    // prove nothing about the ordering (and would destroy real data below).
+    ASSERT_FALSE(fs::exists(candidate, ec)) << "library-relative candidate already exists: " << candidate;
+
+    // Remember how deep the pre-existing tree goes so cleanup removes only
+    // what this test created — never a sibling's data.
+    const fs::path cleanupRoot = !fs::exists(shareDir, ec)                 ? shareDir
+                                 : !fs::exists(shareDir / "librescrs", ec) ? shareDir / "librescrs"
+                                                                           : candidate;
+    fs::create_directories(candidate);
+    std::ofstream(candidate / "relocated.crt") << "stub";
+
+    auto resolved = resolveBundledCertsDir();
+
+    // Clean up before asserting so a failure cannot leave the payload behind
+    // to poison the sibling tests.
+    fs::remove_all(cleanupRoot);
+
+    ASSERT_TRUE(resolved.has_value());
+    EXPECT_EQ(*resolved, candidate) << "the absolute installed location outranked the package's own payload";
+}
+#endif
+
 // The installed location sits below the env override, so a developer pointing
 // LIBRESCRS_CERTIFICATES_DIR at a scratch bundle still wins on a packaged build.
 TEST_F(BundledCertsInstallLayoutTest, EnvOverrideStillOutranksInstalledLocation)

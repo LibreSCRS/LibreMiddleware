@@ -289,25 +289,7 @@ std::optional<fs::path> resolveBundledCertsDir() noexcept
         }
 #endif
 
-        // 3. compile-time install path — where the install rule actually
-        //    writes the bundle. Unlike the candidates below it this survives a
-        //    split prefix (libraries under one root, ${datadir} under another),
-        //    where no relative walk from a binary reaches the certificates.
-        //    Same empty-string guard: the define is "" in a build that never
-        //    means to install.
-#ifdef LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR
-        {
-            const char* installed = LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR;
-            if (installed != nullptr && installed[0] != '\0') {
-                std::error_code ec;
-                auto canonical = fs::weakly_canonical(fs::path(installed), ec);
-                if (!ec && isUsableCertsDir(canonical))
-                    return canonical;
-            }
-        }
-#endif
-
-        // 4. library-relative candidates — the shared object carrying this
+        // 3. library-relative candidates — the shared object carrying this
         //    code need not live under the same prefix as the process that
         //    loaded it (a host binary from /usr/bin pulling LibreSCRS out of
         //    /opt/librescrs/lib). Derive the bundle from the library's own
@@ -323,7 +305,7 @@ std::optional<fs::path> resolveBundledCertsDir() noexcept
             }
         }
 
-        // 5. exe-relative candidates — packaged-runtime layouts.
+        // 4. exe-relative candidates — packaged-runtime layouts.
         //    macOS bundle: <exe>/../Resources/certificates (tried first on Darwin)
         //    Linux FHS:    <exe>/../share/librescrs/certificates
         if (auto exe = exePath()) {
@@ -342,6 +324,28 @@ std::optional<fs::path> resolveBundledCertsDir() noexcept
                     return canonical;
             }
         }
+
+        // 5. compile-time install path — where the install rule actually
+        //    writes the bundle. It survives a split prefix (libraries under
+        //    one root, ${datadir} under another), where no relative walk from
+        //    a binary reaches the certificates — but it is an ABSOLUTE path
+        //    baked at configure time, so a relocated self-contained package
+        //    (an AppImage staged with prefix /usr) would resolve the HOST
+        //    system's bundle through it. Self-relative candidates therefore
+        //    outrank it, and it stays last as the split-prefix safety net.
+        //    Same empty-string guard: the define is "" in a build that never
+        //    means to install.
+#ifdef LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR
+        {
+            const char* installed = LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR;
+            if (installed != nullptr && installed[0] != '\0') {
+                std::error_code ec;
+                auto canonical = fs::weakly_canonical(fs::path(installed), ec);
+                if (!ec && isUsableCertsDir(canonical))
+                    return canonical;
+            }
+        }
+#endif
 
         return std::nullopt;
     } catch (...) {
