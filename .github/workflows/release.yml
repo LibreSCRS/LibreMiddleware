@@ -57,7 +57,7 @@ jobs:
           cmake --build build
 
       - name: Test
-        run: ctest --output-on-failure --test-dir build/test
+        run: ctest --output-on-failure --test-dir build/test --no-tests=error
 
   shared-linux:
     # Mirror of test-linux but with LIBREMIDDLEWARE_BUILD_SHARED=ON, so
@@ -118,7 +118,7 @@ jobs:
               || { echo "::error::Expected CardSession::transmitInternal export not found"; exit 1; }
 
       - name: Test
-        run: ctest --output-on-failure --test-dir build-shared/test
+        run: ctest --output-on-failure --test-dir build-shared/test --no-tests=error
 
   test-macos:
     needs: verify-signature
@@ -142,7 +142,7 @@ jobs:
           cmake --build build
 
       - name: Test
-        run: ctest --output-on-failure --test-dir build/test
+        run: ctest --output-on-failure --test-dir build/test --no-tests=error
 
   pkcs11-linux:
     needs: [verify-signature, test-linux]
@@ -248,10 +248,28 @@ jobs:
           # Match a `## ` header where the version is delimited by a bracket or
           # whitespace on each side, so tag 4.2.0 matches `## [4.2.0]` /
           # `## [Unreleased] — 4.2.0` but NOT `## [4.2.0-rc1]` or `## [14.2.0]`.
-          awk -v ver="$VER" \
-            '/^## / { if ($0 ~ ("(\\[|[[:space:]])" ver "(\\]|[[:space:]]|$)")) {f=1; next} else if (f) exit } f' \
-            _changelog/CHANGELOG.md > "$RUNNER_TEMP/relnotes.md"
-          if [ -s "$RUNNER_TEMP/relnotes.md" ]; then
+          # The version's dots are escaped on the way into the pattern: an
+          # unescaped `.` is "any character", so 4.2.0 would also match a
+          # `## [432.0]` header.
+          #
+          # A missing CHANGELOG is the no-section case, said out loud — this
+          # step runs under -e, and an awk over an absent file would otherwise
+          # kill it before the fallback branch below is ever reached.
+          if [ -f _changelog/CHANGELOG.md ]; then
+            awk -v ver="$VER" \
+              'BEGIN { gsub(/\./, "\\.", ver) }
+               /^## / { if ($0 ~ ("(\\[|[[:space:]])" ver "(\\]|[[:space:]]|$)")) {f=1; next} else if (f) exit } f' \
+              _changelog/CHANGELOG.md > "$RUNNER_TEMP/relnotes.md"
+          else
+            echo "::warning::CHANGELOG.md is absent at this tag"
+            : > "$RUNNER_TEMP/relnotes.md"
+          fi
+          # Test for a non-whitespace character rather than for file size: a
+          # header followed only by blank lines is a section that exists and
+          # says nothing, and `gh release create --notes-file` accepts a blank
+          # file and publishes a release with no body at all. That has to fall
+          # back too.
+          if grep -q '[^[:space:]]' "$RUNNER_TEMP/relnotes.md"; then
             echo "NOTES_ARG=--notes-file $RUNNER_TEMP/relnotes.md" >> "$GITHUB_ENV"
           else
             echo "No CHANGELOG section for $VER — falling back to --generate-notes"

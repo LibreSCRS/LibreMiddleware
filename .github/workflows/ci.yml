@@ -152,7 +152,7 @@ jobs:
         # tests skip cleanly via g_pinFailed / SKIP_IF_PIN_FAILED. Real-
         # card validation happens locally on a developer machine before
         # tag.
-        run: ctest --output-on-failure --test-dir build/test
+        run: ctest --output-on-failure --test-dir build/test --no-tests=error
 
   examples-build:
     # Build the SDK-consumer example against the public LibreSCRS surface.
@@ -235,7 +235,7 @@ jobs:
         run: ./ci/scripts/check-impl-visibility.sh build
 
       - name: Test
-        run: ctest --output-on-failure --test-dir build/test
+        run: ctest --output-on-failure --test-dir build/test --no-tests=error
 
   shared-config-package:
     # Build LibreMiddleware with LIBREMIDDLEWARE_BUILD_SHARED=ON, install
