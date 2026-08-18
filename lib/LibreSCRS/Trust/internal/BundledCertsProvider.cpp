@@ -113,7 +113,9 @@ BundledCertsProvider::BundledCertsProvider(std::string dir) : bundledCertDir(std
         return; // empty cache; anchors() will return empty vector
     }
 
-    // Recurse one level into subdirectories (rs-mup, rs-mup-format, rs-pks, ...)
+    // Recurse one level into subdirectories (rs-mup, rs-mup-format, ...). One
+    // level only: a sibling of the resolved root — the archived
+    // certificates-legacy tree next to the source bundle — is never reached.
     for (const auto& sub : fs::directory_iterator(root, ec)) {
         if (sub.is_directory()) {
             loadDirectoryInto(cached, sub.path(), bundledCertDir);

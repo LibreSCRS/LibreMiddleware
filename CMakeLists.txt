@@ -321,7 +321,7 @@ endif()
 # Bundled CA certificates install rule.
 #
 # LibreMiddleware ships a curated set of root + intermediate CA certificates
-# under thirdparty/certificates/ (rs-mup/, rs-mup-format/, rs-pks/) that the
+# under thirdparty/certificates/ (rs-mup/, rs-mup-format/) that the
 # chain-validation paths consume — notably LibreKDE's CardEdge purpose plugin,
 # which needs the MUP intermediates to anchor RS eID certificate chains when
 # the system trust store lacks them. Packaged builds (AppImage, .deb, .rpm,
@@ -337,10 +337,15 @@ endif()
 # /usr/share/librescrs/certificates on standard Linux prefixes,
 # /usr/local/share/librescrs/certificates on /usr/local prefixes,
 # Contents/Resources/share/librescrs/certificates inside the macOS bundle
-# layout). FILES_MATCHING preserves the rs-mup/ / rs-mup-format/ / rs-pks/
+# layout). FILES_MATCHING preserves the rs-mup/ / rs-mup-format/
 # subdirectory layout that the walker expects. README files are skipped.
 # Component "runtime" lets distro packagers split docs/dev headers out into
 # separate sub-packages.
+#
+# Only thirdparty/certificates/ is installed. The sibling tree
+# thirdparty/certificates-legacy/ holds archived, mostly unloadable material and
+# is deliberately named by no install rule and no path define, so it never
+# reaches an installed prefix — see the README in either directory.
 # ──────────────────────────────────────────────────────────────────────────
 include(GNUInstallDirs)
 install(DIRECTORY thirdparty/certificates/

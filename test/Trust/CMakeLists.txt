@@ -61,3 +61,30 @@ target_compile_definitions(bundled_certs_install_layout_test PRIVATE
     LIBRESCRS_STAGED_CERTS_DIR="${LIBRESCRS_STAGED_CERTS_DIR}"
 )
 add_test(NAME bundled_certs_install_layout_test COMMAND bundled_certs_install_layout_test)
+
+# Third binary: asserts on the source-tree bundle itself rather than on a
+# fixture — that it still holds loadable anchors, that its README and its
+# subdirectories describe each other in both directions, and that the archived
+# sibling tree stays out of the loaded set. Compiled against the real
+# certificate-directory defines for that reason.
+add_executable(bundled_certs_bundle_contents_test
+    bundled_certs_bundle_contents_test.cpp
+    ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/Trust/internal/BundledCertsProvider.cpp
+)
+target_link_libraries(bundled_certs_bundle_contents_test
+    PRIVATE
+        OpenSSL_Crypto
+        GTest::gtest
+        GTest::gtest_main
+        ${CMAKE_DL_LIBS}
+)
+target_include_directories(bundled_certs_bundle_contents_test PRIVATE
+    ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/Trust
+    ${PROJECT_SOURCE_DIR}/include
+)
+target_compile_definitions(bundled_certs_bundle_contents_test PRIVATE
+    LIBRESCRS_INTERNAL_BUILD
+    LIBREMIDDLEWARE_CERTIFICATES_DIR="${LIBREMIDDLEWARE_CERTIFICATES_DIR}"
+    LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR="${LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR}"
+)
+add_test(NAME bundled_certs_bundle_contents_test COMMAND bundled_certs_bundle_contents_test)
