@@ -29,7 +29,30 @@ jobs:
             | xargs clang-format-21 --dry-run --Werror
 
   build-linux:
+    # Two signing backends. `native` is the production path and carries the
+    # release gates; `both` additionally compiles the DSS cross-verification
+    # oracle so cross_backend_test.cpp — gated on
+    # `LIBRESIGN_HAS_NATIVE && LIBRESIGN_HAS_DSS`, and therefore never built by
+    # any job before this matrix existed — is actually exercised.
+    name: build-linux (${{ matrix.signing_backend }})
     runs-on: ubuntu-latest
+    strategy:
+      # Each backend must report independently: a `both`-only regression should
+      # not mask the production leg's result, and vice versa.
+      fail-fast: false
+      matrix:
+        include:
+          - signing_backend: native
+            # The DSS oracle shells out to a Java JAR. Kept on for the native
+            # leg only because that is where it already ran.
+            dss_oracle: 'ON'
+            release_gates: true
+          - signing_backend: both
+            # No Java on the runner: the oracle would be built and never
+            # usable. Off here, while the DSS *backend* itself still compiles
+            # and the cross-backend cases still run.
+            dss_oracle: 'OFF'
+            release_gates: false
     env:
       OPENSC_VERSION: '0.26.1'
     steps:
@@ -62,26 +85,39 @@ jobs:
         # path runs in production and in the local pre-tag verification
         # pass. Debug coverage lives in the developer workflow; the CI
         # gate exists to catch regressions in the shipped configuration.
-        # SIGNING_BACKEND stays at the default `native` (DSS is a
-        # cross-verification test oracle per `lib/libresign/CMakeLists.txt`,
-        # not the production signing path).
+        # SIGNING_BACKEND is bare (declared in `lib/libresign/CMakeLists.txt`,
+        # not namespaced) and BUILD_TESTING defaults ON, so neither is spelled
+        # with a project prefix here.
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH=/tmp/opensc-install \
-            -DOPENSC_INCLUDE_DIR=/tmp/opensc-src/src
+            -DOPENSC_INCLUDE_DIR=/tmp/opensc-src/src \
+            -DSIGNING_BACKEND=${{ matrix.signing_backend }} \
+            -DBUILD_DSS_ORACLE=${{ matrix.dss_oracle }}
           cmake --build build
 
+      - name: Verify the configured signing backend took effect
+        # Runs on every leg — this is the matrix's own integrity check, not a
+        # release gate. SIGNING_BACKEND's cached STRINGS property is advisory,
+        # so a misspelled flag name above would not fail configure: CMake would
+        # record the stray variable, keep the "native" default, and this job
+        # would pass forever while silently testing one backend twice.
+        run: ./ci/scripts/check-signing-backend.sh build ${{ matrix.signing_backend }}
+
       - name: Check pimpl visibility
+        if: matrix.release_gates
         run: ./ci/scripts/check-impl-visibility.sh build
 
       - name: Check raw PC/SC open confinement
+        if: matrix.release_gates
         # Production code must open the card via CardSession::open (single
         # session per reader); only the diagnostic tools/tests may use the
         # PCSCConnection::openRawDiagnostic escape hatch.
         run: ./ci/scripts/check-raw-pcsc-open.sh
 
       - name: Check pinned TL cert expiry
+        if: matrix.release_gates
         # Pre-empt the runtime hard-fail in tl_signature_verifier.cpp by
         # alerting (build break) ~3 months before any pinned TL signing
         # certificate's notAfter date, giving a comfortable rotation
@@ -89,6 +125,10 @@ jobs:
         run: ./ci/check-pinned-cert-expiry.sh
 
       - name: Check ABI snapshot vs 4.x baseline
+        # Native leg only: the baseline is recorded for one configuration, and
+        # `both` adds the DSS backend's exported symbols, so running it there
+        # would report a delta that is not a regression.
+        if: matrix.release_gates
         # 4.x baseline — minor-version additions tracked; removals or
         # signature drift forbidden. Additions land via an intentional
         # baseline regeneration (`abi-snapshot.sh --update`) reviewed in
@@ -173,7 +213,8 @@ jobs:
         # pre-tag verification pass and what users receive. Native
         # signing only — DSS is a cross-verification test oracle (per
         # `lib/libresign/CMakeLists.txt`), not the production signing
-        # path; exercising it is a local pre-tag step, not a CI gate.
+        # path. The cross-backend coverage runs once, on the Linux
+        # `both` leg; duplicating it here would buy no new signal.
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build
