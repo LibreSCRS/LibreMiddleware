@@ -65,13 +65,23 @@ std::set<std::string> readmeSubdirectories(const fs::path& readme)
     return names;
 }
 
+// Subdirectories that actually hold something. An EMPTY directory carries no
+// certificate, ships nothing through the install rule, and is routinely left
+// behind by git itself: git removes files, never the directory they lived in,
+// so every checkout that has ever held a since-moved issuer tree keeps an
+// empty husk of it. Failing the drift gate on that artifact would train
+// readers to ignore the gate, while the drift it exists to catch — a
+// directory of certificates nobody described — always has files in it.
 std::set<std::string> onDiskSubdirectories(const fs::path& dir)
 {
     std::set<std::string> names;
     std::error_code ec;
     for (const auto& entry : fs::directory_iterator(dir, ec)) {
-        if (entry.is_directory(ec) && !ec)
-            names.insert(entry.path().filename().string());
+        if (!entry.is_directory(ec) || ec)
+            continue;
+        if (fs::is_empty(entry.path(), ec) && !ec)
+            continue;
+        names.insert(entry.path().filename().string());
     }
     return names;
 }
