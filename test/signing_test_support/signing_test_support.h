@@ -70,10 +70,38 @@ void checkPinFailure(const SigningResult& result);
 // A self-signed leaf with no issuer on the token is deliberate: it keeps
 // the on-token chain at length 1, which is what the long-term revocation
 // gate treats as an unproven terminal.
+//
+// Add a SECOND key/cert pair whose certificate is already expired, so the
+// signer-expiry policy can be exercised without waiting for a clock. Same
+// token, same PIN, distinct CKA_ID and label. Both notBefore and notAfter
+// are in the past, which is what X509_cmp_current_time(notAfter) reports
+// as expired:
+//
+//   openssl req -x509 -newkey rsa:2048 -sha256 -nodes \
+//       -not_before 20200101000000Z -not_after 20210101000000Z \
+//       -keyout ekey.pem -out ecert.pem \
+//       -subj "/CN=LibreSCRS SoftHSM Expired Test Signer"
+//   openssl rsa  -in ekey.pem  -outform DER -out ekey.der
+//   openssl x509 -in ecert.pem -outform DER -out ecert.der
+//   pkcs11-tool --module <path>/libsofthsm2.so --token-label test-token \
+//       --login --pin 1234 \
+//       --write-object ekey.der  --type privkey --label expired-key --id 02
+//   pkcs11-tool --module <path>/libsofthsm2.so --token-label test-token \
+//       --login --pin 1234 \
+//       --write-object ecert.der --type cert    --label expired-key --id 02
+//
+// The extra pair does not lengthen the chain the valid signer reports:
+// Pkcs11Token::certificateChain seeds the chain with the CKA_ID-matched
+// signer and only appends certificates that actually verify it, and two
+// unrelated self-signed leaves verify nothing of each other.
 const char* findSoftHsmPath();
 
 /// Default label of the test token created by the setup above.
 inline constexpr const char* kSoftHsmTokenLabel = "test-token";
+
+/// Label (and, byte-for-byte, the CKA_LABEL) of the expired signer pair
+/// provisioned by the second recipe above. Its CKA_ID is `{0x02}`.
+inline constexpr const char* kSoftHsmExpiredKeyLabel = "expired-key";
 
 /// @brief Resolve the raw PKCS#11 slot ID that carries the initialised
 ///        SoftHSM2 token labelled @p tokenLabel.

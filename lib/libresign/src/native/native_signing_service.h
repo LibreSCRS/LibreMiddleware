@@ -67,6 +67,28 @@ public:
         anchorEmitter = std::move(emit);
     }
 
+    /// @brief Build this service's PKCS#11 token from a raw slot ID instead
+    ///        of resolving the @c readerName argument. TEST ONLY.
+    ///
+    /// Mirrors @ref Pkcs11Token::TestSlotId and exists for the same reason:
+    /// the production token constructor matches @c readerName against the
+    /// `[<8-hex-hash>]` slot-identity prefix that LM's own PKCS#11 module
+    /// writes into `slotDescription`, and SoftHSM2 emits no such prefix. So
+    /// the SoftHSM2-backed tests cannot reach @ref sign or @ref appendSigner
+    /// at all without this — they can only drive the format modules
+    /// directly with a `Pkcs11Token::TestSlotId` token, which bypasses every
+    /// policy this service applies around them (certificate expiry, chain
+    /// completion, TSA/revocation wiring).
+    ///
+    /// When set, both entry points construct their token from @p slotId; the
+    /// module still comes from their `pkcs11Module` argument, and the
+    /// `readerName` argument is then unused. Unset (the default) leaves the
+    /// readerName path unchanged — no production caller sets this.
+    void setTestSlotId(unsigned long slotId)
+    {
+        testSlotId = slotId;
+    }
+
 private:
     TrustConfig trustConfig;
     std::map<std::string, std::vector<uint8_t>> lotlDerivedCerts; // URL -> signing cert DER
@@ -88,6 +110,10 @@ private:
     /// the sign methods and unwind before this service's dtor runs).
     Pkcs11ModuleManager moduleManager;
 
+    /// Raw slot ID installed by @ref setTestSlotId. Engaged only by the
+    /// SoftHSM2-backed tests; empty in every production configuration.
+    std::optional<unsigned long> testSlotId;
+
     void loadTrustList(const std::string& url, bool isLotl, TlCache& cache, TlSignatureVerifier& verifier, int depth);
 
     /// Complete the token's certificate chain from the configured Trusted-List
@@ -99,6 +125,18 @@ private:
     ///          @ref SigningResult (fail-closed failure) when the issuing CA was
     ///          not found in the configured Trusted List(s).
     std::optional<SigningResult> completeLongTermChain(Pkcs11Token& token, SignatureLevel level);
+
+    /// Reject an expired signer certificate unless the request carries the
+    /// user-consent opt-in. Shared by @ref sign and @ref appendSigner for the
+    /// same reason as @ref completeLongTermChain: adding a signer to an
+    /// already-signed document is signing, and @ref sign redirects several
+    /// formats into @ref appendSigner itself, so a check that lived on only
+    /// one entry point would be dropped by the service's own dispatch.
+    /// @returns std::nullopt when the signer is acceptable (in date, opted in,
+    ///          or carrying no readable certificate to judge); a populated
+    ///          @ref SigningResult carrying @ref SignFailureKind::PolicyViolation
+    ///          when an expired signer is used without the opt-in.
+    std::optional<SigningResult> enforceSignerCertPolicy(Pkcs11Token& token, const SigningRequest& request);
 };
 
 } // namespace libresign

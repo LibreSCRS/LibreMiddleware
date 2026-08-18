@@ -63,6 +63,20 @@ std::vector<uint8_t> loadCertFromFile(const std::string& path)
     return native_utils::derEncode(static_cast<int (*)(const X509*, unsigned char**)>(i2d_X509), cert.get());
 }
 
+// Single construction point for the token both entry points sign with.
+// Production always resolves the slot from @p readerName; @p testSlotId is
+// the SoftHSM2 seam documented on NativeSigningService::setTestSlotId and is
+// never engaged outside the tests. Both returns are prvalues, so the
+// non-movable Token is constructed directly into the caller's storage.
+Pkcs11Token makeToken(Pkcs11ModuleHandle module, const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
+                      const std::string& readerName, const std::vector<uint8_t>& keyId,
+                      std::optional<unsigned long> testSlotId)
+{
+    if (testSlotId)
+        return Pkcs11Token(std::move(module), pin, keyAlias, Pkcs11Token::TestSlotId{*testSlotId}, keyId);
+    return Pkcs11Token(std::move(module), pin, keyAlias, readerName, keyId);
+}
+
 // Sniff signature format from prior bytes' magic. Used by @ref
 // NativeSigningService::appendSigner — the public API does not carry a
 // SignatureFormat for the append path, so the dispatcher infers it from
@@ -362,6 +376,31 @@ std::optional<SigningResult> NativeSigningService::completeLongTermChain(Pkcs11T
     return std::nullopt;
 }
 
+std::optional<SigningResult> NativeSigningService::enforceSignerCertPolicy(Pkcs11Token& token,
+                                                                           const SigningRequest& request)
+{
+    // The native backend's CMS path does not intrinsically reject expired
+    // signers — check explicitly so `allowExpiredCertificate=false` (the
+    // default) behaves consistently with the DSS backend. The flag is the
+    // production user-consent opt-in: the host GUI sets it to true only
+    // after the user has acknowledged the expired-certificate warning on
+    // the signing page. Both entry points run this; appending a signer to
+    // an already-signed document is signing, and the request that reaches
+    // appendSigner carries the same opt-in the user answered for.
+    auto certDer = token.certificate();
+    if (certDer.empty())
+        return std::nullopt;
+    auto x509 = native_utils::parseCert(certDer);
+    if (!x509)
+        return std::nullopt;
+
+    const int cmp = X509_cmp_current_time(X509_get0_notAfter(x509.get()));
+    const bool expired = (cmp <= 0); // -1 past, 0 malformed — treat both as expired
+    if (expired && !request.allowExpiredCertificate)
+        return makeFailure(SignFailureKind::PolicyViolation, "Signing certificate has expired");
+    return std::nullopt;
+}
+
 SigningResult NativeSigningService::sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
                                          const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
                                          const std::string& readerName)
@@ -422,27 +461,11 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, const st
         // outlive this call so the registry's weak_ptr lookup resolves.
         // The module handle comes from the service-owned manager so the
         // module stays mapped across consecutive signs.
-        auto token = Pkcs11Token(moduleManager.acquire(pkcs11ModulePath), pin, keyAlias, readerName, request.keyId);
+        auto token =
+            makeToken(moduleManager.acquire(pkcs11ModulePath), pin, keyAlias, readerName, request.keyId, testSlotId);
 
-        // Certificate expiry enforcement. The native backend's CMS path
-        // does not intrinsically reject expired signers — add an explicit
-        // check so `allowExpiredCertificate=false` (the default) behaves
-        // consistently with the DSS backend. The flag is the production
-        // user-consent opt-in: the host GUI sets it to true only after
-        // the user has acknowledged the expired-certificate warning on
-        // the signing page.
-        {
-            auto certDer = token.certificate();
-            if (!certDer.empty()) {
-                auto x509 = native_utils::parseCert(certDer);
-                if (x509) {
-                    const int cmp = X509_cmp_current_time(X509_get0_notAfter(x509.get()));
-                    const bool expired = (cmp <= 0); // -1 past, 0 malformed — treat both as expired
-                    if (expired && !request.allowExpiredCertificate)
-                        return makeFailure(SignFailureKind::PolicyViolation, "Signing certificate has expired");
-                }
-            }
-        }
+        if (auto failure = enforceSignerCertPolicy(token, request))
+            return *failure;
 
         // Wire trust config to TSA/revocation parameters
         auto tsa = request.tsa;
@@ -505,7 +528,11 @@ SigningResult NativeSigningService::appendSigner(const SigningRequest& request, 
         // flow into the in-process PKCS#11 module's provider probe
         // transparently — the caller's shared_ptr<CardSession> just needs
         // to outlive this call so the registry's weak_ptr resolves.
-        auto token = Pkcs11Token(moduleManager.acquire(pkcs11Module), pin, keyAlias, readerName, request.keyId);
+        auto token =
+            makeToken(moduleManager.acquire(pkcs11Module), pin, keyAlias, readerName, request.keyId, testSlotId);
+
+        if (auto failure = enforceSignerCertPolicy(token, request))
+            return *failure;
 
         // Wire trust config to TSA/revocation parameters — the new signer
         // inherits the host's CRL/OCSP posture, identical to sign().

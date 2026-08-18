@@ -748,6 +748,13 @@ if(BUILD_SIGNING)
         target_link_libraries(CAdESModuleTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
         gtest_discover_tests(CAdESModuleTests)
 
+        # Service-level policy over the SoftHSM2 slot seam — covers the
+        # sign()/appendSigner entry points, not the format modules.
+        add_executable(NativeSigningServiceTests native_signing_service_test.cpp)
+        target_link_libraries(NativeSigningServiceTests
+            PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
+        gtest_discover_tests(NativeSigningServiceTests)
+
         add_executable(PAdESModuleTests pades_module_test.cpp)
         target_link_libraries(PAdESModuleTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
         gtest_discover_tests(PAdESModuleTests)
