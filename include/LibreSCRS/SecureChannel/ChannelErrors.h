@@ -61,7 +61,7 @@ enum class ChannelActivationError : std::uint8_t {
     ///        Re-entering CardSession on the same thread would self-deadlock on
     ///        the non-recursive session mutex. Release the holder first.
     ///        Terminal; indicates a caller bug.
-    /// @since 4.x
+    /// @since 4.2
     ReentrantAccess,
     /// @brief BAC established, but the SM-authenticated EF.CardAccess re-read
     ///        showed PACE — the unauthenticated pre-auth "PACE absent" verdict

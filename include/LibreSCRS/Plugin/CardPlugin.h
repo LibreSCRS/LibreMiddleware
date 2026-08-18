@@ -712,7 +712,7 @@ public:
     /// @param transportValue  Transport PIN value; cleansed on destruction.
     /// @param newPin          Holder's new PIN value; cleansed on destruction.
     /// @note Safe default: `PINResultOutcome::Unsupported` (base not overridden).
-    /// @since 4.x
+    /// @since 4.3
     [[nodiscard]] virtual PINResult activateTransportPin(LibreSCRS::SmartCard::CardSession& session,
                                                          std::string_view pinLabel,
                                                          const LibreSCRS::Secure::String& transportValue,
@@ -745,7 +745,7 @@ public:
     /// @note Declared as the LAST virtual in the class: future virtuals
     ///       must be appended AFTER this one so every existing vtable
     ///       slot keeps its position (ABI-additive evolution).
-    /// @since 4.x
+    /// @since 4.3
     [[nodiscard]] virtual PINResult activateSigningKey(LibreSCRS::SmartCard::CardSession& session,
                                                        const LibreSCRS::Secure::String& signPin) const
     {

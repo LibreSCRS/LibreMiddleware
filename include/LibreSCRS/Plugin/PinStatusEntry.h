@@ -24,7 +24,7 @@
 namespace LibreSCRS::Plugin {
 
 /// @brief Credential classification derived from card evidence.
-/// @since 4.x — append-only.
+/// @since 4.3 — append-only.
 enum class PinKind : std::uint8_t {
     Unknown, ///< No safe classification evidence.
     UserPin, ///< General-authentication PIN.
@@ -35,7 +35,7 @@ enum class PinKind : std::uint8_t {
 
 /// @brief Objective lifecycle state of a credential.
 /// Precedence when several apply: Blocked > NeedsChange > Transport > Operational.
-/// @since 4.x — append-only.
+/// @since 4.3 — append-only.
 enum class PinState : std::uint8_t {
     Unknown,     ///< Not determinable safely.
     Transport,   ///< Transport value set at issuance; not yet personalized.
@@ -47,7 +47,7 @@ enum class PinState : std::uint8_t {
 /// @brief How a PUK-based unblock behaves on this credential.
 /// Meaningful only when @ref PinStatusEntry::unblockable is true; MUST be
 /// Unknown otherwise.
-/// @since 4.x — append-only.
+/// @since 4.3 — append-only.
 enum class UnblockStyle : std::uint8_t {
     Unknown,          ///< Not unblockable, or style not known.
     ResetOnly,        ///< Counter reset; old PIN value retained.
@@ -56,7 +56,7 @@ enum class UnblockStyle : std::uint8_t {
 };
 
 /// @brief Who can recover a blocked credential.
-/// @since 4.x — append-only.
+/// @since 4.3 — append-only.
 enum class PinRecovery : std::uint8_t {
     Unknown,       ///< No evidence — clients show generic contact-issuer guidance.
     HolderViaPuk,  ///< Holder can unblock with the PUK through this software.
