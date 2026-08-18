@@ -287,8 +287,12 @@ TEST(CAdESSignClassification, BT_TsaFailure_IsTsaUnreachable)
         GTEST_SKIP() << "SoftHSM2 not found";
 
     libresign::Pkcs11ModuleManager manager;
+    auto slot = libresign::test::findSoftHsmTestSlot(manager.acquire(softHsmPath));
+    if (!slot)
+        GTEST_SKIP() << "SoftHSM2 token '" << libresign::test::kSoftHsmTokenLabel << "' not initialised";
+
     Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{0});
+                      libresign::Pkcs11Token::TestSlotId{*slot});
 
     MockHttpServer server(MockHttpServer::Mode::GarbageBody);
     TSAConfig tsa;

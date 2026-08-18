@@ -55,9 +55,14 @@ protected:
             GTEST_SKIP() << "SoftHSM2 not found";
         if (!haveTool("pdftotext"))
             GTEST_SKIP() << "pdftotext (poppler-utils) not installed";
+        auto slot = libresign::test::findSoftHsmTestSlot(manager.acquire(softHsmPath));
+        if (!slot)
+            GTEST_SKIP() << "SoftHSM2 token '" << libresign::test::kSoftHsmTokenLabel << "' not initialised";
+        testSlot = *slot;
     }
     const char* softHsmPath = nullptr;
     libresign::Pkcs11ModuleManager manager;
+    unsigned long testSlot = 0;
 };
 
 } // namespace
@@ -65,7 +70,7 @@ protected:
 TEST_F(PAdESUnicodeE2ETest, SerbianLatinSignerIsSearchable)
 {
     Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{0});
+                      libresign::Pkcs11Token::TestSlotId{testSlot});
     PAdESModule pades;
 
     VisualSignatureParams v;
@@ -97,7 +102,7 @@ TEST_F(PAdESUnicodeE2ETest, SerbianLatinSignerIsSearchable)
 TEST_F(PAdESUnicodeE2ETest, SerbianCyrillicSignerIsSearchable)
 {
     Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{0});
+                      libresign::Pkcs11Token::TestSlotId{testSlot});
     PAdESModule pades;
 
     VisualSignatureParams v;
@@ -128,7 +133,7 @@ TEST_F(PAdESUnicodeE2ETest, SerbianCyrillicSignerIsSearchable)
 TEST_F(PAdESUnicodeE2ETest, MixedSignerIsSearchable)
 {
     Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{0});
+                      libresign::Pkcs11Token::TestSlotId{testSlot});
     PAdESModule pades;
 
     VisualSignatureParams v;

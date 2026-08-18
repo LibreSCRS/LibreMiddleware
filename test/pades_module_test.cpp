@@ -221,15 +221,20 @@ protected:
         softHsmPath = libresign::test::findSoftHsmPath();
         if (!softHsmPath)
             GTEST_SKIP() << "SoftHSM2 not found";
+        auto slot = libresign::test::findSoftHsmTestSlot(manager.acquire(softHsmPath));
+        if (!slot)
+            GTEST_SKIP() << "SoftHSM2 token '" << libresign::test::kSoftHsmTokenLabel << "' not initialised";
+        testSlot = *slot;
     }
     const char* softHsmPath = nullptr;
     libresign::Pkcs11ModuleManager manager;
+    unsigned long testSlot = 0;
 };
 
 TEST_F(PAdESModuleSoftHSMTest, SignPdf_BB)
 {
     Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{0});
+                      libresign::Pkcs11Token::TestSlotId{testSlot});
     auto pdf = testPdfBytes();
     PAdESModule pades;
 
@@ -259,7 +264,7 @@ TEST_F(PAdESModuleSoftHSMTest, SignPdf_BB)
 TEST_F(PAdESModuleSoftHSMTest, SignPdf_BB_WithVisual)
 {
     Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{0});
+                      libresign::Pkcs11Token::TestSlotId{testSlot});
     auto pdf = testPdfBytes();
     PAdESModule pades;
 
@@ -290,7 +295,7 @@ TEST_F(PAdESModuleSoftHSMTest, SignPdf_BB_WithVisual)
 TEST_F(PAdESModuleSoftHSMTest, SignPdf_BB_WithUnicodeVisual)
 {
     Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{0});
+                      libresign::Pkcs11Token::TestSlotId{testSlot});
     auto pdf = testPdfBytes();
     PAdESModule pades;
 
@@ -325,7 +330,7 @@ TEST_F(PAdESModuleSoftHSMTest, SignPdf_BB_WithUnicodeVisual)
 TEST_F(PAdESModuleSoftHSMTest, SignPdf_BB_InvisibleSignature)
 {
     Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{0});
+                      libresign::Pkcs11Token::TestSlotId{testSlot});
     auto pdf = testPdfBytes();
     PAdESModule pades;
 
@@ -343,7 +348,7 @@ TEST_F(PAdESModuleSoftHSMTest, SignPdf_BB_InvisibleSignature)
 TEST_F(PAdESModuleSoftHSMTest, SignedPdfHasValidIncrementalUpdate)
 {
     Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{0});
+                      libresign::Pkcs11Token::TestSlotId{testSlot});
     auto pdf = testPdfBytes();
     PAdESModule pades;
 
@@ -372,7 +377,7 @@ TEST_F(PAdESModuleSoftHSMTest, SignedPdfHasValidIncrementalUpdate)
 TEST_F(PAdESModuleSoftHSMTest, ContentsHexIsNonZero)
 {
     Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{0});
+                      libresign::Pkcs11Token::TestSlotId{testSlot});
     auto pdf = testPdfBytes();
     PAdESModule pades;
 
@@ -393,7 +398,7 @@ TEST_F(PAdESModuleSoftHSMTest, ContentsHexIsNonZero)
 TEST_F(PAdESModuleSoftHSMTest, ByteRangeIsFilledIn)
 {
     Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{0});
+                      libresign::Pkcs11Token::TestSlotId{testSlot});
     auto pdf = testPdfBytes();
     PAdESModule pades;
 
@@ -466,7 +471,7 @@ TEST_F(PAdESModuleSoftHSMTest, SignsWrappedPdf_InnerRelativeStartxref)
     // the inner PDF is unchanged — after prefix/suffix strip the offset is
     // already correct, no fallback scan needed.
     Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{0});
+                      libresign::Pkcs11Token::TestSlotId{testSlot});
     auto inner = testPdfBytes();
     auto wrapped = wrapPdfWithForm(inner, /*bumpStartxrefBy=*/0);
 
@@ -492,7 +497,7 @@ TEST_F(PAdESModuleSoftHSMTest, SignsWrappedPdf_OuterRelativeStartxref)
     // offsets. After strip, the stored offset overruns; the fallback xref
     // keyword scan must recover.
     Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{0});
+                      libresign::Pkcs11Token::TestSlotId{testSlot});
     auto inner = testPdfBytes();
     auto wrapped = wrapPdfWithForm(inner, /*bumpStartxrefBy=*/kWebFormPrefix.size());
 

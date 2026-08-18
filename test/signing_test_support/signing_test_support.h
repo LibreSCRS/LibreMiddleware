@@ -14,7 +14,8 @@
 class DSSValidationClient;
 namespace libresign {
 class DSSServiceManager;
-}
+class Pkcs11ModuleHandle;
+} // namespace libresign
 
 namespace libresign::test {
 
@@ -50,12 +51,51 @@ void checkPinFailure(const SigningResult& result);
             GTEST_SKIP() << "Skipped: previous PIN failure";                                                           \
     } while (0)
 
-// ---- SoftHSM helper ----
-// Requires SoftHSM2 setup:
+// ---- SoftHSM helpers ----
+// Requires SoftHSM2 setup. A bare `--keypairgen` is NOT enough: every
+// format module reads the signer certificate off the token, so a token
+// carrying only a key pair fails the whole tier with "No certificate
+// found on token". Import a key + matching certificate under one CKA_ID:
+//
 //   softhsm2-util --init-token --slot 0 --label test-token --so-pin 0000 --pin 1234
-//   pkcs11-tool --module <path>/libsofthsm2.so --login --pin 1234
-//       --keypairgen --key-type rsa:2048 --label test-key
+//   openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+//       -keyout key.pem -out cert.pem -subj "/CN=LibreSCRS SoftHSM Test Signer"
+//   openssl rsa  -in key.pem  -outform DER -out key.der
+//   openssl x509 -in cert.pem -outform DER -out cert.der
+//   pkcs11-tool --module <path>/libsofthsm2.so --login --pin 1234 \
+//       --write-object key.der  --type privkey --label test-key --id 01
+//   pkcs11-tool --module <path>/libsofthsm2.so --login --pin 1234 \
+//       --write-object cert.der --type cert    --label test-key --id 01
+//
+// A self-signed leaf with no issuer on the token is deliberate: it keeps
+// the on-token chain at length 1, which is what the long-term revocation
+// gate treats as an unproven terminal.
 const char* findSoftHsmPath();
+
+/// Default label of the test token created by the setup above.
+inline constexpr const char* kSoftHsmTokenLabel = "test-token";
+
+/// @brief Resolve the raw PKCS#11 slot ID that carries the initialised
+///        SoftHSM2 token labelled @p tokenLabel.
+///
+/// `softhsm2-util --init-token --slot 0` does NOT keep the token on slot
+/// 0: SoftHSM2 >= 2.2 reassigns the freshly initialised token to a
+/// randomly generated slot ID and leaves slot 0 as an uninitialised
+/// spare. A hardcoded `Pkcs11Token::TestSlotId{0}` therefore fails the
+/// whole SoftHSM tier with `CKR_SLOT_ID_INVALID` on `C_OpenSession`.
+/// Enumerate `C_GetSlotList(tokenPresent = CK_TRUE)` and match the label
+/// reported by `C_GetTokenInfo` instead.
+///
+/// @param module     Live handle from @ref libresign::Pkcs11ModuleManager
+///                   (the manager has already run `C_Initialize`).
+/// @param tokenLabel Token label to look for. `CK_TOKEN_INFO::label` is a
+///                   blank-padded, non-NUL-terminated 32-byte field; the
+///                   padding is trimmed before comparison.
+/// @return The slot ID, or `std::nullopt` when the module exposes no slot
+///         carrying that token — callers `GTEST_SKIP()` on `nullopt` so a
+///         machine without a provisioned SoftHSM store (CI) stays green.
+std::optional<unsigned long> findSoftHsmTestSlot(const libresign::Pkcs11ModuleHandle& module,
+                                                 const char* tokenLabel = kSoftHsmTokenLabel);
 
 // ---- DSS test environment (shared instance for signing + validation) ----
 class SigningTestEnvironment : public ::testing::Environment

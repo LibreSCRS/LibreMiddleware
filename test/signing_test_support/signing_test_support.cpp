@@ -2,13 +2,27 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "signing_test_support.h"
+
+#include "native/pkcs11_module_manager.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <string_view>
 #include <thread>
+
+#define CK_PTR *
+#define CK_DECLARE_FUNCTION(returnType, name) returnType name
+#define CK_DECLARE_FUNCTION_POINTER(returnType, name) returnType(*name)
+#define CK_CALLBACK_FUNCTION(returnType, name) returnType(*name)
+#ifndef NULL_PTR
+#define NULL_PTR 0
+#endif
+
+#include "pkcs11/pkcs11.h"
 
 #ifdef LIBRESIGN_HAS_DSS_ORACLE
 #include "dss/dss_service_manager.h"
@@ -101,6 +115,40 @@ const char* findSoftHsmPath()
             return path;
     }
     return nullptr;
+}
+
+std::optional<unsigned long> findSoftHsmTestSlot(const libresign::Pkcs11ModuleHandle& module, const char* tokenLabel)
+{
+    if (!module.valid() || !tokenLabel)
+        return std::nullopt;
+
+    auto* funcs = static_cast<CK_FUNCTION_LIST*>(module.functionList());
+    if (!funcs || !funcs->C_GetSlotList || !funcs->C_GetTokenInfo)
+        return std::nullopt;
+
+    CK_ULONG count = 0;
+    if (funcs->C_GetSlotList(CK_TRUE, nullptr, &count) != CKR_OK || count == 0)
+        return std::nullopt;
+
+    std::vector<CK_SLOT_ID> slots(count);
+    if (funcs->C_GetSlotList(CK_TRUE, slots.data(), &count) != CKR_OK)
+        return std::nullopt;
+
+    const std::string_view wanted(tokenLabel);
+    for (CK_ULONG i = 0; i < count; ++i) {
+        CK_TOKEN_INFO info{};
+        if (funcs->C_GetTokenInfo(slots[i], &info) != CKR_OK)
+            continue;
+
+        // Blank-padded, not NUL-terminated (PKCS#11 v2.40 §10.4).
+        std::string_view label(reinterpret_cast<const char*>(info.label), sizeof(info.label));
+        const auto lastGlyph = label.find_last_not_of(' ');
+        label = (lastGlyph == std::string_view::npos) ? std::string_view{} : label.substr(0, lastGlyph + 1);
+
+        if (label == wanted)
+            return static_cast<unsigned long>(slots[i]);
+    }
+    return std::nullopt;
 }
 
 // ---- DSS validation environment ----

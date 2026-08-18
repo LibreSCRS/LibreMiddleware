@@ -116,10 +116,12 @@ TEST_F(Pkcs11ModuleManagerTest, TokenDestructsBeforeManager)
         // test/signing_test_support/signing_test_support.h). The
         // ctor performs C_OpenSession + C_Login + C_FindObjects; if
         // SoftHSM hasn't been initialised by the project's test
-        // bootstrap, the ctor throws — that's fine here, the test
-        // still demonstrates that no double-finalize occurs.
+        // bootstrap, the slot lookup yields nothing and the ctor
+        // throws — that's fine here, the test still demonstrates that
+        // no double-finalize occurs.
+        const auto slot = libresign::test::findSoftHsmTestSlot(handle).value_or(0);
         try {
-            Pkcs11Token token(handle, libresign::as_pin("1234"), "test-key", Pkcs11Token::TestSlotId{0});
+            Pkcs11Token token(handle, libresign::as_pin("1234"), "test-key", Pkcs11Token::TestSlotId{slot});
         } catch (const std::exception&) {
             // SoftHSM not init'd in this build sandbox; the manager
             // half of the test still proves the lifecycle invariant.

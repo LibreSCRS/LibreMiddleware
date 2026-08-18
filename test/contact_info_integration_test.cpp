@@ -79,9 +79,14 @@ protected:
         softHsmPath = libresign::test::findSoftHsmPath();
         if (!softHsmPath)
             GTEST_SKIP() << "SoftHSM2 not found";
+        auto slot = libresign::test::findSoftHsmTestSlot(manager.acquire(softHsmPath));
+        if (!slot)
+            GTEST_SKIP() << "SoftHSM2 token '" << libresign::test::kSoftHsmTokenLabel << "' not initialised";
+        testSlot = *slot;
     }
     const char* softHsmPath = nullptr;
     libresign::Pkcs11ModuleManager manager;
+    unsigned long testSlot = 0;
 };
 
 TEST_F(SigningContactInfoSoftHSMTest, SignedPdfCarriesContactInfoInSignatureDict)
@@ -112,7 +117,7 @@ TEST_F(SigningContactInfoSoftHSMTest, SignedPdfCarriesContactInfoInSignatureDict
 
     // 3. Sign via PAdESModule with a real (SoftHSM-backed) PKCS#11 token.
     libresign::Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                                 libresign::Pkcs11Token::TestSlotId{0});
+                                 libresign::Pkcs11Token::TestSlotId{testSlot});
     auto pdf = testPdfBytes();
     libresign::PAdESModule pades;
 

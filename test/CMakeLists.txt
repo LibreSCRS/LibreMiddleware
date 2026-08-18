@@ -609,6 +609,10 @@ if(BUILD_SIGNING)
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
         ${LibreMiddleware_SOURCE_DIR}/thirdparty/nlohmann)
+    # findSoftHsmTestSlot drives C_GetSlotList / C_GetTokenInfo directly, so
+    # the support TU needs the PKCS#11 headers LibreSign keeps PRIVATE.
+    target_include_directories(SigningTestSupport PRIVATE
+        ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/include)
     target_link_libraries(SigningTestSupport PUBLIC
         GTest::gtest LibreSign)
     # Support library reaches into bucket-B libresign internals (dss/*,
