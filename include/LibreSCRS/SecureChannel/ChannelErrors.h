@@ -71,7 +71,7 @@ enum class ChannelActivationError : std::uint8_t {
     ///        the narrowed BAC fallback never falls back on it. NOT a
     ///        wrong-credential condition: callers map it to a non-auth failure
     ///        surface and never mark the credential wrong.
-    /// @since 4.x
+    /// @since 4.3
     PaceDowngradeDetected,
 };
 

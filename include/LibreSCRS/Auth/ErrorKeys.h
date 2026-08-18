@@ -313,6 +313,7 @@ namespace LibreSCRS::Auth::ErrorKeys {
 /// @brief Structural: the document exposes no PACE (EF.CardAccess absent or
 ///        empty). NOT a wrong-credential condition — consumers must not treat
 ///        it as one (no credential eviction / retry punishment).
+/// @since 4.3
 [[nodiscard]] inline LocalizedText paceUnsupported()
 {
     return LocalizedText{"librescrs.error.preRead.paceUnsupported", "This document does not support PACE", {}};
@@ -323,6 +324,7 @@ namespace LibreSCRS::Auth::ErrorKeys {
 ///        downgrade). NOT a wrong-credential condition — carried on a non-auth
 ///        failure so flows never evict or punish a credential for an attack
 ///        signal.
+/// @since 4.3
 [[nodiscard]] inline LocalizedText paceDowngradeDetected()
 {
     return LocalizedText{
