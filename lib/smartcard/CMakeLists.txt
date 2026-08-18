@@ -71,3 +71,5 @@ target_include_directories(SmartCard_Impl PRIVATE
 set_target_properties(SmartCard_Impl PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 target_link_libraries(SmartCard_Impl PUBLIC PCSC::PCSC Threads::Threads PRIVATE OpenSSL_Crypto)
+
+librescrs_warnings_as_errors(SmartCard_Impl)

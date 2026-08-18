@@ -80,7 +80,7 @@ jobs:
             --enable-shared --disable-static --without-readline
           make -j$(nproc) install
 
-      - name: Configure & Build (Release)
+      - name: Configure & Build (Release, warnings as errors)
         # Release matches what users receive — same `-O2 -DNDEBUG` code
         # path runs in production and in the local pre-tag verification
         # pass. Debug coverage lives in the developer workflow; the CI
@@ -88,13 +88,25 @@ jobs:
         # SIGNING_BACKEND is bare (declared in `lib/libresign/CMakeLists.txt`,
         # not namespaced) and BUILD_TESTING defaults ON, so neither is spelled
         # with a project prefix here.
+        #
+        # LIBREMIDDLEWARE_WERROR covers the shipped libraries and card plugins
+        # only: the vendored miniz translation unit, the fetched googletest and
+        # this repo's test executables are all left warning-only, so a compiler
+        # upgrade cannot fail this build through a diagnostic no change here
+        # could fix. Set on both matrix legs — `both` compiles the DSS backend
+        # sources that `native` does not. Deliberately not set on the macOS
+        # job: the clean baseline this gate rests on was measured with GCC, and
+        # AppleClang's diagnostic set is a different one that has never been
+        # surveyed. Build type and the option are pinned together here so a
+        # later edit to one cannot quietly disarm the other.
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH=/tmp/opensc-install \
             -DOPENSC_INCLUDE_DIR=/tmp/opensc-src/src \
             -DSIGNING_BACKEND=${{ matrix.signing_backend }} \
-            -DBUILD_DSS_ORACLE=${{ matrix.dss_oracle }}
+            -DBUILD_DSS_ORACLE=${{ matrix.dss_oracle }} \
+            -DLIBREMIDDLEWARE_WERROR=ON
           cmake --build build
 
       - name: Verify the configured signing backend took effect

@@ -45,3 +45,5 @@ target_link_libraries(EMRTDCrypto
     PUBLIC OpenSSL_Crypto
     PRIVATE SmartCard_Impl
 )
+
+librescrs_warnings_as_errors(EMRTDCrypto)

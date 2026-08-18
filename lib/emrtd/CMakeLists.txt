@@ -23,3 +23,5 @@ target_include_directories(EMRTD PRIVATE
 set_target_properties(EMRTD PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 target_link_libraries(EMRTD PUBLIC EMRTDCrypto SmartCard_Impl LibreSCRS_SecureChannel)
+
+librescrs_warnings_as_errors(EMRTD)

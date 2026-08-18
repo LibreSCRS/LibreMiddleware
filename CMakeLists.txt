@@ -21,6 +21,33 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+# Promote those warnings to errors. Default OFF so a local build and a
+# downstream FetchContent/add_subdirectory consumer keep warning-only
+# behaviour; CI turns it on for the configurations whose baseline is known
+# clean.
+#
+# Deliberately NOT an add_compile_options(-Werror) next to the line above:
+# that is directory-scoped and would also reach code this project does not
+# own. googletest is fetched into this build tree (test/CMakeLists.txt) and
+# the vendored miniz translation unit compiles inside LibreSign, so a global
+# -Werror would let a compiler upgrade break this build through a diagnostic
+# in someone else's source, which no local fix can address. The opt-in below
+# is per target and is applied only to first-party libraries and plugins.
+# Test executables stay warning-only for the same reason the strictness is
+# scoped at all: the gate exists to protect the shipped library code.
+option(LIBREMIDDLEWARE_WERROR "Treat compiler warnings as errors" OFF)
+
+# Opts the named targets into LIBREMIDDLEWARE_WERROR. A no-op when the option
+# is off, so call sites need no condition of their own.
+function(librescrs_warnings_as_errors)
+    if(NOT LIBREMIDDLEWARE_WERROR)
+        return()
+    endif()
+    foreach(_target IN LISTS ARGN)
+        target_compile_options(${_target} PRIVATE -Werror)
+    endforeach()
+endfunction()
+
 # 4.0 hardening: per-plugin manifest.json -> constexpr header codegen.
 # Python is the build-time host for the lowering script; jsonschema is an
 # optional runtime dep (the script warns and skips validation when missing).

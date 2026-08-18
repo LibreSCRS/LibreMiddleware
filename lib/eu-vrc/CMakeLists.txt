@@ -22,3 +22,5 @@ target_include_directories(EuVrc PRIVATE
 
 target_link_libraries(EuVrc PUBLIC SmartCard_Impl)
 set_target_properties(EuVrc PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+librescrs_warnings_as_errors(EuVrc)

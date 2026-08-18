@@ -20,3 +20,5 @@ target_include_directories(RsHealth PRIVATE
 
 target_link_libraries(RsHealth PUBLIC SmartCard_Impl)
 set_target_properties(RsHealth PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+librescrs_warnings_as_errors(RsHealth)

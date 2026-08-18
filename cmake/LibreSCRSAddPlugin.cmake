@@ -80,6 +80,9 @@ function(librescrs_add_plugin name)
     if(LRS_PLUGIN_COMPILE_DEFINITIONS)
         target_compile_definitions(${name} PRIVATE ${LRS_PLUGIN_COMPILE_DEFINITIONS})
     endif()
+    # Every plugin is first-party code, so all of them follow the project's
+    # warnings-as-errors setting from this one place.
+    librescrs_warnings_as_errors(${name})
     set_target_properties(${name} PROPERTIES
         PREFIX "lib"
         OUTPUT_NAME "${name}"

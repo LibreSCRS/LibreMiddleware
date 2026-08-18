@@ -136,3 +136,5 @@ include(GNUInstallDirs)
 install(TARGETS librescrs-pkcs11
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkcs11
 )
+
+librescrs_warnings_as_errors(librescrs-pkcs11)

@@ -44,3 +44,5 @@ set_target_properties(librescrs-opensc-pkcs11 PROPERTIES
     POSITION_INDEPENDENT_CODE ON
     CXX_VISIBILITY_PRESET hidden
 )
+
+librescrs_warnings_as_errors(librescrs-opensc-pkcs11)

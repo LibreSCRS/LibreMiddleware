@@ -42,6 +42,8 @@ target_link_libraries(CardPlugin_Impl PUBLIC ${CMAKE_DL_LIBS} SmartCard_Impl)
 target_link_libraries(CardPlugin_Impl PUBLIC LibreSCRS_Auth LibreSCRS_SmartCard)
 set_target_properties(CardPlugin_Impl PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+librescrs_warnings_as_errors(CardPlugin_Impl)
+
 if(BUILD_TESTING AND LIBREMIDDLEWARE_BUILD_PLUGINS)
     # Mirrors lib/pkcs15/CMakeLists.txt: the root CMakeLists.txt enables
     # testing AFTER add_subdirectory(lib/plugin), so call enable_testing()

@@ -496,6 +496,19 @@ set_target_properties(LibreSCRS_SmartCard_TestHelpers PROPERTIES
     VISIBILITY_INLINES_HIDDEN OFF
 )
 
+# The shipped libraries. LibreSCRS_Secure and LibreSCRS_All are INTERFACE
+# targets with no sources of their own, and LibreSCRS_SmartCard_TestHelpers is
+# build-tree-only test scaffolding — none of the three is listed.
+librescrs_warnings_as_errors(
+    LibreSCRS_Auth
+    LibreSCRS_Trust
+    LibreSCRS_Certificate
+    LibreSCRS_SecureChannel
+    LibreSCRS_SmartCard
+    LibreSCRS_Plugin
+    LibreSCRS_Signing
+)
+
 # Public aliases — consumers use these.
 add_library(LibreSCRS::Auth      ALIAS LibreSCRS_Auth)
 add_library(LibreSCRS::SmartCard ALIAS LibreSCRS_SmartCard)

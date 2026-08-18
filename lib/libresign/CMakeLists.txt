@@ -267,3 +267,18 @@ if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
         LibXml2::LibXml2
     )
 endif()
+
+librescrs_warnings_as_errors(LibreSign)
+
+# miniz.c is vendored, and the two suppressions above are the diagnostics it
+# trips on the compilers in use today. Warnings-as-errors is a statement about
+# code this project can fix, so keep the vendored translation unit out of it:
+# a compiler upgrade that grows a new diagnostic here must not break the
+# build in a file no local change may touch. Source-level flags land after
+# the target's, so this wins over the -Werror added just above.
+if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
+    set_property(
+        SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/miniz/miniz.c
+        APPEND_STRING PROPERTY COMPILE_FLAGS " -Wno-error"
+    )
+endif()

@@ -38,6 +38,8 @@ target_link_libraries(PKCS15 PUBLIC SmartCard_Impl LibreSCRS::SmartCard LibreSCR
 
 set_target_properties(PKCS15 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+librescrs_warnings_as_errors(PKCS15)
+
 if(BUILD_TESTING AND LIBREMIDDLEWARE_BUILD_PLUGINS)
     # Root CMakeLists.txt enables testing AFTER add_subdirectory(lib/pkcs15);
     # call enable_testing() here so this subdirectory's CTestTestfile.cmake
