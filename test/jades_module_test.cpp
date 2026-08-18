@@ -59,7 +59,7 @@ TEST_F(JAdESModuleTest, SignBB_ProducesValidJWS)
     ASSERT_TRUE(j["signatures"][0].contains("signature"));
 }
 
-TEST_F(JAdESModuleTest, SignBB_DetachedHasEmptyPayload)
+TEST_F(JAdESModuleTest, SignBB_DetachedOmitsPayload)
 {
     Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
                       libresign::Pkcs11Token::TestSlotId{testSlot});
@@ -73,9 +73,11 @@ TEST_F(JAdESModuleTest, SignBB_DetachedHasEmptyPayload)
     std::string json(result.signedDocument.begin(), result.signedDocument.end());
     auto j = nlohmann::json::parse(json);
 
-    // Detached: payload should be empty string
-    ASSERT_TRUE(j.contains("payload"));
-    EXPECT_EQ(j["payload"].get<std::string>(), "");
+    // Detached: per RFC 7797 §4.2 and RFC 7515 §7.2 the "payload" member is
+    // OMITTED, not present-but-empty. An empty-string payload is a distinct
+    // (and valid) JWS input that strict validators reject on detached
+    // signatures, so absence is the contract being pinned here.
+    EXPECT_FALSE(j.contains("payload"));
 }
 
 TEST_F(JAdESModuleTest, SignBB_EnvelopedHasPayload)

@@ -81,7 +81,9 @@ TEST_F(ASiCModuleSoftHSMTest, SignWithCAdES_ProducesValidZip)
 
     // Verify all expected entries exist
     EXPECT_GE(mz_zip_reader_locate_file(&zip, "test.txt", nullptr, 0), 0);
-    EXPECT_GE(mz_zip_reader_locate_file(&zip, "META-INF/manifest.xml", nullptr, 0), 0);
+    // ETSI EN 319 162-1 names the per-signature manifest ASiCManifest<nnn>.xml
+    // and pairs it with the signature entry carrying the same suffix.
+    EXPECT_GE(mz_zip_reader_locate_file(&zip, "META-INF/ASiCManifest001.xml", nullptr, 0), 0);
     EXPECT_GE(mz_zip_reader_locate_file(&zip, "META-INF/signature001.p7s", nullptr, 0), 0);
 
     // Verify document content round-trips
