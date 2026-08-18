@@ -510,6 +510,29 @@ TEST_F(PAdESModuleSoftHSMTest, SignsWrappedPdf_OuterRelativeStartxref)
     EXPECT_TRUE(containsString(result.signedDocument, "/Type /Sig"));
 }
 
+// The long-term revocation gate is reached through appendSigner, not only
+// through sign(). appendSigner delegates to sign() with the prior PDF as
+// input, so the B-LT chain check runs on the appended signer exactly as it
+// does on a first signer. The SoftHSM token carries a single self-signed
+// leaf, which is a chain of length one: no Trusted-List anchor completed it
+// and no issuer hop reaches a verified root, so the tail is unprovable and
+// the gate must fail closed with CertificateChainIncomplete rather than
+// emit a long-term signature with no verifiable revocation evidence.
+TEST_F(PAdESModuleSoftHSMTest, AppendSignerAtLongTermRejectsUnterminatedChain)
+{
+    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
+                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    PAdESModule pades;
+
+    auto prior = pades.sign(testPdfBytes(), token, SignatureLevel::B_B, {}, {});
+    ASSERT_TRUE(prior.success) << prior.errorMessage;
+
+    auto appended = pades.appendSigner(prior.signedDocument, {}, token, SignatureLevel::B_LT, {}, {});
+    EXPECT_FALSE(appended.success);
+    ASSERT_TRUE(appended.failureKind.has_value()) << appended.errorMessage;
+    EXPECT_EQ(*appended.failureKind, SignFailureKind::CertificateChainIncomplete) << appended.errorMessage;
+}
+
 #else
 TEST(PAdESModule, DISABLED_SkippedNativeNotCompiled)
 {
