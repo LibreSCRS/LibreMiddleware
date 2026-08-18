@@ -84,7 +84,8 @@ add_library(LibreSCRS_Trust ${LIBREMIDDLEWARE_LIB_TYPE}
     ${LIBRESCRS_TRUST_PUBLIC_HEADERS}
 )
 target_compile_definitions(LibreSCRS_Trust PRIVATE LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD
-    LIBREMIDDLEWARE_CERTIFICATES_DIR="${LIBREMIDDLEWARE_CERTIFICATES_DIR}")
+    LIBREMIDDLEWARE_CERTIFICATES_DIR="${LIBREMIDDLEWARE_CERTIFICATES_DIR}"
+    LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR="${LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR}")
 target_include_directories(LibreSCRS_Trust PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
@@ -101,9 +102,13 @@ target_compile_features(LibreSCRS_Trust PUBLIC cxx_std_23)
 # access for the lazy-fetch merge path). Adding a reverse PRIVATE link here
 # closes the loop used by TrustStoreService eager fetches; static archives
 # tolerate the cycle because the linker re-emits both archives in one pass.
+# ${CMAKE_DL_LIBS}: BundledCertsProvider.cpp uses dladdr to derive the
+# certificate bundle from the location of this library rather than the host
+# executable's.
 target_link_libraries(LibreSCRS_Trust PRIVATE
     $<BUILD_INTERFACE:OpenSSL_Crypto>
-    $<BUILD_INTERFACE:LibreSign>)
+    $<BUILD_INTERFACE:LibreSign>
+    ${CMAKE_DL_LIBS})
 set_target_properties(LibreSCRS_Trust PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_options(LibreSCRS_Trust PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden -fvisibility-inlines-hidden -ffunction-sections -fdata-sections>
@@ -351,7 +356,8 @@ add_library(LibreSCRS_Signing ${LIBREMIDDLEWARE_LIB_TYPE}
     ${LIBRESCRS_SIGNING_DETAIL_HEADERS}
 )
 target_compile_definitions(LibreSCRS_Signing PRIVATE LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD
-    LIBREMIDDLEWARE_CERTIFICATES_DIR="${LIBREMIDDLEWARE_CERTIFICATES_DIR}")
+    LIBREMIDDLEWARE_CERTIFICATES_DIR="${LIBREMIDDLEWARE_CERTIFICATES_DIR}"
+    LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR="${LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR}")
 # LIBRESCRS_INTERNAL_BUILD lets SigningService.cpp include the local
 # detail/ErrorClassifier.h (guarded) and transitively pull the internal
 # apdu.h (still referenced by smartcard/pcsc_connection.h) through the

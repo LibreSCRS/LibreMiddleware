@@ -43,6 +43,10 @@
 #define LIBREMIDDLEWARE_CERTIFICATES_DIR ""
 #endif
 
+#ifndef LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR
+#define LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR ""
+#endif
+
 namespace {
 
 namespace fs = std::filesystem;
@@ -201,7 +205,11 @@ void printUsage()
 
 int main(int argc, char** argv)
 {
-    std::string reader, certsDir = LIBREMIDDLEWARE_CERTIFICATES_DIR;
+    // Prefer the source tree when this was built from one; an installed copy
+    // has that define empty and falls back to where the bundle was installed.
+    std::string reader, certsDir = LIBREMIDDLEWARE_CERTIFICATES_DIR[0] != '\0'
+                                       ? LIBREMIDDLEWARE_CERTIFICATES_DIR
+                                       : LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR;
     bool variable = false;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];

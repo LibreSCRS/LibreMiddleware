@@ -54,6 +54,21 @@ endif()
 set(LIBREMIDDLEWARE_CERTIFICATES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/certificates"
     CACHE PATH "Path to bundled CA certificates" FORCE)
 
+# Installed counterpart of the above: the absolute directory the install rule
+# further down drops the bundle into. Baked in alongside the source-tree path
+# so an installed build still resolves its anchors under a split prefix, where
+# the libraries and the data root share no parent and no relative walk from
+# the binary can reach the certificates.
+#
+# GNUInstallDirs is included here rather than only before the install() rules
+# because the subdirectories added below need CMAKE_INSTALL_FULL_DATAROOTDIR
+# to compute this value. The module is idempotent and its cache entries are
+# already created by the later include, so this only moves them earlier.
+include(GNUInstallDirs)
+set(LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR
+    "${CMAKE_INSTALL_FULL_DATAROOTDIR}/librescrs/certificates"
+    CACHE PATH "Installed location of the bundled CA certificates" FORCE)
+
 # Vendored OpenSC fork (static archive) for the OpenScPKCS11Provider.
 # Pinned at thirdparty/opensc-source. ON by default; set to OFF to skip
 # the ~5-10 minute autoconf+make build (the resulting librescrs-opensc-pkcs11

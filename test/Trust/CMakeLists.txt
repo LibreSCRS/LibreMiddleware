@@ -16,6 +16,7 @@ target_link_libraries(bundled_certs_walker_test
         OpenSSL_Crypto
         GTest::gtest
         GTest::gtest_main
+        ${CMAKE_DL_LIBS}
 )
 target_include_directories(bundled_certs_walker_test PRIVATE
     ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/Trust
@@ -24,5 +25,39 @@ target_include_directories(bundled_certs_walker_test PRIVATE
 target_compile_definitions(bundled_certs_walker_test PRIVATE
     LIBRESCRS_INTERNAL_BUILD
     LIBREMIDDLEWARE_CERTIFICATES_DIR="${LIBREMIDDLEWARE_CERTIFICATES_DIR}"
+    LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR="${LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR}"
 )
 add_test(NAME bundled_certs_walker_test COMMAND bundled_certs_walker_test)
+
+# Second walker binary, compiled as a packaged runtime is: dev-tree define
+# forced empty, installed-location define pointed at a staged data root that
+# no relative walk from the binary can reach. Both are compile-time, so the
+# installed-location rung of the ladder cannot be exercised from the target
+# above — it needs its own executable.
+set(LIBRESCRS_STAGED_CERTS_DIR
+    "${CMAKE_CURRENT_BINARY_DIR}/staged-prefix/share/librescrs/certificates")
+file(MAKE_DIRECTORY "${LIBRESCRS_STAGED_CERTS_DIR}/rs-mup")
+file(WRITE "${LIBRESCRS_STAGED_CERTS_DIR}/rs-mup/staged-anchor.crt" "stub")
+
+add_executable(bundled_certs_install_layout_test
+    bundled_certs_install_layout_test.cpp
+    ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/Trust/internal/BundledCertsProvider.cpp
+)
+target_link_libraries(bundled_certs_install_layout_test
+    PRIVATE
+        OpenSSL_Crypto
+        GTest::gtest
+        GTest::gtest_main
+        ${CMAKE_DL_LIBS}
+)
+target_include_directories(bundled_certs_install_layout_test PRIVATE
+    ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/Trust
+    ${PROJECT_SOURCE_DIR}/include
+)
+target_compile_definitions(bundled_certs_install_layout_test PRIVATE
+    LIBRESCRS_INTERNAL_BUILD
+    LIBREMIDDLEWARE_CERTIFICATES_DIR=""
+    LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR="${LIBRESCRS_STAGED_CERTS_DIR}"
+    LIBRESCRS_STAGED_CERTS_DIR="${LIBRESCRS_STAGED_CERTS_DIR}"
+)
+add_test(NAME bundled_certs_install_layout_test COMMAND bundled_certs_install_layout_test)
