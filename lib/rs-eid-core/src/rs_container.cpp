@@ -37,6 +37,15 @@ std::optional<std::span<const std::uint8_t>> leadingTlv(std::span<const std::uin
     return file.first(total);
 }
 
+std::span<const std::uint8_t> innerTlvPayload(std::span<const std::uint8_t> content) noexcept
+{
+    // 0x30 is an ASN.1 SEQUENCE, i.e. the CMS already: nothing wraps it.
+    if (content.size() <= kContainerHeaderSize || content[0] == 0x30) {
+        return content;
+    }
+    return content.subspan(kContainerHeaderSize);
+}
+
 std::vector<std::uint16_t> parseManifest(std::span<const std::uint8_t> manifestFile)
 {
     std::vector<std::uint16_t> ids;

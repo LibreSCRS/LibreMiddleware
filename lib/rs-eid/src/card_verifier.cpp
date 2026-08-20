@@ -4,6 +4,7 @@
 #include "card_verifier.h"
 #include "card_protocol.h"
 #include "card_reader_base.h"
+#include <rs_container.h>
 #include <rs_digest_binding.h>
 #include <rs_signed_object.h>
 #include <pcsc_connection.h>
@@ -28,37 +29,6 @@ using LibreSCRS::Internal::Crypto::Pkcs7Ptr;
 using LibreSCRS::Internal::Crypto::StackX509Ptr;
 using LibreSCRS::Internal::Crypto::X509Ptr;
 using LibreSCRS::Internal::Crypto::X509StoreCtxPtr;
-
-// The card file data returned by readFile() has the outer 4-byte TLV header
-// (2-byte file ID + 2-byte LE length) already stripped (readFile reads from offset 4).
-// But an inner TLV wrapper (2-byte tag + 2-byte LE length) still wraps the actual
-// PKCS#7 DER content. This helper strips that inner header.
-static std::vector<uint8_t> stripInnerTlvHeader(const std::vector<uint8_t>& data)
-{
-    if (data.size() <= 4)
-        return data;
-
-#ifndef NDEBUG
-    // Log first bytes for debugging
-    std::cerr << "[CardVerifier] Raw data first 16 bytes:";
-    for (size_t i = 0; i < std::min(data.size(), size_t(16)); i++)
-        std::cerr << " " << std::hex << std::setfill('0') << std::setw(2) << (int)data[i];
-    std::cerr << std::dec << std::endl;
-#endif
-
-    // If data already starts with ASN.1 SEQUENCE (0x30), it's already pure DER
-    if (data[0] == 0x30)
-        return data;
-
-#ifndef NDEBUG
-    // Otherwise strip the 4-byte inner TLV header (2-byte tag + 2-byte LE length)
-    std::cerr << "[CardVerifier] Stripping 4-byte inner TLV header (tag=0x" << std::hex << std::setfill('0')
-              << std::setw(2) << (int)data[0] << std::setw(2) << (int)data[1] << ", len=" << std::dec
-              << (static_cast<uint16_t>(data[2]) | (static_cast<uint16_t>(data[3]) << 8)) << ")" << std::endl;
-#endif
-
-    return std::vector<uint8_t>(data.begin() + 4, data.end());
-}
 
 CardVerifier::CardVerifier(const std::string& certificateFolderPath)
 {
@@ -175,7 +145,7 @@ VerificationResult CardVerifier::verifyGemaltoCardCert(LibreSCRS::SmartCard::Int
         return VerificationResult::Invalid;
 
     // Strip inner TLV header to get pure PKCS#7 DER
-    auto sodData = stripInnerTlvHeader(sodRaw);
+    const auto sodData = Core::innerTlvPayload(sodRaw);
 #ifndef NDEBUG
     std::cerr << "[CardVerifier] Gemalto card cert: PKCS#7 size after strip: " << sodData.size() << " bytes"
               << std::endl;
@@ -253,7 +223,7 @@ VerificationResult CardVerifier::verifyGemaltoSOD(LibreSCRS::SmartCard::Internal
         return VerificationResult::Invalid;
 
     // Strip inner TLV header to get pure PKCS#7 DER
-    auto sodData = stripInnerTlvHeader(sodRaw);
+    const auto sodData = Core::innerTlvPayload(sodRaw);
 #ifndef NDEBUG
     std::cerr << "[CardVerifier] PKCS#7 size after strip: " << sodData.size() << " bytes" << std::endl;
 #endif

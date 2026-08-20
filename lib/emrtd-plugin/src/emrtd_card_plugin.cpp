@@ -17,6 +17,8 @@
 #include <LibreSCRS/SmartCard/AppletAid.h>
 #include <LibreSCRS_internal/Plugin/PreReadAuthDerivation.h>
 #include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
+
+#include <AnnexDispatch.h>
 #include <LibreSCRS_internal/SmartCard/CardAccessReader.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
@@ -1069,6 +1071,18 @@ private:
             }
 
             emitGroup(std::move(g));
+        }
+
+        // 9. Annex groups, LAST. Selecting an annex directory displaces the
+        // eMRTD application, and nothing below needs it back; the dispatcher
+        // restores the master file on its way out.
+        {
+            LibreSCRS::Annex::AnnexContext annexCtx;
+            annexCtx.channel = channel;
+            annexCtx.conn = &conn;
+            for (auto& g : LibreSCRS::Annex::readAllAnnexes(annexCtx)) {
+                emitGroup(std::move(g));
+            }
         }
 
         // Holder destruction at scope exit ends the PC/SC transaction and

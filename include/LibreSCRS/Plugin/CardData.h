@@ -37,6 +37,12 @@ enum class FieldType : std::uint8_t { Text, Date, Photo, Binary };
 // "pki"          — PKI-related info (certificate count, key references)
 // "vehicle"      — vehicle-specific data
 // "insurance"    — health insurance data
+// "annex.<id>.*" — a national annex the card carries beside its base
+//                  application, e.g. "annex.rs.personal" for its data and
+//                  "annex.rs.security" for that annex's own verdict. The id
+//                  comes from the reader, so two annexes on one card cannot
+//                  collide, and the annex verdict never merges into the base
+//                  "security_status" group.
 // Cards with only PKI (e.g. PKS) may have only a "pki" group.
 
 /// @brief A single card data field with plugin-chosen key, label, and typed value.

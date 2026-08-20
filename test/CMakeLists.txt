@@ -131,6 +131,29 @@ target_include_directories(RsEidCoreTests PRIVATE
 target_compile_definitions(RsEidCoreTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(RsEidCoreTests)
 
+# Annex mechanism unit tests. The mechanism lives in its own static library
+# precisely so a test can link it -- the plugin itself is only reachable by dlopen.
+add_executable(AnnexTests
+    annex_registry_test.cpp
+    annex_reader_test.cpp
+    rs-eid-core/synthetic_annex.cpp
+)
+target_link_libraries(AnnexTests
+    GTest::gtest_main
+    CardAnnex
+    SmartCard_Impl
+    RsEIdCore
+)
+target_include_directories(AnnexTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/card-annex/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/rs-eid-core/src
+)
+target_compile_definitions(AnnexTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(AnnexTests)
+
 add_executable(LibreSCRS_AuthTests LibreSCRS_Auth_test.cpp)
 target_link_libraries(LibreSCRS_AuthTests GTest::gtest_main LibreSCRS_Auth CardPlugin_Impl SmartCard_Impl)
 # ABI v6 removed LibreSCRS::Plugin::detail::ChangePinAdapter — the auth test

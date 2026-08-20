@@ -25,6 +25,7 @@ inline constexpr std::uint16_t kAnnexManifestFileList = 1539;
 inline constexpr std::uint16_t kFidDocumentData = 0x0F02;
 inline constexpr std::uint16_t kFidPersonalData = 0x0F03;
 inline constexpr std::uint16_t kFidVariableData = 0x0F04;
+inline constexpr std::uint16_t kFidAnnexDf = 0x0FF3;
 inline constexpr std::uint16_t kFidManifest = 0x0F1B;
 inline constexpr std::uint16_t kFidSodFixed = 0x0F1C;
 inline constexpr std::uint16_t kFidSodVariable = 0x0F1D;

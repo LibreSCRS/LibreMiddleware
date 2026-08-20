@@ -37,6 +37,13 @@ struct AnnexCoverage
 /// @return Nullopt when the header is absent or the declared length overruns.
 [[nodiscard]] std::optional<std::span<const std::uint8_t>> leadingTlv(std::span<const std::uint8_t> file) noexcept;
 
+/// @brief The payload of the inner TLV that a signed object carries between its
+///        container and the CMS proper.
+///
+/// Returns @p content unchanged when nothing wraps it -- content that already
+/// starts with an ASN.1 SEQUENCE, or that is too short to carry a header.
+[[nodiscard]] std::span<const std::uint8_t> innerTlvPayload(std::span<const std::uint8_t> content) noexcept;
+
 /// @brief File ids advertised by the annex manifest, in on-card order.
 /// The manifest does not list itself.
 [[nodiscard]] std::vector<std::uint16_t> parseManifest(std::span<const std::uint8_t> manifestFile);

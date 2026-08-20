@@ -26,6 +26,12 @@ struct SignedObjectReport
 {
     VerificationResult signer = VerificationResult::Invalid;
     bool digestsBound = false;
+    /// @brief How many digest slots the object carried.
+    ///
+    /// The content itself never leaves, but its shape must: a caller that knows
+    /// how many files the object covers has no other way to insist it checked
+    /// all of them, and @ref matchDigests deliberately tolerates fewer.
+    std::size_t slotCount = 0;
 };
 
 /// @brief Verify a PKCS#7 SignedData whose content is concatenated SHA-256 slots.

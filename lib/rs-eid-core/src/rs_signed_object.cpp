@@ -85,6 +85,7 @@ SignedObjectReport verifySignedObject(std::span<const std::uint8_t> cmsDer, std:
         content.assign(reinterpret_cast<const std::uint8_t*>(bptr->data),
                        reinterpret_cast<const std::uint8_t*>(bptr->data) + bptr->length);
     }
+    report.slotCount = content.size() / kDigestSize;
     report.digestsBound = matchDigests(content, blocks, binding);
 
     // A genuine card Security Object carries exactly one signer. Pinning only

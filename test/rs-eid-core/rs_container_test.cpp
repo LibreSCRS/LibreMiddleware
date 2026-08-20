@@ -91,3 +91,29 @@ TEST(RsContainer, CoverageOfEmptyManifestNamesOnlyTheManifest)
     EXPECT_EQ(cov.fixed, (std::vector<std::uint16_t>{0x0F1B}));
     EXPECT_TRUE(cov.variable.empty());
 }
+
+// A signed object is wrapped twice: the container whose tag repeats the file id,
+// and an inner TLV that sits between it and the CMS itself.
+TEST(RsContainer, InnerTlvPayloadStripsTheSecondHeader)
+{
+    const std::vector<std::uint8_t> cms{0x30, 0x80, 0x02, 0x01, 0x01, 0x00, 0x00};
+    std::vector<std::uint8_t> inner{0x10, 0x08};
+    Fx::appendLe16(inner, static_cast<std::uint16_t>(cms.size()));
+    inner.insert(inner.end(), cms.begin(), cms.end());
+
+    const auto out = innerTlvPayload(inner);
+    EXPECT_EQ(std::vector<std::uint8_t>(out.begin(), out.end()), cms);
+}
+
+// Content that already begins with an ASN.1 SEQUENCE has nothing wrapping it.
+TEST(RsContainer, InnerTlvPayloadLeavesBareDerAlone)
+{
+    const std::vector<std::uint8_t> der{0x30, 0x80, 0x00, 0x00, 0x00};
+    EXPECT_EQ(innerTlvPayload(der).size(), der.size());
+}
+
+TEST(RsContainer, InnerTlvPayloadLeavesRuntAlone)
+{
+    const std::vector<std::uint8_t> runt{0x10, 0x08, 0x01};
+    EXPECT_EQ(innerTlvPayload(runt).size(), runt.size());
+}
