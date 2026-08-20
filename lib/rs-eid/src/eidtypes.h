@@ -11,57 +11,21 @@
 #include <string>
 #include <vector>
 
+#include <rs_types.h>
+
 namespace eidcard {
 
 enum class CardType : int { Unknown = 0, Apollo2008 = 1, Gemalto2014 = 2, ForeignerIF2020 = 3 };
 
-struct DocumentData
-{
-    std::string docRegNo;
-    std::string documentType;
-    std::string documentSerialNumber;
-    std::string issuingDate;
-    std::string expiryDate;
-    std::string issuingAuthority;
-    std::string chipSerialNumber;
-};
+// The national-data vocabulary lives in the core so the annex reader can share
+// it with the CardEdge readers; these aliases keep eidcard:: call sites intact.
+using DocumentData = LibreSCRS::RsEId::Core::DocumentData;
+using FixedPersonalData = LibreSCRS::RsEId::Core::FixedPersonalData;
+using VariablePersonalData = LibreSCRS::RsEId::Core::VariablePersonalData;
+using PhotoData = LibreSCRS::RsEId::Core::PhotoData;
 
-struct FixedPersonalData
-{
-    std::string personalNumber;
-    std::string surname;
-    std::string givenName;
-    std::string parentGivenName;
-    std::string sex;
-    std::string placeOfBirth;
-    std::string communityOfBirth;
-    std::string stateOfBirth;
-    std::string dateOfBirth;
-    std::string nationalityFull;
-    std::string statusOfForeigner;
-};
-
-struct VariablePersonalData
-{
-    std::string state;
-    std::string community;
-    std::string place;
-    std::string street;
-    std::string houseNumber;
-    std::string houseLetter;
-    std::string entrance;
-    std::string floor;
-    std::string apartmentNumber;
-    std::string addressDate;
-    std::string addressLabel;
-};
-
-using PhotoData = std::vector<uint8_t>;
-
-enum class VerificationResult {
-    Unknown, // verification could not be performed
-    Valid,   // signature verified successfully
-    Invalid  // signature verification failed
-};
+// The verdict type belongs to the core, which owns the trust decision; this
+// alias keeps existing eidcard:: call sites unchanged.
+using VerificationResult = LibreSCRS::RsEId::Core::VerificationResult;
 
 } // namespace eidcard

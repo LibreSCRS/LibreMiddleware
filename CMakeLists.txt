@@ -187,6 +187,7 @@ set(LIBREMIDDLEWARE_PLUGIN_DIR "${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}" CACHE PATH
 option(BUILD_TESTING "Build tests" ON)
 
 add_subdirectory(lib/smartcard)
+add_subdirectory(lib/rs-eid-core)
 add_subdirectory(lib/rs-eid)
 add_subdirectory(lib/eu-vrc)
 add_subdirectory(lib/rs-health)

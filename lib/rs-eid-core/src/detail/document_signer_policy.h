@@ -9,7 +9,7 @@
 #include <cctype>
 #include <string>
 
-namespace eidcard::detail {
+namespace LibreSCRS::RsEId::Core::detail {
 
 /// Lower-cased Common Name (CN) of an X509_NAME, or "" if it has none.
 /// MUP certificate CNs are ASCII; used only for trust-branch classification.
@@ -66,4 +66,4 @@ inline bool signerIsMupDocumentSigner(X509* signer)
     return issuerCn.find("resursi") != std::string::npos;
 }
 
-} // namespace eidcard::detail
+} // namespace LibreSCRS::RsEId::Core::detail

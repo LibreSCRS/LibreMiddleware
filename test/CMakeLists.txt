@@ -87,7 +87,6 @@ add_executable(RsEidDriverTests
     rs-eid/card_reader_apollo_test.cpp
     rs-eid/card_reader_gemalto_test.cpp
     rs-eid/card_verifier_test.cpp
-    rs-eid/document_signer_policy_test.cpp
     rs-eid/card_verifier_pin_test.cpp
 )
 target_link_libraries(RsEidDriverTests
@@ -98,6 +97,7 @@ target_link_libraries(RsEidDriverTests
 )
 target_include_directories(RsEidDriverTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/rs-eid/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/rs-eid-core/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/include
 )
@@ -106,6 +106,30 @@ target_compile_definitions(RsEidDriverTests PRIVATE
     LIBREMIDDLEWARE_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/test/test-data"
 )
 gtest_discover_tests(RsEidDriverTests)
+
+# rs-eid-core unit tests. The core is card-free by construction, so these run
+# entirely on synthetic fixtures -- no card bytes enter this repository.
+add_executable(RsEidCoreTests
+    rs-eid-core/rs_container_test.cpp
+    rs-eid-core/rs_digest_binding_test.cpp
+    rs-eid-core/document_signer_policy_test.cpp
+    rs-eid-core/rs_signed_object_test.cpp
+    rs-eid-core/rs_trust_store_test.cpp
+    rs-eid-core/synthetic_annex.cpp
+)
+target_link_libraries(RsEidCoreTests
+    GTest::gtest_main
+    RsEIdCore
+    SmartCard_Impl
+    OpenSSL_Crypto
+)
+target_include_directories(RsEidCoreTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/rs-eid-core/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/include
+)
+target_compile_definitions(RsEidCoreTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(RsEidCoreTests)
 
 add_executable(LibreSCRS_AuthTests LibreSCRS_Auth_test.cpp)
 target_link_libraries(LibreSCRS_AuthTests GTest::gtest_main LibreSCRS_Auth CardPlugin_Impl SmartCard_Impl)

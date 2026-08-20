@@ -6,6 +6,7 @@ librescrs_add_plugin(rs-eid-plugin
     SOURCES  src/eid_card_plugin.cpp
     INCLUDE_DIRS
         ${PROJECT_SOURCE_DIR}/lib/rs-eid/src
+        ${PROJECT_SOURCE_DIR}/lib/rs-eid-core/src
         ${PROJECT_SOURCE_DIR}/lib/smartcard/src
     LINK_LIBRARIES RsEId LibreSCRS_Trust
 )

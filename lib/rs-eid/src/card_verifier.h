@@ -8,11 +8,12 @@
 #pragma once
 
 #include <cstdint>
-#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 #include "eidtypes.h"
+
+#include <rs_trust_store.h>
 
 namespace LibreSCRS::SmartCard::Internal {
 class PCSCConnection;
@@ -66,22 +67,9 @@ private:
 
     // OpenSSL helpers
     bool verifyCertificateChain(const std::vector<uint8_t>& certDER);
-    // Verifies the CMS signature over the SOD content, then validates the signer's
-    // chain AND pins it to the MUP document-signer domain. Returns Valid (trusted MUP
-    // document-signer), Unknown (chain valid but signer outside the resources domain),
-    // or Invalid (bad signature / broken chain / no single signer).
-    VerificationResult verifyPKCS7Signature(const std::vector<uint8_t>& pkcs7DER,
-                                            std::vector<uint8_t>& extractedContent);
     bool verifyRSASignature(const std::vector<uint8_t>& certDER, const std::vector<uint8_t>& data,
                             const std::vector<uint8_t>& signature);
-    static std::vector<uint8_t> computeSHA256(const std::vector<uint8_t>& data);
-
-    // PIMPL to avoid OpenSSL headers in this header
-    struct CertStore;
-    std::unique_ptr<CertStore> certStore;
-    std::string certFolderPath;
-
-    void loadTrustedCertificates();
+    LibreSCRS::RsEId::Core::TrustStore trust;
 };
 
 } // namespace eidcard

@@ -11,7 +11,7 @@
 
 namespace {
 
-using eidcard::detail::signerIsMupDocumentSigner;
+using LibreSCRS::RsEId::Core::detail::signerIsMupDocumentSigner;
 
 struct X509Deleter
 {

@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <rs_tags.h>
+
 #include <cstdint>
 #include <vector>
 
@@ -52,40 +54,37 @@ constexpr uint8_t FILE_SOD_FX_L = 0x1C;
 constexpr uint8_t FILE_SOD_VX_H = 0x0F; // SOD for variable data (PKCS#7 SignedData)
 constexpr uint8_t FILE_SOD_VX_L = 0x1D;
 
-// TLV Tags for Document Data
-constexpr uint16_t TAG_DOC_REG_NO = 1546;
-constexpr uint16_t TAG_DOCUMENT_TYPE = 1547;
-constexpr uint16_t TAG_DOCUMENT_SERIAL_NO = 1548;
-constexpr uint16_t TAG_ISSUING_DATE = 1549;
-constexpr uint16_t TAG_EXPIRY_DATE = 1550;
-constexpr uint16_t TAG_ISSUING_AUTHORITY = 1551;
-constexpr uint16_t TAG_CHIP_SERIAL_NUMBER = 1689;
-
-// TLV Tags for Fixed Personal Data
-constexpr uint16_t TAG_PERSONAL_NUMBER = 1558;
-constexpr uint16_t TAG_SURNAME = 1559;
-constexpr uint16_t TAG_GIVEN_NAME = 1560;
-constexpr uint16_t TAG_PARENT_GIVEN_NAME = 1561;
-constexpr uint16_t TAG_SEX = 1562;
-constexpr uint16_t TAG_PLACE_OF_BIRTH = 1563;
-constexpr uint16_t TAG_COMMUNITY_OF_BIRTH = 1564;
-constexpr uint16_t TAG_STATE_OF_BIRTH = 1565;
-constexpr uint16_t TAG_DATE_OF_BIRTH = 1566;
-constexpr uint16_t TAG_NATIONALITY_FULL = 1583;
-constexpr uint16_t TAG_STATUS_OF_FOREIGNER = 1582;
-
-// TLV Tags for Variable Personal Data
-constexpr uint16_t TAG_STATE = 1568;
-constexpr uint16_t TAG_COMMUNITY = 1569;
-constexpr uint16_t TAG_PLACE = 1570;
-constexpr uint16_t TAG_STREET = 1571;
-constexpr uint16_t TAG_HOUSE_NUMBER = 1572;
-constexpr uint16_t TAG_HOUSE_LETTER = 1573;
-constexpr uint16_t TAG_ENTRANCE = 1574;
-constexpr uint16_t TAG_FLOOR = 1575;
-constexpr uint16_t TAG_APARTMENT_NUMBER = 1578;
-constexpr uint16_t TAG_ADDRESS_DATE = 1580;
-constexpr uint16_t TAG_ADDRESS_LABEL = 1581;
+// Field tags live in the core, which both the CardEdge readers and the annex
+// reader share. These aliases keep existing call sites spelled as they were.
+inline constexpr uint16_t TAG_DOC_REG_NO = LibreSCRS::RsEId::Core::tags::kDocRegNo;
+inline constexpr uint16_t TAG_DOCUMENT_TYPE = LibreSCRS::RsEId::Core::tags::kDocumentType;
+inline constexpr uint16_t TAG_DOCUMENT_SERIAL_NO = LibreSCRS::RsEId::Core::tags::kDocumentSerialNo;
+inline constexpr uint16_t TAG_ISSUING_DATE = LibreSCRS::RsEId::Core::tags::kIssuingDate;
+inline constexpr uint16_t TAG_EXPIRY_DATE = LibreSCRS::RsEId::Core::tags::kExpiryDate;
+inline constexpr uint16_t TAG_ISSUING_AUTHORITY = LibreSCRS::RsEId::Core::tags::kIssuingAuthority;
+inline constexpr uint16_t TAG_CHIP_SERIAL_NUMBER = LibreSCRS::RsEId::Core::tags::kChipSerialNumber;
+inline constexpr uint16_t TAG_PERSONAL_NUMBER = LibreSCRS::RsEId::Core::tags::kPersonalNumber;
+inline constexpr uint16_t TAG_SURNAME = LibreSCRS::RsEId::Core::tags::kSurname;
+inline constexpr uint16_t TAG_GIVEN_NAME = LibreSCRS::RsEId::Core::tags::kGivenName;
+inline constexpr uint16_t TAG_PARENT_GIVEN_NAME = LibreSCRS::RsEId::Core::tags::kParentGivenName;
+inline constexpr uint16_t TAG_SEX = LibreSCRS::RsEId::Core::tags::kSex;
+inline constexpr uint16_t TAG_PLACE_OF_BIRTH = LibreSCRS::RsEId::Core::tags::kPlaceOfBirth;
+inline constexpr uint16_t TAG_COMMUNITY_OF_BIRTH = LibreSCRS::RsEId::Core::tags::kCommunityOfBirth;
+inline constexpr uint16_t TAG_STATE_OF_BIRTH = LibreSCRS::RsEId::Core::tags::kStateOfBirth;
+inline constexpr uint16_t TAG_DATE_OF_BIRTH = LibreSCRS::RsEId::Core::tags::kDateOfBirth;
+inline constexpr uint16_t TAG_NATIONALITY_FULL = LibreSCRS::RsEId::Core::tags::kNationalityFull;
+inline constexpr uint16_t TAG_STATUS_OF_FOREIGNER = LibreSCRS::RsEId::Core::tags::kStatusOfForeigner;
+inline constexpr uint16_t TAG_STATE = LibreSCRS::RsEId::Core::tags::kState;
+inline constexpr uint16_t TAG_COMMUNITY = LibreSCRS::RsEId::Core::tags::kCommunity;
+inline constexpr uint16_t TAG_PLACE = LibreSCRS::RsEId::Core::tags::kPlace;
+inline constexpr uint16_t TAG_STREET = LibreSCRS::RsEId::Core::tags::kStreet;
+inline constexpr uint16_t TAG_HOUSE_NUMBER = LibreSCRS::RsEId::Core::tags::kHouseNumber;
+inline constexpr uint16_t TAG_HOUSE_LETTER = LibreSCRS::RsEId::Core::tags::kHouseLetter;
+inline constexpr uint16_t TAG_ENTRANCE = LibreSCRS::RsEId::Core::tags::kEntrance;
+inline constexpr uint16_t TAG_FLOOR = LibreSCRS::RsEId::Core::tags::kFloor;
+inline constexpr uint16_t TAG_APARTMENT_NUMBER = LibreSCRS::RsEId::Core::tags::kApartmentNumber;
+inline constexpr uint16_t TAG_ADDRESS_DATE = LibreSCRS::RsEId::Core::tags::kAddressDate;
+inline constexpr uint16_t TAG_ADDRESS_LABEL = LibreSCRS::RsEId::Core::tags::kAddressLabel;
 
 // ATR patterns for card type detection
 // Gemalto (2014+) cards have ATR starting with 3B FF 94 00 00
