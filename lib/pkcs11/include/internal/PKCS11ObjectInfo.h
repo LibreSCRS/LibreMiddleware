@@ -121,6 +121,16 @@ struct PKCS11ObjectInfo
     ///        identifier. Zero when not applicable.
     /// @since 4.1
     std::uint8_t keyReference{0};
+
+    /// @brief @c CKA_ALWAYS_AUTHENTICATE — the card requires the PIN to be
+    ///        presented again for EVERY operation with this key, not once per
+    ///        session. Driven by the PKCS#15 @c userConsent attribute; false
+    ///        for the ordinary login-once key. Reporting false for a card that
+    ///        wants per-operation consent yields a token that logs in, signs
+    ///        once, and has its next signature refused by the card with
+    ///        nothing in the client able to say why.
+    /// @since 4.3
+    bool alwaysAuthenticate = false;
 };
 
 } // namespace LibreSCRS::Pkcs11::Internal

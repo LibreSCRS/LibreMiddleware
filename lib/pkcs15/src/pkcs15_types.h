@@ -42,6 +42,25 @@ struct PrivateKeyInfo
     uint8_t keyReference = 0; // from CommonKeyAttributes (used when path is empty)
     bool canSign = false;     // digitalSignature (bit 0) or nonRepudiation (bit 1) in usage flags
     KeyType keyType = KeyType::Rsa;
+    // CommonObjectAttributes userConsent: how many times the holder must
+    // consent before this key is used. Non-zero means the card wants the PIN
+    // presented per operation, which PKCS#11 spells CKA_ALWAYS_AUTHENTICATE.
+    // 0 = absent, the common case; never defaulted to 1.
+    uint8_t userConsent = 0;
+};
+
+/// One EF.PuKDF record. Deliberately its own type rather than a reuse of
+/// PrivateKeyInfo: a public key has no authId and no userConsent (nothing
+/// protects it), and carrying members that are structurally always empty
+/// invites code to branch on them.
+struct PublicKeyInfo
+{
+    std::string label;
+    std::vector<uint8_t> id; // pairs with PrivateKeyInfo::id and CertificateInfo::id
+    uint16_t keySizeBits = 0;
+    std::vector<uint8_t> path; // where the SubjectPublicKeyInfo lives
+    uint8_t keyReference = 0;
+    KeyType keyType = KeyType::Rsa;
 };
 
 enum class PinType { Bcd = 0, Ascii = 1, Utf8 = 2, HalfNibbleBcd = 3, Iso9564 = 4 };
@@ -91,6 +110,7 @@ struct PKCS15Profile
     ObjectDirectory odf;
     std::vector<CertificateInfo> certificates;
     std::vector<PrivateKeyInfo> privateKeys;
+    std::vector<PublicKeyInfo> publicKeys;
     std::vector<PinInfo> pins;
 };
 

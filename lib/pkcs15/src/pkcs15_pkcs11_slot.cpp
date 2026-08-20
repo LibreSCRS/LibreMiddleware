@@ -306,6 +306,15 @@ std::vector<LibreSCRS::Pkcs11::Internal::PKCS11ObjectInfo> Pkcs15Slot::enumerate
                 keyObj.ecParams = std::move(ecParamsDer);
                 keyObj.ecPoint = std::move(ecPointDer);
                 keyObj.keyReference = matchedKey->keyReference;
+                // userConsent is parsed and carried, and the attribute is
+                // served -- but the flag stays false until C_Login accepts
+                // CKU_CONTEXT_SPECIFIC, which is the only login that could
+                // satisfy it. A token that promises per-operation
+                // authentication and then refuses the login for it fails every
+                // conformant client at signing, which is worse than promising
+                // nothing. Drop the switch together with that login path.
+                keyObj.alwaysAuthenticate =
+                    matchedKey->userConsent > 0 && std::getenv("LIBRESCRS_ENABLE_CONTEXT_SPECIFIC_PIN") != nullptr;
                 objects.push_back(std::move(keyObj));
             }
         }

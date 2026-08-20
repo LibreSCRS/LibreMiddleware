@@ -5,6 +5,7 @@
 
 #include <ber.h>
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 
@@ -174,6 +175,46 @@ ObjectDirectory parseODF(std::span<const uint8_t> data)
 //   ...
 // }
 // =============================================================================
+// The serialNumber OCTET STRING as a string safe to publish.
+//
+// PKCS#15 gives serialNumber no character-set contract, and some cards put
+// binary in it -- one observed card wraps its ICCSN in a nested ISO 7816 `84`
+// TLV. The bytes do not stay put: this value becomes
+// CK_TOKEN_INFO.serialNumber, which becomes the `serial` field of every
+// pkcs11: URI the token publishes, and it reaches generated documentation,
+// where one unprintable byte makes the entire file invalid UTF-8.
+//
+// So: unwrap a nested `84` TLV if that is exactly what the content is, then
+// pass printable ASCII through unchanged (a text serial is an identity that
+// existing consumers already match on, and re-encoding it would change that
+// identity) and hex-encode anything else -- the same choice the APDU trace
+// already makes for binary ids.
+[[nodiscard]] std::string renderSerialNumber(const std::vector<uint8_t>& raw)
+{
+    std::span<const uint8_t> bytes{raw};
+    // ISO 7816 `84` (file identifier / ICCSN) wrapping the whole content.
+    if (bytes.size() >= 2 && bytes[0] == 0x84 && static_cast<std::size_t>(bytes[1]) + 2 == bytes.size()) {
+        bytes = bytes.subspan(2);
+    }
+    if (bytes.empty()) {
+        return {};
+    }
+
+    const bool printable = std::all_of(bytes.begin(), bytes.end(), [](uint8_t b) { return b >= 0x20 && b < 0x7F; });
+    if (printable) {
+        return {reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+    }
+
+    static constexpr char kHex[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(bytes.size() * 2);
+    for (const uint8_t b : bytes) {
+        out.push_back(kHex[b >> 4]);
+        out.push_back(kHex[b & 0x0F]);
+    }
+    return out;
+}
+
 TokenInfo parseTokenInfo(std::span<const uint8_t> data)
 {
     if (data.empty()) {
@@ -201,8 +242,7 @@ TokenInfo parseTokenInfo(std::span<const uint8_t> data)
     // [2+] optional: UTF8String manufacturerID, [0] label, BIT STRING tokenFlags
     for (const auto& child : seq->children) {
         if (child.tag == 0x04 && !child.constructed && info.serialNumber.empty()) {
-            // OCTET STRING — typically printable ASCII; binary serials will be lossy
-            info.serialNumber = child.asString();
+            info.serialNumber = renderSerialNumber(child.value);
         } else if (child.tag == 0x0C && !child.constructed) {
             // UTF8String — manufacturerID
             info.manufacturer = child.asString();
@@ -274,12 +314,19 @@ std::vector<CertificateInfo> parseCDF(std::span<const uint8_t> data)
 // =============================================================================
 // parsePrKDF — parse Private Key Directory File
 //
-// Each entry:
-// SEQUENCE {
-//   SEQUENCE { UTF8String label }                      -- CommonObjectAttributes
-//   SEQUENCE { OCTET STRING id, BIT STRING usage }     -- CommonKeyAttributes
-//   [1] CONSTRUCTED { SEQUENCE { path, INTEGER size } } -- typeAttributes
-// }
+// Each entry is one alternative of the PrivateKeyType CHOICE, and the OUTER
+// tag is the key's algorithm:
+//
+//   SEQUENCE  (untagged) -- privateRSAKey
+//   [0]                  -- privateECKey
+//
+// with the same body either way:
+//   SEQUENCE { UTF8String label, ... }                  -- CommonObjectAttributes
+//   SEQUENCE { OCTET STRING id, BIT STRING usage, ... } -- CommonKeyAttributes
+//   [1] CONSTRUCTED { SEQUENCE { path [, INTEGER size] } } -- typeAttributes
+//
+// typeAttributes is [1] for BOTH -- ISO 7816-15 gives it that tag regardless
+// of algorithm, so it can never discriminate one. Only the outer tag can.
 // =============================================================================
 std::vector<PrivateKeyInfo> parsePrKDF(std::span<const uint8_t> data)
 {
@@ -291,23 +338,37 @@ std::vector<PrivateKeyInfo> parsePrKDF(std::span<const uint8_t> data)
     auto root = LibreSCRS::SmartCard::Internal::parseBER(data.data(), data.size());
 
     for (const auto& entry : root.children) {
-        if (entry.tag != 0x30 || !entry.constructed) {
+        if (!entry.constructed) {
             continue;
         }
-
+        // The CHOICE tag IS the algorithm. The remaining alternatives
+        // ([1] DH, [2] DSA, [3] KEA) have no representation in KeyType, and a
+        // key published under the wrong algorithm is worse than one this build
+        // admits it cannot describe -- so they are skipped, not guessed at.
         PrivateKeyInfo key;
+        if (entry.tag == 0x30) {
+            key.keyType = KeyType::Rsa;
+        } else if (entry.tag == 0xA0) {
+            key.keyType = KeyType::Ec;
+        } else {
+            continue;
+        }
 
         // Child 0: CommonObjectAttributes
         if (entry.children.size() >= 1 && entry.children[0].tag == 0x30) {
             key.label = findFirstString(entry.children[0]);
-            // Extract authId — OCTET STRING after label and optional BIT STRING flags
+            // authId — OCTET STRING after the label and optional BIT STRING
+            // flags — and userConsent, the INTEGER that may follow it. Both are
+            // optional, so neither ends the walk: a record carrying only
+            // userConsent must still yield it.
             bool pastLabel = false;
             for (const auto& child : entry.children[0].children) {
                 if (!pastLabel && (child.tag == 0x0C || child.tag == 0x13 || child.tag == 0x16)) {
                     pastLabel = true;
-                } else if (pastLabel && child.tag == 0x04 && !child.constructed) {
+                } else if (pastLabel && child.tag == 0x04 && !child.constructed && key.authId.empty()) {
                     key.authId = child.value;
-                    break;
+                } else if (pastLabel && child.tag == 0x02 && !child.constructed && !child.value.empty()) {
+                    key.userConsent = child.value.back();
                 }
             }
         }
@@ -342,12 +403,77 @@ std::vector<PrivateKeyInfo> parsePrKDF(std::span<const uint8_t> data)
             }
         }
 
-        // TypeAttributes: [1] CONSTRUCTED = RSA, [0] CONSTRUCTED = EC
-        const auto* typeAttrsRsa = findChild(entry, 0xA1);
-        const auto* typeAttrsEc = findChild(entry, 0xA0);
-        const auto* typeAttrs = typeAttrsRsa ? typeAttrsRsa : typeAttrsEc;
-        if (typeAttrs) {
-            key.keyType = typeAttrsRsa ? KeyType::Rsa : KeyType::Ec;
+        // typeAttributes — [1] for every key type, so it carries the path and
+        // (for RSA) the modulus length, and says NOTHING about the algorithm.
+        // An EC record legitimately has no key size; leaving it 0 is the
+        // truthful answer, not a short read.
+        if (const auto* typeAttrs = findChild(entry, 0xA1)) {
+            key.path = extractPath(*typeAttrs);
+            key.keySizeBits = extractKeySize(*typeAttrs);
+        }
+
+        keys.push_back(std::move(key));
+    }
+
+    return keys;
+}
+
+// =============================================================================
+// parsePuKDF — parse Public Key Directory File
+//
+// PublicKeyType is the same CHOICE shape as PrivateKeyType, and the outer tag
+// is again the algorithm: the untagged SEQUENCE is publicRSAKey, [0] is
+// publicECKey. typeAttributes is [1] for both.
+//
+// A public key has no authId and no userConsent -- nothing protects it -- so
+// only the identity, the reference and the path are lifted. The id is the
+// point: it is what pairs this record with its private half and with the
+// certificate, and it is the only source of the public key that does not
+// require reading and parsing a certificate.
+// =============================================================================
+std::vector<PublicKeyInfo> parsePuKDF(std::span<const uint8_t> data)
+{
+    if (data.empty()) {
+        return {};
+    }
+
+    std::vector<PublicKeyInfo> keys;
+    auto root = LibreSCRS::SmartCard::Internal::parseBER(data.data(), data.size());
+
+    for (const auto& entry : root.children) {
+        if (!entry.constructed) {
+            continue;
+        }
+        PublicKeyInfo key;
+        if (entry.tag == 0x30) {
+            key.keyType = KeyType::Rsa;
+        } else if (entry.tag == 0xA0) {
+            key.keyType = KeyType::Ec;
+        } else {
+            continue; // DH / DSA / KEA have no representation here
+        }
+
+        // CommonObjectAttributes — label only.
+        if (!entry.children.empty() && entry.children[0].tag == 0x30) {
+            key.label = findFirstString(entry.children[0]);
+        }
+
+        // CommonKeyAttributes { id, usage, [native], [keyReference], ... }
+        if (entry.children.size() >= 2 && entry.children[1].tag == 0x30) {
+            bool foundId = false;
+            for (const auto& child : entry.children[1].children) {
+                if (child.tag == 0x04 && !child.constructed && !foundId) {
+                    key.id = child.value;
+                    foundId = true;
+                } else if (child.tag == 0x02 && !child.constructed && !child.value.empty()) {
+                    // keyReference INTEGER. .back() is safe: ASN.1 encodes 0x80
+                    // as {0x00, 0x80}, so the low byte is the value.
+                    key.keyReference = child.value.back();
+                }
+            }
+        }
+
+        if (const auto* typeAttrs = findChild(entry, 0xA1)) {
             key.path = extractPath(*typeAttrs);
             key.keySizeBits = extractKeySize(*typeAttrs);
         }

@@ -499,6 +499,35 @@ TEST(PKCS11Test, SessionFunctionsBeforeInit)
 // All card-dependent tests use this fixture.
 // ---------------------------------------------------------------------------
 
+// The key type the slot actually publishes, or CK_UNAVAILABLE_INFORMATION when
+// it publishes no private key. The mechanism assertions below MUST key off this
+// rather than assume RSA: which card sits in the first usable reader is a
+// property of the desk, not of the library, and a token whose only key is EC
+// advertises ECDSA and nothing else -- correctly.
+static CK_KEY_TYPE slotKeyType(CK_SLOT_ID slot)
+{
+    CK_SESSION_HANDLE session = 0;
+    if (C_OpenSession(slot, CKF_SERIAL_SESSION, nullptr, nullptr, &session) != CKR_OK)
+        return CK_UNAVAILABLE_INFORMATION;
+
+    CK_KEY_TYPE result = CK_UNAVAILABLE_INFORMATION;
+    CK_OBJECT_CLASS keyClass = CKO_PRIVATE_KEY;
+    CK_ATTRIBUTE tmpl = {CKA_CLASS, &keyClass, sizeof(keyClass)};
+    if (C_FindObjectsInit(session, &tmpl, 1) == CKR_OK) {
+        CK_OBJECT_HANDLE obj = 0;
+        CK_ULONG count = 0;
+        if (C_FindObjects(session, &obj, 1, &count) == CKR_OK && count == 1) {
+            CK_KEY_TYPE keyType = 0;
+            CK_ATTRIBUTE get = {CKA_KEY_TYPE, &keyType, sizeof(keyType)};
+            if (C_GetAttributeValue(session, obj, &get, 1) == CKR_OK)
+                result = keyType;
+        }
+        C_FindObjectsFinal(session);
+    }
+    C_CloseSession(session);
+    return result;
+}
+
 class PKCS11CardTest : public ::testing::Test
 {
 protected:
@@ -1445,13 +1474,17 @@ TEST_F(PKCS11CardTest, GetMechanismListValid)
         EXPECT_EQ(C_GetMechanismList(slot, mechs.data(), &fillMechCount), CKR_OK);
         EXPECT_EQ(fillMechCount, mechCount);
 
-        // CKM_RSA_PKCS should be present
+        // The signing mechanism for the key this token actually holds must be
+        // there. Hard-coding CKM_RSA_PKCS asserted a property of whichever card
+        // happened to be in the reader, and failed the moment an EC token was.
+        const CK_KEY_TYPE keyType = slotKeyType(slot);
+        const CK_MECHANISM_TYPE expected = (keyType == CKK_EC) ? CKM_ECDSA : CKM_RSA_PKCS;
         bool found = false;
         for (CK_ULONG i = 0; i < fillMechCount; ++i) {
-            if (mechs[i] == CKM_RSA_PKCS)
+            if (mechs[i] == expected)
                 found = true;
         }
-        EXPECT_TRUE(found);
+        EXPECT_TRUE(found) << "token key type " << keyType << " advertises no mechanism it can sign with";
     }
 }
 
@@ -1527,13 +1560,31 @@ TEST_F(PKCS11CardTest, GetMechanismListContents)
         std::vector<CK_MECHANISM_TYPE> mechs(mechCount);
         C_GetMechanismList(slot, mechs.data(), &mechCount);
 
-        bool foundPKCS = false, foundPSS = false;
+        const CK_KEY_TYPE keyType = slotKeyType(slot);
+        bool foundEcdsa = false, foundPKCS = false, foundPSS = false;
         for (CK_ULONG i = 0; i < mechCount; ++i) {
+            if (mechs[i] == CKM_ECDSA)
+                foundEcdsa = true;
             if (mechs[i] == CKM_RSA_PKCS)
                 foundPKCS = true;
             if (mechs[i] == CKM_SHA256_RSA_PKCS_PSS)
                 foundPSS = true;
         }
+
+        // An EC token advertises ECDSA and no RSA mechanism at all -- and must
+        // NOT advertise one, or a caller would pick a scheme the key cannot
+        // perform and be refused by the card.
+        if (keyType == CKK_EC) {
+            EXPECT_TRUE(foundEcdsa);
+            EXPECT_FALSE(foundPKCS) << "an EC-only token must not offer RSA mechanisms";
+
+            CK_MECHANISM_INFO info;
+            EXPECT_EQ(C_GetMechanismInfo(slot, CKM_ECDSA, &info), CKR_OK);
+            EXPECT_LE(info.ulMinKeySize, info.ulMaxKeySize);
+            EXPECT_TRUE(info.flags & CKF_SIGN);
+            return;
+        }
+
         EXPECT_TRUE(foundPKCS);
         // Combined hash+PSS mechanisms are advertised for TLS 1.3 client auth
         EXPECT_TRUE(foundPSS);

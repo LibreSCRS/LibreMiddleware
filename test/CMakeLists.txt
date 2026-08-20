@@ -48,6 +48,37 @@ target_compile_definitions(LibreMiddlewareTests PRIVATE LIBRESCRS_INTERNAL_BUILD
 include(GoogleTest)
 gtest_discover_tests(LibreMiddlewareTests)
 
+# EF.DIR parser: selection-by-verification depends on getting every
+# application template back, including ones sharing an AID with another.
+add_executable(EfDirTests ef_dir_test.cpp)
+# SmartCard_Impl, ne LibreSCRS::SmartCard: alias je SHARED sa -fvisibility=hidden
+# i ne izvozi interne simbole, pa bi parseEfDir bio undefined reference.
+# Obrazac postoji: test/CMakeLists.txt:33,65.
+target_link_libraries(EfDirTests GTest::gtest_main SmartCard_Impl)
+target_include_directories(EfDirTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+)
+target_compile_definitions(EfDirTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(EfDirTests)
+
+# PKCS15Card::probeViaEfDir integration coverage: proves the selection
+# loop picks the candidate under which EF.ODF actually selects, not the
+# first EF.DIR entry whose AID matches. ef_dir_test.cpp above only covers
+# the parser, which never selects anything on the wire. Drives the real
+# PKCS15Card against a scripted card behind a detached PCSCConnection, so
+# it links PKCS15 (not just SmartCard_Impl) plus the public smartcard/
+# secure-channel libraries pkcs15_card.h transitively needs -- same
+# include/link combination lib/pkcs15-plugin/CMakeLists.txt already uses
+# for the equivalent non-plugin PKCS15Card probe path.
+add_executable(Pkcs15ProbeEfDirTests Pkcs15ProbeEfDirTests.cpp)
+target_link_libraries(Pkcs15ProbeEfDirTests GTest::gtest_main PKCS15 LibreSCRS_SmartCard LibreSCRS_SecureChannel SmartCard_Impl)
+target_include_directories(Pkcs15ProbeEfDirTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/pkcs15/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+)
+target_compile_definitions(Pkcs15ProbeEfDirTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(Pkcs15ProbeEfDirTests)
+
 # rs-eid driver unit tests (Wave 5.1 — flagship Serbian eID coverage).
 # Drives CardReaderApollo / CardReaderGemalto / CardVerifier through a
 # detached PCSCConnection with a TransmitFilter intercepting every APDU.

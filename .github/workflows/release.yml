@@ -57,7 +57,14 @@ jobs:
           cmake --build build
 
       - name: Test
-        run: ctest --output-on-failure --test-dir build/test --no-tests=error
+        # --test-dir build, not build/test: several library subdirectories
+        # register their own suites (lib/pkcs15/test, lib/plugin/test,
+        # lib/pkcs11/test), and pointing ctest at build/test reads only
+        # build/test/CTestTestfile.cmake -- so those ran nowhere. Scoping to
+        # the build ROOT runs everything that was built, which is the only
+        # scope that cannot silently shed a suite again. Measured on this
+        # change: 1409 -> 1573 tests, 345s -> 489s.
+        run: ctest --output-on-failure --test-dir build --no-tests=error
 
   shared-linux:
     # Mirror of test-linux but with LIBREMIDDLEWARE_BUILD_SHARED=ON, so
@@ -118,7 +125,10 @@ jobs:
               || { echo "::error::Expected CardSession::transmitInternal export not found"; exit 1; }
 
       - name: Test
-        run: ctest --output-on-failure --test-dir build-shared/test --no-tests=error
+        # Build ROOT, for the same reason as every other ctest here: the
+        # library subdirectories register suites that build-shared/test does
+        # not see.
+        run: ctest --output-on-failure --test-dir build-shared --no-tests=error
 
   test-macos:
     needs: verify-signature
@@ -142,7 +152,14 @@ jobs:
           cmake --build build
 
       - name: Test
-        run: ctest --output-on-failure --test-dir build/test --no-tests=error
+        # --test-dir build, not build/test: several library subdirectories
+        # register their own suites (lib/pkcs15/test, lib/plugin/test,
+        # lib/pkcs11/test), and pointing ctest at build/test reads only
+        # build/test/CTestTestfile.cmake -- so those ran nowhere. Scoping to
+        # the build ROOT runs everything that was built, which is the only
+        # scope that cannot silently shed a suite again. Measured on this
+        # change: 1409 -> 1573 tests, 345s -> 489s.
+        run: ctest --output-on-failure --test-dir build --no-tests=error
 
   pkcs11-linux:
     needs: [verify-signature, test-linux]

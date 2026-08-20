@@ -409,14 +409,35 @@ public:
                              LibreSCRS::SmartCard::CardSession& cardSession) const override
     {
         auto& conn = LibreSCRS::SmartCard::detail::unwrap(cardSession);
-        std::lock_guard lock(mtx);
 
         // Start a fresh session for this connection, tearing down any prior
         // state keyed to the same PCSCConnection* (re-entrancy safety on
         // card re-insert against the same reader). The erased value's
         // ~OpenSCSession() releases libopensc resources.
-        sessions.erase(&conn);
+        //
+        // Scoped: the plugin lock guards the session MAP, and is dropped
+        // before any card I/O below.
+        {
+            std::lock_guard lock(mtx);
+            sessions.erase(&conn);
+        }
 
+        // Everything from here to the re-lock touches only this local session.
+        // Deliberately NOT under the plugin lock, because the very first call
+        // does not stay on this card: sc_establish_context ends in
+        // sc_ctx_detect_readers, which walks EVERY reader on the system and
+        // issues SCardConnect on each -- shared access after a sharing
+        // violation, which blocks for as long as another process holds that
+        // card. This plugin is a singleton, so one busy card held the lock and
+        // stopped every other card's probe with it: an unrelated signature
+        // could not reach its own credential prompt until the first card's
+        // dialog timed out.
+        //
+        // Dropping the lock does not stop the probe from touching readers
+        // nobody asked about -- that is the enumeration itself, and the reader
+        // driver is chosen at compile time in the vendored library, so there is
+        // no local way to ask it to skip. It stops one card's wait from being
+        // charged to all the others.
         OpenSCSession session;
         session.readerName = conn.readerName();
 
@@ -459,7 +480,16 @@ public:
 
         session.hasPKI = (pinCount > 0 || keyCount > 0);
 
-        sessions.emplace(&conn, std::move(session));
+        // Re-lock only to publish. insert_or_assign, not emplace: a probe that
+        // raced another on the SAME connection would otherwise silently keep
+        // the loser's session and report success for it. Concurrent probes on
+        // one connection are not a supported shape (a card session has a single
+        // owner) -- this just makes the outcome deterministic rather than
+        // dependent on which thread arrived first.
+        {
+            std::lock_guard lock(mtx);
+            sessions.insert_or_assign(&conn, std::move(session));
+        }
         return true;
     }
 

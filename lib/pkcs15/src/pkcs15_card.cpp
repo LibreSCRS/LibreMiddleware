@@ -8,6 +8,7 @@
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <apdu.h>
+#include <ef_dir.h>
 #include <smartcard/secure_buffer.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
@@ -248,52 +249,25 @@ bool PKCS15Card::probeViaEfDir()
     if (efDir.empty())
         return false;
 
-    // Parse EF.DIR — look for PKCS#15 AID entries with a path
-    // EF.DIR contains Application Template (tag 61) entries:
-    //   4F = AID, 50 = label, 51 = path
-    size_t pos = 0;
-    while (pos + 2 < efDir.size()) {
-        if (efDir[pos] != 0x61) {
-            pos++;
+    // Kandidat se bira po PROVERI, ne po redosledu: EF.DIR ume da nosi vise
+    // zapisa sa istim AID-om (npr. "MF" na 3F00 i "PKCS15" na 3F00/5015), a
+    // prvi ne mora biti tacan. Prihvatamo prvi kandidat pod kojim se EF.ODF
+    // stvarno moze selektovati.
+    const std::vector<uint8_t> pkcs15Aid(kPkcs15Aid.begin(), kPkcs15Aid.end());
+    for (const auto& entry : LibreSCRS::SmartCard::Internal::parseEfDir(efDir)) {
+        if (entry.aid != pkcs15Aid || entry.path.empty() || entry.path.size() % 2 != 0) {
             continue;
         }
-        uint8_t entryLen = efDir[pos + 1];
-        if (pos + 2 + entryLen > efDir.size())
-            break;
-
-        // Parse entry fields
-        std::vector<uint8_t> aid;
-        std::vector<uint8_t> path;
-        size_t fieldPos = pos + 2;
-        size_t entryEnd = pos + 2 + entryLen;
-
-        while (fieldPos + 2 <= entryEnd) {
-            uint8_t tag = efDir[fieldPos];
-            uint8_t len = efDir[fieldPos + 1];
-            if (fieldPos + 2 + len > entryEnd)
-                break;
-
-            if (tag == 0x4F) { // AID
-                aid.assign(efDir.begin() + fieldPos + 2, efDir.begin() + fieldPos + 2 + len);
-            } else if (tag == 0x51) { // Path
-                path.assign(efDir.begin() + fieldPos + 2, efDir.begin() + fieldPos + 2 + len);
-            }
-            fieldPos += 2 + len;
+        if (!selectByPath(entry.path)) {
+            continue;
         }
-
-        // Check if this is a PKCS#15 entry with a usable path
-        std::vector<uint8_t> pkcs15Aid(kPkcs15Aid.begin(), kPkcs15Aid.end());
-        if (aid == pkcs15Aid && !path.empty() && path.size() % 2 == 0) {
-            // Try to select by path
-            if (selectByPath(path)) {
-                pkcs15Path = path;
-                return true;
-            }
+        const uint8_t odfFid[] = {0x50, 0x31};
+        if (!selectByPath(odfFid)) {
+            continue; // nije prava aplikacija — probaj sledeci zapis
         }
-
-        pos = entryEnd;
+        pkcs15Path = entry.path;
+        return true;
     }
-
     return false;
 }
 
@@ -405,6 +379,24 @@ PKCS15Profile PKCS15Card::readProfile()
         }
     }
 
+    // Read PuKDF if present. The public half is what supplies CKA_EC_PARAMS /
+    // CKA_EC_POINT (and an RSA modulus) without a second card read later, and
+    // it is the only source of them that does not require parsing a
+    // certificate. parseODF has always resolved this path; nothing followed it.
+    if (!odf.publicKeysPath.empty()) {
+        if (!selectApplet())
+            throw std::runtime_error("PKCS15: failed to select applet");
+        if (selectByPath(odf.publicKeysPath)) {
+            auto pukdfData = readSelectedFile();
+            if (trace)
+                std::fprintf(stderr, "[PKCS15::readProfile] PuKDF %zuB head=%s\n", pukdfData.size(),
+                             dumpHex(pukdfData, 32).c_str());
+            profile.publicKeys = parsePuKDF(pukdfData);
+        } else if (trace) {
+            std::fprintf(stderr, "[PKCS15::readProfile] selectByPath(PuKDF) FAILED\n");
+        }
+    }
+
     // Read AODF if present
     if (!odf.authObjectsPath.empty()) {
         if (!selectApplet())
@@ -421,8 +413,9 @@ PKCS15Profile PKCS15Card::readProfile()
     }
 
     if (trace)
-        std::fprintf(stderr, "[PKCS15::readProfile] DONE pins=%zu keys=%zu certs=%zu\n", profile.pins.size(),
-                     profile.privateKeys.size(), profile.certificates.size());
+        std::fprintf(stderr, "[PKCS15::readProfile] DONE pins=%zu keys=%zu pubkeys=%zu certs=%zu\n",
+                     profile.pins.size(), profile.privateKeys.size(), profile.publicKeys.size(),
+                     profile.certificates.size());
 
     return profile;
 }

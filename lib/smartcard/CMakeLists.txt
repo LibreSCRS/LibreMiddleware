@@ -16,6 +16,7 @@ add_library(SmartCard_Impl STATIC
     src/chunked_read.cpp
     src/monitor.cpp
     src/secure_wipe.cpp
+    src/ef_dir.cpp
     # Internal core-transport headers (LM-private; #error-guarded against
     # external use, reached through the PRIVATE lib/smartcard/src include
     # path that every LIBRESCRS_INTERNAL_BUILD consumer already carries).
@@ -27,6 +28,7 @@ add_library(SmartCard_Impl STATIC
     src/pcsc_scan_provider.h
     src/pcsc_connection.h
     src/monitor.h
+    src/ef_dir.h
     # LC-bridge leaf types: small, dependency-free public-include surface
     # that may be reached from external consumers via the PUBLIC include
     # path below. All three are self-contained — IConnection forward-

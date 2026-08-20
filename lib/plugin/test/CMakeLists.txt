@@ -162,3 +162,22 @@ target_include_directories(PinLifecycleDerivationTests PRIVATE
 )
 target_compile_definitions(PinLifecycleDerivationTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(PinLifecycleDerivationTests)
+
+# ProbeOrderTests pins the strict weak ordering probing uses, including the
+# tie-break that keeps two equal-priority plugins from reordering with the
+# order their .so files were loaded in. Needs the internal probe_order.h from
+# lib/plugin/src, hence the extra include directory.
+add_executable(ProbeOrderTests ProbeOrderTests.cpp)
+target_link_libraries(ProbeOrderTests PRIVATE
+    LibreSCRS::Plugin
+    $<BUILD_INTERFACE:CardPlugin_Impl>
+    LibreSCRS::SmartCard
+    LibreSCRS::Secure
+    GTest::gtest_main
+)
+target_include_directories(ProbeOrderTests PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src
+)
+target_compile_definitions(ProbeOrderTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(ProbeOrderTests)

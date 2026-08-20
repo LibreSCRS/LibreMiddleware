@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
+#include "probe_order.h"
+
 #include <LibreSCRS/Plugin/CardPluginService.h>
 
 #include <LibreSCRS/Export.h>
@@ -285,8 +287,7 @@ void CardPluginService::Impl::sortPlugins()
     for (auto& lp : loadedPlugins) {
         sortedPlugins.push_back(lp.plugin);
     }
-    std::sort(sortedPlugins.begin(), sortedPlugins.end(),
-              [](const auto& a, const auto& b) { return a->probePriority() < b->probePriority(); });
+    std::sort(sortedPlugins.begin(), sortedPlugins.end(), Internal::probeOrderBefore);
 }
 
 // -----------------------------------------------------------------------------
@@ -412,10 +413,8 @@ CardPluginService::findAllCandidates(std::span<const std::uint8_t> atr,
 
     // Sort within each pass independently — ATR matches stay ahead of AID probes.
     auto aidProbeStart = result.begin() + static_cast<ptrdiff_t>(atrMatchCount);
-    std::sort(result.begin(), aidProbeStart,
-              [](const auto& a, const auto& b) { return a->probePriority() < b->probePriority(); });
-    std::sort(aidProbeStart, result.end(),
-              [](const auto& a, const auto& b) { return a->probePriority() < b->probePriority(); });
+    std::sort(result.begin(), aidProbeStart, Internal::probeOrderBefore);
+    std::sort(aidProbeStart, result.end(), Internal::probeOrderBefore);
     return result;
 }
 

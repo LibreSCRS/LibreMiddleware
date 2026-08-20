@@ -590,6 +590,9 @@ void walkFidRanges(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, FileNod
     int cachedFidVariant = -1;
     uint32_t rejectedFidMask = 0;
     auto ranges = getProbeRanges();
+    std::size_t probed = 0;
+    std::size_t uniformlyRejected = 0;
+    std::size_t found = 0;
 
     for (const auto& [rangeStart, rangeEnd] : ranges) {
         for (uint16_t fid = rangeStart; fid <= rangeEnd; ++fid) {
@@ -597,8 +600,13 @@ void walkFidRanges(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, FileNod
             auto lo = static_cast<uint8_t>(fid & 0xFF);
 
             auto fileResp = selectFile(conn, hi, lo, cachedFidVariant, rejectedFidMask);
+            ++probed;
+            if (fileResp.statusWord() == 0x6A86) {
+                ++uniformlyRejected;
+            }
 
             if (fileResp.isSuccess() || fileResp.sw1 == 0x62) {
+                ++found;
                 FileNode efNode;
                 efNode.name = std::format("EF ({})", formatFid(hi, lo));
                 efNode.fidHi = hi;
@@ -625,9 +633,26 @@ void walkFidRanges(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, FileNod
             }
         }
     }
+
+    // Say so rather than reporting a card with no files: the sweep measured a
+    // session in which no file-system applet was current, and only a card
+    // RESET clears that -- releasing the connection does not.
+    if (sweepSuggestsNoAppletSelected(probed, uniformlyRejected, found)) {
+        applet.description = "no file-system applet was selected during this scan (every SELECT FILE answered "
+                             "6A86); reset the card and scan again";
+        std::cerr << "card_mapper: all " << probed
+                  << " file identifiers answered 6A86 -- no file-system applet is selected.\n"
+                     "            This is a property of the session, not of the card. Reset the card "
+                     "(SCARD_RESET_CARD) and scan again.\n";
+    }
 }
 
 } // anonymous namespace
+
+bool sweepSuggestsNoAppletSelected(std::size_t probed, std::size_t rejected, std::size_t found)
+{
+    return probed > 0 && found == 0 && rejected == probed;
+}
 
 std::string matchProfile(const std::vector<std::vector<uint8_t>>& detectedAIDs)
 {

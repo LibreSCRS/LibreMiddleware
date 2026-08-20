@@ -788,8 +788,19 @@ bool PKCS11Library::matchesTemplate(const LcInt::PKCS11ObjectInfo& obj, CK_ATTRI
             }
             break;
         }
+        // Per-operation consent is a property of the KEY, not a constant:
+        // a search for CKA_ALWAYS_AUTHENTICATE=TRUE must find the keys that
+        // have it.
+        case CKA_ALWAYS_AUTHENTICATE: {
+            if (obj.objectClass == kCkoPrivateKey && attr.ulValueLen == sizeof(CK_BBOOL)) {
+                CK_BBOOL val;
+                std::memcpy(&val, attr.pValue, sizeof(val));
+                if (val != (obj.alwaysAuthenticate ? CK_TRUE : CK_FALSE))
+                    return false;
+            }
+            break;
+        }
         case CKA_EXTRACTABLE:
-        case CKA_ALWAYS_AUTHENTICATE:
         case CKA_DERIVE:
         case CKA_SIGN_RECOVER:
         case CKA_VERIFY:
@@ -1063,8 +1074,14 @@ CK_RV PKCS11Library::getAttributeValue(CK_SESSION_HANDLE hSession, CK_OBJECT_HAN
                 found = true;
             }
             break;
-        case CKA_EXTRACTABLE:
         case CKA_ALWAYS_AUTHENTICATE:
+            if (obj.objectClass == kCkoPrivateKey) {
+                src = obj.alwaysAuthenticate ? &kBoolTrue : &kBoolFalse;
+                srcLen = sizeof(kBoolFalse);
+                found = true;
+            }
+            break;
+        case CKA_EXTRACTABLE:
         case CKA_DERIVE:
         case CKA_SIGN_RECOVER:
         case CKA_VERIFY:

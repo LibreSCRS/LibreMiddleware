@@ -4,6 +4,9 @@
 #include <pkcs15_parser.h>
 
 #include "fixtures/appletsuitegen1_aodf_20260718.h"
+#include "fixtures/binary_serial_tokeninfo_20260820.h"
+#include "fixtures/ec_prkdf_20260820.h"
+#include "fixtures/ec_pukdf_20260820.h"
 #include "pkcs15_test_vectors.h"
 
 #include <gtest/gtest.h>
@@ -373,4 +376,146 @@ TEST(ParseAODF, LifecycleEvidenceFields)
     EXPECT_FALSE(pins[3].soPin);
     EXPECT_EQ(pins[3].authId, (std::vector<uint8_t>{0x03}));
     EXPECT_EQ(pins[3].id, (std::vector<uint8_t>{0x22}));
+}
+
+// =============================================================================
+// EC private keys — the PrivateKeyType CHOICE
+// =============================================================================
+
+// PrivateKeyType is a CHOICE: privateRSAKey is the untagged SEQUENCE, and
+// privateECKey is [0]. A reader that accepts only the untagged form drops
+// every EC key without a word, and an empty key list reads downstream as "this
+// card has no keys" rather than as a parse that refused what it was given. On
+// a card whose only key is EC that is the whole PKCS#11 surface: no keys means
+// no certificate is published either (a certificate is only published against
+// a retained key), so the slot answers empty for objects AND mechanisms while
+// the token itself enumerates perfectly.
+TEST(ParsePrKDF, KeepsAnEcPrivateKeyRecord)
+{
+    const auto keys = parsePrKDF(EC_PRKDF_SINGLE_KEY);
+
+    ASSERT_EQ(keys.size(), 1U) << "a [0] privateECKey record is a key, not noise";
+    EXPECT_EQ(keys[0].label, "34b8bc40-4afc-4c45-be0f-8524fc10d80f");
+    EXPECT_EQ(keys[0].id, (std::vector<uint8_t>{0x34, 0xB8, 0xBC, 0x40, 0x4A, 0xFC, 0x4C, 0x45, 0xBE, 0x0F, 0x85, 0x24,
+                                                0xFC, 0x10, 0xD8, 0x0F}));
+    EXPECT_EQ(keys[0].authId, (std::vector<uint8_t>{0x06}));
+    EXPECT_EQ(keys[0].keyReference, 0x47);
+    EXPECT_EQ(keys[0].path, (std::vector<uint8_t>{0x3F, 0x00, 0x50, 0x15}));
+    EXPECT_TRUE(keys[0].canSign);
+}
+
+// The type has to come from the OUTER CHOICE tag. typeAttributes is [1] for
+// BOTH key types under ISO 7816-15, so "it has a [1], therefore RSA" labels
+// this EC record RSA -- a parser that merely stopped dropping the record would
+// pass every assertion above and still hand the PKCS#11 layer the wrong key
+// type, wrong mechanisms and a modulus length for a curve.
+TEST(ParsePrKDF, EcKeyTypeComesFromTheChoiceTagNotTheTypeAttributes)
+{
+    const auto keys = parsePrKDF(EC_PRKDF_SINGLE_KEY);
+
+    ASSERT_EQ(keys.size(), 1U);
+    EXPECT_EQ(keys[0].keyType, KeyType::Ec);
+    // ECPrivateKeyAttributes carries no modulusLength, so an absent size here
+    // is conformant -- and must not be back-filled from an RSA assumption.
+    EXPECT_EQ(keys[0].keySizeBits, 0);
+}
+
+// CommonObjectAttributes carries userConsent: how many times the holder must
+// consent before the key is used. A card that sets it wants the PIN presented
+// per operation, and PKCS#11 spells exactly that as CKA_ALWAYS_AUTHENTICATE.
+// Dropping it produces a token that looks usable, logs in once, and then has
+// its second signature refused by the card with nothing in the client able to
+// explain why.
+TEST(ParsePrKDF, EcKeyCarriesUserConsent)
+{
+    const auto keys = parsePrKDF(EC_PRKDF_SINGLE_KEY);
+
+    ASSERT_EQ(keys.size(), 1U);
+    EXPECT_EQ(keys[0].userConsent, 1);
+}
+
+// Absent userConsent is the common case and means no per-operation consent --
+// it must read as 0, never as a defaulted 1 that would make every ordinary
+// card demand a PIN it never asked for.
+TEST(ParsePrKDF, AbsentUserConsentIsZero)
+{
+    const auto keys = parsePrKDF(SAMPLE_PRKDF);
+
+    ASSERT_FALSE(keys.empty());
+    for (const auto& key : keys) {
+        EXPECT_EQ(key.userConsent, 0) << "key '" << key.label << "'";
+    }
+}
+
+// A serialNumber is an OCTET STRING, and nothing says its bytes are text. This
+// card's carries a nested ISO 7816 `84` TLV around its ICCSN, so reading it as
+// characters yields unprintable bytes -- which then travel: into
+// CK_TOKEN_INFO.serialNumber, into the `serial` field of every pkcs11: URI the
+// token publishes, and into generated documentation, where a single binary
+// byte makes the whole file invalid UTF-8.
+TEST(ParseTokenInfo, BinarySerialIsHexEncodedNotPassedThroughAsText)
+{
+    const auto info = parseTokenInfo(BINARY_SERIAL_TOKENINFO);
+
+    // The ICCSN itself, unwrapped from the `84` TLV -- the same eight bytes
+    // EF.D003 returns on this card.
+    EXPECT_EQ(info.serialNumber, "2077B202775C2B10");
+    EXPECT_EQ(info.manufacturer, "cv cryptovision gmbh (c) v1.1j");
+    EXPECT_EQ(info.label, "SSCDv1 PACE MD");
+
+    // Whatever the encoding, the result has to be safe to put in a URI and in
+    // a UTF-8 document.
+    for (const unsigned char c : info.serialNumber) {
+        EXPECT_GE(c, 0x20) << "a serial that reaches a pkcs11: URI must be printable";
+        EXPECT_LT(c, 0x7F);
+    }
+}
+
+// A printable serial is text and must stay EXACTLY as it reads -- hex-encoding
+// one would change the identity every existing consumer already matches on.
+TEST(ParseTokenInfo, PrintableSerialIsLeftAlone)
+{
+    const auto info = parseTokenInfo(SAMPLE_TOKEN_INFO);
+    EXPECT_EQ(info.serialNumber, "T00000083");
+}
+
+// =============================================================================
+// parsePuKDF
+// =============================================================================
+
+// PublicKeyType is the same CHOICE shape as PrivateKeyType, with the same
+// trap: publicRSAKey untagged, publicECKey [0]. The public key is the only
+// source of CKA_EC_PARAMS / CKA_EC_POINT that does not require parsing a
+// certificate, so a reader that drops it forces the slot to pay a card read
+// for something the profile already had.
+TEST(ParsePuKDF, KeepsAnEcPublicKeyRecord)
+{
+    const auto keys = parsePuKDF(EC_PUKDF_SINGLE_KEY);
+
+    ASSERT_EQ(keys.size(), 1U);
+    EXPECT_EQ(keys[0].keyType, KeyType::Ec);
+    EXPECT_EQ(keys[0].label, "34b8bc40-4afc-4c45-be0f-8524fc10d80f");
+    // The SAME id the private key carries -- that pairing is the whole point.
+    EXPECT_EQ(keys[0].id, (std::vector<uint8_t>{0x34, 0xB8, 0xBC, 0x40, 0x4A, 0xFC, 0x4C, 0x45, 0xBE, 0x0F, 0x85, 0x24,
+                                                0xFC, 0x10, 0xD8, 0x0F}));
+    EXPECT_EQ(keys[0].keyReference, 0x47);
+    EXPECT_EQ(keys[0].path, (std::vector<uint8_t>{0x3F, 0x00, 0x50, 0x15, 0x44, 0x0D}));
+}
+
+// The pairing has to hold across the two directories, since that is what the
+// PKCS#11 layer matches a certificate, a private key and its public half on.
+TEST(ParsePuKDF, PublicAndPrivateRecordsShareTheirIdentifier)
+{
+    const auto priv = parsePrKDF(EC_PRKDF_SINGLE_KEY);
+    const auto pub = parsePuKDF(EC_PUKDF_SINGLE_KEY);
+
+    ASSERT_EQ(priv.size(), 1U);
+    ASSERT_EQ(pub.size(), 1U);
+    EXPECT_EQ(priv[0].id, pub[0].id);
+    EXPECT_EQ(priv[0].keyReference, pub[0].keyReference);
+}
+
+TEST(ParsePuKDF, EmptyInput)
+{
+    EXPECT_TRUE(parsePuKDF({}).empty());
 }

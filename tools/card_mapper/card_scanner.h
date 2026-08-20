@@ -7,6 +7,7 @@
 
 #include <pcsc_connection.h>
 
+#include <cstddef>
 #include <string>
 #include <utility>
 #include <vector>
@@ -43,5 +44,22 @@ std::vector<AidProbe> getAllKnownProbes();
 
 // Match detected canonical AIDs to a known profile name (empty if unknown)
 std::string matchProfile(const std::vector<std::vector<uint8_t>>& detectedAIDs);
+
+// Whether a completed file-identifier sweep means "no file-system applet is
+// selected" rather than "this card holds no files".
+//
+// 6A86 is "incorrect P1/P2". A card whose file-system applet has been
+// deselected -- by anything, including a tool that ran before this one and
+// left another applet current -- answers it to EVERY ISO SELECT FILE until the
+// card is reset, and SCARD_LEAVE_CARD on disconnect does not undo that. A
+// sweep then finds nothing and reports a card with no files, which is a
+// measurement of the session rather than of the card. Sweeping thousands of
+// identifiers and getting that one answer to every single one is not what a
+// populated card looks like, and not what an empty one looks like either.
+//
+// @param probed   file identifiers the sweep actually tried
+// @param rejected how many of them answered 6A86
+// @param found    files the sweep located
+[[nodiscard]] bool sweepSuggestsNoAppletSelected(std::size_t probed, std::size_t rejected, std::size_t found);
 
 } // namespace card_mapper

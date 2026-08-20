@@ -177,6 +177,15 @@ set(LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/plugins" CACHE PATH
 set(LIBREMIDDLEWARE_PLUGIN_DIR "${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}" CACHE PATH
     "Directory containing LibreMiddleware card plugins (for consumers)")
 
+# DECLARED BEFORE the first add_subdirectory that reads it. A library
+# subdirectory may gate its own tests on this (lib/pkcs15 does), and until the
+# option() call runs the name is simply undefined -- so on a FRESH configure
+# such a gate is false and those tests are never even generated, while a second
+# configure of the same directory finds the cached entry and turns them on. A
+# developer reconfiguring in place therefore builds and runs tests that CI,
+# which always configures from scratch, has never once compiled.
+option(BUILD_TESTING "Build tests" ON)
+
 add_subdirectory(lib/smartcard)
 add_subdirectory(lib/rs-eid)
 add_subdirectory(lib/eu-vrc)
@@ -220,7 +229,6 @@ if(LIBREMIDDLEWARE_BUILD_PLUGINS)
     add_subdirectory(lib/pkcs15-plugin)
 endif()
 
-option(BUILD_TESTING "Build tests" ON)
 if(BUILD_TESTING)
     # Call enable_testing() at top level so add_test() calls in any
     # subdirectory (test/, examples/) are discoverable by a single

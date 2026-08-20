@@ -196,3 +196,24 @@ TEST(SmartCardApdu, IsSelectRetryable)
     EXPECT_FALSE(LibreSCRS::SmartCard::Internal::isSelectRetryable(0x9000)); // Success
     EXPECT_FALSE(LibreSCRS::SmartCard::Internal::isSelectRetryable(0x6282)); // Warning (end of file)
 }
+
+// 6A86 to every identifier in a sweep is not a description of the card. It is
+// what a card answers while some other applet is current -- a state a tool that
+// ran earlier can leave behind, and one that survives a disconnect. Reporting
+// "no files" there measures the session, not the card.
+TEST(CardScanner, UniformRejectionSweepIsReportedAsNoAppletSelected)
+{
+    // The observed case: thousands of identifiers, every one rejected.
+    EXPECT_TRUE(card_mapper::sweepSuggestsNoAppletSelected(5120, 5120, 0));
+}
+
+TEST(CardScanner, AGenuinelyEmptyRangeIsNotMistakenForADeselectedApplet)
+{
+    // Rejections, but not ALL of them -- the card is answering about files.
+    EXPECT_FALSE(card_mapper::sweepSuggestsNoAppletSelected(5120, 5119, 0));
+    // Files were found, so the applet is plainly selected however many
+    // identifiers came back rejected.
+    EXPECT_FALSE(card_mapper::sweepSuggestsNoAppletSelected(5120, 5119, 7));
+    // Nothing probed at all says nothing about anything.
+    EXPECT_FALSE(card_mapper::sweepSuggestsNoAppletSelected(0, 0, 0));
+}
