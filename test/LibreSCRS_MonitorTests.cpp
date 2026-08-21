@@ -274,7 +274,14 @@ TEST(MonitorTest, ReaderListSnapshotEmittedAfterPerReaderEvents)
 {
     auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
     auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
+    auto* mockPtr = mock.get();
     mock->setReaders({"Reader A", "Reader B"});
+    // Hold the poll thread inside its first enumeration until BOTH callbacks
+    // are registered. The thread starts on the FIRST subscribe, so without
+    // this gate it can enumerate and dispatch in the window between the two
+    // registrations -- and the per-reader subscriber then misses the very
+    // events this test is about, leaving a log of "snapshot:2" alone.
+    mock->setListReadersBlocking(true);
     mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED, SCARD_STATE_CHANGED}, false});
     mock->pushStatusChange({SCARD_S_SUCCESS, {}, true});
 
@@ -311,6 +318,16 @@ TEST(MonitorTest, ReaderListSnapshotEmittedAfterPerReaderEvents)
         cv.notify_all();
     });
     EXPECT_NE(evId, listId);
+
+    // Both callbacks are registered now, so let the enumeration finish. The
+    // brief wait is not a race of its own: it only confirms the poll thread
+    // has REACHED the gate, because disarming it before the thread parks
+    // would leave a released flag and a thread that parks afterwards.
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    // Disarm before releasing, so the re-enumerate the CHANGED event triggers
+    // does not park again.
+    mockPtr->setListReadersBlocking(false);
+    mockPtr->releaseListReadersBlock();
 
     // Wait until a non-empty snapshot has been observed (i.e. the
     // change-driven snapshot reflecting Reader A + Reader B, not a stray
