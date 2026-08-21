@@ -422,7 +422,16 @@ APDUResponse PCSCConnection::transmit(const APDUCommand& cmd)
             break;
         }
         if (!accumulated.empty()) {
-            accumulated.insert(accumulated.end(), response.data.begin(), response.data.end());
+            // Grow then copy, rather than a range insert. Same bytes, same
+            // order -- but GCC 13 cannot see the bound through
+            // vector::_M_range_insert here and reports -Wstringop-overflow,
+            // which this build turns fatal. Newer GCC does not, so the local
+            // toolchain never shows it and only CI does.
+            if (!response.data.empty()) {
+                const size_t joined = accumulated.size();
+                accumulated.resize(joined + response.data.size());
+                std::memcpy(accumulated.data() + joined, response.data.data(), response.data.size());
+            }
             response.data = std::move(accumulated);
         }
     }
