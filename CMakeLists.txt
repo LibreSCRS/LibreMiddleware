@@ -43,8 +43,19 @@ function(librescrs_warnings_as_errors)
     if(NOT LIBREMIDDLEWARE_WERROR)
         return()
     endif()
+    # GCC 13 reports -Wstringop-overflow / -Wstringop-overread from inside
+    # libstdc++'s own vector internals for byte buffers whose bound it cannot
+    # follow through the inlining chain. GCC 14 and newer do not, so a bench on
+    # a current toolchain is silent while the CI compiler refuses to build at
+    # all -- and the diagnostic names a standard header, so there is no line of
+    # ours to fix. Demoted, not disabled: a genuine one still shows in the log,
+    # and the whole relaxation disappears with the compiler generation.
+    set(_relax "")
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 14)
+        set(_relax -Wno-error=stringop-overflow -Wno-error=stringop-overread)
+    endif()
     foreach(_target IN LISTS ARGN)
-        target_compile_options(${_target} PRIVATE -Werror)
+        target_compile_options(${_target} PRIVATE -Werror ${_relax})
     endforeach()
 endfunction()
 
