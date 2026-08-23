@@ -1157,6 +1157,30 @@ private:
 
         secStatus.computeOverall();
 
+        // Honest authenticity: ICAO Doc 9303 passive authentication establishes
+        // data authenticity only when the SOD signature verifies AND the signer
+        // (DSC) chains to a trusted CSCA. computeOverall's "a passed check wins"
+        // rule would report Authenticity PASSED off the SOD-signature check
+        // alone while the CSCA chain sits at NOT_PERFORMED (no trust store), so
+        // the badge would claim more than was proven: a signature checked
+        // against a certificate the document carried itself. Cap the aggregate
+        // at NOT_PERFORMED whenever the anchoring chain did not pass — the
+        // signer is unverified, so authenticity is not established. A genuine
+        // FAILED anywhere is left untouched (computeOverall already set it), and
+        // once a CSCA trust store IS configured the chain check passes and the
+        // aggregate reads PASSED again. Provisioning that store (which national
+        // CSCAs to trust) is a deployment trust decision, not made here.
+        {
+            const auto cscaChain =
+                std::find_if(secStatus.checks.begin(), secStatus.checks.end(),
+                             [](const LibreSCRS::Plugin::SecurityCheck& c) { return c.checkId == "pa_csca_chain"; });
+            const bool anchored = cscaChain != secStatus.checks.end() &&
+                                  cscaChain->status == LibreSCRS::Plugin::SecurityCheck::Status::Passed;
+            if (!anchored && secStatus.overallAuthenticity == LibreSCRS::Plugin::SecurityCheck::Status::Passed) {
+                secStatus.overallAuthenticity = LibreSCRS::Plugin::SecurityCheck::Status::NotPerformed;
+            }
+        }
+
         // 8. Emit security_status group
         {
             LibreSCRS::Plugin::CardFieldGroup g;

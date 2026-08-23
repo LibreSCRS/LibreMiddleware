@@ -388,6 +388,8 @@ TEST(EMRTDHardwareTest, PaceCanEndToEnd)
     std::optional<std::string> authMethod;
     std::optional<std::string> chipAuth;
     std::optional<std::string> dataGroups;
+    std::optional<std::string> overallAuthenticity;
+    std::optional<std::string> cscaChain;
     for (const auto& g : result.data.groups) {
         for (const auto& f : g.fields) {
             if (g.groupKey == "presence" && f.key == "auth_method")
@@ -396,11 +398,24 @@ TEST(EMRTDHardwareTest, PaceCanEndToEnd)
                 dataGroups = f.textValue();
             if (g.groupKey == "security_status" && f.key.rfind("chip_auth", 0) == 0)
                 chipAuth = f.textValue();
+            if (g.groupKey == "security_status" && f.key == "overall_authenticity")
+                overallAuthenticity = f.textValue();
+            if (g.groupKey == "security_status" && f.key == "pa_csca_chain")
+                cscaChain = f.textValue();
         }
     }
-    std::cout << "data_groups = " << dataGroups.value_or("<none>") << "\n";
-    std::cout << "auth_method = " << authMethod.value_or("<none>") << "\n";
-    std::cout << "chip_auth   = " << chipAuth.value_or("<none>") << "\n";
+    std::cout << "data_groups          = " << dataGroups.value_or("<none>") << "\n";
+    std::cout << "auth_method          = " << authMethod.value_or("<none>") << "\n";
+    std::cout << "chip_auth            = " << chipAuth.value_or("<none>") << "\n";
+    std::cout << "overall_authenticity = " << overallAuthenticity.value_or("<none>") << "\n";
+    std::cout << "pa_csca_chain        = " << cscaChain.value_or("<none>") << "\n";
+
+    // Honest authenticity: without a CSCA trust store the chain check is
+    // NOT_PERFORMED, so the authenticity aggregate must NOT read PASSED — the
+    // signer is unanchored. (With LIBRESCRS_CSCA_STORE set, both would pass.)
+    if (cscaChain && cscaChain->rfind("NOT_PERFORMED", 0) == 0)
+        EXPECT_NE(overallAuthenticity.value_or(""), "PASSED")
+            << "authenticity claimed PASSED without a verified CSCA chain";
 
     // A genuine document must never report CA/AA FAILED. On a DG14-bearing card
     // read via PACE, Chip Authentication runs over the SM tunnel and its
