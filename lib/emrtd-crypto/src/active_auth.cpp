@@ -112,7 +112,8 @@ AAPublicKey parseDG15(const std::vector<uint8_t>& dg15Raw)
 // performActiveAuth
 // ---------------------------------------------------------------------------
 
-ChipAuthResult performActiveAuth(LibreSCRS::SecureChannel::ISecureChannel& channel, const std::vector<uint8_t>& dg15Raw)
+ChipAuthResult performActiveAuth(LibreSCRS::SecureChannel::ISecureChannel& channel, const std::vector<uint8_t>& dg15Raw,
+                                 LibreSCRS::CancelToken token)
 {
     ChipAuthResult result;
 
@@ -146,11 +147,21 @@ ChipAuthResult performActiveAuth(LibreSCRS::SecureChannel::ISecureChannel& chann
     // --- Send INTERNAL AUTHENTICATE via Secure Messaging ---
     // Command: 00 88 00 00 08 <challenge> 00
     LibreSCRS::SmartCard::Internal::APDUCommand iaCmd{0x00, 0x88, 0x00, 0x00, challenge, 0x00, true};
-    auto iaResp = channel.transmit(iaCmd, LibreSCRS::CancelToken{});
+    auto iaResp = channel.transmit(iaCmd, token);
 
-    if ((iaResp.sw1 != 0x90 && iaResp.sw1 != 0x62) || iaResp.data.empty()) {
+    if (iaResp.sw1 != 0x90 && iaResp.sw1 != 0x62) {
+        // Card-side SW refusal of INTERNAL AUTHENTICATE (e.g. protocol not
+        // available on this channel) — a policy refusal, not a bad signature.
         result.activeAuthentication = ChipAuthResult::FAILED;
-        result.errorDetail = "INTERNAL AUTHENTICATE failed or empty response";
+        result.chipRefusedProtocol = true;
+        result.errorDetail = "INTERNAL AUTHENTICATE refused by card";
+        return result;
+    }
+    if (iaResp.data.empty()) {
+        // Success SW but no signature bytes: not a refusal, and not a
+        // verifiable answer either.
+        result.activeAuthentication = ChipAuthResult::FAILED;
+        result.errorDetail = "INTERNAL AUTHENTICATE returned empty response";
         return result;
     }
 

@@ -41,6 +41,12 @@ Notable user-visible changes per release. Format follows
 
 ### Changed
 
+- **`SmProtocolRequest` gained a third alternative** (`ChipAuthRequest`,
+  for eMRTD Chip Authentication). The extension is source-compatible —
+  the variant is documented append-only — but it changes the C++
+  mangling of `CardSession::activateChannelWithSm`, so binaries built
+  against older headers must be rebuilt against this release. Source
+  consumers (`find_package` / FetchContent) are unaffected.
 - **Invalid input documents fail fast.** Malformed or unsupported input
   documents now surface a distinct `InvalidDocument` outcome instead of
   a generic failure, letting callers tell a bad input apart from a

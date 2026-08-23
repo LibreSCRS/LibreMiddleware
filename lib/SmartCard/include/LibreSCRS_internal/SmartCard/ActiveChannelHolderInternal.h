@@ -75,6 +75,27 @@ struct ActiveChannelAccessor
     ///        owning holder releases the lock (see
     ///        @ref ActiveChannelHolder::Impl::release).
     LIBRESCRS_PUBLIC_API static void clearOwner(CardSession& session) noexcept;
+
+    /// @brief Install @p channel as @p session's active secure channel and
+    ///        record @p protocol, replacing (and closing) any channel already
+    ///        installed, and registering the session-presence entry the way
+    ///        the PACE/BAC activation paths do.
+    ///
+    /// The production seam for a plugin that established an SM channel OUTSIDE
+    /// the @ref CardSession::activateChannelWithSm state machine — Chip
+    /// Authentication, whose handshake needs a freshly-read DG14 and so is
+    /// driven from inside the eMRTD read. No card I/O: the channel must already
+    /// be proven (its keys exercised on the wire) before this call.
+    ///
+    /// @par Thread-safety
+    /// LOCK-FREE and owner-thread-only, exactly like @ref active and
+    /// @ref activatedProtocol: the ONLY legal caller is the thread that holds
+    /// this session's @ref ActiveChannelHolder, which already owns the session
+    /// mutex for the holder's lifetime. Taking the (non-recursive) mutex here
+    /// would self-deadlock. A debug assertion pins the owner-thread contract.
+    LIBRESCRS_PUBLIC_API static void installSmChannel(CardSession& session,
+                                                      std::unique_ptr<LibreSCRS::SecureChannel::ISecureChannel> channel,
+                                                      LibreSCRS::SmartCard::SmProtocolRequest protocol) noexcept;
 };
 
 /// @brief Friend-only access seam reaching a @ref ActiveChannelHolder's

@@ -30,11 +30,17 @@
 #include "pkcs15_pkcs11_card.h"
 
 #include "apdu.h"
+#include "chip_auth_card_oracle.h"
+#include <pcsc_connection.h>
 
+#include <LibreSCRS/Secure/Buffer.h>
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SecureChannel/BacParams.h>
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
+#include <LibreSCRS/SmartCard/detail/Unwrap.h>
+#include <LibreSCRS_internal/SecureChannel/ChipAuthChannel.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
+#include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
 #include <LibreSCRS_internal/SmartCard/SessionPresence.h>
 #include <LibreSCRS_internal/SmartCard/SmartCardServices.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
@@ -366,4 +372,82 @@ TEST_F(CrossProviderCoordination, Pkcs15ProbePreservesInjectedSessionLiveSm)
     EXPECT_EQ(fake->state(), ChannelState::Open);
     EXPECT_TRUE(session->hasLiveSecureChannel());
     EXPECT_TRUE(injectedSp.hasLiveSm(kReader));
+}
+
+// A live Chip Authentication tunnel (from a prior eMRTD contact read) must be
+// RIDDEN by the PKCS#15 adopt path, not refused: the acquire now derives its
+// SM request from the session's recorded protocol, so activateChannelWithSm
+// takes the wrapped-SELECT reuse path instead of refusing a hardcoded
+// PaceRequest against a ChipAuthChannel. Proven by the card seeing the wrapped
+// SELECT (the oracle verifies its MAC) and the tunnel surviving.
+TEST_F(CrossProviderCoordination, Pkcs15AdoptRidesLiveChipAuthTunnel)
+{
+    LibreSCRS::SmartCard::Internal::SessionPresence injectedSp;
+    auto session = makeDetachedCardSession(kReader);
+
+    // Wire an AES SM oracle behind the detached connection so the wrapped
+    // SELECT the reuse path issues round-trips.
+    auto oracle = std::make_shared<LibreSCRS::Test::AesSmCardOracle>(
+        std::vector<std::uint8_t>(16, 0x11), std::vector<std::uint8_t>(16, 0x22), std::vector<std::uint8_t>(16, 0x00));
+    LibreSCRS::SmartCard::detail::unwrap(*session).setDetachedRawResponder(
+        [oracle](std::span<const std::uint8_t> w) { return oracle->respond(w); });
+
+    // Install a real ChipAuthChannel (dynamic_cast in channelMatchesProtocol
+    // requires the concrete type) bound to the eMRTD applet, recorded as a
+    // ChipAuthRequest — the state a plain→CA upgrade leaves.
+    LibreSCRS::SecureChannel::SessionKeys keys;
+    keys.encKey = LibreSCRS::Secure::Buffer{16, 0x11};
+    keys.macKey = LibreSCRS::Secure::Buffer{16, 0x22};
+    keys.ssc = LibreSCRS::Secure::Buffer{16, 0x00};
+    keys.cipher = LibreSCRS::SecureChannel::SmCipher::Aes;
+    auto ca = std::make_unique<LibreSCRS::SecureChannel::ChipAuthChannel>(
+        LibreSCRS::SmartCard::detail::unwrap(*session), makeAid(), std::move(keys));
+    ChannelInjector::installForTesting(*session, std::move(ca),
+                                       SmProtocolRequest{LibreSCRS::SmartCard::ChipAuthRequest{}});
+
+    auto reg = injectedSp.insert(kReader, session);
+    ASSERT_TRUE(injectedSp.hasLiveSm(kReader));
+
+    LibreSCRS::Pkcs15::Pkcs11::Pkcs15PKCS11Provider provider(/*cardMap=*/nullptr, injectedSp);
+    (void)provider.probe(kReader);
+
+    // The wrapped SELECT to the PKCS#15 applet reached the card over the CA
+    // tunnel (had the request been refused Internal, no APDU would have gone
+    // out), and the tunnel is untouched.
+    EXPECT_GT(oracle->verifiedCommands(), 0)
+        << "the PKCS#15 acquire must ride the CA tunnel with a wrapped SELECT, not refuse it";
+    EXPECT_TRUE(session->hasLiveSecureChannel());
+}
+
+// Riding a live Chip Authentication tunnel proves plain readability, not PACE:
+// a ChipAuthRequest is only ever recorded by a plain→CA upgrade, so the adopt
+// must NOT latch the PACE requirement off that success. Latched, every later
+// per-op acquire would fall back to PACE-CAN once the tunnel dies — on a
+// contact interface that cannot satisfy it — instead of the plain activation
+// that provably works; while the tunnel lives, the plain path's cross-applet
+// reuse rides it anyway.
+TEST_F(CrossProviderCoordination, AdoptOverChipAuthTunnelDoesNotLatchPaceRequirement)
+{
+    auto session = makeDetachedCardSession(kReader);
+
+    auto oracle = std::make_shared<LibreSCRS::Test::AesSmCardOracle>(
+        std::vector<std::uint8_t>(16, 0x11), std::vector<std::uint8_t>(16, 0x22), std::vector<std::uint8_t>(16, 0x00));
+    LibreSCRS::SmartCard::detail::unwrap(*session).setDetachedRawResponder(
+        [oracle](std::span<const std::uint8_t> w) { return oracle->respond(w); });
+
+    LibreSCRS::SecureChannel::SessionKeys keys;
+    keys.encKey = LibreSCRS::Secure::Buffer{16, 0x11};
+    keys.macKey = LibreSCRS::Secure::Buffer{16, 0x22};
+    keys.ssc = LibreSCRS::Secure::Buffer{16, 0x00};
+    keys.cipher = LibreSCRS::SecureChannel::SmCipher::Aes;
+    auto ca = std::make_unique<LibreSCRS::SecureChannel::ChipAuthChannel>(
+        LibreSCRS::SmartCard::detail::unwrap(*session), makeAid(), std::move(keys));
+    ChannelInjector::installForTesting(*session, std::move(ca),
+                                       SmProtocolRequest{LibreSCRS::SmartCard::ChipAuthRequest{}});
+
+    auto card = std::make_shared<LibreSCRS::Pkcs15::Pkcs11::Pkcs15Card>();
+    (void)card->bindFromInjectedSession(kReader, session);
+
+    EXPECT_GT(oracle->verifiedCommands(), 0) << "the bind must still ride the tunnel with a wrapped SELECT";
+    EXPECT_FALSE(card->needsPaceFlag()) << "a CA tunnel is evidence of plain readability, not of PACE";
 }

@@ -41,6 +41,7 @@
 #include <algorithm>
 #include <cctype>
 #include <utility>
+#include <variant>
 
 namespace LibreSCRS::Pkcs15::Pkcs11 {
 
@@ -152,8 +153,17 @@ Pkcs15Card::acquireChannel(LibreSCRS::CancelToken token)
         return std::unexpected(LibreSCRS::SecureChannel::ChannelActivationError::Internal);
     auto aid = pkcs15AppletAid();
     if (needsPace) {
-        return session->activateChannelWithSm(
-            aid, LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can}, std::move(token));
+        // Ride whatever protocol already owns a live SM tunnel on this session
+        // (PACE from the host's display flow, or Chip Authentication raised by
+        // a prior eMRTD contact read) rather than assuming PACE-CAN — a CA
+        // tunnel would refuse a PaceRequest as Internal. One accessor call: it
+        // returns nullopt unless a live Open SM channel exists, so no TOCTOU
+        // against a mid-call card removal.
+        LibreSCRS::SmartCard::SmProtocolRequest req{
+            LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can}};
+        if (auto live = session->activatedProtocol())
+            req = *live;
+        return session->activateChannelWithSm(aid, req, std::move(token));
     }
     return session->activateChannelFor(aid, std::move(token));
 }
@@ -311,18 +321,32 @@ unsigned long Pkcs15Card::bindFromInjectedSession(const std::string& reader,
     // for a non-PACE card or one without deposited credentials, the
     // preflight returns CredentialsRequired cheaply and we fall through.
     {
-        auto holderResult = session->activateChannelWithSm(
-            pkcs15AppletAid(), LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can},
-            LibreSCRS::CancelToken{});
+        // Ride the session's live SM protocol if one exists (a CA tunnel from a
+        // prior eMRTD contact read, or the host's PACE), else probe with
+        // PACE-CAN as before. A single accessor call avoids a TOCTOU deref.
+        LibreSCRS::SmartCard::SmProtocolRequest smReq{
+            LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can}};
+        if (auto live = session->activatedProtocol())
+            smReq = *live;
+        auto holderResult = session->activateChannelWithSm(pkcs15AppletAid(), smReq, LibreSCRS::CancelToken{});
         if (holderResult) {
-            needsPace = true;
-            // Mirror "CAN cached somewhere" into cachedCan so Pkcs15Slot::login
-            // does not require the CAN-in-PIN colon syntax at C_Login. The
-            // marker is intentionally not the real CAN — direct field
-            // assignment bypasses parentCacheCan so the onCachedCanChanged
-            // hook does not fire and overwrite the session's authoritative
-            // copy. Slot dispatch only checks emptiness, never reads value.
-            cachedCan = LibreSCRS::Secure::String{"\x01"};
+            // A probe that RODE a live Chip Authentication tunnel proves
+            // nothing about PACE: the tunnel exists because the card was
+            // plain-readable on this interface (only a plain→CA upgrade
+            // records ChipAuthRequest). Latching needsPace here would wedge
+            // every later acquireChannel onto a PACE-CAN fallback the contact
+            // interface cannot satisfy once the tunnel dies — while it lives,
+            // the plain path's cross-applet reuse rides it anyway.
+            if (!std::holds_alternative<LibreSCRS::SmartCard::ChipAuthRequest>(smReq)) {
+                needsPace = true;
+                // Mirror "CAN cached somewhere" into cachedCan so Pkcs15Slot::login
+                // does not require the CAN-in-PIN colon syntax at C_Login. The
+                // marker is intentionally not the real CAN — direct field
+                // assignment bypasses parentCacheCan so the onCachedCanChanged
+                // hook does not fire and overwrite the session's authoritative
+                // copy. Slot dispatch only checks emptiness, never reads value.
+                cachedCan = LibreSCRS::Secure::String{"\x01"};
+            }
             return readProfileAndComplete(*holderResult);
         }
         if (holderResult.error() != LibreSCRS::SecureChannel::ChannelActivationError::CredentialsRequired)

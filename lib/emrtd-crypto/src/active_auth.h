@@ -32,6 +32,6 @@ AAPublicKey parseDG15(const std::vector<uint8_t>& dg15Raw);
 ///        owns the SM wrap/unwrap. Returns
 ///        @ref ChipAuthResult::activeAuthentication status; no key
 ///        rotation occurs on success.
-ChipAuthResult performActiveAuth(LibreSCRS::SecureChannel::ISecureChannel& channel,
-                                 const std::vector<uint8_t>& dg15Raw);
+ChipAuthResult performActiveAuth(LibreSCRS::SecureChannel::ISecureChannel& channel, const std::vector<uint8_t>& dg15Raw,
+                                 LibreSCRS::CancelToken token = {});
 } // namespace emrtd::crypto

@@ -179,4 +179,10 @@ public:
     using SmChannelBody::SmChannelBody;
 };
 
+class ChipAuthChannelImpl : public SmChannelBody
+{
+public:
+    using SmChannelBody::SmChannelBody;
+};
+
 } // namespace LibreSCRS::SecureChannel::detail

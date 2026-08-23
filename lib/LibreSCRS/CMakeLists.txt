@@ -214,6 +214,7 @@ add_library(LibreSCRS_SecureChannel ${LIBREMIDDLEWARE_LIB_TYPE}
     SecureChannel/pace_channel.cpp
     SecureChannel/pace_params.cpp
     SecureChannel/bac_channel.cpp
+    SecureChannel/chip_auth_channel.cpp
     SecureChannel/channel_state_mutator.cpp
     ${LIBRESCRS_SECURECHANNEL_PUBLIC_HEADERS}
     ${LIBRESCRS_SECURECHANNEL_INTERNAL_HEADERS}

@@ -9,6 +9,7 @@
 
 #include "types.h"
 #include "secure_messaging.h"
+#include <LibreSCRS/CancelToken.h>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -39,6 +40,15 @@ struct ChipAuthResult
     enum Status { PASSED, FAILED, NOT_PERFORMED, NOT_SUPPORTED };
     Status chipAuthentication = NOT_PERFORMED;
     Status activeAuthentication = NOT_PERFORMED;
+    /// @brief True when the FAILED verdict is a card-side STATUS-WORD refusal
+    ///        of a protocol APDU (MSE:Set AT / GENERAL AUTHENTICATE for CA,
+    ///        INTERNAL AUTHENTICATE for AA) — as opposed to a local crypto
+    ///        failure or a bad signature. On a plain channel this lets the
+    ///        caller report NOT_PERFORMED (the contact interface may legitimately
+    ///        SM-gate the protocol) rather than accusing the card; inside an
+    ///        SM tunnel a refusal of an advertised capability still maps to
+    ///        FAILED. Never set on the empty-response or verification krak.
+    bool chipRefusedProtocol = false;
     std::string protocol;
     std::string errorDetail;
     std::optional<SessionKeys> newSessionKeys;
@@ -56,5 +66,6 @@ bool parseDG14(const std::vector<uint8_t>& dg14Raw, std::vector<ChipAuthInfo>& c
 ///        the new key block (mapping @ref newAlgorithm to the corresponding
 ///        @c SmCipher). The protocol's General Authenticate APDUs flow
 ///        through the channel — no separate SM wrap is performed here.
-ChipAuthResult performChipAuth(LibreSCRS::SecureChannel::ISecureChannel& channel, const std::vector<uint8_t>& dg14Raw);
+ChipAuthResult performChipAuth(LibreSCRS::SecureChannel::ISecureChannel& channel, const std::vector<uint8_t>& dg14Raw,
+                               LibreSCRS::CancelToken token = {});
 } // namespace emrtd::crypto

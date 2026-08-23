@@ -44,6 +44,11 @@ namespace LibreSCRS::Plugin::detail {
         return pace->secretKind == Auth::PaceSecretKind::Can ? Auth::PreReadAuthMethod::Can
                                                              : Auth::PreReadAuthMethod::Mrz;
     }
+    if (std::holds_alternative<SmartCard::ChipAuthRequest>(profile.primary)) {
+        // Reuse of an already-proven live tunnel collects no user secret;
+        // the Mrz fallthrough below would promise a prompt that never comes.
+        return Auth::PreReadAuthMethod::None;
+    }
     return Auth::PreReadAuthMethod::Mrz;
 }
 

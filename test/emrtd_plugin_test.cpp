@@ -340,6 +340,74 @@ TEST(EMRTDHardwareTest, ChipAuthEndToEnd)
     EXPECT_TRUE(foundCA || foundAA) << "Neither ca.chip_auth nor aa.active_auth found in security_status";
 }
 
+// PACE-CAN end-to-end: reads a contactless eMRTD via PACE keyed on the CAN,
+// exercising the Chip Authentication SM-path proof exchange on real hardware.
+// Set LIBRESCRS_TEST_CAN (and optionally LIBRESCRS_TEST_READER_INDEX) to run.
+TEST(EMRTDHardwareTest, PaceCanEndToEnd)
+{
+    SKIP_IF_AUTH_FAILED();
+    const char* can = std::getenv("LIBRESCRS_TEST_CAN");
+    if (can == nullptr || *can == '\0')
+        GTEST_SKIP() << "Set LIBRESCRS_TEST_CAN to run";
+
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
+    if (readers.empty())
+        GTEST_SKIP() << "No smart card readers found";
+
+    std::size_t idx = 0;
+    if (const char* r = std::getenv("LIBRESCRS_TEST_READER_INDEX"))
+        idx = static_cast<std::size_t>(std::atoi(r));
+    if (idx >= readers.size())
+        GTEST_SKIP() << "reader index out of range";
+
+    CardPluginService registry{pluginDir()};
+    auto emrtd = findEMRTD(registry);
+    ASSERT_NE(emrtd, nullptr);
+
+    auto opened = LibreSCRS::SmartCard::CardSession::open(readers[idx]);
+    if (!opened.has_value())
+        GTEST_SKIP() << "Cannot open CardSession on reader " << readers[idx];
+    auto session = std::make_shared<LibreSCRS::SmartCard::CardSession>(std::move(*opened));
+
+    // Deposit the CAN AFTER canHandleConnection: the discovery probe erases any
+    // predecessor plugin-session state for this reader, which would drop a CAN
+    // deposited before it.
+    ASSERT_TRUE(emrtd->canHandleConnection({}, *session));
+    emrtd->setCredentials(*session, "can", LibreSCRS::Secure::String{std::string{can}});
+
+    auto result = readCardWithStreaming(emrtd, *session);
+    if (result.data.groups.empty()) {
+        g_authFailed = true;
+        FAIL() << "readCard returned no groups (PACE-CAN failed?)";
+    }
+
+    // Print only the verdict-bearing fields (never the personal data groups):
+    // the SM-path Chip Authentication verdict is what this run is proving.
+    std::optional<std::string> authMethod;
+    std::optional<std::string> chipAuth;
+    std::optional<std::string> dataGroups;
+    for (const auto& g : result.data.groups) {
+        for (const auto& f : g.fields) {
+            if (g.groupKey == "presence" && f.key == "auth_method")
+                authMethod = f.textValue();
+            if (g.groupKey == "presence" && f.key == "data_groups")
+                dataGroups = f.textValue();
+            if (g.groupKey == "security_status" && f.key.rfind("chip_auth", 0) == 0)
+                chipAuth = f.textValue();
+        }
+    }
+    std::cout << "data_groups = " << dataGroups.value_or("<none>") << "\n";
+    std::cout << "auth_method = " << authMethod.value_or("<none>") << "\n";
+    std::cout << "chip_auth   = " << chipAuth.value_or("<none>") << "\n";
+
+    // A genuine document must never report CA/AA FAILED. On a DG14-bearing card
+    // read via PACE, Chip Authentication runs over the SM tunnel and its
+    // verdict is only PASSED because the post-key-change proof exchange
+    // succeeded — the whole point of the 4.4 change.
+    if (chipAuth)
+        EXPECT_EQ(chipAuth->find("FAILED"), std::string::npos) << "chip_auth FAILED on a genuine card";
+}
+
 TEST(EMRTDHardwareTest, StreamingGroupOrder)
 {
     SKIP_IF_AUTH_FAILED();
@@ -783,7 +851,7 @@ TEST(EmrtdInterfaceActivation, ContactWithProviderReadsIdentityWithoutPace)
     EXPECT_FALSE(logContainsIns(*rig, 0x86)) << "GENERAL AUTHENTICATE transmitted — PACE was wrongly attempted";
 }
 
-TEST(EmrtdInterfaceActivation, ContactPlainReadLabelsAuthAndSkipsGenuineness)
+TEST(EmrtdInterfaceActivation, ContactPlainReadAttemptsChipAuthAndStaysPlainWhenUnavailable)
 {
     CardPluginService registry{pluginDir()};
     auto plugin = findEMRTD(registry);
@@ -800,12 +868,15 @@ TEST(EmrtdInterfaceActivation, ContactPlainReadLabelsAuthAndSkipsGenuineness)
     ASSERT_EQ(rr.status, ReadResult::Status::Ok);
     ASSERT_TRUE(rr.data.has_value());
 
-    // The plain path must label itself honestly and must not run the
-    // genuineness protocols: Chip Authentication's key replacement is a
-    // documented no-op on a plain channel, so a PASSED/FAILED verdict there
-    // would be unverifiable. DG14 raw bytes are still read (PA input).
+    // The plain path now ATTEMPTS to run Chip Authentication and raise the
+    // channel to SM (skipping it would leave the verdict unmade AND the rest
+    // of the read in cleartext). This rig's DG14 is an unparseable stub, so the
+    // attempt yields NOT_SUPPORTED — a property of the DG14 content, honestly
+    // reported — and the channel stays plain (no upgrade), so auth_method
+    // stays "None (plain read)". Because parseDG14 fails before the protocol
+    // APDUs, no MSE:Set AT / GENERAL AUTHENTICATE reaches the wire.
     EXPECT_EQ(fieldText(*rr.data, "presence", "auth_method").value_or(""), "None (plain read)");
-    EXPECT_EQ(fieldText(*rr.data, "security_status", "chip_auth").value_or(""), "NOT_PERFORMED");
+    EXPECT_EQ(fieldText(*rr.data, "security_status", "chip_auth").value_or(""), "NOT_SUPPORTED");
     EXPECT_TRUE(logContainsSelectFid(*rig, 0x010E)) << "DG14 raw bytes must still be read on the plain path";
     EXPECT_FALSE(logContainsIns(*rig, 0x22));
     EXPECT_FALSE(logContainsIns(*rig, 0x86));

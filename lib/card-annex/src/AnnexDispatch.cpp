@@ -5,7 +5,9 @@
 
 #include "AnnexRegistry.h"
 
+#include <LibreSCRS/SmartCard/AppletAid.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
+#include <LibreSCRS_internal/SecureChannel/detail/ChannelStateMutator.h>
 
 #include <apdu.h>
 #include <ef_dir.h>
@@ -38,6 +40,20 @@ public:
 
     ~MasterFileRestore()
     {
+        // The MF select goes THROUGH the SM channel but does not update its
+        // cached applet AID (that is only stamped by CardSession after an
+        // activation). Left as-is, the channel would claim to be on the
+        // eMRTD applet while the card sits elsewhere, and a second read's
+        // same-applet fast path would skip the re-SELECT and read the wrong
+        // file. Clear the cached AID to the empty sentinel (the state a fresh
+        // PACE/CA handshake leaves) BEFORE attempting the select: host-side
+        // bookkeeping must not depend on the wire call surviving — a throw
+        // (cancellation, transient PC/SC failure) would otherwise leave the
+        // stale AID armed. Harmless on a plain read (no channel).
+        if (ctx_.channel != nullptr) {
+            LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(*ctx_.channel,
+                                                                                    LibreSCRS::SmartCard::AppletAid{});
+        }
         try {
             (void)dispatch(ctx_, SC::selectByFileId(kMfHi, kMfLo, 0x0C));
         } catch (...) {

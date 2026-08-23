@@ -10,6 +10,7 @@
 #include <LibreSCRS/Secure/Buffer.h>
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SecureChannel/BacParams.h>
+#include <LibreSCRS_internal/SecureChannel/ChipAuthChannel.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
 #include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
@@ -410,6 +411,22 @@ private:
             }
         }
 
+        // A live Chip Authentication tunnel from a prior read on this session
+        // wins over any deposited credential: a second read must ride the
+        // existing SM tunnel (wrapped re-bind), not start a fresh PACE the
+        // recorded protocol would otherwise contradict. Checked BEFORE the
+        // credential branches so a stale MRZ/CAN cannot force a PACE profile
+        // that activateChannelWithSm would then refuse Internal. The public,
+        // mutex-locking accessor is required: profileFor runs WITHOUT the
+        // ActiveChannelHolder (the plain-probe check below locks the same
+        // way), so the lock-free owner-only accessor would race a concurrent
+        // holder's channel teardown.
+        if (auto proto = cardSession.activatedProtocol();
+            proto.has_value() && std::holds_alternative<LibreSCRS::SmartCard::ChipAuthRequest>(*proto)) {
+            p.primary = LibreSCRS::SmartCard::ChipAuthRequest{};
+            return p;
+        }
+
         if (haveMrz) {
             p.primary = LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Mrz};
             // Capability-gated: a deposited/renegotiated MRZ on a
@@ -615,28 +632,12 @@ private:
             return data;
         }
 
-        // SM channel established by the wrapper — read over it.
-        emrtd::EMRTDCard card(*channel);
-
-        // Auth method label for the security_status / presence group, derived
-        // from the protocol the wrapper actually activated. The lock-free,
-        // owner-tolerant accessor is required here: doReadCard runs while the
-        // base readCard wrapper still holds the ActiveChannelHolder, so the
-        // public CardSession::activatedProtocol() (which locks the non-recursive
-        // session mutex on the owner thread) would self-deadlock.
-        std::string authMethodLabel = "BAC";
-        if (plainRead) {
-            // Interface-neutral honesty: the readability probe proves plain
-            // access, not the physical interface (a PACE-less legacy document
-            // can be plain-readable over RF too).
-            authMethodLabel = "None (plain read)";
-        } else if (auto proto = LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::activatedProtocol(cardSession)) {
-            if (const auto* pace = std::get_if<LibreSCRS::SmartCard::PaceRequest>(&*proto))
-                authMethodLabel =
-                    (pace->secretKind == LibreSCRS::Auth::PaceSecretKind::Can) ? "PACE (CAN)" : "PACE (MRZ)";
-        }
-
-        // --- ICAO-compliant reading flow ---
+        // SM channel established by the wrapper — read over it. Held in an
+        // optional because a plain-channel read may UPGRADE to a Chip
+        // Authentication SM channel mid-flow (below): the upgrade closes the
+        // channel this object referenced, so it is re-seated over the new one.
+        std::optional<emrtd::EMRTDCard> cardObj;
+        cardObj.emplace(*channel);
 
         auto addTextField = [](LibreSCRS::Plugin::CardFieldGroup& g, std::string_view key, std::string_view label,
                                std::string_view val) {
@@ -645,25 +646,15 @@ private:
                                     std::vector<uint8_t>{val.begin(), val.end()}});
         };
 
-        // 1. Read COM → emit presence group
-        auto dgList = card.readCOM();
-        {
-            LibreSCRS::Plugin::CardFieldGroup g;
-            g.groupKey = "presence";
-            g.groupLabel = "Data Groups Present";
-            std::string dgListStr;
-            for (int dg : dgList) {
-                if (!dgListStr.empty())
-                    dgListStr += ", ";
-                dgListStr += "DG" + std::to_string(dg);
-            }
-            addTextField(g, "data_groups", "Data Groups", dgListStr);
-            addTextField(g, "auth_method", "Authentication Method", authMethodLabel);
-            emitGroup(std::move(g));
-        }
+        // --- ICAO-compliant reading flow ---
+
+        // 1. Read COM (data-group presence list). The presence group is emitted
+        //    LATER — after the Chip Authentication step — so its auth_method
+        //    field can describe a plain→CA upgrade rather than the pre-CA state.
+        auto dgList = cardObj->readCOM();
 
         // 2. Read SOD → store raw bytes
-        auto sodRaw = card.readSOD();
+        auto sodRaw = cardObj->readSOD();
 
         // 3. Parse SOD → get authoritative DG list from hash entries
         std::vector<int> authoritativeDGs;
@@ -691,54 +682,166 @@ private:
         caResult.chipAuthentication = emrtd::crypto::ChipAuthResult::NOT_PERFORMED;
         caResult.activeAuthentication = emrtd::crypto::ChipAuthResult::NOT_PERFORMED;
 
+        // Set true when a plain read was raised to a Chip Authentication SM
+        // channel below — drives the auth_method label and keeps the SM-branch
+        // key-rotation path from re-running on the same result.
+        bool chipAuthUpgraded = false;
+
         if (hasDG14) {
-            auto dg14Result = card.readDataGroupSafe(14);
+            auto dg14Result = cardObj->readDataGroupSafe(14);
             if (dg14Result.status == emrtd::DGReadStatus::OK && !dg14Result.data.empty()) {
                 dgRawData[14] = dg14Result.data;
-                // Genuineness protocols run only over SM: Chip Authentication's
-                // session-key replacement is a documented no-op on a plain
-                // channel, so any verdict there would be unverifiable. The raw
-                // DG14 bytes above feed passive authentication whenever EF.SOD
-                // is itself readable; documents that SM-gate EF.SOD in plain
-                // skip PA entirely and report it NOT_PERFORMED.
-                if (!plainRead)
-                    caResult = emrtd::crypto::performChipAuth(*channel, dg14Result.data);
-                if (caResult.chipAuthentication == emrtd::crypto::ChipAuthResult::PASSED && caResult.newSessionKeys) {
-                    // Promote channel SM keys to CA-derived keys. The
-                    // public-channel SessionKeys carrier composes
-                    // cleansing Secure::Buffer fields; the emrtd::crypto
-                    // vectors are cleansed by their own destructor when
-                    // caResult drops, so the post-copy bytes never
-                    // persist uncleansed.
-                    LibreSCRS::SecureChannel::SessionKeys newKeys;
-                    newKeys.encKey =
-                        LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{caResult.newSessionKeys->encKey}};
-                    newKeys.macKey =
-                        LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{caResult.newSessionKeys->macKey}};
-                    newKeys.ssc =
-                        LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{caResult.newSessionKeys->ssc}};
-                    newKeys.cipher = (caResult.newAlgorithm == emrtd::crypto::SMAlgorithm::DES3)
-                                         ? LibreSCRS::SecureChannel::SmCipher::Des3
-                                         : LibreSCRS::SecureChannel::SmCipher::Aes;
-                    LibreSCRS::SecureChannel::detail::ChannelStateMutator::replaceKeys(*channel, std::move(newKeys));
+                if (plainRead) {
+                    // Contact/plain read: RUN Chip Authentication and RAISE the
+                    // channel to SM with the derived keys. Skipping it on a
+                    // plain channel would leave the verdict unmade AND the rest
+                    // of the read in cleartext. establish() gates PASSED on a
+                    // real wrapped proof exchange, so a clone that cannot derive
+                    // the keys is caught on the wire, not asserted.
+                    auto upgraded = LibreSCRS::SecureChannel::ChipAuthChannel::establish(
+                        conn, *channel, dg14Result.data, makeEmrtdAid(), LibreSCRS::CancelToken{});
+                    if (upgraded) {
+                        caResult.chipAuthentication = emrtd::crypto::ChipAuthResult::PASSED;
+                        caResult.protocol = (*upgraded)->protocolOid();
+                        LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::installSmChannel(
+                            cardSession, std::move(*upgraded),
+                            LibreSCRS::SmartCard::SmProtocolRequest{LibreSCRS::SmartCard::ChipAuthRequest{}});
+                        // The plain channel is gone; re-seat over the SM channel.
+                        channel = LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::active(cardSession);
+                        cardObj.emplace(*channel);
+                        chipAuthUpgraded = true;
+                        plainRead = false;
+                    } else {
+                        // No SM upgrade. A card-side status-word refusal of the
+                        // protocol on a plain channel is NOT a genuineness
+                        // failure — the contact interface may gate CA behind SM
+                        // — so report it not-performed; a completed key
+                        // agreement that then failed its proof is a real
+                        // failure (clone signal). Reading continues plain: the
+                        // first plain APDU intentionally aborts any card-side SM
+                        // the failed GA left half-open (ISO 7816-4 SM abort).
+                        using EK = LibreSCRS::SecureChannel::ChipAuthEstablishError::Kind;
+                        switch (upgraded.error().kind) {
+                        case EK::NotSupported:
+                            caResult.chipAuthentication = emrtd::crypto::ChipAuthResult::NOT_SUPPORTED;
+                            break;
+                        case EK::ProtocolRefused:
+                            caResult.chipAuthentication = emrtd::crypto::ChipAuthResult::NOT_PERFORMED;
+                            caResult.errorDetail = "chip refused Chip Authentication on plain channel";
+                            break;
+                        case EK::Cancelled:
+                            // An aborted attempt earned no verdict either way
+                            // — never the clone signal.
+                            caResult.chipAuthentication = emrtd::crypto::ChipAuthResult::NOT_PERFORMED;
+                            caResult.errorDetail = upgraded.error().detail;
+                            break;
+                        case EK::SmProofFailed:
+                        case EK::LocalCryptoFailure:
+                            caResult.chipAuthentication = emrtd::crypto::ChipAuthResult::FAILED;
+                            caResult.errorDetail = upgraded.error().detail;
+                            break;
+                        }
+                        caResult.protocol = upgraded.error().protocol;
+                    }
+                } else {
+                    // Already inside an SM tunnel (PACE/BAC): rotate to the
+                    // CA-derived keys, then PROVE the rotation with a wrapped
+                    // exchange before trusting the PASSED verdict.
+                    caResult = emrtd::crypto::performChipAuth(*channel, dg14Result.data, LibreSCRS::CancelToken{});
+                    if (caResult.chipAuthentication == emrtd::crypto::ChipAuthResult::PASSED &&
+                        caResult.newSessionKeys) {
+                        // Promote channel SM keys to CA-derived keys. The
+                        // public-channel SessionKeys carrier composes cleansing
+                        // Secure::Buffer fields; the emrtd::crypto vectors are
+                        // cleansed by their own destructor when caResult drops.
+                        LibreSCRS::SecureChannel::SessionKeys newKeys;
+                        newKeys.encKey =
+                            LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{caResult.newSessionKeys->encKey}};
+                        newKeys.macKey =
+                            LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{caResult.newSessionKeys->macKey}};
+                        newKeys.ssc =
+                            LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{caResult.newSessionKeys->ssc}};
+                        newKeys.cipher = (caResult.newAlgorithm == emrtd::crypto::SMAlgorithm::DES3)
+                                             ? LibreSCRS::SecureChannel::SmCipher::Des3
+                                             : LibreSCRS::SecureChannel::SmCipher::Aes;
+                        LibreSCRS::SecureChannel::detail::ChannelStateMutator::replaceKeys(*channel,
+                                                                                           std::move(newKeys));
+                        // Make the verdict real on the SM path too: if the first
+                        // APDU under the rotated keys does not MAC, the key
+                        // agreement did not match — FAILED, not PASSED.
+                        if (!LibreSCRS::SecureChannel::confirmSmAfterKeyChange(*channel, makeEmrtdAid(),
+                                                                               LibreSCRS::CancelToken{})) {
+                            caResult.chipAuthentication = emrtd::crypto::ChipAuthResult::FAILED;
+                            caResult.errorDetail = "chip authentication key agreement did not verify";
+                        }
+                    }
                 }
             }
         }
 
-        // 5. If no DG14 but DG15 present → Active Authentication
+        // 5. If no DG14 but DG15 present → Active Authentication. Unlike Chip
+        //    Authentication, AA is an explicit challenge-response whose verdict
+        //    does not depend on secure messaging: the chip signs a terminal
+        //    challenge with the DG15 key that EF.SOD already authenticated, so
+        //    the result is verifiable even on a plain channel.
         if (caResult.chipAuthentication != emrtd::crypto::ChipAuthResult::PASSED && hasDG15) {
-            auto dg15Result = card.readDataGroupSafe(15);
+            auto dg15Result = cardObj->readDataGroupSafe(15);
             if (dg15Result.status == emrtd::DGReadStatus::OK && !dg15Result.data.empty()) {
                 dgRawData[15] = dg15Result.data;
-                // Same SM-only rule as Chip Authentication above: no
-                // genuineness verdict from a plain channel.
-                if (!plainRead) {
-                    auto aaResult = emrtd::crypto::performActiveAuth(*channel, dg15Result.data);
-                    caResult.activeAuthentication = aaResult.activeAuthentication;
-                    if (aaResult.errorDetail.size() > caResult.errorDetail.size())
-                        caResult.errorDetail = aaResult.errorDetail;
+                auto aaResult = emrtd::crypto::performActiveAuth(*channel, dg15Result.data, LibreSCRS::CancelToken{});
+                if (aaResult.chipRefusedProtocol && !channel->carriesSm()) {
+                    // A card-side status-word refusal of INTERNAL AUTHENTICATE
+                    // on a plain channel is not a genuineness failure — the
+                    // contact interface may legitimately SM-gate the protocol.
+                    // Same rule as the Chip Authentication ProtocolRefused
+                    // mapping above; inside an SM tunnel the FAILED verdict of
+                    // a refused, advertised capability stands.
+                    aaResult.activeAuthentication = emrtd::crypto::ChipAuthResult::NOT_PERFORMED;
+                    aaResult.errorDetail = "chip refused Active Authentication on plain channel";
                 }
+                caResult.activeAuthentication = aaResult.activeAuthentication;
+                if (aaResult.errorDetail.size() > caResult.errorDetail.size())
+                    caResult.errorDetail = aaResult.errorDetail;
             }
+        }
+
+        // Finalize the auth-method label now that a plain→CA upgrade (if any)
+        // has happened. Derived from the protocol the session actually holds;
+        // the lock-free accessor is required because doReadCard runs while the
+        // base wrapper still holds the ActiveChannelHolder (the public,
+        // mutex-locking accessor would self-deadlock on the owner thread).
+        std::string authMethodLabel = "BAC";
+        if (chipAuthUpgraded) {
+            authMethodLabel = "Chip Authentication";
+        } else if (plainRead) {
+            // Interface-neutral honesty: the readability probe proves plain
+            // access, not the physical interface (a PACE-less legacy document
+            // can be plain-readable over RF too).
+            authMethodLabel = "None (plain read)";
+        } else if (auto proto = LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::activatedProtocol(cardSession)) {
+            if (const auto* pace = std::get_if<LibreSCRS::SmartCard::PaceRequest>(&*proto)) {
+                authMethodLabel =
+                    (pace->secretKind == LibreSCRS::Auth::PaceSecretKind::Can) ? "PACE (CAN)" : "PACE (MRZ)";
+            } else if (std::holds_alternative<LibreSCRS::SmartCard::ChipAuthRequest>(*proto)) {
+                authMethodLabel = "Chip Authentication";
+            }
+        }
+
+        // Emit the presence group now — still the FIRST group in the stream,
+        // but after the CA step so auth_method reflects any upgrade.
+        {
+            LibreSCRS::Plugin::CardFieldGroup g;
+            g.groupKey = "presence";
+            g.groupLabel = "Data Groups Present";
+            std::string dgListStr;
+            for (int dg : dgList) {
+                if (!dgListStr.empty())
+                    dgListStr += ", ";
+                dgListStr += "DG" + std::to_string(dg);
+            }
+            addTextField(g, "data_groups", "Data Groups", dgListStr);
+            addTextField(g, "auth_method", "Authentication Method", authMethodLabel);
+            emitGroup(std::move(g));
         }
 
         // 6. Read remaining DGs and emit groups
@@ -747,7 +850,7 @@ private:
             if (dg == 14 || dg == 15)
                 continue;
 
-            auto dgResult = card.readDataGroupSafe(dg);
+            auto dgResult = cardObj->readDataGroupSafe(dg);
             if (dgResult.status == emrtd::DGReadStatus::OK && !dgResult.data.empty()) {
                 dgRawData[dg] = dgResult.data;
             }

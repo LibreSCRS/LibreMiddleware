@@ -119,3 +119,19 @@ TEST(PreReadAuthDerivationTest, BacProfileYieldsMrz)
     ASSERT_NE(session, nullptr);
     EXPECT_EQ(plugin.preReadAuth(*session), LibreSCRS::Auth::PreReadAuthMethod::Mrz);
 }
+
+TEST(PreReadAuthDerivationTest, ChipAuthProfileYieldsNone)
+{
+    // A ChipAuthRequest profile reuses an already-proven live tunnel; there is
+    // no user secret to collect, so the truthful pre-read answer is None —
+    // falling through to the Mrz default would promise a prompt that never
+    // comes.
+    LibreSCRS::Plugin::ActivationProfile profile;
+    profile.aid = LibreSCRS::SmartCard::AppletAid::fromBytes(std::array<std::uint8_t, 1>{0xA0});
+    profile.primary = LibreSCRS::SmartCard::SmProtocolRequest{LibreSCRS::SmartCard::ChipAuthRequest{}};
+
+    FakeProfilePlugin plugin{std::move(profile)};
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    ASSERT_NE(session, nullptr);
+    EXPECT_EQ(plugin.preReadAuth(*session), LibreSCRS::Auth::PreReadAuthMethod::None);
+}

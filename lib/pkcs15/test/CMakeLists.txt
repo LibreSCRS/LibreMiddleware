@@ -31,17 +31,22 @@ if(LIBRESCRS_VENDOR_OPENSC)
         PKCS15
         librescrs-opensc-pkcs11
         LibreSCRS::SmartCard
+        LibreSCRS::SecureChannel
         LibreSCRS_SmartCard_TestHelpers
         LibreSCRS::Secure
+        EMRTDCrypto
         GTest::gtest_main
     )
 
     target_include_directories(CrossProviderCoordinationTests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../../test
         ${PROJECT_SOURCE_DIR}/lib/pkcs11/include
         ${PROJECT_SOURCE_DIR}/lib/pkcs11/src
         ${PROJECT_SOURCE_DIR}/lib/opensc-pkcs11/include
         ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+        ${PROJECT_SOURCE_DIR}/lib/SecureChannel/include
+        ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src
     )
 
     target_compile_definitions(CrossProviderCoordinationTests PRIVATE LIBRESCRS_INTERNAL_BUILD)

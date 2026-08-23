@@ -461,7 +461,8 @@ static std::vector<uint8_t> extractECPoint(EVP_PKEY* pkey)
 // performChipAuth
 // ---------------------------------------------------------------------------
 
-ChipAuthResult performChipAuth(LibreSCRS::SecureChannel::ISecureChannel& channel, const std::vector<uint8_t>& dg14Raw)
+ChipAuthResult performChipAuth(LibreSCRS::SecureChannel::ISecureChannel& channel, const std::vector<uint8_t>& dg14Raw,
+                               LibreSCRS::CancelToken token)
 {
     ChipAuthResult result;
 
@@ -572,10 +573,11 @@ ChipAuthResult performChipAuth(LibreSCRS::SecureChannel::ISecureChannel& channel
     }
 
     LibreSCRS::SmartCard::Internal::APDUCommand mseCmd{0x00, 0x22, 0x41, 0xA4, mseData, 0, false};
-    auto mseResp = channel.transmit(mseCmd, LibreSCRS::CancelToken{});
+    auto mseResp = channel.transmit(mseCmd, token);
 
     if (mseResp.sw1 != 0x90 && mseResp.sw1 != 0x62) {
         result.chipAuthentication = ChipAuthResult::FAILED;
+        result.chipRefusedProtocol = true; // card-side SW refusal, not a crypto failure
         result.errorDetail = "MSE:Set AT failed";
         return result;
     }
@@ -585,10 +587,11 @@ ChipAuthResult performChipAuth(LibreSCRS::SecureChannel::ISecureChannel& channel
     auto pubKeyDO = buildTLV(0x80, terminalPubBytes);
     auto gaData = buildTLV(0x7C, pubKeyDO);
     LibreSCRS::SmartCard::Internal::APDUCommand gaCmd{0x00, 0x86, 0x00, 0x00, gaData, 0x00, true};
-    auto gaResp = channel.transmit(gaCmd, LibreSCRS::CancelToken{});
+    auto gaResp = channel.transmit(gaCmd, token);
 
     if (gaResp.sw1 != 0x90 && gaResp.sw1 != 0x62) {
         result.chipAuthentication = ChipAuthResult::FAILED;
+        result.chipRefusedProtocol = true; // card-side SW refusal, not a crypto failure
         result.errorDetail = "General Authenticate failed";
         return result;
     }

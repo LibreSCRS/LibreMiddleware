@@ -10,6 +10,7 @@
 #include <LibreSCRS/Auth/CredentialResult.h>
 #include <LibreSCRS/Auth/ErrorKeys.h>
 #include <LibreSCRS_internal/SecureChannel/BacChannel.h>
+#include <LibreSCRS_internal/SecureChannel/ChipAuthChannel.h>
 #include <LibreSCRS_internal/SecureChannel/PaceChannel.h>
 #include <LibreSCRS/SecureChannel/PaceParams.h>
 #include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
@@ -520,14 +521,16 @@ CardSession::activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token)
     // Symmetric SM-tunnel guard, hoisted ahead of the transaction setup: a
     // plain activation must not tear down a live SM channel mid-flight —
     // issuing the plain SELECT below would desynchronise the card-side
-    // send-sequence counter and corrupt the tunnel. Surface a typed
-    // precondition error so callers route the request through
-    // activateChannelWithSm instead. PlainChannels (no SM context) fall
-    // through to the existing teardown path below; Closed and Failed
-    // channels are safe to drop. Engaging a PC/SC transaction only to
-    // refuse is wasteful and races against other holders that could legally
-    // begin work; hoisting the check keeps the failure cheap.
-    if (d->activeChannel && d->activeChannel->state() == ChannelState::Open && d->activeChannel->carriesSm()) {
+    // send-sequence counter and corrupt the tunnel. A NON-reusable SM channel
+    // (BAC — single-applet card matrix) is refused here, cheaply, before the
+    // transaction. A REUSABLE SM channel (PACE / Chip Authentication —
+    // session-scoped SM, BSI TR-03110 §3) instead rides a wrapped SELECT
+    // through the live tunnel below, so a plain-profile plugin (PKCS#15 sign
+    // on the same card) can switch applets without a rePACE and without ever
+    // emitting a bare SELECT over the live SM context. Closed and Failed
+    // channels are safe to drop and fall through to the teardown path.
+    if (d->activeChannel && d->activeChannel->state() == ChannelState::Open && d->activeChannel->carriesSm() &&
+        !d->activeChannel->supportsCrossAppletReuse()) {
         return std::unexpected{ChannelActivationError::Internal};
     }
 
@@ -536,6 +539,22 @@ CardSession::activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token)
         tx = std::make_unique<LibreSCRS::SmartCard::Internal::CardTransaction>(*d->ownedConn);
     } catch (const std::exception&) {
         return std::unexpected{ChannelActivationError::ReaderError};
+    }
+
+    // Reusable live SM tunnel: route the target applet through it with a
+    // wrapped SELECT (mirrors activateChannelWithSm Case 2). The SM context is
+    // session-scoped, so the switch does not re-handshake and the recorded
+    // protocol is left untouched. A failed wrapped SELECT (e.g. 6A82 for an
+    // applet absent on this card) surfaces SelectAppletFailed WITHOUT tearing
+    // the tunnel down — it is a legitimate answer, not a channel fault.
+    if (d->activeChannel && d->activeChannel->state() == ChannelState::Open && d->activeChannel->carriesSm() &&
+        d->activeChannel->supportsCrossAppletReuse()) {
+        auto wrappedSelect = d->activeChannel->transmit(buildSelectAppletCommand(aid), token);
+        if (!wrappedSelect.isSuccess()) {
+            return std::unexpected{ChannelActivationError::SelectAppletFailed};
+        }
+        LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(*d->activeChannel, aid);
+        return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
     }
 
     // Fast path: already on the right applet under a plain channel. Use the
@@ -612,12 +631,31 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
         return std::unexpected{ChannelActivationError::CardRemoved};
     }
 
+    using LibreSCRS::SecureChannel::ChipAuthChannel;
     auto channelMatchesProtocol = [&](const LibreSCRS::SecureChannel::ISecureChannel& ch) noexcept {
         if (std::holds_alternative<PaceRequest>(protocol)) {
             return dynamic_cast<const PaceChannel*>(&ch) != nullptr;
         }
+        if (std::holds_alternative<ChipAuthRequest>(protocol)) {
+            return dynamic_cast<const ChipAuthChannel*>(&ch) != nullptr;
+        }
         return dynamic_cast<const BacChannel*>(&ch) != nullptr;
     };
+
+    // ChipAuthRequest is reuse-only: the CA handshake needs a freshly read
+    // DG14 and so is driven from inside the eMRTD read, never established from
+    // scratch by the session. Honour it ONLY when a matching live channel is
+    // already installed (Case 1 same-applet fast path, or Case 2 wrapped
+    // SELECT below); otherwise refuse HERE, before the credential pre-flight —
+    // a stale cached MRZ would otherwise satisfy the pre-flight and drop the
+    // request into the PACE establish loop, prompting for a secret the caller
+    // never wanted.
+    if (std::holds_alternative<ChipAuthRequest>(protocol)) {
+        if (!(d->activeChannel && d->activeChannel->state() == ChannelState::Open &&
+              channelMatchesProtocol(*d->activeChannel))) {
+            return std::unexpected{ChannelActivationError::Internal};
+        }
+    }
 
     // Hoisted Case 3 refusal: an Open SM channel that does NOT match the
     // requested protocol family cannot be reused (same-protocol Cases 1/2
@@ -1081,6 +1119,42 @@ void ActiveChannelAccessor::markOwner(CardSession& session) noexcept
 void ActiveChannelAccessor::clearOwner(CardSession& session) noexcept
 {
     session.d->activeChannelOwner.store(std::thread::id{}, std::memory_order_release);
+}
+
+void ActiveChannelAccessor::installSmChannel(CardSession& session,
+                                             std::unique_ptr<LibreSCRS::SecureChannel::ISecureChannel> channel,
+                                             LibreSCRS::SmartCard::SmProtocolRequest protocol) noexcept
+{
+    // Lock-free by contract: the only legal caller holds this session's
+    // ActiveChannelHolder and therefore already owns the (non-recursive)
+    // session mutex — taking it here would self-deadlock. Mirror the
+    // owner-tolerant accessors above. The null guard runs first: a moved-from
+    // session must reach the silent no-op, not a null deref inside the assert.
+    auto* d = session.d.get();
+    if (d == nullptr || !channel) {
+        return;
+    }
+    assert(d->callerOwnsActiveChannel() &&
+           "installSmChannel must be called by the thread holding the session's ActiveChannelHolder");
+    // Close and drop the channel being replaced (the plain channel the read
+    // started on): its card-side SM context, if any, is already superseded by
+    // the freshly-installed tunnel.
+    if (d->activeChannel) {
+        d->activeChannel->close();
+    }
+    d->activeChannel = std::move(channel);
+    d->activatedProtocol = std::move(protocol);
+    // Register the cross-reader presence entry the way the PACE/BAC success
+    // branches do, so in-process PKCS#11 probes see a live SM tunnel on this
+    // reader. Best-effort: a value-stored session (no shared_ptr anchor) or an
+    // allocation failure just forgoes the guard, never terminates.
+    try {
+        Internal::ensureSessionPresenceInitialised();
+        if (auto weak = session.weak_from_this(); !weak.expired()) {
+            d->presence.emplace(Internal::sessionPresence().insert(d->readerName, std::move(weak)));
+        }
+    } catch (...) {
+    }
 }
 
 } // namespace Internal

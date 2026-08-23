@@ -165,6 +165,15 @@ LibreSCRS::SecureChannel::BacChannel::setCurrentApplet(LibreSCRS::SmartCard::App
 LibreSCRS::SecureChannel::BacChannel::state() const@@LM_4
 LibreSCRS::SecureChannel::BacChannel::transmit(LibreSCRS::SmartCard::Internal::APDUCommand const&, LibreSCRS::CancelToken)@@LM_4
 LibreSCRS::SecureChannel::BacChannel::~BacChannel()@@LM_4
+LibreSCRS::SecureChannel::ChipAuthChannel::ChipAuthChannel(LibreSCRS::SmartCard::IConnection&, LibreSCRS::SmartCard::AppletAid, LibreSCRS::SecureChannel::SessionKeys)@@LM_4
+LibreSCRS::SecureChannel::ChipAuthChannel::close()@@LM_4
+LibreSCRS::SecureChannel::ChipAuthChannel::currentApplet() const@@LM_4
+LibreSCRS::SecureChannel::ChipAuthChannel::establish(LibreSCRS::SmartCard::IConnection&, LibreSCRS::SecureChannel::ISecureChannel&, std::vector<unsigned char, std::allocator<unsigned char> > const&, LibreSCRS::SmartCard::AppletAid, LibreSCRS::CancelToken)@@LM_4
+LibreSCRS::SecureChannel::ChipAuthChannel::replaceKeys(LibreSCRS::SecureChannel::SessionKeys)@@LM_4
+LibreSCRS::SecureChannel::ChipAuthChannel::setCurrentApplet(LibreSCRS::SmartCard::AppletAid)@@LM_4
+LibreSCRS::SecureChannel::ChipAuthChannel::state() const@@LM_4
+LibreSCRS::SecureChannel::ChipAuthChannel::transmit(LibreSCRS::SmartCard::Internal::APDUCommand const&, LibreSCRS::CancelToken)@@LM_4
+LibreSCRS::SecureChannel::ChipAuthChannel::~ChipAuthChannel()@@LM_4
 LibreSCRS::SecureChannel::PaceChannel::PaceChannel(LibreSCRS::SmartCard::IConnection&, LibreSCRS::SmartCard::AppletAid, LibreSCRS::SecureChannel::SessionKeys)@@LM_4
 LibreSCRS::SecureChannel::PaceChannel::close()@@LM_4
 LibreSCRS::SecureChannel::PaceChannel::currentApplet() const@@LM_4
@@ -179,6 +188,7 @@ LibreSCRS::SecureChannel::PlainChannel::close()@@LM_4
 LibreSCRS::SecureChannel::PlainChannel::currentApplet() const@@LM_4
 LibreSCRS::SecureChannel::PlainChannel::state() const@@LM_4
 LibreSCRS::SecureChannel::PlainChannel::transmit(LibreSCRS::SmartCard::Internal::APDUCommand const&, LibreSCRS::CancelToken)@@LM_4
+LibreSCRS::SecureChannel::confirmSmAfterKeyChange(LibreSCRS::SecureChannel::ISecureChannel&, LibreSCRS::SmartCard::AppletAid const&, LibreSCRS::CancelToken)@@LM_4
 LibreSCRS::SecureChannel::detail::ChannelStateMutator::replaceKeys(LibreSCRS::SecureChannel::ISecureChannel&, LibreSCRS::SecureChannel::SessionKeys)@@LM_4
 LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(LibreSCRS::SecureChannel::ISecureChannel&, LibreSCRS::SmartCard::AppletAid)@@LM_4
 LibreSCRS::SecureChannel::parsePaceOidsFromCardAccess(std::span<unsigned char const, 18446744073709551615ul>)@@LM_4
@@ -215,6 +225,7 @@ LibreSCRS::SmartCard::Internal::selectByPath(unsigned char, unsigned char, unsig
 LibreSCRS::SmartCard::Internal::verifyPIN(unsigned char, std::span<unsigned char const, 18446744073709551615ul>)@@LM_4
 LibreSCRS::SmartCard::Internal::verifyPINStatus(unsigned char)@@LM_4
 emrtd::crypto::performBAC(LibreSCRS::SmartCard::Internal::PCSCConnection&, emrtd::crypto::BACKeys const&)@@LM_4
+emrtd::crypto::performChipAuth(LibreSCRS::SecureChannel::ISecureChannel&, std::vector<unsigned char, std::allocator<unsigned char> > const&, LibreSCRS::CancelToken)@@LM_4
 emrtd::crypto::performPACE(LibreSCRS::SmartCard::Internal::PCSCConnection&, emrtd::crypto::PACEParams const&)@@LM_4
 
 == libLibreSCRS_Signing.so ==
@@ -345,7 +356,7 @@ LibreSCRS::SmartCard::CardSession::CardSession()@@LM_4
 LibreSCRS::SmartCard::CardSession::CardSession(LibreSCRS::SmartCard::CardSession&&)@@LM_4
 LibreSCRS::SmartCard::CardSession::CardSession(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)@@LM_4
 LibreSCRS::SmartCard::CardSession::activateChannelFor(LibreSCRS::SmartCard::AppletAid, LibreSCRS::CancelToken)@@LM_4
-LibreSCRS::SmartCard::CardSession::activateChannelWithSm(LibreSCRS::SmartCard::AppletAid, std::variant<LibreSCRS::SmartCard::BacRequest, LibreSCRS::SmartCard::PaceRequest>, LibreSCRS::CancelToken)@@LM_4
+LibreSCRS::SmartCard::CardSession::activateChannelWithSm(LibreSCRS::SmartCard::AppletAid, std::variant<LibreSCRS::SmartCard::BacRequest, LibreSCRS::SmartCard::PaceRequest, LibreSCRS::SmartCard::ChipAuthRequest>, LibreSCRS::CancelToken)@@LM_4
 LibreSCRS::SmartCard::CardSession::activatedProtocol() const@@LM_4
 LibreSCRS::SmartCard::CardSession::atr() const@@LM_4
 LibreSCRS::SmartCard::CardSession::clearActiveChannel()@@LM_4
@@ -366,6 +377,7 @@ LibreSCRS::SmartCard::CardSession::~CardSession()@@LM_4
 LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::activatedProtocol(LibreSCRS::SmartCard::CardSession&)@@LM_4
 LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::active(LibreSCRS::SmartCard::CardSession&)@@LM_4
 LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::clearOwner(LibreSCRS::SmartCard::CardSession&)@@LM_4
+LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::installSmChannel(LibreSCRS::SmartCard::CardSession&, std::unique_ptr<LibreSCRS::SecureChannel::ISecureChannel, std::default_delete<LibreSCRS::SecureChannel::ISecureChannel> >, std::variant<LibreSCRS::SmartCard::BacRequest, LibreSCRS::SmartCard::PaceRequest, LibreSCRS::SmartCard::ChipAuthRequest>)@@LM_4
 LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::markOwner(LibreSCRS::SmartCard::CardSession&)@@LM_4
 LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(LibreSCRS::SmartCard::ActiveChannelHolder&)@@LM_4
 LibreSCRS::SmartCard::Internal::Monitor::Monitor(std::unique_ptr<LibreSCRS::SmartCard::Internal::IPCSCScanProvider, std::default_delete<LibreSCRS::SmartCard::Internal::IPCSCScanProvider> >)@@LM_4

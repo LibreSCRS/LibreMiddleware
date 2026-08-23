@@ -128,8 +128,16 @@ acquireChannel(LibreSCRS::SmartCard::CardSession& session, bool requiresPace)
 {
     auto aid = pkcs15AppletAid();
     if (requiresPace) {
-        return session.activateChannelWithSm(
-            aid, LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can}, LibreSCRS::CancelToken{});
+        // Ride the protocol that already holds a live SM tunnel on this session
+        // (PACE from the display flow, or Chip Authentication raised by a prior
+        // eMRTD contact read) rather than assuming PACE-CAN — a CA tunnel would
+        // refuse a PaceRequest as Internal, wedging signing on a contact card.
+        // Single accessor call: nullopt unless a live Open SM channel exists.
+        LibreSCRS::SmartCard::SmProtocolRequest req{
+            LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can}};
+        if (auto live = session.activatedProtocol())
+            req = *live;
+        return session.activateChannelWithSm(aid, req, LibreSCRS::CancelToken{});
     }
     return session.activateChannelFor(aid, LibreSCRS::CancelToken{});
 }

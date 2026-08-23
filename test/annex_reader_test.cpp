@@ -6,16 +6,26 @@
 #include "AnnexDispatch.h"
 #include "AnnexRegistry.h"
 #include "RsAnnexReader.h"
+#include "chip_auth_card_oracle.h"
 #include "fake_pcsc_connection.h"
 #include "rs-eid-core/synthetic_annex.h"
+
+#include <LibreSCRS/Secure/Buffer.h>
+#include <LibreSCRS/SmartCard/AppletAid.h>
+#include <LibreSCRS_internal/SecureChannel/ChipAuthChannel.h>
+#include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
 
 #include <rs_container.h>
 #include <rs_digest_binding.h>
 #include <rs_tags.h>
 
 #include <map>
+#include <memory>
+#include <span>
+#include <stdexcept>
 #include <utility>
 #include <string>
+#include <vector>
 
 using namespace LibreSCRS::Annex;
 namespace Core = LibreSCRS::RsEId::Core;
@@ -393,4 +403,77 @@ TEST(AnnexDispatch, NullConnectionYieldsNoGroups)
 {
     const AnnexContext ctx;
     EXPECT_TRUE(readAllAnnexes(ctx).empty());
+}
+
+// When the read runs over a session-scoped SM channel, the master-file restore
+// at the end of the annex pass must clear the channel's cached applet AID: the
+// MF select rode the tunnel but did not update the cached AID, so a second
+// read's same-applet fast path would otherwise skip the re-SELECT and read the
+// master file. After the pass the cached AID must be the empty sentinel.
+TEST(AnnexDispatch, MasterFileRestoreClearsCachedAppletOnSmChannel)
+{
+    // A minimal SM oracle: success to every wrapped SELECT, empty to every
+    // wrapped READ, so EF.DIR comes back empty (no annexes) but the wrapped MF
+    // restore still runs at scope exit.
+    FakePCSCConnection conn;
+    auto oracle = std::make_shared<LibreSCRS::Test::AesSmCardOracle>(
+        std::vector<std::uint8_t>(16, 0x11), std::vector<std::uint8_t>(16, 0x22), std::vector<std::uint8_t>(16, 0x00));
+    // SM commands reach the test double via transmitRaw, which hands the
+    // responder a header-only command — replay the full wire frame from
+    // rawHistory into the oracle.
+    conn.setResponder([&conn, oracle](const LibreSCRS::SmartCard::Internal::APDUCommand&) {
+        return oracle->respond(conn.rawHistory().back());
+    });
+
+    const LibreSCRS::SmartCard::AppletAid boundAid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
+    LibreSCRS::SecureChannel::SessionKeys keys;
+    keys.encKey = LibreSCRS::Secure::Buffer{16, 0x11};
+    keys.macKey = LibreSCRS::Secure::Buffer{16, 0x22};
+    keys.ssc = LibreSCRS::Secure::Buffer{16, 0x00};
+    keys.cipher = LibreSCRS::SecureChannel::SmCipher::Aes;
+    LibreSCRS::SecureChannel::ChipAuthChannel channel{conn, boundAid, std::move(keys)};
+    ASSERT_FALSE(channel.currentApplet().empty());
+
+    AnnexContext ctx;
+    ctx.conn = &conn;
+    ctx.channel = &channel;
+    (void)readAllAnnexes(ctx);
+
+    EXPECT_TRUE(channel.currentApplet().empty())
+        << "the SM channel's cached applet AID must be cleared after the master-file restore";
+}
+
+// The clear must not depend on the MF select surviving the wire: a throw out
+// of the restore's own dispatch (cancellation, transient PC/SC failure) must
+// still leave the cached AID cleared, or the stale-AID same-applet fast path
+// re-arms against whatever file the card was actually left on.
+TEST(AnnexDispatch, MasterFileRestoreClearsCachedAppletEvenWhenSelectThrows)
+{
+    FakePCSCConnection conn;
+    conn.setResponder(
+        [](const LibreSCRS::SmartCard::Internal::APDUCommand&) -> LibreSCRS::SmartCard::Internal::APDUResponse {
+            throw std::runtime_error{"wire lost"};
+        });
+
+    const LibreSCRS::SmartCard::AppletAid boundAid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
+    LibreSCRS::SecureChannel::SessionKeys keys;
+    keys.encKey = LibreSCRS::Secure::Buffer{16, 0x11};
+    keys.macKey = LibreSCRS::Secure::Buffer{16, 0x22};
+    keys.ssc = LibreSCRS::Secure::Buffer{16, 0x00};
+    keys.cipher = LibreSCRS::SecureChannel::SmCipher::Aes;
+    LibreSCRS::SecureChannel::ChipAuthChannel channel{conn, boundAid, std::move(keys)};
+    ASSERT_FALSE(channel.currentApplet().empty());
+
+    AnnexContext ctx;
+    ctx.conn = &conn;
+    ctx.channel = &channel;
+    try {
+        (void)readAllAnnexes(ctx);
+    } catch (...) {
+        // The read itself may propagate the wire failure; the restore must not
+        // depend on it succeeding.
+    }
+
+    EXPECT_TRUE(channel.currentApplet().empty())
+        << "the cached applet AID must be cleared even when the MF select throws";
 }

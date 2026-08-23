@@ -141,8 +141,10 @@ add_executable(AnnexTests
 target_link_libraries(AnnexTests
     GTest::gtest_main
     CardAnnex
+    LibreSCRS::SecureChannel
     SmartCard_Impl
     RsEIdCore
+    EMRTDCrypto
 )
 target_include_directories(AnnexTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -150,6 +152,8 @@ target_include_directories(AnnexTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/rs-eid-core/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/SecureChannel/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src
 )
 target_compile_definitions(AnnexTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(AnnexTests)
@@ -233,6 +237,62 @@ target_include_directories(LibreSCRS_SmChannelTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/include)
 target_compile_definitions(LibreSCRS_SmChannelTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(LibreSCRS_SmChannelTests)
+
+# ChipAuthChannel: flags, AES-SM round-trip against a card-side oracle, and the
+# confirmSmAfterKeyChange proof exchange. The oracle needs the emrtd-crypto
+# AES/CMAC primitives, so EMRTDCrypto and its src dir join the link/include set.
+add_executable(LibreSCRS_ChipAuthChannelTests LibreSCRS_ChipAuthChannelTests.cpp)
+target_link_libraries(LibreSCRS_ChipAuthChannelTests
+    GTest::gtest_main
+    LibreSCRS::SecureChannel
+    LibreSCRS::SmartCard
+    SmartCard_Impl
+    EMRTDCrypto)
+target_include_directories(LibreSCRS_ChipAuthChannelTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src)
+target_compile_definitions(LibreSCRS_ChipAuthChannelTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(LibreSCRS_ChipAuthChannelTests)
+
+# CA/AA crypto verdicts + ChipAuthChannel::establish. Uses a synthetic EC chip
+# (DG14/DG15 + card-side ECDH), so it links EMRTDCrypto and needs the crypto
+# src include path plus OpenSSL (pulled transitively by EMRTDCrypto).
+add_executable(LibreSCRS_ChipAuthCryptoTests LibreSCRS_ChipAuthCryptoTests.cpp)
+target_link_libraries(LibreSCRS_ChipAuthCryptoTests
+    GTest::gtest_main
+    LibreSCRS::SecureChannel
+    LibreSCRS::SmartCard
+    SmartCard_Impl
+    EMRTDCrypto)
+target_include_directories(LibreSCRS_ChipAuthCryptoTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src)
+target_compile_definitions(LibreSCRS_ChipAuthCryptoTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(LibreSCRS_ChipAuthCryptoTests)
+
+# CardSession control flow for the CA channel (installSmChannel seam, the
+# reuse-only ChipAuthRequest guard, cross-applet wrapped-SELECT reuse). Needs
+# the test-helpers archive (ChannelInjector / makeDetachedCardSession) and the
+# EMRTDCrypto primitives behind the SM oracle.
+add_executable(LibreSCRS_ChipAuthSessionTests LibreSCRS_ChipAuthSessionTests.cpp)
+target_link_libraries(LibreSCRS_ChipAuthSessionTests
+    GTest::gtest_main
+    LibreSCRS::SmartCard
+    LibreSCRS::SecureChannel
+    LibreSCRS_SmartCard_TestHelpers
+    LibreSCRS::Secure
+    SmartCard_Impl
+    EMRTDCrypto
+    PCSC::PCSC)
+target_include_directories(LibreSCRS_ChipAuthSessionTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/SecureChannel/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src)
+target_compile_definitions(LibreSCRS_ChipAuthSessionTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(LibreSCRS_ChipAuthSessionTests)
 
 # CardTransaction static contract — move-only, release() noexcept, owns()
 # accessor present, PCSCConnection::isTransactionHeld() visible. Behavioural
