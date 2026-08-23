@@ -410,6 +410,72 @@ TEST(EMRTDHardwareTest, PaceCanEndToEnd)
         EXPECT_EQ(chipAuth->find("FAILED"), std::string::npos) << "chip_auth FAILED on a genuine card";
 }
 
+// Contact plain read: a dual-interface document whose LDS is readable in plain
+// on the contact interface exercises the plain->Chip-Authentication->SM upgrade
+// on real hardware — the path unit tests cover with a synthetic ECDH chip. No
+// credential is deposited: the discovery probe decides plain-readability.
+// Set LIBRESCRS_TEST_CONTACT_READER_INDEX to the CONTACT reader to run.
+TEST(EMRTDHardwareTest, ContactPlainReadChipAuthEndToEnd)
+{
+    SKIP_IF_AUTH_FAILED();
+    const char* ridx = std::getenv("LIBRESCRS_TEST_CONTACT_READER_INDEX");
+    if (ridx == nullptr || *ridx == '\0')
+        GTEST_SKIP() << "Set LIBRESCRS_TEST_CONTACT_READER_INDEX to run";
+
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
+    const std::size_t idx = static_cast<std::size_t>(std::atoi(ridx));
+    if (idx >= readers.size())
+        GTEST_SKIP() << "reader index out of range";
+
+    CardPluginService registry{pluginDir()};
+    auto emrtd = findEMRTD(registry);
+    ASSERT_NE(emrtd, nullptr);
+
+    auto opened = LibreSCRS::SmartCard::CardSession::open(readers[idx]);
+    if (!opened.has_value())
+        GTEST_SKIP() << "Cannot open CardSession on reader " << readers[idx];
+    auto session = std::make_shared<LibreSCRS::SmartCard::CardSession>(std::move(*opened));
+
+    // No CAN/MRZ: the discovery probe caches plain-readability, and the read
+    // takes the plain path (and, if plain-readable, the CA upgrade).
+    if (!emrtd->canHandleConnection({}, *session))
+        GTEST_SKIP() << "eMRTD applet not present on this reader";
+
+    auto result = readCardWithStreaming(emrtd, *session);
+    if (result.data.groups.empty())
+        GTEST_SKIP() << "no groups (card not plain-readable on contact — needs PACE)";
+
+    std::optional<std::string> authMethod;
+    std::optional<std::string> chipAuth;
+    std::optional<std::string> dataGroups;
+    bool hasAuthRequired = false;
+    for (const auto& g : result.data.groups) {
+        if (g.groupKey == "auth_required")
+            hasAuthRequired = true;
+        for (const auto& f : g.fields) {
+            if (g.groupKey == "presence" && f.key == "auth_method")
+                authMethod = f.textValue();
+            if (g.groupKey == "presence" && f.key == "data_groups")
+                dataGroups = f.textValue();
+            if (g.groupKey == "security_status" && f.key == "chip_auth")
+                chipAuth = f.textValue();
+        }
+    }
+    if (hasAuthRequired)
+        GTEST_SKIP() << "card is not plain-readable on this interface (auth_required) — needs PACE";
+
+    std::cout << "data_groups = " << dataGroups.value_or("<none>") << "\n";
+    std::cout << "auth_method = " << authMethod.value_or("<none>") << "\n";
+    std::cout << "chip_auth   = " << chipAuth.value_or("<none>") << "\n";
+
+    // The read went plain. Either the card raised the channel to Chip
+    // Authentication (auth_method "Chip Authentication", chip_auth not FAILED),
+    // or it refused the protocol on the plain channel (auth_method "None (plain
+    // read)", chip_auth NOT_PERFORMED) — never FAILED on a genuine card.
+    if (chipAuth)
+        EXPECT_EQ(chipAuth->find("FAILED"), std::string::npos) << "chip_auth FAILED on a genuine card";
+}
+
 TEST(EMRTDHardwareTest, StreamingGroupOrder)
 {
     SKIP_IF_AUTH_FAILED();
