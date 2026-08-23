@@ -27,6 +27,8 @@
 #include <pcsc_connection.h>
 #include <types.h>
 
+#include "chip_auth_fake_chip.h"
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -849,6 +851,72 @@ TEST(EmrtdInterfaceActivation, ContactWithProviderReadsIdentityWithoutPace)
     EXPECT_FALSE(providerInvoked) << "no CAN prompt may reach the provider on the contact interface";
     EXPECT_FALSE(logContainsIns(*rig, 0x22)) << "MSE SET AT transmitted — PACE was wrongly attempted";
     EXPECT_FALSE(logContainsIns(*rig, 0x86)) << "GENERAL AUTHENTICATE transmitted — PACE was wrongly attempted";
+}
+
+// A genuineness check is emitted only when the document carries the data group
+// its capability lives in: chip_auth iff DG14, active_auth iff DG15. This rig's
+// COM lists DG1 + DG14 and no DG15, so the security view must show a chip_auth
+// row and NO active_auth row — an absent capability is not a not-performed
+// check.
+TEST(EmrtdInterfaceActivation, SecurityChecksTrackDataGroupPresence)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/true);
+    session->setCredentialProvider(
+        [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    auto rr = plugin->readCard(*session);
+    ASSERT_EQ(rr.status, ReadResult::Status::Ok);
+    ASSERT_TRUE(rr.data.has_value());
+
+    // DG14 present -> chip_auth row exists; DG15 absent -> no active_auth row.
+    EXPECT_TRUE(fieldText(*rr.data, "security_status", "chip_auth").has_value())
+        << "chip_auth row must be present when DG14 exists";
+    EXPECT_FALSE(fieldText(*rr.data, "security_status", "active_auth").has_value())
+        << "active_auth row must be omitted when the document has no DG15";
+}
+
+// A card-side status-word refusal of INTERNAL AUTHENTICATE on a PLAIN channel
+// is a policy statement (the contact interface may legitimately SM-gate the
+// protocol), not a clone signal: the active_auth row must read NOT_PERFORMED,
+// never FAILED. Inside an SM tunnel the same refusal keeps FAILED — that
+// distinction is pinned at the crypto layer (chipRefusedProtocol contract).
+TEST(EmrtdInterfaceActivation, PlainReadActiveAuthRefusalIsNotPerformed)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/true);
+    // COM additionally lists DG15 (0x6F), and DG15 carries a parseable EC key
+    // so the AA attempt reaches the wire — where the rig answers INS 0x88 with
+    // its unsupported-instruction SW, the refusal shape under test.
+    rig->files[0x011E] = {0x60, 0x15, 0x5F, 0x01, 0x04, '0', '1',  '0',  '8',  0x5F, 0x36, 0x06,
+                          '0',  '4',  '0',  '0',  '0',  '0', 0x5C, 0x03, 0x61, 0x6E, 0x6F};
+    auto aaKey = LibreSCRS::Test::EcCardKey::generate();
+    rig->files[0x010F] = LibreSCRS::Test::buildDg15(aaKey.spkiDer);
+    session->setCredentialProvider(
+        [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    auto rr = plugin->readCard(*session);
+    ASSERT_EQ(rr.status, ReadResult::Status::Ok);
+    ASSERT_TRUE(rr.data.has_value());
+
+    EXPECT_TRUE(logContainsIns(*rig, 0x88)) << "the AA attempt must reach the wire";
+    // The field text carries the verdict plus a bracketed detail; the verdict
+    // prefix is what is under test.
+    const std::string aa = fieldText(*rr.data, "security_status", "active_auth").value_or("");
+    EXPECT_EQ(aa.rfind("NOT_PERFORMED", 0), 0U)
+        << "a refusal on a plain channel is not a genuineness failure; got: " << aa;
 }
 
 TEST(EmrtdInterfaceActivation, ContactPlainReadAttemptsChipAuthAndStaysPlainWhenUnavailable)

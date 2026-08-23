@@ -1113,8 +1113,11 @@ private:
             }
         }
 
-        // Chip Authentication check
-        {
+        // Chip Authentication check — emitted ONLY when the document carries
+        // DG14. A check that does not EXIST (no CA key on this document) is not
+        // the same as a check that was not PERFORMED: emitting a NOT_PERFORMED
+        // row for an absent capability reads as a gap where there is none.
+        if (hasDG14) {
             LibreSCRS::Plugin::SecurityCheck check;
             check.checkId = "chip_auth";
             check.category = LibreSCRS::Plugin::SecurityCategory::Genuineness;
@@ -1131,8 +1134,11 @@ private:
             secStatus.checks.push_back(std::move(check));
         }
 
-        // Active Authentication check
-        {
+        // Active Authentication check — emitted ONLY when the document carries
+        // DG15 (the AA public key lives there). Same rule as Chip
+        // Authentication above: an absent capability is not a not-performed
+        // check, so no row is emitted for a document without DG15.
+        if (hasDG15) {
             LibreSCRS::Plugin::SecurityCheck check;
             check.checkId = "active_auth";
             check.category = LibreSCRS::Plugin::SecurityCategory::Genuineness;
