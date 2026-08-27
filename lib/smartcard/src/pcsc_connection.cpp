@@ -263,6 +263,21 @@ void PCSCConnection::reconnect()
 #endif
 }
 
+void PCSCConnection::reconnectWithReset()
+{
+    if (pcscTraceEnabled()) {
+        emitPcscTraceEvent("reconnect-reset", readerName(), this);
+    }
+
+    LONG rv = SCardReconnect(card, SCARD_SHARE_SHARED, SCARD_PROTOCOL_T1, SCARD_RESET_CARD, &activeProtocol);
+    if (rv != SCARD_S_SUCCESS) {
+        rv = SCardReconnect(card, SCARD_SHARE_SHARED, SCARD_PROTOCOL_T0, SCARD_RESET_CARD, &activeProtocol);
+    }
+    if (rv != SCARD_S_SUCCESS) {
+        throw PCSCError("SCardReconnect (reset) failed", rv);
+    }
+}
+
 APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
 {
     // Detached test seam: play the card side of a live SM tunnel. Taken ONLY

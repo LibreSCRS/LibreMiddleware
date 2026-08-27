@@ -103,6 +103,14 @@ public:
     APDUResponse transmitRaw(std::span<const std::uint8_t> cmdBytes) override;
 
     void reconnect(); // prefers T=1, falls back to T=0
+
+    // SCardReconnect with SCARD_RESET_CARD: a cold restart of the card
+    // session. Some platforms answer 6A86 to every SELECT once a non-file-
+    // system applet was current, and only a reset clears that. This tears
+    // down other SCARD_SHARE_SHARED sessions' state, so it is for
+    // diagnostic tools that own the bench — production code keeps using
+    // reconnect() (SCARD_LEAVE_CARD).
+    void reconnectWithReset();
     std::vector<uint8_t> getATR() const;
     const std::string& readerName() const
     {

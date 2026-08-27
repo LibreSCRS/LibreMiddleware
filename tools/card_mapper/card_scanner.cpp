@@ -16,12 +16,14 @@
 #include <LibreSCRS/SmartCard/AppletAid.h>
 #include <apdu.h>
 #include <ber.h>
+#include <ef_dir.h>
 #include <tlv.h>
 
 #include <algorithm>
 #include <format>
 #include <iostream>
 #include <optional>
+#include <span>
 #include <unordered_map>
 
 namespace card_mapper {
@@ -138,13 +140,31 @@ LibreSCRS::SmartCard::Internal::APDUResponse trySelectVariant(LibreSCRS::SmartCa
 
 constexpr int FID_SELECT_VARIANT_COUNT = 5;
 
+// Which SELECT variants a sweep may use decides which scope its finds belong
+// to: the child forms (P1=0x02) can only hit children of the current DF,
+// while the MF-relative forms (P1=0x08 path from MF, P1=0x00 by identifier)
+// reach MF-level files no matter which application is current. Mixing them in
+// one walk is how MF children ended up documented under the last selected
+// applet.
+constexpr int CURRENT_DF_VARIANTS[] = {1, 3};
+constexpr int MASTER_FILE_VARIANTS[] = {0, 1, 2, 3, 4};
+
+enum class SweepScope { CurrentDf, MasterFile };
+
+std::span<const int> variantsFor(SweepScope scope)
+{
+    return scope == SweepScope::CurrentDf ? std::span<const int>(CURRENT_DF_VARIANTS)
+                                          : std::span<const int>(MASTER_FILE_VARIANTS);
+}
+
 // Try to SELECT a file, using cached variant first if available.
 // Permanently skips variants the card rejects (6700/6982/6A86 = format mismatch).
 // Still tries all accepted variants per FID since different P1 values search
 // different scopes (P1=0x00 searches MF, P1=0x02 searches current DF).
 LibreSCRS::SmartCard::Internal::APDUResponse selectFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
                                                         uint8_t hi, uint8_t lo, int& cachedVariant,
-                                                        uint32_t& rejectedMask)
+                                                        uint32_t& rejectedMask,
+                                                        std::span<const int> variants = MASTER_FILE_VARIANTS)
 {
     // Fast path: try cached variant first (last variant that returned success)
     if (cachedVariant >= 0) {
@@ -154,7 +174,7 @@ LibreSCRS::SmartCard::Internal::APDUResponse selectFile(LibreSCRS::SmartCard::In
     }
 
     // Try all non-rejected variants
-    for (int v = 0; v < FID_SELECT_VARIANT_COUNT; ++v) {
+    for (int v : variants) {
         if (v == cachedVariant)
             continue;
         if (rejectedMask & (1u << v))
@@ -171,6 +191,50 @@ LibreSCRS::SmartCard::Internal::APDUResponse selectFile(LibreSCRS::SmartCard::In
     }
 
     return LibreSCRS::SmartCard::Internal::APDUResponse{.data = {}, .sw1 = 0x6A, .sw2 = 0x82};
+}
+
+// Whether a SELECT response's FCI/FCP marks the file as a DF: file descriptor
+// byte (tag 82) with the DF bits set (e.g. `82 01 38` on the Serbian LK's
+// annex DFs). A SELECT variant that returns no data leaves this undecided.
+bool fciMarksDf(const std::vector<uint8_t>& fci)
+{
+    if (fci.empty())
+        return false;
+    try {
+        auto tree = LibreSCRS::SmartCard::Internal::parseBER(fci.data(), fci.size());
+        std::vector<const LibreSCRS::SmartCard::Internal::BERField*> stack{&tree};
+        while (!stack.empty()) {
+            const auto* node = stack.back();
+            stack.pop_back();
+            if (node->tag == 0x82 && !node->value.empty())
+                return (node->value[0] & 0x38) == 0x38;
+            for (const auto& child : node->children)
+                stack.push_back(&child);
+        }
+    } catch (const std::exception&) {
+        // Not BER at all -- then it is not an FCI that marks anything.
+    }
+    return false;
+}
+
+// SELECT a DF by its EF.DIR path (tag 51), production shape: strip the
+// leading 3F00, then P1=0x08 (path from MF). Falls back to the Le-carrying
+// form for cards that insist on returning an FCI.
+bool selectByEfDirPath(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const std::vector<uint8_t>& fullPath)
+{
+    std::vector<uint8_t> path = fullPath;
+    if (path.size() > 2 && path[0] == 0x3F && path[1] == 0x00)
+        path.erase(path.begin(), path.begin() + 2);
+    if (path.empty())
+        return false;
+
+    auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::APDUCommand{
+        .cla = 0x00, .ins = 0xA4, .p1 = 0x08, .p2 = 0x0C, .data = path, .le = 0, .hasLe = false});
+    if (resp.isSuccess() || resp.sw1 == 0x61 || resp.sw1 == 0x62)
+        return true;
+    resp = conn.transmit(LibreSCRS::SmartCard::Internal::APDUCommand{
+        .cla = 0x00, .ins = 0xA4, .p1 = 0x08, .p2 = 0x00, .data = path, .le = 0, .hasLe = true});
+    return resp.isSuccess() || resp.sw1 == 0x61 || resp.sw1 == 0x62;
 }
 
 // Read file content with resilience: Le correction, chunk fallback, multi-chunk loop.
@@ -584,8 +648,11 @@ bool probePIV(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, FileNode& df
     return foundAny;
 }
 
-// Walk FID ranges for an applet: SELECT + READ each file, build file tree
-void walkFidRanges(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, FileNode& df, AppletInfo& applet)
+// Walk FID ranges: SELECT + READ each file, appending finds under `parent` --
+// the current DF's node for a CurrentDf sweep, the MF node for a MasterFile
+// sweep. The caller is responsible for having selected that scope first.
+void walkFidRanges(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, FileNode& parent, AppletInfo& applet,
+                   SweepScope scope)
 {
     int cachedFidVariant = -1;
     uint32_t rejectedFidMask = 0;
@@ -599,7 +666,7 @@ void walkFidRanges(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, FileNod
             auto hi = static_cast<uint8_t>(fid >> 8);
             auto lo = static_cast<uint8_t>(fid & 0xFF);
 
-            auto fileResp = selectFile(conn, hi, lo, cachedFidVariant, rejectedFidMask);
+            auto fileResp = selectFile(conn, hi, lo, cachedFidVariant, rejectedFidMask, variantsFor(scope));
             ++probed;
             if (fileResp.statusWord() == 0x6A86) {
                 ++uniformlyRejected;
@@ -608,28 +675,42 @@ void walkFidRanges(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, FileNod
             if (fileResp.isSuccess() || fileResp.sw1 == 0x62) {
                 ++found;
                 FileNode efNode;
-                efNode.name = std::format("EF ({})", formatFid(hi, lo));
+                // The FCI, when a variant returns one, says what the file IS:
+                // `82 01 38` is a DF, and reading a DF's "content" is
+                // meaningless -- name it honestly and move on. The tree
+                // renderer appends the FID itself, so the node name stays
+                // bare.
+                const bool isDf = fciMarksDf(fileResp.data);
+                efNode.name = isDf ? "DF" : "EF";
                 efNode.fidHi = hi;
                 efNode.fidLo = lo;
+                efNode.isDir = isDf;
 
-                auto fileData = readFileContent(conn);
-                if (!fileData.empty()) {
-                    DataFile dataFile;
-                    dataFile.name = efNode.name;
-                    dataFile.fidHi = hi;
-                    dataFile.fidLo = lo;
+                if (!isDf) {
+                    auto fileData = readFileContent(conn);
+                    if (!fileData.empty()) {
+                        DataFile dataFile;
+                        dataFile.name = std::format("EF ({})", formatFid(hi, lo));
+                        dataFile.fidHi = hi;
+                        dataFile.fidLo = lo;
 
-                    parseFileData(fileData, efNode, dataFile);
+                        parseFileData(fileData, efNode, dataFile);
 
-                    if (!dataFile.tags.empty()) {
-                        applet.dataFiles.push_back(dataFile);
+                        if (!dataFile.tags.empty()) {
+                            applet.dataFiles.push_back(dataFile);
+                        }
+                        efNode.sizeEstimate = std::format("~{}B", fileData.size());
+                    } else if (fileResp.statusWord() == 0x6982) {
+                        efNode.format = "[AUTH REQUIRED]";
                     }
-                    efNode.sizeEstimate = std::format("~{}B", fileData.size());
-                } else if (fileResp.statusWord() == 0x6982) {
-                    efNode.format = "[AUTH REQUIRED]";
+                } else if (scope == SweepScope::MasterFile) {
+                    // The successful SELECT just made that DF current; without
+                    // stepping back to the MF the rest of this sweep would
+                    // measure the DF's children and file them under MF.
+                    conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x3F, 0x00));
                 }
 
-                df.children.push_back(efNode);
+                parent.children.push_back(efNode);
             }
         }
     }
@@ -695,7 +776,12 @@ std::string matchProfile(const std::vector<std::vector<uint8_t>>& detectedAIDs)
 ScanResult discoverCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, bool verbose)
 {
     ScanResult result;
-    result.atr = conn.getATR();
+    try {
+        result.atr = conn.getATR();
+    } catch (const std::exception&) {
+        // A detached (scripted) connection has no card handle to ask; the
+        // scan itself does not need the ATR.
+    }
 
     ApduLogger logger;
 
@@ -709,7 +795,7 @@ ScanResult discoverCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, bo
     }
 
     std::vector<std::vector<uint8_t>> detectedAIDs;
-    std::vector<std::vector<uint8_t>> efDirAIDs; // AIDs discovered from EF.DIR
+    std::vector<LibreSCRS::SmartCard::Internal::EfDirEntry> efDirEntries;
 
     // Try reading EF.DIR (2F00) at MF level — ISO 7816-4 application directory
     // This lists all applications on the card regardless of country/vendor
@@ -725,75 +811,94 @@ ScanResult discoverCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, bo
         if (dirResp.isSuccess() || dirResp.sw1 == 0x62) {
             auto dirData = readFileContent(conn);
             if (!dirData.empty()) {
-                // Parse BER-TLV — EF.DIR contains application templates (tag 61)
-                // with AID (tag 4F) and optional label (tag 50)
-                try {
-                    auto dirTree = LibreSCRS::SmartCard::Internal::parseBER(dirData.data(), dirData.size());
-                    for (const auto& tmpl : dirTree.children) {
-                        if (tmpl.tag == 0x61) // Application template
-                        {
-                            for (const auto& field : tmpl.children) {
-                                if (field.tag == 0x4F && !field.value.empty()) {
-                                    efDirAIDs.push_back(field.value);
-                                }
-                            }
-                        }
-                    }
-                } catch (const std::exception&) {
-                    // EF.DIR content is not valid BER-TLV — skip
-                }
+                // The production parser keeps every application template with
+                // its label (tag 50) and path (tag 51), in on-card order --
+                // the same record shape the plugins select on. An inline
+                // AID-only harvest here used to drop both, and with them two
+                // of the Serbian LK's four directory entries.
+                efDirEntries = LibreSCRS::SmartCard::Internal::parseEfDir(dirData);
             }
         }
     }
 
-    // Probe AIDs discovered from EF.DIR (unknown applications)
-    for (const auto& aid : efDirAIDs) {
-        if (aidContained(detectedAIDs, aid)) {
+    // Probe every EF.DIR entry. Deduplicate by (AID, path), not by AID: the
+    // directory may legitimately list one AID at two different paths, and
+    // which of them answers a plain AID SELECT is the card's business.
+    std::vector<std::pair<std::vector<uint8_t>, std::vector<uint8_t>>> seenEntries;
+    for (const auto& entry : efDirEntries) {
+        auto key = std::make_pair(entry.aid, entry.path);
+        if (std::find(seenEntries.begin(), seenEntries.end(), key) != seenEntries.end()) {
+            continue;
+        }
+        seenEntries.push_back(key);
+
+        bool selected = false;
+        if (!entry.aid.empty()) {
+            AidProbe dirProbe;
+            dirProbe.name = "EF.DIR:" + formatHex(entry.aid);
+            dirProbe.canonicalAid = entry.aid;
+            dirProbe.selectSequence = {entry.aid};
+            selected = tryProbe(conn, dirProbe).has_value();
+        }
+        // A DF reachable only through its path (the Serbian annex `3F00/0FF3`
+        // answers no AID SELECT at all) is still an application on this card.
+        if (!selected && !entry.path.empty()) {
+            selected = selectByEfDirPath(conn, entry.path);
+        }
+        if (!selected) {
             continue;
         }
 
-        AidProbe dirProbe;
-        dirProbe.name = "EF.DIR:" + formatHex(aid);
-        dirProbe.canonicalAid = aid;
-        dirProbe.selectSequence = {aid};
-
-        if (tryProbe(conn, dirProbe).has_value()) {
-            detectedAIDs.push_back(aid);
-
-            AppletInfo applet;
-            applet.name = std::format("Applet ({})", formatHex(aid));
-            applet.description = "Discovered via EF.DIR";
-            applet.aids = {aid};
-            applet.authentication = "Unknown";
-            applet.pluginName = "efdir-" + formatHex(aid);
-
-            FileNode mf;
-            mf.name = "MF";
-            mf.fidHi = 0x3F;
-            mf.fidLo = 0x00;
-            mf.isDir = true;
-
-            FileNode df;
-            df.name = std::format("DF ({})", formatHex(aid));
-            df.isDir = true;
-
-            const std::vector<uint8_t> pivAid = {0xA0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10};
-
-            // Smart path for PKCS#15: parse ODF→CDF/PrKDF/AODF structure
-            if (aid == cardedge::protocol::AID_PKCS15) {
-                if (!probePKCS15(conn, df, applet))
-                    walkFidRanges(conn, df, applet);
-            } else if (aid == pivAid) {
-                if (!probePIV(conn, df, applet))
-                    walkFidRanges(conn, df, applet);
-            } else {
-                walkFidRanges(conn, df, applet);
-            }
-
-            mf.children.push_back(df);
-            applet.rootNode = mf;
-            result.detectedApplets.push_back(applet);
+        if (!entry.aid.empty() && !aidContained(detectedAIDs, entry.aid)) {
+            detectedAIDs.push_back(entry.aid);
         }
+
+        const std::string aidHex = formatHex(entry.aid);
+        const std::string pathHex = formatHex(entry.path);
+        const std::string identity = !aidHex.empty() ? aidHex : pathHex;
+
+        AppletInfo applet;
+        applet.name =
+            entry.label.empty() ? std::format("Applet ({})", identity) : std::format("{} ({})", entry.label, identity);
+        applet.description = "Discovered via EF.DIR";
+        applet.aids = {entry.aid};
+        applet.authentication = "Unknown";
+        applet.pluginName = "efdir-" + identity;
+        // Two entries sharing an AID need distinct document names; the path
+        // is what tells them apart.
+        const bool aidShared =
+            !entry.aid.empty() && std::count_if(efDirEntries.begin(), efDirEntries.end(),
+                                                [&](const auto& other) { return other.aid == entry.aid; }) > 1;
+        if (aidShared && !pathHex.empty()) {
+            applet.pluginName += "-" + pathHex;
+        }
+
+        FileNode mf;
+        mf.name = "MF";
+        mf.fidHi = 0x3F;
+        mf.fidLo = 0x00;
+        mf.isDir = true;
+
+        FileNode df;
+        df.name = std::format("DF ({})", identity);
+        df.isDir = true;
+
+        const std::vector<uint8_t> pivAid = {0xA0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10};
+
+        // Smart path for PKCS#15: parse ODF→CDF/PrKDF/AODF structure
+        if (entry.aid == cardedge::protocol::AID_PKCS15) {
+            if (!probePKCS15(conn, df, applet))
+                walkFidRanges(conn, df, applet, SweepScope::CurrentDf);
+        } else if (entry.aid == pivAid) {
+            if (!probePIV(conn, df, applet))
+                walkFidRanges(conn, df, applet, SweepScope::CurrentDf);
+        } else {
+            walkFidRanges(conn, df, applet, SweepScope::CurrentDf);
+        }
+
+        mf.children.push_back(df);
+        applet.rootNode = mf;
+        result.detectedApplets.push_back(applet);
     }
 
     // Probe all known AID sequences
@@ -830,21 +935,55 @@ ScanResult discoverCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, bo
             if (probe.canonicalAid == cardedge::protocol::AID_PKCS15) {
                 if (!probePKCS15(conn, df, applet)) {
                     tryProbe(conn, probe);
-                    walkFidRanges(conn, df, applet);
+                    walkFidRanges(conn, df, applet, SweepScope::CurrentDf);
                 }
             } else if (probe.canonicalAid == pivAid) {
                 if (!probePIV(conn, df, applet)) {
                     tryProbe(conn, probe);
-                    walkFidRanges(conn, df, applet);
+                    walkFidRanges(conn, df, applet, SweepScope::CurrentDf);
                 }
             } else {
                 tryProbe(conn, probe);
-                walkFidRanges(conn, df, applet);
+                walkFidRanges(conn, df, applet, SweepScope::CurrentDf);
             }
 
             mf.children.push_back(df);
             applet.rootNode = mf;
             result.detectedApplets.push_back(applet);
+        }
+    }
+
+    // MF-level sweep, once, with the MF actually selected: this is where the
+    // Serbian LK's `0DF5` lives (child SELECT answers 6A82; `00 A4 00 00`
+    // returns its FCI), and where such finds belong in every tree. The walks
+    // above leave whichever application was selected last as the current DF,
+    // which is exactly how MF children used to be filed under the last
+    // AID-selected applet.
+    if (!result.detectedApplets.empty()) {
+        // Measured on the Serbian LK: by this point the probe traffic has
+        // left the platform answering 6A86 to every SELECT (MF included),
+        // and only a card reset clears that. A detached (scripted)
+        // connection has nothing to reset.
+        try {
+            conn.reconnectWithReset();
+        } catch (const std::exception&) {
+        }
+        conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x3F, 0x00));
+        FileNode mfNode;
+        mfNode.name = "MF";
+        mfNode.fidHi = 0x3F;
+        mfNode.fidLo = 0x00;
+        mfNode.isDir = true;
+        AppletInfo mfScratch;
+        walkFidRanges(conn, mfNode, mfScratch, SweepScope::MasterFile);
+
+        for (auto& applet : result.detectedApplets) {
+            for (const auto& child : mfNode.children) {
+                applet.rootNode.children.push_back(child);
+            }
+            for (const auto& dataFile : mfScratch.dataFiles) {
+                applet.dataFiles.push_back(dataFile);
+            }
         }
     }
 
