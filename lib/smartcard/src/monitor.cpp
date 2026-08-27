@@ -401,6 +401,7 @@ bool Monitor::processEvents(std::vector<SCARD_READERSTATE>& states, int readerCo
             }
 
             if (states[i].dwEventState & SCARD_STATE_UNKNOWN) {
+                lastSeenAtr.erase(states[i].szReader);
                 notifyEvent({MonitorEvent::Type::CardRemoved, states[i].szReader, {}});
                 needReEnumeration = true;
                 break;
@@ -432,11 +433,30 @@ bool Monitor::processEvents(std::vector<SCARD_READERSTATE>& states, int readerCo
                         // Same event counter — INUSE toggle, skip
                         continue;
                     }
+                    // A moved event counter means the READER's state changed, not
+                    // that the card did. On a contactless slot the field is
+                    // re-established constantly and the counter moves with it;
+                    // treating that as a swap tore the card down and re-announced
+                    // it under a fresh identity, which resets every piece of
+                    // per-card state a host holds and fails any read in flight.
+                    // The ATR is what tells one card from another, so it decides.
+                    std::vector<uint8_t> current(states[i].rgbAtr, states[i].rgbAtr + states[i].cbAtr);
+                    // An empty ATR is the absence of evidence, not evidence of a
+                    // different card: a contactless reader can report PRESENT
+                    // mid-transition with nothing readable. Announcing a swap on
+                    // that would let the churn back in through the side door.
+                    if (current.empty()) {
+                        continue;
+                    }
+                    if (auto known = lastSeenAtr.find(states[i].szReader);
+                        known != lastSeenAtr.end() && known->second == current) {
+                        continue; // same card, re-read — nothing happened
+                    }
                     // Card swapped — emit remove for old card
                     notifyEvent({MonitorEvent::Type::CardRemoved, states[i].szReader, {}});
                     shouldEmit = true;
                     eventType = MonitorEvent::Type::CardInserted;
-                    atr.assign(states[i].rgbAtr, states[i].rgbAtr + states[i].cbAtr);
+                    atr = std::move(current);
                 } else {
                     shouldEmit = true;
                     eventType = MonitorEvent::Type::CardInserted;
@@ -445,6 +465,13 @@ bool Monitor::processEvents(std::vector<SCARD_READERSTATE>& states, int readerCo
             }
 
             if (shouldEmit) {
+                // Keep the ATR ledger in step with what the host has been told,
+                // so the next counter move can be judged against it.
+                if (eventType == MonitorEvent::Type::CardInserted) {
+                    lastSeenAtr[states[i].szReader] = atr;
+                } else {
+                    lastSeenAtr.erase(states[i].szReader);
+                }
                 notifyEvent({eventType, states[i].szReader, std::move(atr)});
             }
         }
@@ -481,6 +508,7 @@ bool Monitor::processEvents(std::vector<SCARD_READERSTATE>& states, int readerCo
         // Emit CardRemoved only for readers that had a card present
         for (int i = 0; i < readerCount; i++) {
             if (states[i].dwCurrentState & SCARD_STATE_PRESENT) {
+                lastSeenAtr.erase(states[i].szReader);
                 notifyEvent({MonitorEvent::Type::CardRemoved, states[i].szReader, {}});
             }
         }

@@ -243,7 +243,68 @@ TEST_F(MonitorTestFixture, InuseToggleNoReEmission)
     EXPECT_EQ(result.events[0].type, MonitorEvent::Type::CardInserted);
 }
 
-// --- Test 7: Card swap (different event counter) ---
+// --- A card that stays put must not be re-announced when the reader's event
+// counter moves. A contactless reader re-establishes the RF field constantly and
+// PC/SC bumps the counter each time; treating that as a swap tore the card down
+// and re-published it under a fresh identity, which resets every piece of
+// per-card state the agent holds and fails any read in flight. The card's ATR is
+// what says whether it is the same card. ---
+TEST_F(MonitorTestFixture, SameCardReSeenWithBumpedEventCounterDoesNotReEmit)
+{
+    auto mock = std::make_unique<MockPCSCScanProvider>(counters);
+    mock->setReaders({"Reader A"});
+
+    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false});
+
+    MockPCSCScanProvider::StatusChangeAction first;
+    first.returnValue = SCARD_S_SUCCESS;
+    first.eventStates = {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED | (1 << 16), 0};
+    first.atrData = {{0x3B, 0x8E, 0x80, 0x01}};
+    mock->pushStatusChange(std::move(first));
+
+    // Same card, same ATR, counter moved on.
+    MockPCSCScanProvider::StatusChangeAction again;
+    again.returnValue = SCARD_S_SUCCESS;
+    again.eventStates = {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED | (2 << 16), 0};
+    again.atrData = {{0x3B, 0x8E, 0x80, 0x01}};
+    mock->pushStatusChange(std::move(again));
+
+    mock->pushStatusChange({LONG(SCARD_E_CANCELLED), {}, false});
+
+    auto result = runMonitor(std::move(mock));
+
+    ASSERT_EQ(result.events.size(), 1u) << "the same card must be announced once, not once per RF re-read";
+    EXPECT_EQ(result.events[0].type, MonitorEvent::Type::CardInserted);
+}
+
+// --- A state change that carries NO ATR is not evidence of a new card. A
+// contactless reader can report PRESENT mid-transition with nothing readable;
+// treating that as a swap is how the churn comes back through the side door. ---
+TEST_F(MonitorTestFixture, PresentWithoutAnAtrIsNotTreatedAsASwap)
+{
+    auto mock = std::make_unique<MockPCSCScanProvider>(counters);
+    mock->setReaders({"Reader A"});
+
+    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false});
+
+    MockPCSCScanProvider::StatusChangeAction first;
+    first.returnValue = SCARD_S_SUCCESS;
+    first.eventStates = {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED | (1 << 16), 0};
+    first.atrData = {{0x3B, 0x8E, 0x80, 0x01}};
+    mock->pushStatusChange(std::move(first));
+
+    // Counter moved, still present, but the ATR came back empty this poll.
+    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED | (2 << 16), 0}, false});
+
+    mock->pushStatusChange({LONG(SCARD_E_CANCELLED), {}, false});
+
+    auto result = runMonitor(std::move(mock));
+
+    ASSERT_EQ(result.events.size(), 1u) << "no ATR means no evidence, not a different card";
+    EXPECT_EQ(result.events[0].type, MonitorEvent::Type::CardInserted);
+}
+
+// --- Test 7: Card swap — a DIFFERENT card, told apart by its ATR ---
 TEST_F(MonitorTestFixture, CardSwap)
 {
     auto mock = std::make_unique<MockPCSCScanProvider>(counters);
@@ -252,11 +313,18 @@ TEST_F(MonitorTestFixture, CardSwap)
     // PnP check
     mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false});
 
-    // Card inserted (event counter = 1)
-    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED | (1 << 16), 0}, false});
+    MockPCSCScanProvider::StatusChangeAction first;
+    first.returnValue = SCARD_S_SUCCESS;
+    first.eventStates = {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED | (1 << 16), 0};
+    first.atrData = {{0x3B, 0x8E, 0x80, 0x01}};
+    mock->pushStatusChange(std::move(first));
 
-    // Card swapped (event counter = 2, still present)
-    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED | (2 << 16), 0}, false});
+    // A genuinely different card: counter moved AND the ATR changed.
+    MockPCSCScanProvider::StatusChangeAction swapped;
+    swapped.returnValue = SCARD_S_SUCCESS;
+    swapped.eventStates = {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED | (2 << 16), 0};
+    swapped.atrData = {{0x3B, 0xDE, 0x97, 0x00}};
+    mock->pushStatusChange(std::move(swapped));
 
     // Stop
     mock->pushStatusChange({LONG(SCARD_E_CANCELLED), {}, false});
@@ -267,6 +335,7 @@ TEST_F(MonitorTestFixture, CardSwap)
     EXPECT_EQ(result.events[0].type, MonitorEvent::Type::CardInserted);
     EXPECT_EQ(result.events[1].type, MonitorEvent::Type::CardRemoved);
     EXPECT_EQ(result.events[2].type, MonitorEvent::Type::CardInserted);
+    EXPECT_EQ(result.events[2].atr, (std::vector<uint8_t>{0x3B, 0xDE, 0x97, 0x00}));
 }
 
 // --- Test 8: Exclusive mode — card skipped ---
@@ -506,11 +575,18 @@ TEST_F(MonitorTestFixture, NoPnP_CardSwap)
     // PnP check: UNKNOWN (no PnP)
     mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_UNKNOWN}, false});
 
-    // Card inserted (event counter = 1)
-    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED | (1 << 16)}, false});
+    MockPCSCScanProvider::StatusChangeAction first;
+    first.returnValue = SCARD_S_SUCCESS;
+    first.eventStates = {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED | (1 << 16)};
+    first.atrData = {{0x3B, 0x8E, 0x80, 0x01}};
+    mock->pushStatusChange(std::move(first));
 
-    // Card swapped (event counter = 2)
-    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED | (2 << 16)}, false});
+    // A genuinely different card: counter moved AND the ATR changed.
+    MockPCSCScanProvider::StatusChangeAction swapped;
+    swapped.returnValue = SCARD_S_SUCCESS;
+    swapped.eventStates = {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED | (2 << 16)};
+    swapped.atrData = {{0x3B, 0xDE, 0x97, 0x00}};
+    mock->pushStatusChange(std::move(swapped));
 
     // Stop
     mock->pushStatusChange({LONG(SCARD_E_CANCELLED), {}, false});

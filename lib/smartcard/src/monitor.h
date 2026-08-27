@@ -68,6 +68,12 @@ private:
     SCARDCONTEXT hContext = 0;
 
     std::map<std::string, DWORD> previousReaderStates;
+    // Last ATR announced for each reader that currently holds a card. A moved
+    // PC/SC event counter says the reader's state changed, NOT that the card
+    // did -- a contactless reader re-establishes the RF field constantly and the
+    // counter moves with it. The ATR is what tells one card from another, so it
+    // is what decides whether a still-present card is a new card.
+    std::map<std::string, std::vector<std::uint8_t>> lastSeenAtr;
     std::atomic<bool> stopRequested{false};
 
     mutable std::mutex subscribersMtx;
