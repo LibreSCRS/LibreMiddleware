@@ -2192,7 +2192,7 @@ TEST(BacDowngradeGuard, DeactivatedCardAccessSurfacesPaceUnsupportedBeforePrompt
 // A PACE-less (or unknown-then-empty) document surfaces PaceUnsupported after
 // the credential prompt; the readCard mapping must name it distinctly rather
 // than fold it into the generic authentication-failed key. SoftFail keeps the
-// capability Unknown (fails closed to PACE-CAN, Task 1); the MF EF.CardAccess
+// capability Unknown (fails closed to PACE-CAN); the MF EF.CardAccess
 // read then yields no PACEInfo -> PaceUnsupported.
 TEST(EmrtdInterfaceActivation, PaceUnsupportedReadCarriesStructuralKey)
 {
