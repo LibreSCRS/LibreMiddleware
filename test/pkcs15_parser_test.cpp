@@ -519,3 +519,44 @@ TEST(ParsePuKDF, EmptyInput)
 {
     EXPECT_TRUE(parsePuKDF({}).empty());
 }
+
+// =============================================================================
+// parseDODF
+// =============================================================================
+
+// The DODF is where a card advertises its data containers -- on the bench
+// card that means the MS-minidriver set (cardid, mscp\cmapfile), whose
+// cmapfile carries the key size independently of any certificate. The parser
+// lifts label, applicationName, applicationOID (raw) and path; it decodes
+// nothing further -- the consumer decides what a container means.
+TEST(ParseDODF, LiftsOpaqueMinidriverObjects)
+{
+    const auto objs = parseDODF(MSCP_DODF);
+
+    ASSERT_EQ(objs.size(), 3U);
+    EXPECT_EQ(objs[0].label, "cardid");
+    EXPECT_EQ(objs[0].applicationName, "mscp");
+    EXPECT_TRUE(objs[0].applicationOid.empty());
+    EXPECT_EQ(objs[0].path, (std::vector<uint8_t>{0x63, 0x77}));
+
+    EXPECT_EQ(objs[1].label, "cmapfile");
+    EXPECT_EQ(objs[1].applicationName, "mscp");
+    EXPECT_EQ(objs[1].path, (std::vector<uint8_t>{0x57, 0x03}));
+}
+
+// oidDO is the [1] alternative of the DataType CHOICE -- the same outer-tag
+// discrimination the key parsers already learned the hard way.
+TEST(ParseDODF, OidDoComesFromTheChoiceTag)
+{
+    const auto objs = parseDODF(MSCP_DODF);
+
+    ASSERT_EQ(objs.size(), 3U);
+    EXPECT_EQ(objs[2].label, "oiddata");
+    EXPECT_EQ(objs[2].applicationOid, (std::vector<uint8_t>{0x55, 0x04, 0x03}));
+    EXPECT_EQ(objs[2].path, (std::vector<uint8_t>{0x57, 0x04}));
+}
+
+TEST(ParseDODF, EmptyInput)
+{
+    EXPECT_TRUE(parseDODF({}).empty());
+}

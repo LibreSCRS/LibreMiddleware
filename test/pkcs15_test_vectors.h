@@ -839,4 +839,125 @@ constexpr std::array<uint8_t, 191> GEMALTO_AODF = {
     0x02, 0xA1, 0x08, 0x30, 0x06, 0x01, 0x01, 0xFF, 0x04, 0x01, 0x02,
 };
 
+// =============================================================================
+// EF.DODF — three DataType entries, modeled on the MS-minidriver objects a
+// smart card carries for Windows (cardid, mscp\cmapfile) plus one oidDO.
+//
+// opaqueDO (untagged SEQUENCE):
+//   SEQUENCE {
+//     SEQUENCE { UTF8String label }              -- CommonObjectAttributes
+//     SEQUENCE { UTF8String applicationName }    -- CommonDataObjectAttributes
+//     [1] { SEQUENCE { OCTET STRING path } }     -- typeAttributes (indirect)
+//   }
+// oidDO ([1] of the DataType CHOICE):
+//   [1] {
+//     SEQUENCE { UTF8String label }
+//     SEQUENCE { UTF8String appName, OBJECT IDENTIFIER applicationOID }
+//     [1] { SEQUENCE { OBJECT IDENTIFIER id, SEQUENCE { OCTET STRING path } } }
+//   }
+// =============================================================================
+constexpr std::array<uint8_t, 98> MSCP_DODF = {
+    // opaqueDO "cardid" (app "mscp") -> 6377
+    0x30,
+    0x1A, //
+    0x30,
+    0x08,
+    0x0C,
+    0x06,
+    'c',
+    'a',
+    'r',
+    'd',
+    'i',
+    'd', //
+    0x30,
+    0x06,
+    0x0C,
+    0x04,
+    'm',
+    's',
+    'c',
+    'p', //
+    0xA1,
+    0x06,
+    0x30,
+    0x04,
+    0x04,
+    0x02,
+    0x63,
+    0x77, //
+    // opaqueDO "cmapfile" (app "mscp") -> 5703
+    0x30,
+    0x1C, //
+    0x30,
+    0x0A,
+    0x0C,
+    0x08,
+    'c',
+    'm',
+    'a',
+    'p',
+    'f',
+    'i',
+    'l',
+    'e', //
+    0x30,
+    0x06,
+    0x0C,
+    0x04,
+    'm',
+    's',
+    'c',
+    'p', //
+    0xA1,
+    0x06,
+    0x30,
+    0x04,
+    0x04,
+    0x02,
+    0x57,
+    0x03, //
+    // oidDO "oiddata" (OID 2.5.4.3) -> 5704
+    0xA1,
+    0x26, //
+    0x30,
+    0x09,
+    0x0C,
+    0x07,
+    'o',
+    'i',
+    'd',
+    'd',
+    'a',
+    't',
+    'a', //
+    0x30,
+    0x0A,
+    0x0C,
+    0x03,
+    'o',
+    'i',
+    'd',
+    0x06,
+    0x03,
+    0x55,
+    0x04,
+    0x03, //
+    0xA1,
+    0x0D,
+    0x30,
+    0x0B,
+    0x06,
+    0x03,
+    0x55,
+    0x04,
+    0x03,
+    0x30,
+    0x04,
+    0x04,
+    0x02,
+    0x57,
+    0x04, //
+};
+
 } // namespace pkcs15::test_vectors

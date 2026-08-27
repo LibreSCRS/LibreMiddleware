@@ -397,6 +397,24 @@ PKCS15Profile PKCS15Card::readProfile()
         }
     }
 
+    // Read DODF if present. Data containers are where MS-minidriver cards
+    // publish cardid and mscp\cmapfile (the latter carries the key size
+    // independently of any certificate). parseODF has always resolved this
+    // path too; nothing followed it.
+    if (!odf.dataObjectsPath.empty()) {
+        if (!selectApplet())
+            throw std::runtime_error("PKCS15: failed to select applet");
+        if (selectByPath(odf.dataObjectsPath)) {
+            auto dodfData = readSelectedFile();
+            if (trace)
+                std::fprintf(stderr, "[PKCS15::readProfile] DODF %zuB head=%s\n", dodfData.size(),
+                             dumpHex(dodfData, 32).c_str());
+            profile.dataObjects = parseDODF(dodfData);
+        } else if (trace) {
+            std::fprintf(stderr, "[PKCS15::readProfile] selectByPath(DODF) FAILED\n");
+        }
+    }
+
     // Read AODF if present
     if (!odf.authObjectsPath.empty()) {
         if (!selectApplet())

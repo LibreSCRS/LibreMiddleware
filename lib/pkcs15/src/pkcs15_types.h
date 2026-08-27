@@ -63,6 +63,17 @@ struct PublicKeyInfo
     KeyType keyType = KeyType::Rsa;
 };
 
+/// One EF.DODF record. The parser lifts identity and location only -- what a
+/// data container means (an MS-minidriver cmapfile, a vendor blob) is the
+/// consumer's decision, so the applicationOID stays raw bytes.
+struct DataObjectInfo
+{
+    std::string label;                   // CommonObjectAttributes label
+    std::string applicationName;         // CommonDataObjectAttributes applicationName
+    std::vector<uint8_t> applicationOid; // CommonDataObjectAttributes applicationOID, raw
+    std::vector<uint8_t> path;           // where the container's content lives
+};
+
 enum class PinType { Bcd = 0, Ascii = 1, Utf8 = 2, HalfNibbleBcd = 3, Iso9564 = 4 };
 
 struct PinInfo
@@ -111,6 +122,7 @@ struct PKCS15Profile
     std::vector<CertificateInfo> certificates;
     std::vector<PrivateKeyInfo> privateKeys;
     std::vector<PublicKeyInfo> publicKeys;
+    std::vector<DataObjectInfo> dataObjects;
     std::vector<PinInfo> pins;
 };
 

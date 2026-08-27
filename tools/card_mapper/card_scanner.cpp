@@ -539,6 +539,48 @@ bool probePKCS15(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, FileNode&
             }
         }
 
+        // PuKDF entries (public keys) — the only source of the public half
+        // that needs no certificate parsing.
+        if (!profile.odf.publicKeysPath.empty()) {
+            auto& pp = profile.odf.publicKeysPath;
+            addEF("EF.PuKDF", pp[pp.size() - 2], pp[pp.size() - 1],
+                  std::format("{} public keys", profile.publicKeys.size()));
+        }
+
+        for (const auto& key : profile.publicKeys) {
+            if (key.path.size() >= 2) {
+                FileNode ef;
+                ef.name = std::format("PubKey: {} ({})", key.label,
+                                      formatFid(key.path[key.path.size() - 2], key.path[key.path.size() - 1]));
+                ef.fidHi = key.path[key.path.size() - 2];
+                ef.fidLo = key.path[key.path.size() - 1];
+                ef.format =
+                    key.keyType == pkcs15::KeyType::Ec ? "SubjectPublicKeyInfo (EC)" : "SubjectPublicKeyInfo (RSA)";
+                df.children.push_back(ef);
+            }
+        }
+
+        // DODF entries (data containers, e.g. the MS-minidriver set)
+        if (!profile.odf.dataObjectsPath.empty()) {
+            auto& dp = profile.odf.dataObjectsPath;
+            addEF("EF.DODF", dp[dp.size() - 2], dp[dp.size() - 1],
+                  std::format("{} data objects", profile.dataObjects.size()));
+        }
+
+        for (const auto& obj : profile.dataObjects) {
+            if (obj.path.size() >= 2) {
+                FileNode ef;
+                const std::string qualified =
+                    obj.applicationName.empty() ? obj.label : obj.applicationName + "\\" + obj.label;
+                ef.name = std::format("Data: {} ({})", qualified,
+                                      formatFid(obj.path[obj.path.size() - 2], obj.path[obj.path.size() - 1]));
+                ef.fidHi = obj.path[obj.path.size() - 2];
+                ef.fidLo = obj.path[obj.path.size() - 1];
+                ef.format = "data container";
+                df.children.push_back(ef);
+            }
+        }
+
         // AODF entries (PINs)
         if (!profile.odf.authObjectsPath.empty()) {
             auto& ap = profile.odf.authObjectsPath;

@@ -20,6 +20,7 @@ TokenInfo parseTokenInfo(std::span<const uint8_t> data);
 std::vector<CertificateInfo> parseCDF(std::span<const uint8_t> data);
 std::vector<PrivateKeyInfo> parsePrKDF(std::span<const uint8_t> data);
 std::vector<PublicKeyInfo> parsePuKDF(std::span<const uint8_t> data);
+std::vector<DataObjectInfo> parseDODF(std::span<const uint8_t> data);
 std::vector<PinInfo> parseAODF(std::span<const uint8_t> data);
 
 } // namespace pkcs15

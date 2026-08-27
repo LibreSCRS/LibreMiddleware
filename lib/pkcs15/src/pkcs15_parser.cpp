@@ -485,6 +485,61 @@ std::vector<PublicKeyInfo> parsePuKDF(std::span<const uint8_t> data)
 }
 
 // =============================================================================
+// parseDODF — parse Data Object Directory File
+//
+// DataType is a CHOICE discriminated by the OUTER tag, like the key parsers:
+// the untagged SEQUENCE is opaqueDO, [0] externalIDO, [1] oidDO. All three
+// carry CommonObjectAttributes, then CommonDataObjectAttributes
+// { applicationName?, applicationOID?, iD? }, then [1] typeAttributes holding
+// the container's path. The parser lifts identity and location only; what a
+// container means (an MS-minidriver cmapfile, a vendor blob) is the
+// consumer's decision, so the applicationOID stays raw.
+// =============================================================================
+std::vector<DataObjectInfo> parseDODF(std::span<const uint8_t> data)
+{
+    if (data.empty()) {
+        return {};
+    }
+
+    std::vector<DataObjectInfo> objects;
+    auto root = LibreSCRS::SmartCard::Internal::parseBER(data.data(), data.size());
+
+    for (const auto& entry : root.children) {
+        if (!entry.constructed) {
+            continue;
+        }
+        if (entry.tag != 0x30 && entry.tag != 0xA0 && entry.tag != 0xA1) {
+            continue; // not a DataType alternative
+        }
+        DataObjectInfo obj;
+
+        // CommonObjectAttributes — label only.
+        if (!entry.children.empty() && entry.children[0].tag == 0x30) {
+            obj.label = findFirstString(entry.children[0]);
+        }
+
+        // CommonDataObjectAttributes { applicationName?, applicationOID?, iD? }
+        if (entry.children.size() >= 2 && entry.children[1].tag == 0x30) {
+            for (const auto& child : entry.children[1].children) {
+                if (child.tag == 0x0C && !child.constructed && obj.applicationName.empty()) {
+                    obj.applicationName.assign(child.value.begin(), child.value.end());
+                } else if (child.tag == 0x06 && !child.constructed && obj.applicationOid.empty()) {
+                    obj.applicationOid = child.value;
+                }
+            }
+        }
+
+        if (const auto* typeAttrs = findChild(entry, 0xA1)) {
+            obj.path = extractPath(*typeAttrs);
+        }
+
+        objects.push_back(std::move(obj));
+    }
+
+    return objects;
+}
+
+// =============================================================================
 // parseAODF — parse Authentication Object Directory File
 //
 // Each entry:
