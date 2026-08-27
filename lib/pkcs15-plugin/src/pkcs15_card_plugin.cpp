@@ -85,6 +85,16 @@ struct SessionContext
     /// @ref clearCredentials. The map is keyed by session, so no cross-reader
     /// bleed. @since 4.3
     LibreSCRS::Secure::String pin;
+
+    /// @brief Cached @c readProfile() result for this session.
+    ///
+    /// The profile (ODF/TokenInfo/CDF/PrKDF/AODF structure) is invariant
+    /// while the card session lives; the census suite measured exactly one
+    /// read per entry point, with the redundancy ACROSS entry points in one
+    /// session. Living inside SessionContext, the cache is erased whole by
+    /// @ref clearCredentials, so no card structure outlives the session —
+    /// the plugin still holds no global mutable state.
+    std::optional<pkcs15::PKCS15Profile> profile;
 };
 
 LibreSCRS::SmartCard::AppletAid pkcs15AppletAid()
@@ -402,8 +412,7 @@ public:
                                                       "pkcs15 doReadCard: channel not active after activation");
 
             pkcs15::PKCS15Card card(*channel);
-            LibreSCRS::Internal::probeTrace("PROBE-READPROFILE call=doReadCard");
-            auto profile = card.readProfile();
+            auto profile = profileFor(session, card, "doReadCard");
 
             LibreSCRS::Plugin::CardData data;
             data.cardType = "pkcs15";
@@ -545,8 +554,7 @@ public:
             return result;
 
         pkcs15::PKCS15Card card(*channel);
-        LibreSCRS::Internal::probeTrace("PROBE-READPROFILE call=readCertificates");
-        auto profile = card.readProfile();
+        auto profile = profileFor(session, card, "readCertificates");
 
         for (const auto& cert : profile.certificates) {
             auto der = card.readCertificate(cert);
@@ -597,8 +605,7 @@ public:
             return result;
 
         pkcs15::PKCS15Card card(*channel);
-        LibreSCRS::Internal::probeTrace("PROBE-READPROFILE call=getPINList");
-        auto profile = card.readProfile();
+        auto profile = profileFor(session, card, "getPINList");
 
         using LibreSCRS::Plugin::Internal::PinEvidence;
         const auto family = resolveFamilyId(profile);
@@ -725,8 +732,7 @@ public:
         }
 
         pkcs15::PKCS15Card card(*channel);
-        LibreSCRS::Internal::probeTrace("PROBE-READPROFILE call=changePIN");
-        auto profile = card.readProfile();
+        auto profile = profileFor(session, card, "changePIN");
 
         const pkcs15::PinInfo* pinInfo = findPinByLabel(profile, pinLabel);
         if (!pinInfo && !pinLabel.empty()) {
@@ -789,8 +795,7 @@ public:
         }
 
         pkcs15::PKCS15Card card(*channel);
-        LibreSCRS::Internal::probeTrace("PROBE-READPROFILE call=unblockPIN");
-        auto profile = card.readProfile();
+        auto profile = profileFor(session, card, "unblockPIN");
 
         const pkcs15::PinInfo* pinInfo = findPinByLabel(profile, pinLabel);
         if (!pinInfo && !pinLabel.empty()) {
@@ -924,8 +929,7 @@ public:
         }
 
         pkcs15::PKCS15Card card(*channel);
-        LibreSCRS::Internal::probeTrace("PROBE-READPROFILE call=activateTransportPin");
-        auto profile = card.readProfile();
+        auto profile = profileFor(session, card, "activateTransportPin");
 
         const pkcs15::PinInfo* pinInfo = findPinByLabel(profile, pinLabel);
         if (!pinInfo) {
@@ -1071,8 +1075,7 @@ public:
         }
 
         pkcs15::PKCS15Card card(*channel);
-        LibreSCRS::Internal::probeTrace("PROBE-READPROFILE call=activateSigningKey");
-        auto profile = card.readProfile();
+        auto profile = profileFor(session, card, "activateSigningKey");
 
         const auto family = resolveFamilyId(profile);
         const auto* quirks = LibreSCRS::Plugin::Internal::findFamilyQuirks(family);
@@ -1174,8 +1177,7 @@ public:
         if (channel == nullptr)
             return {};
         pkcs15::PKCS15Card card(*channel);
-        LibreSCRS::Internal::probeTrace("PROBE-READPROFILE call=readCounters");
-        auto profile = card.readProfile();
+        auto profile = profileFor(session, card, "readCounters");
         const pkcs15::PinInfo* pin = pinLabel.empty() ? findUserPin(profile) : findPinByLabel(profile, pinLabel);
         if (!pin)
             return {};
@@ -1268,7 +1270,7 @@ public:
                 return r;
             }
             pkcs15::PKCS15Card card(*channel);
-            auto profile = card.readProfile();
+            auto profile = profileFor(session, card, "doSign");
 
             // Resolve the private key whose on-card file id matches keyReference
             // (the keyFID readCertificates surfaced from the PrKDF path).
@@ -1340,8 +1342,7 @@ public:
         }
 
         pkcs15::PKCS15Card card(*channel);
-        LibreSCRS::Internal::probeTrace("PROBE-READPROFILE call=verifyPIN");
-        auto profile = card.readProfile();
+        auto profile = profileFor(session, card, "verifyPIN");
         auto* pinInfo = findUserPin(profile);
         if (!pinInfo)
             return {};
@@ -1360,6 +1361,31 @@ private:
         std::lock_guard lock(stateMutex);
         auto it = sessions.find(makeSessionKey(session));
         return it != sessions.end() && it->second.requiresPace;
+    }
+
+    /// @brief One profile read per session, not per entry point.
+    ///
+    /// Serves the session's cached profile when @ref SessionContext holds
+    /// one, otherwise reads it from the card (I/O outside the lock) and
+    /// stores it. The probe trace fires only on an actual card read, so the
+    /// trace stays a count of reads, not of intents.
+    pkcs15::PKCS15Profile profileFor(LibreSCRS::SmartCard::CardSession& session, pkcs15::PKCS15Card& card,
+                                     const char* caller) const
+    {
+        const auto key = makeSessionKey(session);
+        {
+            std::lock_guard lock(stateMutex);
+            auto it = sessions.find(key);
+            if (it != sessions.end() && it->second.profile)
+                return *it->second.profile;
+        }
+        LibreSCRS::Internal::probeTrace(std::string{"PROBE-READPROFILE call="} + caller);
+        auto profile = card.readProfile();
+        {
+            std::lock_guard lock(stateMutex);
+            sessions[key].profile = profile;
+        }
+        return profile;
     }
 
     // Clears any security state a mutating card verb (RESET RETRY COUNTER /

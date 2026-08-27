@@ -401,20 +401,15 @@ TEST(Pkcs15ProfileReadCensus, ActivateSigningKeyPerformsExactlyOneProfileRead)
 }
 
 // ---------------------------------------------------------------------------
-// Cross-entry-point census: the profile read is per-entry-point, and each
-// entry point opens (and closes) its own transaction. Three sequential
-// logical operations against ONE session therefore cost three profile
-// reads, one apiece — the arithmetic that decides whether a cache scoped to
-// the transactional channel holder could save anything.
-//
-// A holder-scoped cache cannot change this number: each entry point creates
-// its holder, reads the profile once, and destroys the holder before
-// returning, so no second reader of the cache ever exists within a holder's
-// lifetime. Reducing this total requires a cache whose lifetime SPANS
-// transactions (session-scoped), which is a different design with its own
-// invalidation contract.
+// Cross-entry-point census: the profile is invariant for the life of a card
+// session, so ONE session pays for ONE read however many entry points run —
+// the parsed profile is cached in the plugin's SessionContext and dies with
+// it. This suite used to pin the numbers at 1/2/3 (each entry point opened
+// its own transaction and re-read the profile); that measurement is what
+// argued for a session-scoped cache, and these inverted expectations are the
+// cache's regression guard. The invalidation contract is the test below.
 // ---------------------------------------------------------------------------
-TEST(Pkcs15ProfileReadCensus, SequentialEntryPointsEachReadTheProfileOnce)
+TEST(Pkcs15ProfileReadCensus, SequentialEntryPointsShareOneProfileRead)
 {
     auto rig = makeRig("Census Reader Sequential");
     CardPluginService registry{pluginDir()};
@@ -432,6 +427,26 @@ TEST(Pkcs15ProfileReadCensus, SequentialEntryPointsEachReadTheProfileOnce)
     const auto afterGetPinList = countProfileReads(rig.card->log);
 
     EXPECT_EQ(afterReadCard, 1u);
-    EXPECT_EQ(afterReadCertificates, 2u);
-    EXPECT_EQ(afterGetPinList, 3u);
+    EXPECT_EQ(afterReadCertificates, 1u) << "second entry point re-read the profile the cache should have served";
+    EXPECT_EQ(afterGetPinList, 1u) << "third entry point re-read the profile the cache should have served";
+}
+
+// clearCredentials erases the whole SessionContext — the cached profile must
+// go with it, so a session whose credentials were cleared re-reads from the
+// card instead of serving structure that may have outlived a card swap.
+TEST(Pkcs15ProfileReadCensus, ClearCredentialsDropsTheCachedProfile)
+{
+    auto rig = makeRig("Census Reader ClearCredentials");
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    (void)plugin->readCard(*rig.session);
+    EXPECT_EQ(countProfileReads(rig.card->log), 1u);
+
+    plugin->clearCredentials(*rig.session);
+
+    (void)plugin->readCertificates(*rig.session);
+    EXPECT_EQ(countProfileReads(rig.card->log), 2u)
+        << "a cleared session must not serve the previous session's profile";
 }
