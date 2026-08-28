@@ -68,7 +68,8 @@ jobs:
             libpcsclite-dev libssl-dev zlib1g-dev \
             libcurl4-openssl-dev libxml2-dev \
             pkg-config autoconf automake libtool \
-            cmake ninja-build python3-jsonschema
+            cmake ninja-build python3-jsonschema \
+            softhsm2 opensc
 
       - name: Build OpenSC ${{ env.OPENSC_VERSION }} from source
         run: |
@@ -147,6 +148,14 @@ jobs:
         # the same commit as the new public symbol.
         run: ./ci/scripts/abi-snapshot.sh --check build
 
+      - name: Bootstrap SoftHSM2 test token
+        # Provisions the isolated token store the CAdES/PAdES/JAdES/XAdES/
+        # ASiC-E, NativeSigningService and Pkcs11ModuleManager suites need —
+        # without it they GTEST_SKIP() outright (findSoftHsmPath() /
+        # findSoftHsmTestSlot() come up empty). Exports SOFTHSM2_CONF and
+        # SOFTHSM2_LIB via $GITHUB_ENV so the Test step below inherits them.
+        run: ./ci/scripts/softhsm-bootstrap.sh
+
       - name: Test
         # No LIBRESCRS_TEST_PIN — CI runner has no smart card. PIN-gated
         # tests skip cleanly via g_pinFailed / SKIP_IF_PIN_FAILED. Real-
@@ -222,7 +231,10 @@ jobs:
           # autoconf/automake/libtool/pkg-config are required by the vendored
           # OpenSC autoconf bootstrap (thirdparty/opensc-source/bootstrap →
           # autoreconf -fi). Homebrew's ninja covers the LM build itself.
-          brew install ninja opensc autoconf automake libtool pkg-config
+          # softhsm installs libsofthsm2.so under /opt/homebrew/lib/softhsm/
+          # — the exact path findSoftHsmPath() already carries as its macOS
+          # fallback.
+          brew install ninja opensc softhsm autoconf automake libtool pkg-config
           # manifest2header.py hard-fails when jsonschema is missing
           # (the schema gates the codegen step against malformed manifests).
           python3 -m pip install --break-system-packages --user jsonschema
@@ -240,6 +252,12 @@ jobs:
 
       - name: Check pimpl visibility
         run: ./ci/scripts/check-impl-visibility.sh build
+
+      - name: Bootstrap SoftHSM2 test token
+        # Same store this repo's Linux legs provision — see
+        # ci/scripts/softhsm-bootstrap.sh. Exports SOFTHSM2_CONF and
+        # SOFTHSM2_LIB via $GITHUB_ENV so the Test step below inherits them.
+        run: ./ci/scripts/softhsm-bootstrap.sh
 
       - name: Test
         # --test-dir build, not build/test: several library subdirectories
