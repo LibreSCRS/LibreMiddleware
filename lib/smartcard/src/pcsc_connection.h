@@ -94,6 +94,22 @@ public:
     using RawResponder = std::function<APDUResponse(std::span<const std::uint8_t>)>;
     void setDetachedRawResponder(RawResponder responder);
 
+    // Test-only ATR override for DETACHED connections. getATR() calls
+    // SCardStatus() directly — a lower-level primitive than transmit(), so it
+    // is never touched by the TransmitFilter installed via setTransmitFilter().
+    // A detached connection (card == 0) has no handle for SCardStatus() to
+    // query, so a caller that identifies the card type from its ATR (e.g.
+    // eidcard::EIdCard::detectCardType()) has no other way to be handed a
+    // synthetic ATR. Mirrors the transmitRaw seam below (card == 0 &&
+    // detachedRawResponder): getATR() only returns this override when
+    // card == 0 AND a non-empty ATR was installed here. A production
+    // connection's getATR() path is untouched; a detached connection with
+    // no ATR installed keeps failing exactly as before this seam existed
+    // (SCardStatus(0, ...) throws) instead of silently returning {} --
+    // callers like CardPlugin::canHandleConnection() depend on that failure
+    // to short-circuit before any APDU reaches an un-rigged detached rig.
+    void setDetachedAtr(std::vector<uint8_t> atr);
+
     // Low-level transmit that bypasses the TransmitFilter.
     // Used by SM layer to send already-wrapped APDUs without recursive filtering.
     APDUResponse transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen);
@@ -153,6 +169,7 @@ private:
 
     TransmitFilter transmitFilter;
     RawResponder detachedRawResponder;
+    std::vector<uint8_t> detachedAtr;
     std::string storedReaderName;
     SCARDCONTEXT context = 0;
     SCARDHANDLE card = 0;

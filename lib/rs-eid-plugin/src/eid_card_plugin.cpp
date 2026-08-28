@@ -229,16 +229,6 @@ public:
             auto fixedVerification = card.verifyFixedData();
             auto variableVerification = card.verifyVariableData();
 
-            if (auto metaIdx = data.findGroup("meta")) {
-                auto& meta = data.groupAt(*metaIdx);
-                auto addVerField = [&](const std::string& key, const std::string& val) {
-                    meta.fields.push_back({key, key, LibreSCRS::Plugin::FieldType::Text, {val.begin(), val.end()}});
-                };
-                addVerField("card_verification", toStr(cardVerification));
-                addVerField("fixed_verification", toStr(fixedVerification));
-                addVerField("variable_verification", toStr(variableVerification));
-            }
-
             // Emit verification as a separate group for the streaming path
             LibreSCRS::Plugin::CardFieldGroup verGroup;
             verGroup.groupKey = "verification";

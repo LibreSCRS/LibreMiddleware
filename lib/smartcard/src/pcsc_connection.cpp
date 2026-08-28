@@ -388,6 +388,11 @@ void PCSCConnection::setDetachedRawResponder(RawResponder responder)
     detachedRawResponder = std::move(responder);
 }
 
+void PCSCConnection::setDetachedAtr(std::vector<uint8_t> atr)
+{
+    detachedAtr = std::move(atr);
+}
+
 APDUResponse PCSCConnection::transmitRaw(const APDUCommand& cmd)
 {
     // SecureBuffer adoption: the serialization may carry PIN/PUK bytes
@@ -505,6 +510,22 @@ void PCSCConnection::cancel()
 
 std::vector<uint8_t> PCSCConnection::getATR() const
 {
+    // Detached test connection WITH an ATR installed via setDetachedAtr:
+    // hand those bytes back instead of querying the (handle-less)
+    // SCardStatus. Mirrors the transmitRaw seam above (card == 0 &&
+    // detachedRawResponder): only a detached connection that opted in by
+    // installing a responder/ATR gets the synthetic answer. A detached
+    // connection with no ATR installed falls through to SCardStatus(0, ...)
+    // exactly as before setDetachedAtr existed, which fails (throws) --
+    // e.g. eidcard::EIdCard::detectCardType() reached via
+    // CardPlugin::canHandleConnection() on an un-rigged detached session
+    // must keep seeing that failure, not a silent {} that would route it
+    // into the AID-probing SELECT fallback and generate APDUs a passive
+    // detached rig never expects.
+    if (card == 0 && !detachedAtr.empty()) {
+        return detachedAtr;
+    }
+
     DWORD readerLen = 0;
     DWORD state = 0;
     DWORD protocol = 0;

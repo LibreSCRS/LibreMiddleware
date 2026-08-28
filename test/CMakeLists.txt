@@ -131,6 +131,31 @@ target_include_directories(RsEidCoreTests PRIVATE
 target_compile_definitions(RsEidCoreTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(RsEidCoreTests)
 
+# rs-eid plugin test: drives the real, dlopen'd rs-eid-plugin.so through
+# CardPluginService against a detached PCSCConnection (Apollo protocol,
+# scripted via TransmitFilter + the test-only setDetachedAtr seam). Covers
+# readCard()'s CardData shape end to end -- unlike RsEidDriverTests above,
+# which exercises the CardReaderApollo/CardVerifier drivers directly.
+add_executable(RsEidPluginTests
+    rs-eid/eid_card_plugin_verification_test.cpp
+)
+target_link_libraries(RsEidPluginTests
+    GTest::gtest_main
+    CardPlugin_Impl
+    SmartCard_Impl
+)
+target_include_directories(RsEidPluginTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/rs-eid/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/rs-eid-core/src
+)
+target_compile_definitions(RsEidPluginTests PRIVATE
+    PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
+    LIBRESCRS_INTERNAL_BUILD
+)
+add_dependencies(RsEidPluginTests rs-eid-plugin)
+gtest_discover_tests(RsEidPluginTests)
+
 # Annex mechanism unit tests. The mechanism lives in its own static library
 # precisely so a test can link it -- the plugin itself is only reachable by dlopen.
 add_executable(AnnexTests
