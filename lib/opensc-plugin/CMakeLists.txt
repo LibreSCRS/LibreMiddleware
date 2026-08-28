@@ -16,5 +16,8 @@ librescrs_add_plugin(opensc-plugin
         # Internal derivation engine + quirk table headers (same
         # consumption pattern as pkcs15-plugin).
         ${PROJECT_SOURCE_DIR}/lib/plugin/src
+        # pkcs15_types.h for the standard PKCS#15 AID constant used by the
+        # probe (header-only; no link against the pkcs15 lib).
+        ${PROJECT_SOURCE_DIR}/lib/pkcs15/src
     LINK_LIBRARIES SmartCard_Impl opensc_static_with_deps
 )

@@ -4,10 +4,13 @@
 #include "opensc_reader_bridge.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
 
+#include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
+#include <apdu.h>            // APDUCommand (lib/smartcard/src)
 #include <pcsc_connection.h> // PCSCConnection + APDUResponse (lib/smartcard/src)
 
 // libopensc's OWN APDU (de)serialisers — the exact helpers reader-pcsc.c's
@@ -24,8 +27,80 @@ namespace LibreSCRS::OpenSc::Bridge {
 
 namespace {
 
+using LibreSCRS::SecureChannel::ChannelState;
+using LibreSCRS::SmartCard::Internal::APDUCommand;
 using LibreSCRS::SmartCard::Internal::APDUResponse;
 using LibreSCRS::SmartCard::Internal::PCSCConnection;
+
+// Tunnel branch: forward one sc_apdu through the live LM secure channel.
+// The sc_apdu is mapped FIELD-BY-FIELD into an APDUCommand (short cases
+// only) — the channel does its own SM wire encoding, so the raw branch's
+// sc_apdu_get_octets serialisation must not run here. The channel unwraps
+// the response, so libopensc's GET RESPONSE (61xx) and 6Cxx retry logic
+// above this op keep operating on the raw SW exactly as on the raw branch.
+int tunnelTransmit(BridgeData& d, sc_apdu_t* apdu)
+{
+    APDUCommand cmd{};
+    cmd.cla = apdu->cla;
+    cmd.ins = apdu->ins;
+    cmd.p1 = apdu->p1;
+    cmd.p2 = apdu->p2;
+    switch (apdu->cse) {
+    case SC_APDU_CASE_1:
+        cmd.hasLe = false;
+        break;
+    case SC_APDU_CASE_2_SHORT:
+        cmd.hasLe = true;
+        cmd.le = apdu->le == 256 ? 0 : static_cast<uint16_t>(apdu->le);
+        break;
+    case SC_APDU_CASE_3_SHORT:
+        cmd.data.assign(apdu->data, apdu->data + apdu->datalen);
+        cmd.hasLe = false;
+        break;
+    case SC_APDU_CASE_4_SHORT:
+        cmd.data.assign(apdu->data, apdu->data + apdu->datalen);
+        cmd.hasLe = true;
+        cmd.le = apdu->le == 256 ? 0 : static_cast<uint16_t>(apdu->le);
+        break;
+    default:
+        // Extended APDUs cannot occur: initBridgeReader caps the reader at
+        // short-APDU sizes (255/256) and the tunnel keeps those caps.
+        return SC_ERROR_NOT_SUPPORTED;
+    }
+
+    try {
+        const APDUResponse resp = d.channel->transmit(cmd, d.token);
+
+        // SW passes through UNCHANGED — including 6987/6988 and a real
+        // card 6F00. Fatality is judged by channel STATE, never by SW
+        // pattern: only the channel sentinels 6F00 (closed) / 6F02
+        // (failed) — empty body — while the channel is no longer Open are
+        // a transport failure. 6F01 (cancel) is deliberately not handled
+        // here: cancel leaves the channel Open and the caller detects it
+        // via the operation token.
+        if (resp.data.empty() && resp.sw1 == 0x6F && (resp.sw2 == 0x00 || resp.sw2 == 0x02) &&
+            d.channel->state() != ChannelState::Open) {
+            std::fprintf(stderr,
+                         "[opensc-bridge] secure-channel sentinel SW=6F%02X with channel no longer open — "
+                         "transmit failed\n",
+                         resp.sw2);
+            return SC_ERROR_TRANSMIT_FAILED;
+        }
+
+        const size_t n = std::min(resp.data.size(), apdu->resplen);
+        if (n > 0 && apdu->resp != nullptr)
+            std::memcpy(apdu->resp, resp.data.data(), n);
+        apdu->resplen = (apdu->resp != nullptr) ? n : 0;
+        apdu->sw1 = resp.sw1;
+        apdu->sw2 = resp.sw2;
+        return SC_SUCCESS;
+    } catch (...) {
+        // Same contract as the raw branch: no C++ exception may cross the
+        // libopensc C frames (e.g. card removal propagates from
+        // transmitRaw through the channel implementation).
+        return SC_ERROR_TRANSMIT_FAILED;
+    }
+}
 
 // C-linkage reader-op callbacks. extern "C" makes them assignment-compatible
 // with the sc_reader_operations C function-pointer fields (no language-linkage
@@ -52,6 +127,9 @@ int librescrs_opensc_bridge_transmit(sc_reader_t* reader, sc_apdu_t* apdu)
     auto* d = static_cast<BridgeData*>(reader->drv_data);
     if (d == nullptr || d->conn == nullptr)
         return SC_ERROR_TRANSMIT_FAILED;
+
+    if (d->channel != nullptr)
+        return tunnelTransmit(*d, apdu);
 
     // Mirror reader-pcsc.c:pcsc_transmit so the bridge is byte-identical to the
     // real PC/SC reader op — only the wire call differs (the single LM

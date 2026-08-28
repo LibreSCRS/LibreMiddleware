@@ -646,6 +646,8 @@ if(LIBRESCRS_VENDOR_OPENSC)
     target_link_libraries(OpenScBridgeTests
         GTest::gtest_main
         LibreSCRS_SmartCard
+        # fake_channel.h (tunnel-branch channel double) + its include dir.
+        LibreSCRS_SmartCard_TestHelpers
         SmartCard_Impl
         opensc_static_with_deps
     )
@@ -680,6 +682,35 @@ if(LIBRESCRS_VENDOR_OPENSC)
     )
     add_dependencies(OpenSCFallbackIntegrationTest opensc-plugin)
     gtest_discover_tests(OpenSCFallbackIntegrationTest
+        PROPERTIES LABELS "HARDWARE"
+    )
+endif()
+
+# Second-generation Serbian eID contactless hardware test. Drives the full
+# opensc-plugin tunnel path (CAN prompt -> PACE -> deferred bind ->
+# CAN-hidden enumeration -> PIN verify -> pre-hashed ECDSA) against a real
+# card; SKIPs without LIBRESCRS_TEST_CAN / LIBRESCRS_TEST_PIN or the card.
+# Link list mirrors OpenSCFallbackIntegrationTest.
+if(LIBRESCRS_VENDOR_OPENSC)
+    add_executable(OpenScSrbEid2HwTest
+        opensc_srbeid2_hw_test.cpp
+    )
+    target_link_libraries(OpenScSrbEid2HwTest PRIVATE
+        GTest::gtest_main
+        CardPlugin_Impl
+        LibreSCRS_SmartCard
+        SmartCard_Impl
+        opensc_static_with_deps
+        OpenSSL_Crypto
+    )
+    target_compile_definitions(OpenScSrbEid2HwTest PRIVATE
+        PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
+    )
+    target_include_directories(OpenScSrbEid2HwTest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    add_dependencies(OpenScSrbEid2HwTest opensc-plugin)
+    gtest_discover_tests(OpenScSrbEid2HwTest
         PROPERTIES LABELS "HARDWARE"
     )
 endif()
@@ -1323,6 +1354,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
         ${PROJECT_SOURCE_DIR}/lib/opensc-pkcs11/src
         ${PROJECT_SOURCE_DIR}/lib/smartcard/src
         ${PROJECT_SOURCE_DIR}/lib/plugin/src
+        ${PROJECT_SOURCE_DIR}/lib/pkcs15/src
         ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
     )
     target_link_libraries(OpenscPinLifecycleTests PRIVATE
@@ -1336,6 +1368,68 @@ if(LIBRESCRS_VENDOR_OPENSC)
     target_compile_definitions(OpenscPinLifecycleTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
     add_dependencies(OpenscPinLifecycleTests opensc-plugin)
     gtest_discover_tests(OpenscPinLifecycleTests)
+endif()
+
+# Opensc routing tests (no hardware): the REAL plugin registry probes a
+# detached CardSession whose injected FakeChannel scripts the card, so the
+# two-phase candidate lookup runs every shipped plugin's probe against the
+# same scripted answers. Needs the registry (CardPlugin_Impl), the shipped
+# plugin .so set, and the SmartCard test-helpers archive for the channel
+# injection seams.
+if(LIBRESCRS_VENDOR_OPENSC)
+    add_executable(OpenscRoutingTests
+        OpenscRoutingTests.cpp
+    )
+    target_include_directories(OpenscRoutingTests PRIVATE
+        ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+    )
+    target_link_libraries(OpenscRoutingTests PRIVATE
+        GTest::gtest_main
+        CardPlugin_Impl
+        LibreSCRS_SmartCard
+        LibreSCRS_SmartCard_TestHelpers
+        SmartCard_Impl
+    )
+    target_compile_definitions(OpenscRoutingTests PRIVATE
+        PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
+        LIBRESCRS_INTERNAL_BUILD
+    )
+    add_dependencies(OpenscRoutingTests opensc-plugin pkcs15-plugin)
+    gtest_discover_tests(OpenscRoutingTests)
+endif()
+
+# Opensc-plugin channel lifecycle + probe-gate tests (no hardware).
+# Same TU-compilation harness as OpenscPinLifecycleTests, plus the
+# SmartCard test-helpers archive for the FakeChannel double and the
+# detached-session / channel-injection seams that stand in for a live
+# SM tunnel.
+if(LIBRESCRS_VENDOR_OPENSC)
+    add_executable(OpenscChannelLifecycleTests
+        OpenscChannelLifecycleTests.cpp
+        ${PROJECT_SOURCE_DIR}/lib/opensc-plugin/src/opensc_card_plugin.cpp
+        ${PROJECT_SOURCE_DIR}/lib/opensc-plugin/src/opensc_reader_bridge.cpp
+    )
+    target_include_directories(OpenscChannelLifecycleTests PRIVATE
+        ${PROJECT_BINARY_DIR}/lib/opensc-plugin/generated
+        ${PROJECT_SOURCE_DIR}/lib/opensc-plugin/src
+        ${PROJECT_SOURCE_DIR}/lib/opensc-pkcs11/src
+        ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+        ${PROJECT_SOURCE_DIR}/lib/plugin/src
+        ${PROJECT_SOURCE_DIR}/lib/pkcs15/src
+        ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
+    )
+    target_link_libraries(OpenscChannelLifecycleTests PRIVATE
+        GTest::gtest_main
+        CardPlugin_Impl
+        LibreSCRS_SmartCard
+        LibreSCRS_SmartCard_TestHelpers
+        SmartCard_Impl
+        opensc_static_with_deps
+        OpenSSL_Crypto
+    )
+    target_compile_definitions(OpenscChannelLifecycleTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+    add_dependencies(OpenscChannelLifecycleTests opensc-plugin)
+    gtest_discover_tests(OpenscChannelLifecycleTests)
 endif()
 
 # pkcs15-plugin PIN lifecycle classification tests (no hardware).
@@ -1382,6 +1476,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
         ${PROJECT_SOURCE_DIR}/lib/opensc-pkcs11/src
         ${PROJECT_SOURCE_DIR}/lib/smartcard/src
         ${PROJECT_SOURCE_DIR}/lib/plugin/src
+        ${PROJECT_SOURCE_DIR}/lib/pkcs15/src
         ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
     )
     target_link_libraries(OpenscChangePinSelectorTests PRIVATE

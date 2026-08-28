@@ -11,10 +11,16 @@
 #include <span>
 #include <string>
 
+#include <LibreSCRS/CancelToken.h>
+
 #include <libopensc/opensc.h> // sc_reader_t, sc_context_t, sc_reader_driver
 
 namespace LibreSCRS::SmartCard::Internal {
 class PCSCConnection;
+}
+
+namespace LibreSCRS::SecureChannel {
+class ISecureChannel;
 }
 
 namespace LibreSCRS::OpenSc::Bridge {
@@ -29,6 +35,19 @@ struct BridgeData
 {
     LibreSCRS::SmartCard::Internal::PCSCConnection* conn = nullptr;
     bool ownsTransaction = false;
+    /// Borrowed live secure channel. While non-null, the transmit op routes
+    /// every sc_apdu through @c channel->transmit (the tunnel branch) instead
+    /// of the raw connection: the channel SM-wraps and unwraps, so libopensc
+    /// above still runs its own GET RESPONSE / retry logic against the
+    /// UNWRAPPED SW it gets back. The plugin installs the pointer (together
+    /// with @c token) for the duration of ONE libopensc call under an active
+    /// channel holder and clears it afterwards; the bridge never owns or
+    /// tears down the channel.
+    LibreSCRS::SecureChannel::ISecureChannel* channel = nullptr;
+    /// Operation cancel token forwarded to @c channel->transmit on the
+    /// tunnel branch. Default-constructed (never-cancellable) until the
+    /// plugin installs the running operation's token alongside @c channel.
+    LibreSCRS::CancelToken token;
 };
 
 /// Heap-allocated block that keeps the @c sc_reader, its private data, and
