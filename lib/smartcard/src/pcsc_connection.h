@@ -108,6 +108,15 @@ public:
     // (SCardStatus(0, ...) throws) instead of silently returning {} --
     // callers like CardPlugin::canHandleConnection() depend on that failure
     // to short-circuit before any APDU reaches an un-rigged detached rig.
+    //
+    // DEFINED ONLY in the build-tree-only LibreSCRS_SmartCard_TestHelpers
+    // archive (lib/LibreSCRS/SmartCard/test_helpers/
+    // pcsc_connection_test_helpers.cpp), never in pcsc_connection.cpp, so no
+    // shipped LibreSCRS_*.so exports a way to arm the seam -- see the note at
+    // the former definition site for why a visibility attribute would not
+    // have been enough. Targets that need it link that archive alongside
+    // SmartCard_Impl; the member and the getATR() branch below stay in the
+    // production class, so the class layout is identical either way.
     void setDetachedAtr(std::vector<uint8_t> atr);
 
     // Low-level transmit that bypasses the TransmitFilter.

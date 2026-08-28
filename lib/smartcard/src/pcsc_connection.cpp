@@ -388,10 +388,20 @@ void PCSCConnection::setDetachedRawResponder(RawResponder responder)
     detachedRawResponder = std::move(responder);
 }
 
-void PCSCConnection::setDetachedAtr(std::vector<uint8_t> atr)
-{
-    detachedAtr = std::move(atr);
-}
+// PCSCConnection::setDetachedAtr is deliberately NOT defined here. Its body
+// lives in the build-tree-only LibreSCRS_SmartCard_TestHelpers archive
+// (lib/LibreSCRS/SmartCard/test_helpers/pcsc_connection_test_helpers.cpp),
+// so no shipped library carries a definition -- and therefore no dynamic
+// export -- for the only member that can arm the detached-ATR seam.
+//
+// A definition placed here would not stay private: this TU is compiled at
+// default visibility into libSmartCard_Impl.a, EMRTDCrypto's performBAC /
+// performPACE take a PCSCConnection&, and that reference drags this whole
+// object into libLibreSCRS_SecureChannel.so, where the `*LibreSCRS::*` glob
+// in cmake/librescrs-public-exports.map promotes every LibreSCRS-mentioning
+// symbol it finds. Being a dynamic export also roots the section, so
+// --gc-sections cannot drop it either -- which is why moving the definition
+// out, rather than annotating the declaration, is what removes it.
 
 APDUResponse PCSCConnection::transmitRaw(const APDUCommand& cmd)
 {

@@ -458,12 +458,24 @@ endif()
 # ──────────────────────────────────────────────────────────────────────────
 # Test-only helper archive.
 #
-# The three test-injection helpers (detail::makeMonitorWithProvider,
+# The test-injection helpers (detail::makeMonitorWithProvider,
 # detail::makeSubscriptionIdForTest, detail::ChannelInjector::
-# installForTesting) live here rather than in the production
-# libLibreSCRS_SmartCard so consumers of the released SDK never see the
-# helper symbols at link or runtime. Test executables that need the
+# installForTesting, Internal::shutdownSessionPresenceForTest,
+# Internal::PCSCConnection::setDetachedAtr) live here rather than in the
+# production libLibreSCRS_SmartCard so consumers of the released SDK never
+# see the helper symbols at link or runtime. Test executables that need the
 # helpers link this archive alongside the production target.
+#
+# PCSCConnection::setDetachedAtr is the odd one out in shape only: it is a
+# declared member of a production class (lib/smartcard/src/
+# pcsc_connection.h) rather than a free helper in its own namespace, so
+# only its DEFINITION moves here. The `detachedAtr` member and the
+# `card == 0` branch in getATR() stay in the production class — the class
+# layout is byte-identical either way, and the branch is inert until a
+# test arms it through the setter this archive supplies. Left in
+# pcsc_connection.cpp the definition reached the dynamic export set of
+# libLibreSCRS_SecureChannel.so, which pulls that object out of
+# libSmartCard_Impl.a for EMRTDCrypto's performBAC / performPACE.
 #
 # The archive is OBJECT (not STATIC) so its symbols merge directly into
 # every test executable that links it, with no archive-level
@@ -480,6 +492,7 @@ add_library(LibreSCRS_SmartCard_TestHelpers OBJECT
     SmartCard/test_helpers/monitor_test_helpers.cpp
     SmartCard/test_helpers/channel_test_helpers.cpp
     SmartCard/test_helpers/session_presence_test_helpers.cpp
+    SmartCard/test_helpers/pcsc_connection_test_helpers.cpp
 )
 target_link_libraries(LibreSCRS_SmartCard_TestHelpers
     PUBLIC LibreSCRS_SmartCard

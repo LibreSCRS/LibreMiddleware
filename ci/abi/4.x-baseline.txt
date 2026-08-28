@@ -206,7 +206,6 @@ LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders[abi:cxx11]()@@LM_4
 LibreSCRS::SmartCard::Internal::PCSCConnection::openRawDiagnostic(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)@@LM_4
 LibreSCRS::SmartCard::Internal::PCSCConnection::reconnect()@@LM_4
 LibreSCRS::SmartCard::Internal::PCSCConnection::reconnectWithReset()@@LM_4
-LibreSCRS::SmartCard::Internal::PCSCConnection::setDetachedAtr(std::vector<unsigned char, std::allocator<unsigned char> >)@@LM_4
 LibreSCRS::SmartCard::Internal::PCSCConnection::setDetachedRawResponder(std::function<LibreSCRS::SmartCard::Internal::APDUResponse (std::span<unsigned char const, 18446744073709551615ul>)>)@@LM_4
 LibreSCRS::SmartCard::Internal::PCSCConnection::setTransmitFilter(std::function<LibreSCRS::SmartCard::Internal::APDUResponse (LibreSCRS::SmartCard::Internal::APDUCommand const&)>)@@LM_4
 LibreSCRS::SmartCard::Internal::PCSCConnection::transmit(LibreSCRS::SmartCard::Internal::APDUCommand const&)@@LM_4

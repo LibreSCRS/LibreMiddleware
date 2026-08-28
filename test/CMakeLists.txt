@@ -139,10 +139,16 @@ gtest_discover_tests(RsEidCoreTests)
 add_executable(RsEidPluginTests
     rs-eid/eid_card_plugin_verification_test.cpp
 )
+# LibreSCRS_SmartCard_TestHelpers supplies PCSCConnection::setDetachedAtr:
+# the setter's definition lives in that build-tree-only archive so the
+# shipped libLibreSCRS_SmartCard exports no way to arm the detached-ATR
+# seam (see lib/LibreSCRS/CMakeLists.txt). SmartCard_Impl carries the rest
+# of PCSCConnection, so both are needed.
 target_link_libraries(RsEidPluginTests
     GTest::gtest_main
     CardPlugin_Impl
     SmartCard_Impl
+    LibreSCRS_SmartCard_TestHelpers
 )
 target_include_directories(RsEidPluginTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
