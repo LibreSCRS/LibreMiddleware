@@ -15,10 +15,21 @@
 #include <string>
 #include <vector>
 
-#include <apdu.h>
 #include <smartcard/i_connection.h>
 
 namespace LibreSCRS::SmartCard::Internal {
+
+// Forward declaration only: this header's public surface (ChunkedReadOptions
+// below) names APDUResponse solely as the return type of a std::function
+// member (readChunk), which does not require a complete type. The real
+// definition lives in the internal core-transport header `apdu.h` (LM-private,
+// LIBRESCRS_INTERNAL_BUILD-gated, resolved through the PRIVATE
+// lib/smartcard/src include path). chunked_read.cpp includes it directly for
+// the implementation; keeping it out of this header means a
+// LIBRESCRS_INTERNAL_BUILD consumer that only needs <smartcard/chunked_read.h>
+// no longer has to carry lib/smartcard/src on its own include path just to
+// resolve this one file.
+struct APDUResponse;
 
 /// Description of where the content length lives in the file header.
 /// Used by the default header parser; supply a custom parseHeader callback

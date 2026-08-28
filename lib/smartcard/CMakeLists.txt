@@ -31,11 +31,12 @@ add_library(SmartCard_Impl STATIC
     src/ef_dir.h
     # LC-bridge leaf types: small, dependency-free public-include surface
     # that may be reached from external consumers via the PUBLIC include
-    # path below. All three are self-contained — IConnection forward-
+    # path below. All four are self-contained — IConnection forward-
     # declares APDUCommand/APDUResponse, secure_buffer is a leaf RAII
-    # wrapper, and monitor_event is a POD — so the public surface does
-    # not transitively drag internal core-transport headers into
-    # LM-internal consumers.
+    # wrapper, monitor_event is a POD, and chunked_read forward-declares
+    # the one internal core-transport type (APDUResponse) it names — so
+    # the public surface does not transitively drag internal
+    # core-transport headers into LM-internal consumers.
     include/smartcard/i_connection.h
     include/smartcard/secure_buffer.h
     include/smartcard/secure_wipe.h
