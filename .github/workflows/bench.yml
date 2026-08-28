@@ -1,9 +1,12 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # SPDX-FileCopyrightText: 2026 hirashix0
 #
-# Performance regression smoke. Builds the benchmark targets and uploads the
-# raw JSON output; a future pass will diff against bench/baselines/*.json
-# and gate on a configurable threshold.
+# Performance regression gate. Builds the benchmark targets, compares each
+# candidate JSON run against the committed bench/baselines/4.2-*.json
+# reference with ci/scripts/bench-regression-gate.sh, and fails the job
+# on a cpu_time regression past BENCH_REGRESSION_THRESHOLD_PCT. The raw
+# JSON is still uploaded on both pass and fail so a flagged run can be
+# inspected without re-running CI.
 
 name: Bench
 
@@ -18,6 +21,10 @@ jobs:
   bench:
     name: Google Benchmark
     runs-on: ubuntu-latest
+    env:
+      # See ci/scripts/bench-regression-gate.sh and bench/README.md for
+      # why 20% and why cpu_time.
+      BENCH_REGRESSION_THRESHOLD_PCT: "20"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -64,7 +71,25 @@ jobs:
                   --benchmark_out=bench-results/$b.json || true
           done
 
+      - name: Compare against baseline
+        run: |
+          status=0
+          for b in bench_parsed_cert bench_trust_validate \
+                   bench_truststore_service; do
+              echo "::group::$b vs bench/baselines/4.2-$b.json"
+              ci/scripts/bench-regression-gate.sh \
+                  "bench/baselines/4.2-$b.json" \
+                  "bench-results/$b.json" \
+                  "$BENCH_REGRESSION_THRESHOLD_PCT" || status=1
+              echo "::endgroup::"
+          done
+          exit $status
+
+      # Runs even when the comparison above fails, so a flagged regression
+      # can still be inspected from the job's artifact instead of only its
+      # log.
       - name: Upload bench JSON
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: bench-results
