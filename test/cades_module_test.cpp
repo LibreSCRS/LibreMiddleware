@@ -6,6 +6,7 @@
 #ifdef LIBRESIGN_HAS_NATIVE
 
 #include "native/cades_module.h"
+#include "native/der_utils.h"
 #include "native/openssl_raii.h"
 #include "native/pkcs11_module_manager.h"
 #include "native/native_utils.h"
@@ -23,8 +24,11 @@
 #include <openssl/x509.h>
 
 #include <algorithm>
+#include <ctime>
+#include <initializer_list>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace libresign;
@@ -34,6 +38,10 @@ namespace {
 // id-smime-aa-signatureTimeStamp (RFC 3161 token carrier, ETSI EN 319 122-1
 // §5.3.1) — the unsigned attribute a B-T upgrade attaches to ONE SignerInfo.
 constexpr const char* kSignatureTimeStampOid = "1.2.840.113549.1.9.16.2.14";
+
+// id-smime-aa-ets-revValues (ETSI EN 319 122-1 §5.4.2) — the unsigned
+// attribute a B-LT upgrade attaches next to the B-T timestamp.
+constexpr const char* kRevocationValuesOid = "1.2.840.113549.1.9.16.2.24";
 
 // id-aa-ATSHashIndex (ETSI EN 319 122-1 §5.5.2) and
 // id-aa-ets-archiveTimestampV3 (§5.5.4) — the pair a B-LTA upgrade attaches.
@@ -111,17 +119,35 @@ int cmsCertCount(CMS_ContentInfo* cms)
     return n;
 }
 
-/// Self-signed throwaway CA, DER. Stands in for path material that the token
-/// does not carry, so the certificate-set union can be exercised with a
-/// certificate that is provably not already in the set.
-std::vector<uint8_t> makeSelfSignedCaDer(const std::string& cn)
+/// A software key pair and its self-signed certificate.
+///
+/// An archive timestamp is computed over the DOCUMENT — the signature octets,
+/// the certificates, the CRLs and the unsigned attributes — and never over the
+/// signing key, so a software signer reproduces the exact document a card-backed
+/// signer hands to the archive-timestamp step — which is what lets that step be
+/// exercised on a host with no PKCS#11 token.
+struct SoftwareIdentity
+{
+    libresign::EvpPkeyPtr key;
+    libresign::X509Ptr cert;
+
+    explicit operator bool() const
+    {
+        return key != nullptr && cert != nullptr;
+    }
+};
+
+/// Self-signed P-256 identity named @p cn, valid from an hour ago for a year.
+SoftwareIdentity makeSoftwareIdentity(const std::string& cn, long serial)
 {
     libresign::EvpPkeyPtr key(EVP_EC_gen("P-256"));
     if (!key)
         return {};
     libresign::X509Ptr x(X509_new());
+    if (!x)
+        return {};
     X509_set_version(x.get(), 2);
-    ASN1_INTEGER_set(X509_get_serialNumber(x.get()), 42);
+    ASN1_INTEGER_set(X509_get_serialNumber(x.get()), serial);
     X509_gmtime_adj(X509_getm_notBefore(x.get()), -3600);
     X509_gmtime_adj(X509_getm_notAfter(x.get()), 60L * 60 * 24 * 365);
     X509_set_pubkey(x.get(), key.get());
@@ -129,8 +155,20 @@ std::vector<uint8_t> makeSelfSignedCaDer(const std::string& cn)
                                reinterpret_cast<const unsigned char*>(cn.c_str()), -1, -1, 0);
     X509_NAME_add_entry_by_txt(X509_get_issuer_name(x.get()), "CN", MBSTRING_ASC,
                                reinterpret_cast<const unsigned char*>(cn.c_str()), -1, -1, 0);
-    X509_sign(x.get(), key.get(), EVP_sha256());
-    return libresign::native_utils::derEncode(i2d_X509, x.get());
+    if (!X509_sign(x.get(), key.get(), EVP_sha256()))
+        return {};
+    return SoftwareIdentity{std::move(key), std::move(x)};
+}
+
+/// Self-signed throwaway CA, DER. Stands in for path material that the token
+/// does not carry, so the certificate-set union can be exercised with a
+/// certificate that is provably not already in the set.
+std::vector<uint8_t> makeSelfSignedCaDer(const std::string& cn)
+{
+    auto ca = makeSoftwareIdentity(cn, 42);
+    if (!ca)
+        return {};
+    return libresign::native_utils::derEncode(i2d_X509, ca.cert.get());
 }
 
 /// Every certificate of the SignedData set, DER, in the stack's own order.
@@ -261,6 +299,131 @@ bool swapAdjacentBlocks(std::vector<uint8_t>& buf, const std::vector<uint8_t>& f
         return false;
     std::rotate(begin, mid, mid + static_cast<std::ptrdiff_t>(second.size()));
     return true;
+}
+
+/// A signed, empty v2 CRL issued by @p issuer and carrying @p crlNumber. Two
+/// CRLs from different issuers encode differently, which the SignedData crls
+/// SET OF needs before its order is observable at all.
+libresign::X509CrlPtr makeCrl(const SoftwareIdentity& issuer, long crlNumber)
+{
+    libresign::X509CrlPtr crl(X509_CRL_new());
+    if (!crl)
+        return nullptr;
+    X509_CRL_set_version(crl.get(), 1); // v2
+    if (!X509_CRL_set_issuer_name(crl.get(), X509_get_subject_name(issuer.cert.get())))
+        return nullptr;
+
+    const std::time_t now = std::time(nullptr);
+    std::unique_ptr<ASN1_TIME, decltype(&ASN1_TIME_free)> thisUpdate(ASN1_TIME_set(nullptr, now), ASN1_TIME_free);
+    std::unique_ptr<ASN1_TIME, decltype(&ASN1_TIME_free)> nextUpdate(ASN1_TIME_adj(nullptr, now, 30, 0),
+                                                                     ASN1_TIME_free);
+    if (!thisUpdate || !nextUpdate)
+        return nullptr;
+    X509_CRL_set1_lastUpdate(crl.get(), thisUpdate.get());
+    X509_CRL_set1_nextUpdate(crl.get(), nextUpdate.get());
+
+    libresign::ASN1IntPtr number(ASN1_INTEGER_new());
+    if (!number)
+        return nullptr;
+    ASN1_INTEGER_set(number.get(), crlNumber);
+    if (!X509_CRL_add1_ext_i2d(crl.get(), NID_crl_number, number.get(), 0, 0))
+        return nullptr;
+
+    if (!X509_CRL_sign(crl.get(), issuer.key.get(), EVP_sha256()))
+        return nullptr;
+    return crl;
+}
+
+/// Every CRL of the SignedData, DER, in the stack's own order — the analogue of
+/// @ref cmsCertDers for the crls field.
+std::vector<std::vector<uint8_t>> cmsCrlDers(CMS_ContentInfo* cms)
+{
+    std::vector<std::vector<uint8_t>> out;
+    STACK_OF(X509_CRL)* crls = CMS_get1_crls(cms);
+    if (!crls)
+        return out;
+    for (int i = 0; i < sk_X509_CRL_num(crls); ++i)
+        out.push_back(libresign::native_utils::derEncode(i2d_X509_CRL, sk_X509_CRL_value(crls, i)));
+    sk_X509_CRL_pop_free(crls, X509_CRL_free);
+    return out;
+}
+
+/// Every unsigned attribute of @p si, DER, in the stack's own order, minus the
+/// ones carrying an OID listed in @p exclude.
+std::vector<std::vector<uint8_t>> unsignedAttrDers(CMS_SignerInfo* si, std::initializer_list<const char*> exclude)
+{
+    std::vector<libresign::Asn1ObjectPtr> skip;
+    for (const char* oid : exclude)
+        skip.emplace_back(OBJ_txt2obj(oid, 1));
+
+    std::vector<std::vector<uint8_t>> out;
+    const int count = CMS_unsigned_get_attr_count(si);
+    for (int i = 0; i < count; ++i) {
+        X509_ATTRIBUTE* attr = CMS_unsigned_get_attr(si, i);
+        if (!attr)
+            continue;
+        bool excluded = false;
+        for (const auto& obj : skip)
+            excluded = excluded || (obj && OBJ_cmp(X509_ATTRIBUTE_get0_object(attr), obj.get()) == 0);
+        if (excluded)
+            continue;
+        out.push_back(libresign::native_utils::derEncode(i2d_X509_ATTRIBUTE, attr));
+    }
+    return out;
+}
+
+/// Attach @p valueDer under @p oid as an unsigned attribute of @p si — the same
+/// X509_ATTRIBUTE shape the B-T and B-LT rungs attach.
+bool addUnsignedSequenceAttr(CMS_SignerInfo* si, const char* oid, const std::vector<uint8_t>& valueDer)
+{
+    libresign::Asn1ObjectPtr obj(OBJ_txt2obj(oid, 1));
+    if (!obj)
+        return false;
+    libresign::X509AttributePtr attr(X509_ATTRIBUTE_create_by_OBJ(nullptr, obj.get(), V_ASN1_SEQUENCE, valueDer.data(),
+                                                                  static_cast<int>(valueDer.size())));
+    if (!attr)
+        return false;
+    return CMS_unsigned_add1_attr(si, attr.get()) == 1;
+}
+
+/// Rebuild the ats-hash-index attribute from the EMITTED document: hash every
+/// certificate, every CRL and every unsigned attribute it carries, each on its
+/// own, in that document's own order.
+///
+/// This RECOMPUTES the structure instead of reading back the attribute the
+/// signer wrote, which is the only way the caller's comparison can observe the
+/// ORDER the signer hashed in. It deliberately mirrors the composition
+/// addArchiveTimestampTo uses, so it pins that order and nothing beyond it — a
+/// composition that disagrees with the standard would satisfy it too.
+///
+/// The two attributes THIS archive timestamp contributed are left out, because
+/// neither existed when the index was built. That subtraction is only correct
+/// for a first archive timestamp: on a re-stamped document the previous round's
+/// attributes were present at request time and would have to stay in.
+std::vector<uint8_t> recomputeAtsHashIndex(CMS_ContentInfo* cms, CMS_SignerInfo* si)
+{
+    // hashIndAlgorithm: SEQUENCE { OID 2.16.840.1.101.3.4.2.1 (sha256), NULL }
+    static const std::vector<uint8_t> kSha256AlgId = {0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01,
+                                                      0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00};
+
+    auto hashesOf = [](const std::vector<std::vector<uint8_t>>& ders) {
+        std::vector<uint8_t> inner;
+        for (const auto& der : ders) {
+            const auto octets = libresign::derOctetString(libresign::native_utils::sha256(der));
+            inner.insert(inner.end(), octets.begin(), octets.end());
+        }
+        return libresign::derSequence(inner);
+    };
+
+    const auto certsHashIndex = hashesOf(cmsCertDers(cms));
+    const auto crlsHashIndex = hashesOf(cmsCrlDers(cms));
+    const auto attrsHashIndex = hashesOf(unsignedAttrDers(si, {kAtsHashIndexOid, kArchiveTimeStampOid}));
+
+    std::vector<uint8_t> content = kSha256AlgId;
+    content.insert(content.end(), certsHashIndex.begin(), certsHashIndex.end());
+    content.insert(content.end(), crlsHashIndex.begin(), crlsHashIndex.end());
+    content.insert(content.end(), attrsHashIndex.begin(), attrsHashIndex.end());
+    return libresign::derSequence(content);
 }
 
 } // namespace
@@ -620,6 +783,154 @@ TEST_F(CAdESModuleTest, ArchiveTimestampImprintDescribesTheEmittedCertificateOrd
 }
 
 // Non-SoftHSM tests
+
+// ---- Archive timestamp over the document the level ladder builds ----
+//
+// Every production B-LTA reaches the archive-timestamp step from the level
+// ladder, on a document the earlier rungs have grown: B-T left a
+// signature-timestamp unsigned attribute on the SignerInfo, and B-LT embedded
+// the certificate chain beside the signer's leaf and left a revocation-values
+// unsigned attribute beside the timestamp. Those two fields — certificates and
+// unsignedAttrs — are ASN.1 SET OFs, filled in insertion order and re-ordered
+// by i2d on the way out, so the hash index and the imprint only stay
+// reproducible from the emitted bytes when both were computed over the order
+// the emitted document carries.
+//
+// The fixture also carries two CRLs in SignedData.crls, which no LibreSCRS
+// signing path currently fills — revocation data goes into the
+// revocation-values attribute instead, never into that field. That part of the
+// coverage is defensive: it guards the crls reads against a future path that
+// does populate the field, and it does not describe a document the product
+// emits today.
+//
+// Reaching this step through sign() needs a Pkcs11Token, so no test in the gate
+// drives the ladder itself. The document does not need one: an archive
+// timestamp covers certificates, CRLs, unsigned attributes and the signature
+// octets, never the signing key, so a software signer reproduces the same input
+// and the helper can be exercised on a host with no PKCS#11 module at all.
+//
+// Both SET OFs are then spliced back out of sorted order — each swap is
+// length-preserving, so every enclosing DER length stays valid and the document
+// still parses. Without that divergence the assertions below cannot tell an
+// emitted-order index from an insertion-order one.
+//
+// What the two assertions establish is internal consistency of ORDER: the
+// oracle rebuilds the hash index and the imprint from the emitted document by
+// the same recipe addArchiveTimestampTo uses, so it pins that the helper read
+// its inputs in the order the document ends up carrying. It is not a
+// conformance check — it mirrors the implementation's own composition, so a
+// composition that disagrees with the standard would satisfy it.
+TEST(CAdESArchiveTimestamp, HashIndexAndImprintDescribeTheEmittedDocument)
+{
+    libresign::test::MockTsaServer tsaServer;
+    CAdESModule cades;
+    const std::vector<uint8_t> data = {'A', 'r', 'c', 'h', 'i', 'v', 'e'};
+
+    const auto signer = makeSoftwareIdentity("LibreSCRS CAdES Archive Signer", 101);
+    const auto chainCa = makeSoftwareIdentity("LibreSCRS CAdES Archive Chain CA", 102);
+    const auto otherCa = makeSoftwareIdentity("LibreSCRS CAdES Archive Other CA", 103);
+    ASSERT_TRUE(signer && chainCa && otherCa);
+    const auto signerCertDer = libresign::native_utils::derEncode(i2d_X509, signer.cert.get());
+    ASSERT_FALSE(signerCertDer.empty());
+
+    // B-B, in signBB's shape: partial, binary, detached, no S/MIME capabilities.
+    constexpr unsigned int kFlags = CMS_PARTIAL | CMS_BINARY | CMS_DETACHED | CMS_NOSMIMECAP;
+    libresign::BioPtr signBio(BIO_new_mem_buf(data.data(), static_cast<int>(data.size())));
+    ASSERT_NE(signBio.get(), nullptr);
+    libresign::CmsPtr cms(CMS_sign(nullptr, nullptr, nullptr, signBio.get(), kFlags));
+    ASSERT_NE(cms.get(), nullptr);
+    ASSERT_NE(CMS_add1_signer(cms.get(), signer.cert.get(), signer.key.get(), EVP_sha256(), kFlags), nullptr);
+    libresign::BioPtr finalBio(BIO_new_mem_buf(data.data(), static_cast<int>(data.size())));
+    ASSERT_NE(finalBio.get(), nullptr);
+    ASSERT_EQ(CMS_final(cms.get(), finalBio.get(), nullptr, CMS_BINARY | CMS_DETACHED), 1);
+
+    // B-LT: chain material beside the leaf. The CRLs go into SignedData.crls,
+    // which no signing path fills today — see the header on why they are here.
+    ASSERT_EQ(CMS_add1_cert(cms.get(), chainCa.cert.get()), 1);
+    const auto chainCrl = makeCrl(chainCa, 7);
+    const auto otherCrl = makeCrl(otherCa, 8);
+    ASSERT_TRUE(chainCrl && otherCrl);
+    ASSERT_EQ(CMS_add1_crl(cms.get(), chainCrl.get()), 1);
+    ASSERT_EQ(CMS_add1_crl(cms.get(), otherCrl.get()), 1);
+
+    // B-T and B-LT unsigned attributes. Equal-length values on purpose: the
+    // SET OF order then turns on the OID alone, which keeps the fixture's
+    // before/after ordering the same on every OpenSSL build.
+    STACK_OF(CMS_SignerInfo)* built = CMS_get0_SignerInfos(cms.get());
+    ASSERT_EQ(sk_CMS_SignerInfo_num(built), 1);
+    CMS_SignerInfo* builtSi = sk_CMS_SignerInfo_value(built, 0);
+    const std::vector<uint8_t> timeStampValue =
+        libresign::derSequence(libresign::derOctetString(std::vector<uint8_t>(24, 0xA1)));
+    const std::vector<uint8_t> revValuesValue =
+        libresign::derSequence(libresign::derOctetString(std::vector<uint8_t>(24, 0xB2)));
+    ASSERT_TRUE(addUnsignedSequenceAttr(builtSi, kSignatureTimeStampOid, timeStampValue));
+    ASSERT_TRUE(addUnsignedSequenceAttr(builtSi, kRevocationValuesOid, revValuesValue));
+
+    // Encode once: i2d writes every SET OF in sorted-encoding order, so this is
+    // the order the document carries, and the order any reader of it sees.
+    const auto sorted = libresign::native_utils::derEncode(i2d_CMS_ContentInfo, cms.get());
+    ASSERT_FALSE(sorted.empty());
+    auto sortedCms = parseCmsOrDie(sorted);
+    ASSERT_NE(sortedCms.get(), nullptr);
+    CMS_SignerInfo* sortedSi = signerInfoForCert(sortedCms.get(), signerCertDer);
+    ASSERT_NE(sortedSi, nullptr);
+    const auto sortedCerts = cmsCertDers(sortedCms.get());
+    const auto sortedCrls = cmsCrlDers(sortedCms.get());
+    const auto sortedAttrs = unsignedAttrDers(sortedSi, {});
+    ASSERT_EQ(sortedCerts.size(), 2u) << "an order needs two members before it means anything";
+    ASSERT_EQ(sortedCrls.size(), 2u);
+    ASSERT_EQ(sortedAttrs.size(), 2u) << "the ladder leaves the B-T timestamp and the B-LT revocation values";
+
+    // Splice each SET OF back out of sorted order, the way the ladder leaves the
+    // in-memory stacks before the final encode re-sorts them.
+    auto unsorted = sorted;
+    ASSERT_TRUE(swapAdjacentBlocks(unsorted, sortedCerts[0], sortedCerts[1]))
+        << "fixture: the certificates are not back to back inside the certificates SET OF";
+    ASSERT_TRUE(swapAdjacentBlocks(unsorted, sortedCrls[0], sortedCrls[1]))
+        << "fixture: the CRLs are not back to back inside the crls SET OF";
+    ASSERT_TRUE(swapAdjacentBlocks(unsorted, sortedAttrs[0], sortedAttrs[1]))
+        << "fixture: the unsigned attributes are not back to back inside the unsignedAttrs SET OF";
+    ASSERT_EQ(unsorted.size(), sorted.size()) << "fixture: a swap must preserve every enclosing DER length";
+
+    auto unsortedCms = parseCmsOrDie(unsorted);
+    ASSERT_NE(unsortedCms.get(), nullptr) << "a SET OF in non-sorted order must still parse";
+    CMS_SignerInfo* unsortedSi = signerInfoForCert(unsortedCms.get(), signerCertDer);
+    ASSERT_NE(unsortedSi, nullptr);
+    ASSERT_NE(cmsCertDers(unsortedCms.get()), sortedCerts) << "precondition: certificate order must diverge";
+    ASSERT_NE(cmsCrlDers(unsortedCms.get()), sortedCrls) << "precondition: CRL order must diverge";
+    ASSERT_NE(unsignedAttrDers(unsortedSi, {}), sortedAttrs) << "precondition: attribute order must diverge";
+
+    TSAConfig tsa;
+    tsa.url = tsaServer.url();
+    const auto stamped = cades.addArchiveTimestamp(unsorted, tsa);
+    ASSERT_FALSE(stamped.empty());
+    EXPECT_EQ(tsaServer.servedCount(), 1) << "exactly one RFC 3161 round-trip, for the archive timestamp";
+
+    auto emitted = parseCmsOrDie(stamped);
+    ASSERT_NE(emitted.get(), nullptr);
+    CMS_SignerInfo* si = signerInfoForCert(emitted.get(), signerCertDer);
+    ASSERT_NE(si, nullptr);
+
+    // The emitted document is back in sorted order, so all three orders the
+    // helper could have read off the live structure are orders it does not
+    // carry — which is what makes the two assertions below discriminating.
+    ASSERT_EQ(cmsCertDers(emitted.get()), sortedCerts) << "the encode did not re-sort the certificate set";
+    ASSERT_EQ(cmsCrlDers(emitted.get()), sortedCrls) << "the encode did not re-sort the CRL set";
+    ASSERT_EQ(unsignedAttrDers(si, {kAtsHashIndexOid, kArchiveTimeStampOid}), sortedAttrs)
+        << "the encode did not re-sort the unsigned attributes";
+
+    EXPECT_EQ(unsignedAttrValue(si, kAtsHashIndexOid), recomputeAtsHashIndex(emitted.get(), si))
+        << "the ats-hash-index attribute indexes an order the emitted document does not carry, so it cannot "
+           "be rebuilt from the document that ends up on disk";
+
+    const auto token = unsignedAttrValue(si, kArchiveTimeStampOid);
+    ASSERT_FALSE(token.empty()) << "the archive timestamp attribute is missing";
+    const auto stampedImprint = tokenMessageImprint(token);
+    ASSERT_EQ(stampedImprint.size(), 32u) << "SHA-256 message imprint expected";
+    EXPECT_EQ(recomputeArchiveImprint(emitted.get(), si), stampedImprint)
+        << "the archive timestamp was minted over an order the emitted document does not carry, so the "
+           "imprint cannot be reproduced from the document that ends up on disk";
+}
 
 TEST(CAdESModuleStandalone, RejectsEmptyInput)
 {
