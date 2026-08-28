@@ -425,6 +425,93 @@ TEST(EMRTDHardwareTest, PaceCanEndToEnd)
         EXPECT_EQ(chipAuth->find("FAILED"), std::string::npos) << "chip_auth FAILED on a genuine card";
 }
 
+// Every advertised data group the plugin can parse must come out of a PACE-CAN
+// read as its own group. The failure this pins: an EAC-protected DG (DG3) has
+// no Terminal Authentication available, and on the SRB-eID-V2.00 family its
+// SM SELECT is answered with 6988 AND the card then kills the SM session — so
+// every LATER file (DG11, DG12, the national annex) died collaterally with
+// 6F02, silently: the holder saw a read that "worked" minus their address and
+// issuing data. The EAC-protected pair must instead surface as "EAC required"
+// without an on-card attempt while the rest of the advertised set survives.
+// Set LIBRESCRS_TEST_CAN (and optionally LIBRESCRS_TEST_READER_INDEX) to run.
+TEST(EMRTDHardwareTest, PaceCanAdvertisedReadableGroupsAllArrive)
+{
+    SKIP_IF_AUTH_FAILED();
+    const char* can = std::getenv("LIBRESCRS_TEST_CAN");
+    if (can == nullptr || *can == '\0')
+        GTEST_SKIP() << "Set LIBRESCRS_TEST_CAN to run";
+
+    auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
+    if (readers.empty())
+        GTEST_SKIP() << "No smart card readers found";
+
+    std::size_t idx = 0;
+    if (const char* r = std::getenv("LIBRESCRS_TEST_READER_INDEX"))
+        idx = static_cast<std::size_t>(std::atoi(r));
+    if (idx >= readers.size())
+        GTEST_SKIP() << "reader index out of range";
+
+    CardPluginService registry{pluginDir()};
+    auto emrtd = findEMRTD(registry);
+    ASSERT_NE(emrtd, nullptr);
+
+    auto opened = LibreSCRS::SmartCard::CardSession::open(readers[idx]);
+    if (!opened.has_value())
+        GTEST_SKIP() << "Cannot open CardSession on reader " << readers[idx];
+    auto session = std::make_shared<LibreSCRS::SmartCard::CardSession>(std::move(*opened));
+
+    ASSERT_TRUE(emrtd->canHandleConnection({}, *session));
+    emrtd->setCredentials(*session, "can", LibreSCRS::Secure::String{std::string{can}});
+
+    auto result = readCardWithStreaming(emrtd, *session);
+    if (result.data.groups.empty()) {
+        g_authFailed = true;
+        FAIL() << "readCard returned no groups (PACE-CAN failed?)";
+    }
+
+    std::optional<std::string> dataGroups;
+    std::vector<std::string> groupKeys;
+    for (const auto& g : result.data.groups) {
+        groupKeys.push_back(g.groupKey);
+        for (const auto& f : g.fields) {
+            if (g.groupKey == "presence" && f.key == "data_groups")
+                dataGroups = f.textValue();
+        }
+    }
+    ASSERT_TRUE(dataGroups.has_value()) << "presence group carries no data_groups list";
+
+    const auto advertised = [&](int dg) { return dataGroups->find("DG" + std::to_string(dg)) != std::string::npos; };
+    const auto haveGroup = [&](const char* key) {
+        return std::find(groupKeys.begin(), groupKeys.end(), std::string{key}) != groupKeys.end();
+    };
+
+    // Parsed, PACE-readable DGs: advertised -> the group must have arrived.
+    if (advertised(1)) {
+        EXPECT_TRUE(haveGroup("personal")) << "DG1 advertised but the personal group is missing";
+        EXPECT_TRUE(haveGroup("document")) << "DG1 advertised but the document group is missing";
+    }
+    if (advertised(2))
+        EXPECT_TRUE(haveGroup("photo")) << "DG2 advertised but the photo group is missing";
+    if (advertised(5))
+        EXPECT_TRUE(haveGroup("portrait")) << "DG5 advertised but the portrait group is missing";
+    if (advertised(7))
+        EXPECT_TRUE(haveGroup("signature")) << "DG7 advertised but the signature group is missing";
+    if (advertised(11))
+        EXPECT_TRUE(haveGroup("additional")) << "DG11 advertised but the additional group is missing";
+    if (advertised(12))
+        EXPECT_TRUE(haveGroup("document_extra")) << "DG12 advertised but the issuing group is missing";
+    if (advertised(13))
+        EXPECT_TRUE(haveGroup("national")) << "DG13 advertised but the national group is missing";
+
+    // EAC-protected pair: advertised -> surfaced honestly as gated, never
+    // silently dropped (and, per the root cause above, never SELECTed under
+    // SM in the first place — the collateral assertion is the set above).
+    if (advertised(3))
+        EXPECT_TRUE(haveGroup("biometric_fingerprint")) << "DG3 advertised but not surfaced as EAC-gated";
+    if (advertised(4))
+        EXPECT_TRUE(haveGroup("biometric_iris")) << "DG4 advertised but not surfaced as EAC-gated";
+}
+
 // Contact plain read: a dual-interface document whose LDS is readable in plain
 // on the contact interface exercises the plain->Chip-Authentication->SM upgrade
 // on real hardware — the path unit tests cover with a synthetic ECDH chip. No

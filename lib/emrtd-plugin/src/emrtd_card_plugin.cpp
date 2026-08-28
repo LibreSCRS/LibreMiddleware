@@ -850,7 +850,19 @@ private:
             if (dg == 14 || dg == 15)
                 continue;
 
-            auto dgResult = cardObj->readDataGroupSafe(dg);
+            // DG3/DG4 sit behind EAC Terminal Authentication, which this
+            // reader cannot perform — the card will never release them, so
+            // under an active SM channel the SELECT is not even attempted.
+            // Not just an optimization: the SRB-eID-V2.00 family answers that
+            // SM SELECT with 6988 and then kills the whole SM session, so
+            // every later file (DG11, DG12, the national annex) died
+            // collaterally with 6F02 — silently. On a plain channel the live
+            // probe stays: a refusal there is harmless, and per-document
+            // behaviour varies.
+            const bool smChannelActive = !plainRead || chipAuthUpgraded;
+            const emrtd::DGReadResult dgResult = ((dg == 3 || dg == 4) && smChannelActive)
+                                                     ? emrtd::DGReadResult{emrtd::DGReadStatus::ACCESS_DENIED, {}}
+                                                     : cardObj->readDataGroupSafe(dg);
             if (dgResult.status == emrtd::DGReadStatus::OK && !dgResult.data.empty()) {
                 dgRawData[dg] = dgResult.data;
             }
