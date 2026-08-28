@@ -51,11 +51,12 @@ struct TSARequest
 ///        HTTP request itself — they are consumed by @ref RevocationClient.
 inline TSARequest toTsaRequest(const TSAConfig& cfg)
 {
-    TSARequest req;
-    req.url = cfg.url;
-    req.credentials = cfg.credentials;
-    req.timeoutSeconds = cfg.timeoutSeconds;
-    return req;
+    // Aggregate copy-construction, not member-wise copy-ASSIGNMENT: the
+    // assignment form runs std::optional's destroy-then-construct payload
+    // path for `credentials`, which GCC 16.2 misanalyses at -O3 into a
+    // -Wmaybe-uninitialized false positive inside the inlined
+    // variant/shared_ptr storage (breaking -Werror builds).
+    return TSARequest{cfg.url, cfg.credentials, cfg.timeoutSeconds};
 }
 
 /// @brief RFC 3161 Time-Stamp Protocol client.
