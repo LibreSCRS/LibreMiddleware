@@ -353,6 +353,14 @@ target_link_libraries(TrustStoreServiceCreateExpectedTests PRIVATE
 )
 gtest_discover_tests(TrustStoreServiceCreateExpectedTests)
 
+# TrustConfig::Builder per-setter validation tests.
+add_executable(TrustConfigBuilderTests trust_config_builder_test.cpp)
+target_link_libraries(TrustConfigBuilderTests PRIVATE
+    GTest::gtest_main
+    LibreSCRS::Trust
+)
+gtest_discover_tests(TrustConfigBuilderTests)
+
 # PCSCConnection TransmitFilter tests
 add_executable(pcsc_connection_filter_test pcsc_connection_filter_test.cpp)
 target_link_libraries(pcsc_connection_filter_test SmartCard_Impl GTest::gtest_main)

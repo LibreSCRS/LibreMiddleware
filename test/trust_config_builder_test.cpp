@@ -117,6 +117,27 @@ TEST(TrustConfigBuilderTest, SetTrustedListFileRejectsMissingFile)
     EXPECT_THROW(b.setTrustedListFile("/no/such/tl.xml"), std::invalid_argument);
 }
 
+TEST(TrustConfigBuilderTest, SetTrustedListFileSigningCertAcceptsExistingFile)
+{
+    auto tmp = std::filesystem::temp_directory_path() / "librescrs-tcb-test-cert.pem";
+    {
+        std::ofstream out(tmp);
+        out << "-----BEGIN CERTIFICATE-----\n";
+    }
+    TrustConfig::Builder b;
+    b.setTrustedListFileSigningCert(tmp);
+    auto cfg = std::move(b).build();
+    ASSERT_TRUE(cfg.trustedListFileSigningCert.has_value());
+    EXPECT_EQ(*cfg.trustedListFileSigningCert, tmp);
+    std::filesystem::remove(tmp);
+}
+
+TEST(TrustConfigBuilderTest, SetTrustedListFileSigningCertRejectsMissingFile)
+{
+    TrustConfig::Builder b;
+    EXPECT_THROW(b.setTrustedListFileSigningCert("/no/such/cert.pem"), std::invalid_argument);
+}
+
 TEST(TrustConfigBuilderTest, FluentChainProducesCompleteConfig)
 {
     auto tmp = std::filesystem::temp_directory_path();
