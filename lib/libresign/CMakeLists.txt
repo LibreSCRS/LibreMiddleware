@@ -127,6 +127,7 @@ if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
         src/native/ttf_subset.h
         src/native/pdf_font.h
         src/native/xml_raii.h
+        src/native/zip_records.h
     )
 endif()
 

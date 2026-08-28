@@ -4,6 +4,7 @@
 #include "native/asic_module.h"
 #include "native/cades_module.h"
 #include "native/pkcs11_token.h"
+#include "native/zip_records.h"
 #include "native_utils.h"
 
 #include "miniz.h"
@@ -39,19 +40,10 @@ struct ScopeGuard
 
 using namespace libresign::native_utils;
 
-void appendLE16(std::vector<uint8_t>& v, uint16_t val)
-{
-    v.push_back(static_cast<uint8_t>(val & 0xFF));
-    v.push_back(static_cast<uint8_t>(val >> 8));
-}
-
-void appendLE32(std::vector<uint8_t>& v, uint32_t val)
-{
-    v.push_back(static_cast<uint8_t>(val & 0xFF));
-    v.push_back(static_cast<uint8_t>((val >> 8) & 0xFF));
-    v.push_back(static_cast<uint8_t>((val >> 16) & 0xFF));
-    v.push_back(static_cast<uint8_t>(val >> 24));
-}
+// The hand-built mimetype entry and the End of Central Directory record share
+// one set of little-endian writers with the ZIP64 records.
+using zip::appendLE16;
+using zip::appendLE32;
 
 // Build the mimetype ZIP entry by hand — ETSI EN 319 162-1 §5.2.1 requires:
 // STORED (no compression), no extra field, no data descriptor, CRC/sizes in
@@ -467,41 +459,22 @@ SigningResult ASiCModule::signWithCAdES(const std::vector<uint8_t>& data, const 
     }};
     auto minizData = std::span(static_cast<const uint8_t*>(buf), bufSize);
 
-    // Parse miniz output to find central directory location.
-    // EOCD is at the end: scan backwards for PK\x05\x06.
-    if (bufSize < 22)
-        return makeFailure(SignFailureKind::ZipBuildError, "ASiC-E: archive too small for EOCD");
-    size_t eocdOff = 0;
-    bool eocdFound = false;
-    // Scan from (bufSize - 22) down to 0 inclusive. Use signed loop to avoid
-    // size_t underflow at i == 0.
-    for (ptrdiff_t i = static_cast<ptrdiff_t>(bufSize) - 22; i >= 0; --i) {
-        if (minizData[i] == 0x50 && minizData[i + 1] == 0x4B && minizData[i + 2] == 0x05 && minizData[i + 3] == 0x06) {
-            eocdOff = static_cast<size_t>(i);
-            eocdFound = true;
-            break;
-        }
-    }
-    if (!eocdFound)
+    // Parse miniz output to find the central directory. miniz emits the ZIP64
+    // records itself once an entry crosses 4 GiB, so the sizes and offsets
+    // here are read as 64-bit values through the sentinel-aware reader.
+    const auto minizEocd = zip::readEndOfCentralDirectory(minizData);
+    if (!minizEocd)
         return makeFailure(SignFailureKind::ZipBuildError, "ASiC-E: EOCD record not found in archive");
-
-    // Read EOCD fields
-    uint16_t cdEntries =
-        static_cast<uint16_t>(minizData[eocdOff + 10]) | static_cast<uint16_t>(minizData[eocdOff + 11] << 8);
-    uint32_t cdSize =
-        static_cast<uint32_t>(minizData[eocdOff + 12]) | (static_cast<uint32_t>(minizData[eocdOff + 13]) << 8) |
-        (static_cast<uint32_t>(minizData[eocdOff + 14]) << 16) | (static_cast<uint32_t>(minizData[eocdOff + 15]) << 24);
-    uint32_t cdOff =
-        static_cast<uint32_t>(minizData[eocdOff + 16]) | (static_cast<uint32_t>(minizData[eocdOff + 17]) << 8) |
-        (static_cast<uint32_t>(minizData[eocdOff + 18]) << 16) | (static_cast<uint32_t>(minizData[eocdOff + 19]) << 24);
 
     // Bounds-check cdOff + cdSize against the archive size before subspan.
     // miniz output is trusted, but a defensive check costs nothing and
     // prevents a subspan out-of-range throw (or UB in release) if miniz
     // ever produces a malformed archive or if this path accepts
     // attacker-supplied ZIPs in the future.
-    if (cdOff > bufSize || cdSize > bufSize - cdOff)
+    if (minizEocd->centralDirOffset > bufSize || minizEocd->centralDirSize > bufSize - minizEocd->centralDirOffset)
         return makeFailure(SignFailureKind::ZipBuildError, "ASiC-E: malformed EOCD (cdOff/cdSize exceed archive size)");
+    const auto cdOff = static_cast<size_t>(minizEocd->centralDirOffset);
+    const auto cdSize = static_cast<size_t>(minizEocd->centralDirSize);
 
     // Local file entries from miniz (before central directory)
     auto localEntries = minizData.subspan(0, cdOff);
@@ -511,7 +484,8 @@ SigningResult ASiCModule::signWithCAdES(const std::vector<uint8_t>& data, const 
     // Build result: mimetype local + miniz locals (offset-shifted) + mimetype CD +
     //               miniz CD (offset-shifted) + new EOCD
     std::vector<uint8_t> result;
-    result.reserve(mimetypeEntry.size() + localEntries.size() + mimetypeCDEntry.size() + cdEntryData.size() + 22);
+    result.reserve(mimetypeEntry.size() + localEntries.size() + mimetypeCDEntry.size() + cdEntryData.size() +
+                   zip::kZip64EocdSize + zip::kZip64EocdLocatorSize + zip::kEocdSize);
 
     // A. Mimetype local file entry
     result.insert(result.end(), mimetypeEntry.begin(), mimetypeEntry.end());
@@ -520,61 +494,22 @@ SigningResult ASiCModule::signWithCAdES(const std::vector<uint8_t>& data, const 
     result.insert(result.end(), localEntries.begin(), localEntries.end());
 
     // C. Central directory: mimetype first
-    auto newCdOff = static_cast<uint32_t>(result.size());
+    const uint64_t newCdOff = result.size();
     result.insert(result.end(), mimetypeCDEntry.begin(), mimetypeCDEntry.end());
 
-    // D. Miniz central directory entries — adjust local header offsets by +mimetypeLocalSize
-    for (size_t i = 0; i < cdSize;) {
-        if (i + 46 > cdSize)
-            break;
-        // Read filename length, extra length, comment length to compute entry size
-        uint16_t fnLen = static_cast<uint16_t>(cdEntryData[i + 28]) | static_cast<uint16_t>(cdEntryData[i + 29] << 8);
-        uint16_t exLen = static_cast<uint16_t>(cdEntryData[i + 30]) | static_cast<uint16_t>(cdEntryData[i + 31] << 8);
-        uint16_t cmLen = static_cast<uint16_t>(cdEntryData[i + 32]) | static_cast<uint16_t>(cdEntryData[i + 33] << 8);
-        size_t entrySize = 46 + fnLen + exLen + cmLen;
-        // Defensive: cdEntryData is generated by miniz so this should always
-        // hold, but a malformed buffer would otherwise let us read past the
-        // end of the span. Stop walking and emit whatever we already copied.
-        if (i + entrySize > cdSize)
-            break;
+    // D. Miniz central directory entries — adjust local header offsets by
+    //    +mimetypeLocalSize. An offset past 4 GiB lives in the entry's ZIP64
+    //    Extended Information field rather than the fixed 32-bit slot, so the
+    //    shift goes through the ZIP64-aware walk, which the tests drive too.
+    if (!zip::appendShiftedCentralDirectory(result, cdEntryData, mimetypeLocalSize))
+        return makeFailure(SignFailureKind::ZipBuildError, "ASiC-E: malformed central directory entry");
 
-        // Copy the entry
-        size_t insertPos = result.size();
-        result.insert(result.end(), cdEntryData.begin() + static_cast<ptrdiff_t>(i),
-                      cdEntryData.begin() + static_cast<ptrdiff_t>(i + entrySize));
-
-        // Patch local header offset at +42 from entry start
-        size_t offPos = insertPos + 42;
-        uint32_t lhOff = static_cast<uint32_t>(result[offPos]) | (static_cast<uint32_t>(result[offPos + 1]) << 8) |
-                         (static_cast<uint32_t>(result[offPos + 2]) << 16) |
-                         (static_cast<uint32_t>(result[offPos + 3]) << 24);
-        lhOff += mimetypeLocalSize;
-        result[offPos] = static_cast<uint8_t>(lhOff & 0xFF);
-        result[offPos + 1] = static_cast<uint8_t>((lhOff >> 8) & 0xFF);
-        result[offPos + 2] = static_cast<uint8_t>((lhOff >> 16) & 0xFF);
-        result[offPos + 3] = static_cast<uint8_t>(lhOff >> 24);
-
-        i += entrySize;
-    }
-
-    // E. End of central directory record. The ZIP EOCD stores CD size /
-    // offset as 32-bit. Archives > 4 GiB would require ZIP64, which we do
-    // not emit — refuse loudly instead of silently truncating and writing
-    // a corrupt archive that later tools will misread.
-    const size_t newCdSizeBytes = result.size() - newCdOff;
-    if (newCdSizeBytes > UINT32_MAX || newCdOff > UINT32_MAX)
-        return makeFailure(SignFailureKind::ZipBuildError, "ASiC-E: archive exceeds 4 GiB (ZIP64 not supported)");
-    const auto newCdSize = static_cast<uint32_t>(newCdSizeBytes);
-    const auto newCdOff32 = static_cast<uint32_t>(newCdOff);
-    uint16_t totalEntries = cdEntries + 1; // add mimetype
-    appendLE32(result, 0x06054b50);        // EOCD signature
-    appendLE16(result, 0);                 // disk number
-    appendLE16(result, 0);                 // disk with CD
-    appendLE16(result, totalEntries);
-    appendLE16(result, totalEntries);
-    appendLE32(result, newCdSize);
-    appendLE32(result, newCdOff32);
-    appendLE16(result, 0); // comment length
+    // E. End of central directory record, preceded by the ZIP64 End of Central
+    //    Directory Record + Locator once the central directory outgrows the
+    //    32-bit fields of the classic record (APPNOTE.TXT §4.3.14–§4.3.16).
+    const uint64_t newCdSizeBytes = result.size() - newCdOff;
+    const uint64_t totalEntries = minizEocd->entryCount + 1; // add mimetype
+    zip::appendEndOfCentralDirectory(result, newCdOff, newCdSizeBytes, totalEntries);
 
     return makeSuccess(std::move(result));
 }
