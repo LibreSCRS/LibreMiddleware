@@ -184,11 +184,68 @@ object_exists() {
 WORKDIR="$(mktemp -d "$STORE_DIR/certgen.XXXXXX")"
 trap 'rm -rf "$WORKDIR"' EXIT
 
+# Run an openssl sub-command, keeping its stderr for the failure message.
+# Swallowing it (>/dev/null 2>&1) turns every failure into a bare "failed"
+# with no reason, which is exactly how the -not_before flag below shipped
+# green locally and died opaquely on the runner.
+openssl_or_fatal() {
+    local what="$1"
+    shift
+    if ! openssl "$@" >"$WORKDIR/openssl.out" 2>"$WORKDIR/openssl.err"; then
+        fatal 3 "openssl $what failed: $(tr '\n' ' ' < "$WORKDIR/openssl.err" | head -c 400)"
+    fi
+}
+
+# Self-sign a backdated certificate for an existing key.
+#
+# `openssl req -x509 -not_before/-not_after` would be the obvious way, but
+# those flags arrived in OpenSSL 3.5 and the CI runner (Ubuntu 24.04) ships
+# 3.0.13, where they are unknown options. `openssl ca -selfsign` with
+# -startdate/-enddate has accepted explicit dates for far longer, so it is
+# the single path used everywhere -- deliberately NOT behind a version
+# probe, because a branch only one environment ever takes is a branch that
+# drifts unnoticed.
+selfsign_backdated() {
+    local key_pem="$1" subject="$2" out_pem="$3" start="$4" end="$5"
+    local csr="$WORKDIR/backdated.csr" cnf="$WORKDIR/backdated.cnf"
+
+    cat > "$cnf" <<EOF
+[ ca ]
+default_ca = selfsign_ca
+
+[ selfsign_ca ]
+database       = $WORKDIR/index.txt
+serial         = $WORKDIR/serial
+new_certs_dir  = $WORKDIR
+default_md     = sha256
+policy         = any_policy
+email_in_dn    = no
+rand_serial    = no
+unique_subject = no
+
+[ any_policy ]
+countryName            = optional
+stateOrProvinceName    = optional
+localityName           = optional
+organizationName       = optional
+organizationalUnitName = optional
+commonName             = supplied
+emailAddress           = optional
+EOF
+    : > "$WORKDIR/index.txt"
+    echo 01 > "$WORKDIR/serial"
+
+    openssl_or_fatal "req -new (backdated CSR)" \
+        req -new -key "$key_pem" -subj "$subject" -out "$csr"
+    openssl_or_fatal "ca -selfsign (backdated cert)" \
+        ca -config "$cnf" -selfsign -keyfile "$key_pem" -in "$csr" \
+           -out "$out_pem" -batch -notext -startdate "$start" -enddate "$end"
+}
+
 provision_pair() {
-    local label="$1" id="$2" subject="$3"
-    shift 3
-    # Remaining args (if any): extra `openssl req` flags, e.g. explicit
-    # -not_before/-not_after for the expired pair.
+    local label="$1" id="$2" subject="$3" validity="$4"
+    # validity: "current" -> valid 10 years from now
+    #           "expired" -> notBefore AND notAfter both in the past
     local key_pem="$WORKDIR/$label-key.pem" cert_pem="$WORKDIR/$label-cert.pem"
     local key_der="$WORKDIR/$label-key.der" cert_der="$WORKDIR/$label-cert.der"
 
@@ -201,14 +258,20 @@ provision_pair() {
     fi
 
     log "generating '$label' (id $id) key material"
-    openssl req -x509 -newkey rsa:2048 -sha256 -nodes \
-        "$@" \
-        -keyout "$key_pem" -out "$cert_pem" -subj "$subject" >/dev/null 2>&1 \
-        || fatal 3 "openssl req failed for '$label'"
-    openssl rsa -in "$key_pem" -outform DER -out "$key_der" >/dev/null 2>&1 \
-        || fatal 3 "openssl rsa (DER conversion) failed for '$label'"
-    openssl x509 -in "$cert_pem" -outform DER -out "$cert_der" >/dev/null 2>&1 \
-        || fatal 3 "openssl x509 (DER conversion) failed for '$label'"
+    if [[ "$validity" == "expired" ]]; then
+        openssl_or_fatal "genrsa for '$label'" \
+            genrsa -out "$key_pem" 2048
+        selfsign_backdated "$key_pem" "$subject" "$cert_pem" \
+            20200101000000Z 20210101000000Z
+    else
+        openssl_or_fatal "req -x509 for '$label'" \
+            req -x509 -newkey rsa:2048 -sha256 -nodes -days 3650 \
+                -keyout "$key_pem" -out "$cert_pem" -subj "$subject"
+    fi
+    openssl_or_fatal "rsa (DER conversion) for '$label'" \
+        rsa -in "$key_pem" -outform DER -out "$key_der"
+    openssl_or_fatal "x509 (DER conversion) for '$label'" \
+        x509 -in "$cert_pem" -outform DER -out "$cert_der"
 
     if [[ "$need_key" -eq 1 ]]; then
         log "importing '$label' private key (id $id)"
@@ -224,10 +287,9 @@ provision_pair() {
     fi
 }
 
-provision_pair "$KEY_LABEL" "$KEY_ID" "/CN=LibreSCRS SoftHSM Test Signer" -days 3650
+provision_pair "$KEY_LABEL" "$KEY_ID" "/CN=LibreSCRS SoftHSM Test Signer" current
 
-provision_pair "$EXPIRED_LABEL" "$EXPIRED_ID" "/CN=LibreSCRS SoftHSM Expired Test Signer" \
-    -not_before 20200101000000Z -not_after 20210101000000Z
+provision_pair "$EXPIRED_LABEL" "$EXPIRED_ID" "/CN=LibreSCRS SoftHSM Expired Test Signer" expired
 
 rm -rf "$WORKDIR"
 trap - EXIT
