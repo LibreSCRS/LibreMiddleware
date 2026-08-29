@@ -2,20 +2,28 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 /// @file
-/// @brief Test-only ATR-override seam for @ref
-///        LibreSCRS::SmartCard::Internal::PCSCConnection.
+/// @brief The arming half of every @ref
+///        LibreSCRS::SmartCard::Internal::PCSCConnection test seam.
 ///
 /// This translation unit is compiled into the build-tree-only
 /// @ref LibreSCRS_SmartCard_TestHelpers archive — it is never installed and
-/// never linked into any shipped @c libLibreSCRS_*.so. Production builds
-/// therefore never carry @ref
-/// LibreSCRS::SmartCard::Internal::PCSCConnection::setDetachedAtr in their
-/// dynamic export set: the setter is the only member of the seam that can
-/// arm it, so keeping its definition out of the shipped libraries closes the
-/// dlsym-reachable path while the @c detachedAtr member and the
-/// @c card == 0 branch in @ref PCSCConnection::getATR stay in the
-/// production class (the branch is inert until a test arms it, and moving
-/// the member would change the class layout).
+/// never linked into any shipped @c libLibreSCRS_*.so. It holds the
+/// definitions of the four members that can ARM a seam:
+///
+/// - @c setTransmitFilter / @c clearTransmitFilter — the typed-APDU filter,
+///   also the diagnostic hook the build-tree @c card_mapper tool installs to
+///   log the wire;
+/// - @c setDetachedRawResponder — the raw-byte responder that lets a test
+///   play the card side of a live SM tunnel;
+/// - @c setDetachedAtr — the synthetic-ATR override for detached
+///   connections.
+///
+/// Production builds therefore carry none of the four in their dynamic
+/// export set, so no shipped library offers a dlsym-reachable way to arm a
+/// seam. The members they write (@c transmitFilter, @c detachedRawResponder,
+/// @c detachedAtr) and the branches that read them stay in the production
+/// class: each branch is inert until a test arms it, and moving the members
+/// would change the class layout.
 ///
 /// Kept in @c pcsc_connection.cpp the definition did not stay private: that
 /// TU is compiled at default visibility into @c libSmartCard_Impl.a, and
@@ -42,6 +50,21 @@
 #include <vector>
 
 namespace LibreSCRS::SmartCard::Internal {
+
+void PCSCConnection::setTransmitFilter(TransmitFilter filter)
+{
+    transmitFilter = std::move(filter);
+}
+
+void PCSCConnection::clearTransmitFilter()
+{
+    transmitFilter = nullptr;
+}
+
+void PCSCConnection::setDetachedRawResponder(RawResponder responder)
+{
+    detachedRawResponder = std::move(responder);
+}
 
 void PCSCConnection::setDetachedAtr(std::vector<uint8_t> atr)
 {

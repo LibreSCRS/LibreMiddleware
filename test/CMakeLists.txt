@@ -31,6 +31,7 @@ target_link_libraries(LibreMiddlewareTests
     EuVrc
     RsHealth
     SmartCard_Impl
+    LibreSCRS_SmartCard_TestHelpers
 )
 
 target_include_directories(LibreMiddlewareTests PRIVATE
@@ -71,7 +72,7 @@ gtest_discover_tests(EfDirTests)
 # include/link combination lib/pkcs15-plugin/CMakeLists.txt already uses
 # for the equivalent non-plugin PKCS15Card probe path.
 add_executable(Pkcs15ProbeEfDirTests Pkcs15ProbeEfDirTests.cpp)
-target_link_libraries(Pkcs15ProbeEfDirTests GTest::gtest_main PKCS15 LibreSCRS_SmartCard LibreSCRS_SecureChannel SmartCard_Impl)
+target_link_libraries(Pkcs15ProbeEfDirTests GTest::gtest_main PKCS15 LibreSCRS_SmartCard LibreSCRS_SecureChannel SmartCard_Impl LibreSCRS_SmartCard_TestHelpers)
 target_include_directories(Pkcs15ProbeEfDirTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/pkcs15/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
@@ -94,6 +95,7 @@ target_link_libraries(RsEidDriverTests
     RsEId
     SmartCard_Impl
     OpenSSL_Crypto
+    LibreSCRS_SmartCard_TestHelpers
 )
 target_include_directories(RsEidDriverTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/rs-eid/src
@@ -495,6 +497,7 @@ target_link_libraries(EMRTDPluginTests
     CardPlugin_Impl
     SmartCard_Impl
     EMRTDCrypto
+    LibreSCRS_SmartCard_TestHelpers
 )
 target_include_directories(EMRTDPluginTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
@@ -1165,6 +1168,7 @@ target_link_libraries(LibreSCRS_CardSessionTests PRIVATE
     GTest::gtest_main
     LibreSCRS_SmartCard
     SmartCard_Impl
+    LibreSCRS_SmartCard_TestHelpers
 )
 # The CardSessionPaceCapabilityHoist tests script a card via PCSCConnection::setTransmitFilter
 # (the same detached-session seam the eMRTD plugin tests use); expose apdu.h /

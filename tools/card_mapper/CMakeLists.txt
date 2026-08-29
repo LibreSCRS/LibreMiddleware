@@ -28,7 +28,12 @@ target_include_directories(card_mapper PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/smartcard/src
 )
 
-target_link_libraries(card_mapper PRIVATE SmartCard_Impl EMRTD PKCS15)
+# LibreSCRS_SmartCard_TestHelpers supplies PCSCConnection::setTransmitFilter
+# and clearTransmitFilter: the arming half of every PCSCConnection seam is
+# defined only in that build-tree-only archive so no shipped library exports
+# it. card_mapper installs the filter to log the wire, so it links the
+# archive like the test binaries do. Neither is installed.
+target_link_libraries(card_mapper PRIVATE SmartCard_Impl EMRTD PKCS15 LibreSCRS_SmartCard_TestHelpers)
 target_compile_features(card_mapper PRIVATE cxx_std_23)
 # LM-internal tool: reaches directly into lib/*/src/ for reflection, so it
 # must carry the internal-build marker to satisfy the #error guard on those
@@ -72,7 +77,7 @@ if(BUILD_TESTING AND LIBREMIDDLEWARE_BUILD_PLUGINS)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/pkcs15/src
         ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/smartcard/src
     )
-    target_link_libraries(card_mapper_tests PRIVATE GTest::gtest_main SmartCard_Impl EMRTD PKCS15)
+    target_link_libraries(card_mapper_tests PRIVATE GTest::gtest_main SmartCard_Impl EMRTD PKCS15 LibreSCRS_SmartCard_TestHelpers)
     target_compile_features(card_mapper_tests PRIVATE cxx_std_23)
     target_compile_definitions(card_mapper_tests PRIVATE LIBRESCRS_INTERNAL_BUILD)
     include(GoogleTest)

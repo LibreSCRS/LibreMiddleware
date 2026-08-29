@@ -373,26 +373,16 @@ APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
     return response;
 }
 
-void PCSCConnection::setTransmitFilter(TransmitFilter filter)
-{
-    transmitFilter = std::move(filter);
-}
-
-void PCSCConnection::clearTransmitFilter()
-{
-    transmitFilter = nullptr;
-}
-
-void PCSCConnection::setDetachedRawResponder(RawResponder responder)
-{
-    detachedRawResponder = std::move(responder);
-}
-
-// PCSCConnection::setDetachedAtr is deliberately NOT defined here. Its body
-// lives in the build-tree-only LibreSCRS_SmartCard_TestHelpers archive
+// The four members that ARM a PCSCConnection test seam --
+// setTransmitFilter, clearTransmitFilter, setDetachedRawResponder and
+// setDetachedAtr -- are deliberately NOT defined here. Their bodies live in
+// the build-tree-only LibreSCRS_SmartCard_TestHelpers archive
 // (lib/LibreSCRS/SmartCard/test_helpers/pcsc_connection_test_helpers.cpp),
 // so no shipped library carries a definition -- and therefore no dynamic
-// export -- for the only member that can arm the detached-ATR seam.
+// export -- for any way to arm a seam. The members they write
+// (transmitFilter, detachedRawResponder, detachedAtr) and the branches that
+// read them stay in the production class: the branches are inert until a
+// test arms one, and moving the members would change the class layout.
 //
 // A definition placed here would not stay private: this TU is compiled at
 // default visibility into libSmartCard_Impl.a, EMRTDCrypto's performBAC /
