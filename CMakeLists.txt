@@ -176,6 +176,21 @@ message(STATUS "LibreMiddleware public libraries: ${LIBREMIDDLEWARE_LIB_TYPE}")
 message(STATUS "LibreMiddleware plugins: "
     "${LIBREMIDDLEWARE_BUILD_PLUGINS}")
 
+# DECLARED BEFORE the first add_subdirectory that reads it. A library
+# subdirectory may gate its own tests on this (lib/pkcs15 and lib/plugin both
+# do), and until the option() call runs the name is simply undefined -- so on a
+# FRESH configure such a gate is false and those tests are never even
+# generated, while a second configure of the same directory finds the cached
+# entry and turns them on. A developer reconfiguring in place therefore builds
+# and runs tests that CI, which always configures from scratch, has never once
+# compiled.
+#
+# Measured: this note used to sit BELOW add_subdirectory(lib/plugin), which
+# reads the option, and lib/plugin/test held fifteen suites. A fresh configure
+# produced no lib/plugin/test directory at all; a second configure of the same
+# directory produced it. Keep this above every add_subdirectory().
+option(BUILD_TESTING "Build tests" ON)
+
 add_subdirectory(thirdparty)
 add_subdirectory(lib/LibreSCRS)
 add_subdirectory(lib/plugin)
@@ -187,15 +202,6 @@ set(LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/plugins" CACHE PATH
 # Export plugin directory for consumers (e.g. LibreCelik via FetchContent)
 set(LIBREMIDDLEWARE_PLUGIN_DIR "${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}" CACHE PATH
     "Directory containing LibreMiddleware card plugins (for consumers)")
-
-# DECLARED BEFORE the first add_subdirectory that reads it. A library
-# subdirectory may gate its own tests on this (lib/pkcs15 does), and until the
-# option() call runs the name is simply undefined -- so on a FRESH configure
-# such a gate is false and those tests are never even generated, while a second
-# configure of the same directory finds the cached entry and turns them on. A
-# developer reconfiguring in place therefore builds and runs tests that CI,
-# which always configures from scratch, has never once compiled.
-option(BUILD_TESTING "Build tests" ON)
 
 add_subdirectory(lib/smartcard)
 add_subdirectory(lib/rs-eid-core)
