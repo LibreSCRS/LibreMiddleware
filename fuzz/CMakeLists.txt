@@ -119,6 +119,24 @@ target_include_directories(fuzz_emrtd_dg_parser PRIVATE
 target_link_libraries(fuzz_emrtd_dg_parser PRIVATE EMRTD)
 
 # ---------------------------------------------------------------------------
+# Harness: parseCscaMasterList. External-byte attack surface — a published CSCA
+# master list is walked before anything has verified its signature, so every
+# byte in it is whatever produced the file.
+# ---------------------------------------------------------------------------
+add_executable(fuzz_csca_master_list fuzz_csca_master_list.cpp)
+# Explicit, unlike the harnesses above: csca_master_list.h returns
+# std::expected, so this target needs C++23 in its own right and does not get
+# it from the library's directory-scope setting.
+target_compile_features(fuzz_csca_master_list PRIVATE cxx_std_23)
+target_compile_options(fuzz_csca_master_list PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_link_options(fuzz_csca_master_list PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_compile_definitions(fuzz_csca_master_list PRIVATE LIBRESCRS_INTERNAL_BUILD)
+target_include_directories(fuzz_csca_master_list PRIVATE
+    ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src
+)
+target_link_libraries(fuzz_csca_master_list PRIVATE EMRTDCrypto)
+
+# ---------------------------------------------------------------------------
 # Harness: TlSignatureVerifier::verify (with constant signing cert)
 # ---------------------------------------------------------------------------
 add_executable(fuzz_tl_signature_verifier

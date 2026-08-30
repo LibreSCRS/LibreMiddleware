@@ -565,6 +565,7 @@ add_executable(EMRTDCryptoTests
     secure_messaging_test.cpp
     pace_test.cpp
     emrtd_crypto_test.cpp
+    emrtd-crypto/synthetic_masterlist.cpp
 )
 target_link_libraries(EMRTDCryptoTests
     GTest::gtest_main

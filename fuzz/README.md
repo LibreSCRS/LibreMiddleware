@@ -9,6 +9,7 @@ public parsers. Each harness is a libFuzzer driver compiled against
 | `fuzz_parsed_certificate`        | `LibreSCRS::Certificate::ParsedCertificate::fromDer`   |
 | `fuzz_trusted_list_parser`       | `libresign::TrustedListParser::parse`                  |
 | `fuzz_tl_signature_verifier`     | `libresign::TlSignatureVerifier::verify`               |
+| `fuzz_csca_master_list`          | `emrtd::crypto::parseCscaMasterList`                   |
 
 The signature verifier harness embeds the committed test signing certificate
 (`test/fixtures/trust/test-tl-signing-cert.pem`) so that `verify()` exercises
@@ -37,6 +38,7 @@ LibreMiddleware uses; CMake configures the flag on the affected targets.
 ./build-fuzz/fuzz/fuzz_parsed_certificate    -max_total_time=60 fuzz/corpus/parsed_certificate
 ./build-fuzz/fuzz/fuzz_trusted_list_parser   -max_total_time=60 fuzz/corpus/trusted_list_parser
 ./build-fuzz/fuzz/fuzz_tl_signature_verifier -max_total_time=60 fuzz/corpus/tl_signature_verifier
+./build-fuzz/fuzz/fuzz_csca_master_list      -max_total_time=60 fuzz/corpus/csca_master_list
 ```
 
 CI runs each harness for 60 s on every PR; the Monday cron job runs longer.

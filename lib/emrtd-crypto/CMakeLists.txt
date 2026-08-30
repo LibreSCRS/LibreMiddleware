@@ -13,6 +13,7 @@ add_library(EMRTDCrypto STATIC
     src/secure_messaging.cpp
     src/chip_auth.cpp
     src/active_auth.cpp
+    src/csca_master_list.cpp
     src/types.h
     src/bac.h
     src/pace.h
@@ -20,6 +21,7 @@ add_library(EMRTDCrypto STATIC
     src/secure_messaging.h
     src/chip_auth.h
     src/active_auth.h
+    src/csca_master_list.h
 )
 
 target_compile_definitions(EMRTDCrypto PRIVATE LIBRESCRS_INTERNAL_BUILD)
