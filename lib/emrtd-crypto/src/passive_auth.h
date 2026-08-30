@@ -22,6 +22,11 @@ struct PAResult
     Status cscaChain = NOT_PERFORMED;
     std::map<int, Status> dgHashes;
     std::string hashAlgorithm;
+    /// The document signer, as named by the SIGNATURE rather than by the
+    /// unauthenticated certificate bag the object travels with. Both are empty
+    /// when that signature does not verify, since there is then no signer to
+    /// describe -- and a name taken from the bag would be the attacker's, not
+    /// the signing authority's.
     std::string dscSubject;
     std::string dscExpiry;
     std::string errorDetail;
@@ -47,9 +52,16 @@ PAResult::Status verifySODSignature(const std::vector<uint8_t>& sodRaw);
 ///       separates "we hold no anchor for this issuer" from "this does not
 ///       chain to what we hold", and pins the verification defaults ICAO
 ///       documents need. Anything learned about one of these two belongs in
-///       both until this one is retired -- in particular, this one takes its
-///       signer from the object's unauthenticated certificate BAG, which is
-///       not the same question as who signed it.
+///       both until this one is retired.
+///
+///       Two things this one does that the successor does not, both reasons to
+///       prefer it: it reads its anchors with `X509_STORE_load_path`, which
+///       needs a `c_rehash`ed directory and answers 1 for a path that does not
+///       exist -- it only records the string -- so a mistyped store is
+///       indistinguishable here from an empty one; and it returns a single
+///       status, so "no anchors configured", "no anchor for this issuer" and
+///       "does not chain to what we hold" arrive as one answer. The last of
+///       those is an accusation and the first two are not.
 PAResult::Status verifyCSCAChain(const std::vector<uint8_t>& sodRaw, const std::string& trustStorePath);
 PAResult performPassiveAuth(const std::vector<uint8_t>& sodRaw, const std::map<int, std::vector<uint8_t>>& dgRawData,
                             const std::string& trustStorePath = "");

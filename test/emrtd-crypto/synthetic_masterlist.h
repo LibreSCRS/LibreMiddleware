@@ -18,6 +18,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -180,5 +181,44 @@ struct SyntheticCscaRotation
 /// @note Unlike makeSod(), only the anchor's NAME is impersonated, so no
 ///       private key is needed and a @p ml rebuilt from disk works fine.
 [[nodiscard]] std::vector<uint8_t> makeSodWithImpersonatedIssuer(const SyntheticMasterList& ml, int anchorIndex);
+
+/// @brief What makeSodWithImpostorPrependedToCertificateBag() staged, and what
+///        a test needs in order to say which of the two names is the true one.
+struct SyntheticSodWithImpostor
+{
+    std::vector<uint8_t> der;                ///< the SOD; its signature still verifies
+    std::map<int, std::vector<uint8_t>> dgs; ///< the data groups its security object hashes, by number
+    std::string realSignerCommonName;        ///< common name of the certificate that SIGNED it
+    std::string impostorCommonName;          ///< common name of the certificate sitting FIRST in the bag
+};
+
+/// @brief A SOD that is genuine in every way a holder can check, carrying one
+///        extra certificate in its bag -- and that certificate comes first.
+///
+/// SignedData.certificates sits outside both the eContent and the signed
+/// attributes, so nothing signs it and anybody may add to it. This is the
+/// document an attacker makes out of a passport he has merely READ: he appends
+/// a certificate of his own, the signature still verifies, the data group hash
+/// still matches, and the real signer still chains to a real authority. The
+/// only thing he has changed is what a reader that takes the signer from the
+/// bag will report.
+///
+/// @note "First" is a fact about the ENCODING, not an insertion order a caller
+///       can pick: a DER SET OF is sorted by its members' encodings, and
+///       OpenSSL sorts it on the way out whatever order things were added in.
+///       The impostor is therefore given a common name far shorter than the
+///       document signer's -- 25 characters over the two names it carries,
+///       against at most a couple of bytes of ECDSA signature-length variance
+///       -- so that its encoding is the smaller one. The function then
+///       RE-READS the bag it produced and throws unless the impostor really is
+///       at index 0: a fixture whose names drifted in length would otherwise
+///       quietly stop staging the attack, and the test over it would go green
+///       on the very code it exists to fail.
+/// @note Like makeSod(), the document signer is ISSUED by
+///       `ml.cscaDer[anchorIndex]`, so this works only on a list this process
+///       minted; see the note there. The impostor needs no such thing -- it is
+///       self-signed and related to nothing.
+[[nodiscard]] SyntheticSodWithImpostor makeSodWithImpostorPrependedToCertificateBag(const SyntheticMasterList& ml,
+                                                                                    int anchorIndex);
 
 } // namespace LibreSCRS::Test

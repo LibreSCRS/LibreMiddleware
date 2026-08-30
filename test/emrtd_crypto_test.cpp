@@ -3873,6 +3873,52 @@ TEST_F(CscaVerdictTest, RefusesAForgeryThatMerelyCarriesAnAnchorIssuedCertificat
               emrtd::crypto::CscaVerdict::NoAnchorForIssuer);
 }
 
+// --- the same question, put to the older entry point -----------------------
+
+TEST(PassiveAuthTest, ReportsTheRealSignerWhenTheBagCarriesAnImpostorFirst)
+{
+    // Pins the step in performPassiveAuth that fills PAResult::dscSubject: the
+    // certificate a result NAMES has to be the one the SignerInfo resolves to,
+    // which is what CMS_get0_signers returns after a successful CMS_verify --
+    // never sk_X509_value(CMS_get1_certs(cms), 0), which is only the first
+    // thing in an unsigned bag.
+    //
+    // Kept beside the two evaluateCscaChain tests above rather than with the
+    // other PassiveAuthTests at the top of this file: it is the same question
+    // about the same bag, one entry point older, and it needs the same helpers
+    // to show that the attack is really staged.
+    //
+    // The document below is genuine in every way its holder could check. Its
+    // signature verifies, its data group hash matches, and its signer was
+    // issued by an anchor. All the attacker did was append a certificate to a
+    // bag nothing signs -- and it is his text, not the signing authority's,
+    // that a bag reader passes on to whatever displays it.
+    const auto ml = LibreSCRS::Test::makeMasterList(3);
+    const auto sod = LibreSCRS::Test::makeSodWithImpostorPrependedToCertificateBag(ml, 0);
+
+    const auto bag = certificatesInBagOf(sod.der);
+    ASSERT_EQ(bag.size(), 2u) << "the impostor must really have been planted";
+    ASSERT_NE(subjectOfCert(bag.front()).find(sod.impostorCommonName), std::string::npos)
+        << "and the encoding must really have put it first, or this test asks nothing";
+
+    const std::string anchorDir = LibreSCRS::Test::writePemDir(ml.cscaDer);
+    const auto r = emrtd::crypto::performPassiveAuth(sod.der, sod.dgs, anchorDir);
+    std::filesystem::remove_all(anchorDir);
+
+    // Nothing here asserts on r.cscaChain: whether the signer chains is
+    // verifyCSCAChain's question, and this test is about which certificate the
+    // result names, which it must get right either way.
+    ASSERT_EQ(r.sodSignature, emrtd::crypto::PAResult::PASSED)
+        << "the planted certificate must not have disturbed the signature, or this is not "
+           "a document an attacker could actually produce";
+    ASSERT_EQ(r.dgHashes.at(1), emrtd::crypto::PAResult::PASSED) << "nor anything else about the document";
+
+    EXPECT_NE(r.dscSubject.find(sod.realSignerCommonName), std::string::npos)
+        << "the signer named must be the certificate that signed it";
+    EXPECT_EQ(r.dscSubject.find(sod.impostorCommonName), std::string::npos)
+        << "an unsigned bag entry must never be reported as the signer; it reported \"" << r.dscSubject << "\"";
+}
+
 // --- documents that cannot be read at all ----------------------------------
 
 TEST_F(CscaVerdictTest, FailsAnEmptyDocument)

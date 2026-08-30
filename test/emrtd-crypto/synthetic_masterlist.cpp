@@ -495,6 +495,63 @@ std::vector<uint8_t> signCms(const Cert& signer, const std::vector<uint8_t>& con
     return out;
 }
 
+/// @return @p cmsDer re-encoded with @p cert dropped into its
+///         SignedData.certificates.
+/// @note The signature is neither recomputed nor disturbed, and that is the
+///       whole point: the certificate bag is outside everything a SignedData
+///       signature covers, so a document stays verifiable after anybody at all
+///       has added to it.
+std::vector<uint8_t> addToCertificateBag(const std::vector<uint8_t>& cmsDer, X509* cert)
+{
+    BIOPtr bio(BIO_new_mem_buf(cmsDer.data(), static_cast<int>(cmsDer.size())));
+    if (!bio) {
+        fail("BIO_new_mem_buf failed while planting a certificate");
+    }
+    CMSPtr cms(d2i_CMS_bio(bio.get(), nullptr));
+    if (!cms) {
+        fail("d2i_CMS_bio failed while planting a certificate");
+    }
+    if (CMS_add1_cert(cms.get(), cert) != 1) {
+        fail("CMS_add1_cert failed");
+    }
+
+    unsigned char* der = nullptr;
+    const int len = i2d_CMS_ContentInfo(cms.get(), &der);
+    if (len <= 0 || der == nullptr) {
+        fail("i2d_CMS_ContentInfo failed after planting a certificate");
+    }
+    std::vector<uint8_t> out(der, der + len);
+    OPENSSL_free(der);
+    return out;
+}
+
+/// SignedData.certificates as encoded, in the order a reader of @p cmsDer
+/// meets them. Read back off the produced bytes rather than remembered from
+/// the way they were built, because the DER SET OF order is decided by the
+/// encoder and is exactly the thing a caller here needs told.
+std::vector<std::vector<uint8_t>> certificateBagOf(const std::vector<uint8_t>& cmsDer)
+{
+    BIOPtr bio(BIO_new_mem_buf(cmsDer.data(), static_cast<int>(cmsDer.size())));
+    if (!bio) {
+        fail("BIO_new_mem_buf failed while reading a certificate bag");
+    }
+    CMSPtr cms(d2i_CMS_bio(bio.get(), nullptr));
+    if (!cms) {
+        fail("d2i_CMS_bio failed while reading a certificate bag");
+    }
+
+    STACK_OF(X509)* certs = CMS_get1_certs(cms.get());
+    std::vector<std::vector<uint8_t>> out;
+    for (int i = 0; i < sk_X509_num(certs); ++i) {
+        out.push_back(certDer(sk_X509_value(certs, i)));
+    }
+    // sk_X509_pop_free, unlike the stack CMS_get0_signers hands back:
+    // CMS_get1_certs takes a reference on every certificate it returns, so
+    // these are ours to free.
+    sk_X509_pop_free(certs, X509_free);
+    return out;
+}
+
 // --- CscaMasterList --------------------------------------------------------
 
 struct MasterListContent
@@ -594,18 +651,24 @@ SyntheticMasterList signMasterList(std::vector<std::vector<uint8_t>> anchors, co
     return out;
 }
 
+/// The one data group the security object below covers, and its number. At
+/// file scope rather than inside the builder because a caller that wants the
+/// hash to come out right has to hand a verifier THESE bytes; two copies would
+/// be two things to keep in step.
+constexpr int kDataGroup1Number = 1;
+constexpr uint8_t kDataGroup1[] = {0x61, 0x03, 0x5F, 0x01, 0x00};
+
 /// LDSSecurityObject ::= SEQUENCE { version, hashAlgorithm, dataGroupHashValues }
 /// One data group is enough; nothing here is about the number of them.
 std::vector<uint8_t> buildLdsSecurityObject()
 {
     static constexpr uint8_t kSha256Algorithm[] = {0x30, 0x0D, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01,
                                                    0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00};
-    static constexpr uint8_t kDataGroup1[] = {0x61, 0x03, 0x5F, 0x01, 0x00};
 
     std::vector<uint8_t> body{0x02, 0x01, 0x00}; // version v0
     body.insert(body.end(), std::begin(kSha256Algorithm), std::end(kSha256Algorithm));
 
-    std::vector<uint8_t> hashEntry{0x02, 0x01, 0x01}; // dataGroupNumber 1
+    std::vector<uint8_t> hashEntry{0x02, 0x01, static_cast<uint8_t>(kDataGroup1Number)};
     const std::vector<uint8_t> digest = sha256(kDataGroup1, sizeof(kDataGroup1));
     const std::vector<uint8_t> digestOctets = derWrap(0x04, digest);
     hashEntry.insert(hashEntry.end(), digestOctets.begin(), digestOctets.end());
@@ -614,6 +677,13 @@ std::vector<uint8_t> buildLdsSecurityObject()
     body.insert(body.end(), hashValues.begin(), hashValues.end());
 
     return derWrap(0x30, body);
+}
+
+/// The data groups buildLdsSecurityObject() hashed, keyed by number and as
+/// hashed, ready to be handed to a verifier alongside the object itself.
+std::map<int, std::vector<uint8_t>> ldsDataGroups()
+{
+    return {{kDataGroup1Number, std::vector<uint8_t>(std::begin(kDataGroup1), std::end(kDataGroup1))}};
 }
 
 } // namespace
@@ -790,6 +860,51 @@ std::vector<uint8_t> makeSodWithImpersonatedIssuer(const SyntheticMasterList& ml
                                .ekuOid = {},
                                .notAfter = {}});
     return signCms(dsc, buildLdsSecurityObject(), nullptr);
+}
+
+SyntheticSodWithImpostor makeSodWithImpostorPrependedToCertificateBag(const SyntheticMasterList& ml, int anchorIndex)
+{
+    const Cert anchor = anchorCert(ml, anchorIndex);
+
+    SyntheticSodWithImpostor out;
+    out.realSignerCommonName = "Synthetic Document Signer " + randomHex(4);
+    // Short, and deliberately so: this is what puts the impostor at index 0 of
+    // a SET OF nobody can order by hand. See the note on the declaration; the
+    // check at the bottom of this function is what keeps the reasoning honest.
+    out.impostorCommonName = "Impostor " + randomHex(4);
+
+    const Cert dsc = makeCert({.commonName = out.realSignerCommonName,
+                               .ca = false,
+                               .issuer = &anchor,
+                               .issuerName = nullptr,
+                               .keyUsage = "critical,digitalSignature",
+                               .ekuOid = {},
+                               .notAfter = {}});
+    // Self-signed, and issued by nobody the list knows: it has to be a
+    // certificate that no verifier would ever arrive at on its own, so that
+    // seeing its name in a result can only mean the bag was read.
+    const Cert impostor = makeCert({.commonName = out.impostorCommonName,
+                                    .ca = false,
+                                    .issuer = nullptr,
+                                    .issuerName = nullptr,
+                                    .keyUsage = "critical,digitalSignature",
+                                    .ekuOid = {},
+                                    .notAfter = {}});
+
+    // Signed first and planted afterwards, which is the order the attack
+    // happens in: the document is genuine when it leaves the issuing state,
+    // and what is added to the bag after that cannot disturb the signature.
+    out.der = addToCertificateBag(signCms(dsc, buildLdsSecurityObject(), nullptr), impostor.x.get());
+    out.dgs = ldsDataGroups();
+
+    const std::vector<std::vector<uint8_t>> bag = certificateBagOf(out.der);
+    if (bag.size() != 2) {
+        fail("the impostor did not reach the certificate bag");
+    }
+    if (bag.front() != certDer(impostor.x.get())) {
+        fail("the impostor did not sort first in the certificate bag; the two common names have drifted in length");
+    }
+    return out;
 }
 
 } // namespace LibreSCRS::Test

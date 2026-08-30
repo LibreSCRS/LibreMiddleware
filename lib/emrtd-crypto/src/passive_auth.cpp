@@ -60,11 +60,27 @@ struct EVPMDCtxDeleter
     }
 };
 
+struct X509StackDeleter
+{
+    void operator()(STACK_OF(X509) * p) const
+    {
+        // sk_X509_free, not sk_X509_pop_free/OSSL_STACK_OF_X509_free.
+        // CMS_get0_signers builds its stack with X509_ADD_FLAG_DEFAULT, which
+        // takes no reference, so the certificates in it belong to the
+        // CMS_ContentInfo. Freeing them here would free that object's own.
+        // The same deleter, for the same call and the same reason, is in
+        // csca_master_list.cpp; the two are kept apart only because the
+        // wrappers in that file have internal linkage and these do not.
+        sk_X509_free(p);
+    }
+};
+
 using BIOPtr = std::unique_ptr<BIO, BIODeleter>;
 using CMSPtr = std::unique_ptr<CMS_ContentInfo, CMSDeleter>;
 using X509StorePtr = std::unique_ptr<X509_STORE, X509StoreDeleter>;
 using X509Ptr = std::unique_ptr<X509, X509Deleter>;
 using EVPMDCtxPtr = std::unique_ptr<EVP_MD_CTX, EVPMDCtxDeleter>;
+using X509StackPtr = std::unique_ptr<STACK_OF(X509), X509StackDeleter>;
 
 // ---------------------------------------------------------------------------
 // ASN.1 / BER-TLV helpers for LDSSecurityObject parsing
@@ -458,41 +474,53 @@ PAResult performPassiveAuth(const std::vector<uint8_t>& sodRaw, const std::map<i
     // Step 3: Verify SOD signature (signature only, not certificate chain)
     result.sodSignature = verifySODSignature(sodRaw);
 
-    // Step 4: Extract DSC info from CMS signers
+    // Step 4: Describe the document signer -- the certificate that SIGNED this
+    // object, taken from the signature and not from the bag travelling beside
+    // it.
+    //
+    // SignedData.certificates is unauthenticated: nothing covers it, so a
+    // certificate appended to a genuine security object leaves the signature
+    // verifying, and whatever text that certificate carries would be handed on
+    // as the signer's identity. The signer is whichever certificate the
+    // SignerInfo resolves to, and only CMS_verify resolves it -- until it has
+    // run, CMS_get0_signers has nothing to return.
+    //
+    // So when that verification does not succeed there is no signer to name,
+    // and dscSubject and dscExpiry are left EMPTY. Empty is true; a name lifted
+    // out of the bag is not.
     auto cmsDER = extractCMSFromSOD(sodRaw);
     if (!cmsDER.empty()) {
         BIOPtr bio(BIO_new_mem_buf(cmsDER.data(), static_cast<int>(cmsDER.size())));
         if (bio) {
             CMSPtr cms(d2i_CMS_bio(bio.get(), nullptr));
-            if (cms) {
-                STACK_OF(X509)* signers = CMS_get1_certs(cms.get());
-                if (signers && sk_X509_num(signers) > 0) {
-                    X509* dsc = sk_X509_value(signers, 0);
-                    if (dsc) {
-                        // Extract subject
-                        char* subjectStr = X509_NAME_oneline(X509_get_subject_name(dsc), nullptr, 0);
-                        if (subjectStr) {
-                            result.dscSubject = subjectStr;
-                            OPENSSL_free(subjectStr);
-                        }
+            // The same call verifySODSignature makes above, repeated on this
+            // object because resolving the SignerInfo is a side effect on the
+            // CMS_ContentInfo and does not survive across two of them.
+            // CMS_NO_SIGNER_CERT_VERIFY for the same reason as there: whether
+            // that signer chains to an authority is step 5's question.
+            if (cms && CMS_verify(cms.get(), nullptr, nullptr, nullptr, nullptr, CMS_NO_SIGNER_CERT_VERIFY) == 1) {
+                const X509StackPtr signers(CMS_get0_signers(cms.get()));
+                X509* dsc = signers && sk_X509_num(signers.get()) > 0 ? sk_X509_value(signers.get(), 0) : nullptr;
+                if (dsc) {
+                    // Extract subject
+                    char* subjectStr = X509_NAME_oneline(X509_get_subject_name(dsc), nullptr, 0);
+                    if (subjectStr) {
+                        result.dscSubject = subjectStr;
+                        OPENSSL_free(subjectStr);
+                    }
 
-                        // Extract expiry
-                        const ASN1_TIME* notAfter = X509_get0_notAfter(dsc);
-                        if (notAfter) {
-                            BIOPtr timeBio(BIO_new(BIO_s_mem()));
-                            if (timeBio && ASN1_TIME_print(timeBio.get(), notAfter)) {
-                                char timeBuf[128] = {};
-                                int readLen = BIO_read(timeBio.get(), timeBuf, sizeof(timeBuf) - 1);
-                                if (readLen > 0) {
-                                    result.dscExpiry = std::string(timeBuf, static_cast<size_t>(readLen));
-                                }
+                    // Extract expiry
+                    const ASN1_TIME* notAfter = X509_get0_notAfter(dsc);
+                    if (notAfter) {
+                        BIOPtr timeBio(BIO_new(BIO_s_mem()));
+                        if (timeBio && ASN1_TIME_print(timeBio.get(), notAfter)) {
+                            char timeBuf[128] = {};
+                            int readLen = BIO_read(timeBio.get(), timeBuf, sizeof(timeBuf) - 1);
+                            if (readLen > 0) {
+                                result.dscExpiry = std::string(timeBuf, static_cast<size_t>(readLen));
                             }
                         }
                     }
-                }
-                // Free the signer stack (but not the certs, they're owned by CMS)
-                if (signers) {
-                    sk_X509_pop_free(signers, X509_free);
                 }
             }
         }
