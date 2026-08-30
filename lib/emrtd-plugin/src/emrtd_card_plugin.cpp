@@ -1206,13 +1206,31 @@ private:
             addTextField(g, "overall_genuineness", "Chip Genuineness",
                          LibreSCRS::Plugin::statusToString(secStatus.overallGenuineness));
 
+            // Each check travels as its own family of fields — `check_<N>_id`,
+            // `_category`, `_status`, `_label`, plus `_detail` and `_error`
+            // when the check carries them — never as one pre-joined sentence
+            // keyed by the check id. A joined string cannot carry a
+            // machine-readable reason beside the text a host displays: the
+            // host would have to parse prose back apart to translate the
+            // verdict, and whatever it recovered would already be in one
+            // language. `N` is a positional ordinal and nothing more — the
+            // order in which checks are appended above is not a contract, so
+            // consumers must read `check_<N>_id` to know which check they
+            // are looking at.
+            std::size_t idx = 0;
             for (const auto& check : secStatus.checks) {
-                std::string val{LibreSCRS::Plugin::statusToString(check.status)};
+                const std::string p = "check_" + std::to_string(idx) + "_";
+                addTextField(g, p + "id", check.label, check.checkId);
+                addTextField(g, p + "category", check.label,
+                             std::string{LibreSCRS::Plugin::categoryToString(check.category)});
+                addTextField(g, p + "status", check.label,
+                             std::string{LibreSCRS::Plugin::statusToString(check.status)});
+                addTextField(g, p + "label", check.label, check.label);
                 if (!check.detail.empty())
-                    val += " (" + check.detail + ")";
+                    addTextField(g, p + "detail", check.label, check.detail);
                 if (!check.errorDetail.empty())
-                    val += " [" + check.errorDetail + "]";
-                addTextField(g, check.checkId, check.label, val);
+                    addTextField(g, p + "error", check.label, check.errorDetail);
+                ++idx;
             }
 
             emitGroup(std::move(g));

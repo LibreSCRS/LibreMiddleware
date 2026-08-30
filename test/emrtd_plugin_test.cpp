@@ -31,6 +31,8 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -39,6 +41,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -104,6 +107,91 @@ StreamingResult readCardWithStreaming(const std::shared_ptr<CardPlugin>& plugin,
     if (rr.data.has_value())
         result.data = std::move(*rr.data);
     return result;
+}
+
+// Text of one field of one group, or nullopt when the group, the field, or a
+// textual value is missing.
+std::optional<std::string> fieldText(const CardData& data, const std::string& groupKey, const std::string& fieldKey)
+{
+    auto idx = data.findGroup(groupKey);
+    if (!idx)
+        return std::nullopt;
+    for (const auto& field : data.groupAt(*idx).fields) {
+        if (field.key == fieldKey)
+            return field.textValue();
+    }
+    return std::nullopt;
+}
+
+// --- security_status field shape -------------------------------------------
+//
+// A verdict group publishes each security check as a FAMILY of separate fields
+// keyed `check_<N>_<suffix>` — suffixes `id`, `category`, `status`, `label`,
+// `detail`, `error` — rather than as one pre-joined string keyed by the check
+// id. `N` is a positional ordinal and nothing more: the order in which the
+// plugin appends checks is not a contract, so every assertion below looks a
+// check up by its id through checkIndexOf() and none may hardcode `N`. A test
+// that pinned the ordinal would break the first time a check is added.
+
+// Split `check_<N>_<suffix>` into ordinal and suffix. Returns nullopt for any
+// other key shape — notably the three `overall_*` aggregates, which are not
+// part of the per-check family and keep their own keys.
+std::optional<std::pair<std::size_t, std::string>> parseCheckKey(const std::string& key)
+{
+    constexpr std::string_view kPrefix = "check_";
+    if (key.compare(0, kPrefix.size(), kPrefix) != 0)
+        return std::nullopt;
+    const auto sep = key.find('_', kPrefix.size());
+    if (sep == std::string::npos || sep == kPrefix.size() || sep + 1 == key.size())
+        return std::nullopt;
+    std::size_t n = 0;
+    const char* first = key.data() + kPrefix.size();
+    const char* last = key.data() + sep;
+    const auto [ptr, ec] = std::from_chars(first, last, n);
+    if (ec != std::errc{} || ptr != last)
+        return std::nullopt;
+    return std::pair<std::size_t, std::string>{n, key.substr(sep + 1)};
+}
+
+// The ordinal of the check whose `check_<N>_id` field carries @p checkId.
+std::optional<std::size_t> checkIndexOf(const CardData& data, const std::string& groupKey, const std::string& checkId)
+{
+    auto idx = data.findGroup(groupKey);
+    if (!idx)
+        return std::nullopt;
+    for (const auto& field : data.groupAt(*idx).fields) {
+        const auto parsed = parseCheckKey(field.key);
+        if (!parsed || parsed->second != "id")
+            continue;
+        if (field.textValue().value_or("") == checkId)
+            return parsed->first;
+    }
+    return std::nullopt;
+}
+
+// One attribute of the check at ordinal @p n. `detail` and `error` are absent
+// when the producer had nothing to say, so a missing field is a verdict too.
+std::optional<std::string> checkField(const CardData& data, const std::string& groupKey, std::size_t n,
+                                      const std::string& suffix)
+{
+    return fieldText(data, groupKey, "check_" + std::to_string(n) + "_" + suffix);
+}
+
+// Every check id present in @p groupKey, in emission order.
+std::vector<std::string> checkIds(const CardData& data, const std::string& groupKey)
+{
+    std::vector<std::string> ids;
+    auto idx = data.findGroup(groupKey);
+    if (!idx)
+        return ids;
+    for (const auto& field : data.groupAt(*idx).fields) {
+        const auto parsed = parseCheckKey(field.key);
+        if (parsed && parsed->second == "id") {
+            if (auto text = field.textValue())
+                ids.push_back(*text);
+        }
+    }
+    return ids;
 }
 
 } // namespace
@@ -259,26 +347,18 @@ TEST(EMRTDHardwareTest, PassiveAuthEndToEnd)
         FAIL() << "readCard returned no groups";
     }
 
-    // Find security_status group and look for PA SOD signature check
-    auto secGroupOpt = result.data.findGroup("security_status");
-    ASSERT_TRUE(secGroupOpt.has_value()) << "security_status group missing";
-    const auto& secGroup = result.data.groupAt(*secGroupOpt);
+    // Find security_status group and look for the PA SOD signature check.
+    ASSERT_TRUE(result.data.findGroup("security_status").has_value()) << "security_status group missing";
 
-    // Look for pa.sod_signature field with PASSED status
-    bool foundSodSignature = false;
-    for (const auto& field : secGroup.fields) {
-        if (field.key == "pa.sod_signature") {
-            foundSodSignature = true;
-            auto statusStrOpt = field.textValue();
-            ASSERT_TRUE(statusStrOpt.has_value()) << "pa.sod_signature field is not textual";
-            const auto& statusStr = *statusStrOpt;
-            auto status = statusFromString(statusStr);
-            ASSERT_TRUE(status.has_value()) << "Unrecognized status string: " << statusStr;
-            EXPECT_EQ(*status, SecurityCheck::Status::Passed) << "PA SOD signature status: " << statusStr;
-            break;
-        }
-    }
-    EXPECT_TRUE(foundSodSignature) << "pa.sod_signature field not found in security_status";
+    // Located by check id, never by ordinal — the emission order is not a
+    // contract. Its status is its own field, so the value is the bare token.
+    const auto sodIdx = checkIndexOf(result.data, "security_status", "pa_sod_signature");
+    ASSERT_TRUE(sodIdx.has_value()) << "pa_sod_signature check not found in security_status";
+    const auto statusStrOpt = checkField(result.data, "security_status", *sodIdx, "status");
+    ASSERT_TRUE(statusStrOpt.has_value()) << "pa_sod_signature check has no textual status field";
+    const auto status = statusFromString(*statusStrOpt);
+    ASSERT_TRUE(status.has_value()) << "Unrecognized status string: " << *statusStrOpt;
+    EXPECT_EQ(*status, SecurityCheck::Status::Passed) << "PA SOD signature status: " << *statusStrOpt;
 }
 
 TEST(EMRTDHardwareTest, ChipAuthEndToEnd)
@@ -312,34 +392,25 @@ TEST(EMRTDHardwareTest, ChipAuthEndToEnd)
         FAIL() << "readCard returned no groups";
     }
 
-    auto secGroupOpt = result.data.findGroup("security_status");
-    ASSERT_TRUE(secGroupOpt.has_value()) << "security_status group missing";
-    const auto& secGroup = result.data.groupAt(*secGroupOpt);
+    ASSERT_TRUE(result.data.findGroup("security_status").has_value()) << "security_status group missing";
 
-    // Check for ca.chip_auth or aa.active_auth — at least one should be
-    // PASSED or NOT_SUPPORTED (never FAILED on a genuine document)
-    bool foundCA = false;
-    bool foundAA = false;
-    for (const auto& field : secGroup.fields) {
-        auto textOpt = field.textValue();
-        if (!textOpt.has_value())
-            continue;
-        const auto& text = *textOpt;
-        if (field.key == "ca.chip_auth") {
-            foundCA = true;
-            auto status = statusFromString(text);
-            ASSERT_TRUE(status.has_value()) << "Unrecognized ca.chip_auth status: " << text;
-            EXPECT_NE(*status, SecurityCheck::Status::Failed)
-                << "Chip Authentication reported FAILED on a genuine document";
-        } else if (field.key == "aa.active_auth") {
-            foundAA = true;
-            auto status = statusFromString(text);
-            ASSERT_TRUE(status.has_value()) << "Unrecognized aa.active_auth status: " << text;
-            EXPECT_NE(*status, SecurityCheck::Status::Failed)
-                << "Active Authentication reported FAILED on a genuine document";
-        }
-    }
-    EXPECT_TRUE(foundCA || foundAA) << "Neither ca.chip_auth nor aa.active_auth found in security_status";
+    // Check for chip_auth or active_auth — at least one should be present, and
+    // whichever is present must be PASSED or NOT_SUPPORTED (never FAILED on a
+    // genuine document). Both are looked up by id; neither ordinal is pinned.
+    const auto caIdx = checkIndexOf(result.data, "security_status", "chip_auth");
+    const auto aaIdx = checkIndexOf(result.data, "security_status", "active_auth");
+    auto notFailed = [&result](std::size_t n, const char* what) {
+        const auto text = checkField(result.data, "security_status", n, "status");
+        ASSERT_TRUE(text.has_value()) << what << " check has no textual status field";
+        const auto status = statusFromString(*text);
+        ASSERT_TRUE(status.has_value()) << "Unrecognized " << what << " status: " << *text;
+        EXPECT_NE(*status, SecurityCheck::Status::Failed) << what << " reported FAILED on a genuine document";
+    };
+    if (caIdx.has_value())
+        notFailed(*caIdx, "Chip Authentication");
+    if (aaIdx.has_value())
+        notFailed(*aaIdx, "Active Authentication");
+    EXPECT_TRUE(caIdx.has_value() || aaIdx.has_value()) << "Neither chip_auth nor active_auth found in security_status";
 }
 
 // PACE-CAN end-to-end: reads a contactless eMRTD via PACE keyed on the CAN,
@@ -385,35 +456,35 @@ TEST(EMRTDHardwareTest, PaceCanEndToEnd)
 
     // Print only the verdict-bearing fields (never the personal data groups):
     // the SM-path Chip Authentication verdict is what this run is proving.
-    std::optional<std::string> authMethod;
+    // The `overall_*` aggregates keep their own keys; a check's attributes are
+    // separate fields, reached through its id and never through its ordinal.
+    const auto authMethod = fieldText(result.data, "presence", "auth_method");
+    const auto dataGroups = fieldText(result.data, "presence", "data_groups");
+    const auto overallAuthenticity = fieldText(result.data, "security_status", "overall_authenticity");
+    const auto caIdx = checkIndexOf(result.data, "security_status", "chip_auth");
+    const auto cscaIdx = checkIndexOf(result.data, "security_status", "pa_csca_chain");
     std::optional<std::string> chipAuth;
-    std::optional<std::string> dataGroups;
-    std::optional<std::string> overallAuthenticity;
     std::optional<std::string> cscaChain;
-    for (const auto& g : result.data.groups) {
-        for (const auto& f : g.fields) {
-            if (g.groupKey == "presence" && f.key == "auth_method")
-                authMethod = f.textValue();
-            if (g.groupKey == "presence" && f.key == "data_groups")
-                dataGroups = f.textValue();
-            if (g.groupKey == "security_status" && f.key.rfind("chip_auth", 0) == 0)
-                chipAuth = f.textValue();
-            if (g.groupKey == "security_status" && f.key == "overall_authenticity")
-                overallAuthenticity = f.textValue();
-            if (g.groupKey == "security_status" && f.key == "pa_csca_chain")
-                cscaChain = f.textValue();
-        }
+    std::optional<std::string> cscaChainDetail;
+    if (caIdx.has_value())
+        chipAuth = checkField(result.data, "security_status", *caIdx, "status");
+    if (cscaIdx.has_value()) {
+        cscaChain = checkField(result.data, "security_status", *cscaIdx, "status");
+        cscaChainDetail = checkField(result.data, "security_status", *cscaIdx, "detail");
     }
-    std::cout << "data_groups          = " << dataGroups.value_or("<none>") << "\n";
-    std::cout << "auth_method          = " << authMethod.value_or("<none>") << "\n";
-    std::cout << "chip_auth            = " << chipAuth.value_or("<none>") << "\n";
-    std::cout << "overall_authenticity = " << overallAuthenticity.value_or("<none>") << "\n";
-    std::cout << "pa_csca_chain        = " << cscaChain.value_or("<none>") << "\n";
+    std::cout << "data_groups           = " << dataGroups.value_or("<none>") << "\n";
+    std::cout << "auth_method           = " << authMethod.value_or("<none>") << "\n";
+    std::cout << "chip_auth             = " << chipAuth.value_or("<none>") << "\n";
+    std::cout << "overall_authenticity  = " << overallAuthenticity.value_or("<none>") << "\n";
+    std::cout << "pa_csca_chain         = " << cscaChain.value_or("<none>") << "\n";
+    std::cout << "pa_csca_chain detail  = " << cscaChainDetail.value_or("<none>") << "\n";
 
     // Honest authenticity: without a CSCA trust store the chain check is
     // NOT_PERFORMED, so the authenticity aggregate must NOT read PASSED — the
     // signer is unanchored. (With LIBRESCRS_CSCA_STORE set, both would pass.)
-    if (cscaChain && cscaChain->rfind("NOT_PERFORMED", 0) == 0)
+    // The status field carries the bare token, so this compares exactly where
+    // the joined shape could only test a prefix.
+    if (cscaChain && *cscaChain == "NOT_PERFORMED")
         EXPECT_NE(overallAuthenticity.value_or(""), "PASSED")
             << "authenticity claimed PASSED without a verified CSCA chain";
 
@@ -422,7 +493,7 @@ TEST(EMRTDHardwareTest, PaceCanEndToEnd)
     // verdict is only PASSED because the post-key-change proof exchange
     // succeeded — the whole point of the 4.4 change.
     if (chipAuth)
-        EXPECT_EQ(chipAuth->find("FAILED"), std::string::npos) << "chip_auth FAILED on a genuine card";
+        EXPECT_NE(*chipAuth, "FAILED") << "chip_auth FAILED on a genuine card";
 }
 
 // Every advertised data group the plugin can parse must come out of a PACE-CAN
@@ -547,22 +618,14 @@ TEST(EMRTDHardwareTest, ContactPlainReadChipAuthEndToEnd)
     if (result.data.groups.empty())
         GTEST_SKIP() << "no groups (card not plain-readable on contact — needs PACE)";
 
-    std::optional<std::string> authMethod;
+    const auto authMethod = fieldText(result.data, "presence", "auth_method");
+    const auto dataGroups = fieldText(result.data, "presence", "data_groups");
+    const bool hasAuthRequired = result.data.findGroup("auth_required").has_value();
+    // Located by check id; the status is its own field, so no prose to parse.
+    const auto caIdx = checkIndexOf(result.data, "security_status", "chip_auth");
     std::optional<std::string> chipAuth;
-    std::optional<std::string> dataGroups;
-    bool hasAuthRequired = false;
-    for (const auto& g : result.data.groups) {
-        if (g.groupKey == "auth_required")
-            hasAuthRequired = true;
-        for (const auto& f : g.fields) {
-            if (g.groupKey == "presence" && f.key == "auth_method")
-                authMethod = f.textValue();
-            if (g.groupKey == "presence" && f.key == "data_groups")
-                dataGroups = f.textValue();
-            if (g.groupKey == "security_status" && f.key == "chip_auth")
-                chipAuth = f.textValue();
-        }
-    }
+    if (caIdx.has_value())
+        chipAuth = checkField(result.data, "security_status", *caIdx, "status");
     if (hasAuthRequired)
         GTEST_SKIP() << "card is not plain-readable on this interface (auth_required) — needs PACE";
 
@@ -575,7 +638,7 @@ TEST(EMRTDHardwareTest, ContactPlainReadChipAuthEndToEnd)
     // or it refused the protocol on the plain channel (auth_method "None (plain
     // read)", chip_auth NOT_PERFORMED) — never FAILED on a genuine card.
     if (chipAuth)
-        EXPECT_EQ(chipAuth->find("FAILED"), std::string::npos) << "chip_auth FAILED on a genuine card";
+        EXPECT_NE(*chipAuth, "FAILED") << "chip_auth FAILED on a genuine card";
 }
 
 TEST(EMRTDHardwareTest, StreamingGroupOrder)
@@ -976,18 +1039,6 @@ std::optional<size_t> logIndexOfLast(const LdsRigState& st, Pred pred)
     return std::nullopt;
 }
 
-std::optional<std::string> fieldText(const CardData& data, const std::string& groupKey, const std::string& fieldKey)
-{
-    auto idx = data.findGroup(groupKey);
-    if (!idx)
-        return std::nullopt;
-    for (const auto& field : data.groupAt(*idx).fields) {
-        if (field.key == fieldKey)
-            return field.textValue();
-    }
-    return std::nullopt;
-}
-
 } // namespace
 
 TEST(EmrtdInterfaceActivation, ContactWithProviderReadsIdentityWithoutPace)
@@ -1043,11 +1094,13 @@ TEST(EmrtdInterfaceActivation, SecurityChecksTrackDataGroupPresence)
     ASSERT_EQ(rr.status, ReadResult::Status::Ok);
     ASSERT_TRUE(rr.data.has_value());
 
-    // DG14 present -> chip_auth row exists; DG15 absent -> no active_auth row.
-    EXPECT_TRUE(fieldText(*rr.data, "security_status", "chip_auth").has_value())
-        << "chip_auth row must be present when DG14 exists";
-    EXPECT_FALSE(fieldText(*rr.data, "security_status", "active_auth").has_value())
-        << "active_auth row must be omitted when the document has no DG15";
+    // DG14 present -> a chip_auth check exists; DG15 absent -> no active_auth
+    // check. Presence is decided by whether the id is findable at all, not by
+    // where in the emission order it landed.
+    EXPECT_TRUE(checkIndexOf(*rr.data, "security_status", "chip_auth").has_value())
+        << "chip_auth check must be present when DG14 exists";
+    EXPECT_FALSE(checkIndexOf(*rr.data, "security_status", "active_auth").has_value())
+        << "active_auth check must be omitted when the document has no DG15";
 }
 
 // A card-side status-word refusal of INTERNAL AUTHENTICATE on a PLAIN channel
@@ -1080,11 +1133,75 @@ TEST(EmrtdInterfaceActivation, PlainReadActiveAuthRefusalIsNotPerformed)
     ASSERT_TRUE(rr.data.has_value());
 
     EXPECT_TRUE(logContainsIns(*rig, 0x88)) << "the AA attempt must reach the wire";
-    // The field text carries the verdict plus a bracketed detail; the verdict
-    // prefix is what is under test.
-    const std::string aa = fieldText(*rr.data, "security_status", "active_auth").value_or("");
-    EXPECT_EQ(aa.rfind("NOT_PERFORMED", 0), 0U)
-        << "a refusal on a plain channel is not a genuineness failure; got: " << aa;
+    // The verdict has its own field now, so this compares the whole token
+    // rather than a prefix of a sentence that also carried the refusal reason.
+    const auto aaIdx = checkIndexOf(*rr.data, "security_status", "active_auth");
+    ASSERT_TRUE(aaIdx.has_value()) << "the active_auth check must be present when DG15 exists";
+    const std::string aa = checkField(*rr.data, "security_status", *aaIdx, "status").value_or("");
+    EXPECT_EQ(aa, "NOT_PERFORMED") << "a refusal on a plain channel is not a genuineness failure; got: " << aa;
+}
+
+// Each security check must reach the host as SEPARATE fields — its id,
+// category, status, label and (when the producer has one) its detail and error
+// — not as one pre-joined English string keyed by the check id. The joined
+// shape cannot carry a machine-readable reason alongside displayed text: a
+// consumer that wants to translate a verdict has to parse prose back apart to
+// find it, and any reason it recovers is already in one language. Pins the
+// per-check emission loop in emrtd_card_plugin.cpp's "8. Emit security_status
+// group". This rig gives active_auth both a status AND an error detail, so it
+// is the check that proves the two travel apart.
+TEST(EmrtdInterfaceActivation, SecurityChecksTravelAsSeparateFieldsNotOneJoinedString)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/true);
+    // Same DG15-bearing rig as PlainReadActiveAuthRefusalIsNotPerformed: the AA
+    // attempt reaches the wire and is refused, so the check carries an error.
+    rig->files[0x011E] = {0x60, 0x15, 0x5F, 0x01, 0x04, '0', '1',  '0',  '8',  0x5F, 0x36, 0x06,
+                          '0',  '4',  '0',  '0',  '0',  '0', 0x5C, 0x03, 0x61, 0x6E, 0x6F};
+    auto aaKey = LibreSCRS::Test::EcCardKey::generate();
+    rig->files[0x010F] = LibreSCRS::Test::buildDg15(aaKey.spkiDer);
+    session->setCredentialProvider(
+        [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    auto rr = plugin->readCard(*session);
+    ASSERT_EQ(rr.status, ReadResult::Status::Ok);
+    ASSERT_TRUE(rr.data.has_value());
+
+    // Shape first, so a pre-fix run names BOTH halves of the defect: the old
+    // field keyed by the check id still there, and no field in the new shape.
+    EXPECT_FALSE(fieldText(*rr.data, "security_status", "active_auth").has_value())
+        << "the concatenated field must be gone, not merely duplicated";
+
+    // Nothing may be left in a third shape: every field is either one of the
+    // three aggregates or a member of some check's family.
+    auto secIdx = rr.data->findGroup("security_status");
+    ASSERT_TRUE(secIdx.has_value());
+    for (const auto& field : rr.data->groupAt(*secIdx).fields) {
+        const bool aggregate = field.key.compare(0, 8, "overall_") == 0;
+        EXPECT_TRUE(aggregate || parseCheckKey(field.key).has_value())
+            << "field in neither the aggregate nor the per-check shape: " << field.key;
+    }
+
+    // The three aggregates are the one thing both desktop hosts already render:
+    // they keep their own keys and stay outside the per-check family.
+    EXPECT_TRUE(fieldText(*rr.data, "security_status", "overall_genuineness").has_value());
+    EXPECT_FALSE(parseCheckKey("overall_genuineness").has_value());
+
+    const auto i = checkIndexOf(*rr.data, "security_status", "active_auth");
+    ASSERT_TRUE(i.has_value()) << "the check must be findable by its id";
+
+    EXPECT_EQ(checkField(*rr.data, "security_status", *i, "status").value_or(""), "NOT_PERFORMED");
+    EXPECT_EQ(checkField(*rr.data, "security_status", *i, "id").value_or(""), "active_auth");
+    EXPECT_EQ(checkField(*rr.data, "security_status", *i, "category").value_or(""), "chip_genuineness");
+    EXPECT_EQ(checkField(*rr.data, "security_status", *i, "label").value_or(""), "Active Authentication");
+    EXPECT_FALSE(checkField(*rr.data, "security_status", *i, "error").value_or("").empty())
+        << "the refusal reason must arrive in its own field, not glued onto the status";
 }
 
 TEST(EmrtdInterfaceActivation, ContactPlainReadAttemptsChipAuthAndStaysPlainWhenUnavailable)
@@ -1112,7 +1229,9 @@ TEST(EmrtdInterfaceActivation, ContactPlainReadAttemptsChipAuthAndStaysPlainWhen
     // stays "None (plain read)". Because parseDG14 fails before the protocol
     // APDUs, no MSE:Set AT / GENERAL AUTHENTICATE reaches the wire.
     EXPECT_EQ(fieldText(*rr.data, "presence", "auth_method").value_or(""), "None (plain read)");
-    EXPECT_EQ(fieldText(*rr.data, "security_status", "chip_auth").value_or(""), "NOT_SUPPORTED");
+    const auto caIdx = checkIndexOf(*rr.data, "security_status", "chip_auth");
+    ASSERT_TRUE(caIdx.has_value()) << "chip_auth check must be present when DG14 exists";
+    EXPECT_EQ(checkField(*rr.data, "security_status", *caIdx, "status").value_or(""), "NOT_SUPPORTED");
     EXPECT_TRUE(logContainsSelectFid(*rig, 0x010E)) << "DG14 raw bytes must still be read on the plain path";
     EXPECT_FALSE(logContainsIns(*rig, 0x22));
     EXPECT_FALSE(logContainsIns(*rig, 0x86));
@@ -1120,14 +1239,22 @@ TEST(EmrtdInterfaceActivation, ContactPlainReadAttemptsChipAuthAndStaysPlainWhen
     // EF.SOD is SM-gated on this rig (as on the shipping document): the
     // plain path must not fabricate ANY passive-auth verdict from it — no
     // pa_* checks may appear, and nothing may be reported as FAILED.
-    auto secIdx = rr.data->findGroup("security_status");
-    ASSERT_TRUE(secIdx.has_value());
-    for (const auto& field : rr.data->groupAt(*secIdx).fields) {
-        EXPECT_FALSE(field.key.rfind("pa_", 0) == 0) << "unexpected passive-auth check: " << field.key;
-        auto text = field.textValue();
-        if (text.has_value()) {
-            EXPECT_EQ(text->find("FAILED"), std::string::npos) << field.key << " reported FAILED on the plain path";
-        }
+    // Read through the check ids and statuses, not the field keys: with each
+    // check spread over a `check_<N>_*` family, a key-prefix test for "pa_"
+    // would match nothing and pass while proving nothing.
+    ASSERT_TRUE(rr.data->findGroup("security_status").has_value());
+    for (const auto& id : checkIds(*rr.data, "security_status")) {
+        EXPECT_FALSE(id.compare(0, 3, "pa_") == 0) << "unexpected passive-auth check: " << id;
+        const auto n = checkIndexOf(*rr.data, "security_status", id);
+        ASSERT_TRUE(n.has_value());
+        EXPECT_NE(checkField(*rr.data, "security_status", *n, "status").value_or(""), "FAILED")
+            << id << " reported FAILED on the plain path";
+    }
+    // The aggregates must stay clear of FAILED too — they were covered by the
+    // sweep over every field the joined shape allowed.
+    for (const char* key : {"overall_integrity", "overall_authenticity", "overall_genuineness"}) {
+        EXPECT_NE(fieldText(*rr.data, "security_status", key).value_or(""), "FAILED")
+            << key << " reported FAILED on the plain path";
     }
 }
 
