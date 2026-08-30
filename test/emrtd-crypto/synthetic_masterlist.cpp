@@ -15,6 +15,7 @@
 #include <openssl/x509v3.h>
 
 #include <algorithm>
+#include <ctime>
 #include <filesystem>
 #include <iterator>
 #include <map>
@@ -39,6 +40,14 @@ struct Asn1ObjectDeleter
     void operator()(ASN1_OBJECT* p) const
     {
         ASN1_OBJECT_free(p);
+    }
+};
+
+struct Asn1TimeDeleter
+{
+    void operator()(ASN1_TIME* p) const
+    {
+        ASN1_TIME_free(p);
     }
 };
 
@@ -83,6 +92,7 @@ struct X509Deleter
 };
 
 using Asn1ObjectPtr = std::unique_ptr<ASN1_OBJECT, Asn1ObjectDeleter>;
+using Asn1TimePtr = std::unique_ptr<ASN1_TIME, Asn1TimeDeleter>;
 using BignumPtr = std::unique_ptr<BIGNUM, BignumDeleter>;
 using BIOPtr = std::unique_ptr<BIO, BIODeleter>;
 using CMSPtr = std::unique_ptr<CMS_ContentInfo, CMSDeleter>;
@@ -452,15 +462,78 @@ Cert anchorCert(const SyntheticMasterList& ml, int anchorIndex)
 
 // --- CMS -------------------------------------------------------------------
 
+/// Which `signingTime` the SIGNED attributes of an object this file signs
+/// carry.
+///
+/// Three cases and not a flag, because none of them is the absence of another.
+/// `Current` is what OpenSSL does unbidden -- it adds a signingTime of `now`
+/// whenever it finds none -- and is what every object here carried before this
+/// existed. `Fixed` is the only way to get an instant a test can compare with a
+/// literal. `None` needs CMS_NO_SIGNING_TIME, since leaving something out is
+/// precisely what produces `Current`.
+struct SigningTimeChoice
+{
+    enum class Kind : uint8_t {
+        Current,
+        Fixed,
+        None,
+    };
+
+    Kind kind = Kind::Current;
+    int64_t epochSeconds = 0;
+};
+
+/// Puts exactly @p epochSeconds into the SIGNED signingTime attribute of every
+/// SignerInfo of @p cms, which must not have been finalised yet.
+///
+/// Before CMS_final and not after: the attribute is under the signature, so one
+/// planted afterwards would only invalidate it. Setting it here is also what
+/// keeps OpenSSL from planting its own -- it adds a signingTime of `now` only
+/// when it finds none.
+void setSignedSigningTime(CMS_ContentInfo* cms, int64_t epochSeconds)
+{
+    STACK_OF(CMS_SignerInfo)* signerInfos = CMS_get0_SignerInfos(cms);
+    if (sk_CMS_SignerInfo_num(signerInfos) <= 0) {
+        fail("no SignerInfo to give a signingTime to");
+    }
+    const Asn1TimePtr when(ASN1_TIME_set(nullptr, static_cast<time_t>(epochSeconds)));
+    if (!when) {
+        fail("ASN1_TIME_set failed");
+    }
+    for (int i = 0; i < sk_CMS_SignerInfo_num(signerInfos); ++i) {
+        // The (type, value, -1) form, which is what OpenSSL uses for this very
+        // attribute: with a length of -1 the value handed over is the
+        // ASN1_STRING itself rather than raw content bytes.
+        if (CMS_signed_add1_attr_by_NID(sk_CMS_SignerInfo_value(signerInfos, i), NID_pkcs9_signingTime, when->type,
+                                        when.get(), -1) != 1) {
+            fail("CMS_signed_add1_attr_by_NID(signingTime) failed");
+        }
+    }
+}
+
 /// @param eContentTypeOid nullptr keeps the CMS default, id-data.
-std::vector<uint8_t> signCms(const Cert& signer, const std::vector<uint8_t>& content, const char* eContentTypeOid)
+/// @param signingTime which signingTime the signed attributes carry; see
+///        SigningTimeChoice. Anything but `Current` needs the CMS_PARTIAL path,
+///        i.e. an @p eContentTypeOid, because the SignerInfo has to be reached
+///        before it is signed.
+std::vector<uint8_t> signCms(const Cert& signer, const std::vector<uint8_t>& content, const char* eContentTypeOid,
+                             SigningTimeChoice signingTime = {})
 {
     BIOPtr bio(BIO_new_mem_buf(content.data(), static_cast<int>(content.size())));
     if (!bio) {
         fail("BIO_new_mem_buf failed");
     }
 
+    if (signingTime.kind == SigningTimeChoice::Kind::Fixed && eContentTypeOid == nullptr) {
+        fail("a fixed signingTime needs the CMS_PARTIAL path, which only an eContentType caller takes");
+    }
+
     int flags = CMS_BINARY | CMS_NOSMIMECAP;
+    if (signingTime.kind == SigningTimeChoice::Kind::None) {
+        // The flag, not an omission: without it CMS_sign puts the current time
+        // in the signed attributes on its own.
+        flags |= CMS_NO_SIGNING_TIME;
+    }
     if (eContentTypeOid != nullptr) {
         // CMS_PARTIAL is mandatory here: without it CMS_sign finalises at once,
         // CMS_set1_eContentType no longer has any effect, and nothing could
@@ -479,6 +552,9 @@ std::vector<uint8_t> signCms(const Cert& signer, const std::vector<uint8_t>& con
         Asn1ObjectPtr oid(OBJ_txt2obj(eContentTypeOid, 1));
         if (!oid || CMS_set1_eContentType(cms.get(), oid.get()) != 1) {
             fail("CMS_set1_eContentType failed");
+        }
+        if (signingTime.kind == SigningTimeChoice::Kind::Fixed) {
+            setSignedSigningTime(cms.get(), signingTime.epochSeconds);
         }
         if (CMS_final(cms.get(), bio.get(), nullptr, CMS_BINARY) != 1) {
             fail("CMS_final failed");
@@ -620,7 +696,7 @@ Cert makeCsca(int index)
 ///        signer whose key has rotated out is the ordinary case, and expiring
 ///        the CA with it would confuse two different things.
 SyntheticMasterList signMasterList(std::vector<std::vector<uint8_t>> anchors, const std::string& signerNotAfter = {},
-                                   const std::string& signerEku = {})
+                                   const std::string& signerEku = {}, SigningTimeChoice signingTime = {})
 {
     // Step one, and the one that must not be relaxed: the signer's CA is NOT an
     // anchor in the list it signs.
@@ -643,12 +719,53 @@ SyntheticMasterList signMasterList(std::vector<std::vector<uint8_t>> anchors, co
 
     SyntheticMasterList out;
     out.cscaDer = std::move(anchors);
-    out.der = signCms(mlSigner, content.der, kCscaMasterListOid);
+    out.der = signCms(mlSigner, content.der, kCscaMasterListOid, signingTime);
     out.signerSpkiSha256 = spkiSha256(mlSigner.x.get());
     if (content.serialOffset != 0) {
         out.eContentTamperOffset = contentOffsetIn(out.der, content.der) + content.serialOffset;
     }
     return out;
+}
+
+/// The anchors a fixture list carries: @p cscaCount freshly minted CSCAs,
+/// each with its private key remembered, sorted into the DER SET OF order the
+/// list has to carry them in.
+std::vector<std::vector<uint8_t>> mintAnchors(int cscaCount)
+{
+    if (cscaCount < 0) {
+        fail("cscaCount must not be negative");
+    }
+
+    std::vector<std::vector<uint8_t>> anchors;
+    anchors.reserve(static_cast<std::size_t>(cscaCount));
+    for (int i = 0; i < cscaCount; ++i) {
+        const Cert csca = makeCsca(i);
+        std::vector<uint8_t> der = certDer(csca.x.get());
+        rememberAnchorKey(der, csca.key.get());
+        anchors.push_back(std::move(der));
+    }
+    std::sort(anchors.begin(), anchors.end());
+    return anchors;
+}
+
+/// Whether the first SignerInfo of @p cmsDer carries a signingTime among its
+/// UNSIGNED attributes. Read back off the produced bytes, so that a decoy that
+/// did not survive re-encoding is caught where it was planted.
+bool carriesUnsignedSigningTime(const std::vector<uint8_t>& cmsDer)
+{
+    BIOPtr bio(BIO_new_mem_buf(cmsDer.data(), static_cast<int>(cmsDer.size())));
+    if (!bio) {
+        fail("BIO_new_mem_buf failed while reading back a decoy signingTime");
+    }
+    CMSPtr cms(d2i_CMS_bio(bio.get(), nullptr));
+    if (!cms) {
+        fail("d2i_CMS_bio failed while reading back a decoy signingTime");
+    }
+    STACK_OF(CMS_SignerInfo)* signerInfos = CMS_get0_SignerInfos(cms.get());
+    if (sk_CMS_SignerInfo_num(signerInfos) <= 0) {
+        return false;
+    }
+    return CMS_unsigned_get_attr_by_NID(sk_CMS_SignerInfo_value(signerInfos, 0), NID_pkcs9_signingTime, -1) >= 0;
 }
 
 /// The one data group the security object below covers, and its number. At
@@ -694,21 +811,82 @@ std::map<int, std::vector<uint8_t>> ldsDataGroups()
 
 SyntheticMasterList makeMasterList(int cscaCount, const std::string& signerNotAfter, const std::string& signerEku)
 {
-    if (cscaCount < 0) {
-        fail("cscaCount must not be negative");
+    return signMasterList(mintAnchors(cscaCount), signerNotAfter, signerEku);
+}
+
+SyntheticMasterList makeMasterListSignedAt(int cscaCount, int64_t signingTimeEpochSeconds)
+{
+    return signMasterList(mintAnchors(cscaCount), {}, {}, {SigningTimeChoice::Kind::Fixed, signingTimeEpochSeconds});
+}
+
+SyntheticMasterList makeMasterListWithoutSigningTime(int cscaCount)
+{
+    return signMasterList(mintAnchors(cscaCount), {}, {}, {SigningTimeChoice::Kind::None, 0});
+}
+
+SyntheticMasterList makeMasterListWithSigningTimeInUnsignedAttributes(const SyntheticMasterList& ml,
+                                                                      int64_t decoyEpochSeconds)
+{
+    BIOPtr bio(BIO_new_mem_buf(ml.der.data(), static_cast<int>(ml.der.size())));
+    if (!bio) {
+        fail("BIO_new_mem_buf failed while planting a signingTime");
+    }
+    CMSPtr cms(d2i_CMS_bio(bio.get(), nullptr));
+    if (!cms) {
+        fail("d2i_CMS_bio failed while planting a signingTime");
     }
 
-    std::vector<std::vector<uint8_t>> anchors;
-    anchors.reserve(static_cast<std::size_t>(cscaCount));
-    for (int i = 0; i < cscaCount; ++i) {
-        const Cert csca = makeCsca(i);
-        std::vector<uint8_t> der = certDer(csca.x.get());
-        rememberAnchorKey(der, csca.key.get());
-        anchors.push_back(std::move(der));
+    STACK_OF(CMS_SignerInfo)* signerInfos = CMS_get0_SignerInfos(cms.get());
+    if (sk_CMS_SignerInfo_num(signerInfos) != 1) {
+        fail("a decoy signingTime needs a list carrying exactly one SignerInfo");
     }
-    std::sort(anchors.begin(), anchors.end());
+    CMS_SignerInfo* signerInfo = sk_CMS_SignerInfo_value(signerInfos, 0);
 
-    return signMasterList(std::move(anchors), signerNotAfter, signerEku);
+    const Asn1TimePtr decoy(ASN1_TIME_set(nullptr, static_cast<time_t>(decoyEpochSeconds)));
+    if (!decoy) {
+        fail("ASN1_TIME_set failed");
+    }
+
+    // A decoy equal to the value it is meant to be mistaken for stages
+    // nothing, so the two are COMPARED rather than assumed to differ.
+    const int signedIndex = CMS_signed_get_attr_by_NID(signerInfo, NID_pkcs9_signingTime, -1);
+    if (signedIndex < 0) {
+        fail("the list carries no signed signingTime for a decoy to differ from");
+    }
+    const ASN1_TYPE* signedValue = X509_ATTRIBUTE_get0_type(CMS_signed_get_attr(signerInfo, signedIndex), 0);
+    if (signedValue == nullptr || signedValue->value.asn1_string == nullptr) {
+        fail("the signed signingTime carries no value");
+    }
+    const int order = ASN1_TIME_compare(decoy.get(), signedValue->value.asn1_string);
+    if (order == -2) {
+        fail("the two signing times could not be compared");
+    }
+    if (order == 0) {
+        fail("the decoy signingTime equals the signed one, so it stages nothing");
+    }
+
+    if (CMS_unsigned_add1_attr_by_NID(signerInfo, NID_pkcs9_signingTime, decoy->type, decoy.get(), -1) != 1) {
+        fail("CMS_unsigned_add1_attr_by_NID(signingTime) failed");
+    }
+
+    unsigned char* der = nullptr;
+    const int len = i2d_CMS_ContentInfo(cms.get(), &der);
+    if (len <= 0 || der == nullptr) {
+        fail("i2d_CMS_ContentInfo failed after planting a signingTime");
+    }
+    SyntheticMasterList out = ml;
+    out.der.assign(der, der + len);
+    OPENSSL_free(der);
+    // The extra attribute shifts every offset after it; see the header.
+    out.eContentTamperOffset = 0;
+
+    if (out.der == ml.der) {
+        fail("planting the decoy signingTime changed nothing");
+    }
+    if (!carriesUnsignedSigningTime(out.der)) {
+        fail("the decoy signingTime did not survive re-encoding");
+    }
+    return out;
 }
 
 SyntheticMasterList makeMasterListWithOtherSigner(const SyntheticMasterList& base)
@@ -720,6 +898,15 @@ SyntheticMasterList makeMasterListWithOtherSigner(const SyntheticMasterList& bas
     std::vector<std::vector<uint8_t>> anchors = base.cscaDer;
     std::sort(anchors.begin(), anchors.end());
     return signMasterList(std::move(anchors));
+}
+
+std::vector<uint8_t> masterListSignerCertificateDer(const SyntheticMasterList& ml)
+{
+    const auto bag = certificateBagOf(ml.der);
+    if (bag.size() != 1) {
+        fail("masterListSignerCertificateDer: a list this file signed carries exactly its signer");
+    }
+    return bag.front();
 }
 
 SyntheticCscaRotation makeMasterListWithLinkCertificate()
@@ -822,6 +1009,20 @@ std::string writePemDir(const std::vector<std::vector<uint8_t>>& certsDer)
 std::map<int, std::vector<uint8_t>> sodDataGroups()
 {
     return ldsDataGroups();
+}
+
+std::vector<uint8_t> makeCertificateIssuedByAnchor(const SyntheticMasterList& ml, int anchorIndex,
+                                                   const std::string& notAfter)
+{
+    const Cert anchor = anchorCert(ml, anchorIndex);
+    const Cert leaf = makeCert({.commonName = "Synthetic Signer " + randomHex(4),
+                                .ca = false,
+                                .issuer = &anchor,
+                                .issuerName = nullptr,
+                                .keyUsage = "critical,digitalSignature",
+                                .ekuOid = {},
+                                .notAfter = notAfter});
+    return certDer(leaf.x.get());
 }
 
 std::vector<uint8_t> makeSod(const SyntheticMasterList& ml, int anchorIndex, const std::string& dscEku,

@@ -36,6 +36,20 @@ Notable user-visible changes per release. Format follows
 - **`eid-sod-verify` diagnostic tool.** A standalone PC/SC utility that
   independently reads and verifies the eID Security Object (SOD),
   useful for troubleshooting card trust outside the signing path.
+- **CSCA master-list import API.** New public `LibreSCRS::Trust`
+  functions read an ICAO 9303-12 country-signing master list: verify the
+  signed object and return the trust anchors it carries, compute the
+  fingerprint that pins its publisher, and decide whether a new
+  publisher chains to an anchor the previously trusted list already
+  carried — the rule that lets a country's key rotation be followed
+  without anyone re-pinning by hand. A host that imports master lists no
+  longer needs an OpenSSL dependency and a certificate path builder of
+  its own. A verified list also comes back with the certificate that
+  signed it and, when the list carries one, the instant it was signed
+  at, taken from the attribute the signature covers — so a host can put
+  the rotation question and refuse a replayed older list without being
+  handed, out of band, data that is already inside the file it just
+  read.
 - **Arch Linux packaging.** A release-shaped `PKGBUILD` for
   `librescrs-middleware`.
 

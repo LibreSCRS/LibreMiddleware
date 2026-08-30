@@ -454,5 +454,8 @@ LibreSCRS::Trust::TrustStoreService::trustStore() const@@LM_4
 LibreSCRS::Trust::TrustStoreService::waitForEagerFetches(std::chrono::duration<long, std::ratio<1l, 1000l> >, LibreSCRS::CancelToken) const@@LM_4
 LibreSCRS::Trust::TrustStoreService::~TrustStoreService()@@LM_4
 LibreSCRS::Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(LibreSCRS::Trust::TrustStore&, std::vector<LibreSCRS::Trust::TrustAnchor, std::allocator<LibreSCRS::Trust::TrustAnchor> >, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)@@LM_4
+LibreSCRS::Trust::parseAndVerifyMasterList(std::vector<unsigned char, std::allocator<unsigned char> > const&, std::array<unsigned char, 32ul> const*)@@LM_4
+LibreSCRS::Trust::signerChainsToAnyAnchor(std::vector<unsigned char, std::allocator<unsigned char> > const&, std::vector<std::vector<unsigned char, std::allocator<unsigned char> >, std::allocator<std::vector<unsigned char, std::allocator<unsigned char> > > > const&)@@LM_4
+LibreSCRS::Trust::spkiSha256FromCertificateDer(std::vector<unsigned char, std::allocator<unsigned char> > const&)@@LM_4
 libresign::Pkcs11Token::Pkcs11Token(libresign::Pkcs11ModuleHandle, LibreSCRS::Secure::Buffer const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, libresign::Pkcs11Token::TestSlotId, std::vector<unsigned char, std::allocator<unsigned char> > const&)@@LM_4
 libresign::Pkcs11Token::Pkcs11Token(libresign::Pkcs11ModuleHandle, LibreSCRS::Secure::Buffer const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::vector<unsigned char, std::allocator<unsigned char> > const&)@@LM_4

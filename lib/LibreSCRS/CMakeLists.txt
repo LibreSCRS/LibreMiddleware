@@ -76,6 +76,7 @@ endif()
 
 # Trust: public types + internal providers + composer + async lifecycle owner.
 add_library(LibreSCRS_Trust ${LIBREMIDDLEWARE_LIB_TYPE}
+    Trust/CscaMasterList.cpp
     Trust/TrustConfig.cpp
     Trust/TrustStore.cpp
     Trust/TrustStoreService.cpp
@@ -105,9 +106,18 @@ target_compile_features(LibreSCRS_Trust PUBLIC cxx_std_23)
 # ${CMAKE_DL_LIBS}: BundledCertsProvider.cpp uses dladdr to derive the
 # certificate bundle from the location of this library rather than the host
 # executable's.
+# EMRTDCrypto: Trust/CscaMasterList.cpp is a facade over the CSCA
+# master-list reader that lives beside passive authentication. PRIVATE and
+# BUILD_INTERFACE-only, exactly like the two above — EMRTDCrypto is a static
+# archive that is never installed and never exported, so a Config-package
+# consumer must not see the link edge. What the consumer sees is the three
+# LibreSCRS::Trust symbols, promoted by LIBRESCRS_PUBLIC_API through the
+# version-script allowlist; `emrtd::crypto::*` mentions no LibreSCRS type, so
+# the allowlist leaves it local and the internal surface stays inside the .so.
 target_link_libraries(LibreSCRS_Trust PRIVATE
     $<BUILD_INTERFACE:OpenSSL_Crypto>
     $<BUILD_INTERFACE:LibreSign>
+    $<BUILD_INTERFACE:EMRTDCrypto>
     ${CMAKE_DL_LIBS})
 set_target_properties(LibreSCRS_Trust PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_options(LibreSCRS_Trust PRIVATE

@@ -28,7 +28,10 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <optional>
 #include <stdexcept>
+#include <string>
 
 #include <unistd.h> // geteuid, for the root-runs-ignore-permissions guard below
 
@@ -620,6 +623,77 @@ std::vector<std::vector<uint8_t>> anchorsInsideList(const std::vector<uint8_t>& 
     return out;
 }
 
+/// One instant, written down TWICE and independently: as the second since the
+/// Unix epoch a reader has to answer with, and as the UTCTime the encoding has
+/// to carry. 2009-02-13T23:31:30Z, far enough from any run of this suite that a
+/// reader answering with the clock instead of the attribute cannot pass.
+///
+/// The two spellings are not derived from each other on purpose. An oracle that
+/// converted an ASN.1 time to seconds the same way the implementation does
+/// could agree with it about a conversion both had wrong; a hand-written string
+/// beside a hand-written number cannot.
+constexpr int64_t kFixedSigningTimeEpoch = 1234567890;
+constexpr const char* kFixedSigningTimeUtc = "090213233130Z";
+
+/// A second instant for the decoy, 2017-07-14T02:40:00Z. Only its being
+/// different from the one above matters.
+constexpr int64_t kDecoySigningTimeEpoch = 1500000000;
+constexpr const char* kDecoySigningTimeUtc = "170714024000Z";
+
+/// A third, 2001-09-09T01:46:40Z, so that a list can carry three signers signed
+/// at three different instants and "the middle one" be a distinguishable answer.
+constexpr int64_t kThirdSigningTimeEpoch = 1000000000;
+constexpr const char* kThirdSigningTimeUtc = "010909014640Z";
+
+/// The signingTime the SignerInfo at @p signerIndex carries, AS THE ASN.1 TIME
+/// STRING it holds -- not as seconds; see the constants above.
+///
+/// @param fromSignedAttributes true reads the signed attributes, false the
+///        unsigned ones. Which of the two the value sits in is the whole
+///        subject of the tests that call this with `false`.
+/// @return the time string, or an empty string when there is no such attribute.
+std::string signingTimeStringOf(const std::vector<uint8_t>& cmsDer, int signerIndex, bool fromSignedAttributes)
+{
+    CMS_ContentInfo* cms = parseCms(cmsDer);
+    if (cms == nullptr) {
+        throw std::runtime_error("signingTimeStringOf: the input is not a CMS");
+    }
+    CMS_SignerInfo* signerInfo = sk_CMS_SignerInfo_value(CMS_get0_SignerInfos(cms), signerIndex);
+    std::string out;
+    if (signerInfo != nullptr) {
+        const int index = fromSignedAttributes ? CMS_signed_get_attr_by_NID(signerInfo, NID_pkcs9_signingTime, -1)
+                                               : CMS_unsigned_get_attr_by_NID(signerInfo, NID_pkcs9_signingTime, -1);
+        if (index >= 0) {
+            X509_ATTRIBUTE* attribute = fromSignedAttributes ? CMS_signed_get_attr(signerInfo, index)
+                                                             : CMS_unsigned_get_attr(signerInfo, index);
+            const ASN1_TYPE* value = X509_ATTRIBUTE_get0_type(attribute, 0);
+            if (value != nullptr && value->value.asn1_string != nullptr) {
+                const ASN1_STRING* text = value->value.asn1_string;
+                out.assign(reinterpret_cast<const char*>(ASN1_STRING_get0_data(text)),
+                           static_cast<std::size_t>(ASN1_STRING_length(text)));
+            }
+        }
+    }
+    CMS_ContentInfo_free(cms);
+    ERR_clear_error();
+    return out;
+}
+
+/// Whether the SignerInfo at @p signerIndex carries a SIGNED attribute of
+/// @p nid. Used to show that dropping the signingTime drops nothing else.
+bool hasSignedAttribute(const std::vector<uint8_t>& cmsDer, int signerIndex, int nid)
+{
+    CMS_ContentInfo* cms = parseCms(cmsDer);
+    if (cms == nullptr) {
+        throw std::runtime_error("hasSignedAttribute: the input is not a CMS");
+    }
+    CMS_SignerInfo* signerInfo = sk_CMS_SignerInfo_value(CMS_get0_SignerInfos(cms), signerIndex);
+    const bool present = signerInfo != nullptr && CMS_signed_get_attr_by_NID(signerInfo, nid, -1) >= 0;
+    CMS_ContentInfo_free(cms);
+    ERR_clear_error();
+    return present;
+}
+
 } // namespace
 
 TEST(SyntheticMasterListTest, VariesOnlyTheSignerWhenAskedForAnother)
@@ -710,6 +784,65 @@ TEST(SyntheticMasterListTest, EmptyListIsStillProperlySigned)
     EXPECT_EQ(ml.eContentTamperOffset, 0u);
     EXPECT_EQ(eContentTypeOf(ml.der), "2.23.136.1.1.2");
     EXPECT_EQ(cmsVerifyAgainst(ml.der, {}, CMS_NO_SIGNER_CERT_VERIFY), 1);
+}
+
+TEST(SyntheticMasterListTest, OrdinaryListsCarryASignedSigningTime)
+{
+    // The case that needs no asking for, and the reason the two below have to
+    // be asked for: OpenSSL puts the current time in the signed attributes on
+    // its own, so "carries a signing time" is the default and "carries none" is
+    // the one that has to be arranged.
+    const auto ml = LibreSCRS::Test::makeMasterList(1);
+    EXPECT_FALSE(signingTimeStringOf(ml.der, 0, true).empty()) << "a signed signingTime is what CMS_sign leaves";
+    EXPECT_TRUE(signingTimeStringOf(ml.der, 0, false).empty()) << "and it leaves nothing in the unsigned attributes";
+}
+
+TEST(SyntheticMasterListTest, SignsAtTheInstantItIsGiven)
+{
+    // The encoding, not the epoch: this is the oracle the reader's answer is
+    // compared against, so it is read as the ASN.1 string the object carries.
+    const auto ml = LibreSCRS::Test::makeMasterListSignedAt(2, kFixedSigningTimeEpoch);
+    EXPECT_EQ(signingTimeStringOf(ml.der, 0, true), kFixedSigningTimeUtc)
+        << "the 13-character UTCTime RFC 5280 requires for a year before 2050";
+    EXPECT_EQ(cmsVerifyAgainst(ml.der, {}, CMS_NO_SIGNER_CERT_VERIFY), 1)
+        << "an instant of our own must not cost the signature";
+    EXPECT_EQ(eContentTypeOf(ml.der), "2.23.136.1.1.2");
+    EXPECT_EQ(ml.cscaDer.size(), 2u);
+}
+
+TEST(SyntheticMasterListTest, OmitsTheSigningTimeWhenAskedTo)
+{
+    // And drops nothing else with it. contentType is the attribute
+    // parseCscaMasterList compares against the eContentType field, so a fixture
+    // that dropped every signed attribute would produce an object that is not a
+    // master list at all -- a different input testing a different thing.
+    const auto ml = LibreSCRS::Test::makeMasterListWithoutSigningTime(2);
+    EXPECT_TRUE(signingTimeStringOf(ml.der, 0, true).empty()) << "no signed signingTime";
+    EXPECT_TRUE(signingTimeStringOf(ml.der, 0, false).empty()) << "and none in the unsigned attributes either";
+    EXPECT_TRUE(hasSignedAttribute(ml.der, 0, NID_pkcs9_contentType));
+    EXPECT_TRUE(hasSignedAttribute(ml.der, 0, NID_pkcs9_messageDigest));
+    EXPECT_EQ(cmsVerifyAgainst(ml.der, {}, CMS_NO_SIGNER_CERT_VERIFY), 1) << "a dateless list is still properly signed";
+    EXPECT_EQ(eContentTypeOf(ml.der), "2.23.136.1.1.2");
+}
+
+TEST(SyntheticMasterListTest, ASigningTimePlantedInTheUnsignedAttributesIsRefusedByOpenSslItself)
+{
+    // The finding this fixture exists to record. A signingTime is a SIGNED
+    // attribute by definition, and OpenSSL's own attribute check refuses one
+    // sitting anywhere else -- so an object carrying an attacker-chosen signing
+    // time beside the real one does not verify, and the confusion cannot be
+    // staged on an object that does.
+    const auto ml = LibreSCRS::Test::makeMasterListSignedAt(1, kFixedSigningTimeEpoch);
+    const auto decoyed = LibreSCRS::Test::makeMasterListWithSigningTimeInUnsignedAttributes(ml, kDecoySigningTimeEpoch);
+
+    ASSERT_NE(decoyed.der, ml.der) << "the fixture has to have changed something";
+    EXPECT_EQ(signingTimeStringOf(decoyed.der, 0, false), kDecoySigningTimeUtc) << "the decoy is really planted";
+    EXPECT_EQ(signingTimeStringOf(decoyed.der, 0, true), kFixedSigningTimeUtc) << "and the signed one is untouched";
+    EXPECT_EQ(decoyed.eContentTamperOffset, 0u) << "the offsets after the attribute moved; see the header";
+
+    ASSERT_NE(cmsVerifyAgainst(decoyed.der, {}, CMS_NO_SIGNER_CERT_VERIFY), -1) << "it must still be a parseable CMS";
+    EXPECT_EQ(cmsVerifyAgainst(decoyed.der, {}, CMS_NO_SIGNER_CERT_VERIFY), 0)
+        << "OpenSSL refuses a signingTime outside the signed attributes";
 }
 
 TEST(SyntheticMasterListTest, AnchorsAreSortedForDerSetOf)
@@ -2465,8 +2598,15 @@ namespace {
 ///        object, which is the only difference between the two calls: the
 ///        signature is made the same way and is just as good, and CMS_verify
 ///        still cannot check it, because the key to check it with is not there.
+/// @param signingTimeEpochSeconds when given, the SIGNED signingTime this
+///        signer attests to. It needs CMS_PARTIAL and an explicit
+///        CMS_SignerInfo_sign, because the attribute has to be in place before
+///        the signature is made -- and because OpenSSL puts the current time
+///        there itself the moment it signs a SignerInfo carrying none, which
+///        would give all three signers of a list the same second.
 std::vector<uint8_t> addSignedSigner(const std::vector<uint8_t>& cmsDer, const char* commonName,
-                                     bool embedCertificate = true)
+                                     bool embedCertificate = true,
+                                     std::optional<int64_t> signingTimeEpochSeconds = std::nullopt)
 {
     CMS_ContentInfo* cms = parseCms(cmsDer);
     if (cms == nullptr) {
@@ -2477,7 +2617,10 @@ std::vector<uint8_t> addSignedSigner(const std::vector<uint8_t>& cmsDer, const c
     try {
         mintThrowawayIdentity(id, commonName);
         const unsigned int certFlag = embedCertificate ? 0u : static_cast<unsigned int>(CMS_NOCERTS);
-        signer = CMS_add1_signer(cms, id.cert, id.key, EVP_sha256(), CMS_NOSMIMECAP | CMS_REUSE_DIGEST | certFlag);
+        const unsigned int partialFlag =
+            signingTimeEpochSeconds.has_value() ? static_cast<unsigned int>(CMS_PARTIAL) : 0u;
+        signer = CMS_add1_signer(cms, id.cert, id.key, EVP_sha256(),
+                                 CMS_NOSMIMECAP | CMS_REUSE_DIGEST | certFlag | partialFlag);
     } catch (...) {
         CMS_ContentInfo_free(cms);
         throw;
@@ -2485,6 +2628,21 @@ std::vector<uint8_t> addSignedSigner(const std::vector<uint8_t>& cmsDer, const c
     if (signer == nullptr) {
         CMS_ContentInfo_free(cms);
         throw std::runtime_error("addSignedSigner: could not add the signer");
+    }
+    if (signingTimeEpochSeconds.has_value()) {
+        ASN1_TIME* when = ASN1_TIME_set(nullptr, static_cast<time_t>(*signingTimeEpochSeconds));
+        const bool added =
+            when != nullptr && CMS_signed_add1_attr_by_NID(signer, NID_pkcs9_signingTime, when->type, when, -1) == 1;
+        ASN1_TIME_free(when);
+        if (!added) {
+            CMS_ContentInfo_free(cms);
+            throw std::runtime_error("addSignedSigner: could not set the signingTime");
+        }
+        // Only now, and only because CMS_PARTIAL kept it unsigned until here.
+        if (CMS_SignerInfo_sign(signer) != 1) {
+            CMS_ContentInfo_free(cms);
+            throw std::runtime_error("addSignedSigner: CMS_SignerInfo_sign failed");
+        }
     }
     unsigned char* der = nullptr;
     const int len = i2d_CMS_ContentInfo(cms, &der);
@@ -3335,6 +3493,137 @@ TEST_F(CscaMasterListTest, LeavesACallersErrorQueueUntouchedWhenItVerifies)
     ASSERT_TRUE(out->identityChecked);
 
     expectOnlyTheCallersErrorRemains(callerError);
+}
+
+// --- what a verified list says about WHO signed it and WHEN ----------------
+//
+// Two fields, one reason: a host that imports master lists has to be able to
+// refuse a replayed older list, and to follow a publisher that has rotated its
+// key. Neither is possible from anchors and a fingerprint alone -- the first
+// needs a date the publisher is committed to, the second needs the signer's
+// certificate to hand to signerChainsToAnyAnchor(), which takes a bare
+// certificate.
+// ---------------------------------------------------------------------------
+
+TEST_F(CscaMasterListTest, ReturnsTheCertificateOfTheSignerItReports)
+{
+    // The exact bytes, not a certificate that merely fingerprints the same: a
+    // caller hands this to a path builder, so what comes back has to be an
+    // encoding something can parse, and the one the object actually carried.
+    const auto ml = LibreSCRS::Test::makeMasterList(2);
+    const auto expected = LibreSCRS::Test::masterListSignerCertificateDer(ml);
+
+    const auto out = emrtd::crypto::parseAndVerifyMasterList(ml.der, ml.signerSpkiSha256);
+
+    ASSERT_TRUE(out.has_value());
+    EXPECT_EQ(out->signerCertDer, expected) << "byte for byte the certificate that signed the list";
+    EXPECT_EQ(spkiSha256OfCertificate(out->signerCertDer), out->signerSpkiSha256)
+        << "the certificate and the fingerprint have to describe one signer";
+}
+
+TEST_F(CscaMasterListTest, ReturnsTheCertificateOfThePinnedSignerAmongSeveral)
+{
+    // THREE signers and the pin naming the middle one, for the reason every
+    // other test on this list gives: the certificate reported must be the
+    // signer the pin MATCHED, not the one a reader meets first. Handing back
+    // signers[0] here is how a caller comes to chain a stranger's certificate.
+    const auto ml = LibreSCRS::Test::makeMasterList(1);
+    const auto three = threeSignerMasterList(ml);
+    ASSERT_EQ(signerCountOf(three), 3);
+
+    const auto first = spkiSha256OfSignerAt(three, 0);
+    const auto middle = spkiSha256OfSignerAt(three, 1);
+    const auto last = spkiSha256OfSignerAt(three, 2);
+
+    const auto out = emrtd::crypto::parseAndVerifyMasterList(three, middle);
+
+    ASSERT_TRUE(out.has_value());
+    EXPECT_EQ(spkiSha256OfCertificate(out->signerCertDer), middle) << "the certificate of the signer that MATCHED";
+    EXPECT_NE(spkiSha256OfCertificate(out->signerCertDer), first);
+    EXPECT_NE(spkiSha256OfCertificate(out->signerCertDer), last);
+}
+
+TEST_F(CscaMasterListTest, ReportsTheInstantTheListWasSignedAt)
+{
+    // A literal, not the fixture's own read-back and not a window around the
+    // clock: a reader that answered with `now` would sit inside any window
+    // wide enough to be safe, and this instant is seventeen years past.
+    const auto ml = LibreSCRS::Test::makeMasterListSignedAt(2, kFixedSigningTimeEpoch);
+
+    const auto out = emrtd::crypto::parseAndVerifyMasterList(ml.der, ml.signerSpkiSha256);
+
+    ASSERT_TRUE(out.has_value());
+    ASSERT_TRUE(out->signingTimeEpochSeconds.has_value()) << "the list carries a signed signingTime";
+    EXPECT_EQ(*out->signingTimeEpochSeconds, kFixedSigningTimeEpoch);
+}
+
+TEST_F(CscaMasterListTest, ReportsNoInstantForAListThatCarriesNoSigningTime)
+{
+    // The other half, and it is not optional: with only the test above, an
+    // empty answer cannot be told from a reader that cannot read the attribute
+    // at all -- both look like "nothing here".
+    //
+    // And the list is ACCEPTED. A master list without a signingTime is a valid
+    // CMS object, so refusing it would refuse a genuine publisher; what an
+    // undated list is worth is the caller's decision, taken with this field
+    // empty in front of it.
+    const auto ml = LibreSCRS::Test::makeMasterListWithoutSigningTime(2);
+
+    const auto out = emrtd::crypto::parseAndVerifyMasterList(ml.der, ml.signerSpkiSha256);
+
+    ASSERT_TRUE(out.has_value()) << "a list is not refused for carrying no date";
+    EXPECT_FALSE(out->signingTimeEpochSeconds.has_value());
+    EXPECT_EQ(out->list.cscaDer, ml.cscaDer) << "and everything else about it still comes back";
+    EXPECT_TRUE(out->identityChecked);
+}
+
+TEST_F(CscaMasterListTest, ReportsTheSigningTimeOfThePinnedSignerAmongSeveral)
+{
+    // signingTime belongs to a SignerInfo, not to the object, so on a list with
+    // several signers there are several answers and only one of them is right:
+    // the one belonging to the signer that was pinned. Three signers at three
+    // instants, and the pinned one is in the middle.
+    const auto ml = LibreSCRS::Test::makeMasterListSignedAt(1, kFixedSigningTimeEpoch);
+    const auto three = addSignedSigner(addSignedSigner(ml.der, "Second Signer", true, kDecoySigningTimeEpoch),
+                                       "Third Signer", true, kThirdSigningTimeEpoch);
+    ERR_clear_error(); // building the fixture is not what is under test
+    ASSERT_EQ(signerCountOf(three), 3);
+
+    // The instants, written down as the encodings carry them, so that reading
+    // one back does not go through the very conversion under test. Which signer
+    // lands where is decided by the DER SET OF order, not by the order above.
+    const std::map<std::string, int64_t> instants = {{kFixedSigningTimeUtc, kFixedSigningTimeEpoch},
+                                                     {kDecoySigningTimeUtc, kDecoySigningTimeEpoch},
+                                                     {kThirdSigningTimeUtc, kThirdSigningTimeEpoch}};
+    const int64_t firstInstant = instants.at(signingTimeStringOf(three, 0, true));
+    const int64_t middleInstant = instants.at(signingTimeStringOf(three, 1, true));
+    const int64_t lastInstant = instants.at(signingTimeStringOf(three, 2, true));
+    ASSERT_NE(middleInstant, firstInstant) << "three distinct instants, or this test proves nothing";
+    ASSERT_NE(middleInstant, lastInstant);
+
+    const auto out = emrtd::crypto::parseAndVerifyMasterList(three, spkiSha256OfSignerAt(three, 1));
+
+    ASSERT_TRUE(out.has_value());
+    ASSERT_TRUE(out->signingTimeEpochSeconds.has_value());
+    EXPECT_EQ(*out->signingTimeEpochSeconds, middleInstant) << "the signing time of the signer that MATCHED";
+    EXPECT_NE(*out->signingTimeEpochSeconds, firstInstant);
+    EXPECT_NE(*out->signingTimeEpochSeconds, lastInstant);
+}
+
+TEST_F(CscaMasterListTest, RefusesAListCarryingASigningTimeInTheUnsignedAttributes)
+{
+    // The attack this field's provenance is about, and it never reaches the
+    // field: OpenSSL refuses a signingTime outside the signed attributes, so an
+    // object carrying an attacker-chosen instant beside the real one does not
+    // verify. BadSignature, before any date is read.
+    const auto ml = LibreSCRS::Test::makeMasterListSignedAt(1, kFixedSigningTimeEpoch);
+    const auto decoyed = LibreSCRS::Test::makeMasterListWithSigningTimeInUnsignedAttributes(ml, kDecoySigningTimeEpoch);
+    ASSERT_NE(decoyed.der, ml.der) << "the fixture has to have changed something";
+
+    const auto out = emrtd::crypto::parseAndVerifyMasterList(decoyed.der, ml.signerSpkiSha256);
+
+    ASSERT_FALSE(out.has_value());
+    EXPECT_EQ(out.error(), emrtd::crypto::MasterListError::BadSignature);
 }
 
 // --- computing the pin -----------------------------------------------------
@@ -4255,6 +4544,178 @@ TEST_F(CscaVerdictTest, LeavesACallersErrorQueueUntouchedWhenItPasses)
     ASSERT_NE(callerError, 0ul) << "test setup must actually queue an error to prove anything";
 
     ASSERT_EQ(emrtd::crypto::evaluateCscaChain(sod, anchorsOf(ml), true), emrtd::crypto::CscaVerdict::Passed);
+
+    expectOnlyTheCallersErrorRemains(callerError);
+}
+
+// ---------------------------------------------------------------------------
+// signerChainsToAnyAnchor: one bare certificate against a set of anchors
+// ---------------------------------------------------------------------------
+//
+// evaluateCscaChain answers a neighbouring question about a DOCUMENT: handed a
+// security object, it resolves the signers by verifying it and only then builds
+// a chain. A caller holding a CERTIFICATE and no document -- the publisher of
+// the master list it is about to import -- cannot ask it anything. The rule
+// such a caller needs is "accept a new signer if it chains to an anchor the
+// previous list carried", and it lives here rather than in the caller because
+// the alternative is every caller growing an OpenSSL dependency and building
+// paths of its own, PARTIAL_CHAIN included -- which is what most of the tests
+// below are about.
+//
+// The store is storeOfAnchors(), shared with evaluateCscaChain, so both
+// functions turn off the same two verification defaults for the same reasons.
+
+TEST_F(CscaVerdictTest, ChainsASignerToTheAnchorThatIssuedIt)
+{
+    // The ordinary case, and the only one where a failure means the chain
+    // machinery is wired up wrong rather than a flag being missing.
+    const auto ml = LibreSCRS::Test::makeMasterList(3);
+    const auto signer = documentSignerCertificateOf(LibreSCRS::Test::makeSod(ml, 1));
+
+    EXPECT_TRUE(emrtd::crypto::signerChainsToAnyAnchor(signer, anchorsOf(ml)));
+}
+
+TEST_F(CscaVerdictTest, DoesNotChainASignerToAStrangersAnchors)
+{
+    // The refusal that makes the acceptance above mean something: a set of
+    // anchors minted by a different authority answers false for the same
+    // certificate.
+    const auto ours = LibreSCRS::Test::makeMasterList(2);
+    const auto theirs = LibreSCRS::Test::makeMasterList(2);
+    const auto signer = documentSignerCertificateOf(LibreSCRS::Test::makeSod(ours, 0));
+    ASSERT_NE(subjectOfCert(ours.cscaDer[0]), subjectOfCert(theirs.cscaDer[0]));
+
+    EXPECT_FALSE(emrtd::crypto::signerChainsToAnyAnchor(signer, anchorsOf(theirs)));
+}
+
+TEST_F(CscaVerdictTest, ChainsToALinkCertificateHeldAlone)
+{
+    // X509_V_FLAG_PARTIAL_CHAIN, in the shape the flag exists for. The only
+    // anchor held is a CSCA link certificate, which is not self-signed, so
+    // without the flag OpenSSL refuses to end the chain there, goes looking for
+    // the link's own issuer, does not find it in the store and answers
+    // X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT -- false, for a signer a country
+    // that had rotated genuinely issued.
+    //
+    // See makeMasterListWithLinkCertificate() in the fixture header for what a
+    // link certificate is and why nothing else here produces one.
+    const auto rotation = LibreSCRS::Test::makeMasterListWithLinkCertificate();
+    const auto& link = rotation.list.cscaDer[static_cast<std::size_t>(rotation.linkIndex)];
+    const auto& incoming = rotation.list.cscaDer[static_cast<std::size_t>(rotation.incomingIndex)];
+    // Asserted rather than assumed, as the evaluateCscaChain test above does:
+    // the fixture has to have produced a link certificate for this to be the
+    // test it claims to be.
+    ASSERT_NE(issuerOfCert(link), subjectOfCert(link)) << "a link certificate is not self-signed";
+    ASSERT_EQ(subjectOfCert(link), subjectOfCert(incoming));
+    ASSERT_EQ(spkiSha256OfCertificate(link), spkiSha256OfCertificate(incoming));
+
+    const auto signer = documentSignerCertificateOf(LibreSCRS::Test::makeSod(rotation.list, rotation.incomingIndex));
+
+    EXPECT_TRUE(emrtd::crypto::signerChainsToAnyAnchor(signer, {link}))
+        << "a configured anchor may end a chain, whether or not it signed itself";
+}
+
+TEST_F(CscaVerdictTest, ChainsToTheIncomingCscaHeldAlone)
+{
+    // The control for the test above. The incoming CSCA carries the same
+    // subject and the same key as the link certificate and differs from it in
+    // exactly one property -- it signed itself -- so a green here beside a red
+    // there says the refusal was about self-signedness and not about the
+    // certificate, the key, or the fixture.
+    const auto rotation = LibreSCRS::Test::makeMasterListWithLinkCertificate();
+    const auto& incoming = rotation.list.cscaDer[static_cast<std::size_t>(rotation.incomingIndex)];
+    const auto signer = documentSignerCertificateOf(LibreSCRS::Test::makeSod(rotation.list, rotation.incomingIndex));
+
+    EXPECT_TRUE(emrtd::crypto::signerChainsToAnyAnchor(signer, {incoming}));
+}
+
+TEST_F(CscaVerdictTest, DoesNotChainToTheOutgoingCscaHeldAlone)
+{
+    // And the refusal on the other side of the rotation, so that "any anchor
+    // may end a chain" is not read as "any anchor will do". The outgoing CSCA
+    // issued the link certificate, but it did not issue this signer and does
+    // not carry the key that did.
+    const auto rotation = LibreSCRS::Test::makeMasterListWithLinkCertificate();
+    const auto& outgoing = rotation.list.cscaDer[static_cast<std::size_t>(rotation.outgoingIndex)];
+    const auto signer = documentSignerCertificateOf(LibreSCRS::Test::makeSod(rotation.list, rotation.incomingIndex));
+
+    EXPECT_FALSE(emrtd::crypto::signerChainsToAnyAnchor(signer, {outgoing}));
+}
+
+TEST_F(CscaVerdictTest, ChainsAnAnchorToItself)
+{
+    // A caller re-importing an unchanged list hands back the certificate it
+    // already trusts, and gets true. Stated because it is a consequence of
+    // PARTIAL_CHAIN rather than a separate rule: a certificate in the store
+    // ends a chain of length one.
+    const auto ml = LibreSCRS::Test::makeMasterList(2);
+
+    EXPECT_TRUE(emrtd::crypto::signerChainsToAnyAnchor(ml.cscaDer[0], anchorsOf(ml)));
+}
+
+TEST_F(CscaVerdictTest, IgnoresTheClockAtBothEndsOfTheChain)
+{
+    // X509_V_FLAG_NO_CHECK_TIME, and the same reason evaluateCscaChain turns it
+    // off: a signer's key lives months while what it signed lives years, so an
+    // expired signer is the ordinary case rather than the suspicious one. This
+    // answer therefore carries NO statement about time, and a caller must not
+    // read one into it.
+    const auto ml = LibreSCRS::Test::makeMasterList(1);
+    const auto expired = documentSignerCertificateOf(LibreSCRS::Test::makeSod(ml, 0, {}, "200101000000Z"));
+    const auto current = documentSignerCertificateOf(LibreSCRS::Test::makeSod(ml, 0));
+    ASSERT_NE(expired, current) << "the two certificates must really differ, or this compares nothing";
+
+    EXPECT_TRUE(emrtd::crypto::signerChainsToAnyAnchor(expired, anchorsOf(ml)));
+    EXPECT_TRUE(emrtd::crypto::signerChainsToAnyAnchor(current, anchorsOf(ml)));
+}
+
+TEST_F(CscaVerdictTest, RefusesAnEmptyAnchorSet)
+{
+    // No accusation is available at this level -- the function answers one
+    // question with two answers -- so "nothing was configured" arrives as
+    // false, and the caller separates the two cases itself. That asymmetry with
+    // evaluateCscaChain's five verdicts is deliberate and documented.
+    const auto ml = LibreSCRS::Test::makeMasterList(1);
+    const auto signer = documentSignerCertificateOf(LibreSCRS::Test::makeSod(ml, 0));
+
+    EXPECT_FALSE(emrtd::crypto::signerChainsToAnyAnchor(signer, {}));
+}
+
+TEST_F(CscaVerdictTest, RefusesASignerThatIsNotACertificate)
+{
+    const auto ml = LibreSCRS::Test::makeMasterList(1);
+
+    EXPECT_FALSE(emrtd::crypto::signerChainsToAnyAnchor(notACertificate(0x41), anchorsOf(ml)));
+    EXPECT_FALSE(emrtd::crypto::signerChainsToAnyAnchor({}, anchorsOf(ml)));
+}
+
+TEST_F(CscaVerdictTest, PassesOverAnAnchorThatIsNotACertificate)
+{
+    // decodeAnchors() is shared with evaluateCscaChain and skips what does not
+    // decode rather than refusing the whole set: one unreadable file among many
+    // costs only that file.
+    const auto ml = LibreSCRS::Test::makeMasterList(1);
+    const auto signer = documentSignerCertificateOf(LibreSCRS::Test::makeSod(ml, 0));
+    std::vector<std::vector<uint8_t>> mixed{notACertificate(0x41), ml.cscaDer[0], notACertificate(0x42)};
+
+    EXPECT_TRUE(emrtd::crypto::signerChainsToAnyAnchor(signer, mixed));
+}
+
+TEST_F(CscaVerdictTest, LeavesACallersErrorQueueUntouchedWhenASignerDoesNotChain)
+{
+    // The refusal path, which is the one that queues: a failed
+    // X509_verify_cert leaves entries behind, and they would otherwise land on
+    // top of whatever the caller was holding.
+    const auto ours = LibreSCRS::Test::makeMasterList(1);
+    const auto theirs = LibreSCRS::Test::makeMasterList(1);
+    const auto signer = documentSignerCertificateOf(LibreSCRS::Test::makeSod(ours, 0));
+    ERR_clear_error(); // the fixture generator is entitled to leave its own residue
+
+    ERR_raise(ERR_LIB_USER, ERR_R_INTERNAL_ERROR);
+    const unsigned long callerError = ERR_peek_error();
+    ASSERT_NE(callerError, 0ul) << "test setup must actually queue an error to prove anything";
+
+    ASSERT_FALSE(emrtd::crypto::signerChainsToAnyAnchor(signer, anchorsOf(theirs)));
 
     expectOnlyTheCallersErrorRemains(callerError);
 }

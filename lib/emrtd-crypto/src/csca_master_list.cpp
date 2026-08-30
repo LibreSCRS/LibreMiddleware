@@ -16,8 +16,10 @@
 
 #include <climits>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <utility>
 
 namespace emrtd::crypto {
@@ -405,6 +407,143 @@ struct X509StackDeleter
 
 using X509StackPtr = std::unique_ptr<STACK_OF(X509), X509StackDeleter>;
 
+struct Asn1TimeDeleter
+{
+    void operator()(ASN1_TIME* p) const
+    {
+        ASN1_TIME_free(p);
+    }
+};
+
+struct OpenSslBytesDeleter
+{
+    void operator()(unsigned char* p) const
+    {
+        OPENSSL_free(p);
+    }
+};
+
+using Asn1TimePtr = std::unique_ptr<ASN1_TIME, Asn1TimeDeleter>;
+using OpenSslBytesPtr = std::unique_ptr<unsigned char, OpenSslBytesDeleter>;
+
+/// @p cert as it was encoded, or an empty vector when that cannot be produced.
+///
+/// i2d over a certificate that was PARSED hands back the bytes it was parsed
+/// from, OpenSSL having kept the original encoding, so this is the slice the
+/// object carried rather than a re-encoding of it. That is what a caller going
+/// on to build a path with it should be given: what the publisher published.
+///
+/// The owning pointer is taken before anything can throw. The header says
+/// std::bad_alloc escapes, so the vector below is a live throwing path and a
+/// raw OPENSSL_free pointer across it would be a leak nothing unwinds.
+std::vector<uint8_t> certificateDer(X509* cert)
+{
+    if (cert == nullptr) {
+        return {};
+    }
+    unsigned char* der = nullptr;
+    const int len = i2d_X509(cert, &der);
+    const OpenSslBytesPtr owned(der);
+    if (len <= 0 || der == nullptr) {
+        return {};
+    }
+    return std::vector<uint8_t>(der, der + len);
+}
+
+/// @p when as seconds since the Unix epoch, or nothing when it cannot be read.
+///
+/// Through ASN1_TIME_diff against the epoch itself rather than through a
+/// `struct tm` and timegm: the arithmetic then belongs to the same library that
+/// decoded the field, timegm is a platform extension rather than a C function,
+/// and nothing here goes near the process's timezone state. ASN1_TIME_diff also
+/// validates what it is given, so a value that is tagged as a time and is not
+/// one comes back as nothing instead of as a number.
+std::optional<int64_t> epochSecondsOf(const ASN1_TIME* when)
+{
+    if (when == nullptr) {
+        return std::nullopt;
+    }
+    const Asn1TimePtr epoch(ASN1_TIME_set(nullptr, static_cast<time_t>(0)));
+    if (!epoch) {
+        return std::nullopt;
+    }
+    int days = 0;
+    int seconds = 0;
+    if (ASN1_TIME_diff(&days, &seconds, epoch.get(), when) != 1) {
+        return std::nullopt;
+    }
+    // Both come back with the same sign, so one expression covers a time before
+    // 1970 as well as one after it. A day count that could overflow this is some
+    // five million years wide.
+    return static_cast<int64_t>(days) * 86400 + seconds;
+}
+
+/// The instant the SIGNED attributes of @p signerInfo commit to, or nothing.
+///
+/// The SIGNED attributes and never the unsigned ones. `signingTime` is part of
+/// `signedAttrs`, so the signature covers it and a verified object's publisher
+/// is committed to it; the same attribute among the unsigned ones is outside
+/// every signature and is whatever the last hand to touch the file wrote there.
+/// Reading the wrong one would not be a smaller check, it would be a date that
+/// looks like protection while being attacker-chosen.
+///
+/// Nothing, rather than a guess, in every case where the object does not say
+/// exactly one time: no attribute, a second one beside it, an attribute holding
+/// more or less than one value, or a value that is neither a UTCTime nor a
+/// GeneralizedTime. Picking one of two, or reading a time out of something that
+/// is not one, would be inventing the answer.
+std::optional<int64_t> signedSigningTimeOf(CMS_SignerInfo* signerInfo)
+{
+    const int index = CMS_signed_get_attr_by_NID(signerInfo, NID_pkcs9_signingTime, -1);
+    if (index < 0) {
+        return std::nullopt;
+    }
+    // The search resumes AFTER the one just found, so this is "is there a
+    // second one", not "is there a first one".
+    if (CMS_signed_get_attr_by_NID(signerInfo, NID_pkcs9_signingTime, index) >= 0) {
+        return std::nullopt;
+    }
+    X509_ATTRIBUTE* attribute = CMS_signed_get_attr(signerInfo, index);
+    if (attribute == nullptr || X509_ATTRIBUTE_count(attribute) != 1) {
+        return std::nullopt;
+    }
+    const ASN1_TYPE* value = X509_ATTRIBUTE_get0_type(attribute, 0);
+    if (value == nullptr || (value->type != V_ASN1_UTCTIME && value->type != V_ASN1_GENERALIZEDTIME)) {
+        return std::nullopt;
+    }
+    return epochSecondsOf(value->value.asn1_string);
+}
+
+/// The SignerInfo whose signature @p signerCert verified, or null.
+///
+/// By identity and not by index. CMS_get0_signers builds its stack by walking
+/// the SignerInfos and pushing each one's resolved certificate, but it SKIPS
+/// any SignerInfo that has none -- so the two are parallel only as long as
+/// every SignerInfo resolved, which is true after a successful CMS_verify and
+/// is not a thing to rest an attribute read on. The pointers compared both come
+/// out of this one CMS_ContentInfo, so what is matched here is the very
+/// certificate the verification used.
+///
+/// Queues nothing: every call in it is a getter. That is what lets it sit under
+/// a mark that brackets a step rather than an item.
+///
+/// The FIRST match, on the pathological object that carries one certificate
+/// signing twice: two SignerInfos are then two signatures by one key, and the
+/// attributes read are the first one's.
+CMS_SignerInfo* signerInfoOf(CMS_ContentInfo* cms, const X509* signerCert)
+{
+    STACK_OF(CMS_SignerInfo)* signerInfos = CMS_get0_SignerInfos(cms);
+    for (int i = 0; i < sk_CMS_SignerInfo_num(signerInfos); ++i) {
+        CMS_SignerInfo* signerInfo = sk_CMS_SignerInfo_value(signerInfos, i);
+        X509* itsSigner = nullptr;
+        CMS_SignerInfo_get0_algs(signerInfo, nullptr, &itsSigner, nullptr, nullptr);
+        if (itsSigner != nullptr && itsSigner == signerCert) {
+            return signerInfo;
+        }
+    }
+    return nullptr;
+}
+
 /// SHA-256 over the DER of @p cert's SubjectPublicKeyInfo, or an empty vector
 /// if it cannot be produced.
 ///
@@ -490,6 +629,8 @@ parseAndVerifyMasterList(const std::vector<uint8_t>& der, const std::vector<uint
     }
 
     std::vector<uint8_t> reportedFingerprint;
+    std::vector<uint8_t> signerCertDer;
+    std::optional<int64_t> signingTime;
     bool identityChecked = false;
     {
         // One bracket over the whole of verification, and there is room to
@@ -576,8 +717,15 @@ parseAndVerifyMasterList(const std::vector<uint8_t>& der, const std::vector<uint
         // fingerprintMatches compares the lengths, so an empty pin matches no
         // signer, and a shared loop would answer SignerMismatch to a caller
         // that asked for no comparison at all.
+        // The certificate behind the fingerprint that gets reported, whichever
+        // of the two paths below chooses it. Both fields describe ONE signer,
+        // so it is picked once, where the choice is made, rather than looked up
+        // again afterwards from an index that would have to agree.
+        X509* reportedSigner = nullptr;
+
         if (expectedSpkiSha256.empty()) {
-            reportedFingerprint = spkiSha256(sk_X509_value(signers.get(), 0));
+            reportedSigner = sk_X509_value(signers.get(), 0);
+            reportedFingerprint = spkiSha256(reportedSigner);
             if (reportedFingerprint.empty()) {
                 // Unreachable, for the reason spkiSha256 gives for its own
                 // guards. `BadSignature` and not `SignerMismatch`, here and in
@@ -592,7 +740,8 @@ parseAndVerifyMasterList(const std::vector<uint8_t>& der, const std::vector<uint
                 // which one lands first is decided by the encoding rather than
                 // by whoever assembled the list; a pin on the signer that
                 // happens to sort second would otherwise never be met.
-                std::vector<uint8_t> fingerprint = spkiSha256(sk_X509_value(signers.get(), i));
+                X509* const candidate = sk_X509_value(signers.get(), i);
+                std::vector<uint8_t> fingerprint = spkiSha256(candidate);
                 if (fingerprint.empty()) {
                     return std::unexpected(MasterListError::BadSignature);
                 }
@@ -603,6 +752,7 @@ parseAndVerifyMasterList(const std::vector<uint8_t>& der, const std::vector<uint
                     // and reporting a fingerprint this call established
                     // nothing about is how a caller comes to store one.
                     reportedFingerprint = std::move(fingerprint);
+                    reportedSigner = candidate;
                     identityChecked = true;
                     break;
                 }
@@ -611,6 +761,31 @@ parseAndVerifyMasterList(const std::vector<uint8_t>& der, const std::vector<uint
                 return std::unexpected(MasterListError::SignerMismatch);
             }
         }
+
+        signerCertDer = certificateDer(reportedSigner);
+        if (signerCertDer.empty()) {
+            // Unreachable for the reason spkiSha256's own guards give: this
+            // certificate has just verified a signature and has just been
+            // encoded once already, for its fingerprint. It stays because empty
+            // bytes are not a certificate, and handing them back as one is how
+            // a caller comes to build a path out of nothing. Same verdict as
+            // there, and for the same reason: a signer that cannot be named is
+            // "nothing here vouches for these anchors".
+            return std::unexpected(MasterListError::BadSignature);
+        }
+
+        // The attributes of THAT signer's SignerInfo, not of the object: a
+        // signingTime belongs to one SignerInfo, so a list carrying several
+        // signers carries several answers and only the pinned one's is the
+        // answer to the question asked.
+        //
+        // A SignerInfo that cannot be found is the same answer as an attribute
+        // that is not there -- no time -- because that is what it is: nothing
+        // here says when this was signed. It cannot happen anyway, the
+        // certificate having come out of the stack built from these very
+        // SignerInfos.
+        CMS_SignerInfo* const signerInfo = signerInfoOf(cms.get(), reportedSigner);
+        signingTime = signerInfo != nullptr ? signedSigningTimeOf(signerInfo) : std::nullopt;
     }
 
     // Not a formality after the checks above, and not merely "now read the
@@ -625,7 +800,8 @@ parseAndVerifyMasterList(const std::vector<uint8_t>& der, const std::vector<uint
     if (!parsed) {
         return std::unexpected(parsed.error());
     }
-    return VerifiedMasterList{std::move(*parsed), std::move(reportedFingerprint), identityChecked};
+    return VerifiedMasterList{std::move(*parsed), std::move(reportedFingerprint), identityChecked,
+                              std::move(signerCertDer), signingTime};
 }
 
 std::optional<std::vector<uint8_t>> spkiSha256FromCertificateDer(const std::vector<uint8_t>& certDer)
@@ -683,8 +859,17 @@ struct VerifyParamDeleter
     }
 };
 
+struct X509StoreCtxDeleter
+{
+    void operator()(X509_STORE_CTX* p) const
+    {
+        X509_STORE_CTX_free(p);
+    }
+};
+
 using X509StorePtr = std::unique_ptr<X509_STORE, X509StoreDeleter>;
 using VerifyParamPtr = std::unique_ptr<X509_VERIFY_PARAM, VerifyParamDeleter>;
+using X509StoreCtxPtr = std::unique_ptr<X509_STORE_CTX, X509StoreCtxDeleter>;
 
 /// Decodes every element of @p anchorsDer that is a certificate, in order,
 /// passing over every element that is not.
@@ -954,7 +1139,71 @@ CscaVerdict evaluateCscaChain(const std::vector<uint8_t>& sodDer, const std::vec
                                                                                  : CscaVerdict::Failed;
 }
 
-// A fourth anonymous namespace, opened after the three functions above for the
+bool signerChainsToAnyAnchor(const std::vector<uint8_t>& signerCertDer,
+                             const std::vector<std::vector<uint8_t>>& anchorsDer)
+{
+    // decodeAnchors brackets the queue per element, as it does for
+    // evaluateCscaChain; everything after it is bracketed once here, because a
+    // failed X509_verify_cert leaves a handful of entries behind and this
+    // function promises the caller's queue back unchanged.
+    const std::vector<X509Ptr> anchors = decodeAnchors(anchorsDer);
+    // An empty set and a set of which nothing decoded arrive here as the same
+    // thing, deliberately: with one question and two answers there is no
+    // configuration verdict to distinguish them with. A caller that needs the
+    // distinction knows its own configuration.
+    if (anchors.empty()) {
+        return false;
+    }
+
+    const ErrorQueueMark errorMark;
+
+    // The same null and LONG_MAX guards as everywhere else here. d2i refuses a
+    // zero length itself, so `empty()` cannot change the answer; the LONG_MAX
+    // half cannot either where this builds, and stays for the narrowing cast.
+    if (signerCertDer.empty() || signerCertDer.size() > static_cast<size_t>(LONG_MAX)) {
+        return false;
+    }
+    const unsigned char* p = signerCertDer.data();
+    const X509Ptr signer(d2i_X509(nullptr, &p, static_cast<long>(signerCertDer.size())));
+    if (!signer) {
+        return false;
+    }
+    // Bytes trailing the certificate are not refused, as evaluateCscaChain does
+    // not refuse them after a ContentInfo: the subject here is who issued this
+    // certificate, not how the caller framed it.
+
+    // storeOfAnchors and not a store of its own, so that this function cannot
+    // drift from evaluateCscaChain on the two defaults both must turn off.
+    // X509_V_FLAG_PARTIAL_CHAIN is the one that decides this function's whole
+    // subject: a CSCA link certificate is not self-signed, so without it the
+    // rotation rule this exists to serve is answered `false` in exactly the
+    // case it was written for. See the header, and storeOfAnchors above for the
+    // full reasoning -- it is not repeated because there must be one copy of it.
+    const X509StorePtr store = storeOfAnchors(anchors);
+    if (!store) {
+        // An allocation or a parameter that would not take. False rather than
+        // true, because nothing was established.
+        return false;
+    }
+
+    const X509StoreCtxPtr ctx(X509_STORE_CTX_new());
+    if (!ctx) {
+        return false;
+    }
+    // No untrusted stack: a caller with a bare certificate has no chain to
+    // offer, and an intermediate it does not hold is one the anchors have to
+    // reach on their own. That narrows towards refusal, like the issuer-name
+    // prefilter in evaluateCscaChain.
+    if (X509_STORE_CTX_init(ctx.get(), store.get(), signer.get(), nullptr) != 1) {
+        return false;
+    }
+    // X509_STORE_CTX_init copies the store's verification parameters into the
+    // context, which is what carries the two flags across; setting them on the
+    // store rather than here is also what keeps them from being overwritten.
+    return X509_verify_cert(ctx.get()) == 1;
+}
+
+// A fourth anonymous namespace, opened after the four functions above for the
 // same reason the others were: nothing the directory loader needs is in scope
 // while they are read. Same internal-linkage rule, and the same reason --
 // passive_auth.cpp shares this namespace and defines a BIODeleter of its own at

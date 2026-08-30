@@ -205,6 +205,52 @@ struct VerifiedMasterList
     /// return value so that a caller who forgets to pass a pin cannot mistake
     /// it for one: without this field both look like success.
     bool identityChecked = false;
+
+    /// The certificate that SIGNED the list, as it was encoded. Always filled
+    /// when a value is returned.
+    ///
+    /// **Whose**, and the answer is the same one signerSpkiSha256 gives: with
+    /// a pin, the signer that MATCHED it; without one, the first SignerInfo in
+    /// the object's own encoded order. The two fields describe ONE
+    /// certificate, so fingerprinting this yields signerSpkiSha256 back.
+    ///
+    /// Taken from the signers a successful verification resolved, never from
+    /// the object's certificate bag: the bag is unauthenticated and anyone may
+    /// drop anyone's certificate into it, so a certificate lifted from there
+    /// would be a stranger's as readily as the publisher's.
+    ///
+    /// It is carried because the caller that follows a publisher through a key
+    /// rotation needs it. signerChainsToAnyAnchor() asks whether the NEW signer
+    /// chains to an anchor the PREVIOUS list carried, and it takes a bare
+    /// certificate -- which without this field the caller would have to obtain
+    /// out of band, although it is already inside the bytes just handed over.
+    std::vector<uint8_t> signerCertDer;
+
+    /// When the list was signed, out of the `signingTime` SIGNED attribute of
+    /// that same signer's SignerInfo, as seconds since the Unix epoch.
+    ///
+    /// **Signed, which is what makes it worth reading.** signingTime is part of
+    /// `signedAttrs`, so the signature covers it and the publisher is committed
+    /// to it once the signature has held. The same attribute among the UNSIGNED
+    /// ones is attacker-controlled, and a date taken from there would be worse
+    /// than none: it would look like protection while being whatever the last
+    /// hand to touch the file chose.
+    ///
+    /// **EMPTY when the list carries no such attribute.** That is a property of
+    /// the input, not a shortcoming here: nothing is invented, and a list is
+    /// not refused for lacking a date -- one without a signingTime is a
+    /// perfectly valid CMS object. The consequence is real and belongs to the
+    /// caller: **refusing a replayed list is impossible without a date to
+    /// compare**, so an undated list leaves a publisher free to hand back a
+    /// strictly OLDER set of anchors -- one that restores a withdrawn anchor,
+    /// or that drops a country's current one. What to do about that is the
+    /// caller's decision; this function only reports what the object says.
+    ///
+    /// Empty as well when the attribute is present but no single time can be
+    /// read out of it: more than one signingTime, more than one value inside
+    /// one, or a value that is neither a UTCTime nor a GeneralizedTime. None of
+    /// those is "some time", and none may be passed on as one.
+    std::optional<int64_t> signingTimeEpochSeconds;
 };
 
 /// @brief Verifies an ICAO CSCA master list and says whether it was signed by
@@ -588,5 +634,83 @@ enum class CscaVerdict {
 [[nodiscard]] CscaVerdict evaluateCscaChain(const std::vector<uint8_t>& sodDer,
                                             const std::vector<std::vector<uint8_t>>& anchorsDer,
                                             bool anchorsPathWasGiven);
+
+/// @brief Whether one certificate chains to any of a set of trust anchors.
+///
+/// Pure, like evaluateCscaChain(): it reads its arguments, touches nothing
+/// else, and remembers nothing between calls.
+///
+/// evaluateCscaChain() asks the neighbouring question about a DOCUMENT, and
+/// cannot be asked this one: it is handed a security object, resolves the
+/// signers by verifying it, and only then builds a chain. A caller holding a
+/// certificate and no document has nothing to hand it. That caller is the one
+/// importing a master list: the rule it needs is **"accept a new publisher if
+/// it chains to an anchor the list already trusted carried"**, which is how a
+/// country's rotation is followed without a person re-pinning a fingerprint out
+/// of band. It is answered here rather than by the caller because the
+/// alternative is every caller growing an OpenSSL dependency and a path builder
+/// of its own -- including the PARTIAL_CHAIN flag below, whose absence is
+/// exactly the defect this arrangement exists to avoid.
+///
+/// **The same store as evaluateCscaChain(), built by the same function**, so
+/// the same two verification defaults are off for the same reasons:
+/// - The purpose is pinned to "any", because the `smime_sign` default rejects a
+///   certificate whose extended key usage is present and omits
+///   `emailProtection` -- so it is the ICAO-profiled certificate, the real one,
+///   that the default turns away.
+/// - The time check is off, so **this answer carries no statement about time**,
+///   at either end: an expired signer chains, and so does an expired -- or not
+///   yet valid -- anchor. A signer's key lives months while what it signed
+///   lives years, so a lapsed signer is the ordinary case. A caller that needs a
+///   date checked has to check it, and must not read one into this.
+///
+/// **Any anchor may terminate the chain, self-signed or not** -- the store sets
+/// `X509_V_FLAG_PARTIAL_CHAIN`, and it is load-bearing rather than tidy. A CSCA
+/// LINK CERTIFICATE carries the same subject and the same public key as a
+/// country's new self-signed CSCA but is signed by the OUTGOING key, so it is
+/// not self-signed; ICAO master lists carry them beside the self-signed ones.
+/// Without the flag OpenSSL ends a chain only at a self-signed certificate and
+/// goes looking for the issuer of anything else, so a caller whose anchor for a
+/// country is a link certificate -- only it, or it ahead of the self-signed
+/// twin a store lookup cannot tell apart -- is answered `false` about a signer
+/// that authority genuinely issued. That is the whole case the rotation rule
+/// exists to serve, so refusing it would leave the function with no subject.
+///
+/// An anchor's own signature is never examined, as in evaluateCscaChain(): a
+/// certificate is an anchor because the caller configured it, and a signature
+/// it carries over itself says nothing about whether the caller configured it.
+///
+/// What is still enforced, so that "any purpose" is not read as "no checks":
+/// every signature in the chain, the basic constraints that keep a leaf from
+/// acting as a CA in the middle of one, and the key usage that lets an issuer
+/// sign certificates. Revocation is not consulted.
+///
+/// One question, two answers, and deliberately not evaluateCscaChain()'s five:
+/// there is no document here to accuse, so "no anchors were configured", "none
+/// of them decoded" and "it does not chain" are all `false`. A caller that has
+/// to tell those apart knows its own configuration and can say so without being
+/// told.
+///
+/// Rejections are silent, as everywhere else in this header. `std::bad_alloc`
+/// can still escape.
+///
+/// The OpenSSL error queue is left exactly as the caller had it, on every path,
+/// with the same limit the functions above carry: the queue is a fixed-size
+/// ring, so a caller that walks in with it nearly full loses its own oldest
+/// entries to eviction. What is still in the ring is restored.
+///
+/// @param signerCertDer the certificate to judge, as encoded. Exactly one
+///        certificate; BER is accepted, since `d2i` accepts it. Empty, trailing
+///        bytes, or anything that is not a certificate is `false`.
+/// @param anchorsDer the anchors to judge against, each as an encoded
+///        certificate -- from parseCscaMasterList(), from
+///        parseAndVerifyMasterList(), or from loadAnchorDerFromDirectory().
+///        An element that does not decode is passed over rather than being
+///        fatal, exactly as in evaluateCscaChain(); an empty set, and a set of
+///        which nothing decoded, are both `false`.
+/// @return whether a path was built from @p signerCertDer to some anchor. A
+///         certificate that IS one of the anchors chains to itself.
+[[nodiscard]] bool signerChainsToAnyAnchor(const std::vector<uint8_t>& signerCertDer,
+                                           const std::vector<std::vector<uint8_t>>& anchorsDer);
 
 } // namespace emrtd::crypto

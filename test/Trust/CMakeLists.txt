@@ -88,3 +88,38 @@ target_compile_definitions(bundled_certs_bundle_contents_test PRIVATE
     LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR="${LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR}"
 )
 add_test(NAME bundled_certs_bundle_contents_test COMMAND bundled_certs_bundle_contents_test)
+
+# The CSCA master-list facade, built the way a SEPARATE program is built.
+#
+# Everything absent here is the point, and each absence is load-bearing:
+#   * no LIBRESCRS_INTERNAL_BUILD  — so <LibreSCRS/Trust/CscaMasterList.h> is
+#     reached as a consumer reaches it and lib/emrtd-crypto/src/
+#     csca_master_list.h stays behind its #error guard;
+#   * no lib/emrtd-crypto/src on the include path — so the internal header is
+#     not even findable from this translation unit;
+#   * LibreSCRS::Trust and nothing else of LibreMiddleware — so the three
+#     functions have to come across the library boundary, out of the export set
+#     the version script allows, rather than out of an archive this executable
+#     happens to compile.
+# A test that took any of those shortcuts would pass on a build where the
+# facade does not exist.
+#
+# OpenSSL_Crypto is linked for the FIXTURE only: synthetic_masterlist.cpp mints
+# the certificates and signs the lists. The facade itself needs none of it —
+# that is what the OpenSSL-free public header is about — and the test TU
+# includes no OpenSSL header, which it asserts on itself.
+add_executable(csca_master_list_public_api_test
+    csca_master_list_public_api_test.cpp
+    ${PROJECT_SOURCE_DIR}/test/emrtd-crypto/synthetic_masterlist.cpp
+)
+target_link_libraries(csca_master_list_public_api_test
+    PRIVATE
+        GTest::gtest
+        GTest::gtest_main
+        LibreSCRS::Trust
+        OpenSSL_Crypto
+)
+target_include_directories(csca_master_list_public_api_test PRIVATE
+    ${PROJECT_SOURCE_DIR}/test/emrtd-crypto
+)
+gtest_discover_tests(csca_master_list_public_api_test)

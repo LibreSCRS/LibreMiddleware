@@ -70,6 +70,83 @@ struct SyntheticMasterList
 ///       from makeMasterList() is already sorted, so nothing moves.
 [[nodiscard]] SyntheticMasterList makeMasterListWithOtherSigner(const SyntheticMasterList& base);
 
+/// @brief A list whose SIGNED `signingTime` attribute is exactly
+///        @p signingTimeEpochSeconds.
+///
+/// `signingTime` is a SIGNED attribute, so the signature covers it and a
+/// verifier may believe it once the signature has held. makeMasterList() above
+/// already produces one -- OpenSSL puts the current time there unbidden -- but
+/// only an instant named here can be compared against a literal, and only a
+/// literal separates "read the attribute" from "returned the clock".
+///
+/// @param signingTimeEpochSeconds seconds since the Unix epoch. Choose one FAR
+///        from the present, so that a reader answering with `now` cannot pass
+///        by accident, and inside 1950..2049, where ASN1_TIME_set produces the
+///        13-character UTCTime that RFC 5652 requires for those years; outside
+///        it the encoding silently becomes a GeneralizedTime, which is correct
+///        but is no longer the case a test over the ordinary encoding pins.
+[[nodiscard]] SyntheticMasterList makeMasterListSignedAt(int cscaCount, int64_t signingTimeEpochSeconds);
+
+/// @brief A list carrying NO `signingTime` attribute at all.
+///
+/// Not the same thing as omitting one: OpenSSL ADDS a signingTime of `now`
+/// whenever it finds none, so this needs CMS_NO_SIGNING_TIME and cannot be had
+/// by leaving something out. Without this list, an empty signing time coming
+/// back from a reader cannot be told from a reader that cannot read one at all.
+///
+/// @note The other signed attributes stay -- `contentType` above all, which
+///       parseCscaMasterList compares with the eContentType field. Asking
+///       OpenSSL for no signed attributes at all (CMS_NOATTR) would take that
+///       one with it and the object would stop being a master list, which is a
+///       different test with a different verdict.
+[[nodiscard]] SyntheticMasterList makeMasterListWithoutSigningTime(int cscaCount);
+
+/// @brief @p ml re-encoded with a `signingTime` planted in the UNSIGNED
+///        attributes, beside the signed one it already carries.
+///
+/// **The result does not verify, and that is the finding it exists to pin.**
+/// OpenSSL's own attribute check refuses a `signingTime` outside the signed
+/// attributes, so an object staged this way is rejected before any field of it
+/// is read: the confusion an attacker-controlled signing time would cause
+/// cannot be staged on an object that verifies at all. A reader that took the
+/// time from the unsigned attributes would therefore not be caught by THIS
+/// input -- it is caught by the ordinary lists, where the unsigned bag is
+/// empty and the value it must report is in the signed one.
+///
+/// @param decoyEpochSeconds the planted instant. It must differ from the
+///        signed one, which is asserted rather than assumed: a decoy equal to
+///        the value it is meant to be mistaken for stages nothing.
+/// @note @p ml must carry exactly one SignerInfo, which everything this file
+///       signs does.
+/// @note `eContentTamperOffset` comes back ZERO: the extra attribute shifts
+///       every offset after it, so the remembered one would no longer name the
+///       serial byte. makeTamperedMasterList() therefore throws on the result,
+///       loudly, rather than flipping a byte somewhere else.
+[[nodiscard]] SyntheticMasterList makeMasterListWithSigningTimeInUnsignedAttributes(const SyntheticMasterList& ml,
+                                                                                    int64_t decoyEpochSeconds);
+
+/// @brief The certificate that SIGNED @p ml, as encoded.
+///
+/// SyntheticMasterList carries the signer's fingerprint but not the signer, and
+/// a caller that has to exercise "compute the pin from the publisher's
+/// certificate" needs the certificate itself -- that is the value a real
+/// importer obtains out of band, and the only supported input to a pin.
+///
+/// @note Read back off `ml.der`, out of SignedData.certificates, rather than
+///       remembered from the way the list was built. The bag is
+///       UNAUTHENTICATED in general -- anybody may add to it, which is what
+///       makeSodWithImpostorPrependedToCertificateBag() is about -- so this is
+///       sound only because every list this file signs carries exactly the
+///       signer and nothing else. That is asserted rather than assumed: a bag
+///       holding any other number of certificates THROWS, so a fixture that
+///       grew a second certificate cannot quietly start handing back a
+///       stranger's.
+/// @note The certificate, not the pin. The fingerprint is over the
+///       SubjectPublicKeyInfo inside it, so the two are not interchangeable;
+///       `ml.signerSpkiSha256` is the value this certificate should fingerprint
+///       to.
+[[nodiscard]] std::vector<uint8_t> masterListSignerCertificateDer(const SyntheticMasterList& ml);
+
 /// @brief A CSCA rotation: the outgoing self-signed CSCA, the incoming
 ///        self-signed CSCA, and the LINK CERTIFICATE that joins them, all three
 ///        carried by one signed master list.
@@ -137,6 +214,34 @@ struct SyntheticCscaRotation
 /// @return the directory path; it is created under
 ///         std::filesystem::temp_directory_path() and the caller deletes it.
 [[nodiscard]] std::string writePemDir(const std::vector<std::vector<uint8_t>>& certsDer);
+
+/// @brief An end-entity certificate ISSUED by `ml.cscaDer[anchorIndex]`,
+///        returned on its own rather than wrapped in a document.
+///
+/// makeSod() below produces the same certificate inside a signed object, which
+/// is what a document-shaped verifier needs. A verifier whose subject is a
+/// CERTIFICATE -- "does this signer chain to an anchor I hold" -- has no
+/// document to put it in, and unwrapping one is an OpenSSL job the caller would
+/// otherwise have to grow. So this exists beside makeSod() rather than instead
+/// of it.
+///
+/// @param notAfter when not empty, the certificate expires then (an ASN1_TIME
+///        string). Same form and the same two pitfalls as makeSod's
+///        dscNotAfter: prefer the 13-character UTCTime "YYMMDDHHMMSSZ", and
+///        mind that RFC 5280 §4.1.2.5 reads YY 50..99 as 19YY, so
+///        "500101000000Z" means 1950. Every certificate here starts fifteen
+///        years back, so a past notAfter still leaves a window it was valid in.
+/// @note NOT a CA: basic constraints say so, and key usage is
+///       `digitalSignature` alone. A path builder therefore refuses to let it
+///       sit in the middle of a chain, which is what makes it a faithful stand
+///       in for a signer.
+/// @note Carries the same restriction as makeSod(), for the same reason: the
+///       certificate has to be ISSUED by the anchor, and SyntheticMasterList
+///       carries certificates rather than private keys, so this works only on
+///       an anchor THIS process minted. See makeSod() for what that does and
+///       does not rule out.
+[[nodiscard]] std::vector<uint8_t> makeCertificateIssuedByAnchor(const SyntheticMasterList& ml, int anchorIndex,
+                                                                 const std::string& notAfter = {});
 
 /// @brief A SOD (CMS SignedData over an LDSSecurityObject) signed by a DSC that
 ///        `ml.cscaDer[anchorIndex]` issued.
