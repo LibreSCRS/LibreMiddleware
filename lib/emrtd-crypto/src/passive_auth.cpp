@@ -3,12 +3,13 @@
 
 #include "passive_auth.h"
 
+#include "csca_master_list.h"
+
 #include <openssl/bio.h>
 #include <openssl/cms.h>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/x509.h>
-#include <openssl/x509_vfy.h>
 
 #include <cstring>
 #include <memory>
@@ -33,14 +34,6 @@ struct CMSDeleter
     void operator()(CMS_ContentInfo* p) const
     {
         CMS_ContentInfo_free(p);
-    }
-};
-
-struct X509StoreDeleter
-{
-    void operator()(X509_STORE* p) const
-    {
-        X509_STORE_free(p);
     }
 };
 
@@ -77,7 +70,6 @@ struct X509StackDeleter
 
 using BIOPtr = std::unique_ptr<BIO, BIODeleter>;
 using CMSPtr = std::unique_ptr<CMS_ContentInfo, CMSDeleter>;
-using X509StorePtr = std::unique_ptr<X509_STORE, X509StoreDeleter>;
 using X509Ptr = std::unique_ptr<X509, X509Deleter>;
 using EVPMDCtxPtr = std::unique_ptr<EVP_MD_CTX, EVPMDCtxDeleter>;
 using X509StackPtr = std::unique_ptr<STACK_OF(X509), X509StackDeleter>;
@@ -412,37 +404,58 @@ PAResult::Status verifySODSignature(const std::vector<uint8_t>& sodRaw)
     return PAResult::FAILED;
 }
 
-PAResult::Status verifyCSCAChain(const std::vector<uint8_t>& sodRaw, const std::string& trustStorePath)
+CscaChainOutcome verifyCSCAChain(const std::vector<uint8_t>& sodRaw, const std::string& trustStorePath)
 {
-    if (sodRaw.empty() || trustStorePath.empty())
-        return PAResult::NOT_PERFORMED;
+    // The anchors are read by loadAnchorDerFromDirectory() and judged by
+    // evaluateCscaChain(), both in csca_master_list.cpp. What that pair
+    // replaced here -- X509_STORE_load_path followed by a bare CMS_verify --
+    // could not answer this question honestly, in two ways that both came out
+    // as FAILED:
+    //
+    //   * it finds only certificates a `c_rehash` run has symlinked into the
+    //     directory, so a plain directory of anchors -- the one a person makes
+    //     -- read as empty; and
+    //   * it answers 1 for a path that does not exist, because all it does is
+    //     record the string, so a mistyped store read as an empty one too.
+    //
+    // FAILED is the accusation verdict. Neither of those is evidence about a
+    // document: they are statements about the caller's own configuration, and
+    // reporting them as a forged passport is the defect this replaces.
+    const bool anchorsPathWasGiven = !trustStorePath.empty();
+    // Whether the directory could be READ, which is a different question from
+    // whether it held anything, and the only thing that separates the two
+    // reasons an unusable anchor set is given. loadAnchorDerFromDirectory
+    // answers it; the verdict cannot, and never sees the directory.
+    bool anchorsReadable = false;
+    std::vector<std::vector<uint8_t>> anchorsDer;
+    if (anchorsPathWasGiven) {
+        anchorsDer = loadAnchorDerFromDirectory(trustStorePath, &anchorsReadable);
+    }
 
-    auto cmsDER = extractCMSFromSOD(sodRaw);
-    if (cmsDER.empty())
-        return PAResult::FAILED;
-
-    // Build X509_STORE from trust store directory
-    X509StorePtr store(X509_STORE_new());
-    if (!store)
-        return PAResult::FAILED;
-
-    // Load certificates from the trust store path (directory of PEM certificates)
-    if (!X509_STORE_load_path(store.get(), trustStorePath.c_str()))
-        return PAResult::FAILED;
-
-    BIOPtr bio(BIO_new_mem_buf(cmsDER.data(), static_cast<int>(cmsDER.size())));
-    if (!bio)
-        return PAResult::FAILED;
-
-    CMSPtr cms(d2i_CMS_bio(bio.get(), nullptr));
-    if (!cms)
-        return PAResult::FAILED;
-
-    // Full verification including certificate chain
-    if (CMS_verify(cms.get(), nullptr, store.get(), nullptr, nullptr, 0) == 1)
-        return PAResult::PASSED;
-
-    return PAResult::FAILED;
+    switch (evaluateCscaChain(extractCMSFromSOD(sodRaw), anchorsDer, anchorsPathWasGiven)) {
+    case CscaVerdict::Passed:
+        // The one outcome with nothing to explain.
+        return {PAResult::PASSED, {}};
+    case CscaVerdict::Failed:
+        // The only accusation, and it is earned: a chain was really attempted
+        // against anchors really held, and it did not hold.
+        return {PAResult::FAILED, "csca.chain-failed"};
+    case CscaVerdict::NotConfigured:
+        return {PAResult::NOT_PERFORMED, "csca.not-configured"};
+    case CscaVerdict::AnchorsUnusable:
+        // Somebody meant to establish trust here and it is not working, so the
+        // two halves are worth telling apart: a directory that could not be
+        // read sends a person to the permissions, one that read through and
+        // yielded no certificate sends them to import a list.
+        return {PAResult::NOT_PERFORMED, anchorsReadable ? "csca.anchors-undecodable" : "csca.anchors-unreadable"};
+    case CscaVerdict::NoAnchorForIssuer:
+        return {PAResult::NOT_PERFORMED, "csca.no-anchor-for-issuer"};
+    }
+    // Unreachable while the switch above is exhaustive, which the absence of a
+    // `default:` label keeps a compiler watching. NOT_PERFORMED and not
+    // PASSED, because an answer nobody wrote down must never vouch for a
+    // document.
+    return {PAResult::NOT_PERFORMED, "csca.not-configured"};
 }
 
 PAResult performPassiveAuth(const std::vector<uint8_t>& sodRaw, const std::map<int, std::vector<uint8_t>>& dgRawData,
@@ -526,10 +539,13 @@ PAResult performPassiveAuth(const std::vector<uint8_t>& sodRaw, const std::map<i
         }
     }
 
-    // Step 5: Optionally verify CSCA chain
-    if (!trustStorePath.empty()) {
-        result.cscaChain = verifyCSCAChain(sodRaw, trustStorePath);
-    }
+    // Step 5: Verify the CSCA chain. Unconditionally, including when no anchor
+    // source was configured: that is one of the six answers, not a reason to
+    // leave the field unset, and it is the one a caller with no trust store
+    // configured has to be able to show a person.
+    const CscaChainOutcome csca = verifyCSCAChain(sodRaw, trustStorePath);
+    result.cscaChain = csca.status;
+    result.cscaChainReason = csca.reasonKey;
 
     return result;
 }

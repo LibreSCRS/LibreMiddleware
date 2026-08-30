@@ -491,6 +491,11 @@ gtest_discover_tests(PluginIntegrationTests)
 # eMRTD plugin tests
 add_executable(EMRTDPluginTests
     emrtd_plugin_test.cpp
+    # The synthetic CSCA/SOD generator, so a scripted card can serve a REAL
+    # EF.SOD: without one no plugin test reaches the passive-authentication
+    # path at all, and the CSCA verdict the plugin publishes would be pinned
+    # nowhere.
+    emrtd-crypto/synthetic_masterlist.cpp
 )
 target_link_libraries(EMRTDPluginTests
     GTest::gtest_main

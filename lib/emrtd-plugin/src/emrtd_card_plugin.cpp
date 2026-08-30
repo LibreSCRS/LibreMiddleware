@@ -41,7 +41,6 @@
 #include <algorithm>
 #include <compare>
 #include <cstdint>
-#include <cstdlib>
 #include <ctime>
 #include <map>
 #include <mutex>
@@ -1059,14 +1058,32 @@ private:
 
         // 7. Passive Authentication
         LibreSCRS::Plugin::SecurityStatus secStatus;
+        // Why a check came out as it did, as a key to be translated where it is
+        // shown, keyed by the check it belongs to. It rides beside the checks
+        // rather than inside SecurityCheck because that type crosses the
+        // library ABI: adding a member changes its size, and therefore the
+        // stride of the std::vector<SecurityCheck> that
+        // SecurityStatus::computeOverall walks -- a break inside a shipped
+        // 4.x, and one the symbol-name ABI gate would pass in silence. The
+        // reason is needed on the wire, and SecurityCheck is not on the wire:
+        // this file flattens it either way.
+        std::map<std::string, std::string> checkReasonKeys;
 
         if (sodRaw && !dgRawData.empty()) {
-            // CSCA trust store path from env var
-            std::string trustStorePath;
-            if (const char* envPath = std::getenv("LIBRESCRS_CSCA_STORE"))
-                trustStorePath = envPath;
-
-            auto paResult = emrtd::crypto::performPassiveAuth(*sodRaw, dgRawData, trustStorePath);
+            // NO anchor source is named here, and none may be named from the
+            // ambient environment. Trust anchors are the whole of what a
+            // passive-authentication badge means, and an environment variable
+            // is set by anything running as the person at the keyboard: while
+            // one was read, any process in the session could mint a CA of its
+            // own, point the variable at it, and have a document it forged
+            // reported as chaining to a country signing certificate.
+            //
+            // Until anchors arrive from a source somebody can vouch for, this
+            // answers "no anchor source configured" -- which is a smaller
+            // claim than "passed", and the only one of the two that is true.
+            // verifyCSCAChain still takes a directory, so the answer changes
+            // the day such a source exists and not before.
+            auto paResult = emrtd::crypto::performPassiveAuth(*sodRaw, dgRawData);
 
             // SOD signature check
             {
@@ -1095,8 +1112,14 @@ private:
                                : (paResult.cscaChain == emrtd::crypto::PAResult::FAILED)
                                    ? LibreSCRS::Plugin::SecurityCheck::Status::Failed
                                    : LibreSCRS::Plugin::SecurityCheck::Status::NotPerformed;
-                if (trustStorePath.empty())
-                    check.detail = "No CSCA trust store configured";
+                // No English sentence here. Six different situations reach
+                // this check and three of them share NOT_PERFORMED -- no
+                // anchor source configured, a source that yielded no usable
+                // anchor, and anchors that name another authority than this
+                // document's signer. They call for three different things to
+                // be done about them, and a literal chosen in this file is a
+                // literal every host has to show in English.
+                checkReasonKeys[check.checkId] = paResult.cscaChainReason;
                 secStatus.checks.push_back(std::move(check));
             }
 
@@ -1207,8 +1230,8 @@ private:
                          LibreSCRS::Plugin::statusToString(secStatus.overallGenuineness));
 
             // Each check travels as its own family of fields — `check_<N>_id`,
-            // `_category`, `_status`, `_label`, plus `_detail` and `_error`
-            // when the check carries them — never as one pre-joined sentence
+            // `_category`, `_status`, `_label`, plus `_detail`, `_error` and
+            // `_reason` when the check carries them — never as one pre-joined sentence
             // keyed by the check id. A joined string cannot carry a
             // machine-readable reason beside the text a host displays: the
             // host would have to parse prose back apart to translate the
@@ -1230,6 +1253,12 @@ private:
                     addTextField(g, p + "detail", check.label, check.detail);
                 if (!check.errorDetail.empty())
                     addTextField(g, p + "error", check.label, check.errorDetail);
+                // `reason` is a translation KEY and never a sentence, so a host
+                // that does not yet know the key shows nothing rather than
+                // English. Omitted when there is nothing to explain.
+                if (const auto reason = checkReasonKeys.find(check.checkId);
+                    reason != checkReasonKeys.end() && !reason->second.empty())
+                    addTextField(g, p + "reason", check.label, reason->second);
                 ++idx;
             }
 

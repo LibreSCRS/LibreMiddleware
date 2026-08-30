@@ -819,6 +819,11 @@ std::string writePemDir(const std::vector<std::vector<uint8_t>>& certsDer)
     return dir.string();
 }
 
+std::map<int, std::vector<uint8_t>> sodDataGroups()
+{
+    return ldsDataGroups();
+}
+
 std::vector<uint8_t> makeSod(const SyntheticMasterList& ml, int anchorIndex, const std::string& dscEku,
                              const std::string& dscNotAfter)
 {

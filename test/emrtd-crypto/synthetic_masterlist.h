@@ -166,6 +166,18 @@ struct SyntheticCscaRotation
 [[nodiscard]] std::vector<uint8_t> makeSod(const SyntheticMasterList& ml, int anchorIndex,
                                            const std::string& dscEku = {}, const std::string& dscNotAfter = {});
 
+/// @brief The data groups the security object of every SOD here hashes, keyed
+///        by number and holding the exact bytes that were hashed.
+///
+/// A caller that wants a passive-authentication run to come out consistent has
+/// to hand a verifier THESE bytes — or serve them from a scripted card. They
+/// live here rather than being written down again at each call site, because
+/// two copies are two things to keep in step, and a drifted copy fails as a
+/// hash mismatch a long way from the line that caused it.
+/// @note DG1 here is a minimal data group, NOT an MRZ: nothing in this fixture
+///       is about what a data group contains.
+[[nodiscard]] std::map<int, std::vector<uint8_t>> sodDataGroups();
+
 /// @brief A SOD signed by a SELF-SIGNED DSC belonging to no anchor at all — the
 ///        forgery. Its issuer equals its own subject, so the DN prefilter
 ///        rejects it BEFORE any chain is built.

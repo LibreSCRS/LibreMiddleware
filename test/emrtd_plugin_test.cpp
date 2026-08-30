@@ -28,6 +28,7 @@
 #include <types.h>
 
 #include "chip_auth_fake_chip.h"
+#include "emrtd-crypto/synthetic_masterlist.h"
 
 #include <algorithm>
 #include <array>
@@ -176,6 +177,33 @@ std::optional<std::string> checkField(const CardData& data, const std::string& g
 {
     return fieldText(data, groupKey, "check_" + std::to_string(n) + "_" + suffix);
 }
+
+// Sets an environment variable for a scope and puts back exactly what was
+// there. Every case in this file runs in one process, so a variable left set
+// would decide the outcome of whatever ran next.
+class ScopedEnv
+{
+public:
+    ScopedEnv(const char* name, const std::string& value) : name_(name)
+    {
+        if (const char* had = ::getenv(name))
+            previous_ = std::string(had);
+        ::setenv(name, value.c_str(), 1);
+    }
+    ~ScopedEnv()
+    {
+        if (previous_)
+            ::setenv(name_, previous_->c_str(), 1);
+        else
+            ::unsetenv(name_);
+    }
+    ScopedEnv(const ScopedEnv&) = delete;
+    ScopedEnv& operator=(const ScopedEnv&) = delete;
+
+private:
+    const char* name_;
+    std::optional<std::string> previous_;
+};
 
 // Every check id present in @p groupKey, in emission order.
 std::vector<std::string> checkIds(const CardData& data, const std::string& groupKey)
@@ -465,25 +493,30 @@ TEST(EMRTDHardwareTest, PaceCanEndToEnd)
     const auto cscaIdx = checkIndexOf(result.data, "security_status", "pa_csca_chain");
     std::optional<std::string> chipAuth;
     std::optional<std::string> cscaChain;
-    std::optional<std::string> cscaChainDetail;
+    std::optional<std::string> cscaChainReason;
     if (caIdx.has_value())
         chipAuth = checkField(result.data, "security_status", *caIdx, "status");
     if (cscaIdx.has_value()) {
         cscaChain = checkField(result.data, "security_status", *cscaIdx, "status");
-        cscaChainDetail = checkField(result.data, "security_status", *cscaIdx, "detail");
+        // `reason`, not `detail`: the CSCA check's English sentence was
+        // replaced by a translation key, and on a real card the key is the
+        // thing worth reading -- it names which of the six situations the run
+        // landed in.
+        cscaChainReason = checkField(result.data, "security_status", *cscaIdx, "reason");
     }
     std::cout << "data_groups           = " << dataGroups.value_or("<none>") << "\n";
     std::cout << "auth_method           = " << authMethod.value_or("<none>") << "\n";
     std::cout << "chip_auth             = " << chipAuth.value_or("<none>") << "\n";
     std::cout << "overall_authenticity  = " << overallAuthenticity.value_or("<none>") << "\n";
     std::cout << "pa_csca_chain         = " << cscaChain.value_or("<none>") << "\n";
-    std::cout << "pa_csca_chain detail  = " << cscaChainDetail.value_or("<none>") << "\n";
+    std::cout << "pa_csca_chain reason  = " << cscaChainReason.value_or("<none>") << "\n";
 
-    // Honest authenticity: without a CSCA trust store the chain check is
+    // Honest authenticity: with no CSCA anchors configured the chain check is
     // NOT_PERFORMED, so the authenticity aggregate must NOT read PASSED — the
-    // signer is unanchored. (With LIBRESCRS_CSCA_STORE set, both would pass.)
-    // The status field carries the bare token, so this compares exactly where
-    // the joined shape could only test a prefix.
+    // signer is unanchored. That is the only state this build can be in: there
+    // is no way to configure anchors yet, and deliberately no way to name them
+    // from the environment. The status field carries the bare token, so this
+    // compares exactly where the joined shape could only test a prefix.
     if (cscaChain && *cscaChain == "NOT_PERFORMED")
         EXPECT_NE(overallAuthenticity.value_or(""), "PASSED")
             << "authenticity claimed PASSED without a verified CSCA chain";
@@ -803,6 +836,27 @@ std::vector<uint8_t> dg1Fixture()
     return dg1;
 }
 
+// EF.SOD as a card carries it: the CMS SignedData wrapped in the application
+// tag 0x77, with a BER length. Real documents wrap it; the reader's own TLV
+// walk reads the outer length to know when the file has been read out, so a
+// bare CMS would exercise a shape no card produces.
+std::vector<uint8_t> sodFixture(const std::vector<uint8_t>& cms)
+{
+    std::vector<uint8_t> ef{0x77};
+    if (cms.size() < 0x80) {
+        ef.push_back(static_cast<uint8_t>(cms.size()));
+    } else if (cms.size() <= 0xFF) {
+        ef.push_back(0x81);
+        ef.push_back(static_cast<uint8_t>(cms.size()));
+    } else {
+        ef.push_back(0x82);
+        ef.push_back(static_cast<uint8_t>((cms.size() >> 8) & 0xFF));
+        ef.push_back(static_cast<uint8_t>(cms.size() & 0xFF));
+    }
+    ef.insert(ef.end(), cms.begin(), cms.end());
+    return ef;
+}
+
 // Scripted EF.CardAccess behaviour for the MF-scoped capability probe.
 // The default SoftFail keeps every pre-existing rig test byte-for-byte
 // identical: those tests never emit an MF-scoped (P1=0x00) SELECT, so the
@@ -852,6 +906,12 @@ std::vector<uint8_t> presentNoPaceCardAccess()
 struct LdsRigState
 {
     bool plainLds = true;
+    // EF.SOD is SM-gated on this rig whatever @ref plainLds says, because that
+    // is what shipping documents do -- so no test reaches passive
+    // authentication unless it asks. A test that wants the passive-auth path
+    // sets this and puts a real security object in files[0x011D]; leaving it
+    // false keeps every other rig test byte-for-byte as it was.
+    bool plainSod = false;
     std::vector<APDUCommand> log;
     std::map<uint16_t, std::vector<uint8_t>> files;
     const std::vector<uint8_t>* current = nullptr;
@@ -931,7 +991,9 @@ APDUResponse ldsRigTransmit(LdsRigState& st, const APDUCommand& cmd)
         auto it = st.files.find(fid);
         if (it == st.files.end())
             return sw(0x6A, 0x82);
-        if (!st.plainLds || fid == 0x011D) // whole LDS contactless, EF.SOD always: SM-gated
+        // Whole LDS SM-gated on contactless; EF.SOD SM-gated on top of that
+        // unless a test has asked for it in plain.
+        if (!st.plainLds || (fid == 0x011D && !st.plainSod))
             return sw(0x69, 0x82);
         st.current = &it->second;
         return ok();
@@ -957,10 +1019,12 @@ APDUResponse ldsRigTransmit(LdsRigState& st, const APDUCommand& cmd)
     return sw(0x6D, 0x00); // any SM/PACE instruction: unsupported on the rig
 }
 
-std::shared_ptr<LdsRigState> installLdsRig(LibreSCRS::SmartCard::CardSession& session, bool plainLds)
+std::shared_ptr<LdsRigState> installLdsRig(LibreSCRS::SmartCard::CardSession& session, bool plainLds,
+                                           bool plainSod = false)
 {
     auto st = std::make_shared<LdsRigState>();
     st->plainLds = plainLds;
+    st->plainSod = plainSod;
     st->files[0x011E] = comFixture();
     st->files[0x0101] = dg1Fixture();
     st->files[0x010E] = {0x6E, 0x03, 0x31, 0x01, 0x00}; // DG14 stub (raw bytes only)
@@ -1202,6 +1266,154 @@ TEST(EmrtdInterfaceActivation, SecurityChecksTravelAsSeparateFieldsNotOneJoinedS
     EXPECT_EQ(checkField(*rr.data, "security_status", *i, "label").value_or(""), "Active Authentication");
     EXPECT_FALSE(checkField(*rr.data, "security_status", *i, "error").value_or("").empty())
         << "the refusal reason must arrive in its own field, not glued onto the status";
+}
+
+// Pins two lines in emrtd_card_plugin.cpp: the CSCA check built in "7. Passive
+// Authentication", which used to carry an English sentence in `detail`, and the
+// `reason` suffix in the per-check emission loop in "8. Emit security_status
+// group".
+//
+// This is the first plugin test to reach passive authentication at all. It
+// needs a rig that serves a real EF.SOD (see LdsRigState::plainSod), because
+// the verdict under test does not exist on a document that was never read.
+TEST(EmrtdInterfaceActivation, CscaVerdictTravelsAsATranslatableReasonNotAnEnglishSentence)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/true, /*plainSod=*/true);
+
+    // A document that is internally consistent the way a real one is: a
+    // security object signed by a document signer a country signing
+    // certificate issued, and the exact data group bytes that object hashes.
+    // Nothing here configures a trust anchor, so the chain is the one thing
+    // that cannot be established -- which is the situation every reader of
+    // this build is in, and what the reason has to be able to say.
+    const auto ml = LibreSCRS::Test::makeMasterList(1);
+    rig->files[0x011D] = sodFixture(LibreSCRS::Test::makeSod(ml, 0));
+    const auto dgs = LibreSCRS::Test::sodDataGroups();
+    ASSERT_EQ(dgs.size(), 1u) << "the fixture grew a data group this rig does not serve";
+    ASSERT_EQ(dgs.count(1), 1u) << "and it is DG1 the rig serves";
+    rig->files[0x0101] = dgs.at(1);
+
+    session->setCredentialProvider(
+        [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    auto rr = plugin->readCard(*session);
+    ASSERT_EQ(rr.status, ReadResult::Status::Ok);
+    ASSERT_TRUE(rr.data.has_value());
+
+    // The document really was read and really does hold up on its own terms.
+    // Without this the CSCA assertions below could pass on a rig that served
+    // nothing at all.
+    const auto sodIdx = checkIndexOf(*rr.data, "security_status", "pa_sod_signature");
+    ASSERT_TRUE(sodIdx.has_value()) << "the rig must really have served a security object";
+    EXPECT_EQ(checkField(*rr.data, "security_status", *sodIdx, "status").value_or(""), "PASSED");
+    const auto dgIdx = checkIndexOf(*rr.data, "security_status", "pa_dg1_hash");
+    ASSERT_TRUE(dgIdx.has_value());
+    EXPECT_EQ(checkField(*rr.data, "security_status", *dgIdx, "status").value_or(""), "PASSED");
+
+    const auto i = checkIndexOf(*rr.data, "security_status", "pa_csca_chain");
+    ASSERT_TRUE(i.has_value()) << "the CSCA check must be findable by its id";
+    EXPECT_EQ(checkField(*rr.data, "security_status", *i, "status").value_or(""), "NOT_PERFORMED");
+    EXPECT_EQ(checkField(*rr.data, "security_status", *i, "reason").value_or(""), "csca.not-configured")
+        << "the reason must travel as a key a host can translate, in its own field";
+    EXPECT_FALSE(checkField(*rr.data, "security_status", *i, "detail").has_value())
+        << "the English sentence the key replaces must be GONE, not sitting beside it";
+
+    // And it must not have moved somewhere else in the group either.
+    auto secIdx = rr.data->findGroup("security_status");
+    ASSERT_TRUE(secIdx.has_value());
+    for (const auto& field : rr.data->groupAt(*secIdx).fields) {
+        EXPECT_EQ(field.textValue().value_or("").find("No CSCA trust store"), std::string::npos)
+            << "an English literal survives at " << field.key;
+    }
+
+    // The badge still tells the truth: a signature checked against a
+    // certificate the document carried itself does not establish authenticity.
+    EXPECT_NE(fieldText(*rr.data, "security_status", "overall_authenticity").value_or(""), "PASSED")
+        << "authenticity claimed PASSED with no anchor configured";
+}
+
+// Pins the ABSENCE of an environment read in emrtd_card_plugin.cpp's "7.
+// Passive Authentication".
+//
+// A trust anchor is the whole of what a passive-authentication badge means. An
+// environment variable is set by anything running as the person using the
+// machine -- so while one was read, any process in the session could drop a CA
+// it had minted itself into a directory, point the variable at it, and have a
+// document it forged reported as chaining to a country signing certificate.
+// That is a green badge issued on the say-so of the attacker.
+//
+// The document below is exactly that attack, minus the forging: the anchors in
+// the directory really did issue this document's signer, so a build that reads
+// the variable answers PASSED. Nothing about the answer changes if the whole
+// document is synthesised by whoever set the variable.
+//
+// Until a configuration a person can vouch for arrives, the honest answer is
+// that no anchors are configured. "Not configured" is a smaller answer than
+// "passed"; it is also the only one of the two that is true.
+TEST(EmrtdInterfaceActivation, AnEnvironmentVariableCannotSupplyTrustAnchors)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/true, /*plainSod=*/true);
+
+    const auto ml = LibreSCRS::Test::makeMasterList(1);
+    rig->files[0x011D] = sodFixture(LibreSCRS::Test::makeSod(ml, 0));
+    const auto dgs = LibreSCRS::Test::sodDataGroups();
+    ASSERT_EQ(dgs.count(1), 1u);
+    rig->files[0x0101] = dgs.at(1);
+
+    // An unhashed directory holding the very anchor that issued this
+    // document's signer -- the anchor set that WOULD make it pass, planted
+    // where nothing privileged put it.
+    const std::string planted = LibreSCRS::Test::writePemDir(ml.cscaDer);
+    struct Remove
+    {
+        std::string dir;
+        ~Remove()
+        {
+            std::error_code ec;
+            std::filesystem::remove_all(dir, ec);
+        }
+    } cleanup{planted};
+
+    session->setCredentialProvider(
+        [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+
+    std::optional<CardData> data;
+    {
+        const ScopedEnv store("LIBRESCRS_CSCA_STORE", planted);
+        ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+        auto rr = plugin->readCard(*session);
+        ASSERT_EQ(rr.status, ReadResult::Status::Ok);
+        ASSERT_TRUE(rr.data.has_value());
+        data = std::move(*rr.data);
+    }
+
+    // The document itself is beyond reproach -- so a failure below is about
+    // where the anchors came from and nothing else.
+    const auto sodIdx = checkIndexOf(*data, "security_status", "pa_sod_signature");
+    ASSERT_TRUE(sodIdx.has_value());
+    ASSERT_EQ(checkField(*data, "security_status", *sodIdx, "status").value_or(""), "PASSED");
+
+    const auto i = checkIndexOf(*data, "security_status", "pa_csca_chain");
+    ASSERT_TRUE(i.has_value());
+    EXPECT_EQ(checkField(*data, "security_status", *i, "status").value_or(""), "NOT_PERFORMED")
+        << "anchors from an unprivileged source must not decide this";
+    EXPECT_EQ(checkField(*data, "security_status", *i, "reason").value_or(""), "csca.not-configured")
+        << "and the reader must be told no anchors are configured, not shown a green badge";
+    EXPECT_NE(fieldText(*data, "security_status", "overall_authenticity").value_or(""), "PASSED")
+        << "the badge would have claimed authenticity on the say-so of an environment variable";
 }
 
 TEST(EmrtdInterfaceActivation, ContactPlainReadAttemptsChipAuthAndStaysPlainWhenUnavailable)

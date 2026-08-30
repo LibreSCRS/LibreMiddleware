@@ -101,8 +101,9 @@ TEST(PassiveAuthTest, VerifySODSignatureEmptyFails)
 
 TEST(PassiveAuthTest, VerifyCSCAChainEmptyNotPerformed)
 {
-    auto status = emrtd::crypto::verifyCSCAChain({}, "");
-    EXPECT_EQ(status, emrtd::crypto::PAResult::NOT_PERFORMED);
+    auto outcome = emrtd::crypto::verifyCSCAChain({}, "");
+    EXPECT_EQ(outcome.status, emrtd::crypto::PAResult::NOT_PERFORMED);
+    EXPECT_EQ(outcome.reasonKey, "csca.not-configured") << "no anchor source was named, and the answer says so";
 }
 
 // ---------------------------------------------------------------------------
@@ -4256,4 +4257,353 @@ TEST_F(CscaVerdictTest, LeavesACallersErrorQueueUntouchedWhenItPasses)
     ASSERT_EQ(emrtd::crypto::evaluateCscaChain(sod, anchorsOf(ml), true), emrtd::crypto::CscaVerdict::Passed);
 
     expectOnlyTheCallersErrorRemains(callerError);
+}
+
+// ---------------------------------------------------------------------------
+// The live path: verifyCSCAChain over a directory of anchors
+// ---------------------------------------------------------------------------
+//
+// Everything above tests evaluateCscaChain, which is handed anchors somebody
+// else read. These test the call a document read off a chip actually goes
+// through -- verifyCSCAChain() in passive_auth.cpp -- and therefore the seam
+// between it and the anchor loader, which is where the two defects below lived.
+
+namespace {
+
+/// A directory that exists and holds no anchor. The caller removes it.
+std::filesystem::path makeEmptyAnchorDir()
+{
+    return makeAnchorLoaderTempDir("wiring-empty");
+}
+
+/// A path that is NOT there -- the mistyped store.
+///
+/// It is one half of the mine this section exists for: X509_STORE_load_path
+/// answers 1 for a path that does not exist, because it only records the
+/// string, so nothing downstream could tell a store nobody created from one
+/// that is merely empty. Nothing is created here, so there is nothing to
+/// remove.
+std::filesystem::path makeUnreadableAnchorDir()
+{
+    return std::filesystem::temp_directory_path() / ("librescrs-csca-wiring-absent-" + randomHexSuffix(8));
+}
+
+/// Removes @p dir when the test leaves it -- including through an ASSERT_*
+/// early return or an exception -- so a failing case cannot leave anchors
+/// behind in a temporary directory shared with every other concurrent run.
+class ScopedDirRemoval
+{
+public:
+    explicit ScopedDirRemoval(std::filesystem::path dir) : dir_(std::move(dir)) {}
+    ~ScopedDirRemoval()
+    {
+        std::error_code ec;
+        std::filesystem::remove_all(dir_, ec);
+    }
+    ScopedDirRemoval(const ScopedDirRemoval&) = delete;
+    ScopedDirRemoval& operator=(const ScopedDirRemoval&) = delete;
+
+private:
+    std::filesystem::path dir_;
+};
+
+/// The two places these tests reach the live path, so the shape of what it
+/// answers is written down once.
+emrtd::crypto::PAResult::Status statusFor(const std::vector<uint8_t>& sod, const std::filesystem::path& dir)
+{
+    return emrtd::crypto::verifyCSCAChain(sod, dir.string()).status;
+}
+
+std::string reasonKeyFor(const std::vector<uint8_t>& sod, const std::filesystem::path& dir)
+{
+    return emrtd::crypto::verifyCSCAChain(sod, dir.string()).reasonKey;
+}
+
+/// True when @p dir holds an entry whose name is one OpenSSL's hashed-directory
+/// lookup would find: eight lowercase hex digits, a dot, then digits.
+///
+/// Asserted FALSE by the tests below. Without it, a fixture that started
+/// running `c_rehash` -- or a platform that hashed on write -- would leave them
+/// green while asking nothing.
+bool holdsARehashedLink(const std::filesystem::path& dir)
+{
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+        const std::string name = entry.path().filename().string();
+        const auto dot = name.find('.');
+        if (dot != 8 || dot + 1 == name.size()) {
+            continue;
+        }
+        const bool hashed = std::all_of(name.begin(), name.begin() + 8,
+                                        [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }) &&
+                            std::all_of(name.begin() + 9, name.end(), [](char c) { return c >= '0' && c <= '9'; });
+        if (hashed) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// Same reason as CscaVerdictTest above: these share this process's one OpenSSL
+/// error queue, and a rejection inside the loader or the chain leaves entries
+/// in it.
+class CscaWiringTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        ERR_clear_error();
+    }
+    void TearDown() override
+    {
+        ERR_clear_error();
+    }
+};
+
+} // namespace
+
+TEST_F(CscaWiringTest, PassesADocumentAgainstAnAnchorDirectoryNobodyRehashed)
+{
+    // Pins the anchor read inside verifyCSCAChain(), passive_auth.cpp. The call
+    // it replaced, X509_STORE_load_path, finds only what a `c_rehash` run has
+    // symlinked into a directory -- so a plain directory of PEM anchors, which
+    // is what a person makes and what loadAnchorDerFromDirectory reads, yielded
+    // FAILED here: the accusation verdict, for a genuine document held up
+    // against a correct store.
+    const auto ml = LibreSCRS::Test::makeMasterList(1);
+    const auto sod = LibreSCRS::Test::makeSod(ml, 0);
+    const std::filesystem::path dir = LibreSCRS::Test::writePemDir(ml.cscaDer);
+    const ScopedDirRemoval cleanup(dir);
+
+    ASSERT_FALSE(holdsARehashedLink(dir)) << "the directory must really be unhashed, or this test asks nothing";
+    EXPECT_EQ(statusFor(sod, dir), emrtd::crypto::PAResult::PASSED);
+}
+
+TEST_F(CscaWiringTest, DoesNotAccuseADocumentWhenTheStorePathIsNotThere)
+{
+    // The other half of the mine, and the worse half. X509_STORE_load_path
+    // answers 1 for a path that does not exist, so the store came out empty,
+    // no chain could be built from it, and the verdict was FAILED -- a
+    // configuration nobody finished, or a typo in it, reported to a person as
+    // a forged passport.
+    const auto ml = LibreSCRS::Test::makeMasterList(1);
+    const auto sod = LibreSCRS::Test::makeSod(ml, 0);
+    const auto absent = makeUnreadableAnchorDir();
+    ASSERT_FALSE(std::filesystem::exists(absent)) << "the path must really be missing";
+
+    EXPECT_EQ(statusFor(sod, absent), emrtd::crypto::PAResult::NOT_PERFORMED)
+        << "FAILED is the accusation verdict, and a store that is not there is not evidence about a document";
+}
+
+TEST_F(CscaWiringTest, DoesNotAccuseADocumentNoAnchorWeHoldIssued)
+{
+    // A store that is correct, complete and about somebody else. Nothing is
+    // wrong with the document and nothing is wrong with the configuration;
+    // they are simply about different authorities, and the old single status
+    // had no way to say so.
+    const auto ours = LibreSCRS::Test::makeMasterList(1);
+    const auto theirs = LibreSCRS::Test::makeMasterList(1);
+    const auto sod = LibreSCRS::Test::makeSod(theirs, 0);
+    const std::filesystem::path dir = LibreSCRS::Test::writePemDir(ours.cscaDer);
+    const ScopedDirRemoval cleanup(dir);
+
+    EXPECT_EQ(statusFor(sod, dir), emrtd::crypto::PAResult::NOT_PERFORMED)
+        << "we hold no anchor for this document's issuer, which is not an accusation against the document";
+}
+
+// --- one reason per row, and two rows that share a status -------------------
+//
+// The pair verifyCSCAChain() answers with, exercised one row at a time. Six
+// situations, four statuses: the status is what a badge is painted from, and
+// the reason is the only thing that can tell a person which of the three
+// not-performed situations they are in and what to do about it.
+
+TEST_F(CscaWiringTest, SeparatesAnUnreadableAnchorDirFromAnEmptyOne)
+{
+    // The decisive one, and the pair nothing in this repository could express
+    // before: TWO DIFFERENT REASONS FOR THE SAME NOT_PERFORMED. "There is no
+    // directory there" and "the directory is there and holds no anchor" call
+    // for two different things to be done -- fix the path, or import a master
+    // list -- and a vocabulary that merges them can say neither.
+    const auto ml = LibreSCRS::Test::makeMasterList(1);
+    const auto sod = LibreSCRS::Test::makeSod(ml, 0);
+    const auto unreadable = makeUnreadableAnchorDir();
+    const auto emptyButReadable = makeEmptyAnchorDir();
+    const ScopedDirRemoval cleanup(emptyButReadable);
+
+    ASSERT_FALSE(std::filesystem::exists(unreadable)) << "the unreadable path must really be missing";
+    ASSERT_TRUE(std::filesystem::is_directory(emptyButReadable)) << "and the empty one must really be a directory";
+    ASSERT_TRUE(std::filesystem::is_empty(emptyButReadable)) << "holding nothing";
+
+    EXPECT_EQ(reasonKeyFor(sod, unreadable), "csca.anchors-unreadable");
+    EXPECT_EQ(reasonKeyFor(sod, emptyButReadable), "csca.anchors-undecodable");
+    EXPECT_EQ(statusFor(sod, unreadable), statusFor(sod, emptyButReadable))
+        << "status must NOT distinguish them -- that is why the reason exists";
+}
+
+TEST_F(CscaWiringTest, CallsADirectoryOfNonCertificatesUndecodableAndNotUnreadable)
+{
+    // The other way to reach `csca.anchors-undecodable`, and the one that shows
+    // the two keys are not just "missing" and "empty": this directory is read
+    // right through, every file in it opens, and not one of them is a
+    // certificate. Nothing about the caller's permissions is at fault, so
+    // saying "check the permissions" would send them the wrong way.
+    const auto ml = LibreSCRS::Test::makeMasterList(1);
+    const auto sod = LibreSCRS::Test::makeSod(ml, 0);
+    const auto dir = makeAnchorLoaderTempDir("wiring-not-certificates");
+    const ScopedDirRemoval cleanup(dir);
+    writeFile(dir / "notes.txt", std::string("this is not a certificate"));
+    writeFile(dir / "also.pem", std::string("-----BEGIN CERTIFICATE-----\nnot base64 either\n"));
+
+    EXPECT_EQ(reasonKeyFor(sod, dir), "csca.anchors-undecodable");
+    EXPECT_EQ(statusFor(sod, dir), emrtd::crypto::PAResult::NOT_PERFORMED);
+}
+
+TEST_F(CscaWiringTest, CallsAnAnchorFileItCannotOpenUnreadable)
+{
+    // The shape the two keys were separated for: a directory the caller can
+    // list, holding one anchor it cannot open. The loader reports it through
+    // `outReadable`, and that bool is the whole difference between the two
+    // keys -- so this is the case that proves the key is read off the loader
+    // and not off "did the path exist".
+    if (::geteuid() == 0) {
+        GTEST_SKIP() << "permission bits are not enforced for root";
+    }
+    const auto ml = LibreSCRS::Test::makeMasterList(1);
+    const auto sod = LibreSCRS::Test::makeSod(ml, 0);
+    const auto dir = makeAnchorLoaderTempDir("wiring-unopenable");
+    const ScopedDirRemoval cleanup(dir);
+    const auto anchor = dir / "0.pem";
+    writeFile(anchor, derToPemText(ml.cscaDer[0]));
+
+    std::string reason;
+    {
+        std::filesystem::permissions(anchor, std::filesystem::perms::none, std::filesystem::perm_options::replace);
+        // Restores the mode when this scope ends, early return included, so
+        // the cleanup above always has a file it can remove.
+        const ScopedPermissions restore(anchor, std::filesystem::perms::owner_all);
+        reason = reasonKeyFor(sod, dir);
+    }
+
+    EXPECT_EQ(reason, "csca.anchors-unreadable")
+        << "a directory whose anchor could not be opened is not an empty directory";
+}
+
+TEST_F(CscaWiringTest, SaysNotConfiguredWhenNoAnchorSourceWasGiven)
+{
+    // The document is never read on this path, so it does not matter what it
+    // is: the answer describes the caller's configuration and nothing else.
+    const auto ml = LibreSCRS::Test::makeMasterList(1);
+    const auto sod = LibreSCRS::Test::makeSod(ml, 0);
+
+    EXPECT_EQ(statusFor(sod, ""), emrtd::crypto::PAResult::NOT_PERFORMED);
+    EXPECT_EQ(reasonKeyFor(sod, ""), "csca.not-configured");
+}
+
+TEST_F(CscaWiringTest, SaysNoAnchorForIssuerWhenWeHoldAnotherAuthoritysAnchors)
+{
+    const auto ours = LibreSCRS::Test::makeMasterList(1);
+    const auto theirs = LibreSCRS::Test::makeMasterList(1);
+    const auto sod = LibreSCRS::Test::makeSod(theirs, 0);
+    const std::filesystem::path dir = LibreSCRS::Test::writePemDir(ours.cscaDer);
+    const ScopedDirRemoval cleanup(dir);
+
+    EXPECT_EQ(statusFor(sod, dir), emrtd::crypto::PAResult::NOT_PERFORMED);
+    EXPECT_EQ(reasonKeyFor(sod, dir), "csca.no-anchor-for-issuer");
+}
+
+TEST_F(CscaWiringTest, PassesWithNothingToExplain)
+{
+    const auto ml = LibreSCRS::Test::makeMasterList(1);
+    const auto sod = LibreSCRS::Test::makeSod(ml, 0);
+    const std::filesystem::path dir = LibreSCRS::Test::writePemDir(ml.cscaDer);
+    const ScopedDirRemoval cleanup(dir);
+
+    EXPECT_EQ(statusFor(sod, dir), emrtd::crypto::PAResult::PASSED);
+    EXPECT_EQ(reasonKeyFor(sod, dir), "") << "the one outcome with nothing to say must say nothing";
+}
+
+TEST_F(CscaWiringTest, AccusesOnlyADocumentThatFailedAChainItReallyAttempted)
+{
+    // The one row that is FAILED, and the only one allowed to be. The issuer
+    // name matches an anchor we hold, so the name comparison passes it through
+    // and a chain really is built -- and it does not hold.
+    const auto ml = LibreSCRS::Test::makeMasterList(1);
+    const auto sod = LibreSCRS::Test::makeSodWithImpersonatedIssuer(ml, 0);
+    const std::filesystem::path dir = LibreSCRS::Test::writePemDir(ml.cscaDer);
+    const ScopedDirRemoval cleanup(dir);
+
+    EXPECT_EQ(statusFor(sod, dir), emrtd::crypto::PAResult::FAILED);
+    EXPECT_EQ(reasonKeyFor(sod, dir), "csca.chain-failed");
+}
+
+TEST_F(CscaWiringTest, NeverAccusesADocumentOverTheCallersOwnConfiguration)
+{
+    // Said once, over every configuration answer at the same time, because it
+    // is the property that survives a refactor: FAILED is an accusation of
+    // forgery, and a store that is missing, empty, unreadable or about another
+    // authority is a statement about the reader's setup. A cache nobody
+    // finished configuring must not accuse every passport held up to it.
+    const auto ours = LibreSCRS::Test::makeMasterList(1);
+    const auto theirs = LibreSCRS::Test::makeMasterList(1);
+    const auto sod = LibreSCRS::Test::makeSod(theirs, 0);
+    const auto empty = makeEmptyAnchorDir();
+    const ScopedDirRemoval cleanupEmpty(empty);
+    const std::filesystem::path elsewhere = LibreSCRS::Test::writePemDir(ours.cscaDer);
+    const ScopedDirRemoval cleanupElsewhere(elsewhere);
+
+    for (const std::filesystem::path& dir : {std::filesystem::path(""), makeUnreadableAnchorDir(), empty, elsewhere}) {
+        EXPECT_NE(statusFor(sod, dir), emrtd::crypto::PAResult::FAILED)
+            << "accused the document over the configuration at \"" << dir.string() << '"';
+        EXPECT_FALSE(reasonKeyFor(sod, dir).empty()) << "every refusal has to say which one it is";
+    }
+}
+
+// --- a link certificate is an anchor, read off a directory like any other ---
+
+TEST_F(CscaWiringTest, PassesADocumentAgainstADirectoryHoldingOnlyTheLinkCertificate)
+{
+    // A country that rotates its country signing certificate publishes a link
+    // certificate: same subject and same key as the new self-signed CSCA,
+    // signed by the OUTGOING key. It is not self-signed, and a verification
+    // insisting on a self-signed root answers FAILED -- the accusation -- to a
+    // genuine passport from a country that had rotated. Pinned at the
+    // evaluateCscaChain level above; pinned here through the directory the live
+    // path actually reads, because a loader that filtered non-self-signed
+    // certificates on the way in would put the same defect back one layer out.
+    const auto rotation = LibreSCRS::Test::makeMasterListWithLinkCertificate();
+    const auto& link = rotation.list.cscaDer[static_cast<std::size_t>(rotation.linkIndex)];
+    const auto sod = LibreSCRS::Test::makeSod(rotation.list, rotation.incomingIndex);
+    const std::filesystem::path dir = LibreSCRS::Test::writePemDir({link});
+    const ScopedDirRemoval cleanup(dir);
+
+    EXPECT_EQ(statusFor(sod, dir), emrtd::crypto::PAResult::PASSED);
+    EXPECT_EQ(reasonKeyFor(sod, dir), "");
+}
+
+TEST_F(CscaWiringTest, PassesWhicheverOrderTheDirectoryHandsTheLinkAndTheNewCscaBack)
+{
+    // Both anchors carry the same subject and the same key, so a store lookup
+    // cannot tell them apart and does not backtrack: it takes whichever comes
+    // first. Through a directory, "first" is whatever the platform's listing
+    // happened to produce -- an order this test cannot choose and no caller
+    // can either, which is exactly why the verdict must not depend on it.
+    const auto rotation = LibreSCRS::Test::makeMasterListWithLinkCertificate();
+    const auto& link = rotation.list.cscaDer[static_cast<std::size_t>(rotation.linkIndex)];
+    const auto& incoming = rotation.list.cscaDer[static_cast<std::size_t>(rotation.incomingIndex)];
+    const auto sod = LibreSCRS::Test::makeSod(rotation.list, rotation.incomingIndex);
+    const std::filesystem::path dir = LibreSCRS::Test::writePemDir({link, incoming});
+    const ScopedDirRemoval cleanup(dir);
+
+    EXPECT_EQ(statusFor(sod, dir), emrtd::crypto::PAResult::PASSED);
+
+    // And the order the platform did NOT hand back, from the same bytes it
+    // did: whichever way round the listing came, the other way round passes
+    // too, so nothing here rests on this filesystem's readdir().
+    bool readable = false;
+    auto loaded = emrtd::crypto::loadAnchorDerFromDirectory(dir.string(), &readable);
+    ASSERT_TRUE(readable);
+    ASSERT_EQ(loaded.size(), 2u);
+    std::reverse(loaded.begin(), loaded.end());
+    EXPECT_EQ(emrtd::crypto::evaluateCscaChain(sod, loaded, true), emrtd::crypto::CscaVerdict::Passed)
+        << "the link certificate reached first must not turn a genuine document into a forgery";
 }
