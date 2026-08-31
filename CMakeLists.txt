@@ -254,6 +254,33 @@ if(BUILD_TESTING)
     # `ctest` run from the build root — previously only tests under
     # build/test/ were visible because enable_testing() lived there.
     enable_testing()
+
+    # Bound every test. ctest's built-in default is 1500 seconds and nothing
+    # in this tree overrode it, so a single wedged test could hold a hosted
+    # runner for twenty-five minutes without ever being named; a handful of
+    # them consume the whole job. That is not hypothetical — one CI job sat
+    # for two hours and forty-nine minutes on one deadlocked test, and only
+    # cancelling it released a log that said which.
+    #
+    # Every suite here is registered by gtest_discover_tests() from around a
+    # hundred executables, so a per-call TIMEOUT property would have to be
+    # repeated at each call site and would silently miss the next one added.
+    # DART_TESTING_TIMEOUT is the one declaration that reaches all of them:
+    # the CTest module writes it into DartConfiguration.tcl as the default
+    # every test ctest runs from this build root inherits, discovered ones
+    # included. Set BEFORE include(CTest), which would otherwise cache 1500.
+    #
+    # 300 seconds is measured, not guessed. A full local run of this exact
+    # configuration is 1883 tests in 959 s, and its slowest single test is
+    # 15.4 s — with the DSS oracle actually running, which CI never has. A
+    # loaded runner cannot fail an honest test against a ceiling twenty times
+    # the slowest one, while a wedged test is named in the log in five
+    # minutes instead of twenty-five. Override per test with the TIMEOUT
+    # property if some future suite genuinely needs longer.
+    set(DART_TESTING_TIMEOUT 300 CACHE STRING
+        "Default per-test ctest timeout, in seconds")
+    include(CTest)
+
     if(LIBREMIDDLEWARE_BUILD_PLUGINS)
         add_subdirectory(test)
     else()

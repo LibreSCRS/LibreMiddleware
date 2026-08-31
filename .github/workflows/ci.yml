@@ -10,6 +10,7 @@ on:
 jobs:
   format-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,6 +37,15 @@ jobs:
     # any job before this matrix existed — is actually exercised.
     name: build-linux (${{ matrix.signing_backend }})
     runs-on: ubuntu-latest
+    # GitHub's default job ceiling is six hours. A deadlocked test once held
+    # this job for two hours and forty-nine minutes before a human noticed;
+    # the per-test ctest timeout in the root CMakeLists.txt is what names the
+    # culprit, and this is the backstop for anything that outlives it (a leaked
+    # grandchild holding the output pipe, an apt or clone that stalls). The
+    # number is a ceiling, not a budget: well above what dependencies + OpenSC
+    # from source + a full Release build + the suite need, and far enough below
+    # six hours that a wedge is somebody's problem the same morning.
+    timeout-minutes: 75
     strategy:
       # Each backend must report independently: a `both`-only regression should
       # not mask the production leg's result, and vice versa.
@@ -168,6 +178,13 @@ jobs:
         # the build ROOT runs everything that was built, which is the only
         # scope that cannot silently shed a suite again. Measured on this
         # change: 1409 -> 1573 tests, 345s -> 489s.
+        #
+        # Step ceiling, under the job's. The per-test timeout in the root
+        # CMakeLists.txt is what names a wedged test (and lets the rest of
+        # the suite keep reporting); this caps the case where many wedge at
+        # once, and it fails the step with everything ctest printed up to
+        # that point still in the log.
+        timeout-minutes: 30
         run: ctest --output-on-failure --test-dir build --no-tests=error
 
   examples-build:
@@ -177,6 +194,7 @@ jobs:
     # compile any more) or where a header rename/move forgets to update the
     # example.
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       OPENSC_VERSION: '0.26.1'
     steps:
@@ -220,6 +238,7 @@ jobs:
 
   build-macos:
     runs-on: macos-latest
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
         with:
@@ -267,6 +286,13 @@ jobs:
         # the build ROOT runs everything that was built, which is the only
         # scope that cannot silently shed a suite again. Measured on this
         # change: 1409 -> 1573 tests, 345s -> 489s.
+        #
+        # Step ceiling, under the job's. The per-test timeout in the root
+        # CMakeLists.txt is what names a wedged test (and lets the rest of
+        # the suite keep reporting); this caps the case where many wedge at
+        # once, and it fails the step with everything ctest printed up to
+        # that point still in the log.
+        timeout-minutes: 30
         run: ctest --output-on-failure --test-dir build --no-tests=error
 
   shared-config-package:
@@ -278,6 +304,7 @@ jobs:
     # linkage end-to-end for shared-library consumers.
     name: SHARED build + Config-package consumer
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:

@@ -38,6 +38,10 @@ jobs:
   test-linux:
     needs: verify-signature
     runs-on: ubuntu-latest
+    # Same ceiling as ci.yml's build-linux, for the same reason: an unbounded
+    # ctest on a hosted runner can hold the job until GitHub's six-hour
+    # default, and a release cut is the worst place to discover that.
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
         with:
@@ -64,6 +68,7 @@ jobs:
         # the build ROOT runs everything that was built, which is the only
         # scope that cannot silently shed a suite again. Measured on this
         # change: 1409 -> 1573 tests, 345s -> 489s.
+        timeout-minutes: 30
         run: ctest --output-on-failure --test-dir build --no-tests=error
 
   shared-linux:
@@ -83,6 +88,7 @@ jobs:
     # cmake/librescrs-public-exports.map.
     needs: verify-signature
     runs-on: ubuntu-latest
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
         with:
@@ -128,11 +134,13 @@ jobs:
         # Build ROOT, for the same reason as every other ctest here: the
         # library subdirectories register suites that build-shared/test does
         # not see.
+        timeout-minutes: 30
         run: ctest --output-on-failure --test-dir build-shared --no-tests=error
 
   test-macos:
     needs: verify-signature
     runs-on: macos-latest
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
         with:
@@ -159,6 +167,7 @@ jobs:
         # the build ROOT runs everything that was built, which is the only
         # scope that cannot silently shed a suite again. Measured on this
         # change: 1409 -> 1573 tests, 345s -> 489s.
+        timeout-minutes: 30
         run: ctest --output-on-failure --test-dir build --no-tests=error
 
   pkcs11-linux:
