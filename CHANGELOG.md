@@ -50,6 +50,19 @@ Notable user-visible changes per release. Format follows
   the rotation question and refuse a replayed older list without being
   handed, out of band, data that is already inside the file it just
   read.
+- **Hosts can tell a plugin where their country-signing certificates
+  are.** `CardPluginService::setCscaAnchorDirectory` publishes one
+  directory to every plugin it loaded, and the eMRTD plugin judges a
+  travel document's passive authentication against what is in it. The
+  directory used to be named by an environment variable, which anything
+  running as the person at the keyboard can set — so a forged document
+  could be reported as chaining to a national authority. That read was
+  removed in 4.3 and, until now, nothing replaced it: a host that really
+  had imported country signing certificates was still told none were
+  configured. Only the path is published; the certificates in it are
+  read afresh at each document, so a list imported after startup takes
+  effect on the next read. A host that publishes nothing keeps the
+  honest "not configured" answer.
 - **Arch Linux packaging.** A release-shaped `PKGBUILD` for
   `librescrs-middleware`.
 

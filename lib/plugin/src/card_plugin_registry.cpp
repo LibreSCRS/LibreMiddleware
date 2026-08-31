@@ -338,6 +338,19 @@ CardPluginService::~CardPluginService() = default;
 CardPluginService::CardPluginService(CardPluginService&&) noexcept = default;
 CardPluginService& CardPluginService::operator=(CardPluginService&&) noexcept = default;
 
+void CardPluginService::setCscaAnchorDirectory(const std::filesystem::path& dir)
+{
+    // A SHARED lock: the plugin set itself is not touched here, only walked.
+    // Each plugin serialises its own publication behind its own lock, so two
+    // hosts publishing at once cannot tear a path -- one of them wins whole.
+    std::shared_lock lock(d->pluginsMtx);
+    for (const auto& plugin : d->sortedPlugins) {
+        if (plugin) {
+            plugin->setCscaAnchorDirectory(dir);
+        }
+    }
+}
+
 std::shared_ptr<CardPlugin> CardPluginService::findPluginForCard(std::span<const std::uint8_t> atr) const
 {
     std::shared_lock lock(d->pluginsMtx);

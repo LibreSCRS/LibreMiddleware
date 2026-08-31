@@ -30,6 +30,8 @@
 #include "chip_auth_fake_chip.h"
 #include "emrtd-crypto/synthetic_masterlist.h"
 
+#include <unistd.h> // getpid, for a per-process anchor directory name
+
 #include <algorithm>
 #include <array>
 #include <charconv>
@@ -37,6 +39,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <optional>
@@ -203,6 +206,51 @@ public:
 private:
     const char* name_;
     std::optional<std::string> previous_;
+};
+
+// A directory in the shape the agent's anchor cache really has on disk: one
+// DER-encoded certificate per file, named `000000.cer` upward, nothing else in
+// it. Removed when the object dies.
+//
+// Deliberately NOT the fixture's writePemDir(). PEM is what the crypto-layer
+// tests feed the loader, and a channel proven only against PEM would leave
+// untried the exact bytes the field failure was measured against -- five DER
+// `.cer` files a person had really imported, which the badge said were not
+// there.
+class DerAnchorDir
+{
+public:
+    DerAnchorDir(const std::string& stem, const std::vector<std::vector<std::uint8_t>>& certsDer)
+        : dir_(std::filesystem::temp_directory_path() /
+               ("librescrs-anchors-" + stem + "-" + std::to_string(::getpid())))
+    {
+        std::error_code ec;
+        std::filesystem::remove_all(dir_, ec);
+        std::filesystem::create_directories(dir_);
+        for (std::size_t i = 0; i < certsDer.size(); ++i) {
+            std::string name(6, '0');
+            const std::string n = std::to_string(i);
+            name.replace(name.size() - n.size(), n.size(), n);
+            std::ofstream out(dir_ / (name + ".cer"), std::ios::binary | std::ios::trunc);
+            out.write(reinterpret_cast<const char*>(certsDer[i].data()),
+                      static_cast<std::streamsize>(certsDer[i].size()));
+        }
+    }
+    ~DerAnchorDir()
+    {
+        std::error_code ec;
+        std::filesystem::remove_all(dir_, ec);
+    }
+    DerAnchorDir(const DerAnchorDir&) = delete;
+    DerAnchorDir& operator=(const DerAnchorDir&) = delete;
+
+    [[nodiscard]] const std::filesystem::path& path() const
+    {
+        return dir_;
+    }
+
+private:
+    std::filesystem::path dir_;
 };
 
 // Every check id present in @p groupKey, in emission order.
@@ -1414,6 +1462,199 @@ TEST(EmrtdInterfaceActivation, AnEnvironmentVariableCannotSupplyTrustAnchors)
         << "and the reader must be told no anchors are configured, not shown a green badge";
     EXPECT_NE(fieldText(*data, "security_status", "overall_authenticity").value_or(""), "PASSED")
         << "the badge would have claimed authenticity on the say-so of an environment variable";
+}
+
+// --- the anchors a HOST published ------------------------------------------
+//
+// The three cases below are the other side of the test above. Anchors may not
+// come from the environment; they have to come from somewhere, and this is it:
+// CardPluginService::setCscaAnchorDirectory, called by the host that loaded the
+// plugin.
+//
+// They exist because of a failure measured on a machine with a real passport on
+// the reader. A person had imported a master list; the agent had verified it,
+// applied its trust rules and written five anchors into its cache, and its own
+// state property said so. The badge on the document still read "no country
+// signing certificates have been imported". Both halves were green in their own
+// test suites -- the import was tested against the cache it writes, the chain
+// check was tested against a directory a test handed it -- and nothing anywhere
+// drove the PLUGIN with a directory of anchors present. That is what these do.
+//
+// Each drives the real plugin `.so` through the registry, over a scripted card
+// serving a genuine security object, and reads the badge fields a host paints
+// from. Nothing here calls the chain check directly: the point at issue was
+// never whether that code works.
+
+// The verdict a real passport gets against anchors that do not include its
+// issuer: `no-anchor-for-issuer`, and specifically NOT `not-configured`. Those
+// two are the same STATUS, which is why the reason key exists at all, and
+// telling them apart is the whole difference between "you have not imported
+// anything" and "what you imported does not cover this country".
+TEST(EmrtdInterfaceActivation, AnchorsPublishedByTheHostReachTheChainCheck)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/true, /*plainSod=*/true);
+
+    // Two authorities that have nothing to do with each other. The document is
+    // this country's; the anchors on disk are that one's.
+    const auto issuing = LibreSCRS::Test::makeMasterList(1);
+    const auto other = LibreSCRS::Test::makeMasterList(1);
+    rig->files[0x011D] = sodFixture(LibreSCRS::Test::makeSod(issuing, 0));
+    const auto dgs = LibreSCRS::Test::sodDataGroups();
+    ASSERT_EQ(dgs.count(1), 1u);
+    rig->files[0x0101] = dgs.at(1);
+
+    const DerAnchorDir anchors("other-authority", other.cscaDer);
+    registry.setCscaAnchorDirectory(anchors.path());
+
+    session->setCredentialProvider(
+        [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    auto rr = plugin->readCard(*session);
+    ASSERT_EQ(rr.status, ReadResult::Status::Ok);
+    ASSERT_TRUE(rr.data.has_value());
+
+    // The document held up on its own terms, so a failure below is about the
+    // anchors and nothing else.
+    const auto sodIdx = checkIndexOf(*rr.data, "security_status", "pa_sod_signature");
+    ASSERT_TRUE(sodIdx.has_value()) << "the rig must really have served a security object";
+    ASSERT_EQ(checkField(*rr.data, "security_status", *sodIdx, "status").value_or(""), "PASSED");
+
+    const auto i = checkIndexOf(*rr.data, "security_status", "pa_csca_chain");
+    ASSERT_TRUE(i.has_value());
+    EXPECT_EQ(checkField(*rr.data, "security_status", *i, "reason").value_or(""), "csca.no-anchor-for-issuer")
+        << "anchors the host published were not looked at: this is the field defect";
+    EXPECT_EQ(checkField(*rr.data, "security_status", *i, "status").value_or(""), "NOT_PERFORMED")
+        << "holding another authority's anchors is not an accusation against this document";
+    EXPECT_NE(fieldText(*rr.data, "security_status", "overall_authenticity").value_or(""), "PASSED")
+        << "no anchor issued this signer, so authenticity is not established";
+}
+
+// The same document against the anchors that DID issue its signer. Without
+// this, a plugin that answered `no-anchor-for-issuer` unconditionally -- never
+// reading the directory at all -- would pass the case above.
+TEST(EmrtdInterfaceActivation, AnchorsThatIssuedTheSignerEstablishAuthenticity)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/true, /*plainSod=*/true);
+
+    const auto issuing = LibreSCRS::Test::makeMasterList(1);
+    rig->files[0x011D] = sodFixture(LibreSCRS::Test::makeSod(issuing, 0));
+    const auto dgs = LibreSCRS::Test::sodDataGroups();
+    ASSERT_EQ(dgs.count(1), 1u);
+    rig->files[0x0101] = dgs.at(1);
+
+    const DerAnchorDir anchors("issuing-authority", issuing.cscaDer);
+    registry.setCscaAnchorDirectory(anchors.path());
+
+    session->setCredentialProvider(
+        [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    auto rr = plugin->readCard(*session);
+    ASSERT_EQ(rr.status, ReadResult::Status::Ok);
+    ASSERT_TRUE(rr.data.has_value());
+
+    const auto i = checkIndexOf(*rr.data, "security_status", "pa_csca_chain");
+    ASSERT_TRUE(i.has_value());
+    EXPECT_EQ(checkField(*rr.data, "security_status", *i, "status").value_or(""), "PASSED");
+    EXPECT_EQ(checkField(*rr.data, "security_status", *i, "reason").value_or(""), "")
+        << "the one outcome with nothing to explain must explain nothing";
+    EXPECT_EQ(fieldText(*rr.data, "security_status", "overall_authenticity").value_or(""), "PASSED")
+        << "signature verified and signer anchored: this is what a badge is allowed to claim";
+}
+
+// Publication is single-shot, and this is the direction that matters: a second
+// caller cannot UPGRADE a verdict. Anything sharing the host process would
+// otherwise be able to hand the plugin a certification authority of its own
+// after the fact -- the in-process version of the environment variable the test
+// above forbids, and worth its own case because the argument for that removal
+// is not an argument about environment variables.
+TEST(EmrtdInterfaceActivation, ALaterPublicationCannotRepointAPluginsAnchors)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/true, /*plainSod=*/true);
+
+    const auto issuing = LibreSCRS::Test::makeMasterList(1);
+    const auto other = LibreSCRS::Test::makeMasterList(1);
+    rig->files[0x011D] = sodFixture(LibreSCRS::Test::makeSod(issuing, 0));
+    const auto dgs = LibreSCRS::Test::sodDataGroups();
+    ASSERT_EQ(dgs.count(1), 1u);
+    rig->files[0x0101] = dgs.at(1);
+
+    const DerAnchorDir first("repoint-first", other.cscaDer);
+    const DerAnchorDir second("repoint-second", issuing.cscaDer);
+    registry.setCscaAnchorDirectory(first.path());
+    registry.setCscaAnchorDirectory(second.path());
+
+    // The second directory really would change the answer -- the previous test
+    // reads exactly these anchors and gets PASSED -- so a green verdict here
+    // could only mean the second call was honoured.
+    EXPECT_EQ(plugin->cscaAnchorDirectory(), first.path()) << "the first publication must be the one that stands";
+
+    session->setCredentialProvider(
+        [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    auto rr = plugin->readCard(*session);
+    ASSERT_EQ(rr.status, ReadResult::Status::Ok);
+    ASSERT_TRUE(rr.data.has_value());
+
+    const auto i = checkIndexOf(*rr.data, "security_status", "pa_csca_chain");
+    ASSERT_TRUE(i.has_value());
+    EXPECT_EQ(checkField(*rr.data, "security_status", *i, "reason").value_or(""), "csca.no-anchor-for-issuer")
+        << "a later caller re-pointed the plugin at anchors of its own choosing";
+}
+
+// A host that publishes nothing keeps exactly the behaviour it had: the honest
+// "not configured", not a crash and not a silently empty store. The registry
+// here is never told anything -- which is every host that has not been taught
+// to publish, and every host that has no anchor cache at all.
+TEST(EmrtdInterfaceActivation, AHostThatPublishesNothingStillGetsNotConfigured)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+    EXPECT_TRUE(plugin->cscaAnchorDirectory().empty()) << "an unpublished plugin must name no directory at all";
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installLdsRig(*session, /*plainLds=*/true, /*plainSod=*/true);
+
+    const auto issuing = LibreSCRS::Test::makeMasterList(1);
+    rig->files[0x011D] = sodFixture(LibreSCRS::Test::makeSod(issuing, 0));
+    const auto dgs = LibreSCRS::Test::sodDataGroups();
+    ASSERT_EQ(dgs.count(1), 1u);
+    rig->files[0x0101] = dgs.at(1);
+
+    session->setCredentialProvider(
+        [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    auto rr = plugin->readCard(*session);
+    ASSERT_EQ(rr.status, ReadResult::Status::Ok);
+    ASSERT_TRUE(rr.data.has_value());
+
+    const auto i = checkIndexOf(*rr.data, "security_status", "pa_csca_chain");
+    ASSERT_TRUE(i.has_value());
+    EXPECT_EQ(checkField(*rr.data, "security_status", *i, "reason").value_or(""), "csca.not-configured");
+    EXPECT_EQ(checkField(*rr.data, "security_status", *i, "status").value_or(""), "NOT_PERFORMED");
 }
 
 TEST(EmrtdInterfaceActivation, ContactPlainReadAttemptsChipAuthAndStaysPlainWhenUnavailable)

@@ -122,9 +122,11 @@ LibreSCRS::Plugin::AutoReaderService::AutoReaderService(std::shared_ptr<LibreSCR
 LibreSCRS::Plugin::AutoReaderService::isReading(std::basic_string_view<char, std::char_traits<char> >) const@@LM_4
 LibreSCRS::Plugin::AutoReaderService::~AutoReaderService()@@LM_4
 LibreSCRS::Plugin::CardPlugin::canHandle(std::span<unsigned char const, 18446744073709551615ul>) const@@LM_4
+LibreSCRS::Plugin::CardPlugin::cscaAnchorDirectory[abi:cxx11]() const@@LM_4
 LibreSCRS::Plugin::CardPlugin::decipher(LibreSCRS::SmartCard::CardSession&, unsigned short, std::span<unsigned char const, 18446744073709551615ul>, LibreSCRS::Plugin::DecipherMechanism, LibreSCRS::CancelToken) const@@LM_4
 LibreSCRS::Plugin::CardPlugin::preReadAuth(LibreSCRS::SmartCard::CardSession&) const@@LM_4
 LibreSCRS::Plugin::CardPlugin::readCard(LibreSCRS::SmartCard::CardSession&, std::function<void (std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, LibreSCRS::Plugin::CardFieldGroup const&)>, LibreSCRS::CancelToken) const@@LM_4
+LibreSCRS::Plugin::CardPlugin::setCscaAnchorDirectory(std::filesystem::__cxx11::path)@@LM_4
 LibreSCRS::Plugin::CardPlugin::setTrustStore(std::shared_ptr<LibreSCRS::Trust::TrustStore const>)@@LM_4
 LibreSCRS::Plugin::CardPlugin::sign(LibreSCRS::SmartCard::CardSession&, unsigned short, std::span<unsigned char const, 18446744073709551615ul>, LibreSCRS::Plugin::SignMechanism, LibreSCRS::CancelToken) const@@LM_4
 LibreSCRS::Plugin::CardPlugin::~CardPlugin()@@LM_4
@@ -138,6 +140,7 @@ LibreSCRS::Plugin::CardPluginService::isUsable() const@@LM_4
 LibreSCRS::Plugin::CardPluginService::loadReport() const@@LM_4
 LibreSCRS::Plugin::CardPluginService::operator=(LibreSCRS::Plugin::CardPluginService&&)@@LM_4
 LibreSCRS::Plugin::CardPluginService::plugins() const@@LM_4
+LibreSCRS::Plugin::CardPluginService::setCscaAnchorDirectory(std::filesystem::__cxx11::path const&)@@LM_4
 LibreSCRS::Plugin::CardPluginService::size() const@@LM_4
 LibreSCRS::Plugin::CardPluginService::~CardPluginService()@@LM_4
 LibreSCRS::Plugin::Internal::FamilyQuirks::blockedGuidance(LibreSCRS::Plugin::PinKind) const@@LM_4
@@ -229,9 +232,11 @@ emrtd::crypto::performPACE(LibreSCRS::SmartCard::Internal::PCSCConnection&, emrt
 == libLibreSCRS_Signing.so ==
 LibreSCRS::Plugin::Atr::matches(std::span<unsigned char const, 18446744073709551615ul>) const@@LM_4
 LibreSCRS::Plugin::CardPlugin::canHandle(std::span<unsigned char const, 18446744073709551615ul>) const@@LM_4
+LibreSCRS::Plugin::CardPlugin::cscaAnchorDirectory[abi:cxx11]() const@@LM_4
 LibreSCRS::Plugin::CardPlugin::decipher(LibreSCRS::SmartCard::CardSession&, unsigned short, std::span<unsigned char const, 18446744073709551615ul>, LibreSCRS::Plugin::DecipherMechanism, LibreSCRS::CancelToken) const@@LM_4
 LibreSCRS::Plugin::CardPlugin::preReadAuth(LibreSCRS::SmartCard::CardSession&) const@@LM_4
 LibreSCRS::Plugin::CardPlugin::readCard(LibreSCRS::SmartCard::CardSession&, std::function<void (std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, LibreSCRS::Plugin::CardFieldGroup const&)>, LibreSCRS::CancelToken) const@@LM_4
+LibreSCRS::Plugin::CardPlugin::setCscaAnchorDirectory(std::filesystem::__cxx11::path)@@LM_4
 LibreSCRS::Plugin::CardPlugin::setTrustStore(std::shared_ptr<LibreSCRS::Trust::TrustStore const>)@@LM_4
 LibreSCRS::Plugin::CardPlugin::sign(LibreSCRS::SmartCard::CardSession&, unsigned short, std::span<unsigned char const, 18446744073709551615ul>, LibreSCRS::Plugin::SignMechanism, LibreSCRS::CancelToken) const@@LM_4
 LibreSCRS::Plugin::CardPlugin::~CardPlugin()@@LM_4
@@ -245,6 +250,7 @@ LibreSCRS::Plugin::CardPluginService::isUsable() const@@LM_4
 LibreSCRS::Plugin::CardPluginService::loadReport() const@@LM_4
 LibreSCRS::Plugin::CardPluginService::operator=(LibreSCRS::Plugin::CardPluginService&&)@@LM_4
 LibreSCRS::Plugin::CardPluginService::plugins() const@@LM_4
+LibreSCRS::Plugin::CardPluginService::setCscaAnchorDirectory(std::filesystem::__cxx11::path const&)@@LM_4
 LibreSCRS::Plugin::CardPluginService::size() const@@LM_4
 LibreSCRS::Plugin::CardPluginService::~CardPluginService()@@LM_4
 LibreSCRS::Plugin::Internal::FamilyQuirks::blockedGuidance(LibreSCRS::Plugin::PinKind) const@@LM_4

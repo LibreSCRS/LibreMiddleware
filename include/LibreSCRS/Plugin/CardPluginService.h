@@ -172,6 +172,37 @@ public:
     ///        released per the standard shared_ptr unwinding rules.
     CardPluginService& operator=(CardPluginService&&) noexcept;
 
+    /// @brief Publish the directory of country-signing (CSCA) certificates
+    ///        this host holds to every plugin the registry loaded.
+    ///
+    /// Forwards @p dir to @ref CardPlugin::setCscaAnchorDirectory on each
+    /// loaded plugin; plugins with nothing to verify against country signing
+    /// certificates simply never read it. Read that method before this one —
+    /// it carries why the value has to arrive through an interface rather
+    /// than be looked up, and what happens when nobody calls this at all.
+    ///
+    /// @par Why this is not a constructor argument
+    /// The @ref TrustStore is one, because a host knows it before it loads
+    /// plugins. This one it may not: the Linux agent builds its registry at
+    /// the top of @c main and only assembles the configuration that names
+    /// this directory later, once the bus object exists — so a constructor
+    /// argument could only be filled from a path guessed ahead of the
+    /// configuration, which is how the two halves of this feature came to
+    /// disagree in the first place. Publication is therefore separate from
+    /// loading, and this method loads nothing: the plugin set is still fixed
+    /// at construction.
+    ///
+    /// @par Single-shot
+    /// Enforced per plugin by @ref CardPlugin::setCscaAnchorDirectory, so
+    /// calling this twice publishes the FIRST directory and silently ignores
+    /// the second. Deliberate: see that method's "Lifecycle".
+    ///
+    /// @par Thread-safety
+    /// Thread-safe. Takes the registry's read lock (the plugin set is not
+    /// modified) and each plugin serialises its own publication.
+    /// @since 4.3
+    void setCscaAnchorDirectory(const std::filesystem::path& dir);
+
     /// @brief Fast lookup by ATR bytes (no card I/O).
     /// @return The matching plugin with the smallest @ref CardPlugin::probePriority
     ///         integer (lower numbers are probed first — "highest priority"

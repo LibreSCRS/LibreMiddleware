@@ -25,8 +25,10 @@
 
 #include <atomic>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -84,7 +86,10 @@ struct CardPluginActivationAccessor;
 ///       this value. v7 added the @ref activationProfile / @ref
 ///       seedCredentials activation virtuals consumed by the @ref readCard
 ///       NVI wrapper; v8 appends the @ref doDecipher vtable slot
-///       (ABI-additive — see the note on @ref decipher).
+///       (ABI-additive — see the note on @ref decipher) and the
+///       @ref setCscaAnchorDirectory host-to-plugin channel, which adds
+///       storage to this class and so is an ABI change in its own right —
+///       affordable only because v8 has not shipped.
 ///
 /// Method groups:
 ///  - Identification (@ref pluginId, @ref displayName, @ref probePriority) — set via @ref setIdentity
@@ -676,6 +681,62 @@ public:
     /// @since 4.0 (NVI seam introduced).
     virtual void doSetTrustStore(std::shared_ptr<const LibreSCRS::Trust::TrustStore> /*trustStore*/) noexcept {}
 
+    /// @brief Tell this plugin where the HOST keeps the country-signing
+    ///        (CSCA) certificates it holds, for the passive-authentication
+    ///        chain check on a travel document.
+    ///
+    /// @par Why the path is an argument and not something a plugin looks up
+    /// A trust anchor is the whole of what a passive-authentication badge
+    /// means. This directory used to be named by an environment variable,
+    /// which is set by anything running as the person at the keyboard: a
+    /// process in that session could mint a certification authority of its
+    /// own, point the variable at it, and have a document it had forged
+    /// reported as chaining to a country signing certificate — a green badge
+    /// issued on the attacker's say-so. That read was removed and nothing
+    /// took its place, so a host that really had imported anchors still got
+    /// "no anchor source configured" on every document. This method is what
+    /// took its place: the path arrives from the host that loaded the plugin,
+    /// through this interface, and from nowhere else. A plugin MUST NOT
+    /// consult the environment for it.
+    ///
+    /// @param dir a directory of certificate files — DER or PEM, in any file
+    ///        naming, with no @c c_rehash run needed. An EMPTY path means no
+    ///        anchor source, which is what a plugin sees when no host ever
+    ///        called this, and is answered as "not configured" rather than as
+    ///        a verdict about a document.
+    ///
+    /// @par Lifecycle
+    /// Single-shot, like @ref setTrustStore and for a sharper version of the
+    /// same reason: a directory any caller could re-point at any moment would
+    /// be the mutable ambient source this replaced, only in-process. The
+    /// first call wins; every later call is a silent no-op.
+    /// @ref CardPluginService::setCscaAnchorDirectory is how a host ordinarily
+    /// makes this call — once, for every plugin it loaded.
+    ///
+    /// @par What travels, and what does not
+    /// The PATH travels; the anchors never do. Their bytes are read at each
+    /// verification, so a master list imported long after the host published
+    /// the path is picked up by the next document read with no re-injection —
+    /// and a set of anchors withdrawn by a later import stops being used for
+    /// the same reason.
+    ///
+    /// @par Thread-safety
+    /// Thread-safe. The publication and every concurrent
+    /// @ref cscaAnchorDirectory read are serialised internally, because a host
+    /// may publish after the registry has been handed out (the Linux agent
+    /// does: its configuration is only assembled once the bus object exists).
+    ///
+    /// @since 4.3
+    void setCscaAnchorDirectory(std::filesystem::path dir);
+
+    /// @brief The directory a host published through
+    ///        @ref setCscaAnchorDirectory.
+    /// @return that directory, or an EMPTY path when no host published one —
+    ///         which a plugin must report as "not configured" and never as a
+    ///         finding about the document in front of it.
+    /// @since 4.3
+    [[nodiscard]] std::filesystem::path cscaAnchorDirectory() const;
+
 protected:
     /// @brief Plugin-side implementation of @ref decipher. Treated as atomic;
     ///        the base wrapper handles the pre-dispatch cancel short-circuit.
@@ -798,6 +859,18 @@ private:
     /// [atomics.flag]/4 — `ATOMIC_FLAG_INIT` removed: deprecated in C++20,
     /// removed in C++26.
     std::atomic_flag trustStoreInjectedFlag;
+
+    /// Guards the two members below. A mutex rather than the atomic_flag
+    /// pattern above because what is published here is a
+    /// std::filesystem::path and not a word: a flag can make the INJECTION
+    /// single-shot, but it cannot make a concurrent READ of the path
+    /// race-free, and publication is not confined to registry construction —
+    /// a host whose configuration is only assembled later publishes after the
+    /// plugin set has been handed out.
+    mutable std::mutex cscaAnchorDirectoryMtx;
+    std::filesystem::path cscaAnchorDirectoryValue;
+    /// Single-shot guard for @ref setCscaAnchorDirectory; see its "Lifecycle".
+    bool cscaAnchorDirectoryPublished = false;
 };
 
 // 4.0 compile-time audit: every credential-bearing parameter on

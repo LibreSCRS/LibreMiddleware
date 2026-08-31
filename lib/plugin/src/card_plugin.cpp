@@ -26,7 +26,9 @@
 #include <LibreSCRS_internal/Plugin/PreReadAuthDerivation.h>
 
 #include <atomic>
+#include <filesystem>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <variant>
@@ -125,6 +127,27 @@ void CardPlugin::setTrustStore(std::shared_ptr<const LibreSCRS::Trust::TrustStor
     if (trustStoreInjectedFlag.test_and_set(std::memory_order_acq_rel))
         return;
     doSetTrustStore(std::move(trustStore));
+}
+
+void CardPlugin::setCscaAnchorDirectory(std::filesystem::path dir)
+{
+    std::lock_guard lock(cscaAnchorDirectoryMtx);
+    // Single-shot: the first publication wins. A later caller is not an
+    // error and is not reported as one -- a host that publishes twice has
+    // done nothing wrong -- but it cannot re-point a plugin that is already
+    // answering documents against a directory somebody vouched for.
+    if (cscaAnchorDirectoryPublished)
+        return;
+    cscaAnchorDirectoryPublished = true;
+    cscaAnchorDirectoryValue = std::move(dir);
+}
+
+std::filesystem::path CardPlugin::cscaAnchorDirectory() const
+{
+    std::lock_guard lock(cscaAnchorDirectoryMtx);
+    // By value, under the lock. A reference would hand a caller a path a
+    // concurrent first publication is assigning to.
+    return cscaAnchorDirectoryValue;
 }
 
 } // namespace LibreSCRS::Plugin

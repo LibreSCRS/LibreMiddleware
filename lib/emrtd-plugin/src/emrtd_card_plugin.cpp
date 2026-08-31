@@ -1070,20 +1070,29 @@ private:
         std::map<std::string, std::string> checkReasonKeys;
 
         if (sodRaw && !dgRawData.empty()) {
-            // NO anchor source is named here, and none may be named from the
-            // ambient environment. Trust anchors are the whole of what a
-            // passive-authentication badge means, and an environment variable
-            // is set by anything running as the person at the keyboard: while
-            // one was read, any process in the session could mint a CA of its
-            // own, point the variable at it, and have a document it forged
-            // reported as chaining to a country signing certificate.
+            // The anchors are whatever the HOST that loaded this plugin named,
+            // and nothing else. Not the ambient environment, ever: trust
+            // anchors are the whole of what a passive-authentication badge
+            // means, and an environment variable is set by anything running as
+            // the person at the keyboard -- while one was read, any process in
+            // the session could mint a CA of its own, point the variable at it,
+            // and have a document it forged reported as chaining to a country
+            // signing certificate. That read was removed, and for a while
+            // nothing stood in its place, so a host that really had imported
+            // country signing certificates was still told none were configured.
+            // CardPlugin::setCscaAnchorDirectory is what stands there now; read
+            // its documentation before touching this line.
             //
-            // Until anchors arrive from a source somebody can vouch for, this
-            // answers "no anchor source configured" -- which is a smaller
-            // claim than "passed", and the only one of the two that is true.
-            // verifyCSCAChain still takes a directory, so the answer changes
-            // the day such a source exists and not before.
-            auto paResult = emrtd::crypto::performPassiveAuth(*sodRaw, dgRawData);
+            // An empty path -- no host published one -- is answered "no anchor
+            // source configured", which is a smaller claim than "passed" and
+            // the only one of the two that would be true.
+            //
+            // Read on EVERY document rather than cached: the directory's name
+            // is fixed for this plugin's life, its contents are not, so a
+            // master list imported after the host started counts on the very
+            // next read, and anchors a later import withdrew stop counting.
+            const std::string anchorDir = cscaAnchorDirectory().string();
+            auto paResult = emrtd::crypto::performPassiveAuth(*sodRaw, dgRawData, anchorDir);
 
             // SOD signature check
             {
