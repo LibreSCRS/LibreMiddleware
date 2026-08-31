@@ -249,7 +249,27 @@ TEST(MonitorTest, UnsubscribeWithDrainBlocksUntilCallbackCompletes)
     EXPECT_EQ(finishedCount.load(), 0);
 
     // Release the callback; drain must now return.
-    releaseCallback.store(true);
+    //
+    // The flag MUST be flipped while holding `gate`. The callback thread
+    // evaluates the predicate above under `gate` and only then parks in
+    // condition_variable::wait, which releases `gate` atomically — but the
+    // predicate check and the park are not one instruction. A notifier that
+    // never takes `gate` can run entirely inside that gap: the waiter has
+    // already read the flag as false, the flag flips, notify_all() reaches
+    // nobody, and the waiter parks on a wakeup that was already spent. The
+    // callback then never returns, so the dispatch never releases the lock
+    // unsubscribe(Drain) is blocked on, and join() below waits forever.
+    // Nothing in the test can time out, so the process is simply wedged.
+    //
+    // Taking the lock closes the gap: the flip cannot land between the
+    // predicate and the park, because the waiter holds `gate` across exactly
+    // that span. It is the same reasoning the reader-list gate further down
+    // this file already spells out — a flag disarmed before the thread parks
+    // leaves a released flag and a thread that parks afterwards.
+    {
+        std::lock_guard lock(gate);
+        releaseCallback.store(true);
+    }
     gateCv.notify_all();
     drainThread.join();
     EXPECT_TRUE(drainReturned.load());
