@@ -729,34 +729,47 @@ void MonitorService::unsubscribe(SubscriptionId id, DrainPolicy policy) noexcept
                 d->internalSubId.reset();
             }
         }
+        // Drop dispatchMtx BEFORE the internal unsubscribe below, which
+        // joins the poll thread. Holding it across that join deadlocks, and
+        // the reasoning that said otherwise was wrong at one specific step.
+        //
+        // It ran: Monitor::unsubscribe erases our readers/event callbacks
+        // from its subscriber map before calling stopThread()/join(), so
+        // after the erase the poll thread iterates an empty subscriber set,
+        // never re-enters dispatchReaderListSnapshot, and cannot block on
+        // the dispatchMtx we hold. Every step is true except the one it
+        // skips: Monitor::notifyReaders COPIES the subscriber callbacks
+        // under subscribersMtx and then invokes them with the lock
+        // released. A poll thread that took its copy before the erase is
+        // already past the point the erase can reach. It walks that stale
+        // copy into dispatchReaderListSnapshot, blocks on dispatchMtx, and
+        // the join waits for a thread that is waiting for us.
+        //
+        // Measured, not argued: with the lock held here, the drain test in
+        // test/LibreSCRS_MonitorTests.cpp wedged 15 runs out of 1000 on this
+        // machine and 0 out of 1000 with it released, and the stacks caught
+        // mid-wedge are exactly that cycle. One-and-a-half percent is why it
+        // read as a rare flake — green in a whole-suite run, green on the
+        // other CI leg — and once held a runner for hours instead of
+        // failing.
+        //
+        // Releasing here costs nothing the drain contract needs. That
+        // contract — the callback is never invoked again after this returns
+        // — is already discharged by the erase above: both dispatch paths
+        // (dispatchImmediate, dispatchReaderListSnapshot) take dispatchMtx
+        // FIRST and snapshot the callback map second, so any dispatch that
+        // starts after we release cannot see the entry we just removed, and
+        // any dispatch already running finished before we acquired the lock.
+        //
+        // owns_lock() because the FireAndForget branch never locked it, and
+        // unlocking an unowned unique_lock throws.
+        if (dispatchLock.owns_lock()) {
+            dispatchLock.unlock();
+        }
         if (subToDrop) {
             // Unsubscribe outside cbMtx; internal MonitorService may block
             // for an in-flight dispatch which itself re-enters
             // snapshotCallbacks.
-            //
-            // This call joins the internal poll thread while we (in the
-            // Drain branch) still hold dispatchMtx. That is safe — but NOT
-            // because holding dispatchMtx makes the join "race-free" (an
-            // earlier comment claimed this; it was wrong and could imply a
-            // deadlock if you trace only this layer). The actual invariant
-            // lives one layer down: Monitor::unsubscribe erases our
-            // readers/event callbacks from its subscriber map BEFORE it
-            // calls stopThread()/join() (see lib/smartcard/src/monitor.cpp
-            // unsubscribe()). After that erase, the poll thread's
-            // notifyReaders/notifyEvent iterate an empty subscriber set and
-            // never re-invoke diffReadersAndDispatch -> dispatchReaderListSnapshot,
-            // so the poll thread cannot block trying to re-acquire the
-            // dispatchMtx we hold. The join therefore completes regardless
-            // of whether we hold dispatchMtx.
-            //
-            // CAUTION: this safety is a cross-layer dependency on
-            // Monitor::unsubscribe's erase-before-stop ordering. If that
-            // ordering ever changes to stop-before-erase, holding
-            // dispatchMtx here WOULD deadlock (poll thread trapped in
-            // dispatchReaderListSnapshot waiting for dispatchMtx, join
-            // waiting for the poll thread). The
-            // UnsubscribeDrainDoesNotDeadlockWhenPollReEnters regression
-            // test guards that ordering.
             d->internal->unsubscribe(*subToDrop);
         }
     } catch (...) {
@@ -852,11 +865,15 @@ void MonitorService::unsubscribeReaderList(SubscriptionId id, DrainPolicy policy
                 d->internalSubId.reset();
             }
         }
+        // Same release-before-join as unsubscribe(), for the same reason —
+        // see the note there. The last reader-list subscriber leaving is one
+        // of the two ways the poll thread gets stopped, so this path can
+        // close the same cycle.
+        if (dispatchLock.owns_lock()) {
+            dispatchLock.unlock();
+        }
         if (subToDrop) {
-            // Joins the internal poll thread; safe to call while holding
-            // dispatchMtx because Monitor::unsubscribe erases our callbacks
-            // before stopThread()/join — see the detailed cross-layer
-            // invariant note in unsubscribe().
+            // Joins the internal poll thread.
             d->internal->unsubscribe(*subToDrop);
         }
     } catch (...) {
