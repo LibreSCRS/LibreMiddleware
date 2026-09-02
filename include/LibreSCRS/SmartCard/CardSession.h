@@ -271,7 +271,7 @@ public:
     ///       call returns @c nullopt — the noexcept contract is preserved at the
     ///       cost of a conservative answer. Calling any accessor on a moved-from
     ///       session is undefined behaviour.
-    /// @since 4.3
+    /// @since 5.0
     [[nodiscard]] std::optional<SmProtocolRequest> activatedProtocol() const noexcept;
 
     /// @brief True when a credential provider is installed via
@@ -285,7 +285,7 @@ public:
     ///       contract is preserved at the cost of a conservative answer.
     ///       Calling any accessor on a moved-from session is undefined
     ///       behaviour.
-    /// @since 4.3
+    /// @since 5.0
     [[nodiscard]] bool hasCredentialProvider() const noexcept;
 
     // -- Cross-plugin secure-channel coordination (4.1+) --------------------
@@ -455,7 +455,7 @@ public:
     ///       via the same @c DT_NEEDED edge that already carries the
     ///       public @ref CardSession surface.
     ///
-    /// @since 4.3
+    /// @since 5.0
     /// @cond internal
     [[nodiscard]] LibreSCRS::SmartCard::Internal::APDUResponse
     transmitInternal(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token = {});

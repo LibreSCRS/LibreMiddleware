@@ -34,7 +34,7 @@
 /// touch no shared state, and remember nothing between calls. Concurrent calls
 /// are race-free.
 ///
-/// @since 4.3
+/// @since 5.0
 
 #include <LibreSCRS/Export.h>
 
@@ -48,14 +48,14 @@
 namespace LibreSCRS::Trust {
 
 /// @brief The number of bytes in a signer fingerprint: SHA-256, so 32.
-/// @since 4.3
+/// @since 5.0
 inline constexpr std::size_t kSpkiSha256Size = 32;
 
 /// @brief Why a CSCA master list could not be turned into a set of anchors.
 ///
 /// @note Every value is a refusal. There is no "unknown" case: a call either
 ///       yields anchors or names the first check that failed.
-/// @since 4.3
+/// @since 5.0
 enum class MasterListError : std::uint8_t {
     /// The bytes are not a master list at all. Also the answer for empty input,
     /// for bytes that are not exactly one CMS ContentInfo, for a ContentInfo
@@ -79,7 +79,7 @@ enum class MasterListError : std::uint8_t {
 
 /// @brief A master list whose signature held, and what that established about
 ///        who signed it.
-/// @since 4.3
+/// @since 5.0
 struct VerifiedMasterList
 {
     /// @brief The anchors the list carries, each as an encoded certificate, in
@@ -235,7 +235,7 @@ struct VerifiedMasterList
 ///        VerifiedMasterList::identityChecked. Not retained beyond the call.
 /// @return the anchors together with what was established about the signer, or
 ///         the first check that failed.
-/// @since 4.3
+/// @since 5.0
 [[nodiscard]] LIBRESCRS_PUBLIC_API std::expected<VerifiedMasterList, MasterListError>
 parseAndVerifyMasterList(const std::vector<std::uint8_t>& der,
                          const std::array<std::uint8_t, kSpkiSha256Size>* expectedSpkiSha256);
@@ -264,7 +264,7 @@ parseAndVerifyMasterList(const std::vector<std::uint8_t>& der,
 ///        depend on the encoding.
 /// @return the fingerprint to hand parseAndVerifyMasterList(), or nothing if
 ///         @p certDer is not a certificate.
-/// @since 4.3
+/// @since 5.0
 [[nodiscard]] LIBRESCRS_PUBLIC_API std::optional<std::array<std::uint8_t, kSpkiSha256Size>>
 spkiSha256FromCertificateDer(const std::vector<std::uint8_t>& certDer);
 
@@ -313,7 +313,7 @@ spkiSha256FromCertificateDer(const std::vector<std::uint8_t>& certDer);
 ///        only that anchor.
 /// @return whether a path was built from @p signerCertDer to some anchor. A
 ///         certificate that IS one of the anchors chains to itself.
-/// @since 4.3
+/// @since 5.0
 [[nodiscard]] LIBRESCRS_PUBLIC_API bool
 signerChainsToAnyAnchor(const std::vector<std::uint8_t>& signerCertDer,
                         const std::vector<std::vector<std::uint8_t>>& anchorsDer);

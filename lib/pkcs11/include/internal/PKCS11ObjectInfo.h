@@ -129,7 +129,7 @@ struct PKCS11ObjectInfo
     ///        wants per-operation consent yields a token that logs in, signs
     ///        once, and has its next signature refused by the card with
     ///        nothing in the client able to say why.
-    /// @since 4.3
+    /// @since 5.0
     bool alwaysAuthenticate = false;
 };
 

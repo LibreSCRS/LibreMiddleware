@@ -25,7 +25,7 @@
 /// @ref SessionKey is a plain value aggregate with no internal
 /// synchronisation; thread-compatible per API-POLICY §8.
 ///
-/// @since 4.3
+/// @since 5.0
 
 #include <LibreSCRS/SmartCard/CardSession.h>
 

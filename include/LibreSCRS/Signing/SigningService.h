@@ -202,7 +202,7 @@ public:
     ///         @ref SigningResult::outputPath is absent.
     /// @par Blocking / Exceptions
     /// Identical to the file-based @ref sign overload.
-    /// @since 4.3
+    /// @since 5.0
     [[nodiscard]] SigningResult sign(const SigningRequest& request, std::span<const std::uint8_t> input,
                                      Auth::CredentialProvider credentialProvider,
                                      const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,

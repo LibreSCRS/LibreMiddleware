@@ -134,7 +134,7 @@ public:
     ///        is the caller's responsibility. Empty selects by label /
     ///        auto-select.
     /// @note Pure accessor, @c noexcept per API-POLICY §5.3.
-    /// @since 4.3
+    /// @since 5.0
     [[nodiscard]] const std::vector<std::uint8_t>& keyId() const noexcept;
     /// @brief Name of the document being signed — the ONLY name source on the
     ///        buffer-sign path (@ref Builder::buildForBufferSign), where there
@@ -156,7 +156,7 @@ public:
     ///       or `".."` — are treated as UNSET and take the fallback below;
     ///       they are never handed to the engine as a name.
     /// @note Empty (the default) falls back to deriving the name from
-    ///       @ref inputFile — the pre-4.3 behaviour, unchanged. A NON-empty
+    ///       @ref inputFile — the pre-5.0 behaviour, unchanged. A NON-empty
     ///       value intentionally overrides the @ref inputFile-derived name
     ///       even in file mode, so a host can sign a scratch temp file while
     ///       the artifact carries the name the user actually sees.
@@ -164,7 +164,7 @@ public:
     ///       resolved or written through it.
     /// @note Returned reference is valid while this object is alive.
     /// @note Pure accessor, @c noexcept per API-POLICY §5.3.
-    /// @since 4.3
+    /// @since 5.0
     [[nodiscard]] const std::string& documentName() const noexcept;
     /// @brief Access the visual signature parameters, if any were set.
     /// @return An optional value — empty when @ref Builder::visualParams was
@@ -290,7 +290,7 @@ public:
     Builder& certificateLabel(std::string label);
     /// @brief Set the card-side CKA_ID that selects the EXACT signing key
     ///        (reuse-safe; preferred over the non-unique @ref certificateLabel
-    ///        on multi-cert cards). @since 4.3
+    ///        on multi-cert cards). @since 5.0
     Builder& keyId(std::vector<std::uint8_t> id);
     /// @brief Name the document being signed.
     ///
@@ -306,7 +306,7 @@ public:
     ///       name; a non-empty value overrides it even in file mode.
     /// @note Names the in-memory document only — nothing is opened or written
     ///       through this string.
-    /// @since 4.3
+    /// @since 5.0
     Builder& documentName(std::string name);
     /// @brief Attach visual signature parameters (PAdES only). Takes ownership by move;
     /// call with `std::move(params)`. Passing an lvalue is a compile error.
@@ -348,7 +348,7 @@ public:
     ///       name (ASiC-E entry, XAdES / JAdES detached reference).
     ///       @ref documentName stays OPTIONAL — it is not validated here.
     /// @throws std::invalid_argument only for invalid field combinations
-    ///         (e.g. @ref visualParams on a non-PAdES request). @since 4.3
+    ///         (e.g. @ref visualParams on a non-PAdES request). @since 5.0
     [[nodiscard]] SigningRequest buildForBufferSign() &&;
 
 private:

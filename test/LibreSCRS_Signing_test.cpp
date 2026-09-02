@@ -677,7 +677,7 @@ TEST(SigningServiceBridgeTranslationTest, ForwardsAllowExpiredCert)
 
 TEST(SigningServiceBridgeTranslationTest, DocumentNameNamesTheInMemoryDocument)
 {
-    // Buffer-sign requests carry no inputFile, so the pre-4.3 bridge handed the
+    // Buffer-sign requests carry no inputFile, so the pre-5.0 bridge handed the
     // engine an EMPTY fileName and ASiC-E container creation failed ("Invalid
     // filename for ASiC entry"). documentName is the buffer path's name source.
     LibreSCRS::Signing::SigningRequest::Builder b;

@@ -212,7 +212,7 @@ struct CertificateData
     /// path. Empty when the plugin cannot determine the object id (the caller
     /// then falls back to label / auto-select).
     ///
-    /// @since 4.3
+    /// @since 5.0
     std::vector<std::uint8_t> ckaId;
 
     /// @brief Defaulted member-wise equality.
@@ -265,7 +265,7 @@ enum class SignMechanism : std::uint8_t {
     ///       `std::uint8_t` layout is unchanged); it does not require a
     ///       `kCardPluginAbiVersion` bump. Plugins built against an older enum
     ///       simply never receive this value.
-    /// @since 4.3
+    /// @since 5.0
     RSA_SHA256,
 };
 
@@ -335,13 +335,13 @@ struct SignResult
 /// @note SR cards are PKCS#1 v1.5 only (no OAEP). A future card+driver that
 ///       reports OAEP support would extend this enum; until then the proxy
 ///       advertises only v1.5 decrypt.
-/// @since 4.3
+/// @since 5.0
 enum class DecipherMechanism : std::uint8_t {
     RSA_PKCS1_V15, ///< RSA decrypt, PKCS#1 v1.5 padding stripped by the backend.
 };
 
 /// @brief Structured outcome for on-card decryption (mirrors @ref SignResult).
-/// @since 4.3
+/// @since 5.0
 enum class DecipherResultOutcome : std::uint8_t {
     Unspecified,
     Ok,
@@ -351,7 +351,7 @@ enum class DecipherResultOutcome : std::uint8_t {
 };
 
 /// @brief Result of an on-card decryption operation.
-/// @since 4.3
+/// @since 5.0
 struct DecipherResult
 {
     std::vector<std::uint8_t> plaintext;
@@ -361,7 +361,7 @@ struct DecipherResult
         return outcome == DecipherResultOutcome::Ok;
     }
     /// @brief Cancellation result (mirrors @ref SignResult::cancelled).
-    /// @since 4.3
+    /// @since 5.0
     [[nodiscard]] static DecipherResult cancelled() noexcept
     {
         DecipherResult r;

@@ -411,7 +411,7 @@ public:
     /// recovered plaintext. The wrapper does NOT cleanse @p ciphertext (it is
     /// not secret) but the RECOVERED plaintext is sensitive — the caller owns
     /// cleansing the returned bytes.
-    /// @since 4.3
+    /// @since 5.0
     /// @note NVI wrapper. Plugins override @ref doDecipher instead.
     [[nodiscard]] DecipherResult decipher(LibreSCRS::SmartCard::CardSession& session, std::uint16_t keyReference,
                                           std::span<const std::uint8_t> ciphertext, DecipherMechanism mechanism,
@@ -726,7 +726,7 @@ public:
     /// may publish after the registry has been handed out (the Linux agent
     /// does: its configuration is only assembled once the bus object exists).
     ///
-    /// @since 4.3
+    /// @since 5.0
     void setCscaAnchorDirectory(std::filesystem::path dir);
 
     /// @brief The directory a host published through
@@ -734,20 +734,20 @@ public:
     /// @return that directory, or an EMPTY path when no host published one —
     ///         which a plugin must report as "not configured" and never as a
     ///         finding about the document in front of it.
-    /// @since 4.3
+    /// @since 5.0
     [[nodiscard]] std::filesystem::path cscaAnchorDirectory() const;
 
 protected:
     /// @brief Plugin-side implementation of @ref decipher. Treated as atomic;
     ///        the base wrapper handles the pre-dispatch cancel short-circuit.
     ///
-    /// @note Appended as a single new vtable slot in 4.3 (ABI-additive,
+    /// @note Appended as a single new vtable slot in 5.0 (ABI-additive,
     ///       ABI v8) rather than shifting the existing slots. Do not
     ///       relocate it above an existing virtual. Later additions
     ///       (@ref activateTransportPin, @ref activateSigningKey) appended
     ///       after it; the append anchor for future virtuals sits on
     ///       @ref activateSigningKey — the true LAST virtual.
-    /// @since 4.3
+    /// @since 5.0
     [[nodiscard]] virtual DecipherResult doDecipher(LibreSCRS::SmartCard::CardSession& session,
                                                     std::uint16_t keyReference,
                                                     std::span<const std::uint8_t> ciphertext,
@@ -773,7 +773,7 @@ public:
     /// @param transportValue  Transport PIN value; cleansed on destruction.
     /// @param newPin          Holder's new PIN value; cleansed on destruction.
     /// @note Safe default: `PINResultOutcome::Unsupported` (base not overridden).
-    /// @since 4.3
+    /// @since 5.0
     [[nodiscard]] virtual PINResult activateTransportPin(LibreSCRS::SmartCard::CardSession& session,
                                                          std::string_view pinLabel,
                                                          const LibreSCRS::Secure::String& transportValue,
@@ -806,7 +806,7 @@ public:
     /// @note Declared as the LAST virtual in the class: future virtuals
     ///       must be appended AFTER this one so every existing vtable
     ///       slot keeps its position (ABI-additive evolution).
-    /// @since 4.3
+    /// @since 5.0
     [[nodiscard]] virtual PINResult activateSigningKey(LibreSCRS::SmartCard::CardSession& session,
                                                        const LibreSCRS::Secure::String& signPin) const
     {

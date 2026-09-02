@@ -200,7 +200,7 @@ public:
     /// @par Thread-safety
     /// Thread-safe. Takes the registry's read lock (the plugin set is not
     /// modified) and each plugin serialises its own publication.
-    /// @since 4.3
+    /// @since 5.0
     void setCscaAnchorDirectory(const std::filesystem::path& dir);
 
     /// @brief Fast lookup by ATR bytes (no card I/O).

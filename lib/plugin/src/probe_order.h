@@ -23,7 +23,7 @@ namespace LibreSCRS::Plugin::Internal {
 /// independent of the order plugins were LOADED in, which is a property of the
 /// filesystem, not of the configuration.
 ///
-/// @since 4.3
+/// @since 5.0
 [[nodiscard]] inline bool probeOrderBefore(const std::shared_ptr<CardPlugin>& a,
                                            const std::shared_ptr<CardPlugin>& b) noexcept
 {

@@ -80,7 +80,7 @@ struct SigningResult
         ///        (wrong file type, corrupt, unparseable, or empty). Distinct
         ///        from @ref InvalidRequest (malformed request parameters) and
         ///        @ref SigningEngineError (unclassified engine fault). The user
-        ///        fixes the input file. Append-only. @since 4.3
+        ///        fixes the input file. Append-only. @since 5.0
         InvalidDocument,
     };
 
@@ -132,7 +132,7 @@ struct SigningResult
     ///        artifact is returned in @ref signedDocumentBytes rather than written
     ///        to disk. @ref outputPath is always @c std::nullopt — no file is
     ///        written, so consumers branching on @c outputPath.has_value() see a
-    ///        consistent "in-memory" result. @since 4.3
+    ///        consistent "in-memory" result. @since 5.0
     [[nodiscard]] static SigningResult okWithBytes(std::vector<std::uint8_t> bytes) noexcept
     {
         // Only Auth::ErrorKeys::signOk() can throw (bad_alloc); it runs before
@@ -318,7 +318,7 @@ struct SigningResult
 
     /// @brief Diagnostic-only invalid-document variant — substitutes the
     ///        generic @ref Auth::ErrorKeys::invalidDocument message.
-    /// @since 4.3
+    /// @since 5.0
     [[nodiscard]] static SigningResult invalidDocumentDiagnosticOnly(std::string diagnosticDetail) noexcept
     {
         try {

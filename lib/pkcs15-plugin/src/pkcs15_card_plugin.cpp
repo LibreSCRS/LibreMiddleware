@@ -83,7 +83,7 @@ struct SessionContext
     /// @c PKCS15Card::sign owns the atomic verify+sign and therefore needs the
     /// PIN) and wiped when the session entry is erased by
     /// @ref clearCredentials. The map is keyed by session, so no cross-reader
-    /// bleed. @since 4.3
+    /// bleed. @since 5.0
     LibreSCRS::Secure::String pin;
 
     /// @brief Cached @c readProfile() result for this session.

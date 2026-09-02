@@ -49,13 +49,13 @@ enum class SignFailureKind : std::uint8_t {
     ///        CKA_ID discriminator, so the signing key cannot be resolved
     ///        unambiguously. The engine refuses rather than sign with an
     ///        arbitrary first match (a label-keyed first-of-N was the latent
-    ///        wrong-key hazard this discriminator closes). @since 4.3
+    ///        wrong-key hazard this discriminator closes). @since 5.0
     KeyAmbiguous,
     /// @brief The input (or prior/original) document is not a valid document of
     ///        the requested format — wrong magic, truncated, unparseable, or
     ///        empty. A client-input fault the user fixes by replacing the file;
     ///        distinct from @ref InvalidInput (reserved for request-parameter
-    ///        problems such as a missing TSA URL). Append-only. @since 4.3
+    ///        problems such as a missing TSA URL). Append-only. @since 5.0
     InvalidDocument,
     /// @brief A long-term (B-LT/B-LTA) signature was requested but the
     ///        signer's certificate chain has no PROVEN terminal — no Trusted
@@ -65,7 +65,7 @@ enum class SignFailureKind : std::uint8_t {
     ///        @ref RevocationFetchFailed (evidence endpoints failed for a
     ///        cert WITH a known issuer): the user-actionable fix is to
     ///        configure a Trusted List or use a card that provides its full
-    ///        chain, not to retry the fetch. @since 4.3
+    ///        chain, not to retry the fetch. @since 5.0
     CertificateChainIncomplete
 };
 
@@ -213,7 +213,7 @@ inline SigningResult makeSuccess(std::vector<uint8_t> bytes)
 ///        try/catch can map it to a precise @ref makeFailure instead of
 ///        collapsing it into the generic @ref SignFailureKind::EngineError
 ///        bucket. The @ref what string becomes the result's diagnostic detail.
-/// @since 4.3
+/// @since 5.0
 struct SignFailureException : std::runtime_error
 {
     SignFailureKind kind;

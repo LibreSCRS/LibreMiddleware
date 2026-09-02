@@ -19,7 +19,7 @@
 /// @par Thread-safety
 /// Pure function over its arguments; thread-safe (API-POLICY §8).
 ///
-/// @since 4.3
+/// @since 5.0
 
 #include <LibreSCRS/Plugin/PluginTypes.h>
 

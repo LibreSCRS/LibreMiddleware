@@ -81,7 +81,7 @@ void translatePublicRequestToLibresign(const LibreSCRS::Signing::SigningRequest&
     // strip verbatim — a "." or ".." ZIP entry is precisely the shape the strip
     // exists to prevent. All three fall back to the inputFile derivation, which
     // in buffer mode is empty: an honest nameless failure identical to the
-    // pre-4.3 behaviour, rather than a poisoned entry name.
+    // pre-5.0 behaviour, rather than a poisoned entry name.
     std::string documentName;
     if (!request.documentName().empty()) {
         documentName = std::filesystem::path(request.documentName()).filename().string();

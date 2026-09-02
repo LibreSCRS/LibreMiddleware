@@ -298,7 +298,7 @@ constexpr int kSmActivationMaxAttempts = 3;
 // linkage keeps the helper out of the dynamic symbol table — its previous
 // public-internal incarnation (@c LibreSCRS::SmartCard::Internal::
 // sessionTransmitImpl, exported via the @c *LibreSCRS::* version-script
-// glob) is gone in 4.3 along with the free-function transmit funnel.
+// glob) is gone in 5.0 along with the free-function transmit funnel.
 LibreSCRS::SmartCard::Internal::APDUResponse
 dispatchOverChannelOrConn(LibreSCRS::SecureChannel::ISecureChannel* activeChannel,
                           LibreSCRS::SmartCard::Internal::PCSCConnection& conn,

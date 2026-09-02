@@ -3,7 +3,7 @@
 Notable user-visible changes per release. Format follows
 [Keep a Changelog](https://keepachangelog.com/) loosely.
 
-## [Unreleased] — 4.3.0
+## [Unreleased] — 5.0.0
 
 ### Added
 
@@ -57,7 +57,7 @@ Notable user-visible changes per release. Format follows
   directory used to be named by an environment variable, which anything
   running as the person at the keyboard can set — so a forged document
   could be reported as chaining to a national authority. That read was
-  removed in 4.3 and, until now, nothing replaced it: a host that really
+  removed in 5.0 and, until now, nothing replaced it: a host that really
   had imported country signing certificates was still told none were
   configured. Only the path is published; the certificates in it are
   read afresh at each document, so a list imported after startup takes

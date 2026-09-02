@@ -172,7 +172,7 @@ namespace LibreSCRS::Auth::ErrorKeys {
 ///        level requires cannot be verified at all. Distinct from
 ///        @ref revocationFetchFailed — fetching is not the problem and a
 ///        retry will not help; configuring a Trusted List (or a card with
-///        its full chain) is. @since 4.3
+///        its full chain) is. @since 5.0
 [[nodiscard]] inline LocalizedText certificateChainIncomplete()
 {
     return LocalizedText{"librescrs.error.sign.certificate_chain_incomplete",
@@ -219,7 +219,7 @@ namespace LibreSCRS::Auth::ErrorKeys {
 ///        should check or replace the input file. Distinct from
 ///        @ref invalidRequest (malformed request parameters) and
 ///        @ref signingEngineError (unclassified engine fault).
-/// @since 4.3
+/// @since 5.0
 [[nodiscard]] inline LocalizedText invalidDocument()
 {
     return LocalizedText{
@@ -240,7 +240,7 @@ namespace LibreSCRS::Auth::ErrorKeys {
 ///        matched the requested CKA_ID discriminator, so the signing key
 ///        could not be resolved unambiguously. The engine refuses rather
 ///        than sign with an arbitrary match.
-/// @since 4.3
+/// @since 5.0
 [[nodiscard]] inline LocalizedText keyAmbiguous()
 {
     return LocalizedText{
@@ -313,7 +313,7 @@ namespace LibreSCRS::Auth::ErrorKeys {
 /// @brief Structural: the document exposes no PACE (EF.CardAccess absent or
 ///        empty). NOT a wrong-credential condition — consumers must not treat
 ///        it as one (no credential eviction / retry punishment).
-/// @since 4.3
+/// @since 5.0
 [[nodiscard]] inline LocalizedText paceUnsupported()
 {
     return LocalizedText{"librescrs.error.preRead.paceUnsupported", "This document does not support PACE", {}};
@@ -324,7 +324,7 @@ namespace LibreSCRS::Auth::ErrorKeys {
 ///        downgrade). NOT a wrong-credential condition — carried on a non-auth
 ///        failure so flows never evict or punish a credential for an attack
 ///        signal.
-/// @since 4.3
+/// @since 5.0
 [[nodiscard]] inline LocalizedText paceDowngradeDetected()
 {
     return LocalizedText{
