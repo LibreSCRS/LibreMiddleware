@@ -68,12 +68,25 @@ Notable user-visible changes per release. Format follows
 
 ### Changed
 
+- **The shared objects' SONAME moved to `libLibreSCRS_<Component>.so.5`**
+  (and `librescrs-pkcs11.so.5` with them). This release changes the
+  in-memory shape of the public surface: four public types changed size,
+  and the plugin base class's virtual table gained entries in the middle
+  of itself rather than at the end. A program linked against a 4.x build
+  cannot load a 5.x one, and the SONAME is what lets the dynamic loader
+  say so instead of crashing later. The integer is deliberately **not**
+  the release major — it is raised whenever the shape moves, in whatever
+  release that happens to be — so packagers should read it off the
+  artefact (`readelf -d … | grep SONAME`) rather than derive it from the
+  version. The plugin ABI sentinel moves with it, to v9.
 - **`SmProtocolRequest` gained a third alternative** (`ChipAuthRequest`,
   for eMRTD Chip Authentication). The extension is source-compatible —
   the variant is documented append-only — but it changes the C++
   mangling of `CardSession::activateChannelWithSm`, so binaries built
   against older headers must be rebuilt against this release. Source
-  consumers (`find_package` / FetchContent) are unaffected.
+  consumers (`find_package` / FetchContent) are unaffected. Its mangling
+  is one of several shape changes this release; the SONAME entry above
+  covers the rest.
 - **Invalid input documents fail fast.** Malformed or unsupported input
   documents now surface a distinct `InvalidDocument` outcome instead of
   a generic failure, letting callers tell a bad input apart from a
@@ -106,6 +119,22 @@ Notable user-visible changes per release. Format follows
 
 - Malformed and expired MUP certificates were archived out of the active
   certificate bundle.
+- **`CardPlugin::getPINTriesLeft()`** — the last deprecated entry point
+  anywhere in the project. Its value has been available from
+  `readCounters(session).retriesLeft` since the credential-lifecycle
+  surface landed, and it had no caller left. (The PKCS#15 card class has
+  an unrelated method of the same name; that one stays.)
+- **`LIBRESCRS_DEPRECATED`** — the deprecation macro is gone from the
+  public `include/LibreSCRS/Export.h`, since nothing is marked with it.
+- **`PreReadAuthMethod::BacMrz` and `PreReadAuthMethod::PaceCan`** —
+  renamed to `Mrz` and `Can`. The old spellings do not exist any more;
+  the enumerators name the credential, not the protocol that consumes
+  it.
+
+No exported symbol disappeared with any of these: all four were inline
+or header-only, which is precisely why the symbol snapshot could not see
+them going. The shape baseline (`ci/abi/layout-baseline.txt`) is what
+records their departure, and the SONAME moved with it.
 
 ## [4.2.0] — 2026-05-29
 

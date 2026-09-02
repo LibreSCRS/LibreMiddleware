@@ -33,7 +33,16 @@ namespace LibreSCRS::Plugin {
 ///       LibreSCRS::Plugin::CardPlugin, changing its vtable layout. v8 appends
 ///       the `doDecipher` virtual as the final vtable slot (raw on-card RSA
 ///       decrypt surface).
-inline constexpr std::uint32_t kCardPluginAbiVersion = 8;
+///
+///       v9 covers three shape changes at once, two of which reached `main`
+///       under the v8 number and are recorded here because raising the number
+///       does not rescue anyone who already built against them: the
+///       `readCounters` virtual was inserted into the MIDDLE of the table
+///       rather than appended, @ref LibreSCRS::Plugin::CardPlugin grew three
+///       members (`sizeof` 80 -> 168), and the superseded `getPINTriesLeft`
+///       slot is now removed. v9 is also the first plugin ABI revision that
+///       moves together with the shared objects' SONAME.
+inline constexpr std::uint32_t kCardPluginAbiVersion = 9;
 
 /// @brief Capability flags describing what a plugin can do.
 ///

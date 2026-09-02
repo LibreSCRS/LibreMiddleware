@@ -324,7 +324,7 @@ TEST_F(OpenSCFallbackPKS, Test03ReadCertificatesReturnsParseableDER)
 // Latches g_pinFailed on failure so tests 5 and 6 SKIP.
 // ---------------------------------------------------------------------------
 
-TEST_F(OpenSCFallbackPKS, Test04GetPINTriesLeftBaseline)
+TEST_F(OpenSCFallbackPKS, Test04ReadCountersBaseline)
 {
     SKIP_IF_PIN_FAILED();
     ASSERT_NE(plugin, nullptr);
@@ -340,9 +340,11 @@ TEST_F(OpenSCFallbackPKS, Test04GetPINTriesLeftBaseline)
         // driver IS wired the count is readable and the assertions below still
         // apply (we do NOT weaken them in that case).
         if (const char* conf = std::getenv("OPENSC_CONF"); !conf || *conf == '\0')
-            GTEST_SKIP() << "getPINTriesLeft returned nullopt and OPENSC_CONF is unset — srbeid driver "
+            GTEST_SKIP() << "readCounters(...).retriesLeft returned nullopt and OPENSC_CONF is unset — "
+                            "srbeid driver "
                             "unwired, PIN retry count unreadable; skipping baseline";
-        FAIL() << "getPINTriesLeft returned nullopt — plugin did not report a PIN retry count "
+        FAIL() << "readCounters(...).retriesLeft returned nullopt — plugin did not report a PIN retry "
+                  "count "
                   "(OPENSC_CONF is set, so the srbeid driver should be wired)";
     }
     if (*triesOpt < 3) {
@@ -391,7 +393,8 @@ TEST_F(OpenSCFallbackPKS, Test05VerifyPINSucceeds)
     // ultimate authentication proof.
     const auto triesAfterOpt = plugin->readCounters(*session).retriesLeft;
     if (triesAfterOpt.has_value()) {
-        EXPECT_EQ(*triesAfterOpt, 3) << "Post-verify getPINTriesLeft, when populated, should be 3; got "
+        EXPECT_EQ(*triesAfterOpt, 3) << "Post-verify readCounters(...).retriesLeft, when populated, "
+                                        "should be 3; got "
                                      << *triesAfterOpt;
     }
     if (result.retriesLeft.has_value()) {

@@ -79,7 +79,7 @@ jobs:
             libcurl4-openssl-dev libxml2-dev \
             pkg-config autoconf automake libtool \
             cmake ninja-build python3-jsonschema \
-            softhsm2 opensc
+            softhsm2 opensc clang
 
       - name: Build OpenSC ${{ env.OPENSC_VERSION }} from source
         run: |
@@ -147,16 +147,37 @@ jobs:
         # window for the cert refresh + release cut.
         run: ./ci/check-pinned-cert-expiry.sh
 
-      - name: Check ABI snapshot vs 4.x baseline
+      - name: Check ABI snapshot vs 5.x baseline
         # Native leg only: the baseline is recorded for one configuration, and
         # `both` adds the DSS backend's exported symbols, so running it there
         # would report a delta that is not a regression.
         if: matrix.release_gates
-        # 4.x baseline — minor-version additions tracked; removals or
+        # 5.x baseline — minor-version additions tracked; removals or
         # signature drift forbidden. Additions land via an intentional
         # baseline regeneration (`abi-snapshot.sh --update`) reviewed in
         # the same commit as the new public symbol.
         run: ./ci/scripts/abi-snapshot.sh --check build
+
+      - name: Check ABI layout vs baseline
+        # Native leg only: member offsets and vtable slot order are facts about
+        # one toolchain, and this is the leg that owns the canonical
+        # configuration for the symbol snapshot beside it.
+        if: matrix.release_gates
+        # Reads the public headers with clang; needs no build, costs seconds.
+        # A baseline line that disappears is the failure — a size that moved, an
+        # offset that shifted, a slot whose occupant changed. None of those
+        # reach the symbol snapshot above, because an inline member emits no
+        # symbol at all.
+        run: ./ci/scripts/abi-layout.sh --check build
+
+      - name: Upload ABI layout snapshot
+        # A layout difference is unreadable from its exit code alone; the first
+        # thing anyone needs is the file the runner actually saw.
+        if: failure() && matrix.release_gates
+        uses: actions/upload-artifact@v4
+        with:
+          name: abi-layout-snapshot
+          path: build/abi-layout-snapshot.txt
 
       - name: Bootstrap SoftHSM2 test token
         # Provisions the isolated token store the CAdES/PAdES/JAdES/XAdES/

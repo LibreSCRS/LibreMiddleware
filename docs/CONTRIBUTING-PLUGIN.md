@@ -226,7 +226,7 @@ verification, certificate reading, digital signing), return the appropriate
 `CardCapabilities` bits from `capabilities()` (typically
 `CardCapabilities::PKI | CardCapabilities::PinManagement`) and override the
 optional PKI methods: `readCertificates()`, `verifyPIN()`, `changePIN()`,
-`getPINList()`, `getPINTriesLeft()`, `sign()`, `discoverKeyReferences()`.
+`getPINList()`, `readCounters()`, `sign()`, `discoverKeyReferences()`.
 
 PIN / PUK / CAN material is carried by `LibreSCRS::Secure::String` —
 contents are `OPENSSL_cleanse`d on destruction. `verifyPIN`, `changePIN`,
@@ -236,10 +236,9 @@ parameters; labels (PIN identifiers like `"UserPIN"`) are
 
 `readCounters()` is the entry point for lifecycle counters: it returns a
 `CredentialCounters` (retries / uses / unblocks, each `std::optional<int>` —
-use `std::nullopt` for anything the card cannot report). `getPINTriesLeft()`
-is superseded by `readCounters(session).retriesLeft` and retained only for
-source compatibility. Cards with transport PINs or activatable signing keys
-should also override `activateTransportPin()` and `activateSigningKey()`.
+use `std::nullopt` for anything the card cannot report). Cards with
+transport PINs or activatable signing keys should also override
+`activateTransportPin()` and `activateSigningKey()`.
 
 **Credentials:** If the card requires authentication before reading (e.g.,
 PACE for eMRTD), override `setCredentials()` to accept key-value pairs

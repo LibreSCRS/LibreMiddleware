@@ -102,10 +102,10 @@ set_target_properties(librescrs-pkcs11 PROPERTIES
     # platform-aware probing, so the single-suffix internal probe is no
     # longer required.
     VERSION ${PROJECT_VERSION}
-    SOVERSION ${PROJECT_VERSION_MAJOR}
+    SOVERSION ${LIBRESCRS_ABI_SOVERSION}
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib/pkcs11"
-    # Module installs one level below its sibling LibreSCRS_*.so.4 chain;
-    # relative RPATH avoids LD_LIBRARY_PATH at the call site.
+    # Module installs one level below its sibling LibreSCRS_* shared-object
+    # chain; relative RPATH avoids LD_LIBRARY_PATH at the call site.
     INSTALL_RPATH "$<IF:$<PLATFORM_ID:Darwin>,@loader_path/..,$ORIGIN/..>"
 )
 

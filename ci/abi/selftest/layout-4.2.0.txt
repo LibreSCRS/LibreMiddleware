@@ -1,0 +1,303 @@
+# LibreSCRS public ABI LAYOUT snapshot
+# soversion: 4
+# clang: clang version 22.1.8
+# libstdc++: _GLIBCXX_RELEASE 16
+# host: linux-x86_64
+#
+# Frozen classifier fixture, taken from the public headers of tag 4.2.0.
+# Never regenerated: the selftest's first case asserts an exact count, which
+# is only stable while BOTH inputs are frozen.
+#
+# One line per public type (sizeof/align), one per top-level data member
+# (byte offset), and the full vtable slot order of every polymorphic public
+# class. Regenerate with: ci/scripts/abi-layout.sh --update <build_dir>
+#
+# Canonical configuration: Linux / x86_64 / libstdc++ — the same leg that
+# runs abi-snapshot.sh. Offsets are toolchain-ABI-specific; never
+# regenerate on macOS.
+
+== record layouts ==
+LibreSCRS::Auth::AuthRequirement	  +0     Purpose purposeValue
+LibreSCRS::Auth::AuthRequirement	  +136   class std::optional<struct LibreSCRS::LocalizedText> titleText
+LibreSCRS::Auth::AuthRequirement	  +232   class std::optional<enum LibreSCRS::Auth::PaceSecretKind> paceKindValue
+LibreSCRS::Auth::AuthRequirement	  +240   class std::optional<class LibreSCRS::SmartCard::AppletAid> paceAppletValue
+LibreSCRS::Auth::AuthRequirement	  +32    class std::optional<int> retriesValue
+LibreSCRS::Auth::AuthRequirement	  +40    class std::optional<struct LibreSCRS::LocalizedText> messageText
+LibreSCRS::Auth::AuthRequirement	  +8     class std::vector<struct LibreSCRS::Auth::FieldDescriptor> fieldList
+LibreSCRS::Auth::AuthRequirement	sizeof=272 align=8
+LibreSCRS::Auth::CredentialEntry	  +0     class std::basic_string<char> id
+LibreSCRS::Auth::CredentialEntry	  +32    class LibreSCRS::Secure::String value
+LibreSCRS::Auth::CredentialEntry	sizeof=40 align=8
+LibreSCRS::Auth::CredentialResult	  +0     Status status
+LibreSCRS::Auth::CredentialResult	  +32    struct LibreSCRS::LocalizedText userMessage
+LibreSCRS::Auth::CredentialResult	  +8     class std::vector<struct LibreSCRS::Auth::CredentialEntry> values
+LibreSCRS::Auth::CredentialResult	sizeof=120 align=8
+LibreSCRS::Auth::FieldDescriptor	  +0     class std::basic_string<char> id
+LibreSCRS::Auth::FieldDescriptor	  +160   class std::optional<struct LibreSCRS::LocalizedText> helpText
+LibreSCRS::Auth::FieldDescriptor	  +256   class std::optional<class std::basic_string<char> > equalToFieldId
+LibreSCRS::Auth::FieldDescriptor	  +32    CredentialFieldType type
+LibreSCRS::Auth::FieldDescriptor	  +33    _Bool secret
+LibreSCRS::Auth::FieldDescriptor	  +40    class std::optional<unsigned long> minLength
+LibreSCRS::Auth::FieldDescriptor	  +56    class std::optional<unsigned long> maxLength
+LibreSCRS::Auth::FieldDescriptor	  +72    struct LibreSCRS::LocalizedText label
+LibreSCRS::Auth::FieldDescriptor	sizeof=296 align=8
+LibreSCRS::CancelSource	  +0     class std::shared_ptr<class LibreSCRS::CancelToken::Impl> d
+LibreSCRS::CancelSource	sizeof=16 align=8
+LibreSCRS::CancelToken	  +0     class std::shared_ptr<class LibreSCRS::CancelToken::Impl> d
+LibreSCRS::CancelToken	sizeof=16 align=8
+LibreSCRS::CancelToken::Registration	  +0     class std::unique_ptr<class LibreSCRS::CancelToken::Registration::Impl> d
+LibreSCRS::CancelToken::Registration	sizeof=8 align=8
+LibreSCRS::Certificate::DistinguishedName	  +0     class std::vector<struct LibreSCRS::Certificate::DistinguishedNameComponent> components
+LibreSCRS::Certificate::DistinguishedName	sizeof=24 align=8
+LibreSCRS::Certificate::DistinguishedNameComponent	  +0     struct LibreSCRS::Certificate::ObjectIdentifier oid
+LibreSCRS::Certificate::DistinguishedNameComponent	  +32    class std::basic_string<char> value
+LibreSCRS::Certificate::DistinguishedNameComponent	sizeof=64 align=8
+LibreSCRS::Certificate::Extension	  +0     struct LibreSCRS::Certificate::ObjectIdentifier oid
+LibreSCRS::Certificate::Extension	  +32    _Bool critical
+LibreSCRS::Certificate::Extension	  +40    class std::vector<unsigned char> value
+LibreSCRS::Certificate::Extension	sizeof=64 align=8
+LibreSCRS::Certificate::GeneralName	  +0     GeneralNameType type
+LibreSCRS::Certificate::GeneralName	  +40    class std::vector<unsigned char> rawValue
+LibreSCRS::Certificate::GeneralName	  +8     class std::basic_string<char> value
+LibreSCRS::Certificate::GeneralName	sizeof=64 align=8
+LibreSCRS::Certificate::ObjectIdentifier	  +0     class std::basic_string<char> dottedDecimal
+LibreSCRS::Certificate::ObjectIdentifier	sizeof=32 align=8
+LibreSCRS::Certificate::ParsedCertificate	  +0     class std::unique_ptr<struct LibreSCRS::Certificate::ParsedCertificate::Impl> d
+LibreSCRS::Certificate::ParsedCertificate	sizeof=8 align=8
+LibreSCRS::Certificate::ParsedCertificate::BasicConstraints	  +0     _Bool isCa
+LibreSCRS::Certificate::ParsedCertificate::BasicConstraints	  +4     class std::optional<int> pathLenConstraint
+LibreSCRS::Certificate::ParsedCertificate::BasicConstraints	sizeof=12 align=4
+LibreSCRS::Certificate::ParsedCertificate::ParseError	  +0     Kind kind
+LibreSCRS::Certificate::ParsedCertificate::ParseError	  +8     struct LibreSCRS::LocalizedText userMessage
+LibreSCRS::Certificate::ParsedCertificate::ParseError	  +96    class std::optional<class std::basic_string<char> > diagnosticDetail
+LibreSCRS::Certificate::ParsedCertificate::ParseError	sizeof=136 align=8
+LibreSCRS::Certificate::PublicKeyInfo	  +0     PublicKeyAlgorithm algorithm
+LibreSCRS::Certificate::PublicKeyInfo	  +4     int bitLength
+LibreSCRS::Certificate::PublicKeyInfo	  +40    struct LibreSCRS::Certificate::ObjectIdentifier algorithmOid
+LibreSCRS::Certificate::PublicKeyInfo	  +72    class std::basic_string<char> curveOid
+LibreSCRS::Certificate::PublicKeyInfo	  +8     class std::basic_string<char> algorithmDescription
+LibreSCRS::Certificate::PublicKeyInfo	sizeof=104 align=8
+LibreSCRS::Count	  +0     std::int64_t value
+LibreSCRS::Count	sizeof=8 align=8
+LibreSCRS::LocalizedText	  +0     class std::basic_string<char> key
+LibreSCRS::LocalizedText	  +32    class std::basic_string<char> defaultText
+LibreSCRS::LocalizedText	  +64    class std::vector<struct LibreSCRS::Placeholder> placeholders
+LibreSCRS::LocalizedText	sizeof=88 align=8
+LibreSCRS::Placeholder	  +0     class std::basic_string<char> name
+LibreSCRS::Placeholder	  +32    class std::variant<class std::basic_string<char>, long, unsigned long, class std::vector<unsigned char>, class std::chrono::time_point<struct std::chrono::system_clock, class std::chrono::duration<long, struct std::ratio<1, 1000000000> > >, struct LibreSCRS::Count, _Bool> value
+LibreSCRS::Placeholder	sizeof=72 align=8
+LibreSCRS::Plugin::Atr	  +0     class std::vector<unsigned char> bytes
+LibreSCRS::Plugin::Atr	  +24    class std::optional<class std::vector<unsigned char> > mask
+LibreSCRS::Plugin::Atr	sizeof=56 align=8
+LibreSCRS::Plugin::AutoReaderService	  +0     class std::unique_ptr<struct LibreSCRS::Plugin::AutoReaderService::Impl> d
+LibreSCRS::Plugin::AutoReaderService	sizeof=8 align=8
+LibreSCRS::Plugin::AutoReaderService::AutoReaderError	  +0     Kind kind
+LibreSCRS::Plugin::AutoReaderService::AutoReaderError	  +8     struct LibreSCRS::LocalizedText userMessage
+LibreSCRS::Plugin::AutoReaderService::AutoReaderError	  +96    class std::optional<class std::basic_string<char> > diagnosticDetail
+LibreSCRS::Plugin::AutoReaderService::AutoReaderError	sizeof=136 align=8
+LibreSCRS::Plugin::CardData	  +0     class std::basic_string<char> cardType
+LibreSCRS::Plugin::CardData	  +32    class std::vector<struct LibreSCRS::Plugin::CardFieldGroup> groups
+LibreSCRS::Plugin::CardData	sizeof=56 align=8
+LibreSCRS::Plugin::CardField	  +0     class std::basic_string<char> key
+LibreSCRS::Plugin::CardField	  +32    class std::basic_string<char> label
+LibreSCRS::Plugin::CardField	  +64    FieldType type
+LibreSCRS::Plugin::CardField	  +72    class std::vector<unsigned char> value
+LibreSCRS::Plugin::CardField	sizeof=96 align=8
+LibreSCRS::Plugin::CardFieldGroup	  +0     class std::basic_string<char> groupKey
+LibreSCRS::Plugin::CardFieldGroup	  +32    class std::basic_string<char> groupLabel
+LibreSCRS::Plugin::CardFieldGroup	  +64    class std::vector<struct LibreSCRS::Plugin::CardField> fields
+LibreSCRS::Plugin::CardFieldGroup	sizeof=88 align=8
+LibreSCRS::Plugin::CardPlugin	  +40    class std::basic_string<char> displayNameValue
+LibreSCRS::Plugin::CardPlugin	  +72    int probePriorityValue
+LibreSCRS::Plugin::CardPlugin	  +76    struct std::atomic_flag trustStoreInjectedFlag
+LibreSCRS::Plugin::CardPlugin	  +8     class std::basic_string<char> pluginIdValue
+LibreSCRS::Plugin::CardPlugin	sizeof=80 align=8 polymorphic
+LibreSCRS::Plugin::CardPluginService	  +0     class std::unique_ptr<struct LibreSCRS::Plugin::CardPluginService::Impl> d
+LibreSCRS::Plugin::CardPluginService	sizeof=8 align=8
+LibreSCRS::Plugin::CertificateData	  +0     class std::basic_string<char> label
+LibreSCRS::Plugin::CertificateData	  +32    class std::vector<unsigned char> derBytes
+LibreSCRS::Plugin::CertificateData	  +56    class std::optional<unsigned short> keyFID
+LibreSCRS::Plugin::CertificateData	  +60    class std::optional<unsigned short> keySizeBits
+LibreSCRS::Plugin::CertificateData	sizeof=64 align=8
+LibreSCRS::Plugin::KeyReference	  +0     class std::basic_string<char> label
+LibreSCRS::Plugin::KeyReference	  +32    std::uint16_t reference
+LibreSCRS::Plugin::KeyReference	sizeof=40 align=8
+LibreSCRS::Plugin::LoadOutcome	  +0     class std::filesystem::path soPath
+LibreSCRS::Plugin::LoadOutcome	  +40    class std::basic_string<char> pluginId
+LibreSCRS::Plugin::LoadOutcome	  +72    Status status
+LibreSCRS::Plugin::LoadOutcome	  +80    class std::basic_string<char> diagnostic
+LibreSCRS::Plugin::LoadOutcome	sizeof=112 align=8
+LibreSCRS::Plugin::PINResult	  +0     class std::optional<int> retriesLeft
+LibreSCRS::Plugin::PINResult	  +8     _Bool blocked
+LibreSCRS::Plugin::PINResult	  +9     PINResultOutcome outcome
+LibreSCRS::Plugin::PINResult	sizeof=12 align=4
+LibreSCRS::Plugin::PinStatusEntry	  +0     class std::basic_string<char> label
+LibreSCRS::Plugin::PinStatusEntry	  +32    std::uint8_t reference
+LibreSCRS::Plugin::PinStatusEntry	  +36    class std::optional<int> retriesLeft
+LibreSCRS::Plugin::PinStatusEntry	  +44    _Bool initialized
+LibreSCRS::Plugin::PinStatusEntry	  +45    _Bool blocked
+LibreSCRS::Plugin::PinStatusEntry	  +48    class std::optional<unsigned long> minLength
+LibreSCRS::Plugin::PinStatusEntry	  +64    class std::optional<unsigned long> maxLength
+LibreSCRS::Plugin::PinStatusEntry	  +80    _Bool canChange
+LibreSCRS::Plugin::PinStatusEntry	  +81    _Bool unblockable
+LibreSCRS::Plugin::PinStatusEntry	  +88    class std::optional<struct LibreSCRS::LocalizedText> blockedGuidance
+LibreSCRS::Plugin::PinStatusEntry	sizeof=184 align=8
+LibreSCRS::Plugin::ReadResult	  +0     Status status
+LibreSCRS::Plugin::ReadResult	  +160   class std::optional<class std::basic_string<char> > diagnosticDetail
+LibreSCRS::Plugin::ReadResult	  +72    struct LibreSCRS::LocalizedText userMessage
+LibreSCRS::Plugin::ReadResult	  +8     class std::optional<struct LibreSCRS::Plugin::CardData> data
+LibreSCRS::Plugin::ReadResult	sizeof=200 align=8
+LibreSCRS::Plugin::SecurityCheck	  +0     class std::basic_string<char> checkId
+LibreSCRS::Plugin::SecurityCheck	  +104   class std::basic_string<char> errorDetail
+LibreSCRS::Plugin::SecurityCheck	  +32    SecurityCategory category
+LibreSCRS::Plugin::SecurityCheck	  +33    Status status
+LibreSCRS::Plugin::SecurityCheck	  +40    class std::basic_string<char> label
+LibreSCRS::Plugin::SecurityCheck	  +72    class std::basic_string<char> detail
+LibreSCRS::Plugin::SecurityCheck	sizeof=136 align=8
+LibreSCRS::Plugin::SecurityStatus	  +0     class std::vector<struct LibreSCRS::Plugin::SecurityCheck> checks
+LibreSCRS::Plugin::SecurityStatus	  +24    SecurityCheck::Status overallIntegrity
+LibreSCRS::Plugin::SecurityStatus	  +25    SecurityCheck::Status overallAuthenticity
+LibreSCRS::Plugin::SecurityStatus	  +26    SecurityCheck::Status overallGenuineness
+LibreSCRS::Plugin::SecurityStatus	sizeof=32 align=8
+LibreSCRS::Plugin::SignResult	  +0     class std::vector<unsigned char> signature
+LibreSCRS::Plugin::SignResult	  +24    SignResultOutcome outcome
+LibreSCRS::Plugin::SignResult	sizeof=32 align=8
+LibreSCRS::Secure::Buffer	  +0     class std::unique_ptr<struct LibreSCRS::Secure::Buffer::Impl> d
+LibreSCRS::Secure::Buffer	sizeof=8 align=8
+LibreSCRS::Secure::String	  +0     class std::unique_ptr<struct LibreSCRS::Secure::String::Impl> d
+LibreSCRS::Secure::String	sizeof=8 align=8
+LibreSCRS::SecureChannel::BacInput	  +0     class LibreSCRS::Secure::String documentNumber
+LibreSCRS::SecureChannel::BacInput	  +16    class LibreSCRS::Secure::String dateOfExpiry
+LibreSCRS::SecureChannel::BacInput	  +8     class LibreSCRS::Secure::String dateOfBirth
+LibreSCRS::SecureChannel::BacInput	sizeof=24 align=8
+LibreSCRS::SecureChannel::PaceParams	  +0     class std::basic_string<char> oid
+LibreSCRS::SecureChannel::PaceParams	  +32    LibreSCRS::Auth::PaceSecretKind passwordType
+LibreSCRS::SecureChannel::PaceParams	  +40    class LibreSCRS::Secure::String password
+LibreSCRS::SecureChannel::PaceParams	  +48    PaceStandardisedDomainParam paramId
+LibreSCRS::SecureChannel::PaceParams	sizeof=56 align=8
+LibreSCRS::SecureChannel::PaceSecurityInfo	  +0     class std::basic_string<char> oid
+LibreSCRS::SecureChannel::PaceSecurityInfo	  +32    PaceStandardisedDomainParam paramId
+LibreSCRS::SecureChannel::PaceSecurityInfo	sizeof=40 align=8
+LibreSCRS::Signing::Rect	  +0     int x
+LibreSCRS::Signing::Rect	  +12    int height
+LibreSCRS::Signing::Rect	  +4     int y
+LibreSCRS::Signing::Rect	  +8     int width
+LibreSCRS::Signing::Rect	sizeof=16 align=4
+LibreSCRS::Signing::SigningRequest	  +0     class std::unique_ptr<struct LibreSCRS::Signing::SigningRequest::Impl> d
+LibreSCRS::Signing::SigningRequest	sizeof=8 align=8
+LibreSCRS::Signing::SigningRequest::Builder	  +0     class std::unique_ptr<struct LibreSCRS::Signing::SigningRequest::Builder::Impl> d
+LibreSCRS::Signing::SigningRequest::Builder	sizeof=8 align=8
+LibreSCRS::Signing::SigningResult	  +0     Status status
+LibreSCRS::Signing::SigningResult	  +144   class std::optional<class std::basic_string<char> > diagnosticDetail
+LibreSCRS::Signing::SigningResult	  +56    struct LibreSCRS::LocalizedText userMessage
+LibreSCRS::Signing::SigningResult	  +8     class std::optional<class std::filesystem::path> outputPath
+LibreSCRS::Signing::SigningResult	sizeof=184 align=8
+LibreSCRS::Signing::SigningService	  +0     class std::unique_ptr<struct LibreSCRS::Signing::SigningService::Impl> d
+LibreSCRS::Signing::SigningService	sizeof=8 align=8
+LibreSCRS::Signing::TsaContext	  +0     SignatureFormat format
+LibreSCRS::Signing::TsaContext	  +1     SignatureLevel level
+LibreSCRS::Signing::TsaContext	  +8     class std::optional<class std::chrono::time_point<struct std::chrono::system_clock, class std::chrono::duration<long, struct std::ratio<1, 1000000000> > > > signingTime
+LibreSCRS::Signing::TsaContext	sizeof=24 align=8
+LibreSCRS::Signing::TsaCredentials	  +0     class std::optional<struct LibreSCRS::Signing::TsaCredentials::BasicAuth> basicAuth
+LibreSCRS::Signing::TsaCredentials	  +120   class std::optional<class std::variant<class std::filesystem::path, class LibreSCRS::Secure::Buffer> > clientCertKey
+LibreSCRS::Signing::TsaCredentials	  +176   class std::vector<struct std::pair<class std::basic_string<char>, class std::basic_string<char> > > extraHeaders
+LibreSCRS::Signing::TsaCredentials	  +200   class std::vector<struct std::pair<class std::basic_string<char>, class LibreSCRS::Secure::String> > extraSecretHeaders
+LibreSCRS::Signing::TsaCredentials	  +48    class std::optional<class LibreSCRS::Secure::String> bearerToken
+LibreSCRS::Signing::TsaCredentials	  +64    class std::optional<class std::variant<class std::filesystem::path, class LibreSCRS::Secure::Buffer> > clientCert
+LibreSCRS::Signing::TsaCredentials	sizeof=224 align=8
+LibreSCRS::Signing::TsaCredentials::BasicAuth	  +0     class std::basic_string<char> user
+LibreSCRS::Signing::TsaCredentials::BasicAuth	  +32    class LibreSCRS::Secure::String password
+LibreSCRS::Signing::TsaCredentials::BasicAuth	sizeof=40 align=8
+LibreSCRS::Signing::TsaRequest	  +0     class std::basic_string<char> url
+LibreSCRS::Signing::TsaRequest	  +32    struct LibreSCRS::Signing::TsaCredentials credentials
+LibreSCRS::Signing::TsaRequest	sizeof=256 align=8
+LibreSCRS::Signing::VisualSignatureLayout	  +0     float fontSize
+LibreSCRS::Signing::VisualSignatureLayout	  +32    _Bool clipped
+LibreSCRS::Signing::VisualSignatureLayout	  +4     float lineHeight
+LibreSCRS::Signing::VisualSignatureLayout	  +8     class std::vector<class std::basic_string<char> > lines
+LibreSCRS::Signing::VisualSignatureLayout	sizeof=40 align=8
+LibreSCRS::Signing::VisualSignatureParams	  +0     class std::unique_ptr<struct LibreSCRS::Signing::VisualSignatureParams::Impl> d
+LibreSCRS::Signing::VisualSignatureParams	sizeof=8 align=8
+LibreSCRS::Signing::VisualSignatureParams::Builder	  +0     class std::unique_ptr<struct LibreSCRS::Signing::VisualSignatureParams::Builder::Impl> d
+LibreSCRS::Signing::VisualSignatureParams::Builder	sizeof=8 align=8
+LibreSCRS::SmartCard::ActiveChannelHolder	  +0     class std::unique_ptr<class LibreSCRS::SmartCard::ActiveChannelHolder::Impl> d
+LibreSCRS::SmartCard::ActiveChannelHolder	sizeof=8 align=8
+LibreSCRS::SmartCard::AppletAid	  +0     class std::vector<unsigned char> storage
+LibreSCRS::SmartCard::AppletAid	sizeof=24 align=8
+LibreSCRS::SmartCard::CardMap	  +0     class std::unique_ptr<struct LibreSCRS::SmartCard::CardMap::Impl> d
+LibreSCRS::SmartCard::CardMap	sizeof=8 align=8
+LibreSCRS::SmartCard::CardMapEntry	  +0     class std::vector<unsigned char> pkcs15Path
+LibreSCRS::SmartCard::CardMapEntry	  +24    std::uint8_t fileSelectP2
+LibreSCRS::SmartCard::CardMapEntry	  +32    class std::vector<class std::basic_string<char> > pinLabels
+LibreSCRS::SmartCard::CardMapEntry	sizeof=56 align=8
+LibreSCRS::SmartCard::CardSession	  +16    class std::unique_ptr<struct LibreSCRS::SmartCard::CardSession::Impl> d
+LibreSCRS::SmartCard::CardSession	sizeof=24 align=8
+LibreSCRS::SmartCard::MonitorEvent	  +0     Kind kind
+LibreSCRS::SmartCard::MonitorEvent	  +40    class std::optional<class std::basic_string<char> > diagnosticDetail
+LibreSCRS::SmartCard::MonitorEvent	  +8     class std::basic_string<char> readerName
+LibreSCRS::SmartCard::MonitorEvent	  +80    class std::optional<class std::vector<unsigned char> > atr
+LibreSCRS::SmartCard::MonitorEvent	sizeof=112 align=8
+LibreSCRS::SmartCard::MonitorService	  +0     class std::unique_ptr<struct LibreSCRS::SmartCard::MonitorService::Impl> d
+LibreSCRS::SmartCard::MonitorService	sizeof=8 align=8
+LibreSCRS::SmartCard::MonitorService::Config	  +0     class std::chrono::duration<long, struct std::ratio<1, 1000> > coalesceWindow
+LibreSCRS::SmartCard::MonitorService::Config	  +16    class std::chrono::duration<long, struct std::ratio<1, 1000> > backoffOnFlood
+LibreSCRS::SmartCard::MonitorService::Config	  +8     std::size_t maxEventsPerSecond
+LibreSCRS::SmartCard::MonitorService::Config	sizeof=24 align=8
+LibreSCRS::SmartCard::MonitorService::SubscriptionId	  +0     std::uint64_t valueInternal
+LibreSCRS::SmartCard::MonitorService::SubscriptionId	sizeof=8 align=8
+LibreSCRS::SmartCard::OpenError	  +0     Kind kind
+LibreSCRS::SmartCard::OpenError	  +8     struct LibreSCRS::LocalizedText userMessage
+LibreSCRS::SmartCard::OpenError	  +96    class std::optional<class std::basic_string<char> > diagnosticDetail
+LibreSCRS::SmartCard::OpenError	sizeof=136 align=8
+LibreSCRS::SmartCard::PaceRequest	  +0     LibreSCRS::Auth::PaceSecretKind secretKind
+LibreSCRS::SmartCard::PaceRequest	sizeof=1 align=1
+LibreSCRS::Trust::TrustAnchor	  +0     class std::vector<unsigned char> certificateDer
+LibreSCRS::Trust::TrustAnchor	  +24    class std::basic_string<char> sourceLabel
+LibreSCRS::Trust::TrustAnchor	sizeof=56 align=8
+LibreSCRS::Trust::TrustConfig	  +0     class std::optional<class std::filesystem::path> trustedListFile
+LibreSCRS::Trust::TrustConfig	  +120   class std::optional<class std::filesystem::path> cacheDirectory
+LibreSCRS::Trust::TrustConfig	  +168   _Bool includeSystemTrustStore
+LibreSCRS::Trust::TrustConfig	  +48    class std::optional<class std::filesystem::path> trustedListFileSigningCert
+LibreSCRS::Trust::TrustConfig	  +96    class std::vector<struct LibreSCRS::Trust::TrustedListSource> trustedListSources
+LibreSCRS::Trust::TrustConfig	sizeof=176 align=8
+LibreSCRS::Trust::TrustConfig::Builder	  +0     struct LibreSCRS::Trust::TrustConfig cfg
+LibreSCRS::Trust::TrustConfig::Builder	sizeof=176 align=8
+LibreSCRS::Trust::TrustStore	  +0     class std::unique_ptr<struct LibreSCRS::Trust::TrustStore::Impl> d
+LibreSCRS::Trust::TrustStore	sizeof=8 align=8
+LibreSCRS::Trust::TrustStoreService	  +0     class std::shared_ptr<struct LibreSCRS::Trust::TrustStoreService::Impl> d
+LibreSCRS::Trust::TrustStoreService	sizeof=16 align=8
+LibreSCRS::Trust::TrustStoreService::CreateError	  +0     Kind kind
+LibreSCRS::Trust::TrustStoreService::CreateError	  +8     struct LibreSCRS::LocalizedText userMessage
+LibreSCRS::Trust::TrustStoreService::CreateError	  +96    class std::optional<class std::basic_string<char> > diagnosticDetail
+LibreSCRS::Trust::TrustStoreService::CreateError	sizeof=136 align=8
+LibreSCRS::Trust::TrustedListSource	  +0     class std::basic_string<char> url
+LibreSCRS::Trust::TrustedListSource	  +32    _Bool lotl
+LibreSCRS::Trust::TrustedListSource	  +33    _Bool eager
+LibreSCRS::Trust::TrustedListSource	sizeof=40 align=8
+
+== vtable slot order ==
+Vtable for 'VtProbe'
+   0 | offset_to_top (0)
+   1 | VtProbe RTTI
+   2 | VtProbe::~VtProbe() [complete]
+   3 | VtProbe::~VtProbe() [deleting]
+   4 | LibreSCRS::Plugin::CardCapabilities VtProbe::capabilities() const
+   5 | std::span<const LibreSCRS::Plugin::Atr> VtProbe::supportedAtrs() const
+   6 | bool LibreSCRS::Plugin::CardPlugin::canHandleConnection(std::span<const std::uint8_t>, LibreSCRS::SmartCard::CardSession &) const
+   7 | LibreSCRS::Plugin::ReadResult VtProbe::doReadCard(LibreSCRS::SmartCard::CardSession &, GroupCallback) const
+   8 | std::vector<CertificateData> LibreSCRS::Plugin::CardPlugin::readCertificates(LibreSCRS::SmartCard::CardSession &) const
+   9 | PINResult LibreSCRS::Plugin::CardPlugin::verifyPIN(LibreSCRS::SmartCard::CardSession &, const LibreSCRS::Secure::String &) const
+  10 | std::vector<PinStatusEntry> LibreSCRS::Plugin::CardPlugin::getPINList(LibreSCRS::SmartCard::CardSession &) const
+  11 | PINResult LibreSCRS::Plugin::CardPlugin::changePIN(LibreSCRS::SmartCard::CardSession &, std::string_view, const LibreSCRS::Secure::String &, const LibreSCRS::Secure::String &) const
+  12 | std::optional<int> LibreSCRS::Plugin::CardPlugin::getPINTriesLeft(LibreSCRS::SmartCard::CardSession &) const
+  13 | SignResult LibreSCRS::Plugin::CardPlugin::doSign(LibreSCRS::SmartCard::CardSession &, std::uint16_t, std::span<const std::uint8_t>, SignMechanism) const
+  14 | std::vector<KeyReference> LibreSCRS::Plugin::CardPlugin::discoverKeyReferences(LibreSCRS::SmartCard::CardSession &) const
+  15 | CardFieldGroup LibreSCRS::Plugin::CardPlugin::readTokenInfo(LibreSCRS::SmartCard::CardSession &) const
+  16 | void LibreSCRS::Plugin::CardPlugin::setCredentials(LibreSCRS::SmartCard::CardSession &, std::string_view, const LibreSCRS::Secure::String &)
+  17 | void LibreSCRS::Plugin::CardPlugin::clearCredentials(LibreSCRS::SmartCard::CardSession &)
+  18 | Auth::PreReadAuthMethod LibreSCRS::Plugin::CardPlugin::preReadAuth(LibreSCRS::SmartCard::CardSession &) const
+  19 | PINResult LibreSCRS::Plugin::CardPlugin::unblockPIN(LibreSCRS::SmartCard::CardSession &, std::string_view, const LibreSCRS::Secure::String &, const LibreSCRS::Secure::String &) const
+  20 | void LibreSCRS::Plugin::CardPlugin::doSetTrustStore(std::shared_ptr<const LibreSCRS::Trust::TrustStore>)
+
+== plugin ABI sentinel ==
+inline constexpr std::uint32_t kCardPluginAbiVersion = 6;

@@ -357,20 +357,6 @@ public:
         return {};
     }
 
-    /// @brief Card-reported retries remaining for the default PIN.
-    ///
-    /// Returns @c std::nullopt when the plugin cannot determine the count;
-    /// callers should render this as "unknown" rather than a sentinel integer.
-    ///
-    /// @deprecated Superseded by @ref readCounters — use
-    ///             `readCounters(session).retriesLeft`. Retained for source
-    ///             compatibility; the default delegates to readCounters so a
-    ///             plugin overriding only readCounters keeps a working value.
-    [[deprecated("use readCounters(session).retriesLeft")]] [[nodiscard]] virtual std::optional<int>
-    getPINTriesLeft(LibreSCRS::SmartCard::CardSession& session) const
-    {
-        return readCounters(session).retriesLeft;
-    }
     /// @brief Perform on-card signing with the key identified by @p keyReference.
     ///
     /// Public non-virtual entry point (NVI, *Effective C++* 3e Item 39 —

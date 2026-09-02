@@ -140,6 +140,18 @@ endif()
 option(LIBREMIDDLEWARE_BUILD_SHARED
        "Build public LibreSCRS_* targets as shared libraries" ON)
 
+# SONAME integer for the LibreSCRS_* shared libraries. Independent of the
+# release version on purpose: it is bumped whenever ci/scripts/abi-layout.sh
+# reports a non-additive change, in whatever release that happens to be, and
+# never merely because a new major was declared. Tying it to
+# PROJECT_VERSION_MAJOR would mean the only way to satisfy the layout gate
+# inside a minor line is to declare a new major — which would turn the gate
+# into a reason to route around it.
+set(LIBRESCRS_ABI_SOVERSION 5 CACHE STRING
+    "SONAME integer for the LibreSCRS_* shared libraries. Independent of the
+release version: bumped whenever ci/scripts/abi-layout.sh reports a
+non-additive change. 4 = 4.0-4.2; 5 = 5.0 onward.")
+
 # Plugin and in-tree PKCS#11 module shared objects are built by default.
 # Set OFF for monolithic SDK consumers (single-binary CLI tools, embedded
 # hosts) that statically link LM and do not enumerate plugin .so files

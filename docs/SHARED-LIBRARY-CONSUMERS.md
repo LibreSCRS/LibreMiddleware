@@ -49,14 +49,33 @@ compatibility. A consumer requesting
 - accepts any installed `4.x.y`;
 - rejects `3.x.y` (older major) and `5.x.y` (newer major).
 
-LibreKDE pins `LibreMiddleware ≥ 4.0` and `< 5.0` explicitly via:
+**This rule governs the source / CMake contract only.** It says which
+package a build is willing to compile and link against. It is not what
+the dynamic loader consults at run time, and it is not the SONAME — see
+the next section.
 
-```cmake
-find_package(LibreMiddleware 4.0 REQUIRED CONFIG)
+## The SONAME is not the release version
+
+The `LibreSCRS_*` shared objects carry a SONAME integer of their own
+(`LIBRESCRS_ABI_SOVERSION` in the top-level `CMakeLists.txt`), decoupled
+from `PROJECT_VERSION`. It is raised in any release where
+`ci/scripts/abi-layout.sh` reports a non-additive change — a type whose
+size moved, a member whose offset shifted, a virtual whose slot changed
+occupant — **whether or not that release is a major**. Conversely, a new
+major does not raise it by itself.
+
+Packagers should therefore read the SONAME off the artefact rather than
+deriving it from the version:
+
+```sh
+readelf -d libLibreSCRS_Plugin.so.* | grep SONAME
 ```
 
-5.0 will introduce ABI breaks; consumers must update to a 5.x release
-of LibreKDE (or downstream equivalent) before bumping LM.
+Consequently the file name and the SONAME need not agree: a build whose
+`PROJECT_VERSION` is still `4.2.0` produces
+`libLibreSCRS_Plugin.so.4.2.0` with `SONAME libLibreSCRS_Plugin.so.5`
+once the shape has moved. That is the decoupling working as intended,
+not a packaging error.
 
 ## Consumer example
 
@@ -201,8 +220,11 @@ Linux distros with shared-library policies (Debian, Fedora, openSUSE,
 Arch) build LibreMiddleware with `LIBREMIDDLEWARE_BUILD_SHARED=ON` and
 ship:
 
-- `libLibreSCRS_<Component>.so.4` — runtime soname (in `lib/`)
-- `libLibreSCRS_<Component>.so.4.0.0` — versioned binary (in `lib/`)
+- `libLibreSCRS_<Component>.so.5` — runtime soname (in `lib/`), from
+  `LIBRESCRS_ABI_SOVERSION`, not from the release major
+- `libLibreSCRS_<Component>.so.<PROJECT_VERSION>` — versioned binary (in
+  `lib/`); the two numbers are independent, so do not assume the file
+  name begins with the soname's integer
 - Headers under `include/LibreSCRS/<Component>/...`
 - Config package under `lib/cmake/LibreMiddleware/`
 
