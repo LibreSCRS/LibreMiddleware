@@ -8,6 +8,7 @@
 
 #include "opensc_card.h"
 
+#include "opensc_pin_classification.h"
 #include "opensc_slot.h"
 
 #include <internal/Crv.h>
@@ -37,22 +38,6 @@ namespace {
 constexpr unsigned long kCkfTokenInitialized = 0x00000400UL;
 constexpr unsigned long kCkfLoginRequired = 0x00000004UL;
 constexpr unsigned long kCkfUserPinInitialized = 0x00000008UL;
-
-/// @brief Filter for AODF PIN objects: drop the PUK / unblocking entries
-///        (we surface only user-auth slots; OpenSC's auth_info conveys
-///        the role via the @c SC_PKCS15_PIN_FLAG_UNBLOCKING_PIN bit).
-[[nodiscard]] bool isUserPin(const sc_pkcs15_auth_info_t* auth) noexcept
-{
-    if (!auth)
-        return false;
-    if (auth->auth_type != SC_PKCS15_PIN_AUTH_TYPE_PIN)
-        return false;
-    if (auth->attrs.pin.flags & SC_PKCS15_PIN_FLAG_UNBLOCKING_PIN)
-        return false;
-    if (auth->attrs.pin.flags & SC_PKCS15_PIN_FLAG_SO_PIN)
-        return false;
-    return true;
-}
 
 /// @brief PIN-label → @ref SlotKind via the shared classifier so the
 ///        FNV-1a stable slot ID stays consistent with the in-tree

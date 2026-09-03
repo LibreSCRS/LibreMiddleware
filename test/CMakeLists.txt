@@ -1541,6 +1541,38 @@ if(LIBRESCRS_VENDOR_OPENSC)
     gtest_discover_tests(OpenscChangePinSelectorTests)
 endif()
 
+# Opensc-plugin user-PIN selection tests (no hardware). Same TU-compilation
+# harness: drives the plugin's verify/counter seams with synthetic
+# sc_pkcs15 objects and injected driver entry points, so the addressed-object
+# contract is asserted without any card I/O.
+if(LIBRESCRS_VENDOR_OPENSC)
+    add_executable(OpenscUserPinSelectionTests
+        OpenscUserPinSelectionTests.cpp
+        ${PROJECT_SOURCE_DIR}/lib/opensc-plugin/src/opensc_card_plugin.cpp
+        ${PROJECT_SOURCE_DIR}/lib/opensc-plugin/src/opensc_reader_bridge.cpp
+    )
+    target_include_directories(OpenscUserPinSelectionTests PRIVATE
+        ${PROJECT_BINARY_DIR}/lib/opensc-plugin/generated
+        ${PROJECT_SOURCE_DIR}/lib/opensc-plugin/src
+        ${PROJECT_SOURCE_DIR}/lib/opensc-pkcs11/src
+        ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+        ${PROJECT_SOURCE_DIR}/lib/plugin/src
+        ${PROJECT_SOURCE_DIR}/lib/pkcs15/src
+        ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
+    )
+    target_link_libraries(OpenscUserPinSelectionTests PRIVATE
+        GTest::gtest_main
+        CardPlugin_Impl
+        LibreSCRS_SmartCard
+        SmartCard_Impl
+        opensc_static_with_deps
+        OpenSSL_Crypto
+    )
+    target_compile_definitions(OpenscUserPinSelectionTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+    add_dependencies(OpenscUserPinSelectionTests opensc-plugin)
+    gtest_discover_tests(OpenscUserPinSelectionTests)
+endif()
+
 # pkcs15-plugin changePIN selector-correctness tests (no hardware).
 # Same harness as Pkcs15PinLifecycleTests (plugin .so via the registry,
 # detached CardSession + injected PlainChannel, scripted transmit
