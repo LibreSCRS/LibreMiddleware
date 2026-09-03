@@ -453,22 +453,29 @@ install(DIRECTORY thirdparty/certificates/
             PATTERN "README*" EXCLUDE)
 
 # ──────────────────────────────────────────────────────────────────────────
-# p11-kit module registration.
+# p11-kit module registration — OFF by default, and that is the point.
 #
-# Dropping `librescrs.module` into ${datadir}/p11-kit/modules/ makes every
-# p11-kit-aware application (Kleopatra, GnuPG / gpgsm, Firefox, Chromium,
-# Thunderbird, Evolution, KMail, …) auto-discover LibreSCRS-supported
-# smart cards alongside any other configured PKCS#11 token — with zero
-# application-side configuration.
+# The registered PKCS#11 provider for a LibreSCRS card is the agent proxy,
+# exclusively. The proxy collects the PIN in the agent's prompter, behind an
+# authorization prompt and a lease; this module takes the PIN inside whatever
+# application dlopened it. Registering both leaves one card with two security
+# models and lets whichever dialog the user happens to type into decide which
+# one they got. Installing no declaration is stronger than declaring a
+# conflict: there is then nothing to conflict with.
 #
-# Default ON because (a) it's a single 3-line file with no downstream
-# cost when the .so isn't installed, and (b) the whole point of this
-# integration is "Kleopatra sees our cards" for distro users who don't
-# even have LibreCelik installed. Distro packagers who specifically want
-# to OFF it (e.g. for a stripped SDK package) can do so explicitly.
+# The guard in SessionPresence.h is process-local, so it cannot arbitrate
+# between two providers living in two different processes. That is why this is
+# settled by registration rather than by locking.
+#
+# The default used to be ON for a benefit it never delivered — "Kleopatra sees
+# our cards". The GnuPG stack does not consume p11-kit at all: its card daemon
+# speaks PC/SC directly.
+#
+# ON remains the escape hatch for a headless host with no agent, and for the
+# opt-in out-of-process deployment. It is one explicit flag away.
 # ──────────────────────────────────────────────────────────────────────────
 option(LIBREMIDDLEWARE_INSTALL_P11KIT_MODULE
-    "Install p11-kit module file so PKCS#11-aware applications auto-discover LibreSCRS cards" ON)
+    "Install p11-kit module file so PKCS#11-aware applications auto-discover LibreSCRS cards" OFF)
 if(LIBREMIDDLEWARE_INSTALL_P11KIT_MODULE)
     include(GNUInstallDirs)
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/librescrs.module"

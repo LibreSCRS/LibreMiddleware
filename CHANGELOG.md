@@ -5,6 +5,42 @@ Notable user-visible changes per release. Format follows
 
 ## [Unreleased] — 5.0.0
 
+### Changed
+
+- **The PKCS#11 module is no longer registered with p11-kit, and no longer
+  published as a release artefact.** One card should offer one provider, and it
+  is the agent proxy shipped by the Linux host: the PIN is collected by a
+  prompter behind an authorization prompt and a lease, and never enters the
+  browser's address space. Shipping this module alongside it offered a second,
+  weaker device for the same card and let the choice between two security
+  models fall to whichever dialog a user happened to type into. The library is
+  still built and installed; only the declaration is gone.
+  `-DLIBREMIDDLEWARE_INSTALL_P11KIT_MODULE=ON` restores it for a headless host
+  that runs no agent. The macOS replacement — an agent proxy of its own — is
+  not in this release, so a macOS user who needs a PKCS#11 provider must build
+  this module and register it explicitly.
+
+  **Upgrading.** Three populations, and a package manager cleans only one of
+  them. A *package* install heals itself: pacman, dpkg and rpm remove files
+  that leave the manifest (derived, not measured — no `librescrs-*` package has
+  ever been published, so that install base does not yet exist). A *source*
+  install (`cmake --install`) does **not** heal: `install()` overwrites and
+  never deletes. A *release-archive* install does not heal either, and it is
+  the install base that actually exists, because the published archive is what
+  created it — its instructions had you register the module by hand. Remove
+  that registration:
+
+  ```
+  rm ~/.config/pkcs11/modules/librescrs.module
+  ```
+
+- **The PKCS#11 module is found on library directories that are not called
+  `lib`.** The lookup spelled the library directory as a literal, so a build
+  installing into `lib64` or a Debian multiarch triplet probed beside a
+  directory that does not exist there and fell back to a bare name the loader
+  could not resolve — signing then failed with an opaque engine error, after
+  the PIN had already been collected.
+
 ### Added
 
 - **Buffer-based signing.** New `sign()` overload accepts an in-memory

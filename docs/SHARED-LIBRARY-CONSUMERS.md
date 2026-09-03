@@ -152,41 +152,70 @@ std::filesystem::path plugins =
 LibreSCRS::Plugin::CardPluginService registry{plugins};
 ```
 
-## p11-kit integration (Kleopatra, GnuPG, Firefox, …)
+## p11-kit integration — the agent proxy owns the registration
 
-`LIBREMIDDLEWARE_INSTALL_P11KIT_MODULE` (default `ON`) installs a
-3-line p11-kit module declaration so every p11-kit-aware application
-on the host auto-discovers LibreSCRS smart cards. Files placed by
-`cmake --install`:
+A host must expose exactly **one** LibreSCRS PKCS#11 provider, and it is the
+agent proxy shipped by LibreLinux. The proxy collects the PIN in the agent's
+prompter, behind an authorization prompt and a lease; this module collects it
+inside whatever application dlopened it. Two registered providers for one card
+are two independent security models, and the choice between them falls to
+whichever dialog the user happens to type into.
+
+`LIBREMIDDLEWARE_INSTALL_P11KIT_MODULE` is therefore **`OFF` by default**.
+A default install places the library and no declaration at all:
 
     ${CMAKE_INSTALL_LIBDIR}/pkcs11/librescrs-pkcs11.so       (the .so)
+
+Turning the option `ON` additionally installs
+
     ${CMAKE_INSTALL_DATADIR}/p11-kit/modules/librescrs.module (registration)
 
-`librescrs.module` references the `.so` by bare filename; p11-kit
-resolves it via its standard `${libdir}/pkcs11/` search path. Priority
-is 10 — well below typical vendor middleware (50+) so proprietary
-middleware shipped with eID hardware wins automatic resolution when
-both are installed.
+which is the escape hatch for a headless host that runs no agent, and for the
+opt-in out-of-process deployment. It is not the supported desktop arrangement.
 
-Once installed, **no application configuration is needed**:
+`librescrs.module` references the `.so` by bare filename; p11-kit resolves it
+via its standard `${libdir}/pkcs11/` search path. Priority is 10 — well below
+typical vendor middleware (50+) so proprietary middleware shipped with eID
+hardware wins automatic resolution when both are installed.
 
-- **Kleopatra** — *Settings → Configure → GnuPG System → Smartcards*
-  lists the LibreSCRS-provided card token.
-- **GnuPG / gpgsm** — `gpgsm --learn-card` enumerates the certificate;
-  signing and decryption via `gpg --card-status`.
-- **Firefox / Thunderbird** — *Preferences → Privacy & Security →
-  Security Devices* shows the LibreSCRS module without manually adding
-  it (NSS picks it up via libnssckbi-replacement / p11-kit-trust).
-- **Chromium** — `chrome://settings/certificates` exposes the same
-  surface via NSS.
-- **Evolution / KMail** — S/MIME signing/encryption automatically uses
-  the LibreSCRS token.
+### Packaging contract
 
-The module declaration disables loading inside `p11-kit-proxy` to
-avoid a self-recursion loop when Firefox-style consumers load the
-proxy module which would otherwise pull our module which would itself
-try to enumerate readers inside the proxy. Native loaders (Kleopatra,
-gpgsm direct) skip the proxy and are unaffected.
+This is the split this project **intends to ship**; no `librescrs-*` package has
+been published yet, so nothing below describes an install base that exists
+today. It is written down here because the invariant it protects is decided
+here, and packaging only executes it.
+
+    librescrs-middleware      usr/lib/pkcs11/librescrs-pkcs11.so          ← the .so only, NO .module
+    librescrs-pkcs11-direct   usr/share/p11-kit/modules/librescrs.module  ← eight lines and nothing else
+                              depends=('librescrs-middleware')
+                              conflicts=('librescrs-agent')
+    librescrs-agent           usr/lib/pkcs11/librescrs-pkcs11-agent.so
+                              usr/share/p11-kit/modules/librescrs-agent.module
+                              usr/lib/systemd/user/librescrs-p11-server.service
+                              conflicts=('librescrs-pkcs11-direct')
+
+Three things about it must not be lost in translation to a package recipe:
+
+- The invariant is: *after installing any supported set of packages, the three
+  directories p11-kit reads contain exactly one file naming a LibreSCRS
+  provider, and it names the proxy.* By default that holds because nobody
+  registers the direct module — which is **stronger than a conflict**, since
+  there is nothing to conflict with.
+- The conflict is declared from **both** sides deliberately. A one-sided
+  conflict still permits coexistence when the side that was not named happens
+  to be installed first.
+- The name is `librescrs-pkcs11-direct`, **not** a bare `librescrs-pkcs11`.
+  The bare name is what the released tarball was called and what the website
+  still advertises, so reusing it for a package of the opposite meaning would
+  let a stale link resolve to a different thing.
+
+### Consumers
+
+With the proxy registered by the agent, p11-kit-aware applications — Firefox,
+Thunderbird, Chromium (via NSS), Evolution, KMail — discover the card with no
+application-side configuration. The GnuPG stack (Kleopatra, `gpgsm`) is **not**
+among them: it does not consume p11-kit at all, its card daemon speaks PC/SC
+directly.
 
 ## Bundled dependencies
 

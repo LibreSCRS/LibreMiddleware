@@ -14,7 +14,7 @@ Qt-free C++23 static libraries for reading smart cards via direct PC/SC APDU com
 
 - **SmartCard** — PC/SC connection management, APDU, TLV/BER-TLV encoding
 - **Card plugins** — data readers (Serbian eID, EU vehicle, Serbian health, eMRTD passport) and PKI backends (`opensc`, which drives OpenSC's driver chain; `pkcs15`, the generic gap-fill)
-- **PKCS#11 module** — a standard PKCS#11 library for Firefox, Thunderbird, and other PKCS#11-aware applications
+- **PKCS#11 module** — a standard PKCS#11 library for Firefox, Thunderbird, and other PKCS#11-aware applications. Built and installed, but **not registered with p11-kit**: the registered provider for a LibreSCRS card is the agent proxy, so that one card offers one PIN-entry model
 - **Signing / Trust** — AdES signing (XAdES, PAdES, CAdES, JAdES, ASiC-E), timestamping, and the async trust store
 
 ## Public C++ SDK (4.0)

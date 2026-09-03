@@ -363,12 +363,30 @@ add_library(LibreSCRS_Signing ${LIBREMIDDLEWARE_LIB_TYPE}
     Signing/TsaProvider.cpp
     Signing/SigningService.cpp
     Signing/detail/RequestBridge.cpp
+    Signing/detail/Pkcs11ModulePath.cpp
     ${LIBRESCRS_SIGNING_PUBLIC_HEADERS}
     ${LIBRESCRS_SIGNING_DETAIL_HEADERS}
 )
 target_compile_definitions(LibreSCRS_Signing PRIVATE LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD
     LIBREMIDDLEWARE_CERTIFICATES_DIR="${LIBREMIDDLEWARE_CERTIFICATES_DIR}"
     LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR="${LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR}")
+# Where THIS build installs the PKCS#11 module, for the resolver in
+# Signing/detail/Pkcs11ModulePath.cpp. The library directory is spelled by the
+# build, not assumed: "lib" on Arch, "lib64" on Fedora, a multiarch triplet on
+# Debian. GNUInstallDirs is processed at CMakeLists.txt:105, before this
+# subdirectory — without it CMAKE_INSTALL_LIBDIR is undefined and both
+# definitions silently become empty strings.
+# The suffix is per-platform, exactly like moduleName in SigningService.cpp:
+# .dylib on Apple, .so everywhere else. A hardcoded ".so" would make the last
+# candidate permanently dead on macOS.
+if(APPLE)
+    set(_lm_p11_module_name "librescrs-pkcs11.dylib")
+else()
+    set(_lm_p11_module_name "librescrs-pkcs11.so")
+endif()
+target_compile_definitions(LibreSCRS_Signing PRIVATE
+    LIBRESCRS_INSTALL_LIBDIR_REL="${CMAKE_INSTALL_LIBDIR}"
+    LIBRESCRS_PKCS11_MODULE_FULL_PATH="${CMAKE_INSTALL_FULL_LIBDIR}/pkcs11/${_lm_p11_module_name}")
 # LIBRESCRS_INTERNAL_BUILD lets SigningService.cpp include the local
 # detail/ErrorClassifier.h (guarded) and transitively pull the internal
 # apdu.h (still referenced by smartcard/pcsc_connection.h) through the

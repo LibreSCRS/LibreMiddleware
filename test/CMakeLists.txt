@@ -62,6 +62,25 @@ target_include_directories(EfDirTests PRIVATE
 target_compile_definitions(EfDirTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(EfDirTests)
 
+# PKCS#11 module lookup: seven install layouts, three of which were broken.
+# This compiles lib/LibreSCRS/Signing/detail/Pkcs11ModulePath.cpp DIRECTLY
+# rather than linking LibreSCRS_Signing, which is the shape EfDirTests and
+# RsEidCoreTests use for a different reason: that library is built with
+# -fvisibility=hidden plus a namespace-allowlist version script, so
+# resolvePkcs11ModulePath exports no symbol and linking against it gives an
+# undefined reference. Compiling the one translation unit keeps the function
+# internal to the library it belongs to and still reachable from a test.
+add_executable(Pkcs11ModulePathTests
+    Pkcs11ModulePathTests.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/Signing/detail/Pkcs11ModulePath.cpp
+)
+target_link_libraries(Pkcs11ModulePathTests GTest::gtest_main)
+target_include_directories(Pkcs11ModulePathTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS
+)
+target_compile_definitions(Pkcs11ModulePathTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(Pkcs11ModulePathTests)
+
 # PKCS15Card::probeViaEfDir integration coverage: proves the selection
 # loop picks the candidate under which EF.ODF actually selects, not the
 # first EF.DIR entry whose AID matches. ef_dir_test.cpp above only covers

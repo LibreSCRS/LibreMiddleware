@@ -6,6 +6,7 @@
 
 #include "detail/DocumentPrecheck.h"
 #include "detail/ErrorClassifier.h"
+#include "detail/Pkcs11ModulePath.h"
 #include "detail/RequestBridge.h"
 
 // LM-internal Trust friend header used by the lazy-fetch-merge lambda
@@ -47,6 +48,18 @@
 #include <mach-o/dyld.h>
 #endif
 
+// The library directory of the build that installed the module, and the
+// absolute path that build computed for it. Both are PRIVATE compile
+// definitions on LibreSCRS_Signing, so the values travel with the library that
+// owns the resolver and that LM installs beside the module. A build that does
+// not pass them still compiles and simply skips the candidates they feed.
+#ifndef LIBRESCRS_INSTALL_LIBDIR_REL
+#define LIBRESCRS_INSTALL_LIBDIR_REL ""
+#endif
+#ifndef LIBRESCRS_PKCS11_MODULE_FULL_PATH
+#define LIBRESCRS_PKCS11_MODULE_FULL_PATH ""
+#endif
+
 namespace LibreSCRS::Signing {
 
 namespace {
@@ -55,8 +68,9 @@ namespace {
 // Consumers (LibreCelik, LibreKDE, third-party tools) do not need to know
 // where the module lives — LM owns its own resource discovery. The
 // LIBRESCRS_PKCS11_MODULE environment variable is the override escape
-// hatch for tests and packagers; otherwise the candidate list below covers
-// every standard deploy layout LM ships into.
+// hatch for tests and packagers; otherwise the candidate list, which lives in
+// detail/Pkcs11ModulePath.cpp so it can be asserted for every install layout,
+// covers every standard deploy layout LM ships into.
 std::string resolvePkcs11Module()
 {
     // PKCS#11 module filename uses each platform's native shared-library
@@ -100,31 +114,10 @@ std::string resolvePkcs11Module()
     // Other platforms (Windows etc.) — defer to dyld search path.
     return moduleName;
 #endif
-    // Candidate layouts, ordered most-specific to least-specific:
-    //   1-3: exe-relative flat + standard lib/Frameworks (deployed bundles).
-    //   4-5: LM in-tree test layouts — `build/test/LibreSCRSSigningTests`
-    //        locates the module at `build/lib/pkcs11/librescrs-pkcs11.so`, and
-    //        an installed prefix keeps plugins at `${prefix}/lib/pkcs11/`.
-    //   6-7: consumer FetchContent and side-by-side dev checkouts.
-    //   8:   macOS dev .app bundle — binary at
-    //        `build/src/Foo.app/Contents/MacOS/Foo`, module at
-    //        `build/lib/pkcs11/librescrs-pkcs11.so` (4 parents up).
-    const std::array<std::filesystem::path, 8> candidates{
-        exePath / moduleName,
-        exePath / ".." / "lib" / moduleName,
-        exePath / ".." / "Frameworks" / moduleName,
-        exePath / ".." / "lib" / "pkcs11" / moduleName,
-        exePath / "lib" / "pkcs11" / moduleName,
-        exePath / ".." / "_deps" / "libremiddleware-build" / "lib" / "pkcs11" / moduleName,
-        exePath / ".." / ".." / "LibreMiddleware" / "build" / "lib" / "pkcs11" / moduleName,
-        exePath / ".." / ".." / ".." / ".." / "lib" / "pkcs11" / moduleName,
-    };
-    for (const auto& p : candidates) {
-        std::error_code cec;
-        auto c = std::filesystem::canonical(p, cec);
-        if (!cec && std::filesystem::exists(c)) {
-            return c.string();
-        }
+    auto resolved = detail::resolvePkcs11ModulePath(exePath, moduleName, LIBRESCRS_INSTALL_LIBDIR_REL,
+                                                    LIBRESCRS_PKCS11_MODULE_FULL_PATH);
+    if (resolved != moduleName) {
+        return resolved;
     }
     // No packaged layout matched — a deployment that ships the module outside
     // every known candidate, or does not ship it at all. Resolution now falls

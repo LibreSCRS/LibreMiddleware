@@ -3,15 +3,21 @@
 #
 # check-pkcs11-rpath.sh — install-time guard for librescrs-pkcs11
 #
-# Enforces two invariants on a finished install tree:
+# Enforces ONE invariant on a finished install tree:
 #
-#   1) librescrs-pkcs11.so carries a relative RPATH/RUNPATH so the
-#      runtime loader resolves sibling LibreSCRS shared libraries
-#      without LD_LIBRARY_PATH being set in the consumer's environment.
+#   librescrs-pkcs11.so carries a relative RPATH/RUNPATH, so the runtime loader
+#   resolves the sibling LibreSCRS shared libraries without LD_LIBRARY_PATH
+#   being set in the consumer's environment.
 #
-#   2) p11-kit list-modules, invoked with LD_LIBRARY_PATH UNSET, lists
-#      the module — i.e. the loader actually resolves the NEEDED chain
-#      from RPATH alone, the way real consumers will at runtime.
+# This script used to carry a second invariant — "p11-kit lists the module" —
+# and it could not observe what it claimed to. It exported P11_KIT_MODULE_PATH,
+# a variable p11-kit does not have (the ones it does are P11_KIT_DEBUG,
+# P11_KIT_NO_USER_CONFIG, P11_KIT_STRICT, P11_KIT_URI_LOWERCASE), so instead of
+# reading its synthetic configuration it read the machine's own — and matched
+# the module name by prefix, which also matches the agent proxy. It exited zero
+# when p11-kit was absent, reporting success for something it had not looked at.
+# Registration is now covered by a check that enumerates what a host actually
+# loads, so it is not restated here.
 #
 # Usage:
 #   check-pkcs11-rpath.sh <install-prefix>
@@ -29,9 +35,10 @@ if [[ ! -d "$PREFIX" ]]; then
     exit 2
 fi
 
-# Resolve module .so. Distros may install to lib/ or lib64/.
+# Resolve module .so. The library directory is a property of the build that
+# installed it: lib on Arch, lib64 on Fedora, a multiarch triplet on Debian.
 MODULE=""
-for libdir in lib lib64; do
+for libdir in lib lib64 "lib/$(uname -m)-linux-gnu"; do
     candidate="$PREFIX/$libdir/pkcs11/librescrs-pkcs11.so"
     if [[ -f "$candidate" ]]; then
         MODULE="$candidate"
@@ -39,7 +46,7 @@ for libdir in lib lib64; do
     fi
 done
 if [[ -z "$MODULE" ]]; then
-    echo "error: librescrs-pkcs11.so not found under $PREFIX/{lib,lib64}/pkcs11/" >&2
+    echo "error: librescrs-pkcs11.so not found under $PREFIX/{lib,lib64,lib/<triplet>}/pkcs11/" >&2
     exit 1
 fi
 
@@ -48,9 +55,16 @@ echo "module: $MODULE"
 # ---------------------------------------------------------------------------
 # Invariant 1: RPATH/RUNPATH points to sibling lib dir
 # ---------------------------------------------------------------------------
+# An absent reader is a failure, not a skip: a check that reports success on a
+# host where it inspected nothing is worse than no check at all.
 UNAME=$(uname -s)
 case "$UNAME" in
     Linux)
+        command -v readelf >/dev/null 2>&1 || {
+            echo "error: readelf not available; the rpath cannot be observed." >&2
+            echo "       Install binutils in the test environment rather than skipping." >&2
+            exit 2
+        }
         # readelf -d prints both DT_RPATH (legacy) and DT_RUNPATH. Either
         # is acceptable; the binding semantics differ but both let the
         # loader resolve sibling NEEDED entries from a relative path.
@@ -60,6 +74,10 @@ case "$UNAME" in
         EXPECTED='$ORIGIN/..'
         ;;
     Darwin)
+        command -v otool >/dev/null 2>&1 || {
+            echo "error: otool not available; the rpath cannot be observed." >&2
+            exit 2
+        }
         # otool -l emits LC_RPATH load commands as "path <value>" lines.
         RPATH=$(otool -l "$MODULE" 2>/dev/null \
             | awk '/LC_RPATH/{flag=1;next} flag && /path /{print $2; flag=0}')
@@ -89,49 +107,4 @@ fi
 
 echo "  rpath ok: $(tr '\n' ' ' <<<"$RPATH")"
 
-# ---------------------------------------------------------------------------
-# Invariant 2: p11-kit resolves the module without LD_LIBRARY_PATH
-# ---------------------------------------------------------------------------
-# p11-kit must be present; without it the registration step in the
-# install rule has nothing to consume anyway.
-if ! command -v p11-kit >/dev/null 2>&1; then
-    echo "warn: p11-kit not installed; skipping live-load probe" >&2
-    exit 0
-fi
-
-# Point p11-kit at a synthetic config that references the freshly
-# installed .so by absolute path, so the probe is independent of any
-# user/system .module that may already be installed.
-MODULE_CONF_DIR=$(mktemp -d)
-trap 'rm -rf "$MODULE_CONF_DIR"' EXIT
-cat >"$MODULE_CONF_DIR/librescrs.module" <<EOF
-module: $MODULE
-priority: 10
-EOF
-
-# Strip LD_LIBRARY_PATH so the probe exercises the runtime loader path a
-# real consumer sees, not whatever the developer's shell happens to set.
-OUTPUT=$(
-    env -u LD_LIBRARY_PATH \
-        P11_KIT_MODULE_PATH="$MODULE_CONF_DIR" \
-        p11-kit list-modules --verbose 2>&1
-)
-
-if grep -q "couldn't load module:.*librescrs-pkcs11.so" <<<"$OUTPUT"; then
-    REASON=$(grep "couldn't load module:.*librescrs-pkcs11.so" <<<"$OUTPUT" \
-        | sed 's/.*librescrs-pkcs11.so: //')
-    echo "FAIL: p11-kit cannot load $MODULE without LD_LIBRARY_PATH" >&2
-    echo "      reason: $REASON" >&2
-    echo "      RPATH is set but does not resolve a NEEDED dependency." >&2
-    exit 1
-fi
-
-if ! grep -q "^module: librescrs" <<<"$OUTPUT"; then
-    echo "FAIL: p11-kit did not register 'librescrs' module" >&2
-    echo "      p11-kit list-modules output:" >&2
-    sed 's/^/        /' <<<"$OUTPUT" >&2
-    exit 1
-fi
-
-echo "  p11-kit ok: module loaded without LD_LIBRARY_PATH"
 echo "PASS"

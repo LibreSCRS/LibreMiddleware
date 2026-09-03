@@ -170,66 +170,8 @@ jobs:
         timeout-minutes: 30
         run: ctest --output-on-failure --test-dir build --no-tests=error
 
-  pkcs11-linux:
-    needs: [verify-signature, test-linux]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libpcsclite-dev libcurl4-openssl-dev libxml2-dev \
-            cmake ninja-build python3-jsonschema
-
-      - name: Build
-        run: |
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
-          cmake --build build --target librescrs-pkcs11
-
-      - name: Package
-        run: scripts/linux/build-pkcs11-tar.sh build
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pkcs11-linux
-          path: librescrs-pkcs11-*.tar.gz
-
-  pkcs11-macos:
-    needs: [verify-signature, test-macos]
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
-
-      - name: Install build tools
-        run: |
-          brew install ninja autoconf automake libtool pkg-config
-          # manifest2header.py hard-fails when jsonschema is missing
-          # (the schema gates the codegen step against malformed manifests).
-          python3 -m pip install --break-system-packages --user jsonschema
-
-      - name: Build
-        run: |
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" -DBUILD_TESTING=OFF
-          cmake --build build --target librescrs-pkcs11
-
-      - name: Package
-        run: scripts/macos/build-pkcs11-zip.sh build
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pkcs11-macos
-          path: librescrs-pkcs11-*.zip
-
   release:
-    needs: [test-linux, shared-linux, test-macos, pkcs11-linux, pkcs11-macos]
+    needs: [test-linux, shared-linux, test-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write

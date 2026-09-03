@@ -374,3 +374,42 @@ jobs:
         # build-and-run.sh drives the full install -> consumer-configure
         # -> build -> run cycle and exits ==> OK on success.
         run: bash examples/sdk-consumer-config/build-and-run.sh
+
+      # --- PKCS#11 ownership -------------------------------------------------
+      # Registration belongs to the agent proxy. This install must contribute
+      # the library and no declaration at all — a property of the finished
+      # install tree, not of the rules that produced it, so it is checked by
+      # enumerating what p11-kit loads afterwards. The gate script lives in the
+      # Linux host repository and serves both invariants through a switch, so
+      # neither repository grows a second copy of it. Cross-checkout mirrors
+      # what that repository's own CI already does for this one.
+      - name: Checkout LibreLinux (for the shared PKCS#11 ownership gate)
+        uses: actions/checkout@v4
+        with:
+          repository: LibreSCRS/LibreLinux
+          ref: main
+          path: LibreLinux
+
+      - name: Build and install to the system prefix
+        # Its own step with its own ceiling: the vendored OpenSC autotools
+        # build does not fit inside a gate's budget, and when a step fails its
+        # name should say which half failed. LIBRESCRS_VENDOR_OPENSC=OFF
+        # because librescrs-pkcs11 is built unconditionally and neither the
+        # registration nor the rpath invariant needs the optional fallback
+        # provider it adds.
+        timeout-minutes: 30
+        run: |
+          sudo apt-get install -y p11-kit
+          cmake -B build-install -G Ninja -DCMAKE_BUILD_TYPE=Release \
+                -DBUILD_TESTING=OFF -DLIBRESCRS_VENDOR_OPENSC=OFF \
+                -DCMAKE_INSTALL_PREFIX=/usr
+          cmake --build build-install -j4
+          sudo cmake --install build-install
+
+      - name: Assert LM registers no PKCS#11 provider of its own
+        timeout-minutes: 5
+        run: LibreLinux/e2e/check-p11kit-single-owner.sh --expect none
+
+      - name: Assert the installed module carries a relative rpath
+        timeout-minutes: 5
+        run: bash ci/scripts/check-pkcs11-rpath.sh /usr
