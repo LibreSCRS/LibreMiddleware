@@ -18,6 +18,7 @@ on:
 
 jobs:
   analyze:
+    timeout-minutes: 60
     name: Analyze (cpp)
     runs-on: ubuntu-latest
     permissions:

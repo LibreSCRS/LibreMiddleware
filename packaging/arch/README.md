@@ -45,8 +45,8 @@ second source accordingly.
 ```sh
 # from the LibreMiddleware repo root
 REPO="$(git rev-parse --show-toplevel)"
-mkdir -p /tmp/lm-arch && cp packaging/arch/PKGBUILD /tmp/lm-arch/
-cd /tmp/lm-arch
+mkdir -p /var/tmp/lm-arch && cp packaging/arch/PKGBUILD /var/tmp/lm-arch/
+cd /var/tmp/lm-arch
 # Replace the two-entry release source=()/sha256sums=() arrays (both are
 # MULTI-LINE) with local-git equivalents using the range form `/^source=(/,/^)/c\…`
 # so the WHOLE array is replaced (a single-line s### would only touch the

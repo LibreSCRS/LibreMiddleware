@@ -46,8 +46,11 @@ if(NOT DEFINED PROJECT_VERSION)
   # the authoritative fallback BEFORE the 0.0.1 last-resort: without it a tarball
   # build silently yields SOVERSION 0 (libLibreSCRS_*.so.0), which breaks every
   # downstream `find_package(LibreMiddleware 4.x CONFIG)` at configure time.
-  # VERSION mirrors the most recent release tag and is bumped in lockstep with
-  # each new tag as part of the release process.
+  # VERSION carries the version this tree is heading for, not the last one it
+  # shipped. It is bumped at code freeze, which is what lets the
+  # CHANGELOG/VERSION check run on every push instead of first executing on a
+  # permanent tag. A development checkout is unaffected: `git describe` still
+  # wins, and VERSION is only the fallback for a tarball with no `.git`.
   if(EXISTS "${SRC_DIR}/VERSION")
     file(STRINGS "${SRC_DIR}/VERSION" PROJECT_VERSION LIMIT_COUNT 1)
     string(STRIP "${PROJECT_VERSION}" PROJECT_VERSION)

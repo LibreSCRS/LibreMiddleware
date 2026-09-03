@@ -15,7 +15,7 @@
 # (and its sha256) MUST be refreshed at tag time alongside the main tarball.
 
 pkgname=librescrs-middleware
-pkgver=4.2.0
+pkgver=5.0.0
 pkgrel=1
 pkgdesc="Qt-free C++23 smart-card middleware, card plugins, and PKCS#11 module for LibreSCRS (eID, ePassports, PIV, PKCS#15)"
 arch=('x86_64' 'aarch64')
@@ -41,6 +41,11 @@ makedepends=(
     'ninja'
     'git'           # GitVersion.cmake derives the version from tags
     'python'        # build-time manifest.json -> constexpr header codegen (REQUIRED)
+    'python-jsonschema' # manifest2header.py validates the manifest against its
+                    #   schema and HARD-FAILS without this, so the build stops at
+                    #   the first generated header. The CI image installs it; this
+                    #   recipe did not, and a clean chroot is the only place that
+                    #   difference shows
     'autoconf'      # vendored OpenSC ./bootstrap
     'automake'
     'libtool'

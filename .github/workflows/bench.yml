@@ -19,6 +19,7 @@ on:
 
 jobs:
   bench:
+    timeout-minutes: 30
     name: Google Benchmark
     runs-on: ubuntu-latest
     env:

@@ -9,7 +9,7 @@
 #
 # Downstream consumers (third-party GUIs, packagers, integrators) pull
 # the package in via:
-#   find_package(LibreMiddleware 4.0 REQUIRED CONFIG)
+#   find_package(LibreMiddleware 5.0 REQUIRED CONFIG)
 # and link against the namespaced LibreSCRS::* imported targets,
 # which carry their own transitive dependency chain (OpenSSL, PCSC,
 # bundled vendored static archives) so the consumer doesn't have to

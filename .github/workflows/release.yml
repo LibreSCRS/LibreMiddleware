@@ -17,7 +17,12 @@ env:
 
 jobs:
   verify-signature:
+    timeout-minutes: 10
     runs-on: ubuntu-latest
+    env:
+      # The release key's PRIMARY fingerprint, named once so the import check
+      # and the signature check cannot pin different keys across a rotation.
+      EXPECTED_FPR: '6B05889AC9A6A7188DF639B06F27A989C2031D16'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,13 +32,43 @@ jobs:
 
       - name: Import LibreSCRS release public key
         run: |
+          # The published project key travels with the repository. Report its
+          # absence in terms of what to do about it rather than letting gpg
+          # fail with a bare open error.
+          if [ ! -f KEYS ]; then
+            echo "::error::KEYS is missing from the repository root — a release tag cannot be verified without the published LibreSCRS release public key"
+            exit 1
+          fi
           gpg --import KEYS
-          EXPECTED_FPR='6B05889AC9A6A7188DF639B06F27A989C2031D16'
           gpg --list-keys --with-colons "$EXPECTED_FPR" | grep -q "^pub" \
             || { echo "::error::Public key import failed or fingerprint mismatch"; exit 1; }
 
       - name: Verify tag signature
-        run: git verify-tag "${{ github.ref_name }}"
+        # verify-tag alone accepts a good signature by ANY key in the keyring,
+        # so the signer is pinned by fingerprint through --raw's VALIDSIG line.
+        #
+        # Field order is the whole trick here. VALIDSIG's FIRST field is the
+        # fingerprint of the key that physically signed, and this project signs
+        # with a subkey (the primary is certify-only, `cSC`), so the first field
+        # is the SUBKEY. The primary — the identity worth pinning, because it
+        # outlives every subkey rotation — is VALIDSIG's LAST field. Matching
+        # the primary right after "VALIDSIG" therefore rejects every genuinely
+        # signed tag, and pinning the subkey instead would break at the next
+        # rotation; match the primary in the trailing position.
+        #
+        # Anchored, and deliberately not a bare fingerprint grep: gpg also
+        # emits KEY_CONSIDERED with the primary's fingerprint, and it does so
+        # even for a BADSIG, so a loose match would accept a forged tag.
+        #
+        # The ref name moves through the environment, never inline into the
+        # script — a git ref may carry shell metacharacters and the tag
+        # filter's trailing * accepts an arbitrary suffix.
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          git verify-tag --raw "$TAG" 2>&1 \
+            | grep -qE "^\[GNUPG:\] VALIDSIG [0-9A-F]{40} .* ${EXPECTED_FPR}\$" \
+            || { echo "::error::Tag $TAG is not signed by the LibreSCRS release key"; exit 1; }
 
   test-linux:
     needs: verify-signature
@@ -171,6 +206,7 @@ jobs:
         run: ctest --output-on-failure --test-dir build --no-tests=error
 
   release:
+    timeout-minutes: 20
     needs: [test-linux, shared-linux, test-macos]
     runs-on: ubuntu-latest
     permissions:
@@ -195,7 +231,10 @@ jobs:
       - name: Check out CHANGELOG
         uses: actions/checkout@v4
         with:
-          sparse-checkout: CHANGELOG.md
+          sparse-checkout: |
+            CHANGELOG.md
+            VERSION
+            ci/scripts/check-release-lockstep.sh
           sparse-checkout-cone-mode: false
           # Check out into a SUBDIR. The root workspace already holds the
           # downloaded + cosigned artifacts/, and actions/checkout wipes its
@@ -205,39 +244,20 @@ jobs:
           path: _changelog
 
       - name: Prepare release notes from CHANGELOG
-        # Extract the section whose `## ` header contains the tag version
-        # (matches `## [X.Y.Z]`, `## [X.Y.Z] — date`, or
-        # `## [Unreleased] — X.Y.Z`). Fall back to auto-generated notes when
-        # the CHANGELOG has no section for this tag so a release never ships
-        # empty notes. --generate-notes and --notes-file are mutually
-        # exclusive, hence the shell branch.
+        # One extractor, in ci/scripts/check-release-lockstep.sh, shared with
+        # the per-push agreement check. It used to be copied inline into every
+        # release workflow, and one of the copies had drifted: without escaping
+        # the version's dots, tag 5.0.0 also matched a [500.0] heading.
+        #
+        # --section exits non-zero when the section is missing OR holds only
+        # whitespace. Both have to fall back: `gh release create --notes-file`
+        # accepts a blank file and publishes a release with no body at all.
+        # --generate-notes and --notes-file are mutually exclusive, hence the
+        # shell branch.
         run: |
           VER="${GITHUB_REF_NAME#v}"
-          # Match a `## ` header where the version is delimited by a bracket or
-          # whitespace on each side, so tag 4.2.0 matches `## [4.2.0]` /
-          # `## [Unreleased] — 4.2.0` but NOT `## [4.2.0-rc1]` or `## [14.2.0]`.
-          # The version's dots are escaped on the way into the pattern: an
-          # unescaped `.` is "any character", so 4.2.0 would also match a
-          # `## [432.0]` header.
-          #
-          # A missing CHANGELOG is the no-section case, said out loud — this
-          # step runs under -e, and an awk over an absent file would otherwise
-          # kill it before the fallback branch below is ever reached.
-          if [ -f _changelog/CHANGELOG.md ]; then
-            awk -v ver="$VER" \
-              'BEGIN { gsub(/\./, "\\.", ver) }
-               /^## / { if ($0 ~ ("(\\[|[[:space:]])" ver "(\\]|[[:space:]]|$)")) {f=1; next} else if (f) exit } f' \
-              _changelog/CHANGELOG.md > "$RUNNER_TEMP/relnotes.md"
-          else
-            echo "::warning::CHANGELOG.md is absent at this tag"
-            : > "$RUNNER_TEMP/relnotes.md"
-          fi
-          # Test for a non-whitespace character rather than for file size: a
-          # header followed only by blank lines is a section that exists and
-          # says nothing, and `gh release create --notes-file` accepts a blank
-          # file and publishes a release with no body at all. That has to fall
-          # back too.
-          if grep -q '[^[:space:]]' "$RUNNER_TEMP/relnotes.md"; then
+          export CHANGELOG_FILE=_changelog/CHANGELOG.md
+          if _changelog/ci/scripts/check-release-lockstep.sh --section "$VER" > "$RUNNER_TEMP/relnotes.md"; then
             echo "NOTES_ARG=--notes-file $RUNNER_TEMP/relnotes.md" >> "$GITHUB_ENV"
           else
             echo "No CHANGELOG section for $VER — falling back to --generate-notes"

@@ -53,6 +53,20 @@ jobs:
         # that passed. Costs a second and builds nothing.
         run: ./ci/scripts/check-skip-reasons.sh
 
+      - name: Changelog and version agree on the pending release
+        # Run on every push with the version this tree is heading for, so the
+        # agreement is proved weeks before the tag rather than first on a tag
+        # that cannot be taken back. The release job calls the same script with
+        # the tag's version.
+        run: ci/scripts/check-release-lockstep.sh "$(head -n1 VERSION | tr -d '[:space:]')"
+
+      - name: Every job carries a time bound
+        # An unbounded job that hangs holds a runner for six hours and will
+        # not serve its log until the run is cancelled, so the failing test
+        # cannot even be named. This fails when a new job arrives without a
+        # bound, which is the only moment the omission is cheap to fix.
+        run: ci/scripts/check-job-timeouts.sh
+
   build-linux:
     # Two signing backends. `native` is the production path and carries the
     # release gates; `both` additionally compiles the DSS cross-verification
