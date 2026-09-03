@@ -137,6 +137,61 @@ target_include_directories(fuzz_csca_master_list PRIVATE
 target_link_libraries(fuzz_csca_master_list PRIVATE EMRTDCrypto)
 
 # ---------------------------------------------------------------------------
+# Harnesses: the eMRTD walkers that run over unauthenticated card bytes.
+#
+# Unlike the harnesses above, these compile the source under test INTO the
+# target. ${LIBRESCRS_FUZZ_FLAGS} is PRIVATE on an executable, so it reaches
+# that executable's own sources and nothing else: the libraries are built
+# without any sanitizer. A harness that only links them fuzzes uninstrumented
+# code, and a scalar read past the end of a buffer -- which is what these
+# walkers do on a hostile length -- is then not reported at all. The private
+# include directories and LIBRESCRS_INTERNAL_BUILD are copied from
+# lib/emrtd-crypto/CMakeLists.txt for the same reason: PRIVATE settings do not
+# arrive over the link. SmartCard_Impl is named on the link line for that same
+# reason: EMRTDCrypto links it PRIVATE, so the smartcard public include root and
+# the PC/SC interface it carries stop there, and apdu.h needs both.
+# ---------------------------------------------------------------------------
+set(LIBRESCRS_FUZZ_EMRTD_INCLUDES
+    ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/lib/SecureChannel/include)
+
+# Harness: parseSOD — EF.SOD, walked before its signature is checked.
+add_executable(fuzz_emrtd_sod
+    fuzz_emrtd_sod.cpp
+    ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src/passive_auth.cpp)
+target_compile_features(fuzz_emrtd_sod PRIVATE cxx_std_23)
+target_compile_options(fuzz_emrtd_sod PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_link_options(fuzz_emrtd_sod PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_compile_definitions(fuzz_emrtd_sod PRIVATE LIBRESCRS_INTERNAL_BUILD)
+target_include_directories(fuzz_emrtd_sod PRIVATE ${LIBRESCRS_FUZZ_EMRTD_INCLUDES})
+target_link_libraries(fuzz_emrtd_sod PRIVATE EMRTDCrypto SmartCard_Impl LibreSCRS_SecureChannel)
+
+# Harness: parseCardAccess — EF.CardAccess, read over a plain channel.
+add_executable(fuzz_emrtd_card_access
+    fuzz_emrtd_card_access.cpp
+    ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src/pace.cpp)
+target_compile_features(fuzz_emrtd_card_access PRIVATE cxx_std_23)
+target_compile_options(fuzz_emrtd_card_access PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_link_options(fuzz_emrtd_card_access PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_compile_definitions(fuzz_emrtd_card_access PRIVATE LIBRESCRS_INTERNAL_BUILD)
+target_include_directories(fuzz_emrtd_card_access PRIVATE ${LIBRESCRS_FUZZ_EMRTD_INCLUDES})
+target_link_libraries(fuzz_emrtd_card_access PRIVATE EMRTDCrypto SmartCard_Impl LibreSCRS_SecureChannel)
+
+# Harness: parseDG14 / parseDG15 — the security infos and the AA public key.
+add_executable(fuzz_emrtd_security_info
+    fuzz_emrtd_security_info.cpp
+    ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src/chip_auth.cpp
+    ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src/active_auth.cpp)
+target_compile_features(fuzz_emrtd_security_info PRIVATE cxx_std_23)
+target_compile_options(fuzz_emrtd_security_info PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_link_options(fuzz_emrtd_security_info PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_compile_definitions(fuzz_emrtd_security_info PRIVATE LIBRESCRS_INTERNAL_BUILD)
+target_include_directories(fuzz_emrtd_security_info PRIVATE ${LIBRESCRS_FUZZ_EMRTD_INCLUDES})
+target_link_libraries(fuzz_emrtd_security_info PRIVATE EMRTDCrypto SmartCard_Impl LibreSCRS_SecureChannel)
+
+# ---------------------------------------------------------------------------
 # Harness: TlSignatureVerifier::verify (with constant signing cert)
 # ---------------------------------------------------------------------------
 add_executable(fuzz_tl_signature_verifier

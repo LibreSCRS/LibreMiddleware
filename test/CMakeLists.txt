@@ -581,7 +581,10 @@ target_link_libraries(EMRTDCryptoTests
 target_include_directories(EMRTDCryptoTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src
 )
-target_compile_definitions(EMRTDCryptoTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+target_compile_definitions(EMRTDCryptoTests PRIVATE LIBRESCRS_INTERNAL_BUILD
+    # The bounds cases read the SAME files the fuzz harnesses seed from, so a
+    # corpus entry and its regression case cannot drift apart.
+    LIBRESCRS_FUZZ_CORPUS_DIR="${PROJECT_SOURCE_DIR}/fuzz/corpus")
 gtest_discover_tests(EMRTDCryptoTests)
 
 add_executable(EMRTDTests

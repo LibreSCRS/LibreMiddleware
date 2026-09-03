@@ -9,6 +9,10 @@
 
 #include <algorithm>
 #include <array>
+#include <fstream>
+#include <iterator>
+#include <string>
+#include <vector>
 
 using namespace emrtd::crypto;
 
@@ -435,4 +439,59 @@ TEST(DISABLED_PaceMrzKatBSI, StepAuthTokenTIFD)
     // auto actual = detail::aesCMAC(kMac, pkdoIcc);
     // EXPECT_EQ(actual, expectedTIfd);
     GTEST_SKIP() << "Awaiting BSI TR-03110-3 Annex G.1 vectors";
+}
+
+// ---------------------------------------------------------------------------
+// Bounds tests over the committed EF.CardAccess fuzz corpus.
+//
+// The files are the fuzz seeds themselves, read from fuzz/corpus/, so a seed
+// and its regression case cannot drift apart. Each hostile input declares a
+// length the chip did not send; the walker must stop rather than run off the
+// end or drive its cursor backwards.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+std::vector<uint8_t> readCorpusFile(const std::string& subdir, const std::string& leaf)
+{
+    const std::string path = std::string(LIBRESCRS_FUZZ_CORPUS_DIR) + "/" + subdir + "/" + leaf;
+    std::ifstream in(path, std::ios::binary);
+    EXPECT_TRUE(in.good()) << "corpus file missing: " << path;
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    EXPECT_FALSE(bytes.empty()) << "corpus file empty: " << path;
+    return bytes;
+}
+
+std::vector<uint8_t> readCardAccessCorpus(const std::string& leaf)
+{
+    return readCorpusFile("emrtd_card_access", leaf);
+}
+
+} // namespace
+
+TEST(PACEBoundsTest, SeqEndWrapReturns)
+{
+    // An eight-octet SEQUENCE length whose value makes pos + length wrap, so
+    // the computed end lands behind the cursor and the walk never advances.
+    const auto cardAccess = readCardAccessCorpus("ca_seqend_wrap.bin");
+    const auto oids = parseCardAccess(cardAccess);
+    EXPECT_TRUE(oids.empty());
+}
+
+TEST(PACEBoundsTest, SkipWrapReturns)
+{
+    // The same wrapping length behind a non-SEQUENCE tag, so the skip branch
+    // takes it: pos += lenBytes + len wraps there instead.
+    const auto cardAccess = readCardAccessCorpus("ca_skip_wrap.bin");
+    const auto oids = parseCardAccess(cardAccess);
+    EXPECT_TRUE(oids.empty());
+}
+
+TEST(PACEBoundsTest, FourOctetLengthReturns)
+{
+    // Four length octets, a well-formed encoding: a cap on the NUMBER of
+    // length octets accepts this input and it still wraps the cursor.
+    const auto cardAccess = readCardAccessCorpus("ca_fuzz_found_hang.bin");
+    const auto oids = parseCardAccess(cardAccess);
+    EXPECT_TRUE(oids.empty());
 }

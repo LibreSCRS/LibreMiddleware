@@ -22,6 +22,7 @@ add_library(EMRTDCrypto STATIC
     src/chip_auth.h
     src/active_auth.h
     src/csca_master_list.h
+    src/tlv_bounds.h
 )
 
 target_compile_definitions(EMRTDCrypto PRIVATE LIBRESCRS_INTERNAL_BUILD)

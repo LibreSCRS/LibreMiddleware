@@ -21,6 +21,10 @@ jobs:
   libfuzzer:
     name: libFuzzer / ${{ matrix.harness }}
     runs-on: ubuntu-latest
+    # A job that hangs serves no log at all while it runs, so a hung harness
+    # would otherwise burn the six-hour default before anyone could see which
+    # input did it.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -31,6 +35,9 @@ jobs:
           - fuzz_pkcs15_parser
           - fuzz_emrtd_dg_parser
           - fuzz_csca_master_list
+          - fuzz_emrtd_sod
+          - fuzz_emrtd_card_access
+          - fuzz_emrtd_security_info
     steps:
       - uses: actions/checkout@v4
         with:
@@ -85,6 +92,9 @@ jobs:
             fuzz_pkcs15_parser)          echo "path=fuzz/corpus/pkcs15_parser" >>$GITHUB_OUTPUT;;
             fuzz_emrtd_dg_parser)        echo "path=fuzz/corpus/emrtd_dg_parser" >>$GITHUB_OUTPUT;;
             fuzz_csca_master_list)       echo "path=fuzz/corpus/csca_master_list" >>$GITHUB_OUTPUT;;
+            fuzz_emrtd_sod)              echo "path=fuzz/corpus/emrtd_sod" >>$GITHUB_OUTPUT;;
+            fuzz_emrtd_card_access)      echo "path=fuzz/corpus/emrtd_card_access" >>$GITHUB_OUTPUT;;
+            fuzz_emrtd_security_info)    echo "path=fuzz/corpus/emrtd_security_info" >>$GITHUB_OUTPUT;;
           esac
 
       - name: Run fuzzer (60 s)
@@ -92,6 +102,7 @@ jobs:
           mkdir -p fuzz-artifacts
           ./build-fuzz/fuzz/${{ matrix.harness }} \
             -max_total_time=60 \
+            -timeout=10 \
             -print_final_stats=1 \
             -artifact_prefix=fuzz-artifacts/ \
             ${{ steps.corpus.outputs.path }}

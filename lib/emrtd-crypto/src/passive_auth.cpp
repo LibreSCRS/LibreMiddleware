@@ -3,6 +3,8 @@
 
 #include "passive_auth.h"
 
+#include "tlv_bounds.h"
+
 #include "csca_master_list.h"
 
 #include <openssl/bio.h>
@@ -12,6 +14,7 @@
 #include <openssl/x509.h>
 
 #include <cstring>
+#include <span>
 #include <memory>
 #include <stdexcept>
 
@@ -78,26 +81,9 @@ using X509StackPtr = std::unique_ptr<STACK_OF(X509), X509StackDeleter>;
 // ASN.1 / BER-TLV helpers for LDSSecurityObject parsing
 // ---------------------------------------------------------------------------
 
-// Parse a BER-TLV length field starting at data[pos]. Returns (length, bytesConsumed).
-static std::pair<size_t, size_t> parseBERLength(const uint8_t* data, size_t dataLen, size_t pos)
-{
-    if (pos >= dataLen)
-        return {0, 0};
-
-    uint8_t first = data[pos];
-    if (first < 0x80) {
-        return {first, 1};
-    }
-    size_t numBytes = first & 0x7F;
-    if (numBytes == 0 || numBytes > sizeof(size_t) || pos + 1 + numBytes > dataLen)
-        return {0, 0};
-
-    size_t len = 0;
-    for (size_t i = 0; i < numBytes; ++i) {
-        len = (len << 8) | data[pos + 1 + i];
-    }
-    return {len, 1 + numBytes};
-}
+// Bounds-checked BER-TLV length read, shared by every parser in this library.
+using detail::readLength;
+using detail::readLengthClamped;
 
 // Map OID bytes to hash algorithm name
 static std::string oidToHashAlgorithm(const uint8_t* oidBytes, size_t oidLen)
@@ -148,8 +134,9 @@ static const EVP_MD* hashAlgorithmToMD(const std::string& algo)
 //   dataGroupNumber  INTEGER,
 //   dataGroupHashValue OCTET STRING
 // }
-static std::optional<SODContent> parseLDSSecurityObject(const uint8_t* data, size_t dataLen)
+static std::optional<SODContent> parseLDSSecurityObject(std::span<const std::uint8_t> data)
 {
+    const size_t dataLen = data.size();
     if (dataLen < 2)
         return std::nullopt;
 
@@ -159,7 +146,7 @@ static std::optional<SODContent> parseLDSSecurityObject(const uint8_t* data, siz
     if (data[pos] != 0x30)
         return std::nullopt;
     ++pos;
-    auto [seqLen, seqLenBytes] = parseBERLength(data, dataLen, pos);
+    auto [seqLen, seqLenBytes] = readLength(data, pos);
     if (seqLenBytes == 0)
         return std::nullopt;
     pos += seqLenBytes;
@@ -168,7 +155,7 @@ static std::optional<SODContent> parseLDSSecurityObject(const uint8_t* data, siz
     if (pos >= dataLen || data[pos] != 0x02)
         return std::nullopt;
     ++pos;
-    auto [verLen, verLenBytes] = parseBERLength(data, dataLen, pos);
+    auto [verLen, verLenBytes] = readLength(data, pos);
     if (verLenBytes == 0)
         return std::nullopt;
     pos += verLenBytes + verLen;
@@ -177,7 +164,7 @@ static std::optional<SODContent> parseLDSSecurityObject(const uint8_t* data, siz
     if (pos >= dataLen || data[pos] != 0x30)
         return std::nullopt;
     ++pos;
-    auto [algoSeqLen, algoSeqLenBytes] = parseBERLength(data, dataLen, pos);
+    auto [algoSeqLen, algoSeqLenBytes] = readLength(data, pos);
     if (algoSeqLenBytes == 0)
         return std::nullopt;
     pos += algoSeqLenBytes;
@@ -187,13 +174,13 @@ static std::optional<SODContent> parseLDSSecurityObject(const uint8_t* data, siz
     if (pos >= dataLen || data[pos] != 0x06)
         return std::nullopt;
     ++pos;
-    auto [oidLen, oidLenBytes] = parseBERLength(data, dataLen, pos);
+    auto [oidLen, oidLenBytes] = readLength(data, pos);
     if (oidLenBytes == 0)
         return std::nullopt;
     pos += oidLenBytes;
 
     SODContent result;
-    result.hashAlgorithm = oidToHashAlgorithm(data + pos, oidLen);
+    result.hashAlgorithm = oidToHashAlgorithm(data.data() + pos, oidLen);
     if (result.hashAlgorithm.empty())
         return std::nullopt;
 
@@ -203,7 +190,7 @@ static std::optional<SODContent> parseLDSSecurityObject(const uint8_t* data, siz
     if (pos >= dataLen || data[pos] != 0x30)
         return std::nullopt;
     ++pos;
-    auto [dgSeqLen, dgSeqLenBytes] = parseBERLength(data, dataLen, pos);
+    auto [dgSeqLen, dgSeqLenBytes] = readLength(data, pos);
     if (dgSeqLenBytes == 0)
         return std::nullopt;
     pos += dgSeqLenBytes;
@@ -214,7 +201,7 @@ static std::optional<SODContent> parseLDSSecurityObject(const uint8_t* data, siz
         if (data[pos] != 0x30)
             return std::nullopt;
         ++pos;
-        auto [dghLen, dghLenBytes] = parseBERLength(data, dataLen, pos);
+        auto [dghLen, dghLenBytes] = readLength(data, pos);
         if (dghLenBytes == 0)
             return std::nullopt;
         pos += dghLenBytes;
@@ -223,27 +210,31 @@ static std::optional<SODContent> parseLDSSecurityObject(const uint8_t* data, siz
         if (pos >= dataLen || data[pos] != 0x02)
             return std::nullopt;
         ++pos;
-        auto [dgNumLen, dgNumLenBytes] = parseBERLength(data, dataLen, pos);
+        auto [dgNumLen, dgNumLenBytes] = readLength(data, pos);
         if (dgNumLenBytes == 0 || dgNumLen == 0)
             return std::nullopt;
         pos += dgNumLenBytes;
 
-        int dgNum = 0;
+        // Accumulate unsigned: a chip may declare four length octets, and
+        // shifting those into a signed int overflows it.
+        std::uint32_t dgNumBits = 0;
         for (size_t i = 0; i < dgNumLen; ++i) {
-            dgNum = (dgNum << 8) | data[pos + i];
+            dgNumBits = (dgNumBits << 8) | data[pos + i];
         }
+        const int dgNum = static_cast<int>(dgNumBits & 0x7FFFFFFFU);
         pos += dgNumLen;
 
         // dataGroupHashValue OCTET STRING
         if (pos >= dataLen || data[pos] != 0x04)
             return std::nullopt;
         ++pos;
-        auto [hashLen, hashLenBytes] = parseBERLength(data, dataLen, pos);
+        auto [hashLen, hashLenBytes] = readLength(data, pos);
         if (hashLenBytes == 0)
             return std::nullopt;
         pos += hashLenBytes;
 
-        result.dgHashes[dgNum] = std::vector<uint8_t>(data + pos, data + pos + hashLen);
+        result.dgHashes[dgNum] = std::vector<uint8_t>(data.begin() + static_cast<ptrdiff_t>(pos),
+                                                      data.begin() + static_cast<ptrdiff_t>(pos + hashLen));
         pos += hashLen;
     }
 
@@ -251,7 +242,7 @@ static std::optional<SODContent> parseLDSSecurityObject(const uint8_t* data, siz
     // We don't strictly need it for PA, but parse if present
     if (pos < dataLen && data[pos] == 0x30) {
         ++pos;
-        auto [verInfoLen, verInfoLenBytes] = parseBERLength(data, dataLen, pos);
+        auto [verInfoLen, verInfoLenBytes] = readLength(data, pos);
         if (verInfoLenBytes > 0) {
             pos += verInfoLenBytes;
             size_t verInfoEnd = pos + verInfoLen;
@@ -259,10 +250,10 @@ static std::optional<SODContent> parseLDSSecurityObject(const uint8_t* data, siz
             // ldsVersion PrintableString or UTF8String
             if (pos < verInfoEnd && (data[pos] == 0x13 || data[pos] == 0x0C)) {
                 ++pos;
-                auto [ldsVerLen, ldsVerLenBytes] = parseBERLength(data, dataLen, pos);
+                auto [ldsVerLen, ldsVerLenBytes] = readLength(data, pos);
                 if (ldsVerLenBytes > 0) {
                     pos += ldsVerLenBytes;
-                    result.ldsVersion = std::string(reinterpret_cast<const char*>(data + pos), ldsVerLen);
+                    result.ldsVersion = std::string(reinterpret_cast<const char*>(data.data() + pos), ldsVerLen);
                     pos += ldsVerLen;
                 }
             }
@@ -270,10 +261,10 @@ static std::optional<SODContent> parseLDSSecurityObject(const uint8_t* data, siz
             // unicodeVersion PrintableString or UTF8String
             if (pos < verInfoEnd && (data[pos] == 0x13 || data[pos] == 0x0C)) {
                 ++pos;
-                auto [uniVerLen, uniVerLenBytes] = parseBERLength(data, dataLen, pos);
+                auto [uniVerLen, uniVerLenBytes] = readLength(data, pos);
                 if (uniVerLenBytes > 0) {
                     pos += uniVerLenBytes;
-                    result.unicodeVersion = std::string(reinterpret_cast<const char*>(data + pos), uniVerLen);
+                    result.unicodeVersion = std::string(reinterpret_cast<const char*>(data.data() + pos), uniVerLen);
                 }
             }
         }
@@ -296,7 +287,10 @@ static std::vector<uint8_t> extractCMSFromSOD(const std::vector<uint8_t>& sodRaw
     // EF.SOD outer tag is 0x77
     if (sodRaw[pos] == 0x77) {
         ++pos;
-        auto [len, lenBytes] = parseBERLength(sodRaw.data(), sodRaw.size(), pos);
+        // The 0x77 wrapper declares the whole file; a file read in blocks can
+        // legitimately arrive with fewer bytes than that, so clamp instead of
+        // refusing. The CMS decoder judges what is actually there.
+        auto [len, lenBytes] = readLengthClamped(sodRaw, pos);
         if (lenBytes == 0)
             return {};
         pos += lenBytes;
@@ -341,7 +335,7 @@ std::optional<SODContent> parseSOD(const std::vector<uint8_t>& sodRaw)
     const uint8_t* eContentData = eContent->data;
     size_t eContentLen = static_cast<size_t>(eContent->length);
 
-    return parseLDSSecurityObject(eContentData, eContentLen);
+    return parseLDSSecurityObject({eContentData, eContentLen});
 }
 
 PAResult::Status verifyDGHash(const std::vector<uint8_t>& dgRaw, const std::vector<uint8_t>& expectedHash,

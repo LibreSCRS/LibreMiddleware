@@ -31,7 +31,9 @@
 #include <map>
 #include <optional>
 #include <stdexcept>
+#include <iterator>
 #include <string>
+#include <vector>
 
 #include <unistd.h> // geteuid, for the root-runs-ignore-permissions guard below
 
@@ -5067,4 +5069,117 @@ TEST_F(CscaWiringTest, PassesWhicheverOrderTheDirectoryHandsTheLinkAndTheNewCsca
     std::reverse(loaded.begin(), loaded.end());
     EXPECT_EQ(emrtd::crypto::evaluateCscaChain(sod, loaded, true), emrtd::crypto::CscaVerdict::Passed)
         << "the link certificate reached first must not turn a genuine document into a forgery";
+}
+
+// ---------------------------------------------------------------------------
+// Bounds tests over the committed EF.SOD and DG14 fuzz corpora.
+//
+// The files are the fuzz seeds themselves, read from fuzz/corpus/, so a seed
+// and its regression case cannot drift apart. Every hostile input declares a
+// length larger than what the chip sent; the walker must refuse rather than
+// read past the buffer or wrap its cursor.
+//
+// One input is deliberately NOT covered here: sod_oob_dgnum.der reads other
+// people's bytes in a scalar loop and returns nullopt either way, so this
+// suite -- which runs with no sanitizer at all -- cannot tell the broken walk
+// from the fixed one. The fuzz harness, which compiles the walker into an
+// instrumented target, is what reports that one.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+std::vector<uint8_t> readBoundsCorpusFile(const std::string& subdir, const std::string& leaf)
+{
+    const std::string path = std::string(LIBRESCRS_FUZZ_CORPUS_DIR) + "/" + subdir + "/" + leaf;
+    std::ifstream in(path, std::ios::binary);
+    EXPECT_TRUE(in.good()) << "corpus file missing: " << path;
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    EXPECT_FALSE(bytes.empty()) << "corpus file empty: " << path;
+    return bytes;
+}
+
+std::vector<uint8_t> readDG14Corpus(const std::string& leaf)
+{
+    return readBoundsCorpusFile("emrtd_security_info", leaf);
+}
+
+std::vector<uint8_t> readSODCorpus(const std::string& leaf)
+{
+    return readBoundsCorpusFile("emrtd_sod", leaf);
+}
+
+} // namespace
+
+TEST(DG14BoundsTest, SeqEndWrapReturnsFalse)
+{
+    const auto dg14 = readDG14Corpus("dg14_seqend_wrap.bin");
+    std::vector<emrtd::crypto::ChipAuthInfo> infos;
+    std::vector<emrtd::crypto::ChipAuthPublicKey> keys;
+    EXPECT_FALSE(emrtd::crypto::parseDG14(dg14, infos, keys));
+}
+
+TEST(DG14BoundsTest, SkipWrapReturnsFalse)
+{
+    const auto dg14 = readDG14Corpus("dg14_skip_wrap.bin");
+    std::vector<emrtd::crypto::ChipAuthInfo> infos;
+    std::vector<emrtd::crypto::ChipAuthPublicKey> keys;
+    EXPECT_FALSE(emrtd::crypto::parseDG14(dg14, infos, keys));
+}
+
+TEST(DG14BoundsTest, SpkiWrapReturnsFalse)
+{
+    // The SubjectPublicKeyInfo length wraps, so 1 + lenBytes + len underflows
+    // and the iterator pair handed to the vector constructor is inverted.
+    const auto dg14 = readDG14Corpus("dg14_spki_wrap.bin");
+    std::vector<emrtd::crypto::ChipAuthInfo> infos;
+    std::vector<emrtd::crypto::ChipAuthPublicKey> keys;
+    EXPECT_FALSE(emrtd::crypto::parseDG14(dg14, infos, keys));
+}
+
+TEST(SODBoundsTest, HashLenRejected)
+{
+    // 04 82 0F FF: a data group hash declaring 4095 bytes with four present.
+    const auto sod = readSODCorpus("sod_oob_hashlen.der");
+    EXPECT_FALSE(emrtd::crypto::parseSOD(sod).has_value());
+}
+
+TEST(SODBoundsTest, LdsVersionRejected)
+{
+    // 13 82 02 00: an LDS version string declaring 512 bytes with one present.
+    //
+    // Unlike the three cases around it this object still yields a result: it
+    // carries one well-formed data group hash, and parseSOD refuses only when
+    // it has none. What must not survive is the version string, which today is
+    // 512 bytes carved out of whatever follows the object.
+    const auto sodRaw = readSODCorpus("sod_oob_ldsver.der");
+    const auto sod = emrtd::crypto::parseSOD(sodRaw);
+    ASSERT_TRUE(sod.has_value());
+    EXPECT_TRUE(sod->ldsVersion.empty()) << "ldsVersion length: " << sod->ldsVersion.size();
+}
+
+TEST(SODBoundsTest, HugeHashLenRejected)
+{
+    // 04 84 40 00 00 00: a hash declaring 0x40000000 bytes with four present.
+    const auto sod = readSODCorpus("sod_oob_hashlen_1g.der");
+    EXPECT_FALSE(emrtd::crypto::parseSOD(sod).has_value());
+}
+
+TEST(SODBoundsTest, DgNumRejected)
+{
+    // 02 82 10 00: a data group number declaring 4096 bytes with one present.
+    const auto sod = readSODCorpus("sod_oob_dgnum.der");
+    EXPECT_FALSE(emrtd::crypto::parseSOD(sod).has_value());
+}
+
+TEST(SODBoundsTest, WellFormedSodStillParses)
+{
+    // The regression anchor: a bounded read must not refuse a conformant
+    // object. Rejecting everything would pass all four cases above.
+    const auto sodRaw = readSODCorpus("sod_good.bin");
+    const auto sod = emrtd::crypto::parseSOD(sodRaw);
+    ASSERT_TRUE(sod.has_value());
+    EXPECT_EQ(sod->hashAlgorithm, "SHA-256");
+    EXPECT_EQ(sod->dgHashes.size(), 2u);
+    EXPECT_EQ(sod->ldsVersion.size(), 4u);
+    EXPECT_EQ(sod->unicodeVersion.size(), 6u);
 }

@@ -3,6 +3,8 @@
 
 #include "active_auth.h"
 
+#include "tlv_bounds.h"
+
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <apdu.h>
@@ -43,25 +45,8 @@ using EVPMDCtxPtr = std::unique_ptr<EVP_MD_CTX, EVPMDCtxDeleter>;
 // BER-TLV helpers (minimal)
 // ---------------------------------------------------------------------------
 
-static std::pair<size_t, size_t> parseBERLength(const std::vector<uint8_t>& data, size_t pos)
-{
-    if (pos >= data.size())
-        return {0, 0};
-
-    uint8_t first = data[pos];
-    if (first < 0x80) {
-        return {first, 1};
-    }
-    size_t numBytes = first & 0x7F;
-    if (numBytes == 0 || numBytes > sizeof(size_t) || pos + 1 + numBytes > data.size())
-        return {0, 0};
-
-    size_t len = 0;
-    for (size_t i = 0; i < numBytes; ++i) {
-        len = (len << 8) | data[pos + 1 + i];
-    }
-    return {len, 1 + numBytes};
-}
+// Bounds-checked BER-TLV length read, shared by every parser in this library.
+using detail::readLength;
 
 // ---------------------------------------------------------------------------
 // parseDG15 — extract SubjectPublicKeyInfo from DG15 (tag 0x6F)
@@ -80,7 +65,7 @@ AAPublicKey parseDG15(const std::vector<uint8_t>& dg15Raw)
         return result;
     pos++;
 
-    auto [outerLen, outerLenBytes] = parseBERLength(dg15Raw, pos);
+    auto [outerLen, outerLenBytes] = readLength(dg15Raw, pos);
     pos += outerLenBytes;
     if (outerLen == 0 || pos + outerLen > dg15Raw.size())
         return result;

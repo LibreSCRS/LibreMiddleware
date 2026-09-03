@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "chip_auth.h"
+
+#include "tlv_bounds.h"
 #include "crypto_utils.h"
 
 #include <LibreSCRS/CancelToken.h>
@@ -90,25 +92,9 @@ using EVPPKeyCtxPtr = std::unique_ptr<EVP_PKEY_CTX, EVPPKeyCtxDeleter>;
 // BER-TLV helpers
 // ---------------------------------------------------------------------------
 
-static std::pair<size_t, size_t> parseBERLength(const std::vector<uint8_t>& data, size_t pos)
-{
-    if (pos >= data.size())
-        return {0, 0};
-
-    uint8_t first = data[pos];
-    if (first < 0x80) {
-        return {first, 1};
-    }
-    size_t numBytes = first & 0x7F;
-    if (numBytes == 0 || numBytes > sizeof(size_t) || pos + 1 + numBytes > data.size())
-        return {0, 0};
-
-    size_t len = 0;
-    for (size_t i = 0; i < numBytes; ++i) {
-        len = (len << 8) | data[pos + 1 + i];
-    }
-    return {len, 1 + numBytes};
-}
+// Bounds-checked BER-TLV length read, shared by every parser in this library.
+using detail::readLength;
+using detail::readLengthClamped;
 
 static std::string oidBytesToString(const uint8_t* data, size_t len)
 {
@@ -226,7 +212,7 @@ bool parseDG14(const std::vector<uint8_t>& dg14Raw, std::vector<ChipAuthInfo>& c
         return false;
     pos++;
 
-    auto [outerLen, outerLenBytes] = parseBERLength(dg14Raw, pos);
+    auto [outerLen, outerLenBytes] = readLength(dg14Raw, pos);
     pos += outerLenBytes;
     if (outerLen == 0 || pos + outerLen > dg14Raw.size())
         return false;
@@ -236,24 +222,31 @@ bool parseDG14(const std::vector<uint8_t>& dg14Raw, std::vector<ChipAuthInfo>& c
         return false;
     pos++;
 
-    auto [setLen, setLenBytes] = parseBERLength(dg14Raw, pos);
+    // The SET may declare more than one READ BINARY block returned, so its
+    // length is clamped rather than refused; every length inside it must be
+    // contained.
+    auto [setLen, setLenBytes] = readLengthClamped(dg14Raw, pos);
+    if (setLenBytes == 0)
+        return false;
     pos += setLenBytes;
     size_t setEnd = pos + setLen;
-    if (setEnd > dg14Raw.size())
-        setEnd = dg14Raw.size();
 
     // Iterate SEQUENCE entries in the SET
     while (pos + 2 <= setEnd) {
         if (dg14Raw[pos] != 0x30) {
             // Skip non-SEQUENCE
             pos++;
-            auto [skipLen, skipLenBytes] = parseBERLength(dg14Raw, pos);
+            auto [skipLen, skipLenBytes] = readLength(dg14Raw, pos);
+            if (skipLenBytes == 0)
+                break; // unusable length: stop, do not treat it as empty
             pos += skipLenBytes + skipLen;
             continue;
         }
         pos++; // skip 0x30 tag
 
-        auto [seqLen, seqLenBytes] = parseBERLength(dg14Raw, pos);
+        auto [seqLen, seqLenBytes] = readLength(dg14Raw, pos);
+        if (seqLenBytes == 0)
+            break;
         pos += seqLenBytes;
         size_t seqEnd = pos + seqLen;
         if (seqEnd > setEnd)
@@ -264,7 +257,7 @@ bool parseDG14(const std::vector<uint8_t>& dg14Raw, std::vector<ChipAuthInfo>& c
         std::vector<uint8_t> oidRawBytes;
         if (pos < seqEnd && dg14Raw[pos] == 0x06) {
             pos++; // skip 0x06 tag
-            auto [oidLen, oidLenBytes] = parseBERLength(dg14Raw, pos);
+            auto [oidLen, oidLenBytes] = readLength(dg14Raw, pos);
             pos += oidLenBytes;
             if (pos + oidLen <= seqEnd) {
                 oid = oidBytesToString(dg14Raw.data() + pos, oidLen);
@@ -282,12 +275,13 @@ bool parseDG14(const std::vector<uint8_t>& dg14Raw, std::vector<ChipAuthInfo>& c
             // Parse version INTEGER
             if (pos < seqEnd && dg14Raw[pos] == 0x02) {
                 pos++;
-                auto [intLen, intLenBytes] = parseBERLength(dg14Raw, pos);
+                auto [intLen, intLenBytes] = readLength(dg14Raw, pos);
                 pos += intLenBytes;
-                int val = 0;
+                std::uint32_t bits = 0;
                 for (size_t i = 0; i < intLen && pos + i < seqEnd; ++i) {
-                    val = (val << 8) | dg14Raw[pos + i];
+                    bits = (bits << 8) | dg14Raw[pos + i];
                 }
+                const int val = static_cast<int>(bits & 0x7FFFFFFFU);
                 info.version = val;
                 pos += intLen;
             }
@@ -295,12 +289,13 @@ bool parseDG14(const std::vector<uint8_t>& dg14Raw, std::vector<ChipAuthInfo>& c
             // Parse optional keyId INTEGER
             if (pos < seqEnd && dg14Raw[pos] == 0x02) {
                 pos++;
-                auto [intLen, intLenBytes] = parseBERLength(dg14Raw, pos);
+                auto [intLen, intLenBytes] = readLength(dg14Raw, pos);
                 pos += intLenBytes;
-                int val = 0;
+                std::uint32_t bits = 0;
                 for (size_t i = 0; i < intLen && pos + i < seqEnd; ++i) {
-                    val = (val << 8) | dg14Raw[pos + i];
+                    bits = (bits << 8) | dg14Raw[pos + i];
                 }
+                const int val = static_cast<int>(bits & 0x7FFFFFFFU);
                 info.keyId = val;
                 pos += intLen;
             }
@@ -315,7 +310,9 @@ bool parseDG14(const std::vector<uint8_t>& dg14Raw, std::vector<ChipAuthInfo>& c
             if (pos < seqEnd && dg14Raw[pos] == 0x30) {
                 size_t spkiStart = pos;
                 pos++; // skip 0x30 tag
-                auto [spkiLen, spkiLenBytes] = parseBERLength(dg14Raw, pos);
+                auto [spkiLen, spkiLenBytes] = readLength(dg14Raw, pos);
+                if (spkiLenBytes == 0)
+                    break; // unusable length: this is not a key we can read
                 // SubjectPublicKeyInfo DER = tag + length bytes + content
                 size_t spkiTotalLen = 1 + spkiLenBytes + spkiLen;
                 if (spkiStart + spkiTotalLen <= seqEnd) {
@@ -328,12 +325,13 @@ bool parseDG14(const std::vector<uint8_t>& dg14Raw, std::vector<ChipAuthInfo>& c
             // Parse optional keyId INTEGER
             if (pos < seqEnd && dg14Raw[pos] == 0x02) {
                 pos++;
-                auto [intLen, intLenBytes] = parseBERLength(dg14Raw, pos);
+                auto [intLen, intLenBytes] = readLength(dg14Raw, pos);
                 pos += intLenBytes;
-                int val = 0;
+                std::uint32_t bits = 0;
                 for (size_t i = 0; i < intLen && pos + i < seqEnd; ++i) {
-                    val = (val << 8) | dg14Raw[pos + i];
+                    bits = (bits << 8) | dg14Raw[pos + i];
                 }
+                const int val = static_cast<int>(bits & 0x7FFFFFFFU);
                 key.keyId = val;
                 pos += intLen;
             }

@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "pace.h"
+
+#include "tlv_bounds.h"
 #include "crypto_utils.h"
 
 #include <apdu.h>
@@ -72,25 +74,9 @@ using ECPointPtr = std::unique_ptr<EC_POINT, ECPointDeleter>;
 // ---------------------------------------------------------------------------
 
 // Parse a BER-TLV length field starting at data[pos]. Returns (length, bytesConsumed).
-static std::pair<size_t, size_t> parseBERLength(const std::vector<uint8_t>& data, size_t pos)
-{
-    if (pos >= data.size())
-        return {0, 0};
-
-    uint8_t first = data[pos];
-    if (first < 0x80) {
-        return {first, 1};
-    }
-    size_t numBytes = first & 0x7F;
-    if (numBytes == 0 || numBytes > sizeof(size_t) || pos + 1 + numBytes > data.size())
-        return {0, 0};
-
-    size_t len = 0;
-    for (size_t i = 0; i < numBytes; ++i) {
-        len = (len << 8) | data[pos + 1 + i];
-    }
-    return {len, 1 + numBytes};
-}
+// Bounds-checked BER-TLV length read, shared by every parser in this library.
+using detail::readLength;
+using detail::readLengthClamped;
 
 // Decode an ASN.1 OID from raw bytes to dotted notation string
 static std::string oidBytesToString(const uint8_t* data, size_t len)
@@ -225,7 +211,7 @@ static std::vector<uint8_t> extractDO(const std::vector<uint8_t>& data, uint8_t 
     if (data.size() < 2 || data[0] != 0x7C)
         return {};
 
-    auto [outerLen, outerLenBytes] = parseBERLength(data, 1);
+    auto [outerLen, outerLenBytes] = readLength(data, 1);
     size_t pos = 1 + outerLenBytes;
     size_t end = pos + outerLen;
     if (end > data.size())
@@ -233,7 +219,7 @@ static std::vector<uint8_t> extractDO(const std::vector<uint8_t>& data, uint8_t 
 
     while (pos + 2 <= end) {
         uint8_t t = data[pos++];
-        auto [len, lenBytes] = parseBERLength(data, pos);
+        auto [len, lenBytes] = readLength(data, pos);
         pos += lenBytes;
         if (pos + len > end)
             break;
@@ -272,24 +258,31 @@ std::vector<std::string> parseCardAccess(const std::vector<uint8_t>& cardAccess)
     if (cardAccess[0] != 0x31)
         return result;
 
-    auto [setLen, setLenBytes] = parseBERLength(cardAccess, 1);
+    // The outer SET may legitimately declare more than one READ BINARY block
+    // returned, so its length is clamped rather than refused; every length
+    // inside it must be contained.
+    auto [setLen, setLenBytes] = readLengthClamped(cardAccess, 1);
+    if (setLenBytes == 0)
+        return result;
     size_t pos = 1 + setLenBytes;
     size_t end = pos + setLen;
-    if (end > cardAccess.size())
-        end = cardAccess.size();
 
     // Iterate SEQUENCE entries
     while (pos + 2 <= end) {
         if (cardAccess[pos] != 0x30) {
             // Not a SEQUENCE, skip
             pos++;
-            auto [skipLen, skipLenBytes] = parseBERLength(cardAccess, pos);
+            auto [skipLen, skipLenBytes] = readLength(cardAccess, pos);
+            if (skipLenBytes == 0)
+                break; // unusable length: stop, do not treat it as empty
             pos += skipLenBytes + skipLen;
             continue;
         }
         pos++; // skip 0x30 tag
 
-        auto [seqLen, seqLenBytes] = parseBERLength(cardAccess, pos);
+        auto [seqLen, seqLenBytes] = readLength(cardAccess, pos);
+        if (seqLenBytes == 0)
+            break;
         pos += seqLenBytes;
         size_t seqEnd = pos + seqLen;
         if (seqEnd > end)
@@ -298,7 +291,7 @@ std::vector<std::string> parseCardAccess(const std::vector<uint8_t>& cardAccess)
         // First element should be OID (0x06)
         if (pos < seqEnd && cardAccess[pos] == 0x06) {
             pos++; // skip 0x06 tag
-            auto [oidLen, oidLenBytes] = parseBERLength(cardAccess, pos);
+            auto [oidLen, oidLenBytes] = readLength(cardAccess, pos);
             pos += oidLenBytes;
             if (pos + oidLen <= seqEnd) {
                 std::string oid = oidBytesToString(cardAccess.data() + pos, oidLen);
@@ -385,22 +378,29 @@ static int parseParameterIdFromCardAccess(const std::vector<uint8_t>& cardAccess
     if (cardAccess.size() < 2 || cardAccess[0] != 0x31)
         return -1;
 
-    auto [setLen, setLenBytes] = parseBERLength(cardAccess, 1);
+    // The outer SET may legitimately declare more than one READ BINARY block
+    // returned, so its length is clamped rather than refused; every length
+    // inside it must be contained.
+    auto [setLen, setLenBytes] = readLengthClamped(cardAccess, 1);
+    if (setLenBytes == 0)
+        return -1;
     size_t pos = 1 + setLenBytes;
     size_t end = pos + setLen;
-    if (end > cardAccess.size())
-        end = cardAccess.size();
 
     while (pos + 2 <= end) {
         if (cardAccess[pos] != 0x30) {
             pos++;
-            auto [skipLen, skipLenBytes] = parseBERLength(cardAccess, pos);
+            auto [skipLen, skipLenBytes] = readLength(cardAccess, pos);
+            if (skipLenBytes == 0)
+                break; // unusable length: stop, do not treat it as empty
             pos += skipLenBytes + skipLen;
             continue;
         }
         pos++;
 
-        auto [seqLen, seqLenBytes] = parseBERLength(cardAccess, pos);
+        auto [seqLen, seqLenBytes] = readLength(cardAccess, pos);
+        if (seqLenBytes == 0)
+            break;
         pos += seqLenBytes;
         size_t seqEnd = pos + seqLen;
         if (seqEnd > end)
@@ -410,7 +410,7 @@ static int parseParameterIdFromCardAccess(const std::vector<uint8_t>& cardAccess
         std::string oid;
         if (pos < seqEnd && cardAccess[pos] == 0x06) {
             pos++;
-            auto [oidLen, oidLenBytes] = parseBERLength(cardAccess, pos);
+            auto [oidLen, oidLenBytes] = readLength(cardAccess, pos);
             pos += oidLenBytes;
             if (pos + oidLen <= seqEnd) {
                 oid = oidBytesToString(cardAccess.data() + pos, oidLen);
@@ -422,13 +422,13 @@ static int parseParameterIdFromCardAccess(const std::vector<uint8_t>& cardAccess
             // Skip version INTEGER
             if (pos < seqEnd && cardAccess[pos] == 0x02) {
                 pos++;
-                auto [intLen, intLenBytes] = parseBERLength(cardAccess, pos);
+                auto [intLen, intLenBytes] = readLength(cardAccess, pos);
                 pos += intLenBytes + intLen;
             }
             // Read parameter ID INTEGER (if present)
             if (pos < seqEnd && cardAccess[pos] == 0x02) {
                 pos++;
-                auto [intLen, intLenBytes] = parseBERLength(cardAccess, pos);
+                auto [intLen, intLenBytes] = readLength(cardAccess, pos);
                 pos += intLenBytes;
                 if (intLen > 0 && pos + intLen <= seqEnd) {
                     int paramId = 0;
@@ -455,22 +455,29 @@ std::vector<std::pair<std::string, int>> parseCardAccessWithParams(const std::ve
     if (cardAccess.size() < 2 || cardAccess[0] != 0x31)
         return result;
 
-    auto [setLen, setLenBytes] = parseBERLength(cardAccess, 1);
+    // The outer SET may legitimately declare more than one READ BINARY block
+    // returned, so its length is clamped rather than refused; every length
+    // inside it must be contained.
+    auto [setLen, setLenBytes] = readLengthClamped(cardAccess, 1);
+    if (setLenBytes == 0)
+        return result;
     size_t pos = 1 + setLenBytes;
     size_t end = pos + setLen;
-    if (end > cardAccess.size())
-        end = cardAccess.size();
 
     while (pos + 2 <= end) {
         if (cardAccess[pos] != 0x30) {
             pos++;
-            auto [skipLen, skipLenBytes] = parseBERLength(cardAccess, pos);
+            auto [skipLen, skipLenBytes] = readLength(cardAccess, pos);
+            if (skipLenBytes == 0)
+                break; // unusable length: stop, do not treat it as empty
             pos += skipLenBytes + skipLen;
             continue;
         }
         pos++;
 
-        auto [seqLen, seqLenBytes] = parseBERLength(cardAccess, pos);
+        auto [seqLen, seqLenBytes] = readLength(cardAccess, pos);
+        if (seqLenBytes == 0)
+            break;
         pos += seqLenBytes;
         size_t seqEnd = pos + seqLen;
         if (seqEnd > end)
@@ -481,7 +488,7 @@ std::vector<std::pair<std::string, int>> parseCardAccessWithParams(const std::ve
         size_t afterOid = pos;
         if (pos < seqEnd && cardAccess[pos] == 0x06) {
             afterOid = pos + 1;
-            auto [oidLen, oidLenBytes] = parseBERLength(cardAccess, afterOid);
+            auto [oidLen, oidLenBytes] = readLength(cardAccess, afterOid);
             afterOid += oidLenBytes;
             if (afterOid + oidLen <= seqEnd) {
                 oid = oidBytesToString(cardAccess.data() + afterOid, oidLen);
