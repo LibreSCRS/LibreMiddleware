@@ -110,37 +110,6 @@ TEST(PAdESDssOracle, NativeEmitterMatchesLayoutAPI)
     }
 }
 
-// Full cross-backend oracle: signs the same input via the native
-// engine and via DSS (iText FILL_BOX), parses both outputs, asserts
-// line-count exact match, font size within 0.5 pt, total text height
-// within 5%.
-//
-// SKIPPED unless: LIBRESIGN_HAS_DSS is defined AND the DSS Java
-// service is up AND SoftHSM2 is available. This is the explicit
-// `cmake -DSIGNING_BACKEND=both` test path.
-TEST(PAdESDssOracle, DSSCompareLayoutMetrics)
-{
-    // The full DSS round-trip requires:
-    //   - SoftHSM2 binary on PATH
-    //   - DSS Java JAR + java on PATH
-    //   - a running DSSServiceManager
-    //
-    // The pipeline:
-    //   1. sign a sample PDF via native PAdESModule
-    //   2. sign the same PDF via DSSSigningService::sign(..., DSS)
-    //   3. extract /F1 font size + count Tj operators from each
-    //   4. assert line count exact, fontSize within ±0.5 pt,
-    //      total height (lines * fontSize * leading) within ±5%
-    //
-    // The infrastructure setup is non-trivial and lives in
-    // SigningIntegrationTests.cpp under SIGNING_BACKEND=both. To
-    // avoid duplicating the harness here, this test skips with a
-    // descriptive message — the manual release-gate workflow
-    // covers it via the `signing_integration` suite.
-    GTEST_SKIP() << "DSS cross-backend oracle requires SIGNING_BACKEND=both + SoftHSM2 + DSS service; "
-                 << "covered by SigningIntegrationTests under that build configuration.";
-}
-
 #else // LIBRESIGN_HAS_NATIVE
 
 TEST(PAdESDssOracle, DISABLED_NativeNotCompiledIn)

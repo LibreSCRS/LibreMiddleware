@@ -5,12 +5,17 @@
 
 #ifdef LIBRESIGN_HAS_NATIVE
 
+#include "native/openssl_raii.h"
 #include "native/pades_module.h"
 #include "native/pkcs11_module_manager.h"
 #include "native/pkcs11_token.h"
 #include "signing_test_support/signing_test_support.h"
 #include "signing_service.h"
 
+#include <openssl/cms.h>
+#include <openssl/objects.h>
+
+#include <cstdint>
 #include <cstring>
 #include <string>
 #include <string_view>
@@ -372,6 +377,65 @@ TEST_F(PAdESModuleSoftHSMTest, SignedPdfHasValidIncrementalUpdate)
 
     // New trailer should have /Prev pointing to original xref
     ASSERT_TRUE(containsString(result.signedDocument, "/Prev"));
+}
+
+// EN 319 142-1 forbids the signing-time signed attribute in a PAdES baseline
+// signature: the claimed time is the signature dictionary's /M entry, and a CMS
+// that carries the attribute anyway grades PAdES-BES rather than
+// PAdES-BASELINE-B. OpenSSL adds it unless told not to, so this pins the one
+// flag that keeps it out. Structural, no validator and no Java: it fails in
+// milliseconds on every leg and both platforms.
+TEST_F(PAdESModuleSoftHSMTest, SignBB_PadesCmsCarriesNoSigningTime)
+{
+    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
+                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    auto pdf = testPdfBytes();
+    PAdESModule pades;
+
+    auto result = pades.sign(pdf, token, SignatureLevel::B_B, {}, {});
+    ASSERT_TRUE(result.success) << result.errorMessage;
+
+    // /Contents is a hex string of the DER CMS, zero-padded on the right to the
+    // fixed reservation the byte-range placeholder left for it.
+    std::string_view sv(reinterpret_cast<const char*>(result.signedDocument.data()), result.signedDocument.size());
+    const size_t open = sv.find("/Contents <");
+    ASSERT_NE(open, std::string_view::npos);
+    const size_t close = sv.find('>', open);
+    ASSERT_NE(close, std::string_view::npos);
+
+    const std::string_view hex = sv.substr(open + 11, close - (open + 11));
+    ASSERT_EQ(hex.size() % 2, 0u);
+
+    std::vector<uint8_t> der;
+    der.reserve(hex.size() / 2);
+    for (size_t i = 0; i + 1 < hex.size(); i += 2) {
+        const auto nib = [](char c) -> int {
+            if (c >= '0' && c <= '9')
+                return c - '0';
+            if (c >= 'a' && c <= 'f')
+                return c - 'a' + 10;
+            if (c >= 'A' && c <= 'F')
+                return c - 'A' + 10;
+            return -1;
+        };
+        const int hi = nib(hex[i]);
+        const int lo = nib(hex[i + 1]);
+        ASSERT_GE(hi, 0);
+        ASSERT_GE(lo, 0);
+        der.push_back(static_cast<uint8_t>((hi << 4) | lo));
+    }
+
+    const unsigned char* p = der.data();
+    CmsPtr cms(d2i_CMS_ContentInfo(nullptr, &p, static_cast<long>(der.size())));
+    ASSERT_NE(cms.get(), nullptr) << "the embedded /Contents did not decode as a CMS ContentInfo";
+
+    STACK_OF(CMS_SignerInfo)* signers = CMS_get0_SignerInfos(cms.get());
+    ASSERT_NE(signers, nullptr);
+    ASSERT_EQ(sk_CMS_SignerInfo_num(signers), 1);
+
+    CMS_SignerInfo* si = sk_CMS_SignerInfo_value(signers, 0);
+    EXPECT_LT(CMS_signed_get_attr_by_NID(si, NID_pkcs9_signingTime, -1), 0)
+        << "EN 319 142-1 forbids the signing-time signed attribute in a PAdES baseline signature";
 }
 
 TEST_F(PAdESModuleSoftHSMTest, ContentsHexIsNonZero)

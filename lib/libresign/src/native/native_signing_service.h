@@ -100,6 +100,12 @@ private:
     std::vector<std::vector<uint8_t>> tlAnchorCerts;
     bool configured = false;
     bool fullyConfigured = false;
+    /// Set once @ref loadLazyTrustLists has run for the current
+    /// @ref configure cycle, and cleared by that call. The two must stay in
+    /// step: configure() empties @ref tlAnchorCerts, so a flag that outlived
+    /// it would leave the next long-term sign with no anchors and no attempt
+    /// to fetch any.
+    bool lazyListsLoaded = false;
     AnchorEmitter anchorEmitter;
 
     /// Process-shared loaded-module cache. Tokens constructed from
@@ -116,10 +122,24 @@ private:
 
     void loadTrustList(const std::string& url, bool isLotl, TlCache& cache, TlSignatureVerifier& verifier, int depth);
 
+    /// Fetch every configured Trusted List that @ref configure deliberately
+    /// left alone, i.e. every source whose @c eager flag is false.
+    ///
+    /// This is the deferred half of that flag, and the only caller is
+    /// @ref completeLongTermChain — the one place that knows a level actually
+    /// needs an anchor, which is precisely the condition
+    /// @c TrustedListSource::eager documents for the deferred fetch. A source
+    /// that fails here leaves the anchor set short and the caller's chain gate
+    /// refuses, which is the correct outcome and carries its own message.
+    /// Idempotent within one @ref configure cycle.
+    void loadLazyTrustLists();
+
     /// Complete the token's certificate chain from the configured Trusted-List
     /// anchors for long-term (B-LT/B-LTA) levels, then install it via
     /// @ref Pkcs11Token::setResolvedChain. Shared by @ref sign and
     /// @ref appendSigner so the fail-closed policy stays single-sourced.
+    /// At B_LT and above this is also where any deferred Trusted List is
+    /// fetched — see @ref loadLazyTrustLists.
     /// @returns std::nullopt when there is nothing to do (level below B_LT or no
     ///          TL configured) or the chain completed successfully; a populated
     ///          @ref SigningResult (fail-closed failure) when the issuing CA was

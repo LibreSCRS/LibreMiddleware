@@ -19,12 +19,24 @@ namespace libresign {
 
 class Pkcs11Token;
 
+/// Whether the CMS signer carries the `signing-time` signed attribute.
+///
+/// The two ETSI baselines built on this CMS disagree: EN 319 122-1 requires
+/// `signing-time` in a CAdES baseline signature, while EN 319 142-1 forbids it
+/// in a PAdES baseline one — there the claimed time is the signature
+/// dictionary's `/M` entry. A CMS carrying it inside a PDF grades PAdES-BES,
+/// not PAdES-BASELINE-B. No default: every caller states its profile.
+enum class SigningTimeAttribute {
+    Include, ///< CAdES / ASiC-E — EN 319 122-1 requires the attribute.
+    Omit,    ///< PAdES — EN 319 142-1 forbids it; `/M` carries the time.
+};
+
 class CAdESModule
 {
 public:
     // Create CAdES B-B detached signature.
     // Returns DER-encoded CMS SignedData.
-    std::vector<uint8_t> signBB(const std::vector<uint8_t>& data, Pkcs11Token& token);
+    std::vector<uint8_t> signBB(const std::vector<uint8_t>& data, Pkcs11Token& token, SigningTimeAttribute signingTime);
 
     // The three upgrade helpers below act on the CMS's FIRST SignerInfo, which
     // is unambiguous only on a single-signer document (the PAdES path, where

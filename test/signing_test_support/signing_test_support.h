@@ -141,16 +141,43 @@ private:
     static std::unique_ptr<Impl> impl;
 };
 
+/// @brief Is the ETSI validation oracle mandatory for this run?
+///
+/// `LIBRESCRS_REQUIRE_DSS_ORACLE=1` turns every quiet return into a hard
+/// failure: a missing archive fails the environment instead of printing a
+/// note, and @ref validateSignature fails the test instead of returning. CI
+/// runs in that mode on the leg that compiles the oracle in. The default
+/// stays the specified behaviour — skip silently when the oracle is absent —
+/// so a developer without a JRE is not blocked.
+bool dssOracleIsMandatory();
+
+/// @brief Is the trust configuration POST enabled for this run?
+///
+/// `LIBRESCRS_TEST_DSS_TRUST=1`. Off by default: the levels and the structural
+/// warnings this suite asserts are properties of the bytes, and they were
+/// correct under `INDETERMINATE / NO_CERTIFICATE_CHAIN_FOUND` too. Leaving it
+/// off makes the leg hermetic apart from the Maven fetch.
+bool dssTrustConfigRequested();
+
 /// Validate a signed document via the DSS oracle.
 ///
-/// Asserts no signature reports `TOTAL_FAILED`. On oracle failure
-/// (transport / parse / configuration), trips `ADD_FAILURE()` with the
-/// diagnostic so the calling test fails loudly instead of being silently
-/// skipped — DSS is a hard requirement, not optional.
+/// Asserts no signature reports `TOTAL_FAILED`, that no signature carries a
+/// structural-invalidity warning, and that at least one signature carries
+/// @p expectedBaselineLevel. On oracle failure (transport / parse /
+/// configuration), trips `ADD_FAILURE()` with the diagnostic so the calling
+/// test fails loudly instead of being silently skipped.
 ///
 /// @param result            Signing result whose `signedDocument` is validated.
 /// @param format            ETSI signature format string (e.g. `"PAdES"`,
 ///                          `"XAdES"`, `"CAdES"`, `"JAdES"`, `"ASiC_E"`).
+/// @param expectedBaselineLevel
+///                          The ETSI baseline level at least one signature
+///                          reported by the oracle MUST carry (e.g.
+///                          `"PAdES_BASELINE_B"`, `"XAdES_BASELINE_LTA"`).
+///                          Mandatory, and deliberately so: it was optional
+///                          and supplied at four of forty-three call sites,
+///                          which is how a whole format shipped a level below
+///                          what the product claims past a green suite.
 /// @param packaging         Packaging hint passed to the oracle
 ///                          (`"ENVELOPED"`, `"ENVELOPING"`, `"DETACHED"`).
 /// @param originalDoc       Optional original document bytes — required for
@@ -158,15 +185,9 @@ private:
 ///                          reference.
 /// @param expectedSigCount  If set, assert the DSS oracle reports exactly
 ///                          this many signatures in the document.
-/// @param expectedBaselineLevel
-///                          If set, assert at least one signature reported by
-///                          the oracle carries this ETSI baseline level
-///                          string (e.g. `"PAdES_BASELINE_LT"`,
-///                          `"PAdES_BASELINE_LTA"`, `"XAdES_BASELINE_LTA"`).
-void validateSignature(const SigningResult& result, const std::string& format,
+void validateSignature(const SigningResult& result, const std::string& format, const std::string& expectedBaselineLevel,
                        const std::string& packaging = "ENVELOPED", std::span<const uint8_t> originalDoc = {},
-                       std::optional<int> expectedSigCount = std::nullopt,
-                       std::optional<std::string> expectedBaselineLevel = std::nullopt);
+                       std::optional<int> expectedSigCount = std::nullopt);
 
 // ---- Test data helpers ----
 std::string buildTestPdf();

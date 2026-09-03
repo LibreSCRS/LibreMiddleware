@@ -187,6 +187,30 @@ jobs:
         # SOFTHSM2_LIB via $GITHUB_ENV so the Test step below inherits them.
         run: ./ci/scripts/softhsm-bootstrap.sh
 
+      - name: Set up Java for the ETSI validation oracle
+        # Only the leg that compiles the oracle in. The other one would download
+        # a JDK it never opens.
+        if: matrix.dss_oracle == 'ON'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build the ETSI validation oracle
+        # The oracle's build output is git-ignored and no job ever ran Maven, so
+        # on this leg the test environment printed that the archive was missing
+        # and carried on -- every validation call returned without asserting
+        # anything, on every push, since the oracle was written.
+        #
+        # No continue-on-error, deliberately: a gate allowed to skip itself is
+        # the failure being fixed here. Measured locally on this change: 35s
+        # cold against the job's 75-minute ceiling, and the cache key covers
+        # the project file so a validator version bump invalidates it.
+        if: matrix.dss_oracle == 'ON'
+        timeout-minutes: 10
+        run: mvn -q -B -DskipTests -f tools/dss-service/pom.xml package
+
       - name: Test
         # No LIBRESCRS_TEST_PIN — CI runner has no smart card. PIN-gated
         # tests skip cleanly via g_pinFailed / SKIP_IF_PIN_FAILED. Real-
@@ -206,6 +230,12 @@ jobs:
         # once, and it fails the step with everything ctest printed up to
         # that point still in the log.
         timeout-minutes: 30
+        env:
+          # Computed per leg because this step is shared by both. On the leg
+          # built without the oracle the variable has no subject at all --
+          # LIBRESIGN_HAS_DSS_ORACLE is undefined there, so the stub half of
+          # the support library compiles and never reads it.
+          LIBRESCRS_REQUIRE_DSS_ORACLE: ${{ matrix.dss_oracle == 'ON' && '1' || '0' }}
         run: ctest --output-on-failure --test-dir build --no-tests=error
 
   examples-build:

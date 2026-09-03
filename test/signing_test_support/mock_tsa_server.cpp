@@ -3,6 +3,8 @@
 
 #include "mock_tsa_server.h"
 
+#include "loopback_http_server.h"
+
 #include <openssl/asn1.h>
 #include <openssl/bio.h>
 #include <openssl/bn.h>
@@ -13,18 +15,11 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
 #include <algorithm>
-#include <atomic>
-#include <cctype>
-#include <cstdlib>
+#include <memory>
+#include <span>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace libresign::test {
@@ -168,52 +163,20 @@ void makeAuthority(EvpPkeyPtr& keyOut, X509Ptr& certOut)
     certOut = std::move(cert);
 }
 
-/// Case-insensitive `Content-Length:` lookup over an HTTP header block.
-long parseContentLength(const std::string& headers)
-{
-    std::string lower;
-    lower.reserve(headers.size());
-    for (char c : headers)
-        lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-
-    const auto pos = lower.find("content-length:");
-    if (pos == std::string::npos)
-        return -1;
-    const auto valueStart = pos + std::string("content-length:").size();
-    const auto lineEnd = lower.find("\r\n", valueStart);
-    if (lineEnd == std::string::npos)
-        return -1;
-    return std::strtol(headers.substr(valueStart, lineEnd - valueStart).c_str(), nullptr, 10);
-}
-
-bool sendAll(int fd, const char* data, size_t len)
-{
-    size_t sent = 0;
-    while (sent < len) {
-        const ssize_t n = ::send(fd, data + sent, len - sent, 0);
-        if (n <= 0)
-            return false;
-        sent += static_cast<size_t>(n);
-    }
-    return true;
-}
-
 } // namespace
 
 struct MockTsaServer::Impl
 {
-    int fd = -1;
-    uint16_t boundPort = 0;
-    std::thread worker;
-    std::atomic<bool> stopFlag{false};
-    std::atomic<int> served{0};
     EvpPkeyPtr key;
     X509Ptr cert;
+    // Constructed last: its worker thread starts inside the constructor and
+    // calls back into respond(), so key and cert must already be there.
+    std::unique_ptr<LoopbackHttpServer> http;
 
     /// Build a granted TimeStampResp over @p derRequest. Returns empty on any
     /// responder failure; the caller then closes the connection without a
     /// reply, which the client reports as a transport error.
-    std::vector<uint8_t> respond(const std::string& derRequest)
+    std::vector<uint8_t> respond(std::span<const uint8_t> derRequest)
     {
         TsRespCtxPtr ctx(TS_RESP_CTX_new());
         if (!ctx)
@@ -256,134 +219,32 @@ struct MockTsaServer::Impl
         OPENSSL_free(der);
         return out;
     }
-
-    void handle(int client)
-    {
-        std::string acc;
-        char buf[2048];
-        while (acc.find("\r\n\r\n") == std::string::npos) {
-            const ssize_t n = ::recv(client, buf, sizeof(buf), 0);
-            if (n <= 0)
-                return;
-            acc.append(buf, static_cast<size_t>(n));
-            if (acc.size() > 256 * 1024)
-                return;
-        }
-
-        const auto headerEnd = acc.find("\r\n\r\n") + 4;
-        const std::string headers = acc.substr(0, headerEnd);
-        std::string body = acc.substr(headerEnd);
-
-        const long contentLength = parseContentLength(headers);
-        if (contentLength < 0)
-            return;
-        while (body.size() < static_cast<size_t>(contentLength)) {
-            const ssize_t n = ::recv(client, buf, sizeof(buf), 0);
-            if (n <= 0)
-                return;
-            body.append(buf, static_cast<size_t>(n));
-        }
-        body.resize(static_cast<size_t>(contentLength));
-
-        const auto der = respond(body);
-        if (der.empty())
-            return; // no reply — the client surfaces a transport failure
-
-        std::string reply = "HTTP/1.1 200 OK\r\nContent-Type: application/timestamp-reply\r\nContent-Length: " +
-                            std::to_string(der.size()) + "\r\nConnection: close\r\n\r\n";
-        if (!sendAll(client, reply.data(), reply.size()))
-            return;
-        if (!sendAll(client, reinterpret_cast<const char*>(der.data()), der.size()))
-            return;
-        served.fetch_add(1);
-    }
-
-    void runLoop()
-    {
-        while (!stopFlag.load()) {
-            const int client = ::accept(fd, nullptr, nullptr);
-            if (client < 0) {
-                if (stopFlag.load())
-                    return;
-                continue;
-            }
-            handle(client);
-            ::close(client);
-        }
-    }
 };
 
 MockTsaServer::MockTsaServer() : impl(std::make_unique<Impl>())
 {
     makeAuthority(impl->key, impl->cert);
 
-    impl->fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (impl->fd < 0)
-        throw std::runtime_error("MockTsaServer: socket() failed");
-    int one = 1;
-    ::setsockopt(impl->fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    addr.sin_port = 0;
-    if (::bind(impl->fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        ::close(impl->fd);
-        throw std::runtime_error("MockTsaServer: bind() failed");
-    }
-    if (::listen(impl->fd, 4) < 0) {
-        ::close(impl->fd);
-        throw std::runtime_error("MockTsaServer: listen() failed");
-    }
-
-    sockaddr_in bound{};
-    socklen_t len = sizeof(bound);
-    if (::getsockname(impl->fd, reinterpret_cast<sockaddr*>(&bound), &len) < 0) {
-        ::close(impl->fd);
-        throw std::runtime_error("MockTsaServer: getsockname() failed");
-    }
-    impl->boundPort = ntohs(bound.sin_port);
-
     Impl* raw = impl.get();
-    impl->worker = std::thread([raw] { raw->runLoop(); });
+    impl->http = std::make_unique<LoopbackHttpServer>(
+        "application/timestamp-reply", [raw](std::span<const uint8_t> body) { return raw->respond(body); });
 }
 
-MockTsaServer::~MockTsaServer()
-{
-    impl->stopFlag.store(true);
-    if (impl->fd >= 0) {
-        // Unblock the accept() the worker is parked in.
-        const int wakeFd = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (wakeFd >= 0) {
-            sockaddr_in addr{};
-            addr.sin_family = AF_INET;
-            addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-            addr.sin_port = htons(impl->boundPort);
-            ::connect(wakeFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
-            ::close(wakeFd);
-        }
-    }
-    if (impl->worker.joinable())
-        impl->worker.join();
-    if (impl->fd >= 0) {
-        ::close(impl->fd);
-        impl->fd = -1;
-    }
-}
+MockTsaServer::~MockTsaServer() = default;
 
 std::string MockTsaServer::url() const
 {
-    return "http://127.0.0.1:" + std::to_string(impl->boundPort) + "/tsa";
+    return impl->http->url("/tsa");
 }
 
 uint16_t MockTsaServer::port() const
 {
-    return impl->boundPort;
+    return impl->http->port();
 }
 
 int MockTsaServer::servedCount() const
 {
-    return impl->served.load();
+    return impl->http->servedCount();
 }
 
 } // namespace libresign::test

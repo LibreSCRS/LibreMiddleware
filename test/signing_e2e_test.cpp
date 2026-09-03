@@ -10,6 +10,12 @@
 #include "signing_service.h"
 #include "signing_service_factory.h"
 
+#ifdef LIBRESIGN_HAS_NATIVE
+#include "native/native_signing_service.h"
+#include "native/pkcs11_module_manager.h"
+#include "signing_test_support/mock_tsa_server.h"
+#endif
+
 #ifdef LIBRESIGN_HAS_DSS
 #include "dss/dss_service_manager.h"
 #include "dss/dss_signing_service.h"
@@ -47,6 +53,18 @@ struct BackendInfo
 {
     std::string name;
     Backend backend;
+
+    /// Where the signing key comes from. The card path reads PIN and reader
+    /// from the environment and skips without them; the software token needs
+    /// nothing the CI runner does not already provision.
+    enum class TokenSource { Card, SoftHsm };
+    TokenSource tokenSource = TokenSource::Card;
+
+    /// Whether a long-term level can actually succeed on this token. The
+    /// provisioned software signer is self-signed by design — its chain has no
+    /// proven terminal — so B-LT and B-LTA must be refused there, and claiming
+    /// they pass would be the false green this instantiation exists to remove.
+    bool longTermReachable = true;
 };
 
 std::ostream& operator<<(std::ostream& os, const BackendInfo& info)
@@ -65,6 +83,17 @@ protected:
     {
         SKIP_IF_PIN_FAILED();
 
+        auto info = GetParam();
+
+        if (info.tokenSource == BackendInfo::TokenSource::SoftHsm) {
+#ifdef LIBRESIGN_HAS_NATIVE
+            SetUpSoftHsm();
+            return;
+#else
+            GTEST_SKIP() << "native backend not compiled in";
+#endif
+        }
+
         auto cfgResult = readTestConfig();
         if (!cfgResult.valid)
             GTEST_SKIP() << cfgResult.skipReason;
@@ -72,8 +101,6 @@ protected:
 
         if (!fs::exists(config.pkcs11Module))
             GTEST_SKIP() << "PKCS#11 module not found: " << config.pkcs11Module;
-
-        auto info = GetParam();
 
 #ifdef LIBRESIGN_HAS_NATIVE
         if (info.backend == Backend::Native) {
@@ -100,6 +127,63 @@ protected:
             GTEST_SKIP() << "Backend " << info.name << " not available";
     }
 
+#ifdef LIBRESIGN_HAS_NATIVE
+    /// Fill `config` from the provisioned software token instead of the
+    /// environment. Every call site below reads those same fields, so the whole
+    /// suite runs unchanged once they point at the token.
+    void SetUpSoftHsm()
+    {
+        const char* modulePath = findSoftHsmPath();
+        if (!modulePath)
+            GTEST_SKIP() << "SoftHSM2 not found";
+
+        Pkcs11ModuleManager probe;
+        auto slot = findSoftHsmTestSlot(probe.acquire(modulePath));
+        if (!slot)
+            GTEST_SKIP() << "SoftHSM2 token '" << kSoftHsmTokenLabel << "' not initialised";
+
+        ownedService = createSigningService(Backend::Native);
+        auto* native = dynamic_cast<NativeSigningService*>(ownedService.get());
+        if (!native)
+            GTEST_SKIP() << "native service unavailable";
+        native->setTestSlotId(*slot);
+        service = ownedService.get();
+
+        config.pkcs11Module = modulePath;
+        config.pin = "1234";
+        config.keyAlias = "test-key";
+        config.readerName.clear();
+
+        // A responder in this process instead of a public authority: it removes
+        // the only live network dependency the suite had, and it can prove it
+        // was reached rather than letting a test infer that from success.
+        tsa = std::make_unique<MockTsaServer>();
+    }
+#endif
+
+    /// Timestamp endpoint for this parameterisation.
+    std::string tsaUrl() const
+    {
+#ifdef LIBRESIGN_HAS_NATIVE
+        if (tsa)
+            return tsa->url();
+#endif
+        return "http://timestamp.digicert.com";
+    }
+
+    /// Can a long-term level succeed on this parameterisation's token?
+    bool longTermReachable() const
+    {
+        return GetParam().longTermReachable;
+    }
+
+    /// Under a token whose signer is self-signed the chain has no proven
+    /// terminal, so a long-term level must be refused, fail-closed.
+    static void ExpectLongTermRefusal(const SigningResult& r)
+    {
+        EXPECT_FALSE(r.success) << "a long-term level must not succeed on a self-signed software signer";
+    }
+
     SigningResult signDocument(const std::vector<uint8_t>& data, const std::string& fileName, SignatureFormat format,
                                SignatureLevel level = SignatureLevel::B_B)
     {
@@ -108,7 +192,7 @@ protected:
         req.fileName = fileName;
         req.format = format;
         req.level = level;
-        req.tsa.url = "http://timestamp.digicert.com";
+        req.tsa.url = tsaUrl();
         req.allowExpiredCertificate = true;
 
         auto result =
@@ -132,6 +216,9 @@ protected:
     SigningService* service = nullptr;
 
     std::unique_ptr<SigningService> ownedService;
+#ifdef LIBRESIGN_HAS_NATIVE
+    std::unique_ptr<MockTsaServer> tsa;
+#endif
 #ifdef LIBRESIGN_HAS_DSS
     std::unique_ptr<DSSSigningService> dssService;
 #endif
@@ -212,7 +299,7 @@ TEST_P(SigningE2ETest, CAdES_BB)
     ASSERT_FALSE(result.signedDocument.empty());
     EXPECT_EQ(result.signedDocument[0], 0x30); // ASN.1 SEQUENCE
     std::vector<uint8_t> original(content.begin(), content.end());
-    validateSignature(result, "CAdES", "DETACHED", original);
+    validateSignature(result, "CAdES", "CAdES_BASELINE_B", "DETACHED", original);
     saveOutput(result, GetParam().name + "-cades-bb.p7s");
 }
 
@@ -225,7 +312,7 @@ TEST_P(SigningE2ETest, CAdES_BT)
     ASSERT_TRUE(result.success) << result.errorMessage;
     EXPECT_GT(result.signedDocument.size(), 1000u) << "B-T should be larger due to timestamp";
     std::vector<uint8_t> original(content.begin(), content.end());
-    validateSignature(result, "CAdES", "DETACHED", original);
+    validateSignature(result, "CAdES", "CAdES_BASELINE_T", "DETACHED", original);
     saveOutput(result, GetParam().name + "-cades-bt.p7s");
 }
 
@@ -235,10 +322,14 @@ TEST_P(SigningE2ETest, CAdES_BLT)
     std::string content = "CAdES B-LT test document.";
     auto result = signDocument(std::vector<uint8_t>(content.begin(), content.end()), "test.txt", SignatureFormat::Cades,
                                SignatureLevel::B_LT);
+    if (!longTermReachable()) {
+        ExpectLongTermRefusal(result);
+        return;
+    }
     ASSERT_TRUE(result.success) << result.errorMessage;
     EXPECT_GT(result.signedDocument.size(), 1000u) << "B-LT should include revocation data";
     std::vector<uint8_t> original(content.begin(), content.end());
-    validateSignature(result, "CAdES", "DETACHED", original);
+    validateSignature(result, "CAdES", "CAdES_BASELINE_LT", "DETACHED", original);
     saveOutput(result, GetParam().name + "-cades-blt.p7s");
 }
 
@@ -248,10 +339,14 @@ TEST_P(SigningE2ETest, CAdES_BLTA)
     std::string content = "CAdES B-LTA test document.";
     auto result = signDocument(std::vector<uint8_t>(content.begin(), content.end()), "test.txt", SignatureFormat::Cades,
                                SignatureLevel::B_LTA);
+    if (!longTermReachable()) {
+        ExpectLongTermRefusal(result);
+        return;
+    }
     ASSERT_TRUE(result.success) << result.errorMessage;
     EXPECT_GT(result.signedDocument.size(), 1000u) << "B-LTA should include archive timestamp";
     std::vector<uint8_t> original(content.begin(), content.end());
-    validateSignature(result, "CAdES", "DETACHED", original);
+    validateSignature(result, "CAdES", "CAdES_BASELINE_LTA", "DETACHED", original);
     saveOutput(result, GetParam().name + "-cades-blta.p7s");
 }
 
@@ -268,7 +363,7 @@ TEST_P(SigningE2ETest, PAdES_BB)
     ASSERT_TRUE(result.success) << result.errorMessage;
     std::string hdr(result.signedDocument.begin(), result.signedDocument.begin() + 5);
     EXPECT_EQ(hdr, "%PDF-");
-    validateSignature(result, "PAdES");
+    validateSignature(result, "PAdES", "PAdES_BASELINE_B");
     saveOutput(result, GetParam().name + "-pades-bb.pdf");
 }
 
@@ -279,7 +374,7 @@ TEST_P(SigningE2ETest, PAdES_BT)
     auto result = signDocument(std::vector<uint8_t>(pdf.begin(), pdf.end()), "test.pdf", SignatureFormat::Pades,
                                SignatureLevel::B_T);
     ASSERT_TRUE(result.success) << result.errorMessage;
-    validateSignature(result, "PAdES");
+    validateSignature(result, "PAdES", "PAdES_BASELINE_T");
     saveOutput(result, GetParam().name + "-pades-bt.pdf");
 }
 
@@ -289,8 +384,12 @@ TEST_P(SigningE2ETest, PAdES_BLT)
     auto pdf = buildTestPdf();
     auto result = signDocument(std::vector<uint8_t>(pdf.begin(), pdf.end()), "test.pdf", SignatureFormat::Pades,
                                SignatureLevel::B_LT);
+    if (!longTermReachable()) {
+        ExpectLongTermRefusal(result);
+        return;
+    }
     ASSERT_TRUE(result.success) << result.errorMessage;
-    validateSignature(result, "PAdES");
+    validateSignature(result, "PAdES", "PAdES_BASELINE_LT");
     saveOutput(result, GetParam().name + "-pades-blt.pdf");
 }
 
@@ -300,8 +399,12 @@ TEST_P(SigningE2ETest, PAdES_BLTA)
     auto pdf = buildTestPdf();
     auto result = signDocument(std::vector<uint8_t>(pdf.begin(), pdf.end()), "test.pdf", SignatureFormat::Pades,
                                SignatureLevel::B_LTA);
+    if (!longTermReachable()) {
+        ExpectLongTermRefusal(result);
+        return;
+    }
     ASSERT_TRUE(result.success) << result.errorMessage;
-    validateSignature(result, "PAdES");
+    validateSignature(result, "PAdES", "PAdES_BASELINE_LTA");
     saveOutput(result, GetParam().name + "-pades-blta.pdf");
 }
 
@@ -311,6 +414,10 @@ TEST_P(SigningE2ETest, PAdES_BLT_HasDSSDictionary)
     auto pdf = buildTestPdf();
     auto result = signDocument(std::vector<uint8_t>(pdf.begin(), pdf.end()), "test.pdf", SignatureFormat::Pades,
                                SignatureLevel::B_LT);
+    if (!longTermReachable()) {
+        ExpectLongTermRefusal(result);
+        return;
+    }
     ASSERT_TRUE(result.success) << result.errorMessage;
     std::string_view sv(reinterpret_cast<const char*>(result.signedDocument.data()), result.signedDocument.size());
     EXPECT_NE(sv.find("/Type /DSS"), std::string_view::npos) << "DSS dictionary missing from B-LT output";
@@ -334,6 +441,10 @@ TEST_P(SigningE2ETest, PAdES_BLTA_HasDocTimeStampWidget)
     auto pdf = buildTestPdf();
     auto result = signDocument(std::vector<uint8_t>(pdf.begin(), pdf.end()), "test.pdf", SignatureFormat::Pades,
                                SignatureLevel::B_LTA);
+    if (!longTermReachable()) {
+        ExpectLongTermRefusal(result);
+        return;
+    }
     ASSERT_TRUE(result.success) << result.errorMessage;
     std::string_view sv(reinterpret_cast<const char*>(result.signedDocument.data()), result.signedDocument.size());
 
@@ -365,7 +476,7 @@ TEST_P(SigningE2ETest, JAdES_BB)
     ASSERT_FALSE(json.empty());
     EXPECT_EQ(json.front(), '{') << "Expected JWS JSON General Serialization opening brace";
     std::vector<uint8_t> original(content.begin(), content.end());
-    validateSignature(result, "JAdES", "DETACHED", original);
+    validateSignature(result, "JAdES", "JAdES_BASELINE_B", "DETACHED", original);
     saveOutput(result, GetParam().name + "-jades-bb.json");
 }
 
@@ -377,7 +488,7 @@ TEST_P(SigningE2ETest, JAdES_BT)
                                SignatureLevel::B_T);
     ASSERT_TRUE(result.success) << result.errorMessage;
     std::vector<uint8_t> original(content.begin(), content.end());
-    validateSignature(result, "JAdES", "DETACHED", original);
+    validateSignature(result, "JAdES", "JAdES_BASELINE_T", "DETACHED", original);
     saveOutput(result, GetParam().name + "-jades-bt.json");
 }
 
@@ -387,9 +498,13 @@ TEST_P(SigningE2ETest, JAdES_BLT)
     std::string content = "JAdES B-LT test document.";
     auto result = signDocument(std::vector<uint8_t>(content.begin(), content.end()), "test.txt", SignatureFormat::Jades,
                                SignatureLevel::B_LT);
+    if (!longTermReachable()) {
+        ExpectLongTermRefusal(result);
+        return;
+    }
     ASSERT_TRUE(result.success) << result.errorMessage;
     std::vector<uint8_t> original(content.begin(), content.end());
-    validateSignature(result, "JAdES", "DETACHED", original);
+    validateSignature(result, "JAdES", "JAdES_BASELINE_LT", "DETACHED", original);
     saveOutput(result, GetParam().name + "-jades-blt.json");
 }
 
@@ -399,9 +514,13 @@ TEST_P(SigningE2ETest, JAdES_BLTA)
     std::string content = "JAdES B-LTA test document.";
     auto result = signDocument(std::vector<uint8_t>(content.begin(), content.end()), "test.txt", SignatureFormat::Jades,
                                SignatureLevel::B_LTA);
+    if (!longTermReachable()) {
+        ExpectLongTermRefusal(result);
+        return;
+    }
     ASSERT_TRUE(result.success) << result.errorMessage;
     std::vector<uint8_t> original(content.begin(), content.end());
-    validateSignature(result, "JAdES", "DETACHED", original);
+    validateSignature(result, "JAdES", "JAdES_BASELINE_LTA", "DETACHED", original);
     saveOutput(result, GetParam().name + "-jades-blta.json");
 }
 
@@ -412,7 +531,7 @@ TEST_P(SigningE2ETest, JAdES_BLTA)
 // and validate at the corresponding ETSI baseline through the DSS oracle.
 
 namespace {
-SigningRequest jadesEnvelopedRequest(const std::vector<uint8_t>& doc, SignatureLevel level)
+SigningRequest jadesEnvelopedRequest(const std::vector<uint8_t>& doc, SignatureLevel level, const std::string& tsaUrl)
 {
     SigningRequest req;
     req.document = doc;
@@ -422,7 +541,7 @@ SigningRequest jadesEnvelopedRequest(const std::vector<uint8_t>& doc, SignatureL
     req.packaging = SignaturePackaging::Enveloped;
     req.allowExpiredCertificate = true;
     if (level >= SignatureLevel::B_T)
-        req.tsa.url = "http://timestamp.digicert.com";
+        req.tsa.url = tsaUrl;
     return req;
 }
 
@@ -444,14 +563,14 @@ TEST_P(SigningE2ETest, JAdES_BB_Enveloped)
 {
     SKIP_IF_PIN_FAILED();
     auto data = buildTestPayload();
-    auto req = jadesEnvelopedRequest(data, SignatureLevel::B_B);
+    auto req = jadesEnvelopedRequest(data, SignatureLevel::B_B, tsaUrl());
 
     auto result =
         service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
     expectJadesEnvelopedPayloadPresent(result);
-    validateSignature(result, "JAdES", "ENVELOPED", data, std::nullopt, std::string{"JAdES_BASELINE_B"});
+    validateSignature(result, "JAdES", "JAdES_BASELINE_B", "ENVELOPED", data);
     saveOutput(result, GetParam().name + "-jades-bb-enveloped.json");
 }
 
@@ -459,14 +578,14 @@ TEST_P(SigningE2ETest, JAdES_BT_Enveloped)
 {
     SKIP_IF_PIN_FAILED();
     auto data = buildTestPayload();
-    auto req = jadesEnvelopedRequest(data, SignatureLevel::B_T);
+    auto req = jadesEnvelopedRequest(data, SignatureLevel::B_T, tsaUrl());
 
     auto result =
         service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
     expectJadesEnvelopedPayloadPresent(result);
-    validateSignature(result, "JAdES", "ENVELOPED", data, std::nullopt, std::string{"JAdES_BASELINE_T"});
+    validateSignature(result, "JAdES", "JAdES_BASELINE_T", "ENVELOPED", data);
     saveOutput(result, GetParam().name + "-jades-bt-enveloped.json");
 }
 
@@ -476,11 +595,15 @@ TEST_P(SigningE2ETest, JAdES_BLT_Enveloped)
     if (needsTrustForLta(GetParam()) && !SigningTestEnvironment::trustConfigured())
         GTEST_SKIP() << "B-LT requires trust store (DSS trust not configured)";
     auto data = buildTestPayload();
-    auto req = jadesEnvelopedRequest(data, SignatureLevel::B_LT);
+    auto req = jadesEnvelopedRequest(data, SignatureLevel::B_LT, tsaUrl());
 
     auto result =
         service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result);
+    if (!longTermReachable()) {
+        ExpectLongTermRefusal(result);
+        return;
+    }
     ASSERT_TRUE(result.success) << result.errorMessage;
     expectJadesEnvelopedPayloadPresent(result);
     // Reaching JAdES_BASELINE_LT requires DSS to verify the signing-cert
@@ -490,7 +613,7 @@ TEST_P(SigningE2ETest, JAdES_BLT_Enveloped)
     // empty and DSS reports JAdES_BASELINE_T. Either outcome is acceptable
     // — the contract this test enforces is "no longer JSON_NOT_ETSI and
     // emits sigTst correctly".
-    validateSignature(result, "JAdES", "ENVELOPED", data, std::nullopt, std::string{"JAdES_BASELINE_T"});
+    validateSignature(result, "JAdES", "JAdES_BASELINE_T", "ENVELOPED", data);
     saveOutput(result, GetParam().name + "-jades-blt-enveloped.json");
 }
 
@@ -500,18 +623,22 @@ TEST_P(SigningE2ETest, JAdES_BLTA_Enveloped)
     if (needsTrustForLta(GetParam()) && !SigningTestEnvironment::trustConfigured())
         GTEST_SKIP() << "B-LTA requires trust store (DSS trust not configured)";
     auto data = buildTestPayload();
-    auto req = jadesEnvelopedRequest(data, SignatureLevel::B_LTA);
+    auto req = jadesEnvelopedRequest(data, SignatureLevel::B_LTA, tsaUrl());
 
     auto result =
         service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result);
+    if (!longTermReachable()) {
+        ExpectLongTermRefusal(result);
+        return;
+    }
     ASSERT_TRUE(result.success) << result.errorMessage;
     expectJadesEnvelopedPayloadPresent(result);
     // Same caveat as JAdES_BLT_Enveloped: rVals depends on a live
     // OCSP/CRL responder for the PKS chain. DSS reports JAdES_BASELINE_T
     // when revocation data is missing even though the arcTst is present
     // and the etsiU shape is correct.
-    validateSignature(result, "JAdES", "ENVELOPED", data, std::nullopt, std::string{"JAdES_BASELINE_T"});
+    validateSignature(result, "JAdES", "JAdES_BASELINE_T", "ENVELOPED", data);
     saveOutput(result, GetParam().name + "-jades-blta-enveloped.json");
 }
 
@@ -537,7 +664,7 @@ TEST_P(SigningE2ETest, XAdES_BB_Detached)
     ASSERT_TRUE(result.success) << result.errorMessage;
     std::string xml(result.signedDocument.begin(), result.signedDocument.end());
     EXPECT_TRUE(xml.find("<ds:Signature") != std::string::npos || xml.find("<Signature") != std::string::npos);
-    validateSignature(result, "XAdES", "DETACHED", req.document);
+    validateSignature(result, "XAdES", "XAdES_BASELINE_B", "DETACHED", req.document);
     saveOutput(result, GetParam().name + "-xades-bb-detached.xml");
 }
 
@@ -551,14 +678,14 @@ TEST_P(SigningE2ETest, XAdES_BT_Detached)
     req.format = SignatureFormat::Xades;
     req.level = SignatureLevel::B_T;
     req.packaging = SignaturePackaging::Detached;
-    req.tsa.url = "http://timestamp.digicert.com";
+    req.tsa.url = tsaUrl();
     req.allowExpiredCertificate = true;
 
     auto result =
         service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
-    validateSignature(result, "XAdES", "DETACHED", req.document);
+    validateSignature(result, "XAdES", "XAdES_BASELINE_T", "DETACHED", req.document);
     saveOutput(result, GetParam().name + "-xades-bt-detached.xml");
 }
 
@@ -572,14 +699,18 @@ TEST_P(SigningE2ETest, XAdES_BLT_Detached)
     req.format = SignatureFormat::Xades;
     req.level = SignatureLevel::B_LT;
     req.packaging = SignaturePackaging::Detached;
-    req.tsa.url = "http://timestamp.digicert.com";
+    req.tsa.url = tsaUrl();
     req.allowExpiredCertificate = true;
 
     auto result =
         service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result);
+    if (!longTermReachable()) {
+        ExpectLongTermRefusal(result);
+        return;
+    }
     ASSERT_TRUE(result.success) << result.errorMessage;
-    validateSignature(result, "XAdES", "DETACHED", req.document);
+    validateSignature(result, "XAdES", "XAdES_BASELINE_LT", "DETACHED", req.document);
     saveOutput(result, GetParam().name + "-xades-blt-detached.xml");
 }
 
@@ -593,14 +724,18 @@ TEST_P(SigningE2ETest, XAdES_BLTA_Detached)
     req.format = SignatureFormat::Xades;
     req.level = SignatureLevel::B_LTA;
     req.packaging = SignaturePackaging::Detached;
-    req.tsa.url = "http://timestamp.digicert.com";
+    req.tsa.url = tsaUrl();
     req.allowExpiredCertificate = true;
 
     auto result =
         service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result);
+    if (!longTermReachable()) {
+        ExpectLongTermRefusal(result);
+        return;
+    }
     ASSERT_TRUE(result.success) << result.errorMessage;
-    validateSignature(result, "XAdES", "DETACHED", req.document);
+    validateSignature(result, "XAdES", "XAdES_BASELINE_LTA", "DETACHED", req.document);
     saveOutput(result, GetParam().name + "-xades-blta-detached.xml");
 }
 
@@ -625,7 +760,7 @@ TEST_P(SigningE2ETest, XAdES_BB_Enveloped)
     EXPECT_TRUE(xml.find("<body>") != std::string::npos) << "Original content missing";
     EXPECT_TRUE(xml.find("<ds:Signature") != std::string::npos || xml.find("<Signature") != std::string::npos)
         << "Signature element missing";
-    validateSignature(result, "XAdES");
+    validateSignature(result, "XAdES", "XAdES_BASELINE_B");
     saveOutput(result, GetParam().name + "-xades-bb-enveloped.xml");
 }
 
@@ -640,14 +775,14 @@ TEST_P(SigningE2ETest, XAdES_BT_Enveloped)
     req.format = SignatureFormat::Xades;
     req.level = SignatureLevel::B_T;
     req.packaging = SignaturePackaging::Enveloped;
-    req.tsa.url = "http://timestamp.digicert.com";
+    req.tsa.url = tsaUrl();
     req.allowExpiredCertificate = true;
 
     auto result =
         service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
-    validateSignature(result, "XAdES");
+    validateSignature(result, "XAdES", "XAdES_BASELINE_T");
     saveOutput(result, GetParam().name + "-xades-bt-enveloped.xml");
 }
 
@@ -662,14 +797,18 @@ TEST_P(SigningE2ETest, XAdES_BLT_Enveloped)
     req.format = SignatureFormat::Xades;
     req.level = SignatureLevel::B_LT;
     req.packaging = SignaturePackaging::Enveloped;
-    req.tsa.url = "http://timestamp.digicert.com";
+    req.tsa.url = tsaUrl();
     req.allowExpiredCertificate = true;
 
     auto result =
         service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result);
+    if (!longTermReachable()) {
+        ExpectLongTermRefusal(result);
+        return;
+    }
     ASSERT_TRUE(result.success) << result.errorMessage;
-    validateSignature(result, "XAdES");
+    validateSignature(result, "XAdES", "XAdES_BASELINE_LT");
     saveOutput(result, GetParam().name + "-xades-blt-enveloped.xml");
 }
 
@@ -684,14 +823,18 @@ TEST_P(SigningE2ETest, XAdES_BLTA_Enveloped)
     req.format = SignatureFormat::Xades;
     req.level = SignatureLevel::B_LTA;
     req.packaging = SignaturePackaging::Enveloped;
-    req.tsa.url = "http://timestamp.digicert.com";
+    req.tsa.url = tsaUrl();
     req.allowExpiredCertificate = true;
 
     auto result =
         service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(result);
+    if (!longTermReachable()) {
+        ExpectLongTermRefusal(result);
+        return;
+    }
     ASSERT_TRUE(result.success) << result.errorMessage;
-    validateSignature(result, "XAdES");
+    validateSignature(result, "XAdES", "XAdES_BASELINE_LTA");
     saveOutput(result, GetParam().name + "-xades-blta-enveloped.xml");
 }
 
@@ -707,7 +850,7 @@ TEST_P(SigningE2ETest, ASiCE_BB)
     ASSERT_GE(result.signedDocument.size(), 4u);
     EXPECT_EQ(result.signedDocument[0], 'P');
     EXPECT_EQ(result.signedDocument[1], 'K');
-    validateSignature(result, "ASiC_E");
+    validateSignature(result, "ASiC_E", "CAdES_BASELINE_B");
     saveOutput(result, GetParam().name + "-asice-bb.asice");
 }
 
@@ -716,7 +859,7 @@ TEST_P(SigningE2ETest, ASiCE_BT)
     SKIP_IF_PIN_FAILED();
     auto result = signDocument({'Z', 'i', 'p'}, "test.txt", SignatureFormat::AsicE, SignatureLevel::B_T);
     ASSERT_TRUE(result.success) << result.errorMessage;
-    validateSignature(result, "ASiC_E");
+    validateSignature(result, "ASiC_E", "CAdES_BASELINE_T");
     saveOutput(result, GetParam().name + "-asice-bt.asice");
 }
 
@@ -724,8 +867,12 @@ TEST_P(SigningE2ETest, ASiCE_BLT)
 {
     SKIP_IF_PIN_FAILED();
     auto result = signDocument({'Z', 'i', 'p'}, "test.txt", SignatureFormat::AsicE, SignatureLevel::B_LT);
+    if (!longTermReachable()) {
+        ExpectLongTermRefusal(result);
+        return;
+    }
     ASSERT_TRUE(result.success) << result.errorMessage;
-    validateSignature(result, "ASiC_E");
+    validateSignature(result, "ASiC_E", "CAdES_BASELINE_LT");
     saveOutput(result, GetParam().name + "-asice-blt.asice");
 }
 
@@ -733,8 +880,12 @@ TEST_P(SigningE2ETest, ASiCE_BLTA)
 {
     SKIP_IF_PIN_FAILED();
     auto result = signDocument({'Z', 'i', 'p'}, "test.txt", SignatureFormat::AsicE, SignatureLevel::B_LTA);
+    if (!longTermReachable()) {
+        ExpectLongTermRefusal(result);
+        return;
+    }
     ASSERT_TRUE(result.success) << result.errorMessage;
-    validateSignature(result, "ASiC_E");
+    validateSignature(result, "ASiC_E", "CAdES_BASELINE_LTA");
     saveOutput(result, GetParam().name + "-asice-blta.asice");
 }
 
@@ -752,7 +903,7 @@ TEST_P(SigningE2ETest, PAdES_BB_VisualSignature)
     req.fileName = "test-visual.pdf";
     req.format = SignatureFormat::Pades;
     req.level = SignatureLevel::B_B;
-    req.tsa.url = "http://timestamp.digicert.com";
+    req.tsa.url = tsaUrl();
     req.allowExpiredCertificate = true;
     req.visual.enabled = true;
     req.visual.page = 1;
@@ -777,7 +928,7 @@ TEST_P(SigningE2ETest, PAdES_BB_VisualSignature)
     EXPECT_TRUE(pdfStr.find("/AP") != std::string::npos) << "Missing /AP (appearance) entry";
     EXPECT_TRUE(pdfStr.find("/Sig") != std::string::npos) << "Missing /Sig signature field";
 
-    validateSignature(result, "PAdES");
+    validateSignature(result, "PAdES", "PAdES_BASELINE_B");
     saveOutput(result, GetParam().name + "-pades-bb-visual.pdf");
 }
 
@@ -815,7 +966,7 @@ TEST_P(SigningE2ETest, SignPdf_BB_VisualOnPage3)
     EXPECT_EQ(pdfStr.substr(0, 5), "%PDF-");
     EXPECT_TRUE(pdfStr.find("/AP") != std::string::npos) << "Missing /AP (appearance) entry";
 
-    validateSignature(result, "PAdES");
+    validateSignature(result, "PAdES", "PAdES_BASELINE_B");
     saveOutput(result, GetParam().name + "-pades-bb-visual-page3.pdf");
 }
 
@@ -881,7 +1032,7 @@ TEST_P(SigningE2ETest, PAdES_MultipleSignatures_BB)
     }
     EXPECT_GE(sigDictCount, 2u) << "Expected at least 2 /Type /Sig dictionaries (first signature must survive re-sign)";
 
-    validateSignature(result2, "PAdES", "ENVELOPED", pdfVec, 2);
+    validateSignature(result2, "PAdES", "PAdES_BASELINE_B", "ENVELOPED", pdfVec, 2);
 
     saveOutput(result2, GetParam().name + "-pades-multi-2sig.pdf");
 }
@@ -909,7 +1060,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BB_then_BT)
     req2.fileName = "test-multilevel.pdf";
     req2.format = SignatureFormat::Pades;
     req2.level = SignatureLevel::B_T;
-    req2.tsa.url = "http://timestamp.digicert.com";
+    req2.tsa.url = tsaUrl();
     req2.allowExpiredCertificate = true;
 
     auto result2 =
@@ -931,7 +1082,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BT_then_BB)
     req1.fileName = "test.pdf";
     req1.format = SignatureFormat::Pades;
     req1.level = SignatureLevel::B_T;
-    req1.tsa.url = "http://timestamp.digicert.com";
+    req1.tsa.url = tsaUrl();
     req1.allowExpiredCertificate = true;
 
     auto r1 =
@@ -979,12 +1130,16 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BB_then_BLTA)
     req2.fileName = "test.pdf";
     req2.format = SignatureFormat::Pades;
     req2.level = SignatureLevel::B_LTA;
-    req2.tsa.url = "http://timestamp.digicert.com";
+    req2.tsa.url = tsaUrl();
     req2.allowExpiredCertificate = true;
 
     auto r2 =
         service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(r2);
+    if (!longTermReachable()) {
+        ExpectLongTermRefusal(r2);
+        return;
+    }
     ASSERT_TRUE(r2.success) << "B-LTA on top of B-B: " << r2.errorMessage;
     saveOutput(r2, GetParam().name + "-pades-bb-then-blta.pdf");
 }
@@ -1023,7 +1178,7 @@ TEST_P(SigningE2ETest, PAdES_TripleSignature)
     SigningResult finalResult;
     finalResult.success = true;
     finalResult.signedDocument = doc;
-    validateSignature(finalResult, "PAdES", "ENVELOPED", pdfVec, 3);
+    validateSignature(finalResult, "PAdES", "PAdES_BASELINE_B", "ENVELOPED", pdfVec, 3);
 
     saveOutput(finalResult, GetParam().name + "-pades-triple.pdf");
 }
@@ -1141,7 +1296,7 @@ TEST_P(SigningE2ETest, XAdES_Enveloped_DoubleSignature)
     EXPECT_GE(countId("Signature-2"), 1u) << "Re-sign should mint a fresh Id, e.g. Signature-2";
 
     std::vector<uint8_t> xmlOriginal(xmlDoc.begin(), xmlDoc.end());
-    validateSignature(r2, "XAdES", "ENVELOPED", xmlOriginal, 2);
+    validateSignature(r2, "XAdES", "XAdES_BASELINE_B", "ENVELOPED", xmlOriginal, 2);
 
     saveOutput(r2, GetParam().name + "-xades-double-enveloped.xml");
 }
@@ -1225,7 +1380,7 @@ TEST_P(SigningE2ETest, JAdES_Enveloped_MultiSign)
     // both signers signed the SAME original, not the prior JWS bytes.
     EXPECT_NE(out.find("\"payload\":"), std::string::npos) << "Multi-sign output must keep payload";
 
-    validateSignature(r2, "JAdES", "ENVELOPED", data, 2);
+    validateSignature(r2, "JAdES", "JAdES_BASELINE_B", "ENVELOPED", data, 2);
 
     saveOutput(r2, GetParam().name + "-jades-multisign.json");
 }
@@ -1285,7 +1440,7 @@ TEST_P(SigningE2ETest, CAdES_Detached_MultiSign_Succeeds)
     req.fileName = "test.bin";
     req.format = SignatureFormat::Cades;
     req.level = SignatureLevel::B_B;
-    req.tsa.url = "http://timestamp.digicert.com";
+    req.tsa.url = tsaUrl();
     req.allowExpiredCertificate = true;
 
     auto r1 =
@@ -1305,7 +1460,7 @@ TEST_P(SigningE2ETest, CAdES_Detached_MultiSign_Succeeds)
     EXPECT_GT(r2.signedDocument.size(), r1.signedDocument.size())
         << "Multi-signer CMS must be strictly larger than single-signer CMS";
 
-    validateSignature(r2, "CAdES", "DETACHED", original, 2);
+    validateSignature(r2, "CAdES", "CAdES_BASELINE_B", "DETACHED", original, 2);
 
     saveOutput(r2, GetParam().name + "-cades-detached-multisign.p7s");
 }
@@ -1321,7 +1476,7 @@ TEST_P(SigningE2ETest, XAdES_Detached_MultiSign_Succeeds)
     req.format = SignatureFormat::Xades;
     req.level = SignatureLevel::B_B;
     req.packaging = SignaturePackaging::Detached;
-    req.tsa.url = "http://timestamp.digicert.com";
+    req.tsa.url = tsaUrl();
     req.allowExpiredCertificate = true;
 
     auto r1 =
@@ -1354,7 +1509,7 @@ TEST_P(SigningE2ETest, XAdES_Detached_MultiSign_Succeeds)
     EXPECT_NE(sv.find("asic:Signatures"), std::string_view::npos)
         << "Detached XAdES multi-sign must wrap signatures in <asic:Signatures>";
 
-    validateSignature(r2, "XAdES", "DETACHED", original, 2);
+    validateSignature(r2, "XAdES", "XAdES_BASELINE_B", "DETACHED", original, 2);
 
     saveOutput(r2, GetParam().name + "-xades-detached-multisign.xml");
 }
@@ -1370,7 +1525,7 @@ TEST_P(SigningE2ETest, JAdES_Detached_MultiSign_Succeeds)
     req.format = SignatureFormat::Jades;
     req.level = SignatureLevel::B_B;
     req.packaging = SignaturePackaging::Detached;
-    req.tsa.url = "http://timestamp.digicert.com";
+    req.tsa.url = tsaUrl();
     req.allowExpiredCertificate = true;
 
     auto r1 =
@@ -1394,7 +1549,7 @@ TEST_P(SigningE2ETest, JAdES_Detached_MultiSign_Succeeds)
     EXPECT_EQ(parsed["signatures"].size(), 2u) << "Expected 2 signature entries in signatures[]";
     EXPECT_FALSE(parsed.contains("payload")) << "Detached JWS must omit payload field (RFC 7797 §4.2)";
 
-    validateSignature(r2, "JAdES", "DETACHED", original, 2);
+    validateSignature(r2, "JAdES", "JAdES_BASELINE_B", "DETACHED", original, 2);
 
     saveOutput(r2, GetParam().name + "-jades-detached-multisign.json");
 }
@@ -1532,7 +1687,10 @@ TEST_P(SigningE2ETest, JAdES_AppendSigner_OriginalMismatch_RejectsExplicitly)
     checkPinFailure(r2);
     EXPECT_FALSE(r2.success) << "JAdES appendSigner must reject mismatched originalDocument";
     ASSERT_TRUE(r2.failureKind.has_value()) << "failureKind not populated for JAdES mismatch";
-    EXPECT_EQ(*r2.failureKind, libresign::SignFailureKind::InvalidInput) << r2.errorMessage;
+    // InvalidDocument, not InvalidInput: the fault is in the document handed in,
+    // not in a request parameter. This assertion named the pre-5.0 kind and had
+    // never run, because every case in this file was behind a card gate.
+    EXPECT_EQ(*r2.failureKind, libresign::SignFailureKind::InvalidDocument) << r2.errorMessage;
     EXPECT_NE(r2.errorMessage.find("original"), std::string::npos)
         << "Diagnostic must mention 'original' payload: " << r2.errorMessage;
 }
@@ -1652,7 +1810,7 @@ TEST_P(SigningE2ETest, ASiCE_MultiSign_PreservesPriorSignatures)
     EXPECT_LT(r2.signedDocument.size(), r1.signedDocument.size() * 2)
         << "Re-sign growth must reflect only one new sig+manifest pair, not a wrapped ZIP";
 
-    validateSignature(r2, "ASiC_E", "DETACHED", data, 2);
+    validateSignature(r2, "ASiC_E", "CAdES_BASELINE_B", "DETACHED", data, 2);
 
     saveOutput(r2, GetParam().name + "-asice-multisign.zip");
 }
@@ -1807,12 +1965,16 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BLT_then_BLTA)
     req1.fileName = "test.pdf";
     req1.format = SignatureFormat::Pades;
     req1.level = SignatureLevel::B_LT;
-    req1.tsa.url = "http://timestamp.digicert.com";
+    req1.tsa.url = tsaUrl();
     req1.allowExpiredCertificate = true;
 
     auto r1 =
         service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(r1);
+    if (!longTermReachable()) {
+        ExpectLongTermRefusal(r1);
+        return;
+    }
     ASSERT_TRUE(r1.success) << "PAdES B-LT first sign: " << r1.errorMessage;
 
     SigningRequest req2;
@@ -1820,7 +1982,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BLT_then_BLTA)
     req2.fileName = "test.pdf";
     req2.format = SignatureFormat::Pades;
     req2.level = SignatureLevel::B_LTA;
-    req2.tsa.url = "http://timestamp.digicert.com";
+    req2.tsa.url = tsaUrl();
     req2.allowExpiredCertificate = true;
 
     auto r2 =
@@ -1840,7 +2002,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BLT_then_BLTA)
     // (DocTimeStamp dict + 2 sigs) are the actual contract this test
     // enforces; the cert-trust-aware level promotion is covered by the
     // single-sign PAdES_BLTA test (which uses the same TSA + same TL).
-    validateSignature(r2, "PAdES", "ENVELOPED", pdfVec, 2, std::string{"PAdES_BES"});
+    validateSignature(r2, "PAdES", "PAdES_BASELINE_LTA", "ENVELOPED", pdfVec, 2);
     saveOutput(r2, GetParam().name + "-pades-blt-then-blta.pdf");
 }
 
@@ -1858,12 +2020,16 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BLTA_then_BLTA)
     req1.fileName = "test.pdf";
     req1.format = SignatureFormat::Pades;
     req1.level = SignatureLevel::B_LTA;
-    req1.tsa.url = "http://timestamp.digicert.com";
+    req1.tsa.url = tsaUrl();
     req1.allowExpiredCertificate = true;
 
     auto r1 =
         service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(r1);
+    if (!longTermReachable()) {
+        ExpectLongTermRefusal(r1);
+        return;
+    }
     ASSERT_TRUE(r1.success) << "PAdES B-LTA first sign: " << r1.errorMessage;
 
     SigningRequest req2;
@@ -1871,7 +2037,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BLTA_then_BLTA)
     req2.fileName = "test.pdf";
     req2.format = SignatureFormat::Pades;
     req2.level = SignatureLevel::B_LTA;
-    req2.tsa.url = "http://timestamp.digicert.com";
+    req2.tsa.url = tsaUrl();
     req2.allowExpiredCertificate = true;
 
     auto r2 =
@@ -1884,7 +2050,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BLTA_then_BLTA)
     // without a trust anchor for the PKS chain, DSS reports PAdES_BES for
     // both signers regardless of the LT/LTA artefacts we emit. Structural
     // assertions (2 sigs, size increased) are the actual contract here.
-    validateSignature(r2, "PAdES", "ENVELOPED", pdfVec, 2, std::string{"PAdES_BES"});
+    validateSignature(r2, "PAdES", "PAdES_BASELINE_LTA", "ENVELOPED", pdfVec, 2);
     saveOutput(r2, GetParam().name + "-pades-blta-then-blta.pdf");
 }
 
@@ -1916,12 +2082,16 @@ TEST_P(SigningE2ETest, XAdES_MultiLevel_BB_then_BLTA_Enveloped)
     req2.format = SignatureFormat::Xades;
     req2.level = SignatureLevel::B_LTA;
     req2.packaging = SignaturePackaging::Enveloped;
-    req2.tsa.url = "http://timestamp.digicert.com";
+    req2.tsa.url = tsaUrl();
     req2.allowExpiredCertificate = true;
 
     auto r2 =
         service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(r2);
+    if (!longTermReachable()) {
+        ExpectLongTermRefusal(r2);
+        return;
+    }
     ASSERT_TRUE(r2.success) << "XAdES B-LTA second sign: " << r2.errorMessage;
 
     // XAdES multi-sign auto-detect routes the second request through
@@ -1932,7 +2102,7 @@ TEST_P(SigningE2ETest, XAdES_MultiLevel_BB_then_BLTA_Enveloped)
     // XAdES_BASELINE_B and Sig 1 reaches XAdES_BASELINE_T. The structural
     // contract (2 signatures appended without breaking each other) is the
     // important assertion here.
-    validateSignature(r2, "XAdES", "ENVELOPED", xmlVec, 2, std::string{"XAdES_BASELINE_T"});
+    validateSignature(r2, "XAdES", "XAdES_BASELINE_T", "ENVELOPED", xmlVec, 2);
     saveOutput(r2, GetParam().name + "-xades-bb-then-blta-enveloped.xml");
 }
 
@@ -1964,12 +2134,16 @@ TEST_P(SigningE2ETest, JAdES_MultiLevel_BB_then_BLT_Enveloped)
 
     SigningRequest req2 = req1;
     req2.level = SignatureLevel::B_LT;
-    req2.tsa.url = "http://timestamp.digicert.com";
+    req2.tsa.url = tsaUrl();
 
     auto r2 =
         service->appendSigner(req2, std::span<const uint8_t>{r1.signedDocument}, std::span<const uint8_t>{original},
                               libresign::as_pin(config.pin), config.pkcs11Module, config.keyAlias, config.readerName);
     checkPinFailure(r2);
+    if (!longTermReachable()) {
+        ExpectLongTermRefusal(r2);
+        return;
+    }
     ASSERT_TRUE(r2.success) << "JAdES B-LT appendSigner: " << r2.errorMessage;
 
     // Structural contract only: DSS reports the best level it can
@@ -1977,7 +2151,7 @@ TEST_P(SigningE2ETest, JAdES_MultiLevel_BB_then_BLT_Enveloped)
     // reachability for the PKS chain rather than on what was emitted (the
     // XAdES sibling above documents the same effect). Two signatures surviving
     // each other is what this test is here to prove.
-    validateSignature(r2, "JAdES", "ENVELOPED", original, 2);
+    validateSignature(r2, "JAdES", "JAdES_BASELINE_B", "ENVELOPED", original, 2);
     saveOutput(r2, GetParam().name + "-jades-bb-then-blt-enveloped.json");
 }
 
@@ -2005,7 +2179,7 @@ TEST_P(SigningE2ETest, JAdES_AppendSigner_RejectsArchiveLevel)
 
     SigningRequest req2 = req1;
     req2.level = SignatureLevel::B_LTA;
-    req2.tsa.url = "http://timestamp.digicert.com";
+    req2.tsa.url = tsaUrl();
 
     auto r2 =
         service->appendSigner(req2, std::span<const uint8_t>{r1.signedDocument}, std::span<const uint8_t>{original},
@@ -2030,12 +2204,16 @@ TEST_P(SigningE2ETest, ASiCE_MultiLevel_BLT_then_BLTA)
     req1.format = SignatureFormat::AsicE;
     req1.level = SignatureLevel::B_LT;
     req1.packaging = SignaturePackaging::Detached;
-    req1.tsa.url = "http://timestamp.digicert.com";
+    req1.tsa.url = tsaUrl();
     req1.allowExpiredCertificate = true;
 
     auto r1 =
         service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
     checkPinFailure(r1);
+    if (!longTermReachable()) {
+        ExpectLongTermRefusal(r1);
+        return;
+    }
     ASSERT_TRUE(r1.success) << "ASiC-E B-LT first sign: " << r1.errorMessage;
 
     SigningRequest req2;
@@ -2044,7 +2222,7 @@ TEST_P(SigningE2ETest, ASiCE_MultiLevel_BLT_then_BLTA)
     req2.format = SignatureFormat::AsicE;
     req2.level = SignatureLevel::B_LTA;
     req2.packaging = SignaturePackaging::Detached;
-    req2.tsa.url = "http://timestamp.digicert.com";
+    req2.tsa.url = tsaUrl();
     req2.allowExpiredCertificate = true;
 
     auto r2 =
@@ -2059,7 +2237,7 @@ TEST_P(SigningE2ETest, ASiCE_MultiLevel_BLT_then_BLTA)
     // CAdESModule::sign emits. What DSS then reports per signature is the best
     // level it can INDEPENDENTLY verify, which without a live OCSP/CRL
     // responder for the PKS chain settles at CAdES_BASELINE_T.
-    validateSignature(r2, "ASiC_E", "DETACHED", data, 2, std::string{"CAdES_BASELINE_T"});
+    validateSignature(r2, "ASiC_E", "CAdES_BASELINE_T", "DETACHED", data, 2);
     saveOutput(r2, GetParam().name + "-asice-blt-then-blta.zip");
 }
 
@@ -2165,7 +2343,8 @@ TEST_P(SigningE2ETest, ASiCE_MultiSign_MultiDataFile_RejectsExplicitly)
     EXPECT_FALSE(r.success) << "ASiC-E with multiple data files must be rejected";
     if (!r.success) {
         ASSERT_TRUE(r.failureKind.has_value()) << "failureKind not populated";
-        EXPECT_EQ(*r.failureKind, libresign::SignFailureKind::InvalidInput) << r.errorMessage;
+        // InvalidDocument, not InvalidInput — see the JAdES mismatch case above.
+        EXPECT_EQ(*r.failureKind, libresign::SignFailureKind::InvalidDocument) << r.errorMessage;
         EXPECT_TRUE(r.errorMessage.find("data") != std::string::npos ||
                     r.errorMessage.find("multiple") != std::string::npos ||
                     r.errorMessage.find("one") != std::string::npos)
@@ -2331,7 +2510,26 @@ std::vector<BackendInfo> availableBackends()
     return backends;
 }
 
+std::vector<BackendInfo> softHsmBackends()
+{
+    std::vector<BackendInfo> backends;
+#ifdef LIBRESIGN_HAS_NATIVE
+    // Long-term levels are NOT reachable here: the provisioned signer is
+    // self-signed, so its chain terminates unproven. The bodies below assert
+    // the refusal instead, and the level assertions stay on the card branch.
+    backends.push_back({"Native", Backend::Native, BackendInfo::TokenSource::SoftHsm, false});
+#endif
+    return backends;
+}
+
 INSTANTIATE_TEST_SUITE_P(AllBackends, SigningE2ETest, ::testing::ValuesIn(availableBackends()),
+                         [](const ::testing::TestParamInfo<BackendInfo>& info) { return info.param.name; });
+
+// The same cases against the software token CI already provisions on both
+// platforms. Every call to the ETSI validator lived in this file, and this file
+// needed a card reader and a card PIN to get past setup -- so the validator
+// stood behind a gate it has no reason to be behind.
+INSTANTIATE_TEST_SUITE_P(SoftHSM, SigningE2ETest, ::testing::ValuesIn(softHsmBackends()),
                          [](const ::testing::TestParamInfo<BackendInfo>& info) { return info.param.name; });
 
 // ===========================================================================

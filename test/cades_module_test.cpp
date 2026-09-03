@@ -476,6 +476,40 @@ protected:
     unsigned long testSlot = 0;
 };
 
+// The other half of the PAdES assertion in pades_module_test.cpp. EN 319 122-1
+// REQUIRES signing-time in a CAdES baseline signature, so the parameter that
+// lets PAdES drop it must not drop it here. Flipping the CAdES call site to
+// Omit fails this test — which is how the parameter is shown to carry weight
+// in both directions rather than in only the one that was broken.
+TEST_F(CAdESModuleTest, SignBB_CadesCmsCarriesSigningTime)
+{
+    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
+                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    CAdESModule cades;
+
+    // Through sign(), not signBB(), deliberately: the assertion has to pin the
+    // profile this call site CHOSE, not merely that the parameter is wired.
+    // Calling signBB with an explicit Include would still pass with the call
+    // site flipped to Omit, which is the mutation this test exists to catch.
+    std::vector<uint8_t> data = {'H', 'e', 'l', 'l', 'o'};
+    auto result = cades.sign(data, token, SignatureLevel::B_B, {});
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    const auto& cms = result.signedDocument;
+    ASSERT_FALSE(cms.empty());
+
+    const unsigned char* p = cms.data();
+    CmsPtr info(d2i_CMS_ContentInfo(nullptr, &p, static_cast<long>(cms.size())));
+    ASSERT_NE(info.get(), nullptr);
+
+    STACK_OF(CMS_SignerInfo)* signers = CMS_get0_SignerInfos(info.get());
+    ASSERT_NE(signers, nullptr);
+    ASSERT_EQ(sk_CMS_SignerInfo_num(signers), 1);
+
+    CMS_SignerInfo* si = sk_CMS_SignerInfo_value(signers, 0);
+    EXPECT_GE(CMS_signed_get_attr_by_NID(si, NID_pkcs9_signingTime, -1), 0)
+        << "EN 319 122-1 requires the signing-time signed attribute in a CAdES baseline signature";
+}
+
 TEST_F(CAdESModuleTest, SignBB_ProducesValidCMS)
 {
     Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
@@ -483,7 +517,7 @@ TEST_F(CAdESModuleTest, SignBB_ProducesValidCMS)
     CAdESModule cades;
 
     std::vector<uint8_t> data = {'H', 'e', 'l', 'l', 'o'};
-    auto cms = cades.signBB(data, token);
+    auto cms = cades.signBB(data, token, SigningTimeAttribute::Include);
 
     ASSERT_FALSE(cms.empty());
 
@@ -528,7 +562,7 @@ TEST_F(CAdESModuleTest, SignBB_IsDetached)
     CAdESModule cades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
-    auto cms = cades.signBB(data, token);
+    auto cms = cades.signBB(data, token, SigningTimeAttribute::Include);
     ASSERT_FALSE(cms.empty());
 
     const unsigned char* p = cms.data();
@@ -564,8 +598,8 @@ TEST_F(CAdESModuleTest, SignBB_DifferentDataProducesDifferentSignature)
     std::vector<uint8_t> data1 = {'A', 'B', 'C'};
     std::vector<uint8_t> data2 = {'X', 'Y', 'Z'};
 
-    auto cms1 = cades.signBB(data1, token);
-    auto cms2 = cades.signBB(data2, token);
+    auto cms1 = cades.signBB(data1, token, SigningTimeAttribute::Include);
+    auto cms2 = cades.signBB(data2, token, SigningTimeAttribute::Include);
 
     ASSERT_FALSE(cms1.empty());
     ASSERT_FALSE(cms2.empty());

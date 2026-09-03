@@ -3,6 +3,7 @@
 
 #include "native_utils.h"
 
+#include "native/der_utils.h"
 #include "native/issuer_resolution.h"
 #include "native/pkcs11_token.h"
 #include "native/revocation_client.h"
@@ -310,6 +311,32 @@ X509Ptr parseCert(const std::vector<uint8_t>& der)
     if (!cert)
         throw std::runtime_error("d2i_X509() failed: " + opensslError());
     return cert;
+}
+
+// ---- ESS IssuerSerial (RFC 5035 sec. 4) ----
+
+std::vector<uint8_t> buildIssuerSerialDer(X509* cert)
+{
+    if (!cert)
+        throw std::runtime_error("buildIssuerSerialDer(): null certificate");
+
+    auto issuerBytes = derEncode(i2d_X509_NAME, X509_get_issuer_name(cert));
+    if (issuerBytes.empty())
+        throw std::runtime_error("i2d_X509_NAME() failed: " + opensslError());
+
+    auto serialDer = derEncode(i2d_ASN1_INTEGER, const_cast<ASN1_INTEGER*>(X509_get0_serialNumber(cert)));
+    if (serialDer.empty())
+        throw std::runtime_error("i2d_ASN1_INTEGER() failed: " + opensslError());
+
+    // GeneralName ::= [4] IMPLICIT directoryName, then GeneralNames ::= SEQUENCE OF GeneralName
+    auto generalNames = derSequence(derWrap(0xA4, issuerBytes));
+
+    std::vector<uint8_t> content;
+    content.reserve(generalNames.size() + serialDer.size());
+    content.insert(content.end(), generalNames.begin(), generalNames.end());
+    content.insert(content.end(), serialDer.begin(), serialDer.end());
+
+    return derSequence(content);
 }
 
 // ---- UTC time decomposition ----

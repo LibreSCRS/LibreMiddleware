@@ -717,8 +717,12 @@ SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, Pkcs11Tok
         // 3. Create CAdES detached signature over the byte range data.
         //    CAdESModule::signBB hashes the data internally, which is what we want:
         //    it computes SHA-256(signedData) and creates CMS SignedData with that digest.
+        //    SigningTimeAttribute::Omit: ETSI EN 319 142-1 forbids the
+        //    signing-time signed attribute in a PAdES baseline signature — the
+        //    /M entry written above carries the claimed time. A CMS that keeps
+        //    it grades PAdES-BES instead of PAdES-BASELINE-B.
         CAdESModule cades;
-        auto cms = cades.signBB(signedData, token);
+        auto cms = cades.signBB(signedData, token, SigningTimeAttribute::Omit);
         if (cms.empty())
             return makeFailure(SignFailureKind::OpensslError, "CAdES B-B signing produced empty output");
 

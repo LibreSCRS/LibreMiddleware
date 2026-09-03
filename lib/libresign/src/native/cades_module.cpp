@@ -83,33 +83,9 @@ std::vector<uint8_t> buildSigningCertV2Attr(X509* cert)
 
     auto certHash = sha256(certDer);
 
-    // 2. Build IssuerSerial
-    //    issuer = GeneralNames containing a directoryName with the issuer DN
-    //    serialNumber = cert serial number
-
-    // Get issuer name DER
-    auto issuerBytes = derEncode(i2d_X509_NAME, X509_get_issuer_name(cert));
-    if (issuerBytes.empty())
-        throw std::runtime_error("i2d_X509_NAME() failed: " + opensslError());
-
-    // Get serial number DER
-    auto serialDer = derEncode(i2d_ASN1_INTEGER, const_cast<ASN1_INTEGER*>(X509_get0_serialNumber(cert)));
-    if (serialDer.empty())
-        throw std::runtime_error("i2d_ASN1_INTEGER() failed: " + opensslError());
-
-    // Build GeneralName (directoryName) [4] IMPLICIT
-    // Tag: context [4] constructed = 0xA4
-    auto generalName = derWrap(0xA4, issuerBytes);
-
-    // GeneralNames = SEQUENCE OF GeneralName
-    auto generalNames = derWrap(0x30, generalName);
-
-    // IssuerSerial = SEQUENCE { issuer GeneralNames, serialNumber INTEGER }
-    std::vector<uint8_t> issuerSerialContent;
-    issuerSerialContent.insert(issuerSerialContent.end(), generalNames.begin(), generalNames.end());
-    issuerSerialContent.insert(issuerSerialContent.end(), serialDer.begin(), serialDer.end());
-
-    auto issuerSerial = derWrap(0x30, issuerSerialContent);
+    // 2. Build IssuerSerial — shared with the XAdES xades:IssuerSerialV2
+    //    element, which carries the base64 of these same octets.
+    auto issuerSerial = buildIssuerSerialDer(cert);
 
     // 3. Build ESSCertIDv2
     //    For SHA-256 default: omit hashAlgorithm field
@@ -252,7 +228,8 @@ void addUnsignedAttr(CMS_SignerInfo* si, const char* oid, const std::vector<uint
 
 // ---- signBB ----
 
-std::vector<uint8_t> CAdESModule::signBB(const std::vector<uint8_t>& data, Pkcs11Token& token)
+std::vector<uint8_t> CAdESModule::signBB(const std::vector<uint8_t>& data, Pkcs11Token& token,
+                                         SigningTimeAttribute signingTime)
 {
     // 1. Get signer certificate from token
     auto certDer = token.certificate();
@@ -273,23 +250,30 @@ std::vector<uint8_t> CAdESModule::signBB(const std::vector<uint8_t>& data, Pkcs1
     if (!dataBio)
         throw std::runtime_error("BIO_new_mem_buf() failed");
 
-    constexpr unsigned int kFlags = CMS_PARTIAL | CMS_BINARY | CMS_DETACHED | CMS_NOSMIMECAP;
+    // CMS_NO_SIGNING_TIME is what keeps CMS_SignerInfo_sign (reached through
+    // CMS_final below) from minting a signing-time attribute of its own:
+    // OpenSSL adds one whenever the attribute is absent and the flag is not
+    // set. PAdES needs it gone; CAdES needs it there.
+    unsigned int flags = CMS_PARTIAL | CMS_BINARY | CMS_DETACHED | CMS_NOSMIMECAP;
+    if (signingTime == SigningTimeAttribute::Omit)
+        flags |= CMS_NO_SIGNING_TIME;
 
     // Create empty CMS (no signer yet)
-    CmsPtr cms(CMS_sign(nullptr, nullptr, nullptr, dataBio.get(), kFlags));
+    CmsPtr cms(CMS_sign(nullptr, nullptr, nullptr, dataBio.get(), flags));
     if (!cms)
         throw std::runtime_error("CMS_sign() failed: " + opensslError());
 
     // Add signer with explicit digest. Our provider keymgmt implements export
     // so EVP_PKEY_eq inside CMS_add1_signer succeeds for key/cert matching.
-    CMS_SignerInfo* si = CMS_add1_signer(cms.get(), signerCert.get(), pkey.get(), EVP_sha256(), kFlags);
+    CMS_SignerInfo* si = CMS_add1_signer(cms.get(), signerCert.get(), pkey.get(), EVP_sha256(), flags);
     if (!si)
         throw std::runtime_error("CMS_add1_signer() failed: " + opensslError());
 
     // 4. Add signing-certificate-v2 signed attribute (ETSI EN 319 122-1 §5.2.2)
     attachSigningCertificateV2(si, signerCert.get());
 
-    // 5. Finalize — OpenSSL computes message-digest, adds signing-time,
+    // 5. Finalize — OpenSSL computes message-digest, adds signing-time
+    //    (unless CMS_NO_SIGNING_TIME asked it not to),
     //    hashes signed attributes, and calls our PKCS#11-backed EVP_PKEY
     //    to produce the signature. All transparently.
     BioPtr dataBio2(BIO_new_mem_buf(data.data(), static_cast<int>(data.size())));
@@ -668,7 +652,7 @@ SigningResult CAdESModule::sign(const std::vector<uint8_t>& data, Pkcs11Token& t
         return makeFailure(SignFailureKind::InvalidDocument, "Input data is empty");
 
     try {
-        auto cmsBytes = signBB(data, token);
+        auto cmsBytes = signBB(data, token, SigningTimeAttribute::Include);
         if (cmsBytes.empty())
             return makeFailure(SignFailureKind::OpensslError, "CAdES B-B signing produced empty output");
 

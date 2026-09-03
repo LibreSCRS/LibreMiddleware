@@ -15,10 +15,13 @@
 #include "tl_cache.h"
 #include "tl_signature_verifier.h"
 
+#include <openssl/cms.h>
+#include <openssl/err.h>
 #include <openssl/pem.h>
 #include <openssl/x509.h>
 
 #include <algorithm>
+#include <climits>
 #include <cstring>
 #include <fstream>
 #include <optional>
@@ -101,6 +104,30 @@ std::optional<SignatureFormat> inferFormat(std::span<const uint8_t> prior)
     return std::nullopt;
 }
 
+// Is @p doc a CMS SignedData that already carries at least one signer?
+//
+// A leading 0x30 is the ASN.1 SEQUENCE tag *and* the ASCII character '0', so
+// every CSV, log or text file whose first character is that digit reaches
+// here. Only a real parse can tell them apart; a byte test cannot. Errors
+// left on the OpenSSL queue by a failed d2i are cleared, because the next
+// unrelated opensslError() would otherwise report this parse's failure.
+bool isSignedCms(std::span<const uint8_t> doc)
+{
+    if (doc.empty() || doc.size() > static_cast<size_t>(LONG_MAX))
+        return false;
+
+    const unsigned char* p = doc.data();
+    CmsPtr cms(d2i_CMS_ContentInfo(nullptr, &p, static_cast<long>(doc.size())));
+    if (!cms) {
+        ERR_clear_error();
+        return false;
+    }
+
+    // Returns null for any content type other than signedData.
+    STACK_OF(CMS_SignerInfo)* signers = CMS_get0_SignerInfos(cms.get());
+    return signers != nullptr && sk_CMS_SignerInfo_num(signers) > 0;
+}
+
 // Cheap "looks like an already-signed document of `fmt`" probe used by
 // @ref NativeSigningService::sign to lift the per-module multi-sign
 // auto-detect (previously inside xades_module / jades_module sign()
@@ -115,9 +142,8 @@ std::optional<SignatureFormat> inferFormat(std::span<const uint8_t> prior)
 // "/Type /Sig" octets but has no signature dict) only redirects to
 // appendSigner, which then runs its own strict parse and fails with a
 // targeted InvalidInput rather than producing a malformed signature.
-// CAdES is special-cased: a DER SEQUENCE matched by inferFormat IS by
-// definition a signed CMS blob (no "unsigned CAdES" concept), so the
-// probe is unconditionally true.
+// CAdES is the exception and does parse: its magic is a single byte that
+// ordinary text shares, so a substring scan has nothing to stand on.
 bool looksSignedAlready(std::span<const uint8_t> doc, SignatureFormat fmt)
 {
     using namespace std::string_view_literals;
@@ -146,10 +172,9 @@ bool looksSignedAlready(std::span<const uint8_t> doc, SignatureFormat fmt)
         // tryParseJwsGeneral check downstream.
         return sv.find("\"signatures\""sv) != std::string_view::npos;
     case SignatureFormat::Cades:
-        // Any input that inferFormat tagged as CAdES (DER SEQUENCE
-        // leading byte) is a signed CMS blob — there is no unsigned
-        // CAdES wire shape.
-        return true;
+        // The one arm the magic byte cannot settle: 0x30 is both the DER
+        // SEQUENCE tag and ASCII '0'. Parse rather than assume.
+        return isSignedCms(doc);
     }
     std::unreachable();
 }
@@ -159,7 +184,8 @@ bool looksSignedAlready(std::span<const uint8_t> doc, SignatureFormat fmt)
 bool NativeSigningService::configure(const TrustConfig& config)
 {
     trustConfig = config;
-    tlAnchorCerts.clear(); // rebuilt from the TLs loaded below
+    tlAnchorCerts.clear();   // rebuilt from the TLs loaded below
+    lazyListsLoaded = false; // and from the deferred ones, when a level needs them
 
     TlCache cache(config.cacheDirectory);
     TlSignatureVerifier verifier;
@@ -343,6 +369,28 @@ bool NativeSigningService::isAvailable() const
     return true;
 }
 
+void NativeSigningService::loadLazyTrustLists()
+{
+    if (lazyListsLoaded)
+        return;
+    lazyListsLoaded = true;
+
+    TlCache cache(trustConfig.cacheDirectory);
+    TlSignatureVerifier verifier;
+
+    for (const auto& entry : trustConfig.trustedLists) {
+        if (entry.eager)
+            continue; // configure() already fetched it
+        try {
+            loadTrustList(entry.url, entry.isLotl, cache, verifier, 0);
+        } catch (const std::exception&) {
+            // Degraded, exactly as configure() treats an eager source that
+            // fails: the anchor set stays short and the chain gate below
+            // refuses with the cause the user can act on.
+        }
+    }
+}
+
 std::optional<SigningResult> NativeSigningService::completeLongTermChain(Pkcs11Token& token, SignatureLevel level)
 {
     // Long-term levels (B-LT/B-LTA) embed the full certificate chain. Cards
@@ -362,7 +410,15 @@ std::optional<SigningResult> NativeSigningService::completeLongTermChain(Pkcs11T
     // CAdESModule::sign). CAdES and JAdES get there directly: their
     // appendSigner runs the same per-signer level ladder their sign() runs,
     // which reaches the gate at B-LT. No format bypasses it.
-    if (level < SignatureLevel::B_LT || tlAnchorCerts.empty())
+    if (level < SignatureLevel::B_LT)
+        return std::nullopt;
+
+    // Past this line the level DOES require an anchor, which is the condition
+    // TrustedListSource::eager names for the deferred fetch. Nothing else in
+    // the engine is in a position to know it.
+    loadLazyTrustLists();
+
+    if (tlAnchorCerts.empty())
         return std::nullopt;
 
     auto ordered = native_utils::buildOrderedChain(token.certificateChain(), tlAnchorCerts);
@@ -423,7 +479,16 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, const st
         // be recovered from a CMS SignedData, so the only path forward
         // is the explicit appendSigner public API. Fail fast with a
         // pointer at that API.
-        if (auto fmt = inferFormat(request.document); fmt && looksSignedAlready(request.document, *fmt)) {
+        // The request's format is authoritative. The auto-detect adds a
+        // convenience — "this is already a signed document of the format you
+        // asked for, so add a signer to it" — and must never answer a
+        // different question than the caller asked. Sniffing the format
+        // instead of agreeing with it refuses ordinary documents outright:
+        // a CSV whose first character is '0' shares its leading byte with a
+        // DER SEQUENCE, and a JSON payload containing the word "signatures"
+        // reads as a JWS.
+        if (auto fmt = inferFormat(request.document);
+            fmt == request.format && looksSignedAlready(request.document, *fmt)) {
             switch (*fmt) {
             case SignatureFormat::Pades:
                 // PAdES handles already-signed PDFs natively through the

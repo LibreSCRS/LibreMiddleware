@@ -5,7 +5,10 @@
 
 #include "native/pkcs11_module_manager.h"
 
+#include <gmock/gmock.h>
+
 #include <algorithm>
+#include <cstring>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -32,6 +35,24 @@
 #endif
 
 namespace libresign::test {
+
+namespace {
+bool envFlagIsOne(const char* name)
+{
+    const char* v = std::getenv(name);
+    return v != nullptr && std::strcmp(v, "1") == 0;
+}
+} // namespace
+
+bool dssOracleIsMandatory()
+{
+    return envFlagIsOne("LIBRESCRS_REQUIRE_DSS_ORACLE");
+}
+
+bool dssTrustConfigRequested()
+{
+    return envFlagIsOne("LIBRESCRS_TEST_DSS_TRUST");
+}
 
 // ---- PIN guard ----
 
@@ -166,6 +187,23 @@ struct SigningTestEnvironment::Impl
 
 std::unique_ptr<SigningTestEnvironment::Impl> SigningTestEnvironment::impl;
 
+namespace {
+/// Hard-stop when the run declared the ETSI validator mandatory and it is not
+/// there.
+///
+/// Deliberately not `FAIL()`. Measured: a fatal failure inside a global
+/// `Environment::SetUp` makes gtest skip every test and still exit **0**, so a
+/// CI leg with no validator archive printed the diagnostic and reported a
+/// green run — the exact failure mode the mandatory mode exists to remove. A
+/// non-zero process exit is the only signal `ctest` reads.
+[[noreturn]] void dieBecauseOracleIsMandatory(const std::string& why)
+{
+    std::cerr << "[SigningTestEnvironment] " << why << "\n";
+    std::cerr.flush();
+    std::exit(EXIT_FAILURE);
+}
+} // namespace
+
 void SigningTestEnvironment::SetUp()
 {
     impl = std::make_unique<Impl>();
@@ -173,6 +211,10 @@ void SigningTestEnvironment::SetUp()
     std::string jarPath = std::string(CMAKE_SOURCE_DIR) + "/tools/dss-service/target/dss-service-1.0.0-SNAPSHOT.jar";
 
     if (!std::filesystem::exists(jarPath)) {
+        if (dssOracleIsMandatory())
+            dieBecauseOracleIsMandatory("LIBRESCRS_REQUIRE_DSS_ORACLE=1 but the ETSI validator archive is missing at " +
+                                        jarPath +
+                                        ". Build it with: mvn -B -DskipTests -f tools/dss-service/pom.xml package");
         std::cerr << "[SigningTestEnvironment] DSS JAR not found at " << jarPath << ", validation will be skipped\n";
         return;
     }
@@ -184,6 +226,9 @@ void SigningTestEnvironment::SetUp()
     impl->dssManager = std::make_unique<DSSServiceManager>(std::move(cfg));
     auto result = impl->dssManager->ensureRunning();
     if (!result) {
+        if (dssOracleIsMandatory())
+            dieBecauseOracleIsMandatory("LIBRESCRS_REQUIRE_DSS_ORACLE=1 but the ETSI validator failed to start: " +
+                                        result.error);
         std::cerr << "[SigningTestEnvironment] DSS failed to start: " << result.error << "\n";
         impl->dssManager.reset();
         return;
@@ -209,13 +254,26 @@ void SigningTestEnvironment::SetUp()
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
         if (!ready) {
+            if (dssOracleIsMandatory())
+                dieBecauseOracleIsMandatory(
+                    "LIBRESCRS_REQUIRE_DSS_ORACLE=1 but the ETSI validator did not become ready within 30s");
             std::cerr << "[SigningTestEnvironment] DSS oracle did not become ready within 30s\n";
             impl->dssManager.reset();
             return;
         }
     }
 
-    // Configure trust with Serbian TL
+    // Configure trust with the national TL. Opt-in: the levels and the
+    // structural warnings this suite asserts are properties of the bytes and
+    // were correct under INDETERMINATE / NO_CERTIFICATE_CHAIN_FOUND too, so the
+    // default leg needs neither this network round trip nor its 30s timeout.
+    if (!dssTrustConfigRequested()) {
+        std::cerr << "[SigningTestEnvironment] Trust config skipped "
+                     "(set LIBRESCRS_TEST_DSS_TRUST=1 to enable)\n";
+        impl->validationClient = std::make_unique<DSSValidationClient>(impl->baseUrl, impl->socketPath);
+        return;
+    }
+
     try {
         HttpClient http;
         nlohmann::json trustCfg;
@@ -286,11 +344,16 @@ std::string joinLevels(const std::vector<ValidationSignatureInfo>& sigs)
 }
 } // namespace
 
-void validateSignature(const SigningResult& result, const std::string& format, const std::string& packaging,
-                       std::span<const uint8_t> originalDoc, std::optional<int> expectedSigCount,
-                       std::optional<std::string> expectedBaselineLevel)
+void validateSignature(const SigningResult& result, const std::string& format, const std::string& expectedBaselineLevel,
+                       const std::string& packaging, std::span<const uint8_t> originalDoc,
+                       std::optional<int> expectedSigCount)
 {
     if (!SigningTestEnvironment::available()) {
+        if (dssOracleIsMandatory()) {
+            ADD_FAILURE() << "LIBRESCRS_REQUIRE_DSS_ORACLE=1 but the ETSI validator is unavailable; "
+                             "nothing about this signature was checked";
+            return;
+        }
         std::cerr << "[validateSignature] DSS not available, skipping validation\n";
         return;
     }
@@ -312,18 +375,27 @@ void validateSignature(const SigningResult& result, const std::string& format, c
             << "DSS reports " << vr.signatureCount << " signatures; expected " << *expectedSigCount;
     }
 
-    if (expectedBaselineLevel.has_value()) {
+    // Unconditional. The level was the optional argument nobody passed, which
+    // is exactly how a format shipping one level below its claim stayed green.
+    {
         const bool found =
             std::any_of(vr.signatures.begin(), vr.signatures.end(),
-                        [&](const ValidationSignatureInfo& s) { return s.level == *expectedBaselineLevel; });
+                        [&](const ValidationSignatureInfo& s) { return s.level == expectedBaselineLevel; });
         EXPECT_TRUE(found) << "DSS signature levels [" << joinLevels(vr.signatures) << "] does not include expected "
-                           << *expectedBaselineLevel;
+                           << expectedBaselineLevel;
     }
 
     for (size_t i = 0; i < vr.signatures.size(); ++i) {
         const auto& sig = vr.signatures[i];
         EXPECT_NE(sig.indication, "TOTAL_FAILED") << "Signature " << i << " TOTAL_FAILED"
                                                   << (sig.subIndication.empty() ? "" : " (" + sig.subIndication + ")");
+
+        // The validator printed this on every XAdES document this engine
+        // produced and nothing asserted it, so a whole format shipped
+        // schema-invalid past a green suite.
+        EXPECT_THAT(sig.warnings, ::testing::Not(::testing::Contains(
+                                      ::testing::HasSubstr("structure of the signature is not valid"))))
+            << "Signature " << i;
 
         std::cerr << "[validateSignature] Sig " << i << ": " << sig.indication;
         if (!sig.subIndication.empty())
@@ -364,10 +436,14 @@ bool SigningTestEnvironment::trustConfigured()
     return false;
 }
 
-void validateSignature(const SigningResult& /*result*/, const std::string& /*format*/, const std::string& /*packaging*/,
-                       std::span<const uint8_t> /*originalDoc*/, std::optional<int> /*expectedSigCount*/,
-                       std::optional<std::string> /*expectedBaselineLevel*/)
+void validateSignature(const SigningResult& /*result*/, const std::string& /*format*/,
+                       const std::string& /*expectedBaselineLevel*/, const std::string& /*packaging*/,
+                       std::span<const uint8_t> /*originalDoc*/, std::optional<int> /*expectedSigCount*/)
 {
+    // LIBRESCRS_REQUIRE_DSS_ORACLE is deliberately NOT read here. On a leg
+    // built without the oracle there is no archive to be missing and no
+    // service to fail: the variable would have no subject, and reading it
+    // would turn a build-configuration choice into a test failure.
     std::cerr << "[validateSignature] DSS not compiled, skipping validation\n";
 }
 

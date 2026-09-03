@@ -223,10 +223,32 @@ TEST_F(XAdESModuleTest, SignBB_HasXAdESQualifyingProperties)
     EXPECT_EQ(xpathCount(ctx.get(), "//xades:Cert/xades:CertDigest/ds:DigestValue"), 1);
     std::string certDigest = xpathText(ctx.get(), "//xades:Cert/xades:CertDigest/ds:DigestValue");
     EXPECT_FALSE(certDigest.empty());
+}
 
-    // xades:IssuerSerial
-    EXPECT_EQ(xpathCount(ctx.get(), "//xades:IssuerSerial/ds:X509IssuerName"), 1);
-    EXPECT_EQ(xpathCount(ctx.get(), "//xades:IssuerSerial/ds:X509SerialNumber"), 1);
+// The certificate identifier inside SigningCertificateV2 is a CertIDTypeV2
+// (ETSI EN 319 132-1), whose content model allows CertDigest and an optional
+// IssuerSerialV2 — nothing else. The v1 pair of ds:X509IssuerName and
+// ds:X509SerialNumber belongs to xades:SigningCertificate, and emitting it
+// here makes every document this module produces schema-invalid. Two
+// assertions used to pin exactly that wrong shape, which is why the defect
+// outlived a green suite.
+TEST_F(XAdESModuleTest, SignBB_SigningCertificateV2IsCertIDTypeV2)
+{
+    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
+                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    XAdESModule xades;
+
+    std::vector<uint8_t> data = {'H', 'e', 'l', 'l', 'o'};
+    auto result = xades.sign(data, "test.txt", token, SignatureLevel::B_B, SignaturePackaging::Detached, {});
+
+    ASSERT_TRUE(result.success) << result.errorMessage;
+    auto doc = parseResult(result);
+    ASSERT_NE(doc.get(), nullptr);
+
+    auto ctx = createXPathCtx(doc.get());
+
+    EXPECT_EQ(xpathCount(ctx.get(), "//xades:Cert/xades:IssuerSerialV2"), 1);
+    EXPECT_EQ(xpathCount(ctx.get(), "//xades:Cert/xades:IssuerSerial"), 0);
 }
 
 TEST_F(XAdESModuleTest, SignBB_HasDataObjectFormat)

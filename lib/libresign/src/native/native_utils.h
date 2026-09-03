@@ -96,6 +96,18 @@ std::vector<uint8_t> sha512(const std::string& data);
 // Parse DER-encoded X509 certificate
 X509Ptr parseCert(const std::vector<uint8_t>& der);
 
+/// @brief DER-encode the ESS `IssuerSerial` SEQUENCE naming @p cert's issuer
+///        and serial number (RFC 5035 sec. 4):
+///        `IssuerSerial ::= SEQUENCE { issuer GeneralNames, serialNumber INTEGER }`
+///        with `issuer` a single `[4] directoryName` GeneralName.
+///
+/// Two conformance profiles need the identical octets: the CAdES
+/// `signing-certificate-v2` attribute wraps it inside `ESSCertIDv2`
+/// (ETSI EN 319 122-1), and the XAdES `xades:IssuerSerialV2` element carries
+/// its base64 (ETSI EN 319 132-1, `CertIDTypeV2`). Emitting it from one place
+/// keeps the two from drifting.
+std::vector<uint8_t> buildIssuerSerialDer(X509* cert);
+
 // Ensure libxml2 is initialized (thread-safe, idempotent)
 void ensureXmlInitialized();
 

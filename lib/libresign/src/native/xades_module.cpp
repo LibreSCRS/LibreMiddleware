@@ -72,48 +72,6 @@ constexpr const char* kNsXpathFilter2 = "http://www.w3.org/2002/06/xmldsig-filte
 // the RFC 3986 §2.3 unreserved set (including `/`) must be percent-encoded.
 // Delegates to the shared native_utils::percentEncode with preserveSlash=false.
 
-// ---- Extract issuer DN as RFC 2253 string ----
-
-std::string issuerDN(X509* cert)
-{
-    X509_NAME* name = X509_get_issuer_name(cert);
-    if (!name)
-        throw std::runtime_error("X509_get_issuer_name() returned null");
-
-    ::libresign::BioPtr bio(BIO_new(BIO_s_mem()));
-    if (!bio)
-        throw std::runtime_error("BIO_new() failed");
-
-    // RFC 2253 format (the format expected by XML-DSIG)
-    if (X509_NAME_print_ex(bio.get(), name, 0, XN_FLAG_RFC2253) < 0)
-        throw std::runtime_error("X509_NAME_print_ex() failed");
-
-    BUF_MEM* bufMem = nullptr;
-    BIO_get_mem_ptr(bio.get(), &bufMem);
-    return {bufMem->data, bufMem->length};
-}
-
-// ---- Extract serial number as decimal string ----
-
-std::string serialNumber(X509* cert)
-{
-    const ASN1_INTEGER* serial = X509_get0_serialNumber(cert);
-    if (!serial)
-        throw std::runtime_error("X509_get0_serialNumber() returned null");
-
-    ::libresign::BNPtr bn(ASN1_INTEGER_to_BN(serial, nullptr));
-    if (!bn)
-        throw std::runtime_error("ASN1_INTEGER_to_BN() failed");
-
-    char* dec = BN_bn2dec(bn.get());
-    if (!dec)
-        throw std::runtime_error("BN_bn2dec() failed");
-
-    std::string result(dec);
-    OPENSSL_free(dec);
-    return result;
-}
-
 // ---- Canonicalize an XML node subtree using Exclusive C14N ----
 // Returns the canonical form as a byte vector.
 
@@ -336,10 +294,12 @@ XmlSignatureContext buildSignatureXml(const std::vector<uint8_t>& certDer, X509*
     xmlSetProp(certDigestMethod, BAD_CAST "Algorithm", BAD_CAST "http://www.w3.org/2001/04/xmlenc#sha256");
     addChildWithText(certDigest, nsDs, "DigestValue", base64Encode(sha256(certDer)));
 
-    // <xades:IssuerSerial>
-    xmlNodePtr issuerSerial = xmlNewChild(certElem, nsXades, BAD_CAST "IssuerSerial", nullptr);
-    addChildWithText(issuerSerial, nsDs, "X509IssuerName", issuerDN(cert));
-    addChildWithText(issuerSerial, nsDs, "X509SerialNumber", serialNumber(cert));
+    // <xades:IssuerSerialV2> — base64 of the DER IssuerSerial SEQUENCE.
+    // xades:Cert here is a CertIDTypeV2 (ETSI EN 319 132-1), whose content
+    // model is CertDigest plus an optional IssuerSerialV2. The v1
+    // xades:IssuerSerial with ds:X509IssuerName / ds:X509SerialNumber belongs
+    // to xades:SigningCertificate and makes this document schema-invalid.
+    addChildWithText(certElem, nsXades, "IssuerSerialV2", base64Encode(buildIssuerSerialDer(cert)));
 
     // <xades:SignedDataObjectProperties>
     xmlNodePtr signedDataObjProps = xmlNewChild(signedProps, nsXades, BAD_CAST "SignedDataObjectProperties", nullptr);

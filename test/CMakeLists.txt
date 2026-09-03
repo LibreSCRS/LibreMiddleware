@@ -817,6 +817,8 @@ if(BUILD_SIGNING)
     add_library(SigningTestSupport STATIC
         signing_test_support/signing_test_support.cpp
         signing_test_support/pkcs11_token_mock.cpp
+        signing_test_support/loopback_http_server.cpp
+        signing_test_support/mock_trusted_list_server.cpp
         signing_test_support/mock_tsa_server.cpp
         dss_validation_client.cpp)
     # LibreSign's bucket-B internal headers (http_client.h, dss/*, native/*)
@@ -835,7 +837,7 @@ if(BUILD_SIGNING)
     # (TS_RESP_CTX) and mints its own signing certificate, so the support
     # library needs libcrypto directly rather than transitively.
     target_link_libraries(SigningTestSupport PUBLIC
-        GTest::gtest LibreSign OpenSSL_Crypto)
+        GTest::gtest GTest::gmock LibreSign OpenSSL_Crypto)
     # Support library reaches into bucket-B libresign internals (dss/*,
     # native/*). Propagate the internal-build marker to every consumer so the
     # #error guard lets them through.
@@ -851,6 +853,13 @@ if(BUILD_SIGNING)
     add_executable(SigningE2ETests signing_e2e_test.cpp)
     target_link_libraries(SigningE2ETests PRIVATE SigningTestSupport)
     gtest_discover_tests(SigningE2ETests DISCOVERY_TIMEOUT 30)
+
+    # ETSI conformance suite: every case signs against the software token and
+    # is graded by the independent validator. Its own main registers the
+    # SigningTestEnvironment, which is where the oracle lives.
+    add_executable(SigningConformanceTests signing_conformance_test.cpp)
+    target_link_libraries(SigningConformanceTests PRIVATE SigningTestSupport GTest::gmock)
+    gtest_discover_tests(SigningConformanceTests DISCOVERY_TIMEOUT 30)
 
     # Signing-side cancellation / disconnect / concurrent-sign axes are not
     # yet wired to a mockable IPkcs11Token. The mock skeleton lives at
