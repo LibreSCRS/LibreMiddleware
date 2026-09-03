@@ -38,6 +38,12 @@ namespace LibreSCRS::Plugin {
 ///
 /// For wire/serialization contexts that need a stable string token, use
 /// `categoryToString` / `categoryFromString`.
+// MIRROR-OF: LibreAgent/client/qt/include/LibreSCRS/AgentClient/SecurityChecks.h
+// - this is the PRODUCER's side of one vocabulary, in a published plugin
+// surface a card plugin writes against; the reader that decodes the same
+// tokens lives in the agent client. Neither can move into the other: a plugin
+// may not link a Qt client, and a Qt client may not link the card stack. A
+// parity test in the client holds the two token sets equal.
 enum class SecurityCategory : std::uint8_t {
     DataIntegrity, ///< Hash/MAC integrity of data groups.
     Authenticity,  ///< Signature / passive authentication over the data.
@@ -168,6 +174,11 @@ struct SecurityStatus
 ///       and to enable compile-time evaluation. @c std::string and
 ///       string-literal call sites convert implicitly without an
 ///       intermediate allocation.
+// MIRROR-OF: LibreAgent/client/qt/src/SecurityChecks.cpp - the producer side
+// of the same decode, on the published plugin surface. A plugin may not link
+// a Qt client and a Qt client may not link the card stack, so the two decode
+// the same closed token set separately; a parity test in the client holds
+// the sets equal.
 [[nodiscard]] inline constexpr std::optional<SecurityCheck::Status> statusFromString(std::string_view s) noexcept
 {
     if (s == "PASSED")
@@ -209,6 +220,8 @@ struct SecurityStatus
 
 /// @brief Parse a @c SecurityCategory wire token.
 /// @return The matching enumerator on success; @c std::nullopt for unknown input.
+// MIRROR-OF: LibreAgent/client/qt/src/SecurityChecks.cpp - same pair, same
+// reason as statusFromString above.
 [[nodiscard]] inline constexpr std::optional<SecurityCategory> categoryFromString(std::string_view s) noexcept
 {
     if (s == "data_integrity")

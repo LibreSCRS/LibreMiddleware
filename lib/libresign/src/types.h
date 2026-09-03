@@ -87,6 +87,9 @@ enum class ChainTermination : std::uint8_t { Unterminated, AnchorTerminated };
 /// land at the tail. The on-the-wire string form for the DSS bridge
 /// (`dss_signing_service.cpp::formatToString`) retains the legacy
 /// SCREAMING values for Java-side compatibility.
+// MIRROR-OF: LibreMiddleware/include/LibreSCRS/Signing/Enums.h - the engine's
+// own vocabulary, deliberately separate from the published one so that adding
+// a format here is not an ABI event out there. RequestBridge translates.
 enum class SignatureFormat { Pades, Cades, Xades, Jades, AsicE };
 
 enum class SignaturePackaging { Enveloped, Detached };

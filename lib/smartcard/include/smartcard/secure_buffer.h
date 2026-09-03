@@ -13,6 +13,10 @@
 
 namespace LibreSCRS::SmartCard::Internal {
 
+/// @note Not the same concept as `LibreSCRS::Secure::Buffer`, and deliberately
+/// not merged with it: that one is a sealed carrier a consumer receives across
+/// the published surface and cannot resize, this one is the scratch a card read
+/// fills in place. Collapsing them would hand a caller a buffer it can grow.
 /// RAII wrapper around std::vector<uint8_t> that zeroizes memory on destruction.
 /// Use for PIN data and other secrets to ensure cleanup even on exception paths.
 class SecureBuffer

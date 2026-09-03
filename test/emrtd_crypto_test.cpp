@@ -324,13 +324,31 @@ TEST(BACTestVectors, ICAO9303AppendixD2KeyDerivation)
     EXPECT_EQ(keys.macKey, expectedMac) << "K_MAC does not match ICAO 9303 Appendix D.2";
 }
 
+// The ICAO 9303 Part 3 4.9 check digit (weights 7,3,1) is computed in three
+// places in this workspace, and no two of them can share an implementation:
+// this one throws on a non-MRZ character, the agent's returns -1 without ever
+// materialising the secret bytes as a std::string, and the Linux prompter's
+// walks QChar. Unifying them would cost a new published middleware API to save
+// forty lines.
+//
+// So they are pinned to one table of golden vectors instead, asserted
+// independently from each package. The vectors below are the same ten in
+// LibreAgent (tests/MrzPayloadTest.cpp) and LibreLinux
+// (prompter/tests/InputWidgetValidationTest.cpp); a change to any one
+// implementation now fails in its own repository against a shared external
+// truth rather than against a sibling that may have drifted with it.
 TEST(BACTestVectors, ICAO9303CheckDigits)
 {
-    // ICAO 9303 Part 3 §4.9 check digit algorithm (weight 7,3,1)
-    // These are the three check digits used in Appendix D.2
+    // Appendix D.2's three, then the ones that exercise the parts of the walk
+    // the appendix does not: letters, filler, and an empty field.
     EXPECT_EQ(emrtd::crypto::detail::computeCheckDigit("L898902C<"), 3);
     EXPECT_EQ(emrtd::crypto::detail::computeCheckDigit("740727"), 3);
     EXPECT_EQ(emrtd::crypto::detail::computeCheckDigit("120714"), 9);
+    EXPECT_EQ(emrtd::crypto::detail::computeCheckDigit("690806"), 1);
+    EXPECT_EQ(emrtd::crypto::detail::computeCheckDigit("940623"), 6);
+    EXPECT_EQ(emrtd::crypto::detail::computeCheckDigit("AB1234<<<"), 1);
+    EXPECT_EQ(emrtd::crypto::detail::computeCheckDigit("D23145890734"), 9);
+    EXPECT_EQ(emrtd::crypto::detail::computeCheckDigit("ZE184226B"), 1);
 
     // Edge cases
     EXPECT_EQ(emrtd::crypto::detail::computeCheckDigit(""), 0) << "Empty input check digit should be 0";
