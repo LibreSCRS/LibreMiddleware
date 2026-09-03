@@ -12,6 +12,7 @@ file(GLOB LIBRESCRS_AUTH_PUBLIC_HEADERS CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/include/LibreSCRS/Secure/*.h"
     "${PROJECT_SOURCE_DIR}/include/LibreSCRS/Export.h"
     "${PROJECT_SOURCE_DIR}/include/LibreSCRS/LocalizedText.h"
+    "${PROJECT_SOURCE_DIR}/include/LibreSCRS/Logging.h"
     "${PROJECT_SOURCE_DIR}/include/LibreSCRS/SyncProvider.h"
     "${PROJECT_SOURCE_DIR}/include/LibreSCRS/CancelToken.h"
 )
@@ -37,6 +38,11 @@ add_library(LibreSCRS_Auth ${LIBREMIDDLEWARE_LIB_TYPE}
     Auth/AuthRequirementFactory.cpp
     CancelToken.cpp
     LocalizedText.cpp
+    # Logging.cpp lives in the lowest public target on purpose: LibreSCRS_Auth
+    # is the one every other LibreSCRS_* target links PUBLIC (directly or via
+    # LibreSCRS_SmartCard), so the facade's process-global sink has exactly one
+    # home rather than one per archive.
+    Logging.cpp
     Secure/Buffer.cpp
     Secure/String.cpp
     ${LIBRESCRS_AUTH_PUBLIC_HEADERS}

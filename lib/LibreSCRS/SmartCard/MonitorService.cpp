@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
+#include <LibreSCRS/Logging.h>
 #include <LibreSCRS/SmartCard/MonitorService.h>
 #include <LibreSCRS_internal/SmartCard/MonitorServiceImpl.h>
 
@@ -13,7 +14,6 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <deque>
 #include <exception>
@@ -24,6 +24,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -46,6 +47,31 @@ MonitorEvent::Kind mapCardEventKind(::LibreSCRS::SmartCard::Internal::MonitorEve
         return MonitorEvent::Kind::CardRemoved;
     }
     return MonitorEvent::Kind::Error;
+}
+
+// Report an exception a dispatch shield swallowed.
+//
+// Every caller sits inside a try/catch whose entire job is to stop an
+// exception from reaching a std::thread entry point, where it would call
+// std::terminate. That makes the reporting call itself load-bearing: unlike
+// the std::fprintf it replaces, `log::errorf` allocates (std::format) and
+// then calls consumer code (the injected sink). Either can throw. The emit is
+// therefore shielded in turn, and this function is noexcept so the compiler
+// enforces it rather than the next reader having to notice.
+//
+// `what` empty means the shield caught `...` and has no message to relay.
+void reportSwallowedException(const char* site, std::string_view what) noexcept
+{
+    try {
+        if (what.empty()) {
+            log::errorf("MonitorService: {} threw unknown exception", site);
+        } else {
+            log::errorf("MonitorService: {} threw: {}", site, what);
+        }
+    } catch (...) {
+        // The diagnostic channel is the thing that failed; there is nowhere
+        // left to report that, and throwing here would defeat the shield.
+    }
 }
 
 } // namespace
@@ -139,9 +165,9 @@ void MonitorService::Impl::dispatchReaderListSnapshot(const std::vector<std::str
         try {
             cb(snapshot);
         } catch (const std::exception& e) {
-            std::fprintf(stderr, "LibreSCRS MonitorService: reader-list subscriber callback threw: %s\n", e.what());
+            reportSwallowedException("reader-list subscriber callback", e.what());
         } catch (...) {
-            std::fprintf(stderr, "LibreSCRS MonitorService: reader-list subscriber callback threw unknown exception\n");
+            reportSwallowedException("reader-list subscriber callback", {});
         }
     }
 }
@@ -149,9 +175,10 @@ void MonitorService::Impl::dispatchReaderListSnapshot(const std::vector<std::str
 // Each subscriber callback runs inside a try/catch shield. A subscriber
 // that throws will not propagate out of the poll thread — that would
 // otherwise terminate the program (an exception escaping the std::thread
-// entry point invokes std::terminate). Error tokens are written to stderr
-// as a defense-in-depth fallback because the SDK does not currently inject
-// a logger across the public ABI boundary; the contract is documented on
+// entry point invokes std::terminate). The swallowed exception is reported
+// through the public LibreSCRS::log facade, which the consumer can redirect
+// with log::init; until 5.0 there was no such seam and these tokens went
+// straight to the consumer's stderr. The contract is documented on
 // `MonitorService`'s @par Thread-safety section in the header.
 void MonitorService::Impl::dispatchImmediate(const MonitorEvent& event)
 {
@@ -164,9 +191,9 @@ void MonitorService::Impl::dispatchImmediate(const MonitorEvent& event)
         try {
             cb(event);
         } catch (const std::exception& e) {
-            std::fprintf(stderr, "LibreSCRS MonitorService: subscriber callback threw: %s\n", e.what());
+            reportSwallowedException("subscriber callback", e.what());
         } catch (...) {
-            std::fprintf(stderr, "LibreSCRS MonitorService: subscriber callback threw unknown exception\n");
+            reportSwallowedException("subscriber callback", {});
         }
     }
 }
@@ -645,9 +672,9 @@ void MonitorService::Impl::startInternalMonitor()
         try {
             diffReadersAndDispatch(readers);
         } catch (const std::exception& e) {
-            std::fprintf(stderr, "LibreSCRS MonitorService: reader-list dispatch threw: %s\n", e.what());
+            reportSwallowedException("reader-list dispatch", e.what());
         } catch (...) {
-            std::fprintf(stderr, "LibreSCRS MonitorService: reader-list dispatch threw unknown exception\n");
+            reportSwallowedException("reader-list dispatch", {});
         }
     };
     auto internalId = internal->subscribe(std::move(eventCb), std::move(readersCb));
@@ -835,10 +862,9 @@ MonitorService::SubscriptionId MonitorService::subscribeReaderList(ReaderListCal
             try {
                 toFire(bootstrapSnapshot);
             } catch (const std::exception& e) {
-                std::fprintf(stderr, "LibreSCRS MonitorService: reader-list subscriber callback threw: %s\n", e.what());
+                reportSwallowedException("reader-list subscriber callback", e.what());
             } catch (...) {
-                std::fprintf(stderr,
-                             "LibreSCRS MonitorService: reader-list subscriber callback threw unknown exception\n");
+                reportSwallowedException("reader-list subscriber callback", {});
             }
         }
     }

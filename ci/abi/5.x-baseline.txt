@@ -73,6 +73,11 @@ LibreSCRS::Secure::String::operator==(LibreSCRS::Secure::String const&) const@@L
 LibreSCRS::Secure::String::size() const@@LM_4
 LibreSCRS::Secure::String::view() const@@LM_4
 LibreSCRS::Secure::String::~String()@@LM_4
+LibreSCRS::log::error(std::basic_string_view<char, std::char_traits<char> >)@@LM_4
+LibreSCRS::log::info(std::basic_string_view<char, std::char_traits<char> >)@@LM_4
+LibreSCRS::log::init(std::function<void (LibreSCRS::log::Level, std::basic_string_view<char, std::char_traits<char> >)>, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)@@LM_4
+LibreSCRS::log::resetForTest()@@LM_4
+LibreSCRS::log::warn(std::basic_string_view<char, std::char_traits<char> >)@@LM_4
 
 == libLibreSCRS_Certificate.so ==
 LibreSCRS::Certificate::DistinguishedName::commonName[abi:cxx11]() const@@LM_4

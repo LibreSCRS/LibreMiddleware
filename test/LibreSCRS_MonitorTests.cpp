@@ -3,6 +3,7 @@
 
 #include "mock_pcsc_scan_provider.h"
 
+#include <LibreSCRS/Logging.h>
 #include <LibreSCRS/SmartCard/MonitorService.h>
 #include <LibreSCRS/SmartCard/detail/MonitorInjection.h>
 
@@ -13,7 +14,9 @@
 #include <condition_variable>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <type_traits>
 #include <utility>
@@ -975,4 +978,88 @@ TEST(MonitorServiceAdditionalRaces, SubscribeFirstSubscriberRaceWithImmediateUns
     EXPECT_EQ(established, released) << "Orphaned internal subscriptions detected: established=" << established
                                      << " released=" << released
                                      << " (likely TOCTOU race in subscribe firstSubscriber branch).";
+}
+
+// ---------------------------------------------------------------------------
+// The subscriber-exception shields report through the injected log sink, not
+// through the consumer's stderr.
+//
+// This is the assertion that makes LibreSCRS/Logging.h worth landing. Until
+// 5.0 the four try/catch shields in MonitorService.cpp called
+// `std::fprintf(stderr, ...)` directly, and the file said so in a comment:
+// "a defense-in-depth fallback because the SDK does not currently inject a
+// logger across the public ABI boundary". A library writing to a stream it
+// does not own, with no switch and no seam, is a defect on its own terms.
+//
+// The test perturbs the *shipped* path rather than a proxy for it: a real
+// subscriber throws inside a real dispatch on the real poll thread, and the
+// only thing asserted is that the diagnostic arrived in the sink this test
+// installed. Revert MonitorService to fprintf and this case fails on an empty
+// capture — that is the whole point of asserting the store rather than the
+// absence of output.
+TEST(MonitorTest, ThrowingSubscriberReportsThroughTheInjectedLogSink)
+{
+    // Declaration order is the lifetime contract and it is deliberate:
+    // captures first, the log reset next, the monitor last. Destruction runs
+    // in reverse, so the poll thread is joined (monitor), then the sink is
+    // uninstalled (guard), and only then do the objects the sink captured by
+    // reference go away. Any other order is a use-after-free on a background
+    // thread that only reproduces under load.
+    std::mutex mtx;
+    std::condition_variable cv;
+    std::vector<std::pair<LibreSCRS::log::Level, std::string>> lines;
+
+    struct SinkGuard
+    {
+        ~SinkGuard()
+        {
+            LibreSCRS::log::resetForTest();
+        }
+    } guard;
+
+    LibreSCRS::log::init(
+        [&](LibreSCRS::log::Level level, std::string_view line) {
+            std::lock_guard lock(mtx);
+            lines.emplace_back(level, std::string(line));
+            cv.notify_all();
+        },
+        "test.monitor.shield");
+
+    auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
+    auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
+    mock->setReaders({"Reader A"});
+    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false});
+    mock->pushStatusChange({SCARD_S_SUCCESS, {}, true});
+
+    auto monitor = LibreSCRS::SmartCard::detail::makeMonitorWithProvider(std::move(mock));
+    ASSERT_NE(monitor, nullptr);
+
+    auto id = monitor->subscribe([](const MonitorEvent&) { throw std::runtime_error("subscriber blew up"); });
+
+    {
+        std::unique_lock lock(mtx);
+        cv.wait_for(lock, std::chrono::seconds(5), [&] { return !lines.empty(); });
+    }
+    monitor->unsubscribe(id);
+
+    std::vector<std::pair<LibreSCRS::log::Level, std::string>> observed;
+    {
+        std::lock_guard lock(mtx);
+        observed = lines;
+    }
+
+    ASSERT_FALSE(observed.empty()) << "the throwing subscriber's diagnostic never reached the injected sink — "
+                                      "MonitorService is still writing to the consumer's stderr";
+
+    bool sawTheThrow = false;
+    for (const auto& [level, line] : observed) {
+        if (line.find("subscriber blew up") == std::string::npos)
+            continue;
+        sawTheThrow = true;
+        EXPECT_EQ(level, LibreSCRS::log::Level::Error) << "a swallowed subscriber exception is an error, not a notice";
+        EXPECT_NE(line.find("test.monitor.shield"), std::string::npos)
+            << "the line did not carry the category this test injected: " << line;
+    }
+    EXPECT_TRUE(sawTheThrow) << "the sink received " << observed.size()
+                             << " line(s), none carrying the exception text the subscriber threw";
 }

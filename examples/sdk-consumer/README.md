@@ -15,6 +15,7 @@ Exercises one call per public target:
 
 | # | Target              | Call                                             |
 |---|---------------------|--------------------------------------------------|
+| 0 | `LibreSCRS::Auth`   | `log::init(sink, "example.sdk-consumer")` (co-hosted in Auth lib) — first, so nothing emits to stderr before the sink exists |
 | 1 | `LibreSCRS::Auth`   | `AuthRequirement::forSigning(LocalizedText{"", "PIN", {}}, 3)` |
 | 2 | `LibreSCRS::Auth`   | `Secure::Buffer(8, 0x42)` (co-hosted in Auth lib)|
 | 3 | `LibreSCRS::SmartCard` | `Monitor::listReaders()`                       |

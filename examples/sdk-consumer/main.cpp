@@ -18,6 +18,7 @@
 #include <LibreSCRS/Auth/AuthRequirement.h>
 #include <LibreSCRS/Auth/CredentialProvider.h>
 #include <LibreSCRS/Certificate/ParsedCertificate.h>
+#include <LibreSCRS/Logging.h>
 #include <LibreSCRS/Plugin/CardPluginService.h>
 #include <LibreSCRS/Plugin/PluginTypes.h>
 #include <LibreSCRS/Secure/Buffer.h>
@@ -33,10 +34,23 @@
 
 #include <filesystem>
 #include <iostream>
+#include <string_view>
 #include <utility>
 
 int main()
 {
+    // 0. Logging — install the sink FIRST, before any LibreSCRS service can
+    //    emit. This is what a real consumer wires at startup: everything
+    //    LibreMiddleware would otherwise print on this process's stderr
+    //    (today, the exception shields around consumer callbacks in
+    //    MonitorService) arrives here instead, already formatted.
+    LibreSCRS::log::init(
+        [](LibreSCRS::log::Level level, std::string_view line) {
+            std::cout << "[sdk-consumer log, level=" << static_cast<int>(level) << "] " << line;
+        },
+        "example.sdk-consumer");
+    LibreSCRS::log::info("sink installed");
+
     // 1. Auth — request shape + i18n container.
     auto req = LibreSCRS::Auth::AuthRequirement::forSigning(LibreSCRS::LocalizedText{"", "PIN", {}}, 3);
     std::cout << "Auth: " << req.fields().size() << " field(s)\n";

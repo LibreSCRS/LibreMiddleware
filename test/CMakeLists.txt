@@ -235,6 +235,16 @@ target_include_directories(LibreSCRS_CancelTokenTests PRIVATE
 )
 gtest_discover_tests(LibreSCRS_CancelTokenTests)
 
+# Logging — the public sink-injected facade. Links LibreSCRS_Auth because that
+# is where Logging.cpp lives (the lowest target every other one links PUBLIC,
+# so the process-global sink has exactly one home).
+add_executable(LibreSCRS_LoggingTests LibreSCRS_LoggingTests.cpp)
+target_link_libraries(LibreSCRS_LoggingTests PRIVATE
+    GTest::gtest_main
+    LibreSCRS_Auth
+)
+gtest_discover_tests(LibreSCRS_LoggingTests)
+
 add_executable(LibreSCRS_CredentialProviderTests LibreSCRS_CredentialProvider_test.cpp)
 target_link_libraries(LibreSCRS_CredentialProviderTests GTest::gtest_main LibreSCRS_Auth)
 gtest_discover_tests(LibreSCRS_CredentialProviderTests)

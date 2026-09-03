@@ -53,6 +53,24 @@ Notable user-visible changes per release. Format follows
 
 ### Added
 
+- **A logging facade the consumer can redirect: `LibreSCRS::log`**
+  (`<LibreSCRS/Logging.h>`). `init(sink, category)` installs a
+  `std::function<void(Level, std::string_view)>` that receives every
+  diagnostic LibreMiddleware emits without being asked; the built-in sink
+  writes to `std::clog`. The four exception shields around consumer
+  callbacks in `MonitorService` now report through it. Until now they called
+  `std::fprintf(stderr, ...)` and the source said why — "a defense-in-depth
+  fallback because the SDK does not currently inject a logger across the
+  public ABI boundary". A library writing to a stream it does not own, with
+  no way to redirect it, is a defect rather than a matter of taste, and this
+  is the boundary that was missing. The shape is deliberately identical to
+  the facade the LibreSCRS agent already ships, so one diagnostic grep reads
+  the host layer and the core the same way.
+  **Scope, stated so it is not mistaken for coverage:** only unconditional
+  writers are routed here. Roughly 150 sites behind `LIBRESCRS_SIGN_TRACE`,
+  `LIBRESCRS_PCSC_TRACE`, `LIBRESCRS_PROBE_TRACE`, `LIBRESCRS_OPENSC_DEBUG`
+  and `PKCS11_DEBUG` still write to `stderr` directly; they sit in PC/SC
+  transmit, PKCS#15 profile reading and the signing engine and are unchanged.
 - **Buffer-based signing.** New `sign()` overload accepts an in-memory
   document as bytes and returns the signed document bytes directly, in
   addition to the existing file-based path. Suits callers that never
