@@ -247,144 +247,11 @@ from the caller. The value parameter is `const Secure::String&`.
 **Export functions:** Your plugin shared library must export two C-linkage
 functions. The `LIBRESCRS_DECLARE_CARD_PLUGIN` macro emits both for you.
 
-### Worked example: PIV plugin
-
-The PIV plugin (US FIPS 201 / NIST SP 800-73) is a good worked example
-because it is self-contained, internationally recognised, and exercises
-the full in-tree authoring flow: a `lib/piv/` core library, a
-`lib/piv-plugin/` adapter wired via `librescrs_add_plugin()`, a manifest
-with capabilities and ABI version, and direct use of `detail::unwrap` to
-reach the raw PC/SC connection.
-
-#### Plugin CMake target
-
-`lib/piv-plugin/CMakeLists.txt` (lines 4–11):
-
-```cmake
-librescrs_add_plugin(piv-plugin
-    MANIFEST ${CMAKE_CURRENT_SOURCE_DIR}/manifest.json
-    SOURCES  src/piv_card_plugin.cpp
-    INCLUDE_DIRS
-        ${PROJECT_SOURCE_DIR}/lib/piv/src
-        ${PROJECT_SOURCE_DIR}/lib/smartcard/src
-    LINK_LIBRARIES PIV
-)
-```
-
-`librescrs_add_plugin()` sets `LIBRESCRS_INTERNAL_BUILD` on the target,
-runs `manifest2header.py` over `manifest.json` to emit a generated
-`manifest.h`, and links the loader-side glue. The `INCLUDE_DIRS` reach
-into `lib/piv/src` and `lib/smartcard/src` — internal-only paths, by
-design.
-
-#### Manifest
-
-`lib/piv-plugin/manifest.json` (lines 1–8):
-
-```json
-{
-  "pluginId": "piv",
-  "displayName": "PIV (NIST SP 800-73)",
-  "abiVersion": 8,
-  "capabilities": ["PKI", "PinManagement"],
-  "preReadAuth": "None",
-  "atrs": []
-}
-```
-
-`abiVersion` must equal the current `LibreSCRS::Plugin::kCardPluginAbiVersion`
-the plugin is built against; the manifest schema validates it at build time.
-(The loader's runtime ABI gate compares the compiled `card_plugin_abi_version()`
-symbol that `LIBRESCRS_DECLARE_CARD_PLUGIN` emits — not this JSON field.) The
-`atrs` array
-is intentionally empty for PIV because PIV cards have no distinguishing
-ATR — detection runs through `canHandleConnection()` instead (see below).
-The manifest is consumed by `manifest2header.py`, which generates the
-`LibreSCRS::Plugin::generated::piv::k*` constants used in the adapter.
-
-#### Plugin adapter — identity, capabilities, ATRs
-
-`lib/piv-plugin/src/piv_card_plugin.cpp` (lines 60–75):
-
-```cpp
-PIVCardPlugin()
-{
-    setIdentity(std::string{LibreSCRS::Plugin::generated::piv::kPluginId},
-                std::string{LibreSCRS::Plugin::generated::piv::kDisplayName},
-                /*priority=*/700);
-}
-
-LibreSCRS::Plugin::CardCapabilities capabilities() const override
-{
-    return LibreSCRS::Plugin::generated::piv::kCapabilities;
-}
-
-std::span<const LibreSCRS::Plugin::Atr> supportedAtrs() const noexcept override
-{
-    return LibreSCRS::Plugin::generated::piv::kAtrs;
-}
-```
-
-Identity, capabilities, and supported ATRs all flow from the manifest
-through the generated header. The ctor's call to `setIdentity()` is the
-once-per-instance handshake that fixes the public `pluginId()` /
-`displayName()` / `probePriority()` accessors.
-
-#### Plugin adapter — APDU access via `detail::unwrap`
-
-`lib/piv-plugin/src/piv_card_plugin.cpp` (lines 77–87):
-
-```cpp
-bool canHandleConnection(std::span<const std::uint8_t> /*atr*/,
-                         LibreSCRS::SmartCard::CardSession& session) const override
-{
-    auto& conn = LibreSCRS::SmartCard::detail::unwrap(session);
-    try {
-        piv::PIVCard card(conn);
-        return card.probe();
-    } catch (...) {
-        return false;
-    }
-}
-```
-
-`LibreSCRS::SmartCard::detail::unwrap(session)` returns the underlying
-`LibreSCRS::SmartCard::Internal::PCSCConnection&`. The unwrap header is gated by
-`LIBRESCRS_INTERNAL_BUILD`, which the plugin target inherits from
-`librescrs_add_plugin()`. Once the raw connection is in hand, the
-plugin instantiates the in-tree `piv::PIVCard` core class
-(`lib/piv/src/piv_card.h` lines 26–71) and drives it directly. The same
-pattern is used in `doReadCard` (lines 89–180), `readCertificates`
-(lines 182–202), `getPINList` (lines 204–234), `verifyPIN` (lines
-236–252), `getPINTriesLeft` (lines 254–269), and `discoverKeyReferences`
-(lines 271–285) — every entry point on the adapter unwraps to the raw
-connection, opens a `LibreSCRS::SmartCard::Internal::CardTransaction`, and delegates to the
-core `PIVCard` methods.
-
-Note that `lib/piv/src/piv_card.h` itself starts with an
-`#ifndef LIBRESCRS_INTERNAL_BUILD / #error` guard (lines 4–6) — the core
-card class is internal too. Any consumer of the core library must also
-be an in-tree target with the build flag granted.
-
-#### Plugin adapter — the export macro
-
-`lib/piv-plugin/src/piv_card_plugin.cpp` (line 290):
-
-```cpp
-LIBRESCRS_DECLARE_CARD_PLUGIN(PIVCardPlugin, LibreSCRS::Plugin::kCardPluginAbiVersion)
-```
-
-This macro (from `<LibreSCRS/Plugin/PluginExport.h>`) emits the two
-`extern "C"` exports the loader looks up via `dlsym`: a factory function
-returning a `std::unique_ptr<CardPlugin>` and an ABI-version accessor
-returning the current `kCardPluginAbiVersion`. Pass your derived class
-as the first argument; the second argument anchors the ABI handshake on
-the loader side.
-
 ### Learn from existing plugins
 
-Once the worked example is internalised, study these existing
-implementations as a reference catalogue:
+There is no invented example here: the plugins below are the ones this
+repository actually builds, and each is a complete worked example of the
+flow above — core library, adapter, manifest and export macro.
 
 | Plugin | Card Type | Key Files |
 |--------|-----------|-----------|
@@ -392,7 +259,7 @@ implementations as a reference catalogue:
 | `eu-vrc` | EU Vehicle Registration (Directive 2003/127/EC) | `lib/eu-vrc/`, `lib/eu-vrc-plugin/` |
 | `rs-health` | Serbian health card | `lib/rs-health/`, `lib/rs-health-plugin/` |
 | `emrtd` | eMRTD / passport (ICAO 9303) | `lib/emrtd/`, `lib/emrtd-plugin/` |
-| `cardedge` | CardEdge PKI applet | `lib/cardedge/`, `lib/cardedge-plugin/` |
+| `opensc` | OpenSC fallback (CardEdge PKI applet among others) | `lib/opensc-plugin/` |
 | `pkcs15` | PKCS#15 generic applet | `lib/pkcs15/`, `lib/pkcs15-plugin/` |
 
 ### Write tests

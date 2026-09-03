@@ -149,4 +149,4 @@ See `tools/card_mapper/README.md` for full environment variable documentation.
 - FID helper: `emrtd::dgToFID(int dg)` returns `0x0100 + dg`
 - EF.COM FID: `emrtd::FID_COM` = `0x011E`
 - EF.CardAccess SFI: `emrtd::SFID_CARD_ACCESS` = `0x1C`
-- Auth methods: `emrtd::AuthMethod::PACE_MRZ`, `PACE_CAN`
+- Auth methods: BAC, PACE-MRZ and PACE-CAN (`lib/emrtd-crypto/src/bac.h`, `pace.h`)

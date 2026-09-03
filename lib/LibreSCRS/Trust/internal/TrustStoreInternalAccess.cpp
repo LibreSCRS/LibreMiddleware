@@ -41,14 +41,6 @@ TrustStore TrustStoreInternalAccess::makeStore(std::string bundledCertDir, bool 
     return TrustStore(std::move(impl));
 }
 
-void TrustStoreInternalAccess::addProvider(TrustStore& store, std::shared_ptr<TrustAnchorProvider> provider)
-{
-    if (!store.d || !provider)
-        return;
-    std::unique_lock lock(store.d->mtx);
-    store.d->providers.push_back(std::move(provider));
-}
-
 void TrustStoreInternalAccess::mergeTrustedListAnchors(TrustStore& store, std::vector<TrustAnchor> anchors,
                                                        const std::string& sourceLabel)
 {

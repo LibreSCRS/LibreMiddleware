@@ -40,15 +40,6 @@ public:
     {
         return pkcs15Path;
     }
-    [[nodiscard]] uint8_t fileSelectP2View() const noexcept
-    {
-        return fileSelectP2;
-    }
-    void seedDiscoveredState(std::vector<uint8_t> path, uint8_t selectP2) noexcept
-    {
-        pkcs15Path = std::move(path);
-        fileSelectP2 = selectP2;
-    }
     PKCS15Profile readProfile();
     TokenInfo readTokenInfo(); // Lightweight: reads only EF(TokenInfo), no certs/keys/PINs
     std::vector<uint8_t> readCertificate(const CertificateInfo& cert);

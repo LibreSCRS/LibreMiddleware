@@ -46,12 +46,6 @@ public:
         return configured;
     }
 
-    /// True if all eager TLs loaded successfully (no degraded mode).
-    bool isFullyConfigured() const
-    {
-        return configured && fullyConfigured;
-    }
-
     /// Callback invoked when @ref loadTrustList successfully fetches+verifies+
     /// parses a Trusted List and extracts trust anchors from it. The Signing-
     /// side bridge (LibreSCRS::Signing::SigningService) binds a lambda that
@@ -99,7 +93,6 @@ private:
     // typically carry only the leaf, so the issuing CA must come from the TL.
     std::vector<std::vector<uint8_t>> tlAnchorCerts;
     bool configured = false;
-    bool fullyConfigured = false;
     /// Set once @ref loadLazyTrustLists has run for the current
     /// @ref configure cycle, and cleared by that call. The two must stay in
     /// step: configure() empties @ref tlAnchorCerts, so a flag that outlived

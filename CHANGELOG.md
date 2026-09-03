@@ -7,6 +7,16 @@ Notable user-visible changes per release. Format follows
 
 ### Changed
 
+- **The installed CMake package exports one target namespace, `LibreSCRS::`.**
+  Up to 4.x the export carried `LibreMiddleware::` and the config file then
+  mirrored every target under `LibreSCRS::` so a consumer could write either —
+  while the mirror's own comment called `LibreSCRS::` the preferred spelling for
+  new code. The preferred spelling is now the export and the mirror is gone.
+  `LibreMiddleware` still names the package you ask `find_package` for; it no
+  longer names the targets inside it. Consumers linking `LibreMiddleware::Auth`
+  and friends must move to `LibreSCRS::Auth`; this is a major release and that
+  is the window for it.
+
 - **The PKCS#11 module is no longer registered with p11-kit, and no longer
   published as a release artefact.** One card should offer one provider, and it
   is the agent proxy shipped by the Linux host: the PIN is collected by a
@@ -153,6 +163,18 @@ Notable user-visible changes per release. Format follows
 
 ### Removed
 
+- **The published macOS PKCS#11 archive.** The release no longer produces a
+  macOS tarball of this module, and nothing replaces it inside this project.
+  What was published was a *direct* module: it opened the card itself, took the
+  PIN inside the loading application's address space, and its own instructions
+  told the reader to click past Gatekeeper because the file was unsigned. Its
+  replacement forwards to the agent instead, so the PIN is collected outside the
+  browser and the file is signed rather than excused — and it ships with the
+  macOS host, not from here.
+
+  A macOS user whose provider disappears at upgrade reads this rather than
+  discovering it: remove the module you registered by hand, and register the one
+  the host installs. The Linux half of the same decision is the entry above.
 - Malformed and expired MUP certificates were archived out of the active
   certificate bundle.
 - **`CardPlugin::getPINTriesLeft()`** — the last deprecated entry point
@@ -171,6 +193,46 @@ No exported symbol disappeared with any of these: all four were inline
 or header-only, which is precisely why the symbol snapshot could not see
 them going. The shape baseline (`ci/abi/layout-baseline.txt`) is what
 records their departure, and the SONAME moved with it.
+
+- **`tools/migrate-3x-to-4.0.sh`** — an assistant for consumers moving an
+  SDK integration from 3.x to 4.0. It shipped in the source archive, nothing
+  in this project referenced it, and it still pointed at a documentation URL
+  that no longer resolves. A major release is where the previous major's
+  migration burden ends, not where it accumulates.
+- **`LIBREMIDDLEWARE_HAS_SIGNING`** — a cache variable exported "for
+  consumers"; no consumer, in this repository or any other, ever read it.
+- **`LIBRESCRS_SIGNING_BACKEND` and `SIGNING_BACKEND=dss`.** An environment
+  variable chose the signing implementation at run time, and one of the choices
+  silently dropped TSA credentials and the `/ContactInfo` entry — guarded by two
+  branches that refused loudly rather than fixing it. The project's own
+  packaging scripts already called that backend deprecated while it stayed
+  selectable. It remains buildable as the cross-verification oracle the native
+  engine is checked against (`SIGNING_BACKEND=both`, `BUILD_DSS_ORACLE=ON`),
+  which is what it is for, and stops being something a deployment can turn on by
+  accident. `SIGNING_BACKEND=dss` — which used to build the DSS engine *instead
+  of* the native one — is now a configure error rather than a build that
+  compiles and then fails at the first signature.
+
+- **Five public symbols nothing can reach.**
+  `SecureChannel::ChannelOperationError` and
+  `SigningResult::tsaUnreachableDiagnosticOnly()` have no producer inside this
+  library, so no consumer could ever have been handed one;
+  `LocalizedText::formattedDefault()`, `Auth::ErrorKeys::pinIncorrect()` and
+  `Auth::ErrorKeys::pinBlocked()` have no caller in any of the seven
+  repositories, and no translation carries their message keys.
+  `pinIncorrectWithRetries()` — the one a card with a retry counter actually
+  produces — stays. A public symbol can only be removed in a major release, so
+  leaving these would have locked them in until the release after this one.
+  The symbol and layout baselines are unchanged by their removal: all five are
+  header-inline or a type, so neither gate ever recorded them. That is a fact
+  about the gates, not evidence of safety.
+- **Eleven internal helpers with a declaration, a definition and no third
+  occurrence** — among them `berFindBytes`, `PdfValue::asReal`,
+  `EIdCard::setCertificateFolderPath` and `TrustStoreInternalAccess::addProvider`.
+  None appears in the ABI baseline, and that proves nothing about safety:
+  they were never public. Removing the certificate-folder setter also
+  removed the state only it could set and the branch that read that state,
+  which would otherwise have been dead the moment the setter went.
 
 ## [4.2.0] — 2026-05-29
 

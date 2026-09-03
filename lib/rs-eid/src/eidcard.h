@@ -38,7 +38,6 @@ public:
     PhotoData readPortrait();
 
     // Verification
-    void setCertificateFolderPath(const std::string& path);
     // Add a single DER-encoded trusted certificate (use when certs come from
     // memory / Qt resources rather than a filesystem directory).
     void addTrustedCertificate(const std::vector<uint8_t>& derCert);
@@ -50,11 +49,9 @@ private:
     LibreSCRS::SmartCard::Internal::PCSCConnection* conn = nullptr; // borrowed: the single card session's connection
     std::unique_ptr<CardReaderBase> cardReader;
     std::unique_ptr<CardVerifier> verifier;
-    std::string certFolderPath;
     CardType cardType = CardType::Unknown;
 
     void detectCardType();
-    void ensureVerifier();
 };
 
 } // namespace eidcard

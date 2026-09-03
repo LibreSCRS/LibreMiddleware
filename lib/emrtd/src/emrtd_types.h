@@ -22,15 +22,6 @@ struct MRZData
     std::string dateOfExpiry; // YYMMDD
 };
 
-enum class AuthMethod { BAC, PACE_MRZ, PACE_CAN };
-
-struct AuthResult
-{
-    bool success = false;
-    AuthMethod method = AuthMethod::BAC;
-    std::string error;
-};
-
 struct ContactPerson
 {
     std::string name;

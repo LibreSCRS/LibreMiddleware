@@ -234,10 +234,6 @@ if(BUILD_SIGNING)
 else()
     message(STATUS "Digital signing: disabled (set -DBUILD_SIGNING=ON to enable)")
 endif()
-# Export flag for consumers (LibreCelik)
-set(LIBREMIDDLEWARE_HAS_SIGNING ${BUILD_SIGNING} CACHE BOOL
-    "Whether LibreMiddleware was built with signing support" FORCE)
-
 if(LIBRESCRS_VENDOR_OPENSC AND LIBREMIDDLEWARE_BUILD_PLUGINS)
     add_subdirectory(lib/opensc-pkcs11)
     # OpenSC fallback card plugin shares the vendored static archive with
@@ -378,7 +374,7 @@ endif()
 # (`install(EXPORT LibreMiddlewareTargets …)`) so downstream consumers can:
 #
 #   find_package(LibreMiddleware 4.0 REQUIRED CONFIG)
-#   target_link_libraries(my_target PRIVATE LibreMiddleware::SmartCard …)
+#   target_link_libraries(my_target PRIVATE LibreSCRS::SmartCard …)
 #
 # Compatibility policy: SameMajorVersion. A consumer requesting 4.x.y is
 # compatible iff the installed major is 4. 5.0 ABI break => consumers

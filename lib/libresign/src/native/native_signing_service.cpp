@@ -206,7 +206,6 @@ bool NativeSigningService::configure(const TrustConfig& config)
     }
 
     configured = true;
-    fullyConfigured = (successCount == eagerCount);
 
     // Success if at least one TL loaded, or if no TLs were configured (empty list is valid)
     return eagerCount == 0 || successCount > 0;

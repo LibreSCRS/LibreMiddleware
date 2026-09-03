@@ -3,7 +3,7 @@
 //
 // Minimal find_package(LibreMiddleware CONFIG) consumer. Exercises one
 // symbol from each of the two linked Config-package imported targets
-// (LibreMiddleware::SmartCard and LibreMiddleware::Plugin) to prove
+// (LibreSCRS::SmartCard and LibreSCRS::Plugin) to prove
 // the install-tree headers, .so libraries, and Targets.cmake all
 // resolve end-to-end.
 //

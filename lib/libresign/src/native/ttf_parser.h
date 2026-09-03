@@ -79,10 +79,6 @@ public:
     {
         return headBboxMaxY;
     }
-    bool locaIsLong() const noexcept
-    {
-        return longLocaFormat;
-    }
 
     // --- Table access ---
     bool hasTable(std::string_view tag) const;

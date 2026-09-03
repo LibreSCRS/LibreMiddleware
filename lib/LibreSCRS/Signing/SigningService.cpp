@@ -131,21 +131,6 @@ std::string resolvePkcs11Module()
     return moduleName; // let the dynamic loader search path handle it
 }
 
-// NOTE: when LIBRESCRS_SIGNING_BACKEND=dss is set, the DSS backend silently
-// drops TSA credentials and /ContactInfo. DSS is retained as a
-// cross-verification oracle for tests; production paths must use Native.
-libresign::Backend chooseBackend()
-{
-    if (const char* env = std::getenv("LIBRESCRS_SIGNING_BACKEND"); env && *env) {
-        std::string v{env};
-        std::transform(v.begin(), v.end(), v.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (v == "dss")
-            return libresign::Backend::DSS;
-    }
-    return libresign::Backend::Native;
-}
-
 // Format / level / packaging translation helpers plus the full
 // SigningRequest → libresign::SigningRequest bridge live in
 // detail/RequestBridge.h so the unit test suite can exercise the exact
@@ -435,26 +420,7 @@ SigningService::Impl::runSignPipeline(const SigningRequest& request, const Auth:
         libReq.tsa.credentials.extraSecretHeaders = std::move(tsaOut->credentials.extraSecretHeaders);
     }
 
-    const auto backend = chooseBackend();
-    // The DSS backend silently drops TSA credentials and the /ContactInfo
-    // sig-dict entry (DSS is retained as a cross-verification oracle for
-    // tests, not for production signing). Fail LOUD so a caller that set
-    // those fields does not get a silent auth downgrade resulting in a
-    // confusing "TSA timestamp failed" later.
-    if (backend == libresign::Backend::DSS) {
-        const bool hasCredentials =
-            libReq.tsa.credentials.basicAuth.has_value() || libReq.tsa.credentials.bearerToken.has_value() ||
-            libReq.tsa.credentials.clientCert.has_value() || libReq.tsa.credentials.clientCertKey.has_value() ||
-            !libReq.tsa.credentials.extraSecretHeaders.empty() || !request.contactInfo().empty();
-        if (hasCredentials) {
-            return {SigningResult::signingEngineErrorDiagnosticOnly(
-                        std::string{"DSS backend does not support TSA credentials or contactInfo — "
-                                    "use Native backend (unset LIBRESCRS_SIGNING_BACKEND or set =native)."}),
-                    {}};
-        }
-    }
-
-    auto service = libresign::createSigningService(backend);
+    auto service = libresign::createSigningService(libresign::Backend::Native);
     if (!service) {
         return {SigningResult::signingEngineErrorDiagnosticOnly(
                     std::string{"Failed to construct libresign::SigningService"}),
@@ -467,16 +433,13 @@ SigningService::Impl::runSignPipeline(const SigningRequest& request, const Auth:
     // (Trust::TrustStoreService) populates. Inverted call direction —
     // libresign no longer reaches into Trust internals — keeps the
     // libresign target free of any link edge to LibreSCRS_Trust.
-    if (backend == libresign::Backend::Native) {
-        if (auto* native = dynamic_cast<libresign::NativeSigningService*>(service.get())) {
-            auto trustStore = std::const_pointer_cast<Trust::TrustStore>(trustService->trustStore());
-            native->setAnchorEmitter([trustStore](std::vector<Trust::TrustAnchor> anchors, std::string label) {
-                if (!trustStore)
-                    return;
-                Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(*trustStore, std::move(anchors),
-                                                                                 label);
-            });
-        }
+    if (auto* native = dynamic_cast<libresign::NativeSigningService*>(service.get())) {
+        auto trustStore = std::const_pointer_cast<Trust::TrustStore>(trustService->trustStore());
+        native->setAnchorEmitter([trustStore](std::vector<Trust::TrustAnchor> anchors, std::string label) {
+            if (!trustStore)
+                return;
+            Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(*trustStore, std::move(anchors), label);
+        });
     }
     if (!service->configure(libTrust)) {
         return {SigningResult::trustStoreUnavailableDiagnosticOnly(std::string{"libresign rejected TrustConfig"}), {}};
@@ -833,34 +796,18 @@ try {
         libReq.tsa.credentials.extraSecretHeaders = std::move(tsaOut->credentials.extraSecretHeaders);
     }
 
-    const auto backend = chooseBackend();
-    if (backend == libresign::Backend::DSS) {
-        const bool hasCredentials =
-            libReq.tsa.credentials.basicAuth.has_value() || libReq.tsa.credentials.bearerToken.has_value() ||
-            libReq.tsa.credentials.clientCert.has_value() || libReq.tsa.credentials.clientCertKey.has_value() ||
-            !libReq.tsa.credentials.extraSecretHeaders.empty() || !request.contactInfo().empty();
-        if (hasCredentials) {
-            return SigningResult::signingEngineErrorDiagnosticOnly(
-                std::string{"DSS backend does not support TSA credentials or contactInfo — "
-                            "use Native backend (unset LIBRESCRS_SIGNING_BACKEND or set =native)."});
-        }
-    }
-
-    auto service = libresign::createSigningService(backend);
+    auto service = libresign::createSigningService(libresign::Backend::Native);
     if (!service) {
         return SigningResult::signingEngineErrorDiagnosticOnly(
             std::string{"Failed to construct libresign::SigningService"});
     }
-    if (backend == libresign::Backend::Native) {
-        if (auto* native = dynamic_cast<libresign::NativeSigningService*>(service.get())) {
-            auto trustStore = std::const_pointer_cast<Trust::TrustStore>(d->trustService->trustStore());
-            native->setAnchorEmitter([trustStore](std::vector<Trust::TrustAnchor> anchors, std::string label) {
-                if (!trustStore)
-                    return;
-                Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(*trustStore, std::move(anchors),
-                                                                                 label);
-            });
-        }
+    if (auto* native = dynamic_cast<libresign::NativeSigningService*>(service.get())) {
+        auto trustStore = std::const_pointer_cast<Trust::TrustStore>(d->trustService->trustStore());
+        native->setAnchorEmitter([trustStore](std::vector<Trust::TrustAnchor> anchors, std::string label) {
+            if (!trustStore)
+                return;
+            Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(*trustStore, std::move(anchors), label);
+        });
     }
     if (!service->configure(libTrust)) {
         return SigningResult::trustStoreUnavailableDiagnosticOnly(std::string{"libresign rejected TrustConfig"});

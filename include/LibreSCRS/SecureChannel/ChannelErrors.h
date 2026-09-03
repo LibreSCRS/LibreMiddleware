@@ -75,31 +75,4 @@ enum class ChannelActivationError : std::uint8_t {
     PaceDowngradeDetected,
 };
 
-/// @brief Error categories surfaced by @ref ISecureChannel::transmit (and
-///        by the holder/transmit wrapper layered above it).
-///
-/// @since 4.1
-enum class ChannelOperationError : std::uint8_t {
-    /// @brief Sentinel: no error. Reserved for callers that need a default-
-    ///        constructed value; never returned by an operation wrapper.
-    None,
-    /// @brief Channel transitioned to @ref ChannelState::Failed. Caller
-    ///        should drop and re-activate.
-    ChannelFailed,
-    /// @brief Channel was closed before this call. Caller should re-activate.
-    ChannelClosed,
-    /// @brief Card removal observed mid-operation. Terminal.
-    CardRemoved,
-    /// @brief @ref LibreSCRS::CancelToken tripped. Terminal.
-    Cancelled,
-    /// @brief PC/SC-level error. Terminal (usually).
-    ReaderError,
-    /// @brief Card returned SW 6987 or 6988: SM data missing or incorrect.
-    Sw6987Or6988,
-    /// @brief Response MAC failed verification (PACE/BAC channels).
-    MacVerificationFailed,
-    /// @brief Caller-visible bug. Terminal.
-    Internal,
-};
-
 } // namespace LibreSCRS::SecureChannel

@@ -1,11 +1,16 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # SPDX-FileCopyrightText: 2026 hirashix0
 
-set(SIGNING_BACKEND "native" CACHE STRING "Signing backend: native, dss, or both")
-set_property(CACHE SIGNING_BACKEND PROPERTY STRINGS "native" "dss" "both")
+set(SIGNING_BACKEND "native" CACHE STRING "Signing backend: native, or both (native + the DSS cross-verification oracle)")
+set_property(CACHE SIGNING_BACKEND PROPERTY STRINGS "native" "both")
 
+# `dss` used to be a third value that built the DSS engine INSTEAD of the
+# native one. Nothing selects an engine at run time any more, so such a build
+# would compile and then fail inside createSigningService(Native) — a
+# configuration error is the honest place for it. `both` still compiles the DSS
+# sources, which is what the cross-backend tests need.
 if(SIGNING_BACKEND STREQUAL "dss")
-    message(WARNING "DSS signing backend is intended as a cross-verification test oracle; the production signing path is 'native' (default). Set SIGNING_BACKEND=native unless you are running cross-backend tests.")
+    message(FATAL_ERROR "SIGNING_BACKEND=dss is no longer a build configuration: DSS is the cross-verification oracle, not a selectable production engine. Use `native` (default) or `both`.")
 endif()
 
 # libcurl is vendored (thirdparty/curl-source), built static against the

@@ -17,4 +17,4 @@ find_package(LibreMiddleware 4.0 REQUIRED CONFIG)
 add_executable(sdk_consumer_config main.cpp)
 target_compile_features(sdk_consumer_config PRIVATE cxx_std_23)
 target_link_libraries(sdk_consumer_config
-    PRIVATE LibreMiddleware::SmartCard LibreMiddleware::Plugin)
+    PRIVATE LibreSCRS::SmartCard LibreSCRS::Plugin)

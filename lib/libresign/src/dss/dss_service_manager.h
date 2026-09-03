@@ -66,12 +66,6 @@ public:
         return socketPath;
     }
 
-    // The log file path where DSS service stdout/stderr is captured.
-    const std::string& logFilePath() const
-    {
-        return logPath;
-    }
-
 private:
     bool waitForHealth(std::chrono::seconds timeout);
 

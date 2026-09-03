@@ -119,12 +119,6 @@ PhotoData EIdCard::readPortrait()
     return {};
 }
 
-void EIdCard::setCertificateFolderPath(const std::string& path)
-{
-    certFolderPath = path;
-    verifier.reset(); // force re-creation with new path
-}
-
 void EIdCard::addTrustedCertificate(const std::vector<uint8_t>& derCert)
 {
     if (!verifier)
@@ -132,16 +126,8 @@ void EIdCard::addTrustedCertificate(const std::vector<uint8_t>& derCert)
     verifier->addCertificate(derCert);
 }
 
-void EIdCard::ensureVerifier()
-{
-    if (!verifier && !certFolderPath.empty()) {
-        verifier = std::make_unique<CardVerifier>(certFolderPath);
-    }
-}
-
 VerificationResult EIdCard::verifyCard()
 {
-    ensureVerifier();
     if (!verifier)
         return VerificationResult::Unknown;
     return verifier->verifyCard(*conn, *cardReader, cardType);
@@ -149,7 +135,6 @@ VerificationResult EIdCard::verifyCard()
 
 VerificationResult EIdCard::verifyFixedData()
 {
-    ensureVerifier();
     if (!verifier)
         return VerificationResult::Unknown;
     return verifier->verifyFixedData(*conn, *cardReader, cardType);
@@ -157,7 +142,6 @@ VerificationResult EIdCard::verifyFixedData()
 
 VerificationResult EIdCard::verifyVariableData()
 {
-    ensureVerifier();
     if (!verifier)
         return VerificationResult::Unknown;
     return verifier->verifyVariableData(*conn, *cardReader, cardType);

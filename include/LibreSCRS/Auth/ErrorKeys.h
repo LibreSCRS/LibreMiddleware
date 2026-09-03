@@ -56,19 +56,6 @@ namespace LibreSCRS::Auth::ErrorKeys {
     return LocalizedText{"librescrs.error.auth.generic", "Authentication failed.", {}};
 }
 
-/// @brief PIN-incorrect message without a retries-left count.
-///
-/// Use when the card reports a wrong PIN but does NOT report an updated
-/// counter (or the plugin chose not to translate it). Distinct from
-/// @ref authFailed so the GUI can render PIN-specific affordances
-/// (the LC SignPage distinguishes "Wrong PIN" from "Authentication
-/// failed" in its retry UI).
-/// @since 4.0
-[[nodiscard]] inline LocalizedText pinIncorrect()
-{
-    return LocalizedText{"librescrs.error.auth.pinIncorrect", "The PIN you entered is incorrect.", {}};
-}
-
 /// @brief PIN-incorrect message carrying the remaining-tries count.
 ///
 /// The placeholder @c {count} is filled in by the i18n layer at render
@@ -85,17 +72,6 @@ namespace LibreSCRS::Auth::ErrorKeys {
     return LocalizedText{"librescrs.error.auth.pinIncorrectWithRetries",
                          "The PIN you entered is incorrect. {count} attempt(s) remaining.",
                          {Placeholder{.name = "count", .value = Count{static_cast<std::int64_t>(retries)}}}};
-}
-
-/// @brief PIN-blocked message — card reports retries exhausted.
-///
-/// Distinct from @ref pinIncorrect because the recovery affordance is
-/// different (PUK / unblock workflow, not "try again").
-/// @since 4.0
-[[nodiscard]] inline LocalizedText pinBlocked()
-{
-    return LocalizedText{
-        "librescrs.error.auth.pinBlocked", "The PIN is blocked. Use the unblock (PUK) workflow to reset it.", {}};
 }
 
 /// @brief Generic "operation cancelled" message — used by the NVI wrappers
@@ -182,8 +158,8 @@ namespace LibreSCRS::Auth::ErrorKeys {
 }
 
 /// @brief Signing failed due to a low-level communication or APDU error
-///        with the smart card. Distinct from @ref pinIncorrect (wrong PIN)
-///        and @ref pinBlocked (PUK workflow) — this covers transport
+///        with the smart card. Distinct from @ref pinIncorrectWithRetries
+///        (wrong PIN) — this covers transport
 ///        faults, card-removed-mid-operation, and unexpected SW1/SW2
 ///        responses from the card.
 /// @since 4.1
@@ -194,7 +170,7 @@ namespace LibreSCRS::Auth::ErrorKeys {
 
 /// @brief Signing failed because the card rejected the supplied PIN.
 ///
-/// Distinct from @ref pinIncorrect (used during pre-sign authentication)
+/// Distinct from @ref pinIncorrectWithRetries (used during pre-sign authentication)
 /// because the signing-time PIN-verify path may need to surface a different
 /// affordance (e.g. the wizard's retry step rather than the card-open
 /// PIN dialog).

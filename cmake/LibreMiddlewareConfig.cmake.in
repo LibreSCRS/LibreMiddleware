@@ -10,7 +10,7 @@
 # Downstream consumers (third-party GUIs, packagers, integrators) pull
 # the package in via:
 #   find_package(LibreMiddleware 4.0 REQUIRED CONFIG)
-# and link against the namespaced LibreMiddleware::* imported targets,
+# and link against the namespaced LibreSCRS::* imported targets,
 # which carry their own transitive dependency chain (OpenSSL, PCSC,
 # bundled vendored static archives) so the consumer doesn't have to
 # re-discover them.
@@ -28,32 +28,15 @@ find_dependency(PCSC REQUIRED)
 
 include("${CMAKE_CURRENT_LIST_DIR}/LibreMiddlewareTargets.cmake")
 
-# Convenience aggregate alias matching the in-tree LibreSCRS::All target.
+# Convenience aggregate matching the in-tree LibreSCRS::All target.
 # Consumers that don't want to reason about component boundaries can:
-#   target_link_libraries(my_consumer PRIVATE LibreMiddleware::All)
-if(NOT TARGET LibreMiddleware::All)
-    add_library(LibreMiddleware::All INTERFACE IMPORTED)
-    set_target_properties(LibreMiddleware::All PROPERTIES
+#   target_link_libraries(my_consumer PRIVATE LibreSCRS::All)
+if(NOT TARGET LibreSCRS::All)
+    add_library(LibreSCRS::All INTERFACE IMPORTED)
+    set_target_properties(LibreSCRS::All PROPERTIES
         INTERFACE_LINK_LIBRARIES
-            "LibreMiddleware::Auth;LibreMiddleware::SmartCard;LibreMiddleware::SecureChannel;LibreMiddleware::Plugin;LibreMiddleware::Signing;LibreMiddleware::Trust;LibreMiddleware::Certificate"
+            "LibreSCRS::Auth;LibreSCRS::SmartCard;LibreSCRS::SecureChannel;LibreSCRS::Plugin;LibreSCRS::Signing;LibreSCRS::Trust;LibreSCRS::Certificate"
     )
 endif()
-
-# Mirror every imported target under the LibreSCRS:: namespace so consumers
-# may use either spelling interchangeably. LibreSCRS:: matches the C++
-# namespace (LibreSCRS::Foo::Bar) and the in-tree target spelling
-# (lib/LibreSCRS/CMakeLists.txt) and is the preferred form for new code.
-# LibreMiddleware:: is retained for backward compatibility with code that
-# already links against the installed package.
-foreach(_lm_component
-        Auth SmartCard SecureChannel Plugin Signing Trust Certificate Secure All)
-    if(TARGET LibreMiddleware::${_lm_component}
-       AND NOT TARGET LibreSCRS::${_lm_component})
-        add_library(LibreSCRS::${_lm_component} INTERFACE IMPORTED)
-        set_target_properties(LibreSCRS::${_lm_component} PROPERTIES
-            INTERFACE_LINK_LIBRARIES "LibreMiddleware::${_lm_component}")
-    endif()
-endforeach()
-unset(_lm_component)
 
 check_required_components(LibreMiddleware)

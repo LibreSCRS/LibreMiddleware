@@ -35,7 +35,6 @@ struct TrustStoreInternalAccess
     // Intra-LibreSCRS_Trust callers only — no LIBRESCRS_PUBLIC_API marker
     // keeps the symbols hidden in the SHARED-build .so.
     static TrustStore makeStore(std::string bundledCertDir, bool includeSystemTrustStore);
-    static void addProvider(TrustStore& store, std::shared_ptr<TrustAnchorProvider> provider);
 
     /// @brief Merge a set of pre-extracted DER-encoded trust anchors into
     ///        @p store as a single provider tagged with @p sourceLabel.
@@ -53,10 +52,10 @@ struct TrustStoreInternalAccess
     /// The cross-`.so` call site is the only reason this symbol is
     /// exported via @ref LIBRESCRS_PUBLIC_API; the surrounding
     /// `internal/` header path + LIBRESCRS_INTERNAL_BUILD #error guard
-    /// keep external consumers from including it. Sibling
-    /// `makeStore`/`addProvider` are NOT marked because their callers all
-    /// live inside LibreSCRS_Trust itself; exporting them would widen
-    /// the visible symbol set without a use case.
+    /// keep external consumers from including it. Sibling `makeStore` is
+    /// NOT marked because its callers all live inside LibreSCRS_Trust
+    /// itself; exporting it would widen the visible symbol set without a
+    /// use case.
     ///
     /// @par Thread-safety
     /// Takes an exclusive lock on the store's internal mutex.

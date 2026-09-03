@@ -608,7 +608,7 @@ TEST(SigningRequestBuilderTest, AllowExpiredCertRoundTrips)
 TEST(SigningRequestBuilderTest, DocumentNameDefaultsEmpty)
 {
     // Default is empty on BOTH build paths — the bridge then derives the
-    // engine-visible name from inputFile() exactly as it did before 4.3.
+    // engine-visible name from inputFile() exactly as it did before 5.0.
     {
         SigningRequest::Builder b;
         b.format(SignatureFormat::AsicE);
@@ -929,39 +929,6 @@ TEST(SigningServiceBridgeTest, ReturnsUserCancelledWhenProviderCancels)
     EXPECT_EQ(result.status, LibreSCRS::Signing::SigningResult::Status::UserCancelled);
 }
 
-// Scoped env-var helper: set on construction, restore on destruction.
-// Keeps tests hermetic even if the suite runs under LIBRESCRS_SIGNING_BACKEND
-// already set in the shell (which would otherwise silently change behavior).
-namespace {
-class ScopedEnvVar
-{
-public:
-    ScopedEnvVar(const char* name, const char* value) : name_(name)
-    {
-        const char* old = std::getenv(name);
-        if (old)
-            previous_ = old;
-        if (value)
-            ::setenv(name, value, /*overwrite=*/1);
-        else
-            ::unsetenv(name);
-    }
-    ~ScopedEnvVar()
-    {
-        if (previous_)
-            ::setenv(name_, previous_->c_str(), /*overwrite=*/1);
-        else
-            ::unsetenv(name_);
-    }
-    ScopedEnvVar(const ScopedEnvVar&) = delete;
-    ScopedEnvVar& operator=(const ScopedEnvVar&) = delete;
-
-private:
-    const char* name_;
-    std::optional<std::string> previous_;
-};
-} // namespace
-
 // SigningService.h documents that B-T / B-LT / B-LTA
 // signatures require a configured TSA. With pure-DI ctor + nullable
 // TsaProvider, sign() must surface TsaUnreachable up front rather than letting
@@ -1007,70 +974,8 @@ TEST(SigningServiceBridgeTest, TsaUnreachableWhenNonBBLevelAndEmptyTsa)
         << "Diagnostic should name TsaProvider; got: " << *result.diagnosticDetail;
 }
 
-// DSS-backend silent-drop guard: when LIBRESCRS_SIGNING_BACKEND=dss AND the
-// caller set TSA credentials or contactInfo, SigningService::sign() must
-// fail LOUD (not silently drop) with a SigningEngineError whose
-// diagnosticDetail names the DSS backend.
-TEST(SigningServiceBridgeTest, DssBackendFailsLoudWhenCredentialsSet)
-{
-    auto session = tryOpenSession();
-    if (!session) {
-        GTEST_SKIP() << "No PC/SC reader available for opening a CardSession";
-    }
-
-    ScopedEnvVar envGuard("LIBRESCRS_SIGNING_BACKEND", "dss");
-
-    LibreSCRS::Trust::TrustConfig trust;
-    trust.trustedListSources.push_back({"https://www.mit.gov.rs/TrustedList/TSL-RS.xml", false, false});
-
-    // TsaProvider returns credentials — the silent-drop path we are guarding.
-    LibreSCRS::Signing::TsaProvider tsaProvider = [](const LibreSCRS::Signing::TsaContext&) {
-        LibreSCRS::Signing::TsaRequest req;
-        req.url = "https://tsa.example.com/tsa";
-        req.credentials.bearerToken = LibreSCRS::Secure::String("demo-bearer-token");
-        return req;
-    };
-
-    auto trustResult = LibreSCRS::Trust::TrustStoreService::create(std::move(trust));
-    ASSERT_TRUE(trustResult.has_value());
-    auto svc = std::make_shared<LibreSCRS::Signing::SigningService>(*trustResult, std::move(tsaProvider));
-
-    // Create a real tiny input file so the input-file check passes and we
-    // reach the backend-guard block inside sign(). A %PDF- header clears the
-    // fail-fast document pre-check (makeBuiltRequest signs as PAdES) so this
-    // test still reaches the DSS backend guard rather than the InvalidDocument
-    // reject path.
-    auto tmpIn = std::filesystem::temp_directory_path() / "librescrs-dss-guard-input.pdf";
-    {
-        std::ofstream f(tmpIn);
-        f << "%PDF-1.7\n";
-    }
-    auto request = makeBuiltRequest(tmpIn, tmpIn.parent_path() / "out.asice");
-
-    auto provider = [](const LibreSCRS::Auth::AuthRequirement&) {
-        std::vector<LibreSCRS::Auth::CredentialEntry> values;
-        values.emplace_back("pin", LibreSCRS::Secure::String{"0000"});
-        return LibreSCRS::Auth::CredentialResult::ok(std::move(values));
-    };
-
-    auto plugin = std::make_shared<StubPkiPlugin>();
-    auto result = svc->sign(request, provider, plugin, session);
-
-    EXPECT_EQ(result.status, LibreSCRS::Signing::SigningResult::Status::SigningEngineError);
-    // Diagnostic must name the DSS backend so a deployer flipping the env
-    // var gets an actionable error rather than a silent auth downgrade.
-    ASSERT_TRUE(result.diagnosticDetail.has_value());
-    ASSERT_FALSE(result.diagnosticDetail->empty());
-    EXPECT_NE(result.diagnosticDetail->find("DSS"), std::string::npos)
-        << "Diagnostic should name DSS backend; got: " << *result.diagnosticDetail;
-    EXPECT_NE(result.diagnosticDetail->find("credentials"), std::string::npos)
-        << "Diagnostic should mention credentials; got: " << *result.diagnosticDetail;
-
-    // No cleanup needed: svc is per-test (pure DI), goes out of scope here.
-}
-
 // ---------------------------------------------------------------------------
-// Buffer-sign overload (4.3): span in -> SigningResult::signedDocumentBytes,
+// Buffer-sign overload (5.0): span in -> SigningResult::signedDocumentBytes,
 // no file touched. These two cases exercise the overload's input seam and the
 // SHARED validate+pipeline core WITHOUT a PC/SC reader: a detached CardSession
 // drives the path, and both assertions land on early returns that fire before

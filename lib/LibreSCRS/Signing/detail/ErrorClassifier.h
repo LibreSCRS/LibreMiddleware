@@ -37,9 +37,9 @@ namespace LibreSCRS::Signing::detail {
 /// the failure was known. Closed switch under `-Wswitch-enum` so adding a
 /// new kind triggers a compile error here.
 ///
-/// Fallback path (legacy 4.0/4.1 callers): when `failureKind` is unset
-/// (e.g. PIN-failure surfacing via Pkcs11Token throw before any module
-/// gets a chance to classify), parse `errorMessage` substring tokens to
+/// Substring path: when `failureKind` is unset — which happens when a PIN
+/// failure surfaces as a `Pkcs11Token` throw before any module gets a
+/// chance to classify it — parse `errorMessage` substring tokens to
 /// recover PIN / card-blocked / TSA classes. Canonical hex reference:
 ///
 ///   CKR_PIN_INCORRECT = 0x000000A0
@@ -96,12 +96,10 @@ inline LibreSCRS::Signing::SigningResult::Status classifyLibresignError(const li
         return S::SigningEngineError; // defensive — switch closes via -Wswitch-enum on every value
     }
 
-    // Legacy fallback: substring match on errorMessage. Reached only when
-    // the module returned the typed shape without populating failureKind,
-    // OR when a CKR exception propagates from Pkcs11Token before any
-    // module wraps it. Signing-engine modules populate failureKind on
-    // every return path; this branch survives for the Pkcs11Token
-    // exception path.
+    // Substring match on errorMessage. Signing-engine modules populate
+    // failureKind on every return path, so this is reached only when a CKR
+    // exception propagates from Pkcs11Token before any module wraps it —
+    // a live path, not a compatibility one.
     const std::string& detail = r.errorMessage;
     auto contains = [&](std::string_view needle) { return detail.find(needle) != std::string::npos; };
 

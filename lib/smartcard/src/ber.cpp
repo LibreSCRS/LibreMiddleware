@@ -166,26 +166,4 @@ std::string berFindString(const BERField& root, std::initializer_list<uint32_t> 
 
     return current->asString();
 }
-
-std::vector<uint8_t> berFindBytes(const BERField& root, std::initializer_list<uint32_t> path)
-{
-    const BERField* current = &root;
-
-    for (uint32_t tag : path) {
-        bool found = false;
-        for (const auto& child : current->children) {
-            if (child.tag == tag) {
-                current = &child;
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            return {};
-        }
-    }
-
-    return current->value;
-}
-
 } // namespace LibreSCRS::SmartCard::Internal

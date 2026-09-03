@@ -43,6 +43,5 @@ void mergeBER(BERField& dst, const BERField& src);
 
 // Access nested field by tag path, e.g. {0x71, 0xA3, 0x87}
 std::string berFindString(const BERField& root, std::initializer_list<uint32_t> path);
-std::vector<uint8_t> berFindBytes(const BERField& root, std::initializer_list<uint32_t> path);
 
 } // namespace LibreSCRS::SmartCard::Internal

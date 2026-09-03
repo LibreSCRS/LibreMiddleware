@@ -97,7 +97,7 @@ struct SigningResult
     /// @brief Signed artifact bytes, set only by the buffer-sign overload
     ///        (@ref SigningService::sign taking a byte span); absent for the
     ///        file-based path, which writes to @ref outputPath instead.
-    ///        Append-only data member (since 4.3); default @c std::nullopt keeps
+    ///        Append-only data member (since 5.0); default @c std::nullopt keeps
     ///        every existing factory source- and ABI-compatible.
     std::optional<std::vector<std::uint8_t>> signedDocumentBytes;
 
@@ -266,21 +266,6 @@ struct SigningResult
     tsaUnreachable(LocalizedText userMessage, std::optional<std::string> diagnosticDetail = std::nullopt) noexcept
     {
         return SigningResult{Status::TsaUnreachable, std::nullopt, std::move(userMessage), std::move(diagnosticDetail)};
-    }
-
-    /// @brief Diagnostic-only TSA-unreachable variant — substitutes a
-    ///        generic timestamp-authority-unreachable message. Use only
-    ///        when no signing-engine-specific text is available; prefer
-    ///        the two-argument overload otherwise.
-    /// @since 4.0
-    [[nodiscard]] static SigningResult tsaUnreachableDiagnosticOnly(std::string diagnosticDetail) noexcept
-    {
-        try {
-            return SigningResult{Status::TsaUnreachable, std::nullopt, Auth::ErrorKeys::tsaUnreachable(),
-                                 std::move(diagnosticDetail)};
-        } catch (...) {
-            return SigningResult{Status::TsaUnreachable, std::nullopt, LocalizedText{}, std::nullopt};
-        }
     }
 
     /// @brief Signing engine reported an error not classified by the other statuses.

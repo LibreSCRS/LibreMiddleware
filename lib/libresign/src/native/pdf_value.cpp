@@ -54,13 +54,6 @@ int64_t PdfValue::asInt() const
     throw std::runtime_error("PdfValue: not an Int");
 }
 
-double PdfValue::asReal() const
-{
-    if (auto* p = std::get_if<double>(&data))
-        return *p;
-    throw std::runtime_error("PdfValue: not a Real");
-}
-
 const std::string& PdfValue::asString() const
 {
     if (auto* p = std::get_if<std::string>(&data))

@@ -98,7 +98,6 @@ public:
     // Type-specific accessors — throw std::runtime_error on type mismatch
     bool asBool() const;
     int64_t asInt() const;
-    double asReal() const;
     const std::string& asString() const;
     const std::string& asName() const;
     const ArrayType& asArray() const;

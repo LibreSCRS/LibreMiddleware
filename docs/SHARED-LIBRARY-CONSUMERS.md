@@ -5,8 +5,8 @@ SPDX-FileCopyrightText: 2026 hirashix0
 
 # Consuming LibreMiddleware as a shared library
 
-Starting with LibreMiddleware 4.0, downstream projects (LibreKDE,
-LibreLinux, third-party tools) can consume LM via CMake's
+Starting with LibreMiddleware 4.0, downstream projects (LibreLinux,
+LibreAgent, LibreDarwin, third-party tools) can consume LM via CMake's
 `find_package(LibreMiddleware ... CONFIG)`. This document covers
 build options, version pinning, and the public target surface.
 
@@ -23,22 +23,23 @@ LibreCelik's existing in-tree FetchContent build path uses the default
 
 ## Public targets
 
-| In-tree | Installed | Purpose |
-|---|---|---|
-| `LibreSCRS::Auth` | `LibreMiddleware::Auth` | Auth requirements, secure string types, credential providers |
-| `LibreSCRS::SmartCard` | `LibreMiddleware::SmartCard` | PCSC sessions, monitor service, reader enumeration |
-| `LibreSCRS::Plugin` | `LibreMiddleware::Plugin` | `CardPlugin` interface, `CardPluginService` registry |
-| `LibreSCRS::Signing` | `LibreMiddleware::Signing` | `SigningService`, `SigningRequest`, signature engine |
-| `LibreSCRS::Trust` | `LibreMiddleware::Trust` | `TrustStore`, certificate validation |
-| `LibreSCRS::Certificate` | `LibreMiddleware::Certificate` | X.509 utilities |
-| `LibreSCRS::Secure` | `LibreMiddleware::Secure` | INTERFACE alias for secure-allocator-using types |
-| `LibreSCRS::All` | `LibreMiddleware::All` | INTERFACE convenience aggregating the six archive targets |
+| Target | Purpose |
+|---|---|
+| `LibreSCRS::Auth` | Auth requirements, secure string types, credential providers |
+| `LibreSCRS::SmartCard` | PCSC sessions, monitor service, reader enumeration |
+| `LibreSCRS::Plugin` | `CardPlugin` interface, `CardPluginService` registry |
+| `LibreSCRS::Signing` | `SigningService`, `SigningRequest`, signature engine |
+| `LibreSCRS::Trust` | `TrustStore`, certificate validation |
+| `LibreSCRS::Certificate` | X.509 utilities |
+| `LibreSCRS::Secure` | INTERFACE alias for secure-allocator-using types |
+| `LibreSCRS::All` | INTERFACE convenience aggregating the six archive targets |
 
-The asymmetry between source namespace (`LibreSCRS::*`) and package
-namespace (`LibreMiddleware::*`) is deliberate per the project naming
-convention: `LibreSCRS` is the source/code namespace, `LibreMiddleware`
-is the artefact/package namespace. Headers retain the `LibreSCRS::`
-spelling under all build modes; only the CMake import names differ.
+One spelling, in-tree and installed. `LibreMiddleware` names the package
+a consumer asks `find_package` for; `LibreSCRS` names every target inside
+it, matching the C++ namespace (`LibreSCRS::Foo::Bar`) and the header
+paths (`<LibreSCRS/...>`). Up to 4.x the export carried the package name
+and the source spelling was mirrored on top of it so either would link;
+the mirror is gone and the source spelling is the export.
 
 ## Version pinning
 
@@ -95,7 +96,7 @@ find_package(LibreMiddleware 4.0 REQUIRED CONFIG)
 add_executable(my_consumer main.cpp)
 target_compile_features(my_consumer PRIVATE cxx_std_23)
 target_link_libraries(my_consumer
-    PRIVATE LibreMiddleware::SmartCard LibreMiddleware::Plugin)
+    PRIVATE LibreSCRS::SmartCard LibreSCRS::Plugin)
 ```
 
 ```cpp
@@ -109,11 +110,11 @@ configure → build → run flow against a temporary install prefix.
 
 ## Card plugins (runtime-loaded)
 
-Card readers are reached through `LibreMiddleware::Plugin` —
+Card readers are reached through `LibreSCRS::Plugin` —
 `LibreSCRS::Plugin::CardPluginService` constructs a registry and
 `dlopen()`s the `lib*-plugin.so` files inside the directory you pass it.
 The plugins are independent `.so` artefacts (one per card family —
-`libcardedge-plugin.so`, `libpkcs15-plugin.so`, `libemrtd-plugin.so`,
+`librs-eid-plugin.so`, `libpkcs15-plugin.so`, `libemrtd-plugin.so`,
 …); they are **not** linked into the public LibreMiddleware libraries.
 
 ### Install layout
@@ -228,7 +229,7 @@ in-tree:
 - `SmartCard_Impl`, `CardPlugin_Impl` (PC/SC + plugin runtime helpers)
 
 Downstream consumers do **not** need to link these separately. The
-exported `LibreMiddleware::*` imported targets do not propagate any
+exported `LibreSCRS::*` imported targets do not propagate any
 in-tree-only dep through `INSTALL_INTERFACE` (each in-source link uses
 `$<BUILD_INTERFACE:>` to scope the propagation).
 

@@ -81,8 +81,8 @@ struct LIBRESCRS_PUBLIC_API Placeholder
         return static_cast<Type>(value.index());
     }
 
-    /// @brief Render the value as English text (used by `LocalizedText::formattedDefault`
-    ///        and consumer-side log fallback).
+    /// @brief Render the value as English text (used by the consumer-side
+    ///        log fallback).
     /// @details Returns: String → as-is; Int/Count → `std::to_string`; UInt → ditto;
     ///          Hex → uppercase hex bytes joined; Date → ISO 8601 UTC; Bool → "true"/"false".
     /// @throws std::bad_alloc on allocation failure while building the
@@ -146,14 +146,6 @@ struct LIBRESCRS_PUBLIC_API LocalizedText
     /// @throws std::bad_alloc on allocation failure while building the
     ///         returned string.
     [[nodiscard]] std::string interpolate(std::string_view format) const;
-
-    /// @brief Convenience: interpolate placeholders into `defaultText`.
-    /// @throws std::bad_alloc on allocation failure (propagated from
-    ///         @ref interpolate).
-    [[nodiscard]] std::string formattedDefault() const
-    {
-        return interpolate(defaultText);
-    }
 
     /// @brief Value equality (`key`, `defaultText`, `placeholders` element-wise).
     [[nodiscard]] bool operator==(const LocalizedText&) const noexcept = default;
