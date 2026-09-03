@@ -128,6 +128,13 @@ jobs:
         # would pass forever while silently testing one backend twice.
         run: ./ci/scripts/check-signing-backend.sh build ${{ matrix.signing_backend }} ${{ matrix.dss_oracle }} ON
 
+      - name: Check the discovered test set
+        # Runs on every leg. The two backends register different suites from
+        # the same commit, so one committed listing per leg is the only shape
+        # that can be compared; a matrix expression is correct here precisely
+        # because this is the one job in this project that has a matrix.
+        run: ./ci/scripts/test-manifest-gate.sh --check build ${{ matrix.signing_backend }}
+
       - name: Check pimpl visibility
         if: matrix.release_gates
         run: ./ci/scripts/check-impl-visibility.sh build
