@@ -44,7 +44,10 @@ target_include_directories(LibreMiddlewareTests PRIVATE
 )
 # LM-internal test: includes internal headers via lib/*/src/; advertise the
 # internal-build marker to satisfy the #error guard on those headers.
-target_compile_definitions(LibreMiddlewareTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+target_compile_definitions(LibreMiddlewareTests PRIVATE LIBRESCRS_INTERNAL_BUILD
+    # The chunked-read cap cases read the SAME file the fuzz harness seeds
+    # from, so a corpus entry and its regression case cannot drift apart.
+    LIBRESCRS_FUZZ_CORPUS_DIR="${PROJECT_SOURCE_DIR}/fuzz/corpus")
 
 include(GoogleTest)
 gtest_discover_tests(LibreMiddlewareTests)

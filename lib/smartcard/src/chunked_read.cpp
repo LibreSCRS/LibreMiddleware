@@ -41,10 +41,6 @@ std::optional<HeaderParseResult> parseHeaderFromSpec(std::span<const uint8_t> he
         contentLen |= static_cast<uint32_t>(header[spec.lengthOffset + i]) << (8 * i);
     }
 
-    if (spec.maxContentLength != 0 && contentLen > spec.maxContentLength) {
-        throw std::runtime_error("chunked_read: declared content length exceeds maxContentLength");
-    }
-
     return HeaderParseResult{spec.headerSize, contentLen};
 }
 
@@ -83,6 +79,13 @@ std::vector<uint8_t> readChunkedFile(IConnection& conn, const ChunkedReadOptions
 
     const size_t dataOffset = parsed->dataOffset;
     const size_t totalToRead = parsed->totalToRead;
+
+    // Before the reserve below, not after: the declared length is whatever the
+    // chip said, and both parser paths funnel through here, including a
+    // caller-supplied one that is free to return any number.
+    if (totalToRead > opts.maxTotalBytes) {
+        throw std::runtime_error(opts.errorPrefix + ": declared file length exceeds the read cap");
+    }
 
     // Pre-size the result. When includeHeaderInResult is set, the header
     // bytes occupy [0, dataOffset) of the returned vector.

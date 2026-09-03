@@ -192,6 +192,29 @@ target_include_directories(fuzz_emrtd_security_info PRIVATE ${LIBRESCRS_FUZZ_EMR
 target_link_libraries(fuzz_emrtd_security_info PRIVATE EMRTDCrypto SmartCard_Impl LibreSCRS_SecureChannel)
 
 # ---------------------------------------------------------------------------
+# Harness: readChunkedFile — the one file-read loop under every card reader.
+#
+# The length it allocates for comes out of the file header, so the chip picks
+# the size of the buffer. chunked_read.cpp is compiled into the target for the
+# same reason the eMRTD walkers above are: PRIVATE sanitizer flags do not
+# arrive over the link, and a harness that only links the library fuzzes
+# uninstrumented code. SmartCard_Impl is still on the link line for readBinary()
+# and the PC/SC interface; it is a static archive, so pulling apdu.o out of it
+# does not also pull the uninstrumented chunked_read.o.
+# ---------------------------------------------------------------------------
+add_executable(fuzz_chunked_read
+    fuzz_chunked_read.cpp
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src/chunked_read.cpp)
+target_compile_features(fuzz_chunked_read PRIVATE cxx_std_23)
+target_compile_options(fuzz_chunked_read PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_link_options(fuzz_chunked_read PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_compile_definitions(fuzz_chunked_read PRIVATE LIBRESCRS_INTERNAL_BUILD)
+target_include_directories(fuzz_chunked_read PRIVATE
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/include)
+target_link_libraries(fuzz_chunked_read PRIVATE SmartCard_Impl)
+
+# ---------------------------------------------------------------------------
 # Harness: TlSignatureVerifier::verify (with constant signing cert)
 # ---------------------------------------------------------------------------
 add_executable(fuzz_tl_signature_verifier

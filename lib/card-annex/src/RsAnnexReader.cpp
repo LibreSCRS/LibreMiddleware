@@ -64,7 +64,7 @@ constexpr std::uint8_t kMasterFileLo = 0x00;
     }
 
     SC::ChunkedReadOptions opts;
-    opts.headerSpec.maxContentLength = 64 * 1024;
+    opts.maxTotalBytes = 64 * 1024;
     opts.includeHeaderInResult = true; // the digest covers tag and length too
     opts.errorPrefix = "annex";
     opts.headerOverride = head.data;

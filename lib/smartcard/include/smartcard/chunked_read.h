@@ -48,8 +48,6 @@ struct HeaderLengthSpec
     bool hasEmptyMarker = false;
     uint8_t emptyMarkerOffset = 0;
     uint8_t emptyMarkerValue = 0xFF;
-    /// Optional sanity cap on declared content length (0 = no cap).
-    uint32_t maxContentLength = 0;
 };
 
 /// Result returned by a custom header parser.
@@ -76,6 +74,19 @@ struct ChunkedReadOptions
     uint8_t fallbackChunkSize = 0;
     /// Prefix used in thrown std::runtime_error messages, e.g. "Apollo".
     std::string errorPrefix = "readChunkedFile";
+    /// Upper bound on how many bytes one read may allocate for. The file
+    /// length comes out of the header, which is card-controlled, so without
+    /// a ceiling the card picks the size of the allocation. Checked after the
+    /// header is parsed and before anything is reserved, whichever parser
+    /// produced the length -- a caller-supplied parseHeader is free to return
+    /// any number at all, so a cap living in HeaderLengthSpec would not see it.
+    ///
+    /// One MiB is a proposed ceiling, not a measured one: the largest file a
+    /// shipped reader fetches is a facial image, which is expected to be tens
+    /// of KiB, but no such image has been measured off a real card. A document
+    /// carrying a larger photograph is refused in the field until this number
+    /// is raised, which is a one-constant change.
+    std::size_t maxTotalBytes = 1024 * 1024;
     /// If set, called with header bytes; must return the data offset and
     /// total body length, or nullopt to abort and return an empty vector.
     /// Overrides headerSpec when present.

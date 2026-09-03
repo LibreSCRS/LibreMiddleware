@@ -6,6 +6,20 @@
 #include <array>
 #include <tlv.h>
 #include <ber.h>
+#include <smartcard/chunked_read.h>
+
+#include "fake_pcsc_connection.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <fstream>
+#include <iterator>
+#include <optional>
+#include <span>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
 
 using namespace LibreSCRS::SmartCard::Internal;
 
@@ -213,4 +227,134 @@ TEST(BERTest, MergeBERTrees)
     ASSERT_EQ(tree1.children.size(), 2u);
     EXPECT_EQ(tree1.children[0].tag, 0x81u);
     EXPECT_EQ(tree1.children[1].tag, 0x82u);
+}
+
+// --- Chunked file reader: the cap on a card-chosen allocation ---
+//
+// readChunkedFile allocates whatever the file header declares, and the header
+// is card-controlled bytes that arrive before anything has authenticated the
+// card. The hostile header below is read from fuzz/corpus/, so the fuzz seed
+// and this regression case cannot drift apart.
+//
+// Every case here asserts the number of recorded commands as well as the
+// refusal. Without that second assertion the suite would pass for an
+// implementation that reserves four gigabytes first and complains afterwards,
+// which is the defect being closed.
+
+namespace {
+
+std::vector<uint8_t> readChunkedReadCorpus(const std::string& leaf)
+{
+    const std::string path = std::string(LIBRESCRS_FUZZ_CORPUS_DIR) + "/chunked_read/" + leaf;
+    std::ifstream in(path, std::ios::binary);
+    EXPECT_TRUE(in.good()) << "corpus file missing: " << path;
+    std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    EXPECT_FALSE(bytes.empty()) << "corpus file empty: " << path;
+    return bytes;
+}
+
+/// Serves READ BINARY out of a flat card image; past the end it answers with a
+/// successful empty read, the way the loop expects EOF to arrive.
+LibreSCRS::SecureChannel::TestSupport::FakePCSCConnection::ResponseFn imageResponder(std::vector<uint8_t> image)
+{
+    return [image = std::move(image)](const APDUCommand& cmd) {
+        APDUResponse resp;
+        resp.sw1 = 0x90;
+        resp.sw2 = 0x00;
+        const size_t offset = (static_cast<size_t>(cmd.p1) << 8) | cmd.p2;
+        if (offset >= image.size()) {
+            return resp;
+        }
+        const size_t want = cmd.le == 0 ? 256u : cmd.le;
+        const size_t have = std::min(want, image.size() - offset);
+        resp.data.assign(image.begin() + static_cast<ptrdiff_t>(offset),
+                         image.begin() + static_cast<ptrdiff_t>(offset + have));
+        return resp;
+    };
+}
+
+/// The custom parser shape: eight-byte header, little-endian u32 body length
+/// at offset 0. A caller-supplied parser is free to return any length, which
+/// is why the cap cannot live in HeaderLengthSpec.
+std::optional<HeaderParseResult> parseLeU32Header(std::span<const uint8_t> hdr)
+{
+    if (hdr.size() < 8) {
+        return std::nullopt;
+    }
+    size_t declared = 0;
+    for (int i = 0; i < 4; ++i) {
+        declared |= static_cast<size_t>(hdr[i]) << (8 * i);
+    }
+    return HeaderParseResult{8, declared};
+}
+
+} // namespace
+
+TEST(ChunkedReadTest, CustomHeaderParserCannotOutrunTheReadCap)
+{
+    LibreSCRS::SecureChannel::TestSupport::FakePCSCConnection conn;
+    conn.setResponder(imageResponder(readChunkedReadCorpus("cr_header_declares_4gib.bin")));
+
+    ChunkedReadOptions opts;
+    opts.headerSpec.headerSize = 8;
+    opts.errorPrefix = "cap";
+    opts.parseHeader = parseLeU32Header;
+
+    EXPECT_THROW((void)readChunkedFile(conn, opts), std::runtime_error);
+    // One command: the header read. No body was ever asked for, so nothing
+    // was reserved for it either.
+    EXPECT_EQ(conn.history().size(), 1u);
+}
+
+TEST(ChunkedReadTest, DefaultHeaderSpecRefusesBeyondTheDefaultCap)
+{
+    // Four length octets at offset 4 of an eight-byte header: 32 MiB declared.
+    std::vector<uint8_t> image = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02};
+    LibreSCRS::SecureChannel::TestSupport::FakePCSCConnection conn;
+    conn.setResponder(imageResponder(image));
+
+    ChunkedReadOptions opts;
+    opts.headerSpec.headerSize = 8;
+    opts.headerSpec.lengthOffset = 4;
+    opts.headerSpec.lengthBytes = 4;
+    opts.errorPrefix = "cap";
+
+    EXPECT_THROW((void)readChunkedFile(conn, opts), std::runtime_error);
+    EXPECT_EQ(conn.history().size(), 1u);
+}
+
+TEST(ChunkedReadTest, CallerCapTighterThanTheDefaultStillBites)
+{
+    // 128 KiB declared, under the default ceiling but over the 64 KiB a
+    // caller reading eID files sets for itself.
+    std::vector<uint8_t> image = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00};
+    LibreSCRS::SecureChannel::TestSupport::FakePCSCConnection conn;
+    conn.setResponder(imageResponder(image));
+
+    ChunkedReadOptions opts;
+    opts.headerSpec.headerSize = 8;
+    opts.headerSpec.lengthOffset = 4;
+    opts.headerSpec.lengthBytes = 4;
+    opts.maxTotalBytes = 64 * 1024;
+    opts.errorPrefix = "cap";
+
+    EXPECT_THROW((void)readChunkedFile(conn, opts), std::runtime_error);
+    EXPECT_EQ(conn.history().size(), 1u);
+}
+
+TEST(ChunkedReadTest, ReadUnderTheCapStillReturnsTheFile)
+{
+    // Guards the three cases above: a ceiling that refused everything would
+    // satisfy them and ship a reader that reads nothing.
+    std::vector<uint8_t> image = {0x00, 0x00, 0x04, 0x00};
+    image.insert(image.end(), 4u, 0x41);
+    LibreSCRS::SecureChannel::TestSupport::FakePCSCConnection conn;
+    conn.setResponder(imageResponder(image));
+
+    ChunkedReadOptions opts;
+    opts.errorPrefix = "cap";
+
+    const auto body = readChunkedFile(conn, opts);
+    EXPECT_EQ(body, std::vector<uint8_t>(4u, 0x41));
+    EXPECT_GT(conn.history().size(), 1u);
 }

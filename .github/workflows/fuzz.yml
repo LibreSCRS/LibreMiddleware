@@ -38,6 +38,7 @@ jobs:
           - fuzz_emrtd_sod
           - fuzz_emrtd_card_access
           - fuzz_emrtd_security_info
+          - fuzz_chunked_read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -95,6 +96,7 @@ jobs:
             fuzz_emrtd_sod)              echo "path=fuzz/corpus/emrtd_sod" >>$GITHUB_OUTPUT;;
             fuzz_emrtd_card_access)      echo "path=fuzz/corpus/emrtd_card_access" >>$GITHUB_OUTPUT;;
             fuzz_emrtd_security_info)    echo "path=fuzz/corpus/emrtd_security_info" >>$GITHUB_OUTPUT;;
+            fuzz_chunked_read)           echo "path=fuzz/corpus/chunked_read" >>$GITHUB_OUTPUT;;
           esac
 
       - name: Run fuzzer (60 s)
