@@ -35,6 +35,9 @@ namespace {
 // belongs to a different library and must not be pulled across.
 // ---------------------------------------------------------------------------
 
+// MIRROR-OF: LibreMiddleware/lib/LibreSCRS/include/LibreSCRS_internal/Crypto/OpenSslPtr.h - this fixture is compiled
+// into a public-API test that deliberately defines no LIBRESCRS_INTERNAL_BUILD, so it may not include the internal
+// header the rest of the tree shares.
 struct Asn1ObjectDeleter
 {
     void operator()(ASN1_OBJECT* p) const
@@ -83,6 +86,9 @@ struct EVPPKeyDeleter
     }
 };
 
+// MIRROR-OF: LibreMiddleware/lib/LibreSCRS/include/LibreSCRS_internal/Crypto/OpenSslPtr.h - this fixture is compiled
+// into a public-API test that deliberately defines no LIBRESCRS_INTERNAL_BUILD, so it may not include the internal
+// header the rest of the tree shares.
 struct X509Deleter
 {
     void operator()(X509* p) const

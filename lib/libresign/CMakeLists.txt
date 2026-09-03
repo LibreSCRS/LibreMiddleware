@@ -117,10 +117,10 @@ if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
         src/native/trusted_list_parser.h
         src/native/fetch_and_verify_tl.h
         src/native/native_signing_service.h
+        src/native/depth_guard.h
         src/native/der_utils.h
         src/native/digest_info.h
         src/native/native_utils.h
-        src/native/openssl_raii.h
         src/native/pdf_value.h
         src/native/pdf_tokens.h
         src/native/pdf_parser.h
@@ -225,6 +225,11 @@ endif()
 target_include_directories(LibreSign PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${LibreMiddleware_SOURCE_DIR}/lib
+    # The shared internal Crypto headers. The OpenSSL handle aliases this
+    # engine uses were a second set, in a second namespace, and the CMS/TS/OCSP
+    # include cost that was the stated reason for the split is answered by
+    # OpenSslPtrCms.h rather than by a second copy of everything else.
+    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include
     ${LibreMiddleware_SOURCE_DIR}/thirdparty/nlohmann
     ${LibreMiddleware_SOURCE_DIR}/thirdparty/miniz
 )

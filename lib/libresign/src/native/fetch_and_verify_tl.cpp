@@ -14,6 +14,10 @@
 #include <fstream>
 #include <iterator>
 #include <string_view>
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+
+using LibreSCRS::Internal::Crypto::BioPtr;
+using LibreSCRS::Internal::Crypto::X509Ptr;
 
 namespace libresign {
 

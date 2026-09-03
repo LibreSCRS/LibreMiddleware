@@ -21,6 +21,16 @@
 #include <memory>
 #include <span>
 #include <stdexcept>
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+#include <LibreSCRS_internal/Crypto/OpenSslPtrCms.h>
+
+using LibreSCRS::Internal::Crypto::Asn1ObjectPtr;
+using LibreSCRS::Internal::Crypto::Asn1StringPtr;
+using LibreSCRS::Internal::Crypto::BioPtr;
+using LibreSCRS::Internal::Crypto::CmsPtr;
+using LibreSCRS::Internal::Crypto::EvpPkeyPtr;
+using LibreSCRS::Internal::Crypto::X509AttributePtr;
+using LibreSCRS::Internal::Crypto::X509Ptr;
 
 namespace libresign {
 
@@ -28,10 +38,10 @@ namespace {
 
 using namespace libresign::native_utils;
 
-using ::libresign::BioPtr;
-using ::libresign::CmsPtr;
-using ::libresign::EvpPkeyPtr;
-using ::libresign::StackX509Ptr;
+using LibreSCRS::Internal::Crypto::BioPtr;
+using LibreSCRS::Internal::Crypto::CmsPtr;
+using LibreSCRS::Internal::Crypto::EvpPkeyPtr;
+using LibreSCRS::Internal::Crypto::X509StackOwningPtr;
 
 // Encode CMS to DER
 std::vector<uint8_t> encodeCms(CMS_ContentInfo* cms)
@@ -471,15 +481,17 @@ void addArchiveTimestampTo(CMS_ContentInfo* cms, CMS_SignerInfo* si, const TSACo
 
     // 1. Hash each certificate DER individually
     std::vector<std::vector<uint8_t>> certHashes;
-    STACK_OF(X509)* certs = CMS_get1_certs(emitted.get());
+    // get1: the caller owns the stack AND a reference to every certificate in
+    // it, so this is the OWNING pointer -- the borrowed one would leak each
+    // certificate, and nothing would say so.
+    const X509StackOwningPtr certs(CMS_get1_certs(emitted.get()));
     if (certs) {
-        for (int i = 0; i < sk_X509_num(certs); ++i) {
-            X509* cert = sk_X509_value(certs, i);
+        for (int i = 0; i < sk_X509_num(certs.get()); ++i) {
+            X509* cert = sk_X509_value(certs.get(), i);
             auto der = derEncode(i2d_X509, cert);
             if (!der.empty())
                 certHashes.push_back(sha256(der));
         }
-        sk_X509_pop_free(certs, X509_free);
     }
 
     // 2. Hash each CRL DER individually
@@ -547,15 +559,15 @@ void addArchiveTimestampTo(CMS_ContentInfo* cms, CMS_SignerInfo* si, const TSACo
     }
 
     // 5d. Certificate values (DER-encoded, in the order the document carries)
-    STACK_OF(X509)* certsForHash = CMS_get1_certs(emitted.get());
+    // get1 again: owning, for the same reason as above.
+    const X509StackOwningPtr certsForHash(CMS_get1_certs(emitted.get()));
     if (certsForHash) {
-        for (int i = 0; i < sk_X509_num(certsForHash); ++i) {
-            X509* cert = sk_X509_value(certsForHash, i);
+        for (int i = 0; i < sk_X509_num(certsForHash.get()); ++i) {
+            X509* cert = sk_X509_value(certsForHash.get(), i);
             auto der = derEncode(i2d_X509, cert);
             if (!der.empty())
                 archiveInput.insert(archiveInput.end(), der.begin(), der.end());
         }
-        sk_X509_pop_free(certsForHash, X509_free);
     }
 
     // 5e. CRL values (DER-encoded, in the order the document carries)

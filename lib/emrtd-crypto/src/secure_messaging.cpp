@@ -4,6 +4,8 @@
 #include "secure_messaging.h"
 #include "crypto_utils.h"
 
+#include <ber.h>
+
 #include <openssl/crypto.h>
 #include <stdexcept>
 
@@ -57,23 +59,16 @@ static std::vector<TLVObject> parseTLV(const std::vector<uint8_t>& buf, size_t o
         if (offset >= end)
             break;
 
-        size_t len = 0;
-        if (buf[offset] < 0x80) {
-            len = buf[offset++];
-        } else if (buf[offset] == 0x81) {
-            ++offset;
-            if (offset >= end)
-                break;
-            len = buf[offset++];
-        } else if (buf[offset] == 0x82) {
-            ++offset;
-            if (offset + 1 >= end)
-                break;
-            len = (static_cast<size_t>(buf[offset]) << 8) | buf[offset + 1];
-            offset += 2;
-        } else {
-            break; // unsupported multi-byte length
-        }
+        // The shared decode, in its non-throwing form. The ceiling stays here:
+        // an SM data object carries a short or a one/two-byte long-form length,
+        // and `next - offset` is 1, 2 or 3 for exactly those. Anything longer
+        // ends the walk, as it always did -- widening what this path accepts
+        // would not be a deduplication.
+        const auto parsed = LibreSCRS::SmartCard::Internal::tryParseLength(buf.data(), end, offset);
+        if (!parsed.ok || parsed.next - offset > 3)
+            break;
+        const size_t len = parsed.length;
+        offset = parsed.next;
 
         if (offset + len > end)
             break;

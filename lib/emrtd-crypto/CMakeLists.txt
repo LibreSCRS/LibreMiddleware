@@ -40,6 +40,11 @@ target_include_directories(EMRTDCrypto PRIVATE
     # LibreSCRS_SecureChannel directly, so no transitive surface is lost.
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/lib/SecureChannel/include
+    # The shared internal Crypto headers (CleanseGuard, OpenSslPtr). Four
+    # key-agreement paths in this library each wrote their own scope guard for
+    # wiping key material; the one they share now lives there, beside the other
+    # internal crypto RAII this repository already keeps in one place.
+    ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
 )
 
 set_target_properties(EMRTDCrypto PROPERTIES POSITION_INDEPENDENT_CODE ON)

@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "docp_parser.h"
+
+#include <LibreSCRS_internal/Hex.h>
 #include "pkcs15_card.h"
 #include "pkcs15_parser.h"
 #include "pkcs15_types.h"
@@ -288,13 +290,8 @@ PKCS15Profile PKCS15Card::readProfile()
 {
     const bool trace = std::getenv("LIBRESCRS_SIGN_TRACE") != nullptr;
     auto dumpHex = [](const std::vector<uint8_t>& v, std::size_t maxLen) {
-        std::string out;
         const auto n = std::min(maxLen, v.size());
-        for (std::size_t i = 0; i < n; ++i) {
-            char buf[4];
-            std::snprintf(buf, sizeof(buf), "%02X", v[i]);
-            out += buf;
-        }
+        std::string out = LibreSCRS::Internal::hexEncode(std::span<const std::uint8_t>(v).first(n));
         if (v.size() > n)
             out += "...";
         return out;
@@ -705,12 +702,9 @@ std::vector<uint8_t> PKCS15Card::tryMsePsoOid(std::span<const uint8_t> algoOid, 
     mseData.push_back(static_cast<uint8_t>(keyRef.keyRefData.size()));
     mseData.insert(mseData.end(), keyRef.keyRefData.begin(), keyRef.keyRefData.end());
 #ifndef NDEBUG
-    fprintf(stderr, "[PKCS15] MSE SET OID: oid=");
-    for (auto b : algoOid)
-        fprintf(stderr, "%02X", b);
-    fprintf(stderr, " keyTag=0x%02X keyRef=", keyRef.keyTag);
-    for (auto b : keyRef.keyRefData)
-        fprintf(stderr, "%02X", b);
+    fprintf(stderr, "[PKCS15] MSE SET OID: oid=%s", LibreSCRS::Internal::hexEncode(algoOid).c_str());
+    fprintf(stderr, " keyTag=0x%02X keyRef=%s", keyRef.keyTag,
+            LibreSCRS::Internal::hexEncode(keyRef.keyRefData).c_str());
     fprintf(stderr, " psoDataLen=%zu\n", psoData.size());
 #endif
     LibreSCRS::SmartCard::Internal::APDUCommand mseSet{
@@ -741,9 +735,8 @@ std::vector<uint8_t> PKCS15Card::tryMsePso(uint8_t sigAlgo, const KeyRefInfo& ke
     std::vector<uint8_t> mseData = {0x80, 0x01, sigAlgo, keyRef.keyTag, static_cast<uint8_t>(keyRef.keyRefData.size())};
     mseData.insert(mseData.end(), keyRef.keyRefData.begin(), keyRef.keyRefData.end());
 #ifndef NDEBUG
-    fprintf(stderr, "[PKCS15] MSE SET: algo=0x%02X keyTag=0x%02X keyRef=", sigAlgo, keyRef.keyTag);
-    for (auto b : keyRef.keyRefData)
-        fprintf(stderr, "%02X", b);
+    fprintf(stderr, "[PKCS15] MSE SET: algo=0x%02X keyTag=0x%02X keyRef=%s", sigAlgo, keyRef.keyTag,
+            LibreSCRS::Internal::hexEncode(keyRef.keyRefData).c_str());
     fprintf(stderr, " psoDataLen=%zu\n", psoData.size());
 #endif
     LibreSCRS::SmartCard::Internal::APDUCommand mseSet{
@@ -777,16 +770,13 @@ std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_vie
     auto keyRef = resolveKeyRef(key);
     uint16_t sigLen = key.keySizeBits > 0 ? (key.keySizeBits / 8) : 256;
 #ifndef NDEBUG
-    fprintf(stderr, "[PKCS15] sign(): keyRef=%d keyPath=", key.keyReference);
-    for (auto b : key.path)
-        fprintf(stderr, "%02X", b);
+    fprintf(stderr, "[PKCS15] sign(): keyRef=%d keyPath=%s", key.keyReference,
+            LibreSCRS::Internal::hexEncode(key.path).c_str());
     fprintf(stderr, " keySizeBits=%d scheme=%d\n", key.keySizeBits, static_cast<int>(scheme));
-    fprintf(stderr, "[PKCS15] resolved: tag=0x%02X ref=", keyRef.keyTag);
-    for (auto b : keyRef.keyRefData)
-        fprintf(stderr, "%02X", b);
-    fprintf(stderr, " pinRef=0x%02X pinPath=", pinInfo.pinReference);
-    for (auto b : pinInfo.path)
-        fprintf(stderr, "%02X", b);
+    fprintf(stderr, "[PKCS15] resolved: tag=0x%02X ref=%s", keyRef.keyTag,
+            LibreSCRS::Internal::hexEncode(keyRef.keyRefData).c_str());
+    fprintf(stderr, " pinRef=0x%02X pinPath=%s", pinInfo.pinReference,
+            LibreSCRS::Internal::hexEncode(pinInfo.path).c_str());
     fprintf(stderr, " pinStoredLen=%d\n", pinInfo.storedLength);
 #endif
 

@@ -4,6 +4,8 @@
 #include "bac.h"
 #include "crypto_utils.h"
 
+#include <LibreSCRS_internal/Crypto/CleanseGuard.h>
+
 #include <apdu.h>
 #include <pcsc_connection.h>
 
@@ -51,31 +53,8 @@ std::optional<SessionKeys> performBAC(LibreSCRS::SmartCard::Internal::PCSCConnec
     // every session key derived below — so cleanse aggressively.
     std::vector<uint8_t> rndICC, rndIFD, kIFD, kICC, kSeedSession;
     std::vector<uint8_t> s, eIFD, mIFD, cmdData, eICC, mICC, expectedMAC, r;
-    struct KeyCleaner
-    {
-        std::vector<uint8_t>&rndICC, &rndIFD, &kIFD, &kICC, &kSeedSession;
-        std::vector<uint8_t>&s, &eIFD, &mIFD, &cmdData, &eICC, &mICC, &expectedMAC, &r;
-        ~KeyCleaner()
-        {
-            auto cleanse = [](std::vector<uint8_t>& v) {
-                if (!v.empty())
-                    OPENSSL_cleanse(v.data(), v.size());
-            };
-            cleanse(rndICC);
-            cleanse(rndIFD);
-            cleanse(kIFD);
-            cleanse(kICC);
-            cleanse(kSeedSession);
-            cleanse(s);
-            cleanse(eIFD);
-            cleanse(mIFD);
-            cleanse(cmdData);
-            cleanse(eICC);
-            cleanse(mICC);
-            cleanse(expectedMAC);
-            cleanse(r);
-        }
-    } keyCleaner{rndICC, rndIFD, kIFD, kICC, kSeedSession, s, eIFD, mIFD, cmdData, eICC, mICC, expectedMAC, r};
+    LibreSCRS::Internal::Crypto::CleanseGuard keyCleaner{rndICC, rndIFD,  kIFD, kICC, kSeedSession, s, eIFD,
+                                                         mIFD,   cmdData, eICC, mICC, expectedMAC,  r};
 
     // Step 1: GET CHALLENGE — receive 8-byte RND.ICC
     LibreSCRS::SmartCard::Internal::APDUCommand getChallenge{0x00, 0x84, 0x00, 0x00, {}, 0x08, true};

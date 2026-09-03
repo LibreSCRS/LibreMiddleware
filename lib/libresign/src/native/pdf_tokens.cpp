@@ -4,6 +4,8 @@
 #include "pdf_parser.h"
 #include "pdf_tokens.h"
 
+#include "depth_guard.h"
+
 #include <charconv>
 #include <cstdlib>
 #include <cstring>
@@ -37,18 +39,6 @@ PdfValue PdfParser::parseValue(size_t& pos) const
     // ("[[[[[..." or "<<<<..."). A stack overflow from unbounded recursion
     // is uncatchable; we bail with a runtime error instead, which is then
     // caught by parse()'s try/catch and reported as a parse failure.
-    struct DepthGuard
-    {
-        int& d;
-        explicit DepthGuard(int& depth) : d(depth)
-        {
-            ++d;
-        }
-        ~DepthGuard()
-        {
-            --d;
-        }
-    };
     if (parseDepth >= kMaxParseDepth)
         throw std::runtime_error("PdfParser: max parse depth exceeded");
     DepthGuard guard(parseDepth);

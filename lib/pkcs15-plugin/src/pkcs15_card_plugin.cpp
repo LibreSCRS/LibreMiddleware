@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <pkcs15_card.h>
+#include <pkcs15_applet_probe.h>
 #include <pkcs15_types.h>
 
 #include <internal/PinClassification.h>
@@ -101,25 +102,6 @@ LibreSCRS::SmartCard::AppletAid pkcs15AppletAid()
 {
     return LibreSCRS::SmartCard::AppletAid::fromBytes(
         std::span<const std::uint8_t>{pkcs15::kPkcs15Aid.data(), pkcs15::kPkcs15Aid.size()});
-}
-
-/// @brief Result of a cheap reachability probe against the AID, used to
-///        decide whether PACE is required.
-enum class ProbeResult {
-    Ok,         ///< Plain SELECT succeeded — no SM needed for this card.
-    NeedsPace,  ///< Card returned 6982 — PACE must be run first.
-    Unreachable ///< Other failure; treat as not-PKCS#15.
-};
-
-ProbeResult probeApplet(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
-{
-    std::vector<std::uint8_t> aid(pkcs15::kPkcs15Aid.begin(), pkcs15::kPkcs15Aid.end());
-    auto aidResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(aid, 0x0C));
-    if (aidResp.isSuccess())
-        return ProbeResult::Ok;
-    if (aidResp.sw1 == 0x69 && aidResp.sw2 == 0x82)
-        return ProbeResult::NeedsPace;
-    return ProbeResult::Unreachable;
 }
 
 /// @brief Acquire an @ref ActiveChannelHolder appropriate for this session.
@@ -329,14 +311,14 @@ public:
             // families) for subsequent operations. The actual applet
             // selection happens later through
             // CardSession::activateChannel{For,WithSm}.
-            const auto state = probeApplet(conn);
-            if (state == ProbeResult::Ok) {
+            const auto state = pkcs15::probeApplet(conn);
+            if (state == pkcs15::ProbeResult::Ok) {
                 std::lock_guard lock(stateMutex);
                 sessions[mapKey].requiresPace = false;
                 LibreSCRS::Internal::probeTrace("PROBE-PKCS15-CANHANDLE result=true");
                 return true;
             }
-            if (state == ProbeResult::NeedsPace) {
+            if (state == pkcs15::ProbeResult::NeedsPace) {
                 std::lock_guard lock(stateMutex);
                 sessions[mapKey].requiresPace = true;
                 LibreSCRS::Internal::probeTrace("PROBE-PKCS15-CANHANDLE result=needsPace");

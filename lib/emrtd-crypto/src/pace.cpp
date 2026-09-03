@@ -6,6 +6,8 @@
 #include "tlv_bounds.h"
 #include "crypto_utils.h"
 
+#include <LibreSCRS_internal/Crypto/CleanseGuard.h>
+
 #include <apdu.h>
 #include <pcsc_connection.h>
 
@@ -21,6 +23,9 @@
 #include <limits>
 #include <memory>
 #include <stdexcept>
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+
+using LibreSCRS::Internal::Crypto::BnPtr;
 
 namespace emrtd::crypto {
 
@@ -28,17 +33,6 @@ namespace emrtd::crypto {
 // RAII wrappers for OpenSSL types
 // ---------------------------------------------------------------------------
 
-struct BNDeleter
-{
-    void operator()(BIGNUM* p) const
-    {
-        // Cleansing free: zeroises BIGNUM limb buffer before release.
-        // Plain BN_free leaks PACE ephemeral private keys / decrypted
-        // nonce on the heap; passive reconstruction of those defeats
-        // the recorded handshake.
-        BN_clear_free(p);
-    }
-};
 struct BNCtxDeleter
 {
     void operator()(BN_CTX* p) const
@@ -64,7 +58,6 @@ struct ECPointDeleter
     }
 };
 
-using BNPtr = std::unique_ptr<BIGNUM, BNDeleter>;
 using BNCtxPtr = std::unique_ptr<BN_CTX, BNCtxDeleter>;
 using ECGroupPtr = std::unique_ptr<EC_GROUP, ECGroupDeleter>;
 using ECPointPtr = std::unique_ptr<EC_POINT, ECPointDeleter>;
@@ -539,13 +532,13 @@ static ECPointPtr bytesToPoint(const EC_GROUP* group, const std::vector<uint8_t>
 // Generate a random private key in [1, order-1]
 // ---------------------------------------------------------------------------
 
-static BNPtr generatePrivateKey(const EC_GROUP* group, BN_CTX* ctx)
+static BnPtr generatePrivateKey(const EC_GROUP* group, BN_CTX* ctx)
 {
-    BNPtr order(BN_new());
+    BnPtr order(BN_new());
     if (!EC_GROUP_get_order(group, order.get(), ctx))
         throw std::runtime_error("PACE: EC_GROUP_get_order failed");
 
-    BNPtr privKey(BN_new());
+    BnPtr privKey(BN_new());
     if (!BN_rand_range(privKey.get(), order.get()))
         throw std::runtime_error("PACE: BN_rand_range failed");
 
@@ -588,12 +581,12 @@ static std::vector<uint8_t> ecdhSharedSecret(const EC_GROUP* group, const BIGNUM
     if (!EC_POINT_mul(group, shared.get(), nullptr, otherPub, privKey, ctx))
         throw std::runtime_error("PACE: EC_POINT_mul (ECDH) failed");
 
-    BNPtr x(BN_new());
+    BnPtr x(BN_new());
     if (!EC_POINT_get_affine_coordinates(group, shared.get(), x.get(), nullptr, ctx))
         throw std::runtime_error("PACE: EC_POINT_get_affine_coordinates failed");
 
     // Pad x-coordinate to field element size (BN_bn2bin strips leading zeros)
-    BNPtr p(BN_new());
+    BnPtr p(BN_new());
     if (!EC_GROUP_get_curve(group, p.get(), nullptr, nullptr, ctx))
         throw std::runtime_error("PACE: EC_GROUP_get_curve failed");
     size_t fieldSize = static_cast<size_t>(BN_num_bytes(p.get()));
@@ -705,23 +698,7 @@ std::optional<SessionKeys> performPACE(LibreSCRS::SmartCard::Internal::PCSCConne
     std::vector<uint8_t> kMAC;
 
     // Scope guard to cleanse key material on all exit paths
-    struct KeyCleaner
-    {
-        std::vector<uint8_t>&kpiSeed, &kPi, &nonce, &sharedK, &kEnc, &kMAC;
-        ~KeyCleaner()
-        {
-            auto cleanse = [](std::vector<uint8_t>& v) {
-                if (!v.empty())
-                    OPENSSL_cleanse(v.data(), v.size());
-            };
-            cleanse(kpiSeed);
-            cleanse(kPi);
-            cleanse(nonce);
-            cleanse(sharedK);
-            cleanse(kEnc);
-            cleanse(kMAC);
-        }
-    } keyCleaner{kpiSeed, kPi, nonce, sharedK, kEnc, kMAC};
+    LibreSCRS::Internal::Crypto::CleanseGuard keyCleaner{kpiSeed, kPi, nonce, sharedK, kEnc, kMAC};
 
     if (auto seed = derivePaceKpiSeed(params.passwordType, params.password)) {
         kpiSeed = std::move(*seed);
@@ -751,7 +728,7 @@ std::optional<SessionKeys> performPACE(LibreSCRS::SmartCard::Internal::PCSCConne
         return std::nullopt;
 
     // Convert nonce to BIGNUM
-    BNPtr sNonce(BN_bin2bn(nonce.data(), static_cast<int>(nonce.size()), nullptr));
+    BnPtr sNonce(BN_bin2bn(nonce.data(), static_cast<int>(nonce.size()), nullptr));
     if (!sNonce)
         return std::nullopt;
 
@@ -787,7 +764,7 @@ std::optional<SessionKeys> performPACE(LibreSCRS::SmartCard::Internal::PCSCConne
     // Unfortunately EC_POINT_mul's scalar for generator and scalar for arbitrary point
     // are separate. We need: s*baseG + H
     // Use: EC_POINT_mul with n=sNonce (for generator), q=hPoint, m=BN_one
-    BNPtr one(BN_new());
+    BnPtr one(BN_new());
     BN_one(one.get());
     if (!EC_POINT_mul(baseGroup.get(), mappedG.get(), sNonce.get(), hPoint.get(), one.get(), bnCtx.get()))
         return std::nullopt;

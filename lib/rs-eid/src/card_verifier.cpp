@@ -26,8 +26,8 @@ namespace Core = LibreSCRS::RsEId::Core;
 using LibreSCRS::Internal::Crypto::EvpMdCtxPtr;
 using LibreSCRS::Internal::Crypto::EvpPkeyPtr;
 using LibreSCRS::Internal::Crypto::Pkcs7Ptr;
-using LibreSCRS::Internal::Crypto::StackX509Ptr;
 using LibreSCRS::Internal::Crypto::X509Ptr;
+using LibreSCRS::Internal::Crypto::X509StackBorrowedPtr;
 using LibreSCRS::Internal::Crypto::X509StoreCtxPtr;
 
 CardVerifier::CardVerifier(const std::string& certificateFolderPath)
@@ -151,7 +151,7 @@ VerificationResult CardVerifier::verifyGemaltoCardCert(LibreSCRS::SmartCard::Int
               << std::endl;
 #endif
 
-    // Parse PKCS#7 to extract signer certificate. Pkcs7Ptr / StackX509Ptr /
+    // Parse PKCS#7 to extract signer certificate. Pkcs7Ptr / X509StackBorrowedPtr /
     // X509StoreCtxPtr keep their handles alive across every throwable line
     // below — most importantly the std::cerr stream operations
     // (which can throw under std::ios_base::failure with fail-on-throw
@@ -159,7 +159,7 @@ VerificationResult CardVerifier::verifyGemaltoCardCert(LibreSCRS::SmartCard::Int
     // OpenSSL string. With raw owning pointers any C++ exception between
     // d2i_PKCS7 and the manual *_free calls leaked the PKCS7 + signer
     // stack. Mirrors the Wave 4 rewrite of the sibling
-    // verifyPKCS7Signature() in this file. StackX509Ptr's deleter is
+    // verifyPKCS7Signature() in this file. X509StackBorrowedPtr's deleter is
     // sk_X509_free (not sk_X509_pop_free) because PKCS7_get0_signers
     // returns borrowed certs owned by the parent PKCS7.
     const uint8_t* p = sodData.data();
@@ -182,7 +182,7 @@ VerificationResult CardVerifier::verifyGemaltoCardCert(LibreSCRS::SmartCard::Int
     }
 
     // Extract the single signer and route through the shared chain + domain-pin decision.
-    StackX509Ptr signerCerts(PKCS7_get0_signers(pkcs7.get(), nullptr, 0));
+    X509StackBorrowedPtr signerCerts(PKCS7_get0_signers(pkcs7.get(), nullptr, 0));
     if (!signerCerts || sk_X509_num(signerCerts.get()) != 1) {
 #ifndef NDEBUG
         std::cerr << "[CardVerifier] Gemalto card cert: expected exactly one signer, got "

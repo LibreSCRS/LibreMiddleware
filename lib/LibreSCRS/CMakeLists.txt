@@ -103,7 +103,10 @@ target_include_directories(LibreSCRS_Trust PUBLIC
 # is already set so their #error guards let us through.
 target_include_directories(LibreSCRS_Trust PRIVATE
     ${PROJECT_SOURCE_DIR}/lib/libresign/src
-    ${PROJECT_SOURCE_DIR}/lib)
+    ${PROJECT_SOURCE_DIR}/lib
+    # The shared internal Crypto handle aliases: this subsystem had written its
+    # own borrowing X509-stack deleter, one of five copies of it in this tree.
+    ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include)
 target_compile_features(LibreSCRS_Trust PUBLIC cxx_std_23)
 # LibreSign already PRIVATE-links LibreSCRS_Trust (TrustStore::Impl friend
 # access for the lazy-fetch merge path). Adding a reverse PRIVATE link here

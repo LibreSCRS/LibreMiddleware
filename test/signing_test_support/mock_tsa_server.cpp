@@ -21,6 +21,15 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+#include <LibreSCRS_internal/Crypto/OpenSslPtrCms.h>
+
+using LibreSCRS::Internal::Crypto::Asn1ObjectPtr;
+using LibreSCRS::Internal::Crypto::BioPtr;
+using LibreSCRS::Internal::Crypto::EvpPkeyPtr;
+using LibreSCRS::Internal::Crypto::TsRespPtr;
+using LibreSCRS::Internal::Crypto::X509Ptr;
+using LibreSCRS::Internal::Crypto::X509StackBorrowedPtr;
 
 namespace libresign::test {
 
@@ -30,34 +39,6 @@ namespace {
 // client sends no reqPolicy, so the responder stamps this as the default.
 constexpr const char* kTsaPolicyOid = "1.2.3.4.1";
 
-struct EvpPkeyDeleter
-{
-    void operator()(EVP_PKEY* p) const
-    {
-        EVP_PKEY_free(p);
-    }
-};
-struct X509Deleter
-{
-    void operator()(X509* p) const
-    {
-        X509_free(p);
-    }
-};
-struct Asn1ObjDeleter
-{
-    void operator()(ASN1_OBJECT* p) const
-    {
-        ASN1_OBJECT_free(p);
-    }
-};
-struct BioDeleter
-{
-    void operator()(BIO* p) const
-    {
-        BIO_free(p);
-    }
-};
 struct TsRespCtxDeleter
 {
     void operator()(TS_RESP_CTX* p) const
@@ -65,29 +46,8 @@ struct TsRespCtxDeleter
         TS_RESP_CTX_free(p);
     }
 };
-struct TsRespDeleter
-{
-    void operator()(TS_RESP* p) const
-    {
-        TS_RESP_free(p);
-    }
-};
-struct StackOfX509Deleter
-{
-    void operator()(STACK_OF(X509) * p) const
-    {
-        // The stack borrows its element; free the container only.
-        sk_X509_free(p);
-    }
-};
 
-using EvpPkeyPtr = std::unique_ptr<EVP_PKEY, EvpPkeyDeleter>;
-using X509Ptr = std::unique_ptr<X509, X509Deleter>;
-using Asn1ObjPtr = std::unique_ptr<ASN1_OBJECT, Asn1ObjDeleter>;
-using BioPtr = std::unique_ptr<BIO, BioDeleter>;
 using TsRespCtxPtr = std::unique_ptr<TS_RESP_CTX, TsRespCtxDeleter>;
-using TsRespPtr = std::unique_ptr<TS_RESP, TsRespDeleter>;
-using StackOfX509Ptr = std::unique_ptr<STACK_OF(X509), StackOfX509Deleter>;
 
 void addExtension(X509* cert, int nid, const char* value)
 {
@@ -188,7 +148,7 @@ struct MockTsaServer::Impl
         if (TS_RESP_CTX_set_signer_digest(ctx.get(), EVP_sha256()) != 1)
             return {};
 
-        Asn1ObjPtr policy(OBJ_txt2obj(kTsaPolicyOid, 1));
+        Asn1ObjectPtr policy(OBJ_txt2obj(kTsaPolicyOid, 1));
         if (!policy || TS_RESP_CTX_set_def_policy(ctx.get(), policy.get()) != 1)
             return {};
         // The client always requests SHA-256; an unlisted digest is answered
@@ -198,7 +158,7 @@ struct MockTsaServer::Impl
 
         // Carry the authority certificate inside the token so the ESSCertID
         // in the signing-certificate attribute resolves to a present cert.
-        StackOfX509Ptr certs(sk_X509_new_null());
+        X509StackBorrowedPtr certs(sk_X509_new_null());
         if (!certs || sk_X509_push(certs.get(), cert.get()) <= 0)
             return {};
         if (TS_RESP_CTX_set_certs(ctx.get(), certs.get()) != 1)

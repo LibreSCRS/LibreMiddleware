@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 #include "docp_parser.h"
 
+#include <ber.h>
+
 namespace LibreSCRS::pkcs15 {
 namespace {
 
@@ -22,28 +24,26 @@ Tlv readTlv(std::span<const std::uint8_t> b, std::size_t pos) noexcept
     if (pos >= b.size())
         return t;
     t.firstByte = b[pos];
-    unsigned tag = b[pos++];
-    if ((tag & 0x1F) == 0x1F) { // multi-byte tag
-        while (pos < b.size()) {
-            const std::uint8_t x = b[pos++];
-            tag = (tag << 8) | x;
-            if ((x & 0x80) == 0)
-                break;
-        }
-    }
-    if (pos >= b.size())
+
+    // The shared decode, in its non-throwing form. This file used to carry its
+    // own, and the difference was not only duplication: the local one accepted
+    // a long-form length byte it did not understand as a SHORT length (0x82
+    // read as 130 bytes, 0x8F as 143), which is a silent misparse rather than a
+    // refusal. The shared decode refuses those, and understands 0x82 properly.
+    const auto tag = LibreSCRS::SmartCard::Internal::tryParseTag(b.data(), b.size(), pos);
+    if (!tag.ok)
         return t;
-    std::size_t len = b[pos++];
-    if (len == 0x81) {
-        if (pos >= b.size())
-            return t;
-        len = b[pos++];
-    }
-    if (pos + len > b.size())
+    // Ceiling kept at the call site: every DOCP field is a short or one-byte
+    // long-form length, and widening what a card path accepts is not a
+    // deduplication. `next - pos` is 1 for the short form, 2 for 0x81 LL.
+    const auto len = LibreSCRS::SmartCard::Internal::tryParseLength(b.data(), b.size(), tag.next);
+    if (!len.ok || len.next - tag.next > 2)
         return t;
-    t.tag = tag;
-    t.value = b.subspan(pos, len);
-    t.next = pos + len;
+    if (len.next + len.length > b.size())
+        return t;
+    t.tag = tag.tag;
+    t.value = b.subspan(len.next, len.length);
+    t.next = len.next + len.length;
     t.ok = true;
     return t;
 }

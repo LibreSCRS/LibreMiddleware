@@ -58,6 +58,10 @@ target_compile_definitions(SmartCard_Impl PRIVATE LIBRESCRS_INTERNAL_BUILD)
 # <LibreSCRS/SmartCard/MonitorService.h> instead.
 target_include_directories(SmartCard_Impl PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    # <LibreSCRS/Export.h>, for the hidden-visibility attribute the BER
+    # decoder's declarations carry -- PUBLIC because ber.h is included by
+    # LM-internal consumers in other libraries, which then need it too.
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
 )
 
 # PRIVATE: lets SmartCard_Impl's own .cpp files resolve "apdu.h" /

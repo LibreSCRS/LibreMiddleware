@@ -11,17 +11,21 @@ std::string BERField::asString() const
     return std::string(value.begin(), value.end());
 }
 
-// Parse a BER tag (1, 2, or 3 bytes). Returns tag value and advances offset.
-uint32_t parseTag(const uint8_t* data, size_t length, size_t& offset)
+// Parse a BER tag (1, 2, or 3 bytes). Reports failure through the result.
+TagResult tryParseTag(const uint8_t* data, size_t length, size_t pos) noexcept
 {
-    if (offset >= length) {
-        throw std::runtime_error("BER: unexpected end of data parsing tag");
+    TagResult out;
+    if (pos >= length) {
+        return out;
     }
 
-    uint8_t firstByte = data[offset++];
+    const uint8_t firstByte = data[pos++];
     if ((firstByte & 0x1F) != 0x1F) {
         // Single-byte tag
-        return firstByte;
+        out.tag = firstByte;
+        out.next = pos;
+        out.ok = true;
+        return out;
     }
 
     // Multi-byte tag: subsequent bytes have bit 7 set (continuation)
@@ -29,45 +33,77 @@ uint32_t parseTag(const uint8_t* data, size_t length, size_t& offset)
     uint32_t tag = firstByte;
     int continuationCount = 0;
     do {
-        if (offset >= length || ++continuationCount > 3) {
-            throw std::runtime_error("BER: tag too long or unexpected end of data");
+        if (pos >= length || ++continuationCount > 3) {
+            return out;
         }
-        tag = (tag << 8) | data[offset];
-    } while (data[offset++] & 0x80);
+        tag = (tag << 8) | data[pos];
+    } while (data[pos++] & 0x80);
 
-    return tag;
+    out.tag = tag;
+    out.next = pos;
+    out.ok = true;
+    return out;
 }
 
-// Parse BER length. Returns length value and advances offset.
-size_t parseLength(const uint8_t* data, size_t length, size_t& offset)
+// Parse BER length. Reports failure through the result.
+LengthResult tryParseLength(const uint8_t* data, size_t length, size_t pos) noexcept
 {
-    if (offset >= length) {
-        throw std::runtime_error("BER: unexpected end of data parsing length");
+    LengthResult out;
+    if (pos >= length) {
+        return out;
     }
 
-    uint8_t firstByte = data[offset++];
+    const uint8_t firstByte = data[pos++];
 
     if (firstByte < 0x80) {
         // Short form
-        return firstByte;
+        out.length = firstByte;
+        out.next = pos;
+        out.ok = true;
+        return out;
     }
 
     if (firstByte == 0x80) {
         // Indefinite length not supported
-        throw std::runtime_error("BER: indefinite length not supported");
+        return out;
     }
 
     // Long form: firstByte & 0x7F = number of subsequent bytes
-    size_t numBytes = firstByte & 0x7F;
-    if (numBytes > 4 || offset + numBytes > length) {
-        throw std::runtime_error("BER: invalid length encoding");
+    const size_t numBytes = firstByte & 0x7F;
+    if (numBytes > 4 || pos + numBytes > length) {
+        return out;
     }
 
     size_t len = 0;
     for (size_t i = 0; i < numBytes; i++) {
-        len = (len << 8) | data[offset++];
+        len = (len << 8) | data[pos++];
     }
-    return len;
+    out.length = len;
+    out.next = pos;
+    out.ok = true;
+    return out;
+}
+
+// The throwing pair, written over the pair above rather than beside it: one
+// decode, and the difference is only what happens when the bytes are wrong.
+uint32_t parseTag(const uint8_t* data, size_t length, size_t& offset)
+{
+    const TagResult res = tryParseTag(data, length, offset);
+    if (!res.ok) {
+        throw std::runtime_error("BER: tag too long or unexpected end of data");
+    }
+    offset = res.next;
+    return res.tag;
+}
+
+size_t parseLength(const uint8_t* data, size_t length, size_t& offset)
+{
+    const LengthResult res = tryParseLength(data, length, offset);
+    if (!res.ok) {
+        throw std::runtime_error("BER: invalid, indefinite or truncated length encoding");
+    }
+    offset = res.next;
+    return res.length;
 }
 
 namespace {

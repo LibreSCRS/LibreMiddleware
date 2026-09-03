@@ -19,6 +19,10 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+
+using LibreSCRS::Internal::Crypto::EvpMdCtxPtr;
+using LibreSCRS::Internal::Crypto::X509Ptr;
 
 namespace libresign {
 

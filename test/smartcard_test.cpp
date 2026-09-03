@@ -217,6 +217,107 @@ TEST(BERTest, ParsePrimitiveField)
     EXPECT_FALSE(root.children[0].constructed);
 }
 
+// The non-throwing pair the two card-path reimplementations were folded onto.
+// Both inputs below come from those reimplementations: the multi-byte tag the
+// DOCP parser walked for itself, and the long-form lengths the secure-messaging
+// TLV walk decoded for itself.
+TEST(BERTest, TryParseTagReadsSingleAndMultiByteTags)
+{
+    const uint8_t single[] = {0x81, 0x00};
+    auto t = tryParseTag(single, sizeof(single), 0);
+    EXPECT_TRUE(t.ok);
+    EXPECT_EQ(t.tag, 0x81u);
+    EXPECT_EQ(t.next, 1u);
+
+    // 0x7F 0x49: the low five bits of the first byte all set means the tag
+    // continues, and the continuation ends on a byte without bit 7.
+    const uint8_t multi[] = {0x7F, 0x49, 0x00};
+    t = tryParseTag(multi, sizeof(multi), 0);
+    EXPECT_TRUE(t.ok);
+    EXPECT_EQ(t.tag, 0x7F49u);
+    EXPECT_EQ(t.next, 2u);
+}
+
+TEST(BERTest, TryParseTagRefusesTruncatedAndOverlongTags)
+{
+    const uint8_t truncated[] = {0x7F};
+    EXPECT_FALSE(tryParseTag(truncated, sizeof(truncated), 0).ok);
+
+    // Every continuation byte carries bit 7, so the tag never ends.
+    const uint8_t overlong[] = {0x7F, 0x81, 0x82, 0x83, 0x84, 0x85};
+    EXPECT_FALSE(tryParseTag(overlong, sizeof(overlong), 0).ok);
+
+    EXPECT_FALSE(tryParseTag(truncated, sizeof(truncated), 99).ok);
+}
+
+TEST(BERTest, TryParseLengthReadsShortAndLongForms)
+{
+    const uint8_t shortForm[] = {0x03};
+    auto l = tryParseLength(shortForm, sizeof(shortForm), 0);
+    EXPECT_TRUE(l.ok);
+    EXPECT_EQ(l.length, 3u);
+    EXPECT_EQ(l.next, 1u);
+
+    const uint8_t oneByte[] = {0x81, 0x90};
+    l = tryParseLength(oneByte, sizeof(oneByte), 0);
+    EXPECT_TRUE(l.ok);
+    EXPECT_EQ(l.length, 0x90u);
+    EXPECT_EQ(l.next, 2u);
+
+    const uint8_t twoByte[] = {0x82, 0x01, 0x00};
+    l = tryParseLength(twoByte, sizeof(twoByte), 0);
+    EXPECT_TRUE(l.ok);
+    EXPECT_EQ(l.length, 256u);
+    EXPECT_EQ(l.next, 3u);
+}
+
+TEST(BERTest, TryParseLengthRefusesIndefiniteOversizedAndTruncated)
+{
+    const uint8_t indefinite[] = {0x80, 0x01};
+    EXPECT_FALSE(tryParseLength(indefinite, sizeof(indefinite), 0).ok);
+
+    // Five length bytes: past the ceiling the decoder accepts.
+    const uint8_t oversized[] = {0x85, 1, 2, 3, 4, 5};
+    EXPECT_FALSE(tryParseLength(oversized, sizeof(oversized), 0).ok);
+
+    const uint8_t truncated[] = {0x82, 0x01};
+    EXPECT_FALSE(tryParseLength(truncated, sizeof(truncated), 0).ok);
+
+    EXPECT_FALSE(tryParseLength(truncated, sizeof(truncated), 99).ok);
+}
+
+// The throwing pair is written over the pair above, so the same inputs must
+// come back as exceptions rather than as a second decode with its own opinion.
+TEST(BERTest, ThrowingPairRefusesExactlyWhatTheFlagPairRefuses)
+{
+    const uint8_t indefinite[] = {0x80, 0x01};
+    std::size_t off = 0;
+    EXPECT_THROW(parseLength(indefinite, sizeof(indefinite), off), std::runtime_error);
+
+    const uint8_t truncatedTag[] = {0x7F};
+    off = 0;
+    EXPECT_THROW(parseTag(truncatedTag, sizeof(truncatedTag), off), std::runtime_error);
+
+    // …and accepts what it accepts, advancing the caller's offset.
+    const uint8_t twoByte[] = {0x82, 0x01, 0x00};
+    off = 0;
+    EXPECT_EQ(parseLength(twoByte, sizeof(twoByte), off), 256u);
+    EXPECT_EQ(off, 3u);
+}
+
+// The 0x00-padded TLV sequence the secure-messaging walk handles: padding
+// between objects is skipped, and the objects on either side still parse.
+TEST(BERTest, ParsePaddingBetweenFields)
+{
+    const uint8_t data[] = {0x81, 0x01, 'a', 0x00, 0x00, 0x82, 0x01, 'b'};
+    auto root = parseBER(data, sizeof(data));
+    ASSERT_EQ(root.children.size(), 2u);
+    EXPECT_EQ(root.children[0].tag, 0x81u);
+    EXPECT_EQ(root.children[0].asString(), "a");
+    EXPECT_EQ(root.children[1].tag, 0x82u);
+    EXPECT_EQ(root.children[1].asString(), "b");
+}
+
 TEST(BERTest, MergeBERTrees)
 {
     const uint8_t data1[] = {0x81, 0x01, 'a'};

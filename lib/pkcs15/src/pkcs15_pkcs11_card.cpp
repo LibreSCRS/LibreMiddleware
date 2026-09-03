@@ -16,6 +16,7 @@
 
 #include "pkcs15_card.h"
 #include "pkcs15_pkcs11_slot.h"
+#include "pkcs15_applet_probe.h"
 #include "pkcs15_types.h"
 
 #include "probe_trace.h"
@@ -61,26 +62,6 @@ constexpr unsigned long kCkfUserPinInitialized = 0x00000008UL;
     auto label = pin.label;
     std::transform(label.begin(), label.end(), label.begin(), [](unsigned char c) { return std::tolower(c); });
     return LibreSCRS::Pkcs11::Internal::classifyFromLabel(label);
-}
-
-/// @brief Cheap reachability probe: can the card SELECT the standard
-///        PKCS#15 AID without authentication? Mirrors the
-///        @c pkcs15-plugin probeApplet helper.
-enum class ProbeResult : std::uint8_t {
-    Ok,         ///< Plain SELECT succeeded — no SM needed for this card.
-    NeedsPace,  ///< Card returned 6982 — PACE must be run first.
-    Unreachable ///< Other failure; treat as not-PKCS#15.
-};
-
-[[nodiscard]] ProbeResult probeApplet(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
-{
-    std::vector<std::uint8_t> aid(::pkcs15::kPkcs15Aid.begin(), ::pkcs15::kPkcs15Aid.end());
-    auto aidResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(aid, 0x0C));
-    if (aidResp.isSuccess())
-        return ProbeResult::Ok;
-    if (aidResp.sw1 == 0x69 && aidResp.sw2 == 0x82)
-        return ProbeResult::NeedsPace;
-    return ProbeResult::Unreachable;
 }
 
 /// @brief Translate a channel-activation failure to a PKCS#11
@@ -240,16 +221,16 @@ unsigned long Pkcs15Card::bind(const std::string& reader)
     // torn down by plain APDUs. Skip the probe and assume the SM-required
     // disposition; the subsequent acquireChannel() will reuse the live
     // channel.
-    ProbeResult state;
+    ::pkcs15::ProbeResult state;
     if (session->hasLiveSecureChannel()) {
-        state = ProbeResult::NeedsPace;
+        state = ::pkcs15::ProbeResult::NeedsPace;
     } else {
         auto& conn = LibreSCRS::SmartCard::detail::unwrap(*session);
-        state = probeApplet(conn);
+        state = ::pkcs15::probeApplet(conn);
     }
-    if (state == ProbeResult::Unreachable)
+    if (state == ::pkcs15::ProbeResult::Unreachable)
         return Crv::TokenNotPresent;
-    if (state == ProbeResult::NeedsPace)
+    if (state == ::pkcs15::ProbeResult::NeedsPace)
         needsPace = true;
 
     // PACE-required card without cached CAN: publish a single placeholder

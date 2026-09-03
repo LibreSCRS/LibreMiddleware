@@ -12,6 +12,13 @@
 #include <climits>
 #include <cstring>
 #include <memory>
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+#include <LibreSCRS_internal/Crypto/OpenSslPtrCms.h>
+
+using LibreSCRS::Internal::Crypto::Asn1IntegerPtr;
+using LibreSCRS::Internal::Crypto::BnPtr;
+using LibreSCRS::Internal::Crypto::TsReqPtr;
+using LibreSCRS::Internal::Crypto::TsRespPtr;
 
 namespace libresign {
 
@@ -19,10 +26,10 @@ namespace {
 
 using namespace libresign::native_utils;
 
-using ::libresign::ASN1IntPtr;
-using ::libresign::BNPtr;
-using ::libresign::TSReqPtr;
-using ::libresign::TSRespPtr;
+using LibreSCRS::Internal::Crypto::Asn1IntegerPtr;
+using LibreSCRS::Internal::Crypto::BnPtr;
+using LibreSCRS::Internal::Crypto::TsReqPtr;
+using LibreSCRS::Internal::Crypto::TsRespPtr;
 
 } // namespace
 
@@ -36,7 +43,7 @@ TSAResult TSAClient::timestamp(const std::vector<uint8_t>& hash, const TSAReques
     }
 
     // 1. Create TS_REQ
-    TSReqPtr req(TS_REQ_new());
+    TsReqPtr req(TS_REQ_new());
     if (!req) {
         result.errorMessage = "TS_REQ_new() failed: " + opensslError();
         return result;
@@ -94,13 +101,13 @@ TSAResult TSAClient::timestamp(const std::vector<uint8_t>& hash, const TSAReques
         return result;
     }
 
-    BNPtr bn(BN_bin2bn(nonceBytes, sizeof(nonceBytes), nullptr));
+    BnPtr bn(BN_bin2bn(nonceBytes, sizeof(nonceBytes), nullptr));
     if (!bn) {
         result.errorMessage = "BN_bin2bn() failed: " + opensslError();
         return result;
     }
 
-    ASN1IntPtr nonce(BN_to_ASN1_INTEGER(bn.get(), nullptr));
+    Asn1IntegerPtr nonce(BN_to_ASN1_INTEGER(bn.get(), nullptr));
     if (!nonce) {
         result.errorMessage = "BN_to_ASN1_INTEGER() failed: " + opensslError();
         return result;
@@ -142,7 +149,7 @@ TSAResult TSAClient::timestamp(const std::vector<uint8_t>& hash, const TSAReques
         return result;
     }
     const unsigned char* respData = reinterpret_cast<const unsigned char*>(response.body.data());
-    TSRespPtr resp(d2i_TS_RESP(nullptr, &respData, static_cast<long>(response.body.size())));
+    TsRespPtr resp(d2i_TS_RESP(nullptr, &respData, static_cast<long>(response.body.size())));
     if (!resp) {
         result.errorMessage = "d2i_TS_RESP() failed: " + opensslError();
         return result;

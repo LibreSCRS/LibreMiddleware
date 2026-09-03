@@ -6,7 +6,6 @@
 // consumed by the provider's query_operation in signing_provider.cpp.
 
 #include "native/signing_provider_keymgmt.h"
-#include "native/openssl_raii.h"
 #include "native/pkcs11_token.h"
 
 #include <openssl/core.h>
@@ -18,6 +17,9 @@
 
 #include <cstdint>
 #include <memory>
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+
+using LibreSCRS::Internal::Crypto::BnPtr;
 
 namespace libresign::detail {
 
@@ -30,13 +32,13 @@ void populateKeyDataFromPkey(ProviderKeyData& kd, EVP_PKEY* pubKey)
         kd.maxSigSize = (kd.keyBits + 7) / 8;
         BIGNUM* rawN = nullptr;
         if (EVP_PKEY_get_bn_param(pubKey, OSSL_PKEY_PARAM_RSA_N, &rawN)) {
-            BNPtr n(rawN);
+            BnPtr n(rawN);
             kd.rsaN.resize(static_cast<size_t>(BN_num_bytes(n.get())));
             BN_bn2bin(n.get(), kd.rsaN.data());
         }
         BIGNUM* rawE = nullptr;
         if (EVP_PKEY_get_bn_param(pubKey, OSSL_PKEY_PARAM_RSA_E, &rawE)) {
-            BNPtr e(rawE);
+            BnPtr e(rawE);
             kd.rsaE.resize(static_cast<size_t>(BN_num_bytes(e.get())));
             BN_bn2bin(e.get(), kd.rsaE.data());
         }
@@ -175,13 +177,13 @@ int kmImport(void* keydata, int /*selection*/, const OSSL_PARAM params[])
     }
 
     // Extract RSA public key components (modulus + exponent).
-    // BNPtr wraps each BIGNUM so rsaN/rsaE resize() throwing bad_alloc
+    // BnPtr wraps each BIGNUM so rsaN/rsaE resize() throwing bad_alloc
     // cannot leak the BIGNUM.
     p = OSSL_PARAM_locate_const(params, OSSL_PKEY_PARAM_RSA_N);
     if (p != nullptr) {
         BIGNUM* rawBn = nullptr;
         if (OSSL_PARAM_get_BN(p, &rawBn)) {
-            BNPtr bn(rawBn);
+            BnPtr bn(rawBn);
             int len = BN_num_bytes(bn.get());
             kd->rsaN.resize(static_cast<size_t>(len));
             BN_bn2bin(bn.get(), kd->rsaN.data());
@@ -192,7 +194,7 @@ int kmImport(void* keydata, int /*selection*/, const OSSL_PARAM params[])
     if (p != nullptr) {
         BIGNUM* rawBn = nullptr;
         if (OSSL_PARAM_get_BN(p, &rawBn)) {
-            BNPtr bn(rawBn);
+            BnPtr bn(rawBn);
             int len = BN_num_bytes(bn.get());
             kd->rsaE.resize(static_cast<size_t>(len));
             BN_bn2bin(bn.get(), kd->rsaE.data());

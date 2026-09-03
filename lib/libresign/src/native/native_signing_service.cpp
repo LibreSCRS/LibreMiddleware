@@ -27,6 +27,12 @@
 #include <optional>
 #include <stdexcept>
 #include <utility>
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+#include <LibreSCRS_internal/Crypto/OpenSslPtrCms.h>
+
+using LibreSCRS::Internal::Crypto::BioPtr;
+using LibreSCRS::Internal::Crypto::CmsPtr;
+using LibreSCRS::Internal::Crypto::X509Ptr;
 
 namespace libresign {
 

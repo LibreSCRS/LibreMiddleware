@@ -10,7 +10,6 @@
 
 #include "../lib/libresign/src/native/der_utils.h"
 #include "../lib/libresign/src/native/native_utils.h"
-#include "../lib/libresign/src/native/openssl_raii.h"
 #include "../lib/libresign/src/native/revocation_client.h"
 
 #include <miniz.h>
@@ -27,6 +26,10 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+
+using LibreSCRS::Internal::Crypto::EvpPkeyPtr;
+using LibreSCRS::Internal::Crypto::X509Ptr;
 
 using libresign::derEncodeLength;
 using libresign::native_utils::base64Decode;
@@ -43,8 +46,8 @@ using libresign::native_utils::sha256Base64;
 // ---------------------------------------------------------------------------
 
 namespace {
-using libresign::EvpPkeyPtr;
-using libresign::X509Ptr;
+using LibreSCRS::Internal::Crypto::EvpPkeyPtr;
+using LibreSCRS::Internal::Crypto::X509Ptr;
 
 EvpPkeyPtr makeEcKey()
 {

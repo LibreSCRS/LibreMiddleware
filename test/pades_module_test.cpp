@@ -5,7 +5,6 @@
 
 #ifdef LIBRESIGN_HAS_NATIVE
 
-#include "native/openssl_raii.h"
 #include "native/pades_module.h"
 #include "native/pkcs11_module_manager.h"
 #include "native/pkcs11_token.h"
@@ -141,6 +140,10 @@ TEST(PAdESModule, AppearanceStreamIsUtf8DrivenFromVisualText)
 // ---- Auto-fit emitter tests (rc2 visual-signature FILL_BOX) ----
 
 #include <LibreSCRS/Signing/VisualSignatureLayout.h>
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+#include <LibreSCRS_internal/Crypto/OpenSslPtrCms.h>
+
+using LibreSCRS::Internal::Crypto::CmsPtr;
 
 namespace {
 

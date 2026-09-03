@@ -14,6 +14,9 @@
 #include <iterator>
 #include <mutex>
 #include <shared_mutex>
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+
+using LibreSCRS::Internal::Crypto::X509StackBorrowedPtr;
 
 namespace LibreSCRS::Trust {
 
@@ -22,15 +25,6 @@ namespace {
 using X509Ptr = std::unique_ptr<X509, decltype(&X509_free)>;
 using X509StorePtr = std::unique_ptr<X509_STORE, decltype(&X509_STORE_free)>;
 using X509StoreCtxPtr = std::unique_ptr<X509_STORE_CTX, decltype(&X509_STORE_CTX_free)>;
-
-struct StackX509Deleter
-{
-    void operator()(STACK_OF(X509) * p) const
-    {
-        sk_X509_free(p);
-    }
-};
-using StackX509Ptr = std::unique_ptr<STACK_OF(X509), StackX509Deleter>;
 
 X509Ptr parseDer(const std::uint8_t* data, std::size_t len)
 {
@@ -113,7 +107,7 @@ TrustStore::ChainStatus TrustStore::validateChain(std::span<const CertificateVie
     relaxKnownEidasCriticalExtensions(leaf.get());
 
     // Build STACK_OF(X509) for intermediates (chain elements 1..N-1).
-    StackX509Ptr untrusted(sk_X509_new_null());
+    X509StackBorrowedPtr untrusted(sk_X509_new_null());
     if (!untrusted)
         return ChainStatus::InvalidCertificate;
     std::vector<X509Ptr> intermediates;

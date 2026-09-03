@@ -6,6 +6,8 @@
 #include "tlv_bounds.h"
 #include "crypto_utils.h"
 
+#include <LibreSCRS_internal/Crypto/CleanseGuard.h>
+
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <apdu.h>
@@ -24,6 +26,11 @@
 #include <cstring>
 #include <memory>
 #include <stdexcept>
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+
+using LibreSCRS::Internal::Crypto::BnPtr;
+using LibreSCRS::Internal::Crypto::EvpPkeyCtxPtr;
+using LibreSCRS::Internal::Crypto::EvpPkeyPtr;
 
 namespace emrtd::crypto {
 
@@ -31,17 +38,6 @@ namespace emrtd::crypto {
 // RAII wrappers for OpenSSL types
 // ---------------------------------------------------------------------------
 
-struct BNDeleter
-{
-    void operator()(BIGNUM* p) const
-    {
-        // Cleansing free: zeroises BIGNUM limb buffer before release.
-        // Plain BN_free leaks Chip Authentication ephemeral private
-        // keys on the heap; passive reconstruction of those defeats
-        // the recorded handshake.
-        BN_clear_free(p);
-    }
-};
 struct BNCtxDeleter
 {
     void operator()(BN_CTX* p) const
@@ -66,27 +62,10 @@ struct ECPointDeleter
         EC_POINT_clear_free(p);
     }
 };
-struct EVPPKeyDeleter
-{
-    void operator()(EVP_PKEY* p) const
-    {
-        EVP_PKEY_free(p);
-    }
-};
-struct EVPPKeyCtxDeleter
-{
-    void operator()(EVP_PKEY_CTX* p) const
-    {
-        EVP_PKEY_CTX_free(p);
-    }
-};
 
-using BNPtr = std::unique_ptr<BIGNUM, BNDeleter>;
 using BNCtxPtr = std::unique_ptr<BN_CTX, BNCtxDeleter>;
 using ECGroupPtr = std::unique_ptr<EC_GROUP, ECGroupDeleter>;
 using ECPointPtr = std::unique_ptr<EC_POINT, ECPointDeleter>;
-using EVPPKeyPtr = std::unique_ptr<EVP_PKEY, EVPPKeyDeleter>;
-using EVPPKeyCtxPtr = std::unique_ptr<EVP_PKEY_CTX, EVPPKeyCtxDeleter>;
 
 // ---------------------------------------------------------------------------
 // BER-TLV helpers
@@ -403,7 +382,7 @@ static CAAlgoInfo caAlgoFromOID(const std::string& oid)
 
 struct ParsedSPKI
 {
-    EVPPKeyPtr pkey;
+    EvpPkeyPtr pkey;
     int nid = 0;
 };
 
@@ -417,7 +396,7 @@ static std::optional<ParsedSPKI> parseSPKI(const std::vector<uint8_t>& der)
     if (!raw)
         return std::nullopt;
 
-    EVPPKeyPtr pkey(raw);
+    EvpPkeyPtr pkey(raw);
     if (EVP_PKEY_id(pkey.get()) != EVP_PKEY_EC)
         return std::nullopt;
 
@@ -522,7 +501,7 @@ ChipAuthResult performChipAuth(LibreSCRS::SecureChannel::ISecureChannel& channel
     }
 
     // --- Generate ephemeral ECDH key pair on same curve ---
-    EVPPKeyCtxPtr paramCtx(EVP_PKEY_CTX_new_id(EVP_PKEY_EC, nullptr));
+    EvpPkeyCtxPtr paramCtx(EVP_PKEY_CTX_new_id(EVP_PKEY_EC, nullptr));
     if (!paramCtx) {
         result.chipAuthentication = ChipAuthResult::FAILED;
         result.errorDetail = "EVP_PKEY_CTX_new_id failed";
@@ -547,7 +526,7 @@ ChipAuthResult performChipAuth(LibreSCRS::SecureChannel::ISecureChannel& channel
         result.errorDetail = "Ephemeral key generation failed";
         return result;
     }
-    EVPPKeyPtr ephKey(ephRaw);
+    EvpPkeyPtr ephKey(ephRaw);
 
     // Extract terminal's public key bytes (uncompressed EC point)
     auto terminalPubBytes = extractECPoint(ephKey.get());
@@ -595,7 +574,7 @@ ChipAuthResult performChipAuth(LibreSCRS::SecureChannel::ISecureChannel& channel
     }
 
     // --- Compute shared secret via ECDH ---
-    EVPPKeyCtxPtr deriveCtx(EVP_PKEY_CTX_new(ephKey.get(), nullptr));
+    EvpPkeyCtxPtr deriveCtx(EVP_PKEY_CTX_new(ephKey.get(), nullptr));
     if (!deriveCtx || EVP_PKEY_derive_init(deriveCtx.get()) <= 0) {
         result.chipAuthentication = ChipAuthResult::FAILED;
         result.errorDetail = "ECDH derive init failed";
@@ -624,33 +603,14 @@ ChipAuthResult performChipAuth(LibreSCRS::SecureChannel::ISecureChannel& channel
     sharedSecret.resize(secretLen);
 
     // Scope guard to cleanse key material
-    struct KeyCleaner
-    {
-        std::vector<uint8_t>& secret;
-        ~KeyCleaner()
-        {
-            if (!secret.empty())
-                OPENSSL_cleanse(secret.data(), secret.size());
-        }
-    } cleaner{sharedSecret};
+    LibreSCRS::Internal::Crypto::CleanseGuard cleaner{sharedSecret};
 
     // --- Derive new session keys using KDF ---
     auto kEnc = detail::kdf(sharedSecret, 1, algoInfo.isDES3, algoInfo.keyLen);
     auto kMAC = detail::kdf(sharedSecret, 2, algoInfo.isDES3, algoInfo.keyLen);
 
     // Scope guard: cleanse derived keys on all exit paths
-    struct DerivedKeyCleaner
-    {
-        std::vector<uint8_t>& enc;
-        std::vector<uint8_t>& mac;
-        ~DerivedKeyCleaner()
-        {
-            if (!enc.empty())
-                OPENSSL_cleanse(enc.data(), enc.size());
-            if (!mac.empty())
-                OPENSSL_cleanse(mac.data(), mac.size());
-        }
-    } derivedCleaner{kEnc, kMAC};
+    LibreSCRS::Internal::Crypto::CleanseGuard derivedCleaner{kEnc, kMAC};
 
     // --- Build new SessionKeys ---
     SessionKeys newKeys;

@@ -16,10 +16,12 @@ namespace libresign {
 
 class Pkcs11Token;
 
-// RAII wrapper for EVP_PKEY — defined here (separately from openssl_raii.h)
-// because this is a public header that must not include internal OpenSSL headers.
-// The deleter body lives in the .cpp file so we don't need <openssl/evp.h> here.
-// openssl_raii.h has an identical alias for internal use; they are ABI-compatible.
+// RAII wrapper for EVP_PKEY — declared here rather than taken from the shared
+// internal set, because this header must not include an OpenSSL header at all:
+// the deleter body lives in the .cpp, so <openssl/evp.h> stays out of every
+// consumer of this file. The shared set's EvpPkeyPtr is the same shape and the
+// two are ABI-compatible; this one exists for the include boundary, which is a
+// reason the registry carries rather than a duplicate it tolerates.
 struct EvpPkeyPublicDeleter
 {
     void operator()(EVP_PKEY* p) const;

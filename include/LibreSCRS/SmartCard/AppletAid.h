@@ -78,6 +78,9 @@ public:
         return storage.empty();
     }
 
+    // MIRROR-OF: LibreMiddleware/lib/LibreSCRS/include/LibreSCRS_internal/Hex.h - this is a PUBLIC
+    // installed header and may not include an internal one; a consumer compiling against the SDK
+    // would be handed a path that does not exist in its prefix.
     /// @brief Lower-case hex rendering (no separators). Diagnostic use.
     /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::string toHex() const

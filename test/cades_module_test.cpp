@@ -7,7 +7,6 @@
 
 #include "native/cades_module.h"
 #include "native/der_utils.h"
-#include "native/openssl_raii.h"
 #include "native/pkcs11_module_manager.h"
 #include "native/native_utils.h"
 #include "native/pkcs11_token.h"
@@ -30,6 +29,17 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+#include <LibreSCRS_internal/Crypto/OpenSslPtrCms.h>
+
+using LibreSCRS::Internal::Crypto::Asn1IntegerPtr;
+using LibreSCRS::Internal::Crypto::Asn1ObjectPtr;
+using LibreSCRS::Internal::Crypto::BioPtr;
+using LibreSCRS::Internal::Crypto::CmsPtr;
+using LibreSCRS::Internal::Crypto::EvpPkeyPtr;
+using LibreSCRS::Internal::Crypto::X509AttributePtr;
+using LibreSCRS::Internal::Crypto::X509CrlPtr;
+using LibreSCRS::Internal::Crypto::X509Ptr;
 
 using namespace libresign;
 
@@ -49,10 +59,10 @@ constexpr const char* kAtsHashIndexOid = "0.4.0.1733.2.5";
 constexpr const char* kArchiveTimeStampOid = "1.2.840.113549.1.9.16.2.48";
 
 /// Parse a DER CMS or fail the calling test.
-libresign::CmsPtr parseCmsOrDie(const std::vector<uint8_t>& der)
+LibreSCRS::Internal::Crypto::CmsPtr parseCmsOrDie(const std::vector<uint8_t>& der)
 {
     const unsigned char* p = der.data();
-    return libresign::CmsPtr(d2i_CMS_ContentInfo(nullptr, &p, static_cast<long>(der.size())));
+    return LibreSCRS::Internal::Crypto::CmsPtr(d2i_CMS_ContentInfo(nullptr, &p, static_cast<long>(der.size())));
 }
 
 /// Number of unsigned attributes carrying @p oid on @p si. Counting per
@@ -60,7 +70,7 @@ libresign::CmsPtr parseCmsOrDie(const std::vector<uint8_t>& der)
 /// pins below: a document-level count cannot tell which signer was upgraded.
 int unsignedAttrCount(CMS_SignerInfo* si, const char* oid)
 {
-    libresign::Asn1ObjectPtr obj(OBJ_txt2obj(oid, 1));
+    LibreSCRS::Internal::Crypto::Asn1ObjectPtr obj(OBJ_txt2obj(oid, 1));
     if (!obj)
         return -1;
     int count = 0;
@@ -80,7 +90,7 @@ int unsignedAttrCount(CMS_SignerInfo* si, const char* oid)
 CMS_SignerInfo* signerInfoForCert(CMS_ContentInfo* cms, const std::vector<uint8_t>& certDer)
 {
     const unsigned char* p = certDer.data();
-    libresign::X509Ptr cert(d2i_X509(nullptr, &p, static_cast<long>(certDer.size())));
+    LibreSCRS::Internal::Crypto::X509Ptr cert(d2i_X509(nullptr, &p, static_cast<long>(certDer.size())));
     if (!cert)
         return nullptr;
     STACK_OF(CMS_SignerInfo)* sis = CMS_get0_SignerInfos(cms);
@@ -96,7 +106,7 @@ CMS_SignerInfo* signerInfoForCert(CMS_ContentInfo* cms, const std::vector<uint8_
 bool cmsCarriesCert(CMS_ContentInfo* cms, const std::vector<uint8_t>& certDer)
 {
     const unsigned char* p = certDer.data();
-    libresign::X509Ptr want(d2i_X509(nullptr, &p, static_cast<long>(certDer.size())));
+    LibreSCRS::Internal::Crypto::X509Ptr want(d2i_X509(nullptr, &p, static_cast<long>(certDer.size())));
     if (!want)
         return false;
     STACK_OF(X509)* certs = CMS_get1_certs(cms);
@@ -128,8 +138,8 @@ int cmsCertCount(CMS_ContentInfo* cms)
 /// exercised on a host with no PKCS#11 token.
 struct SoftwareIdentity
 {
-    libresign::EvpPkeyPtr key;
-    libresign::X509Ptr cert;
+    LibreSCRS::Internal::Crypto::EvpPkeyPtr key;
+    LibreSCRS::Internal::Crypto::X509Ptr cert;
 
     explicit operator bool() const
     {
@@ -140,10 +150,10 @@ struct SoftwareIdentity
 /// Self-signed P-256 identity named @p cn, valid from an hour ago for a year.
 SoftwareIdentity makeSoftwareIdentity(const std::string& cn, long serial)
 {
-    libresign::EvpPkeyPtr key(EVP_EC_gen("P-256"));
+    LibreSCRS::Internal::Crypto::EvpPkeyPtr key(EVP_EC_gen("P-256"));
     if (!key)
         return {};
-    libresign::X509Ptr x(X509_new());
+    LibreSCRS::Internal::Crypto::X509Ptr x(X509_new());
     if (!x)
         return {};
     X509_set_version(x.get(), 2);
@@ -190,7 +200,7 @@ std::vector<std::vector<uint8_t>> cmsCertDers(CMS_ContentInfo* cms)
 /// structure resp. of the RFC 3161 TimeStampToken. Empty when absent.
 std::vector<uint8_t> unsignedAttrValue(CMS_SignerInfo* si, const char* oid)
 {
-    libresign::Asn1ObjectPtr want(OBJ_txt2obj(oid, 1));
+    LibreSCRS::Internal::Crypto::Asn1ObjectPtr want(OBJ_txt2obj(oid, 1));
     if (!want)
         return {};
     const int count = CMS_unsigned_get_attr_count(si);
@@ -304,9 +314,9 @@ bool swapAdjacentBlocks(std::vector<uint8_t>& buf, const std::vector<uint8_t>& f
 /// A signed, empty v2 CRL issued by @p issuer and carrying @p crlNumber. Two
 /// CRLs from different issuers encode differently, which the SignedData crls
 /// SET OF needs before its order is observable at all.
-libresign::X509CrlPtr makeCrl(const SoftwareIdentity& issuer, long crlNumber)
+LibreSCRS::Internal::Crypto::X509CrlPtr makeCrl(const SoftwareIdentity& issuer, long crlNumber)
 {
-    libresign::X509CrlPtr crl(X509_CRL_new());
+    LibreSCRS::Internal::Crypto::X509CrlPtr crl(X509_CRL_new());
     if (!crl)
         return nullptr;
     X509_CRL_set_version(crl.get(), 1); // v2
@@ -322,7 +332,7 @@ libresign::X509CrlPtr makeCrl(const SoftwareIdentity& issuer, long crlNumber)
     X509_CRL_set1_lastUpdate(crl.get(), thisUpdate.get());
     X509_CRL_set1_nextUpdate(crl.get(), nextUpdate.get());
 
-    libresign::ASN1IntPtr number(ASN1_INTEGER_new());
+    LibreSCRS::Internal::Crypto::Asn1IntegerPtr number(ASN1_INTEGER_new());
     if (!number)
         return nullptr;
     ASN1_INTEGER_set(number.get(), crlNumber);
@@ -352,7 +362,7 @@ std::vector<std::vector<uint8_t>> cmsCrlDers(CMS_ContentInfo* cms)
 /// ones carrying an OID listed in @p exclude.
 std::vector<std::vector<uint8_t>> unsignedAttrDers(CMS_SignerInfo* si, std::initializer_list<const char*> exclude)
 {
-    std::vector<libresign::Asn1ObjectPtr> skip;
+    std::vector<LibreSCRS::Internal::Crypto::Asn1ObjectPtr> skip;
     for (const char* oid : exclude)
         skip.emplace_back(OBJ_txt2obj(oid, 1));
 
@@ -376,11 +386,11 @@ std::vector<std::vector<uint8_t>> unsignedAttrDers(CMS_SignerInfo* si, std::init
 /// X509_ATTRIBUTE shape the B-T and B-LT rungs attach.
 bool addUnsignedSequenceAttr(CMS_SignerInfo* si, const char* oid, const std::vector<uint8_t>& valueDer)
 {
-    libresign::Asn1ObjectPtr obj(OBJ_txt2obj(oid, 1));
+    LibreSCRS::Internal::Crypto::Asn1ObjectPtr obj(OBJ_txt2obj(oid, 1));
     if (!obj)
         return false;
-    libresign::X509AttributePtr attr(X509_ATTRIBUTE_create_by_OBJ(nullptr, obj.get(), V_ASN1_SEQUENCE, valueDer.data(),
-                                                                  static_cast<int>(valueDer.size())));
+    LibreSCRS::Internal::Crypto::X509AttributePtr attr(X509_ATTRIBUTE_create_by_OBJ(
+        nullptr, obj.get(), V_ASN1_SEQUENCE, valueDer.data(), static_cast<int>(valueDer.size())));
     if (!attr)
         return false;
     return CMS_unsigned_add1_attr(si, attr.get()) == 1;
@@ -869,12 +879,12 @@ TEST(CAdESArchiveTimestamp, HashIndexAndImprintDescribeTheEmittedDocument)
 
     // B-B, in signBB's shape: partial, binary, detached, no S/MIME capabilities.
     constexpr unsigned int kFlags = CMS_PARTIAL | CMS_BINARY | CMS_DETACHED | CMS_NOSMIMECAP;
-    libresign::BioPtr signBio(BIO_new_mem_buf(data.data(), static_cast<int>(data.size())));
+    LibreSCRS::Internal::Crypto::BioPtr signBio(BIO_new_mem_buf(data.data(), static_cast<int>(data.size())));
     ASSERT_NE(signBio.get(), nullptr);
-    libresign::CmsPtr cms(CMS_sign(nullptr, nullptr, nullptr, signBio.get(), kFlags));
+    LibreSCRS::Internal::Crypto::CmsPtr cms(CMS_sign(nullptr, nullptr, nullptr, signBio.get(), kFlags));
     ASSERT_NE(cms.get(), nullptr);
     ASSERT_NE(CMS_add1_signer(cms.get(), signer.cert.get(), signer.key.get(), EVP_sha256(), kFlags), nullptr);
-    libresign::BioPtr finalBio(BIO_new_mem_buf(data.data(), static_cast<int>(data.size())));
+    LibreSCRS::Internal::Crypto::BioPtr finalBio(BIO_new_mem_buf(data.data(), static_cast<int>(data.size())));
     ASSERT_NE(finalBio.get(), nullptr);
     ASSERT_EQ(CMS_final(cms.get(), finalBio.get(), nullptr, CMS_BINARY | CMS_DETACHED), 1);
 

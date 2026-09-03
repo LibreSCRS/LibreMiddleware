@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "native/jades_module.h"
+#include "native/depth_guard.h"
 #include "native/jcs.h"
 #include "native/pkcs11_token.h"
 #include "native/revocation_client.h"
@@ -20,6 +21,9 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+
+using LibreSCRS::Internal::Crypto::X509Ptr;
 
 namespace libresign {
 
@@ -412,18 +416,6 @@ SigningResult JAdESModule::sign(const std::vector<uint8_t>& data, const std::str
         // user-PIN consent — a wedge for HSM signing quota abuse or paid
         // TSA over-billing.
         static thread_local int multiSignDepth = 0;
-        struct DepthGuard
-        {
-            int& d;
-            DepthGuard(int& d) : d(d)
-            {
-                ++d;
-            }
-            ~DepthGuard()
-            {
-                --d;
-            }
-        };
         if (auto prior = tryParseJwsGeneral(data); prior.has_value()) {
             if (multiSignDepth >= 1) {
                 return makeFailure(SignFailureKind::PolicyViolation,

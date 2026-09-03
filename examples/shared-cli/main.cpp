@@ -25,6 +25,9 @@
 
 namespace {
 
+// MIRROR-OF: LibreMiddleware/lib/LibreSCRS/include/LibreSCRS_internal/Hex.h - an example stands for
+// what a consumer can write against the published SDK alone; reaching into an internal header here
+// would advertise one nobody outside this repository has.
 std::string toHex(const std::vector<std::uint8_t>& bytes)
 {
     std::string out;

@@ -209,6 +209,7 @@ target_include_directories(AnnexTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/rs-eid-core/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/SecureChannel/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/include
 )
 target_compile_definitions(AnnexTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(AnnexTests)
@@ -223,6 +224,33 @@ gtest_discover_tests(LibreSCRS_AuthTests)
 add_executable(LibreSCRS_LocalizedTextTests LibreSCRS_LocalizedTextTests.cpp)
 target_link_libraries(LibreSCRS_LocalizedTextTests GTest::gtest_main LibreSCRS_Auth)
 gtest_discover_tests(LibreSCRS_LocalizedTextTests)
+
+# The scope guard that wipes key material. Header-only and internal, so this
+# needs the internal include root and nothing else -- it links LibreSCRS_Auth
+# only for the OpenSSL it already carries (OPENSSL_cleanse).
+# The two X509-stack pointers whose predecessors shared one name and did
+# opposite things. Header-only and internal, like the guard below.
+add_executable(LibreSCRS_OpenSslPtrTests LibreSCRS_OpenSslPtrTests.cpp)
+target_link_libraries(LibreSCRS_OpenSslPtrTests PRIVATE
+    GTest::gtest_main
+    LibreSCRS_Auth
+)
+target_compile_definitions(LibreSCRS_OpenSslPtrTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+target_include_directories(LibreSCRS_OpenSslPtrTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/include
+)
+gtest_discover_tests(LibreSCRS_OpenSslPtrTests)
+
+add_executable(LibreSCRS_CleanseGuardTests LibreSCRS_CleanseGuardTests.cpp)
+target_link_libraries(LibreSCRS_CleanseGuardTests PRIVATE
+    GTest::gtest_main
+    LibreSCRS_Auth
+)
+target_compile_definitions(LibreSCRS_CleanseGuardTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+target_include_directories(LibreSCRS_CleanseGuardTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/include
+)
+gtest_discover_tests(LibreSCRS_CleanseGuardTests)
 
 add_executable(LibreSCRS_CancelTokenTests LibreSCRS_CancelTokenTests.cpp)
 target_link_libraries(LibreSCRS_CancelTokenTests PRIVATE
@@ -316,7 +344,8 @@ target_link_libraries(LibreSCRS_ChipAuthChannelTests
 target_include_directories(LibreSCRS_ChipAuthChannelTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src)
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/include)
 target_compile_definitions(LibreSCRS_ChipAuthChannelTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(LibreSCRS_ChipAuthChannelTests)
 
@@ -333,7 +362,8 @@ target_link_libraries(LibreSCRS_ChipAuthCryptoTests
 target_include_directories(LibreSCRS_ChipAuthCryptoTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src)
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/include)
 target_compile_definitions(LibreSCRS_ChipAuthCryptoTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(LibreSCRS_ChipAuthCryptoTests)
 
@@ -355,7 +385,8 @@ target_include_directories(LibreSCRS_ChipAuthSessionTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/SecureChannel/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src)
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/include)
 target_compile_definitions(LibreSCRS_ChipAuthSessionTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(LibreSCRS_ChipAuthSessionTests)
 
@@ -539,6 +570,7 @@ target_link_libraries(EMRTDPluginTests
 target_include_directories(EMRTDPluginTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/plugin/include)
 target_compile_definitions(EMRTDPluginTests PRIVATE
     PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
@@ -578,6 +610,7 @@ target_link_libraries(pkcs15_after_pace_probe SmartCard_Impl EMRTDCrypto EMRTD L
 target_include_directories(pkcs15_after_pace_probe PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
 )
 target_compile_definitions(pkcs15_after_pace_probe PRIVATE LIBRESCRS_INTERNAL_BUILD)
@@ -612,6 +645,7 @@ target_link_libraries(EMRTDCryptoTests
 )
 target_include_directories(EMRTDCryptoTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/include
 )
 target_compile_definitions(EMRTDCryptoTests PRIVATE LIBRESCRS_INTERNAL_BUILD
     # The bounds cases read the SAME files the fuzz harnesses seed from, so a
@@ -632,6 +666,7 @@ target_link_libraries(EMRTDTests
 target_include_directories(EMRTDTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
 )
 target_compile_definitions(EMRTDTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
@@ -843,7 +878,8 @@ if(BUILD_SIGNING)
     # via the PRIVATE src/ root plus LIBRESCRS_INTERNAL_BUILD to satisfy the
     # #error guards.
     target_include_directories(LibreSignTests PRIVATE
-        ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
+        ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+        ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
     target_compile_definitions(LibreSignTests PRIVATE
         LIBRESCRS_INTERNAL_BUILD)
     gtest_discover_tests(LibreSignTests)
@@ -863,6 +899,7 @@ if(BUILD_SIGNING)
         ${CMAKE_CURRENT_SOURCE_DIR}/signing_test_support
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+        ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include
         ${LibreMiddleware_SOURCE_DIR}/thirdparty/nlohmann)
     # findSoftHsmTestSlot drives C_GetSlotList / C_GetTokenInfo directly, so
     # the support TU needs the PKCS#11 headers LibreSign keeps PRIVATE.
@@ -911,7 +948,8 @@ if(BUILD_SIGNING)
     add_executable(HttpClientTests http_client_test.cpp)
     target_link_libraries(HttpClientTests PRIVATE LibreSign GTest::gtest_main)
     target_include_directories(HttpClientTests PRIVATE
-        ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
+        ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+        ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
     target_compile_definitions(HttpClientTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
     gtest_discover_tests(HttpClientTests)
 
@@ -920,14 +958,16 @@ if(BUILD_SIGNING)
         add_executable(DSSServiceManagerTests dss_service_manager_test.cpp)
         target_link_libraries(DSSServiceManagerTests PRIVATE LibreSign GTest::gmock GTest::gtest_main)
         target_include_directories(DSSServiceManagerTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
+            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
         target_compile_definitions(DSSServiceManagerTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
         gtest_discover_tests(DSSServiceManagerTests)
 
         add_executable(DSSSigningServiceTests dss_signing_service_test.cpp)
         target_link_libraries(DSSSigningServiceTests PRIVATE LibreSign GTest::gtest_main)
         target_include_directories(DSSSigningServiceTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
+            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
         target_compile_definitions(DSSSigningServiceTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
         gtest_discover_tests(DSSSigningServiceTests)
 
@@ -935,7 +975,8 @@ if(BUILD_SIGNING)
         add_executable(DSSIntegrationTests dss_integration_test.cpp)
         target_link_libraries(DSSIntegrationTests PRIVATE LibreSign GTest::gtest_main)
         target_include_directories(DSSIntegrationTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
+            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
         target_compile_definitions(DSSIntegrationTests PRIVATE
             CMAKE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
             LIBRESCRS_INTERNAL_BUILD)
@@ -958,7 +999,8 @@ if(BUILD_SIGNING)
         target_link_libraries(NativeUtilsTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto)
         target_include_directories(NativeUtilsTests PRIVATE
             ${LibreMiddleware_SOURCE_DIR}/thirdparty/miniz
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
+            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
         target_compile_definitions(NativeUtilsTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
         gtest_discover_tests(NativeUtilsTests)
 
@@ -971,6 +1013,7 @@ if(BUILD_SIGNING)
             GTest::gtest_main LibreSign SigningTestSupport)
         target_include_directories(Pkcs11ModuleManagerTests PRIVATE
             ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include
             ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/include)
         target_compile_definitions(Pkcs11ModuleManagerTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
         gtest_discover_tests(Pkcs11ModuleManagerTests)
@@ -978,7 +1021,8 @@ if(BUILD_SIGNING)
         add_executable(TSAClientTests tsa_client_test.cpp)
         target_link_libraries(TSAClientTests PRIVATE GTest::gtest_main LibreSign)
         target_include_directories(TSAClientTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
+            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
         target_compile_definitions(TSAClientTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
         gtest_discover_tests(TSAClientTests)
 
@@ -988,7 +1032,8 @@ if(BUILD_SIGNING)
         add_executable(TsaAuthIntegrationTests tsa_auth_integration_test.cpp)
         target_link_libraries(TsaAuthIntegrationTests PRIVATE GTest::gtest_main LibreSign)
         target_include_directories(TsaAuthIntegrationTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
+            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
         target_compile_definitions(TsaAuthIntegrationTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
         gtest_discover_tests(TsaAuthIntegrationTests)
 
@@ -998,14 +1043,16 @@ if(BUILD_SIGNING)
         add_executable(TsaFailureModesTests tsa_failure_modes_test.cpp)
         target_link_libraries(TsaFailureModesTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
         target_include_directories(TsaFailureModesTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
+            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
         target_compile_definitions(TsaFailureModesTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
         gtest_discover_tests(TsaFailureModesTests)
 
         add_executable(RevocationClientTests revocation_client_test.cpp)
         target_link_libraries(RevocationClientTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto)
         target_include_directories(RevocationClientTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
+            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
         target_compile_definitions(RevocationClientTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
         gtest_discover_tests(RevocationClientTests)
 
@@ -1042,21 +1089,24 @@ if(BUILD_SIGNING)
         add_executable(TtfParserTests ttf_parser_test.cpp)
         target_link_libraries(TtfParserTests PRIVATE GTest::gtest_main LibreSign)
         target_include_directories(TtfParserTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
+            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
         target_compile_definitions(TtfParserTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
         gtest_discover_tests(TtfParserTests)
 
         add_executable(TtfSubsetTests ttf_subset_test.cpp)
         target_link_libraries(TtfSubsetTests PRIVATE GTest::gtest_main LibreSign)
         target_include_directories(TtfSubsetTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
+            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
         target_compile_definitions(TtfSubsetTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
         gtest_discover_tests(TtfSubsetTests)
 
         add_executable(PdfFontTests pdf_font_test.cpp)
         target_link_libraries(PdfFontTests PRIVATE GTest::gtest_main LibreSign)
         target_include_directories(PdfFontTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
+            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
         target_compile_definitions(PdfFontTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
         gtest_discover_tests(PdfFontTests)
 
@@ -1077,7 +1127,8 @@ if(BUILD_SIGNING)
         target_link_libraries(ContactInfoIntegrationTests
             PRIVATE GTest::gtest_main LibreSCRS_Signing LibreSign OpenSSL_Crypto SigningTestSupport)
         target_include_directories(ContactInfoIntegrationTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
+            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
         target_compile_definitions(ContactInfoIntegrationTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
         gtest_discover_tests(ContactInfoIntegrationTests)
 
@@ -1093,6 +1144,7 @@ if(BUILD_SIGNING)
         target_link_libraries(JcsTests PRIVATE GTest::gtest_main LibreSign)
         target_include_directories(JcsTests PRIVATE
             ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include
             ${LibreMiddleware_SOURCE_DIR}/thirdparty/nlohmann)
         target_compile_definitions(JcsTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
         gtest_discover_tests(JcsTests)
@@ -1111,7 +1163,8 @@ if(BUILD_SIGNING)
         add_executable(TrustedListParserTests trusted_list_parser_test.cpp)
         target_link_libraries(TrustedListParserTests PRIVATE GTest::gtest_main LibreSign LibXml2::LibXml2)
         target_include_directories(TrustedListParserTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
+            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
         target_compile_definitions(TrustedListParserTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
         gtest_discover_tests(TrustedListParserTests)
 
@@ -1132,7 +1185,8 @@ if(BUILD_SIGNING)
         add_executable(CrossBackendTests cross_backend_test.cpp)
         target_link_libraries(CrossBackendTests PRIVATE GTest::gtest_main LibreSign)
         target_include_directories(CrossBackendTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
+            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
         target_compile_definitions(CrossBackendTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
         gtest_discover_tests(CrossBackendTests)
 

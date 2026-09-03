@@ -8,19 +8,13 @@
 
 #include <memory>
 #include <string>
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+
+using LibreSCRS::Internal::Crypto::X509Ptr;
 
 namespace {
 
 using LibreSCRS::RsEId::Core::detail::signerIsMupDocumentSigner;
-
-struct X509Deleter
-{
-    void operator()(X509* p) const noexcept
-    {
-        X509_free(p);
-    }
-};
-using X509Ptr = std::unique_ptr<X509, X509Deleter>;
 
 // Build a bare certificate whose ISSUER CN is `issuerCn`. The policy predicate reads
 // only the issuer CN, so no signing or chain is needed — this isolates the domain check.

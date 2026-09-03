@@ -17,65 +17,20 @@
 #include <span>
 #include <memory>
 #include <stdexcept>
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+#include <LibreSCRS_internal/Crypto/OpenSslPtrCms.h>
+
+using LibreSCRS::Internal::Crypto::BioPtr;
+using LibreSCRS::Internal::Crypto::CmsPtr;
+using LibreSCRS::Internal::Crypto::EvpMdCtxPtr;
+using LibreSCRS::Internal::Crypto::X509Ptr;
+using LibreSCRS::Internal::Crypto::X509StackBorrowedPtr;
 
 namespace emrtd::crypto {
 
 // ---------------------------------------------------------------------------
 // RAII wrappers for OpenSSL types
 // ---------------------------------------------------------------------------
-
-struct BIODeleter
-{
-    void operator()(BIO* p) const
-    {
-        BIO_free(p);
-    }
-};
-
-struct CMSDeleter
-{
-    void operator()(CMS_ContentInfo* p) const
-    {
-        CMS_ContentInfo_free(p);
-    }
-};
-
-struct X509Deleter
-{
-    void operator()(X509* p) const
-    {
-        X509_free(p);
-    }
-};
-
-struct EVPMDCtxDeleter
-{
-    void operator()(EVP_MD_CTX* p) const
-    {
-        EVP_MD_CTX_free(p);
-    }
-};
-
-struct X509StackDeleter
-{
-    void operator()(STACK_OF(X509) * p) const
-    {
-        // sk_X509_free, not sk_X509_pop_free/OSSL_STACK_OF_X509_free.
-        // CMS_get0_signers builds its stack with X509_ADD_FLAG_DEFAULT, which
-        // takes no reference, so the certificates in it belong to the
-        // CMS_ContentInfo. Freeing them here would free that object's own.
-        // The same deleter, for the same call and the same reason, is in
-        // csca_master_list.cpp; the two are kept apart only because the
-        // wrappers in that file have internal linkage and these do not.
-        sk_X509_free(p);
-    }
-};
-
-using BIOPtr = std::unique_ptr<BIO, BIODeleter>;
-using CMSPtr = std::unique_ptr<CMS_ContentInfo, CMSDeleter>;
-using X509Ptr = std::unique_ptr<X509, X509Deleter>;
-using EVPMDCtxPtr = std::unique_ptr<EVP_MD_CTX, EVPMDCtxDeleter>;
-using X509StackPtr = std::unique_ptr<STACK_OF(X509), X509StackDeleter>;
 
 // ---------------------------------------------------------------------------
 // ASN.1 / BER-TLV helpers for LDSSecurityObject parsing
@@ -318,11 +273,11 @@ std::optional<SODContent> parseSOD(const std::vector<uint8_t>& sodRaw)
         return std::nullopt;
 
     // Parse CMS SignedData using OpenSSL
-    BIOPtr bio(BIO_new_mem_buf(cmsDER.data(), static_cast<int>(cmsDER.size())));
+    BioPtr bio(BIO_new_mem_buf(cmsDER.data(), static_cast<int>(cmsDER.size())));
     if (!bio)
         return std::nullopt;
 
-    CMSPtr cms(d2i_CMS_bio(bio.get(), nullptr));
+    CmsPtr cms(d2i_CMS_bio(bio.get(), nullptr));
     if (!cms)
         return std::nullopt;
 
@@ -345,7 +300,7 @@ PAResult::Status verifyDGHash(const std::vector<uint8_t>& dgRaw, const std::vect
     if (!md)
         return PAResult::FAILED;
 
-    EVPMDCtxPtr ctx(EVP_MD_CTX_new());
+    EvpMdCtxPtr ctx(EVP_MD_CTX_new());
     if (!ctx)
         return PAResult::FAILED;
 
@@ -380,11 +335,11 @@ PAResult::Status verifySODSignature(const std::vector<uint8_t>& sodRaw)
     if (cmsDER.empty())
         return PAResult::FAILED;
 
-    BIOPtr bio(BIO_new_mem_buf(cmsDER.data(), static_cast<int>(cmsDER.size())));
+    BioPtr bio(BIO_new_mem_buf(cmsDER.data(), static_cast<int>(cmsDER.size())));
     if (!bio)
         return PAResult::FAILED;
 
-    CMSPtr cms(d2i_CMS_bio(bio.get(), nullptr));
+    CmsPtr cms(d2i_CMS_bio(bio.get(), nullptr));
     if (!cms)
         return PAResult::FAILED;
 
@@ -497,16 +452,16 @@ PAResult performPassiveAuth(const std::vector<uint8_t>& sodRaw, const std::map<i
     // out of the bag is not.
     auto cmsDER = extractCMSFromSOD(sodRaw);
     if (!cmsDER.empty()) {
-        BIOPtr bio(BIO_new_mem_buf(cmsDER.data(), static_cast<int>(cmsDER.size())));
+        BioPtr bio(BIO_new_mem_buf(cmsDER.data(), static_cast<int>(cmsDER.size())));
         if (bio) {
-            CMSPtr cms(d2i_CMS_bio(bio.get(), nullptr));
+            CmsPtr cms(d2i_CMS_bio(bio.get(), nullptr));
             // The same call verifySODSignature makes above, repeated on this
             // object because resolving the SignerInfo is a side effect on the
             // CMS_ContentInfo and does not survive across two of them.
             // CMS_NO_SIGNER_CERT_VERIFY for the same reason as there: whether
             // that signer chains to an authority is step 5's question.
             if (cms && CMS_verify(cms.get(), nullptr, nullptr, nullptr, nullptr, CMS_NO_SIGNER_CERT_VERIFY) == 1) {
-                const X509StackPtr signers(CMS_get0_signers(cms.get()));
+                const X509StackBorrowedPtr signers(CMS_get0_signers(cms.get()));
                 X509* dsc = signers && sk_X509_num(signers.get()) > 0 ? sk_X509_value(signers.get(), 0) : nullptr;
                 if (dsc) {
                     // Extract subject
@@ -519,7 +474,7 @@ PAResult performPassiveAuth(const std::vector<uint8_t>& sodRaw, const std::map<i
                     // Extract expiry
                     const ASN1_TIME* notAfter = X509_get0_notAfter(dsc);
                     if (notAfter) {
-                        BIOPtr timeBio(BIO_new(BIO_s_mem()));
+                        BioPtr timeBio(BIO_new(BIO_s_mem()));
                         if (timeBio && ASN1_TIME_print(timeBio.get(), notAfter)) {
                             char timeBuf[128] = {};
                             int readLen = BIO_read(timeBio.get(), timeBuf, sizeof(timeBuf) - 1);

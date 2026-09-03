@@ -21,7 +21,7 @@ namespace {
 
 using LibreSCRS::Internal::Crypto::BioPtr;
 using LibreSCRS::Internal::Crypto::Pkcs7Ptr;
-using LibreSCRS::Internal::Crypto::StackX509Ptr;
+using LibreSCRS::Internal::Crypto::X509StackBorrowedPtr;
 using LibreSCRS::Internal::Crypto::X509StoreCtxPtr;
 
 [[nodiscard]] VerificationResult verifyChainAndDomain(X509_STORE* store, X509* signerCert)
@@ -90,7 +90,7 @@ SignedObjectReport verifySignedObject(std::span<const std::uint8_t> cmsDer, std:
 
     // A genuine card Security Object carries exactly one signer. Pinning only
     // the first of several would leave the rest unexamined.
-    StackX509Ptr signerCerts(PKCS7_get0_signers(pkcs7.get(), nullptr, 0));
+    X509StackBorrowedPtr signerCerts(PKCS7_get0_signers(pkcs7.get(), nullptr, 0));
     if (!signerCerts || sk_X509_num(signerCerts.get()) != 1) {
         return report;
     }

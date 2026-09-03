@@ -111,3 +111,57 @@ dup:oasis-pkcs11	LibreMiddleware/lib/pkcs11/include/pkcs11/pkcs11.h	LibreAgent/i
 # trees are allowed to coincide and claims nothing about which files do. No
 # marker is added to either: annotating a third party's source is editing it.
 dup:vendored-openssl	LibreMiddleware/thirdparty/openssl-3.5.5/linux/*	LibreMiddleware/thirdparty/openssl-3.5.5/macosx/*
+
+# --- the scope guard that wipes key material. Three key-agreement paths each
+# declared their own local struct for it and one of them declared two; the
+# bodies were the same loop over a different arity, so the arity is the
+# parameter. The call sites keep their own buffer names and their own order.
+CleanseGuard	LibreMiddleware/lib/LibreSCRS/include/LibreSCRS_internal/Crypto/CleanseGuard.h	-
+
+# --- the recursion counter four parsing paths wrote out byte for byte. The
+# ceiling and the diagnostic stay at the call site: they differ per path, and
+# only the increment/decrement pairing was ever the same.
+DepthGuard	LibreMiddleware/lib/libresign/src/native/depth_guard.h	-
+
+# --- one question about one card: can the PKCS#15 applet be selected in the
+# clear, or does it want PACE first. A plugin and the PKCS#11 card each spelled
+# the SELECT and the three-valued answer for themselves.
+ProbeResult	LibreMiddleware/lib/pkcs15/src/pkcs15_applet_probe.h	-
+func:probeApplet	LibreMiddleware/lib/pkcs15/src/pkcs15_applet_probe.h	-
+
+# --- the two X509-stack deleters. Structures with the SAME name, in two
+# namespaces, doing opposite things to the same argument: one popped and freed
+# every certificate, the other freed only the stack, and the canonical one even
+# documented why. Neither survivor is called what either was called, so no call
+# site could be migrated by leaving the name alone.
+X509StackOwningDeleter	LibreMiddleware/lib/LibreSCRS/include/LibreSCRS_internal/Crypto/OpenSslPtr.h	-
+X509StackBorrowedDeleter	LibreMiddleware/lib/LibreSCRS/include/LibreSCRS_internal/Crypto/OpenSslPtr.h	-
+
+# --- the OpenSSL handle deleters, one set for the whole tree. The second set
+# lived under a second namespace and its stated reason was the CMS/TS/OCSP
+# include cost; that reason is now OpenSslPtrCms.h, not a second copy.
+# The synthetic master-list fixture keeps its own: it is compiled into a
+# public-API test that defines no internal-build marker and so may not include
+# the header at all.
+X509Deleter	LibreMiddleware/lib/LibreSCRS/include/LibreSCRS_internal/Crypto/OpenSslPtr.h	LibreMiddleware/test/emrtd-crypto/synthetic_masterlist.cpp,LibreAgent/tests/SyntheticMasterList.cpp
+Asn1ObjectDeleter	LibreMiddleware/lib/LibreSCRS/include/LibreSCRS_internal/Crypto/OpenSslPtr.h	LibreMiddleware/test/emrtd-crypto/synthetic_masterlist.cpp
+BioDeleter	LibreMiddleware/lib/LibreSCRS/include/LibreSCRS_internal/Crypto/OpenSslPtr.h	LibreAgent/tests/SyntheticMasterList.cpp
+BnDeleter	LibreMiddleware/lib/LibreSCRS/include/LibreSCRS_internal/Crypto/OpenSslPtr.h	LibreAgent/tests/SyntheticMasterList.cpp
+EvpPkeyDeleter	LibreMiddleware/lib/LibreSCRS/include/LibreSCRS_internal/Crypto/OpenSslPtr.h	-
+EvpMdCtxDeleter	LibreMiddleware/lib/LibreSCRS/include/LibreSCRS_internal/Crypto/OpenSslPtr.h	-
+X509StoreDeleter	LibreMiddleware/lib/LibreSCRS/include/LibreSCRS_internal/Crypto/OpenSslPtr.h	-
+CmsDeleter	LibreMiddleware/lib/LibreSCRS/include/LibreSCRS_internal/Crypto/OpenSslPtrCms.h	LibreAgent/tests/SyntheticMasterList.cpp
+
+# --- byte span to hex text. Three helpers of this shape existed and the loop
+# was the same in all three; the case of the digits is the parameter. The two
+# survivors are about include boundaries, not about the loop: the applet-AID
+# member is on a PUBLIC installed header that may not reach an internal one,
+# and the shipped example stands for what a consumer can write WITHOUT this
+# repository's internals -- an example that included them would be advertising
+# a header nobody outside can have. Both carry a MIRROR-OF line saying so.
+#
+# `toHex` itself is deliberately NOT a registered name: three repositories own
+# a function by that spelling, each for its own reason (the agent may not
+# depend on middleware internals at all), so a single canonical site for it
+# would be a claim none of them accepts.
+func:hexEncode	LibreMiddleware/lib/LibreSCRS/include/LibreSCRS_internal/Hex.h	LibreMiddleware/lib/libresign/src/native/native_utils.cpp

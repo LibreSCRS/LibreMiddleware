@@ -8,7 +8,6 @@
 // query_operation callback.
 
 #include "native/signing_provider.h"
-#include "native/openssl_raii.h"
 #include "native/pkcs11_token.h"
 #include "native/signing_provider_keymgmt.h"
 #include "native/signing_provider_signature.h"
@@ -24,6 +23,9 @@
 #include <mutex>
 #include <stdexcept>
 #include <vector>
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+
+using LibreSCRS::Internal::Crypto::EvpPkeyCtxPtr;
 
 namespace libresign {
 

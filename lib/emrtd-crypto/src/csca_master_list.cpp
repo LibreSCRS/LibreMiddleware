@@ -21,6 +21,15 @@
 #include <memory>
 #include <optional>
 #include <utility>
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+#include <LibreSCRS_internal/Crypto/OpenSslPtrCms.h>
+
+using LibreSCRS::Internal::Crypto::BioPtr;
+using LibreSCRS::Internal::Crypto::CmsPtr;
+using LibreSCRS::Internal::Crypto::X509Ptr;
+using LibreSCRS::Internal::Crypto::X509StackBorrowedPtr;
+using LibreSCRS::Internal::Crypto::X509StoreCtxPtr;
+using LibreSCRS::Internal::Crypto::X509StorePtr;
 
 namespace emrtd::crypto {
 
@@ -30,25 +39,6 @@ namespace emrtd::crypto {
 // violation. Nothing here is meant to be shared, so nothing here is visible
 // outside this file.
 namespace {
-
-struct CMSDeleter
-{
-    void operator()(CMS_ContentInfo* p) const
-    {
-        CMS_ContentInfo_free(p);
-    }
-};
-
-struct X509Deleter
-{
-    void operator()(X509* p) const
-    {
-        X509_free(p);
-    }
-};
-
-using CMSPtr = std::unique_ptr<CMS_ContentInfo, CMSDeleter>;
-using X509Ptr = std::unique_ptr<X509, X509Deleter>;
 
 /// Discards, when it goes out of scope, whatever OpenSSL queued since it was
 /// constructed, leaving anything the caller had queued below it untouched --
@@ -254,7 +244,7 @@ std::expected<MasterList, MasterListError> readCscaMasterListContent(const unsig
 
 std::expected<MasterList, MasterListError> parseCscaMasterList(const std::vector<uint8_t>& der)
 {
-    CMSPtr cms;
+    CmsPtr cms;
     {
         const ErrorQueueMark errorMark;
         // `der.empty()`, `!cms` below, and the trailing-bytes check after it
@@ -392,20 +382,6 @@ std::expected<MasterList, MasterListError> parseCscaMasterList(const std::vector
 // while the parser is read. Same internal-linkage rule and the same reason:
 // passive_auth.cpp shares this namespace.
 namespace {
-
-struct X509StackDeleter
-{
-    void operator()(STACK_OF(X509) * p) const
-    {
-        // sk_X509_free, not sk_X509_pop_free/OSSL_STACK_OF_X509_free.
-        // CMS_get0_signers builds its stack with X509_ADD_FLAG_DEFAULT, which
-        // takes no reference, so the certificates in it belong to the
-        // CMS_ContentInfo. Freeing them here would free that object's own.
-        sk_X509_free(p);
-    }
-};
-
-using X509StackPtr = std::unique_ptr<STACK_OF(X509), X509StackDeleter>;
 
 struct Asn1TimeDeleter
 {
@@ -602,7 +578,7 @@ bool fingerprintMatches(const std::vector<uint8_t>& fingerprint, const std::vect
 std::expected<VerifiedMasterList, MasterListError>
 parseAndVerifyMasterList(const std::vector<uint8_t>& der, const std::vector<uint8_t>& expectedSpkiSha256)
 {
-    CMSPtr cms;
+    CmsPtr cms;
     {
         const ErrorQueueMark errorMark;
         // The null guard, as in parseCscaMasterList -- but the overlaps are
@@ -696,7 +672,7 @@ parseAndVerifyMasterList(const std::vector<uint8_t>& der, const std::vector<uint
         // it, would be accepted and would report the pinned fingerprint back.
         // RefusesAListThatMerelyCarriesThePinnedSignersCertificate is that
         // input, and it is the only test that separates the two.
-        const X509StackPtr signers(CMS_get0_signers(cms.get()));
+        const X509StackBorrowedPtr signers(CMS_get0_signers(cms.get()));
         const int signerCount = sk_X509_num(signers.get());
         // Cannot be reached from any input: CMS_verify has already refused an
         // object with no SignerInfo, and one whose signer certificate it could
@@ -843,14 +819,6 @@ std::optional<std::vector<uint8_t>> spkiSha256FromCertificateDer(const std::vect
 // passive_auth.cpp shares this namespace.
 namespace {
 
-struct X509StoreDeleter
-{
-    void operator()(X509_STORE* p) const
-    {
-        X509_STORE_free(p);
-    }
-};
-
 struct VerifyParamDeleter
 {
     void operator()(X509_VERIFY_PARAM* p) const
@@ -859,17 +827,7 @@ struct VerifyParamDeleter
     }
 };
 
-struct X509StoreCtxDeleter
-{
-    void operator()(X509_STORE_CTX* p) const
-    {
-        X509_STORE_CTX_free(p);
-    }
-};
-
-using X509StorePtr = std::unique_ptr<X509_STORE, X509StoreDeleter>;
 using VerifyParamPtr = std::unique_ptr<X509_VERIFY_PARAM, VerifyParamDeleter>;
-using X509StoreCtxPtr = std::unique_ptr<X509_STORE_CTX, X509StoreCtxDeleter>;
 
 /// Decodes every element of @p anchorsDer that is a certificate, in order,
 /// passing over every element that is not.
@@ -1042,7 +1000,7 @@ CscaVerdict evaluateCscaChain(const std::vector<uint8_t>& sodDer, const std::vec
         return CscaVerdict::AnchorsUnusable;
     }
 
-    CMSPtr cms;
+    CmsPtr cms;
     {
         const ErrorQueueMark errorMark;
         // The null guard, as in the two functions above. `sodDer.empty()` and
@@ -1095,11 +1053,11 @@ CscaVerdict evaluateCscaChain(const std::vector<uint8_t>& sodDer, const std::vec
         // taken as far as the chain check, and a genuine document would be
         // judged on whichever stranger's certificate someone had planted in it.
         //
-        // Freed with sk_X509_free through X509StackPtr, which does not
+        // Freed with sk_X509_free through X509StackBorrowedPtr, which does not
         // down-ref: CMS_get0_signers builds its stack with
         // X509_ADD_FLAG_DEFAULT, so the certificates in it belong to the
         // CMS_ContentInfo.
-        const X509StackPtr signers(CMS_get0_signers(cms.get()));
+        const X509StackBorrowedPtr signers(CMS_get0_signers(cms.get()));
         // Cannot be reached from any input: CMS_verify has already refused an
         // object with no SignerInfo, and one whose signer certificate it could
         // not find. It stays because an allocation failure inside
@@ -1210,14 +1168,6 @@ bool signerChainsToAnyAnchor(const std::vector<uint8_t>& signerCertDer,
 // namespace scope.
 namespace {
 
-struct BIODeleter
-{
-    void operator()(BIO* p) const
-    {
-        BIO_free(p);
-    }
-};
-
 // OPENSSL_malloc'd buffers (e.g. the output of i2d_X509) are freed with
 // OPENSSL_free, not the type-specific *_free functions above.
 struct OpenSSLBufferDeleter
@@ -1228,7 +1178,6 @@ struct OpenSSLBufferDeleter
     }
 };
 
-using BIOPtr = std::unique_ptr<BIO, BIODeleter>;
 using OpenSSLBufferPtr = std::unique_ptr<unsigned char, OpenSSLBufferDeleter>;
 
 // Re-encodes @p cert as DER and appends it to @p out. The intermediate
@@ -1327,7 +1276,7 @@ std::vector<std::vector<uint8_t>> loadAnchorDerFromDirectory(const std::string& 
             fullyEnumerated = false;
         } else if (isRegular) {
             const std::string path = it->path().string();
-            BIOPtr bio(BIO_new_file(path.c_str(), "rb"));
+            BioPtr bio(BIO_new_file(path.c_str(), "rb"));
             if (!bio) {
                 fullyEnumerated = false;
             } else {

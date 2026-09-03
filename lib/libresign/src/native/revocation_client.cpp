@@ -6,7 +6,6 @@
 #include "native/issuer_resolution.h"   // isSelfSignedSelfVerifying — the tail-exemption proof
 #include "native/trusted_list_parser.h" // isSafeFetchUrl — shared SSRF host/IP-literal gate
 #include "native_utils.h"
-#include "openssl_raii.h"
 
 #include <openssl/err.h>
 #include <openssl/ocsp.h>
@@ -15,6 +14,15 @@
 
 #include <climits>
 #include <memory>
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+#include <LibreSCRS_internal/Crypto/OpenSslPtrCms.h>
+
+using LibreSCRS::Internal::Crypto::OcspBasicPtr;
+using LibreSCRS::Internal::Crypto::OcspReqPtr;
+using LibreSCRS::Internal::Crypto::OcspRespPtr;
+using LibreSCRS::Internal::Crypto::X509CrlPtr;
+using LibreSCRS::Internal::Crypto::X509StackBorrowedPtr;
+using LibreSCRS::Internal::Crypto::X509StorePtr;
 
 namespace libresign {
 
@@ -258,18 +266,10 @@ std::vector<uint8_t> RevocationClient::fetchOcsp(X509* cert, X509* issuer, const
     if (!chain.empty() && chain.back() != nullptr)
         X509_STORE_add_cert(trustStore.get(), chain.back());
 
-    // Non-owning stack: we push borrowed X509* from `chain` (whose lifetime
-    // outlives this call). A lambda deleter frees the stack only — the
-    // canonical StackX509Deleter would pop_free the X509 contents, which
-    // we don't own.
-    struct StackFreeOnly
-    {
-        void operator()(STACK_OF(X509) * p) const
-        {
-            sk_X509_free(p);
-        }
-    };
-    std::unique_ptr<STACK_OF(X509), StackFreeOnly> extraCerts(sk_X509_new_null());
+    // Borrowed: the X509* pushed below come from `chain`, whose lifetime
+    // outlives this call, so only the container is freed. The name says which
+    // of the two this is, which is the whole reason the two are named apart.
+    X509StackBorrowedPtr extraCerts(sk_X509_new_null());
     if (!extraCerts)
         return {};
     // Include every non-root chain cert (and the signer itself, in case the

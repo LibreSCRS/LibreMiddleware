@@ -14,7 +14,8 @@
 #include <string_view>
 #include <vector>
 
-#include "openssl_raii.h"
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+#include <LibreSCRS_internal/Hex.h>
 #include "types.h" // SigningResult / SignFailureKind for revocationFailClosed
 
 // Forward declarations for helper functions
@@ -40,9 +41,10 @@ struct RevocationData;
 
 namespace libresign::native_utils {
 
-// Re-export from openssl_raii.h for existing callers
-using libresign::X509Deleter;
-using libresign::X509Ptr;
+// Re-exported into this namespace for existing callers. The aliases themselves
+// are the project-wide internal set, not a second one written here.
+using LibreSCRS::Internal::Crypto::X509Deleter;
+using LibreSCRS::Internal::Crypto::X509Ptr;
 
 /// @brief Returns the text content of @p node as a std::string,
 ///        rejecting embedded NUL bytes.
@@ -67,10 +69,9 @@ std::string xmlContentToString(::_xmlNode* node);
 std::string xmlAttrToString(::_xmlNode* node, const char* attrName);
 
 /// @brief Uppercase hex digit table — `data[i]` is the ASCII character for
-///        the nibble value @p i (0..15). Used by every internal byte→hex
-///        encoder (PAdES /Contents, XAdES percent-encoder, …) to avoid
-///        re-defining the same 16-byte literal in multiple TUs.
-inline constexpr std::string_view kHexChars = "0123456789ABCDEF";
+///        the nibble value @p i (0..15). The table itself is the shared one;
+///        this name stays because call sites in this engine use it directly.
+inline constexpr std::string_view kHexChars = LibreSCRS::Internal::kHexUpper;
 
 // OpenSSL error string
 std::string opensslError();

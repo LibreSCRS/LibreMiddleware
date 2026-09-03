@@ -5,6 +5,8 @@
 #include "native_utils.h"
 #include "pdf_tokens.h"
 
+#include "depth_guard.h"
+
 #include <charconv>
 #include <format>
 #include <limits>
@@ -292,18 +294,6 @@ PdfValue PdfParser::resolvePageFromNode(const PdfValue& node, int& remaining) co
     // with deep nesting (or cycles via /Parent refs) would otherwise
     // overflow the stack. kMaxParseDepth (256) far exceeds any real page
     // tree.
-    struct DepthGuard
-    {
-        int& d;
-        explicit DepthGuard(int& depth) : d(depth)
-        {
-            ++d;
-        }
-        ~DepthGuard()
-        {
-            --d;
-        }
-    };
     if (parseDepth >= kMaxParseDepth)
         throw std::runtime_error("PdfParser: page tree too deep");
     DepthGuard guard(parseDepth);
@@ -388,18 +378,6 @@ int PdfParser::resolvePageObjNumFromNode(PdfRef nodeRef, int& remaining) const
 {
     // Same depth guard as resolvePageFromNode — deep /Kids nesting or
     // /Parent cycles would otherwise overflow the stack.
-    struct DepthGuard
-    {
-        int& d;
-        explicit DepthGuard(int& depth) : d(depth)
-        {
-            ++d;
-        }
-        ~DepthGuard()
-        {
-            --d;
-        }
-    };
     if (parseDepth >= kMaxParseDepth)
         throw std::runtime_error("PdfParser: page tree too deep");
     DepthGuard guard(parseDepth);

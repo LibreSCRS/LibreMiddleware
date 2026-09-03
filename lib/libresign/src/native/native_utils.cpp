@@ -3,6 +3,8 @@
 
 #include "native_utils.h"
 
+#include <LibreSCRS_internal/Hex.h>
+
 #include "native/der_utils.h"
 #include "native/issuer_resolution.h"
 #include "native/pkcs11_token.h"
@@ -31,6 +33,10 @@
 #include <mutex>
 #include <span>
 #include <stdexcept>
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+
+using LibreSCRS::Internal::Crypto::BioPtr;
+using LibreSCRS::Internal::Crypto::X509Ptr;
 
 namespace libresign::native_utils {
 
@@ -269,17 +275,15 @@ std::vector<uint8_t> base64urlDecode(const std::string& input)
 
 // ---- Hex / percent encoding ----
 
+// MIRROR-OF: LibreMiddleware/lib/LibreSCRS/include/LibreSCRS_internal/Hex.h - this engine's call
+// sites spell the name in their own namespace and its lowercase default is the one ISO 32000-2
+// asks for; the loop itself is not written twice.
 std::string hexEncode(std::span<const uint8_t> data, bool lowercase)
 {
-    static constexpr std::string_view kHexCharsLower = "0123456789abcdef";
-    const std::string_view chars = lowercase ? kHexCharsLower : kHexChars;
-    std::string out;
-    out.reserve(data.size() * 2);
-    for (uint8_t b : data) {
-        out.push_back(chars[(b >> 4) & 0x0F]);
-        out.push_back(chars[b & 0x0F]);
-    }
-    return out;
+    // The loop lives in one place now; this entry point stays because callers
+    // in this engine spell it in their own namespace and its lowercase default
+    // is the one ISO 32000-2 asks for.
+    return LibreSCRS::Internal::hexEncode(data, lowercase);
 }
 
 std::string percentEncode(std::string_view in, bool preserveSlash)

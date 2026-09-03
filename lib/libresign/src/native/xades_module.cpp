@@ -32,6 +32,9 @@
 #include <unordered_set>
 
 #include "xml_raii.h"
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+
+using LibreSCRS::Internal::Crypto::X509Ptr;
 
 namespace libresign {
 

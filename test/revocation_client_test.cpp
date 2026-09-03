@@ -5,7 +5,6 @@
 
 #ifdef LIBRESIGN_HAS_NATIVE
 
-#include "native/openssl_raii.h"
 #include "native/revocation_client.h"
 #include "native/trusted_list_parser.h" // isSafeFetchUrl — shared SSRF gate
 
@@ -17,6 +16,12 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+
+using LibreSCRS::Internal::Crypto::Asn1IntegerPtr;
+using LibreSCRS::Internal::Crypto::EvpPkeyPtr;
+using LibreSCRS::Internal::Crypto::X509CrlPtr;
+using LibreSCRS::Internal::Crypto::X509Ptr;
 
 using namespace libresign;
 
@@ -68,10 +73,10 @@ namespace {
 // Build a minimal signed cert CN=subjectCn issued by CN=issuerCn (pass the
 // subject's own key + equal CNs for a self-signed root). Mirrors the
 // native_utils_test helper.
-libresign::X509Ptr makeCert(const std::string& subjectCn, const std::string& issuerCn, EVP_PKEY* subjectKey,
-                            EVP_PKEY* issuerKey)
+LibreSCRS::Internal::Crypto::X509Ptr makeCert(const std::string& subjectCn, const std::string& issuerCn,
+                                              EVP_PKEY* subjectKey, EVP_PKEY* issuerKey)
 {
-    libresign::X509Ptr x(X509_new());
+    LibreSCRS::Internal::Crypto::X509Ptr x(X509_new());
     X509_set_version(x.get(), 2);
     ASN1_INTEGER_set(X509_get_serialNumber(x.get()), 1);
     X509_gmtime_adj(X509_getm_notBefore(x.get()), -3600);
@@ -365,7 +370,7 @@ X509CrlPtr makeCrl(X509* ca, EVP_PKEY* caKey, const long* revokedSerial)
 
     if (revokedSerial) {
         X509_REVOKED* rev = X509_REVOKED_new();
-        ASN1IntPtr serial(ASN1_INTEGER_new());
+        Asn1IntegerPtr serial(ASN1_INTEGER_new());
         ASN1_INTEGER_set(serial.get(), *revokedSerial);
         X509_REVOKED_set_serialNumber(rev, serial.get());
         Asn1TimePtr when(ASN1_TIME_set(nullptr, std::time(nullptr) - 1800));
