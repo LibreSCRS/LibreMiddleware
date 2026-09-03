@@ -405,9 +405,4 @@ TEST(RevocationClient, CrlRevokesCertDetectsRevokedSerial)
     EXPECT_FALSE(RevocationClient::crlRevokesCert(revokingCrl.get(), nullptr));
 }
 
-#else
-TEST(RevocationClient, DISABLED_SkippedNativeNotCompiled)
-{
-    GTEST_SKIP();
-}
 #endif

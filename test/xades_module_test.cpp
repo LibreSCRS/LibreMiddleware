@@ -477,9 +477,4 @@ TEST(XAdESModuleStandalone, RejectsEmptyInput)
     EXPECT_NE(result.errorMessage.find("empty"), std::string::npos);
 }
 
-#else
-TEST(XAdESModuleTest, DISABLED_SkippedNativeNotCompiled)
-{
-    GTEST_SKIP();
-}
 #endif

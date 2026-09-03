@@ -13,7 +13,7 @@ AllowShortLoopsOnASingleLine: false
 AlwaysBreakTemplateDeclarations: Yes
 IncludeBlocks: Preserve
 SortIncludes: Never
-Standard: c++20
+Standard: Latest
 AlignConsecutiveAssignments: None
 AlignConsecutiveDeclarations: None
 BinPackArguments: true

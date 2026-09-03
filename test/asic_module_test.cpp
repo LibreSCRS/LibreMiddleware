@@ -719,9 +719,4 @@ TEST_F(ASiCModuleSoftHSMTest, AppendSignerAtLongTermRejectsUnterminatedChain)
     EXPECT_EQ(*appended.failureKind, SignFailureKind::CertificateChainIncomplete) << appended.errorMessage;
 }
 
-#else
-TEST(ASiCModuleTest, DISABLED_SkippedNativeNotCompiled)
-{
-    GTEST_SKIP();
-}
 #endif

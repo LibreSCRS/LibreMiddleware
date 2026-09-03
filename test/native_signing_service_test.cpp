@@ -287,9 +287,4 @@ TEST_F(LazyTrustedListTest, LazyTrustedListIsNotFetchedForBasicLevel)
     EXPECT_EQ(server.servedCount(), 0) << "a basic signature needs no anchor and must make no request";
 }
 
-#else
-TEST(NativeSigningService, DISABLED_SkippedNativeNotCompiled)
-{
-    GTEST_SKIP();
-}
 #endif

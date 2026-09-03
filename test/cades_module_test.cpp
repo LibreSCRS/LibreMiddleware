@@ -992,9 +992,4 @@ TEST(CAdESModuleStandalone, AddRevocationData_EmptyIsNoop)
     EXPECT_EQ(result, fakeCms);
 }
 
-#else
-TEST(CAdESModuleTest, DISABLED_SkippedNativeNotCompiled)
-{
-    GTEST_SKIP();
-}
 #endif

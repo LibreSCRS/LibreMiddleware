@@ -1,0 +1,28 @@
+# LibreMiddleware — leg 'native'. Regenerate: ci/scripts/skip-ledger.sh --update <ctest.log> native
+# Columns: category, glob, expected count. Categories: CARD NETWORK SERVICE PLATFORM DESIGN TAUTOLOGY TOMBSTONE
+# TODO rows are a draft: --check refuses an unknown category, on purpose.
+# Counted here: 132 skipped by ctest, 4 DISABLED_ in the sources.
+CARD      AllBackends/SigningE2ETest.*                               62
+CARD      BuildOrderedChain.*                                        1
+PLATFORM  CrossBackendTest.*                                         2
+CARD      ECMatrix/ECSigningMatrixTest.*                             6
+CARD      ECSigningTest.*                                            3
+DESIGN    EFCOMTest.*                                                2
+CARD      EMRTDHardwareTest.*                                        7
+TAUTOLOGY HttpCredentialsValidation.*                                1
+CARD      OpenSCFallbackPKS.*                                        3
+CARD      PACEHardwareTest.*                                         4
+PLATFORM  PAdESDssOracle.*                                           1
+CARD      PKCS11CardTest.*                                           15
+DESIGN    PaceMrzKatBSI.*                                            4
+CARD      Pkcs11AppletSuiteGen1Fixture.*                             8
+CARD      Pkcs11NamFixture.*                                         5
+CARD      Pkcs11PksFixture.*                                         1
+SERVICE   SessionTransmitTest.*                                      1
+PLATFORM  SigningConformance.*                                       1
+CARD      SigningHwNativeBLT.*                                       1
+CARD      SigningProviderTest.*                                      4
+SERVICE   SigningRevocation.*                                        1
+CARD      SrbEid2ContactlessHw.*                                     1
+NETWORK   TrustStoreServiceTest.*                                    1
+NETWORK   TrustedListParser.*                                        1

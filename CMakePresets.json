@@ -1,0 +1,26 @@
+{
+  "version": 4,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 23,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "coverage",
+      "displayName": "Coverage (Debug + gcov)",
+      "description": "The configuration ci/coverage-baseline.json was measured under. A coverage number carries its configuration or it is not reproducible, and the gate refuses to compare when the compiler, the gcovr version or the committed test listings moved. Note this build type is Debug: where a CI leg is Release, an assertion-only case can be registered here and not there, so the two discovered sets are close but need not be identical.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-cov",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_FLAGS": "-O0 -g --coverage -fprofile-update=atomic",
+        "CMAKE_C_FLAGS": "-O0 -g --coverage -fprofile-update=atomic",
+        "CMAKE_EXE_LINKER_FLAGS": "--coverage",
+        "CMAKE_SHARED_LINKER_FLAGS": "--coverage",
+        "SIGNING_BACKEND": "native",
+        "BUILD_DSS_ORACLE": "ON"
+      }
+    }
+  ]
+}

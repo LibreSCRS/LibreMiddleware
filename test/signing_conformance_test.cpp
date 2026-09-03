@@ -224,7 +224,7 @@ TEST_P(SoftHSM, CarriesNoStructuralWarning)
 #else
 TEST(SigningConformance, DISABLED_SkippedNativeNotCompiled)
 {
-    GTEST_SKIP();
+    GTEST_SKIP() << "the native signing backend is not compiled in this configuration";
 }
 #endif
 

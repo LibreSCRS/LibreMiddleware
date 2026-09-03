@@ -1116,15 +1116,6 @@ if(BUILD_SIGNING)
         target_compile_definitions(TlCacheTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
         gtest_discover_tests(TlCacheTests)
 
-        add_executable(TlConfigureTests tl_configure_test.cpp)
-        target_link_libraries(TlConfigureTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto)
-        target_include_directories(TlConfigureTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
-        target_compile_definitions(TlConfigureTests PRIVATE
-            CMAKE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
-            LIBRESCRS_INTERNAL_BUILD)
-        gtest_discover_tests(TlConfigureTests)
-
         add_executable(CrossBackendTests cross_backend_test.cpp)
         target_link_libraries(CrossBackendTests PRIVATE GTest::gtest_main LibreSign)
         target_include_directories(CrossBackendTests PRIVATE

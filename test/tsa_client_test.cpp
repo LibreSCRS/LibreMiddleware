@@ -48,9 +48,4 @@ TEST(TSAClient, RejectsWrongHashSize)
     ASSERT_NE(result.errorMessage.find("32-byte"), std::string::npos);
 }
 
-#else
-TEST(TSAClient, DISABLED_SkippedNativeNotCompiled)
-{
-    GTEST_SKIP();
-}
 #endif

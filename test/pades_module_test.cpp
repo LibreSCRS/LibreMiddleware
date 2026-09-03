@@ -597,9 +597,4 @@ TEST_F(PAdESModuleSoftHSMTest, AppendSignerAtLongTermRejectsUnterminatedChain)
     EXPECT_EQ(*appended.failureKind, SignFailureKind::CertificateChainIncomplete) << appended.errorMessage;
 }
 
-#else
-TEST(PAdESModule, DISABLED_SkippedNativeNotCompiled)
-{
-    GTEST_SKIP();
-}
 #endif

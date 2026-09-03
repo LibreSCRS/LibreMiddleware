@@ -7,6 +7,12 @@ on:
   pull_request:
     branches: [main]
 
+  # Manual runs. Without this a job that is deliberately not part of every pull
+  # request -- a coverage pass that takes an hour, say -- cannot be started at
+  # all: a branch that is not a pull request gets no run, and a gate that cannot
+  # be triggered is green by construction.
+  workflow_dispatch:
+
 jobs:
   format-check:
     runs-on: ubuntu-latest
@@ -25,9 +31,27 @@ jobs:
           sudo apt-get install -y clang-format-21
 
       - name: Check clang-format
+        # The roots live in ci/format-dirs.txt, which the scope check below
+        # reads too: a directory nobody formats cannot appear without one of
+        # these two steps saying so.
+        #
+        # -print0/-0 for paths with spaces, a parenthesised extension filter so
+        # the -o cannot swallow the directory list, and -r because without it an
+        # empty result makes clang-format read stdin and hang rather than fail.
+        # One wedged job in this project cost most of a working afternoon.
         run: |
-          find lib test -name "*.cpp" -o -name "*.h" \
-            | xargs clang-format-21 --dry-run --Werror
+          mapfile -t dirs < <(grep -v '^#' ci/format-dirs.txt)
+          find "${dirs[@]}" \
+            \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.mm' \) -print0 \
+            | xargs -0 -r clang-format-21 --dry-run --Werror
+
+      - name: Check every tracked source is reachable by the formatter
+        run: ./ci/scripts/check-format-scope.sh
+
+      - name: Check every skip carries a reason
+        # A test that skips without saying why is indistinguishable from a test
+        # that passed. Costs a second and builds nothing.
+        run: ./ci/scripts/check-skip-reasons.sh
 
   build-linux:
     # Two signing backends. `native` is the production path and carries the
@@ -79,7 +103,8 @@ jobs:
             libcurl4-openssl-dev libxml2-dev \
             pkg-config autoconf automake libtool \
             cmake ninja-build python3-jsonschema \
-            softhsm2 opensc clang
+            softhsm2 opensc clang \
+            poppler-utils
 
       - name: Build OpenSC ${{ env.OPENSC_VERSION }} from source
         run: |
@@ -118,7 +143,18 @@ jobs:
             -DSIGNING_BACKEND=${{ matrix.signing_backend }} \
             -DBUILD_DSS_ORACLE=${{ matrix.dss_oracle }} \
             -DLIBREMIDDLEWARE_WERROR=ON
-          cmake --build build
+          # set -o pipefail is explicit: without it `| tee` reports tee's status
+          # and a failed build becomes a green step, after which the warning
+          # check measures a log that was never produced.
+          set -o pipefail
+          LC_ALL=C cmake --build build 2>&1 | tee build.log
+
+      - name: Check the warning baseline
+        # Counted by the [-Wname] tag, never by the message text: diagnostics
+        # are localised. An unknown compiler is reported, not failed -- this
+        # runner and the machine that recorded the baseline do not agree on a
+        # diagnostic set, and neither is authoritative over the other.
+        run: ./ci/scripts/warning-gate.py --check build.log --build-dir build
 
       - name: Verify the configured signing backend took effect
         # Runs on every leg — this is the matrix's own integrity check, not a
@@ -243,7 +279,27 @@ jobs:
           # LIBRESIGN_HAS_DSS_ORACLE is undefined there, so the stub half of
           # the support library compiles and never reads it.
           LIBRESCRS_REQUIRE_DSS_ORACLE: ${{ matrix.dss_oracle == 'ON' && '1' || '0' }}
-        run: ctest --output-on-failure --test-dir build --no-tests=error
+        run: |
+          # The pipe is removed rather than patched. The runner's default shell
+          # for a `run:` step is `bash -e {0}` WITHOUT pipefail, so
+          # `ctest ... | tee ctest.log` reports the status of tee: a failed
+          # suite showed as a green step, and a check reading that log
+          # afterwards passed too. With no pipe there is no question about what
+          # the default is. Measured: the old shape exits 0 on a ctest that
+          # fails, this one exits 1.
+          set +e
+          ctest --output-on-failure --test-dir build --no-tests=error > ctest.log 2>&1
+          rc=$?
+          set -e
+          cat ctest.log
+          echo "ctest rc=$rc"
+          exit "$rc"
+
+      - name: Check the skip ledger
+        # always(): the ledger's whole point is the run where something did not
+        # run, including runs where something also failed.
+        if: always()
+        run: ./ci/scripts/skip-ledger.sh --check ctest.log ${{ matrix.signing_backend }}
 
   examples-build:
     # Build the SDK-consumer example against the public LibreSCRS surface.
@@ -420,3 +476,90 @@ jobs:
       - name: Assert the installed module carries a relative rpath
         timeout-minutes: 5
         run: bash ci/scripts/check-pkcs11-rpath.sh /usr
+
+  coverage:
+    # Two signing backends. `native` is the production path and carries the
+    # release gates; `both` additionally compiles the DSS cross-verification
+    # oracle so cross_backend_test.cpp — gated on
+    # `LIBRESIGN_HAS_NATIVE && LIBRESIGN_HAS_DSS`, and therefore never built by
+    # any job before this matrix existed — is actually exercised.
+    runs-on: ubuntu-latest
+    # GitHub's default job ceiling is six hours. A deadlocked test once held
+    # this job for two hours and forty-nine minutes before a human noticed;
+    # the per-test ctest timeout in the root CMakeLists.txt is what names the
+    # culprit, and this is the backstop for anything that outlives it (a leaked
+    # grandchild holding the output pipe, an apt or clone that stalls). The
+    # number is a ceiling, not a budget: well above what dependencies + OpenSC
+    # from source + a full Release build + the suite need, and far enough below
+    # six hours that a wedge is somebody's problem the same morning.
+    env:
+      OPENSC_VERSION: '0.26.1'
+    # Not on pull_request: this pass costs an hour and the moment a
+    # function actually lands is the push to main. Manual only until one
+    # measured run says what it really costs on a hosted runner.
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libpcsclite-dev libssl-dev zlib1g-dev \
+            libcurl4-openssl-dev libxml2-dev \
+            pkg-config autoconf automake libtool \
+            cmake ninja-build python3-jsonschema \
+            softhsm2 opensc clang \
+            poppler-utils
+
+      - name: Build OpenSC ${{ env.OPENSC_VERSION }} from source
+        run: |
+          git clone --branch ${{ env.OPENSC_VERSION }} --depth 1 \
+            https://github.com/OpenSC/OpenSC /tmp/opensc-src
+          cd /tmp/opensc-src
+          ./bootstrap
+          ./configure --prefix=/tmp/opensc-install \
+            --enable-shared --disable-static --without-readline
+          make -j$(nproc) install
+
+
+      - name: Install gcovr
+        # Pinned: the baseline records the gcovr version it was measured with
+        # and the gate refuses to compare across versions, because the exclude
+        # semantics that decide the denominator have changed between them.
+        run: python3 -m pip install --break-system-packages 'gcovr==8.6'
+
+      - name: Configure (coverage)
+        run: cmake --preset coverage -DCMAKE_PREFIX_PATH=/tmp/opensc-install -DOPENSC_INCLUDE_DIR=/tmp/opensc-src/src
+
+      - name: Build
+        run: cmake --build build-cov -j4
+
+      - name: Provision the software token
+        # Without it roughly forty signing cases skip, and the resulting number
+        # is a measurement of the environment, not of the code.
+        run: ./ci/scripts/softhsm-bootstrap.sh
+
+      - name: Test
+        run: |
+          set +e
+          ctest --output-on-failure --test-dir build-cov --no-tests=error > ctest.log 2>&1
+          rc=$?
+          set -e
+          cat ctest.log
+          echo "ctest rc=$rc"
+          exit "$rc"
+
+      - name: Check coverage against the baseline
+        # The committed baseline was measured with a different compiler than
+        # this runner uses, so the FIRST authorised run of this job is expected
+        # to refuse to compare and say so. Refusing is the design: a coverage
+        # number carries the configuration it was measured under, and comparing
+        # across configurations is how a gap becomes an artefact. Record a
+        # runner-side baseline with --update, review it in the same commit, and
+        # from then on this step is a ratchet.
+        run: ./ci/scripts/coverage-gate.py --check build-cov

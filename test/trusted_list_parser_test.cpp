@@ -304,9 +304,4 @@ TEST(TrustedListParser, FetchSerbianTL)
     ASSERT_GE(info.services.size(), 2u);
 }
 
-#else
-TEST(TrustedListParser, DISABLED_SkippedNativeNotCompiled)
-{
-    GTEST_SKIP();
-}
 #endif

@@ -1,0 +1,9 @@
+{
+  "GNU-16": {
+    "-Warray-bounds=": 1,
+    "-Wcomment": 102,
+    "-Wdangling-else": 12,
+    "-Wunused-result": 2
+  },
+  "min_compile_units": 358
+}

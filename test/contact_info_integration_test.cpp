@@ -143,9 +143,4 @@ TEST_F(SigningContactInfoSoftHSMTest, SignedPdfCarriesContactInfoInSignatureDict
     EXPECT_TRUE(containsBytes(result.signedDocument, "/Location (Belgrade)"));
 }
 
-#else // LIBRESIGN_HAS_NATIVE
-TEST(SigningContactInfoIntegration, DISABLED_SkippedNativeNotCompiled)
-{
-    GTEST_SKIP();
-}
 #endif

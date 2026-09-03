@@ -44,9 +44,4 @@ TEST(Pkcs11TokenStandalone, FailsWithInvalidModule)
     ASSERT_THROW({ (void)manager.acquire("/nonexistent.so"); }, std::runtime_error);
 }
 
-#else
-TEST(Pkcs11TokenTest, DISABLED_SkippedNativeNotCompiled)
-{
-    GTEST_SKIP();
-}
 #endif

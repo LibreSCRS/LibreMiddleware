@@ -154,9 +154,4 @@ TEST(Pkcs11ModuleManagerStandalone, AcquireThrowsOnInvalidModule)
     EXPECT_THROW({ (void)manager.acquire("/nonexistent/path/librescrs-pkcs11.so"); }, std::runtime_error);
 }
 
-#else
-TEST(Pkcs11ModuleManagerTest, DISABLED_SkippedNativeNotCompiled)
-{
-    GTEST_SKIP();
-}
 #endif

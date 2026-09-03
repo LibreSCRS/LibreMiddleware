@@ -388,9 +388,4 @@ TEST(CAdESTimestampPartition, InternalFaultIsNotTypedFailure)
     EXPECT_TRUE(threwPlain) << "addArchiveTimestamp must throw a plain exception on a malformed CMS";
 }
 
-#else
-TEST(TSAClient, DISABLED_SkippedNativeNotCompiled)
-{
-    GTEST_SKIP();
-}
 #endif
