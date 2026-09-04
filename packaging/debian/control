@@ -1,0 +1,80 @@
+Source: librescrs-middleware
+Section: libs
+Priority: optional
+Maintainer: LibreSCRS <packages@librescrs.org>
+Build-Depends: debhelper-compat (= 13),
+               cmake (>= 3.24),
+               ninja-build,
+               make,
+               pkg-config,
+               git,
+               libpcsclite-dev,
+               libxml2-dev,
+               zlib1g-dev,
+               autoconf,
+               automake,
+               libtool,
+               python3,
+               python3-jsonschema
+Standards-Version: 4.7.0
+Homepage: https://github.com/LibreSCRS/LibreMiddleware
+Rules-Requires-Root: no
+
+Package: liblibrescrs5
+Architecture: any
+Multi-Arch: same
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Recommends: librescrs-card-plugins (= ${binary:Version})
+Description: LibreSCRS smart-card middleware runtime libraries
+ LibreSCRS reads Serbian government smart cards (identity, vehicle and health)
+ as well as generic ICAO eMRTD, NIST PIV and PKCS#15 cards, talking to the
+ reader over PC/SC directly.
+ .
+ This package holds the shared libraries and the PKCS#11 provider module. The
+ module is installed but not registered with p11-kit; registration is a
+ separate decision and a separate package.
+
+Package: librescrs-card-plugins
+Architecture: any
+Multi-Arch: same
+Depends: ${shlibs:Depends}, ${misc:Depends}, liblibrescrs5 (= ${binary:Version})
+Description: Card plugins for the LibreSCRS middleware
+ One dlopen'd plugin per card family, with the manifest that describes the
+ fields each one exposes.
+ .
+ Without this package the libraries load and enumerate readers but recognise
+ no card.
+
+Package: librescrs-pkcs11-direct
+Architecture: all
+Multi-Arch: foreign
+Depends: ${misc:Depends}, liblibrescrs5 (>= ${source:Version})
+Conflicts: librescrs-agent
+Description: Register the LibreSCRS PKCS#11 module directly with p11-kit
+ Installs the p11-kit declaration that makes PKCS#11-aware applications
+ discover the LibreSCRS provider in their own process.
+ .
+ This is the alternative to the agent, not a companion to it. The agent
+ registers a proxy that collects the PIN in its own prompter, behind an
+ authorization prompt; the direct module takes the PIN inside whichever
+ application loaded it. Registering both would leave one card with two
+ security models and let whichever dialog the user typed into decide which one
+ they got, so the two packages conflict and installing either replaces the
+ other. On a machine with a desktop session the agent is the one you want.
+
+Package: liblibrescrs-dev
+Section: libdevel
+Architecture: any
+Multi-Arch: same
+Depends: ${misc:Depends},
+         liblibrescrs5 (= ${binary:Version}),
+         libpcsclite-dev,
+         libssl-dev
+Description: Development files for the LibreSCRS middleware
+ Headers, linker symlinks and the CMake package configuration for building
+ against LibreSCRS.
+ .
+ The two development dependencies are not decoration. The installed CMake
+ config calls find_dependency for PCSC and for OpenSSL before it defines a
+ single target, so without their headers every downstream find_package fails at
+ configuration -- which is exactly how it was found.

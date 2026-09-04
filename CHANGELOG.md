@@ -5,6 +5,34 @@ Notable user-visible changes per release. Format follows
 
 ## [Unreleased] — 5.0.0
 
+### Added
+
+- **Debian and RPM packages, built by the project.** `deb` packages for Debian
+  13 and Ubuntu 26.04 LTS and `rpm` packages for Fedora 43, built in the target
+  distribution's own container and installed with one command. The middleware
+  ships as four packages: the runtime libraries, the card plugins, the
+  development files, and an architecture-independent package holding nothing but
+  the p11-kit registration file — which is what lets a machine choose between
+  the direct PKCS#11 module and the agent proxy without ending up with two
+  providers for one card.
+
+  **Which distributions, and why not the others.** The bundled OpenSSL archive
+  contains x86_64 objects only and references symbols that appear in glibc 2.38,
+  so Debian 12 and every Ubuntu up to and including 24.04 LTS cannot link these
+  binaries at all, and neither can any `arm64` target. Fedora 42 and older ship
+  sdbus-c++ 1.5, below the 2.0 the agent requires. Excluding Ubuntu 24.04 LTS is
+  a product decision rather than a technicality: it is the largest installed
+  base left out.
+
+  **The cryptography is bundled and a bill of materials ships with every
+  artefact.** OpenSSL, curl and OpenSC are linked in statically, so a CVE in any
+  of them is invisible to every distribution security tracker and every
+  container scanner — nothing in the packaging metadata says which versions are
+  inside. The SBOM published beside each artefact is the only place they are
+  named. These packages are therefore not candidates for the Debian or Fedora
+  archives, and `packaging/README-bundling.md` says so in the repository rather
+  than hiding it behind lint overrides.
+
 ### Changed
 
 - **The installed CMake package exports one target namespace, `LibreSCRS::`.**

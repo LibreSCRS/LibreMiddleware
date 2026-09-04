@@ -100,6 +100,11 @@ if(LIBRESCRS_VENDOR_CURL)
         LIST_SEPARATOR |
         CMAKE_ARGS
             -DCMAKE_INSTALL_PREFIX=${CURL_INSTALL_DIR}
+            # curl's own GNUInstallDirs picks lib64 on a 64-bit RPM target,
+            # while CURL_STATIC_LIB above names lib/libcurl.a unconditionally.
+            # Pin the producer, not the consumer: changing CURL_STATIC_LIB to
+            # lib64 would fix Fedora and break Debian.
+            -DCMAKE_INSTALL_LIBDIR=lib
             -DCMAKE_BUILD_TYPE=Release
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON
             -DBUILD_SHARED_LIBS=OFF

@@ -53,3 +53,6 @@ LibreSCRS-cardedge-pkcs11-*.zip
 *.class
 tools/__pycache__/
 Testing/
+
+# Working copy of the packaging recipe; dpkg-buildpackage wants it at the root.
+/debian/

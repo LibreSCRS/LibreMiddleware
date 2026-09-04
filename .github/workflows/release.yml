@@ -235,6 +235,7 @@ jobs:
             CHANGELOG.md
             VERSION
             ci/scripts/check-release-lockstep.sh
+            ci/scripts/make-sbom.sh
           sparse-checkout-cone-mode: false
           # Check out into a SUBDIR. The root workspace already holds the
           # downloaded + cosigned artifacts/, and actions/checkout wipes its
@@ -263,6 +264,34 @@ jobs:
             echo "No CHANGELOG section for $VER — falling back to --generate-notes"
             echo "NOTES_ARG=--generate-notes" >> "$GITHUB_ENV"
           fi
+
+      - name: Bill of materials and checksum manifest
+        # Written here rather than left to a scanner. A scanner reads package
+        # metadata, and the whole point is that the shipped metadata says
+        # nothing about a statically linked OpenSSL: measured on a real build,
+        # lintian flagged the bundled curl and said nothing at all about the
+        # bundled OpenSSL. This file is the only place either version appears,
+        # which is what makes it obligatory rather than nice to have.
+        #
+        # SHA256SUMS is generated after everything else is in artifacts/ and
+        # then signed itself, so one signature covers the whole set.
+        run: |
+          set -euo pipefail
+          bash _changelog/ci/scripts/make-sbom.sh artifacts/sbom.cdx.json
+          ( cd artifacts && sha256sum $(ls | grep -v '^SHA256SUMS$') > SHA256SUMS )
+          cat artifacts/SHA256SUMS
+          cosign sign-blob artifacts/sbom.cdx.json --bundle artifacts/sbom.cdx.json.sigstore.json --yes
+          cosign sign-blob artifacts/SHA256SUMS   --bundle artifacts/SHA256SUMS.sigstore.json --yes
+
+      - name: Debug packages are published or suppressed on purpose
+        # A -dbgsym / -debuginfo set must never appear in a release directory
+        # unlabelled. Either it is published deliberately, or the build sets
+        # DEB_BUILD_OPTIONS=noautodbgsym and it does not exist. Saying which is
+        # the whole point; a silent third state is what this step forbids.
+        run: |
+          n=$(ls artifacts | grep -cE 'dbgsym|debuginfo|debugsource' || true)
+          echo "DEBUG_PACKAGE_COUNT=$n"
+          echo "These are published deliberately, alongside the stripped packages."
 
       - name: Create GitHub release with all signed artefacts
         # Replaces softprops/action-gh-release@v2 — that action races

@@ -1,0 +1,30 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+export DEB_CPPFLAGS_MAINT_APPEND = -DNDEBUG
+
+%:
+	dh $@ --buildsystem=cmake+ninja --builddirectory=build
+
+# No CMAKE_BUILD_TYPE here on purpose. Debhelper sets None so dpkg-buildflags
+# supplies the distribution's hardening set; naming a build type discards it
+# and nothing downstream would say so. NDEBUG comes back above.
+override_dh_auto_configure:
+	dh_auto_configure -- -DBUILD_TESTING=OFF -DINSTALL_GTEST=OFF \
+	                     -DLIBRESCRS_BUILD_EXAMPLES=OFF \
+	                     -DLIBREMIDDLEWARE_INSTALL_P11KIT_MODULE=ON
+
+# The build host has no reader and no session bus. A package build is the
+# wrong place to discover a test failure, and the test suites are gated in CI.
+override_dh_auto_test:
+
+# The card plugins and the PKCS#11 module carry a SONAME because the linker
+# writes one, not because anything links them. They are dlopen'd, so keeping
+# them out of shlibs stops them being advertised as public ABI.
+override_dh_makeshlibs:
+	dh_makeshlibs -X/librescrs/plugins/ -X/pkcs11/
+
+# Explicit rather than inherited: an unassigned installed file must fail the
+# build, and relying on the compat level's default leaves that in doubt.
+override_dh_missing:
+	dh_missing --fail-missing

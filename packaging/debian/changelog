@@ -1,0 +1,24 @@
+librescrs-middleware (5.0.0-1) unstable; urgency=medium
+
+  * The installed CMake package exports one target namespace, `LibreSCRS::`.
+  * The PKCS#11 module is no longer registered with p11-kit, and no longer
+  * The PKCS#11 module is found on library directories that are not called
+  * A logging facade the consumer can redirect: `LibreSCRS::log`
+  * Buffer-based signing. New `sign()` overload accepts an in-memory
+  * Document name on a signing request. A request can now carry an
+  * AdES long-term signature levels. B-T (timestamped), B-LT and
+  * Uniform credential activation across plugins. Cards protected by a
+  * On-card SHA-256 RSA signing for hash-on-card IAS-ECC cards that
+  * On-card RSA decipher over a single-session libopensc bridge.
+  * CKA_ID key selection for PKCS#11 signing, so a specific key can be
+  * `eid-sod-verify` diagnostic tool. A standalone PC/SC utility that
+  * CSCA master-list import API. New public `LibreSCRS::Trust`
+  * Hosts can tell a plugin where their country-signing certificates
+  * Arch Linux packaging. A release-shaped `PKGBUILD` for
+  * The shared objects' SONAME moved to `libLibreSCRS_<Component>.so.5`
+  * `SmProtocolRequest` gained a third alternative (`ChipAuthRequest`,
+  * Invalid input documents fail fast. Malformed or unsupported input
+  * eID SOD signer is pinned to the MUP document-signer domain,
+  * Long-term signing path hardened — fail-closed behaviour and
+
+ -- LibreSCRS <packages@librescrs.org>  Fri, 04 Sep 2026 03:22:08 +0200

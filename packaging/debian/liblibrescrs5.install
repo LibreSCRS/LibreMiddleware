@@ -1,0 +1,3 @@
+usr/lib/*/libLibreSCRS_*.so.*
+usr/lib/*/pkcs11/librescrs-pkcs11.so*
+usr/share/librescrs/certificates/

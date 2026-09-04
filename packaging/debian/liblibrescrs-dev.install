@@ -1,0 +1,3 @@
+usr/include/LibreSCRS/
+usr/lib/*/libLibreSCRS_*.so
+usr/lib/*/cmake/LibreMiddleware/
