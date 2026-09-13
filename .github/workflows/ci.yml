@@ -427,7 +427,7 @@ jobs:
     # Build LibreMiddleware with LIBREMIDDLEWARE_BUILD_SHARED=ON, install
     # to a workspace prefix, then run examples/sdk-consumer-config/build-and-run.sh
     # which configures + builds + runs a downstream consumer via
-    # find_package(LibreMiddleware 4.0 REQUIRED CONFIG). Catches regressions
+    # find_package(LibreMiddleware 5.0 REQUIRED CONFIG). Catches regressions
     # in target export, visibility, version pinning, and bundled-dep
     # linkage end-to-end for shared-library consumers.
     name: SHARED build + Config-package consumer

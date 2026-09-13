@@ -64,7 +64,7 @@ guides.
 
 Set `-DLIBREMIDDLEWARE_BUILD_SHARED=ON` to produce versioned `.so`
 libraries plus a CMake Config package so downstream projects can use
-`find_package(LibreMiddleware 4.0 REQUIRED CONFIG)` and link against
+`find_package(LibreMiddleware 5.0 REQUIRED CONFIG)` and link against
 namespaced `LibreSCRS::*` imported targets. The full consumer
 documentation is at
 [`docs/SHARED-LIBRARY-CONSUMERS.md`](docs/SHARED-LIBRARY-CONSUMERS.md);

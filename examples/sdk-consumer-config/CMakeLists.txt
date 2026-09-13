@@ -12,7 +12,7 @@
 cmake_minimum_required(VERSION 3.24)
 project(sdk_consumer_config LANGUAGES CXX)
 
-find_package(LibreMiddleware 4.0 REQUIRED CONFIG)
+find_package(LibreMiddleware 5.0 REQUIRED CONFIG)
 
 add_executable(sdk_consumer_config main.cpp)
 target_compile_features(sdk_consumer_config PRIVATE cxx_std_23)

@@ -14,7 +14,7 @@ build options, version pinning, and the public target surface.
 
 | Option | Default | Effect |
 |---|---|---|
-| `LIBREMIDDLEWARE_BUILD_SHARED` | `OFF` | Builds public `LibreSCRS_*` archives as SHARED libraries with `SOVERSION = MAJOR`. |
+| `LIBREMIDDLEWARE_BUILD_SHARED` | `OFF` | Builds public `LibreSCRS_*` archives as SHARED libraries, with the SONAME taken from `LIBRESCRS_ABI_SOVERSION` and not from the release major (see below). |
 | `LIBRESCRS_INSTALL_SDK_HEADERS` | `OFF` | Installs public headers under `include/LibreSCRS/`. Implicit ON when `LIBREMIDDLEWARE_BUILD_SHARED=ON`. |
 
 LibreCelik's existing in-tree FetchContent build path uses the default
@@ -45,10 +45,10 @@ the mirror is gone and the source spelling is the export.
 
 `LibreMiddlewareConfigVersion.cmake` declares `SameMajorVersion`
 compatibility. A consumer requesting
-`find_package(LibreMiddleware 4.0 REQUIRED CONFIG)`:
+`find_package(LibreMiddleware 5.0 REQUIRED CONFIG)`:
 
-- accepts any installed `4.x.y`;
-- rejects `3.x.y` (older major) and `5.x.y` (newer major).
+- accepts any installed `5.x.y`;
+- rejects `4.x.y` (older major) and `6.x.y` (newer major).
 
 **This rule governs the source / CMake contract only.** It says which
 package a build is willing to compile and link against. It is not what
@@ -72,26 +72,39 @@ deriving it from the version:
 readelf -d libLibreSCRS_Plugin.so.* | grep SONAME
 ```
 
-Consequently the file name and the SONAME need not agree: a build whose
-`PROJECT_VERSION` is still `4.2.0` produces
-`libLibreSCRS_Plugin.so.4.2.0` with `SONAME libLibreSCRS_Plugin.so.5`
-once the shape has moved. That is the decoupling working as intended,
-not a packaging error.
+Consequently the file name and the SONAME need not agree. In this release
+they happen to — `libLibreSCRS_Plugin.so.5.0.0` carries
+`SONAME libLibreSCRS_Plugin.so.5` — only because the last layout break and
+the last major landed together. They part company whenever one moves
+without the other: a minor release that breaks layout keeps its file name
+inside the current major line and raises the SONAME, and a new major that
+breaks nothing moves the file name and leaves the SONAME where it is.
+Either shape is the decoupling working as intended, not a packaging error.
+
+Which releases each SONAME integer covers is recorded in exactly one place,
+the `LIBRESCRS_ABI_SOVERSION` cache entry in the top-level `CMakeLists.txt`.
+This document deliberately does not restate those numbers, so the two cannot
+drift apart.
 
 ## Consumer example
 
 `find_package(LibreMiddleware REQUIRED COMPONENTS Auth)` (per-component
 selection) is **not** supported — the package does not declare
 per-component found-variables. Always use the bare invocation and pick
-imported targets via `target_link_libraries`. Consumers that need a
-specific minor version pin can use the CMake 3.19+ `VERSION_RANGE` shape
-(`find_package(LibreMiddleware 4.1...<5.0 REQUIRED CONFIG)`).
+imported targets via `target_link_libraries`. Consumers that want to state
+both ends can use the CMake 3.19+ `VERSION_RANGE` shape
+(`find_package(LibreMiddleware 5.0...<6.0 REQUIRED CONFIG)`). The lower
+bound is a real floor and not a label: under `SameMajorVersion` a range
+whose low end is above the installed version is refused before the majors
+are compared at all, so `5.1...<6.0` against an installed 5.0.0 fails with
+`no configuration file compatible with requested version range`. Name a
+lower bound the release you build against actually reaches.
 
 ```cmake
 cmake_minimum_required(VERSION 3.24)
 project(my_consumer LANGUAGES CXX)
 
-find_package(LibreMiddleware 4.0 REQUIRED CONFIG)
+find_package(LibreMiddleware 5.0 REQUIRED CONFIG)
 
 add_executable(my_consumer main.cpp)
 target_compile_features(my_consumer PRIVATE cxx_std_23)
@@ -250,8 +263,9 @@ Linux distros with shared-library policies (Debian, Fedora, openSUSE,
 Arch) build LibreMiddleware with `LIBREMIDDLEWARE_BUILD_SHARED=ON` and
 ship:
 
-- `libLibreSCRS_<Component>.so.5` — runtime soname (in `lib/`), from
-  `LIBRESCRS_ABI_SOVERSION`, not from the release major
+- `libLibreSCRS_<Component>.so.<LIBRESCRS_ABI_SOVERSION>` — runtime soname
+  (in `lib/`). The integer is the cache entry's, not the release major's, so
+  read it off the artefact rather than deriving it from the version
 - `libLibreSCRS_<Component>.so.<PROJECT_VERSION>` — versioned binary (in
   `lib/`); the two numbers are independent, so do not assume the file
   name begins with the soname's integer
