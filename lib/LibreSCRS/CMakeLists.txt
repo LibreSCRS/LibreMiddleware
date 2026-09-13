@@ -191,7 +191,13 @@ target_compile_definitions(LibreSCRS_Certificate PRIVATE LIBRESCRS_BUILDING LIBR
 target_include_directories(LibreSCRS_Certificate PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
-target_include_directories(LibreSCRS_Certificate PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Certificate/internal)
+target_include_directories(LibreSCRS_Certificate PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/Certificate/internal
+    # The shared internal Crypto handle aliases, on the same terms as
+    # LibreSCRS_Trust above: header-only deleters, no link edge. The serial
+    # number reader used to own its own BIGNUM deleter, which is how a
+    # non-cleansing one lived here after the shared one was fixed.
+    ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include)
 target_compile_features(LibreSCRS_Certificate PUBLIC cxx_std_23)
 target_link_libraries(LibreSCRS_Certificate PRIVATE $<BUILD_INTERFACE:OpenSSL_Crypto>)
 set_target_properties(LibreSCRS_Certificate PROPERTIES POSITION_INDEPENDENT_CODE ON)

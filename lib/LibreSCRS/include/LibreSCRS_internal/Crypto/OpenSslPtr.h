@@ -84,11 +84,35 @@ struct EvpMdCtxDeleter
         EVP_MD_CTX_free(p);
     }
 };
+/// @brief Frees a BIGNUM, zeroing its limb buffer first.
+///
+/// Cleansing, for every BIGNUM this tree releases through a deleter and not
+/// only the secret ones, because it has already been through the other
+/// arrangement. PACE holds three secrets that exist ONLY as a BIGNUM -- the
+/// ephemeral private keys skMap and skAgree, the x-coordinate of the ECDH
+/// shared secret K, and the decrypted nonce s -- and @c CleanseGuard cannot
+/// reach any of them: it wipes @c std::vector, and the ephemeral private key
+/// has no vector copy at all. Plain @c BN_free hands the limb buffer back with
+/// the secret still in it, where a core dump, a swap page or the next
+/// allocation of that size can read it.
+///
+/// It was split once: a cleansing deleter in @c pace.cpp and a plain one here,
+/// for callers holding public values. A deduplication pass matched the two on
+/// their names, kept this body, and deleted the comment that said why the other
+/// existed -- so the split is not coming back. The cost of cleansing a public
+/// value was measured rather than argued: about 15 ns on a 512-byte modulus,
+/// against a free that costs ~680 ns.
+///
+/// @see ci/scripts/check-cleansing-deleters.sh, which fails if this call or
+///      this reason goes missing again, and if a BIGNUM anywhere in this tree
+///      is released through a deleter that does not cleanse -- written as a
+///      struct, a function pointer or a lambda -- outside the sites recorded
+///      in ci/cleansing-deleter-exceptions.txt.
 struct BnDeleter
 {
     void operator()(BIGNUM* p) const noexcept
     {
-        BN_free(p);
+        BN_clear_free(p);
     }
 };
 struct Pkcs7Deleter

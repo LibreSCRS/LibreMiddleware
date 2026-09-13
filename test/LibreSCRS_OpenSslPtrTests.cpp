@@ -23,12 +23,16 @@
 
 #include <gtest/gtest.h>
 
+#include <openssl/bn.h>
+#include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <openssl/pkcs7.h>
 #include <openssl/x509.h>
 
 #include <type_traits>
+#include <vector>
 
+using LibreSCRS::Internal::Crypto::BnPtr;
 using LibreSCRS::Internal::Crypto::EvpPkeyPtr;
 using LibreSCRS::Internal::Crypto::X509StackBorrowedDeleter;
 using LibreSCRS::Internal::Crypto::X509StackBorrowedPtr;
@@ -147,4 +151,85 @@ TEST(OpenSslStackPtr, Pkcs7SignersAreBorrowedFromTheirParent)
     ASSERT_NE(held, nullptr);
     EXPECT_EQ(sk_X509_num(held), 1);
     EXPECT_NE(X509_get_subject_name(sk_X509_value(held, 0)), nullptr);
+}
+
+namespace {
+
+constexpr int kProbeBytes = 64;
+constexpr int kWordBytes = 8;
+constexpr int kProbeWords = kProbeBytes / kWordBytes;
+constexpr unsigned char kPattern = 0xAB;
+
+// Builds a BIGNUM out of a known pattern, releases it through `release`, then
+// immediately asks the allocator for the same number of bytes and counts how
+// many whole words of the pattern are still readable there.
+//
+// This is a probe, not a proof: whether the allocator hands back the same chunk
+// is its business. The control leg below is what makes the probe honest -- if
+// plain BN_free leaves nothing either, the probe could not observe anything on
+// this platform and the case skips instead of passing.
+//
+// Whole words rather than bytes, because the allocator writes its own
+// bookkeeping into the head of a freed chunk and on glibc part of that is a
+// per-process random key. Counting bytes, one of those equalled the pattern in
+// 7 of 530 runs -- a red run in a hundred on a deleter that had wiped
+// everything. A random eight-byte word equal to the pattern has no such chance,
+// and the words the bookkeeping overwrites are lost to both legs alike.
+template <class Release>
+int survivingPatternWords(Release release)
+{
+    std::vector<unsigned char> pattern(kProbeBytes, kPattern);
+    BIGNUM* bn = BN_bin2bn(pattern.data(), kProbeBytes, nullptr);
+    if (bn == nullptr) {
+        return -1;
+    }
+    release(bn);
+
+    auto* reused = static_cast<unsigned char*>(OPENSSL_malloc(kProbeBytes));
+    if (reused == nullptr) {
+        return -1;
+    }
+    int surviving = 0;
+    for (int w = 0; w < kProbeWords; ++w) {
+        bool intact = true;
+        for (int i = 0; i < kWordBytes; ++i) {
+            intact = intact && reused[w * kWordBytes + i] == kPattern;
+        }
+        if (intact) {
+            ++surviving;
+        }
+    }
+    OPENSSL_free(reused);
+    return surviving;
+}
+
+} // namespace
+
+// PACE holds three secrets that exist ONLY as a BIGNUM -- the ephemeral private
+// keys skMap/skAgree, the x-coordinate of the ECDH shared secret K, and the
+// decrypted nonce s. CleanseGuard cannot reach any of them: it wipes
+// std::vector, and the ephemeral private key has no vector copy at all.
+//
+// So the deleter is the only thing standing between those bytes and a core
+// dump, a swap page, or the next allocation of the same size. This case drives
+// exactly that, against a control that proves the probe can see anything here.
+TEST(OpenSslBnPtr, DeleterZeroesTheLimbBufferBeforeReleasingIt)
+{
+    const int control = survivingPatternWords([](BIGNUM* p) { BN_free(p); });
+    ASSERT_GE(control, 0) << "allocation failed; nothing was measured";
+    if (control == 0) {
+        GTEST_SKIP() << "this allocator did not return the freed chunk, so the "
+                        "probe cannot observe cleansing either way";
+    }
+
+    const int throughDeleter = survivingPatternWords([](BIGNUM* p) { BnPtr guard(p); });
+    ASSERT_GE(throughDeleter, 0) << "allocation failed; nothing was measured";
+
+    EXPECT_EQ(throughDeleter, 0) << throughDeleter << " of " << kProbeWords
+                                 << " words of the secret stayed readable in the released heap after "
+                                    "BnPtr ran its deleter (plain BN_free left "
+                                 << control
+                                 << "). PACE ephemeral "
+                                    "private keys are freed through this deleter and nothing else wipes "
+                                    "them.";
 }

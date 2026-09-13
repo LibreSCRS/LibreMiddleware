@@ -58,7 +58,7 @@ struct BignumDeleter
 {
     void operator()(BIGNUM* p) const
     {
-        BN_free(p);
+        BN_clear_free(p);
     }
 };
 

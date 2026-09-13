@@ -246,9 +246,9 @@ std::vector<LibreSCRS::Pkcs11::Internal::PKCS11ObjectInfo> Pkcs15Slot::enumerate
                         const int baseId = EVP_PKEY_base_id(pkey.get());
                         if (baseId == EVP_PKEY_RSA) {
                             // rsaModulus.resize() may throw std::bad_alloc; BnPtr
-                            // guarantees BN_free runs on unwind. Prior raw-owning
-                            // code leaked the BIGNUM `n` plus the enclosing pkey
-                            // and x509 on the throw path.
+                            // guarantees the cleansing deleter runs on unwind.
+                            // Prior raw-owning code leaked the BIGNUM `n` plus
+                            // the enclosing pkey and x509 on the throw path.
                             BIGNUM* nRaw = nullptr;
                             if (EVP_PKEY_get_bn_param(pkey.get(), "n", &nRaw) == 1 && nRaw) {
                                 BnPtr n(nRaw);

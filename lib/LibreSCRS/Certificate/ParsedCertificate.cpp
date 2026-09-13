@@ -8,6 +8,8 @@
 
 #include <LibreSCRS/Auth/ErrorKeys.h>
 
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+
 #include <openssl/asn1.h>
 #include <openssl/bio.h>
 #include <openssl/bn.h>
@@ -276,7 +278,7 @@ std::vector<std::uint8_t> ParsedCertificate::serialNumber() const
     const ASN1_INTEGER* sn = X509_get0_serialNumber(d->x509.get());
     if (!sn)
         return {};
-    std::unique_ptr<BIGNUM, decltype(&BN_free)> bn(ASN1_INTEGER_to_BN(sn, nullptr), BN_free);
+    Internal::Crypto::BnPtr bn(ASN1_INTEGER_to_BN(sn, nullptr));
     if (!bn)
         return {};
     int len = BN_num_bytes(bn.get());

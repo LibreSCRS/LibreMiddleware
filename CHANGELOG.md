@@ -192,6 +192,13 @@ Notable user-visible changes per release. Format follows
 
 ### Fixed
 
+- **PACE key material is zeroed when it is released again.** The ephemeral
+  private keys, the x-coordinate of the ECDH shared secret and the decrypted
+  nonce exist only as OpenSSL `BIGNUM`s, and their deleter had stopped wiping
+  the limb buffer before handing it back — so those bytes stayed readable in a
+  core dump, in swap, or in the next allocation of that size. A measurement on
+  this release's OpenSSL: 48 of 64 secret bytes survived a release, and none do
+  now. Restores hardening that shipped in 4.1.0.
 - **PDFs carrying a leading wrapper are no longer refused up front.** The
   fail-fast input check demanded the `%PDF-` header at the very first
   byte, while the PAdES engine itself accepts it anywhere in the first
