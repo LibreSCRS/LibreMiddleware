@@ -25,8 +25,8 @@
 # step is dropped the release publishes no tarball, every gate here stays
 # green, and the recipe's `source=` 404s for everyone at the next tag. The
 # wiring check does not see it either: reachability there is TRANSITIVE, and
-# make-source-tarball.sh is named in code by the recipe check and by the
-# determinism check, so it counts as wired even when no workflow names it at
+# make-source-tarball.sh is named in code by the recipe check and by this
+# script itself, so it counts as wired even when no workflow names it at
 # all (measured -- deleting the whole job left that check green). Dropping
 # only the upload step is the quieter half of the same hole: the run step
 # that builds the tarball is untouched, so a check that only asked whether

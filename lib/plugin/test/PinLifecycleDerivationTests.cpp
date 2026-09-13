@@ -474,11 +474,10 @@ TEST(ResolveUnblockApdu, UnblockAndChangeSendsNewPinOnlyWhenCallerSuppliesOne)
 // ---------------------------------------------------------------------------
 // resolveTransportChangeApdu: the CHANGE REFERENCE DATA P1
 // + on-wire data-shape decision extracted from pkcs15-plugin's
-// activateTransportPin override, up front this time (following the
-// resolveUnblockApdu precedent immediately above rather than needing a
-// review round to arrive at it). Pure function over its arguments — no
-// FamilyQuirks lookup involved beyond the raw P1 byte the caller passes in,
-// so these tests exercise arbitrary P1 values directly, exactly like
+// activateTransportPin override, following the resolveUnblockApdu precedent
+// immediately above. Pure function over its arguments — no FamilyQuirks
+// lookup involved beyond the raw P1 byte the caller passes in, so these
+// tests exercise arbitrary P1 values directly, exactly like
 // resolveUnblockApdu's tests exercise arbitrary rrcP1 rows via a synthetic
 // quirk row.
 // ---------------------------------------------------------------------------

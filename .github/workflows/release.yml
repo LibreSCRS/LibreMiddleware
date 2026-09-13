@@ -282,10 +282,9 @@ jobs:
     # not ours to assert; this one comes from a clone with --recurse-submodules
     # and is byte-identical run to run, so the sha256sums line in
     # packaging/arch/PKGBUILD becomes a claim about bytes this project made.
-    # That property is measured on every push in the components whose clone is
-    # purely local. It is NOT measured here, and this repository does not carry
-    # the check at all: the script cannot run without reaching github.com for
-    # the two submodule trees -- with the network blocked it aborts on the
+    # That property is NOT measured here, and this repository does not carry
+    # a check for it at all: the script cannot run without reaching github.com
+    # for the two submodule trees -- with the network blocked it aborts on the
     # first of them -- and a determinism check needs two runs of it, so a
     # per-push job would depend twice on somebody else's server being up.
     # A gate that goes red for a reason outside this repository teaches people
@@ -293,8 +292,8 @@ jobs:
     #
     # It runs after the signature check for the same reason every other job
     # does: nothing is built for a tag whose signature has not been proved.
-    # Higher than the sibling components' 20 because this checkout is the only
-    # one here that pulls submodules over the network -- the vendored OpenSC and
+    # Thirty minutes rather than a tighter bound because this checkout pulls
+    # its two submodule trees over the network -- the vendored OpenSC and
     # curl trees. This job has never run: it is new, and the workflow it lives in
     # only runs on a tag, so the first honest measurement of it is the first tag.
     # The bound exists so an unmeasured job cannot hold a runner for six hours.

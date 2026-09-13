@@ -24,9 +24,7 @@ jobs:
       # still a placeholder would outlive the release it waits for and no run
       # would ever say so. This checkout already asks for the whole history,
       # which carries the tags with it; the flag is here so the arm survives
-      # someone shortening the fetch later, and so this block reads the same as
-      # the sibling components', where the checkout WAS shallow and that arm
-      # really could not fire.
+      # someone shortening the fetch later.
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -90,7 +88,7 @@ jobs:
       - name: Every shipped gate is wired into CI
         # A gate nobody runs is not a gate: dup-scan.py and canonical-types.py
         # shipped here, self-tested and green, while no workflow in this
-        # repository named either.
+        # repository named either until this step arrived.
         run: ci/scripts/check-gates-wired.sh
 
       - name: Gate-wiring check self-test
