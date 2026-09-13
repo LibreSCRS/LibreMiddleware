@@ -48,7 +48,7 @@ jobs:
         # -print0/-0 for paths with spaces, a parenthesised extension filter so
         # the -o cannot swallow the directory list, and -r because without it an
         # empty result makes clang-format read stdin and hang rather than fail.
-        # One wedged job in this project cost most of a working afternoon.
+        # A wedged job in this project once held a runner until it was cancelled by hand.
         run: |
           mapfile -t dirs < <(grep -v '^#' ci/format-dirs.txt)
           find "${dirs[@]}" \

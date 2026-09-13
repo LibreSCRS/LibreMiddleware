@@ -22,7 +22,7 @@ namespace healthcard {
 // real card class walks straight into that corner: an insurant who is their
 // OWN insurance carrier has every carrier field empty, so the carrier
 // group's first value is empty and the whole read died on the throw
-// (Leg-7 bench catch, 2026-08-17). A group with no surviving fields is not
+// (caught on the hardware bench). A group with no surviving fields is not
 // emitted at all — an empty section is nothing to render.
 [[nodiscard]] inline LibreSCRS::Plugin::CardData buildHealthGroups(const HealthDocumentData& doc)
 {

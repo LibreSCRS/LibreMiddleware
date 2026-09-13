@@ -35,10 +35,10 @@
 # the reader has to edit.
 #
 # Deliberately not a YAML-library parse, for the same reason as
-# check-job-timeouts.sh: sibling repositories build inside containers that
-# would need an extra package for that, and the indentation is exact enough for
-# the distinctions that matter -- a job key is two spaces, its own keys four,
-# its steps six.
+# check-job-timeouts.sh: a job that runs inside a minimal container would need
+# an extra package for that, and the indentation is exact enough for the
+# distinctions that matter -- a job key is two spaces, its own keys four, its
+# steps six.
 #
 # Threat model. This reads workflow TEXT, so it guards against the honest
 # regression: someone adds a consumer job, or drops a producer, writing the

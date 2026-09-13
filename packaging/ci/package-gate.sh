@@ -145,10 +145,10 @@ check "G2 build ($BUILDLOG)" $rc
 [ "$rc" -eq 0 ] || { tail -n 30 "$BUILDLOG"; }
 
 # Anything this repository alone has to assert about its own build lives in a
-# hook next to the fix it guards, not in this shared text. A repository-specific
-# assertion carried in a file that is copied into five repositories reads, to
-# anything counting where a gate lives, as a gate duplicated into four
-# repositories that do not own it.
+# hook next to the fix it guards, not in this shared text. This file is kept
+# identical in every repository that ships it, so a repository-specific
+# assertion carried here would read, to anything counting where a gate lives,
+# as a gate duplicated into repositories that do not own it.
 if [ -x "$REPO_ROOT/packaging/ci/extra-build-checks.sh" ] && [ "$rc" -eq 0 ]; then
   BUILDLOG="$BUILDLOG" SRC="$SRC" OUT="$OUT" FAMILY="$FAMILY" \
     bash "$REPO_ROOT/packaging/ci/extra-build-checks.sh"

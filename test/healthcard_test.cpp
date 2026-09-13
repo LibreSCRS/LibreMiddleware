@@ -79,7 +79,7 @@ std::vector<uint8_t> asciiBytes(const std::string& s)
 
 TEST(HealthGroups, SelfCarrierDocumentBuildsWithoutCarrierOrTaxpayerGroups)
 {
-    // The Leg-7 bench catch (2026-08-17): an insurant who is their OWN
+    // Caught on the hardware bench: an insurant who is their OWN
     // insurance carrier has every carrier field empty, so the carrier
     // group's FIRST addText call carried an empty value — the documented
     // CardFieldGroup::addText corner (std::logic_error: no reference to
