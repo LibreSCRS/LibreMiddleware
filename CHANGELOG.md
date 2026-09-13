@@ -7,6 +7,19 @@ Notable user-visible changes per release. Format follows
 
 ### Added
 
+- **Every release carries a source tarball this project built**, cosigned and
+  listed in the signed `SHA256SUMS` manifest like every other asset — so the
+  manifest a release publishes is larger than it was. The Arch recipe fetches
+  that asset instead of the archive GitHub generates for a tag: the generated
+  one omits every submodule tree, and its bytes are not ours to assert, so the
+  recipe's `sha256sums` line said nothing about what was actually built. The
+  published tarball is a function of the commit — every member carries the
+  commit's own timestamp, owner `0/0` and a mode no umask can widen — so a
+  packager who rebuilds it gets the same bytes back, up to the gzip
+  implementation. It is named so that one file can serve as the `.orig` for
+  `dpkg-source`; the `deb` and `rpm` builds still build from the checkout and
+  do not consume it yet.
+
 - **Debian and RPM packages, built by the project.** `deb` packages for Debian
   13 and Ubuntu 26.04 LTS and `rpm` packages for Fedora 43, built in the target
   distribution's own container and installed with one command. The middleware
@@ -15,6 +28,16 @@ Notable user-visible changes per release. Format follows
   the p11-kit registration file — which is what lets a machine choose between
   the direct PKCS#11 module and the agent proxy without ending up with two
   providers for one card.
+
+  **Each published file names the distribution it was built for.** Release
+  assets are `<package>.<distribution>.<deb|rpm>`: the runtime library package
+  arrives as `liblibrescrs5_5.0.0-1_amd64.debian13.deb`, not as
+  `liblibrescrs5_5.0.0-1_amd64.deb`. The source changelog carries no
+  distribution suffix, so Debian 13 and Ubuntu 26.04 build byte-different files
+  under identical names; without the slug one of the two would quietly replace
+  the other on the release, with nothing afterwards to say which one survived.
+  A consumer fetching packages from a release therefore has to match on that
+  slug rather than on the extension alone.
 
   **Which distributions, and why not the others.** The bundled OpenSSL archive
   contains x86_64 objects only and references symbols that appear in glibc 2.38,

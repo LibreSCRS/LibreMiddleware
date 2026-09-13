@@ -5,12 +5,31 @@ on:
   push:
     tags:
       - '[0-9]+.[0-9]+.[0-9]+*'
+  # Rehearsal path. A maintainer can start this workflow from the Actions tab
+  # (Run workflow -> pick the ref) to exercise the whole chain, packages and
+  # release notes included, without publishing anything: github.ref_name is the
+  # tag name on that path too, so every step behaves exactly as it does on a tag
+  # push -- except publication, because a rehearsal creates a DRAFT unless the
+  # maintainer explicitly flips dry_run off.
+  #
+  # What the rehearsal can be pointed at is narrower than it looks, and worth
+  # stating because all three limits are silent. A dispatch runs the workflow
+  # file AS IT EXISTS AT THE CHOSEN REF, so a tag cut before this file landed
+  # rehearses its own older chain and says nothing about this one. The first job
+  # verifies a signature over the ref, so a branch, which carries no tag
+  # signature, cannot be rehearsed. And `gh release create` refuses a tag that
+  # already has a release, draft or not. So the rehearsal is for a signed tag
+  # that carries this file and has not been released yet.
   workflow_dispatch:
     inputs:
       opensc_version:
         description: 'OpenSC version to build driver against (e.g. 0.26.1)'
         required: false
         default: '0.26.1'
+      dry_run:
+        description: 'Create the release as a draft (rehearsal)'
+        type: boolean
+        default: true
 
 env:
   OPENSC_VERSION: ${{ inputs.opensc_version || '0.26.1' }}
@@ -205,18 +224,175 @@ jobs:
         timeout-minutes: 30
         run: ctest --output-on-failure --test-dir build --no-tests=error
 
+  package:
+    # The binary artefacts this release publishes. Built here, in the release
+    # run, rather than fetched from the CI run of the same commit: a
+    # download-artifact without a run-id sees only its own run, and a release
+    # that reaches into another run depends on that run's retention window.
+    name: package (${{ matrix.slug }})
+    needs: verify-signature
+    runs-on: ubuntu-latest
+    # The push workflow measures the slowest image at about 45 minutes and
+    # bounds the same work at 112. A wedged container must not hold a release
+    # for six hours and refuse its log while it does.
+    timeout-minutes: 112
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - slug: debian13
+            image: debian@sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1
+          - slug: ubuntu2604
+            image: ubuntu@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b
+          - slug: fedora43
+            image: fedora@sha256:a651ddf48ea28a06ed4e1e6519f51c9f47e7a5a138722ade87369b8fbb7e5b42
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Check out the working tree as the gate will read it
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Gate
+        run: |
+          # set +e first: the default shell here is `bash -eo pipefail`, so a
+          # failing gate would end the step before its exit code could be read,
+          # and the echo below would be dead text pretending to be a measurement.
+          set +e
+          bash packaging/ci/package-gate.sh "${{ matrix.image }}" "$RUNNER_TEMP/librescrs-packages/out"
+          rc=$?
+          set -e
+          echo "PACKAGE_GATE_RC=$rc"
+          test "$rc" = 0
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.slug }}
+          path: ${{ runner.temp }}/librescrs-packages/out/${{ matrix.slug }}/**
+          # The push workflow uploads on failure too, with a warning, to keep
+          # the evidence. A release must not: an empty upload is how a release
+          # publishes an empty SHA256SUMS and calls it signed.
+          if-no-files-found: error
+
+  source-tarball:
+    # The source tarball is produced by this project, not by GitHub. GitHub's
+    # archive/refs/tags tarball omits every submodule tree and its bytes are
+    # not ours to assert; this one comes from a clone with --recurse-submodules
+    # and is byte-identical run to run, so the sha256sums line in
+    # packaging/arch/PKGBUILD becomes a claim about bytes this project made.
+    # That property is measured on every push in the components whose clone is
+    # purely local. It is NOT measured here, and this repository does not carry
+    # the check at all: the script cannot run without reaching github.com for
+    # the two submodule trees -- with the network blocked it aborts on the
+    # first of them -- and a check needs two runs of it, measured at 28 s each,
+    # so a per-push job would depend twice on somebody else's server being up.
+    # A gate that goes red for a reason outside this repository teaches people
+    # to ignore red.
+    #
+    # It runs after the signature check for the same reason every other job
+    # does: nothing is built for a tag whose signature has not been proved.
+    # Higher than the sibling components' 20 because this checkout is the only
+    # one here that pulls submodules over the network -- the vendored OpenSC and
+    # curl trees. This job has never run: it is new, and the workflow it lives in
+    # only runs on a tag, so the first honest measurement of it is the first tag.
+    # The bound exists so an unmeasured job cannot hold a runner for six hours.
+    timeout-minutes: 30
+    needs: verify-signature
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Build the source tarball
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/srctar"
+          ci/scripts/make-source-tarball.sh "$RUNNER_TEMP/srctar"
+          ls -l "$RUNNER_TEMP/srctar"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-tarball
+          path: ${{ runner.temp }}/srctar/*.orig.tar.gz
+          # An empty upload here would make the release job publish a release
+          # with no source at all, and the recipe's source= URL would 404 for
+          # everyone. Fail where it is cheap.
+          if-no-files-found: error
+
   release:
     timeout-minutes: 20
-    needs: [test-linux, shared-linux, test-macos]
+    needs: [test-linux, shared-linux, test-macos, package, source-tarball]
     runs-on: ubuntu-latest
     permissions:
       contents: write
       id-token: write
     steps:
       - uses: actions/download-artifact@v4
+        # Deliberately NOT merge-multiple. Debian 13 and Ubuntu 26.04 build
+        # .deb files with identical names, and merging lets the second
+        # overwrite the first with no error and no way to tell afterwards
+        # which distribution the published file came from. Each artefact stays
+        # in its own directory and the next step puts the slug in the name.
         with:
-          pattern: '*'
-          merge-multiple: true
+          pattern: 'packages-*'
+          path: artifacts-raw
+
+      - name: Flatten the packages into one asset set, refusing a name collision
+        # The slug goes into the asset name, which is also what lets a
+        # downstream `gh release download --pattern` ask for the build made for
+        # its own distribution.
+        #
+        # Only .deb and .rpm are published: the .changes and .buildinfo files
+        # beside them name the packages by their pre-rename names, so shipping
+        # them would publish a manifest that does not match what is published.
+        # They stay behind as workflow artefacts, and this step prints every
+        # file it did not take rather than dropping them silently.
+        #
+        # The count is asserted, not merely printed. download-artifact succeeds
+        # on an empty match and does not create its target directory, so
+        # without this the job either dies four steps later against a path that
+        # does not exist, or publishes a signed SHA256SUMS over nothing.
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          shopt -s nullglob
+          for d in artifacts-raw/packages-*; do
+              slug="${d##*/packages-}"
+              while IFS= read -r f; do
+                  base="$(basename "$f")"
+                  name="${base%.*}.${slug}.${base##*.}"
+                  if [ -e "artifacts/$name" ]; then
+                      echo "::error::two artefacts want the same asset name: $name"
+                      exit 1
+                  fi
+                  mv "$f" "artifacts/$name"
+              done < <(find "$d" -type f \( -name '*.deb' -o -name '*.rpm' \) | sort)
+              find "$d" -type f | sort | sed "s|^|  not published: |"
+          done
+          n="$(find artifacts -type f | wc -l)"
+          echo "RELEASE_ARTEFACT_COUNT=$n"
+          if [ "$n" -eq 0 ]; then
+              echo "::error::no packages arrived -- a release published now would carry a signed SHA256SUMS over nothing"
+              exit 1
+          fi
+          ls -1 artifacts
+
+      - name: Fetch the source tarball this release publishes
+        # Downloaded after the step above, not with the packages: that step
+        # refuses a release when `artifacts` holds nothing, and a tarball
+        # sitting there already would answer that question for it. From here on
+        # the tarball is one more asset -- cosigned, listed in SHA256SUMS and
+        # published -- which is what makes the recipe's sha256sums a claim
+        # about bytes this project produced.
+        uses: actions/download-artifact@v4
+        with:
+          name: source-tarball
           path: artifacts
 
       - name: Install cosign
@@ -228,21 +404,26 @@ jobs:
             ! -name '*.sigstore.json' \
             -exec sh -c 'cosign sign-blob "$1" --bundle "$1.sigstore.json" --yes' _ {} \;
 
-      - name: Check out CHANGELOG
+      - name: Check out the source this release was cut from
         uses: actions/checkout@v4
         with:
-          sparse-checkout: |
-            CHANGELOG.md
-            VERSION
-            ci/scripts/check-release-lockstep.sh
-            ci/scripts/make-sbom.sh
-          sparse-checkout-cone-mode: false
-          # Check out into a SUBDIR. The root workspace already holds the
-          # downloaded + cosigned artifacts/, and actions/checkout wipes its
-          # target directory whenever there is no pre-existing .git there
-          # (clean:false does NOT suppress that path). Isolating the checkout
-          # in _changelog/ leaves artifacts/ untouched.
-          path: _changelog
+          # A FULL checkout, not a sparse list. make-sbom.sh reads its pins out
+          # of the tree -- packaging/arch/PKGBUILD, thirdparty/openssl-*,
+          # thirdparty/nlohmann, thirdparty/miniz -- so a sparse list is a
+          # second, hand-maintained copy of that input set, and it rots the
+          # moment the script grows an input. Measured: with the four-entry
+          # sparse list this step used to carry, the same script that reports
+          # 5 components against the tree reports 0 here, exits 0, and the
+          # release publishes a signed bill of materials naming nothing.
+          # Submodules are not needed: every pin the script reads is tracked
+          # in this repository.
+          #
+          # Into a SUBDIR. The root workspace already holds the downloaded and
+          # cosigned artifacts/, and actions/checkout wipes its target
+          # directory whenever there is no pre-existing .git there (clean:false
+          # does NOT suppress that path). Isolating it in _src/ leaves
+          # artifacts/ untouched.
+          path: _src
 
       - name: Prepare release notes from CHANGELOG
         # One extractor, in ci/scripts/check-release-lockstep.sh, shared with
@@ -257,8 +438,8 @@ jobs:
         # shell branch.
         run: |
           VER="${GITHUB_REF_NAME#v}"
-          export CHANGELOG_FILE=_changelog/CHANGELOG.md
-          if _changelog/ci/scripts/check-release-lockstep.sh --section "$VER" > "$RUNNER_TEMP/relnotes.md"; then
+          export CHANGELOG_FILE=_src/CHANGELOG.md
+          if _src/ci/scripts/check-release-lockstep.sh --section "$VER" > "$RUNNER_TEMP/relnotes.md"; then
             echo "NOTES_ARG=--notes-file $RUNNER_TEMP/relnotes.md" >> "$GITHUB_ENV"
           else
             echo "No CHANGELOG section for $VER — falling back to --generate-notes"
@@ -277,7 +458,11 @@ jobs:
         # then signed itself, so one signature covers the whole set.
         run: |
           set -euo pipefail
-          bash _changelog/ci/scripts/make-sbom.sh artifacts/sbom.cdx.json
+          bash _src/ci/scripts/make-sbom.sh artifacts/sbom.cdx.json
+          # Read back what was actually written, in the directory a consumer
+          # downloads. The producer knows what it looked for; this knows only
+          # what arrived, which is the half that was silent.
+          python3 _src/ci/scripts/check-sbom.py artifacts/sbom.cdx.json
           ( cd artifacts && sha256sum $(ls | grep -v '^SHA256SUMS$') > SHA256SUMS )
           cat artifacts/SHA256SUMS
           cosign sign-blob artifacts/sbom.cdx.json --bundle artifacts/sbom.cdx.json.sigstore.json --yes
@@ -302,6 +487,7 @@ jobs:
         # request that includes the assets, then exits.
         env:
           GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           # Mark X.Y.Z-{rc,beta,alpha,…} as pre-release; everything else
           # is a stable release.
@@ -309,12 +495,23 @@ jobs:
           case "${{ github.ref_name }}" in
               *-rc*|*-beta*|*-alpha*|*-pre*) PRERELEASE_FLAG="--prerelease" ;;
           esac
-          # --repo lets `gh` skip the .git autodetection — release job
-          # downloads artefacts but never checks out the repo, so there
-          # is no `.git` directory.
+          # A dispatch rehearsal publishes a DRAFT unless dry_run was
+          # explicitly turned off; a tag push never drafts. Without this the
+          # only way to exercise the chain is a tag that cannot be taken back.
+          DRAFT_FLAG=""
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$DRY_RUN" != "false" ]; then
+              DRAFT_FLAG="--draft"
+              echo "::notice::dry_run rehearsal -- creating a draft release"
+          fi
+          # --repo lets `gh` skip the .git autodetection -- the release job
+          # checks the source out into _src/, so the workspace root has no
+          # `.git` of its own. --verify-tag refuses to invent a tag if this
+          # ever runs against a ref that is not one.
           gh release create "${{ github.ref_name }}" \
               --repo "${{ github.repository }}" \
               --title "${{ github.ref_name }}" \
+              --verify-tag \
               $NOTES_ARG \
               $PRERELEASE_FLAG \
+              $DRAFT_FLAG \
               artifacts/*
