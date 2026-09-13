@@ -59,5 +59,31 @@ component() {  # component <name> <version> <purl> <licence>
   printf '\n  ]\n}\n'
 } > "$out"
 
-python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print('make-sbom: %d components' % len(d['components']))" "$out"
+# The count is ASSERTED, not merely printed. Every lookup above tolerates
+# absence by design, which is right for one missing pin and catastrophic for
+# all of them at once: a bill with no components is not a small bill, it is a
+# signed document stating that this artefact bundles nothing. A byte-identical
+# copy of this script shipped in four other repositories, each carrying at
+# most a fragment of this pin set -- one of them holds a QCBOR pin and would
+# have billed exactly that one component -- while the copy that was actually
+# wired into a release carried none of it: it printed "make-sbom: 0
+# components", exited 0, and the empty document it wrote was signed and
+# published beside the only downloadable binary of that release.
+python3 - "$out" <<'REFUSE_EMPTY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    doc = json.load(fh)
+n = len(doc["components"])
+print("make-sbom: %d components" % n)
+if n == 0:
+    print(
+        "make-sbom: ERROR: no components — this script reads pins from THIS "
+        "tree and found none. A bill of materials claiming an artefact "
+        "bundles nothing must not be published, let alone signed.",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+REFUSE_EMPTY
 echo "make-sbom: wrote $out"
