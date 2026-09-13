@@ -96,12 +96,12 @@ struct EvpMdCtxDeleter
 /// the secret still in it, where a core dump, a swap page or the next
 /// allocation of that size can read it.
 ///
-/// It was split once: a cleansing deleter in @c pace.cpp and a plain one here,
-/// for callers holding public values. A deduplication pass matched the two on
-/// their names, kept this body, and deleted the comment that said why the other
-/// existed -- so the split is not coming back. The cost of cleansing a public
-/// value was measured rather than argued: about 15 ns on a 512-byte modulus,
-/// against a free that costs ~680 ns.
+/// One deleter, not two, and it cleanses for every caller -- including the ones
+/// holding nothing secret. A second, plain deleter for public values saves a
+/// single @c OPENSSL_cleanse over the limb buffer, negligible beside the free it
+/// sits in front of, and buys a choice at every call site in exchange: two
+/// deleters that differ only in whether they wipe are one wrong pick away from
+/// handing a secret back intact, with no diagnostic anywhere.
 ///
 /// @see ci/scripts/check-cleansing-deleters.sh, which fails if this call or
 ///      this reason goes missing again, and if a BIGNUM anywhere in this tree

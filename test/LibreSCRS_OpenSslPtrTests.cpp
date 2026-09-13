@@ -171,10 +171,10 @@ constexpr unsigned char kPattern = 0xAB;
 //
 // Whole words rather than bytes, because the allocator writes its own
 // bookkeeping into the head of a freed chunk and on glibc part of that is a
-// per-process random key. Counting bytes, one of those equalled the pattern in
-// 7 of 530 runs -- a red run in a hundred on a deleter that had wiped
-// everything. A random eight-byte word equal to the pattern has no such chance,
-// and the words the bookkeeping overwrites are lost to both legs alike.
+// per-process random key. Counted a byte at a time, one byte of that key can
+// equal the pattern by chance and score as a survivor, turning a deleter that
+// wiped everything red at random. A random eight-byte word equal to the pattern
+// has no such chance, and the words the bookkeeping overwrites are lost alike.
 template <class Release>
 int survivingPatternWords(Release release)
 {
