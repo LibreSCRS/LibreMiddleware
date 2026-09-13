@@ -8,11 +8,11 @@
 #
 # Why this is not covered by anything else: check-version-floors.sh reads
 # VERSION and the sources, so it is green whatever the version derivation does;
-# the version-surface check configures with an EMPTY GIT_EXECUTABLE, which is
-# the tarball path and the one input under which a tag cannot win at all; and a
-# test that asserts the stamp is self-consistent (triple is a prefix of the full
-# string, not the 0.0.1 fallback) is satisfied by the wrong major exactly as by
-# the right one. The defect this measures shipped in a release-shaped tree with
+# configuring with an EMPTY GIT_EXECUTABLE measures the tarball path, which is
+# the one input under which a tag cannot win at all; and a test that asserts
+# the stamp is self-consistent (triple is a prefix of the full string, not the
+# 0.0.1 fallback) is satisfied by the wrong major exactly as by the right one.
+# The defect this measures shipped in a release-shaped tree with
 # all three of those green: VERSION, the changelog and the package metadata said
 # 5.0.0 while project(), the About window and the bundle keys said 4.2.0.
 #
