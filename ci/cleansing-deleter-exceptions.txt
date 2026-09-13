@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+#
+# Sites that release a BIGNUM through plain BN_free on purpose. One path:line
+# per entry, then the reason. check-cleansing-deleters.sh skips exactly those
+# lines in its fourth clause and fails on an entry whose file is untracked or
+# whose line no longer matches, so an amnesty cannot outlive the site it was
+# written for.
+#
+# The line number is half the entry. Excusing a path would hand the amnesty to
+# every deleter written in that file afterwards, and the ones written next are
+# the ones nobody has argued for. When the site moves the gate says so, and the
+# number is corrected in the same change that moved it.
+#
+# Keep this list at the length it is now. Every entry is a place the gate has
+# stopped measuring.
+test/LibreSCRS_OpenSslPtrTests.cpp:218  the control leg of the cleansing probe must call plain BN_free; it is what proves the probe can observe anything on this allocator, and without it a deleter that wiped nothing would pass
