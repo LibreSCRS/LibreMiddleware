@@ -75,8 +75,8 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
     add_link_options(-fexperimental-library)
 endif()
 
-# Verify std::expected is available on this toolchain before any 4.0
-# code that uses it compiles. Probe added per 2026-05-03 spec R1.
+# Verify std::expected is available on this toolchain before any code
+# that uses it compiles.
 try_compile(LIBRESCRS_HAS_STD_EXPECTED
     SOURCE_FROM_FILE check-std-expected.cpp ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check-std-expected.cpp
     CXX_STANDARD 23
@@ -84,7 +84,7 @@ try_compile(LIBRESCRS_HAS_STD_EXPECTED
 if(NOT LIBRESCRS_HAS_STD_EXPECTED)
     message(FATAL_ERROR
         "std::expected is not available on this toolchain. "
-        "LibreMiddleware 4.0 requires C++23 with <expected>. "
+        "LibreMiddleware requires C++23 with <expected>. "
         "Update GCC to 13+, Clang/libc++ to 16+, or AppleClang to 16+.")
 endif()
 
@@ -373,12 +373,12 @@ endif()
 # plus the namespaced Targets.cmake exported in lib/LibreSCRS/CMakeLists.txt
 # (`install(EXPORT LibreMiddlewareTargets …)`) so downstream consumers can:
 #
-#   find_package(LibreMiddleware 4.0 REQUIRED CONFIG)
+#   find_package(LibreMiddleware 5.0 REQUIRED CONFIG)
 #   target_link_libraries(my_target PRIVATE LibreSCRS::SmartCard …)
 #
-# Compatibility policy: SameMajorVersion. A consumer requesting 4.x.y is
-# compatible iff the installed major is 4. 5.0 ABI break => consumers
-# must update to a 5.x release first.
+# Compatibility policy: SameMajorVersion. A consumer requesting 5.x.y is
+# compatible iff the installed major is 5. The 5.0 ABI break has already
+# happened: a 4.x floor cannot be satisfied by anything this tree installs.
 # ──────────────────────────────────────────────────────────────────────────
 if(LIBREMIDDLEWARE_BUILD_SHARED)
     include(GNUInstallDirs)
@@ -478,3 +478,50 @@ if(LIBREMIDDLEWARE_INSTALL_P11KIT_MODULE)
         DESTINATION "${CMAKE_INSTALL_DATADIR}/p11-kit/modules"
     )
 endif()
+
+# ──────────────────────────────────────────────────────────────────────────
+# Divergence gate: EMRTDCrypto's PRIVATE include list has a second consumer.
+#
+# fuzz/ compiles lib/emrtd-crypto/src/*.cpp into three instrumented harnesses,
+# because PRIVATE sanitizer flags do not arrive over a link, so it needs the
+# same include directories. That list was once a hand copy in two files; one
+# directory was added to the library only, and fuzz_emrtd_sod,
+# fuzz_emrtd_card_access and fuzz_emrtd_security_info stopped compiling. No
+# ordinary build saw it: LIBRESCRS_BUILD_FUZZ defaults to OFF.
+#
+# Both consumers now read cmake/EmrtdCryptoPrivateIncludes.cmake. This check
+# runs in every configure, fuzz on or off, and fails it when EMRTDCrypto's
+# INCLUDE_DIRECTORIES carries a directory that module does not name. That
+# property is all it reads: a directory that arrives through a link
+# dependency's INTERFACE is not in it, which is why fuzz/ names SmartCard_Impl
+# on the harness link line by hand. The fix is to add the directory to that
+# module -- not to delete this check. ci/scripts/emrtd-include-gate.selftest.sh
+# proves it fails.
+#
+# A directory-wide include_directories() -- a consumer's, set above an
+# add_subdirectory() or FetchContent of this project -- is inherited by every
+# target here, the harnesses included, so it is no drift: what this directory
+# carries is taken out before the comparison.
+# ──────────────────────────────────────────────────────────────────────────
+include(EmrtdCryptoPrivateIncludes)
+get_target_property(_librescrs_emrtd_inc EMRTDCrypto INCLUDE_DIRECTORIES)
+get_directory_property(_librescrs_emrtd_inherited INCLUDE_DIRECTORIES)
+if(_librescrs_emrtd_inc AND _librescrs_emrtd_inherited)
+    list(REMOVE_ITEM _librescrs_emrtd_inc ${_librescrs_emrtd_inherited})
+endif()
+if(_librescrs_emrtd_inc)
+    foreach(_librescrs_dir IN LISTS _librescrs_emrtd_inc)
+        if(NOT _librescrs_dir IN_LIST LIBRESCRS_EMRTD_CRYPTO_PRIVATE_INCLUDES)
+            message(FATAL_ERROR
+                "EMRTDCrypto include directory not declared in "
+                "cmake/EmrtdCryptoPrivateIncludes.cmake:\n    ${_librescrs_dir}\n"
+                "fuzz/ compiles the same translation units and reads that "
+                "module; adding a directory anywhere else silently breaks "
+                "fuzz_emrtd_sod, fuzz_emrtd_card_access and "
+                "fuzz_emrtd_security_info.")
+        endif()
+    endforeach()
+endif()
+unset(_librescrs_emrtd_inc)
+unset(_librescrs_emrtd_inherited)
+unset(_librescrs_dir)

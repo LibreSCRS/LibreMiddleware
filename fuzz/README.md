@@ -63,10 +63,18 @@ Local soak runs of an hour or more are recommended before any tag.
 2. Register the executable in `fuzz/CMakeLists.txt` with the same compile/link
    flags as the existing ones. If the code under test must be instrumented,
    list its source in the `add_executable` call rather than relying on the
-   library link, and copy that library's PRIVATE include directories and
-   compile definitions: PRIVATE settings do not arrive over the link. Confirm
-   it with `nm -u <target>.dir/**/<source>.cpp.o | grep -c asan_report`, which
-   must be non-zero.
+   library link, and take that library's PRIVATE include directories from a
+   `cmake/` module the library itself reads -- never a second hand-written
+   copy. PRIVATE settings do not arrive over the link, and a copy drifts: one
+   did, and three harnesses stopped compiling with nothing in an ordinary
+   build to say so. `EMRTDCrypto` shares its list through
+   `cmake/EmrtdCryptoPrivateIncludes.cmake`, and the top-level CMakeLists.txt
+   fails the configure if the target and that list disagree. Compile
+   definitions are still spelled out per target: the internal headers `#error`
+   on a missing `LIBRESCRS_INTERNAL_BUILD`, so that one fails loudly by
+   itself. Confirm instrumentation with
+   `nm -u <target>.dir/**/<source>.cpp.o | grep -c asan_report`, which must be
+   non-zero.
 3. Create `fuzz/corpus/<name>/` with hermetic seed inputs (real-world fixtures
    from `test/test-data/` or `test/fixtures/` plus a few small malformed
    examples).

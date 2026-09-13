@@ -145,17 +145,18 @@ target_link_libraries(fuzz_csca_master_list PRIVATE EMRTDCrypto)
 # without any sanitizer. A harness that only links them fuzzes uninstrumented
 # code, and a scalar read past the end of a buffer -- which is what these
 # walkers do on a hostile length -- is then not reported at all. The private
-# include directories and LIBRESCRS_INTERNAL_BUILD are copied from
-# lib/emrtd-crypto/CMakeLists.txt for the same reason: PRIVATE settings do not
-# arrive over the link. SmartCard_Impl is named on the link line for that same
-# reason: EMRTDCrypto links it PRIVATE, so the smartcard public include root and
-# the PC/SC interface it carries stop there, and apdu.h needs both.
+# include directories come from cmake/EmrtdCryptoPrivateIncludes.cmake, which
+# lib/emrtd-crypto/CMakeLists.txt reads too, for the same reason: PRIVATE
+# settings do not arrive over the link. That list used to be hand-copied here
+# and drifted; the top-level CMakeLists.txt now fails the configure if it and
+# EMRTDCrypto disagree. LIBRESCRS_INTERNAL_BUILD stays spelled out below: the
+# internal headers #error on its absence, so a missing one fails loudly at
+# compile time, which an include directory does not. SmartCard_Impl is named on
+# the link line because EMRTDCrypto links it PRIVATE, so the smartcard public
+# include root and the PC/SC interface it carries stop there, and apdu.h needs
+# both.
 # ---------------------------------------------------------------------------
-set(LIBRESCRS_FUZZ_EMRTD_INCLUDES
-    ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src
-    ${PROJECT_SOURCE_DIR}/lib/smartcard/src
-    ${PROJECT_SOURCE_DIR}/include
-    ${PROJECT_SOURCE_DIR}/lib/SecureChannel/include)
+include(EmrtdCryptoPrivateIncludes)
 
 # Harness: parseSOD — EF.SOD, walked before its signature is checked.
 add_executable(fuzz_emrtd_sod
@@ -165,7 +166,7 @@ target_compile_features(fuzz_emrtd_sod PRIVATE cxx_std_23)
 target_compile_options(fuzz_emrtd_sod PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_link_options(fuzz_emrtd_sod PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_compile_definitions(fuzz_emrtd_sod PRIVATE LIBRESCRS_INTERNAL_BUILD)
-target_include_directories(fuzz_emrtd_sod PRIVATE ${LIBRESCRS_FUZZ_EMRTD_INCLUDES})
+target_include_directories(fuzz_emrtd_sod PRIVATE ${LIBRESCRS_EMRTD_CRYPTO_PRIVATE_INCLUDES})
 target_link_libraries(fuzz_emrtd_sod PRIVATE EMRTDCrypto SmartCard_Impl LibreSCRS_SecureChannel)
 
 # Harness: parseCardAccess — EF.CardAccess, read over a plain channel.
@@ -176,7 +177,7 @@ target_compile_features(fuzz_emrtd_card_access PRIVATE cxx_std_23)
 target_compile_options(fuzz_emrtd_card_access PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_link_options(fuzz_emrtd_card_access PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_compile_definitions(fuzz_emrtd_card_access PRIVATE LIBRESCRS_INTERNAL_BUILD)
-target_include_directories(fuzz_emrtd_card_access PRIVATE ${LIBRESCRS_FUZZ_EMRTD_INCLUDES})
+target_include_directories(fuzz_emrtd_card_access PRIVATE ${LIBRESCRS_EMRTD_CRYPTO_PRIVATE_INCLUDES})
 target_link_libraries(fuzz_emrtd_card_access PRIVATE EMRTDCrypto SmartCard_Impl LibreSCRS_SecureChannel)
 
 # Harness: parseDG14 / parseDG15 — the security infos and the AA public key.
@@ -188,7 +189,7 @@ target_compile_features(fuzz_emrtd_security_info PRIVATE cxx_std_23)
 target_compile_options(fuzz_emrtd_security_info PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_link_options(fuzz_emrtd_security_info PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_compile_definitions(fuzz_emrtd_security_info PRIVATE LIBRESCRS_INTERNAL_BUILD)
-target_include_directories(fuzz_emrtd_security_info PRIVATE ${LIBRESCRS_FUZZ_EMRTD_INCLUDES})
+target_include_directories(fuzz_emrtd_security_info PRIVATE ${LIBRESCRS_EMRTD_CRYPTO_PRIVATE_INCLUDES})
 target_link_libraries(fuzz_emrtd_security_info PRIVATE EMRTDCrypto SmartCard_Impl LibreSCRS_SecureChannel)
 
 # ---------------------------------------------------------------------------

@@ -27,24 +27,11 @@ add_library(EMRTDCrypto STATIC
 
 target_compile_definitions(EMRTDCrypto PRIVATE LIBRESCRS_INTERNAL_BUILD)
 
+# fuzz/ compiles these same translation units into three instrumented
+# harnesses, so the list lives in one place both read.
+include(EmrtdCryptoPrivateIncludes)
 target_include_directories(EMRTDCrypto PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${PROJECT_SOURCE_DIR}/lib/smartcard/src
-    # SecureChannel public + internal headers —
-    # included via direct path rather than `LibreSCRS_SecureChannel` link to
-    # avoid a circular target dependency: LibreSCRS_SecureChannel privately
-    # links EMRTDCrypto for the BAC/PACE/CA protocol implementations. A
-    # static<->static cycle is permitted, but a SHARED LibreSCRS_SecureChannel
-    # cycle fails at generate time (LIBREMIDDLEWARE_BUILD_SHARED=ON / LibreKDE
-    # consumer mode). All downstream targets that link EMRTDCrypto also link
-    # LibreSCRS_SecureChannel directly, so no transitive surface is lost.
-    ${PROJECT_SOURCE_DIR}/include
-    ${PROJECT_SOURCE_DIR}/lib/SecureChannel/include
-    # The shared internal Crypto headers (CleanseGuard, OpenSslPtr). Four
-    # key-agreement paths in this library each wrote their own scope guard for
-    # wiping key material; the one they share now lives there, beside the other
-    # internal crypto RAII this repository already keeps in one place.
-    ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
+    ${LIBRESCRS_EMRTD_CRYPTO_PRIVATE_INCLUDES}
 )
 
 set_target_properties(EMRTDCrypto PROPERTIES POSITION_INDEPENDENT_CODE ON)
