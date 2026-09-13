@@ -18,10 +18,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # fetch-tags, deliberately. The recipe check run further down decides
+      # its last arm on whether the LOCAL clone holds refs/tags/<pkgver>: with
+      # a tagless checkout it prints SKIPPED forever, so a sha256sums that is
+      # still a placeholder would outlive the release it waits for and no run
+      # would ever say so. This checkout already asks for the whole history,
+      # which carries the tags with it; the flag is here so the arm survives
+      # someone shortening the fetch later, and so this block reads the same as
+      # the sibling components', where the checkout WAS shallow and that arm
+      # really could not fire.
       - uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Install clang-format-21
         run: |
@@ -53,6 +63,16 @@ jobs:
         # that passed. Costs a second and builds nothing.
         run: ./ci/scripts/check-skip-reasons.sh
 
+      - name: BIGNUM deleters cleanse, and say why
+        # PACE ephemeral private keys exist only as a BIGNUM and no CleanseGuard
+        # reaches them. This was fixed in 4.1.0 and silently undone by a
+        # deduplication pass that matched two deleters on their names. Checks
+        # the call and the recorded reason as two separate failures.
+        run: ./ci/scripts/check-cleansing-deleters.sh
+
+      - name: BIGNUM deleter gate can still tell red from green
+        run: ./ci/scripts/check-cleansing-deleters.selftest.sh
+
       - name: Changelog and version agree on the pending release
         # Run on every push with the version this tree is heading for, so the
         # agreement is proved weeks before the tag rather than first on a tag
@@ -66,6 +86,117 @@ jobs:
         # cannot even be named. This fails when a new job arrives without a
         # bound, which is the only moment the omission is cheap to fix.
         run: ci/scripts/check-job-timeouts.sh
+
+      - name: Every shipped gate is wired into CI
+        # A gate nobody runs is not a gate: dup-scan.py and canonical-types.py
+        # shipped in five repositories for a whole release cycle and no
+        # workflow ever named either.
+        run: ci/scripts/check-gates-wired.sh
+
+      - name: Gate-wiring check self-test
+        run: ci/scripts/check-gates-wired.selftest.sh
+
+      - name: Canonical declaration registry
+        # Single-checkout subset of the workspace scan. The cross-repository
+        # half -- duplicate bodies between two checkouts -- needs every tree
+        # side by side, which no single repository's CI has; this half is the
+        # part one repository can prove on its own.
+        run: python3 tools/canonical-types.py --repo "$(basename "$PWD")"
+
+      - name: Duplicate bodies (this checkout)
+        run: python3 tools/dup-scan.py --repo "$(basename "$PWD")"
+
+      - name: Every first-party version floor names the major in VERSION
+        # The 4.x sweep before 5.0 searched for the token `4.2`; the floor that
+        # mattered read `4.0`, in the only executable consumer the project
+        # ships, and survived. This measures the property instead: every
+        # first-party find_package/find_dependency floor must name the major
+        # the VERSION file names. It reads VERSION and never `git describe`, so
+        # it is decidable before a tag exists -- which is the whole window in
+        # which the mistake is cheap. --min 1 is the vacuum guard: a scan that
+        # matches nothing is unmeasured, not clean.
+        run: ci/scripts/check-version-floors.sh --min 1
+
+      - name: Prove the floor gate still fails when it should
+        # Instant, no build, every case two-sided. A gate nobody has seen fail
+        # is a line in a workflow file. The count is deliberately not written
+        # here: a number in a comment goes stale the first time the selftest
+        # grows, and the run itself already prints one line per case.
+        run: ./ci/scripts/check-version-floors.selftest.sh
+
+      - name: The version this tree stamps names the major in VERSION
+        # The floor gate reads VERSION and the sources, so it stays green
+        # whatever the version derivation does, and a check that configures
+        # with git switched off is measuring the one input under which a tag
+        # cannot win. Between code freeze and the tag `git describe` still
+        # answers with the PREVIOUS release, and a tree that lets it decide
+        # installs a package whose major contradicts its own VERSION, changelog
+        # and packaging. This configures the real CMakeLists against a stubbed
+        # tag, in both directions, and creates no tag anywhere.
+        run: ci/scripts/check-version-stamp.sh --verbose
+
+      - name: Prove the stamp gate still fails when it should
+        # Seven fixtures, no compiler, no build. Two of them are shapes that
+        # have really been written: the tag deciding unconditionally, and git
+        # being ignored altogether.
+        run: ./ci/scripts/check-version-stamp.selftest.sh
+
+      - name: Every artefact a release publishes has a producer in the same run
+        # release.yml downloaded artefacts that no job in that workflow
+        # uploaded. download-artifact succeeds on an empty match, so the
+        # failure surfaced four steps later as `find: 'artifacts': No such
+        # file or directory` -- on a tag, which is the one moment it cannot be
+        # taken back. This reads the pairing on every push instead.
+        run: ci/scripts/check-release-artifacts.sh
+
+      - name: The artefact-producer check can still fail
+        # A gate whose own failure path is never exercised is a gate on trust.
+        # Thirteen synthetic workflows: three a naive grep would pass, two
+        # that a check reading only the direct needs: line gets wrong the other
+        # way round, and two that a check reading the pairing per job rather
+        # than per artefact gets wrong.
+        run: ./ci/scripts/check-release-artifacts.selftest.sh
+
+      - name: The package matrix is the same in both workflows
+        # The three pinned images are written twice, because a job that calls a
+        # reusable workflow cannot carry timeout-minutes and the job-bound
+        # check requires one on every job. Two copies of a digest drift, and a
+        # release built on an image no push was ever tested against says
+        # nothing about it: the packages appear, every gate is green.
+        run: ci/scripts/check-package-matrix.sh
+
+      - name: The package-matrix check can still fail
+        run: ./ci/scripts/check-package-matrix.selftest.sh
+
+      - name: The bill-of-materials refusal can still fail
+        # The bill's producer runs in the release job and nowhere else, so its
+        # refusal to publish a document listing nothing first turns red on the
+        # one run that must not fail. check-sbom.py makes the same claim about
+        # the finished document, and these cases make it on every push: six
+        # shapes a bill can take while still being a file a release would sign.
+        run: ./ci/scripts/check-sbom.selftest.sh
+      - name: The Arch recipe fetches the tarball this project publishes
+        # Two scripts, because a gate nobody proves is a gate nobody trusts:
+        # the selftest perturbs the recipe -- and the tree around it -- and
+        # requires each refusal to name its own arm, then the gate runs over
+        # the committed recipe. It prints how many cases it ran, which is the
+        # only count that cannot go stale.
+        # Neither touches the network — `git ls-remote` against these SSH
+        # remotes hangs on a developer machine, and a gate that can hang is
+        # worse than one that can fail.
+        run: |
+          ./packaging/arch/check-recipe.selftest.sh
+          ./packaging/arch/check-recipe.sh
+
+      - name: Every uploaded artefact has someone to download it
+        # An artefact whose name no download step can match is built, kept for
+        # ninety days and dropped from the release without a word: the release
+        # simply carries one asset fewer. Names only -- whether the consumer is
+        # ordered after the producer is the needs question, which this
+        # repository answers only if it carries check-release-artifacts.sh.
+        run: |
+          ./ci/scripts/check-artifact-names.selftest.sh
+          ./ci/scripts/check-artifact-names.sh
 
   build-linux:
     # Two signing backends. `native` is the production path and carries the
@@ -162,6 +293,24 @@ jobs:
           # check measures a log that was never produced.
           set -o pipefail
           LC_ALL=C cmake --build build 2>&1 | tee build.log
+
+      - name: The warning floor is still reachable
+        # warning-gate.py judges the LOG, so a tree that has LOST compile units
+        # makes it refuse every full build and blame the build. This judges the
+        # configured graph instead, so the message names the stale number.
+        run: ./ci/scripts/check-warning-floor.sh build
+
+      - name: Warning-floor check self-test
+        run: ./ci/scripts/check-warning-floor.selftest.sh
+
+      - name: EMRTDCrypto include-list gate self-test
+        # The gate itself is the configure-time check at the end of the
+        # top-level CMakeLists.txt, so this job's own configure above already
+        # ran it. This proves it can fail: on a throw-away copy of the tracked
+        # tree, a directory added to the target outside the shared module
+        # fails the configure and a comment does not. One leg is enough.
+        if: matrix.release_gates
+        run: ./ci/scripts/emrtd-include-gate.selftest.sh
 
       - name: Check the warning baseline
         # Counted by the [-Wname] tag, never by the message text: diagnostics

@@ -65,8 +65,8 @@ def parse_registry(path: str):
     """Rows are ``name<TAB>canonical[<TAB>mirrors]``.
 
     ``name`` may carry a kind prefix: ``func:`` for a function, ``dup:`` for a
-    whole-file duplicate group that ``dup-scan.py`` reads and this gate skips.
-    No prefix means a type (class/struct/enum/union/alias).
+    whole-file duplicate group that the duplicate-body scanner reads and this
+    gate skips. No prefix means a type (class/struct/enum/union/alias).
     """
     rows = []
     with open(path, encoding="utf-8") as fh:
