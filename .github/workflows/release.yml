@@ -286,8 +286,8 @@ jobs:
     # purely local. It is NOT measured here, and this repository does not carry
     # the check at all: the script cannot run without reaching github.com for
     # the two submodule trees -- with the network blocked it aborts on the
-    # first of them -- and a check needs two runs of it, measured at 28 s each,
-    # so a per-push job would depend twice on somebody else's server being up.
+    # first of them -- and a determinism check needs two runs of it, so a
+    # per-push job would depend twice on somebody else's server being up.
     # A gate that goes red for a reason outside this repository teaches people
     # to ignore red.
     #

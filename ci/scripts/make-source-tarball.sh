@@ -78,8 +78,9 @@ mkdir -p "$outdir"
 
 # The excludes are anchored to the top directory. './.github' matched NOTHING:
 # tar's member names here are "<Repo>-<version>/.github/…", so the release
-# tarball shipped .github/ for as long as this script existed (measured: four
-# entries in a LibreKDE tarball).
+# tarball shipped .github/ for as long as this script existed. An exclude that
+# does not carry that prefix matches no member and says nothing about it, which
+# is the only way this one fails.
 #
 # `--sort=name` and everything below it are what make two runs produce the same
 # bytes. Without them the sum in sha256sums is a fact about one upload and
@@ -97,16 +98,16 @@ mkdir -p "$outdir"
 #    differed (two inside one second did not, which is why this survived);
 #  * owner and group were whoever ran it;
 #  * the MODE was the caller's umask. git clone honours it, tar records what it
-#    finds. Measured on this repository, same commit, same second: umask 022
-#    gave 5ea42da7... and umask 002 gave d2fc8326..., because one wrote
-#    drwxr-xr-x/-rw-r--r-- and the other drwxrwxr-x/-rw-rw-r--. A packager
-#    rebuilding the tarball to check the published sum would have concluded the
-#    asset had been tampered with. --mode normalises all three: 755 for
-#    anything executable or a directory, 644 for the rest. It reaches symlinks
-#    too, where the stored mode is a constant either way -- measured with GNU
-#    tar 1.35 on a fixture holding one: stored lrwxrwxrwx without --mode,
-#    lrwxr-xr-x with it. Neither is the umask, but only one of them is what
-#    this script writes, and that is the one the check accepts.
+#    finds, so one commit cloned twice under umask 022 and umask 002 gives two
+#    different sums: one writes drwxr-xr-x/-rw-r--r-- and the other
+#    drwxrwxr-x/-rw-rw-r--. A packager rebuilding the tarball to check the
+#    published sum would have concluded the asset had been tampered with.
+#    --mode normalises all three -- 755 for anything executable or a directory,
+#    644 for the rest -- and the two sums agree again. It reaches symlinks too,
+#    where the stored mode is a constant either way: GNU tar 1.35 stores
+#    lrwxrwxrwx without --mode and lrwxr-xr-x with it. Neither is the umask,
+#    but only one of them is what this script writes, and that is the one the
+#    check accepts.
 #
 # What remains outside this script's reach is the compressor: gzip -9 output is
 # a property of the gzip implementation, so the sum is reproducible for anyone

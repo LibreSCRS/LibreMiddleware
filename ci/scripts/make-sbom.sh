@@ -62,13 +62,14 @@ component() {  # component <name> <version> <purl> <licence>
 # The count is ASSERTED, not merely printed. Every lookup above tolerates
 # absence by design, which is right for one missing pin and catastrophic for
 # all of them at once: a bill with no components is not a small bill, it is a
-# signed document stating that this artefact bundles nothing. A byte-identical
-# copy of this script shipped in four other repositories, each carrying at
-# most a fragment of this pin set -- one of them holds a QCBOR pin and would
-# have billed exactly that one component -- while the copy that was actually
-# wired into a release carried none of it: it printed "make-sbom: 0
-# components", exited 0, and the empty document it wrote was signed and
-# published beside the only downloadable binary of that release.
+# signed document stating that this artefact bundles nothing. What it reads
+# here is six optional things -- an unpacked OpenSSL directory, two commit
+# hashes in the Arch recipe, a QCBOR pin in cmake/, and two in-tree header
+# libraries -- and the QCBOR arm already finds nothing here, which is the point:
+# every arm is allowed to come up empty, so nothing but this assertion stands
+# between a tree that has moved or renamed a pin and a bill printing
+# "make-sbom: 0 components", exiting 0, and being signed and published beside
+# the only downloadable binary of the release.
 python3 - "$out" <<'REFUSE_EMPTY'
 import json
 import sys

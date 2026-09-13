@@ -89,8 +89,8 @@ jobs:
 
       - name: Every shipped gate is wired into CI
         # A gate nobody runs is not a gate: dup-scan.py and canonical-types.py
-        # shipped in five repositories for a whole release cycle and no
-        # workflow ever named either.
+        # shipped here, self-tested and green, while no workflow in this
+        # repository named either.
         run: ci/scripts/check-gates-wired.sh
 
       - name: Gate-wiring check self-test

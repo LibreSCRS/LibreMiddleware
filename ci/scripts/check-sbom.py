@@ -9,11 +9,14 @@ download step that did not merge it. Neither of those says anything today.
 
 The two claims are deliberately made in two places. The producer runs against
 this tree and knows what it looked for; this runs against the release
-directory and knows only what a consumer will download. A byte-identical copy
-of that producer shipped in five repositories, most of which carry at most a
-fragment of the pins it reads; the copy that was wired into a release carried
-none of them, printed "0 components", exited 0, and the empty document was
-signed and published.
+directory and knows only what a consumer will download. Neither subsumes the
+other. The producer's every pin lookup tolerates absence, because not every
+tree bundles everything, so a tree that has moved or renamed all of them at
+once looks exactly like a tree that bundles nothing -- and without its refusal
+it would print "0 components", exit 0, and the empty document would be signed
+and published. And a bill the producer wrote correctly still reaches no release
+if the job that made it was dropped or its download never merged it, which is
+the half only a check over the release directory can see.
 
 What it reads is the document, not the job that produced it: the bill must
 parse, name CycloneDX, carry a non-empty components array, and every
