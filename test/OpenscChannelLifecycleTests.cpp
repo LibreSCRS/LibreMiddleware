@@ -377,6 +377,17 @@ struct DeferredSessionFixture
     std::shared_ptr<OpenSCSession> s;
 };
 
+/// The RAW branch of the same fixture: no PACE gate, so runUnderChannel takes
+/// no ActiveChannelHolder and (before this gate existed) took nothing at all.
+struct RawSessionFixture : DeferredSessionFixture
+{
+    RawSessionFixture()
+    {
+        s->requiresPace = false;
+        s->bound = true; // bind already done; fn is reached directly
+    }
+};
+
 } // namespace
 
 TEST(OpenscChannelRun, ActivationFailureWithoutLiveChannelIsCredentialsRequired)
@@ -396,6 +407,94 @@ TEST(OpenscChannelRun, ActivationFailureWithoutLiveChannelIsCredentialsRequired)
     // Activation failure with bound==true must NOT reset card state.
     EXPECT_TRUE(f.s->bound);
     EXPECT_NE(f.s->ctx, nullptr);
+}
+
+// The bridge opens its OWN PC/SC transaction per libopensc call whenever none
+// is held (OpenScBridgeLock.AcquiresOwnTransactionWhenNoneHeld proves exactly
+// that, and that behaviour is correct FOR THE BRIDGE). What was missing is an
+// outer owner on the raw branch, so two consecutive libopensc calls were two
+// consecutive PC/SC transactions with the card open to another process in
+// between. This asserts the property, not a proxy for it: inside fn the
+// connection reports a held transaction, and it is released by the time
+// runUnderChannel returns.
+TEST(OpenscChannelRun, RawBranchHoldsTheCardTransaction)
+{
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("ChannelTestReader");
+    RawSessionFixture f;
+
+    EXPECT_FALSE(f.conn.isTransactionHeld()) << "nothing held before the run";
+
+    bool heldInsideFn = false;
+    const ChannelRunReport report = LibreSCRS::OpenSc::runUnderChannel(
+        *session, *f.s, CancelToken{}, [&](OpenSCSession&) { heldInsideFn = f.conn.isTransactionHeld(); });
+
+    EXPECT_FALSE(report.activationFailed) << "the raw branch never activates a channel";
+    EXPECT_TRUE(report.ran) << "fn must have been reached";
+    EXPECT_TRUE(heldInsideFn) << "VERIFY and PSO must not be able to fall into two transactions";
+    // Only that nothing is left held. WHERE it was released -- on the channel
+    // holder's seam, before the teardown, rather than at function exit -- is
+    // not visible from out here and is measured by the next test.
+    EXPECT_FALSE(f.conn.isTransactionHeld()) << "nothing is left held after the run";
+}
+
+// That acquisition is the FIRST PC/SC touch of the operation and it sits
+// OUTSIDE the try that contains fn, so a card removed, reset or claimed
+// exclusively by another process makes SCardBeginTransaction fail and
+// CardTransaction's constructor throw PCSCError. That throw would leave a
+// dlopen'd plugin through the C ABI, which CardPlugin.h calls undefined
+// behaviour. The bridge's own sc_lock has always caught the identical failure
+// and returned SC_ERROR_READER, so losing the outer transaction must degrade
+// to exactly that per-call behaviour -- never to an escaping exception.
+TEST(OpenscChannelRun, RawTransactionFailureIsContainedNotPropagated)
+{
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("ChannelTestReader");
+    RawSessionFixture f;
+    f.conn.setDetachedTransactionFailure(SCARD_E_SHARING_VIOLATION);
+
+    bool heldInsideFn = false;
+    ChannelRunReport report;
+    ASSERT_NO_THROW(
+        report = LibreSCRS::OpenSc::runUnderChannel(*session, *f.s, CancelToken{},
+                                                    [&](OpenSCSession&) { heldInsideFn = f.conn.isTransactionHeld(); }))
+        << "no exception may cross the plugin ABI boundary";
+    EXPECT_TRUE(report.ran) << "the operation still runs; the bridge falls back to its own per-call transaction";
+    EXPECT_FALSE(heldInsideFn) << "the outer transaction was not acquired";
+    EXPECT_FALSE(f.conn.isTransactionHeld()) << "and nothing is left held behind it";
+}
+
+// The release has to land on the CHANNEL HOLDER'S seam, not merely somewhere
+// before the call returns. runWithChannelPtr tears the card state down AFTER
+// that seam -- a failed bind or a dead tunnel unbinds PKCS#15 and disconnects
+// the card -- and a transaction still held across that teardown is the
+// cross-process window this branch exists to close, held open at the worst
+// moment. isTransactionHeld() asked after the call cannot tell the two apart:
+// the local owner dies at function exit either way, so the flag reads false in
+// both. The flag is therefore sampled AT the release, from inside
+// endTransaction, and compared against a piece of state the teardown is about
+// to clear.
+TEST(OpenscChannelRun, RawTransactionIsReleasedBeforeCardStateReset)
+{
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("ChannelTestReader");
+    RawSessionFixture f;
+
+    bool observedRelease = false;
+    bool boundAtRelease = false;
+    f.conn.setDetachedTransactionReleaseObserver([&] {
+        observedRelease = true;
+        boundAtRelease = f.s->bound;
+    });
+
+    // A throwing fn is what drives the teardown: the exception is contained,
+    // the operation is reported as failed, and resetCardState() runs.
+    const ChannelRunReport report = LibreSCRS::OpenSc::runUnderChannel(
+        *session, *f.s, CancelToken{}, [](OpenSCSession&) { throw std::runtime_error("fn"); });
+
+    EXPECT_TRUE(report.ran) << "fn must have been reached";
+    EXPECT_TRUE(report.bindFailed) << "a throwing fn is reported as a failed operation";
+    EXPECT_FALSE(f.s->bound) << "so the teardown after the release seam really ran";
+    EXPECT_TRUE(observedRelease) << "the outer transaction was acquired and released";
+    EXPECT_TRUE(boundAtRelease) << "released BEFORE the teardown, on the seam the channel holder uses";
+    EXPECT_FALSE(f.conn.isTransactionHeld());
 }
 
 // The post-activation phase (bind + fn + verdict + teardown) is driven

@@ -8,7 +8,7 @@
 /// This translation unit is compiled into the build-tree-only
 /// @ref LibreSCRS_SmartCard_TestHelpers archive — it is never installed and
 /// never linked into any shipped @c libLibreSCRS_*.so. It holds the
-/// definitions of the four members that can ARM a seam:
+/// definitions of the six members that can ARM a seam:
 ///
 /// - @c setTransmitFilter / @c clearTransmitFilter — the typed-APDU filter,
 ///   also the diagnostic hook the build-tree @c card_mapper tool installs to
@@ -16,14 +16,25 @@
 /// - @c setDetachedRawResponder — the raw-byte responder that lets a test
 ///   play the card side of a live SM tunnel;
 /// - @c setDetachedAtr — the synthetic-ATR override for detached
-///   connections.
+///   connections;
+/// - @c setDetachedTransactionFailure — makes a detached
+///   @c beginTransaction() throw, so a caller that must contain that throw
+///   can be measured doing it;
+/// - @c setDetachedTransactionReleaseObserver — runs test code at the moment
+///   a detached @c endTransaction() takes effect, which is the only point at
+///   which the ORDER of a release against its caller's later work can be
+///   sampled.
 ///
-/// Production builds therefore carry none of the four in their dynamic
+/// Production builds therefore carry none of the six in their dynamic
 /// export set, so no shipped library offers a dlsym-reachable way to arm a
 /// seam. The members they write (@c transmitFilter, @c detachedRawResponder,
-/// @c detachedAtr) and the branches that read them stay in the production
+/// @c detachedAtr, @c detachedTransactionRv, @c detachedReleaseObserver) and
+/// the branches that read them
+/// stay in the production
 /// class: each branch is inert until a test arms it, and moving the members
-/// would change the class layout.
+/// would change the class layout. They are declared at the TAIL of that class
+/// for the same reason: appending grows it without moving a production offset
+/// that separately-packaged objects have already compiled in.
 ///
 /// Kept in @c pcsc_connection.cpp the definition did not stay private: that
 /// TU is compiled at default visibility into @c libSmartCard_Impl.a, and
@@ -46,6 +57,7 @@
 #include <pcsc_connection.h>
 
 #include <cstdint>
+#include <functional>
 #include <utility>
 #include <vector>
 
@@ -69,6 +81,16 @@ void PCSCConnection::setDetachedRawResponder(RawResponder responder)
 void PCSCConnection::setDetachedAtr(std::vector<uint8_t> atr)
 {
     detachedAtr = std::move(atr);
+}
+
+void PCSCConnection::setDetachedTransactionFailure(LONG rv)
+{
+    detachedTransactionRv = rv;
+}
+
+void PCSCConnection::setDetachedTransactionReleaseObserver(std::function<void()> observer)
+{
+    detachedReleaseObserver = std::move(observer);
 }
 
 } // namespace LibreSCRS::SmartCard::Internal

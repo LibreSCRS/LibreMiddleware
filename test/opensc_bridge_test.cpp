@@ -28,6 +28,11 @@ using LibreSCRS::SmartCard::Internal::PCSCConnection;
 // round-trip (sc_apdu_get_octets/set_resp <-> conn.transmitRaw) is exercised by
 // the HW integration test (opensc_fallback_integration_test.cpp).
 
+// This is the bridge's FALLBACK, not the shape a caller should reach it in:
+// with no outer owner, every libopensc call becomes its own PC/SC transaction.
+// runUnderChannel now takes one on the raw branch too, so production hits the
+// DefersToHolderTransaction case below; this stays green because the fallback
+// itself must keep working (a host that legitimately holds nothing).
 TEST(OpenScBridgeLock, AcquiresOwnTransactionWhenNoneHeld)
 {
     PCSCConnection conn(PCSCConnection::DetachedTag{}, "FakeReader0");

@@ -480,6 +480,10 @@ void PCSCConnection::beginTransaction()
     // so test-only holder acquisition through the CardTransaction RAII
     // wrapper works without a live reader.
     if (card == 0) {
+        // ...unless a test armed a failure through the detached seam: this is
+        // the only way to reach the throw below without hardware.
+        if (detachedTransactionRv != SCARD_S_SUCCESS)
+            throw PCSCError("SCardBeginTransaction failed", detachedTransactionRv);
         return;
     }
     LONG rv = SCardBeginTransaction(card);
@@ -498,6 +502,16 @@ void PCSCConnection::endTransaction() noexcept
 {
     // Detached test connection: no card handle to release (see beginTransaction).
     if (card == 0) {
+        // ...but a test may be watching for the moment of release, which is
+        // the only point at which the release ORDER is observable; see
+        // setDetachedTransactionReleaseObserver. The call is contained because
+        // this function is noexcept and the observer is arbitrary test code.
+        if (detachedReleaseObserver) {
+            try {
+                detachedReleaseObserver();
+            } catch (...) {
+            }
+        }
         return;
     }
     SCardEndTransaction(card, SCARD_LEAVE_CARD);

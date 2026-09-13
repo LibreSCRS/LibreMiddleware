@@ -122,6 +122,28 @@ public:
     // to short-circuit before any APDU reaches an un-rigged detached rig.
     void setDetachedAtr(std::vector<uint8_t> atr);
 
+    // Test-only transaction failure for DETACHED connections. beginTransaction()
+    // short-circuits on a detached connection (card == 0) and returns without
+    // touching the null handle, so the throwing branch it takes on real
+    // hardware -- removed card, reset card, reader unavailable, sharing
+    // violation -- is unreachable from any test, and a caller whose duty is to
+    // CONTAIN that throw has no way to prove that it does. Armed with a
+    // non-zero PC/SC status, a detached beginTransaction() throws PCSCError
+    // carrying it instead of returning. A production connection has card != 0,
+    // so the branch is never taken and the transaction path stays identical.
+    void setDetachedTransactionFailure(LONG rv);
+
+    // Test-only release observation for DETACHED connections. WHETHER a
+    // transaction is held is readable at any time through isTransactionHeld();
+    // WHEN it was released is not. An owner that holds one a statement too
+    // long -- across its caller's teardown, say -- looks identical afterwards,
+    // because the transaction is gone by the time the call returns either way,
+    // so an assertion made after the fact certifies nothing about the order.
+    // This runs the observer at the moment a detached endTransaction() takes
+    // effect, which is where the order can actually be sampled. A production
+    // connection has card != 0 and never reaches it.
+    void setDetachedTransactionReleaseObserver(std::function<void()> observer);
+
     // Low-level transmit that bypasses the TransmitFilter.
     // Used by SM layer to send already-wrapped APDUs without recursive filtering.
     APDUResponse transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen);
@@ -187,6 +209,15 @@ private:
     SCARDHANDLE card = 0;
     DWORD activeProtocol = 0;
     bool callerHoldsTransaction = false;
+    // Test-only members go at the TAIL. This class is not installed, but it is
+    // opted into by include path from several separately-packaged shared
+    // objects, and isTransactionHeld() and the whole of CardTransaction are
+    // header-inline, so every one of them compiles these offsets in for itself.
+    // Appending keeps a new member additive: the class grows, no existing
+    // offset moves, and objects built against either revision agree about
+    // where the production state lives.
+    LONG detachedTransactionRv = SCARD_S_SUCCESS;
+    std::function<void()> detachedReleaseObserver;
     friend class CardTransaction;
     friend class ::LibreSCRS::SmartCard::CardSession;
 };

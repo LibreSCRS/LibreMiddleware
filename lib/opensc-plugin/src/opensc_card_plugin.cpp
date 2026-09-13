@@ -327,6 +327,19 @@ ChannelRunReport runUnderChannel(LibreSCRS::SmartCard::CardSession& cardSession,
         opLock.lock();
 
     std::optional<LibreSCRS::SmartCard::ActiveChannelHolder> holder;
+    // The raw (non-PACE) branch held no transaction of ANY kind, so libopensc's
+    // own sc_lock opened and closed one PER libopensc call through the bridge
+    // (librescrs_opensc_bridge_lock begins its own only when none is held).
+    // Between two of those the SCARD_SHARE_SHARED connection is open to another
+    // process's SELECT, and on PIV every lock re-runs the driver's
+    // lock-obtained hook, which force-re-reads the Discovery Object -- an
+    // intervening APDU that clears card-side auth state. One transaction for
+    // the whole operation makes the bridge DEFER instead, so bind, that
+    // Discovery read and the PSO ride one uninterrupted transaction.
+    //
+    // This does NOT span a CALLER's separate verifyPIN call; that gap is a
+    // host-side contract and is still open.
+    std::optional<LibreSCRS::SmartCard::Internal::CardTransaction> rawTxn;
     LibreSCRS::SecureChannel::ISecureChannel* channel = nullptr;
     if (s.requiresPace) {
         // Ride the protocol that already holds a live SM tunnel on this
@@ -350,8 +363,28 @@ ChannelRunReport runUnderChannel(LibreSCRS::SmartCard::CardSession& cardSession,
         }
         holder.emplace(std::move(*holderResult));
         channel = HolderChannelAccessor::channel(*holder);
+    } else if (s.bridge && s.bridge->data.conn && !s.bridge->data.conn->isTransactionHeld()) {
+        // Guarded on isTransactionHeld(): CardTransaction is not re-entrant and
+        // an outer owner (a host that already took one) must not be nested.
+        try {
+            rawTxn.emplace(*s.bridge->data.conn);
+        } catch (...) {
+            // SCardBeginTransaction fails on a removed or reset card, an
+            // unavailable reader and an exclusive claim by another process,
+            // and CardTransaction reports that by throwing. This acquisition
+            // is the operation's FIRST PC/SC touch and sits outside the try
+            // that contains fn, so an escaping exception would leave a dlopen'd
+            // plugin through the C ABI -- undefined behaviour (CardPlugin.h).
+            // Degrade instead to what this branch did before it took an outer
+            // transaction: librescrs_opensc_bridge_lock meets the same failure
+            // on the next libopensc call and returns SC_ERROR_READER, which the
+            // caller already maps to a communication error.
+        }
     }
-    return runWithChannelPtr(s, channel, token, fn, [&holder]() { holder.reset(); });
+    return runWithChannelPtr(s, channel, token, fn, [&holder, &rawTxn]() {
+        holder.reset();
+        rawTxn.reset();
+    });
 }
 
 // -- Activation-error vocabulary (declared in opensc_session.h) -------------
