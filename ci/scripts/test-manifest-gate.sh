@@ -74,7 +74,7 @@ fi
 
 sed -nE 's/^ *Test +#[0-9]+: +//p' "$raw" | sort > "$listing"
 
-count=$(wc -l < "$listing")
+count=$(wc -l < "$listing" | tr -d "[:space:]")   # BSD wc pads; see below
 if [ "$count" -eq 0 ]; then
     echo "FATAL: ctest -N discovered no tests in '$BUILD_DIR' — this is a build that did not happen, not a test set" >&2
     exit 2
@@ -103,8 +103,11 @@ if cmp -s "$listing" "$MANIFEST"; then
     exit 0
 fi
 
-added=$(comm -23 "$listing" "$MANIFEST" | wc -l)
-removed=$(comm -13 "$listing" "$MANIFEST" | wc -l)
+# BSD `wc -l` pads its output to a fixed width, so on a macOS runner these
+# read "+       1 / -       0 tests". GNU wc does not pad, which is why the
+# Linux legs never showed it.
+added=$(comm -23 "$listing" "$MANIFEST" | wc -l | tr -d "[:space:]")
+removed=$(comm -13 "$listing" "$MANIFEST" | wc -l | tr -d "[:space:]")
 diff -u "$MANIFEST" "$listing" || true
 echo "+$added / -$removed tests against $REL_MANIFEST"
 echo "Regenerate it in the same change: ci/scripts/test-manifest-gate.sh --update $BUILD_DIR $LEG"
