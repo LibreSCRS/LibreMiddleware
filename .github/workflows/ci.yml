@@ -259,6 +259,19 @@ jobs:
             --enable-shared --disable-static --without-readline
           make -j$(nproc) install
 
+      - name: Install clang-21 for the layout snapshot
+        # The layout snapshot dumps record layouts with clang. The runner's
+        # default clang crashes inside <type_traits> of the system libstdc++
+        # while doing that under -std=c++23, and the baseline was recorded
+        # with a newer clang, so the snapshot is taken with the same major
+        # the format check already installs, from the same repository.
+        if: matrix.release_gates
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm.gpg
+          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" | sudo tee /etc/apt/sources.list.d/llvm-21.list
+          sudo apt-get update
+          sudo apt-get install -y clang-21
+
       - name: Configure & Build (Release, warnings as errors)
         # Release matches what users receive — same `-O2 -DNDEBUG` code
         # path runs in production and in the local pre-tag verification
@@ -373,6 +386,8 @@ jobs:
         # reach the symbol snapshot above, because an inline member emits no
         # symbol at all.
         run: ./ci/scripts/abi-layout.sh --check build
+        env:
+          CXX: clang++-21
 
       - name: Upload ABI layout snapshot
         # A layout difference is unreadable from its exit code alone; the first
@@ -461,6 +476,16 @@ jobs:
         # run, including runs where something also failed.
         if: always()
         run: ./ci/scripts/skip-ledger.sh --check ctest.log ${{ matrix.signing_backend }}
+
+      - name: Upload the ctest log
+        # The ledger's verdict is unreadable without the log it judged; a
+        # skip that appears only on the runner is diagnosed from this file.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-log-${{ matrix.signing_backend }}
+          path: ctest.log
+          if-no-files-found: ignore
 
   examples-build:
     # Build the SDK-consumer example against the public LibreSCRS surface.
