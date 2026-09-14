@@ -72,7 +72,14 @@ if [ "$ctest_rc" != 0 ]; then
     exit 2
 fi
 
-sed -nE 's/^ *Test +#[0-9]+: +//p' "$raw" | sort > "$listing"
+# A value-parameterized googletest case is listed by gtest with a
+# `# GetParam() = ...` comment after its name, and whether the discovery step
+# carries that comment into the ctest name depends on the CMake version doing
+# the discovery. The comment can hold the bytes of a pointer, so it differs
+# between two runs of the same build; it is never part of the test's identity.
+# Everything from the first `#` after the name is dropped, on --check and on
+# --update alike, so the manifest records names and nothing the tool chain adds.
+sed -nE 's/^ *Test +#[0-9]+: +//p' "$raw" | sed -E 's/[[:space:]]+#.*$//' | sort > "$listing"
 
 count=$(wc -l < "$listing" | tr -d "[:space:]")   # BSD wc pads; see below
 if [ "$count" -eq 0 ]; then

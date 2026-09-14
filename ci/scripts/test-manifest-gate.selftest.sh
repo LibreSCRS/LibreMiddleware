@@ -144,5 +144,24 @@ root="$(make_env c8 "$three")"
 out="$( cd "$root" && PATH="$root/bin:$PATH" bash ci/scripts/test-manifest-gate.sh --check build linux 2>&1 )"; rc=$?
 check 8 2 $rc
 
+# --- case 9: the parameter comment gtest prints after a name is not identity -> 0
+# The discovery step on some CMake versions keeps `# GetParam() = ...` behind a
+# value-parameterized case's name, with pointer bytes inside; the manifest
+# recorded from a build without it must still match.
+commented="$(listing_of Alpha.One 'Beta.Two  # GetParam() = 64-byte object <C0-1E FD-9F 41-56 00-00 0B-00>' Gamma.Three)"
+root="$(make_env c9 "$three")"
+( cd "$root" && PATH="$root/bin:$PATH" bash ci/scripts/test-manifest-gate.sh --update build linux >/dev/null 2>&1 )
+( cd "$root" && { echo '#!/usr/bin/env bash'; printf 'cat <<%s\n' "'LIST'"; printf '%s\n' "$commented"; echo "LIST"; } > bin/ctest; chmod +x bin/ctest )
+out="$( cd "$root" && PATH="$root/bin:$PATH" bash ci/scripts/test-manifest-gate.sh --check build linux 2>&1 )"; rc=$?
+check 9 0 $rc
+case "$out" in *"3 tests, manifest matches"*) ;; *) echo "  case 9: FAIL — the comment was read as part of the name: $out"; fail=$((fail + 1)) ;; esac
+# and --update from such a listing records the bare name, not the comment
+( cd "$root" && PATH="$root/bin:$PATH" bash ci/scripts/test-manifest-gate.sh --update build linux >/dev/null 2>&1 )
+if grep -q '#' "$root/ci/test-manifest.linux.txt"; then
+    echo "case 9b: FAIL — --update recorded the comment"; fail=$((fail + 1))
+else
+    echo "case 9b: OK   — --update records the bare name"; pass=$((pass + 1))
+fi
+
 echo "selftest: $pass passed, $fail failed"
 [ "$fail" = 0 ]
