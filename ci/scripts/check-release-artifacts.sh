@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # check-release-artifacts.sh
 #
 # A job that DOWNLOADS artefacts must depend on a job that UPLOADS them, in the

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # check-warning-floor.sh <build-dir>
 #
 # warning-gate.py refuses to judge a log with fewer compile lines than

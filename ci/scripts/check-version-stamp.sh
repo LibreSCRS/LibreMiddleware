@@ -1,4 +1,5 @@
 #!/usr/bin/env sh
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # check-version-stamp.sh [--verbose]
 #
 # The version this tree STAMPS -- what `project()` ends up with, and with it the

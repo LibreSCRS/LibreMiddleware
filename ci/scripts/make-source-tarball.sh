@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # make-source-tarball.sh [output-directory]
 #
 # The tarball is named so that `<source>_<version>.orig.tar.gz` is what

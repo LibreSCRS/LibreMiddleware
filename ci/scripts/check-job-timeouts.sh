@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # check-job-timeouts.sh
 #
 # Every job in .github/workflows/*.yml must carry a timeout-minutes.

@@ -1,4 +1,5 @@
 #!/usr/bin/env sh
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # check-release-lockstep.sh <version>
 #
 # The CHANGELOG and the VERSION file must agree on the version passed in.

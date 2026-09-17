@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # GitVersion
 #
 # Version from git tag according to https://semver.org/

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # make-sbom.sh [output-path]
 #
 # A CycloneDX bill of materials for one artefact set, listing what is bundled

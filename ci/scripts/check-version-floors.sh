@@ -1,4 +1,5 @@
 #!/usr/bin/env sh
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # check-version-floors.sh [--list] [--min <n>]
 #
 # Every first-party `find_package(...)` / `find_dependency(...)` version floor

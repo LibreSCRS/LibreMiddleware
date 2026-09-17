@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # check-gates-wired.sh -- a gate nobody runs is not a gate.
 #
 # Property, not proxy: every shipped script under ci/scripts/, tools/ and

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # check-package-matrix.sh
 #
 # The package matrix is written twice -- once in ci.yml, once in release.yml --

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-2.1-or-later
 #include <LibreSCRS/Plugin/CardPlugin.h>
 namespace {
 struct VtProbe : LibreSCRS::Plugin::CardPlugin {

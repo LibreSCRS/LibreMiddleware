@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # Generate debian/changelog from CHANGELOG.md and VERSION.
 #
 # Usage: changelog-to-debian.sh <source-package-name> [output-path]

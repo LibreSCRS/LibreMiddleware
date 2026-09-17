@@ -1,4 +1,5 @@
 #!/usr/bin/env sh
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # Selftest for check-release-lockstep.sh.
 #
 # Four cases, each one a mistake the original inline step's own comments name

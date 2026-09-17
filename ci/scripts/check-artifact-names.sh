@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # check-artifact-names.sh [workflow-dir]
 #
 # An artefact that is uploaded and never downloaded is built, kept for ninety

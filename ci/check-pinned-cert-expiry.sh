@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # Pre-expiry alert for pinned TL signing certificates.
 #
 # Fails if any std::array<uint8_t,N> in
