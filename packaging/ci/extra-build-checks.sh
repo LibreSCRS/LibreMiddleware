@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # Assertions only this repository can make about its own package build.
 # Run by packaging/ci/package-gate.sh after a successful build, with BUILDLOG,
 # SRC, OUT and FAMILY in the environment.

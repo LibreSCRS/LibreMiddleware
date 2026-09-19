@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # Selftest for check-recipe.sh. Ten shapes the recipe (or the tree around it)
 # gets wrong, plus the real recipe as a control. One of the ten only applies to
 # a repository whose recipe carries a FetchContent pin; where it does not, the
@@ -26,8 +27,6 @@
 # to report "expected a non-zero exit, got 0" -- or hang on the prompt. CI has
 # no global configuration and would not have seen either, so the gate would have
 # been green there and red or wedged on the machine that has to maintain it.
-#
-# SPDX-License-Identifier: LGPL-2.1-or-later
 set -u
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)

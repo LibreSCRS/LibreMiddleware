@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # Build this repository's RPM packages inside a container.
 #
 # Contract: source tree at the working directory, /out mounted writable, and

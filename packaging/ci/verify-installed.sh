@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # Runs INSIDE a fresh container with the built packages at /pkg. Asserts what
 # the packages leave on a machine, not what the build printed.
 #

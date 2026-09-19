@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: LGPL-2.1-or-later
 """
 Generate sorted constexpr OID lookup table from OpenSSL objects.txt + curated TSVs.
 

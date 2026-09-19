@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # Build this repository's Debian binary packages inside a container.
 #
 # Contract: run with the source tree at the working directory, /out mounted

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
 # check-recipe.sh [--online]
 #
 # The Arch recipe must fetch the tarball THIS project publishes, and must say
@@ -44,8 +45,6 @@
 # actually uploaded it: a workflow that stopped uploading leaves this green and
 # 404s at the first makepkg. Code review, not this gate, is what catches a
 # recipe written to mislead.
-#
-# SPDX-License-Identifier: LGPL-2.1-or-later
 set -u
 
 online=0
