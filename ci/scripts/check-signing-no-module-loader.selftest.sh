@@ -7,16 +7,29 @@
 # this one is red by construction today, so its self-test is the only thing
 # proving that the red is the red it claims and not a broken invocation.
 #
-# Usage: check-signing-no-module-loader.selftest.sh <build-dir>
+# Usage: check-signing-no-module-loader.selftest.sh [<build-dir>]
+#
+# The build directory may also arrive in BUILD_DIR, which is how the shared
+# build tool hands a leased tree to a gate:
+#
+#   knowledge/tools/shared-build.sh run lm -- ./ci/scripts/run-selftests.sh
+#
+# That is the only way run-selftests.sh can drive this one, because the runner
+# passes no arguments -- and it must be driven from a job that has built the
+# library. Two of the four cases read the SHIPPED libLibreSCRS_Signing.so: case_a
+# asserts the real library still links the loader, and case_c strips that same
+# real library. Neither can be simulated, so with no build tree this exits 2 --
+# "cannot judge" -- rather than run the two cases that need no artefact and
+# report a count that looks like a pass.
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 subject="$here/check-signing-no-module-loader.sh"
 [[ -f "$subject" ]] || { echo "missing subject: $subject" >&2; exit 2; }
 
-build="${1:-}"
+build="${1:-${BUILD_DIR:-}}"
 if [[ -z "$build" ]]; then
-    echo "usage: $(basename "$0") <build-dir>" >&2
+    echo "usage: $(basename "$0") <build-dir>   (or BUILD_DIR=<build-dir>)" >&2
     exit 2
 fi
 real="$(ls "$build"/lib/LibreSCRS/libLibreSCRS_Signing.so.*.*.* 2>/dev/null | head -1)"
@@ -29,8 +42,14 @@ work="$(mktemp -d /var/tmp/librescrs-signing-loader-selftest.XXXXXX)"
 trap 'rm -rf "$work"' EXIT
 
 fails=0
+cases=0
+reds=0
 run() { # run <name> <expected-rc> <build-dir>
     local name="$1" want="$2" dir="$3" got
+    cases=$((cases + 1))
+    # red-proved: the case in which the GATE returned non-zero on a perturbed
+    # input. Both refusal codes count; a happy path proves nothing about a gate.
+    [[ "$want" != 0 ]] && reds=$((reds + 1))
     bash "$subject" "$dir" >"$work/out" 2>&1
     got=$?
     if [[ "$got" -eq "$want" ]]; then
@@ -75,7 +94,7 @@ mkdir -p "$work/vacuum/lib/LibreSCRS"
 run "case_d an empty build tree cannot be measured" 2 "$work/vacuum"
 
 if [[ "$fails" -eq 0 ]]; then
-    echo "check-signing-no-module-loader selftest: all cases passed"
+    echo "selftest: $cases cases, $reds red-proved"
     exit 0
 fi
 echo "check-signing-no-module-loader selftest: $fails case(s) failed"

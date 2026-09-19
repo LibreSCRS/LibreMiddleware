@@ -24,6 +24,7 @@ trap 'rm -rf "$work"' EXIT
 
 fails=0
 reds=0
+cases=0
 
 # make_tree <name> -- a tree with the subject and the two declaring files.
 make_tree() {
@@ -37,6 +38,7 @@ make_tree() {
 
 run() { # run <name> <expected-rc> <tree> [red]
     local name="$1" want="$2" dir="$3" red="${4:-}" got
+    cases=$((cases + 1))
     ( cd "$dir" && bash ci/scripts/check-raw-pcsc-open.sh ) > "$work/out" 2>&1
     got=$?
     if [[ "$got" -eq "$want" ]]; then
@@ -85,7 +87,10 @@ printf '%s\n' 'void blindSpot(const std::string& r) { (void)openRawDiagnostic(r)
 run "case_5 a caller in the defining file is NOT caught" 0 "$d"
 
 if [[ "$fails" -eq 0 ]]; then
-    echo "check-raw-pcsc-open selftest: 5 cases, $reds red-proved, all passed"
+    # The canonical trailer, last line of stdout and nothing after it:
+    # run-selftests.sh reads exactly this shape, and the counts are counted
+    # rather than written down so adding a case cannot leave them stale.
+    echo "selftest: $cases cases, $reds red-proved"
     exit 0
 fi
 echo "check-raw-pcsc-open selftest: $fails case(s) failed"
