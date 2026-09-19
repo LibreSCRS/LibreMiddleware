@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-2.1-or-later
-"""Prove the warning gate can fail, and prove it refuses a log that is not a
-measurement.
+"""Prove the warning gate can fail, that it refuses a log that is not a
+measurement, and that it can tell one of our diagnostics from a header's.
+
+The case that matters most is the first partition one. Partitioning by the
+primary location alone would put a real invalid free of one of our objects into
+`system`: operator delete for a member vector is always called from
+new_allocator.h, so the defect reports the SAME primary location as the
+second-hand diagnostics this tree has today, and the category is already excused
+there. Only the rest of the block tells them apart.
 
 Cases:
    1  exactly the baseline                                  -> 0
@@ -13,6 +20,15 @@ Cases:
    7  no baseline                                           -> 2
    8  a localised message still counts by its [-W] tag      -> 0
    9  --update over a vacuum log is refused                 -> 2, baseline untouched
+  10  our file in the inlined-from chain                    -> 1, counted as ours
+  11  the same primary, chain entirely in a header          -> 0, counted as a header's
+  12  the same tag from another header, no reason           -> 1
+  13  growth in the header partition                        -> 1
+  14  a frame under _deps/ or build-asan/                   -> 0, not ours
+  15  min_compile_units is read per compiler                -> 2
+  16  the one-dimensional baseline is read as ours          -> 0
+  17  a tagged diagnostic with no location                  -> 2
+  18  --require-key on an unknown compiler                  -> 1
 """
 import json
 import shutil
@@ -26,6 +42,9 @@ WORK = Path(tempfile.mkdtemp(prefix="warngate-selftest.", dir="/var/tmp"))
 passed = failed = 0
 cases = red = 0
 
+SYS_HDR = "/usr/include/c++/16/bits/new_allocator.h"
+OTHER_HDR = "/usr/include/c++/16/bits/stl_vector.h"
+
 
 def make_log(path, units, warnings):
     lines = []
@@ -33,6 +52,20 @@ def make_log(path, units, warnings):
         lines.append(f"[{i+1}/{units}] Building CXX object lib/CMakeFiles/x.dir/f{i}.cpp.o")
     lines.extend(warnings)
     path.write_text("\n".join(lines) + "\n")
+
+
+def free_block(chain, header=SYS_HDR):
+    """A GCC -Wfree-nonheap-object block: the inlined-from context comes BEFORE
+    the diagnostic, which is why reading only the diagnostic line loses it."""
+    out = ["In function 'void LibreSCRS::Placeholder::~Placeholder()',"]
+    for i, (fn, loc) in enumerate(chain):
+        end = ":" if i == len(chain) - 1 else ","
+        out.append(f"    inlined from '{fn}' at {loc}{end}")
+    out.append(f"{header}:183:66: warning: 'void operator delete(void*, std::size_t)' "
+               f"called on unallocated object [-Wfree-nonheap-object]")
+    out.append("  183 |         _GLIBCXX_OPERATOR_DELETE(__p, __n * sizeof(_Tp));")
+    out.append("      |         ^")
+    return out
 
 
 def make_repo(name, compiler=("GNU", "16.2.1")):
@@ -55,6 +88,11 @@ def run(root, *args):
     return r.returncode, r.stdout + r.stderr
 
 
+def write_baseline(root, obj):
+    (root / "ci").mkdir(exist_ok=True)
+    (root / "ci" / "warning-baseline.json").write_text(json.dumps(obj, indent=2) + "\n")
+
+
 def check(label, expected, actual, extra=True, out=""):
     global passed, failed, cases, red
     cases += 1
@@ -66,8 +104,20 @@ def check(label, expected, actual, extra=True, out=""):
         print(f"case {label}: OK   — exit {actual}")
         passed += 1
     else:
-        print(f"case {label}: FAIL — expected exit {expected}, got {actual}\n    {out.strip()[:250]}")
+        print(f"case {label}: FAIL — expected exit {expected}, got {actual}\n    {out.strip()[:300]}")
         failed += 1
+
+
+# A baseline that excuses the tag in the header partition, with its reason.
+def partitioned(units=620):
+    return {"GNU-16": {
+        "min_compile_units": units,
+        "project": {"-Wcomment": 30},
+        "system": {"-Wfree-nonheap-object": 1},
+        "system_reasons": {
+            f"-Wfree-nonheap-object@{SYS_HDR}:183":
+                "the compiler loses the buffer's origin inlining a variant reset"},
+    }}
 
 
 W = ["f.h:1:1: warning: multi-line comment [-Wcomment]"] * 30
@@ -82,7 +132,7 @@ try:
     run(r, "--update", str(r / "build.log"))
     make_log(r / "more.log", 620, W + [W[0]])
     rc, out = run(r, "--check", str(r / "more.log"))
-    check(2, 1, rc, "-Wcomment: 31, baseline 30" in out, out)
+    check(2, 1, rc, "-Wcomment: 31" in out and "baseline 30" in out, out)
 
     # 3
     r = make_repo("c3"); make_log(r / "build.log", 620, W)
@@ -124,7 +174,7 @@ try:
              ["f.h:1:1: warning: напомена више редова [-Wcomment]"] * 30)
     run(r, "--update", str(r / "build.log"))
     rc, out = run(r, "--check", str(r / "build.log"))
-    check(8, 0, rc, "30 warning(s)" in out, out)
+    check(8, 0, rc, "30 ours" in out, out)
 
     # 9: --update over a vacuum log is refused and changes nothing
     r = make_repo("c9"); make_log(r / "build.log", 620, W)
@@ -134,6 +184,76 @@ try:
     rc, out = run(r, "--update", str(r / "vacuum.log"))
     after = (r / "ci" / "warning-baseline.json").read_bytes()
     check(9, 2, rc, before == after, out)
+
+    # --- the partition ----------------------------------------------------
+    # 10: OUR file in the chain, same primary location as the excused ones.
+    r = make_repo("c10"); write_baseline(r, partitioned())
+    make_log(r / "ours.log", 620, W + free_block(
+        [("std::_Optional_payload_base<T>::_M_reset()", "/usr/include/c++/16/optional:280:9"),
+         ("LibreSCRS::asicSign(char const*)",
+          "lib/libresign/src/native/asic_module.cpp:12:5")]))
+    rc, out = run(r, "--check", str(r / "ours.log"))
+    check(10, 1, rc, "-Wfree-nonheap-object: 1 ours" in out and "has not seen" in out, out)
+
+    # 11: the same primary location, chain entirely inside the header
+    r = make_repo("c11"); write_baseline(r, partitioned())
+    make_log(r / "hdr.log", 620, W + free_block(
+        [("std::_Optional_payload_base<T>::_M_reset()", "/usr/include/c++/16/optional:280:9"),
+         ("std::_Variant_storage<T>::_M_reset()", "/usr/include/c++/16/variant:420:7")]))
+    rc, out = run(r, "--check", str(r / "hdr.log"))
+    check(11, 0, rc, "loses the buffer's origin" in out, out)
+
+    # 12: same tag, another header, no reason of its own
+    r = make_repo("c12"); write_baseline(r, partitioned())
+    make_log(r / "other.log", 620, W + free_block(
+        [("std::vector<T>::~vector()", "/usr/include/c++/16/bits/stl_vector.h:733:15")],
+        header=OTHER_HDR))
+    rc, out = run(r, "--check", str(r / "other.log"))
+    check(12, 1, rc, "no reason recorded" in out and OTHER_HDR in out, out)
+
+    # 13: growth inside the header partition is still a ratchet
+    r = make_repo("c13"); write_baseline(r, partitioned())
+    blk = free_block([("std::_Variant_storage<T>::_M_reset()",
+                       "/usr/include/c++/16/variant:420:7")])
+    make_log(r / "grown.log", 620, W + blk + blk)
+    rc, out = run(r, "--check", str(r / "grown.log"))
+    check(13, 1, rc, "-Wfree-nonheap-object: 2 from a header" in out, out)
+
+    # 14: vendored and build trees are not ours, or vendored code is permanent red
+    r = make_repo("c14"); write_baseline(r, partitioned())
+    make_log(r / "vendor.log", 620, W + free_block(
+        [("testing::Test::Run()", "_deps/googletest-src/googletest/src/gtest.cc:2600:11"),
+         ("Generated::run()", "build-asan/generated/shim.cpp:9:1")]))
+    rc, out = run(r, "--check", str(r / "vendor.log"))
+    check(14, 0, rc, out=out)
+
+    # 15: the floor is read from the compiler's own section
+    r = make_repo("c15"); write_baseline(r, partitioned(units=900))
+    make_log(r / "short.log", 620, W)
+    rc, out = run(r, "--check", str(r / "short.log"))
+    check(15, 2, rc, "expects >= 900" in out, out)
+
+    # 16: the shape this file used to write is read as ours, and says so
+    r = make_repo("c16")
+    write_baseline(r, {"GNU-16": {"-Wcomment": 30}, "min_compile_units": 620})
+    make_log(r / "legacy.log", 620, W)
+    rc, out = run(r, "--check", str(r / "legacy.log"))
+    check(16, 0, rc, "predates the header/ours partition" in out, out)
+
+    # 17: a tagged diagnostic with nowhere to resolve is not a header's by default
+    r = make_repo("c17"); write_baseline(r, partitioned())
+    make_log(r / "nowhere.log", 620,
+             ["warning: something happened [-Wfree-nonheap-object]"])
+    rc, out = run(r, "--check", str(r / "nowhere.log"))
+    check(17, 2, rc, "no location to resolve" in out, out)
+
+    # 18: on CI, a compiler with no baseline is a failure, not a report
+    r = make_repo("c18"); write_baseline(r, partitioned())
+    (r / "build" / "CMakeFiles" / "4.4.2" / "CMakeCXXCompiler.cmake").write_text(
+        'set(CMAKE_CXX_COMPILER_ID "GNU")\nset(CMAKE_CXX_COMPILER_VERSION "13.2.0")\n')
+    make_log(r / "ci.log", 620, W)
+    rc, out = run(r, "--check", "--require-key", str(r / "ci.log"))
+    check(18, 1, rc, "requires one" in out, out)
 
     print(f"selftest: {passed} passed, {failed} failed")
     print(f"selftest: {cases} cases, {red} red-proved")

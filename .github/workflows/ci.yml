@@ -342,7 +342,7 @@ jobs:
         # are localised. An unknown compiler is reported, not failed -- this
         # runner and the machine that recorded the baseline do not agree on a
         # diagnostic set, and neither is authoritative over the other.
-        run: ./ci/scripts/warning-gate.py --check build.log --build-dir build
+        run: ./ci/scripts/warning-gate.py --check --require-key build.log --build-dir build
 
       - name: Verify the configured signing backend took effect
         # Runs on every leg — this is the matrix's own integrity check, not a
