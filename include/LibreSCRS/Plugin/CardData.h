@@ -29,21 +29,44 @@ namespace LibreSCRS::Plugin {
 /// @brief Presentation-layer data type for a card field.
 enum class FieldType : std::uint8_t { Text, Date, Photo, Binary };
 
-// Well-known group keys (convention, not enforced):
-// "personal"     — demographic identity data (name, birth, nationality)
-// "address"      — address/residence data
-// "document"     — document metadata (serial, issuing, expiry)
-// "photo"        — portrait/photo data
-// "pki"          — PKI-related info (certificate count, key references)
-// "vehicle"      — vehicle-specific data
-// "insurance"    — health insurance data
-// "annex.<id>.*" — a national annex the card carries beside its base
-//                  application, e.g. "annex.rs.personal" for its data and
-//                  "annex.rs.security" for that annex's own verdict. The id
-//                  comes from the reader, so two annexes on one card cannot
-//                  collide, and the annex verdict never merges into the base
-//                  "security_status" group.
-// Cards with only PKI (e.g. PKS) may have only a "pki" group.
+// Well-known group keys (convention, not enforced). Regenerated from every
+// `groupKey = "..."` / `annexGroupKey(...)` assignment across the plugins:
+// "additional"            — emrtd-plugin: supplementary optional data
+// "address"               — rs-eid-plugin, rs-health-plugin: address/residence data
+// "auth_required"         — emrtd-plugin: PACE/BAC-gated data group
+// "biometric_fingerprint" — emrtd-plugin: fingerprint biometric data
+// "biometric_iris"        — emrtd-plugin: iris biometric data
+// "carrier"               — rs-health-plugin: insurance carrier data
+// "certificates"          — opensc-plugin, pkcs15-plugin: PKCS#15 certificate objects
+// "contacts"              — emrtd-plugin: visa/contact travel data
+// "document"              — emrtd-plugin, rs-eid-plugin: document metadata (serial, issuing, expiry)
+// "document_extra"        — emrtd-plugin: additional document fields
+// "holder"                — eu-vrc-plugin: vehicle registration certificate holder data
+// "insurance"             — rs-health-plugin: health insurance data
+// "meta"                  — rs-eid-plugin: card/plugin metadata
+// "national"              — emrtd-plugin, eu-vrc-plugin: national-specific data
+// "owner"                 — eu-vrc-plugin: vehicle owner data
+// "personal"              — emrtd-plugin, rs-eid-plugin, rs-health-plugin: demographic
+//                           identity data (name, birth, nationality)
+// "photo"                 — emrtd-plugin, rs-eid-plugin: portrait/photo data
+// "portrait"              — emrtd-plugin: portrait image data
+// "presence"              — emrtd-plugin: presence/liveness indicator group
+// "registration"          — eu-vrc-plugin: vehicle registration data
+// "security_status"       — emrtd-plugin: passive/active authentication verdicts
+// "signature"             — emrtd-plugin: holder signature image
+// "taxpayer"              — rs-health-plugin: taxpayer identification data
+// "token"                 — opensc-plugin, pkcs15-plugin: PKCS#15 token info
+//                           (e.g. a PKS card, which has no "pki" group — it
+//                           surfaces "token" and "certificates" instead)
+// "user"                  — eu-vrc-plugin: vehicle authorized-user data
+// "vehicle"               — eu-vrc-plugin: vehicle-specific data
+// "verification"          — rs-eid-plugin: verification/check result group
+// "annex.<id>.*"          — a national annex the card carries beside its base
+//                           application: "annex.<id>.personal" for its data and
+//                           "annex.<id>.security" for that annex's own verdict.
+//                           The id comes from the reader, so two annexes on one
+//                           card cannot collide, and the annex verdict never
+//                           merges into the base "security_status" group.
 
 /// @brief A single card data field with plugin-chosen key, label, and typed value.
 struct CardField
