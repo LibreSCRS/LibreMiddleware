@@ -102,7 +102,7 @@ target_include_directories(Pkcs15ProbeEfDirTests PRIVATE
 target_compile_definitions(Pkcs15ProbeEfDirTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(Pkcs15ProbeEfDirTests)
 
-# rs-eid driver unit tests (Wave 5.1 — flagship Serbian eID coverage).
+# rs-eid driver unit tests (flagship Serbian eID coverage).
 # Drives CardReaderApollo / CardReaderGemalto / CardVerifier through a
 # detached PCSCConnection with a TransmitFilter intercepting every APDU.
 add_executable(RsEidDriverTests
@@ -505,7 +505,7 @@ target_link_libraries(PluginTests
 )
 # LibreSCRS_Plugin link: needed for the LibreSCRS::Plugin::textValue /
 # textValueAt convenience accessors exercised by the CardDataAccessTest
-# suite in card_data_test.cpp (Wave 6 / 6.2).
+# suite in card_data_test.cpp.
 target_compile_definitions(PluginTests PRIVATE
     MOCK_PLUGIN_DIR="$<TARGET_FILE_DIR:mock-card-plugin>"
 )
@@ -700,7 +700,7 @@ target_compile_definitions(PKCS15PluginTests PRIVATE
 add_dependencies(PKCS15PluginTests pkcs15-plugin)
 gtest_discover_tests(PKCS15PluginTests)
 
-# opensc-pkcs11 driver unit tests (Wave 5.2 — fills the 0-dedicated-file
+# opensc-pkcs11 driver unit tests (fills the 0-dedicated-file
 # gap for the shipped librescrs-pkcs11.so). Deep bind/sign coverage already
 # lives in lib/pkcs15/test/CrossProviderCoordinationTests.cpp and the
 # hardware-gated opensc_fallback_integration_test.cpp; this binary pins

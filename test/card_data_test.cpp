@@ -191,7 +191,7 @@ TEST(CardDataBoundsTest, FieldAtUncheckedNoexcept)
                   "const fieldAtUnchecked must be noexcept on the hot-path");
 }
 
-// --- CardDataAccess.h convenience accessors (Wave 6 / 6.2) ---
+// --- CardDataAccess.h convenience accessors ---
 //
 // textValue(data, groupKey, fieldKey) collapses the "findGroup -> groupAt ->
 // find field -> textValue" dance LC's carddatautils.h previously did by

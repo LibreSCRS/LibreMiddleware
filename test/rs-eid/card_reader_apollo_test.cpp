@@ -6,7 +6,7 @@
 // Approach: drive the production reader through a real PCSCConnection
 // constructed via the DetachedTag (no PC/SC handle opened) plus a
 // TransmitFilter that intercepts every APDU. This exercises the actual
-// readChunkedFile() helper wired up in Wave 3, the SELECT-by-file-id
+// readChunkedFile() helper, the SELECT-by-file-id
 // semantics specific to Apollo cards, and the 0xFF empty-marker handling.
 
 #include <gtest/gtest.h>

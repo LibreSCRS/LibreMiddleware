@@ -3,7 +3,7 @@
 //
 // Health-card (rs-health) unit tests. Drives the production HealthCard
 // against a detached PCSCConnection plus a TransmitFilter intercepting
-// every APDU — same pattern as rs-eid (Wave 5.1).
+// every APDU — same pattern as rs-eid.
 
 #include <gtest/gtest.h>
 

@@ -158,7 +158,7 @@ VerificationResult CardVerifier::verifyGemaltoCardCert(LibreSCRS::SmartCard::Int
     // exception masks) and the X509_NAME_oneline path that allocates an
     // OpenSSL string. With raw owning pointers any C++ exception between
     // d2i_PKCS7 and the manual *_free calls leaked the PKCS7 + signer
-    // stack. Mirrors the Wave 4 rewrite of the sibling
+    // stack. Mirrors the rewrite of the sibling
     // verifyPKCS7Signature() in this file. X509StackBorrowedPtr's deleter is
     // sk_X509_free (not sk_X509_pop_free) because PKCS7_get0_signers
     // returns borrowed certs owned by the parent PKCS7.

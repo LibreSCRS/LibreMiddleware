@@ -229,7 +229,7 @@ TEST(SecureMessagingTest, RoundTripAES)
     EXPECT_EQ(protected1, protected2);
 }
 
-// --- Negative-path coverage (Wave 5.3) ---
+// --- Negative-path coverage ---
 //
 // SecureChannel/SecureMessaging was previously only covered by KAT (positive)
 // + hardware-gated tests. The cases below pin down rejection-without-crash

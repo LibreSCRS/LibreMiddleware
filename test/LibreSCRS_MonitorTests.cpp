@@ -288,7 +288,7 @@ TEST(MonitorTest, UnsubscribeWithDrainUnknownIdIsNoOp)
 }
 
 // --- subscribeReaderList: snapshot is dispatched AFTER per-reader events ---
-// Wave 6 / 6.1 acceptance: an LC-style consumer using subscribeReaderList
+// Acceptance: an LC-style consumer using subscribeReaderList
 // observes the post-change reader-list snapshot strictly after the
 // per-reader ReaderAdded events for the same change. Guarantees the
 // snapshot reflects every prior per-reader event the consumer's
