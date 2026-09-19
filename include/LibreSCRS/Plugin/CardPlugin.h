@@ -81,15 +81,19 @@ struct CardPluginActivationAccessor;
 /// concurrently — a plugin-scoped map keyed only by a credential label
 /// would corrupt cross-session state.
 ///
-/// @note ABI version is @c 8 (see `kCardPluginAbiVersion`). Plugin loaders
+/// @note ABI version is @c 9 (see `kCardPluginAbiVersion`). Plugin loaders
 ///       reject any plugin whose `card_plugin_abi_version()` differs from
 ///       this value. v7 added the @ref activationProfile / @ref
 ///       seedCredentials activation virtuals consumed by the @ref readCard
-///       NVI wrapper; v8 appends the @ref doDecipher vtable slot
+///       NVI wrapper; v8 appended the @ref doDecipher vtable slot
 ///       (ABI-additive — see the note on @ref decipher) and the
-///       @ref setCscaAnchorDirectory host-to-plugin channel, which adds
-///       storage to this class and so is an ABI change in its own right —
-///       affordable only because v8 has not shipped.
+///       @ref setCscaAnchorDirectory host-to-plugin channel. v9 removes the
+///       superseded `getPINTriesLeft` slot and also retroactively covers two
+///       shape changes that reached `main` under the v8 number: the
+///       @ref readCounters virtual was inserted into the MIDDLE of the
+///       vtable rather than appended, and this class grew three members
+///       (`sizeof` 80 -> 168). v9 is also the first plugin ABI revision
+///       that moves together with the shared objects' SONAME.
 ///
 /// Method groups:
 ///  - Identification (@ref pluginId, @ref displayName, @ref probePriority) — set via @ref setIdentity
@@ -728,11 +732,14 @@ protected:
     ///        the base wrapper handles the pre-dispatch cancel short-circuit.
     ///
     /// @note Appended as a single new vtable slot in 5.0 (ABI-additive,
-    ///       ABI v8) rather than shifting the existing slots. Do not
-    ///       relocate it above an existing virtual. Later additions
-    ///       (@ref activateTransportPin, @ref activateSigningKey) appended
-    ///       after it; the append anchor for future virtuals sits on
-    ///       @ref activateSigningKey — the true LAST virtual.
+    ///       introduced under ABI v8) rather than shifting the existing
+    ///       slots. Do not relocate it above an existing virtual. Later
+    ///       additions (@ref activateTransportPin, @ref activateSigningKey)
+    ///       appended after it; the append anchor for future virtuals sits
+    ///       on @ref activateSigningKey — the true LAST virtual. The v8 ->
+    ///       v9 bump (removal of the superseded `getPINTriesLeft` slot, and
+    ///       the @ref readCounters virtual's mid-table insertion earlier in
+    ///       this class) does not move any slot in this decipher region.
     /// @since 5.0
     [[nodiscard]] virtual DecipherResult doDecipher(LibreSCRS::SmartCard::CardSession& session,
                                                     std::uint16_t keyReference,
