@@ -31,6 +31,10 @@ on:
         type: boolean
         default: true
 
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
 env:
   OPENSC_VERSION: ${{ inputs.opensc_version || '0.26.1' }}
 
