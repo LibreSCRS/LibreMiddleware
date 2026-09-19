@@ -20,6 +20,18 @@ Cases:
   11  no baseline                                      -> 2
   12  covered lines fell while the PERCENTAGE ROSE     -> 1  (rule 4)
   13  the same input with a recorded exception         -> 0, reason printed
+  14  --update with the test token unset               -> 2, and it is named
+  15  --check --expect-key against another key         -> 1, not 2
+  16  no environment contract at all                   -> 2
+
+Cases 14 to 16 are the half that was missing. The committed baseline of one
+repository here was recorded without the software token provisioned: sixteen
+files on the signing path read 0.0% because the tests covering them skipped, and
+the one rule that matters for a release which deletes code cannot fire on a file
+at zero. Measured against the gate as it was: it had no reference to the token
+anywhere, --expect-key did not exist, and a baseline from another environment
+came back as exit 2 -- the same answer as "gcovr broke", which the barrier and CI
+read as "I did not measure".
 """
 import json
 import os
@@ -29,7 +41,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-GATE = Path(__file__).resolve().parent / "coverage-gate.py"
+GATE = Path(os.environ.get("GATE", Path(__file__).resolve().parent / "coverage-gate.py"))
 WORK = Path(tempfile.mkdtemp(prefix="covgate-selftest.", dir="/var/tmp"))
 passed = failed = 0
 cases = red = 0
@@ -55,6 +67,12 @@ def make_repo(name, summary_obj, compiler=("GNU", "16.2.1"), manifest="A.One\nA.
     (root / "bin").mkdir(parents=True)
     shutil.copy(GATE, root / "ci" / "scripts" / "coverage-gate.py")
     (root / "ci" / "test-manifest.linux.txt").write_text(manifest)
+    # The contract every --update is held to. Two variables, so a case can drop
+    # one of them and still be testing the contract rather than its absence.
+    (root / "ci" / "coverage-env.txt").write_text(
+        "require SELFTEST_TOKEN_CONF\n"
+        "require SELFTEST_TOKEN_LIB\n"
+        "runner selftest\n")
     (root / "build" / "CMakeCache.txt").write_text("CMAKE_BUILD_TYPE:STRING=Debug\n")
     # The compiler identity is NOT in CMakeCache.txt; CMake writes it here.
     cmf = root / "build" / "CMakeFiles" / "4.4.2"
@@ -78,10 +96,17 @@ def make_repo(name, summary_obj, compiler=("GNU", "16.2.1"), manifest="A.One\nA.
     return root
 
 
-def run(root, *args):
+def run(root, *args, drop_env=()):
     env = dict(os.environ)
+    for name in drop_env:
+        env.pop(name, None)
     env["PATH"] = f"{root}/bin:" + env["PATH"]
     env["SELFTEST_PREPARED"] = str(root / "prepared.json")
+    for name in ("SELFTEST_TOKEN_CONF", "SELFTEST_TOKEN_LIB"):
+        if name not in drop_env:
+            env[name] = str(root / name.lower())
+        else:
+            env.pop(name, None)
     r = subprocess.run([sys.executable, str(root / "ci" / "scripts" / "coverage-gate.py"),
                         *args, str(root / "build")],
                        capture_output=True, text=True, env=env, cwd=root)
@@ -182,6 +207,25 @@ try:
     (r / "prepared.json").write_text(json.dumps(summary(80.0, 80, 100, f)))
     rc, out = run(r, "--check")
     check(13, 0, rc, "vendored shim" in out, out)
+
+    # 14: recording from an environment that cannot run what it counts
+    r = make_repo("c14", BASE)
+    rc, out = run(r, "--update", drop_env=("SELFTEST_TOKEN_CONF",))
+    check(14, 2, rc, "SELFTEST_TOKEN_CONF" in out and "refusing to record" in out, out)
+
+    # 15: a baseline from another environment is a mismatch, not an inability
+    r = make_repo("c15", BASE); seed(r)
+    rc, out = run(r, "--check", "--expect-key", "GNU-13")
+    check(15, 1, rc, "not this environment's baseline" in out, out)
+    rc, out = run(r, "--check", "--expect-key", "GNU-16")
+    check("15b", 0, rc, out=out)
+
+    # 16: no contract at all. A missing contract is the situation the contract
+    # exists for, with nothing to say so.
+    r = make_repo("c16", BASE)
+    (r / "ci" / "coverage-env.txt").unlink()
+    rc, out = run(r, "--update")
+    check(16, 2, rc, "coverage-env.txt" in out, out)
 
     print(f"selftest: {passed} passed, {failed} failed")
     print(f"selftest: {cases} cases, {red} red-proved")

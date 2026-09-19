@@ -1,0 +1,28 @@
+# coverage-env.txt — the environment a coverage baseline may be recorded in.
+#
+# `require <VAR>` lines are a contract: coverage-gate.py --update refuses, with
+# exit 2, when any of them is unset or empty. It exists because a committed
+# baseline in this project was recorded without the software token provisioned:
+# sixteen files on the signing path read 0.0% not because they are uncovered but
+# because the tests that cover them skipped, and a floor under a file at zero is
+# either meaningless or permanently red. The sibling skip-ledger check already
+# refused to record from such an environment (ci/skip-ledger-env.txt); this one
+# did not — it had no reference to the token at all.
+#
+# The remaining lines are the pin, recorded for the reader and for whoever
+# regenerates next: which environment the number came from. `--check
+# --expect-key` asserts the compiler key against the baseline, so a baseline
+# from another environment is a mismatch (exit 1) rather than an inability to
+# judge (exit 2) — the barrier and CI read exit 2 as "I did not measure".
+#
+# Freshness of this pin is not asserted here. `recorded` is the date it was last
+# looked at; a date that has gone stale is the signal.
+
+require SOFTHSM2_CONF
+require SOFTHSM2_LIB
+
+runner ubuntu-24.04
+compiler GNU-13
+gcovr 8.6
+recorded 2026-09-19
+note The runner label and the compiler are pinned in the workflow; g++-13 is installed and CC/CXX name it, because the ubuntu-latest label moves the compiler with the image and the key would then fail for a reason that has nothing to do with the code.

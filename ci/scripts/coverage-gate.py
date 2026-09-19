@@ -35,14 +35,20 @@ everywhere here, and a ratchet on a number that low fires on noise. It is in the
 baseline so a later ratchet has a history to start from.
 
 Usage:
-  ci/scripts/coverage-gate.py --check  <builddir>
+  ci/scripts/coverage-gate.py --check [--expect-key <key>] <builddir>
   ci/scripts/coverage-gate.py --update <builddir>
+
+--update refuses to record from an environment that cannot run what it counts:
+ci/coverage-env.txt names what has to be present, and a missing variable is exit
+2 rather than a recorded number. --check --expect-key says which environment the
+baseline must have come from, and a baseline from another one is exit 1.
 
 Exit codes:
   0  within every rule
-  1  a rule was broken
-  2  refusing to compare: no baseline, gcovr failed, or the configuration
-     behind the number moved (test set, compiler, gcovr version)
+  1  a rule was broken, or the baseline is another environment's
+  2  refusing to compare or to record: no baseline, no environment contract, an
+     environment that cannot measure, gcovr failed, or the configuration behind
+     the number moved (test set, compiler, gcovr version)
 """
 
 import argparse
@@ -57,6 +63,66 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 BASELINE = REPO_ROOT / "ci" / "coverage-baseline.json"
+ENV_CONTRACT = REPO_ROOT / "ci" / "coverage-env.txt"
+
+
+def env_contract():
+    """What ci/coverage-env.txt requires of the environment, and the pin it
+    records. Two kinds of line:
+
+        require <VAR>      must be set and non-empty before --update
+        <key> <value>      recorded for the reader: the image, the compiler,
+                           the gcovr version, the date this was last checked
+
+    The file itself being absent is "cannot judge": this check exists because a
+    baseline was once recorded in an environment that could not run the tests
+    the number counts, and a missing contract is exactly that situation with
+    nothing to say so."""
+    if not ENV_CONTRACT.is_file():
+        fatal("no ci/coverage-env.txt — nothing says which environment this "
+              "baseline may be recorded in, and recording one from any "
+              "environment is how sixteen files came to read zero percent")
+    required, recorded = [], {}
+    for raw in ENV_CONTRACT.read_text().splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2 or not parts[1].strip():
+            fatal(f"ci/coverage-env.txt: '{raw.strip()}' is not '<key> <value>'")
+        key, value = parts[0], parts[1].strip()
+        if key == "require":
+            required.append(value)
+        else:
+            recorded[key] = value
+    if not required:
+        fatal("ci/coverage-env.txt names no required variable — a contract that "
+              "cannot be broken is not a contract")
+    return required, recorded
+
+
+def assert_environment_can_measure():
+    """Refuse to RECORD from an environment that cannot run what it counts.
+
+    Sixteen files on the signing path stand at 0.0% in the committed baseline
+    because the run that recorded it had no software token provisioned: the
+    tests that cover them skipped, and every percentage rule then reads those
+    files as legitimately uncovered, so the one rule that matters for a release
+    which deletes code — absolute covered lines may not fall — cannot fire on
+    them. The sibling skip-ledger check already refuses to record from such an
+    environment; this one did not, and measured: it had no reference to the
+    token at all."""
+    required, recorded = env_contract()
+    missing = [v for v in required if not os.environ.get(v, "").strip()]
+    if missing:
+        fatal("refusing to record a baseline: " + ", ".join(missing)
+              + " unset or empty. ci/coverage-env.txt requires "
+              + ", ".join(required)
+              + ". A number measured without them is not this repository's "
+                "coverage.")
+    if recorded:
+        print("environment contract: "
+              + ", ".join(f"{k}={v}" for k, v in sorted(recorded.items())))
 
 
 def fatal(msg):
@@ -212,6 +278,7 @@ DEFAULT_RULES = {
 
 
 def do_update(build: Path):
+    assert_environment_can_measure()
     cur = measure(build)
     rules = DEFAULT_RULES.copy()
     if BASELINE.is_file():
@@ -229,10 +296,22 @@ def do_update(build: Path):
     return 0
 
 
-def do_check(build: Path):
+def do_check(build: Path, expect_key=None):
     if not BASELINE.is_file():
         fatal("no baseline at ci/coverage-baseline.json")
     base = json.loads(BASELINE.read_text())
+
+    # A baseline recorded somewhere else is a MISMATCH, not an inability to
+    # judge. The two must not be spelled the same way: exit 2 is what the
+    # barrier and CI read as "I did not measure", and a baseline from another
+    # environment is something measured, somewhere it should not have been.
+    if expect_key is not None:
+        got = base["config"].get("compiler")
+        if got != expect_key:
+            print(f"the baseline was recorded under {got}, and this environment "
+                  f"is {expect_key}: it is not this environment's baseline. "
+                  f"Record one here, in its own commit.")
+            return 1
     cur = measure(build)
     rules = {**DEFAULT_RULES, **base.get("rules", {})}
 
@@ -294,6 +373,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--update", action="store_true")
+    ap.add_argument("--expect-key", default=None,
+                    help="the environment key this baseline must carry; a "
+                         "mismatch is exit 1, not exit 2")
     ap.add_argument("builddir")
     args = ap.parse_args()
     if args.check == args.update:
@@ -302,7 +384,12 @@ def main():
     build = Path(args.builddir)
     if not build.is_dir():
         fatal(f"build dir '{build}' not found")
-    return do_update(build) if args.update else do_check(build)
+    if args.update:
+        if args.expect_key is not None:
+            print("FATAL: --expect-key belongs to --check", file=sys.stderr)
+            return 2
+        return do_update(build)
+    return do_check(build, args.expect_key)
 
 
 if __name__ == "__main__":
