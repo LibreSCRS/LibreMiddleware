@@ -139,6 +139,36 @@ else
   fi
 fi
 
+# --- arm 2b (Debian changelog / RPM spec, packaged alongside the same VERSION) ---
+dch="$root/packaging/debian/changelog"
+if [ ! -f "$dch" ]; then
+  printf 'arm2b: no packaging/debian/changelog -- nothing to compare against VERSION\n'
+else
+  dchver=$(sed -n '1p' "$dch" | sed -nE 's/^[^(]*\(([^)]*)\).*/\1/p')
+  dchver=${dchver%-*}
+  if [ -z "$dchver" ]; then
+    bad "arm2b: could not parse a version out of the first line of $dch"
+  elif [ "$dchver" != "$declared" ]; then
+    bad "arm2b: version drift -- VERSION says $declared, packaging/debian/changelog says $dchver"
+  else
+    printf 'arm2b: packaging/debian/changelog head names %s, matching VERSION\n' "$dchver"
+  fi
+fi
+
+spec="$root/packaging/rpm/librescrs-middleware.spec"
+if [ ! -f "$spec" ]; then
+  printf 'arm2c: no packaging/rpm/librescrs-middleware.spec -- nothing to compare against VERSION\n'
+else
+  specver=$(sed -nE 's/^Version:[[:space:]]+([^[:space:]]+).*/\1/p' "$spec" | head -1)
+  if [ -z "$specver" ]; then
+    bad "arm2c: no 'Version:' line in $spec"
+  elif [ "$specver" != "$declared" ]; then
+    bad "arm2c: version drift -- VERSION says $declared, $spec says Version: $specver"
+  else
+    printf 'arm2c: %s Version: %s matches VERSION\n' "$(basename "$spec")" "$specver"
+  fi
+fi
+
 # --- arm 3 -----------------------------------------------------------------
 # Read from the index, not from HEAD: the gate judges the tree it is run over.
 gl=0; ok=0
