@@ -359,6 +359,85 @@ records their departure, and the SONAME moved with it.
   removed the state only it could set and the branch that read that state,
   which would otherwise have been dead the moment the setter went.
 
+### Security
+
+- **The three statically bundled dependencies move to current releases:
+  OpenSSL 3.5.8, curl 8.22.0 and miniz 3.1.2.** These are linked in, so a
+  published vulnerability in any of them reaches this project without appearing
+  in any distribution's security tracker — which is why the bill of materials
+  ships beside every artefact and why this entry exists. What the three close, in
+  terms of what this code actually reaches: two of the OpenSSL fixes are on paths
+  driven by bytes nothing has authenticated — a heap overflow converting a
+  multi-byte ASN.1 string, which happens for every certificate string read off a
+  card, and a null dereference on a delta certificate revocation list with no
+  list number, which happens on a body fetched over the network. The
+  use-after-free in the PKCS#7 verification path is in the same release; it frees
+  a buffer this project never passes, so it is fixed rather than reached here.
+  curl 8.22.0 clears every published
+  advisory affecting the previous pin, two of which are reachable from an
+  HTTPS-only client that reuses one handle with client certificates — the shape
+  the timestamp, revocation and trusted-list fetches have. miniz 3.1.2 restores
+  a guard against an endless loop in the inflate path and replaces a
+  central-directory bounds check that an archive could pass by overflowing it;
+  that decoder reads the container a user drags into the signing wizard. A
+  release cannot carry a partial move: the provenance check reads each bundled
+  archive's own build stamp back and refuses a set where one platform's is
+  older than the record claims.
+- **A container or a card could make the reader allocate whatever it declared.**
+  Two paths reserved a declared size before anything had authenticated the
+  source. On the container path — the public re-signing entry point, reached by
+  dragging a file into the wizard — a few hundred bytes declaring a
+  multi-gigabyte entry reached the allocator, and the entry read first was the
+  one with no ceiling on it at all. Every extraction now goes through one capped
+  reader, and a container whose entry exceeds the ceiling is refused by name
+  rather than quietly signed as if it were a new document.
+- **A card could set a PIN length the encoding did not carry.** The directory
+  parser accumulated an integer wider than the accumulator and then narrowed the
+  result to the field it fed, so a card declaring 2^64 + 8 produced a minimum PIN
+  length of eight and one declaring 2^32 + 5 produced five. Both widths are
+  refused now, at the point where each one is.
+- **A long-term signature could pass with no revocation evidence at all.** On a
+  card with no Trusted List configured, the on-token certificate fallback
+  returned every object with the signer moved to the front, and the revocation
+  gate unconditionally exempted the last element of the chain — so the two
+  together produced zero revocation evidence and reported zero gaps. A verdict
+  4.2 reported as passing could not be relied on. Both halves are fixed: the
+  fallback no longer reorders, and the exemption now applies only to a
+  self-signed anchor.
+- **An eMRTD authenticity badge could read PASSED from the SOD signature
+  alone.** The document-signer chain check sat at NOT_PERFORMED while the badge
+  already said the document was authentically issued — a verdict 4.2 reported as
+  passing could not be relied on. The badge now requires both, and reports the
+  chain state separately. Verified against a real document.
+- **The expired-signer policy did not run on the append-signer path.** `sign()`
+  routes an already-signed XAdES / JAdES / ASiC-E document into `appendSigner`,
+  so a host that only ever calls `sign()` lost the check the moment its input was
+  already signed. The policy now runs on both paths.
+- **A PIN verify or change could spend the unblocking PIN's retry counter.** The
+  verify, change-target and counter-read paths addressed the first PIN object in
+  the directory without filtering out the unblocking / security-officer PIN, so
+  on a card whose AODF lists its unblocking PIN before the user's, the operation
+  consumed the wrong counter — and a PUK driven to zero takes the card's last
+  recovery path with it. All three paths now classify the PIN before using it.
+- **A malformed EF.CardAccess could send the reader into an endless loop.** Four
+  private copies of the BER length decoder checked that the length OCTETS fit the
+  buffer and never that the DECODED VALUE did, so `position + length` could
+  overflow. EF.CardAccess is read before any key, PIN, CAN or MRZ is involved, so
+  the bytes are entirely the chip's choice. Containment is now proved by
+  subtraction and covered by self-tests.
+- **A chip could make the reader allocate whatever its file header declared.**
+  The chunked file read reserved the declared length before anything had
+  authenticated the card; a header declaring 4 GiB reached the allocator. Reads
+  now carry an explicit byte ceiling.
+- **PIN-bearing APDU payloads were not wiped before their buffers were
+  released.** Both the command payloads and their wire serialisations are now
+  cleansed on every exit path.
+- **A secure-messaging SELECT of DG3 killed the whole SM session on one card
+  family.** The holder saw a read that "worked" minus their address, issuing data
+  and annex — partial data silently presented as complete. The select is now
+  driven so the session survives, and a read that cannot complete reports the
+  failure instead of returning less.
+
 ### Known limitations
 
 - **A document signature opens a second, short-lived PC/SC handle on the card
