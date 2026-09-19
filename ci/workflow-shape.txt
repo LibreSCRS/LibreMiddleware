@@ -7,4 +7,4 @@
 # workflow or a job, in the same change — check-job-timeouts.sh prints the job
 # count on every run.
 min_workflows 5
-min_jobs 17
+min_jobs 18

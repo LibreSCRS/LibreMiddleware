@@ -1,0 +1,19 @@
+# ubsan-suppressions.txt — one row per suppressed UndefinedBehaviorSanitizer
+# check, with the reason. A row with no reason is not a suppression, it is a
+# hole; a row whose file is gone stops suppressing anything and the report comes
+# back, which is the only way an entry here can expire.
+#
+# alignment:*/thirdparty/miniz/miniz.c
+#   Measured on the first sanitizer pass over this tree: five reports, four at
+#   miniz.c:1150:35 and one at miniz.c:3515:21, all "load of/store to misaligned
+#   address for type mz_uint32". miniz reads and writes 32-bit words straight out
+#   of a byte stream on purpose — it is a deflate implementation, and the streams
+#   it walks are not word-aligned. The code is vendored, unmodified upstream, and
+#   the platforms this ships on all permit unaligned access; changing it would be
+#   a fork of a third-party library to satisfy a check that is telling the truth
+#   about a deliberate design. Every other check stays on for this file, and the
+#   suppression is scoped to it.
+#
+#   It expires by itself: it names one file, and the moment miniz is dropped or
+#   replaced the row suppresses nothing.
+alignment:*/thirdparty/miniz/miniz.c

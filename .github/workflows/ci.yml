@@ -508,6 +508,93 @@ jobs:
           path: ctest.log
           if-no-files-found: ignore
 
+  build-asan:
+    # The core parses APDUs, ASN.1, CMS, SOD and eMRTD structures that come off a
+    # card and off the network, vendors OpenSC and miniz, and does manual OpenSSL
+    # memory work — and it was the only repository here with no sanitizer pass
+    # over its tests at all. fuzz.yml builds with -DBUILD_TESTING=OFF, so it runs
+    # zero ctest entries under an instrumented build.
+    #
+    # Not on pull_request: this leg costs about twenty minutes of build plus four
+    # of tests, measured locally at -j4, and the moment code actually lands is the
+    # push to main. No continue-on-error: a job that cannot fail the run is not a
+    # gate.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # Without a ceiling a wedged sanitizer run burns GitHub's six-hour default.
+    timeout-minutes: 90
+    env:
+      OPENSC_VERSION: '0.26.1'
+      # halt_on_error: without it UBSan prints the diagnostic and carries on, so
+      # the job stays green with undefined behaviour in the log. The suppression
+      # file carries one scoped row, with its reason, for the vendored deflate
+      # implementation that reads 32-bit words out of an unaligned byte stream on
+      # purpose; every other check stays on for that file.
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1:suppressions=${{ github.workspace }}/ci/ubsan-suppressions.txt
+      ASAN_OPTIONS: detect_leaks=1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libpcsclite-dev libssl-dev zlib1g-dev \
+            libcurl4-openssl-dev libxml2-dev \
+            pkg-config autoconf automake libtool \
+            cmake ninja-build python3-jsonschema \
+            softhsm2 opensc \
+            poppler-utils
+
+      - name: Build OpenSC ${{ env.OPENSC_VERSION }} from source
+        run: |
+          git clone --branch ${{ env.OPENSC_VERSION }} --depth 1 \
+            https://github.com/OpenSC/OpenSC /tmp/opensc-src
+          cd /tmp/opensc-src
+          ./bootstrap
+          ./configure --prefix=/tmp/opensc-install \
+            --enable-shared --disable-static --without-readline
+          make -j$(nproc) install
+
+      - name: Configure & Build (address + undefined behaviour sanitizers)
+        run: |
+          # WERROR off on purpose: this leg measures runtime behaviour, not
+          # diagnostics, and the instrumented build raises warnings the plain
+          # build does not. The warning floor is judged by its own job.
+          cmake -B build-asan -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DLIBREMIDDLEWARE_BUILD_SHARED=ON \
+            -DLIBREMIDDLEWARE_WERROR=OFF \
+            -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g" \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined"
+          cmake --build build-asan -j4
+
+      # The anti-vacuum, and it is not new: this check refuses an empty listing
+      # and refuses a listing with NOT_BUILT placeholders, so "the sanitizer leg
+      # was green" and "the sanitizer leg ran nothing" cannot read the same. It
+      # compares against the native leg's listing rather than one of its own,
+      # because the set of registered cases is a property of the sources, not of
+      # the sanitizer: measured, the two listings are byte-identical, and a second
+      # copy is a file nobody would keep in step.
+      - name: The sanitizer tree registers the same cases as the plain one
+        run: ./ci/scripts/test-manifest-gate.sh --check build-asan native
+
+      - name: Test under the sanitizers
+        # The hardware suites need a reader and self-skip without one; excluding
+        # them by name keeps the reason visible instead of relying on the skip.
+        # Performance_ is excluded because it asserts a wall-clock median, and
+        # instrumentation moves it: measured at 2869 microseconds against a 1000
+        # microsecond budget, which is the instrumentation and not the code.
+        run: |
+          ctest --test-dir build-asan --output-on-failure --no-tests=error \
+            --timeout 300 \
+            -E "HardwareTest|HwSmoke|RealCard|OpenScBridgeTunnel|Performance_"
+
   examples-build:
     # Build the SDK-consumer example against the public LibreSCRS surface.
     # Catches regressions where a public header silently grows a dependency
