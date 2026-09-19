@@ -196,13 +196,6 @@ jobs:
           ./ci/scripts/check-artifact-names.selftest.sh
           ./ci/scripts/check-artifact-names.sh
 
-      # Every self-test in this repository, by pathspec, and each one must
-      # report the cases it ran and how many proved the gate red. A self-test
-      # nothing runs proves as much as no self-test, and a runner that read only
-      # exit codes would accept `exit 0` as a body.
-      - name: Run every self-test
-        run: ./ci/scripts/run-selftests.sh
-
       # A step can land in a job that does not run on push, or before the
       # checkout that creates the directory its working-directory names, and
       # nothing says so: the wiring check sees the name and the timeout check
@@ -336,6 +329,28 @@ jobs:
         # fails the configure and a comment does not. One leg is enough.
         if: matrix.release_gates
         run: ./ci/scripts/emrtd-include-gate.selftest.sh
+
+      # Every self-test in this repository, by pathspec, and each one must
+      # report the cases it ran and how many proved the gate red. A self-test
+      # nothing runs proves as much as no self-test, and a runner that read only
+      # exit codes would accept `exit 0` as a body.
+      #
+      # Here rather than in format-check, which builds nothing: one of these
+      # self-tests reads the SHIPPED libLibreSCRS_Signing.so -- it asserts the
+      # real library still links the PKCS#11 loader, and strips that same
+      # library to prove a stripped artefact is refused -- so without a build
+      # tree it says "cannot judge" and takes the whole runner with it. The
+      # honest fix is the tree, not a skip: a skipped case conceals whatever
+      # precondition broke next. BUILD_DIR is how the runner hands a built tree
+      # to the self-tests that need one; the rest ignore it.
+      #
+      # Both matrix legs on purpose. `native` and `both` link different signing
+      # backends into that same library, and this job's rule is that each
+      # backend reports for itself.
+      - name: Run every self-test
+        env:
+          BUILD_DIR: build
+        run: ./ci/scripts/run-selftests.sh
 
       - name: Check the warning baseline
         # Counted by the [-Wname] tag, never by the message text: diagnostics
