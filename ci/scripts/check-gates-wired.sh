@@ -9,11 +9,12 @@
 # Anything else must be listed in ci/gate-wiring-exceptions.txt WITH a reason;
 # a listed path that is no longer tracked fails too, so amnesty cannot go stale.
 #
-# Why this exists: two scanners shipped here, tools/dup-scan.py and
-# tools/canonical-types.py, both self-tested and both green, and no workflow in
-# this repository named either. A gate no workflow invokes measures nothing on
-# any push, and until this check there was nothing asserting that a shipped gate
-# is invoked at all.
+# Why this exists: a self-tested, green script that no workflow ever names
+# measures nothing on every push, and nothing says so -- unwiring a gate
+# changes no output, so it is the cheapest thing in CI to lose. Two scanners
+# shipped in this project self-tested and green with no workflow naming either,
+# which is the shape that hides it. Every path ci/gate-wiring-exceptions.txt
+# stands down is recorded there with a reason.
 #
 # Three shapes this gate had to be taught, each found by its own selftest:
 #  * Comment lines are stripped before the search, so naming a script inside a
@@ -22,9 +23,11 @@
 #  * The match is anchored on a name boundary, never a bare substring: without
 #    the anchor `wired.sh` is "named" by every file mentioning
 #    `check-gates-wired.sh`. That is how the first draft reported a false green.
-#  * An exception is a reachability ROOT, not a pardon: packaging/ci/build-deb.sh
-#    is really run, as `build-$FAMILY.sh` (packaging/ci/package-gate.sh:142), so
-#    whatever it calls is run too and must not be reported as unwired.
+#  * An exception is a reachability ROOT, not a pardon: a path listed in
+#    ci/gate-wiring-exceptions.txt counts as run, so whatever that script calls
+#    counts as run too and must not be reported as unwired. That matters for a
+#    script CI really runs under a name no workflow spells out -- one invoked
+#    through a variable, say -- and it is why an entry has to carry a reason.
 #
 # What this gate does NOT claim: that a named script is executed, or that its
 # exit code is honoured. It claims no shipped gate is invisible to every place
@@ -33,8 +36,8 @@
 # The match is textual. Any non-comment line of a reachable file that spells a
 # script's name wires that script -- a docstring, a trailing comment after code
 # or a quoted string counts as much as a `run:` line does. So keep script names
-# out of prose inside scripts CI runs: while the registry's docstring named the
-# duplicate scanner, dropping the scanner's workflow step stayed green.
+# out of prose inside scripts CI runs: a name left in a docstring keeps this
+# gate green after the step that really ran the script is deleted.
 #
 # Exit: 0 wired (or accounted for) - 1 something is unwired - 2 cannot measure.
 #

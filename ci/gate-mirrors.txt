@@ -1,0 +1,77 @@
+# gate-mirrors.txt — which gate scripts are the same file in more than one
+# repository, and which pairs differ on purpose.
+#
+# Format:   <path>  SAME:<repo>[,<repo>…]       <why it is mirrored>
+#           <path>  DIFFERENT:<repo>[,<repo>…]  <why it may differ>
+#           <path>  PENDING:<package>           <who creates it, and when>
+#
+# knowledge/tools/gate-drift-scan.sh compares them, from the workspace, because
+# that is the only place every repository exists at once. Both directions fail:
+# a SAME row whose copies differ, and a DIFFERENT row whose copies have all
+# become identical -- the second is a deleted decision, and it looks like a
+# cleanup. A PENDING row passes while the file exists nowhere and fails the
+# moment it exists anywhere, so it cannot become a permanent amnesty.
+#
+# An empty reason fails. This file is itself mirrored, and says so below.
+
+# --- the same file, by design ------------------------------------------------
+ci/gate-mirrors.txt  SAME:LibreMiddleware,LibreAgent,LibreLinux,LibreCelik,LibreKDE,LibreDarwin,LibreMac,LibreSCRS.github.io,knowledge  The registry is itself a mirror: a per-repository copy that drifted would answer a different question in each repository, which is the defect it exists to find.
+ci/fixtures/workflow-step-order/ll-coverage-fixed.yml  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMac,LibreMiddleware,LibreSCRS.github.io  The same workflow with the steps moved back; the pair is the red and green proof and only means something together.
+ci/fixtures/workflow-step-order/ll-coverage-misplaced.yml  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMac,LibreMiddleware,LibreSCRS.github.io  The recorded defect, committed rather than fetched: the commit it comes from exists in one repository and the check is in all of them.
+ci/scripts/check-artifact-names.selftest.sh  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  The naming rule is shared even though the names it checks are not; the fixture is synthetic.
+ci/scripts/check-format-scope.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  Proves it, and in the repositories where the check passes on the day it lands this is the only thing that shows it works.
+ci/scripts/check-format-scope.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  A tracked source outside every formatted directory is the same defect everywhere.
+ci/scripts/check-gates-wired.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMac,LibreMiddleware,LibreSCRS.github.io  Proves the reachability rule, which is identical, so the proof is too.
+ci/scripts/check-gates-wired.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMac,LibreMiddleware,LibreSCRS.github.io  Reachability is the same property everywhere; what differs per repository is the exception list beside it.
+ci/scripts/check-job-timeouts.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMac,LibreMiddleware,LibreSCRS.github.io  Proves the bound rule, which is identical.
+ci/scripts/check-job-timeouts.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMac,LibreMiddleware,LibreSCRS.github.io  Every job needs a bound for the same reason in every repository.
+ci/scripts/check-release-lockstep.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMac,LibreMiddleware  Proves that rule.
+ci/scripts/check-release-lockstep.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMac,LibreMiddleware  CHANGELOG and VERSION agree, or they do not; the rule has no repository in it.
+ci/scripts/check-skip-reasons.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  Proves it.
+ci/scripts/check-skip-reasons.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  A skip without a reason is the same defect everywhere.
+ci/scripts/check-tarball-determinism.selftest.sh  SAME:LibreCelik,LibreKDE,LibreLinux  Proves that a tarball is reproducible, which has nothing repository-specific in it.
+ci/scripts/check-version-floors.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  Proves that comparison.
+ci/scripts/check-version-floors.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  Declared minimum versions are compared the same way everywhere.
+ci/scripts/check-version-stamp.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  Proves that check.
+ci/scripts/check-version-stamp.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  The version a build stamps is checked against the tree the same way everywhere.
+ci/scripts/check-version-surfaces.selftest.sh  SAME:LibreDarwin,LibreKDE  Proves that enumeration.
+ci/scripts/check-version-surfaces.sh  SAME:LibreDarwin,LibreKDE  The surfaces a version appears on are enumerated the same way; the list is what differs.
+ci/scripts/check-warning-floor.selftest.sh  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  Proves the floor rule, which is shared.
+ci/scripts/coverage-gate.py  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  The four ratchet rules and the environment contract are one policy; the baseline and the environment file are what differ.
+ci/scripts/coverage-gate.selftest.py  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  Proves those rules.
+ci/scripts/run-selftests.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMac,LibreMiddleware  Proves that contract, which is identical.
+ci/scripts/run-selftests.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMac,LibreMiddleware  The self-test contract -- the pathspec and the canonical trailer -- is one contract.
+ci/scripts/skip-ledger.selftest.sh  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  Proves that accounting.
+ci/scripts/skip-ledger.sh  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  A skipped test is accounted for the same way everywhere; the ledger is what differs.
+ci/scripts/test-manifest-gate.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  Proves that comparison.
+ci/scripts/test-manifest-gate.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  Comparing a discovered test set against a committed listing is the same operation everywhere; the listing is what differs.
+ci/scripts/warning-gate.py  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  The partition between a header's diagnostics and ours is one rule; the baseline is what differs.
+ci/scripts/warning-gate.selftest.py  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  Proves that rule, including the case that separates a real defect of ours from the header noise it hides behind.
+ci/scripts/workflow-step-order.py  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMac,LibreMiddleware,LibreSCRS.github.io  Step order and job reachability are properties of GitHub Actions, not of a repository; the per-repository part is in workflow-shape.txt and gate-job-exceptions.txt.
+ci/scripts/workflow-step-order.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMac,LibreMiddleware,LibreSCRS.github.io  Judges the tracked workflows of whichever repository it runs in, so it has to be the same file to be comparable.
+packaging/ci/build-deb.sh  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  One Debian build recipe driven by the package gate; the package metadata is what differs.
+packaging/ci/build-rpm.sh  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  One RPM build recipe, same reason.
+packaging/ci/package-gate.sh  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  The gate that drives both recipes and checks what they produced.
+packaging/debian/source/format  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  The Debian source format is a constant, not a decision per repository.
+tools/canonical-types.py  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  One vocabulary of canonical types across the project; a second copy of the rule would be a second vocabulary.
+tools/canonical-types.selftest.py  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  Proves that rule.
+tools/canonical-types.tsv  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  The vocabulary itself, which is the thing that must not fork.
+tools/dup-scan.py  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  Duplicate detection is the same scan wherever it runs.
+tools/dup-scan.selftest.py  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  Proves that scan.
+tools/run-selftests.selftest.sh  SAME:LibreSCRS.github.io,knowledge  Proves that contract.
+tools/run-selftests.sh  SAME:LibreSCRS.github.io,knowledge  The same self-test contract as ci/scripts/run-selftests.sh, for the repositories whose tools live under tools/.
+
+KEYS  SAME:LibreMiddleware,LibreLinux,LibreCelik,LibreKDE,LibreDarwin  The release signing key is one key; a repository shipping a different one would have consumers verifying against something nobody else uses.
+
+# --- different on purpose ----------------------------------------------------
+ci/scripts/abi-snapshot.sh  DIFFERENT:LibreMiddleware,LibreAgent  Two surfaces, not two copies of one: the middleware snapshots seven shared libraries against a recorded public ABI, the agent snapshots a single component and refuses a different set of empty shapes. Merging them would lose whichever set of guards the loser had.
+ci/scripts/abi-snapshot.selftest.sh  DIFFERENT:LibreMiddleware,LibreAgent  Proves two different surfaces, so it is two different proofs; the middleware copy asserts guards the agent copy has no artefacts for.
+ci/scripts/check-cleansing-deleters.sh  DIFFERENT:LibreMiddleware,LibreAgent  Two policies, not two copies: the middleware keeps a file of exemptions for deliberate non-cleansing deleters and the agent deliberately has none. A merge would silently adopt one policy for both, and the comment recording the difference is the first thing such a merge deletes.
+ci/scripts/check-cleansing-deleters.selftest.sh  DIFFERENT:LibreMiddleware,LibreAgent  Proves two different policies, including the exemption file one of them does not have.
+packaging/arch/check-recipe.sh  DIFFERENT:LibreMiddleware,LibreAgent,LibreKDE,LibreLinux  Each recipe check names its own package and its own spec file; there is no shared spelling to converge on, and a merge would check one package four times.
+packaging/arch/check-recipe.selftest.sh  DIFFERENT:LibreMiddleware,LibreAgent,LibreKDE,LibreLinux  Proves four different recipes against four different packages.
+
+# --- not written yet ---------------------------------------------------------
+ci/scripts/check-release-assets.sh  PENDING:S3  The release-asset check does not exist yet; it lands with the release packaging work and is mirrored across the seven shipping repositories when it does.
+ci/scripts/check-release-assets.selftest.sh  PENDING:S3  Lands with the check it proves.
+ci/scripts/check-network-pins.sh  PENDING:S3  The network-pin check lands with the release work.
