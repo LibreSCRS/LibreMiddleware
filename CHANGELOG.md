@@ -180,6 +180,16 @@ Notable user-visible changes per release. Format follows
   honest "not configured" answer.
 - **Arch Linux packaging.** A release-shaped `PKGBUILD` for
   `librescrs-middleware`.
+- **Four new public headers**: `ActivationProfile.h` (the declarative
+  channel-activation descriptor plugins publish), `CredentialCounters.h`
+  (per-credential retry/use counters), `PinOutcome.h` (the shared
+  verify/change/unblock outcome classifier), and `SessionKey.h` (the
+  per-session state-map key plugins use to avoid raw-pointer keying).
+  Alongside them, ten new public enum values: the new `DecipherMechanism`,
+  `DecipherResultOutcome`, `MasterListError`, `PinKind`, `PinState`,
+  `PinRecovery` and `UnblockStyle` enums, plus three enumerators appended to
+  existing enums — `ChannelActivationError::PaceDowngradeDetected`,
+  `PINResultOutcome::KeyActivationFailed` and `SignMechanism::RSA_SHA256`.
 
 ### Changed
 

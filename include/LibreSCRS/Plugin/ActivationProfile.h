@@ -24,6 +24,15 @@ namespace LibreSCRS::Plugin {
 ///
 /// @par Thread-safety
 /// thread-compatible (see API-POLICY §8).
+///
+/// @par Example
+/// @code
+/// ActivationProfile profile;
+/// profile.aid = LibreSCRS::SmartCard::AppletAid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
+/// profile.primary = LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can};
+/// profile.allowBacFallback = true; // retry with BAC if PACE is unsupported
+/// @endcode
+/// @since 5.0
 struct ActivationProfile
 {
     /// Applet to activate against; empty means "plain channel / no SM".
