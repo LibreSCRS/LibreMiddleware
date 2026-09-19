@@ -48,7 +48,11 @@ git -C "$repo" rev-parse --show-toplevel >/dev/null 2>&1 \
 ALLOW="ci/gate-wiring-exceptions.txt"
 rc=0
 
-mapfile -t candidates < <(git ls-files -- 'ci/scripts/*' 'tools/*' 'packaging/ci/*' 'packaging/arch/*' \
+# 'Scripts/*' is here because the macOS host keeps its gate scripts there, and
+# this file is byte-identical in every repository: a pathspec that differed per
+# repository is how four self-tests stopped being counted. The C++ repositories
+# have no Scripts/ directory, so their candidate set is unchanged.
+mapfile -t candidates < <(git ls-files -- 'ci/scripts/*' 'tools/*' 'Scripts/*' 'packaging/ci/*' 'packaging/arch/*' \
     | grep -E '\.(sh|py)$' | grep -v '\.selftest\.' | sort)
 [ "${#candidates[@]}" -eq 0 ] && { echo "FATAL: no candidate scripts found -- wrong root?" >&2; exit 2; }
 

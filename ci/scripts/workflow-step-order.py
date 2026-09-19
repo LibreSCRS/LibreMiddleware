@@ -356,6 +356,16 @@ def judge(paths, exceptions, shape, repo_mode):
                     raise Cannot("%s: %s step %d is not a mapping"
                                  % (path, job_name, index))
 
+                scripts = gate_scripts_in(step)
+
+                # A step that runs one of this project's own scripts reads the
+                # checkout by definition: the path it names is in the tree. That
+                # is not interpreting the run: body for arbitrary relative paths
+                # -- it is the same path-shape signal the gate-step rule below
+                # already computes. It is what catches a gate step placed in a
+                # job that has no checkout at all, which the deploy job of a
+                # pages workflow is: one step, no checkout, and the gate would
+                # read a tree that does not exist.
                 wanted = reads_tree(step, defaults_wd)
                 if wanted is not None and not covers(provided, wanted):
                     findings.append(
@@ -363,11 +373,26 @@ def judge(paths, exceptions, shape, repo_mode):
                         "(provided so far: %s)"
                         % (wf, job_name, step_label(index, step), wanted,
                            sorted(provided) or "nothing"))
+                elif scripts and not provided:
+                    # A step that runs one of this project's own scripts needs a
+                    # checkout to have happened in this job -- the path it names
+                    # is in the tree. WHICH directory it ends up in is not
+                    # guessed: a `cd` inside the run: body is exactly the thing
+                    # this check does not interpret, and one job here does that.
+                    # "Some checkout, anywhere" is the weakest claim that still
+                    # catches the shape that matters: a gate step in a job with
+                    # no checkout at all, which the deploy job of a pages
+                    # workflow is -- one step, no checkout, and the gate would
+                    # read a tree that does not exist.
+                    findings.append(
+                        "%s::%s step %s runs %s in a job that never checks "
+                        "anything out"
+                        % (wf, job_name, step_label(index, step),
+                           ", ".join(scripts)))
 
                 for made in provided_by(step):
                     provided.add(made)
 
-                scripts = gate_scripts_in(step)
                 if not scripts:
                     continue
                 gate_steps_seen += 1

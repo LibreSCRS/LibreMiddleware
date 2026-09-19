@@ -281,7 +281,51 @@ YML
 run "$work/scratch" "$work/scratch/.github/workflows/t.yml"
 judge 1 "a job needing a dispatch-only job is not on push either" $? "needs: dispatch_only"
 
-# --- case 11: the anti-vacuum ---------------------------------------------
+# --- case 11: a gate step in a job that checks nothing out ----------------
+# The shape a pages workflow has: a deploy job with one step, no checkout, and
+# needs: on a build job that did check out. R2 is satisfied -- it does run on
+# push -- and the step would read a tree that does not exist.
+mk_wf t.yml <<'YML'
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: gate
+        run: ./ci/scripts/thing.sh
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: gate in the wrong job
+        run: ./ci/scripts/thing.sh
+YML
+run "$work/scratch" "$work/scratch/.github/workflows/t.yml"
+judge 1 "a gate step in a job that never checks anything out fails" $? \
+    "never checks anything out"
+
+mk_wf t.yml <<'YML'
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: gate
+        run: ./ci/scripts/thing.sh
+      - name: the same gate, in the job that has the tree
+        run: ./ci/scripts/thing.sh
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/deploy-pages@v4
+YML
+run "$work/scratch" "$work/scratch/.github/workflows/t.yml"
+judge 0 "the same gate step in the job that has the tree passes" $?
+
+# --- case 12: the anti-vacuum ---------------------------------------------
 # A floor that cannot be breached is not a floor, so it is breached here.
 mkdir -p "$work/vacuum/ci" "$work/vacuum/.github/workflows"
 cp "$work/scratch/.github/workflows/t.yml" "$work/vacuum/.github/workflows/"
