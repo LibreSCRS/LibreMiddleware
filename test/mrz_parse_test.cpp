@@ -65,3 +65,65 @@ TEST(MRZParseTest, EmptyMRZ)
     auto parsed = parseMRZ("");
     EXPECT_TRUE(parsed.documentCode.empty());
 }
+
+// =============================================================================
+// MRZ date formatting.
+//
+// ICAO 9303 allows the filler character `<` wherever a component of the date of
+// birth is unknown, so these are conformant document contents, not corruption.
+// =============================================================================
+
+#include <mrz_date.h>
+
+TEST(MRZDateFormat, FullDateIsReformatted)
+{
+    EXPECT_EQ(formatMRZDate("740727"), "27.07.1974");
+}
+
+TEST(MRZDateFormat, ExpiryUsesTheFutureWindow)
+{
+    EXPECT_EQ(formatMRZDate("300101", true), "01.01.2030");
+}
+
+// The whole read used to come back as a failure for this input: the conversion
+// threw, the throw left the plugin, and the portrait and the authenticity
+// result that had already been read correctly went with it.
+TEST(MRZDateFormat, UnknownYearIsReturnedAsItCameOffTheCard)
+{
+    EXPECT_EQ(formatMRZDate("<<0101"), "<<0101");
+}
+
+TEST(MRZDateFormat, PartiallyUnknownYearIsReturnedAsItCameOffTheCard)
+{
+    EXPECT_EQ(formatMRZDate("9<0101"), "9<0101");
+}
+
+TEST(MRZDateFormat, UnknownMonthAndDayAreReturnedAsTheyCameOffTheCard)
+{
+    EXPECT_EQ(formatMRZDate("74<<27"), "74<<27");
+}
+
+TEST(MRZDateFormat, WrongLengthIsUnchanged)
+{
+    EXPECT_EQ(formatMRZDate(""), "");
+    EXPECT_EQ(formatMRZDate("74072"), "74072");
+}
+
+// The conversion accepts a leading minus, so a six-character input with one in
+// it produced a formatted date instead of being returned as it came off the
+// card. The MRZ character set is A-Z, 0-9 and the filler, so no conformant
+// document carries this -- but the bytes come from the chip, and the function's
+// contract says six digits or nothing.
+TEST(MRZDateFormat, ASignIsNotADigit)
+{
+    EXPECT_EQ(formatMRZDate("-10101"), "-10101");
+    EXPECT_EQ(formatMRZDate("74-127"), "74-127");
+    EXPECT_EQ(formatMRZDate("7401-1"), "7401-1");
+}
+
+// Whitespace is not a digit either: from_chars skips none, but a plus sign is
+// the other thing a numeric conversion tends to take.
+TEST(MRZDateFormat, APlusIsNotADigit)
+{
+    EXPECT_EQ(formatMRZDate("+10101"), "+10101");
+}

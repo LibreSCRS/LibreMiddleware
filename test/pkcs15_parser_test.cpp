@@ -560,3 +560,92 @@ TEST(ParseDODF, EmptyInput)
 {
     EXPECT_TRUE(parseDODF({}).empty());
 }
+
+// =============================================================================
+// INTEGER length: the card chooses it, and DER permits more than eight octets.
+//
+// These build the smallest AODF that reaches the PinAttributes INTEGER fields,
+// so the only thing that varies between the cases is the encoding of one
+// INTEGER. The boundary case is here on purpose: a refusal written `>= 8`
+// instead of `> 8` would reject a legitimate eight-octet value and no
+// over-length case would notice.
+// =============================================================================
+namespace {
+
+std::vector<uint8_t> aodfWithMinLength(const std::vector<uint8_t>& minLenInteger)
+{
+    std::vector<uint8_t> pinAttrs{
+        0x03, 0x02, 0x00, 0x40, // BIT STRING pinFlags (local)
+        0x0A, 0x01, 0x01,       // ENUMERATED pinType
+    };
+    pinAttrs.push_back(0x02); // INTEGER minLength
+    pinAttrs.push_back(static_cast<uint8_t>(minLenInteger.size()));
+    pinAttrs.insert(pinAttrs.end(), minLenInteger.begin(), minLenInteger.end());
+    pinAttrs.insert(pinAttrs.end(), {0x02, 0x01, 0x08}); // INTEGER storedLength
+    pinAttrs.insert(pinAttrs.end(), {0x02, 0x01, 0x0C}); // INTEGER maxLength
+
+    std::vector<uint8_t> typeAttrs{0x30, static_cast<uint8_t>(pinAttrs.size())};
+    typeAttrs.insert(typeAttrs.end(), pinAttrs.begin(), pinAttrs.end());
+
+    std::vector<uint8_t> entry{
+        0x30, 0x05, 0x0C, 0x03, 'P',  'I', 'N', // CommonObjectAttributes
+        0x30, 0x03, 0x04, 0x01, 0x01,           // CommonAuthObjectAttributes
+    };
+    entry.push_back(0xA1); // [1] typeAttributes
+    entry.push_back(static_cast<uint8_t>(typeAttrs.size()));
+    entry.insert(entry.end(), typeAttrs.begin(), typeAttrs.end());
+
+    std::vector<uint8_t> out{0x30, static_cast<uint8_t>(entry.size())};
+    out.insert(out.end(), entry.begin(), entry.end());
+    return out;
+}
+
+} // namespace
+
+TEST(ParseAODF, EightOctetIntegerIsStillDecoded)
+{
+    const auto aodf = aodfWithMinLength({0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08});
+    const auto pins = parseAODF(aodf);
+
+    ASSERT_EQ(pins.size(), 1U);
+    EXPECT_EQ(pins[0].minLength, 8);
+}
+
+// Nine octets declaring 2^64 + 8. The ninth shift carries the leading octet
+// straight off the top of the accumulator, so the value that came back was
+// eight -- a plausible PIN length that the encoding does not carry, from bytes
+// the card chose. Nothing reports it: since C++20 the shift is a defined wrap,
+// not undefined behaviour, so no sanitizer sees it either.
+TEST(ParseAODF, IntegerLongerThanTheAccumulatorIsRefused)
+{
+    const auto aodf = aodfWithMinLength({0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08});
+    const auto pins = parseAODF(aodf);
+
+    ASSERT_EQ(pins.size(), 1U);
+    EXPECT_EQ(pins[0].minLength, 0);
+}
+
+// A negative INTEGER that does fit is decoded as it always was: the refusal is
+// about width, not about sign.
+TEST(ParseAODF, EightOctetIntegerWithTheTopBitSetKeepsItsSign)
+{
+    const auto aodf = aodfWithMinLength({0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xF8});
+    const auto pins = parseAODF(aodf);
+
+    ASSERT_EQ(pins.size(), 1U);
+    EXPECT_EQ(pins[0].minLength, -8);
+}
+
+// A value that fits the accumulator but not the field it lands in. The caller
+// used to narrow to `int`, so a card declaring 2^32 + 5 got a PIN minimum
+// length of five: the same fault as the over-wide INTEGER, with the boundary
+// moved from eight octets to four. The refusal is now the caller's, because the
+// accumulator is not what these fields are.
+TEST(ParseAODF, AnIntegerTooLargeForThePinFieldIsRefused)
+{
+    const auto aodf = aodfWithMinLength({0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x05}); // 2^32 + 5
+    const auto pins = parseAODF(aodf);
+
+    ASSERT_EQ(pins.size(), 1U);
+    EXPECT_EQ(pins[0].minLength, 0);
+}

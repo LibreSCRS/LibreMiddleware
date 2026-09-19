@@ -11,6 +11,10 @@
 #include <pcsc_connection.h>
 #include <smartcard/chunked_read.h>
 
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <span>
 #include <stdexcept>
 
 namespace euvrc {
@@ -37,6 +41,74 @@ EuVrcCard::EuVrcCard(LibreSCRS::SmartCard::Internal::PCSCConnection& externalCon
 }
 
 EuVrcCard::~EuVrcCard() = default;
+
+namespace detail {
+
+// Decide, from the first bytes of a file and whatever the FCI said about its
+// size, where the body starts and how many bytes still have to be read.
+//
+// Lifted out of the lambda it used to be so that a test and a fuzz harness can
+// reach it; the behaviour is unchanged, including the catch-all, which is the
+// walker's documented rejection path.
+//
+// The two branches decode two different things, and that distinction is the
+// point. When the FCI carried a size, that size IS the answer. When it did not,
+// the BER length at the data offset is read as a DECLARATION of how many bytes
+// the card still has to hand over -- a value that legitimately exceeds the
+// header buffer in hand, because the rest has not been read yet. Every other
+// caller of the same length decoder is asking the opposite question, whether a
+// length fits bytes that have already arrived.
+std::optional<LibreSCRS::SmartCard::Internal::HeaderParseResult> deriveEuVrcHeader(std::span<const std::uint8_t> hdr,
+                                                                                   std::size_t fciFileSize)
+{
+    if (hdr.size() < 2) {
+        return std::nullopt;
+    }
+
+    // Try BER parse from byte 0 to decide if the file starts with TLV.
+    bool parsedFromZero = false;
+    try {
+        auto testParse = LibreSCRS::SmartCard::Internal::parseBER(hdr.data(), hdr.size());
+        if (!testParse.children.empty()) {
+            parsedFromZero = true;
+        }
+    } catch (...) {
+    }
+
+    size_t dataOffset = 0;
+    if (!parsedFromZero) {
+        // Header-skip fallback for NXP eVL cards
+        dataOffset = static_cast<size_t>(hdr[1]) + 2;
+        if (dataOffset >= hdr.size()) {
+            return std::nullopt;
+        }
+    }
+
+    size_t totalToRead = 0;
+    if (fciFileSize > 0 && fciFileSize > dataOffset) {
+        // FCI-reported file size is the most reliable signal
+        totalToRead = fciFileSize - dataOffset;
+    } else {
+        // Otherwise reuse the shared BER tag+length parser to derive
+        // body length from the header bytes starting at dataOffset.
+        try {
+            size_t parseOffset = dataOffset;
+            const size_t tagStart = parseOffset;
+            LibreSCRS::SmartCard::Internal::parseTag(hdr.data(), hdr.size(), parseOffset);
+            const size_t tagLen = parseOffset - tagStart;
+            const size_t lenStart = parseOffset;
+            const size_t dataLength = LibreSCRS::SmartCard::Internal::parseLength(hdr.data(), hdr.size(), parseOffset);
+            const size_t lenBytes = parseOffset - lenStart;
+            totalToRead = tagLen + lenBytes + dataLength;
+        } catch (...) {
+            return std::nullopt;
+        }
+    }
+
+    return LibreSCRS::SmartCard::Internal::HeaderParseResult{dataOffset, totalToRead};
+}
+
+} // namespace detail
 
 std::vector<uint8_t> EuVrcCard::readFile(uint8_t fidHi, uint8_t fidLo)
 {
@@ -79,55 +151,8 @@ std::vector<uint8_t> EuVrcCard::readFile(uint8_t fidHi, uint8_t fidLo)
     opts.chunkSize = protocol::READ_CHUNK_LARGE;
     opts.fallbackChunkSize = protocol::READ_CHUNK_SMALL;
     opts.errorPrefix = "EU VRC";
-    opts.parseHeader =
-        [fciFileSize](
-            std::span<const uint8_t> hdr) -> std::optional<LibreSCRS::SmartCard::Internal::HeaderParseResult> {
-        if (hdr.size() < 2) {
-            return std::nullopt;
-        }
-
-        // Try BER parse from byte 0 to decide if the file starts with TLV.
-        bool parsedFromZero = false;
-        try {
-            auto testParse = LibreSCRS::SmartCard::Internal::parseBER(hdr.data(), hdr.size());
-            if (!testParse.children.empty()) {
-                parsedFromZero = true;
-            }
-        } catch (...) {
-        }
-
-        size_t dataOffset = 0;
-        if (!parsedFromZero) {
-            // Header-skip fallback for NXP eVL cards
-            dataOffset = static_cast<size_t>(hdr[1]) + 2;
-            if (dataOffset >= hdr.size()) {
-                return std::nullopt;
-            }
-        }
-
-        size_t totalToRead = 0;
-        if (fciFileSize > 0 && fciFileSize > dataOffset) {
-            // FCI-reported file size is the most reliable signal
-            totalToRead = fciFileSize - dataOffset;
-        } else {
-            // Otherwise reuse the shared BER tag+length parser to derive
-            // body length from the header bytes starting at dataOffset.
-            try {
-                size_t parseOffset = dataOffset;
-                const size_t tagStart = parseOffset;
-                LibreSCRS::SmartCard::Internal::parseTag(hdr.data(), hdr.size(), parseOffset);
-                const size_t tagLen = parseOffset - tagStart;
-                const size_t lenStart = parseOffset;
-                const size_t dataLength =
-                    LibreSCRS::SmartCard::Internal::parseLength(hdr.data(), hdr.size(), parseOffset);
-                const size_t lenBytes = parseOffset - lenStart;
-                totalToRead = tagLen + lenBytes + dataLength;
-            } catch (...) {
-                return std::nullopt;
-            }
-        }
-
-        return LibreSCRS::SmartCard::Internal::HeaderParseResult{dataOffset, totalToRead};
+    opts.parseHeader = [fciFileSize](std::span<const uint8_t> hdr) {
+        return detail::deriveEuVrcHeader(hdr, fciFileSize);
     };
 
     return LibreSCRS::SmartCard::Internal::readChunkedFile(*conn, opts);

@@ -6,6 +6,7 @@
 #include <ber.h>
 
 #include <algorithm>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -62,16 +63,41 @@ const LibreSCRS::SmartCard::Internal::BERField* findChild(const LibreSCRS::Smart
 }
 
 // Parse an ASN.1 INTEGER value from raw bytes (big-endian, possibly signed).
+//
+// The card chooses the length, and DER allows an INTEGER longer than eight
+// octets. Shifting that into an int64_t carries the leading octets off the top
+// of the accumulator: since C++20 that is a defined wrap rather than undefined
+// behaviour, so no sanitizer reports it and no test saw it -- it simply returned
+// a number the encoding did not carry (nine octets declaring 2^64 + 8 came back
+// as eight). Anything wider than the accumulator is refused with 0, which all
+// three callers in this file already treat as absent: the key size in
+// extractKeySize, and the PIN type and the three PIN length fields in parseAODF.
 int64_t parseInteger(const std::vector<uint8_t>& bytes)
 {
-    if (bytes.empty()) {
+    if (bytes.empty() || bytes.size() > sizeof(int64_t)) {
         return 0;
     }
-    int64_t val = 0;
+    std::uint64_t acc = 0;
     for (auto b : bytes) {
-        val = (val << 8) | b;
+        acc = (acc << 8) | b;
     }
-    return val;
+    return static_cast<int64_t>(acc);
+}
+
+// Narrow a decoded INTEGER to the width of the field it lands in.
+//
+// parseInteger refuses an INTEGER wider than its accumulator, but the fields
+// below are `int`, and a plain cast is the same fault with the boundary moved
+// from eight octets to four: a card declaring 2^32 + 5 produced a PIN minimum
+// length of five. Anything that does not fit is refused with 0, which every
+// caller already reads as absent -- the accumulator's width is not what these
+// fields are.
+int asFieldInt(int64_t value)
+{
+    if (value < std::numeric_limits<int>::min() || value > std::numeric_limits<int>::max()) {
+        return 0;
+    }
+    return static_cast<int>(value);
 }
 
 // Extract path bytes from a typeAttributes [1] CONSTRUCTED node.
@@ -96,7 +122,13 @@ uint16_t extractKeySize(const LibreSCRS::SmartCard::Internal::BERField& typeAttr
             // Look for INTEGER after the path SEQUENCE
             for (const auto& child : outerSeq.children) {
                 if (child.tag == 0x02 && !child.constructed) {
-                    return static_cast<uint16_t>(parseInteger(child.value));
+                    {
+                        const int keySize = asFieldInt(parseInteger(child.value));
+                        if (keySize < 0 || keySize > std::numeric_limits<uint16_t>::max()) {
+                            return 0;
+                        }
+                        return static_cast<uint16_t>(keySize);
+                    }
                 }
             }
         }
@@ -662,7 +694,7 @@ std::vector<PinInfo> parseAODF(std::span<const uint8_t> data)
                     pin.pinType = static_cast<PinType>(val);
                 }
             } else if (field.tag == 0x02 && !field.constructed) {
-                auto val = static_cast<int>(parseInteger(field.value));
+                auto val = asFieldInt(parseInteger(field.value));
                 switch (intIndex) {
                 case 0:
                     pin.minLength = val;

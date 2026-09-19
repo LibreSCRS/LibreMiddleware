@@ -26,6 +26,7 @@
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
 
 #include <active_auth.h>
+#include <mrz_date.h>
 #include <apdu.h>
 #include <chip_auth.h>
 #include <crypto_utils.h>
@@ -57,32 +58,6 @@ namespace {
 // from the per-plugin manifest.json via the generated manifest.h header.
 // eMRTD passports never advertise via ATR — the applet is detected by
 // SELECT FILE on a live session, so kAtrs is intentionally empty.
-
-// Format MRZ date YYMMDD → DD.MM.YYYY.
-// For DOB: 2-digit year mapped to past (20xx if ≤ current year, else 19xx).
-// For DOE: 2-digit year mapped to future (19xx only if > current year + 20).
-std::string formatMRZDate(const std::string& yymmdd, bool isExpiry = false)
-{
-    if (yymmdd.size() != 6)
-        return yymmdd;
-    std::string yy = yymmdd.substr(0, 2);
-    std::string mm = yymmdd.substr(2, 2);
-    std::string dd = yymmdd.substr(4, 2);
-    int y = std::stoi(yy);
-    int fullYear;
-    if (isExpiry) {
-        // Expiry dates are in the near future — use 20xx unless obviously wrong
-        fullYear = (y + 2000 > 2080) ? 1900 + y : 2000 + y;
-    } else {
-        // Birth dates are in the past — use 19xx if 20xx would be in the future
-        auto now = std::time(nullptr);
-        struct tm tmBuf{};
-        localtime_r(&now, &tmBuf);
-        int currentYY = (tmBuf.tm_year + 1900) % 100;
-        fullYear = (y > currentYY) ? 1900 + y : 2000 + y; // NOLINT(readability-magic-numbers)
-    }
-    return dd + "." + mm + "." + std::to_string(fullYear);
-}
 
 // Plugin-local cleansing MRZ aggregate. F2: SessionContext must not retain
 // raw secret bytes in plain std::string fields; wrap the three MRZ inputs
@@ -882,7 +857,8 @@ private:
                         addTextField(g, "surname", "Surname", parsed.dg1->surname);
                         addTextField(g, "given_names", "Given Names", parsed.dg1->givenNames);
                         addTextField(g, "nationality", "Nationality", parsed.dg1->nationality);
-                        addTextField(g, "date_of_birth", "Date of Birth", formatMRZDate(parsed.dg1->dateOfBirth));
+                        addTextField(g, "date_of_birth", "Date of Birth",
+                                     emrtd::formatMRZDate(parsed.dg1->dateOfBirth));
                         addTextField(g, "sex", "Sex", parsed.dg1->sex);
                         emitGroup(std::move(g));
                     }
@@ -894,7 +870,7 @@ private:
                         addTextField(g, "document_code", "Document Code", parsed.dg1->documentCode);
                         addTextField(g, "issuing_state", "Issuing State", parsed.dg1->issuingState);
                         addTextField(g, "date_of_expiry", "Date of Expiry",
-                                     formatMRZDate(parsed.dg1->dateOfExpiry, true));
+                                     emrtd::formatMRZDate(parsed.dg1->dateOfExpiry, true));
                         addTextField(g, "personal_number", "Personal Number", parsed.dg1->optionalData);
                         emitGroup(std::move(g));
                     }
@@ -1011,7 +987,7 @@ private:
                     if (doi.size() == 8)
                         doi = LibreSCRS::SmartCard::Internal::formatDateYMD(doi);
                     else if (doi.size() == 6)
-                        doi = formatMRZDate(doi, true);
+                        doi = emrtd::formatMRZDate(doi, true);
                     addTextField(g, "date_of_issue", "Date of Issue", doi);
                     addTextField(g, "endorsements", "Endorsements", parsed.dg12->endorsements);
                     addTextField(g, "tax_exit", "Tax/Exit Requirements", parsed.dg12->taxExitRequirements);
