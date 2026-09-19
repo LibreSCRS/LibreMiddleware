@@ -167,6 +167,23 @@ TEST(PaceChannelTests, MalformedResponseTransitionsToFailed)
     EXPECT_EQ(resp.statusWord(), 0x6988);
 }
 
+TEST(PaceChannelTests, Sw6883ChainingResponseTransitionsToFailed)
+{
+    // ISO 7816-4 SW 6883 ("last command of the chain expected") is not one
+    // of the two SM-invalidation status words short-circuited before MAC
+    // unwrap (6987/6988), so a bare 6883 with no SM TLVs is treated like any
+    // other unprotected reply: MAC unwrap fails and the channel maps it to
+    // the same 6988 sentinel as MalformedResponseTransitionsToFailed, not
+    // to the raw 6883 the card sent.
+    FakePCSCConnection fakeConn;
+    fakeConn.setResponder([](const auto&) { return makeRaw(0x68, 0x83); });
+    PaceChannel channel(fakeConn, makeNamEmrtdAid(), makeFakeAesKeys());
+
+    auto resp = channel.transmit(makeSelectMf(), CancelToken{});
+    EXPECT_EQ(channel.state(), ChannelState::Failed);
+    EXPECT_EQ(resp.statusWord(), 0x6988);
+}
+
 TEST(PaceChannelTests, TransmitAfterFailedReturnsFailedSentinel)
 {
     FakePCSCConnection fakeConn;
