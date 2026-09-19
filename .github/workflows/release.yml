@@ -479,7 +479,10 @@ jobs:
         run: |
           n=$(ls artifacts | grep -cE 'dbgsym|debuginfo|debugsource' || true)
           echo "DEBUG_PACKAGE_COUNT=$n"
-          echo "These are published deliberately, alongside the stripped packages."
+          case "$n" in
+            0) echo "suppressed (DEB_BUILD_OPTIONS=noautodbgsym)";;
+            *) echo "published deliberately";;
+          esac
 
       - name: Create GitHub release with all signed artefacts
         # Replaces softprops/action-gh-release@v2 — that action races
