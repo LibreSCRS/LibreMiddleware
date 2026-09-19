@@ -701,7 +701,7 @@ add_dependencies(PKCS15PluginTests pkcs15-plugin)
 gtest_discover_tests(PKCS15PluginTests)
 
 # opensc-pkcs11 driver unit tests (Wave 5.2 — fills the 0-dedicated-file
-# gap for the shipped libresc-pkcs11.so). Deep bind/sign coverage already
+# gap for the shipped librescrs-pkcs11.so). Deep bind/sign coverage already
 # lives in lib/pkcs15/test/CrossProviderCoordinationTests.cpp and the
 # hardware-gated opensc_fallback_integration_test.cpp; this binary pins
 # down the unit-tier surface that runs without any PC/SC traffic.
