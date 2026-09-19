@@ -2,9 +2,18 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 #
 # check-gates-wired.selftest.sh — perturbs the gate, never just runs it.
-# Nine cases; each asserts rc AND the message, because a gate that fails for the
-# wrong reason is not a gate. Fixture is a throw-away git checkout under
+# Fourteen cases; each asserts rc AND the message, because a gate that fails for
+# the wrong reason is not a gate. Fixture is a throw-away git checkout under
 # ${TMPDIR:-/var/tmp}; nothing in the real tree is touched.
+#
+# Cases 10 to 13 are the half that was missing. The gate excluded self-tests from
+# its candidate set with a `grep -v`, so the shipped proofs of red -- half of what
+# this project relies on -- were invisible to it: a self-test could be added and
+# reach nothing, or be dropped from the runner's pathspec, and this check stayed
+# green. Reachability by name is the wrong instrument for them anyway, because the
+# runner picks its set by pathspec rather than by being named. So the gate asks the
+# runner what it would execute and compares that against what the repository
+# ships, in BOTH directions.
 set -uo pipefail
 GATE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/check-gates-wired.sh"
 [ -x "$GATE" ] || { echo "FATAL: gate not executable at $GATE" >&2; exit 2; }
@@ -26,7 +35,21 @@ mkfixture() {  # mkfixture <dir>
   rm -rf "$d"; mkdir -p "$d/ci/scripts" "$d/tools" "$d/.github/workflows"
   printf '#!/bin/sh\nexit 0\n' > "$d/ci/scripts/wired.sh"
   printf '#!/bin/sh\nexit 0\n' > "$d/tools/hop.sh"
-  printf 'jobs:\n  lint:\n    steps:\n      - run: ci/scripts/wired.sh\n      - run: ci/scripts/check-gates-wired.sh\n' > "$d/.github/workflows/ci.yml"
+  # A self-test and a runner, because every repository here has both and the
+  # gate now asks the runner what it would execute. The runner picks its set the
+  # way the real one does -- by pathspec, not by a list in its body.
+  printf '#!/bin/sh\nexit 0\nprintf "selftest: 1 cases, 1 red-proved\\n"\n' > "$d/ci/scripts/wired.selftest.sh"
+  cat > "$d/ci/scripts/run-selftests.sh" <<'RUNNER'
+#!/bin/sh
+cd "$(dirname "$0")/../.." || exit 2
+if [ "${1:-}" = --list ]; then
+    git ls-files -- 'ci/*' 'tools/*' 'packaging/*' 'scripts/*' 'Scripts/*' 'e2e/*' | grep '\.selftest\.' | sort
+    exit 0
+fi
+exit 0
+RUNNER
+  chmod +x "$d/ci/scripts/run-selftests.sh" "$d/ci/scripts/wired.selftest.sh"
+  printf 'jobs:\n  lint:\n    steps:\n      - run: ci/scripts/wired.sh\n      - run: ci/scripts/run-selftests.sh\n      - run: ci/scripts/check-gates-wired.sh\n' > "$d/.github/workflows/ci.yml"
   printf 'cmake_minimum_required(VERSION 3.24)\n' > "$d/CMakeLists.txt"
   cp "$GATE" "$d/ci/scripts/check-gates-wired.sh"; chmod +x "$d/ci/scripts/check-gates-wired.sh"
   git -C "$d" init -q
@@ -44,14 +67,14 @@ rc=$(run "$T/a")
 
 # 2. PERTURBATION: drop the mention from the workflow -> red, and it names the file
 mkfixture "$T/b"
-printf 'jobs:\n  lint:\n    steps:\n      - run: ci/scripts/check-gates-wired.sh\n' > "$T/b/.github/workflows/ci.yml"
+printf 'jobs:\n  lint:\n    steps:\n      - run: ci/scripts/run-selftests.sh\n      - run: ci/scripts/check-gates-wired.sh\n' > "$T/b/.github/workflows/ci.yml"
 git -C "$T/b" add -A; git -C "$T/b" -c user.email=s@e -c user.name=s commit -qm p
 rc=$(run "$T/b")
 [ "$rc" = 1 ] && grep -q 'FAIL: ci/scripts/wired.sh is shipped' "$T/out"; say $? "2 red when nothing names the script" 1
 
 # 3. ANTI-CHEAT: the only mention is a YAML comment -> still red
 mkfixture "$T/c"
-printf 'jobs:\n  lint:\n    steps:\n      # ci/scripts/wired.sh used to run here\n      - run: ci/scripts/check-gates-wired.sh\n' \
+printf 'jobs:\n  lint:\n    steps:\n      # ci/scripts/wired.sh used to run here\n      - run: ci/scripts/run-selftests.sh\n      - run: ci/scripts/check-gates-wired.sh\n' \
   > "$T/c/.github/workflows/ci.yml"
 git -C "$T/c" add -A; git -C "$T/c" -c user.email=s@e -c user.name=s commit -qm c
 rc=$(run "$T/c")
@@ -59,7 +82,7 @@ rc=$(run "$T/c")
 
 # 4. allowlist entry without a reason -> red, and it says so
 mkfixture "$T/d"
-printf 'jobs:\n  lint:\n    steps:\n      - run: ci/scripts/check-gates-wired.sh\n' > "$T/d/.github/workflows/ci.yml"
+printf 'jobs:\n  lint:\n    steps:\n      - run: ci/scripts/run-selftests.sh\n      - run: ci/scripts/check-gates-wired.sh\n' > "$T/d/.github/workflows/ci.yml"
 printf 'ci/scripts/wired.sh\n' > "$T/d/ci/gate-wiring-exceptions.txt"
 git -C "$T/d" add -A; git -C "$T/d" -c user.email=s@e -c user.name=s commit -qm d
 rc=$(run "$T/d")
@@ -67,7 +90,7 @@ rc=$(run "$T/d")
 
 # 5. allowlist with a reason -> green, and the skip is printed
 mkfixture "$T/e"
-printf 'jobs:\n  lint:\n    steps:\n      - run: ci/scripts/check-gates-wired.sh\n' > "$T/e/.github/workflows/ci.yml"
+printf 'jobs:\n  lint:\n    steps:\n      - run: ci/scripts/run-selftests.sh\n      - run: ci/scripts/check-gates-wired.sh\n' > "$T/e/.github/workflows/ci.yml"
 printf 'ci/scripts/wired.sh  run by hand at release time, see docs/RELEASE.md\ntools/hop.sh  same\n' \
   > "$T/e/ci/gate-wiring-exceptions.txt"
 git -C "$T/e" add -A; git -C "$T/e" -c user.email=s@e -c user.name=s commit -qm e
@@ -87,8 +110,10 @@ rc=$(run "$T/f")
 # 7. no candidates at all -> 2 (cannot judge), never 0
 mkfixture "$T/g"
 git -C "$T/g" rm -q -r --cached tools >/dev/null
-git -C "$T/g" rm -q --cached ci/scripts/wired.sh >/dev/null
-rm -rf "$T/g/tools" "$T/g/ci/scripts/wired.sh"
+git -C "$T/g" rm -q --cached ci/scripts/wired.sh ci/scripts/run-selftests.sh \
+    ci/scripts/wired.selftest.sh >/dev/null
+rm -rf "$T/g/tools" "$T/g/ci/scripts/wired.sh" "$T/g/ci/scripts/run-selftests.sh" \
+    "$T/g/ci/scripts/wired.selftest.sh"
 git -C "$T/g" add -A; git -C "$T/g" -c user.email=s@e -c user.name=s commit -qm g
 git -C "$T/g" rm -q --cached ci/scripts/check-gates-wired.sh >/dev/null
 git -C "$T/g" -c user.email=s@e -c user.name=s commit -qm g2
@@ -97,7 +122,7 @@ rc=$(bash "$T/g/ci/scripts/check-gates-wired.sh" >"$T/out" 2>&1; echo $?)
 
 # 8. an exception is a ROOT, not a pardon: what it calls is covered too
 mkfixture "$T/h"
-printf 'jobs:\n  lint:\n    steps:\n      - run: ci/scripts/check-gates-wired.sh\n' > "$T/h/.github/workflows/ci.yml"
+printf 'jobs:\n  lint:\n    steps:\n      - run: ci/scripts/run-selftests.sh\n      - run: ci/scripts/check-gates-wired.sh\n' > "$T/h/.github/workflows/ci.yml"
 printf '#!/bin/sh\ntools/hop.sh\n' > "$T/h/ci/scripts/wired.sh"
 printf 'ci/scripts/wired.sh  invoked as ci/scripts/$stage.sh by the release job\n' \
   > "$T/h/ci/gate-wiring-exceptions.txt"
@@ -120,6 +145,59 @@ rc=$(run "$T/i")
 [ "$rc" = 1 ] && grep -q 'FAIL: packaging/arch/check-recipe.sh is shipped' "$T/out"
 say $? "9 a packaging recipe that nothing names is red" 1
 
-[ "$fails" -eq 0 ] && echo "selftest: 9/9 OK" || echo "selftest: FAILED"
+# 10. A self-test the repository ships that the runner would NOT execute. This
+#     is the shape the `grep -v` hid: reachability by name says nothing about a
+#     set chosen by pathspec, so the gate has to ask the runner.
+mkfixture "$T/j"
+mkdir -p "$T/j/e2e"
+printf '#!/bin/sh\nexit 0\nprintf "selftest: 1 cases, 1 red-proved\\n"\n' > "$T/j/e2e/lost.selftest.sh"
+sed -i "s|'ci/\*' 'tools/\*' 'packaging/\*' 'scripts/\*' 'Scripts/\*' 'e2e/\*'|'ci/*'|" "$T/j/ci/scripts/run-selftests.sh"
+git -C "$T/j" add -A; git -C "$T/j" -c user.email=s@e -c user.name=s commit -qm j10
+rc=$(run "$T/j")
+[ "$rc" = 1 ] && grep -q 'e2e/lost.selftest.sh' "$T/out" && grep -q 'the runner would not run' "$T/out"
+say $? "10 a shipped self-test the runner would not run is red" 1
+
+# 11. The other direction: the runner would run something the repository does not
+#     track. A set that is equal in one direction only is not equal.
+mkfixture "$T/k"
+sed -i 's|exit 0$|printf "ci/scripts/phantom.selftest.sh\\n"; exit 0|' "$T/k/ci/scripts/run-selftests.sh"
+git -C "$T/k" add -A; git -C "$T/k" -c user.email=s@e -c user.name=s commit -qm k11
+rc=$(run "$T/k")
+[ "$rc" = 1 ] && grep -q 'phantom.selftest.sh' "$T/out"
+say $? "11 a self-test the runner names and the repository does not ship is red" 1
+
+# 12. No runner at all -> cannot judge. Not green: a repository that ships
+#     self-tests and has nothing to run them is the situation this exists for.
+mkfixture "$T/l"
+git -C "$T/l" rm -q --cached ci/scripts/run-selftests.sh >/dev/null
+rm -f "$T/l/ci/scripts/run-selftests.sh"
+git -C "$T/l" -c user.email=s@e -c user.name=s commit -qm l12
+rc=$(run "$T/l")
+[ "$rc" = 2 ] && grep -q 'run-selftests.sh' "$T/out"
+say $? "12 no runner is 'cannot judge' (2), not pass" 2
+
+# 13. A runner whose --list prints nothing while the repository ships a
+#     self-test: an empty answer is not an empty set.
+mkfixture "$T/m"
+printf '#!/bin/sh\nexit 0\n' > "$T/m/ci/scripts/run-selftests.sh"
+chmod +x "$T/m/ci/scripts/run-selftests.sh"
+git -C "$T/m" add -A; git -C "$T/m" -c user.email=s@e -c user.name=s commit -qm m13
+rc=$(run "$T/m")
+[ "$rc" = 2 ] && grep -qF -e '--list' "$T/out"
+say $? "13 a runner that lists nothing is 'cannot judge' (2)" 2
+
+# 14. A tracked script under scripts/ that nothing names. The old pathspec did
+#     not look there, so a release helper could ship and run nowhere; measured
+#     across this project, widening the scan brought 23 such scripts into view.
+mkfixture "$T/n"
+mkdir -p "$T/n/scripts"
+printf '#!/bin/sh\nexit 0\n' > "$T/n/scripts/helper.sh"
+printf '#!/bin/sh\ntools/hop.sh\n' > "$T/n/ci/scripts/wired.sh"
+git -C "$T/n" add -A; git -C "$T/n" -c user.email=s@e -c user.name=s commit -qm n14
+rc=$(run "$T/n")
+[ "$rc" = 1 ] && grep -q 'FAIL: scripts/helper.sh is shipped' "$T/out"
+say $? "14 a script under scripts/ that nothing names is red" 1
+
+[ "$fails" -eq 0 ] && echo "selftest: 14/14 OK" || echo "selftest: FAILED"
 printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
 exit "$fails"
