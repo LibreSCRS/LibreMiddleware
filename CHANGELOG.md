@@ -147,7 +147,9 @@ Notable user-visible changes per release. Format follows
   value.
 - **On-card RSA decipher** over a single-session libopensc bridge.
 - **CKA_ID key selection** for PKCS#11 signing, so a specific key can be
-  targeted by its identifier when a card exposes several.
+  targeted by its identifier when a card exposes several. Both public
+  `libresign::Pkcs11Token` constructors gained a `std::vector<uint8_t>
+  const&` `keyId` parameter carrying it.
 - **`eid-sod-verify` diagnostic tool.** A standalone PC/SC utility that
   independently reads and verifies the eID Security Object (SOD),
   useful for troubleshooting card trust outside the signing path.
@@ -169,10 +171,11 @@ Notable user-visible changes per release. Format follows
   are.** `CardPluginService::setCscaAnchorDirectory` publishes one
   directory to every plugin it loaded, and the eMRTD plugin judges a
   travel document's passive authentication against what is in it. The
-  directory used to be named by an environment variable, which anything
-  running as the person at the keyboard can set — so a forged document
-  could be reported as chaining to a national authority. That read was
-  removed in 5.0 and, until now, nothing replaced it: a host that really
+  directory used to be named by the `LIBRESCRS_CSCA_STORE` environment
+  variable, which anything running as the person at the keyboard can
+  set — so a forged document could be reported as chaining to a
+  national authority. That read was removed in 5.0 and, until now,
+  nothing replaced it: a host that really
   had imported country signing certificates was still told none were
   configured. Only the path is published; the certificates in it are
   read afresh at each document, so a list imported after startup takes
@@ -203,7 +206,7 @@ Notable user-visible changes per release. Format follows
   the release major — it is raised whenever the shape moves, in whatever
   release that happens to be — so packagers should read it off the
   artefact (`readelf -d … | grep SONAME`) rather than derive it from the
-  version. The plugin ABI sentinel moves with it, to v9.
+  version. The plugin ABI sentinel moves with it, from 6 to v9.
 - **`SmProtocolRequest` gained a third alternative** (`ChipAuthRequest`,
   for eMRTD Chip Authentication). The extension is source-compatible —
   the variant is documented append-only — but it changes the C++
@@ -212,6 +215,10 @@ Notable user-visible changes per release. Format follows
   consumers (`find_package` / FetchContent) are unaffected. Its mangling
   is one of several shape changes this release; the SONAME entry above
   covers the rest.
+- **`Internal::changeReferenceData` gained a fourth parameter** (`p1`,
+  defaulting to the ordinary-change value) so transport-PIN activation can
+  pass an explicit P1. Internal, not part of the installed headers, but
+  another of the shape changes the SONAME move above covers.
 - **Invalid input documents fail fast.** Malformed or unsupported input
   documents now surface a distinct `InvalidDocument` outcome instead of
   a generic failure, letting callers tell a bad input apart from a
