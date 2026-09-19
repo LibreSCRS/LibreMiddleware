@@ -203,6 +203,13 @@ jobs:
       - name: Run every self-test
         run: ./ci/scripts/run-selftests.sh
 
+      # A step can land in a job that does not run on push, or before the
+      # checkout that creates the directory its working-directory names, and
+      # nothing says so: the wiring check sees the name and the timeout check
+      # sees the bound. This reads the workflows as data and fails on both.
+      - name: Every step can run where it was placed
+        run: ./ci/scripts/workflow-step-order.py
+
   build-linux:
     # Two signing backends. `native` is the production path and carries the
     # release gates; `both` additionally compiles the DSS cross-verification
