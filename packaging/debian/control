@@ -21,7 +21,7 @@ Homepage: https://github.com/LibreSCRS/LibreMiddleware
 Rules-Requires-Root: no
 
 Package: liblibrescrs5
-Architecture: any
+Architecture: amd64
 Multi-Arch: same
 Depends: ${shlibs:Depends}, ${misc:Depends}
 Recommends: librescrs-card-plugins (= ${binary:Version})
@@ -35,7 +35,7 @@ Description: LibreSCRS smart-card middleware runtime libraries
  separate decision and a separate package.
 
 Package: librescrs-card-plugins
-Architecture: any
+Architecture: amd64
 Multi-Arch: same
 Depends: ${shlibs:Depends}, ${misc:Depends}, liblibrescrs5 (= ${binary:Version})
 Description: Card plugins for the LibreSCRS middleware
@@ -64,7 +64,7 @@ Description: Register the LibreSCRS PKCS#11 module directly with p11-kit
 
 Package: liblibrescrs-dev
 Section: libdevel
-Architecture: any
+Architecture: amd64
 Multi-Arch: same
 Depends: ${misc:Depends},
          liblibrescrs5 (= ${binary:Version}),
