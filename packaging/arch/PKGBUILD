@@ -67,7 +67,7 @@ source=(
     # the tarball already carries, so each one has a checksum of its own. Pins
     # match `git -C thirdparty/<sub> rev-parse HEAD` at tag time.
     "opensc-source-$pkgver.tar.gz::https://github.com/OpenSC/OpenSC/archive/07d0d40b0e4051f6fe11f3a92cec56d320670d85.tar.gz"
-    "curl-source-$pkgver.tar.gz::https://github.com/curl/curl/archive/75a2079d5c28debb2eaa848ca9430f1fe0d7844c.tar.gz"
+    "curl-source-$pkgver.tar.gz::https://github.com/curl/curl/archive/01346829096c61b372692f6dc43ffa778c6caccd.tar.gz"
 )
 # Placeholders — real checksums are filled in at tag time with `makepkg -g`,
 # which ships with pacman itself (`updpkgsums` needs pacman-contrib and is a
@@ -94,9 +94,9 @@ prepare() {
         rm -rf thirdparty/opensc-source
         cp -aT ../OpenSC-07d0d40b0e4051f6fe11f3a92cec56d320670d85 thirdparty/opensc-source
     fi
-    if [ -d ../curl-75a2079d5c28debb2eaa848ca9430f1fe0d7844c ]; then
+    if [ -d ../curl-01346829096c61b372692f6dc43ffa778c6caccd ]; then
         rm -rf thirdparty/curl-source
-        cp -aT ../curl-75a2079d5c28debb2eaa848ca9430f1fe0d7844c thirdparty/curl-source
+        cp -aT ../curl-01346829096c61b372692f6dc43ffa778c6caccd thirdparty/curl-source
     fi
 }
 

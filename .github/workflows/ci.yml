@@ -449,6 +449,17 @@ jobs:
         if: matrix.release_gates
         run: ./ci/scripts/check-vendored-provenance.selftest.sh
 
+      - name: Check the bundled licence texts against the manifest
+        if: matrix.release_gates
+        # thirdparty/licenses.json pins a digest per bundled licence file and
+        # nothing recomputed them: moving the curl submodule changed its COPYING
+        # and the manifest went on asserting the previous one.
+        run: ./ci/scripts/check-bundled-licenses.sh
+
+      - name: Prove the licence check can fail
+        if: matrix.release_gates
+        run: ./ci/scripts/check-bundled-licenses.selftest.sh
+
       - name: Check ABI snapshot vs 5.x baseline
         # Native leg only: the baseline is recorded for one configuration, and
         # `both` adds the DSS backend's exported symbols, so running it there

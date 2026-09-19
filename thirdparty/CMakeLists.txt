@@ -34,7 +34,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 # ──────────────────────────────────────────────────────────────────────────
-# Vendored libcurl (pinned curl-8_11_1), built STATIC against the BUNDLED
+# Vendored libcurl (pinned curl-8_22_0), built STATIC against the BUNDLED
 # OpenSSL above.
 #
 # Rationale (consistency, not a bug-fix): a system libcurl.so drags the host
@@ -66,7 +66,23 @@ if(LIBRESCRS_VENDOR_CURL)
         set(CURL_OPENSSL_DIR ${OPENSSL_ROOT}/linux)
     endif()
     set(CURL_SOURCE_DIR  ${CMAKE_CURRENT_SOURCE_DIR}/curl-source)
-    set(CURL_BUILD_DIR   ${CMAKE_CURRENT_BINARY_DIR}/curl-build)
+    # curl's own CMakeCache.txt outlives a change of either bundled version:
+    # -DOPENSSL_ROOT_DIR does not reset the OPENSSL_*_LIBRARY and
+    # OPENSSL_INCLUDE_DIR it cached, so after a switch the configure step
+    # looks for a tree that no longer exists. Key the build tree by both
+    # versions, so each pair configures in a tree of its own, and re-run
+    # this configure when the curl checkout moves.
+    set(_curl_version_header ${CURL_SOURCE_DIR}/include/curl/curlver.h)
+    file(STRINGS ${_curl_version_header} _curl_version_line
+        REGEX "^#define LIBCURL_VERSION \"[^\"]+\"")
+    string(REGEX REPLACE "^#define LIBCURL_VERSION \"([^\"]+)\".*" "\\1"
+        _curl_version "${_curl_version_line}")
+    if(NOT _curl_version)
+        message(FATAL_ERROR "No LIBCURL_VERSION in ${_curl_version_header}")
+    endif()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_curl_version_header})
+    get_filename_component(_curl_openssl_name ${OPENSSL_ROOT} NAME)
+    set(CURL_BUILD_DIR   ${CMAKE_CURRENT_BINARY_DIR}/curl-build-${_curl_version}-${_curl_openssl_name})
     set(CURL_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/curl-install)
     set(CURL_STATIC_LIB  ${CURL_INSTALL_DIR}/lib/libcurl.a)
     # IMPORTED INTERFACE_INCLUDE_DIRECTORIES must exist at configure time even
@@ -115,6 +131,11 @@ if(LIBRESCRS_VENDOR_CURL)
             -DENABLE_CURL_MANUAL=OFF
             -DCURL_USE_OPENSSL=ON
             -DOPENSSL_ROOT_DIR=${CURL_OPENSSL_DIR}
+            # Named, not searched: a hit elsewhere on the host would be a
+            # second OpenSSL in the process.
+            -DOPENSSL_INCLUDE_DIR=${CURL_OPENSSL_DIR}/include
+            -DOPENSSL_SSL_LIBRARY=${CURL_OPENSSL_DIR}/lib/libssl.a
+            -DOPENSSL_CRYPTO_LIBRARY=${CURL_OPENSSL_DIR}/lib/libcrypto.a
             -DOPENSSL_USE_STATIC_LIBS=ON
             # The baked CA default is the build host's; CURL_CA_FALLBACK lets a
             # target whose layout differs fall back to the bundled OpenSSL's

@@ -10,7 +10,7 @@ reader does not have to reconstruct it from build files.
 | bundled | form | pin |
 |---|---|---|
 | OpenSSL 3.5.8 | pre-compiled static archives committed to the tree | `thirdparty/openssl-3.5.8/` |
-| curl 8.11.1 | submodule, built statically against the bundled OpenSSL | `75a2079d5c28debb2eaa848ca9430f1fe0d7844c` |
+| curl 8.22.0 | submodule, built statically against the bundled OpenSSL | `01346829096c61b372692f6dc43ffa778c6caccd` |
 | OpenSC | submodule, built statically | `07d0d40b0e4051f6fe11f3a92cec56d320670d85` |
 | miniz, nlohmann/json | source drop-in | in tree, `thirdparty/` |
 | QCBOR | FetchContent by commit, absorbed into the agent client library | pinned in LibreAgent |

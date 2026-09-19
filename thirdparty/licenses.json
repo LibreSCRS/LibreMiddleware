@@ -6,5 +6,5 @@
   {"match": "liberation-sans-data", "name": "Liberation Sans", "spdx": "OFL-1.1",
    "text": "liberation-sans/LICENSE-OFL-1.1.txt", "sha256": "93fed46019c38bbe566b479d22148e2e8a1e85ada614accb0211c37b2c61c19b"},
   {"match": "curl-static*", "name": "curl", "spdx": "curl",
-   "text": "curl-source/COPYING", "sha256": "adb1fc06547fd136244179809f7b7c2d2ae6c4534f160aa513af9b6a12866a32"}
+   "text": "curl-source/COPYING", "sha256": "82f2f4427d6545ee5aaac4f0b80428da6cc8ba41c2cf5da3a03680ec327b9681"}
 ] }

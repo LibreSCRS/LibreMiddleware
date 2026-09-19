@@ -43,7 +43,7 @@ and configuration dies earlier still with `No download info given for
 So the dogfood recipe supplies each pinned upstream tree as its own **local git
 source**, named `OpenSC-<fullhash>` and `curl-<fullhash>` so their clones land
 at `$srcdir/OpenSC-07d0d40b0e4051f6fe11f3a92cec56d320670d85` and
-`$srcdir/curl-75a2079d5c28debb2eaa848ca9430f1fe0d7844c` — exactly the
+`$srcdir/curl-01346829096c61b372692f6dc43ffa778c6caccd` — exactly the
 directories the release `prepare()` already copies into
 `thirdparty/opensc-source` and `thirdparty/curl-source`. Because the source
 dirs are named to match what `prepare()` and the four phase `cd` lines already
@@ -54,7 +54,7 @@ This assumes upstream OpenSC (OpenSC/OpenSC) and curl (curl/curl) are cloned as
 **siblings** of this repo at `../OpenSC` and `../curl`, with the pinned commits
 reachable offline (verify with `git -C ../OpenSC cat-file -t
 07d0d40b0e4051f6fe11f3a92cec56d320670d85` and `git -C ../curl cat-file -t
-75a2079d5c28debb2eaa848ca9430f1fe0d7844c`). If your clones live elsewhere,
+01346829096c61b372692f6dc43ffa778c6caccd`). If your clones live elsewhere,
 adjust the `git+file://` paths accordingly.
 
 The curl source is listed here for the first time. The two-entry recipe this
@@ -77,7 +77,7 @@ cd /var/tmp/lm-arch
 # named OpenSC-<hash> / curl-<hash> (matching prepare()'s copy dirs) so
 # prepare() is unchanged.
 sed -i \
-  -e "/^source=(/,/^)/c\\source=(\"LibreMiddleware-\$pkgver::git+file://$REPO\"\n        \"OpenSC-07d0d40b0e4051f6fe11f3a92cec56d320670d85::git+file://$REPO/../OpenSC#commit=07d0d40b0e4051f6fe11f3a92cec56d320670d85\"\n        \"curl-75a2079d5c28debb2eaa848ca9430f1fe0d7844c::git+file://$REPO/../curl#commit=75a2079d5c28debb2eaa848ca9430f1fe0d7844c\")" \
+  -e "/^source=(/,/^)/c\\source=(\"LibreMiddleware-\$pkgver::git+file://$REPO\"\n        \"OpenSC-07d0d40b0e4051f6fe11f3a92cec56d320670d85::git+file://$REPO/../OpenSC#commit=07d0d40b0e4051f6fe11f3a92cec56d320670d85\"\n        \"curl-01346829096c61b372692f6dc43ffa778c6caccd::git+file://$REPO/../curl#commit=01346829096c61b372692f6dc43ffa778c6caccd\")" \
   -e "/^sha256sums=(/,/^)/c\\sha256sums=('SKIP' 'SKIP' 'SKIP')" \
   PKGBUILD
 makepkg -si
@@ -85,11 +85,11 @@ makepkg -si
 
 > Why this works: the PKGBUILD `cd`s into `$srcdir/LibreMiddleware-$pkgver`
 > in all four phase functions, and `prepare()` copies `../OpenSC-07d0d40b…`
-> and `../curl-75a2079d…` into `thirdparty/opensc-source` and
+> and `../curl-013468290…` into `thirdparty/opensc-source` and
 > `thirdparty/curl-source`. The first git source checks out to exactly
 > `$srcdir/LibreMiddleware-$pkgver`; the second and third, named
-> `OpenSC-07d0d40b…` and `curl-75a2079d…`, check out to
-> `$srcdir/OpenSC-07d0d40b…` and `$srcdir/curl-75a2079d…` — precisely where
+> `OpenSC-07d0d40b…` and `curl-013468290…`, check out to
+> `$srcdir/OpenSC-07d0d40b…` and `$srcdir/curl-013468290…` — precisely where
 > `prepare()` looks. makepkg does NOT carry submodules, so these explicit
 > extra sources are what make the vendored trees present for the static
 > builds. Both arrays stay three-element, so `sha256sums` is three `'SKIP'`s.

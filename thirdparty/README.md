@@ -3,9 +3,22 @@
 ## curl-source
 
 **Upstream:** https://github.com/curl/curl
-**Pinned commit:** `75a2079d5` (tag `curl-8_11_1`)
+**Pinned commit:** `013468290` (tag `curl-8_22_0`, released 2026-09-02)
 **License:** curl (MIT/X-derivative)
-**Vendored on:** 2026-06-11
+**Vendored on:** 2026-06-11 (moved to 8.22.0 on 2026-09-19)
+
+Verifying a pin here: upstream publishes **no** `SHA256SUMS` and no per-release
+hash file — only a detached `.asc` beside each tarball — so for a submodule the
+signed tag is both the easier and the stronger check. The release tags are
+signed by Daniel Stenberg,
+`27ED EAF2 2F3A BCEB 50DB 9A12 5CC9 08FD B71E 12C2`, and unlike the OpenSSL
+tags GitHub verifies them too. Check the tag, then check that the gitlink is
+the commit the tag points at, because a submodule records a **commit** and not
+a tag:
+```
+git -C thirdparty/curl-source tag -v curl-8_22_0
+git -C thirdparty/curl-source rev-parse refs/tags/curl-8_22_0^{}
+```
 
 Why vendored: the host distribution's `libcurl.so` is linked against the
 *system* OpenSSL, so loading it would drag a SECOND OpenSSL (the host's
@@ -26,10 +39,17 @@ Update procedure:
 ```
 cd thirdparty/curl-source
 git fetch origin
-git checkout <new-tag>     # e.g. curl-8_12_0
+git tag -v <new-tag>       # must say "Good signature", then check the gitlink
+git checkout <new-tag>     # e.g. curl-8_23_0
 cd ../..
 git add thirdparty/curl-source
-# rebuild + verify: ldd libLibreSCRS_Signing.so shows NO system libssl/libcrypto/libcurl
+# The curl build tree is keyed by LIBCURL_VERSION and the bundled OpenSSL
+# directory (build/thirdparty/curl-build-<curl>-<openssl>), and curlver.h is
+# a configure dependency, so the next build configures the new pin in a
+# fresh tree; nothing needs deleting by hand.
+# rebuild + verify the ARTEFACT, not the pin:
+#   strings build/thirdparty/curl-install/lib/libcurl.a | grep -m1 'libcurl/8'
+#   ldd libLibreSCRS_Signing.so shows NO system libssl/libcrypto/libcurl
 ```
 
 ## opensc-source
