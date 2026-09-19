@@ -41,7 +41,12 @@ target_include_directories(librescrs_pkcs11_e2e_tests PRIVATE
     ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/include
 )
 
-gtest_discover_tests(librescrs_pkcs11_e2e_tests)
+# Every case (Pkcs11AppletSuiteGen1Fixture, Pkcs11NamFixture,
+# Pkcs11PksFixture) GTEST_SKIPs without a real card, per the file header
+# above; the whole target is card-gated.
+gtest_discover_tests(librescrs_pkcs11_e2e_tests
+    PROPERTIES LABELS "HARDWARE"
+)
 
 # ---------------------------------------------------------------------------
 # Opt-in real-card E2E tests.

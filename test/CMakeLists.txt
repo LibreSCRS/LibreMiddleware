@@ -577,6 +577,11 @@ target_compile_definitions(EMRTDPluginTests PRIVATE
     LIBRESCRS_INTERNAL_BUILD
 )
 add_dependencies(EMRTDPluginTests emrtd-plugin)
+# Mixed target: only the EMRTDHardwareTest suite (7 cases) is card-gated;
+# the other suites in this binary (EMRTDPluginTest, EmrtdPluginSessionKeying,
+# EmrtdInterfaceActivation, EmrtdPreReadAuth, PaceDowngradeVerdict,
+# BacDowngradeGuard) run with no card. `PROPERTIES LABELS` applies to the
+# whole target, so it is not added here — it would mislabel the rest.
 gtest_discover_tests(EMRTDPluginTests)
 
 add_executable(PKCS11Tests pkcs11_test.cpp)
@@ -586,6 +591,9 @@ target_link_libraries(PKCS11Tests GTest::gtest_main librescrs-pkcs11)
 # real-card test binaries.
 target_include_directories(PKCS11Tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# Mixed target: only the PKCS11CardTest suite (59 cases) is card-gated; the
+# PKCS11Test suite (34 cases) in the same binary needs no card.
+# `PROPERTIES LABELS` applies to the whole target, so it is not added here.
 gtest_discover_tests(PKCS11Tests DISCOVERY_TIMEOUT 30)
 
 # Internal-only test for the slot-disambiguation hash helpers shared by
@@ -670,6 +678,10 @@ target_include_directories(EMRTDTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
 )
 target_compile_definitions(EMRTDTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+# Mixed target: only the PACEHardwareTest suite (4 cases, from
+# pace_hardware_test.cpp) is card-gated; MRZParseTest and DataGroupTest
+# (from mrz_parse_test.cpp / data_group_test.cpp) need no card.
+# `PROPERTIES LABELS` applies to the whole target, so it is not added here.
 gtest_discover_tests(EMRTDTests)
 
 # PKCS#15 parser tests
@@ -924,6 +936,12 @@ if(BUILD_SIGNING)
     # Unified signing E2E tests (parameterized by backend, custom main)
     add_executable(SigningE2ETests signing_e2e_test.cpp)
     target_link_libraries(SigningE2ETests PRIVATE SigningTestSupport)
+    # Mixed target: only the AllBackends/SigningE2ETest and SigningHwNativeBLT
+    # instantiations (63 cases) are card-gated; the SoftHSM/SigningE2ETest
+    # instantiation of the SAME parameterized fixture (62 cases) runs against
+    # SoftHSM, not a card. `PROPERTIES LABELS` applies to the whole target
+    # (and cannot distinguish instantiations of one suite), so it is not
+    # added here.
     gtest_discover_tests(SigningE2ETests DISCOVERY_TIMEOUT 30)
 
     # ETSI conformance suite: every case signs against the software token and
@@ -942,7 +960,11 @@ if(BUILD_SIGNING)
     # Signing provider unit tests
     add_executable(SigningProviderTests signing_provider_test.cpp)
     target_link_libraries(SigningProviderTests PRIVATE SigningTestSupport OpenSSL_Crypto GTest::gtest_main)
-    gtest_discover_tests(SigningProviderTests)
+    # Every SigningProviderTest case GTEST_SKIPs without a real card; the
+    # whole target is card-gated.
+    gtest_discover_tests(SigningProviderTests
+        PROPERTIES LABELS "HARDWARE"
+    )
 
     # HttpClient is core (used by both backends)
     add_executable(HttpClientTests http_client_test.cpp)
@@ -1002,6 +1024,13 @@ if(BUILD_SIGNING)
             ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
             ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
         target_compile_definitions(NativeUtilsTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+        # Mixed target, at a finer grain than most: nine of the ten suites in
+        # this binary need no card, and even the tenth (BuildOrderedChain)
+        # mixes GRAIN — only its HwCompletesRealCardLeafToTrustedListCa case
+        # is card-gated; the other six BuildOrderedChain cases use synthetic
+        # certs. `PROPERTIES LABELS` applies to the whole target (or nothing
+        # finer than a whole gtest suite), so it cannot express this and is
+        # not added here.
         gtest_discover_tests(NativeUtilsTests)
 
         add_executable(Pkcs11TokenTests pkcs11_token_test.cpp)
@@ -1198,7 +1227,11 @@ if(BUILD_SIGNING)
 
         add_executable(ECSigningTests ec_signing_test.cpp)
         target_link_libraries(ECSigningTests PRIVATE GTest::gtest_main LibreSign SigningTestSupport)
-        gtest_discover_tests(ECSigningTests DISCOVERY_TIMEOUT 30)
+        # Every case in this binary (ECSigningTest, ECMatrix/ECSigningMatrixTest)
+        # GTEST_SKIPs without a real card; the whole target is card-gated.
+        gtest_discover_tests(ECSigningTests DISCOVERY_TIMEOUT 30
+            PROPERTIES LABELS "HARDWARE"
+        )
     endif()
 endif()
 
@@ -1216,6 +1249,10 @@ target_include_directories(LibreSCRS_SigningTests PRIVATE
 # The ErrorClassifier.h header (an internal implementation detail) is guarded by
 # LIBRESCRS_INTERNAL_BUILD; this test unit is allowed to include it.
 target_compile_definitions(LibreSCRS_SigningTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+# Mixed target: only the SigningServiceBridgeTest suite (3 cases, which need
+# a PC/SC reader with a card) is card-gated; the other 15 suites in this
+# binary are pure unit tests. `PROPERTIES LABELS` applies to the whole
+# target, so it is not added here.
 gtest_discover_tests(LibreSCRS_SigningTests)
 
 # SignFailureKind cardinality + bridge-mapping lock test. Same include /
