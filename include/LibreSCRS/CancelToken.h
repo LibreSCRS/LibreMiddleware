@@ -137,6 +137,22 @@ private:
 /// @brief Mirrors @c std::stop_source. Copyable; copies share cancellation
 ///        state. Allocates a single @c shared_ptr-managed @c Impl on
 ///        construction.
+///
+/// @par Thread-safety
+/// Mirrors @c std::stop_source's contract (C++20 §32.3.2 [stopsource.intro]):
+///  - **A single instance** of @ref CancelSource is NOT safe to use
+///    concurrently from multiple threads. Concurrent copy / move / destroy
+///    on the same instance, or concurrent observe (@ref token,
+///    @ref isCancelled) racing with copy / move / destroy on that instance,
+///    is a data race. The internal @c std::shared_ptr is bare, not
+///    @c std::atomic<std::shared_ptr>, so only its control-block reference
+///    counting is atomic — the pointer-pair instance itself is not.
+///  - **Different instances** that share the same cancellation state (copies
+///    of one source, or tokens obtained from it) ARE safe to use
+///    concurrently from different threads.
+///  - @ref requestCancel and @ref isCancelled are thread-safe and may be
+///    called concurrently with each other from any thread holding a copy of
+///    this source (the underlying @c std::stop_source contract).
 class LIBRESCRS_PUBLIC_API CancelSource
 {
 public:
