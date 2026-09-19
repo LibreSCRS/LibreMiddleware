@@ -15,6 +15,8 @@ subject="$here/check-version-floors.sh"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 fails=0
+cases=0
+red=0
 
 mkrepo() {  # mkrepo <dir> <version>
     mkdir -p "$1"
@@ -38,6 +40,9 @@ says() {    # says <name> <yes|no> <pattern> -- judge the LAST run's output
 }
 run() {     # run <name> <expected-rc> <dir> [args...]
     name=$1; want=$2; dir=$3; shift 3
+    cases=$((cases + 1))
+    # red-proved: the case in which the gate returned non-zero on a perturbed input.
+    if [ "$want" != 0 ]; then red=$((red + 1)); fi
     ( cd "$dir" && sh "$subject" "$@" ) > "$work/out" 2>&1
     got=$?
     if [ "$got" -eq "$want" ]; then
@@ -337,7 +342,9 @@ run "case_30e with project() the same floor is judged whole" 1 "$d" --min 1
 
 if [ "$fails" -eq 0 ]; then
     echo "check-version-floors selftest: all cases passed"
+    printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
     exit 0
 fi
 echo "check-version-floors selftest: $fails case(s) failed"
+printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
 exit 1

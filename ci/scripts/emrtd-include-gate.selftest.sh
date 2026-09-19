@@ -82,7 +82,15 @@ add_subdirectory("$SRC" lm)
 CMAKE
 
 fails=0
-say() { if [ "$1" = 0 ]; then printf 'PASS  %s\n' "$2"; else printf 'FAIL  %s\n' "$2"; fails=1; fi; }
+cases=0
+red=0
+# say <status> <label> <gate-rc>: <gate-rc> is what the gate was expected to
+# return for this case, and a non-zero one is a case that proved the gate red.
+say() {
+  cases=$((cases + 1))
+  if [ "${3:-0}" != 0 ]; then red=$((red + 1)); fi
+  if [ "$1" = 0 ]; then printf 'PASS  %s\n' "$2"; else printf 'FAIL  %s\n' "$2"; fails=1; fi
+}
 EXTRA=("$@")
 configure() {  # configure <n> [source dir] -> rc; log in $T/log<n>
     cmake -S "${2:-$SRC}" -B "$T/b$1" -DBUILD_TESTING=OFF -DLIBRESCRS_VENDOR_OPENSC=OFF \
@@ -99,34 +107,34 @@ DIR_PROBE='include_directories(/nonexistent/probe-dir)'
 
 # 1. control: the untouched copy configures.
 rc=$(configure 1)
-[ "$rc" = 0 ] && ! says_check "$T/log1"; say $? "1 control: untouched tree configures (rc=$rc)"
+[ "$rc" = 0 ] && ! says_check "$T/log1"; say $? "1 control: untouched tree configures (rc=$rc)" 0
 [ "$rc" = 0 ] || { echo "  (control failed -- log tail follows)"; tail -n 20 "$T/log1" | sed 's/^/  | /'; }
 
 # 2. PERTURBATION: a directory added to the target directly, in the library's file.
 printf '\n%s\n' "$PROBE" >> "$LIB"
 [ "$(sum "$LIB")" != "$LIB0" ] || { echo "FATAL: perturbation changed nothing" >&2; exit 2; }
 rc=$(configure 2)
-[ "$rc" != 0 ] && names_probe "$T/log2"; say $? "2 PERTURBATION: directory added in lib/emrtd-crypto fails the configure and is named (rc=$rc)"
+[ "$rc" != 0 ] && names_probe "$T/log2"; say $? "2 PERTURBATION: directory added in lib/emrtd-crypto fails the configure and is named (rc=$rc)" 1
 restore
 
 # 3. PERTURBATION: the same line in the top-level file, after the library exists.
 sed -i "/^add_subdirectory(lib\/emrtd-crypto)$/a $PROBE" "$TOP"
 [ "$(sum "$TOP")" != "$TOP0" ] || { echo "FATAL: perturbation changed nothing (anchor line missing?)" >&2; exit 2; }
 rc=$(configure 3)
-[ "$rc" != 0 ] && names_probe "$T/log3"; say $? "3 PERTURBATION: directory added in the top-level file fails the configure and is named (rc=$rc)"
+[ "$rc" != 0 ] && names_probe "$T/log3"; say $? "3 PERTURBATION: directory added in the top-level file fails the configure and is named (rc=$rc)" 1
 restore
 
 # 4. control: an edit that adds no directory must not trip the check.
 printf '\n# probe comment\n' >> "$LIB"
 [ "$(sum "$LIB")" != "$LIB0" ] || { echo "FATAL: perturbation changed nothing" >&2; exit 2; }
 rc=$(configure 4)
-[ "$rc" = 0 ] && ! says_check "$T/log4"; say $? "4 control: a comment in the library's file still configures (rc=$rc)"
+[ "$rc" = 0 ] && ! says_check "$T/log4"; say $? "4 control: a comment in the library's file still configures (rc=$rc)" 0
 restore
 
 # 5. control: a consumer's directory-wide include is inherited by every target,
 #    the harnesses included, and must not read as drift.
 rc=$(configure 5 "$WRAP")
-[ "$rc" = 0 ] && ! says_check "$T/log5"; say $? "5 control: a consumer's include_directories() above add_subdirectory() still configures (rc=$rc)"
+[ "$rc" = 0 ] && ! says_check "$T/log5"; say $? "5 control: a consumer's include_directories() above add_subdirectory() still configures (rc=$rc)" 0
 [ "$rc" = 0 ] || { echo "  (control failed -- log tail follows)"; tail -n 20 "$T/log5" | sed 's/^/  | /'; }
 
 # 6. PERTURBATION: setting the consumer's directory aside must not set aside the
@@ -134,7 +142,7 @@ rc=$(configure 5 "$WRAP")
 printf '\n%s\n' "$PROBE" >> "$LIB"
 [ "$(sum "$LIB")" != "$LIB0" ] || { echo "FATAL: perturbation changed nothing" >&2; exit 2; }
 rc=$(configure 6 "$WRAP")
-[ "$rc" != 0 ] && names_probe "$T/log6"; say $? "6 PERTURBATION: under that consumer, a directory added in lib/emrtd-crypto still fails the configure and is named (rc=$rc)"
+[ "$rc" != 0 ] && names_probe "$T/log6"; say $? "6 PERTURBATION: under that consumer, a directory added in lib/emrtd-crypto still fails the configure and is named (rc=$rc)" 1
 restore
 
 # 7. PERTURBATION: a directory-wide include in the library's own file lands on
@@ -142,8 +150,9 @@ restore
 printf '\n%s\n' "$DIR_PROBE" >> "$LIB"
 [ "$(sum "$LIB")" != "$LIB0" ] || { echo "FATAL: perturbation changed nothing" >&2; exit 2; }
 rc=$(configure 7)
-[ "$rc" != 0 ] && says_check "$T/log7" && grep -q '/nonexistent/probe-dir' "$T/log7"; say $? "7 PERTURBATION: include_directories() inside lib/emrtd-crypto fails the configure and is named (rc=$rc)"
+[ "$rc" != 0 ] && says_check "$T/log7" && grep -q '/nonexistent/probe-dir' "$T/log7"; say $? "7 PERTURBATION: include_directories() inside lib/emrtd-crypto fails the configure and is named (rc=$rc)" 1
 restore
 
 [ "$fails" -eq 0 ] && echo "selftest: 7/7 OK" || echo "selftest: FAILED"
+printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
 exit "$fails"

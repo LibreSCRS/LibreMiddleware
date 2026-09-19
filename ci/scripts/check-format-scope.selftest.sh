@@ -28,6 +28,8 @@ trap 'rm -rf "$WORK"' EXIT
 
 pass=0
 fail=0
+cases=0
+red=0
 
 make_repo() {
     local name="$1"; shift
@@ -47,6 +49,9 @@ commit_all() { git -C "$1" add -A && git -C "$1" -c commit.gpgsign=false commit 
 
 check() {
     local label="$1" expected="$2" actual="$3"
+    cases=$((cases + 1))
+    # red-proved: the case in which the gate returned non-zero on a perturbed input.
+    if [ "$expected" != 0 ]; then red=$((red + 1)); fi
     if [ "$expected" = "$actual" ]; then
         echo "case $label: OK   — exit $actual"; pass=$((pass + 1))
     else
@@ -104,4 +109,5 @@ check 8 1 $rc
 case "$out" in *"tools/bridge.mm"*) ;; *) echo "  case 8: FAIL — .mm not counted"; fail=$((fail + 1)) ;; esac
 
 echo "selftest: $pass passed, $fail failed"
+printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
 [ "$fail" = 0 ]

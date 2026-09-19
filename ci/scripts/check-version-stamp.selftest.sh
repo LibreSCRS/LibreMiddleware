@@ -22,6 +22,7 @@ WORK="$(mktemp -d)" || exit 2
 trap 'rm -rf "$WORK"' EXIT INT TERM
 fails=0
 n=0
+red=0
 
 # $1 dir, $2 module flavour: newer-wins | tag-wins | no-git
 module() {
@@ -79,6 +80,8 @@ project_file() {
 # $1 label, $2 expected rc, $3 dir
 expect() {
     n=$((n + 1))
+    # red-proved: the case in which the gate returned non-zero on a perturbed input.
+    if [ "$2" != 0 ]; then red=$((red + 1)); fi
     out="$( (cd "$3" && sh "$GATE") 2>&1 )"
     rc=$?
     if [ "$rc" != "$2" ]; then
@@ -128,7 +131,9 @@ expect case_7_probe_never_reached 2 "$d"
 
 if [ "$fails" = 0 ]; then
     echo "check-version-stamp selftest: all $n cases passed"
+    printf 'selftest: %s cases, %s red-proved\n' "$n" "$red"
     exit 0
 fi
 echo "check-version-stamp selftest: $fails of $n cases FAILED"
+printf 'selftest: %s cases, %s red-proved\n' "$n" "$red"
 exit 1

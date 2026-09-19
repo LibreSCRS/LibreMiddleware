@@ -79,11 +79,21 @@ def registry(root, tag, rows):
     return path
 
 
+CASES = 0
+RED = 0
+
+
 def run_scan(ws, reg, repo=None):
+    # Every invocation is one case, and a non-zero return on a perturbed
+    # input is a case that proved the gate red.
+    global CASES, RED
     cmd = [sys.executable, SCAN, "--workspace", ws, "--registry", reg]
     if repo:
         cmd += ["--repo", repo]
     proc = subprocess.run(cmd, capture_output=True, text=True)
+    CASES += 1
+    if proc.returncode != 0:
+        RED += 1
     return proc.returncode, proc.stdout + proc.stderr
 
 
@@ -179,8 +189,10 @@ def main() -> int:
 
     if failures:
         print(f"\n{len(failures)} selftest case(s) failed: " + ", ".join(failures))
+        print(f"selftest: {CASES} cases, {RED} red-proved")
         return 1
     print("\nall dup-scan selftest cases behave")
+    print(f"selftest: {CASES} cases, {RED} red-proved")
     return 0
 
 

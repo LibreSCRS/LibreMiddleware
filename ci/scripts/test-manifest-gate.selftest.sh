@@ -26,6 +26,8 @@ trap 'rm -rf "$WORK"' EXIT
 
 pass=0
 fail=0
+cases=0
+red=0
 
 # Build a fake repository root with a ci/ directory and a stub ctest whose
 # output the caller dictates.
@@ -60,6 +62,9 @@ listing_of() {
 
 check() {
     local label="$1" expected="$2" actual="$3"
+    cases=$((cases + 1))
+    # red-proved: the case in which the gate returned non-zero on a perturbed input.
+    if [ "$expected" != 0 ]; then red=$((red + 1)); fi
     if [ "$expected" = "$actual" ]; then
         echo "case $label: OK   — exit $actual"
         pass=$((pass + 1))
@@ -157,6 +162,7 @@ check 9 0 $rc
 case "$out" in *"3 tests, manifest matches"*) ;; *) echo "  case 9: FAIL — the comment was read as part of the name: $out"; fail=$((fail + 1)) ;; esac
 # and --update from such a listing records the bare name, not the comment
 ( cd "$root" && PATH="$root/bin:$PATH" bash ci/scripts/test-manifest-gate.sh --update build linux >/dev/null 2>&1 )
+cases=$((cases + 1))
 if grep -q '#' "$root/ci/test-manifest.linux.txt"; then
     echo "case 9b: FAIL — --update recorded the comment"; fail=$((fail + 1))
 else
@@ -164,4 +170,5 @@ else
 fi
 
 echo "selftest: $pass passed, $fail failed"
+printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
 [ "$fail" = 0 ]

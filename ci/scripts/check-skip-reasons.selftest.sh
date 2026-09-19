@@ -23,6 +23,8 @@ trap 'rm -rf "$WORK"' EXIT
 
 pass=0
 fail=0
+cases=0
+red=0
 
 make_repo() {
     local name="$1" body="$2"
@@ -41,6 +43,9 @@ make_repo() {
 
 check() {
     local label="$1" expected="$2" actual="$3"
+    cases=$((cases + 1))
+    # red-proved: the case in which the gate returned non-zero on a perturbed input.
+    if [ "$expected" != 0 ]; then red=$((red + 1)); fi
     if [ "$expected" = "$actual" ]; then
         echo "case $label: OK   — exit $actual"; pass=$((pass + 1))
     else
@@ -90,4 +95,5 @@ git -C "$r" add README.md; git -C "$r" -c commit.gpgsign=false commit -qm x
 out="$(run "$r")"; rc=$?; check 10 2 $rc
 
 echo "selftest: $pass passed, $fail failed"
+printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
 [ "$fail" = 0 ]

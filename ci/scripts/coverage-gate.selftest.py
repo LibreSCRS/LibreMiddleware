@@ -32,6 +32,7 @@ from pathlib import Path
 GATE = Path(__file__).resolve().parent / "coverage-gate.py"
 WORK = Path(tempfile.mkdtemp(prefix="covgate-selftest.", dir="/var/tmp"))
 passed = failed = 0
+cases = red = 0
 
 
 def summary(total_pct, covered, total_lines, files, branch=30.0):
@@ -92,7 +93,12 @@ def seed(root):
 
 
 def check(label, expected, actual, extra=True, out=""):
-    global passed, failed
+    global passed, failed, cases, red
+    cases += 1
+    # red-proved: a case in which the gate was to return non-zero on a
+    # perturbed input. A proof that never saw the gate fail is not a proof.
+    if expected != 0:
+        red += 1
     if expected == actual and extra:
         print(f"case {label}: OK   — exit {actual}")
         passed += 1
@@ -178,6 +184,7 @@ try:
     check(13, 0, rc, "vendored shim" in out, out)
 
     print(f"selftest: {passed} passed, {failed} failed")
+    print(f"selftest: {cases} cases, {red} red-proved")
 finally:
     shutil.rmtree(WORK, ignore_errors=True)
 

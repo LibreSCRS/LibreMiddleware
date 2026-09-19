@@ -16,6 +16,8 @@ subject="$here/check-package-matrix.sh"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 fails=0
+cases=0
+red=0
 
 matrix() {  # matrix <third-digest>
     cat <<Y
@@ -36,6 +38,9 @@ Y
 
 run() {  # run <name> <expected-rc> <dir>
     local name=$1 want=$2 dir=$3
+    cases=$((cases + 1))
+    # red-proved: the case in which the gate returned non-zero on a perturbed input.
+    if [ "$want" != 0 ]; then red=$((red + 1)); fi
     ( cd "$dir" && bash "$subject" ) > "$work/out" 2>&1
     local got=$?
     if [ "$got" -eq "$want" ]; then
@@ -69,7 +74,9 @@ run "case_3 no matrix to compare is not a pass" 2 "$work/case_3"
 
 if [ "$fails" -eq 0 ]; then
     echo "check-package-matrix selftest: all cases passed"
+    printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
     exit 0
 fi
 echo "check-package-matrix selftest: $fails case(s) failed"
+printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
 exit 1

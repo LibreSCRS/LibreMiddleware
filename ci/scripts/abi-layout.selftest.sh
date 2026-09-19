@@ -48,6 +48,10 @@ trap 'rm -rf "$WORK"' EXIT
 
 pass=0
 fail=0
+cases=0
+# red-proved: a case in which the classifier or --update returned non-zero on
+# a perturbed input. Cases 2 and 5 are the additive controls, so they are not.
+red=0
 
 ok()   { printf 'case %s: OK   — %s\n' "$1" "$2"; pass=$((pass + 1)); }
 bad()  { printf 'case %s: FAIL — %s\n' "$1" "$2"; fail=$((fail + 1)); }
@@ -93,6 +97,7 @@ mkfakerepo() {
 # ---------------------------------------------------------------------------
 # Case 1 — the two frozen dumps.
 # ---------------------------------------------------------------------------
+cases=$((cases + 1)); red=$((red + 1))
 for f in "$FROZEN_OLD" "$FROZEN_NEW"; do
     if [[ ! -f "$f" ]]; then
         bad 1 "frozen fixture missing: $f"
@@ -123,6 +128,7 @@ if ! snap "$WORK/pristine/include" "$WORK/ref.txt" "$WORK/bd-ref"; then
     bad 0 "could not snapshot the unperturbed header copy"
     sed -n '1,20p' "$WORK/ref.txt.err"
     echo "selftest: ${pass} passed, ${fail} failed"
+    printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
     exit 1
 fi
 
@@ -130,6 +136,8 @@ fi
 # $WORK/<case>/include, applies a python edit, snapshots, classifies.
 run_case() {
     local id="$1" expect="$2" py="$3" extra_check="${4:-}" where="${5:-verdict}"
+    cases=$((cases + 1))
+    if [[ "$expect" != additive ]]; then red=$((red + 1)); fi
     local d="$WORK/case$id"
     mkdir -p "$d"
     cp -a "$WORK/pristine/include" "$d/include"
@@ -241,6 +249,7 @@ run_case 5 additive "$PY5" 'LibreSCRS::Plugin::SelftestProbeType' snapshot
 # Case 6 — --update refuses a non-additive difference while the SONAME integer
 # stands still, and names both numbers.
 # ---------------------------------------------------------------------------
+cases=$((cases + 1)); red=$((red + 1))
 base_soversion="$(sed -n 's/^# soversion: \([0-9]*\)$/\1/p' "$WORK/ref.txt" | head -1)"
 if [[ -z "$base_soversion" ]]; then
     bad 6 "reference snapshot carries no '# soversion:' header line"
@@ -265,6 +274,7 @@ fi
 # Case 7 — --update is refused anywhere but the canonical toolchain. Member
 # offsets are facts about one toolchain, so exactly one may record them.
 # ---------------------------------------------------------------------------
+cases=$((cases + 1)); red=$((red + 1))
 d="$WORK/case7"
 mkfakerepo "$d" "$((base_soversion + 1))" "$WORK/ref.txt" "$WORK/pristine/include"
 mkdir -p "$d/stub"
@@ -290,4 +300,5 @@ fi
 
 # ---------------------------------------------------------------------------
 echo "selftest: ${pass} passed, ${fail} failed"
+printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
 [[ $fail -eq 0 ]]

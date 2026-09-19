@@ -24,6 +24,7 @@ from pathlib import Path
 GATE = Path(__file__).resolve().parent / "warning-gate.py"
 WORK = Path(tempfile.mkdtemp(prefix="warngate-selftest.", dir="/var/tmp"))
 passed = failed = 0
+cases = red = 0
 
 
 def make_log(path, units, warnings):
@@ -55,7 +56,12 @@ def run(root, *args):
 
 
 def check(label, expected, actual, extra=True, out=""):
-    global passed, failed
+    global passed, failed, cases, red
+    cases += 1
+    # red-proved: a case in which the gate was to return non-zero on a
+    # perturbed input. A proof that never saw the gate fail is not a proof.
+    if expected != 0:
+        red += 1
     if expected == actual and extra:
         print(f"case {label}: OK   — exit {actual}")
         passed += 1
@@ -130,6 +136,7 @@ try:
     check(9, 2, rc, before == after, out)
 
     print(f"selftest: {passed} passed, {failed} failed")
+    print(f"selftest: {cases} cases, {red} red-proved")
 finally:
     shutil.rmtree(WORK, ignore_errors=True)
 

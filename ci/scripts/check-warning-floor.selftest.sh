@@ -9,7 +9,15 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 T="$(mktemp -d "${TMPDIR:-/var/tmp}/cwf-selftest.XXXXXX")"
 trap 'rm -rf "$T"' EXIT
 fails=0
-say() { if [ "$1" = 0 ]; then printf 'PASS  %s\n' "$2"; else printf 'FAIL  %s\n' "$2"; fails=1; fi; }
+cases=0
+red=0
+# say <status> <label> <gate-rc>: <gate-rc> is what the gate was expected to
+# return for this case, and a non-zero one is a case that proved the gate red.
+say() {
+  cases=$((cases + 1))
+  if [ "${3:-0}" != 0 ]; then red=$((red + 1)); fi
+  if [ "$1" = 0 ]; then printf 'PASS  %s\n' "$2"; else printf 'FAIL  %s\n' "$2"; fails=1; fi
+}
 
 fixture() {  # fixture <name> <floor-json-line> <n-edges>
   local d="$T/$1"; rm -rf "$d"; mkdir -p "$d/ci/scripts" "$d/b"
@@ -26,26 +34,27 @@ fixture() {  # fixture <name> <floor-json-line> <n-edges>
 run() { bash "$1/ci/scripts/check-warning-floor.sh" "$1/b" >"$T/out" 2>&1; echo $?; }
 
 d=$(fixture a 100 111); rc=$(run "$d")
-[ "$rc" = 0 ] && grep -q 'floor is 11 low' "$T/out"; say $? "1 floor below the graph is reachable, and the slack is named"
+[ "$rc" = 0 ] && grep -q 'floor is 11 low' "$T/out"; say $? "1 floor below the graph is reachable, and the slack is named" 0
 
 d=$(fixture b 111 111); rc=$(run "$d")
-[ "$rc" = 0 ] && grep -q 'min_compile_units=111 is reachable' "$T/out"; say $? "2 floor equal to the graph is green"
+[ "$rc" = 0 ] && grep -q 'min_compile_units=111 is reachable' "$T/out"; say $? "2 floor equal to the graph is green" 0
 
 d=$(fixture c 122 111); rc=$(run "$d")
 [ "$rc" = 1 ] && grep -q 'min_compile_units=122' "$T/out" && grep -q 'only 111 compile edges' "$T/out"
-say $? "3 PERTURBATION: floor above the graph is red and names both numbers"
+say $? "3 PERTURBATION: floor above the graph is red and names both numbers" 1
 
 d=$(fixture d 0 111); rc=$(run "$d")
-[ "$rc" = 1 ] && grep -q 'anti-vacuum rule is disarmed' "$T/out"; say $? "4 a zero floor is refused, not passed"
+[ "$rc" = 1 ] && grep -q 'anti-vacuum rule is disarmed' "$T/out"; say $? "4 a zero floor is refused, not passed" 1
 
 d=$(fixture e NONE 111); rc=$(run "$d")
-[ "$rc" = 2 ] && grep -q 'no baseline' "$T/out"; say $? "5 a missing baseline is 'cannot measure' (2), not pass"
+[ "$rc" = 2 ] && grep -q 'no baseline' "$T/out"; say $? "5 a missing baseline is 'cannot measure' (2), not pass" 2
 
 d=$(fixture f 111 NONE); rc=$(run "$d")
-[ "$rc" = 2 ] && grep -q 'no .*build.ninja' "$T/out"; say $? "6 a missing build.ninja is 'cannot measure' (2), not pass"
+[ "$rc" = 2 ] && grep -q 'no .*build.ninja' "$T/out"; say $? "6 a missing build.ninja is 'cannot measure' (2), not pass" 2
 
 d=$(fixture g 111 0); rc=$(run "$d")
-[ "$rc" = 2 ] && grep -q 'no compile edges' "$T/out"; say $? "7 a graph with no compile edges is 'cannot measure' (2), not pass"
+[ "$rc" = 2 ] && grep -q 'no compile edges' "$T/out"; say $? "7 a graph with no compile edges is 'cannot measure' (2), not pass" 2
 
 [ "$fails" -eq 0 ] && echo "selftest: 7/7 OK" || echo "selftest: FAILED"
+printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
 exit "$fails"

@@ -41,6 +41,7 @@ trap 'rm -rf "$work"' EXIT
 
 fails=0
 cases=0
+red=0
 
 fx() { printf '%s/%s/%s\n' "$work" "$1" "$rname"; }
 
@@ -76,6 +77,8 @@ expect_red() {  # expect_red <name> <substring>
     local c="$1" want="$2" d
     d=$(fx "$c")
     cases=$((cases + 1))
+    # every case here is a perturbation: a red one is the proof.
+    red=$((red + 1))
     if cmp -s "$d/packaging/arch/PKGBUILD" "$control_recipe" \
        && cmp -s "$d/VERSION" "$root/VERSION" 2>/dev/null; then
         echo "CASE $c: the fixture is identical to the control -- the perturbation changed nothing"
@@ -97,6 +100,7 @@ expect_red_out() {  # expect_red_out <name> <substring> -- for perturbations
                     # that touch the tree rather than the recipe text
     local c="$1" want="$2"
     cases=$((cases + 1))
+    red=$((red + 1))
     run "$c"
     if [ "$rc" -eq 0 ]; then
         echo "CASE $c: expected a non-zero exit, got 0"
@@ -221,5 +225,11 @@ case "$out" in
        printf '%s\n' "$out" | sed 's/^/    /'; fails=$((fails + 1)) ;;
 esac
 
-if [ "$fails" -eq 0 ]; then echo "check-recipe selftest: all $cases cases passed"; exit 0; fi
-echo "check-recipe selftest: $fails of $cases case(s) failed"; exit 1
+if [ "$fails" -eq 0 ]; then
+    echo "check-recipe selftest: all $cases cases passed"
+    printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
+    exit 0
+fi
+echo "check-recipe selftest: $fails of $cases case(s) failed"
+printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
+exit 1

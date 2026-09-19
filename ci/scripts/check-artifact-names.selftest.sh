@@ -30,6 +30,7 @@ trap 'rm -rf "$work"' EXIT
 
 fails=0
 cases=0
+red=0
 
 wf() {  # wf <case> <upload-name> <consumer-key> <consumer-value>
     local c=$1 up=$2 key=$3 val=$4 d="$work/$1"
@@ -112,6 +113,8 @@ wfroot_unpublished() {  # wfroot_unpublished <case>
 expect() {  # expect <case> <want-rc> <substring>
     local c=$1 want=$2 sub=$3 out rc
     cases=$((cases + 1))
+    # red-proved: the case in which the gate returned non-zero on a perturbed input.
+    if [ "$want" != 0 ]; then red=$((red + 1)); fi
     local d="$work/$c"; [ -d "$d/root/.github/workflows" ] && d="$d/root/.github/workflows"
     out=$(bash "$subject" "$d" 2>&1); rc=$?
     if [ "$rc" -ne "$want" ]; then
@@ -191,5 +194,11 @@ case "$out" in
        printf '%s\n' "$out" | sed 's/^/    /'; fails=$((fails + 1)) ;;
 esac
 
-if [ "$fails" -eq 0 ]; then echo "check-artifact-names selftest: all $cases cases passed"; exit 0; fi
-echo "check-artifact-names selftest: $fails of $cases case(s) failed"; exit 1
+if [ "$fails" -eq 0 ]; then
+    echo "check-artifact-names selftest: all $cases cases passed"
+    printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
+    exit 0
+fi
+echo "check-artifact-names selftest: $fails of $cases case(s) failed"
+printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
+exit 1

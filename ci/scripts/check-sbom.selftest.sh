@@ -27,10 +27,15 @@ subject="$here/check-sbom.py"
 work=$(mktemp -d) || exit 2
 trap 'rm -rf "$work"' EXIT
 fails=0
+cases=0
+red=0
 
 # expect <want-rc> <label> <file...>
 expect() {
     want=$1; label=$2; shift 2
+    cases=$((cases + 1))
+    # red-proved: the case in which the gate returned non-zero on a perturbed input.
+    if [ "$want" != 0 ]; then red=$((red + 1)); fi
     python3 "$subject" "$@" >"$work/out" 2>&1
     got=$?
     if [ "$got" != "$want" ]; then
@@ -66,6 +71,8 @@ expect 1 "one empty bill in a set fails the set" "$work/good.json" "$work/empty.
 
 if [ "$fails" -ne 0 ]; then
     echo "check-sbom.selftest: $fails case(s) failed" >&2
+    printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
     exit 1
 fi
 echo "check-sbom.selftest: all cases passed"
+printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"

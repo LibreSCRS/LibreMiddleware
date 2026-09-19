@@ -14,8 +14,13 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 fails=0
+cases=0
+red=0
 run() {   # run <name> <expected-rc> <dir>  [args...]
     name=$1; want=$2; dir=$3; shift 3
+    cases=$((cases + 1))
+    # red-proved: the case in which the gate returned non-zero on a perturbed input.
+    if [ "$want" != 0 ]; then red=$((red + 1)); fi
     ( cd "$dir" && sh "$subject" "$@" ) > "$work/out" 2>&1
     got=$?
     if [ "$got" -eq "$want" ]; then
@@ -74,7 +79,9 @@ run "case_7 no version argument" 2 "$d"
 
 if [ "$fails" -eq 0 ]; then
     echo "check-release-lockstep selftest: all cases passed"
+    printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
     exit 0
 fi
 echo "check-release-lockstep selftest: $fails case(s) failed"
+printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
 exit 1
