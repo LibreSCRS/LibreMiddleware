@@ -1,15 +1,15 @@
 # Contributing to a LibreSCRS Card Plugin
 
-> **Scope (LM 4.0):** Plugins are an **internal modular-driver pattern**.
+> **Scope (LM 5.0):** Plugins are an **internal modular-driver pattern**.
 > They live in-tree under `LibreMiddleware/lib/<name>/` and
 > `LibreMiddleware/lib/<name>-plugin/`, are built and tested as part of
 > the LibreMiddleware build, and have direct access to the
 > `LIBRESCRS_INTERNAL_BUILD`-gated APDU transmission helpers
 > (`LibreSCRS::SmartCard::detail::unwrap`).
 >
-> **The LM 4.0 public C++ API does not include APDU transmission or
+> **The LM 5.0 public C++ API does not include APDU transmission or
 > low-level card session control.** Out-of-tree (third-party) plugin
-> authoring is **not supported in 4.0**: the surface required to support
+> authoring is **not supported in 5.0**: the surface required to support
 > it (a public APDU API and a stable plugin C++ ABI) is reserved for a
 > future 4.x cycle, to be informed by a concrete real consumer rather
 > than guessed pre-emptively.
@@ -211,7 +211,7 @@ protected:
 > path for sending raw APDUs from a plugin.
 >
 > Translation units that do not carry `LIBRESCRS_INTERNAL_BUILD` cannot
-> use `detail::unwrap`. There is no public alternative in LM 4.0; out-
+> use `detail::unwrap`. There is no public alternative in LM 5.0; out-
 > of-tree plugin authoring requires a public APDU API which is deferred
 > to a future 4.x cycle.
 
@@ -317,7 +317,7 @@ failure.
 ## What This Doc Does NOT Cover
 
 This guide is scoped to in-tree contribution. The following are **out
-of scope for LM 4.0** and intentionally not documented here:
+of scope for LM 5.0** and intentionally not documented here:
 
 - **Third-party packaging or distribution** of plugins outside the
   LibreMiddleware source tree. Plugins are built as part of LM and
@@ -328,7 +328,7 @@ of scope for LM 4.0** and intentionally not documented here:
   In-tree plugins are recompiled with LM in lockstep.
 - **Public APDU transmission from a non-`LIBRESCRS_INTERNAL_BUILD`
   translation unit.** The `detail::unwrap` gate is intentional. There
-  is no public `CardSession::transmit` in 4.0.
+  is no public `CardSession::transmit` in 5.0.
 - **`librescrs_add_plugin()` use from outside the LM source tree.**
   The CMake helper is part of the LM build system, not a published
   installable artefact.
