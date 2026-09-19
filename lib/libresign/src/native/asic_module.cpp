@@ -154,19 +154,10 @@ std::string buildASiCManifest(const std::string& fileName, const std::vector<uin
 // free NNN into the SAME container, leaving every prior entry byte-for-byte
 // intact and signing the SAME data file every prior signer already signed.
 
-struct AsicEntry
-{
-    std::string name;
-    std::vector<uint8_t> data;
-};
-
-struct ParsedAsic
-{
-    std::string dataFileName;             // first non-META-INF, non-mimetype entry
-    std::vector<uint8_t> dataFileBytes;   // its content
-    std::vector<AsicEntry> preservedMeta; // every META-INF/* entry (sigs + manifests + anything else)
-    int nextSigNum = 1;                   // max existing signatureNNN/ASiCManifestNNN + 1
-};
+// AsicEntry and ParsedAsic are declared in asic_module.h, beside the entry
+// point that returns them.
+using detail::AsicEntry;
+using detail::ParsedAsic;
 
 // Resource caps for tryParseAsic — defend against zip-bomb / heap-exhaustion
 // inputs reachable on every re-sign request via attacker-supplied ASiC
@@ -174,10 +165,65 @@ struct ParsedAsic
 // documents (a typical signed PDF + a handful of CAdES sigs fits in well
 // under 64 MiB per entry / 256 MiB total) while rejecting central-directory
 // bombs that declare GiB-scale uncompressed sizes from KB-scale inputs.
+//
+// What exceeding them DOES, which is the half that was missing: a container
+// whose entry declares more than kMaxAsicEntrySize is refused, with that number
+// in the message, and is NOT signed. It used to be signed the wrong way -- the
+// reader declined it, nothing distinguished "too big" from "not a container",
+// and a legal ASiC-E carrying a 70 MiB document was wrapped as a fresh data
+// file instead of gaining a second signature. The user saw success and the
+// validator saw one signature. Raising the ceiling is a one-constant change,
+// the same shape as ChunkedReadOptions::maxTotalBytes.
+//
+// Why 64 MiB and not more: these two numbers are a proposed ceiling, not a
+// measured one. No corpus of real ASiC-E containers has been measured here, so
+// raising them would be inventing a policy rather than recording one; 64 MiB per
+// entry is roughly an order of magnitude above the signed PDFs and XML invoices
+// this path is built for, and the 256 MiB container budget below is what stops a
+// thousand entries just under the per-entry ceiling from adding up. They are
+// deliberately unlike ChunkedReadOptions::maxTotalBytes (1 MiB), which bounds a
+// card read over APDUs where the largest file is a facial image; nothing is
+// shared between the two paths but the shape of the argument.
 inline constexpr mz_uint kMaxAsicEntries = 1024;
 inline constexpr size_t kMaxAsicEntrySize = 64ULL * 1024 * 1024;   // 64 MiB
 inline constexpr size_t kMaxAsicTotalBytes = 256ULL * 1024 * 1024; // 256 MiB
 inline constexpr size_t kMaxAsicEntryNameLen = 1024;
+
+// One capped extraction, used by every place that pulls an entry out of a
+// container the user brought.
+//
+// mz_zip_reader_extract_to_heap allocates the DECLARED uncompressed size up
+// front, before reading a byte, and on a 64-bit build nothing bounds that: the
+// 0x7FFFFFFF guard inside miniz is compiled only where size_t is 32 bits. So
+// the declared size has to be refused here, not after.
+//
+// This exists as one helper rather than three guards because the guard was
+// added to two of the three call sites and the third -- a diagnostic probe
+// under the signing entry point -- kept the behaviour alive, reached with
+// exactly the bytes the other two now refuse. A helper cannot be added to two
+// places out of three.
+std::optional<std::vector<uint8_t>> extractCapped(mz_zip_archive& zip, mz_uint index)
+{
+    mz_zip_archive_file_stat st;
+    if (!mz_zip_reader_file_stat(&zip, index, &st))
+        return std::nullopt;
+    if (st.m_uncomp_size > kMaxAsicEntrySize)
+        return std::nullopt;
+
+    size_t sz = 0;
+    void* buf = mz_zip_reader_extract_to_heap(&zip, index, &sz, 0);
+    if (!buf)
+        return std::nullopt;
+    // Re-checked against the size actually produced: a decoder could in
+    // principle decompress to more than the header declared.
+    if (sz > kMaxAsicEntrySize) {
+        mz_free(buf);
+        return std::nullopt;
+    }
+    std::vector<uint8_t> out(static_cast<uint8_t*>(buf), static_cast<uint8_t*>(buf) + sz);
+    mz_free(buf);
+    return out;
+}
 
 // Validate a ZIP entry name against zip-slip / NUL / backslash / "..".
 // Used both for the data file (writer-side, single entry from the caller)
@@ -206,6 +252,10 @@ bool isValidAsicEntryName(std::string_view name)
 // mimetype, ZIP with zero or multiple data files, mimetype-only ZIP,
 // entries failing zip-slip / size-cap validation) — the caller then
 // falls back to the fresh single-sign path.
+} // namespace
+
+namespace detail {
+
 std::optional<ParsedAsic> tryParseAsic(const std::vector<uint8_t>& data)
 {
     if (data.size() < 30 || data[0] != 'P' || data[1] != 'K' || data[2] != 0x03 || data[3] != 0x04)
@@ -225,12 +275,13 @@ std::optional<ParsedAsic> tryParseAsic(const std::vector<uint8_t>& data)
     if (mtIdx < 0)
         return std::nullopt;
     {
-        size_t mtSize = 0;
-        void* mtBuf = mz_zip_reader_extract_to_heap(&zip, static_cast<mz_uint>(mtIdx), &mtSize, 0);
-        if (!mtBuf)
+        // The mimetype entry is reached FIRST, so an uncapped extraction here
+        // allocates before anything else has had a chance to refuse. Its
+        // content has one legal value, 31 bytes long.
+        const auto mtBytes = extractCapped(zip, static_cast<mz_uint>(mtIdx));
+        if (!mtBytes)
             return std::nullopt;
-        std::string mtContent(static_cast<char*>(mtBuf), mtSize);
-        mz_free(mtBuf);
+        const std::string mtContent(mtBytes->begin(), mtBytes->end());
         if (mtContent != "application/vnd.etsi.asic-e+zip")
             return std::nullopt;
     }
@@ -253,28 +304,20 @@ std::optional<ParsedAsic> tryParseAsic(const std::vector<uint8_t>& data)
         if (!isValidAsicEntryName(name))
             return std::nullopt;
 
-        // Cap declared uncompressed size before allocating heap for it,
-        // and refuse if the running total exceeds the budget. m_uncomp_size
-        // is attacker-controlled (it's read straight from the central
-        // directory) — without the cap a 1 KB malicious candidate can
-        // declare GiB-scale entries and OOM the signing service.
-        if (st.m_uncomp_size > kMaxAsicEntrySize)
-            return std::nullopt;
+        // The running total is this loop's own budget, on top of the per-entry
+        // cap extractCapped applies: a thousand entries just under the ceiling
+        // are as effective as one over it. m_uncomp_size is read straight out
+        // of the central directory, so it is the archive's claim, not a fact.
         if (st.m_uncomp_size > kMaxAsicTotalBytes - totalExtracted)
             return std::nullopt;
 
-        size_t sz = 0;
-        void* buf = mz_zip_reader_extract_to_heap(&zip, i, &sz, 0);
-        if (!buf)
+        const auto extracted = extractCapped(zip, i);
+        if (!extracted)
             return std::nullopt;
-        // Re-check actual extracted size against the cap — miniz could in
-        // principle decompress to more than m_uncomp_size declared.
-        if (sz > kMaxAsicEntrySize || sz > kMaxAsicTotalBytes - totalExtracted) {
-            mz_free(buf);
+        if (extracted->size() > kMaxAsicTotalBytes - totalExtracted)
             return std::nullopt;
-        }
-        std::vector<uint8_t> bytes(static_cast<uint8_t*>(buf), static_cast<uint8_t*>(buf) + sz);
-        mz_free(buf);
+        std::vector<uint8_t> bytes = *extracted;
+        const size_t sz = bytes.size();
         totalExtracted += sz;
 
         constexpr std::string_view kMetaPrefix = "META-INF/";
@@ -314,6 +357,78 @@ std::optional<ParsedAsic> tryParseAsic(const std::vector<uint8_t>& data)
     return parsed;
 }
 
+std::size_t maxContainerEntryBytes()
+{
+    return kMaxAsicEntrySize;
+}
+
+AsicProbe probeAsic(const std::vector<uint8_t>& data)
+{
+    mz_zip_archive probe;
+    std::memset(&probe, 0, sizeof(probe));
+    if (!mz_zip_reader_init_mem(&probe, data.data(), data.size(), 0))
+        return AsicProbe::NotAsicE;
+    ScopeGuard pg{[&probe] { mz_zip_reader_end(&probe); }};
+
+    const int mtIdx = mz_zip_reader_locate_file(&probe, "mimetype", nullptr, 0);
+    if (mtIdx < 0)
+        return AsicProbe::NotAsicE;
+
+    // Capped, like every other extraction here. This is the one that was not:
+    // it runs exactly when tryParseAsic has already refused, so the bytes it
+    // sees are the ones the caps upstream just rejected.
+    const auto mtBytes = extractCapped(probe, static_cast<mz_uint>(mtIdx));
+    if (!mtBytes)
+        return AsicProbe::NotAsicE;
+    const std::string mt(mtBytes->begin(), mtBytes->end());
+    if (mt != "application/vnd.etsi.asic-e+zip")
+        return AsicProbe::NotAsicE;
+
+    int rootDataFiles = 0;
+    int priorSignatures = 0;
+    bool overCap = false;
+    const mz_uint pn = mz_zip_reader_get_num_files(&probe);
+    for (mz_uint i = 0; i < pn; ++i) {
+        mz_zip_archive_file_stat ps;
+        if (!mz_zip_reader_file_stat(&probe, i, &ps))
+            break;
+        // Declared, not extracted: this walk allocates nothing, so it can look
+        // at a size the reader refuses to make room for. That is the whole
+        // reason the caller can tell "too big" apart from "not a container" --
+        // before this, an entry over the cap left the reader with nullopt and
+        // the probe unable to name it, which read as "nothing to say".
+        if (ps.m_uncomp_size > kMaxAsicEntrySize)
+            overCap = true;
+        const std::string nm(ps.m_filename);
+        if (nm == "mimetype")
+            continue;
+        if (std::string_view(nm).starts_with("META-INF/")) {
+            // Whether there is anything to join, which is the only question the
+            // signing path has to answer. Counted here rather than reasoned
+            // about there, because this walk is already looking at every name.
+            if ((std::string_view(nm).starts_with("META-INF/signature") && std::string_view(nm).ends_with(".p7s")) ||
+                (std::string_view(nm).starts_with("META-INF/signatures") && std::string_view(nm).ends_with(".xml"))) {
+                ++priorSignatures;
+            }
+            continue;
+        }
+        ++rootDataFiles;
+    }
+    if (rootDataFiles > 1)
+        return AsicProbe::MultipleRootDataFiles;
+    if (overCap)
+        return AsicProbe::EntryTooLarge;
+    if (priorSignatures == 0)
+        return AsicProbe::NoPriorSignature;
+    // Recognisable, carries signatures, and the reader would not read it. Which
+    // cap or which malformed part stopped it does not change what must happen.
+    return AsicProbe::Unreadable;
+}
+
+} // namespace detail
+
+namespace {
+
 // Format the three-digit sig number suffix used in entry names (signatureNNN /
 // ASiCManifestNNN). Matches the convention DSS / ETSI test bench expect.
 std::string formatSigSuffix(int n)
@@ -336,7 +451,7 @@ SigningResult ASiCModule::signWithCAdES(const std::vector<uint8_t>& data, const 
     // prior signer signed — read those from the existing container, ignore
     // the caller's data/fileName, and emit signature{maxNNN+1}.p7s with a
     // matching ASiCManifest{maxNNN+1}.xml in the SAME ZIP.
-    std::optional<ParsedAsic> prior = tryParseAsic(data);
+    std::optional<ParsedAsic> prior = detail::tryParseAsic(data);
 
     // ETSI EN 319 162-1 §A.4 covers re-signing only when the prior container
     // holds exactly one data file. If the input is a recognisably ASiC-E
@@ -349,38 +464,40 @@ SigningResult ASiCModule::signWithCAdES(const std::vector<uint8_t>& data, const 
     // ETSI MIME literal" gate the parser uses, so non-ASiC inputs (PDFs,
     // generic blobs) keep falling through to fresh-sign as before.
     if (!prior) {
-        mz_zip_archive probe;
-        std::memset(&probe, 0, sizeof(probe));
-        if (mz_zip_reader_init_mem(&probe, data.data(), data.size(), 0)) {
-            ScopeGuard pg{[&probe] { mz_zip_reader_end(&probe); }};
-            int mtIdx = mz_zip_reader_locate_file(&probe, "mimetype", nullptr, 0);
-            if (mtIdx >= 0) {
-                size_t mtSize = 0;
-                void* mtBuf = mz_zip_reader_extract_to_heap(&probe, static_cast<mz_uint>(mtIdx), &mtSize, 0);
-                if (mtBuf) {
-                    std::string mt(static_cast<char*>(mtBuf), mtSize);
-                    mz_free(mtBuf);
-                    if (mt == "application/vnd.etsi.asic-e+zip") {
-                        int rootDataFiles = 0;
-                        const mz_uint pn = mz_zip_reader_get_num_files(&probe);
-                        for (mz_uint i = 0; i < pn; ++i) {
-                            mz_zip_archive_file_stat ps;
-                            if (!mz_zip_reader_file_stat(&probe, i, &ps))
-                                break;
-                            std::string nm(ps.m_filename);
-                            if (nm == "mimetype")
-                                continue;
-                            if (std::string_view(nm).starts_with("META-INF/"))
-                                continue;
-                            ++rootDataFiles;
-                        }
-                        if (rootDataFiles > 1)
-                            return makeFailure(SignFailureKind::InvalidDocument,
-                                               "ASiC-E re-sign rejects containers with multiple root data files (ETSI "
-                                               "EN 319 162-1 §A.4 supports only one data file per container)");
-                    }
-                }
-            }
+        switch (detail::probeAsic(data)) {
+        case detail::AsicProbe::MultipleRootDataFiles:
+            return makeFailure(SignFailureKind::InvalidDocument,
+                               "ASiC-E re-sign rejects containers with multiple root data files (ETSI "
+                               "EN 319 162-1 §A.4 supports only one data file per container)");
+        case detail::AsicProbe::EntryTooLarge:
+            // Refused, and said so. This used to fall through: the reader
+            // declined to allocate for the oversized entry, the probe had
+            // nothing to distinguish it with, and a perfectly legal container
+            // was wrapped as a fresh data file instead of gaining a signature.
+            // The user saw a success and the validator saw one signature.
+            return makeFailure(SignFailureKind::InvalidDocument,
+                               "ASiC-E container entry exceeds " +
+                                   std::to_string(detail::maxContainerEntryBytes() / (1024 * 1024)) +
+                                   " MiB, the per-entry ceiling this reader will allocate for; the "
+                                   "container is not re-signed rather than being wrapped as a new "
+                                   "data file");
+        case detail::AsicProbe::Unreadable:
+            // The class, not one instance of it. Any reason the reader refused a
+            // container that carries signatures ends here: the running size
+            // budget, the entry count, a name that fails validation, an entry
+            // that does not decode. Falling through would wrap it as a new
+            // document -- success for the holder, one signature for a validator.
+            return makeFailure(SignFailureKind::InvalidDocument,
+                               "this is an ASiC-E container carrying signatures, and it could not be "
+                               "read: it is not re-signed rather than being wrapped as a new data "
+                               "file. Check that every entry decodes, that entry names carry no path "
+                               "traversal, and that the container is within the entry count and total "
+                               "size this reader accepts");
+        case detail::AsicProbe::NotAsicE:
+        case detail::AsicProbe::NoPriorSignature:
+            // Not a container at all, or a container with no signature to join.
+            // Both are signed fresh, which is what they should be.
+            break;
         }
     }
 

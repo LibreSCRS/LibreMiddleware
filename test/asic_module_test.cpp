@@ -22,7 +22,45 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
+
+// A legal ASiC-E container whose data file is one byte over the per-entry
+// ceiling. It is generated here rather than committed: 64 MiB of anything is not
+// a fixture, and the bytes are compressible so the archive itself stays small
+// while the DECLARED uncompressed size is what the cap looks at.
+namespace {
+
+std::vector<uint8_t> asicWithDataFileOfSize(size_t dataBytes)
+{
+    const std::vector<char> payload(dataBytes, '\0'); // deflates to almost nothing
+    const char* kMime = "application/vnd.etsi.asic-e+zip";
+
+    mz_zip_archive w{};
+    if (!mz_zip_writer_init_heap(&w, 0, 0))
+        return {};
+    mz_zip_archive_file_stat unusedStat{};
+    (void)unusedStat;
+    mz_zip_writer_add_mem(&w, "mimetype", kMime, std::strlen(kMime), MZ_NO_COMPRESSION);
+    mz_zip_writer_add_mem(&w, "big.bin", payload.data(), payload.size(), MZ_DEFAULT_COMPRESSION);
+    const char* sig = "\x30\x03\x02\x01\x00";
+    mz_zip_writer_add_mem(&w, "META-INF/signature001.p7s", sig, 5, MZ_DEFAULT_COMPRESSION);
+    const char* man = "<?xml version=\"1.0\"?><ASiCManifest/>";
+    mz_zip_writer_add_mem(&w, "META-INF/ASiCManifest001.xml", man, std::strlen(man), MZ_DEFAULT_COMPRESSION);
+
+    void* buf = nullptr;
+    size_t size = 0;
+    if (!mz_zip_writer_finalize_heap_archive(&w, &buf, &size)) {
+        mz_zip_writer_end(&w);
+        return {};
+    }
+    mz_zip_writer_end(&w);
+    std::vector<uint8_t> out(static_cast<uint8_t*>(buf), static_cast<uint8_t*>(buf) + size);
+    mz_free(buf);
+    return out;
+}
+
+} // namespace
 
 using namespace libresign;
 
@@ -700,6 +738,28 @@ TEST_F(ASiCModuleSoftHSMTest, SignWithCAdES_ProducesValidZip)
 // Trusted-List anchor completed it and no issuer hop reaches a verified root,
 // so the tail is unprovable and the gate must fail closed rather than emit a
 // long-term signature with no verifiable revocation evidence.
+// The public entry point, not just the probe under it: a legal container over
+// the per-entry ceiling must come back as a refusal with a reason. Before this
+// it came back as a SUCCESS carrying the prior container wrapped as a fresh data
+// file -- the user saw a signed document and a validator saw one signature.
+TEST_F(ASiCModuleSoftHSMTest, SignWithCAdES_RefusesAContainerEntryOverTheCeiling)
+{
+    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
+                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    ASiCModule asic;
+
+    const auto oversized = asicWithDataFileOfSize(libresign::detail::maxContainerEntryBytes() + 1);
+    ASSERT_FALSE(oversized.empty());
+
+    const auto result = asic.signWithCAdES(oversized, "ignored.txt", token, SignatureLevel::B_B, {});
+
+    EXPECT_FALSE(result.success);
+    ASSERT_TRUE(result.failureKind.has_value()) << result.errorMessage;
+    EXPECT_EQ(*result.failureKind, SignFailureKind::InvalidDocument) << result.errorMessage;
+    EXPECT_NE(result.errorMessage.find("exceeds"), std::string::npos) << result.errorMessage;
+    EXPECT_NE(result.errorMessage.find("MiB"), std::string::npos) << result.errorMessage;
+}
+
 TEST_F(ASiCModuleSoftHSMTest, AppendSignerAtLongTermRejectsUnterminatedChain)
 {
     libresign::test::MockTsaServer tsaServer;
@@ -827,6 +887,267 @@ TEST(MinizZipBounds, ACentralDirectoryOffsetThatWrapsTheBoundsCheckIsRefusedAsCo
     EXPECT_EQ(mz_zip_get_last_error(&zip), MZ_ZIP_INVALID_HEADER_OR_CORRUPTED)
         << "actual: " << mz_zip_get_error_string(mz_zip_get_last_error(&zip));
     mz_zip_reader_end(&zip);
+}
+
+// readCorpusSeed / zipWithEntries: the fuzz corpus is the only place the
+// harness-found inputs live, so a unit test reads them from there rather than
+// keeping a second copy that can drift from the one the harness drives.
+namespace {
+
+std::vector<uint8_t> readCorpusSeed(const std::string& name)
+{
+    const std::string path = std::string(LIBRESCRS_FUZZ_CORPUS_DIR) + "/asic_reader/" + name;
+    std::FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f)
+        return {};
+    std::vector<uint8_t> out;
+    uint8_t chunk[4096];
+    size_t n = 0;
+    while ((n = std::fread(chunk, 1, sizeof(chunk), f)) > 0)
+        out.insert(out.end(), chunk, chunk + n);
+    std::fclose(f);
+    return out;
+}
+
+std::vector<uint8_t> zipWithEntries(const std::vector<std::pair<std::string, std::string>>& entries)
+{
+    mz_zip_archive w{};
+    if (!mz_zip_writer_init_heap(&w, 0, 0))
+        return {};
+    for (const auto& [name, body] : entries)
+        mz_zip_writer_add_mem(&w, name.c_str(), body.data(), body.size(), MZ_NO_COMPRESSION);
+    void* buf = nullptr;
+    size_t size = 0;
+    if (!mz_zip_writer_finalize_heap_archive(&w, &buf, &size)) {
+        mz_zip_writer_end(&w);
+        return {};
+    }
+    mz_zip_writer_end(&w);
+    std::vector<uint8_t> out(static_cast<uint8_t*>(buf), static_cast<uint8_t*>(buf) + size);
+    mz_free(buf);
+    return out;
+}
+
+} // namespace
+
+// =============================================================================
+// The diagnostic probe under the signing entry point.
+//
+// It reads the same bytes the reader just refused, which is what kept an
+// uncapped extraction alive after the reader got its cap: the fuzz harness
+// returned as soon as the reader said no, so nothing drove this. Both are now
+// one capped helper, and these cases hold the probe's own answers.
+// =============================================================================
+TEST(AsicProbe, ACapDeclaringThreeGigabytesIsNotAnAsicContainer)
+{
+    // The committed seed the harness found. Before the cap reached this path
+    // the declared size was allocated here in full.
+    const auto bytes = readCorpusSeed("mimetype-declares-three-gigabytes");
+    ASSERT_FALSE(bytes.empty()) << "seed missing";
+
+    EXPECT_EQ(libresign::detail::probeAsic(bytes), libresign::detail::AsicProbe::NotAsicE);
+}
+
+TEST(AsicProbe, OneRootDataFileIsRecognisedAsAsicE)
+{
+    const auto bytes = readCorpusSeed("asice-one-signer");
+    ASSERT_FALSE(bytes.empty()) << "seed missing";
+
+    // Readable and carrying a signature: the reader accepts it, so the probe's
+    // answer is only consulted when the reader does not.
+    EXPECT_TRUE(libresign::detail::tryParseAsic(bytes).has_value());
+}
+
+TEST(AsicProbe, APlainZipIsNotAnAsicContainer)
+{
+    const auto bytes = readCorpusSeed("wrong-mimetype-plain-zip");
+    ASSERT_FALSE(bytes.empty()) << "seed missing";
+
+    EXPECT_EQ(libresign::detail::probeAsic(bytes), libresign::detail::AsicProbe::NotAsicE);
+}
+
+TEST(AsicProbe, SeveralRootDataFilesAreNamedRatherThanJustRefused)
+{
+    // What the probe exists for: this is a real ASiC-E container, and re-signing
+    // it cannot be expressed, so the caller gets told which rule it broke
+    // instead of having the whole prior zip wrapped as a fresh data file.
+    const auto bytes = zipWithEntries({{"mimetype", "application/vnd.etsi.asic-e+zip"},
+                                       {"first.txt", "a"},
+                                       {"second.txt", "b"},
+                                       {"META-INF/signature001.p7s", "\x30\x03\x02\x01\x00"}});
+
+    EXPECT_EQ(libresign::detail::probeAsic(bytes), libresign::detail::AsicProbe::MultipleRootDataFiles);
+}
+
+// =============================================================================
+// The two local patches to the vendored ZIP writer, held by one byte.
+//
+// Upstream sets the data-descriptor bit (general-purpose flag bit 3) on every
+// entry. Java refuses a STORED entry that claims one, so a container written
+// that way holds a signature the ETSI validator reports as absent -- which is
+// how a wholesale version bump that dropped these patches looked green
+// everywhere except the one CI leg that runs the validator. This is the cheap
+// version of that leg: one byte per entry, no token, no JVM.
+// =============================================================================
+TEST(MinizWriterPatches, AStoredEntryDoesNotClaimADataDescriptor)
+{
+    mz_zip_archive writer{};
+    ASSERT_TRUE(mz_zip_writer_init_heap(&writer, 0, 0));
+    // Three bytes: miniz stores anything this small rather than deflating it,
+    // which is exactly the case upstream marks with bit 3 and Java then refuses.
+    ASSERT_TRUE(mz_zip_writer_add_mem(&writer, "small.txt", "abc", 3, MZ_DEFAULT_COMPRESSION));
+    const std::string deflatable(4096, 'x');
+    ASSERT_TRUE(
+        mz_zip_writer_add_mem(&writer, "big.txt", deflatable.data(), deflatable.size(), MZ_DEFAULT_COMPRESSION));
+    void* buf = nullptr;
+    size_t size = 0;
+    ASSERT_TRUE(mz_zip_writer_finalize_heap_archive(&writer, &buf, &size));
+    mz_zip_writer_end(&writer);
+
+    mz_zip_archive reader{};
+    ASSERT_TRUE(mz_zip_reader_init_mem(&reader, buf, size, 0));
+    ASSERT_EQ(mz_zip_reader_get_num_files(&reader), 2U);
+
+    constexpr mz_uint kHasDataDescriptor = 1U << 3;
+    mz_zip_archive_file_stat stored{};
+    mz_zip_archive_file_stat deflated{};
+    ASSERT_TRUE(mz_zip_reader_file_stat(&reader, 0, &stored));
+    ASSERT_TRUE(mz_zip_reader_file_stat(&reader, 1, &deflated));
+
+    EXPECT_EQ(stored.m_method, 0U) << "three bytes should be stored, not deflated";
+    EXPECT_EQ(stored.m_bit_flag & kHasDataDescriptor, 0U)
+        << "a STORED entry must not claim a data descriptor: Java refuses those, and the "
+           "ETSI validator then reports a container's signature as absent";
+
+    EXPECT_NE(deflated.m_method, 0U) << "4 KiB of one byte should deflate";
+    EXPECT_EQ(deflated.m_bit_flag & kHasDataDescriptor, kHasDataDescriptor)
+        << "a DEFLATED entry's compressed size is unknown until the stream ends, so it does "
+           "carry one -- asserting both ways is what stops the fix being 'never set the bit'";
+
+    mz_zip_reader_end(&reader);
+    mz_free(buf);
+}
+
+TEST(AsicProbe, AnEntryExactlyAtTheCeilingIsStillReadable)
+{
+    const auto bytes = asicWithDataFileOfSize(libresign::detail::maxContainerEntryBytes());
+    ASSERT_FALSE(bytes.empty());
+
+    // The boundary matters in its own right: a ceiling written `>=` would refuse
+    // a container the policy means to accept, and no over-cap case would notice.
+    EXPECT_EQ(libresign::detail::probeAsic(bytes), libresign::detail::AsicProbe::Unreadable);
+    EXPECT_TRUE(libresign::detail::tryParseAsic(bytes).has_value());
+}
+
+TEST(AsicProbe, AnEntryOverTheCeilingIsNamedRatherThanIgnored)
+{
+    const auto bytes = asicWithDataFileOfSize(libresign::detail::maxContainerEntryBytes() + 1);
+    ASSERT_FALSE(bytes.empty());
+
+    // The reader declines it, which is correct -- it will not allocate that. What
+    // was wrong is that nothing downstream could tell that apart from "this is
+    // not a container", so the signing path wrapped a legal ASiC-E as a fresh
+    // data file and reported success.
+    EXPECT_FALSE(libresign::detail::tryParseAsic(bytes).has_value());
+    EXPECT_EQ(libresign::detail::probeAsic(bytes), libresign::detail::AsicProbe::EntryTooLarge);
+}
+
+// The whole class, not the one instance the first fix covered. Each of these is a
+// container that carries signatures and that the reader refuses for a DIFFERENT
+// reason; each one used to be wrapped as a new document with the holder told it
+// had been signed.
+namespace {
+
+std::vector<uint8_t> asicWithEntries(const std::vector<std::pair<std::string, std::string>>& extra,
+                                     bool withSignature = true)
+{
+    const char* kMime = "application/vnd.etsi.asic-e+zip";
+    mz_zip_archive w{};
+    if (!mz_zip_writer_init_heap(&w, 0, 0))
+        return {};
+    mz_zip_writer_add_mem(&w, "mimetype", kMime, std::strlen(kMime), MZ_NO_COMPRESSION);
+    if (withSignature) {
+        const char* sig = "\x30\x03\x02\x01\x00";
+        mz_zip_writer_add_mem(&w, "META-INF/signature001.p7s", sig, 5, MZ_DEFAULT_COMPRESSION);
+        const char* man = "<?xml version=\"1.0\"?><ASiCManifest/>";
+        mz_zip_writer_add_mem(&w, "META-INF/ASiCManifest001.xml", man, std::strlen(man), MZ_DEFAULT_COMPRESSION);
+    }
+    for (const auto& [name, body] : extra)
+        mz_zip_writer_add_mem(&w, name.c_str(), body.data(), body.size(), MZ_DEFAULT_COMPRESSION);
+    void* buf = nullptr;
+    size_t size = 0;
+    if (!mz_zip_writer_finalize_heap_archive(&w, &buf, &size)) {
+        mz_zip_writer_end(&w);
+        return {};
+    }
+    mz_zip_writer_end(&w);
+    std::vector<uint8_t> out(static_cast<uint8_t*>(buf), static_cast<uint8_t*>(buf) + size);
+    mz_free(buf);
+    return out;
+}
+
+} // namespace
+
+TEST(AsicProbe, ManyEntriesUnderTheEntryCapButOverTheTotalBudget)
+{
+    // Five entries each under the per-entry ceiling, together over the container
+    // budget. They go under META-INF so that exactly one root data file remains:
+    // five root data files would trip the more specific multiple-data-files
+    // verdict instead, which is also a refusal but not the one under test here.
+    std::vector<std::pair<std::string, std::string>> entries;
+    entries.emplace_back("data.txt", "abc");
+    for (int i = 0; i < 5; ++i)
+        entries.emplace_back("META-INF/bulk" + std::to_string(i) + ".bin", std::string(60u * 1024 * 1024, '\0'));
+    const auto bytes = asicWithEntries(entries);
+    ASSERT_FALSE(bytes.empty());
+
+    EXPECT_FALSE(libresign::detail::tryParseAsic(bytes).has_value());
+    EXPECT_EQ(libresign::detail::probeAsic(bytes), libresign::detail::AsicProbe::Unreadable);
+}
+
+TEST(AsicProbe, MoreEntriesThanTheReaderAccepts)
+{
+    std::vector<std::pair<std::string, std::string>> entries;
+    for (int i = 0; i < 1100; ++i)
+        entries.emplace_back("META-INF/extra" + std::to_string(i) + ".txt", "x");
+    const auto bytes = asicWithEntries(entries);
+    ASSERT_FALSE(bytes.empty());
+
+    EXPECT_FALSE(libresign::detail::tryParseAsic(bytes).has_value());
+    EXPECT_EQ(libresign::detail::probeAsic(bytes), libresign::detail::AsicProbe::Unreadable);
+}
+
+TEST(AsicProbe, AnEntryThatDoesNotDecode)
+{
+    auto bytes = asicWithEntries({{"data.bin", std::string(4096, 'q')}});
+    ASSERT_FALSE(bytes.empty());
+    // Corrupt the deflate stream of the last entry's local data, leaving every
+    // header intact: the walk succeeds and the extraction does not.
+    ASSERT_GT(bytes.size(), 64u);
+    for (size_t i = bytes.size() / 2; i < bytes.size() / 2 + 32; ++i)
+        bytes[i] = static_cast<uint8_t>(~bytes[i]);
+
+    EXPECT_FALSE(libresign::detail::tryParseAsic(bytes).has_value());
+    EXPECT_EQ(libresign::detail::probeAsic(bytes), libresign::detail::AsicProbe::Unreadable);
+}
+
+TEST(AsicProbe, AnEntryNameThatTraversesOutOfTheContainer)
+{
+    const auto bytes = readCorpusSeed("zip-slip-meta-entry-name");
+    ASSERT_FALSE(bytes.empty()) << "seed missing";
+
+    EXPECT_FALSE(libresign::detail::tryParseAsic(bytes).has_value());
+    EXPECT_EQ(libresign::detail::probeAsic(bytes), libresign::detail::AsicProbe::Unreadable);
+}
+
+TEST(AsicProbe, AContainerWithNoSignatureIsSignedFresh)
+{
+    // The one case that must still fall through: nothing to join, so wrapping it
+    // is the right answer and refusing it would be a regression.
+    const auto bytes = asicWithEntries({{"data.txt", "abc"}}, /*withSignature=*/false);
+    ASSERT_FALSE(bytes.empty());
+
+    EXPECT_EQ(libresign::detail::probeAsic(bytes), libresign::detail::AsicProbe::NoPriorSignature);
 }
 
 #endif

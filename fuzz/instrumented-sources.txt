@@ -35,6 +35,8 @@ fuzz_csca_master_list: lib/emrtd-crypto/src/csca_master_list.cpp
 fuzz_pdf_parser: lib/libresign/src/native/pdf_parser.cpp
 fuzz_pdf_parser: lib/libresign/src/native/pdf_tokens.cpp
 fuzz_pdf_parser: lib/libresign/src/native/pdf_value.cpp
+fuzz_asic_reader: lib/libresign/src/native/asic_module.cpp
+fuzz_asic_reader: thirdparty/miniz/miniz.c
 fuzz_rs_tlv: lib/smartcard/src/tlv.cpp
 fuzz_ber: lib/smartcard/src/ber.cpp
 fuzz_ber: lib/smartcard/src/tlv.cpp

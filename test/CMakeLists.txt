@@ -1187,6 +1187,10 @@ if(BUILD_SIGNING)
         target_link_libraries(ASiCModuleTests PRIVATE GTest::gtest_main LibreSign SigningTestSupport)
         target_include_directories(ASiCModuleTests PRIVATE
             ${LibreMiddleware_SOURCE_DIR}/thirdparty/miniz)
+        # The fuzz corpus holds the inputs the harness found; a unit test reads
+        # them from there rather than carrying a second copy that can drift.
+        target_compile_definitions(ASiCModuleTests PRIVATE
+            LIBRESCRS_FUZZ_CORPUS_DIR="${LibreMiddleware_SOURCE_DIR}/fuzz/corpus")
         gtest_discover_tests(ASiCModuleTests)
 
         add_executable(TrustedListParserTests trusted_list_parser_test.cpp)

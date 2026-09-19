@@ -274,6 +274,27 @@ target_include_directories(fuzz_pdf_parser PRIVATE
 target_link_libraries(fuzz_pdf_parser PRIVATE LibreSign)
 
 # ---------------------------------------------------------------------------
+# Harness: the ASiC-E container reader, over the vendored ZIP decoder.
+#
+# miniz.c is compiled in beside the reader for the usual reason: it is where a
+# length-driven fault would be, and a harness that only links LibreSign.a gets
+# the uninstrumented copy of it. Having its own copy of miniz.o in the
+# executable also means the linker never pulls the archive's, so there is no
+# duplicate definition to work around.
+# ---------------------------------------------------------------------------
+add_executable(fuzz_asic_reader fuzz_asic_reader.cpp ${LIBRESCRS_FUZZ_SRC_fuzz_asic_reader})
+target_compile_features(fuzz_asic_reader PRIVATE cxx_std_23)
+target_compile_options(fuzz_asic_reader PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_link_options(fuzz_asic_reader PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_compile_definitions(fuzz_asic_reader PRIVATE LIBRESCRS_INTERNAL_BUILD)
+target_include_directories(fuzz_asic_reader PRIVATE
+    ${PROJECT_SOURCE_DIR}/lib/libresign/src
+    ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
+    ${PROJECT_SOURCE_DIR}/thirdparty/miniz
+)
+target_link_libraries(fuzz_asic_reader PRIVATE LibreSign)
+
+# ---------------------------------------------------------------------------
 # Harnesses: the Serbian card TLV reader, and the BER-TLV walker under it.
 #
 # Both Serbian families read their fields through one little-endian 16-bit TLV
