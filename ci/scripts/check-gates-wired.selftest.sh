@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 #
 # check-gates-wired.selftest.sh — perturbs the gate, never just runs it.
-# Eight cases; each asserts rc AND the message, because a gate that fails for the
+# Nine cases; each asserts rc AND the message, because a gate that fails for the
 # wrong reason is not a gate. Fixture is a throw-away git checkout under
 # ${TMPDIR:-/var/tmp}; nothing in the real tree is touched.
 set -uo pipefail
@@ -98,5 +98,19 @@ rc=$(run "$T/h")
 [ "$rc" = 0 ] && grep -q 'SKIP: ci/scripts/wired.sh' "$T/out" && ! grep -q 'tools/hop.sh is shipped' "$T/out"
 say $? "8 an exception seeds reachability for what it calls"
 
-[ "$fails" -eq 0 ] && echo "selftest: 8/8 OK" || echo "selftest: FAILED"
+# 9. a packaging recipe that nothing names -> red. This case exists because the
+# candidate pathspec is data the gate cannot check about itself: one sibling
+# copy lost 'packaging/arch/*' from it and went green over a whole directory of
+# shipped scripts, which no comparison of the six copies' contents would have
+# explained on its own. The fixture makes the pathspec observable.
+mkfixture "$T/i"
+printf '#!/bin/sh\ntools/hop.sh\n' > "$T/i/ci/scripts/wired.sh"
+mkdir -p "$T/i/packaging/arch"
+printf '#!/bin/sh\nexit 0\n' > "$T/i/packaging/arch/check-recipe.sh"
+git -C "$T/i" add -A; git -C "$T/i" -c user.email=s@e -c user.name=s commit -qm i9
+rc=$(run "$T/i")
+[ "$rc" = 1 ] && grep -q 'FAIL: packaging/arch/check-recipe.sh is shipped' "$T/out"
+say $? "9 a packaging recipe that nothing names is red"
+
+[ "$fails" -eq 0 ] && echo "selftest: 9/9 OK" || echo "selftest: FAILED"
 exit "$fails"
