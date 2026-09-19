@@ -36,7 +36,7 @@ constexpr std::uint8_t kEfDirLo = 0x00;
 class MasterFileRestore
 {
 public:
-    explicit MasterFileRestore(const AnnexContext& ctx) : ctx_(ctx) {}
+    explicit MasterFileRestore(const AnnexContext& ctx) : ctx(ctx) {}
 
     ~MasterFileRestore()
     {
@@ -50,12 +50,12 @@ public:
         // bookkeeping must not depend on the wire call surviving — a throw
         // (cancellation, transient PC/SC failure) would otherwise leave the
         // stale AID armed. Harmless on a plain read (no channel).
-        if (ctx_.channel != nullptr) {
-            LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(*ctx_.channel,
+        if (ctx.channel != nullptr) {
+            LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(*ctx.channel,
                                                                                     LibreSCRS::SmartCard::AppletAid{});
         }
         try {
-            (void)dispatch(ctx_, SC::selectByFileId(kMfHi, kMfLo, 0x0C));
+            (void)dispatch(ctx, SC::selectByFileId(kMfHi, kMfLo, 0x0C));
         } catch (...) {
             // Nothing useful to do in a destructor; the next caller selects its
             // own application anyway and will see the failure there.
@@ -66,7 +66,7 @@ public:
     MasterFileRestore& operator=(const MasterFileRestore&) = delete;
 
 private:
-    const AnnexContext& ctx_;
+    const AnnexContext& ctx;
 };
 
 /// Data came back and is usable. A short read ends with a 62xx/63xx warning

@@ -40,7 +40,7 @@ namespace SC = LibreSCRS::SmartCard::Internal;
 class ImageConnection final : public LibreSCRS::SmartCard::IConnection
 {
 public:
-    explicit ImageConnection(std::span<const std::uint8_t> image) : image_(image) {}
+    explicit ImageConnection(std::span<const std::uint8_t> image) : image(image) {}
 
     SC::APDUResponse transmit(const SC::APDUCommand& cmd) override
     {
@@ -49,13 +49,13 @@ public:
         resp.sw2 = 0x00;
         ++reads;
         const std::size_t offset = (static_cast<std::size_t>(cmd.p1) << 8) | cmd.p2;
-        if (offset >= image_.size()) {
+        if (offset >= image.size()) {
             return resp;
         }
         const std::size_t want = cmd.le == 0 ? 256u : cmd.le;
-        const std::size_t have = std::min(want, image_.size() - offset);
-        resp.data.assign(image_.begin() + static_cast<std::ptrdiff_t>(offset),
-                         image_.begin() + static_cast<std::ptrdiff_t>(offset + have));
+        const std::size_t have = std::min(want, image.size() - offset);
+        resp.data.assign(image.begin() + static_cast<std::ptrdiff_t>(offset),
+                         image.begin() + static_cast<std::ptrdiff_t>(offset + have));
         return resp;
     }
 
@@ -74,7 +74,7 @@ public:
     std::size_t reads = 0;
 
 private:
-    std::span<const std::uint8_t> image_;
+    std::span<const std::uint8_t> image;
 };
 
 void driveOnce(std::span<const std::uint8_t> image, const SC::ChunkedReadOptions& opts)

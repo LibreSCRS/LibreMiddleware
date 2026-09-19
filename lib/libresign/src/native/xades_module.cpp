@@ -547,16 +547,16 @@ std::vector<XmlNodeAnchor> collectDsSignatureDescendants(xmlNodePtr root)
 class DsSignatureUnlinkGuard
 {
 public:
-    explicit DsSignatureUnlinkGuard(xmlNodePtr root) : anchors_(collectDsSignatureDescendants(root))
+    explicit DsSignatureUnlinkGuard(xmlNodePtr root) : anchors(collectDsSignatureDescendants(root))
     {
-        for (const auto& a : anchors_)
+        for (const auto& a : anchors)
             xmlUnlinkNode(a.node);
     }
     ~DsSignatureUnlinkGuard()
     {
         // Re-link in original order; walk forward so each insertion lands at
         // its original sibling position.
-        for (const auto& a : anchors_) {
+        for (const auto& a : anchors) {
             if (a.nextSibling)
                 xmlAddPrevSibling(a.nextSibling, a.node);
             else if (a.parent)
@@ -570,7 +570,7 @@ public:
     DsSignatureUnlinkGuard& operator=(DsSignatureUnlinkGuard&&) = delete;
 
 private:
-    std::vector<XmlNodeAnchor> anchors_;
+    std::vector<XmlNodeAnchor> anchors;
 };
 
 // ---- Serialize xmlDoc to UTF-8 bytes ----
