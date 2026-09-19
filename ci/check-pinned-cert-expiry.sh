@@ -7,9 +7,50 @@
 # next 90 days, so a release rotation lands well before the cert
 # expires and triggers the runtime hard-fail in
 # tl_signature_verifier.cpp.
+#
+# Usage: check-pinned-cert-expiry.sh [--days <n>]
+#
+# The window is an argument, not an environment variable. It used to be
+# `${THRESHOLD_DAYS:-90}`, which meant any caller could export
+# THRESHOLD_DAYS=0 and this check would pass on a certificate expiring
+# tomorrow -- measured: 0 gave exit 0 and 100000 gave exit 1, so the value was
+# read and a caller could pick it. A switch that turns a release check off is
+# not a transfer of ownership; whoever wants a different window says so on the
+# command line, where the workflow that did it is the record.
 set -euo pipefail
 
-THRESHOLD_DAYS="${THRESHOLD_DAYS:-90}"
+THRESHOLD_DAYS=90
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --days)
+            [[ $# -ge 2 ]] || { echo "check-pinned-cert-expiry: --days needs a value" >&2; exit 2; }
+            THRESHOLD_DAYS="$2"
+            shift 2
+            ;;
+        --days=*)
+            THRESHOLD_DAYS="${1#*=}"
+            shift
+            ;;
+        *)
+            echo "check-pinned-cert-expiry: usage: $(basename "$0") [--days <n>]" >&2
+            exit 2
+            ;;
+    esac
+done
+
+if [[ ! "$THRESHOLD_DAYS" =~ ^[0-9]+$ ]]; then
+    echo "check-pinned-cert-expiry: --days takes a whole number of days, got '$THRESHOLD_DAYS'" >&2
+    exit 2
+fi
+
+# Without these the check cannot say anything about a certificate, and an
+# unreadable certificate must not be spelled the same way as an expiring one.
+for tool in openssl python3; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "check-pinned-cert-expiry: $tool not found on PATH -- cannot judge expiry" >&2
+        exit 2
+    fi
+done
 
 HEADER="lib/libresign/src/native/pinned_tl_certs.h"
 if [[ ! -f "$HEADER" ]]; then
