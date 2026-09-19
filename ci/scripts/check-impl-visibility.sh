@@ -94,6 +94,18 @@
 
 set -euo pipefail
 
+# Tool guard, before anything is measured. Every symbol pipeline below ends in
+# `| grep ... || true`, so a host missing one of these tools produced an empty
+# pipeline, satisfied every container-counting guard and printed a clean
+# result. "I could not measure" is a third answer and must never be spelled
+# the same way as "I measured and found nothing".
+for tool in nm c++filt; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "FATAL: $tool not found on PATH — cannot judge Impl visibility" >&2
+        exit 2
+    fi
+done
+
 BUILD_DIR="${1:-build}"
 if [[ ! -d "$BUILD_DIR" ]]; then
     echo "ERROR: build dir '$BUILD_DIR' not found" >&2
@@ -131,16 +143,24 @@ if [[ "$PLATFORM" == "Darwin" ]]; then
     # pipeline transfers byte-for-byte.
     scan_dylib() {
         local dylib="$1"
-        local t_leaks wv_leaks bad
-        t_leaks=$(nm -gU "$dylib" 2>/dev/null \
+        local syms t_leaks wv_leaks bad
+        # One `nm` read per artefact, so the symbols this pass actually saw can
+        # be counted. `2>/dev/null` stays on nm alone: it silences the expected
+        # "no symbols" note, and an unreadable artefact is caught by the count.
+        syms=$(nm -gU "$dylib" 2>/dev/null || true)
+        if [[ -n "$syms" ]]; then
+            symbols_seen=$((symbols_seen + $(printf '%s\n' "$syms" | wc -l)))
+        fi
+
+        t_leaks=$(printf '%s\n' "$syms" \
             | awk '$2 == "T" { print $3 }' \
-            | c++filt 2>/dev/null \
+            | c++filt \
             | grep -F '::Impl::' \
             | sort -u || true)
 
-        wv_leaks=$(nm -gU "$dylib" 2>/dev/null \
+        wv_leaks=$(printf '%s\n' "$syms" \
             | awk '$2 == "W" || $2 == "V" { print $3 }' \
-            | c++filt 2>/dev/null \
+            | c++filt \
             | grep -E '^(vtable for|typeinfo (for|name for))\b.*::Impl\b' \
             | sort -u || true)
 
@@ -161,6 +181,7 @@ if [[ "$PLATFORM" == "Darwin" ]]; then
     leaks=0
     plugin_count=0
     core_count=0
+    symbols_seen=0
 
     # Plugins + standalone PKCS#11 module (present in both STATIC and
     # SHARED LM modes — they're plugin .dylib regardless).
@@ -184,6 +205,15 @@ if [[ "$PLATFORM" == "Darwin" ]]; then
         echo "ERROR: no public dylibs found under '$BUILD_DIR/lib/pkcs11/'," >&2
         echo "       '$BUILD_DIR/plugins/', or '$BUILD_DIR/lib/LibreSCRS/'." >&2
         echo "       Build broken or wrong build dir?" >&2
+        exit 2
+    fi
+
+    # Counting containers is not counting symbols: $((plugin_count + core_count))
+    # dylibs that yield no symbol at all mean the pass read nothing, whatever
+    # the file names say.
+    if [[ $symbols_seen -eq 0 ]]; then
+        echo "ERROR: dylib pass read $((plugin_count + core_count)) file(s) and 0 symbols." >&2
+        echo "       Nothing was measured; refusing to report a clean result." >&2
         exit 2
     fi
 
@@ -228,17 +258,25 @@ fi
 
 leaks=0
 archives_scanned=0
+archive_symbols_seen=0
 while IFS= read -r archive; do
     archives_scanned=$((archives_scanned + 1))
+
+    # One `nm` read per archive; both passes below filter this text. The count
+    # is what turns "found no leak" apart from "read nothing".
+    archive_syms=$(nm -U "$archive" 2>/dev/null || true)
+    if [[ -n "$archive_syms" ]]; then
+        archive_symbols_seen=$((archive_symbols_seen + $(printf '%s\n' "$archive_syms" | wc -l)))
+    fi
 
     # Pass 1 — T-binding (global text, default-visible) whose demangled
     # name contains the `::Impl::` namespace segment. The `::Impl::`
     # match must run AFTER c++filt — mangled names encode `Impl` as
     # `4Impl` via Itanium ABI, so filtering before demangle would never
     # match.
-    t_leaks=$(nm -U "$archive" 2>/dev/null \
+    t_leaks=$(printf '%s\n' "$archive_syms" \
         | awk '$2 == "T" { print $3 }' \
-        | c++filt 2>/dev/null \
+        | c++filt \
         | grep -F '::Impl::' \
         | sort -u || true)
 
@@ -278,9 +316,9 @@ while IFS= read -r archive; do
     # std::shared_ptr inplace, std::thread state), and would export
     # from a shared library despite the `LIBRESCRS_INTERNAL` attribute
     # on the `Impl` struct itself.
-    wv_leaks=$(nm -U "$archive" 2>/dev/null \
+    wv_leaks=$(printf '%s\n' "$archive_syms" \
         | awk '$2 == "W" || $2 == "V" { print $3 }' \
-        | c++filt 2>/dev/null \
+        | c++filt \
         | grep -E '^(vtable for|typeinfo (for|name for))\b.*::Impl\b' \
         | sort -u || true)
 
@@ -329,6 +367,12 @@ if [[ $archives_scanned -ne $EXPECTED_ARCHIVES ]]; then
     exit 2
 fi
 
+if [[ $archives_scanned -gt 0 && $archive_symbols_seen -eq 0 ]]; then
+    echo "ERROR: static-archive pass read $archives_scanned archive(s) and 0 symbols." >&2
+    echo "       Nothing was measured; refusing to report a clean result." >&2
+    exit 2
+fi
+
 if [[ $leaks -gt 0 ]]; then
     echo
     echo "ERROR: $leaks archive(s) leaked pimpl Impl symbols." >&2
@@ -358,19 +402,27 @@ echo "Static archives clean — $archives_scanned scanned ($BUILD_CONFIG build).
 # are emitted WEAK HIDDEN in their TUs and the linker strips them from
 # every .so dynamic export table — so their presence in any .so here
 # is a real leak.
+# `symbols_seen` is the caller's pass counter, added to here so each pass can
+# tell "scanned N files, found no leak" apart from "scanned N files and read no
+# symbol at all".
 scan_so_for_impl_leaks() {
     local so="$1"
-    local t_leaks wv_leaks bad
+    local syms t_leaks wv_leaks bad
 
-    t_leaks=$(nm -gU "$so" 2>/dev/null \
+    syms=$(nm -gU "$so" 2>/dev/null || true)
+    if [[ -n "$syms" ]]; then
+        symbols_seen=$((symbols_seen + $(printf '%s\n' "$syms" | wc -l)))
+    fi
+
+    t_leaks=$(printf '%s\n' "$syms" \
         | awk '$2 == "T" { print $3 }' \
-        | c++filt 2>/dev/null \
+        | c++filt \
         | grep -F '::Impl::' \
         | sort -u || true)
 
-    wv_leaks=$(nm -gU "$so" 2>/dev/null \
+    wv_leaks=$(printf '%s\n' "$syms" \
         | awk '$2 == "W" || $2 == "V" { print $3 }' \
-        | c++filt 2>/dev/null \
+        | c++filt \
         | grep -E '^(vtable for|typeinfo (for|name for))\b.*::Impl\b' \
         | sort -u || true)
 
@@ -394,6 +446,7 @@ scan_so_for_impl_leaks() {
 # over Impl reaching the export table is a real visibility hole.
 core_leaks=0
 core_sos_scanned=0
+symbols_seen=0
 if [[ $EXPECTED_CORE_SOS -gt 0 ]]; then
     while IFS= read -r so; do
         core_sos_scanned=$((core_sos_scanned + 1))
@@ -406,6 +459,12 @@ if [[ $EXPECTED_CORE_SOS -gt 0 ]]; then
         echo "       '$BUILD_DIR/lib/LibreSCRS/' (shared build), found" >&2
         echo "       $core_sos_scanned. Build broken, wrong dir, or LM" >&2
         echo "       core library set changed?" >&2
+        exit 2
+    fi
+
+    if [[ $symbols_seen -eq 0 ]]; then
+        echo "ERROR: LM core .so pass read $core_sos_scanned file(s) and 0 symbols." >&2
+        echo "       Nothing was measured; refusing to report a clean result." >&2
         exit 2
     fi
 
@@ -437,6 +496,7 @@ fi
 
 so_leaks=0
 sos_scanned=0
+symbols_seen=0
 while IFS= read -r so; do
     sos_scanned=$((sos_scanned + 1))
     scan_so_for_impl_leaks "$so" || so_leaks=$((so_leaks + 1))
@@ -446,6 +506,12 @@ done < <(find "$BUILD_DIR/lib/pkcs11" "$BUILD_DIR/plugins" \
 if [[ $sos_scanned -eq 0 ]]; then
     echo "ERROR: no public .so files found under '$BUILD_DIR/lib/pkcs11/' or" >&2
     echo "       '$BUILD_DIR/plugins/'. Build broken or wrong build dir?" >&2
+    exit 2
+fi
+
+if [[ $symbols_seen -eq 0 ]]; then
+    echo "ERROR: plugin/pkcs11 .so pass read $sos_scanned file(s) and 0 symbols." >&2
+    echo "       Nothing was measured; refusing to report a clean result." >&2
     exit 2
 fi
 
