@@ -96,11 +96,14 @@ def make_repo(name, summary_obj, compiler=("GNU", "16.2.1"), manifest="A.One\nA.
     return root
 
 
-def run(root, *args, drop_env=()):
+def run(root, *args, drop_env=(), path=None):
     env = dict(os.environ)
     for name in drop_env:
         env.pop(name, None)
-    env["PATH"] = f"{root}/bin:" + env["PATH"]
+    # `path` replaces PATH outright, which is the only way to prove what the gate
+    # does when a tool is MISSING: prepending a fixture directory can add a tool,
+    # never take one away.
+    env["PATH"] = path if path is not None else f"{root}/bin:" + env["PATH"]
     env["SELFTEST_PREPARED"] = str(root / "prepared.json")
     for name in ("SELFTEST_TOKEN_CONF", "SELFTEST_TOKEN_LIB"):
         if name not in drop_env:
@@ -120,13 +123,14 @@ def seed(root):
 def check(label, expected, actual, extra=True, out=""):
     global passed, failed, cases, red
     cases += 1
-    # red-proved: a case in which the gate was to return non-zero on a
-    # perturbed input. A proof that never saw the gate fail is not a proof.
-    if expected != 0:
-        red += 1
     if expected == actual and extra:
         print(f"case {label}: OK   — exit {actual}")
         passed += 1
+        # red-proved counts what was OBSERVED, not what was declared: counted
+        # before the comparison, this number stays 11 while two cases fail, and
+        # a trailer that cannot move is not a measurement.
+        if expected != 0:
+            red += 1
     else:
         print(f"case {label}: FAIL — expected exit {expected}, got {actual}\n    {out.strip()[:300]}")
         failed += 1
@@ -226,6 +230,19 @@ try:
     (r / "ci" / "coverage-env.txt").unlink()
     rc, out = run(r, "--update")
     check(16, 2, rc, "coverage-env.txt" in out, out)
+
+    # 17: gcovr absent. gcov is on PATH and gcovr is not, which is how this
+    # gate fails when a pip install into a container did not land. The whole
+    # point of the 1/2 split is that CI can tell "coverage fell" from "I could
+    # not measure", so an absent tool has to be 2 -- and before the guard it was
+    # a TypeError, which exits 1 and reads as a regression.
+    r = make_repo("c17", BASE); seed(r)
+    only = r / "onlygcov"
+    only.mkdir()
+    (only / "gcov").write_text("#!/bin/sh\nexit 0\n")
+    (only / "gcov").chmod(0o755)
+    rc, out = run(r, "--check", path=str(only))
+    check(17, 2, rc, "gcovr is not on PATH" in out, out)
 
     print(f"selftest: {passed} passed, {failed} failed")
     print(f"selftest: {cases} cases, {red} red-proved")

@@ -195,7 +195,13 @@ def run_gcovr(build: Path):
     outdir.mkdir(parents=True, exist_ok=True)
     summary = outdir / "coverage-summary.json"
     cmd = [
-        shutil.which("gcovr"),
+        # Guarded, like gcovr_version() one function up: without it this is a
+        # TypeError inside subprocess and a traceback exits 1, which is the code
+        # for "a rule was broken". An absent tool is exit 2 -- LA/LK/LL install
+        # gcovr with pip into an Arch container, so "it is not there" is the
+        # likeliest way this gate fails, and it must not read as a coverage
+        # regression.
+        shutil.which("gcovr") or fatal("gcovr is not on PATH"),
         "--root", str(REPO_ROOT),
         "--gcov-executable", pick_gcov(build),
         "--json-summary-pretty", "--json-summary", str(summary),
