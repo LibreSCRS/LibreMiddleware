@@ -20,6 +20,14 @@ source into itself**, as the three eMRTD harnesses below do.
 | `fuzz_emrtd_sod`                 | `emrtd::crypto::parseSOD`                              |
 | `fuzz_emrtd_card_access`         | `emrtd::crypto::parseCardAccess`                       |
 | `fuzz_emrtd_security_info`       | `emrtd::crypto::parseDG14` / `parseDG15`               |
+| `fuzz_pkcs15_parser`             | `pkcs15::parseODF` and the other directory parsers     |
+| `fuzz_emrtd_dg_parser`           | `emrtd::parseDataGroups` / `parseMRZ`                  |
+| `fuzz_chunked_read`              | `SmartCard::Internal::readChunkedFile`                 |
+| `fuzz_pdf_parser`                | `libresign::PdfParser` xref / trailer walk             |
+| `fuzz_asic_reader`               | `libresign::detail::tryParseAsic` / `probeAsic`        |
+| `fuzz_rs_tlv`                    | `SmartCard::Internal::parseTLV` and the UTF-16 decode  |
+| `fuzz_ber`                       | `SmartCard::Internal::parseBER` and both length decoders |
+| `fuzz_eu_vrc`                    | `euvrc::detail::deriveEuVrcHeader` / `extractFields`   |
 
 The signature verifier harness embeds the committed test signing certificate
 (`test/fixtures/trust/test-tl-signing-cert.pem`) so that `verify()` exercises
@@ -60,10 +68,20 @@ Local soak runs of an hour or more are recommended before any tag.
 ## Adding new harnesses
 
 1. Add `fuzz_<name>.cpp` exposing `LLVMFuzzerTestOneInput`.
-2. Register the executable in `fuzz/CMakeLists.txt` with the same compile/link
-   flags as the existing ones. If the code under test must be instrumented,
-   list its source in the `add_executable` call rather than relying on the
-   library link, and take that library's PRIVATE include directories from a
+2. Add a row to `fuzz/instrumented-sources.txt`: either
+   `fuzz_<name>: path/to/source.cpp` for each source compiled into the harness,
+   or `fuzz_<name>: LINK_ONLY  # <why> -- due YYYY-MM-DD` when it
+   deliberately only links. **This is not optional and not last:** three things
+   read that file -- `fuzz/CMakeLists.txt` compiles what it names,
+   `ci/scripts/check-fuzz-instrumentation.sh` reads the objects back to prove the
+   sanitizer flags arrived, and the workflow compares it against both the corpus
+   directories and the job matrix. A harness missing from it fails the configure;
+   a LINK_ONLY row without a reason and a future date fails the check.
+3. Register the executable in `fuzz/CMakeLists.txt`, taking its sources from
+   `${LIBRESCRS_FUZZ_SRC_fuzz_<name>}` so the declaration above is what decides,
+   with the same compile/link flags as the existing ones. If the code under test
+   must be instrumented, list its source in the declaration rather than relying
+   on the library link, and take that library's PRIVATE include directories from a
    `cmake/` module the library itself reads -- never a second hand-written
    copy. PRIVATE settings do not arrive over the link, and a copy drifts: one
    did, and three harnesses stopped compiling with nothing in an ordinary
@@ -75,10 +93,14 @@ Local soak runs of an hour or more are recommended before any tag.
    itself. Confirm instrumentation with
    `nm -u <target>.dir/**/<source>.cpp.o | grep -c asan_report`, which must be
    non-zero.
-3. Create `fuzz/corpus/<name>/` with hermetic seed inputs (real-world fixtures
-   from `test/test-data/` or `test/fixtures/` plus a few small malformed
-   examples).
-4. Append the harness to the matrix in `.github/workflows/fuzz.yml`.
+4. Create `fuzz/corpus/<name>/` with hermetic seed inputs and a `README.md`
+   saying where each one came from. An undocumented seed is a constant with no
+   provenance, and the workflow refuses a harness whose corpus directory is
+   missing or empty.
+5. Append the harness to the matrix in `.github/workflows/fuzz.yml`. The
+   workflow checks that the matrix, the declaration and the corpus directories
+   name the same set, so leaving any one of the three out is red rather than
+   silently unfuzzed.
 
 ## Reporting crashes
 

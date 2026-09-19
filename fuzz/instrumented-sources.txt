@@ -1,0 +1,48 @@
+# Which harness compiles the code it fuzzes, and which one only links it.
+#
+# The sanitizer flags in fuzz/CMakeLists.txt are PRIVATE on each executable.
+# PRIVATE settings do not travel over a link, so they reach the harness's own
+# translation units and stop there; the libraries are compiled without them. A
+# harness that only LINKS the parser under test therefore fuzzes uninstrumented
+# code: the undefined-behaviour checks never run at all, and the address checks
+# see only what their interceptors see. A scalar read one past the end of a heap
+# buffer -- which is what a length-driven walker does on hostile bytes -- is not
+# reported. Nothing fails, and nothing was measured.
+#
+# This file is the one declaration of that, and it is read twice on purpose: by
+# fuzz/CMakeLists.txt, which compiles what it names, and by
+# ci/scripts/check-fuzz-instrumentation.sh, which reads the objects back and
+# asserts they really carry the checks. Two hand-kept copies of one list is what
+# cmake/EmrtdCryptoPrivateIncludes.cmake exists to prevent.
+#
+# Format, one row per harness and per source:
+#   <harness>: <path/to/source.cpp>       repeat the harness for several sources
+#   <harness>: LINK_ONLY  # <why> -- due YYYY-MM-DD
+#
+# A LINK_ONLY row with no written reason fails the check: "temporary" with no
+# owner is how six of ten harnesses ended up in that state.
+
+# --- compiled in: bytes a card or a file supplies, walked before anything
+# --- has authenticated them
+fuzz_emrtd_sod: lib/emrtd-crypto/src/passive_auth.cpp
+fuzz_emrtd_card_access: lib/emrtd-crypto/src/pace.cpp
+fuzz_emrtd_security_info: lib/emrtd-crypto/src/chip_auth.cpp
+fuzz_emrtd_security_info: lib/emrtd-crypto/src/active_auth.cpp
+fuzz_chunked_read: lib/smartcard/src/chunked_read.cpp
+fuzz_pkcs15_parser: lib/pkcs15/src/pkcs15_parser.cpp
+fuzz_emrtd_dg_parser: lib/emrtd/src/data_group.cpp
+fuzz_csca_master_list: lib/emrtd-crypto/src/csca_master_list.cpp
+fuzz_pdf_parser: lib/libresign/src/native/pdf_parser.cpp
+fuzz_pdf_parser: lib/libresign/src/native/pdf_tokens.cpp
+fuzz_pdf_parser: lib/libresign/src/native/pdf_value.cpp
+fuzz_rs_tlv: lib/smartcard/src/tlv.cpp
+fuzz_ber: lib/smartcard/src/ber.cpp
+fuzz_ber: lib/smartcard/src/tlv.cpp
+fuzz_eu_vrc: lib/eu-vrc/src/eu_vrc_card.cpp
+fuzz_eu_vrc: lib/smartcard/src/ber.cpp
+fuzz_eu_vrc: lib/smartcard/src/tlv.cpp
+
+# --- link only, each with the reason and the date by which it is revisited
+fuzz_parsed_certificate: LINK_ONLY  # the bytes are walked by OpenSSL d2i_X509 inside the bundled libcrypto, not by a source of ours that could be compiled in, so instrumenting it means an instrumented OpenSSL build -- unscheduled, due 2026-12-31
+fuzz_trusted_list_parser: LINK_ONLY  # the XML walk is vendored pugixml inside LibreSign.a, the same shape and the same cost as above -- unscheduled, due 2026-12-31
+fuzz_tl_signature_verifier: LINK_ONLY  # verification is OpenSSL's, and the only code of ours here is the caller, which the harness already compiles -- unscheduled, due 2026-12-31

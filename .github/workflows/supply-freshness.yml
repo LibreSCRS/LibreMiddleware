@@ -1,0 +1,113 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# SPDX-FileCopyrightText: 2026 hirashix0
+#
+# Is any bundled dependency behind its own release series?
+#
+# The bundled crypto entered this tree in February and was three security
+# releases behind seven months later, and nothing in CI said so. This is the
+# thing that says so.
+#
+# Two behaviours, deliberately different:
+#   * schedule and workflow_dispatch FAIL on a finding. That is the run somebody
+#     is meant to act on.
+#   * push to main REPORTS and does not fail. Its only job is to keep the cron
+#     alive -- GitHub disables a schedule after sixty days without repository
+#     activity, so a quiet month would silently switch the whole thing off. A
+#     finding on a push is not the pusher's to fix, and a red build they cannot
+#     act on is a red build they learn to ignore.
+#
+# Not on pull_request, for the same reason: the author of a patch cannot make
+# upstream publish a different release.
+
+name: Supply freshness
+
+on:
+  schedule:
+    - cron: '23 5 * * 1'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  # Read only. The plan describes a step that opens one issue and comments on it
+  # rather than opening many, and that step does not exist yet; a privilege with
+  # no consumer is surface with no purpose. It goes back in together with the
+  # step, not before it.
+  contents: read
+
+jobs:
+  freshness:
+    name: Bundled dependency freshness
+    runs-on: ubuntu-latest
+    # A job that hangs serves no log while it runs. This one makes a handful of
+    # API calls, so anything near the ceiling means something is wrong rather
+    # than slow.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The curl and OpenSC pins are submodule commits, and the check reads
+          # them from the submodules rather than from a table that copies them.
+          submodules: recursive
+
+      - name: Check freshness
+        id: freshness
+        # Authenticated on purpose. Unauthenticated the API allows sixty
+        # requests an hour against five thousand, so this would land in "cannot
+        # measure" on most runs -- and "cannot measure" is not a failure, so
+        # nobody would notice it had stopped measuring anything at all.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # On a push the exit code is recorded and not honoured; the step after
+        # this one turns it into a failure only for a schedule or a dispatch.
+        continue-on-error: true
+        run: |
+          set +e
+          ./ci/scripts/check-supply-freshness.sh --json supply-freshness.json
+          echo "rc=$?" >>"$GITHUB_OUTPUT"
+
+      - name: Prove the freshness check can fail
+        # Offline and hermetic: it substitutes both the tree and the upstream
+        # answers, so it costs no API budget and runs on every trigger.
+        run: ./ci/scripts/check-supply-freshness.selftest.sh
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "## Bundled dependency freshness"
+            echo
+            echo "Exit code: \`${{ steps.freshness.outputs.rc }}\`"
+            echo "(0 current · 1 a pin needs attention · 2 could not measure — never a pass)"
+            echo
+            if [ -f supply-freshness.json ]; then
+              echo '| component | pin | verdict | detail |'
+              echo '|---|---|---|---|'
+              python3 - supply-freshness.json <<'PY'
+          import json, sys
+          for c in json.load(open(sys.argv[1]))["components"]:
+              print("| `%s` | `%s` | %s | %s |" % (c["component"], c["pin"], c["verdict"], c["detail"]))
+          PY
+            else
+              echo 'No report was written.'
+            fi
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: supply-freshness
+          path: supply-freshness.json
+          if-no-files-found: warn
+
+      - name: Fail on a finding, except on a push
+        # The push trigger exists to keep the schedule alive, so it reports and
+        # stops there. Everything else acts on the verdict.
+        if: github.event_name != 'push'
+        run: |
+          rc='${{ steps.freshness.outputs.rc }}'
+          if [ "$rc" != 0 ]; then
+            echo "::error::bundled dependency freshness check exited $rc — see the job summary" >&2
+            exit 1
+          fi

@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+#
+# Deliberate exceptions for ci/scripts/check-supply-freshness.sh.
+#
+# Format: <component> <review-by YYYY-MM-DD> owner:<who|PENDING> <reason>
+#
+# Three fields are load-bearing:
+#
+#   * the DATE — an entry whose date has passed FAILS rather than going on
+#     excusing anything, so a deferral cannot quietly become permanent;
+#   * the OWNER — not keeping a pin current is a decision about what ships, and
+#     neither this check nor whoever writes the line gets to make it.
+#     `owner:PENDING` means nobody has taken the decision yet, and the check
+#     reads that as a finding, not as permission. An entry in that state makes
+#     the check RED on purpose;
+#   * the REASON — an entry without one fails.
+#
+# What an entry CANNOT do, whoever owns it: excuse a newer release in the pin's
+# own series. That is where security patches land, it is the failure this check
+# was written for, and the check refuses to consult this file for it.
+nlohmann 2026-12-31 owner:hirashix0 a newer minor exists with no security content in it; the release owner keeps 3.11.3 for 5.0.0 rather than move a minor right before the tag, and reviews it again by the date

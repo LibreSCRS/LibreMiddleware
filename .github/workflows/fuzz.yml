@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # SPDX-FileCopyrightText: 2026 hirashix0
 #
-# Short libFuzzer smoke session per PR / push to main / weekly cron.
-# Each harness runs for 60 s with the committed seed corpus. Crashes are
+# Short libFuzzer smoke session per PR / push to main, and a real soak on the
+# weekly cron: 60 s per harness on a push, 900 s on the schedule. Crashes are
 # uploaded as artifacts; jobs fail on any libFuzzer-reported finding.
 
 name: Fuzz
@@ -13,7 +13,7 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # Mondays 03:00 UTC — slightly longer "soak" run.
+    # Mondays 03:00 UTC — the longer soak, fifteen minutes per harness.
     - cron: '0 3 * * 1'
   workflow_dispatch:
 
@@ -24,7 +24,17 @@ jobs:
     # A job that hangs serves no log at all while it runs, so a hung harness
     # would otherwise burn the six-hour default before anyone could see which
     # input did it.
-    timeout-minutes: 20
+    #
+    # The number has to hold the soak AND everything before it, and the earlier
+    # arithmetic did not: the fuzz step went from 60 s to 900 s (+14 min) while
+    # this went from 20 to 25 (+5), which left the setup phase with ten minutes
+    # instead of nineteen. That phase is a recursive checkout, an apt update and
+    # ten packages, the LLVM repository and clang-21, a configure, and a build of
+    # all fifteen harnesses at -j2. If it ever exceeds its share, the scheduled
+    # leg dies at the ceiling and the soak this exists for never finishes. Forty
+    # minutes keeps the setup phase's original headroom above a fifteen-minute
+    # soak; it has not been measured in CI, because the schedule has never run.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -39,6 +49,11 @@ jobs:
           - fuzz_emrtd_card_access
           - fuzz_emrtd_security_info
           - fuzz_chunked_read
+          - fuzz_pdf_parser
+          - fuzz_asic_reader
+          - fuzz_rs_tlv
+          - fuzz_ber
+          - fuzz_eu_vrc
     steps:
       - uses: actions/checkout@v4
         with:
@@ -83,27 +98,72 @@ jobs:
       - name: Build harness
         run: cmake --build build-fuzz --target ${{ matrix.harness }} -j2
 
+      - name: Check that the harness instruments the code it fuzzes
+        # The sanitizer flags are PRIVATE on the executable, so a harness that
+        # only links the library under test fuzzes uninstrumented code and
+        # reports nothing. This reads the objects back and refuses a harness
+        # that is link-only without a written reason. Every harness is built
+        # here so the whole declaration is measured, not just this leg's.
+        run: |
+          cmake --build build-fuzz -j2
+          ./ci/scripts/check-fuzz-instrumentation.sh build-fuzz
+
+      - name: Prove the instrumentation check can fail
+        run: ./ci/scripts/check-fuzz-instrumentation.selftest.sh
+
       - name: Determine corpus path
         id: corpus
+        # Mechanically derived, not listed. The corpus directory is the harness
+        # name without its prefix for every harness here, so the case block was
+        # a third copy of the matrix above -- and a harness added to the matrix
+        # but forgotten there fuzzed from an empty path with nothing saying so.
         run: |
-          case "${{ matrix.harness }}" in
-            fuzz_parsed_certificate)     echo "path=fuzz/corpus/parsed_certificate" >>$GITHUB_OUTPUT;;
-            fuzz_trusted_list_parser)    echo "path=fuzz/corpus/trusted_list_parser" >>$GITHUB_OUTPUT;;
-            fuzz_tl_signature_verifier)  echo "path=fuzz/corpus/tl_signature_verifier" >>$GITHUB_OUTPUT;;
-            fuzz_pkcs15_parser)          echo "path=fuzz/corpus/pkcs15_parser" >>$GITHUB_OUTPUT;;
-            fuzz_emrtd_dg_parser)        echo "path=fuzz/corpus/emrtd_dg_parser" >>$GITHUB_OUTPUT;;
-            fuzz_csca_master_list)       echo "path=fuzz/corpus/csca_master_list" >>$GITHUB_OUTPUT;;
-            fuzz_emrtd_sod)              echo "path=fuzz/corpus/emrtd_sod" >>$GITHUB_OUTPUT;;
-            fuzz_emrtd_card_access)      echo "path=fuzz/corpus/emrtd_card_access" >>$GITHUB_OUTPUT;;
-            fuzz_emrtd_security_info)    echo "path=fuzz/corpus/emrtd_security_info" >>$GITHUB_OUTPUT;;
-            fuzz_chunked_read)           echo "path=fuzz/corpus/chunked_read" >>$GITHUB_OUTPUT;;
-          esac
+          harness="${{ matrix.harness }}"
+          echo "path=fuzz/corpus/${harness#fuzz_}" >>$GITHUB_OUTPUT
 
-      - name: Run fuzzer (60 s)
+      - name: Check that every harness has a seed directory
+        # The set of corpus directories and the set of matrix entries must be
+        # the same set. Without this a new harness silently starts from nothing,
+        # which looks exactly like a harness that found nothing.
+        run: |
+          missing=0
+          while IFS= read -r h; do
+            d="fuzz/corpus/${h#fuzz_}"
+            if [ ! -d "$d" ]; then
+              echo "FAIL: $h has no seed directory at $d" >&2
+              missing=1
+            elif [ -z "$(find "$d" -type f ! -name 'README.md' -print -quit)" ]; then
+              echo "FAIL: $d holds no seeds" >&2
+              missing=1
+            fi
+          done < <(sed -n 's/^\([a-z0-9_]*\):.*/\1/p' fuzz/instrumented-sources.txt | sort -u)
+          for d in fuzz/corpus/*/; do
+            h="fuzz_$(basename "$d")"
+            grep -q "^${h}:" fuzz/instrumented-sources.txt || {
+              echo "FAIL: $d has seeds but $h is not declared" >&2
+              missing=1
+            }
+          done
+          # And the matrix above, which is a third list. A harness added to the
+          # declaration, to CMake and to the corpus but not to the matrix passes
+          # every other check here and is never fuzzed once -- the same class as
+          # a harness with no seeds, left open for the matrix.
+          declared=$(sed -n 's/^\([a-z0-9_]*\):.*/\1/p' fuzz/instrumented-sources.txt | sort -u)
+          matrixed=$(sed -n 's/^          - \(fuzz_[a-z0-9_]*\)$/\1/p' .github/workflows/fuzz.yml | sort -u)
+          if [ "$declared" != "$matrixed" ]; then
+            echo "FAIL: the declaration and the job matrix name different harnesses:" >&2
+            diff <(echo "$declared") <(echo "$matrixed") >&2 || true
+            missing=1
+          fi
+          exit $missing
+
+      - name: Run fuzzer
+        # The header said the Monday run was a longer soak and then passed the
+        # same sixty seconds every time, because nothing branched on the event.
         run: |
           mkdir -p fuzz-artifacts
           ./build-fuzz/fuzz/${{ matrix.harness }} \
-            -max_total_time=60 \
+            -max_total_time=${{ github.event_name == 'schedule' && 900 || 60 }} \
             -timeout=10 \
             -print_final_stats=1 \
             -artifact_prefix=fuzz-artifacts/ \

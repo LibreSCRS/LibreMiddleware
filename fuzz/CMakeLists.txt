@@ -35,6 +35,50 @@ set(LIBRESCRS_FUZZ_FLAGS
     -g
 )
 
+# ---------------------------------------------------------------------------
+# Which harness compiles the code it fuzzes: read from one file, here and in
+# ci/scripts/check-fuzz-instrumentation.sh.
+#
+# The flags above are PRIVATE on each executable, so they reach that
+# executable's own translation units and nothing else. A harness that only
+# links the library it is meant to fuzz therefore fuzzes uninstrumented code.
+# fuzz/instrumented-sources.txt says, per harness, which sources are compiled
+# in and which harness deliberately has none; this block turns that into the
+# LIBRESCRS_FUZZ_SRC_<harness> variables the targets below use, and the check
+# reads the resulting objects back to prove the flags really arrived. Two
+# hand-kept copies of one list is what cmake/EmrtdCryptoPrivateIncludes.cmake
+# exists to prevent.
+# ---------------------------------------------------------------------------
+set(LIBRESCRS_FUZZ_SOURCE_LIST "${CMAKE_CURRENT_SOURCE_DIR}/instrumented-sources.txt")
+if(NOT EXISTS "${LIBRESCRS_FUZZ_SOURCE_LIST}")
+    message(FATAL_ERROR "missing ${LIBRESCRS_FUZZ_SOURCE_LIST}")
+endif()
+file(STRINGS "${LIBRESCRS_FUZZ_SOURCE_LIST}" LIBRESCRS_FUZZ_ROWS REGEX "^[A-Za-z0-9_]+:")
+set(LIBRESCRS_FUZZ_DECLARED "")
+foreach(row IN LISTS LIBRESCRS_FUZZ_ROWS)
+    if(NOT row MATCHES "^([A-Za-z0-9_]+):[ \t]*([^#]*)")
+        continue()
+    endif()
+    set(harness "${CMAKE_MATCH_1}")
+    set(value "${CMAKE_MATCH_2}")
+    string(STRIP "${value}" value)
+    list(APPEND LIBRESCRS_FUZZ_DECLARED "${harness}")
+    if(value STREQUAL "LINK_ONLY" OR value STREQUAL "")
+        continue()
+    endif()
+    if(NOT EXISTS "${PROJECT_SOURCE_DIR}/${value}")
+        message(FATAL_ERROR
+            "instrumented-sources.txt names ${value} for ${harness}, which does not exist")
+    endif()
+    list(APPEND LIBRESCRS_FUZZ_SRC_${harness} "${PROJECT_SOURCE_DIR}/${value}")
+endforeach()
+list(REMOVE_DUPLICATES LIBRESCRS_FUZZ_DECLARED)
+
+# Reconfigure when the list changes, or the build would keep the shape the
+# previous configure read out of it.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${LIBRESCRS_FUZZ_SOURCE_LIST}")
+
 # Convert the test TL signing certificate from PEM to DER and embed it as a
 # C array for the signature-verifier harness. We do this at configure time
 # rather than depending on the CMake EmbedBinary helper because we want a
@@ -73,7 +117,7 @@ add_custom_command(
 # ---------------------------------------------------------------------------
 # Harness: ParsedCertificate::fromDer
 # ---------------------------------------------------------------------------
-add_executable(fuzz_parsed_certificate fuzz_parsed_certificate.cpp)
+add_executable(fuzz_parsed_certificate fuzz_parsed_certificate.cpp ${LIBRESCRS_FUZZ_SRC_fuzz_parsed_certificate})
 target_compile_options(fuzz_parsed_certificate PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_link_options(fuzz_parsed_certificate PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_link_libraries(fuzz_parsed_certificate PRIVATE LibreSCRS_Certificate)
@@ -81,7 +125,7 @@ target_link_libraries(fuzz_parsed_certificate PRIVATE LibreSCRS_Certificate)
 # ---------------------------------------------------------------------------
 # Harness: TrustedListParser::parse
 # ---------------------------------------------------------------------------
-add_executable(fuzz_trusted_list_parser fuzz_trusted_list_parser.cpp)
+add_executable(fuzz_trusted_list_parser fuzz_trusted_list_parser.cpp ${LIBRESCRS_FUZZ_SRC_fuzz_trusted_list_parser})
 target_compile_options(fuzz_trusted_list_parser PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_link_options(fuzz_trusted_list_parser PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_compile_definitions(fuzz_trusted_list_parser PRIVATE LIBRESCRS_INTERNAL_BUILD)
@@ -95,12 +139,15 @@ target_link_libraries(fuzz_trusted_list_parser PRIVATE LibreSign)
 # parseAODF). External-byte attack surface — a hostile PKCS#15 card can put
 # any bytes in any directory file.
 # ---------------------------------------------------------------------------
-add_executable(fuzz_pkcs15_parser fuzz_pkcs15_parser.cpp)
+add_executable(fuzz_pkcs15_parser fuzz_pkcs15_parser.cpp ${LIBRESCRS_FUZZ_SRC_fuzz_pkcs15_parser})
+target_compile_features(fuzz_pkcs15_parser PRIVATE cxx_std_23)
 target_compile_options(fuzz_pkcs15_parser PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_link_options(fuzz_pkcs15_parser PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_compile_definitions(fuzz_pkcs15_parser PRIVATE LIBRESCRS_INTERNAL_BUILD)
 target_include_directories(fuzz_pkcs15_parser PRIVATE
     ${PROJECT_SOURCE_DIR}/lib/pkcs15/src
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/include
 )
 target_link_libraries(fuzz_pkcs15_parser PRIVATE PKCS15)
 
@@ -109,7 +156,8 @@ target_link_libraries(fuzz_pkcs15_parser PRIVATE PKCS15)
 # DG file contents are card-controlled bytes that dispatch into per-DG
 # sub-parsers.
 # ---------------------------------------------------------------------------
-add_executable(fuzz_emrtd_dg_parser fuzz_emrtd_dg_parser.cpp)
+add_executable(fuzz_emrtd_dg_parser fuzz_emrtd_dg_parser.cpp ${LIBRESCRS_FUZZ_SRC_fuzz_emrtd_dg_parser})
+target_compile_features(fuzz_emrtd_dg_parser PRIVATE cxx_std_23)
 target_compile_options(fuzz_emrtd_dg_parser PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_link_options(fuzz_emrtd_dg_parser PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_compile_definitions(fuzz_emrtd_dg_parser PRIVATE LIBRESCRS_INTERNAL_BUILD)
@@ -118,12 +166,14 @@ target_include_directories(fuzz_emrtd_dg_parser PRIVATE
 )
 target_link_libraries(fuzz_emrtd_dg_parser PRIVATE EMRTD)
 
+include(EmrtdCryptoPrivateIncludes)
+
 # ---------------------------------------------------------------------------
 # Harness: parseCscaMasterList. External-byte attack surface — a published CSCA
 # master list is walked before anything has verified its signature, so every
 # byte in it is whatever produced the file.
 # ---------------------------------------------------------------------------
-add_executable(fuzz_csca_master_list fuzz_csca_master_list.cpp)
+add_executable(fuzz_csca_master_list fuzz_csca_master_list.cpp ${LIBRESCRS_FUZZ_SRC_fuzz_csca_master_list})
 # Explicit, unlike the harnesses above: csca_master_list.h returns
 # std::expected, so this target needs C++23 in its own right and does not get
 # it from the library's directory-scope setting.
@@ -131,10 +181,8 @@ target_compile_features(fuzz_csca_master_list PRIVATE cxx_std_23)
 target_compile_options(fuzz_csca_master_list PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_link_options(fuzz_csca_master_list PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_compile_definitions(fuzz_csca_master_list PRIVATE LIBRESCRS_INTERNAL_BUILD)
-target_include_directories(fuzz_csca_master_list PRIVATE
-    ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src
-)
-target_link_libraries(fuzz_csca_master_list PRIVATE EMRTDCrypto)
+target_include_directories(fuzz_csca_master_list PRIVATE ${LIBRESCRS_EMRTD_CRYPTO_PRIVATE_INCLUDES})
+target_link_libraries(fuzz_csca_master_list PRIVATE EMRTDCrypto SmartCard_Impl LibreSCRS_SecureChannel)
 
 # ---------------------------------------------------------------------------
 # Harnesses: the eMRTD walkers that run over unauthenticated card bytes.
@@ -159,9 +207,7 @@ target_link_libraries(fuzz_csca_master_list PRIVATE EMRTDCrypto)
 include(EmrtdCryptoPrivateIncludes)
 
 # Harness: parseSOD — EF.SOD, walked before its signature is checked.
-add_executable(fuzz_emrtd_sod
-    fuzz_emrtd_sod.cpp
-    ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src/passive_auth.cpp)
+add_executable(fuzz_emrtd_sod fuzz_emrtd_sod.cpp ${LIBRESCRS_FUZZ_SRC_fuzz_emrtd_sod})
 target_compile_features(fuzz_emrtd_sod PRIVATE cxx_std_23)
 target_compile_options(fuzz_emrtd_sod PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_link_options(fuzz_emrtd_sod PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
@@ -170,9 +216,7 @@ target_include_directories(fuzz_emrtd_sod PRIVATE ${LIBRESCRS_EMRTD_CRYPTO_PRIVA
 target_link_libraries(fuzz_emrtd_sod PRIVATE EMRTDCrypto SmartCard_Impl LibreSCRS_SecureChannel)
 
 # Harness: parseCardAccess — EF.CardAccess, read over a plain channel.
-add_executable(fuzz_emrtd_card_access
-    fuzz_emrtd_card_access.cpp
-    ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src/pace.cpp)
+add_executable(fuzz_emrtd_card_access fuzz_emrtd_card_access.cpp ${LIBRESCRS_FUZZ_SRC_fuzz_emrtd_card_access})
 target_compile_features(fuzz_emrtd_card_access PRIVATE cxx_std_23)
 target_compile_options(fuzz_emrtd_card_access PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_link_options(fuzz_emrtd_card_access PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
@@ -181,10 +225,7 @@ target_include_directories(fuzz_emrtd_card_access PRIVATE ${LIBRESCRS_EMRTD_CRYP
 target_link_libraries(fuzz_emrtd_card_access PRIVATE EMRTDCrypto SmartCard_Impl LibreSCRS_SecureChannel)
 
 # Harness: parseDG14 / parseDG15 — the security infos and the AA public key.
-add_executable(fuzz_emrtd_security_info
-    fuzz_emrtd_security_info.cpp
-    ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src/chip_auth.cpp
-    ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src/active_auth.cpp)
+add_executable(fuzz_emrtd_security_info fuzz_emrtd_security_info.cpp ${LIBRESCRS_FUZZ_SRC_fuzz_emrtd_security_info})
 target_compile_features(fuzz_emrtd_security_info PRIVATE cxx_std_23)
 target_compile_options(fuzz_emrtd_security_info PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_link_options(fuzz_emrtd_security_info PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
@@ -203,9 +244,7 @@ target_link_libraries(fuzz_emrtd_security_info PRIVATE EMRTDCrypto SmartCard_Imp
 # and the PC/SC interface; it is a static archive, so pulling apdu.o out of it
 # does not also pull the uninstrumented chunked_read.o.
 # ---------------------------------------------------------------------------
-add_executable(fuzz_chunked_read
-    fuzz_chunked_read.cpp
-    ${PROJECT_SOURCE_DIR}/lib/smartcard/src/chunked_read.cpp)
+add_executable(fuzz_chunked_read fuzz_chunked_read.cpp ${LIBRESCRS_FUZZ_SRC_fuzz_chunked_read})
 target_compile_features(fuzz_chunked_read PRIVATE cxx_std_23)
 target_compile_options(fuzz_chunked_read PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_link_options(fuzz_chunked_read PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
@@ -216,11 +255,83 @@ target_include_directories(fuzz_chunked_read PRIVATE
 target_link_libraries(fuzz_chunked_read PRIVATE SmartCard_Impl)
 
 # ---------------------------------------------------------------------------
+# Harness: the PDF xref / trailer walker.
+#
+# The document arrives by mail or download and goes into the signing wizard, so
+# every byte of it is the sender's choice. Three translation units are compiled
+# in because the tokenizer and the value tree are separate from the walker and
+# all three see the same bytes.
+# ---------------------------------------------------------------------------
+add_executable(fuzz_pdf_parser fuzz_pdf_parser.cpp ${LIBRESCRS_FUZZ_SRC_fuzz_pdf_parser})
+target_compile_features(fuzz_pdf_parser PRIVATE cxx_std_23)
+target_compile_options(fuzz_pdf_parser PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_link_options(fuzz_pdf_parser PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_compile_definitions(fuzz_pdf_parser PRIVATE LIBRESCRS_INTERNAL_BUILD)
+target_include_directories(fuzz_pdf_parser PRIVATE
+    ${PROJECT_SOURCE_DIR}/lib/libresign/src
+    ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
+)
+target_link_libraries(fuzz_pdf_parser PRIVATE LibreSign)
+
+# ---------------------------------------------------------------------------
+# Harnesses: the Serbian card TLV reader, and the BER-TLV walker under it.
+#
+# Both Serbian families read their fields through one little-endian 16-bit TLV
+# reader with a UTF-16 decode behind it, so one harness covers both. The BER
+# walker is the canonical decoder the tree consolidated its length decodes
+# onto and had no harness at all.
+# ---------------------------------------------------------------------------
+add_executable(fuzz_rs_tlv fuzz_rs_tlv.cpp ${LIBRESCRS_FUZZ_SRC_fuzz_rs_tlv})
+target_compile_features(fuzz_rs_tlv PRIVATE cxx_std_23)
+target_compile_options(fuzz_rs_tlv PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_link_options(fuzz_rs_tlv PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_compile_definitions(fuzz_rs_tlv PRIVATE LIBRESCRS_INTERNAL_BUILD)
+target_include_directories(fuzz_rs_tlv PRIVATE
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/include
+    ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
+)
+target_link_libraries(fuzz_rs_tlv PRIVATE SmartCard_Impl)
+
+add_executable(fuzz_ber fuzz_ber.cpp ${LIBRESCRS_FUZZ_SRC_fuzz_ber})
+target_compile_features(fuzz_ber PRIVATE cxx_std_23)
+target_compile_options(fuzz_ber PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_link_options(fuzz_ber PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_compile_definitions(fuzz_ber PRIVATE LIBRESCRS_INTERNAL_BUILD)
+target_include_directories(fuzz_ber PRIVATE
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/include
+    ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
+)
+target_link_libraries(fuzz_ber PRIVATE SmartCard_Impl)
+
+# ---------------------------------------------------------------------------
+# Harness: the EU vehicle-registration path.
+#
+# The header derivation decides how many bytes to read from the card, and the
+# field walk turns the result into what a user sees. The whole BER stack under
+# both is compiled in.
+# ---------------------------------------------------------------------------
+add_executable(fuzz_eu_vrc fuzz_eu_vrc.cpp ${LIBRESCRS_FUZZ_SRC_fuzz_eu_vrc})
+target_compile_features(fuzz_eu_vrc PRIVATE cxx_std_23)
+target_compile_options(fuzz_eu_vrc PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_link_options(fuzz_eu_vrc PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
+target_compile_definitions(fuzz_eu_vrc PRIVATE LIBRESCRS_INTERNAL_BUILD)
+target_include_directories(fuzz_eu_vrc PRIVATE
+    ${PROJECT_SOURCE_DIR}/lib/eu-vrc/src
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/include
+    ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
+)
+target_link_libraries(fuzz_eu_vrc PRIVATE EuVrc SmartCard_Impl)
+
+# ---------------------------------------------------------------------------
 # Harness: TlSignatureVerifier::verify (with constant signing cert)
 # ---------------------------------------------------------------------------
 add_executable(fuzz_tl_signature_verifier
     fuzz_tl_signature_verifier.cpp
     "${LIBRESCRS_FUZZ_TL_EMBED}"
+    ${LIBRESCRS_FUZZ_SRC_fuzz_tl_signature_verifier}
 )
 target_compile_options(fuzz_tl_signature_verifier PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_link_options(fuzz_tl_signature_verifier PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
@@ -229,6 +340,22 @@ target_include_directories(fuzz_tl_signature_verifier PRIVATE
     ${PROJECT_SOURCE_DIR}/lib/libresign/src
 )
 target_link_libraries(fuzz_tl_signature_verifier PRIVATE LibreSign)
+
+# A harness the list does not mention would be silently link-only, and a row
+# naming a harness that does not exist would describe a build nobody has. The
+# runtime check asserts the same two things against the objects; this one fails
+# the configure, which is cheaper to read.
+get_property(LIBRESCRS_FUZZ_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(t IN LISTS LIBRESCRS_FUZZ_TARGETS)
+    if(t MATCHES "^fuzz_" AND NOT t IN_LIST LIBRESCRS_FUZZ_DECLARED)
+        message(FATAL_ERROR "${t} is a fuzz target but instrumented-sources.txt does not mention it")
+    endif()
+endforeach()
+foreach(h IN LISTS LIBRESCRS_FUZZ_DECLARED)
+    if(NOT TARGET ${h})
+        message(FATAL_ERROR "instrumented-sources.txt names ${h}, which is not a target here")
+    endif()
+endforeach()
 
 # Stage corpora next to the binaries so users can `cd build && ./fuzz/...`
 # without a long path argument.
