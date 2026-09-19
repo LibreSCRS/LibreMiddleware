@@ -435,6 +435,20 @@ jobs:
         # window for the cert refresh + release cut.
         run: ./ci/check-pinned-cert-expiry.sh
 
+      - name: Check vendored archive provenance
+        if: matrix.release_gates
+        # The bundled OpenSSL is four committed binaries, not a source tree.
+        # Each archive carries the version, target, compiler line and build
+        # date it was produced with; this reads those back out and compares
+        # them with thirdparty/openssl-*/PROVENANCE.txt. A bump that moves the
+        # archives and forgets the record, or moves only one platform's, fails
+        # here without anything being tampered with.
+        run: ./ci/scripts/check-vendored-provenance.sh
+
+      - name: Prove the provenance check can fail
+        if: matrix.release_gates
+        run: ./ci/scripts/check-vendored-provenance.selftest.sh
+
       - name: Check ABI snapshot vs 5.x baseline
         # Native leg only: the baseline is recorded for one configuration, and
         # `both` adds the DSS backend's exported symbols, so running it there

@@ -1,5 +1,5 @@
-# Bundled OpenSSL 3.5.5 (static)
-set(OPENSSL_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/openssl-3.5.5)
+# Bundled OpenSSL 3.5.8 (static)
+set(OPENSSL_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/openssl-3.5.8)
 add_library(OpenSSL_Crypto STATIC IMPORTED GLOBAL)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
@@ -40,7 +40,7 @@ endif()
 # Rationale (consistency, not a bug-fix): a system libcurl.so drags the host
 # distribution's libssl/libcrypto.so into every consuming process, so the
 # LibreSign signing engine would run with TWO OpenSSL instances — the bundled
-# static OpenSSL 3.5.5 AND the host's dynamic OpenSSL. The native engine
+# static OpenSSL 3.5.8 AND the host's dynamic OpenSSL. The native engine
 # registers a custom OpenSSL provider ("librescrs") in the bundled OpenSSL's
 # default OSSL_LIB_CTX; a second, unrelated OpenSSL in the same address space
 # is a latent hazard and a portability inconsistency (macOS universal builds

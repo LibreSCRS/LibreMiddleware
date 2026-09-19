@@ -7,7 +7,7 @@
 #
 # Why by hand rather than by a scanner: a scanner reads package metadata, and
 # the whole problem is that the shipped metadata says nothing about a statically
-# linked OpenSSL 3.5.5. Measured on a real build, lintian flagged the bundled
+# linked OpenSSL. Measured on a real build, lintian flagged the bundled
 # curl and said nothing at all about the bundled OpenSSL, so this file is the
 # only place either version will ever appear. If a scanner is available its
 # output is worth comparing against this one, but this one is the source of
@@ -31,7 +31,15 @@ pin_from_pkgbuild() {   # pin_from_pkgbuild <substring of the source URL>
 }
 
 opensc_sha="$(pin_from_pkgbuild OpenSC || true)"
-curl_sha="$(pin_from_pkgbuild curl || true)"
+# The curl pin is the submodule's own checked-out commit, not the one written
+# into the packaging recipe: the recipe is a CONSUMER of the pin, so reading it
+# here let a bump of the submodule publish a signed bill naming the old commit.
+# The recipe stays the fallback, for a source tarball unpacked outside git.
+curl_sha=""
+if [ -d "$repo/thirdparty/curl-source/.git" ] || [ -f "$repo/thirdparty/curl-source/.git" ]; then
+  curl_sha="$(git -C "$repo/thirdparty/curl-source" rev-parse HEAD 2>/dev/null || true)"
+fi
+[ -n "$curl_sha" ] || curl_sha="$(pin_from_pkgbuild curl || true)"
 curlver_h="$repo/thirdparty/curl-source/include/curl/curlver.h"
 curl_ver=""
 if [ -f "$curlver_h" ]; then
@@ -40,12 +48,50 @@ if [ -f "$curlver_h" ]; then
   curl_pat="$(awk '/^#define LIBCURL_VERSION_PATCH /{print $3}' "$curlver_h")"
   [ -n "$curl_maj" ] && [ -n "$curl_min" ] && [ -n "$curl_pat" ] && curl_ver="$curl_maj.$curl_min.$curl_pat"
 fi
-openssl_dir="$(ls -d "$repo"/thirdparty/openssl-* 2>/dev/null | head -1 || true)"
+# The OpenSSL version is the directory name, which is a PIN rather than a
+# property of the bytes beside it. That is sound only while the provenance check
+# stands wired and un-excused: it reads each archive's own build stamp back and
+# refuses a set where one platform's is older than the record claims, so a bill
+# naming the directory cannot outlive a tree that disagrees with it. If that
+# check ever gains continue-on-error or an entry in the wiring exceptions, this
+# becomes a quiet false witness and should read the archives instead.
+#
+# `| head -1` was its own silent branch: in the middle of a bump a tree holds two
+# openssl-* directories, and the lexicographically first one was published
+# without a word about the other.
 openssl_ver=""
-[ -n "$openssl_dir" ] && openssl_ver="$(basename "$openssl_dir" | sed 's/^openssl-//')"
+openssl_count=0
+for d in "$repo"/thirdparty/openssl-*; do
+  [ -d "$d" ] || continue
+  openssl_count=$((openssl_count + 1))
+  openssl_ver="$(basename "$d" | sed 's/^openssl-//')"
+done
+if [ "$openssl_count" -gt 1 ]; then
+  echo "make-sbom: ERROR: $openssl_count thirdparty/openssl-* directories -- a bill of" \
+       "materials cannot say which one ships" >&2
+  exit 1
+fi
 qcbor_sha=""
 [ -f "$repo/cmake/FetchQCBOR.cmake" ] && \
   qcbor_sha="$(awk '/GIT_TAG/{print $2; exit}' "$repo/cmake/FetchQCBOR.cmake")"
+
+# Two header libraries are vendored as plain files with no pin anywhere, so
+# until now the bill said "in-tree" for both -- true, and useless to anyone
+# asking whether a published advisory reaches this artefact. Both carry their
+# own version macro; that is the pin, and it is read here like every other one.
+miniz_ver=""
+[ -f "$repo/thirdparty/miniz/miniz.h" ] && \
+  miniz_ver="$(sed -n 's/^#define MZ_VERSION  *"\([^"]*\)".*/\1/p' \
+    "$repo/thirdparty/miniz/miniz.h" | head -1)"
+nlohmann_ver=""
+if [ -f "$repo/thirdparty/nlohmann/json.hpp" ]; then
+  nj="$repo/thirdparty/nlohmann/json.hpp"
+  nj_maj="$(awk '/^#define NLOHMANN_JSON_VERSION_MAJOR /{print $3; exit}' "$nj")"
+  nj_min="$(awk '/^#define NLOHMANN_JSON_VERSION_MINOR /{print $3; exit}' "$nj")"
+  nj_pat="$(awk '/^#define NLOHMANN_JSON_VERSION_PATCH /{print $3; exit}' "$nj")"
+  [ -n "$nj_maj" ] && [ -n "$nj_min" ] && [ -n "$nj_pat" ] \
+    && nlohmann_ver="$nj_maj.$nj_min.$nj_pat"
+fi
 
 component() {  # component <name> <version> <purl> <licence>
   printf '    {\n      "type": "library",\n      "name": "%s",\n      "version": "%s",\n      "purl": "%s",\n      "licenses": [{"license": {"id": "%s"}}]\n    }' \
@@ -63,8 +109,8 @@ component() {  # component <name> <version> <purl> <licence>
   [ -n "$curl_sha" ] && [ -n "$curl_ver" ] && emit curl "$curl_ver" "pkg:github/curl/curl@$curl_sha" curl
   [ -n "$opensc_sha" ]  && emit opensc "git-$opensc_sha" "pkg:github/OpenSC/OpenSC@$opensc_sha" LGPL-2.1-or-later
   [ -n "$qcbor_sha" ]   && emit qcbor "git-$qcbor_sha" "pkg:github/laurencelundblade/QCBOR@$qcbor_sha" BSD-3-Clause
-  [ -d "$repo/thirdparty/nlohmann" ] && emit nlohmann-json in-tree "pkg:generic/nlohmann-json" MIT
-  [ -d "$repo/thirdparty/miniz" ] && emit miniz in-tree "pkg:generic/miniz" MIT
+  [ -n "$nlohmann_ver" ] && emit nlohmann-json "$nlohmann_ver" "pkg:github/nlohmann/json@v$nlohmann_ver" MIT
+  [ -n "$miniz_ver" ] && emit miniz "$miniz_ver" "pkg:github/richgel999/miniz@$miniz_ver" MIT
   printf '\n  ]\n}\n'
 } > "$out"
 
@@ -72,9 +118,10 @@ component() {  # component <name> <version> <purl> <licence>
 # absence by design, which is right for one missing pin and catastrophic for
 # all of them at once: a bill with no components is not a small bill, it is a
 # signed document stating that this artefact bundles nothing. What it reads
-# here is six optional things -- an unpacked OpenSSL directory, two commit
-# hashes in the Arch recipe, a QCBOR pin in cmake/, and two in-tree header
-# libraries -- and the QCBOR arm already finds nothing here, which is the point:
+# here is six optional things -- an unpacked OpenSSL directory, the curl
+# submodule's commit, the OpenSC hash in the Arch recipe, a QCBOR pin in
+# cmake/, and the version macro of each of two vendored header libraries --
+# and the QCBOR arm already finds nothing here, which is the point:
 # every arm is allowed to come up empty, so nothing but this assertion stands
 # between a tree that has moved or renamed a pin and a bill printing
 # "make-sbom: 0 components", exiting 0, and being signed and published beside

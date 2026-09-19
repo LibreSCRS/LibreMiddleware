@@ -55,7 +55,7 @@ target_include_directories(LibreSCRS_Auth PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_compile_features(LibreSCRS_Auth PUBLIC cxx_std_23)
-# OpenSSL_Crypto is the bundled static archive (thirdparty/openssl-3.5.5);
+# OpenSSL_Crypto is the bundled static archive (thirdparty/openssl-3.5.8);
 # baked into the .so / .a so downstream consumers don't need to link it.
 # BUILD_INTERFACE-only keeps Config-package consumers from seeing the
 # unresolved `-lOpenSSL_Crypto` reference at link time.
@@ -446,7 +446,7 @@ endif()
 # ──────────────────────────────────────────────────────────────────────────
 # SHARED-build symbol hygiene: namespace-allowlist version script.
 #
-# Without this, bundled OpenSSL (thirdparty/openssl-3.5.5/libcrypto.a) and
+# Without this, bundled OpenSSL (thirdparty/openssl-3.5.8/libcrypto.a) and
 # vendored nlohmann::json / miniz (carried in LibreSign.a) leak ~4400
 # default-visibility symbols (OPENSSL_*, EVP_*, X509_*, BN_*, ossl_*,
 # nlohmann::json_abi_v3_11_3::*, mz_*, …) into the public dynamic symbol

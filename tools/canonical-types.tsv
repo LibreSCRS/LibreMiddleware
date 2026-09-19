@@ -110,7 +110,7 @@ dup:oasis-pkcs11	LibreMiddleware/lib/pkcs11/include/pkcs11/pkcs11.h	LibreAgent/i
 # their headers coincide and a few legitimately do not, so this row says the
 # trees are allowed to coincide and claims nothing about which files do. No
 # marker is added to either: annotating a third party's source is editing it.
-dup:vendored-openssl	LibreMiddleware/thirdparty/openssl-3.5.5/linux/*	LibreMiddleware/thirdparty/openssl-3.5.5/macosx/*
+dup:vendored-openssl	LibreMiddleware/thirdparty/openssl-3.5.8/linux/*	LibreMiddleware/thirdparty/openssl-3.5.8/macosx/*
 
 # --- the scope guard that wipes key material. Three key-agreement paths each
 # declared their own local struct for it and one of them declared two; the

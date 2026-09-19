@@ -26,7 +26,7 @@ arch=('x86_64')
 url="https://github.com/LibreSCRS/LibreMiddleware"
 license=('LGPL-2.1-or-later' 'Apache-2.0' 'OFL-1.1' 'MIT')   # MIT = vendored curl (curl license)
 # Runtime: system libs the LibreSCRS_* shared objects + plugins link against.
-# OpenSSL (libcrypto) is BUNDLED statically (thirdparty/openssl-3.5.5) and is
+# OpenSSL (libcrypto) is BUNDLED statically (thirdparty/openssl-3.5.8) and is
 # therefore NOT a runtime depend.
 depends=(
     'pcsclite'      # PCSC::PCSC — APDU transport

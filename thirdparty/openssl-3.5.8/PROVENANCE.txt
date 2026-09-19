@@ -1,0 +1,86 @@
+# How the OpenSSL archives in this directory were built.
+#
+# The four committed archives are binaries, not sources, so nothing in a diff
+# says where they came from. OpenSSL itself compiles its build configuration
+# into libcrypto (crypto/cversion.c), so each archive carries its own version,
+# target, compiler line and build date. This file records what those should be;
+# ci/scripts/check-vendored-provenance.sh reads them back out of the archives
+# and compares. A version bump that forgets this record goes red without anyone
+# tampering with anything.
+#
+# Fields the check compares (per platform section): platform, compiler, built on,
+# and the version -- against both the record and the directory name. It ALSO
+# compares each `no-<feature>` token of the configure lines against the
+# OPENSSL_NO_<FEATURE> macro it must produce in that platform's committed
+# include/openssl/configuration.h, in both directions. So a configure line that
+# does not describe the build under it fails, and so does a build that was given
+# a flag the line does not record.
+# Fields recorded but NOT measurable, and therefore not compared: source-sha256,
+# signing-key, cross-signed-by, host, and the parts of a configure line that emit
+# no macro at all (`no-shared`, the target triple, --prefix).
+#
+component: openssl
+version: 3.5.8
+source-url: https://github.com/openssl/openssl/releases/download/openssl-3.5.8/openssl-3.5.8.tar.gz
+source-sha256: a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2
+signing-key: B146647E45A7B33947AB226B2A2C87D161692D40 (primary; signed by subkey C46ED3F2CBEFDA1FDAADA44264ED7B1DCCE71CB2)
+cross-signed-by: 216094DFD0CB81EF 2026-06-01 OpenSSL <openssl@openssl.org> (retired key, sig!)
+
+[linux]
+configure: ./Configure linux-x86_64 no-shared no-tests no-apps no-docs no-engine --prefix=<staging> --openssldir=/usr/local
+host: Linux 6.12.104-1-MANJARO x86_64 GNU/Linux, gcc (GCC) 16.2.1 20260810, perl 5.42.2
+config-delta: seven OPENSSL_NO_* macros are new against the 3.5.5 archive, none
+config-delta: gone. Four follow from no-engine (ENGINE, AFALGENG, CAPIENG,
+config-delta: PADLOCKENG); three -- APPS, DOCS, TESTS -- follow from the
+config-delta: no-apps/no-docs/no-tests flags, which measurement says the 3.5.5
+config-delta: archive was NOT built with: configuring 3.5.8 without those three
+config-delta: flags emits none of the three macros, so their absence from the
+config-delta: 3.5.5 header is evidence about that build, not about the version.
+config-delta: None of the three changes library code; they only skip building
+config-delta: the apps, the docs and the test suite.
+platform: linux-x86_64
+compiler: gcc -fPIC -pthread -m64 -Wa,--noexecstack -Wall -O3 -DOPENSSL_USE_NODELETE -DL_ENDIAN -DOPENSSL_PIC -DOPENSSL_BUILDING_OPENSSL -DNDEBUG
+built on: Sat Sep 19 13:58:59 2026 UTC
+
+[macosx]
+configure: ./Configure darwin64-x86_64-cc no-shared no-tests no-apps no-docs no-asm no-engine no-async --prefix=<staging>
+configure: ./Configure darwin64-arm64-cc no-shared no-tests no-apps no-docs no-asm no-engine no-async --prefix=<staging>
+configure: lipo -create <x86_64>/lib/libcrypto.a <arm64>/lib/libcrypto.a -output macosx/lib/libcrypto.a
+build-env: MACOSX_DEPLOYMENT_TARGET=15.0 (pins otool -l LC_BUILD_VERSION minos to the
+build-env: project's CMAKE_OSX_DEPLOYMENT_TARGET; clang honours the env var with no
+build-env: -mmacosx-version-min needed on the Configure line -- unset, it defaulted to
+build-env: the active SDK's own major version, 26.0, which is a newer floor than the
+build-env: project targets). make was invoked as `make -j4 PLATFORM=macos-<arch>`: the
+build-env: PLATFORM make variable feeds only crypto/buildinf.h's "platform: " string
+build-env: (util/mkbuildinf.pl; grep '$(PLATFORM)' Makefile has exactly that one hit),
+build-env: never a compiler flag or path, so the override is cosmetic and does not
+build-env: change what was compiled. Without it, darwin64-<arch>-cc's stock Configure
+build-env: target embeds "platform: darwin64-<arch>-cc" verbatim (util/mkbuildinf.pl
+build-env: writes the raw Configure target name through) -- there is no stock OpenSSL
+build-env: target literally named macos-arm64/macos-x86_64 (checked Configurations/
+build-env: *.conf). The override reproduces the label the 3.5.5 archive already
+build-env: carried and that this file's own [macosx] platform: lines, the gate's
+build-env: macos-prefix universal check, and this component's README section all
+build-env: assume; recorded here because the plain Configure line alone reproduces
+build-env: neither that label nor this file's own expectation of it.
+host: macOS 26.6.2 (build 25G83), Apple clang version 21.0.0 (clang-2100.1.1.101),
+host: SDK /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk (26.5), perl 5.34.1
+config-delta: three OPENSSL_NO_* macros are new against the 3.5.5 archive (49 -> 52),
+config-delta: none gone -- APPS, DOCS, TESTS, following from no-apps/no-docs/no-tests.
+config-delta: ASM/ENGINE/ASYNC (and the no-engine consequences AFALGENG/CAPIENG/
+config-delta: PADLOCKENG) were already off in the 3.5.5 macOS archive, unlike Linux,
+config-delta: which is why macOS gains only three here against Linux's seven. None of
+config-delta: the three changes library code; they only skip building the apps, the
+config-delta: docs and the test suite. configuration.h is byte-identical between the
+config-delta: arm64 and x86_64 staging prefixes -- no per-architecture OPENSSL_NO_*
+config-delta: divergence to flag. The headers also show OPENSSL_SYS_MacOSX (3.5.5)
+config-delta: renamed to OPENSSL_SYS_MACOSX and opensslconf.h's multi-arch
+config-delta: `#if defined(__APPLE__) && ...` wrapper gone; both are 3.5.8's own
+config-delta: header generation, not a build-flag choice, and neither macro is
+config-delta: referenced anywhere in LM outside this vendored tree.
+platform: macos-arm64
+platform: macos-x86_64
+compiler: cc -fPIC -arch arm64 -O3 -Wall -DL_ENDIAN -DOPENSSL_PIC -D_REENTRANT -DOPENSSL_BUILDING_OPENSSL -DNDEBUG
+compiler: cc -fPIC -arch x86_64 -O3 -Wall -DL_ENDIAN -DOPENSSL_PIC -D_REENTRANT -DOPENSSL_BUILDING_OPENSSL -DNDEBUG
+built on: Thu Sep 24 10:57:31 2026 UTC
+built on: Thu Sep 24 10:58:44 2026 UTC

@@ -261,7 +261,7 @@ The SHARED `LibreSCRS_*` libraries bake in their own copies of the
 LibreMiddleware-internal static archives that LibreCelik consumes
 in-tree:
 
-- bundled OpenSSL 3.5.5 (`thirdparty/openssl-3.5.5/{linux,macosx}`)
+- bundled OpenSSL 3.5.8 (`thirdparty/openssl-3.5.8/{linux,macosx}`)
 - `LibreSign` (private signing engine)
 - `SmartCard_Impl`, `CardPlugin_Impl` (PC/SC + plugin runtime helpers)
 

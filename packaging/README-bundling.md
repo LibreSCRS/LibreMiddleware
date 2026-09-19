@@ -9,7 +9,7 @@ reader does not have to reconstruct it from build files.
 
 | bundled | form | pin |
 |---|---|---|
-| OpenSSL 3.5.5 | pre-compiled static archives committed to the tree | `thirdparty/openssl-3.5.5/` |
+| OpenSSL 3.5.8 | pre-compiled static archives committed to the tree | `thirdparty/openssl-3.5.8/` |
 | curl 8.11.1 | submodule, built statically against the bundled OpenSSL | `75a2079d5c28debb2eaa848ca9430f1fe0d7844c` |
 | OpenSC | submodule, built statically | `07d0d40b0e4051f6fe11f3a92cec56d320670d85` |
 | miniz, nlohmann/json | source drop-in | in tree, `thirdparty/` |
@@ -34,7 +34,7 @@ a pre-compiled OpenSSL sits in git; both archives require the system copy.
 
 A CVE in the bundled OpenSSL is invisible to every distribution security
 tracker and every container scanner, because nothing in the shipped metadata
-says OpenSSL 3.5.5 is inside. That is why a bill of materials ships beside
+says OpenSSL 3.5.8 is inside. That is why a bill of materials ships beside
 every artefact — it is the only place the bundled versions are ever named.
 
 `lintian` and `rpmlint` findings in the `embedded-library` family are accepted

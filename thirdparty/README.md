@@ -10,12 +10,12 @@
 Why vendored: the host distribution's `libcurl.so` is linked against the
 *system* OpenSSL, so loading it would drag a SECOND OpenSSL (the host's
 `libssl`/`libcrypto.so`) into every process that also uses our bundled static
-OpenSSL 3.5.5 — two OpenSSL instances in one address space. The native signing
+OpenSSL 3.5.8 — two OpenSSL instances in one address space. The native signing
 engine registers a custom OpenSSL provider (`librescrs`) in the bundled
 OpenSSL's default `OSSL_LIB_CTX`; a second OpenSSL is a portability
 inconsistency (macOS universal builds have no system OpenSSL at all) and a
 latent hazard. We therefore build a minimal **static** `libcurl.a` against the
-**bundled** OpenSSL (`thirdparty/openssl-3.5.5`), guaranteeing exactly ONE
+**bundled** OpenSSL (`thirdparty/openssl-3.5.8`), guaranteeing exactly ONE
 OpenSSL per process on every platform. curl is reached only by the TSA / CRL /
 OCSP / Trusted-List HTTP paths (B-T and higher); B-B detached signing never
 calls it. Built via `ExternalProject_Add(curl_external)` in
@@ -72,3 +72,144 @@ asserts ownership of a given slot.
 Disable: pass `-DLIBRESCRS_VENDOR_OPENSC=OFF` at configure time to skip the
 ~5-10 minute autoconf+make build (the resulting `librescrs-opensc-pkcs11`
 fallback module will not be built either).
+
+## openssl-3.5.x
+
+**Upstream:** https://github.com/openssl/openssl (releases) —
+https://openssl-library.org/source/
+**Pinned version:** 3.5.8 (released 2026-08-25)
+**License:** Apache-2.0 (`openssl-3.5.8/LICENSE.txt`)
+**Source tarball SHA256:** not recorded — the archives below were vendored
+before this section existed. Every version from the next one on records it.
+**Signing key:** `B146 647E 45A7 B339 47AB 226B 2A2C 87D1 6169 2D40`
+(primary; releases are signed by its current signing *subkey*, so compare the
+fingerprint in the last field of the `VALIDSIG` line, not the first).
+Keyring: https://openssl-library.org/source/pubkeys.asc — use that file, not a
+keyserver: it keeps the cross-certification from the retired key
+`BA54 73A2 B058 7B07 FB27 CF2D 2160 94DF D0CB 81EF`, which is the only link
+back to the older, known key. `openssl-library.org/source/fingerprints.txt` is
+gone (404); the historical fingerprints live in `doc/fingerprints.txt` in the
+upstream git repository.
+
+⚠ A release tag here is a signed annotated tag, but GitHub reports it as
+`verified: false, reason: unknown_key` because the key is not registered with
+GitHub. Verify **locally** against `pubkeys.asc`; the GitHub badge means
+nothing for this project.
+
+**This is not a source tree.** Unlike `curl-source` and `opensc-source`, what
+is committed here is four prebuilt static archives —
+`{linux,macosx}/lib/lib{crypto,ssl}.a` — plus the headers that match them.
+`PROVENANCE.txt` beside them records what produced each one, and
+`ci/scripts/check-vendored-provenance.sh` reads those properties back out of
+the archives and compares. See the decisions at the end of this section for
+why it is a binary and what moving to a source build would cost.
+
+### The two platforms are not configured the same way
+
+Measured from the `configuration.h` of the archives committed before this
+section existed: Linux defined **43** `OPENSSL_NO_*` macros, macOS **49**. Six
+were macOS-only — `NO_ASM`, `NO_ASYNC`, `NO_ENGINE`, `NO_AFALGENG`,
+`NO_CAPIENG`, `NO_PADLOCKENG` — and **none** was Linux-only. So the macOS
+archives are built without assembly, without the ENGINE API and without async,
+and the Linux one had assembly and ENGINE compiled in. Neither line was written
+down anywhere until now, which means a rebuild that quietly turned assembly
+back on for macOS would change code paths and timings with no test able to
+see it.
+
+The Linux rebuild for 3.5.8 adds **seven** macros against that set and removes
+none. Four follow from `no-engine` (`NO_ENGINE` plus the three engine
+implementations `NO_AFALGENG`, `NO_CAPIENG`, `NO_PADLOCKENG`). The other three
+— `NO_APPS`, `NO_DOCS`, `NO_TESTS` — follow from `no-apps no-docs no-tests`,
+and their absence from the previous header says something about that build
+rather than about the version: configuring 3.5.8 **without** those three emits
+none of the three macros, so the archives committed before this section existed
+were not built with them. None of the three changes library code; they only
+skip building the apps, the manual pages and the test suite. `PROVENANCE.txt`
+carries the same measurement beside the archives.
+
+The exact configure lines, so that the `configuration.h` diff after a rebuild
+is a check and not a discovery:
+
+```
+# Linux x86-64
+#   no-engine: nothing in this project uses the ENGINE API, and the archive is
+#   smaller and the attack surface narrower without it.
+./Configure linux-x86_64 no-shared no-tests no-apps no-docs no-engine \
+    --prefix=<staging> --openssldir=/usr/local
+
+# macOS: one pass per slice, then `lipo -create`. Export the deployment
+#   target first -- it pins the floor to this project's own
+#   CMAKE_OSX_DEPLOYMENT_TARGET (15.0); unset, clang embeds the active SDK's
+#   own version instead (26.x on a current toolchain), a floor no consumer
+#   here asks for.
+export MACOSX_DEPLOYMENT_TARGET=15.0
+./Configure darwin64-x86_64-cc no-shared no-tests no-apps no-docs \
+    no-asm no-engine no-async --prefix=<staging>
+./Configure darwin64-arm64-cc  no-shared no-tests no-apps no-docs \
+    no-asm no-engine no-async --prefix=<staging>
+lipo -create <x86_64-staging>/lib/libcrypto.a <arm64-staging>/lib/libcrypto.a \
+     -output macosx/lib/libcrypto.a          # and the same for libssl.a
+```
+
+Update procedure (the order matters; step 1 gates everything after it):
+```
+# 1. fetch and verify the source. No successful signature, no build: a binary
+#    committed here from unverified source is worse than an old one.
+cd /var/tmp && mkdir -p openssl-build && cd openssl-build
+curl -sSLO https://github.com/openssl/openssl/releases/download/openssl-<ver>/openssl-<ver>.tar.gz
+curl -sSLO https://github.com/openssl/openssl/releases/download/openssl-<ver>/openssl-<ver>.tar.gz.asc
+curl -sSLO https://github.com/openssl/openssl/releases/download/openssl-<ver>/openssl-<ver>.tar.gz.sha256
+sha256sum -c openssl-<ver>.tar.gz.sha256
+curl -sSL https://openssl-library.org/source/pubkeys.asc | gpg --import
+gpg --verify openssl-<ver>.tar.gz.asc openssl-<ver>.tar.gz
+gpg --check-sigs B146647E45A7B33947AB226B2A2C87D161692D40 | grep -i 'D0CB81EF'
+
+# 2. build, per platform, with the exact line above (macOS: export
+#    MACOSX_DEPLOYMENT_TARGET first, see above). Never in /tmp on a box
+#    where /tmp is a RAM filesystem; -j4, not -j$(nproc).
+tar xf openssl-<ver>.tar.gz && cd openssl-<ver>
+./Configure <line from above>
+make -j4 && make install_sw
+#    macOS only: replace that `make -j4` with
+#    `make -j4 PLATFORM=macos-x86_64` (x86_64 slice) or
+#    `make -j4 PLATFORM=macos-arm64` (arm64 slice), then `make install_sw` as
+#    above. PLATFORM overrides only the "platform: " string
+#    check-vendored-provenance.sh reads back out of the archive -- a plain
+#    `make -j4` embeds the stock Configure target name instead
+#    ("platform: darwin64-<arch>-cc"), which the gate's macOS universal-slice
+#    check does not recognise (it is keyed on a `macos-` label) and which
+#    does not match what PROVENANCE.txt records.
+
+# 3. diff the OPENSSL_NO_* set of the new configuration.h against the old one,
+#    per platform. Every difference is either a deliberate flag change that
+#    gets written down here, or a wrong Configure line. None is ignored.
+grep -oE 'OPENSSL_NO_[A-Z0-9_]+' <staging>/include/openssl/configuration.h | sort -u
+
+# 4. copy from the INSTALLED prefix, never from the build tree: the build tree
+#    still holds the .h.in templates (the Linux headers here carry 28 of them
+#    from exactly that mistake, which is harmless but is the evidence that the
+#    procedure was not written down).
+# 5. rewrite PROVENANCE.txt from the new archives (strings -n 8 ... | grep -oE
+#    'platform: |compiler: |built on: ') and record the tarball SHA256, the
+#    signing key and the cross-signature output from step 1.
+# 6. ci/scripts/check-vendored-provenance.sh   # must print rc 0
+```
+
+### Two recorded decisions
+
+**The archive stays a committed binary for 5.0.** Building OpenSSL from source
+in CI (a submodule plus `ExternalProject_Add`, the shape `curl-source` already
+has) is the better end state and it is what this section's existence argues
+for: provenance would stop being a document and become a build log, the
+configure line would live in `thirdparty/CMakeLists.txt`, the version would be
+a submodule pin, and roughly 33 MB of binaries would leave the git history
+along with the "not a candidate for distribution packaging" objection in
+`packaging/README-bundling.md`. The cost is the macOS universal build moving
+into CI — two slices plus `lipo`, about ten minutes per build — and a release
+cycle is the wrong place to take that on. Deferred to a 5.x cycle, deliberately.
+
+**Linux gets `no-engine`.** The ENGINE API is unused here and has been
+deprecated upstream since 3.0; leaving it compiled in costs size and surface
+for nothing. macOS has been built without it since the archives were first
+produced, so this also removes one of the six differences between the two
+platforms rather than adding one.

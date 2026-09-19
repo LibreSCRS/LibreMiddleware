@@ -98,9 +98,12 @@ constexpr const char* kCscaMasterListOid = "2.23.136.1.1.2";
 
 /// True when @p oid is exactly id-icao-cscaMasterList.
 ///
-/// Compared in dotted form: OpenSSL 3.5.5 has no entry for this OID, so it has
-/// no NID to compare against, and OBJ_obj2txt with no_name set prints the
-/// numeric form whether or not the object table happens to know the arc.
+/// Compared in dotted form: OpenSSL 3.5.8 still has no entry for this OID
+/// (OBJ_txt2nid returns NID_undef, measured against the bundled archive), so
+/// there is no NID to compare against. The comparison does not depend on that:
+/// OBJ_obj2txt with no_name set prints the numeric form whether or not the
+/// object table happens to know the arc, so a future release that adds the
+/// entry changes nothing here.
 bool isCscaMasterListOid(const ASN1_OBJECT* oid)
 {
     // Callers really do pass null here -- an attribute that is missing,

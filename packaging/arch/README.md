@@ -116,6 +116,6 @@ one command:
 echo 'module: /usr/lib/pkcs11/librescrs-pkcs11.so' | sudo tee /etc/pkcs11/modules/librescrs.module
 ```
 
-OpenSSL (libcrypto) is **statically bundled** (`thirdparty/openssl-3.5.5`) and
+OpenSSL (libcrypto) is **statically bundled** (`thirdparty/openssl-3.5.8`) and
 is not a runtime dependency. The vendored upstream OpenSC is built as a static
 archive and linked in; there is no `system libopensc` dependency.
