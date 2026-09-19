@@ -28,7 +28,7 @@
 set -uo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-SUBJECT="$HERE/abi-snapshot.sh"
+SUBJECT="${SUBJECT:-$HERE/abi-snapshot.sh}"
 [ -f "$SUBJECT" ] || { echo "FATAL: $SUBJECT is missing" >&2; exit 2; }
 
 # A compiler is the only way to get a shared object whose exported set this
@@ -168,6 +168,39 @@ rm -f "$SHIM/c++filt"
 rc=$( if ( cd "$root5" && PATH="$SHIM" ./ci/scripts/abi-snapshot.sh --check build ) > "$WORK/out" 2>&1; then echo 0; else echo $?; fi )
 check "c++filt off PATH is 'cannot measure'" 2 "$rc"
 says "c++filt off PATH is 'cannot measure'" "c++filt not found on PATH"
+
+# --- case 8: a binding class the snapshot has no rule for -------------------
+# The snapshot records T and declares which classes it deliberately does not,
+# because the policy says vague-linkage entries are not the public API: they are
+# how the object model emits a vtable or an inline member, and the compiler
+# decides which exist. Recording them would put inlining decisions into the ABI.
+#
+# What that must NOT do is drop something that IS the ABI. An exported DATA
+# symbol is part of a C++ contract, and the old T-only clause threw it away
+# without a word. This case is that symbol.
+root6="$(stub data-symbol)"
+run "$root6" --update build >/dev/null
+{
+    printf 'namespace LibreSCRS {\n'
+    printf 'int selftestAlpha(int x) { return x + 1; }\n'
+    printf 'int selftestBeta(int x) { return x + 2; }\n'
+    printf 'int selftestGamma(int x) { return x + 3; }\n'
+    printf 'int selftestExportedGlobal = 7;\n'
+    printf '}\n'
+} > "$root6/stub.cpp"
+g++ -shared -fPIC -o "$root6/build/lib/LibreSCRS/libLibreSCRS_Stub.so.5.0.0" \
+    "$root6/stub.cpp" 2>"$WORK/gcc.err" \
+    || { echo "FATAL: could not rebuild the stub with a data symbol" >&2; exit 2; }
+# The fixture really does export one, or the case would pass for the wrong reason.
+if ! nm -D -U "$root6/build/lib/LibreSCRS/libLibreSCRS_Stub.so.5.0.0" \
+        | awk '$2 == "D" || $2 == "B" { found = 1 } END { exit !found }'; then
+    echo "FATAL: the fixture exports no data symbol -- nothing to detect" >&2
+    exit 2
+fi
+rc=$(run "$root6" --check build)
+check "an exported data symbol is not dropped in silence" 2 "$rc"
+says "an exported data symbol is not dropped in silence" "no
+       rule for"
 
 printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
 [ "$fails" = 0 ]

@@ -63,13 +63,64 @@ total_symbols=0
 # on the pipeline because `set -o pipefail` would otherwise turn nm's own
 # failure into exit 1 -- "ABI drift" -- where the truth is "I could not read
 # this file".
+# The binding classes this snapshot deliberately does NOT record, and why.
+#
+# The policy defines the public API as what users can reach under the LibreSCRS
+# namespaces through the public targets. It says in as many words that anything
+# else is implementation detail and may change in any release. Vague-linkage
+# entries are not API under that definition: they are how the object model
+# emits a vtable, a typeinfo, an inline member or a template instantiation, and
+# the compiler decides which of them exist. Measured on this tree: 543 T, 102 W,
+# 62 V, 4 u and 7 A over the seven shared libraries. Recording the 168 W/V/u
+# entries would put inlining decisions into the ABI contract, so one -O level or
+# one new use of an exported type would rewrite the baseline -- a gate measuring
+# a proxy rather than the property. `A` is the version-definition entry, not code.
+#
+# The filter is declared here rather than left implicit in an awk clause,
+# because a filter nobody can see is an exemption nobody can audit. It is also
+# falsifiable: a binding class that is NOT in this list appearing in the export
+# table stops the snapshot rather than being dropped in silence. That matters for
+# exactly one shape this tree does not have today -- an exported DATA symbol
+# (`D`, `B`, `R`, `G`, `S`), which IS part of a C++ ABI contract and which the
+# old T-only clause would have thrown away without a word.
+#
+# What this filter does NOT answer: whether an implementation-detail symbol
+# should be in the export table at all. Sixteen of the W/V entries name
+# LibreSCRS::*::Internal:: types. That is a visibility question and it belongs to
+# check-impl-visibility.sh, which records it.
+NOT_RECORDED_BINDINGS="W V u A"
+
+# emit_symbols <label> <dynamic|static> <file>
+#
+# Writes the section's symbols on stdout and refuses an empty one. `|| true`
+# on the pipeline because `set -o pipefail` would otherwise turn nm's own
+# failure into exit 1 -- "ABI drift" -- where the truth is "I could not read
+# this file".
 emit_symbols() {
-    local label="$1" mode="$2" file="$3" syms n
+    local label="$1" mode="$2" file="$3" syms n raw unexpected
     if [[ "$mode" == dynamic ]]; then
-        syms="$(nm -D -U "$file" 2>/dev/null | awk '$2 == "T" { print $3 }' | c++filt | sort -u || true)"
+        raw="$(nm -D -U "$file" 2>/dev/null || true)"
     else
-        syms="$(nm -U "$file" 2>/dev/null | awk '$2 == "T" { print $3 }' | c++filt | sort -u || true)"
+        raw="$(nm -U "$file" 2>/dev/null || true)"
     fi
+
+    # Every binding class in the table that is neither recorded (T) nor declared
+    # as not recorded. A new one is "I cannot judge what this is": deciding for
+    # it silently is how a data symbol would leave the contract unnoticed.
+    unexpected="$(printf '%s\n' "$raw" \
+        | awk 'NF >= 3 { print $2 }' \
+        | sort -u \
+        | grep -vxF -e T $(printf -- '-e %s ' $NOT_RECORDED_BINDINGS) || true)"
+    if [[ -n "$unexpected" ]]; then
+        echo "FATAL: section '$label' exports binding class(es) this snapshot has no" >&2
+        echo "       rule for: $(printf '%s' "$unexpected" | tr '\n' ' ')" >&2
+        echo "       T is recorded; $NOT_RECORDED_BINDINGS are deliberately not (see the" >&2
+        echo "       note above emit_symbols). A data symbol is part of the ABI and must" >&2
+        echo "       be recorded; decide, and say which in the same change." >&2
+        exit 2
+    fi
+
+    syms="$(printf '%s\n' "$raw" | awk '$2 == "T" { print $3 }' | c++filt | sort -u || true)"
     n=0
     [[ -n "$syms" ]] && n="$(printf '%s\n' "$syms" | wc -l)"
     if [[ "$n" -eq 0 ]]; then
