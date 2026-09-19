@@ -79,10 +79,18 @@ qcbor_sha=""
 # until now the bill said "in-tree" for both -- true, and useless to anyone
 # asking whether a published advisory reaches this artefact. Both carry their
 # own version macro; that is the pin, and it is read here like every other one.
+# miniz's MZ_VERSION is the zlib version it emulates, not its own release: the
+# 2.1.0 tarball says "10.1.0" and the 3.1.2 tarball says "11.3.2", and there is
+# no formula between the two. So the release goes in a pin file beside the
+# sources and is read from there; MZ_VERSION is the fallback, and a bill of
+# materials carrying it says so by being obviously not a miniz release number.
 miniz_ver=""
-[ -f "$repo/thirdparty/miniz/miniz.h" ] && \
+[ -f "$repo/thirdparty/miniz/VERSION" ] && \
+  miniz_ver="$(tr -d '[:space:]' < "$repo/thirdparty/miniz/VERSION")"
+if [ -z "$miniz_ver" ] && [ -f "$repo/thirdparty/miniz/miniz.h" ]; then
   miniz_ver="$(sed -n 's/^#define MZ_VERSION  *"\([^"]*\)".*/\1/p' \
     "$repo/thirdparty/miniz/miniz.h" | head -1)"
+fi
 nlohmann_ver=""
 if [ -f "$repo/thirdparty/nlohmann/json.hpp" ]; then
   nj="$repo/thirdparty/nlohmann/json.hpp"

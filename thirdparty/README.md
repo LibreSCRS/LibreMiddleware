@@ -233,3 +233,99 @@ deprecated upstream since 3.0; leaving it compiled in costs size and surface
 for nothing. macOS has been built without it since the archives were first
 produced, so this also removes one of the six differences between the two
 platforms rather than adding one.
+
+## miniz
+
+**Upstream:** https://github.com/richgel999/miniz
+**Pinned release:** 3.1.2 (`thirdparty/miniz/VERSION`, which the bill of
+materials reads — see below for why `MZ_VERSION` is not that number)
+**License:** MIT (`thirdparty/miniz/LICENSE`)
+**Vendored form:** the amalgamated `miniz.c` + `miniz.h`, generated upstream by
+`amalgamate.sh`, **plus two local patches** (below), compiled into `LibreSign.a`
+(`lib/libresign/CMakeLists.txt`). It is the ZIP/inflate implementation behind
+the ASiC-E container reader, so it runs over a file the user brings.
+
+### Reading the version, which does not say what it looks like
+
+miniz's `MZ_VERSION` is the **zlib-compatibility** version, not the miniz
+release. Measured against upstream tarballs:
+
+| upstream release | `MZ_VERSION` | `MZ_VERNUM` |
+|---|---|---|
+| 2.1.0 | `10.1.0` | `0xA100` |
+| 3.1.2 | `11.3.2` | `0xB302` |
+
+So a copy reporting `10.1.0` / `0xA100` is upstream **2.1.0**, from 2019 — and
+the leading digit is the series: `10.x` is the 2.x line, `11.x` the 3.x line.
+Anyone reading `MZ_VERSION` as the release number reads it two major series
+wrong, which is how a 2019 decoder can look current in a dependency listing.
+The bill of materials reports this macro, so this table is what decodes it.
+
+### Why the copy moved to 3.1.2
+
+Upstream 3.1.2 (2026-07-01) is a security release. Two of its fixes were
+measured against the copy that was here before, named rather than eyeballed,
+and **both were missing**:
+
+1. **An inflate stream that decodes a symbol in zero bits loops forever.**
+   The guard exists in three places in the decoder. The vendored 2.1.0 copy
+   carried it in the `TINFL_HUFF_DECODE` macro only (`if ((code_len) && (num_bits
+   >= code_len))`). The two fast-path decodes inside `tinfl_decompress` --
+   the literal/length pair that the inner loop runs for every symbol -- read
+   `code_len`, shifted the bit buffer by it, and never checked it against zero.
+   Upstream 3.1.2 ends both with `if (code_len == 0) TINFL_CR_RETURN_FOREVER(...,
+   TINFL_STATUS_FAILED)`. This is the reappearance of a fault first fixed in
+   2018; a crafted container makes the reader spin instead of failing.
+2. **The central-directory bounds check could be passed by overflowing it.**
+   The vendored copy tested `(cdir_ofs + (mz_uint64)cdir_size) > m_archive_size`.
+   In the ZIP64 path both operands are 64-bit values read straight out of the
+   file, so their sum can wrap and the comparison then succeeds on an offset
+   that is nowhere in the archive. Upstream 3.1.2 tests the subtraction form
+   instead: `cdir_size > m_archive_size || cdir_ofs > m_archive_size - cdir_size`,
+   which cannot wrap.
+
+### The two local patches, and why dropping them is not an option
+
+This copy is **not** pristine upstream. Both patches live in
+`mz_zip_writer_add_mem_ex_v2`, are marked `LibreSCRS local patch` in the
+source, and are one change in two halves:
+
+1. The data-descriptor bit (general-purpose flag bit 3) is set only for
+   DEFLATED entries, whose compressed size is genuinely unknown until the
+   stream ends. Upstream sets it for every entry.
+2. A STORED entry therefore has no trailing descriptor, so its local file
+   header is rewritten in place with the real CRC and sizes once the data is
+   written.
+
+Why it matters: ETSI EN 319 162-1 containers are read by Java tooling, and
+`java.util.zip.ZipInputStream` **refuses** a STORED entry that claims a data
+descriptor. An ASiC-E container written without these patches parses fine with
+command-line unzip and with Python, and reports **zero signatures** to the ETSI
+validator — the signature is there, and nothing can reach it. This is what the
+independent validator in the signing end-to-end tests exists to catch, and it
+is what it caught when the bump first landed without them re-applied.
+
+Upstream 3.1.2 sets the bit unconditionally, so the patches had to be
+re-applied by hand on top of it. **Re-apply them on every future bump**, then
+run the ASiC-E end-to-end tests with the validator enabled; a container that
+opens with unzip proves nothing here.
+
+Update procedure:
+```
+# Upstream ships the pieces, not the amalgamation; generate it the way the
+# release does, and copy only the two files.
+git clone --depth 1 --branch <ver> https://github.com/richgel999/miniz
+cd miniz && ./amalgamate.sh          # writes amalgamation/miniz.{c,h}
+cp amalgamation/miniz.c amalgamation/miniz.h <repo>/thirdparty/miniz/
+cp LICENSE <repo>/thirdparty/miniz/LICENSE
+echo <ver> > <repo>/thirdparty/miniz/VERSION
+# RE-APPLY the two local patches above, then:
+#   ctest -R 'MinizZipBounds|ZipRecords|ASiC|Asic'      with the ETSI validator
+#   ci/scripts/make-sbom.sh /tmp/sbom.json              must print the new version
+#   ci/scripts/abi-snapshot.sh --check build            miniz lands in LibreSign.a
+```
+
+`thirdparty/licenses.json` has no miniz row and that is not an oversight: its
+`match` field names a build target, and miniz has none — it is compiled into
+`LibreSign.a` alongside the other header-only vendored code. The licence text
+sits beside the sources instead, and the version is in the bill of materials.

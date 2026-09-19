@@ -719,4 +719,114 @@ TEST_F(ASiCModuleSoftHSMTest, AppendSignerAtLongTermRejectsUnterminatedChain)
     EXPECT_EQ(*appended.failureKind, SignFailureKind::CertificateChainIncomplete) << appended.errorMessage;
 }
 
+// =============================================================================
+// The vendored ZIP decoder's central-directory bounds check.
+//
+// A ZIP64 end-of-central-directory record carries the directory's offset as a
+// full 64-bit value read straight out of the file, while its size is clamped to
+// 32 bits. Testing containment as `offset + size > archive_size` can therefore
+// be passed by choosing an offset so large that the sum wraps: the archive
+// below sets the offset to 2^64 - 46 and the size to 46, so the sum is zero and
+// the check waves through an offset that is nowhere in the file.
+//
+// The assertion is on the error CODE, not merely on failure, and that is the
+// whole point. Opening this archive fails either way -- but with the wrapping
+// check it fails later and for an unrelated reason, because the in-memory
+// reader happens to return a short read for an out-of-range offset. Asserting
+// "it failed" would be green against a decoder that never checked the bounds at
+// all; asserting that it was refused as corrupt is what says the bounds check
+// ran.
+// =============================================================================
+namespace {
+
+void putLe16(std::vector<uint8_t>& out, size_t at, uint16_t v)
+{
+    out[at] = static_cast<uint8_t>(v & 0xFF);
+    out[at + 1] = static_cast<uint8_t>((v >> 8) & 0xFF);
+}
+
+void putLe32(std::vector<uint8_t>& out, size_t at, uint32_t v)
+{
+    for (int i = 0; i < 4; ++i) {
+        out[at + static_cast<size_t>(i)] = static_cast<uint8_t>((v >> (8 * i)) & 0xFF);
+    }
+}
+
+void putLe64(std::vector<uint8_t>& out, size_t at, uint64_t v)
+{
+    for (int i = 0; i < 8; ++i) {
+        out[at + static_cast<size_t>(i)] = static_cast<uint8_t>((v >> (8 * i)) & 0xFF);
+    }
+}
+
+// 56-byte ZIP64 record at 0, 20-byte ZIP64 locator at 56, 22-byte classic
+// end-of-central-directory at 76. Nothing else: the decoder never gets far
+// enough to want a file entry.
+std::vector<uint8_t> zip64ArchiveWithWrappingCentralDirOffset()
+{
+    constexpr uint32_t kCdirSize = 46; // exactly one central-directory header
+    std::vector<uint8_t> a(98, 0);
+
+    putLe32(a, 0, 0x06064b50);                    // ZIP64 end of central directory
+    putLe64(a, 4, 44);                            // size of record, from offset 12 on
+    putLe16(a, 12, 45);                           // version made by
+    putLe16(a, 14, 45);                           // version needed
+    putLe32(a, 16, 0);                            // this disk
+    putLe32(a, 20, 0);                            // disk holding the directory
+    putLe64(a, 24, 1);                            // entries on this disk
+    putLe64(a, 32, 1);                            // entries in total
+    putLe64(a, 40, kCdirSize);                    // directory size
+    putLe64(a, 48, ~uint64_t{0} - kCdirSize + 1); // offset: sum wraps to zero
+
+    putLe32(a, 56, 0x07064b50); // ZIP64 locator
+    putLe32(a, 60, 0);          // disk holding the ZIP64 record
+    putLe64(a, 64, 0);          // its offset
+    putLe32(a, 72, 1);          // number of disks
+
+    putLe32(a, 76, 0x06054b50); // classic end of central directory
+    putLe16(a, 80, 0);          // this disk
+    putLe16(a, 82, 0);          // disk holding the directory
+    putLe16(a, 84, 1);          // entries on this disk
+    putLe16(a, 86, 1);          // entries in total
+    putLe32(a, 88, kCdirSize);  // directory size
+    putLe32(a, 92, 0);          // directory offset
+    putLe16(a, 96, 0);          // comment length
+    return a;
+}
+
+} // namespace
+
+// The control: the decoder still opens an archive it wrote itself, so a
+// refusal above is a refusal of that archive and not of everything.
+TEST(MinizZipBounds, AWellFormedArchiveStillOpens)
+{
+    mz_zip_archive writer{};
+    ASSERT_TRUE(mz_zip_writer_init_heap(&writer, 0, 0));
+    const char payload[] = "hello";
+    ASSERT_TRUE(mz_zip_writer_add_mem(&writer, "a.txt", payload, sizeof(payload) - 1, MZ_NO_COMPRESSION));
+    void* buf = nullptr;
+    size_t size = 0;
+    ASSERT_TRUE(mz_zip_writer_finalize_heap_archive(&writer, &buf, &size));
+    mz_zip_writer_end(&writer);
+
+    mz_zip_archive reader{};
+    EXPECT_TRUE(mz_zip_reader_init_mem(&reader, buf, size, 0));
+    EXPECT_EQ(mz_zip_reader_get_num_files(&reader), 1U);
+    mz_zip_reader_end(&reader);
+    mz_free(buf);
+}
+
+TEST(MinizZipBounds, ACentralDirectoryOffsetThatWrapsTheBoundsCheckIsRefusedAsCorrupt)
+{
+    const auto archive = zip64ArchiveWithWrappingCentralDirOffset();
+
+    mz_zip_archive zip{};
+    const mz_bool opened = mz_zip_reader_init_mem(&zip, archive.data(), archive.size(), 0);
+
+    EXPECT_FALSE(opened);
+    EXPECT_EQ(mz_zip_get_last_error(&zip), MZ_ZIP_INVALID_HEADER_OR_CORRUPTED)
+        << "actual: " << mz_zip_get_error_string(mz_zip_get_last_error(&zip));
+    mz_zip_reader_end(&zip);
+}
+
 #endif
