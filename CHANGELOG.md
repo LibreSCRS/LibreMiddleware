@@ -259,10 +259,13 @@ Notable user-visible changes per release. Format follows
 
 ### Removed
 
-- **The published macOS PKCS#11 archive.** The release no longer produces a
-  macOS tarball of this module, and nothing replaces it inside this project.
-  What was published was a *direct* module: it opened the card itself, took the
-  PIN inside the loading application's address space, and its own instructions
+- **The published macOS PKCS#11 archive.** The release no longer produces the
+  `librescrs-pkcs11-*-macos-universal.zip` this module used to ship as, and
+  nothing replaces it inside this project. (The Linux
+  `librescrs-pkcs11-*-linux-x86_64.tar.gz` stopped publishing in the same
+  release — see the entry above.) What was published was a *direct* module:
+  it opened the card itself, took the PIN inside the loading application's
+  address space, and its own instructions
   told the reader to click past Gatekeeper because the file was unsigned. Its
   replacement forwards to the agent instead, so the PIN is collected outside the
   browser and the file is signed rather than excused — and it ships with the
