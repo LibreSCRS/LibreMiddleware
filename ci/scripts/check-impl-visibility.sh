@@ -229,6 +229,68 @@ if [[ "$PLATFORM" == "Darwin" ]]; then
     exit 0
 fi
 
+# The recorded residuals of the static-archive pass, and the rule that makes
+# them mortal. Each row names an archive, a demangled prefix and a reason; a row
+# whose prefix matches nothing in the archives that were actually scanned fails,
+# so an exemption cannot outlive what it excused. Rows are only judged when the
+# archive pass ran at all -- in a shared build no archive is scanned and every
+# row would read as stale.
+RESIDUALS_FILE="${LIBRESCRS_IMPL_RESIDUALS:-$(cd "$(dirname "$0")/.." && pwd)/impl-visibility-residuals.txt}"
+declare -a RESIDUAL_ARCHIVE=() RESIDUAL_PREFIX=() RESIDUAL_REASON=()
+declare -a RESIDUAL_USED=()
+
+load_residuals() {
+    [[ -r "$RESIDUALS_FILE" ]] || {
+        echo "FATAL: no residuals file at $RESIDUALS_FILE — cannot judge which archive symbols are allowed" >&2
+        exit 2
+    }
+    local line archive prefix reason
+    while IFS= read -r line; do
+        [[ -z "${line// /}" || "$line" =~ ^[[:space:]]*# ]] && continue
+        archive=$(printf '%s' "$line" | sed -E 's/[[:space:]]{2,}.*$//')
+        prefix=$(printf '%s' "$line" | sed -E 's/^[^[:space:]]+[[:space:]]{2,}//; s/[[:space:]]{2,}.*$//')
+        reason=$(printf '%s' "$line" | sed -E 's/^[^[:space:]]+[[:space:]]{2,}[^\n]*?//' )
+        reason=$(printf '%s' "$line" | awk -F'[[:space:]][[:space:]]+' '{ $1=""; $2=""; sub(/^ +/, ""); print }' | sed -E 's/^[[:space:]]+//')
+        if [[ -z "$archive" || -z "$prefix" || -z "${reason// /}" ]]; then
+            echo "FATAL: $RESIDUALS_FILE: a row without all three fields cannot be judged: $line" >&2
+            exit 2
+        fi
+        RESIDUAL_ARCHIVE+=("$archive")
+        RESIDUAL_PREFIX+=("$prefix")
+        RESIDUAL_REASON+=("$reason")
+        RESIDUAL_USED+=(0)
+    done < "$RESIDUALS_FILE"
+    if [[ ${#RESIDUAL_ARCHIVE[@]} -eq 0 ]]; then
+        echo "FATAL: $RESIDUALS_FILE records no row — refusing to judge with an empty allowance list" >&2
+        exit 2
+    fi
+}
+
+# Drops the rows' symbols from one list, marking each row that matched.
+apply_residuals() {
+    local archive="$1" list="$2" i
+    [[ -z "$list" ]] && { printf '%s' ""; return 0; }
+    for i in "${!RESIDUAL_ARCHIVE[@]}"; do
+        [[ "${RESIDUAL_ARCHIVE[$i]}" == "$archive" ]] || continue
+        if printf '%s\n' "$list" | grep -qF -- "${RESIDUAL_PREFIX[$i]}"; then
+            RESIDUAL_USED[$i]=1
+            list=$(printf '%s\n' "$list" | grep -vF -- "${RESIDUAL_PREFIX[$i]}" || true)
+        fi
+    done
+    printf '%s' "$list"
+}
+
+report_stale_residuals() {
+    local i stale=0
+    for i in "${!RESIDUAL_ARCHIVE[@]}"; do
+        [[ "${RESIDUAL_USED[$i]}" == 1 ]] && continue
+        echo "STALE: $RESIDUALS_FILE row $((i + 1)) allows '${RESIDUAL_PREFIX[$i]}' in ${RESIDUAL_ARCHIVE[$i]}," >&2
+        echo "       and nothing there carries it any more. Delete the row." >&2
+        stale=$((stale + 1))
+    done
+    [[ $stale -eq 0 ]]
+}
+
 # Linux branch — scan static archives (GCC visibility propagates to .a),
 # the plugin/pkcs11 .so files, AND, in shared-library builds, the LM core
 # .so files (Auth, Certificate, Plugin, SecureChannel, Signing, SmartCard,
@@ -255,6 +317,8 @@ else
                             # Signing, SmartCard, Trust
     EXPECTED_CORE_SOS=0
 fi
+
+load_residuals
 
 leaks=0
 archives_scanned=0
@@ -288,11 +352,7 @@ while IFS= read -r archive; do
     # would require breaking the private nested type. Accepted as a
     # static-archive-only residual (.a archives don't expose this symbol
     # at link time); re-evaluate before any .so migration that exposes it.
-    if [[ "$(basename "$archive")" == "libLibreSCRS_Trust.a" ]]; then
-        t_leaks=$(printf '%s\n' "$t_leaks" \
-            | grep -v '^LibreSCRS::Trust::TrustStoreService::Impl::runWorker' \
-            || true)
-    fi
+    t_leaks=$(apply_residuals "$(basename "$archive")" "$t_leaks")
 
     # ALLOW-LIST: MonitorService::Impl member functions
     # (snapshotCallbacks, dispatch, diffReadersAndDispatch). Same GCC
@@ -303,11 +363,6 @@ while IFS= read -r archive; do
     # so anonymous-namespace is not an option. The linker hides these
     # symbols at .so link-edit time on GCC; confirmed absent from every
     # build/plugins/*.so and from every build-shared/**/*.so.
-    if [[ "$(basename "$archive")" == "libLibreSCRS_SmartCard.a" ]]; then
-        t_leaks=$(printf '%s\n' "$t_leaks" \
-            | grep -v '^LibreSCRS::SmartCard::MonitorService::Impl::' \
-            || true)
-    fi
 
     # Pass 2 — W/V-binding (weak / vague-linkage) vtable/typeinfo
     # entries containing `::Impl` as a word segment. These are emitted
@@ -327,11 +382,7 @@ while IFS= read -r archive; do
     # choice (async tasks must be able to extend Impl lifetime). Static
     # archives don't surface these symbols to the linker. See header note
     # on known residuals for the SO-migration follow-up.
-    if [[ "$(basename "$archive")" == "libLibreSCRS_Trust.a" ]]; then
-        wv_leaks=$(printf '%s\n' "$wv_leaks" \
-            | grep -vE '_Sp_counted_ptr_inplace<LibreSCRS::Trust::TrustStoreService::Impl' \
-            || true)
-    fi
+    wv_leaks=$(apply_residuals "$(basename "$archive")" "$wv_leaks")
 
     # ALLOW-LIST: std::shared_ptr<CancelToken::Impl> inplace-deleter
     # vtable/typeinfo. Same rationale as Trust above — CancelSource and
@@ -339,11 +390,6 @@ while IFS= read -r archive; do
     # observers; the source keeps the writable side). Symbols are emitted
     # WEAK HIDDEN in CancelToken.cpp.o and are absent from every linked
     # .so / .dylib; .a-level residual only.
-    if [[ "$(basename "$archive")" == "libLibreSCRS_Auth.a" ]]; then
-        wv_leaks=$(printf '%s\n' "$wv_leaks" \
-            | grep -vE '_Sp_counted_ptr_inplace<LibreSCRS::CancelToken::Impl' \
-            || true)
-    fi
 
     bad="$t_leaks"
     if [[ -n "$wv_leaks" ]]; then
@@ -384,6 +430,11 @@ if [[ $leaks -gt 0 ]]; then
     exit 1
 fi
 
+if [[ $archives_scanned -gt 0 ]] && ! report_stale_residuals; then
+    echo "ERROR: an allowance in $(basename "$RESIDUALS_FILE") excuses a symbol that is gone." >&2
+    exit 1
+fi
+
 echo "Static archives clean — $archives_scanned scanned ($BUILD_CONFIG build)."
 
 # Helper: scan a single .so for ::Impl:: T-binding and vtable/typeinfo
@@ -405,6 +456,100 @@ echo "Static archives clean — $archives_scanned scanned ($BUILD_CONFIG build).
 # `symbols_seen` is the caller's pass counter, added to here so each pass can
 # tell "scanned N files, found no leak" apart from "scanned N files and read no
 # symbol at all".
+# The recorded public surface, one section per library, produced by
+# abi-snapshot.sh. It is what the core-library pass compares against instead of
+# matching a spelling. Overridable so the self-test can record a surface for its
+# own fixture; unset, it is this checkout's.
+ABI_BASELINE="${LIBRESCRS_ABI_BASELINE:-$(cd "$(dirname "$0")/.." && pwd)/abi/5.x-baseline.txt}"
+
+# Prints the recorded T-binding symbols of one library, or fails when the
+# surface does not record it at all. A library the baseline has never seen is
+# "cannot judge": comparing against an empty set would call every symbol a leak,
+# and comparing against nothing would call none of them one.
+recorded_surface() {
+    local name="$1"
+    if [[ ! -r "$ABI_BASELINE" ]]; then
+        echo "FATAL: no recorded ABI surface at $ABI_BASELINE — cannot judge what is public" >&2
+        exit 2
+    fi
+    awk -v want="== ${name} ==" '
+        $0 == want { inside = 1; next }
+        /^== .* ==$/ { inside = 0 }
+        inside && $0 !~ /^#/ && NF { print }
+    ' "$ABI_BASELINE"
+}
+
+# The core-library rule, and the reason it is not a spelling any more.
+#
+# It used to match the demangled segment `::Impl::`, so renaming the pimpl to
+# `Impl_` exported exactly the same implementation detail past every rule --
+# `_` is a word character, and both `grep -F '::Impl::'` and `::Impl\b` are blind
+# to it. `Priv`, `Detail` and every future spelling were free too. The rule is
+# now the property: a T-binding symbol in a core library's dynamic export table
+# that the recorded surface does not list fails, whatever it is called.
+#
+# Measured on this tree when the rule was written: the T sets of all seven core
+# libraries match the recorded surface exactly, 0 extra and 0 missing.
+#
+# The W/V half below is still a spelling, and that is a known gap rather than an
+# oversight: the recorded surface holds T-binding symbols only, while the seven
+# libraries export 168 vague-linkage symbols it has never seen -- among them
+# real implementation detail (LibreSCRS::SmartCard::Internal::PCSCScanProvider::*,
+# LibreSCRS::Plugin::Internal::*, LibreSCRS::Internal::*). Recording them is an
+# ABI-surface change, not a check change, so it is not done here.
+scan_core_so_against_surface() {
+    local so="$1"
+    local name syms dyn t_all surface extra wv_leaks bad
+    name="$(basename "$so")"
+
+    # Two reads, because the two halves ask different questions. The allowlist
+    # compares against a surface abi-snapshot.sh recorded with `nm -D -U`, so it
+    # has to read the same table: the DYNAMIC one, which is what a consumer can
+    # link against. The combined `-gU` view also lists statically linked
+    # internals that never reach the export table -- measured here: it reports
+    # symbols in all seven libraries that `nm -D -U` does not, among them
+    # vendored libresign internals. Comparing that view against a dynamic-table
+    # surface would fail every library on the first run for no reason at all.
+    syms=$(nm -gU "$so" 2>/dev/null || true)
+    if [[ -n "$syms" ]]; then
+        symbols_seen=$((symbols_seen + $(printf '%s\n' "$syms" | wc -l)))
+    fi
+    dyn=$(nm -D -U "$so" 2>/dev/null || true)
+
+    surface=$(recorded_surface "$name")
+    if [[ -z "$surface" ]]; then
+        echo "FATAL: the recorded surface has no section for $name — cannot judge it" >&2
+        exit 2
+    fi
+
+    t_all=$(printf '%s\n' "$dyn" \
+        | awk '$2 == "T" { print $3 }' \
+        | c++filt \
+        | sort -u || true)
+
+    extra=$(comm -23 <(printf '%s\n' "$t_all" | sed '/^$/d') \
+                     <(printf '%s\n' "$surface" | sort -u) || true)
+
+    wv_leaks=$(printf '%s\n' "$syms" \
+        | awk '$2 == "W" || $2 == "V" { print $3 }' \
+        | c++filt \
+        | grep -E '^(vtable for|typeinfo (for|name for))\b.*::Impl\b' \
+        | sort -u || true)
+
+    bad="$extra"
+    if [[ -n "$wv_leaks" ]]; then
+        [[ -n "$bad" ]] && bad+=$'\n'
+        bad+="$wv_leaks"
+    fi
+
+    if [[ -n "$bad" ]]; then
+        echo "LEAK in $name:"
+        echo "$bad" | sed 's/^/  /'
+        return 1
+    fi
+    return 0
+}
+
 scan_so_for_impl_leaks() {
     local so="$1"
     local syms t_leaks wv_leaks bad
@@ -450,7 +595,7 @@ symbols_seen=0
 if [[ $EXPECTED_CORE_SOS -gt 0 ]]; then
     while IFS= read -r so; do
         core_sos_scanned=$((core_sos_scanned + 1))
-        scan_so_for_impl_leaks "$so" || core_leaks=$((core_leaks + 1))
+        scan_core_so_against_surface "$so" || core_leaks=$((core_leaks + 1))
     done < <(find "$BUILD_DIR/lib/LibreSCRS" \
                   -maxdepth 1 -name 'libLibreSCRS_*.so' 2>/dev/null | sort)
 
@@ -470,13 +615,16 @@ if [[ $EXPECTED_CORE_SOS -gt 0 ]]; then
 
     if [[ $core_leaks -gt 0 ]]; then
         echo
-        echo "ERROR: $core_leaks LM core .so file(s) leaked pimpl Impl symbols." >&2
-        echo "  Apply LIBRESCRS_INTERNAL to leaked Impl structs, or refactor" >&2
-        echo "  std-template instantiations that embed internal Impl types." >&2
+        echo "ERROR: $core_leaks LM core .so file(s) export something the recorded" >&2
+        echo "       surface does not list." >&2
+        echo "  - A new public symbol: add it to ci/abi/5.x-baseline.txt in the" >&2
+        echo "    same change, so the addition is visible as an ABI change." >&2
+        echo "  - Implementation detail: apply LIBRESCRS_INTERNAL to it. Its" >&2
+        echo "    spelling does not matter -- Impl, Impl_, Priv, Detail all fail." >&2
         exit 1
     fi
 
-    echo "LM core .so files clean — $core_sos_scanned scanned."
+    echo "LM core .so files match the recorded surface — $core_sos_scanned scanned."
 fi
 
 # Plugin/pkcs11 .so scan (always — these are .so in both build configs).

@@ -1,0 +1,23 @@
+# impl-visibility-residuals.txt — the pimpl symbols a STATIC archive still
+# carries, each with the reason it is allowed to.
+#
+# Format:   <archive>  <demangled-prefix>  <reason>
+#           (two or more spaces between the three fields)
+#
+# These used to be four inline `grep -v` lines in check-impl-visibility.sh. An
+# inline exemption cannot fail: when the symbol it excused disappears, the line
+# keeps passing and nothing says the exemption is dead. A row here fails when it
+# matches nothing in the archives that were scanned, so it leaves with what it
+# excused.
+#
+# The rows apply to the static-archive pass ONLY, and the reason is the same for
+# all four: GCC does not propagate LIBRESCRS_INTERNAL from an internal-tagged
+# class to its static members, nor to std-template instantiations parameterised
+# on it, and a static archive records what the translation unit emitted. The
+# linker drops all of them at .so link-edit, which the core-library pass proves
+# separately by comparing the dynamic export table against the recorded surface.
+
+libLibreSCRS_Trust.a       LibreSCRS::Trust::TrustStoreService::Impl::runWorker    Static member of an internal-tagged class; hiding it the other way means breaking up the private nested type it operates on.
+libLibreSCRS_SmartCard.a   LibreSCRS::SmartCard::MonitorService::Impl::            Impl is declared in an internal header consumed by the production unit and by the test-helper archive, so an anonymous namespace is not available.
+libLibreSCRS_Trust.a       _Sp_counted_ptr_inplace<LibreSCRS::Trust::TrustStoreService::Impl    Shared pimpl by design: async tasks must be able to extend Impl's lifetime.
+libLibreSCRS_Auth.a        _Sp_counted_ptr_inplace<LibreSCRS::CancelToken::Impl    CancelSource and CancelToken share Impl ownership by design; the symbols are emitted weak hidden and never reach a linked library.

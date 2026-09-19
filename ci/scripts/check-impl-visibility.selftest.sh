@@ -14,6 +14,17 @@
 #   3  a tree of real libraries, no leak  -> 0   (the control)
 #   4  one of them carries ::Impl::       -> 1, and the symbol is named
 #   5  the core libraries are gone        -> 2, and the message names the count
+#   6  one of them carries ::Impl_::      -> 1, and the symbol is named
+#   7  an allowance that matches nothing  -> 1, and the row is named
+#   8  an allowance missing a field       -> 2
+#
+# Case 6 is why cases 3 and 4 are not enough. Until this file was written the
+# rule matched the demangled segment `::Impl::`, so renaming the pimpl to `Impl_`
+# exported the same implementation detail past every rule: `_` is a word
+# character, and both `grep -F '::Impl::'` and `::Impl\b` are blind to it.
+# Measured against the gate as it was: exit 0 on exactly the tree case 6 uses.
+# The rule is now an allowlist against the recorded surface, so the spelling does
+# not enter into it.
 #
 # Cases 1, 2 and 5 are zero-byte files under /var/tmp named exactly like a
 # shared build tree, so `nm` reads no symbol from them. That is the subject of
@@ -34,7 +45,7 @@
 # never compiled.
 set -uo pipefail
 
-GATE="$(cd "$(dirname "$0")" && pwd)/check-impl-visibility.sh"
+GATE="${GATE:-$(cd "$(dirname "$0")" && pwd)/check-impl-visibility.sh}"
 [ -f "$GATE" ] || { echo "FATAL: $GATE not found" >&2; exit 2; }
 
 WORK="$(mktemp -d /var/tmp/impl-visibility-selftest.XXXXXX)" || exit 2
@@ -141,6 +152,39 @@ if ! nm -D -U "$src/leak.so" | awk '$2 == "T" { print $3 }' | c++filt | grep -qF
     exit 2
 fi
 
+# The same perturbation with the one spelling the old rule could not see.
+sed 's/Body/Impl_/g' "$src/clean.cpp" > "$src/leak_.cpp"
+if cmp -s "$src/leak.cpp" "$src/leak_.cpp"; then
+    echo "FATAL: the two leaky fixtures are the same file -- one of them proves nothing" >&2
+    exit 2
+fi
+g++ -shared -fPIC -o "$src/leak_.so" "$src/leak_.cpp" 2>>"$WORK/gcc.err" \
+    || { echo "FATAL: could not compile the Impl_ fixture" >&2; sed 's/^/    /' "$WORK/gcc.err" >&2; exit 2; }
+if ! nm -D -U "$src/leak_.so" | awk '$2 == "T" { print $3 }' | c++filt | grep -qF '::Impl_::'; then
+    echo "FATAL: the Impl_ fixture exports no ::Impl_:: symbol -- nothing to detect" >&2
+    exit 2
+fi
+# The two libraries really do export different symbol sets. Without this the
+# next two cases could both pass over one artefact.
+if cmp -s <(nm -D -U "$src/clean.so") <(nm -D -U "$src/leak_.so"); then
+    echo "FATAL: the perturbed library exports exactly what the clean one does" >&2
+    exit 2
+fi
+
+# The recorded surface for this fixture, in the format abi-snapshot.sh writes and
+# through the same pipeline: the clean library's dynamic T-binding symbols, one
+# section per core library. The gate compares against this instead of the
+# repository's, because the fixture is not this repository's ABI.
+fixture_surface="$WORK/fixture-surface.txt"
+{
+    echo "# fixture surface for check-impl-visibility.selftest.sh"
+    for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
+        echo "== libLibreSCRS_$module.so =="
+        nm -D -U "$src/clean.so" | awk '$2 == "T" { print $3 }' | c++filt | sort -u
+    done
+} > "$fixture_surface"
+export LIBRESCRS_ABI_BASELINE="$fixture_surface"
+
 # Same shape as make_tree, with libraries that are not empty.
 tree3="$WORK/tree-real"
 make_tree "$tree3"
@@ -163,6 +207,54 @@ report 4 1 "$rc" "LibreSCRS::Selftest::Impl::step(int)" "$out"
 rm -f "$tree3/lib/LibreSCRS/"*.so
 out="$(bash "$GATE" "$tree3" 2>&1)"; rc=$?
 report 5 2 "$rc" "found 0" "$out"
+
+# --- case 6: the spelling the old rule could not see -------------------------
+tree6="$WORK/tree-impl-underscore"
+make_tree "$tree6"
+for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
+    command cp -f "$src/clean.so" "$tree6/lib/LibreSCRS/libLibreSCRS_$module.so"
+done
+command cp -f "$src/clean.so" "$tree6/plugins/libselftest-plugin.so"
+command cp -f "$src/clean.so" "$tree6/lib/pkcs11/librescrs-pkcs11.so"
+command cp -f "$src/leak_.so" "$tree6/lib/LibreSCRS/libLibreSCRS_Signing.so"
+out="$(bash "$GATE" "$tree6" 2>&1)"; rc=$?
+report 6 1 "$rc" "LibreSCRS::Selftest::Impl_::step(int)" "$out"
+
+# --- cases 7 and 8: the allowances of the static-archive pass ----------------
+# The four inline `grep -v` lines these rows replaced could not fail: when the
+# symbol one of them excused disappeared, the line kept passing. A row that
+# matches nothing does not.
+ar_src="$WORK/ar"
+mkdir -p "$ar_src"
+cat > "$ar_src/residual.cpp" <<'CPP'
+namespace LibreSCRS { namespace Selftest {
+struct Keeper { int hold(int x); };
+int Keeper::hold(int x) { return x - 1; }
+} }
+CPP
+if ! g++ -c -fPIC -o "$ar_src/residual.o" "$ar_src/residual.cpp" 2>>"$WORK/gcc.err"; then
+    echo "FATAL: could not compile the archive fixture" >&2
+    exit 2
+fi
+tree7="$WORK/tree-static"
+mkdir -p "$tree7/lib/LibreSCRS" "$tree7/plugins" "$tree7/lib/pkcs11"
+for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
+    ar rcs "$tree7/lib/LibreSCRS/libLibreSCRS_$module.a" "$ar_src/residual.o" 2>/dev/null
+done
+command cp -f "$src/clean.so" "$tree7/plugins/libselftest-plugin.so"
+command cp -f "$src/clean.so" "$tree7/lib/pkcs11/librescrs-pkcs11.so"
+
+stale="$WORK/residuals-stale.txt"
+printf '%s\n' \
+  "libLibreSCRS_Trust.a  LibreSCRS::Selftest::LongGone::Impl::  a reason for a symbol no archive carries" \
+  > "$stale"
+out="$(LIBRESCRS_IMPL_RESIDUALS="$stale" bash "$GATE" "$tree7" 2>&1)"; rc=$?
+report 7 1 "$rc" "STALE" "$out"
+
+short="$WORK/residuals-short.txt"
+printf '%s\n' "libLibreSCRS_Trust.a  LibreSCRS::Selftest::Keeper::hold" > "$short"
+out="$(LIBRESCRS_IMPL_RESIDUALS="$short" bash "$GATE" "$tree7" 2>&1)"; rc=$?
+report 8 2 "$rc" "all three fields" "$out"
 
 printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
 [ "$fail" = 0 ]
