@@ -38,8 +38,50 @@ set -euo pipefail
 # the other way), and any diff against the baseline is pure noise.
 export LC_ALL=C
 
+# Tools before anything else. Every pipeline below is `nm | awk | c++filt |
+# sort`, and with c++filt absent the "command not found" used to go to
+# /dev/null: the pipeline came back empty, each section printed its header and
+# no symbols, and `--update` wrote a baseline of comments over a real one. The
+# sibling repository's snapshot already refuses an empty section for exactly
+# this reason; a missing tool is "I cannot measure", never a pass.
+for tool in nm c++filt; do
+    command -v "$tool" >/dev/null 2>&1 \
+        || { echo "FATAL: $tool not found on PATH -- cannot measure the ABI surface" >&2; exit 2; }
+done
+
 ACTION="check"
 BUILD_DIR="build"
+
+# What the scan actually saw. A section that exists but yields nothing is a
+# broken artefact; no section at all is an unbuilt tree. Both are exit 2.
+artefacts_scanned=0
+total_symbols=0
+
+# emit_symbols <label> <dynamic|static> <file>
+#
+# Writes the section's symbols on stdout and refuses an empty one. `|| true`
+# on the pipeline because `set -o pipefail` would otherwise turn nm's own
+# failure into exit 1 -- "ABI drift" -- where the truth is "I could not read
+# this file".
+emit_symbols() {
+    local label="$1" mode="$2" file="$3" syms n
+    if [[ "$mode" == dynamic ]]; then
+        syms="$(nm -D -U "$file" 2>/dev/null | awk '$2 == "T" { print $3 }' | c++filt | sort -u || true)"
+    else
+        syms="$(nm -U "$file" 2>/dev/null | awk '$2 == "T" { print $3 }' | c++filt | sort -u || true)"
+    fi
+    n=0
+    [[ -n "$syms" ]] && n="$(printf '%s\n' "$syms" | wc -l)"
+    if [[ "$n" -eq 0 ]]; then
+        echo "FATAL: section '$label' yielded no T-binding symbols from '$file'" >&2
+        echo "       (broken artefact, or nm/c++filt produced nothing)." >&2
+        echo "       Refusing to emit an empty snapshot for this section." >&2
+        exit 2
+    fi
+    printf '%s\n' "$syms"
+    artefacts_scanned=$((artefacts_scanned + 1))
+    total_symbols=$((total_symbols + n))
+}
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -97,20 +139,14 @@ snapshot="${SCRATCH}/snapshot.txt"
             stable_name="${name%.*.*.*}"
             echo
             echo "== $stable_name =="
-            nm -D -U "$so" 2>/dev/null \
-                | awk '$2 == "T" { print $3 }' \
-                | c++filt 2>/dev/null \
-                | sort -u
+            emit_symbols "$stable_name" dynamic "$so"
         done < <(find "$BUILD_DIR/lib/LibreSCRS" -maxdepth 1 -name 'libLibreSCRS_*.so.[0-9]*.[0-9]*.[0-9]*' | sort)
     else
         while IFS= read -r archive; do
             name="$(basename "$archive")"
             echo
             echo "== $name =="
-            nm -U "$archive" 2>/dev/null \
-                | awk '$2 == "T" { print $3 }' \
-                | c++filt 2>/dev/null \
-                | sort -u
+            emit_symbols "$name" static "$archive"
         done < <(find "$BUILD_DIR" -name 'libLibreSCRS_*.a' | sort)
     fi
 
@@ -123,13 +159,23 @@ snapshot="${SCRATCH}/snapshot.txt"
         echo
         echo "== $name =="
         # `--defined-only` is GNU-only; `-U` is portable.
-        nm -D -U "$so" 2>/dev/null \
-            | awk '$2 == "T" { print $3 }' \
-            | c++filt 2>/dev/null \
-            | sort -u
+        emit_symbols "$name" dynamic "$so"
     done < <(find "$BUILD_DIR" -path "*/lib/pkcs11/librescrs-pkcs11.so.[0-9]*" -not -name "*.[0-9]" | sort | head -1)
 
 } > "$snapshot"
+
+# A header-only snapshot is a measurement that did not happen, and writing one
+# over the baseline disarms every later --check against the same empty tree.
+if [[ "$artefacts_scanned" -eq 0 ]]; then
+    echo "FATAL: no libLibreSCRS_* archive or shared object under '$BUILD_DIR'" >&2
+    echo "       -- build first. Refusing to emit a header-only snapshot." >&2
+    exit 2
+fi
+if [[ "$total_symbols" -eq 0 ]]; then
+    echo "FATAL: scanned $artefacts_scanned artefact(s) under '$BUILD_DIR' and read" >&2
+    echo "       0 symbols. Refusing to emit an empty snapshot." >&2
+    exit 2
+fi
 
 case "$ACTION" in
     update)
