@@ -279,6 +279,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang-21
 
+      # The compiler the warning baseline's key names, installed explicitly and
+      # named through CC/CXX. Without it the key is whatever the image happens to
+      # ship on the day, and `--require-key` turns that drift into a failure
+      # nobody caused -- the same step, for the same reason, as the one the
+      # coverage job already carries.
+      - name: Pin the compiler the warning baseline is keyed to
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-13 gcc-13
+          echo "CC=gcc-13" >> "$GITHUB_ENV"
+          echo "CXX=g++-13" >> "$GITHUB_ENV"
+
       - name: Configure & Build (Release, warnings as errors)
         # Release matches what users receive — same `-O2 -DNDEBUG` code
         # path runs in production and in the local pre-tag verification
@@ -354,9 +366,11 @@ jobs:
 
       - name: Check the warning baseline
         # Counted by the [-Wname] tag, never by the message text: diagnostics
-        # are localised. An unknown compiler is reported, not failed -- this
-        # runner and the machine that recorded the baseline do not agree on a
-        # diagnostic set, and neither is authoritative over the other.
+        # are localised. --require-key means a compiler the baseline has no
+        # section for FAILS rather than being reported: the sentence that used to
+        # stand here -- "an unknown compiler is reported, not failed" -- described
+        # the behaviour this flag removed. That is only a usable rule if the key
+        # cannot drift, which is what the pin above is for.
         run: ./ci/scripts/warning-gate.py --check --require-key build.log --build-dir build
 
       - name: Verify the configured signing backend took effect

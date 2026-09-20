@@ -21,13 +21,18 @@ because operator delete for a member vector is always called from there, and
 would land in a category the baseline already excuses.
 
 So a block is partitioned by every frame it names -- the primary location, each
-`inlined from ... at`, each `required from` and `note:`, each `In file included
-from` -- and it is OURS unless not one of those frames resolves inside the
-repository. `project` is the default; `system` has to be proved.
+`inlined from ... at`, each `required from` and `note:` -- and it is OURS unless
+not one of those frames resolves inside the repository. `project` is the default;
+`system` has to be proved.
 
-The translation unit being compiled is NOT one of those frames, deliberately. It
-is always ours, so counting it would make every block `project` and the
-partition would be a no-op. It is recorded in the reason instead, so a system
+The translation unit being compiled is NOT one of those frames, deliberately, and
+neither is the `In file included from` chain, which starts in that same
+translation unit: measured over a full build, all four of GCC 16's
+-Wfree-nonheap-object blocks have every inlined frame inside
+/usr/include/c++/16 and our own headers only in the include chain, so counting
+that chain would make all four `project` and the partition would decide nothing.
+The unit is always ours; the chain always begins there. Both are recorded in the
+reason instead, so a system
 block still says which of our files triggered it.
 
 A `system` entry also has to carry a reason, keyed by (category, primary
