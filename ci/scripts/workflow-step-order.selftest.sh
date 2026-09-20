@@ -73,12 +73,12 @@ mkdir -p "$work/scratch/ci" "$work/scratch/.github/workflows"
 git -C "$work/scratch" init -q 2>/dev/null || true
 scratch_rows() { printf '%s\n' "$@" >"$work/scratch/ci/gate-job-exceptions.txt"; }
 FIXTURE_ROWS_MISPLACED=(
-    "ll-coverage-misplaced.yml:coverage    dispatch-only in the recorded workflow"
-    "ll-coverage-misplaced.yml:package    never ran in the recorded workflow"
+    "ll-coverage-misplaced.yml:coverage:13    dispatch-only in the recorded workflow"
+    "ll-coverage-misplaced.yml:package:4    never ran in the recorded workflow"
 )
 FIXTURE_ROWS_FIXED=(
-    "ll-coverage-fixed.yml:coverage    dispatch-only in the recorded workflow"
-    "ll-coverage-fixed.yml:package    never ran in the recorded workflow"
+    "ll-coverage-fixed.yml:coverage:10    dispatch-only in the recorded workflow"
+    "ll-coverage-fixed.yml:package:4    never ran in the recorded workflow"
 )
 
 # --- case 1: the defect, as it was ----------------------------------------
@@ -193,11 +193,11 @@ YML
 run "$work/scratch" "$work/scratch/.github/workflows/t.yml"
 judge 1 "a gate step in a job that needs a variable fails without a row" $? "no reason is recorded"
 
-scratch_rows "t.yml:j    the variable is not set on this repository"
+scratch_rows "t.yml:j:2    the variable is not set on this repository"
 run "$work/scratch" "$work/scratch/.github/workflows/t.yml"
 judge 0 "the same step passes with a row that carries a reason" $?
 
-scratch_rows "t.yml:j"
+scratch_rows "t.yml:j:2"
 run "$work/scratch" "$work/scratch/.github/workflows/t.yml"
 judge 1 "a row with an empty reason fails" $? "empty reason"
 
@@ -359,6 +359,50 @@ printf 'raise ImportError("no yaml here")\n' >"$work/noyaml/yaml.py"
 (cd "$work/scratch" && PYTHONPATH="$work/noyaml" python3 "$SUBJECT" \
     "$work/scratch/.github/workflows/t.yml") >"$out" 2>&1
 judge 2 "a python3 that cannot import yaml cannot judge" $? "PyYAML"
+
+# --- an exception that names a job excuses steps nobody decided about ------
+# Measured before this rule: a gate step moved into a dispatch-only job that
+# already carried a row, placed AFTER that job's checkout, was accepted by all
+# three meta-checks at once. The row had been written for a different step, and
+# for a job that then grew one.
+mk_wf excused.yml <<'YML'
+on: [push]
+jobs:
+  coverage:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ci/scripts/coverage-gate.py --check build
+YML
+scratch_rows "excused.yml:coverage    dispatch-only, and this row names the job"
+run "$work/scratch" "$work/scratch/.github/workflows/excused.yml"
+judge 1 "a row that excuses a whole job is not an excuse" $? \
+    "excuses the whole of" "excused.yml:coverage:2"
+
+scratch_rows "excused.yml:coverage:2    dispatch-only: the ratchet reads a baseline recorded elsewhere"
+run "$work/scratch" "$work/scratch/.github/workflows/excused.yml"
+judge 0 "the same job, with the step named, is excused" $?
+
+# And the step that lands in that job afterwards: the row above still names
+# step 2, so the newcomer is unexcused and says so by name.
+mk_wf excused.yml <<'YML'
+on: [push]
+jobs:
+  coverage:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ci/scripts/coverage-gate.py --check build
+      - name: Every step can run where it was placed
+        run: ci/scripts/workflow-step-order.py
+YML
+run "$work/scratch" "$work/scratch/.github/workflows/excused.yml"
+judge 1 "a gate step moved into the excused job is not covered by its row" $? \
+    "Every step can run where it was placed" "no reason is recorded"
+rm -f "$work/scratch/.github/workflows/excused.yml"
+: >"$work/scratch/ci/gate-job-exceptions.txt"
 
 printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
 [ "$failed" = 0 ] || exit 1

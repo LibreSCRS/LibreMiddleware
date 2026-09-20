@@ -326,6 +326,8 @@ def load(path):
 
 def judge(paths, exceptions, shape, repo_mode):
     findings = []
+    # rows that excused a gate step by naming only its job: {lineno: [hits]}
+    job_level_hits = {}
     used_rows = set()
     gate_steps_seen = 0
     jobs_total = 0
@@ -407,6 +409,9 @@ def judge(paths, exceptions, shape, repo_mode):
                             (c_step is None or c_step == index):
                         row = candidate
                         break
+                if row is not None and row[3] is None:
+                    job_level_hits.setdefault(row[0], []).append(
+                        (wf, str(job_name), index, step_label(index, step)))
                 if row is None:
                     findings.append(
                         "%s::%s step %s runs %s but is not reached on push (%s) "
@@ -419,6 +424,21 @@ def judge(paths, exceptions, shape, repo_mode):
                     findings.append(
                         "ci/gate-job-exceptions.txt:%d excuses %s::%s with an "
                         "empty reason" % (row[0], wf, job_name))
+
+    # A row that names a JOB excuses every gate step that job has -- and every
+    # gate step that lands in it afterwards, which nobody decided. Measured: a
+    # gate step moved into a dispatch-only job that already had a row, placed
+    # after that job's checkout, was accepted by all three meta-checks at once.
+    # A row therefore has to name the step it excuses; the numbers go stale
+    # loudly, which is the point.
+    for lineno, hits in sorted(job_level_hits.items()):
+        wf, job_name = hits[0][0], hits[0][1]
+        findings.append(
+            "ci/gate-job-exceptions.txt:%d excuses the whole of %s::%s -- name the "
+            "step it excuses (%s), or a gate step moved into this job later is "
+            "excused by a row written before it existed"
+            % (lineno, wf, job_name,
+               ", ".join("%s:%s:%d" % (wf, job_name, index) for _, _, index, _ in hits)))
 
     # A row that matches nothing has rotted against what it names, and a row
     # that cannot fail is how every stale exemption here has started.

@@ -1,6 +1,13 @@
 # gate-job-exceptions.txt — gate steps that are deliberately NOT reached on push.
 #
-# Format:   <workflow>:<job>[:<step-number>]<two or more spaces><reason>
+# Format:   <workflow>:<job>:<step-number><two or more spaces><reason>
+#
+# The step number is required, not optional. A row that named only the job
+# excused every gate step that job had -- and every one that landed in it
+# afterwards, which nobody decided: a gate step moved into a dispatch-only job,
+# after that job's checkout, was accepted by all three meta-checks at once.
+# Numbers go stale loudly (the row then excuses a step needing no excuse, or
+# leaves one unexcused), and that is the point.
 #
 # workflow-step-order.py requires a row for every gate step whose job or step
 # condition cannot be shown to hold on push. Same discipline as
@@ -8,5 +15,6 @@
 # longer exists fails, and a row that excuses something needing no excuse fails.
 # The last one is what makes these rows disappear when the condition does.
 
-ci.yml:coverage    The coverage job runs only on workflow_dispatch: the ratchet compares against a baseline recorded in one environment, and the runner image moves the compiler under it. Both gate steps in it — the token provisioning and the ratchet — are unreached until then. This row goes when the job moves to push on a pinned environment.
-ci.yml:build-asan    The sanitizer leg runs only on a push to main: the build alone is about twenty minutes instrumented, and the moment code actually lands is that push. The job is not a pull-request gate and does not claim to be; this row goes if it becomes one.
+ci.yml:coverage:8    The coverage job runs only on workflow_dispatch: the ratchet compares against a baseline recorded in one environment, and the runner image moves the compiler under it. Both gate steps in it — the token provisioning and the ratchet — are unreached until then. This row goes when the job moves to push on a pinned environment.
+ci.yml:coverage:10    The coverage job runs only on workflow_dispatch: the ratchet compares against a baseline recorded in one environment, and the runner image moves the compiler under it. Both gate steps in it — the token provisioning and the ratchet — are unreached until then. This row goes when the job moves to push on a pinned environment.
+ci.yml:build-asan:5    The sanitizer leg runs only on a push to main: the build alone is about twenty minutes instrumented, and the moment code actually lands is that push. The job is not a pull-request gate and does not claim to be; this row goes if it becomes one.
