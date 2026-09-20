@@ -533,7 +533,7 @@ scan_core_so_against_surface() {
     wv_leaks=$(printf '%s\n' "$syms" \
         | awk '$2 == "W" || $2 == "V" { print $3 }' \
         | c++filt \
-        | grep -E '^(vtable for|typeinfo (for|name for))\b.*::Impl\b' \
+        | grep -E '^(vtable for|typeinfo (for|name for))\b.*::Impl[A-Za-z0-9_]*(::|$)' \
         | sort -u || true)
 
     bad="$extra"
@@ -559,16 +559,22 @@ scan_so_for_impl_leaks() {
         symbols_seen=$((symbols_seen + $(printf '%s\n' "$syms" | wc -l)))
     fi
 
+    # `::Impl` plus any identifier tail, not the literal `::Impl::`. `Impl_`,
+    # `ImplData`, `Impl2` are the same decision by the author and the same hole
+    # in the .so, and this pass judges plugins/*.so and lib/pkcs11/*.so --
+    # including the module Firefox, Thunderbird, gpgsm and Kleopatra load. The
+    # core pass moved from the spelling to the recorded surface in the same
+    # change that left this one reading `::Impl::` literally.
     t_leaks=$(printf '%s\n' "$syms" \
         | awk '$2 == "T" { print $3 }' \
         | c++filt \
-        | grep -F '::Impl::' \
+        | grep -E '::Impl[A-Za-z0-9_]*::' \
         | sort -u || true)
 
     wv_leaks=$(printf '%s\n' "$syms" \
         | awk '$2 == "W" || $2 == "V" { print $3 }' \
         | c++filt \
-        | grep -E '^(vtable for|typeinfo (for|name for))\b.*::Impl\b' \
+        | grep -E '^(vtable for|typeinfo (for|name for))\b.*::Impl[A-Za-z0-9_]*(::|$)' \
         | sort -u || true)
 
     bad="$t_leaks"

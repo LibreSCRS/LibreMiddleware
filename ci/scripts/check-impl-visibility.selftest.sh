@@ -256,5 +256,20 @@ printf '%s\n' "libLibreSCRS_Trust.a  LibreSCRS::Selftest::Keeper::hold" > "$shor
 out="$(LIBRESCRS_IMPL_RESIDUALS="$short" bash "$GATE" "$tree7" 2>&1)"; rc=$?
 report 8 2 "$rc" "all three fields" "$out"
 
+# --- case 9: the same spelling, in the half of the surface the modules are ----
+# Case 6 puts the leak in a CORE library, where the recorded surface catches it
+# whatever it is called. The plugin and pkcs11 pass is a different rule over a
+# different table, and it read `::Impl::` literally: a module exporting
+# `Impl_::step` was reported clean. librescrs-pkcs11.so is in that half.
+tree9="$WORK/tree-plugin-underscore"
+make_tree "$tree9"
+for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
+    command cp -f "$src/clean.so" "$tree9/lib/LibreSCRS/libLibreSCRS_$module.so"
+done
+command cp -f "$src/clean.so" "$tree9/lib/pkcs11/librescrs-pkcs11.so"
+command cp -f "$src/leak_.so" "$tree9/plugins/libselftest-plugin.so"
+out="$(bash "$GATE" "$tree9" 2>&1)"; rc=$?
+report 9 1 "$rc" "LibreSCRS::Selftest::Impl_::step(int)" "$out"
+
 printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
 [ "$fail" = 0 ]
