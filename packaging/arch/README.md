@@ -23,6 +23,11 @@ third `source=()` entries to match `git -C thirdparty/<sub> rev-parse HEAD`.
 `packaging/arch/check-recipe.sh` refuses a pin that is not the gitlink, so a
 stale one is caught on every push rather than at the first AUR build.
 
+The recipe inside a release tarball is not authoritative: its `sha256sums` are
+`SKIP`, because the asset they would name does not exist until the tag does. The
+copy on the default branch — which is what AUR builds from — carries the
+checksum of the published asset.
+
 ## Local dogfood build (no remote, no tag — build from this checkout)
 
 The release `PKGBUILD` fetches three tarballs (the project's own release
