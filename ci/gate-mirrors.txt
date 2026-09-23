@@ -25,6 +25,10 @@ ci/scripts/check-gates-wired.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin
 ci/scripts/check-gates-wired.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMac,LibreMiddleware,LibreSCRS.github.io  Reachability is the same property everywhere; what differs per repository is the exception list beside it.
 ci/scripts/check-job-timeouts.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMac,LibreMiddleware,LibreSCRS.github.io  Proves the bound rule, which is identical.
 ci/scripts/check-job-timeouts.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMac,LibreMiddleware,LibreSCRS.github.io  Every job needs a bound for the same reason in every repository.
+ci/scripts/check-release-artifacts.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  Proves the per-artefact producer rule, which is identical; the fixtures are synthetic workflows.
+ci/scripts/check-release-artifacts.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  A consumer whose artefact has no producer in its needs closure is the same defect in every release workflow.
+ci/scripts/check-release-assets.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  Proves the three arms over fixture directories and a stand-in for gh; nothing in it names a repository.
+ci/scripts/check-release-assets.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  Staged, wired and published are judged the same way everywhere; what differs per repository is ci/release-assets.txt and the argument the release workflow passes.
 ci/scripts/check-release-lockstep.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMac,LibreMiddleware  Proves that rule.
 ci/scripts/check-release-lockstep.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMac,LibreMiddleware  CHANGELOG and VERSION agree, or they do not; the rule has no repository in it.
 ci/scripts/check-skip-reasons.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  Proves it.
@@ -34,8 +38,8 @@ ci/scripts/check-version-floors.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDar
 ci/scripts/check-version-floors.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  Declared minimum versions are compared the same way everywhere.
 ci/scripts/check-version-stamp.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  Proves that check.
 ci/scripts/check-version-stamp.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  The version a build stamps is checked against the tree the same way everywhere.
-ci/scripts/check-version-surfaces.selftest.sh  SAME:LibreDarwin,LibreKDE  Proves that enumeration.
-ci/scripts/check-version-surfaces.sh  SAME:LibreDarwin,LibreKDE  The surfaces a version appears on are enumerated the same way; the list is what differs.
+ci/scripts/check-version-surfaces.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  Proves that enumeration.
+ci/scripts/check-version-surfaces.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  The surfaces a version appears on are enumerated the same way; the list is what differs.
 ci/scripts/check-warning-floor.selftest.sh  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  Proves the floor rule, which is shared.
 ci/scripts/coverage-gate.py  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  The four ratchet rules and the environment contract are one policy; the baseline and the environment file are what differ.
 ci/scripts/coverage-gate.selftest.py  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  Proves those rules.
@@ -72,6 +76,3 @@ packaging/arch/check-recipe.sh  DIFFERENT:LibreMiddleware,LibreAgent,LibreKDE,Li
 packaging/arch/check-recipe.selftest.sh  DIFFERENT:LibreMiddleware,LibreAgent,LibreKDE,LibreLinux  Proves four different recipes against four different packages.
 
 # --- not written yet ---------------------------------------------------------
-ci/scripts/check-release-assets.sh  PENDING:S3  The release-asset check does not exist yet; it lands with the release packaging work and is mirrored across the seven shipping repositories when it does.
-ci/scripts/check-release-assets.selftest.sh  PENDING:S3  Lands with the check it proves.
-ci/scripts/check-network-pins.sh  PENDING:S3  The network-pin check lands with the release work.
