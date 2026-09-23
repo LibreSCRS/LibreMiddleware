@@ -56,6 +56,13 @@ Notable user-visible changes per release. Format follows
   archives, and `packaging/README-bundling.md` says so in the repository rather
   than hiding it behind lint overrides.
 
+  **There is no update channel.** These packages and the source tarball are
+  release assets: a `.deb` or `.rpm` downloaded from a release page never updates
+  itself, and no APT, DNF, AUR, Flathub or Homebrew repository serves them. With
+  OpenSSL, curl and OpenSC linked in statically, a security fix in any of them is
+  a new release and nothing on an installed machine will say so. Watch the
+  releases page, or the repository's release feed, and re-download.
+
 ### Changed
 
 - **The installed CMake package exports one target namespace, `LibreSCRS::`.**
