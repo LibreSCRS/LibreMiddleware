@@ -1,0 +1,4 @@
+# <kind> <path>
+cmake-project      .
+debian-changelog   packaging/debian/changelog
+rpm-spec-version   packaging/rpm/librescrs-middleware.spec

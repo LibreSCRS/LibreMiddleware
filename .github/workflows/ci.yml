@@ -155,6 +155,15 @@ jobs:
         # than per artefact gets wrong.
         run: ./ci/scripts/check-release-artifacts.selftest.sh
 
+      - name: Prove the version-surface check still fails when it should
+        run: ./ci/scripts/check-version-surfaces.selftest.sh
+
+      - name: Every surface states the version in VERSION
+        # The build's project() stamp, the Debian changelog and the RPM spec,
+        # each against the version file: a package labelled one version must
+        # not install a binary that calls itself another.
+        run: ./ci/scripts/check-version-surfaces.sh
+
       - name: The release-asset check can still fail
         # Twenty-three cases over the three arms, including the two that must
         # say "cannot judge" rather than pass: a staging directory that was
