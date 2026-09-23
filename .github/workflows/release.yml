@@ -484,6 +484,13 @@ jobs:
             *) echo "published deliberately";;
           esac
 
+      - name: The staged asset set is the set this repository declares
+        # The files gh is about to publish, against ci/release-assets.txt, in
+        # both directions. It reads the directory rather than this workflow, so
+        # a later step that adds or removes a file cannot slip past it; and it
+        # runs before the release exists, when a mismatch still costs nothing.
+        run: _src/ci/scripts/check-release-assets.sh --staged artifacts
+
       - name: Create GitHub release with all signed artefacts
         # Replaces softprops/action-gh-release@v2 — that action races
         # between asset upload and metadata update; both rc1 attempts
@@ -521,3 +528,12 @@ jobs:
               $PRERELEASE_FLAG \
               $DRAFT_FLAG \
               artifacts/*
+
+      - name: The published release is the set this repository declares
+        # The release this job just created, read back. A draft rehearsal is
+        # judged too, and the check says DRAFT=yes so the log cannot be taken
+        # for evidence about a published release.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: _src/ci/scripts/check-release-assets.sh --published "$TAG"

@@ -155,6 +155,18 @@ jobs:
         # than per artefact gets wrong.
         run: ./ci/scripts/check-release-artifacts.selftest.sh
 
+      - name: The release-asset check can still fail
+        # Twenty-three cases over the three arms, including the two that must
+        # say "cannot judge" rather than pass: a staging directory that was
+        # promised and does not exist, and a draft under --published-strict.
+        run: ./ci/scripts/check-release-assets.selftest.sh
+
+      - name: The release workflow checks its asset set before publishing
+        # Structural only: the job that runs gh release create runs the
+        # --staged check before it. Whether the set is right is measured on the
+        # tag, over the files themselves.
+        run: ./ci/scripts/check-release-assets.sh --wired
+
       - name: The package matrix is the same in both workflows
         # The three pinned images are written twice, because a job that calls a
         # reusable workflow cannot carry timeout-minutes and the job-bound

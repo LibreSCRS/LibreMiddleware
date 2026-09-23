@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+#
+# What a tag of this repository publishes as release assets. One glob per
+# line, then the one-line description the downloads page renders.
+#
+# This file is the single place that answers "what do we publish". One script
+# holds it true, three times: --wired proves the release workflow calls it at
+# all; --staged compares this list against the files actually staged, in the
+# step before `gh release create`; --published <tag> compares it against the
+# release that exists. Changing what the workflow publishes without changing
+# this file fails the release before it is created.
+*.debian13.deb        binary packages built in a Debian 13 container
+*.ubuntu2604.deb      binary packages built in an Ubuntu 26.04 LTS container
+*.fedora43.rpm        binary packages built in a Fedora 43 container
+*.orig.tar.gz         the deterministic source tarball the packaging recipes fetch
+sbom.cdx.json         CycloneDX bill of materials naming the statically linked OpenSSL, curl and OpenSC
+SHA256SUMS            checksums over every other asset in this release
+*.sigstore.json       cosign keyless signature bundle, one per asset
