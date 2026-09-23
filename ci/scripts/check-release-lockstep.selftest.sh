@@ -77,6 +77,43 @@ run "case_6 agreeing changelog and VERSION" 0 "$d" 5.0.0
 # case_7 -- no argument is a usage error, not a silent pass.
 run "case_7 no version argument" 2 "$d"
 
+# case_8 -- a pre-release tag extracts the section its final version names.
+# Without the fallback the rehearsal fell back to generated notes, so the one
+# run meant to exercise the tag path never did.
+d=$work/case_8; mkdir -p "$d"
+printf '# Changelog\n\n## [5.0.0] — 2026-10-01\n\n- final entry\n' > "$d/CHANGELOG.md"
+printf '5.0.0\n' > "$d/VERSION"
+run "case_8 --section 5.0.0-rc1 over a [5.0.0] section" 0 "$d" --section 5.0.0-rc1
+( cd "$d" && sh "$subject" --section 5.0.0-rc1 2>&1 ) | grep -q "final entry" \
+    && printf '  ok    %-52s\n' "case_8 the body is the 5.0.0 section" \
+    || { printf '  FAIL  %-52s\n' "case_8 the body is the 5.0.0 section"; fails=$((fails + 1)); }
+
+# case_9 -- a repository that DOES keep a pre-release section gets that one;
+# the fallback must not fire when the exact version has a section.
+d=$work/case_9; mkdir -p "$d"
+printf '# Changelog\n\n## [5.0.0-rc1] — 2026-09-30\n\n- rc entry\n\n## [5.0.0] — 2026-10-01\n\n- final entry\n' > "$d/CHANGELOG.md"
+printf '5.0.0\n' > "$d/VERSION"
+run "case_9 --section 5.0.0-rc1 over its own section" 0 "$d" --section 5.0.0-rc1
+out9=$( cd "$d" && sh "$subject" --section 5.0.0-rc1 2>&1 )
+if printf '%s' "$out9" | grep -q "rc entry" && ! printf '%s' "$out9" | grep -q "final entry"; then
+    printf '  ok    %-52s\n' "case_9 the body is the rc section, not the final"
+else
+    printf '  FAIL  %-52s\n' "case_9 the body is the rc section, not the final"; fails=$((fails + 1))
+fi
+
+# case_10 -- neither the pre-release nor its base version has a section.
+d=$work/case_10; mkdir -p "$d"
+printf '# Changelog\n\n## [4.2.0]\n\n- older\n' > "$d/CHANGELOG.md"
+printf '5.0.0\n' > "$d/VERSION"
+run "case_10 --section 5.0.0-rc1 with neither section" 1 "$d" --section 5.0.0-rc1
+
+# case_11 -- the agreement check is NOT loosened: asserting 5.0.0 over a
+# changelog that only names 5.0.0-rc1 still fails.
+d=$work/case_11; mkdir -p "$d"
+printf '# Changelog\n\n## [5.0.0-rc1] — 2026-09-30\n\n- rc entry\n' > "$d/CHANGELOG.md"
+printf '5.0.0\n' > "$d/VERSION"
+run "case_11 assert 5.0.0 over only a [5.0.0-rc1] section" 1 "$d" 5.0.0
+
 if [ "$fails" -eq 0 ]; then
     echo "check-release-lockstep selftest: all cases passed"
     printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"

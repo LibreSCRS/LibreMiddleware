@@ -46,19 +46,29 @@ FAIL=0
 #
 # A missing CHANGELOG is the no-section case, said out loud: an awk over an
 # absent file would otherwise die before this branch could report anything.
-SECTION=""
-if [ -f "$CHANGELOG" ]; then
-    SECTION="$(awk -v ver="$VER" \
+extract() {  # extract <version>: that version's CHANGELOG section, or nothing
+    [ -f "$CHANGELOG" ] || return 0
+    awk -v ver="$1" \
         'BEGIN { gsub(/\./, "\\.", ver) }
          /^## / { if ($0 ~ ("(\\[|[[:space:]])" ver "(\\]|[[:space:]]|$)")) {f=1; next} else if (f) exit } f' \
-        "$CHANGELOG")"
-fi
+        "$CHANGELOG"
+}
+SECTION="$(extract "$VER")"
 # --section is the release job's notes extractor. It is the SAME awk above,
 # reached through the same file, because five hand-copied extractors are what
 # let one of them drift: without the dot escaping, tag 5.0.0 also matched a
 # [500.0] heading. A section that exists but holds only whitespace is a miss —
 # `gh release create --notes-file` accepts a blank file and publishes a release
 # with no body at all — so the caller can branch on the exit code.
+# A pre-release tag (5.0.0-rc1) falls back to the section of its base version
+# when it has none of its own, so a rehearsal publishes exactly the notes the
+# final tag will. Only here, and only when the exact version has no non-empty
+# section: a repository that keeps a pre-release section still gets that one,
+# and the agreement check below is untouched.
+if [ "$MODE" = section ] && ! printf '%s' "$SECTION" | grep -q '[^[:space:]]' \
+        && [ "${VER%%-*}" != "$VER" ]; then
+    SECTION="$(extract "${VER%%-*}")"
+fi
 if [ "$MODE" = section ]; then
     printf '%s\n' "$SECTION"
     printf '%s' "$SECTION" | grep -q '[^[:space:]]'
