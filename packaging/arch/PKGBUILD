@@ -106,7 +106,8 @@ build() {
         -DCMAKE_BUILD_TYPE=RelWithDebInfo \
         -DCMAKE_INSTALL_PREFIX=/usr \
         -DLIBRESCRS_BUILD_EXAMPLES=OFF \
-        -DINSTALL_GTEST=OFF
+        -DINSTALL_GTEST=OFF \
+        -DBUILD_TESTING=OFF
     cmake --build build -j4
 }
 

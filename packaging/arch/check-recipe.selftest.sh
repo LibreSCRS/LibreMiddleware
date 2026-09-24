@@ -239,8 +239,10 @@ if grep -q 'INSTALL_P11KIT_MODULE\|p11-kit registration' "$control_recipe"; then
     fixture claim_with_option
     sed -i 's|^    # /usr/share/librescrs/certificates/\*\*\.$|    # /usr/share/librescrs/certificates/**, /usr/share/p11-kit/modules/librescrs.module.|' \
         "$(fx claim_with_option)/packaging/arch/PKGBUILD"
-    sed -i 's|        -DINSTALL_GTEST=OFF$|        -DINSTALL_GTEST=OFF -DLIBREMIDDLEWARE_INSTALL_P11KIT_MODULE=ON|' \
+    sed -i 's|-DINSTALL_GTEST=OFF|-DINSTALL_GTEST=OFF -DLIBREMIDDLEWARE_INSTALL_P11KIT_MODULE=ON|' \
         "$(fx claim_with_option)/packaging/arch/PKGBUILD"
+    grep -q -- '-DLIBREMIDDLEWARE_INSTALL_P11KIT_MODULE=ON' "$(fx claim_with_option)/packaging/arch/PKGBUILD" \
+        || { echo "CASE claim_with_option: the option was not written -- the perturbation changed nothing"; fails=$((fails + 1)); }
     cases=$((cases + 1))
     run claim_with_option
     case "$out" in *"arm5: FAIL"*|*"FAIL"*"arm5"*)
