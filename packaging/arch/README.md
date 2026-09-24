@@ -25,8 +25,8 @@ stale one is caught on every push rather than at the first AUR build.
 
 The recipe inside a release tarball is not authoritative: its `sha256sums` are
 `SKIP`, because the asset they would name does not exist until the tag does. The
-copy on the default branch — which is what AUR builds from — carries the
-checksum of the published asset.
+copy on the default branch carries the checksum of the published asset; build
+from that copy, not from the one inside the tarball.
 
 ## Local dogfood build (no remote, no tag — build from this checkout)
 
