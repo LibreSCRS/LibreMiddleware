@@ -196,6 +196,35 @@ else
   printf 'arm3b: the recipe carries no _qcbor_commit -- nothing to keep in lockstep\n'
 fi
 
+# --- arm 5 -----------------------------------------------------------------
+# The package must not describe a file it does not install. build() decides
+# whether the p11-kit registration ships (LIBREMIDDLEWARE_INSTALL_P11KIT_MODULE,
+# OFF by default); while it does not, neither the recipe nor its README may name
+# the installed registration path or offer p11-kit as the thing that makes the
+# cards discoverable. The README's manual registration under /etc is not a claim
+# about the package and is not judged.
+if [ -f "$root/CMakeLists.txt" ] && grep -q 'INSTALL_P11KIT_MODULE' "$root/CMakeLists.txt"; then
+  buildfn=$(sed -n '/^build()/,/^}/p' "$recipe")
+  if printf '%s\n' "$buildfn" | grep -q -- '-DLIBREMIDDLEWARE_INSTALL_P11KIT_MODULE=ON'; then
+    printf 'arm5: build() installs the p11-kit registration; describing it is true\n'
+  else
+    claims=0
+    readme="$(dirname "$recipe")/README.md"
+    for f in "$recipe" "$readme"; do
+      [ -f "$f" ] || continue
+      while IFS= read -r hit; do
+        bad "arm5: $(basename "$f"):${hit%%:*} names share/p11-kit/modules, which this package does not install (build() leaves LIBREMIDDLEWARE_INSTALL_P11KIT_MODULE off)"
+        claims=$((claims + 1))
+      done < <(grep -n 'share/p11-kit/modules' "$f")
+    done
+    if sed -n '/^optdepends=(/,/)/p' "$recipe" | grep -q "p11-kit"; then
+      bad "arm5: optdepends offers p11-kit for card discovery, and this package installs no p11-kit registration"
+      claims=$((claims + 1))
+    fi
+    [ "$claims" -eq 0 ] && printf 'arm5: no p11-kit registration installed, and none described\n'
+  fi
+fi
+
 # --- arm 4 -----------------------------------------------------------------
 where=""
 git -C "$root" rev-parse -q --verify "refs/tags/$pkgver" >/dev/null 2>&1 && where="in this clone"

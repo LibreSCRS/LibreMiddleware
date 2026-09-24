@@ -55,11 +55,11 @@ makedepends=(
     'libtool'
     'pkgconf'
 )
-# p11-kit drop-in lets PKCS#11-aware apps (Kleopatra, gpgsm, Firefox, ...)
-# auto-discover LibreSCRS cards. Not a hard dep of the libraries.
-optdepends=(
-    'p11-kit: auto-discovery of LibreSCRS cards by PKCS#11-aware applications'
-)
+# No p11-kit registration is installed: build() leaves
+# LIBREMIDDLEWARE_INSTALL_P11KIT_MODULE at its default, OFF, because exactly one
+# PKCS#11 provider may own a card and on a desktop that is the card agent.
+# packaging/arch/README.md names the one command that registers the direct
+# module on a machine that deliberately has no agent.
 options=('!lto')   # vendored OpenSC static archive + IPO can conflict; keep it simple
 source=(
     "$pkgname-$pkgver.tar.gz::https://github.com/LibreSCRS/LibreMiddleware/releases/download/$pkgver/librescrs-middleware_$pkgver.orig.tar.gz"
@@ -124,6 +124,6 @@ package() {
     # cmake --install already lays down: /usr/lib/libLibreSCRS_*.so,
     # /usr/lib/librescrs/plugins/*.so, /usr/lib/pkcs11/librescrs-pkcs11.so,
     # /usr/include/LibreSCRS/**, /usr/lib/cmake/LibreMiddleware/**,
-    # /usr/share/librescrs/certificates/**, /usr/share/p11-kit/modules/librescrs.module.
+    # /usr/share/librescrs/certificates/**.
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

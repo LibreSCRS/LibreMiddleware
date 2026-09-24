@@ -54,6 +54,9 @@ fixture() {
     cp "$subject"        "$d/packaging/arch/check-recipe.sh"
     chmod +x "$d/packaging/arch/check-recipe.sh"
     cp "$root/VERSION"   "$d/VERSION"
+    [ -f "$here/README.md" ] && cp "$here/README.md" "$d/packaging/arch/README.md"
+    # arm 5 asks the top-level CMakeLists.txt which install options exist.
+    [ -f "$root/CMakeLists.txt" ] && cp "$root/CMakeLists.txt" "$d/CMakeLists.txt"
     # arm 1 reads the source name out of this script; without it every case
     # would fail on a missing input rather than on what it perturbs.
     cp "$root/ci/scripts/make-source-tarball.sh" "$d/ci/scripts/"
@@ -208,6 +211,44 @@ else
         echo "CASE tag_with_skip: exit was non-zero but no line mentions 'arm4'"
         printf '%s\n' "$out" | sed 's/^/    /'; fails=$((fails + 1)) ;;
     esac
+fi
+
+# 12-15 -- the recipe and its README claim a p11-kit registration the build
+#          does not install. Only in a recipe whose build() can install one.
+if grep -q 'INSTALL_P11KIT_MODULE\|p11-kit registration' "$control_recipe"; then
+    fixture readme_claim
+    printf '%s\n' '- `share/p11-kit/modules/librescrs.module` — p11-kit auto-discovery drop-in' \
+        >> "$(fx readme_claim)/packaging/arch/README.md"
+    if cmp -s "$(fx readme_claim)/packaging/arch/README.md" "$here/README.md"; then
+        echo "CASE readme_claim: the README did not change"; cases=$((cases + 1)); fails=$((fails + 1))
+    else
+        expect_red_out readme_claim "arm5"
+    fi
+
+    fixture recipe_claim
+    sed -i 's|^    # /usr/share/librescrs/certificates/\*\*\.$|    # /usr/share/librescrs/certificates/**, /usr/share/p11-kit/modules/librescrs.module.|' \
+        "$(fx recipe_claim)/packaging/arch/PKGBUILD"
+    expect_red recipe_claim "arm5"
+
+    fixture optdepends_claim
+    sed -i "s|^options=|optdepends=('p11-kit: auto-discovery of LibreSCRS cards by PKCS#11-aware applications')\noptions=|" \
+        "$(fx optdepends_claim)/packaging/arch/PKGBUILD"
+    expect_red optdepends_claim "arm5"
+
+    # The claim is true once build() installs the file: not a finding.
+    fixture claim_with_option
+    sed -i 's|^    # /usr/share/librescrs/certificates/\*\*\.$|    # /usr/share/librescrs/certificates/**, /usr/share/p11-kit/modules/librescrs.module.|' \
+        "$(fx claim_with_option)/packaging/arch/PKGBUILD"
+    sed -i 's|        -DINSTALL_GTEST=OFF$|        -DINSTALL_GTEST=OFF -DLIBREMIDDLEWARE_INSTALL_P11KIT_MODULE=ON|' \
+        "$(fx claim_with_option)/packaging/arch/PKGBUILD"
+    cases=$((cases + 1))
+    run claim_with_option
+    case "$out" in *"arm5: FAIL"*|*"FAIL"*"arm5"*)
+        echo "CASE claim_with_option: arm 5 refused a claim build() makes true"
+        printf '%s\n' "$out" | sed 's/^/    /'; fails=$((fails + 1)) ;;
+    esac
+else
+    echo "CASE p11kit_claims: not applicable -- this recipe installs no PKCS#11 registration"
 fi
 
 # 11 -- control: the real recipe, untouched, must pass, and arm 4 must SAY it is
