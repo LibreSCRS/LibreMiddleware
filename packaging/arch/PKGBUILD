@@ -60,7 +60,7 @@ makedepends=(
 # PKCS#11 provider may own a card and on a desktop that is the card agent.
 # packaging/arch/README.md names the one command that registers the direct
 # module on a machine that deliberately has no agent.
-options=('!lto')   # vendored OpenSC static archive + IPO can conflict; keep it simple
+options=('!lto')   # LTO off, as the RPM spec does; not measured to be required
 source=(
     "$pkgname-$pkgver.tar.gz::https://github.com/LibreSCRS/LibreMiddleware/releases/download/$pkgver/librescrs-middleware_$pkgver.orig.tar.gz"
     # The pinned upstream trees, fetched separately and laid over the copies
