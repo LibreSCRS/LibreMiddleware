@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: LGPL-2.1-or-later
-# Self-test for check-release-assets.sh -- all three arms, twenty-three cases.
+# Self-test for check-release-assets.sh -- all three arms, twenty-eight cases.
 #
 # --staged is judged over fixture DIRECTORIES of real files, because bytes on
 # disk are what it measures; --wired over workflow fragments; --published over
@@ -151,6 +151,32 @@ w4="$work/w4.yml"
 { wf_head; printf '%s\n' '  build:' '    runs-on: ubuntu-latest' '    steps:' "$staged_step"; } > "$w4"
 check "W4 no gh release create anywhere" 2 "gh release create" -- wired "$w4"
 
+# W5-W8 -- a --staged step that cannot fail the job is not wired. Each keeps
+# the command in the file and takes away its power to stop the release.
+w5="$work/w5.yml"
+{ wf_head; printf '%s\n' '  release:' '    runs-on: ubuntu-latest' '    steps:' \
+    '      - name: Only a comment' \
+    '        run: |' \
+    '          # _src/ci/scripts/check-release-assets.sh --staged artifacts' \
+    '          true' "$create_step"; } > "$w5"
+check "W5 staged step present only as a comment" 1 "no check-release-assets.sh --staged" -- wired "$w5"
+
+w6="$work/w6.yml"
+{ wf_head; printf '%s\n' '  release:' '    runs-on: ubuntu-latest' '    steps:' \
+    "$staged_step" '        continue-on-error: true' "$create_step"; } > "$w6"
+changed "W6" "$w" "$w6"
+check "W6 staged step with continue-on-error" 1 "continue-on-error" -- wired "$w6"
+
+w7="$work/w7.yml"
+{ wf_head; printf '%s\n' '  release:' '    runs-on: ubuntu-latest' '    steps:' \
+    "$staged_step" '        if: false' "$create_step"; } > "$w7"
+check "W7 staged step behind an if: condition" 1 "if:" -- wired "$w7"
+
+w8="$w.or-true.yml"
+sed 's|--staged artifacts$|--staged artifacts \|\| true|' "$w" > "$w8"
+changed "W8" "$w" "$w8"
+check "W8 staged call whose failure is swallowed by ||" 1 "||" -- wired "$w8"
+
 # ------------------------------------------------------------- --published --
 names_json() {  # names_json <draft> <name...>
     local draft="$1" first=1 n
@@ -197,6 +223,11 @@ fi
 check "B7 a draft under --published-strict is not evidence" 2 "DRAFT" -- published "$decl" "$b" --strict
 
 check "B8 no assets fixture to read" 2 "GH_ASSETS_JSON" -- published "$decl" "$work/absent.json"
+
+# B9 -- an empty tag: gh would answer with the latest release, which is
+# evidence about a different release.
+check "B9 an empty tag is a usage error, not the latest release" 2 "usage" -- \
+    env RELEASE_ASSETS_FILE="$decl" GH_ASSETS_JSON="$all" bash "$subject" --published ""
 
 if [ "$fails" -eq 0 ]; then
     echo "check-release-assets selftest: all cases passed"

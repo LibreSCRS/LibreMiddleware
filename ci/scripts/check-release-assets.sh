@@ -8,7 +8,9 @@
 #                               No <dir> means "this release uploads no asset",
 #                               and then the declaration must hold no glob.
 #   --wired                     on push: the release workflow's job that runs
-#                               `gh release create` runs `--staged` before it.
+#                               `gh release create` runs `--staged` before it,
+#                               in a step that can fail the job -- not behind
+#                               continue-on-error, an if:, or a trailing ||.
 #   --published <tag>           after the release exists: its assets are the
 #                               declared set. A draft is judged, and says so.
 #   --published-strict <tag>    the same, and a draft is NOT judged (exit 2):
@@ -171,14 +173,30 @@ STAGED = re.compile(r"check-release-assets\.sh\s+--staged\b")
 jobs = (doc or {}).get("jobs") or {}
 creators = []
 staged_in = []
+disarmed = []
 for jname, job in jobs.items():
     steps = (job or {}).get("steps") or []
     for i, step in enumerate(steps):
-        body = code((step or {}).get("run"))
+        step = step or {}
+        body = code(step.get("run"))
         if CREATE.search(body):
             creators.append((jname, i))
         if STAGED.search(body):
-            staged_in.append((jname, i))
+            # A step that cannot fail the job is not a check in the chain: it
+            # stays in the file and never stops a release.
+            why = []
+            coe = step.get("continue-on-error", False)
+            if coe not in (False, "false"):
+                why.append(f"continue-on-error: {coe}")
+            if "if" in step:
+                why.append(f"if: {step['if']}")
+            for line in body.split("\n"):
+                if STAGED.search(line) and re.search(r"\|\||;|&\s*$", line[STAGED.search(line).end():]):
+                    why.append("its exit status is swallowed after the call (|| or ;)")
+            if why:
+                disarmed.append((jname, i, why))
+            else:
+                staged_in.append((jname, i))
 if not creators:
     print(f"FATAL: no job in {path} runs gh release create -- nothing to be wired into; cannot judge",
           file=sys.stderr)
@@ -189,6 +207,9 @@ for jname, i in creators:
     if not mine:
         elsewhere = sorted({j for j, _ in staged_in})
         extra = f" (it runs in {', '.join(elsewhere)}, which does not publish)" if elsewhere else ""
+        for j, k, why in disarmed:
+            if j == jname:
+                extra += f" (step {k + 1} calls it but cannot fail the job: {'; '.join(why)})"
         print(f"::error::job {jname} runs gh release create with no check-release-assets.sh --staged step before it{extra}")
         rc = 1
     elif min(mine) > i:
@@ -271,7 +292,9 @@ case "$1" in
         wired
         ;;
     --published | --published-strict)
-        [ "$#" -eq 2 ] || usage
+        # An empty tag would make gh answer with the latest release: evidence
+        # about a different one.
+        [ "$#" -eq 2 ] && [ -n "$2" ] || usage
         strict=0
         [ "$1" = --published-strict ] && strict=1
         published "$2" "$strict"
