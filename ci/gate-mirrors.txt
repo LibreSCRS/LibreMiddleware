@@ -27,8 +27,8 @@ ci/scripts/check-job-timeouts.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwi
 ci/scripts/check-job-timeouts.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMac,LibreMiddleware,LibreSCRS.github.io  Every job needs a bound for the same reason in every repository.
 ci/scripts/check-release-artifacts.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  Proves the per-artefact producer rule, which is identical; the fixtures are synthetic workflows.
 ci/scripts/check-release-artifacts.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  A consumer whose artefact has no producer in its needs closure is the same defect in every release workflow.
-ci/scripts/check-release-assets.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  Proves the three arms over fixture directories and a stand-in for gh; nothing in it names a repository.
-ci/scripts/check-release-assets.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  Staged, wired and published are judged the same way everywhere; what differs per repository is ci/release-assets.txt and the argument the release workflow passes.
+ci/scripts/check-release-assets.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware,LibreMac  Proves the three arms over fixture directories and a stand-in for gh; nothing in it names a repository.
+ci/scripts/check-release-assets.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware,LibreMac  Staged, wired and published are judged the same way everywhere; what differs per repository is ci/release-assets.txt and the argument the release workflow passes.
 ci/scripts/check-release-lockstep.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMac,LibreMiddleware  Proves that rule.
 ci/scripts/check-release-lockstep.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMac,LibreMiddleware  CHANGELOG and VERSION agree, or they do not; the rule has no repository in it.
 ci/scripts/check-skip-reasons.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  Proves it.
@@ -65,7 +65,7 @@ tools/dup-scan.selftest.py  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,Libre
 tools/run-selftests.selftest.sh  SAME:LibreSCRS.github.io,knowledge  Proves that contract.
 tools/run-selftests.sh  SAME:LibreSCRS.github.io,knowledge  The same self-test contract as ci/scripts/run-selftests.sh, for the repositories whose tools live under tools/.
 
-KEYS  SAME:LibreMiddleware,LibreLinux,LibreCelik,LibreKDE,LibreDarwin  The release signing key is one key; a repository shipping a different one would have consumers verifying against something nobody else uses.
+KEYS  SAME:LibreMiddleware,LibreAgent,LibreLinux,LibreCelik,LibreKDE,LibreDarwin,LibreMac  The release signing key is one key; a repository shipping a different one would have consumers verifying against something nobody else uses.
 
 # --- different on purpose ----------------------------------------------------
 ci/scripts/abi-snapshot.sh  DIFFERENT:LibreMiddleware,LibreAgent  Two surfaces, not two copies of one: the middleware snapshots seven shared libraries against a recorded public ABI, the agent snapshots a single component and refuses a different set of empty shapes. Merging them would lose whichever set of guards the loser had.
