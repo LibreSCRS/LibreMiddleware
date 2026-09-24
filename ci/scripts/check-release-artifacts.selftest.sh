@@ -182,8 +182,11 @@ jobs:
 Y
 run "case_7 consumer with no needs" 1 "$d"
 
-# case_8 -- a workflow that downloads nothing is not this check's business,
-# and must not be failed for it.
+# case_8 -- a directory in which no workflow downloads anything measured
+# nothing. A census of 0/0/0 is how every workflow without a consumer looks,
+# and also how one whose consumer this parser cannot read would look, so it is
+# "cannot judge", not a pass. A repository with nothing to download says so in
+# its gate-wiring exceptions instead of running this.
 d=$work/case_8; mkdir -p "$d"
 cat > "$d/a.yml" <<'Y'
 name: a
@@ -194,7 +197,7 @@ jobs:
     steps:
       - uses: actions/upload-artifact@v4
 Y
-run "case_8 no consumer at all" 0 "$d"
+run "case_8 no consumer anywhere is unmeasured" 2 "$d"
 grep -q '^artifact-consumers=0 producer-backed=0 unbacked=0$' "$work/out" \
     && printf '  ok    %-56s\n' "case_8 census is 0/0/0" \
     || { printf '  FAIL  %-56s\n' "case_8 census is 0/0/0"; fails=$((fails + 1)); }
@@ -319,6 +322,74 @@ jobs:
           pattern: 'packages-*'
 Y
 run "case_13 a pattern served through the matrix and a fan-in" 0 "$d"
+
+# case_14 -- a workflow without a consumer beside one with a backed consumer:
+# the directory measured something, and the quiet workflow is not failed.
+d=$work/case_14; mkdir -p "$d"
+cat > "$d/a.yml" <<'Y'
+name: a
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+Y
+cat > "$d/b.yml" <<'Y'
+name: b
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle
+  release:
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundle
+Y
+run "case_14 a quiet workflow beside a measured one" 0 "$d"
+
+# case_15 -- a pattern that one producer in needs already satisfies, while a
+# second producer whose artefact the same pattern collects is NOT in needs.
+# The pattern matches, so a per-request "is anything upstream" reading passes,
+# and the release publishes without the second producer's files -- whichever
+# of the two happens to finish first.
+d=$work/case_15; mkdir -p "$d"
+cat > "$d/a.yml" <<'Y'
+name: a
+on: [push]
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-artifacts
+  tarball:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tarball-artifacts
+  release:
+    needs: [linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*-artifacts'
+          merge-multiple: true
+Y
+run "case_15 a pattern whose second producer is not in needs" 1 "$d"
+grep -q "tarball" "$work/out" \
+    && printf '  ok    %-56s\n' "case_15 the message names the missing producer" \
+    || { printf '  FAIL  %-56s\n' "case_15 the message names the missing producer"; fails=$((fails + 1)); }
 
 if [ "$fails" -eq 0 ]; then
     echo "check-release-artifacts selftest: all cases passed"

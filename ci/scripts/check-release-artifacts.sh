@@ -66,8 +66,13 @@
 # Scans relative to the current directory, so a repository without its own copy
 # can borrow one.
 #
-# Exit: 0 every artefact a consumer asks for has a producer it needs - 1 one
-#       does not - 2 nothing could be measured -- NOT a pass.
+# A pattern request is held to EVERY producer whose upload it matches, not to
+# the first: a release that collects '*-artifacts' and needs only one of three
+# producers matches, and publishes whatever has finished.
+#
+# Exit: 0 every artefact a consumer asks for has its producers in needs - 1 one
+#       does not - 2 nothing could be measured (no workflow, or no consumer in
+#       any of them) -- NOT a pass.
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
 set -u
@@ -97,6 +102,9 @@ for f in "${files[@]}"; do
                     matched=$((matched + 1)) ;;
                 missing)
                     echo "::error file=$f::job '$job' downloads '$rest' but no job in its needs closure uploads an artefact by that name -- the download fails on the tag, where it cannot be taken back"
+                    rc=1 ;;
+                stray)
+                    echo "::error file=$f::job '$job' collects ${rest#* } with a pattern that also matches what job '${rest%% *}' uploads, and '${rest%% *}' is not in its needs closure -- the release takes whatever has finished, and may publish without it"
                     rc=1 ;;
             esac
             continue
@@ -218,6 +226,15 @@ for f in "${files[@]}"; do
             }
             return 0
         }
+        function closure(j, reach,   m, t, k, c) {
+            m = split(needs[j], t, /[[:space:]]+/)
+            for (k = 1; k <= m; k++) {
+                c = t[k]
+                if (c == "" || (c in reach)) continue
+                reach[c] = 1
+                closure(c, reach)
+            }
+        }
         END {
             flush()
             for (i = 1; i <= n; i++) {
@@ -236,8 +253,24 @@ for f in "${files[@]}"; do
                     r = t[k]
                     if (r == "") continue
                     delete seen
-                    if (serves(j, globre(expand(r)), seen)) printf "REQ %s ok %s\n", j, r
-                    else { printf "REQ %s missing %s\n", j, r; bad = 1 }
+                    re = globre(expand(r))
+                    if (!serves(j, re, seen)) { printf "REQ %s missing %s\n", j, r; bad = 1; continue }
+                    # Every producer whose upload the request matches has to be
+                    # upstream, not just one: a pattern one producer satisfies
+                    # is still missing the others.
+                    delete reach
+                    closure(j, reach)
+                    stray = 0
+                    for (o = 1; o <= n; o++) {
+                        p = order[o]
+                        if (p == j || (p in reach)) continue
+                        nn = split(upn[p], q, /[[:space:]]+/)
+                        for (x = 1; x <= nn; x++)
+                            if (q[x] != "" && expand(q[x]) ~ re) {
+                                printf "REQ %s stray %s %s\n", j, p, r; stray = 1; bad = 1; break
+                            }
+                    }
+                    if (!stray) printf "REQ %s ok %s\n", j, r
                 }
                 printf "JOB %s %s -\n", j, (bad ? "partial" : "ok")
             }
@@ -247,4 +280,12 @@ done
 
 printf 'artifact-consumers=%d producer-backed=%d unbacked=%d\n' "$consumers" "$backed" "$((consumers - backed))"
 printf 'artefact-requests=%d matched=%d unmatched=%d\n' "$requests" "$matched" "$((requests - matched))"
+# Nothing downloaded anywhere is nothing measured: the census reads 0/0/0 for
+# a repository with no consumer and for one whose consumer this parser cannot
+# see. A repository that has nothing to download records that in its
+# gate-wiring exceptions rather than running this.
+if [ "$rc" -eq 0 ] && [ "$consumers" -eq 0 ]; then
+    echo "no workflow under $dir downloads an artefact -- nothing was measured, and that is not a pass" >&2
+    exit 2
+fi
 exit "$rc"
