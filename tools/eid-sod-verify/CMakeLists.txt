@@ -11,7 +11,7 @@ if(NOT PCSC_FOUND)
 endif()
 
 add_executable(eid-sod-verify main.cpp)
-target_include_directories(eid-sod-verify PRIVATE ${PCSC_INCLUDE_DIRS})
+target_include_directories(eid-sod-verify PRIVATE $<TARGET_PROPERTY:PCSC::PCSC,INTERFACE_INCLUDE_DIRECTORIES>)
 target_link_libraries(eid-sod-verify PRIVATE OpenSSL_Crypto ${PCSC_LIBRARIES})
 target_compile_definitions(eid-sod-verify
     PRIVATE LIBREMIDDLEWARE_CERTIFICATES_DIR="${LIBREMIDDLEWARE_CERTIFICATES_DIR}"

@@ -1260,7 +1260,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
         ${PROJECT_SOURCE_DIR}/lib/smartcard/src
         ${PROJECT_SOURCE_DIR}/lib/smartcard/include
         ${PROJECT_SOURCE_DIR}/lib/SecureChannel/include)
-    target_include_directories(pcsc_handle_census_test SYSTEM PRIVATE ${PCSC_INCLUDE_DIRS})
+    target_include_directories(pcsc_handle_census_test SYSTEM PRIVATE $<TARGET_PROPERTY:PCSC::PCSC,INTERFACE_INCLUDE_DIRECTORIES>)
     target_compile_definitions(pcsc_handle_census_test PRIVATE
         LIBRESCRS_PCSC_SHIM_PATH="$<TARGET_FILE:pcsc_counting_shim>"
         LIBRESCRS_PKCS11_MODULE_PATH="$<TARGET_FILE:librescrs-pkcs11>"

@@ -14,7 +14,11 @@
 add_library(pcsc_counting_shim SHARED counting_pcsc_shim.c)
 
 target_include_directories(pcsc_counting_shim PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_include_directories(pcsc_counting_shim SYSTEM PRIVATE ${PCSC_INCLUDE_DIRS})
+# PCSC_INCLUDE_DIRS is set by find_package(PCSC) in lib/smartcard and is not
+# visible from this directory; the imported target is global, so read its
+# include directories without linking it.
+target_include_directories(pcsc_counting_shim SYSTEM PRIVATE
+    $<TARGET_PROPERTY:PCSC::PCSC,INTERFACE_INCLUDE_DIRECTORIES>)
 
 set_target_properties(pcsc_counting_shim PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
