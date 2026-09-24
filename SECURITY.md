@@ -107,5 +107,5 @@ the same reader**, and carries two limits worth knowing before choosing it:
 |---------|-----------|
 | 5.x     | ✅ Active  |
 | 4.x     | ✅ Active  |
-| 3.x     | ✅ Active  |
+| 3.x     | ❌ EOL     |
 | 2.x     | ❌ EOL     |
