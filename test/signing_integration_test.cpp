@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <utility>
 
 #include <openssl/x509.h>
 
@@ -26,7 +27,11 @@ static std::string getJarPath()
 static libresign::TrustConfig buildTestTrustConfig()
 {
     libresign::TrustConfig cfg;
-    cfg.trustedLists.push_back({"https://www.mit.gov.rs/TrustedList/TSL-RS.xml", false, true});
+    libresign::TrustedListEntry serbianTl;
+    serbianTl.url = "https://www.mit.gov.rs/TrustedList/TSL-RS.xml";
+    serbianTl.isLotl = false;
+    serbianTl.eager = true;
+    cfg.trustedLists.push_back(std::move(serbianTl));
     cfg.cacheDirectory = (fs::temp_directory_path() / "librescrs-test-tsl").string();
     cfg.crlEnabled = true;
     cfg.ocspEnabled = true;

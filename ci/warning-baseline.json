@@ -5,7 +5,6 @@
       "-Wcomment": 108,
       "-Wdangling-else": 12,
       "-Wfree-nonheap-object": 1,
-      "-Wmissing-field-initializers": 1,
       "-Wstringop-overflow=": 11,
       "-Wstringop-overread": 14
     },
