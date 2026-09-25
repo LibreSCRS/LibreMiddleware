@@ -1245,6 +1245,10 @@ endif()
 #
 # SmartCard_Impl is deliberately NOT linked here: a second copy of the PC/SC
 # wrapper in this executable would make it ambiguous whose calls were counted.
+#
+# The preemption is ELF's flat symbol lookup. Mach-O's two-level namespace binds
+# every library's references to the image it linked, so on macOS the exported
+# copies are never called and the suite skips itself there; see the test file.
 if(LIBRESCRS_VENDOR_OPENSC)
     add_executable(pcsc_handle_census_test
         pcsc_handle_census_test.cpp
