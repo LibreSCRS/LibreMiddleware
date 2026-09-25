@@ -49,7 +49,18 @@ if(LIBRESCRS_VENDOR_OPENSC)
         ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src
     )
 
-    target_compile_definitions(CrossProviderCoordinationTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+    # The counting PC/SC provider this suite makes OpenSC load. The path is
+    # compiled in because the suite writes the OPENSC_CONF that names it, and
+    # then dlopens the same path itself to read the counters: the same inode is
+    # the same mapping, so OpenSC's calls and the assertions meet in one set of
+    # globals. add_dependencies, not a link edge -- nothing here calls into it.
+    target_compile_definitions(CrossProviderCoordinationTests PRIVATE
+        LIBRESCRS_INTERNAL_BUILD
+        LIBRESCRS_PCSC_SHIM_PATH="$<TARGET_FILE:pcsc_counting_shim>")
+    target_include_directories(CrossProviderCoordinationTests PRIVATE
+        ${PROJECT_SOURCE_DIR}/test/pcsc_counting_shim)
+    target_link_libraries(CrossProviderCoordinationTests PRIVATE ${CMAKE_DL_LIBS})
+    add_dependencies(CrossProviderCoordinationTests pcsc_counting_shim)
 
     gtest_discover_tests(CrossProviderCoordinationTests)
 endif()

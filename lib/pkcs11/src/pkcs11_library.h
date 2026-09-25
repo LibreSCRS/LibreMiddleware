@@ -134,28 +134,15 @@ public:
     /// @par Lock discipline
     /// Snapshot reader list + provider list under @c cardSlotLibMutex,
     /// run @c probe() OUTSIDE the lock (PC/SC I/O), commit cardMap /
-    /// slotMap entries under the lock again. Per-reader probing is
-    /// exactly-once-per-card-insertion via @c std::call_once; the flag
-    /// is reset by @ref notifyCardRemoved so a hot-swap triggers a
-    /// fresh probe.
+    /// slotMap entries under the lock again.
+    /// @par Probing is exactly once per reader, for the life of the library
+    /// The per-reader @c std::call_once flag is never reset, so a card
+    /// swapped into the same reader is not re-probed until @c C_Finalize:
+    /// the slots the first card published stay surfaced. Nothing in this
+    /// library watches for removal — @c C_WaitForSlotEvent reports
+    /// @c CKR_FUNCTION_NOT_SUPPORTED and there is no monitor thread to
+    /// drive an invalidation from.
     [[nodiscard]] std::vector<unsigned long> enumerateSlotIds();
-
-    /// @brief Invalidate cached state for @p readerName so the next
-    ///        @ref enumerateSlotIds reprobes.
-    ///
-    /// Drops the cardMap entry for the reader, removes every slot
-    /// that card owned from slotMap, drops their object caches, and
-    /// resets the per-reader once-flag. Hot-swap of a different card
-    /// in the same reader otherwise leaves the old card's slots
-    /// surfaced indefinitely (the once-flag was permanently latched
-    /// after the first successful probe).
-    /// @param readerName PC/SC reader the card was removed from.
-    /// @par Thread-safety
-    /// Internally synchronised on @c cardSlotLibMutex,
-    /// @c slotCacheMutex, and @c sessionMutex. Safe to call from a
-    /// MonitorService poll thread.
-    /// @since 4.1
-    void notifyCardRemoved(const std::string& readerName);
 
 private:
     // -------- Card+Slot state ---------------------------------------

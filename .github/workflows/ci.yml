@@ -356,6 +356,13 @@ jobs:
         # PCSCConnection::openRawDiagnostic escape hatch.
         run: ./ci/scripts/check-raw-pcsc-open.sh
 
+      - name: Prove the raw PC/SC open gate still fails when it should
+        if: matrix.release_gates
+        # The gate above is a recursive grep, and a grep that finds nothing
+        # looks the same whether the tree is clean or empty -- it printed OK for
+        # a tree with no sources in it. Three of these four cases prove a red.
+        run: ./ci/scripts/check-raw-pcsc-open.selftest.sh
+
       - name: Check pinned TL cert expiry
         if: matrix.release_gates
         # Pre-empt the runtime hard-fail in tl_signature_verifier.cpp by

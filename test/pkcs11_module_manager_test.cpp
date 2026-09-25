@@ -22,12 +22,35 @@
 
 #include "pkcs11/pkcs11.h"
 
+#include <atomic>
+#include <chrono>
+#include <functional>
+#include <stdexcept>
+#include <string>
 #include <memory>
 #include <optional>
+#include <thread>
 
 using namespace libresign;
 
 namespace {
+
+// Removes the registry rendezvous however the test leaves, including through a
+// failed ASSERT: a lambda left installed captures a dead stack frame.
+class ScopedRendezvous
+{
+public:
+    explicit ScopedRendezvous(std::function<void(ModuleRegistryEvent)> hook)
+    {
+        setModuleRegistryRendezvousForTest(std::move(hook));
+    }
+    ~ScopedRendezvous()
+    {
+        setModuleRegistryRendezvousForTest({});
+    }
+    ScopedRendezvous(const ScopedRendezvous&) = delete;
+    ScopedRendezvous& operator=(const ScopedRendezvous&) = delete;
+};
 
 class Pkcs11ModuleManagerTest : public ::testing::Test
 {
@@ -37,6 +60,19 @@ protected:
         softHsmPath = libresign::test::findSoftHsmPath();
         if (!softHsmPath)
             GTEST_SKIP() << "SoftHSM2 not found";
+        // The module registry is process-wide, so a module a previous case
+        // left behind would otherwise be shared with this one and the case
+        // would not measure what it says it does. Entries are weak, so this
+        // finalises nothing.
+        resetSharedModuleRegistryForTest();
+        setModuleRegistryRendezvousForTest({});
+        setModuleTeardownBudgetForTest(std::chrono::seconds(30));
+    }
+
+    void TearDown() override
+    {
+        setModuleRegistryRendezvousForTest({});
+        setModuleTeardownBudgetForTest(std::chrono::seconds(30));
     }
     const char* softHsmPath = nullptr;
 };
@@ -146,6 +182,239 @@ TEST_F(Pkcs11ModuleManagerTest, AcquireCachesByCanonicalPath)
     EXPECT_EQ(h1.functionList(), h2.functionList());
     EXPECT_EQ(h1.dlHandle(), h2.dlHandle());
     EXPECT_EQ(h1.path(), h2.path());
+}
+
+// Two concurrent signing calls own one module manager each. The first to
+// finish used to finalise the module under the second: nothing refcounted the
+// module across managers, so the manager that drove C_Initialize called
+// C_Finalize when it went away and every call the other one still had to make
+// returned CKR_CRYPTOKI_NOT_INITIALIZED. The second caller's handle must stay
+// usable after the first caller's manager and handle are both gone.
+TEST_F(Pkcs11ModuleManagerTest, TwoManagersShareOneInitialisedModule)
+{
+    Pkcs11ModuleManager second;
+    Pkcs11ModuleHandle secondHandle;
+
+    {
+        Pkcs11ModuleManager first;
+        auto firstHandle = first.acquire(softHsmPath);
+        ASSERT_TRUE(firstHandle.valid());
+
+        // On another thread, as two sign calls on two readers are: the
+        // service's workers run in parallel.
+        std::thread worker([&] { secondHandle = second.acquire(softHsmPath); });
+        worker.join();
+        ASSERT_TRUE(secondHandle.valid());
+    }
+    // The first caller has returned: its manager and its handle are gone while
+    // the second caller is still holding one.
+
+    auto* funcs = static_cast<CK_FUNCTION_LIST*>(secondHandle.functionList());
+    ASSERT_NE(funcs, nullptr);
+
+    CK_INFO info{};
+    EXPECT_EQ(funcs->C_GetInfo(&info), CKR_OK);
+    CK_ULONG slotCount = 0;
+    EXPECT_EQ(funcs->C_GetSlotList(CK_FALSE, nullptr, &slotCount), CKR_OK);
+}
+
+// The registry that makes the sharing above possible must not become an owner:
+// a module stays mapped exactly as long as some manager or handle refers to it,
+// and not one call longer. Counted through the test-only accessor, because the
+// difference is invisible from outside -- a leaked module answers C_GetInfo
+// just as well as a live one.
+TEST_F(Pkcs11ModuleManagerTest, RegistryDoesNotExtendModuleLifetime)
+{
+    ASSERT_EQ(liveSharedModuleCountForTest(), 0u);
+    {
+        Pkcs11ModuleManager manager;
+        auto handle = manager.acquire(softHsmPath);
+        ASSERT_TRUE(handle.valid());
+        EXPECT_EQ(liveSharedModuleCountForTest(), 1u);
+    }
+    EXPECT_EQ(liveSharedModuleCountForTest(), 0u);
+}
+
+// The registry shares a module between overlapping users, which is what the case
+// above measures. This one measures the case NEXT to it, and it is the one that
+// stayed broken: a weak reference expires the instant the last owner lets go,
+// which is strictly before the destructor reaches C_Finalize. A signature
+// arriving in that window used to find an expired entry, load the module again
+// while the first one was still initialised, and then have C_Finalize run under
+// it -- V1.11 again, from a few instructions' worth of window.
+//
+// The window is too narrow to hit by racing, so the test is let into it: the
+// rendezvous parks the releasing thread at the top of the teardown while the
+// second caller asks for the same module.
+TEST_F(Pkcs11ModuleManagerTest, AcquireArrivingDuringTeardownGetsAnInitialisedModule)
+{
+    Pkcs11ModuleManager second;
+    Pkcs11ModuleHandle secondHandle;
+    std::atomic<bool> teardownReached{false};
+    std::atomic<bool> secondAsked{false};
+    std::thread worker;
+
+    ScopedRendezvous rendezvous([&](ModuleRegistryEvent event) {
+        if (event != ModuleRegistryEvent::BeforeTeardown)
+            return;
+        teardownReached.store(true);
+        while (!secondAsked.load())
+            std::this_thread::yield();
+        // The second caller has entered acquire. With the window open it
+        // finishes there and this thread then finalises under it; with the
+        // window closed it is parked inside the registry until this returns.
+        // The wait is bounded because it only has to be long enough for the
+        // defect to happen, and it is what makes the red reproducible.
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    });
+
+    {
+        Pkcs11ModuleManager first;
+        auto firstHandle = first.acquire(softHsmPath);
+        ASSERT_TRUE(firstHandle.valid());
+
+        worker = std::thread([&] {
+            while (!teardownReached.load())
+                std::this_thread::yield();
+            secondAsked.store(true);
+            secondHandle = second.acquire(softHsmPath);
+        });
+    }
+    // The manager and the handle are both gone, so the module's use count hit
+    // zero and the teardown -- and the rendezvous inside it -- has run.
+
+    worker.join();
+    ASSERT_TRUE(secondHandle.valid());
+
+    auto* funcs = static_cast<CK_FUNCTION_LIST*>(secondHandle.functionList());
+    ASSERT_NE(funcs, nullptr);
+    CK_INFO info{};
+    EXPECT_EQ(funcs->C_GetInfo(&info), CKR_OK);
+    CK_ULONG slotCount = 0;
+    EXPECT_EQ(funcs->C_GetSlotList(CK_FALSE, nullptr, &slotCount), CKR_OK);
+}
+
+// Loading happens with the registry held, so two callers that reach the same
+// path at once produce one dlopen and one C_Initialize rather than a race whose
+// loser's C_Finalize tears the winner down. Nothing else observable tells one
+// load of a shared object from two -- the loader hands back the same address and
+// the module the same function table -- so the count is the measurement, and the
+// rendezvous is what guarantees the two callers actually overlap.
+TEST_F(Pkcs11ModuleManagerTest, ConcurrentAcquireOfOnePathLoadsTheModuleOnce)
+{
+    // A difference, not an absolute: the counter is process-global, and asserting
+    // zero here would make this case depend on the order gtest happens to run in.
+    const std::size_t loadsBefore = sharedModuleLoadCountForTest();
+
+    Pkcs11ModuleManager first;
+    Pkcs11ModuleManager second;
+    Pkcs11ModuleHandle secondHandle;
+    std::atomic<bool> loadReached{false};
+    std::atomic<bool> secondAsked{false};
+
+    ScopedRendezvous rendezvous([&](ModuleRegistryEvent event) {
+        if (event != ModuleRegistryEvent::BeforeLoad || loadReached.load())
+            return;
+        loadReached.store(true);
+        while (!secondAsked.load())
+            std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    });
+
+    std::thread worker([&] {
+        while (!loadReached.load())
+            std::this_thread::yield();
+        secondAsked.store(true);
+        secondHandle = second.acquire(softHsmPath);
+    });
+
+    auto firstHandle = first.acquire(softHsmPath);
+    worker.join();
+
+    ASSERT_TRUE(firstHandle.valid());
+    ASSERT_TRUE(secondHandle.valid());
+    EXPECT_EQ(sharedModuleLoadCountForTest() - loadsBefore, 1u) << "the second caller loaded the module a second time";
+    EXPECT_EQ(firstHandle.functionList(), secondHandle.functionList());
+    EXPECT_EQ(liveSharedModuleCountForTest(), 1u);
+}
+
+// Waiting for a teardown means waiting for a card: the teardown logs slots out
+// with real APDUs and tears down the PC/SC transport, so an unresponsive card or
+// a wedged daemon lands in that wait. It is bounded, and on expiry the acquire is
+// refused with a diagnostic instead of holding the signature open. The budget is
+// shortened here because nothing else can tell "waited and got a module" from
+// "waited forever".
+TEST_F(Pkcs11ModuleManagerTest, AcquireRefusesRatherThanWaitOutAnEndlessTeardown)
+{
+    setModuleTeardownBudgetForTest(std::chrono::milliseconds(50));
+
+    Pkcs11ModuleManager second;
+    std::atomic<bool> teardownReached{false};
+    std::atomic<bool> secondFinished{false};
+    std::string diagnostic;
+    std::thread worker;
+
+    ScopedRendezvous rendezvous([&](ModuleRegistryEvent event) {
+        if (event != ModuleRegistryEvent::BeforeTeardown)
+            return;
+        teardownReached.store(true);
+        // Hold the teardown open well past the budget, then let it finish so the
+        // module is released and the next case starts from a clean registry.
+        while (!secondFinished.load())
+            std::this_thread::yield();
+    });
+
+    {
+        Pkcs11ModuleManager first;
+        auto firstHandle = first.acquire(softHsmPath);
+        ASSERT_TRUE(firstHandle.valid());
+
+        worker = std::thread([&] {
+            while (!teardownReached.load())
+                std::this_thread::yield();
+            try {
+                auto handle = second.acquire(softHsmPath);
+                diagnostic = "acquire returned a handle instead of refusing";
+            } catch (const std::exception& e) {
+                diagnostic = e.what();
+            }
+            secondFinished.store(true);
+        });
+    }
+
+    worker.join();
+    EXPECT_NE(diagnostic.find("still being finalized"), std::string::npos)
+        << "the refusal must say what it waited for; got: " << diagnostic;
+    EXPECT_NE(diagnostic.find("50 ms"), std::string::npos) << "and name the budget; got: " << diagnostic;
+}
+
+// The listing is what makes a caller wait, so it has to outlive the finalise --
+// it is erased only once the module is gone. Nothing measured that: moving the
+// erase ahead of the finalise left every other case green, because the half they
+// pin is the waiting, not the order. This one watches the registry from inside
+// the teardown, where the two orders differ.
+TEST_F(Pkcs11ModuleManagerTest, TheEntryOutlivesTheFinaliseThatCallersWaitFor)
+{
+    std::size_t whenTeardownStarted = 0;
+    std::size_t whenFinaliseFinished = 0;
+
+    {
+        ScopedRendezvous rendezvous([&](ModuleRegistryEvent event) {
+            if (event == ModuleRegistryEvent::BeforeTeardown)
+                whenTeardownStarted = sharedModuleEntryCountForTest();
+            else if (event == ModuleRegistryEvent::AfterTeardown)
+                whenFinaliseFinished = sharedModuleEntryCountForTest();
+        });
+
+        Pkcs11ModuleManager manager;
+        auto handle = manager.acquire(softHsmPath);
+        ASSERT_TRUE(handle.valid());
+        ASSERT_EQ(sharedModuleEntryCountForTest(), 1u);
+    }
+
+    EXPECT_EQ(whenTeardownStarted, 1u) << "the entry must be listed when the teardown begins";
+    EXPECT_EQ(whenFinaliseFinished, 1u) << "and still listed once the finalise is done: it is erased after, not before";
+    EXPECT_EQ(sharedModuleEntryCountForTest(), 0u) << "and gone once the release returns";
 }
 
 TEST(Pkcs11ModuleManagerStandalone, AcquireThrowsOnInvalidModule)

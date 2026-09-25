@@ -26,6 +26,8 @@
 #include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
 #include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
 #include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
+#include <LibreSCRS_internal/SmartCard/SessionPresence.h>
+#include <LibreSCRS_internal/SmartCard/SmartCardServices.h>
 
 #include "apdu.h"
 #include "chip_auth_card_oracle.h"
@@ -121,6 +123,47 @@ TEST(ChipAuthSessionTest, InstallSmChannelRecordsProtocolAndClosesOldChannel)
     auto* active = ActiveChannelAccessor::active(*session);
     ASSERT_NE(active, nullptr);
     EXPECT_TRUE(active->carriesSm());
+}
+
+// Installing a channel registers the reader in the process-local presence
+// registry, and installing a SECOND one must leave it registered. The optional
+// that holds the registration destroys the old one after the new entry has
+// already been written, and the old one owns exactly that entry -- so unless the
+// old registration is dropped first, a second install leaves the reader
+// unregistered while the session believes otherwise, and the next in-process
+// PKCS#11 probe binds a card that is behind a live secure channel. This drives
+// the production seam, not the registry directly: deleting the reset in
+// installSmChannel fails it.
+TEST(ChipAuthSessionTest, InstallingASecondSmChannelKeepsTheReaderRegistered)
+{
+    LibreSCRS::SmartCard::Internal::ensureSessionPresenceInitialised();
+    LibreSCRS::SmartCard::Internal::shutdownSessionPresenceForTest();
+
+    auto session = makeDetachedCardSession("reader-reinstall");
+    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*session);
+
+    ChannelInjector::installForTesting(*session, std::make_unique<PlainChannel>(conn, aidA()));
+    {
+        auto holder = session->activateChannelFor(aidA(), LibreSCRS::CancelToken{});
+        ASSERT_TRUE(holder.has_value());
+
+        // Only peek() while the holder is alive: it locks the registry and the
+        // weak reference, never the session. hasLiveSm would ask the session,
+        // whose mutex this thread is holding through the holder.
+        ActiveChannelAccessor::installSmChannel(*session, std::make_unique<ChipAuthChannel>(conn, aidA(), aesKeys()),
+                                                ChipAuthRequest{});
+        ASSERT_EQ(LibreSCRS::SmartCard::Internal::sessionPresence().peek("reader-reinstall"), session)
+            << "the first install must register the reader";
+
+        ActiveChannelAccessor::installSmChannel(*session, std::make_unique<ChipAuthChannel>(conn, aidA(), aesKeys()),
+                                                ChipAuthRequest{});
+        EXPECT_EQ(LibreSCRS::SmartCard::Internal::sessionPresence().peek("reader-reinstall"), session)
+            << "the second install left the reader unregistered";
+    }
+
+    // Holder released: now the registry may ask the session itself, which is what
+    // the in-process PKCS#11 probes do.
+    EXPECT_TRUE(LibreSCRS::SmartCard::Internal::sessionPresence().hasLiveSm("reader-reinstall"));
 }
 
 // --- activateChannelWithSm(ChipAuthRequest) --------------------------------

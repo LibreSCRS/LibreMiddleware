@@ -873,8 +873,16 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                 // would burn a registry slot for no observable benefit.
                 try {
                     Internal::ensureSessionPresenceInitialised();
-                    if (auto weak = weak_from_this(); !weak.expired())
+                    if (auto weak = weak_from_this(); !weak.expired()) {
+                        // Drop any registration we already hold FIRST. emplace
+                        // destroys the old one after insert has already written
+                        // the new entry, and the old one owns that same entry --
+                        // so it would erase what was just registered and leave
+                        // the reader unregistered while this object believes it
+                        // is not.
+                        d->presence.reset();
                         d->presence.emplace(Internal::sessionPresence().insert(d->readerName, std::move(weak)));
+                    }
                 } catch (...) {
                     // bad_alloc on insert / rehash: SM already established;
                     // losing the cross-reader guard for this one session is
@@ -1049,8 +1057,11 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
             // branch above for the rationale and lifecycle invariants.
             try {
                 Internal::ensureSessionPresenceInitialised();
-                if (auto weak = weak_from_this(); !weak.expired())
+                if (auto weak = weak_from_this(); !weak.expired()) {
+                    // Old registration first; see the BAC branch above.
+                    d->presence.reset();
                     d->presence.emplace(Internal::sessionPresence().insert(d->readerName, std::move(weak)));
+                }
             } catch (...) {
             }
             // Record the protocol that won this channel. On the PACE branch
@@ -1151,6 +1162,8 @@ void ActiveChannelAccessor::installSmChannel(CardSession& session,
     try {
         Internal::ensureSessionPresenceInitialised();
         if (auto weak = session.weak_from_this(); !weak.expired()) {
+            // Old registration first; see the BAC branch in activateChannelWithSm.
+            d->presence.reset();
             d->presence.emplace(Internal::sessionPresence().insert(d->readerName, std::move(weak)));
         }
     } catch (...) {

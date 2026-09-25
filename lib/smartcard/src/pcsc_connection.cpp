@@ -214,6 +214,15 @@ PCSCConnection::PCSCConnection(const std::string& readerName) : storedReaderName
         SCardReleaseContext(context);
         throw PCSCError("SCardConnect failed on reader: " + readerName, rv);
     }
+
+    // One event per handle, emitted after the protocol fallback has settled:
+    // the tracer reported reconnects and transmits but never the open itself,
+    // so a census of the handles a process holds could not be taken from a
+    // trace. The T=1-then-T=0 retry above is one open, and this is where it is
+    // known to have succeeded.
+    if (pcscTraceEnabled()) {
+        emitPcscTraceEvent("connect", readerName, this);
+    }
 }
 
 // Diagnostic-only escape hatch (see header): opens a real PC/SC connection

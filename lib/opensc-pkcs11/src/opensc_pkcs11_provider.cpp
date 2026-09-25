@@ -20,12 +20,22 @@ namespace LibreSCRS::OpenSc::Pkcs11 {
 std::shared_ptr<LibreSCRS::Pkcs11::Internal::PKCS11Card> OpenScPKCS11Provider::probe(const std::string& readerName)
 {
     // Defer when another in-process CardSession holds a live SM channel on
-    // this reader: opening a parallel PC/SC handle while a PACE/BAC SM
-    // tunnel is live on the card-side context invalidates the tunnel
+    // this reader: binding a card over a parallel PC/SC handle while a PACE/BAC
+    // SM tunnel is live on the card-side context invalidates the tunnel
     // (BSI TR-03110 §3 — SM is session-scoped). Sessions without a live
     // secure channel (contact PKCS#15, PIV, generic ICC) are safe to bind
     // against in parallel — mere presence of a CardSession is NOT
     // sufficient grounds to skip.
+    //
+    // This is deliberately conservative about the handle as well as the bind.
+    // What is known to break a tunnel is the bind: it sends APDUs outside the
+    // secure channel, and a malformed or plain command under an established
+    // channel ends the session card-side. A handle on its own need not — the reader enumeration
+    // this very call performs opens and closes one on every reader holding a
+    // card, including readers refused here, and does no more than a
+    // reader-level control call before a SCARD_LEAVE_CARD disconnect. That
+    // narrower statement is not yet measured on hardware, so the guard refuses
+    // the whole probe rather than only the APDUs.
     LibreSCRS::SmartCard::Internal::ensureSessionPresenceInitialised();
     if (LibreSCRS::SmartCard::Internal::sessionPresence().hasLiveSm(readerName))
         return nullptr;

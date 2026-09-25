@@ -1056,6 +1056,72 @@ TEST(SigningServiceBufferSignTest, ReturnsUserCancelledWhenProviderCancels)
     EXPECT_FALSE(result.signedDocumentBytes.has_value());
 }
 
+namespace {
+// Set an environment variable for the duration of a scope and put back whatever
+// was there. The variable below changes how the whole process resolves the
+// PKCS#11 module, so leaking it would reach every case that runs afterwards.
+class ScopedEnv
+{
+public:
+    ScopedEnv(const char* name, const char* value) : key(name)
+    {
+        if (const char* current = std::getenv(name); current != nullptr) {
+            had = true;
+            previous = current;
+        }
+        ::setenv(name, value, 1);
+    }
+    ~ScopedEnv()
+    {
+        if (had)
+            ::setenv(key, previous.c_str(), 1);
+        else
+            ::unsetenv(key);
+    }
+    ScopedEnv(const ScopedEnv&) = delete;
+    ScopedEnv& operator=(const ScopedEnv&) = delete;
+
+private:
+    const char* key;
+    bool had = false;
+    std::string previous;
+};
+} // namespace
+
+// Document signing currently depends on loading the in-process PKCS#11 module:
+// point the resolver at a path that does not exist and the signature is refused
+// with an engine error naming the module it could not load. The test says so
+// plainly, so the day signing stops loading a module in-process this case flips
+// to asserting success instead of changing quietly.
+TEST(SigningServiceBufferSignTest, SignWithoutLoadableModuleIsRefusedToday)
+{
+    const ScopedEnv module{"LIBRESCRS_PKCS11_MODULE", "/nonexistent/librescrs-pkcs11.so"};
+
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    auto svc = makeBufferSignService();
+    ASSERT_NE(svc, nullptr);
+    auto request = makeBufferSignRequest();
+
+    auto provider = [](const LibreSCRS::Auth::AuthRequirement&) {
+        std::vector<LibreSCRS::Auth::CredentialEntry> values;
+        values.emplace_back("pin", LibreSCRS::Secure::String{"0000"});
+        return LibreSCRS::Auth::CredentialResult::ok(std::move(values));
+    };
+    auto plugin = std::make_shared<StubPkiPlugin>();
+
+    // A %PDF- prefix clears the fail-fast document pre-check so the pipeline
+    // reaches the backend rather than rejecting the bytes.
+    const std::vector<std::uint8_t> document{'%', 'P', 'D', 'F', '-', '1', '.', '7', '\n', '%', 0xE2, 0xE3};
+    auto result = svc->sign(request, std::span<const std::uint8_t>{document}, provider, plugin, session);
+
+    EXPECT_EQ(result.status, LibreSCRS::Signing::SigningResult::Status::SigningEngineError);
+    ASSERT_TRUE(result.diagnosticDetail.has_value());
+    EXPECT_NE(result.diagnosticDetail->find("Cannot load PKCS#11 module"), std::string::npos)
+        << "the diagnostic must name the module load, not just report an engine error; got: "
+        << *result.diagnosticDetail;
+    EXPECT_FALSE(result.signedDocumentBytes.has_value());
+}
+
 TEST(SigningResultFactories, InvalidDocumentCarriesStatusAndKey)
 {
     using LibreSCRS::Signing::SigningResult;

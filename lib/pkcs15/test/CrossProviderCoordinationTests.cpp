@@ -26,6 +26,14 @@
 /// contactless cards — which depends on all three holding simultaneously —
 /// silently regresses. These tests pin the joint invariant down without
 /// any hardware dependency.
+///
+/// @par Why a counting PC/SC provider, and not a null card
+/// The deferral assertions used to read "probe returned nullptr", which is
+/// also what binding returns when there is no card — and there never is one
+/// here. Deleting the short-circuit under test left the suite green. OpenSC
+/// reaches PC/SC through a library it dlopens by name, so pointing
+/// OPENSC_CONF at a counting provider makes the question answerable directly:
+/// did OpenSC establish a context and open a handle, or not.
 
 #include "pkcs15_pkcs11_card.h"
 
@@ -51,6 +59,8 @@
 
 #include "fake_channel.h"
 
+#include "counting_pcsc_shim.h"
+
 #include <internal/OpenScPKCS11Provider.h>
 #include <internal/PinClassification.h>
 
@@ -58,10 +68,17 @@
 
 #include <gtest/gtest.h>
 
+#include <dlfcn.h>
+
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 // Lock the noexcept contract of LibreSCRS::Pkcs15::Internal::isUserPin at
 // compile time. The body allocates (label copy + std::transform); the
@@ -87,6 +104,135 @@ using LibreSCRS::SmartCard::Internal::sessionPresence;
 using LibreSCRS::SmartCard::Internal::shutdownSessionPresenceForTest;
 
 constexpr const char* kReader = "Phantom Reader 0";
+
+// A structurally valid four-byte T=1 ATR. Nothing is expected to recognise it;
+// the reader layer only has to be willing to hand it on.
+constexpr const char* kShimAtr = "3B800181";
+
+// A dlopen-ed view of the counting provider OpenSC loads.
+//
+// Process-wide and kept open for the life of the binary on purpose: OpenSC
+// dlopens and dlcloses the same path around each context, and if this view let
+// go between cases the mapping would be unloaded and the counters would come
+// back zeroed for a reason that has nothing to do with what was measured.
+class CountingShim
+{
+public:
+    CountingShim()
+    {
+        handle = ::dlopen(LIBRESCRS_PCSC_SHIM_PATH, RTLD_LAZY | RTLD_LOCAL);
+        if (handle == nullptr) {
+            const char* why = ::dlerror();
+            error = (why != nullptr) ? why : "dlopen failed";
+            return;
+        }
+        countsFn = reinterpret_cast<CountsFn>(::dlsym(handle, "librescrs_shim_counts"));
+        openHandlesFn = reinterpret_cast<OpenHandlesFn>(::dlsym(handle, "librescrs_shim_open_handles"));
+        resetFn = reinterpret_cast<ResetFn>(::dlsym(handle, "librescrs_shim_reset"));
+        listReadersFn = reinterpret_cast<ListReadersFn>(::dlsym(handle, "SCardListReaders"));
+        connectFn = reinterpret_cast<ConnectFn>(::dlsym(handle, "SCardConnect"));
+        statusFn = reinterpret_cast<StatusFn>(::dlsym(handle, "SCardStatus"));
+        disconnectFn = reinterpret_cast<DisconnectFn>(::dlsym(handle, "SCardDisconnect"));
+        if (countsFn == nullptr || openHandlesFn == nullptr || resetFn == nullptr || listReadersFn == nullptr ||
+            connectFn == nullptr || statusFn == nullptr || disconnectFn == nullptr)
+            error = "the counting provider is missing one of its entry points";
+    }
+
+    CountingShim(const CountingShim&) = delete;
+    CountingShim& operator=(const CountingShim&) = delete;
+
+    [[nodiscard]] bool loaded() const
+    {
+        return error.empty();
+    }
+    [[nodiscard]] const std::string& why() const
+    {
+        return error;
+    }
+
+    [[nodiscard]] LibrescrsShimCounts counts(const char* reader) const
+    {
+        return countsFn(reader);
+    }
+    [[nodiscard]] unsigned long openHandles() const
+    {
+        return openHandlesFn();
+    }
+    void reset() const
+    {
+        resetFn();
+    }
+
+    /// @brief The provider's own SCardListReaders, for the two-call case below.
+    [[nodiscard]] LONG listReaders(char* buffer, DWORD* length) const
+    {
+        return listReadersFn(0, nullptr, buffer, length);
+    }
+
+    [[nodiscard]] LONG connect(const char* reader, SCARDHANDLE* card) const
+    {
+        DWORD activeProtocol = 0;
+        return connectFn(0, reader, SCARD_SHARE_SHARED, SCARD_PROTOCOL_T1, card, &activeProtocol);
+    }
+    [[nodiscard]] LONG status(SCARDHANDLE card, char* name, DWORD* nameLength, unsigned char* atr,
+                              DWORD* atrLength) const
+    {
+        return statusFn(card, name, nameLength, nullptr, nullptr, atr, atrLength);
+    }
+    [[nodiscard]] LONG disconnect(SCARDHANDLE card) const
+    {
+        return disconnectFn(card, SCARD_LEAVE_CARD);
+    }
+
+private:
+    using CountsFn = LibrescrsShimCounts (*)(const char*);
+    using OpenHandlesFn = unsigned long (*)();
+    using ResetFn = void (*)();
+    using ListReadersFn = LONG (*)(SCARDCONTEXT, const char*, char*, DWORD*);
+    using ConnectFn = LONG (*)(SCARDCONTEXT, const char*, DWORD, DWORD, SCARDHANDLE*, DWORD*);
+    using StatusFn = LONG (*)(SCARDHANDLE, char*, DWORD*, DWORD*, DWORD*, unsigned char*, DWORD*);
+    using DisconnectFn = LONG (*)(SCARDHANDLE, DWORD);
+
+    void* handle = nullptr;
+    CountsFn countsFn = nullptr;
+    OpenHandlesFn openHandlesFn = nullptr;
+    ResetFn resetFn = nullptr;
+    ListReadersFn listReadersFn = nullptr;
+    ConnectFn connectFn = nullptr;
+    StatusFn statusFn = nullptr;
+    DisconnectFn disconnectFn = nullptr;
+    std::string error;
+};
+
+const CountingShim& shim()
+{
+    static const CountingShim view;
+    return view;
+}
+
+// Point OpenSC at the counting provider. The configuration file is written into
+// the shim's own directory in the build tree -- beside the library it names, and
+// never under /tmp, which is RAM on this project's machines.
+void installCountingPcscProvider()
+{
+    static const std::string confPath = [] {
+        const std::filesystem::path shimPath{LIBRESCRS_PCSC_SHIM_PATH};
+        const std::filesystem::path conf = shimPath.parent_path() / "opensc-counting-shim.conf";
+        std::ofstream out(conf);
+        out << "app default {\n"
+            << "    reader_driver pcsc {\n"
+            << "        provider_library = \"" << shimPath.string() << "\";\n"
+            << "    }\n"
+            << "}\n";
+        return conf.string();
+    }();
+
+    ::setenv("OPENSC_CONF", confPath.c_str(), 1);
+    // ';'-separated, not the PC/SC multi-string's NUL: setenv takes a C string,
+    // so a NUL byte would end the value. The provider builds the multi-string.
+    ::setenv("LIBRESCRS_SHIM_READERS", kReader, 1);
+    ::setenv("LIBRESCRS_SHIM_ATR", kShimAtr, 1);
+}
 
 AppletAid makeAid()
 {
@@ -128,6 +274,14 @@ protected:
     {
         ensureSessionPresenceInitialised();
         shutdownSessionPresenceForTest();
+        ASSERT_TRUE(shim().loaded()) << shim().why();
+        installCountingPcscProvider();
+        shim().reset();
+    }
+
+    void TearDown() override
+    {
+        shim().reset();
     }
 };
 
@@ -169,6 +323,13 @@ TEST_F(CrossProviderCoordination, OpenScProbeShortCircuitsWhenSessionHasLiveSm)
     auto card = provider.probe(kReader);
     EXPECT_EQ(card, nullptr);
 
+    // The load-bearing assertion, and the reason this suite loads a counting
+    // PC/SC provider: a null return is what binding without a card returns too,
+    // so it says nothing about whether the provider deferred. Establishing a
+    // PC/SC context is the first thing OpenSC does and the first thing that
+    // would disturb a live secure channel; zero of them is the invariant.
+    EXPECT_EQ(shim().counts(nullptr).establishContext, 0u);
+
     // SessionPresence entry survives the short-circuit so subsequent
     // probes on the same reader continue to defer.
     EXPECT_TRUE(sessionPresence().hasLiveSm(kReader));
@@ -186,7 +347,83 @@ TEST_F(CrossProviderCoordination, OpenScProbeProceedsWhenSessionHasNoLiveSm)
     // that it did NOT short-circuit early; the presence entry stays in
     // place regardless of bind outcome.
     (void)provider.probe(kReader);
+
+    // The positive control for the assertion above: with no live secure channel
+    // the provider goes all the way to the PC/SC layer. Without this half, a
+    // provider that short-circuited unconditionally would pass the case above.
+    //
+    // Two handles, pinned as measured rather than assumed: OpenSC opens one
+    // while enumerating readers, to probe the reader's features, and one to
+    // connect to the card. Both are closed before probe returns, which is the
+    // half of the contract the deferral cases cannot show.
+    const auto seen = shim().counts(kReader);
+    EXPECT_EQ(seen.establishContext, 1u);
+    EXPECT_EQ(seen.connect, 2u);
+    EXPECT_EQ(shim().openHandles(), 0u) << "every handle this probe opened must be closed on return";
     EXPECT_FALSE(sessionPresence().hasLiveSm(kReader));
+}
+
+// ---------------------------------------------------------------------------
+// The counting provider is itself a measuring instrument, so its own answers
+// have to be right. PC/SC's two-call convention is where a provider gets this
+// wrong invisibly: every caller that first asks for the length and then passes
+// a buffer of exactly that size cannot tell a provider that reports the length
+// of the data from one that echoes the buffer size back. A caller with a LARGER
+// buffer can, and OpenSC is such a caller in places.
+// ---------------------------------------------------------------------------
+
+TEST_F(CrossProviderCoordination, CountingProviderReportsTheDataLengthNotTheBufferSize)
+{
+    DWORD needed = 0;
+    ASSERT_EQ(shim().listReaders(nullptr, &needed), SCARD_S_SUCCESS);
+    // One reader name, its NUL, and the multi-string's own terminator.
+    ASSERT_EQ(needed, static_cast<DWORD>(std::strlen(kReader) + 2));
+
+    std::vector<char> oversized(needed + 64, '\x7F');
+    DWORD given = static_cast<DWORD>(oversized.size());
+    ASSERT_EQ(shim().listReaders(oversized.data(), &given), SCARD_S_SUCCESS);
+    EXPECT_EQ(given, needed) << "a provider that reports the buffer size hides a length bug";
+    EXPECT_STREQ(oversized.data(), kReader);
+    EXPECT_EQ(oversized[std::strlen(kReader) + 1], '\0') << "the multi-string must be doubly terminated";
+
+    std::vector<char> tooSmall(needed - 1, '\x7F');
+    DWORD small = static_cast<DWORD>(tooSmall.size());
+    EXPECT_EQ(shim().listReaders(tooSmall.data(), &small), SCARD_E_INSUFFICIENT_BUFFER);
+    EXPECT_EQ(small, needed);
+}
+
+TEST_F(CrossProviderCoordination, CountingProviderReportsTheStatusLengthsNotTheBufferSizes)
+{
+    // SCardStatus carries the same convention twice over, for the reader name
+    // and for the ATR, and in this suite's path the reader driver takes the ATR
+    // from SCardGetStatusChange instead -- so a length bug here would be
+    // invisible in both directions unless something asks on purpose.
+    SCARDHANDLE card = 0;
+    ASSERT_EQ(shim().connect(kReader, &card), SCARD_S_SUCCESS);
+
+    DWORD nameNeeded = 0;
+    DWORD atrNeeded = 0;
+    ASSERT_EQ(shim().status(card, nullptr, &nameNeeded, nullptr, &atrNeeded), SCARD_S_SUCCESS);
+    ASSERT_EQ(nameNeeded, static_cast<DWORD>(std::strlen(kReader) + 1));
+    ASSERT_GT(atrNeeded, 0u);
+
+    std::vector<char> name(nameNeeded + 64, '\x7F');
+    std::vector<unsigned char> atr(atrNeeded + 64, 0x7Fu);
+    DWORD nameGiven = static_cast<DWORD>(name.size());
+    DWORD atrGiven = static_cast<DWORD>(atr.size());
+    ASSERT_EQ(shim().status(card, name.data(), &nameGiven, atr.data(), &atrGiven), SCARD_S_SUCCESS);
+    EXPECT_EQ(nameGiven, nameNeeded) << "the reader name length must be the data's, not the buffer's";
+    EXPECT_EQ(atrGiven, atrNeeded) << "the ATR length must be the data's, not the buffer's";
+    EXPECT_STREQ(name.data(), kReader);
+
+    std::vector<char> shortName(nameNeeded - 1, '\x7F');
+    DWORD shortGiven = static_cast<DWORD>(shortName.size());
+    DWORD atrAgain = static_cast<DWORD>(atr.size());
+    EXPECT_EQ(shim().status(card, shortName.data(), &shortGiven, atr.data(), &atrAgain), SCARD_E_INSUFFICIENT_BUFFER);
+    EXPECT_EQ(shortGiven, nameNeeded);
+
+    EXPECT_EQ(shim().disconnect(card), SCARD_S_SUCCESS);
+    EXPECT_EQ(shim().openHandles(), 0u);
 }
 
 // ---------------------------------------------------------------------------

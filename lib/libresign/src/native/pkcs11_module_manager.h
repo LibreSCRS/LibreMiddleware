@@ -16,7 +16,8 @@
 /// critical path. Each per-sign Token acquires a handle from the
 /// manager; the handle's refcount keeps the underlying @c LoadedModule
 /// alive while the Token uses it. The module stays mapped until the
-/// owning manager is destroyed (typically at host-process exit).
+/// last in-process holder of a handle to it is gone — which may be a
+/// different manager than the one that loaded it.
 ///
 /// @par Why per-Token @c dlclose is a regression vector
 /// Per-Token @c C_Finalize + @c dlclose unmaps the module and forces
@@ -27,7 +28,12 @@
 /// cross-reader SM guard survives a module reload, but the dlopen
 /// round-trip itself is wasteful; this manager eliminates it.
 
+#include "native/pkcs11_module_handle.h"
+
+#include <chrono>
+#include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -35,73 +41,37 @@
 
 namespace libresign {
 
-// Forward declared so the header does not pull in pkcs11.h. The
-// implementation TU resolves the concrete CK_FUNCTION_LIST shape.
+// Defined in this manager's own translation unit, which is the only one that
+// finalises and unloads a module. Forward declared here so the header does not
+// pull in pkcs11.h.
 struct LoadedModule;
-
-/// @brief Lightweight handle to a process-shared loaded PKCS#11 module.
-///
-/// Held by @ref Pkcs11Token instances and other consumers; copying is
-/// a refcount bump on the underlying @ref LoadedModule. The handle
-/// exposes the module's path, the C @c CK_FUNCTION_LIST pointer and
-/// the raw @c dlopen handle without enabling the holder to unload the
-/// module — unload happens through @ref Pkcs11ModuleManager destruction.
-///
-/// @par Thread-safety
-/// Distinct handles are independent. A single handle is not internally
-/// synchronised — copy and move are not safe to race against. The
-/// underlying @ref LoadedModule's PKCS#11 session state is owned by
-/// the Token, not the manager.
-class Pkcs11ModuleHandle
-{
-public:
-    Pkcs11ModuleHandle() noexcept = default;
-
-    /// @brief Reach the underlying C @c CK_FUNCTION_LIST.
-    /// @return Pointer to the PKCS#11 function table, never null on a
-    ///         live handle. @c valid() returns @c false on a default-
-    ///         constructed handle and the function pointer is null.
-    [[nodiscard]] void* functionList() const noexcept;
-
-    /// @brief Raw @c dlopen handle for diagnostic / @c dlsym callers
-    ///        that need to reach non-PKCS#11 symbols (the inject hook,
-    ///        for example).
-    /// @return Opaque @c dlopen handle or @c nullptr.
-    [[nodiscard]] void* dlHandle() const noexcept;
-
-    /// @brief Path the module was loaded from, after canonicalisation
-    ///        by @ref Pkcs11ModuleManager::acquire.
-    [[nodiscard]] const std::filesystem::path& path() const noexcept;
-
-    /// @brief Whether the handle refers to a live module.
-    /// @return @c true iff the underlying @ref LoadedModule is live;
-    ///         @c false for a default-constructed handle.
-    [[nodiscard]] bool valid() const noexcept
-    {
-        return static_cast<bool>(loaded);
-    }
-
-private:
-    friend class Pkcs11ModuleManager;
-    explicit Pkcs11ModuleHandle(std::shared_ptr<LoadedModule> module) noexcept;
-
-    std::shared_ptr<LoadedModule> loaded;
-};
 
 /// @brief Process-local cache of loaded PKCS#11 modules keyed by
 ///        canonical filesystem path.
 ///
 /// @par Lifecycle
 /// The manager owns a strong reference to every loaded module. The
-/// first @ref acquire for a given path performs @c dlopen and
-/// @c C_Initialize; subsequent acquires return a handle to the cached
-/// @ref LoadedModule. Modules are unloaded (@c C_Finalize then
-/// @c dlclose) when the manager is destroyed — which means a Token
-/// outliving the manager would have a dangling function pointer. The
+/// first @ref acquire for a given path anywhere in the process performs
+/// @c dlopen and @c C_Initialize; every later acquire of the same
+/// canonical path — through this manager or any other one alive in the
+/// process — returns a handle to that same @ref LoadedModule. A module
+/// is unloaded (@c C_Finalize then @c dlclose) when the last manager and
+/// the last handle referring to it are gone, which means a Token
+/// outliving every holder would have a dangling function pointer. The
 /// architectural invariant is therefore "manager is held by a longer-
 /// lived owner than any Token built from it". @ref NativeSigningService
 /// owns the manager as a member; Tokens are constructed within sign
 /// calls and destroyed before the service.
+///
+/// @par Why the sharing is process-wide
+/// Two concurrent sign calls own one manager each. While each kept its
+/// own @c LoadedModule, the first to finish called @c C_Finalize under
+/// the second, whose every subsequent PKCS#11 call then returned
+/// @c CKR_CRYPTOKI_NOT_INITIALIZED. The module's initialised state is
+/// process-scoped by specification (PKCS#11 v2.40 §6.6) and its mapping
+/// is refcounted process-wide by @c dlopen, so a process-wide registry
+/// of weak references mirrors a lifetime that already exists rather
+/// than inventing one.
 ///
 /// @par CKR_CRYPTOKI_ALREADY_INITIALIZED tolerance
 /// Some loader configurations (in-process p11-kit, third-party tooling
@@ -155,5 +125,62 @@ private:
     mutable std::mutex mu;
     std::unordered_map<std::string, std::shared_ptr<LoadedModule>> modules;
 };
+
+/// @brief Test-only: the points inside the process-wide registry a test can
+///        stop the thread that reached them at.
+///
+/// Both windows are a few instructions wide and cannot be hit by racing, so a
+/// test that means to measure what happens inside one has to be let in.
+enum class ModuleRegistryEvent {
+    BeforeLoad,     ///< About to @c dlopen and @c C_Initialize a module.
+    BeforeTeardown, ///< The last holder let go; nothing has been finalised yet.
+    AfterTeardown,  ///< The module is finalised and unloaded; its entry is not yet erased.
+};
+
+/// @brief Test-only: run @p rendezvous whenever one of those points is reached.
+///
+/// Pass an empty function to remove it. The callback runs on whichever thread got
+/// there, and what that thread holds differs per event:
+///  - @c BeforeTeardown and @c AfterTeardown: the registry lock is NOT held. A
+///    callback may do as it likes, including calling back into the registry.
+///  - @c BeforeLoad: the registry lock IS held, because loading under it is the
+///    property that event exists to test. A callback that calls @ref
+///    Pkcs11ModuleManager::acquire, @ref resetSharedModuleRegistryForTest or
+///    @ref liveSharedModuleCountForTest from there deadlocks against itself on a
+///    non-recursive mutex. Block, signal and return; do not re-enter.
+void setModuleRegistryRendezvousForTest(std::function<void(ModuleRegistryEvent)> rendezvous);
+
+/// @brief Test-only: shorten the budget an acquire waits for a teardown in
+///        flight before refusing (default 30 s).
+///
+/// The only honest test of a budget is one that shortens it; nothing else can
+/// distinguish "waited and got a module" from "waited forever".
+void setModuleTeardownBudgetForTest(std::chrono::milliseconds budget);
+
+/// @brief Test-only: how many times a module has been loaded (@c dlopen plus
+///        @c C_Initialize) since the last reset.
+///
+/// One load per module, however many managers ask for it, is the property the
+/// registry exists for; nothing else observable distinguishes one load from two
+/// of the same shared object.
+[[nodiscard]] std::size_t sharedModuleLoadCountForTest();
+
+/// @brief Test-only: drop every entry from the process-wide module registry.
+///
+/// The obligation that comes with process-global state. Entries are weak
+/// references, so this neither finalises nor unloads anything — it only stops
+/// a module loaded by an earlier test from being shared with a later one.
+void resetSharedModuleRegistryForTest();
+
+/// @brief Test-only: how many registry entries still refer to a live module.
+/// @return Count of entries whose weak reference can still be locked.
+[[nodiscard]] std::size_t liveSharedModuleCountForTest();
+
+/// @brief Test-only: how many entries the registry lists at all, live or spent.
+///
+/// A spent entry is not a leak, it is the marker a caller waits on, so the two
+/// counts answer different questions and a test that means the second must not
+/// ask the first.
+[[nodiscard]] std::size_t sharedModuleEntryCountForTest();
 
 } // namespace libresign

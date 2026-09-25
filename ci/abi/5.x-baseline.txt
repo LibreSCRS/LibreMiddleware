@@ -406,7 +406,7 @@ LibreSCRS::SmartCard::Internal::Monitor::subscribe(std::function<void (LibreSCRS
 LibreSCRS::SmartCard::Internal::Monitor::unsubscribe(unsigned long)@@LM_4
 LibreSCRS::SmartCard::Internal::Monitor::waitForFirstReader(bool)@@LM_4
 LibreSCRS::SmartCard::Internal::Monitor::~Monitor()@@LM_4
-LibreSCRS::SmartCard::Internal::SessionPresence::Registration::Registration(LibreSCRS::SmartCard::Internal::SessionPresence*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)@@LM_4
+LibreSCRS::SmartCard::Internal::SessionPresence::Registration::Registration(LibreSCRS::SmartCard::Internal::SessionPresence*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::weak_ptr<LibreSCRS::SmartCard::CardSession>)@@LM_4
 LibreSCRS::SmartCard::Internal::SessionPresence::Registration::Registration(LibreSCRS::SmartCard::Internal::SessionPresence::Registration&&)@@LM_4
 LibreSCRS::SmartCard::Internal::SessionPresence::Registration::operator=(LibreSCRS::SmartCard::Internal::SessionPresence::Registration&&)@@LM_4
 LibreSCRS::SmartCard::Internal::SessionPresence::Registration::~Registration()@@LM_4
@@ -414,7 +414,7 @@ LibreSCRS::SmartCard::Internal::SessionPresence::clearAll()@@LM_4
 LibreSCRS::SmartCard::Internal::SessionPresence::hasLiveSm(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) const@@LM_4
 LibreSCRS::SmartCard::Internal::SessionPresence::insert(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::weak_ptr<LibreSCRS::SmartCard::CardSession>)@@LM_4
 LibreSCRS::SmartCard::Internal::SessionPresence::peek(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) const@@LM_4
-LibreSCRS::SmartCard::Internal::SessionPresence::remove(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)@@LM_4
+LibreSCRS::SmartCard::Internal::SessionPresence::remove(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::weak_ptr<LibreSCRS::SmartCard::CardSession> const&)@@LM_4
 LibreSCRS::SmartCard::Internal::ensureSessionPresenceInitialised()@@LM_4
 LibreSCRS::SmartCard::Internal::sessionPresence()@@LM_4
 LibreSCRS::SmartCard::MonitorService::Config::fromEnv()@@LM_4

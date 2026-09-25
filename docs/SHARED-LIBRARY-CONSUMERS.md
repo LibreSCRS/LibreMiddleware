@@ -192,6 +192,30 @@ via its standard `${libdir}/pkcs11/` search path. Priority is 10 — well below
 typical vendor middleware (50+) so proprietary middleware shipped with eID
 hardware wins automatic resolution when both are installed.
 
+### What the direct module does not do
+
+Two limits of the direct deployment, both of them properties of the module and
+not of the packaging, so choosing this arrangement means accepting them:
+
+- **It is exclusive with the agent on the same reader.** Both open PC/SC
+  handles and both collect a PIN; running them against one reader is two
+  owners for one card.
+- **It does not notice a card swapped in the same reader.** Each reader is
+  probed exactly once for the life of the loaded module, because nothing in it
+  watches for removal: `C_WaitForSlotEvent` reports
+  `CKR_FUNCTION_NOT_SUPPORTED` and the module runs no thread of its own. The
+  slots the first card published stay surfaced until `C_Finalize`, and so does
+  the first card's identity — label, serial number, certificate. Two cards of
+  the same family share their object identifiers, so a PIN collected for the
+  first is presented to the second. A host that expects hot swap must reload the
+  module, or use the agent, which owns the reader and does watch.
+
+A third property belongs to the signing API rather than to this deployment: a
+document signature loads the module into the signing process and probes every
+reader, which opens a short-lived handle on the card being signed with and on
+every other card present, and binds every card that carries no live secure
+channel. `SECURITY.md` and `CHANGELOG.md` describe what that costs per reader.
+
 ### Packaging contract
 
 This is the split this project **intends to ship**; no `librescrs-*` package has

@@ -7,3 +7,4 @@
 packaging/ci/build-deb.sh  run as packaging/ci/build-$FAMILY.sh by packaging/ci/package-gate.sh:142
 packaging/ci/build-rpm.sh  run as packaging/ci/build-$FAMILY.sh by packaging/ci/package-gate.sh:142
 ci/scripts/changelog-to-debian.sh  hand-run when refreshing packaging/debian/changelog; no CI step consumes it
+ci/scripts/check-signing-no-module-loader.sh  red by construction while the signing facade loads the PKCS#11 module in-process; wired once it stops

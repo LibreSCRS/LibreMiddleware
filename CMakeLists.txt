@@ -223,6 +223,15 @@ add_subdirectory(lib/eu-vrc)
 add_subdirectory(lib/rs-health)
 add_subdirectory(lib/emrtd-crypto)
 add_subdirectory(lib/emrtd)
+# The counting PC/SC provider the cross-provider suite loads through
+# OPENSC_CONF. Declared HERE, above lib/pkcs15, because that library adds its
+# own test directory during its own add_subdirectory() -- long before the
+# top-level add_subdirectory(test) -- and a test that compiles in
+# $<TARGET_FILE:pcsc_counting_shim> needs the target to exist by then.
+if(BUILD_TESTING AND LIBREMIDDLEWARE_BUILD_PLUGINS AND LIBRESCRS_VENDOR_OPENSC)
+    add_subdirectory(test/pcsc_counting_shim)
+endif()
+
 add_subdirectory(lib/pkcs15)
 # Digital signing support (LibreSign library + DSS integration).
 # pkcs11.so is always built — it's a standalone PKCS#11 module

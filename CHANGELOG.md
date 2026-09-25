@@ -232,6 +232,25 @@ Notable user-visible changes per release. Format follows
 
 ### Fixed
 
+- **A signature no longer breaks another signature that is already running.**
+  Each signing call owned its own PKCS#11 module manager, and nothing counted
+  the module across them: the manager whose `C_Initialize` had returned first
+  called `C_Finalize` when its call returned, and every PKCS#11 call the other
+  one still had to make then failed with `CKR_CRYPTOKI_NOT_INITIALIZED`. The
+  signature was reported as an engine error, with nothing in the message to
+  suggest that finishing one signature had broken the other.
+
+  A module is now shared by every user of it in the process and finalised only
+  after the last of them has let go. Two cases had to be closed, not one: two
+  users at the same time, and a user arriving while the previous one's module is
+  being finalised — a window a few instructions wide that the first half of the
+  fix left open. A module being released now stays listed as such, present but
+  spent, for as long as the finalise takes; that finalise runs without holding
+  the registry that hands modules out, because it can wait on the card. A call
+  arriving in that window therefore finds the module accounted for and waits for
+  it — with a time limit, after which that one signature is refused rather than
+  held open — instead of loading a second copy underneath the first.
+
 - **PACE key material is zeroed when it is released again.** The ephemeral
   private keys, the x-coordinate of the ECDH shared secret and the decrypted
   nonce exist only as OpenSSL `BIGNUM`s, and their deleter had stopped wiping
@@ -332,6 +351,66 @@ records their departure, and the SONAME moved with it.
   they were never public. Removing the certificate-folder setter also
   removed the state only it could set and the branch that read that state,
   which would otherwise have been dead the moment the setter went.
+
+### Known limitations
+
+- **A document signature opens a second, short-lived PC/SC handle on the card
+  it is signing with.** Signing loads the PKCS#11 module into the signing
+  process and asks it for its slots, and answering that means probing the
+  readers. On a reader whose session carries no live secure channel the module
+  opens its own handle to the same card the caller is already talking to, and
+  binds it. The handle is closed and the module unloaded before the call
+  returns. A card protected by a secure channel is not **re-bound** this way —
+  that session is adopted instead of reopened — but see the next item for what
+  still reaches it.
+
+  `test/pcsc_handle_census_test.cpp` records the counts. They are the counts of
+  a signature whose bind fails, which is the path that test drives; a handle
+  opened only where the bind succeeds would not move them.
+
+- **The probe also touches readers the signature has nothing to do with.**
+  Every reader the PC/SC layer reports gets a handle opened and closed during
+  that same probe, including a reader holding a live secure channel: refusing
+  to bind such a reader stops the bind, not the handle, because establishing a
+  PC/SC context for any reader makes the bundled OpenSC enumerate all of them
+  and read each one's features.
+
+  What that costs differs by reader. On a reader **without** a live secure
+  channel the module does not merely open a handle, it binds the card: that
+  sends APDUs, so an operation running there can find card state it did not set
+  — a different selected file, a changed security state — and, where the driver
+  has to change protocol, a card that was unpowered under it. On a reader
+  **with** a live secure channel only the enumeration reaches it, which by the
+  reader driver's own source is a shared connect, one reader-level control call
+  and a disconnect that leaves the card powered — a shape that driver hardcodes
+  for this path, so no configuration turns it into a reset. On that reading the
+  channel survives, but this has **not been confirmed on a card**, and no test in
+  this release can confirm it. If a contactless session drops while you sign a
+  document on another reader, this is the most likely cause: re-establish the
+  session — you will be asked for the card access number again — and please
+  report it.
+
+  The counts and the reasoning above assume the reader driver's own defaults. A
+  host that ships an `/etc/opensc.conf` with a `reader_driver pcsc` block can
+  change the bind path itself: demanding exclusive access (signing then fails on
+  a reader the agent holds), resetting or unpowering the card on disconnect, or
+  replacing the PC/SC layer. This release ships no such file and sets no
+  `OPENSC_CONF`.
+
+- **The direct PKCS#11 module does not notice a card swapped in the same
+  reader.** Each reader is probed exactly once for the life of the loaded
+  module: there is no thread watching for removal, and `C_WaitForSlotEvent`
+  reports `CKR_FUNCTION_NOT_SUPPORTED`, so the slots the first card published
+  stay surfaced until `C_Finalize`.
+
+  What stays surfaced is the first card's **identity**, not just its slot: the
+  token label, the serial number and the certificate a host reads back are the
+  ones the module learned from the card that has gone, while APDUs go to the one
+  now in the reader. For two cards of the same family the object identifiers
+  match, so the objects rebind silently and a PIN collected for the first card
+  is presented to the second — spending its retry counter. Replace the card and
+  reload the module, or use the agent, which owns the reader and does watch.
+  This affects the `librescrs-pkcs11-direct` deployment only.
 
 ## [4.2.0] — 2026-05-29
 
