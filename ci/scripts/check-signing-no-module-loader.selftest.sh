@@ -9,10 +9,10 @@
 #
 # Usage: check-signing-no-module-loader.selftest.sh [<build-dir>]
 #
-# The build directory may also arrive in BUILD_DIR, which is how the shared
-# build tool hands a leased tree to a gate:
+# The build directory may also arrive in BUILD_DIR, which lets the runner
+# drive it with a built tree:
 #
-#   knowledge/tools/shared-build.sh run lm -- ./ci/scripts/run-selftests.sh
+#   BUILD_DIR=build ./ci/scripts/run-selftests.sh
 #
 # That is the only way run-selftests.sh can drive this one, because the runner
 # passes no arguments -- and it must be driven from a job that has built the

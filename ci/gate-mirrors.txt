@@ -5,8 +5,8 @@
 #           <path>  DIFFERENT:<repo>[,<repo>…]  <why it may differ>
 #           <path>  PENDING:<package>           <who creates it, and when>
 #
-# knowledge/tools/gate-drift-scan.sh compares them, from the workspace, because
-# that is the only place every repository exists at once. Both directions fail:
+# A drift scan compares them from a checkout holding every repository side by
+# side, the only place they all exist at once. Both directions fail:
 # a SAME row whose copies differ, and a DIFFERENT row whose copies have all
 # become identical -- the second is a deleted decision, and it looks like a
 # cleanup. A PENDING row passes while the file exists nowhere and fails the
