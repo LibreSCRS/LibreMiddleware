@@ -203,6 +203,15 @@ message(STATUS "LibreMiddleware plugins: "
 # directory produced it. Keep this above every add_subdirectory().
 option(BUILD_TESTING "Build tests" ON)
 
+# Defer gtest test discovery to ctest time, for every test directory. The
+# default (POST_BUILD) runs each freshly linked test binary in the middle of
+# the parallel build, where a loaded machine lets it exceed the five-second
+# discovery timeout or return an empty list, and the build fails. This is a
+# directory-scoped variable: set in test/ it reached test/ only, and the
+# suites under lib/*/test kept discovering at build time. Set it here, above
+# every add_subdirectory(), so each directory inherits it.
+set(CMAKE_GTEST_DISCOVER_TESTS_DISCOVERY_MODE PRE_TEST)
+
 add_subdirectory(thirdparty)
 add_subdirectory(lib/LibreSCRS)
 add_subdirectory(lib/plugin)
