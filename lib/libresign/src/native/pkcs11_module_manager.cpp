@@ -144,7 +144,8 @@ std::string canonicalKey(const std::filesystem::path& modulePath)
 // Process-wide registry of loaded modules, keyed by the same canonical path
 // the per-manager cache uses.
 //
-// Sanctioned process-global state, and the only one in this library: dlopen
+// Sanctioned process-global state, one of two in this library (the other is the
+// OpenSSL provider loads in signing_provider.cpp, for the same reason): dlopen
 // already refcounts the mapping process-wide and PKCS#11 v2.40 §6.6 scopes
 // C_Initialize to the process, so a module's initialised lifetime is
 // process-wide whether or not anything here models it. While each manager kept

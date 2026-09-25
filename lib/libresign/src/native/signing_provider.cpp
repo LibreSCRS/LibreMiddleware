@@ -20,6 +20,7 @@
 #include <openssl/provider.h>
 #include <openssl/x509.h>
 
+#include <cstddef>
 #include <mutex>
 #include <stdexcept>
 #include <vector>
@@ -74,7 +75,20 @@ int librescrsProviderInit(const OSSL_CORE_HANDLE* /*handle*/, const OSSL_DISPATC
     return 1;
 }
 
-std::once_flag g_providerInitFlag;
+// Process-global, like the default OSSL_LIB_CTX it mirrors: the provider is
+// loaded into that one context, so which leases keep it there is a question
+// about the whole process, not about any one object. The lease count is what
+// decides when the load is undone. Constant-initialised, never a function-local
+// static.
+struct ProviderLoads
+{
+    std::mutex mutex;
+    std::size_t leases = 0;
+    OSSL_PROVIDER* librescrs = nullptr;
+    OSSL_PROVIDER* defaultLoadedHere = nullptr;
+};
+ProviderLoads g_loads;
+std::once_flag g_builtinRegistered;
 
 } // anonymous namespace
 
@@ -82,31 +96,56 @@ std::once_flag g_providerInitFlag;
 // Public API
 // ---------------------------------------------------------------------------
 
-void initSigningProvider()
+SigningProviderLease::SigningProviderLease()
 {
-    std::call_once(g_providerInitFlag, []() {
-        // Load default provider FIRST so it has priority for standard RSA/EC
-        // operations (X509_get0_pubkey, EVP_DigestVerify, etc.). Our provider
-        // is only used when explicitly requested via "provider=librescrs" query.
-        if (!OSSL_PROVIDER_available(nullptr, "default"))
-            OSSL_PROVIDER_load(nullptr, "default");
-
+    std::call_once(g_builtinRegistered, []() {
         if (!OSSL_PROVIDER_add_builtin(nullptr, "librescrs", librescrsProviderInit))
             throw std::runtime_error("Failed to register librescrs provider");
-
-        // Provider handles are intentionally not stored — they live for the
-        // process lifetime and are owned by the default OSSL_LIB_CTX.
-        if (!OSSL_PROVIDER_load(nullptr, "librescrs"))
-            throw std::runtime_error("Failed to load librescrs provider");
     });
+
+    std::lock_guard lock(g_loads.mutex);
+    if (g_loads.leases == 0) {
+        // retain_fallbacks = 1: a plain OSSL_PROVIDER_load switches OpenSSL's
+        // fallback to the default provider off for good, and the default
+        // provider would then have to be loaded -- and later unloaded -- here,
+        // under every other OpenSSL user in the process.
+        OSSL_PROVIDER* ours = OSSL_PROVIDER_try_load(nullptr, "librescrs", 1);
+        if (!ours)
+            throw std::runtime_error("Failed to load librescrs provider");
+        // The standard RSA/EC operations (X509_get0_pubkey, EVP_DigestVerify)
+        // must come from the default provider. Asking activates the fallback;
+        // only if somebody else has turned it off is it loaded here.
+        OSSL_PROVIDER* dflt = nullptr;
+        if (!OSSL_PROVIDER_available(nullptr, "default")) {
+            dflt = OSSL_PROVIDER_try_load(nullptr, "default", 1);
+            if (!dflt) {
+                OSSL_PROVIDER_unload(ours);
+                throw std::runtime_error("Failed to load the default provider");
+            }
+        }
+        g_loads.librescrs = ours;
+        g_loads.defaultLoadedHere = dflt;
+    }
+    ++g_loads.leases;
 }
 
-EvpPkeyPublicPtr createPkcs11EvpKey(Pkcs11Token& token, X509* cert)
+SigningProviderLease::~SigningProviderLease()
+{
+    std::lock_guard lock(g_loads.mutex);
+    if (--g_loads.leases != 0)
+        return;
+    OSSL_PROVIDER_unload(g_loads.librescrs);
+    g_loads.librescrs = nullptr;
+    if (g_loads.defaultLoadedHere) {
+        OSSL_PROVIDER_unload(g_loads.defaultLoadedHere);
+        g_loads.defaultLoadedHere = nullptr;
+    }
+}
+
+EvpPkeyPublicPtr createPkcs11EvpKey(const SigningProviderLease& /*lease*/, Pkcs11Token& token, X509* cert)
 {
     if (!cert)
         throw std::runtime_error("Certificate must not be null");
-
-    initSigningProvider();
 
     // Get public key info from certificate
     EVP_PKEY* certPubKey = X509_get0_pubkey(cert);

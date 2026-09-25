@@ -251,7 +251,10 @@ std::vector<uint8_t> CAdESModule::signBB(const std::vector<uint8_t>& data, Pkcs1
     // 2. Create an EVP_PKEY backed by the PKCS#11 token.
     //    This key has the cert's public key but delegates sign() to the card.
     //    OpenSSL CMS API uses it transparently — no workarounds needed.
-    EvpPkeyPtr pkey(createPkcs11EvpKey(token, signerCert.get()).release());
+    //    The lease keeps the provider loaded until pkey, declared after it,
+    //    is gone.
+    SigningProviderLease provider;
+    EvpPkeyPtr pkey(createPkcs11EvpKey(provider, token, signerCert.get()).release());
 
     // 3. Create CMS SignedData with the PKCS#11-backed key.
     //    OpenSSL handles content-type, message-digest, and signing-time
@@ -715,6 +718,10 @@ SigningResult CAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
                            "set, which appending a signer changes; use B-LT or lower");
 
     try {
+        // Taken first: the CMS below comes to hold a reference to the
+        // provider-backed key, so the provider has to outlive it too.
+        SigningProviderLease provider;
+
         // 1. Parse the prior CMS ContentInfo.
         const unsigned char* p = prior.data();
         CmsPtr cms(d2i_CMS_ContentInfo(nullptr, &p, static_cast<long>(prior.size())));
@@ -742,7 +749,7 @@ SigningResult CAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
         if (!signerCert)
             return makeFailure(SignFailureKind::EngineError, "CAdES appendSigner: failed to parse signer certificate");
 
-        EvpPkeyPtr pkey(createPkcs11EvpKey(token, signerCert.get()).release());
+        EvpPkeyPtr pkey(createPkcs11EvpKey(provider, token, signerCert.get()).release());
         if (!pkey)
             return makeFailure(SignFailureKind::CardError, "CAdES appendSigner: failed to obtain PKCS#11 key handle");
 

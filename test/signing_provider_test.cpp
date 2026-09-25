@@ -9,6 +9,7 @@
 #include "signing_test_support/signing_test_support.h"
 
 #include <openssl/evp.h>
+#include <openssl/provider.h>
 #include <openssl/x509.h>
 
 #include <memory>
@@ -68,10 +69,44 @@ protected:
     Pkcs11ModuleManager manager;
 };
 
-TEST_F(SigningProviderTest, InitProviderIsIdempotent)
+// A provider loaded and never unloaded is still referenced when OpenSSL tears
+// the library context down at exit, and the sanitizer job reports what it
+// allocated as leaked. So the provider is loaded for as long as a lease lives,
+// and the last lease to go unloads it -- not the first, while another holder
+// is still using a key.
+TEST(SigningProviderLeaseTest, TheProviderIsLoadedExactlyWhileALeaseLives)
 {
-    EXPECT_NO_THROW(initSigningProvider());
-    EXPECT_NO_THROW(initSigningProvider());
+    ASSERT_EQ(OSSL_PROVIDER_available(nullptr, "librescrs"), 0) << "a lease from another case is still alive";
+    {
+        SigningProviderLease first;
+        EXPECT_EQ(OSSL_PROVIDER_available(nullptr, "librescrs"), 1);
+        {
+            SigningProviderLease second;
+            EXPECT_EQ(OSSL_PROVIDER_available(nullptr, "librescrs"), 1);
+        }
+        EXPECT_EQ(OSSL_PROVIDER_available(nullptr, "librescrs"), 1) << "released while a lease was still held";
+    }
+    EXPECT_EQ(OSSL_PROVIDER_available(nullptr, "librescrs"), 0) << "the last lease left the provider loaded";
+
+    // And again: a later signature loads it afresh.
+    SigningProviderLease again;
+    EXPECT_EQ(OSSL_PROVIDER_available(nullptr, "librescrs"), 1);
+}
+
+// Unloading is only safe if it takes nothing away from the rest of the
+// process: the trust store, the HTTP client and every verification use the
+// standard algorithms from the same default library context.
+TEST(SigningProviderLeaseTest, TheLastLeaseLeavesTheStandardAlgorithmsInPlace)
+{
+    {
+        SigningProviderLease lease;
+    }
+    EXPECT_EQ(OSSL_PROVIDER_available(nullptr, "default"), 1);
+    std::unique_ptr<EVP_MD, decltype(&EVP_MD_free)> sha256(EVP_MD_fetch(nullptr, "SHA2-256", nullptr), &EVP_MD_free);
+    EXPECT_NE(sha256, nullptr);
+    std::unique_ptr<EVP_PKEY_CTX, decltype(&EVP_PKEY_CTX_free)> rsa(EVP_PKEY_CTX_new_from_name(nullptr, "RSA", nullptr),
+                                                                    &EVP_PKEY_CTX_free);
+    EXPECT_NE(rsa, nullptr);
 }
 
 TEST_F(SigningProviderTest, CreateEvpKeyFromCert)
@@ -83,7 +118,8 @@ TEST_F(SigningProviderTest, CreateEvpKeyFromCert)
     auto cert = parseCertFromToken(token);
     ASSERT_NE(cert, nullptr);
 
-    EvpPkeyPtr pkey(createPkcs11EvpKey(token, cert.get()).release());
+    SigningProviderLease provider;
+    EvpPkeyPtr pkey(createPkcs11EvpKey(provider, token, cert.get()).release());
     ASSERT_NE(pkey, nullptr);
 
     EXPECT_GT(EVP_PKEY_get_bits(pkey.get()), 0);
@@ -99,7 +135,8 @@ TEST_F(SigningProviderTest, DigestSignAndVerify)
     auto cert = parseCertFromToken(token);
     ASSERT_NE(cert, nullptr);
 
-    EvpPkeyPtr pkey(createPkcs11EvpKey(token, cert.get()).release());
+    SigningProviderLease provider;
+    EvpPkeyPtr pkey(createPkcs11EvpKey(provider, token, cert.get()).release());
     ASSERT_NE(pkey, nullptr);
 
     const unsigned char data[] = "Test data for signing via OpenSSL 3 provider";
@@ -139,5 +176,6 @@ TEST_F(SigningProviderTest, NullCertThrows)
 {
     Pkcs11Token token(manager.acquire(config.pkcs11Module), libresign::as_pin(config.pin), config.keyAlias,
                       config.readerName);
-    EXPECT_THROW(createPkcs11EvpKey(token, nullptr), std::runtime_error);
+    SigningProviderLease provider;
+    EXPECT_THROW(createPkcs11EvpKey(provider, token, nullptr), std::runtime_error);
 }

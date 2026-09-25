@@ -28,8 +28,30 @@ struct EvpPkeyPublicDeleter
 };
 using EvpPkeyPublicPtr = std::unique_ptr<EVP_PKEY, EvpPkeyPublicDeleter>;
 
-void initSigningProvider();
+/// Keeps the librescrs OpenSSL provider loaded into the default library
+/// context for as long as it lives. The first lease loads it, the last one to
+/// go unloads it: a provider loaded and never unloaded is still referenced when
+/// OpenSSL tears the context down at exit, so its allocations are never freed.
+///
+/// Only what a lease loaded is unloaded. The default provider is left to
+/// OpenSSL's own fallback, which it activates on first use and frees at exit,
+/// so unloading this one never takes the standard algorithms away from other
+/// OpenSSL users in the process; only when something else has already turned
+/// the fallback off does the lease load the default provider itself, and then
+/// it unloads that too.
+///
+/// Thread-safe: leases may be taken and dropped concurrently.
+class SigningProviderLease
+{
+public:
+    SigningProviderLease();
+    ~SigningProviderLease();
+    SigningProviderLease(const SigningProviderLease&) = delete;
+    SigningProviderLease& operator=(const SigningProviderLease&) = delete;
+};
 
-EvpPkeyPublicPtr createPkcs11EvpKey(Pkcs11Token& token, X509* cert);
+/// @p lease is the proof that the provider stays loaded while the key is used;
+/// it must outlive the returned key.
+EvpPkeyPublicPtr createPkcs11EvpKey(const SigningProviderLease& lease, Pkcs11Token& token, X509* cert);
 
 } // namespace libresign

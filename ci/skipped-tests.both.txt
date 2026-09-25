@@ -24,7 +24,7 @@ SERVICE   SessionTransmitTest.*                                      1
 PLATFORM  SigningConformance.*                                       1
 SERVICE   SigningConformance/SoftHSM.*                               14
 CARD      SigningHwNativeBLT.*                                       1
-CARD      SigningProviderTest.*                                      4
+CARD      SigningProviderTest.*                                      3
 SERVICE   SigningRevocation.*                                        1
 CARD      SigningServiceBridgeTest.*                                 3
 CARD      SrbEid2ContactlessHw.*                                     1
