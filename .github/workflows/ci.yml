@@ -358,7 +358,7 @@ jobs:
         # warning-gate.py judges the LOG, so a tree that has LOST compile units
         # makes it refuse every full build and blame the build. This judges the
         # configured graph instead, so the message names the stale number.
-        run: ./ci/scripts/check-warning-floor.sh build
+        run: ./ci/scripts/check-warning-floor.sh build --leg ${{ matrix.signing_backend }}
 
       - name: Warning-floor check self-test
         run: ./ci/scripts/check-warning-floor.selftest.sh
@@ -401,7 +401,7 @@ jobs:
         # stand here -- "an unknown compiler is reported, not failed" -- described
         # the behaviour this flag removed. That is only a usable rule if the key
         # cannot drift, which is what the pin above is for.
-        run: ./ci/scripts/warning-gate.py --check --require-key build.log --build-dir build
+        run: ./ci/scripts/warning-gate.py --check --require-key --leg ${{ matrix.signing_backend }} build.log --build-dir build
 
       - name: Verify the configured signing backend took effect
         # Runs on every leg — this is the matrix's own integrity check, not a

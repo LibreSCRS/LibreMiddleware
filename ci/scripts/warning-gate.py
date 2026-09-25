@@ -50,8 +50,15 @@ Falling BELOW the baseline never fails the build -- a gate that punishes fixing
 warnings does not survive contact -- it prints `stale baseline, run --update`.
 
 Usage:
-  ci/scripts/warning-gate.py --check [--require-key] <build.log> --build-dir <dir>
-  ci/scripts/warning-gate.py --update <build.log> --build-dir <dir>
+  ci/scripts/warning-gate.py --check [--require-key] [--leg <name>] <build.log> --build-dir <dir>
+  ci/scripts/warning-gate.py --update [--leg <name>] <build.log> --build-dir <dir>
+
+--leg is for a workflow that builds one compiler in more than one configuration
+(a matrix): each configuration compiles a different set of units, so each gets
+its own section, keyed `<compiler>/<leg>`. Without it the key is the compiler
+alone. There is no fallback from one to the other: a union of two legs would let
+each leg carry the other's diagnostics, and a leg with no section of its own is
+not judged by somebody else's.
 
 --require-key is for CI: without it an unknown compiler key is reported and the
 run passes, which is how this check came to judge nothing at all on a runner
@@ -107,6 +114,21 @@ def compiler_key(build: Path):
     if not cid:
         fatal(f"{build} names no CMAKE_CXX_COMPILER_ID — that is not a configured build tree")
     return f"{cid}-{(ver or '0').split('.')[0]}"
+
+
+LEG_NAME = re.compile(r"[A-Za-z0-9_.-]+")
+
+
+def baseline_key(build: Path, leg=None):
+    """The baseline section a build tree is judged by: the compiler's key, and
+    `/<leg>` after it when the workflow names one. check-warning-floor.sh asks
+    this same function, so the floor and the counts come from one section."""
+    key = compiler_key(build)
+    if leg is None:
+        return key
+    if not LEG_NAME.fullmatch(leg):
+        fatal(f"--leg '{leg}' is not a leg name (letters, digits, '_', '.', '-')")
+    return f"{key}/{leg}"
 
 
 # A frame is anything in the block that names a file and a line. Every shape GCC
@@ -260,6 +282,9 @@ def main():
                     help="a compiler the baseline has never seen is a failure, "
                          "not a report; for CI, where the alternative is a check "
                          "that judges nothing")
+    ap.add_argument("--leg", default=None,
+                    help="the workflow leg this tree was built for; judged by the "
+                         "section <compiler>/<leg> instead of <compiler>")
     ap.add_argument("--build-dir", required=True)
     ap.add_argument("log")
     args = ap.parse_args()
@@ -271,7 +296,7 @@ def main():
     build = Path(args.build_dir)
     if not build.is_dir():
         fatal(f"build dir '{build}' not found")
-    key = compiler_key(build)
+    key = baseline_key(build, args.leg)
     counts, seen_reasons, units, unresolvable = scan(Path(args.log), build, REPO_ROOT)
 
     if unresolvable:

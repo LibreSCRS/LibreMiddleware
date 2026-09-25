@@ -6,10 +6,11 @@
 # independently, because a gate that fails for the wrong reason is not a gate.
 #
 # Run against the check as it was before it asked warning-gate.py for the
-# section, eleven of these thirteen cases fall (all but 5 and 6): it read the
-# floor from the top of the file, which the gate's own --update stopped
-# writing, so every build it judged was "no min_compile_units", and it never
-# looked at which compiler configured the tree.
+# section, all but cases 5 and 6 fall: it read the floor from the top of the
+# file, which the gate's own --update stopped writing, so every build it judged
+# was "no min_compile_units", and it never looked at which compiler configured
+# the tree. Against the check as it was before --leg, 14a, 14b and 15 fall: it
+# read one section per compiler, so the two legs of a matrix shared one floor.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 T="$(mktemp -d "${TMPDIR:-/var/tmp}/cwf-selftest.XXXXXX")"
@@ -106,6 +107,26 @@ say $? "12 PERTURBATION: the older top-level floor is still read, and red when u
 d=$(fixture m 111 111); rm -f "$d/b/CMakeCache.txt"; rc=$(run "$d")
 [ "$rc" = 2 ] && grep -q 'not a configured build tree' "$T/out"
 say $? "13 an unconfigured tree is 'cannot measure' (2), not pass" 2
+
+# 14: two legs of one compiler, each with its own floor. The `both` leg builds
+# more units than `native`; a graph of 368 edges reaches native's 366 and not
+# both's 371, so a check that read the wrong leg's section is wrong in one of
+# the two directions. Fails against the check before --leg existed, which
+# ignored the flag and looked for a plain GNU-13 section.
+legs='{"GNU-13/native": {"min_compile_units": 366, "project": {}, "system": {}, "system_reasons": {}},
+ "GNU-13/both": {"min_compile_units": 371, "project": {}, "system": {}, "system_reasons": {}}}'
+d=$(fixture n X 368 13.2.0 "$legs")
+bash "$d/ci/scripts/check-warning-floor.sh" "$d/b" --leg native >"$T/out" 2>&1; rc=$?
+[ "$rc" = 0 ] && grep -q 'GNU-13/native min_compile_units=366 is reachable' "$T/out"
+say $? "14a --leg native reads the native section" 0
+bash "$d/ci/scripts/check-warning-floor.sh" "$d/b" --leg both >"$T/out" 2>&1; rc=$?
+[ "$rc" = 1 ] && grep -q 'GNU-13/both min_compile_units=371' "$T/out"
+say $? "14b PERTURBATION: --leg both reads the both section, and is red on it" 1
+
+# 15: a leg with no section is not judged by the plain compiler section.
+d=$(fixture o 100 111); bash "$d/ci/scripts/check-warning-floor.sh" "$d/b" --leg both >"$T/out" 2>&1; rc=$?
+[ "$rc" = 2 ] && grep -q 'no section for GNU-13/both' "$T/out"
+say $? "15 a leg with no section is 'cannot measure' (2), not the plain key's floor" 2
 
 [ "$fails" -eq 0 ] || echo "selftest: FAILED"
 printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"

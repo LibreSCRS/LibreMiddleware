@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: LGPL-2.1-or-later
-# check-warning-floor.sh <build-dir>
+# check-warning-floor.sh <build-dir> [--leg <name>]
 #
 # warning-gate.py refuses to judge a log with fewer compile lines than
 # ci/warning-baseline.json's min_compile_units -- the anti-vacuum rule that
@@ -10,16 +10,20 @@
 # healthy full build, with a message that blames the build ("this is an
 # incremental build, not a measurement") instead of the stale number.
 #
-# Measured on LibreKDE: the recorded floor is 122, written before the in-repo
-# fake agent was deleted; a clean CI-configured tree has 111 compile edges. The
-# first push would fail build-linux at the warning step, and the steps after it
-# -- the test-manifest gate, qmllint and the whole LibreKDE ctest run -- would
-# never execute.
+# A floor is recorded once and the tree keeps moving: delete a component and
+# the recorded number can end up above what a clean CI-configured tree builds.
+# From then on every full build fails at the warning step, and every step the
+# workflow runs after it -- the remaining gates and the whole ctest run --
+# never executes, for a reason the message does not name.
 #
 # Asserts min_compile_units -- from the baseline section for the compiler that
 # configured the tree, the same section warning-gate.py judges against -- is
 # <= the compile edges the CONFIGURED graph holds,
 # and prints both numbers so a stale floor is visible rather than inferred.
+# --leg names the workflow leg, exactly as warning-gate.py takes it: a matrix
+# that builds one compiler in two configurations keeps one section per leg, and
+# each leg's floor is read from its own.
+#
 # Ninja only, by design: a missing build.ninja is exit 2 (cannot measure),
 # never 0 -- an unmeasurable gate that returns success is the defect this
 # whole file exists to prevent.
@@ -29,7 +33,12 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 set -uo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-build="${1:?usage: check-warning-floor.sh <build-dir>}"
+build="${1:?usage: check-warning-floor.sh <build-dir> [--leg <name>]}"
+leg=""
+if [ "$#" -gt 1 ]; then
+    if [ "$#" -eq 3 ] && [ "$2" = "--leg" ] && [ -n "$3" ]; then leg="$3"
+    else echo "FATAL: usage: check-warning-floor.sh <build-dir> [--leg <name>]" >&2; exit 2; fi
+fi
 base="$repo/ci/warning-baseline.json"
 
 [ -f "$base" ] || { echo "FATAL: no baseline at $base" >&2; exit 2; }
@@ -42,13 +51,13 @@ base="$repo/ci/warning-baseline.json"
 # compiler, and failed every build with "no min_compile_units".
 gate="$repo/ci/scripts/warning-gate.py"
 [ -f "$gate" ] || { echo "FATAL: no $gate to read the compiler key with" >&2; exit 2; }
-read -r key floor < <(python3 -B - "$gate" "$build" "$base" <<'PY'
+read -r key floor < <(python3 -B - "$gate" "$build" "$base" "$leg" <<'PY'
 import importlib.util, json, sys
 from pathlib import Path
 spec = importlib.util.spec_from_file_location("warning_gate", sys.argv[1])
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
-key = gate.compiler_key(Path(sys.argv[2]))          # exits 2 on an unconfigured tree
+key = gate.baseline_key(Path(sys.argv[2]), sys.argv[4] or None)  # exits 2 if unconfigured
 base = json.loads(Path(sys.argv[3]).read_text())
 sect = gate.section(base, key)
 floor = gate.compile_unit_floor(base, sect)
@@ -56,7 +65,7 @@ print(key, -2 if sect is None else (-1 if floor is None else floor))
 PY
 ) || { echo "FATAL: cannot read the compiler key or the floor for $build" >&2; exit 2; }
 case "$floor" in ''|*[!0-9-]*) echo "FATAL: min_compile_units is not a number: '$floor'" >&2; exit 2;; esac
-[ "$floor" -eq -2 ] && { echo "FATAL: $base has no section for $key, the compiler that configured $build" >&2; exit 2; }
+[ "$floor" -eq -2 ] && { echo "FATAL: $base has no section for $key, the key $build is judged by" >&2; exit 2; }
 [ "$floor" -lt 0 ] && { echo "FATAL: $base has no min_compile_units for $key" >&2; exit 2; }
 [ "$floor" -eq 0 ] && { echo "FAIL: $key min_compile_units is 0 -- the anti-vacuum rule is disarmed" >&2; exit 1; }
 
