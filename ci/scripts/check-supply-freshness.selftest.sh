@@ -52,7 +52,7 @@ tree() {
     mkdir -p "$root/thirdparty/openssl-3.5.8" "$root/thirdparty/miniz" \
              "$root/thirdparty/nlohmann" "$root/thirdparty/curl-source/include/curl" \
              "$root/thirdparty/opensc-source" "$root/ci"
-    printf '3.1.2\n' > "$root/thirdparty/miniz/VERSION"
+    printf '3.1.2\n' > "$root/thirdparty/miniz/VERSION.txt"
     {
         printf '#define NLOHMANN_JSON_VERSION_MAJOR 3\n'
         printf '#define NLOHMANN_JSON_VERSION_MINOR 11\n'
@@ -172,7 +172,7 @@ expect pin_older_than_threshold 1 'miniz' 'older than'
 #    check that guessed would compare 11.3.2 against a 3.x tag list and call it
 #    behind by eight majors.
 tree bad_pin; fixture bad_pin; green bad_pin
-printf 'not-a-version\n' > "$TREE/thirdparty/miniz/VERSION"
+printf 'not-a-version\n' > "$TREE/thirdparty/miniz/VERSION.txt"
 expect unknown_version_mapping 2 'miniz' 'CANNOT MEASURE'
 
 # 6. Upstream renames its tags and the series query comes back empty. Silence

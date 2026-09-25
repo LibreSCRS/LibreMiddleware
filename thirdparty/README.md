@@ -237,8 +237,11 @@ platforms rather than adding one.
 ## miniz
 
 **Upstream:** https://github.com/richgel999/miniz
-**Pinned release:** 3.1.2 (`thirdparty/miniz/VERSION`, which the bill of
-materials reads — see below for why `MZ_VERSION` is not that number)
+**Pinned release:** 3.1.2 (`thirdparty/miniz/VERSION.txt`, which the bill of
+materials reads — see below for why `MZ_VERSION` is not that number). Not a
+bare `VERSION`: this directory is on the include path, and on a case-insensitive
+file system the standard library's own `#include <version>` opens that file.
+`ci/scripts/check-include-shadowing.py` fails the build on any such name.
 **License:** MIT (`thirdparty/miniz/LICENSE`)
 **Vendored form:** the amalgamated `miniz.c` + `miniz.h`, generated upstream by
 `amalgamate.sh`, **plus two local patches** (below), compiled into `LibreSign.a`
@@ -318,7 +321,7 @@ git clone --depth 1 --branch <ver> https://github.com/richgel999/miniz
 cd miniz && ./amalgamate.sh          # writes amalgamation/miniz.{c,h}
 cp amalgamation/miniz.c amalgamation/miniz.h <repo>/thirdparty/miniz/
 cp LICENSE <repo>/thirdparty/miniz/LICENSE
-echo <ver> > <repo>/thirdparty/miniz/VERSION
+echo <ver> > <repo>/thirdparty/miniz/VERSION.txt
 # RE-APPLY the two local patches above, then:
 #   ctest -R 'MinizZipBounds|ZipRecords|ASiC|Asic'      with the ETSI validator
 #   ci/scripts/make-sbom.sh /tmp/sbom.json              must print the new version

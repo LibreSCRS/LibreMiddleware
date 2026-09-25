@@ -12,7 +12,7 @@ reader does not have to reconstruct it from build files.
 | OpenSSL 3.5.8 | pre-compiled static archives committed to the tree | `thirdparty/openssl-3.5.8/` |
 | curl 8.22.0 | submodule, built statically against the bundled OpenSSL | `01346829096c61b372692f6dc43ffa778c6caccd` |
 | OpenSC | submodule, built statically | `07d0d40b0e4051f6fe11f3a92cec56d320670d85` |
-| miniz 3.1.2 | source drop-in, two local patches | `thirdparty/miniz/VERSION` |
+| miniz 3.1.2 | source drop-in, two local patches | `thirdparty/miniz/VERSION.txt` |
 | nlohmann/json 3.11.3 | source drop-in | in tree, `thirdparty/nlohmann/` |
 | QCBOR | FetchContent by commit, absorbed into the agent client library | pinned in LibreAgent |
 

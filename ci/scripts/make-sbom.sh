@@ -85,8 +85,8 @@ qcbor_sha=""
 # sources and is read from there; MZ_VERSION is the fallback, and a bill of
 # materials carrying it says so by being obviously not a miniz release number.
 miniz_ver=""
-[ -f "$repo/thirdparty/miniz/VERSION" ] && \
-  miniz_ver="$(tr -d '[:space:]' < "$repo/thirdparty/miniz/VERSION")"
+[ -f "$repo/thirdparty/miniz/VERSION.txt" ] && \
+  miniz_ver="$(tr -d '[:space:]' < "$repo/thirdparty/miniz/VERSION.txt")"
 if [ -z "$miniz_ver" ] && [ -f "$repo/thirdparty/miniz/miniz.h" ]; then
   miniz_ver="$(sed -n 's/^#define MZ_VERSION  *"\([^"]*\)".*/\1/p' \
     "$repo/thirdparty/miniz/miniz.h" | head -1)"

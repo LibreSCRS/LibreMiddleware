@@ -443,14 +443,14 @@ if [ "$unknowns" = 0 ]; then
     # version being emulated (2.1.0 says "10.1.0", 3.1.2 says "11.3.2") and
     # there is no formula between the two. Guessing would compare 11.3.2
     # against a 3.x tag list.
-    miniz_pin="$REPO/thirdparty/miniz/VERSION"
+    miniz_pin="$REPO/thirdparty/miniz/VERSION.txt"
     if [ ! -f "$miniz_pin" ]; then
-        cannot "miniz: no thirdparty/miniz/VERSION -- MZ_VERSION is the emulated zlib version and cannot stand in for it"
+        cannot "miniz: no thirdparty/miniz/VERSION.txt -- MZ_VERSION is the emulated zlib version and cannot stand in for it"
         add_row miniz - cannot-measure "no pin file"
     else
         miniz_ver="$(tr -d '[:space:]' < "$miniz_pin")"
         if ! printf '%s' "$miniz_ver" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            cannot "miniz: cannot read a version out of thirdparty/miniz/VERSION ('$miniz_ver')"
+            cannot "miniz: cannot read a version out of thirdparty/miniz/VERSION.txt ('$miniz_ver')"
             add_row miniz "$miniz_ver" cannot-measure "unparseable pin"
         else
             judge miniz "$miniz_ver" richgel999/miniz "${miniz_ver%.*}." "$miniz_ver" -

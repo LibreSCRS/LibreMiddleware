@@ -338,12 +338,21 @@ jobs:
             -DOPENSC_INCLUDE_DIR=/tmp/opensc-src/src \
             -DSIGNING_BACKEND=${{ matrix.signing_backend }} \
             -DBUILD_DSS_ORACLE=${{ matrix.dss_oracle }} \
-            -DLIBREMIDDLEWARE_WERROR=ON
+            -DLIBREMIDDLEWARE_WERROR=ON \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
           # set -o pipefail is explicit: without it `| tee` reports tee's status
           # and a failed build becomes a green step, after which the warning
           # check measures a log that was never produced.
           set -o pipefail
           LC_ALL=C cmake --build build 2>&1 | tee build.log
+
+      - name: No file on the include path can stand in for a standard header
+        # On a case-insensitive file system a file named VERSION in an include
+        # directory IS <version>, and the standard library's own include opens
+        # it. This file system never shows that, so the macOS build used to be
+        # the first to find out; this reads every include directory the
+        # compiler is handed and fails on the name instead.
+        run: ./ci/scripts/check-include-shadowing.py build
 
       - name: The warning floor is still reachable
         # warning-gate.py judges the LOG, so a tree that has LOST compile units
