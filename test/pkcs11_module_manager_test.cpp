@@ -24,6 +24,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <exception>
 #include <functional>
 #include <stdexcept>
 #include <string>
@@ -321,15 +322,36 @@ TEST_F(Pkcs11ModuleManagerTest, ConcurrentAcquireOfOnePathLoadsTheModuleOnce)
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     });
 
+    // An acquire that throws -- a module that will not initialise, say -- must
+    // fail this case, not the process: an exception escaping the worker, or one
+    // unwinding past a joinable worker, is std::terminate. So both sides catch,
+    // the worker is released if the first caller never reached the load, and
+    // whatever was thrown is rethrown only once the worker is joined.
+    std::exception_ptr secondError;
     std::thread worker([&] {
         while (!loadReached.load())
             std::this_thread::yield();
         secondAsked.store(true);
-        secondHandle = second.acquire(softHsmPath);
+        try {
+            secondHandle = second.acquire(softHsmPath);
+        } catch (...) {
+            secondError = std::current_exception();
+        }
     });
 
-    auto firstHandle = first.acquire(softHsmPath);
+    Pkcs11ModuleHandle firstHandle;
+    std::exception_ptr firstError;
+    try {
+        firstHandle = first.acquire(softHsmPath);
+    } catch (...) {
+        firstError = std::current_exception();
+        loadReached.store(true);
+    }
     worker.join();
+    if (firstError)
+        std::rethrow_exception(firstError);
+    if (secondError)
+        std::rethrow_exception(secondError);
 
     ASSERT_TRUE(firstHandle.valid());
     ASSERT_TRUE(secondHandle.valid());
