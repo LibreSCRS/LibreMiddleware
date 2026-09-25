@@ -23,6 +23,8 @@
 # Build
 build/
 build-*/
+# Compiler output captured beside the tree for ci/scripts/warning-gate.py.
+/build.log
 install/
 install-*/
 
