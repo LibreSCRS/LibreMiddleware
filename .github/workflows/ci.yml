@@ -668,6 +668,14 @@ jobs:
       - name: The sanitizer tree registers the same cases as the plain one
         run: ./ci/scripts/test-manifest-gate.sh --check build-asan native
 
+      - name: Bootstrap SoftHSM2 test token
+        # The same token store build-linux provisions. Without it the software
+        # token suites do not skip here: the module is found, C_Initialize
+        # cannot read a configuration and returns CKR_GENERAL_ERROR, and every
+        # signing and module-manager case fails. Exports SOFTHSM2_CONF and
+        # SOFTHSM2_LIB via $GITHUB_ENV for the step below.
+        run: ./ci/scripts/softhsm-bootstrap.sh
+
       - name: Test under the sanitizers
         # The hardware suites need a reader and self-skip without one; excluding
         # them by name keeps the reason visible instead of relying on the skip.
