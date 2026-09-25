@@ -151,7 +151,8 @@ say $? "9 a packaging recipe that nothing names is red" 1
 mkfixture "$T/j"
 mkdir -p "$T/j/e2e"
 printf '#!/bin/sh\nexit 0\nprintf "selftest: 1 cases, 1 red-proved\\n"\n' > "$T/j/e2e/lost.selftest.sh"
-sed -i "s|'ci/\*' 'tools/\*' 'packaging/\*' 'scripts/\*' 'Scripts/\*' 'e2e/\*'|'ci/*'|" "$T/j/ci/scripts/run-selftests.sh"
+sed -i.bak "s|'ci/\*' 'tools/\*' 'packaging/\*' 'scripts/\*' 'Scripts/\*' 'e2e/\*'|'ci/*'|" "$T/j/ci/scripts/run-selftests.sh" \
+    && rm -f "$T/j/ci/scripts/run-selftests.sh.bak"
 git -C "$T/j" add -A; git -C "$T/j" -c user.email=s@e -c user.name=s commit -qm j10
 rc=$(run "$T/j")
 [ "$rc" = 1 ] && grep -q 'e2e/lost.selftest.sh' "$T/out" && grep -q 'the runner would not run' "$T/out"
@@ -160,7 +161,8 @@ say $? "10 a shipped self-test the runner would not run is red" 1
 # 11. The other direction: the runner would run something the repository does not
 #     track. A set that is equal in one direction only is not equal.
 mkfixture "$T/k"
-sed -i 's|exit 0$|printf "ci/scripts/phantom.selftest.sh\\n"; exit 0|' "$T/k/ci/scripts/run-selftests.sh"
+sed -i.bak 's|exit 0$|printf "ci/scripts/phantom.selftest.sh\\n"; exit 0|' "$T/k/ci/scripts/run-selftests.sh" \
+    && rm -f "$T/k/ci/scripts/run-selftests.sh.bak"
 git -C "$T/k" add -A; git -C "$T/k" -c user.email=s@e -c user.name=s commit -qm k11
 rc=$(run "$T/k")
 [ "$rc" = 1 ] && grep -q 'phantom.selftest.sh' "$T/out"
