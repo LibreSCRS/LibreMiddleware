@@ -1,4 +1,37 @@
 {
+  "GNU-13/both": {
+    "min_compile_units": 371,
+    "project": {
+      "-Wcomment": 108,
+      "-Wdangling-else": 12,
+      "-Wfree-nonheap-object": 1,
+      "-Wmissing-field-initializers": 1,
+      "-Wstringop-overflow=": 11,
+      "-Wstringop-overread": 14
+    },
+    "system": {
+      "-Wstringop-overread": 1
+    },
+    "system_reasons": {
+      "-Wstringop-overread@/usr/include/c++/13/bits/stl_algobase.h:1848": "GCC 13 raises it inside libstdc++'s std::lexicographical_compare_three_way, at the __builtin_memcmp(&*__first1, &*__first2, __blen) that std::vector<unsigned char>'s operator<=> (stl_vector.h:2061) reduces to, reached through std::less (stl_function.h:408) and std::_Rb_tree::_M_get_insert_unique_pos (stl_tree.h:2118): every inlined frame of the block is in /usr/include/c++/13 and not one is ours. The bound it reports, [9223372036854775808, 18446744073709551615], lies entirely above PTRDIFF_MAX, so it is a length the compiler derived for the iterator difference and not one any vector can have. The one block is the key comparison of the std::map<std::vector<uint8_t>, std::pair<int, int>> in test/pkcs11_test.cpp:952. The other fourteen diagnostics of this tag at the same location carry a frame of ours in their chain and are counted as ours, which is where they stay."
+    }
+  },
+  "GNU-13/native": {
+    "min_compile_units": 366,
+    "project": {
+      "-Wcomment": 102,
+      "-Wdangling-else": 12,
+      "-Wfree-nonheap-object": 1,
+      "-Wstringop-overflow=": 11,
+      "-Wstringop-overread": 14
+    },
+    "system": {
+      "-Wstringop-overread": 1
+    },
+    "system_reasons": {
+      "-Wstringop-overread@/usr/include/c++/13/bits/stl_algobase.h:1848": "GCC 13 raises it inside libstdc++'s std::lexicographical_compare_three_way, at the __builtin_memcmp(&*__first1, &*__first2, __blen) that std::vector<unsigned char>'s operator<=> (stl_vector.h:2061) reduces to, reached through std::less (stl_function.h:408) and std::_Rb_tree::_M_get_insert_unique_pos (stl_tree.h:2118): every inlined frame of the block is in /usr/include/c++/13 and not one is ours. The bound it reports, [9223372036854775808, 18446744073709551615], lies entirely above PTRDIFF_MAX, so it is a length the compiler derived for the iterator difference and not one any vector can have. The one block is the key comparison of the std::map<std::vector<uint8_t>, std::pair<int, int>> in test/pkcs11_test.cpp:952. The other fourteen diagnostics of this tag at the same location carry a frame of ours in their chain and are counted as ours, which is where they stay."
+    }
+  },
   "GNU-16": {
     "min_compile_units": 366,
     "project": {
