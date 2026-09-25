@@ -20,6 +20,9 @@
 #      without the prefix, is one test and counts once       -> 0
 #  12  a disabled SUITE, TEST(DISABLED_Suite, Name), is booked under the
 #      suite's own name even though the log parse leaves it out -> 0
+#  13  a test turned off with the ctest DISABLED property -- "(Disabled)" in
+#      the log, no DISABLED_ in any source -- must be booked  -> 1 unbooked,
+#      0 booked
 set -uo pipefail
 
 TOOL="$(cd "$(dirname "$0")" && pwd)/skip-ledger.sh"
@@ -167,6 +170,25 @@ r="$(make_repo c12 'TEST(DISABLED_Suite, NotYet) { }')"
 printf 'DESIGN    Suite.*     1\n' > "$r/ci/skipped-tests.linux.txt"
 out="$(run "$r" --check ctest.log linux)"; rc=$?
 check 12 0 $rc
+
+# --- case 13: disabled by the ctest property, not by a prefix
+# No source scan can see it, so the log is the only account of it. Dropping
+# every "(Disabled)" row, as the version that introduced case 11 did, left it
+# counted nowhere and the unbooked book green.
+r="$(make_repo c13)"
+{
+    echo "100% tests passed, 0 tests failed out of 10"
+    echo ""
+    echo "The following tests did not run:"
+    printf '\t%3d - %s (Disabled)\n' 999 "ProtocolVersion.NegotiatesCurrent"
+} > "$r/ctest.log"
+printf '# nothing booked\n' > "$r/ci/skipped-tests.linux.txt"
+out="$(run "$r" --check ctest.log linux)"; rc=$?
+ok=0; case "$out" in *"ProtocolVersion.NegotiatesCurrent"*) ok=1 ;; esac
+check 13a 1 $rc $ok
+printf 'DESIGN    ProtocolVersion.*     1\n' > "$r/ci/skipped-tests.linux.txt"
+out="$(run "$r" --check ctest.log linux)"; rc=$?
+check 13b 0 $rc
 
 echo "selftest: $pass passed, $fail failed"
 printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"

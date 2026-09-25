@@ -72,28 +72,6 @@ ENVFILE="ci/skip-ledger-env.txt"
 SCRATCH="$(mktemp -d /var/tmp/skip-ledger.XXXXXX)"
 trap 'rm -rf "$SCRATCH"' EXIT
 
-# --- what did not run ------------------------------------------------------
-# ctest prints, after the summary:
-#     The following tests did not run:
-#             123 - Some.Test (Skipped)
-#
-# A DISABLED_ case is left out here, because the source scan below accounts for
-# it on every leg. With one ctest entry per case ctest does list one, as
-# "(Disabled)" and under the name WITHOUT the prefix; taking it from both
-# places would count one test twice under two spellings.
-awk '
-    /^The following tests did not run:/ { on = 1; next }
-    on && /^[ \t]*[0-9]+ - .* \(Disabled\)[ \t]*$/ { next }
-    on && /^[ \t]*[0-9]+ - / {
-        line = $0
-        sub(/^[ \t]*[0-9]+ - /, "", line)
-        sub(/ \([A-Za-z]+\)[ \t]*$/, "", line)
-        print line
-        next
-    }
-    on && !/^[ \t]*[0-9]+ - / { on = 0 }
-' "$LOG" | sort -u > "$SCRATCH/skipped.txt"
-
 # --- what is disabled at the source ----------------------------------------
 # Read from the tracked sources rather than from the log: a leg that does not
 # build the binary never lists its DISABLED_ cases at all.
@@ -105,6 +83,41 @@ git grep -hoE 'TEST[_A-Z]*\([ \t]*[A-Za-z0-9_]+[ \t]*,[ \t]*[A-Za-z0-9_]+' \
   | sed -E 's/^TEST[_A-Z]*\([ \t]*//; s/[ \t]*,[ \t]*/./' \
   | grep -E '^DISABLED_|\.DISABLED_' | sed -E 's/^DISABLED_//' \
   | sort -u > "$SCRATCH/disabled.txt"
+
+# --- what did not run ------------------------------------------------------
+# ctest prints, after the summary:
+#     The following tests did not run:
+#             123 - Some.Test (Skipped)
+#
+# A "(Disabled)" row is left out ONLY when the source scan above already books
+# that test: with one ctest entry per case ctest lists a DISABLED_ case there,
+# under the name WITHOUT the prefix, and taking it from both places would count
+# one test twice under two spellings. Every other "(Disabled)" row -- a test
+# turned off with the ctest DISABLED property, which no source scan sees -- is
+# booked like a skip. The comparison drops a parameterised test's instance
+# prefix and parameter suffix, the parts ctest adds to the source name.
+sed -E 's/\.DISABLED_/./' "$SCRATCH/disabled.txt" > "$SCRATCH/disabled-as-listed.txt"
+awk '
+    # FILENAME, not FNR == NR: with nothing disabled at the source the first
+    # file is empty, and FNR == NR would then hold for every line of the log.
+    FILENAME == ARGV[1] { known[$0] = 1; next }
+    /^The following tests did not run:/ { on = 1; next }
+    on && /^[ \t]*[0-9]+ - / {
+        line = $0
+        disabled = (line ~ / \(Disabled\)[ \t]*$/)
+        sub(/^[ \t]*[0-9]+ - /, "", line)
+        sub(/ \([A-Za-z]+\)[ \t]*$/, "", line)
+        if (disabled) {
+            bare = line
+            sub(/^[^.\/]*\//, "", bare)
+            sub(/\/.*$/, "", bare)
+            if (bare in known) next
+        }
+        print line
+        next
+    }
+    on && !/^[ \t]*[0-9]+ - / { on = 0 }
+' "$SCRATCH/disabled-as-listed.txt" "$LOG" | sort -u > "$SCRATCH/skipped.txt"
 
 cat "$SCRATCH/skipped.txt" "$SCRATCH/disabled.txt" | sort -u > "$SCRATCH/accountable.txt"
 
