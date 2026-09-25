@@ -41,6 +41,7 @@ ci/scripts/check-version-stamp.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreK
 ci/scripts/check-version-surfaces.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  Proves that enumeration.
 ci/scripts/check-version-surfaces.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMiddleware  The surfaces a version appears on are enumerated the same way; the list is what differs.
 ci/scripts/check-warning-floor.selftest.sh  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  Proves the floor rule, which is shared.
+ci/scripts/check-warning-floor.sh  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  The floor is read from the section warning-gate.py judges, by the same key, so the two cannot disagree about which one applies.
 ci/scripts/coverage-gate.py  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  The four ratchet rules and the environment contract are one policy; the baseline and the environment file are what differ.
 ci/scripts/coverage-gate.selftest.py  SAME:LibreAgent,LibreCelik,LibreKDE,LibreLinux,LibreMiddleware  Proves those rules.
 ci/scripts/run-selftests.selftest.sh  SAME:LibreAgent,LibreCelik,LibreDarwin,LibreKDE,LibreLinux,LibreMac,LibreMiddleware  Proves that contract, which is identical.
