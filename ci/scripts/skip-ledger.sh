@@ -76,8 +76,14 @@ trap 'rm -rf "$SCRATCH"' EXIT
 # ctest prints, after the summary:
 #     The following tests did not run:
 #             123 - Some.Test (Skipped)
+#
+# A DISABLED_ case is left out here, because the source scan below accounts for
+# it on every leg. With one ctest entry per case ctest does list one, as
+# "(Disabled)" and under the name WITHOUT the prefix; taking it from both
+# places would count one test twice under two spellings.
 awk '
     /^The following tests did not run:/ { on = 1; next }
+    on && /^[ \t]*[0-9]+ - .* \(Disabled\)[ \t]*$/ { next }
     on && /^[ \t]*[0-9]+ - / {
         line = $0
         sub(/^[ \t]*[0-9]+ - /, "", line)
@@ -89,8 +95,8 @@ awk '
 ' "$LOG" | sort -u > "$SCRATCH/skipped.txt"
 
 # --- what is disabled at the source ----------------------------------------
-# ctest never reports a DISABLED_ case as skipped, so it is read from the
-# tracked sources instead of from the log.
+# Read from the tracked sources rather than from the log: a leg that does not
+# build the binary never lists its DISABLED_ cases at all.
 git grep -hoE 'TEST[_A-Z]*\([ \t]*[A-Za-z0-9_]+[ \t]*,[ \t]*DISABLED_[A-Za-z0-9_]+' \
     -- '*.cpp' '*.cc' '*.mm' 2>/dev/null \
   | sed -E 's/^TEST[_A-Z]*\([ \t]*//; s/[ \t]*,[ \t]*/./' \

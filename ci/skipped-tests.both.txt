@@ -17,7 +17,7 @@ CARD      PACEHardwareTest.*                                         4
 PLATFORM  PAdESDssOracle.*                                           1
 CARD      PKCS11CardTest.*                                           15
 DESIGN    PaceMrzKatBSI.*                                            4
-CARD      Pkcs11AppletSuiteGen1Fixture.*                             8
+CARD      Pkcs11AppletSuiteGen1Fixture.*                             7
 CARD      Pkcs11NamFixture.*                                         5
 CARD      Pkcs11PksFixture.*                                         4
 SERVICE   SessionTransmitTest.*                                      1

@@ -16,6 +16,8 @@
 #   9  --update refused when ci/skip-ledger-env.txt names an unset variable,
 #      and the book is left untouched
 #  10  --update accepted once that variable is set
+#  11  a DISABLED_ case ctest ALSO lists, as "(Disabled)" under the name
+#      without the prefix, is one test and counts once       -> 0
 set -uo pipefail
 
 TOOL="$(cd "$(dirname "$0")" && pwd)/skip-ledger.sh"
@@ -131,6 +133,22 @@ check 9 2 $rc $ok
 out="$( cd "$r" && SELFTEST_TOKEN_CONF=/somewhere bash ci/scripts/skip-ledger.sh --update ctest.log linux 2>&1 )"; rc=$?
 ok=0; case "$(cat "$r/ci/skipped-tests.linux.txt")" in *"SoftHSM.*"*) ok=1 ;; esac
 check 10 0 $rc $ok
+
+# --- case 11: one disabled test, two spellings
+# With one ctest entry per case, ctest lists a DISABLED_ case in its "did not
+# run" block as "(Disabled)", under the name without the prefix, while the
+# source scan reads it with the prefix. Counted from both, one test in the book
+# reads as two and the count moves on every leg that builds it.
+r="$(make_repo c11 'TEST(Suite, DISABLED_NotYet) { }')"
+{
+    echo "100% tests passed, 0 tests failed out of 10"
+    echo ""
+    echo "The following tests did not run:"
+    printf '\t%3d - %s (Disabled)\n' 7 "Suite.NotYet"
+} > "$r/ctest.log"
+printf 'DESIGN    Suite.*     1\n' > "$r/ci/skipped-tests.linux.txt"
+out="$(run "$r" --check ctest.log linux)"; rc=$?
+check 11 0 $rc
 
 echo "selftest: $pass passed, $fail failed"
 printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
