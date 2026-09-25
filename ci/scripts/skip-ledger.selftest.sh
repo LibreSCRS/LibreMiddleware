@@ -18,6 +18,8 @@
 #  10  --update accepted once that variable is set
 #  11  a DISABLED_ case ctest ALSO lists, as "(Disabled)" under the name
 #      without the prefix, is one test and counts once       -> 0
+#  12  a disabled SUITE, TEST(DISABLED_Suite, Name), is booked under the
+#      suite's own name even though the log parse leaves it out -> 0
 set -uo pipefail
 
 TOOL="$(cd "$(dirname "$0")" && pwd)/skip-ledger.sh"
@@ -149,6 +151,22 @@ r="$(make_repo c11 'TEST(Suite, DISABLED_NotYet) { }')"
 printf 'DESIGN    Suite.*     1\n' > "$r/ci/skipped-tests.linux.txt"
 out="$(run "$r" --check ctest.log linux)"; rc=$?
 check 11 0 $rc
+
+# --- case 12: a disabled suite rather than a disabled case
+# The prefix is on the suite, so a scan that only reads `Suite, DISABLED_x`
+# never sees it, and with "(Disabled)" left out of the log parse nothing counts
+# it at all: the book's row reads as stale. Fails over the version that
+# introduced case 11.
+r="$(make_repo c12 'TEST(DISABLED_Suite, NotYet) { }')"
+{
+    echo "100% tests passed, 0 tests failed out of 10"
+    echo ""
+    echo "The following tests did not run:"
+    printf '\t%3d - %s (Disabled)\n' 7 "Suite.NotYet"
+} > "$r/ctest.log"
+printf 'DESIGN    Suite.*     1\n' > "$r/ci/skipped-tests.linux.txt"
+out="$(run "$r" --check ctest.log linux)"; rc=$?
+check 12 0 $rc
 
 echo "selftest: $pass passed, $fail failed"
 printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"

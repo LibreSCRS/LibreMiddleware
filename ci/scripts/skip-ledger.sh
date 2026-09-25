@@ -97,9 +97,13 @@ awk '
 # --- what is disabled at the source ----------------------------------------
 # Read from the tracked sources rather than from the log: a leg that does not
 # build the binary never lists its DISABLED_ cases at all.
-git grep -hoE 'TEST[_A-Z]*\([ \t]*[A-Za-z0-9_]+[ \t]*,[ \t]*DISABLED_[A-Za-z0-9_]+' \
+# Both forms: a disabled case (Suite.DISABLED_Name) and a disabled suite
+# (DISABLED_Suite, Name), which is booked under the suite's own name, as ctest
+# prints it.
+git grep -hoE 'TEST[_A-Z]*\([ \t]*[A-Za-z0-9_]+[ \t]*,[ \t]*[A-Za-z0-9_]+' \
     -- '*.cpp' '*.cc' '*.mm' 2>/dev/null \
   | sed -E 's/^TEST[_A-Z]*\([ \t]*//; s/[ \t]*,[ \t]*/./' \
+  | grep -E '^DISABLED_|\.DISABLED_' | sed -E 's/^DISABLED_//' \
   | sort -u > "$SCRATCH/disabled.txt"
 
 cat "$SCRATCH/skipped.txt" "$SCRATCH/disabled.txt" | sort -u > "$SCRATCH/accountable.txt"
