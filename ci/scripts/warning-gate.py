@@ -241,6 +241,17 @@ def section(base, key):
     return {"project": dict(raw), "system": {}, "system_reasons": {}, "_legacy": True}
 
 
+def compile_unit_floor(base, sect):
+    """The compile-line count a log must reach before it is scored: the
+    compiler's own section first, then the top level where the older layout
+    kept it. None when neither names one. check-warning-floor.sh asks this same
+    function, so the two can never read the floor from different places."""
+    for source in (sect or {}, base or {}):
+        if "min_compile_units" in source:
+            return source["min_compile_units"]
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true")
@@ -270,8 +281,7 @@ def main():
 
     base = json.loads(BASELINE.read_text()) if BASELINE.is_file() else None
     sect = section(base or {}, key)
-    expected_units = ((sect or {}).get("min_compile_units")
-                      or (base or {}).get("min_compile_units", 0))
+    expected_units = compile_unit_floor(base, sect) or 0
 
     if units < expected_units:
         fatal(f"log has {units} compile lines, baseline expects >= {expected_units} — "

@@ -16,7 +16,9 @@
 # -- the test-manifest gate, qmllint and the whole LibreKDE ctest run -- would
 # never execute.
 #
-# Asserts min_compile_units <= the compile edges the CONFIGURED graph holds,
+# Asserts min_compile_units -- from the baseline section for the compiler that
+# configured the tree, the same section warning-gate.py judges against -- is
+# <= the compile edges the CONFIGURED graph holds,
 # and prints both numbers so a stale floor is visible rather than inferred.
 # Ninja only, by design: a missing build.ninja is exit 2 (cannot measure),
 # never 0 -- an unmeasurable gate that returns success is the defect this
@@ -33,17 +35,36 @@ base="$repo/ci/warning-baseline.json"
 [ -f "$base" ] || { echo "FATAL: no baseline at $base" >&2; exit 2; }
 [ -f "$build/build.ninja" ] || { echo "FATAL: no $build/build.ninja (Ninja generator required)" >&2; exit 2; }
 
-floor="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("min_compile_units", -1))' "$base")" \
-    || { echo "FATAL: cannot read min_compile_units from $base" >&2; exit 2; }
+# The floor lives in the baseline's section for the compiler that configured
+# this tree, and which section that is -- and how an older layout is read -- is
+# warning-gate.py's decision, so it is asked rather than restated here. Reading
+# the top level instead found nothing once the gate began keying the baseline by
+# compiler, and failed every build with "no min_compile_units".
+gate="$repo/ci/scripts/warning-gate.py"
+[ -f "$gate" ] || { echo "FATAL: no $gate to read the compiler key with" >&2; exit 2; }
+read -r key floor < <(python3 -B - "$gate" "$build" "$base" <<'PY'
+import importlib.util, json, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("warning_gate", sys.argv[1])
+gate = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gate)
+key = gate.compiler_key(Path(sys.argv[2]))          # exits 2 on an unconfigured tree
+base = json.loads(Path(sys.argv[3]).read_text())
+sect = gate.section(base, key)
+floor = gate.compile_unit_floor(base, sect)
+print(key, -2 if sect is None else (-1 if floor is None else floor))
+PY
+) || { echo "FATAL: cannot read the compiler key or the floor for $build" >&2; exit 2; }
 case "$floor" in ''|*[!0-9-]*) echo "FATAL: min_compile_units is not a number: '$floor'" >&2; exit 2;; esac
-[ "$floor" -lt 0 ] && { echo "FATAL: $base has no min_compile_units" >&2; exit 2; }
-[ "$floor" -eq 0 ] && { echo "FAIL: min_compile_units is 0 -- the anti-vacuum rule is disarmed" >&2; exit 1; }
+[ "$floor" -eq -2 ] && { echo "FATAL: $base has no section for $key, the compiler that configured $build" >&2; exit 2; }
+[ "$floor" -lt 0 ] && { echo "FATAL: $base has no min_compile_units for $key" >&2; exit 2; }
+[ "$floor" -eq 0 ] && { echo "FAIL: $key min_compile_units is 0 -- the anti-vacuum rule is disarmed" >&2; exit 1; }
 
 units="$(grep -cE '^build .*: (CXX|C|OBJCXX|OBJC)_COMPILER' "$build/build.ninja")"
 [ "$units" -eq 0 ] && { echo "FATAL: $build/build.ninja has no compile edges -- cannot measure" >&2; exit 2; }
 
 if [ "$floor" -gt "$units" ]; then
-    echo "FAIL: ci/warning-baseline.json min_compile_units=$floor but the configured graph" >&2
+    echo "FAIL: ci/warning-baseline.json $key min_compile_units=$floor but the configured graph" >&2
     echo "      has only $units compile edges. No full build can ever reach that floor, so" >&2
     echo "      warning-gate.py will refuse every log and blame the build. Re-record with:" >&2
     echo "        ./ci/scripts/warning-gate.py --update --build-dir $build <full-build.log>" >&2
@@ -54,5 +75,5 @@ if [ "$floor" -lt "$units" ]; then
     echo "note: min_compile_units=$floor, configured graph has $units -- floor is $((units-floor)) low."
     echo "      Reachable, so this is not a failure; re-record when the categories are next measured."
 fi
-echo "OK: min_compile_units=$floor is reachable ($units compile edges configured)"
+echo "OK: $key min_compile_units=$floor is reachable ($units compile edges configured)"
 exit 0
