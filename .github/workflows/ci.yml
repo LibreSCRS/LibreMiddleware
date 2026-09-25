@@ -292,8 +292,8 @@ jobs:
         # default clang crashes inside <type_traits> of the system libstdc++
         # while doing that under -std=c++23, and the baseline was recorded
         # with a newer clang, so the snapshot is taken with the same major
-        # the format check already installs, from the same repository.
-        if: matrix.release_gates
+        # the format check already installs, from the same repository. Both
+        # legs need it: the self-test runner drives abi-layout.selftest.sh too.
         run: |
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm.gpg
           echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" | sudo tee /etc/apt/sources.list.d/llvm-21.list
@@ -392,6 +392,9 @@ jobs:
       - name: Run every self-test
         env:
           BUILD_DIR: build
+          # abi-layout.selftest.sh dumps layouts with clang; the job-wide CXX is
+          # the gcc the warning baseline is keyed to, which has no -Xclang.
+          CXX: clang++-21
         run: ./ci/scripts/run-selftests.sh
 
       - name: Check the warning baseline
