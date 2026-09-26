@@ -324,7 +324,7 @@ cp LICENSE <repo>/thirdparty/miniz/LICENSE
 echo <ver> > <repo>/thirdparty/miniz/VERSION.txt
 # RE-APPLY the two local patches above, then:
 #   ctest -R 'MinizZipBounds|ZipRecords|ASiC|Asic'      with the ETSI validator
-#   ci/scripts/make-sbom.sh /tmp/sbom.json              must print the new version
+#   <LibreSCRS/ci>/scripts/make-sbom --out /tmp/sbom.json  must print the new version
 #   ci/scripts/abi-snapshot.sh --check build            miniz lands in LibreSign.a
 ```
 
