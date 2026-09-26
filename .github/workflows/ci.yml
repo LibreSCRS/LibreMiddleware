@@ -53,13 +53,12 @@ jobs:
             \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.mm' \) -print0 \
             | xargs -0 -r clang-format-21 --dry-run --Werror
 
-      - name: Check every tracked source is reachable by the formatter
-        run: ./ci/scripts/check-format-scope.sh
-
-      - name: Check every skip carries a reason
-        # A test that skips without saying why is indistinguishable from a test
-        # that passed. Costs a second and builds nothing.
-        run: ./ci/scripts/check-skip-reasons.sh
+      - name: Shared gates
+        # The gates every LibreSCRS repository runs the same way -- format
+        # scope, skip reasons, the workflows read as data, the canonical-type
+        # registry and duplicate bodies -- from one copy in LibreSCRS/ci. The
+        # repository's profile there says which ones apply here.
+        uses: LibreSCRS/ci/actions/gates@5b9410f9b0e6ab6983c39f931e118e68007c12b4
 
       - name: BIGNUM deleters cleanse, and say why
         # PACE ephemeral private keys exist only as a BIGNUM and no CleanseGuard
@@ -68,41 +67,12 @@ jobs:
         # the call and the recorded reason as two separate failures.
         run: ./ci/scripts/check-cleansing-deleters.sh
 
-      - name: BIGNUM deleter gate can still tell red from green
-        run: ./ci/scripts/check-cleansing-deleters.selftest.sh
-
       - name: Changelog and version agree on the pending release
         # Run on every push with the version this tree is heading for, so the
         # agreement is proved weeks before the tag rather than first on a tag
         # that cannot be taken back. The release job calls the same script with
         # the tag's version.
         run: ci/scripts/check-release-lockstep.sh "$(head -n1 VERSION | tr -d '[:space:]')"
-
-      - name: Every job carries a time bound
-        # An unbounded job that hangs holds a runner for six hours and will
-        # not serve its log until the run is cancelled, so the failing test
-        # cannot even be named. This fails when a new job arrives without a
-        # bound, which is the only moment the omission is cheap to fix.
-        run: ci/scripts/check-job-timeouts.sh
-
-      - name: Every shipped gate is wired into CI
-        # A gate nobody runs is not a gate: dup-scan.py and canonical-types.py
-        # shipped here, self-tested and green, while no workflow in this
-        # repository named either until this step arrived.
-        run: ci/scripts/check-gates-wired.sh
-
-      - name: Gate-wiring check self-test
-        run: ci/scripts/check-gates-wired.selftest.sh
-
-      - name: Canonical declaration registry
-        # Single-checkout subset of the workspace scan. The cross-repository
-        # half -- duplicate bodies between two checkouts -- needs every tree
-        # side by side, which no single repository's CI has; this half is the
-        # part one repository can prove on its own.
-        run: python3 tools/canonical-types.py --repo "$(basename "$PWD")"
-
-      - name: Duplicate bodies (this checkout)
-        run: python3 tools/dup-scan.py --repo "$(basename "$PWD")"
 
       - name: Every first-party version floor names the major in VERSION
         # The 4.x sweep before 5.0 searched for the token `4.2`; the floor that
@@ -195,17 +165,13 @@ jobs:
         # shapes a bill can take while still being a file a release would sign.
         run: ./ci/scripts/check-sbom.selftest.sh
       - name: The Arch recipe fetches the tarball this project publishes
-        # Two scripts, because a gate nobody proves is a gate nobody trusts:
-        # the selftest perturbs the recipe -- and the tree around it -- and
-        # requires each refusal to name its own arm, then the gate runs over
-        # the committed recipe. It prints how many cases it ran, which is the
-        # only count that cannot go stale.
-        # Neither touches the network — `git ls-remote` against these SSH
+        # Its self-test, which perturbs the recipe and the tree around it and
+        # requires each refusal to name its own arm, runs with every other
+        # self-test after the build. This judges the committed recipe.
+        # It does not touch the network — `git ls-remote` against these SSH
         # remotes hangs on a developer machine, and a gate that can hang is
         # worse than one that can fail.
-        run: |
-          ./packaging/arch/check-recipe.selftest.sh
-          ./packaging/arch/check-recipe.sh
+        run: ./packaging/arch/check-recipe.sh
 
       - name: Every uploaded artefact has someone to download it
         # An artefact whose name no download step can match is built, kept for
@@ -216,13 +182,6 @@ jobs:
         run: |
           ./ci/scripts/check-artifact-names.selftest.sh
           ./ci/scripts/check-artifact-names.sh
-
-      # A step can land in a job that does not run on push, or before the
-      # checkout that creates the directory its working-directory names, and
-      # nothing says so: the wiring check sees the name and the timeout check
-      # sees the bound. This reads the workflows as data and fails on both.
-      - name: Every step can run where it was placed
-        run: ./ci/scripts/workflow-step-order.py
 
   build-linux:
     # Two signing backends. `native` is the production path and carries the
@@ -354,57 +313,24 @@ jobs:
         # compiler is handed and fails on the name instead.
         run: ./ci/scripts/check-include-shadowing.py build
 
-      - name: The warning floor is still reachable
-        # warning-gate.py judges the LOG, so a tree that has LOST compile units
-        # makes it refuse every full build and blame the build. This judges the
-        # configured graph instead, so the message names the stale number.
-        run: ./ci/scripts/check-warning-floor.sh build --leg ${{ matrix.signing_backend }}
-
-      - name: Warning-floor check self-test
-        run: ./ci/scripts/check-warning-floor.selftest.sh
-
-      - name: EMRTDCrypto include-list gate self-test
-        # The gate itself is the configure-time check at the end of the
-        # top-level CMakeLists.txt, so this job's own configure above already
-        # ran it. This proves it can fail: on a throw-away copy of the tracked
-        # tree, a directory added to the target outside the shared module
-        # fails the configure and a comment does not. One leg is enough.
-        if: matrix.release_gates
-        run: ./ci/scripts/emrtd-include-gate.selftest.sh
-
-      # Every self-test in this repository, by pathspec, and each one must
-      # report the cases it ran and how many proved the gate red. A self-test
-      # nothing runs proves as much as no self-test, and a runner that read only
-      # exit codes would accept `exit 0` as a body.
-      #
-      # Here rather than in format-check, which builds nothing: one of these
-      # self-tests reads the SHIPPED libLibreSCRS_Signing.so -- it asserts the
-      # real library still links the PKCS#11 loader, and strips that same
-      # library to prove a stripped artefact is refused -- so without a build
-      # tree it says "cannot judge" and takes the whole runner with it. The
-      # honest fix is the tree, not a skip: a skipped case conceals whatever
-      # precondition broke next. BUILD_DIR is how the runner hands a built tree
-      # to the self-tests that need one; the rest ignore it.
-      #
-      # Both matrix legs on purpose. `native` and `both` link different signing
-      # backends into that same library, and this job's rule is that each
-      # backend reports for itself.
-      - name: Run every self-test
+      # The gates that need this build: every self-test this repository ships
+      # (one of them reads the SHIPPED libLibreSCRS_Signing.so, so they run
+      # where a build tree exists, handed over as BUILD_DIR), the warning
+      # baseline with its floor, and the discovered test set. Both matrix legs
+      # on purpose: they link different signing backends and register
+      # different suites, and each reports for itself.
+      - name: Shared gates after the build
+        uses: LibreSCRS/ci/actions/gates@5b9410f9b0e6ab6983c39f931e118e68007c12b4
         env:
-          BUILD_DIR: build
-          # abi-layout.selftest.sh dumps layouts with clang; the job-wide CXX is
-          # the gcc the warning baseline is keyed to, which has no -Xclang.
+          # abi-layout.selftest.sh dumps layouts with clang; the job-wide CXX
+          # is the gcc the warning baseline is keyed to, which has no -Xclang.
           CXX: clang++-21
-        run: ./ci/scripts/run-selftests.sh
-
-      - name: Check the warning baseline
-        # Counted by the [-Wname] tag, never by the message text: diagnostics
-        # are localised. --require-key means a compiler the baseline has no
-        # section for FAILS rather than being reported: the sentence that used to
-        # stand here -- "an unknown compiler is reported, not failed" -- described
-        # the behaviour this flag removed. That is only a usable rule if the key
-        # cannot drift, which is what the pin above is for.
-        run: ./ci/scripts/warning-gate.py --check --require-key --leg ${{ matrix.signing_backend }} build.log --build-dir build
+        with:
+          phase: build
+          build-dir: build
+          build-log: build.log
+          leg: ${{ matrix.signing_backend }}
+          warning-leg: ${{ matrix.signing_backend }}
 
       - name: Verify the configured signing backend took effect
         # Runs on every leg — this is the matrix's own integrity check, not a
@@ -413,13 +339,6 @@ jobs:
         # record the stray variable, keep the "native" default, and this job
         # would pass forever while silently testing one backend twice.
         run: ./ci/scripts/check-signing-backend.sh build ${{ matrix.signing_backend }} ${{ matrix.dss_oracle }} ON
-
-      - name: Check the discovered test set
-        # Runs on every leg. The two backends register different suites from
-        # the same commit, so one committed listing per leg is the only shape
-        # that can be compared; a matrix expression is correct here precisely
-        # because this is the one job in this project that has a matrix.
-        run: ./ci/scripts/test-manifest-gate.sh --check build ${{ matrix.signing_backend }}
 
       - name: Check pimpl visibility
         if: matrix.release_gates
@@ -431,13 +350,6 @@ jobs:
         # session per reader); only the diagnostic tools/tests may use the
         # PCSCConnection::openRawDiagnostic escape hatch.
         run: ./ci/scripts/check-raw-pcsc-open.sh
-
-      - name: Prove the raw PC/SC open gate still fails when it should
-        if: matrix.release_gates
-        # The gate above is a recursive grep, and a grep that finds nothing
-        # looks the same whether the tree is clean or empty -- it printed OK for
-        # a tree with no sources in it. Three of these four cases prove a red.
-        run: ./ci/scripts/check-raw-pcsc-open.selftest.sh
 
       - name: Check pinned TL cert expiry
         if: matrix.release_gates
@@ -457,20 +369,12 @@ jobs:
         # here without anything being tampered with.
         run: ./ci/scripts/check-vendored-provenance.sh
 
-      - name: Prove the provenance check can fail
-        if: matrix.release_gates
-        run: ./ci/scripts/check-vendored-provenance.selftest.sh
-
       - name: Check the bundled licence texts against the manifest
         if: matrix.release_gates
         # thirdparty/licenses.json pins a digest per bundled licence file and
         # nothing recomputed them: moving the curl submodule changed its COPYING
         # and the manifest went on asserting the previous one.
         run: ./ci/scripts/check-bundled-licenses.sh
-
-      - name: Prove the licence check can fail
-        if: matrix.release_gates
-        run: ./ci/scripts/check-bundled-licenses.selftest.sh
 
       - name: Check ABI snapshot vs 5.x baseline
         # Native leg only: the baseline is recorded for one configuration, and
@@ -663,15 +567,18 @@ jobs:
             -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined"
           cmake --build build-asan -j4
 
-      # The anti-vacuum, and it is not new: this check refuses an empty listing
-      # and refuses a listing with NOT_BUILT placeholders, so "the sanitizer leg
-      # was green" and "the sanitizer leg ran nothing" cannot read the same. It
+      # The anti-vacuum, and it is not new: the test-set check refuses an empty
+      # listing and one with NOT_BUILT placeholders, so "the sanitizer leg was
+      # green" and "the sanitizer leg ran nothing" cannot read the same. It
       # compares against the native leg's listing rather than one of its own,
-      # because the set of registered cases is a property of the sources, not of
-      # the sanitizer: measured, the two listings are byte-identical, and a second
-      # copy is a file nobody would keep in step.
+      # because the set of registered cases is a property of the sources, not
+      # of the sanitizer: measured, the two listings are byte-identical.
       - name: The sanitizer tree registers the same cases as the plain one
-        run: ./ci/scripts/test-manifest-gate.sh --check build-asan native
+        uses: LibreSCRS/ci/actions/gates@5b9410f9b0e6ab6983c39f931e118e68007c12b4
+        with:
+          phase: asan
+          build-dir: build-asan
+          leg: native
 
       - name: Bootstrap SoftHSM2 test token
         # The same token store build-linux provisions. Without it the software
@@ -932,7 +839,6 @@ jobs:
           ./configure --prefix=/tmp/opensc-install \
             --enable-shared --disable-static --without-readline
           make -j$(nproc) install
-
 
       - name: Install gcovr
         # Pinned: the baseline records the gcovr version it was measured with

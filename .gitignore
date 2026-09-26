@@ -23,7 +23,7 @@
 # Build
 build/
 build-*/
-# Compiler output captured beside the tree for ci/scripts/warning-gate.py.
+# Compiler output captured beside the tree for the shared warning gate.
 /build.log
 install/
 install-*/
