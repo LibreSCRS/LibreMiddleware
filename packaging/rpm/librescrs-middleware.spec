@@ -9,7 +9,7 @@
 Name:           librescrs-middleware
 Version:        5.0.0
 Release:        1%{?dist}
-Summary:        Smart-card middleware, card plugins and PKCS#11 provider for LibreSCRS
+Summary:        Smart-card libraries, card plugins and PKCS#11 provider for LibreSCRS
 
 License:        LGPL-2.1-or-later AND Apache-2.0 AND MIT AND OFL-1.1
 URL:            https://github.com/LibreSCRS/LibreMiddleware
@@ -42,21 +42,21 @@ BuildRequires:  python3-jsonschema
 
 %description
 LibreSCRS reads Serbian government smart cards (identity, vehicle and health)
-as well as generic ICAO eMRTD, NIST PIV and PKCS#15 cards, talking to the
-reader over PC/SC directly.
+as well as ICAO 9303 travel documents, NIST PIV and PKCS#15 cards, talking to
+the reader over PC/SC directly.
 
 This package holds the shared libraries and the PKCS#11 provider module. The
 module is installed but not registered with p11-kit; registration is a separate
 decision and a separate package.
 
 %package -n librescrs-card-plugins
-Summary:        Card plugins for the LibreSCRS middleware
+Summary:        Card plugins for the LibreSCRS smart-card libraries
 Requires:       %{name}%{?_isa} = %{version}-%{release}
 
 %description -n librescrs-card-plugins
-One dlopen'd plugin per card family, with the manifest that describes the
-fields each one exposes. Without this package the libraries load and enumerate
-readers but recognise no card.
+One plugin per card family, loaded at run time, with the manifest that
+describes the fields each one exposes. Without this package the libraries load
+and enumerate readers but recognize no card.
 
 %package -n librescrs-pkcs11-direct
 Summary:        Register the LibreSCRS PKCS#11 module directly with p11-kit
@@ -73,10 +73,12 @@ registers a proxy that collects the PIN in its own prompter, behind an
 authorization prompt; the direct module takes the PIN inside whichever
 application loaded it. Registering both would leave one card with two security
 models and let whichever dialog the user typed into decide which one they got,
-so the two packages conflict.
+so the two packages conflict. dnf switches from one to the other only with
+--allowerasing; zypper when its conflict solution that removes the other
+package is chosen (--force-resolution).
 
 %package        devel
-Summary:        Development files for the LibreSCRS middleware
+Summary:        Development files for the LibreSCRS smart-card libraries
 Requires:       %{name}%{?_isa} = %{version}-%{release}
 # The installed CMake config calls find_dependency for PCSC and for OpenSSL
 # before it defines a target, so a consumer without these headers fails at
@@ -85,7 +87,7 @@ Requires:       pcsc-lite-devel
 Requires:       openssl-devel
 
 %description    devel
-Headers, linker symlinks and the CMake package configuration for building
+Headers, linker symbolic links and the CMake package configuration for building
 against LibreSCRS.
 
 %prep

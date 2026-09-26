@@ -25,10 +25,10 @@ Architecture: amd64
 Multi-Arch: same
 Depends: ${shlibs:Depends}, ${misc:Depends}
 Recommends: librescrs-card-plugins (= ${binary:Version})
-Description: LibreSCRS smart-card middleware runtime libraries
+Description: LibreSCRS smart-card runtime libraries
  LibreSCRS reads Serbian government smart cards (identity, vehicle and health)
- as well as generic ICAO eMRTD, NIST PIV and PKCS#15 cards, talking to the
- reader over PC/SC directly.
+ as well as ICAO 9303 travel documents, NIST PIV and PKCS#15 cards, talking
+ to the reader over PC/SC directly.
  .
  This package holds the shared libraries and the PKCS#11 provider module. The
  module is installed but not registered with p11-kit; registration is a
@@ -38,11 +38,11 @@ Package: librescrs-card-plugins
 Architecture: amd64
 Multi-Arch: same
 Depends: ${shlibs:Depends}, ${misc:Depends}, liblibrescrs5 (= ${binary:Version})
-Description: Card plugins for the LibreSCRS middleware
- One dlopen'd plugin per card family, with the manifest that describes the
- fields each one exposes.
+Description: Card plugins for the LibreSCRS smart-card libraries
+ One plugin per card family, loaded at run time, with the manifest that
+ describes the fields each one exposes.
  .
- Without this package the libraries load and enumerate readers but recognise
+ Without this package the libraries load and enumerate readers but recognize
  no card.
 
 Package: librescrs-pkcs11-direct
@@ -59,8 +59,10 @@ Description: Register the LibreSCRS PKCS#11 module directly with p11-kit
  authorization prompt; the direct module takes the PIN inside whichever
  application loaded it. Registering both would leave one card with two
  security models and let whichever dialog the user typed into decide which one
- they got, so the two packages conflict and installing either replaces the
- other. On a machine with a desktop session the agent is the one you want.
+ they got, so the two packages conflict. Installing either with apt replaces
+ the other; dnf switches only with --allowerasing, and zypper when its
+ conflict solution that removes the other package is chosen. On a machine
+ with a desktop session the agent is the one you want.
 
 Package: liblibrescrs-dev
 Section: libdevel
@@ -70,9 +72,9 @@ Depends: ${misc:Depends},
          liblibrescrs5 (= ${binary:Version}),
          libpcsclite-dev,
          libssl-dev
-Description: Development files for the LibreSCRS middleware
- Headers, linker symlinks and the CMake package configuration for building
- against LibreSCRS.
+Description: Development files for the LibreSCRS smart-card libraries
+ Headers, linker symbolic links and the CMake package configuration for
+ building against LibreSCRS.
  .
  The two development dependencies are not decoration. The installed CMake
  config calls find_dependency for PCSC and for OpenSSL before it defines a
