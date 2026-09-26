@@ -623,21 +623,6 @@ jobs:
         # -> build -> run cycle and exits ==> OK on success.
         run: bash examples/sdk-consumer-config/build-and-run.sh
 
-      # --- PKCS#11 ownership -------------------------------------------------
-      # Registration belongs to the agent proxy. This install must contribute
-      # the library and no declaration at all — a property of the finished
-      # install tree, not of the rules that produced it, so it is checked by
-      # enumerating what p11-kit loads afterwards. The gate script lives in the
-      # Linux host repository and serves both invariants through a switch, so
-      # neither repository grows a second copy of it. Cross-checkout mirrors
-      # what that repository's own CI already does for this one.
-      - name: Checkout LibreLinux (for the shared PKCS#11 ownership gate)
-        uses: actions/checkout@v4
-        with:
-          repository: LibreSCRS/LibreLinux
-          ref: main
-          path: LibreLinux
-
       - name: Build and install to the system prefix
         # Its own step with its own ceiling: the vendored OpenSC autotools
         # build does not fit inside a gate's budget, and when a step fails its
@@ -654,9 +639,37 @@ jobs:
           cmake --build build-install -j4
           sudo cmake --install build-install
 
+      # Registration belongs to the agent proxy, or on a host with no agent to
+      # the librescrs-pkcs11-direct package. A plain install must contribute
+      # the library and no declaration at all -- a property of the finished
+      # install, measured twice: the install's own manifest names no p11-kit
+      # .module file (wherever it went, so a declaration that p11-kit is told
+      # to hide still counts), and p11-kit, which loads every module it reads,
+      # lists no LibreSCRS provider.
       - name: Assert LM registers no PKCS#11 provider of its own
         timeout-minutes: 5
-        run: LibreLinux/e2e/check-p11kit-single-owner.sh --expect none
+        run: |
+          set -uo pipefail
+          manifest=build-install/install_manifest.txt
+          if [ ! -s "$manifest" ]; then
+            echo "::error::$manifest is missing or empty -- the install was not measured"
+            exit 2
+          fi
+          if grep -E '\.module$' "$manifest"; then
+            echo "::error::the install wrote a p11-kit module declaration (above)"
+            exit 1
+          fi
+          if ! out="$(p11-kit list-modules 2>&1)"; then
+            printf '%s\n' "$out"
+            echo "::error::p11-kit list-modules failed -- the registration cannot be observed"
+            exit 2
+          fi
+          n="$(printf '%s\n' "$out" | grep -c '^    library-manufacturer: LibreSCRS$' || true)"
+          echo "LibreSCRS providers p11-kit loads: $n"
+          if [ "$n" -ne 0 ]; then
+            echo "::error::$n LibreSCRS provider(s) registered; this install must register none"
+            exit 1
+          fi
 
       - name: Assert the installed module carries a relative rpath
         timeout-minutes: 5
