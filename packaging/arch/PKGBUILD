@@ -6,17 +6,20 @@
 #
 #     librescrs-middleware  <=  librelinux  <=  librekde
 #
-# NOTE ON THE VENDORED OpenSC SUBMODULE
-# -------------------------------------
-# thirdparty/opensc-source is a git SUBMODULE (upstream OpenSC/OpenSC). This
-# recipe no longer fetches GitHub's auto-generated archive, which omits every
-# submodule tree; it fetches the tarball the release workflow uploads, built
-# from a clone with --recurse-submodules, so the submodule trees ARE inside it.
-# The two upstream entries below stay anyway, and prepare() lays them over the
-# tarball's copies: each carries a checksum of its own, so a pinned upstream
-# tree cannot change under the package without this file changing too. The pins
-# (and their sha256) MUST be refreshed at tag time alongside the main tarball;
-# packaging/arch/check-recipe.sh arm 3 refuses a pin that is not the gitlink.
+# SOURCES
+# -------
+# The project's own source is the signed release tag, cloned with git:
+# makepkg verifies the tag's signature against validpgpkeys, the LibreSCRS
+# release key in KEYS, and that is what the 'SKIP' checksum of that entry
+# stands on. A checksum could not do it: this recipe travels inside the tree
+# the checksum would cover, and the tag does not exist until release day.
+#
+# makepkg's git source carries no submodules, so the two vendored upstream
+# trees (thirdparty/opensc-source, thirdparty/curl-source) are fetched as
+# archives of their pinned commits and laid into place by prepare(). Those
+# commits never move under a tag, so their checksums are real and final.
+# packaging/arch/check-recipe.sh arm 3 refuses a pin that is not the gitlink,
+# and arm 4 a real archive without a real checksum.
 
 pkgname=librescrs-middleware
 pkgver=5.0.0
@@ -62,34 +65,30 @@ makedepends=(
 # module on a machine that deliberately has no agent.
 options=('!lto')   # LTO off, as the RPM spec does; not measured to be required
 source=(
-    "$pkgname-$pkgver.tar.gz::https://github.com/LibreSCRS/LibreMiddleware/releases/download/$pkgver/librescrs-middleware_$pkgver.orig.tar.gz"
-    # The pinned upstream trees, fetched separately and laid over the copies
-    # the tarball already carries, so each one has a checksum of its own. Pins
-    # match `git -C thirdparty/<sub> rev-parse HEAD` at tag time.
+    "git+https://github.com/LibreSCRS/LibreMiddleware.git#tag=$pkgver?signed"
+    # The pinned upstream trees, laid into the submodule paths by prepare().
+    # Pins match `git -C thirdparty/<sub> rev-parse HEAD`.
     "opensc-source-$pkgver.tar.gz::https://github.com/OpenSC/OpenSC/archive/07d0d40b0e4051f6fe11f3a92cec56d320670d85.tar.gz"
     "curl-source-$pkgver.tar.gz::https://github.com/curl/curl/archive/01346829096c61b372692f6dc43ffa778c6caccd.tar.gz"
 )
-# Placeholders — real checksums are filled in at tag time with `makepkg -g`,
-# which ships with pacman itself (`updpkgsums` needs pacman-contrib and is a
-# human convenience, not a prerequisite of any gate). 'SKIP' keeps the
-# release-shaped recipe parseable until the release exists; the moment the tag
-# does, packaging/arch/check-recipe.sh turns every remaining SKIP into an
-# error, so this placeholder cannot outlive the release it waits for.
+# The LibreSCRS release key's primary fingerprint, as published in KEYS.
+validpgpkeys=('6B05889AC9A6A7188DF639B06F27A989C2031D16')
 sha256sums=(
     'SKIP'
-    'SKIP'
-    'SKIP'
+    '395904bf1ebf929825b6c5fe3f3345929675bd2cbb4689a17760a5c14186606c'
+    '64cd4fdf196bce8bc381f4ae6f8d0e4e4c4f3b93b73b69deb8d78dab24f2d9ff'
 )
 
 prepare() {
-    cd "$srcdir/LibreMiddleware-$pkgver"
+    cd "$srcdir/LibreMiddleware"
     # Drop the separately-fetched submodule sources into their paths so the
     # vendored static builds (thirdparty/CMakeLists.txt) find their source trees.
-    # The tarball already carries these trees, so the replacement must be a
-    # replacement and not a merge — hence rm -rf, not rmdir. rmdir removes an
-    # EMPTY directory and quietly does nothing otherwise, which would leave
-    # cp -aT to merge the pinned tree over a populated one: a file upstream
-    # deleted would survive in the package with nothing to show it had.
+    # The clone leaves each path empty, but a local build may find it
+    # populated, so the replacement must be a replacement and not a merge —
+    # hence rm -rf, not rmdir. rmdir removes an EMPTY directory and quietly
+    # does nothing otherwise, which would leave cp -aT to merge the pinned tree
+    # over a populated one: a file upstream deleted would survive in the
+    # package with nothing to show it had.
     if [ -d ../OpenSC-07d0d40b0e4051f6fe11f3a92cec56d320670d85 ]; then
         rm -rf thirdparty/opensc-source
         cp -aT ../OpenSC-07d0d40b0e4051f6fe11f3a92cec56d320670d85 thirdparty/opensc-source
@@ -101,7 +100,7 @@ prepare() {
 }
 
 build() {
-    cd "$srcdir/LibreMiddleware-$pkgver"
+    cd "$srcdir/LibreMiddleware"
     cmake -S . -B build -G Ninja \
         -DCMAKE_BUILD_TYPE=RelWithDebInfo \
         -DCMAKE_INSTALL_PREFIX=/usr \
@@ -112,7 +111,7 @@ build() {
 }
 
 check() {
-    cd "$srcdir/LibreMiddleware-$pkgver"
+    cd "$srcdir/LibreMiddleware"
     # Card-hardware / live-PIN suites self-skip without a reader + the
     # LIBRESCRS_TEST_* env vars; the rest are pure unit tests. QT_QPA is
     # harmless here (the core is Qt-free) but kept for a uniform check() shape.
@@ -120,7 +119,7 @@ check() {
 }
 
 package() {
-    cd "$srcdir/LibreMiddleware-$pkgver"
+    cd "$srcdir/LibreMiddleware"
     DESTDIR="$pkgdir" cmake --install build
     # cmake --install already lays down: /usr/lib/libLibreSCRS_*.so,
     # /usr/lib/librescrs/plugins/*.so, /usr/lib/pkcs11/librescrs-pkcs11.so,

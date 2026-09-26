@@ -22,18 +22,12 @@ jobs:
       contents: read
     timeout-minutes: 15
     steps:
-      # fetch-tags, deliberately. The recipe check run further down decides
-      # its last arm on whether the LOCAL clone holds refs/tags/<pkgver>: with
-      # a tagless checkout it prints SKIPPED forever, so a sha256sums that is
-      # still a placeholder would outlive the release it waits for and no run
-      # would ever say so. This checkout already asks for the whole history,
-      # which carries the tags with it; the flag is here so the arm survives
-      # someone shortening the fetch later.
+      # The whole history: the version check's stamp arm configures the real
+      # CMakeLists, and the version derivation reads the history it has.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           submodules: recursive
           fetch-depth: 0
-          fetch-tags: true
 
       - name: Install clang-format-21
         run: |
@@ -71,7 +65,7 @@ jobs:
         # the call and the recorded reason as two separate failures.
         run: ./ci/scripts/check-cleansing-deleters.sh
 
-      - name: The Arch recipe fetches the tarball this project publishes
+      - name: The Arch recipe builds this project's signed release tag
         # Its self-test, which perturbs the recipe and the tree around it and
         # requires each refusal to name its own arm, runs with every other
         # self-test after the build. This judges the committed recipe.

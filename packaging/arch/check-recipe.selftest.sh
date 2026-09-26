@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: LGPL-2.1-or-later
-# Selftest for check-recipe.sh. Ten shapes the recipe (or the tree around it)
+# Selftest for check-recipe.sh. The shapes the recipe (or the tree around it)
 # gets wrong, plus the real recipe as a control. One of the ten only applies to
 # a repository whose recipe carries a FetchContent pin; where it does not, the
 # file says so out loud and counts one case fewer, because a silently dropped
@@ -22,11 +22,9 @@
 # Both git object-writing commands are run with signing turned off for the
 # invocation. A maintainer with tag.gpgSign=true set globally does not get a
 # lightweight tag from `git tag` but a signed annotated one, which asks for a
-# message in an editor and a passphrase from pinentry: the case would either
-# fail to create the tag -- leaving arm 4 to print SKIPPED, exit 0, and the case
-# to report "expected a non-zero exit, got 0" -- or hang on the prompt. CI has
-# no global configuration and would not have seen either, so the gate would have
-# been green there and red or wedged on the machine that has to maintain it.
+# message in an editor and a passphrase from pinentry. CI has no global
+# configuration and would not have seen it, so the fixture would have been
+# built there and wedged on the machine that has to maintain it.
 set -u
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -49,7 +47,7 @@ fx() { printf '%s/%s/%s\n' "$work" "$1" "$rname"; }
 fixture() {
     local c="$1" d
     d=$(fx "$c")
-    mkdir -p "$d/packaging/arch" "$d/ci/scripts"
+    mkdir -p "$d/packaging/arch"
     cp "$control_recipe" "$d/packaging/arch/PKGBUILD"
     cp "$subject"        "$d/packaging/arch/check-recipe.sh"
     chmod +x "$d/packaging/arch/check-recipe.sh"
@@ -57,9 +55,8 @@ fixture() {
     [ -f "$here/README.md" ] && cp "$here/README.md" "$d/packaging/arch/README.md"
     # arm 5 asks the top-level CMakeLists.txt which install options exist.
     [ -f "$root/CMakeLists.txt" ] && cp "$root/CMakeLists.txt" "$d/CMakeLists.txt"
-    # arm 1 reads the source name out of this script; without it every case
-    # would fail on a missing input rather than on what it perturbs.
-    cp "$root/ci/scripts/make-source-tarball.sh" "$d/ci/scripts/"
+    # arm 4 reads the release key's fingerprint out of KEYS.
+    cp "$root/KEYS" "$d/KEYS"
     [ -f "$root/cmake/FetchQCBOR.cmake" ] && {
         mkdir -p "$d/cmake"
         cp "$root/cmake/FetchQCBOR.cmake" "$d/cmake/"
@@ -118,18 +115,17 @@ expect_red_out() {  # expect_red_out <name> <substring> -- for perturbations
     esac
 }
 
-# 1 -- the v-prefixed auto archive: the shape every recipe carried before the
-#      release workflow began publishing a tarball of its own.
-fixture v_prefixed_archive
-sed -i 's#releases/download/\$pkgver/[^"]*#archive/refs/tags/v$pkgver.tar.gz#' \
-    "$(fx v_prefixed_archive)/packaging/arch/PKGBUILD"
-expect_red v_prefixed_archive "arm1"
+# 1 -- a v-prefixed tag, the spelling every recipe carried before this stack
+#      settled on unprefixed tags.
+fixture v_prefixed_tag
+sed -i 's#\#tag=\$pkgver#\#tag=v$pkgver#' "$(fx v_prefixed_tag)/packaging/arch/PKGBUILD"
+expect_red v_prefixed_tag "v-prefixed"
 
-# 2 -- the UNPREFIXED auto archive. This one resolves for a repository that has
-#      published a tag, so nothing at build time would complain; only the gate
-#      can say the bytes are not ours.
+# 2 -- GitHub's auto-generated archive of the tag. It resolves for a
+#      repository that has published a tag, so nothing at build time would
+#      complain; only the gate can say the bytes are not ours.
 fixture unprefixed_archive
-sed -i 's#releases/download/\$pkgver/[^"]*#archive/refs/tags/$pkgver.tar.gz#' \
+sed -i "s#git+https://github.com/LibreSCRS/$rname\.git\#tag=\\\$pkgver?signed#https://github.com/LibreSCRS/$rname/archive/refs/tags/\$pkgver.tar.gz#" \
     "$(fx unprefixed_archive)/packaging/arch/PKGBUILD"
 expect_red unprefixed_archive "auto-generated archive"
 
@@ -148,19 +144,24 @@ fixture vacuum_source
 sed -i 's/^source=(/sources=(/' "$(fx vacuum_source)/packaging/arch/PKGBUILD"
 expect_red vacuum_source "vacuum"
 
-# 6 -- the asset name drifts from the one make-source-tarball.sh writes. The
-#      URL is still a releases/download/ one, so shape alone cannot catch it;
-#      the first makepkg would 404.
-fixture asset_name_drift
-sed -i 's#/\([a-z-]*\)_\$pkgver\.orig\.tar\.gz#/\1-sources_$pkgver.orig.tar.gz#' \
-    "$(fx asset_name_drift)/packaging/arch/PKGBUILD"
-expect_red asset_name_drift "the release workflow uploads"
+# 6 -- the release-asset tarball this recipe used to fetch. Its checksum
+#      cannot exist before the tag, and the recipe travels inside it.
+fixture release_tarball
+sed -i "s#\"git+https://github.com/LibreSCRS/$rname\.git\#tag=\\\$pkgver?signed\"#\"\$pkgname-\$pkgver.tar.gz::https://github.com/LibreSCRS/$rname/releases/download/\$pkgver/src_\$pkgver.orig.tar.gz\"#" \
+    "$(fx release_tarball)/packaging/arch/PKGBUILD"
+expect_red release_tarball "release-asset tarball"
 
-# 7 -- the recipe fetches a SIBLING repository's asset. A recipe of this shape
-#      is written by copying a near-identical one, so this is what a careless
-#      copy produces.
+# 6b -- the tag cloned without ?signed: makepkg would not verify it, and the
+#       SKIP checksum would then stand on nothing.
+fixture unsigned_tag
+sed -i 's#?signed"#"#' "$(fx unsigned_tag)/packaging/arch/PKGBUILD"
+expect_red unsigned_tag "without ?signed"
+
+# 7 -- the recipe fetches a SIBLING repository's source. A recipe of this
+#      shape is written by copying a near-identical one, so this is what a
+#      careless copy produces.
 fixture sibling_repo
-sed -i "s#github.com/LibreSCRS/$rname/releases#github.com/LibreSCRS/NotThisRepo/releases#" \
+sed -i "s#github.com/LibreSCRS/$rname\.git#github.com/LibreSCRS/NotThisRepo.git#" \
     "$(fx sibling_repo)/packaging/arch/PKGBUILD"
 expect_red sibling_repo "while this repository is"
 
@@ -194,24 +195,27 @@ else
     echo "CASE fetchcontent_drift: not applicable -- this recipe carries no _qcbor_commit"
 fi
 
-# 10 -- the tag exists and sha256sums is still SKIP. The tag is created in the
-#       throwaway fixture, never in a real clone.
-fixture tag_with_skip
-cases=$((cases + 1))
-v=$(sed -n '1p' "$(fx tag_with_skip)/VERSION" | tr -d '[:space:]')
-git -C "$(fx tag_with_skip)" -c tag.gpgSign=false tag "$v"
-sed -i "s/^pkgver=.*/pkgver=$v/" "$(fx tag_with_skip)/packaging/arch/PKGBUILD"
-sed -i "/^sha256sums=(/,/)/s/'[0-9a-f]\{64\}'/'SKIP'/g" \
-    "$(fx tag_with_skip)/packaging/arch/PKGBUILD"
-run tag_with_skip
-if [ "$rc" -eq 0 ]; then
-    echo "CASE tag_with_skip: expected a non-zero exit, got 0"; fails=$((fails + 1))
-else
-    case "$out" in *"arm4"*) : ;; *)
-        echo "CASE tag_with_skip: exit was non-zero but no line mentions 'arm4'"
-        printf '%s\n' "$out" | sed 's/^/    /'; fails=$((fails + 1)) ;;
-    esac
-fi
+# 10 -- arm 4, which holds before the tag and after it.
+# 10a  a fixed upstream archive whose checksum is still SKIP.
+fixture upstream_skip
+sed -i "0,/'[0-9a-f]\{64\}'/s//'SKIP'/" "$(fx upstream_skip)/packaging/arch/PKGBUILD"
+expect_red upstream_skip "not a real sha256"
+
+# 10b  validpgpkeys names a key that is not the one in KEYS.
+fixture wrong_key
+sed -i -E "/^validpgpkeys=/s/[0-9A-F]{40}/0000000000000000000000000000000000000000/" \
+    "$(fx wrong_key)/packaging/arch/PKGBUILD"
+expect_red wrong_key "validpgpkeys must be exactly the release key"
+
+# 10c  the signed tag given a checksum: a git source has none to compare.
+fixture tag_with_sum
+sed -i "/^sha256sums=(/,/^)/s/'SKIP'/'$(printf '%064d' 0)'/" "$(fx tag_with_sum)/packaging/arch/PKGBUILD"
+expect_red tag_with_sum "must be SKIP"
+
+# 10d  KEYS gone from the tree: the key cannot be shown to be the release key.
+fixture no_keys
+rm -f "$(fx no_keys)/KEYS"
+expect_red_out no_keys "KEYS is missing"
 
 # 12-15 -- the recipe and its README claim a p11-kit registration the build
 #          does not install. Only in a recipe whose build() can install one.
@@ -263,7 +267,7 @@ if [ "$rc" -ne 0 ]; then
     printf '%s\n' "$out" | sed 's/^/    /'; fails=$((fails + 1))
 fi
 case "$out" in
-    *"arm4: SKIPPED"*|*"arm4: tag"*) : ;;
+    *"arm4: validpgpkeys names the release key"*"arm4: "*"real checksum"*) : ;;
     *) echo "CASE control: arm 4 said nothing about itself -- a silent arm is a vacuum"
        printf '%s\n' "$out" | sed 's/^/    /'; fails=$((fails + 1)) ;;
 esac

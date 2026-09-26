@@ -2,34 +2,29 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # check-recipe.sh [--online]
 #
-# The Arch recipe must fetch the tarball THIS project publishes, and must say
-# true things about it. Four arms; every arm prints what it measured, a skip
-# included, because a silent skip is a vacuum and not a pass.
+# The Arch recipe must build THIS project's signed release, and must say true
+# things about it. Five arms; every arm prints what it measured, because a
+# silent skip is a vacuum and not a pass.
 #
-#   1  source= fetches the release asset this project uploads: from THIS
-#      repository, under the name ci/scripts/make-source-tarball.sh gives it.
-#      GitHub's auto-generated archive/refs/tags tarball is refused -- its bytes
-#      are not ours to assert and it omits submodule trees -- and so is the
-#      v-prefixed spelling it used to ask for, which is not how any tag in this
-#      stack is written.
+#   1  the project's own source is the signed release tag of THIS repository,
+#      cloned with git:  git+https://github.com/LibreSCRS/<repo>.git#tag=$pkgver?signed
+#      -- exactly one such entry. GitHub's auto-generated archive/refs/tags
+#      tarball is refused (its bytes are not ours to assert and it omits
+#      submodule trees), and so are an unsigned tag, a branch or commit, a
+#      release-asset tarball (its checksum cannot exist before the tag, and the
+#      recipe travels inside the tarball it would checksum), a sibling
+#      repository, and the v-prefixed spelling no tag in this stack uses.
 #   2  pkgver equals the first line of VERSION. pkgver only labels the package;
 #      the installed CMake version file is generated from VERSION, so a bump
 #      that misses one of them ships a package whose own metadata disagrees.
 #   3  every submodule gitlink is pinned verbatim in the recipe; and a
 #      FetchContent pin carried by the recipe equals the pin in the cmake module
 #      the build would otherwise fetch with.
-#   4  once the tag exists, no sha256sums entry may still be SKIP.
-#
-# Arm 4 asks the LOCAL repository whether the tag exists, so it is INERT in a
-# clone that carries no tags: it prints its skip and passes. That is why the
-# workflow step that runs this gate checks out with fetch-tags -- without it the
-# arm could never fire, and a placeholder checksum would outlive the release it
-# waits for. It deliberately does not contact the remote by default: measured on the maintainer's machine,
-# `git ls-remote` against these SSH remotes hangs (rc=124 under `timeout 15`,
-# even with GIT_TERMINAL_PROMPT=0), and a gate that can hang is worse than one
-# that can fail -- an unbounded job holds a runner for six hours and refuses to
-# serve its log while it does. --online adds the probe under an explicit
-# timeout and treats a timeout as a printed skip, never as a red.
+#   4  integrity without a tag: validpgpkeys is exactly the primary fingerprint
+#      of the release key in KEYS, the signed tag is the only 'SKIP' checksum,
+#      and every other source carries a real sha256. Before the tag and after
+#      it, the same answer.
+#   5  the recipe describes no p11-kit registration the build does not install.
 #
 # Threat model. This reads the recipe as TEXT rather than sourcing it, so it
 # guards against the honest regression: someone edits source=, bumps a version
@@ -40,19 +35,14 @@
 # array (source_x86_64=()) instead of source=; a source=( or its closing ) not
 # at column 0, which the range match needs; a pin that appears in the recipe
 # only inside a comment, because arm 3 asks whether the sha is present, not
-# where. Arm 1 reads the asset name out of the URL and compares it with the one
-# make-source-tarball.sh builds, but it cannot know whether the release workflow
-# actually uploaded it: a workflow that stopped uploading leaves this green and
-# 404s at the first makepkg. Code review, not this gate, is what catches a
-# recipe written to mislead.
+# where. Code review, not this gate, is what catches a recipe written to
+# mislead.
+#
+# It does not touch the network. Arm 4 reads KEYS with gpg in a throwaway home
+# directory; no gpg is "cannot judge" (exit 2), never a pass.
 set -u
 
-online=0
-case "${1:-}" in
-  --online) online=1 ;;
-  '') ;;
-  *) echo "usage: check-recipe.sh [--online]" >&2; exit 2 ;;
-esac
+[ "$#" -eq 0 ] || { echo "usage: check-recipe.sh" >&2; exit 2; }
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(CDPATH= cd -- "$here/../.." && pwd)
@@ -68,7 +58,9 @@ pkgver=$(sed -nE 's/^pkgver=([^[:space:]#]+).*/\1/p' "$recipe" | head -1)
 [ -n "$pkgver" ] || bad "no pkgver= in $recipe"
 
 # --- arm 1 -----------------------------------------------------------------
+reponame=$(basename "$root")
 block=$(sed -n '/^source=(/,/^)/p' "$recipe")
+entries=()
 if [ -z "$block" ]; then
   bad "arm1: no 'source=(' ... ')' array in the recipe -- the pattern matches nothing, which is a vacuum and not a pass"
 else
@@ -78,48 +70,44 @@ else
   if [ "$n" -eq 0 ]; then
     bad "arm1: the source=() array holds no entries"
   else
-    # The asset name is not free-form: make-source-tarball.sh maps this
-    # repository to a source name and writes <src>_<version>.orig.tar.gz. The
-    # mapping is read out of that script instead of being repeated here, so a
-    # rename cannot leave the recipe and the workflow naming different files --
-    # the recipe would 404 at the first makepkg and nothing would have said so.
-    reponame=$(basename "$root")
-    maker="$root/ci/scripts/make-source-tarball.sh"
-    srcname=""
-    if [ -f "$maker" ]; then
-      srcname=$(sed -nE "s/^[[:space:]]*$reponame\)[[:space:]]+src=([A-Za-z0-9._-]+).*/\1/p" "$maker" | head -1)
-    fi
+    want="git+https://github.com/LibreSCRS/$reponame.git#tag="
     own=0
     for e in "${entries[@]}"; do
-      url=${e##*::}; url=${url%\"}
-      case "$e" in
+      src=${e#"${e%%[![:space:]]*}"}; src=${src#\"}; src=${src%\"}
+      url=${src#*::}
+      case "$url" in
         *archive/refs/tags*)
           bad "arm1: fetches GitHub's auto-generated archive, whose bytes this project does not produce: $url" ;;
       esac
-      case "$e" in
-        *'/v$pkgver'*|*'/v${pkgver}'*)
+      # shellcheck disable=SC2016 # the recipe's literal $pkgver, not ours
+      case "$url" in
+        *'/v$pkgver'*|*'/v${pkgver}'*|*'tag=v$pkgver'*|*'tag=v${pkgver}'*)
           bad "arm1: asks for a v-prefixed tag; every tag this project publishes is unprefixed: $url" ;;
       esac
-      case "$e" in
-        *github.com/LibreSCRS/*/releases/download/*)
-          own=$((own + 1))
+      case "$url" in
+        *github.com/LibreSCRS/*)
           rest=${url#*github.com/LibreSCRS/}
-          erepo=${rest%%/*}
-          [ "$erepo" = "$reponame" ] || bad "arm1: the release asset is fetched from LibreSCRS/$erepo while this repository is $reponame -- a recipe copied between siblings packages the other one's sources"
-          asset=${url##*/}
-          asset=${asset//'${pkgver}'/$pkgver}
-          asset=${asset//'$pkgver'/$pkgver}
-          if [ -z "$srcname" ]; then
-            bad "arm1: ci/scripts/make-source-tarball.sh names no source for $reponame, so the asset name $asset cannot be checked against the one the release workflow uploads"
-          elif [ "$asset" != "${srcname}_${pkgver}.orig.tar.gz" ]; then
-            bad "arm1: the recipe fetches $asset, but the release workflow uploads ${srcname}_${pkgver}.orig.tar.gz"
-          fi ;;
+          erepo=${rest%%[/.#]*}
+          if [ "$erepo" != "$reponame" ]; then
+            bad "arm1: the source is fetched from LibreSCRS/$erepo while this repository is $reponame -- a recipe copied between siblings packages the other one's sources"
+            continue
+          fi
+          own=$((own + 1))
+          # shellcheck disable=SC2016 # the recipe's literal $pkgver, not ours
+          case "$url" in
+            "$want"'$pkgver?signed'|"$want"'${pkgver}?signed') ;;
+            *releases/download/*)
+              bad "arm1: fetches a release-asset tarball ($url); the source is the signed tag, $want\$pkgver?signed -- a tarball checksum cannot exist before the tag, and the recipe travels inside the tarball it would checksum" ;;
+            "$want"'$pkgver'|"$want"'${pkgver}')
+              bad "arm1: the tag is cloned without ?signed, so makepkg would not verify its signature: $url" ;;
+            *)
+              bad "arm1: the project's own source must be $want\$pkgver?signed, not $url" ;;
+          esac ;;
       esac
     done
-    printf 'arm1: %d source entr%s, %d fetching this repository'"'"'s own release asset%s\n' \
-      "$n" "$([ "$n" -eq 1 ] && echo y || echo ies)" "$own" \
-      "$([ -n "$srcname" ] && echo " named ${srcname}_${pkgver}.orig.tar.gz")"
-    [ "$own" -eq 1 ] || bad "arm1: expected exactly one .../releases/download/... entry, found $own"
+    printf 'arm1: %d source entr%s, %d naming this repository\n' \
+      "$n" "$([ "$n" -eq 1 ] && echo y || echo ies)" "$own"
+    [ "$own" -eq 1 ] || bad "arm1: expected exactly one source naming LibreSCRS/$reponame (its signed tag), found $own"
   fi
 fi
 
@@ -226,34 +214,55 @@ if [ -f "$root/CMakeLists.txt" ] && grep -q 'INSTALL_P11KIT_MODULE' "$root/CMake
 fi
 
 # --- arm 4 -----------------------------------------------------------------
-where=""
-git -C "$root" rev-parse -q --verify "refs/tags/$pkgver" >/dev/null 2>&1 && where="in this clone"
-if [ -z "$where" ] && [ "$online" -eq 1 ]; then
-  if out=$(GIT_TERMINAL_PROMPT=0 timeout 20 git -C "$root" ls-remote --tags origin "$pkgver" 2>/dev/null); then
-    [ -n "$out" ] && where="on origin"
+# Integrity that does not wait for a tag. The signed tag is verified by
+# makepkg against validpgpkeys; every other entry is a fixed upstream commit
+# whose checksum is known today. So: validpgpkeys names exactly the primary
+# key in KEYS, the tag is the one SKIP, and the rest are real sums.
+# The text of a NAME=( ... ) array, one line or many, comments dropped.
+array_text() {
+  awk -v n="$1" 'index($0, n "=(") == 1 {f = 1} f {sub(/#.*/, ""); print} f && /\)/ {exit}' "$recipe"
+}
+keys="$root/KEYS"
+if [ ! -f "$keys" ]; then
+  bad "arm4: $keys is missing -- validpgpkeys cannot be shown to name the release key"
+elif ! command -v gpg >/dev/null 2>&1; then
+  note FAIL "arm4: gpg is not installed -- KEYS cannot be read (cannot judge)"
+  exit 2
+else
+  gh=$(mktemp -d "/var/tmp/check-recipe-gpg.XXXXXX") || { note FAIL "arm4: no temporary directory (cannot judge)"; exit 2; }
+  mapfile -t published < <(GNUPGHOME="$gh" gpg --batch --show-keys --with-colons "$keys" 2>/dev/null \
+                           | awk -F: '$1=="pub"{p=1; next} p && $1=="fpr"{print $10; p=0}')
+  rm -rf "$gh"
+  mapfile -t declared < <(array_text validpgpkeys \
+                          | grep -oE "[0-9A-Fa-f]{40}" | tr '[:lower:]' '[:upper:]')
+  if [ "${#published[@]}" -ne 1 ]; then
+    bad "arm4: KEYS holds ${#published[@]} primary key(s); expected exactly one release key"
+  elif [ "${#declared[@]}" -ne 1 ] || [ "${declared[0]}" != "${published[0]}" ]; then
+    bad "arm4: validpgpkeys must be exactly the release key in KEYS (${published[0]}), found: ${declared[*]:-none}"
   else
-    printf 'arm4: the remote probe timed out or failed; falling back to the local tag only\n'
+    printf 'arm4: validpgpkeys names the release key in KEYS (%s)\n' "${published[0]}"
   fi
-fi
-if [ -n "$where" ]; then
-  sums=$(sed -n '/^sha256sums=(/,/)/p' "$recipe")
+
+  sums=$(array_text sha256sums)
   mapfile -t vals < <(printf '%s\n' "$sums" | grep -oE "'[^']*'" | tr -d "'")
   if [ "${#vals[@]}" -eq 0 ]; then
     bad "arm4: no sha256sums entries found -- the pattern matches nothing, which is a vacuum and not a pass"
+  elif [ "${#vals[@]}" -ne "${#entries[@]}" ]; then
+    bad "arm4: ${#entries[@]} source entr$([ "${#entries[@]}" -eq 1 ] && echo y || echo ies) but ${#vals[@]} sha256sums"
   else
-    n_bad=0
-    for v in "${vals[@]}"; do
-      case "$v" in
-        [0-9a-f]*) [ "${#v}" -eq 64 ] || n_bad=$((n_bad + 1)) ;;
-        *) n_bad=$((n_bad + 1)) ;;
+    i=0; real=0
+    for e in "${entries[@]}"; do
+      v=${vals[$i]}; i=$((i + 1))
+      case "$e" in
+        *git+*'?signed'*)
+          [ "$v" = SKIP ] || bad "arm4: the signed tag's checksum must be SKIP (git sources carry none; the signature is the check), found $v" ;;
+        *)
+          if [[ "$v" =~ ^[0-9a-f]{64}$ ]]; then real=$((real + 1))
+          else bad "arm4: entry $i has checksum '$v', not a real sha256 -- it is a fixed upstream commit, so its sum is known now: $e"; fi ;;
       esac
     done
-    printf 'arm4: tag %s exists %s; %d sha256sums entr%s, %d not a real checksum\n' \
-      "$pkgver" "$where" "${#vals[@]}" "$([ "${#vals[@]}" -eq 1 ] && echo y || echo ies)" "$n_bad"
-    [ "$n_bad" -eq 0 ] || bad "arm4: $n_bad sha256sums entr$([ "$n_bad" -eq 1 ] && echo y || echo ies) still SKIP (or not 64 lowercase hex) while tag $pkgver exists"
+    printf 'arm4: %d sha256sums, %d real checksum(s), the signed tag SKIP\n' "${#vals[@]}" "$real"
   fi
-else
-  printf 'arm4: SKIPPED -- tag %s exists in neither this clone nor (unasked) the remote, so the release asset it names cannot be checksummed yet\n' "$pkgver"
 fi
 
 echo "check-recipe: $([ $rc -eq 0 ] && echo GREEN || echo RED)"

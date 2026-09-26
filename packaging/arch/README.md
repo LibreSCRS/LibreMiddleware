@@ -1,32 +1,25 @@
 # Arch packaging — librescrs-middleware
 
-The `PKGBUILD` in this directory is **release-shaped**: it pulls the source
-tarball the release workflow uploads for the tag
-(`releases/download/$pkgver/librescrs-middleware_$pkgver.orig.tar.gz`) the way
-it will once published to the AUR — not GitHub's auto-generated
-`archive/refs/tags/` tarball, whose bytes this project does not produce and
-which omits the vendored submodule trees. Until the release exists, use the
-local-dogfood recipe below to build the package straight from your working
-checkout.
+The `PKGBUILD` in this directory is **release-shaped**: it clones the signed
+release tag (`git+https://github.com/LibreSCRS/LibreMiddleware.git#tag=$pkgver?signed`)
+and makepkg verifies the tag's signature against `validpgpkeys`, the LibreSCRS
+release key published in `KEYS`. That signature is the integrity check for the
+project's own source, so its `sha256sums` entry is `SKIP`; the two pinned
+upstream trees (OpenSC, curl) are archives of fixed commits and carry real
+checksums. Nothing in the recipe changes at tag time.
 
-## Release build (after the `5.0.0` release is published)
+## Release build (after the `5.0.0` tag exists)
 
 ```sh
 cd packaging/arch
-makepkg -g          # prints the three real sha256sums; paste them into the recipe
-                    # (updpkgsums does the same but needs pacman-contrib)
+gpg --import ../../KEYS   # once: makepkg checks the tag against this key
 makepkg -si
 ```
 
-At tag time you MUST also refresh the OpenSC and curl pins in the second and
-third `source=()` entries to match `git -C thirdparty/<sub> rev-parse HEAD`.
-`packaging/arch/check-recipe.sh` refuses a pin that is not the gitlink, so a
-stale one is caught on every push rather than at the first AUR build.
-
-The recipe inside a release tarball is not authoritative: its `sha256sums` are
-`SKIP`, because the asset they would name does not exist until the tag does. The
-copy on the default branch carries the checksum of the published asset; build
-from that copy, not from the one inside the tarball.
+When a submodule moves, refresh the matching pin and its checksum in the
+second or third `source=()` entry (`makepkg -g` prints the new sums).
+`packaging/arch/check-recipe.sh` refuses a pin that is not the gitlink and an
+archive without a real checksum, on every push.
 
 ## Local dogfood build (no remote, no tag — build from this checkout)
 
@@ -72,22 +65,22 @@ cd /var/tmp/lm-arch
 # MULTI-LINE) with local-git equivalents using the range form `/^source=(/,/^)/c\…`
 # so the WHOLE array is replaced (a single-line s### would only touch the
 # first line and corrupt the array). Source 1 is this repo named
-# LibreMiddleware-$pkgver (matches the phase `cd` lines); sources 2 and 3 are
+# LibreMiddleware (matches the phase `cd` lines); sources 2 and 3 are
 # the sibling upstream OpenSC and curl pinned to the submodule commits and
 # named OpenSC-<hash> / curl-<hash> (matching prepare()'s copy dirs) so
 # prepare() is unchanged.
 sed -i \
-  -e "/^source=(/,/^)/c\\source=(\"LibreMiddleware-\$pkgver::git+file://$REPO\"\n        \"OpenSC-07d0d40b0e4051f6fe11f3a92cec56d320670d85::git+file://$REPO/../OpenSC#commit=07d0d40b0e4051f6fe11f3a92cec56d320670d85\"\n        \"curl-01346829096c61b372692f6dc43ffa778c6caccd::git+file://$REPO/../curl#commit=01346829096c61b372692f6dc43ffa778c6caccd\")" \
+  -e "/^source=(/,/^)/c\\source=(\"LibreMiddleware::git+file://$REPO\"\n        \"OpenSC-07d0d40b0e4051f6fe11f3a92cec56d320670d85::git+file://$REPO/../OpenSC#commit=07d0d40b0e4051f6fe11f3a92cec56d320670d85\"\n        \"curl-01346829096c61b372692f6dc43ffa778c6caccd::git+file://$REPO/../curl#commit=01346829096c61b372692f6dc43ffa778c6caccd\")" \
   -e "/^sha256sums=(/,/^)/c\\sha256sums=('SKIP' 'SKIP' 'SKIP')" \
   PKGBUILD
 makepkg -si
 ```
 
-> Why this works: the PKGBUILD `cd`s into `$srcdir/LibreMiddleware-$pkgver`
+> Why this works: the PKGBUILD `cd`s into `$srcdir/LibreMiddleware`
 > in all four phase functions, and `prepare()` copies `../OpenSC-07d0d40b…`
 > and `../curl-013468290…` into `thirdparty/opensc-source` and
 > `thirdparty/curl-source`. The first git source checks out to exactly
-> `$srcdir/LibreMiddleware-$pkgver`; the second and third, named
+> `$srcdir/LibreMiddleware`; the second and third, named
 > `OpenSC-07d0d40b…` and `curl-013468290…`, check out to
 > `$srcdir/OpenSC-07d0d40b…` and `$srcdir/curl-013468290…` — precisely where
 > `prepare()` looks. makepkg does NOT carry submodules, so these explicit
