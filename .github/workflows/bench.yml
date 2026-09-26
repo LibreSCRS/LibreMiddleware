@@ -11,10 +11,12 @@
 name: Bench
 
 on:
-  push:
-    branches: [main, 'ci/**']
+  # Not on push: a change reaches main through a pull request, where this
+  # already ran, and the weekly run catches drift that no single change made.
   pull_request:
     branches: [main]
+  schedule:
+    - cron: '0 4 * * 1'
   workflow_dispatch:
 
 jobs:

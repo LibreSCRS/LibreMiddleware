@@ -7,14 +7,15 @@ name: CodeQL
 # findings beyond what -Wall -Wextra -Wpedantic surfaces.
 
 on:
-  push:
-    branches: [main, 'ci/**']
+  # Not on push: half an hour per run, and a change reaches main through a
+  # pull request, where this already ran.
   pull_request:
     branches: [main]
   schedule:
     # Weekly Sunday 03:00 UTC — picks up new query packs without blocking PRs
     # if the queries themselves change between runs.
     - cron: '0 3 * * 0'
+  workflow_dispatch:
 
 jobs:
   analyze:

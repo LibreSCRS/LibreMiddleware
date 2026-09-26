@@ -17,3 +17,5 @@
 
 ci.yml:build-asan:5    The sanitizer leg runs only on a push to main: the build alone is about twenty minutes instrumented, and the moment code actually lands is that push. The job is not a pull-request gate and does not claim to be; this row goes if it becomes one.
 ci.yml:build-asan:6    The sanitizer leg runs only on a push to main, for the reason in the row above; this is the software token that leg's signing and module-manager cases need, provisioned the same way build-linux does it. This row goes with the one above.
+fuzz.yml:libfuzzer:6    The fuzz workflow runs on pull requests, on a weekly soak and on dispatch, not on push: fifteen harnesses cost two hours of runner time per run, and a change reaches main through a pull request, where the instrumentation check already ran. This row goes if fuzzing moves back to push.
+bench.yml:bench:6    The benchmark workflow runs on pull requests, weekly and on dispatch, not on push: its baseline was measured on a shared runner and a change reaches main through a pull request, where the comparison already ran. This row goes if the benchmarks move back to push.

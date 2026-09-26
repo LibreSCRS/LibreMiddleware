@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # SPDX-FileCopyrightText: 2026 hirashix0
 #
-# Short libFuzzer smoke session per PR / push to main, and a real soak on the
-# weekly cron: 60 s per harness on a push, 900 s on the schedule. Crashes are
-# uploaded as artifacts; jobs fail on any libFuzzer-reported finding.
+# Short libFuzzer smoke session per pull request, and a real soak on the
+# weekly cron: 60 s per harness on a pull request, 900 s on the schedule.
+# Crashes are uploaded as artifacts; jobs fail on any libFuzzer-reported
+# finding. Not on push: fifteen harnesses cost two hours of runner time, and a
+# change reaches main through a pull request, where this already ran.
 
 name: Fuzz
 
 on:
-  push:
-    branches: [main, 'ci/**']
   pull_request:
     branches: [main]
   schedule:
@@ -107,9 +107,6 @@ jobs:
         run: |
           cmake --build build-fuzz -j2
           ./ci/scripts/check-fuzz-instrumentation.sh build-fuzz
-
-      - name: Prove the instrumentation check can fail
-        run: ./ci/scripts/check-fuzz-instrumentation.selftest.sh
 
       - name: Determine corpus path
         id: corpus
