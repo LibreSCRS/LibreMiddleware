@@ -228,9 +228,9 @@ allowance_for() {
 #
 # Read only on demand it would be invisible: an entry is consulted only when the
 # pin it names is already a finding, so a malformed, expired or orphaned entry for
-# a component that happens to be current is never looked at. Its sibling file,
-# ci/gate-wiring-exceptions.txt, fails on a stale entry for exactly this reason --
-# amnesty that cannot go stale is amnesty nobody rereads.
+# a component that happens to be current is never looked at. A stale entry fails
+# for exactly this reason -- amnesty that cannot go stale is amnesty nobody
+# rereads.
 validate_allowances() {
     [ -f "$ALLOWANCES" ] || return 0
     local line c until owner reason u

@@ -37,26 +37,22 @@ jobs:
           sudo apt-get install -y clang-format-21
 
       - name: Check clang-format
-        # The roots live in ci/format-dirs.txt, which the scope check below
-        # reads too: a directory nobody formats cannot appear without one of
-        # these two steps saying so.
-        #
-        # -print0/-0 for paths with spaces, a parenthesised extension filter so
-        # the -o cannot swallow the directory list, and -r because without it an
-        # empty result makes clang-format read stdin and hang rather than fail.
-        # A wedged job in this project once held a runner until it was cancelled by hand.
+        # Every tracked C++ source but the vendored trees and two files that
+        # are compiler probes, not project code. -z/-0 for paths with spaces;
+        # -r because an empty list would make clang-format read stdin and hang.
         run: |
-          mapfile -t dirs < <(grep -v '^#' ci/format-dirs.txt)
-          find "${dirs[@]}" \
-            \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.mm' \) -print0 \
+          git ls-files -z -- '*.cpp' '*.h' '*.hpp' '*.mm' \
+              ':!:thirdparty/**' ':!:cmake/check-std-expected.cpp' ':!:ci/abi/vtable-probe.cpp' \
             | xargs -0 -r clang-format-21 --dry-run --Werror
 
       - name: Shared gates
-        # The gates every LibreSCRS repository runs the same way -- format
-        # scope, skip reasons, the workflows read as data, the canonical-type
-        # registry and duplicate bodies -- from one copy in LibreSCRS/ci. The
-        # repository's profile there says which ones apply here.
-        uses: LibreSCRS/ci/actions/gates@373a0f82c9af280b7a8ccc4ee30106c947394ca2
+        # From one copy in LibreSCRS/ci: every job bounded and every shared
+        # action at one commit, every skip with a reason, every version surface
+        # agreeing with VERSION, and the Arch recipe building the signed tag.
+        uses: LibreSCRS/ci/actions/gates@bd36eee50ba085ef4f052ea2767cff910e2e62e7
+        with:
+          gates: check-workflows check-skip-reasons check-version check-recipe
+          recipe-args: --p11kit-option LIBREMIDDLEWARE_INSTALL_P11KIT_MODULE
 
       - name: BIGNUM deleters cleanse, and say why
         # PACE ephemeral private keys exist only as a BIGNUM and no CleanseGuard
@@ -65,14 +61,26 @@ jobs:
         # the call and the recorded reason as two separate failures.
         run: ./ci/scripts/check-cleansing-deleters.sh
 
-      - name: The Arch recipe builds this project's signed release tag
-        # Its self-test, which perturbs the recipe and the tree around it and
-        # requires each refusal to name its own arm, runs with every other
-        # self-test after the build. This judges the committed recipe.
-        # It does not touch the network — `git ls-remote` against these SSH
-        # remotes hangs on a developer machine, and a gate that can hang is
-        # worse than one that can fail.
-        run: ./packaging/arch/check-recipe.sh
+      - name: Check raw PC/SC open confinement
+        # Production code must open the card via CardSession::open (single
+        # session per reader); only the diagnostic tools/tests may use the
+        # PCSCConnection::openRawDiagnostic escape hatch.
+        run: ./ci/scripts/check-raw-pcsc-open.sh
+
+      - name: Check vendored archive provenance
+        # The bundled OpenSSL is four committed binaries, not a source tree.
+        # Each archive carries the version, target, compiler line and build
+        # date it was produced with; this reads those back out and compares
+        # them with thirdparty/openssl-*/PROVENANCE.txt. A bump that moves the
+        # archives and forgets the record, or moves only one platform's, fails
+        # here without anything being tampered with.
+        run: ./ci/scripts/check-vendored-provenance.sh
+
+      - name: Check the bundled licence texts against the manifest
+        # thirdparty/licenses.json pins a digest per bundled licence file and
+        # nothing recomputed them: moving the curl submodule changed its COPYING
+        # and the manifest went on asserting the previous one.
+        run: ./ci/scripts/check-bundled-licenses.sh
 
   build-linux:
     # Two signing backends. `native` is the production path and carries the
@@ -104,12 +112,15 @@ jobs:
             # leg only because that is where it already ran.
             dss_oracle: 'ON'
             release_gates: true
+            # The warning baseline is recorded for this leg's compile graph.
+            gates: selftests warning-gate test-floor
           - signing_backend: both
             # No Java on the runner: the oracle would be built and never
             # usable. Off here, while the DSS *backend* itself still compiles
             # and the cross-backend cases still run.
             dss_oracle: 'OFF'
             release_gates: false
+            gates: selftests test-floor
     env:
       OPENSC_VERSION: '0.26.1'
     steps:
@@ -208,22 +219,19 @@ jobs:
 
       # The gates that need this build: every self-test this repository ships
       # (one of them reads the SHIPPED libLibreSCRS_Signing.so, so they run
-      # where a build tree exists, handed over as BUILD_DIR), the warning
-      # baseline with its floor, and the discovered test set. Both matrix legs
-      # on purpose: they link different signing backends and register
-      # different suites, and each reports for itself.
+      # where a build tree exists, handed over as BUILD_DIR), the per-binary
+      # test floor of this leg, and on the native leg the warning baseline.
       - name: Shared gates after the build
-        uses: LibreSCRS/ci/actions/gates@373a0f82c9af280b7a8ccc4ee30106c947394ca2
+        uses: LibreSCRS/ci/actions/gates@bd36eee50ba085ef4f052ea2767cff910e2e62e7
         env:
           # abi-layout.selftest.sh dumps layouts with clang; the job-wide CXX
           # is the gcc the warning baseline is keyed to, which has no -Xclang.
           CXX: clang++-21
         with:
-          phase: build
+          gates: ${{ matrix.gates }}
           build-dir: build
           build-log: build.log
-          leg: ${{ matrix.signing_backend }}
-          warning-leg: ${{ matrix.signing_backend }}
+          floor: ci/test-floor.${{ matrix.signing_backend }}.txt
 
       - name: Verify the configured signing backend took effect
         # Runs on every leg — this is the matrix's own integrity check, not a
@@ -236,38 +244,6 @@ jobs:
       - name: Check pimpl visibility
         if: matrix.release_gates
         run: ./ci/scripts/check-impl-visibility.sh build
-
-      - name: Check raw PC/SC open confinement
-        if: matrix.release_gates
-        # Production code must open the card via CardSession::open (single
-        # session per reader); only the diagnostic tools/tests may use the
-        # PCSCConnection::openRawDiagnostic escape hatch.
-        run: ./ci/scripts/check-raw-pcsc-open.sh
-
-      - name: Check pinned TL cert expiry
-        if: matrix.release_gates
-        # Pre-empt the runtime hard-fail in tl_signature_verifier.cpp by
-        # alerting (build break) ~3 months before any pinned TL signing
-        # certificate's notAfter date, giving a comfortable rotation
-        # window for the cert refresh + release cut.
-        run: ./ci/check-pinned-cert-expiry.sh
-
-      - name: Check vendored archive provenance
-        if: matrix.release_gates
-        # The bundled OpenSSL is four committed binaries, not a source tree.
-        # Each archive carries the version, target, compiler line and build
-        # date it was produced with; this reads those back out and compares
-        # them with thirdparty/openssl-*/PROVENANCE.txt. A bump that moves the
-        # archives and forgets the record, or moves only one platform's, fails
-        # here without anything being tampered with.
-        run: ./ci/scripts/check-vendored-provenance.sh
-
-      - name: Check the bundled licence texts against the manifest
-        if: matrix.release_gates
-        # thirdparty/licenses.json pins a digest per bundled licence file and
-        # nothing recomputed them: moving the curl submodule changed its COPYING
-        # and the manifest went on asserting the previous one.
-        run: ./ci/scripts/check-bundled-licenses.sh
 
       - name: Check ABI snapshot vs 5.x baseline
         # Native leg only: the baseline is recorded for one configuration, and
@@ -456,18 +432,16 @@ jobs:
             -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined"
           cmake --build build-asan -j4
 
-      # The anti-vacuum, and it is not new: the test-set check refuses an empty
-      # listing and one with NOT_BUILT placeholders, so "the sanitizer leg was
-      # green" and "the sanitizer leg ran nothing" cannot read the same. It
-      # compares against the native leg's listing rather than one of its own,
-      # because the set of registered cases is a property of the sources, not
-      # of the sanitizer: measured, the two listings are byte-identical.
+      # The anti-vacuum: "the sanitizer leg was green" and "the sanitizer leg
+      # ran nothing" must not read the same. The native leg's per-binary floor,
+      # because the registered cases are a property of the sources, not of the
+      # sanitizer.
       - name: The sanitizer tree registers the same cases as the plain one
-        uses: LibreSCRS/ci/actions/gates@373a0f82c9af280b7a8ccc4ee30106c947394ca2
+        uses: LibreSCRS/ci/actions/gates@bd36eee50ba085ef4f052ea2767cff910e2e62e7
         with:
-          phase: asan
+          gates: test-floor
           build-dir: build-asan
-          leg: native
+          floor: ci/test-floor.native.txt
 
       - name: Bootstrap SoftHSM2 test token
         # The same token store build-linux provisions. Without it the software
@@ -678,6 +652,23 @@ jobs:
             echo "::error::$n LibreSCRS provider(s) registered; this install must register none"
             exit 1
           fi
+
+      - name: Verify SmartCard transmit-funnel export allowlist
+        # Per the cmake/librescrs-public-exports.map header: only
+        # CardSession::transmitInternal remains in the dynamic export set; the
+        # legacy sessionTransmitImpl / detail::sessionTransmit are forbidden.
+        timeout-minutes: 5
+        run: |
+          SO=build-install/lib/LibreSCRS/libLibreSCRS_SmartCard.so
+          test -f "$SO" || { echo "::error::missing $SO"; exit 1; }
+          if nm -D --defined-only "$SO" | c++filt \
+              | grep -E '(sessionTransmitImpl|detail::sessionTransmit)' ; then
+              echo "::error::Forbidden sessionTransmit symbol leaked into shared LibreSCRS_SmartCard.so"
+              exit 1
+          fi
+          nm -D --defined-only "$SO" | c++filt \
+              | grep -F 'CardSession::transmitInternal' \
+              || { echo "::error::Expected CardSession::transmitInternal export not found"; exit 1; }
 
       - name: Assert the installed module carries a relative rpath
         timeout-minutes: 5

@@ -18,7 +18,7 @@ makepkg -si
 
 When a submodule moves, refresh the matching pin and its checksum in the
 second or third `source=()` entry (`makepkg -g` prints the new sums).
-`packaging/arch/check-recipe.sh` refuses a pin that is not the gitlink and an
+The `check-recipe` gate (LibreSCRS/ci, run on every push) refuses a pin that is not the gitlink and an
 archive without a real checksum, on every push.
 
 ## Local dogfood build (no remote, no tag — build from this checkout)

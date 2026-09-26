@@ -21,8 +21,7 @@
 /// manager nor the dynamic loader, so the loader's presence becomes a statement
 /// about which objects a library actually pulls in. The library itself is a
 /// separate question and today still answers yes: the signing library imports
-/// @c dlopen because the facade calls the manager, which is what
-/// @c ci/scripts/check-signing-no-module-loader.sh measures and why it is red.
+/// @c dlopen because the facade calls the manager.
 ///
 /// That is also why a handle does not point at @ref libresign::LoadedModule but
 /// at the read-only projection of it defined below: the module definition, and

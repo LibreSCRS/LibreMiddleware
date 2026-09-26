@@ -18,8 +18,8 @@
 # trees (thirdparty/opensc-source, thirdparty/curl-source) are fetched as
 # archives of their pinned commits and laid into place by prepare(). Those
 # commits never move under a tag, so their checksums are real and final.
-# packaging/arch/check-recipe.sh arm 3 refuses a pin that is not the gitlink,
-# and arm 4 a real archive without a real checksum.
+# The check-recipe gate (LibreSCRS/ci) refuses a pin that is not the gitlink,
+# and a fixed archive without a real checksum.
 
 pkgname=librescrs-middleware
 pkgver=5.0.0
