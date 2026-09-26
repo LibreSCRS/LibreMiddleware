@@ -19,17 +19,21 @@ on:
     - cron: '0 4 * * 1'
   workflow_dispatch:
 
+permissions: {}
+
 jobs:
   bench:
     timeout-minutes: 30
     name: Google Benchmark
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     env:
       # See ci/scripts/bench-regression-gate.sh and bench/README.md for
       # why 20% and why cpu_time.
       BENCH_REGRESSION_THRESHOLD_PCT: "20"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           submodules: recursive
           fetch-depth: 0
@@ -93,7 +97,7 @@ jobs:
       # log.
       - name: Upload bench JSON
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: bench-results
           path: bench-results/

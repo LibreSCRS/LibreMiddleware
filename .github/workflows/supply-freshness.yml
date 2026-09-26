@@ -28,23 +28,23 @@ on:
     branches: [main, 'ci/**']
   workflow_dispatch:
 
-permissions:
-  # Read only. The plan describes a step that opens one issue and comments on it
-  # rather than opening many, and that step does not exist yet; a privilege with
-  # no consumer is surface with no purpose. It goes back in together with the
-  # step, not before it.
-  contents: read
+permissions: {}
 
 jobs:
   freshness:
     name: Bundled dependency freshness
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A job that hangs serves no log while it runs. This one makes a handful of
     # API calls, so anything near the ceiling means something is wrong rather
     # than slow.
     timeout-minutes: 10
+    # Read only. A step that opens one issue and comments on it rather than
+    # opening many does not exist yet; a privilege with no consumer is surface
+    # with no purpose. It goes back in together with that step, not before it.
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           # The curl and OpenSC pins are submodule commits, and the check reads
           # them from the submodules rather than from a table that copies them.
@@ -95,7 +95,7 @@ jobs:
 
       - name: Upload the report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: supply-freshness
           path: supply-freshness.json

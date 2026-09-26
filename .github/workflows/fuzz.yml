@@ -17,10 +17,14 @@ on:
     - cron: '0 3 * * 1'
   workflow_dispatch:
 
+permissions: {}
+
 jobs:
   libfuzzer:
     name: libFuzzer / ${{ matrix.harness }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     # A job that hangs serves no log at all while it runs, so a hung harness
     # would otherwise burn the six-hour default before anyone could see which
     # input did it.
@@ -55,7 +59,7 @@ jobs:
           - fuzz_ber
           - fuzz_eu_vrc
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           submodules: recursive
           # Full history so cmake's git-describe-derived version stamp
@@ -168,7 +172,7 @@ jobs:
 
       - name: Upload crash artifacts (on failure)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: ${{ matrix.harness }}-crashes
           path: fuzz-artifacts/

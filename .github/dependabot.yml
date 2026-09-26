@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Every third-party action is pinned by commit, and nothing moves a commit pin
+# by itself. This proposes the move -- one grouped pull request a week, the
+# version comment beside each pin updated with it -- so a pin is reviewed
+# rather than forgotten. LibreSCRS/ci is pinned the same way and moved
+# deliberately, with every reference at one commit.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ['*']
+    ignore:
+      - dependency-name: 'LibreSCRS/ci*'

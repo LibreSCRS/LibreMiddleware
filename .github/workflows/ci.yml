@@ -13,9 +13,13 @@ on:
   # be triggered is green by construction.
   workflow_dispatch:
 
+permissions: {}
+
 jobs:
   format-check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     timeout-minutes: 15
     steps:
       # fetch-tags, deliberately. The recipe check run further down decides
@@ -25,7 +29,7 @@ jobs:
       # would ever say so. This checkout already asks for the whole history,
       # which carries the tags with it; the flag is here so the arm survives
       # someone shortening the fetch later.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           submodules: recursive
           fetch-depth: 0
@@ -83,7 +87,9 @@ jobs:
     # `LIBRESIGN_HAS_NATIVE && LIBRESIGN_HAS_DSS`, and therefore never built by
     # any job before this matrix existed — is actually exercised.
     name: build-linux (${{ matrix.signing_backend }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     # GitHub's default job ceiling is six hours. A deadlocked test once held
     # this job for two hours and forty-nine minutes before a human noticed;
     # the per-test ctest timeout in the root CMakeLists.txt is what names the
@@ -113,7 +119,7 @@ jobs:
     env:
       OPENSC_VERSION: '0.26.1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           submodules: recursive
           fetch-depth: 0
@@ -298,7 +304,7 @@ jobs:
         # A layout difference is unreadable from its exit code alone; the first
         # thing anyone needs is the file the runner actually saw.
         if: failure() && matrix.release_gates
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: abi-layout-snapshot
           path: build/abi-layout-snapshot.txt
@@ -315,7 +321,7 @@ jobs:
         # Only the leg that compiles the oracle in. The other one would download
         # a JDK it never opens.
         if: matrix.dss_oracle == 'ON'
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6.0.1
         with:
           distribution: temurin
           java-version: '21'
@@ -380,7 +386,7 @@ jobs:
         # A failure or a skip that appears only on the runner is diagnosed
         # from this file.
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: ctest-log-${{ matrix.signing_backend }}
           path: ctest.log
@@ -400,7 +406,9 @@ jobs:
     if: >-
       github.event_name == 'push' &&
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ci/'))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     # Without a ceiling a wedged sanitizer run burns GitHub's six-hour default.
     timeout-minutes: 90
     env:
@@ -413,7 +421,7 @@ jobs:
       UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1:suppressions=${{ github.workspace }}/ci/ubsan-suppressions.txt
       ASAN_OPTIONS: detect_leaks=1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           submodules: recursive
           fetch-depth: 0
@@ -492,12 +500,14 @@ jobs:
     # on a private/internal header (the consumer-facing entry-point cannot
     # compile any more) or where a header rename/move forgets to update the
     # example.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     timeout-minutes: 45
     env:
       OPENSC_VERSION: '0.26.1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           submodules: recursive
           fetch-depth: 0
@@ -536,10 +546,12 @@ jobs:
         run: ./build/examples/sdk-consumer/sdk-consumer
 
   build-macos:
-    runs-on: macos-latest
+    runs-on: macos-15
+    permissions:
+      contents: read
     timeout-minutes: 75
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           submodules: recursive
           fetch-depth: 0
@@ -602,10 +614,12 @@ jobs:
     # in target export, visibility, version pinning, and bundled-dep
     # linkage end-to-end for shared-library consumers.
     name: SHARED build + Config-package consumer
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           submodules: recursive
           fetch-depth: 0
