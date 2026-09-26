@@ -49,7 +49,7 @@ jobs:
         # From one copy in LibreSCRS/ci: every job bounded and every shared
         # action at one commit, every skip with a reason, every version surface
         # agreeing with VERSION, and the Arch recipe building the signed tag.
-        uses: LibreSCRS/ci/actions/gates@ac199ae69bc187a8571c9f29763503c1a966ea2c
+        uses: LibreSCRS/ci/actions/gates@261a41fb5b6dc060ab18e0ead6dd2b065755ed8e
         with:
           gates: check-workflows check-skip-reasons check-version check-recipe
           recipe-args: --p11kit-option LIBREMIDDLEWARE_INSTALL_P11KIT_MODULE
@@ -222,7 +222,7 @@ jobs:
       # where a build tree exists, handed over as BUILD_DIR), the per-binary
       # test floor of this leg, and on the native leg the warning baseline.
       - name: Shared gates after the build
-        uses: LibreSCRS/ci/actions/gates@ac199ae69bc187a8571c9f29763503c1a966ea2c
+        uses: LibreSCRS/ci/actions/gates@261a41fb5b6dc060ab18e0ead6dd2b065755ed8e
         env:
           # abi-layout.selftest.sh dumps layouts with clang; the job-wide CXX
           # is the gcc the warning baseline is keyed to, which has no -Xclang.
@@ -437,7 +437,7 @@ jobs:
       # because the registered cases are a property of the sources, not of the
       # sanitizer.
       - name: The sanitizer tree registers the same cases as the plain one
-        uses: LibreSCRS/ci/actions/gates@ac199ae69bc187a8571c9f29763503c1a966ea2c
+        uses: LibreSCRS/ci/actions/gates@261a41fb5b6dc060ab18e0ead6dd2b065755ed8e
         with:
           gates: test-floor
           build-dir: build-asan

@@ -63,7 +63,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - id: pre
-        uses: LibreSCRS/ci/actions/release-preflight@ac199ae69bc187a8571c9f29763503c1a966ea2c
+        uses: LibreSCRS/ci/actions/release-preflight@261a41fb5b6dc060ab18e0ead6dd2b065755ed8e
         with:
           mode: ${{ inputs.mode || (github.ref_type == 'tag' && 'publish' || 'rehearse') }}
           version-min: '1'
@@ -97,13 +97,13 @@ jobs:
       # build first, so a tag and a rehearsal build the same way.
       - name: Build the packages for ${{ matrix.slug }}
         id: build
-        uses: LibreSCRS/ci/actions/pkg-build@ac199ae69bc187a8571c9f29763503c1a966ea2c
+        uses: LibreSCRS/ci/actions/pkg-build@261a41fb5b6dc060ab18e0ead6dd2b065755ed8e
         with:
           slug: ${{ matrix.slug }}
           upstream: source
 
       - name: Install them in a clean container and judge the result
-        uses: LibreSCRS/ci/actions/pkg-verify@ac199ae69bc187a8571c9f29763503c1a966ea2c
+        uses: LibreSCRS/ci/actions/pkg-verify@261a41fb5b6dc060ab18e0ead6dd2b065755ed8e
         with:
           slug: ${{ matrix.slug }}
           packages: ${{ steps.build.outputs.art }}/${{ matrix.slug }}
@@ -146,7 +146,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           repository: LibreSCRS/ci
-          ref: ac199ae69bc187a8571c9f29763503c1a966ea2c
+          ref: 261a41fb5b6dc060ab18e0ead6dd2b065755ed8e
           path: .ci
           persist-credentials: false
 
@@ -205,7 +205,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           repository: LibreSCRS/ci
-          ref: ac199ae69bc187a8571c9f29763503c1a966ea2c
+          ref: 261a41fb5b6dc060ab18e0ead6dd2b065755ed8e
           path: .ci
           persist-credentials: false
 
@@ -222,7 +222,7 @@ jobs:
           .ci/scripts/check-sbom artifacts/sbom.cdx.json
 
       - name: Checksums, signatures and provenance
-        uses: LibreSCRS/ci/actions/release-seal@ac199ae69bc187a8571c9f29763503c1a966ea2c
+        uses: LibreSCRS/ci/actions/release-seal@261a41fb5b6dc060ab18e0ead6dd2b065755ed8e
         with:
           mode: ${{ needs.preflight.outputs.mode }}
           version: ${{ needs.preflight.outputs.version }}
@@ -249,7 +249,7 @@ jobs:
           name: sealed
           path: artifacts
       - name: Release notes, the asset set, and the release
-        uses: LibreSCRS/ci/actions/release-publish@ac199ae69bc187a8571c9f29763503c1a966ea2c
+        uses: LibreSCRS/ci/actions/release-publish@261a41fb5b6dc060ab18e0ead6dd2b065755ed8e
         with:
           mode: ${{ needs.preflight.outputs.mode }}
           version: ${{ needs.preflight.outputs.version }}
