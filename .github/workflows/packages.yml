@@ -58,13 +58,13 @@ jobs:
       # The bottom of the stack: no upstream LibreSCRS package to build first.
       - name: Build the packages for ${{ matrix.slug }}
         id: build
-        uses: LibreSCRS/ci/actions/pkg-build@5b9410f9b0e6ab6983c39f931e118e68007c12b4
+        uses: LibreSCRS/ci/actions/pkg-build@373a0f82c9af280b7a8ccc4ee30106c947394ca2
         with:
           slug: ${{ matrix.slug }}
           upstream: source
 
       - name: Install them in a clean container and judge the result
-        uses: LibreSCRS/ci/actions/pkg-verify@5b9410f9b0e6ab6983c39f931e118e68007c12b4
+        uses: LibreSCRS/ci/actions/pkg-verify@373a0f82c9af280b7a8ccc4ee30106c947394ca2
         with:
           slug: ${{ matrix.slug }}
           packages: ${{ steps.build.outputs.art }}/${{ matrix.slug }}

@@ -47,7 +47,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - id: pre
-        uses: LibreSCRS/ci/actions/release-preflight@5b9410f9b0e6ab6983c39f931e118e68007c12b4
+        uses: LibreSCRS/ci/actions/release-preflight@373a0f82c9af280b7a8ccc4ee30106c947394ca2
         with:
           mode: ${{ inputs.mode || 'publish' }}
           version-min: '1'
@@ -201,13 +201,13 @@ jobs:
       # build first, so a tag and a rehearsal build the same way.
       - name: Build the packages for ${{ matrix.slug }}
         id: build
-        uses: LibreSCRS/ci/actions/pkg-build@5b9410f9b0e6ab6983c39f931e118e68007c12b4
+        uses: LibreSCRS/ci/actions/pkg-build@373a0f82c9af280b7a8ccc4ee30106c947394ca2
         with:
           slug: ${{ matrix.slug }}
           upstream: source
 
       - name: Install them in a clean container and judge the result
-        uses: LibreSCRS/ci/actions/pkg-verify@5b9410f9b0e6ab6983c39f931e118e68007c12b4
+        uses: LibreSCRS/ci/actions/pkg-verify@373a0f82c9af280b7a8ccc4ee30106c947394ca2
         with:
           slug: ${{ matrix.slug }}
           packages: ${{ steps.build.outputs.art }}/${{ matrix.slug }}
@@ -308,7 +308,7 @@ jobs:
           python3 _src/ci/scripts/check-sbom.py artifacts/sbom.cdx.json
 
       - name: Checksums, signatures and provenance
-        uses: LibreSCRS/ci/actions/release-seal@5b9410f9b0e6ab6983c39f931e118e68007c12b4
+        uses: LibreSCRS/ci/actions/release-seal@373a0f82c9af280b7a8ccc4ee30106c947394ca2
         with:
           mode: ${{ needs.preflight.outputs.mode }}
           version: ${{ needs.preflight.outputs.version }}
@@ -335,7 +335,7 @@ jobs:
           name: sealed
           path: artifacts
       - name: Release notes, the asset set, and the release
-        uses: LibreSCRS/ci/actions/release-publish@5b9410f9b0e6ab6983c39f931e118e68007c12b4
+        uses: LibreSCRS/ci/actions/release-publish@373a0f82c9af280b7a8ccc4ee30106c947394ca2
         with:
           mode: ${{ needs.preflight.outputs.mode }}
           version: ${{ needs.preflight.outputs.version }}

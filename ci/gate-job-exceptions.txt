@@ -9,7 +9,7 @@
 # Numbers go stale loudly (the row then excuses a step needing no excuse, or
 # leaves one unexcused), and that is the point.
 #
-# workflow-step-order.py requires a row for every gate step whose job or step
+# The order rule of check-workflows (LibreSCRS/ci) requires a row for every gate step whose job or step
 # condition cannot be shown to hold on push. Same discipline as
 # gate-wiring-exceptions.txt: an empty reason fails, a row naming a job that no
 # longer exists fails, and a row that excuses something needing no excuse fails.

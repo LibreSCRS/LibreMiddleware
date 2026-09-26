@@ -58,7 +58,7 @@ jobs:
         # scope, skip reasons, the workflows read as data, the canonical-type
         # registry and duplicate bodies -- from one copy in LibreSCRS/ci. The
         # repository's profile there says which ones apply here.
-        uses: LibreSCRS/ci/actions/gates@5b9410f9b0e6ab6983c39f931e118e68007c12b4
+        uses: LibreSCRS/ci/actions/gates@373a0f82c9af280b7a8ccc4ee30106c947394ca2
 
       - name: BIGNUM deleters cleanse, and say why
         # PACE ephemeral private keys exist only as a BIGNUM and no CleanseGuard
@@ -213,7 +213,7 @@ jobs:
       # on purpose: they link different signing backends and register
       # different suites, and each reports for itself.
       - name: Shared gates after the build
-        uses: LibreSCRS/ci/actions/gates@5b9410f9b0e6ab6983c39f931e118e68007c12b4
+        uses: LibreSCRS/ci/actions/gates@373a0f82c9af280b7a8ccc4ee30106c947394ca2
         env:
           # abi-layout.selftest.sh dumps layouts with clang; the job-wide CXX
           # is the gcc the warning baseline is keyed to, which has no -Xclang.
@@ -461,7 +461,7 @@ jobs:
       # because the set of registered cases is a property of the sources, not
       # of the sanitizer: measured, the two listings are byte-identical.
       - name: The sanitizer tree registers the same cases as the plain one
-        uses: LibreSCRS/ci/actions/gates@5b9410f9b0e6ab6983c39f931e118e68007c12b4
+        uses: LibreSCRS/ci/actions/gates@373a0f82c9af280b7a8ccc4ee30106c947394ca2
         with:
           phase: asan
           build-dir: build-asan
