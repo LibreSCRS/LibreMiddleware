@@ -73,9 +73,9 @@ registers a proxy that collects the PIN in its own prompter, behind an
 authorization prompt; the direct module takes the PIN inside whichever
 application loaded it. Registering both would leave one card with two security
 models and let whichever dialog the user typed into decide which one they got,
-so the two packages conflict. dnf switches from one to the other only with
---allowerasing; zypper when its conflict solution that removes the other
-package is chosen (--force-resolution).
+so the two packages conflict. The package manager switches from one to the
+other only when it is told to remove the conflicting package; the download
+page names the command for each distribution.
 
 %package        devel
 Summary:        Development files for the LibreSCRS smart-card libraries
