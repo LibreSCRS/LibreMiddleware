@@ -9,7 +9,7 @@
     {
       "name": "coverage",
       "displayName": "Coverage (Debug + gcov)",
-      "description": "The configuration ci/coverage-baseline.json was measured under. A coverage number carries its configuration or it is not reproducible, and the gate refuses to compare when the compiler, the gcovr version or the committed test listings moved. Note this build type is Debug: where a CI leg is Release, an assertion-only case can be registered here and not there, so the two discovered sets are close but need not be identical.",
+      "description": "A local coverage build, read by gcovr with gcovr.cfg. A coverage number carries its configuration or it is not reproducible, so compare two numbers only when the compiler and the gcovr version are the same. Note this build type is Debug: where a CI leg is Release, an assertion-only case can be registered here and not there, so the two discovered sets are close but need not be identical.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build-cov",
       "cacheVariables": {

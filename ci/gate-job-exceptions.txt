@@ -15,7 +15,5 @@
 # longer exists fails, and a row that excuses something needing no excuse fails.
 # The last one is what makes these rows disappear when the condition does.
 
-ci.yml:coverage:8    The coverage job runs only on workflow_dispatch: the ratchet compares against a baseline recorded in one environment, and the runner image moves the compiler under it. Both gate steps in it — the token provisioning and the ratchet — are unreached until then. This row goes when the job moves to push on a pinned environment.
-ci.yml:coverage:10    The coverage job runs only on workflow_dispatch: the ratchet compares against a baseline recorded in one environment, and the runner image moves the compiler under it. Both gate steps in it — the token provisioning and the ratchet — are unreached until then. This row goes when the job moves to push on a pinned environment.
 ci.yml:build-asan:5    The sanitizer leg runs only on a push to main: the build alone is about twenty minutes instrumented, and the moment code actually lands is that push. The job is not a pull-request gate and does not claim to be; this row goes if it becomes one.
 ci.yml:build-asan:6    The sanitizer leg runs only on a push to main, for the reason in the row above; this is the software token that leg's signing and module-manager cases need, provisioned the same way build-linux does it. This row goes with the one above.
