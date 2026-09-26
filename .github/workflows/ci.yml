@@ -3,7 +3,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'ci/**']
   pull_request:
     branches: [main]
 
@@ -606,7 +606,9 @@ jobs:
     # of tests, measured locally at -j4, and the moment code actually lands is the
     # push to main. No continue-on-error: a job that cannot fail the run is not a
     # gate.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/ci/'))
     runs-on: ubuntu-latest
     # Without a ceiling a wedged sanitizer run burns GitHub's six-hour default.
     timeout-minutes: 90

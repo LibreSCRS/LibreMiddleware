@@ -25,7 +25,7 @@ on:
   schedule:
     - cron: '23 5 * * 1'
   push:
-    branches: [main]
+    branches: [main, 'ci/**']
   workflow_dispatch:
 
 permissions:
