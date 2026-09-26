@@ -67,92 +67,6 @@ jobs:
         # the call and the recorded reason as two separate failures.
         run: ./ci/scripts/check-cleansing-deleters.sh
 
-      - name: Changelog and version agree on the pending release
-        # Run on every push with the version this tree is heading for, so the
-        # agreement is proved weeks before the tag rather than first on a tag
-        # that cannot be taken back. The release job calls the same script with
-        # the tag's version.
-        run: ci/scripts/check-release-lockstep.sh "$(head -n1 VERSION | tr -d '[:space:]')"
-
-      - name: Every first-party version floor names the major in VERSION
-        # The 4.x sweep before 5.0 searched for the token `4.2`; the floor that
-        # mattered read `4.0`, in the only executable consumer the project
-        # ships, and survived. This measures the property instead: every
-        # first-party find_package/find_dependency floor must name the major
-        # the VERSION file names. It reads VERSION and never `git describe`, so
-        # it is decidable before a tag exists -- which is the whole window in
-        # which the mistake is cheap. --min 1 is the vacuum guard: a scan that
-        # matches nothing is unmeasured, not clean.
-        run: ci/scripts/check-version-floors.sh --min 1
-
-      - name: Prove the floor gate still fails when it should
-        # Instant, no build, every case two-sided. A gate nobody has seen fail
-        # is a line in a workflow file. The count is deliberately not written
-        # here: a number in a comment goes stale the first time the selftest
-        # grows, and the run itself already prints one line per case.
-        run: ./ci/scripts/check-version-floors.selftest.sh
-
-      - name: The version this tree stamps names the major in VERSION
-        # The floor gate reads VERSION and the sources, so it stays green
-        # whatever the version derivation does, and a check that configures
-        # with git switched off is measuring the one input under which a tag
-        # cannot win. Between code freeze and the tag `git describe` still
-        # answers with the PREVIOUS release, and a tree that lets it decide
-        # installs a package whose major contradicts its own VERSION, changelog
-        # and packaging. This configures the real CMakeLists against a stubbed
-        # tag, in both directions, and creates no tag anywhere.
-        run: ci/scripts/check-version-stamp.sh --verbose
-
-      - name: Prove the stamp gate still fails when it should
-        # Seven fixtures, no compiler, no build. Two of them are shapes that
-        # have really been written: the tag deciding unconditionally, and git
-        # being ignored altogether.
-        run: ./ci/scripts/check-version-stamp.selftest.sh
-
-      - name: Every artefact a release publishes has a producer in the same run
-        # release.yml downloaded artefacts that no job in that workflow
-        # uploaded. download-artifact succeeds on an empty match, so the
-        # failure surfaced four steps later as `find: 'artifacts': No such
-        # file or directory` -- on a tag, which is the one moment it cannot be
-        # taken back. This reads the pairing on every push instead.
-        run: ci/scripts/check-release-artifacts.sh
-
-      - name: The artefact-producer check can still fail
-        # A gate whose own failure path is never exercised is a gate on trust.
-        # Thirteen synthetic workflows: three a naive grep would pass, two
-        # that a check reading only the direct needs: line gets wrong the other
-        # way round, and two that a check reading the pairing per job rather
-        # than per artefact gets wrong.
-        run: ./ci/scripts/check-release-artifacts.selftest.sh
-
-      - name: Prove the version-surface check still fails when it should
-        run: ./ci/scripts/check-version-surfaces.selftest.sh
-
-      - name: Every surface states the version in VERSION
-        # The build's project() stamp, the Debian changelog and the RPM spec,
-        # each against the version file: a package labelled one version must
-        # not install a binary that calls itself another.
-        run: ./ci/scripts/check-version-surfaces.sh
-
-      - name: The release-asset check can still fail
-        # Twenty-three cases over the three arms, including the two that must
-        # say "cannot judge" rather than pass: a staging directory that was
-        # promised and does not exist, and a draft under --published-strict.
-        run: ./ci/scripts/check-release-assets.selftest.sh
-
-      - name: The release workflow checks its asset set before publishing
-        # Structural only: the job that runs gh release create runs the
-        # --staged check before it. Whether the set is right is measured on the
-        # tag, over the files themselves.
-        run: ./ci/scripts/check-release-assets.sh --wired
-
-      - name: The bill-of-materials refusal can still fail
-        # The bill's producer runs in the release job and nowhere else, so its
-        # refusal to publish a document listing nothing first turns red on the
-        # one run that must not fail. check-sbom.py makes the same claim about
-        # the finished document, and these cases make it on every push: six
-        # shapes a bill can take while still being a file a release would sign.
-        run: ./ci/scripts/check-sbom.selftest.sh
       - name: The Arch recipe fetches the tarball this project publishes
         # Its self-test, which perturbs the recipe and the tree around it and
         # requires each refusal to name its own arm, runs with every other
@@ -161,16 +75,6 @@ jobs:
         # remotes hangs on a developer machine, and a gate that can hang is
         # worse than one that can fail.
         run: ./packaging/arch/check-recipe.sh
-
-      - name: Every uploaded artefact has someone to download it
-        # An artefact whose name no download step can match is built, kept for
-        # ninety days and dropped from the release without a word: the release
-        # simply carries one asset fewer. Names only -- whether the consumer is
-        # ordered after the producer is the needs question, which this
-        # repository answers only if it carries check-release-artifacts.sh.
-        run: |
-          ./ci/scripts/check-artifact-names.selftest.sh
-          ./ci/scripts/check-artifact-names.sh
 
   build-linux:
     # Two signing backends. `native` is the production path and carries the

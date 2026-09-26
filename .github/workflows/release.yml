@@ -1,110 +1,72 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 name: Release
 
+# preflight -> build (tests, packages, source tarball) -> seal -> publish.
+#
+# A tag push publishes. A manual dispatch rehearses by default, on any ref: the
+# preflight proves the tag verifier both ways on real and forged tags instead of
+# verifying a tag that does not exist, the seal signs with an ephemeral key and
+# uploads nothing to a transparency log, and the publish step keeps the asset
+# set as a workflow artefact and reads it back the way it reads a published
+# release. `publish` on a ref that is not a tag is refused in the first step.
+# The shared steps live in LibreSCRS/ci, pinned by commit below.
 on:
   push:
-    tags:
-      - '[0-9]+.[0-9]+.[0-9]+*'
-  # Rehearsal path. A maintainer can start this workflow from the Actions tab
-  # (Run workflow -> pick the ref) to exercise the whole chain, packages and
-  # release notes included, without publishing anything: github.ref_name is the
-  # tag name on that path too, so every step behaves exactly as it does on a tag
-  # push -- except publication, because a rehearsal creates a DRAFT unless the
-  # maintainer explicitly flips dry_run off.
-  #
-  # What the rehearsal can be pointed at is narrower than it looks, and worth
-  # stating because all three limits are silent. A dispatch runs the workflow
-  # file AS IT EXISTS AT THE CHOSEN REF, so a tag cut before this file landed
-  # rehearses its own older chain and says nothing about this one. The first job
-  # verifies a signature over the ref, so a branch, which carries no tag
-  # signature, cannot be rehearsed. And `gh release create` refuses a tag that
-  # already has a release, draft or not. So the rehearsal is for a signed tag
-  # that carries this file and has not been released yet.
+    tags: ['[0-9]+.[0-9]+.[0-9]+*']
   workflow_dispatch:
     inputs:
-      opensc_version:
-        description: 'OpenSC version to build driver against (e.g. 0.26.1)'
-        required: false
-        default: '0.26.1'
-      dry_run:
-        description: 'Create the release as a draft (rehearsal)'
-        type: boolean
-        default: true
+      mode:
+        description: 'rehearse (any ref) or publish (a tag ref only)'
+        type: choice
+        options: [rehearse, publish]
+        default: rehearse
+
+permissions: {}
 
 concurrency:
-  group: release-${{ github.ref_name }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-  OPENSC_VERSION: ${{ inputs.opensc_version || '0.26.1' }}
-
 jobs:
-  verify-signature:
-    timeout-minutes: 10
-    runs-on: ubuntu-latest
-    env:
-      # The release key's PRIMARY fingerprint, named once so the import check
-      # and the signature check cannot pin different keys across a rotation.
-      EXPECTED_FPR: '6B05889AC9A6A7188DF639B06F27A989C2031D16'
+  preflight:
+    # Everything a release can be refused for, before anything is built or
+    # signed: the mode against the ref, the tag's signature, and the version
+    # agreement (CHANGELOG, VERSION, the find_package floors, the stamped
+    # version and the packaging surfaces).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      mode: ${{ steps.pre.outputs.mode }}
+      version: ${{ steps.pre.outputs.version }}
+      is_prerelease: ${{ steps.pre.outputs.is_prerelease }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          submodules: recursive
           fetch-depth: 0
-          ref: ${{ github.ref }}
-
-      - name: Import LibreSCRS release public key
-        run: |
-          # The published project key travels with the repository. Report its
-          # absence in terms of what to do about it rather than letting gpg
-          # fail with a bare open error.
-          if [ ! -f KEYS ]; then
-            echo "::error::KEYS is missing from the repository root — a release tag cannot be verified without the published LibreSCRS release public key"
-            exit 1
-          fi
-          gpg --import KEYS
-          gpg --list-keys --with-colons "$EXPECTED_FPR" | grep -q "^pub" \
-            || { echo "::error::Public key import failed or fingerprint mismatch"; exit 1; }
-
-      - name: Verify tag signature
-        # verify-tag alone accepts a good signature by ANY key in the keyring,
-        # so the signer is pinned by fingerprint through --raw's VALIDSIG line.
-        #
-        # Field order is the whole trick here. VALIDSIG's FIRST field is the
-        # fingerprint of the key that physically signed, and this project signs
-        # with a subkey (the primary is certify-only, `cSC`), so the first field
-        # is the SUBKEY. The primary — the identity worth pinning, because it
-        # outlives every subkey rotation — is VALIDSIG's LAST field. Matching
-        # the primary right after "VALIDSIG" therefore rejects every genuinely
-        # signed tag, and pinning the subkey instead would break at the next
-        # rotation; match the primary in the trailing position.
-        #
-        # Anchored, and deliberately not a bare fingerprint grep: gpg also
-        # emits KEY_CONSIDERED with the primary's fingerprint, and it does so
-        # even for a BADSIG, so a loose match would accept a forged tag.
-        #
-        # The ref name moves through the environment, never inline into the
-        # script — a git ref may carry shell metacharacters and the tag
-        # filter's trailing * accepts an arbitrary suffix.
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          git verify-tag --raw "$TAG" 2>&1 \
-            | grep -qE "^\[GNUPG:\] VALIDSIG [0-9A-F]{40} .* ${EXPECTED_FPR}\$" \
-            || { echo "::error::Tag $TAG is not signed by the LibreSCRS release key"; exit 1; }
+          persist-credentials: false
+      - id: pre
+        uses: LibreSCRS/ci/actions/release-preflight@5b9410f9b0e6ab6983c39f931e118e68007c12b4
+        with:
+          mode: ${{ inputs.mode || 'publish' }}
+          version-min: '1'
 
   test-linux:
-    needs: verify-signature
-    runs-on: ubuntu-latest
+    needs: [preflight]
+    runs-on: ubuntu-24.04
     # Same ceiling as ci.yml's build-linux, for the same reason: an unbounded
     # ctest on a hosted runner can hold the job until GitHub's six-hour
     # default, and a release cut is the worst place to discover that.
     timeout-minutes: 75
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Install dependencies
         run: |
@@ -122,36 +84,27 @@ jobs:
         # --test-dir build, not build/test: several library subdirectories
         # register their own suites (lib/pkcs15/test, lib/plugin/test,
         # lib/pkcs11/test), and pointing ctest at build/test reads only
-        # build/test/CTestTestfile.cmake -- so those ran nowhere. Scoping to
-        # the build ROOT runs everything that was built, which is the only
-        # scope that cannot silently shed a suite again. Measured on this
-        # change: 1409 -> 1573 tests, 345s -> 489s.
+        # build/test/CTestTestfile.cmake -- so those ran nowhere.
         timeout-minutes: 30
         run: ctest --output-on-failure --test-dir build --no-tests=error
 
   shared-linux:
-    # Mirror of test-linux but with LIBREMIDDLEWARE_BUILD_SHARED=ON, so
-    # the GNU ld version-script (cmake/librescrs-public-exports.map) and
-    # macOS counterpart (.darwin.list) are linker-exercised on every
-    # release. The static (.a) test-linux build above never invokes those
-    # files, which means a public-symbol leak or accidental hidden-public
-    # symbol can slip past CI until a downstream consumer tries to link
-    # the shared LM and the symbol is missing or extra.
-    #
-    # Extra verification step: nm | c++filt against the SmartCard .so to
-    # confirm the SM-aware transmit funnel still exports ONLY
-    # CardSession::transmitInternal — the legacy sessionTransmitImpl /
-    # detail::sessionTransmit overloads (intentionally stripped in 4.x)
-    # must stay out of the dynamic export set per the rationale block in
-    # cmake/librescrs-public-exports.map.
-    needs: verify-signature
-    runs-on: ubuntu-latest
+    # test-linux with LIBREMIDDLEWARE_BUILD_SHARED=ON, so the GNU ld version
+    # script (cmake/librescrs-public-exports.map) is linker-exercised on every
+    # release. The static build above never invokes it, so a public-symbol leak
+    # or an accidentally hidden public symbol would otherwise first show when a
+    # downstream consumer links the shared middleware.
+    needs: [preflight]
+    runs-on: ubuntu-24.04
     timeout-minutes: 75
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Install dependencies
         run: |
@@ -171,11 +124,9 @@ jobs:
         run: ./ci/scripts/check-impl-visibility.sh build-shared
 
       - name: Verify SmartCard transmit-funnel export allowlist
-        # Per cmake/librescrs-public-exports.map header: only
-        # CardSession::transmitInternal must remain in the dynamic export
-        # set; legacy sessionTransmitImpl / detail::sessionTransmit are
-        # forbidden. If either reappears the version-script rationale is
-        # invalidated and the comment + map need a coordinated fix.
+        # Per the cmake/librescrs-public-exports.map header: only
+        # CardSession::transmitInternal remains in the dynamic export set; the
+        # legacy sessionTransmitImpl / detail::sessionTransmit are forbidden.
         run: |
           SO=build-shared/lib/LibreSCRS/libLibreSCRS_SmartCard.so
           test -f "$SO" || { echo "::error::missing $SO"; exit 1; }
@@ -189,21 +140,21 @@ jobs:
               || { echo "::error::Expected CardSession::transmitInternal export not found"; exit 1; }
 
       - name: Test
-        # Build ROOT, for the same reason as every other ctest here: the
-        # library subdirectories register suites that build-shared/test does
-        # not see.
         timeout-minutes: 30
         run: ctest --output-on-failure --test-dir build-shared --no-tests=error
 
   test-macos:
-    needs: verify-signature
-    runs-on: macos-latest
+    needs: [preflight]
+    runs-on: macos-15
     timeout-minutes: 75
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Install build tools
         run: |
@@ -218,13 +169,6 @@ jobs:
           cmake --build build
 
       - name: Test
-        # --test-dir build, not build/test: several library subdirectories
-        # register their own suites (lib/pkcs15/test, lib/plugin/test,
-        # lib/pkcs11/test), and pointing ctest at build/test reads only
-        # build/test/CTestTestfile.cmake -- so those ran nowhere. Scoping to
-        # the build ROOT runs everything that was built, which is the only
-        # scope that cannot silently shed a suite again. Measured on this
-        # change: 1409 -> 1573 tests, 345s -> 489s.
         timeout-minutes: 30
         run: ctest --output-on-failure --test-dir build --no-tests=error
 
@@ -234,7 +178,7 @@ jobs:
     # download-artifact without a run-id sees only its own run, and a release
     # that reaches into another run depends on that run's retention window.
     name: packages (${{ matrix.slug }})
-    needs: verify-signature
+    needs: [preflight]
     runs-on: ubuntu-24.04
     # Seven to nine minutes of build per slug and a few more to install and
     # judge the result, measured locally at -j4. A wedged container must not
@@ -280,48 +224,25 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-      - name: Keep the build and verification logs
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
-        with:
-          name: pkg-report-${{ matrix.slug }}
-          path: |
-            ${{ steps.build.outputs.art }}/log
-            ${{ runner.temp }}/pkg-report
-          if-no-files-found: ignore
-          retention-days: 7
-
   source-tarball:
     # The source tarball is produced by this project, not by GitHub. GitHub's
     # archive/refs/tags tarball omits every submodule tree and its bytes are
     # not ours to assert; this one comes from a clone with --recurse-submodules
-    # and is byte-identical run to run, so the sha256sums line in
-    # packaging/arch/PKGBUILD becomes a claim about bytes this project made.
-    # That property is NOT measured here, and this repository does not carry
-    # a check for it at all: the script cannot run without reaching github.com
-    # for the two submodule trees -- with the network blocked it aborts on the
-    # first of them -- and a determinism check needs two runs of it, so a
-    # per-push job would depend twice on somebody else's server being up.
-    # A gate that goes red for a reason outside this repository teaches people
-    # to ignore red.
-    #
-    # It runs after the signature check for the same reason every other job
-    # does: nothing is built for a tag whose signature has not been proved.
-    # Thirty minutes rather than a tighter bound because this checkout pulls
-    # its two submodule trees over the network -- the vendored OpenSC and
-    # curl trees. This job has never run: it is new, and the workflow it lives in
-    # only runs on a tag, so the first honest measurement of it is the first tag.
-    # The bound exists so an unmeasured job cannot hold a runner for six hours.
+    # and is byte-identical run to run.
+    needs: [preflight]
+    runs-on: ubuntu-24.04
+    # It pulls the two submodule trees (the vendored OpenSC and curl) over the
+    # network, so the bound is loose; it exists so a stalled clone cannot hold
+    # a runner for six hours.
     timeout-minutes: 30
-    needs: verify-signature
-    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Build the source tarball
         run: |
@@ -330,169 +251,92 @@ jobs:
           ci/scripts/make-source-tarball.sh "$RUNNER_TEMP/srctar"
           ls -l "$RUNNER_TEMP/srctar"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          name: source-tarball
+          name: tarball-artifacts
           path: ${{ runner.temp }}/srctar/*.orig.tar.gz
-          # An empty upload here would make the release job publish a release
-          # with no source at all, and the recipe's source= URL would 404 for
-          # everyone. Fail where it is cheap.
+          # An empty upload here would make the release publish no source at
+          # all. Fail where it is cheap.
           if-no-files-found: error
+          retention-days: 3
 
-  release:
-    timeout-minutes: 20
-    needs: [test-linux, shared-linux, test-macos, packages, source-tarball]
-    runs-on: ubuntu-latest
+  seal:
+    needs: [preflight, test-linux, shared-linux, test-macos, packages, source-tarball]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
-      contents: write
+      contents: read
+      # Used on a tag only: keyless signatures and the build provenance.
       id-token: write
+      attestations: write
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
-        # merge-multiple is safe here: every file already carries its slug in
-        # its name, and the builder refused a collision before anything was
+        # merge-multiple is safe here: every package already carries its slug
+        # in its name, and the builder refused a collision before anything was
         # uploaded.
         with:
           pattern: 'packages-*'
           merge-multiple: true
           path: artifacts
 
-      - name: Fetch the source tarball this release publishes
-        # Downloaded after the step above, not with the packages: that step
-        # refuses a release when `artifacts` holds nothing, and a tarball
-        # sitting there already would answer that question for it. From here on
-        # the tarball is one more asset -- cosigned, listed in SHA256SUMS and
-        # published -- which is what makes the recipe's sha256sums a claim
-        # about bytes this project produced.
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
-          name: source-tarball
+          pattern: '*-artifacts'
+          merge-multiple: true
           path: artifacts
 
-      - name: Install cosign
-        # Pinned by commit: a moved tag on a third-party action would run its
-        # code in this job. Nothing updates the pin for us -- move it deliberately.
-        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad  # v4.0.0
-
-      - name: Sign artifacts with cosign (keyless via Sigstore OIDC)
-        run: |
-          find artifacts -type f \
-            ! -name '*.sigstore.json' \
-            -exec sh -c 'cosign sign-blob "$1" --bundle "$1.sigstore.json" --yes' _ {} \;
-
       - name: Check out the source this release was cut from
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          # A FULL checkout, not a sparse list. make-sbom.sh reads its pins out
-          # of the tree -- packaging/arch/PKGBUILD, thirdparty/openssl-*,
-          # thirdparty/nlohmann, thirdparty/miniz -- so a sparse list is a
-          # second, hand-maintained copy of that input set, and it rots the
-          # moment the script grows an input. Measured: with the four-entry
-          # sparse list this step used to carry, the same script that reports
-          # 5 components against the tree reports 0 here, exits 0, and the
-          # release publishes a signed bill of materials naming nothing.
-          # Submodules are not needed: every pin the script reads is tracked
-          # in this repository.
-          #
-          # Into a SUBDIR. The root workspace already holds the downloaded and
-          # cosigned artifacts/, and actions/checkout wipes its target
-          # directory whenever there is no pre-existing .git there (clean:false
-          # does NOT suppress that path). Isolating it in _src/ leaves
-          # artifacts/ untouched.
+          # A FULL checkout, not a sparse list: make-sbom.sh reads its pins out
+          # of the tree, and a sparse list is a second, hand-maintained copy of
+          # that input set. With submodules, because the bundled curl's version
+          # is read from the curl tree itself; without it the bill silently
+          # leaves curl out. Into a subdirectory, so artifacts/ above is kept.
           path: _src
+          submodules: recursive
+          persist-credentials: false
 
-      - name: Prepare release notes from CHANGELOG
-        # One extractor, in ci/scripts/check-release-lockstep.sh, shared with
-        # the per-push agreement check. It used to be copied inline into every
-        # release workflow, and one of the copies had drifted: without escaping
-        # the version's dots, tag 5.0.0 also matched a [500.0] heading.
-        #
-        # --section exits non-zero when the section is missing OR holds only
-        # whitespace. Both have to fall back: `gh release create --notes-file`
-        # accepts a blank file and publishes a release with no body at all.
-        # --generate-notes and --notes-file are mutually exclusive, hence the
-        # shell branch.
-        run: |
-          VER="${GITHUB_REF_NAME#v}"
-          export CHANGELOG_FILE=_src/CHANGELOG.md
-          if _src/ci/scripts/check-release-lockstep.sh --section "$VER" > "$RUNNER_TEMP/relnotes.md"; then
-            echo "NOTES_ARG=--notes-file $RUNNER_TEMP/relnotes.md" >> "$GITHUB_ENV"
-          else
-            echo "No CHANGELOG section for $VER — falling back to --generate-notes"
-            echo "NOTES_ARG=--generate-notes" >> "$GITHUB_ENV"
-          fi
-
-      - name: Bill of materials and checksum manifest
-        # Written here rather than left to a scanner. A scanner reads package
-        # metadata, and the whole point is that the shipped metadata says
-        # nothing about a statically linked OpenSSL: measured on a real build,
-        # lintian flagged the bundled curl and said nothing at all about the
-        # bundled OpenSSL. This file is the only place either version appears,
-        # which is what makes it obligatory rather than nice to have.
-        #
-        # SHA256SUMS is generated after everything else is in artifacts/ and
-        # then signed itself, so one signature covers the whole set.
+      - name: Bill of materials
+        # Written here rather than left to a scanner: the shipped package
+        # metadata says nothing about the statically linked OpenSSL, curl and
+        # OpenSC, and this file is the only place their versions appear. Read
+        # back from the directory a consumer downloads.
         run: |
           set -euo pipefail
           bash _src/ci/scripts/make-sbom.sh artifacts/sbom.cdx.json
-          # Read back what was actually written, in the directory a consumer
-          # downloads. The producer knows what it looked for; this knows only
-          # what arrived, which is the half that was silent.
           python3 _src/ci/scripts/check-sbom.py artifacts/sbom.cdx.json
-          ( cd artifacts && sha256sum $(ls | grep -v '^SHA256SUMS$') > SHA256SUMS )
-          cat artifacts/SHA256SUMS
-          cosign sign-blob artifacts/sbom.cdx.json --bundle artifacts/sbom.cdx.json.sigstore.json --yes
-          cosign sign-blob artifacts/SHA256SUMS   --bundle artifacts/SHA256SUMS.sigstore.json --yes
 
-      - name: The staged asset set is the set this repository declares
-        # The files gh is about to publish, against ci/release-assets.txt, in
-        # both directions. It reads the directory rather than this workflow, so
-        # a later step that adds or removes a file cannot slip past it; and it
-        # runs before the release exists, when a mismatch still costs nothing.
-        run: _src/ci/scripts/check-release-assets.sh --staged artifacts
+      - name: Checksums, signatures and provenance
+        uses: LibreSCRS/ci/actions/release-seal@5b9410f9b0e6ab6983c39f931e118e68007c12b4
+        with:
+          mode: ${{ needs.preflight.outputs.mode }}
+          version: ${{ needs.preflight.outputs.version }}
 
-      - name: Create GitHub release with all signed artefacts
-        # Replaces softprops/action-gh-release@v2 — that action races
-        # between asset upload and metadata update; both rc1 attempts
-        # failed at "error updating release asset metadata: HttpError:
-        # Not Found" even though every `✅ Uploaded` line succeeded.
-        # `gh release create` does it deterministically in a single
-        # request that includes the assets, then exits.
-        env:
-          GH_TOKEN: ${{ github.token }}
-          DRY_RUN: ${{ inputs.dry_run }}
-        run: |
-          # Mark X.Y.Z-{rc,beta,alpha,…} as pre-release; everything else
-          # is a stable release.
-          PRERELEASE_FLAG=""
-          case "${{ github.ref_name }}" in
-              *-rc*|*-beta*|*-alpha*|*-pre*) PRERELEASE_FLAG="--prerelease" ;;
-          esac
-          # A dispatch rehearsal publishes a DRAFT unless dry_run was
-          # explicitly turned off; a tag push never drafts. Without this the
-          # only way to exercise the chain is a tag that cannot be taken back.
-          DRAFT_FLAG=""
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$DRY_RUN" != "false" ]; then
-              DRAFT_FLAG="--draft"
-              echo "::notice::dry_run rehearsal -- creating a draft release"
-          fi
-          # --repo lets `gh` skip the .git autodetection -- the release job
-          # checks the source out into _src/, so the workspace root has no
-          # `.git` of its own. --verify-tag refuses to invent a tag if this
-          # ever runs against a ref that is not one.
-          gh release create "${{ github.ref_name }}" \
-              --repo "${{ github.repository }}" \
-              --title "${{ github.ref_name }}" \
-              --verify-tag \
-              $NOTES_ARG \
-              $PRERELEASE_FLAG \
-              $DRAFT_FLAG \
-              artifacts/*
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: sealed
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 3
 
-      - name: The published release is the set this repository declares
-        # The release this job just created, read back. A draft rehearsal is
-        # judged too, and the check says DRAFT=yes so the log cannot be taken
-        # for evidence about a published release.
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
-        run: _src/ci/scripts/check-release-assets.sh --published "$TAG"
+  publish:
+    needs: [preflight, seal]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: sealed
+          path: artifacts
+      - name: Release notes, the asset set, and the release
+        uses: LibreSCRS/ci/actions/release-publish@5b9410f9b0e6ab6983c39f931e118e68007c12b4
+        with:
+          mode: ${{ needs.preflight.outputs.mode }}
+          version: ${{ needs.preflight.outputs.version }}
+          is_prerelease: ${{ needs.preflight.outputs.is_prerelease }}
