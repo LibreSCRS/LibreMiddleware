@@ -228,57 +228,68 @@ jobs:
         timeout-minutes: 30
         run: ctest --output-on-failure --test-dir build --no-tests=error
 
-  package:
+  packages:
     # The binary artefacts this release publishes. Built here, in the release
     # run, rather than fetched from the CI run of the same commit: a
     # download-artifact without a run-id sees only its own run, and a release
     # that reaches into another run depends on that run's retention window.
-    name: package (${{ matrix.slug }})
+    name: packages (${{ matrix.slug }})
     needs: verify-signature
-    runs-on: ubuntu-latest
-    # The push workflow measures the slowest image at about 45 minutes and
-    # bounds the same work at 112. A wedged container must not hold a release
-    # for six hours and refuse its log while it does.
-    timeout-minutes: 112
+    runs-on: ubuntu-24.04
+    # Seven to nine minutes of build per slug and a few more to install and
+    # judge the result, measured locally at -j4. A wedged container must not
+    # hold a release for six hours and refuse its log while it does.
+    timeout-minutes: 90
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - slug: debian13
-            image: debian@sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1
-          - slug: ubuntu2604
-            image: ubuntu@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b
-          - slug: fedora43
-            image: fedora@sha256:a651ddf48ea28a06ed4e1e6519f51c9f47e7a5a138722ade87369b8fbb7e5b42
+        slug: [debian13, ubuntu2604, fedora43, fedora44, opensusetw]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Check out the working tree as the gate will read it
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      # The bottom of the stack: no upstream LibreSCRS package to fetch or
+      # build first, so a tag and a rehearsal build the same way.
+      - name: Build the packages for ${{ matrix.slug }}
+        id: build
+        uses: LibreSCRS/ci/actions/pkg-build@5b9410f9b0e6ab6983c39f931e118e68007c12b4
+        with:
+          slug: ${{ matrix.slug }}
+          upstream: source
 
-      - name: Gate
-        run: |
-          # set +e first: the default shell here is `bash -eo pipefail`, so a
-          # failing gate would end the step before its exit code could be read,
-          # and the echo below would be dead text pretending to be a measurement.
-          set +e
-          bash packaging/ci/package-gate.sh "${{ matrix.image }}" "$RUNNER_TEMP/librescrs-packages/out"
-          rc=$?
-          set -e
-          echo "PACKAGE_GATE_RC=$rc"
-          test "$rc" = 0
+      - name: Install them in a clean container and judge the result
+        uses: LibreSCRS/ci/actions/pkg-verify@5b9410f9b0e6ab6983c39f931e118e68007c12b4
+        with:
+          slug: ${{ matrix.slug }}
+          packages: ${{ steps.build.outputs.art }}/${{ matrix.slug }}
+          report: ${{ runner.temp }}/pkg-report
 
-      - uses: actions/upload-artifact@v4
+      # Named <package>.<slug>.<deb|rpm> already, debug packages refused: the
+      # asset set is decided by the builder, not by a rename here.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: packages-${{ matrix.slug }}
-          path: ${{ runner.temp }}/librescrs-packages/out/${{ matrix.slug }}/**
-          # The push workflow uploads on failure too, with a warning, to keep
-          # the evidence. A release must not: an empty upload is how a release
-          # publishes an empty SHA256SUMS and calls it signed.
+          path: ${{ steps.build.outputs.dist }}
+          # An empty upload is how a release publishes an empty SHA256SUMS and
+          # calls it signed.
           if-no-files-found: error
+          retention-days: 3
+
+      - name: Keep the build and verification logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: pkg-report-${{ matrix.slug }}
+          path: |
+            ${{ steps.build.outputs.art }}/log
+            ${{ runner.temp }}/pkg-report
+          if-no-files-found: ignore
+          retention-days: 7
 
   source-tarball:
     # The source tarball is produced by this project, not by GitHub. GitHub's
@@ -330,61 +341,20 @@ jobs:
 
   release:
     timeout-minutes: 20
-    needs: [test-linux, shared-linux, test-macos, package, source-tarball]
+    needs: [test-linux, shared-linux, test-macos, packages, source-tarball]
     runs-on: ubuntu-latest
     permissions:
       contents: write
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
-        # Deliberately NOT merge-multiple. Debian 13 and Ubuntu 26.04 build
-        # .deb files with identical names, and merging lets the second
-        # overwrite the first with no error and no way to tell afterwards
-        # which distribution the published file came from. Each artefact stays
-        # in its own directory and the next step puts the slug in the name.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        # merge-multiple is safe here: every file already carries its slug in
+        # its name, and the builder refused a collision before anything was
+        # uploaded.
         with:
           pattern: 'packages-*'
-          path: artifacts-raw
-
-      - name: Flatten the packages into one asset set, refusing a name collision
-        # The slug goes into the asset name, which is also what lets a
-        # downstream `gh release download --pattern` ask for the build made for
-        # its own distribution.
-        #
-        # Only .deb and .rpm are published: the .changes and .buildinfo files
-        # beside them name the packages by their pre-rename names, so shipping
-        # them would publish a manifest that does not match what is published.
-        # They stay behind as workflow artefacts, and this step prints every
-        # file it did not take rather than dropping them silently.
-        #
-        # The count is asserted, not merely printed. download-artifact succeeds
-        # on an empty match and does not create its target directory, so
-        # without this the job either dies four steps later against a path that
-        # does not exist, or publishes a signed SHA256SUMS over nothing.
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts
-          shopt -s nullglob
-          for d in artifacts-raw/packages-*; do
-              slug="${d##*/packages-}"
-              while IFS= read -r f; do
-                  base="$(basename "$f")"
-                  name="${base%.*}.${slug}.${base##*.}"
-                  if [ -e "artifacts/$name" ]; then
-                      echo "::error::two artefacts want the same asset name: $name"
-                      exit 1
-                  fi
-                  mv "$f" "artifacts/$name"
-              done < <(find "$d" -type f \( -name '*.deb' -o -name '*.rpm' \) | sort)
-              find "$d" -type f | sort | sed "s|^|  not published: |"
-          done
-          n="$(find artifacts -type f | wc -l)"
-          echo "RELEASE_ARTEFACT_COUNT=$n"
-          if [ "$n" -eq 0 ]; then
-              echo "::error::no packages arrived -- a release published now would carry a signed SHA256SUMS over nothing"
-              exit 1
-          fi
-          ls -1 artifacts
+          merge-multiple: true
+          path: artifacts
 
       - name: Fetch the source tarball this release publishes
         # Downloaded after the step above, not with the packages: that step
@@ -472,19 +442,6 @@ jobs:
           cat artifacts/SHA256SUMS
           cosign sign-blob artifacts/sbom.cdx.json --bundle artifacts/sbom.cdx.json.sigstore.json --yes
           cosign sign-blob artifacts/SHA256SUMS   --bundle artifacts/SHA256SUMS.sigstore.json --yes
-
-      - name: Debug packages are published or suppressed on purpose
-        # A -dbgsym / -debuginfo set must never appear in a release directory
-        # unlabelled. Either it is published deliberately, or the build sets
-        # DEB_BUILD_OPTIONS=noautodbgsym and it does not exist. Saying which is
-        # the whole point; a silent third state is what this step forbids.
-        run: |
-          n=$(ls artifacts | grep -cE 'dbgsym|debuginfo|debugsource' || true)
-          echo "DEBUG_PACKAGE_COUNT=$n"
-          case "$n" in
-            0) echo "suppressed (DEB_BUILD_OPTIONS=noautodbgsym)";;
-            *) echo "published deliberately";;
-          esac
 
       - name: The staged asset set is the set this repository declares
         # The files gh is about to publish, against ci/release-assets.txt, in

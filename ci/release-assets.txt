@@ -12,6 +12,8 @@
 *.debian13.deb        binary packages built in a Debian 13 container
 *.ubuntu2604.deb      binary packages built in an Ubuntu 26.04 LTS container
 *.fedora43.rpm        binary packages built in a Fedora 43 container
+*.fedora44.rpm        binary packages built in a Fedora 44 container
+*.opensusetw.rpm      binary packages built in an openSUSE Tumbleweed container
 *.orig.tar.gz         the deterministic source tarball the packaging recipes fetch
 sbom.cdx.json         CycloneDX bill of materials naming the statically linked OpenSSL, curl and OpenSC
 SHA256SUMS            checksums over every other asset in this release

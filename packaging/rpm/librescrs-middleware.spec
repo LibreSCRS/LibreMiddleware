@@ -137,5 +137,5 @@ test -f %{_vpath_builddir}/thirdparty/curl-install/lib/libcurl.a
 %{_libdir}/cmake/LibreMiddleware/
 
 %changelog
-* Fri Sep 04 2026 LibreSCRS <packages@librescrs.org> - 5.0.0-1
+* Fri Sep 04 2026 LibreSCRS <librescrs@proton.me> - 5.0.0-1
 - Initial RPM packaging of the LibreSCRS middleware.

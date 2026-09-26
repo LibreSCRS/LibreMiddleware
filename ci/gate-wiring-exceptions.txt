@@ -4,8 +4,7 @@
 # scripts that are deliberately hand-run. One path per line, then the reason.
 # check-gates-wired.sh treats every line here as a reachability root, so what
 # these scripts call counts as run too. A path that stops being tracked fails.
-packaging/ci/build-deb.sh  run as packaging/ci/build-$FAMILY.sh by packaging/ci/package-gate.sh:142
-packaging/ci/build-rpm.sh  run as packaging/ci/build-$FAMILY.sh by packaging/ci/package-gate.sh:142
-ci/scripts/changelog-to-debian.sh  hand-run when refreshing packaging/debian/changelog; no CI step consumes it
 ci/scripts/check-signing-no-module-loader.sh  red by construction while the signing facade loads the PKCS#11 module in-process; wired once it stops
 scripts/pre-commit-clang-format.sh  A git hook a developer installs locally, so nothing in CI names it by design; the same rule is enforced on every push by the format job, which runs clang-format over the tracked sources directly.
+packaging/ci/verify-installed.sh  run inside the package build's clean container by scripts/pkg-gate.sh in LibreSCRS/ci, which the pkg-build action calls with this checkout as its root
+packaging/ci/extra-build-checks.sh  run after a successful package build by scripts/pkg-gate.sh in LibreSCRS/ci, which the pkg-build action calls with this checkout as its root

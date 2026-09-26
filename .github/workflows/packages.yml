@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+name: Packages
+
+# The distribution packages, built and installed the way a release builds them,
+# on the pushes that can change them. A push that touches none of these paths
+# cannot change what the packages contain or how they install, and the weekly
+# stack-chain run in LibreSCRS/ci builds every slug of the whole stack anyway;
+# the release workflow builds them again from the tag.
+on:
+  push:
+    branches: [main, 'ci/**']
+    paths:
+      - 'packaging/**'
+      - 'CMakeLists.txt'
+      - '**/CMakeLists.txt'
+      - 'cmake/**'
+      - 'thirdparty/**'
+      - 'VERSION'
+      - 'CHANGELOG.md'
+      - '.github/workflows/packages.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packaging/**'
+      - 'CMakeLists.txt'
+      - '**/CMakeLists.txt'
+      - 'cmake/**'
+      - 'thirdparty/**'
+      - 'VERSION'
+      - 'CHANGELOG.md'
+      - '.github/workflows/packages.yml'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  packages:
+    name: packages (${{ matrix.slug }})
+    runs-on: ubuntu-24.04
+    # Measured locally at -j4: seven to nine minutes of build per slug, and two
+    # to four of installing the result in a clean container and judging it.
+    # The bound is for a wedged container, which holds a runner and serves no
+    # log until it is cancelled.
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        slug: [debian13, ubuntu2604, fedora43, fedora44, opensusetw]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The bottom of the stack: no upstream LibreSCRS package to build first.
+      - name: Build the packages for ${{ matrix.slug }}
+        id: build
+        uses: LibreSCRS/ci/actions/pkg-build@5b9410f9b0e6ab6983c39f931e118e68007c12b4
+        with:
+          slug: ${{ matrix.slug }}
+          upstream: source
+
+      - name: Install them in a clean container and judge the result
+        uses: LibreSCRS/ci/actions/pkg-verify@5b9410f9b0e6ab6983c39f931e118e68007c12b4
+        with:
+          slug: ${{ matrix.slug }}
+          packages: ${{ steps.build.outputs.art }}/${{ matrix.slug }}
+          report: ${{ runner.temp }}/pkg-report
+
+      - name: Keep the build and verification logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: pkg-report-${{ matrix.slug }}
+          path: |
+            ${{ steps.build.outputs.art }}/log
+            ${{ runner.temp }}/pkg-report
+          if-no-files-found: ignore
+          retention-days: 7

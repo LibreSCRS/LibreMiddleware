@@ -146,17 +146,6 @@ jobs:
         # tag, over the files themselves.
         run: ./ci/scripts/check-release-assets.sh --wired
 
-      - name: The package matrix is the same in both workflows
-        # The three pinned images are written twice, because a job that calls a
-        # reusable workflow cannot carry timeout-minutes and the job-bound
-        # check requires one on every job. Two copies of a digest drift, and a
-        # release built on an image no push was ever tested against says
-        # nothing about it: the packages appear, every gate is green.
-        run: ci/scripts/check-package-matrix.sh
-
-      - name: The package-matrix check can still fail
-        run: ./ci/scripts/check-package-matrix.selftest.sh
-
       - name: The bill-of-materials refusal can still fail
         # The bill's producer runs in the release job and nowhere else, so its
         # refusal to publish a document listing nothing first turns red on the
@@ -768,61 +757,3 @@ jobs:
       - name: Assert the installed module carries a relative rpath
         timeout-minutes: 5
         run: bash ci/scripts/check-pkcs11-rpath.sh /usr
-
-  package:
-    # Distribution packages, built in the target distribution's own container.
-    #
-    # Containers rather than apt/dnf on the runner: ubuntu-latest is one
-    # distribution in one version and cannot produce a trixie or an fc43
-    # package, and a container makes the same build reproducible with one
-    # `docker run` on a development machine.
-    #
-    # Images are pinned by digest, not by tag. A tag moves under you; a digest
-    # does not.
-    name: package (${{ matrix.slug }})
-    runs-on: ubuntu-latest
-    # Measured locally at 45 minutes for the slowest image, times
-    # about 2.5. A job with no limit does not fail when it hangs -- it burns
-    # hours and hands back no log, because /logs answers 404 while it runs.
-    timeout-minutes: 112
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - slug: debian13
-            image: debian@sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1
-          - slug: ubuntu2604
-            image: ubuntu@sha256:2260313b31c8c011cd2eebe728008efac1b3982be73eb71348ea2648d2c0e09b
-          - slug: fedora43
-            image: fedora@sha256:a651ddf48ea28a06ed4e1e6519f51c9f47e7a5a138722ade87369b8fbb7e5b42
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
-
-      - name: Check out the working tree as the gate will read it
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-      # Nothing upstream: the middleware is the bottom of the chain, which is
-      # why its packaging job is the one that gets enabled first.
-
-      - name: Gate
-        run: |
-          # set +e first: the default shell here is `bash -eo pipefail`, so a
-          # failing gate would end the step before its exit code could be read,
-          # and the echo below would be dead text pretending to be a measurement.
-          set +e
-          bash packaging/ci/package-gate.sh "${{ matrix.image }}" "$RUNNER_TEMP/librescrs-packages/out"
-          rc=$?
-          set -e
-          echo "PACKAGE_GATE_RC=$rc"
-          test "$rc" = 0
-
-      - name: Upload the packages
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: packages-${{ matrix.slug }}
-          path: ${{ runner.temp }}/librescrs-packages/out/${{ matrix.slug }}/**
-          if-no-files-found: warn

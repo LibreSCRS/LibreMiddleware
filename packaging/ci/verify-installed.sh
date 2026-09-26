@@ -9,6 +9,26 @@ set -uo pipefail
 fail=0
 check() { if [ "$2" -eq 0 ]; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 
+# openSUSE: the same assertions through zypper. The dnf calls below are
+# answered by this function, which drops -y/-q and maps the one package name
+# openSUSE spells differently.
+if [ "${PKG_MANAGER:-}" = zypper ]; then
+  zypper -n -q refresh >/dev/null
+  zypper -n -q install findutils dbus-1-tools >/dev/null
+  dnf() {
+    local a=() x
+    for x in "$@"; do
+      case "$x" in -y|-q) ;; dbus-daemon) a+=(dbus-1-daemon) ;; *) a+=("$x") ;; esac
+    done
+    case "${a[0]}" in
+      install) zypper -n -q --no-gpg-checks install --allow-unsigned-rpm "${a[@]:1}" ;;
+      remove)  zypper -n -q remove "${a[@]:1}" ;;
+      *) echo "dnf shim: ${a[0]} is not mapped" >&2; return 2 ;;
+    esac
+  }
+fi
+
+
 if [ "${FAMILY:-deb}" = deb ]; then
   export DEBIAN_FRONTEND=noninteractive
   # The base container is not a machine. Ubuntu's image ships
