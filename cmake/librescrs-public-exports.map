@@ -52,10 +52,10 @@
  *       symbol no longer reaches the export glob and no longer leaks.
  *       Listed here only as a record of the prior accepted leak.
  *   The remaining classes were investigated for stripping via:
- *     (a) anonymous-version + named LM_4 block — REJECTED by GNU ld
+ *     (a) anonymous-version + named LM_5 block — REJECTED by GNU ld
  *         2.46 ("anonymous version tag cannot be combined with other
  *         version tags").
- *     (b) multiple named-version blocks (`_DENY` before LM_4) — DID
+ *     (b) multiple named-version blocks (`_DENY` before LM_5) — DID
  *         NOT strip; named-version local: blocks do not override
  *         later named-version global: matches for equally-non-
  *         specific wildcards.
@@ -119,7 +119,7 @@
  *   accessors are intentionally absent from the dynamic export set.
  */
 
-LM_4 {
+LM_5 {
     global:
         extern "C++" {
             /* Wildcard prefix matches both bare names
