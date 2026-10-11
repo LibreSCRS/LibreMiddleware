@@ -118,7 +118,10 @@ rc=$(configure 2)
 restore
 
 # 3. PERTURBATION: the same line in the top-level file, after the library exists.
-sed -i "/^add_subdirectory(lib\/emrtd-crypto)$/a $PROBE" "$TOP"
+# -i.orig and the a\ newline form: what GNU and BSD sed both read.
+sed -i.orig "/^add_subdirectory(lib\/emrtd-crypto)\$/a\\
+$PROBE
+" "$TOP" && rm -f "$TOP.orig"
 [ "$(sum "$TOP")" != "$TOP0" ] || { echo "FATAL: perturbation changed nothing (anchor line missing?)" >&2; exit 2; }
 rc=$(configure 3)
 [ "$rc" != 0 ] && names_probe "$T/log3"; say $? "3 PERTURBATION: directory added in the top-level file fails the configure and is named (rc=$rc)" 1

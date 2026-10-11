@@ -212,7 +212,7 @@ expect_text 0 "check-cleansing-deleters: OK" "$out"
 perturb() {
     local label="$1" file="$2" expr="$3"
     cp "$file" "$WORK/pre.tmp"
-    sed -i -e "$expr" "$file"
+    sed -i.orig -e "$expr" "$file" && rm -f "$file.orig"
     if cmp -s "$WORK/pre.tmp" "$file"; then
         echo "case $label: FAIL — perturbation changed nothing in ${file#"$ROOT"/}"
         fail=$((fail + 1))
@@ -323,7 +323,8 @@ cp "$WORK/exceptions.bak" "$ROOT/$EXCEPTIONS_REL"
 out="$(run "$ROOT")"; rc=$?; check "11-restored" 0 $rc
 
 # --- case 12: an exception that no longer matches anything ----------------
-if perturb 12 "$ROOT/$EXCEPTIONS_REL" "\$a ${FIXTURE_REL}:9999  nothing at that line releases a BIGNUM this way"; then
+if perturb 12 "$ROOT/$EXCEPTIONS_REL" "\$a\\
+${FIXTURE_REL}:9999  nothing at that line releases a BIGNUM this way"; then
     out="$(run "$ROOT")"; rc=$?; check 12 1 $rc
     expect_text 12 "no longer releases a BIGNUM" "$out"
 fi
@@ -331,7 +332,8 @@ cp "$WORK/exceptions.bak" "$ROOT/$EXCEPTIONS_REL"
 out="$(run "$ROOT")"; rc=$?; check "12-restored" 0 $rc
 
 # --- case 13: an exception naming a path that is not tracked --------------
-if perturb 13 "$ROOT/$EXCEPTIONS_REL" '$a test/gone.cpp:5  deleted three releases ago'; then
+if perturb 13 "$ROOT/$EXCEPTIONS_REL" '$a\
+test/gone.cpp:5  deleted three releases ago'; then
     out="$(run "$ROOT")"; rc=$?; check 13 1 $rc
     expect_text 13 "is not a tracked file" "$out"
 fi
@@ -350,7 +352,8 @@ out="$(run "$ROOT")"; rc=$?; check "14-restored" 0 $rc
 # --- case 15: a second plain-BN_free deleter in the excused file ----------
 # What the amnesty is worth: the recorded site, and nothing else in the file
 # around it. A path-shaped exception passes this silently.
-if perturb 15 "$ROOT/$PROBE_REL" '$a auto secondDeleter = [](BIGNUM* p) { BN_free(p); };'; then
+if perturb 15 "$ROOT/$PROBE_REL" '$a\
+auto secondDeleter = [](BIGNUM* p) { BN_free(p); };'; then
     added="$(wc -l < "$ROOT/$PROBE_REL")"
     out="$(run "$ROOT")"; rc=$?; check 15 1 $rc
     expect_text 15 "released through a plain BN_free deleter" "$out"
@@ -360,7 +363,8 @@ cp "$WORK/probe.bak" "$ROOT/$PROBE_REL"
 out="$(run "$ROOT")"; rc=$?; check "15-restored" 0 $rc
 
 # --- case 16: an exception that names a file and no line ------------------
-if perturb 16 "$ROOT/$EXCEPTIONS_REL" "\$a ${PROBE_REL}  an amnesty with no line in it"; then
+if perturb 16 "$ROOT/$EXCEPTIONS_REL" "\$a\\
+${PROBE_REL}  an amnesty with no line in it"; then
     out="$(run "$ROOT")"; rc=$?; check 16 1 $rc
     expect_text 16 "which names no line" "$out"
 fi
