@@ -10,6 +10,7 @@
 /// enumerateObjects, signData, mechanisms) is pure-virtual and lives
 /// in each concrete subclass.
 
+#include "internal/Crv.h"
 #include "internal/PKCS11Card.h"
 #include "internal/PKCS11Slot.h"
 
@@ -52,6 +53,37 @@ bool PKCS11Slot::isLoggedIn() const noexcept
     // / libc++ implementation we ship against.
     std::scoped_lock lock(slotMutex);
     return loggedIn;
+}
+
+unsigned long PKCS11Slot::verifyContextPin(std::span<const std::uint8_t> /*keyId*/,
+                                           std::span<const std::uint8_t> /*pin*/)
+{
+    return Crv::FunctionFailed;
+}
+
+ContextPinSignature PKCS11Slot::signDataWithContextPin(std::span<const std::uint8_t> /*data*/,
+                                                       unsigned long /*mechanism*/,
+                                                       std::span<const std::uint8_t> /*keyId*/,
+                                                       const Secure::String& /*contextPin*/)
+{
+    return std::unexpected(Crv::DeviceError);
+}
+
+ContextPinSignature PKCS11Slot::signWithDigestInfoAndContextPin(std::span<const std::uint8_t> /*digestInfo*/,
+                                                                std::span<const std::uint8_t> /*rawData*/,
+                                                                unsigned long /*mechanism*/,
+                                                                std::span<const std::uint8_t> /*keyId*/,
+                                                                const Secure::String& /*contextPin*/)
+{
+    return std::unexpected(Crv::DeviceError);
+}
+
+const Secure::String* selectPresentedPin(bool alwaysAuthenticate, bool loggedIn, const Secure::String& cachedPin,
+                                         const Secure::String* contextPin) noexcept
+{
+    if (alwaysAuthenticate)
+        return (contextPin != nullptr && !contextPin->empty()) ? contextPin : nullptr;
+    return (loggedIn && !cachedPin.empty()) ? &cachedPin : nullptr;
 }
 
 // Friend-mediated parent accessors. PKCS11Slot is the friend of

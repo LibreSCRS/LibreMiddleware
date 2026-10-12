@@ -12,7 +12,9 @@
 # any consumer linking the .so. Recompiling the small handful of TU
 # sources into the test exe is the smallest-blast-radius way to keep
 # the production export discipline intact while still being able to
-# unit-test the abstract bases.
+# unit-test the abstract bases. pkcs11_library.cpp is compiled in the
+# same way, with the reader list injected through its constructor, so the
+# library facade runs against the mock provider without PC/SC.
 #
 # IMPORTANT: librescrs_pkcs11_tests MUST NEVER be linked against
 # librescrs-pkcs11 (the .so). Doing so would put two definitions of
@@ -36,21 +38,30 @@ add_executable(librescrs_pkcs11_tests
     CanInPinParsingTests.cpp
     ReconnectTests.cpp
     ConcurrencyTests.cpp
+    SlotContextPinContractTests.cpp
+    AlwaysAuthenticateLibraryTests.cpp
     MockPKCS11CardSlot.h
     MockPKCS11CardProvider.h
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/pkcs11_card.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/pkcs11_slot.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/slot_id_hash.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/pkcs11_library.cpp
 )
 
 target_link_libraries(librescrs_pkcs11_tests PRIVATE
     GTest::gtest_main
     LibreSCRS::Secure
+    SmartCard_Impl
+    OpenSSL_Crypto
 )
 
 target_include_directories(librescrs_pkcs11_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
+    # pkcs11_version.h, configured into the module's own binary dir.
+    ${CMAKE_CURRENT_BINARY_DIR}/..
+    ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src/native
+    ${LibreMiddleware_SOURCE_DIR}/lib/smartcard/src
 )
 
 # The internal/ headers carry the LIBRESCRS_INTERNAL_BUILD #error guard;

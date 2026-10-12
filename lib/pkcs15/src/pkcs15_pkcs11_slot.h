@@ -142,6 +142,29 @@ public:
                                                                unsigned long mechanism,
                                                                std::span<const std::uint8_t> keyId) override;
 
+    /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11Slot::verifyContextPin
+    /// @since 5.0
+    [[nodiscard]] unsigned long verifyContextPin(std::span<const std::uint8_t> keyId,
+                                                 std::span<const std::uint8_t> pin) override;
+
+    /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11Slot::signDataWithContextPin
+    /// @par Implementation
+    /// The card's refusal of the PIN (63Cx, 6983) inside the signing
+    /// transaction comes back as @c Crv::PinIncorrect / @c Crv::PinLocked.
+    /// @since 5.0
+    [[nodiscard]] LibreSCRS::Pkcs11::Internal::ContextPinSignature
+    signDataWithContextPin(std::span<const std::uint8_t> data, unsigned long mechanism,
+                           std::span<const std::uint8_t> keyId, const LibreSCRS::Secure::String& contextPin) override;
+
+    /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11Slot::signWithDigestInfoAndContextPin
+    /// @par Implementation
+    /// As @ref signDataWithContextPin.
+    /// @since 5.0
+    [[nodiscard]] LibreSCRS::Pkcs11::Internal::ContextPinSignature
+    signWithDigestInfoAndContextPin(std::span<const std::uint8_t> digestInfo, std::span<const std::uint8_t> rawData,
+                                    unsigned long mechanism, std::span<const std::uint8_t> keyId,
+                                    const LibreSCRS::Secure::String& contextPin) override;
+
     /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11Slot::signatureSize
     /// @par Implementation
     /// Returns the modulus byte length for RSA keys and 2× the
@@ -159,6 +182,20 @@ private:
     /// @par Thread-safety Caller must hold the parent's @c cardMutex.
     [[nodiscard]] static const pkcs15::PKCS15Profile*
     parentProfile(LibreSCRS::Pkcs11::Internal::PKCS11Card& parentBase) noexcept;
+
+    /// @brief The slot key whose PKCS#15 id is @p keyId, or @c nullptr.
+    /// @par Thread-safety Caller holds @c slotMutex.
+    [[nodiscard]] const pkcs15::PrivateKeyInfo* keyById(std::span<const std::uint8_t> keyId) const noexcept;
+
+    /// @brief The one sign path: picks the PIN with @ref selectPresentedPin and
+    ///        runs select + VERIFY + MSE + PSO under one holder (one card
+    ///        transaction). @p contextPin is @c nullptr on the session-login path.
+    /// @return The signature; @c Crv::PinIncorrect / @c Crv::PinLocked when the
+    ///         card refused @p contextPin; @c Crv::DeviceError otherwise.
+    [[nodiscard]] LibreSCRS::Pkcs11::Internal::ContextPinSignature
+    signWithPin(std::span<const std::uint8_t> digestInfo, std::span<const std::uint8_t> rawData,
+                unsigned long mechanism, std::span<const std::uint8_t> keyId,
+                const LibreSCRS::Secure::String* contextPin);
 
     std::optional<pkcs15::PinInfo> pinInfo;   ///< @c nullopt in deferred-profile mode pre-login.
     std::vector<pkcs15::PrivateKeyInfo> keys; ///< Empty in deferred-profile mode pre-login.

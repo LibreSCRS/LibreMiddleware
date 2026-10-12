@@ -13,6 +13,7 @@
 #include <smartcard/secure_buffer.h>
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -20,6 +21,10 @@
 
 namespace LibreSCRS::SecureChannel {
 class ISecureChannel;
+}
+
+namespace LibreSCRS::SmartCard::Internal {
+struct APDUResponse;
 }
 
 namespace pkcs15 {
@@ -119,6 +124,14 @@ public:
     std::vector<uint8_t> sign(const PrivateKeyInfo& key, std::string_view pin, const PinInfo& pinInfo,
                               const std::vector<uint8_t>& digestInfo, const std::vector<uint8_t>& rawData,
                               SignScheme scheme);
+    /// The card's refusal of the PIN the last @ref sign presented: a wrong
+    /// PIN (63Cx) or a blocked one (6983). @c std::nullopt when the card
+    /// accepted it or never answered with a refusal -- so an empty signature
+    /// that carries no refusal is a failure the PIN did not cause.
+    [[nodiscard]] const std::optional<PinResult>& pinRefusal() const noexcept
+    {
+        return lastPinRefusal;
+    }
 
 private:
     struct KeyRefInfo
@@ -137,6 +150,9 @@ private:
     std::vector<uint8_t> tryMsePsoOid(std::span<const uint8_t> algoOid, const KeyRefInfo& keyRef,
                                       const std::vector<uint8_t>& psoData, uint16_t expectedSigLen, uint16_t& lastSW);
     static LibreSCRS::SmartCard::Internal::SecureBuffer encodePIN(std::string_view pin, const PinInfo& pinInfo);
+    // Fold one inline VERIFY answer into lastPinRefusal: a refusal (wrong or blocked PIN) sets it, success clears
+    // it, an answer that is no verdict on the PIN leaves it.
+    void recordPinRefusal(const LibreSCRS::SmartCard::Internal::APDUResponse& resp);
     // Returns: 1=success, 0=wrong PIN (0x63Cx), -1=other failure
     int verifyPinInline(const PinInfo& pinInfo, const LibreSCRS::SmartCard::Internal::SecureBuffer& pinData);
     static std::vector<uint8_t> extractRawHash(const std::vector<uint8_t>& digestInfo);
@@ -145,8 +161,9 @@ private:
     bool probeViaEfDir(); // EF.DIR fallback: read MF/2F00, find PKCS#15 path
 
     LibreSCRS::SecureChannel::ISecureChannel& channel;
-    std::vector<uint8_t> pkcs15Path; // Path discovered from EF.DIR (empty = use AID)
-    uint8_t fileSelectP2 = 0x00;     // Discovered during probe/first selectByPath
+    std::vector<uint8_t> pkcs15Path;         // Path discovered from EF.DIR (empty = use AID)
+    uint8_t fileSelectP2 = 0x00;             // Discovered during probe/first selectByPath
+    std::optional<PinResult> lastPinRefusal; // Set by verifyPinInline; see pinRefusal()
 };
 
 } // namespace pkcs15

@@ -57,6 +57,14 @@ struct MockSlotSpec
 
     /// @brief Logical kind, fed into @ref computeSlotId.
     SlotKind kind{SlotKind::Generic};
+
+    /// @brief Publish the slot's key with @c alwaysAuthenticate: the card wants
+    ///        the PIN again for every operation with it.
+    bool alwaysAuthenticate{false};
+
+    /// @brief RSA modulus length published for the slot's key, in bytes; 0
+    ///        publishes none (the library then skips its input-length check).
+    std::size_t modulusLength{0};
 };
 
 /// @brief Per-card specification for the mock provider.
@@ -73,6 +81,17 @@ struct MockCardSpec
 
     /// @brief One @ref MockSlotSpec per slot the card will surface.
     std::vector<MockSlotSpec> slots;
+};
+
+/// @brief One signature a @ref MockConfigurableSlot was asked for and the PIN
+///        that path would have presented to the card.
+struct MockSignCall
+{
+    /// @brief @c true: the per-operation path (one-shot PIN); @c false: the
+    ///        session login's cached PIN.
+    bool viaContextPin{false};
+    /// @brief The PIN bytes offered.
+    std::string pin;
 };
 
 /// @brief Concrete @ref PKCS11Slot used by @ref MockConfigurableCard.
@@ -121,6 +140,8 @@ public:
         key.id = slotSpec.pinId;
         key.privateObj = true;
         key.sensitive = true;
+        key.alwaysAuthenticate = slotSpec.alwaysAuthenticate;
+        key.modulus.assign(slotSpec.modulusLength, std::uint8_t{0xC5});
 
         PKCS11ObjectInfo cert;
         cert.objectClass = 1UL; // CKO_CERTIFICATE
@@ -138,6 +159,52 @@ public:
                                                                std::span<const std::uint8_t> rawData,
                                                                unsigned long mechanism,
                                                                std::span<const std::uint8_t> keyId) override;
+
+    [[nodiscard]] unsigned long verifyContextPin(std::span<const std::uint8_t> keyId,
+                                                 std::span<const std::uint8_t> pin) override;
+
+    [[nodiscard]] ContextPinSignature signDataWithContextPin(std::span<const std::uint8_t> data,
+                                                             unsigned long mechanism,
+                                                             std::span<const std::uint8_t> keyId,
+                                                             const Secure::String& contextPin) override;
+
+    [[nodiscard]] ContextPinSignature signWithDigestInfoAndContextPin(std::span<const std::uint8_t> digestInfo,
+                                                                      std::span<const std::uint8_t> rawData,
+                                                                      unsigned long mechanism,
+                                                                      std::span<const std::uint8_t> keyId,
+                                                                      const Secure::String& contextPin) override;
+
+    /// @brief Every signature asked for so far (test introspection).
+    [[nodiscard]] std::vector<MockSignCall> signCalls() const
+    {
+        std::scoped_lock lock(slotMutex);
+        return signLog;
+    }
+
+    /// @brief How many context-specific VERIFYs reached the card.
+    [[nodiscard]] int contextVerifies() const
+    {
+        std::scoped_lock lock(slotMutex);
+        return contextVerifyCount;
+    }
+
+    /// @brief Test hook: the card's PIN becomes @p pin with @p failedTries
+    ///        wrong tries already counted -- a PIN armed before this no longer
+    ///        matches when the signing transaction VERIFYs it.
+    void changePinOnCard(std::string pin, int failedTries)
+    {
+        std::scoped_lock lock(slotMutex);
+        slotSpec.correctPin = std::move(pin);
+        retryCount = failedTries;
+    }
+
+    /// @brief Test hook: the next @ref verifyContextPin succeeds but the USER
+    ///        login ends while it runs, as a sibling session's C_Logout would.
+    void dropLoginDuringNextContextVerify()
+    {
+        std::scoped_lock lock(slotMutex);
+        dropLoginOnContextVerify = true;
+    }
 
     [[nodiscard]] std::size_t signatureSize(std::span<const std::uint8_t> /*keyId*/) const override
     {
@@ -166,8 +233,16 @@ public:
     }
 
 private:
+    [[nodiscard]] bool consumeArmedSignFault();
+
     MockSlotSpec slotSpec;
     std::weak_ptr<PKCS11Card> ownerCard;
+    /// @guarded_by slotMutex
+    std::vector<MockSignCall> signLog;
+    /// @guarded_by slotMutex
+    int contextVerifyCount{0};
+    /// @guarded_by slotMutex
+    bool dropLoginOnContextVerify{false};
     /// @guarded_by slotMutex
     int retryCount{0};
     /// @guarded_by slotMutex
@@ -426,44 +501,6 @@ inline unsigned long MockConfigurableSlot::login(unsigned long /*userType*/, std
     return Crv::PinIncorrect;
 }
 
-inline std::vector<std::uint8_t> MockConfigurableSlot::signData(std::span<const std::uint8_t> /*data*/,
-                                                                unsigned long /*mechanism*/,
-                                                                std::span<const std::uint8_t> /*keyId*/)
-{
-    // Consult the card-level sign-fault flag OUTSIDE slotMutex to honour
-    // the project lock order (slotMutex never held while reaching into
-    // cardMutex).
-    if (auto cardLocked = ownerCard.lock()) {
-        auto* configurable = static_cast<MockConfigurableCard*>(cardLocked.get());
-        if (configurable->consumeSignFaultLocked()) {
-            return {};
-        }
-    }
-    std::scoped_lock lock(slotMutex);
-    if (!loggedIn) {
-        return {};
-    }
-    return std::vector<std::uint8_t>(64, std::uint8_t{0xAA});
-}
-
-inline std::vector<std::uint8_t> MockConfigurableSlot::signWithDigestInfo(std::span<const std::uint8_t> /*digestInfo*/,
-                                                                          std::span<const std::uint8_t> /*rawData*/,
-                                                                          unsigned long /*mechanism*/,
-                                                                          std::span<const std::uint8_t> /*keyId*/)
-{
-    if (auto cardLocked = ownerCard.lock()) {
-        auto* configurable = static_cast<MockConfigurableCard*>(cardLocked.get());
-        if (configurable->consumeSignFaultLocked()) {
-            return {};
-        }
-    }
-    std::scoped_lock lock(slotMutex);
-    if (!loggedIn) {
-        return {};
-    }
-    return std::vector<std::uint8_t>(64, std::uint8_t{0xAA});
-}
-
 inline unsigned long MockConfigurableCard::reconnectInline()
 {
     // Mock reconnect: if the card requires PACE and a CAN is cached
@@ -497,6 +534,93 @@ inline unsigned long MockConfigurableCard::establishPaceWithCan(const std::strin
         p->recordPaceEstablishment(readerName);
     }
     return Crv::Ok;
+}
+
+inline bool MockConfigurableSlot::consumeArmedSignFault()
+{
+    // Outside slotMutex: the card-level flag lives under cardMutex.
+    if (auto cardLocked = ownerCard.lock())
+        return static_cast<MockConfigurableCard*>(cardLocked.get())->consumeSignFaultLocked();
+    return false;
+}
+
+inline std::vector<std::uint8_t> MockConfigurableSlot::signData(std::span<const std::uint8_t> /*data*/,
+                                                                unsigned long /*mechanism*/,
+                                                                std::span<const std::uint8_t> /*keyId*/)
+{
+    const bool faulted = consumeArmedSignFault();
+    std::scoped_lock lock(slotMutex);
+    signLog.push_back(MockSignCall{.viaContextPin = false, .pin = std::string{cachedPin.view()}});
+    // A per-operation key never signs on the session login (mirrors the real
+    // slots): the cached PIN is not this operation's PIN.
+    if (faulted || !loggedIn || slotSpec.alwaysAuthenticate)
+        return {};
+    return std::vector<std::uint8_t>(64, std::uint8_t{0xAA});
+}
+
+inline std::vector<std::uint8_t> MockConfigurableSlot::signWithDigestInfo(std::span<const std::uint8_t> /*digestInfo*/,
+                                                                          std::span<const std::uint8_t> rawData,
+                                                                          unsigned long mechanism,
+                                                                          std::span<const std::uint8_t> keyId)
+{
+    return signData(rawData, mechanism, keyId);
+}
+
+inline unsigned long MockConfigurableSlot::verifyContextPin(std::span<const std::uint8_t> /*keyId*/,
+                                                            std::span<const std::uint8_t> pin)
+{
+    std::scoped_lock lock(slotMutex);
+    ++contextVerifyCount;
+    if (!slotSpec.alwaysAuthenticate)
+        return Crv::ArgumentsBad;
+    if (std::exchange(dropLoginOnContextVerify, false)) {
+        loggedIn = false;
+        cachedPin.clear();
+    }
+    if (locked)
+        return Crv::PinLocked;
+    if (std::string(pin.begin(), pin.end()) == slotSpec.correctPin) {
+        retryCount = 0;
+        return Crv::Ok;
+    }
+    if (++retryCount >= 3) {
+        locked = true;
+        return Crv::PinLocked;
+    }
+    return Crv::PinIncorrect;
+}
+
+inline ContextPinSignature MockConfigurableSlot::signDataWithContextPin(std::span<const std::uint8_t> /*data*/,
+                                                                        unsigned long /*mechanism*/,
+                                                                        std::span<const std::uint8_t> /*keyId*/,
+                                                                        const Secure::String& contextPin)
+{
+    const bool faulted = consumeArmedSignFault();
+    std::scoped_lock lock(slotMutex);
+    signLog.push_back(MockSignCall{.viaContextPin = true, .pin = std::string{contextPin.view()}});
+    // No loggedIn check: the library's retry after a reset presents the same
+    // one-shot PIN to a slot the reset has logged out.
+    if (faulted || !slotSpec.alwaysAuthenticate)
+        return std::unexpected(Crv::DeviceError);
+    // The VERIFY inside the signing transaction, on the card's retry counter.
+    if (locked)
+        return std::unexpected(Crv::PinLocked);
+    if (contextPin.view() != slotSpec.correctPin) {
+        if (++retryCount >= 3) {
+            locked = true;
+            return std::unexpected(Crv::PinLocked);
+        }
+        return std::unexpected(Crv::PinIncorrect);
+    }
+    retryCount = 0;
+    return std::vector<std::uint8_t>(64, std::uint8_t{0xBB});
+}
+
+inline ContextPinSignature MockConfigurableSlot::signWithDigestInfoAndContextPin(
+    std::span<const std::uint8_t> /*digestInfo*/, std::span<const std::uint8_t> rawData, unsigned long mechanism,
+    std::span<const std::uint8_t> keyId, const Secure::String& contextPin)
+{
+    return signDataWithContextPin(rawData, mechanism, keyId, contextPin);
 }
 
 } // namespace LibreSCRS::Pkcs11::Internal::Test

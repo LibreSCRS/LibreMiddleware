@@ -37,6 +37,7 @@
 
 #include "opensc_reader_bridge.h"
 #include "opensc_session.h"
+#include "opensc_user_consent.h"
 
 using LibreSCRS::CancelSource;
 using LibreSCRS::CancelToken;
@@ -840,6 +841,18 @@ TEST(OpenscEcSurface, KeySizeBitsComesFromModulusOrFieldLength)
     sc_pkcs15_prkey_info_t ecInfo{};
     ecInfo.field_length = 384;
     EXPECT_EQ(LibreSCRS::OpenSc::keySizeBitsFromKeyInfo(ecInfo), 384);
+}
+
+// OpenSC's own reading of PKCS#15 userConsent -- the one its PKCS#11 framework
+// turns into CKA_ALWAYS_AUTHENTICATE, and the one the plugin and the slot share.
+TEST(OpenscUserConsent, PerOperationAuthIsOpenScsOwnRule)
+{
+    sc_pkcs15_object_t object{};
+    EXPECT_FALSE(LibreSCRS::OpenSc::requiresPerOperationAuth(object));
+    object.user_consent = 1; // what the PIV emulator sets on the Digital Signature key (9C)
+    EXPECT_TRUE(LibreSCRS::OpenSc::requiresPerOperationAuth(object));
+    object.user_consent = 3;
+    EXPECT_TRUE(LibreSCRS::OpenSc::requiresPerOperationAuth(object));
 }
 
 TEST(OpenscEcSurface, DriverShortNameMapsToQuirkFamily)

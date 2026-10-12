@@ -714,6 +714,8 @@ if(LIBRESCRS_VENDOR_OPENSC)
     add_executable(OpenScPkcs11UnitTests
         opensc-pkcs11/sc_lock_guard_test.cpp
         opensc-pkcs11/provider_test.cpp
+        opensc-pkcs11/pin_verdict_test.cpp
+        opensc-pkcs11/context_pin_gate_test.cpp
         ${PROJECT_SOURCE_DIR}/lib/pkcs11/src/pkcs11_card.cpp
         ${PROJECT_SOURCE_DIR}/lib/pkcs11/src/pkcs11_slot.cpp
         ${PROJECT_SOURCE_DIR}/lib/pkcs11/src/slot_id_hash.cpp
@@ -1764,18 +1766,34 @@ gtest_discover_tests(Pkcs15ChangePinSelectorTests)
 # Same harness as Pkcs15PinLifecycleTests (plugin .so via the registry,
 # detached CardSession + injected PlainChannel, scripted transmit filter).
 # Counts SELECT-by-FID of EF.ODF — emitted by PKCS15Card::readProfile and
-# by nothing else — to measure profile reads per public entry point.
-add_executable(Pkcs15ProfileReadCensusTests Pkcs15ProfileReadCensusTests.cpp)
+# by nothing else — to measure profile reads per public entry point. The
+# same scripted card, with its optional signing behaviour on, also drives
+# the PKCS#15 PKCS#11 slot (CKA_ALWAYS_AUTHENTICATE from userConsent), which
+# is why the slot's base-class sources are compiled in here.
+add_executable(Pkcs15ProfileReadCensusTests
+    Pkcs15ProfileReadCensusTests.cpp
+    ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/src/pkcs11_card.cpp
+    ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/src/pkcs11_slot.cpp
+    ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/src/slot_id_hash.cpp
+)
 target_link_libraries(Pkcs15ProfileReadCensusTests PRIVATE
     GTest::gtest_main
     CardPlugin_Impl
+    PKCS15
+    EMRTDCrypto
     LibreSCRS_SmartCard
     LibreSCRS_SmartCard_TestHelpers
     LibreSCRS_SecureChannel
     SmartCard_Impl
+    LibreSCRS::Secure
 )
 target_include_directories(Pkcs15ProfileReadCensusTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/pkcs15/src
+    ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/include
+    ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/src
+    ${LibreMiddleware_SOURCE_DIR}/lib/SecureChannel/include
+    ${LibreMiddleware_SOURCE_DIR}/lib/emrtd-crypto/src
 )
 target_compile_definitions(Pkcs15ProfileReadCensusTests PRIVATE
     PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"

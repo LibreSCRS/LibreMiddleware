@@ -27,6 +27,9 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <span>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -172,10 +175,34 @@ private:
     return CKR_OK;
 }
 
+/// @brief Unpack a one-shot-PIN signature: its bytes, or empty with
+///        @p refusal set to @c Crv::PinIncorrect / @c Crv::PinLocked when the
+///        card refused the PIN (@c Crv::Ok for any other failure).
+[[nodiscard]] std::vector<std::uint8_t> unpackContextPinSignature(LcInt::ContextPinSignature outcome,
+                                                                  unsigned long& refusal)
+{
+    refusal = LcInt::Crv::Ok;
+    if (outcome)
+        return std::move(*outcome);
+    if (outcome.error() == LcInt::Crv::PinIncorrect || outcome.error() == LcInt::Crv::PinLocked)
+        refusal = outcome.error();
+    return {};
+}
+
+/// @brief Stable IDs of every slot on @p card.
+[[nodiscard]] std::vector<CK_SLOT_ID> slotIdsOf(const LcInt::PKCS11Card& card)
+{
+    std::vector<CK_SLOT_ID> ids;
+    for (const auto& s : card.enumerateSlots()) {
+        if (s)
+            ids.push_back(static_cast<CK_SLOT_ID>(s->stableId()));
+    }
+    return ids;
+}
+
 /// @brief PKCS#11 v2.40 numeric constants reused on the new path.
 constexpr unsigned long kCkoCertificate = 1UL;
 constexpr unsigned long kCkoPrivateKey = 3UL;
-constexpr unsigned long kCkkRsa = 0UL;
 constexpr unsigned long kCkkEc = 3UL;
 
 } // namespace
@@ -184,7 +211,9 @@ constexpr unsigned long kCkkEc = 3UL;
 // Construction / destruction
 // ---------------------------------------------------------------------
 
-PKCS11Library::PKCS11Library() = default;
+PKCS11Library::PKCS11Library() : PKCS11Library(ReaderSnapshot{&PKCS11Library::snapshotPcscReaders}) {}
+
+PKCS11Library::PKCS11Library(ReaderSnapshot readerSnapshot) : readerSnapshot(std::move(readerSnapshot)) {}
 
 PKCS11Library::~PKCS11Library()
 {
@@ -293,7 +322,13 @@ void PKCS11Library::probeReadersOnce(const std::vector<std::string>& readers)
 
 std::vector<unsigned long> PKCS11Library::enumerateSlotIds()
 {
-    const auto readers = snapshotPcscReaders();
+    std::vector<std::string> readers;
+    try {
+        if (readerSnapshot)
+            readers = readerSnapshot();
+    } catch (...) {
+        readers.clear();
+    }
     probeReadersOnce(readers);
 
     std::vector<unsigned long> result;
@@ -553,6 +588,8 @@ CK_RV PKCS11Library::getSessionInfo(CK_SESSION_HANDLE hSession, CK_SESSION_INFO_
 
 CK_RV PKCS11Library::login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType, CK_UTF8CHAR_PTR pPin, CK_ULONG ulPinLen)
 {
+    if (userType == CKU_CONTEXT_SPECIFIC)
+        return loginContextSpecific(hSession, pPin, ulPinLen);
     if (userType != CKU_USER)
         return CKR_USER_TYPE_INVALID;
     if (pPin == nullptr)
@@ -589,6 +626,129 @@ CK_RV PKCS11Library::login(CK_SESSION_HANDLE hSession, CK_USER_TYPE userType, CK
     return rv;
 }
 
+// PKCS#11 v2.40 sections 4.9 and 5.6: CKU_CONTEXT_SPECIFIC authenticates ONE
+// operation -- the active C_SignInit on a CKA_ALWAYS_AUTHENTICATE key -- and
+// leaves the USER login as it was. Decided here, before the slot is reached: a
+// slot reports failure as an empty vector, which cannot say "there was no
+// operation to authorise".
+CK_RV PKCS11Library::loginContextSpecific(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pPin, CK_ULONG ulPinLen)
+{
+    if (pPin == nullptr)
+        return CKR_ARGUMENTS_BAD;
+
+    std::unique_lock sessLock(sessionMutex);
+    auto sessIt = sessions.find(hSession);
+    if (sessIt == sessions.end())
+        return CKR_SESSION_HANDLE_INVALID;
+    auto& session = sessIt->second;
+    if (session.busy)
+        return CKR_FUNCTION_FAILED;
+    if (!session.signState.has_value() || !session.signState->alwaysAuthenticate)
+        return CKR_OPERATION_NOT_INITIALIZED;
+
+    const CK_SLOT_ID slotID = session.slotID;
+    auto slot = findSlot(static_cast<unsigned long>(slotID));
+    if (!slot)
+        return CKR_SLOT_ID_INVALID;
+    if (!slot->isLoggedIn())
+        return CKR_OPERATION_NOT_INITIALIZED;
+    auto objIt = objectHandleMap.find(session.signState->keyHandle);
+    if (objIt == objectHandleMap.end())
+        return CKR_OPERATION_NOT_INITIALIZED;
+    const std::vector<std::uint8_t> keyId = objIt->second.info->id;
+
+    const auto info = slot->tokenInfo();
+    if (ulPinLen < info.minPinLen || ulPinLen > info.maxPinLen)
+        return CKR_PIN_LEN_RANGE;
+    // "CAN:PIN" is the session login's syntax on a PACE card, never an
+    // operation's. Refused before the VERIFY, so a user who types the login's
+    // form here spends no try of the card's retry counter.
+    if (auto card = slot->lockParentCard();
+        card && card->needsPaceFlag() && std::memchr(pPin, ':', ulPinLen) != nullptr)
+        return CKR_PIN_INVALID;
+
+    const std::span<const std::uint8_t> pin{static_cast<const std::uint8_t*>(pPin), ulPinLen};
+    unsigned long crv = LcInt::Crv::DeviceError;
+    session.busy = true;
+    {
+        SessionBusyGuard busyGuard(sessLock, session);
+        try {
+            crv = slot->verifyContextPin(std::span<const std::uint8_t>{keyId}, pin);
+        } catch (...) {
+            crv = LcInt::Crv::DeviceError;
+        }
+        if (crv == LcInt::Crv::PinLocked)
+            endLoginOnBlockedPin(*slot, slotID);
+    }
+    if (crv == LcInt::Crv::PinLocked)
+        session.signState.reset(); // this session was busy, so endSignOperations skipped it
+    if (crv != LcInt::Crv::Ok)
+        return crvToCkRv(crv);
+
+    // The session stayed busy while the card ran, so it and its operation are
+    // still here; a C_Logout from a sibling session in that window must not be
+    // outlived by a PIN armed after it. That logout skipped this busy session,
+    // so its operation is ended here instead.
+    if (!session.signState.has_value() || !slot->isLoggedIn()) {
+        session.signState.reset();
+        return CKR_OPERATION_NOT_INITIALIZED;
+    }
+    session.signState->contextPin =
+        LibreSCRS::Secure::String{std::string_view{reinterpret_cast<const char*>(pPin), ulPinLen}};
+    return CKR_OK;
+}
+
+// A blocked PIN ends the USER login: nothing a session on this slot holds can
+// be used any more.
+void PKCS11Library::endLoginOnBlockedPin(LcInt::PKCS11Slot& slot, CK_SLOT_ID slotID)
+{
+    try {
+        (void)slot.logout();
+    } catch (...) {
+    }
+    invalidateSlotObjects(slotID);
+    endSignOperations(std::span<const CK_SLOT_ID>{&slotID, 1});
+}
+
+CK_RV PKCS11Library::refuseContextPin(LcInt::PKCS11Slot& slot, CK_SLOT_ID slotID, unsigned long refusal)
+{
+    if (refusal == LcInt::Crv::PinLocked)
+        endLoginOnBlockedPin(slot, slotID);
+    return crvToCkRv(refusal);
+}
+
+// Erase on reset: the library sees the resets it starts itself (the retry in
+// sign / signFinal) and erases here. A reset it does not see logs the slot out,
+// and every armed operation then fails the !slot->isLoggedIn() check before
+// its PIN is used -- intentional, so a PIN is never presented across a reset.
+void PKCS11Library::discardContextPins(std::span<const CK_SLOT_ID> slotIds)
+{
+    std::scoped_lock lk(sessionMutex);
+    for (auto& [handle, entry] : sessions) {
+        if (entry.signState.has_value() && std::find(slotIds.begin(), slotIds.end(), entry.slotID) != slotIds.end())
+            entry.signState->contextPin.clear();
+    }
+}
+
+bool PKCS11Library::holdsContextPinForTest(CK_SESSION_HANDLE hSession) const
+{
+    std::scoped_lock lk(sessionMutex);
+    const auto it = sessions.find(hSession);
+    return it != sessions.end() && it->second.signState.has_value() && !it->second.signState->contextPin.empty();
+}
+
+// PKCS#11 v2.40 C_Logout: the token may end the operations active in its
+// sessions. A sign operation started under the USER login cannot outlive it;
+// resetting the state also cleanses any one-shot PIN it held.
+void PKCS11Library::endSignOperations(std::span<const CK_SLOT_ID> slotIds)
+{
+    std::scoped_lock lk(sessionMutex);
+    for (auto& [handle, entry] : sessions) {
+        if (!entry.busy && std::find(slotIds.begin(), slotIds.end(), entry.slotID) != slotIds.end())
+            entry.signState.reset();
+    }
+}
+
 CK_RV PKCS11Library::logout(CK_SESSION_HANDLE hSession)
 {
     CK_SLOT_ID slotID = 0;
@@ -610,6 +770,11 @@ CK_RV PKCS11Library::logout(CK_SESSION_HANDLE hSession)
         // objects that became inaccessible at logout don't leave stale
         // handles in objectHandleMap.
         invalidateSlotObjects(slotID);
+        // A session busy in sign / signFinal has already consumed its
+        // operation. One busy in a context-specific login keeps it here; that
+        // login sees the USER login gone when the card returns, and ends the
+        // operation itself instead of arming it.
+        endSignOperations(std::span<const CK_SLOT_ID>{&slotID, 1});
     }
     return rv;
 }
@@ -1192,7 +1357,7 @@ CK_RV PKCS11Library::signInit(CK_SESSION_HANDLE hSession, CK_MECHANISM_PTR pMech
     if (!slot->isLoggedIn())
         return CKR_USER_NOT_LOGGED_IN;
 
-    SignState state{hKey, pMechanism->mechanism, {}, false};
+    SignState state{hKey, pMechanism->mechanism, {}, false, obj.alwaysAuthenticate, {}};
     session.signState = std::move(state);
     return CKR_OK;
 }
@@ -1231,6 +1396,7 @@ CK_RV PKCS11Library::sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULON
 
     auto handle = session.signState->keyHandle;
     auto mech = session.signState->mechanism;
+    const bool perOperation = session.signState->alwaysAuthenticate;
 
     auto objIt = objectHandleMap.find(handle);
     if (objIt == objectHandleMap.end()) {
@@ -1265,13 +1431,26 @@ CK_RV PKCS11Library::sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULON
         }
     }
 
+    // CKA_ALWAYS_AUTHENTICATE (PKCS#11 v2.40 section 4.9): this signature needs
+    // the PIN its own C_Login(CKU_CONTEXT_SPECIFIC) armed, under a USER login
+    // that still stands -- a card reset or a C_Logout since then took it away.
+    // After the length query and the argument checks, so sizing a buffer needs
+    // no PIN and a malformed call reports what is malformed.
+    if (perOperation && (session.signState->contextPin.empty() || !slot->isLoggedIn())) {
+        session.signState.reset();
+        return CKR_USER_NOT_LOGGED_IN;
+    }
+
     // Consume sign state, mark busy, drop session lock for card I/O.
+    // The one-shot PIN travels with this call only.
+    LibreSCRS::Secure::String contextPin = std::move(session.signState->contextPin);
     session.signState.reset();
     session.busy = true;
     SessionBusyGuard busyGuard(sessLock, session);
 
     try {
         std::vector<std::uint8_t> sig;
+        unsigned long refusal = LcInt::Crv::Ok;
         std::span<const std::uint8_t> keyIdSpan{info->id};
 
         auto attemptSign = [&]() {
@@ -1280,16 +1459,27 @@ CK_RV PKCS11Library::sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULON
                 if (!isPSSMechanism(mech))
                     digestInfo = buildDigestInfo(mech, pData, ulDataLen);
                 std::vector<std::uint8_t> rawData(pData, pData + ulDataLen);
-                sig = slot->signWithDigestInfo(std::span<const std::uint8_t>{digestInfo},
-                                               std::span<const std::uint8_t>{rawData}, mech, keyIdSpan);
+                const std::span<const std::uint8_t> digestSpan{digestInfo};
+                const std::span<const std::uint8_t> rawSpan{rawData};
+                sig = perOperation ? unpackContextPinSignature(slot->signWithDigestInfoAndContextPin(
+                                                                   digestSpan, rawSpan, mech, keyIdSpan, contextPin),
+                                                               refusal)
+                                   : slot->signWithDigestInfo(digestSpan, rawSpan, mech, keyIdSpan);
             } else {
                 // CKM_RSA_PKCS / CKM_ECDSA: pre-built input.
                 std::span<const std::uint8_t> dataSpan{pData, ulDataLen};
-                sig = slot->signData(dataSpan, mech, keyIdSpan);
+                sig = perOperation ? unpackContextPinSignature(
+                                         slot->signDataWithContextPin(dataSpan, mech, keyIdSpan, contextPin), refusal)
+                                   : slot->signData(dataSpan, mech, keyIdSpan);
             }
         };
 
         attemptSign();
+
+        // The card refused this operation's PIN inside the transaction: no
+        // reset and no retry, since presenting it again costs another try.
+        if (refusal != LcInt::Crv::Ok)
+            return refuseContextPin(*slot, slotID, refusal);
 
         // Inline RESET-recovery retry-once. Empty signature is the slot's
         // signal for transport failure (legacy path mapped SCARD_W_RESET_CARD
@@ -1297,10 +1487,18 @@ CK_RV PKCS11Library::sign(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pData, CK_ULON
         // PKCS11Card::handleReset() under cardMutex and retry the sign once.
         if (sig.empty()) {
             if (auto card = slot->lockParentCard()) {
-                if (card->handleReset() == LcInt::Crv::Ok)
+                if (card->handleReset() == LcInt::Crv::Ok) {
+                    // The reset dropped every card-side authentication: no other
+                    // operation may sign with a PIN armed before it. This one
+                    // keeps its own for the single retry -- the same operation
+                    // the PIN was given for.
+                    discardContextPins(slotIdsOf(*card));
                     attemptSign();
+                }
             }
         }
+        if (refusal != LcInt::Crv::Ok)
+            return refuseContextPin(*slot, slotID, refusal);
 
         return finishSignatureOutput(sig, pSignature, pulSignatureLen);
     } catch (...) {
@@ -1326,6 +1524,11 @@ CK_RV PKCS11Library::signUpdate(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pPart, C
     if (!isCombinedHashMechanism(session.signState->mechanism) && !isPSSMechanism(session.signState->mechanism)) {
         session.signState.reset();
         return CKR_FUNCTION_NOT_SUPPORTED;
+    }
+    // A per-operation key is authorised before its data is taken.
+    if (session.signState->alwaysAuthenticate && session.signState->contextPin.empty()) {
+        session.signState.reset();
+        return CKR_USER_NOT_LOGGED_IN;
     }
 
     session.signState->multiPart = true;
@@ -1360,6 +1563,7 @@ CK_RV PKCS11Library::signFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignatur
     const CK_SLOT_ID slotID = session.slotID;
     auto handle = session.signState->keyHandle;
     auto mech = session.signState->mechanism;
+    const bool perOperation = session.signState->alwaysAuthenticate;
 
     auto objIt = objectHandleMap.find(handle);
     if (objIt == objectHandleMap.end()) {
@@ -1385,7 +1589,14 @@ CK_RV PKCS11Library::signFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignatur
         return CKR_BUFFER_TOO_SMALL;
     }
 
+    // CKA_ALWAYS_AUTHENTICATE: as in sign(), after the length query.
+    if (perOperation && (session.signState->contextPin.empty() || !slot->isLoggedIn())) {
+        session.signState.reset();
+        return CKR_USER_NOT_LOGGED_IN;
+    }
+
     auto buffer = std::move(session.signState->buffer);
+    LibreSCRS::Secure::String contextPin = std::move(session.signState->contextPin);
     session.signState.reset();
     session.busy = true;
     SessionBusyGuard busyGuard(sessLock, session);
@@ -1394,20 +1605,32 @@ CK_RV PKCS11Library::signFinal(CK_SESSION_HANDLE hSession, CK_BYTE_PTR pSignatur
         std::vector<std::uint8_t> digestInfo;
         if (!isPSSMechanism(mech))
             digestInfo = buildDigestInfo(mech, buffer.data(), buffer.size());
-        auto sig =
-            slot->signWithDigestInfo(std::span<const std::uint8_t>{digestInfo}, std::span<const std::uint8_t>{buffer},
-                                     mech, std::span<const std::uint8_t>{info->id});
+        const std::span<const std::uint8_t> digestSpan{digestInfo};
+        const std::span<const std::uint8_t> bufferSpan{buffer};
+        const std::span<const std::uint8_t> keyIdSpan{info->id};
+        unsigned long refusal = LcInt::Crv::Ok;
+        auto signOnce = [&]() {
+            return perOperation ? unpackContextPinSignature(slot->signWithDigestInfoAndContextPin(
+                                                                digestSpan, bufferSpan, mech, keyIdSpan, contextPin),
+                                                            refusal)
+                                : slot->signWithDigestInfo(digestSpan, bufferSpan, mech, keyIdSpan);
+        };
+        auto sig = signOnce();
+        // A refused one-shot PIN is never presented twice (see sign()).
+        if (refusal != LcInt::Crv::Ok)
+            return refuseContextPin(*slot, slotID, refusal);
 
         // Inline RESET-recovery retry-once (parity with single-shot sign path).
         if (sig.empty()) {
             if (auto card = slot->lockParentCard()) {
                 if (card->handleReset() == LcInt::Crv::Ok) {
-                    sig = slot->signWithDigestInfo(std::span<const std::uint8_t>{digestInfo},
-                                                   std::span<const std::uint8_t>{buffer}, mech,
-                                                   std::span<const std::uint8_t>{info->id});
+                    discardContextPins(slotIdsOf(*card));
+                    sig = signOnce();
                 }
             }
         }
+        if (refusal != LcInt::Crv::Ok)
+            return refuseContextPin(*slot, slotID, refusal);
 
         return finishSignatureOutput(sig, pSignature, pulSignatureLen);
     } catch (...) {

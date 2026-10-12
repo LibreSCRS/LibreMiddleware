@@ -59,10 +59,10 @@ OidDatabaseTests 9
 OpenSCFallbackIntegrationTest 7
 OpenSCPluginTests 9
 OpenScBridgeTests 19
-OpenScPkcs11UnitTests 8
+OpenScPkcs11UnitTests 12
 OpenScSrbEid2HwTest 1
 OpenscChangePinSelectorTests 4
-OpenscChannelLifecycleTests 32
+OpenscChannelLifecycleTests 33
 OpenscPinLifecycleTests 7
 OpenscRoutingTests 2
 OpenscUserPinSelectionTests 4
@@ -87,7 +87,7 @@ Pkcs11TokenTests 2
 Pkcs15ChangePinSelectorTests 4
 Pkcs15PinLifecycleTests 39
 Pkcs15ProbeEfDirTests 2
-Pkcs15ProfileReadCensusTests 12
+Pkcs15ProfileReadCensusTests 23
 Pkcs15ReadTokenInfoPartialTests 2
 PkcsAttachApiDeletedTest 1
 PluginAbiVersionTest 1
@@ -131,7 +131,7 @@ cardsession_reentrancy_test 5
 csca_master_list_public_api_test 16
 librescrs-example-shared-cli 1
 librescrs_pkcs11_e2e_tests 16
-librescrs_pkcs11_tests 38
+librescrs_pkcs11_tests 67
 monitor_coalescer_test 1
 pcsc_6c_retry_test 2
 pcsc_connection_filter_test 2

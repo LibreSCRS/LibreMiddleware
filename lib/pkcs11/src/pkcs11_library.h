@@ -19,11 +19,16 @@
 
 #include "pkcs11_platform.h"
 
+#include <LibreSCRS/Secure/String.h>
+
 #include <atomic>
+#include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -48,6 +53,13 @@ struct SignState
     CK_MECHANISM_TYPE mechanism;
     std::vector<std::uint8_t> buffer; ///< Multi-part accumulator.
     bool multiPart = false;
+    /// @brief The key carries @c CKA_ALWAYS_AUTHENTICATE: this operation needs
+    ///        its own @c C_Login(CKU_CONTEXT_SPECIFIC) before it may sign.
+    bool alwaysAuthenticate = false;
+    /// @brief The one-shot PIN that login armed for THIS operation; empty while
+    ///        not armed. Cleansed when the operation ends, on @c C_Logout, on a
+    ///        card reset, and with the session.
+    LibreSCRS::Secure::String contextPin;
 };
 
 /// @brief Per-session bookkeeping.
@@ -63,9 +75,17 @@ struct SessionEntry
 class PKCS11Library
 {
 public:
-    /// @brief Construct an empty library; providers are registered via
-    ///        @ref registerProvider before any @c C_GetSlotList call.
+    /// @brief Source of the PC/SC reader names @ref enumerateSlotIds probes.
+    using ReaderSnapshot = std::function<std::vector<std::string>()>;
+
+    /// @brief Construct an empty library over the system's PC/SC readers;
+    ///        providers are registered via @ref registerProvider before any
+    ///        @c C_GetSlotList call.
     PKCS11Library();
+
+    /// @brief Construct an empty library over @p readerSnapshot -- the seam a
+    ///        test uses to drive the library without PC/SC.
+    explicit PKCS11Library(ReaderSnapshot readerSnapshot);
     ~PKCS11Library();
 
     PKCS11Library(const PKCS11Library&) = delete;
@@ -144,6 +164,14 @@ public:
     /// drive an invalidation from.
     [[nodiscard]] std::vector<unsigned long> enumerateSlotIds();
 
+    /// @brief Test hook: whether @p hSession's sign operation still holds a
+    ///        one-shot PIN from @c C_Login(CKU_CONTEXT_SPECIFIC). Erasing it
+    ///        early (a card reset) is invisible to every PKCS#11 call, because
+    ///        the slot is logged out and refuses the operation anyway.
+    /// @par Thread-safety
+    /// Takes @c sessionMutex; the caller must not hold it.
+    [[nodiscard]] bool holdsContextPinForTest(CK_SESSION_HANDLE hSession) const;
+
 private:
     // -------- Card+Slot state ---------------------------------------
     mutable std::mutex cardSlotLibMutex;
@@ -187,7 +215,41 @@ private:
     CK_SESSION_HANDLE nextSessionHandle = 1;
     std::map<CK_SESSION_HANDLE, SessionEntry> sessions;
 
+    ReaderSnapshot readerSnapshot;
+
     // -------- Helpers -----------------------------------------------
+
+    /// @brief @c C_Login(CKU_CONTEXT_SPECIFIC): VERIFY @p pPin for the session's
+    ///        active sign operation on a @c CKA_ALWAYS_AUTHENTICATE key and arm
+    ///        it as that operation's one-shot PIN.
+    CK_RV loginContextSpecific(CK_SESSION_HANDLE hSession, CK_UTF8CHAR_PTR pPin, CK_ULONG ulPinLen);
+
+    /// @brief Cleanse the armed one-shot PIN of every operation on @p slotIds.
+    /// @par Thread-safety
+    /// Takes @c sessionMutex; the caller must not hold it.
+    void discardContextPins(std::span<const CK_SLOT_ID> slotIds);
+
+    /// @brief End the sign operation of every idle session on @p slotIds
+    ///        (C_Logout, a blocked PIN); cleanses their one-shot PINs with it.
+    /// @par Thread-safety
+    /// Takes @c sessionMutex; the caller must not hold it.
+    void endSignOperations(std::span<const CK_SLOT_ID> slotIds);
+
+    /// @brief The card blocked the PIN: log @p slot out, drop its objects and
+    ///        end the sign operations of its sessions.
+    /// @par Thread-safety
+    /// Takes @c sessionMutex; the caller must not hold it.
+    void endLoginOnBlockedPin(LibreSCRS::Pkcs11::Internal::PKCS11Slot& slot, CK_SLOT_ID slotID);
+
+    /// @brief The card refused an operation's one-shot PIN (@p refusal is
+    ///        @c Crv::PinIncorrect or @c Crv::PinLocked): the matching
+    ///        @c CK_RV, with no reset and no retry, since presenting the PIN
+    ///        again costs another try. A blocked PIN also ends the login
+    ///        (@ref endLoginOnBlockedPin).
+    /// @par Thread-safety
+    /// Takes @c sessionMutex; the caller must not hold it.
+    [[nodiscard]] CK_RV refuseContextPin(LibreSCRS::Pkcs11::Internal::PKCS11Slot& slot, CK_SLOT_ID slotID,
+                                         unsigned long refusal);
 
     /// @brief Snapshot of currently visible PC/SC readers.
     [[nodiscard]] static std::vector<std::string> snapshotPcscReaders();

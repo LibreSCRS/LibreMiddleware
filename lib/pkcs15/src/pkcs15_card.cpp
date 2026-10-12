@@ -651,6 +651,20 @@ LibreSCRS::SmartCard::Internal::SecureBuffer PKCS15Card::encodePIN(std::string_v
     return pinData;
 }
 
+void PKCS15Card::recordPinRefusal(const LibreSCRS::SmartCard::Internal::APDUResponse& resp)
+{
+    // An answer that is no verdict on the PIN (wrong reference, file not
+    // found) leaves an earlier VERIFY's refusal in place: sign() may VERIFY
+    // again on another path after the card already refused the PIN.
+    const auto mapped = classifyPinSw(resp);
+    if (!mapped)
+        return;
+    if (mapped->success)
+        lastPinRefusal.reset();
+    else
+        lastPinRefusal = *mapped;
+}
+
 int PKCS15Card::verifyPinInline(const PinInfo& pinInfo, const LibreSCRS::SmartCard::Internal::SecureBuffer& pinData)
 {
     auto resp = channel.transmit(LibreSCRS::SmartCard::Internal::verifyPIN(pinInfo.pinReference, pinData),
@@ -659,6 +673,7 @@ int PKCS15Card::verifyPinInline(const PinInfo& pinInfo, const LibreSCRS::SmartCa
     fprintf(stderr, "[PKCS15] verifyPIN ref=0x%02X pinLen=%zu SW=%04X\n", pinInfo.pinReference, pinData.size(),
             resp.statusWord());
 #endif
+    recordPinRefusal(resp);
     if (resp.isSuccess())
         return 1;
     if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
@@ -672,6 +687,7 @@ int PKCS15Card::verifyPinInline(const PinInfo& pinInfo, const LibreSCRS::SmartCa
 #ifndef NDEBUG
         fprintf(stderr, "[PKCS15] verifyPIN altRef=0x%02X SW=%04X\n", altRef, resp2.statusWord());
 #endif
+        recordPinRefusal(resp2);
         if (resp2.isSuccess())
             return 1;
         if (resp2.sw1 == 0x63 && (resp2.sw2 & 0xF0) == 0xC0)
@@ -766,6 +782,7 @@ std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_vie
                                       const std::vector<uint8_t>& digestInfo, const std::vector<uint8_t>& rawData,
                                       SignScheme scheme)
 {
+    lastPinRefusal.reset();
     auto pinData = encodePIN(pin, pinInfo);
     auto keyRef = resolveKeyRef(key);
     uint16_t sigLen = key.keySizeBits > 0 ? (key.keySizeBits / 8) : 256;

@@ -8,6 +8,8 @@
 #include "opensc_slot.h"
 
 #include "opensc_card.h"
+#include "opensc_pin_verdict.h"
+#include "opensc_user_consent.h"
 #include "pkcs15_cert_ptr.h"
 #include "sc_lock_guard.h"
 
@@ -263,6 +265,8 @@ std::vector<LibreSCRS::Pkcs11::Internal::PKCS11ObjectInfo> OpenScSlot::enumerate
             keyPkcs.sensitive = true;
             keyPkcs.extractable = false;
             keyPkcs.keyReference = static_cast<std::uint8_t>(kInfo->key_reference & 0xFF);
+            // OpenSC's rule, the one the OpenSC card plugin reads too.
+            keyPkcs.alwaysAuthenticate = LibreSCRS::OpenSc::requiresPerOperationAuth(*matchedKey);
 
             // Populate modulus / exponent or ec_params / ec_point from the
             // certificate's parsed pubkey when available.
@@ -321,16 +325,8 @@ unsigned long OpenScSlot::login(unsigned long userType, std::span<const std::uin
         // re-prompt for verification on subsequent operations).
         cachedPin = LibreSCRS::Secure::String{std::string_view{reinterpret_cast<const char*>(pin.data()), pin.size()}};
         loggedIn = true;
-        return Crv::Ok;
     }
-
-    if (rc == SC_ERROR_PIN_CODE_INCORRECT)
-        return Crv::PinIncorrect;
-    if (rc == SC_ERROR_AUTH_METHOD_BLOCKED)
-        return Crv::PinLocked;
-    if (rc == SC_ERROR_INVALID_PIN_LENGTH)
-        return Crv::PinLenRange;
-    return Crv::DeviceError;
+    return crvFromVerifyRc(rc);
 }
 
 unsigned long OpenScSlot::logout()
@@ -344,36 +340,54 @@ unsigned long OpenScSlot::logout()
 std::vector<std::uint8_t> OpenScSlot::signData(std::span<const std::uint8_t> data, unsigned long mechanism,
                                                std::span<const std::uint8_t> keyId)
 {
+    return signWithPin(data, mechanism, keyId, nullptr).value_or(std::vector<std::uint8_t>{});
+}
+
+LibreSCRS::Pkcs11::Internal::ContextPinSignature
+OpenScSlot::signDataWithContextPin(std::span<const std::uint8_t> data, unsigned long mechanism,
+                                   std::span<const std::uint8_t> keyId, const LibreSCRS::Secure::String& contextPin)
+{
+    return signWithPin(data, mechanism, keyId, &contextPin);
+}
+
+LibreSCRS::Pkcs11::Internal::ContextPinSignature OpenScSlot::signWithPin(std::span<const std::uint8_t> data,
+                                                                         unsigned long mechanism,
+                                                                         std::span<const std::uint8_t> keyId,
+                                                                         const LibreSCRS::Secure::String* contextPin)
+{
     using namespace LibreSCRS::Pkcs11::Internal;
+
+    const auto failed = std::unexpected(Crv::DeviceError);
 
     auto parentBase = parentCard.lock();
     if (!parentBase)
-        return {};
+        return failed;
     auto* parent = static_cast<OpenScCard*>(parentBase.get());
 
     std::scoped_lock slotLock(slotMutex);
     std::scoped_lock cardLock(parentTransportMutex(*parent));
 
-    if (!loggedIn)
-        return {};
-
     auto* p15 = parent->p15Card();
     if (!p15)
-        return {};
+        return failed;
 
-    sc_pkcs15_object_t* targetKey = nullptr;
-    for (auto* k : keyObjects) {
-        if (keyMatchesId(k, keyId)) {
-            targetKey = k;
-            break;
-        }
-    }
+    sc_pkcs15_object_t* targetKey = keyById(keyId);
     if (!targetKey || !targetKey->data)
-        return {};
+        return failed;
+
+    // A per-operation key takes only the PIN armed for this operation; every
+    // other key the PIN cached by login().
+    const bool perOperation = LibreSCRS::OpenSc::requiresPerOperationAuth(*targetKey);
+    const LibreSCRS::Secure::String* presented = selectPresentedPin(perOperation, loggedIn, cachedPin, contextPin);
+    // A login through the reader's PIN pad cached no PIN: an ordinary key then
+    // signs on that login without a re-VERIFY, as it always has.
+    const bool pinPadLogin = !perOperation && loggedIn && cachedPin.empty();
+    if (presented == nullptr && !pinPadLogin)
+        return failed;
 
     auto flags = mechanismToScFlags(mechanism, isEcKey(targetKey));
     if (!flags)
-        return {};
+        return failed;
 
     auto* keyInfo = static_cast<const sc_pkcs15_prkey_info_t*>(targetKey->data);
     std::size_t outSize = 0;
@@ -396,29 +410,36 @@ std::vector<std::uint8_t> OpenScSlot::signData(std::span<const std::uint8_t> dat
     // VERIFY immediately preceding General Authenticate for the PIV Digital
     // Signature key (slot 0x9C "PIN ALWAYS"); without the surrounding lock,
     // OpenSC's piv_card_reader_lock_obtained refreshes the Discovery Object
-    // between login and PSO and the card answers 6982. Re-VERIFY with the
-    // correct cached PIN does not decrement the retry counter; it is a no-op
-    // for cards that do not enforce PIN-ALWAYS.
+    // between login and PSO and the card answers 6982. A key the card flags
+    // that way (user_consent) is VERIFYed only with the PIN given for this one
+    // operation; every other key re-VERIFYs with the cached PIN, which does
+    // not decrement the retry counter.
     //
     // ScLockGuard pairs sc_lock + sc_unlock under a non-movable scope so the
     // unlock survives an exception thrown between the verify and the sign.
     ScLockGuard txn(p15->card);
     if (!txn.locked())
-        return {};
+        return failed;
 
-    if (loggedIn && pinObject && !cachedPin.empty()) {
-        auto pinView = cachedPin.view();
+    if (pinObject && presented != nullptr) {
+        auto pinView = presented->view();
         int vrc =
             sc_pkcs15_verify_pin(p15, pinObject, reinterpret_cast<const std::uint8_t*>(pinView.data()), pinView.size());
         if (vrc != SC_SUCCESS) {
-            return {};
+            // The card's refusal of a one-shot PIN is returned apart from any
+            // other failure: the caller must not present that PIN again.
+            if (contextPin != nullptr && presented == contextPin)
+                return std::unexpected(refusalFromVerifyRc(vrc));
+            return failed;
         }
+    } else if (perOperation) {
+        return failed;
     }
 
     int rc = sc_pkcs15_compute_signature(p15, targetKey, *flags, data.data(), data.size(), out.data(), out.size(),
                                          /*pMechanism=*/nullptr);
     if (rc < 0)
-        return {};
+        return failed;
     out.resize(static_cast<std::size_t>(rc));
     return out;
 }
@@ -426,6 +447,21 @@ std::vector<std::uint8_t> OpenScSlot::signData(std::span<const std::uint8_t> dat
 std::vector<std::uint8_t> OpenScSlot::signWithDigestInfo(std::span<const std::uint8_t> digestInfo,
                                                          std::span<const std::uint8_t> rawData, unsigned long mechanism,
                                                          std::span<const std::uint8_t> keyId)
+{
+    return routeDigestInfo(digestInfo, rawData, mechanism, keyId, nullptr).value_or(std::vector<std::uint8_t>{});
+}
+
+LibreSCRS::Pkcs11::Internal::ContextPinSignature OpenScSlot::signWithDigestInfoAndContextPin(
+    std::span<const std::uint8_t> digestInfo, std::span<const std::uint8_t> rawData, unsigned long mechanism,
+    std::span<const std::uint8_t> keyId, const LibreSCRS::Secure::String& contextPin)
+{
+    return routeDigestInfo(digestInfo, rawData, mechanism, keyId, &contextPin);
+}
+
+LibreSCRS::Pkcs11::Internal::ContextPinSignature
+OpenScSlot::routeDigestInfo(std::span<const std::uint8_t> digestInfo, std::span<const std::uint8_t> rawData,
+                            unsigned long mechanism, std::span<const std::uint8_t> keyId,
+                            const LibreSCRS::Secure::String* contextPin)
 {
     // CardEdge / srbeid applets do NOT hash on-card. The path that works
     // reliably is: caller hashes + prepends DigestInfo (the library does
@@ -449,13 +485,53 @@ std::vector<std::uint8_t> OpenScSlot::signWithDigestInfo(std::span<const std::ui
     if (isCombinedHashRsaPkcs1 && !digestInfo.empty()) {
         // Reroute to raw RSA-PKCS path: library has already prepended
         // DigestInfo; HASH_NONE flag matches the srbeid card surface.
-        return signData(digestInfo, kCkmRsaPkcs, keyId);
+        return signWithPin(digestInfo, kCkmRsaPkcs, keyId, contextPin);
     }
     // PSS combined-hash + everything else: pass rawData with the original
     // mechanism (libopensc PSS dispatch handles the hash internally).
     if (!digestInfo.empty())
-        return signData(digestInfo, mechanism, keyId);
-    return signData(rawData, mechanism, keyId);
+        return signWithPin(digestInfo, mechanism, keyId, contextPin);
+    return signWithPin(rawData, mechanism, keyId, contextPin);
+}
+
+unsigned long OpenScSlot::verifyContextPin(std::span<const std::uint8_t> keyId, std::span<const std::uint8_t> pin)
+{
+    using namespace LibreSCRS::Pkcs11::Internal;
+
+    auto parentBase = parentCard.lock();
+    if (!parentBase)
+        return Crv::DeviceError;
+    auto* parent = static_cast<OpenScCard*>(parentBase.get());
+
+    std::scoped_lock slotLock(slotMutex);
+    std::scoped_lock cardLock(parentTransportMutex(*parent));
+
+    const sc_pkcs15_object_t* targetKey = keyById(keyId);
+    if (!targetKey || !LibreSCRS::OpenSc::requiresPerOperationAuth(*targetKey))
+        return Crv::ArgumentsBad;
+    auto* p15 = parent->p15Card();
+    if (!p15 || !pinObject)
+        return Crv::DeviceError;
+    // An empty PIN would ask OpenSC for the reader's PIN pad; a PIN given for
+    // one operation is never empty.
+    if (pin.empty())
+        return Crv::PinLenRange;
+    // The PIN as given. This slot does not switch OpenSC's PIN cache off; the
+    // PIN stays out of it only because OpenSC refuses to cache a PIN that
+    // guards a user_consent object -- unless pin_cache_ignore_user_consent is
+    // set in the opensc.conf sc_establish_context reads, in which case OpenSC
+    // keeps a copy after this call. The library still refuses a sign that
+    // was not armed by its own context login.
+    return crvFromVerifyRc(sc_pkcs15_verify_pin(p15, pinObject, pin.data(), pin.size()));
+}
+
+sc_pkcs15_object_t* OpenScSlot::keyById(std::span<const std::uint8_t> keyId) const noexcept
+{
+    for (auto* k : keyObjects) {
+        if (keyMatchesId(k, keyId))
+            return k;
+    }
+    return nullptr;
 }
 
 std::size_t OpenScSlot::signatureSize(std::span<const std::uint8_t> keyId) const

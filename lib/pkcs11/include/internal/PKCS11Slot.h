@@ -17,6 +17,7 @@
 #include <LibreSCRS/Secure/String.h>
 
 #include <cstdint>
+#include <expected>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -26,6 +27,16 @@
 namespace LibreSCRS::Pkcs11::Internal {
 
 class PKCS11Card;
+
+/// @brief A signature made with a one-shot PIN, or why the card gave none.
+///
+/// The error tells the two failures a caller must handle differently apart:
+/// @ref Crv::PinIncorrect / @ref Crv::PinLocked -- the card refused the PIN
+/// inside the signing transaction, so presenting it again costs another try --
+/// and @ref Crv::DeviceError, any failure the PIN did not cause, which a card
+/// reset and one retry may cure.
+/// @since 5.0
+using ContextPinSignature = std::expected<std::vector<std::uint8_t>, unsigned long>;
 
 /// @brief Abstract base for a single logical PKCS#11 slot.
 ///
@@ -130,6 +141,8 @@ public:
     /// @return Signature bytes on success; empty on failure (the @ref
     ///         Crv error path travels via the surrounding library
     ///         layer).
+    /// @note A key published with @c alwaysAuthenticate is refused (empty result): the cached PIN is never presented
+    /// for it.
     /// @par Thread-safety
     /// Internally synchronised; serialises card transport.
     /// @since 4.1
@@ -163,6 +176,54 @@ public:
                                                                        std::span<const std::uint8_t> rawData,
                                                                        unsigned long mechanism,
                                                                        std::span<const std::uint8_t> keyId) = 0;
+
+    /// @brief Present @p pin to the card for ONE operation with the
+    ///        per-operation key @p keyId -- the slot side of PKCS#11
+    ///        @c C_Login(CKU_CONTEXT_SPECIFIC).
+    ///
+    /// Runs the card's VERIFY so the caller learns a wrong or blocked PIN
+    /// with the card's own answer and retry counter. Leaves @ref loggedIn and
+    /// @ref cachedPin untouched, and parses no @c "CAN:PIN" prefix: a CAN
+    /// belongs to the session login, never to an operation.
+    /// @param keyId @c CKA_ID of a key this slot publishes with
+    ///              @c PKCS11ObjectInfo::alwaysAuthenticate set.
+    /// @param pin   PIN bytes; not retained.
+    /// @return @ref Crv::Ok, @ref Crv::PinIncorrect, @ref Crv::PinLocked,
+    ///         @ref Crv::PinLenRange, @ref Crv::ArgumentsBad (no such
+    ///         per-operation key in this slot) or @ref Crv::DeviceError. The
+    ///         base returns @ref Crv::FunctionFailed: a slot family that never
+    ///         publishes such a key never receives the call.
+    /// @par Thread-safety
+    /// Internally synchronised; slotMutex, then the parent's cardMutex.
+    /// @since 5.0
+    [[nodiscard]] virtual unsigned long verifyContextPin(std::span<const std::uint8_t> keyId,
+                                                         std::span<const std::uint8_t> pin);
+
+    /// @brief @ref signData for a per-operation key: VERIFY with
+    ///        @p contextPin and the signature in ONE card transaction.
+    ///
+    /// Never presents @ref cachedPin and does not require @ref loggedIn: the
+    /// library's single retry after a card reset reuses the same one-shot PIN
+    /// on a slot the reset has logged out. @ref signData and
+    /// @ref signWithDigestInfo refuse such a key (empty result).
+    /// @return The signature, or @ref Crv::PinIncorrect / @ref Crv::PinLocked
+    ///         when the card refused @p contextPin, or @ref Crv::DeviceError
+    ///         for any other failure (see @ref ContextPinSignature). The base
+    ///         always returns @ref Crv::DeviceError.
+    /// @since 5.0
+    [[nodiscard]] virtual ContextPinSignature signDataWithContextPin(std::span<const std::uint8_t> data,
+                                                                     unsigned long mechanism,
+                                                                     std::span<const std::uint8_t> keyId,
+                                                                     const Secure::String& contextPin);
+
+    /// @brief @ref signWithDigestInfo for a per-operation key; same contract
+    ///        as @ref signDataWithContextPin.
+    /// @since 5.0
+    [[nodiscard]] virtual ContextPinSignature signWithDigestInfoAndContextPin(std::span<const std::uint8_t> digestInfo,
+                                                                              std::span<const std::uint8_t> rawData,
+                                                                              unsigned long mechanism,
+                                                                              std::span<const std::uint8_t> keyId,
+                                                                              const Secure::String& contextPin);
 
     /// @brief Pre-IO signature size for a key referenced by @p keyId.
     ///
@@ -351,5 +412,17 @@ protected:
     ///        zero-initialised before bind.
     unsigned long stableSlotId{0};
 };
+
+/// @brief The PIN a slot may present to the card for a key -- the one rule
+///        every slot family applies, so none presents a PIN its key forbids.
+///
+/// A per-operation key (@c alwaysAuthenticate) takes only the one-shot PIN its
+/// operation was armed with, and needs no session login for it. Every other key
+/// takes the PIN cached by the session login, and only while that login stands.
+/// @return The PIN to present, or @c nullptr when none may be presented.
+/// @since 5.0
+[[nodiscard]] const Secure::String* selectPresentedPin(bool alwaysAuthenticate, bool loggedIn,
+                                                       const Secure::String& cachedPin,
+                                                       const Secure::String* contextPin) noexcept;
 
 } // namespace LibreSCRS::Pkcs11::Internal

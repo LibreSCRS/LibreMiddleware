@@ -36,6 +36,12 @@
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
 #include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
 
+#include "pkcs15_pkcs11_card.h"
+
+#include <internal/Crv.h>
+#include <internal/PKCS11ObjectInfo.h>
+#include <internal/PKCS11Slot.h>
+
 #include <apdu.h>
 #include <pcsc_connection.h>
 
@@ -47,6 +53,8 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -88,11 +96,32 @@ struct ScriptedPkcs15Card
     std::map<std::uint8_t, int> probeTries;
     std::vector<APDUCommand> log;
 
+    // --- Optional signing behaviour. The defaults answer exactly what the
+    // census rows have always seen (6D00), so no profile count moves. ---
+
+    /// VERIFY carrying a PIN: the PINs this card accepts. Empty answers 6D00.
+    std::set<std::string> acceptedPins;
+    int triesLeft = 3;
+    /// MSE SET and PSO COMPUTE DIGITAL SIGNATURE (a fixed 256-byte signature).
+    bool answersSigning = false;
+
+    /// Per log entry: whether a card transaction was held, and which one.
+    struct TransactionMark
+    {
+        bool held = false;
+        int number = 0;
+    };
+    std::vector<TransactionMark> transactions;
+    /// Bumped each time the detached connection releases a transaction.
+    int transaction = 0;
+    const LibreSCRS::SmartCard::Internal::PCSCConnection* connection = nullptr;
+
     std::uint16_t selectedFid = 0;
 
     APDUResponse operator()(const APDUCommand& cmd)
     {
         log.push_back(cmd);
+        transactions.push_back(TransactionMark{connection != nullptr && connection->isTransactionHeld(), transaction});
 
         if (cmd.ins == 0xA4 && cmd.p1 == 0x04) // SELECT by AID
             return {{}, 0x90, 0x00};
@@ -126,6 +155,26 @@ struct ScriptedPkcs15Card
                 return {{}, 0x6A, 0x88};
             return {{}, 0x63, static_cast<std::uint8_t>(0xC0 | (it->second & 0x0F))};
         }
+
+        if (cmd.ins == 0x20 && !acceptedPins.empty()) { // VERIFY with a PIN
+            if (triesLeft == 0)
+                return {{}, 0x69, 0x83};
+            std::string pin(cmd.data.begin(), cmd.data.end());
+            while (!pin.empty() && (pin.back() == '\0' || pin.back() == '\xFF'))
+                pin.pop_back();
+            if (acceptedPins.contains(pin)) {
+                triesLeft = 3;
+                return {{}, 0x90, 0x00};
+            }
+            --triesLeft;
+            if (triesLeft == 0)
+                return {{}, 0x69, 0x83};
+            return {{}, 0x63, static_cast<std::uint8_t>(0xC0 | triesLeft)};
+        }
+        if (answersSigning && cmd.ins == 0x22) // MSE SET
+            return {{}, 0x90, 0x00};
+        if (answersSigning && cmd.ins == 0x2A && cmd.p1 == 0x9E && cmd.p2 == 0x9A) // PSO CDS
+            return {std::vector<std::uint8_t>(256, 0x5A), 0x90, 0x00};
 
         return {{}, 0x6D, 0x00}; // anything else: instruction not supported
     }
@@ -204,14 +253,29 @@ std::vector<std::uint8_t> oneCertCdf()
 }
 
 // EF.PrKDF: ONE RSA private key (id 01) at path 3F00/4410, so the key/cert
-// pairing in readCertificates resolves and doSign has a key to match.
-std::vector<std::uint8_t> onePrivateKeyPrkdf()
+// pairing in readCertificates resolves and doSign has a key to match. With
+// @p userConsent its CommonObjectAttributes carry userConsent INTEGER 1. Its
+// modulusLength is the empty INTEGER the census has always read unless
+// @p modulusBits is given: a signature needs it to pad the input.
+std::vector<std::uint8_t> onePrivateKeyPrkdf(bool userConsent = false, std::uint16_t modulusBits = 0)
 {
-    return {0x30, 0x1A,                                     // SEQUENCE (26)
-            0x30, 0x05, 0x0C, 0x03, 0x4B, 0x45, 0x59,       //   CommonObjectAttributes "KEY"
-            0x30, 0x03, 0x04, 0x01, 0x01,                   //   CommonKeyAttributes: id 01
-            0xA1, 0x0C, 0x30, 0x0A, 0x30, 0x08, 0x04, 0x04, //   [1] { ... OCTET STRING
-            0x3F, 0x00, 0x44, 0x10, 0x02, 0x00};            //     path 3F00/4410 }
+    std::vector<std::uint8_t> commonObject = {0x0C, 0x03, 0x4B, 0x45, 0x59}; // "KEY"
+    if (userConsent)
+        commonObject.insert(commonObject.end(), {0x02, 0x01, 0x01});
+    std::vector<std::uint8_t> body = {0x30, static_cast<std::uint8_t>(commonObject.size())};
+    body.insert(body.end(), commonObject.begin(), commonObject.end());
+    // PrivateRSAKeyAttributes: { Path { 3F00/4410, index 0 } [, modulusLength] }
+    std::vector<std::uint8_t> rsaAttributes = {0x30, 0x08, 0x04, 0x04, 0x3F, 0x00, 0x44, 0x10, 0x02, 0x00};
+    if (modulusBits != 0)
+        rsaAttributes.insert(rsaAttributes.end(), {0x02, 0x02, static_cast<std::uint8_t>(modulusBits >> 8),
+                                                   static_cast<std::uint8_t>(modulusBits & 0xFF)});
+    body.insert(body.end(), {0x30, 0x03, 0x04, 0x01, 0x01, // id 01
+                             0xA1, static_cast<std::uint8_t>(rsaAttributes.size() + 2), 0x30,
+                             static_cast<std::uint8_t>(rsaAttributes.size())});
+    body.insert(body.end(), rsaAttributes.begin(), rsaAttributes.end());
+    std::vector<std::uint8_t> out = {0x30, static_cast<std::uint8_t>(body.size())};
+    out.insert(out.end(), body.begin(), body.end());
+    return out;
 }
 
 // Stand-in certificate content. The census never parses it as X.509; it only
@@ -231,7 +295,7 @@ struct FakeCardRig
     std::shared_ptr<ScriptedPkcs15Card> card;
 };
 
-FakeCardRig makeRig(const char* readerName)
+FakeCardRig makeRig(const char* readerName, bool userConsent = false)
 {
     FakeCardRig rig;
     rig.session = makeDetachedCardSession(readerName);
@@ -239,7 +303,7 @@ FakeCardRig makeRig(const char* readerName)
     rig.card->files = {
         {kEfOdf, fullOdf()},
         {kEfTokenInfo, tokenInfoWithLabel("Census Token")},
-        {kPrkdfFid, onePrivateKeyPrkdf()},
+        {kPrkdfFid, onePrivateKeyPrkdf(userConsent)},
         {kCdfFid, oneCertCdf()},
         {kAodfFid, plainPinAodf()},
         {kCertFid, certBlob()},
@@ -247,6 +311,8 @@ FakeCardRig makeRig(const char* readerName)
     rig.card->probeTries = {{0x01, 3}};
 
     auto& conn = LibreSCRS::SmartCard::detail::unwrap(*rig.session);
+    rig.card->connection = &conn;
+    conn.setDetachedTransactionReleaseObserver([card = rig.card] { ++card->transaction; });
     conn.setTransmitFilter([card = rig.card](const APDUCommand& cmd) { return (*card)(cmd); });
 
     // Pre-install a PlainChannel bound to the PKCS#15 AID so the plugin's
@@ -449,4 +515,288 @@ TEST(Pkcs15ProfileReadCensus, ClearCredentialsDropsTheCachedProfile)
     (void)plugin->readCertificates(*rig.session);
     EXPECT_EQ(countProfileReads(rig.card->log), 2u)
         << "a cleared session must not serve the previous session's profile";
+}
+
+// ===========================================================================
+// CKA_ALWAYS_AUTHENTICATE from PKCS#15 userConsent, without hardware. The
+// same scripted card, with its optional signing behaviour on, serves the
+// PKCS#11 slot (a Pkcs15Card bound over the injected session): the slot must
+// publish the flag, VERIFY a one-shot PIN, and present it in the SAME card
+// transaction as the signature -- never the session login's PIN.
+// ===========================================================================
+
+namespace {
+
+namespace Crv = LibreSCRS::Pkcs11::Internal::Crv;
+using LibreSCRS::Pkcs11::Internal::PKCS11ObjectInfo;
+using LibreSCRS::Pkcs11::Internal::PKCS11Slot;
+
+constexpr unsigned long kCkuUser = 1UL;
+constexpr unsigned long kCkmRsaPkcs = 0x0001UL;
+constexpr unsigned long kCkoPrivateKey = 3UL;
+const std::vector<std::uint8_t> kKeyId{0x01};
+const std::vector<std::uint8_t> kToBeSigned(20, 0x42);
+
+FakeCardRig makeSigningRig(const char* readerName, bool userConsent)
+{
+    auto rig = makeRig(readerName, userConsent);
+    rig.card->files[kPrkdfFid] = onePrivateKeyPrkdf(userConsent, 2048);
+    rig.card->acceptedPins = {"1234"};
+    rig.card->answersSigning = true;
+    return rig;
+}
+
+struct SlotRig
+{
+    FakeCardRig rig;
+    std::shared_ptr<LibreSCRS::Pkcs15::Pkcs11::Pkcs15Card> p11;
+    std::shared_ptr<PKCS11Slot> slot;
+};
+
+SlotRig makeSlotRig(const char* readerName, bool userConsent)
+{
+    SlotRig s;
+    s.rig = makeSigningRig(readerName, userConsent);
+    s.p11 = std::make_shared<LibreSCRS::Pkcs15::Pkcs11::Pkcs15Card>();
+    EXPECT_EQ(s.p11->bindFromInjectedSession(readerName, s.rig.session), Crv::Ok);
+    const auto slots = s.p11->enumerateSlots();
+    EXPECT_EQ(slots.size(), 1U);
+    if (!slots.empty())
+        s.slot = slots[0];
+    return s;
+}
+
+std::vector<std::uint8_t> pinBytes(std::string_view s)
+{
+    return {s.begin(), s.end()};
+}
+
+bool isVerifyWithPin(const APDUCommand& cmd)
+{
+    return cmd.ins == 0x20 && !cmd.data.empty();
+}
+
+bool isPso(const APDUCommand& cmd)
+{
+    return cmd.ins == 0x2A && cmd.p1 == 0x9E && cmd.p2 == 0x9A;
+}
+
+std::string pinOf(const APDUCommand& cmd)
+{
+    std::string pin(cmd.data.begin(), cmd.data.end());
+    while (!pin.empty() && (pin.back() == '\0' || pin.back() == '\xFF'))
+        pin.pop_back();
+    return pin;
+}
+
+std::optional<PKCS11ObjectInfo> privateKeyOf(PKCS11Slot& slot)
+{
+    for (auto& object : slot.enumerateObjects()) {
+        if (object.objectClass == kCkoPrivateKey)
+            return object;
+    }
+    return std::nullopt;
+}
+
+// The first PSO after @p mark and the last VERIFY carrying a PIN before it.
+struct SignTrace
+{
+    std::optional<std::size_t> verify;
+    std::optional<std::size_t> pso;
+};
+
+SignTrace traceSince(const std::vector<APDUCommand>& log, std::size_t mark)
+{
+    SignTrace t;
+    for (std::size_t i = mark; i < log.size(); ++i) {
+        if (isPso(log[i])) {
+            t.pso = i;
+            break;
+        }
+    }
+    if (t.pso) {
+        for (std::size_t i = *t.pso; i-- > mark;) {
+            if (isVerifyWithPin(log[i])) {
+                t.verify = i;
+                break;
+            }
+        }
+    }
+    return t;
+}
+
+} // namespace
+
+TEST(Pkcs15SlotAlwaysAuthenticate, PerOperationKeyIsPublishedWithAlwaysAuthenticate)
+{
+    auto s = makeSlotRig("AA Slot Reader 0", true);
+    ASSERT_NE(s.slot, nullptr);
+    const auto key = privateKeyOf(*s.slot);
+    ASSERT_TRUE(key.has_value());
+    EXPECT_TRUE(key->alwaysAuthenticate);
+}
+
+TEST(Pkcs15SlotAlwaysAuthenticate, OrdinaryKeyIsPublishedWithoutAlwaysAuthenticate)
+{
+    auto s = makeSlotRig("AA Slot Reader 1", false);
+    ASSERT_NE(s.slot, nullptr);
+    const auto key = privateKeyOf(*s.slot);
+    ASSERT_TRUE(key.has_value());
+    EXPECT_FALSE(key->alwaysAuthenticate);
+}
+
+TEST(Pkcs15SlotAlwaysAuthenticate, CachedPinIsNeverPresentedForAPerOperationKey)
+{
+    auto s = makeSlotRig("AA Slot Reader 2", true);
+    ASSERT_NE(s.slot, nullptr);
+    ASSERT_EQ(s.slot->login(kCkuUser, pinBytes("1234")), Crv::Ok);
+    const auto mark = s.rig.card->log.size();
+
+    EXPECT_TRUE(s.slot->signData(kToBeSigned, kCkmRsaPkcs, kKeyId).empty());
+    EXPECT_TRUE(s.slot->signWithDigestInfo(kToBeSigned, kToBeSigned, kCkmRsaPkcs, kKeyId).empty());
+
+    const auto& log = s.rig.card->log;
+    for (std::size_t i = mark; i < log.size(); ++i) {
+        EXPECT_FALSE(isVerifyWithPin(log[i])) << "the session login's PIN reached the card";
+        EXPECT_FALSE(isPso(log[i])) << "a signature was attempted without this operation's PIN";
+    }
+}
+
+TEST(Pkcs15SlotAlwaysAuthenticate, ContextPinIsVerifiedAndSignedInOneTransaction)
+{
+    auto s = makeSlotRig("AA Slot Reader 3", true);
+    ASSERT_NE(s.slot, nullptr);
+    s.rig.card->acceptedPins = {"1234", "5678"};
+    ASSERT_EQ(s.slot->login(kCkuUser, pinBytes("1234")), Crv::Ok);
+    const auto mark = s.rig.card->log.size();
+
+    const auto signature = s.slot->signDataWithContextPin(kToBeSigned, kCkmRsaPkcs, kKeyId,
+                                                          LibreSCRS::Secure::String{std::string_view{"5678"}});
+    ASSERT_TRUE(signature.has_value());
+    ASSERT_FALSE(signature->empty());
+
+    const auto& log = s.rig.card->log;
+    const auto& marks = s.rig.card->transactions;
+    const auto t = traceSince(log, mark);
+    ASSERT_TRUE(t.pso.has_value());
+    ASSERT_TRUE(t.verify.has_value()) << "no VERIFY preceded the signature";
+    EXPECT_EQ(pinOf(log[*t.verify]), "5678") << "only the PIN armed for this operation may reach the card";
+    EXPECT_TRUE(marks[*t.verify].held);
+    EXPECT_TRUE(marks[*t.pso].held);
+    EXPECT_EQ(marks[*t.verify].number, marks[*t.pso].number)
+        << "VERIFY and the signature must share one card transaction";
+}
+
+TEST(Pkcs15SlotAlwaysAuthenticate, DigestInfoPathPresentsTheContextPinToo)
+{
+    auto s = makeSlotRig("AA Slot Reader 4", true);
+    ASSERT_NE(s.slot, nullptr);
+    s.rig.card->acceptedPins = {"1234", "5678"};
+    ASSERT_EQ(s.slot->login(kCkuUser, pinBytes("1234")), Crv::Ok);
+    const auto mark = s.rig.card->log.size();
+
+    ASSERT_TRUE(s.slot
+                    ->signWithDigestInfoAndContextPin(kToBeSigned, kToBeSigned, kCkmRsaPkcs, kKeyId,
+                                                      LibreSCRS::Secure::String{std::string_view{"5678"}})
+                    .has_value());
+    const auto t = traceSince(s.rig.card->log, mark);
+    ASSERT_TRUE(t.verify.has_value());
+    EXPECT_EQ(pinOf(s.rig.card->log[*t.verify]), "5678");
+}
+
+// The library's single retry after a card reset reuses the one-shot PIN on a
+// slot the reset has logged out.
+TEST(Pkcs15SlotAlwaysAuthenticate, ContextPinSignsAfterACardResetDroppedTheLogin)
+{
+    auto s = makeSlotRig("AA Slot Reader 5", true);
+    ASSERT_NE(s.slot, nullptr);
+    ASSERT_EQ(s.slot->login(kCkuUser, pinBytes("1234")), Crv::Ok);
+    s.slot->onCardReset();
+    ASSERT_FALSE(s.slot->isLoggedIn());
+
+    EXPECT_TRUE(s.slot
+                    ->signDataWithContextPin(kToBeSigned, kCkmRsaPkcs, kKeyId,
+                                             LibreSCRS::Secure::String{std::string_view{"1234"}})
+                    .has_value());
+}
+
+TEST(Pkcs15SlotAlwaysAuthenticate, VerifyContextPinReportsAWrongPinWithoutSigning)
+{
+    auto s = makeSlotRig("AA Slot Reader 6", true);
+    ASSERT_NE(s.slot, nullptr);
+    ASSERT_EQ(s.slot->login(kCkuUser, pinBytes("1234")), Crv::Ok);
+    const auto mark = s.rig.card->log.size();
+
+    EXPECT_EQ(s.slot->verifyContextPin(kKeyId, pinBytes("0000")), Crv::PinIncorrect);
+    EXPECT_EQ(s.slot->verifyContextPin(kKeyId, pinBytes("1234")), Crv::Ok);
+    EXPECT_TRUE(s.slot->isLoggedIn()) << "the context login must leave the session login alone";
+
+    const auto& log = s.rig.card->log;
+    for (std::size_t i = mark; i < log.size(); ++i)
+        EXPECT_FALSE(isPso(log[i])) << "verifying a PIN must not sign";
+}
+
+TEST(Pkcs15SlotAlwaysAuthenticate, VerifyContextPinRefusesAnOrdinaryKey)
+{
+    auto s = makeSlotRig("AA Slot Reader 7", false);
+    ASSERT_NE(s.slot, nullptr);
+    ASSERT_EQ(s.slot->login(kCkuUser, pinBytes("1234")), Crv::Ok);
+    const auto mark = s.rig.card->log.size();
+
+    EXPECT_EQ(s.slot->verifyContextPin(kKeyId, pinBytes("1234")), Crv::ArgumentsBad);
+    const auto& log = s.rig.card->log;
+    for (std::size_t i = mark; i < log.size(); ++i)
+        EXPECT_FALSE(isVerifyWithPin(log[i]));
+}
+
+TEST(Pkcs15SlotAlwaysAuthenticate, OrdinaryKeyStillSignsWithTheCachedPin)
+{
+    auto s = makeSlotRig("AA Slot Reader 8", false);
+    ASSERT_NE(s.slot, nullptr);
+    ASSERT_EQ(s.slot->login(kCkuUser, pinBytes("1234")), Crv::Ok);
+    const auto mark = s.rig.card->log.size();
+
+    ASSERT_FALSE(s.slot->signData(kToBeSigned, kCkmRsaPkcs, kKeyId).empty());
+    const auto t = traceSince(s.rig.card->log, mark);
+    ASSERT_TRUE(t.verify.has_value());
+    EXPECT_EQ(pinOf(s.rig.card->log[*t.verify]), "1234");
+    EXPECT_EQ(s.rig.card->transactions[*t.verify].number, s.rig.card->transactions[*t.pso].number);
+}
+
+// A card that refuses the one-shot PIN inside the signing transaction must be
+// told apart from a failure the PIN did not cause: the library retries an
+// empty signature once after a card reset, and presenting a refused PIN again
+// would cost a second try.
+TEST(Pkcs15SlotAlwaysAuthenticate, RefusedContextPinIsReportedApartFromAFailedSignature)
+{
+    auto s = makeSlotRig("AA Slot Reader 9", true);
+    ASSERT_NE(s.slot, nullptr);
+    const auto mark = s.rig.card->log.size();
+
+    const auto refused = s.slot->signDataWithContextPin(kToBeSigned, kCkmRsaPkcs, kKeyId,
+                                                        LibreSCRS::Secure::String{std::string_view{"0000"}});
+    ASSERT_FALSE(refused.has_value());
+    EXPECT_EQ(refused.error(), Crv::PinIncorrect);
+    const auto& log = s.rig.card->log;
+    EXPECT_EQ(std::count_if(log.begin() + static_cast<std::ptrdiff_t>(mark), log.end(), isVerifyWithPin), 1)
+        << "a refused PIN is presented once";
+
+    // The PIN is accepted but the card cannot sign: a failure, not a refusal.
+    s.rig.card->answersSigning = false;
+    const auto failed = s.slot->signWithDigestInfoAndContextPin(kToBeSigned, kToBeSigned, kCkmRsaPkcs, kKeyId,
+                                                                LibreSCRS::Secure::String{std::string_view{"1234"}});
+    ASSERT_FALSE(failed.has_value());
+    EXPECT_EQ(failed.error(), Crv::DeviceError);
+}
+
+TEST(Pkcs15SlotAlwaysAuthenticate, BlockedContextPinIsReportedAsLocked)
+{
+    auto s = makeSlotRig("AA Slot Reader 10", true);
+    ASSERT_NE(s.slot, nullptr);
+    s.rig.card->triesLeft = 1;
+
+    const auto blocked = s.slot->signDataWithContextPin(kToBeSigned, kCkmRsaPkcs, kKeyId,
+                                                        LibreSCRS::Secure::String{std::string_view{"0000"}});
+    ASSERT_FALSE(blocked.has_value());
+    EXPECT_EQ(blocked.error(), Crv::PinLocked);
 }

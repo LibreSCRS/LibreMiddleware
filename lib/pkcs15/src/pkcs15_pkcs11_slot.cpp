@@ -107,6 +107,21 @@ using LibreSCRS::Pkcs11::Internal::kCkmRsaPssSha512;
 using LibreSCRS::Pkcs11::Internal::kCkoCertificate;
 using LibreSCRS::Pkcs11::Internal::kCkoPrivateKey;
 
+/// @brief The PKCS#11 answer to the card's verdict on a PIN: @c Ok when it
+///        accepted it, @c PinIncorrect / @c PinLocked when it refused it, and
+///        @c DeviceError when it gave no verdict at all.
+[[nodiscard]] unsigned long pinVerdictToCrv(const ::pkcs15::PinResult& verdict) noexcept
+{
+    namespace Crv = LibreSCRS::Pkcs11::Internal::Crv;
+    if (verdict.success)
+        return Crv::Ok;
+    if (verdict.blocked || verdict.retriesLeft == 0)
+        return Crv::PinLocked;
+    if (verdict.retriesLeft > 0)
+        return Crv::PinIncorrect;
+    return Crv::DeviceError;
+}
+
 } // namespace
 
 Pkcs15Slot::Pkcs15Slot(std::weak_ptr<LibreSCRS::Pkcs11::Internal::PKCS11Card> parent, std::vector<std::uint8_t> pinId,
@@ -306,14 +321,8 @@ std::vector<LibreSCRS::Pkcs11::Internal::PKCS11ObjectInfo> Pkcs15Slot::enumerate
                 keyObj.ecParams = std::move(ecParamsDer);
                 keyObj.ecPoint = std::move(ecPointDer);
                 keyObj.keyReference = matchedKey->keyReference;
-                // userConsent is parsed and carried, but the flag stays
-                // false: this token does not implement the
-                // CKU_CONTEXT_SPECIFIC login that CKA_ALWAYS_AUTHENTICATE
-                // promises. A token that promises per-operation
-                // authentication and then refuses the login for it fails
-                // every conformant client at signing, which is worse than
-                // promising nothing.
-                keyObj.alwaysAuthenticate = false;
+                // From the card, through the rule the card plugin reads too.
+                keyObj.alwaysAuthenticate = ::pkcs15::requiresPerOperationAuth(*matchedKey);
                 objects.push_back(std::move(keyObj));
             }
         }
@@ -723,113 +732,158 @@ unsigned long Pkcs15Slot::logout()
     return LibreSCRS::Pkcs11::Internal::Crv::Ok;
 }
 
+const ::pkcs15::PrivateKeyInfo* Pkcs15Slot::keyById(std::span<const std::uint8_t> keyId) const noexcept
+{
+    for (const auto& k : keys) {
+        if (std::equal(k.id.begin(), k.id.end(), keyId.begin(), keyId.end()))
+            return &k;
+    }
+    return nullptr;
+}
+
 std::vector<std::uint8_t> Pkcs15Slot::signData(std::span<const std::uint8_t> data, unsigned long mechanism,
                                                std::span<const std::uint8_t> keyId)
 {
-    using namespace LibreSCRS::Pkcs11::Internal;
-
-    auto parent = parentCard.lock();
-    if (!parent)
-        return {};
-    auto& parentP15 = static_cast<Pkcs15Card&>(*parent);
-
-    std::scoped_lock locks(slotMutex, parentTransportMutex(*parent));
-
-    if (!loggedIn || !cachedPin)
-        return {};
-
-    // Find the key by PKCS#15 id.
-    const ::pkcs15::PrivateKeyInfo* matched = nullptr;
-    for (const auto& k : keys) {
-        if (std::equal(k.id.begin(), k.id.end(), keyId.begin(), keyId.end())) {
-            matched = &k;
-            break;
-        }
-    }
-    if (!matched || !pinInfo)
-        return {};
-
-    try {
-        auto scheme = mechanismToScheme(mechanism, matched->keyType);
-
-        // Materialise PIN as cleansing std::string (SSO-safe; PinStringScrubber
-        // covers the exception path even before sign() returns).
-        auto canView = cachedPin.view();
-        std::string pinStr(canView.begin(), canView.end());
-        ::LibreSCRS::SmartCard::Internal::PinStringScrubber pinScrub{pinStr};
-
-        auto holderResult = parentP15.acquireChannel();
-        if (!holderResult)
-            return {};
-        auto holder = std::move(*holderResult);
-        auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
-        if (channel == nullptr)
-            return {};
-        ::pkcs15::PKCS15Card apdu(*channel);
-
-        std::vector<std::uint8_t> dataVec(data.begin(), data.end());
-        return apdu.sign(*matched, pinStr, *pinInfo, dataVec, dataVec, scheme);
-    } catch (...) {
-        return {};
-    }
+    return signWithPin(data, data, mechanism, keyId, nullptr).value_or(std::vector<std::uint8_t>{});
 }
 
 std::vector<std::uint8_t> Pkcs15Slot::signWithDigestInfo(std::span<const std::uint8_t> digestInfo,
                                                          std::span<const std::uint8_t> rawData, unsigned long mechanism,
                                                          std::span<const std::uint8_t> keyId)
 {
+    return signWithPin(digestInfo, rawData, mechanism, keyId, nullptr).value_or(std::vector<std::uint8_t>{});
+}
+
+LibreSCRS::Pkcs11::Internal::ContextPinSignature
+Pkcs15Slot::signDataWithContextPin(std::span<const std::uint8_t> data, unsigned long mechanism,
+                                   std::span<const std::uint8_t> keyId, const LibreSCRS::Secure::String& contextPin)
+{
+    return signWithPin(data, data, mechanism, keyId, &contextPin);
+}
+
+LibreSCRS::Pkcs11::Internal::ContextPinSignature Pkcs15Slot::signWithDigestInfoAndContextPin(
+    std::span<const std::uint8_t> digestInfo, std::span<const std::uint8_t> rawData, unsigned long mechanism,
+    std::span<const std::uint8_t> keyId, const LibreSCRS::Secure::String& contextPin)
+{
+    return signWithPin(digestInfo, rawData, mechanism, keyId, &contextPin);
+}
+
+LibreSCRS::Pkcs11::Internal::ContextPinSignature Pkcs15Slot::signWithPin(std::span<const std::uint8_t> digestInfo,
+                                                                         std::span<const std::uint8_t> rawData,
+                                                                         unsigned long mechanism,
+                                                                         std::span<const std::uint8_t> keyId,
+                                                                         const LibreSCRS::Secure::String* contextPin)
+{
     using namespace LibreSCRS::Pkcs11::Internal;
 
-    // The underlying @c PKCS15Card::sign already takes both DigestInfo
-    // and raw data, so dual-buffer dispatch lives in the lower layer;
-    // this method is a thin Slot-API wrapper.
+    const auto failed = std::unexpected(Crv::DeviceError);
+
     auto parent = parentCard.lock();
     if (!parent)
-        return {};
+        return failed;
     auto& parentP15 = static_cast<Pkcs15Card&>(*parent);
 
     std::scoped_lock locks(slotMutex, parentTransportMutex(*parent));
 
-    if (!loggedIn || !cachedPin)
-        return {};
-
-    const ::pkcs15::PrivateKeyInfo* matched = nullptr;
-    for (const auto& k : keys) {
-        if (std::equal(k.id.begin(), k.id.end(), keyId.begin(), keyId.end())) {
-            matched = &k;
-            break;
-        }
-    }
+    const ::pkcs15::PrivateKeyInfo* matched = keyById(keyId);
     if (!matched || !pinInfo)
-        return {};
+        return failed;
+    // A per-operation key takes only the PIN armed for this operation; every
+    // other key the PIN cached by login(). PKCS15Card::sign VERIFYs it and signs
+    // under the one holder below, which is one card transaction.
+    const LibreSCRS::Secure::String* presented =
+        selectPresentedPin(::pkcs15::requiresPerOperationAuth(*matched), loggedIn, cachedPin, contextPin);
+    if (presented == nullptr)
+        return failed;
 
     try {
         auto scheme = mechanismToScheme(mechanism, matched->keyType);
 
-        auto canView = cachedPin.view();
-        std::string pinStr(canView.begin(), canView.end());
+        // Materialise PIN as cleansing std::string (SSO-safe; PinStringScrubber
+        // covers the exception path even before sign() returns).
+        auto pinView = presented->view();
+        std::string pinStr(pinView.begin(), pinView.end());
         ::LibreSCRS::SmartCard::Internal::PinStringScrubber pinScrub{pinStr};
 
         auto holderResult = parentP15.acquireChannel();
         if (!holderResult)
-            return {};
+            return failed;
         auto holder = std::move(*holderResult);
         auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
         if (channel == nullptr)
-            return {};
+            return failed;
         ::pkcs15::PKCS15Card apdu(*channel);
 
+        // The card's refusal of a one-shot PIN is returned apart from any
+        // other failure: the caller must not present that PIN again.
+        const auto refusal = [&]() -> std::optional<unsigned long> {
+            if (contextPin == nullptr || !apdu.pinRefusal())
+                return std::nullopt;
+            const unsigned long crv = pinVerdictToCrv(*apdu.pinRefusal());
+            if (crv != Crv::PinIncorrect && crv != Crv::PinLocked)
+                return std::nullopt;
+            return crv;
+        };
         std::vector<std::uint8_t> digestVec(digestInfo.begin(), digestInfo.end());
         std::vector<std::uint8_t> rawVec(rawData.begin(), rawData.end());
-        return apdu.sign(*matched, pinStr, *pinInfo, digestVec, rawVec, scheme);
+        std::vector<std::uint8_t> signature;
+        try {
+            signature = apdu.sign(*matched, pinStr, *pinInfo, digestVec, rawVec, scheme);
+        } catch (...) {
+            if (const auto refused = refusal())
+                return std::unexpected(*refused);
+            throw;
+        }
+        if (signature.empty()) {
+            if (const auto refused = refusal())
+                return std::unexpected(*refused);
+            return failed;
+        }
+        return signature;
     } catch (const std::exception& e) {
         if (std::getenv("LIBRESCRS_SIGN_TRACE"))
-            std::fprintf(stderr, "[Pkcs15Slot::signData] exception: %s\n", e.what());
-        return {};
+            std::fprintf(stderr, "[Pkcs15Slot::sign] exception: %s\n", e.what());
+        return failed;
     } catch (...) {
         if (std::getenv("LIBRESCRS_SIGN_TRACE"))
-            std::fprintf(stderr, "[Pkcs15Slot::signData] unknown exception\n");
-        return {};
+            std::fprintf(stderr, "[Pkcs15Slot::sign] unknown exception\n");
+        return failed;
+    }
+}
+
+unsigned long Pkcs15Slot::verifyContextPin(std::span<const std::uint8_t> keyId, std::span<const std::uint8_t> pin)
+{
+    using namespace LibreSCRS::Pkcs11::Internal;
+
+    auto parent = parentCard.lock();
+    if (!parent)
+        return Crv::DeviceError;
+    auto& parentP15 = static_cast<Pkcs15Card&>(*parent);
+
+    std::scoped_lock locks(slotMutex, parentTransportMutex(*parent));
+
+    const ::pkcs15::PrivateKeyInfo* matched = keyById(keyId);
+    if (!matched || !pinInfo || !::pkcs15::requiresPerOperationAuth(*matched))
+        return Crv::ArgumentsBad;
+
+    try {
+        // The PIN as given: no CAN-in-PIN split and no profile re-read -- both
+        // belong to the session login, never to one operation.
+        std::string pinStr(pin.begin(), pin.end());
+        ::LibreSCRS::SmartCard::Internal::PinStringScrubber pinScrub{pinStr};
+
+        auto holderResult = parentP15.acquireChannel();
+        if (!holderResult)
+            return Crv::DeviceError;
+        auto holder = std::move(*holderResult);
+        auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
+        if (channel == nullptr)
+            return Crv::DeviceError;
+        ::pkcs15::PKCS15Card apdu(*channel);
+
+        return pinVerdictToCrv(apdu.verifyPIN(*pinInfo, pinStr));
+    } catch (...) {
+        return Crv::DeviceError;
     }
 }
 

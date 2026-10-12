@@ -99,6 +99,30 @@ public:
                                                                unsigned long mechanism,
                                                                std::span<const std::uint8_t> keyId) override;
 
+    /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11Slot::verifyContextPin
+    /// @since 5.0
+    [[nodiscard]] unsigned long verifyContextPin(std::span<const std::uint8_t> keyId,
+                                                 std::span<const std::uint8_t> pin) override;
+
+    /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11Slot::signDataWithContextPin
+    /// @par Implementation
+    /// VERIFY and compute-signature run under one @c sc_lock; the card's
+    /// refusal of the PIN (@c sc_pkcs15_verify_pin's wrong-PIN or blocked
+    /// answer) comes back as @c Crv::PinIncorrect / @c Crv::PinLocked.
+    /// @since 5.0
+    [[nodiscard]] LibreSCRS::Pkcs11::Internal::ContextPinSignature
+    signDataWithContextPin(std::span<const std::uint8_t> data, unsigned long mechanism,
+                           std::span<const std::uint8_t> keyId, const LibreSCRS::Secure::String& contextPin) override;
+
+    /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11Slot::signWithDigestInfoAndContextPin
+    /// @par Implementation
+    /// As @ref signDataWithContextPin.
+    /// @since 5.0
+    [[nodiscard]] LibreSCRS::Pkcs11::Internal::ContextPinSignature
+    signWithDigestInfoAndContextPin(std::span<const std::uint8_t> digestInfo, std::span<const std::uint8_t> rawData,
+                                    unsigned long mechanism, std::span<const std::uint8_t> keyId,
+                                    const LibreSCRS::Secure::String& contextPin) override;
+
     /// @copydoc LibreSCRS::Pkcs11::Internal::PKCS11Slot::signatureSize
     /// @since 4.1
     [[nodiscard]] std::size_t signatureSize(std::span<const std::uint8_t> keyId) const override;
@@ -148,6 +172,25 @@ public:
     }
 
 private:
+    /// @brief The one sign path: picks the PIN with @ref selectPresentedPin and
+    ///        runs VERIFY + compute-signature under one @c sc_lock.
+    ///        @p contextPin is @c nullptr on the session-login path.
+    /// @return The signature; @c Crv::PinIncorrect / @c Crv::PinLocked when the
+    ///         card refused @p contextPin; @c Crv::DeviceError otherwise.
+    [[nodiscard]] LibreSCRS::Pkcs11::Internal::ContextPinSignature
+    signWithPin(std::span<const std::uint8_t> data, unsigned long mechanism, std::span<const std::uint8_t> keyId,
+                const LibreSCRS::Secure::String* contextPin);
+
+    /// @brief The DigestInfo routing of @ref signWithDigestInfo, for both PIN paths.
+    [[nodiscard]] LibreSCRS::Pkcs11::Internal::ContextPinSignature
+    routeDigestInfo(std::span<const std::uint8_t> digestInfo, std::span<const std::uint8_t> rawData,
+                    unsigned long mechanism, std::span<const std::uint8_t> keyId,
+                    const LibreSCRS::Secure::String* contextPin);
+
+    /// @brief The slot key whose PKCS#15 id is @p keyId, or @c nullptr.
+    /// @par Thread-safety Caller holds @c slotMutex.
+    [[nodiscard]] sc_pkcs15_object_t* keyById(std::span<const std::uint8_t> keyId) const noexcept;
+
     sc_pkcs15_object_t* pinObject{nullptr};
     std::vector<sc_pkcs15_object_t*> keyObjects;
     std::vector<sc_pkcs15_object_t*> certObjects;

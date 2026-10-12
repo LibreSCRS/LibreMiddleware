@@ -124,8 +124,9 @@ struct PKCS11ObjectInfo
 
     /// @brief @c CKA_ALWAYS_AUTHENTICATE — the card requires the PIN to be
     ///        presented again for EVERY operation with this key, not once per
-    ///        session. Driven by the PKCS#15 @c userConsent attribute; false
-    ///        for the ordinary login-once key. Reporting false for a card that
+    ///        session. Driven by the card: PKCS#15 @c userConsent (PKCS#15
+    ///        slot) or OpenSC's @c user_consent (OpenSC slot); false for the
+    ///        ordinary login-once key. Reporting false for a card that
     ///        wants per-operation consent yields a token that logs in, signs
     ///        once, and has its next signature refused by the card with
     ///        nothing in the client able to say why.
