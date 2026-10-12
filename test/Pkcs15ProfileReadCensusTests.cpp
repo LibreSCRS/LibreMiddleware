@@ -36,6 +36,7 @@
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
 #include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
 
+#include "pkcs15_card.h"
 #include "pkcs15_pkcs11_card.h"
 
 #include <internal/Crv.h>
@@ -55,6 +56,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -799,4 +801,91 @@ TEST(Pkcs15SlotAlwaysAuthenticate, BlockedContextPinIsReportedAsLocked)
                                                         LibreSCRS::Secure::String{std::string_view{"0000"}});
     ASSERT_FALSE(blocked.has_value());
     EXPECT_EQ(blocked.error(), Crv::PinLocked);
+}
+
+// ---------------------------------------------------------------------------
+// The card plugin's "pin" credential
+// ---------------------------------------------------------------------------
+
+// An empty "pin" erases the signing PIN and nothing else. NotImplemented
+// would mean the whole session entry went -- the PACE requirement with it --
+// which is clearCredentials, not this.
+TEST(Pkcs15PluginPinCredential, ErasingThePinKeepsThePaceRequirement)
+{
+    auto rig = makeRig("AA Plugin Reader 0", true);
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    plugin->setCredentials(*rig.session, "can", LibreSCRS::Secure::String{std::string_view{"123456"}});
+    plugin->setCredentials(*rig.session, "pin", LibreSCRS::Secure::String{std::string_view{"1234"}});
+    plugin->setCredentials(*rig.session, "pin", LibreSCRS::Secure::String{});
+
+    const auto result = plugin->sign(*rig.session, 0x4410, kToBeSigned, LibreSCRS::Plugin::SignMechanism::RSA_SHA256);
+    EXPECT_EQ(result.outcome, LibreSCRS::Plugin::SignResultOutcome::PluginError);
+}
+
+TEST(Pkcs15PluginPinCredential, ErasedPinStopsTheNextSignBeforeTheCard)
+{
+    auto rig = makeRig("AA Plugin Reader 1", true);
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+    plugin->setCredentials(*rig.session, "can", LibreSCRS::Secure::String{std::string_view{"123456"}});
+    plugin->setCredentials(*rig.session, "pin", LibreSCRS::Secure::String{std::string_view{"1234"}});
+
+    // Control: with a PIN deposited, the sign goes to the card.
+    auto transactions = rig.card->transaction;
+    auto apdus = rig.card->log.size();
+    (void)plugin->sign(*rig.session, 0x4410, kToBeSigned, LibreSCRS::Plugin::SignMechanism::RSA_SHA256);
+    ASSERT_TRUE(rig.card->transaction > transactions || rig.card->log.size() > apdus)
+        << "rig regression: a deposited PIN no longer drives the sign to the card";
+
+    plugin->setCredentials(*rig.session, "pin", LibreSCRS::Secure::String{});
+    transactions = rig.card->transaction;
+    apdus = rig.card->log.size();
+    const auto result = plugin->sign(*rig.session, 0x4410, kToBeSigned, LibreSCRS::Plugin::SignMechanism::RSA_SHA256);
+
+    EXPECT_EQ(result.outcome, LibreSCRS::Plugin::SignResultOutcome::PluginError);
+    EXPECT_EQ(rig.card->transaction, transactions);
+    EXPECT_EQ(rig.card->log.size(), apdus) << "an erased PIN must stop the sign before anything reaches the card";
+}
+
+// PKCS15Card::sign owns VERIFY + MSE + PSO, so the card's refusal of the PIN
+// it presents must stay readable after the throw (pinRefusal) for the plugin
+// to report PinIncorrect / PinBlocked instead of PluginError -- and a blocked
+// PIN (6983) is a verdict like a wrong one: it is presented once, never again
+// on another reference or path. (The plugin's own hash-on-card sign needs a
+// PACE channel, which a detached session cannot establish, so the verdict is
+// held at the layer the plugin reads it from.)
+TEST(Pkcs15CardSignPin, RefusedPinIsPresentedOnceAndKeptForTheCaller)
+{
+    for (const int triesBefore : {3, 1}) {
+        SCOPED_TRACE(triesBefore);
+        auto rig = makeSigningRig(triesBefore == 3 ? "AA Card Reader 0" : "AA Card Reader 1", true);
+        rig.card->triesLeft = triesBefore;
+        auto& conn = LibreSCRS::SmartCard::detail::unwrap(*rig.session);
+        PlainChannel channel(conn, pkcs15Aid());
+        pkcs15::PKCS15Card card(channel);
+        const auto profile = card.readProfile();
+        ASSERT_FALSE(profile.privateKeys.empty());
+        ASSERT_FALSE(profile.pins.empty());
+
+        const auto mark = rig.card->log.size();
+        EXPECT_THROW((void)card.sign(profile.privateKeys[0], "0000", profile.pins[0], kToBeSigned, kToBeSigned,
+                                     pkcs15::SignScheme::RsaPkcs1),
+                     std::runtime_error);
+        const auto& log = rig.card->log;
+        EXPECT_EQ(std::count_if(log.begin() + static_cast<std::ptrdiff_t>(mark), log.end(), isVerifyWithPin), 1)
+            << "a refused PIN is presented once";
+
+        ASSERT_TRUE(card.pinRefusal().has_value());
+        EXPECT_FALSE(card.pinRefusal()->success);
+        if (triesBefore == 3) {
+            EXPECT_FALSE(card.pinRefusal()->blocked);
+            EXPECT_EQ(card.pinRefusal()->retriesLeft, 2);
+        } else {
+            EXPECT_TRUE(card.pinRefusal()->blocked) << "6983 is a blocked PIN, not 'no strategy worked'";
+        }
+    }
 }

@@ -19,5 +19,9 @@ librescrs_add_plugin(opensc-plugin
         # pkcs15_types.h for the standard PKCS#15 AID constant used by the
         # probe (header-only; no link against the pkcs15 lib).
         ${PROJECT_SOURCE_DIR}/lib/pkcs15/src
+        # opensc_pin_verdict.h reads a VERIFY answer the way the OpenSC
+        # PKCS#11 slot does; its CK_RV constants (internal/Crv.h) are
+        # header-only.
+        ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/include
     LINK_LIBRARIES SmartCard_Impl opensc_static_with_deps
 )

@@ -386,6 +386,16 @@ public:
     ///         any failure. The wrapper sets
     ///         @ref SignResultOutcome::Cancelled for the early short-circuit
     ///         case (since 4.0).
+    /// @note PIN for the operation: when a @c "pin" credential is deposited for
+    ///       @p session (@ref setCredentials), a plugin that signs presents it
+    ///       to the card (VERIFY) and signs in ONE card transaction, so nothing
+    ///       can come between the two. A host using a key whose
+    ///       CertificateData says the card wants the PIN for every operation
+    ///       MUST use this path -- deposit, call this, then erase with an empty
+    ///       @c "pin" -- and not a separate @ref verifyPIN call: such a key's
+    ///       verified state does not survive between two plugin calls. A
+    ///       refused PIN is reported as @ref SignResultOutcome::PinIncorrect, or
+    ///       @ref SignResultOutcome::PinBlocked when the card reports the PIN blocked.
     /// @since 4.0
     /// @note NVI wrapper. Plugins override @ref doSign instead.
     [[nodiscard]] SignResult sign(LibreSCRS::SmartCard::CardSession& session, std::uint16_t keyReference,
@@ -401,6 +411,16 @@ public:
     /// recovered plaintext. The wrapper does NOT cleanse @p ciphertext (it is
     /// not secret) but the RECOVERED plaintext is sensitive — the caller owns
     /// cleansing the returned bytes.
+    /// @note PIN for the operation: when a @c "pin" credential is deposited for
+    ///       @p session (@ref setCredentials), a plugin that deciphers presents it
+    ///       to the card (VERIFY) and deciphers in ONE card transaction, so nothing
+    ///       can come between the two. A host using a key whose
+    ///       CertificateData says the card wants the PIN for every operation
+    ///       MUST use this path -- deposit, call this, then erase with an empty
+    ///       @c "pin" -- and not a separate @ref verifyPIN call: such a key's
+    ///       verified state does not survive between two plugin calls. A
+    ///       refused PIN is reported as @ref DecipherResultOutcome::PinIncorrect, or
+    ///       @ref DecipherResultOutcome::PinBlocked when the card reports the PIN blocked.
     /// @since 5.0
     /// @note NVI wrapper. Plugins override @ref doDecipher instead.
     [[nodiscard]] DecipherResult decipher(LibreSCRS::SmartCard::CardSession& session, std::uint16_t keyReference,
@@ -464,6 +484,14 @@ public:
     ///       SHOULD exclude `CardCapabilities::PinManagement` from its
     ///       @ref capabilities bitfield and leave this method at the
     ///       no-op default.
+    /// @note For the key @c "pin" an EMPTY @p value erases the PIN stored for
+    ///       @p session and nothing else: the session's other plugin state (its
+    ///       secure-messaging requirement, cached card structure, a CAN) stays,
+    ///       unlike @ref clearCredentials, which forgets the whole session. A
+    ///       host that signs with a key whose @ref CertificateData says the
+    ///       card wants the PIN per operation erases it this way after each
+    ///       operation. A later sign without a new @c "pin" fails without
+    ///       sending anything to the card.
     /// @note Non-`const` since ABI v6 (4.0). The earlier `const`
     ///       qualifier was cosmetic — plugins held their per-session cache
     ///       in `mutable` members guarded by an internal mutex, which hid

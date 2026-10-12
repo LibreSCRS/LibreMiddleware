@@ -363,6 +363,9 @@ public:
             // needs the PIN. Wiped by clearCredentials. CardSession only owns
             // PACE secrets, so the eSign PIN lives here (session-keyed map ->
             // no cross-reader bleed), NOT in the PACE cache.
+            // An empty value erases only this PIN (the contract on
+            // CardPlugin::setCredentials); requiresPace and the cached
+            // profile stay.
             std::lock_guard lock(stateMutex);
             sessions[makeSessionKey(session)].pin = LibreSCRS::Secure::String{value.view()};
             return;
@@ -1200,6 +1203,10 @@ public:
         return r;
     }
 
+    // This already meets the CardPlugin contract for a deposited "pin":
+    // PKCS15Card::sign presents it and signs under one holder (one card
+    // transaction).
+    //
     // Hash-on-card RSA-SHA256 signing for the IAS-ECC / PKCS#15 family
     // (NAM: SCE 8.0-C2V0 SSCD). The caller deposits the signing
     // PIN via setCredentials("pin", ...) immediately before this call (the same
@@ -1283,25 +1290,32 @@ public:
             // both slots, mirroring the EVP-verified in-process path
             // (Pkcs15Slot::signData). pin.view() references `pin`, alive here.
             std::vector<std::uint8_t> dataVec(data.begin(), data.end());
-            auto sig = card.sign(*matched, pin.view(), *pinInfo, dataVec, dataVec, pkcs15::SignScheme::RsaSha256Pkcs1);
+            // The card's refusal of the deposited PIN is reported as such, as
+            // verifyPIN reports it; any other failure stays PluginError.
+            const auto refusedOutcome = [&card] {
+                return card.pinRefusal()->blocked ? LibreSCRS::Plugin::SignResultOutcome::PinBlocked
+                                                  : LibreSCRS::Plugin::SignResultOutcome::PinIncorrect;
+            };
+            std::vector<std::uint8_t> sig;
+            try {
+                sig = card.sign(*matched, pin.view(), *pinInfo, dataVec, dataVec, pkcs15::SignScheme::RsaSha256Pkcs1);
+            } catch (...) {
+                if (!card.pinRefusal())
+                    throw;
+                r.outcome = refusedOutcome();
+                return r;
+            }
             if (sig.empty()) {
-                r.outcome = LibreSCRS::Plugin::SignResultOutcome::PluginError;
+                r.outcome = card.pinRefusal() ? refusedOutcome() : LibreSCRS::Plugin::SignResultOutcome::PluginError;
                 return r;
             }
             r.signature = std::move(sig);
             r.outcome = LibreSCRS::Plugin::SignResultOutcome::Ok;
             return r;
         } catch (...) {
-            // PKCS15Card::sign throws a generic runtime_error on wrong PIN /
-            // exhausted attempts. LIMITATION (constrained by the no-ABI-bump
-            // rule — SignResultOutcome has no AuthFailed variant and the throw
-            // is untyped): a wrong eSign PIN folds to PluginError here, which the
-            // agent maps to CardError -> CKR_DEVICE_ERROR, NOT CKR_PIN_INCORRECT.
-            // Counter-safety is preserved per op: the agent does a SINGLE attempt
-            // (no retry on PluginError; the DigestInfo fallback fires only on
-            // NotImplemented), so the card's PIN counter is touched at most once,
-            // and the HW test's g_pinFailed latch blocks further attempts. A host
-            // must NOT auto-retry on CKR_DEVICE_ERROR (it is not a PIN-retry hint).
+            // A refused PIN was answered above; what lands here is a channel
+            // or card failure. A host must NOT auto-retry on PluginError (it
+            // is not a PIN-retry hint).
             r.outcome = LibreSCRS::Plugin::SignResultOutcome::PluginError;
             return r;
         }

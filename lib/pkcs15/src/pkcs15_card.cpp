@@ -676,8 +676,12 @@ int PKCS15Card::verifyPinInline(const PinInfo& pinInfo, const LibreSCRS::SmartCa
     recordPinRefusal(resp);
     if (resp.isSuccess())
         return 1;
-    if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
-        return 0; // wrong PIN — do NOT try alternate reference, it would burn another retry
+    // A verdict on the PIN (wrong, 63Cx, or blocked, 6983): do NOT try the
+    // alternate reference or another path -- a wrong PIN would burn another
+    // retry, and a blocked one is not "no strategy worked". 6983 on the
+    // primary reference therefore ends here, before the alternate reference.
+    if (const auto verdict = classifyPinSw(resp); verdict && !verdict->success)
+        return 0;
 
     // Primary reference was not recognized (6A86/6A88/etc.) — try stripping local bit
     uint8_t altRef = pinInfo.pinReference & 0x7F;
@@ -690,8 +694,8 @@ int PKCS15Card::verifyPinInline(const PinInfo& pinInfo, const LibreSCRS::SmartCa
         recordPinRefusal(resp2);
         if (resp2.isSuccess())
             return 1;
-        if (resp2.sw1 == 0x63 && (resp2.sw2 & 0xF0) == 0xC0)
-            return 0; // wrong PIN
+        if (const auto verdict = classifyPinSw(resp2); verdict && !verdict->success)
+            return 0; // wrong or blocked PIN
     }
     return -1;
 }
@@ -987,7 +991,7 @@ std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_vie
         throw std::runtime_error("PKCS15: failed to select applet");
     int pinStatus = verifyPinInline(pinInfo, pinData);
     if (pinStatus == 0)
-        throw std::runtime_error("PKCS15: wrong PIN");
+        throw std::runtime_error("PKCS15: PIN refused");
     if (pinStatus == 1) {
         auto result = tryAllAttempts();
         if (!result.empty())
@@ -1012,7 +1016,7 @@ std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_vie
         selectByPath(pinInfo.path);
         pinStatus = verifyPinInline(pinInfo, pinData);
         if (pinStatus == 0)
-            throw std::runtime_error("PKCS15: wrong PIN");
+            throw std::runtime_error("PKCS15: PIN refused");
         if (pinStatus == 1) {
             // Prefer the key's DF (drop the trailing 2-byte EF when the
             // path ends with the key file itself). When key.path is

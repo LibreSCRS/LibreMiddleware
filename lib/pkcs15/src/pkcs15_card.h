@@ -153,7 +153,7 @@ private:
     // Fold one inline VERIFY answer into lastPinRefusal: a refusal (wrong or blocked PIN) sets it, success clears
     // it, an answer that is no verdict on the PIN leaves it.
     void recordPinRefusal(const LibreSCRS::SmartCard::Internal::APDUResponse& resp);
-    // Returns: 1=success, 0=wrong PIN (0x63Cx), -1=other failure
+    // Returns: 1=success, 0=PIN refused (wrong 0x63Cx or blocked 0x6983), -1=other failure
     int verifyPinInline(const PinInfo& pinInfo, const LibreSCRS::SmartCard::Internal::SecureBuffer& pinData);
     static std::vector<uint8_t> extractRawHash(const std::vector<uint8_t>& digestInfo);
     bool selectByPath(std::span<const uint8_t> path, uint8_t selectP2 = 0x00);

@@ -27,6 +27,7 @@
 
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Plugin/CardPlugin.h>
+#include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
 #include <LibreSCRS/SmartCard/detail/ChannelInjection.h>
@@ -436,6 +437,167 @@ TEST(OpenscChannelRun, RawBranchHoldsTheCardTransaction)
     // holder's seam, before the teardown, rather than at function exit -- is
     // not visible from out here and is measured by the next test.
     EXPECT_FALSE(f.conn.isTransactionHeld()) << "nothing is left held after the run";
+}
+
+// A PIN deposited for a key operation is presented in the SAME card
+// transaction as the operation: runUnderChannel holds one transaction for the
+// whole callback, and verifyThenRun keeps VERIFY first and inside it. The
+// control half runs the two steps as two calls -- the shape a host used to
+// have -- and must land in two transactions, so the assertion discriminates.
+TEST(OpenscOperationPin, VerifyAndOperationShareOneCardTransaction)
+{
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("ChannelTestReader");
+    RawSessionFixture f;
+    int transaction = 0;
+    f.conn.setDetachedTransactionReleaseObserver([&transaction] { ++transaction; });
+    struct Step
+    {
+        bool held = false;
+        int transaction = -1;
+    };
+    Step verified;
+    Step operated;
+    const LibreSCRS::Secure::String pin{std::string_view{"1234"}};
+
+    (void)LibreSCRS::OpenSc::runUnderChannel(*session, *f.s, CancelToken{}, [&](OpenSCSession&) {
+        (void)LibreSCRS::OpenSc::verifyThenRun(
+            pin, /*perOperation=*/true,
+            [&](const LibreSCRS::Secure::String&) {
+                verified = {f.conn.isTransactionHeld(), transaction};
+                return SC_SUCCESS;
+            },
+            [&] { operated = {f.conn.isTransactionHeld(), transaction}; });
+    });
+    EXPECT_TRUE(verified.held);
+    EXPECT_TRUE(operated.held);
+    EXPECT_EQ(verified.transaction, operated.transaction) << "VERIFY and the operation must share one transaction";
+
+    // Control: two separate calls fall into two transactions.
+    Step first;
+    Step second;
+    (void)LibreSCRS::OpenSc::runUnderChannel(
+        *session, *f.s, CancelToken{}, [&](OpenSCSession&) { first = {f.conn.isTransactionHeld(), transaction}; });
+    (void)LibreSCRS::OpenSc::runUnderChannel(
+        *session, *f.s, CancelToken{}, [&](OpenSCSession&) { second = {f.conn.isTransactionHeld(), transaction}; });
+    EXPECT_NE(first.transaction, second.transaction) << "rig regression: two calls no longer mean two transactions";
+}
+
+TEST(OpenscOperationPin, WrongPinNeverReachesTheOperation)
+{
+    bool operated = false;
+    const int rc = LibreSCRS::OpenSc::verifyThenRun(
+        LibreSCRS::Secure::String{std::string_view{"0000"}}, /*perOperation=*/true,
+        [](const LibreSCRS::Secure::String&) { return SC_ERROR_PIN_CODE_INCORRECT; }, [&] { operated = true; });
+    EXPECT_EQ(rc, SC_ERROR_PIN_CODE_INCORRECT) << "the card's answer must reach the caller";
+    EXPECT_FALSE(operated);
+}
+
+TEST(OpenscOperationPin, NoDepositedPinRunsAnOrdinaryKeysOperationAsBefore)
+{
+    bool verifyCalled = false;
+    bool operated = false;
+    const int rc = LibreSCRS::OpenSc::verifyThenRun(
+        LibreSCRS::Secure::String{}, /*perOperation=*/false,
+        [&](const LibreSCRS::Secure::String&) {
+            verifyCalled = true;
+            return SC_SUCCESS;
+        },
+        [&] { operated = true; });
+    EXPECT_EQ(rc, SC_SUCCESS);
+    EXPECT_FALSE(verifyCalled);
+    EXPECT_TRUE(operated);
+}
+
+// CardPlugin::setCredentials: a key the card wants the PIN for per operation
+// is never used without a deposited PIN -- the sign that follows an erase
+// (an empty "pin") fails before anything reaches the card. Driven through the
+// plugin's own gate with an unbound session: a gate that let the operation
+// through would run it here.
+TEST(OpenscOperationPin, PerOperationKeyWithoutADepositedPinNeverRuns)
+{
+    for (const bool erased : {false, true}) {
+        SCOPED_TRACE(erased ? "PIN deposited, then erased" : "no PIN ever deposited");
+        OpenSCSession session;
+        if (erased) {
+            session.operationPin = LibreSCRS::Secure::String{std::string_view{"1234"}};
+            session.operationPin = LibreSCRS::Secure::String{};
+        }
+        sc_pkcs15_object_t key{};
+        key.user_consent = 1; // the PIV Digital Signature key (9C)
+        bool operated = false;
+        const auto refused = LibreSCRS::OpenSc::verifyDepositedPinThenRun(session, key, [&] { operated = true; });
+        EXPECT_FALSE(operated) << "a per-operation key signed without its PIN";
+        ASSERT_TRUE(refused.has_value());
+        EXPECT_EQ(LibreSCRS::OpenSc::signOutcomeForRefusedPin(refused->rc),
+                  LibreSCRS::Plugin::SignResultOutcome::PluginError)
+            << "no PIN is not the card's verdict on one";
+        EXPECT_EQ(LibreSCRS::OpenSc::decipherOutcomeForRefusedPin(refused->rc),
+                  LibreSCRS::Plugin::DecipherResultOutcome::PluginError);
+    }
+
+    // Control: an ordinary key without a PIN still runs, as it always has.
+    OpenSCSession session;
+    sc_pkcs15_object_t key{};
+    bool operated = false;
+    EXPECT_FALSE(LibreSCRS::OpenSc::verifyDepositedPinThenRun(session, key, [&] { operated = true; }).has_value());
+    EXPECT_TRUE(operated);
+}
+
+// A key no PIN guards -- the PIV Card Authentication key (9E), any PrKDF
+// entry without an authId -- runs with a PIN deposited exactly as it runs
+// without one: no VERIFY, and the deposit stays for the host's next operation
+// with a guarded key. There is no PIN object to present the PIN to: a lookup
+// by the key's empty auth_id finds none, so a VERIFY attempted here refuses
+// an operation that ran before deposits existed. The session carries an
+// empty PKCS#15 binding so that lookup can run and come back empty-handed
+// instead of dereferencing a null card; only a path that never looks can
+// report the operation as run.
+TEST(OpenscOperationPin, KeyWithoutAPinRunsWithADepositedPinAndNoVerify)
+{
+    sc_pkcs15_card_t noObjects{};
+    OpenSCSession session;
+    session.p15card = &noObjects;
+    session.operationPin = LibreSCRS::Secure::String{std::string_view{"1234"}};
+    sc_pkcs15_object_t key{}; // auth_id.len == 0, user_consent == 0
+    bool operated = false;
+    const auto refused = LibreSCRS::OpenSc::verifyDepositedPinThenRun(session, key, [&] { operated = true; });
+    session.p15card = nullptr; // not a binding of OpenSC's: nothing to unbind at teardown
+    EXPECT_FALSE(refused.has_value()) << "a key without a PIN was refused over the deposited PIN";
+    EXPECT_TRUE(operated);
+    EXPECT_EQ(session.operationPin.view(), std::string_view{"1234"}) << "the deposit is the host's to erase";
+}
+
+// A refused PIN on the atomic path must say so, as verifyPIN always has: a
+// host that sees PluginError cannot tell a wrong PIN from a broken card.
+// The verdict is the one the OpenSC PKCS#11 slot gives the same VERIFY answer.
+TEST(OpenscOperationPin, RefusedPinIsReportedAsAPinOutcome)
+{
+    using LibreSCRS::OpenSc::decipherOutcomeForRefusedPin;
+    using LibreSCRS::OpenSc::signOutcomeForRefusedPin;
+    using LibreSCRS::Plugin::DecipherResultOutcome;
+    using LibreSCRS::Plugin::SignResultOutcome;
+    EXPECT_EQ(signOutcomeForRefusedPin(SC_ERROR_PIN_CODE_INCORRECT), SignResultOutcome::PinIncorrect);
+    EXPECT_EQ(signOutcomeForRefusedPin(SC_ERROR_AUTH_METHOD_BLOCKED), SignResultOutcome::PinBlocked);
+    EXPECT_EQ(signOutcomeForRefusedPin(SC_ERROR_CARD_CMD_FAILED), SignResultOutcome::PluginError);
+    EXPECT_EQ(signOutcomeForRefusedPin(SC_ERROR_INVALID_PIN_LENGTH), SignResultOutcome::PluginError)
+        << "only the card's verdict on the PIN is a PIN outcome";
+    EXPECT_EQ(decipherOutcomeForRefusedPin(SC_ERROR_PIN_CODE_INCORRECT), DecipherResultOutcome::PinIncorrect);
+    EXPECT_EQ(decipherOutcomeForRefusedPin(SC_ERROR_AUTH_METHOD_BLOCKED), DecipherResultOutcome::PinBlocked);
+    EXPECT_EQ(decipherOutcomeForRefusedPin(SC_ERROR_CARD_CMD_FAILED), DecipherResultOutcome::PluginError);
+}
+
+// The same erase-only-the-PIN contract as the PKCS#15 plugin: an empty "pin"
+// leaves the session's claim (and with it the PACE requirement) in place.
+TEST(OpenscOperations, EmptyPinCredentialKeepsTheSessionClaim)
+{
+    PluginHandle h;
+    LiveSmSession live;
+    live.channel->transmitHandler = [](const APDUCommand&) { return sw(0x90, 0x00); };
+    ASSERT_TRUE(h.plugin->canHandleConnection(kTestAtr, *live.session));
+
+    h.plugin->setCredentials(*live.session, "pin", LibreSCRS::Secure::String{std::string_view{"1234"}});
+    h.plugin->setCredentials(*live.session, "pin", LibreSCRS::Secure::String{});
+    EXPECT_EQ(h.plugin->preReadAuth(*live.session), LibreSCRS::Auth::PreReadAuthMethod::Can);
 }
 
 // That acquisition is the FIRST PC/SC touch of the operation and it sits

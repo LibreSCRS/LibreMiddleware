@@ -12,18 +12,21 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Plugin/PluginTypes.h>
 #include <LibreSCRS/Plugin/ReadResult.h>
+#include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
 
 #include <libopensc/opensc.h>
 #include <libopensc/pkcs15.h>
 
 #include "opensc_reader_bridge.h"
+#include "opensc_user_consent.h"
 #include "pin_family_quirks.h" // FamilyId
 
 namespace LibreSCRS::SmartCard {
@@ -85,6 +88,13 @@ struct OpenSCSession
     /// @ref runUnderChannel).
     std::mutex opMutex;
 
+    /// The PIN a host deposited with CardPlugin::setCredentials("pin") for the
+    /// next key operation on this session. Presented to the card inside that
+    /// operation's own card transaction (verifyThenRun), never in a separate
+    /// call. Empty when none is deposited.
+    /// @guarded_by opMutex
+    LibreSCRS::Secure::String operationPin;
+
     /// Single-session bridge: owns the librescrs-bridge sc_reader + its
     /// private data at a stable heap address. Holds no PC/SC connection of
     /// its own — it routes libopensc through the LM PCSCConnection (raw
@@ -133,6 +143,98 @@ private:
 /// from an RSA idiom (modulus_length/8) nor resized from the driver's
 /// return count — the output is the canonical fixed-width r||s.
 [[nodiscard]] std::size_t ecdsaSignatureLength(std::size_t fieldLengthBits) noexcept;
+
+/// sc_pkcs15_bind with OpenSC's own PIN cache switched off. OpenSC keeps
+/// every PIN a successful sc_pkcs15_verify_pin presented and replays it when
+/// the card later wants it again; a PIN given to this plugin -- deposited for
+/// one operation, or passed to verifyPIN -- is used for that call only and
+/// must not outlive it inside OpenSC.
+/// @return The sc_pkcs15_bind result.
+[[nodiscard]] int bindWithoutPinCache(sc_card_t* card, sc_pkcs15_card_t** p15card) noexcept;
+
+/// The order every key operation keeps inside runUnderChannel: VERIFY the
+/// deposited per-operation @p pin, then @p operation -- in ONE card
+/// transaction, because runUnderChannel holds it across the whole callback.
+/// A key that wants its PIN per operation (PIV 9C) loses the verified state
+/// across two calls; inside one transaction there is nothing between them.
+/// @param pin          Deposited PIN; empty = nothing to present.
+/// @param perOperation  The key wants its PIN for every operation (see
+///                      requiresPerOperationAuth). Without a deposited PIN such
+///                      a key's operation does not run: nothing reaches the
+///                      card. Any other key runs as it always has.
+/// @param verify        Presents the PIN; returns an OpenSC code (SC_SUCCESS = verified).
+/// @param operation     The card operation; runs only after a successful VERIFY.
+/// @return SC_SUCCESS when the operation ran; SC_ERROR_SECURITY_STATUS_NOT_SATISFIED
+///         when a per-operation key had no PIN; otherwise the code @p verify
+///         returned. In both failure cases the operation did not run.
+template <typename Verify, typename Operation>
+[[nodiscard]] int verifyThenRun(const LibreSCRS::Secure::String& pin, bool perOperation, Verify&& verify,
+                                Operation&& operation)
+{
+    if (!pin.empty()) {
+        const int rc = verify(pin);
+        if (rc != SC_SUCCESS)
+            return rc;
+    } else if (perOperation) {
+        return SC_ERROR_SECURITY_STATUS_NOT_SATISFIED;
+    }
+    operation();
+    return SC_SUCCESS;
+}
+
+/// A key operation that did not run because of its PIN: the card's answer to
+/// VERIFY of the deposited PIN, or SC_ERROR_SECURITY_STATUS_NOT_SATISFIED when
+/// a per-operation key had none.
+struct RefusedPin
+{
+    int rc = SC_SUCCESS;
+};
+
+/// Present the PIN deposited on @p session to the PIN object guarding
+/// @p key, then run @p operation -- both inside the caller's
+/// runUnderChannel callback, so in one card transaction. With no PIN
+/// deposited, @p operation runs unchanged for an ordinary key and not at all
+/// for a key the card wants the PIN for per operation. A key no PIN guards
+/// (an empty auth_id: the PIV Card Authentication key, 9E; a PrKDF entry
+/// without an authId) runs without a VERIFY whether or not a PIN is
+/// deposited -- there is no PIN object to present it to, and OpenSC's own
+/// C_Sign presents none. The deposit stays where the host put it, for its
+/// next operation with a guarded key.
+/// @return std::nullopt when @p operation ran; otherwise why it did not.
+template <typename Operation>
+[[nodiscard]] std::optional<RefusedPin> verifyDepositedPinThenRun(OpenSCSession& session, const sc_pkcs15_object_t& key,
+                                                                  Operation&& operation)
+{
+    if (key.auth_id.len == 0 && !requiresPerOperationAuth(key)) {
+        // No PIN object guards this key: a lookup by its empty auth_id finds
+        // none, so a VERIFY here could only refuse an operation the card
+        // runs without one.
+        operation();
+        return std::nullopt;
+    }
+    sc_pkcs15_object_t* pinObject = nullptr;
+    auto verify = [&](const LibreSCRS::Secure::String& pin) {
+        if (sc_pkcs15_find_pin_by_auth_id(session.p15card, &key.auth_id, &pinObject) != SC_SUCCESS ||
+            pinObject == nullptr)
+            return SC_ERROR_OBJECT_NOT_FOUND;
+        const auto view = pin.view();
+        return sc_pkcs15_verify_pin(session.p15card, pinObject, reinterpret_cast<const unsigned char*>(view.data()),
+                                    view.size());
+    };
+    const int rc = verifyThenRun(session.operationPin, requiresPerOperationAuth(key), verify, operation);
+    if (rc == SC_SUCCESS)
+        return std::nullopt;
+    return RefusedPin{rc};
+}
+
+/// The outcome a key operation reports when VERIFY of its deposited PIN
+/// failed with @p rc. The card's verdict on the PIN is
+/// read exactly as the OpenSC PKCS#11 slot reads it: a wrong PIN is
+/// PinIncorrect, a blocked one PinBlocked, and every failure the PIN did not
+/// cause stays PluginError.
+[[nodiscard]] LibreSCRS::Plugin::SignResultOutcome signOutcomeForRefusedPin(int rc) noexcept;
+/// @copydoc signOutcomeForRefusedPin
+[[nodiscard]] LibreSCRS::Plugin::DecipherResultOutcome decipherOutcomeForRefusedPin(int rc) noexcept;
 
 /// Maps libopensc's resolved card-driver identity to a quirk-table family.
 /// Uses only the driver short_name that sc_connect_card already resolved —

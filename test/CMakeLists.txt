@@ -1574,6 +1574,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
         ${PROJECT_SOURCE_DIR}/lib/plugin/src
         ${PROJECT_SOURCE_DIR}/lib/pkcs15/src
         ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
+        ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/include
     )
     target_link_libraries(OpenscPinLifecycleTests PRIVATE
         GTest::gtest_main
@@ -1635,6 +1636,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
         ${PROJECT_SOURCE_DIR}/lib/plugin/src
         ${PROJECT_SOURCE_DIR}/lib/pkcs15/src
         ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
+        ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/include
     )
     target_link_libraries(OpenscChannelLifecycleTests PRIVATE
         GTest::gtest_main
@@ -1696,6 +1698,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
         ${PROJECT_SOURCE_DIR}/lib/plugin/src
         ${PROJECT_SOURCE_DIR}/lib/pkcs15/src
         ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
+        ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/include
     )
     target_link_libraries(OpenscChangePinSelectorTests PRIVATE
         GTest::gtest_main
@@ -1728,6 +1731,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
         ${PROJECT_SOURCE_DIR}/lib/plugin/src
         ${PROJECT_SOURCE_DIR}/lib/pkcs15/src
         ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
+        ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/include
     )
     target_link_libraries(OpenscUserPinSelectionTests PRIVATE
         GTest::gtest_main

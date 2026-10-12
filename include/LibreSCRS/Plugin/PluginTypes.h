@@ -298,6 +298,17 @@ enum class SignResultOutcome : std::uint8_t {
     /// cancellation mid-operation.
     /// @since 4.0
     Cancelled,
+    /// @brief The card refused the PIN presented for this operation (a PIN
+    ///        deposited with @ref CardPlugin::setCredentials and presented in
+    ///        the operation's own transaction). Nothing was signed. The
+    ///        remaining tries are not carried here; read them with
+    ///        @ref CardPlugin::readCounters. Appended in ABI 10.
+    /// @since 5.0
+    PinIncorrect,
+    /// @brief The PIN is blocked: the card refused the operation's PIN and
+    ///        reports it blocked. Appended in ABI 10.
+    /// @since 5.0
+    PinBlocked,
 };
 
 /// @brief Result of an on-card signing operation.
@@ -357,6 +368,17 @@ enum class DecipherResultOutcome : std::uint8_t {
     NotImplemented, ///< Plugin base default hit — no decipher override.
     PluginError,    ///< Plugin-internal / card-side failure.
     Cancelled,      ///< Cancellation observed via CancelToken at the wrapper.
+    /// @brief The card refused the PIN presented for this operation (a PIN
+    ///        deposited with @ref CardPlugin::setCredentials and presented in
+    ///        the operation's own transaction). Nothing was deciphered. The
+    ///        remaining tries are not carried here; read them with
+    ///        @ref CardPlugin::readCounters. Appended in ABI 10.
+    /// @since 5.0
+    PinIncorrect,
+    /// @brief The PIN is blocked: the card refused the operation's PIN and
+    ///        reports it blocked. Appended in ABI 10.
+    /// @since 5.0
+    PinBlocked,
 };
 
 /// @brief Result of an on-card decryption operation.
