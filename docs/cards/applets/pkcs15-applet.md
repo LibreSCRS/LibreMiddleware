@@ -98,6 +98,7 @@ Each private key entry contains:
 | `keySizeBits` | Key size (e.g. 2048 for RSA-2048) |
 | `path` | File path to the key reference |
 | `accessFlags` | Access control flags |
+| `userConsent` | Per-operation consent count from `CommonObjectAttributes`; non-zero means the card wants the PIN for every operation with this key (PKCS#11 `CKA_ALWAYS_AUTHENTICATE`) |
 
 ### PIN Objects (AODF)
 

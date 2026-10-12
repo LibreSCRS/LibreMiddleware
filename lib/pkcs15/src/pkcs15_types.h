@@ -45,9 +45,22 @@ struct PrivateKeyInfo
     // CommonObjectAttributes userConsent: how many times the holder must
     // consent before this key is used. Non-zero means the card wants the PIN
     // presented per operation, which PKCS#11 spells CKA_ALWAYS_AUTHENTICATE.
-    // 0 = absent, the common case; never defaulted to 1.
-    uint8_t userConsent = 0;
+    // 0 = absent, the common case; never defaulted to 1. The whole INTEGER is
+    // kept -- 256 is encoded 01 00, and its last octet alone reads as absent --
+    // and a value wider than this field saturates, so any non-zero encoding
+    // stays non-zero. A present but zero-length INTEGER saturates too, and of
+    // several INTEGERs the largest is kept.
+    uint32_t userConsent = 0;
 };
+
+/// True when the card wants the PIN presented again for every operation with
+/// @p key: PKCS#15 userConsent present and non-zero, which PKCS#11 publishes as
+/// CKA_ALWAYS_AUTHENTICATE. The one rule both the card plugin and the PKCS#11
+/// slot read, so the two cannot disagree about a key.
+[[nodiscard]] inline bool requiresPerOperationAuth(const PrivateKeyInfo& key) noexcept
+{
+    return key.userConsent != 0;
+}
 
 /// One EF.PuKDF record. Deliberately its own type rather than a reuse of
 /// PrivateKeyInfo: a public key has no authId and no userConsent (nothing

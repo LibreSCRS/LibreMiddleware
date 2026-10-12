@@ -13,7 +13,9 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <span>
+#include <string>
 #include <vector>
 
 using namespace pkcs15;
@@ -431,7 +433,7 @@ TEST(ParsePrKDF, EcKeyCarriesUserConsent)
     const auto keys = parsePrKDF(EC_PRKDF_SINGLE_KEY);
 
     ASSERT_EQ(keys.size(), 1U);
-    EXPECT_EQ(keys[0].userConsent, 1);
+    EXPECT_EQ(keys[0].userConsent, 1U);
 }
 
 // Absent userConsent is the common case and means no per-operation consent --
@@ -443,7 +445,143 @@ TEST(ParsePrKDF, AbsentUserConsentIsZero)
 
     ASSERT_FALSE(keys.empty());
     for (const auto& key : keys) {
-        EXPECT_EQ(key.userConsent, 0) << "key '" << key.label << "'";
+        EXPECT_EQ(key.userConsent, 0U) << "key '" << key.label << "'";
+    }
+}
+
+namespace {
+
+std::vector<uint8_t> tlv(uint8_t tag, const std::vector<uint8_t>& content)
+{
+    std::vector<uint8_t> out{tag, static_cast<uint8_t>(content.size())};
+    out.insert(out.end(), content.begin(), content.end());
+    return out;
+}
+
+// One RSA PrKDF record -- id 01, key file 3F00/4410 -- around the given
+// CommonObjectAttributes content, so each test varies only that member.
+std::vector<uint8_t> rsaKeyWithCommonObjectAttributes(const std::vector<uint8_t>& commonObjectAttributes)
+{
+    std::vector<uint8_t> body = tlv(0x30, commonObjectAttributes);
+    const std::vector<uint8_t> rest = {0x30, 0x03, 0x04, 0x01, 0x01,                               // id 01
+                                       0xA1, 0x0C, 0x30, 0x0A, 0x30, 0x08, 0x04, 0x04, 0x3F, 0x00, // path
+                                       0x44, 0x10, 0x02, 0x00};
+    body.insert(body.end(), rest.begin(), rest.end());
+    return tlv(0x30, body);
+}
+
+// CommonObjectAttributes content: label "KEY" followed by @p tail.
+std::vector<uint8_t> labelledKeyThen(const std::vector<uint8_t>& tail)
+{
+    std::vector<uint8_t> out = {0x0C, 0x03, 0x4B, 0x45, 0x59};
+    out.insert(out.end(), tail.begin(), tail.end());
+    return out;
+}
+
+} // namespace
+
+// 256 is encoded 01 00. Its last octet alone is zero, which reads as "no
+// consent needed" -- the one wrong answer here that fails open.
+TEST(ParsePrKDF, UserConsentIsReadAsAWholeInteger)
+{
+    const auto keys = parsePrKDF(rsaKeyWithCommonObjectAttributes(labelledKeyThen({0x02, 0x02, 0x01, 0x00})));
+
+    ASSERT_EQ(keys.size(), 1U);
+    EXPECT_EQ(keys[0].userConsent, 256U);
+    EXPECT_TRUE(requiresPerOperationAuth(keys[0]));
+}
+
+// Every CommonObjectAttributes member is OPTIONAL, the label included. The
+// INTEGER is the only one of its type there, so it needs no label to anchor
+// it; a record without one must still say the card wants its PIN.
+TEST(ParsePrKDF, UserConsentWithoutALabelIsStillRead)
+{
+    const auto keys = parsePrKDF(rsaKeyWithCommonObjectAttributes({0x04, 0x01, 0x01, 0x02, 0x01, 0x01}));
+
+    ASSERT_EQ(keys.size(), 1U);
+    EXPECT_EQ(keys[0].userConsent, 1U);
+    EXPECT_TRUE(requiresPerOperationAuth(keys[0]));
+}
+
+TEST(ParsePrKDF, ZeroUserConsentDoesNotAskForThePin)
+{
+    const auto keys = parsePrKDF(rsaKeyWithCommonObjectAttributes(labelledKeyThen({0x02, 0x01, 0x00})));
+
+    ASSERT_EQ(keys.size(), 1U);
+    EXPECT_EQ(keys[0].userConsent, 0U);
+    EXPECT_FALSE(requiresPerOperationAuth(keys[0]));
+}
+
+// Five octets do not fit the field. Refusing them as "absent" -- what the
+// other INTEGER fields in this parser do -- would turn an over-wide consent
+// count into "no PIN needed"; it saturates instead.
+TEST(ParsePrKDF, OverWideUserConsentStaysNonZero)
+{
+    const auto keys =
+        parsePrKDF(rsaKeyWithCommonObjectAttributes(labelledKeyThen({0x02, 0x05, 0x01, 0x00, 0x00, 0x00, 0x00})));
+
+    ASSERT_EQ(keys.size(), 1U);
+    EXPECT_EQ(keys[0].userConsent, std::numeric_limits<uint32_t>::max());
+    EXPECT_TRUE(requiresPerOperationAuth(keys[0]));
+}
+
+// Encodings a reader can get wrong while every everyday value still passes.
+// userConsent is (1..ub), so a card never means "no consent" by any of them;
+// each must keep the key asking for its PIN.
+struct UserConsentEncoding
+{
+    const char* name;
+    std::vector<uint8_t> integer; // the whole INTEGER TLV
+    uint32_t expected;
+};
+
+class UserConsentEncodingTest : public ::testing::TestWithParam<UserConsentEncoding>
+{};
+
+TEST_P(UserConsentEncodingTest, StaysNonZero)
+{
+    const auto keys = parsePrKDF(rsaKeyWithCommonObjectAttributes(labelledKeyThen(GetParam().integer)));
+
+    ASSERT_EQ(keys.size(), 1U);
+    EXPECT_EQ(keys[0].userConsent, GetParam().expected);
+    EXPECT_TRUE(requiresPerOperationAuth(keys[0]));
+}
+
+INSTANTIATE_TEST_SUITE_P(ParsePrKDF, UserConsentEncodingTest,
+                         ::testing::Values(
+                             // A leading 00 keeps 128 positive; dropping or trusting that octet alone reads 0.
+                             UserConsentEncoding{"LeadingZeroOctet", {0x02, 0x02, 0x00, 0x80}, 128U},
+                             // High bit set: a signed reader sees -1, and clamping that to 0 fails open.
+                             UserConsentEncoding{"HighBitOctet", {0x02, 0x01, 0xFF}, 255U},
+                             // Present but empty: no value to read, yet the card put the member there.
+                             // Skipping it reads as absent, so it saturates like an over-wide one.
+                             UserConsentEncoding{"ZeroLength", {0x02, 0x00}, std::numeric_limits<uint32_t>::max()}),
+                         [](const ::testing::TestParamInfo<UserConsentEncoding>& info) {
+                             return std::string(info.param.name);
+                         });
+
+// A malformed record with two INTEGERs must not let the later one cancel the
+// earlier: the larger consent count wins, never simply the last one read.
+TEST(ParsePrKDF, RepeatedUserConsentKeepsTheLargest)
+{
+    const auto keys =
+        parsePrKDF(rsaKeyWithCommonObjectAttributes(labelledKeyThen({0x02, 0x01, 0x01, 0x02, 0x01, 0x00})));
+
+    ASSERT_EQ(keys.size(), 1U);
+    EXPECT_EQ(keys[0].userConsent, 1U);
+    EXPECT_TRUE(requiresPerOperationAuth(keys[0]));
+}
+
+// The rule both readers share, against the scanned cards: the EC key asks for
+// its PIN per operation, the sample RSA keys do not.
+TEST(PerOperationAuth, FollowsTheScannedCards)
+{
+    const auto ecKeys = parsePrKDF(EC_PRKDF_SINGLE_KEY);
+    ASSERT_EQ(ecKeys.size(), 1U);
+    EXPECT_TRUE(requiresPerOperationAuth(ecKeys[0]));
+
+    for (const auto& key : parsePrKDF(SAMPLE_PRKDF)) {
+        EXPECT_FALSE(requiresPerOperationAuth(key)) << "key '" << key.label << "'";
     }
 }
 

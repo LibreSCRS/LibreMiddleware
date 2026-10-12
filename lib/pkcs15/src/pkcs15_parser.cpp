@@ -136,6 +136,27 @@ uint16_t extractKeySize(const LibreSCRS::SmartCard::Internal::BERField& typeAttr
     return 0;
 }
 
+// userConsent INTEGER (1..pkcs15-ub-userConsent), read whole. Not parseInteger:
+// that refuses an over-wide INTEGER as 0, which every other field reads as
+// absent -- and an absent userConsent means "no PIN per operation", the unsafe
+// answer. This saturates instead, so a non-zero encoding stays non-zero. A
+// zero-length INTEGER carries no value but is still present, and present means
+// the card asked for consent, so it saturates as well.
+uint32_t readUserConsent(const std::vector<uint8_t>& value) noexcept
+{
+    if (value.empty()) {
+        return std::numeric_limits<uint32_t>::max();
+    }
+    uint32_t out = 0;
+    for (const auto b : value) {
+        if (out > (std::numeric_limits<uint32_t>::max() >> 8)) {
+            return std::numeric_limits<uint32_t>::max();
+        }
+        out = (out << 8) | b;
+    }
+    return out;
+}
+
 } // anonymous namespace
 
 // =============================================================================
@@ -389,18 +410,22 @@ std::vector<PrivateKeyInfo> parsePrKDF(std::span<const uint8_t> data)
         // Child 0: CommonObjectAttributes
         if (entry.children.size() >= 1 && entry.children[0].tag == 0x30) {
             key.label = findFirstString(entry.children[0]);
-            // authId — OCTET STRING after the label and optional BIT STRING
-            // flags — and userConsent, the INTEGER that may follow it. Both are
-            // optional, so neither ends the walk: a record carrying only
-            // userConsent must still yield it.
+            // authId is the OCTET STRING after the label and optional BIT
+            // STRING flags, so it is looked for past the label. userConsent is
+            // read wherever it sits: every member here is optional, and a
+            // record carrying only userConsent must still yield it.
             bool pastLabel = false;
             for (const auto& child : entry.children[0].children) {
                 if (!pastLabel && (child.tag == 0x0C || child.tag == 0x13 || child.tag == 0x16)) {
                     pastLabel = true;
                 } else if (pastLabel && child.tag == 0x04 && !child.constructed && key.authId.empty()) {
                     key.authId = child.value;
-                } else if (pastLabel && child.tag == 0x02 && !child.constructed && !child.value.empty()) {
-                    key.userConsent = child.value.back();
+                } else if (child.tag == 0x02 && !child.constructed) {
+                    // The only INTEGER in CommonObjectAttributes, so it needs no
+                    // label to anchor it -- and the label is OPTIONAL. Should a
+                    // record carry more than one, the largest wins: a later 0
+                    // must not cancel an earlier request for consent.
+                    key.userConsent = std::max(key.userConsent, readUserConsent(child.value));
                 }
             }
         }

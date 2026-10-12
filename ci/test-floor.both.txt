@@ -73,7 +73,7 @@ PAdESDssOracleTests 1
 PAdESModuleTests 20
 PAdESUnicodeE2ETests 3
 PKCS11Tests 93
-PKCS15ParserTests 40
+PKCS15ParserTests 49
 PKCS15PluginTests 7
 ParsedCertificateExpectedTests 3
 ParsedCertificateTests 26
