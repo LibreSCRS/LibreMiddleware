@@ -163,6 +163,13 @@ if(LIBRESCRS_VENDOR_CURL)
             -DZLIB_LIBRARY=${ZLIB_LIBRARIES}
             -DZLIB_INCLUDE_DIR=${ZLIB_INCLUDE_DIRS}
             -DUSE_LIBIDN2=OFF
+            # curl's OpenSSL init otherwise asks for OPENSSL_INIT_LOAD_CONFIG,
+            # which reads openssl.cnf from the bundled libcrypto's compiled-in
+            # OPENSSLDIR. Defence in depth only: libcrypto still loads that
+            # file itself on its first fetch, often before curl initialises,
+            # so what keeps a planted openssl.cnf out is an OPENSSLDIR no user
+            # can create, not this flag.
+            -DCURL_DISABLE_OPENSSL_AUTO_LOAD_CONFIG=ON
             ${_curl_osx_args}
         BUILD_BYPRODUCTS  ${CURL_STATIC_LIB}
         LOG_CONFIGURE         TRUE
@@ -286,6 +293,23 @@ if(_opensc_any_patch_applied OR _opensc_sources_changed)
     endif()
 endif()
 
+# libopensc compiles OPENSC_CONF_PATH="$(sysconfdir)/opensc.conf" in as the
+# configuration it reads when OPENSC_CONF is unset, and opensc.conf can name an
+# OpenSSL configuration and modules to load. Left at the default, sysconfdir is
+# ${OPENSC_INSTALL_DIR}/etc: a directory in the build tree, writable by whoever
+# built it, and the file make install puts there was then read by every process
+# loading the module on that host. Point it at a root-owned directory that
+# nothing installs -- on macOS one under /System/Library, which System
+# Integrity Protection keeps anyone from creating -- so the module runs without
+# a configuration file, as it already did on every machine but the build host.
+# make install gets sysconfdir back as the staging directory (see
+# INSTALL_COMMAND), so nothing is written to the compiled-in path.
+if(APPLE)
+    set(OPENSC_SYSCONFDIR /System/Library/LibreSCRS/opensc)
+else()
+    set(OPENSC_SYSCONFDIR /usr/lib/librescrs/opensc)
+endif()
+
 # PCSC strategy: vendored OpenSC owns its own PCSC session for the cards
 # it claims (rs-eid via srbeid driver, etc.). Cross-process PCSC contention
 # is left to the host PC/SC daemon's existing session arbitration; no
@@ -295,6 +319,11 @@ endif()
 # `opensc_static_with_deps` wrapper below.
 set(OPENSC_CONFIGURE_FLAGS
     --prefix=${OPENSC_INSTALL_DIR}
+    --sysconfdir=${OPENSC_SYSCONFDIR}
+    # Defaults to ${sysconfdir}/bash_completion.d, or to the host's own
+    # bash-completion directory when pkg-config finds one; keep the tools'
+    # completion files in the staging tree either way.
+    --with-completiondir=${OPENSC_INSTALL_DIR}/etc/bash_completion.d
     --disable-shared
     --enable-static
     --disable-tests
@@ -383,7 +412,11 @@ ExternalProject_Add(opensc_external
                       "MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}"
                       ${OPENSC_SOURCE_DIR}/configure ${OPENSC_CONFIGURE_FLAGS}
     BUILD_COMMAND     make -j4
-    INSTALL_COMMAND   make install
+    # With autostart off and the completion directory pinned above, only
+    # opensc.conf is installed under sysconfdir. The objects were
+    # compiled by BUILD_COMMAND with the configured value, and install only
+    # copies them, so overriding it here moves the file and not the path.
+    INSTALL_COMMAND   make install sysconfdir=${OPENSC_INSTALL_DIR}/etc
     BUILD_BYPRODUCTS  ${OPENSC_STATIC_LIB}
     BUILD_IN_SOURCE   FALSE
     LOG_CONFIGURE         TRUE
