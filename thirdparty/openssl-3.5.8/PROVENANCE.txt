@@ -17,7 +17,10 @@
 # a flag the line does not record.
 # Fields recorded but NOT measurable, and therefore not compared: source-sha256,
 # signing-key, cross-signed-by, host, and the parts of a configure line that emit
-# no macro at all (`no-shared`, the target triple, --prefix).
+# no macro at all (`no-shared`, `no-module`, the target triple, --prefix,
+# --openssldir). Configure skips `module` when it writes OPENSSL_NO_* macros, so
+# configuration.h is the same with and without it; what `no-module` changes is
+# visible only in the archive, which then defines ossl_legacy_provider_init.
 #
 component: openssl
 version: 3.5.8
@@ -43,14 +46,37 @@ compiler: gcc -fPIC -pthread -m64 -Wa,--noexecstack -Wall -O3 -DOPENSSL_USE_NODE
 built on: Sat Sep 19 13:58:59 2026 UTC
 
 [macosx]
-configure: ./Configure darwin64-x86_64-cc no-shared no-tests no-apps no-docs no-asm no-engine no-async --prefix=<staging>
-configure: ./Configure darwin64-arm64-cc no-shared no-tests no-apps no-docs no-asm no-engine no-async --prefix=<staging>
-configure: lipo -create <x86_64>/lib/libcrypto.a <arm64>/lib/libcrypto.a -output macosx/lib/libcrypto.a
+configure: ./Configure darwin64-x86_64-cc no-shared no-tests no-apps no-docs no-asm no-engine no-async no-module --prefix=/System/Library/LibreSCRS/openssl --openssldir=/System/Library/LibreSCRS/openssl/ssl
+configure: ./Configure darwin64-arm64-cc no-shared no-tests no-apps no-docs no-asm no-engine no-async no-module --prefix=/System/Library/LibreSCRS/openssl --openssldir=/System/Library/LibreSCRS/openssl/ssl
+configure: make install_sw DESTDIR=<staging>
+configure: lipo -create <x86_64-staging>/System/Library/LibreSCRS/openssl/lib/libcrypto.a <arm64-staging>/System/Library/LibreSCRS/openssl/lib/libcrypto.a -output macosx/lib/libcrypto.a
+build-paths: OpenSSL compiles its install layout into libcrypto: OPENSSLDIR (openssl.cnf,
+build-paths: cert.pem and certs/), MODULESDIR (provider modules) and ENGINESDIR. Built
+build-paths: with --prefix=<staging> they named the build host's staging directory, a
+build-paths: path inside a user's home directory that the user can write to; every
+build-paths: process that created an OpenSC context on that host dlopen()ed whatever
+build-paths: legacy.dylib was there, because OpenSC loads the legacy provider by name on
+build-paths: every sc_context_create. Two changes close that:
+build-paths:   no-module builds the legacy provider into libcrypto (providers/build.info:
+build-paths:   `IF[{- $disabled{module} -}]` puts liblegacy into libcrypto with
+build-paths:   STATIC_LEGACY; crypto/provider_predefined.c then lists "legacy" with its
+build-paths:   init function), so loading it by name never touches the disk.
+build-paths:   --prefix/--openssldir name a directory under /System/Library, which does
+build-paths:   not exist and which System Integrity Protection keeps anyone, root
+build-paths:   included, from creating. No configuration, trust anchors or modules are
+build-paths:   read from disk through the compiled-in defaults -- the same as on every
+build-paths:   user's machine before, where the build host's path did not exist either.
+build-paths:   Not /System/Library/OpenSSL: that one exists and holds an openssl.cnf
+build-paths:   libcrypto would load as its configuration, which can name providers to
+build-paths:   load (and a certs/ directory that would become a trust-anchor source).
+build-paths:   The install is staged with
+build-paths:   DESTDIR, so the compiled-in paths are never created on the build host.
+build-paths: Check: strings -n 8 macosx/lib/libcrypto.a | grep -E 'DIR: '
 build-env: MACOSX_DEPLOYMENT_TARGET=15.0 (pins otool -l LC_BUILD_VERSION minos to the
 build-env: project's CMAKE_OSX_DEPLOYMENT_TARGET; clang honours the env var with no
 build-env: -mmacosx-version-min needed on the Configure line -- unset, it defaulted to
 build-env: the active SDK's own major version, 26.0, which is a newer floor than the
-build-env: project targets). make was invoked as `make -j4 PLATFORM=macos-<arch>`: the
+build-env: project targets). make was invoked as `make -j3 PLATFORM=macos-<arch>`: the
 build-env: PLATFORM make variable feeds only crypto/buildinf.h's "platform: " string
 build-env: (util/mkbuildinf.pl; grep '$(PLATFORM)' Makefile has exactly that one hit),
 build-env: never a compiler flag or path, so the override is cosmetic and does not
@@ -63,8 +89,8 @@ build-env: carried and that this file's own [macosx] platform: lines, the gate's
 build-env: macos-prefix universal check, and this component's README section all
 build-env: assume; recorded here because the plain Configure line alone reproduces
 build-env: neither that label nor this file's own expectation of it.
-host: macOS 26.6.2 (build 25G83), Apple clang version 21.0.0 (clang-2100.1.1.101),
-host: SDK /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk (26.5), perl 5.34.1
+host: macOS 27.0.1 (build 26A434), Xcode 27.0 (27A266a), Apple clang version 21.0.0 (clang-2100.3.34.2),
+host: SDK /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk (27.0), perl 5.34.1
 config-delta: three OPENSSL_NO_* macros are new against the 3.5.5 archive (49 -> 52),
 config-delta: none gone -- APPS, DOCS, TESTS, following from no-apps/no-docs/no-tests.
 config-delta: ASM/ENGINE/ASYNC (and the no-engine consequences AFALGENG/CAPIENG/
@@ -78,9 +104,14 @@ config-delta: renamed to OPENSSL_SYS_MACOSX and opensslconf.h's multi-arch
 config-delta: `#if defined(__APPLE__) && ...` wrapper gone; both are 3.5.8's own
 config-delta: header generation, not a build-flag choice, and neither macro is
 config-delta: referenced anywhere in LM outside this vendored tree.
+config-delta: The rebuild that added no-module and the /System/Library paths left
+config-delta: include/ byte-identical (diff -r against the previous staging prefix):
+config-delta: Configure emits no macro for `module` (Configure, the list beginning
+config-delta: 'buildtest-c++', 'fips', 'threads', 'shared', 'module'), and the paths
+config-delta: are compiled into libcrypto, not written into a header.
 platform: macos-arm64
 platform: macos-x86_64
 compiler: cc -fPIC -arch arm64 -O3 -Wall -DL_ENDIAN -DOPENSSL_PIC -D_REENTRANT -DOPENSSL_BUILDING_OPENSSL -DNDEBUG
 compiler: cc -fPIC -arch x86_64 -O3 -Wall -DL_ENDIAN -DOPENSSL_PIC -D_REENTRANT -DOPENSSL_BUILDING_OPENSSL -DNDEBUG
-built on: Thu Sep 24 10:57:31 2026 UTC
-built on: Thu Sep 24 10:58:44 2026 UTC
+built on: Mon Oct 12 11:24:10 2026 UTC
+built on: Mon Oct 12 11:25:29 2026 UTC

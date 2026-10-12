@@ -162,12 +162,26 @@ is a check and not a discovery:
 #   CMAKE_OSX_DEPLOYMENT_TARGET (15.0); unset, clang embeds the active SDK's
 #   own version instead (26.x on a current toolchain), a floor no consumer
 #   here asks for.
+#   no-module: the legacy provider is compiled into libcrypto, so OpenSC's
+#   load-by-name of "legacy" on every context never dlopen()s a file.
+#   --prefix/--openssldir: libcrypto keeps these as its default module,
+#   configuration and trust-anchor locations. A directory under
+#   /System/Library that does not exist cannot be created by anyone while
+#   System Integrity Protection is on; a staging path would point every
+#   process on the build host at a directory its user can write to. Install
+#   with DESTDIR=<staging> so the paths are never created; the files then
+#   land under <staging>/System/Library/LibreSCRS/openssl/, written <prefix>
+#   below.
 export MACOSX_DEPLOYMENT_TARGET=15.0
 ./Configure darwin64-x86_64-cc no-shared no-tests no-apps no-docs \
-    no-asm no-engine no-async --prefix=<staging>
+    no-asm no-engine no-async no-module \
+    --prefix=/System/Library/LibreSCRS/openssl \
+    --openssldir=/System/Library/LibreSCRS/openssl/ssl
 ./Configure darwin64-arm64-cc  no-shared no-tests no-apps no-docs \
-    no-asm no-engine no-async --prefix=<staging>
-lipo -create <x86_64-staging>/lib/libcrypto.a <arm64-staging>/lib/libcrypto.a \
+    no-asm no-engine no-async no-module \
+    --prefix=/System/Library/LibreSCRS/openssl \
+    --openssldir=/System/Library/LibreSCRS/openssl/ssl
+lipo -create <x86_64-prefix>/lib/libcrypto.a <arm64-prefix>/lib/libcrypto.a \
      -output macosx/lib/libcrypto.a          # and the same for libssl.a
 ```
 
@@ -189,7 +203,7 @@ gpg --check-sigs B146647E45A7B33947AB226B2A2C87D161692D40 | grep -i 'D0CB81EF'
 #    where /tmp is a RAM filesystem; -j4, not -j$(nproc).
 tar xf openssl-<ver>.tar.gz && cd openssl-<ver>
 ./Configure <line from above>
-make -j4 && make install_sw
+make -j4 && make install_sw            # macOS: make install_sw DESTDIR=<staging>
 #    macOS only: replace that `make -j4` with
 #    `make -j4 PLATFORM=macos-x86_64` (x86_64 slice) or
 #    `make -j4 PLATFORM=macos-arm64` (arm64 slice), then `make install_sw` as
@@ -203,9 +217,9 @@ make -j4 && make install_sw
 # 3. diff the OPENSSL_NO_* set of the new configuration.h against the old one,
 #    per platform. Every difference is either a deliberate flag change that
 #    gets written down here, or a wrong Configure line. None is ignored.
-grep -oE 'OPENSSL_NO_[A-Z0-9_]+' <staging>/include/openssl/configuration.h | sort -u
+grep -oE 'OPENSSL_NO_[A-Z0-9_]+' <prefix>/include/openssl/configuration.h | sort -u   # Linux: <staging>/include
 
-# 4. copy from the INSTALLED prefix, never from the build tree: the build tree
+# 4. copy from the INSTALLED prefix (macOS: <prefix> as above), never from the build tree: the build tree
 #    still holds the .h.in templates (the Linux headers here carry 28 of them
 #    from exactly that mistake, which is harmless but is the evidence that the
 #    procedure was not written down).
