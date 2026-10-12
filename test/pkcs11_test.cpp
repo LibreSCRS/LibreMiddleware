@@ -21,6 +21,7 @@
 // PKCS#11 unit-test exe and the e2e binaries under test/e2e/ — single
 // source of truth for g_pinFailed / SKIP_IF_PIN_FAILED.
 #include "pin_guard.h"
+#include "pkcs11_operation_login.h"
 
 // ---------------------------------------------------------------------------
 // C_GetFunctionList
@@ -1312,6 +1313,7 @@ TEST_F(PKCS11CardTest, SignAndVerify)
             if (count > 0) {
                 CK_MECHANISM mech = {CKM_RSA_PKCS, nullptr, 0};
                 EXPECT_EQ(C_SignInit(hSession, &mech, keyObj), CKR_OK);
+                OPERATION_LOGIN_OR_ABORT(hSession, keyObj, getTestPIN());
 
                 // SHA-256 DigestInfo prefix (19 bytes) + 32-byte hash = 51 bytes
                 const CK_BYTE digestInfo[] = {0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03,
@@ -1375,6 +1377,7 @@ TEST_F(PKCS11CardTest, SignAndVerifyCombinedSHA256)
             if (count > 0) {
                 CK_MECHANISM mech = {CKM_SHA256_RSA_PKCS, nullptr, 0};
                 EXPECT_EQ(C_SignInit(hSession, &mech, keyObj), CKR_OK);
+                OPERATION_LOGIN_OR_ABORT(hSession, keyObj, getTestPIN());
 
                 const CK_BYTE msg[] = "hello world";
                 CK_BYTE sigBuf[512];
@@ -1633,6 +1636,7 @@ TEST_F(PKCS11CardTest, SignAndVerifyPSS)
                 CK_RV initRv = C_SignInit(hSession, &mechPSS, keyObj);
 
                 if (initRv == CKR_OK) {
+                    OPERATION_LOGIN_OR_ABORT(hSession, keyObj, testPIN);
                     const CK_BYTE msg[] = "PSS signing test";
                     CK_BYTE sigBuf[512];
                     CK_ULONG sigLen = sizeof(sigBuf);
@@ -1679,6 +1683,7 @@ TEST_F(PKCS11CardTest, SignUpdateFinalPSS)
                 CK_RV initRv = C_SignInit(hSession, &mechPSS, keyObj);
 
                 if (initRv == CKR_OK) {
+                    OPERATION_LOGIN_OR_ABORT(hSession, keyObj, testPIN);
                     CK_BYTE part1[] = "PSS multi";
                     CK_BYTE part2[] = "-part test";
                     EXPECT_EQ(C_SignUpdate(hSession, part1, sizeof(part1) - 1), CKR_OK);
@@ -1732,6 +1737,7 @@ TEST_F(PKCS11CardTest, SignAndVerifyCombinedSHA512)
                 CK_RV initRv = C_SignInit(hSession, &mech, keyObj);
 
                 if (initRv == CKR_OK) {
+                    OPERATION_LOGIN_OR_ABORT(hSession, keyObj, testPIN);
                     const CK_BYTE msg[] = "hello world";
                     CK_BYTE sigBuf[256];
                     CK_ULONG sigLen = sizeof(sigBuf);
@@ -1880,6 +1886,7 @@ TEST_F(PKCS11CardTest, SignRejectsAfterSignUpdate)
             if (count > 0) {
                 CK_MECHANISM mech = {CKM_SHA256_RSA_PKCS, nullptr, 0};
                 EXPECT_EQ(C_SignInit(hSession, &mech, keyObj), CKR_OK);
+                OPERATION_LOGIN_OR_ABORT(hSession, keyObj, getTestPIN());
 
                 CK_BYTE data[] = "hello";
                 EXPECT_EQ(C_SignUpdate(hSession, data, sizeof(data) - 1), CKR_OK);
@@ -1925,6 +1932,7 @@ TEST_F(PKCS11CardTest, SignFinalSizeQuery)
             if (count > 0) {
                 CK_MECHANISM mech = {CKM_SHA256_RSA_PKCS, nullptr, 0};
                 EXPECT_EQ(C_SignInit(hSession, &mech, keyObj), CKR_OK);
+                OPERATION_LOGIN_OR_ABORT(hSession, keyObj, getTestPIN());
 
                 CK_BYTE data[] = "test data for size query";
                 EXPECT_EQ(C_SignUpdate(hSession, data, sizeof(data) - 1), CKR_OK);
@@ -1977,6 +1985,7 @@ TEST_F(PKCS11CardTest, SignUpdateMultipleChunks)
                 // Sign "hello world" in two chunks via multi-part
                 CK_MECHANISM mech = {CKM_SHA256_RSA_PKCS, nullptr, 0};
                 EXPECT_EQ(C_SignInit(hSession, &mech, keyObj), CKR_OK);
+                OPERATION_LOGIN_OR_ABORT(hSession, keyObj, getTestPIN());
 
                 CK_BYTE chunk1[] = "hello ";
                 CK_BYTE chunk2[] = "world";
@@ -1990,6 +1999,7 @@ TEST_F(PKCS11CardTest, SignUpdateMultipleChunks)
 
                 // Now sign the same message in single-part
                 EXPECT_EQ(C_SignInit(hSession, &mech, keyObj), CKR_OK);
+                OPERATION_LOGIN_OR_ABORT(hSession, keyObj, getTestPIN());
                 CK_BYTE wholeMsg[] = "hello world";
                 CK_BYTE sigSingle[256];
                 CK_ULONG sigSingleLen = sizeof(sigSingle);
@@ -2034,6 +2044,7 @@ TEST_F(PKCS11CardTest, SignUpdateZeroLength)
             if (count > 0) {
                 CK_MECHANISM mech = {CKM_SHA256_RSA_PKCS, nullptr, 0};
                 EXPECT_EQ(C_SignInit(hSession, &mech, keyObj), CKR_OK);
+                OPERATION_LOGIN_OR_ABORT(hSession, keyObj, getTestPIN());
 
                 // Zero-length update should be a valid no-op
                 EXPECT_EQ(C_SignUpdate(hSession, nullptr, 0), CKR_OK);
@@ -2184,6 +2195,7 @@ TEST_F(PKCS11CardTest, SignFinalNullSigLen)
             if (count > 0) {
                 CK_MECHANISM mech = {CKM_SHA256_RSA_PKCS, nullptr, 0};
                 EXPECT_EQ(C_SignInit(hSession, &mech, keyObj), CKR_OK);
+                OPERATION_LOGIN_OR_ABORT(hSession, keyObj, getTestPIN());
 
                 CK_BYTE data[] = "test";
                 EXPECT_EQ(C_SignUpdate(hSession, data, 4), CKR_OK);

@@ -10,10 +10,13 @@
 #include <LibreSCRS/Export.h>
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
 #include <mutex>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 
@@ -44,6 +47,18 @@ void checkRv(CK_RV rv, const char* operation)
 
 } // namespace
 
+namespace detail {
+
+std::span<const uint8_t> operationPinOf(std::span<const uint8_t> pin) noexcept
+{
+    const auto colon = std::find(pin.begin(), pin.end(), static_cast<uint8_t>(':'));
+    if (colon == pin.end())
+        return pin;
+    return pin.subspan(static_cast<std::size_t>(colon - pin.begin()) + 1);
+}
+
+} // namespace detail
+
 struct LIBRESCRS_INTERNAL Pkcs11Token::Impl
 {
     /// Shared handle into the process-wide loaded-module cache. Keeps
@@ -53,6 +68,10 @@ struct LIBRESCRS_INTERNAL Pkcs11Token::Impl
     Pkcs11ModuleHandle module;
     CK_FUNCTION_LIST* funcs = nullptr;
     CK_SESSION_HANDLE session = 0;
+    CK_SLOT_ID slotId = 0;
+    /// A failed context login left an operation active on the only session and
+    /// no replacement could be opened; the token cannot sign any more.
+    bool sessionUnusable = false;
     CK_OBJECT_HANDLE privateKey = 0;
     bool loggedIn = false;
     std::mutex sessionMutex;
@@ -66,6 +85,16 @@ struct LIBRESCRS_INTERNAL Pkcs11Token::Impl
     /// The termination the resolvedChain's caller asserted (Unterminated
     /// whenever the on-token fallback is active).
     ChainTermination resolvedTermination = ChainTermination::Unterminated;
+
+    /// The private key carries CKA_ALWAYS_AUTHENTICATE: the module wants the PIN
+    /// again after every C_SignInit (PKCS#11 v2.40 section 4.9). Only for such a
+    /// key does the token keep a cleansing copy of the PIN, for its own lifetime.
+    bool alwaysAuthenticate = false;
+    LibreSCRS::Secure::Buffer operationPin;
+    /// The module refused the per-operation PIN once -- at C_Login, or at a
+    /// C_Sign that presents it. Every later sign() refuses before C_SignInit,
+    /// so the token never spends a second try.
+    bool contextLoginRefused = false;
 
     ~Impl()
     {
@@ -81,8 +110,9 @@ struct LIBRESCRS_INTERNAL Pkcs11Token::Impl
         }
     }
 
-    void openSessionAndLogin(CK_SLOT_ID slotId, std::span<const uint8_t> pin)
+    void openSessionAndLogin(CK_SLOT_ID slot, std::span<const uint8_t> pin)
     {
+        slotId = slot;
         checkRv(funcs->C_OpenSession(slotId, CKF_SERIAL_SESSION | CKF_RW_SESSION, nullptr, nullptr, &session),
                 "C_OpenSession");
         // C_Login copies the PIN into the module's session state — we do not
@@ -93,6 +123,81 @@ struct LIBRESCRS_INTERNAL Pkcs11Token::Impl
                            static_cast<CK_ULONG>(pin.size()));
         checkRv(rv, "C_Login");
         loggedIn = true;
+    }
+
+    /// Read the key's CKA_ALWAYS_AUTHENTICATE once, after it was found.
+    void notePerOperationKey(std::span<const uint8_t> pin)
+    {
+        CK_BBOOL value = CK_FALSE;
+        CK_ATTRIBUTE attribute{CKA_ALWAYS_AUTHENTICATE, &value, sizeof(value)};
+        if (funcs->C_GetAttributeValue(session, privateKey, &attribute, 1) == CKR_OK && value != CK_FALSE) {
+            alwaysAuthenticate = true;
+            operationPin = LibreSCRS::Secure::Buffer{detail::operationPinOf(pin)};
+        }
+    }
+
+    /// Authorise the operation C_SignInit just started. Any failure throws
+    /// rather than falling through to another mechanism; a PIN verdict is also
+    /// remembered (other errors say nothing about the PIN): a second
+    /// attempt, now or in a later sign(), would only spend another try of the
+    /// card's retry counter.
+    void authoriseOperation()
+    {
+        if (!alwaysAuthenticate)
+            return;
+        const CK_RV rv = funcs->C_Login(session, CKU_CONTEXT_SPECIFIC,
+                                        reinterpret_cast<CK_UTF8CHAR_PTR>(const_cast<uint8_t*>(operationPin.data())),
+                                        static_cast<CK_ULONG>(operationPin.size()));
+        if (rv == CKR_PIN_INCORRECT || rv == CKR_PIN_LOCKED)
+            contextLoginRefused = true;
+        if (rv != CKR_OK)
+            endUnauthorisedOperation();
+        checkRv(rv, "C_Login(CKU_CONTEXT_SPECIFIC)");
+    }
+
+    /// The operation C_SignInit started stays active after a failed context
+    /// login, and a later C_SignInit would be refused with
+    /// CKR_OPERATION_ACTIVE. PKCS#11 v2.40 has no cancel call; closing a session
+    /// ends its operations by definition. The USER login belongs to the token,
+    /// not to a session, so it survives as long as another session on the slot
+    /// is open: open the new one first, then close the old one. Nothing is
+    /// sent to the card. If no new session can be opened the old one stays,
+    /// with its operation active, and the token refuses every further sign().
+    void endUnauthorisedOperation()
+    {
+        CK_SESSION_HANDLE replacement = 0;
+        const CK_RV rv =
+            funcs->C_OpenSession(slotId, CKF_SERIAL_SESSION | CKF_RW_SESSION, nullptr, nullptr, &replacement);
+        if (rv != CKR_OK) {
+            sessionUnusable = true;
+            return;
+        }
+        // Only a busy session fails to close, and sessionMutex rules that out; the
+        // USER login is token-wide, so a leaked old handle cannot weaken the token.
+        (void)funcs->C_CloseSession(session);
+        session = replacement;
+    }
+
+    /// A module may present the context-specific PIN when C_Sign runs rather
+    /// than at C_Login (LibreSCRS's own module VERIFYs it in the signing
+    /// transaction). A PIN refusal there is the same refusal: remembered, and
+    /// thrown rather than falling through to another mechanism that would
+    /// present the PIN again.
+    void refuseOnPinRefusal(CK_RV rv, const char* operation)
+    {
+        if (alwaysAuthenticate && (rv == CKR_PIN_INCORRECT || rv == CKR_PIN_LOCKED)) {
+            contextLoginRefused = true;
+            checkRv(rv, operation);
+        }
+    }
+
+    void refuseIfUnusable() const
+    {
+        if (sessionUnusable)
+            throw std::runtime_error("The PKCS#11 session could not be replaced after a failed per-operation login "
+                                     "(C_OpenSession failed); the token is unusable");
+        if (contextLoginRefused)
+            throw std::runtime_error("C_Login(CKU_CONTEXT_SPECIFIC) was refused earlier; not trying the PIN again");
     }
 
     void findPrivateKey(const std::string& keyAlias, const std::vector<uint8_t>& keyId)
@@ -282,6 +387,7 @@ Pkcs11Token::Pkcs11Token(Pkcs11ModuleHandle module, const LibreSCRS::Secure::Buf
     CK_SLOT_ID slotId = impl->findSlotByReaderName(readerName);
     impl->openSessionAndLogin(slotId, std::span<const uint8_t>{pin.data(), pin.size()});
     impl->findPrivateKey(keyAlias, keyId);
+    impl->notePerOperationKey(std::span<const uint8_t>{pin.data(), pin.size()});
 }
 
 Pkcs11Token::Pkcs11Token(Pkcs11ModuleHandle module, const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
@@ -298,6 +404,7 @@ Pkcs11Token::Pkcs11Token(Pkcs11ModuleHandle module, const LibreSCRS::Secure::Buf
     impl->openSessionAndLogin(static_cast<CK_SLOT_ID>(rawSlotId.slotId),
                               std::span<const uint8_t>{pin.data(), pin.size()});
     impl->findPrivateKey(keyAlias, keyId);
+    impl->notePerOperationKey(std::span<const uint8_t>{pin.data(), pin.size()});
 }
 
 Pkcs11Token::~Pkcs11Token() = default;
@@ -306,6 +413,7 @@ std::vector<uint8_t> Pkcs11Token::sign(std::span<const uint8_t> hash, const std:
                                        std::span<const uint8_t> rawData)
 {
     std::scoped_lock lock(impl->sessionMutex);
+    impl->refuseIfUnusable();
 
     // Route to CKM_ECDSA for ECDSA / JWS ES256/ES384/ES512 aliases.
     // Previously we matched any string starting with "ES" which would
@@ -339,13 +447,18 @@ std::vector<uint8_t> Pkcs11Token::sign(std::span<const uint8_t> hash, const std:
             CK_MECHANISM mech{combined, nullptr, 0};
             CK_RV initRv = impl->funcs->C_SignInit(impl->session, &mech, impl->privateKey);
             if (initRv == CKR_OK) {
+                // If this attempt fails for any reason but a refused PIN, the fallback below
+                // logs in for its own operation again.
+                impl->authoriseOperation();
                 CK_ULONG sigLen = 0;
                 CK_RV sizeRv = impl->funcs->C_Sign(impl->session, const_cast<CK_BYTE_PTR>(rawData.data()),
                                                    rawData.size(), nullptr, &sigLen);
+                impl->refuseOnPinRefusal(sizeRv, "C_Sign (length)");
                 if (sizeRv == CKR_OK && sigLen > 0) {
                     std::vector<uint8_t> signature(sigLen);
                     CK_RV signRv = impl->funcs->C_Sign(impl->session, const_cast<CK_BYTE_PTR>(rawData.data()),
                                                        rawData.size(), signature.data(), &sigLen);
+                    impl->refuseOnPinRefusal(signRv, "C_Sign");
                     if (signRv == CKR_OK) {
                         signature.resize(sigLen);
                         return signature;
@@ -369,15 +482,18 @@ std::vector<uint8_t> Pkcs11Token::sign(std::span<const uint8_t> hash, const std:
     else
         mechanism = {CKM_RSA_PKCS, nullptr, 0};
     checkRv(impl->funcs->C_SignInit(impl->session, &mechanism, impl->privateKey), "C_SignInit");
+    impl->authoriseOperation();
 
     CK_ULONG sigLen = 0;
-    checkRv(impl->funcs->C_Sign(impl->session, const_cast<CK_BYTE_PTR>(hash.data()), hash.size(), nullptr, &sigLen),
-            "C_Sign (length)");
+    CK_RV rv = impl->funcs->C_Sign(impl->session, const_cast<CK_BYTE_PTR>(hash.data()), hash.size(), nullptr, &sigLen);
+    impl->refuseOnPinRefusal(rv, "C_Sign (length)");
+    checkRv(rv, "C_Sign (length)");
 
     std::vector<uint8_t> signature(sigLen);
-    checkRv(impl->funcs->C_Sign(impl->session, const_cast<CK_BYTE_PTR>(hash.data()), hash.size(), signature.data(),
-                                &sigLen),
-            "C_Sign");
+    rv = impl->funcs->C_Sign(impl->session, const_cast<CK_BYTE_PTR>(hash.data()), hash.size(), signature.data(),
+                             &sigLen);
+    impl->refuseOnPinRefusal(rv, "C_Sign");
+    checkRv(rv, "C_Sign");
     signature.resize(sigLen);
     return signature;
 }

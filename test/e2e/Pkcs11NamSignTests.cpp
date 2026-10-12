@@ -6,6 +6,7 @@
 // both Auth and Sign keys (one PIN, two keys).
 
 #include "pin_guard.h"
+#include "pkcs11_operation_login.h"
 
 // PKCS#11 platform macros (see Pkcs11AppletSuiteGen1MultiPinTests.cpp for rationale).
 #define CK_PTR *
@@ -248,8 +249,17 @@ TEST_F(Pkcs11NamFixture, NamContactless_LoginAndSign_Succeeds)
     // cryptographic round-trip check of this path lives in
     // NamContactless_LcFaithfulSign_VerifiesAgainstCert; this smoke just
     // asserts the post-login slot self-transform is signable.
+    //
+    // Pure-PACE runs (no PIN in the environment) cannot authorise a key that
+    // wants its PIN for every signature.
+    if (pinEnv.empty() && LibreSCRS::Tests::E2E::keyAsksForPinPerOperation(session, key)) {
+        (void)C_Logout(session);
+        (void)C_CloseSession(session);
+        GTEST_SKIP() << "the signing key wants its PIN for every signature; set LIBRESCRS_TEST_PIN";
+    }
     CK_MECHANISM mech{CKM_SHA256_RSA_PKCS, nullptr, 0};
     ASSERT_EQ(C_SignInit(session, &mech, key), CKR_OK);
+    OPERATION_LOGIN_OR_ABORT(session, key, pinEnv);
 
     std::array<CK_BYTE, 32> data{};
     for (size_t i = 0; i < data.size(); ++i)
@@ -407,6 +417,8 @@ TEST_F(Pkcs11NamFixture, NamContactless_LcFaithfulSign_VerifiesAgainstCert)
         // Faithful LibreCelik path: combined hash+sign over the raw payload.
         CK_MECHANISM mech{CKM_SHA256_RSA_PKCS, nullptr, 0};
         CK_RV signRv = C_SignInit(session, &mech, k.handle);
+        if (signRv == CKR_OK)
+            OPERATION_LOGIN_OR_ABORT(session, k.handle, env("LIBRESCRS_TEST_PIN"));
         CK_ULONG sigLen = 0;
         std::vector<CK_BYTE> sig;
         if (signRv == CKR_OK)

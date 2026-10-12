@@ -28,10 +28,12 @@ class Pkcs11Token
 {
 public:
     // pin: @ref LibreSCRS::Secure::Buffer borrowed from the caller. The token
-    // does not retain a pointer into the buffer past construction; the bytes
-    // are passed straight to C_Login which copies them into the PKCS#11
-    // module. The buffer's cleansing-on-destroy contract is enforced at the
-    // type system — no caller-side discipline required.
+    // keeps no pointer into the buffer past construction: the bytes go to
+    // C_Login, which copies them into the PKCS#11 module. The one exception is
+    // a key the module publishes with CKA_ALWAYS_AUTHENTICATE, which needs the
+    // PIN again after every C_SignInit; for it the token keeps a cleansing copy
+    // of its own for its lifetime. The buffer's cleansing-on-destroy contract
+    // is enforced at the type system -- no caller-side discipline required.
     //
     // module: live handle into the process-shared loaded module cache
     // owned by @ref Pkcs11ModuleManager. The Token does NOT drive
@@ -139,5 +141,15 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl;
 };
+
+namespace detail {
+
+/// The PIN a per-operation login presents for the login credential @p pin:
+/// the part after the first ':' of a "CAN:PIN" credential (the format the LM
+/// module's session login splits the same way), else @p pin whole. The CAN
+/// belongs to the session login, never to one operation.
+[[nodiscard]] std::span<const uint8_t> operationPinOf(std::span<const uint8_t> pin) noexcept;
+
+} // namespace detail
 
 } // namespace libresign

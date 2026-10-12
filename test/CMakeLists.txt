@@ -1030,6 +1030,11 @@ if(BUILD_SIGNING)
 
         add_executable(Pkcs11TokenTests pkcs11_token_test.cpp)
         target_link_libraries(Pkcs11TokenTests PRIVATE GTest::gtest_main LibreSign SigningTestSupport)
+        target_include_directories(Pkcs11TokenTests PRIVATE
+            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include
+            ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/include)
+        target_compile_definitions(Pkcs11TokenTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
         gtest_discover_tests(Pkcs11TokenTests)
 
         add_executable(Pkcs11ModuleManagerTests pkcs11_module_manager_test.cpp)

@@ -16,6 +16,7 @@
 //     g_pinFailed before the next test runs.
 
 #include "pin_guard.h"
+#include "pkcs11_operation_login.h"
 
 // Platform-specific PKCS#11 macros must be defined BEFORE pkcs11.h is
 // included (the header is OASIS-portable and asks consumers to define
@@ -241,6 +242,7 @@ TEST_F(Pkcs11AppletSuiteGen1Fixture, DISABLED_AppletSuiteGen1Contact_SignSlotSig
 
     CK_MECHANISM mech{CKM_RSA_PKCS, nullptr, 0};
     ASSERT_EQ(C_SignInit(session, &mech, key), CKR_OK);
+    OPERATION_LOGIN_OR_ABORT(session, key, env("LIBRESCRS_TEST_PIN_QSCD"));
 
     // 32-byte SHA-256 digest stand-in (test-only). Real signing flows
     // would prepend the DigestInfo structure for CKM_RSA_PKCS but for

@@ -19,6 +19,7 @@
 //     g_pinFailed before the next PIN-using test runs.
 
 #include "pin_guard.h"
+#include "pkcs11_operation_login.h"
 
 // Platform-specific PKCS#11 macros must be defined BEFORE pkcs11.h is
 // included (the header is OASIS-portable and asks consumers to define
@@ -368,6 +369,7 @@ TEST_F(Pkcs11PksFixture, PksContact_LoginAndSign_Succeeds)
 
     CK_MECHANISM mech{CKM_RSA_PKCS, nullptr, 0};
     ASSERT_EQ(C_SignInit(session, &mech, key), CKR_OK);
+    OPERATION_LOGIN_OR_ABORT(session, key, env("LIBRESCRS_TEST_PIN"));
 
     CK_ULONG sigLen = 0;
     ASSERT_EQ(C_Sign(session, signInput.data(), static_cast<CK_ULONG>(signInput.size()), nullptr, &sigLen), CKR_OK);
