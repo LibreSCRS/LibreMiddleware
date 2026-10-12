@@ -411,7 +411,12 @@ ExternalProject_Add(opensc_external
                       "OPENSSL_LIBS=${OPENSC_OPENSSL_LIBS}"
                       "MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}"
                       ${OPENSC_SOURCE_DIR}/configure ${OPENSC_CONFIGURE_FLAGS}
-    BUILD_COMMAND     make -j4
+    # The deployment target goes to the compile as well: clang reads it from
+    # the environment of each compile, and configure does not turn it into a
+    # flag, so without it here every object carries the SDK's own version.
+    BUILD_COMMAND     ${CMAKE_COMMAND} -E env
+                      "MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}"
+                      make -j4
     # With autostart off and the completion directory pinned above, only
     # opensc.conf is installed under sysconfdir. The objects were
     # compiled by BUILD_COMMAND with the configured value, and install only
