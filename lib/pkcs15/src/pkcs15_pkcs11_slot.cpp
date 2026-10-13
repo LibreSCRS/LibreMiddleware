@@ -115,7 +115,7 @@ using LibreSCRS::Pkcs11::Internal::kCkoPrivateKey;
     namespace Crv = LibreSCRS::Pkcs11::Internal::Crv;
     if (verdict.success)
         return Crv::Ok;
-    if (verdict.blocked || verdict.retriesLeft == 0)
+    if (::pkcs15::refusalBlocksPin(verdict))
         return Crv::PinLocked;
     if (verdict.retriesLeft > 0)
         return Crv::PinIncorrect;
@@ -534,7 +534,7 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
                 auto result = apdu.verifyPIN(*selectedPin, realPin);
                 if (!result.success) {
                     OPENSSL_cleanse(realPin.data(), realPin.size());
-                    if (result.blocked)
+                    if (::pkcs15::refusalBlocksPin(result))
                         return Crv::PinLocked;
                     return Crv::PinIncorrect;
                 }
@@ -651,7 +651,7 @@ unsigned long Pkcs15Slot::login(unsigned long userType, std::span<const std::uin
         auto result = apdu.verifyPIN(pinInfoForVerify, pinStr);
         if (!result.success) {
             OPENSSL_cleanse(pinStr.data(), pinStr.size());
-            if (result.blocked)
+            if (::pkcs15::refusalBlocksPin(result))
                 return Crv::PinLocked;
             return Crv::PinIncorrect;
         }

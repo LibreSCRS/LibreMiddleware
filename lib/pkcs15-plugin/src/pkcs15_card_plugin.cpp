@@ -1296,8 +1296,9 @@ public:
             // The card's refusal of the deposited PIN is reported as such, as
             // verifyPIN reports it; any other failure stays PluginError.
             const auto refusedOutcome = [&card] {
-                return card.pinRefusal()->blocked ? LibreSCRS::Plugin::SignResultOutcome::PinBlocked
-                                                  : LibreSCRS::Plugin::SignResultOutcome::PinIncorrect;
+                return pkcs15::refusalBlocksPin(*card.pinRefusal())
+                           ? LibreSCRS::Plugin::SignResultOutcome::PinBlocked
+                           : LibreSCRS::Plugin::SignResultOutcome::PinIncorrect;
             };
             std::vector<std::uint8_t> sig;
             try {

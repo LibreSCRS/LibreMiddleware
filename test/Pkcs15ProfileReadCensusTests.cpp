@@ -104,6 +104,9 @@ struct ScriptedPkcs15Card
     /// VERIFY carrying a PIN: the PINs this card accepts. Empty answers 6D00.
     std::set<std::string> acceptedPins;
     int triesLeft = 3;
+    /// The wrong PIN that spends the last try is answered 63C0 rather than
+    /// 6983 (some cards do); the VERIFY after it is 6983 either way.
+    bool lastTryAnswers63C0 = false;
     /// MSE SET and PSO COMPUTE DIGITAL SIGNATURE (a fixed 256-byte signature).
     bool answersSigning = false;
 
@@ -170,7 +173,7 @@ struct ScriptedPkcs15Card
             }
             --triesLeft;
             if (triesLeft == 0)
-                return {{}, 0x69, 0x83};
+                return lastTryAnswers63C0 ? APDUResponse{{}, 0x63, 0xC0} : APDUResponse{{}, 0x69, 0x83};
             return {{}, 0x63, static_cast<std::uint8_t>(0xC0 | triesLeft)};
         }
         if (answersSigning && cmd.ins == 0x22) // MSE SET
@@ -793,14 +796,44 @@ TEST(Pkcs15SlotAlwaysAuthenticate, RefusedContextPinIsReportedApartFromAFailedSi
 
 TEST(Pkcs15SlotAlwaysAuthenticate, BlockedContextPinIsReportedAsLocked)
 {
-    auto s = makeSlotRig("AA Slot Reader 10", true);
-    ASSERT_NE(s.slot, nullptr);
-    s.rig.card->triesLeft = 1;
+    for (const bool answers63C0 : {false, true}) {
+        SCOPED_TRACE(answers63C0 ? "last try answered 63C0" : "last try answered 6983");
+        auto s = makeSlotRig(answers63C0 ? "AA Slot Reader 11" : "AA Slot Reader 10", true);
+        ASSERT_NE(s.slot, nullptr);
+        s.rig.card->triesLeft = 1;
+        s.rig.card->lastTryAnswers63C0 = answers63C0;
 
-    const auto blocked = s.slot->signDataWithContextPin(kToBeSigned, kCkmRsaPkcs, kKeyId,
-                                                        LibreSCRS::Secure::String{std::string_view{"0000"}});
-    ASSERT_FALSE(blocked.has_value());
-    EXPECT_EQ(blocked.error(), Crv::PinLocked);
+        const auto blocked = s.slot->signDataWithContextPin(kToBeSigned, kCkmRsaPkcs, kKeyId,
+                                                            LibreSCRS::Secure::String{std::string_view{"0000"}});
+        ASSERT_FALSE(blocked.has_value());
+        EXPECT_EQ(blocked.error(), Crv::PinLocked);
+    }
+}
+
+// The session login reads the card's refusal as the per-operation path does:
+// a wrong PIN that leaves no tries (63C0) is a blocked PIN, not a wrong one.
+TEST(Pkcs15SlotLogin, WrongPinThatSpendsTheLastTryIsLocked)
+{
+    for (const bool answers63C0 : {false, true}) {
+        SCOPED_TRACE(answers63C0 ? "last try answered 63C0" : "last try answered 6983");
+        auto s = makeSlotRig(answers63C0 ? "AA Login Reader 1" : "AA Login Reader 0", false);
+        ASSERT_NE(s.slot, nullptr);
+        s.rig.card->lastTryAnswers63C0 = answers63C0;
+        s.rig.card->triesLeft = 2;
+        EXPECT_EQ(s.slot->login(kCkuUser, pinBytes("0000")), Crv::PinIncorrect) << "one try left is not blocked";
+        EXPECT_EQ(s.slot->login(kCkuUser, pinBytes("0000")), Crv::PinLocked);
+    }
+}
+
+TEST(Pkcs15PinRefusal, NoTriesLeftIsABlockedPin)
+{
+    using pkcs15::PinResult;
+    using pkcs15::refusalBlocksPin;
+    EXPECT_TRUE(refusalBlocksPin(PinResult{false, 0, true}));   // 6983
+    EXPECT_TRUE(refusalBlocksPin(PinResult{false, 0, false}));  // 63C0
+    EXPECT_FALSE(refusalBlocksPin(PinResult{false, 1, false})); // 63C1
+    EXPECT_FALSE(refusalBlocksPin(PinResult{false, -1, false})) << "an unknown count is not a blocked PIN";
+    EXPECT_FALSE(refusalBlocksPin(PinResult{true, -1, false}));
 }
 
 // ---------------------------------------------------------------------------
@@ -860,10 +893,19 @@ TEST(Pkcs15PluginPinCredential, ErasedPinStopsTheNextSignBeforeTheCard)
 // held at the layer the plugin reads it from.)
 TEST(Pkcs15CardSignPin, RefusedPinIsPresentedOnceAndKeptForTheCaller)
 {
-    for (const int triesBefore : {3, 1}) {
-        SCOPED_TRACE(triesBefore);
-        auto rig = makeSigningRig(triesBefore == 3 ? "AA Card Reader 0" : "AA Card Reader 1", true);
+    struct Case
+    {
+        int triesBefore;
+        bool answers63C0;
+        const char* reader;
+    };
+    for (const auto& c :
+         {Case{3, false, "AA Card Reader 0"}, Case{1, false, "AA Card Reader 1"}, Case{1, true, "AA Card Reader 2"}}) {
+        const int triesBefore = c.triesBefore;
+        SCOPED_TRACE(c.reader);
+        auto rig = makeSigningRig(c.reader, true);
         rig.card->triesLeft = triesBefore;
+        rig.card->lastTryAnswers63C0 = c.answers63C0;
         auto& conn = LibreSCRS::SmartCard::detail::unwrap(*rig.session);
         PlainChannel channel(conn, pkcs15Aid());
         pkcs15::PKCS15Card card(channel);
@@ -881,11 +923,17 @@ TEST(Pkcs15CardSignPin, RefusedPinIsPresentedOnceAndKeptForTheCaller)
 
         ASSERT_TRUE(card.pinRefusal().has_value());
         EXPECT_FALSE(card.pinRefusal()->success);
+        // The plugin reports PinBlocked exactly when refusalBlocksPin holds.
         if (triesBefore == 3) {
             EXPECT_FALSE(card.pinRefusal()->blocked);
             EXPECT_EQ(card.pinRefusal()->retriesLeft, 2);
+            EXPECT_FALSE(pkcs15::refusalBlocksPin(*card.pinRefusal()));
+        } else if (c.answers63C0) {
+            EXPECT_EQ(card.pinRefusal()->retriesLeft, 0);
+            EXPECT_TRUE(pkcs15::refusalBlocksPin(*card.pinRefusal())) << "63C0 leaves no tries: a blocked PIN";
         } else {
             EXPECT_TRUE(card.pinRefusal()->blocked) << "6983 is a blocked PIN, not 'no strategy worked'";
+            EXPECT_TRUE(pkcs15::refusalBlocksPin(*card.pinRefusal()));
         }
     }
 }

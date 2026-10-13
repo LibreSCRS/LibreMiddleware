@@ -146,6 +146,14 @@ struct PinResult
     bool blocked = false;
 };
 
+/// True when the card's refusal of a PIN leaves it blocked: 6983, or a wrong
+/// PIN answered 63C0 -- no tries left, so every later VERIFY is refused. The
+/// one reading of a refusal for every PKCS#15 path that reports a blocked PIN.
+[[nodiscard]] constexpr bool refusalBlocksPin(const PinResult& result) noexcept
+{
+    return !result.success && (result.blocked || result.retriesLeft == 0);
+}
+
 // Signing scheme — abstracts PKCS#11 mechanism types for the card layer.
 enum class SignScheme : uint8_t {
     RsaPkcs1,
