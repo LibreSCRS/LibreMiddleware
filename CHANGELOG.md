@@ -65,6 +65,53 @@ Notable user-visible changes per release. Format follows
 
 ### Changed
 
+- **The card now says when a key needs its PIN for every operation, and the
+  PKCS#11 module holds clients to it.** A PKCS#15 key whose
+  `CommonObjectAttributes` carry a `userConsent` (non-zero, or zero-length,
+  which counts as consent: fail-closed) — and an OpenSC key
+  with `user_consent`, such as the PIV Digital Signature key (9C) — is reported
+  through the new `CertificateData::alwaysAuthenticate` and published by the
+  middleware's PKCS#11 module with `CKA_ALWAYS_AUTHENTICATE = TRUE`. The module
+  implements `C_Login(CKU_CONTEXT_SPECIFIC)` for such a key: the PIN given after
+  `C_SignInit` is verified, presented to the card in the same transaction as
+  the signature and erased when the operation ends; the PIN of the session
+  login is never presented for it, and `C_Sign` without that login returns
+  `CKR_USER_NOT_LOGGED_IN`. `userConsent` is now read as a whole INTEGER, with
+  or without a label (a value of 256 used to read as absent). The middleware's
+  own signing path authorises each signature this way. A plugin given a PIN
+  through `setCredentials("pin")` presents it in the same card transaction as
+  `sign` / `decipher`, which report a refused PIN as `PinIncorrect` or
+  `PinBlocked`.
+
+  **Behaviour change for PIV users.** Until now the module re-presented the
+  session PIN before every PIV 9C signature, so a client that never sent a
+  context-specific login still signed. Such a client now gets
+  `CKR_USER_NOT_LOGGED_IN`, as PKCS#11 has always specified for a key marked
+  this way.
+
+  **Behaviour change for PKCS#15 clients.** On a PKCS#15 slot of the
+  middleware's own module, `C_Login(CKU_USER)` now returns `CKR_PIN_LOCKED`,
+  not `CKR_PIN_INCORRECT`, when a wrong PIN spends the last try (the card
+  answers `63C0`). A client that tells "try again" from "unblock with the PUK"
+  by that return value now takes the second path at that moment, not one call
+  later.
+
+  **Behaviour change for hosts of the OpenSC card plugin.** The plugin no
+  longer lets OpenSC keep or replay a cached PIN. A host that calls
+  `verifyPIN` and later `sign` / `decipher` as two separate calls for a key
+  must deposit the PIN with the operation (`setCredentials("pin")`), so that it
+  is presented inside that operation's own card transaction. A key the card
+  guards with no PIN, such as the PIV Card Authentication key (9E), runs
+  without one whether or not a PIN is deposited.
+
+  **Rebuild the host and its plugins together.** `CertificateData` grows
+  (88 -> 96 bytes) and `SignResultOutcome` / `DecipherResultOutcome` gain two
+  values within plugin ABI 9, which has not been released. The registry checks
+  only the ABI number, so a host and plugins built on either side of this
+  change load each other without complaint while disagreeing on the layout.
+  Rebuild every component that loads plugins from the same revision, and do
+  not mix installation prefixes built before and after it.
+
 - **The installed CMake package exports one target namespace, `LibreSCRS::`.**
   Up to 4.x the export carried `LibreMiddleware::` and the config file then
   mirrored every target under `LibreSCRS::` so a consumer could write either —
