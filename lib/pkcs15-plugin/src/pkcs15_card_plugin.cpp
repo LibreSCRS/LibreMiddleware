@@ -567,6 +567,9 @@ public:
                     }
                     if (key.keySizeBits != 0)
                         cd.keySizeBits = key.keySizeBits;
+                    // From the card, through the rule the PKCS#11 slot
+                    // publishes as CKA_ALWAYS_AUTHENTICATE.
+                    cd.alwaysAuthenticate = pkcs15::requiresPerOperationAuth(key);
                     break;
                 }
             }

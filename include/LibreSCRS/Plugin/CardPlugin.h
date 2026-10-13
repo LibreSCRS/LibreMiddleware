@@ -93,7 +93,8 @@ struct CardPluginActivationAccessor;
 ///       @ref readCounters virtual was inserted into the MIDDLE of the
 ///       vtable rather than appended, and this class grew three members
 ///       (`sizeof` 80 -> 168). v9 is also the first plugin ABI revision
-///       that moves together with the shared objects' SONAME.
+///       that moves together with the shared objects' SONAME. v9 also grows
+///       @ref CertificateData by its @c alwaysAuthenticate member.
 ///
 /// Method groups:
 ///  - Identification (@ref pluginId, @ref displayName, @ref probePriority) — set via @ref setIdentity

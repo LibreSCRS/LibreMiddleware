@@ -889,3 +889,31 @@ TEST(Pkcs15CardSignPin, RefusedPinIsPresentedOnceAndKeptForTheCaller)
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// The card plugin's CertificateData
+// ---------------------------------------------------------------------------
+
+TEST(Pkcs15PluginAlwaysAuthenticate, PerOperationKeyIsReportedInCertificateData)
+{
+    auto rig = makeRig("AA Plugin Reader 2", true);
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    const auto certs = plugin->readCertificates(*rig.session);
+    ASSERT_EQ(certs.size(), 1U);
+    EXPECT_TRUE(certs[0].alwaysAuthenticate);
+}
+
+TEST(Pkcs15PluginAlwaysAuthenticate, OrdinaryKeyIsReportedWithoutTheFlag)
+{
+    auto rig = makeRig("AA Plugin Reader 3", false);
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    const auto certs = plugin->readCertificates(*rig.session);
+    ASSERT_EQ(certs.size(), 1U);
+    EXPECT_FALSE(certs[0].alwaysAuthenticate);
+}

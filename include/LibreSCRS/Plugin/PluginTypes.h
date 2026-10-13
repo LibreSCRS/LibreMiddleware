@@ -40,8 +40,12 @@ namespace LibreSCRS::Plugin {
 ///       `readCounters` virtual was inserted into the MIDDLE of the table
 ///       rather than appended, @ref LibreSCRS::Plugin::CardPlugin grew three
 ///       members (`sizeof` 80 -> 168), and the superseded `getPINTriesLeft`
-///       slot is now removed. v9 is also the first plugin ABI revision that
-///       moves together with the shared objects' SONAME.
+///       slot is now removed. v9 also appends
+///       @ref LibreSCRS::Plugin::CertificateData::alwaysAuthenticate (`sizeof` 88 -> 96 on the
+///       canonical layout) and the PinIncorrect / PinBlocked values of
+///       SignResultOutcome and DecipherResultOutcome. v9 is also the first
+///       plugin ABI revision that moves together with the shared objects'
+///       SONAME.
 inline constexpr std::uint32_t kCardPluginAbiVersion = 9;
 
 /// @brief Capability flags describing what a plugin can do.
@@ -224,6 +228,31 @@ struct CertificateData
     /// @since 5.0
     std::vector<std::uint8_t> ckaId;
 
+    /// @brief The card requires the PIN to be presented again before EVERY
+    ///        operation with this certificate's private key, not once per
+    ///        session.
+    ///
+    /// Read from the card, never derived: PKCS#15 @c CommonObjectAttributes
+    /// @c userConsent (any non-zero value), or OpenSC's @c user_consent for
+    /// OpenSC-bound cards -- the value PKCS#11 publishes as
+    /// @c CKA_ALWAYS_AUTHENTICATE (the PIV Digital Signature key, 9C, is one).
+    /// A host that holds the PIN must not reuse it for such a key: collect it
+    /// for each operation and erase it afterwards (for a plugin that keeps a
+    /// signing PIN, @ref CardPlugin::setCredentials with key @c "pin" and an
+    /// empty value). @c false when the card does not ask, and when no private
+    /// key is paired with the certificate.
+    ///
+    /// @code
+    /// for (const auto& cert : plugin.readCertificates(session)) {
+    ///     if (cert.alwaysAuthenticate) {
+    ///         // ask for the PIN for this signature; never reuse a cached one
+    ///     }
+    /// }
+    /// @endcode
+    ///
+    /// @since 5.0
+    bool alwaysAuthenticate = false;
+
     /// @brief Defaulted member-wise equality.
     [[nodiscard]] bool operator==(const CertificateData&) const noexcept = default;
 };
@@ -302,11 +331,11 @@ enum class SignResultOutcome : std::uint8_t {
     ///        deposited with @ref CardPlugin::setCredentials and presented in
     ///        the operation's own transaction). Nothing was signed. The
     ///        remaining tries are not carried here; read them with
-    ///        @ref CardPlugin::readCounters. Appended in ABI 10.
+    ///        @ref CardPlugin::readCounters. Appended in ABI 9.
     /// @since 5.0
     PinIncorrect,
     /// @brief The PIN is blocked: the card refused the operation's PIN and
-    ///        reports it blocked. Appended in ABI 10.
+    ///        reports it blocked. Appended in ABI 9.
     /// @since 5.0
     PinBlocked,
 };
@@ -372,11 +401,11 @@ enum class DecipherResultOutcome : std::uint8_t {
     ///        deposited with @ref CardPlugin::setCredentials and presented in
     ///        the operation's own transaction). Nothing was deciphered. The
     ///        remaining tries are not carried here; read them with
-    ///        @ref CardPlugin::readCounters. Appended in ABI 10.
+    ///        @ref CardPlugin::readCounters. Appended in ABI 9.
     /// @since 5.0
     PinIncorrect,
     /// @brief The PIN is blocked: the card refused the operation's PIN and
-    ///        reports it blocked. Appended in ABI 10.
+    ///        reports it blocked. Appended in ABI 9.
     /// @since 5.0
     PinBlocked,
 };

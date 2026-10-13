@@ -45,6 +45,7 @@
 #include "opensc_pin_verdict.h"
 #include "opensc_reader_bridge.h"
 #include "opensc_session.h"
+#include "opensc_user_consent.h"
 #include "pin_family_quirks.h"
 #include "pin_lifecycle_derivation.h"
 #include "pkcs15_cert_ptr.h"
@@ -1146,6 +1147,9 @@ public:
                 cd.keyFID = static_cast<std::uint16_t>(keyInfo->key_reference);
                 // RSA advertises modulus_length, EC advertises field_length.
                 cd.keySizeBits = LibreSCRS::OpenSc::keySizeBitsFromKeyInfo(*keyInfo);
+                // OpenSC's own rule, shared with the PKCS#11 slot: the PIV
+                // Digital Signature key (9C) arrives with user_consent set.
+                cd.alwaysAuthenticate = LibreSCRS::OpenSc::requiresPerOperationAuth(*keyObj);
             }
 
             result.push_back(std::move(cd));

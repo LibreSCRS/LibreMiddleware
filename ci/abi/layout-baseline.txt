@@ -122,7 +122,8 @@ LibreSCRS::Plugin::CertificateData	  +32    class std::vector<unsigned char> der
 LibreSCRS::Plugin::CertificateData	  +56    class std::optional<unsigned short> keyFID
 LibreSCRS::Plugin::CertificateData	  +60    class std::optional<unsigned short> keySizeBits
 LibreSCRS::Plugin::CertificateData	  +64    class std::vector<unsigned char> ckaId
-LibreSCRS::Plugin::CertificateData	sizeof=88 align=8
+LibreSCRS::Plugin::CertificateData	  +88    _Bool alwaysAuthenticate
+LibreSCRS::Plugin::CertificateData	sizeof=96 align=8
 LibreSCRS::Plugin::CredentialCounters	  +0     class std::optional<int> retriesLeft
 LibreSCRS::Plugin::CredentialCounters	  +16    class std::optional<int> usesLeft
 LibreSCRS::Plugin::CredentialCounters	  +24    class std::optional<int> usesMax
