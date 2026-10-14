@@ -4,12 +4,15 @@
 #include <pkcs15_card.h>
 #include <pkcs15_applet_probe.h>
 #include <pkcs15_types.h>
+#include <ecdsa_signature.h>
 
 #include <internal/PinClassification.h>
 
 #include <LibreSCRS/Auth/ErrorKeys.h>
 #include <LibreSCRS/Auth/PaceSecretKind.h>
 #include <LibreSCRS/CancelToken.h>
+#include <LibreSCRS/Certificate/ParsedCertificate.h>
+#include <LibreSCRS/Logging.h>
 #include <LibreSCRS/Plugin/CardPlugin.h>
 #include <LibreSCRS/Plugin/PinOutcome.h>
 #include <LibreSCRS/Plugin/PluginExport.h>
@@ -47,6 +50,7 @@
 #include "pin_family_quirks.h"
 #include "pin_lifecycle_derivation.h"
 #include "probe_trace.h"
+#include "sign_mechanism_rules.h"
 
 namespace {
 
@@ -559,12 +563,23 @@ public:
                 if (key.id == cert.id) {
                     // One rule with doSign's lookup: the card command's own
                     // key selection, reference first (pkcs15::keyHandle).
-                    cd.keyFID = pkcs15::keyHandle(key);
+                    // A handle two keys share names neither (doSign refuses
+                    // it), so none is offered: verify-only.
+                    const auto handle = pkcs15::keyHandle(key);
+                    const auto sharing =
+                        std::count_if(profile.privateKeys.begin(), profile.privateKeys.end(),
+                                      [handle](const auto& other) { return pkcs15::keyHandle(other) == handle; });
+                    if (sharing == 1)
+                        cd.keyFID = handle;
                     if (key.keySizeBits != 0)
                         cd.keySizeBits = key.keySizeBits;
                     // From the card, through the rule the PKCS#11 slot
                     // publishes as CKA_ALWAYS_AUTHENTICATE.
                     cd.alwaysAuthenticate = pkcs15::requiresPerOperationAuth(key);
+                    // This plugin performs no key agreement -- card-specific
+                    // key-agreement commands live in OpenSC drivers -- so
+                    // canDerive stays false. The card's derive bit is
+                    // reported once per card session (profileFor).
                     break;
                 }
             }
@@ -1181,16 +1196,13 @@ public:
         return c;
     }
 
-    // Raw on-card RSA decrypt is not yet implemented for the generic PKCS#15
-    // fallback family. Unlike the opensc plugin (which binds an
-    // sc_pkcs15_card_t and delegates to sc_pkcs15_decipher), this plugin
-    // operates over the LM-native pkcs15::PKCS15Card abstraction on an SM
-    // channel and has no libopensc card handle. A raw-decrypt path would
-    // require a dedicated MSE:Set-CT (P2=0xB8) + PSO DECIPHER APDU sequence on
-    // pkcs15::PKCS15Card mirroring its sign() path — new on-card crypto rather
-    // than a delegation — so it is deferred. Returning NotImplemented
-    // explicitly (rather than inheriting the base default) keeps the gap
-    // visible to callers and documents the reason at the override site.
+    // Neither RSA decryption nor EC key agreement is implemented for the
+    // generic PKCS#15 family. Both are card-specific command sequences (an
+    // MSE SET for the key's operation plus a PSO DECIPHER or key-agreement
+    // template); OpenSC drivers carry them for the cards that have them, and
+    // the OpenSC plugin delegates there. Returning NotImplemented explicitly,
+    // for RSA_PKCS1_V15 and ECDH_RAW alike, keeps the gap visible to callers
+    // and matches CertificateData::canDerive == false.
     LibreSCRS::Plugin::DecipherResult doDecipher(LibreSCRS::SmartCard::CardSession& /*session*/,
                                                  std::uint16_t /*keyReference*/,
                                                  std::span<const std::uint8_t> /*ciphertext*/,
@@ -1201,35 +1213,43 @@ public:
         return r;
     }
 
-    // This already meets the CardPlugin contract for a deposited "pin":
-    // PKCS15Card::sign presents it and signs under one holder (one card
-    // transaction).
+    // ECDSA with an EC key on any PKCS#15 card, and hash-on-card RSA-SHA256
+    // on the PACE-gated IAS-ECC family (NAM: SCE 8.0-C2V0). The caller
+    // deposits the signing PIN via setCredentials("pin", ...) immediately
+    // before this call; PKCS15Card::sign owns the atomic select + VERIFY + MSE
+    // + PSO under one holder (one card transaction), so nothing is
+    // pre-verified here.
     //
-    // Hash-on-card RSA-SHA256 signing for the IAS-ECC / PKCS#15 family
-    // (NAM: SCE 8.0-C2V0 SSCD). The caller deposits the signing
-    // PIN via setCredentials("pin", ...) immediately before this call (the same
-    // per-session seam used for the CAN). PKCS15Card::sign owns the atomic
-    // select + verifyPIN + MSE(0x28) + PSO over the RAW message — the exact
-    // EVP-verified sequence the LibreCelik / AdES path uses — so we do NOT
-    // pre-verify here. Only RSA_SHA256 (raw message, card hashes) is honoured;
-    // a caller-supplied DigestInfo (RSA_PKCS) is rejected by these cards, so
-    // that mechanism inherits the base NotImplemented.
+    // RSA_SHA256 stays gated on PACE: a plain PKCS#15 card expects a
+    // caller-built DigestInfo, and RsaSha256Pkcs1's attempt set would
+    // brute-force hash-on-card algorithms at it -- NotImplemented sends the
+    // caller to its verify + RSA_PKCS DigestInfo path instead. ECDSA needs no
+    // such gate: its input is always the hash.
+    //
+    // An ECDSA signature leaves as the contract's fixed-width r || s. Cards
+    // answer in DER, with INTEGERs at the full field width, or raw;
+    // ecdsaRawFromCardReply reads all of them, with the width read from the
+    // key's certificate in this same channel -- such a card's PrKDF records
+    // no field size -- and nothing is cached in the plugin. Every reading is
+    // checked with that certificate's public key: a signature that does not
+    // verify is never returned.
+    //
+    // Key references are local to a DF, so two keys can share a handle; a
+    // handle that matches more than one key names none, and no key is
+    // guessed.
     LibreSCRS::Plugin::SignResult doSign(LibreSCRS::SmartCard::CardSession& session, std::uint16_t keyReference,
                                          std::span<const std::uint8_t> data,
                                          LibreSCRS::Plugin::SignMechanism mechanism) const override
     {
+        using LibreSCRS::Plugin::SignResultOutcome;
         LibreSCRS::Plugin::SignResult r;
-        // Honour RSA_SHA256 ONLY for cards that actually hash on-card — i.e.
-        // PACE-gated IAS-ECC SSCDs (NAM). For any other mechanism, OR a plain
-        // PKCS#15 card (no PACE) that expects a caller-built DigestInfo, return
-        // NotImplemented so the agent falls back to its verify + RSA_PKCS
-        // DigestInfo path. This matters because RsaSha256Pkcs1's on-card attempt
-        // set (pkcs15_card.cpp) is narrower than RsaPkcs1 and brute-forces
-        // hash-on-card algos, which is wrong for a DigestInfo card; gating here
-        // keeps the fallback alive for the rest of the PKCS#15 family (only the
-        // NAM hash-on-card path is exercised + HW-verified today).
-        if (mechanism != LibreSCRS::Plugin::SignMechanism::RSA_SHA256 || !requiresPaceFor(session)) {
-            r.outcome = LibreSCRS::Plugin::SignResultOutcome::NotImplemented;
+        const bool ecdsa = LibreSCRS::Plugin::Internal::isEcdsaMechanism(mechanism);
+        if (!ecdsa && (mechanism != LibreSCRS::Plugin::SignMechanism::RSA_SHA256 || !requiresPaceFor(session))) {
+            r.outcome = SignResultOutcome::NotImplemented;
+            return r;
+        }
+        if (ecdsa && !LibreSCRS::Plugin::Internal::isEcdsaDigestLength(data.size())) {
+            r.outcome = SignResultOutcome::PluginError; // not a hash: nothing reaches the card
             return r;
         }
         // Pull the per-session signing PIN deposited by setCredentials("pin").
@@ -1241,55 +1261,75 @@ public:
                 pin = LibreSCRS::Secure::String{it->second.pin.view()};
         }
         if (pin.view().empty()) {
-            r.outcome = LibreSCRS::Plugin::SignResultOutcome::PluginError; // no PIN deposited
+            r.outcome = SignResultOutcome::PluginError; // no PIN deposited
             return r;
         }
         try {
             auto holderResult = acquireChannel(session, requiresPaceFor(session));
             if (!holderResult) {
-                r.outcome = LibreSCRS::Plugin::SignResultOutcome::PluginError;
+                r.outcome = SignResultOutcome::PluginError;
                 return r;
             }
             auto holder = std::move(*holderResult);
             auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
             if (channel == nullptr) {
-                r.outcome = LibreSCRS::Plugin::SignResultOutcome::PluginError;
+                r.outcome = SignResultOutcome::PluginError;
                 return r;
             }
             pkcs15::PKCS15Card card(*channel);
             auto profile = profileFor(session, card, "doSign");
 
             // Resolve the private key whose handle matches keyReference -- the
-            // keyFID readCertificates surfaced, through the same rule.
+            // keyFID readCertificates surfaced, through the same rule. Two
+            // matches: the request does not say which key, so neither signs.
             const pkcs15::PrivateKeyInfo* matched = nullptr;
+            std::size_t matches = 0;
             for (const auto& key : profile.privateKeys) {
                 if (pkcs15::keyHandle(key) == keyReference) {
                     matched = &key;
-                    break;
+                    ++matches;
                 }
             }
             const pkcs15::PinInfo* pinInfo = findUserPin(profile);
-            if (matched == nullptr || pinInfo == nullptr) {
-                r.outcome = LibreSCRS::Plugin::SignResultOutcome::PluginError;
+            if (matches != 1 || pinInfo == nullptr) {
+                r.outcome = SignResultOutcome::PluginError; // no key, or no single key: before the PIN
                 return r;
             }
+            if (matched->keyType != (ecdsa ? pkcs15::KeyType::Ec : pkcs15::KeyType::Rsa)) {
+                r.outcome = SignResultOutcome::NotImplemented; // mechanism and key family disagree
+                return r;
+            }
+            std::vector<std::uint8_t> certDer;
+            std::size_t fieldBytes = 0;
+            if (ecdsa) {
+                certDer = certificateFor(card, profile, *matched);
+                fieldBytes = ecFieldBytesOf(certDer);
+                if (fieldBytes == 0) {
+                    r.outcome = SignResultOutcome::PluginError; // no width: stop before the PIN is presented
+                    return r;
+                }
+            }
 
-            // PKCS15Card::sign takes both a DigestInfo and the raw data; for the
-            // RsaSha256Pkcs1 scheme the winning attempt on a hash-on-card SSCD
-            // is {algo 0x28, rawData} (the card hashes). Pass the raw message in
-            // both slots, mirroring the EVP-verified in-process path
-            // (Pkcs15Slot::signData). pin.view() references `pin`, alive here.
-            std::vector<std::uint8_t> dataVec(data.begin(), data.end());
+            // PKCS15Card::sign takes both a DigestInfo and the raw data. For
+            // RsaSha256Pkcs1 on a hash-on-card SSCD the winning attempt is
+            // {algo 0x28, rawData} (the card hashes); for EcdsaRaw the first
+            // slot is sent as is -- the hash, cut to the field's width when it
+            // is longer (FIPS 186-4 6.4 signs its leftmost bytes; OpenSC sends
+            // the same). The certificate check below is over the whole hash,
+            // which OpenSSL cuts the same way. pin.view() references `pin`,
+            // alive here.
+            const auto cardInput = ecdsa ? data.first(std::min(data.size(), fieldBytes)) : data;
+            std::vector<std::uint8_t> dataVec(cardInput.begin(), cardInput.end());
             // The card's refusal of the deposited PIN is reported as such, as
             // verifyPIN reports it; any other failure stays PluginError.
             const auto refusedOutcome = [&card] {
-                return pkcs15::refusalBlocksPin(*card.pinRefusal())
-                           ? LibreSCRS::Plugin::SignResultOutcome::PinBlocked
-                           : LibreSCRS::Plugin::SignResultOutcome::PinIncorrect;
+                return pkcs15::refusalBlocksPin(*card.pinRefusal()) ? SignResultOutcome::PinBlocked
+                                                                    : SignResultOutcome::PinIncorrect;
             };
             std::vector<std::uint8_t> sig;
             try {
-                sig = card.sign(*matched, pin.view(), *pinInfo, dataVec, dataVec, pkcs15::SignScheme::RsaSha256Pkcs1);
+                sig = card.sign(*matched, pin.view(), *pinInfo, dataVec, dataVec,
+                                ecdsa ? pkcs15::SignScheme::EcdsaRaw : pkcs15::SignScheme::RsaSha256Pkcs1);
             } catch (...) {
                 if (!card.pinRefusal())
                     throw;
@@ -1297,17 +1337,29 @@ public:
                 return r;
             }
             if (sig.empty()) {
-                r.outcome = card.pinRefusal() ? refusedOutcome() : LibreSCRS::Plugin::SignResultOutcome::PluginError;
+                r.outcome = card.pinRefusal() ? refusedOutcome() : SignResultOutcome::PluginError;
                 return r;
             }
+            if (ecdsa) {
+                auto raw = pkcs15::ecdsaRawFromCardReply(sig, fieldBytes, [&](std::span<const std::uint8_t> candidate) {
+                    return pkcs15::ecdsaRawVerifiesWithCertificate(certDer, data, candidate);
+                });
+                if (!raw) {
+                    // A signature that does not verify with the certificate's
+                    // key is never returned -- nor a reply of no known shape.
+                    r.outcome = SignResultOutcome::PluginError;
+                    return r;
+                }
+                sig = std::move(*raw);
+            }
             r.signature = std::move(sig);
-            r.outcome = LibreSCRS::Plugin::SignResultOutcome::Ok;
+            r.outcome = SignResultOutcome::Ok;
             return r;
         } catch (...) {
             // A refused PIN was answered above; what lands here is a channel
             // or card failure. A host must NOT auto-retry on PluginError (it
             // is not a PIN-retry hint).
-            r.outcome = LibreSCRS::Plugin::SignResultOutcome::PluginError;
+            r.outcome = SignResultOutcome::PluginError;
             return r;
         }
     }
@@ -1356,6 +1408,10 @@ private:
     /// one, otherwise reads it from the card (I/O outside the lock) and
     /// stores it. The probe trace fires only on an actual card read, so the
     /// trace stays a count of reads, not of intents.
+    ///
+    /// The card's derive bit is reported here, on that read, so once per
+    /// card session: a host resolves its key through readCertificates on
+    /// every operation, and a line per call would repeat with each one.
     pkcs15::PKCS15Profile profileFor(LibreSCRS::SmartCard::CardSession& session, pkcs15::PKCS15Card& card,
                                      const char* caller) const
     {
@@ -1368,6 +1424,15 @@ private:
         }
         LibreSCRS::Internal::probeTrace(std::string{"PROBE-READPROFILE call="} + caller);
         auto profile = card.readProfile();
+        // This plugin performs no key agreement, so canDerive stays false; the
+        // card's bit is not dropped silently -- it explains a key OpenSC would
+        // offer for it. Named by its handle, not by a label the card supplies.
+        for (const auto& prkey : profile.privateKeys) {
+            if (prkey.canDerive)
+                LibreSCRS::log::infof("pkcs15: key {:04X}: the card allows key agreement with it; this "
+                                      "plugin does not perform it, so it is not offered for it",
+                                      pkcs15::keyHandle(prkey));
+        }
         {
             std::lock_guard lock(stateMutex);
             sessions[key].profile = profile;
@@ -1451,6 +1516,32 @@ private:
                 return &pin;
         }
         return nullptr;
+    }
+
+    // The paired certificate's DER, read in the caller's channel: the source
+    // of an EC key's field width. Not cached -- one plugin instance serves
+    // every reader.
+    static std::vector<std::uint8_t> certificateFor(pkcs15::PKCS15Card& card, const pkcs15::PKCS15Profile& profile,
+                                                    const pkcs15::PrivateKeyInfo& key)
+    {
+        for (const auto& cert : profile.certificates) {
+            if (cert.id == key.id)
+                return card.readCertificate(cert);
+        }
+        return {};
+    }
+
+    // ceil(bits / 8) of the EC key in @p certDer; 0 when the certificate does
+    // not parse or holds no EC key, which leaves the caller no width.
+    static std::size_t ecFieldBytesOf(std::span<const std::uint8_t> certDer)
+    {
+        const auto cert = LibreSCRS::Certificate::ParsedCertificate::fromDer(certDer);
+        if (!cert)
+            return 0;
+        const auto key = cert->publicKey();
+        if (key.algorithm != LibreSCRS::Certificate::PublicKeyAlgorithm::ECDSA || key.bitLength <= 0)
+            return 0;
+        return (static_cast<std::size_t>(key.bitLength) + 7) / 8;
     }
 
     static const pkcs15::PinInfo* findPinByLabel(const pkcs15::PKCS15Profile& profile, std::string_view pinLabel)

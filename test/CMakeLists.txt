@@ -1808,6 +1808,7 @@ target_link_libraries(Pkcs15ProfileReadCensusTests PRIVATE
     LibreSCRS_SecureChannel
     SmartCard_Impl
     LibreSCRS::Secure
+    OpenSSL_Crypto
 )
 target_include_directories(Pkcs15ProfileReadCensusTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
@@ -1816,6 +1817,8 @@ target_include_directories(Pkcs15ProfileReadCensusTests PRIVATE
     ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/src
     ${LibreMiddleware_SOURCE_DIR}/lib/SecureChannel/include
     ${LibreMiddleware_SOURCE_DIR}/lib/emrtd-crypto/src
+    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 target_compile_definitions(Pkcs15ProfileReadCensusTests PRIVATE
     PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"

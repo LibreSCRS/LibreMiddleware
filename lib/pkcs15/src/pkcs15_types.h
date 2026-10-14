@@ -39,7 +39,7 @@ struct PrivateKeyInfo
     uint16_t keySizeBits = 0;
     std::vector<uint8_t> path;
     uint8_t accessFlags = 0;
-    uint8_t keyReference = 0; // from CommonKeyAttributes (used when path is empty)
+    uint8_t keyReference = 0; // from CommonKeyAttributes; non-zero, it takes precedence over path (keyHandle)
     bool canSign = false;     // digitalSignature (bit 0) or nonRepudiation (bit 1) in usage flags
     // KeyUsageFlags derive: bit 8, the MSB of the flags' second byte. The
     // unused-bits count (at most 7) never covers that bit; bits past

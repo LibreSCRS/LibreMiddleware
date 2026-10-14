@@ -91,7 +91,7 @@ Pkcs15ChangePinSelectorTests 4
 Pkcs15EcdsaSignatureTests 16
 Pkcs15PinLifecycleTests 39
 Pkcs15ProbeEfDirTests 2
-Pkcs15ProfileReadCensusTests 32
+Pkcs15ProfileReadCensusTests 48
 Pkcs15ReadTokenInfoPartialTests 2
 PkcsAttachApiDeletedTest 1
 PluginAbiVersionTest 1

@@ -28,6 +28,7 @@
 
 #include <LibreSCRS/Plugin/CardPlugin.h>
 #include <LibreSCRS/Plugin/CardPluginService.h>
+#include <LibreSCRS/Logging.h>
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
@@ -38,6 +39,8 @@
 
 #include "pkcs15_card.h"
 #include "pkcs15_pkcs11_card.h"
+
+#include "ec_test_key.h"
 
 #include <internal/Crv.h>
 #include <internal/PKCS11ObjectInfo.h>
@@ -52,11 +55,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <initializer_list>
 #include <map>
 #include <memory>
 #include <optional>
 #include <set>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -110,6 +115,9 @@ struct ScriptedPkcs15Card
     bool lastTryAnswers63C0 = false;
     /// MSE SET and PSO COMPUTE DIGITAL SIGNATURE (a fixed 256-byte signature).
     bool answersSigning = false;
+    /// PSO COMPUTE DIGITAL SIGNATURE body when signing is answered. Unset: the
+    /// fixed 256-byte RSA-shaped answer the census has always seen.
+    std::function<std::vector<std::uint8_t>(const APDUCommand&)> psoReply;
 
     /// Per log entry: whether a card transaction was held, and which one.
     struct TransactionMark
@@ -180,7 +188,7 @@ struct ScriptedPkcs15Card
         if (answersSigning && cmd.ins == 0x22) // MSE SET
             return {{}, 0x90, 0x00};
         if (answersSigning && cmd.ins == 0x2A && cmd.p1 == 0x9E && cmd.p2 == 0x9A) // PSO CDS
-            return {std::vector<std::uint8_t>(256, 0x5A), 0x90, 0x00};
+            return {psoReply ? psoReply(cmd) : std::vector<std::uint8_t>(256, 0x5A), 0x90, 0x00};
 
         return {{}, 0x6D, 0x00}; // anything else: instruction not supported
     }
@@ -1051,4 +1059,435 @@ TEST(Pkcs15PluginKeyHandle, KeyFileWithoutAReferenceKeepsItsPathHandle)
     ASSERT_EQ(certs.size(), 1U);
     ASSERT_TRUE(certs[0].keyFID.has_value());
     EXPECT_EQ(*certs[0].keyFID, std::uint16_t{0x4410});
+}
+
+// ---------------------------------------------------------------------------
+// ECDSA through the card plugin: the contract's fixed-width r || s
+// ---------------------------------------------------------------------------
+
+namespace {
+
+using LibreSCRS::Plugin::SignMechanism;
+using LibreSCRS::Plugin::SignResultOutcome;
+using LibreSCRS::TestSupport::EcTestKey;
+
+const std::vector<std::uint8_t> kHash384(48, 0x37);
+
+struct EcSigningRig
+{
+    FakeCardRig rig;
+    std::shared_ptr<const EcTestKey> key;
+};
+
+// The PKCS#15 card with one EC P-384 key shaped like the Serbian eID's (no
+// field size in the PrKDF, reference 0x47 in DF 3F00/5015) and a real
+// certificate over it. It answers the signature in DER, as that card does.
+EcSigningRig makeEcSigningRig(const char* readerName, bool derive = false)
+{
+    EcSigningRig r;
+    r.rig = makeRig(readerName);
+    r.key = std::make_shared<const EcTestKey>(LibreSCRS::TestSupport::makeEcTestKey("P-384"));
+    r.rig.card->files[kPrkdfFid] = ecPrivateKeyRecord(0x01, 0x47, derive);
+    r.rig.card->files[kCertFid] = r.key->certDer;
+    r.rig.card->acceptedPins = {"1234"};
+    r.rig.card->answersSigning = true;
+    r.rig.card->psoReply = [key = r.key](const APDUCommand& cmd) { return key->signDer(cmd.data); };
+    return r;
+}
+
+void depositPin(CardPlugin& plugin, CardSession& session)
+{
+    plugin.setCredentials(session, "pin", LibreSCRS::Secure::String{std::string_view{"1234"}});
+}
+
+bool isMseSet(const APDUCommand& cmd)
+{
+    return cmd.ins == 0x22 && cmd.p1 == 0x41 && cmd.p2 == 0xB6;
+}
+
+std::size_t countSince(const std::vector<APDUCommand>& log, std::size_t mark, bool (*matches)(const APDUCommand&))
+{
+    return static_cast<std::size_t>(std::count_if(log.begin() + static_cast<std::ptrdiff_t>(mark), log.end(), matches));
+}
+
+std::optional<APDUCommand> lastMseSince(const std::vector<APDUCommand>& log, std::size_t mark)
+{
+    std::optional<APDUCommand> found;
+    for (std::size_t i = mark; i < log.size(); ++i) {
+        if (isMseSet(log[i]))
+            found = log[i];
+    }
+    return found;
+}
+
+} // namespace
+
+// A card that answers ECDSA in DER and whose PrKDF records no field size:
+// the plugin takes the width from the certificate, reads the reply and
+// checks it with that certificate's key. No CAN is deposited -- ECDSA input
+// is always the hash, so it needs no PACE gate.
+TEST(Pkcs15PluginEcdsa, DerReplyComesBackAsFixedWidthRawSignature)
+{
+    auto r = makeEcSigningRig("ECDSA Reader 0");
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+    depositPin(*plugin, *r.rig.session);
+
+    const auto result = plugin->sign(*r.rig.session, 0x47, kHash384, SignMechanism::ECDSA_SHA384);
+
+    ASSERT_EQ(result.outcome, SignResultOutcome::Ok);
+    EXPECT_EQ(result.signature.size(), 96U);
+    EXPECT_TRUE(r.key->verifiesRaw(kHash384, result.signature));
+    const auto mse = lastMseSince(r.rig.card->log, 0);
+    ASSERT_TRUE(mse.has_value());
+    EXPECT_EQ(mse->data, (std::vector<std::uint8_t>{0x80, 0x01, 0x04, 0x84, 0x01, 0x47}))
+        << "ECDSA-plain with the key's reference";
+}
+
+// A real signature whose r is below 2^376 (about one in 256): DER writes r
+// at least a byte short, the contract wants it left-padded.
+TEST(Pkcs15PluginEcdsa, ShortIntegerIsLeftPadded)
+{
+    auto r = makeEcSigningRig("ECDSA Reader 1");
+    const auto shortRs =
+        r.key->rawSignatureWhere(kHash384, [](std::span<const std::uint8_t> raw) { return raw[0] == 0x00; });
+    r.rig.card->psoReply =
+        [der = LibreSCRS::TestSupport::ecdsaDer(std::span(shortRs).first(48), std::span(shortRs).subspan(48))](
+            const APDUCommand&) { return der; };
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+    depositPin(*plugin, *r.rig.session);
+
+    const auto result = plugin->sign(*r.rig.session, 0x47, kHash384, SignMechanism::ECDSA_SHA384);
+
+    ASSERT_EQ(result.outcome, SignResultOutcome::Ok);
+    ASSERT_EQ(result.signature.size(), 96U);
+    EXPECT_EQ(result.signature[0], 0x00);
+    EXPECT_EQ(result.signature, shortRs);
+}
+
+TEST(Pkcs15PluginEcdsa, RawReplyOfTheKeysWidthIsKept)
+{
+    auto r = makeEcSigningRig("ECDSA Reader 2");
+    r.rig.card->psoReply = [key = r.key](const APDUCommand& cmd) {
+        return LibreSCRS::TestSupport::ecdsaRawOf(key->signDer(cmd.data), key->fieldBytes);
+    };
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+    depositPin(*plugin, *r.rig.session);
+
+    const auto result = plugin->sign(*r.rig.session, 0x47, kHash384, SignMechanism::ECDSA_SHA384);
+
+    ASSERT_EQ(result.outcome, SignResultOutcome::Ok);
+    EXPECT_TRUE(r.key->verifiesRaw(kHash384, result.signature));
+}
+
+// A valid signature whose DER is exactly 96 bytes also reads as raw r || s.
+// The plugin settles it with the certificate's public key.
+TEST(Pkcs15PluginEcdsa, AmbiguousReplyIsSettledByTheCertificate)
+{
+    auto r = makeEcSigningRig("ECDSA Reader 3");
+    const auto chosen = r.key->signatureWithRawWidthDer();
+    r.rig.card->psoReply = [der = chosen.der](const APDUCommand&) { return der; };
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+    depositPin(*plugin, *r.rig.session);
+
+    const auto result = plugin->sign(*r.rig.session, 0x47, chosen.hash, SignMechanism::ECDSA_SHA384);
+
+    ASSERT_EQ(result.outcome, SignResultOutcome::Ok);
+    EXPECT_NE(result.signature, chosen.der);
+    EXPECT_TRUE(r.key->verifiesRaw(chosen.hash, result.signature));
+}
+
+TEST(Pkcs15PluginEcdsa, ReplyOfNeitherShapeIsAPluginError)
+{
+    auto r = makeEcSigningRig("ECDSA Reader 4");
+    r.rig.card->psoReply = [](const APDUCommand&) { return std::vector<std::uint8_t>(50, 0xA5); };
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+    depositPin(*plugin, *r.rig.session);
+
+    const auto result = plugin->sign(*r.rig.session, 0x47, kHash384, SignMechanism::ECDSA_SHA384);
+
+    EXPECT_EQ(result.outcome, SignResultOutcome::PluginError);
+    EXPECT_TRUE(result.signature.empty());
+}
+
+// Without a readable EC certificate there is no width to sign with; the plugin
+// stops before the PIN reaches the card, so no try is spent.
+TEST(Pkcs15PluginEcdsa, NoCertificateWidthStopsBeforeThePin)
+{
+    auto r = makeEcSigningRig("ECDSA Reader 5");
+    r.rig.card->files[kCertFid] = certBlob(); // not X.509
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+    depositPin(*plugin, *r.rig.session);
+
+    const auto result = plugin->sign(*r.rig.session, 0x47, kHash384, SignMechanism::ECDSA_SHA384);
+
+    EXPECT_EQ(result.outcome, SignResultOutcome::PluginError);
+    EXPECT_EQ(countSince(r.rig.card->log, 0, isVerifyWithPin), 0U);
+    EXPECT_EQ(countSince(r.rig.card->log, 0, isPso), 0U);
+}
+
+TEST(Pkcs15PluginEcdsa, RsaKeyRefusesAnEcdsaMechanism)
+{
+    auto rig = makeSigningRig("ECDSA Reader 6", false);
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+    depositPin(*plugin, *rig.session);
+
+    const auto result = plugin->sign(*rig.session, 0x4410, kHash384, SignMechanism::ECDSA_SHA384);
+
+    EXPECT_EQ(result.outcome, SignResultOutcome::NotImplemented);
+    EXPECT_EQ(countSince(rig.card->log, 0, isVerifyWithPin), 0U) << "no PIN try spent";
+    EXPECT_EQ(countSince(rig.card->log, 0, isPso), 0U);
+}
+
+TEST(Pkcs15PluginEcdsa, WrongHashLengthNeverReachesTheCard)
+{
+    auto r = makeEcSigningRig("ECDSA Reader 7");
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+    depositPin(*plugin, *r.rig.session);
+    const auto apdus = r.rig.card->log.size();
+
+    const auto result =
+        plugin->sign(*r.rig.session, 0x47, std::vector<std::uint8_t>(20, 0x01), SignMechanism::ECDSA_SHA384);
+
+    EXPECT_EQ(result.outcome, SignResultOutcome::PluginError);
+    EXPECT_EQ(r.rig.card->log.size(), apdus);
+}
+
+// A wrong PIN must read as a wrong PIN: a host that sees PluginError cannot
+// tell it from a broken card, and the agent would read it as a lost channel.
+TEST(Pkcs15PluginEcdsa, RefusedPinIsReportedAsPinIncorrect)
+{
+    auto r = makeEcSigningRig("ECDSA Reader 8");
+    r.rig.card->acceptedPins = {"9999"};
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+    depositPin(*plugin, *r.rig.session);
+
+    const auto result = plugin->sign(*r.rig.session, 0x47, kHash384, SignMechanism::ECDSA_SHA384);
+
+    EXPECT_EQ(result.outcome, SignResultOutcome::PinIncorrect);
+    EXPECT_EQ(countSince(r.rig.card->log, 0, isVerifyWithPin), 1U) << "a refused PIN is presented once";
+    EXPECT_EQ(countSince(r.rig.card->log, 0, isPso), 0U);
+}
+
+TEST(Pkcs15PluginEcdsa, EachKeyInOneDfSignsWithItsOwnReference)
+{
+    auto r = makeEcSigningRig("ECDSA Reader 9");
+    r.rig.card->files[kPrkdfFid] =
+        joined({ecPrivateKeyRecord(0x01, 0x47, false), ecPrivateKeyRecord(0x02, 0x48, false)});
+    r.rig.card->files[kCdfFid] = joined({certificateRecord(0x01, kCertFid), certificateRecord(0x02, kSecondCertFid)});
+    r.rig.card->files[kSecondCertFid] = r.key->certDer;
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+    depositPin(*plugin, *r.rig.session);
+
+    for (const std::uint8_t reference : {std::uint8_t{0x48}, std::uint8_t{0x47}}) {
+        SCOPED_TRACE(static_cast<int>(reference));
+        const auto mark = r.rig.card->log.size();
+        const auto result = plugin->sign(*r.rig.session, reference, kHash384, SignMechanism::ECDSA_SHA384);
+        ASSERT_EQ(result.outcome, SignResultOutcome::Ok);
+        const auto mse = lastMseSince(r.rig.card->log, mark);
+        ASSERT_TRUE(mse.has_value());
+        ASSERT_FALSE(mse->data.empty());
+        EXPECT_EQ(mse->data.back(), reference);
+    }
+}
+
+// Cards that write r and s at the full field width answer
+// 30 66 02 31 00 r 02 31 00 s or 30 64 02 30 r 02 30 s -- not DER for about
+// half of all signatures. Both are the key's signature, and come back as one.
+TEST(Pkcs15PluginEcdsa, FixedWidthIntegersFromTheCardAreAccepted)
+{
+    for (const bool zeroPrefix : {true, false}) {
+        SCOPED_TRACE(zeroPrefix);
+        auto r = makeEcSigningRig(zeroPrefix ? "ECDSA Reader 10" : "ECDSA Reader 11");
+        r.rig.card->psoReply = [key = r.key, zeroPrefix](const APDUCommand& cmd) {
+            return LibreSCRS::TestSupport::fixedWidthSequence(
+                LibreSCRS::TestSupport::ecdsaRawOf(key->signDer(cmd.data), key->fieldBytes), zeroPrefix);
+        };
+        CardPluginService registry{pluginDir()};
+        auto plugin = findPkcs15(registry);
+        ASSERT_NE(plugin, nullptr);
+        depositPin(*plugin, *r.rig.session);
+
+        const auto result = plugin->sign(*r.rig.session, 0x47, kHash384, SignMechanism::ECDSA_SHA384);
+
+        ASSERT_EQ(result.outcome, SignResultOutcome::Ok);
+        EXPECT_EQ(result.signature.size(), 96U);
+        EXPECT_TRUE(r.key->verifiesRaw(kHash384, result.signature));
+    }
+}
+
+// Every signature is checked with the certificate's key before it leaves: a
+// well-formed signature by ANOTHER key is never returned, though the card
+// answered.
+TEST(Pkcs15PluginEcdsa, SignatureThatDoesNotVerifyIsAPluginError)
+{
+    auto r = makeEcSigningRig("ECDSA Reader 12");
+    const auto other = std::make_shared<const EcTestKey>(LibreSCRS::TestSupport::makeEcTestKey("P-384"));
+    r.rig.card->psoReply = [other](const APDUCommand& cmd) { return other->signDer(cmd.data); };
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+    depositPin(*plugin, *r.rig.session);
+
+    const auto result = plugin->sign(*r.rig.session, 0x47, kHash384, SignMechanism::ECDSA_SHA384);
+
+    EXPECT_EQ(result.outcome, SignResultOutcome::PluginError);
+    EXPECT_TRUE(result.signature.empty());
+    EXPECT_EQ(countSince(r.rig.card->log, 0, isPso), 1U) << "the card signed; the plugin refused what came back";
+}
+
+// Key references are local to a DF: two keys in two DFs may carry the same
+// one and so share a handle. Such a request names no single key; none is
+// guessed, and no PIN try is spent on it.
+TEST(Pkcs15PluginEcdsa, KeysSharingAHandleAreNeverGuessed)
+{
+    auto r = makeEcSigningRig("ECDSA Reader 13");
+    r.rig.card->files[kPrkdfFid] =
+        joined({ecPrivateKeyRecord(0x01, 0x47, false), ecPrivateKeyRecord(0x02, 0x47, false, 0x5016)});
+    // Both keys have a readable certificate, so only the shared handle can
+    // stop the request: without the check either key would sign.
+    r.rig.card->files[kCdfFid] = joined({certificateRecord(0x01, kCertFid), certificateRecord(0x02, kSecondCertFid)});
+    r.rig.card->files[kSecondCertFid] = r.key->certDer;
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+    depositPin(*plugin, *r.rig.session);
+
+    const auto result = plugin->sign(*r.rig.session, 0x47, kHash384, SignMechanism::ECDSA_SHA384);
+
+    EXPECT_EQ(result.outcome, SignResultOutcome::PluginError);
+    EXPECT_EQ(countSince(r.rig.card->log, 0, isVerifyWithPin), 0U);
+    EXPECT_EQ(countSince(r.rig.card->log, 0, isPso), 0U);
+
+    // The handle that doSign refuses is not handed out either: a host reads a
+    // disengaged keyFID as "verify-only", not as a key it may ask to sign.
+    const auto certs = plugin->readCertificates(*r.rig.session);
+    ASSERT_EQ(certs.size(), 2U);
+    for (const auto& cert : certs)
+        EXPECT_FALSE(cert.keyFID.has_value());
+}
+
+// A hash longer than the key's field -- SHA-512 with a P-384 key, a pair TLS
+// allows: the card gets its leftmost 48 bytes, the ones FIPS 186-4 signs and
+// the ones OpenSC sends. This card refuses a wider input, as one under PACE
+// might with a plain reply that ends the session. The signature verifies
+// over the whole hash.
+TEST(Pkcs15PluginEcdsa, HashLongerThanTheFieldReachesTheCardCut)
+{
+    auto r = makeEcSigningRig("ECDSA Reader 14");
+    std::vector<std::uint8_t> hash512(64);
+    for (std::size_t i = 0; i < hash512.size(); ++i)
+        hash512[i] = static_cast<std::uint8_t>(0xB0 + i);
+    r.rig.card->psoReply = [key = r.key](const APDUCommand& cmd) {
+        return cmd.data.size() == key->fieldBytes ? key->signDer(cmd.data) : std::vector<std::uint8_t>{};
+    };
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+    depositPin(*plugin, *r.rig.session);
+
+    const auto result = plugin->sign(*r.rig.session, 0x47, hash512, SignMechanism::ECDSA_SHA512);
+
+    std::optional<APDUCommand> pso;
+    for (const auto& cmd : r.rig.card->log) {
+        if (isPso(cmd))
+            pso = cmd;
+    }
+    ASSERT_TRUE(pso.has_value());
+    EXPECT_EQ(pso->data, std::vector<std::uint8_t>(hash512.begin(), hash512.begin() + 48))
+        << "the card was sent " << pso->data.size() << " bytes";
+    ASSERT_EQ(result.outcome, SignResultOutcome::Ok);
+    EXPECT_TRUE(r.key->verifiesRaw(hash512, result.signature));
+}
+
+// ---------------------------------------------------------------------------
+// Key agreement: the card may allow it, this plugin does not perform it
+// ---------------------------------------------------------------------------
+
+class Pkcs15PluginDerive : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        LibreSCRS::log::init([this](LibreSCRS::log::Level, std::string_view line) { lines.emplace_back(line); },
+                             "test.pkcs15");
+    }
+    void TearDown() override
+    {
+        LibreSCRS::log::resetForTest();
+    }
+
+    [[nodiscard]] std::size_t linesMentioningKeyAgreement() const
+    {
+        return static_cast<std::size_t>(std::count_if(lines.begin(), lines.end(), [](const std::string& line) {
+            return line.find("key agreement") != std::string::npos;
+        }));
+    }
+
+    std::vector<std::string> lines;
+};
+
+// canDerive means "this plugin will run ECDH", not "the card allows it". The
+// card's bit is not lost: one line per card session says why the key is not
+// offered for it.
+TEST_F(Pkcs15PluginDerive, CardAllowsDeriveButThisPluginDoesNot)
+{
+    auto r = makeEcSigningRig("Derive Reader 0", /*derive=*/true);
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    const auto certs = plugin->readCertificates(*r.rig.session);
+
+    ASSERT_EQ(certs.size(), 1U);
+    EXPECT_FALSE(certs[0].canDerive);
+    EXPECT_EQ(linesMentioningKeyAgreement(), 1U);
+
+    // A host resolves its key through readCertificates on every operation;
+    // the line belongs to the card session, not to each of those reads.
+    (void)plugin->readCertificates(*r.rig.session);
+    (void)plugin->readCertificates(*r.rig.session);
+    EXPECT_EQ(linesMentioningKeyAgreement(), 1U) << "once per card session";
+
+    // Control: a key without the bit says nothing.
+    auto quiet = makeEcSigningRig("Derive Reader 1", /*derive=*/false);
+    lines.clear();
+    (void)plugin->readCertificates(*quiet.rig.session);
+    EXPECT_EQ(linesMentioningKeyAgreement(), 0U);
+}
+
+TEST_F(Pkcs15PluginDerive, EcdhIsNotImplemented)
+{
+    auto r = makeEcSigningRig("Derive Reader 2", /*derive=*/true);
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+    depositPin(*plugin, *r.rig.session);
+    std::vector<std::uint8_t> point(97, 0x3C);
+    point[0] = 0x04;
+    const auto apdus = r.rig.card->log.size();
+
+    const auto result = plugin->decipher(*r.rig.session, 0x47, point, LibreSCRS::Plugin::DecipherMechanism::ECDH_RAW);
+
+    EXPECT_EQ(result.outcome, LibreSCRS::Plugin::DecipherResultOutcome::NotImplemented);
+    EXPECT_EQ(r.rig.card->log.size(), apdus);
 }
