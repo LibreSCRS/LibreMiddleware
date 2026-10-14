@@ -52,6 +52,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <initializer_list>
 #include <map>
 #include <memory>
 #include <optional>
@@ -964,4 +965,90 @@ TEST(Pkcs15PluginAlwaysAuthenticate, OrdinaryKeyIsReportedWithoutTheFlag)
     const auto certs = plugin->readCertificates(*rig.session);
     ASSERT_EQ(certs.size(), 1U);
     EXPECT_FALSE(certs[0].alwaysAuthenticate);
+}
+
+// ---------------------------------------------------------------------------
+// The key handle readCertificates hands out and doSign resolves
+// ---------------------------------------------------------------------------
+
+namespace {
+
+std::vector<std::uint8_t> derTlv(std::uint8_t tag, const std::vector<std::uint8_t>& content)
+{
+    std::vector<std::uint8_t> out{tag, static_cast<std::uint8_t>(content.size())};
+    out.insert(out.end(), content.begin(), content.end());
+    return out;
+}
+
+std::vector<std::uint8_t> joined(std::initializer_list<std::vector<std::uint8_t>> parts)
+{
+    std::vector<std::uint8_t> out;
+    for (const auto& part : parts)
+        out.insert(out.end(), part.begin(), part.end());
+    return out;
+}
+
+// One [0] privateECKey record shaped like the Serbian eID's: no field size,
+// the key addressed by @p keyReference inside DF 3F00/@p df, usage
+// decrypt|sign|unwrap and -- with @p derive -- derive.
+std::vector<std::uint8_t> ecPrivateKeyRecord(std::uint8_t id, std::uint8_t keyReference, bool derive,
+                                             std::uint16_t df = 0x5015)
+{
+    const std::vector<std::uint8_t> usage =
+        derive ? std::vector<std::uint8_t>{0x00, 0x64, 0x80} : std::vector<std::uint8_t>{0x00, 0x64};
+    const std::vector<std::uint8_t> path = {0x3F, 0x00, static_cast<std::uint8_t>(df >> 8),
+                                            static_cast<std::uint8_t>(df & 0xFF)};
+    return derTlv(0xA0,
+                  joined({derTlv(0x30, {0x0C, 0x03, 0x4B, 0x45, 0x59}),
+                          derTlv(0x30, joined({derTlv(0x04, {id}), derTlv(0x03, usage), derTlv(0x02, {keyReference})})),
+                          derTlv(0xA1, derTlv(0x30, derTlv(0x30, derTlv(0x04, path))))}));
+}
+
+// One EF.CDF record: certificate @p id ("Cert") stored at 3F00/@p fid.
+std::vector<std::uint8_t> certificateRecord(std::uint8_t id, std::uint16_t fid)
+{
+    return derTlv(0x30, joined({derTlv(0x30, {0x0C, 0x04, 0x43, 0x65, 0x72, 0x74}), derTlv(0x30, derTlv(0x04, {id})),
+                                derTlv(0xA1, derTlv(0x30, derTlv(0x04, {0x3F, 0x00, static_cast<std::uint8_t>(fid >> 8),
+                                                                        static_cast<std::uint8_t>(fid & 0xFF)})))}));
+}
+
+constexpr std::uint16_t kSecondCertFid = 0x4411;
+
+} // namespace
+
+// Two EC keys in ONE DF, told apart only by their key references. A handle
+// taken from the path's last two bytes gave both 5015.
+TEST(Pkcs15PluginKeyHandle, KeysInOneDfGetTheirOwnHandles)
+{
+    auto rig = makeRig("Key Handle Reader 0");
+    rig.card->files[kPrkdfFid] = joined({ecPrivateKeyRecord(0x01, 0x47, false), ecPrivateKeyRecord(0x02, 0x48, false)});
+    rig.card->files[kCdfFid] = joined({certificateRecord(0x01, kCertFid), certificateRecord(0x02, kSecondCertFid)});
+    rig.card->files[kSecondCertFid] = certBlob();
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    const auto certs = plugin->readCertificates(*rig.session);
+
+    ASSERT_EQ(certs.size(), 2U);
+    ASSERT_TRUE(certs[0].keyFID.has_value());
+    ASSERT_TRUE(certs[1].keyFID.has_value());
+    EXPECT_EQ(*certs[0].keyFID, std::uint16_t{0x47});
+    EXPECT_EQ(*certs[1].keyFID, std::uint16_t{0x48});
+}
+
+// A key stored in its own file, without a reference, keeps the handle it has
+// always had: the file's id.
+TEST(Pkcs15PluginKeyHandle, KeyFileWithoutAReferenceKeepsItsPathHandle)
+{
+    auto rig = makeRig("Key Handle Reader 1");
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    const auto certs = plugin->readCertificates(*rig.session);
+
+    ASSERT_EQ(certs.size(), 1U);
+    ASSERT_TRUE(certs[0].keyFID.has_value());
+    EXPECT_EQ(*certs[0].keyFID, std::uint16_t{0x4410});
 }

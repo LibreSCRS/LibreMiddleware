@@ -70,7 +70,7 @@ PAdESDssOracleTests 1
 PAdESModuleTests 20
 PAdESUnicodeE2ETests 3
 PKCS11Tests 93
-PKCS15ParserTests 49
+PKCS15ParserTests 56
 PKCS15PluginTests 7
 ParsedCertificateExpectedTests 3
 ParsedCertificateTests 26
@@ -87,7 +87,7 @@ Pkcs11TokenTests 8
 Pkcs15ChangePinSelectorTests 4
 Pkcs15PinLifecycleTests 39
 Pkcs15ProbeEfDirTests 2
-Pkcs15ProfileReadCensusTests 30
+Pkcs15ProfileReadCensusTests 32
 Pkcs15ReadTokenInfoPartialTests 2
 PkcsAttachApiDeletedTest 1
 PluginAbiVersionTest 1

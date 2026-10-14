@@ -557,14 +557,9 @@ public:
 
             for (const auto& key : profile.privateKeys) {
                 if (key.id == cert.id) {
-                    if (key.path.size() >= 2) {
-                        cd.keyFID = static_cast<std::uint16_t>((key.path[key.path.size() - 2] << 8) |
-                                                               key.path[key.path.size() - 1]);
-                    } else if (key.keyReference != 0) {
-                        cd.keyFID = static_cast<std::uint16_t>(key.keyReference);
-                    } else {
-                        cd.keyFID = std::uint16_t{1};
-                    }
+                    // One rule with doSign's lookup: the card command's own
+                    // key selection, reference first (pkcs15::keyHandle).
+                    cd.keyFID = pkcs15::keyHandle(key);
                     if (key.keySizeBits != 0)
                         cd.keySizeBits = key.keySizeBits;
                     // From the card, through the rule the PKCS#11 slot
@@ -1264,19 +1259,11 @@ public:
             pkcs15::PKCS15Card card(*channel);
             auto profile = profileFor(session, card, "doSign");
 
-            // Resolve the private key whose on-card file id matches keyReference
-            // (the keyFID readCertificates surfaced from the PrKDF path).
+            // Resolve the private key whose handle matches keyReference -- the
+            // keyFID readCertificates surfaced, through the same rule.
             const pkcs15::PrivateKeyInfo* matched = nullptr;
             for (const auto& key : profile.privateKeys) {
-                std::uint16_t fid;
-                if (key.path.size() >= 2)
-                    fid = static_cast<std::uint16_t>((key.path[key.path.size() - 2] << 8) |
-                                                     key.path[key.path.size() - 1]);
-                else if (key.keyReference != 0)
-                    fid = static_cast<std::uint16_t>(key.keyReference);
-                else
-                    fid = std::uint16_t{1};
-                if (fid == keyReference) {
+                if (pkcs15::keyHandle(key) == keyReference) {
                     matched = &key;
                     break;
                 }

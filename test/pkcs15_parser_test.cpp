@@ -7,6 +7,7 @@
 #include "fixtures/binary_serial_tokeninfo_20260820.h"
 #include "fixtures/ec_prkdf_20260820.h"
 #include "fixtures/ec_pukdf_20260820.h"
+#include "fixtures/rs_eid_ec_prkdf_20260903.h"
 #include "pkcs15_test_vectors.h"
 
 #include <gtest/gtest.h>
@@ -583,6 +584,109 @@ TEST(PerOperationAuth, FollowsTheScannedCards)
     for (const auto& key : parsePrKDF(SAMPLE_PRKDF)) {
         EXPECT_FALSE(requiresPerOperationAuth(key)) << "key '" << key.label << "'";
     }
+}
+
+// =============================================================================
+// KeyUsageFlags derive, and the handle a plugin hands out for a key
+// =============================================================================
+
+namespace {
+
+// One [0] privateECKey record (id 01) in DF 3F00/5015, addressed by
+// @p keyReference, with @p usageBits as the KeyUsageFlags BIT STRING content.
+std::vector<uint8_t> ecKeyRecord(uint8_t keyReference, const std::vector<uint8_t>& usageBits)
+{
+    std::vector<uint8_t> keyAttributes = {0x04, 0x01, 0x01};
+    const auto usage = tlv(0x03, usageBits);
+    keyAttributes.insert(keyAttributes.end(), usage.begin(), usage.end());
+    keyAttributes.insert(keyAttributes.end(), {0x02, 0x01, keyReference});
+
+    std::vector<uint8_t> body = tlv(0x30, {0x0C, 0x03, 0x4B, 0x45, 0x59}); // label "KEY"
+    const auto attributes = tlv(0x30, keyAttributes);
+    body.insert(body.end(), attributes.begin(), attributes.end());
+    body.insert(body.end(), {0xA1, 0x0A, 0x30, 0x08, 0x30, 0x06, 0x04, 0x04, 0x3F, 0x00, 0x50, 0x15});
+    return tlv(0xA0, body);
+}
+
+} // namespace
+
+// The scanned key allows derive (bit 8, 0x80 of the third byte) next to a bit
+// 15 PKCS#15 does not define. Derive is read; the undefined bit changes nothing.
+TEST(ParsePrKDF, ScannedEcKeyAllowsDerive)
+{
+    const auto keys = parsePrKDF(RS_EID_EC_PRKDF);
+
+    ASSERT_EQ(keys.size(), 1U);
+    EXPECT_EQ(keys[0].keyType, KeyType::Ec);
+    EXPECT_TRUE(keys[0].canDerive);
+    EXPECT_TRUE(keys[0].canSign);
+    EXPECT_EQ(keys[0].keyReference, 0x47);
+    EXPECT_EQ(keys[0].userConsent, 1U);
+    EXPECT_EQ(keys[0].id.size(), 16U);
+}
+
+TEST(ParsePrKDF, UsageWithoutTheDeriveBitDoesNotDerive)
+{
+    const auto twoBytes = parsePrKDF(EC_PRKDF_SINGLE_KEY); // usage 02 64: no third byte at all
+    ASSERT_EQ(twoBytes.size(), 1U);
+    EXPECT_FALSE(twoBytes[0].canDerive);
+
+    const auto bit15Only = parsePrKDF(ecKeyRecord(0x47, {0x00, 0x64, 0x01}));
+    ASSERT_EQ(bit15Only.size(), 1U);
+    EXPECT_FALSE(bit15Only[0].canDerive) << "bit 15 is not derive";
+}
+
+// The unused-bits count (first content byte, at most 7) can only cover the low
+// bits of the last byte, never its MSB -- which is where derive sits.
+TEST(ParsePrKDF, DeriveIsReadWhateverTheUnusedBitCount)
+{
+    const auto keys = parsePrKDF(ecKeyRecord(0x47, {0x07, 0x00, 0x80}));
+
+    ASSERT_EQ(keys.size(), 1U);
+    EXPECT_TRUE(keys[0].canDerive);
+    EXPECT_FALSE(keys[0].canSign);
+}
+
+// The card command selects a key by its reference when the PrKDF carries one
+// (resolveKeyRef); the handle a plugin hands out follows the same choice.
+TEST(KeyHandle, KeyReferenceComesFirst)
+{
+    const auto keys = parsePrKDF(RS_EID_EC_PRKDF);
+
+    ASSERT_EQ(keys.size(), 1U);
+    EXPECT_EQ(keyHandle(keys[0]), std::uint16_t{0x47}) << "not 5015, the DF the key lives in";
+}
+
+TEST(KeyHandle, KeyFileWithoutAReferenceKeepsItsPath)
+{
+    const auto keys = parsePrKDF(rsaKeyWithCommonObjectAttributes({0x0C, 0x03, 0x4B, 0x45, 0x59}));
+
+    ASSERT_EQ(keys.size(), 1U);
+    ASSERT_EQ(keys[0].keyReference, 0);
+    EXPECT_EQ(keyHandle(keys[0]), std::uint16_t{0x4410});
+}
+
+TEST(KeyHandle, NeitherReferenceNorPathIsOne)
+{
+    PrivateKeyInfo bare;
+    EXPECT_EQ(keyHandle(bare), std::uint16_t{1});
+    bare.path = {0x44};
+    EXPECT_EQ(keyHandle(bare), std::uint16_t{1}) << "one path byte names no file";
+}
+
+// Two keys in one DF share every path byte; only their references tell them
+// apart. A handle taken from the path first gave both 5015.
+TEST(KeyHandle, TwoKeysInOneDfStayApart)
+{
+    auto prkdf = ecKeyRecord(0x47, {0x00, 0x64});
+    const auto second = ecKeyRecord(0x48, {0x00, 0x64});
+    prkdf.insert(prkdf.end(), second.begin(), second.end());
+    const auto keys = parsePrKDF(prkdf);
+
+    ASSERT_EQ(keys.size(), 2U);
+    ASSERT_EQ(keys[0].path, keys[1].path);
+    EXPECT_EQ(keyHandle(keys[0]), std::uint16_t{0x47});
+    EXPECT_EQ(keyHandle(keys[1]), std::uint16_t{0x48});
 }
 
 // A serialNumber is an OCTET STRING, and nothing says its bytes are text. This

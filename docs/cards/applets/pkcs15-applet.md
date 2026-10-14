@@ -98,6 +98,8 @@ Each private key entry contains:
 | `keySizeBits` | Key size (e.g. 2048 for RSA-2048) |
 | `path` | File path to the key reference |
 | `accessFlags` | Access control flags |
+| `keyReference` | On-card key reference from `CommonKeyAttributes`; the card command selects the key by it, and the plugin's key handle (`keyFID`) is this value when present, otherwise the last two bytes of `path` |
+| `canDerive` | `KeyUsageFlags` `derive` bit (bit 8): the card allows key agreement with this key. The PKCS#15 plugin performs none, so it does not offer the key for it |
 | `userConsent` | Per-operation consent count from `CommonObjectAttributes`; non-zero means the card wants the PIN for every operation with this key (PKCS#11 `CKA_ALWAYS_AUTHENTICATE`) |
 
 ### PIN Objects (AODF)

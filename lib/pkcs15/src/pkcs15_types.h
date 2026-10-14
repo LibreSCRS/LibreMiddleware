@@ -41,6 +41,10 @@ struct PrivateKeyInfo
     uint8_t accessFlags = 0;
     uint8_t keyReference = 0; // from CommonKeyAttributes (used when path is empty)
     bool canSign = false;     // digitalSignature (bit 0) or nonRepudiation (bit 1) in usage flags
+    // KeyUsageFlags derive: bit 8, the MSB of the flags' second byte. The
+    // unused-bits count (at most 7) never covers that bit; bits past
+    // nonRepudiation (9) -- some cards set an undefined bit 15 -- are ignored.
+    bool canDerive = false;
     KeyType keyType = KeyType::Rsa;
     // CommonObjectAttributes userConsent: how many times the holder must
     // consent before this key is used. Non-zero means the card wants the PIN
@@ -60,6 +64,22 @@ struct PrivateKeyInfo
 [[nodiscard]] inline bool requiresPerOperationAuth(const PrivateKeyInfo& key) noexcept
 {
     return key.userConsent != 0;
+}
+
+/// The handle CardPlugin::sign takes for @p key: CertificateData::keyFID as
+/// the PKCS#15 plugin reports it. Same precedence as the card command's own key
+/// selection (PKCS15Card::resolveKeyRef): the keyReference when the PrKDF
+/// carries one, otherwise the last two bytes of the key's path, otherwise 1.
+/// Two keys in one DF differ in their reference, never in their path. The
+/// value is opaque to every consumer; readCertificates hands it out and doSign
+/// resolves it, both through this one function, so the two cannot disagree.
+[[nodiscard]] inline uint16_t keyHandle(const PrivateKeyInfo& key) noexcept
+{
+    if (key.keyReference != 0)
+        return key.keyReference;
+    if (key.path.size() >= 2)
+        return static_cast<uint16_t>((key.path[key.path.size() - 2] << 8) | key.path[key.path.size() - 1]);
+    return 1;
 }
 
 /// One EF.PuKDF record. Deliberately its own type rather than a reuse of

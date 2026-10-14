@@ -452,6 +452,9 @@ std::vector<PrivateKeyInfo> parsePrKDF(std::span<const uint8_t> data)
                         bool hasNonRepudiation = child.value.size() >= 3 && (child.value[2] & 0x40) != 0;
                         key.canSign = hasSign || hasNonRepudiation;
                     }
+                    // derive (bit 8) is the MSB of the second flags byte;
+                    // the unused-bits count (at most 7) cannot reach it.
+                    key.canDerive = child.value.size() >= 3 && (child.value[2] & 0x80) != 0;
                 } else if (child.tag == 0x02 && !child.value.empty()) {
                     // keyReference INTEGER (PKCS#15 range 0-255).
                     // .back() is safe: ASN.1 encodes 0x80 as {0x00, 0x80}, .back() = 0x80.
