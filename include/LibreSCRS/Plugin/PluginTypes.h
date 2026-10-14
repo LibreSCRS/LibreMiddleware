@@ -42,8 +42,10 @@ namespace LibreSCRS::Plugin {
 ///       members (`sizeof` 80 -> 168), and the superseded `getPINTriesLeft`
 ///       slot is now removed. v9 also appends
 ///       @ref LibreSCRS::Plugin::CertificateData::alwaysAuthenticate (`sizeof` 88 -> 96 on the
-///       canonical layout) and the PinIncorrect / PinBlocked values of
-///       SignResultOutcome and DecipherResultOutcome. v9 is also the first
+///       canonical layout) and @ref LibreSCRS::Plugin::CertificateData::canDerive behind it (it
+///       fills padding; `sizeof` stays 96), the PinIncorrect / PinBlocked
+///       values of SignResultOutcome and DecipherResultOutcome, and
+///       @ref LibreSCRS::Plugin::DecipherMechanism::ECDH_RAW. v9 is also the first
 ///       plugin ABI revision that moves together with the shared objects'
 ///       SONAME.
 inline constexpr std::uint32_t kCardPluginAbiVersion = 9;
@@ -194,12 +196,14 @@ struct CertificateData
     std::string label;
     /// @brief Certificate body in DER encoding.
     std::vector<std::uint8_t> derBytes;
-    /// @brief File identifier of the matching private key, when known.
+    /// @brief Plugin-defined handle of the matching private key, when known.
     ///
-    /// An engaged optional carries a concrete FID; a disengaged optional
-    /// means "no private key associated" or "plugin cannot determine the
-    /// FID" and the caller should fall back to label-based matching or
-    /// mark the cert as verify-only.
+    /// Pass it back to sign / decipher unchanged. It is a key reference or a
+    /// key-file id, whichever the plugin selects the key by; hosts treat it
+    /// as opaque. An engaged optional carries a concrete handle; a
+    /// disengaged optional means "no private key associated", "plugin cannot
+    /// determine the handle" or "the handle names more than one key" and the caller should fall back to label-based
+    /// matching or mark the cert as verify-only.
     ///
     /// @since 4.0
     std::optional<std::uint16_t> keyFID;
@@ -219,9 +223,9 @@ struct CertificateData
     /// This is the reuse-safe discriminator to hand to
     /// @ref LibreSCRS::Signing::SigningRequest::Builder::keyId so the signing
     /// engine selects THIS exact key — the label is not unique on multi-cert
-    /// cards. **Distinct from @ref keyFID**, which is the matching key's *file*
-    /// identifier (a different value): @ref keyFID is the on-card file selector,
-    /// @ref ckaId is the PKCS#11 object selector used on the in-process signing
+    /// cards. **Distinct from @ref keyFID**, which is the plugin's handle for the
+    /// matching key (a different value): @ref keyFID is what sign / decipher
+    /// take, @ref ckaId is the PKCS#11 object selector used on the in-process signing
     /// path. Empty when the plugin cannot determine the object id (the caller
     /// then falls back to label / auto-select).
     ///
@@ -253,6 +257,31 @@ struct CertificateData
     /// @since 5.0
     bool alwaysAuthenticate = false;
 
+    /// @brief This plugin performs EC key agreement with this certificate's
+    ///        private key: @ref CardPlugin::decipher with
+    ///        @ref DecipherMechanism::ECDH_RAW will run.
+    ///
+    /// True only when the card allows the key to derive (the PKCS#15 key usage
+    /// @c derive bit) AND this plugin implements ECDH for it. A host offers key
+    /// agreement from this flag (PKCS#11 @c CKA_DERIVE, @c CKM_ECDH1_DERIVE), so
+    /// a card bit the plugin cannot act on stays @c false -- offering it would
+    /// cost the user a PIN prompt and end in
+    /// @ref DecipherResultOutcome::NotImplemented. @c false when no private key
+    /// is paired with the certificate.
+    ///
+    /// @code
+    /// for (const auto& cert : plugin.readCertificates(session)) {
+    ///     if (cert.canDerive && cert.keyFID) {
+    ///         auto r = plugin.decipher(session, *cert.keyFID, peerPoint,
+    ///                                  DecipherMechanism::ECDH_RAW);
+    ///         // r.plaintext holds Z: derive the key from it, then erase it
+    ///     }
+    /// }
+    /// @endcode
+    ///
+    /// @since 5.0
+    bool canDerive = false;
+
     /// @brief Defaulted member-wise equality.
     [[nodiscard]] bool operator==(const CertificateData&) const noexcept = default;
 };
@@ -277,17 +306,30 @@ struct KeyReference
 
 /// @brief Cryptographic mechanism for on-card signing.
 ///
-/// @note ECDSA alternatives (`ECDSA_SHA256`, `ECDSA_SHA384`, `ECDSA_SHA512`)
-///       are reserved in ABI v6 (4.0). Plugins that do not implement ECDSA MUST
-///       return `SignResultOutcome::NotImplemented` when called with one of
-///       these mechanisms rather than producing an RSA-signed blob.
+/// For the three ECDSA mechanisms @p data is the hash the caller computed:
+/// 32, 48 or 64 bytes, accepted by every ECDSA mechanism alike -- the
+/// enumerator names the hash the caller used, it does not fix the length. A
+/// hash longer than the key's field is signed by its leftmost
+/// `ceil(fieldBits / 8)` bytes (FIPS 186-4 6.4), as OpenSC does. A
+/// successful @ref LibreSCRS::Plugin::SignResult::signature is the raw signature `r || s`: two
+/// big-endian integers of exactly `ceil(fieldBits / 8)` bytes each,
+/// left-padded with zeros (96 bytes for P-384), never the DER
+/// `SEQUENCE { r, s }` some cards answer with. The PKCS#15 plugin also
+/// checks it with the key's certificate before returning it. A plugin that
+/// cannot determine the key's field size returns
+/// @ref LibreSCRS::Plugin::SignResultOutcome::PluginError before the PIN is presented or the
+/// card is asked to sign; an input of another length is refused before
+/// anything reaches the card.
+/// Plugins that do not implement ECDSA MUST return
+/// @ref LibreSCRS::Plugin::SignResultOutcome::NotImplemented for these mechanisms rather than
+/// producing an RSA-signed blob.
 enum class SignMechanism : std::uint8_t {
     RSA_PKCS,
-    /// @brief ECDSA over SHA-256 (NIST P-256 / secp256r1 typical).
+    /// @brief ECDSA over a hash the caller computed with SHA-256. NIST P-256 typical.
     ECDSA_SHA256,
-    /// @brief ECDSA over SHA-384 (NIST P-384 / secp384r1 typical).
+    /// @brief ECDSA over a hash the caller computed with SHA-384. NIST P-384 typical.
     ECDSA_SHA384,
-    /// @brief ECDSA over SHA-512 (NIST P-521 / secp521r1 typical).
+    /// @brief ECDSA over a hash the caller computed with SHA-512. NIST P-521 typical.
     ECDSA_SHA512,
     /// @brief RSA PKCS#1 v1.5 over SHA-256, **hashed on-card**.
     ///
@@ -380,13 +422,30 @@ struct SignResult
     }
 };
 
-/// @brief Cryptographic mechanism for on-card RSA decryption.
+/// @brief Cryptographic mechanism for an on-card private-key operation that
+///        returns a secret: RSA decryption and EC key agreement.
 /// @note SR cards are PKCS#1 v1.5 only (no OAEP). A future card+driver that
 ///       reports OAEP support would extend this enum; until then the proxy
 ///       advertises only v1.5 decrypt.
+/// @note Append-only: a plugin built against an older header never receives a
+///       value it did not know.
 /// @since 5.0
 enum class DecipherMechanism : std::uint8_t {
     RSA_PKCS1_V15, ///< RSA decrypt, PKCS#1 v1.5 padding stripped by the backend.
+    /// @brief ECDH key agreement with the card's EC private key, no KDF.
+    ///
+    /// The input is the other party's public point, uncompressed:
+    /// `04 || X || Y`, `1 + 2 * ceil(fieldBits / 8)` bytes (97 for P-384). A
+    /// successful @ref DecipherResult::plaintext is the raw shared secret Z, the
+    /// x-coordinate of the product, exactly `ceil(fieldBits / 8)` bytes -- a
+    /// SECRET the caller erases once it has derived its key. A plugin checks the
+    /// point's length and leading byte before the card sees it; whether the
+    /// point lies on the key's curve is the caller's to check (a plugin may not
+    /// know the curve). Runs for a key whose @ref CertificateData::canDerive is
+    /// @c true; otherwise the answer is @ref DecipherResultOutcome::NotImplemented
+    /// or @ref DecipherResultOutcome::PluginError. Appended in ABI 9.
+    /// @since 5.0
+    ECDH_RAW,
 };
 
 /// @brief Structured outcome for on-card decryption (mirrors @ref SignResult).
@@ -414,6 +473,9 @@ enum class DecipherResultOutcome : std::uint8_t {
 /// @since 5.0
 struct DecipherResult
 {
+    /// @brief The recovered plaintext (@ref DecipherMechanism::RSA_PKCS1_V15)
+    ///        or the shared secret Z (@ref DecipherMechanism::ECDH_RAW).
+    ///        Secret in both cases: the caller cleanses it after use.
     std::vector<std::uint8_t> plaintext;
     DecipherResultOutcome outcome = DecipherResultOutcome::Unspecified;
     [[nodiscard]] bool ok() const noexcept

@@ -16,7 +16,7 @@ CardSessionApiInvariantTest 1
 ContactInfoIntegrationTests 2
 CrossBackendTests 1
 CrossProviderCoordinationTests 13
-DecipherTypesTest 2
+DecipherTypesTest 3
 DocpParserTests 4
 ECSigningTests 9
 EMRTDCryptoTests 257

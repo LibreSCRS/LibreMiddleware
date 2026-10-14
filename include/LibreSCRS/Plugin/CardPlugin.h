@@ -94,7 +94,7 @@ struct CardPluginActivationAccessor;
 ///       vtable rather than appended, and this class grew three members
 ///       (`sizeof` 80 -> 168). v9 is also the first plugin ABI revision
 ///       that moves together with the shared objects' SONAME. v9 also grows
-///       @ref CertificateData by its @c alwaysAuthenticate member.
+///       @ref CertificateData by its @c alwaysAuthenticate and @c canDerive members.
 ///
 /// Method groups:
 ///  - Identification (@ref pluginId, @ref displayName, @ref probePriority) — set via @ref setIdentity
@@ -403,15 +403,18 @@ public:
                                   std::span<const std::uint8_t> data, SignMechanism mechanism,
                                   CancelToken token = {}) const;
 
-    /// @brief Raw RSA decrypt with the on-card key @p keyReference.
+    /// @brief RSA decryption or EC key agreement with the on-card key
+    ///        @p keyReference.
     ///
     /// Public NVI (mirrors @ref sign): the wrapper observes @p token and
     /// short-circuits to @ref DecipherResultOutcome::Cancelled before
-    /// dispatching to @ref doDecipher. @p ciphertext is the RSA block to
-    /// decrypt; the backend strips PKCS#1 v1.5 padding and returns the
-    /// recovered plaintext. The wrapper does NOT cleanse @p ciphertext (it is
-    /// not secret) but the RECOVERED plaintext is sensitive — the caller owns
-    /// cleansing the returned bytes.
+    /// dispatching to @ref doDecipher. What @p ciphertext carries depends on
+    /// @p mechanism: for @ref DecipherMechanism::RSA_PKCS1_V15 the RSA block,
+    /// whose PKCS#1 v1.5 padding the backend strips from the recovered
+    /// plaintext; for @ref DecipherMechanism::ECDH_RAW the other party's
+    /// uncompressed public point, and the shared secret Z comes back. The
+    /// wrapper does NOT cleanse @p ciphertext (it is not secret), but what
+    /// comes back IS -- the caller owns cleansing the returned bytes.
     /// @note PIN for the operation: when a @c "pin" credential is deposited for
     ///       @p session (@ref setCredentials), a plugin that deciphers presents it
     ///       to the card (VERIFY) and deciphers in ONE card transaction, so nothing

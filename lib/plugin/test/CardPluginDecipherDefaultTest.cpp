@@ -9,8 +9,9 @@
 /// @ref LibreSCRS::Plugin::CardPlugin::doDecipher must surface
 /// @ref LibreSCRS::Plugin::DecipherResultOutcome::NotImplemented through the
 /// public wrapper, so a caller can distinguish "this plugin cannot decrypt"
-/// from a genuine card-side failure. A second test pins the decrypt mechanism
-/// enum closed so a future addition forces a deliberate doDecipher update.
+/// from a genuine card-side failure. A second test sends
+/// @ref LibreSCRS::Plugin::DecipherMechanism::ECDH_RAW through the same
+/// default: key agreement a plugin does not implement is NotImplemented too.
 ///
 /// The wrapper receives a real detached @ref LibreSCRS::SmartCard::CardSession
 /// via the LM-internal test factory (the @c LIBRESCRS_INTERNAL_BUILD define +
@@ -70,10 +71,15 @@ TEST(CardPluginDecipher, DefaultIsNotImplemented)
     EXPECT_EQ(r.outcome, DecipherResultOutcome::NotImplemented);
 }
 
-TEST(CardPluginDecipher, UnsupportedMechanismIsRejectedWithoutCard)
+// Every mechanism reaches doDecipher; a plugin that overrides nothing answers
+// key agreement exactly as it answers RSA: NotImplemented, nothing sent.
+TEST(CardPluginDecipher, EcdhRawDefaultIsNotImplemented)
 {
-    // doDecipher must reject a non-v1.5 mechanism deterministically. The enum
-    // is closed, so this test pins that the ONLY value is RSA_PKCS1_V15 so a
-    // future addition forces a deliberate doDecipher update.
-    EXPECT_EQ(static_cast<int>(DecipherMechanism::RSA_PKCS1_V15), 0);
+    BareCardPlugin p;
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    ASSERT_NE(session, nullptr);
+    std::array<std::uint8_t, 97> point{};
+    point[0] = 0x04;
+    DecipherResult r = p.decipher(*session, /*keyReference=*/0x47, point, DecipherMechanism::ECDH_RAW);
+    EXPECT_EQ(r.outcome, DecipherResultOutcome::NotImplemented);
 }

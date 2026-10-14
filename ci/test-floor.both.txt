@@ -19,7 +19,7 @@ CrossProviderCoordinationTests 13
 DSSIntegrationTests 2
 DSSServiceManagerTests 4
 DSSSigningServiceTests 4
-DecipherTypesTest 2
+DecipherTypesTest 3
 DocpParserTests 4
 ECSigningTests 9
 EMRTDCryptoTests 257

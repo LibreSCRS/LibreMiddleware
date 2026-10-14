@@ -15,9 +15,18 @@ TEST(DecipherTypes, OkPredicateMatchesOutcome)
     EXPECT_FALSE(r.ok());
 }
 
-TEST(DecipherTypes, RsaPkcs1V15IsTheOnlyMechanismThisRelease)
+// A plugin built against an older header must never receive a value it knew
+// under another meaning: RSA_PKCS1_V15 keeps 0, and ECDH_RAW follows it.
+TEST(DecipherTypes, MechanismsAreAppendOnly)
 {
-    // No card this release advertises OAEP, so the enum carries only the
-    // PKCS#1 v1.5 mechanism; OAEP is reserved for a card that advertises it.
     EXPECT_EQ(static_cast<int>(DecipherMechanism::RSA_PKCS1_V15), 0);
+    EXPECT_EQ(static_cast<int>(DecipherMechanism::ECDH_RAW), 1);
+}
+
+// A host advertises key agreement from this flag, so a plugin that says
+// nothing must not read as offering it.
+TEST(DecipherTypes, CanDeriveIsOffUntilAPluginSetsIt)
+{
+    CertificateData cd{};
+    EXPECT_FALSE(cd.canDerive);
 }
