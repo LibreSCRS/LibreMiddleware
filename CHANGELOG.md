@@ -7,6 +7,44 @@ Notable user-visible changes per release. Format follows
 
 ### Added
 
+- **EC keys: ECDSA through both card plugins, and ECDH key agreement through
+  OpenSC.** The generic PKCS#15 plugin now signs with EC keys
+  (`SignMechanism::ECDSA_SHA256/384/512`) on any card (unlike hash-on-card
+  RSA, ECDSA is not limited to PACE cards), and both plugins return what the
+  ECDSA mechanisms now promise: the input is the hash, and the signature is raw `r || s`, each half exactly the key's
+  field width. A hash longer than the field is signed by its leftmost bytes, as
+  FIPS 186-4 prescribes and OpenSC does. The PKCS#15 plugin reads the card's answer — DER, or a
+  `SEQUENCE` whose integers are written at the full field width, as some cards
+  do — with the width taken from the key's certificate, because such a card's
+  key directory records no field size, and checks every signature with that
+  certificate's public key before returning it: one that does not verify is a
+  `PluginError`, never passed on. On cards without PACE the native plugin now
+  attempts ECDSA; a card that lacks plain ECDSA fails with `PluginError` after
+  the PIN check rather than `NotImplemented`, and no PIN try is lost. An EC key
+  asked for `RSA_SHA256` is `NotImplemented`. The OpenSC plugin accepts a
+  driver return of 0 over a filled signature buffer, as OpenSC's own
+  `C_Sign` does, and rejects an all-zero `r` or `s`. The OpenSC plugin
+  performs ECDH
+  (`DecipherMechanism::ECDH_RAW`, appended: the other party's uncompressed
+  point in, the raw shared secret Z out) through OpenSC's own derive path,
+  with the deposited PIN presented in the same card transaction; a point of
+  the wrong length or form is refused before the card sees it.
+  `CertificateData::canDerive` says when a plugin will run ECDH for a key: the
+  card's `derive` usage bit *and* an implementation in that plugin — for the
+  OpenSC plugin, a card driver that offers raw ECDH for the key's field. The
+  PKCS#15 plugin implements none and leaves it `false`, with one log line when
+  the card would allow it. Plugin ABI 9: the new member fills padding, so the
+  aggregate keeps its size.
+
+  **Key handles of the generic PKCS#15 plugin.** `CertificateData::keyFID` now
+  follows the card command's own key selection: the key reference when the
+  key directory carries one, otherwise the last two bytes of the key's path.
+  Two keys in one directory no longer share a handle; a handle that two keys
+  in different directories still share is refused by `sign` before the PIN is
+  presented, rather than guessed. The value is opaque and is passed back to
+  `sign` unchanged, so callers that do not store it see no difference; one
+  that stored a handle must read it again.
+
 - **Every release carries a source tarball this project built**, cosigned and
   listed in the signed `SHA256SUMS` manifest like every other asset — so the
   manifest a release publishes is larger than it was. The Arch recipe fetches
