@@ -16,11 +16,13 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -914,6 +916,36 @@ TEST(OpenscOperations, DeferredClaimWithoutChannelOrCanIsTyped)
     EXPECT_TRUE(h.plugin->getPINList(*live.session).empty());
 }
 
+TEST(OpenscOperations, EcdsaInputOfAWrongLengthIsRefusedBeforeAnyChannelWork)
+{
+    PluginHandle h;
+    LiveSmSession live;
+
+    live.channel->transmitHandler = [](const APDUCommand&) { return sw(0x90, 0x00); };
+    ASSERT_TRUE(h.plugin->canHandleConnection(kTestAtr, *live.session));
+
+    // The tunnel is gone, so any channel activation would ask the credential
+    // provider; a request refused before that never reaches it.
+    live.session->clearActiveChannel();
+    int providerCalls = 0;
+    live.session->setCredentialProvider([&providerCalls](const LibreSCRS::Auth::AuthRequirement&) {
+        ++providerCalls;
+        return LibreSCRS::Auth::CredentialResult::cancelled();
+    });
+    const int transmitsBefore = live.channel->transmits();
+
+    const auto wrongLength = h.plugin->sign(*live.session, 0x47, std::vector<std::uint8_t>(20, 0xAB),
+                                            LibreSCRS::Plugin::SignMechanism::ECDSA_SHA256);
+    EXPECT_EQ(wrongLength.outcome, LibreSCRS::Plugin::SignResultOutcome::PluginError);
+    EXPECT_EQ(providerCalls, 0) << "no channel activation for a SHA-1 length";
+    EXPECT_EQ(live.channel->transmits(), transmitsBefore);
+
+    // Control: the same session does activate for a well-formed request.
+    (void)h.plugin->sign(*live.session, 0x47, std::vector<std::uint8_t>(32, 0xAB),
+                         LibreSCRS::Plugin::SignMechanism::ECDSA_SHA256);
+    EXPECT_GT(providerCalls, 0) << "the control must reach activation, or the assertion above proves nothing";
+}
+
 TEST(OpenscOperations, ClearCredentialsOnlyErasesTheMapEntry)
 {
     PluginHandle h;
@@ -1025,6 +1057,405 @@ TEST(OpenscEcSurface, DriverShortNameMapsToQuirkFamily)
     EXPECT_EQ(LibreSCRS::OpenSc::familyFromDriverShortName("PIV-II"), FamilyId::Piv);
     EXPECT_EQ(LibreSCRS::OpenSc::familyFromDriverShortName(nullptr), FamilyId::Unknown);
     EXPECT_EQ(LibreSCRS::OpenSc::familyFromDriverShortName("cardos"), FamilyId::Unknown);
+}
+
+// ── EC key agreement and ECDSA: everything refusable is refused off-card ───
+
+struct EcKeyObject
+{
+    explicit EcKeyObject(std::size_t fieldLengthBits, int userConsent = 0)
+    {
+        info.field_length = fieldLengthBits;
+        info.usage = SC_PKCS15_PRKEY_USAGE_DERIVE | SC_PKCS15_PRKEY_USAGE_SIGN;
+        object.type = SC_PKCS15_TYPE_PRKEY_EC;
+        object.user_consent = userConsent;
+        object.data = &info;
+    }
+    EcKeyObject(const EcKeyObject&) = delete;
+    EcKeyObject& operator=(const EcKeyObject&) = delete;
+
+    sc_pkcs15_prkey_info_t info{};
+    sc_pkcs15_object_t object{};
+};
+
+std::vector<std::uint8_t> uncompressedPoint(std::size_t fieldBytes)
+{
+    std::vector<std::uint8_t> point(1 + 2 * fieldBytes, 0x3C);
+    point[0] = 0x04;
+    return point;
+}
+
+// What the card's driver advertises for an EC key of that field: raw ECDH.
+constexpr unsigned long kCardEcdh = SC_ALGORITHM_ECDH_CDH_RAW;
+
+TEST(OpenscEcSurface, CanDeriveNeedsAnEcKeyTheDeriveBitAFieldLengthAndTheCardsEcdh)
+{
+    using LibreSCRS::OpenSc::canDeriveWith;
+    EcKeyObject key(384);
+    EXPECT_TRUE(canDeriveWith(key.object, kCardEcdh));
+    EXPECT_FALSE(canDeriveWith(key.object, SC_ALGORITHM_ECDSA_RAW))
+        << "the driver signs with the key but has no ECDH: derive would fail after the PIN";
+    EXPECT_FALSE(canDeriveWith(key.object, 0)) << "no algorithm for this field on the card";
+
+    key.info.usage = SC_PKCS15_PRKEY_USAGE_SIGN;
+    EXPECT_FALSE(canDeriveWith(key.object, kCardEcdh)) << "no derive bit";
+
+    key.info.usage = SC_PKCS15_PRKEY_USAGE_DERIVE;
+    key.info.field_length = 0;
+    EXPECT_FALSE(canDeriveWith(key.object, kCardEcdh)) << "no field length: no buffer, no curve width";
+
+    key.info.field_length = 384;
+    key.object.type = SC_PKCS15_TYPE_PRKEY_RSA;
+    EXPECT_FALSE(canDeriveWith(key.object, kCardEcdh)) << "not an EC key";
+}
+
+TEST(OpenscEcSurface, NoCardAdvertisesNothing)
+{
+    EXPECT_EQ(LibreSCRS::OpenSc::ecAlgorithmFlags(nullptr, 384), 0UL);
+}
+
+// sc_card_find_ec_alg reads only the card's algorithm table: one entry per
+// field length, and the flags are that entry's -- the same lookup the derive
+// and sign paths make.
+TEST(OpenscEcSurface, FlagsComeFromTheEntryForTheKeysField)
+{
+    sc_algorithm_info_t algorithms[3]{};
+    algorithms[0].algorithm = SC_ALGORITHM_RSA;
+    algorithms[0].key_length = 384;
+    algorithms[0].flags = SC_ALGORITHM_RSA_RAW;
+    algorithms[1].algorithm = SC_ALGORITHM_EC;
+    algorithms[1].key_length = 256;
+    algorithms[1].flags = SC_ALGORITHM_ECDSA_RAW;
+    algorithms[2].algorithm = SC_ALGORITHM_EC;
+    algorithms[2].key_length = 384;
+    algorithms[2].flags = SC_ALGORITHM_ECDSA_RAW | SC_ALGORITHM_ECDH_CDH_RAW;
+    sc_card_t card{};
+    card.algorithms = algorithms;
+    card.algorithm_count = 3;
+
+    using LibreSCRS::OpenSc::ecAlgorithmFlags;
+    EXPECT_EQ(ecAlgorithmFlags(&card, 384),
+              static_cast<unsigned long>(SC_ALGORITHM_ECDSA_RAW | SC_ALGORITHM_ECDH_CDH_RAW));
+    EXPECT_EQ(ecAlgorithmFlags(&card, 256), static_cast<unsigned long>(SC_ALGORITHM_ECDSA_RAW));
+    EXPECT_EQ(ecAlgorithmFlags(&card, 521), 0UL) << "no entry for that field";
+    EXPECT_EQ(ecAlgorithmFlags(&card, 0), 0UL) << "no field length";
+
+    EcKeyObject key(384);
+    EXPECT_TRUE(LibreSCRS::OpenSc::canDeriveWith(key.object, ecAlgorithmFlags(&card, 384)));
+    key.info.field_length = 256;
+    EXPECT_FALSE(LibreSCRS::OpenSc::canDeriveWith(key.object, ecAlgorithmFlags(&card, 256)))
+        << "the driver signs over P-256 but has no ECDH there";
+}
+
+// ECDH_RAW is a mechanism decipher knows: without a bound session it fails as
+// any key operation does, not as NotImplemented. (Where it is routed is not
+// proved here.)
+TEST(OpenscEcdh, EcdhRawIsNotRefusedAsAnUnknownMechanism)
+{
+    PluginHandle h;
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("ChannelTestReader");
+    using LibreSCRS::Plugin::DecipherMechanism;
+    using LibreSCRS::Plugin::DecipherResultOutcome;
+    const auto point = uncompressedPoint(48);
+
+    EXPECT_EQ(h.plugin->decipher(*session, 0x01, point, DecipherMechanism::ECDH_RAW).outcome,
+              DecipherResultOutcome::PluginError);
+    EXPECT_EQ(h.plugin->decipher(*session, 0x01, point, static_cast<DecipherMechanism>(0x7F)).outcome,
+              DecipherResultOutcome::NotImplemented)
+        << "a mechanism this plugin does not know";
+}
+
+// 04 opens both the raw point and its DER OCTET STRING wrapper (04 61 04 ...),
+// so length decides; 02/03 are compressed points, 00 is the point at infinity.
+TEST(OpenscEcSurface, PeerPointMustBeUncompressedOfTheKeysWidth)
+{
+    using LibreSCRS::OpenSc::isUncompressedPeerPoint;
+    EXPECT_TRUE(isUncompressedPeerPoint(uncompressedPoint(48), 384));
+    EXPECT_TRUE(isUncompressedPeerPoint(uncompressedPoint(32), 256));
+    EXPECT_TRUE(isUncompressedPeerPoint(uncompressedPoint(66), 521)) << "133 bytes for P-521";
+
+    EXPECT_FALSE(isUncompressedPeerPoint(uncompressedPoint(32), 384)) << "another curve's width";
+    auto wrapped = uncompressedPoint(48);
+    wrapped.insert(wrapped.begin(), {0x04, 0x61});
+    EXPECT_FALSE(isUncompressedPeerPoint(wrapped, 384)) << "DER-wrapped point";
+    for (const std::uint8_t lead : {std::uint8_t{0x02}, std::uint8_t{0x03}, std::uint8_t{0x00}}) {
+        auto point = uncompressedPoint(48);
+        point[0] = lead;
+        EXPECT_FALSE(isUncompressedPeerPoint(point, 384)) << "leading byte " << static_cast<int>(lead);
+    }
+    EXPECT_FALSE(isUncompressedPeerPoint(std::vector<std::uint8_t>{0x00}, 384));
+    EXPECT_FALSE(isUncompressedPeerPoint(uncompressedPoint(48), 0)) << "no field length";
+}
+
+TEST(OpenscEcdh, DerivesWithCdhRawIntoAFieldWideBuffer)
+{
+    EcKeyObject key(384);
+    OpenSCSession session;
+    const auto point = uncompressedPoint(48);
+    unsigned long seenFlags = 0;
+    std::size_t seenCapacity = 0;
+    std::vector<std::uint8_t> seenIn;
+    LibreSCRS::Plugin::DecipherResult result;
+
+    const auto refused =
+        LibreSCRS::OpenSc::deriveEcdhBound(session, key.object, kCardEcdh, point, result,
+                                           [&](unsigned long flags, const std::uint8_t* in, std::size_t inLength,
+                                               std::uint8_t* out, std::size_t* outLength) {
+                                               seenFlags = flags;
+                                               seenCapacity = *outLength;
+                                               seenIn.assign(in, in + inLength);
+                                               std::fill_n(out, 48, std::uint8_t{0xC3});
+                                               *outLength = 48;
+                                               return 48;
+                                           });
+
+    EXPECT_FALSE(refused.has_value());
+    EXPECT_EQ(seenFlags, static_cast<unsigned long>(SC_ALGORITHM_ECDH_CDH_RAW))
+        << "the flag OpenSC's own C_DeriveKey passes";
+    EXPECT_EQ(seenCapacity, 48U) << "a smaller buffer is a size query that never asks the card";
+    EXPECT_EQ(seenIn, point);
+    ASSERT_TRUE(result.ok());
+    EXPECT_EQ(result.plaintext, std::vector<std::uint8_t>(48, 0xC3));
+}
+
+TEST(OpenscEcdh, BadPointOrUnknownFieldNeverReachesTheCard)
+{
+    OpenSCSession session;
+    bool called = false;
+    const auto derive = [&](unsigned long, const std::uint8_t*, std::size_t, std::uint8_t*, std::size_t*) {
+        called = true;
+        return 48;
+    };
+
+    EcKeyObject key(384);
+    auto compressed = uncompressedPoint(48);
+    compressed[0] = 0x02;
+    LibreSCRS::Plugin::DecipherResult result;
+    EXPECT_FALSE(
+        LibreSCRS::OpenSc::deriveEcdhBound(session, key.object, kCardEcdh, compressed, result, derive).has_value());
+    EXPECT_FALSE(called);
+    EXPECT_FALSE(result.ok());
+
+    EcKeyObject unknownField(0);
+    EXPECT_FALSE(LibreSCRS::OpenSc::deriveEcdhBound(session, unknownField.object, kCardEcdh, uncompressedPoint(48),
+                                                    result, derive)
+                     .has_value());
+    EXPECT_FALSE(called) << "no field length: refused before the card";
+    EXPECT_FALSE(result.ok());
+}
+
+// sc_pkcs15_derive answers 0 for a size query and for a key the card keeps
+// on board: no secret came back, so it is never a result.
+TEST(OpenscEcdh, SizeQueryOrShortSecretIsNeverOk)
+{
+    struct Answer
+    {
+        int rc;
+        std::size_t length;
+    };
+    for (const auto answer : {Answer{0, 48}, Answer{47, 47}, Answer{-1, 48}}) {
+        SCOPED_TRACE(answer.rc);
+        EcKeyObject key(384);
+        OpenSCSession session;
+        LibreSCRS::Plugin::DecipherResult result;
+        (void)LibreSCRS::OpenSc::deriveEcdhBound(
+            session, key.object, kCardEcdh, uncompressedPoint(48), result,
+            [&](unsigned long, const std::uint8_t*, std::size_t, std::uint8_t*, std::size_t* outLength) {
+                *outLength = answer.length;
+                return answer.rc;
+            });
+        EXPECT_FALSE(result.ok());
+        EXPECT_TRUE(result.plaintext.empty());
+    }
+}
+
+TEST(OpenscEcdh, PerOperationKeyWithoutAPinNeverDerives)
+{
+    EcKeyObject key(384, /*userConsent=*/1);
+    OpenSCSession session; // no PIN deposited
+    bool called = false;
+    LibreSCRS::Plugin::DecipherResult result;
+
+    const auto refused = LibreSCRS::OpenSc::deriveEcdhBound(
+        session, key.object, kCardEcdh, uncompressedPoint(48), result,
+        [&](unsigned long, const std::uint8_t*, std::size_t, std::uint8_t*, std::size_t*) {
+            called = true;
+            return 48;
+        });
+
+    EXPECT_FALSE(called);
+    ASSERT_TRUE(refused.has_value());
+    EXPECT_EQ(LibreSCRS::OpenSc::decipherOutcomeForRefusedPin(refused->rc),
+              LibreSCRS::Plugin::DecipherResultOutcome::PluginError);
+}
+
+// The derive runs inside runUnderChannel's card transaction, where the
+// deposited PIN's VERIFY runs too (OpenscOperationPin above).
+TEST(OpenscEcdh, DeriveRunsInsideTheCardTransaction)
+{
+    auto cardSession = LibreSCRS::SmartCard::detail::makeDetachedCardSession("ChannelTestReader");
+    RawSessionFixture f;
+    EcKeyObject key(384);
+    bool held = false;
+    LibreSCRS::Plugin::DecipherResult result;
+
+    (void)LibreSCRS::OpenSc::runUnderChannel(*cardSession, *f.s, CancelToken{}, [&](OpenSCSession& s) {
+        (void)LibreSCRS::OpenSc::deriveEcdhBound(
+            s, key.object, kCardEcdh, uncompressedPoint(48), result,
+            [&](unsigned long, const std::uint8_t*, std::size_t, std::uint8_t* out, std::size_t* outLength) {
+                held = f.conn.isTransactionHeld();
+                std::fill_n(out, *outLength, std::uint8_t{0x5A});
+                return static_cast<int>(*outLength);
+            });
+    });
+
+    EXPECT_TRUE(held);
+    EXPECT_TRUE(result.ok());
+}
+
+// A key the card does not let derive, or a card whose driver has no raw ECDH
+// for the key's field, is refused before the PIN rule: for this per-operation
+// key without a PIN that rule would answer RefusedPin, and with a PIN it
+// would spend a try on an operation that cannot run.
+TEST(OpenscEcdh, KeyTheCardCannotDeriveWithNeverReachesThePin)
+{
+    OpenSCSession session; // no PIN deposited
+    bool called = false;
+    const auto derive = [&](unsigned long, const std::uint8_t*, std::size_t, std::uint8_t*, std::size_t*) {
+        called = true;
+        return 48;
+    };
+    LibreSCRS::Plugin::DecipherResult result;
+
+    EcKeyObject signOnly(384, /*userConsent=*/1);
+    signOnly.info.usage = SC_PKCS15_PRKEY_USAGE_SIGN;
+    EXPECT_FALSE(
+        LibreSCRS::OpenSc::deriveEcdhBound(session, signOnly.object, kCardEcdh, uncompressedPoint(48), result, derive)
+            .has_value())
+        << "no derive bit";
+
+    EcKeyObject key(384, /*userConsent=*/1);
+    EXPECT_FALSE(LibreSCRS::OpenSc::deriveEcdhBound(session, key.object, SC_ALGORITHM_ECDSA_RAW, uncompressedPoint(48),
+                                                    result, derive)
+                     .has_value())
+        << "no raw ECDH on the card";
+
+    EXPECT_FALSE(called);
+    EXPECT_FALSE(result.ok());
+}
+
+TEST(OpenscEcdsa, UnknownFieldLengthOrNonHashNeverSigns)
+{
+    OpenSCSession session;
+    bool called = false;
+    const auto compute = [&](unsigned long, const std::uint8_t*, std::size_t, std::uint8_t*, std::size_t) {
+        called = true;
+        return 96;
+    };
+    LibreSCRS::Plugin::SignResult result;
+
+    EcKeyObject unknownField(0);
+    (void)LibreSCRS::OpenSc::signEcdsaBound(session, unknownField.object, std::vector<std::uint8_t>(48, 0x01), result,
+                                            compute);
+    EXPECT_FALSE(called) << "the buffer would be empty";
+
+    EcKeyObject key(384);
+    (void)LibreSCRS::OpenSc::signEcdsaBound(session, key.object, std::vector<std::uint8_t>(20, 0x01), result, compute);
+    EXPECT_FALSE(called) << "a SHA-1 length is no ECDSA_SHA* input";
+    EXPECT_FALSE(result.ok());
+}
+
+TEST(OpenscEcdsa, SignsTheHashIntoAFixedWidthBuffer)
+{
+    EcKeyObject key(384);
+    OpenSCSession session;
+    unsigned long seenFlags = 0;
+    std::size_t seenCapacity = 0;
+    LibreSCRS::Plugin::SignResult result;
+
+    (void)LibreSCRS::OpenSc::signEcdsaBound(
+        session, key.object, std::vector<std::uint8_t>(48, 0x01), result,
+        [&](unsigned long flags, const std::uint8_t*, std::size_t, std::uint8_t* out, std::size_t outLength) {
+            seenFlags = flags;
+            seenCapacity = outLength;
+            std::fill_n(out, outLength, std::uint8_t{0x77});
+            return static_cast<int>(outLength);
+        });
+
+    EXPECT_EQ(seenFlags, static_cast<unsigned long>(SC_ALGORITHM_ECDSA_HASH_NONE));
+    EXPECT_EQ(seenCapacity, 96U);
+    ASSERT_TRUE(result.ok());
+    EXPECT_EQ(result.signature.size(), 96U);
+}
+
+// A driver writes the fixed-width r || s into the whole buffer and returns
+// either its length or 0 (OpenSC's C_Sign reads 0 as "the whole buffer"; EDO
+// answers so). Any other positive count is not the contract's r || s, and is
+// never returned -- even over a filled buffer.
+TEST(OpenscEcdsa, SignatureOfAnotherLengthIsNeverOk)
+{
+    for (const int rc : {48, 95, 97}) {
+        SCOPED_TRACE(rc);
+        EcKeyObject key(384);
+        OpenSCSession session;
+        LibreSCRS::Plugin::SignResult result;
+
+        (void)LibreSCRS::OpenSc::signEcdsaBound(
+            session, key.object, std::vector<std::uint8_t>(48, 0x01), result,
+            [&](unsigned long, const std::uint8_t*, std::size_t, std::uint8_t* out, std::size_t outLength) {
+                std::fill_n(out, outLength, std::uint8_t{0x77});
+                return rc;
+            });
+
+        EXPECT_FALSE(result.ok());
+        EXPECT_TRUE(result.signature.empty());
+    }
+}
+
+TEST(OpenscEcdsa, ZeroReturnOverAFilledBufferIsTheSignature)
+{
+    EcKeyObject key(384);
+    OpenSCSession session;
+    LibreSCRS::Plugin::SignResult result;
+
+    (void)LibreSCRS::OpenSc::signEcdsaBound(
+        session, key.object, std::vector<std::uint8_t>(48, 0x01), result,
+        [&](unsigned long, const std::uint8_t*, std::size_t, std::uint8_t* out, std::size_t outLength) {
+            std::fill_n(out, outLength, std::uint8_t{0x77});
+            return 0;
+        });
+
+    ASSERT_TRUE(result.ok());
+    EXPECT_EQ(result.signature, std::vector<std::uint8_t>(96, 0x77));
+}
+
+// The buffer starts zeroed and neither r nor s of a signature is ever 0, so
+// an all-zero half means the driver did not write it -- whatever it returned.
+TEST(OpenscEcdsa, HalfTheDriverDidNotWriteIsNeverASignature)
+{
+    struct Answer
+    {
+        int rc;
+        std::size_t from;
+        std::size_t count;
+    };
+    for (const auto answer :
+         {Answer{0, 0, 0}, Answer{0, 0, 48}, Answer{0, 48, 48}, Answer{96, 0, 48}, Answer{96, 48, 48}}) {
+        SCOPED_TRACE(testing::Message() << answer.rc << " " << answer.from << "+" << answer.count);
+        EcKeyObject key(384);
+        OpenSCSession session;
+        LibreSCRS::Plugin::SignResult result;
+
+        (void)LibreSCRS::OpenSc::signEcdsaBound(
+            session, key.object, std::vector<std::uint8_t>(48, 0x01), result,
+            [&](unsigned long, const std::uint8_t*, std::size_t, std::uint8_t* out, std::size_t) {
+                std::fill_n(out + answer.from, answer.count, std::uint8_t{0x77});
+                return answer.rc;
+            });
+
+        EXPECT_FALSE(result.ok());
+        EXPECT_TRUE(result.signature.empty());
+    }
 }
 
 } // namespace

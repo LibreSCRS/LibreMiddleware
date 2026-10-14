@@ -35,6 +35,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -200,6 +201,28 @@ LibreSCRS::Plugin::DecipherResultOutcome decipherOutcomeForRefusedPin(int rc) no
     if (refusal == Crv::PinLocked)
         return LibreSCRS::Plugin::DecipherResultOutcome::PinBlocked;
     return LibreSCRS::Plugin::DecipherResultOutcome::PluginError;
+}
+
+unsigned long ecAlgorithmFlags(sc_card_t* card, std::size_t fieldLengthBits) noexcept
+{
+    if (card == nullptr || fieldLengthBits == 0)
+        return 0;
+    const sc_algorithm_info_t* algorithm = sc_card_find_ec_alg(card, fieldLengthBits, nullptr);
+    return algorithm != nullptr ? algorithm->flags : 0;
+}
+
+bool canDeriveWith(const sc_pkcs15_object_t& key, unsigned long cardEcFlags) noexcept
+{
+    if (key.type != SC_PKCS15_TYPE_PRKEY_EC || key.data == nullptr)
+        return false;
+    const auto* info = static_cast<const sc_pkcs15_prkey_info_t*>(key.data);
+    return (info->usage & SC_PKCS15_PRKEY_USAGE_DERIVE) != 0 && info->field_length != 0 &&
+           (cardEcFlags & SC_ALGORITHM_ECDH_CDH_RAW) != 0;
+}
+
+bool isUncompressedPeerPoint(std::span<const std::uint8_t> point, std::size_t fieldLengthBits) noexcept
+{
+    return fieldLengthBits != 0 && point.size() == 1 + 2 * ecFieldBytes(fieldLengthBits) && point[0] == 0x04;
 }
 
 namespace {
@@ -1150,6 +1173,11 @@ public:
                 // OpenSC's own rule, shared with the PKCS#11 slot: the PIV
                 // Digital Signature key (9C) arrives with user_consent set.
                 cd.alwaysAuthenticate = LibreSCRS::OpenSc::requiresPerOperationAuth(*keyObj);
+                // ECDH runs through sc_pkcs15_derive for an EC key the card
+                // lets derive, on a driver that offers raw ECDH for its
+                // field; the field length sizes the secret.
+                cd.canDerive = LibreSCRS::OpenSc::canDeriveWith(
+                    *keyObj, LibreSCRS::OpenSc::ecAlgorithmFlags(session.card, keyInfo->field_length));
             }
 
             result.push_back(std::move(cd));
@@ -1303,17 +1331,20 @@ public:
 
         // RSA_PKCS carries a caller-built DigestInfo; the ECDSA_SHA*
         // mechanisms carry the PRE-COMPUTED hash (the card signs it with no
-        // on-card hashing — SC_ALGORITHM_ECDSA_HASH_NONE below). Anything
+        // on-card hashing — signEcdsaBound passes SC_ALGORITHM_ECDSA_HASH_NONE). Anything
         // else (e.g. hash-on-card RSA) stays NotImplemented so callers can
         // route to a plugin that has the primitive.
-        const bool isEcdsa = mechanism == LibreSCRS::Plugin::SignMechanism::ECDSA_SHA256 ||
-                             mechanism == LibreSCRS::Plugin::SignMechanism::ECDSA_SHA384 ||
-                             mechanism == LibreSCRS::Plugin::SignMechanism::ECDSA_SHA512;
+        const bool isEcdsa = LibreSCRS::Plugin::Internal::isEcdsaMechanism(mechanism);
         if (mechanism != LibreSCRS::Plugin::SignMechanism::RSA_PKCS && !isEcdsa) {
             LibreSCRS::Plugin::SignResult r;
             r.outcome = LibreSCRS::Plugin::SignResultOutcome::NotImplemented;
             return r;
         }
+
+        // A non-hash input is refused before any channel work, like the
+        // native plugin; signEcdsaBound keeps the same check as its own guard.
+        if (isEcdsa && !LibreSCRS::Plugin::Internal::isEcdsaDigestLength(data.size()))
+            return pluginError();
 
         auto s = pinnedSession(cardSession);
         if (!s)
@@ -1335,28 +1366,23 @@ public:
                 if (!targetKey)
                     return; // maps to PluginError below
 
+                if (isEcdsa) {
+                    // Pre-hashed ECDSA into a fixed-width r || s buffer; an
+                    // unknown field length or a non-hash input is refused
+                    // before the card (signEcdsaBound).
+                    refusedPin = LibreSCRS::OpenSc::signEcdsaBound(
+                        session, *targetKey, data, result,
+                        [&](unsigned long flags, const std::uint8_t* in, std::size_t inLength, std::uint8_t* out,
+                            std::size_t outLength) {
+                            return sc_pkcs15_compute_signature(session.p15card, targetKey, flags, in, inLength, out,
+                                                               outLength, nullptr);
+                        });
+                    completed = result.ok();
+                    return;
+                }
+
                 auto* keyInfo = static_cast<sc_pkcs15_prkey_info_t*>(targetKey->data);
                 auto operation = [&] {
-                    if (isEcdsa) {
-                        // Pre-hashed ECDSA. The buffer is EXACTLY
-                        // 2*ceil(field/8) bytes (96 for P-384):
-                        // sc_asn1_sig_value_sequence_to_rs zeroes the WHOLE
-                        // buffer and right-aligns r and s into its halves, and
-                        // pkcs15-sec passes outlen to the driver unchanged —
-                        // an RSA-sized buffer would mis-place the halves. The
-                        // output is the canonical fixed-width r||s; no
-                        // post-processing, and NEVER the RSA resize(rc) idiom.
-                        std::vector<uint8_t> sig(LibreSCRS::OpenSc::ecdsaSignatureLength(keyInfo->field_length));
-                        int rc = sc_pkcs15_compute_signature(session.p15card, targetKey, SC_ALGORITHM_ECDSA_HASH_NONE,
-                                                             data.data(), data.size(), sig.data(), sig.size(), nullptr);
-                        if (rc < 0)
-                            return; // maps to PluginError below
-                        result.signature = std::move(sig);
-                        result.outcome = LibreSCRS::Plugin::SignResultOutcome::Ok;
-                        completed = true;
-                        return;
-                    }
-
                     size_t sigLen = keyInfo->modulus_length / 8; // RSA signature length in bytes
                     std::vector<uint8_t> sig(sigLen);
 
@@ -1404,11 +1430,12 @@ public:
             return r;
         };
 
-        // This release supports only PKCS#1 v1.5 decrypt (SR cards are v1.5
-        // only, no OAEP). Surface any other mechanism as NotImplemented so a
-        // caller can route to a future OAEP-capable driver instead of silently
-        // producing a v1.5-stripped result.
-        if (mechanism != LibreSCRS::Plugin::DecipherMechanism::RSA_PKCS1_V15) {
+        // PKCS#1 v1.5 decrypt (SR cards are v1.5 only, no OAEP) and ECDH key
+        // agreement. Any other mechanism is NotImplemented, so a caller can
+        // route to a future OAEP-capable driver instead of silently producing
+        // a v1.5-stripped result.
+        using LibreSCRS::Plugin::DecipherMechanism;
+        if (mechanism != DecipherMechanism::RSA_PKCS1_V15 && mechanism != DecipherMechanism::ECDH_RAW) {
             LibreSCRS::Plugin::DecipherResult r;
             r.outcome = LibreSCRS::Plugin::DecipherResultOutcome::NotImplemented;
             return r;
@@ -1423,6 +1450,11 @@ public:
         std::optional<RefusedPin> refusedPin;
         const auto run =
             LibreSCRS::OpenSc::runUnderChannel(cardSession, *s, LibreSCRS::CancelToken{}, [&](OpenSCSession& session) {
+                if (mechanism == DecipherMechanism::ECDH_RAW) {
+                    refusedPin = deriveBound(session, keyReference, ciphertext, result);
+                    completed = result.ok();
+                    return;
+                }
                 refusedPin = decipherBound(session, keyReference, ciphertext, result, completed);
             });
         if (run.activationFailed) {
@@ -1447,9 +1479,9 @@ public:
                                             std::span<const std::uint8_t> ciphertext,
                                             LibreSCRS::Plugin::DecipherResult& result, bool& completed) const
     {
-        // Same TYPE-filtered reference resolution as doSign. Decipher stays
-        // RSA-only (v1.5 decrypt; ECDH/derive is a different surface and
-        // awaits its card profile), so the filter pins SC_PKCS15_TYPE_PRKEY_RSA.
+        // Same TYPE-filtered reference resolution as doSign. RSA decryption
+        // addresses only an RSA key, so the filter pins
+        // SC_PKCS15_TYPE_PRKEY_RSA; key agreement goes through deriveBound.
         sc_pkcs15_object_t* keyObjs[8];
         int keyCount = sc_pkcs15_get_objects(session.p15card, SC_PKCS15_TYPE_PRKEY, keyObjs, 8);
         sc_pkcs15_object_t* targetKey =
@@ -1482,6 +1514,29 @@ public:
             completed = true;
         };
         return verifyDepositedPinThenRun(session, *targetKey, operation);
+    }
+
+    // ECDH with the EC key at @p keyReference, TYPE-filtered like doSign: an
+    // RSA key that shares the reference is never addressed.
+    std::optional<RefusedPin> deriveBound(OpenSCSession& session, std::uint16_t keyReference,
+                                          std::span<const std::uint8_t> peerPoint,
+                                          LibreSCRS::Plugin::DecipherResult& result) const
+    {
+        sc_pkcs15_object_t* keyObjs[8];
+        int keyCount = sc_pkcs15_get_objects(session.p15card, SC_PKCS15_TYPE_PRKEY, keyObjs, 8);
+        sc_pkcs15_object_t* targetKey =
+            LibreSCRS::OpenSc::selectKeyByReferenceAndType(keyObjs, keyCount, keyReference, SC_PKCS15_TYPE_PRKEY_EC);
+        if (!targetKey)
+            return std::nullopt; // maps to PluginError at the caller
+        const auto* info = static_cast<const sc_pkcs15_prkey_info_t*>(targetKey->data);
+        const unsigned long cardEcFlags =
+            info != nullptr ? LibreSCRS::OpenSc::ecAlgorithmFlags(session.card, info->field_length) : 0;
+        return LibreSCRS::OpenSc::deriveEcdhBound(session, *targetKey, cardEcFlags, peerPoint, result,
+                                                  [&](unsigned long flags, const std::uint8_t* in, std::size_t inLength,
+                                                      std::uint8_t* out, std::size_t* outLength) {
+                                                      return sc_pkcs15_derive(session.p15card, targetKey, flags, in,
+                                                                              inLength, out, outLength);
+                                                  });
     }
 
     std::vector<LibreSCRS::Plugin::KeyReference>

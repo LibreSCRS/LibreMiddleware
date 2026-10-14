@@ -7,20 +7,24 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Plugin/PluginTypes.h>
 #include <LibreSCRS/Plugin/ReadResult.h>
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
+#include <LibreSCRS_internal/Crypto/CleanseGuard.h>
 
 #include <libopensc/opensc.h>
 #include <libopensc/pkcs15.h>
@@ -28,6 +32,7 @@
 #include "opensc_reader_bridge.h"
 #include "opensc_user_consent.h"
 #include "pin_family_quirks.h" // FamilyId
+#include "sign_mechanism_rules.h"
 
 namespace LibreSCRS::SmartCard {
 class CardSession;
@@ -137,12 +142,41 @@ private:
 [[nodiscard]] std::uint16_t keySizeBitsFromKeyInfo(const sc_pkcs15_prkey_info_t& keyInfo) noexcept;
 
 /// ECDSA signature buffer length for a key over a @p fieldLengthBits-bit
-/// field: EXACTLY 2*ceil(field/8) bytes (96 for P-384). libopensc's
-/// sc_asn1_sig_value_sequence_to_rs zeroes the WHOLE buffer and
-/// right-aligns r and s into its halves, so the buffer must never be sized
+/// field: EXACTLY 2*ceil(field/8) bytes (96 for P-384). Drivers write a
+/// fixed-width r||s into the WHOLE buffer, r and s right-aligned in its
+/// halves (converted from the card's DER, or as the card returned it), so the
+/// buffer must never be sized
 /// from an RSA idiom (modulus_length/8) nor resized from the driver's
 /// return count — the output is the canonical fixed-width r||s.
 [[nodiscard]] std::size_t ecdsaSignatureLength(std::size_t fieldLengthBits) noexcept;
+
+/// Bytes of one EC field element: ceil(fieldLengthBits / 8). OpenSC spells it
+/// BYTES4BITS, in a header it does not install.
+[[nodiscard]] constexpr std::size_t ecFieldBytes(std::size_t fieldLengthBits) noexcept
+{
+    return (fieldLengthBits + 7) / 8;
+}
+
+/// The algorithm flags the card's driver advertises for an EC key over a
+/// @p fieldLengthBits-bit field -- the entry sc_pkcs15_derive and
+/// sc_pkcs15_compute_signature will use (sc_card_find_ec_alg). 0 without a
+/// card, a field length, or such an entry.
+[[nodiscard]] unsigned long ecAlgorithmFlags(sc_card_t* card, std::size_t fieldLengthBits) noexcept;
+
+/// The plugin performs ECDH with @p key: an EC key whose usage includes
+/// DERIVE, whose field length is known (without it there is no buffer size
+/// and no peer-point width), on a card whose driver offers raw ECDH for that
+/// field (@p cardEcFlags, from ecAlgorithmFlags, includes
+/// SC_ALGORITHM_ECDH_CDH_RAW; without it sc_pkcs15_derive answers
+/// NOT_SUPPORTED -- after the PIN). What CertificateData::canDerive reports.
+[[nodiscard]] bool canDeriveWith(const sc_pkcs15_object_t& key, unsigned long cardEcFlags) noexcept;
+
+/// The peer point ECDH_RAW accepts: uncompressed 04 || X || Y, exactly
+/// 1 + 2 * ecFieldBytes(fieldLengthBits) bytes. Refuses compressed points
+/// (02/03), the point at infinity (00) and a DER-wrapped point (it opens with
+/// 04 too, so the length decides). Whether the point is on the curve is the
+/// caller's check: OpenSC's field length does not name the curve.
+[[nodiscard]] bool isUncompressedPeerPoint(std::span<const std::uint8_t> point, std::size_t fieldLengthBits) noexcept;
 
 /// sc_pkcs15_bind with OpenSC's own PIN cache switched off. OpenSC keeps
 /// every PIN a successful sc_pkcs15_verify_pin presented and replays it when
@@ -225,6 +259,81 @@ template <typename Operation>
     if (rc == SC_SUCCESS)
         return std::nullopt;
     return RefusedPin{rc};
+}
+
+/// ECDH (DecipherMechanism::ECDH_RAW) with @p key, inside the caller's
+/// runUnderChannel callback. What can be refused is refused before the card
+/// sees a byte and before the PIN is presented -- a key canDeriveWith rejects
+/// (no derive bit, no field length, no raw ECDH in @p cardEcFlags), a peer
+/// point that is not uncompressed at the key's width -- because a PIN try
+/// spent on an operation that cannot run is lost, and under PACE secure
+/// messaging a plain error answer ends the session. Then the deposited PIN
+/// and @p derive run in one transaction (verifyDepositedPinThenRun).
+/// @p derive gets OpenSC's own C_DeriveKey flag, SC_ALGORITHM_ECDH_CDH_RAW,
+/// and a buffer of exactly ecFieldBytes(field_length): a smaller one turns
+/// sc_pkcs15_derive into a size query that answers 0 without asking the card.
+/// Only a positive return with a full-width secret is a result; a 0 (size
+/// query, or a key the card keeps on board) is not. The local buffer is
+/// cleansed on every way out, a throw included.
+/// @return As verifyDepositedPinThenRun. @p result is Ok only with Z in it.
+template <typename Derive>
+[[nodiscard]] std::optional<RefusedPin>
+deriveEcdhBound(OpenSCSession& session, const sc_pkcs15_object_t& key, unsigned long cardEcFlags,
+                std::span<const std::uint8_t> peerPoint, LibreSCRS::Plugin::DecipherResult& result, Derive&& derive)
+{
+    if (!canDeriveWith(key, cardEcFlags))
+        return std::nullopt; // result stays Unspecified: PluginError at the caller, no PIN, nothing sent
+    const auto* info = static_cast<const sc_pkcs15_prkey_info_t*>(key.data);
+    if (!isUncompressedPeerPoint(peerPoint, info->field_length))
+        return std::nullopt;
+    const std::size_t secretBytes = ecFieldBytes(info->field_length);
+    auto operation = [&] {
+        std::vector<std::uint8_t> z(secretBytes);
+        LibreSCRS::Internal::Crypto::CleanseGuard guard{z};
+        std::size_t zLength = z.size();
+        const int rc = derive(static_cast<unsigned long>(SC_ALGORITHM_ECDH_CDH_RAW), peerPoint.data(), peerPoint.size(),
+                              z.data(), &zLength);
+        if (rc > 0 && zLength == secretBytes) {
+            result.plaintext = std::move(z); // the caller's to cleanse from here; guard wipes what stays in z
+            result.outcome = LibreSCRS::Plugin::DecipherResultOutcome::Ok;
+        }
+    };
+    return verifyDepositedPinThenRun(session, key, operation);
+}
+
+/// ECDSA over the caller's hash with @p key, inside the caller's
+/// runUnderChannel callback. Refused off-card: an unknown field length (the
+/// buffer would be empty) and an input that is no SHA-256/384/512 hash. The
+/// buffer is EXACTLY ecdsaSignatureLength(field_length): drivers write a
+/// fixed-width r || s into that whole buffer, r and s right-aligned in its
+/// halves, and return its length or 0 -- OpenSC's own C_Sign reads 0 as the
+/// whole buffer, and some drivers (EDO) answer so. The result is the
+/// contract's r || s with no post-processing. Any other positive count is not
+/// a result, nor is a buffer with an all-zero half: the buffer starts zeroed
+/// and neither r nor s of a signature is 0, so such a half was never written.
+/// @return As verifyDepositedPinThenRun. @p result is Ok only with a signature.
+template <typename Compute>
+[[nodiscard]] std::optional<RefusedPin> signEcdsaBound(OpenSCSession& session, const sc_pkcs15_object_t& key,
+                                                       std::span<const std::uint8_t> hash,
+                                                       LibreSCRS::Plugin::SignResult& result, Compute&& compute)
+{
+    const auto* info = static_cast<const sc_pkcs15_prkey_info_t*>(key.data);
+    if (info == nullptr || info->field_length == 0 || !LibreSCRS::Plugin::Internal::isEcdsaDigestLength(hash.size()))
+        return std::nullopt; // result stays Unspecified: PluginError at the caller, nothing sent
+    auto operation = [&] {
+        std::vector<std::uint8_t> sig(ecdsaSignatureLength(info->field_length));
+        const int rc = compute(static_cast<unsigned long>(SC_ALGORITHM_ECDSA_HASH_NONE), hash.data(), hash.size(),
+                               sig.data(), sig.size());
+        if (rc < 0 || (rc > 0 && static_cast<std::size_t>(rc) != sig.size()))
+            return; // an error, or not the full r || s the driver writes
+        const auto half = static_cast<std::ptrdiff_t>(sig.size() / 2);
+        const auto isZero = [](std::uint8_t b) { return b == 0; };
+        if (std::all_of(sig.begin(), sig.begin() + half, isZero) || std::all_of(sig.begin() + half, sig.end(), isZero))
+            return; // a half the driver never wrote
+        result.signature = std::move(sig);
+        result.outcome = LibreSCRS::Plugin::SignResultOutcome::Ok;
+    };
+    return verifyDepositedPinThenRun(session, key, operation);
 }
 
 /// The outcome a key operation reports when VERIFY of its deposited PIN
