@@ -154,8 +154,17 @@ is a check and not a discovery:
 # Linux x86-64
 #   no-engine: nothing in this project uses the ENGINE API, and the archive is
 #   smaller and the attack surface narrower without it.
-./Configure linux-x86_64 no-shared no-tests no-apps no-docs no-engine \
-    --prefix=<staging> --openssldir=/usr/local
+#   no-module: the legacy provider is compiled into libcrypto, so OpenSC's
+#   load-by-name of "legacy" on every context never dlopen()s a file.
+#   --prefix/--openssldir: libcrypto keeps these as its default module,
+#   configuration and trust-anchor locations. /usr/lib/librescrs is root-owned
+#   and nothing installs it; a staging path would point every process on the
+#   build host at a directory its user can write to. Install with
+#   DESTDIR=<staging>, so the files land under
+#   <staging>/usr/lib/librescrs/openssl/ (lib64/ for the archives).
+./Configure linux-x86_64 no-shared no-tests no-apps no-docs no-engine no-module \
+    --prefix=/usr/lib/librescrs/openssl \
+    --openssldir=/usr/lib/librescrs/openssl/ssl
 
 # macOS: one pass per slice, then `lipo -create`. Export the deployment
 #   target first -- it pins the floor to this project's own
@@ -189,7 +198,7 @@ Update procedure (the order matters; step 1 gates everything after it):
 ```
 # 1. fetch and verify the source. No successful signature, no build: a binary
 #    committed here from unverified source is worse than an old one.
-cd /var/tmp && mkdir -p openssl-build && cd openssl-build
+mkdir -p <build-dir> && cd <build-dir>   # on disk, outside any path the archives record
 curl -sSLO https://github.com/openssl/openssl/releases/download/openssl-<ver>/openssl-<ver>.tar.gz
 curl -sSLO https://github.com/openssl/openssl/releases/download/openssl-<ver>/openssl-<ver>.tar.gz.asc
 curl -sSLO https://github.com/openssl/openssl/releases/download/openssl-<ver>/openssl-<ver>.tar.gz.sha256
@@ -203,7 +212,7 @@ gpg --check-sigs B146647E45A7B33947AB226B2A2C87D161692D40 | grep -i 'D0CB81EF'
 #    where /tmp is a RAM filesystem; -j4, not -j$(nproc).
 tar xf openssl-<ver>.tar.gz && cd openssl-<ver>
 ./Configure <line from above>
-make -j4 && make install_sw            # macOS: make install_sw DESTDIR=<staging>
+make -j4 && make install_sw DESTDIR=<staging>   # both platforms
 #    macOS only: replace that `make -j4` with
 #    `make -j4 PLATFORM=macos-x86_64` (x86_64 slice) or
 #    `make -j4 PLATFORM=macos-arm64` (arm64 slice), then `make install_sw` as
@@ -217,7 +226,7 @@ make -j4 && make install_sw            # macOS: make install_sw DESTDIR=<staging
 # 3. diff the OPENSSL_NO_* set of the new configuration.h against the old one,
 #    per platform. Every difference is either a deliberate flag change that
 #    gets written down here, or a wrong Configure line. None is ignored.
-grep -oE 'OPENSSL_NO_[A-Z0-9_]+' <prefix>/include/openssl/configuration.h | sort -u   # Linux: <staging>/include
+grep -oE 'OPENSSL_NO_[A-Z0-9_]+' <prefix>/include/openssl/configuration.h | sort -u   # Linux: <staging>/usr/lib/librescrs/openssl/include
 
 # 4. copy from the INSTALLED prefix (macOS: <prefix> as above), never from the build tree: the build tree
 #    still holds the .h.in templates (the Linux headers here carry 28 of them

@@ -30,8 +30,24 @@ signing-key: B146647E45A7B33947AB226B2A2C87D161692D40 (primary; signed by subkey
 cross-signed-by: 216094DFD0CB81EF 2026-06-01 OpenSSL <openssl@openssl.org> (retired key, sig!)
 
 [linux]
-configure: ./Configure linux-x86_64 no-shared no-tests no-apps no-docs no-engine --prefix=<staging> --openssldir=/usr/local
-host: Linux 6.12.104-1-MANJARO x86_64 GNU/Linux, gcc (GCC) 16.2.1 20260810, perl 5.42.2
+configure: ./Configure linux-x86_64 no-shared no-tests no-apps no-docs no-engine no-module --prefix=/usr/lib/librescrs/openssl --openssldir=/usr/lib/librescrs/openssl/ssl
+configure: make install_sw DESTDIR=<staging>
+build-paths: OpenSSL compiles its install layout into libcrypto: OPENSSLDIR (openssl.cnf,
+build-paths: cert.pem and certs/), MODULESDIR (provider modules) and ENGINESDIR. Built
+build-paths: with --prefix=<staging> in /var/tmp (writable by every local user) they named
+build-paths: that directory, and every process that created an OpenSC context dlopen()ed
+build-paths: whatever legacy.so was there, because OpenSC loads the legacy provider by
+build-paths: name on every sc_context_create. Two changes close that:
+build-paths:   no-module builds the legacy provider into libcrypto, so loading it by name
+build-paths:   never touches the disk (ossl_legacy_provider_init is defined in the archive).
+build-paths:   --prefix/--openssldir name a directory under /usr/lib, which is root-owned
+build-paths:   and which nothing installs librescrs/openssl into. Not /usr/lib/ssl or
+build-paths:   /etc/ssl: those hold the distribution's openssl.cnf, which libcrypto would
+build-paths:   load as its configuration (it can name providers to load). The install is
+build-paths:   staged with DESTDIR, so the compiled-in paths are never created on the
+build-paths:   build host.
+build-paths: Check: strings -n 8 linux/lib/libcrypto.a | grep -E 'DIR: '
+host: Linux 6.12.108-1-MANJARO x86_64 GNU/Linux, gcc (GCC) 16.2.1 20260810, perl 5.42.2
 config-delta: seven OPENSSL_NO_* macros are new against the 3.5.5 archive, none
 config-delta: gone. Four follow from no-engine (ENGINE, AFALGENG, CAPIENG,
 config-delta: PADLOCKENG); three -- APPS, DOCS, TESTS -- follow from the
@@ -43,7 +59,7 @@ config-delta: None of the three changes library code; they only skip building
 config-delta: the apps, the docs and the test suite.
 platform: linux-x86_64
 compiler: gcc -fPIC -pthread -m64 -Wa,--noexecstack -Wall -O3 -DOPENSSL_USE_NODELETE -DL_ENDIAN -DOPENSSL_PIC -DOPENSSL_BUILDING_OPENSSL -DNDEBUG
-built on: Sat Sep 19 13:58:59 2026 UTC
+built on: Wed Oct 14 17:54:46 2026 UTC
 
 [macosx]
 configure: ./Configure darwin64-x86_64-cc no-shared no-tests no-apps no-docs no-asm no-engine no-async no-module --prefix=/System/Library/LibreSCRS/openssl --openssldir=/System/Library/LibreSCRS/openssl/ssl
