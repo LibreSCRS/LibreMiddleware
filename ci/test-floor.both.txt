@@ -88,6 +88,7 @@ Pkcs11ModuleManagerTests 11
 Pkcs11ModulePathTests 7
 Pkcs11TokenTests 8
 Pkcs15ChangePinSelectorTests 4
+Pkcs15EcdsaSignatureTests 16
 Pkcs15PinLifecycleTests 39
 Pkcs15ProbeEfDirTests 2
 Pkcs15ProfileReadCensusTests 32

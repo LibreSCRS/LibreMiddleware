@@ -30,6 +30,7 @@ fuzz_emrtd_security_info: lib/emrtd-crypto/src/chip_auth.cpp
 fuzz_emrtd_security_info: lib/emrtd-crypto/src/active_auth.cpp
 fuzz_chunked_read: lib/smartcard/src/chunked_read.cpp
 fuzz_pkcs15_parser: lib/pkcs15/src/pkcs15_parser.cpp
+fuzz_pkcs15_parser: lib/pkcs15/src/ecdsa_signature.cpp
 fuzz_emrtd_dg_parser: lib/emrtd/src/data_group.cpp
 fuzz_csca_master_list: lib/emrtd-crypto/src/csca_master_list.cpp
 fuzz_pdf_parser: lib/libresign/src/native/pdf_parser.cpp

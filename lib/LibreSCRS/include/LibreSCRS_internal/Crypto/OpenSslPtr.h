@@ -16,8 +16,9 @@
 /// cost -- one of them pulled in @c cms.h, @c ts.h and @c ocsp.h that the
 /// leaner consumers did not need. That reason is answered by @c OpenSslPtrCms.h
 /// beside this file, which is where those three live now: this header includes
-/// only @c x509.h, @c x509_vfy.h, @c bio.h, @c bn.h, @c evp.h, @c pkcs7.h and
-/// @c safestack.h, and a consumer that needs the CMS family says so.
+/// only @c x509.h, @c x509_vfy.h, @c bio.h, @c bn.h, @c ec.h, @c evp.h,
+/// @c pkcs7.h and @c safestack.h, and a consumer that needs the CMS family says
+/// so.
 ///
 /// @warning The two X509 STACK deleters below do OPPOSITE things to the same
 ///          argument, and that is why neither is called what either used to be
@@ -27,6 +28,7 @@
 
 #include <openssl/bio.h>
 #include <openssl/bn.h>
+#include <openssl/ec.h>
 #include <openssl/evp.h>
 #include <openssl/pkcs7.h>
 #include <openssl/safestack.h>
@@ -115,6 +117,13 @@ struct BnDeleter
         BN_clear_free(p);
     }
 };
+struct EcdsaSigDeleter
+{
+    void operator()(ECDSA_SIG* p) const noexcept
+    {
+        ECDSA_SIG_free(p);
+    }
+};
 struct Pkcs7Deleter
 {
     void operator()(PKCS7* p) const noexcept
@@ -197,6 +206,7 @@ using EvpPkeyCtxPtr = std::unique_ptr<EVP_PKEY_CTX, EvpPkeyCtxDeleter>;
 using BioPtr = std::unique_ptr<BIO, BioDeleter>;
 using EvpMdCtxPtr = std::unique_ptr<EVP_MD_CTX, EvpMdCtxDeleter>;
 using BnPtr = std::unique_ptr<BIGNUM, BnDeleter>;
+using EcdsaSigPtr = std::unique_ptr<ECDSA_SIG, EcdsaSigDeleter>;
 using Pkcs7Ptr = std::unique_ptr<PKCS7, Pkcs7Deleter>;
 using X509StorePtr = std::unique_ptr<X509_STORE, X509StoreDeleter>;
 using X509StoreCtxPtr = std::unique_ptr<X509_STORE_CTX, X509StoreCtxDeleter>;

@@ -148,8 +148,9 @@ target_include_directories(fuzz_pkcs15_parser PRIVATE
     ${PROJECT_SOURCE_DIR}/lib/pkcs15/src
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src
     ${PROJECT_SOURCE_DIR}/lib/smartcard/include
+    ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
 )
-target_link_libraries(fuzz_pkcs15_parser PRIVATE PKCS15)
+target_link_libraries(fuzz_pkcs15_parser PRIVATE PKCS15 OpenSSL_Crypto)
 
 # ---------------------------------------------------------------------------
 # Harness: emrtd parseDataGroups + parseMRZ. External-byte attack surface —

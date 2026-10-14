@@ -3,12 +3,14 @@
 //
 // libFuzzer harness for the pkcs15 parser entry points.
 // Drives every public parser overload (ODF / TokenInfo / CDF / PrKDF / AODF)
+// and the ECDSA reply reader
 // with the same fuzz input — each must reject malformed bytes cleanly
 // (no crash, no leak, no unbounded allocation).
 //
 // Build: -DLIBRESCRS_BUILD_FUZZ=ON; binary lands in build-fuzz/fuzz/.
 // Run:   ./fuzz_pkcs15_parser -max_total_time=60 corpus/pkcs15_parser
 
+#include "ecdsa_signature.h"
 #include "pkcs15_parser.h"
 
 #include <cstddef>
@@ -48,6 +50,14 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     runCatching([&] { (void)pkcs15::parseCDF(bytes); });
     runCatching([&] { (void)pkcs15::parsePrKDF(bytes); });
     runCatching([&] { (void)pkcs15::parseAODF(bytes); });
+
+    // The card's ECDSA reply, at every width a card's curve has. The check
+    // refuses every candidate, so only the walk over the bytes runs.
+    for (const std::size_t fieldBytes : {std::size_t{32}, std::size_t{48}, std::size_t{66}}) {
+        runCatching([&] {
+            (void)pkcs15::ecdsaRawFromCardReply(bytes, fieldBytes, [](std::span<const std::uint8_t>) { return false; });
+        });
+    }
 
     return 0;
 }

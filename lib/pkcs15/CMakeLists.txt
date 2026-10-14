@@ -11,6 +11,7 @@ add_library(PKCS15 STATIC
     src/pkcs15_pkcs11_slot.cpp
     src/pin_classification.cpp
     src/docp_parser.cpp
+    src/ecdsa_signature.cpp
     include/internal/PinClassification.h
     src/pkcs15_types.h
     src/pkcs15_parser.h
@@ -18,6 +19,7 @@ add_library(PKCS15 STATIC
     src/pkcs15_pkcs11_card.h
     src/pkcs15_pkcs11_slot.h
     src/docp_parser.h
+    src/ecdsa_signature.h
 )
 
 target_compile_definitions(PKCS15 PRIVATE LIBRESCRS_INTERNAL_BUILD)

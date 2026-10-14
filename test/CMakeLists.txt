@@ -686,6 +686,19 @@ target_include_directories(PKCS15ParserTests PRIVATE
 target_compile_definitions(PKCS15ParserTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(PKCS15ParserTests)
 
+# ECDSA reply reading: DER, fixed-width INTEGERs or raw r||s from a card ->
+# the plugin contract's fixed-width r||s, only when it verifies. No card I/O;
+# OpenSSL makes the keys and the signatures.
+add_executable(Pkcs15EcdsaSignatureTests pkcs15_ecdsa_signature_test.cpp)
+target_link_libraries(Pkcs15EcdsaSignatureTests PRIVATE GTest::gtest_main PKCS15 OpenSSL_Crypto)
+target_include_directories(Pkcs15EcdsaSignatureTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/pkcs15/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_compile_definitions(Pkcs15EcdsaSignatureTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(Pkcs15EcdsaSignatureTests)
+
 # DOCP counter parser tests — pure TLV walker over a GET DATA (ODD)
 # response, no card I/O. Links PKCS15 only for the docp_parser.cpp TU.
 add_executable(DocpParserTests DocpParserTests.cpp)
