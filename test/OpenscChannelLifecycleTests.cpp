@@ -927,18 +927,17 @@ TEST(OpenscOperations, EcdsaInputOfAWrongLengthIsRefusedBeforeAnyChannelWork)
     // The tunnel is gone, so any channel activation would ask the credential
     // provider; a request refused before that never reaches it.
     live.session->clearActiveChannel();
+    live.channel = nullptr; // destroyed with the tunnel
     int providerCalls = 0;
     live.session->setCredentialProvider([&providerCalls](const LibreSCRS::Auth::AuthRequirement&) {
         ++providerCalls;
         return LibreSCRS::Auth::CredentialResult::cancelled();
     });
-    const int transmitsBefore = live.channel->transmits();
 
     const auto wrongLength = h.plugin->sign(*live.session, 0x47, std::vector<std::uint8_t>(20, 0xAB),
                                             LibreSCRS::Plugin::SignMechanism::ECDSA_SHA256);
     EXPECT_EQ(wrongLength.outcome, LibreSCRS::Plugin::SignResultOutcome::PluginError);
     EXPECT_EQ(providerCalls, 0) << "no channel activation for a SHA-1 length";
-    EXPECT_EQ(live.channel->transmits(), transmitsBefore);
 
     // Control: the same session does activate for a well-formed request.
     (void)h.plugin->sign(*live.session, 0x47, std::vector<std::uint8_t>(32, 0xAB),
