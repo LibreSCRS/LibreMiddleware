@@ -165,8 +165,37 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+  sign:
+    # RPM packages carry their own signature: dnf and zypper check it on every
+    # install from a repository, and a signature added after the checksums would
+    # change the bytes the checksums and the provenance vouch for. The key is in
+    # an environment only a tag can reach; a rehearsal signs with the public
+    # rehearsal key, so the rehearsal runs the same steps.
+    needs: [preflight, packages]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions: {}
+    environment: ${{ needs.preflight.outputs.mode == 'publish' && 'package-signing' || '' }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          pattern: 'packages-*'
+          merge-multiple: true
+          path: signed
+      - uses: LibreSCRS/ci/actions/pkg-sign@b9848b4990ae046072497f10d6f5b2bfdfa45470
+        with:
+          mode: ${{ needs.preflight.outputs.mode }}
+          packages: signed
+          key: ${{ secrets.PACKAGE_SIGNING_KEY }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: signed-packages
+          path: signed/*
+          if-no-files-found: error
+          retention-days: 3
+
   seal:
-    needs: [preflight, packages, source-tarball]
+    needs: [preflight, sign, source-tarball]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -176,12 +205,10 @@ jobs:
       attestations: write
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
-        # merge-multiple is safe here: every package already carries its slug
-        # in its name, and the builder refused a collision before anything was
-        # uploaded.
+        # One artifact: the sign job merged the slugs after the builder refused
+        # any name collision, and uploaded the set with the rpms signed.
         with:
-          pattern: 'packages-*'
-          merge-multiple: true
+          name: signed-packages
           path: artifacts
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
