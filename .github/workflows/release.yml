@@ -114,7 +114,7 @@ jobs:
 
       # Named <package>.<slug>.<deb|rpm> already, debug packages refused: the
       # asset set is decided by the builder, not by a rename here.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: packages-${{ matrix.slug }}
           path: ${{ steps.build.outputs.dist }}
@@ -156,7 +156,7 @@ jobs:
           .ci/scripts/make-source-tarball --name librescrs-middleware --out "$RUNNER_TEMP/srctar"
           ls -l "$RUNNER_TEMP/srctar"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: tarball-artifacts
           path: ${{ runner.temp }}/srctar/*.orig.tar.gz
@@ -177,7 +177,7 @@ jobs:
     permissions: {}
     environment: ${{ needs.preflight.outputs.mode == 'publish' && 'package-signing' || '' }}
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           pattern: 'packages-*'
           merge-multiple: true
@@ -187,7 +187,7 @@ jobs:
           mode: ${{ needs.preflight.outputs.mode }}
           packages: signed
           key: ${{ secrets.PACKAGE_SIGNING_KEY }}
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: signed-packages
           path: signed/*
@@ -204,14 +204,14 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         # One artifact: the sign job merged the slugs after the builder refused
         # any name collision, and uploaded the set with the rpms signed.
         with:
           name: signed-packages
           path: artifacts
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           pattern: '*-artifacts'
           merge-multiple: true
@@ -254,7 +254,7 @@ jobs:
           mode: ${{ needs.preflight.outputs.mode }}
           version: ${{ needs.preflight.outputs.version }}
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: sealed
           path: artifacts/*
@@ -271,7 +271,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: sealed
           path: artifacts
