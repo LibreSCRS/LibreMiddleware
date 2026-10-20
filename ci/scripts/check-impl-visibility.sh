@@ -112,6 +112,174 @@ if [[ ! -d "$BUILD_DIR" ]]; then
     exit 2
 fi
 
+# ── The PC/SC connection is defined in one image only ─────────────────────
+# PCSCConnection holds process-wide PC/SC state, so exactly one shipped image
+# may define it: libLibreSCRS_SmartCard, which exports it to everyone else.
+# A private copy is invisible to every export check below -- it is a hidden,
+# local text symbol -- so this pass reads every definition, whatever its
+# visibility. Weak definitions are skipped: an inline accessor's out-of-line
+# copy holds no state. A linked image may record such a copy as a local
+# symbol all the same, which is why CI runs this on optimised builds, where
+# the accessors are inlined.
+#
+# The same reasoning covers test executables that link
+# LibreSCRS_SmartCard_PcscForTests: they define their own PC/SC entry points
+# and compile the connection into themselves, so they must never open a real
+# session through CardSession::open -- on macOS the library keeps calling its
+# own copy of the connection, not theirs. That part reads the sources the
+# repository tracks, not the build.
+PCSC_CLASS='LibreSCRS::SmartCard::Internal::PCSCConnection::'
+PCSC_STUB_TARGET='LibreSCRS_SmartCard_PcscForTests'
+PCSC_REPO_ROOT="${LIBRESCRS_REPO_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
+
+pcsc_images() {
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        find "$BUILD_DIR/lib/LibreSCRS" -maxdepth 1 -name 'libLibreSCRS_*.dylib' 2>/dev/null
+        find "$BUILD_DIR/lib/pkcs11" "$BUILD_DIR/plugins" -maxdepth 2 -name '*.dylib' 2>/dev/null
+    else
+        find "$BUILD_DIR/lib/LibreSCRS" -maxdepth 1 -name 'libLibreSCRS_*.so' 2>/dev/null
+        find "$BUILD_DIR" -name 'libLibreSCRS_*.a' 2>/dev/null
+        find "$BUILD_DIR/lib/pkcs11" "$BUILD_DIR/plugins" -maxdepth 2 -name '*.so' 2>/dev/null
+    fi
+}
+
+# Demangled strong definitions of the connection's members in one image.
+# The symbol table is read first and on its own, so an image nm cannot read
+# fails the whole check instead of reading as an image without a copy.
+pcsc_definitions() {
+    local image="$1" table
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        if ! table=$(nm -m "$image" 2>&1); then
+            echo "FATAL: nm cannot read $(basename "$image") -- cannot judge where PCSCConnection is defined" >&2
+            printf '%s\n' "$table" | sed 's/^/    /' >&2
+            return 2
+        fi
+        printf '%s\n' "$table" \
+            | grep -v -e '(undefined)' -e ' weak ' \
+            | awk '{ print $NF }' \
+            | c++filt \
+            | grep -F -- "$PCSC_CLASS" \
+            | sort -u || true
+    else
+        if ! table=$(nm "$image" 2>&1); then
+            echo "FATAL: nm cannot read $(basename "$image") -- cannot judge where PCSCConnection is defined" >&2
+            printf '%s\n' "$table" | sed 's/^/    /' >&2
+            return 2
+        fi
+        printf '%s\n' "$table" \
+            | awk 'NF == 3 && ($2 == "T" || $2 == "t") { print $3 }' \
+            | c++filt \
+            | grep -F -- "$PCSC_CLASS" \
+            | sort -u || true
+    fi
+}
+
+# Prints "<dir> <target> <source>..." for every add_executable, and
+# "LINK <target>" for every target_link_libraries naming the stub target, of
+# one CMakeLists.txt. Comments are dropped; a command runs to its first `)`.
+pcsc_cmake_commands() {
+    awk -v want="$PCSC_STUB_TARGET" '
+        { line = $0; sub(/#.*/, "", line); buf = buf " " line }
+        END {
+            s = buf
+            while (match(s, /[A-Za-z_][A-Za-z0-9_]*[ \t]*\(/)) {
+                name = tolower(substr(s, RSTART, RLENGTH))
+                sub(/[ \t]*\($/, "", name)
+                s = substr(s, RSTART + RLENGTH)
+                close_at = index(s, ")")
+                if (close_at == 0) break
+                n = split(substr(s, 1, close_at - 1), raw, /[ \t]+/)
+                s = substr(s, close_at + 1)
+                k = 0
+                for (i = 1; i <= n; i++) {
+                    if (raw[i] == "") continue
+                    gsub(/"/, "", raw[i])
+                    tok[++k] = raw[i]
+                }
+                if (k == 0) continue
+                if (name == "target_link_libraries" && tok[1] != want) {
+                    for (i = 2; i <= k; i++) if (tok[i] == want) { print "LINK " tok[1]; break }
+                }
+                if (name == "add_executable") {
+                    out = "EXE " tok[1]
+                    for (i = 2; i <= k; i++) out = out " " tok[i]
+                    print out
+                }
+            }
+        }' "$1"
+}
+
+pcsc_violations=0
+
+while IFS= read -r image; do
+    [[ -n "$image" ]] || continue
+    case "$(basename "$image")" in
+        libLibreSCRS_SmartCard.*) continue ;;
+    esac
+    # An empty file holds no definition; the passes below report it as a file
+    # that yielded no symbols.
+    [[ -s "$image" ]] || continue
+    defs_rc=0
+    defs=$(pcsc_definitions "$image") || defs_rc=$?
+    if [[ $defs_rc -ne 0 ]]; then
+        exit 2
+    fi
+    while IFS= read -r symbol; do
+        [[ -n "$symbol" ]] || continue
+        echo "defines PCSCConnection outside the SmartCard library: $(basename "$image"): $symbol"
+        pcsc_violations=$((pcsc_violations + 1))
+    done <<< "$defs"
+done < <(pcsc_images | while IFS= read -r found; do readlink -f "$found"; done | sort -u)
+
+if ! pcsc_cmake_files=$(git -C "$PCSC_REPO_ROOT" ls-files -- 'CMakeLists.txt' '*/CMakeLists.txt' 2>/dev/null); then
+    echo "FATAL: $PCSC_REPO_ROOT is not a git checkout -- cannot read which executables link $PCSC_STUB_TARGET" >&2
+    exit 2
+fi
+pcsc_exes=""
+pcsc_links=""
+while IFS= read -r cmake_file; do
+    [[ -n "$cmake_file" ]] || continue
+    cmake_dir="$(dirname "$cmake_file")"
+    while IFS= read -r entry; do
+        case "$entry" in
+            "LINK "*) pcsc_links+="${entry#LINK }"$'\n' ;;
+            "EXE "*) pcsc_exes+="$cmake_dir ${entry#EXE }"$'\n' ;;
+        esac
+    done < <(pcsc_cmake_commands "$PCSC_REPO_ROOT/$cmake_file")
+done <<< "$pcsc_cmake_files"
+
+while IFS= read -r target; do
+    [[ -n "$target" ]] || continue
+    exe_line=$(printf '%s' "$pcsc_exes" | awk -v t="$target" '$2 == t' | head -n 1)
+    if [[ -z "$exe_line" ]]; then
+        echo "FATAL: $target links $PCSC_STUB_TARGET, but no add_executable($target ...) was found -- cannot judge its sources" >&2
+        exit 2
+    fi
+    exe_dir=$(printf '%s\n' "$exe_line" | awk '{ print $1 }')
+    for source in $(printf '%s\n' "$exe_line" | awk '{ for (i = 3; i <= NF; i++) print $i }'); do
+        case "$source" in
+            WIN32 | MACOSX_BUNDLE | EXCLUDE_FROM_ALL) continue ;;
+        esac
+        source="${source#\$\{CMAKE_CURRENT_SOURCE_DIR\}/}"
+        if [[ "$source" == *'$'* || ! -f "$PCSC_REPO_ROOT/$exe_dir/$source" ]]; then
+            echo "FATAL: $target lists '$source', which is not a file under $exe_dir -- cannot judge it" >&2
+            exit 2
+        fi
+        if grep -q 'CardSession::open' "$PCSC_REPO_ROOT/$exe_dir/$source"; then
+            echo "links $PCSC_STUB_TARGET and calls CardSession::open: $exe_dir/$source ($target)"
+            pcsc_violations=$((pcsc_violations + 1))
+        fi
+    done
+done <<< "$(printf '%s' "$pcsc_links" | sort -u)"
+
+if [[ $pcsc_violations -gt 0 ]]; then
+    echo
+    echo "ERROR: $pcsc_violations place(s) hold a second PC/SC connection." >&2
+    echo "  PCSCConnection is defined only in libLibreSCRS_SmartCard; link" >&2
+    echo "  LibreSCRS::SmartCard instead of compiling or archiving it again." >&2
+    exit 1
+fi
+
 # Platform-specific visibility semantics for static archives:
 #
 #   Linux ELF (GCC):

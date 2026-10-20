@@ -9,7 +9,7 @@
 #include <LibreSCRS_internal/Crypto/CleanseGuard.h>
 
 #include <apdu.h>
-#include <pcsc_connection.h>
+#include <smartcard/i_connection.h>
 
 #include <openssl/bn.h>
 #include <openssl/crypto.h>
@@ -647,7 +647,7 @@ std::optional<std::vector<uint8_t>> derivePaceKpiSeed(PACEPasswordType passwordT
 // performPACE
 // ---------------------------------------------------------------------------
 
-std::optional<SessionKeys> performPACE(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const PACEParams& params)
+std::optional<SessionKeys> performPACE(LibreSCRS::SmartCard::IConnection& conn, const PACEParams& params)
 {
     bool isDES3 = (paceOIDToSMAlgorithm(params.oid) == SMAlgorithm::DES3);
     size_t keyLen = keyLengthFromOID(params.oid);

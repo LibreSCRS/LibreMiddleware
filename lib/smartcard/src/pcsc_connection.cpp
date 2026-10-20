@@ -393,14 +393,13 @@ APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
 // read them stay in the production class: the branches are inert until a
 // test arms one, and moving the members would change the class layout.
 //
-// A definition placed here would not stay private: this TU is compiled at
-// default visibility into libSmartCard_Impl.a, EMRTDCrypto's performBAC /
-// performPACE take a PCSCConnection&, and that reference drags this whole
-// object into libLibreSCRS_SecureChannel.so, where the `*LibreSCRS::*` glob
-// in cmake/librescrs-public-exports.map promotes every LibreSCRS-mentioning
-// symbol it finds. Being a dynamic export also roots the section, so
-// --gc-sections cannot drop it either -- which is why moving the definition
-// out, rather than annotating the declaration, is what removes it.
+// A definition placed here would not stay private: this TU is compiled into
+// libLibreSCRS_SmartCard, the class is LIBRESCRS_PUBLIC_API, and both export
+// filters (the `*LibreSCRS::*` glob in cmake/librescrs-public-exports.map,
+// the `__ZN9LibreSCRS*` prefixes on Darwin) admit every member. Being a
+// dynamic export also roots the section, so --gc-sections cannot drop it
+// either -- which is why moving the definition out, rather than annotating
+// the declaration, is what removes it.
 
 APDUResponse PCSCConnection::transmitRaw(const APDUCommand& cmd)
 {
@@ -524,11 +523,6 @@ void PCSCConnection::endTransaction() noexcept
         return;
     }
     SCardEndTransaction(card, SCARD_LEAVE_CARD);
-}
-
-void PCSCConnection::cancel()
-{
-    SCardCancel(context);
 }
 
 std::vector<uint8_t> PCSCConnection::getATR() const

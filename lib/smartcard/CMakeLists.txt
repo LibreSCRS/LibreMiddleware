@@ -9,7 +9,6 @@ find_package(Threads REQUIRED)
 
 add_library(SmartCard_Impl STATIC
     src/apdu.cpp
-    src/pcsc_connection.cpp
     src/tlv.cpp
     src/ber.cpp
     src/date_format.cpp

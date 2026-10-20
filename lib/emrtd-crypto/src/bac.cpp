@@ -7,7 +7,7 @@
 #include <LibreSCRS_internal/Crypto/CleanseGuard.h>
 
 #include <apdu.h>
-#include <pcsc_connection.h>
+#include <smartcard/i_connection.h>
 
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
@@ -43,7 +43,7 @@ BACKeys deriveBACKeys(const std::string& documentNumber, const std::string& date
     return keys;
 }
 
-std::optional<SessionKeys> performBAC(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const BACKeys& keys)
+std::optional<SessionKeys> performBAC(LibreSCRS::SmartCard::IConnection& conn, const BACKeys& keys)
 {
     // Scope guard to cleanse all key material on every exit path.
     // Covers BOTH the long-lived randoms/halves and every intermediate

@@ -131,10 +131,8 @@ public:
     /// AID. The caller is expected to hold a PC/SC transaction across the
     /// full activation sequence.
     ///
-    /// @param connection Concrete connection. The current implementation
-    ///        requires a @ref LibreSCRS::SmartCard::Internal::PCSCConnection;
-    ///        any other implementation maps to @ref
-    ///        ChannelActivationError::Internal.
+    /// @param connection Connection the handshake runs over; any @ref
+    ///        LibreSCRS::SmartCard::IConnection.
     /// @param params PACE inputs: OID, password type, password bytes,
     ///        standardised domain parameter id.
     /// @param token Cancellation token honoured before the handshake

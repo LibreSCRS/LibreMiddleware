@@ -135,7 +135,7 @@ librescrs_pkcs11_e2e_tests 16
 librescrs_pkcs11_tests 67
 monitor_coalescer_test 1
 pcsc_6c_retry_test 2
-pcsc_connection_filter_test 2
+pcsc_connection_filter_test 1
 pcsc_handle_census_test 2
 sdk-consumer 1
 visual_signature_layout_example 1
