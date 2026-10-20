@@ -113,10 +113,8 @@ public:
     /// post-handshake APDUs sent via the returned channel are wrapped in
     /// SM.
     ///
-    /// @param connection Concrete connection. The current implementation
-    ///        requires a @ref LibreSCRS::SmartCard::Internal::PCSCConnection;
-    ///        any other implementation maps to @ref
-    ///        ChannelActivationError::Internal.
+    /// @param connection Connection the handshake runs over; any @ref
+    ///        LibreSCRS::SmartCard::IConnection.
     /// @param appletAid AID the channel will be bound to in its public
     ///        surface; the handshake itself targets the active eMRTD applet
     ///        on the card.

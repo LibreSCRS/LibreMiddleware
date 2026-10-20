@@ -21,6 +21,7 @@
 #endif
 
 #include "apdu.h"
+#include <LibreSCRS/Export.h>
 #include <smartcard/i_connection.h>
 
 namespace LibreSCRS::SmartCard {
@@ -32,7 +33,7 @@ class CardSession;
 
 namespace LibreSCRS::SmartCard::Internal {
 
-class PCSCError : public std::runtime_error
+class LIBRESCRS_PUBLIC_API PCSCError : public std::runtime_error
 {
 public:
     PCSCError(const std::string& msg, LONG code) : std::runtime_error(msg), errorCode(code) {}
@@ -45,7 +46,7 @@ private:
     LONG errorCode;
 };
 
-class PCSCConnection : public IConnection
+class LIBRESCRS_PUBLIC_API PCSCConnection : public IConnection
 {
 public:
     /// Tag type used to construct a "detached" PCSCConnection that performs
@@ -188,10 +189,6 @@ public:
     {
         return callerHoldsTransaction;
     }
-
-    // Abort any pending blocking PC/SC operation (SCardTransmit, etc.) on this
-    // connection's context. Thread-safe: can be called from any thread.
-    void cancel();
 
     static std::vector<std::string> listReaders();
 

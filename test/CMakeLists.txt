@@ -464,9 +464,11 @@ gtest_discover_tests(pcsc_connection_filter_test)
 # against link-time SCardTransmit/SCardReconnect stubs defined in the test
 # binary itself (the executable's definitions take precedence over
 # libpcsclite's), so no PC/SC daemon or card I/O is involved. Own binary:
-# the stubs interpose for the whole executable.
+# the stubs interpose for the whole executable. The connection comes from
+# LibreSCRS_SmartCard_PcscForTests, compiled into the binary, because the copy
+# inside libLibreSCRS_SmartCard does not see the stubs on macOS.
 add_executable(pcsc_6c_retry_test pcsc_6c_retry_test.cpp)
-target_link_libraries(pcsc_6c_retry_test SmartCard_Impl GTest::gtest_main)
+target_link_libraries(pcsc_6c_retry_test SmartCard_Impl LibreSCRS_SmartCard_PcscForTests GTest::gtest_main)
 target_include_directories(pcsc_6c_retry_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src)
 # LM-internal test: reaches directly into lib/smartcard/src; must advertise
@@ -600,7 +602,7 @@ gtest_discover_tests(SlotHashTests)
 
 # PKCS#15 card investigation probe (run with a physical card inserted)
 add_executable(pkcs15_probe pkcs15_probe.cpp)
-target_link_libraries(pkcs15_probe SmartCard_Impl)
+target_link_libraries(pkcs15_probe SmartCard_Impl LibreSCRS::SmartCard)
 target_include_directories(pkcs15_probe PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src)
 target_compile_definitions(pkcs15_probe PRIVATE LIBRESCRS_INTERNAL_BUILD)
@@ -618,14 +620,14 @@ target_compile_definitions(pkcs15_after_pace_probe PRIVATE LIBRESCRS_INTERNAL_BU
 
 # AODF + PIN reference probe
 add_executable(aodf_probe aodf_probe.cpp)
-target_link_libraries(aodf_probe SmartCard_Impl)
+target_link_libraries(aodf_probe SmartCard_Impl LibreSCRS::SmartCard)
 target_include_directories(aodf_probe PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src)
 target_compile_definitions(aodf_probe PRIVATE LIBRESCRS_INTERNAL_BUILD)
 
 # FCI format probe: tests if CardEdge SELECT FILE returns ISO TLV-wrapped FCI
 add_executable(fci_format_probe fci_format_probe.cpp)
-target_link_libraries(fci_format_probe SmartCard_Impl)
+target_link_libraries(fci_format_probe SmartCard_Impl LibreSCRS::SmartCard)
 target_include_directories(fci_format_probe PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src)
 target_compile_definitions(fci_format_probe PRIVATE LIBRESCRS_INTERNAL_BUILD)

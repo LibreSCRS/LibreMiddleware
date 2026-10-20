@@ -26,10 +26,9 @@
  *   The leading-wildcard glob also promotes any symbol whose
  *   demangled name MENTIONS a `LibreSCRS::` type anywhere. Empirically
  *   this leaks:
- *     - `emrtd::crypto::performBAC(LibreSCRS::SmartCard::Internal::
- *       PCSCConnection&, ...)` and `performPACE(...)` (statically
- *       linked into LibreSCRS_SecureChannel.so via the EMRTDCrypto
- *       archive)
+ *     - `emrtd::crypto::performBAC(LibreSCRS::SmartCard::IConnection&,
+ *       ...)` and `performPACE(...)` (statically linked into
+ *       LibreSCRS_SecureChannel.so via the EMRTDCrypto archive)
  *     - `libresign::Pkcs11Token::Pkcs11Token(..., LibreSCRS::Secure::
  *       Buffer const&, ...)` plus the symmetric
  *       `libresign::NativeSigningService::{appendSigner,sign}(...)` and

@@ -293,6 +293,9 @@ add_library(LibreSCRS_SmartCard ${LIBREMIDDLEWARE_LIB_TYPE}
     SmartCard/MonitorService.cpp
     SmartCard/SessionPresence.cpp
     SmartCard/SmartCardServices.cpp
+    # The PC/SC connection holds process-wide PC/SC state, so it is defined
+    # here and only here; every other image imports it from this library.
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection.cpp
     ${LIBRESCRS_SMARTCARD_PUBLIC_HEADERS}
     ${LIBRESCRS_SMARTCARD_INTERNAL_HEADERS}
 )
@@ -516,9 +519,9 @@ endif()
 # `card == 0` branch in getATR() stay in the production class — the class
 # layout is byte-identical either way, and the branch is inert until a
 # test arms it through the setter this archive supplies. Left in
-# pcsc_connection.cpp the definition reached the dynamic export set of
-# libLibreSCRS_SecureChannel.so, which pulls that object out of
-# libSmartCard_Impl.a for EMRTDCrypto's performBAC / performPACE.
+# pcsc_connection.cpp the definition would be a dynamic export of
+# libLibreSCRS_SmartCard, which compiles that file and exports the whole
+# class.
 #
 # The archive is OBJECT (not STATIC) so its symbols merge directly into
 # every test executable that links it, with no archive-level
@@ -553,9 +556,42 @@ set_target_properties(LibreSCRS_SmartCard_TestHelpers PROPERTIES
     VISIBILITY_INLINES_HIDDEN OFF
 )
 
+# ──────────────────────────────────────────────────────────────────────────
+# Test-only copy of the PC/SC connection.
+#
+# A test executable that replaces the PC/SC entry points with its own stubs
+# (SCardTransmit, SCardReconnect, ...) needs the connection compiled into the
+# executable itself: on macOS the connection inside libLibreSCRS_SmartCard
+# binds to the PCSC framework at link time and never reaches a stub the
+# executable defines. Executables that link this define their own PC/SC entry
+# points; they must not call CardSession::open — on macOS the library keeps
+# its own copy of the connection. ci/scripts/check-impl-visibility.sh fails
+# when one of their sources does.
+#
+# Not installed (no install(TARGETS …) rule). Build-tree-only.
+# ──────────────────────────────────────────────────────────────────────────
+add_library(LibreSCRS_SmartCard_PcscForTests OBJECT
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection.cpp
+)
+target_link_libraries(LibreSCRS_SmartCard_PcscForTests
+    PUBLIC LibreSCRS_SmartCard
+    PRIVATE $<BUILD_INTERFACE:SmartCard_Impl>
+)
+target_include_directories(LibreSCRS_SmartCard_PcscForTests
+    PRIVATE ${PROJECT_SOURCE_DIR}/lib/smartcard/src)
+target_compile_features(LibreSCRS_SmartCard_PcscForTests PUBLIC cxx_std_23)
+target_compile_definitions(LibreSCRS_SmartCard_PcscForTests PRIVATE
+    LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD)
+set_target_properties(LibreSCRS_SmartCard_PcscForTests PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET default
+    VISIBILITY_INLINES_HIDDEN OFF
+)
+
 # The shipped libraries. LibreSCRS_Secure and LibreSCRS_All are INTERFACE
-# targets with no sources of their own, and LibreSCRS_SmartCard_TestHelpers is
-# build-tree-only test scaffolding — none of the three is listed.
+# targets with no sources of their own, and LibreSCRS_SmartCard_TestHelpers and
+# LibreSCRS_SmartCard_PcscForTests are build-tree-only test scaffolding — none
+# of the four is listed.
 librescrs_warnings_as_errors(
     LibreSCRS_Auth
     LibreSCRS_Trust

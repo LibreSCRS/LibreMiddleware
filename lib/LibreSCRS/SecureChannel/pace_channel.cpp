@@ -7,7 +7,6 @@
 
 #include "pace.h"
 #include "secure_messaging.h"
-#include <pcsc_connection.h>
 
 #include <LibreSCRS/Secure/Buffer.h>
 
@@ -96,17 +95,6 @@ PaceChannel::establish(LibreSCRS::SmartCard::IConnection& connection, const Pace
             return std::unexpected{ChannelActivationError::Cancelled};
         }
 
-        // emrtd::crypto::performPACE binds to the concrete PCSCConnection
-        // because the underlying handshake issues several plain APDUs
-        // through it. IConnection is the seam used by the post-handshake
-        // transmit path (FakePCSCConnection), but the handshake itself
-        // requires the real transport. A non-PCSCConnection IConnection
-        // therefore surfaces as Internal — tests cover this path explicitly.
-        auto* pcsc = dynamic_cast<LibreSCRS::SmartCard::Internal::PCSCConnection*>(&connection);
-        if (pcsc == nullptr) {
-            return std::unexpected{ChannelActivationError::Internal};
-        }
-
         auto view = params.password.view();
         emrtd::crypto::PACEParams cryptoParams;
         cryptoParams.oid = params.oid;
@@ -116,7 +104,7 @@ PaceChannel::establish(LibreSCRS::SmartCard::IConnection& connection, const Pace
 
         std::optional<emrtd::crypto::SessionKeys> derived;
         try {
-            derived = emrtd::crypto::performPACE(*pcsc, cryptoParams);
+            derived = emrtd::crypto::performPACE(connection, cryptoParams);
         } catch (...) {
             // Cleanse the local password copy before propagating the
             // failure.

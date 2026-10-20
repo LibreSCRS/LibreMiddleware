@@ -21,8 +21,8 @@
 # version-script counterpart) operates on DEMANGLED names via a
 # `*LibreSCRS::*` glob and therefore exports any symbol whose
 # demangled name mentions `LibreSCRS::` anywhere — including
-# `emrtd::crypto::performBAC(LibreSCRS::SmartCard::Internal::
-# PCSCConnection&, ...)`, `libresign::Pkcs11Token::Pkcs11Token(...,
+# `emrtd::crypto::performBAC(LibreSCRS::SmartCard::IConnection&, ...)`,
+# `libresign::Pkcs11Token::Pkcs11Token(...,
 # LibreSCRS::Secure::Buffer const&, ...)`, and similar (see the
 # Linux file-header "IMPLEMENTABILITY-FORCED leading-wildcard"
 # trade-off essay for the full enumeration). The Darwin

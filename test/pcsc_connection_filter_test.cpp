@@ -12,11 +12,3 @@ TEST(PCSCConnectionFilter, FilterAPIExists)
                                         const LibreSCRS::SmartCard::Internal::APDUCommand&>);
     SUCCEED();
 }
-
-TEST(PCSCConnectionCancel, CancelAPIExists)
-{
-    // PCSCConnection::cancel() must exist and be callable.
-    // Verifies the method signature at compile time.
-    static_assert(std::is_member_function_pointer_v<decltype(&LibreSCRS::SmartCard::Internal::PCSCConnection::cancel)>);
-    SUCCEED();
-}

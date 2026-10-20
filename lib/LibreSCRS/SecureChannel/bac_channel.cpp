@@ -6,7 +6,6 @@
 #include "sm_channel_impl.h"
 
 #include "bac.h"
-#include <pcsc_connection.h>
 #include "smartcard/secure_buffer.h"
 
 #include <LibreSCRS/Secure/Buffer.h>
@@ -65,11 +64,6 @@ BacChannel::establish(LibreSCRS::SmartCard::IConnection& connection, LibreSCRS::
             return std::unexpected{ChannelActivationError::Cancelled};
         }
 
-        auto* pcsc = dynamic_cast<LibreSCRS::SmartCard::Internal::PCSCConnection*>(&connection);
-        if (pcsc == nullptr) {
-            return std::unexpected{ChannelActivationError::Internal};
-        }
-
         std::optional<emrtd::crypto::SessionKeys> derived;
         try {
             // emrtd::crypto::deriveBACKeys takes const std::string& —
@@ -83,7 +77,7 @@ BacChannel::establish(LibreSCRS::SmartCard::IConnection& connection, LibreSCRS::
             LibreSCRS::SmartCard::Internal::PinStringScrubber scrubDob{dobScratch};
             LibreSCRS::SmartCard::Internal::PinStringScrubber scrubDoe{doeScratch};
             auto bacKeys = emrtd::crypto::deriveBACKeys(docNoScratch, dobScratch, doeScratch);
-            derived = emrtd::crypto::performBAC(*pcsc, bacKeys);
+            derived = emrtd::crypto::performBAC(connection, bacKeys);
         } catch (...) {
             return std::unexpected{ChannelActivationError::PaceProtocolFailure};
         }
