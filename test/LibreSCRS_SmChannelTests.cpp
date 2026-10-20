@@ -237,7 +237,7 @@ TEST(BacChannelTests, Sw6988TransitionsToFailed)
 // separate effort.
 // -----------------------------------------------------------------------------
 
-TEST(PaceEstablishTests, NonPcscConnectionMapsToInternal)
+TEST(PaceEstablishTests, CardRefusingMseSetAtIsAWrongSecret)
 {
     using LibreSCRS::Auth::PaceSecretKind;
     using LibreSCRS::SecureChannel::ChannelActivationError;
@@ -250,9 +250,17 @@ TEST(PaceEstablishTests, NonPcscConnectionMapsToInternal)
     params.password = LibreSCRS::Secure::String{"123456"};
     params.paramId = LibreSCRS::SecureChannel::PaceStandardisedDomainParam::BrainpoolP256r1;
 
+    fakeConn.setResponder([](const LibreSCRS::SmartCard::Internal::APDUCommand&) {
+        return LibreSCRS::SmartCard::Internal::APDUResponse{{}, 0x6A, 0x80};
+    });
+
     auto outcome = PaceChannel::establish(fakeConn, params, CancelToken{});
     ASSERT_FALSE(outcome.has_value());
-    EXPECT_EQ(outcome.error(), ChannelActivationError::Internal);
+    EXPECT_EQ(outcome.error(), ChannelActivationError::PaceWrongSecret);
+    ASSERT_EQ(fakeConn.history().size(), 1u);
+    EXPECT_EQ(fakeConn.history()[0].ins, 0x22);
+    EXPECT_EQ(fakeConn.history()[0].p1, 0xC1);
+    EXPECT_EQ(fakeConn.history()[0].p2, 0xA4);
 }
 
 TEST(PaceEstablishTests, AlreadyCancelledTokenSkipsHandshake)
@@ -296,7 +304,7 @@ TEST(PaceChannelTests, SetCurrentAppletUpdatesReportedAid)
     EXPECT_EQ(channel.currentApplet(), otherAid);
 }
 
-TEST(BacEstablishTests, NonPcscConnectionMapsToInternal)
+TEST(BacEstablishTests, CardRefusingGetChallengeIsAWrongSecret)
 {
     using LibreSCRS::SecureChannel::BacInput;
     using LibreSCRS::SecureChannel::ChannelActivationError;
@@ -307,9 +315,15 @@ TEST(BacEstablishTests, NonPcscConnectionMapsToInternal)
     input.dateOfBirth = LibreSCRS::Secure::String{"690806"};
     input.dateOfExpiry = LibreSCRS::Secure::String{"940623"};
 
+    fakeConn.setResponder([](const LibreSCRS::SmartCard::Internal::APDUCommand&) {
+        return LibreSCRS::SmartCard::Internal::APDUResponse{{}, 0x6A, 0x80};
+    });
+
     auto outcome = BacChannel::establish(fakeConn, makeNamEmrtdAid(), input, CancelToken{});
     ASSERT_FALSE(outcome.has_value());
-    EXPECT_EQ(outcome.error(), ChannelActivationError::Internal);
+    EXPECT_EQ(outcome.error(), ChannelActivationError::PaceWrongSecret);
+    ASSERT_EQ(fakeConn.history().size(), 1u);
+    EXPECT_EQ(fakeConn.history()[0].ins, 0x84);
 }
 
 TEST(BacEstablishTests, AlreadyCancelledTokenSkipsHandshake)

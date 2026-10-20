@@ -51,6 +51,7 @@ add_executable(librescrs_pkcs11_tests
 target_link_libraries(librescrs_pkcs11_tests PRIVATE
     GTest::gtest_main
     LibreSCRS::Secure
+    LibreSCRS::SmartCard
     SmartCard_Impl
     OpenSSL_Crypto
 )

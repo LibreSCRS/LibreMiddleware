@@ -121,6 +121,143 @@ make_tree "$tree2"
 out="$(bash "$GATE" "$tree2" 2>&1)"; rc=$?
 report 2 2 "$rc" "0 symbols" "$out"
 
+# --- cases 10 to 13: the PC/SC connection lives in one image only -------------
+# They run here, ahead of case 3, because they build their own fixture with the
+# host's compiler and the host's library suffix, so they hold on macOS as well
+# as on Linux; the cases below them compile ELF objects with g++.
+#
+# 10  a plugin carries a hidden copy of the connection -> 1, symbol named
+# 11  the same object, in the SmartCard library        -> 0   (control of 10)
+# 12  an executable linking the PC/SC test stubs calls
+#     CardSession::open                                -> 1, source named
+# 13  the same executable without that call            -> 0   (control of 12)
+# 14  a plugin nm cannot read                          -> 2, image named
+#
+# Case 10 is the defect the rule was written for: at eaccfb8 the OpenSC plugin,
+# the secure-channel library and the PKCS#11 module each carried their own
+# hidden copy of PCSCConnection, which no export check could see.
+pcsc_host="$(uname -s)"
+if [ "$pcsc_host" = "Darwin" ]; then
+    pcsc_ext=dylib
+    pcsc_shared="-dynamiclib"
+else
+    pcsc_ext=so
+    pcsc_shared="-shared -fPIC"
+fi
+command -v c++ >/dev/null 2>&1 \
+    || { echo "FATAL: c++ not found on PATH -- cannot compile the PC/SC fixture" >&2; exit 2; }
+pcsc_src="$WORK/pcsc"
+mkdir -p "$pcsc_src"
+cat > "$pcsc_src/plain.cpp" <<'CPP'
+namespace LibreSCRS { namespace Selftest {
+int plain(int x) { return x + 1; }
+} }
+CPP
+cat > "$pcsc_src/connection.cpp" <<'CPP'
+namespace LibreSCRS { namespace SmartCard { namespace Internal {
+struct __attribute__((visibility("hidden"))) PCSCConnection { static int listReaders(); };
+int PCSCConnection::listReaders() { return 1; }
+} } }
+namespace LibreSCRS { namespace Selftest {
+int plain(int x) { return x + SmartCard::Internal::PCSCConnection::listReaders(); }
+} }
+CPP
+# shellcheck disable=SC2086
+if ! c++ $pcsc_shared -o "$pcsc_src/plain.$pcsc_ext" "$pcsc_src/plain.cpp" 2>"$WORK/pcsc.err" \
+    || ! c++ $pcsc_shared -o "$pcsc_src/connection.$pcsc_ext" "$pcsc_src/connection.cpp" 2>>"$WORK/pcsc.err"; then
+    echo "FATAL: could not compile the PC/SC fixture" >&2
+    sed 's/^/    /' "$WORK/pcsc.err" >&2
+    exit 2
+fi
+# The hidden copy must really be in the image, and must really not be exported:
+# that is the shape no export check sees.
+if ! nm "$pcsc_src/connection.$pcsc_ext" | c++filt | grep -qF 'PCSCConnection::listReaders'; then
+    echo "FATAL: the fixture image carries no PCSCConnection definition -- nothing to detect" >&2
+    exit 2
+fi
+if nm -gU "$pcsc_src/connection.$pcsc_ext" | c++filt | grep -qF 'PCSCConnection::listReaders'; then
+    echo "FATAL: the fixture exports the connection -- it would not be the hidden copy the rule exists for" >&2
+    exit 2
+fi
+
+# A tree the rest of the gate passes: every library carries `plain` and nothing
+# else, and on Linux the recorded surface lists exactly that.
+pcsc_tree() {
+    root="$1"
+    mkdir -p "$root/lib/LibreSCRS" "$root/plugins" "$root/lib/pkcs11"
+    for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
+        command cp -f "$pcsc_src/plain.$pcsc_ext" "$root/lib/LibreSCRS/libLibreSCRS_$module.$pcsc_ext"
+    done
+    command cp -f "$pcsc_src/plain.$pcsc_ext" "$root/plugins/libfixture-plugin.$pcsc_ext"
+    command cp -f "$pcsc_src/plain.$pcsc_ext" "$root/lib/pkcs11/librescrs-pkcs11.$pcsc_ext"
+}
+pcsc_surface="$WORK/pcsc-surface.txt"
+if [ "$pcsc_host" != "Darwin" ]; then
+    {
+        echo "# fixture surface for the PC/SC cases"
+        for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
+            echo "== libLibreSCRS_$module.so =="
+            nm -D -U "$pcsc_src/plain.so" | awk '$2 == "T" { print $3 }' | c++filt | sort -u
+        done
+    } > "$pcsc_surface"
+fi
+
+tree10="$WORK/tree-pcsc-plugin"
+pcsc_tree "$tree10"
+command cp -f "$pcsc_src/connection.$pcsc_ext" "$tree10/plugins/libfixture-plugin.$pcsc_ext"
+out="$(LIBRESCRS_ABI_BASELINE="$pcsc_surface" bash "$GATE" "$tree10" 2>&1)"; rc=$?
+report 10 1 "$rc" \
+    "defines PCSCConnection outside the SmartCard library: libfixture-plugin.$pcsc_ext: LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders()" \
+    "$out"
+
+tree11="$WORK/tree-pcsc-smartcard"
+pcsc_tree "$tree11"
+command cp -f "$pcsc_src/connection.$pcsc_ext" "$tree11/lib/LibreSCRS/libLibreSCRS_SmartCard.$pcsc_ext"
+if cmp -s "$tree10/plugins/libfixture-plugin.$pcsc_ext" "$tree11/plugins/libfixture-plugin.$pcsc_ext"; then
+    echo "FATAL: the plugin of case 11 is the plugin of case 10 -- the control proves nothing" >&2
+    exit 2
+fi
+out="$(LIBRESCRS_ABI_BASELINE="$pcsc_surface" bash "$GATE" "$tree11" 2>&1)"; rc=$?
+report 11 0 "$rc" "Impl visibility clean" "$out"
+
+# Cases 12 and 13 judge a repository, not a build: the executables that link
+# the PC/SC test stubs are read from the CMakeLists.txt files git tracks.
+pcsc_repo() {
+    repo="$1"; body="$2"
+    mkdir -p "$repo/test"
+    cat > "$repo/test/CMakeLists.txt" <<'CMAKE'
+# An executable that brings its own PC/SC entry points.
+add_executable(stubbed_test
+    stubbed_test.cpp)
+target_link_libraries(stubbed_test
+    LibreSCRS_SmartCard_PcscForTests # the stubs replace the PC/SC calls
+    GTest::gtest_main)
+CMAKE
+    printf '%s\n' "$body" > "$repo/test/stubbed_test.cpp"
+    git -C "$repo" init -q && git -C "$repo" add -A \
+        || { echo "FATAL: could not build the repository fixture" >&2; exit 2; }
+}
+repo12="$WORK/repo-opens-session"
+pcsc_repo "$repo12" 'auto session = LibreSCRS::SmartCard::CardSession::open("reader");'
+out="$(LIBRESCRS_REPO_ROOT="$repo12" LIBRESCRS_ABI_BASELINE="$pcsc_surface" bash "$GATE" "$tree11" 2>&1)"; rc=$?
+report 12 1 "$rc" \
+    "links LibreSCRS_SmartCard_PcscForTests and calls CardSession::open: test/stubbed_test.cpp (stubbed_test)" \
+    "$out"
+
+repo13="$WORK/repo-stubs-only"
+pcsc_repo "$repo13" 'auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();'
+out="$(LIBRESCRS_REPO_ROOT="$repo13" LIBRESCRS_ABI_BASELINE="$pcsc_surface" bash "$GATE" "$tree11" 2>&1)"; rc=$?
+report 13 0 "$rc" "Impl visibility clean" "$out"
+
+# --- case 14: an image nm cannot read ----------------------------------------
+# A plugin that is not an object file at all. Reading nothing from it is not
+# finding no copy of the connection in it: the rule must refuse to judge.
+tree14="$WORK/tree-pcsc-unreadable"
+pcsc_tree "$tree14"
+printf 'not an object file\n' > "$tree14/plugins/libfixture-plugin.$pcsc_ext"
+out="$(LIBRESCRS_ABI_BASELINE="$pcsc_surface" bash "$GATE" "$tree14" 2>&1)"; rc=$?
+report 14 2 "$rc" "cannot read libfixture-plugin.$pcsc_ext" "$out"
+
 # --- cases 3 and 4: a tree that really exports something ---------------------
 # The two sources differ in one token: `struct Body` against `struct Impl`. The
 # gate matches the demangled `::Impl::` segment, so that one token is the whole

@@ -36,11 +36,9 @@
 /// for the same reason: appending grows it without moving a production offset
 /// that separately-packaged objects have already compiled in.
 ///
-/// Kept in @c pcsc_connection.cpp the definition did not stay private: that
-/// TU is compiled at default visibility into @c libSmartCard_Impl.a, and
-/// @c emrtd::crypto::performBAC / @c performPACE take a
-/// @c PCSCConnection&, so linking @c LibreSCRS_SecureChannel extracts the
-/// whole object and the @c *LibreSCRS::* glob in
+/// Kept in @c pcsc_connection.cpp the definition would not stay private: that
+/// TU is compiled into @c libLibreSCRS_SmartCard, the class is
+/// @c LIBRESCRS_PUBLIC_API, and the @c *LibreSCRS::* glob in
 /// @c cmake/librescrs-public-exports.map promotes every LibreSCRS-mentioning
 /// symbol in it. A hidden-visibility attribute on the declaration is not an
 /// alternative: the Darwin export filter is a mangled-prefix allowlist with
