@@ -82,16 +82,23 @@ git add thirdparty/opensc-source
 # rebuild + run regression suite
 ```
 
-PCSC: vendored OpenSC is built with `--enable-pcsc`; it owns its own PCSC
-session per card it claims. The bundled `librescrs-opensc-pkcs11` module
+PCSC: vendored OpenSC is built twice from the one source. The copy linked
+into `librescrs-opensc-pkcs11` is built with `--enable-pcsc`; it owns its own
+PCSC session per card it claims. The copy linked into the OpenSC card plugin
+is built with `--disable-pcsc --enable-ctapi`: the plugin reaches the card only
+through the session it is handed, and a context with the PC/SC driver would
+enumerate and connect to every reader on the host. OpenSC requires exactly one
+reader driver, and CT-API with no module configured loads nothing and detects
+no reader. `ci/scripts/check-opensc-plugin-no-pcsc.sh` checks the plugin's
+copy. The bundled `librescrs-opensc-pkcs11` module
 runs alongside the in-tree LibreSCRS PKCS#15 module — each owns its own
 PCSC connection to the card it claims, with the dispatcher in
 `lib/pkcs11/` routing C_FindObjects/C_Sign requests to whichever module
 asserts ownership of a given slot.
 
 Disable: pass `-DLIBRESCRS_VENDOR_OPENSC=OFF` at configure time to skip the
-~5-10 minute autoconf+make build (the resulting `librescrs-opensc-pkcs11`
-fallback module will not be built either).
+~5-10 minute autoconf+make builds (the resulting `librescrs-opensc-pkcs11`
+fallback module and the OpenSC card plugin will not be built either).
 
 ## openssl-3.5.x
 

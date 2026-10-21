@@ -808,16 +808,11 @@ public:
         }
 
         // Everything from here to the publish touches only this local
-        // session. Deliberately NOT under the plugin lock, because the very
-        // first call does not stay on this card: sc_establish_context ends in
-        // sc_ctx_detect_readers, which walks EVERY reader on the system and
-        // issues SCardConnect on each -- shared access after a sharing
-        // violation, which blocks for as long as another process holds that
-        // card. One busy card must not stop every other card's probe. (The
-        // same walk also means a PROBE can block while another reader's
-        // credential prompt holds its PC/SC transaction — a pre-existing,
-        // documented limitation outside this plugin's control; OPERATIONS on
-        // different readers stay independent.)
+        // session, and is NOT under the plugin lock: card I/O on one reader
+        // must not stop every other reader's probe. The plugin's copy of
+        // OpenSC has no PC/SC reader driver, so creating the context below
+        // enumerates and connects to no reader; the card is reached only
+        // through the bridge reader installed over this session.
         //
         // sc_establish_context runs ONLY here — before any transaction or
         // channel work — never in an operation or in recovery.

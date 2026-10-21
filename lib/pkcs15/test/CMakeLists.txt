@@ -57,6 +57,13 @@ if(LIBRESCRS_VENDOR_OPENSC)
     target_compile_definitions(CrossProviderCoordinationTests PRIVATE
         LIBRESCRS_INTERNAL_BUILD
         LIBRESCRS_PCSC_SHIM_PATH="$<TARGET_FILE:pcsc_counting_shim>")
+
+    # One case probes through the OpenSC card plugin, loaded from the plugin
+    # output directory like any consumer loads it.
+    target_link_libraries(CrossProviderCoordinationTests PRIVATE CardPlugin_Impl)
+    target_compile_definitions(CrossProviderCoordinationTests PRIVATE
+        PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}")
+    add_dependencies(CrossProviderCoordinationTests opensc-plugin)
     target_include_directories(CrossProviderCoordinationTests PRIVATE
         ${PROJECT_SOURCE_DIR}/test/pcsc_counting_shim)
     target_link_libraries(CrossProviderCoordinationTests PRIVATE ${CMAKE_DL_LIBS})

@@ -245,6 +245,13 @@ jobs:
         if: matrix.release_gates
         run: ./ci/scripts/check-impl-visibility.sh build
 
+      - name: The OpenSC card plugin carries no PC/SC reader driver
+        # Every leg: which copy of the vendored OpenSC the plugin links is a
+        # property of the link line, not of the signing backend. The second
+        # OpenSC build this needs (the plugin's copy, without PC/SC) is part of
+        # the build step above.
+        run: ./ci/scripts/check-opensc-plugin-no-pcsc.sh build
+
       - name: Check ABI snapshot vs 5.x baseline
         # Native leg only: the baseline is recorded for one configuration, and
         # `both` adds the DSS backend's exported symbols, so running it there
@@ -550,6 +557,9 @@ jobs:
 
       - name: Check pimpl visibility
         run: ./ci/scripts/check-impl-visibility.sh build
+
+      - name: The OpenSC card plugin carries no PC/SC reader driver
+        run: ./ci/scripts/check-opensc-plugin-no-pcsc.sh build
 
       - name: Bootstrap SoftHSM2 test token
         # Same store this repo's Linux legs provision — see

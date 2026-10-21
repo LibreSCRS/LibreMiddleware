@@ -41,6 +41,7 @@
 #include "chip_auth_card_oracle.h"
 #include <pcsc_connection.h>
 
+#include <LibreSCRS/Plugin/CardPluginService.h>
 #include <LibreSCRS/Secure/Buffer.h>
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SecureChannel/BacParams.h>
@@ -361,6 +362,41 @@ TEST_F(CrossProviderCoordination, OpenScProbeProceedsWhenSessionHasNoLiveSm)
     EXPECT_EQ(seen.connect, 2u);
     EXPECT_EQ(shim().openHandles(), 0u) << "every handle this probe opened must be closed on return";
     EXPECT_FALSE(sessionPresence().hasLiveSm(kReader));
+}
+
+// ---------------------------------------------------------------------------
+// The OpenSC card plugin carries its own copy of OpenSC, and that copy has no
+// PC/SC reader driver: the plugin talks to the card only through the session it
+// is handed. The same counting provider the module case above reaches is
+// configured here, and a probe through the plugin must not reach it at all --
+// not to enumerate readers, and not to connect to the one being probed. A
+// plugin linked against the PC/SC copy again loads the provider while creating
+// its context and turns this red.
+// ---------------------------------------------------------------------------
+
+TEST_F(CrossProviderCoordination, OpenScPluginProbeReachesNoPcscProvider)
+{
+    LibreSCRS::Plugin::CardPluginService registry{std::filesystem::path{PLUGIN_DIR}};
+    std::shared_ptr<LibreSCRS::Plugin::CardPlugin> opensc;
+    for (const auto& p : registry.plugins()) {
+        if (p->pluginId() == "opensc")
+            opensc = p;
+    }
+    ASSERT_NE(opensc, nullptr) << "the OpenSC card plugin is not in " << PLUGIN_DIR;
+
+    auto session = makeDetachedCardSession(kReader);
+    const std::vector<std::uint8_t> atr{0x3B, 0x80, 0x01, 0x81};
+    // A detached session answers no APDU, so the plugin declines the card; it
+    // gets that far only after creating its OpenSC context, which is the step
+    // that used to reach the provider (a plugin relinked against the PC/SC copy
+    // turns the counts below red).
+    EXPECT_FALSE(opensc->canHandleConnection(atr, *session));
+
+    const auto seen = shim().counts(nullptr);
+    EXPECT_EQ(seen.establishContext, 0u);
+    EXPECT_EQ(seen.listReaders, 0u);
+    EXPECT_EQ(seen.connect, 0u);
+    EXPECT_EQ(shim().openHandles(), 0u);
 }
 
 // ---------------------------------------------------------------------------

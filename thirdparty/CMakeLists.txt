@@ -208,9 +208,11 @@ endif()
 # ──────────────────────────────────────────────────────────────────────────
 # Vendored OpenSC (upstream OpenSC/OpenSC, pinned commit 07d0d40b).
 #
-# Built as a STATIC archive via ExternalProject_Add so the
-# librescrs-opensc-pkcs11 SHARED library can link it without pulling a
-# runtime dependency on the host distribution's libopensc.
+# Built as STATIC archives via ExternalProject_Add so the
+# librescrs-opensc-pkcs11 SHARED library and the OpenSC card plugin can link
+# it without pulling a runtime dependency on the host distribution's
+# libopensc. The two get separate builds of the one source: the plugin's has
+# no PC/SC reader driver (opensc_external_plugin below).
 #
 # See thirdparty/README.md for the pin rationale and update procedure.
 # ──────────────────────────────────────────────────────────────────────────
@@ -225,6 +227,12 @@ set(OPENSC_SOURCE_DIR  ${CMAKE_CURRENT_SOURCE_DIR}/opensc-source)
 set(OPENSC_BUILD_DIR   ${CMAKE_CURRENT_BINARY_DIR}/opensc-build)
 set(OPENSC_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/opensc-install)
 set(OPENSC_STATIC_LIB  ${OPENSC_INSTALL_DIR}/lib/libopensc.a)
+
+# The same source is built a second time for the OpenSC card plugin, without
+# the PC/SC reader driver (see opensc_external_plugin below).
+set(OPENSC_PLUGIN_BUILD_DIR   ${CMAKE_CURRENT_BINARY_DIR}/opensc-plugin-build)
+set(OPENSC_PLUGIN_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/opensc-plugin-install)
+set(OPENSC_PLUGIN_STATIC_LIB  ${OPENSC_PLUGIN_INSTALL_DIR}/lib/libopensc.a)
 
 # OpenSC does not install its libopensc/ public headers (treated as private
 # upstream — system distros don't ship them either). Consumers like our
@@ -244,9 +252,6 @@ set(OPENSC_INCLUDE_BUILD ${OPENSC_BUILD_DIR})
 # PIV support are all merged upstream. The stamp-invalidation guard below still
 # tracks the vendored sources by mtime so a submodule bump re-links libopensc.a.
 set(_opensc_any_patch_applied FALSE)
-
-set(_opensc_stamp_dir
-    ${CMAKE_CURRENT_BINARY_DIR}/opensc_external-prefix/src/opensc_external-stamp)
 
 # ExternalProject_Add tracks step completion via stamp files. Once
 # opensc_external-build exists, the build step is treated as done and not
@@ -270,28 +275,35 @@ set(_opensc_stamp_dir
 set(_opensc_vendored_sources
     ${OPENSC_SOURCE_DIR}/src/libopensc/card-srbeid.c
     ${OPENSC_SOURCE_DIR}/src/libopensc/card-srbeid.h)
-set(_opensc_sources_changed FALSE)
-if(EXISTS ${_opensc_stamp_dir}/opensc_external-build)
-    foreach(_src ${_opensc_vendored_sources})
-        if(EXISTS ${_src} AND ${_src} IS_NEWER_THAN ${_opensc_stamp_dir}/opensc_external-build)
-            set(_opensc_sources_changed TRUE)
-        endif()
-    endforeach()
-endif()
 
-if(_opensc_any_patch_applied OR _opensc_sources_changed)
-    # Delete the build + install + done stamps so the next build pass re-runs
-    # make → re-links libopensc.a with the current source.
-    file(REMOVE
-        ${_opensc_stamp_dir}/opensc_external-build
-        ${_opensc_stamp_dir}/opensc_external-install
-        ${_opensc_stamp_dir}/opensc_external-done)
-    if(_opensc_any_patch_applied)
-        message(STATUS "OpenSC: patch applied; invalidated build/install/done stamps")
-    else()
-        message(STATUS "OpenSC: vendored source newer than build stamp; invalidated build/install/done stamps")
+# Both builds of the source are guarded, each against its own build stamp: a
+# stale plugin archive would hide an edit exactly as a stale module archive did.
+foreach(_opensc_project opensc_external opensc_external_plugin)
+    set(_opensc_stamp_dir ${CMAKE_CURRENT_BINARY_DIR}/${_opensc_project}-prefix/src/${_opensc_project}-stamp)
+    set(_opensc_sources_changed FALSE)
+    if(EXISTS ${_opensc_stamp_dir}/${_opensc_project}-build)
+        foreach(_src ${_opensc_vendored_sources})
+            if(EXISTS ${_src} AND ${_src} IS_NEWER_THAN ${_opensc_stamp_dir}/${_opensc_project}-build)
+                set(_opensc_sources_changed TRUE)
+            endif()
+        endforeach()
     endif()
-endif()
+
+    if(_opensc_any_patch_applied OR _opensc_sources_changed)
+        # Delete the build + install + done stamps so the next build pass re-runs
+        # make → re-links libopensc.a with the current source.
+        file(REMOVE
+            ${_opensc_stamp_dir}/${_opensc_project}-build
+            ${_opensc_stamp_dir}/${_opensc_project}-install
+            ${_opensc_stamp_dir}/${_opensc_project}-done)
+        if(_opensc_any_patch_applied)
+            message(STATUS "OpenSC (${_opensc_project}): patch applied; invalidated build/install/done stamps")
+        else()
+            message(STATUS "OpenSC (${_opensc_project}): vendored source newer than build stamp; "
+                           "invalidated build/install/done stamps")
+        endif()
+    endif()
+endforeach()
 
 # libopensc compiles OPENSC_CONF_PATH="$(sysconfdir)/opensc.conf" in as the
 # configuration it reads when OPENSC_CONF is unset, and opensc.conf can name an
@@ -310,50 +322,67 @@ else()
     set(OPENSC_SYSCONFDIR /usr/lib/librescrs/opensc)
 endif()
 
-# PCSC strategy: vendored OpenSC owns its own PCSC session for the cards
-# it claims (rs-eid via srbeid driver, etc.). Cross-process PCSC contention
-# is left to the host PC/SC daemon's existing session arbitration; no
-# explicit lock coordination across providers.
-# libpcsclite is a system dep (autoconf detects it via --enable-pcsc).
-# Presence is expected on Linux build hosts; consumers link it via the
-# `opensc_static_with_deps` wrapper below.
-set(OPENSC_CONFIGURE_FLAGS
-    --prefix=${OPENSC_INSTALL_DIR}
-    --sysconfdir=${OPENSC_SYSCONFDIR}
-    # Defaults to ${sysconfdir}/bash_completion.d, or to the host's own
-    # bash-completion directory when pkg-config finds one; keep the tools'
-    # completion files in the staging tree either way.
-    --with-completiondir=${OPENSC_INSTALL_DIR}/etc/bash_completion.d
-    --disable-shared
-    --enable-static
-    --disable-tests
-    --disable-doc
-    --disable-man
-    --enable-pcsc
-    # Headless backend embedding has no use for OpenSC's desktop-notification
-    # feature. Leaving it at autoconf's `detect` default makes notify.c pull in
-    # GIO/GLib whenever the build host happens to ship gio-2.0, which then
-    # leaves the static-archive consumers (OpenScPkcs11UnitTests, …) with
-    # undefined g_application_*/g_notification_* references unless every
-    # consuming environment also provides gio on its link line. Disabling it
-    # outright keeps the link deterministic and drops the GIO/GLib edge.
-    --disable-notify
-    # OpenSC auto-detects libeac/openpace (EAC / PACE) whenever the build host
-    # ships its headers — Arch's `opensc` package pulls them in, Ubuntu's does
-    # not — which makes libopensc.a reference CVC_*/EAC_*/PACE_*/TA_* and leaves
-    # the static-archive consumers (librescrs-opensc-pkcs11, …) with undefined
-    # references unless every consuming environment also links -leac. LibreSCRS
-    # performs its own PACE, so disable it outright to keep the link
-    # deterministic and drop the libeac edge (same reasoning as --disable-notify).
-    --disable-openpace
-    --with-pic
-    # Redirect p11-kit module install into the staging dir; otherwise OpenSC
-    # tries to write opensc.module into /usr/share/p11-kit/modules/ during
-    # `make install` (system path detected via pkg-config p11-kit-1) and
-    # fails with EACCES on non-root builds. We don't need the p11-kit
-    # config file anyway — librescrs-opensc-pkcs11 statically links libopensc.
-    --enable-p11_system_config_modules=${OPENSC_INSTALL_DIR}/share/p11-kit/modules
-)
+# Reader drivers. The copy linked into the PKCS#11 module is a PC/SC client of
+# its own: it opens the readers it serves through the host PC/SC daemon, and
+# cross-process contention is left to that daemon's session arbitration.
+# libpcsclite is a system dep (autoconf detects it via --enable-pcsc); consumers
+# link it via the `opensc_static_with_deps` wrapper below.
+#
+# The copy linked into the OpenSC card plugin has no PC/SC driver. The plugin
+# reaches the card only through the bridge reader it installs over the session
+# it is handed, yet a context with the PC/SC driver enumerates every reader on
+# the host and connects to each one the moment it is created. OpenSC needs
+# exactly one reader driver (configure refuses none, and the context
+# dereferences it unconditionally), so the CT-API driver stands in: with no
+# module named in a configuration it loads nothing, and it has no reader
+# detection at all. This is a configuration of upstream OpenSC, not a patch.
+set(OPENSC_PCSC_READER_FLAGS --enable-pcsc)
+set(OPENSC_PLUGIN_READER_FLAGS --disable-pcsc --disable-cryptotokenkit --enable-ctapi)
+
+# _opensc_configure_flags(<out> <install-dir> <reader-flags>...)
+function(_opensc_configure_flags out install_dir)
+    set(_flags
+        --prefix=${install_dir}
+        --sysconfdir=${OPENSC_SYSCONFDIR}
+        # Defaults to ${sysconfdir}/bash_completion.d, or to the host's own
+        # bash-completion directory when pkg-config finds one; keep the tools'
+        # completion files in the staging tree either way.
+        --with-completiondir=${install_dir}/etc/bash_completion.d
+        --disable-shared
+        --enable-static
+        --disable-tests
+        --disable-doc
+        --disable-man
+        ${ARGN}
+        # Headless backend embedding has no use for OpenSC's desktop-notification
+        # feature. Leaving it at autoconf's `detect` default makes notify.c pull in
+        # GIO/GLib whenever the build host happens to ship gio-2.0, which then
+        # leaves the static-archive consumers (OpenScPkcs11UnitTests, …) with
+        # undefined g_application_*/g_notification_* references unless every
+        # consuming environment also provides gio on its link line. Disabling it
+        # outright keeps the link deterministic and drops the GIO/GLib edge.
+        --disable-notify
+        # OpenSC auto-detects libeac/openpace (EAC / PACE) whenever the build host
+        # ships its headers — Arch's `opensc` package pulls them in, Ubuntu's does
+        # not — which makes libopensc.a reference CVC_*/EAC_*/PACE_*/TA_* and leaves
+        # the static-archive consumers (librescrs-opensc-pkcs11, …) with undefined
+        # references unless every consuming environment also links -leac. LibreSCRS
+        # performs its own PACE, so disable it outright to keep the link
+        # deterministic and drop the libeac edge (same reasoning as --disable-notify).
+        --disable-openpace
+        --with-pic
+        # Redirect p11-kit module install into the staging dir; otherwise OpenSC
+        # tries to write opensc.module into /usr/share/p11-kit/modules/ during
+        # `make install` (system path detected via pkg-config p11-kit-1) and
+        # fails with EACCES on non-root builds. We don't need the p11-kit
+        # config file anyway — librescrs-opensc-pkcs11 statically links libopensc.
+        --enable-p11_system_config_modules=${install_dir}/share/p11-kit/modules
+    )
+    set(${out} ${_flags} PARENT_SCOPE)
+endfunction()
+
+_opensc_configure_flags(OPENSC_CONFIGURE_FLAGS ${OPENSC_INSTALL_DIR} ${OPENSC_PCSC_READER_FLAGS})
+_opensc_configure_flags(OPENSC_PLUGIN_CONFIGURE_FLAGS ${OPENSC_PLUGIN_INSTALL_DIR} ${OPENSC_PLUGIN_READER_FLAGS})
 
 # CFLAGS for the vendored OpenSC build. Autoconf defaults to `-g -O2` when
 # CFLAGS is unset, which produces a libopensc.a carrying full DWARF debug
@@ -437,6 +466,52 @@ set_target_properties(opensc_static PROPERTIES
 )
 add_dependencies(opensc_static opensc_external)
 
+# The card plugin's copy: the same source, flags and build type, configured
+# without the PC/SC reader driver (OPENSC_PLUGIN_READER_FLAGS above). The price
+# is a second OpenSC build in every configuration that vendors it.
+#
+# bootstrap rewrites configure and the Makefile.in files in the shared source
+# tree, so it runs once, in opensc_external's configure step; this build's
+# configure waits for that step and does not run it again. Its make also waits
+# for the other make: automake's rebuild rules write into the shared source
+# tree as well, and two make -j4 at once would double the job count. The price
+# is that the two OpenSC builds run one after the other.
+ExternalProject_Add(opensc_external_plugin
+    SOURCE_DIR        ${OPENSC_SOURCE_DIR}
+    BINARY_DIR        ${OPENSC_PLUGIN_BUILD_DIR}
+    INSTALL_DIR       ${OPENSC_PLUGIN_INSTALL_DIR}
+    CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env
+                      "CFLAGS=${OPENSC_CFLAGS}"
+                      "LDFLAGS=${OPENSC_LDFLAGS}"
+                      "OPENSSL_CFLAGS=${OPENSC_OPENSSL_CFLAGS}"
+                      "OPENSSL_LIBS=${OPENSC_OPENSSL_LIBS}"
+                      "MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}"
+                      ${OPENSC_SOURCE_DIR}/configure ${OPENSC_PLUGIN_CONFIGURE_FLAGS}
+    BUILD_COMMAND     ${CMAKE_COMMAND} -E env
+                      "MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}"
+                      make -j4
+    INSTALL_COMMAND   make install sysconfdir=${OPENSC_PLUGIN_INSTALL_DIR}/etc
+    BUILD_BYPRODUCTS  ${OPENSC_PLUGIN_STATIC_LIB}
+    BUILD_IN_SOURCE   FALSE
+    # Built only when the plugin or a test of it is: a configuration without
+    # the plugins does not pay for it.
+    EXCLUDE_FROM_ALL  TRUE
+    LOG_CONFIGURE         TRUE
+    LOG_BUILD             TRUE
+    LOG_INSTALL           TRUE
+    LOG_OUTPUT_ON_FAILURE TRUE
+)
+ExternalProject_Add_StepTargets(opensc_external configure build)
+ExternalProject_Add_StepDependencies(opensc_external_plugin configure opensc_external-configure)
+ExternalProject_Add_StepDependencies(opensc_external_plugin build opensc_external-build)
+
+add_library(opensc_plugin_static STATIC IMPORTED GLOBAL)
+set_target_properties(opensc_plugin_static PROPERTIES
+    IMPORTED_LOCATION             ${OPENSC_PLUGIN_STATIC_LIB}
+    INTERFACE_INCLUDE_DIRECTORIES "${OPENSC_INCLUDE_SRC};${OPENSC_PLUGIN_BUILD_DIR}"
+)
+add_dependencies(opensc_plugin_static opensc_external_plugin)
+
 # Convenience wrapper bundling opensc_static with its transitive runtime
 # deps. libopensc.a references zlib (compression.o, pkcs15-actalis.o) and
 # PC/SC (SCard* via --enable-pcsc). Consumers linking the static archive
@@ -485,4 +560,17 @@ if(PkgConfig_FOUND AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     if(LIBRESCRS_OPENSC_PCSC_FOUND)
         target_link_libraries(opensc_static_with_deps INTERFACE PkgConfig::LIBRESCRS_OPENSC_PCSC)
     endif()
+endif()
+
+# The same wrapper for the plugin's copy: the same rescan group, and no PC/SC
+# library, because that copy has nothing that calls one.
+add_library(opensc_plugin_static_with_deps INTERFACE)
+if(APPLE)
+    target_link_libraries(opensc_plugin_static_with_deps INTERFACE
+        opensc_plugin_static OpenSSL_Crypto ZLIB::ZLIB
+    )
+else()
+    target_link_libraries(opensc_plugin_static_with_deps INTERFACE
+        "$<LINK_GROUP:RESCAN,opensc_plugin_static,OpenSSL_Crypto,ZLIB::ZLIB>"
+    )
 endif()
