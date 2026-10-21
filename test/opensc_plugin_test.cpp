@@ -136,6 +136,29 @@ TEST(OpenSCPluginTest, NoReaderGracefulFail)
     sc_release_context(ctx);
 }
 
+// The plugin reaches a card only through the bridge reader it installs over the
+// session it is handed. A copy of OpenSC with the PC/SC reader driver would
+// enumerate every reader on the host, and connect to each, whenever the plugin
+// created a context; the plugin's copy has no such driver. OpenSC insists on
+// exactly one reader driver, so the CT-API one stands in, and with no module
+// configured it finds nothing: this holds on a host with readers attached too.
+TEST(OpenSCPluginTest, ContextWithoutPcscReaderDriverCreatesAndListsNoReader)
+{
+    sc_context_param_t params{};
+    params.ver = 0;
+    params.app_name = "librescrs-test";
+    sc_context_t* ctx = nullptr;
+    ASSERT_EQ(sc_context_create(&ctx, &params), SC_SUCCESS);
+    ASSERT_NE(ctx, nullptr);
+
+    ASSERT_NE(ctx->reader_driver, nullptr);
+    EXPECT_STREQ(ctx->reader_driver->short_name, "ctapi");
+    EXPECT_EQ(sc_ctx_detect_readers(ctx), SC_SUCCESS);
+    EXPECT_EQ(sc_ctx_get_reader_count(ctx), 0u);
+
+    sc_release_context(ctx);
+}
+
 // --- Concurrency regression tests ---
 
 // Regression test for A1: the OpenSC plugin previously held sc_context_t*,
@@ -248,8 +271,8 @@ TEST(OpenSCPluginConcurrency, TwoThreadsTwoSessionsDoNotCollide)
 // Mirrors test/pkcs15-plugin/readtokeninfo_partial_test.cpp for the opensc
 // plugin. The override populates the "token" group from sc_pkcs15_card_t::
 // tokeninfo when a session is bound; without a bound session (detached
-// CardSession → canHandleConnection short-circuits at sc_establish_context
-// or sc_connect_card with no hardware) it must return an empty group whose
+// CardSession → canHandleConnection declines at the probe SELECT or at
+// sc_connect_card with no hardware) it must return an empty group whose
 // key/label are still populated so the presentation layer can render its
 // placeholder header. Returning a default-constructed empty CardFieldGroup
 // (which is what the base class did before the override) would demote

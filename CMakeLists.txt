@@ -254,9 +254,10 @@ else()
 endif()
 if(LIBRESCRS_VENDOR_OPENSC AND LIBREMIDDLEWARE_BUILD_PLUGINS)
     add_subdirectory(lib/opensc-pkcs11)
-    # OpenSC fallback card plugin shares the vendored static archive with
-    # the PKCS#11 module — both link `opensc_static_with_deps`. No system
-    # libopensc package is needed; coverage is unified across Stack A
+    # The OpenSC fallback card plugin and the PKCS#11 module each link a copy
+    # of the vendored OpenSC: the module `opensc_static_with_deps`, the plugin
+    # `opensc_plugin_static_with_deps`, built without the PC/SC reader driver.
+    # No system libopensc package is needed; coverage is unified across Stack A
     # (CardPlugin chain → display) and Stack B (PKCS#11 providers → sign).
     add_subdirectory(lib/opensc-plugin)
 endif()

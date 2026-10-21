@@ -761,7 +761,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
         CardPlugin_Impl
         LibreSCRS_SmartCard
         SmartCard_Impl
-        opensc_static_with_deps
+        opensc_plugin_static_with_deps
     )
     target_compile_definitions(OpenSCPluginTests PRIVATE
         PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
@@ -789,7 +789,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
         # fake_channel.h (tunnel-branch channel double) + its include dir.
         LibreSCRS_SmartCard_TestHelpers
         SmartCard_Impl
-        opensc_static_with_deps
+        opensc_plugin_static_with_deps
     )
     target_compile_definitions(OpenScBridgeTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
     gtest_discover_tests(OpenScBridgeTests)
@@ -809,7 +809,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
         CardPlugin_Impl
         LibreSCRS_SmartCard
         SmartCard_Impl
-        opensc_static_with_deps
+        opensc_plugin_static_with_deps
         OpenSSL_Crypto
     )
     target_compile_definitions(OpenSCFallbackIntegrationTest PRIVATE
@@ -840,7 +840,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
         CardPlugin_Impl
         LibreSCRS_SmartCard
         SmartCard_Impl
-        opensc_static_with_deps
+        opensc_plugin_static_with_deps
         OpenSSL_Crypto
     )
     target_compile_definitions(OpenScSrbEid2HwTest PRIVATE
@@ -1596,7 +1596,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
         CardPlugin_Impl
         LibreSCRS_SmartCard
         SmartCard_Impl
-        opensc_static_with_deps
+        opensc_plugin_static_with_deps
         OpenSSL_Crypto
     )
     target_compile_definitions(OpenscPinLifecycleTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
@@ -1659,7 +1659,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
         LibreSCRS_SmartCard
         LibreSCRS_SmartCard_TestHelpers
         SmartCard_Impl
-        opensc_static_with_deps
+        opensc_plugin_static_with_deps
         OpenSSL_Crypto
     )
     target_compile_definitions(OpenscChannelLifecycleTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
@@ -1720,7 +1720,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
         CardPlugin_Impl
         LibreSCRS_SmartCard
         SmartCard_Impl
-        opensc_static_with_deps
+        opensc_plugin_static_with_deps
         OpenSSL_Crypto
     )
     target_compile_definitions(OpenscChangePinSelectorTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
@@ -1753,7 +1753,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
         CardPlugin_Impl
         LibreSCRS_SmartCard
         SmartCard_Impl
-        opensc_static_with_deps
+        opensc_plugin_static_with_deps
         OpenSSL_Crypto
     )
     target_compile_definitions(OpenscUserPinSelectionTests PRIVATE LIBRESCRS_INTERNAL_BUILD)

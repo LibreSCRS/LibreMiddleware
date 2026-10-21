@@ -15,7 +15,7 @@ CardPluginDecipherDefaultTest 2
 CardSessionApiInvariantTest 1
 ContactInfoIntegrationTests 2
 CrossBackendTests 1
-CrossProviderCoordinationTests 13
+CrossProviderCoordinationTests 14
 DecipherTypesTest 3
 DocpParserTests 4
 ECSigningTests 9
@@ -57,12 +57,12 @@ NativeSigningServiceTests 9
 NativeUtilsTests 55
 OidDatabaseTests 9
 OpenSCFallbackIntegrationTest 7
-OpenSCPluginTests 9
+OpenSCPluginTests 10
 OpenScBridgeTests 19
 OpenScPkcs11UnitTests 12
 OpenScSrbEid2HwTest 1
 OpenscChangePinSelectorTests 4
-OpenscChannelLifecycleTests 57
+OpenscChannelLifecycleTests 62
 OpenscPinLifecycleTests 7
 OpenscRoutingTests 2
 OpenscUserPinSelectionTests 4

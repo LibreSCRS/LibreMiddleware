@@ -8,6 +8,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -49,6 +50,66 @@ struct APDUResponse;
 
 namespace LibreSCRS::OpenSc {
 
+/// The OpenSC context of one plugin instance, shared by every session the
+/// plugin claims and released when the plugin is destroyed. It is created the
+/// way OpenSC's own PKCS#11 module creates its shared context, with a thread
+/// context, because every lock inside libopensc is a no-op without one and
+/// each reader's worker uses this context from its own thread.
+///
+/// A session holds a Lease for as long as it can touch the context. A lease
+/// still held when the plugin is destroyed is a programming error (a session
+/// that outlived its plugin): the destructor stops the process rather than
+/// leave that session to use freed memory. The one known way there is an
+/// operation the host abandoned while stuck in a transmit, which still holds
+/// its session when the process shuts down; that process is exiting anyway.
+class PluginContext
+{
+public:
+    PluginContext() = default;
+    ~PluginContext() noexcept;
+
+    PluginContext(const PluginContext&) = delete;
+    PluginContext& operator=(const PluginContext&) = delete;
+    PluginContext(PluginContext&&) = delete;
+    PluginContext& operator=(PluginContext&&) = delete;
+
+    /// A session's claim on the context; moving it transfers the claim.
+    class Lease
+    {
+    public:
+        Lease() noexcept = default;
+        ~Lease() noexcept
+        {
+            reset();
+        }
+        Lease(Lease&& other) noexcept;
+        Lease& operator=(Lease&& other) noexcept;
+        Lease(const Lease&) = delete;
+        Lease& operator=(const Lease&) = delete;
+
+        /// The leased context; nullptr for an empty lease.
+        [[nodiscard]] sc_context_t* get() const noexcept;
+        void reset() noexcept;
+
+    private:
+        friend class PluginContext;
+        explicit Lease(PluginContext& owner) noexcept;
+        PluginContext* owner = nullptr;
+    };
+
+    /// The context, created on the first call and kept until destruction;
+    /// nullptr when OpenSC cannot create one (the next call tries again).
+    [[nodiscard]] sc_context_t* context();
+
+    /// A claim on the context for one session. Call after context() succeeded.
+    [[nodiscard]] Lease lease() noexcept;
+
+private:
+    std::mutex createMtx; // guards creation only; never held across card I/O
+    sc_context_t* ctx = nullptr;
+    std::atomic<std::size_t> leases{0};
+};
+
 /// Per-session OpenSC binding state. Held in the plugin's session map as
 /// @c std::shared_ptr<OpenSCSession>: an operation pins the pointer under the
 /// plugin's map mutex and releases that mutex BEFORE any I/O or activation, so
@@ -71,7 +132,9 @@ struct OpenSCSession
     OpenSCSession(OpenSCSession&&) = delete;
     OpenSCSession& operator=(OpenSCSession&&) = delete;
 
-    sc_context_t* ctx = nullptr;
+    /// The plugin's shared context. Never owned here: the plugin creates it
+    /// once and releases it when it is destroyed.
+    PluginContext::Lease context;
     sc_card_t* card = nullptr;
     sc_pkcs15_card_t* p15card = nullptr;
     std::string readerName;
@@ -107,16 +170,26 @@ struct OpenSCSession
     std::unique_ptr<LibreSCRS::OpenSc::Bridge::OpenScBridge> bridge;
 
     /// Partial teardown: tears down ONLY @ref p15card (unbind) and @ref card
-    /// (disconnect through the bridge — zero PC/SC calls); @ref ctx and
+    /// (disconnect through the bridge — zero PC/SC calls); @ref context and
     /// @ref bridge SURVIVE, so the next operation re-activates and re-binds
-    /// over the same context — @c sc_establish_context is never called in an
-    /// operation or in recovery.
+    /// over the same context.
     void resetCardState() noexcept;
 
 private:
-    /// Full teardown (destructor): partial teardown, then context + bridge.
+    /// Full teardown (destructor): partial teardown, then the bridge, then the
+    /// lease on the plugin's context.
     void release() noexcept;
 };
+
+/// How many OpenSC contexts this plugin code has created and released in the
+/// process. Only the tests read it: they hold a plugin to one context for its
+/// whole lifetime, which no answer of the plugin's public surface reveals.
+struct ContextCounts
+{
+    std::size_t created = 0;
+    std::size_t released = 0;
+};
+[[nodiscard]] ContextCounts contextCountsForTest() noexcept;
 
 /// Walk @c ctx->card_drivers for a driver whose @c short_name equals
 /// @p shortName. Deferred-PACE claims are gated on the srbeid2 driver being

@@ -23,5 +23,7 @@ librescrs_add_plugin(opensc-plugin
         # PKCS#11 slot does; its CK_RV constants (internal/Crv.h) are
         # header-only.
         ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/include
-    LINK_LIBRARIES SmartCard_Impl opensc_static_with_deps
+    # The plugin's own copy of OpenSC, built without the PC/SC reader driver:
+    # the plugin reaches the card only through its bridge reader.
+    LINK_LIBRARIES SmartCard_Impl opensc_plugin_static_with_deps
 )
