@@ -203,21 +203,6 @@ LibreSCRS::SecureChannel::parsePaceOidsFromCardAccess(std::span<unsigned char co
 LibreSCRS::SmartCard::Internal::APDUCommand::toBytes() const@@LM_5
 LibreSCRS::SmartCard::Internal::APDUResponse::isSuccess() const@@LM_5
 LibreSCRS::SmartCard::Internal::APDUResponse::statusWord() const@@LM_5
-LibreSCRS::SmartCard::Internal::PCSCConnection::PCSCConnection(LibreSCRS::SmartCard::Internal::PCSCConnection::DetachedTag, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)@@LM_5
-LibreSCRS::SmartCard::Internal::PCSCConnection::PCSCConnection(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)@@LM_5
-LibreSCRS::SmartCard::Internal::PCSCConnection::beginTransaction()@@LM_5
-LibreSCRS::SmartCard::Internal::PCSCConnection::cancel()@@LM_5
-LibreSCRS::SmartCard::Internal::PCSCConnection::endTransaction()@@LM_5
-LibreSCRS::SmartCard::Internal::PCSCConnection::getATR() const@@LM_5
-LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders[abi:cxx11]()@@LM_5
-LibreSCRS::SmartCard::Internal::PCSCConnection::openRawDiagnostic(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)@@LM_5
-LibreSCRS::SmartCard::Internal::PCSCConnection::reconnect()@@LM_5
-LibreSCRS::SmartCard::Internal::PCSCConnection::reconnectWithReset()@@LM_5
-LibreSCRS::SmartCard::Internal::PCSCConnection::transmit(LibreSCRS::SmartCard::Internal::APDUCommand const&)@@LM_5
-LibreSCRS::SmartCard::Internal::PCSCConnection::transmitRaw(LibreSCRS::SmartCard::Internal::APDUCommand const&)@@LM_5
-LibreSCRS::SmartCard::Internal::PCSCConnection::transmitRaw(std::span<unsigned char const, 18446744073709551615ul>)@@LM_5
-LibreSCRS::SmartCard::Internal::PCSCConnection::transmitRaw(unsigned char const*, unsigned long)@@LM_5
-LibreSCRS::SmartCard::Internal::PCSCConnection::~PCSCConnection()@@LM_5
 LibreSCRS::SmartCard::Internal::activate(unsigned char, unsigned char, std::span<unsigned char const, 18446744073709551615ul>)@@LM_5
 LibreSCRS::SmartCard::Internal::changeReferenceData(unsigned char, std::span<unsigned char const, 18446744073709551615ul>, std::span<unsigned char const, 18446744073709551615ul>, unsigned char)@@LM_5
 LibreSCRS::SmartCard::Internal::getDataDocp(unsigned char)@@LM_5
@@ -230,9 +215,9 @@ LibreSCRS::SmartCard::Internal::selectByFileId(unsigned char, unsigned char, uns
 LibreSCRS::SmartCard::Internal::selectByPath(unsigned char, unsigned char, unsigned char)@@LM_5
 LibreSCRS::SmartCard::Internal::verifyPIN(unsigned char, std::span<unsigned char const, 18446744073709551615ul>)@@LM_5
 LibreSCRS::SmartCard::Internal::verifyPINStatus(unsigned char)@@LM_5
-emrtd::crypto::performBAC(LibreSCRS::SmartCard::Internal::PCSCConnection&, emrtd::crypto::BACKeys const&)@@LM_5
+emrtd::crypto::performBAC(LibreSCRS::SmartCard::IConnection&, emrtd::crypto::BACKeys const&)@@LM_5
 emrtd::crypto::performChipAuth(LibreSCRS::SecureChannel::ISecureChannel&, std::vector<unsigned char, std::allocator<unsigned char> > const&, LibreSCRS::CancelToken)@@LM_5
-emrtd::crypto::performPACE(LibreSCRS::SmartCard::Internal::PCSCConnection&, emrtd::crypto::PACEParams const&)@@LM_5
+emrtd::crypto::performPACE(LibreSCRS::SmartCard::IConnection&, emrtd::crypto::PACEParams const&)@@LM_5
 
 == libLibreSCRS_Signing.so ==
 LibreSCRS::Plugin::Atr::matches(std::span<unsigned char const, 18446744073709551615ul>) const@@LM_5
@@ -406,6 +391,20 @@ LibreSCRS::SmartCard::Internal::Monitor::subscribe(std::function<void (LibreSCRS
 LibreSCRS::SmartCard::Internal::Monitor::unsubscribe(unsigned long)@@LM_5
 LibreSCRS::SmartCard::Internal::Monitor::waitForFirstReader(bool)@@LM_5
 LibreSCRS::SmartCard::Internal::Monitor::~Monitor()@@LM_5
+LibreSCRS::SmartCard::Internal::PCSCConnection::PCSCConnection(LibreSCRS::SmartCard::Internal::PCSCConnection::DetachedTag, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)@@LM_5
+LibreSCRS::SmartCard::Internal::PCSCConnection::PCSCConnection(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)@@LM_5
+LibreSCRS::SmartCard::Internal::PCSCConnection::beginTransaction()@@LM_5
+LibreSCRS::SmartCard::Internal::PCSCConnection::endTransaction()@@LM_5
+LibreSCRS::SmartCard::Internal::PCSCConnection::getATR() const@@LM_5
+LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders[abi:cxx11]()@@LM_5
+LibreSCRS::SmartCard::Internal::PCSCConnection::openRawDiagnostic(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)@@LM_5
+LibreSCRS::SmartCard::Internal::PCSCConnection::reconnect()@@LM_5
+LibreSCRS::SmartCard::Internal::PCSCConnection::reconnectWithReset()@@LM_5
+LibreSCRS::SmartCard::Internal::PCSCConnection::transmit(LibreSCRS::SmartCard::Internal::APDUCommand const&)@@LM_5
+LibreSCRS::SmartCard::Internal::PCSCConnection::transmitRaw(LibreSCRS::SmartCard::Internal::APDUCommand const&)@@LM_5
+LibreSCRS::SmartCard::Internal::PCSCConnection::transmitRaw(std::span<unsigned char const, 18446744073709551615ul>)@@LM_5
+LibreSCRS::SmartCard::Internal::PCSCConnection::transmitRaw(unsigned char const*, unsigned long)@@LM_5
+LibreSCRS::SmartCard::Internal::PCSCConnection::~PCSCConnection()@@LM_5
 LibreSCRS::SmartCard::Internal::SessionPresence::Registration::Registration(LibreSCRS::SmartCard::Internal::SessionPresence*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::weak_ptr<LibreSCRS::SmartCard::CardSession>)@@LM_5
 LibreSCRS::SmartCard::Internal::SessionPresence::Registration::Registration(LibreSCRS::SmartCard::Internal::SessionPresence::Registration&&)@@LM_5
 LibreSCRS::SmartCard::Internal::SessionPresence::Registration::operator=(LibreSCRS::SmartCard::Internal::SessionPresence::Registration&&)@@LM_5
