@@ -7,7 +7,7 @@
 # We deliberately recompile pkcs11_card.cpp / pkcs11_slot.cpp directly
 # into the test executable rather than linking librescrs-pkcs11. The
 # production .so restricts its exported symbol set to the PKCS#11 v2.40
-# C ABI via exports.list / exports.map (see lib/pkcs11/CMakeLists.txt),
+# C ABI via exports.map (see lib/pkcs11/CMakeLists.txt),
 # which would hide LibreSCRS::Pkcs11::Internal::PKCS11Card et al. from
 # any consumer linking the .so. Recompiling the small handful of TU
 # sources into the test exe is the smallest-blast-radius way to keep

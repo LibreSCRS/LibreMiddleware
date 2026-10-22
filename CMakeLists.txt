@@ -273,7 +273,8 @@ add_subdirectory(lib/emrtd)
 # own test directory during its own add_subdirectory() -- long before the
 # top-level add_subdirectory(test) -- and a test that compiles in
 # $<TARGET_FILE:pcsc_counting_shim> needs the target to exist by then.
-if(BUILD_TESTING AND LIBREMIDDLEWARE_BUILD_PLUGINS AND LIBRESCRS_VENDOR_OPENSC)
+# Not on macOS, where nothing reaches a card through PC/SC.
+if(BUILD_TESTING AND LIBREMIDDLEWARE_BUILD_PLUGINS AND LIBRESCRS_VENDOR_OPENSC AND NOT APPLE)
     add_subdirectory(test/pcsc_counting_shim)
 endif()
 
@@ -289,7 +290,11 @@ else()
     message(STATUS "Digital signing: disabled (set -DBUILD_SIGNING=ON to enable)")
 endif()
 if(LIBRESCRS_VENDOR_OPENSC AND LIBREMIDDLEWARE_BUILD_PLUGINS)
-    add_subdirectory(lib/opensc-pkcs11)
+    # The direct PKCS#11 provider opens readers through PC/SC itself; on macOS
+    # cards are reached through CryptoTokenKit only, so it is not built there.
+    if(NOT APPLE)
+        add_subdirectory(lib/opensc-pkcs11)
+    endif()
     # The OpenSC fallback card plugin and the PKCS#11 module each link a copy
     # of the vendored OpenSC: the module `opensc_static_with_deps`, the plugin
     # `opensc_plugin_static_with_deps`, built without the PC/SC reader driver.
@@ -303,7 +308,11 @@ endif()
 # so reaching the OFF branch here implies a deliberate monolithic-SDK
 # configuration.
 if(LIBREMIDDLEWARE_BUILD_PLUGINS)
-    add_subdirectory(lib/pkcs11)
+    # The direct PKCS#11 module drives the card itself; on macOS the agent owns
+    # the card, so the module is not built there.
+    if(NOT APPLE)
+        add_subdirectory(lib/pkcs11)
+    endif()
     add_subdirectory(lib/rs-eid-plugin)
     add_subdirectory(lib/eu-vrc-plugin)
     add_subdirectory(lib/rs-health-plugin)

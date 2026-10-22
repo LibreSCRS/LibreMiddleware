@@ -598,17 +598,20 @@ add_dependencies(EMRTDPluginTests emrtd-plugin)
 # whole target, so it is not added here — it would mislabel the rest.
 gtest_discover_tests(EMRTDPluginTests)
 
-add_executable(PKCS11Tests pkcs11_test.cpp)
-target_link_libraries(PKCS11Tests GTest::gtest_main librescrs-pkcs11)
-# Shared PIN-guard header lives under test/include/ — see test/e2e/CMakeLists.txt
-# for the matching consumer. The helper must stay byte-identical across
-# real-card test binaries.
-target_include_directories(PKCS11Tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include)
-# Mixed target: only the PKCS11CardTest suite (59 cases) is card-gated; the
-# PKCS11Test suite (34 cases) in the same binary needs no card.
-# `PROPERTIES LABELS` applies to the whole target, so it is not added here.
-gtest_discover_tests(PKCS11Tests DISCOVERY_TIMEOUT 30)
+# The direct PKCS#11 module is not built on macOS.
+if(NOT APPLE)
+    add_executable(PKCS11Tests pkcs11_test.cpp)
+    target_link_libraries(PKCS11Tests GTest::gtest_main librescrs-pkcs11)
+    # Shared PIN-guard header lives under test/include/ — see test/e2e/CMakeLists.txt
+    # for the matching consumer. The helper must stay byte-identical across
+    # real-card test binaries.
+    target_include_directories(PKCS11Tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    # Mixed target: only the PKCS11CardTest suite (59 cases) is card-gated; the
+    # PKCS11Test suite (34 cases) in the same binary needs no card.
+    # `PROPERTIES LABELS` applies to the whole target, so it is not added here.
+    gtest_discover_tests(PKCS11Tests DISCOVERY_TIMEOUT 30)
+endif()
 
 # Internal-only test for the slot-disambiguation hash helpers shared by
 # the LM PKCS#11 module and Pkcs11Token's reader-name lookup.
@@ -743,8 +746,9 @@ gtest_discover_tests(PKCS15PluginTests)
 # gap for the shipped librescrs-pkcs11.so). Deep bind/sign coverage already
 # lives in lib/pkcs15/test/CrossProviderCoordinationTests.cpp and the
 # hardware-gated opensc_fallback_integration_test.cpp; this binary pins
-# down the unit-tier surface that runs without any PC/SC traffic.
-if(LIBRESCRS_VENDOR_OPENSC)
+# down the unit-tier surface that runs without any PC/SC traffic. Not on
+# macOS, where the provider is not built.
+if(LIBRESCRS_VENDOR_OPENSC AND NOT APPLE)
     add_executable(OpenScPkcs11UnitTests
         opensc-pkcs11/sc_lock_guard_test.cpp
         opensc-pkcs11/provider_test.cpp
@@ -1267,10 +1271,9 @@ endif()
 # SmartCard_Impl is deliberately NOT linked here: a second copy of the PC/SC
 # wrapper in this executable would make it ambiguous whose calls were counted.
 #
-# The preemption is ELF's flat symbol lookup. Mach-O's two-level namespace binds
-# every library's references to the image it linked, so on macOS the exported
-# copies are never called and the suite skips itself there; see the test file.
-if(LIBRESCRS_VENDOR_OPENSC)
+# The preemption is ELF's flat symbol lookup, and macOS reaches no card through
+# PC/SC: the suite is built where it can count.
+if(LIBRESCRS_VENDOR_OPENSC AND NOT APPLE)
     add_executable(pcsc_handle_census_test
         pcsc_handle_census_test.cpp
         ${PROJECT_SOURCE_DIR}/test/pcsc_counting_shim/counting_pcsc_shim.c)
@@ -1569,7 +1572,11 @@ gtest_discover_tests(ManifestCodegenTests)
 # librescrs-pkcs11.so. Always built so the test exe compiles in CI;
 # every test SKIPs at runtime when the env vars (LIBRESCRS_TEST_PIN,
 # LIBRESCRS_TEST_PIN_QSCD, LIBRESCRS_TEST_CAN) are unset.
-add_subdirectory(e2e)
+# Every suite there loads the direct PKCS#11 module or its provider, neither of
+# which is built on macOS.
+if(NOT APPLE)
+    add_subdirectory(e2e)
+endif()
 add_subdirectory(smartcard)
 add_subdirectory(pkcs15-plugin)
 add_subdirectory(Trust)

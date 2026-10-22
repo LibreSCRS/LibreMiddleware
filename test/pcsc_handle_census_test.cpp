@@ -42,16 +42,7 @@
 /// @par Where the census can be taken
 /// The first path depends on ELF's flat symbol lookup: a definition exported
 /// by the executable preempts the same name in every library loaded after it.
-/// Mach-O binds each undefined symbol to the image it was linked against (the
-/// two-level namespace), so on macOS the middleware's and the module's
-/// SCardConnect, dlopen and dlclose go to PCSC.framework and libdyld and never
-/// reach the copies here. The module then asks the real PC/SC service for its
-/// readers, finds none on a machine without them, and OpenSC is never reached:
-/// every count reads zero, measured on the macOS CI runner. Zero is also what
-/// several of these assertions expect, so on such a platform the suite skips
-/// rather than pass on numbers nothing produced. The OpenSC-side copy alone
-/// does not depend on this -- OpenSC loads it by path -- and the
-/// cross-provider coordination suite, which uses only that copy, runs there.
+/// The suite is built for Linux only; macOS reaches no card through PC/SC.
 
 #include "counting_pcsc_shim.h"
 #include "fake_channel.h"
@@ -316,12 +307,6 @@ class PcscHandleCensusTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-#if !defined(__linux__)
-        GTEST_SKIP() << "the census counts the middleware's PC/SC calls through this executable's exported "
-                        "SCardConnect, dlopen and dlclose, which preempt the libraries' own only under ELF's "
-                        "flat symbol lookup; this platform binds each library's references to the image it was "
-                        "linked against, so nothing here would be counted";
-#endif
         ensureSessionPresenceInitialised();
         shutdownSessionPresenceForTest();
         ASSERT_TRUE(shim().loaded()) << shim().why();
