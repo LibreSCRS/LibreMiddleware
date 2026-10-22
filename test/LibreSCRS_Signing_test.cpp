@@ -315,6 +315,8 @@ TEST(SigningResultTest, FactoriesSetStatus)
 #include "detail/RequestBridge.h"
 #include <types.h>
 
+#include "signing_stub_plugin.h"
+
 TEST(DocumentPrecheck, RejectsNonPdfForPadesButNotOtherFormats)
 {
     using LibreSCRS::Signing::SignatureFormat;
@@ -802,36 +804,13 @@ TEST(SigningServiceBridgeTranslationTest, DocumentNameOverridesInputFileDerivedN
 // never dereferences the connection reference for tests that exercise
 // InvalidRequest / UserCancelled paths.
 namespace {
-class StubPkiPlugin : public LibreSCRS::Plugin::CardPlugin
+class StubPkiPlugin : public LibreSCRS::TestSupport::SigningStubPlugin
 {
 public:
     StubPkiPlugin()
-    {
-        setIdentity("stub-pki", "Stub PKI", /*priority=*/1000);
-    }
-    LibreSCRS::Plugin::CardCapabilities capabilities() const override
-    {
-        return LibreSCRS::Plugin::CardCapabilities::PKI | LibreSCRS::Plugin::CardCapabilities::PinManagement;
-    }
-    std::span<const LibreSCRS::Plugin::Atr> supportedAtrs() const noexcept override
-    {
-        // The stub matches every ATR via canHandleConnection — give an empty
-        // ATR table here; the bridge tests below never exercise canHandle.
-        static constexpr std::array<LibreSCRS::Plugin::Atr, 0> kAtrs{};
-        return kAtrs;
-    }
-    LibreSCRS::Plugin::ReadResult doReadCard(LibreSCRS::SmartCard::CardSession&, GroupCallback) const override
-    {
-        return LibreSCRS::Plugin::ReadResult::ok(LibreSCRS::Plugin::CardData{});
-    }
-    LibreSCRS::Plugin::CredentialCounters readCounters(LibreSCRS::SmartCard::CardSession&,
-                                                       std::string_view) const override
-    {
-        // Return without touching the session — the bridge tests below pass a
-        // live session (or skip when no reader is available), but we don't
-        // want to generate APDU traffic.
-        return {};
-    }
+        : SigningStubPlugin(LibreSCRS::Plugin::CardCapabilities::PKI |
+                            LibreSCRS::Plugin::CardCapabilities::PinManagement)
+    {}
 };
 
 // Try to open a live CardSession for tests that must pass a real session.

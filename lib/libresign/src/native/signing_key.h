@@ -19,10 +19,9 @@ namespace libresign {
 /// @brief The key a document signature is made with, as every format module
 ///        and the OpenSSL provider see it.
 ///
-/// A PKCS#11 token is one implementation (it opens the module and the card
-/// itself); a key that signs through a card plugin on a session the host
-/// already holds is the other. Neither the formats nor the provider know
-/// which one they were handed.
+/// In production it signs through the card plugin on a session the host
+/// already holds; the tests hand in keys held in memory. Neither the formats
+/// nor the provider know which one they were handed.
 class SigningKey
 {
 public:

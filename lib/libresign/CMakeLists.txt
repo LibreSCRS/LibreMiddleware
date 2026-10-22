@@ -73,6 +73,7 @@ if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
         src/native/pkcs11_module_handle.cpp
         src/native/pkcs11_module_manager.cpp
         src/native/pkcs11_token.cpp
+        src/native/plugin_signing_key.cpp
         src/native/signing_provider.cpp
         src/native/signing_provider_keymgmt.cpp
         src/native/signing_provider_signature.cpp
@@ -104,6 +105,7 @@ if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
         src/native/pkcs11_module_manager.h
         src/native/pkcs11_token.h
         src/native/signing_key.h
+        src/native/plugin_signing_key.h
         src/native/signing_provider.h
         src/native/signing_provider_keymgmt.h
         src/native/signing_provider_signature.h

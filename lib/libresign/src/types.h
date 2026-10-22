@@ -66,7 +66,12 @@ enum class SignFailureKind : std::uint8_t {
     ///        cert WITH a known issuer): the user-actionable fix is to
     ///        configure a Trusted List or use a card that provides its full
     ///        chain, not to retry the fetch. @since 5.0
-    CertificateChainIncomplete
+    CertificateChainIncomplete,
+    /// @brief The card refused the PIN and reports it blocked: no try is
+    ///        left. Distinct from @ref PinFailed (a wrong PIN with tries left)
+    ///        because the user cannot fix it by typing again. Append-only.
+    ///        @since 5.0
+    PinBlocked
 };
 
 /// @brief Provenance of a certificate chain handed to the revocation gate:

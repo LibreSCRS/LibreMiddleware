@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <exception>
 #include <memory>
 
 typedef struct evp_pkey_st EVP_PKEY;
@@ -52,6 +53,14 @@ public:
 
 /// @p lease is the proof that the provider stays loaded while the key is used;
 /// it must outlive the returned key.
-EvpPkeyPublicPtr createSigningEvpKey(const SigningProviderLease& lease, SigningKey& key, X509* cert);
+///
+/// An exception @p key throws while OpenSSL signs with the returned key -- a
+/// refused PIN, a blocked card, a cancel -- cannot cross OpenSSL's C frames:
+/// OpenSSL learns only that the signature failed, and the exception is kept in
+/// @p keyFailure, which must outlive the returned key. A caller whose OpenSSL
+/// signature fails rethrows it when it is set, so the key's own verdict, not a
+/// generic OpenSSL failure, is what its caller sees.
+EvpPkeyPublicPtr createSigningEvpKey(const SigningProviderLease& lease, SigningKey& key, X509* cert,
+                                     std::exception_ptr& keyFailure);
 
 } // namespace libresign

@@ -95,7 +95,7 @@ AsicProbe probeAsic(const std::vector<uint8_t>& data);
 class ASiCModule
 {
 public:
-    SigningResult signWithCAdES(const std::vector<uint8_t>& data, const std::string& fileName, SigningKey& token,
+    SigningResult signWithCAdES(const std::vector<uint8_t>& data, const std::string& fileName, SigningKey& key,
                                 SignatureLevel level, const TSAConfig& tsa);
 
     /// @brief Append a new signer to an existing ASiC-E container.
@@ -117,14 +117,14 @@ public:
     ///                     container's data file); when non-empty, currently
     ///                     informational only — the new signer signs whatever
     ///                     bytes are in the container's data file
-    /// @param token        signing token (already opened + logged in)
+    /// @param key        signing key
     /// @param level        desired signature level for the new signature
     /// @param tsa          TSA config for the new signature
     /// @return @ref SigningResult containing the new ASiC-E ZIP bytes, or
     ///         a failure with @ref SignFailureKind::InvalidDocument when
     ///         @p prior is empty
     [[nodiscard]] SigningResult appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
-                                             SigningKey& token, SignatureLevel level, const TSAConfig& tsa);
+                                             SigningKey& key, SignatureLevel level, const TSAConfig& tsa);
 };
 
 } // namespace libresign

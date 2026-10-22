@@ -93,6 +93,8 @@
 #include <utility>
 #include <vector>
 
+#include "signing_stub_plugin.h"
+
 // ---------------------------------------------------------------------------
 // dlopen / dlclose interposition
 // ---------------------------------------------------------------------------
@@ -252,32 +254,7 @@ AppletAid makeAid()
     return AppletAid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
 }
 
-class StubPkiPlugin : public LibreSCRS::Plugin::CardPlugin
-{
-public:
-    StubPkiPlugin()
-    {
-        setIdentity("stub-pki", "Stub PKI", /*priority=*/1000);
-    }
-    LibreSCRS::Plugin::CardCapabilities capabilities() const override
-    {
-        return LibreSCRS::Plugin::CardCapabilities::PKI;
-    }
-    std::span<const LibreSCRS::Plugin::Atr> supportedAtrs() const noexcept override
-    {
-        static constexpr std::array<LibreSCRS::Plugin::Atr, 0> kAtrs{};
-        return kAtrs;
-    }
-    LibreSCRS::Plugin::ReadResult doReadCard(LibreSCRS::SmartCard::CardSession&, GroupCallback) const override
-    {
-        return LibreSCRS::Plugin::ReadResult::ok(LibreSCRS::Plugin::CardData{});
-    }
-    LibreSCRS::Plugin::CredentialCounters readCounters(LibreSCRS::SmartCard::CardSession&,
-                                                       std::string_view) const override
-    {
-        return {};
-    }
-};
+using StubPkiPlugin = LibreSCRS::TestSupport::SigningStubPlugin;
 
 std::shared_ptr<LibreSCRS::Signing::SigningService> makeSigningService()
 {

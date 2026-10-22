@@ -133,9 +133,9 @@ std::string jwsAlgorithm(X509* cert)
 
 // ---- Build x5c array: base64 DER certs (standard base64, NOT base64url) ----
 
-nlohmann::json buildX5c(SigningKey& token)
+nlohmann::json buildX5c(SigningKey& key)
 {
-    auto chain = token.certificateChain();
+    auto chain = key.certificateChain();
     nlohmann::json x5c = nlohmann::json::array();
     for (const auto& certDer : chain)
         x5c.push_back(base64Encode(certDer));
@@ -183,18 +183,18 @@ std::string serializeJws(const JwsComponents& jws)
 // for DETACHED), and signature (base64url). Throws std::runtime_error on
 // PKCS#11 / certificate / curve failures; callers wrap in try/catch and
 // convert to SigningResult.
-JwsComponents buildJwsBB(const std::vector<uint8_t>& payload, bool isDetached, SigningKey& token)
+JwsComponents buildJwsBB(const std::vector<uint8_t>& payload, bool isDetached, SigningKey& key)
 {
-    auto certDer = token.certificate();
+    auto certDer = key.certificate();
     if (certDer.empty())
-        throw std::runtime_error("No certificate found on token");
+        throw std::runtime_error("the signing key carries no certificate");
 
     X509Ptr cert = parseCert(certDer);
     std::string alg = jwsAlgorithm(cert.get());
 
     nlohmann::json header;
     header["alg"] = alg;
-    header["x5c"] = buildX5c(token);
+    header["x5c"] = buildX5c(key);
     // ETSI TS 119 182-1 §5.2.2 — the signing-certificate reference MUST
     // be present in the protected header (either x5t#S256 or sigX5ts) for
     // a JAdES baseline signature. DSS classifies signatures without it
@@ -254,9 +254,9 @@ JwsComponents buildJwsBB(const std::vector<uint8_t>& payload, bool isDetached, S
     // DigestInfo path inside the key's sign.
     const std::span<const uint8_t> signingInputSpan{reinterpret_cast<const uint8_t*>(signingInput.data()),
                                                     signingInput.size()};
-    auto signatureBytes = signHashWithToken(token, cert.get(), inputHash, hashAlgo, signingInputSpan);
+    auto signatureBytes = signHashWithKey(key, cert.get(), inputHash, hashAlgo, signingInputSpan);
     if (signatureBytes.empty())
-        throw std::runtime_error("PKCS#11 token signing returned empty signature");
+        throw std::runtime_error("the signing key returned an empty signature");
 
     JwsComponents jws;
     jws.protectedHeader = protectedB64;
@@ -278,7 +278,7 @@ JwsComponents buildJwsBB(const std::vector<uint8_t>& payload, bool isDetached, S
 //
 // Returns a failure result for the fail-closed policy stops, std::nullopt when
 // @p entry reached @p level.
-std::optional<SigningResult> applyEtsiU(JwsComponents& entry, SigningKey& token, SignatureLevel level,
+std::optional<SigningResult> applyEtsiU(JwsComponents& entry, SigningKey& key, SignatureLevel level,
                                         const TSAConfig& tsa)
 {
     // B-T: add signature timestamp
@@ -308,7 +308,7 @@ std::optional<SigningResult> applyEtsiU(JwsComponents& entry, SigningKey& token,
 
     // B-LT: add revocation data
     if (level >= SignatureLevel::B_LT) {
-        auto revData = collectRevocationData(token, tsa);
+        auto revData = collectRevocationData(key, tsa);
         if (auto failure = revocationFailClosed(revData))
             return failure;
 
@@ -375,7 +375,7 @@ std::optional<SigningResult> applyEtsiU(JwsComponents& entry, SigningKey& token,
 
 // ---- JAdESModule::sign ----
 
-SigningResult JAdESModule::sign(const std::vector<uint8_t>& data, const std::string& fileName, SigningKey& token,
+SigningResult JAdESModule::sign(const std::vector<uint8_t>& data, const std::string& fileName, SigningKey& key,
                                 SignatureLevel level, SignaturePackaging packaging, const TSAConfig& tsa)
 {
     if (data.empty())
@@ -441,7 +441,7 @@ SigningResult JAdESModule::sign(const std::vector<uint8_t>& data, const std::str
             // Recurse with the recovered payload as ENVELOPED. The inner call
             // emits a self-contained single-signer JWS over the same payload;
             // lift its sole signatures[0] entry into the prior document.
-            SigningResult inner = sign(priorPayload, fileName, token, level, SignaturePackaging::Enveloped, tsa);
+            SigningResult inner = sign(priorPayload, fileName, key, level, SignaturePackaging::Enveloped, tsa);
             if (!inner.success)
                 return inner;
             nlohmann::json newJws;
@@ -464,16 +464,20 @@ SigningResult JAdESModule::sign(const std::vector<uint8_t>& data, const std::str
         //    DETACHED appendSigner branch can reuse the exact same primitive
         //    without recursing through the prior-JWS detection above.
         bool isDetached = (packaging == SignaturePackaging::Detached);
-        JwsComponents jws = buildJwsBB(data, isDetached, token);
+        JwsComponents jws = buildJwsBB(data, isDetached, key);
 
         // 2. Level upgrades, into this signature's own unprotected header.
-        if (auto failure = applyEtsiU(jws, token, level, tsa))
+        if (auto failure = applyEtsiU(jws, key, level, tsa))
             return *failure;
 
         // 3. Final serialization
         std::string result = serializeJws(jws);
         return makeSuccess(std::vector<uint8_t>(result.begin(), result.end()));
 
+    } catch (const SignFailureException& e) {
+        // A typed failure -- the key's verdict on the PIN among them -- keeps
+        // its kind; the generic arm below would make it an engine error.
+        return makeFailure(e.kind, e.what());
     } catch (const std::exception& e) {
         return makeFailure(SignFailureKind::EngineError, std::string("JAdES error: ") + e.what());
     }
@@ -482,7 +486,7 @@ SigningResult JAdESModule::sign(const std::vector<uint8_t>& data, const std::str
 // ---- JAdESModule::appendSigner ----
 
 SigningResult JAdESModule::appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
-                                        const std::string& fileName, SigningKey& token, SignatureLevel level,
+                                        const std::string& fileName, SigningKey& key, SignatureLevel level,
                                         const TSAConfig& tsa)
 {
     (void)fileName; // JAdES does not carry a per-signer file name
@@ -555,13 +559,13 @@ SigningResult JAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
         // buildJwsBB is the same primitive sign() uses for a fresh single-
         // signer JWS so the new entry is byte-compatible with the prior
         // entries (same alg selection, same x5c shape, same crit set).
-        JwsComponents newJws = buildJwsBB(payload, isDetached, token);
+        JwsComponents newJws = buildJwsBB(payload, isDetached, key);
 
         // Level upgrades for the NEW signer only, through the same ladder
         // sign() uses. Components land in newJws.unprotectedHeader, which
         // becomes this entry's `header` member below — the prior entries are
         // never read or rewritten.
-        if (auto failure = applyEtsiU(newJws, token, level, tsa))
+        if (auto failure = applyEtsiU(newJws, key, level, tsa))
             return *failure;
 
         // Append the new signature entry to signatures[]. Each entry is the
@@ -580,6 +584,10 @@ SigningResult JAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
         std::string out = priorJws.dump();
         return makeSuccess(std::vector<uint8_t>(out.begin(), out.end()));
 
+    } catch (const SignFailureException& e) {
+        // A typed failure -- the key's verdict on the PIN among them -- keeps
+        // its kind; the generic arm below would make it an engine error.
+        return makeFailure(e.kind, e.what());
     } catch (const std::exception& e) {
         return makeFailure(SignFailureKind::EngineError, std::string("JAdES appendSigner error: ") + e.what());
     }

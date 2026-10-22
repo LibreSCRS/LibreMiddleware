@@ -26,6 +26,7 @@ constexpr int kPadPSS = 6;      // RSA_PKCS1_PSS_PADDING
 
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <iostream>
 #include <span>
 #include <string>
@@ -43,7 +44,7 @@ using native_utils::tokenAlgorithm;
 // (RFC 5753) require the signature as DER-encoded `Ecdsa-Sig-Value
 // SEQUENCE { r INTEGER, s INTEGER }`. Wrap before returning to OpenSSL's
 // CMS pipeline. XAdES and JAdES call SigningKey::sign() directly via
-// signHashWithToken() — those paths keep raw r||s, which is the correct
+// signHashWithKey() — those paths keep raw r||s, which is the correct
 // form for XMLDSig (ECDSASignatureValue) and JWS (RFC 7518 §3.4).
 std::vector<uint8_t> ecdsaRawToDer(const std::vector<uint8_t>& raw)
 {
@@ -110,6 +111,27 @@ struct SignCtx
     }
 };
 
+// An exception cannot cross OpenSSL's C frames, so a signature callback tells
+// OpenSSL only that it failed (0) and keeps the exception where the caller that
+// created the key rethrows it once OpenSSL reports the failure: a refused PIN
+// or a blocked card then reaches that caller as itself. A key loaded without a
+// failure slot has nowhere to keep it, and its message goes to stderr.
+int keyFailed(const ProviderKeyData& kd, const char* callback) noexcept
+{
+    if (kd.failure != nullptr) {
+        *kd.failure = std::current_exception();
+        return 0;
+    }
+    try {
+        throw;
+    } catch (const std::exception& e) {
+        std::cerr << "libresign: " << callback << " exception: " << e.what() << std::endl;
+    } catch (...) {
+        std::cerr << "libresign: " << callback << " unknown exception" << std::endl;
+    }
+    return 0;
+}
+
 void* sigNewCtx(void* /*provctx*/, const char* /*propq*/)
 {
     return new SignCtx();
@@ -166,16 +188,8 @@ int sigSign(void* ctx, unsigned char* sig, size_t* siglen, size_t sigsize, const
         std::memcpy(sig, result.data(), result.size());
         *siglen = result.size();
         return 1;
-    } catch (const std::exception& e) {
-        // Swallowing the exception silently produced a 0-byte signature
-        // return code and the upstream CMS / PAdES path then surfaced
-        // an opaque "signing failed" with no signing-key diagnostic.
-        // Surface the message so the field has something actionable.
-        std::cerr << "libresign: sigSign exception: " << e.what() << std::endl;
-        return 0;
     } catch (...) {
-        std::cerr << "libresign: sigSign unknown exception" << std::endl;
-        return 0;
+        return keyFailed(*sc->keyData, "sigSign");
     }
 }
 
@@ -236,7 +250,7 @@ int sigDigestSignUpdate(void* ctx, const unsigned char* data, size_t datalen)
     return EVP_DigestUpdate(sc->mdCtx, data, datalen);
 }
 
-// digest_sign_final: finalize digest and sign via PKCS#11 token
+// digest_sign_final: finalize digest and sign with the signing key
 int sigDigestSignFinal(void* ctx, unsigned char* sig, size_t* siglen, size_t sigsize)
 {
     auto* sc = static_cast<SignCtx*>(ctx);
@@ -256,7 +270,7 @@ int sigDigestSignFinal(void* ctx, unsigned char* sig, size_t* siglen, size_t sig
         return 0;
 
     try {
-        // NOTE: Cannot use native_utils::signHashWithToken() here because this
+        // NOTE: Cannot use native_utils::signHashWithKey() here because this
         // runs inside an OpenSSL provider callback with pre-computed hash bytes
         // (not a vector), variable digest algorithm, and must return 0/1 status.
         std::vector<uint8_t> signInput;
@@ -277,8 +291,8 @@ int sigDigestSignFinal(void* ctx, unsigned char* sig, size_t* siglen, size_t sig
         }
 
         std::string algo = tokenAlgorithm(sc->keyData->keyType, sc->mdName);
-        // Pass the accumulated raw bytes so a PKCS#11 token can use the combined
-        // CKM_SHA*_RSA_PKCS mechanism on hash-on-card SSCDs. Empty for ECDSA
+        // Pass the accumulated raw bytes so a key on a hash-on-card SSCD can
+        // have the card hash the message itself. Empty for ECDSA
         // (raw-hash mechanism is already correct on every supported card).
         std::span<const uint8_t> rawSpan;
         if (sc->keyData->keyType == EVP_PKEY_RSA)
@@ -302,12 +316,8 @@ int sigDigestSignFinal(void* ctx, unsigned char* sig, size_t* siglen, size_t sig
         std::memcpy(sig, result.data(), result.size());
         *siglen = result.size();
         return 1;
-    } catch (const std::exception& e) {
-        std::cerr << "libresign: sigDigestSignFinal exception: " << e.what() << std::endl;
-        return 0;
     } catch (...) {
-        std::cerr << "libresign: sigDigestSignFinal unknown exception" << std::endl;
-        return 0;
+        return keyFailed(*sc->keyData, "sigDigestSignFinal");
     }
 }
 

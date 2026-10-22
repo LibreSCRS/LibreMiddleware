@@ -8,6 +8,7 @@
 #pragma once
 
 #include <cstdint>
+#include <exception>
 #include <string>
 #include <vector>
 
@@ -24,12 +25,17 @@ namespace detail {
 
 // Custom OSSL_PARAM key for passing the SigningKey pointer through keymgmt_import.
 inline constexpr const char* kParamTokenPtr = "librescrs-token-ptr";
+// Custom OSSL_PARAM key for passing the key's failure slot through keymgmt_import.
+inline constexpr const char* kParamFailurePtr = "librescrs-key-failure-ptr";
 
 // Opaque key data stored by our keymgmt.
 struct ProviderKeyData
 {
     SigningKey* key = nullptr; // non-owning
-    int keyType = 0;           // EVP_PKEY_RSA or EVP_PKEY_EC
+    // Non-owning: where the signature callbacks keep the exception the key
+    // threw, for the caller that created the key (see createSigningEvpKey).
+    std::exception_ptr* failure = nullptr;
+    int keyType = 0; // EVP_PKEY_RSA or EVP_PKEY_EC
     int keyBits = 0;
     int maxSigSize = 0;
 

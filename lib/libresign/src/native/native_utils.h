@@ -37,7 +37,8 @@ struct RevocationData;
 // - Return error struct (TSAResult, SigningResult with success=false): expected
 //   operational failures — network timeouts, invalid input, card not present.
 // - Top-level NativeSigningService::sign() catches all exceptions and wraps
-//   in SigningResult{false, {}, errorMessage}.
+//   them with makeFailure: a SignFailureException keeps its kind, anything
+//   else becomes an engine error.
 
 namespace libresign::native_utils {
 
@@ -164,8 +165,8 @@ std::string iso8601Now();
 // MIME type from file extension
 std::string mimeTypeFromFileName(const std::string& fileName);
 
-// Collect revocation data (CRLs + OCSP) for the token's certificate chain.
-libresign::RevocationData collectRevocationData(libresign::SigningKey& token, const libresign::TSAConfig& tsa);
+// Collect revocation data (CRLs + OCSP) for the key's certificate chain.
+libresign::RevocationData collectRevocationData(libresign::SigningKey& key, const libresign::TSAConfig& tsa);
 
 // Fail-closed gate for long-term (B-LT/B-LTA) signatures: returns a
 // RevocationFetchFailed failure result when @p rev reports any non-root chain
@@ -216,8 +217,8 @@ std::string tokenAlgorithm(int keyType, const std::string& mdName);
 // instead of the legacy pre-built DigestInfo path that those cards
 // reject with SW 6A80 / wrong-data-format. Returns the raw signature
 // bytes.
-std::vector<uint8_t> signHashWithToken(libresign::SigningKey& token, X509* cert, const std::vector<uint8_t>& hash,
-                                       const std::string& hashAlgo = "SHA256", std::span<const uint8_t> rawData = {});
+std::vector<uint8_t> signHashWithKey(libresign::SigningKey& key, X509* cert, const std::vector<uint8_t>& hash,
+                                     const std::string& hashAlgo = "SHA256", std::span<const uint8_t> rawData = {});
 
 // Decompress FlateDecode (zlib) data. Returns nullopt on malformed input.
 // Throws std::runtime_error if the inflated output would exceed
@@ -245,13 +246,4 @@ std::vector<uint8_t> derEncode(Fn i2dFn, const T* obj)
     return result;
 }
 
-} // namespace libresign::native_utils
-
-// Re-export DigestInfo prefixes into native_utils for existing callers.
-#include <LibreSCRS_internal/Crypto/DigestInfo.h>
-namespace libresign::native_utils {
-using LibreSCRS::Internal::Crypto::kDigestInfoSha1Prefix;
-using LibreSCRS::Internal::Crypto::kDigestInfoSha256Prefix;
-using LibreSCRS::Internal::Crypto::kDigestInfoSha384Prefix;
-using LibreSCRS::Internal::Crypto::kDigestInfoSha512Prefix;
 } // namespace libresign::native_utils

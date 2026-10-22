@@ -157,6 +157,14 @@ int kmImport(void* keydata, int /*selection*/, const OSSL_PARAM params[])
         kd->key = static_cast<SigningKey*>(ptr);
     }
 
+    p = OSSL_PARAM_locate_const(params, kParamFailurePtr);
+    if (p != nullptr) {
+        void* ptr = nullptr;
+        if (!OSSL_PARAM_get_octet_ptr(p, (const void**)&ptr, nullptr))
+            return 0;
+        kd->failure = static_cast<std::exception_ptr*>(ptr);
+    }
+
     // Extract key type
     p = OSSL_PARAM_locate_const(params, "librescrs-key-type");
     if (p != nullptr)
@@ -224,6 +232,7 @@ int kmImport(void* keydata, int /*selection*/, const OSSL_PARAM params[])
 const OSSL_PARAM* kmImportTypes(int /*selection*/)
 {
     static const OSSL_PARAM importable[] = {OSSL_PARAM_octet_ptr(kParamTokenPtr, nullptr, 0),
+                                            OSSL_PARAM_octet_ptr(kParamFailurePtr, nullptr, 0),
                                             OSSL_PARAM_int("librescrs-key-type", nullptr),
                                             OSSL_PARAM_int(OSSL_PKEY_PARAM_BITS, nullptr),
                                             OSSL_PARAM_BN(OSSL_PKEY_PARAM_RSA_N, nullptr, 0),

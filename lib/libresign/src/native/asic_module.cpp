@@ -440,8 +440,8 @@ std::string formatSigSuffix(int n)
 
 } // namespace
 
-SigningResult ASiCModule::signWithCAdES(const std::vector<uint8_t>& data, const std::string& fileName,
-                                        SigningKey& token, SignatureLevel level, const TSAConfig& tsa)
+SigningResult ASiCModule::signWithCAdES(const std::vector<uint8_t>& data, const std::string& fileName, SigningKey& key,
+                                        SignatureLevel level, const TSAConfig& tsa)
 {
     // ---- Multi-sign branch (ETSI EN 319 162-1 §A.4) ----
     //
@@ -517,7 +517,7 @@ SigningResult ASiCModule::signWithCAdES(const std::vector<uint8_t>& data, const 
     //    Per ETSI EN 319 162-1, the CAdES signature covers the manifest which
     //    in turn references the document with its own digest.
     CAdESModule cades;
-    auto cadesResult = cades.sign(manifestBytes, token, level, tsa);
+    auto cadesResult = cades.sign(manifestBytes, key, level, tsa);
     if (!cadesResult.success)
         return cadesResult;
 
@@ -632,7 +632,7 @@ SigningResult ASiCModule::signWithCAdES(const std::vector<uint8_t>& data, const 
 }
 
 SigningResult ASiCModule::appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
-                                       SigningKey& token, SignatureLevel level, const TSAConfig& tsa)
+                                       SigningKey& key, SignatureLevel level, const TSAConfig& tsa)
 {
     if (prior.empty())
         return makeFailure(SignFailureKind::InvalidDocument, "ASiC-E appendSigner: empty prior container");
@@ -647,7 +647,7 @@ SigningResult ASiCModule::appendSigner(std::span<const uint8_t> prior, std::span
     // originalDoc is currently informational only — the new signer signs
     // whatever bytes are in the container's data file.
     (void)originalDoc;
-    return signWithCAdES(std::vector<uint8_t>(prior.begin(), prior.end()), std::string(), token, level, tsa);
+    return signWithCAdES(std::vector<uint8_t>(prior.begin(), prior.end()), std::string(), key, level, tsa);
 }
 
 } // namespace libresign

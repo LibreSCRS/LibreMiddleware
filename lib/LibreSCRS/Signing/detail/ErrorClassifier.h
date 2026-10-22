@@ -61,6 +61,8 @@ inline LibreSCRS::Signing::SigningResult::Status classifyLibresignError(const li
             return S::TsaUnreachable;
         case SignFailureKind::PinFailed:
             return S::PinVerificationFailed;
+        case SignFailureKind::PinBlocked:
+            return S::CardBlocked;
         case SignFailureKind::UserCancelled:
             return S::UserCancelled;
         case SignFailureKind::InvalidInput:
@@ -148,6 +150,10 @@ inline LibreSCRS::LocalizedText kindToUserMessage(libresign::SignFailureKind k)
         return EK::cardError();
     case SignFailureKind::PinFailed:
         return EK::pinVerificationFailed();
+    // No message of its own: the card is what failed the user, and the status
+    // (CardBlocked) carries the distinction.
+    case SignFailureKind::PinBlocked:
+        return EK::cardError();
     case SignFailureKind::UserCancelled:
         return EK::userCancelled();
     case SignFailureKind::InvalidInput:

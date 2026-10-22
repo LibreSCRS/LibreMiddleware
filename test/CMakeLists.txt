@@ -982,6 +982,14 @@ if(BUILD_SIGNING)
     target_link_libraries(SigningProviderKeymgmtTests PRIVATE SigningTestSupport OpenSSL_Crypto GTest::gtest_main)
     gtest_discover_tests(SigningProviderKeymgmtTests)
 
+    # The key that signs through a card plugin on a held session, against a
+    # plugin that records every deposit and sign: no card.
+    add_executable(PluginSigningKeyTests PluginSigningKeyTests.cpp)
+    target_link_libraries(PluginSigningKeyTests PRIVATE SigningTestSupport LibreSign CardPlugin_Impl
+        LibreSCRS_SmartCard SmartCard_Impl GTest::gtest_main)
+    target_include_directories(PluginSigningKeyTests PRIVATE ${LibreMiddleware_SOURCE_DIR}/lib/smartcard/src)
+    gtest_discover_tests(PluginSigningKeyTests)
+
     # HttpClient is core (used by both backends)
     add_executable(HttpClientTests http_client_test.cpp)
     target_link_libraries(HttpClientTests PRIVATE LibreSign GTest::gtest_main)

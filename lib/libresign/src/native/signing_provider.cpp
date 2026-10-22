@@ -142,7 +142,8 @@ SigningProviderLease::~SigningProviderLease()
     }
 }
 
-EvpPkeyPublicPtr createSigningEvpKey(const SigningProviderLease& /*lease*/, SigningKey& key, X509* cert)
+EvpPkeyPublicPtr createSigningEvpKey(const SigningProviderLease& /*lease*/, SigningKey& key, X509* cert,
+                                     std::exception_ptr& keyFailure)
 {
     if (!cert)
         throw std::runtime_error("Certificate must not be null");
@@ -183,10 +184,12 @@ EvpPkeyPublicPtr createSigningEvpKey(const SigningProviderLease& /*lease*/, Sign
     // through our keymgmt_import as an opaque pointer value -- a SigningKey*
     // on both sides, whichever implementation it points at.
     void* keyPtr = &key;
+    void* failurePtr = &keyFailure;
 
     // Use a vector to build params dynamically based on key type
     std::vector<OSSL_PARAM> params;
     params.push_back(OSSL_PARAM_construct_octet_ptr(detail::kParamTokenPtr, &keyPtr, sizeof(void*)));
+    params.push_back(OSSL_PARAM_construct_octet_ptr(detail::kParamFailurePtr, &failurePtr, sizeof(void*)));
     params.push_back(OSSL_PARAM_construct_int("librescrs-key-type", &keyType));
     params.push_back(OSSL_PARAM_construct_int(OSSL_PKEY_PARAM_BITS, &keyBits));
 

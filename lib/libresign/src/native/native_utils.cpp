@@ -33,6 +33,7 @@
 #include <mutex>
 #include <span>
 #include <stdexcept>
+#include <LibreSCRS_internal/Crypto/DigestInfo.h>
 #include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
 
 using LibreSCRS::Internal::Crypto::BioPtr;
@@ -441,13 +442,13 @@ std::span<const uint8_t> digestInfoPrefixForAlgo(const std::string& mdName)
 {
     switch (shaFamilyId(mdName)) {
     case 256:
-        return kDigestInfoSha256Prefix;
+        return LibreSCRS::Internal::Crypto::kDigestInfoSha256Prefix;
     case 384:
-        return kDigestInfoSha384Prefix;
+        return LibreSCRS::Internal::Crypto::kDigestInfoSha384Prefix;
     case 512:
-        return kDigestInfoSha512Prefix;
+        return LibreSCRS::Internal::Crypto::kDigestInfoSha512Prefix;
     case 1:
-        return kDigestInfoSha1Prefix;
+        return LibreSCRS::Internal::Crypto::kDigestInfoSha1Prefix;
     default:
         return {};
     }
@@ -474,11 +475,11 @@ std::string tokenAlgorithm(int keyType, const std::string& mdName)
     }
 }
 
-// ---- Collect revocation data for a token's certificate chain ----
+// ---- Collect revocation data for a key's certificate chain ----
 
-libresign::RevocationData collectRevocationData(libresign::SigningKey& token, const libresign::TSAConfig& tsa)
+libresign::RevocationData collectRevocationData(libresign::SigningKey& key, const libresign::TSAConfig& tsa)
 {
-    auto chainDer = token.certificateChain();
+    auto chainDer = key.certificateChain();
     std::vector<X509*> chain;
     std::vector<X509Ptr> chainOwned;
     for (const auto& der : chainDer) {
@@ -490,10 +491,10 @@ libresign::RevocationData collectRevocationData(libresign::SigningKey& token, co
     revClient.crlEnabled = tsa.crlEnabled;
     revClient.ocspEnabled = tsa.ocspEnabled;
     // The termination provenance travels from the ONE place that can prove
-    // it (completeLongTermChain's Trusted-List resolution) through the token;
-    // the on-token fallback is always Unterminated and the gate proves (or
+    // it (completeLongTermChain's Trusted-List resolution) through the key;
+    // the key's own chain is always Unterminated and the gate proves (or
     // fails) the tail itself.
-    return revClient.collectForChain(chain, token.chainTermination());
+    return revClient.collectForChain(chain, key.chainTermination());
 }
 
 std::vector<std::vector<uint8_t>> orderOnTokenChain(std::vector<std::vector<uint8_t>> certs)
@@ -667,10 +668,10 @@ std::optional<libresign::SigningResult> revocationFailClosed(const libresign::Re
                                       " certificate(s) could not be covered");
 }
 
-// ---- Sign a hash with PKCS#11 token (DigestInfo for RSA) ----
+// ---- Sign a hash with the signing key (DigestInfo for RSA) ----
 
-std::vector<uint8_t> signHashWithToken(libresign::SigningKey& token, X509* cert, const std::vector<uint8_t>& hash,
-                                       const std::string& hashAlgo, std::span<const uint8_t> rawData)
+std::vector<uint8_t> signHashWithKey(libresign::SigningKey& key, X509* cert, const std::vector<uint8_t>& hash,
+                                     const std::string& hashAlgo, std::span<const uint8_t> rawData)
 {
     EVP_PKEY* pubKey = X509_get0_pubkey(cert);
     int keyType = pubKey ? EVP_PKEY_base_id(pubKey) : EVP_PKEY_RSA;
@@ -685,13 +686,13 @@ std::vector<uint8_t> signHashWithToken(libresign::SigningKey& token, X509* cert,
         std::vector<uint8_t> digestInfo(prefix.begin(), prefix.end());
         digestInfo.insert(digestInfo.end(), hash.begin(), hash.end());
         // A key that can only sign a message it hashes itself takes
-        // @p rawData (hash-on-card SSCDs: a PKCS#11 token tries the combined
-        // CKM_SHA*_RSA_PKCS form first); otherwise, and when the caller has
+        // @p rawData (hash-on-card SSCDs: the key asks the card for the
+        // mechanism that hashes the message first); otherwise, and when the caller has
         // no raw bytes, the pre-built DigestInfo is what is signed.
-        return token.sign(digestInfo, alg, rawData);
+        return key.sign(digestInfo, alg, rawData);
     } else {
-        // ECDSA: token handles DigestInfo internally
-        return token.sign(hash, alg, {});
+        // ECDSA: the key signs the hash itself
+        return key.sign(hash, alg, {});
     }
 }
 

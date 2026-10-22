@@ -138,7 +138,8 @@ TEST(SigningProviderKeymgmtTest, KeyPointerRoundTripsAsSigningKey)
 {
     SoftwareKey key;
     libresign::SigningProviderLease provider;
-    EvpPkeyPtr pkey(libresign::createSigningEvpKey(provider, key, key.x509()).release());
+    std::exception_ptr keyFailure;
+    EvpPkeyPtr pkey(libresign::createSigningEvpKey(provider, key, key.x509(), keyFailure).release());
     ASSERT_NE(pkey, nullptr);
 
     const std::vector<std::uint8_t> data{'s', 'i', 'g', 'n', ' ', 'm', 'e'};

@@ -96,6 +96,7 @@ Pkcs15ReadTokenInfoPartialTests 2
 PkcsAttachApiDeletedTest 1
 PluginAbiVersionTest 1
 PluginIntegrationTests 8
+PluginSigningKeyTests 11
 PluginTests 45
 PreReadAuthDerivationTests 5
 ProbeOrderTests 3
