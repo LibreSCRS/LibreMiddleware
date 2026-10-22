@@ -5,6 +5,7 @@
 #include <LibreSCRS/SmartCard/MonitorService.h>
 #include <LibreSCRS_internal/SmartCard/MonitorServiceImpl.h>
 
+#include <LibreSCRS_internal/SmartCard/DefaultScanProvider.h>
 #include <ipcsc_scan_provider.h>
 #include <monitor.h>
 #include <smartcard/monitor_event.h>
@@ -33,11 +34,10 @@ namespace LibreSCRS::SmartCard {
 
 namespace {
 
-// Internal LibreSCRS::SmartCard::Internal::MonitorEvent has only Card{Inserted,Removed} types.
-// Reader-list changes arrive via a separate ReaderListCallback — they are
-// diffed against the previous snapshot to synthesise Reader{Added,Removed}
-// public events. MonitorEvent::Kind::Error is reserved for future use (no
-// internal event maps onto it today).
+// Internal events are Card{Inserted,Removed} and Error (the event source
+// refused for good). Reader-list changes arrive via a separate
+// ReaderListCallback — they are diffed against the previous snapshot to
+// synthesise Reader{Added,Removed} public events.
 MonitorEvent::Kind mapCardEventKind(::LibreSCRS::SmartCard::Internal::MonitorEvent::Type t)
 {
     switch (t) {
@@ -45,6 +45,8 @@ MonitorEvent::Kind mapCardEventKind(::LibreSCRS::SmartCard::Internal::MonitorEve
         return MonitorEvent::Kind::CardInserted;
     case ::LibreSCRS::SmartCard::Internal::MonitorEvent::Type::CardRemoved:
         return MonitorEvent::Kind::CardRemoved;
+    case ::LibreSCRS::SmartCard::Internal::MonitorEvent::Type::Error:
+        return MonitorEvent::Kind::Error;
     }
     return MonitorEvent::Kind::Error;
 }
@@ -93,7 +95,9 @@ void reportSwallowedException(const char* site, std::string_view what) noexcept
 // dynamic export table.
 MonitorService::Impl::Impl(std::unique_ptr<::LibreSCRS::SmartCard::Internal::IPCSCScanProvider> provider,
                            MonitorService::Config cfg)
-    : internal(std::make_unique<::LibreSCRS::SmartCard::Internal::Monitor>(std::move(provider))), config(cfg)
+    : internal(std::make_unique<::LibreSCRS::SmartCard::Internal::Monitor>(
+          provider ? std::move(provider) : ::LibreSCRS::SmartCard::Internal::makeDefaultScanProvider())),
+      config(cfg)
 {
     if (config.coalesceWindow.count() > 0) {
         // Spawn via a local lambda so the std::thread::_State_impl<...>
@@ -656,6 +660,9 @@ void MonitorService::Impl::startInternalMonitor()
         // (e.g. AutoReaderService dereferences via `event.atr.value()`).
         if (pub.kind == MonitorEvent::Kind::CardInserted) {
             pub.atr = e.atr;
+        }
+        if (pub.kind == MonitorEvent::Kind::Error) {
+            pub.diagnosticDetail = e.detail;
         }
         dispatch(pub);
     };

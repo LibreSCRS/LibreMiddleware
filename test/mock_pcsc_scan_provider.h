@@ -46,6 +46,16 @@ public:
         readerNames = std::move(names);
     }
 
+    void setRefusalDetail(std::string text)
+    {
+        refusal = std::move(text);
+    }
+
+    const char* refusalDetail() const noexcept override
+    {
+        return refusal.empty() ? IPCSCScanProvider::refusalDetail() : refusal.c_str();
+    }
+
     void setListReadersReturn(LONG rv)
     {
         std::lock_guard<std::mutex> lock(mtx);
@@ -80,10 +90,24 @@ public:
         statusChangeQueue.push_back(std::move(action));
     }
 
+    /// @brief What establishContext answers; SCARD_S_SUCCESS by default.
+    void setEstablishContextReturn(LONG rv)
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        establishContextRv = rv;
+    }
+
     LONG establishContext(DWORD, LPCVOID, LPCVOID, LPSCARDCONTEXT phContext) override
     {
-        *phContext = 42;
         counters->establishContextCount++;
+        LONG rv = SCARD_S_SUCCESS;
+        {
+            std::lock_guard<std::mutex> lock(mtx);
+            rv = establishContextRv;
+        }
+        if (rv != static_cast<LONG>(SCARD_S_SUCCESS))
+            return rv;
+        *phContext = 42;
         return SCARD_S_SUCCESS;
     }
 
@@ -210,11 +234,13 @@ public:
     }
 
 private:
+    std::string refusal; // set before the monitor starts; empty: the interface's text
     std::shared_ptr<MockCounters> counters;
 
     std::mutex mtx;
     std::vector<std::string> readerNames;
     LONG listReadersRv = SCARD_S_SUCCESS;
+    LONG establishContextRv = SCARD_S_SUCCESS;
     std::vector<StatusChangeAction> statusChangeQueue;
 
     std::mutex blockMtx;

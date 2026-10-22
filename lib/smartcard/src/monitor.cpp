@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 hirashix0 and LibreSCRS contributors
 
 #include "monitor.h"
-#include "pcsc_scan_provider.h"
 
 #include <cassert>
 #include <chrono>
@@ -27,10 +26,13 @@ static constexpr LONG kScTimeout = static_cast<LONG>(SCARD_E_TIMEOUT);
 static constexpr LONG kScNoService = static_cast<LONG>(SCARD_E_NO_SERVICE);
 static constexpr LONG kScUnknownReader = static_cast<LONG>(SCARD_E_UNKNOWN_READER);
 static constexpr LONG kScCancelled = static_cast<LONG>(SCARD_E_CANCELLED);
+static constexpr LONG kScNoAccess = static_cast<LONG>(SCARD_E_NO_ACCESS);
 
-Monitor::Monitor(std::unique_ptr<IPCSCScanProvider> provider)
-    : pcsc(provider ? std::move(provider) : std::make_unique<PCSCScanProvider>())
-{}
+Monitor::Monitor(std::unique_ptr<IPCSCScanProvider> provider) : pcsc(std::move(provider))
+{
+    if (!pcsc)
+        throw std::invalid_argument("Monitor needs an event source");
+}
 
 Monitor::~Monitor()
 {
@@ -148,13 +150,21 @@ void Monitor::run()
 {
     bool contextEstablished = false;
     while (!stopRequested.load()) {
+        LONG rv = kScSuccess;
         try {
-            establishContext();
+            rv = establishContext();
+        } catch (...) {
+            rv = kScNoService;
+        }
+        if (rv == kScSuccess) {
             contextEstablished = true;
             break;
-        } catch (...) {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
         }
+        if (rv == kScNoAccess) {
+            notifyEvent({MonitorEvent::Type::Error, {}, {}, pcsc->refusalDetail()});
+            return;
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(1));
     }
     if (stopRequested.load()) {
         // stopThread() (or startThread() fixing the startThread/stopThread
@@ -288,14 +298,14 @@ void Monitor::reEstablishContext()
     setContext(ctx);
 }
 
-void Monitor::establishContext()
+LONG Monitor::establishContext()
 {
     SCARDCONTEXT ctx = 0;
     LONG rv = pcsc->establishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &ctx);
-    if (rv != kScSuccess) {
-        throw std::runtime_error("Cannot establish context in Monitor");
+    if (rv == kScSuccess) {
+        setContext(ctx);
     }
-    setContext(ctx);
+    return rv;
 }
 
 bool Monitor::checkPnPSupport()
@@ -402,7 +412,7 @@ bool Monitor::processEvents(std::vector<SCARD_READERSTATE>& states, int readerCo
 
             if (states[i].dwEventState & SCARD_STATE_UNKNOWN) {
                 lastSeenAtr.erase(states[i].szReader);
-                notifyEvent({MonitorEvent::Type::CardRemoved, states[i].szReader, {}});
+                notifyEvent({MonitorEvent::Type::CardRemoved, states[i].szReader, {}, {}});
                 needReEnumeration = true;
                 break;
             }
@@ -453,7 +463,7 @@ bool Monitor::processEvents(std::vector<SCARD_READERSTATE>& states, int readerCo
                         continue; // same card, re-read — nothing happened
                     }
                     // Card swapped — emit remove for old card
-                    notifyEvent({MonitorEvent::Type::CardRemoved, states[i].szReader, {}});
+                    notifyEvent({MonitorEvent::Type::CardRemoved, states[i].szReader, {}, {}});
                     shouldEmit = true;
                     eventType = MonitorEvent::Type::CardInserted;
                     atr = std::move(current);
@@ -472,7 +482,7 @@ bool Monitor::processEvents(std::vector<SCARD_READERSTATE>& states, int readerCo
                 } else {
                     lastSeenAtr.erase(states[i].szReader);
                 }
-                notifyEvent({eventType, states[i].szReader, std::move(atr)});
+                notifyEvent({eventType, states[i].szReader, std::move(atr), {}});
             }
         }
 
@@ -509,7 +519,7 @@ bool Monitor::processEvents(std::vector<SCARD_READERSTATE>& states, int readerCo
         for (int i = 0; i < readerCount; i++) {
             if (states[i].dwCurrentState & SCARD_STATE_PRESENT) {
                 lastSeenAtr.erase(states[i].szReader);
-                notifyEvent({MonitorEvent::Type::CardRemoved, states[i].szReader, {}});
+                notifyEvent({MonitorEvent::Type::CardRemoved, states[i].szReader, {}, {}});
             }
         }
 

@@ -27,6 +27,13 @@ public:
     virtual LONG getStatusChange(SCARDCONTEXT hContext, DWORD dwTimeout, SCARD_READERSTATE* rgReaderStates,
                                  DWORD cReaders) = 0;
     virtual LONG cancel(SCARDCONTEXT hContext) = 0;
+
+    /// What SCARD_E_NO_ACCESS from establishContext means for this source;
+    /// the monitor reports it once, in its Error event.
+    [[nodiscard]] virtual const char* refusalDetail() const noexcept
+    {
+        return "PC/SC access denied to this process (SCARD_E_NO_ACCESS)";
+    }
 };
 
 } // namespace LibreSCRS::SmartCard::Internal

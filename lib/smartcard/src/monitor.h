@@ -28,7 +28,7 @@ using ReaderListCallback = std::function<void(const std::vector<std::string>&)>;
 class Monitor
 {
 public:
-    explicit Monitor(std::unique_ptr<IPCSCScanProvider> provider = nullptr);
+    explicit Monitor(std::unique_ptr<IPCSCScanProvider> provider);
     ~Monitor();
 
     Monitor(const Monitor&) = delete;
@@ -51,7 +51,7 @@ private:
     void stopThread();
     void run();
 
-    void establishContext();
+    LONG establishContext();
     void setContext(SCARDCONTEXT ctx);
     void reEstablishContext();
     bool checkPnPSupport();

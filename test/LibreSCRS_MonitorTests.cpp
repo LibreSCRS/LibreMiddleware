@@ -1063,3 +1063,29 @@ TEST(MonitorTest, ThrowingSubscriberReportsThroughTheInjectedLogSink)
     EXPECT_TRUE(sawTheThrow) << "the sink received " << observed.size()
                              << " line(s), none carrying the exception text the subscriber threw";
 }
+
+// The event source refusing for good reaches a subscriber as exactly one
+// Error event that says why.
+TEST(MonitorServiceTest, SourceRefusalArrivesAsOneErrorEvent)
+{
+    auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
+    auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
+    mock->setEstablishContextReturn(static_cast<LONG>(SCARD_E_NO_ACCESS));
+    auto monitor = LibreSCRS::SmartCard::detail::makeMonitorWithProvider(std::move(mock));
+
+    std::mutex mtx;
+    std::vector<MonitorEvent> events;
+    auto id = monitor->subscribe([&](const MonitorEvent& e) {
+        std::lock_guard lock(mtx);
+        events.push_back(e);
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+    monitor->unsubscribe(id);
+
+    std::lock_guard lock(mtx);
+    ASSERT_EQ(events.size(), 1U);
+    EXPECT_EQ(events[0].kind, MonitorEvent::Kind::Error);
+    ASSERT_TRUE(events[0].diagnosticDetail.has_value());
+    EXPECT_FALSE(events[0].diagnosticDetail->empty());
+    EXPECT_EQ(counters->establishContextCount.load(), 1);
+}

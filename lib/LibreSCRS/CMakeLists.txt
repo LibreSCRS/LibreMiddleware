@@ -290,6 +290,7 @@ add_library(LibreSCRS_SmartCard ${LIBREMIDDLEWARE_LIB_TYPE}
     SmartCard/ActiveChannelHolder.cpp
     SmartCard/CardMap.cpp
     SmartCard/CardSession.cpp
+    SmartCard/DefaultScanProvider.cpp
     SmartCard/MonitorService.cpp
     SmartCard/SessionPresence.cpp
     SmartCard/SmartCardServices.cpp
