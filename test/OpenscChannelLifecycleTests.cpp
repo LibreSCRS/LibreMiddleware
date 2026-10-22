@@ -38,6 +38,8 @@
 #include <fake_channel.h>
 #include <pcsc_connection.h>
 
+#include <LibreSCRS_internal/Crypto/DigestInfo.h>
+
 #include "opensc_reader_bridge.h"
 #include "opensc_session.h"
 #include "opensc_user_consent.h"
@@ -1479,6 +1481,90 @@ TEST(OpenscEcdh, KeyTheCardCannotDeriveWithNeverReachesThePin)
 
     EXPECT_FALSE(called);
     EXPECT_FALSE(result.ok());
+}
+
+// ── RSA: every PKCS#1 v1.5 mechanism the module's slot signs ─────────────
+
+struct RsaKeyObject
+{
+    explicit RsaKeyObject(std::size_t modulusBits)
+    {
+        info.modulus_length = modulusBits;
+        info.usage = SC_PKCS15_PRKEY_USAGE_SIGN;
+        object.type = SC_PKCS15_TYPE_PRKEY_RSA;
+        object.data = &info;
+    }
+    RsaKeyObject(const RsaKeyObject&) = delete;
+    RsaKeyObject& operator=(const RsaKeyObject&) = delete;
+
+    sc_pkcs15_prkey_info_t info{};
+    sc_pkcs15_object_t object{};
+};
+
+TEST(OpenscRsa, RawMessageMechanismsAreNotRefusedAsUnknown)
+{
+    // No claim on this session, so a mechanism the plugin signs fails for that
+    // reason; one it does not know is turned away before it looks.
+    PluginHandle h;
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("ChannelTestReader");
+    using LibreSCRS::Plugin::SignMechanism;
+    using LibreSCRS::Plugin::SignResultOutcome;
+    const std::vector<std::uint8_t> message{'m', 's', 'g'};
+
+    for (const auto mechanism :
+         {SignMechanism::RSA_SHA1, SignMechanism::RSA_SHA256, SignMechanism::RSA_SHA384, SignMechanism::RSA_SHA512}) {
+        SCOPED_TRACE(static_cast<int>(mechanism));
+        EXPECT_EQ(h.plugin->sign(*session, 0x01, message, mechanism).outcome, SignResultOutcome::PluginError);
+    }
+    EXPECT_EQ(h.plugin->sign(*session, 0x01, message, static_cast<SignMechanism>(0x7F)).outcome,
+              SignResultOutcome::NotImplemented)
+        << "a mechanism this plugin does not know";
+}
+
+TEST(OpenscRsa, RawMessageReachesTheCardAsTheDigestInfoOverItsHash)
+{
+    // What OpenScSlot hands libopensc for CKM_SHA*_RSA_PKCS: the DigestInfo
+    // built on the host, padded by OpenSC, no hashing on the card.
+    using LibreSCRS::Internal::Crypto::DigestInfoHash;
+    using LibreSCRS::Plugin::SignMechanism;
+    const std::vector<std::uint8_t> message{'t', 'o', ' ', 's', 'i', 'g', 'n'};
+    const struct
+    {
+        SignMechanism mechanism;
+        std::vector<std::uint8_t> expected;
+    } cases[] = {
+        {SignMechanism::RSA_PKCS, message},
+        {SignMechanism::RSA_SHA1, LibreSCRS::Internal::Crypto::digestInfoOf(DigestInfoHash::Sha1, message)},
+        {SignMechanism::RSA_SHA256, LibreSCRS::Internal::Crypto::digestInfoOf(DigestInfoHash::Sha256, message)},
+        {SignMechanism::RSA_SHA384, LibreSCRS::Internal::Crypto::digestInfoOf(DigestInfoHash::Sha384, message)},
+        {SignMechanism::RSA_SHA512, LibreSCRS::Internal::Crypto::digestInfoOf(DigestInfoHash::Sha512, message)},
+    };
+    for (const auto& c : cases) {
+        SCOPED_TRACE(static_cast<int>(c.mechanism));
+        RsaKeyObject key(2048);
+        OpenSCSession session;
+        unsigned long seenFlags = 0;
+        std::vector<std::uint8_t> seenInput;
+        std::size_t seenCapacity = 0;
+        LibreSCRS::Plugin::SignResult result;
+
+        (void)LibreSCRS::OpenSc::signRsaBound(session, key.object, c.mechanism, message, result,
+                                              [&](unsigned long flags, const std::uint8_t* in, std::size_t inLength,
+                                                  std::uint8_t* out, std::size_t outLength) {
+                                                  seenFlags = flags;
+                                                  seenInput.assign(in, in + inLength);
+                                                  seenCapacity = outLength;
+                                                  std::fill_n(out, outLength, std::uint8_t{0x5A});
+                                                  return static_cast<int>(outLength);
+                                              });
+
+        EXPECT_EQ(seenFlags,
+                  static_cast<unsigned long>(SC_ALGORITHM_RSA_PAD_PKCS1_TYPE_01 | SC_ALGORITHM_RSA_HASH_NONE));
+        EXPECT_EQ(seenInput, c.expected);
+        EXPECT_EQ(seenCapacity, 256U);
+        ASSERT_TRUE(result.ok());
+        EXPECT_EQ(result.signature.size(), 256U);
+    }
 }
 
 TEST(OpenscEcdsa, UnknownFieldLengthOrNonHashNeverSigns)

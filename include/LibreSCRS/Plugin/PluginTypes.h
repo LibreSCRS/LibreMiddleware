@@ -331,15 +331,18 @@ enum class SignMechanism : std::uint8_t {
     ECDSA_SHA384,
     /// @brief ECDSA over a hash the caller computed with SHA-512. NIST P-521 typical.
     ECDSA_SHA512,
-    /// @brief RSA PKCS#1 v1.5 over SHA-256, **hashed on-card**.
+    /// @brief RSA PKCS#1 v1.5 over SHA-256 of a raw message.
     ///
     /// Unlike @ref RSA_PKCS (where `data` is a complete caller-built
-    /// DigestInfo the card signs verbatim), here `data` is the **raw message**:
-    /// the card computes SHA-256 internally and produces the PKCS#1 v1.5
-    /// signature. This is the only form accepted by certain IAS-ECC
-    /// hash-on-card SSCDs (e.g. SCE 8.0-C2V0) that reject a caller-supplied
-    /// DigestInfo. Plugins without a hash-on-card sign primitive MUST return
-    /// @ref SignResultOutcome::NotImplemented for this mechanism.
+    /// DigestInfo the card signs verbatim), here `data` is the **raw message**
+    /// and the plugin produces the PKCS#1 v1.5 signature over its SHA-256,
+    /// exactly as the PKCS#11 module does for `CKM_SHA256_RSA_PKCS`: the
+    /// DigestInfo built on the host where the card signs one, the hash
+    /// computed **on-card** where the card insists on it (certain IAS-ECC
+    /// SSCDs, e.g. SCE 8.0-C2V0, reject a caller-supplied DigestInfo). A
+    /// plugin with no RSA signing at all returns
+    /// @ref SignResultOutcome::NotImplemented. @ref RSA_SHA1, @ref RSA_SHA384
+    /// and @ref RSA_SHA512 are the same over their hash.
     ///
     /// @note Appended last so this is an ABI-additive enumerator (the enum's
     ///       `std::uint8_t` layout is unchanged); it does not require a
@@ -347,6 +350,18 @@ enum class SignMechanism : std::uint8_t {
     ///       simply never receive this value.
     /// @since 5.0
     RSA_SHA256,
+    /// @brief RSA PKCS#1 v1.5 over SHA-1 of a raw message, as @ref RSA_SHA256.
+    ///
+    /// Appended, like @ref RSA_SHA384 and @ref RSA_SHA512, so the three are
+    /// ABI-additive in the same way @ref RSA_SHA256 is.
+    /// @since 5.0
+    RSA_SHA1,
+    /// @brief RSA PKCS#1 v1.5 over SHA-384 of a raw message, as @ref RSA_SHA256.
+    /// @since 5.0
+    RSA_SHA384,
+    /// @brief RSA PKCS#1 v1.5 over SHA-512 of a raw message, as @ref RSA_SHA256.
+    /// @since 5.0
+    RSA_SHA512,
 };
 
 /// @brief Structured outcome for on-card signing.

@@ -62,7 +62,7 @@ OpenScBridgeTests 19
 OpenScPkcs11UnitTests 12
 OpenScSrbEid2HwTest 1
 OpenscChangePinSelectorTests 4
-OpenscChannelLifecycleTests 62
+OpenscChannelLifecycleTests 64
 OpenscPinLifecycleTests 7
 OpenscRoutingTests 2
 OpenscUserPinSelectionTests 4
@@ -88,7 +88,7 @@ Pkcs15ChangePinSelectorTests 4
 Pkcs15EcdsaSignatureTests 16
 Pkcs15PinLifecycleTests 39
 Pkcs15ProbeEfDirTests 2
-Pkcs15ProfileReadCensusTests 48
+Pkcs15ProfileReadCensusTests 51
 Pkcs15ReadTokenInfoPartialTests 2
 PkcsAttachApiDeletedTest 1
 PluginAbiVersionTest 1

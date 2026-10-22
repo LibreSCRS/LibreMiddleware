@@ -7,10 +7,22 @@ Notable user-visible changes per release. Format follows
 
 ### Added
 
+- **RSA through the card plugins with every digest the PKCS#11 module signs,
+  PACE or not.** `SignMechanism` gains `RSA_SHA1`, `RSA_SHA384` and
+  `RSA_SHA512` (appended after `RSA_SHA256`, so ABI-additive): PKCS#1 v1.5 over
+  that hash of the raw message in `data`. The generic PKCS#15 plugin signed RSA
+  only behind PACE and only over SHA-256; it now signs `RSA_PKCS` and every
+  `RSA_SHA*` on any card, handing the card the DigestInfo built on the host
+  together with the raw message, the scheme ladder the PKCS#11 module runs for
+  `CKM_RSA_PKCS` and `CKM_SHA*_RSA_PKCS`: a plain card signs the DigestInfo, a
+  card that hashes on-card is reached with its own algorithm reference and the
+  message. The OpenSC plugin, which knew only `RSA_PKCS`, hashes on the host for
+  the `RSA_SHA*` mechanisms and signs the DigestInfo exactly as the module's
+  OpenSC slot does.
+
 - **EC keys: ECDSA through both card plugins, and ECDH key agreement through
   OpenSC.** The generic PKCS#15 plugin now signs with EC keys
-  (`SignMechanism::ECDSA_SHA256/384/512`) on any card (unlike hash-on-card
-  RSA, ECDSA is not limited to PACE cards), and both plugins return what the
+  (`SignMechanism::ECDSA_SHA256/384/512`) on any card, and both plugins return what the
   ECDSA mechanisms now promise: the input is the hash, and the signature is raw `r || s`, each half exactly the key's
   field width. A hash longer than the field is signed by its leftmost bytes, as
   FIPS 186-4 prescribes and OpenSC does. The PKCS#15 plugin reads the card's answer — DER, or a
@@ -280,11 +292,12 @@ Notable user-visible changes per release. Format follows
   (per-credential retry/use counters), `PinOutcome.h` (the shared
   verify/change/unblock outcome classifier), and `SessionKey.h` (the
   per-session state-map key plugins use to avoid raw-pointer keying).
-  Alongside them, ten new public enum values: the new `DecipherMechanism`,
+  Alongside them, thirteen new public enum values: the new `DecipherMechanism`,
   `DecipherResultOutcome`, `MasterListError`, `PinKind`, `PinState`,
-  `PinRecovery` and `UnblockStyle` enums, plus three enumerators appended to
+  `PinRecovery` and `UnblockStyle` enums, plus six enumerators appended to
   existing enums — `ChannelActivationError::PaceDowngradeDetected`,
-  `PINResultOutcome::KeyActivationFailed` and `SignMechanism::RSA_SHA256`.
+  `PINResultOutcome::KeyActivationFailed` and `SignMechanism::RSA_SHA256`,
+  `RSA_SHA1`, `RSA_SHA384` and `RSA_SHA512`.
 
 ### Changed
 
