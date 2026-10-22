@@ -58,25 +58,6 @@ One plugin per card family, loaded at run time, with the manifest that
 describes the fields each one exposes. Without this package the libraries load
 and enumerate readers but recognize no card.
 
-%package -n librescrs-pkcs11-direct
-Summary:        Register the LibreSCRS PKCS#11 module directly with p11-kit
-BuildArch:      noarch
-Requires:       %{name} = %{version}-%{release}
-Conflicts:      librescrs-agent
-
-%description -n librescrs-pkcs11-direct
-Installs the p11-kit declaration that makes PKCS#11-aware applications discover
-the LibreSCRS provider in their own process.
-
-This is the alternative to the agent, not a companion to it. The agent
-registers a proxy that collects the PIN in its own prompter, behind an
-authorization prompt; the direct module takes the PIN inside whichever
-application loaded it. Registering both would leave one card with two security
-models and let whichever dialog the user typed into decide which one they got,
-so the two packages conflict. The package manager switches from one to the
-other only when it is told to remove the conflicting package; the download
-page names the command for each distribution.
-
 %package        devel
 Summary:        Development files for the LibreSCRS smart-card libraries
 Requires:       %{name}%{?_isa} = %{version}-%{release}
@@ -97,8 +78,7 @@ against LibreSCRS.
 %cmake -GNinja \
     -DBUILD_TESTING=OFF \
     -DINSTALL_GTEST=OFF \
-    -DLIBRESCRS_BUILD_EXAMPLES=OFF \
-    -DLIBREMIDDLEWARE_INSTALL_P11KIT_MODULE=ON
+    -DLIBRESCRS_BUILD_EXAMPLES=OFF
 %cmake_build
 
 # The link step names thirdparty/curl-install/lib/libcurl.a unconditionally,
@@ -119,9 +99,9 @@ test -f %{_vpath_builddir}/thirdparty/curl-install/lib/libcurl.a
 %doc README.md
 %{_libdir}/libLibreSCRS_*.so.*
 # All three paths -- .so.5.0.0, .so.5 and the bare .so -- belong to the runtime
-# package. The p11-kit declaration in librescrs-pkcs11-direct names the bare
-# name, and that package is noarch and carries nothing but the declaration, so
-# a machine with no -devel installed still has to resolve it.
+# package: the module is not registered with p11-kit (the agent's proxy is what
+# applications load), and a host that registers it by hand names the bare name,
+# which a machine with no -devel installed still has to resolve.
 %{_libdir}/pkcs11/librescrs-pkcs11.so*
 %dir %{_datadir}/librescrs
 %{_datadir}/librescrs/certificates/
@@ -129,9 +109,6 @@ test -f %{_vpath_builddir}/thirdparty/curl-install/lib/libcurl.a
 %files -n librescrs-card-plugins
 %{_libdir}/librescrs/
 %{_datadir}/librescrs/plugins/
-
-%files -n librescrs-pkcs11-direct
-%{_datadir}/p11-kit/modules/librescrs.module
 
 %files devel
 %{_includedir}/LibreSCRS/

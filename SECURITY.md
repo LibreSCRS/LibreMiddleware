@@ -57,8 +57,9 @@ number again at the next operation. Keeping exactly one LibreSCRS provider per
 host is what prevents this, and that is a property of the packaging, not of the
 library.
 
-**The direct module (`librescrs-pkcs11-direct`) is exclusive with the agent on
-the same reader**, and carries two limits worth knowing before choosing it:
+**The direct module is exclusive with the agent on the same reader.** It is not
+published as a package in 5.0 — it is built for tests and installed
+unregistered — and a host that registers it by hand takes on this limit:
 
 - It probes each reader exactly once for the life of the loaded module. Nothing
   watches for card removal — `C_WaitForSlotEvent` reports
@@ -70,36 +71,9 @@ the same reader**, and carries two limits worth knowing before choosing it:
   carry the same object identifiers, so the objects rebind silently and **a PIN
   collected for the first card is presented to the second**, spending its retry
   counter. Reload the module, or use the agent.
-- A signature made through the middleware's signing API loads this module into
-  the signing process, which probes every reader the PC/SC layer reports. Every
-  handle it opens is closed and the module unloaded before the call returns, but
-  what reaches each card differs:
-  - on the reader being signed with, and on any other reader **without** a live
-    secure channel, the module opens a handle **and binds the card** — that
-    sends APDUs, so a concurrent operation on such a reader can find card state
-    it did not set, and where the driver must change protocol, a card that was
-    unpowered under it;
-  - on a reader **with** a live secure channel only the reader enumeration
-    reaches it: a shared connect, one reader-level control call and a disconnect
-    that leaves the card powered. The shape of that handle is not configurable —
-    the reader driver hardcodes the shared access mode and the leave-the-card
-    disposition for this path — so no APDU is sent and an already-powered card is
-    not power-cycled, and on that reading the secure channel survives. **It is
-    not yet measured on a card**, and no test in this release can measure it.
 
-  `CHANGELOG.md` records this under known limitations, and
-  `test/pcsc_handle_census_test.cpp` records the handle counts (not what the
-  handles do to a card, which no in-process test can observe).
-
-  **All of this assumes the reader driver's defaults.** OpenSC reads a
-  `reader_driver pcsc` block from `/etc/opensc.conf` (or from whatever
-  `OPENSC_CONF` names), and three of its options change the bind path rather than
-  the counts: `connect_exclusive` makes the signing bind demand exclusive access,
-  so signing fails on a reader the agent is holding; `disconnect_action` and
-  `transaction_end_action` can reset or unpower the card being signed with; and
-  `provider_library` replaces the PC/SC layer wholesale. This project ships no
-  such file and sets no `OPENSC_CONF` in production, so a host that has one is
-  outside what the measurements above describe.
+A signature made through the middleware's signing API does not load the module:
+it signs through the card plugin on the session the caller already holds.
 
 ## Supported versions
 

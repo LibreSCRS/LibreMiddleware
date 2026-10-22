@@ -71,14 +71,17 @@ fi
 # ── V1 the packages install at all ────────────────────────────────────────
 install_all; check "V1 install" $?
 
-# ── V2 the registration file is on the path p11-kit reads ─────────────────
-test -f /usr/share/p11-kit/modules/librescrs.module
-check "V2 p11-kit declaration on /usr/share/p11-kit/modules" $?
+# ── V2 no package registers the module with p11-kit ───────────────────────
+# Applications reach the card through the agent's proxy, which the agent's
+# own package registers; the middleware registers nothing of its own.
+test ! -e /usr/share/p11-kit/modules/librescrs.module
+check "V2 no p11-kit declaration from the middleware" $?
 
 # ── V3 all three module paths exist and belong to the RUNTIME package ─────
 # VERSION/SOVERSION on the PKCS#11 target emit .so.5.0.0, .so.5 and the bare
-# .so. The declaration names the bare name, so the bare name must not sit in a
-# development package a headless box would never install.
+# .so. A host that registers the module by hand names the bare name, so the
+# bare name must not sit in a development package a headless box would never
+# install.
 ls $LIBDIRGLOB/pkcs11/librescrs-pkcs11.so   >/dev/null 2>&1; check "V3 bare module path" $?
 ls $LIBDIRGLOB/pkcs11/librescrs-pkcs11.so.5 >/dev/null 2>&1; check "V3b soname path" $?
 for f in $LIBDIRGLOB/pkcs11/librescrs-pkcs11.so*; do
@@ -86,12 +89,11 @@ for f in $LIBDIRGLOB/pkcs11/librescrs-pkcs11.so*; do
   test "$o" = "$RUNTIME_PKG"; check "V3 owner $f = $o" $?
 done
 
-# ── V4 exactly one provider ───────────────────────────────────────────────
+# ── V4 no provider ────────────────────────────────────────────────────────
 # The anchor ^module: is not decoration: a bare `grep -c -i librescrs` counts
-# the path, uri and description lines too and returns five for one correctly
-# registered module.
+# the path, uri and description lines too.
 n=$(p11-kit list-modules | grep -c '^module: librescrs')
-test "$n" -eq 1; check "V4 exactly one librescrs provider (counted $n)" $?
+test "$n" -eq 0; check "V4 no librescrs provider registered by the middleware (counted $n)" $?
 p11-kit list-modules
 
 # ── V8 nothing generated mentions a user's home ───────────────────────────
@@ -119,11 +121,9 @@ test "$miss" -eq 0; check "V11 no unresolved shared-library dependency" $?
 # else's bag. A headless box is the opposite case.
 remove_ours
 if [ "${FAMILY:-deb}" = deb ]; then
-  install_some /pkg/liblibrescrs5_*.deb /pkg/librescrs-card-plugins_*.deb \
-               /pkg/librescrs-pkcs11-direct_*.deb
+  install_some /pkg/liblibrescrs5_*.deb /pkg/librescrs-card-plugins_*.deb
 else
-  install_some /pkg/librescrs-middleware-5*.rpm /pkg/librescrs-card-plugins-5*.rpm \
-               /pkg/librescrs-pkcs11-direct-5*.rpm
+  install_some /pkg/librescrs-middleware-5*.rpm /pkg/librescrs-card-plugins-5*.rpm
 fi
 check "V3c headless install (no development package)" $?
 installed_list > /tmp/inst.txt 2>&1; check "V3c package list readable" $?
@@ -133,7 +133,7 @@ check "V3c development package really absent" $?
 ls $LIBDIRGLOB/pkcs11/librescrs-pkcs11.so >/dev/null 2>&1
 check "V3c bare module still present without the development package" $?
 n=$(p11-kit list-modules | grep -c '^module: librescrs')
-test "$n" -eq 1; check "V3c still exactly one provider" $?
+test "$n" -eq 0; check "V3c still no provider" $?
 
 # ── V9 removal leaves nothing under /usr ──────────────────────────────────
 # Removing by query rather than by a hand-written list. A hand-written list

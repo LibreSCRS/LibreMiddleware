@@ -210,42 +210,22 @@ not of the packaging, so choosing this arrangement means accepting them:
   first is presented to the second. A host that expects hot swap must reload the
   module, or use the agent, which owns the reader and does watch.
 
-A third property belongs to the signing API rather than to this deployment: a
-document signature loads the module into the signing process and probes every
-reader, which opens a short-lived handle on the card being signed with and on
-every other card present, and binds every card that carries no live secure
-channel. `SECURITY.md` and `CHANGELOG.md` describe what that costs per reader.
+The signing API does not use the module at all: a document signature is made
+through the card plugin on the session the caller already holds.
 
 ### Packaging contract
 
-This is the split this project **intends to ship**; no `librescrs-*` package has
-been published yet, so nothing below describes an install base that exists
-today. It is written down here because the invariant it protects is decided
-here, and packaging only executes it.
-
     librescrs-middleware      usr/lib/pkcs11/librescrs-pkcs11.so          ← the .so only, NO .module
-    librescrs-pkcs11-direct   usr/share/p11-kit/modules/librescrs.module  ← eight lines and nothing else
-                              depends=('librescrs-middleware')
-                              conflicts=('librescrs-agent')
     librescrs-agent           usr/lib/pkcs11/librescrs-pkcs11-agent.so
                               usr/share/p11-kit/modules/librescrs-agent.module
                               usr/lib/systemd/user/librescrs-p11-server.service
-                              conflicts=('librescrs-pkcs11-direct')
 
-Three things about it must not be lost in translation to a package recipe:
-
-- The invariant is: *after installing any supported set of packages, the three
-  directories p11-kit reads contain exactly one file naming a LibreSCRS
-  provider, and it names the proxy.* By default that holds because nobody
-  registers the direct module — which is **stronger than a conflict**, since
-  there is nothing to conflict with.
-- The conflict is declared from **both** sides deliberately. A one-sided
-  conflict still permits coexistence when the side that was not named happens
-  to be installed first.
-- The name is `librescrs-pkcs11-direct`, **not** a bare `librescrs-pkcs11`.
-  The bare name is what the released tarball was called and what the website
-  still advertises, so reusing it for a package of the opposite meaning would
-  let a stale link resolve to a different thing.
+The invariant is: *after installing any supported set of packages, the three
+directories p11-kit reads contain exactly one file naming a LibreSCRS provider,
+and it names the proxy.* It holds because no package registers the direct
+module: 5.0 publishes no package that carries its declaration, and a host that
+registers it by hand (the option above, or a `.module` file of its own) has
+chosen the direct deployment and its limits.
 
 ### Consumers
 

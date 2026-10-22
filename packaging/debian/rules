@@ -11,8 +11,7 @@ export DEB_CPPFLAGS_MAINT_APPEND = -DNDEBUG
 # and nothing downstream would say so. NDEBUG comes back above.
 override_dh_auto_configure:
 	dh_auto_configure -- -DBUILD_TESTING=OFF -DINSTALL_GTEST=OFF \
-	                     -DLIBRESCRS_BUILD_EXAMPLES=OFF \
-	                     -DLIBREMIDDLEWARE_INSTALL_P11KIT_MODULE=ON
+	                     -DLIBRESCRS_BUILD_EXAMPLES=OFF
 
 # The build host has no reader and no session bus. A package build is the
 # wrong place to discover a test failure, and the test suites are gated in CI.

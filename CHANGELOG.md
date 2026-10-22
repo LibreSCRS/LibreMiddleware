@@ -115,6 +115,26 @@ Notable user-visible changes per release. Format follows
 
 ### Changed
 
+- **A document signature uses the session it was given.** The signing service
+  signs through the card plugin on the one session the caller already holds:
+  no PKCS#11 module is loaded into the signing process, no second connection is
+  opened to the card, and no other reader is touched. The signer's certificate
+  is the one the plugin reads from the card whose CKA_ID, or else label, the
+  request names, or the card's only key; a request that matches two keys is
+  refused as ambiguous rather than signed with the first, and a key id longer
+  than a PKCS#15 identifier (255 bytes) is refused as `InvalidRequest` before
+  the card is read. The card's verdict on the PIN reaches the caller with its
+  own status in every format, PAdES, CAdES and ASiC-E included:
+  `PinVerificationFailed` for a refused PIN, `CardBlocked` for a blocked one,
+  and `UserCancelled` when the card's plugin reports the signature cancelled.
+
+- **The OpenSC card plugin's copy of OpenSC has no PC/SC reader driver, and
+  one OpenSC context serves the plugin for its whole life.** Creating that
+  context no longer enumerates or connects to any reader; the plugin reaches a
+  card only through the session it is handed. The context is created with
+  OpenSC's thread callbacks, so its internal locks are real locks. The PKCS#11
+  module keeps its own copy of OpenSC with the PC/SC driver.
+
 - **The card now says when a key needs its PIN for every operation, and the
   PKCS#11 module holds clients to it.** A PKCS#15 key whose
   `CommonObjectAttributes` carry a `userConsent` (non-zero, or zero-length,
@@ -383,6 +403,10 @@ Notable user-visible changes per release. Format follows
 
 ### Removed
 
+- **The PKCS#11 module path resolver of the signing service, and the
+  `LIBRESCRS_PKCS11_MODULE` variable it read.** Signing no longer loads a
+  module, so nothing is left to find one.
+
 - **The published macOS PKCS#11 archive.** The release no longer produces the
   `librescrs-pkcs11-*-macos-universal.zip` this module used to ship as, and
   nothing replaces it inside this project. (The Linux
@@ -538,49 +562,6 @@ records their departure, and the SONAME moved with it.
 
 ### Known limitations
 
-- **A document signature opens a second, short-lived PC/SC handle on the card
-  it is signing with.** Signing loads the PKCS#11 module into the signing
-  process and asks it for its slots, and answering that means probing the
-  readers. On a reader whose session carries no live secure channel the module
-  opens its own handle to the same card the caller is already talking to, and
-  binds it. The handle is closed and the module unloaded before the call
-  returns. A card protected by a secure channel is not **re-bound** this way —
-  that session is adopted instead of reopened — but see the next item for what
-  still reaches it.
-
-  `test/pcsc_handle_census_test.cpp` records the counts. They are the counts of
-  a signature whose bind fails, which is the path that test drives; a handle
-  opened only where the bind succeeds would not move them.
-
-- **The probe also touches readers the signature has nothing to do with.**
-  Every reader the PC/SC layer reports gets a handle opened and closed during
-  that same probe, including a reader holding a live secure channel: refusing
-  to bind such a reader stops the bind, not the handle, because establishing a
-  PC/SC context for any reader makes the bundled OpenSC enumerate all of them
-  and read each one's features.
-
-  What that costs differs by reader. On a reader **without** a live secure
-  channel the module does not merely open a handle, it binds the card: that
-  sends APDUs, so an operation running there can find card state it did not set
-  — a different selected file, a changed security state — and, where the driver
-  has to change protocol, a card that was unpowered under it. On a reader
-  **with** a live secure channel only the enumeration reaches it, which by the
-  reader driver's own source is a shared connect, one reader-level control call
-  and a disconnect that leaves the card powered — a shape that driver hardcodes
-  for this path, so no configuration turns it into a reset. On that reading the
-  channel survives, but this has **not been confirmed on a card**, and no test in
-  this release can confirm it. If a contactless session drops while you sign a
-  document on another reader, this is the most likely cause: re-establish the
-  session — you will be asked for the card access number again — and please
-  report it.
-
-  The counts and the reasoning above assume the reader driver's own defaults. A
-  host that ships an `/etc/opensc.conf` with a `reader_driver pcsc` block can
-  change the bind path itself: demanding exclusive access (signing then fails on
-  a reader the agent holds), resetting or unpowering the card on disconnect, or
-  replacing the PC/SC layer. This release ships no such file and sets no
-  `OPENSC_CONF`.
-
 - **The direct PKCS#11 module does not notice a card swapped in the same
   reader.** Each reader is probed exactly once for the life of the loaded
   module: there is no thread watching for removal, and `C_WaitForSlotEvent`
@@ -594,7 +575,8 @@ records their departure, and the SONAME moved with it.
   match, so the objects rebind silently and a PIN collected for the first card
   is presented to the second — spending its retry counter. Replace the card and
   reload the module, or use the agent, which owns the reader and does watch.
-  This affects the `librescrs-pkcs11-direct` deployment only.
+  This affects only a module a host has registered by hand: no package
+  registers it.
 
 ## [4.2.0] — 2026-05-29
 

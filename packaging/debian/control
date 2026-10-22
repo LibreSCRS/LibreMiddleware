@@ -45,25 +45,6 @@ Description: Card plugins for the LibreSCRS smart-card libraries
  Without this package the libraries load and enumerate readers but recognize
  no card.
 
-Package: librescrs-pkcs11-direct
-Architecture: all
-Multi-Arch: foreign
-Depends: ${misc:Depends}, liblibrescrs5 (>= ${source:Version})
-Conflicts: librescrs-agent
-Description: Register the LibreSCRS PKCS#11 module directly with p11-kit
- Installs the p11-kit declaration that makes PKCS#11-aware applications
- discover the LibreSCRS provider in their own process.
- .
- This is the alternative to the agent, not a companion to it. The agent
- registers a proxy that collects the PIN in its own prompter, behind an
- authorization prompt; the direct module takes the PIN inside whichever
- application loaded it. Registering both would leave one card with two
- security models and let whichever dialog the user typed into decide which one
- they got, so the two packages conflict. Installing either with apt replaces
- the other; dnf switches only with --allowerasing, and zypper when its
- conflict solution that removes the other package is chosen. On a machine
- with a desktop session the agent is the one you want.
-
 Package: liblibrescrs-dev
 Section: libdevel
 Architecture: amd64
