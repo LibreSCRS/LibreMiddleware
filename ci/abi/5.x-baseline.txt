@@ -321,15 +321,10 @@ LibreSCRS::Signing::VisualSignatureParams::width() const@@LM_5
 LibreSCRS::Signing::VisualSignatureParams::x() const@@LM_5
 LibreSCRS::Signing::VisualSignatureParams::y() const@@LM_5
 LibreSCRS::Signing::VisualSignatureParams::~VisualSignatureParams()@@LM_5
-LibreSCRS::Signing::detail::translatePublicRequestToLibresign(LibreSCRS::Signing::SigningRequest const&, libresign::SigningRequest&)@@LM_5
 LibreSCRS::Signing::embeddedAppearanceFontData()@@LM_5
 LibreSCRS::Signing::layoutVisualSignature(std::basic_string_view<char, std::char_traits<char> >, LibreSCRS::Signing::Rect)@@LM_5
 LibreSCRS::Signing::staticTsa(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)@@LM_5
 LibreSCRS::Signing::staticTsaChecked(std::basic_string_view<char, std::char_traits<char> >)@@LM_5
-libresign::NativeSigningService::appendSigner(libresign::SigningRequest const&, std::span<unsigned char const, 18446744073709551615ul>, std::span<unsigned char const, 18446744073709551615ul>, LibreSCRS::Secure::Buffer const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)@@LM_5
-libresign::NativeSigningService::sign(libresign::SigningRequest const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, LibreSCRS::Secure::Buffer const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)@@LM_5
-libresign::Pkcs11Token::Pkcs11Token(libresign::Pkcs11ModuleHandle, LibreSCRS::Secure::Buffer const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, libresign::Pkcs11Token::TestSlotId, std::vector<unsigned char, std::allocator<unsigned char> > const&)@@LM_5
-libresign::Pkcs11Token::Pkcs11Token(libresign::Pkcs11ModuleHandle, LibreSCRS::Secure::Buffer const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::vector<unsigned char, std::allocator<unsigned char> > const&)@@LM_5
 
 == libLibreSCRS_SmartCard.so ==
 LibreSCRS::SmartCard::ActiveChannelHolder::ActiveChannelHolder(LibreSCRS::SmartCard::ActiveChannelHolder&&)@@LM_5
@@ -467,5 +462,3 @@ LibreSCRS::Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(Libr
 LibreSCRS::Trust::parseAndVerifyMasterList(std::vector<unsigned char, std::allocator<unsigned char> > const&, std::array<unsigned char, 32ul> const*)@@LM_5
 LibreSCRS::Trust::signerChainsToAnyAnchor(std::vector<unsigned char, std::allocator<unsigned char> > const&, std::vector<std::vector<unsigned char, std::allocator<unsigned char> >, std::allocator<std::vector<unsigned char, std::allocator<unsigned char> > > > const&)@@LM_5
 LibreSCRS::Trust::spkiSha256FromCertificateDer(std::vector<unsigned char, std::allocator<unsigned char> > const&)@@LM_5
-libresign::Pkcs11Token::Pkcs11Token(libresign::Pkcs11ModuleHandle, LibreSCRS::Secure::Buffer const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, libresign::Pkcs11Token::TestSlotId, std::vector<unsigned char, std::allocator<unsigned char> > const&)@@LM_5
-libresign::Pkcs11Token::Pkcs11Token(libresign::Pkcs11ModuleHandle, LibreSCRS::Secure::Buffer const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::vector<unsigned char, std::allocator<unsigned char> > const&)@@LM_5
