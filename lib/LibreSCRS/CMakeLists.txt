@@ -572,6 +572,30 @@ set_target_properties(LibreSCRS_SmartCard_PcscForTests PROPERTIES
     VISIBILITY_INLINES_HIDDEN OFF
 )
 
+# ──────────────────────────────────────────────────────────────────────────
+# Test-only copy of the connection over CryptoTokenKit, compiled against the
+# scripted CryptoTokenKit facade (test/ctk_fake.cpp) instead of the system
+# one, so the CryptoTokenKit body is judged on every platform. Executables
+# that link it must not link libLibreSCRS_SmartCard and must not call
+# CardSession::open: the class has another layout in this copy.
+# LIBRESCRS_BUILDING is deliberately absent: pcsc_connection.h refuses the
+# fake in anything that defines it, which every shipped library does.
+#
+# Not installed (no install(TARGETS …) rule). Build-tree-only.
+# ──────────────────────────────────────────────────────────────────────────
+add_library(LibreSCRS_SmartCard_CtkForTests OBJECT
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection.cpp
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_ctk.cpp
+    ${PROJECT_SOURCE_DIR}/test/ctk_fake.cpp
+)
+target_link_libraries(LibreSCRS_SmartCard_CtkForTests PUBLIC $<BUILD_INTERFACE:SmartCard_Impl>)
+target_include_directories(LibreSCRS_SmartCard_CtkForTests
+    PUBLIC ${PROJECT_SOURCE_DIR}/lib/smartcard/src ${PROJECT_SOURCE_DIR}/test)
+target_compile_features(LibreSCRS_SmartCard_CtkForTests PUBLIC cxx_std_23)
+target_compile_definitions(LibreSCRS_SmartCard_CtkForTests PUBLIC
+    LIBRESCRS_SMARTCARD_CTK_FAKE LIBRESCRS_INTERNAL_BUILD)
+set_target_properties(LibreSCRS_SmartCard_CtkForTests PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 # The shipped libraries. LibreSCRS_Secure and LibreSCRS_All are INTERFACE
 # targets with no sources of their own, and LibreSCRS_SmartCard_TestHelpers and
 # LibreSCRS_SmartCard_PcscForTests are build-tree-only test scaffolding — none

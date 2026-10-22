@@ -7,8 +7,11 @@
 
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <span>
 #include <string>
 #include <vector>
 #include <stdexcept>
@@ -18,6 +21,14 @@
 #include <PCSC/wintypes.h>
 #else
 #include <winscard.h>
+#endif
+
+#if defined(LIBRESCRS_SMARTCARD_CTK_FAKE)
+#include "ctk_smartcard.h"
+#endif
+
+#if defined(LIBRESCRS_SMARTCARD_CTK_FAKE) && defined(LIBRESCRS_BUILDING)
+#error "the scripted CryptoTokenKit facade is test-only and must never reach a shipped library"
 #endif
 
 #include "apdu.h"
@@ -97,12 +108,12 @@ public:
     // ships already-wrapped APDUs through transmitRaw(), which deliberately
     // bypasses the TransmitFilter (setTransmitFilter only intercepts the typed
     // transmit()). On a detached connection there is no card handle for those
-    // bytes to reach, so — and ONLY when card == 0 AND a responder has been
+    // bytes to reach, so — and ONLY when detached() AND a responder has been
     // installed — transmitRaw() hands the raw bytes here instead. This lets a
     // test play the card side of a live SM tunnel (e.g. the BAC downgrade-guard
-    // oracle). A production connection has card != 0, so the branch is never
+    // oracle). A production connection has a card, so the branch is never
     // taken and the wire path stays byte-identical; a detached connection with
-    // no responder installed falls through to the (handle-less) SCardTransmit
+    // no responder installed falls through to the body's handle-less wire
     // path exactly as before.
     using RawResponder = std::function<APDUResponse(std::span<const std::uint8_t>)>;
     void setDetachedRawResponder(RawResponder responder);
@@ -110,12 +121,12 @@ public:
     // Test-only ATR override for DETACHED connections. getATR() calls
     // SCardStatus() directly — a lower-level primitive than transmit(), so it
     // is never touched by the TransmitFilter installed via setTransmitFilter().
-    // A detached connection (card == 0) has no handle for SCardStatus() to
+    // A detached connection has no handle for SCardStatus() to
     // query, so a caller that identifies the card type from its ATR (e.g.
     // eidcard::EIdCard::detectCardType()) has no other way to be handed a
-    // synthetic ATR. Mirrors the transmitRaw seam below (card == 0 &&
+    // synthetic ATR. Mirrors the transmitRaw seam below (detached() &&
     // detachedRawResponder): getATR() only returns this override when
-    // card == 0 AND a non-empty ATR was installed here. A production
+    // detached() AND a non-empty ATR was installed here. A production
     // connection's getATR() path is untouched; a detached connection with
     // no ATR installed keeps failing exactly as before this seam existed
     // (SCardStatus(0, ...) throws) instead of silently returning {} --
@@ -124,13 +135,13 @@ public:
     void setDetachedAtr(std::vector<uint8_t> atr);
 
     // Test-only transaction failure for DETACHED connections. beginTransaction()
-    // short-circuits on a detached connection (card == 0) and returns without
+    // short-circuits on a detached connection and returns without
     // touching the null handle, so the throwing branch it takes on real
     // hardware -- removed card, reset card, reader unavailable, sharing
     // violation -- is unreachable from any test, and a caller whose duty is to
     // CONTAIN that throw has no way to prove that it does. Armed with a
     // non-zero PC/SC status, a detached beginTransaction() throws PCSCError
-    // carrying it instead of returning. A production connection has card != 0,
+    // carrying it instead of returning. A production connection has a card,
     // so the branch is never taken and the transaction path stays identical.
     void setDetachedTransactionFailure(LONG rv);
 
@@ -142,7 +153,7 @@ public:
     // so an assertion made after the fact certifies nothing about the order.
     // This runs the observer at the moment a detached endTransaction() takes
     // effect, which is where the order can actually be sampled. A production
-    // connection has card != 0 and never reaches it.
+    // connection has a card and never reaches it.
     void setDetachedTransactionReleaseObserver(std::function<void()> observer);
 
     // Low-level transmit that bypasses the TransmitFilter.
@@ -198,12 +209,30 @@ private:
     // diagnostic tools/tests reach it via the openRawDiagnostic() factory.
     explicit PCSCConnection(const std::string& readerName);
 
+    // The body of the platform (pcsc_connection_pcsc.cpp or
+    // pcsc_connection_ctk.cpp) defines these; the shared members in
+    // pcsc_connection.cpp, including the detached seams, call them.
+
+    // A DetachedTag connection: no handle, no card.
+    LIBRESCRS_INTERNAL bool detached() const noexcept;
+    // One command on the wire; the reply including its status word. No value:
+    // the card was reset, or its session lost with the card still in the
+    // reader, and the command was not answered. Any other failure throws.
+    LIBRESCRS_INTERNAL std::optional<std::vector<std::uint8_t>> exchangeWire(std::span<const std::uint8_t> command);
+    LIBRESCRS_INTERNAL void beginOnCard();
+    LIBRESCRS_INTERNAL void endOnCard() noexcept;
+    LIBRESCRS_INTERNAL std::vector<uint8_t> atrFromCard() const;
+
     TransmitFilter transmitFilter;
     RawResponder detachedRawResponder;
     std::vector<uint8_t> detachedAtr;
     std::string storedReaderName;
+#if defined(LIBRESCRS_SMARTCARD_CTK_FAKE)
+    std::unique_ptr<Ctk::CtkCard> ctk; // the one held exclusive CryptoTokenKit session; null = detached
+#else
     SCARDCONTEXT context = 0;
     SCARDHANDLE card = 0;
+#endif
     DWORD activeProtocol = 0;
     bool callerHoldsTransaction = false;
     // Test-only members go at the TAIL. This class is not installed, but it is

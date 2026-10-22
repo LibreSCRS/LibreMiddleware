@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-// The nine members of PCSCConnection that talk to PC/SC. The shared transmit
-// loop, tracing and the diagnostic opener stay in pcsc_connection.cpp.
+// The members of PCSCConnection that talk to PC/SC. The shared transmit
+// loop, the wire flow around exchangeWire, tracing, the detached seams and the
+// diagnostic opener stay in pcsc_connection.cpp.
 
 #include "pcsc_connection.h"
 #include "pcsc_trace.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -96,28 +100,15 @@ void PCSCConnection::reconnectWithReset()
     }
 }
 
-APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
+bool PCSCConnection::detached() const noexcept
 {
-    // Detached test seam: play the card side of a live SM tunnel. Taken ONLY
-    // by a detached connection (card == 0, no PC/SC handle) with a responder
-    // installed via setDetachedRawResponder — a production connection has
-    // card != 0 so this branch is unreachable and the wire path below is
-    // byte-identical; a detached connection with no responder falls through to
-    // the (handle-less) SCardTransmit path exactly as before.
-    if (card == 0 && detachedRawResponder) {
-        return detachedRawResponder(std::span<const std::uint8_t>(cmdBytes, cmdLen));
-    }
+    return card == 0;
+}
 
-    // PCSC_TRACE hook is installed on this lowest-level overload because
-    // every wire APDU passes through here regardless of which higher-level
-    // caller produced it — including Secure-Messaging wrappers which
-    // assemble a wrapped byte vector directly and skip the APDUCommand-
-    // typed transmit() overload. Hooking here therefore captures plain
-    // and SM-wrapped APDUs from a single point, and also picks up the
-    // chained GET-RESPONSE / 6Cxx-retry follow-ups that transmit() emits.
-    if (pcscTraceEnabled()) {
-        emitPcscTraceWire("transmit", readerName(), this, cmdBytes, cmdLen);
-    }
+std::optional<std::vector<std::uint8_t>> PCSCConnection::exchangeWire(std::span<const std::uint8_t> command)
+{
+    const auto* cmdBytes = command.data();
+    const auto cmdLen = static_cast<DWORD>(command.size());
 
 #ifndef NDEBUG
     // Log sent APDU — mask data for INSes whose payload carries PIN /
@@ -147,20 +138,11 @@ APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
 
     LONG rv = SCardTransmit(card, pioSendPci, cmdBytes, cmdLen, nullptr, recvBuffer.data(), &recvLength);
     if (rv == static_cast<LONG>(SCARD_W_RESET_CARD)) {
-        // Card was reset (e.g. hot-swap or external reset). Re-establish the
-        // handle without physically resetting the card, then retry once --
-        // unless the command carries a PIN: resent, it could spend a try on a
-        // card whose verified state the reset cleared, or on another card.
+        // Card was reset (e.g. hot-swap or external reset).
 #ifndef NDEBUG
-        std::cerr << "[PCSC] SCardTransmit got RESET_CARD, reconnecting..." << std::endl;
+        std::cerr << "[PCSC] SCardTransmit got RESET_CARD" << std::endl;
 #endif
-        reconnect();
-        if (cmdLen >= 2 && isSensitiveIns(cmdBytes[1])) {
-            throw PCSCError("SCardTransmit failed", rv);
-        }
-        pioSendPci = (activeProtocol == SCARD_PROTOCOL_T0) ? SCARD_PCI_T0 : SCARD_PCI_T1;
-        recvLength = static_cast<DWORD>(recvBuffer.size());
-        rv = SCardTransmit(card, pioSendPci, cmdBytes, cmdLen, nullptr, recvBuffer.data(), &recvLength);
+        return std::nullopt;
     }
     if (rv != SCARD_S_SUCCESS) {
 #ifndef NDEBUG
@@ -177,38 +159,11 @@ APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
     std::cerr << std::dec << std::endl;
 #endif
 
-    if (recvLength < 2)
-        throw PCSCError("SCardTransmit: response too short (" + std::to_string(recvLength) + " bytes)",
-                        SCARD_F_COMM_ERROR);
-
-    APDUResponse response;
-    response.sw1 = recvBuffer[recvLength - 2];
-    response.sw2 = recvBuffer[recvLength - 1];
-    if (recvLength > 2) {
-        response.data.assign(recvBuffer.begin(), recvBuffer.begin() + static_cast<ptrdiff_t>(recvLength - 2));
-    }
-
-#ifndef NDEBUG
-    std::cerr << "[PCSC] SW=0x" << std::hex << std::setfill('0') << std::setw(4) << response.statusWord() << std::dec
-              << ", data=" << response.data.size() << " bytes" << std::endl;
-#endif
-
-    return response;
+    return std::vector<std::uint8_t>(recvBuffer.begin(), recvBuffer.begin() + static_cast<ptrdiff_t>(recvLength));
 }
 
-void PCSCConnection::beginTransaction()
+void PCSCConnection::beginOnCard()
 {
-    // Detached test connection (DetachedTag ctor): no card handle, no PC/SC
-    // I/O. Treat the transaction as held without touching the (null) handle
-    // so test-only holder acquisition through the CardTransaction RAII
-    // wrapper works without a live reader.
-    if (card == 0) {
-        // ...unless a test armed a failure through the detached seam: this is
-        // the only way to reach the throw below without hardware.
-        if (detachedTransactionRv != SCARD_S_SUCCESS)
-            throw PCSCError("SCardBeginTransaction failed", detachedTransactionRv);
-        return;
-    }
     LONG rv = SCardBeginTransaction(card);
     if (rv == static_cast<LONG>(SCARD_W_RESET_CARD)) {
         // Card was reset externally (reader firmware, or prior SCARD_RESET_CARD by another
@@ -221,43 +176,15 @@ void PCSCConnection::beginTransaction()
         throw PCSCError("SCardBeginTransaction failed", rv);
 }
 
-void PCSCConnection::endTransaction() noexcept
+void PCSCConnection::endOnCard() noexcept
 {
-    // Detached test connection: no card handle to release (see beginTransaction).
-    if (card == 0) {
-        // ...but a test may be watching for the moment of release, which is
-        // the only point at which the release ORDER is observable; see
-        // setDetachedTransactionReleaseObserver. The call is contained because
-        // this function is noexcept and the observer is arbitrary test code.
-        if (detachedReleaseObserver) {
-            try {
-                detachedReleaseObserver();
-            } catch (...) {
-            }
-        }
-        return;
-    }
     SCardEndTransaction(card, SCARD_LEAVE_CARD);
 }
 
-std::vector<uint8_t> PCSCConnection::getATR() const
+std::vector<uint8_t> PCSCConnection::atrFromCard() const
 {
-    // Detached test connection WITH an ATR installed via setDetachedAtr:
-    // hand those bytes back instead of querying the (handle-less)
-    // SCardStatus. Mirrors the transmitRaw seam above (card == 0 &&
-    // detachedRawResponder): only a detached connection that opted in by
-    // installing a responder/ATR gets the synthetic answer. A detached
-    // connection with no ATR installed falls through to SCardStatus(0, ...)
-    // exactly as before setDetachedAtr existed, which fails (throws) --
-    // e.g. eidcard::EIdCard::detectCardType() reached via
-    // CardPlugin::canHandleConnection() on an un-rigged detached session
-    // must keep seeing that failure, not a silent {} that would route it
-    // into the AID-probing SELECT fallback and generate APDUs a passive
-    // detached rig never expects.
-    if (card == 0 && !detachedAtr.empty()) {
-        return detachedAtr;
-    }
-
+    // A detached connection (card == 0) gets here too and fails in
+    // SCardStatus, as it always has.
     DWORD readerLen = 0;
     DWORD state = 0;
     DWORD protocol = 0;

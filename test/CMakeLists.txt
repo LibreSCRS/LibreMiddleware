@@ -457,6 +457,13 @@ target_include_directories(pcsc_6c_retry_test PRIVATE
 target_compile_definitions(pcsc_6c_retry_test PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(pcsc_6c_retry_test)
 
+# The CryptoTokenKit body of the connection against a scripted CryptoTokenKit:
+# one held session per connection, session loss, and the PC/SC codes it maps
+# to. Runs everywhere; links no LibreSCRS library.
+add_executable(CtkConnectionTests ctk_connection_test.cpp)
+target_link_libraries(CtkConnectionTests LibreSCRS_SmartCard_CtkForTests GTest::gtest_main)
+gtest_discover_tests(CtkConnectionTests)
+
 # selectByFileId P2 parameter test
 add_executable(apdu_select_p2_test apdu_select_p2_test.cpp)
 target_link_libraries(apdu_select_p2_test SmartCard_Impl GTest::gtest_main)
