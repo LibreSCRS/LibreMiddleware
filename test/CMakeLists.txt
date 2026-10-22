@@ -448,14 +448,17 @@ gtest_discover_tests(pcsc_connection_filter_test)
 # the stubs interpose for the whole executable. The connection comes from
 # LibreSCRS_SmartCard_PcscForTests, compiled into the binary, because the copy
 # inside libLibreSCRS_SmartCard does not see the stubs on macOS.
-add_executable(pcsc_6c_retry_test pcsc_6c_retry_test.cpp)
-target_link_libraries(pcsc_6c_retry_test SmartCard_Impl LibreSCRS_SmartCard_PcscForTests GTest::gtest_main)
-target_include_directories(pcsc_6c_retry_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src)
-# LM-internal test: reaches directly into lib/smartcard/src; must advertise
-# the internal-build marker so the #error guard in apdu.h lets it in.
-target_compile_definitions(pcsc_6c_retry_test PRIVATE LIBRESCRS_INTERNAL_BUILD)
-gtest_discover_tests(pcsc_6c_retry_test)
+# macOS has no PC/SC body to stub; the CryptoTokenKit body has its own tests.
+if(NOT APPLE)
+    add_executable(pcsc_6c_retry_test pcsc_6c_retry_test.cpp)
+    target_link_libraries(pcsc_6c_retry_test SmartCard_Impl LibreSCRS_SmartCard_PcscForTests GTest::gtest_main)
+    target_include_directories(pcsc_6c_retry_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src)
+    # LM-internal test: reaches directly into lib/smartcard/src; must advertise
+    # the internal-build marker so the #error guard in apdu.h lets it in.
+    target_compile_definitions(pcsc_6c_retry_test PRIVATE LIBRESCRS_INTERNAL_BUILD)
+    gtest_discover_tests(pcsc_6c_retry_test)
+endif()
 
 # The CryptoTokenKit body of the connection against a scripted CryptoTokenKit:
 # one held session per connection, session loss, and the PC/SC codes it maps
@@ -463,6 +466,28 @@ gtest_discover_tests(pcsc_6c_retry_test)
 add_executable(CtkConnectionTests ctk_connection_test.cpp)
 target_link_libraries(CtkConnectionTests LibreSCRS_SmartCard_CtkForTests GTest::gtest_main)
 gtest_discover_tests(CtkConnectionTests)
+
+if(APPLE)
+    # The CryptoTokenKit facade against Objective-C objects answering the same
+    # selectors; it never reaches the system's CryptoTokenKit.
+    add_executable(CtkSmartCardTests ctk_smartcard_test.mm
+        ${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_smartcard.mm)
+    set_source_files_properties(ctk_smartcard_test.mm ${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_smartcard.mm
+        TARGET_DIRECTORY CtkSmartCardTests PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_include_directories(CtkSmartCardTests PRIVATE ${PROJECT_SOURCE_DIR}/lib/smartcard/src ${PROJECT_SOURCE_DIR}/include)
+    target_compile_definitions(CtkSmartCardTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+    target_link_libraries(CtkSmartCardTests SmartCard_Impl GTest::gtest_main "-framework CryptoTokenKit" "-framework Foundation")
+    gtest_discover_tests(CtkSmartCardTests)
+
+    # The shipped library in a process without the smart-card entitlement:
+    # opening a card fails and says why. Runs unsigned: the one name in
+    # LIBRESCRS_UNSIGNED_EXECUTABLES (top-level CMakeLists.txt).
+    add_executable(CardSessionMacTests cardsession_mac_test.cpp)
+    target_include_directories(CardSessionMacTests PRIVATE ${PROJECT_SOURCE_DIR}/lib/smartcard/src)
+    target_compile_definitions(CardSessionMacTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+    target_link_libraries(CardSessionMacTests LibreSCRS_SmartCard SmartCard_Impl GTest::gtest_main)
+    gtest_discover_tests(CardSessionMacTests)
+endif()
 
 # selectByFileId P2 parameter test
 add_executable(apdu_select_p2_test apdu_select_p2_test.cpp)

@@ -293,10 +293,14 @@ add_library(LibreSCRS_SmartCard ${LIBREMIDDLEWARE_LIB_TYPE}
     SmartCard/MonitorService.cpp
     SmartCard/SessionPresence.cpp
     SmartCard/SmartCardServices.cpp
-    # The PC/SC connection holds process-wide PC/SC state, so it is defined
-    # here and only here; every other image imports it from this library.
+    # The connection holds process-wide card state, so it is defined here and
+    # only here; every other image imports it from this library. macOS reaches
+    # the card through one held CryptoTokenKit session, everything else
+    # through PC/SC.
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection.cpp
-    ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_pcsc.cpp
+    $<$<PLATFORM_ID:Darwin>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_ctk.cpp>
+    $<$<PLATFORM_ID:Darwin>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_smartcard.mm>
+    $<$<NOT:$<PLATFORM_ID:Darwin>>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_pcsc.cpp>
     ${LIBRESCRS_SMARTCARD_PUBLIC_HEADERS}
     ${LIBRESCRS_SMARTCARD_INTERNAL_HEADERS}
 )
@@ -317,6 +321,11 @@ target_include_directories(LibreSCRS_SmartCard PRIVATE
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src)
 target_compile_features(LibreSCRS_SmartCard PUBLIC cxx_std_23)
 target_compile_definitions(LibreSCRS_SmartCard PRIVATE LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD)
+if(APPLE)
+    set_source_files_properties(${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_smartcard.mm
+        PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(LibreSCRS_SmartCard PRIVATE "-framework CryptoTokenKit" "-framework Foundation")
+endif()
 # Plugins link CardPlugin_Impl (which now pulls LibreSCRS_SmartCard via PUBLIC)
 # into dynamic .so artefacts, so the static archive must be position-independent.
 set_target_properties(LibreSCRS_SmartCard PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -553,24 +562,27 @@ set_target_properties(LibreSCRS_SmartCard_TestHelpers PROPERTIES
 #
 # Not installed (no install(TARGETS …) rule). Build-tree-only.
 # ──────────────────────────────────────────────────────────────────────────
-add_library(LibreSCRS_SmartCard_PcscForTests OBJECT
-    ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection.cpp
-    ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_pcsc.cpp
-)
-target_link_libraries(LibreSCRS_SmartCard_PcscForTests
-    PUBLIC LibreSCRS_SmartCard
-    PRIVATE $<BUILD_INTERFACE:SmartCard_Impl>
-)
-target_include_directories(LibreSCRS_SmartCard_PcscForTests
-    PRIVATE ${PROJECT_SOURCE_DIR}/lib/smartcard/src)
-target_compile_features(LibreSCRS_SmartCard_PcscForTests PUBLIC cxx_std_23)
-target_compile_definitions(LibreSCRS_SmartCard_PcscForTests PRIVATE
-    LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD)
-set_target_properties(LibreSCRS_SmartCard_PcscForTests PROPERTIES
-    POSITION_INDEPENDENT_CODE ON
-    CXX_VISIBILITY_PRESET default
-    VISIBILITY_INLINES_HIDDEN OFF
-)
+# macOS has no PC/SC body to stub.
+if(NOT APPLE)
+    add_library(LibreSCRS_SmartCard_PcscForTests OBJECT
+        ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection.cpp
+        ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_pcsc.cpp
+    )
+    target_link_libraries(LibreSCRS_SmartCard_PcscForTests
+        PUBLIC LibreSCRS_SmartCard
+        PRIVATE $<BUILD_INTERFACE:SmartCard_Impl>
+    )
+    target_include_directories(LibreSCRS_SmartCard_PcscForTests
+        PRIVATE ${PROJECT_SOURCE_DIR}/lib/smartcard/src)
+    target_compile_features(LibreSCRS_SmartCard_PcscForTests PUBLIC cxx_std_23)
+    target_compile_definitions(LibreSCRS_SmartCard_PcscForTests PRIVATE
+        LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD)
+    set_target_properties(LibreSCRS_SmartCard_PcscForTests PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        CXX_VISIBILITY_PRESET default
+        VISIBILITY_INLINES_HIDDEN OFF
+    )
+endif()
 
 # ──────────────────────────────────────────────────────────────────────────
 # Test-only copy of the connection over CryptoTokenKit, compiled against the

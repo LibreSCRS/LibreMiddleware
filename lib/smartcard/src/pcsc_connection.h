@@ -23,7 +23,7 @@
 #include <winscard.h>
 #endif
 
-#if defined(LIBRESCRS_SMARTCARD_CTK_FAKE)
+#if defined(__APPLE__) || defined(LIBRESCRS_SMARTCARD_CTK_FAKE)
 #include "ctk_smartcard.h"
 #endif
 
@@ -227,7 +227,7 @@ private:
     RawResponder detachedRawResponder;
     std::vector<uint8_t> detachedAtr;
     std::string storedReaderName;
-#if defined(LIBRESCRS_SMARTCARD_CTK_FAKE)
+#if defined(__APPLE__) || defined(LIBRESCRS_SMARTCARD_CTK_FAKE)
     std::unique_ptr<Ctk::CtkCard> ctk; // the one held exclusive CryptoTokenKit session; null = detached
 #else
     SCARDCONTEXT context = 0;
