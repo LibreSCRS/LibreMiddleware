@@ -296,6 +296,7 @@ add_library(LibreSCRS_SmartCard ${LIBREMIDDLEWARE_LIB_TYPE}
     # The PC/SC connection holds process-wide PC/SC state, so it is defined
     # here and only here; every other image imports it from this library.
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection.cpp
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_pcsc.cpp
     ${LIBRESCRS_SMARTCARD_PUBLIC_HEADERS}
     ${LIBRESCRS_SMARTCARD_INTERNAL_HEADERS}
 )
@@ -554,6 +555,7 @@ set_target_properties(LibreSCRS_SmartCard_TestHelpers PROPERTIES
 # ──────────────────────────────────────────────────────────────────────────
 add_library(LibreSCRS_SmartCard_PcscForTests OBJECT
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection.cpp
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_pcsc.cpp
 )
 target_link_libraries(LibreSCRS_SmartCard_PcscForTests
     PUBLIC LibreSCRS_SmartCard
