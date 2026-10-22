@@ -63,7 +63,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - id: pre
-        uses: LibreSCRS/ci/actions/release-preflight@b9848b4990ae046072497f10d6f5b2bfdfa45470
+        uses: LibreSCRS/ci/actions/release-preflight@9930a61090c701fee68abb89f543e6d77bd8519d
         with:
           mode: ${{ inputs.mode || (github.ref_type == 'tag' && 'publish' || 'rehearse') }}
           version-min: '1'
@@ -97,13 +97,13 @@ jobs:
       # build first, so a tag and a rehearsal build the same way.
       - name: Build the packages for ${{ matrix.slug }}
         id: build
-        uses: LibreSCRS/ci/actions/pkg-build@b9848b4990ae046072497f10d6f5b2bfdfa45470
+        uses: LibreSCRS/ci/actions/pkg-build@9930a61090c701fee68abb89f543e6d77bd8519d
         with:
           slug: ${{ matrix.slug }}
           upstream: source
 
       - name: Install them in a clean container and judge the result
-        uses: LibreSCRS/ci/actions/pkg-verify@b9848b4990ae046072497f10d6f5b2bfdfa45470
+        uses: LibreSCRS/ci/actions/pkg-verify@9930a61090c701fee68abb89f543e6d77bd8519d
         with:
           slug: ${{ matrix.slug }}
           packages: ${{ steps.build.outputs.art }}/${{ matrix.slug }}
@@ -146,7 +146,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           repository: LibreSCRS/ci
-          ref: b9848b4990ae046072497f10d6f5b2bfdfa45470
+          ref: 9930a61090c701fee68abb89f543e6d77bd8519d
           path: .ci
           persist-credentials: false
 
@@ -182,7 +182,7 @@ jobs:
           pattern: 'packages-*'
           merge-multiple: true
           path: signed
-      - uses: LibreSCRS/ci/actions/pkg-sign@b9848b4990ae046072497f10d6f5b2bfdfa45470
+      - uses: LibreSCRS/ci/actions/pkg-sign@9930a61090c701fee68abb89f543e6d77bd8519d
         with:
           mode: ${{ needs.preflight.outputs.mode }}
           packages: signed
@@ -232,7 +232,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           repository: LibreSCRS/ci
-          ref: b9848b4990ae046072497f10d6f5b2bfdfa45470
+          ref: 9930a61090c701fee68abb89f543e6d77bd8519d
           path: .ci
           persist-credentials: false
 
@@ -249,7 +249,7 @@ jobs:
           .ci/scripts/check-sbom artifacts/sbom.cdx.json
 
       - name: Checksums, signatures and provenance
-        uses: LibreSCRS/ci/actions/release-seal@b9848b4990ae046072497f10d6f5b2bfdfa45470
+        uses: LibreSCRS/ci/actions/release-seal@9930a61090c701fee68abb89f543e6d77bd8519d
         with:
           mode: ${{ needs.preflight.outputs.mode }}
           version: ${{ needs.preflight.outputs.version }}
@@ -276,7 +276,7 @@ jobs:
           name: sealed
           path: artifacts
       - name: Release notes, the asset set, and the release
-        uses: LibreSCRS/ci/actions/release-publish@b9848b4990ae046072497f10d6f5b2bfdfa45470
+        uses: LibreSCRS/ci/actions/release-publish@9930a61090c701fee68abb89f543e6d77bd8519d
         with:
           mode: ${{ needs.preflight.outputs.mode }}
           version: ${{ needs.preflight.outputs.version }}
