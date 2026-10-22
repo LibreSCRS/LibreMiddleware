@@ -121,7 +121,6 @@ if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
         src/native/native_signing_service.h
         src/native/depth_guard.h
         src/native/der_utils.h
-        src/native/digest_info.h
         src/native/native_utils.h
         src/native/pdf_value.h
         src/native/pdf_tokens.h

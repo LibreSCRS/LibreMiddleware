@@ -1213,18 +1213,43 @@ public:
         return r;
     }
 
-    // ECDSA with an EC key on any PKCS#15 card, and hash-on-card RSA-SHA256
-    // on the PACE-gated IAS-ECC family (NAM: SCE 8.0-C2V0). The caller
+    // The PKCS15Card scheme the PKCS#11 module picks for the same mechanism
+    // (Pkcs15Slot's mechanismToScheme).
+    static pkcs15::SignScheme signSchemeFor(LibreSCRS::Plugin::SignMechanism mechanism) noexcept
+    {
+        using LibreSCRS::Plugin::SignMechanism;
+        switch (mechanism) {
+        case SignMechanism::RSA_PKCS:
+            return pkcs15::SignScheme::RsaPkcs1;
+        case SignMechanism::RSA_SHA1:
+            return pkcs15::SignScheme::RsaSha1Pkcs1;
+        case SignMechanism::RSA_SHA256:
+            return pkcs15::SignScheme::RsaSha256Pkcs1;
+        case SignMechanism::RSA_SHA384:
+            return pkcs15::SignScheme::RsaSha384Pkcs1;
+        case SignMechanism::RSA_SHA512:
+            return pkcs15::SignScheme::RsaSha512Pkcs1;
+        case SignMechanism::ECDSA_SHA256:
+        case SignMechanism::ECDSA_SHA384:
+        case SignMechanism::ECDSA_SHA512:
+            return pkcs15::SignScheme::EcdsaRaw;
+        }
+        return pkcs15::SignScheme::EcdsaRaw;
+    }
+
+    // ECDSA with an EC key and RSA PKCS#1 v1.5 with an RSA key, on any
+    // PKCS#15 card, behind PACE or not (the IAS-ECC family that hashes
+    // on-card -- NAM: SCE 8.0-C2V0 -- included). The caller
     // deposits the signing PIN via setCredentials("pin", ...) immediately
     // before this call; PKCS15Card::sign owns the atomic select + VERIFY + MSE
     // + PSO under one holder (one card transaction), so nothing is
     // pre-verified here.
     //
-    // RSA_SHA256 stays gated on PACE: a plain PKCS#15 card expects a
-    // caller-built DigestInfo, and RsaSha256Pkcs1's attempt set would
-    // brute-force hash-on-card algorithms at it -- NotImplemented sends the
-    // caller to its verify + RSA_PKCS DigestInfo path instead. ECDSA needs no
-    // such gate: its input is always the hash.
+    // RSA runs the PKCS#11 module's scheme ladder, PACE or not: RSA_PKCS
+    // signs the caller's DigestInfo, and an RSA_SHA* mechanism hands the card
+    // the DigestInfo over the raw message built here AND the raw message, as
+    // the module does for CKM_SHA*_RSA_PKCS -- a plain card signs the first,
+    // a card that hashes on-card is reached with the second.
     //
     // An ECDSA signature leaves as the contract's fixed-width r || s. Cards
     // answer in DER, with INTEGERs at the full field width, or raw;
@@ -1244,9 +1269,20 @@ public:
         using LibreSCRS::Plugin::SignResultOutcome;
         LibreSCRS::Plugin::SignResult r;
         const bool ecdsa = LibreSCRS::Plugin::Internal::isEcdsaMechanism(mechanism);
-        if (!ecdsa && (mechanism != LibreSCRS::Plugin::SignMechanism::RSA_SHA256 || !requiresPaceFor(session))) {
+        const auto messageHash = LibreSCRS::Plugin::Internal::rsaMessageHash(mechanism);
+        if (!ecdsa && !messageHash && mechanism != LibreSCRS::Plugin::SignMechanism::RSA_PKCS) {
             r.outcome = SignResultOutcome::NotImplemented;
             return r;
+        }
+        // What the card is handed: the DigestInfo (for ECDSA the hash) and the
+        // raw message. Only an RSA_SHA* mechanism has them apart.
+        std::vector<std::uint8_t> digestInfo(data.begin(), data.end());
+        if (messageHash) {
+            digestInfo = LibreSCRS::Internal::Crypto::digestInfoOf(*messageHash, data);
+            if (digestInfo.empty()) {
+                r.outcome = SignResultOutcome::PluginError;
+                return r;
+            }
         }
         if (ecdsa && !LibreSCRS::Plugin::Internal::isEcdsaDigestLength(data.size())) {
             r.outcome = SignResultOutcome::PluginError; // not a hash: nothing reaches the card
@@ -1311,15 +1347,17 @@ public:
             }
 
             // PKCS15Card::sign takes both a DigestInfo and the raw data. For
-            // RsaSha256Pkcs1 on a hash-on-card SSCD the winning attempt is
-            // {algo 0x28, rawData} (the card hashes); for EcdsaRaw the first
-            // slot is sent as is -- the hash, cut to the field's width when it
-            // is longer (FIPS 186-4 6.4 signs its leftmost bytes; OpenSC sends
-            // the same). The certificate check below is over the whole hash,
-            // which OpenSSL cuts the same way. pin.view() references `pin`,
-            // alive here.
-            const auto cardInput = ecdsa ? data.first(std::min(data.size(), fieldBytes)) : data;
-            std::vector<std::uint8_t> dataVec(cardInput.begin(), cardInput.end());
+            // an RSA_SHA* scheme on a hash-on-card SSCD the winning attempt is
+            // {algo 0x28 (or its hash's), rawData} (the card hashes); for
+            // EcdsaRaw the first slot is sent as is -- the hash, cut to the
+            // field's width when it is longer (FIPS 186-4 6.4 signs its
+            // leftmost bytes; OpenSC sends the same). The certificate check
+            // below is over the whole hash, which OpenSSL cuts the same way.
+            // pin.view() references `pin`, alive here.
+            if (ecdsa)
+                digestInfo.resize(std::min(data.size(), fieldBytes));
+            std::vector<std::uint8_t> rawMessage =
+                messageHash ? std::vector<std::uint8_t>(data.begin(), data.end()) : digestInfo;
             // The card's refusal of the deposited PIN is reported as such, as
             // verifyPIN reports it; any other failure stays PluginError.
             const auto refusedOutcome = [&card] {
@@ -1328,8 +1366,7 @@ public:
             };
             std::vector<std::uint8_t> sig;
             try {
-                sig = card.sign(*matched, pin.view(), *pinInfo, dataVec, dataVec,
-                                ecdsa ? pkcs15::SignScheme::EcdsaRaw : pkcs15::SignScheme::RsaSha256Pkcs1);
+                sig = card.sign(*matched, pin.view(), *pinInfo, digestInfo, rawMessage, signSchemeFor(mechanism));
             } catch (...) {
                 if (!card.pinRefusal())
                     throw;

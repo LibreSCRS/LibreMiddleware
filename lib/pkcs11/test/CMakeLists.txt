@@ -61,7 +61,7 @@ target_include_directories(librescrs_pkcs11_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
     # pkcs11_version.h, configured into the module's own binary dir.
     ${CMAKE_CURRENT_BINARY_DIR}/..
-    ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src/native
+    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include
     ${LibreMiddleware_SOURCE_DIR}/lib/smartcard/src
 )
 

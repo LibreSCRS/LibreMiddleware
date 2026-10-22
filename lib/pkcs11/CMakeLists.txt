@@ -42,7 +42,8 @@ target_include_directories(librescrs-pkcs11 PUBLIC
 target_include_directories(librescrs-pkcs11 PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_BINARY_DIR}
-    ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src/native
+    # The shared internal Crypto headers (the PKCS#1 v1.5 DigestInfo builder).
+    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include
     ${LibreMiddleware_SOURCE_DIR}/lib/pkcs15/src
     ${LibreMiddleware_SOURCE_DIR}/lib/smartcard/src
 )

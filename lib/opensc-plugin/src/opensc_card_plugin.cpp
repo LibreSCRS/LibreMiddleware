@@ -1441,13 +1441,15 @@ public:
             return r;
         };
 
-        // RSA_PKCS carries a caller-built DigestInfo; the ECDSA_SHA*
-        // mechanisms carry the PRE-COMPUTED hash (the card signs it with no
-        // on-card hashing — signEcdsaBound passes SC_ALGORITHM_ECDSA_HASH_NONE). Anything
-        // else (e.g. hash-on-card RSA) stays NotImplemented so callers can
-        // route to a plugin that has the primitive.
+        // RSA_PKCS carries a caller-built DigestInfo and an RSA_SHA*
+        // mechanism the raw message, whose DigestInfo is built on the host
+        // (signRsaBound, as OpenScSlot does); the ECDSA_SHA* mechanisms carry
+        // the PRE-COMPUTED hash (the card signs it with no on-card hashing —
+        // signEcdsaBound passes SC_ALGORITHM_ECDSA_HASH_NONE). A mechanism
+        // this plugin does not know stays NotImplemented.
         const bool isEcdsa = LibreSCRS::Plugin::Internal::isEcdsaMechanism(mechanism);
-        if (mechanism != LibreSCRS::Plugin::SignMechanism::RSA_PKCS && !isEcdsa) {
+        if (mechanism != LibreSCRS::Plugin::SignMechanism::RSA_PKCS && !isEcdsa &&
+            !LibreSCRS::Plugin::Internal::rsaMessageHash(mechanism)) {
             LibreSCRS::Plugin::SignResult r;
             r.outcome = LibreSCRS::Plugin::SignResultOutcome::NotImplemented;
             return r;
@@ -1493,23 +1495,14 @@ public:
                     return;
                 }
 
-                auto* keyInfo = static_cast<sc_pkcs15_prkey_info_t*>(targetKey->data);
-                auto operation = [&] {
-                    size_t sigLen = keyInfo->modulus_length / 8; // RSA signature length in bytes
-                    std::vector<uint8_t> sig(sigLen);
-
-                    int rc = sc_pkcs15_compute_signature(
-                        session.p15card, targetKey, SC_ALGORITHM_RSA_PAD_PKCS1_TYPE_01 | SC_ALGORITHM_RSA_HASH_NONE,
-                        data.data(), data.size(), sig.data(), sig.size(), nullptr);
-
-                    if (rc < 0)
-                        return; // maps to PluginError below
-                    sig.resize(static_cast<size_t>(rc));
-                    result.signature = std::move(sig);
-                    result.outcome = LibreSCRS::Plugin::SignResultOutcome::Ok;
-                    completed = true;
-                };
-                refusedPin = verifyDepositedPinThenRun(session, *targetKey, operation);
+                refusedPin = LibreSCRS::OpenSc::signRsaBound(
+                    session, *targetKey, mechanism, data, result,
+                    [&](unsigned long flags, const std::uint8_t* in, std::size_t inLength, std::uint8_t* out,
+                        std::size_t outLength) {
+                        return sc_pkcs15_compute_signature(session.p15card, targetKey, flags, in, inLength, out,
+                                                           outLength, nullptr);
+                    });
+                completed = result.ok();
             });
         if (run.activationFailed) {
             LibreSCRS::Plugin::SignResult r;

@@ -7,9 +7,9 @@
 
 #include "pkcs11_library.h"
 
-#include "digest_info.h"
 #include "pkcs11_version.h"
 
+#include <LibreSCRS_internal/Crypto/DigestInfo.h>
 #include <internal/Crv.h>
 #include <internal/PKCS11Card.h>
 #include <internal/PKCS11CardProvider.h>
@@ -66,47 +66,27 @@ void padString(CK_UTF8CHAR* dest, std::size_t destLen, const char* src)
 [[nodiscard]] std::vector<std::uint8_t> buildDigestInfo(CK_MECHANISM_TYPE mech, const std::uint8_t* data,
                                                         std::size_t dataLen)
 {
-    const EVP_MD* md = nullptr;
-    const std::uint8_t* pfx = nullptr;
-    std::size_t pfxLen = 0;
+    using LibreSCRS::Internal::Crypto::DigestInfoHash;
+    DigestInfoHash hash{};
     switch (mech) {
     case CKM_SHA1_RSA_PKCS:
-        md = EVP_sha1();
-        pfx = libresign::kDigestInfoSha1Prefix;
-        pfxLen = sizeof(libresign::kDigestInfoSha1Prefix);
+        hash = DigestInfoHash::Sha1;
         break;
     case CKM_SHA256_RSA_PKCS:
-        md = EVP_sha256();
-        pfx = libresign::kDigestInfoSha256Prefix;
-        pfxLen = sizeof(libresign::kDigestInfoSha256Prefix);
+        hash = DigestInfoHash::Sha256;
         break;
     case CKM_SHA384_RSA_PKCS:
-        md = EVP_sha384();
-        pfx = libresign::kDigestInfoSha384Prefix;
-        pfxLen = sizeof(libresign::kDigestInfoSha384Prefix);
+        hash = DigestInfoHash::Sha384;
         break;
     case CKM_SHA512_RSA_PKCS:
-        md = EVP_sha512();
-        pfx = libresign::kDigestInfoSha512Prefix;
-        pfxLen = sizeof(libresign::kDigestInfoSha512Prefix);
+        hash = DigestInfoHash::Sha512;
         break;
     default:
         throw std::runtime_error("buildDigestInfo: unsupported mechanism");
     }
-
-    std::vector<std::uint8_t> hash(static_cast<std::size_t>(EVP_MD_size(md)));
-    auto ctx = std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)>(EVP_MD_CTX_new(), EVP_MD_CTX_free);
-    if (!ctx)
-        throw std::runtime_error("buildDigestInfo: EVP_MD_CTX_new failed");
-    unsigned int hLen = static_cast<unsigned int>(hash.size());
-    if (!EVP_DigestInit_ex(ctx.get(), md, nullptr) || !EVP_DigestUpdate(ctx.get(), data, dataLen) ||
-        !EVP_DigestFinal_ex(ctx.get(), hash.data(), &hLen)) {
+    auto digestInfo = LibreSCRS::Internal::Crypto::digestInfoOf(hash, std::span<const std::uint8_t>(data, dataLen));
+    if (digestInfo.empty())
         throw std::runtime_error("buildDigestInfo: digest operation failed");
-    }
-
-    std::vector<std::uint8_t> digestInfo(pfxLen + hash.size());
-    std::memcpy(digestInfo.data(), pfx, pfxLen);
-    std::memcpy(digestInfo.data() + pfxLen, hash.data(), hash.size());
     return digestInfo;
 }
 

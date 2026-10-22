@@ -25,6 +25,9 @@
 // BY VALUE — assertions scan value snapshots and never hold pointers into
 // the filter's state across transmits. No hardware, no PC/SC, no real
 // credential values.
+//
+// The same scripted card also carries the plugin's signing cases, ECDSA and
+// RSA: what each mechanism sends the card, and that the answer verifies.
 
 #include <LibreSCRS/Plugin/CardPlugin.h>
 #include <LibreSCRS/Plugin/CardPluginService.h>
@@ -41,6 +44,9 @@
 #include "pkcs15_pkcs11_card.h"
 
 #include "ec_test_key.h"
+#include "rsa_test_key.h"
+
+#include <LibreSCRS_internal/Crypto/DigestInfo.h>
 
 #include <internal/Crv.h>
 #include <internal/PKCS11ObjectInfo.h>
@@ -118,6 +124,12 @@ struct ScriptedPkcs15Card
     /// PSO COMPUTE DIGITAL SIGNATURE body when signing is answered. Unset: the
     /// fixed 256-byte RSA-shaped answer the census has always seen.
     std::function<std::vector<std::uint8_t>(const APDUCommand&)> psoReply;
+    /// A real RSA key (borrowed). When set, MSE SET takes only one-byte
+    /// algorithm references and refuses those in @ref refusedAlgorithms, and
+    /// PSO answers what a card holding the key signs for the chosen one.
+    const LibreSCRS::TestSupport::RsaTestKey* rsaKey = nullptr;
+    std::set<std::uint8_t> refusedAlgorithms;
+    std::optional<std::uint8_t> mseAlgorithm;
 
     /// Per log entry: whether a card transaction was held, and which one.
     struct TransactionMark
@@ -185,12 +197,49 @@ struct ScriptedPkcs15Card
                 return lastTryAnswers63C0 ? APDUResponse{{}, 0x63, 0xC0} : APDUResponse{{}, 0x69, 0x83};
             return {{}, 0x63, static_cast<std::uint8_t>(0xC0 | triesLeft)};
         }
+        if (rsaKey != nullptr && cmd.ins == 0x22) { // MSE SET
+            mseAlgorithm.reset();
+            if (cmd.data.size() < 3 || cmd.data[0] != 0x80 || cmd.data[1] != 0x01 ||
+                refusedAlgorithms.contains(cmd.data[2]))
+                return {{}, 0x6A, 0x80};
+            mseAlgorithm = cmd.data[2];
+            return {{}, 0x90, 0x00};
+        }
+        if (rsaKey != nullptr && cmd.ins == 0x2A && cmd.p1 == 0x9E && cmd.p2 == 0x9A) { // PSO CDS
+            auto signature = mseAlgorithm ? rsaCardSignature(*mseAlgorithm, cmd.data) : std::vector<std::uint8_t>{};
+            if (signature.empty())
+                return {{}, 0x6A, 0x80};
+            return {std::move(signature), 0x90, 0x00};
+        }
         if (answersSigning && cmd.ins == 0x22) // MSE SET
             return {{}, 0x90, 0x00};
         if (answersSigning && cmd.ins == 0x2A && cmd.p1 == 0x9E && cmd.p2 == 0x9A) // PSO CDS
             return {psoReply ? psoReply(cmd) : std::vector<std::uint8_t>(256, 0x5A), 0x90, 0x00};
 
         return {{}, 0x6D, 0x00}; // anything else: instruction not supported
+    }
+
+    /// The PKCS#1 v1.5 signature this card's key makes for @p input under
+    /// @p algorithm: a DigestInfo it pads (0x02, 0x08), or a message it
+    /// hashes first (0x0A, 0x28, 0x29, 0x2A). Empty for anything else.
+    [[nodiscard]] std::vector<std::uint8_t> rsaCardSignature(std::uint8_t algorithm,
+                                                             std::span<const std::uint8_t> input) const
+    {
+        switch (algorithm) {
+        case 0x02:
+        case 0x08:
+            return rsaKey->signPkcs1(nullptr, input);
+        case 0x0A:
+            return rsaKey->signPkcs1(EVP_sha1(), input);
+        case 0x28:
+            return rsaKey->signPkcs1(EVP_sha256(), input);
+        case 0x29:
+            return rsaKey->signPkcs1(EVP_sha384(), input);
+        case 0x2A:
+            return rsaKey->signPkcs1(EVP_sha512(), input);
+        default:
+            return {};
+        }
     }
 };
 
@@ -1121,6 +1170,132 @@ std::optional<APDUCommand> lastMseSince(const std::vector<APDUCommand>& log, std
 }
 
 } // namespace
+
+// ---------------------------------------------------------------------------
+// RSA through the card plugin: the mechanisms the PKCS#11 module signs with
+// ---------------------------------------------------------------------------
+
+namespace {
+
+struct RsaSigningRig
+{
+    FakeCardRig rig;
+    std::shared_ptr<const LibreSCRS::TestSupport::RsaTestKey> key;
+};
+
+// A plain PKCS#15 card -- no PACE -- with one 2048-bit RSA key and its
+// certificate. @p refused names the algorithm references its MSE SET refuses:
+// {0x02, 0x08} makes a card that signs only what it hashes itself.
+RsaSigningRig makeRsaSigningRig(const char* readerName, std::set<std::uint8_t> refused = {})
+{
+    RsaSigningRig r;
+    r.rig = makeSigningRig(readerName, false);
+    r.key = std::make_shared<const LibreSCRS::TestSupport::RsaTestKey>(LibreSCRS::TestSupport::makeRsaTestKey());
+    r.rig.card->files[kCertFid] = r.key->certDer;
+    r.rig.card->rsaKey = r.key.get();
+    r.rig.card->refusedAlgorithms = std::move(refused);
+    return r;
+}
+
+const std::vector<std::uint8_t> kMessage{'t', 'o', ' ', 'b', 'e', ' ', 's', 'i', 'g', 'n', 'e', 'd'};
+
+struct RsaDigestCase
+{
+    LibreSCRS::Plugin::SignMechanism mechanism;
+    const EVP_MD* (*md)();
+    LibreSCRS::Internal::Crypto::DigestInfoHash hash;
+    std::uint8_t onCardAlgorithm;
+    const char* name;
+};
+
+const RsaDigestCase kRsaDigestCases[] = {
+    {LibreSCRS::Plugin::SignMechanism::RSA_SHA1, &EVP_sha1, LibreSCRS::Internal::Crypto::DigestInfoHash::Sha1, 0x0A,
+     "RSA_SHA1"},
+    {LibreSCRS::Plugin::SignMechanism::RSA_SHA256, &EVP_sha256, LibreSCRS::Internal::Crypto::DigestInfoHash::Sha256,
+     0x28, "RSA_SHA256"},
+    {LibreSCRS::Plugin::SignMechanism::RSA_SHA384, &EVP_sha384, LibreSCRS::Internal::Crypto::DigestInfoHash::Sha384,
+     0x29, "RSA_SHA384"},
+    {LibreSCRS::Plugin::SignMechanism::RSA_SHA512, &EVP_sha512, LibreSCRS::Internal::Crypto::DigestInfoHash::Sha512,
+     0x2A, "RSA_SHA512"},
+};
+
+std::optional<APDUCommand> lastPsoSince(const std::vector<APDUCommand>& log, std::size_t mark)
+{
+    std::optional<APDUCommand> found;
+    for (std::size_t i = mark; i < log.size(); ++i) {
+        if (log[i].ins == 0x2A && log[i].p1 == 0x9E && log[i].p2 == 0x9A)
+            found = log[i];
+    }
+    return found;
+}
+
+} // namespace
+
+// The caller's DigestInfo is signed as given, with no secure channel: a plain
+// PKCS#15 card signs RSA as readily as the PKCS#11 module makes it.
+TEST(Pkcs15PluginRsa, DigestInfoIsSignedWithoutPace)
+{
+    auto r = makeRsaSigningRig("RSA Reader 0");
+    CardPluginService registry{pluginDir()};
+    auto plugin = findPkcs15(registry);
+    ASSERT_NE(plugin, nullptr);
+    plugin->setCredentials(*r.rig.session, "pin", LibreSCRS::Secure::String{std::string_view{"1234"}});
+
+    const auto digestInfo =
+        LibreSCRS::Internal::Crypto::digestInfoOf(LibreSCRS::Internal::Crypto::DigestInfoHash::Sha256, kMessage);
+    const auto result = plugin->sign(*r.rig.session, 0x4410, digestInfo, SignMechanism::RSA_PKCS);
+
+    ASSERT_EQ(result.outcome, SignResultOutcome::Ok);
+    EXPECT_TRUE(r.key->verifies(EVP_sha256(), kMessage, result.signature));
+}
+
+// A raw message under every RSA_SHA* mechanism: the card is handed the
+// DigestInfo over that hash, built on the host, as the module hands it.
+TEST(Pkcs15PluginRsa, RawMessageIsSignedOverEachHashWithoutPace)
+{
+    for (const auto& c : kRsaDigestCases) {
+        SCOPED_TRACE(c.name);
+        auto r = makeRsaSigningRig(c.name);
+        CardPluginService registry{pluginDir()};
+        auto plugin = findPkcs15(registry);
+        ASSERT_NE(plugin, nullptr);
+        plugin->setCredentials(*r.rig.session, "pin", LibreSCRS::Secure::String{std::string_view{"1234"}});
+        const auto mark = r.rig.card->log.size();
+
+        const auto result = plugin->sign(*r.rig.session, 0x4410, kMessage, c.mechanism);
+
+        ASSERT_EQ(result.outcome, SignResultOutcome::Ok);
+        EXPECT_TRUE(r.key->verifies(c.md(), kMessage, result.signature));
+        const auto pso = lastPsoSince(r.rig.card->log, mark);
+        ASSERT_TRUE(pso.has_value());
+        EXPECT_EQ(pso->data, LibreSCRS::Internal::Crypto::digestInfoOf(c.hash, kMessage));
+    }
+}
+
+// A card that signs only what it hashes itself refuses the DigestInfo forms;
+// the plugin then reaches the card's own algorithm for that hash with the raw
+// message, as the module's ladder does.
+TEST(Pkcs15PluginRsa, HashOnCardCardGetsItsAlgorithmAndTheMessage)
+{
+    for (const auto& c : kRsaDigestCases) {
+        SCOPED_TRACE(c.name);
+        auto r = makeRsaSigningRig(c.name, {0x02, 0x08});
+        CardPluginService registry{pluginDir()};
+        auto plugin = findPkcs15(registry);
+        ASSERT_NE(plugin, nullptr);
+        plugin->setCredentials(*r.rig.session, "pin", LibreSCRS::Secure::String{std::string_view{"1234"}});
+        const auto mark = r.rig.card->log.size();
+
+        const auto result = plugin->sign(*r.rig.session, 0x4410, kMessage, c.mechanism);
+
+        ASSERT_EQ(result.outcome, SignResultOutcome::Ok);
+        EXPECT_TRUE(r.key->verifies(c.md(), kMessage, result.signature));
+        EXPECT_EQ(r.rig.card->mseAlgorithm, std::optional<std::uint8_t>{c.onCardAlgorithm});
+        const auto pso = lastPsoSince(r.rig.card->log, mark);
+        ASSERT_TRUE(pso.has_value());
+        EXPECT_EQ(pso->data, kMessage);
+    }
+}
 
 // A card that answers ECDSA in DER and whose PrKDF records no field size:
 // the plugin takes the width from the certificate, reads the reply and

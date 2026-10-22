@@ -248,10 +248,10 @@ std::vector<uint8_t> derEncode(Fn i2dFn, const T* obj)
 } // namespace libresign::native_utils
 
 // Re-export DigestInfo prefixes into native_utils for existing callers.
-#include "digest_info.h"
+#include <LibreSCRS_internal/Crypto/DigestInfo.h>
 namespace libresign::native_utils {
-using libresign::kDigestInfoSha1Prefix;
-using libresign::kDigestInfoSha256Prefix;
-using libresign::kDigestInfoSha384Prefix;
-using libresign::kDigestInfoSha512Prefix;
+using LibreSCRS::Internal::Crypto::kDigestInfoSha1Prefix;
+using LibreSCRS::Internal::Crypto::kDigestInfoSha256Prefix;
+using LibreSCRS::Internal::Crypto::kDigestInfoSha384Prefix;
+using LibreSCRS::Internal::Crypto::kDigestInfoSha512Prefix;
 } // namespace libresign::native_utils

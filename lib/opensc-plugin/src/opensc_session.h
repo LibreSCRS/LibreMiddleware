@@ -409,6 +409,44 @@ template <typename Compute>
     return verifyDepositedPinThenRun(session, key, operation);
 }
 
+/// RSA PKCS#1 v1.5 with the RSA key @p key, the way OpenScSlot signs every RSA
+/// mechanism (opensc_slot.cpp, signFlagsFor and routeDigestInfo): @p data
+/// becomes the DigestInfo -- as given for @c RSA_PKCS, built here over the raw
+/// message for an @c RSA_SHA* mechanism -- and OpenSC pads it with no hashing
+/// on the card (@c SC_ALGORITHM_RSA_PAD_PKCS1_TYPE_01 |
+/// @c SC_ALGORITHM_RSA_HASH_NONE). @p compute has the shape of
+/// sc_pkcs15_compute_signature over the bound card.
+/// @return As verifyDepositedPinThenRun. @p result is Ok only with a signature.
+template <typename Compute>
+[[nodiscard]] std::optional<RefusedPin>
+signRsaBound(OpenSCSession& session, const sc_pkcs15_object_t& key, LibreSCRS::Plugin::SignMechanism mechanism,
+             std::span<const std::uint8_t> data, LibreSCRS::Plugin::SignResult& result, Compute&& compute)
+{
+    const auto* info = static_cast<const sc_pkcs15_prkey_info_t*>(key.data);
+    if (info == nullptr || info->modulus_length == 0)
+        return std::nullopt; // result stays Unspecified: PluginError at the caller, nothing sent
+    std::vector<std::uint8_t> digestInfo(data.begin(), data.end());
+    if (const auto hash = LibreSCRS::Plugin::Internal::rsaMessageHash(mechanism)) {
+        digestInfo = LibreSCRS::Internal::Crypto::digestInfoOf(*hash, data);
+        if (digestInfo.empty())
+            return std::nullopt;
+    } else if (mechanism != LibreSCRS::Plugin::SignMechanism::RSA_PKCS) {
+        return std::nullopt;
+    }
+    auto operation = [&] {
+        std::vector<std::uint8_t> sig((info->modulus_length + 7) / 8);
+        const int rc =
+            compute(static_cast<unsigned long>(SC_ALGORITHM_RSA_PAD_PKCS1_TYPE_01 | SC_ALGORITHM_RSA_HASH_NONE),
+                    digestInfo.data(), digestInfo.size(), sig.data(), sig.size());
+        if (rc < 0)
+            return;
+        sig.resize(static_cast<std::size_t>(rc));
+        result.signature = std::move(sig);
+        result.outcome = LibreSCRS::Plugin::SignResultOutcome::Ok;
+    };
+    return verifyDepositedPinThenRun(session, key, operation);
+}
+
 /// The outcome a key operation reports when VERIFY of its deposited PIN
 /// failed with @p rc. The card's verdict on the PIN is
 /// read exactly as the OpenSC PKCS#11 slot reads it: a wrong PIN is
