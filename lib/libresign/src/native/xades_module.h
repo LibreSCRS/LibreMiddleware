@@ -17,12 +17,12 @@
 
 namespace libresign {
 
-class Pkcs11Token;
+class SigningKey;
 
 class XAdESModule
 {
 public:
-    SigningResult sign(const std::vector<uint8_t>& data, const std::string& fileName, Pkcs11Token& token,
+    SigningResult sign(const std::vector<uint8_t>& data, const std::string& fileName, SigningKey& key,
                        SignatureLevel level, SignaturePackaging packaging, const TSAConfig& tsa);
 
     /// @brief Append a new signer to an existing XAdES signature.
@@ -51,7 +51,7 @@ public:
     /// @return @ref SigningResult; on failure carries a @ref SignFailureKind
     /// @throws nothing (failures returned via @ref SigningResult)
     [[nodiscard]] SigningResult appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
-                                             const std::string& fileName, Pkcs11Token& token, SignatureLevel level,
+                                             const std::string& fileName, SigningKey& key, SignatureLevel level,
                                              const TSAConfig& tsa);
 
 private:
@@ -68,7 +68,7 @@ private:
     /// values participate in the digested SignedProperties + SignedInfo
     /// canonicalisations, so post-hoc rename of Ids would invalidate the
     /// signature.
-    SigningResult signWithSuffix(const std::vector<uint8_t>& data, const std::string& fileName, Pkcs11Token& token,
+    SigningResult signWithSuffix(const std::vector<uint8_t>& data, const std::string& fileName, SigningKey& key,
                                  SignatureLevel level, SignaturePackaging packaging, const TSAConfig& tsa,
                                  std::string_view forcedIdSuffix);
 };

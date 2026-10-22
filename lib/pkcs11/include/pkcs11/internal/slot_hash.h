@@ -10,16 +10,12 @@
 // share a 64-byte `CK_SLOT_INFO::slotDescription` prefix (the spec's
 // fixed-buffer limit causes truncation on long real-world reader names).
 //
-// Both ends of the LM signing path agree on this single hash function:
-//
-//   1. `lib/pkcs11/src/pkcs11_library.cpp` — the LM PKCS#11 module
-//      formats `slotDescription` as
-//        "LibreSCRS [<8-hex-hash>] <readable-suffix>"
-//      where <8-hex-hash> = fnv1a32(fullReaderName).
-//
-//   2. `lib/libresign/src/native/pkcs11_token.cpp` — Pkcs11Token's slot
-//      lookup computes fnv1a32(callerSuppliedReaderName) and scans
-//      `slotDescription` for the matching `[<hash>]` substring.
+// `lib/pkcs11/src/pkcs11_library.cpp` — the LM PKCS#11 module — formats
+// `slotDescription` as
+//   "LibreSCRS [<8-hex-hash>] <readable-suffix>"
+// where <8-hex-hash> = fnv1a32(fullReaderName). A PKCS#11 consumer that
+// knows the full reader name finds its slot by computing the same hash and
+// scanning `slotDescription` for the matching `[<hash>]` substring.
 //
 // The hash needs to be:
 //   * deterministic (same bytes in → same bytes out across compilers,
@@ -116,7 +112,7 @@ inline constexpr std::size_t kSlotHashBracketLen = 11;
 ///
 /// into @p out (assumed @c CK_SLOT_INFO::slotDescription[64], blank-padded
 /// per PKCS#11 spec — caller MUST `std::memset(out, ' ', 64)` before
-/// calling, NOT zero-pad). The bracket gives Pkcs11Token a stable,
+/// calling, NOT zero-pad). The bracket gives a consumer a stable,
 /// truncation-immune handle for slot disambiguation; the readable suffix
 /// gives `pkcs11-tool --list-slots` users a recognisable reader name.
 ///

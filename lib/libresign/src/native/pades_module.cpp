@@ -6,7 +6,7 @@
 #include "native/pdf_doc_timestamp.h"
 #include "utf8.h"
 #include "native/pdf_dss.h"
-#include "native/pkcs11_token.h"
+#include "native/signing_key.h"
 #include "native/revocation_client.h"
 #include "native_utils.h"
 
@@ -603,7 +603,7 @@ PAdESModule::PreparedPdf PAdESModule::preparePdf(const std::vector<uint8_t>& pdf
 
 // ---- sign ----
 
-SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, Pkcs11Token& token, SignatureLevel level,
+SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, SigningKey& key, SignatureLevel level,
                                 const TSAConfig& tsa, const VisualSignatureParams& visual)
 {
     try {
@@ -670,8 +670,8 @@ SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, Pkcs11Tok
         RevocationData revData;
         const bool wantsLT = (level >= SignatureLevel::B_LT);
         if (wantsLT) {
-            dssMat.certs = token.certificateChain();
-            revData = collectRevocationData(token, tsa);
+            dssMat.certs = key.certificateChain();
+            revData = collectRevocationData(key, tsa);
             if (auto failure = revocationFailClosed(revData))
                 return *failure;
             dssMat.crls = revData.crls;
@@ -722,7 +722,7 @@ SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, Pkcs11Tok
         //    /M entry written above carries the claimed time. A CMS that keeps
         //    it grades PAdES-BES instead of PAdES-BASELINE-B.
         CAdESModule cades;
-        auto cms = cades.signBB(signedData, token, SigningTimeAttribute::Omit);
+        auto cms = cades.signBB(signedData, key, SigningTimeAttribute::Omit);
         if (cms.empty())
             return makeFailure(SignFailureKind::OpensslError, "CAdES B-B signing produced empty output");
 
@@ -895,13 +895,17 @@ SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, Pkcs11Tok
 
         return makeSuccess(std::move(prepared.bytes));
 
+    } catch (const SignFailureException& e) {
+        // A typed failure -- the key's verdict on the PIN among them -- keeps
+        // its kind; the generic arm below would make it an engine error.
+        return makeFailure(e.kind, e.what());
     } catch (const std::exception& e) {
         return makeFailure(SignFailureKind::EngineError, std::string("PAdES error: ") + e.what());
     }
 }
 
 SigningResult PAdESModule::appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
-                                        Pkcs11Token& token, SignatureLevel level, const TSAConfig& tsa,
+                                        SigningKey& key, SignatureLevel level, const TSAConfig& tsa,
                                         const VisualSignatureParams& visual)
 {
     // The PAdES incremental-update model lets sign() handle a prior-signed PDF
@@ -910,7 +914,7 @@ SigningResult PAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
     // from the prior PDF's signed byte range, so when supplied it is currently
     // informational only.
     (void)originalDoc;
-    return sign(std::vector<uint8_t>(prior.begin(), prior.end()), token, level, tsa, visual);
+    return sign(std::vector<uint8_t>(prior.begin(), prior.end()), key, level, tsa, visual);
 }
 
 } // namespace libresign

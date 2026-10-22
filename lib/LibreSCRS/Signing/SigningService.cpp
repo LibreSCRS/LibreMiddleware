@@ -6,7 +6,6 @@
 
 #include "detail/DocumentPrecheck.h"
 #include "detail/ErrorClassifier.h"
-#include "detail/Pkcs11ModulePath.h"
 #include "detail/RequestBridge.h"
 
 // LM-internal Trust friend header used by the lazy-fetch-merge lambda
@@ -15,8 +14,10 @@
 // internal include is allowed.
 #include "../Trust/internal/TrustStoreInternalAccess.h"
 #include "native/native_signing_service.h"
+#include "native/plugin_signing_key.h"
 
 #include <LibreSCRS/Auth/AuthRequirement.h>
+#include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Plugin/CardPlugin.h>
 #include <signing_service.h>
 #include <signing_service_factory.h>
@@ -28,14 +29,14 @@
 #include <array>
 #include <cctype>
 #include <cstdint>
-#include <cstdlib>
 #include <cstring>
+#include <expected>
 #include <filesystem>
 #include <fstream>
-#include <iostream>
 #include <memory>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -44,91 +45,99 @@
 #include <variant>
 #include <vector>
 
-#if defined(__APPLE__)
-#include <mach-o/dyld.h>
-#endif
-
-// The library directory of the build that installed the module, and the
-// absolute path that build computed for it. Both are PRIVATE compile
-// definitions on LibreSCRS_Signing, so the values travel with the library that
-// owns the resolver and that LM installs beside the module. A build that does
-// not pass them still compiles and simply skips the candidates they feed.
-#ifndef LIBRESCRS_INSTALL_LIBDIR_REL
-#define LIBRESCRS_INSTALL_LIBDIR_REL ""
-#endif
-#ifndef LIBRESCRS_PKCS11_MODULE_FULL_PATH
-#define LIBRESCRS_PKCS11_MODULE_FULL_PATH ""
-#endif
-
 namespace LibreSCRS::Signing {
 
 namespace {
 
-// Resolve the PKCS#11 module LibreMiddleware ships alongside itself.
-// Consumers (LibreCelik, LibreKDE, third-party tools) do not need to know
-// where the module lives — LM owns its own resource discovery. The
-// LIBRESCRS_PKCS11_MODULE environment variable is the override escape
-// hatch for tests and packagers; otherwise the candidate list, which lives in
-// detail/Pkcs11ModulePath.cpp so it can be asserted for every install layout,
-// covers every standard deploy layout LM ships into.
-std::string resolvePkcs11Module()
+// The certificate the request signs with, among those the plugin reads from
+// the card: the one whose CKA_ID the request names, else the one with the
+// request's label, else the card's only key. Two matches name no key and
+// none is guessed. @p chain receives every certificate the card exposed.
+std::expected<LibreSCRS::Plugin::CertificateData, SigningResult>
+signingCandidate(const SigningRequest& request, const LibreSCRS::Plugin::CardPlugin& cardPlugin,
+                 LibreSCRS::SmartCard::CardSession& session, std::vector<std::vector<std::uint8_t>>& chain)
 {
-    // PKCS#11 module filename uses each platform's native shared-library
-    // suffix: `.so` on Linux, `.dylib` on macOS. Matches what third-party
-    // PKCS#11 consumers (Firefox, Thunderbird, Adobe Acrobat, GnuPG,
-    // p11-kit) expect to see when the user picks a module file from a GUI
-    // dialog on the corresponding platform.
-#if defined(__APPLE__)
-    const std::string moduleName = "librescrs-pkcs11.dylib";
-#else
-    const std::string moduleName = "librescrs-pkcs11.so";
-#endif
-    if (const char* env = std::getenv("LIBRESCRS_PKCS11_MODULE"); env && *env) {
-        return std::string{env};
+    std::vector<LibreSCRS::Plugin::CertificateData> certs;
+    try {
+        certs = cardPlugin.readCertificates(session);
+    } catch (const std::exception& e) {
+        return std::unexpected(
+            SigningResult::signingEngineError(LibreSCRS::Auth::ErrorKeys::cardError(),
+                                              std::string{"reading the card's certificates failed: "} + e.what()));
     }
+    std::vector<LibreSCRS::Plugin::CertificateData*> matches;
+    for (auto& c : certs) {
+        if (!c.derBytes.empty())
+            chain.push_back(c.derBytes);
+        if (!c.keyFID)
+            continue;
+        const bool wanted = !request.keyId().empty()              ? c.ckaId == request.keyId()
+                            : !request.certificateLabel().empty() ? c.label == request.certificateLabel()
+                                                                  : true;
+        if (wanted)
+            matches.push_back(&c);
+    }
+    if (matches.empty()) {
+        return std::unexpected(SigningResult::signingEngineError(
+            LibreSCRS::Auth::ErrorKeys::cardError(), std::string{"no signing key on the card matches the request"}));
+    }
+    if (matches.size() > 1) {
+        return std::unexpected(SigningResult::signingEngineError(
+            LibreSCRS::Auth::ErrorKeys::keyAmbiguous(),
+            std::string{"more than one key on the card matches the request; name the key by its CKA_ID"}));
+    }
+    return std::move(*matches.front());
+}
 
-    std::error_code ec;
-    std::filesystem::path exePath;
-#if defined(__linux__)
-    exePath = std::filesystem::canonical("/proc/self/exe", ec).parent_path();
-    if (ec) {
-        return moduleName;
+// The key the engine signs with: the plugin on the caller's session, for the
+// candidate the request names. No PKCS#11 module is loaded and no second
+// connection to the card is opened.
+std::expected<std::unique_ptr<libresign::PluginSigningKey>, SigningResult>
+pluginSigningKey(const SigningRequest& request, const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,
+                 const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session,
+                 const LibreSCRS::Secure::Buffer& pin)
+{
+    // A key id no PKCS#15 card can carry names no key: the request is
+    // malformed, and the card is not read for it. The key re-checks it as its
+    // own invariant.
+    if (request.keyId().size() > libresign::PluginSigningKey::kMaxKeyIdLength) {
+        return std::unexpected(
+            SigningResult::invalidRequest(LibreSCRS::Auth::ErrorKeys::invalidRequest(),
+                                          std::string{"the key id is longer than a PKCS#15 identifier (255 bytes)"}));
     }
-#elif defined(__APPLE__)
-    {
-        std::uint32_t bufSize = 0;
-        _NSGetExecutablePath(nullptr, &bufSize);
-        std::string buf(bufSize, '\0');
-        if (_NSGetExecutablePath(buf.data(), &bufSize) != 0) {
-            return moduleName;
-        }
-        // _NSGetExecutablePath may return a symlinked path; canonicalise it
-        // so candidate-relative lookups land in the expected install layout.
-        auto resolved = std::filesystem::canonical(buf.c_str(), ec);
-        if (ec) {
-            return moduleName;
-        }
-        exePath = resolved.parent_path();
+    std::vector<std::vector<std::uint8_t>> chain;
+    auto chosen = signingCandidate(request, *cardPlugin, *session, chain);
+    if (!chosen)
+        return std::unexpected(std::move(chosen.error()));
+    try {
+        return std::make_unique<libresign::PluginSigningKey>(cardPlugin, session, std::move(*chosen), pin,
+                                                             std::move(chain), request.keyId(), CancelToken{});
+    } catch (const std::invalid_argument& e) {
+        return std::unexpected(SigningResult::invalidRequest(LibreSCRS::Auth::ErrorKeys::invalidRequest(), e.what()));
     }
-#else
-    // Other platforms (Windows etc.) — defer to dyld search path.
-    return moduleName;
-#endif
-    auto resolved = detail::resolvePkcs11ModulePath(exePath, moduleName, LIBRESCRS_INSTALL_LIBDIR_REL,
-                                                    LIBRESCRS_PKCS11_MODULE_FULL_PATH);
-    if (resolved != moduleName) {
-        return resolved;
+}
+
+// The caller's result for a failed engine call: the status the classifier
+// names, built by its factory, with the user message of the failure's kind.
+SigningResult engineFailure(const libresign::SigningResult& libResult)
+{
+    LocalizedText userMsg = libResult.failureKind.has_value() ? detail::kindToUserMessage(*libResult.failureKind)
+                                                              : LibreSCRS::Auth::ErrorKeys::signingEngineError();
+    switch (detail::classifyLibresignError(libResult)) {
+    case SigningResult::Status::PinVerificationFailed:
+        return SigningResult::pinVerificationFailed(std::move(userMsg), libResult.errorMessage);
+    case SigningResult::Status::CardBlocked:
+        return SigningResult::cardBlocked(std::move(userMsg), libResult.errorMessage);
+    case SigningResult::Status::UserCancelled:
+        return SigningResult::userCancelled();
+    case SigningResult::Status::TsaUnreachable:
+        return SigningResult::tsaUnreachable(std::move(userMsg), libResult.errorMessage);
+    case SigningResult::Status::InvalidDocument:
+        return SigningResult::invalidDocument(std::move(userMsg), libResult.errorMessage);
+    case SigningResult::Status::SigningEngineError:
+    default:
+        return SigningResult::signingEngineError(std::move(userMsg), libResult.errorMessage);
     }
-    // No packaged layout matched — a deployment that ships the module outside
-    // every known candidate, or does not ship it at all. Resolution now falls
-    // to the dynamic loader search path; if that also misses, the subsequent
-    // sign fails with an opaque engine error. Emit a breadcrumb so the
-    // misconfiguration is visible instead of silent.
-    std::clog << "[librescrs.signing] PKCS#11 module \"" << moduleName
-              << "\" not found at any candidate path (exe dir: " << exePath.string()
-              << "); falling back to bare name and relying on the dynamic loader search path. "
-                 "Set LIBRESCRS_PKCS11_MODULE to override.\n";
-    return moduleName; // let the dynamic loader search path handle it
 }
 
 // Format / level / packaging translation helpers plus the full
@@ -349,14 +358,6 @@ SigningService::Impl::runSignPipeline(const SigningRequest& request, const Auth:
         libTrust.cacheDirectory = trustSnapshot.cacheDirectory->string();
     }
 
-    // Resolve the PKCS#11 key alias from the request. LC populates this from the
-    // user-selected certificate's label (CertificateData::label). When absent,
-    // libresign's auto-select path picks the first signing-capable key on the
-    // token — the common case for single-cert cards. The reuse-safe CKA_ID
-    // discriminator (SigningRequest::keyId) is carried into libReq by the
-    // request bridge and consumed by the native Pkcs11Token key search.
-    const std::string& keyAlias = request.certificateLabel();
-
     libresign::SigningRequest libReq;
     // Translate all request-sourced fields (fileName, format, packaging,
     // level, signature-dictionary fields, the CKA_ID key discriminator, and
@@ -445,44 +446,16 @@ SigningService::Impl::runSignPipeline(const SigningRequest& request, const Auth:
         return {SigningResult::trustStoreUnavailableDiagnosticOnly(std::string{"libresign rejected TrustConfig"}), {}};
     }
 
-    // Pass the caller-chosen reader name through to libresign so its
-    // PKCS#11 slot lookup targets THIS card, not whichever card the
-    // PCSC daemon enumerated first. Without this, multi-card setups
-    // routed PIN to slots[0] and produced spurious "wrong PIN" errors.
-    // Forward the live display CardSession so its auto-registration in
-    // the process-local SessionPresence stays visible across the
-    // libresign call boundary — the in-process PKCS#11 provider probe
-    // refuses to open a parallel PC/SC handle on a reader carrying a
-    // live SM channel. Callers without a session in scope pass nullptr;
-    // no host-side SM tunnel exists, so the standalone bind path is
-    // safe to run.
-    auto libResult = service->sign(libReq, resolvePkcs11Module(), pinBuffer, keyAlias, session->readerName());
+    // The engine signs through the caller's plugin on the caller's session
+    // — the card the caller chose, over the channel it already holds. No
+    // module is loaded and no second connection to the card is opened.
+    auto key = pluginSigningKey(request, cardPlugin, session, pinBuffer);
+    if (!key)
+        return {std::move(key.error()), {}};
+    auto libResult = service->sign(libReq, **key);
 
-    if (!libResult.success) {
-        // The classifier returns one of the SigningResult::Status values; map
-        // each to its corresponding named factory so we keep the "factory is
-        // the only way to construct" invariant end-to-end.
-        const auto classified = detail::classifyLibresignError(libResult);
-        // Derive the user-facing message from the typed failure kind when the
-        // module set one; fall back to the generic engine-error key for the
-        // legacy exception path (Pkcs11Token CKR throws that bypass the
-        // module's typed return shape).
-        LocalizedText userMsg = libResult.failureKind.has_value() ? detail::kindToUserMessage(*libResult.failureKind)
-                                                                  : LibreSCRS::Auth::ErrorKeys::signingEngineError();
-        switch (classified) {
-        case SigningResult::Status::PinVerificationFailed:
-            return {SigningResult::pinVerificationFailed(std::move(userMsg), libResult.errorMessage), {}};
-        case SigningResult::Status::CardBlocked:
-            return {SigningResult::cardBlocked(std::move(userMsg), libResult.errorMessage), {}};
-        case SigningResult::Status::TsaUnreachable:
-            return {SigningResult::tsaUnreachable(std::move(userMsg), libResult.errorMessage), {}};
-        case SigningResult::Status::InvalidDocument:
-            return {SigningResult::invalidDocument(std::move(userMsg), libResult.errorMessage), {}};
-        case SigningResult::Status::SigningEngineError:
-        default:
-            return {SigningResult::signingEngineError(std::move(userMsg), libResult.errorMessage), {}};
-        }
-    }
+    if (!libResult.success)
+        return {engineFailure(libResult), {}};
 
     return {std::nullopt, std::move(libResult.signedDocument)};
 }
@@ -728,8 +701,7 @@ try {
     // deliberately retains its inline form for now and does NOT share that
     // decomposition (its libresign entry point and span inputs differ). The
     // two are therefore asymmetric: any change to the shared sign() core
-    // (error classification, trust translation, the CKA_ID/KeyAmbiguous path)
-    // must be mirrored here until appendSigner is folded into the shared core
+    // (trust translation, TSA wiring) must be mirrored here until appendSigner is folded into the shared core
     // alongside the per-format dispatcher and a buffer-append overload in a
     // future cleanup. The blocks below intentionally mirror runSignPipeline.
     libresign::TrustConfig libTrust;
@@ -753,8 +725,6 @@ try {
     if (trustSnapshot.cacheDirectory.has_value()) {
         libTrust.cacheDirectory = trustSnapshot.cacheDirectory->string();
     }
-
-    const std::string& keyAlias = request.certificateLabel();
 
     // For appendSigner the prior-signature bytes flow as a span; libReq.document
     // is left empty (the per-format dispatcher reads from the priorSignature
@@ -813,33 +783,15 @@ try {
         return SigningResult::trustStoreUnavailableDiagnosticOnly(std::string{"libresign rejected TrustConfig"});
     }
 
-    // Forward the live display CardSession to the engine so its
-    // SessionPresence registration stays visible across the call - the
-    // in-process PKCS#11 provider probe defers to the host on any
-    // reader carrying a live SM channel. Mandatory for PACE-protected
-    // re-signs where a parallel PC/SC handle would invalidate the
-    // host's tunnel before C_Login.
-    auto libResult = service->appendSigner(libReq, priorSignature, originalDocument, pinBuffer, resolvePkcs11Module(),
-                                           keyAlias, session->readerName());
+    // As sign(): the new signer signs through the caller's plugin on the
+    // caller's session.
+    auto key = pluginSigningKey(request, cardPlugin, session, pinBuffer);
+    if (!key)
+        return std::move(key.error());
+    auto libResult = service->appendSigner(libReq, priorSignature, originalDocument, **key);
 
-    if (!libResult.success) {
-        const auto classified = detail::classifyLibresignError(libResult);
-        LocalizedText userMsg = libResult.failureKind.has_value() ? detail::kindToUserMessage(*libResult.failureKind)
-                                                                  : LibreSCRS::Auth::ErrorKeys::signingEngineError();
-        switch (classified) {
-        case SigningResult::Status::PinVerificationFailed:
-            return SigningResult::pinVerificationFailed(std::move(userMsg), libResult.errorMessage);
-        case SigningResult::Status::CardBlocked:
-            return SigningResult::cardBlocked(std::move(userMsg), libResult.errorMessage);
-        case SigningResult::Status::TsaUnreachable:
-            return SigningResult::tsaUnreachable(std::move(userMsg), libResult.errorMessage);
-        case SigningResult::Status::InvalidDocument:
-            return SigningResult::invalidDocument(std::move(userMsg), libResult.errorMessage);
-        case SigningResult::Status::SigningEngineError:
-        default:
-            return SigningResult::signingEngineError(std::move(userMsg), libResult.errorMessage);
-        }
-    }
+    if (!libResult.success)
+        return engineFailure(libResult);
 
     // Atomic write — same .tmp + rename(2) idiom as sign().
     auto outputPath = request.outputFile();

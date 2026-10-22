@@ -6,8 +6,7 @@
 #ifdef LIBRESIGN_HAS_NATIVE
 
 #include "native/cades_module.h"
-#include "native/pkcs11_module_manager.h"
-#include "native/pkcs11_token.h"
+#include "signing_keys.h"
 #include "native/tsa_client.h"
 #include "signing_service.h"
 #include "signing_test_support/signing_test_support.h"
@@ -229,16 +228,15 @@ TEST(TSAClient, Timeout_ExceedsConfigured)
 
 // ---- OCSP fail-clean placeholder ----
 //
-// SigningRevocation::OcspUnreachable_BLT_FailsClean requires injecting a
-// mock OCSP responder URL into a signer cert's AIA extension AND a live
-// PKCS#11 token to drive @c PAdESModule::sign through the LT path; that
-// shape needs the same dependency-injection plumbing as the cancellation
-// tests (see test/cancellation_test.cpp). Kept as a SKIPPED placeholder so
-// the coverage gap stays visible.
+// SigningRevocation::OcspUnreachable_BLT_FailsClean requires a signer
+// certificate whose AIA extension names a mock OCSP responder, under an issuer
+// the LT path accepts as a proven terminal; the in-memory test key's
+// self-signed leaf has neither. Kept as a SKIPPED placeholder so the coverage
+// gap stays visible.
 TEST(SigningRevocation, OcspUnreachable_BLT_FailsClean)
 {
-    GTEST_SKIP() << "Requires injecting mock OCSP responder URL into signer cert AIA + "
-                    "mockable Pkcs11Token (see test/signing_test_support/pkcs11_token_mock.h)";
+    GTEST_SKIP() << "Requires a signer certificate whose AIA names a mock OCSP responder, "
+                    "under an issuer the LT path accepts as a proven terminal";
 }
 
 // ---- Module-level B-T missing-TSA contract ----
@@ -278,21 +276,11 @@ TEST(CAdESModuleStandalone, BTRequiresTSA)
 // and PAdES paths already produce for the equivalent timestamp-step failure.
 // MockHttpServer (GarbageBody) replies HTTP 200 with a body that is not a
 // TimeStampResp, so TSAClient parses it and reports failure — driving the
-// addTimestamp throw inside sign() without any live network. signBB still
-// needs a real token, so this is SoftHSM-gated like the other module tests.
+// addTimestamp throw inside sign() without any live network; signBB signs with
+// the in-memory test key.
 TEST(CAdESSignClassification, BT_TsaFailure_IsTsaUnreachable)
 {
-    const char* softHsmPath = libresign::test::findSoftHsmPath();
-    if (!softHsmPath)
-        GTEST_SKIP() << "SoftHSM2 not found";
-
-    libresign::Pkcs11ModuleManager manager;
-    auto slot = libresign::test::findSoftHsmTestSlot(manager.acquire(softHsmPath));
-    if (!slot)
-        GTEST_SKIP() << "SoftHSM2 token '" << libresign::test::kSoftHsmTokenLabel << "' not initialised";
-
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{*slot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
 
     MockHttpServer server(MockHttpServer::Mode::GarbageBody);
     TSAConfig tsa;
@@ -320,8 +308,8 @@ TEST(CAdESSignClassification, BT_TsaFailure_IsTsaUnreachable)
 // plain std::runtime_error (NOT a SignFailureException) and falls through to the
 // generic arm -> EngineError. These token-free helper-level tests pin that type
 // partition so a refactor can't silently mis-classify an internal fault as
-// TsaUnreachable (or vice versa). The SoftHSM CI host additionally exercises the
-// TSA-failure -> TsaUnreachable branch via
+// TsaUnreachable (or vice versa). The TSA-failure -> TsaUnreachable branch is
+// exercised end to end by
 // CAdESSignClassification.BT_TsaFailure_IsTsaUnreachable above.
 
 TEST(CAdESTimestampPartition, MissingUrlThrowsTypedInvalidInput)

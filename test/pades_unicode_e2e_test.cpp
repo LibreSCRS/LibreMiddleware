@@ -4,8 +4,7 @@
 #include <gtest/gtest.h>
 
 #include "native/pades_module.h"
-#include "native/pkcs11_module_manager.h"
-#include "native/pkcs11_token.h"
+#include "signing_keys.h"
 #include "signing_test_support/signing_test_support.h"
 #include "signing_service.h"
 
@@ -50,27 +49,16 @@ class PAdESUnicodeE2ETest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        softHsmPath = libresign::test::findSoftHsmPath();
-        if (!softHsmPath)
-            GTEST_SKIP() << "SoftHSM2 not found";
         if (!haveTool("pdftotext"))
             GTEST_SKIP() << "pdftotext (poppler-utils) not installed";
-        auto slot = libresign::test::findSoftHsmTestSlot(manager.acquire(softHsmPath));
-        if (!slot)
-            GTEST_SKIP() << "SoftHSM2 token '" << libresign::test::kSoftHsmTokenLabel << "' not initialised";
-        testSlot = *slot;
     }
-    const char* softHsmPath = nullptr;
-    libresign::Pkcs11ModuleManager manager;
-    unsigned long testSlot = 0;
 };
 
 } // namespace
 
 TEST_F(PAdESUnicodeE2ETest, SerbianLatinSignerIsSearchable)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     PAdESModule pades;
 
     VisualSignatureParams v;
@@ -101,8 +89,7 @@ TEST_F(PAdESUnicodeE2ETest, SerbianLatinSignerIsSearchable)
 
 TEST_F(PAdESUnicodeE2ETest, SerbianCyrillicSignerIsSearchable)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     PAdESModule pades;
 
     VisualSignatureParams v;
@@ -132,8 +119,7 @@ TEST_F(PAdESUnicodeE2ETest, SerbianCyrillicSignerIsSearchable)
 
 TEST_F(PAdESUnicodeE2ETest, MixedSignerIsSearchable)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     PAdESModule pades;
 
     VisualSignatureParams v;

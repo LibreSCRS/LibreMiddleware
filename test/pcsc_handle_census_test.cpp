@@ -4,30 +4,24 @@
 /// @file
 /// @brief A census of the PC/SC handles one document signature opens.
 ///
-/// Signing a document today loads the PKCS#11 module into the signing process
-/// and asks it for its slots, and the module probes every reader the PC/SC
-/// layer reports. On a reader whose session carries no live secure channel that
-/// probe opens a second handle to the card the caller is already talking to,
-/// and on every other reader it opens one the caller never asked about.
+/// A document is signed through the card plugin on the session the caller
+/// already holds: no PKCS#11 module is loaded into the signing process, so no
+/// slot is listed and no reader is probed. This test counts every handle either
+/// PC/SC layer opens during one signature and finds none -- not on the reader
+/// the signature targets, where the caller's session is the only connection,
+/// not on a reader whose session carries a live secure channel, and not on a
+/// neighbour nobody asked about. A neighbour's own operation is never waited on.
 ///
-/// This test pins those numbers as measured. It is not a wish: the counts below
-/// record a known violation, so an intended change moves them deliberately and
-/// an unintended one is visible. When signing stops loading a PKCS#11 module in
-/// this process these counts become zero.
+/// Before this, signing loaded the module, which opened a second handle to the
+/// target card and a handle on every other reader that reported a card. dlopen
+/// is interposed here, so a regression that loads a module named like it again
+/// is counted.
 ///
 /// @par What it cannot tell you
 /// It counts handles; it says nothing about what a handle does to a card,
-/// because there is no card here. The numbers are also those of a signature
-/// whose bind FAILS — the counting provider answers every APDU with 6A 82 — so
-/// a handle opened only on the path where the bind succeeds would not move
-/// them. Both limits are stated in `CHANGELOG.md` under known limitations, and
-/// closing them needs hardware, not another in-process test.
-///
-/// A third limit is the configuration: this file WRITES the OPENSC_CONF it
-/// measures against, so every number here is a number for the reader driver's own
-/// defaults. A host's `/etc/opensc.conf` can set `connect_exclusive`,
-/// `disconnect_action` or `provider_library`, which change the bind path without
-/// moving any count in this file.
+/// because there is no card here. This file also WRITES the OPENSC_CONF it
+/// measures against, so every number is a number for the reader driver's own
+/// defaults.
 ///
 /// @par How the two PC/SC layers are told apart
 /// There are two paths to PC/SC in this picture and they must be counted
@@ -82,6 +76,8 @@
 #include <dlfcn.h>
 
 #include <algorithm>
+#include <chrono>
+#include <future>
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -92,6 +88,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "soft_key_plugin.h"
 
 // ---------------------------------------------------------------------------
 // dlopen / dlclose interposition
@@ -252,33 +250,6 @@ AppletAid makeAid()
     return AppletAid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
 }
 
-class StubPkiPlugin : public LibreSCRS::Plugin::CardPlugin
-{
-public:
-    StubPkiPlugin()
-    {
-        setIdentity("stub-pki", "Stub PKI", /*priority=*/1000);
-    }
-    LibreSCRS::Plugin::CardCapabilities capabilities() const override
-    {
-        return LibreSCRS::Plugin::CardCapabilities::PKI;
-    }
-    std::span<const LibreSCRS::Plugin::Atr> supportedAtrs() const noexcept override
-    {
-        static constexpr std::array<LibreSCRS::Plugin::Atr, 0> kAtrs{};
-        return kAtrs;
-    }
-    LibreSCRS::Plugin::ReadResult doReadCard(LibreSCRS::SmartCard::CardSession&, GroupCallback) const override
-    {
-        return LibreSCRS::Plugin::ReadResult::ok(LibreSCRS::Plugin::CardData{});
-    }
-    LibreSCRS::Plugin::CredentialCounters readCounters(LibreSCRS::SmartCard::CardSession&,
-                                                       std::string_view) const override
-    {
-        return {};
-    }
-};
-
 std::shared_ptr<LibreSCRS::Signing::SigningService> makeSigningService()
 {
     LibreSCRS::Trust::TrustConfig trust;
@@ -292,27 +263,26 @@ std::shared_ptr<LibreSCRS::Signing::SigningService> makeSigningService()
 LibreSCRS::Signing::SigningRequest makeBufferRequest()
 {
     LibreSCRS::Signing::SigningRequest::Builder b;
-    b.format(LibreSCRS::Signing::SignatureFormat::Pades)
+    // A detached CMS signature: any bytes are a document to it.
+    b.format(LibreSCRS::Signing::SignatureFormat::Cades)
         .level(LibreSCRS::Signing::SignatureLevel::B_B)
-        .packaging(LibreSCRS::Signing::PackagingMode::Enveloped);
+        .packaging(LibreSCRS::Signing::PackagingMode::Detached);
     return std::move(b).buildForBufferSign();
 }
 
-/// @brief Sign a buffer through the facade and return the public outcome.
+/// @brief Sign a buffer through the facade with a plugin whose key really
+///        signs, and return the public outcome.
 LibreSCRS::Signing::SigningResult signOnce(const std::shared_ptr<LibreSCRS::Signing::SigningService>& svc,
                                            const std::shared_ptr<CardSession>& session)
 {
-    auto request = makeBufferRequest();
     auto provider = [](const LibreSCRS::Auth::AuthRequirement&) {
         std::vector<LibreSCRS::Auth::CredentialEntry> values;
         values.emplace_back("pin", LibreSCRS::Secure::String{"0000"});
         return LibreSCRS::Auth::CredentialResult::ok(std::move(values));
     };
-    auto plugin = std::make_shared<StubPkiPlugin>();
-    // A %PDF- prefix clears the fail-fast document pre-check so the pipeline
-    // reaches the backend instead of rejecting the bytes.
-    static const std::vector<std::uint8_t> document{'%', 'P', 'D', 'F', '-', '1', '.', '7', '\n', '%', 0xE2, 0xE3};
-    return svc->sign(request, std::span<const std::uint8_t>{document}, provider, plugin, session);
+    auto plugin = std::make_shared<LibreSCRS::TestSupport::SoftKeyPlugin>();
+    static const std::vector<std::uint8_t> document{'t', 'o', ' ', 'b', 'e', ' ', 's', 'i', 'g', 'n', 'e', 'd'};
+    return svc->sign(makeBufferRequest(), std::span<const std::uint8_t>{document}, provider, plugin, session);
 }
 
 void setReaderSet(const std::string& semicolonSeparated)
@@ -338,11 +308,10 @@ void installCountingProviders()
 
     ::setenv("OPENSC_CONF", confPath.c_str(), 1);
     ::setenv("LIBRESCRS_SHIM_ATR", kShimAtr, 1);
-    ::setenv("LIBRESCRS_PKCS11_MODULE", LIBRESCRS_PKCS11_MODULE_PATH, 1);
     setReaderSet(std::string{kSmReader} + ";" + kTargetReader + ";" + kNeighbourReader);
 }
 
-class PcscHandleCensusPinsKnownSecondHandleTest : public ::testing::Test
+class PcscHandleCensusTest : public ::testing::Test
 {
 protected:
     void SetUp() override
@@ -392,83 +361,71 @@ protected:
 
 } // namespace
 
-TEST_F(PcscHandleCensusPinsKnownSecondHandleTest, DocumentSignatureOpensASecondHandleOnTheTargetReader)
+TEST_F(PcscHandleCensusTest, DocumentSignatureOpensNoHandleBeyondTheSession)
 {
     const auto result = signOnce(service, target);
+    // EXPECT, not ASSERT: a regression is most readable in the counts below.
+    EXPECT_EQ(result.status, LibreSCRS::Signing::SigningResult::Status::Ok)
+        << result.diagnosticDetail.value_or("no detail");
 
-    // The middleware's own PC/SC layer, which is where the PKCS#11 module's
-    // PKCS#15 provider opens handles.
-    //
-    //  * the reader carrying a live secure channel gets NO new handle: the
-    //    provider adopts the session already registered for it;
-    //  * the reader the signature targets gets ONE, and that is the known
-    //    violation this test exists to pin: the caller already holds a session
-    //    on it, and the module opens a second handle to the same card;
-    //  * the neighbour, which neither the caller nor the signature has any
-    //    business with, gets one too, because the module probes every reader
-    //    the PC/SC layer reports.
+    // The middleware's own PC/SC layer: the caller's session is the one
+    // connection to the target card, and no other reader is touched.
     EXPECT_EQ(stubConnect(kSmReader), 0u);
-    EXPECT_EQ(stubConnect(kTargetReader), 1u);
-    EXPECT_EQ(stubConnect(kNeighbourReader), 1u);
+    EXPECT_EQ(stubConnect(kTargetReader), 0u);
+    EXPECT_EQ(stubConnect(kNeighbourReader), 0u);
 
-    // OpenSC's PC/SC layer, and the number that is easiest to get wrong about
-    // this architecture. Two contexts, not three: the provider refuses to bind
-    // the reader with the live secure channel, so no context is established for
-    // it. But establishing a context for ANY reader makes OpenSC enumerate all
-    // of them and open a transient shared handle on each one that reports a
-    // card, to read its features -- including the reader it just refused to
-    // bind. So the short-circuit stops the bind, not the handle: two contexts
-    // touch the secure-channel reader twice, and each context's own target once
-    // more on top of that.
-    EXPECT_EQ(shim().establishContext(), 2u);
-    EXPECT_EQ(shim().connect(kSmReader), 2u);
-    EXPECT_EQ(shim().connect(kTargetReader), 3u);
-    EXPECT_EQ(shim().connect(kNeighbourReader), 3u);
+    // OpenSC's PC/SC layer: no context is established, so no reader is
+    // enumerated and none is connected to.
+    EXPECT_EQ(shim().establishContext(), 0u);
+    EXPECT_EQ(shim().connect(kSmReader), 0u);
+    EXPECT_EQ(shim().connect(kTargetReader), 0u);
+    EXPECT_EQ(shim().connect(kNeighbourReader), 0u);
 
-    // Every handle either layer opened is closed before the call returns, and
-    // the module is unloaded. This is the half of the picture that bounds the
-    // damage: the handles are transient, not held for the process's life.
     EXPECT_EQ(librescrs_shim_open_handles(), 0u);
     EXPECT_EQ(shim().openHandles(), 0u);
-    EXPECT_EQ(countContaining(g_dlopened, kModuleName), 1u) << "the module is loaded exactly once per signature";
-    EXPECT_EQ(countContaining(g_dlclosed, kModuleName), 1u) << "and unloaded before the call returns";
+    EXPECT_EQ(countContaining(g_dlopened, kModuleName), 0u) << "no PKCS#11 module is loaded to sign";
 
-    // In-process sanity, NOT evidence about the card: the adopt path did not
-    // tear down the channel object or drop the registry entry. Both of these
-    // read a member of an injected fake on a session that owns no PC/SC handle,
-    // so no number the counting provider produces can change them -- they would
-    // stay green even if a real transient handle killed a real tunnel. Whether
-    // a live secure channel survives these handles is not yet confirmed on a
-    // card; see the note at the top of this file.
+    // In-process sanity only: the neighbour's secure channel and its registry
+    // entry are untouched.
     EXPECT_TRUE(smSession->hasLiveSecureChannel());
     EXPECT_TRUE(sessionPresence().hasLiveSm(kSmReader));
-
-    // The signature itself fails, and must: no card answers any APDU here. The
-    // counts above are what a signature costs before it gets that far.
-    EXPECT_EQ(result.status, LibreSCRS::Signing::SigningResult::Status::SigningEngineError);
 }
 
-// The module targets the reader by NAME, not by the index it had in some earlier
-// listing. Drop a reader from the set between two signatures and the target
-// still gets exactly one handle while the dropped one gets none -- an
-// index-based lookup would follow the shift and land on the wrong card.
-TEST_F(PcscHandleCensusPinsKnownSecondHandleTest, ReaderSetChangeKeepsTargetByName)
+// An operation running on a neighbouring reader is neither waited on nor
+// touched: the neighbour's plugin holds its operation open until the signature
+// on the target has finished, so a signature that waited for it would never
+// finish at all.
+TEST_F(PcscHandleCensusTest, ConcurrentOperationOnNeighbourIsUndisturbed)
 {
-    (void)signOnce(service, target);
-    ASSERT_EQ(stubConnect(kTargetReader), 1u);
-    ASSERT_EQ(stubConnect(kNeighbourReader), 1u);
+    auto neighbour = makeDetachedCardSession(kNeighbourReader);
+    auto neighbourPlugin = std::make_shared<LibreSCRS::TestSupport::SigningStubPlugin>();
+    std::promise<void> inside;
+    std::promise<void> release;
+    auto released = release.get_future().share();
+    neighbourPlugin->respond = [&inside, released](const LibreSCRS::TestSupport::SigningStubPlugin::SignCall&) {
+        inside.set_value();
+        released.wait();
+        LibreSCRS::Plugin::SignResult r;
+        r.outcome = LibreSCRS::Plugin::SignResultOutcome::Ok;
+        r.signature = {0x01};
+        return r;
+    };
+    auto neighbourOperation = std::async(std::launch::async, [&] {
+        return neighbourPlugin->sign(*neighbour, 0x01, std::vector<std::uint8_t>(32, 0x11),
+                                     LibreSCRS::Plugin::SignMechanism::ECDSA_SHA256);
+    });
+    inside.get_future().wait();
 
-    // Both copies of the counting provider re-read the reader set on reset and
-    // not before: a silent re-read would let a test change the set without
-    // saying so, and this is the one case that means to change it.
-    librescrs_shim_reset();
-    shim().reset();
-    setReaderSet(std::string{kSmReader} + ";" + kTargetReader);
+    const auto started = std::chrono::steady_clock::now();
+    auto result = std::async(std::launch::async, [&] { return signOnce(service, target); });
+    const auto status = result.wait_for(std::chrono::seconds(30));
+    release.set_value();
+    ASSERT_EQ(status, std::future_status::ready) << "the signature waited for the neighbour's operation";
+    const auto elapsed = std::chrono::steady_clock::now() - started;
 
-    (void)signOnce(service, target);
-
-    EXPECT_EQ(stubConnect(kTargetReader), 1u);
+    EXPECT_EQ(result.get().status, LibreSCRS::Signing::SigningResult::Status::Ok);
+    EXPECT_EQ(neighbourOperation.get().outcome, LibreSCRS::Plugin::SignResultOutcome::Ok);
     EXPECT_EQ(stubConnect(kNeighbourReader), 0u);
-    EXPECT_EQ(stubConnect(kSmReader), 0u);
-    EXPECT_EQ(librescrs_shim_open_handles(), 0u);
+    EXPECT_EQ(shim().connect(kNeighbourReader), 0u);
+    EXPECT_LT(elapsed, std::chrono::seconds(10)) << "a B-B signature in memory takes milliseconds";
 }

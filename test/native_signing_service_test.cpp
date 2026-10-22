@@ -6,7 +6,7 @@
 #ifdef LIBRESIGN_HAS_NATIVE
 
 #include "native/native_signing_service.h"
-#include "native/pkcs11_module_manager.h"
+#include "signing_keys.h"
 #include "signing_test_support/mock_trusted_list_server.h"
 #include "signing_test_support/signing_test_support.h"
 #include "signing_service.h"
@@ -19,26 +19,13 @@
 
 using namespace libresign;
 
-// Service-level policy tests. The format modules have their own SoftHSM2
-// fixtures, but those construct a Pkcs11Token directly and call the module,
-// which skips everything NativeSigningService applies around the modules.
-// This fixture drives the service entry points themselves via the SoftHSM2
-// slot seam (setTestSlotId) so the shared policy is covered on BOTH of them.
-class NativeSigningServiceSoftHSMTest : public ::testing::Test
+// Service-level policy tests. The format-module tests call the modules with a
+// key directly, which skips everything NativeSigningService applies around the
+// modules. This fixture drives the service entry points themselves, so the
+// shared policy is covered on BOTH of them.
+class NativeSigningServiceTest : public ::testing::Test
 {
 protected:
-    void SetUp() override
-    {
-        softHsmPath = libresign::test::findSoftHsmPath();
-        if (!softHsmPath)
-            GTEST_SKIP() << "SoftHSM2 not found";
-        Pkcs11ModuleManager probe;
-        auto slot = libresign::test::findSoftHsmTestSlot(probe.acquire(softHsmPath));
-        if (!slot)
-            GTEST_SKIP() << "SoftHSM2 token '" << libresign::test::kSoftHsmTokenLabel << "' not initialised";
-        service.setTestSlotId(*slot);
-    }
-
     static SigningRequest pdfRequest(bool allowExpired)
     {
         SigningRequest req;
@@ -55,7 +42,7 @@ protected:
     /// append cases start from.
     std::vector<uint8_t> priorSignature()
     {
-        auto result = service.sign(pdfRequest(false), softHsmPath, libresign::as_pin("1234"), "test-key", "");
+        auto result = service.sign(pdfRequest(false), validSigner);
         EXPECT_TRUE(result.success) << result.errorMessage;
         return result.signedDocument;
     }
@@ -78,26 +65,25 @@ protected:
     /// signature.
     static constexpr std::string_view kAsciiZeroCsv = "0,name,amount\n0,first,12\n1,second,34\n";
 
-    const char* softHsmPath = nullptr;
     NativeSigningService service;
+    libresign::test::SoftSigningKey validSigner{libresign::test::validSignerKey()};
+    libresign::test::SoftSigningKey expiredSigner{libresign::test::expiredSignerKey()};
 };
 
-// Harness pin: the slot seam actually reaches the service entry point, so a
-// failure in any test below is a policy result and not a fixture that never
-// opened the token.
-TEST_F(NativeSigningServiceSoftHSMTest, SignsAtBaselineWithValidSigner)
+// Harness pin: the key reaches the service entry point and signs, so a failure
+// in any test below is a policy result and not a fixture that never signed.
+TEST_F(NativeSigningServiceTest, SignsAtBaselineWithValidSigner)
 {
-    auto result = service.sign(pdfRequest(false), softHsmPath, libresign::as_pin("1234"), "test-key", "");
+    auto result = service.sign(pdfRequest(false), validSigner);
     ASSERT_TRUE(result.success) << result.errorMessage;
     EXPECT_FALSE(result.signedDocument.empty());
 }
 
 // Control for the append case below: expiry enforcement on the sign() entry
 // point is the behaviour that already existed, and it must keep holding.
-TEST_F(NativeSigningServiceSoftHSMTest, SignRejectsExpiredSignerByDefault)
+TEST_F(NativeSigningServiceTest, SignRejectsExpiredSignerByDefault)
 {
-    auto result = service.sign(pdfRequest(false), softHsmPath, libresign::as_pin("1234"),
-                               libresign::test::kSoftHsmExpiredKeyLabel, "");
+    auto result = service.sign(pdfRequest(false), expiredSigner);
     EXPECT_FALSE(result.success);
     ASSERT_TRUE(result.failureKind.has_value()) << result.errorMessage;
     EXPECT_EQ(*result.failureKind, SignFailureKind::PolicyViolation) << result.errorMessage;
@@ -109,13 +95,12 @@ TEST_F(NativeSigningServiceSoftHSMTest, SignRejectsExpiredSignerByDefault)
 // sign() itself redirects an already-signed XAdES/JAdES/ASiC-E input here,
 // so a policy that lived only in sign() would be silently dropped by the
 // service's own dispatch.
-TEST_F(NativeSigningServiceSoftHSMTest, AppendSignerRejectsExpiredSignerByDefault)
+TEST_F(NativeSigningServiceTest, AppendSignerRejectsExpiredSignerByDefault)
 {
     auto prior = priorSignature();
     ASSERT_FALSE(prior.empty());
 
-    auto result = service.appendSigner(pdfRequest(false), prior, {}, libresign::as_pin("1234"), softHsmPath,
-                                       libresign::test::kSoftHsmExpiredKeyLabel, "");
+    auto result = service.appendSigner(pdfRequest(false), prior, {}, expiredSigner);
     EXPECT_FALSE(result.success);
     ASSERT_TRUE(result.failureKind.has_value()) << result.errorMessage;
     EXPECT_EQ(*result.failureKind, SignFailureKind::PolicyViolation) << result.errorMessage;
@@ -124,13 +109,12 @@ TEST_F(NativeSigningServiceSoftHSMTest, AppendSignerRejectsExpiredSignerByDefaul
 // The opt-in is the user-consent gate, not a sign()-only escape hatch: with
 // it set the append must go through, otherwise the fix above would have
 // turned a fail-open into an unconditional refusal.
-TEST_F(NativeSigningServiceSoftHSMTest, AppendSignerHonoursExpiredCertificateOptIn)
+TEST_F(NativeSigningServiceTest, AppendSignerHonoursExpiredCertificateOptIn)
 {
     auto prior = priorSignature();
     ASSERT_FALSE(prior.empty());
 
-    auto result = service.appendSigner(pdfRequest(true), prior, {}, libresign::as_pin("1234"), softHsmPath,
-                                       libresign::test::kSoftHsmExpiredKeyLabel, "");
+    auto result = service.appendSigner(pdfRequest(true), prior, {}, expiredSigner);
     ASSERT_TRUE(result.success) << result.errorMessage;
     EXPECT_FALSE(result.signedDocument.empty());
 }
@@ -139,11 +123,10 @@ TEST_F(NativeSigningServiceSoftHSMTest, AppendSignerHonoursExpiredCertificateOpt
 // DER SEQUENCE is 0x30, which is also the ASCII digit zero, so a CSV or a log
 // that starts with it was being refused as an already-signed CMS — for every
 // format the caller could ask for, including the two the guess did not name.
-TEST_F(NativeSigningServiceSoftHSMTest, SignsDocumentWhoseFirstByteIsAsciiZero)
+TEST_F(NativeSigningServiceTest, SignsDocumentWhoseFirstByteIsAsciiZero)
 {
     for (auto format : {SignatureFormat::Cades, SignatureFormat::AsicE, SignatureFormat::Xades}) {
-        auto result = service.sign(bytesRequest(kAsciiZeroCsv, format, "rows.csv"), softHsmPath,
-                                   libresign::as_pin("1234"), "test-key", "");
+        auto result = service.sign(bytesRequest(kAsciiZeroCsv, format, "rows.csv"), validSigner);
         EXPECT_TRUE(result.success) << "format " << static_cast<int>(format) << ": " << result.errorMessage;
         EXPECT_FALSE(result.signedDocument.empty()) << "format " << static_cast<int>(format);
     }
@@ -152,11 +135,10 @@ TEST_F(NativeSigningServiceSoftHSMTest, SignsDocumentWhoseFirstByteIsAsciiZero)
 // The same defect on the JSON arm: an ordinary payload carrying the word
 // "signatures" reads as a JWS to the probe. The caller asked for ASiC-E, and
 // the caller's answer is the one that counts.
-TEST_F(NativeSigningServiceSoftHSMTest, SignsJsonContainingTheWordSignaturesAtAsicE)
+TEST_F(NativeSigningServiceTest, SignsJsonContainingTheWordSignaturesAtAsicE)
 {
     constexpr std::string_view json = R"({"kind":"report","signatures":["none collected yet"]})";
-    auto result = service.sign(bytesRequest(json, SignatureFormat::AsicE, "report.json"), softHsmPath,
-                               libresign::as_pin("1234"), "test-key", "");
+    auto result = service.sign(bytesRequest(json, SignatureFormat::AsicE, "report.json"), validSigner);
     EXPECT_TRUE(result.success) << result.errorMessage;
     EXPECT_FALSE(result.signedDocument.empty());
 }
@@ -165,10 +147,10 @@ TEST_F(NativeSigningServiceSoftHSMTest, SignsJsonContainingTheWordSignaturesAtAs
 // payload to sign alongside, so it must still be refused with a pointer at the
 // append API. If this ever turns green because nothing refuses any more, the
 // dispatcher fix has gone too far.
-TEST_F(NativeSigningServiceSoftHSMTest, RefusesRealDetachedCmsWhenCadesWasRequested)
+TEST_F(NativeSigningServiceTest, RefusesRealDetachedCmsWhenCadesWasRequested)
 {
-    auto signed_ = service.sign(bytesRequest("payload for a detached CMS\n", SignatureFormat::Cades, "payload.txt"),
-                                softHsmPath, libresign::as_pin("1234"), "test-key", "");
+    auto signed_ =
+        service.sign(bytesRequest("payload for a detached CMS\n", SignatureFormat::Cades, "payload.txt"), validSigner);
     ASSERT_TRUE(signed_.success) << signed_.errorMessage;
     ASSERT_FALSE(signed_.signedDocument.empty());
 
@@ -179,7 +161,7 @@ TEST_F(NativeSigningServiceSoftHSMTest, RefusesRealDetachedCmsWhenCadesWasReques
     req.packaging = SignaturePackaging::Detached;
     req.level = SignatureLevel::B_B;
 
-    auto result = service.sign(req, softHsmPath, libresign::as_pin("1234"), "test-key", "");
+    auto result = service.sign(req, validSigner);
     EXPECT_FALSE(result.success);
     ASSERT_TRUE(result.failureKind.has_value()) << result.errorMessage;
     EXPECT_EQ(*result.failureKind, SignFailureKind::InvalidInput) << result.errorMessage;
@@ -195,14 +177,11 @@ TEST_F(NativeSigningServiceSoftHSMTest, RefusesRealDetachedCmsWhenCadesWasReques
 // none when a basic one does not. The second is as load-bearing as the first —
 // without it, "fetch on every signature" passes.
 // ---------------------------------------------------------------------------
-class LazyTrustedListTest : public NativeSigningServiceSoftHSMTest
+class LazyTrustedListTest : public NativeSigningServiceTest
 {
 protected:
     void SetUp() override
     {
-        NativeSigningServiceSoftHSMTest::SetUp();
-        if (::testing::Test::IsSkipped())
-            return;
         // A cache directory shared with another run would serve the list off
         // disk and drive the fetch count to zero for a reason that has nothing
         // to do with the code under test.
@@ -253,14 +232,14 @@ TEST_F(LazyTrustedListTest, LazyTrustedListIsFetchedWhenALevelNeedsIt)
 
     auto req = pdfRequest(false);
     req.level = SignatureLevel::B_LT;
-    auto result = service.sign(req, softHsmPath, libresign::as_pin("1234"), "test-key", "");
+    auto result = service.sign(req, validSigner);
 
     EXPECT_EQ(server.servedCount(), 1) << "a long-term level must fetch the deferred list exactly once";
     // Not the same claim as the one above: a GET that arrives and is then
     // refused at verification leaves the anchor set empty and the count at one.
     EXPECT_GE(anchorsEmitted, 1) << "the list was fetched but never verified and parsed";
 
-    // The provisioned signer is self-signed and this list does not name its
+    // The in-memory signer is self-signed and this list does not name its
     // issuer, so the refusal is the chain gate working on anchors that really
     // were fetched — not the old walk-past over an empty set. Before this
     // change the same request died later, on an unrelated missing TSA.
@@ -282,7 +261,7 @@ TEST_F(LazyTrustedListTest, LazyTrustedListIsNotFetchedForBasicLevel)
                                                   "/test/fixtures/trust/synthetic-tl.xml");
     configureWithLazyList(server);
 
-    auto result = service.sign(pdfRequest(false), softHsmPath, libresign::as_pin("1234"), "test-key", "");
+    auto result = service.sign(pdfRequest(false), validSigner);
     EXPECT_TRUE(result.success) << result.errorMessage;
     EXPECT_EQ(server.servedCount(), 0) << "a basic signature needs no anchor and must make no request";
 }

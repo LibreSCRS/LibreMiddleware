@@ -71,7 +71,7 @@ const char* profileName(CardProfile p)
     }
 }
 
-// Classify a card by ATR. Mirrors Pkcs11MultiCardSignTests::classifyByAtr;
+// Classify a card by ATR. Mirrors MultiCardSignTests::classifyByAtr;
 // only the two profiles this test needs are distinguished. Reader A is
 // the NAM contactless card (hist bytes "SCE 8.0-C2V0"); reader B is the
 // PKS / cardedge contact card (hist bytes "SCE 8.0-C1V0").

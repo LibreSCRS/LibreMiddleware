@@ -3,8 +3,6 @@
 
 #include "signing_test_support.h"
 
-#include "native/pkcs11_module_manager.h"
-
 #include <gmock/gmock.h>
 
 #include <algorithm>
@@ -16,16 +14,6 @@
 #include <memory>
 #include <string_view>
 #include <thread>
-
-#define CK_PTR *
-#define CK_DECLARE_FUNCTION(returnType, name) returnType name
-#define CK_DECLARE_FUNCTION_POINTER(returnType, name) returnType(*name)
-#define CK_CALLBACK_FUNCTION(returnType, name) returnType(*name)
-#ifndef NULL_PTR
-#define NULL_PTR 0
-#endif
-
-#include "pkcs11/pkcs11.h"
 
 #ifdef LIBRESIGN_HAS_DSS_ORACLE
 #include "dss/dss_service_manager.h"
@@ -63,19 +51,10 @@ void checkPinFailure(const SigningResult& result)
     if (result.success)
         return;
 
-    const auto& msg = result.errorMessage;
-    if (msg.find("CKR_PIN_INCORRECT") != std::string::npos || msg.find("CKR_PIN_LOCKED") != std::string::npos ||
-        msg.find("0x000000A0") != std::string::npos || msg.find("0x000000A4") != std::string::npos) {
+    if (result.failureKind == SignFailureKind::PinFailed || result.failureKind == SignFailureKind::PinBlocked) {
         g_pinFailed = true;
-        GTEST_SKIP() << "PIN failure detected, skipping remaining tests: " << msg;
+        GTEST_SKIP() << "PIN failure detected, skipping remaining tests: " << result.errorMessage;
     }
-}
-
-// ---- PKCS#11 helpers ----
-
-std::string pkcs11ModulePath()
-{
-    return std::string(CMAKE_SOURCE_DIR) + "/build/lib/pkcs11/librescrs-pkcs11.so";
 }
 
 // ---- Config ----
@@ -102,74 +81,10 @@ TestConfigResult readTestConfig()
     if (alias)
         r.config.keyAlias = alias;
 
-    r.config.pkcs11Module = pkcs11ModulePath();
     r.config.dssJarPath = std::string(CMAKE_SOURCE_DIR) + "/tools/dss-service/target/dss-service-1.0.0-SNAPSHOT.jar";
 
     r.valid = true;
     return r;
-}
-
-// ---- SoftHSM helper ----
-
-const char* findSoftHsmPath()
-{
-    // `SOFTHSM2_LIB` is the canonical SoftHSM2 override env var (matches
-    // the upstream pkcs11-tool / opensc convention) — honour it first so
-    // CI / Nix / non-standard package layouts can point at their library
-    // without patching the hardcoded search list.
-    static std::string envPath;
-    if (const char* env = std::getenv("SOFTHSM2_LIB")) {
-        envPath = env;
-        if (!envPath.empty() && std::filesystem::exists(envPath))
-            return envPath.c_str();
-    }
-
-    static const char* paths[] = {
-        "/usr/lib/softhsm/libsofthsm2.so",
-        "/usr/lib64/softhsm/libsofthsm2.so",
-        "/usr/local/lib/softhsm/libsofthsm2.so",
-        "/opt/homebrew/lib/softhsm/libsofthsm2.so",
-    };
-
-    for (const auto* path : paths) {
-        if (std::filesystem::exists(path))
-            return path;
-    }
-    return nullptr;
-}
-
-std::optional<unsigned long> findSoftHsmTestSlot(const libresign::Pkcs11ModuleHandle& module, const char* tokenLabel)
-{
-    if (!module.valid() || !tokenLabel)
-        return std::nullopt;
-
-    auto* funcs = static_cast<CK_FUNCTION_LIST*>(module.functionList());
-    if (!funcs || !funcs->C_GetSlotList || !funcs->C_GetTokenInfo)
-        return std::nullopt;
-
-    CK_ULONG count = 0;
-    if (funcs->C_GetSlotList(CK_TRUE, nullptr, &count) != CKR_OK || count == 0)
-        return std::nullopt;
-
-    std::vector<CK_SLOT_ID> slots(count);
-    if (funcs->C_GetSlotList(CK_TRUE, slots.data(), &count) != CKR_OK)
-        return std::nullopt;
-
-    const std::string_view wanted(tokenLabel);
-    for (CK_ULONG i = 0; i < count; ++i) {
-        CK_TOKEN_INFO info{};
-        if (funcs->C_GetTokenInfo(slots[i], &info) != CKR_OK)
-            continue;
-
-        // Blank-padded, not NUL-terminated (PKCS#11 v2.40 §10.4).
-        std::string_view label(reinterpret_cast<const char*>(info.label), sizeof(info.label));
-        const auto lastGlyph = label.find_last_not_of(' ');
-        label = (lastGlyph == std::string_view::npos) ? std::string_view{} : label.substr(0, lastGlyph + 1);
-
-        if (label == wanted)
-            return static_cast<unsigned long>(slots[i]);
-    }
-    return std::nullopt;
 }
 
 // ---- DSS validation environment ----

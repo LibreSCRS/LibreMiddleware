@@ -16,12 +16,12 @@
 
 namespace libresign {
 
-class Pkcs11Token;
+class SigningKey;
 
 class JAdESModule
 {
 public:
-    SigningResult sign(const std::vector<uint8_t>& data, const std::string& fileName, Pkcs11Token& token,
+    SigningResult sign(const std::vector<uint8_t>& data, const std::string& fileName, SigningKey& key,
                        SignatureLevel level, SignaturePackaging packaging, const TSAConfig& tsa);
 
     /// @brief Append a new signer to an existing JAdES JWS JSON General signature.
@@ -52,12 +52,12 @@ public:
     ///                     ENVELOPED — verified against decoded payload when supplied)
     /// @param fileName     file name hint (unused on the JAdES path; carried for
     ///                     interface symmetry with sibling modules)
-    /// @param token        signing token
+    /// @param key        signing key
     /// @param level        desired level for the new signer (`B_B`, `B_T` or `B_LT`)
     /// @param tsa          TSA config — required from `B_T` upwards
     /// @return @ref SigningResult containing the updated JWS JSON General document
     [[nodiscard]] SigningResult appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
-                                             const std::string& fileName, Pkcs11Token& token, SignatureLevel level,
+                                             const std::string& fileName, SigningKey& key, SignatureLevel level,
                                              const TSAConfig& tsa);
 };
 

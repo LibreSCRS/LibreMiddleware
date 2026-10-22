@@ -7,9 +7,8 @@
 
 #include "native/cades_module.h"
 #include "native/der_utils.h"
-#include "native/pkcs11_module_manager.h"
 #include "native/native_utils.h"
-#include "native/pkcs11_token.h"
+#include "signing_keys.h"
 #include "signing_test_support/mock_tsa_server.h"
 #include "signing_test_support/signing_test_support.h"
 #include "signing_service.h"
@@ -135,7 +134,7 @@ int cmsCertCount(CMS_ContentInfo* cms)
 /// the certificates, the CRLs and the unsigned attributes — and never over the
 /// signing key, so a software signer reproduces the exact document a card-backed
 /// signer hands to the archive-timestamp step — which is what lets that step be
-/// exercised on a host with no PKCS#11 token.
+/// exercised on a host with no card.
 struct SoftwareIdentity
 {
     LibreSCRS::Internal::Crypto::EvpPkeyPtr key;
@@ -441,49 +440,32 @@ std::vector<uint8_t> recomputeAtsHashIndex(CMS_ContentInfo* cms, CMS_SignerInfo*
 class CAdESModuleTest : public ::testing::Test
 {
 protected:
-    void SetUp() override
-    {
-        softHsmPath = libresign::test::findSoftHsmPath();
-        if (!softHsmPath)
-            GTEST_SKIP() << "SoftHSM2 not found";
-        auto slot = libresign::test::findSoftHsmTestSlot(manager.acquire(softHsmPath));
-        if (!slot)
-            GTEST_SKIP() << "SoftHSM2 token '" << libresign::test::kSoftHsmTokenLabel << "' not initialised";
-        testSlot = *slot;
-    }
-
     /// Sign @p data at B-B with the valid signer; reports the signer's
     /// certificate through @p certDer so the caller can tell the two signers of
     /// the appended document apart.
     std::vector<uint8_t> signFirst(const std::vector<uint8_t>& data, std::vector<uint8_t>& certDer)
     {
         CAdESModule cades;
-        Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                          libresign::Pkcs11Token::TestSlotId{testSlot});
+        libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
         certDer = token.certificate();
         auto result = cades.sign(data, token, SignatureLevel::B_B, {});
         EXPECT_TRUE(result.success) << result.errorMessage;
         return result.signedDocument;
     }
 
-    /// Append a second signer using the OTHER key pair on the token, so the two
-    /// SignerInfos carry distinct certificates and per-signer assertions can
-    /// name their target. The expired pair is the only second identity the
-    /// SoftHSM store provides; module-level appendSigner applies no expiry
-    /// policy (that lives in NativeSigningService), so it signs normally here.
+    /// Append a second signer with the OTHER test key, so the two SignerInfos
+    /// carry distinct certificates and per-signer assertions can name their
+    /// target. The second test signer's certificate is expired; module-level
+    /// appendSigner applies no expiry policy (that lives in
+    /// NativeSigningService), so it signs normally here.
     SigningResult appendSecond(const std::vector<uint8_t>& prior, const std::vector<uint8_t>& originalDoc,
                                SignatureLevel level, const TSAConfig& tsa, std::vector<uint8_t>& certDer)
     {
         CAdESModule cades;
-        Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"),
-                          libresign::test::kSoftHsmExpiredKeyLabel, libresign::Pkcs11Token::TestSlotId{testSlot});
+        libresign::test::SoftSigningKey token(libresign::test::expiredSignerKey());
         certDer = token.certificate();
         return cades.appendSigner(prior, originalDoc, token, level, tsa);
     }
-
-    const char* softHsmPath = nullptr;
-    libresign::Pkcs11ModuleManager manager;
-    unsigned long testSlot = 0;
 };
 
 // The other half of the PAdES assertion in pades_module_test.cpp. EN 319 122-1
@@ -493,8 +475,7 @@ protected:
 // in both directions rather than in only the one that was broken.
 TEST_F(CAdESModuleTest, SignBB_CadesCmsCarriesSigningTime)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     CAdESModule cades;
 
     // Through sign(), not signBB(), deliberately: the assertion has to pin the
@@ -522,8 +503,7 @@ TEST_F(CAdESModuleTest, SignBB_CadesCmsCarriesSigningTime)
 
 TEST_F(CAdESModuleTest, SignBB_ProducesValidCMS)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     CAdESModule cades;
 
     std::vector<uint8_t> data = {'H', 'e', 'l', 'l', 'o'};
@@ -567,8 +547,7 @@ TEST_F(CAdESModuleTest, SignBB_ProducesValidCMS)
 
 TEST_F(CAdESModuleTest, SignBB_IsDetached)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     CAdESModule cades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
@@ -587,8 +566,7 @@ TEST_F(CAdESModuleTest, SignBB_IsDetached)
 
 TEST_F(CAdESModuleTest, Sign_BB_Convenience)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     CAdESModule cades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
@@ -601,8 +579,7 @@ TEST_F(CAdESModuleTest, Sign_BB_Convenience)
 
 TEST_F(CAdESModuleTest, SignBB_DifferentDataProducesDifferentSignature)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     CAdESModule cades;
 
     std::vector<uint8_t> data1 = {'A', 'B', 'C'};
@@ -713,7 +690,7 @@ TEST_F(CAdESModuleTest, AddCertificateChainUnionsIntoTheExistingCertificateSet)
 }
 
 // B-LT on append now reaches the long-term revocation gate instead of being
-// refused up front. The SoftHSM token's single self-signed leaf is a chain of
+// refused up front. The in-memory signer's single self-signed leaf is a chain of
 // length one: no Trusted-List anchor completed it and no issuer hop reaches a
 // verified root, so the tail is unprovable and the gate must fail closed.
 TEST_F(CAdESModuleTest, AppendSignerAtLongTermRejectsUnterminatedChain)
@@ -826,7 +803,7 @@ TEST_F(CAdESModuleTest, ArchiveTimestampImprintDescribesTheEmittedCertificateOrd
            "verifier can reproduce the ETSI EN 319 122-1 §5.5.4 imprint from the document it holds";
 }
 
-// Non-SoftHSM tests
+// Tests whose key never signs
 
 // ---- Archive timestamp over the document the level ladder builds ----
 //
@@ -847,11 +824,10 @@ TEST_F(CAdESModuleTest, ArchiveTimestampImprintDescribesTheEmittedCertificateOrd
 // does populate the field, and it does not describe a document the product
 // emits today.
 //
-// Reaching this step through sign() needs a Pkcs11Token, so no test in the gate
-// drives the ladder itself. The document does not need one: an archive
+// The helper is driven directly rather than through sign()'s ladder: an archive
 // timestamp covers certificates, CRLs, unsigned attributes and the signature
 // octets, never the signing key, so a software signer reproduces the same input
-// and the helper can be exercised on a host with no PKCS#11 module at all.
+// and the document can be built here with the splices below.
 //
 // Both SET OFs are then spliced back out of sorted order — each swap is
 // length-preserving, so every enclosing DER length stays valid and the document
@@ -981,8 +957,7 @@ TEST(CAdESModuleStandalone, RejectsEmptyInput)
     CAdESModule cades;
     std::vector<uint8_t> empty;
     // Token is never touched — sign() returns early on empty input.
-    alignas(Pkcs11Token) char storage[sizeof(Pkcs11Token)]{};
-    auto& dummyToken = *reinterpret_cast<Pkcs11Token*>(storage);
+    libresign::test::SoftSigningKey dummyToken(libresign::test::validSignerKey());
     auto result = cades.sign(empty, dummyToken, SignatureLevel::B_B, {});
     ASSERT_FALSE(result.success);
     EXPECT_NE(result.errorMessage.find("empty"), std::string::npos);

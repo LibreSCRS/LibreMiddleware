@@ -18,9 +18,8 @@
 #include <LibreSCRS/Signing/SigningRequest.h>
 
 #include "native/pades_module.h"
-#include "native/pkcs11_module_manager.h"
-#include "native/pkcs11_token.h"
-#include "signing_service.h" // libresign::as_pin
+#include "signing_keys.h"
+#include "signing_service.h"
 #include "signing_test_support/signing_test_support.h"
 
 #include <string>
@@ -50,7 +49,7 @@ bool containsBytes(const std::vector<uint8_t>& haystack, std::string_view needle
 // Compile-time + runtime proof that the public SigningRequest::Builder
 // stores contactInfo() and that SigningRequest::contactInfo() reads it
 // back untouched. This is the host-visible half of the B4 contract and
-// does not require a PKCS#11 token.
+// does not require a signing key.
 TEST(SigningContactInfoIntegration, PublicBuilderRoundtripsContactInfo)
 {
     SigningRequest::Builder b;
@@ -66,30 +65,9 @@ TEST(SigningContactInfoIntegration, PublicBuilderRoundtripsContactInfo)
 // Runtime proof that a signed PDF carries /ContactInfo in the signature
 // dictionary when the public SigningRequest carries contactInfo().
 //
-// Skipped when SoftHSM is unavailable (mirrors the PAdESModuleSoftHSMTest
-// fixture — a real CMS signature and therefore a real token is required
-// to produce a complete PDF with a populated ByteRange). The skip still
-// exercises the public builder above; the /ContactInfo assertion only
-// runs where a token is available.
-class SigningContactInfoSoftHSMTest : public ::testing::Test
-{
-protected:
-    void SetUp() override
-    {
-        softHsmPath = libresign::test::findSoftHsmPath();
-        if (!softHsmPath)
-            GTEST_SKIP() << "SoftHSM2 not found";
-        auto slot = libresign::test::findSoftHsmTestSlot(manager.acquire(softHsmPath));
-        if (!slot)
-            GTEST_SKIP() << "SoftHSM2 token '" << libresign::test::kSoftHsmTokenLabel << "' not initialised";
-        testSlot = *slot;
-    }
-    const char* softHsmPath = nullptr;
-    libresign::Pkcs11ModuleManager manager;
-    unsigned long testSlot = 0;
-};
-
-TEST_F(SigningContactInfoSoftHSMTest, SignedPdfCarriesContactInfoInSignatureDict)
+// A real CMS signature, made with the in-memory test key, produces a complete
+// PDF with a populated ByteRange.
+TEST(SigningContactInfoInMemoryKeyTest, SignedPdfCarriesContactInfoInSignatureDict)
 {
     // 1. Build the public SigningRequest with contactInfo(...).
     SigningRequest::Builder builder;
@@ -115,9 +93,8 @@ TEST_F(SigningContactInfoSoftHSMTest, SignedPdfCarriesContactInfoInSignatureDict
     lv.location = request.location();
     lv.contactInfo = request.contactInfo();
 
-    // 3. Sign via PAdESModule with a real (SoftHSM-backed) PKCS#11 token.
-    libresign::Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                                 libresign::Pkcs11Token::TestSlotId{testSlot});
+    // 3. Sign via PAdESModule with the in-memory test key.
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     auto pdf = testPdfBytes();
     libresign::PAdESModule pades;
 

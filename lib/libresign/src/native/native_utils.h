@@ -27,7 +27,7 @@ typedef struct x509_st X509;
 struct _xmlNode;
 
 namespace libresign {
-class Pkcs11Token;
+class SigningKey;
 struct TSAConfig;
 struct RevocationData;
 } // namespace libresign
@@ -37,7 +37,8 @@ struct RevocationData;
 // - Return error struct (TSAResult, SigningResult with success=false): expected
 //   operational failures — network timeouts, invalid input, card not present.
 // - Top-level NativeSigningService::sign() catches all exceptions and wraps
-//   in SigningResult{false, {}, errorMessage}.
+//   them with makeFailure: a SignFailureException keeps its kind, anything
+//   else becomes an engine error.
 
 namespace libresign::native_utils {
 
@@ -164,8 +165,8 @@ std::string iso8601Now();
 // MIME type from file extension
 std::string mimeTypeFromFileName(const std::string& fileName);
 
-// Collect revocation data (CRLs + OCSP) for the token's certificate chain.
-libresign::RevocationData collectRevocationData(libresign::Pkcs11Token& token, const libresign::TSAConfig& tsa);
+// Collect revocation data (CRLs + OCSP) for the key's certificate chain.
+libresign::RevocationData collectRevocationData(libresign::SigningKey& key, const libresign::TSAConfig& tsa);
 
 // Fail-closed gate for long-term (B-LT/B-LTA) signatures: returns a
 // RevocationFetchFailed failure result when @p rev reports any non-root chain
@@ -205,19 +206,19 @@ std::vector<std::vector<uint8_t>> buildOrderedChain(const std::vector<std::vecto
 // Accepts OpenSSL-style names: SHA256, SHA-256, SHA2-256, etc. (case-insensitive).
 std::span<const uint8_t> digestInfoPrefixForAlgo(const std::string& mdName);
 
-// Return the Pkcs11Token algorithm string for the given key type + digest.
+// Return the SigningKey algorithm string for the given key type + digest.
 // keyType is EVP_PKEY_RSA or EVP_PKEY_EC; mdName uses OpenSSL-style names.
 std::string tokenAlgorithm(int keyType, const std::string& mdName);
 
-// Sign a hash with a PKCS#11 token, prepending DigestInfo for RSA.
-// When @p rawData is non-empty, it is forwarded to Pkcs11Token::sign as
+// Sign a hash with a signing key, prepending DigestInfo for RSA.
+// When @p rawData is non-empty, it is forwarded to SigningKey::sign as
 // the "original data" hint so certain IAS-ECC hash-on-card SSCDs
 // (German nPA family) can use the combined CKM_SHA*_RSA_PKCS mechanism
 // instead of the legacy pre-built DigestInfo path that those cards
 // reject with SW 6A80 / wrong-data-format. Returns the raw signature
 // bytes.
-std::vector<uint8_t> signHashWithToken(libresign::Pkcs11Token& token, X509* cert, const std::vector<uint8_t>& hash,
-                                       const std::string& hashAlgo = "SHA256", std::span<const uint8_t> rawData = {});
+std::vector<uint8_t> signHashWithKey(libresign::SigningKey& key, X509* cert, const std::vector<uint8_t>& hash,
+                                     const std::string& hashAlgo = "SHA256", std::span<const uint8_t> rawData = {});
 
 // Decompress FlateDecode (zlib) data. Returns nullopt on malformed input.
 // Throws std::runtime_error if the inflated output would exceed
@@ -245,13 +246,4 @@ std::vector<uint8_t> derEncode(Fn i2dFn, const T* obj)
     return result;
 }
 
-} // namespace libresign::native_utils
-
-// Re-export DigestInfo prefixes into native_utils for existing callers.
-#include <LibreSCRS_internal/Crypto/DigestInfo.h>
-namespace libresign::native_utils {
-using LibreSCRS::Internal::Crypto::kDigestInfoSha1Prefix;
-using LibreSCRS::Internal::Crypto::kDigestInfoSha256Prefix;
-using LibreSCRS::Internal::Crypto::kDigestInfoSha384Prefix;
-using LibreSCRS::Internal::Crypto::kDigestInfoSha512Prefix;
 } // namespace libresign::native_utils

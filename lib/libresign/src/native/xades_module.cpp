@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "native/xades_module.h"
-#include "native/pkcs11_token.h"
+#include "native/signing_key.h"
 #include "native/revocation_client.h"
 #include "native/tsa_client.h"
 #include "native_utils.h"
@@ -601,14 +601,14 @@ std::vector<uint8_t> serializeDoc(xmlDocPtr doc)
 // the produced signature under the exact filename supplied here; if
 // the recipient receives only the `.xml`, validation aborts at the
 // reference-resolution step before any cryptographic check runs.
-SigningResult XAdESModule::sign(const std::vector<uint8_t>& data, const std::string& fileName, Pkcs11Token& token,
+SigningResult XAdESModule::sign(const std::vector<uint8_t>& data, const std::string& fileName, SigningKey& key,
                                 SignatureLevel level, SignaturePackaging packaging, const TSAConfig& tsa)
 {
-    return signWithSuffix(data, fileName, token, level, packaging, tsa, std::string_view{});
+    return signWithSuffix(data, fileName, key, level, packaging, tsa, std::string_view{});
 }
 
 SigningResult XAdESModule::signWithSuffix(const std::vector<uint8_t>& data, const std::string& fileName,
-                                          Pkcs11Token& token, SignatureLevel level, SignaturePackaging packaging,
+                                          SigningKey& key, SignatureLevel level, SignaturePackaging packaging,
                                           const TSAConfig& tsa, std::string_view forcedIdSuffix)
 {
     if (data.empty())
@@ -617,13 +617,13 @@ SigningResult XAdESModule::signWithSuffix(const std::vector<uint8_t>& data, cons
     try {
         native_utils::ensureXmlInitialized();
 
-        // 1. Get certificate and chain from token
-        auto certDer = token.certificate();
+        // 1. Get certificate and chain from key
+        auto certDer = key.certificate();
         if (certDer.empty())
-            return makeFailure(SignFailureKind::CardError, "No certificate found on token");
+            return makeFailure(SignFailureKind::CardError, "the signing key carries no certificate");
 
         X509Ptr cert = parseCert(certDer);
-        auto chainDer = token.certificateChain();
+        auto chainDer = key.certificateChain();
         if (chainDer.empty())
             chainDer.push_back(certDer); // at minimum include signer cert
 
@@ -858,15 +858,15 @@ SigningResult XAdESModule::signWithSuffix(const std::vector<uint8_t>& data, cons
         auto signedInfoC14n = canonicalizeNode(parsedDoc, ctx.signedInfoNode);
         auto signedInfoHash = sha256(signedInfoC14n);
 
-        // 8. Sign with PKCS#11 token. Pass canonicalised SignedInfo as the
+        // 8. Sign with the key. Pass canonicalised SignedInfo as the
         //    raw "to-be-signed" bytes so hash-on-card SSCDs can use the
         //    combined CKM_SHA256_RSA_PKCS mechanism; legacy cards fall
-        //    through to the pre-built DigestInfo path inside Pkcs11Token.
+        //    through to the pre-built DigestInfo path inside the key's sign.
         auto signatureBytes =
-            signHashWithToken(token, cert.get(), signedInfoHash, "SHA256", std::span<const uint8_t>{signedInfoC14n});
+            signHashWithKey(key, cert.get(), signedInfoHash, "SHA256", std::span<const uint8_t>{signedInfoC14n});
 
         if (signatureBytes.empty())
-            return makeFailure(SignFailureKind::CardError, "PKCS#11 token signing returned empty signature");
+            return makeFailure(SignFailureKind::CardError, "the signing key returned an empty signature");
 
         // 9. Set SignatureValue
         std::string sigValueB64 = base64Encode(signatureBytes);
@@ -907,7 +907,7 @@ SigningResult XAdESModule::signWithSuffix(const std::vector<uint8_t>& data, cons
 
         // 11. B-LT: add revocation data
         if (level >= SignatureLevel::B_LT) {
-            auto revData = collectRevocationData(token, tsa);
+            auto revData = collectRevocationData(key, tsa);
             if (auto failure = revocationFailClosed(revData))
                 return *failure;
 
@@ -1061,6 +1061,10 @@ SigningResult XAdESModule::signWithSuffix(const std::vector<uint8_t>& data, cons
         auto result = serializeDoc(ctx.doc.get());
         return makeSuccess(std::move(result));
 
+    } catch (const SignFailureException& e) {
+        // A typed failure -- the key's verdict on the PIN among them -- keeps
+        // its kind; the generic arm below would make it an engine error.
+        return makeFailure(e.kind, e.what());
     } catch (const std::exception& e) {
         return makeFailure(SignFailureKind::EngineError, std::string("XAdES error: ") + e.what());
     }
@@ -1069,7 +1073,7 @@ SigningResult XAdESModule::signWithSuffix(const std::vector<uint8_t>& data, cons
 // ---- XAdESModule::appendSigner ----
 
 SigningResult XAdESModule::appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
-                                        const std::string& fileName, Pkcs11Token& token, SignatureLevel level,
+                                        const std::string& fileName, SigningKey& key, SignatureLevel level,
                                         const TSAConfig& tsa)
 {
     if (prior.empty())
@@ -1154,8 +1158,8 @@ SigningResult XAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
             //    and LTA promotion. The returned blob is a single
             //    <ds:Signature> XML document with non-colliding Ids.
             std::vector<uint8_t> originalCopy(originalDoc.begin(), originalDoc.end());
-            auto newSigResult = this->signWithSuffix(originalCopy, fileName, token, level, SignaturePackaging::Detached,
-                                                     tsa, newSuffix);
+            auto newSigResult =
+                this->signWithSuffix(originalCopy, fileName, key, level, SignaturePackaging::Detached, tsa, newSuffix);
             if (!newSigResult.success)
                 return newSigResult;
 
@@ -1171,8 +1175,12 @@ SigningResult XAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
         // next free integer suffix, so the new ds:Signature lands as a
         // sibling at the document root without colliding with any prior IDs.
         std::vector<uint8_t> priorCopy(prior.begin(), prior.end());
-        return this->sign(priorCopy, fileName, token, level, SignaturePackaging::Enveloped, tsa);
+        return this->sign(priorCopy, fileName, key, level, SignaturePackaging::Enveloped, tsa);
 
+    } catch (const SignFailureException& e) {
+        // A typed failure -- the key's verdict on the PIN among them -- keeps
+        // its kind; the generic arm below would make it an engine error.
+        return makeFailure(e.kind, e.what());
     } catch (const std::exception& e) {
         return makeFailure(SignFailureKind::EngineError, std::string("XAdES appendSigner error: ") + e.what());
     }

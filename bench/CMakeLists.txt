@@ -86,8 +86,7 @@ target_compile_definitions(bench_truststore_service PRIVATE
 
 # bench_signing: intentionally absent.
 #
-# SigningService::sign() requires a working PKCS#11 token (SoftHSM in
-# CI), and the bench host does not currently bootstrap one. A benchmark
-# that always SKIPs offers no signal, so the target is omitted until a
-# hermetic SoftHSM bootstrap lands under bench/. When it does, the
-# benchmark binary + its baseline JSON come back in lockstep.
+# SigningService::sign() signs through a card plugin on a session; a bench
+# would drive it with a plugin whose key is held in memory, as the signing
+# tests do. Until that harness is written the target is omitted; when it
+# lands, the benchmark binary + its baseline JSON come in lockstep.

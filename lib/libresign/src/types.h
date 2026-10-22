@@ -45,12 +45,6 @@ enum class SignFailureKind : std::uint8_t {
     OpensslError,
     PolicyViolation,
     EngineError,
-    /// @brief More than one private key on the token matched the requested
-    ///        CKA_ID discriminator, so the signing key cannot be resolved
-    ///        unambiguously. The engine refuses rather than sign with an
-    ///        arbitrary first match (a label-keyed first-of-N was the latent
-    ///        wrong-key hazard this discriminator closes). @since 5.0
-    KeyAmbiguous,
     /// @brief The input (or prior/original) document is not a valid document of
     ///        the requested format — wrong magic, truncated, unparseable, or
     ///        empty. A client-input fault the user fixes by replacing the file;
@@ -66,7 +60,12 @@ enum class SignFailureKind : std::uint8_t {
     ///        cert WITH a known issuer): the user-actionable fix is to
     ///        configure a Trusted List or use a card that provides its full
     ///        chain, not to retry the fetch. @since 5.0
-    CertificateChainIncomplete
+    CertificateChainIncomplete,
+    /// @brief The card refused the PIN and reports it blocked: no try is
+    ///        left. Distinct from @ref PinFailed (a wrong PIN with tries left)
+    ///        because the user cannot fix it by typing again. Append-only.
+    ///        @since 5.0
+    PinBlocked
 };
 
 /// @brief Provenance of a certificate chain handed to the revocation gate:
@@ -169,14 +168,6 @@ struct SigningRequest
     // consistent); host GUI flips to true only after the user has
     // acknowledged the expiry warning on the signing page.
     bool allowExpiredCertificate = false;
-    // Card-side CKA_ID of the signing key/cert pair — the reuse-safe
-    // discriminator that selects the EXACT key. The PKCS#15 label is not
-    // unique on multi-cert cards, so a label-keyed first-of-N match can
-    // silently pick the wrong key; when this is non-empty the native backend
-    // selects the private key by CKA_ID instead. Empty preserves the legacy
-    // label / auto-select path. Carried verbatim from the public
-    // LibreSCRS::Signing::SigningRequest::keyId() via the request bridge.
-    std::vector<uint8_t> keyId;
 };
 
 struct SigningResult
@@ -185,10 +176,6 @@ struct SigningResult
     std::vector<uint8_t> signedDocument;
     /// @brief ASCII-for-logs diagnostic. Not user-facing — the user message
     /// is derived from @ref failureKind via the bridge's kindToUserMessage.
-    /// Field ordering (success / signedDocument / errorMessage) is preserved
-    /// so legacy `{false, {}, "..."}` initializers remain compilable while a
-    /// module is converted to typed failures. When @ref failureKind is set,
-    /// the bridge prefers it over substring matching on this string.
     std::string errorMessage;
     /// @brief Typed classification of failure. Set iff `!success`.
     /// Bridge maps this to public SigningResult::Status + LocalizedText.
@@ -196,10 +183,9 @@ struct SigningResult
     std::optional<SignFailureKind> failureKind;
 };
 
-/// @brief Factory for typed failure results. Replaces the legacy shape
-/// `{false, {}, "..."}` at every return site. The diagnostic detail is
-/// preserved verbatim from the call site (it goes to logs); the user
-/// message is derived from @p kind via the bridge.
+/// @brief Factory for typed failure results, used at every return site. The
+/// diagnostic detail is preserved verbatim from the call site (it goes to
+/// logs); the user message is derived from @p kind via the bridge.
 inline SigningResult makeFailure(SignFailureKind kind, std::string detail = {})
 {
     return SigningResult{false, {}, std::move(detail), kind};
@@ -211,11 +197,12 @@ inline SigningResult makeSuccess(std::vector<uint8_t> bytes)
     return SigningResult{true, std::move(bytes), {}, std::nullopt};
 }
 
-/// @brief Carries a typed @ref SignFailureKind out of deep card-layer code
-///        (e.g. @ref Pkcs11Token key selection) so the NativeSigningService
-///        try/catch can map it to a precise @ref makeFailure instead of
-///        collapsing it into the generic @ref SignFailureKind::EngineError
-///        bucket. The @ref what string becomes the result's diagnostic detail.
+/// @brief Carries a typed @ref SignFailureKind out of code that cannot return
+///        a result (a signing key's verdict on the PIN, a TSA fault deep in a
+///        format module) so the module or service try/catch can map it to a
+///        precise @ref makeFailure instead of collapsing it into the generic
+///        @ref SignFailureKind::EngineError bucket. The @ref what string
+///        becomes the result's diagnostic detail.
 /// @since 5.0
 struct SignFailureException : std::runtime_error
 {

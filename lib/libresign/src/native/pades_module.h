@@ -17,7 +17,7 @@
 
 namespace libresign {
 
-class Pkcs11Token;
+class SigningKey;
 
 /// @brief Bundle of artefacts produced by createAppearanceStream().
 ///
@@ -35,8 +35,8 @@ struct AppearanceData
 class PAdESModule
 {
 public:
-    SigningResult sign(const std::vector<uint8_t>& pdfData, Pkcs11Token& token, SignatureLevel level,
-                       const TSAConfig& tsa, const VisualSignatureParams& visual);
+    SigningResult sign(const std::vector<uint8_t>& pdfData, SigningKey& key, SignatureLevel level, const TSAConfig& tsa,
+                       const VisualSignatureParams& visual);
 
     /// @brief Append a new signer to an existing PAdES PDF.
     ///
@@ -51,13 +51,13 @@ public:
     ///                     PAdES incremental structure); when non-empty, a
     ///                     future enhancement can verify it matches the prior
     ///                     PDF's signed range — currently informational only
-    /// @param token        signing token (already opened + logged in)
+    /// @param key        signing key
     /// @param level        desired signature level for the NEW signature
     /// @param tsa          TSA config for the new signature
     /// @param visual       visual signature params for the new field
     /// @return @ref SigningResult — same shape as @ref sign
     [[nodiscard]] SigningResult appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
-                                             Pkcs11Token& token, SignatureLevel level, const TSAConfig& tsa,
+                                             SigningKey& key, SignatureLevel level, const TSAConfig& tsa,
                                              const VisualSignatureParams& visual);
 
     /// @brief Build the PDF appearance content stream and the matching

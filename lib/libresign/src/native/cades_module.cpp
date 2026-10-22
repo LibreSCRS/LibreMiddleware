@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "native/cades_module.h"
-#include "native/pkcs11_token.h"
+#include "native/signing_key.h"
 #include "native/signing_provider.h"
 #include "native/tsa_client.h"
 #include "der_utils.h"
@@ -18,6 +18,7 @@
 
 #include <climits>
 #include <cstring>
+#include <exception>
 #include <memory>
 #include <span>
 #include <stdexcept>
@@ -238,23 +239,25 @@ void addUnsignedAttr(CMS_SignerInfo* si, const char* oid, const std::vector<uint
 
 // ---- signBB ----
 
-std::vector<uint8_t> CAdESModule::signBB(const std::vector<uint8_t>& data, Pkcs11Token& token,
+std::vector<uint8_t> CAdESModule::signBB(const std::vector<uint8_t>& data, SigningKey& key,
                                          SigningTimeAttribute signingTime)
 {
-    // 1. Get signer certificate from token
-    auto certDer = token.certificate();
+    // 1. Get signer certificate from key
+    auto certDer = key.certificate();
     if (certDer.empty())
-        throw std::runtime_error("No certificate found on token");
+        throw std::runtime_error("the signing key carries no certificate");
 
     X509Ptr signerCert = parseCert(certDer);
 
-    // 2. Create an EVP_PKEY backed by the PKCS#11 token.
+    // 2. Create an EVP_PKEY backed by the signing key.
     //    This key has the cert's public key but delegates sign() to the card.
     //    OpenSSL CMS API uses it transparently — no workarounds needed.
     //    The lease keeps the provider loaded until pkey, declared after it,
-    //    is gone.
+    //    is gone; keyFailure, declared before it too, receives what the key
+    //    throws while OpenSSL signs.
     SigningProviderLease provider;
-    EvpPkeyPtr pkey(createPkcs11EvpKey(provider, token, signerCert.get()).release());
+    std::exception_ptr keyFailure;
+    EvpPkeyPtr pkey(createSigningEvpKey(provider, key, signerCert.get(), keyFailure).release());
 
     // 3. Create CMS SignedData with the PKCS#11-backed key.
     //    OpenSSL handles content-type, message-digest, and signing-time
@@ -290,8 +293,13 @@ std::vector<uint8_t> CAdESModule::signBB(const std::vector<uint8_t>& data, Pkcs1
     //    hashes signed attributes, and calls our PKCS#11-backed EVP_PKEY
     //    to produce the signature. All transparently.
     BioPtr dataBio2(BIO_new_mem_buf(data.data(), static_cast<int>(data.size())));
-    if (!CMS_final(cms.get(), dataBio2.get(), nullptr, CMS_BINARY | CMS_DETACHED))
+    if (!CMS_final(cms.get(), dataBio2.get(), nullptr, CMS_BINARY | CMS_DETACHED)) {
+        // The key's own failure -- a refused PIN, a blocked card -- is all
+        // OpenSSL could report as a failed signature.
+        if (keyFailure)
+            std::rethrow_exception(keyFailure);
         throw std::runtime_error("CMS_final() failed: " + opensslError());
+    }
 
     // 6. Encode final CMS to DER
     return encodeCms(cms.get());
@@ -617,7 +625,7 @@ void addArchiveTimestampTo(CMS_ContentInfo* cms, CMS_SignerInfo* si, const TSACo
 //
 // Returns a failure result for the fail-closed policy stops, std::nullopt when
 // the document reached @p level. Throws SignFailureException on TSA faults.
-std::optional<SigningResult> applyLevelUpgrades(CMS_ContentInfo* cms, CMS_SignerInfo* si, Pkcs11Token& token,
+std::optional<SigningResult> applyLevelUpgrades(CMS_ContentInfo* cms, CMS_SignerInfo* si, SigningKey& key,
                                                 SignatureLevel level, const TSAConfig& tsa)
 {
     // The B-T signature timestamp and B-LTA archive timestamp drive an RFC 3161
@@ -633,10 +641,10 @@ std::optional<SigningResult> applyLevelUpgrades(CMS_ContentInfo* cms, CMS_Signer
     }
 
     if (level >= SignatureLevel::B_LT) {
-        auto revData = collectRevocationData(token, tsa);
+        auto revData = collectRevocationData(key, tsa);
         if (auto failure = revocationFailClosed(revData))
             return failure;
-        addCertificateChainTo(cms, token.certificateChain());
+        addCertificateChainTo(cms, key.certificateChain());
         addRevocationDataTo(si, revData);
     }
 
@@ -660,21 +668,21 @@ std::vector<uint8_t> CAdESModule::addArchiveTimestamp(const std::vector<uint8_t>
 
 // ---- sign (convenience) ----
 
-SigningResult CAdESModule::sign(const std::vector<uint8_t>& data, Pkcs11Token& token, SignatureLevel level,
+SigningResult CAdESModule::sign(const std::vector<uint8_t>& data, SigningKey& key, SignatureLevel level,
                                 const TSAConfig& tsa)
 {
     if (data.empty())
         return makeFailure(SignFailureKind::InvalidDocument, "Input data is empty");
 
     try {
-        auto cmsBytes = signBB(data, token, SigningTimeAttribute::Include);
+        auto cmsBytes = signBB(data, key, SigningTimeAttribute::Include);
         if (cmsBytes.empty())
             return makeFailure(SignFailureKind::OpensslError, "CAdES B-B signing produced empty output");
 
         // signBB emits exactly one SignerInfo, so index 0 names it
         // unambiguously. From here the ladder works on the live pointer.
         CmsPtr cms = parseCms(cmsBytes);
-        if (auto failure = applyLevelUpgrades(cms.get(), signerInfoAt(cms.get(), 0), token, level, tsa))
+        if (auto failure = applyLevelUpgrades(cms.get(), signerInfoAt(cms.get(), 0), key, level, tsa))
             return *failure;
 
         return makeSuccess(encodeCms(cms.get()));
@@ -692,7 +700,7 @@ SigningResult CAdESModule::sign(const std::vector<uint8_t>& data, Pkcs11Token& t
 // ---- appendSigner ----
 
 SigningResult CAdESModule::appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
-                                        Pkcs11Token& token, SignatureLevel level, const TSAConfig& tsa)
+                                        SigningKey& key, SignatureLevel level, const TSAConfig& tsa)
 {
     if (prior.empty())
         return makeFailure(SignFailureKind::InvalidDocument, "CAdES appendSigner: empty prior signature");
@@ -719,8 +727,10 @@ SigningResult CAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
 
     try {
         // Taken first: the CMS below comes to hold a reference to the
-        // provider-backed key, so the provider has to outlive it too.
+        // provider-backed key, so the provider has to outlive it too, as does
+        // the slot that receives what the key throws while OpenSSL signs.
         SigningProviderLease provider;
+        std::exception_ptr keyFailure;
 
         // 1. Parse the prior CMS ContentInfo.
         const unsigned char* p = prior.data();
@@ -741,17 +751,18 @@ SigningResult CAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
                                "CAdES appendSigner: prior CMS is attached; only detached is supported");
 
         // 3. Load signer cert + PKCS#11-backed EVP_PKEY (same path as signBB).
-        auto certDer = token.certificate();
+        auto certDer = key.certificate();
         if (certDer.empty())
-            return makeFailure(SignFailureKind::CardError, "CAdES appendSigner: no certificate on token");
+            return makeFailure(SignFailureKind::CardError,
+                               "CAdES appendSigner: the signing key carries no certificate");
 
         X509Ptr signerCert = parseCert(certDer);
         if (!signerCert)
             return makeFailure(SignFailureKind::EngineError, "CAdES appendSigner: failed to parse signer certificate");
 
-        EvpPkeyPtr pkey(createPkcs11EvpKey(provider, token, signerCert.get()).release());
+        EvpPkeyPtr pkey(createSigningEvpKey(provider, key, signerCert.get(), keyFailure).release());
         if (!pkey)
-            return makeFailure(SignFailureKind::CardError, "CAdES appendSigner: failed to obtain PKCS#11 key handle");
+            return makeFailure(SignFailureKind::CardError, "CAdES appendSigner: failed to obtain the provider key");
 
         // 4. Append the new SignerInfo with CMS_PARTIAL so OpenSSL does not
         //    immediately try to sign. We sign ONLY the new SignerInfo via
@@ -796,9 +807,13 @@ SigningResult CAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
         //    EVP_PKEY, and stores the resulting signature value on this si.
         //    Pre-existing SignerInfos are untouched — their original DER
         //    signatureValue survives intact through the upcoming re-encode.
-        if (!CMS_SignerInfo_sign(si))
+        if (!CMS_SignerInfo_sign(si)) {
+            // As in signBB: the key's own failure is what OpenSSL reported.
+            if (keyFailure)
+                std::rethrow_exception(keyFailure);
             return makeFailure(SignFailureKind::OpensslError,
                                "CAdES appendSigner: CMS_SignerInfo_sign failed: " + opensslError());
+        }
 
         // 8. Apply the requested level upgrades to the NEW SignerInfo only,
         //    through the same ladder sign() uses. `si` is the pointer
@@ -811,7 +826,7 @@ SigningResult CAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
         //    over — true at every level, B-B included. Appending to a document
         //    whose existing signers hold archive timestamps is outside what
         //    this method can keep intact.
-        if (auto failure = applyLevelUpgrades(cms.get(), si, token, level, tsa))
+        if (auto failure = applyLevelUpgrades(cms.get(), si, key, level, tsa))
             return *failure;
 
         // 9. Serialise to DER.

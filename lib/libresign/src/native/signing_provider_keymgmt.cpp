@@ -6,7 +6,7 @@
 // consumed by the provider's query_operation in signing_provider.cpp.
 
 #include "native/signing_provider_keymgmt.h"
-#include "native/pkcs11_token.h"
+#include "native/signing_key.h"
 
 #include <openssl/core.h>
 #include <openssl/core_dispatch.h>
@@ -79,7 +79,7 @@ void kmFree(void* keydata)
 int kmHas(const void* keydata, int selection)
 {
     auto* kd = static_cast<const ProviderKeyData*>(keydata);
-    if (!kd || !kd->token)
+    if (!kd || !kd->key)
         return 0;
 
     // We always claim to have both public and private key parts.
@@ -141,7 +141,7 @@ const OSSL_PARAM* kmGettableParams(void* /*provctx*/)
 }
 
 // keymgmt_import: receives public key params from EVP_PKEY_fromdata,
-// plus our custom "librescrs-token-ptr" param with the Pkcs11Token pointer.
+// plus our custom "librescrs-token-ptr" param with the SigningKey pointer.
 int kmImport(void* keydata, int /*selection*/, const OSSL_PARAM params[])
 {
     auto* kd = static_cast<ProviderKeyData*>(keydata);
@@ -154,7 +154,15 @@ int kmImport(void* keydata, int /*selection*/, const OSSL_PARAM params[])
         void* ptr = nullptr;
         if (!OSSL_PARAM_get_octet_ptr(p, (const void**)&ptr, nullptr))
             return 0;
-        kd->token = static_cast<Pkcs11Token*>(ptr);
+        kd->key = static_cast<SigningKey*>(ptr);
+    }
+
+    p = OSSL_PARAM_locate_const(params, kParamFailurePtr);
+    if (p != nullptr) {
+        void* ptr = nullptr;
+        if (!OSSL_PARAM_get_octet_ptr(p, (const void**)&ptr, nullptr))
+            return 0;
+        kd->failure = static_cast<std::exception_ptr*>(ptr);
     }
 
     // Extract key type
@@ -224,6 +232,7 @@ int kmImport(void* keydata, int /*selection*/, const OSSL_PARAM params[])
 const OSSL_PARAM* kmImportTypes(int /*selection*/)
 {
     static const OSSL_PARAM importable[] = {OSSL_PARAM_octet_ptr(kParamTokenPtr, nullptr, 0),
+                                            OSSL_PARAM_octet_ptr(kParamFailurePtr, nullptr, 0),
                                             OSSL_PARAM_int("librescrs-key-type", nullptr),
                                             OSSL_PARAM_int(OSSL_PKEY_PARAM_BITS, nullptr),
                                             OSSL_PARAM_BN(OSSL_PKEY_PARAM_RSA_N, nullptr, 0),
@@ -242,7 +251,7 @@ void* kmLoad(const void* reference, size_t referenceSz)
         return nullptr;
 
     auto* ref = static_cast<const KeyReference*>(reference);
-    if (!ref->token || !ref->cert)
+    if (!ref->key || !ref->cert)
         return nullptr;
 
     EVP_PKEY* pubKey = X509_get0_pubkey(ref->cert);
@@ -250,7 +259,7 @@ void* kmLoad(const void* reference, size_t referenceSz)
         return nullptr;
 
     auto kd = std::make_unique<ProviderKeyData>();
-    kd->token = ref->token;
+    kd->key = ref->key;
     populateKeyDataFromPkey(*kd, pubKey);
     return kd.release();
 }

@@ -34,25 +34,23 @@ public:
 
     bool isConfigured() const;
 
-    // Note: PIN is transmitted as plaintext JSON over the Unix domain socket
-    // to the Java DSS service. The PIN resides in non-cleansable JVM String
-    // memory during signing. This is an inherent limitation of the IPC-to-Java
-    // architecture; the Unix socket restricts exposure to the local machine.
-    // Any std::string we form on the C++ side as part of the JSON request is
-    // explicitly cleansed before return.
-    SigningResult sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
-                       const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
-                       const std::string& readerName) override;
-
-    /// @brief DSS backend stub for appendSigner — returns EngineError.
-    /// The DSS oracle is retained for cross-verification only; multi-sign
-    /// is implemented in the Native backend.
-    SigningResult appendSigner(const SigningRequest& request, std::span<const uint8_t> priorSignature,
-                               std::span<const uint8_t> originalDocument, const LibreSCRS::Secure::Buffer& pin,
-                               const std::string& pkcs11Module, const std::string& keyAlias,
-                               const std::string& readerName) override;
-
     bool isAvailable() const override;
+
+    /// @brief Sign through the Java oracle with @p key, which the caller holds:
+    ///        the oracle returns the bytes to sign, @p key signs them here, and
+    ///        the oracle builds the document around the signature. No PIN and
+    ///        no key reaches the oracle.
+    ///
+    /// RSA keys only, over SHA-256: an ECDSA key returns
+    /// @ref SignFailureKind::EngineError.
+    /// A key's own failure (a refused PIN, a blocked card) keeps its kind.
+    SigningResult sign(const SigningRequest& request, SigningKey& key) override;
+
+    /// @brief Not supported — returns EngineError. The oracle is a
+    ///        cross-verification reference; adding a signer is the native
+    ///        engine's.
+    SigningResult appendSigner(const SigningRequest& request, std::span<const uint8_t> priorSignature,
+                               std::span<const uint8_t> originalDocument, SigningKey& key) override;
 
 private:
     DSSServiceManager& manager();

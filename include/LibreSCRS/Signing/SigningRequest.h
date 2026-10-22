@@ -132,7 +132,9 @@ public:
     ///        operation rather than signing with an arbitrary first match.
     ///        Binding the chosen certificate to an intended identity (its DER)
     ///        is the caller's responsibility. Empty selects by label /
-    ///        auto-select.
+    ///        auto-select. A key id longer than a PKCS#15 identifier
+    ///        (255 bytes) is refused with
+    ///        @ref SigningResult::Status::InvalidRequest before the card is read.
     /// @note Pure accessor, @c noexcept per API-POLICY §5.3.
     /// @since 5.0
     [[nodiscard]] const std::vector<std::uint8_t>& keyId() const noexcept;

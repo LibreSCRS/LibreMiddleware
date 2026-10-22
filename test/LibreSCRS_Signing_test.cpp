@@ -315,6 +315,18 @@ TEST(SigningResultTest, FactoriesSetStatus)
 #include "detail/RequestBridge.h"
 #include <types.h>
 
+#include "signing_stub_plugin.h"
+#include "soft_key_plugin.h"
+#include "signing_test_support/mock_tsa_server.h"
+#include "signing_test_support/signing_test_support.h"
+
+#include <openssl/bio.h>
+#include <openssl/cms.h>
+
+#include <cstdio>
+#include <iterator>
+#include <regex>
+
 TEST(DocumentPrecheck, RejectsNonPdfForPadesButNotOtherFormats)
 {
     using LibreSCRS::Signing::SignatureFormat;
@@ -369,53 +381,22 @@ TEST(DocumentPrecheck, ToleratesTheSameLeadingPrefixAsThePadesEngine)
     EXPECT_TRUE(det::documentPrecheck(SignatureFormat::Pades, headerless).has_value());
 }
 
-TEST(SigningServiceClassifierTest, MapsCKRHexCodesToPinErrors)
+// The status comes from the failure's kind and from nothing else: a message
+// that merely reads like a PIN error is not one.
+TEST(SigningServiceClassifierTest, MapsTheKeysVerdictToItsStatus)
 {
-    using LibreSCRS::Signing::SigningResult;
-    auto make = [](std::string msg) {
-        libresign::SigningResult r;
-        r.errorMessage = std::move(msg);
-        return r;
-    };
+    using S = LibreSCRS::Signing::SigningResult::Status;
+    using libresign::SignFailureKind;
+    namespace det = LibreSCRS::Signing::detail;
+    auto kind = [](SignFailureKind k) { return libresign::SigningResult{false, {}, "detail", k}; };
+    EXPECT_EQ(S::PinVerificationFailed, det::classifyLibresignError(kind(SignFailureKind::PinFailed)));
+    EXPECT_EQ(S::CardBlocked, det::classifyLibresignError(kind(SignFailureKind::PinBlocked)));
+    EXPECT_EQ(S::UserCancelled, det::classifyLibresignError(kind(SignFailureKind::UserCancelled)));
+    EXPECT_EQ(S::TsaUnreachable, det::classifyLibresignError(kind(SignFailureKind::TsaUnreachable)));
 
-    // Native backend: "<op> failed: CKR 0x<UPPER-HEX>" (see pkcs11_token.cpp checkRv).
-    EXPECT_EQ(SigningResult::Status::PinVerificationFailed,
-              LibreSCRS::Signing::detail::classifyLibresignError(
-                  make("Native signing error: C_Login failed: CKR 0x000000A0")));
-    EXPECT_EQ(SigningResult::Status::PinVerificationFailed,
-              LibreSCRS::Signing::detail::classifyLibresignError(make("CKR 0x000000A1 presented")));
-    EXPECT_EQ(SigningResult::Status::PinVerificationFailed,
-              LibreSCRS::Signing::detail::classifyLibresignError(make("C_Login failed: CKR 0x000000A2")));
-
-    EXPECT_EQ(SigningResult::Status::CardBlocked, LibreSCRS::Signing::detail::classifyLibresignError(
-                                                      make("Native signing error: C_Login failed: CKR 0x000000A4")));
-    EXPECT_EQ(SigningResult::Status::CardBlocked,
-              LibreSCRS::Signing::detail::classifyLibresignError(make("Token reports CKR 0x000000A3")));
-
-    // DSS backend / symbolic names.
-    EXPECT_EQ(SigningResult::Status::PinVerificationFailed,
-              LibreSCRS::Signing::detail::classifyLibresignError(make("Wrong PIN entered")));
-    EXPECT_EQ(SigningResult::Status::PinVerificationFailed,
-              LibreSCRS::Signing::detail::classifyLibresignError(make("CKR_PIN_INCORRECT from token")));
-    EXPECT_EQ(SigningResult::Status::CardBlocked,
-              LibreSCRS::Signing::detail::classifyLibresignError(make("CKR_PIN_LOCKED")));
-    EXPECT_EQ(SigningResult::Status::CardBlocked,
-              LibreSCRS::Signing::detail::classifyLibresignError(make("CKR_PIN_EXPIRED")));
-
-    // TSA bucket.
-    EXPECT_EQ(SigningResult::Status::TsaUnreachable,
-              LibreSCRS::Signing::detail::classifyLibresignError(make("timestamping service unreachable")));
-    EXPECT_EQ(SigningResult::Status::TsaUnreachable,
-              LibreSCRS::Signing::detail::classifyLibresignError(make("TSA returned HTTP 500")));
-
-    // Fallback + defensive checks: unrelated strings must NOT match the old
-    // lowercase "pin" trap (the reviewer's concrete false-positive concern).
-    EXPECT_EQ(SigningResult::Status::SigningEngineError,
-              LibreSCRS::Signing::detail::classifyLibresignError(make("random library error")));
-    EXPECT_EQ(SigningResult::Status::SigningEngineError,
-              LibreSCRS::Signing::detail::classifyLibresignError(make("pipeline stalled")));
-    EXPECT_EQ(SigningResult::Status::SigningEngineError,
-              LibreSCRS::Signing::detail::classifyLibresignError(make("/home/user/pinfile missing")));
+    libresign::SigningResult untyped;
+    untyped.errorMessage = "C_Login failed: CKR_PIN_INCORRECT (CKR 0x000000A0)";
+    EXPECT_EQ(S::SigningEngineError, det::classifyLibresignError(untyped));
 }
 
 // ---------------------------------------------------------------------------
@@ -423,7 +404,7 @@ TEST(SigningServiceClassifierTest, MapsCKRHexCodesToPinErrors)
 //
 // These cover the exact production mapping that SigningService::sign uses to
 // hand a public SigningRequest to libresign — without needing a PC/SC reader
-// or PKCS#11 token. The original contact-info end-to-end test re-implemented
+// or a card. The original contact-info end-to-end test re-implemented
 // the bridge locally, so a regression in SigningService.cpp would not have
 // been detected; this suite guards against that path drifting again.
 // ---------------------------------------------------------------------------
@@ -802,36 +783,13 @@ TEST(SigningServiceBridgeTranslationTest, DocumentNameOverridesInputFileDerivedN
 // never dereferences the connection reference for tests that exercise
 // InvalidRequest / UserCancelled paths.
 namespace {
-class StubPkiPlugin : public LibreSCRS::Plugin::CardPlugin
+class StubPkiPlugin : public LibreSCRS::TestSupport::SigningStubPlugin
 {
 public:
     StubPkiPlugin()
-    {
-        setIdentity("stub-pki", "Stub PKI", /*priority=*/1000);
-    }
-    LibreSCRS::Plugin::CardCapabilities capabilities() const override
-    {
-        return LibreSCRS::Plugin::CardCapabilities::PKI | LibreSCRS::Plugin::CardCapabilities::PinManagement;
-    }
-    std::span<const LibreSCRS::Plugin::Atr> supportedAtrs() const noexcept override
-    {
-        // The stub matches every ATR via canHandleConnection — give an empty
-        // ATR table here; the bridge tests below never exercise canHandle.
-        static constexpr std::array<LibreSCRS::Plugin::Atr, 0> kAtrs{};
-        return kAtrs;
-    }
-    LibreSCRS::Plugin::ReadResult doReadCard(LibreSCRS::SmartCard::CardSession&, GroupCallback) const override
-    {
-        return LibreSCRS::Plugin::ReadResult::ok(LibreSCRS::Plugin::CardData{});
-    }
-    LibreSCRS::Plugin::CredentialCounters readCounters(LibreSCRS::SmartCard::CardSession&,
-                                                       std::string_view) const override
-    {
-        // Return without touching the session — the bridge tests below pass a
-        // live session (or skip when no reader is available), but we don't
-        // want to generate APDU traffic.
-        return {};
-    }
+        : SigningStubPlugin(LibreSCRS::Plugin::CardCapabilities::PKI |
+                            LibreSCRS::Plugin::CardCapabilities::PinManagement)
+    {}
 };
 
 // Try to open a live CardSession for tests that must pass a real session.
@@ -1057,69 +1015,291 @@ TEST(SigningServiceBufferSignTest, ReturnsUserCancelledWhenProviderCancels)
 }
 
 namespace {
-// Set an environment variable for the duration of a scope and put back whatever
-// was there. The variable below changes how the whole process resolves the
-// PKCS#11 module, so leaking it would reach every case that runs afterwards.
-class ScopedEnv
-{
-public:
-    ScopedEnv(const char* name, const char* value) : key(name)
-    {
-        if (const char* current = std::getenv(name); current != nullptr) {
-            had = true;
-            previous = current;
-        }
-        ::setenv(name, value, 1);
-    }
-    ~ScopedEnv()
-    {
-        if (had)
-            ::setenv(key, previous.c_str(), 1);
-        else
-            ::unsetenv(key);
-    }
-    ScopedEnv(const ScopedEnv&) = delete;
-    ScopedEnv& operator=(const ScopedEnv&) = delete;
 
-private:
-    const char* key;
-    bool had = false;
-    std::string previous;
-};
+LibreSCRS::Auth::CredentialResult pinProvider(const LibreSCRS::Auth::AuthRequirement&)
+{
+    std::vector<LibreSCRS::Auth::CredentialEntry> values;
+    values.emplace_back("pin", LibreSCRS::Secure::String{"0000"});
+    return LibreSCRS::Auth::CredentialResult::ok(std::move(values));
+}
+
+// Whether @p pdf carries one PAdES signature, over its /ByteRange, made by the
+// key whose certificate is @p signerDer.
+bool padesSignatureVerifies(const std::vector<std::uint8_t>& pdf, const std::vector<std::uint8_t>& signerDer)
+{
+    const std::string text(pdf.begin(), pdf.end());
+    const auto at = text.rfind("/ByteRange");
+    if (at == std::string::npos)
+        return false;
+    long range[4] = {};
+    if (std::sscanf(text.c_str() + at, "/ByteRange [%ld %ld %ld %ld]", &range[0], &range[1], &range[2], &range[3]) != 4)
+        return false;
+    std::vector<std::uint8_t> signedBytes(pdf.begin() + range[0], pdf.begin() + range[0] + range[1]);
+    signedBytes.insert(signedBytes.end(), pdf.begin() + range[2], pdf.begin() + range[2] + range[3]);
+    // The gap between the two ranges is "<hex>": the CMS, zero-padded.
+    std::vector<std::uint8_t> cmsDer;
+    for (long k = range[1] + 1; k + 1 < range[2] - 1; k += 2) {
+        unsigned int byte = 0;
+        if (std::sscanf(text.c_str() + k, "%2x", &byte) != 1)
+            return false;
+        cmsDer.push_back(static_cast<std::uint8_t>(byte));
+    }
+    const unsigned char* p = cmsDer.data();
+    const std::unique_ptr<CMS_ContentInfo, decltype(&CMS_ContentInfo_free)> cms(
+        d2i_CMS_ContentInfo(nullptr, &p, static_cast<long>(cmsDer.size())), &CMS_ContentInfo_free);
+    const std::unique_ptr<BIO, decltype(&BIO_free)> content(
+        BIO_new_mem_buf(signedBytes.data(), static_cast<int>(signedBytes.size())), &BIO_free);
+    if (!cms || !content ||
+        CMS_verify(cms.get(), nullptr, nullptr, content.get(), nullptr, CMS_NO_SIGNER_CERT_VERIFY | CMS_BINARY) != 1)
+        return false;
+    STACK_OF(X509)* signers = CMS_get0_signers(cms.get());
+    if (signers == nullptr || sk_X509_num(signers) != 1)
+        return false;
+    unsigned char* der = nullptr;
+    const int length = i2d_X509(sk_X509_value(signers, 0), &der);
+    const bool same = length > 0 && std::vector<std::uint8_t>(der, der + length) == signerDer;
+    OPENSSL_free(der);
+    sk_X509_free(signers);
+    return same;
+}
+
 } // namespace
 
-// Document signing currently depends on loading the in-process PKCS#11 module:
-// point the resolver at a path that does not exist and the signature is refused
-// with an engine error naming the module it could not load. The test says so
-// plainly, so the day signing stops loading a module in-process this case flips
-// to asserting success instead of changing quietly.
-TEST(SigningServiceBufferSignTest, SignWithoutLoadableModuleIsRefusedToday)
+// Document signing is made through the card plugin on the caller's session: the
+// plugin's key, held in memory here, makes the document's one signature.
+TEST(SigningServiceBufferSignTest, SignsWithoutAnyPkcs11Module)
 {
-    const ScopedEnv module{"LIBRESCRS_PKCS11_MODULE", "/nonexistent/librescrs-pkcs11.so"};
-
     auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
     auto svc = makeBufferSignService();
     ASSERT_NE(svc, nullptr);
-    auto request = makeBufferSignRequest();
+    auto plugin = std::make_shared<LibreSCRS::TestSupport::SoftKeyPlugin>();
+    const auto pdf = libresign::test::buildTestPdf();
+    const std::vector<std::uint8_t> document(pdf.begin(), pdf.end());
 
-    auto provider = [](const LibreSCRS::Auth::AuthRequirement&) {
-        std::vector<LibreSCRS::Auth::CredentialEntry> values;
-        values.emplace_back("pin", LibreSCRS::Secure::String{"0000"});
-        return LibreSCRS::Auth::CredentialResult::ok(std::move(values));
+    auto result =
+        svc->sign(makeBufferSignRequest(), std::span<const std::uint8_t>{document}, pinProvider, plugin, session);
+
+    ASSERT_EQ(result.status, LibreSCRS::Signing::SigningResult::Status::Ok)
+        << result.diagnosticDetail.value_or("no detail");
+    ASSERT_TRUE(result.signedDocumentBytes.has_value());
+    EXPECT_TRUE(padesSignatureVerifies(*result.signedDocumentBytes, plugin->certDer));
+    EXPECT_EQ(plugin->count("pin:deposit"), 1);
+    EXPECT_GE(plugin->signCalls.size(), 1U);
+}
+
+// A key id longer than a PKCS#15 identifier names no key on any card: the
+// request is malformed, and it is refused as such before the card is read.
+TEST(SigningServiceBufferSignTest, OverlongKeyIdIsRefusedBeforeTheCardIsRead)
+{
+    class CountingPlugin : public LibreSCRS::TestSupport::SoftKeyPlugin
+    {
+    public:
+        std::vector<LibreSCRS::Plugin::CertificateData>
+        readCertificates(LibreSCRS::SmartCard::CardSession& s) const override
+        {
+            ++reads;
+            return SoftKeyPlugin::readCertificates(s);
+        }
+        mutable int reads = 0;
     };
-    auto plugin = std::make_shared<StubPkiPlugin>();
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    auto svc = makeBufferSignService();
+    ASSERT_NE(svc, nullptr);
+    auto plugin = std::make_shared<CountingPlugin>();
+    LibreSCRS::Signing::SigningRequest::Builder b;
+    b.format(LibreSCRS::Signing::SignatureFormat::Pades)
+        .level(LibreSCRS::Signing::SignatureLevel::B_B)
+        .packaging(LibreSCRS::Signing::PackagingMode::Enveloped)
+        .keyId(std::vector<std::uint8_t>(256, 0x45));
+    const auto request = std::move(b).buildForBufferSign();
+    const auto pdf = libresign::test::buildTestPdf();
+    const std::vector<std::uint8_t> document(pdf.begin(), pdf.end());
 
-    // A %PDF- prefix clears the fail-fast document pre-check so the pipeline
-    // reaches the backend rather than rejecting the bytes.
-    const std::vector<std::uint8_t> document{'%', 'P', 'D', 'F', '-', '1', '.', '7', '\n', '%', 0xE2, 0xE3};
-    auto result = svc->sign(request, std::span<const std::uint8_t>{document}, provider, plugin, session);
+    auto result = svc->sign(request, std::span<const std::uint8_t>{document}, pinProvider, plugin, session);
 
-    EXPECT_EQ(result.status, LibreSCRS::Signing::SigningResult::Status::SigningEngineError);
-    ASSERT_TRUE(result.diagnosticDetail.has_value());
-    EXPECT_NE(result.diagnosticDetail->find("Cannot load PKCS#11 module"), std::string::npos)
-        << "the diagnostic must name the module load, not just report an engine error; got: "
-        << *result.diagnosticDetail;
-    EXPECT_FALSE(result.signedDocumentBytes.has_value());
+    EXPECT_EQ(result.status, LibreSCRS::Signing::SigningResult::Status::InvalidRequest)
+        << result.diagnosticDetail.value_or("no detail");
+    EXPECT_EQ(plugin->reads, 0) << "the card is not read for a malformed request";
+    EXPECT_TRUE(plugin->events.empty()) << "no PIN is deposited";
+    EXPECT_TRUE(plugin->signCalls.empty());
+}
+
+// The same for a second signer: an XAdES detached signature gains another
+// signature, both made through card plugins, and no module is loaded.
+TEST(SigningServiceBufferSignTest, AppendSignerSignsWithoutAnyPkcs11Module)
+{
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    auto svc = makeBufferSignService();
+    ASSERT_NE(svc, nullptr);
+    LibreSCRS::Signing::SigningRequest::Builder b;
+    b.format(LibreSCRS::Signing::SignatureFormat::Xades)
+        .level(LibreSCRS::Signing::SignatureLevel::B_B)
+        .packaging(LibreSCRS::Signing::PackagingMode::Detached)
+        .documentName("contract.txt");
+    const auto request = std::move(b).buildForBufferSign();
+    const std::vector<std::uint8_t> document{'t', 'h', 'e', ' ', 'c', 'o', 'n', 't', 'r', 'a', 'c', 't'};
+
+    auto first = std::make_shared<LibreSCRS::TestSupport::SoftKeyPlugin>();
+    auto signedOnce = svc->sign(request, std::span<const std::uint8_t>{document}, pinProvider, first, session);
+    ASSERT_EQ(signedOnce.status, LibreSCRS::Signing::SigningResult::Status::Ok)
+        << signedOnce.diagnosticDetail.value_or("no detail");
+    ASSERT_TRUE(signedOnce.signedDocumentBytes.has_value());
+
+    // appendSigner writes its artifact to the request's output file.
+    const auto out = std::filesystem::temp_directory_path() / "librescrs-append-without-module.xml";
+    LibreSCRS::Signing::SigningRequest::Builder ab;
+    ab.format(LibreSCRS::Signing::SignatureFormat::Xades)
+        .level(LibreSCRS::Signing::SignatureLevel::B_B)
+        .packaging(LibreSCRS::Signing::PackagingMode::Detached)
+        .documentName("contract.txt")
+        .outputFile(out);
+    const auto appendRequest = std::move(ab).buildForBufferSign();
+    auto second = std::make_shared<LibreSCRS::TestSupport::SoftKeyPlugin>();
+    auto signedTwice =
+        svc->appendSigner(appendRequest, *signedOnce.signedDocumentBytes, document, pinProvider, second, session);
+    ASSERT_EQ(signedTwice.status, LibreSCRS::Signing::SigningResult::Status::Ok)
+        << signedTwice.diagnosticDetail.value_or("no detail");
+    std::ifstream in(out, std::ios::binary);
+    const std::string xml((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::filesystem::remove(out);
+    // Opening <ds:SignatureValue ...> / <SignatureValue ...> tags only: the
+    // name also appears in Id attributes and closing tags.
+    const std::regex openingTag{"<([A-Za-z0-9_]+:)?SignatureValue[ >]"};
+    const auto signatures =
+        std::distance(std::sregex_iterator(xml.begin(), xml.end(), openingTag), std::sregex_iterator());
+    EXPECT_EQ(signatures, 2) << "the first signer's signature and the second's";
+    EXPECT_GE(second->signCalls.size(), 1U);
+}
+
+// Every format at B-B and B-T (against an in-process time-stamping authority),
+// signed and then given a second signer, through card plugins whose keys sign
+// in memory: Ok in every cell, with each plugin's key having signed, is the
+// proof that every format signs through the plugin it was handed.
+TEST(SigningMatrix, EveryFormatAndLevelSignsAndAppendsWithoutAnyModule)
+{
+    using LibreSCRS::Signing::PackagingMode;
+    using LibreSCRS::Signing::SignatureFormat;
+    using LibreSCRS::Signing::SignatureLevel;
+    using Status = LibreSCRS::Signing::SigningResult::Status;
+    libresign::test::MockTsaServer tsa;
+    LibreSCRS::Trust::TrustConfig trust;
+    trust.trustedListSources.push_back({"https://www.mit.gov.rs/TrustedList/TSL-RS.xml", false, false});
+    auto trustResult = LibreSCRS::Trust::TrustStoreService::create(std::move(trust));
+    ASSERT_TRUE(trustResult.has_value());
+    const auto svc =
+        std::make_shared<LibreSCRS::Signing::SigningService>(*trustResult, LibreSCRS::Signing::staticTsa(tsa.url()));
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("matrix-reader");
+
+    const auto pdf = libresign::test::buildTestPdf();
+    const std::vector<std::uint8_t> pdfBytes(pdf.begin(), pdf.end());
+    const std::vector<std::uint8_t> text{'t', 'h', 'e', ' ', 'c', 'o', 'n', 't', 'r', 'a', 'c', 't'};
+    const struct
+    {
+        SignatureFormat format;
+        PackagingMode packaging;
+        const std::vector<std::uint8_t>* document;
+        bool detached;
+        const char* name;
+    } formats[] = {
+        {SignatureFormat::Pades, PackagingMode::Enveloped, &pdfBytes, false, "PAdES"},
+        {SignatureFormat::Cades, PackagingMode::Detached, &text, true, "CAdES"},
+        {SignatureFormat::Xades, PackagingMode::Detached, &text, true, "XAdES"},
+        {SignatureFormat::Jades, PackagingMode::Detached, &text, true, "JAdES"},
+        {SignatureFormat::AsicE, PackagingMode::Enveloped, &text, false, "ASiC-E"},
+    };
+    const auto out = std::filesystem::temp_directory_path() / "librescrs-signing-matrix.out";
+
+    for (const auto& f : formats) {
+        for (const auto level : {SignatureLevel::B_B, SignatureLevel::B_T}) {
+            SCOPED_TRACE(std::string{f.name} + (level == SignatureLevel::B_B ? " B-B" : " B-T"));
+            LibreSCRS::Signing::SigningRequest::Builder b;
+            b.format(f.format).level(level).packaging(f.packaging).documentName("contract.txt").outputFile(out);
+            const auto request = std::move(b).buildForBufferSign();
+
+            auto first = std::make_shared<LibreSCRS::TestSupport::SoftKeyPlugin>();
+            const auto signedOnce =
+                svc->sign(request, std::span<const std::uint8_t>{*f.document}, pinProvider, first, session);
+            ASSERT_EQ(signedOnce.status, Status::Ok) << signedOnce.diagnosticDetail.value_or("no detail");
+            ASSERT_TRUE(signedOnce.signedDocumentBytes.has_value());
+
+            auto second = std::make_shared<LibreSCRS::TestSupport::SoftKeyPlugin>();
+            const std::span<const std::uint8_t> original =
+                f.detached ? std::span<const std::uint8_t>{*f.document} : std::span<const std::uint8_t>{};
+            const auto signedTwice =
+                svc->appendSigner(request, *signedOnce.signedDocumentBytes, original, pinProvider, second, session);
+            EXPECT_EQ(signedTwice.status, Status::Ok) << signedTwice.diagnosticDetail.value_or("no detail");
+            EXPECT_GE(first->signCalls.size(), 1U);
+            EXPECT_GE(second->signCalls.size(), 1U);
+        }
+    }
+    std::filesystem::remove(out);
+}
+
+// The card's verdict on the PIN reaches the caller as the status it names, in
+// every format: a refused PIN, a blocked one and a cancel. CAdES, PAdES and
+// ASiC-E sign through OpenSSL, which sees only that the key did not sign; the
+// three statuses must not be lost on that way. The PIN is presented once and
+// erased again.
+TEST(SigningPinOutcomes, EveryFormatReportsTheCardsVerdict)
+{
+    using LibreSCRS::Plugin::SignResultOutcome;
+    using LibreSCRS::Signing::PackagingMode;
+    using LibreSCRS::Signing::SignatureFormat;
+    using LibreSCRS::Signing::SignatureLevel;
+    using Status = LibreSCRS::Signing::SigningResult::Status;
+
+    auto svc = makeBufferSignService();
+    ASSERT_NE(svc, nullptr);
+    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("pin-outcome-reader");
+    const auto pdf = libresign::test::buildTestPdf();
+    const std::vector<std::uint8_t> pdfBytes(pdf.begin(), pdf.end());
+    const std::vector<std::uint8_t> text{'t', 'h', 'e', ' ', 'c', 'o', 'n', 't', 'r', 'a', 'c', 't'};
+    const struct
+    {
+        SignatureFormat format;
+        PackagingMode packaging;
+        const std::vector<std::uint8_t>* document;
+        const char* name;
+    } formats[] = {
+        {SignatureFormat::Pades, PackagingMode::Enveloped, &pdfBytes, "PAdES"},
+        {SignatureFormat::Cades, PackagingMode::Detached, &text, "CAdES"},
+        {SignatureFormat::AsicE, PackagingMode::Enveloped, &text, "ASiC-E"},
+        {SignatureFormat::Xades, PackagingMode::Detached, &text, "XAdES"},
+        {SignatureFormat::Jades, PackagingMode::Detached, &text, "JAdES"},
+    };
+    const struct
+    {
+        SignResultOutcome outcome;
+        Status status;
+        const char* name;
+    } verdicts[] = {
+        {SignResultOutcome::PinIncorrect, Status::PinVerificationFailed, "PIN refused"},
+        {SignResultOutcome::PinBlocked, Status::CardBlocked, "PIN blocked"},
+        {SignResultOutcome::Cancelled, Status::UserCancelled, "cancelled"},
+    };
+
+    for (const auto& f : formats) {
+        for (const auto& v : verdicts) {
+            SCOPED_TRACE(std::string{f.name} + ", " + v.name);
+            LibreSCRS::Signing::SigningRequest::Builder b;
+            b.format(f.format).level(SignatureLevel::B_B).packaging(f.packaging).documentName("contract.txt");
+            const auto request = std::move(b).buildForBufferSign();
+            auto plugin = std::make_shared<LibreSCRS::TestSupport::SoftKeyPlugin>();
+            plugin->respond = [outcome = v.outcome](const LibreSCRS::TestSupport::SigningStubPlugin::SignCall&) {
+                LibreSCRS::Plugin::SignResult r;
+                r.outcome = outcome;
+                return r;
+            };
+
+            const auto result =
+                svc->sign(request, std::span<const std::uint8_t>{*f.document}, pinProvider, plugin, session);
+
+            EXPECT_EQ(result.status, v.status) << result.diagnosticDetail.value_or("no detail");
+            EXPECT_FALSE(result.signedDocumentBytes.has_value());
+            EXPECT_EQ(plugin->signCalls.size(), 1U) << "the PIN is presented once";
+            EXPECT_TRUE(plugin->depositedPin.empty()) << "the PIN is erased after the card refused to sign";
+        }
+    }
 }
 
 TEST(SigningResultFactories, InvalidDocumentCarriesStatusAndKey)

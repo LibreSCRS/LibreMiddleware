@@ -24,97 +24,56 @@
 #include <LibreSCRS/Signing/SigningResult.h>
 #include <types.h>
 
-#include <string>
-#include <string_view>
 #include <utility>
 
 namespace LibreSCRS::Signing::detail {
 
 /// Map a libresign failure to a LibreSCRS status code.
 ///
-/// Primary path (4.2+): `r.failureKind` carries a typed
-/// `libresign::SignFailureKind` that the module set at the precise point
-/// the failure was known. Closed switch under `-Wswitch-enum` so adding a
-/// new kind triggers a compile error here.
-///
-/// Substring path: when `failureKind` is unset — which happens when a PIN
-/// failure surfaces as a `Pkcs11Token` throw before any module gets a
-/// chance to classify it — parse `errorMessage` substring tokens to
-/// recover PIN / card-blocked / TSA classes. Canonical hex reference:
-///
-///   CKR_PIN_INCORRECT = 0x000000A0
-///   CKR_PIN_INVALID   = 0x000000A1
-///   CKR_PIN_LEN_RANGE = 0x000000A2
-///   CKR_PIN_EXPIRED   = 0x000000A3
-///   CKR_PIN_LOCKED    = 0x000000A4
-///
-/// The fallback deliberately does NOT check the lowercase substring "pin":
-/// that false-positive-matches strings like "pipeline" or filesystem paths.
+/// `r.failureKind` carries the typed `libresign::SignFailureKind` that the
+/// engine set at the precise point the failure was known; every failure is
+/// made with one. Closed switch under `-Wswitch-enum` so adding a new kind
+/// triggers a compile error here.
 inline LibreSCRS::Signing::SigningResult::Status classifyLibresignError(const libresign::SigningResult& r)
 {
     using S = LibreSCRS::Signing::SigningResult::Status;
     using libresign::SignFailureKind;
 
-    if (r.failureKind.has_value()) {
-        switch (*r.failureKind) {
-        case SignFailureKind::TsaUnreachable:
-            return S::TsaUnreachable;
-        case SignFailureKind::PinFailed:
-            return S::PinVerificationFailed;
-        case SignFailureKind::UserCancelled:
-            return S::UserCancelled;
-        case SignFailureKind::InvalidInput:
-            return S::InvalidRequest;
-        case SignFailureKind::PolicyViolation:
-            return S::InvalidRequest;
-        // Ambiguous key selection is a terminal, non-retriable engine outcome
-        // (the card carries >1 key for the requested CKA_ID); the public enum
-        // gains no dedicated value (LC's -Wswitch-enum consumers would break),
-        // so it maps to the "not otherwise classified" engine bucket while the
-        // dedicated user-message key below carries the precise distinction.
-        case SignFailureKind::KeyAmbiguous:
-            return S::SigningEngineError;
-        // Document-content faults: the bytes are not a valid document of the
-        // requested format. Client-input, user-fixable — its own status so the
-        // client says "fix your file", not "engine error".
-        case SignFailureKind::PdfPreparationError:
-        case SignFailureKind::InvalidDocument:
-            return S::InvalidDocument;
-        case SignFailureKind::CardError:
-        case SignFailureKind::RevocationFetchFailed:
-        // Chain-incomplete keeps the engine-error status (LC's -Wswitch-enum
-        // consumers gain no public enum value); the dedicated user-message
-        // key below carries the actionable distinction.
-        case SignFailureKind::CertificateChainIncomplete:
-        case SignFailureKind::XmlSerializationError:
-        case SignFailureKind::JsonSerializationError:
-        case SignFailureKind::ZipBuildError:
-        case SignFailureKind::OpensslError:
-        case SignFailureKind::EngineError:
-            return S::SigningEngineError;
-        }
-        return S::SigningEngineError; // defensive — switch closes via -Wswitch-enum on every value
-    }
-
-    // Substring match on errorMessage. Signing-engine modules populate
-    // failureKind on every return path, so this is reached only when a CKR
-    // exception propagates from Pkcs11Token before any module wraps it —
-    // a live path, not a compatibility one.
-    const std::string& detail = r.errorMessage;
-    auto contains = [&](std::string_view needle) { return detail.find(needle) != std::string::npos; };
-
-    if (contains("CKR 0x000000A0") || contains("CKR 0x000000A1") || contains("CKR 0x000000A2") ||
-        contains("CKR_PIN_INCORRECT") || contains("wrong PIN") || contains("Wrong PIN"))
-        return S::PinVerificationFailed;
-
-    if (contains("CKR 0x000000A3") || contains("CKR 0x000000A4") || contains("CKR_PIN_LOCKED") ||
-        contains("CKR_PIN_EXPIRED") || contains("BLOCKED") || contains("locked"))
-        return S::CardBlocked;
-
-    if (contains("timestamp") || contains("TSA") || contains("tsa") || contains("timestamping"))
+    if (!r.failureKind.has_value())
+        return S::SigningEngineError;
+    switch (*r.failureKind) {
+    case SignFailureKind::TsaUnreachable:
         return S::TsaUnreachable;
-
-    return S::SigningEngineError;
+    case SignFailureKind::PinFailed:
+        return S::PinVerificationFailed;
+    case SignFailureKind::PinBlocked:
+        return S::CardBlocked;
+    case SignFailureKind::UserCancelled:
+        return S::UserCancelled;
+    case SignFailureKind::InvalidInput:
+        return S::InvalidRequest;
+    case SignFailureKind::PolicyViolation:
+        return S::InvalidRequest;
+    // Document-content faults: the bytes are not a valid document of the
+    // requested format. Client-input, user-fixable — its own status so the
+    // client says "fix your file", not "engine error".
+    case SignFailureKind::PdfPreparationError:
+    case SignFailureKind::InvalidDocument:
+        return S::InvalidDocument;
+    case SignFailureKind::CardError:
+    case SignFailureKind::RevocationFetchFailed:
+    // Chain-incomplete keeps the engine-error status (LC's -Wswitch-enum
+    // consumers gain no public enum value); the dedicated user-message
+    // key below carries the actionable distinction.
+    case SignFailureKind::CertificateChainIncomplete:
+    case SignFailureKind::XmlSerializationError:
+    case SignFailureKind::JsonSerializationError:
+    case SignFailureKind::ZipBuildError:
+    case SignFailureKind::OpensslError:
+    case SignFailureKind::EngineError:
+        return S::SigningEngineError;
+    }
+    return S::SigningEngineError; // defensive — switch closes via -Wswitch-enum on every value
 }
 
 /// Translate a typed libresign failure kind into the user-facing
@@ -148,14 +107,16 @@ inline LibreSCRS::LocalizedText kindToUserMessage(libresign::SignFailureKind k)
         return EK::cardError();
     case SignFailureKind::PinFailed:
         return EK::pinVerificationFailed();
+    // No message of its own: the card is what failed the user, and the status
+    // (CardBlocked) carries the distinction.
+    case SignFailureKind::PinBlocked:
+        return EK::cardError();
     case SignFailureKind::UserCancelled:
         return EK::userCancelled();
     case SignFailureKind::InvalidInput:
         return EK::invalidRequest();
     case SignFailureKind::PolicyViolation:
         return EK::policyViolation();
-    case SignFailureKind::KeyAmbiguous:
-        return EK::keyAmbiguous();
     case SignFailureKind::PdfPreparationError:
     case SignFailureKind::InvalidDocument:
         return EK::invalidDocument();

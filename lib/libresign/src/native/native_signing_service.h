@@ -8,13 +8,13 @@
 #pragma once
 
 #include "signing_service.h"
-#include "native/pkcs11_module_manager.h"
 
 #include <LibreSCRS/Trust/TrustStore.h> // for LibreSCRS::Trust::TrustAnchor
 
 #include <functional>
 #include <map>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -22,23 +22,19 @@ namespace libresign {
 
 class TlCache;
 class TlSignatureVerifier;
-class Pkcs11Token;
+class SigningKey;
 
 class NativeSigningService : public SigningService
 {
 public:
     bool configure(const TrustConfig& config) override;
 
-    SigningResult sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
-                       const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
-                       const std::string& readerName) override;
+    bool isAvailable() const override;
+
+    SigningResult sign(const SigningRequest& request, SigningKey& key) override;
 
     SigningResult appendSigner(const SigningRequest& request, std::span<const uint8_t> priorSignature,
-                               std::span<const uint8_t> originalDocument, const LibreSCRS::Secure::Buffer& pin,
-                               const std::string& pkcs11Module, const std::string& keyAlias,
-                               const std::string& readerName) override;
-
-    bool isAvailable() const override;
+                               std::span<const uint8_t> originalDocument, SigningKey& key) override;
 
     /// True if configure() was called (even if some TLs failed — degraded mode).
     bool isConfigured() const
@@ -61,28 +57,6 @@ public:
         anchorEmitter = std::move(emit);
     }
 
-    /// @brief Build this service's PKCS#11 token from a raw slot ID instead
-    ///        of resolving the @c readerName argument. TEST ONLY.
-    ///
-    /// Mirrors @ref Pkcs11Token::TestSlotId and exists for the same reason:
-    /// the production token constructor matches @c readerName against the
-    /// `[<8-hex-hash>]` slot-identity prefix that LM's own PKCS#11 module
-    /// writes into `slotDescription`, and SoftHSM2 emits no such prefix. So
-    /// the SoftHSM2-backed tests cannot reach @ref sign or @ref appendSigner
-    /// at all without this — they can only drive the format modules
-    /// directly with a `Pkcs11Token::TestSlotId` token, which bypasses every
-    /// policy this service applies around them (certificate expiry, chain
-    /// completion, TSA/revocation wiring).
-    ///
-    /// When set, both entry points construct their token from @p slotId; the
-    /// module still comes from their `pkcs11Module` argument, and the
-    /// `readerName` argument is then unused. Unset (the default) leaves the
-    /// readerName path unchanged — no production caller sets this.
-    void setTestSlotId(unsigned long slotId)
-    {
-        testSlotId = slotId;
-    }
-
 private:
     TrustConfig trustConfig;
     std::map<std::string, std::vector<uint8_t>> lotlDerivedCerts; // URL -> signing cert DER
@@ -101,18 +75,6 @@ private:
     bool lazyListsLoaded = false;
     AnchorEmitter anchorEmitter;
 
-    /// Process-shared loaded-module cache. Tokens constructed from
-    /// @ref sign / @ref appendSigner acquire a handle into this manager
-    /// so a single C_Initialize spans every sign call against the same
-    /// PKCS#11 module path. Destroyed AFTER any in-flight Token via
-    /// natural member-destruction order (Tokens are stack-scoped in
-    /// the sign methods and unwind before this service's dtor runs).
-    Pkcs11ModuleManager moduleManager;
-
-    /// Raw slot ID installed by @ref setTestSlotId. Engaged only by the
-    /// SoftHSM2-backed tests; empty in every production configuration.
-    std::optional<unsigned long> testSlotId;
-
     void loadTrustList(const std::string& url, bool isLotl, TlCache& cache, TlSignatureVerifier& verifier, int depth);
 
     /// Fetch every configured Trusted List that @ref configure deliberately
@@ -127,9 +89,9 @@ private:
     /// Idempotent within one @ref configure cycle.
     void loadLazyTrustLists();
 
-    /// Complete the token's certificate chain from the configured Trusted-List
+    /// Complete the key's certificate chain from the configured Trusted-List
     /// anchors for long-term (B-LT/B-LTA) levels, then install it via
-    /// @ref Pkcs11Token::setResolvedChain. Shared by @ref sign and
+    /// @ref SigningKey::setResolvedChain. Shared by @ref sign and
     /// @ref appendSigner so the fail-closed policy stays single-sourced.
     /// At B_LT and above this is also where any deferred Trusted List is
     /// fetched — see @ref loadLazyTrustLists.
@@ -137,7 +99,7 @@ private:
     ///          TL configured) or the chain completed successfully; a populated
     ///          @ref SigningResult (fail-closed failure) when the issuing CA was
     ///          not found in the configured Trusted List(s).
-    std::optional<SigningResult> completeLongTermChain(Pkcs11Token& token, SignatureLevel level);
+    std::optional<SigningResult> completeLongTermChain(SigningKey& key, SignatureLevel level);
 
     /// Reject an expired signer certificate unless the request carries the
     /// user-consent opt-in. Shared by @ref sign and @ref appendSigner for the
@@ -149,7 +111,7 @@ private:
     ///          or carrying no readable certificate to judge); a populated
     ///          @ref SigningResult carrying @ref SignFailureKind::PolicyViolation
     ///          when an expired signer is used without the opt-in.
-    std::optional<SigningResult> enforceSignerCertPolicy(Pkcs11Token& token, const SigningRequest& request);
+    std::optional<SigningResult> enforceSignerCertPolicy(SigningKey& key, const SigningRequest& request);
 };
 
 } // namespace libresign

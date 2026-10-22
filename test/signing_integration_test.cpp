@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
+#include "dss_validation_client.h"
+#include "signing_keys.h"
 #include "signing_test_support/signing_test_support.h"
 
 #include "dss/dss_service_manager.h"
@@ -11,8 +13,12 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <string>
 #include <utility>
 
+#include <openssl/bio.h>
+#include <openssl/cms.h>
 #include <openssl/x509.h>
 
 namespace fs = std::filesystem;
@@ -99,20 +105,77 @@ TEST_F(DSSSigningIntegrationTest, ConfigEndpointAcceptsTrustConfig)
     EXPECT_TRUE(svc.isConfigured());
 }
 
-TEST_F(DSSSigningIntegrationTest, Pkcs11SignFailsWithInvalidModule)
+// The oracle signs with a key the caller holds: it hands back the bytes to
+// sign, the key signs them here, and it builds the document around the
+// signature. Every format comes back with exactly one signature by the key,
+// which the oracle's own validator does not find cryptographically broken, and
+// the CAdES one also verifies with OpenSSL over the content.
+TEST_F(DSSSigningIntegrationTest, SignsWithAKeyTheCallerHolds)
 {
     libresign::DSSSigningService svc(*manager);
+    const auto pdf = buildTestPdf();
+    const auto xml = buildTestXml();
+    const std::string text = "the contract";
+    const struct
+    {
+        libresign::SignatureFormat format;
+        libresign::SignaturePackaging packaging;
+        std::string document;
+        const char* fileName;
+        const char* oracleFormat;
+        const char* oraclePackaging;
+    } cases[] = {
+        {libresign::SignatureFormat::Pades, libresign::SignaturePackaging::Enveloped, pdf, "test.pdf", "PAdES",
+         "ENVELOPED"},
+        {libresign::SignatureFormat::Cades, libresign::SignaturePackaging::Detached, text, "test.txt", "CAdES",
+         "DETACHED"},
+        {libresign::SignatureFormat::Xades, libresign::SignaturePackaging::Enveloped, xml, "test.xml", "XAdES",
+         "ENVELOPED"},
+        {libresign::SignatureFormat::Jades, libresign::SignaturePackaging::Detached, text, "test.txt", "JAdES",
+         "DETACHED"},
+        {libresign::SignatureFormat::AsicE, libresign::SignaturePackaging::Detached, text, "test.txt", "ASiC_E",
+         "ENVELOPED"},
+    };
+    const auto running = manager->ensureRunning();
+    ASSERT_TRUE(running) << running.error;
+    DSSValidationClient validator(running.baseUrl, manager->unixSocketPath());
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.fileName + std::string{" format "} + std::to_string(static_cast<int>(c.format)));
+        libresign::SigningRequest req;
+        req.document.assign(c.document.begin(), c.document.end());
+        req.fileName = c.fileName;
+        req.format = c.format;
+        req.packaging = c.packaging;
+        req.level = libresign::SignatureLevel::B_B;
+        SoftSigningKey key(validSignerKey());
 
-    libresign::SigningRequest req;
-    auto pdf = buildTestPdf();
-    req.document = std::vector<uint8_t>(pdf.begin(), pdf.end());
-    req.fileName = "test.pdf";
-    req.format = libresign::SignatureFormat::Pades;
-    req.level = libresign::SignatureLevel::B_B;
+        const auto result = svc.sign(req, key);
 
-    auto result = svc.sign(req, "/nonexistent/pkcs11.so", libresign::as_pin("0000"), "", "");
-    EXPECT_FALSE(result.success);
-    EXPECT_FALSE(result.errorMessage.empty());
+        ASSERT_TRUE(result.success) << result.errorMessage;
+        EXPECT_FALSE(result.signedDocument.empty());
+        EXPECT_EQ(key.signCalls, 1);
+        const bool detached =
+            c.packaging == libresign::SignaturePackaging::Detached && c.format != libresign::SignatureFormat::AsicE;
+        const auto report =
+            validator.validate(result.signedDocument, c.oracleFormat, c.oraclePackaging,
+                               detached ? std::span<const uint8_t>{req.document} : std::span<const uint8_t>{});
+        ASSERT_TRUE(report.error.empty()) << report.error;
+        ASSERT_EQ(report.signatureCount, 1);
+        for (const auto& sig : report.signatures)
+            EXPECT_NE(sig.indication, "TOTAL_FAILED") << sig.subIndication;
+        if (c.format != libresign::SignatureFormat::Cades)
+            continue;
+        const unsigned char* p = result.signedDocument.data();
+        const std::unique_ptr<CMS_ContentInfo, decltype(&CMS_ContentInfo_free)> cms(
+            d2i_CMS_ContentInfo(nullptr, &p, static_cast<long>(result.signedDocument.size())), &CMS_ContentInfo_free);
+        ASSERT_NE(cms, nullptr);
+        const std::unique_ptr<BIO, decltype(&BIO_free)> content(
+            BIO_new_mem_buf(req.document.data(), static_cast<int>(req.document.size())), &BIO_free);
+        EXPECT_EQ(CMS_verify(cms.get(), nullptr, nullptr, content.get(), nullptr,
+                             CMS_NO_SIGNER_CERT_VERIFY | CMS_BINARY | CMS_DETACHED),
+                  1)
+            << "the oracle's CAdES signature does not verify over the content";
+    }
 }
 
 // ============================================================================
