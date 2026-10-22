@@ -19,6 +19,7 @@
 #include <pcsc_connection.h>
 
 #include <cstring>
+#include <span>
 #include <vector>
 
 namespace {
@@ -31,6 +32,10 @@ using LibreSCRS::SmartCard::Internal::verifyPIN;
 // (consumed front to back; when exhausted the stub answers SW=9000).
 std::vector<std::vector<uint8_t>> g_sentApdus;
 std::vector<std::vector<uint8_t>> g_scriptedReplies;
+// Return codes for SCardTransmit, consumed front to back; SCARD_S_SUCCESS once
+// exhausted. A call answered with an error records the APDU and returns no data.
+std::vector<LONG> g_transmitRvs;
+int g_reconnects = 0;
 
 class Pcsc6cRetryTest : public ::testing::Test
 {
@@ -39,6 +44,8 @@ protected:
     {
         g_sentApdus.clear();
         g_scriptedReplies.clear();
+        g_transmitRvs.clear();
+        g_reconnects = 0;
     }
 };
 
@@ -50,6 +57,7 @@ extern "C" {
 // the only protocol for which the 6C retry path is live.
 LONG SCardReconnect(SCARDHANDLE, DWORD, DWORD, DWORD, LPDWORD pdwActiveProtocol)
 {
+    ++g_reconnects;
     *pdwActiveProtocol = SCARD_PROTOCOL_T0;
     return SCARD_S_SUCCESS;
 }
@@ -60,6 +68,12 @@ LONG SCardTransmit(SCARDHANDLE, const SCARD_IO_REQUEST*, LPCBYTE pbSendBuffer, D
                    LPBYTE pbRecvBuffer, LPDWORD pcbRecvLength)
 {
     g_sentApdus.emplace_back(pbSendBuffer, pbSendBuffer + cbSendLength);
+    if (!g_transmitRvs.empty()) {
+        const LONG rv = g_transmitRvs.front();
+        g_transmitRvs.erase(g_transmitRvs.begin());
+        if (rv != SCARD_S_SUCCESS)
+            return rv;
+    }
 
     std::vector<uint8_t> reply = {0x90, 0x00};
     if (!g_scriptedReplies.empty()) {
@@ -116,4 +130,47 @@ TEST_F(Pcsc6cRetryTest, LeCommandIsResentWithCorrectedLe)
     EXPECT_EQ(g_sentApdus[1], expectedRetry);
     EXPECT_TRUE(response.isSuccess());
     EXPECT_EQ(response.data, (std::vector<uint8_t>{0x01, 0x02, 0x03}));
+}
+
+// After SCARD_W_RESET_CARD the connection reconnects and resends a command
+// once. A command that carries a PIN is never resent: the resend could reach a
+// different card, or one whose state the reset cleared, and spend a try there.
+// The INS is byte 1 in a secure-messaging wrapped APDU as well.
+class Pcsc6cRetrySensitiveTest : public Pcsc6cRetryTest, public ::testing::WithParamInterface<std::vector<uint8_t>>
+{};
+
+TEST_P(Pcsc6cRetrySensitiveTest, SensitiveCommandIsNeverResentAfterReset)
+{
+    PCSCConnection conn(PCSCConnection::DetachedTag{}, "test-reader");
+    const std::vector<uint8_t> apdu = GetParam();
+    g_transmitRvs.push_back(static_cast<LONG>(SCARD_W_RESET_CARD));
+
+    try {
+        (void)conn.transmitRaw(std::span<const uint8_t>(apdu));
+        ADD_FAILURE() << "a PIN-carrying command after a reset must not succeed";
+    } catch (const LibreSCRS::SmartCard::Internal::PCSCError& e) {
+        EXPECT_EQ(e.code(), static_cast<LONG>(SCARD_W_RESET_CARD));
+    }
+    EXPECT_EQ(g_sentApdus.size(), 1u) << "sent once, never resent";
+    EXPECT_EQ(g_reconnects, 1) << "the handle is re-established for the next call";
+}
+
+INSTANTIATE_TEST_SUITE_P(PinVerbs, Pcsc6cRetrySensitiveTest,
+                         ::testing::Values(std::vector<uint8_t>{0x00, 0x20, 0x00, 0x01, 0x04, 0xAA, 0xBB, 0xCC, 0xDD},
+                                           std::vector<uint8_t>{0x00, 0x24, 0x00, 0x01, 0x04, 0xAA, 0xBB, 0xCC, 0xDD},
+                                           std::vector<uint8_t>{0x00, 0x2C, 0x00, 0x01, 0x04, 0xAA, 0xBB, 0xCC, 0xDD},
+                                           std::vector<uint8_t>{0x0C, 0x20, 0x00, 0x01, 0x04, 0x87, 0x02, 0x01, 0x00}));
+
+TEST_F(Pcsc6cRetryTest, PlainCommandIsResentOnceAfterReset)
+{
+    PCSCConnection conn(PCSCConnection::DetachedTag{}, "test-reader");
+    const std::vector<uint8_t> readBinary{0x00, 0xB0, 0x00, 0x00, 0x04};
+    g_transmitRvs.push_back(static_cast<LONG>(SCARD_W_RESET_CARD));
+    g_scriptedReplies.push_back({0x01, 0x02, 0x03, 0x04, 0x90, 0x00});
+
+    const auto response = conn.transmitRaw(std::span<const uint8_t>(readBinary));
+
+    EXPECT_EQ(g_sentApdus.size(), 2u);
+    EXPECT_EQ(g_reconnects, 1);
+    EXPECT_TRUE(response.isSuccess());
 }
