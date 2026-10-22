@@ -301,6 +301,7 @@ add_library(LibreSCRS_SmartCard ${LIBREMIDDLEWARE_LIB_TYPE}
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection.cpp
     $<$<PLATFORM_ID:Darwin>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_ctk.cpp>
     $<$<PLATFORM_ID:Darwin>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_smartcard.mm>
+    $<$<PLATFORM_ID:Darwin>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_scan_provider.cpp>
     $<$<NOT:$<PLATFORM_ID:Darwin>>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_pcsc.cpp>
     ${LIBRESCRS_SMARTCARD_PUBLIC_HEADERS}
     ${LIBRESCRS_SMARTCARD_INTERNAL_HEADERS}
@@ -599,6 +600,7 @@ endif()
 add_library(LibreSCRS_SmartCard_CtkForTests OBJECT
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection.cpp
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_ctk.cpp
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_scan_provider.cpp
     ${PROJECT_SOURCE_DIR}/test/ctk_fake.cpp
 )
 target_link_libraries(LibreSCRS_SmartCard_CtkForTests PUBLIC $<BUILD_INTERFACE:SmartCard_Impl>)

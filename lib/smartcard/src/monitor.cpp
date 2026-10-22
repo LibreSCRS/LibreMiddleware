@@ -13,7 +13,6 @@
 namespace LibreSCRS::SmartCard::Internal {
 
 static constexpr DWORD SCAN_TIMEOUT = 3600 * 1000; // 1 hour
-static constexpr const char* PNP_READER = "\\\\?PnP?\\Notification";
 
 // SCARD_* constants are defined by the PCSC headers as unsigned (DWORD)
 // literals, but SCardXxx() functions return signed LONG. Comparing the two
@@ -218,7 +217,7 @@ void Monitor::run()
             }
 
             if (pnp) {
-                states[readerCount].szReader = PNP_READER;
+                states[readerCount].szReader = kPnpReaderName;
                 states[readerCount].dwCurrentState = SCARD_STATE_UNAWARE;
             }
 
@@ -311,7 +310,7 @@ LONG Monitor::establishContext()
 bool Monitor::checkPnPSupport()
 {
     SCARD_READERSTATE state{};
-    state.szReader = PNP_READER;
+    state.szReader = kPnpReaderName;
     state.dwCurrentState = SCARD_STATE_UNAWARE;
 
     pcsc->getStatusChange(hContext, 0, &state, 1);
@@ -365,7 +364,7 @@ void Monitor::waitForFirstReader(bool pnp)
 {
     if (pnp) {
         SCARD_READERSTATE state{};
-        state.szReader = PNP_READER;
+        state.szReader = kPnpReaderName;
         state.dwCurrentState = SCARD_STATE_UNAWARE;
 
         LONG rv;

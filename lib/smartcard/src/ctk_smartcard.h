@@ -40,6 +40,7 @@
 #include <expected>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -124,5 +125,53 @@ private:
 
 /// The names of the slots the manager knows; empty without a manager.
 [[nodiscard]] LIBRESCRS_INTERNAL std::vector<std::string> slotNames(const ManagerProvider& manager = {});
+
+/// One slot as the watcher last saw it.
+struct SlotSnapshot
+{
+    std::string name;
+    SlotState state = SlotState::Empty;
+    std::vector<std::uint8_t> atr; ///< when state is ValidCard
+    /// The state before the card probe began (Probing is reported as this);
+    /// Empty when the slot has known no other state.
+    SlotState settled = SlotState::Empty;
+    /// Transitions between settled states seen on this slot, counted by the
+    /// watcher so a card in and out between two looks still shows.
+    std::uint32_t transitions = 0;
+};
+
+enum class WaitResult { Changed, TimedOut, Cancelled };
+
+/// Follows the slots without ever opening a card session: the slot list and
+/// each slot's state, refreshed on the kvo queue. Waiting happens on the
+/// caller's thread.
+///
+/// @par Thread-safety
+/// Thread-safe: any thread may snapshot or wait while another cancels.
+class LIBRESCRS_INTERNAL CtkSlots
+{
+public:
+    /// Makes no CryptoTokenKit call; the manager is taken by acquire().
+    explicit CtkSlots(ManagerProvider manager = {});
+    ~CtkSlots();
+    CtkSlots(const CtkSlots&) = delete;
+    CtkSlots& operator=(const CtkSlots&) = delete;
+
+    /// Takes the manager (again) and starts watching; NoManager without one.
+    /// Clears a pending cancel.
+    [[nodiscard]] CtkStatus acquire();
+    [[nodiscard]] std::vector<SlotSnapshot> snapshot() const;
+    /// Bumped by every change the watcher sees.
+    [[nodiscard]] std::uint64_t generation() const noexcept;
+    /// Returns when generation() moves past @p seen, the timeout passes, or
+    /// cancel() is called (which stays in force until the next acquire()).
+    [[nodiscard]] WaitResult waitForChange(std::uint64_t seen, std::optional<std::chrono::milliseconds> timeout);
+    void cancel() noexcept;
+
+    struct Impl;
+
+private:
+    std::unique_ptr<Impl> impl;
+};
 
 } // namespace LibreSCRS::SmartCard::Internal::Ctk

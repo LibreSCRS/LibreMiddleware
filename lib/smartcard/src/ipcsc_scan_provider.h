@@ -16,6 +16,9 @@
 
 namespace LibreSCRS::SmartCard::Internal {
 
+/// The pseudo-reader whose state reports reader arrivals and departures.
+inline constexpr const char* kPnpReaderName = "\\\\?PnP?\\Notification";
+
 class IPCSCScanProvider
 {
 public:

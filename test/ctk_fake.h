@@ -60,4 +60,12 @@ void removeCard(const std::string& name);
 void swapCard(const std::string& name, std::vector<std::uint8_t> atr);
 [[nodiscard]] Calls calls(const std::string& name);
 
+/// Changes a slot's state the way CryptoTokenKit would, so a watching
+/// CtkSlots sees it: Probing keeps the settled state, any other state that
+/// differs from it is one transition.
+void setSlotState(const std::string& name, SlotState state);
+/// How often a CtkSlots took the manager, and how often it made a card.
+[[nodiscard]] int slotsAcquires();
+[[nodiscard]] int slotsManagerLookups();
+
 } // namespace LibreSCRS::SmartCard::Internal::Ctk::Fake

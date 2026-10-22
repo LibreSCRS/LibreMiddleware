@@ -467,6 +467,12 @@ add_executable(CtkConnectionTests ctk_connection_test.cpp)
 target_link_libraries(CtkConnectionTests LibreSCRS_SmartCard_CtkForTests GTest::gtest_main)
 gtest_discover_tests(CtkConnectionTests)
 
+# Reader events from CryptoTokenKit's slots, in PC/SC terms, against the
+# scripted CryptoTokenKit. Runs everywhere; links no LibreSCRS library.
+add_executable(CtkScanProviderTests ctk_scan_provider_test.cpp)
+target_link_libraries(CtkScanProviderTests LibreSCRS_SmartCard_CtkForTests GTest::gtest_main)
+gtest_discover_tests(CtkScanProviderTests)
+
 if(APPLE)
     # The CryptoTokenKit facade against Objective-C objects answering the same
     # selectors; it never reaches the system's CryptoTokenKit.

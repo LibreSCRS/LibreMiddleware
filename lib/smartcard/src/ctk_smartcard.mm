@@ -15,6 +15,8 @@
 #import <Foundation/Foundation.h>
 
 #include <atomic>
+#include <condition_variable>
+#include <map>
 #include <memory>
 #include <mutex>
 
@@ -131,6 +133,154 @@ id resolveManager(const Ctk::ManagerProvider& provider)
     dispatch_async(kvoQueue(), ^{
       cardLeft->store(true);
     });
+}
+
+@end
+
+namespace {
+
+Ctk::SlotState slotStateOf(TKSmartCardSlotState state)
+{
+    switch (state) {
+    case TKSmartCardSlotStateMissing:
+        return Ctk::SlotState::Missing;
+    case TKSmartCardSlotStateEmpty:
+        return Ctk::SlotState::Empty;
+    case TKSmartCardSlotStateProbing:
+        return Ctk::SlotState::Probing;
+    case TKSmartCardSlotStateMuteCard:
+        return Ctk::SlotState::MuteCard;
+    case TKSmartCardSlotStateValidCard:
+        return Ctk::SlotState::ValidCard;
+    }
+    return Ctk::SlotState::Empty;
+}
+
+// What a CtkSlots and its watcher share. The Objective-C members are touched
+// on the kvo queue only; the rest under mtx.
+struct SlotsShared
+{
+    std::mutex mtx;
+    std::condition_variable changed;
+    std::vector<Ctk::SlotSnapshot> snapshot;
+    std::uint64_t generation = 0;
+    bool cancelled = false;
+    bool dead = false;
+
+    id manager = nil;
+    NSMutableDictionary<NSString*, TKSmartCardSlot*>* slots = [NSMutableDictionary dictionary];
+    std::map<std::string, std::pair<Ctk::SlotState, std::uint32_t>> history; // settled state, transitions
+};
+
+} // namespace
+
+// Watches the manager's slot list and each slot's state. A notification only
+// queues a refresh on the kvo queue; the refresh rebuilds the snapshot and
+// wakes the waiters. No caller code runs on either.
+@interface LibreSCRSCtkSlotsWatcher : NSObject
+- (instancetype)initWithShared:(std::shared_ptr<SlotsShared>)shared;
+- (void)refresh;      // on the kvo queue only
+- (void)stopWatching; // on the kvo queue only
+@end
+
+@implementation LibreSCRSCtkSlotsWatcher {
+    std::shared_ptr<SlotsShared> _shared;
+}
+
+- (instancetype)initWithShared:(std::shared_ptr<SlotsShared>)shared
+{
+    if ((self = [super init])) {
+        _shared = std::move(shared);
+    }
+    return self;
+}
+
+- (void)observeValueForKeyPath:(NSString*)keyPath
+                      ofObject:(id)object
+                        change:(NSDictionary<NSKeyValueChangeKey, id>*)change
+                       context:(void*)context
+{
+    (void)keyPath;
+    (void)object;
+    (void)change;
+    (void)context;
+    LibreSCRSCtkSlotsWatcher* watcher = self;
+    dispatch_async(kvoQueue(), ^{
+      [watcher refresh];
+    });
+}
+
+- (void)refresh
+{
+    auto& shared = *_shared;
+    if (shared.dead || shared.manager == nil) {
+        return;
+    }
+    NSArray<NSString*>* names = [shared.manager slotNames];
+    if (names == nil) {
+        names = @[];
+    }
+    for (NSString* name in names) {
+        if (shared.slots[name] == nil) {
+            TKSmartCardSlot* slot = [shared.manager slotNamed:name];
+            if (slot != nil) {
+                // No options: the refresh reads the state itself, on the kvo queue.
+                [slot addObserver:self forKeyPath:@"state" options:0 context:nullptr];
+                shared.slots[name] = slot;
+            }
+        }
+    }
+    for (NSString* name in [shared.slots.allKeys copy]) {
+        if (![names containsObject:name]) {
+            [shared.slots[name] removeObserver:self forKeyPath:@"state" context:nullptr];
+            [shared.slots removeObjectForKey:name];
+        }
+    }
+
+    std::vector<Ctk::SlotSnapshot> fresh;
+    for (NSString* name in names) {
+        TKSmartCardSlot* slot = shared.slots[name];
+        if (slot == nil) {
+            continue;
+        }
+        Ctk::SlotSnapshot snap;
+        snap.name = utf8(name);
+        snap.state = slotStateOf(slot.state);
+        if (snap.state == Ctk::SlotState::ValidCard) {
+            NSData* atr = slot.ATR.bytes;
+            if (atr != nil) {
+                const auto* bytes = static_cast<const std::uint8_t*>(atr.bytes);
+                snap.atr.assign(bytes, bytes + atr.length);
+            }
+        }
+        auto& [settled, transitions] = shared.history.try_emplace(snap.name, Ctk::SlotState::Empty, 0U).first->second;
+        if (snap.state != Ctk::SlotState::Probing && snap.state != settled) {
+            settled = snap.state;
+            ++transitions;
+        }
+        snap.settled = settled;
+        snap.transitions = transitions;
+        fresh.push_back(std::move(snap));
+    }
+    {
+        std::lock_guard lock(shared.mtx);
+        shared.snapshot = std::move(fresh);
+        ++shared.generation;
+    }
+    shared.changed.notify_all();
+}
+
+- (void)stopWatching
+{
+    auto& shared = *_shared;
+    for (NSString* name in shared.slots) {
+        [shared.slots[name] removeObserver:self forKeyPath:@"state" context:nullptr];
+    }
+    [shared.slots removeAllObjects];
+    if (shared.manager != nil) {
+        [shared.manager removeObserver:self forKeyPath:@"slotNames" context:nullptr];
+        shared.manager = nil;
+    }
 }
 
 @end
@@ -260,8 +410,15 @@ CtkCard::~CtkCard()
     @autoreleasepool {
         std::lock_guard lock(impl->mtx);
         if (impl->observer != nil) {
-            [impl->slot removeObserver:impl->observer forKeyPath:@"state" context:nullptr];
+            LibreSCRSCtkSlotObserver* observer = impl->observer;
+            [impl->slot removeObserver:observer forKeyPath:@"state" context:nullptr];
             impl->observer = nil;
+            // A notification already being delivered on another thread may
+            // still reach the observer; keep it alive well past that, as the
+            // slots watcher is kept.
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), kvoQueue(), ^{
+              (void)observer;
+            });
         }
         impl->endSessionLocked();
     }
@@ -388,6 +545,101 @@ std::vector<std::string> slotNames(const ManagerProvider& manager)
         }
         return names;
     }
+}
+
+struct CtkSlots::Impl
+{
+    ManagerProvider provider;
+    std::shared_ptr<SlotsShared> shared = std::make_shared<SlotsShared>();
+    LibreSCRSCtkSlotsWatcher* watcher = [[LibreSCRSCtkSlotsWatcher alloc] initWithShared:shared];
+};
+
+CtkSlots::CtkSlots(ManagerProvider manager) : impl(std::make_unique<Impl>())
+{
+    impl->provider = std::move(manager);
+}
+
+CtkSlots::~CtkSlots()
+{
+    @autoreleasepool {
+        auto shared = impl->shared;
+        LibreSCRSCtkSlotsWatcher* watcher = impl->watcher;
+        // Not a handler: the destructor may wait for the kvo queue, so no
+        // refresh runs after the observers are gone.
+        dispatch_sync(kvoQueue(), ^{
+          [watcher stopWatching];
+          shared->dead = true;
+        });
+        // A notification already being delivered on another thread may still
+        // reach the watcher; keep it alive well past that.
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), kvoQueue(), ^{
+          (void)watcher;
+        });
+        {
+            std::lock_guard lock(shared->mtx);
+            shared->cancelled = true;
+        }
+        shared->changed.notify_all();
+    }
+}
+
+CtkStatus CtkSlots::acquire()
+{
+    @autoreleasepool {
+        {
+            std::lock_guard lock(impl->shared->mtx);
+            impl->shared->cancelled = false;
+        }
+        id manager = resolveManager(impl->provider);
+        if (manager == nil) {
+            return CtkStatus::NoManager;
+        }
+        auto shared = impl->shared;
+        LibreSCRSCtkSlotsWatcher* watcher = impl->watcher;
+        dispatch_sync(kvoQueue(), ^{
+          [watcher stopWatching];
+          shared->manager = manager;
+          [manager addObserver:watcher forKeyPath:@"slotNames" options:0 context:nullptr];
+          [watcher refresh];
+        });
+        return CtkStatus::Ok;
+    }
+}
+
+std::vector<SlotSnapshot> CtkSlots::snapshot() const
+{
+    std::lock_guard lock(impl->shared->mtx);
+    return impl->shared->snapshot;
+}
+
+std::uint64_t CtkSlots::generation() const noexcept
+{
+    std::lock_guard lock(impl->shared->mtx);
+    return impl->shared->generation;
+}
+
+WaitResult CtkSlots::waitForChange(std::uint64_t seen, std::optional<std::chrono::milliseconds> timeout)
+{
+    auto& shared = *impl->shared;
+    std::unique_lock lock(shared.mtx);
+    const auto ready = [&] { return shared.cancelled || shared.generation != seen; };
+    if (timeout) {
+        if (!shared.changed.wait_for(lock, *timeout, ready)) {
+            return WaitResult::TimedOut;
+        }
+    } else {
+        shared.changed.wait(lock, ready);
+    }
+    return shared.cancelled ? WaitResult::Cancelled : WaitResult::Changed;
+}
+
+void CtkSlots::cancel() noexcept
+{
+    {
+        std::lock_guard lock(impl->shared->mtx);
+        impl->shared->cancelled = true;
+    }
+    impl->shared->changed.notify_all();
 }
 
 } // namespace LibreSCRS::SmartCard::Internal::Ctk

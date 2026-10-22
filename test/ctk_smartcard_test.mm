@@ -87,7 +87,8 @@ dispatch_queue_t fakeQueue()
 
 // One card slot, with the behaviour a test scripts into it.
 @interface FakeSlot : NSObject
-@property(atomic) TKSmartCardSlotState state;
+@property(nonatomic) TKSmartCardSlotState state;
+@property(atomic, strong) NSMutableSet<NSString*>* stateReadQueues; // queue labels the state was read on
 @property(nonatomic, strong) FakeATR* ATR;
 @property(nonatomic, copy) NSString* name;
 @property(nonatomic) NSInteger maxInputLength;
@@ -196,9 +197,20 @@ dispatch_queue_t fakeQueue()
 
 @implementation FakeSlot
 
+@synthesize state = _state;
+
+- (TKSmartCardSlotState)state
+{
+    @synchronized(self) {
+        [_stateReadQueues addObject:@(currentQueueLabel().c_str())];
+    }
+    return _state;
+}
+
 - (instancetype)init
 {
     if ((self = [super init])) {
+        _stateReadQueues = [NSMutableSet set];
         _state = TKSmartCardSlotStateValidCard;
         _ATR = [FakeATR new];
         const uint8_t atr[] = {0x3B, 0x00};
@@ -249,22 +261,31 @@ dispatch_queue_t fakeQueue()
 @interface FakeManager : NSObject
 @property(atomic) int lookups;
 @property(nonatomic, strong) NSMutableDictionary<NSString*, FakeSlot*>* slots;
+@property(atomic, copy) NSArray<NSString*>* slotNames; // KVO-observable, as the real one
+- (void)addSlot:(FakeSlot*)slot named:(NSString*)name;
 @end
 @implementation FakeManager
 - (instancetype)init
 {
-    if ((self = [super init]))
+    if ((self = [super init])) {
         _slots = [NSMutableDictionary dictionary];
+        _slotNames = @[];
+    }
     return self;
 }
 - (FakeSlot*)slotNamed:(NSString*)name
 {
     self.lookups = self.lookups + 1;
-    return self.slots[name];
+    @synchronized(self) {
+        return self.slots[name];
+    }
 }
-- (NSArray<NSString*>*)slotNames
+- (void)addSlot:(FakeSlot*)slot named:(NSString*)name
 {
-    return self.slots.allKeys;
+    @synchronized(self) {
+        self.slots[name] = slot;
+    }
+    self.slotNames = [self.slotNames arrayByAddingObject:name];
 }
 @end
 
@@ -279,7 +300,7 @@ protected:
     {
         manager = [FakeManager new];
         slot = [FakeSlot new];
-        manager.slots[@"Fake Slot"] = slot;
+        [manager addSlot:slot named:@"Fake Slot"];
         FakeManager* m = manager;
         provider = [m, this]() -> void* {
             ++providerCalls;
@@ -529,4 +550,90 @@ TEST_F(CtkSmartCard, RepliesRunNoCallerCode)
     auto reply = (*card)->exchange(std::vector<std::uint8_t>{0x00, 0xB0, 0x00, 0x00, 0x04});
     EXPECT_TRUE(reply.has_value());
     EXPECT_EQ(std::this_thread::get_id(), caller);
+}
+
+TEST_F(CtkSmartCard, SlotsNeverOpenACardSession)
+{
+    Ctk::CtkSlots slots(provider);
+    ASSERT_EQ(slots.acquire(), Ctk::CtkStatus::Ok);
+    slot.state = TKSmartCardSlotStateEmpty;
+    slot.state = TKSmartCardSlotStateValidCard;
+    slot.state = TKSmartCardSlotStateMuteCard;
+    settle(milliseconds{100});
+    const auto snapshot = slots.snapshot();
+    ASSERT_EQ(snapshot.size(), 1U);
+    EXPECT_EQ(snapshot[0].state, Ctk::SlotState::MuteCard);
+    EXPECT_EQ(slot.cards.count, 0U) << "a watcher never makes a card object";
+}
+
+TEST_F(CtkSmartCard, KvoRunsNoCallerCode)
+{
+    Ctk::CtkSlots slots(provider);
+    ASSERT_EQ(slots.acquire(), Ctk::CtkStatus::Ok);
+    @synchronized(slot) {
+        [slot.stateReadQueues removeAllObjects];
+    }
+
+    const auto waiter = std::this_thread::get_id();
+    const auto seen = slots.generation();
+    FakeSlot* watched = slot;
+    std::thread changer([watched] {
+        std::this_thread::sleep_for(milliseconds{100});
+        watched.state = TKSmartCardSlotStateEmpty;
+    });
+    EXPECT_EQ(slots.waitForChange(seen, milliseconds{2000}), Ctk::WaitResult::Changed);
+    changer.join();
+    EXPECT_EQ(std::this_thread::get_id(), waiter) << "the wait returns on the waiting thread";
+    settle(milliseconds{50});
+    NSSet* queues = nil;
+    @synchronized(slot) {
+        queues = [slot.stateReadQueues copy];
+    }
+    EXPECT_EQ(queues.count, 1U) << queues.description.UTF8String;
+    EXPECT_TRUE([queues containsObject:@"org.librescrs.ctk.kvo"]) << queues.description.UTF8String;
+    ASSERT_EQ(slots.snapshot().size(), 1U);
+    EXPECT_EQ(slots.snapshot()[0].state, Ctk::SlotState::Empty);
+}
+
+TEST_F(CtkSmartCard, DestroyWhileKvoFiresIsSafe)
+{
+    std::atomic<bool> stop{false};
+    FakeSlot* watched = slot;
+    std::thread toggler([&stop, watched] {
+        while (!stop.load()) {
+            watched.state = TKSmartCardSlotStateEmpty;
+            watched.state = TKSmartCardSlotStateValidCard;
+        }
+    });
+    for (int i = 0; i < 200; ++i) {
+        auto slots = std::make_unique<Ctk::CtkSlots>(provider);
+        ASSERT_EQ(slots->acquire(), Ctk::CtkStatus::Ok);
+        slots.reset();
+    }
+    stop.store(true);
+    toggler.join();
+    SUCCEED();
+}
+
+// The held card's own observer, torn down while its slot's state changes on
+// another thread.
+TEST_F(CtkSmartCard, CardDestroyedWhileItsSlotChangesIsSafe)
+{
+    std::atomic<bool> stop{false};
+    FakeSlot* watched = slot;
+    std::thread toggler([&stop, watched] {
+        while (!stop.load()) {
+            watched.state = TKSmartCardSlotStateEmpty;
+            watched.state = TKSmartCardSlotStateValidCard;
+        }
+    });
+    int opened = 0;
+    for (int i = 0; i < 200; ++i) {
+        auto card = open();
+        if (card.has_value()) // the toggler may have emptied the slot just then
+            ++opened;
+    }
+    stop.store(true);
+    toggler.join();
+    EXPECT_GT(opened, 0);
 }

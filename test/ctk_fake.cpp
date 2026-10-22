@@ -4,6 +4,7 @@
 #include "ctk_fake.h"
 
 #include <algorithm>
+#include <condition_variable>
 #include <map>
 #include <mutex>
 
@@ -20,13 +21,19 @@ struct SlotRecord
     std::uint64_t cardGeneration = 0;
     // Bumped when the system ends the session while the card stays.
     std::uint64_t sessionGeneration = 0;
+    SlotState settled = SlotState::Empty;
+    std::uint32_t transitions = 0;
 };
 
 struct World
 {
     std::mutex mtx;
+    std::condition_variable changed;
     bool managerPresent = true;
     std::map<std::string, SlotRecord> slots;
+    std::uint64_t generation = 0; // every change a watcher could see
+    int slotsAcquires = 0;
+    int slotsManagerLookups = 0;
 };
 
 World& world()
@@ -207,6 +214,82 @@ std::vector<std::string> slotNames(const ManagerProvider& /*manager*/)
     return names;
 }
 
+struct CtkSlots::Impl
+{
+    bool acquired = false;
+    bool cancelled = false;
+};
+
+CtkSlots::CtkSlots(ManagerProvider /*manager*/) : impl(std::make_unique<Impl>()) {}
+
+CtkSlots::~CtkSlots() = default;
+
+CtkStatus CtkSlots::acquire()
+{
+    auto& w = world();
+    std::lock_guard lock(w.mtx);
+    ++w.slotsAcquires;
+    ++w.slotsManagerLookups;
+    impl->cancelled = false;
+    if (!w.managerPresent)
+        return CtkStatus::NoManager;
+    impl->acquired = true;
+    return CtkStatus::Ok;
+}
+
+std::vector<SlotSnapshot> CtkSlots::snapshot() const
+{
+    auto& w = world();
+    std::lock_guard lock(w.mtx);
+    std::vector<SlotSnapshot> out;
+    if (!impl->acquired || !w.managerPresent)
+        return out;
+    for (const auto& [name, rec] : w.slots) {
+        if (rec.slot.state == SlotState::Missing)
+            continue;
+        SlotSnapshot snap;
+        snap.name = name;
+        snap.state = rec.slot.state;
+        if (rec.slot.state == SlotState::ValidCard)
+            snap.atr = rec.slot.atr;
+        snap.settled = rec.settled == SlotState::Probing ? SlotState::Empty : rec.settled;
+        snap.transitions = rec.transitions;
+        out.push_back(std::move(snap));
+    }
+    return out;
+}
+
+std::uint64_t CtkSlots::generation() const noexcept
+{
+    auto& w = world();
+    std::lock_guard lock(w.mtx);
+    return w.generation;
+}
+
+WaitResult CtkSlots::waitForChange(std::uint64_t seen, std::optional<std::chrono::milliseconds> timeout)
+{
+    auto& w = world();
+    std::unique_lock lock(w.mtx);
+    const auto ready = [&] { return impl->cancelled || w.generation != seen; };
+    if (timeout) {
+        if (!w.changed.wait_for(lock, *timeout, ready))
+            return WaitResult::TimedOut;
+    } else {
+        w.changed.wait(lock, ready);
+    }
+    return impl->cancelled ? WaitResult::Cancelled : WaitResult::Changed;
+}
+
+void CtkSlots::cancel() noexcept
+{
+    auto& w = world();
+    {
+        std::lock_guard lock(w.mtx);
+        impl->cancelled = true;
+    }
+    w.changed.notify_all();
+}
+
 namespace Fake {
 
 void reset()
@@ -215,6 +298,9 @@ void reset()
     std::lock_guard lock(w.mtx);
     w.managerPresent = true;
     w.slots.clear();
+    w.generation = 0;
+    w.slotsAcquires = 0;
+    w.slotsManagerLookups = 0;
 }
 
 void setManagerPresent(bool present)
@@ -222,13 +308,21 @@ void setManagerPresent(bool present)
     auto& w = world();
     std::lock_guard lock(w.mtx);
     w.managerPresent = present;
+    ++w.generation;
+    w.changed.notify_all();
 }
 
 Slot& slot(const std::string& name)
 {
     auto& w = world();
     std::lock_guard lock(w.mtx);
-    return w.slots[name].slot;
+    auto [it, created] = w.slots.try_emplace(name);
+    if (created) {
+        it->second.settled = it->second.slot.state;
+        ++w.generation;
+        w.changed.notify_all();
+    }
+    return it->second.slot;
 }
 
 void removeSlot(const std::string& name)
@@ -240,6 +334,8 @@ void removeSlot(const std::string& name)
         it->second.slot.state = SlotState::Missing;
         ++it->second.cardGeneration;
     }
+    ++w.generation;
+    w.changed.notify_all();
 }
 
 void loseSession(const std::string& name)
@@ -256,6 +352,12 @@ void removeCard(const std::string& name)
     auto& rec = w.slots[name];
     rec.slot.state = SlotState::Empty;
     ++rec.cardGeneration;
+    if (rec.settled != SlotState::Empty) {
+        rec.settled = SlotState::Empty;
+        ++rec.transitions;
+    }
+    ++w.generation;
+    w.changed.notify_all();
 }
 
 void swapCard(const std::string& name, std::vector<std::uint8_t> atr)
@@ -266,6 +368,40 @@ void swapCard(const std::string& name, std::vector<std::uint8_t> atr)
     rec.slot.atr = std::move(atr);
     rec.slot.state = SlotState::ValidCard;
     ++rec.cardGeneration;
+    rec.transitions += 2; // out and in again
+    rec.settled = SlotState::ValidCard;
+    ++w.generation;
+    w.changed.notify_all();
+}
+
+void setSlotState(const std::string& name, SlotState state)
+{
+    auto& w = world();
+    std::lock_guard lock(w.mtx);
+    auto& rec = w.slots[name];
+    rec.slot.state = state;
+    if (state != SlotState::Probing && state != rec.settled) {
+        rec.settled = state;
+        ++rec.transitions;
+        if (state != SlotState::ValidCard)
+            ++rec.cardGeneration;
+    }
+    ++w.generation;
+    w.changed.notify_all();
+}
+
+int slotsAcquires()
+{
+    auto& w = world();
+    std::lock_guard lock(w.mtx);
+    return w.slotsAcquires;
+}
+
+int slotsManagerLookups()
+{
+    auto& w = world();
+    std::lock_guard lock(w.mtx);
+    return w.slotsManagerLookups;
 }
 
 Calls calls(const std::string& name)
