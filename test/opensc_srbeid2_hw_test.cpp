@@ -19,6 +19,7 @@
 #include <gtest/gtest.h>
 
 #include "pin_guard.h"
+#include "signature_verify.h"
 
 #include <LibreSCRS/Auth/CredentialResult.h>
 #include <LibreSCRS/Plugin/CardPlugin.h>
@@ -29,7 +30,6 @@
 #include <LibreSCRS/SmartCard/MonitorService.h>
 
 #include <openssl/crypto.h>
-#include <openssl/ecdsa.h>
 #include <openssl/evp.h>
 #include <openssl/x509.h>
 
@@ -46,6 +46,7 @@ using LibreSCRS::Plugin::CardPluginService;
 using LibreSCRS::Plugin::SignMechanism;
 using LibreSCRS::SmartCard::CardSession;
 using LibreSCRS::SmartCard::MonitorService;
+using LibreSCRS::Tests::ecdsaVerifyRaw;
 using LibreSCRS::Tests::E2E::markPinFailedAndAbort;
 
 namespace {
@@ -56,54 +57,6 @@ std::optional<std::string> envOpt(const char* name)
     if (v == nullptr || v[0] == '\0')
         return std::nullopt;
     return std::string{v};
-}
-
-// Verify a raw r||s ECDSA signature against the certificate's EC public key.
-// The card (via sc_asn1_sig_value_sequence_to_rs) returns the canonical
-// fixed-width r||s; OpenSSL's verify wants a DER ECDSA-Sig-Value, so rebuild
-// one from the two halves.
-::testing::AssertionResult ecdsaVerifyRaw(const std::vector<std::uint8_t>& certDer,
-                                          const std::vector<std::uint8_t>& rawSig,
-                                          const std::vector<std::uint8_t>& digest)
-{
-    if (rawSig.size() % 2 != 0)
-        return ::testing::AssertionFailure() << "raw signature length " << rawSig.size() << " is not even";
-    const std::size_t half = rawSig.size() / 2;
-
-    using X509Ptr = std::unique_ptr<X509, decltype(&X509_free)>;
-    using EvpPkeyPtr = std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)>;
-    using SigPtr = std::unique_ptr<ECDSA_SIG, decltype(&ECDSA_SIG_free)>;
-
-    const unsigned char* p = certDer.data();
-    X509Ptr x{d2i_X509(nullptr, &p, static_cast<long>(certDer.size())), &X509_free};
-    if (!x)
-        return ::testing::AssertionFailure() << "d2i_X509 failed";
-    EvpPkeyPtr pkey{X509_get_pubkey(x.get()), &EVP_PKEY_free};
-    if (!pkey)
-        return ::testing::AssertionFailure() << "X509_get_pubkey failed";
-
-    SigPtr sig{ECDSA_SIG_new(), &ECDSA_SIG_free};
-    BIGNUM* r = BN_bin2bn(rawSig.data(), static_cast<int>(half), nullptr);
-    BIGNUM* s = BN_bin2bn(rawSig.data() + half, static_cast<int>(half), nullptr);
-    if (!sig || !r || !s || ECDSA_SIG_set0(sig.get(), r, s) != 1)
-        return ::testing::AssertionFailure() << "ECDSA_SIG assembly failed";
-
-    unsigned char* der = nullptr;
-    const int derLen = i2d_ECDSA_SIG(sig.get(), &der);
-    if (derLen <= 0)
-        return ::testing::AssertionFailure() << "i2d_ECDSA_SIG failed";
-    // OPENSSL_free is a macro, not a callable — wrap it for the RAII deleter.
-    const auto freeDer = [](unsigned char* p) { OPENSSL_free(p); };
-    std::unique_ptr<unsigned char, decltype(freeDer)> derOwner{der, freeDer};
-
-    using CtxPtr = std::unique_ptr<EVP_PKEY_CTX, decltype(&EVP_PKEY_CTX_free)>;
-    CtxPtr vctx{EVP_PKEY_CTX_new(pkey.get(), nullptr), &EVP_PKEY_CTX_free};
-    if (!vctx || EVP_PKEY_verify_init(vctx.get()) != 1)
-        return ::testing::AssertionFailure() << "verify init failed";
-    const int vres =
-        EVP_PKEY_verify(vctx.get(), derOwner.get(), static_cast<std::size_t>(derLen), digest.data(), digest.size());
-    return vres == 1 ? ::testing::AssertionSuccess()
-                     : ::testing::AssertionFailure() << "ECDSA signature did not verify (vres=" << vres << ")";
 }
 
 } // namespace

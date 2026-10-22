@@ -493,6 +493,34 @@ if(APPLE)
     target_compile_definitions(CardSessionMacTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
     target_link_libraries(CardSessionMacTests LibreSCRS_SmartCard SmartCard_Impl GTest::gtest_main)
     gtest_discover_tests(CardSessionMacTests)
+
+    # Hardware checks of the held CryptoTokenKit session against real cards and
+    # readers. Every case skips unless LIBRESCRS_HW_CTK=1; the person at the
+    # readers runs them one by one (see the header of the source). It also
+    # carries the one check that never skips: the binary holds the smart-card
+    # entitlement every executable of this build is signed with, so a card
+    # case cannot skip for want of it.
+    add_executable(CtkSessionHardwareTests ctk_session_hw_test.cpp ctk_hw_probe.mm smartcard_entitlement_check.cpp)
+    set_source_files_properties(ctk_hw_probe.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_include_directories(CtkSessionHardwareTests PRIVATE
+        ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(CtkSessionHardwareTests PRIVATE
+        LIBRESCRS_INTERNAL_BUILD
+        PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}")
+    target_link_libraries(CtkSessionHardwareTests
+        CardPlugin_Impl LibreSCRS_SmartCard SmartCard_Impl GTest::gtest_main
+        "-framework CryptoTokenKit" "-framework Foundation" "-framework Security" "-framework CoreFoundation")
+    foreach(plugin rs-eid-plugin pkcs15-plugin opensc-plugin emrtd-plugin)
+        if(TARGET ${plugin})
+            add_dependencies(CtkSessionHardwareTests ${plugin})
+        endif()
+    endforeach()
+    # gtest_discover_tests gives every case a SKIP_REGULAR_EXPRESSION, so a
+    # case without LIBRESCRS_HW_CTK reads as Skipped, not Passed. The pattern
+    # matches anywhere in the output and cannot be replaced from here, so no
+    # case in the source skips after a failure.
+    gtest_discover_tests(CtkSessionHardwareTests PROPERTIES LABELS "HARDWARE")
 endif()
 
 # selectByFileId P2 parameter test
