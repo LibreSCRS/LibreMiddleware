@@ -164,6 +164,15 @@ set_target_properties(LibreSign PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_options(LibreSign PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-ffunction-sections -fdata-sections>
 )
+# Hidden by default, like every other LM library: the engine is an
+# implementation detail of the signing and trust libraries that carry it, and
+# nothing outside them calls into it. Without this, any libresign symbol whose
+# signature names a LibreSCRS:: type (a Secure::Buffer PIN, a CardPlugin) matched
+# the export glob of cmake/librescrs-public-exports.map and leaked into the
+# public symbol table.
+target_compile_options(LibreSign PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden -fvisibility-inlines-hidden>
+)
 
 # Vendored miniz.c was written against pre-C89 compilers and uses K&R-style
 # function declarations in two spots, which clang flags with

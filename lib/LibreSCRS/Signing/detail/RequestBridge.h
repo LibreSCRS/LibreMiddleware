@@ -38,7 +38,6 @@
 // Do NOT depend on this header from consumer code: the mapping is an
 // implementation detail of the libresign adapter.
 
-#include <LibreSCRS/Export.h>
 #include <LibreSCRS/Signing/Enums.h>
 #include <LibreSCRS/Signing/SigningRequest.h>
 #include <LibreSCRS/Signing/VisualSignatureParams.h>
@@ -90,7 +89,10 @@ libresign::SignaturePackaging mapPackaging(LibreSCRS::Signing::PackagingMode p);
 /// wiring would give consumers silent-ignore behaviour for a visible
 /// signature-appearance property, which is worse than not offering the
 /// knob at all.
-LIBRESCRS_PUBLIC_API void translatePublicRequestToLibresign(const LibreSCRS::Signing::SigningRequest& request,
-                                                            libresign::SigningRequest& out);
+///
+/// Not exported: its signature names the engine's internal request type. The
+/// tests compile RequestBridge.cpp into their own executable.
+void translatePublicRequestToLibresign(const LibreSCRS::Signing::SigningRequest& request,
+                                       libresign::SigningRequest& out);
 
 } // namespace LibreSCRS::Signing::detail

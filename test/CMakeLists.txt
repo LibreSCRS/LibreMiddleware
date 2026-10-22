@@ -1293,7 +1293,10 @@ if(LIBRESCRS_VENDOR_OPENSC)
     gtest_discover_tests(pcsc_handle_census_test)
 endif()
 
-add_executable(LibreSCRS_SigningTests LibreSCRS_Signing_test.cpp)
+# RequestBridge.cpp is compiled in: the bridge's signature names the engine's
+# internal request type, so the signing library does not export it.
+add_executable(LibreSCRS_SigningTests LibreSCRS_Signing_test.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/Signing/detail/RequestBridge.cpp)
 # CardPlugin_Impl supplies the out-of-line ~CardPlugin() key function
 #; StubPkiPlugin in this test derives from
 # CardPlugin so the vtable + typeinfo are pulled in via CardPlugin_Impl.
