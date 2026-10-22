@@ -12,7 +12,7 @@
 # this exe MUST link librescrs-pkcs11.so, because its whole purpose is
 # to validate the PUBLISHED C ABI surface (C_Initialize, C_GetSlotList,
 # C_Login, C_Sign, ...). Those C symbols are exported by the .so
-# (see lib/pkcs11/exports.list / exports.map); no internal LibreSCRS::
+# (see lib/pkcs11/exports.map); no internal LibreSCRS::
 # symbols are referenced from these tests, so there's no ODR risk.
 
 set(CMAKE_CXX_STANDARD 23)

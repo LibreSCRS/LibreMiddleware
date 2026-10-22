@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # GNU ld(1) version script for librescrs-pkcs11.so on ELF platforms
-# (Linux, BSD, etc.). The macOS counterpart with the same allowlist
-# is exports.list (Apple ld -exported_symbols_list format).
+# (Linux, BSD, etc.). The module is not built on macOS.
 #
 # Restricts the .so's exported symbol set to the standard PKCS#11
 # v2.40 / v3.0 C interface only. Without this allowlist the statically

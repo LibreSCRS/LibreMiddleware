@@ -32,9 +32,10 @@ if (PCSC_FOUND AND NOT TARGET PCSC::PCSC)
   mark_as_advanced(PCSC_FOUND PCSC_INCLUDE_DIR PCSC_LIBRARY)
   
   if(PCSC_LIBRARY MATCHES "/([^/]+)\\.framework$")
+    # macOS: cards and readers go through CryptoTokenKit. PCSC.framework only
+    # supplies the SCARD_* types and codes, found as <PCSC/...> on the SDK's
+    # framework path; nothing links it.
     add_library(PCSC::PCSC INTERFACE IMPORTED GLOBAL)
-    set_target_properties(PCSC::PCSC PROPERTIES
-      INTERFACE_LINK_LIBRARIES "${PCSC_LIBRARY}")
   else()
     add_library(PCSC::PCSC UNKNOWN IMPORTED GLOBAL)
     set_target_properties(PCSC::PCSC PROPERTIES

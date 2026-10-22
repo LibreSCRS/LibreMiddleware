@@ -180,13 +180,22 @@ struct OpenError
 class LIBRESCRS_PUBLIC_API CardSession final : public std::enable_shared_from_this<CardSession>
 {
 public:
-    /// @brief Opens a PC/SC session against the named reader.
+    /// @brief Opens a session with the card in the named reader.
     /// @return On success, the opened session. On failure, a fully
     /// populated @ref OpenError carrying classification, user-facing
     /// message, and dev-facing diagnostic.
     /// @since 4.0
+    /// @par macOS
+    /// The session reaches the card through CryptoTokenKit and holds it
+    /// exclusively until the @c CardSession is destroyed: other applications
+    /// and token drivers wait for it, so keep a session no longer than the
+    /// work it is opened for. The process must be signed with the
+    /// @c com.apple.security.smartcard entitlement; without it the open fails
+    /// with an @ref OpenError whose @c diagnosticDetail names the entitlement.
+    /// On Linux the session goes through PC/SC.
     /// @par C++23 Idiom
     /// @code
+    /// // On macOS the card stays held by this process until `session` goes.
     /// auto result = CardSession::open(readerName);
     /// if (!result) {
     ///     log("Open failed: {}", result.error().userMessage.defaultText);

@@ -802,3 +802,49 @@ TEST_F(MonitorTestFixture, UnsubscribeStopsDelivery)
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     EXPECT_FALSE(monitor.isRunning());
 }
+
+// A context the source refuses with SCARD_E_NO_ACCESS stays refused (a
+// process without the smart-card entitlement on macOS, a polkit denial on
+// Linux): the monitor reports one Error and stops asking.
+TEST_F(MonitorTestFixture, NoAccessFromEstablishIsPermanent)
+{
+    auto mock = std::make_unique<MockPCSCScanProvider>(counters);
+    mock->setEstablishContextReturn(static_cast<LONG>(SCARD_E_NO_ACCESS));
+    mock->setRefusalDetail("the source's own words");
+
+    std::mutex mtx;
+    std::vector<MonitorEvent> events;
+    std::chrono::steady_clock::duration destroyTook{};
+    {
+        auto monitor = std::make_unique<Monitor>(std::move(mock));
+        monitor->subscribe(
+            [&](const MonitorEvent& e) {
+                std::lock_guard lock(mtx);
+                events.push_back(e);
+            },
+            [](const std::vector<std::string>&) {});
+        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        const auto start = std::chrono::steady_clock::now();
+        monitor.reset();
+        destroyTook = std::chrono::steady_clock::now() - start;
+    }
+
+    EXPECT_EQ(counters->establishContextCount.load(), 1);
+    ASSERT_EQ(events.size(), 1U);
+    EXPECT_EQ(events[0].type, MonitorEvent::Type::Error);
+    EXPECT_EQ(events[0].detail, "the source's own words");
+    EXPECT_LT(destroyTook, std::chrono::milliseconds(100));
+}
+
+// Any other refusal (pcscd not running yet) is retried, silently.
+TEST_F(MonitorTestFixture, NoServiceFromEstablishIsRetried)
+{
+    auto mock = std::make_unique<MockPCSCScanProvider>(counters);
+    mock->setEstablishContextReturn(static_cast<LONG>(SCARD_E_NO_SERVICE));
+
+    auto result = runMonitor(std::move(mock), 2500);
+
+    EXPECT_GE(counters->establishContextCount.load(), 2);
+    for (const auto& e : result.events)
+        EXPECT_NE(e.type, MonitorEvent::Type::Error);
+}

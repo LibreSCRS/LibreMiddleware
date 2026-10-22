@@ -18,8 +18,9 @@ include(GoogleTest)
 # and CardSession::activateChannel*. Locks in the cross-provider
 # invariants without hardware. Gated on LIBRESCRS_VENDOR_OPENSC because
 # the OpenSc provider lives behind that option; the in-tree invariants
-# it pins down are only at risk when that provider is in the picture.
-if(LIBRESCRS_VENDOR_OPENSC)
+# it pins down are only at risk when that provider is in the picture. Not on
+# macOS, where that provider is not built.
+if(LIBRESCRS_VENDOR_OPENSC AND NOT APPLE)
     add_executable(CrossProviderCoordinationTests
         CrossProviderCoordinationTests.cpp
         ${PROJECT_SOURCE_DIR}/lib/pkcs11/src/pkcs11_card.cpp

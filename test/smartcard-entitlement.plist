@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- SPDX-License-Identifier: LGPL-2.1-or-later -->
+<!-- Ad-hoc test signature: lets a test binary reach CryptoTokenKit smart cards. -->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.smartcard</key>
+    <true/>
+</dict>
+</plist>

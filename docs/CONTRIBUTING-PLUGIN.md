@@ -34,7 +34,7 @@ implementing the plugin, and submitting a pull request.
 
 - CMake 3.24 or later
 - A C++23-capable compiler (GCC 13+, Clang 16+, AppleClang 16+ with `-fexperimental-library`)
-- PC/SC library (`pcsclite` on Linux, built-in on macOS)
+- PC/SC library (`pcsclite`) on Linux; macOS: CryptoTokenKit, part of the system; no PC/SC library
 - LibreMiddleware built from source (see top-level README)
 
 ### Knowledge

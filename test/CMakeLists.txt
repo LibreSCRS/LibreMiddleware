@@ -448,14 +448,89 @@ gtest_discover_tests(pcsc_connection_filter_test)
 # the stubs interpose for the whole executable. The connection comes from
 # LibreSCRS_SmartCard_PcscForTests, compiled into the binary, because the copy
 # inside libLibreSCRS_SmartCard does not see the stubs on macOS.
-add_executable(pcsc_6c_retry_test pcsc_6c_retry_test.cpp)
-target_link_libraries(pcsc_6c_retry_test SmartCard_Impl LibreSCRS_SmartCard_PcscForTests GTest::gtest_main)
-target_include_directories(pcsc_6c_retry_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src)
-# LM-internal test: reaches directly into lib/smartcard/src; must advertise
-# the internal-build marker so the #error guard in apdu.h lets it in.
-target_compile_definitions(pcsc_6c_retry_test PRIVATE LIBRESCRS_INTERNAL_BUILD)
-gtest_discover_tests(pcsc_6c_retry_test)
+# macOS has no PC/SC body to stub; the CryptoTokenKit body has its own tests.
+if(NOT APPLE)
+    add_executable(pcsc_6c_retry_test pcsc_6c_retry_test.cpp)
+    target_link_libraries(pcsc_6c_retry_test SmartCard_Impl LibreSCRS_SmartCard_PcscForTests GTest::gtest_main)
+    target_include_directories(pcsc_6c_retry_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src)
+    # LM-internal test: reaches directly into lib/smartcard/src; must advertise
+    # the internal-build marker so the #error guard in apdu.h lets it in.
+    target_compile_definitions(pcsc_6c_retry_test PRIVATE LIBRESCRS_INTERNAL_BUILD)
+    gtest_discover_tests(pcsc_6c_retry_test)
+endif()
+
+# The CryptoTokenKit body of the connection against a scripted CryptoTokenKit:
+# one held session per connection, session loss, and the PC/SC codes it maps
+# to. Runs everywhere; links no LibreSCRS library.
+add_executable(CtkConnectionTests ctk_connection_test.cpp)
+target_link_libraries(CtkConnectionTests LibreSCRS_SmartCard_CtkForTests GTest::gtest_main)
+gtest_discover_tests(CtkConnectionTests)
+
+# Reader events from CryptoTokenKit's slots, in PC/SC terms, against the
+# scripted CryptoTokenKit. Runs everywhere; links no LibreSCRS library.
+add_executable(CtkScanProviderTests ctk_scan_provider_test.cpp)
+target_link_libraries(CtkScanProviderTests LibreSCRS_SmartCard_CtkForTests GTest::gtest_main)
+gtest_discover_tests(CtkScanProviderTests)
+
+if(APPLE)
+    # The CryptoTokenKit facade against Objective-C objects answering the same
+    # selectors; it never reaches the system's CryptoTokenKit.
+    add_executable(CtkSmartCardTests ctk_smartcard_test.mm
+        ${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_smartcard.mm)
+    set_source_files_properties(ctk_smartcard_test.mm ${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_smartcard.mm
+        TARGET_DIRECTORY CtkSmartCardTests PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_include_directories(CtkSmartCardTests PRIVATE ${PROJECT_SOURCE_DIR}/lib/smartcard/src ${PROJECT_SOURCE_DIR}/include)
+    target_compile_definitions(CtkSmartCardTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+    target_link_libraries(CtkSmartCardTests SmartCard_Impl GTest::gtest_main "-framework CryptoTokenKit" "-framework Foundation")
+    gtest_discover_tests(CtkSmartCardTests)
+
+    # The shipped library in a process without the smart-card entitlement:
+    # opening a card fails and says why. Runs unsigned: the one name in
+    # LIBRESCRS_UNSIGNED_EXECUTABLES (top-level CMakeLists.txt).
+    add_executable(CardSessionMacTests cardsession_mac_test.cpp)
+    target_include_directories(CardSessionMacTests PRIVATE ${PROJECT_SOURCE_DIR}/lib/smartcard/src)
+    target_compile_definitions(CardSessionMacTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+    target_link_libraries(CardSessionMacTests LibreSCRS_SmartCard SmartCard_Impl GTest::gtest_main)
+    gtest_discover_tests(CardSessionMacTests)
+
+    # Hardware checks of the held CryptoTokenKit session against real cards and
+    # readers. Every case skips unless LIBRESCRS_HW_CTK=1; the person at the
+    # readers runs them one by one (see the header of the source). It also
+    # carries the one check that never skips: the binary holds the smart-card
+    # entitlement every executable of this build is signed with, so a card
+    # case cannot skip for want of it.
+    add_executable(CtkSessionHardwareTests ctk_session_hw_test.cpp ctk_hw_probe.mm smartcard_entitlement_check.cpp)
+    set_source_files_properties(ctk_hw_probe.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_include_directories(CtkSessionHardwareTests PRIVATE
+        ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_definitions(CtkSessionHardwareTests PRIVATE
+        LIBRESCRS_INTERNAL_BUILD
+        PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}")
+    target_link_libraries(CtkSessionHardwareTests
+        CardPlugin_Impl LibreSCRS_SmartCard SmartCard_Impl GTest::gtest_main
+        "-framework CryptoTokenKit" "-framework Foundation" "-framework Security" "-framework CoreFoundation")
+    foreach(plugin rs-eid-plugin pkcs15-plugin opensc-plugin emrtd-plugin)
+        if(TARGET ${plugin})
+            add_dependencies(CtkSessionHardwareTests ${plugin})
+        endif()
+    endforeach()
+    # gtest_discover_tests gives every case a SKIP_REGULAR_EXPRESSION, so a
+    # case without LIBRESCRS_HW_CTK reads as Skipped, not Passed. The pattern
+    # matches anywhere in the output and cannot be replaced from here, so no
+    # case in the source skips after a failure.
+    gtest_discover_tests(CtkSessionHardwareTests PROPERTIES LABELS "HARDWARE")
+
+    # Hardware checks of MonitorService's CryptoTokenKit events with real
+    # readers. Every case skips unless LIBRESCRS_HW_MONITOR=1 (see the header of
+    # the source); the entitlement check never skips, as above.
+    add_executable(MonitorCtkHardwareTests monitor_ctk_hw_test.cpp ctk_hw_probe.mm smartcard_entitlement_check.cpp)
+    target_link_libraries(MonitorCtkHardwareTests
+        LibreSCRS_SmartCard GTest::gtest_main
+        "-framework CryptoTokenKit" "-framework Foundation" "-framework Security" "-framework CoreFoundation")
+    gtest_discover_tests(MonitorCtkHardwareTests PROPERTIES LABELS "HARDWARE")
+endif()
 
 # selectByFileId P2 parameter test
 add_executable(apdu_select_p2_test apdu_select_p2_test.cpp)
@@ -560,17 +635,20 @@ add_dependencies(EMRTDPluginTests emrtd-plugin)
 # whole target, so it is not added here — it would mislabel the rest.
 gtest_discover_tests(EMRTDPluginTests)
 
-add_executable(PKCS11Tests pkcs11_test.cpp)
-target_link_libraries(PKCS11Tests GTest::gtest_main librescrs-pkcs11)
-# Shared PIN-guard header lives under test/include/ — see test/e2e/CMakeLists.txt
-# for the matching consumer. The helper must stay byte-identical across
-# real-card test binaries.
-target_include_directories(PKCS11Tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include)
-# Mixed target: only the PKCS11CardTest suite (59 cases) is card-gated; the
-# PKCS11Test suite (34 cases) in the same binary needs no card.
-# `PROPERTIES LABELS` applies to the whole target, so it is not added here.
-gtest_discover_tests(PKCS11Tests DISCOVERY_TIMEOUT 30)
+# The direct PKCS#11 module is not built on macOS.
+if(NOT APPLE)
+    add_executable(PKCS11Tests pkcs11_test.cpp)
+    target_link_libraries(PKCS11Tests GTest::gtest_main librescrs-pkcs11)
+    # Shared PIN-guard header lives under test/include/ — see test/e2e/CMakeLists.txt
+    # for the matching consumer. The helper must stay byte-identical across
+    # real-card test binaries.
+    target_include_directories(PKCS11Tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    # Mixed target: only the PKCS11CardTest suite (59 cases) is card-gated; the
+    # PKCS11Test suite (34 cases) in the same binary needs no card.
+    # `PROPERTIES LABELS` applies to the whole target, so it is not added here.
+    gtest_discover_tests(PKCS11Tests DISCOVERY_TIMEOUT 30)
+endif()
 
 # Internal-only test for the slot-disambiguation hash helpers shared by
 # the LM PKCS#11 module and Pkcs11Token's reader-name lookup.
@@ -705,8 +783,9 @@ gtest_discover_tests(PKCS15PluginTests)
 # gap for the shipped librescrs-pkcs11.so). Deep bind/sign coverage already
 # lives in lib/pkcs15/test/CrossProviderCoordinationTests.cpp and the
 # hardware-gated opensc_fallback_integration_test.cpp; this binary pins
-# down the unit-tier surface that runs without any PC/SC traffic.
-if(LIBRESCRS_VENDOR_OPENSC)
+# down the unit-tier surface that runs without any PC/SC traffic. Not on
+# macOS, where the provider is not built.
+if(LIBRESCRS_VENDOR_OPENSC AND NOT APPLE)
     add_executable(OpenScPkcs11UnitTests
         opensc-pkcs11/sc_lock_guard_test.cpp
         opensc-pkcs11/provider_test.cpp
@@ -1229,10 +1308,9 @@ endif()
 # SmartCard_Impl is deliberately NOT linked here: a second copy of the PC/SC
 # wrapper in this executable would make it ambiguous whose calls were counted.
 #
-# The preemption is ELF's flat symbol lookup. Mach-O's two-level namespace binds
-# every library's references to the image it linked, so on macOS the exported
-# copies are never called and the suite skips itself there; see the test file.
-if(LIBRESCRS_VENDOR_OPENSC)
+# The preemption is ELF's flat symbol lookup, and macOS reaches no card through
+# PC/SC: the suite is built where it can count.
+if(LIBRESCRS_VENDOR_OPENSC AND NOT APPLE)
     add_executable(pcsc_handle_census_test
         pcsc_handle_census_test.cpp
         ${PROJECT_SOURCE_DIR}/test/pcsc_counting_shim/counting_pcsc_shim.c)
@@ -1531,7 +1609,11 @@ gtest_discover_tests(ManifestCodegenTests)
 # librescrs-pkcs11.so. Always built so the test exe compiles in CI;
 # every test SKIPs at runtime when the env vars (LIBRESCRS_TEST_PIN,
 # LIBRESCRS_TEST_PIN_QSCD, LIBRESCRS_TEST_CAN) are unset.
-add_subdirectory(e2e)
+# Every suite there loads the direct PKCS#11 module or its provider, neither of
+# which is built on macOS.
+if(NOT APPLE)
+    add_subdirectory(e2e)
+endif()
 add_subdirectory(smartcard)
 add_subdirectory(pkcs15-plugin)
 add_subdirectory(Trust)

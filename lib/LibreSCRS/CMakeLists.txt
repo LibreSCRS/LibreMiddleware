@@ -290,13 +290,19 @@ add_library(LibreSCRS_SmartCard ${LIBREMIDDLEWARE_LIB_TYPE}
     SmartCard/ActiveChannelHolder.cpp
     SmartCard/CardMap.cpp
     SmartCard/CardSession.cpp
+    SmartCard/DefaultScanProvider.cpp
     SmartCard/MonitorService.cpp
     SmartCard/SessionPresence.cpp
     SmartCard/SmartCardServices.cpp
-    # The PC/SC connection holds process-wide PC/SC state, so it is defined
-    # here and only here; every other image imports it from this library.
+    # The connection holds process-wide card state, so it is defined here and
+    # only here; every other image imports it from this library. macOS reaches
+    # the card through one held CryptoTokenKit session, everything else
+    # through PC/SC.
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection.cpp
-    ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_pcsc.cpp
+    $<$<PLATFORM_ID:Darwin>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_ctk.cpp>
+    $<$<PLATFORM_ID:Darwin>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_smartcard.mm>
+    $<$<PLATFORM_ID:Darwin>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_scan_provider.cpp>
+    $<$<NOT:$<PLATFORM_ID:Darwin>>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_pcsc.cpp>
     ${LIBRESCRS_SMARTCARD_PUBLIC_HEADERS}
     ${LIBRESCRS_SMARTCARD_INTERNAL_HEADERS}
 )
@@ -317,6 +323,11 @@ target_include_directories(LibreSCRS_SmartCard PRIVATE
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src)
 target_compile_features(LibreSCRS_SmartCard PUBLIC cxx_std_23)
 target_compile_definitions(LibreSCRS_SmartCard PRIVATE LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD)
+if(APPLE)
+    set_source_files_properties(${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_smartcard.mm
+        PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(LibreSCRS_SmartCard PRIVATE "-framework CryptoTokenKit" "-framework Foundation")
+endif()
 # Plugins link CardPlugin_Impl (which now pulls LibreSCRS_SmartCard via PUBLIC)
 # into dynamic .so artefacts, so the static archive must be position-independent.
 set_target_properties(LibreSCRS_SmartCard PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -553,24 +564,52 @@ set_target_properties(LibreSCRS_SmartCard_TestHelpers PROPERTIES
 #
 # Not installed (no install(TARGETS …) rule). Build-tree-only.
 # ──────────────────────────────────────────────────────────────────────────
-add_library(LibreSCRS_SmartCard_PcscForTests OBJECT
+# macOS has no PC/SC body to stub.
+if(NOT APPLE)
+    add_library(LibreSCRS_SmartCard_PcscForTests OBJECT
+        ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection.cpp
+        ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_pcsc.cpp
+    )
+    target_link_libraries(LibreSCRS_SmartCard_PcscForTests
+        PUBLIC LibreSCRS_SmartCard
+        PRIVATE $<BUILD_INTERFACE:SmartCard_Impl>
+    )
+    target_include_directories(LibreSCRS_SmartCard_PcscForTests
+        PRIVATE ${PROJECT_SOURCE_DIR}/lib/smartcard/src)
+    target_compile_features(LibreSCRS_SmartCard_PcscForTests PUBLIC cxx_std_23)
+    target_compile_definitions(LibreSCRS_SmartCard_PcscForTests PRIVATE
+        LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD)
+    set_target_properties(LibreSCRS_SmartCard_PcscForTests PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        CXX_VISIBILITY_PRESET default
+        VISIBILITY_INLINES_HIDDEN OFF
+    )
+endif()
+
+# ──────────────────────────────────────────────────────────────────────────
+# Test-only copy of the connection over CryptoTokenKit, compiled against the
+# scripted CryptoTokenKit facade (test/ctk_fake.cpp) instead of the system
+# one, so the CryptoTokenKit body is judged on every platform. Executables
+# that link it must not link libLibreSCRS_SmartCard and must not call
+# CardSession::open: the class has another layout in this copy.
+# LIBRESCRS_BUILDING is deliberately absent: pcsc_connection.h refuses the
+# fake in anything that defines it, which every shipped library does.
+#
+# Not installed (no install(TARGETS …) rule). Build-tree-only.
+# ──────────────────────────────────────────────────────────────────────────
+add_library(LibreSCRS_SmartCard_CtkForTests OBJECT
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection.cpp
-    ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_pcsc.cpp
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_ctk.cpp
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_scan_provider.cpp
+    ${PROJECT_SOURCE_DIR}/test/ctk_fake.cpp
 )
-target_link_libraries(LibreSCRS_SmartCard_PcscForTests
-    PUBLIC LibreSCRS_SmartCard
-    PRIVATE $<BUILD_INTERFACE:SmartCard_Impl>
-)
-target_include_directories(LibreSCRS_SmartCard_PcscForTests
-    PRIVATE ${PROJECT_SOURCE_DIR}/lib/smartcard/src)
-target_compile_features(LibreSCRS_SmartCard_PcscForTests PUBLIC cxx_std_23)
-target_compile_definitions(LibreSCRS_SmartCard_PcscForTests PRIVATE
-    LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD)
-set_target_properties(LibreSCRS_SmartCard_PcscForTests PROPERTIES
-    POSITION_INDEPENDENT_CODE ON
-    CXX_VISIBILITY_PRESET default
-    VISIBILITY_INLINES_HIDDEN OFF
-)
+target_link_libraries(LibreSCRS_SmartCard_CtkForTests PUBLIC $<BUILD_INTERFACE:SmartCard_Impl>)
+target_include_directories(LibreSCRS_SmartCard_CtkForTests
+    PUBLIC ${PROJECT_SOURCE_DIR}/lib/smartcard/src ${PROJECT_SOURCE_DIR}/test)
+target_compile_features(LibreSCRS_SmartCard_CtkForTests PUBLIC cxx_std_23)
+target_compile_definitions(LibreSCRS_SmartCard_CtkForTests PUBLIC
+    LIBRESCRS_SMARTCARD_CTK_FAKE LIBRESCRS_INTERNAL_BUILD)
+set_target_properties(LibreSCRS_SmartCard_CtkForTests PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # The shipped libraries. LibreSCRS_Secure and LibreSCRS_All are INTERFACE
 # targets with no sources of their own, and LibreSCRS_SmartCard_TestHelpers and

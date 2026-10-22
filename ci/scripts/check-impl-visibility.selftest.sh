@@ -116,10 +116,13 @@ report 1 2 "$rc" "c++filt not found" "$out"
 # --- case 2: every artefact in place, and not one symbol read ----------------
 # Seven core libraries and two modules is what the counters check; none of them
 # yields a symbol. Counting containers is not counting symbols.
-tree2="$WORK/tree-no-symbols"
-make_tree "$tree2"
-out="$(bash "$GATE" "$tree2" 2>&1)"; rc=$?
-report 2 2 "$rc" "0 symbols" "$out"
+# Linux only: the containers are .so files, which a macOS build never has.
+if [ "$(uname -s)" != "Darwin" ]; then
+    tree2="$WORK/tree-no-symbols"
+    make_tree "$tree2"
+    out="$(bash "$GATE" "$tree2" 2>&1)"; rc=$?
+    report 2 2 "$rc" "0 symbols" "$out"
+fi
 
 # --- cases 10 to 13: the PC/SC connection lives in one image only -------------
 # They run here, ahead of case 3, because they build their own fixture with the
@@ -257,6 +260,72 @@ pcsc_tree "$tree14"
 printf 'not an object file\n' > "$tree14/plugins/libfixture-plugin.$pcsc_ext"
 out="$(LIBRESCRS_ABI_BASELINE="$pcsc_surface" bash "$GATE" "$tree14" 2>&1)"; rc=$?
 report 14 2 "$rc" "cannot read libfixture-plugin.$pcsc_ext" "$out"
+
+# --- cases 15-19: macOS images reach no card through PC/SC -------------------
+# The rule runs on Darwin only, so these cases exist there only. Each image is
+# a fixture dylib in an otherwise clean tree; 19 is the control: OpenSC built
+# without its PC/SC reader driver.
+if [ "$pcsc_host" = "Darwin" ]; then
+    mac_src="$WORK/mac-pcsc"
+    mkdir -p "$mac_src"
+    cat > "$mac_src/imports.c" <<'C'
+#include <PCSC/winscard.h>
+int librescrs_selftest(void) { SCARDCONTEXT c; return (int)SCardEstablishContext(SCARD_SCOPE_SYSTEM, 0, 0, &c); }
+C
+    cat > "$mac_src/plain.c" <<'C'
+int librescrs_selftest(void) { return 0; }
+C
+    cat > "$mac_src/driver.c" <<'C'
+__attribute__((visibility("hidden"))) int pcsc_init(void) { return 0; }
+int librescrs_selftest(void) { return pcsc_init(); }
+C
+    cat > "$mac_src/literal.c" <<'C'
+const char* librescrs_selftest_name(void) { return "SCardEstablishContext"; }
+C
+    if ! cc -dynamiclib -o "$mac_src/imports.dylib" "$mac_src/imports.c" -framework PCSC 2>"$WORK/mac.err" \
+        || ! cc -dynamiclib -o "$mac_src/framework.dylib" "$mac_src/plain.c" -Wl,-needed_framework,PCSC 2>>"$WORK/mac.err" \
+        || ! cc -dynamiclib -o "$mac_src/driver.dylib" "$mac_src/driver.c" 2>>"$WORK/mac.err" \
+        || ! cc -dynamiclib -o "$mac_src/literal.dylib" "$mac_src/literal.c" 2>>"$WORK/mac.err" \
+        || ! cc -dynamiclib -o "$mac_src/clean.dylib" "$mac_src/plain.c" 2>>"$WORK/mac.err"; then
+        echo "FATAL: could not compile the macOS PC/SC fixtures" >&2
+        sed 's/^/    /' "$WORK/mac.err" >&2
+        exit 2
+    fi
+    # Each fixture must have the one property its case is about.
+    nm -m -u "$mac_src/imports.dylib" | grep -q '_SCardEstablishContext' \
+        || { echo "FATAL: the import fixture imports no SCard function" >&2; exit 2; }
+    otool -L "$mac_src/framework.dylib" | grep -q 'PCSC.framework' \
+        || { echo "FATAL: the framework fixture does not load PCSC.framework" >&2; exit 2; }
+    nm -m "$mac_src/driver.dylib" | grep -qE '_pcsc_init$' \
+        || { echo "FATAL: the driver fixture carries no pcsc_init" >&2; exit 2; }
+    grep -aq 'SCardEstablishContext' "$mac_src/literal.dylib" \
+        || { echo "FATAL: the literal fixture carries no SCardEstablishContext string" >&2; exit 2; }
+    if otool -L "$mac_src/clean.dylib" | grep -q PCSC || grep -aq 'SCard' "$mac_src/clean.dylib"; then
+        echo "FATAL: the clean fixture touches PC/SC -- the control proves nothing" >&2
+        exit 2
+    fi
+
+    mac_case() {
+        num="$1"; fixture="$2"; where="$3"; want_rc="$4"; want_text="$5"
+        tree="$WORK/tree-mac-$num"
+        pcsc_tree "$tree"
+        command cp -f "$mac_src/$fixture.dylib" "$tree/$where"
+        out="$(LIBRESCRS_ABI_BASELINE="$pcsc_surface" bash "$GATE" "$tree" 2>&1)"; rc=$?
+        report "$num" "$want_rc" "$rc" "$want_text" "$out"
+    }
+    mac_case 15 imports lib/LibreSCRS/libLibreSCRS_SmartCard.dylib 1 \
+        "imports a PC/SC function on macOS: libLibreSCRS_SmartCard.dylib: _SCardEstablishContext"
+    mac_case 16 framework lib/LibreSCRS/libLibreSCRS_Trust.dylib 1 "loads PCSC.framework: libLibreSCRS_Trust.dylib"
+    mac_case 17 driver plugins/libfixture-plugin.dylib 1 "carries OpenSC's PC/SC reader driver: libfixture-plugin.dylib"
+    mac_case 18 literal plugins/libfixture-plugin.dylib 1 "carries OpenSC's PC/SC reader driver: libfixture-plugin.dylib"
+    mac_case 19 clean plugins/libfixture-plugin.dylib 0 "Impl visibility clean"
+
+    # Cases 2 to 9 build ELF fixtures and read them with GNU nm -D; they run
+    # on Linux. Everything above runs here too.
+    printf 'selftest: %s cases, %s red-proved (cases 2-9 run on Linux only)\n' "$cases" "$red"
+    [ "$fail" = 0 ]
+    exit $?
+fi
 
 # --- cases 3 and 4: a tree that really exports something ---------------------
 # The two sources differ in one token: `struct Body` against `struct Impl`. The

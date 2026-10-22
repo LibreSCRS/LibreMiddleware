@@ -16,7 +16,9 @@
 #include <iostream>
 #include <memory>
 #include <span>
+#include <string>
 #include <thread>
+#include <vector>
 #include <unistd.h>
 
 namespace {
@@ -202,15 +204,15 @@ namespace LibreSCRS::SmartCard::Internal {
 
 using namespace detail;
 
-// Diagnostic-only escape hatch (see header): opens a real PC/SC connection
-// for the CLI tools / hardware-probe tests under tools/ and test/. A static
-// member can reach the private reader-name ctor; production code cannot.
+// Diagnostic-only escape hatch (see header): opens a real connection for the
+// CLI tools / hardware-probe tests under tools/ and test/. A static member can
+// reach the private reader-name ctor; production code cannot.
 std::unique_ptr<PCSCConnection> PCSCConnection::openRawDiagnostic(const std::string& readerName)
 {
     return std::unique_ptr<PCSCConnection>(new PCSCConnection(readerName));
 }
 
-// Test-only ctor: no PC/SC calls, no context, no card. Used by CardSession
+// Test-only ctor: no card I/O, no handle, no card. Used by CardSession
 // injection paths to produce a connection object whose address can be used
 // as a key while keeping readerName() functional.
 PCSCConnection::PCSCConnection(DetachedTag, const std::string& readerName) : storedReaderName(readerName) {}
@@ -233,6 +235,107 @@ PCSCConnection::PCSCConnection(DetachedTag, const std::string& readerName) : sto
 // dynamic export also roots the section, so --gc-sections cannot drop it
 // either -- which is why moving the definition out, rather than annotating
 // the declaration, is what removes it.
+
+APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
+{
+    // Detached test seam: play the card side of a live SM tunnel. Taken ONLY
+    // by a detached connection with a responder installed via
+    // setDetachedRawResponder; a connection to a card never takes it, and a
+    // detached connection with no responder goes on to the body's handle-less
+    // wire path exactly as before.
+    if (detached() && detachedRawResponder) {
+        return detachedRawResponder(std::span<const std::uint8_t>(cmdBytes, cmdLen));
+    }
+
+    // PCSC_TRACE hook is installed on this lowest-level overload because
+    // every wire APDU passes through here regardless of which higher-level
+    // caller produced it — including Secure-Messaging wrappers which
+    // assemble a wrapped byte vector directly and skip the APDUCommand-
+    // typed transmit() overload. Hooking here therefore captures plain
+    // and SM-wrapped APDUs from a single point, and also picks up the
+    // chained GET-RESPONSE / 6Cxx-retry follow-ups that transmit() emits.
+    if (pcscTraceEnabled()) {
+        emitPcscTraceWire("transmit", readerName(), this, cmdBytes, cmdLen);
+    }
+
+    const std::span<const std::uint8_t> command(cmdBytes, cmdLen);
+    auto reply = exchangeWire(command);
+    if (!reply) {
+        // The card was reset, or its session lost with the card still in the
+        // reader. Re-establish the handle without resetting the card, then
+        // send the command once more -- unless it carries a PIN: resent, it
+        // could spend a try on a card whose verified state the reset cleared,
+        // or on another card.
+        reconnect();
+        if (cmdLen >= 2 && isSensitiveIns(cmdBytes[1])) {
+            throw PCSCError("SCardTransmit failed", SCARD_W_RESET_CARD);
+        }
+        reply = exchangeWire(command);
+        if (!reply) {
+            throw PCSCError("SCardTransmit failed", SCARD_W_RESET_CARD);
+        }
+    }
+
+    if (reply->size() < 2) {
+        throw PCSCError("SCardTransmit: response too short (" + std::to_string(reply->size()) + " bytes)",
+                        SCARD_F_COMM_ERROR);
+    }
+    APDUResponse response;
+    response.sw1 = (*reply)[reply->size() - 2];
+    response.sw2 = (*reply)[reply->size() - 1];
+    reply->resize(reply->size() - 2);
+    response.data = std::move(*reply);
+    return response;
+}
+
+void PCSCConnection::beginTransaction()
+{
+    // Detached test connection: no card. Treat the transaction as held so
+    // test-only holder acquisition through the CardTransaction RAII wrapper
+    // works without a live reader -- unless a test armed a failure through the
+    // detached seam, the only way to reach a begin failure without hardware.
+    if (detached()) {
+        if (detachedTransactionRv != SCARD_S_SUCCESS)
+            throw PCSCError("SCardBeginTransaction failed", detachedTransactionRv);
+        return;
+    }
+    beginOnCard();
+}
+
+void PCSCConnection::endTransaction() noexcept
+{
+    // Detached test connection: nothing to release, but a test may be
+    // watching for the moment of release, the only point at which the release
+    // ORDER is observable; see setDetachedTransactionReleaseObserver. The call
+    // is contained because this function is noexcept and the observer is
+    // arbitrary test code.
+    if (detached()) {
+        if (detachedReleaseObserver) {
+            try {
+                detachedReleaseObserver();
+            } catch (...) {
+            }
+        }
+        return;
+    }
+    endOnCard();
+}
+
+std::vector<uint8_t> PCSCConnection::getATR() const
+{
+    // Detached test connection WITH an ATR installed via setDetachedAtr: hand
+    // those bytes back. A detached connection with no ATR installed goes on to
+    // the body, which fails (throws) as before setDetachedAtr existed --
+    // e.g. eidcard::EIdCard::detectCardType() reached via
+    // CardPlugin::canHandleConnection() on an un-rigged detached session must
+    // keep seeing that failure, not a silent {} that would route it into the
+    // AID-probing SELECT fallback and generate APDUs a passive detached rig
+    // never expects.
+    if (detached() && !detachedAtr.empty()) {
+        return detachedAtr;
+    }
+    return atrFromCard();
+}
 
 APDUResponse PCSCConnection::transmitRaw(const APDUCommand& cmd)
 {

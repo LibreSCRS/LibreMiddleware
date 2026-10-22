@@ -31,12 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef __APPLE__
-#include <PCSC/winscard.h>
-#include <PCSC/wintypes.h>
-#else
 #include <winscard.h>
-#endif
 
 #include "counting_pcsc_shim.h"
 

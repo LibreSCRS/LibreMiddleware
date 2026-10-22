@@ -59,26 +59,16 @@ if(LIBRESCRS_VENDOR_OPENSC)
     target_compile_definitions(librescrs-pkcs11 PRIVATE LIBRESCRS_HAS_VENDORED_OPENSC=1)
 endif()
 
-# Restrict the dylib's exported symbol set to the PKCS#11 standard C
+# Restrict the module's exported symbol set to the PKCS#11 standard C
 # interface. Without this, statically linked OpenSSL crypto and the
 # LibreSCRS internal namespaces all surface as exported symbols of the
-# .dylib - a layering / supply-chain smell. CXX_VISIBILITY_PRESET hidden
+# .so - a layering / supply-chain smell. CXX_VISIBILITY_PRESET hidden
 # above hides LibreSCRS-built symbols, but it does NOT hide symbols
 # brought in from the bundled static OpenSSL archive (those were compiled
 # with default visibility into libcrypto.a). The allowlist approach below
 # strips them at link time.
-#
-# Apple ld(1): -exported_symbols_list <file>  (allowlist of symbol names)
-# GNU ld(1):   --version-script <file>          (version-tagged sections)
-# Both formats encode the same allowlist; their syntax just differs. See
-# the per-platform allowlist files for the rationale + symbol list.
-if(APPLE)
-    target_link_options(librescrs-pkcs11 PRIVATE
-        "LINKER:-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/exports.list"
-        # Apple ld(1) dead-strips by default; -dead_strip is explicit form.
-        "LINKER:-dead_strip"
-    )
-elseif(UNIX)
+# The module is not built on macOS (see the top-level CMakeLists.txt).
+if(UNIX)
     target_link_options(librescrs-pkcs11 PRIVATE
         "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/exports.map"
         # Pair with -ffunction-sections / -fdata-sections in vendored OpenSC
@@ -96,18 +86,14 @@ set_target_properties(librescrs-pkcs11 PROPERTIES
     VISIBILITY_INLINES_HIDDEN ON
     PREFIX "lib"
     OUTPUT_NAME "rescrs-pkcs11"
-    # Native platform suffix: `.so` on Linux, `.dylib` on macOS. Matches
-    # the convention third-party PKCS#11 consumers (Firefox / Thunderbird /
-    # Adobe Acrobat / GnuPG / p11-kit) expect on each platform's GUI
-    # module-load dialog. The SigningService resolver below has matching
-    # platform-aware probing, so the single-suffix internal probe is no
-    # longer required.
+    # Native suffix `.so`, the convention third-party PKCS#11 consumers
+    # (Firefox / Thunderbird / GnuPG / p11-kit) expect.
     VERSION ${PROJECT_VERSION}
     SOVERSION ${LIBRESCRS_ABI_SOVERSION}
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib/pkcs11"
     # Module installs one level below its sibling LibreSCRS_* shared-object
     # chain; relative RPATH avoids LD_LIBRARY_PATH at the call site.
-    INSTALL_RPATH "$<IF:$<PLATFORM_ID:Darwin>,@loader_path/..,$ORIGIN/..>"
+    INSTALL_RPATH "$ORIGIN/.."
 )
 
 if(BUILD_TESTING)

@@ -280,6 +280,67 @@ if [[ $pcsc_violations -gt 0 ]]; then
     exit 1
 fi
 
+# ── macOS: no shipped image reaches a card through PC/SC ──────────────────
+# Apple PCSC.framework corrupts its in-process handle table when
+# SCardReleaseContext overlaps any other PC/SC call; on macOS this library
+# therefore reaches cards only through CryptoTokenKit. An image that imports
+# an SCard function, loads PCSC.framework, or carries OpenSC's PC/SC reader
+# driver (reader-pcsc.c: pcsc_init / pcsc_detect_readers, or its
+# SCardEstablishContext name string from a dlopen'd PC/SC) brings PC/SC back.
+# An image nm or otool cannot read fails the check: "could not measure" is
+# not "clean".
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    if ! command -v otool >/dev/null 2>&1; then
+        echo "FATAL: otool not found on PATH -- cannot judge PC/SC on macOS" >&2
+        exit 2
+    fi
+    mac_pcsc_violations=0
+    mac_pcsc_images=0
+    while IFS= read -r image; do
+        [[ -n "$image" ]] || continue
+        mac_pcsc_images=$((mac_pcsc_images + 1))
+        name="$(basename "$image")"
+        if ! table=$(nm -m "$image" 2>&1); then
+            echo "FATAL: nm cannot read $name -- cannot judge PC/SC on macOS" >&2
+            exit 2
+        fi
+        if ! loads=$(otool -L "$image" 2>&1); then
+            echo "FATAL: otool cannot read $name -- cannot judge PC/SC on macOS" >&2
+            exit 2
+        fi
+        while IFS= read -r sym; do
+            [[ -n "$sym" ]] || continue
+            echo "imports a PC/SC function on macOS: $name: $sym"
+            mac_pcsc_violations=$((mac_pcsc_violations + 1))
+        done < <(printf '%s\n' "$table" | grep -F '(undefined)' | grep -oE '_SCard[A-Za-z0-9_]+' | sort -u || true)
+        if printf '%s\n' "$loads" | tail -n +2 | grep -q 'PCSC\.framework'; then
+            echo "loads PCSC.framework: $name"
+            mac_pcsc_violations=$((mac_pcsc_violations + 1))
+        fi
+        # The name string alone counts only where it is not the import's own
+        # symbol name, which the first rule already reports.
+        imports_establish=0
+        printf '%s\n' "$table" | grep -F '(undefined)' | grep -qE '_SCardEstablishContext([[:space:]]|$)' && imports_establish=1
+        if printf '%s\n' "$table" | grep -vF '(undefined)' | grep -qE '[[:space:]]_pcsc_(init|detect_readers)$' \
+            || { [[ $imports_establish -eq 0 ]] && grep -aq 'SCardEstablishContext' "$image"; }; then
+            echo "carries OpenSC's PC/SC reader driver: $name"
+            mac_pcsc_violations=$((mac_pcsc_violations + 1))
+        fi
+    done < <({
+        find "$BUILD_DIR/lib/LibreSCRS" -maxdepth 1 -type f -name 'libLibreSCRS_*.dylib' 2>/dev/null
+        find "$BUILD_DIR/plugins" "$BUILD_DIR/lib/pkcs11" -maxdepth 2 -type f -name '*.dylib' 2>/dev/null
+    } | sort)
+    if [[ $mac_pcsc_images -eq 0 ]]; then
+        echo "FATAL: no macOS image found under $BUILD_DIR -- cannot judge PC/SC on macOS" >&2
+        exit 2
+    fi
+    if [[ $mac_pcsc_violations -gt 0 ]]; then
+        echo
+        echo "ERROR: $mac_pcsc_violations PC/SC use(s) in macOS images; cards and readers go through CryptoTokenKit there." >&2
+        exit 1
+    fi
+fi
+
 # Platform-specific visibility semantics for static archives:
 #
 #   Linux ELF (GCC):

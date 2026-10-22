@@ -212,6 +212,42 @@ option(BUILD_TESTING "Build tests" ON)
 # every add_subdirectory(), so each directory inherits it.
 set(CMAKE_GTEST_DISCOVER_TESTS_DISCOVERY_MODE PRE_TEST)
 
+# macOS reaches cards through CryptoTokenKit, whose facade is Objective-C++.
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
+
+# macOS: every executable of this build is signed ad hoc with the smart-card
+# entitlement as part of its link, so a test or tool that reaches
+# CryptoTokenKit never runs without it -- CryptoTokenKit would list no reader
+# and a card test would skip for a reason that has nothing to do with the code.
+# The pass runs once every directory has been read, so a new executable needs
+# no edit here. Not installed, not exported.
+# The executables that must run without the entitlement:
+set(LIBRESCRS_UNSIGNED_EXECUTABLES
+    CardSessionMacTests # what a process without it is told
+)
+function(librescrs_sign_executables_for_smartcard dir)
+    get_property(targets DIRECTORY ${dir} PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(target IN LISTS targets)
+        get_target_property(type ${target} TYPE)
+        if(type STREQUAL "EXECUTABLE" AND NOT target IN_LIST LIBRESCRS_UNSIGNED_EXECUTABLES)
+            foreach(lang C CXX OBJCXX)
+                set_property(TARGET ${target} PROPERTY ${lang}_LINKER_LAUNCHER
+                    ${PROJECT_SOURCE_DIR}/cmake/sign-smartcard-after-link.sh
+                    ${PROJECT_SOURCE_DIR}/test/smartcard-entitlement.plist)
+            endforeach()
+        endif()
+    endforeach()
+    get_property(subdirs DIRECTORY ${dir} PROPERTY SUBDIRECTORIES)
+    foreach(subdir IN LISTS subdirs)
+        librescrs_sign_executables_for_smartcard(${subdir})
+    endforeach()
+endfunction()
+if(APPLE)
+    cmake_language(DEFER CALL librescrs_sign_executables_for_smartcard ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
+
 add_subdirectory(thirdparty)
 add_subdirectory(lib/LibreSCRS)
 add_subdirectory(lib/plugin)
@@ -237,7 +273,8 @@ add_subdirectory(lib/emrtd)
 # own test directory during its own add_subdirectory() -- long before the
 # top-level add_subdirectory(test) -- and a test that compiles in
 # $<TARGET_FILE:pcsc_counting_shim> needs the target to exist by then.
-if(BUILD_TESTING AND LIBREMIDDLEWARE_BUILD_PLUGINS AND LIBRESCRS_VENDOR_OPENSC)
+# Not on macOS, where nothing reaches a card through PC/SC.
+if(BUILD_TESTING AND LIBREMIDDLEWARE_BUILD_PLUGINS AND LIBRESCRS_VENDOR_OPENSC AND NOT APPLE)
     add_subdirectory(test/pcsc_counting_shim)
 endif()
 
@@ -253,7 +290,11 @@ else()
     message(STATUS "Digital signing: disabled (set -DBUILD_SIGNING=ON to enable)")
 endif()
 if(LIBRESCRS_VENDOR_OPENSC AND LIBREMIDDLEWARE_BUILD_PLUGINS)
-    add_subdirectory(lib/opensc-pkcs11)
+    # The direct PKCS#11 provider opens readers through PC/SC itself; on macOS
+    # cards are reached through CryptoTokenKit only, so it is not built there.
+    if(NOT APPLE)
+        add_subdirectory(lib/opensc-pkcs11)
+    endif()
     # The OpenSC fallback card plugin and the PKCS#11 module each link a copy
     # of the vendored OpenSC: the module `opensc_static_with_deps`, the plugin
     # `opensc_plugin_static_with_deps`, built without the PC/SC reader driver.
@@ -267,7 +308,11 @@ endif()
 # so reaching the OFF branch here implies a deliberate monolithic-SDK
 # configuration.
 if(LIBREMIDDLEWARE_BUILD_PLUGINS)
-    add_subdirectory(lib/pkcs11)
+    # The direct PKCS#11 module drives the card itself; on macOS the agent owns
+    # the card, so the module is not built there.
+    if(NOT APPLE)
+        add_subdirectory(lib/pkcs11)
+    endif()
     add_subdirectory(lib/rs-eid-plugin)
     add_subdirectory(lib/eu-vrc-plugin)
     add_subdirectory(lib/rs-health-plugin)

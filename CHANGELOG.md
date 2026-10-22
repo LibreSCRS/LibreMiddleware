@@ -115,6 +115,17 @@ Notable user-visible changes per release. Format follows
 
 ### Changed
 
+- **macOS: card I/O and reader events go through CryptoTokenKit.** An open card
+  session holds the card exclusively until it is closed: other applications and
+  token drivers wait for it. The process needs the
+  `com.apple.security.smartcard` entitlement; without it opening a card fails
+  with an error that names the entitlement, and the reader monitor reports one
+  error event and nothing else. A second reader is reported as soon as it is
+  plugged in. A command that carries a PIN is never sent a second time after
+  the card was reset or the session was lost, on any platform. The direct
+  PKCS#11 module and its OpenSC provider are not built for macOS, and nothing
+  shipped for macOS links PCSC.framework.
+
 - **A document signature uses the session it was given.** The signing service
   signs through the card plugin on the one session the caller already holds:
   no PKCS#11 module is loaded into the signing process, no second connection is
@@ -356,6 +367,11 @@ Notable user-visible changes per release. Format follows
   rather than an absolute path, flagging a fragile module lookup.
 
 ### Fixed
+
+- **macOS: a crash or hang of a multi-threaded process using cards.** Apple
+  PCSC.framework corrupts its in-process handle table when
+  `SCardReleaseContext` overlaps any other PC/SC call; on macOS this library
+  therefore reaches cards only through CryptoTokenKit.
 
 - **A signature no longer breaks another signature that is already running.**
   Each signing call owned its own PKCS#11 module manager, and nothing counted

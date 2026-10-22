@@ -426,6 +426,9 @@ if(APPLE AND CMAKE_OSX_ARCHITECTURES)
     set(OPENSC_OPENSSL_LIBS   "-L${OPENSSL_ROOT}/macosx/lib -lcrypto")
 endif()
 
+# On macOS nothing links this PC/SC build (its consumers are not built there);
+# it still runs because its configure step bootstraps the source tree that the
+# plugin's build below shares.
 ExternalProject_Add(opensc_external
     SOURCE_DIR        ${OPENSC_SOURCE_DIR}
     BINARY_DIR        ${OPENSC_BUILD_DIR}
