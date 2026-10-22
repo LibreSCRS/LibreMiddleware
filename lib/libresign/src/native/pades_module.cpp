@@ -6,7 +6,7 @@
 #include "native/pdf_doc_timestamp.h"
 #include "utf8.h"
 #include "native/pdf_dss.h"
-#include "native/pkcs11_token.h"
+#include "native/signing_key.h"
 #include "native/revocation_client.h"
 #include "native_utils.h"
 
@@ -603,7 +603,7 @@ PAdESModule::PreparedPdf PAdESModule::preparePdf(const std::vector<uint8_t>& pdf
 
 // ---- sign ----
 
-SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, Pkcs11Token& token, SignatureLevel level,
+SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, SigningKey& token, SignatureLevel level,
                                 const TSAConfig& tsa, const VisualSignatureParams& visual)
 {
     try {
@@ -901,7 +901,7 @@ SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, Pkcs11Tok
 }
 
 SigningResult PAdESModule::appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
-                                        Pkcs11Token& token, SignatureLevel level, const TSAConfig& tsa,
+                                        SigningKey& token, SignatureLevel level, const TSAConfig& tsa,
                                         const VisualSignatureParams& visual)
 {
     // The PAdES incremental-update model lets sign() handle a prior-signed PDF

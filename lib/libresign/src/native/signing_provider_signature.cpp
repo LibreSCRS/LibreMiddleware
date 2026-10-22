@@ -7,7 +7,7 @@
 // query_operation in signing_provider.cpp.
 
 #include "native/signing_provider_signature.h"
-#include "native/pkcs11_token.h"
+#include "native/signing_key.h"
 #include "native/signing_provider_keymgmt.h"
 #include "native_utils.h"
 
@@ -42,7 +42,7 @@ using native_utils::tokenAlgorithm;
 // (each zero-padded to the curve's field-size). CMS/CAdES/PAdES/ASiC-CAdES
 // (RFC 5753) require the signature as DER-encoded `Ecdsa-Sig-Value
 // SEQUENCE { r INTEGER, s INTEGER }`. Wrap before returning to OpenSSL's
-// CMS pipeline. XAdES and JAdES call Pkcs11Token::sign() directly via
+// CMS pipeline. XAdES and JAdES call SigningKey::sign() directly via
 // signHashWithToken() — those paths keep raw r||s, which is the correct
 // form for XMLDSig (ECDSASignatureValue) and JWS (RFC 7518 §3.4).
 std::vector<uint8_t> ecdsaRawToDer(const std::vector<uint8_t>& raw)
@@ -96,7 +96,7 @@ struct SignCtx
 
     /// Accumulator for the raw bytes streamed into the digest via
     /// digest_sign_update. Captured so the sign-final callback can
-    /// forward them to Pkcs11Token alongside the computed hash — certain
+    /// forward them to the signing key alongside the computed hash — certain
     /// IAS-ECC hash-on-card SSCDs (German nPA) need this raw view
     /// to drive the combined CKM_SHA*_RSA_PKCS mechanism. Memory cost is
     /// the signed-attributes / PDF-byte-range size (≤ a few KB per
@@ -135,7 +135,7 @@ int sigSignInit(void* ctx, void* provkey, const OSSL_PARAM /*params*/[])
 int sigSign(void* ctx, unsigned char* sig, size_t* siglen, size_t sigsize, const unsigned char* tbs, size_t tbslen)
 {
     auto* sc = static_cast<SignCtx*>(ctx);
-    if (!sc->keyData || !sc->keyData->token)
+    if (!sc->keyData || !sc->keyData->key)
         return 0;
 
     // Query for size only
@@ -147,7 +147,7 @@ int sigSign(void* ctx, unsigned char* sig, size_t* siglen, size_t sigsize, const
     try {
         std::span<const uint8_t> input(tbs, tbslen);
         std::string algo = tokenAlgorithm(sc->keyData->keyType, sc->mdName);
-        auto result = sc->keyData->token->sign(input, algo);
+        auto result = sc->keyData->key->sign(input, algo, {});
 
         if (result.empty())
             return 0;
@@ -169,7 +169,7 @@ int sigSign(void* ctx, unsigned char* sig, size_t* siglen, size_t sigsize, const
     } catch (const std::exception& e) {
         // Swallowing the exception silently produced a 0-byte signature
         // return code and the upstream CMS / PAdES path then surfaced
-        // an opaque "signing failed" with no Pkcs11Token diagnostic.
+        // an opaque "signing failed" with no signing-key diagnostic.
         // Surface the message so the field has something actionable.
         std::cerr << "libresign: sigSign exception: " << e.what() << std::endl;
         return 0;
@@ -240,7 +240,7 @@ int sigDigestSignUpdate(void* ctx, const unsigned char* data, size_t datalen)
 int sigDigestSignFinal(void* ctx, unsigned char* sig, size_t* siglen, size_t sigsize)
 {
     auto* sc = static_cast<SignCtx*>(ctx);
-    if (!sc->keyData || !sc->keyData->token || !sc->mdCtx)
+    if (!sc->keyData || !sc->keyData->key || !sc->mdCtx)
         return 0;
 
     // Size query
@@ -277,13 +277,13 @@ int sigDigestSignFinal(void* ctx, unsigned char* sig, size_t* siglen, size_t sig
         }
 
         std::string algo = tokenAlgorithm(sc->keyData->keyType, sc->mdName);
-        // Pass the accumulated raw bytes so Pkcs11Token can use the combined
+        // Pass the accumulated raw bytes so a PKCS#11 token can use the combined
         // CKM_SHA*_RSA_PKCS mechanism on hash-on-card SSCDs. Empty for ECDSA
         // (raw-hash mechanism is already correct on every supported card).
         std::span<const uint8_t> rawSpan;
         if (sc->keyData->keyType == EVP_PKEY_RSA)
             rawSpan = std::span<const uint8_t>{sc->rawAccumulator};
-        auto result = sc->keyData->token->sign(signInput, algo, rawSpan);
+        auto result = sc->keyData->key->sign(signInput, algo, rawSpan);
 
         if (result.empty())
             return 0;

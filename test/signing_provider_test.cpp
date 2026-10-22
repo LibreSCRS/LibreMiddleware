@@ -119,7 +119,7 @@ TEST_F(SigningProviderTest, CreateEvpKeyFromCert)
     ASSERT_NE(cert, nullptr);
 
     SigningProviderLease provider;
-    EvpPkeyPtr pkey(createPkcs11EvpKey(provider, token, cert.get()).release());
+    EvpPkeyPtr pkey(createSigningEvpKey(provider, token, cert.get()).release());
     ASSERT_NE(pkey, nullptr);
 
     EXPECT_GT(EVP_PKEY_get_bits(pkey.get()), 0);
@@ -136,7 +136,7 @@ TEST_F(SigningProviderTest, DigestSignAndVerify)
     ASSERT_NE(cert, nullptr);
 
     SigningProviderLease provider;
-    EvpPkeyPtr pkey(createPkcs11EvpKey(provider, token, cert.get()).release());
+    EvpPkeyPtr pkey(createSigningEvpKey(provider, token, cert.get()).release());
     ASSERT_NE(pkey, nullptr);
 
     const unsigned char data[] = "Test data for signing via OpenSSL 3 provider";
@@ -177,5 +177,5 @@ TEST_F(SigningProviderTest, NullCertThrows)
     Pkcs11Token token(manager.acquire(config.pkcs11Module), libresign::as_pin(config.pin), config.keyAlias,
                       config.readerName);
     SigningProviderLease provider;
-    EXPECT_THROW(createPkcs11EvpKey(provider, token, nullptr), std::runtime_error);
+    EXPECT_THROW(createSigningEvpKey(provider, token, nullptr), std::runtime_error);
 }

@@ -8,7 +8,7 @@
 // query_operation callback.
 
 #include "native/signing_provider.h"
-#include "native/pkcs11_token.h"
+#include "native/signing_key.h"
 #include "native/signing_provider_keymgmt.h"
 #include "native/signing_provider_signature.h"
 
@@ -142,7 +142,7 @@ SigningProviderLease::~SigningProviderLease()
     }
 }
 
-EvpPkeyPublicPtr createPkcs11EvpKey(const SigningProviderLease& /*lease*/, Pkcs11Token& token, X509* cert)
+EvpPkeyPublicPtr createSigningEvpKey(const SigningProviderLease& /*lease*/, SigningKey& key, X509* cert)
 {
     if (!cert)
         throw std::runtime_error("Certificate must not be null");
@@ -153,7 +153,7 @@ EvpPkeyPublicPtr createPkcs11EvpKey(const SigningProviderLease& /*lease*/, Pkcs1
         throw std::runtime_error("Certificate does not contain a public key");
 
     // Extract key type, size, and RSA/EC public components via the shared
-    // helper. A local ProviderKeyData acts as the out-struct; only token/
+    // helper. A local ProviderKeyData acts as the out-struct; only key/
     // maxSigSize fields are unused here.
     detail::ProviderKeyData tempKd;
     detail::populateKeyDataFromPkey(tempKd, certPubKey);
@@ -178,14 +178,15 @@ EvpPkeyPublicPtr createPkcs11EvpKey(const SigningProviderLease& /*lease*/, Pkcs1
     if (!pctx)
         throw std::runtime_error("EVP_PKEY_CTX_new_from_name failed for librescrs");
 
-    // Build OSSL_PARAM array with token pointer, key metadata, and public
-    // key components. The token pointer is passed as an OCTET_PTR so it goes
-    // through our keymgmt_import as an opaque pointer value.
-    void* tokenPtr = &token;
+    // Build OSSL_PARAM array with the key pointer, key metadata, and public
+    // key components. The key pointer is passed as an OCTET_PTR so it goes
+    // through our keymgmt_import as an opaque pointer value -- a SigningKey*
+    // on both sides, whichever implementation it points at.
+    void* keyPtr = &key;
 
     // Use a vector to build params dynamically based on key type
     std::vector<OSSL_PARAM> params;
-    params.push_back(OSSL_PARAM_construct_octet_ptr(detail::kParamTokenPtr, &tokenPtr, sizeof(void*)));
+    params.push_back(OSSL_PARAM_construct_octet_ptr(detail::kParamTokenPtr, &keyPtr, sizeof(void*)));
     params.push_back(OSSL_PARAM_construct_int("librescrs-key-type", &keyType));
     params.push_back(OSSL_PARAM_construct_int(OSSL_PKEY_PARAM_BITS, &keyBits));
 

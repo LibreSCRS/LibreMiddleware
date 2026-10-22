@@ -22,7 +22,7 @@ namespace libresign {
 
 class TlCache;
 class TlSignatureVerifier;
-class Pkcs11Token;
+class SigningKey;
 
 class NativeSigningService : public SigningService
 {
@@ -39,6 +39,14 @@ public:
                                const std::string& readerName) override;
 
     bool isAvailable() const override;
+
+    /// The one signing path: the overload above opens the module's token and
+    /// lands here with it.
+    SigningResult sign(const SigningRequest& request, SigningKey& key) override;
+
+    /// The one append path; see the overload above.
+    SigningResult appendSigner(const SigningRequest& request, std::span<const uint8_t> priorSignature,
+                               std::span<const uint8_t> originalDocument, SigningKey& key) override;
 
     /// True if configure() was called (even if some TLs failed — degraded mode).
     bool isConfigured() const
@@ -127,9 +135,9 @@ private:
     /// Idempotent within one @ref configure cycle.
     void loadLazyTrustLists();
 
-    /// Complete the token's certificate chain from the configured Trusted-List
+    /// Complete the key's certificate chain from the configured Trusted-List
     /// anchors for long-term (B-LT/B-LTA) levels, then install it via
-    /// @ref Pkcs11Token::setResolvedChain. Shared by @ref sign and
+    /// @ref SigningKey::setResolvedChain. Shared by @ref sign and
     /// @ref appendSigner so the fail-closed policy stays single-sourced.
     /// At B_LT and above this is also where any deferred Trusted List is
     /// fetched — see @ref loadLazyTrustLists.
@@ -137,7 +145,7 @@ private:
     ///          TL configured) or the chain completed successfully; a populated
     ///          @ref SigningResult (fail-closed failure) when the issuing CA was
     ///          not found in the configured Trusted List(s).
-    std::optional<SigningResult> completeLongTermChain(Pkcs11Token& token, SignatureLevel level);
+    std::optional<SigningResult> completeLongTermChain(SigningKey& key, SignatureLevel level);
 
     /// Reject an expired signer certificate unless the request carries the
     /// user-consent opt-in. Shared by @ref sign and @ref appendSigner for the
@@ -149,7 +157,7 @@ private:
     ///          or carrying no readable certificate to judge); a populated
     ///          @ref SigningResult carrying @ref SignFailureKind::PolicyViolation
     ///          when an expired signer is used without the opt-in.
-    std::optional<SigningResult> enforceSignerCertPolicy(Pkcs11Token& token, const SigningRequest& request);
+    std::optional<SigningResult> enforceSignerCertPolicy(SigningKey& key, const SigningRequest& request);
 };
 
 } // namespace libresign

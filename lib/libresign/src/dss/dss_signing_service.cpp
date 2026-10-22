@@ -262,4 +262,18 @@ SigningResult DSSSigningService::appendSigner(const SigningRequest& /*request*/,
     return makeFailure(SignFailureKind::EngineError, "appendSigner not yet implemented in this backend");
 }
 
+SigningResult DSSSigningService::sign(const SigningRequest& /*request*/, SigningKey& /*key*/)
+{
+    return makeFailure(SignFailureKind::EngineError,
+                       "the DSS test-oracle backend signs only through a PKCS#11 module it opens itself");
+}
+
+SigningResult DSSSigningService::appendSigner(const SigningRequest& /*request*/,
+                                              std::span<const uint8_t> /*priorSignature*/,
+                                              std::span<const uint8_t> /*originalDocument*/, SigningKey& /*key*/)
+{
+    return makeFailure(SignFailureKind::EngineError,
+                       "the DSS test-oracle backend signs only through a PKCS#11 module it opens itself");
+}
+
 } // namespace libresign

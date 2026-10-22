@@ -54,6 +54,15 @@ public:
 
     bool isAvailable() const override;
 
+    /// @brief Not supported — returns EngineError. The Java oracle signs only
+    ///        through a PKCS#11 module it opens itself; it cannot be handed a
+    ///        key the caller holds.
+    SigningResult sign(const SigningRequest& request, SigningKey& key) override;
+
+    /// @brief Not supported — returns EngineError, as the overload above.
+    SigningResult appendSigner(const SigningRequest& request, std::span<const uint8_t> priorSignature,
+                               std::span<const uint8_t> originalDocument, SigningKey& key) override;
+
 private:
     DSSServiceManager& manager();
 

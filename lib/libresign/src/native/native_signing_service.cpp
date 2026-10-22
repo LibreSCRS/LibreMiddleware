@@ -185,6 +185,29 @@ bool looksSignedAlready(std::span<const uint8_t> doc, SignatureFormat fmt)
     std::unreachable();
 }
 
+// The request's own format, when the document already is a signature in it.
+// The request's format is authoritative: the auto-detect is a convenience —
+// "this is already a signed document of the format you asked for, so add a
+// signer to it" — and must never answer a different question than the caller
+// asked. Sniffing the format instead of agreeing with it refuses ordinary
+// documents outright: a CSV whose first character is '0' shares its leading
+// byte with a DER SEQUENCE, and a JSON payload containing the word
+// "signatures" reads as a JWS.
+std::optional<SignatureFormat> alreadySignedIn(const SigningRequest& request)
+{
+    auto fmt = inferFormat(request.document);
+    if (fmt == request.format && looksSignedAlready(request.document, *fmt))
+        return fmt;
+    return std::nullopt;
+}
+
+SigningResult cadesInputIsDetached()
+{
+    return makeFailure(SignFailureKind::InvalidInput,
+                       "CAdES input is a detached CMS signature (no embedded payload). "
+                       "Use SigningService::appendSigner with the originalDocument argument "
+                       "to add a new signer to a prior CAdES signature.");
+}
 } // namespace
 
 bool NativeSigningService::configure(const TrustConfig& config)
@@ -396,12 +419,12 @@ void NativeSigningService::loadLazyTrustLists()
     }
 }
 
-std::optional<SigningResult> NativeSigningService::completeLongTermChain(Pkcs11Token& token, SignatureLevel level)
+std::optional<SigningResult> NativeSigningService::completeLongTermChain(SigningKey& key, SignatureLevel level)
 {
     // Long-term levels (B-LT/B-LTA) embed the full certificate chain. Cards
     // typically carry only the signer cert, so complete the chain from the
     // Trusted-List anchors before any format module reads
-    // token.certificateChain(). Fail closed if the issuing CA is not in the
+    // key.certificateChain(). Fail closed if the issuing CA is not in the
     // configured TL(s): a long-term signature with an unverifiable chain
     // cannot reach the LT validation level. Skipped when no TL is configured
     // (tlAnchorCerts empty) — the chain then stays as the card provided it,
@@ -426,18 +449,18 @@ std::optional<SigningResult> NativeSigningService::completeLongTermChain(Pkcs11T
     if (tlAnchorCerts.empty())
         return std::nullopt;
 
-    auto ordered = native_utils::buildOrderedChain(token.certificateChain(), tlAnchorCerts);
+    auto ordered = native_utils::buildOrderedChain(key.certificateChain(), tlAnchorCerts);
     if (ordered.empty())
         return makeFailure(SignFailureKind::EngineError,
                            "long-term signing requires a complete certificate chain, but the signer's "
                            "issuing CA was not found in the configured Trusted List(s)");
     // The ONE place that can assert the anchor termination: buildOrderedChain's
     // only non-empty return ends at a Trusted-List candidate by construction.
-    token.setResolvedChain(std::move(ordered), ChainTermination::AnchorTerminated);
+    key.setResolvedChain(std::move(ordered), ChainTermination::AnchorTerminated);
     return std::nullopt;
 }
 
-std::optional<SigningResult> NativeSigningService::enforceSignerCertPolicy(Pkcs11Token& token,
+std::optional<SigningResult> NativeSigningService::enforceSignerCertPolicy(SigningKey& key,
                                                                            const SigningRequest& request)
 {
     // The native backend's CMS path does not intrinsically reject expired
@@ -448,7 +471,7 @@ std::optional<SigningResult> NativeSigningService::enforceSignerCertPolicy(Pkcs1
     // the signing page. Both entry points run this; appending a signer to
     // an already-signed document is signing, and the request that reaches
     // appendSigner carries the same opt-in the user answered for.
-    auto certDer = token.certificate();
+    auto certDer = key.certificate();
     if (certDer.empty())
         return std::nullopt;
     auto x509 = native_utils::parseCert(certDer);
@@ -467,58 +490,11 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, const st
                                          const std::string& readerName)
 {
     try {
-        // Multi-sign auto-detect, lifted from per-module sign() branches.
-        //
-        // If the input bytes already shape as a signed document in some
-        // format, route to appendSigner instead of the per-format sign().
-        // Done BEFORE Pkcs11Token construction so a DETACHED-CAdES (which
-        // we reject) never opens the card — saves a card session and a
-        // potential PIN attempt on inputs that cannot legally multi-sign
-        // without an originalDocument.
-        //
-        // ENVELOPED-capable formats (PAdES, XAdES, JAdES, ASiC-E): the
-        // per-format appendSigner extracts the original payload from the
-        // prior signature itself, so an empty originalDocument is fine.
-        //
-        // CAdES is by definition detached — the originalDocument cannot
-        // be recovered from a CMS SignedData, so the only path forward
-        // is the explicit appendSigner public API. Fail fast with a
-        // pointer at that API.
-        // The request's format is authoritative. The auto-detect adds a
-        // convenience — "this is already a signed document of the format you
-        // asked for, so add a signer to it" — and must never answer a
-        // different question than the caller asked. Sniffing the format
-        // instead of agreeing with it refuses ordinary documents outright:
-        // a CSV whose first character is '0' shares its leading byte with a
-        // DER SEQUENCE, and a JSON payload containing the word "signatures"
-        // reads as a JWS.
-        if (auto fmt = inferFormat(request.document);
-            fmt == request.format && looksSignedAlready(request.document, *fmt)) {
-            switch (*fmt) {
-            case SignatureFormat::Pades:
-                // PAdES handles already-signed PDFs natively through the
-                // PDF incremental-update mechanism inside PAdESModule::sign.
-                // Falling through to the standard sign() path keeps the
-                // single Pkcs11Token construction the per-card PKCS#15
-                // session-attach flow expects; redirecting to appendSigner
-                // would trigger a second bindFromInjectedSession on PACE-
-                // gated contactless cards whose AODF read would then
-                // return an empty profile and surface as CKR_PIN_INCORRECT.
-                break;
-            case SignatureFormat::Xades:
-            case SignatureFormat::Jades:
-            case SignatureFormat::AsicE:
-                // SessionPresence handoff carries any live SM channel
-                // across the redirected path automatically; the host's
-                // shared_ptr<CardSession> just needs to outlive this call.
-                return appendSigner(request, request.document, {}, pin, pkcs11ModulePath, keyAlias, readerName);
-            case SignatureFormat::Cades:
-                return makeFailure(SignFailureKind::InvalidInput,
-                                   "CAdES input is a detached CMS signature (no embedded payload). "
-                                   "Use SigningService::appendSigner with the originalDocument argument "
-                                   "to add a new signer to a prior CAdES signature.");
-            }
-        }
+        // A detached CAdES input is refused BEFORE the token is opened, so
+        // it never costs a card session or a PIN attempt (see the
+        // multi-sign auto-detect in the overload below).
+        if (alreadySignedIn(request) == SignatureFormat::Cades)
+            return cadesInputIsDetached();
 
         // Single mandatory ctor — legacy slotIndex=-1 / tokenLabel=""
         // auto-pick paths were removed in 4.0 because they silently
@@ -533,8 +509,49 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, const st
         // module stays mapped across consecutive signs.
         auto token =
             makeToken(moduleManager.acquire(pkcs11ModulePath), pin, keyAlias, readerName, request.keyId, testSlotId);
+        return sign(request, token);
+    } catch (const SignFailureException& e) {
+        // Typed failure escaping the card layer (e.g. ambiguous CKA_ID key
+        // selection) — preserve its precise kind instead of collapsing it
+        // into the generic EngineError bucket below.
+        return makeFailure(e.kind, e.what());
+    } catch (const std::exception& e) {
+        return makeFailure(SignFailureKind::EngineError, std::string("Native signing error: ") + e.what());
+    }
+}
 
-        if (auto failure = enforceSignerCertPolicy(token, request))
+SigningResult NativeSigningService::sign(const SigningRequest& request, SigningKey& key)
+{
+    try {
+        // Multi-sign auto-detect, lifted from per-module sign() branches.
+        //
+        // If the input bytes already shape as a signed document in the
+        // requested format, route to appendSigner instead of the per-format
+        // sign(). ENVELOPED-capable formats (PAdES, XAdES, JAdES, ASiC-E):
+        // the per-format appendSigner extracts the original payload from the
+        // prior signature itself, so an empty originalDocument is fine.
+        //
+        // CAdES is by definition detached — the originalDocument cannot
+        // be recovered from a CMS SignedData, so the only path forward
+        // is the explicit appendSigner public API. Fail fast with a
+        // pointer at that API.
+        if (const auto fmt = alreadySignedIn(request)) {
+            switch (*fmt) {
+            case SignatureFormat::Pades:
+                // PAdES handles already-signed PDFs natively through the
+                // PDF incremental-update mechanism inside PAdESModule::sign,
+                // so it stays on this path.
+                break;
+            case SignatureFormat::Xades:
+            case SignatureFormat::Jades:
+            case SignatureFormat::AsicE:
+                return appendSigner(request, request.document, {}, key);
+            case SignatureFormat::Cades:
+                return cadesInputIsDetached();
+            }
+        }
+
+        if (auto failure = enforceSignerCertPolicy(key, request))
             return *failure;
 
         // Wire trust config to TSA/revocation parameters
@@ -542,7 +559,7 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, const st
         tsa.crlEnabled = trustConfig.crlEnabled;
         tsa.ocspEnabled = trustConfig.ocspEnabled;
 
-        if (auto failure = completeLongTermChain(token, request.level))
+        if (auto failure = completeLongTermChain(key, request.level))
             return *failure;
 
         // API-POLICY §9 forward-compat: exhaustive switch, no `default:`,
@@ -552,30 +569,27 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, const st
         switch (request.format) {
         case SignatureFormat::Cades: {
             CAdESModule cades;
-            return cades.sign(request.document, token, request.level, tsa);
+            return cades.sign(request.document, key, request.level, tsa);
         }
         case SignatureFormat::Pades: {
             PAdESModule pades;
-            return pades.sign(request.document, token, request.level, tsa, request.visual);
+            return pades.sign(request.document, key, request.level, tsa, request.visual);
         }
         case SignatureFormat::Xades: {
             XAdESModule xades;
-            return xades.sign(request.document, request.fileName, token, request.level, request.packaging, tsa);
+            return xades.sign(request.document, request.fileName, key, request.level, request.packaging, tsa);
         }
         case SignatureFormat::Jades: {
             JAdESModule jades;
-            return jades.sign(request.document, request.fileName, token, request.level, request.packaging, tsa);
+            return jades.sign(request.document, request.fileName, key, request.level, request.packaging, tsa);
         }
         case SignatureFormat::AsicE: {
             ASiCModule asic;
-            return asic.signWithCAdES(request.document, request.fileName, token, request.level, tsa);
+            return asic.signWithCAdES(request.document, request.fileName, key, request.level, tsa);
         }
         }
         std::unreachable();
     } catch (const SignFailureException& e) {
-        // Typed failure escaping the card layer (e.g. ambiguous CKA_ID key
-        // selection) — preserve its precise kind instead of collapsing it
-        // into the generic EngineError bucket below.
         return makeFailure(e.kind, e.what());
     } catch (const std::exception& e) {
         return makeFailure(SignFailureKind::EngineError, std::string("Native signing error: ") + e.what());
@@ -588,8 +602,8 @@ SigningResult NativeSigningService::appendSigner(const SigningRequest& request, 
                                                  const std::string& keyAlias, const std::string& readerName)
 {
     try {
-        auto fmt = inferFormat(priorSignature);
-        if (!fmt)
+        // An input of no known format is refused before the token is opened.
+        if (!inferFormat(priorSignature))
             return makeFailure(SignFailureKind::InvalidDocument,
                                "appendSigner: cannot infer signature format from prior bytes");
 
@@ -600,8 +614,26 @@ SigningResult NativeSigningService::appendSigner(const SigningRequest& request, 
         // to outlive this call so the registry's weak_ptr resolves.
         auto token =
             makeToken(moduleManager.acquire(pkcs11Module), pin, keyAlias, readerName, request.keyId, testSlotId);
+        return appendSigner(request, priorSignature, originalDocument, token);
+    } catch (const SignFailureException& e) {
+        // Typed failure escaping the card layer (e.g. ambiguous CKA_ID key
+        // selection) — preserve its precise kind, same as sign().
+        return makeFailure(e.kind, e.what());
+    } catch (const std::exception& e) {
+        return makeFailure(SignFailureKind::EngineError, std::string("Native appendSigner error: ") + e.what());
+    }
+}
 
-        if (auto failure = enforceSignerCertPolicy(token, request))
+SigningResult NativeSigningService::appendSigner(const SigningRequest& request, std::span<const uint8_t> priorSignature,
+                                                 std::span<const uint8_t> originalDocument, SigningKey& key)
+{
+    try {
+        auto fmt = inferFormat(priorSignature);
+        if (!fmt)
+            return makeFailure(SignFailureKind::InvalidDocument,
+                               "appendSigner: cannot infer signature format from prior bytes");
+
+        if (auto failure = enforceSignerCertPolicy(key, request))
             return *failure;
 
         // Wire trust config to TSA/revocation parameters — the new signer
@@ -613,35 +645,33 @@ SigningResult NativeSigningService::appendSigner(const SigningRequest& request, 
         // Complete the new signer's chain from the Trusted List for long-term
         // levels, identical to sign() — otherwise a B-LT counter-signature would
         // embed a leaf-only chain. Fail closed when the issuing CA is absent.
-        if (auto failure = completeLongTermChain(token, request.level))
+        if (auto failure = completeLongTermChain(key, request.level))
             return *failure;
 
         switch (*fmt) {
         case SignatureFormat::Pades: {
             PAdESModule pades;
-            return pades.appendSigner(priorSignature, originalDocument, token, request.level, tsa, request.visual);
+            return pades.appendSigner(priorSignature, originalDocument, key, request.level, tsa, request.visual);
         }
         case SignatureFormat::Cades: {
             CAdESModule cades;
-            return cades.appendSigner(priorSignature, originalDocument, token, request.level, tsa);
+            return cades.appendSigner(priorSignature, originalDocument, key, request.level, tsa);
         }
         case SignatureFormat::Xades: {
             XAdESModule xades;
-            return xades.appendSigner(priorSignature, originalDocument, request.fileName, token, request.level, tsa);
+            return xades.appendSigner(priorSignature, originalDocument, request.fileName, key, request.level, tsa);
         }
         case SignatureFormat::Jades: {
             JAdESModule jades;
-            return jades.appendSigner(priorSignature, originalDocument, request.fileName, token, request.level, tsa);
+            return jades.appendSigner(priorSignature, originalDocument, request.fileName, key, request.level, tsa);
         }
         case SignatureFormat::AsicE: {
             ASiCModule asic;
-            return asic.appendSigner(priorSignature, originalDocument, token, request.level, tsa);
+            return asic.appendSigner(priorSignature, originalDocument, key, request.level, tsa);
         }
         }
         std::unreachable();
     } catch (const SignFailureException& e) {
-        // Typed failure escaping the card layer (e.g. ambiguous CKA_ID key
-        // selection) — preserve its precise kind, same as sign().
         return makeFailure(e.kind, e.what());
     } catch (const std::exception& e) {
         return makeFailure(SignFailureKind::EngineError, std::string("Native appendSigner error: ") + e.what());

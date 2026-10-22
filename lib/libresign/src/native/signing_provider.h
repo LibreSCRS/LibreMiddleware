@@ -14,7 +14,7 @@ typedef struct x509_st X509;
 
 namespace libresign {
 
-class Pkcs11Token;
+class SigningKey;
 
 // RAII wrapper for EVP_PKEY — declared here rather than taken from the shared
 // internal set, because this header must not include an OpenSSL header at all:
@@ -52,6 +52,6 @@ public:
 
 /// @p lease is the proof that the provider stays loaded while the key is used;
 /// it must outlive the returned key.
-EvpPkeyPublicPtr createPkcs11EvpKey(const SigningProviderLease& lease, Pkcs11Token& token, X509* cert);
+EvpPkeyPublicPtr createSigningEvpKey(const SigningProviderLease& lease, SigningKey& key, X509* cert);
 
 } // namespace libresign

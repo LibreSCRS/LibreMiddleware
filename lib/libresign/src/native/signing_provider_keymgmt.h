@@ -18,18 +18,18 @@ typedef struct ossl_algorithm_st OSSL_ALGORITHM;
 
 namespace libresign {
 
-class Pkcs11Token;
+class SigningKey;
 
 namespace detail {
 
-// Custom OSSL_PARAM key for passing the token pointer through keymgmt_import.
+// Custom OSSL_PARAM key for passing the SigningKey pointer through keymgmt_import.
 inline constexpr const char* kParamTokenPtr = "librescrs-token-ptr";
 
 // Opaque key data stored by our keymgmt.
 struct ProviderKeyData
 {
-    Pkcs11Token* token = nullptr; // non-owning
-    int keyType = 0;              // EVP_PKEY_RSA or EVP_PKEY_EC
+    SigningKey* key = nullptr; // non-owning
+    int keyType = 0;           // EVP_PKEY_RSA or EVP_PKEY_EC
     int keyBits = 0;
     int maxSigSize = 0;
 
@@ -40,16 +40,16 @@ struct ProviderKeyData
     std::string ecGroup;        // EC curve name (e.g., "prime256v1")
 };
 
-// KeyReference — passed from createPkcs11EvpKey through keymgmt_import.
+// KeyReference — passed from createSigningEvpKey through keymgmt_import.
 struct KeyReference
 {
-    Pkcs11Token* token;
+    SigningKey* key;
     X509* cert;
 };
 
 // Populate RSA/EC public-key components (and derived maxSigSize) from an
 // existing EVP_PKEY into a ProviderKeyData. Shared by kmLoad() and
-// createPkcs11EvpKey() — the only two EVP_PKEY→component paths we have.
+// createSigningEvpKey() — the only two EVP_PKEY→component paths we have.
 // BNPtr wraps each BIGNUM so a subsequent vector resize that throws
 // bad_alloc cannot leak the BIGNUM. kmImport() has a different shape
 // (OSSL_PARAM input) and is not merged here.

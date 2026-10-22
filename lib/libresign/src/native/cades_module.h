@@ -17,7 +17,7 @@
 
 namespace libresign {
 
-class Pkcs11Token;
+class SigningKey;
 
 /// Whether the CMS signer carries the `signing-time` signed attribute.
 ///
@@ -36,7 +36,7 @@ class CAdESModule
 public:
     // Create CAdES B-B detached signature.
     // Returns DER-encoded CMS SignedData.
-    std::vector<uint8_t> signBB(const std::vector<uint8_t>& data, Pkcs11Token& token, SigningTimeAttribute signingTime);
+    std::vector<uint8_t> signBB(const std::vector<uint8_t>& data, SigningKey& token, SigningTimeAttribute signingTime);
 
     // The three upgrade helpers below act on the CMS's FIRST SignerInfo, which
     // is unambiguous only on a single-signer document (the PAdES path, where
@@ -62,8 +62,7 @@ public:
     std::vector<uint8_t> addArchiveTimestamp(const std::vector<uint8_t>& cms, const TSAConfig& tsa);
 
     // Convenience: sign at requested level in one call.
-    SigningResult sign(const std::vector<uint8_t>& data, Pkcs11Token& token, SignatureLevel level,
-                       const TSAConfig& tsa);
+    SigningResult sign(const std::vector<uint8_t>& data, SigningKey& token, SignatureLevel level, const TSAConfig& tsa);
 
     /// @brief Append a new SignerInfo to a prior detached CAdES signature.
     ///
@@ -96,7 +95,7 @@ public:
     /// @param tsa          TSA config — required from B-T upwards
     /// @return @ref SigningResult — DER-encoded CMS with the appended signer
     [[nodiscard]] SigningResult appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
-                                             Pkcs11Token& token, SignatureLevel level, const TSAConfig& tsa);
+                                             SigningKey& token, SignatureLevel level, const TSAConfig& tsa);
 };
 
 } // namespace libresign

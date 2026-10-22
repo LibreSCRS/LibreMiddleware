@@ -3,7 +3,7 @@
 
 #include "native/asic_module.h"
 #include "native/cades_module.h"
-#include "native/pkcs11_token.h"
+#include "native/signing_key.h"
 #include "native/zip_records.h"
 #include "native_utils.h"
 
@@ -441,7 +441,7 @@ std::string formatSigSuffix(int n)
 } // namespace
 
 SigningResult ASiCModule::signWithCAdES(const std::vector<uint8_t>& data, const std::string& fileName,
-                                        Pkcs11Token& token, SignatureLevel level, const TSAConfig& tsa)
+                                        SigningKey& token, SignatureLevel level, const TSAConfig& tsa)
 {
     // ---- Multi-sign branch (ETSI EN 319 162-1 §A.4) ----
     //
@@ -632,7 +632,7 @@ SigningResult ASiCModule::signWithCAdES(const std::vector<uint8_t>& data, const 
 }
 
 SigningResult ASiCModule::appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
-                                       Pkcs11Token& token, SignatureLevel level, const TSAConfig& tsa)
+                                       SigningKey& token, SignatureLevel level, const TSAConfig& tsa)
 {
     if (prior.empty())
         return makeFailure(SignFailureKind::InvalidDocument, "ASiC-E appendSigner: empty prior container");

@@ -4,7 +4,7 @@
 #include "native/jades_module.h"
 #include "native/depth_guard.h"
 #include "native/jcs.h"
-#include "native/pkcs11_token.h"
+#include "native/signing_key.h"
 #include "native/revocation_client.h"
 #include "native/tsa_client.h"
 #include "native_utils.h"
@@ -133,7 +133,7 @@ std::string jwsAlgorithm(X509* cert)
 
 // ---- Build x5c array: base64 DER certs (standard base64, NOT base64url) ----
 
-nlohmann::json buildX5c(Pkcs11Token& token)
+nlohmann::json buildX5c(SigningKey& token)
 {
     auto chain = token.certificateChain();
     nlohmann::json x5c = nlohmann::json::array();
@@ -183,7 +183,7 @@ std::string serializeJws(const JwsComponents& jws)
 // for DETACHED), and signature (base64url). Throws std::runtime_error on
 // PKCS#11 / certificate / curve failures; callers wrap in try/catch and
 // convert to SigningResult.
-JwsComponents buildJwsBB(const std::vector<uint8_t>& payload, bool isDetached, Pkcs11Token& token)
+JwsComponents buildJwsBB(const std::vector<uint8_t>& payload, bool isDetached, SigningKey& token)
 {
     auto certDer = token.certificate();
     if (certDer.empty())
@@ -251,7 +251,7 @@ JwsComponents buildJwsBB(const std::vector<uint8_t>& payload, bool isDetached, P
 
     // Pass raw to-be-signed bytes so hash-on-card SSCDs can use the combined
     // CKM_SHA*_RSA_PKCS mechanism; legacy cards fall through to the pre-built
-    // DigestInfo path inside Pkcs11Token.
+    // DigestInfo path inside the key's sign.
     const std::span<const uint8_t> signingInputSpan{reinterpret_cast<const uint8_t*>(signingInput.data()),
                                                     signingInput.size()};
     auto signatureBytes = signHashWithToken(token, cert.get(), inputHash, hashAlgo, signingInputSpan);
@@ -278,7 +278,7 @@ JwsComponents buildJwsBB(const std::vector<uint8_t>& payload, bool isDetached, P
 //
 // Returns a failure result for the fail-closed policy stops, std::nullopt when
 // @p entry reached @p level.
-std::optional<SigningResult> applyEtsiU(JwsComponents& entry, Pkcs11Token& token, SignatureLevel level,
+std::optional<SigningResult> applyEtsiU(JwsComponents& entry, SigningKey& token, SignatureLevel level,
                                         const TSAConfig& tsa)
 {
     // B-T: add signature timestamp
@@ -375,7 +375,7 @@ std::optional<SigningResult> applyEtsiU(JwsComponents& entry, Pkcs11Token& token
 
 // ---- JAdESModule::sign ----
 
-SigningResult JAdESModule::sign(const std::vector<uint8_t>& data, const std::string& fileName, Pkcs11Token& token,
+SigningResult JAdESModule::sign(const std::vector<uint8_t>& data, const std::string& fileName, SigningKey& token,
                                 SignatureLevel level, SignaturePackaging packaging, const TSAConfig& tsa)
 {
     if (data.empty())
@@ -482,7 +482,7 @@ SigningResult JAdESModule::sign(const std::vector<uint8_t>& data, const std::str
 // ---- JAdESModule::appendSigner ----
 
 SigningResult JAdESModule::appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
-                                        const std::string& fileName, Pkcs11Token& token, SignatureLevel level,
+                                        const std::string& fileName, SigningKey& token, SignatureLevel level,
                                         const TSAConfig& tsa)
 {
     (void)fileName; // JAdES does not carry a per-signer file name

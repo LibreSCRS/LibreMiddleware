@@ -103,6 +103,7 @@ if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
         src/native/pkcs11_module_handle.h
         src/native/pkcs11_module_manager.h
         src/native/pkcs11_token.h
+        src/native/signing_key.h
         src/native/signing_provider.h
         src/native/signing_provider_keymgmt.h
         src/native/signing_provider_signature.h

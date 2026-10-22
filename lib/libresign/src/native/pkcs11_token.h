@@ -9,6 +9,7 @@
 
 #include "../types.h" // ChainTermination
 #include "pkcs11_module_manager.h"
+#include "signing_key.h"
 
 #include <LibreSCRS/Secure/Buffer.h>
 
@@ -24,7 +25,9 @@ class CardSession;
 
 namespace libresign {
 
-class Pkcs11Token
+/// @brief A SigningKey on a PKCS#11 token: it loads the module, finds the
+///        reader's slot and logs in itself.
+class Pkcs11Token final : public SigningKey
 {
 public:
     // pin: @ref LibreSCRS::Secure::Buffer borrowed from the caller. The token
@@ -97,7 +100,7 @@ public:
     Pkcs11Token(Pkcs11ModuleHandle module, const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
                 TestSlotId rawSlotId, const std::vector<uint8_t>& keyId = {});
 
-    ~Pkcs11Token();
+    ~Pkcs11Token() override;
 
     Pkcs11Token(const Pkcs11Token&) = delete;
     Pkcs11Token& operator=(const Pkcs11Token&) = delete;
@@ -113,9 +116,9 @@ public:
     ///        provider sign callback) pass an empty span and get the legacy
     ///        behaviour.
     std::vector<uint8_t> sign(std::span<const uint8_t> hash, const std::string& algorithm = "SHA256withRSA",
-                              std::span<const uint8_t> rawData = {});
-    std::vector<uint8_t> certificate() const;
-    std::vector<std::vector<uint8_t>> certificateChain() const;
+                              std::span<const uint8_t> rawData = {}) override;
+    std::vector<uint8_t> certificate() const override;
+    std::vector<std::vector<uint8_t>> certificateChain() const override;
 
     /// @brief Override the chain returned by @ref certificateChain with a
     ///        caller-resolved one (DER, leaf-first). The signing service uses
@@ -129,13 +132,13 @@ public:
     ///        Trusted-List anchor by construction (the resolver's success
     ///        return). The revocation gate exempts the chain's tail on this
     ///        assertion — a wrong claim reopens a fail-open.
-    void setResolvedChain(std::vector<std::vector<uint8_t>> chain, ChainTermination termination);
+    void setResolvedChain(std::vector<std::vector<uint8_t>> chain, ChainTermination termination) override;
 
     /// @brief Termination provenance of the chain @ref certificateChain
     ///        currently returns: the value asserted by the last
     ///        @ref setResolvedChain, or Unterminated when the on-token
     ///        fallback is active (its walk proves nothing about the tail).
-    [[nodiscard]] ChainTermination chainTermination() const;
+    [[nodiscard]] ChainTermination chainTermination() const override;
 
 private:
     struct Impl;

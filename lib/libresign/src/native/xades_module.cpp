@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "native/xades_module.h"
-#include "native/pkcs11_token.h"
+#include "native/signing_key.h"
 #include "native/revocation_client.h"
 #include "native/tsa_client.h"
 #include "native_utils.h"
@@ -601,14 +601,14 @@ std::vector<uint8_t> serializeDoc(xmlDocPtr doc)
 // the produced signature under the exact filename supplied here; if
 // the recipient receives only the `.xml`, validation aborts at the
 // reference-resolution step before any cryptographic check runs.
-SigningResult XAdESModule::sign(const std::vector<uint8_t>& data, const std::string& fileName, Pkcs11Token& token,
+SigningResult XAdESModule::sign(const std::vector<uint8_t>& data, const std::string& fileName, SigningKey& token,
                                 SignatureLevel level, SignaturePackaging packaging, const TSAConfig& tsa)
 {
     return signWithSuffix(data, fileName, token, level, packaging, tsa, std::string_view{});
 }
 
 SigningResult XAdESModule::signWithSuffix(const std::vector<uint8_t>& data, const std::string& fileName,
-                                          Pkcs11Token& token, SignatureLevel level, SignaturePackaging packaging,
+                                          SigningKey& token, SignatureLevel level, SignaturePackaging packaging,
                                           const TSAConfig& tsa, std::string_view forcedIdSuffix)
 {
     if (data.empty())
@@ -861,7 +861,7 @@ SigningResult XAdESModule::signWithSuffix(const std::vector<uint8_t>& data, cons
         // 8. Sign with PKCS#11 token. Pass canonicalised SignedInfo as the
         //    raw "to-be-signed" bytes so hash-on-card SSCDs can use the
         //    combined CKM_SHA256_RSA_PKCS mechanism; legacy cards fall
-        //    through to the pre-built DigestInfo path inside Pkcs11Token.
+        //    through to the pre-built DigestInfo path inside the key's sign.
         auto signatureBytes =
             signHashWithToken(token, cert.get(), signedInfoHash, "SHA256", std::span<const uint8_t>{signedInfoC14n});
 
@@ -1069,7 +1069,7 @@ SigningResult XAdESModule::signWithSuffix(const std::vector<uint8_t>& data, cons
 // ---- XAdESModule::appendSigner ----
 
 SigningResult XAdESModule::appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
-                                        const std::string& fileName, Pkcs11Token& token, SignatureLevel level,
+                                        const std::string& fileName, SigningKey& token, SignatureLevel level,
                                         const TSAConfig& tsa)
 {
     if (prior.empty())

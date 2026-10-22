@@ -112,6 +112,7 @@ SigningE2ETests 191
 SigningFailureKindTests 4
 SigningIntegrationTests 3
 SigningProviderTests 5
+SigningProviderKeymgmtTests 1
 SigningRequestTsaOverrideTest 2
 SlotHashTests 9
 TSAClientTests 3

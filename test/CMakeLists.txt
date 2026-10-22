@@ -976,6 +976,12 @@ if(BUILD_SIGNING)
         PROPERTIES LABELS "HARDWARE"
     )
 
+    # The provider's key import with a key that is not a PKCS#11 token: no
+    # card, so not card-gated.
+    add_executable(SigningProviderKeymgmtTests signing_provider_keymgmt_test.cpp)
+    target_link_libraries(SigningProviderKeymgmtTests PRIVATE SigningTestSupport OpenSSL_Crypto GTest::gtest_main)
+    gtest_discover_tests(SigningProviderKeymgmtTests)
+
     # HttpClient is core (used by both backends)
     add_executable(HttpClientTests http_client_test.cpp)
     target_link_libraries(HttpClientTests PRIVATE LibreSign GTest::gtest_main)

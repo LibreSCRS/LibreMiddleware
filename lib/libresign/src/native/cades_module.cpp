@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "native/cades_module.h"
-#include "native/pkcs11_token.h"
+#include "native/signing_key.h"
 #include "native/signing_provider.h"
 #include "native/tsa_client.h"
 #include "der_utils.h"
@@ -238,7 +238,7 @@ void addUnsignedAttr(CMS_SignerInfo* si, const char* oid, const std::vector<uint
 
 // ---- signBB ----
 
-std::vector<uint8_t> CAdESModule::signBB(const std::vector<uint8_t>& data, Pkcs11Token& token,
+std::vector<uint8_t> CAdESModule::signBB(const std::vector<uint8_t>& data, SigningKey& token,
                                          SigningTimeAttribute signingTime)
 {
     // 1. Get signer certificate from token
@@ -254,7 +254,7 @@ std::vector<uint8_t> CAdESModule::signBB(const std::vector<uint8_t>& data, Pkcs1
     //    The lease keeps the provider loaded until pkey, declared after it,
     //    is gone.
     SigningProviderLease provider;
-    EvpPkeyPtr pkey(createPkcs11EvpKey(provider, token, signerCert.get()).release());
+    EvpPkeyPtr pkey(createSigningEvpKey(provider, token, signerCert.get()).release());
 
     // 3. Create CMS SignedData with the PKCS#11-backed key.
     //    OpenSSL handles content-type, message-digest, and signing-time
@@ -617,7 +617,7 @@ void addArchiveTimestampTo(CMS_ContentInfo* cms, CMS_SignerInfo* si, const TSACo
 //
 // Returns a failure result for the fail-closed policy stops, std::nullopt when
 // the document reached @p level. Throws SignFailureException on TSA faults.
-std::optional<SigningResult> applyLevelUpgrades(CMS_ContentInfo* cms, CMS_SignerInfo* si, Pkcs11Token& token,
+std::optional<SigningResult> applyLevelUpgrades(CMS_ContentInfo* cms, CMS_SignerInfo* si, SigningKey& token,
                                                 SignatureLevel level, const TSAConfig& tsa)
 {
     // The B-T signature timestamp and B-LTA archive timestamp drive an RFC 3161
@@ -660,7 +660,7 @@ std::vector<uint8_t> CAdESModule::addArchiveTimestamp(const std::vector<uint8_t>
 
 // ---- sign (convenience) ----
 
-SigningResult CAdESModule::sign(const std::vector<uint8_t>& data, Pkcs11Token& token, SignatureLevel level,
+SigningResult CAdESModule::sign(const std::vector<uint8_t>& data, SigningKey& token, SignatureLevel level,
                                 const TSAConfig& tsa)
 {
     if (data.empty())
@@ -692,7 +692,7 @@ SigningResult CAdESModule::sign(const std::vector<uint8_t>& data, Pkcs11Token& t
 // ---- appendSigner ----
 
 SigningResult CAdESModule::appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
-                                        Pkcs11Token& token, SignatureLevel level, const TSAConfig& tsa)
+                                        SigningKey& token, SignatureLevel level, const TSAConfig& tsa)
 {
     if (prior.empty())
         return makeFailure(SignFailureKind::InvalidDocument, "CAdES appendSigner: empty prior signature");
@@ -749,7 +749,7 @@ SigningResult CAdESModule::appendSigner(std::span<const uint8_t> prior, std::spa
         if (!signerCert)
             return makeFailure(SignFailureKind::EngineError, "CAdES appendSigner: failed to parse signer certificate");
 
-        EvpPkeyPtr pkey(createPkcs11EvpKey(provider, token, signerCert.get()).release());
+        EvpPkeyPtr pkey(createSigningEvpKey(provider, token, signerCert.get()).release());
         if (!pkey)
             return makeFailure(SignFailureKind::CardError, "CAdES appendSigner: failed to obtain PKCS#11 key handle");
 

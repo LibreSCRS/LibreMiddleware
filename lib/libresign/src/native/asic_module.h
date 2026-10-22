@@ -18,7 +18,7 @@
 
 namespace libresign {
 
-class Pkcs11Token;
+class SigningKey;
 
 namespace detail {
 
@@ -95,7 +95,7 @@ AsicProbe probeAsic(const std::vector<uint8_t>& data);
 class ASiCModule
 {
 public:
-    SigningResult signWithCAdES(const std::vector<uint8_t>& data, const std::string& fileName, Pkcs11Token& token,
+    SigningResult signWithCAdES(const std::vector<uint8_t>& data, const std::string& fileName, SigningKey& token,
                                 SignatureLevel level, const TSAConfig& tsa);
 
     /// @brief Append a new signer to an existing ASiC-E container.
@@ -124,7 +124,7 @@ public:
     ///         a failure with @ref SignFailureKind::InvalidDocument when
     ///         @p prior is empty
     [[nodiscard]] SigningResult appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
-                                             Pkcs11Token& token, SignatureLevel level, const TSAConfig& tsa);
+                                             SigningKey& token, SignatureLevel level, const TSAConfig& tsa);
 };
 
 } // namespace libresign

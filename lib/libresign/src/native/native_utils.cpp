@@ -7,7 +7,7 @@
 
 #include "native/der_utils.h"
 #include "native/issuer_resolution.h"
-#include "native/pkcs11_token.h"
+#include "native/signing_key.h"
 #include "native/revocation_client.h"
 #include "types.h"
 
@@ -476,7 +476,7 @@ std::string tokenAlgorithm(int keyType, const std::string& mdName)
 
 // ---- Collect revocation data for a token's certificate chain ----
 
-libresign::RevocationData collectRevocationData(libresign::Pkcs11Token& token, const libresign::TSAConfig& tsa)
+libresign::RevocationData collectRevocationData(libresign::SigningKey& token, const libresign::TSAConfig& tsa)
 {
     auto chainDer = token.certificateChain();
     std::vector<X509*> chain;
@@ -669,7 +669,7 @@ std::optional<libresign::SigningResult> revocationFailClosed(const libresign::Re
 
 // ---- Sign a hash with PKCS#11 token (DigestInfo for RSA) ----
 
-std::vector<uint8_t> signHashWithToken(libresign::Pkcs11Token& token, X509* cert, const std::vector<uint8_t>& hash,
+std::vector<uint8_t> signHashWithToken(libresign::SigningKey& token, X509* cert, const std::vector<uint8_t>& hash,
                                        const std::string& hashAlgo, std::span<const uint8_t> rawData)
 {
     EVP_PKEY* pubKey = X509_get0_pubkey(cert);
@@ -684,14 +684,14 @@ std::vector<uint8_t> signHashWithToken(libresign::Pkcs11Token& token, X509* cert
 
         std::vector<uint8_t> digestInfo(prefix.begin(), prefix.end());
         digestInfo.insert(digestInfo.end(), hash.begin(), hash.end());
-        // Pkcs11Token internally tries the combined CKM_SHA*_RSA_PKCS form
-        // first when @p rawData is supplied (hash-on-card SSCDs); on any
-        // failure or when the caller has no raw bytes, it falls back to
-        // the legacy CKM_RSA_PKCS path with the pre-built DigestInfo.
+        // A key that can only sign a message it hashes itself takes
+        // @p rawData (hash-on-card SSCDs: a PKCS#11 token tries the combined
+        // CKM_SHA*_RSA_PKCS form first); otherwise, and when the caller has
+        // no raw bytes, the pre-built DigestInfo is what is signed.
         return token.sign(digestInfo, alg, rawData);
     } else {
         // ECDSA: token handles DigestInfo internally
-        return token.sign(hash, alg);
+        return token.sign(hash, alg, {});
     }
 }
 

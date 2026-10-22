@@ -22,6 +22,8 @@ class CardSession;
 
 namespace libresign {
 
+class SigningKey;
+
 // Helper for callers that have the PIN as a std::string_view (e.g. test
 // fixtures with string literals). Production callers SHOULD store the PIN in
 // a @ref LibreSCRS::Secure::Buffer and forward it directly — the buffer's
@@ -121,6 +123,23 @@ public:
                                        const std::string& readerName) = 0;
 
     virtual bool isAvailable() const = 0;
+
+    /// @brief @ref sign with a key the caller already holds, instead of a
+    ///        PKCS#11 module this service opens: the agent's key signs through
+    ///        the card plugin on the session it holds for the reader.
+    ///
+    /// Same request contract and result shape as @ref sign. A backend that
+    /// can only sign through a module it opens itself returns
+    /// @ref SignFailureKind::EngineError.
+    ///
+    /// Appended after every earlier virtual so the vtable order of the
+    /// existing ones is unchanged.
+    virtual SigningResult sign(const SigningRequest& request, SigningKey& key) = 0;
+
+    /// @brief @ref appendSigner with a key the caller already holds; same
+    ///        contract as the overload above.
+    virtual SigningResult appendSigner(const SigningRequest& request, std::span<const uint8_t> priorSignature,
+                                       std::span<const uint8_t> originalDocument, SigningKey& key) = 0;
 };
 
 } // namespace libresign
