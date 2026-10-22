@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 //
-// Multi-card 4.1.0 regression smoke. Iterates every PCSC reader the
-// system reports and attempts the full inject-path sign cycle against
-// whichever recognised card profile is present on each reader. Per-card
-// PIN-failure latching halts further PIN ops on a card that fails while
-// the other readers continue independently — no cross-contamination.
+// Multi-card regression smoke. Iterates every PCSC reader the system reports
+// and signs, the way a document signature is made, on whichever recognised
+// card profile is present on each reader: the card's plugin on a session for
+// the reader, the PIN deposited and presented in the plugin's own sign.
+// Per-card PIN-failure latching halts further PIN ops on a card that fails
+// while the other readers continue independently — no cross-contamination.
 //
-// Card → PIN map (operator-supplied via env or compiled-in fallback):
+// Card → PIN map (operator-supplied via env):
 //   PKS  (CardEdge platform)                  → bare PIN
 //   NAM  (SCE 8.0-C2V0 CL)                    → CAN:PIN (PACE then verify)
-//   PIV  (G+D SCE7)                           → bare PIN (PIV-aware path)
+//   PIV  (G+D SCE7)                           → bare PIN
 //
 // Opt-in: gated on LIBRESCRS_BUILD_REAL_CARD_TESTS=ON. NOT in default
 // ctest set. Operator invocation:
@@ -18,7 +19,7 @@
 //   LIBRESCRS_TEST_PKS_PIN="0114" \
 //   LIBRESCRS_TEST_NAM_PIN="123456:654321" \
 //   LIBRESCRS_TEST_PIV_PIN="569548" \
-//   ./Pkcs11MultiCardSignTests
+//   ./MultiCardSignTests
 
 // pin_guard.h is included for its PIN-related helpers, but this test
 // deliberately does NOT invoke SKIP_IF_PIN_FAILED() at function entry.
@@ -31,27 +32,17 @@
 #include "pin_guard.h"
 
 #include <LibreSCRS/Auth/PaceSecretKind.h>
+#include <LibreSCRS/CancelToken.h>
+#include <LibreSCRS/Plugin/CardPlugin.h>
+#include <LibreSCRS/Plugin/CardPluginService.h>
 #include <LibreSCRS/Secure/Buffer.h>
 #include <LibreSCRS/Secure/String.h>
-#include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
-#include <LibreSCRS/SmartCard/AppletAid.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/MonitorService.h>
-#include <LibreSCRS/SmartCard/SmProtocolRequest.h>
+#include <LibreSCRS_internal/Crypto/DigestInfo.h>
 
-#include <dlfcn.h>
-
-#define CK_PTR *
-#define CK_DECLARE_FUNCTION(returnType, name) returnType name
-#define CK_DECLARE_FUNCTION_POINTER(returnType, name) returnType(*name)
-#define CK_CALLBACK_FUNCTION(returnType, name) returnType(*name)
-#ifndef NULL_PTR
-#define NULL_PTR 0
-#endif
-#include "pkcs11/pkcs11.h"
-
-#include "native/pkcs11_module_manager.h"
-#include "native/pkcs11_token.h"
+#include "native/plugin_signing_key.h"
+#include "types.h"
 
 #include <openssl/evp.h>
 #include <openssl/rsa.h>
@@ -149,13 +140,6 @@ std::string atrHex(const std::vector<std::uint8_t>& atr)
     return out;
 }
 
-std::filesystem::path modulePath()
-{
-    if (const char* o = std::getenv("LIBRESCRS_PKCS11_MODULE_PATH"))
-        return o;
-    return std::filesystem::path{LIBRESCRS_PKCS11_MODULE_PATH};
-}
-
 /// Per-card failure latch. The cards on the three readers are
 /// independent — a PIN failure on one MUST NOT cause us to abandon
 /// the sign attempts on the others. Each profile gets its own bool;
@@ -199,17 +183,6 @@ struct PinFailureLatch
 };
 static PinFailureLatch g_latch;
 
-bool looksLikePinError(const std::string& what)
-{
-    static constexpr std::array<const char*, 5> kNeedles = {
-        "PIN", "0x000000a0", "0x000000A0", "0x000000a1", "0x000000a4",
-    };
-    for (const auto* needle : kNeedles)
-        if (what.find(needle) != std::string::npos)
-            return true;
-    return false;
-}
-
 struct ReaderCard
 {
     std::string reader;
@@ -245,8 +218,7 @@ std::vector<ReaderCard> discoverCards()
 
 struct SignOutcome
 {
-    bool attached = false;
-    bool loggedIn = false;
+    bool attached = false; ///< a plugin read a signing key from the card
     bool certRead = false;
     bool signed_ = false;
     bool verified = false;
@@ -254,15 +226,10 @@ struct SignOutcome
     std::string sigError;
 };
 
-/// Run the full inject-path sign cycle on @p rc using @p pin. Latches
-/// the profile-specific PIN-failure flag on any PIN-related error so
-/// subsequent ops on the SAME card skip without burning more retries.
-/// @param moduleManager Shared loaded-module cache; passed by the test
-///                      so each per-card sign acquires a fresh handle
-///                      against the same C_Initialize-ed module —
-///                      mirrors the production NativeSigningService
-///                      composition.
-SignOutcome signOnCard(libresign::Pkcs11ModuleManager& moduleManager, ReaderCard& rc, const std::string& pin)
+/// Sign on @p rc as a document signature is made, using @p pin. Latches the
+/// profile-specific PIN-failure flag when the card refuses the PIN or reports
+/// it blocked, so later ops on the SAME card skip without burning more tries.
+SignOutcome signOnCard(const LibreSCRS::Plugin::CardPluginService& plugins, ReaderCard& rc, const std::string& pin)
 {
     SignOutcome o;
     if (g_latch.isFailed(rc.profile)) {
@@ -270,95 +237,59 @@ SignOutcome signOnCard(libresign::Pkcs11ModuleManager& moduleManager, ReaderCard
         return o;
     }
 
-    // NAM CL eager-bind flow: pre-deposit the CAN portion via
-    // setPaceSecret (PACE is required even to read the AODF over CL),
-    // then ESTABLISH the host session's SM channel before C_Login, and
-    // finally pass the BARE PIN to the token. Real-AODF slot publishes
-    // maxPinLen=12; the 6-byte PIN fits. Passing the full 13-byte
-    // "CAN:PIN" here would hit the dispatcher's length gate
-    // (CKR_PIN_LEN_RANGE) before slot.login() runs.
-    //
-    // Establishing SM here mirrors the product (LC GUI): a single
-    // CardSession runs PACE once, then every in-process PKCS#11 consumer
-    // reuses that live SM via the process-local SessionPresence registry.
-    // We do NOT keep the ActiveChannelHolder alive across the token
-    // login: the holder borrows the session's (non-recursive) mutex and
-    // PC/SC transaction, and the loaded module's adopt path
-    // (Pkcs15Card::bindFromInjectedSession) re-enters
-    // CardSession::activateChannelWithSm on the SAME session — holding
-    // the holder would self-deadlock on sessionMutex. Releasing it at
-    // the end of this scope leaves the live PaceChannel (with its SM
-    // keys) and the SessionPresence registration intact on the session,
-    // so hasLiveSm() stays true, the opensc-pkcs11 provider defers, and
-    // the token's sign reuses the host SM via the same-applet /
-    // wrapped-SELECT fast path — no second PACE, SM never interrupted.
-    std::string pinForLogin = pin;
+    // NAM CL: the CAN goes to the session as the PACE secret (PACE is
+    // required even to read the certificates over CL), the bare PIN to the
+    // key; the plugin brings up PACE on the session itself.
+    std::string pinForSign = pin;
     if (rc.profile == CardProfile::NAM_CL) {
         auto colon = pin.find(':');
         if (colon == std::string::npos) {
             o.note = "NAM CL expects CAN:PIN format; got bare PIN";
             return o;
         }
-        std::string can = pin.substr(0, colon);
-        rc.session->setPaceSecret(LibreSCRS::Auth::PaceSecretKind::Can, LibreSCRS::Secure::String{can});
-        pinForLogin = pin.substr(colon + 1);
-
-        // PKCS#15 applet AID: A0 00 00 00 63 50 4B 43 53 2D 31 35
-        // ("PKCS-15"). Run PACE/CAN to bring up the SM tunnel on the host
-        // session, then release the holder (scope exit) so the channel
-        // and registry entry survive for the token to reuse.
-        const LibreSCRS::SmartCard::AppletAid pkcs15Aid{
-            std::vector<std::uint8_t>{0xA0, 0x00, 0x00, 0x00, 0x63, 0x50, 0x4B, 0x43, 0x53, 0x2D, 0x31, 0x35}};
-        auto holderResult = rc.session->activateChannelWithSm(
-            pkcs15Aid, LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can},
-            LibreSCRS::CancelToken{});
-        if (!holderResult) {
-            // SM/PACE setup failed (e.g. SW=0x6300 at GENERAL AUTHENTICATE).
-            // This is NOT a PIN failure — the CAN has no retry counter and
-            // VERIFY never ran — so do NOT latch the profile.
-            o.note = "host SM establish (PACE/CAN) failed before token login";
-            return o;
-        }
-        // holderResult goes out of scope here, releasing the session mutex
-        // and PC/SC transaction; the live SM channel persists on the session.
+        rc.session->setPaceSecret(LibreSCRS::Auth::PaceSecretKind::Can,
+                                  LibreSCRS::Secure::String{pin.substr(0, colon)});
+        pinForSign = pin.substr(colon + 1);
     }
 
-    std::unique_ptr<libresign::Pkcs11Token> token;
+    std::unique_ptr<libresign::PluginSigningKey> key;
     try {
-        LibreSCRS::Secure::Buffer pinBuf(pinForLogin);
-        token = std::make_unique<libresign::Pkcs11Token>(moduleManager.acquire(modulePath()), pinBuf,
-                                                         /*keyAlias=*/std::string{}, rc.reader);
-        o.loggedIn = true;
-        o.attached = true; // For NAM_CL the host session above established SM,
-                           // so SessionPresence reports a live SM and the
-                           // in-process provider probe adopts rc.session
-                           // instead of opening a parallel PC/SC handle; the
-                           // rc.session shared_ptr stays alive in scope for
-                           // that lookup.
+        for (const auto& plugin : plugins.findAllCandidates(rc.atr, *rc.session)) {
+            if (!LibreSCRS::Plugin::hasCapability(plugin->capabilities(), LibreSCRS::Plugin::CardCapabilities::PKI))
+                continue;
+            const auto certs = plugin->readCertificates(*rc.session);
+            std::vector<std::vector<std::uint8_t>> chain;
+            for (const auto& c : certs) {
+                if (!c.derBytes.empty())
+                    chain.push_back(c.derBytes);
+            }
+            for (const auto& c : certs) {
+                if (!c.keyFID)
+                    continue;
+                const LibreSCRS::Secure::Buffer pinBuf(pinForSign);
+                key = std::make_unique<libresign::PluginSigningKey>(
+                    plugin, rc.session, c, pinBuf, chain, std::span<const std::uint8_t>{}, LibreSCRS::CancelToken{});
+                break;
+            }
+            if (key)
+                break;
+        }
     } catch (const std::exception& e) {
         o.sigError = e.what();
-        if (looksLikePinError(o.sigError)) {
-            g_latch.markFailed(rc.profile);
-            o.note = "PIN error during attach/login; profile latched";
-        } else {
-            o.note = "attach/login failure (non-PIN)";
-        }
+        o.note = "reading the card's signing key failed";
         return o;
     }
-
-    try {
-        auto cert = token->certificate();
-        o.certRead = !cert.empty();
-    } catch (const std::exception& e) {
-        o.sigError = e.what();
-        o.note = "certificate read failed";
+    if (!key) {
+        o.note = "no plugin reads a signing key from this card";
         return o;
     }
+    o.attached = true;
+    const auto certDer = key->certificate();
+    o.certRead = !certDer.empty();
 
-    // Sign a fixed test payload. Pass raw bytes so the libresign 4.1
-    // combined-mechanism path can drive hash-on-card SSCDs correctly.
-    const std::vector<std::uint8_t> payload = {'r', 'c', '-', '4', '.', '1', '.', '0', '-',
-                                               'm', 'u', 'l', 't', 'i', 'c', 'a', 'r', 'd'};
+    // Sign a fixed test payload. Pass the raw bytes so a card that only signs
+    // what it hashes itself is driven as a document signature drives it.
+    const std::vector<std::uint8_t> payload = {'m', 'u', 'l', 't', 'i', '-', 'c', 'a', 'r', 'd'};
     std::array<std::uint8_t, 32> digest{};
     {
         EVP_MD_CTX* md = EVP_MD_CTX_new();
@@ -368,21 +299,20 @@ SignOutcome signOnCard(libresign::Pkcs11ModuleManager& moduleManager, ReaderCard
         EVP_DigestFinal_ex(md, digest.data(), &n);
         EVP_MD_CTX_free(md);
     }
-    static constexpr std::array<std::uint8_t, 19> kSha256DigestInfoPrefix = {0x30, 0x31, 0x30, 0x0D, 0x06, 0x09, 0x60,
-                                                                             0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02,
-                                                                             0x01, 0x05, 0x00, 0x04, 0x20};
-    std::vector<std::uint8_t> signInput;
-    signInput.reserve(kSha256DigestInfoPrefix.size() + digest.size());
-    signInput.insert(signInput.end(), kSha256DigestInfoPrefix.begin(), kSha256DigestInfoPrefix.end());
-    signInput.insert(signInput.end(), digest.begin(), digest.end());
+    const auto signInput =
+        LibreSCRS::Internal::Crypto::digestInfoOf(LibreSCRS::Internal::Crypto::DigestInfoHash::Sha256, payload);
 
     std::vector<std::uint8_t> signature;
     try {
-        signature = token->sign(signInput, "SHA256withRSA", std::span<const std::uint8_t>{payload});
+        signature = key->sign(signInput, "SHA256withRSA", std::span<const std::uint8_t>{payload});
+    } catch (const libresign::SignFailureException& e) {
+        o.sigError = e.what();
+        if (e.kind == libresign::SignFailureKind::PinFailed || e.kind == libresign::SignFailureKind::PinBlocked)
+            g_latch.markFailed(rc.profile);
+        o.note = "sign failed";
+        return o;
     } catch (const std::exception& e) {
         o.sigError = e.what();
-        if (looksLikePinError(o.sigError))
-            g_latch.markFailed(rc.profile);
         o.note = "sign failed";
         return o;
     }
@@ -394,7 +324,6 @@ SignOutcome signOnCard(libresign::Pkcs11ModuleManager& moduleManager, ReaderCard
     o.signed_ = true;
 
     // Verify against the on-card cert's public key.
-    auto certDer = token->certificate();
     const unsigned char* p = certDer.data();
     X509* cert = d2i_X509(nullptr, &p, static_cast<long>(certDer.size()));
     if (!cert) {
@@ -442,10 +371,10 @@ const char* pinFor(CardProfile p)
 
 } // namespace
 
-TEST(Pkcs11MultiCardSign, AllPresentReadersIndependent)
+TEST(MultiCardSign, AllPresentReadersIndependent)
 {
     auto found = discoverCards();
-    std::fprintf(stderr, "\n=== Pkcs11MultiCardSign: %zu reader(s) with a card present ===\n", found.size());
+    std::fprintf(stderr, "\n=== MultiCardSign: %zu reader(s) with a card present ===\n", found.size());
     for (const auto& rc : found)
         std::fprintf(stderr, "  reader=%s profile=%s atr=%s\n", rc.reader.c_str(), profileName(rc.profile),
                      atrHex(rc.atr).c_str());
@@ -461,12 +390,7 @@ TEST(Pkcs11MultiCardSign, AllPresentReadersIndependent)
     };
     std::vector<Result> results;
 
-    // Shared loaded-module cache for the whole multi-card sweep.
-    // Mirrors the production NativeSigningService composition so the
-    // module stays mapped across all per-card signs — critical for
-    // test #1 (two consecutive signs against the same module without
-    // a C_Finalize between them).
-    libresign::Pkcs11ModuleManager moduleManager;
+    const LibreSCRS::Plugin::CardPluginService plugins{std::filesystem::path(PLUGIN_DIR)};
 
     for (auto& rc : found) {
         const char* pin = pinFor(rc.profile);
@@ -479,10 +403,10 @@ TEST(Pkcs11MultiCardSign, AllPresentReadersIndependent)
             continue;
         }
         std::fprintf(stderr, "\n--- Signing on %s @ %s ---\n", profileName(rc.profile), rc.reader.c_str());
-        auto outcome = signOnCard(moduleManager, rc, pin);
-        std::fprintf(stderr, "    attached=%d login=%d cert=%d signed=%d verified=%d note=\"%s\" err=\"%s\"\n",
-                     outcome.attached, outcome.loggedIn, outcome.certRead, outcome.signed_, outcome.verified,
-                     outcome.note.c_str(), outcome.sigError.c_str());
+        auto outcome = signOnCard(plugins, rc, pin);
+        std::fprintf(stderr, "    attached=%d cert=%d signed=%d verified=%d note=\"%s\" err=\"%s\"\n", outcome.attached,
+                     outcome.certRead, outcome.signed_, outcome.verified, outcome.note.c_str(),
+                     outcome.sigError.c_str());
         results.push_back({rc.reader, rc.profile, std::move(outcome)});
     }
 
@@ -510,25 +434,19 @@ TEST(Pkcs11MultiCardSign, AllPresentReadersIndependent)
     EXPECT_GT(verifiedCount, 0) << "At least one card whose PIN was supplied must produce a verifiable signature";
 }
 
-// Two consecutive signs against the SAME card MUST NOT re-prompt for
-// the CAN. Regression test for the per-Token dlopen+dlclose cycle that
-// previously tore down loaded-module state between signs and forced a
-// fresh PACE handshake (with CAN re-prompt) on the second sign. The
-// shared loaded-module cache owned by Pkcs11ModuleManager is what
-// keeps the module mapped across both signs; if that invariant breaks,
-// the second sign re-PACEs because the host-side CardSession's
-// SessionPresence registration would still be live but the loaded
-// module's cached slot state would have been torn down.
+// Two consecutive signs against the SAME card MUST NOT re-prompt for the
+// CAN: the PACE channel the first signature brought up on the session stays
+// up, and the second signature uses it.
 //
 // Operator protocol:
 //   LIBRESCRS_TEST_CARD=NAM_CL  // hard gate
 //   LIBRESCRS_TEST_NAM_PIN="CAN:PIN"
-//   ./Pkcs11MultiCardSignTests --gtest_filter=*PacePersistsAcrossTokens*
+//   ./MultiCardSignTests --gtest_filter=*PacePersistsAcrossSignatures*
 //
-// PIN budget: 2 signs; both go through C_Login → 2 PIN counter
-// decrements on the card. Operator MUST ensure the PIN counter has
-// at least 2 fresh tries before invocation.
-TEST(Pkcs11MultiCardSign, NamSignTwicePacePersistsAcrossTokens)
+// PIN budget: 2 signs, each presents the PIN once → 2 PIN verifications on
+// the card. Operator MUST ensure the PIN counter has at least 2 fresh tries
+// before invocation.
+TEST(MultiCardSign, NamSignTwicePacePersistsAcrossSignatures)
 {
     if (env("LIBRESCRS_TEST_CARD") != "NAM_CL")
         GTEST_SKIP() << "LIBRESCRS_TEST_CARD != NAM_CL — refusing to PIN this card unguarded.";
@@ -547,23 +465,19 @@ TEST(Pkcs11MultiCardSign, NamSignTwicePacePersistsAcrossTokens)
     if (!nam)
         GTEST_SKIP() << "No NAM CL card on any reader";
 
-    libresign::Pkcs11ModuleManager moduleManager;
+    const LibreSCRS::Plugin::CardPluginService plugins{std::filesystem::path(PLUGIN_DIR)};
 
-    auto first = signOnCard(moduleManager, *nam, pin);
-    std::fprintf(stderr, "[sign 1] attached=%d login=%d signed=%d verified=%d note=\"%s\" err=\"%s\"\n", first.attached,
-                 first.loggedIn, first.signed_, first.verified, first.note.c_str(), first.sigError.c_str());
+    auto first = signOnCard(plugins, *nam, pin);
+    std::fprintf(stderr, "[sign 1] attached=%d signed=%d verified=%d note=\"%s\" err=\"%s\"\n", first.attached,
+                 first.signed_, first.verified, first.note.c_str(), first.sigError.c_str());
     ASSERT_TRUE(first.verified) << "First sign must verify before we attempt the second";
 
-    // Critical assertion: the session must still report a live SM
-    // channel between signs. If the previous Token destructor had
-    // dlclose-d the module and the shared cache invariant had broken,
-    // the second sign would re-prompt for CAN.
-    ASSERT_TRUE(nam->session->hasLiveSecureChannel())
-        << "PACE SM channel was torn down between signs — Pkcs11ModuleManager invariant broken";
+    // Critical assertion: the session must still report a live SM channel
+    // between signs, or the second sign would re-run PACE.
+    ASSERT_TRUE(nam->session->hasLiveSecureChannel()) << "PACE SM channel was torn down between signs";
 
-    auto second = signOnCard(moduleManager, *nam, pin);
-    std::fprintf(stderr, "[sign 2] attached=%d login=%d signed=%d verified=%d note=\"%s\" err=\"%s\"\n",
-                 second.attached, second.loggedIn, second.signed_, second.verified, second.note.c_str(),
-                 second.sigError.c_str());
+    auto second = signOnCard(plugins, *nam, pin);
+    std::fprintf(stderr, "[sign 2] attached=%d signed=%d verified=%d note=\"%s\" err=\"%s\"\n", second.attached,
+                 second.signed_, second.verified, second.note.c_str(), second.sigError.c_str());
     EXPECT_TRUE(second.verified) << "Second sign must verify without re-prompt for CAN";
 }

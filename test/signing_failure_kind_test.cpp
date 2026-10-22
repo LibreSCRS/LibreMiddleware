@@ -32,13 +32,14 @@ constexpr SignFailureKind kAll[] = {
     SignFailureKind::OpensslError,
     SignFailureKind::PolicyViolation,
     SignFailureKind::EngineError,
-    SignFailureKind::KeyAmbiguous,
     SignFailureKind::InvalidDocument,
+    SignFailureKind::CertificateChainIncomplete,
+    SignFailureKind::PinBlocked,
 };
 
 TEST(SignFailureKindTest, ArrayLocksCardinality)
 {
-    EXPECT_EQ(sizeof(kAll) / sizeof(kAll[0]), 15u);
+    EXPECT_EQ(sizeof(kAll) / sizeof(kAll[0]), 16u);
 }
 
 TEST(SignFailureKindTest, EveryKindMapsToNonEmptyUserMessage)

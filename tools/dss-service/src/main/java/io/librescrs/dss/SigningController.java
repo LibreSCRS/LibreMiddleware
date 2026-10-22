@@ -16,7 +16,7 @@ import java.util.Map;
 @RestController
 public class SigningController {
 
-    private final PkcsSigningService pkcsSigningService;
+    private final DocumentSigningService documentSigningService;
     private final TrustConfigManager trustConfigManager;
     // Strict Jackson configuration: reject unknown fields, null-for-primitive,
     // and numeric-for-enum coercions so that malformed or attacker-injected
@@ -27,9 +27,9 @@ public class SigningController {
             .configure(DeserializationFeature.FAIL_ON_NUMBERS_FOR_ENUMS, true)
             .build();
 
-    public SigningController(PkcsSigningService pkcsSigningService,
+    public SigningController(DocumentSigningService documentSigningService,
                              TrustConfigManager trustConfigManager) {
-        this.pkcsSigningService = pkcsSigningService;
+        this.documentSigningService = documentSigningService;
         this.trustConfigManager = trustConfigManager;
     }
 
@@ -59,10 +59,27 @@ public class SigningController {
         }
     }
 
-    @SuppressWarnings("unchecked")
-    @PostMapping(value = "/sign/pkcs11", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public Mono<ResponseEntity<?>> signPkcs11(@RequestPart("document") FilePart document,
+    /** Step one: the bytes the caller's key signs (application/octet-stream). */
+    @PostMapping(value = "/sign/data-to-sign", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Mono<ResponseEntity<?>> dataToSign(@RequestPart("document") FilePart document,
                                                @RequestPart("metadata") String metadataJson) {
+        return signingStep(document, metadataJson, documentSigningService::dataToSign);
+    }
+
+    /** Step two: the signed document around the caller's signature value. */
+    @PostMapping(value = "/sign/document", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Mono<ResponseEntity<?>> signDocument(@RequestPart("document") FilePart document,
+                                                 @RequestPart("metadata") String metadataJson) {
+        return signingStep(document, metadataJson, documentSigningService::signDocument);
+    }
+
+    @FunctionalInterface
+    private interface Step {
+        byte[] apply(byte[] docBytes, String fileName, Map<String, Object> metadata) throws Exception;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Mono<ResponseEntity<?>> signingStep(FilePart document, String metadataJson, Step step) {
         return DataBufferUtils.join(document.content())
                 .map(dataBuffer -> {
                     byte[] docBytes = new byte[dataBuffer.readableByteCount()];
@@ -73,7 +90,7 @@ public class SigningController {
                 .map(docBytes -> {
                     try {
                         Map<String, Object> metadata = objectMapper.readValue(metadataJson, Map.class);
-                        byte[] result = pkcsSigningService.sign(docBytes, document.filename(), metadata);
+                        byte[] result = step.apply(docBytes, document.filename(), metadata);
                         return (ResponseEntity<?>) ResponseEntity.ok()
                                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
                                 .body(result);

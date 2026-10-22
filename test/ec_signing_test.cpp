@@ -2,11 +2,13 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
+#include "card_signing_key.h"
 #include "native/native_signing_service.h"
 #include "signing_test_support.h"
 #include "types.h"
 
 #include <cstdlib>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -28,10 +30,8 @@ using namespace libresign::test;
 namespace {
 struct ECEnv
 {
-    std::string pin;
-    std::string token;
+    TestConfig card; // the EC card: its PIN and reader
     std::string curve;
-    std::string module;
     bool valid = false;
     std::string skipReason;
 };
@@ -45,9 +45,8 @@ ECEnv readECEnv()
         env.skipReason = "EC card env vars not set (LIBRESCRS_TEST_EC_PIN, LIBRESCRS_TEST_EC_TOKEN)";
         return env;
     }
-    env.pin = pin;
-    env.token = token;
-    env.module = pkcs11ModulePath();
+    env.card.pin = pin;
+    env.card.readerName = token;
 
     const char* curve = std::getenv("LIBRESCRS_TEST_EC_CURVE");
     if (curve)
@@ -67,9 +66,14 @@ protected:
         env = readECEnv();
         if (!env.valid)
             GTEST_SKIP() << env.skipReason;
+        std::string skipReason;
+        key = openCardSigningKey(env.card, skipReason);
+        if (!key)
+            GTEST_SKIP() << skipReason;
     }
 
     ECEnv env;
+    std::unique_ptr<libresign::SigningKey> key;
 };
 
 TEST_F(ECSigningTest, CAdES_BB_ECDSA)
@@ -83,7 +87,7 @@ TEST_F(ECSigningTest, CAdES_BB_ECDSA)
     req.level = libresign::SignatureLevel::B_B;
     req.allowExpiredCertificate = true;
 
-    auto result = service.sign(req, env.module, libresign::as_pin(env.pin), "", env.token);
+    auto result = service.sign(req, *key);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
     EXPECT_FALSE(result.signedDocument.empty());
@@ -101,7 +105,7 @@ TEST_F(ECSigningTest, XAdES_BB_ECDSA_Detached)
     req.packaging = libresign::SignaturePackaging::Detached;
     req.allowExpiredCertificate = true;
 
-    auto result = service.sign(req, env.module, libresign::as_pin(env.pin), "", env.token);
+    auto result = service.sign(req, *key);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
     EXPECT_FALSE(result.signedDocument.empty());
@@ -118,7 +122,7 @@ TEST_F(ECSigningTest, JAdES_BB_ECDSA)
     req.level = libresign::SignatureLevel::B_B;
     req.allowExpiredCertificate = true;
 
-    auto result = service.sign(req, env.module, libresign::as_pin(env.pin), "", env.token);
+    auto result = service.sign(req, *key);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
     EXPECT_FALSE(result.signedDocument.empty());
@@ -150,9 +154,14 @@ protected:
             GTEST_SKIP() << env.skipReason;
         if (env.curve.empty())
             GTEST_SKIP() << "LIBRESCRS_TEST_EC_CURVE not set (P-256 / P-384 / P-521)";
+        std::string skipReason;
+        key = openCardSigningKey(env.card, skipReason);
+        if (!key)
+            GTEST_SKIP() << skipReason;
     }
 
     ECEnv env;
+    std::unique_ptr<libresign::SigningKey> key;
 };
 
 TEST_P(ECSigningMatrixTest, SignsAtLevelAndFormat)
@@ -180,7 +189,7 @@ TEST_P(ECSigningMatrixTest, SignsAtLevelAndFormat)
     req.tsa.url = "http://timestamp.digicert.com";
     req.allowExpiredCertificate = true;
 
-    auto result = service.sign(req, env.module, libresign::as_pin(env.pin), "", env.token);
+    auto result = service.sign(req, *key);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << "EC " << tc.name << " sign: " << result.errorMessage;
     EXPECT_FALSE(result.signedDocument.empty());

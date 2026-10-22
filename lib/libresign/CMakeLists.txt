@@ -70,9 +70,6 @@ if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
         src/native/pdf_value.cpp
         src/native/pdf_tokens.cpp
         src/native/pdf_parser.cpp
-        src/native/pkcs11_module_handle.cpp
-        src/native/pkcs11_module_manager.cpp
-        src/native/pkcs11_token.cpp
         src/native/plugin_signing_key.cpp
         src/native/signing_provider.cpp
         src/native/signing_provider_keymgmt.cpp
@@ -101,9 +98,6 @@ if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
         src/native/native_signing_service.cpp
     )
     list(APPEND LIBRESIGN_HEADERS
-        src/native/pkcs11_module_handle.h
-        src/native/pkcs11_module_manager.h
-        src/native/pkcs11_token.h
         src/native/signing_key.h
         src/native/plugin_signing_key.h
         src/native/signing_provider.h
@@ -161,7 +155,7 @@ set_target_properties(LibreSign PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # Per-function/data sections enable downstream --gc-sections to dead-strip
 # unreferenced TUs. LibreSCRS_Trust links only the TL-fetch/verify subset of
 # this archive; without section splitting, the entire archive (including
-# Pkcs11Token / PAdES / CAdES / etc.) lands in libLibreSCRS_Trust.so under
+# PAdES / CAdES / etc.) lands in libLibreSCRS_Trust.so under
 # LIBREMIDDLEWARE_BUILD_SHARED=ON, duplicating sign-path symbols already
 # present in libLibreSCRS_Signing.so.
 target_compile_options(LibreSign PRIVATE
@@ -281,15 +275,9 @@ endif()
 
 if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
     target_compile_definitions(LibreSign PUBLIC LIBRESIGN_HAS_NATIVE=1)
-    target_include_directories(LibreSign PRIVATE
-        ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/include
-    )
 
     find_package(LibXml2 REQUIRED)
-    target_link_libraries(LibreSign PRIVATE
-        ${CMAKE_DL_LIBS}
-        LibXml2::LibXml2
-    )
+    target_link_libraries(LibreSign PRIVATE LibXml2::LibXml2)
 endif()
 
 librescrs_warnings_as_errors(LibreSign)

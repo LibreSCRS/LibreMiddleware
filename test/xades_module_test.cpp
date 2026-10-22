@@ -6,8 +6,7 @@
 #ifdef LIBRESIGN_HAS_NATIVE
 
 #include "native/xades_module.h"
-#include "native/pkcs11_module_manager.h"
-#include "native/pkcs11_token.h"
+#include "signing_keys.h"
 #include "signing_test_support/mock_tsa_server.h"
 #include "signing_test_support/signing_test_support.h"
 #include "signing_service.h"
@@ -105,7 +104,7 @@ static std::string xpathAttr(xmlXPathContextPtr ctx, const char* expr)
     return {};
 }
 
-// ---- SoftHSM-dependent tests ----
+// ---- Tests that sign ----
 
 class XAdESModuleTest : public ::testing::Test
 {
@@ -113,23 +112,12 @@ protected:
     void SetUp() override
     {
         libresign::native_utils::ensureXmlInitialized();
-        softHsmPath = libresign::test::findSoftHsmPath();
-        if (!softHsmPath)
-            GTEST_SKIP() << "SoftHSM2 not found";
-        auto slot = libresign::test::findSoftHsmTestSlot(manager.acquire(softHsmPath));
-        if (!slot)
-            GTEST_SKIP() << "SoftHSM2 token '" << libresign::test::kSoftHsmTokenLabel << "' not initialised";
-        testSlot = *slot;
     }
-    const char* softHsmPath = nullptr;
-    libresign::Pkcs11ModuleManager manager;
-    unsigned long testSlot = 0;
 };
 
 TEST_F(XAdESModuleTest, SignBB_ProducesValidXml)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     XAdESModule xades;
 
     std::vector<uint8_t> data = {'H', 'e', 'l', 'l', 'o'};
@@ -150,8 +138,7 @@ TEST_F(XAdESModuleTest, SignBB_ProducesValidXml)
 
 TEST_F(XAdESModuleTest, SignBB_HasRequiredElements)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     XAdESModule xades;
 
     std::vector<uint8_t> data = {'H', 'e', 'l', 'l', 'o'};
@@ -186,8 +173,7 @@ TEST_F(XAdESModuleTest, SignBB_HasRequiredElements)
 
 TEST_F(XAdESModuleTest, SignBB_HasXAdESQualifyingProperties)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     XAdESModule xades;
 
     std::vector<uint8_t> data = {'H', 'e', 'l', 'l', 'o'};
@@ -234,8 +220,7 @@ TEST_F(XAdESModuleTest, SignBB_HasXAdESQualifyingProperties)
 // outlived a green suite.
 TEST_F(XAdESModuleTest, SignBB_SigningCertificateV2IsCertIDTypeV2)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     XAdESModule xades;
 
     std::vector<uint8_t> data = {'H', 'e', 'l', 'l', 'o'};
@@ -253,8 +238,7 @@ TEST_F(XAdESModuleTest, SignBB_SigningCertificateV2IsCertIDTypeV2)
 
 TEST_F(XAdESModuleTest, SignBB_HasDataObjectFormat)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     XAdESModule xades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
@@ -278,8 +262,7 @@ TEST_F(XAdESModuleTest, SignBB_HasDataObjectFormat)
 
 TEST_F(XAdESModuleTest, SignBB_DetachedHasFileNameReference)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     XAdESModule xades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
@@ -298,8 +281,7 @@ TEST_F(XAdESModuleTest, SignBB_DetachedHasFileNameReference)
 
 TEST_F(XAdESModuleTest, SignBB_DigestValuesAreNonEmpty)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     XAdESModule xades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
@@ -322,8 +304,7 @@ TEST_F(XAdESModuleTest, SignBB_DigestValuesAreNonEmpty)
 
 TEST_F(XAdESModuleTest, SignBB_DifferentDataProducesDifferentSignature)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     XAdESModule xades;
 
     std::vector<uint8_t> data1 = {'A', 'B', 'C'};
@@ -339,8 +320,7 @@ TEST_F(XAdESModuleTest, SignBB_DifferentDataProducesDifferentSignature)
 
 TEST_F(XAdESModuleTest, SignBB_NoUnsignedProperties)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     XAdESModule xades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
@@ -358,8 +338,7 @@ TEST_F(XAdESModuleTest, SignBB_NoUnsignedProperties)
 
 TEST_F(XAdESModuleTest, BTRequiresTSA)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     XAdESModule xades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
@@ -378,8 +357,7 @@ TEST_F(XAdESModuleTest, BTRequiresTSA)
 TEST_F(XAdESModuleTest, BTSignsAgainstMockTsa)
 {
     libresign::test::MockTsaServer tsaServer;
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     XAdESModule xades;
 
     std::vector<uint8_t> data = {'T', 'i', 'm', 'e'};
@@ -400,7 +378,7 @@ TEST_F(XAdESModuleTest, BTSignsAgainstMockTsa)
 // The long-term revocation gate is reached through appendSigner on the XAdES
 // path too, but only once the RFC 3161 step ahead of it can succeed: B-LT
 // implies B-T, so without a reachable TSA the append fails at the timestamp
-// and never reaches the gate. With one supplied, the SoftHSM token's single
+// and never reaches the gate. With one supplied, the in-memory signer's single
 // self-signed leaf is a chain of length one — no Trusted-List anchor completed
 // it and no issuer hop reaches a verified root — so the tail is unprovable and
 // the gate must fail closed rather than emit a long-term signature with no
@@ -408,8 +386,7 @@ TEST_F(XAdESModuleTest, BTSignsAgainstMockTsa)
 TEST_F(XAdESModuleTest, AppendSignerAtLongTermRejectsUnterminatedChain)
 {
     libresign::test::MockTsaServer tsaServer;
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     XAdESModule xades;
 
     const auto xml = libresign::test::buildTestXml();
@@ -425,7 +402,7 @@ TEST_F(XAdESModuleTest, AppendSignerAtLongTermRejectsUnterminatedChain)
     EXPECT_EQ(*appended.failureKind, SignFailureKind::CertificateChainIncomplete) << appended.errorMessage;
 }
 
-// ---- Standalone tests (no SoftHSM required) ----
+// ---- Standalone tests ----
 
 class XAdESModuleStandaloneTest : public ::testing::Test
 {
@@ -438,18 +415,8 @@ protected:
 
 TEST_F(XAdESModuleStandaloneTest, ProducesXmlOutput)
 {
-    // If SoftHSM is available, verify the output starts with XML declaration
-    const char* hsmPath = libresign::test::findSoftHsmPath();
-    if (!hsmPath)
-        GTEST_SKIP() << "SoftHSM2 not found";
-
-    libresign::Pkcs11ModuleManager manager;
-    auto slot = libresign::test::findSoftHsmTestSlot(manager.acquire(hsmPath));
-    if (!slot)
-        GTEST_SKIP() << "SoftHSM2 token '" << libresign::test::kSoftHsmTokenLabel << "' not initialised";
-
-    Pkcs11Token token(manager.acquire(hsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{*slot});
+    // The output starts with the XML declaration.
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     XAdESModule xades;
 
     std::vector<uint8_t> data = {'X', 'M', 'L'};
@@ -463,15 +430,14 @@ TEST_F(XAdESModuleStandaloneTest, ProducesXmlOutput)
     EXPECT_EQ(prefix, "<?xml");
 }
 
-// Non-SoftHSM tests
+// Tests whose key never signs
 
 TEST(XAdESModuleStandalone, RejectsEmptyInput)
 {
     XAdESModule xades;
     std::vector<uint8_t> empty;
     // Token is never touched — sign() returns early on empty input.
-    alignas(Pkcs11Token) char storage[sizeof(Pkcs11Token)]{};
-    auto& dummyToken = *reinterpret_cast<Pkcs11Token*>(storage);
+    libresign::test::SoftSigningKey dummyToken(libresign::test::validSignerKey());
     auto result = xades.sign(empty, "test.xml", dummyToken, SignatureLevel::B_B, SignaturePackaging::Enveloped, {});
     ASSERT_FALSE(result.success);
     EXPECT_NE(result.errorMessage.find("empty"), std::string::npos);

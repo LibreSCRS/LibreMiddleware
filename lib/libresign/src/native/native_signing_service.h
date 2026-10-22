@@ -8,13 +8,13 @@
 #pragma once
 
 #include "signing_service.h"
-#include "native/pkcs11_module_manager.h"
 
 #include <LibreSCRS/Trust/TrustStore.h> // for LibreSCRS::Trust::TrustAnchor
 
 #include <functional>
 #include <map>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -29,22 +29,10 @@ class NativeSigningService : public SigningService
 public:
     bool configure(const TrustConfig& config) override;
 
-    SigningResult sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
-                       const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
-                       const std::string& readerName) override;
-
-    SigningResult appendSigner(const SigningRequest& request, std::span<const uint8_t> priorSignature,
-                               std::span<const uint8_t> originalDocument, const LibreSCRS::Secure::Buffer& pin,
-                               const std::string& pkcs11Module, const std::string& keyAlias,
-                               const std::string& readerName) override;
-
     bool isAvailable() const override;
 
-    /// The one signing path: the overload above opens the module's token and
-    /// lands here with it.
     SigningResult sign(const SigningRequest& request, SigningKey& key) override;
 
-    /// The one append path; see the overload above.
     SigningResult appendSigner(const SigningRequest& request, std::span<const uint8_t> priorSignature,
                                std::span<const uint8_t> originalDocument, SigningKey& key) override;
 
@@ -69,28 +57,6 @@ public:
         anchorEmitter = std::move(emit);
     }
 
-    /// @brief Build this service's PKCS#11 token from a raw slot ID instead
-    ///        of resolving the @c readerName argument. TEST ONLY.
-    ///
-    /// Mirrors @ref Pkcs11Token::TestSlotId and exists for the same reason:
-    /// the production token constructor matches @c readerName against the
-    /// `[<8-hex-hash>]` slot-identity prefix that LM's own PKCS#11 module
-    /// writes into `slotDescription`, and SoftHSM2 emits no such prefix. So
-    /// the SoftHSM2-backed tests cannot reach @ref sign or @ref appendSigner
-    /// at all without this — they can only drive the format modules
-    /// directly with a `Pkcs11Token::TestSlotId` token, which bypasses every
-    /// policy this service applies around them (certificate expiry, chain
-    /// completion, TSA/revocation wiring).
-    ///
-    /// When set, both entry points construct their token from @p slotId; the
-    /// module still comes from their `pkcs11Module` argument, and the
-    /// `readerName` argument is then unused. Unset (the default) leaves the
-    /// readerName path unchanged — no production caller sets this.
-    void setTestSlotId(unsigned long slotId)
-    {
-        testSlotId = slotId;
-    }
-
 private:
     TrustConfig trustConfig;
     std::map<std::string, std::vector<uint8_t>> lotlDerivedCerts; // URL -> signing cert DER
@@ -108,18 +74,6 @@ private:
     /// to fetch any.
     bool lazyListsLoaded = false;
     AnchorEmitter anchorEmitter;
-
-    /// Process-shared loaded-module cache. Tokens constructed from
-    /// @ref sign / @ref appendSigner acquire a handle into this manager
-    /// so a single C_Initialize spans every sign call against the same
-    /// PKCS#11 module path. Destroyed AFTER any in-flight Token via
-    /// natural member-destruction order (Tokens are stack-scoped in
-    /// the sign methods and unwind before this service's dtor runs).
-    Pkcs11ModuleManager moduleManager;
-
-    /// Raw slot ID installed by @ref setTestSlotId. Engaged only by the
-    /// SoftHSM2-backed tests; empty in every production configuration.
-    std::optional<unsigned long> testSlotId;
 
     void loadTrustList(const std::string& url, bool isLotl, TlCache& cache, TlSignatureVerifier& verifier, int depth);
 

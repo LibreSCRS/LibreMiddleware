@@ -16,7 +16,7 @@
 //   * SigningService.cpp can include it to keep the translation in one place.
 //   * The unit test suite (test/LibreSCRS_Signing_test.cpp) can exercise the
 //     exact production translation without spinning up a PC/SC reader, a
-//     PKCS#11 token, or a live filesystem input — isolating the bridge
+//     card, or a live filesystem input — isolating the bridge
 //     contract from end-to-end test scaffolding.
 //
 // Bodies live in RequestBridge.cpp : with two

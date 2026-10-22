@@ -62,31 +62,26 @@ option(LIBRESCRS_BUILD_REAL_CARD_TESTS
     OFF)
 
 if(LIBRESCRS_BUILD_REAL_CARD_TESTS)
-    # 4.1.0 multi-card regression smoke. Iterates every reader, classifies
-    # by ATR, runs sign on each recognised card profile with its own PIN
-    # latch — a failure on one card does not poison the others.
-    add_executable(Pkcs11MultiCardSignTests
-        Pkcs11MultiCardSignTests.cpp
+    # Multi-card regression smoke. Iterates every reader, classifies by ATR,
+    # signs on each recognised card profile through the card's plugin on a
+    # session for the reader, with its own PIN latch — a failure on one card
+    # does not poison the others.
+    add_executable(MultiCardSignTests
+        MultiCardSignTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../include/pin_guard.h
     )
-    target_link_libraries(Pkcs11MultiCardSignTests PRIVATE
+    target_link_libraries(MultiCardSignTests PRIVATE
         GTest::gtest_main
-        LibreSCRS::SmartCard
-        LibreSign
+        CardSigningKeySupport
         OpenSSL_Crypto
-        ${CMAKE_DL_LIBS}
     )
-    target_include_directories(Pkcs11MultiCardSignTests PRIVATE
+    target_include_directories(MultiCardSignTests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/../include
-        ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
-        ${LibreMiddleware_SOURCE_DIR}/lib/pkcs11/include
     )
-    target_compile_definitions(Pkcs11MultiCardSignTests PRIVATE
-        LIBRESCRS_INTERNAL_BUILD=1
-        LIBRESCRS_PKCS11_MODULE_PATH="$<TARGET_FILE:librescrs-pkcs11>"
+    target_compile_definitions(MultiCardSignTests PRIVATE
+        PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
     )
-    add_dependencies(Pkcs11MultiCardSignTests librescrs-pkcs11)
 
     # Two-reader SM-survival confirmation (CAN-only, NO PIN). Brings up a
     # live PACE SM on reader A (NAM CL), binds reader B (PKS / cardedge)

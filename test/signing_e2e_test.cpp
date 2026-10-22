@@ -10,9 +10,10 @@
 #include "signing_service.h"
 #include "signing_service_factory.h"
 
+#include "card_signing_key.h"
+#include "signing_keys.h"
+
 #ifdef LIBRESIGN_HAS_NATIVE
-#include "native/native_signing_service.h"
-#include "native/pkcs11_module_manager.h"
 #include "signing_test_support/mock_tsa_server.h"
 #endif
 
@@ -55,15 +56,15 @@ struct BackendInfo
     Backend backend;
 
     /// Where the signing key comes from. The card path reads PIN and reader
-    /// from the environment and skips without them; the software token needs
-    /// nothing the CI runner does not already provision.
-    enum class TokenSource { Card, SoftHsm };
-    TokenSource tokenSource = TokenSource::Card;
+    /// from the environment and skips without them; the key held in memory
+    /// needs nothing at all.
+    enum class KeySource { Card, InMemory };
+    KeySource keySource = KeySource::Card;
 
-    /// Whether a long-term level can actually succeed on this token. The
-    /// provisioned software signer is self-signed by design — its chain has no
-    /// proven terminal — so B-LT and B-LTA must be refused there, and claiming
-    /// they pass would be the false green this instantiation exists to remove.
+    /// Whether a long-term level can actually succeed with this key. The
+    /// in-memory signer is self-signed by design — its chain has no proven
+    /// terminal — so B-LT and B-LTA must be refused there, and claiming they
+    /// pass would be the false green this instantiation exists to remove.
     bool longTermReachable = true;
 };
 
@@ -84,23 +85,6 @@ protected:
         SKIP_IF_PIN_FAILED();
 
         auto info = GetParam();
-
-        if (info.tokenSource == BackendInfo::TokenSource::SoftHsm) {
-#ifdef LIBRESIGN_HAS_NATIVE
-            SetUpSoftHsm();
-            return;
-#else
-            GTEST_SKIP() << "native backend not compiled in";
-#endif
-        }
-
-        auto cfgResult = readTestConfig();
-        if (!cfgResult.valid)
-            GTEST_SKIP() << cfgResult.skipReason;
-        config = cfgResult.config;
-
-        if (!fs::exists(config.pkcs11Module))
-            GTEST_SKIP() << "PKCS#11 module not found: " << config.pkcs11Module;
 
 #ifdef LIBRESIGN_HAS_NATIVE
         if (info.backend == Backend::Native) {
@@ -125,41 +109,28 @@ protected:
 
         if (!service->isAvailable())
             GTEST_SKIP() << "Backend " << info.name << " not available";
-    }
 
+        if (info.keySource == BackendInfo::KeySource::InMemory) {
+            key = std::make_unique<SoftSigningKey>(validSignerKey());
 #ifdef LIBRESIGN_HAS_NATIVE
-    /// Fill `config` from the provisioned software token instead of the
-    /// environment. Every call site below reads those same fields, so the whole
-    /// suite runs unchanged once they point at the token.
-    void SetUpSoftHsm()
-    {
-        const char* modulePath = findSoftHsmPath();
-        if (!modulePath)
-            GTEST_SKIP() << "SoftHSM2 not found";
-
-        Pkcs11ModuleManager probe;
-        auto slot = findSoftHsmTestSlot(probe.acquire(modulePath));
-        if (!slot)
-            GTEST_SKIP() << "SoftHSM2 token '" << kSoftHsmTokenLabel << "' not initialised";
-
-        ownedService = createSigningService(Backend::Native);
-        auto* native = dynamic_cast<NativeSigningService*>(ownedService.get());
-        if (!native)
-            GTEST_SKIP() << "native service unavailable";
-        native->setTestSlotId(*slot);
-        service = ownedService.get();
-
-        config.pkcs11Module = modulePath;
-        config.pin = "1234";
-        config.keyAlias = "test-key";
-        config.readerName.clear();
-
-        // A responder in this process instead of a public authority: it removes
-        // the only live network dependency the suite had, and it can prove it
-        // was reached rather than letting a test infer that from success.
-        tsa = std::make_unique<MockTsaServer>();
-    }
+            // A responder in this process instead of a public authority: it
+            // removes the only live network dependency the suite had, and it
+            // can prove it was reached rather than letting a test infer that
+            // from success.
+            tsa = std::make_unique<MockTsaServer>();
 #endif
+            return;
+        }
+
+        auto cfgResult = readTestConfig();
+        if (!cfgResult.valid)
+            GTEST_SKIP() << cfgResult.skipReason;
+        config = cfgResult.config;
+        std::string skipReason;
+        key = openCardSigningKey(config, skipReason);
+        if (!key)
+            GTEST_SKIP() << skipReason;
+    }
 
     /// Timestamp endpoint for this parameterisation.
     std::string tsaUrl() const
@@ -171,13 +142,13 @@ protected:
         return "http://timestamp.digicert.com";
     }
 
-    /// Can a long-term level succeed on this parameterisation's token?
+    /// Can a long-term level succeed with this parameterisation's key?
     bool longTermReachable() const
     {
         return GetParam().longTermReachable;
     }
 
-    /// Under a token whose signer is self-signed the chain has no proven
+    /// With a key whose signer is self-signed the chain has no proven
     /// terminal, so a long-term level must be refused, fail-closed.
     static void ExpectLongTermRefusal(const SigningResult& r)
     {
@@ -195,8 +166,7 @@ protected:
         req.tsa.url = tsaUrl();
         req.allowExpiredCertificate = true;
 
-        auto result =
-            service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+        auto result = service->sign(req, *key);
         checkPinFailure(result);
         return result;
     }
@@ -214,6 +184,7 @@ protected:
 
     TestConfig config;
     SigningService* service = nullptr;
+    std::unique_ptr<SigningKey> key;
 
     std::unique_ptr<SigningService> ownedService;
 #ifdef LIBRESIGN_HAS_NATIVE
@@ -237,8 +208,10 @@ TEST(SigningHwNativeBLT, CAdESEmbedsTrustedListChain)
     if (!cfgResult.valid)
         GTEST_SKIP() << cfgResult.skipReason;
     auto cfg = cfgResult.config;
-    if (!fs::exists(cfg.pkcs11Module))
-        GTEST_SKIP() << "PKCS#11 module not found: " << cfg.pkcs11Module;
+    std::string skipReason;
+    auto key = openCardSigningKey(cfg, skipReason);
+    if (!key)
+        GTEST_SKIP() << skipReason;
 
     auto svc = createSigningService(Backend::Native);
     if (!svc || !svc->isAvailable())
@@ -265,7 +238,7 @@ TEST(SigningHwNativeBLT, CAdESEmbedsTrustedListChain)
     req.tsa.url = "http://timestamp.digicert.com";
     req.allowExpiredCertificate = true;
 
-    auto result = svc->sign(req, cfg.pkcs11Module, as_pin(cfg.pin), cfg.keyAlias, cfg.readerName);
+    auto result = svc->sign(req, *key);
     checkPinFailure(result);
     if (!result.success)
         GTEST_SKIP() << "B-LT not produced (fail-closed / network): " << result.errorMessage;
@@ -565,8 +538,7 @@ TEST_P(SigningE2ETest, JAdES_BB_Enveloped)
     auto data = buildTestPayload();
     auto req = jadesEnvelopedRequest(data, SignatureLevel::B_B, tsaUrl());
 
-    auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto result = service->sign(req, *key);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
     expectJadesEnvelopedPayloadPresent(result);
@@ -580,8 +552,7 @@ TEST_P(SigningE2ETest, JAdES_BT_Enveloped)
     auto data = buildTestPayload();
     auto req = jadesEnvelopedRequest(data, SignatureLevel::B_T, tsaUrl());
 
-    auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto result = service->sign(req, *key);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
     expectJadesEnvelopedPayloadPresent(result);
@@ -597,8 +568,7 @@ TEST_P(SigningE2ETest, JAdES_BLT_Enveloped)
     auto data = buildTestPayload();
     auto req = jadesEnvelopedRequest(data, SignatureLevel::B_LT, tsaUrl());
 
-    auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto result = service->sign(req, *key);
     checkPinFailure(result);
     if (!longTermReachable()) {
         ExpectLongTermRefusal(result);
@@ -625,8 +595,7 @@ TEST_P(SigningE2ETest, JAdES_BLTA_Enveloped)
     auto data = buildTestPayload();
     auto req = jadesEnvelopedRequest(data, SignatureLevel::B_LTA, tsaUrl());
 
-    auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto result = service->sign(req, *key);
     checkPinFailure(result);
     if (!longTermReachable()) {
         ExpectLongTermRefusal(result);
@@ -658,8 +627,7 @@ TEST_P(SigningE2ETest, XAdES_BB_Detached)
     req.packaging = SignaturePackaging::Detached;
     req.allowExpiredCertificate = true;
 
-    auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto result = service->sign(req, *key);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
     std::string xml(result.signedDocument.begin(), result.signedDocument.end());
@@ -681,8 +649,7 @@ TEST_P(SigningE2ETest, XAdES_BT_Detached)
     req.tsa.url = tsaUrl();
     req.allowExpiredCertificate = true;
 
-    auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto result = service->sign(req, *key);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
     validateSignature(result, "XAdES", "XAdES_BASELINE_T", "DETACHED", req.document);
@@ -702,8 +669,7 @@ TEST_P(SigningE2ETest, XAdES_BLT_Detached)
     req.tsa.url = tsaUrl();
     req.allowExpiredCertificate = true;
 
-    auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto result = service->sign(req, *key);
     checkPinFailure(result);
     if (!longTermReachable()) {
         ExpectLongTermRefusal(result);
@@ -727,8 +693,7 @@ TEST_P(SigningE2ETest, XAdES_BLTA_Detached)
     req.tsa.url = tsaUrl();
     req.allowExpiredCertificate = true;
 
-    auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto result = service->sign(req, *key);
     checkPinFailure(result);
     if (!longTermReachable()) {
         ExpectLongTermRefusal(result);
@@ -752,8 +717,7 @@ TEST_P(SigningE2ETest, XAdES_BB_Enveloped)
     req.packaging = SignaturePackaging::Enveloped;
     req.allowExpiredCertificate = true;
 
-    auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto result = service->sign(req, *key);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
     std::string xml(result.signedDocument.begin(), result.signedDocument.end());
@@ -778,8 +742,7 @@ TEST_P(SigningE2ETest, XAdES_BT_Enveloped)
     req.tsa.url = tsaUrl();
     req.allowExpiredCertificate = true;
 
-    auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto result = service->sign(req, *key);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
     validateSignature(result, "XAdES", "XAdES_BASELINE_T");
@@ -800,8 +763,7 @@ TEST_P(SigningE2ETest, XAdES_BLT_Enveloped)
     req.tsa.url = tsaUrl();
     req.allowExpiredCertificate = true;
 
-    auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto result = service->sign(req, *key);
     checkPinFailure(result);
     if (!longTermReachable()) {
         ExpectLongTermRefusal(result);
@@ -826,8 +788,7 @@ TEST_P(SigningE2ETest, XAdES_BLTA_Enveloped)
     req.tsa.url = tsaUrl();
     req.allowExpiredCertificate = true;
 
-    auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto result = service->sign(req, *key);
     checkPinFailure(result);
     if (!longTermReachable()) {
         ExpectLongTermRefusal(result);
@@ -915,8 +876,7 @@ TEST_P(SigningE2ETest, PAdES_BB_VisualSignature)
     req.visual.reason = "E2E test";
     req.visual.location = "Belgrade";
 
-    auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto result = service->sign(req, *key);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
     ASSERT_GT(result.signedDocument.size(), pdf.size());
@@ -956,8 +916,7 @@ TEST_P(SigningE2ETest, SignPdf_BB_VisualOnPage3)
     req.visual.text = "Signed on page 3";
     req.visual.reason = "multipage";
 
-    auto result =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto result = service->sign(req, *key);
     checkPinFailure(result);
     ASSERT_TRUE(result.success) << result.errorMessage;
     EXPECT_GT(result.signedDocument.size(), pdf.size());
@@ -988,8 +947,7 @@ TEST_P(SigningE2ETest, PAdES_MultipleSignatures_BB)
     req1.level = SignatureLevel::B_B;
     req1.allowExpiredCertificate = true;
 
-    auto result1 =
-        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto result1 = service->sign(req1, *key);
     checkPinFailure(result1);
     ASSERT_TRUE(result1.success) << "First signature: " << result1.errorMessage;
     ASSERT_GT(result1.signedDocument.size(), pdfVec.size());
@@ -1002,8 +960,7 @@ TEST_P(SigningE2ETest, PAdES_MultipleSignatures_BB)
     req2.level = SignatureLevel::B_B;
     req2.allowExpiredCertificate = true;
 
-    auto result2 =
-        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto result2 = service->sign(req2, *key);
     checkPinFailure(result2);
     ASSERT_TRUE(result2.success) << "Second signature: " << result2.errorMessage;
     ASSERT_GT(result2.signedDocument.size(), result1.signedDocument.size());
@@ -1050,8 +1007,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BB_then_BT)
     req1.level = SignatureLevel::B_B;
     req1.allowExpiredCertificate = true;
 
-    auto result1 =
-        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto result1 = service->sign(req1, *key);
     checkPinFailure(result1);
     ASSERT_TRUE(result1.success) << "B-B signature: " << result1.errorMessage;
 
@@ -1063,8 +1019,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BB_then_BT)
     req2.tsa.url = tsaUrl();
     req2.allowExpiredCertificate = true;
 
-    auto result2 =
-        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto result2 = service->sign(req2, *key);
     checkPinFailure(result2);
     ASSERT_TRUE(result2.success) << "B-T signature: " << result2.errorMessage;
     ASSERT_GT(result2.signedDocument.size(), result1.signedDocument.size());
@@ -1085,8 +1040,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BT_then_BB)
     req1.tsa.url = tsaUrl();
     req1.allowExpiredCertificate = true;
 
-    auto r1 =
-        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r1 = service->sign(req1, *key);
     checkPinFailure(r1);
     ASSERT_TRUE(r1.success) << "B-T: " << r1.errorMessage;
 
@@ -1097,8 +1051,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BT_then_BB)
     req2.level = SignatureLevel::B_B;
     req2.allowExpiredCertificate = true;
 
-    auto r2 =
-        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r2 = service->sign(req2, *key);
     checkPinFailure(r2);
     ASSERT_TRUE(r2.success) << "B-B on top of B-T: " << r2.errorMessage;
     ASSERT_GT(r2.signedDocument.size(), r1.signedDocument.size());
@@ -1120,8 +1073,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BB_then_BLTA)
     req1.level = SignatureLevel::B_B;
     req1.allowExpiredCertificate = true;
 
-    auto r1 =
-        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r1 = service->sign(req1, *key);
     checkPinFailure(r1);
     ASSERT_TRUE(r1.success) << "B-B: " << r1.errorMessage;
 
@@ -1133,8 +1085,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BB_then_BLTA)
     req2.tsa.url = tsaUrl();
     req2.allowExpiredCertificate = true;
 
-    auto r2 =
-        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r2 = service->sign(req2, *key);
     checkPinFailure(r2);
     if (!longTermReachable()) {
         ExpectLongTermRefusal(r2);
@@ -1159,8 +1110,7 @@ TEST_P(SigningE2ETest, PAdES_TripleSignature)
         req.level = SignatureLevel::B_B;
         req.allowExpiredCertificate = true;
 
-        auto r =
-            service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+        auto r = service->sign(req, *key);
         checkPinFailure(r);
         ASSERT_TRUE(r.success) << "Signature " << (i + 1) << ": " << r.errorMessage;
         doc = r.signedDocument;
@@ -1196,8 +1146,7 @@ TEST_P(SigningE2ETest, PAdES_InvisibleThenVisual)
     req1.level = SignatureLevel::B_B;
     req1.allowExpiredCertificate = true;
 
-    auto r1 =
-        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r1 = service->sign(req1, *key);
     checkPinFailure(r1);
     ASSERT_TRUE(r1.success) << "Invisible: " << r1.errorMessage;
 
@@ -1216,8 +1165,7 @@ TEST_P(SigningE2ETest, PAdES_InvisibleThenVisual)
     req2.visual.text = "Signed by: Second Signer\nCounter-sign";
     req2.visual.reason = "Counter-sign";
 
-    auto r2 =
-        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r2 = service->sign(req2, *key);
     checkPinFailure(r2);
     ASSERT_TRUE(r2.success) << "Visual on top: " << r2.errorMessage;
 
@@ -1243,8 +1191,7 @@ TEST_P(SigningE2ETest, XAdES_Enveloped_DoubleSignature)
     req1.packaging = SignaturePackaging::Enveloped;
     req1.allowExpiredCertificate = true;
 
-    auto r1 =
-        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r1 = service->sign(req1, *key);
     checkPinFailure(r1);
     ASSERT_TRUE(r1.success) << "First XAdES: " << r1.errorMessage;
 
@@ -1256,8 +1203,7 @@ TEST_P(SigningE2ETest, XAdES_Enveloped_DoubleSignature)
     req2.packaging = SignaturePackaging::Enveloped;
     req2.allowExpiredCertificate = true;
 
-    auto r2 =
-        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r2 = service->sign(req2, *key);
     checkPinFailure(r2);
     ASSERT_TRUE(r2.success) << "Second XAdES: " << r2.errorMessage;
 
@@ -1320,8 +1266,7 @@ TEST_P(SigningE2ETest, JAdES_SignOriginalTwice_BothSucceed)
         req.packaging = SignaturePackaging::Detached;
         req.allowExpiredCertificate = true;
 
-        auto r =
-            service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+        auto r = service->sign(req, *key);
         checkPinFailure(r);
         ASSERT_TRUE(r.success) << "JAdES #" << (i + 1) << ": " << r.errorMessage;
 
@@ -1352,13 +1297,11 @@ TEST_P(SigningE2ETest, JAdES_Enveloped_MultiSign)
         return req;
     };
 
-    auto r1 =
-        service->sign(mk(data), config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r1 = service->sign(mk(data), *key);
     checkPinFailure(r1);
     ASSERT_TRUE(r1.success) << "JAdES enveloped sign1: " << r1.errorMessage;
 
-    auto r2 = service->sign(mk(r1.signedDocument), config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias,
-                            config.readerName);
+    auto r2 = service->sign(mk(r1.signedDocument), *key);
     checkPinFailure(r2);
     ASSERT_TRUE(r2.success) << "JAdES enveloped sign2 (multi-sign): " << r2.errorMessage;
 
@@ -1399,13 +1342,11 @@ TEST_P(SigningE2ETest, JAdES_Detached_MultiSign_RejectedExplicitly)
         req.allowExpiredCertificate = true;
         return req;
     };
-    auto r1 =
-        service->sign(mk(data), config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r1 = service->sign(mk(data), *key);
     checkPinFailure(r1);
     ASSERT_TRUE(r1.success) << "JAdES detached sign1: " << r1.errorMessage;
 
-    auto r2 = service->sign(mk(r1.signedDocument), config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias,
-                            config.readerName);
+    auto r2 = service->sign(mk(r1.signedDocument), *key);
     // Must REFUSE — DETACHED multi-sign cannot recover original from prior JWS.
     EXPECT_FALSE(r2.success) << "DETACHED multi-sign must error out, not silently produce a single-signer JWS";
     EXPECT_NE(r2.errorMessage.find("DETACHED"), std::string::npos) << "Error must mention DETACHED limitation";
@@ -1443,16 +1384,14 @@ TEST_P(SigningE2ETest, CAdES_Detached_MultiSign_Succeeds)
     req.tsa.url = tsaUrl();
     req.allowExpiredCertificate = true;
 
-    auto r1 =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r1 = service->sign(req, *key);
     checkPinFailure(r1);
     ASSERT_TRUE(r1.success) << "CAdES sign1: " << r1.errorMessage;
     ASSERT_FALSE(r1.signedDocument.empty());
     EXPECT_EQ(r1.signedDocument[0], 0x30); // ASN.1 SEQUENCE
 
-    auto r2 =
-        service->appendSigner(req, std::span<const uint8_t>{r1.signedDocument}, std::span<const uint8_t>{original},
-                              libresign::as_pin(config.pin), config.pkcs11Module, config.keyAlias, config.readerName);
+    auto r2 = service->appendSigner(req, std::span<const uint8_t>{r1.signedDocument},
+                                    std::span<const uint8_t>{original}, *key);
     checkPinFailure(r2);
     ASSERT_TRUE(r2.success) << "CAdES appendSigner: " << r2.errorMessage;
     ASSERT_FALSE(r2.signedDocument.empty());
@@ -1479,15 +1418,13 @@ TEST_P(SigningE2ETest, XAdES_Detached_MultiSign_Succeeds)
     req.tsa.url = tsaUrl();
     req.allowExpiredCertificate = true;
 
-    auto r1 =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r1 = service->sign(req, *key);
     checkPinFailure(r1);
     ASSERT_TRUE(r1.success) << "XAdES sign1: " << r1.errorMessage;
     ASSERT_FALSE(r1.signedDocument.empty());
 
-    auto r2 =
-        service->appendSigner(req, std::span<const uint8_t>{r1.signedDocument}, std::span<const uint8_t>{original},
-                              libresign::as_pin(config.pin), config.pkcs11Module, config.keyAlias, config.readerName);
+    auto r2 = service->appendSigner(req, std::span<const uint8_t>{r1.signedDocument},
+                                    std::span<const uint8_t>{original}, *key);
     checkPinFailure(r2);
     ASSERT_TRUE(r2.success) << "XAdES appendSigner: " << r2.errorMessage;
     ASSERT_FALSE(r2.signedDocument.empty());
@@ -1528,15 +1465,13 @@ TEST_P(SigningE2ETest, JAdES_Detached_MultiSign_Succeeds)
     req.tsa.url = tsaUrl();
     req.allowExpiredCertificate = true;
 
-    auto r1 =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r1 = service->sign(req, *key);
     checkPinFailure(r1);
     ASSERT_TRUE(r1.success) << "JAdES sign1: " << r1.errorMessage;
     ASSERT_FALSE(r1.signedDocument.empty());
 
-    auto r2 =
-        service->appendSigner(req, std::span<const uint8_t>{r1.signedDocument}, std::span<const uint8_t>{original},
-                              libresign::as_pin(config.pin), config.pkcs11Module, config.keyAlias, config.readerName);
+    auto r2 = service->appendSigner(req, std::span<const uint8_t>{r1.signedDocument},
+                                    std::span<const uint8_t>{original}, *key);
     checkPinFailure(r2);
     ASSERT_TRUE(r2.success) << "JAdES appendSigner: " << r2.errorMessage;
     ASSERT_FALSE(r2.signedDocument.empty());
@@ -1586,14 +1521,11 @@ TEST_P(SigningE2ETest, CAdES_AppendSigner_MissingOriginal_RejectsExplicitly)
     req.level = SignatureLevel::B_B;
     req.allowExpiredCertificate = true;
 
-    auto r1 =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r1 = service->sign(req, *key);
     checkPinFailure(r1);
     ASSERT_TRUE(r1.success) << "CAdES prior sign: " << r1.errorMessage;
 
-    auto r2 =
-        service->appendSigner(req, std::span<const uint8_t>{r1.signedDocument}, std::span<const uint8_t>{},
-                              libresign::as_pin(config.pin), config.pkcs11Module, config.keyAlias, config.readerName);
+    auto r2 = service->appendSigner(req, std::span<const uint8_t>{r1.signedDocument}, std::span<const uint8_t>{}, *key);
     checkPinFailure(r2);
     EXPECT_FALSE(r2.success) << "CAdES appendSigner must reject empty originalDocument";
     ASSERT_TRUE(r2.failureKind.has_value()) << "failureKind not populated for CAdES rejection";
@@ -1615,14 +1547,11 @@ TEST_P(SigningE2ETest, XAdES_AppendSigner_MissingOriginal_RejectsExplicitly)
     req.packaging = SignaturePackaging::Detached;
     req.allowExpiredCertificate = true;
 
-    auto r1 =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r1 = service->sign(req, *key);
     checkPinFailure(r1);
     ASSERT_TRUE(r1.success) << "XAdES prior sign: " << r1.errorMessage;
 
-    auto r2 =
-        service->appendSigner(req, std::span<const uint8_t>{r1.signedDocument}, std::span<const uint8_t>{},
-                              libresign::as_pin(config.pin), config.pkcs11Module, config.keyAlias, config.readerName);
+    auto r2 = service->appendSigner(req, std::span<const uint8_t>{r1.signedDocument}, std::span<const uint8_t>{}, *key);
     checkPinFailure(r2);
     EXPECT_FALSE(r2.success) << "XAdES appendSigner must reject empty originalDocument";
     ASSERT_TRUE(r2.failureKind.has_value()) << "failureKind not populated for XAdES rejection";
@@ -1644,14 +1573,11 @@ TEST_P(SigningE2ETest, JAdES_AppendSigner_MissingOriginal_RejectsExplicitly)
     req.packaging = SignaturePackaging::Detached;
     req.allowExpiredCertificate = true;
 
-    auto r1 =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r1 = service->sign(req, *key);
     checkPinFailure(r1);
     ASSERT_TRUE(r1.success) << "JAdES prior sign: " << r1.errorMessage;
 
-    auto r2 =
-        service->appendSigner(req, std::span<const uint8_t>{r1.signedDocument}, std::span<const uint8_t>{},
-                              libresign::as_pin(config.pin), config.pkcs11Module, config.keyAlias, config.readerName);
+    auto r2 = service->appendSigner(req, std::span<const uint8_t>{r1.signedDocument}, std::span<const uint8_t>{}, *key);
     checkPinFailure(r2);
     EXPECT_FALSE(r2.success) << "JAdES appendSigner must reject empty originalDocument";
     ASSERT_TRUE(r2.failureKind.has_value()) << "failureKind not populated for JAdES rejection";
@@ -1673,17 +1599,15 @@ TEST_P(SigningE2ETest, JAdES_AppendSigner_OriginalMismatch_RejectsExplicitly)
     req.packaging = SignaturePackaging::Enveloped;
     req.allowExpiredCertificate = true;
 
-    auto r1 =
-        service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r1 = service->sign(req, *key);
     checkPinFailure(r1);
     ASSERT_TRUE(r1.success) << "JAdES enveloped prior sign: " << r1.errorMessage;
 
     // Caller supplies an originalDocument that does NOT match the JWS payload
     // embedded in the prior signature. The optional integrity check must trip.
     std::vector<uint8_t> wrongOriginal{'B', 'A', 'D'};
-    auto r2 =
-        service->appendSigner(req, std::span<const uint8_t>{r1.signedDocument}, std::span<const uint8_t>{wrongOriginal},
-                              libresign::as_pin(config.pin), config.pkcs11Module, config.keyAlias, config.readerName);
+    auto r2 = service->appendSigner(req, std::span<const uint8_t>{r1.signedDocument},
+                                    std::span<const uint8_t>{wrongOriginal}, *key);
     checkPinFailure(r2);
     EXPECT_FALSE(r2.success) << "JAdES appendSigner must reject mismatched originalDocument";
     ASSERT_TRUE(r2.failureKind.has_value()) << "failureKind not populated for JAdES mismatch";
@@ -1720,7 +1644,7 @@ TEST_P(SigningE2ETest, JAdES_MultiSign_RejectsOversizedJsonInput)
     req.packaging = SignaturePackaging::Enveloped;
     req.allowExpiredCertificate = true;
 
-    auto r = service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r = service->sign(req, *key);
     checkPinFailure(r);
     SUCCEED() << "Oversized JSON input returned bounded result (success=" << r.success << ", msg=\"" << r.errorMessage
               << "\")";
@@ -1744,7 +1668,7 @@ TEST_P(SigningE2ETest, JAdES_MultiSign_RejectsDeeplyNestedJsonInput)
     req.packaging = SignaturePackaging::Enveloped;
     req.allowExpiredCertificate = true;
 
-    auto r = service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r = service->sign(req, *key);
     checkPinFailure(r);
     SUCCEED() << "Deeply-nested JSON input returned bounded result (success=" << r.success << ", msg=\""
               << r.errorMessage << "\")";
@@ -1785,8 +1709,7 @@ TEST_P(SigningE2ETest, ASiCE_MultiSign_PreservesPriorSignatures)
     req2.level = SignatureLevel::B_B;
     req2.packaging = SignaturePackaging::Detached;
     req2.allowExpiredCertificate = true;
-    auto r2 =
-        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r2 = service->sign(req2, *key);
     checkPinFailure(r2);
     ASSERT_TRUE(r2.success) << "ASiC-E sign2 (multi-sign): " << r2.errorMessage;
 
@@ -1921,7 +1844,7 @@ TEST_P(SigningE2ETest, ASiCE_MultiSign_RejectsZipSlipInPreservedEntries)
     req.level = SignatureLevel::B_B;
     req.packaging = SignaturePackaging::Detached;
     req.allowExpiredCertificate = true;
-    auto r = service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r = service->sign(req, *key);
     checkPinFailure(r);
     // Either: tryParseAsic rejected the input (success=true producing a
     // fresh ASiC wrapping the malicious ZIP as test.txt — safe), OR the
@@ -1968,8 +1891,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BLT_then_BLTA)
     req1.tsa.url = tsaUrl();
     req1.allowExpiredCertificate = true;
 
-    auto r1 =
-        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r1 = service->sign(req1, *key);
     checkPinFailure(r1);
     if (!longTermReachable()) {
         ExpectLongTermRefusal(r1);
@@ -1985,8 +1907,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BLT_then_BLTA)
     req2.tsa.url = tsaUrl();
     req2.allowExpiredCertificate = true;
 
-    auto r2 =
-        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r2 = service->sign(req2, *key);
     checkPinFailure(r2);
     ASSERT_TRUE(r2.success) << "PAdES B-LTA append: " << r2.errorMessage;
     ASSERT_GT(r2.signedDocument.size(), r1.signedDocument.size());
@@ -2023,8 +1944,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BLTA_then_BLTA)
     req1.tsa.url = tsaUrl();
     req1.allowExpiredCertificate = true;
 
-    auto r1 =
-        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r1 = service->sign(req1, *key);
     checkPinFailure(r1);
     if (!longTermReachable()) {
         ExpectLongTermRefusal(r1);
@@ -2040,8 +1960,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BLTA_then_BLTA)
     req2.tsa.url = tsaUrl();
     req2.allowExpiredCertificate = true;
 
-    auto r2 =
-        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r2 = service->sign(req2, *key);
     checkPinFailure(r2);
     ASSERT_TRUE(r2.success) << "PAdES B-LTA second sign: " << r2.errorMessage;
     ASSERT_GT(r2.signedDocument.size(), r1.signedDocument.size());
@@ -2071,8 +1990,7 @@ TEST_P(SigningE2ETest, XAdES_MultiLevel_BB_then_BLTA_Enveloped)
     req1.packaging = SignaturePackaging::Enveloped;
     req1.allowExpiredCertificate = true;
 
-    auto r1 =
-        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r1 = service->sign(req1, *key);
     checkPinFailure(r1);
     ASSERT_TRUE(r1.success) << "XAdES B-B first sign: " << r1.errorMessage;
 
@@ -2085,8 +2003,7 @@ TEST_P(SigningE2ETest, XAdES_MultiLevel_BB_then_BLTA_Enveloped)
     req2.tsa.url = tsaUrl();
     req2.allowExpiredCertificate = true;
 
-    auto r2 =
-        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r2 = service->sign(req2, *key);
     checkPinFailure(r2);
     if (!longTermReachable()) {
         ExpectLongTermRefusal(r2);
@@ -2127,8 +2044,7 @@ TEST_P(SigningE2ETest, JAdES_MultiLevel_BB_then_BLT_Enveloped)
     req1.packaging = SignaturePackaging::Enveloped;
     req1.allowExpiredCertificate = true;
 
-    auto r1 =
-        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r1 = service->sign(req1, *key);
     checkPinFailure(r1);
     ASSERT_TRUE(r1.success) << "JAdES B-B first sign: " << r1.errorMessage;
 
@@ -2136,9 +2052,8 @@ TEST_P(SigningE2ETest, JAdES_MultiLevel_BB_then_BLT_Enveloped)
     req2.level = SignatureLevel::B_LT;
     req2.tsa.url = tsaUrl();
 
-    auto r2 =
-        service->appendSigner(req2, std::span<const uint8_t>{r1.signedDocument}, std::span<const uint8_t>{original},
-                              libresign::as_pin(config.pin), config.pkcs11Module, config.keyAlias, config.readerName);
+    auto r2 = service->appendSigner(req2, std::span<const uint8_t>{r1.signedDocument},
+                                    std::span<const uint8_t>{original}, *key);
     checkPinFailure(r2);
     if (!longTermReachable()) {
         ExpectLongTermRefusal(r2);
@@ -2172,8 +2087,7 @@ TEST_P(SigningE2ETest, JAdES_AppendSigner_RejectsArchiveLevel)
     req1.packaging = SignaturePackaging::Enveloped;
     req1.allowExpiredCertificate = true;
 
-    auto r1 =
-        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r1 = service->sign(req1, *key);
     checkPinFailure(r1);
     ASSERT_TRUE(r1.success) << "JAdES B-B first sign: " << r1.errorMessage;
 
@@ -2181,9 +2095,8 @@ TEST_P(SigningE2ETest, JAdES_AppendSigner_RejectsArchiveLevel)
     req2.level = SignatureLevel::B_LTA;
     req2.tsa.url = tsaUrl();
 
-    auto r2 =
-        service->appendSigner(req2, std::span<const uint8_t>{r1.signedDocument}, std::span<const uint8_t>{original},
-                              libresign::as_pin(config.pin), config.pkcs11Module, config.keyAlias, config.readerName);
+    auto r2 = service->appendSigner(req2, std::span<const uint8_t>{r1.signedDocument},
+                                    std::span<const uint8_t>{original}, *key);
     checkPinFailure(r2);
     EXPECT_FALSE(r2.success) << "B-LTA must not be emitted on the append path";
     ASSERT_TRUE(r2.failureKind.has_value()) << r2.errorMessage;
@@ -2207,8 +2120,7 @@ TEST_P(SigningE2ETest, ASiCE_MultiLevel_BLT_then_BLTA)
     req1.tsa.url = tsaUrl();
     req1.allowExpiredCertificate = true;
 
-    auto r1 =
-        service->sign(req1, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r1 = service->sign(req1, *key);
     checkPinFailure(r1);
     if (!longTermReachable()) {
         ExpectLongTermRefusal(r1);
@@ -2225,8 +2137,7 @@ TEST_P(SigningE2ETest, ASiCE_MultiLevel_BLT_then_BLTA)
     req2.tsa.url = tsaUrl();
     req2.allowExpiredCertificate = true;
 
-    auto r2 =
-        service->sign(req2, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r2 = service->sign(req2, *key);
     checkPinFailure(r2);
     ASSERT_TRUE(r2.success) << "ASiC-E B-LTA second sign: " << r2.errorMessage;
 
@@ -2337,7 +2248,7 @@ TEST_P(SigningE2ETest, ASiCE_MultiSign_MultiDataFile_RejectsExplicitly)
     req.level = SignatureLevel::B_B;
     req.packaging = SignaturePackaging::Detached;
     req.allowExpiredCertificate = true;
-    auto r = service->sign(req, config.pkcs11Module, libresign::as_pin(config.pin), config.keyAlias, config.readerName);
+    auto r = service->sign(req, *key);
     checkPinFailure(r);
 
     EXPECT_FALSE(r.success) << "ASiC-E with multiple data files must be rejected";
@@ -2349,83 +2260,6 @@ TEST_P(SigningE2ETest, ASiCE_MultiSign_MultiDataFile_RejectsExplicitly)
                     r.errorMessage.find("multiple") != std::string::npos ||
                     r.errorMessage.find("one") != std::string::npos)
             << "Diagnostic must name the multi-data violation: " << r.errorMessage;
-    }
-}
-
-// ---- Bad PIN latch positive test ----
-//
-// `checkPinFailure` flips a process-static `g_pinFailed` flag when the
-// signing service surfaces a PIN-incorrect / PIN-locked diagnostic, and
-// every test in this suite calls SKIP_IF_PIN_FAILED before touching the
-// card. The flag latches because attempt counters on real cards are
-// finite — once a wrong PIN is in flight, subsequent tests must not
-// burn additional attempts in a parallel test run.
-//
-// This positive test asserts the latch trips when the signing service
-// sees a wrong PIN format. The PKCS#11 module typically returns
-// CKR_PIN_LEN_RANGE (or CKR_PIN_INCORRECT for some firmwares) for a
-// length-zero PIN; either way the error message contains a substring
-// the latch keys off. We use a length-zero PIN — most PINs are 4-8
-// digits and zero is reliably rejected by SafeNet / Gemalto / OpenSC.
-//
-// The test installs a one-shot RAII save/restore around the latch so
-// the failure here doesn't poison the rest of the suite.
-namespace {
-class PinLatchSaver
-{
-public:
-    PinLatchSaver() : saved(::libresign::test::g_pinFailed) {}
-    ~PinLatchSaver()
-    {
-        ::libresign::test::g_pinFailed = saved;
-    }
-
-private:
-    bool saved;
-};
-} // namespace
-
-TEST_P(SigningE2ETest, BadPinLatch_FormatRejectedPin_TripsGuardWithoutDecrement)
-{
-    SKIP_IF_PIN_FAILED();
-
-    PinLatchSaver guard;
-    // Reset the latch BEFORE the bad-PIN call so we observe the flip here
-    // rather than seeing it pre-flipped from an earlier test.
-    ::libresign::test::g_pinFailed = false;
-
-    SigningRequest req;
-    req.document = {'P', 'i', 'n', '?'};
-    req.fileName = "test.txt";
-    req.format = SignatureFormat::Cades;
-    req.level = SignatureLevel::B_B;
-    req.allowExpiredCertificate = true;
-
-    // Empty PIN — PKCS#11 modules report CKR_PIN_INCORRECT or
-    // CKR_PIN_LEN_RANGE; neither decrements the attempt counter on
-    // production cards (the length check is pre-VERIFY).
-    auto result = service->sign(req, config.pkcs11Module, libresign::as_pin(""), config.keyAlias, config.readerName);
-
-    EXPECT_FALSE(result.success) << "Empty PIN must fail";
-    if (!result.success) {
-        // Replicate the latch's substring rule directly so we can observe
-        // the flip without invoking checkPinFailure (which would short-
-        // circuit the test via GTEST_SKIP on a match).
-        const auto& msg = result.errorMessage;
-        const bool wouldFlipLatch =
-            msg.find("CKR_PIN_INCORRECT") != std::string::npos || msg.find("CKR_PIN_LOCKED") != std::string::npos ||
-            msg.find("0x000000A0") != std::string::npos || msg.find("0x000000A4") != std::string::npos;
-        if (wouldFlipLatch) {
-            ::libresign::test::g_pinFailed = true;
-            std::cerr << "[BadPinLatch] Latch keywords matched in diagnostic; g_pinFailed flipped.\n";
-        } else {
-            // CKR_PIN_LEN_RANGE (0xA2) is NOT in the latch keyword list;
-            // some modules return it for empty PINs and the call still
-            // fails closed. The primary contract (no crash, failure
-            // reported) is upheld either way.
-            std::cerr << "[BadPinLatch] Diagnostic: " << msg
-                      << " (does not match latch keywords — typical for CKR_PIN_LEN_RANGE; not a regression).\n";
-        }
     }
 }
 
@@ -2441,24 +2275,8 @@ TEST(NativeFactoryTest, CreateNativeBackend)
     EXPECT_TRUE(service->isAvailable());
 }
 
-TEST(NativeFactoryTest, InvalidModuleFails)
-{
-    auto service = createSigningService(Backend::Native);
-    ASSERT_NE(service, nullptr);
-
-    SigningRequest req;
-    req.document = {'T', 'e', 's', 't'};
-    req.fileName = "test.txt";
-    req.format = SignatureFormat::Cades;
-    req.level = SignatureLevel::B_B;
-
-    auto result = service->sign(req, "/nonexistent/pkcs11.so", libresign::as_pin("0000"), "key", "");
-    EXPECT_FALSE(result.success);
-    EXPECT_FALSE(result.errorMessage.empty());
-}
-
-// PAdES dispatcher rejects inputs too small to be a PDF before any
-// PKCS#11 / network work is initiated.
+// PAdES dispatcher rejects inputs too small to be a PDF before the key signs
+// or any network work is initiated.
 TEST(NativeFactoryTest, RejectsOneByteInput)
 {
     auto service = createSigningService(Backend::Native);
@@ -2470,8 +2288,10 @@ TEST(NativeFactoryTest, RejectsOneByteInput)
     req.format = SignatureFormat::Pades;
     req.level = SignatureLevel::B_B;
 
-    auto result = service->sign(req, "/nonexistent/pkcs11.so", libresign::as_pin("0000"), "key", "");
+    SoftSigningKey key(validSignerKey());
+    auto result = service->sign(req, key);
     EXPECT_FALSE(result.success) << "1-byte PDF input must be rejected";
+    EXPECT_EQ(key.signCalls, 0);
     EXPECT_FALSE(result.errorMessage.empty());
 }
 
@@ -2488,8 +2308,10 @@ TEST(NativeFactoryTest, Rejects7ByteNonPdf)
     req.format = SignatureFormat::Pades;
     req.level = SignatureLevel::B_B;
 
-    auto result = service->sign(req, "/nonexistent/pkcs11.so", libresign::as_pin("0000"), "key", "");
+    SoftSigningKey key(validSignerKey());
+    auto result = service->sign(req, key);
     EXPECT_FALSE(result.success) << "7-byte non-PDF input must be rejected";
+    EXPECT_EQ(key.signCalls, 0);
     EXPECT_FALSE(result.errorMessage.empty());
 }
 #endif
@@ -2510,14 +2332,14 @@ std::vector<BackendInfo> availableBackends()
     return backends;
 }
 
-std::vector<BackendInfo> softHsmBackends()
+std::vector<BackendInfo> inMemoryBackends()
 {
     std::vector<BackendInfo> backends;
 #ifdef LIBRESIGN_HAS_NATIVE
-    // Long-term levels are NOT reachable here: the provisioned signer is
+    // Long-term levels are NOT reachable here: the in-memory signer is
     // self-signed, so its chain terminates unproven. The bodies below assert
     // the refusal instead, and the level assertions stay on the card branch.
-    backends.push_back({"Native", Backend::Native, BackendInfo::TokenSource::SoftHsm, false});
+    backends.push_back({"Native", Backend::Native, BackendInfo::KeySource::InMemory, false});
 #endif
     return backends;
 }
@@ -2525,11 +2347,11 @@ std::vector<BackendInfo> softHsmBackends()
 INSTANTIATE_TEST_SUITE_P(AllBackends, SigningE2ETest, ::testing::ValuesIn(availableBackends()),
                          [](const ::testing::TestParamInfo<BackendInfo>& info) { return info.param.name; });
 
-// The same cases against the software token CI already provisions on both
-// platforms. Every call to the ETSI validator lived in this file, and this file
-// needed a card reader and a card PIN to get past setup -- so the validator
-// stood behind a gate it has no reason to be behind.
-INSTANTIATE_TEST_SUITE_P(SoftHSM, SigningE2ETest, ::testing::ValuesIn(softHsmBackends()),
+// The same cases with a key held in memory, which needs nothing provisioned.
+// Every call to the ETSI validator lived in this file, and this file needed a
+// card reader and a card PIN to get past setup -- so the validator stood
+// behind a gate it has no reason to be behind.
+INSTANTIATE_TEST_SUITE_P(InMemory, SigningE2ETest, ::testing::ValuesIn(inMemoryBackends()),
                          [](const ::testing::TestParamInfo<BackendInfo>& info) { return info.param.name; });
 
 // ===========================================================================

@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 #include "dss/dss_signing_service.h"
 #include "dss/dss_service_manager.h"
+#include "signing_keys.h"
 
 class DSSSigningServiceTest : public ::testing::Test
 {
@@ -25,41 +26,19 @@ TEST_F(DSSSigningServiceTest, IsNotAvailableWhenServiceDown)
     EXPECT_FALSE(svc.isAvailable());
 }
 
-TEST_F(DSSSigningServiceTest, Pkcs11SignFailsWhenServiceDown)
+TEST_F(DSSSigningServiceTest, SignFailsWhenServiceDown)
 {
     libresign::DSSSigningService svc(*manager);
     libresign::SigningRequest req;
     req.document = {0x25, 0x50, 0x44, 0x46}; // %PDF
     req.format = libresign::SignatureFormat::Pades;
     req.level = libresign::SignatureLevel::B_B;
+    libresign::test::SoftSigningKey key(libresign::test::validSignerKey());
 
-    auto result = svc.sign(req, "/path/to/pkcs11.so", libresign::as_pin("1234"), "key1", "");
+    auto result = svc.sign(req, key);
     EXPECT_FALSE(result.success);
     EXPECT_FALSE(result.errorMessage.empty());
-}
-
-// V5: the DSS backend does not route C_FindObjects through CKA_ID, so a
-// non-empty keyId discriminator must fail closed BEFORE the service is even
-// contacted — forwarding it would let the Java oracle silently fall back to a
-// label / first-of-N match (the wrong-key hazard the discriminator prevents).
-// The guard fires before manager().ensureRunning(), so no JVM is needed.
-TEST_F(DSSSigningServiceTest, NonEmptyKeyIdFailsClosedBeforeServiceStart)
-{
-    libresign::DSSSigningService svc(*manager);
-    libresign::SigningRequest req;
-    req.document = {0x25, 0x50, 0x44, 0x46}; // %PDF
-    req.format = libresign::SignatureFormat::Pades;
-    req.level = libresign::SignatureLevel::B_B;
-    req.keyId = {0x01, 0x02, 0x03, 0x04}; // CKA_ID discriminator — unsupported by DSS
-
-    auto result = svc.sign(req, "/path/to/pkcs11.so", libresign::as_pin("1234"), "key1", "");
-
-    ASSERT_FALSE(result.success);
-    ASSERT_TRUE(result.failureKind.has_value());
-    EXPECT_EQ(*result.failureKind, libresign::SignFailureKind::EngineError);
-    // Message must point at the CKA_ID limitation and the native backend.
-    EXPECT_NE(result.errorMessage.find("CKA_ID"), std::string::npos) << "msg=" << result.errorMessage;
-    EXPECT_NE(result.errorMessage.find("native"), std::string::npos) << "msg=" << result.errorMessage;
+    EXPECT_EQ(key.signCalls, 0) << "nothing is signed without the oracle's bytes to sign";
 }
 
 TEST_F(DSSSigningServiceTest, FormatAndLevelStrings)
@@ -72,7 +51,8 @@ TEST_F(DSSSigningServiceTest, FormatAndLevelStrings)
     req.format = libresign::SignatureFormat::Cades;
     req.level = libresign::SignatureLevel::B_LTA;
 
-    auto result = svc.sign(req, "/p11.so", libresign::as_pin("pin"), "key", "");
+    libresign::test::SoftSigningKey key(libresign::test::validSignerKey());
+    auto result = svc.sign(req, key);
     EXPECT_FALSE(result.success);
     // Error should be about service unavailability, not JSON/format issues
     EXPECT_TRUE(result.errorMessage.find("service") != std::string::npos ||

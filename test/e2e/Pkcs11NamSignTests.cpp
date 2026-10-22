@@ -244,8 +244,7 @@ TEST_F(Pkcs11NamFixture, NamContactless_LoginAndSign_Succeeds)
     // insists on hashing the input itself and rejects a pre-built
     // DigestInfo (CKM_RSA_PKCS) with SW 6A80 / 6982. The only working
     // contract is the combined CKM_SHA256_RSA_PKCS mechanism over the
-    // raw message — exactly the path LibreCelik's libresign Native
-    // backend takes (lib/libresign/src/native/pkcs11_token.cpp). A
+    // raw message — what a PKCS#11 consumer that signs documents takes. A
     // cryptographic round-trip check of this path lives in
     // NamContactless_LcFaithfulSign_VerifiesAgainstCert; this smoke just
     // asserts the post-login slot self-transform is signable.
@@ -311,16 +310,15 @@ TEST_F(Pkcs11NamFixture, NamContactless_PaceEstablishedOnce)
     (void)C_CloseSession(second);
 }
 
-// Ground-truth NAM sign that mirrors how LibreCelik actually signs AND
+// Ground-truth NAM sign that mirrors how a document signer signs AND
 // cryptographically verifies the result.
 //
 // The legacy LoginAndSign_Succeeds test signs 32 raw bytes through
-// CKM_RSA_PKCS and never checks the signature — both unfaithful to
-// LibreCelik and blind to a silently-wrong (re-hashed) signature.
-// LibreCelik's libresign Native backend
-// (lib/libresign/src/native/pkcs11_token.cpp::Pkcs11Token::sign) signs
-// through the combined CKM_SHA256_RSA_PKCS mechanism over the raw
-// document bytes; the PKCS#11 library turns that into
+// CKM_RSA_PKCS and never checks the signature — both unfaithful to a
+// document signer and blind to a silently-wrong (re-hashed) signature.
+// A PKCS#11 consumer that signs documents signs through the combined
+// CKM_SHA256_RSA_PKCS mechanism over the raw document bytes; the
+// PKCS#11 library turns that into
 // buildDigestInfo()+signWithDigestInfo() and the pkcs15 card layer maps
 // it to SignScheme::RsaSha256Pkcs1, reaching the IAS-ECC 0x42 / 0x28
 // attempts that the RsaPkcs1 path never tries.

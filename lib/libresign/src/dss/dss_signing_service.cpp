@@ -4,12 +4,18 @@
 #include "dss/dss_signing_service.h"
 #include "dss/dss_path_resolver.h"
 #include "http_client.h"
-#include <smartcard/secure_buffer.h>
+#include "native/native_utils.h"
+#include "native/signing_key.h"
 
 #include <json.hpp>
-#include <openssl/crypto.h>
+#include <openssl/evp.h>
+#include <openssl/x509.h>
+
+#include <chrono>
 #include <stdexcept>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace libresign {
 
@@ -76,9 +82,6 @@ std::string levelToString(SignatureLevel level)
 // signature-dictionary field — feature parity with native is not a goal.
 // Also: reason / location / contactInfo are gated on visual.enabled here,
 // so invisible signatures lose those fields entirely on the DSS backend.
-// SigningService::sign() detects callers passing TSA credentials with
-// LIBRESCRS_SIGNING_BACKEND=dss and fails LOUD rather than silently
-// downgrading.
 void addTsaConfig(nlohmann::json& body, const SigningRequest& request)
 {
     if (request.level != SignatureLevel::B_B && !request.tsa.url.empty()) {
@@ -167,113 +170,73 @@ bool DSSSigningService::isAvailable() const
     return false;
 }
 
-SigningResult DSSSigningService::sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
-                                      const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
-                                      const std::string& readerName)
+SigningResult DSSSigningService::sign(const SigningRequest& request, SigningKey& key)
 {
-    // CKA_ID exact-key selection is honoured only by the native backend; the
-    // DSS Java oracle does not yet route C_FindObjects through CKA_ID. Rather
-    // than forward the discriminator and let the oracle silently fall back to
-    // a label / first-of-N match — the exact wrong-key hazard the
-    // discriminator exists to prevent — refuse here (fail-closed). Tests that
-    // exercise CKA_ID selection must use the native backend (the authoritative
-    // implementation); DSS gains CKA_ID honouring alongside the oracle work.
-    if (!request.keyId.empty())
-        return makeFailure(SignFailureKind::EngineError,
-                           "CKA_ID key selection is not supported by the DSS test-oracle backend; "
-                           "use the native backend (unset LIBRESCRS_SIGNING_BACKEND or set =native).");
+    try {
+        const auto certDer = key.certificate();
+        auto cert = native_utils::parseCert(certDer);
+        if (!cert)
+            return makeFailure(SignFailureKind::CardError, "the key carries no readable certificate");
+        if (EVP_PKEY_base_id(X509_get0_pubkey(cert.get())) != EVP_PKEY_RSA)
+            return makeFailure(SignFailureKind::EngineError, "the DSS test-oracle backend signs with RSA keys only");
 
-    auto result = manager().ensureRunning();
-    if (!result)
-        return makeFailure(SignFailureKind::EngineError, result.error);
+        auto result = manager().ensureRunning();
+        if (!result)
+            return makeFailure(SignFailureKind::EngineError, result.error);
+        const auto socketPath = manager().unixSocketPath();
 
-    auto socketPath = manager().unixSocketPath();
+        // Both steps carry the same metadata, the signing time included: the
+        // oracle rebuilds the same signature parameters from it each time.
+        nlohmann::json meta;
+        meta["format"] = formatToString(request.format);
+        meta["packaging"] = packagingToString(request.packaging);
+        meta["level"] = levelToString(request.level);
+        meta["certificateChain"] = nlohmann::json::array();
+        meta["certificateChain"].push_back(native_utils::base64Encode(certDer));
+        for (const auto& der : key.certificateChain()) {
+            if (der != certDer)
+                meta["certificateChain"].push_back(native_utils::base64Encode(der));
+        }
+        meta["signingTime"] =
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
+                .count();
+        if (request.allowExpiredCertificate)
+            meta["allowExpiredCertificate"] = true;
+        addTsaConfig(meta, request);
+        addVisualConfig(meta, request);
 
-    // The Java DSS service expects the PIN as a JSON string field. We have to
-    // materialize a std::string here to feed nlohmann::json. The caller's
-    // Secure::Buffer cleanses its own storage on destruction, but THIS local
-    // std::string copy is born outside that contract — keep PinStringScrubber
-    // on `pinStr` so it's cleansed on scope exit even on exception. (The PIN
-    // still ends up in JVM String memory once the Java side parses the
-    // request — inherent limitation of the IPC architecture, documented on
-    // the header.)
-    std::string pinStr(reinterpret_cast<const char*>(pin.data()), pin.size());
-    LibreSCRS::SmartCard::Internal::PinStringScrubber pinScrubber{pinStr};
+        auto step = [&](const std::string& path) {
+            auto resp = httpClient->postMultipart(result.baseUrl + path, request.document, request.fileName,
+                                                  meta.dump(), 120, socketPath);
+            if (resp.statusCode == 200)
+                return std::vector<uint8_t>(resp.body.begin(), resp.body.end());
+            std::string msg = "DSS service error";
+            if (!resp.body.empty())
+                msg += ": " + resp.body;
+            else if (!resp.errorMessage.empty())
+                msg += " (connection): " + resp.errorMessage;
+            else
+                msg += " (HTTP " + std::to_string(resp.statusCode) + ", no details)";
+            throw std::runtime_error(msg);
+        };
 
-    nlohmann::json meta;
-    meta["format"] = formatToString(request.format);
-    meta["packaging"] = packagingToString(request.packaging);
-    meta["level"] = levelToString(request.level);
-    meta["pkcs11ModulePath"] = pkcs11ModulePath;
-    meta["pin"] = pinStr;
-    meta["keyAlias"] = keyAlias;
-    // The DSS Java service is a cross-verification test oracle, not a
-    // production signing path. It accepts a PCSC reader name on the
-    // wire and routes the slot lookup the same way the native engine
-    // does (see lib/libresign/src/native/pkcs11_token.cpp's
-    // findSlotByReaderName). We do NOT replicate the slotIndex=-1
-    // legacy here — that path was the source of the multi-card
-    // "wrong PIN" bug; the DSS oracle has to behave the same as the
-    // native path for the cross-backend test to be meaningful.
-    meta["readerName"] = readerName;
-
-    if (request.allowExpiredCertificate)
-        meta["allowExpiredCertificate"] = true;
-
-    addTsaConfig(meta, request);
-    addVisualConfig(meta, request);
-
-    auto metaJson = meta.dump();
-    // Cleanse PIN from JSON object immediately
-    if (meta.contains("pin")) {
-        auto& pinRef = meta["pin"].get_ref<std::string&>();
-        OPENSSL_cleanse(pinRef.data(), pinRef.size());
-        meta.erase("pin");
+        const auto toBeSigned = step("/sign/data-to-sign");
+        const auto signature =
+            native_utils::signHashWithKey(key, cert.get(), native_utils::sha256(toBeSigned), "SHA-256", toBeSigned);
+        meta["signatureValue"] = native_utils::base64Encode(signature);
+        return makeSuccess(step("/sign/document"));
+    } catch (const SignFailureException& e) {
+        return makeFailure(e.kind, e.what());
+    } catch (const std::exception& e) {
+        return makeFailure(SignFailureKind::EngineError, e.what());
     }
-
-    auto resp = httpClient->postMultipart(result.baseUrl + "/sign/pkcs11", request.document, request.fileName, metaJson,
-                                          120, socketPath);
-    // Cleanse PIN from the serialized JSON string
-    OPENSSL_cleanse(metaJson.data(), metaJson.size());
-
-    if (resp.statusCode != 200) {
-        std::string msg = "DSS service error";
-        if (!resp.body.empty())
-            msg += ": " + resp.body;
-        else if (!resp.errorMessage.empty())
-            msg += " (connection): " + resp.errorMessage;
-        else
-            msg += " (HTTP " + std::to_string(resp.statusCode) + ", no details)";
-        return makeFailure(SignFailureKind::EngineError, msg);
-    }
-
-    // Response is raw binary (application/octet-stream)
-    std::vector<uint8_t> doc(resp.body.begin(), resp.body.end());
-    return makeSuccess(std::move(doc));
-}
-
-SigningResult DSSSigningService::appendSigner(const SigningRequest& /*request*/,
-                                              std::span<const uint8_t> /*priorSignature*/,
-                                              std::span<const uint8_t> /*originalDocument*/,
-                                              const LibreSCRS::Secure::Buffer& /*pin*/,
-                                              const std::string& /*pkcs11Module*/, const std::string& /*keyAlias*/,
-                                              const std::string& /*readerName*/)
-{
-    return makeFailure(SignFailureKind::EngineError, "appendSigner not yet implemented in this backend");
-}
-
-SigningResult DSSSigningService::sign(const SigningRequest& /*request*/, SigningKey& /*key*/)
-{
-    return makeFailure(SignFailureKind::EngineError,
-                       "the DSS test-oracle backend signs only through a PKCS#11 module it opens itself");
 }
 
 SigningResult DSSSigningService::appendSigner(const SigningRequest& /*request*/,
                                               std::span<const uint8_t> /*priorSignature*/,
                                               std::span<const uint8_t> /*originalDocument*/, SigningKey& /*key*/)
 {
-    return makeFailure(SignFailureKind::EngineError,
-                       "the DSS test-oracle backend signs only through a PKCS#11 module it opens itself");
+    return makeFailure(SignFailureKind::EngineError, "appendSigner is not implemented by the DSS test-oracle backend");
 }
 
 } // namespace libresign

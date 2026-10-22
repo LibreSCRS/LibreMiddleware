@@ -4,13 +4,13 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include "signing_keys.h"
 #include "signing_test_support/signing_test_support.h"
 
 #ifdef LIBRESIGN_HAS_NATIVE
 
 #include "dss_validation_client.h"
 #include "native/native_signing_service.h"
-#include "native/pkcs11_module_manager.h"
 #include "types.h"
 
 #include <cstdlib>
@@ -30,8 +30,8 @@ using ::testing::Not;
 // engine emits. The end-to-end suite already ran that validator and printed
 // what came back; nothing asserted it. These cases assert it.
 //
-// The token is the software one CI provisions on both platforms, so the whole
-// suite runs wherever the validator does — no card, no reader, no PIN.
+// The key is held in memory, so the whole suite runs wherever the validator
+// does — no card, no reader, no PIN.
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -87,21 +87,9 @@ enum class OracleStatus {
 
 } // namespace
 
-class SoftHSM : public ::testing::TestWithParam<ConformanceCase>
+class InMemoryKey : public ::testing::TestWithParam<ConformanceCase>
 {
 protected:
-    void SetUp() override
-    {
-        softHsmPath = libresign::test::findSoftHsmPath();
-        if (!softHsmPath)
-            GTEST_SKIP() << "SoftHSM2 not found";
-        Pkcs11ModuleManager probe;
-        auto slot = libresign::test::findSoftHsmTestSlot(probe.acquire(softHsmPath));
-        if (!slot)
-            GTEST_SKIP() << "SoftHSM2 token '" << libresign::test::kSoftHsmTokenLabel << "' not initialised";
-        service.setTestSlotId(*slot);
-    }
-
     static std::vector<uint8_t> payload(DocKind kind)
     {
         std::string s;
@@ -135,7 +123,7 @@ protected:
             p.format == SignatureFormat::Pades ? SignaturePackaging::Enveloped : SignaturePackaging::Detached;
         req.level = SignatureLevel::B_B;
 
-        return service.sign(req, softHsmPath, libresign::as_pin("1234"), "test-key", "");
+        return service.sign(req, key);
     }
 
     /// Run the emitted bytes past the independent validator.
@@ -168,11 +156,11 @@ protected:
         return out.signatureCount > 0 ? OracleStatus::Ok : OracleStatus::Failed;
     }
 
-    const char* softHsmPath = nullptr;
     NativeSigningService service;
+    libresign::test::SoftSigningKey key{libresign::test::validSignerKey()};
 };
 
-INSTANTIATE_TEST_SUITE_P(SigningConformance, SoftHSM, ::testing::ValuesIn(kConformanceCases),
+INSTANTIATE_TEST_SUITE_P(SigningConformance, InMemoryKey, ::testing::ValuesIn(kConformanceCases),
                          [](const ::testing::TestParamInfo<ConformanceCase>& info) {
                              return std::string(info.param.name);
                          });
@@ -185,7 +173,7 @@ INSTANTIATE_TEST_SUITE_P(SigningConformance, SoftHSM, ::testing::ValuesIn(kConfo
 // structural-warning assertions the end-to-end suite depends on, and every one
 // of ITS call sites is behind a card gate. Without this case, the shared gate
 // would itself be code no run executes.
-TEST_P(SoftHSM, ReachesExpectedBaselineLevel)
+TEST_P(InMemoryKey, ReachesExpectedBaselineLevel)
 {
     std::vector<uint8_t> original;
     auto result = signCase(original);
@@ -202,7 +190,7 @@ TEST_P(SoftHSM, ReachesExpectedBaselineLevel)
 
 // A structurally invalid signature is one no other implementation has to
 // accept. The validator says so on every document; until now nothing listened.
-TEST_P(SoftHSM, CarriesNoStructuralWarning)
+TEST_P(InMemoryKey, CarriesNoStructuralWarning)
 {
     std::vector<uint8_t> original;
     auto result = signCase(original);

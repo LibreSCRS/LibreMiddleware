@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "native/native_signing_service.h"
-#include "native/pkcs11_token.h"
+#include "native/signing_key.h"
 #include "native/trusted_list_parser.h"
 #include "native/cades_module.h"
 #include "native/pades_module.h"
@@ -70,20 +70,6 @@ std::vector<uint8_t> loadCertFromFile(const std::string& path)
         return {};
 
     return native_utils::derEncode(static_cast<int (*)(const X509*, unsigned char**)>(i2d_X509), cert.get());
-}
-
-// Single construction point for the token both entry points sign with.
-// Production always resolves the slot from @p readerName; @p testSlotId is
-// the SoftHSM2 seam documented on NativeSigningService::setTestSlotId and is
-// never engaged outside the tests. Both returns are prvalues, so the
-// non-movable Token is constructed directly into the caller's storage.
-Pkcs11Token makeToken(Pkcs11ModuleHandle module, const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
-                      const std::string& readerName, const std::vector<uint8_t>& keyId,
-                      std::optional<unsigned long> testSlotId)
-{
-    if (testSlotId)
-        return Pkcs11Token(std::move(module), pin, keyAlias, Pkcs11Token::TestSlotId{*testSlotId}, keyId);
-    return Pkcs11Token(std::move(module), pin, keyAlias, readerName, keyId);
 }
 
 // Sniff signature format from prior bytes' magic. Used by @ref
@@ -485,41 +471,6 @@ std::optional<SigningResult> NativeSigningService::enforceSignerCertPolicy(Signi
     return std::nullopt;
 }
 
-SigningResult NativeSigningService::sign(const SigningRequest& request, const std::string& pkcs11ModulePath,
-                                         const LibreSCRS::Secure::Buffer& pin, const std::string& keyAlias,
-                                         const std::string& readerName)
-{
-    try {
-        // A detached CAdES input is refused BEFORE the token is opened, so
-        // it never costs a card session or a PIN attempt (see the
-        // multi-sign auto-detect in the overload below).
-        if (alreadySignedIn(request) == SignatureFormat::Cades)
-            return cadesInputIsDetached();
-
-        // Single mandatory ctor — legacy slotIndex=-1 / tokenLabel=""
-        // auto-pick paths were removed in 4.0 because they silently
-        // selected slots[0] under multi-card setups, routing PIN to
-        // the wrong card.
-        //
-        // SessionPresence auto-registration on the host side surfaces any
-        // live SM channel to the loaded librescrs-pkcs11 module's provider
-        // probe directly; the host's shared_ptr<CardSession> just needs to
-        // outlive this call so the registry's weak_ptr lookup resolves.
-        // The module handle comes from the service-owned manager so the
-        // module stays mapped across consecutive signs.
-        auto token =
-            makeToken(moduleManager.acquire(pkcs11ModulePath), pin, keyAlias, readerName, request.keyId, testSlotId);
-        return sign(request, token);
-    } catch (const SignFailureException& e) {
-        // Typed failure escaping the card layer (e.g. ambiguous CKA_ID key
-        // selection) — preserve its precise kind instead of collapsing it
-        // into the generic EngineError bucket below.
-        return makeFailure(e.kind, e.what());
-    } catch (const std::exception& e) {
-        return makeFailure(SignFailureKind::EngineError, std::string("Native signing error: ") + e.what());
-    }
-}
-
 SigningResult NativeSigningService::sign(const SigningRequest& request, SigningKey& key)
 {
     try {
@@ -593,34 +544,6 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, SigningK
         return makeFailure(e.kind, e.what());
     } catch (const std::exception& e) {
         return makeFailure(SignFailureKind::EngineError, std::string("Native signing error: ") + e.what());
-    }
-}
-
-SigningResult NativeSigningService::appendSigner(const SigningRequest& request, std::span<const uint8_t> priorSignature,
-                                                 std::span<const uint8_t> originalDocument,
-                                                 const LibreSCRS::Secure::Buffer& pin, const std::string& pkcs11Module,
-                                                 const std::string& keyAlias, const std::string& readerName)
-{
-    try {
-        // An input of no known format is refused before the token is opened.
-        if (!inferFormat(priorSignature))
-            return makeFailure(SignFailureKind::InvalidDocument,
-                               "appendSigner: cannot infer signature format from prior bytes");
-
-        // Mirror sign()'s Pkcs11Token construction. SessionPresence
-        // carries any live PACE/BAC SM channel from the host's display
-        // flow into the in-process PKCS#11 module's provider probe
-        // transparently — the caller's shared_ptr<CardSession> just needs
-        // to outlive this call so the registry's weak_ptr resolves.
-        auto token =
-            makeToken(moduleManager.acquire(pkcs11Module), pin, keyAlias, readerName, request.keyId, testSlotId);
-        return appendSigner(request, priorSignature, originalDocument, token);
-    } catch (const SignFailureException& e) {
-        // Typed failure escaping the card layer (e.g. ambiguous CKA_ID key
-        // selection) — preserve its precise kind, same as sign().
-        return makeFailure(e.kind, e.what());
-    } catch (const std::exception& e) {
-        return makeFailure(SignFailureKind::EngineError, std::string("Native appendSigner error: ") + e.what());
     }
 }
 

@@ -6,8 +6,7 @@
 #ifdef LIBRESIGN_HAS_NATIVE
 
 #include "native/jades_module.h"
-#include "native/pkcs11_module_manager.h"
-#include "native/pkcs11_token.h"
+#include "signing_keys.h"
 #include "signing_test_support/mock_tsa_server.h"
 #include "signing_test_support/signing_test_support.h"
 #include "signing_service.h"
@@ -59,48 +58,30 @@ bool etsiUHasComponent(const nlohmann::json& etsiU, const char* key)
 class JAdESModuleTest : public ::testing::Test
 {
 protected:
-    void SetUp() override
-    {
-        softHsmPath = libresign::test::findSoftHsmPath();
-        if (!softHsmPath)
-            GTEST_SKIP() << "SoftHSM2 not found";
-        auto slot = libresign::test::findSoftHsmTestSlot(manager.acquire(softHsmPath));
-        if (!slot)
-            GTEST_SKIP() << "SoftHSM2 token '" << libresign::test::kSoftHsmTokenLabel << "' not initialised";
-        testSlot = *slot;
-    }
-
     /// Sign @p data with the valid signer at @p level.
     SigningResult signFirst(const std::vector<uint8_t>& data, SignatureLevel level, const TSAConfig& tsa)
     {
         JAdESModule jades;
-        Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                          libresign::Pkcs11Token::TestSlotId{testSlot});
+        libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
         return jades.sign(data, "test.txt", token, level, SignaturePackaging::Detached, tsa);
     }
 
-    /// Append using the OTHER key pair on the token, so the new entry is
-    /// distinguishable from the prior one. Module-level appendSigner applies no
+    /// Append with the OTHER test key, so the new entry is distinguishable
+    /// from the prior one. Module-level appendSigner applies no
     /// expiry policy (that lives in NativeSigningService), so the expired pair
     /// signs normally here.
     SigningResult appendSecond(const std::vector<uint8_t>& prior, const std::vector<uint8_t>& originalDoc,
                                SignatureLevel level, const TSAConfig& tsa)
     {
         JAdESModule jades;
-        Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"),
-                          libresign::test::kSoftHsmExpiredKeyLabel, libresign::Pkcs11Token::TestSlotId{testSlot});
+        libresign::test::SoftSigningKey token(libresign::test::expiredSignerKey());
         return jades.appendSigner(prior, originalDoc, "test.txt", token, level, tsa);
     }
-
-    const char* softHsmPath = nullptr;
-    libresign::Pkcs11ModuleManager manager;
-    unsigned long testSlot = 0;
 };
 
 TEST_F(JAdESModuleTest, SignBB_ProducesValidJWS)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     JAdESModule jades;
 
     std::vector<uint8_t> data = {'H', 'e', 'l', 'l', 'o'};
@@ -122,8 +103,7 @@ TEST_F(JAdESModuleTest, SignBB_ProducesValidJWS)
 
 TEST_F(JAdESModuleTest, SignBB_DetachedOmitsPayload)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     JAdESModule jades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
@@ -143,8 +123,7 @@ TEST_F(JAdESModuleTest, SignBB_DetachedOmitsPayload)
 
 TEST_F(JAdESModuleTest, SignBB_EnvelopedHasPayload)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     JAdESModule jades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
@@ -162,8 +141,7 @@ TEST_F(JAdESModuleTest, SignBB_EnvelopedHasPayload)
 
 TEST_F(JAdESModuleTest, SignBB_ProtectedHeaderContainsRequiredFields)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     JAdESModule jades;
 
     std::vector<uint8_t> data = {'H', 'e', 'l', 'l', 'o'};
@@ -216,8 +194,7 @@ TEST_F(JAdESModuleTest, SignBB_ProtectedHeaderContainsRequiredFields)
 
 TEST_F(JAdESModuleTest, SignBB_DifferentDataProducesDifferentSignature)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     JAdESModule jades;
 
     std::vector<uint8_t> data1 = {'A', 'B', 'C'};
@@ -233,8 +210,7 @@ TEST_F(JAdESModuleTest, SignBB_DifferentDataProducesDifferentSignature)
 
 TEST_F(JAdESModuleTest, SignBB_NoEtsiUHeader)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     JAdESModule jades;
 
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
@@ -304,7 +280,7 @@ TEST_F(JAdESModuleTest, AppendSignerAtBBAddsNoEtsiU)
 }
 
 // B-LT on append now reaches the long-term revocation gate instead of being
-// refused up front. The SoftHSM token's single self-signed leaf is a chain of
+// refused up front. The in-memory signer's single self-signed leaf is a chain of
 // length one, so the tail is unprovable and the gate must fail closed.
 TEST_F(JAdESModuleTest, AppendSignerAtLongTermRejectsUnterminatedChain)
 {
@@ -341,25 +317,12 @@ TEST_F(JAdESModuleTest, AppendSignerRejectsArchiveLevel)
     EXPECT_EQ(*appended.failureKind, SignFailureKind::PolicyViolation) << appended.errorMessage;
 }
 
-// Non-SoftHSM tests
-
 TEST(JAdESModuleStandalone, BTRequiresTSA)
 {
-    // Cannot actually test without SoftHSM, but verifies the interface
     JAdESModule jades;
     std::vector<uint8_t> data = {'T', 'e', 's', 't'};
 
-    const char* hsmPath = libresign::test::findSoftHsmPath();
-    if (!hsmPath)
-        GTEST_SKIP() << "SoftHSM2 not found";
-
-    libresign::Pkcs11ModuleManager localManager;
-    auto slot = libresign::test::findSoftHsmTestSlot(localManager.acquire(hsmPath));
-    if (!slot)
-        GTEST_SKIP() << "SoftHSM2 token '" << libresign::test::kSoftHsmTokenLabel << "' not initialised";
-
-    Pkcs11Token token(localManager.acquire(hsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{*slot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     TSAConfig emptyTsa; // empty URL
     auto result = jades.sign(data, "test.txt", token, SignatureLevel::B_T, SignaturePackaging::Detached, emptyTsa);
 
@@ -368,15 +331,14 @@ TEST(JAdESModuleStandalone, BTRequiresTSA)
     EXPECT_FALSE(result.errorMessage.empty());
 }
 
-// Non-SoftHSM tests
+// Tests whose key never signs
 
 TEST(JAdESModuleStandalone, RejectsEmptyInput)
 {
     JAdESModule jades;
     std::vector<uint8_t> empty;
     // Token is never touched — sign() returns early on empty input.
-    alignas(Pkcs11Token) char storage[sizeof(Pkcs11Token)]{};
-    auto& dummyToken = *reinterpret_cast<Pkcs11Token*>(storage);
+    libresign::test::SoftSigningKey dummyToken(libresign::test::validSignerKey());
     auto result = jades.sign(empty, "test.json", dummyToken, SignatureLevel::B_B, SignaturePackaging::Detached, {});
     ASSERT_FALSE(result.success);
     EXPECT_NE(result.errorMessage.find("empty"), std::string::npos);

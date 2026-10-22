@@ -6,8 +6,7 @@
 #ifdef LIBRESIGN_HAS_NATIVE
 
 #include "native/pades_module.h"
-#include "native/pkcs11_module_manager.h"
-#include "native/pkcs11_token.h"
+#include "signing_keys.h"
 #include "signing_test_support/signing_test_support.h"
 #include "signing_service.h"
 
@@ -37,7 +36,7 @@ static bool containsString(const std::vector<uint8_t>& data, std::string_view ne
     return sv.find(needle) != std::string_view::npos;
 }
 
-// ---- Tests that don't require a PKCS#11 token ----
+// ---- Tests that don't sign ----
 
 TEST(PAdESModule, MinimalPdfIsValid)
 {
@@ -58,8 +57,7 @@ TEST(PAdESModule, RejectsEmptyInput)
     std::vector<uint8_t> empty;
     // Token is never touched — sign() returns early on invalid PDF.
     // Use aligned storage to create a valid reference without constructing a real object.
-    alignas(Pkcs11Token) char storage[sizeof(Pkcs11Token)]{};
-    auto& dummyToken = *reinterpret_cast<Pkcs11Token*>(storage);
+    libresign::test::SoftSigningKey dummyToken(libresign::test::validSignerKey());
     auto result = pades.sign(empty, dummyToken, SignatureLevel::B_B, {}, {});
     ASSERT_FALSE(result.success);
     EXPECT_TRUE(result.errorMessage.find("too small") != std::string::npos);
@@ -69,8 +67,7 @@ TEST(PAdESModule, RejectsNonPdf)
 {
     PAdESModule pades;
     std::vector<uint8_t> notPdf = {'N', 'O', 'T', 'P', 'D', 'F'};
-    alignas(Pkcs11Token) char storage[sizeof(Pkcs11Token)]{};
-    auto& dummyToken = *reinterpret_cast<Pkcs11Token*>(storage);
+    libresign::test::SoftSigningKey dummyToken(libresign::test::validSignerKey());
     auto result = pades.sign(notPdf, dummyToken, SignatureLevel::B_B, {}, {});
     ASSERT_FALSE(result.success);
     EXPECT_TRUE(result.errorMessage.find("not a valid PDF") != std::string::npos);
@@ -92,8 +89,7 @@ TEST(PAdESModule, RejectsTrulyCorruptPdf)
     ASSERT_EQ(jv.find("%PDF-"), std::string_view::npos);
 
     PAdESModule pades;
-    alignas(Pkcs11Token) char storage[sizeof(Pkcs11Token)]{};
-    auto& dummyToken = *reinterpret_cast<Pkcs11Token*>(storage);
+    libresign::test::SoftSigningKey dummyToken(libresign::test::validSignerKey());
     auto result = pades.sign(junk, dummyToken, SignatureLevel::B_B, {}, {});
     ASSERT_FALSE(result.success);
     EXPECT_TRUE(result.errorMessage.find("missing %PDF- header") != std::string::npos) << result.errorMessage;
@@ -219,30 +215,11 @@ TEST(PAdESModule, AppearanceStreamFontSizeMatchesLayout)
     EXPECT_NE(s.find(buf), std::string::npos) << "stream:\n" << s;
 }
 
-// ---- SoftHSM-based tests ----
+// ---- Tests that sign ----
 
-class PAdESModuleSoftHSMTest : public ::testing::Test
+TEST(PAdESModuleInMemoryKeyTest, SignPdf_BB)
 {
-protected:
-    void SetUp() override
-    {
-        softHsmPath = libresign::test::findSoftHsmPath();
-        if (!softHsmPath)
-            GTEST_SKIP() << "SoftHSM2 not found";
-        auto slot = libresign::test::findSoftHsmTestSlot(manager.acquire(softHsmPath));
-        if (!slot)
-            GTEST_SKIP() << "SoftHSM2 token '" << libresign::test::kSoftHsmTokenLabel << "' not initialised";
-        testSlot = *slot;
-    }
-    const char* softHsmPath = nullptr;
-    libresign::Pkcs11ModuleManager manager;
-    unsigned long testSlot = 0;
-};
-
-TEST_F(PAdESModuleSoftHSMTest, SignPdf_BB)
-{
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     auto pdf = testPdfBytes();
     PAdESModule pades;
 
@@ -269,10 +246,9 @@ TEST_F(PAdESModuleSoftHSMTest, SignPdf_BB)
     EXPECT_EQ(tail, "%%EOF\n");
 }
 
-TEST_F(PAdESModuleSoftHSMTest, SignPdf_BB_WithVisual)
+TEST(PAdESModuleInMemoryKeyTest, SignPdf_BB_WithVisual)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     auto pdf = testPdfBytes();
     PAdESModule pades;
 
@@ -300,10 +276,9 @@ TEST_F(PAdESModuleSoftHSMTest, SignPdf_BB_WithVisual)
     ASSERT_FALSE(containsString(result.signedDocument, "/BaseFont /Helvetica"));
 }
 
-TEST_F(PAdESModuleSoftHSMTest, SignPdf_BB_WithUnicodeVisual)
+TEST(PAdESModuleInMemoryKeyTest, SignPdf_BB_WithUnicodeVisual)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     auto pdf = testPdfBytes();
     PAdESModule pades;
 
@@ -335,10 +310,9 @@ TEST_F(PAdESModuleSoftHSMTest, SignPdf_BB_WithUnicodeVisual)
     ASSERT_FALSE(containsString(out, "/BaseFont /Helvetica"));
 }
 
-TEST_F(PAdESModuleSoftHSMTest, SignPdf_BB_InvisibleSignature)
+TEST(PAdESModuleInMemoryKeyTest, SignPdf_BB_InvisibleSignature)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     auto pdf = testPdfBytes();
     PAdESModule pades;
 
@@ -353,10 +327,9 @@ TEST_F(PAdESModuleSoftHSMTest, SignPdf_BB_InvisibleSignature)
     ASSERT_FALSE(containsString(result.signedDocument, "/Type /XObject"));
 }
 
-TEST_F(PAdESModuleSoftHSMTest, SignedPdfHasValidIncrementalUpdate)
+TEST(PAdESModuleInMemoryKeyTest, SignedPdfHasValidIncrementalUpdate)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     auto pdf = testPdfBytes();
     PAdESModule pades;
 
@@ -388,10 +361,9 @@ TEST_F(PAdESModuleSoftHSMTest, SignedPdfHasValidIncrementalUpdate)
 // PAdES-BASELINE-B. OpenSSL adds it unless told not to, so this pins the one
 // flag that keeps it out. Structural, no validator and no Java: it fails in
 // milliseconds on every leg and both platforms.
-TEST_F(PAdESModuleSoftHSMTest, SignBB_PadesCmsCarriesNoSigningTime)
+TEST(PAdESModuleInMemoryKeyTest, SignBB_PadesCmsCarriesNoSigningTime)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     auto pdf = testPdfBytes();
     PAdESModule pades;
 
@@ -441,10 +413,9 @@ TEST_F(PAdESModuleSoftHSMTest, SignBB_PadesCmsCarriesNoSigningTime)
         << "EN 319 142-1 forbids the signing-time signed attribute in a PAdES baseline signature";
 }
 
-TEST_F(PAdESModuleSoftHSMTest, ContentsHexIsNonZero)
+TEST(PAdESModuleInMemoryKeyTest, ContentsHexIsNonZero)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     auto pdf = testPdfBytes();
     PAdESModule pades;
 
@@ -462,10 +433,9 @@ TEST_F(PAdESModuleSoftHSMTest, ContentsHexIsNonZero)
     EXPECT_NE(hexView, "0000000000000000") << "Contents hex appears to be all zeros (CMS not embedded)";
 }
 
-TEST_F(PAdESModuleSoftHSMTest, ByteRangeIsFilledIn)
+TEST(PAdESModuleInMemoryKeyTest, ByteRangeIsFilledIn)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     auto pdf = testPdfBytes();
     PAdESModule pades;
 
@@ -532,13 +502,12 @@ static std::vector<uint8_t> wrapPdfWithForm(const std::vector<uint8_t>& inner, s
 
 } // namespace
 
-TEST_F(PAdESModuleSoftHSMTest, SignsWrappedPdf_InnerRelativeStartxref)
+TEST(PAdESModuleInMemoryKeyTest, SignsWrappedPdf_InnerRelativeStartxref)
 {
     // Multipart/form-data wrapper around a clean PDF. startxref value inside
     // the inner PDF is unchanged — after prefix/suffix strip the offset is
     // already correct, no fallback scan needed.
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     auto inner = testPdfBytes();
     auto wrapped = wrapPdfWithForm(inner, /*bumpStartxrefBy=*/0);
 
@@ -557,14 +526,13 @@ TEST_F(PAdESModuleSoftHSMTest, SignsWrappedPdf_InnerRelativeStartxref)
     EXPECT_TRUE(containsString(result.signedDocument, "/Type /Sig"));
 }
 
-TEST_F(PAdESModuleSoftHSMTest, SignsWrappedPdf_OuterRelativeStartxref)
+TEST(PAdESModuleInMemoryKeyTest, SignsWrappedPdf_OuterRelativeStartxref)
 {
     // Same wrapper, but the inner PDF's startxref value has been bumped by
     // the prefix length to simulate a generator that wrote outer-relative
     // offsets. After strip, the stored offset overruns; the fallback xref
     // keyword scan must recover.
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     auto inner = testPdfBytes();
     auto wrapped = wrapPdfWithForm(inner, /*bumpStartxrefBy=*/kWebFormPrefix.size());
 
@@ -580,15 +548,14 @@ TEST_F(PAdESModuleSoftHSMTest, SignsWrappedPdf_OuterRelativeStartxref)
 // The long-term revocation gate is reached through appendSigner, not only
 // through sign(). appendSigner delegates to sign() with the prior PDF as
 // input, so the B-LT chain check runs on the appended signer exactly as it
-// does on a first signer. The SoftHSM token carries a single self-signed
+// does on a first signer. The in-memory signer carries a single self-signed
 // leaf, which is a chain of length one: no Trusted-List anchor completed it
 // and no issuer hop reaches a verified root, so the tail is unprovable and
 // the gate must fail closed with CertificateChainIncomplete rather than
 // emit a long-term signature with no verifiable revocation evidence.
-TEST_F(PAdESModuleSoftHSMTest, AppendSignerAtLongTermRejectsUnterminatedChain)
+TEST(PAdESModuleInMemoryKeyTest, AppendSignerAtLongTermRejectsUnterminatedChain)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     PAdESModule pades;
 
     auto prior = pades.sign(testPdfBytes(), token, SignatureLevel::B_B, {}, {});

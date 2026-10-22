@@ -9,9 +9,8 @@
 /// Acceptance: line count exact match, font size within ±0.5 pt,
 /// total text height within ±5 %.
 ///
-/// Gated on `LIBRESIGN_HAS_DSS` AND a running DSS Java service AND
-/// SoftHSM2 installed. Skips silently in the default native-only CI
-/// path. To run:
+/// Gated on `LIBRESIGN_HAS_DSS` AND a running DSS Java service. Skips
+/// silently in the default native-only CI path. To run:
 ///   cmake -DSIGNING_BACKEND=both ...
 ///   ctest -R pades_dss_oracle
 
@@ -67,7 +66,7 @@ size_t countTjLines(std::string_view stream)
 // the native emitter ever drifts from it, the oracle is invalidated.
 //
 // This test runs unconditionally (under SIGNING_BACKEND=native|both)
-// because it has no DSS or SoftHSM dependency. The full DSS oracle
+// because it has no DSS dependency. The full DSS oracle
 // (DSSCompareLayoutMetrics below) is gated.
 TEST(PAdESDssOracle, NativeEmitterMatchesLayoutAPI)
 {

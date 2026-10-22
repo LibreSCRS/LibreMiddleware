@@ -14,11 +14,11 @@ CancellationNviTests 4
 CardPluginDecipherDefaultTest 2
 CardSessionApiInvariantTest 1
 ContactInfoIntegrationTests 2
-CrossBackendTests 3
+CrossBackendTests 2
 CrossProviderCoordinationTests 14
 DSSIntegrationTests 2
 DSSServiceManagerTests 4
-DSSSigningServiceTests 4
+DSSSigningServiceTests 3
 DecipherTypesTest 3
 DocpParserTests 4
 ECSigningTests 9
@@ -50,7 +50,7 @@ LibreSCRS_PlainChannelTests 6
 LibreSCRS_SecureAllocatorTests 3
 LibreSCRS_SecureBufferTests 10
 LibreSCRS_SecureStringTests 28
-LibreSCRS_SigningTests 50
+LibreSCRS_SigningTests 54
 LibreSCRS_SmChannelTests 18
 LibreSignTests 4
 LocalizedTextFactoriesTests 17
@@ -84,9 +84,6 @@ PinLifecycleDerivationTests 24
 PinLifecycleFieldsTests 4
 PinLifecycleVirtualsTests 2
 PivAidPatchTest 1
-Pkcs11ModuleManagerTests 11
-Pkcs11ModulePathTests 7
-Pkcs11TokenTests 8
 Pkcs15ChangePinSelectorTests 4
 Pkcs15EcdsaSignatureTests 16
 Pkcs15PinLifecycleTests 39
@@ -109,11 +106,10 @@ SecureWipeTests 2
 SessionPresenceTest 8
 SessionTransmitTest 5
 SigningConformanceTests 14
-SigningE2ETests 191
+SigningE2ETests 187
 SigningFailureKindTests 4
 SigningIntegrationTests 3
-SigningProviderTests 5
-SigningProviderKeymgmtTests 1
+SigningProviderKeymgmtTests 3
 SigningRequestTsaOverrideTest 2
 SlotHashTests 9
 TSAClientTests 3

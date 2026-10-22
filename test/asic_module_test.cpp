@@ -6,8 +6,7 @@
 #ifdef LIBRESIGN_HAS_NATIVE
 
 #include "native/asic_module.h"
-#include "native/pkcs11_module_manager.h"
-#include "native/pkcs11_token.h"
+#include "signing_keys.h"
 #include "native/zip_records.h"
 #include "signing_test_support/mock_tsa_server.h"
 #include "signing_test_support/signing_test_support.h"
@@ -632,28 +631,9 @@ TEST(ZipRecordsTest, MinizReadsAnArchiveClosedByTheZip64Records)
     mz_zip_reader_end(&reader);
 }
 
-class ASiCModuleSoftHSMTest : public ::testing::Test
+TEST(ASiCModuleInMemoryKeyTest, SignWithCAdES_ProducesValidZip)
 {
-protected:
-    void SetUp() override
-    {
-        softHsmPath = libresign::test::findSoftHsmPath();
-        if (!softHsmPath)
-            GTEST_SKIP() << "SoftHSM2 not found";
-        auto slot = libresign::test::findSoftHsmTestSlot(manager.acquire(softHsmPath));
-        if (!slot)
-            GTEST_SKIP() << "SoftHSM2 token '" << libresign::test::kSoftHsmTokenLabel << "' not initialised";
-        testSlot = *slot;
-    }
-    const char* softHsmPath = nullptr;
-    libresign::Pkcs11ModuleManager manager;
-    unsigned long testSlot = 0;
-};
-
-TEST_F(ASiCModuleSoftHSMTest, SignWithCAdES_ProducesValidZip)
-{
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     ASiCModule asic;
 
     std::vector<uint8_t> data = {'H', 'e', 'l', 'l', 'o'};
@@ -734,7 +714,7 @@ TEST_F(ASiCModuleSoftHSMTest, SignWithCAdES_ProducesValidZip)
 // working RFC 3161 step first — B-LT implies B-T, and CAdESModule::sign
 // timestamps before it collects revocation material, so with no TSA the append
 // fails at the timestamp and never gets to the gate. With one supplied, the
-// SoftHSM token's single self-signed leaf is a chain of length one: no
+// in-memory signer's single self-signed leaf is a chain of length one: no
 // Trusted-List anchor completed it and no issuer hop reaches a verified root,
 // so the tail is unprovable and the gate must fail closed rather than emit a
 // long-term signature with no verifiable revocation evidence.
@@ -742,10 +722,9 @@ TEST_F(ASiCModuleSoftHSMTest, SignWithCAdES_ProducesValidZip)
 // the per-entry ceiling must come back as a refusal with a reason. Before this
 // it came back as a SUCCESS carrying the prior container wrapped as a fresh data
 // file -- the user saw a signed document and a validator saw one signature.
-TEST_F(ASiCModuleSoftHSMTest, SignWithCAdES_RefusesAContainerEntryOverTheCeiling)
+TEST(ASiCModuleInMemoryKeyTest, SignWithCAdES_RefusesAContainerEntryOverTheCeiling)
 {
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     ASiCModule asic;
 
     const auto oversized = asicWithDataFileOfSize(libresign::detail::maxContainerEntryBytes() + 1);
@@ -760,11 +739,10 @@ TEST_F(ASiCModuleSoftHSMTest, SignWithCAdES_RefusesAContainerEntryOverTheCeiling
     EXPECT_NE(result.errorMessage.find("MiB"), std::string::npos) << result.errorMessage;
 }
 
-TEST_F(ASiCModuleSoftHSMTest, AppendSignerAtLongTermRejectsUnterminatedChain)
+TEST(ASiCModuleInMemoryKeyTest, AppendSignerAtLongTermRejectsUnterminatedChain)
 {
     libresign::test::MockTsaServer tsaServer;
-    Pkcs11Token token(manager.acquire(softHsmPath), libresign::as_pin("1234"), "test-key",
-                      libresign::Pkcs11Token::TestSlotId{testSlot});
+    libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     ASiCModule asic;
 
     std::vector<uint8_t> data = {'A', 'S', 'i', 'C'};

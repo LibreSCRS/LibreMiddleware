@@ -137,7 +137,7 @@ jobs:
             libcurl4-openssl-dev libxml2-dev \
             pkg-config autoconf automake libtool \
             cmake ninja-build python3-jsonschema \
-            softhsm2 opensc clang \
+            opensc clang \
             poppler-utils
 
       - name: Build OpenSC ${{ env.OPENSC_VERSION }} from source
@@ -286,14 +286,6 @@ jobs:
           name: abi-layout-snapshot
           path: build/abi-layout-snapshot.txt
 
-      - name: Bootstrap SoftHSM2 test token
-        # Provisions the isolated token store the CAdES/PAdES/JAdES/XAdES/
-        # ASiC-E, NativeSigningService and Pkcs11ModuleManager suites need —
-        # without it they GTEST_SKIP() outright (findSoftHsmPath() /
-        # findSoftHsmTestSlot() come up empty). Exports SOFTHSM2_CONF and
-        # SOFTHSM2_LIB via $GITHUB_ENV so the Test step below inherits them.
-        run: ./ci/scripts/softhsm-bootstrap.sh
-
       - name: Set up Java for the ETSI validation oracle
         # Only the leg that compiles the oracle in. The other one would download
         # a JDK it never opens.
@@ -411,7 +403,7 @@ jobs:
             libcurl4-openssl-dev libxml2-dev \
             pkg-config autoconf automake libtool \
             cmake ninja-build python3-jsonschema \
-            softhsm2 opensc \
+            opensc \
             poppler-utils
 
       - name: Build OpenSC ${{ env.OPENSC_VERSION }} from source
@@ -449,14 +441,6 @@ jobs:
           gates: test-floor
           build-dir: build-asan
           floor: ci/test-floor.native.txt
-
-      - name: Bootstrap SoftHSM2 test token
-        # The same token store build-linux provisions. Without it the software
-        # token suites do not skip here: the module is found, C_Initialize
-        # cannot read a configuration and returns CKR_GENERAL_ERROR, and every
-        # signing and module-manager case fails. Exports SOFTHSM2_CONF and
-        # SOFTHSM2_LIB via $GITHUB_ENV for the step below.
-        run: ./ci/scripts/softhsm-bootstrap.sh
 
       - name: Test under the sanitizers
         # The hardware suites need a reader and self-skip without one; excluding
@@ -536,10 +520,7 @@ jobs:
           # autoconf/automake/libtool/pkg-config are required by the vendored
           # OpenSC autoconf bootstrap (thirdparty/opensc-source/bootstrap →
           # autoreconf -fi). Homebrew's ninja covers the LM build itself.
-          # softhsm installs libsofthsm2.so under /opt/homebrew/lib/softhsm/
-          # — the exact path findSoftHsmPath() already carries as its macOS
-          # fallback.
-          brew install ninja opensc softhsm autoconf automake libtool pkg-config
+          brew install ninja opensc autoconf automake libtool pkg-config
           # manifest2header.py hard-fails when jsonschema is missing
           # (the schema gates the codegen step against malformed manifests).
           python3 -m pip install --break-system-packages --user jsonschema
@@ -560,12 +541,6 @@ jobs:
 
       - name: The OpenSC card plugin carries no PC/SC reader driver
         run: ./ci/scripts/check-opensc-plugin-no-pcsc.sh build
-
-      - name: Bootstrap SoftHSM2 test token
-        # Same store this repo's Linux legs provision — see
-        # ci/scripts/softhsm-bootstrap.sh. Exports SOFTHSM2_CONF and
-        # SOFTHSM2_LIB via $GITHUB_ENV so the Test step below inherits them.
-        run: ./ci/scripts/softhsm-bootstrap.sh
 
       - name: Test
         # --test-dir build, not build/test: several library subdirectories

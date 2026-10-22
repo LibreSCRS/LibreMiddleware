@@ -55,8 +55,8 @@ jobs:
             -DBUILD_TESTING=OFF
 
       - name: Build
-        # bench_signing is gated on SoftHSM availability and not built in
-        # the default LibreSCRS_BUILD_BENCH=ON configuration; the four
+        # bench_signing is not written yet and is not built in the
+        # default LibreSCRS_BUILD_BENCH=ON configuration; the four
         # released bench binaries cover ParsedCertificate, validateChain
         # depth 1/3/5, and TrustStoreService::create. Re-add to the
         # target list when the bench harness for SigningService::sign
