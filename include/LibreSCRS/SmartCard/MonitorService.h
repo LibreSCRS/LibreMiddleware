@@ -98,6 +98,13 @@ struct MonitorEvent
 /// not abort the poll thread; misbehaving subscribers cannot tear down the
 /// MonitorService for unrelated subscribers in the same process.
 ///
+/// @par macOS
+/// On macOS the event source is CryptoTokenKit, which reports a second reader
+/// as soon as it is plugged in. The process must be signed with the
+/// @c com.apple.security.smartcard entitlement; without it the monitor reports
+/// one @ref MonitorEvent::Kind::Error event and no other. On Linux the source
+/// is PC/SC.
+///
 /// Non-copyable, non-movable. A MonitorService owns a live poll thread and
 /// a subscription table keyed by stable @ref SubscriptionId tokens;
 /// subscribers installed before any move would still reference the

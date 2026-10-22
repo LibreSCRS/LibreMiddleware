@@ -57,6 +57,10 @@ number again at the next operation. Keeping exactly one LibreSCRS provider per
 host is what prevents this, and that is a property of the packaging, not of the
 library.
 
+On macOS the agent's hold on a card is exclusive at the system level: a card
+session holds the card through CryptoTokenKit until it is closed, and the
+direct module is not built for macOS.
+
 **The direct module is exclusive with the agent on the same reader.** It is not
 published as a package in 5.0 — it is built for tests and installed
 unregistered — and a host that registers it by hand takes on this limit:
