@@ -606,8 +606,7 @@ jobs:
           cmake --build build-install -j4
           sudo cmake --install build-install
 
-      # Registration belongs to the agent proxy, or on a host with no agent to
-      # the librescrs-pkcs11-direct package. A plain install must contribute
+      # Registration belongs to the agent proxy. A plain install must contribute
       # the library and no declaration at all -- a property of the finished
       # install, measured twice: the install's own manifest names no p11-kit
       # .module file (wherever it went, so a declaration that p11-kit is told
