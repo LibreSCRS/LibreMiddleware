@@ -125,7 +125,7 @@ APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
     //   0x20 VERIFY
     //   0x24 CHANGE REFERENCE DATA
     //   0x2C RESET RETRY COUNTER (PUK + new PIN in P1=0x00/0x02 forms)
-    bool isSensitive = cmdLen >= 2 && (cmdBytes[1] == 0x20 || cmdBytes[1] == 0x24 || cmdBytes[1] == 0x2C);
+    bool isSensitive = cmdLen >= 2 && isSensitiveIns(cmdBytes[1]);
     std::cerr << "[PCSC] TX (" << cmdLen << " bytes,"
               << " protocol=" << (activeProtocol == SCARD_PROTOCOL_T0 ? "T=0" : "T=1") << "):";
     DWORD headerLen = std::min(cmdLen, static_cast<DWORD>(isSensitive ? 5 : cmdLen));
@@ -148,11 +148,16 @@ APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
     LONG rv = SCardTransmit(card, pioSendPci, cmdBytes, cmdLen, nullptr, recvBuffer.data(), &recvLength);
     if (rv == static_cast<LONG>(SCARD_W_RESET_CARD)) {
         // Card was reset (e.g. hot-swap or external reset). Re-establish the
-        // handle without physically resetting the card, then retry once.
+        // handle without physically resetting the card, then retry once --
+        // unless the command carries a PIN: resent, it could spend a try on a
+        // card whose verified state the reset cleared, or on another card.
 #ifndef NDEBUG
         std::cerr << "[PCSC] SCardTransmit got RESET_CARD, reconnecting..." << std::endl;
 #endif
         reconnect();
+        if (cmdLen >= 2 && isSensitiveIns(cmdBytes[1])) {
+            throw PCSCError("SCardTransmit failed", rv);
+        }
         pioSendPci = (activeProtocol == SCARD_PROTOCOL_T0) ? SCARD_PCI_T0 : SCARD_PCI_T1;
         recvLength = static_cast<DWORD>(recvBuffer.size());
         rv = SCardTransmit(card, pioSendPci, cmdBytes, cmdLen, nullptr, recvBuffer.data(), &recvLength);
