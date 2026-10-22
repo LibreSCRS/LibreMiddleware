@@ -360,23 +360,27 @@ TEST(OpenscProbeLiveSm, ReprobeErasesPredecessorGenerationsOfSameReader)
 namespace {
 
 /// Assembles an OpenSCSession the way the probe's deferred-claim branch
-/// does: real sc_context + bridge bound to a detached connection,
-/// requiresPace set, bind deferred.
+/// does: a lease on a real plugin context + bridge bound to a detached
+/// connection, requiresPace set, bind deferred.
 struct DeferredSessionFixture
 {
     DeferredSessionFixture()
     {
         s = std::make_shared<OpenSCSession>();
         s->readerName = "ChannelTestReader";
-        if (sc_establish_context(&s->ctx, "librescrs-lifecycle-test") != 0)
+        sc_context_t* ctx = owner.context();
+        if (!ctx)
             std::abort();
+        s->context = owner.lease();
         s->bridge = std::make_unique<LibreSCRS::OpenSc::Bridge::OpenScBridge>();
         s->bridge->data.conn = &conn;
         s->bridge->readerName = s->readerName;
-        LibreSCRS::OpenSc::Bridge::initBridgeReader(s->ctx, *s->bridge, kTestAtr);
+        LibreSCRS::OpenSc::Bridge::initBridgeReader(ctx, *s->bridge, kTestAtr);
         s->requiresPace = true;
     }
 
+    // Declared first so it outlives the session that leases it.
+    LibreSCRS::OpenSc::PluginContext owner;
     PCSCConnection conn{PCSCConnection::DetachedTag{}, "ChannelTestReader"};
     std::shared_ptr<OpenSCSession> s;
 };
@@ -410,7 +414,7 @@ TEST(OpenscChannelRun, ActivationFailureWithoutLiveChannelIsCredentialsRequired)
     EXPECT_FALSE(ran);
     // Activation failure with bound==true must NOT reset card state.
     EXPECT_TRUE(f.s->bound);
-    EXPECT_NE(f.s->ctx, nullptr);
+    EXPECT_NE(f.s->context.get(), nullptr);
 }
 
 // The bridge opens its OWN PC/SC transaction per libopensc call whenever none
@@ -695,9 +699,9 @@ TEST(OpenscChannelRun, BindFailureResetsCardStateButPreservesContext)
     EXPECT_FALSE(f.s->bound);
     EXPECT_EQ(f.s->card, nullptr);
     EXPECT_EQ(f.s->p15card, nullptr);
-    EXPECT_NE(f.s->ctx, nullptr);      // partial teardown never touches ctx
-    EXPECT_NE(f.s->bridge, nullptr);   // nor the bridge
-    EXPECT_GT(channel.transmits(), 0); // the bind DID ride the tunnel
+    EXPECT_NE(f.s->context.get(), nullptr); // partial teardown never touches the context
+    EXPECT_NE(f.s->bridge, nullptr);        // nor the bridge
+    EXPECT_GT(channel.transmits(), 0);      // the bind DID ride the tunnel
 
     // A second run starts a FRESH sc_connect_card over the same ctx/bridge —
     // no second sc_card piles up on the bridge (ASan would flag the leak).
@@ -739,7 +743,7 @@ TEST(OpenscChannelRun, ChannelDeathIsJudgedByStateAndTriggersReset)
         kNoHolderRelease);
     EXPECT_TRUE(report.channelFatal);
     EXPECT_FALSE(f.s->bound); // resetCardState ran
-    EXPECT_NE(f.s->ctx, nullptr);
+    EXPECT_NE(f.s->context.get(), nullptr);
 }
 
 TEST(OpenscChannelRun, BenignStatusWordDoesNotReset)
@@ -964,19 +968,153 @@ TEST(OpenscSessionOwnership, TeardownRunsAtLastOwnerRelease)
     // copy before any I/O. A probe/clearCredentials erase removes ONLY the
     // map entry — the libopensc teardown runs when the LAST owner (here: the
     // pinned copy) lets go, never under the map lock.
+    LibreSCRS::OpenSc::PluginContext owner;
+    ASSERT_NE(owner.context(), nullptr);
     auto mapEntry = std::make_shared<OpenSCSession>();
     mapEntry->readerName = "OwnershipReader";
-    ASSERT_EQ(sc_establish_context(&mapEntry->ctx, "librescrs-lifecycle-test"), 0);
+    mapEntry->context = owner.lease();
 
     std::weak_ptr<OpenSCSession> watch = mapEntry;
     auto pinned = mapEntry; // the in-flight operation's pin
     mapEntry.reset();       // the map erase
 
     ASSERT_FALSE(watch.expired());
-    EXPECT_NE(pinned->ctx, nullptr); // still fully alive for the operation
+    EXPECT_NE(pinned->context.get(), nullptr); // still fully alive for the operation
 
     pinned.reset(); // operation completes — LAST owner runs the teardown
     EXPECT_TRUE(watch.expired());
+}
+
+// ── One OpenSC context per plugin instance ────────────────────────────────
+//
+// The plugin creates one OpenSC context for its whole lifetime and every
+// session it claims shares it; a context established per probe and released
+// per session was a context, a driver load and a configuration read for every
+// card event. The counts are process-wide, so each test measures differences.
+
+namespace {
+
+LibreSCRS::OpenSc::ContextCounts contextCounts()
+{
+    return LibreSCRS::OpenSc::contextCountsForTest();
+}
+
+} // namespace
+
+TEST(OpenscPluginContext, OnePluginEstablishesOneContextForManyProbes)
+{
+    const auto before = contextCounts();
+    {
+        PluginHandle h;
+        LiveSmSession a("ContextReaderA");
+        LiveSmSession b("ContextReaderB");
+        a.channel->transmitHandler = [](const APDUCommand&) { return sw(0x90, 0x00); };
+        b.channel->transmitHandler = [](const APDUCommand&) { return sw(0x90, 0x00); };
+
+        ASSERT_TRUE(h.plugin->canHandleConnection(kTestAtr, *a.session));
+        ASSERT_TRUE(h.plugin->canHandleConnection(kTestAtr, *b.session));
+        (void)h.plugin->readCard(*a.session);
+        (void)h.plugin->readCard(*b.session);
+        // A re-probe of the same reader starts a fresh claim, not a fresh context.
+        ASSERT_TRUE(h.plugin->canHandleConnection(kTestAtr, *a.session));
+
+        const auto during = contextCounts();
+        EXPECT_EQ(during.created - before.created, 1u) << "one context for three probes and two operations";
+        EXPECT_EQ(during.released - before.released, 0u) << "no context is released while the plugin lives";
+    }
+    const auto after = contextCounts();
+    EXPECT_EQ(after.created - before.created, 1u);
+    EXPECT_EQ(after.released - before.released, 1u) << "the plugin releases its context when it is destroyed";
+}
+
+TEST(OpenscPluginContext, NormalShutdownReleasesSessionsBeforeThePlugin)
+{
+    // The order a host shuts down in: the card sessions go first, the plugin
+    // service last. Every OpenSC session is gone by the time the plugin is, so
+    // the plugin releases its context exactly once and nothing stops the process.
+    const auto before = contextCounts();
+    auto h = std::make_unique<PluginHandle>();
+    {
+        LiveSmSession a("ShutdownReaderA");
+        LiveSmSession b("ShutdownReaderB");
+        a.channel->transmitHandler = [](const APDUCommand&) { return sw(0x90, 0x00); };
+        b.channel->transmitHandler = [](const APDUCommand&) { return sw(0x90, 0x00); };
+        ASSERT_TRUE(h->plugin->canHandleConnection(kTestAtr, *a.session));
+        ASSERT_TRUE(h->plugin->canHandleConnection(kTestAtr, *b.session));
+        (void)h->plugin->readCard(*a.session);
+        h->plugin->clearCredentials(*a.session);
+    }
+    EXPECT_EQ(contextCounts().released - before.released, 0u);
+    h.reset();
+    const auto after = contextCounts();
+    EXPECT_EQ(after.created - before.created, 1u);
+    EXPECT_EQ(after.released - before.released, 1u);
+}
+
+TEST(OpenscPluginContext, AThousandProbesOnOneContextLeakNothing)
+{
+    // Each probe claims the reader afresh and drops the previous claim; under
+    // a leak checker every one of the thousand dropped sessions must have
+    // given back its bridge and its lease, and the plugin still holds one
+    // context.
+    const auto before = contextCounts();
+    {
+        PluginHandle h;
+        LiveSmSession live("ThousandProbesReader");
+        live.channel->transmitHandler = [](const APDUCommand&) { return sw(0x90, 0x00); };
+        for (int i = 0; i < 1000; ++i)
+            ASSERT_TRUE(h.plugin->canHandleConnection(kTestAtr, *live.session)) << "probe " << i;
+        EXPECT_EQ(live.channel->transmits(), 1000) << "every probe reached the card";
+        EXPECT_EQ(contextCounts().created - before.created, 1u);
+    }
+    EXPECT_EQ(contextCounts().released - before.released, 1u);
+}
+
+TEST(OpenscPluginContext, TwoReadersWorkConcurrentlyOnTheSharedContext)
+{
+    // Each reader has its own worker thread, and both now drive libopensc
+    // through the one context: claims, binds and disconnects of the two
+    // readers interleave on it. Run under a thread sanitizer this is the
+    // case the context's thread callbacks exist for.
+    PluginHandle h;
+    LiveSmSession a("ConcurrentReaderA");
+    LiveSmSession b("ConcurrentReaderB");
+    a.channel->transmitHandler = [](const APDUCommand&) { return sw(0x90, 0x00); };
+    b.channel->transmitHandler = [](const APDUCommand&) { return sw(0x90, 0x00); };
+
+    std::atomic<int> claims{0};
+    auto worker = [&](LiveSmSession& live) {
+        for (int i = 0; i < 100; ++i) {
+            if (h.plugin->canHandleConnection(kTestAtr, *live.session))
+                ++claims;
+            (void)h.plugin->readCard(*live.session);
+            h.plugin->clearCredentials(*live.session);
+        }
+    };
+    std::thread ta(worker, std::ref(a));
+    std::thread tb(worker, std::ref(b));
+    ta.join();
+    tb.join();
+    EXPECT_EQ(claims.load(), 200);
+}
+
+TEST(OpenscPluginContextDeathTest, ASessionThatOutlivesItsPluginStopsTheProcess)
+{
+    // A session the plugin no longer holds can still be pinned elsewhere: an
+    // operation abandoned while stuck in a transmit keeps its session when the
+    // process shuts down. Its plugin's context is gone by then, so the plugin
+    // stops the process instead of letting that session reach freed memory.
+    GTEST_FLAG_SET(death_test_style, "threadsafe");
+    EXPECT_DEATH(
+        {
+            auto owner = std::make_unique<LibreSCRS::OpenSc::PluginContext>();
+            if (!owner->context())
+                std::_Exit(0); // no context, nothing to prove: the death assertion then fails
+            auto session = std::make_shared<OpenSCSession>();
+            session->context = owner->lease();
+            owner.reset();
+        },
+        "outlived the plugin");
 }
 
 // ── EC surface: mechanism-family key filter, lengths, family mapping ───────

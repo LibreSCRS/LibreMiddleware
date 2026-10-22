@@ -26,14 +26,18 @@
 #include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <span>
 #include <string>
@@ -88,6 +92,118 @@ std::string extractSubjectCN(const uint8_t* der, size_t len)
 
 namespace LibreSCRS::OpenSc {
 
+namespace {
+std::atomic<std::size_t> contextsCreated{0};
+std::atomic<std::size_t> contextsReleased{0};
+} // namespace
+
+ContextCounts contextCountsForTest() noexcept
+{
+    return ContextCounts{contextsCreated.load(), contextsReleased.load()};
+}
+
+// -- PluginContext (declared in opensc_session.h) ---------------------------
+
+namespace {
+
+// The four lock callbacks OpenSC's PKCS#11 module hands its shared context.
+int createMutex(void** mutex)
+{
+    *mutex = new (std::nothrow) std::mutex;
+    return *mutex ? SC_SUCCESS : SC_ERROR_OUT_OF_MEMORY;
+}
+
+int lockMutex(void* mutex)
+{
+    try {
+        static_cast<std::mutex*>(mutex)->lock();
+        return SC_SUCCESS;
+    } catch (...) {
+        return SC_ERROR_INTERNAL;
+    }
+}
+
+int unlockMutex(void* mutex)
+{
+    static_cast<std::mutex*>(mutex)->unlock();
+    return SC_SUCCESS;
+}
+
+int destroyMutex(void* mutex)
+{
+    delete static_cast<std::mutex*>(mutex);
+    return SC_SUCCESS;
+}
+
+sc_thread_context_t threadContext{0, createMutex, lockMutex, unlockMutex, destroyMutex, nullptr};
+
+} // namespace
+
+PluginContext::~PluginContext() noexcept
+{
+    if (leases.load() != 0) {
+        std::fputs("opensc-plugin: an OpenSC session outlived the plugin that owns its context; "
+                   "stopping rather than letting it use freed memory\n",
+                   stderr);
+        std::abort();
+    }
+    if (ctx) {
+        sc_release_context(ctx);
+        ++contextsReleased;
+    }
+}
+
+sc_context_t* PluginContext::context()
+{
+    std::lock_guard lock(createMtx);
+    if (!ctx) {
+        sc_context_param_t params{};
+        params.ver = 0;
+        params.app_name = "librescrs";
+        params.thread_ctx = &threadContext;
+        if (sc_context_create(&ctx, &params) != SC_SUCCESS) {
+            ctx = nullptr;
+            return nullptr;
+        }
+        ++contextsCreated;
+    }
+    return ctx;
+}
+
+PluginContext::Lease PluginContext::lease() noexcept
+{
+    return Lease{*this};
+}
+
+PluginContext::Lease::Lease(PluginContext& owner) noexcept : owner(&owner)
+{
+    ++owner.leases;
+}
+
+PluginContext::Lease::Lease(Lease&& other) noexcept : owner(std::exchange(other.owner, nullptr)) {}
+
+PluginContext::Lease& PluginContext::Lease::operator=(Lease&& other) noexcept
+{
+    if (this != &other) {
+        reset();
+        owner = std::exchange(other.owner, nullptr);
+    }
+    return *this;
+}
+
+sc_context_t* PluginContext::Lease::get() const noexcept
+{
+    return owner ? owner->ctx : nullptr;
+}
+
+void PluginContext::Lease::reset() noexcept
+{
+    if (owner) {
+        --owner->leases;
+        owner = nullptr;
+    }
+}
+
 // -- OpenSCSession lifecycle (declared in opensc_session.h) -----------------
 
 void OpenSCSession::resetCardState() noexcept
@@ -95,9 +211,8 @@ void OpenSCSession::resetCardState() noexcept
     // Partial teardown. Order matters: PKCS#15 binding holds references into
     // the underlying sc_card, so unbind before disconnect. The disconnect
     // goes through the bridge reader ops (no-op at the wire) — zero PC/SC
-    // calls. ctx and bridge SURVIVE: the next operation re-activates and
-    // re-binds over the same context; sc_establish_context is never called
-    // outside the probe.
+    // calls. The context lease and the bridge SURVIVE: the next operation
+    // re-activates and re-binds over the same context.
     if (p15card) {
         sc_pkcs15_unbind(p15card);
         p15card = nullptr;
@@ -122,15 +237,13 @@ void OpenSCSession::resetCardState() noexcept
 void OpenSCSession::release() noexcept
 {
     resetCardState();
-    if (ctx) {
-        sc_release_context(ctx);
-        ctx = nullptr;
-    }
-    // The bridge reader is NOT in ctx->readers, so sc_release_context did
-    // not free it; resetting frees the sc_reader + private-data block.
-    // Must run after sc_disconnect_card/sc_release_context, which used
-    // card->reader = &bridge->reader.
+    // The bridge reader is NOT in ctx->readers, so the context never frees
+    // it; resetting frees the sc_reader + private-data block. Must run after
+    // sc_disconnect_card, which used card->reader = &bridge->reader.
     bridge.reset();
+    // Last: the card and the bridge reader above both pointed into the
+    // context, which the plugin may release once no lease is left.
+    context.reset();
 }
 
 // Unrecognised drivers stay Unknown (nullptr quirks: nothing beyond
@@ -775,7 +888,9 @@ public:
     {
         std::lock_guard lock(mtx);
         // OpenSCSession dtor releases libopensc resources; clearing the
-        // map invokes it for every entry.
+        // map invokes it for every entry. The context goes last, with
+        // openscContext, and stops the process if a session pinned
+        // elsewhere still holds a lease on it.
         sessions.clear();
     }
 
@@ -796,7 +911,8 @@ public:
 
         // A probe starts a FRESH claim for this reader: drop every session of
         // the same reader name — prior generations (a leaked entry would keep
-        // its sc_context alive forever) and a re-probed current one alike.
+        // its bridge and its context lease forever) and a re-probed current
+        // one alike.
         // The erased shared_ptr may still be pinned by an in-flight
         // operation; the LAST owner runs the teardown, never this erase.
         //
@@ -814,16 +930,17 @@ public:
         // enumerates and connects to no reader; the card is reached only
         // through the bridge reader installed over this session.
         //
-        // sc_establish_context runs ONLY here — before any transaction or
-        // channel work — never in an operation or in recovery.
+        // The context is the plugin's, created on its first probe and shared
+        // by every session it claims: a probe or an operation never creates
+        // or releases one.
         try {
             auto& conn = LibreSCRS::SmartCard::detail::unwrap(cardSession);
+            sc_context_t* ctx = openscContext.context();
+            if (!ctx)
+                return false;
             auto session = std::make_shared<OpenSCSession>();
             session->readerName = conn.readerName();
-
-            int rc = sc_establish_context(&session->ctx, "librescrs");
-            if (rc < 0)
-                return false;
+            session->context = openscContext.lease();
 
             // Bind libopensc to the agent's single LM PCSCConnection via the
             // bridge reader (ATR comes from the session — no extra
@@ -831,7 +948,7 @@ public:
             session->bridge = std::make_unique<LibreSCRS::OpenSc::Bridge::OpenScBridge>();
             session->bridge->data.conn = &conn;
             session->bridge->readerName = conn.readerName();
-            LibreSCRS::OpenSc::Bridge::initBridgeReader(session->ctx, *session->bridge, atr);
+            LibreSCRS::OpenSc::Bridge::initBridgeReader(ctx, *session->bridge, atr);
 
             const std::vector<std::uint8_t> aidBytes(pkcs15::kPkcs15Aid.begin(), pkcs15::kPkcs15Aid.end());
 
@@ -858,7 +975,7 @@ public:
                     // the bind to fail; without the EF.DIR discriminator a
                     // foreign PACE card would be claimed away from its
                     // rightful plugin.
-                    claim = LibreSCRS::OpenSc::driverPresent(session->ctx, "srbeid2") &&
+                    claim = LibreSCRS::OpenSc::driverPresent(ctx, "srbeid2") &&
                             LibreSCRS::OpenSc::efDirAdvertisesAppletSuiteGen2(wrapped);
                 }
                 if (!claim)
@@ -879,7 +996,7 @@ public:
                 auto raw = [&conn](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd) {
                     return conn.transmit(cmd);
                 };
-                if (!LibreSCRS::OpenSc::driverPresent(session->ctx, "srbeid2"))
+                if (!LibreSCRS::OpenSc::driverPresent(ctx, "srbeid2"))
                     return false;
                 if (!LibreSCRS::OpenSc::efDirAdvertisesAppletSuiteGen2(raw))
                     return false;
@@ -888,9 +1005,9 @@ public:
                 return true;
             }
 
-            rc = sc_connect_card(&session->bridge->reader, &session->card);
+            int rc = sc_connect_card(&session->bridge->reader, &session->card);
             if (rc < 0) {
-                // ~OpenSCSession runs on scope exit and releases ctx + bridge.
+                // ~OpenSCSession runs on scope exit and releases the bridge.
                 return false;
             }
 
@@ -1606,6 +1723,8 @@ private:
         sessions.insert_or_assign(mapKey, std::move(session));
     }
 
+    // Declared first so it is destroyed last, after every session in the map.
+    mutable LibreSCRS::OpenSc::PluginContext openscContext;
     mutable std::mutex mtx;
     mutable std::map<LibreSCRS::Plugin::SessionKey, std::shared_ptr<OpenSCSession>> sessions;
 };

@@ -271,8 +271,8 @@ TEST(OpenSCPluginConcurrency, TwoThreadsTwoSessionsDoNotCollide)
 // Mirrors test/pkcs15-plugin/readtokeninfo_partial_test.cpp for the opensc
 // plugin. The override populates the "token" group from sc_pkcs15_card_t::
 // tokeninfo when a session is bound; without a bound session (detached
-// CardSession → canHandleConnection short-circuits at sc_establish_context
-// or sc_connect_card with no hardware) it must return an empty group whose
+// CardSession → canHandleConnection declines at the probe SELECT or at
+// sc_connect_card with no hardware) it must return an empty group whose
 // key/label are still populated so the presentation layer can render its
 // placeholder header. Returning a default-constructed empty CardFieldGroup
 // (which is what the base class did before the override) would demote
