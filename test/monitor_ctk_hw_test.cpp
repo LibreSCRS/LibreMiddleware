@@ -202,8 +202,9 @@ bool isCardEvent(const MonitorEvent& event)
 
 // Readers CryptoTokenKit reports empty now and for which the monitor has
 // reported no card event except the test's own (@p own, log indices). A slot
-// that drops and regains a card by itself (a contactless card in the field)
-// would otherwise answer the person's step without the person.
+// that drops and regains a card without the person (a dual-interface card's
+// contactless side, each time another process opens its contact side) would
+// otherwise answer the person's step.
 std::set<std::string> quietEmptyReaders(const EventLog& log, const std::set<std::size_t>& own)
 {
     std::set<std::string> churned;
