@@ -73,11 +73,10 @@ Notable user-visible changes per release. Format follows
 - **Debian and RPM packages, built by the project.** `deb` packages for Debian
   13 and Ubuntu 26.04 LTS and `rpm` packages for Fedora 43, built in the target
   distribution's own container and installed with one command. The middleware
-  ships as four packages: the runtime libraries, the card plugins, the
-  development files, and an architecture-independent package holding nothing but
-  the p11-kit registration file — which is what lets a machine choose between
-  the direct PKCS#11 module and the agent proxy without ending up with two
-  providers for one card.
+  ships as three packages: the runtime libraries, the card plugins and the
+  development files. The direct PKCS#11 module comes with the runtime libraries
+  and is not registered with p11-kit, so a machine with the agent has one
+  provider per card: the agent's proxy module.
 
   **Each published file names the distribution it was built for.** Release
   assets are `<package>.<distribution>.<deb|rpm>`: the runtime library package
