@@ -35,6 +35,7 @@
 //
 // Measurements go to stderr as single lines starting with "CTKHW ".
 
+#include "ctk_hw_cards.h"
 #include "ctk_hw_probe.h"
 #include "pin_guard.h"
 #include "signature_verify.h"
@@ -98,26 +99,18 @@ using LibreSCRS::SmartCard::Internal::PCSCConnection;
 using LibreSCRS::SmartCard::Internal::PCSCError;
 using LibreSCRS::Tests::E2E::markPinFailedAndAbort;
 using Clock = std::chrono::steady_clock;
+using CtkHw::atrHasPrefix;
+using CtkHw::envLong;
+using CtkHw::envOpt;
+using CtkHw::hex;
+using CtkHw::kGeoContact;
+using CtkHw::kGeoContactless;
+using CtkHw::kLkContact;
+using CtkHw::kLkContactless;
+using CtkHw::slotWithAtrPrefix;
+using CtkHw::upper;
 
 // --- environment -------------------------------------------------------------
-
-std::optional<std::string> envOpt(const char* name)
-{
-    const char* value = std::getenv(name);
-    if (value == nullptr || value[0] == '\0')
-        return std::nullopt;
-    return std::string(value);
-}
-
-long envLong(const char* name, long fallback)
-{
-    const auto value = envOpt(name);
-    if (!value)
-        return fallback;
-    char* end = nullptr;
-    const long parsed = std::strtol(value->c_str(), &end, 0);
-    return end != nullptr && *end == '\0' ? parsed : fallback;
-}
 
 std::vector<std::string> splitList(const std::string& text)
 {
@@ -132,18 +125,6 @@ std::vector<std::string> splitList(const std::string& text)
 
 // --- formatting and logging ----------------------------------------------------
 
-std::string hex(std::span<const std::uint8_t> bytes)
-{
-    static constexpr char kDigits[] = "0123456789ABCDEF";
-    std::string out;
-    out.reserve(bytes.size() * 2);
-    for (const auto b : bytes) {
-        out.push_back(kDigits[(b >> 4) & 0x0F]);
-        out.push_back(kDigits[b & 0x0F]);
-    }
-    return out;
-}
-
 std::string hex4(std::uint16_t value)
 {
     const std::uint8_t bytes[] = {static_cast<std::uint8_t>(value >> 8), static_cast<std::uint8_t>(value)};
@@ -155,14 +136,6 @@ std::string pcscCode(long code)
     char buffer[16];
     std::snprintf(buffer, sizeof buffer, "0x%08lX", static_cast<unsigned long>(code) & 0xFFFFFFFFUL);
     return buffer;
-}
-
-std::string upper(std::string text)
-{
-    for (auto& c : text)
-        if (c >= 'a' && c <= 'f')
-            c = static_cast<char>(c - 'a' + 'A');
-    return text;
 }
 
 // One measurement line: "CTKHW <case> key=value ...".
@@ -195,11 +168,6 @@ struct CardRole
     std::vector<std::string> defaults;
 };
 
-constexpr const char* kLkContact = "3BDE97008031FE4553434520382E302D43325630"; // test LK, contact (SCE 8.0-C2V0)
-constexpr const char* kLkContactless = "3B8D80015352422D6549442D56322E3030";   // test LK, contactless (SRB-eID-V2.00)
-constexpr const char* kGeoContactless = "3B8E800153434520382E302D43325630";    // GEO test card, contactless
-constexpr const char* kGeoContact = "3B9E968031FE4553434520382E302D43325630";  // GEO test card, contact
-
 // A card with PACE (CAN) and an eMRTD applet, reached contactless.
 const CardRole kPaceCard{"pace", "LIBRESCRS_HW_CTK_ATR_PACE", {kLkContactless, kGeoContactless}};
 // The test LK on the contact interface: no PACE, PIN on the card.
@@ -231,24 +199,6 @@ std::vector<std::string> allTestPrefixes()
             if (std::find(all.begin(), all.end(), prefix) == all.end())
                 all.push_back(prefix);
     return all;
-}
-
-bool atrHasPrefix(std::span<const std::uint8_t> atr, std::string_view hexPrefix)
-{
-    const auto atrHex = hex(atr);
-    return !hexPrefix.empty() && atrHex.size() >= hexPrefix.size() &&
-           atrHex.compare(0, hexPrefix.size(), hexPrefix) == 0;
-}
-
-/// The first slot holding a valid card whose ATR, read without a session,
-/// starts with @p hexPrefix.
-std::optional<std::string> slotWithAtrPrefix(std::string_view hexPrefix)
-{
-    const auto prefix = upper(std::string(hexPrefix));
-    for (const auto& slot : CtkHw::passiveSlots())
-        if (slot.state == CtkHw::SlotState::ValidCard && atrHasPrefix(slot.atr, prefix))
-            return slot.name;
-    return std::nullopt;
 }
 
 std::optional<std::string> slotFor(const CardRole& role)

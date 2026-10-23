@@ -521,6 +521,15 @@ if(APPLE)
     # matches anywhere in the output and cannot be replaced from here, so no
     # case in the source skips after a failure.
     gtest_discover_tests(CtkSessionHardwareTests PROPERTIES LABELS "HARDWARE")
+
+    # Hardware checks of MonitorService's CryptoTokenKit events with real
+    # readers. Every case skips unless LIBRESCRS_HW_MONITOR=1 (see the header of
+    # the source); the entitlement check never skips, as above.
+    add_executable(MonitorCtkHardwareTests monitor_ctk_hw_test.cpp ctk_hw_probe.mm smartcard_entitlement_check.cpp)
+    target_link_libraries(MonitorCtkHardwareTests
+        LibreSCRS_SmartCard GTest::gtest_main
+        "-framework CryptoTokenKit" "-framework Foundation" "-framework Security" "-framework CoreFoundation")
+    gtest_discover_tests(MonitorCtkHardwareTests PROPERTIES LABELS "HARDWARE")
 endif()
 
 # selectByFileId P2 parameter test
