@@ -40,7 +40,13 @@ target_include_directories(CardPlugin_Impl PUBLIC
 target_compile_features(CardPlugin_Impl PUBLIC cxx_std_23)
 target_link_libraries(CardPlugin_Impl PUBLIC ${CMAKE_DL_LIBS} SmartCard_Impl)
 target_link_libraries(CardPlugin_Impl PUBLIC LibreSCRS_Auth LibreSCRS_SmartCard)
-set_target_properties(CardPlugin_Impl PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# Hidden: only a library that links this archive decides what of it is exported;
+# default visibility let every symbol naming LibreSCRS:: through the export glob.
+set_target_properties(CardPlugin_Impl PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
 
 librescrs_warnings_as_errors(CardPlugin_Impl)
 

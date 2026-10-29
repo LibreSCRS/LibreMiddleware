@@ -19,6 +19,12 @@ target_include_directories(RsHealth PRIVATE
 )
 
 target_link_libraries(RsHealth PUBLIC SmartCard_Impl)
-set_target_properties(RsHealth PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# Hidden: only a library that links this archive decides what of it is exported;
+# default visibility let every symbol naming LibreSCRS:: through the export glob.
+set_target_properties(RsHealth PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
 
 librescrs_warnings_as_errors(RsHealth)

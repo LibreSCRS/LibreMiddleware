@@ -21,6 +21,12 @@ target_include_directories(EuVrc PRIVATE
 )
 
 target_link_libraries(EuVrc PUBLIC SmartCard_Impl)
-set_target_properties(EuVrc PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# Hidden: only a library that links this archive decides what of it is exported;
+# default visibility let every symbol naming LibreSCRS:: through the export glob.
+set_target_properties(EuVrc PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
 
 librescrs_warnings_as_errors(EuVrc)

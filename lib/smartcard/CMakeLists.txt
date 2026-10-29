@@ -74,7 +74,13 @@ target_include_directories(SmartCard_Impl PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-set_target_properties(SmartCard_Impl PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# Hidden: only a library that links this archive decides what of it is exported;
+# default visibility let every symbol naming LibreSCRS:: through the export glob.
+set_target_properties(SmartCard_Impl PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
 
 target_link_libraries(SmartCard_Impl PUBLIC PCSC::PCSC Threads::Threads PRIVATE OpenSSL_Crypto)
 

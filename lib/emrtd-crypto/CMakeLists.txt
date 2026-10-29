@@ -34,7 +34,13 @@ target_include_directories(EMRTDCrypto PRIVATE
     ${LIBRESCRS_EMRTD_CRYPTO_PRIVATE_INCLUDES}
 )
 
-set_target_properties(EMRTDCrypto PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# Hidden: only a library that links this archive decides what of it is exported;
+# default visibility let every symbol naming LibreSCRS:: through the export glob.
+set_target_properties(EMRTDCrypto PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
 
 target_link_libraries(EMRTDCrypto
     PUBLIC OpenSSL_Crypto

@@ -26,9 +26,12 @@
  *   The leading-wildcard glob also promotes any symbol whose
  *   demangled name MENTIONS a `LibreSCRS::` type anywhere. Empirically
  *   this leaks:
- *     - `emrtd::crypto::performBAC(LibreSCRS::SmartCard::IConnection&,
- *       ...)` and `performPACE(...)` (statically linked into
- *       LibreSCRS_SecureChannel.so via the EMRTDCrypto archive)
+ *     - (HISTORICAL) `emrtd::crypto::performBAC(LibreSCRS::SmartCard::
+ *       IConnection&, ...)`, `performPACE(...)` and `performChipAuth`
+ *       (statically linked into LibreSCRS_SecureChannel.so via the
+ *       EMRTDCrypto archive). MITIGATED: the internal archives are
+ *       compiled with hidden visibility, and the glob can only hide,
+ *       never export, a hidden symbol.
  *     - (HISTORICAL) STL template instantiations templated on
  *       `LibreSCRS::SmartCard::Internal::Monitor` (specifically
  *       `std::thread::_State_impl<...LibreSCRS::SmartCard::Internal::
@@ -73,10 +76,12 @@
  *   The LibreSCRS::*::Internal:: namespace IS part of the SHARED-build
  *   ABI for cross-`.so` plugin reach and the test-helper archive.
  *   Specifically:
- *     - LibreSCRS::SmartCard::Internal::Monitor, PCSCScanProvider,
- *       PCSCConnection, APDUCommand, APDUResponse, MonitorEvent —
- *       required for plugin .so files and the test-helper archive to
- *       link against shared LibreSCRS_SmartCard.
+ *     - LibreSCRS::SmartCard::Internal::PCSCConnection, SessionPresence,
+ *       ActiveChannelAccessor — reached across the .so boundary by the
+ *       card plugins, the PKCS#11 module and the test-helper archive.
+ *       Monitor, the APDU helpers and the plugin PIN-family quirks are
+ *       compiled into each image from hidden-visibility archives and
+ *       are not exported.
  *     - LibreSCRS::SecureChannel::detail::ChannelStateMutator —
  *       required for SmartCard.so + emrtd-plugin.so to call
  *       SetCurrentApplet / ReplaceKeys.

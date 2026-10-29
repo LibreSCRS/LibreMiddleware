@@ -38,7 +38,13 @@ target_include_directories(PKCS15
 
 target_link_libraries(PKCS15 PUBLIC SmartCard_Impl LibreSCRS::SmartCard LibreSCRS_SecureChannel PRIVATE OpenSSL_Crypto EMRTDCrypto LibreSCRS::Secure)
 
-set_target_properties(PKCS15 PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# Hidden: only a library that links this archive decides what of it is exported;
+# default visibility let every symbol naming LibreSCRS:: through the export glob.
+set_target_properties(PKCS15 PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
 
 librescrs_warnings_as_errors(PKCS15)
 

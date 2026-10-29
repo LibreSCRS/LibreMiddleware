@@ -27,7 +27,13 @@ target_include_directories(RsEId PRIVATE
     ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
 )
 
-set_target_properties(RsEId PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# Hidden: only a library that links this archive decides what of it is exported;
+# default visibility let every symbol naming LibreSCRS:: through the export glob.
+set_target_properties(RsEId PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
 
 target_link_libraries(RsEId PUBLIC SmartCard_Impl RsEIdCore PRIVATE OpenSSL_Crypto z)
 

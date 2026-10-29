@@ -148,16 +148,6 @@ LibreSCRS::Plugin::CardPluginService::plugins() const@@LM_5
 LibreSCRS::Plugin::CardPluginService::setCscaAnchorDirectory(std::filesystem::__cxx11::path const&)@@LM_5
 LibreSCRS::Plugin::CardPluginService::size() const@@LM_5
 LibreSCRS::Plugin::CardPluginService::~CardPluginService()@@LM_5
-LibreSCRS::Plugin::Internal::FamilyQuirks::blockedGuidance(LibreSCRS::Plugin::PinKind) const@@LM_5
-LibreSCRS::Plugin::Internal::FamilyQuirks::blockedRecovery(LibreSCRS::Plugin::PinKind) const@@LM_5
-LibreSCRS::Plugin::Internal::FamilyQuirks::canChange(LibreSCRS::Plugin::PinKind) const@@LM_5
-LibreSCRS::Plugin::Internal::FamilyQuirks::retriesMax(LibreSCRS::Plugin::PinKind) const@@LM_5
-LibreSCRS::Plugin::Internal::FamilyQuirks::rrcVariantKnown(LibreSCRS::Plugin::PinKind) const@@LM_5
-LibreSCRS::Plugin::Internal::FamilyQuirks::unblockStyle(LibreSCRS::Plugin::PinKind) const@@LM_5
-LibreSCRS::Plugin::Internal::derivePinStatus(LibreSCRS::Plugin::Internal::PinEvidence const&, std::vector<LibreSCRS::Plugin::Internal::PinEvidence, std::allocator<LibreSCRS::Plugin::Internal::PinEvidence> > const&, LibreSCRS::Plugin::Internal::FamilyQuirks const*)@@LM_5
-LibreSCRS::Plugin::Internal::findFamilyQuirks(LibreSCRS::Plugin::Internal::FamilyId)@@LM_5
-LibreSCRS::Plugin::Internal::resolveTransportChangeApdu(unsigned char, std::basic_string_view<char, std::char_traits<char> >, std::basic_string_view<char, std::char_traits<char> >)@@LM_5
-LibreSCRS::Plugin::Internal::resolveUnblockApdu(LibreSCRS::Plugin::UnblockStyle, LibreSCRS::Plugin::Internal::FamilyQuirks const&, std::basic_string_view<char, std::char_traits<char> >, std::basic_string_view<char, std::char_traits<char> >)@@LM_5
 LibreSCRS::Plugin::SecurityStatus::computeOverall()@@LM_5
 LibreSCRS::Plugin::acquireChannelForProfile(LibreSCRS::SmartCard::CardSession&, LibreSCRS::Plugin::ActivationProfile const&, LibreSCRS::CancelToken)@@LM_5
 LibreSCRS::Plugin::textValueAt[abi:cxx11](LibreSCRS::Plugin::CardData const&, unsigned long, std::basic_string_view<char, std::char_traits<char> >)@@LM_5
@@ -200,24 +190,6 @@ LibreSCRS::SecureChannel::confirmSmAfterKeyChange(LibreSCRS::SecureChannel::ISec
 LibreSCRS::SecureChannel::detail::ChannelStateMutator::replaceKeys(LibreSCRS::SecureChannel::ISecureChannel&, LibreSCRS::SecureChannel::SessionKeys)@@LM_5
 LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(LibreSCRS::SecureChannel::ISecureChannel&, LibreSCRS::SmartCard::AppletAid)@@LM_5
 LibreSCRS::SecureChannel::parsePaceOidsFromCardAccess(std::span<unsigned char const, 18446744073709551615ul>)@@LM_5
-LibreSCRS::SmartCard::Internal::APDUCommand::toBytes() const@@LM_5
-LibreSCRS::SmartCard::Internal::APDUResponse::isSuccess() const@@LM_5
-LibreSCRS::SmartCard::Internal::APDUResponse::statusWord() const@@LM_5
-LibreSCRS::SmartCard::Internal::activate(unsigned char, unsigned char, std::span<unsigned char const, 18446744073709551615ul>)@@LM_5
-LibreSCRS::SmartCard::Internal::changeReferenceData(unsigned char, std::span<unsigned char const, 18446744073709551615ul>, std::span<unsigned char const, 18446744073709551615ul>, unsigned char)@@LM_5
-LibreSCRS::SmartCard::Internal::getDataDocp(unsigned char)@@LM_5
-LibreSCRS::SmartCard::Internal::isSelectRetryable(unsigned short)@@LM_5
-LibreSCRS::SmartCard::Internal::readBinary(unsigned short, unsigned char)@@LM_5
-LibreSCRS::SmartCard::Internal::resetRetryCounter(unsigned char, unsigned char, std::span<unsigned char const, 18446744073709551615ul>, std::span<unsigned char const, 18446744073709551615ul>)@@LM_5
-LibreSCRS::SmartCard::Internal::secureWipe(void*, unsigned long)@@LM_5
-LibreSCRS::SmartCard::Internal::selectByAID(std::vector<unsigned char, std::allocator<unsigned char> > const&, unsigned char)@@LM_5
-LibreSCRS::SmartCard::Internal::selectByFileId(unsigned char, unsigned char, unsigned char)@@LM_5
-LibreSCRS::SmartCard::Internal::selectByPath(unsigned char, unsigned char, unsigned char)@@LM_5
-LibreSCRS::SmartCard::Internal::verifyPIN(unsigned char, std::span<unsigned char const, 18446744073709551615ul>)@@LM_5
-LibreSCRS::SmartCard::Internal::verifyPINStatus(unsigned char)@@LM_5
-emrtd::crypto::performBAC(LibreSCRS::SmartCard::IConnection&, emrtd::crypto::BACKeys const&)@@LM_5
-emrtd::crypto::performChipAuth(LibreSCRS::SecureChannel::ISecureChannel&, std::vector<unsigned char, std::allocator<unsigned char> > const&, LibreSCRS::CancelToken)@@LM_5
-emrtd::crypto::performPACE(LibreSCRS::SmartCard::IConnection&, emrtd::crypto::PACEParams const&)@@LM_5
 
 == libLibreSCRS_Signing.so ==
 LibreSCRS::Plugin::Atr::matches(std::span<unsigned char const, 18446744073709551615ul>) const@@LM_5
@@ -243,16 +215,6 @@ LibreSCRS::Plugin::CardPluginService::plugins() const@@LM_5
 LibreSCRS::Plugin::CardPluginService::setCscaAnchorDirectory(std::filesystem::__cxx11::path const&)@@LM_5
 LibreSCRS::Plugin::CardPluginService::size() const@@LM_5
 LibreSCRS::Plugin::CardPluginService::~CardPluginService()@@LM_5
-LibreSCRS::Plugin::Internal::FamilyQuirks::blockedGuidance(LibreSCRS::Plugin::PinKind) const@@LM_5
-LibreSCRS::Plugin::Internal::FamilyQuirks::blockedRecovery(LibreSCRS::Plugin::PinKind) const@@LM_5
-LibreSCRS::Plugin::Internal::FamilyQuirks::canChange(LibreSCRS::Plugin::PinKind) const@@LM_5
-LibreSCRS::Plugin::Internal::FamilyQuirks::retriesMax(LibreSCRS::Plugin::PinKind) const@@LM_5
-LibreSCRS::Plugin::Internal::FamilyQuirks::rrcVariantKnown(LibreSCRS::Plugin::PinKind) const@@LM_5
-LibreSCRS::Plugin::Internal::FamilyQuirks::unblockStyle(LibreSCRS::Plugin::PinKind) const@@LM_5
-LibreSCRS::Plugin::Internal::derivePinStatus(LibreSCRS::Plugin::Internal::PinEvidence const&, std::vector<LibreSCRS::Plugin::Internal::PinEvidence, std::allocator<LibreSCRS::Plugin::Internal::PinEvidence> > const&, LibreSCRS::Plugin::Internal::FamilyQuirks const*)@@LM_5
-LibreSCRS::Plugin::Internal::findFamilyQuirks(LibreSCRS::Plugin::Internal::FamilyId)@@LM_5
-LibreSCRS::Plugin::Internal::resolveTransportChangeApdu(unsigned char, std::basic_string_view<char, std::char_traits<char> >, std::basic_string_view<char, std::char_traits<char> >)@@LM_5
-LibreSCRS::Plugin::Internal::resolveUnblockApdu(LibreSCRS::Plugin::UnblockStyle, LibreSCRS::Plugin::Internal::FamilyQuirks const&, std::basic_string_view<char, std::char_traits<char> >, std::basic_string_view<char, std::char_traits<char> >)@@LM_5
 LibreSCRS::Plugin::acquireChannelForProfile(LibreSCRS::SmartCard::CardSession&, LibreSCRS::Plugin::ActivationProfile const&, LibreSCRS::CancelToken)@@LM_5
 LibreSCRS::Signing::SigningRequest::Builder::Builder()@@LM_5
 LibreSCRS::Signing::SigningRequest::Builder::Builder(LibreSCRS::Signing::SigningRequest::Builder&&)@@LM_5
@@ -369,23 +331,6 @@ LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::clearOwner(LibreSCRS::Sma
 LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::installSmChannel(LibreSCRS::SmartCard::CardSession&, std::unique_ptr<LibreSCRS::SecureChannel::ISecureChannel, std::default_delete<LibreSCRS::SecureChannel::ISecureChannel> >, std::variant<LibreSCRS::SmartCard::BacRequest, LibreSCRS::SmartCard::PaceRequest, LibreSCRS::SmartCard::ChipAuthRequest>)@@LM_5
 LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::markOwner(LibreSCRS::SmartCard::CardSession&)@@LM_5
 LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(LibreSCRS::SmartCard::ActiveChannelHolder&)@@LM_5
-LibreSCRS::SmartCard::Internal::Monitor::Monitor(std::unique_ptr<LibreSCRS::SmartCard::Internal::IPCSCScanProvider, std::default_delete<LibreSCRS::SmartCard::Internal::IPCSCScanProvider> >)@@LM_5
-LibreSCRS::SmartCard::Internal::Monitor::checkPnPSupport()@@LM_5
-LibreSCRS::SmartCard::Internal::Monitor::enumerateReaders[abi:cxx11]()@@LM_5
-LibreSCRS::SmartCard::Internal::Monitor::establishContext()@@LM_5
-LibreSCRS::SmartCard::Internal::Monitor::isRunning() const@@LM_5
-LibreSCRS::SmartCard::Internal::Monitor::notifyEvent(LibreSCRS::SmartCard::Internal::MonitorEvent const&)@@LM_5
-LibreSCRS::SmartCard::Internal::Monitor::notifyReaders(std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > const&)@@LM_5
-LibreSCRS::SmartCard::Internal::Monitor::processEvents(std::vector<SCARD_READERSTATE, std::allocator<SCARD_READERSTATE> >&, int, bool)@@LM_5
-LibreSCRS::SmartCard::Internal::Monitor::reEstablishContext()@@LM_5
-LibreSCRS::SmartCard::Internal::Monitor::run()@@LM_5
-LibreSCRS::SmartCard::Internal::Monitor::setContext(long)@@LM_5
-LibreSCRS::SmartCard::Internal::Monitor::startThread()@@LM_5
-LibreSCRS::SmartCard::Internal::Monitor::stopThread()@@LM_5
-LibreSCRS::SmartCard::Internal::Monitor::subscribe(std::function<void (LibreSCRS::SmartCard::Internal::MonitorEvent const&)>, std::function<void (std::vector<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, std::allocator<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > > > const&)>)@@LM_5
-LibreSCRS::SmartCard::Internal::Monitor::unsubscribe(unsigned long)@@LM_5
-LibreSCRS::SmartCard::Internal::Monitor::waitForFirstReader(bool)@@LM_5
-LibreSCRS::SmartCard::Internal::Monitor::~Monitor()@@LM_5
 LibreSCRS::SmartCard::Internal::PCSCConnection::PCSCConnection(LibreSCRS::SmartCard::Internal::PCSCConnection::DetachedTag, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)@@LM_5
 LibreSCRS::SmartCard::Internal::PCSCConnection::PCSCConnection(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)@@LM_5
 LibreSCRS::SmartCard::Internal::PCSCConnection::beginTransaction()@@LM_5
