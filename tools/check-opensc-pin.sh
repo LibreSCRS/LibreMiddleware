@@ -13,8 +13,12 @@ cd "$(dirname "$0")/../thirdparty/opensc-source"
 # This is a developer-time drift guard. In a release-tarball / makepkg build the
 # submodule source is unpacked WITHOUT a .git tree (and is already pinned by the
 # source tarball's commit URL), so `git merge-base` cannot run — skip cleanly
-# rather than hard-failing the cmake configure.
-if ! git rev-parse --git-dir >/dev/null 2>&1; then
+# rather than hard-failing the cmake configure. The unpacked tree must be a
+# checkout of its own: makepkg lays it inside the project's git clone, where a
+# bare `git rev-parse` finds the PROJECT's repository and the ancestry check
+# then asks it for OpenSC commits it can never have.
+top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$top" ] || [ "$(cd "$top" && pwd -P)" != "$(pwd -P)" ]; then
     echo "opensc-pin: skipped (no git checkout — release-tarball/makepkg build; pin fixed by the source archive)"
     exit 0
 fi
