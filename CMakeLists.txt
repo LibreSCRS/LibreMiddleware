@@ -175,6 +175,13 @@ option(BUILD_TESTING "Build tests" ON)
 # their test directories long before test/ is reached.
 if(BUILD_TESTING)
     find_package(GTest REQUIRED)
+    # A package manager's GoogleTest shares its include directory with
+    # everything else that manager installed: Homebrew's /opt/homebrew/include
+    # also holds Homebrew's own OpenSSL. Test targets link GTest first, so that
+    # directory came first on their compile line, and the tests compiled
+    # against OpenSSL headers that are not the bundled libcrypto they link.
+    # The bundled headers go first for every target below this directory.
+    include_directories(BEFORE SYSTEM "$<TARGET_PROPERTY:OpenSSL_Crypto,INTERFACE_INCLUDE_DIRECTORIES>")
 endif()
 
 # Defer gtest test discovery to ctest time, for every test directory. The
