@@ -400,11 +400,19 @@ target_compile_features(LibreSCRS_Signing PUBLIC cxx_std_23)
 # LibreSCRS::Plugin::CardPlugin; a consumer that constructs plugins links
 # LibreSCRS::Plugin itself. abi-snapshot.sh refuses a function exported by two
 # libraries.
+#
+# LibreSCRS_Plugin is listed AFTER LibreSign on purpose: the call into the
+# plugin lives in the LibreSign archive, not in this library's own objects.
+# A linker that drops unreferenced shared libraries (--as-needed, the default
+# on Debian and Ubuntu) reads Plugin first otherwise, finds nothing asking for
+# it yet, and leaves it out of DT_NEEDED -- every executable linking this
+# library then fails on CardPlugin::sign. LibreSign cannot carry the edge
+# itself: LibreSCRS_Trust links it too, and Plugin links Trust.
 target_link_libraries(LibreSCRS_Signing
     PUBLIC  LibreSCRS_Auth LibreSCRS_Trust
     PRIVATE
-        LibreSCRS_Plugin
         $<BUILD_INTERFACE:LibreSign>
+        LibreSCRS_Plugin
         $<BUILD_INTERFACE:SmartCard_Impl>
         $<BUILD_INTERFACE:OpenSSL_Crypto>)
 target_compile_options(LibreSCRS_Signing PRIVATE
