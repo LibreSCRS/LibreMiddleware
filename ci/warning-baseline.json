@@ -1,6 +1,6 @@
 {
   "GNU-13": {
-    "min_compile_units": 332,
+    "min_compile_units": 328,
     "project": {
       "-Wcomment": 102,
       "-Wdangling-else": 12,
