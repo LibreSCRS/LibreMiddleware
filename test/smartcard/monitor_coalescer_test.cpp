@@ -73,6 +73,24 @@ protected:
         return received;
     }
 
+    // Waits until at least `count` events have arrived, or `limit` passes.
+    // The coalescer flushes on its own thread at a deadline, and a loaded
+    // runner can wake that thread well after the deadline: a fixed sleep
+    // turns that delay into a failure, so an expected arrival is awaited.
+    // An expected ABSENCE still needs a fixed wait -- nothing can signal it.
+    template <typename Pred>
+    void waitUntil(Pred done, std::chrono::milliseconds limit = std::chrono::milliseconds(3000))
+    {
+        const auto until = std::chrono::steady_clock::now() + limit;
+        while (!done(snapshot()) && std::chrono::steady_clock::now() < until)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    void waitForEvents(std::size_t count, std::chrono::milliseconds limit = std::chrono::milliseconds(3000))
+    {
+        waitUntil([count](const std::vector<MonitorEvent>& snap) { return snap.size() >= count; }, limit);
+    }
+
     std::shared_ptr<MonitorService> service;
     MonitorService::SubscriptionId subId{};
     std::mutex mtx;
@@ -93,9 +111,10 @@ TEST_F(CoalescerHarness, SuppressesInsertedRemovedWithinWindow)
 TEST_F(CoalescerHarness, AllowsInsertedAloneAcrossWindow)
 {
     emit(MonitorEvent::Kind::CardInserted, "Real Reader");
-    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    waitForEvents(1);
+    ASSERT_EQ(snapshot().size(), 1u) << "the CardInserted alone must flush after its window";
     emit(MonitorEvent::Kind::CardRemoved, "Real Reader");
-    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    waitForEvents(2);
 
     auto snap = snapshot();
     EXPECT_EQ(snap.size(), 2u) << "Inserted then Removed > 250ms apart are real card transitions";
@@ -107,7 +126,7 @@ TEST_F(CoalescerHarness, IndependentReadersDoNotCoalesce)
 {
     emit(MonitorEvent::Kind::CardInserted, "Reader A");
     emit(MonitorEvent::Kind::CardRemoved, "Reader B");
-    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    waitForEvents(2);
 
     EXPECT_EQ(snapshot().size(), 2u) << "Coalescing is per-reader, not global";
 }
@@ -202,8 +221,10 @@ TEST_F(CoalescerHarness, TerminalCardInsertedSurvivesFloodBackoff)
     // while the reader is still inside its flood backoff.
     emit(MonitorEvent::Kind::CardInserted, "Flood Reader");
 
-    // Wait past the backoff and any reconcile flush.
-    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    // Wait for the reconcile after the backoff expires.
+    waitUntil([](const std::vector<MonitorEvent>& snap) {
+        return !snap.empty() && snap.back().kind == MonitorEvent::Kind::CardInserted;
+    });
 
     auto snap = snapshot();
     ASSERT_FALSE(snap.empty()) << "a card present after a flood burst was never reported to subscribers";
@@ -253,7 +274,7 @@ TEST_F(CoalescerHarness, HealthyReaderEventNotDelayedByOtherReadersFloodBackoff)
 
     // B's event must flush shortly after ITS window expires — well before
     // A's backoff expiry — so wait far less than the 3000ms backoff.
-    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    waitForEvents(1, std::chrono::milliseconds(1500));
 
     auto snap = snapshot();
     ASSERT_EQ(snap.size(), 1u) << "reader B's genuine CardInserted was parked behind reader A's flood backoff";
@@ -284,7 +305,9 @@ TEST_F(CoalescerHarness, TerminalCardRemovedSurvivesFloodBackoff)
     // Establish the subscriber's belief: a genuine CardInserted flushes
     // after its 60ms hold window.
     emit(MonitorEvent::Kind::CardInserted, "Flood Reader");
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    // Bounded well inside the 1s rate window, which the burst below counts
+    // this event in.
+    waitForEvents(1, std::chrono::milliseconds(700));
     ASSERT_EQ(snapshot().size(), 1u) << "the genuine CardInserted must flush before the burst starts";
 
     // Bogus flapping burst: the accepted events pair-cancel in the
@@ -297,8 +320,8 @@ TEST_F(CoalescerHarness, TerminalCardRemovedSurvivesFloodBackoff)
     // while the reader is still inside its flood backoff.
     emit(MonitorEvent::Kind::CardRemoved, "Flood Reader");
 
-    // Wait past the backoff and any reconcile flush.
-    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    // Wait for the reconcile after the backoff expires.
+    waitForEvents(2);
 
     auto snap = snapshot();
     ASSERT_EQ(snap.size(), 2u) << "a card removed during a flood burst was never reconciled to subscribers";
@@ -330,7 +353,9 @@ TEST_F(CoalescerHarness, FloodSettlingInKnownStateEmitsNothingOnReconcile)
 
     // Establish the subscriber's belief: the card is present.
     emit(MonitorEvent::Kind::CardInserted, "Flood Reader");
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    // Bounded well inside the 1s rate window, which the burst below counts
+    // this event in.
+    waitForEvents(1, std::chrono::milliseconds(700));
     ASSERT_EQ(snapshot().size(), 1u) << "the genuine CardInserted must flush before the burst starts";
 
     // Bogus flapping burst trips the flood gate (see the mirror test above),
@@ -384,8 +409,8 @@ TEST_F(CoalescerHarness, ReconcileOrderingHoldsWhenCoalesceWindowExceedsBackoff)
     // CardInserted's 300ms window is still running.
     emit(MonitorEvent::Kind::CardRemoved, "Flood Reader");
 
-    // Wait past the backoff expiry, the hold window and any flush.
-    std::this_thread::sleep_for(std::chrono::milliseconds(700));
+    // Wait for the held event and the reconcile after the backoff expires.
+    waitForEvents(2);
 
     auto snap = snapshot();
     ASSERT_FALSE(snap.empty()) << "neither the held CardInserted nor the settled CardRemoved surfaced";
