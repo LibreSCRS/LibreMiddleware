@@ -132,7 +132,7 @@ std::string oneline(X509_NAME* n)
 
 std::string issuerCn(X509* c)
 {
-    X509_NAME* n = X509_get_issuer_name(c);
+    const X509_NAME* n = X509_get_issuer_name(c);
     const int idx = X509_NAME_get_index_by_NID(n, NID_commonName, -1);
     if (idx < 0)
         return {};

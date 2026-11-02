@@ -119,7 +119,7 @@ TEST(OpenSslStackPtr, BorrowedLeavesItsMembersToTheirOwner)
     }
     // Still usable: had the owning deleter run here, this read would be a use
     // after free -- silent today, loud under a sanitizer leg.
-    X509_NAME* subject = X509_get_subject_name(owner.get());
+    const X509_NAME* subject = X509_get_subject_name(owner.get());
     ASSERT_NE(subject, nullptr);
     char buf[128] = {};
     EXPECT_NE(X509_NAME_get_text_by_NID(subject, NID_commonName, buf, sizeof(buf)), -1);

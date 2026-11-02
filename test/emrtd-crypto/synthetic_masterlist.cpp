@@ -352,7 +352,7 @@ Cert makeCert(const CertRequest& req)
 
     X509* issuerCert = req.issuer != nullptr ? req.issuer->x.get() : out.x.get();
     const X509_NAME* issuerName = req.issuerName != nullptr ? req.issuerName : X509_get_subject_name(issuerCert);
-    if (X509_set_issuer_name(out.x.get(), const_cast<X509_NAME*>(issuerName)) != 1) {
+    if (X509_set_issuer_name(out.x.get(), issuerName) != 1) {
         fail("X509_set_issuer_name failed");
     }
 

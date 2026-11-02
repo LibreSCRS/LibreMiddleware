@@ -80,7 +80,7 @@ std::string extractSubjectCN(const uint8_t* der, size_t len)
     if (!cert)
         return "(unreadable)";
 
-    X509_NAME* subject = X509_get_subject_name(cert.get());
+    const X509_NAME* subject = X509_get_subject_name(cert.get());
     char buf[256] = {};
     X509_NAME_get_text_by_NID(subject, NID_commonName, buf, sizeof(buf));
 

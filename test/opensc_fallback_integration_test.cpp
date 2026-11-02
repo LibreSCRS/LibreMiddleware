@@ -303,7 +303,7 @@ TEST_F(OpenSCFallbackPKS, Test03ReadCertificatesReturnsParseableDER)
                               << "First bytes: " << firstHexBytes(der) << ". "
                               << "OpenSSL: " << opensslLastError();
 
-        X509_NAME* subj = X509_get_subject_name(x);
+        const X509_NAME* subj = X509_get_subject_name(x);
         ASSERT_NE(subj, nullptr) << "cert[" << i << "] has null subject";
         const int entryCount = X509_NAME_entry_count(subj);
         EXPECT_GT(entryCount, 0) << "cert[" << i << "] subject DN has zero RDN entries";

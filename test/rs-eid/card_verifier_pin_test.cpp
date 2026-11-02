@@ -94,7 +94,7 @@ KeyCert issue(const std::string& cn, const X509* issuer, EVP_PKEY* issuerKey, bo
                                static_cast<int>(cn.size()), -1, 0);
 
     if (issuer)
-        X509_set_issuer_name(c, X509_get_subject_name(const_cast<X509*>(issuer)));
+        X509_set_issuer_name(c, X509_get_subject_name(issuer));
     else
         X509_set_issuer_name(c, subj); // self-signed root
 

@@ -167,7 +167,7 @@ std::optional<TrustAnchor> TrustStore::findIssuerOf(CertificateView certDer) con
     if (!cert)
         return std::nullopt;
 
-    X509_NAME* issuerName = X509_get_issuer_name(cert.get());
+    const X509_NAME* issuerName = X509_get_issuer_name(cert.get());
     if (!issuerName)
         return std::nullopt;
 
@@ -176,7 +176,7 @@ std::optional<TrustAnchor> TrustStore::findIssuerOf(CertificateView certDer) con
             auto candidate = parseDer(anchor.certificateDer);
             if (!candidate)
                 continue;
-            X509_NAME* candidateSubject = X509_get_subject_name(candidate.get());
+            const X509_NAME* candidateSubject = X509_get_subject_name(candidate.get());
             if (sameDn(issuerName, candidateSubject)) {
                 return anchor;
             }
