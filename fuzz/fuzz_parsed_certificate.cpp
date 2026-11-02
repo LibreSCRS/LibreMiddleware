@@ -25,7 +25,6 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
         (void)cert->notAfter();
         (void)cert->signatureAlgorithmOid();
         (void)cert->signatureAlgorithmDescription();
-        (void)cert->signatureValue();
         (void)cert->publicKey();
         (void)cert->keyUsage();
         (void)cert->extendedKeyUsage();

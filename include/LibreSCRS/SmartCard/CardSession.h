@@ -60,17 +60,6 @@ struct ActiveChannelAccessor;
 } // namespace Internal
 
 namespace detail {
-#ifdef LIBRESCRS_INTERNAL_BUILD
-// Test-only detached/alternate-session factory. Gated behind
-// @c LIBRESCRS_INTERNAL_BUILD exactly like @ref CardSession::transmitInternal:
-// it is reached only from in-tree test translation units through the internal-
-// build-guarded <LibreSCRS/SmartCard/detail/CardSessionInjection.h>, never from
-// a shipped plugin or sibling LibreSCRS_*.so. External SDK consumers therefore
-// never see the prototype (it is compiled out without @c LIBRESCRS_INTERNAL_BUILD)
-// and cannot call it; the definition itself is still present in the .so dynamic
-// export set selected by cmake/librescrs-public-exports.map.
-LIBRESCRS_PUBLIC_API std::shared_ptr<CardSession> makeDetachedCardSession(std::string readerName);
-#endif
 struct PcscBridge;
 LIBRESCRS_PUBLIC_API std::uint64_t sessionGeneration(const CardSession& session) noexcept;
 // Friend-only access struct for the test-channel injection seam. Method
@@ -80,6 +69,12 @@ LIBRESCRS_PUBLIC_API std::uint64_t sessionGeneration(const CardSession& session)
 // or its parameter type into the public SDK surface.
 struct ChannelInjector;
 } // namespace detail
+namespace Testing {
+// Friend-only access struct for the declared test support in
+// <LibreSCRS/SmartCard/testing/CardSessionTesting.h>. Defined in the static
+// LibreSCRS::SmartCardTesting archive, never in a shipped shared library.
+struct SessionAccess;
+} // namespace Testing
 /// @endcond
 
 /// @brief Structured error describing why @ref CardSession::open failed.
@@ -98,6 +93,12 @@ struct OpenError
         /// Card is present but the PC/SC protocol negotiation failed (T=0 /
         /// T=1 mismatch, reader fault, driver bug).
         ProtocolError,
+        /// Card is present but another client holds it, or the platform
+        /// refused this process a session (PC/SC
+        /// `SCARD_E_SHARING_VIOLATION`; CryptoTokenKit refusing or not
+        /// yet granting the session). Usually passes: a retry may succeed.
+        /// @since 5.0
+        SessionRefused,
     };
 
     /// @brief Failure category.
@@ -138,8 +139,8 @@ struct OpenError
 /// @brief Opaque handle for an active PC/SC session against a reader.
 ///
 /// Construct via the noexcept factory @ref CardSession::open with the reader
-/// name reported by LibreSCRS::SmartCard::MonitorService::listReaders. Move-only;
-/// not copyable. Internally wraps LibreMiddleware's PC/SC connection
+/// name a LibreSCRS::SmartCard::MonitorEvent reported. Move-only; not
+/// copyable. Internally wraps LibreMiddleware's PC/SC connection
 /// primitive behind a pimpl so consumers see no dependency on PC/SC headers.
 ///
 /// Lifetime of the underlying hardware connection matches the CardSession
@@ -157,24 +158,18 @@ struct OpenError
 /// multiple threads are undefined. Callers
 /// that need to dispatch work from several threads must serialise APDUs
 /// externally (e.g. by holding the session under a mutex) or allocate one
-/// session per worker. The pure accessors (@ref readerName, @ref atr,
-/// @ref isConnected) read immutable post-construction state and may be
-/// called concurrently. Sibling pimpl-backed types
+/// session per worker. The pure accessors (@ref readerName, @ref atr) read
+/// immutable post-construction state and may be called concurrently. Sibling pimpl-backed types
 /// (@ref LibreSCRS::Signing::SigningService) take a
 /// @c std::shared_ptr<CardSession> by value and assume the caller has
 /// already established that exclusivity for the duration of the call.
 ///
 /// @par Smart-pointer integration (since 4.2)
-/// Inherits @c std::enable_shared_from_this<CardSession> so the
-/// LM-internal SessionPresence registry can store a @c weak_ptr that
-/// auto-clears when the owning @c shared_ptr drops. @c shared_from_this()
+/// Inherits @c std::enable_shared_from_this<CardSession>. @c shared_from_this()
 /// is callable only when the session is owned by a @c std::shared_ptr;
-/// value-stored sessions (the SwiftUI host's BridgeSession holds the
-/// session by value, for example) trigger @c std::bad_weak_ptr per the
-/// standard contract and are documented as a known SessionPresence
-/// no-op — auto-registration short-circuits without raising. Use
-/// @c weak_from_this() (safe in either case; returns empty on value
-/// storage) when only the lookup half is needed.
+/// value-stored sessions trigger @c std::bad_weak_ptr per the standard
+/// contract. Use @c weak_from_this() (safe in either case; returns empty on
+/// value storage) when only the lookup half is needed.
 ///
 /// @since 4.0
 class LIBRESCRS_PUBLIC_API CardSession final : public std::enable_shared_from_this<CardSession>
@@ -220,9 +215,8 @@ public:
 
     /// @brief True when this object holds a valid (non-moved-from) pimpl.
     ///
-    /// `if (!session)` is always well-defined; calling @ref readerName,
-    /// @ref atr, or @ref isConnected on a moved-from session is undefined
-    /// behaviour. Consumers that move sessions into
+    /// `if (!session)` is always well-defined; calling @ref readerName or
+    /// @ref atr on a moved-from session is undefined behaviour. Consumers that move sessions into
     /// @c std::shared_ptr<CardSession> for signing should check the
     /// source-object state before the move if the source remains in scope.
     /// @since 4.0
@@ -241,11 +235,6 @@ public:
     /// @note Pure accessor, `noexcept` per API-POLICY §5.3. Calling any
     ///       accessor on a moved-from session is undefined behaviour.
     [[nodiscard]] const std::vector<std::uint8_t>& atr() const noexcept;
-
-    /// @brief True while the session is open; false after reset / removal.
-    /// @note Pure accessor, `noexcept` per API-POLICY §5.3. Calling any
-    ///       accessor on a moved-from session is undefined behaviour.
-    [[nodiscard]] bool isConnected() const noexcept;
 
     /// @brief True when this session currently owns an active secure-
     ///        messaging channel (PACE / BAC) in
@@ -395,8 +384,8 @@ public:
     /// @since 4.1
     void clearCachedPaceCredentials() noexcept;
 
-    /// @brief Mark the session dead. Invoked by @c AutoReaderService on
-    ///        a @c CardRemoved event; subsequent activation attempts
+    /// @brief Mark the session dead, typically on a @c CardRemoved event
+    ///        for its reader; subsequent activation attempts
     ///        return @c ChannelActivationError::CardRemoved.
     /// @since 4.1
     void markDead() noexcept;
@@ -447,7 +436,10 @@ public:
     ///          or when an exception (reader gone, card removed mid-
     ///          transmit) escapes the dispatch, returns @c SW=0x6F00
     ///          without propagating the exception across the LM-internal
-    ///          funnel boundary.
+    ///          funnel boundary. When the installed channel carries secure
+    ///          messaging but is no longer open, returns @c SW=0x6F02 and
+    ///          sends nothing: a plain command never replaces a protected
+    ///          one.
     ///
     /// @pre Callers must serialise concurrent transmits on the same
     ///      session themselves — the funnel does NOT internally
@@ -472,25 +464,19 @@ public:
 #endif
 
 private:
-    // Detail-namespace free functions are the internal access points for
-    // test factories (makeDetachedCardSession) and plugin/signing bridges
-    // (unwrap, sessionGeneration). Friending them directly removes the
-    // earlier CardSessionFactory class indirection. Declarations live in
-    // internal-only headers under `LibreSCRS/SmartCard/detail/`; friend
-    // declarations here inject the names at enclosing-namespace scope
-    // without leaking any prototypes into the public include tree.
-#ifdef LIBRESCRS_INTERNAL_BUILD
-    // Friend for the internal-build-only detached-session test factory; gated
-    // in lockstep with its declaration above so the public surface neither
-    // names nor befriends a symbol absent from the SDK.
-    friend std::shared_ptr<CardSession> detail::makeDetachedCardSession(std::string readerName);
-#endif
+    // Detail-namespace free functions and access structs are the internal
+    // access points for plugin/signing bridges (unwrap, sessionGeneration)
+    // and the test seams (ChannelInjector, Testing::SessionAccess). Their
+    // declarations live outside this header; friend declarations here inject
+    // the names at enclosing-namespace scope without leaking any prototypes
+    // into the public include tree.
     friend struct detail::PcscBridge;
     friend std::uint64_t detail::sessionGeneration(const CardSession& session) noexcept;
     friend struct detail::ChannelInjector;
+    friend struct Testing::SessionAccess;
     friend struct Internal::ActiveChannelAccessor;
 
-    /// @brief Private; used by @ref detail::makeDetachedCardSession.
+    /// @brief Private; used by @ref Testing::makeDetachedCardSession.
     CardSession();
     /// @brief Private constructor used by @ref open and the detail factories.
     ///        Not part of the public surface.

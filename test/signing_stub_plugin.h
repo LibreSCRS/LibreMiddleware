@@ -34,7 +34,7 @@ public:
         LibreSCRS::Plugin::CardCapabilities capabilities = LibreSCRS::Plugin::CardCapabilities::PKI)
         : caps(capabilities)
     {
-        setIdentity("stub-pki", "Stub PKI", /*priority=*/1000);
+        setIdentity("stub-pki", /*priority=*/1000);
     }
 
     LibreSCRS::Plugin::CardCapabilities capabilities() const override
@@ -51,13 +51,6 @@ public:
     LibreSCRS::Plugin::ReadResult doReadCard(LibreSCRS::SmartCard::CardSession&, GroupCallback) const override
     {
         return LibreSCRS::Plugin::ReadResult::ok(LibreSCRS::Plugin::CardData{});
-    }
-
-    LibreSCRS::Plugin::CredentialCounters readCounters(LibreSCRS::SmartCard::CardSession&,
-                                                       std::string_view) const override
-    {
-        // No APDU traffic: the session is never touched.
-        return {};
     }
 
     void setCredentials(LibreSCRS::SmartCard::CardSession&, std::string_view key,

@@ -42,3 +42,66 @@ xmlsec1 --verify \
     "$SIGNED"
 
 echo "Regenerated $SIGNED"
+
+# Two references to SchemeInformation by Id, one with the enveloped-signature
+# transform and one without, and one to the list itself by Id.
+SI_ID="http://uri.etsi.org/02231/v2#:SchemeInformation"
+TSL_ID="http://uri.etsi.org/02231/v2#:TrustServiceStatusList"
+xmlsec1 --sign \
+    --privkey-pem:testkey "$KEY,$CERT" \
+    --node-id TLSignature \
+    --id-attr:Id "http://www.w3.org/2000/09/xmldsig#:Signature" \
+    --id-attr:Id "$SI_ID" \
+    --id-attr:Id "$TSL_ID" \
+    --output two-reference-tl.xml \
+    two-reference-tl.template.xml
+xmlsec1 --verify \
+    --trusted-pem "$CERT" \
+    --enabled-key-data x509,key-name,rsa \
+    --id-attr:Id "http://www.w3.org/2000/09/xmldsig#:Signature" \
+    --id-attr:Id "$SI_ID" \
+    --id-attr:Id "$TSL_ID" \
+    two-reference-tl.xml
+
+echo "Regenerated two-reference-tl.xml"
+
+# One reference, to SchemeInformation only: a valid signature that leaves the
+# rest of the list unsigned.
+xmlsec1 --sign \
+    --privkey-pem:testkey "$KEY,$CERT" \
+    --node-id TLSignature \
+    --id-attr:Id "http://www.w3.org/2000/09/xmldsig#:Signature" \
+    --id-attr:Id "$SI_ID" \
+    --output scheme-only-tl.xml \
+    scheme-only-tl.template.xml
+xmlsec1 --verify \
+    --trusted-pem "$CERT" \
+    --enabled-key-data x509,key-name,rsa \
+    --id-attr:Id "http://www.w3.org/2000/09/xmldsig#:Signature" \
+    --id-attr:Id "$SI_ID" \
+    scheme-only-tl.xml
+
+echo "Regenerated scheme-only-tl.xml"
+
+# The same list with a NextUpdate in the past.
+xmlsec1 --sign \
+    --privkey-pem:testkey "$KEY,$CERT" \
+    --node-id TLSignature \
+    --id-attr:Id "http://www.w3.org/2000/09/xmldsig#:Signature" \
+    --output stale-tl.xml \
+    stale-tl.template.xml
+echo "Regenerated stale-tl.xml"
+
+# The same list with its one service a qualified time-stamping service.
+xmlsec1 --sign \
+    --privkey-pem:testkey "$KEY,$CERT" \
+    --node-id TLSignature \
+    --id-attr:Id "http://www.w3.org/2000/09/xmldsig#:Signature" \
+    --output tsa-tl.xml \
+    tsa-tl.template.xml
+xmlsec1 --verify \
+    --trusted-pem "$CERT" \
+    --enabled-key-data x509,key-name,rsa \
+    --id-attr:Id "http://www.w3.org/2000/09/xmldsig#:Signature" \
+    tsa-tl.xml
+echo "Regenerated tsa-tl.xml"

@@ -1,84 +1,44 @@
 /* GNU ld version script for the public LibreSCRS_*.so libraries.
- * Whitelists LM-public C++ namespaces; everything else (bundled OpenSSL,
- * libresign internals, vendored nlohmann/miniz/pugixml, std-template
- * instantiations on internal types) collapses to local linkage.
+ * Exports the entities of the LibreSCRS namespace; everything else (bundled
+ * OpenSSL, libresign internals, vendored nlohmann/miniz/pugixml, and every
+ * standard-library template instantiation, including one instantiated on a
+ * LibreSCRS type) collapses to local linkage.
  * See lib/LibreSCRS/CMakeLists.txt for full rationale.
  *
- * Syntax: GNU ld 2.46 — `extern "C++"` block matches against demangled
- * names. UNQUOTED patterns are glob wildcards (shell-style); DOUBLE-
- * QUOTED patterns are LITERAL matches with NO wildcard interpretation
- * (binutils `ld` info, §3.9 VERSION). Unquoted patterns cannot contain
- * spaces, which forces the leading-wildcard `*LibreSCRS::*` idiom: it
- * is the only single-line glob that simultaneously matches
- *     `LibreSCRS::Foo::bar(...)`
- * and the Itanium-ABI artefacts
- *     `typeinfo for LibreSCRS::Foo`
- *     `vtable for LibreSCRS::Foo`
- *     `VTT for LibreSCRS::Foo`
- *     `construction vtable for LibreSCRS::Foo`
- * — all of which carry an internal space the linker grammar refuses
- * to accept in an unquoted pattern. Anchored quoted entries
- * (`"LibreSCRS::*"`, `"typeinfo for LibreSCRS::*"`) were attempted
- * and rejected: they are LITERAL matches per ld docs and match
- * nothing at runtime.
- *
- * Trade-off — IMPLEMENTABILITY-FORCED leading-wildcard surface:
- *   The leading-wildcard glob also promotes any symbol whose
- *   demangled name MENTIONS a `LibreSCRS::` type anywhere. Empirically
- *   this leaks:
- *     - (HISTORICAL) `emrtd::crypto::performBAC(LibreSCRS::SmartCard::
- *       IConnection&, ...)`, `performPACE(...)` and `performChipAuth`
- *       (statically linked into LibreSCRS_SecureChannel.so via the
- *       EMRTDCrypto archive). MITIGATED: the internal archives are
- *       compiled with hidden visibility, and the glob can only hide,
- *       never export, a hidden symbol.
- *     - (HISTORICAL) STL template instantiations templated on
- *       `LibreSCRS::SmartCard::Internal::Monitor` (specifically
- *       `std::thread::_State_impl<...LibreSCRS::SmartCard::Internal::
- *       Monitor...>::_M_run()` and its destructors / typeinfo /
- *       vtable). MITIGATED: the internal poll thread is now spawned via
- *       a local lambda (`std::thread([this]{ run(); })` in
- *       lib/smartcard/src/monitor.cpp), so the `_State_impl<...>`
- *       instantiation parameterises over an anonymous closure with
- *       local linkage instead of over the internal Monitor type — the
- *       symbol no longer reaches the export glob and no longer leaks.
- *       Listed here only as a record of the prior accepted leak.
- *   The remaining classes were investigated for stripping via:
- *     (a) anonymous-version + named LM_5 block — REJECTED by GNU ld
- *         2.46 ("anonymous version tag cannot be combined with other
- *         version tags").
- *     (b) multiple named-version blocks (`_DENY` before LM_5) — DID
- *         NOT strip; named-version local: blocks do not override
- *         later named-version global: matches for equally-non-
- *         specific wildcards.
- *     (c) intra-block `local:` with `emrtd::*` / `libresign::*` /
- *         `smartcard::*` — DID NOT strip; intra-block GLOBAL
- *         wildcard wins over intra-block LOCAL wildcard at equal
- *         specificity in GNU ld.
- *     (d) `--exclude-libs libLibreSign.a` / `--exclude-libs
- *         libEMRTDCrypto.a` — REJECTED because the legitimately
- *         public `LibreSCRS::Signing::layoutVisualSignature` lives
- *         in libresign source.
- *   The leaked symbols are NOT security-critical: they are functions
- *   whose demangled names happen to mention `LibreSCRS::` types.
- *   They cannot be invoked via dlsym without prior knowledge of their
- *   mangled names, do not break abstract-base polymorphism, and do
- *   not expose any LM private API to third-party `.so` consumers
- *   (who would have to declare matching `emrtd::` / `libresign::` /
- *   `smartcard::` namespaces and depend on internal-header types to
- *   link against them — a far harder ABI break than any reasonable
- *   third-party consumer would commit to). The trade-off is accepted
- *   as the cost of GNU ld's grammar; if a future binutils release
- *   admits an anchored-glob-with-RTTI-coverage form, this file
- *   should be re-narrowed.
+ * Syntax: the global patterns are plain (C-language) globs, so they match
+ * the MANGLED name. Each one is anchored on a nested name rooted in
+ * `9LibreSCRS`, after the Itanium-ABI prefix of its kind:
+ *     _ZN / _ZNK / _ZNV / _ZNVK / _ZNR / _ZNO / _ZNKR / _ZNKO
+ *                               functions and data, with their cv- and
+ *                               ref-qualifiers
+ *     _ZTV / _ZTI / _ZTS / _ZTT / _ZTC
+ *                               vtable, typeinfo, typeinfo name, VTT,
+ *                               construction vtable -- required for
+ *                               cross-SO polymorphism (dynamic_cast,
+ *                               exception catch, vtable lookup of public
+ *                               abstract bases such as `ISecureChannel`)
+ *     _ZGV / _ZZ / _ZTH / _ZTW  guard variables and local statics of
+ *                               inline functions (one copy per process),
+ *                               thread_local init and wrapper
+ *     _ZThn / _ZTv              non-virtual and virtual thunks
+ * The demangled form cannot be anchored the same way: GNU ld refuses spaces
+ * in an unquoted `extern "C++"` pattern and treats a quoted one as a
+ * literal, so `typeinfo for LibreSCRS::Foo` forces a leading-wildcard
+ * `*LibreSCRS::*` glob -- and that glob also matched every symbol whose
+ * demangled name merely MENTIONS a LibreSCRS type, such as
+ * `std::__detail::_Map_base<..., LibreSCRS::<an enum>>::operator[]`
+ * or `vtable for std::_Sp_counted_ptr_inplace<LibreSCRS::Trust::TrustStore,
+ * ...>`. Exported weak, those bind every consumer instantiating the same
+ * template to whichever copy loaded first.
+ * ci/scripts/check-impl-visibility.sh refuses any such export.
  *
  * Cross-`.so` ABI surface — INTENTIONAL Internal::/detail:: exports:
  *   The LibreSCRS::*::Internal:: namespace IS part of the SHARED-build
  *   ABI for cross-`.so` plugin reach and the test-helper archive.
  *   Specifically:
- *     - LibreSCRS::SmartCard::Internal::PCSCConnection, SessionPresence,
+ *     - LibreSCRS::SmartCard::Internal::PCSCConnection,
  *       ActiveChannelAccessor — reached across the .so boundary by the
- *       card plugins, the PKCS#11 module and the test-helper archive.
+ *       card plugins and the test-helper archive.
  *       Monitor, the APDU helpers and the plugin PIN-family quirks are
  *       compiled into each image from hidden-visibility archives and
  *       are not exported.
@@ -94,9 +54,6 @@
  *     - LibreSCRS::Trust::detail::TrustAnchorProvider typeinfo —
  *       required for cross-`.so` dynamic_cast on subclasses linked in
  *       different .so files.
- *     - LibreSCRS::Certificate::detail::lookupOidName — required for
- *       the OidDatabase test which links against the SHARED
- *       LibreSCRS_Certificate.
  *   Third-party consumers MUST NOT rely on Internal:: or detail::
  *   symbols; both are unstable across minor releases and are exported
  *   only because the shared-build link graph mechanically requires
@@ -104,7 +61,7 @@
  *
  *   SM-aware transmit funnel: the only exported entry point is
  *   `CardSession::transmitInternal()` (internal-build-gated public
- *   member), promoted authoritatively by the `*LibreSCRS::*` glob.
+ *   member), exported by the `_ZN9LibreSCRS*` family.
  *   The snapshot/dispatch primitive is a TU-local anonymous-namespace
  *   helper inside `CardSession.cpp` and is not exported; the legacy
  *   `LibreSCRS::SmartCard::Internal::sessionTransmitImpl` free
@@ -115,66 +72,40 @@
 
 LM_5 {
     global:
-        extern "C++" {
-            /* Wildcard prefix matches both bare names
-             *     `LibreSCRS::Foo::bar(...)`
-             * and Itanium-ABI RTTI / vtable artefacts demangled as
-             *     `typeinfo for LibreSCRS::Foo`
-             *     `typeinfo name for LibreSCRS::Foo`
-             *     `vtable for LibreSCRS::Foo`
-             *     `VTT for LibreSCRS::Foo`
-             *     `construction vtable for LibreSCRS::Foo`
-             * which are required for cross-SO polymorphism
-             * (dynamic_cast, exception catch, vtable lookup of public
-             * abstract bases such as `ISecureChannel`). A bare
-             * `LibreSCRS::*` glob misses the `... for LibreSCRS::*`
-             * forms and silently demotes class-level visibility to
-             * LOCAL in the .so, breaking link of consumers that
-             * downcast or instantiate the type. See the file-header
-             * "Trade-off" block for the IMPLEMENTABILITY-FORCED side
-             * of this glob and the four narrowing approaches GNU ld
-             * 2.46 grammar rejected. */
-            *LibreSCRS::*;
-        };
+        /* The prefix families of the file header, each anchored on
+         * `9LibreSCRS` right after it. A `*` never comes before the
+         * anchor except inside a thunk's offset. */
+        _ZN9LibreSCRS*;
+        _ZNK9LibreSCRS*;
+        _ZNV9LibreSCRS*;
+        _ZNVK9LibreSCRS*;
+        _ZNR9LibreSCRS*;
+        _ZNO9LibreSCRS*;
+        _ZNKR9LibreSCRS*;
+        _ZNKO9LibreSCRS*;
+        _ZTVN9LibreSCRS*;
+        _ZTIN9LibreSCRS*;
+        _ZTSN9LibreSCRS*;
+        _ZTTN9LibreSCRS*;
+        _ZTCN9LibreSCRS*;
+        _ZGVN9LibreSCRS*;
+        _ZGVZN9LibreSCRS*;
+        _ZGVZNK9LibreSCRS*;
+        _ZZN9LibreSCRS*;
+        _ZZNK9LibreSCRS*;
+        _ZTHN9LibreSCRS*;
+        _ZTWN9LibreSCRS*;
+        _ZThn*_N9LibreSCRS*;
+        _ZThn*_NK9LibreSCRS*;
+        _ZTv*_N9LibreSCRS*;
+        _ZTv*_NK9LibreSCRS*;
     local:
-        /* Strip test-only injection helpers from the dynamic export
-         * set. The `*LibreSCRS::*` global glob above would otherwise
-         * authoritatively override the per-declaration
-         * `LIBRESCRS_INTERNAL` hidden-visibility attribute and leak
-         * these dlsym-reachable footguns into the production shared
-         * library, defeating the documented runtime hardening of
-         * `LibreSCRS::SmartCard::MonitorService::SubscriptionId`
-         * (privatised raw-int ctor) and of
-         * `LibreSCRS::SmartCard::CardSession`'s channel install path.
-         *
-         * The helper bodies live in the build-tree-only
-         * `LibreSCRS_SmartCard_TestHelpers` archive: test executables
-         * that need them link the archive alongside the production
-         * target, so the symbols enter the test executable directly
-         * and never need to be found in the .so at link time.
-         *
-         * Note: the broader `*LibreSCRS::*::detail::*` glob would
-         * also be sound, but it would strip the legitimate
-         * cross-`.so` plugin-reach detail helpers (e.g.
-         * `SecureChannel::detail::ChannelStateMutator`,
-         * `SmartCard::detail::PcscBridge::unwrap`,
-         * `Certificate::detail::lookupOidName`,
-         * `Signing::detail::translatePublicRequestToLibresign`,
-         * `Trust::detail::TrustAnchorProvider`,
-         * `Trust::detail::TrustStoreInternalAccess`,
-         * `SmartCard::detail::sessionGeneration`,
-         * `SmartCard::detail::makeDetachedCardSession`), each of
-         * which is consumed by either a card plugin or a sibling
-         * `LibreSCRS_*.so` via the `DT_NEEDED` edge.
-         *
-         * The narrow per-symbol list captures only the three
-         * test-injection footguns plus the `MonitorFactory` friend
-         * bridge they go through. */
-        extern "C++" {
-            *LibreSCRS::SmartCard::detail::makeMonitorWithProvider*;
-            *LibreSCRS::SmartCard::detail::makeSubscriptionIdForTest*;
-            *LibreSCRS::SmartCard::detail::MonitorFactory*;
-            *LibreSCRS::SmartCard::detail::ChannelInjector::installForTesting*;
-        };
+        /* Everything else. A local pattern cannot carve an exception out
+         * of a global wildcard -- GNU ld lets the global wildcard win and
+         * only a literal local name overrides it -- so a LibreSCRS entity
+         * that must not be exported stays out of these libraries instead:
+         * the test seams are compiled into the test archives
+         * (`LibreSCRS_SmartCard_TestHelpers`, `LibreSCRS_SmartCardTesting`),
+         * never into a .so. */
         *;
 };

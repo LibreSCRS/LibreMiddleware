@@ -12,11 +12,7 @@ namespace LibreSCRS::Signing {
 
 TsaProvider staticTsa(std::string url)
 {
-    return [u = std::move(url)](const TsaContext&) {
-        TsaRequest req;
-        req.url = u;
-        return req;
-    };
+    return TsaProvider{std::move(url)};
 }
 
 TsaProvider staticTsaChecked(std::string_view url)

@@ -35,6 +35,7 @@
 /// weaker conclusion than the unauthenticated probe on identical bytes.
 
 #include <LibreSCRS_internal/SmartCard/CardAccessReader.h>
+#include <ber.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -54,32 +55,17 @@ enum class PaceDowngradeVerdict : std::uint8_t {
 /// @brief True iff the outer DER length octet(s) at @p data[1..] describe a
 ///        value wholly contained in @p data. @p data[0] is assumed 0x31.
 ///        Rejects the indefinite form and any > 64 KiB length (a single READ
-///        BINARY can never return the whole file). Mirrors the pre-auth
-///        probe's @c outerBerLengthContained so a truncated read is never
-///        mistaken for a complete no-PACE document.
+///        BINARY can never return the whole file). The pre-auth probe applies
+///        this same function, so a truncated read is never mistaken for a
+///        complete no-PACE document by either.
 [[nodiscard]] inline bool cardAccessOuterLengthContained(const std::vector<std::uint8_t>& data) noexcept
 {
-    if (data.size() < 2)
+    // The shared decode; the ceiling (short, 81 or 82: `next - 1` up to 3) is
+    // this check's own.
+    const auto parsed = tryParseLength(data.data(), data.size(), 1);
+    if (!parsed.ok || parsed.next - 1 > 3)
         return false;
-    const std::uint8_t lead = data[1];
-    std::size_t header = 2;
-    std::size_t contentLen = 0;
-    if (lead < 0x80) {
-        contentLen = lead;
-    } else if (lead == 0x81) {
-        if (data.size() < 3)
-            return false;
-        header = 3;
-        contentLen = data[2];
-    } else if (lead == 0x82) {
-        if (data.size() < 4)
-            return false;
-        header = 4;
-        contentLen = (static_cast<std::size_t>(data[2]) << 8) | data[3];
-    } else {
-        return false; // 0x80 indefinite, or 0x83+ (> 64 KiB)
-    }
-    return header + contentLen <= data.size();
+    return parsed.length <= data.size() - parsed.next;
 }
 
 namespace detail {
@@ -90,27 +76,12 @@ namespace detail {
 [[nodiscard]] inline bool readDerLength(const std::vector<std::uint8_t>& d, std::size_t& pos, std::size_t end,
                                         std::size_t& len) noexcept
 {
-    if (pos >= end)
+    const auto parsed = tryParseLength(d.data(), end, pos);
+    if (!parsed.ok || parsed.next - pos > 3)
         return false;
-    const std::uint8_t lead = d[pos++];
-    if (lead < 0x80) {
-        len = lead;
-        return true;
-    }
-    if (lead == 0x81) {
-        if (pos >= end)
-            return false;
-        len = d[pos++];
-        return true;
-    }
-    if (lead == 0x82) {
-        if (pos + 1 >= end)
-            return false;
-        len = (static_cast<std::size_t>(d[pos]) << 8) | d[pos + 1];
-        pos += 2;
-        return true;
-    }
-    return false;
+    len = parsed.length;
+    pos = parsed.next;
+    return true;
 }
 
 } // namespace detail

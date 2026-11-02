@@ -25,10 +25,7 @@ namespace LibreSCRS::Trust {
 /// @since 4.0
 using CertificateView = std::span<const std::uint8_t>;
 
-/// @brief Resolved trust anchor — DER-encoded certificate plus provenance label.
-///
-/// The label encodes where the anchor came from for diagnostics and audit;
-/// callers must not parse it as a structured identifier.
+/// @brief Resolved trust anchor — a DER-encoded certificate.
 ///
 /// @par Thread-safety
 /// Thread-compatible per API-POLICY §8: distinct instances are independent;
@@ -39,9 +36,6 @@ struct LIBRESCRS_PUBLIC_API TrustAnchor
 {
     /// @brief DER-encoded X.509 certificate bytes.
     std::vector<std::uint8_t> certificateDer;
-    /// @brief Human-readable provenance tag (e.g. "bundled:root-CA-A",
-    ///        "tl:rs-mit-2026-04"). Diagnostics only — do not parse.
-    std::string sourceLabel;
 
     /// @brief Defaulted byte-identity equality.
     [[nodiscard]] bool operator==(const TrustAnchor&) const noexcept = default;
@@ -81,15 +75,10 @@ public:
     ///       work in flight, an anchor that is in the process of being
     ///       fetched and merged is not yet present in the store; a chain
     ///       whose root depends on that anchor will validate to
-    ///       ChainStatus::UntrustedRoot until the merge completes. Consumers that
-    ///       must distinguish "really untrusted" from "still loading"
-    ///       query @ref LibreSCRS::Trust::TrustStoreService::status()
-    ///       (or @ref LibreSCRS::Trust::TrustStoreService::sourceStatuses())
-    ///       in addition to inspecting the @ref ChainStatus value. Doing
-    ///       the disambiguation on the consumer side avoids a back-pointer
-    ///       cycle from @ref TrustStore into @ref TrustStoreService and
-    ///       keeps the validation surface free of an Unsettled value that
-    ///       only makes sense for online sources.
+    ///       ChainStatus::UntrustedRoot until the merge completes. The
+    ///       validation surface carries no Unsettled value that only makes
+    ///       sense for online sources, and the store holds no back-pointer
+    ///       into @ref TrustStoreService.
     ///
     /// @note Append-only per API-POLICY §9 — new outcome values land at
     ///       the tail and consumers' switches MUST close over every value

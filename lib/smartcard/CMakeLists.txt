@@ -72,6 +72,8 @@ target_include_directories(SmartCard_Impl PUBLIC
 # own PRIVATE include dirs.
 target_include_directories(SmartCard_Impl PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    # <LibreSCRS_internal/LogNoexcept.h>
+    ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
 )
 
 # Hidden: only a library that links this archive decides what of it is exported;
@@ -82,6 +84,7 @@ set_target_properties(SmartCard_Impl PROPERTIES
     VISIBILITY_INLINES_HIDDEN ON
 )
 
-target_link_libraries(SmartCard_Impl PUBLIC PCSC::PCSC Threads::Threads PRIVATE OpenSSL_Crypto)
+# LibreSCRS_Auth: the monitor reports through the logging facade.
+target_link_libraries(SmartCard_Impl PUBLIC PCSC::PCSC Threads::Threads LibreSCRS_Auth PRIVATE OpenSSL_Crypto)
 
 librescrs_warnings_as_errors(SmartCard_Impl)

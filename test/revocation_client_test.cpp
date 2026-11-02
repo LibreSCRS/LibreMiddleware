@@ -3,8 +3,6 @@
 
 #include <gtest/gtest.h>
 
-#ifdef LIBRESIGN_HAS_NATIVE
-
 #include "native/revocation_client.h"
 #include "native/trusted_list_parser.h" // isSafeFetchUrl — shared SSRF gate
 
@@ -17,6 +15,9 @@
 #include <string>
 #include <vector>
 #include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+#include <LibreSCRS_internal/Crypto/OpenSslPtrCms.h>
+
+#include <openssl/ocsp.h>
 
 using LibreSCRS::Internal::Crypto::Asn1IntegerPtr;
 using LibreSCRS::Internal::Crypto::EvpPkeyPtr;
@@ -410,4 +411,29 @@ TEST(RevocationClient, CrlRevokesCertDetectsRevokedSerial)
     EXPECT_FALSE(RevocationClient::crlRevokesCert(revokingCrl.get(), nullptr));
 }
 
-#endif
+// A Trusted List names a subordinate CA as often as a root. An OCSP response
+// signed by such an anchor verifies when the chain is anchor-terminated, and
+// does not when the chain's tail is merely the last certificate the card had.
+TEST(RevocationClient, OcspSignedByASubordinateTrustedListAnchorVerifies)
+{
+    auto rootKey = makeKey();
+    auto subKey = makeKey();
+    auto leafKey = makeKey();
+    auto sub = makeCert("Sub CA", "Root CA", subKey.get(), rootKey.get()); // not self-signed
+    auto leaf = makeCert("Leaf", "Sub CA", leafKey.get(), subKey.get());
+
+    LibreSCRS::Internal::Crypto::OcspBasicPtr basic(OCSP_BASICRESP_new());
+    ASSERT_TRUE(basic);
+    OCSP_CERTID* id = OCSP_cert_to_id(EVP_sha256(), leaf.get(), sub.get());
+    ASSERT_NE(id, nullptr);
+    ASN1_TIME* now = X509_gmtime_adj(nullptr, 0);
+    ASSERT_NE(OCSP_basic_add1_status(basic.get(), id, V_OCSP_CERTSTATUS_GOOD, 0, nullptr, now, nullptr), nullptr);
+    ASSERT_EQ(OCSP_basic_sign(basic.get(), sub.get(), subKey.get(), EVP_sha256(), nullptr, 0), 1);
+    OCSP_CERTID_free(id);
+    ASN1_TIME_free(now);
+
+    const std::vector<X509*> chain{leaf.get(), sub.get()};
+    EXPECT_TRUE(libresign::RevocationClient::ocspResponseVerifies(basic.get(), chain, /*anchorTerminated=*/true));
+    EXPECT_FALSE(libresign::RevocationClient::ocspResponseVerifies(basic.get(), chain, /*anchorTerminated=*/false))
+        << "an unproven tail is not trusted as an anchor";
+}

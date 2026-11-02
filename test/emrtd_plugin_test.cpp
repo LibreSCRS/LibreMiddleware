@@ -14,7 +14,7 @@
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
-#include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
+#include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
 #include <LibreSCRS/SecureChannel/BacParams.h>
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
@@ -113,16 +113,42 @@ StreamingResult readCardWithStreaming(const std::shared_ptr<CardPlugin>& plugin,
     return result;
 }
 
+// The first group keyed @p key, or nullptr.
+const CardFieldGroup* groupOf(const CardData& data, std::string_view key)
+{
+    const auto it = std::ranges::find(data.groups, key, &CardFieldGroup::groupKey);
+    return it == data.groups.end() ? nullptr : &*it;
+}
+
+// The bytes of a Text field as a string; nullopt for any other field type.
+std::optional<std::string> textOf(const CardField& field)
+{
+    if (field.type != FieldType::Text)
+        return std::nullopt;
+    return std::string(field.value.begin(), field.value.end());
+}
+
+// The status whose canonical token is @p token, or nullopt for anything else.
+std::optional<SecurityCheck::Status> statusOf(std::string_view token)
+{
+    using S = SecurityCheck::Status;
+    for (const auto s : {S::Passed, S::Failed, S::NotPerformed, S::NotSupported, S::Skipped}) {
+        if (statusToString(s) == token)
+            return s;
+    }
+    return std::nullopt;
+}
+
 // Text of one field of one group, or nullopt when the group, the field, or a
 // textual value is missing.
 std::optional<std::string> fieldText(const CardData& data, const std::string& groupKey, const std::string& fieldKey)
 {
-    auto idx = data.findGroup(groupKey);
-    if (!idx)
+    const auto* group = groupOf(data, groupKey);
+    if (group == nullptr)
         return std::nullopt;
-    for (const auto& field : data.groupAt(*idx).fields) {
+    for (const auto& field : group->fields) {
         if (field.key == fieldKey)
-            return field.textValue();
+            return textOf(field);
     }
     return std::nullopt;
 }
@@ -160,14 +186,14 @@ std::optional<std::pair<std::size_t, std::string>> parseCheckKey(const std::stri
 // The ordinal of the check whose `check_<N>_id` field carries @p checkId.
 std::optional<std::size_t> checkIndexOf(const CardData& data, const std::string& groupKey, const std::string& checkId)
 {
-    auto idx = data.findGroup(groupKey);
-    if (!idx)
+    const auto* group = groupOf(data, groupKey);
+    if (group == nullptr)
         return std::nullopt;
-    for (const auto& field : data.groupAt(*idx).fields) {
+    for (const auto& field : group->fields) {
         const auto parsed = parseCheckKey(field.key);
         if (!parsed || parsed->second != "id")
             continue;
-        if (field.textValue().value_or("") == checkId)
+        if (textOf(field).value_or("") == checkId)
             return parsed->first;
     }
     return std::nullopt;
@@ -257,13 +283,13 @@ private:
 std::vector<std::string> checkIds(const CardData& data, const std::string& groupKey)
 {
     std::vector<std::string> ids;
-    auto idx = data.findGroup(groupKey);
-    if (!idx)
+    const auto* group = groupOf(data, groupKey);
+    if (group == nullptr)
         return ids;
-    for (const auto& field : data.groupAt(*idx).fields) {
+    for (const auto& field : group->fields) {
         const auto parsed = parseCheckKey(field.key);
         if (parsed && parsed->second == "id") {
-            if (auto text = field.textValue())
+            if (auto text = textOf(field))
                 ids.push_back(*text);
         }
     }
@@ -301,7 +327,6 @@ TEST(EMRTDPluginTest, Metadata)
     ASSERT_NE(emrtd, nullptr);
 
     EXPECT_EQ(emrtd->pluginId(), "emrtd");
-    EXPECT_EQ(emrtd->displayName(), "Electronic Passport (eMRTD)");
     EXPECT_EQ(emrtd->probePriority(), 800);
 }
 
@@ -386,10 +411,10 @@ TEST(EMRTDHardwareTest, PaceMRZEndToEnd)
     }
 
     // Verify key groups are present
-    EXPECT_TRUE(result.data.findGroup("personal").has_value()) << "personal group missing";
-    EXPECT_TRUE(result.data.findGroup("document").has_value()) << "document group missing";
-    EXPECT_TRUE(result.data.findGroup("photo").has_value()) << "photo group missing";
-    EXPECT_TRUE(result.data.findGroup("security_status").has_value()) << "security_status group missing";
+    EXPECT_NE(groupOf(result.data, "personal"), nullptr) << "personal group missing";
+    EXPECT_NE(groupOf(result.data, "document"), nullptr) << "document group missing";
+    EXPECT_NE(groupOf(result.data, "photo"), nullptr) << "photo group missing";
+    EXPECT_NE(groupOf(result.data, "security_status"), nullptr) << "security_status group missing";
 }
 
 TEST(EMRTDHardwareTest, PassiveAuthEndToEnd)
@@ -424,7 +449,7 @@ TEST(EMRTDHardwareTest, PassiveAuthEndToEnd)
     }
 
     // Find security_status group and look for the PA SOD signature check.
-    ASSERT_TRUE(result.data.findGroup("security_status").has_value()) << "security_status group missing";
+    ASSERT_NE(groupOf(result.data, "security_status"), nullptr) << "security_status group missing";
 
     // Located by check id, never by ordinal — the emission order is not a
     // contract. Its status is its own field, so the value is the bare token.
@@ -432,7 +457,7 @@ TEST(EMRTDHardwareTest, PassiveAuthEndToEnd)
     ASSERT_TRUE(sodIdx.has_value()) << "pa_sod_signature check not found in security_status";
     const auto statusStrOpt = checkField(result.data, "security_status", *sodIdx, "status");
     ASSERT_TRUE(statusStrOpt.has_value()) << "pa_sod_signature check has no textual status field";
-    const auto status = statusFromString(*statusStrOpt);
+    const auto status = statusOf(*statusStrOpt);
     ASSERT_TRUE(status.has_value()) << "Unrecognized status string: " << *statusStrOpt;
     EXPECT_EQ(*status, SecurityCheck::Status::Passed) << "PA SOD signature status: " << *statusStrOpt;
 }
@@ -468,7 +493,7 @@ TEST(EMRTDHardwareTest, ChipAuthEndToEnd)
         FAIL() << "readCard returned no groups";
     }
 
-    ASSERT_TRUE(result.data.findGroup("security_status").has_value()) << "security_status group missing";
+    ASSERT_NE(groupOf(result.data, "security_status"), nullptr) << "security_status group missing";
 
     // Check for chip_auth or active_auth — at least one should be present, and
     // whichever is present must be PASSED or NOT_SUPPORTED (never FAILED on a
@@ -478,7 +503,7 @@ TEST(EMRTDHardwareTest, ChipAuthEndToEnd)
     auto notFailed = [&result](std::size_t n, const char* what) {
         const auto text = checkField(result.data, "security_status", n, "status");
         ASSERT_TRUE(text.has_value()) << what << " check has no textual status field";
-        const auto status = statusFromString(*text);
+        const auto status = statusOf(*text);
         ASSERT_TRUE(status.has_value()) << "Unrecognized " << what << " status: " << *text;
         EXPECT_NE(*status, SecurityCheck::Status::Failed) << what << " reported FAILED on a genuine document";
     };
@@ -627,7 +652,7 @@ TEST(EMRTDHardwareTest, PaceCanAdvertisedReadableGroupsAllArrive)
         groupKeys.push_back(g.groupKey);
         for (const auto& f : g.fields) {
             if (g.groupKey == "presence" && f.key == "data_groups")
-                dataGroups = f.textValue();
+                dataGroups = textOf(f);
         }
     }
     ASSERT_TRUE(dataGroups.has_value()) << "presence group carries no data_groups list";
@@ -701,7 +726,7 @@ TEST(EMRTDHardwareTest, ContactPlainReadChipAuthEndToEnd)
 
     const auto authMethod = fieldText(result.data, "presence", "auth_method");
     const auto dataGroups = fieldText(result.data, "presence", "data_groups");
-    const bool hasAuthRequired = result.data.findGroup("auth_required").has_value();
+    const bool hasAuthRequired = groupOf(result.data, "auth_required") != nullptr;
     // Located by check id; the status is its own field, so no prose to parse.
     const auto caIdx = checkIndexOf(result.data, "security_status", "chip_auth");
     std::optional<std::string> chipAuth;
@@ -789,7 +814,7 @@ TEST(EmrtdPluginSessionKeying, GenerationBasedKeyPreventsLeak)
     std::uint64_t genA = 0;
 
     {
-        auto sessionA = LibreSCRS::SmartCard::detail::makeDetachedCardSession(reader);
+        auto sessionA = LibreSCRS::SmartCard::Testing::makeDetachedCardSession(reader);
         ASSERT_NE(sessionA, nullptr);
         genA = LibreSCRS::SmartCard::detail::sessionGeneration(*sessionA);
         EXPECT_GT(genA, 0u) << "live session must have non-zero generation";
@@ -800,7 +825,7 @@ TEST(EmrtdPluginSessionKeying, GenerationBasedKeyPreventsLeak)
         plugin->setCredentials(*sessionA, "can", LibreSCRS::Secure::String{"123456"});
     } // sessionA destructs here — shared_ptr drops, PCSCConnection goes away.
 
-    auto sessionB = LibreSCRS::SmartCard::detail::makeDetachedCardSession(reader);
+    auto sessionB = LibreSCRS::SmartCard::Testing::makeDetachedCardSession(reader);
     ASSERT_NE(sessionB, nullptr);
     const auto genB = LibreSCRS::SmartCard::detail::sessionGeneration(*sessionB);
 
@@ -818,15 +843,15 @@ TEST(EmrtdPluginSessionKeying, GenerationBasedKeyPreventsLeak)
     auto rr = plugin->readCard(*sessionB);
     ASSERT_TRUE(rr.data.has_value());
     const auto& data = *rr.data;
-    EXPECT_TRUE(data.findGroup("auth_required").has_value())
+    EXPECT_NE(groupOf(data, "auth_required"), nullptr)
         << "sessionB must see an empty credential slot — reader-name + generation key prevents leak";
-    EXPECT_FALSE(data.findGroup("error").has_value())
+    EXPECT_EQ(groupOf(data, "error"), nullptr)
         << "sessionB must not reach the authenticate() path that implies leaked credentials";
 }
 
 TEST(EmrtdPluginSessionKeying, GenerationSurvivesMove)
 {
-    auto sessionA = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Reader Move");
+    auto sessionA = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Reader Move");
     ASSERT_NE(sessionA, nullptr);
     const auto originalGen = LibreSCRS::SmartCard::detail::sessionGeneration(*sessionA);
     EXPECT_GT(originalGen, 0u);
@@ -1159,7 +1184,7 @@ TEST(EmrtdInterfaceActivation, ContactWithProviderReadsIdentityWithoutPace)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contact Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/true);
 
@@ -1175,8 +1200,8 @@ TEST(EmrtdInterfaceActivation, ContactWithProviderReadsIdentityWithoutPace)
     auto rr = plugin->readCard(*session);
     EXPECT_EQ(rr.status, ReadResult::Status::Ok);
     ASSERT_TRUE(rr.data.has_value());
-    EXPECT_TRUE(rr.data->findGroup("personal").has_value()) << "identity must be read plain on contact";
-    EXPECT_FALSE(rr.data->findGroup("auth_required").has_value());
+    EXPECT_NE(groupOf(*rr.data, "personal"), nullptr) << "identity must be read plain on contact";
+    EXPECT_EQ(groupOf(*rr.data, "auth_required"), nullptr);
     EXPECT_EQ(fieldText(*rr.data, "personal", "surname").value_or(""), "ERIKSSON");
 
     EXPECT_FALSE(providerInvoked) << "no CAN prompt may reach the provider on the contact interface";
@@ -1195,7 +1220,7 @@ TEST(EmrtdInterfaceActivation, SecurityChecksTrackDataGroupPresence)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contact Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/true);
     session->setCredentialProvider(
@@ -1226,7 +1251,7 @@ TEST(EmrtdInterfaceActivation, PlainReadActiveAuthRefusalIsNotPerformed)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contact Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/true);
     // COM additionally lists DG15 (0x6F), and DG15 carries a parseable EC key
@@ -1268,7 +1293,7 @@ TEST(EmrtdInterfaceActivation, SecurityChecksTravelAsSeparateFieldsNotOneJoinedS
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contact Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/true);
     // Same DG15-bearing rig as PlainReadActiveAuthRefusalIsNotPerformed: the AA
@@ -1292,9 +1317,9 @@ TEST(EmrtdInterfaceActivation, SecurityChecksTravelAsSeparateFieldsNotOneJoinedS
 
     // Nothing may be left in a third shape: every field is either one of the
     // three aggregates or a member of some check's family.
-    auto secIdx = rr.data->findGroup("security_status");
-    ASSERT_TRUE(secIdx.has_value());
-    for (const auto& field : rr.data->groupAt(*secIdx).fields) {
+    const auto* sec = groupOf(*rr.data, "security_status");
+    ASSERT_NE(sec, nullptr);
+    for (const auto& field : sec->fields) {
         const bool aggregate = field.key.compare(0, 8, "overall_") == 0;
         EXPECT_TRUE(aggregate || parseCheckKey(field.key).has_value())
             << "field in neither the aggregate nor the per-check shape: " << field.key;
@@ -1330,7 +1355,7 @@ TEST(EmrtdInterfaceActivation, CscaVerdictTravelsAsATranslatableReasonNotAnEngli
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contact Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/true, /*plainSod=*/true);
 
@@ -1374,10 +1399,10 @@ TEST(EmrtdInterfaceActivation, CscaVerdictTravelsAsATranslatableReasonNotAnEngli
         << "the English sentence the key replaces must be GONE, not sitting beside it";
 
     // And it must not have moved somewhere else in the group either.
-    auto secIdx = rr.data->findGroup("security_status");
-    ASSERT_TRUE(secIdx.has_value());
-    for (const auto& field : rr.data->groupAt(*secIdx).fields) {
-        EXPECT_EQ(field.textValue().value_or("").find("No CSCA trust store"), std::string::npos)
+    const auto* sec = groupOf(*rr.data, "security_status");
+    ASSERT_NE(sec, nullptr);
+    for (const auto& field : sec->fields) {
+        EXPECT_EQ(textOf(field).value_or("").find("No CSCA trust store"), std::string::npos)
             << "an English literal survives at " << field.key;
     }
 
@@ -1411,7 +1436,7 @@ TEST(EmrtdInterfaceActivation, AnEnvironmentVariableCannotSupplyTrustAnchors)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contact Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/true, /*plainSod=*/true);
 
@@ -1496,7 +1521,7 @@ TEST(EmrtdInterfaceActivation, AnchorsPublishedByTheHostReachTheChainCheck)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contact Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/true, /*plainSod=*/true);
 
@@ -1545,7 +1570,7 @@ TEST(EmrtdInterfaceActivation, AnchorsThatIssuedTheSignerEstablishAuthenticity)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contact Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/true, /*plainSod=*/true);
 
@@ -1587,7 +1612,7 @@ TEST(EmrtdInterfaceActivation, ALaterPublicationCannotRepointAPluginsAnchors)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contact Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/true, /*plainSod=*/true);
 
@@ -1633,7 +1658,7 @@ TEST(EmrtdInterfaceActivation, AHostThatPublishesNothingStillGetsNotConfigured)
     ASSERT_NE(plugin, nullptr);
     EXPECT_TRUE(plugin->cscaAnchorDirectory().empty()) << "an unpublished plugin must name no directory at all";
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contact Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/true, /*plainSod=*/true);
 
@@ -1663,7 +1688,7 @@ TEST(EmrtdInterfaceActivation, ContactPlainReadAttemptsChipAuthAndStaysPlainWhen
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contact Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/true);
     session->setCredentialProvider(
@@ -1695,7 +1720,7 @@ TEST(EmrtdInterfaceActivation, ContactPlainReadAttemptsChipAuthAndStaysPlainWhen
     // Read through the check ids and statuses, not the field keys: with each
     // check spread over a `check_<N>_*` family, a key-prefix test for "pa_"
     // would match nothing and pass while proving nothing.
-    ASSERT_TRUE(rr.data->findGroup("security_status").has_value());
+    ASSERT_NE(groupOf(*rr.data, "security_status"), nullptr);
     for (const auto& id : checkIds(*rr.data, "security_status")) {
         EXPECT_FALSE(id.compare(0, 3, "pa_") == 0) << "unexpected passive-auth check: " << id;
         const auto n = checkIndexOf(*rr.data, "security_status", id);
@@ -1717,7 +1742,7 @@ TEST(EmrtdInterfaceActivation, ContactlessWithProviderStillActivatesSm)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
 
@@ -1735,7 +1760,7 @@ TEST(EmrtdInterfaceActivation, ContactlessWithProviderStillActivatesSm)
     // identity data is ever readable in plain.
     EXPECT_TRUE(providerInvoked) << "contactless read with a provider must still drive SM activation";
     EXPECT_EQ(rr.status, ReadResult::Status::Cancelled);
-    EXPECT_FALSE(rr.data.has_value() && rr.data->findGroup("personal").has_value());
+    EXPECT_FALSE(rr.data.has_value() && groupOf(*rr.data, "personal") != nullptr);
     (void)rig;
 }
 
@@ -1745,7 +1770,7 @@ TEST(EmrtdInterfaceActivation, ContactlessDiscoveryWithoutProviderStillAuthRequi
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
 
@@ -1759,8 +1784,8 @@ TEST(EmrtdInterfaceActivation, ContactlessDiscoveryWithoutProviderStillAuthRequi
     // not-readable verdict.
     ASSERT_EQ(rr.status, ReadResult::Status::Ok);
     ASSERT_TRUE(rr.data.has_value());
-    EXPECT_TRUE(rr.data->findGroup("auth_required").has_value());
-    EXPECT_FALSE(rr.data->findGroup("personal").has_value());
+    EXPECT_NE(groupOf(*rr.data, "auth_required"), nullptr);
+    EXPECT_EQ(groupOf(*rr.data, "personal"), nullptr);
     EXPECT_FALSE(logContainsSelectFid(*rig, 0x011E)) << "plain-first attempt must be skipped on contactless";
 }
 
@@ -1774,7 +1799,7 @@ TEST(EmrtdInterfaceActivation, DepositedCanStillDrivesPace)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contact Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/true);
 
@@ -1783,7 +1808,7 @@ TEST(EmrtdInterfaceActivation, DepositedCanStillDrivesPace)
     auto rr = plugin->readCard(*session);
 
     EXPECT_NE(rr.status, ReadResult::Status::Ok);
-    EXPECT_FALSE(rr.data.has_value() && rr.data->findGroup("personal").has_value());
+    EXPECT_FALSE(rr.data.has_value() && groupOf(*rr.data, "personal") != nullptr);
     (void)rig;
 }
 
@@ -1796,7 +1821,7 @@ TEST(EmrtdInterfaceActivation, ForeignPlainChannelIsHealedOnContact)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contact Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/true);
 
@@ -1816,9 +1841,9 @@ TEST(EmrtdInterfaceActivation, ForeignPlainChannelIsHealedOnContact)
     auto rr = plugin->readCard(*session);
     ASSERT_EQ(rr.status, ReadResult::Status::Ok);
     ASSERT_TRUE(rr.data.has_value());
-    EXPECT_TRUE(rr.data->findGroup("personal").has_value())
+    EXPECT_NE(groupOf(*rr.data, "personal"), nullptr)
         << "the plain path must re-bind its own applet, not read over the sibling channel";
-    EXPECT_FALSE(rr.data->findGroup("auth_required").has_value());
+    EXPECT_EQ(groupOf(*rr.data, "auth_required"), nullptr);
 }
 
 // Without a discovery probe (canHandleConnection never ran) the verdict is
@@ -1829,7 +1854,7 @@ TEST(EmrtdInterfaceActivation, UnprobedProviderSessionStaysOnPace)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contact Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/true);
 
@@ -1852,7 +1877,7 @@ TEST(EmrtdInterfaceActivation, ContactDiscoveryWithoutProviderReadsIdentity)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contact Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/true);
 
@@ -1863,8 +1888,8 @@ TEST(EmrtdInterfaceActivation, ContactDiscoveryWithoutProviderReadsIdentity)
     // identity directly — no auth_required round-trip, no CAN prompt.
     ASSERT_EQ(rr.status, ReadResult::Status::Ok);
     ASSERT_TRUE(rr.data.has_value());
-    EXPECT_TRUE(rr.data->findGroup("personal").has_value());
-    EXPECT_FALSE(rr.data->findGroup("auth_required").has_value());
+    EXPECT_NE(groupOf(*rr.data, "personal"), nullptr);
+    EXPECT_EQ(groupOf(*rr.data, "auth_required"), nullptr);
     EXPECT_FALSE(logContainsIns(*rig, 0x22));
     EXPECT_FALSE(logContainsIns(*rig, 0x86));
 }
@@ -1883,7 +1908,7 @@ TEST(EmrtdInterfaceActivation, BacOnlyDocumentYieldsBacProfileOnProviderBranch)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::AbsentNotFound);
@@ -1910,7 +1935,7 @@ TEST(EmrtdInterfaceActivation, CardAccessWithoutPaceInfoAlsoYieldsBacProfile)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::PresentNoPace);
@@ -1934,7 +1959,7 @@ TEST(EmrtdInterfaceActivation, CardAccessWithoutPaceInfoAlsoYieldsBacProfile)
 // keeps the definitive signal free of attacker-influenceable bits under SM.
 TEST(EmrtdInterfaceActivation, HelperReportsDeactivatedCardAccessDefinitive)
 {
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::Deactivated);
@@ -1955,7 +1980,7 @@ TEST(EmrtdInterfaceActivation, HelperReportsDeactivatedCardAccessDefinitive)
 // downstream (fail closed to PACE-CAN).
 TEST(EmrtdInterfaceActivation, HelperKeepsTerminationWarningNonDefinitive)
 {
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::Terminated6285);
@@ -1977,7 +2002,7 @@ TEST(EmrtdInterfaceActivation, DeactivatedCardAccessYieldsBacProfileOnProviderBr
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::Deactivated);
@@ -2005,7 +2030,7 @@ TEST(EmrtdInterfaceActivation, PacePresentKeepsPaceCanOnProviderBranch)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::PresentPace);
@@ -2030,7 +2055,7 @@ TEST(EmrtdInterfaceActivation, UnknownCapabilityFailsClosedToPaceCan)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::SoftFail);
@@ -2055,7 +2080,7 @@ TEST(EmrtdInterfaceActivation, MalformedCardAccessFailsClosedToPaceCan)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::MalformedData);
@@ -2080,7 +2105,7 @@ TEST(EmrtdInterfaceActivation, TruncatedCardAccessFailsClosedToPaceCan)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::Truncated);
@@ -2106,7 +2131,7 @@ TEST(EmrtdInterfaceActivation, PreReadAuthReportsMrzForBacOnlyDocument)
     ASSERT_NE(plugin, nullptr);
 
     {
-        auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+        auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
         ASSERT_NE(session, nullptr);
         auto rig = installLdsRig(*session, /*plainLds=*/false);
         setCardAccessMode(*rig, CardAccessMode::AbsentNotFound);
@@ -2116,7 +2141,7 @@ TEST(EmrtdInterfaceActivation, PreReadAuthReportsMrzForBacOnlyDocument)
         EXPECT_EQ(plugin->preReadAuth(*session), LibreSCRS::Auth::PreReadAuthMethod::Mrz);
     }
     {
-        auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+        auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
         ASSERT_NE(session, nullptr);
         auto rig = installLdsRig(*session, /*plainLds=*/false);
         setCardAccessMode(*rig, CardAccessMode::PresentPace);
@@ -2136,7 +2161,7 @@ TEST(EmrtdInterfaceActivation, CapabilityProbeRunsInsideTheProbeTransaction)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::PresentPace);
@@ -2167,7 +2192,7 @@ TEST(EmrtdInterfaceActivation, PlainReadableContactStaysPlainEvenWhenAbsent)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contact Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/true);
     setCardAccessMode(*rig, CardAccessMode::AbsentNotFound);
@@ -2190,7 +2215,7 @@ TEST(EmrtdInterfaceActivation, DepositedMrzOnPaceDocumentKeepsFallbackOff)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::PresentPace);
@@ -2215,7 +2240,7 @@ TEST(EmrtdInterfaceActivation, DepositedMrzOnUnknownDocumentKeepsFallbackOff)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::SoftFail);
@@ -2240,7 +2265,7 @@ TEST(EmrtdInterfaceActivation, DepositedMrzOnBacOnlyDocumentEnablesFallback)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::AbsentNotFound);
@@ -2267,7 +2292,7 @@ TEST(EmrtdInterfaceActivation, DepositedMrzOnDeactivatedDocumentEnablesFallback)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::Deactivated);
@@ -2293,7 +2318,7 @@ TEST(EmrtdInterfaceActivation, HostDiscoveryLegReportsPaceSupportedFromMf)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::PresentPace);
@@ -2304,7 +2329,7 @@ TEST(EmrtdInterfaceActivation, HostDiscoveryLegReportsPaceSupportedFromMf)
     auto rr = plugin->readCard(*session);
     ASSERT_EQ(rr.status, ReadResult::Status::Ok);
     ASSERT_TRUE(rr.data.has_value());
-    ASSERT_TRUE(rr.data->findGroup("auth_required").has_value());
+    ASSERT_NE(groupOf(*rr.data, "auth_required"), nullptr);
     EXPECT_EQ(fieldText(*rr.data, "auth_required", "pace_supported").value_or(""), "true");
     EXPECT_FALSE(fieldText(*rr.data, "auth_required", "pace_oids").value_or("").empty())
         << "pace_oids must be reported from the MF-scoped EF.CardAccess read";
@@ -2324,7 +2349,7 @@ TEST(EmrtdPreReadAuth, ReportsMrzForDeactivatedDocument)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::Deactivated);
@@ -2341,7 +2366,7 @@ TEST(EmrtdPreReadAuth, ReportsCanForPaceDocument)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::PresentPace);
@@ -2357,7 +2382,7 @@ TEST(EmrtdPreReadAuth, ReportsNoneForPlainReadableContact)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contact Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contact Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/true);
 
@@ -2372,7 +2397,7 @@ TEST(EmrtdPreReadAuth, ReportsMrzForDepositedMrz)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::PresentPace);
@@ -2394,7 +2419,7 @@ TEST(EmrtdInterfaceActivation, HostDiscoveryLegReportsPaceUnsupportedWhenDeactiv
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::Deactivated);
@@ -2403,7 +2428,7 @@ TEST(EmrtdInterfaceActivation, HostDiscoveryLegReportsPaceUnsupportedWhenDeactiv
     auto rr = plugin->readCard(*session);
     ASSERT_EQ(rr.status, ReadResult::Status::Ok);
     ASSERT_TRUE(rr.data.has_value());
-    ASSERT_TRUE(rr.data->findGroup("auth_required").has_value());
+    ASSERT_NE(groupOf(*rr.data, "auth_required"), nullptr);
     EXPECT_EQ(fieldText(*rr.data, "auth_required", "pace_supported").value_or(""), "false");
     EXPECT_EQ(rig->deactivatedReadAttempts, 0);
 }
@@ -2731,7 +2756,7 @@ TEST(BacDowngradeGuard, OracleDerivesIcao9303WorkedExampleKeys)
 // (the oracle was invoked), not the old throw path.
 TEST(BacDowngradeGuard, BacEstablishAbortsWhenSmCardAccessShowsPace)
 {
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto oracle = armBacDowngradeSession(*session, SmRereadScenario::PacePresent);
 
@@ -2749,7 +2774,7 @@ TEST(BacDowngradeGuard, BacEstablishAbortsWhenSmCardAccessShowsPace)
 // DIFFERENT branch from the PACE-OID case, both landing PaceDowngradeDetected.
 TEST(BacDowngradeGuard, BacEstablishAbortsOnGarbledSmReread)
 {
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto oracle = armBacDowngradeSession(*session, SmRereadScenario::GarbledRead);
 
@@ -2766,7 +2791,7 @@ TEST(BacDowngradeGuard, BacEstablishAbortsOnGarbledSmReread)
 // definitively absent (clean 6A82) -> activation proceeds, holder returned.
 TEST(BacDowngradeGuard, BacEstablishProceedsWhenSmRereadConfirmsAbsence)
 {
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto oracle = armBacDowngradeSession(*session, SmRereadScenario::AbsentConfirmed);
 
@@ -2789,7 +2814,7 @@ TEST(BacDowngradeGuard, BacEstablishProceedsWhenSmRereadConfirmsAbsence)
 // outer 6283 dies on the missing-DO'8E sentinel path).
 TEST(BacDowngradeGuard, BacEstablishProceedsWhenSmRereadConfirmsDeactivation)
 {
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto oracle = armBacDowngradeSession(*session, SmRereadScenario::DeactivatedConfirmed);
 
@@ -2809,7 +2834,7 @@ TEST(BacDowngradeGuard, BacEstablishProceedsWhenSmRereadConfirmsDeactivation)
 // fail-closed downgrade abort.
 TEST(BacDowngradeGuard, BacEstablishAbortsOnTerminationWarningSmReread)
 {
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto oracle = armBacDowngradeSession(*session, SmRereadScenario::Terminated6285Read);
 
@@ -2829,7 +2854,7 @@ TEST(BacDowngradeGuard, BacEstablishAbortsOnTerminationWarningSmReread)
 // negotiate PACE.
 TEST(BacDowngradeGuard, DeactivatedCardAccessSurfacesPaceUnsupportedBeforePrompt)
 {
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::Deactivated);
@@ -2867,7 +2892,7 @@ TEST(EmrtdInterfaceActivation, PaceUnsupportedReadCarriesStructuralKey)
     auto plugin = findEMRTD(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::SoftFail); // Unknown -> PaceRequest{Can}, fallback off
@@ -2896,7 +2921,7 @@ class BacProfilePlugin final : public LibreSCRS::Plugin::CardPlugin
 public:
     BacProfilePlugin()
     {
-        setIdentity("fake-bac", "FakeBac", 0);
+        setIdentity("fake-bac", 0);
     }
 
     LibreSCRS::Plugin::CardCapabilities capabilities() const override
@@ -2934,7 +2959,7 @@ protected:
 // attack signal must never evict or punish a credential.
 TEST(BacDowngradeGuard, PaceDowngradeReadCarriesStructuralKeyNotAuthFailed)
 {
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Contactless Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
     auto oracle = armBacDowngradeSession(*session, SmRereadScenario::PacePresent);
 

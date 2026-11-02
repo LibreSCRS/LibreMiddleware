@@ -5,21 +5,21 @@
 #include "pcsc_trace.h"
 #include <smartcard/secure_buffer.h>
 
+#include <LibreSCRS/Logging.h>
+
 #include <algorithm>
+#include <array>
 #include <chrono>
-#include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <execinfo.h>
+#include <format>
 #include <functional>
-#include <iomanip>
-#include <iostream>
+#include <iterator>
 #include <memory>
 #include <span>
 #include <string>
 #include <thread>
 #include <vector>
-#include <unistd.h>
 
 namespace {
 
@@ -30,50 +30,58 @@ constexpr std::size_t kMaxDataPrintBytes = 16;
 
 namespace LibreSCRS::SmartCard::Internal::detail {
 
-// Env-var-gated tracer for diagnosing cross-reader / cross-applet PC/SC
-// handle reuse (e.g. applet-A's Secure-Messaging channel still being fed
-// APDUs after the connection was repurposed for applet-B). Emits one
-// [PCSC_TRACE] block per wire APDU (PCSCConnection::transmitRaw) when
-// LIBRESCRS_PCSC_TRACE is set to a value other than "0". The captured
-// stack frames let an offline reviewer walk back from the transmitRaw
-// callsite via addr2line to the originating higher-level caller.
-[[nodiscard]] bool pcscTraceEnabled()
+// Tracer for diagnosing cross-reader / cross-applet PC/SC handle reuse (e.g.
+// applet-A's Secure-Messaging channel still being fed APDUs after the
+// connection was repurposed for applet-B). Emits one trace block per wire
+// APDU (PCSCConnection::transmitRaw) on the Pcsc channel of the logging
+// facade, which LIBRESCRS_PCSC_TRACE switches on. The captured stack frames
+// let an offline reviewer walk back from the transmitRaw callsite via
+// addr2line to the originating higher-level caller.
+bool pcscTraceEnabled()
 {
-    // Cache env-var lookup once on first call. Per-call cost on the hot
-    // path when disabled is a single function-local-static load.
-    static const bool enabled = []() {
-        const char* v = std::getenv("LIBRESCRS_PCSC_TRACE");
-        return v != nullptr && std::strcmp(v, "0") != 0 && v[0] != '\0';
-    }();
-    return enabled;
+    return LibreSCRS::log::traceEnabled(LibreSCRS::log::TraceChannel::Pcsc);
+}
+
+void emitPcscTraceLine(std::string_view line)
+{
+    LibreSCRS::log::trace(LibreSCRS::log::TraceChannel::Pcsc, line);
 }
 
 } // namespace LibreSCRS::SmartCard::Internal::detail
 
 namespace {
 
+using LibreSCRS::SmartCard::Internal::detail::emitPcscTraceLine;
+
 // Shared trace-block prefix: "[PCSC_TRACE] t=... tid=... phase=... reader=... conn=...".
-// Caller writes any phase-specific tail (e.g. " apdu=..." for transmit) and the
-// closing newline.
-void writePcscTracePrefix(const char* phase, const std::string& readerName, const void* connAddr)
+// The caller appends any phase-specific tail (e.g. " apdu=..." for transmit).
+std::string pcscTracePrefix(const char* phase, const std::string& readerName, const void* connAddr)
 {
     using namespace std::chrono;
     const auto now = steady_clock::now().time_since_epoch();
     const auto micros = duration_cast<microseconds>(now).count();
 
-    std::fprintf(stderr, "[PCSC_TRACE] t=%lld tid=%zx phase=%s reader=%s conn=%p", static_cast<long long>(micros),
-                 std::hash<std::thread::id>{}(std::this_thread::get_id()), phase, readerName.c_str(), connAddr);
+    return std::format("[PCSC_TRACE] t={} tid={:x} phase={} reader={} conn={}", static_cast<long long>(micros),
+                       std::hash<std::thread::id>{}(std::this_thread::get_id()), phase, readerName, connAddr);
 }
 
-// Capture and dump the current call stack to stderr in the [PCSC_TRACE] block
-// format. Symbol resolution happens offline (addr2line) during trace analysis.
+// Capture the current call stack as trace lines. Symbol resolution happens
+// offline (addr2line) during trace analysis.
 void emitPcscStackFrames()
 {
     void* frames[kStackDepth];
-    int frameCount = ::backtrace(frames, kStackDepth);
-    std::fprintf(stderr, "[PCSC_TRACE]   stack(%d frames):\n", frameCount);
-    ::backtrace_symbols_fd(frames, frameCount, STDERR_FILENO);
-    std::fprintf(stderr, "[PCSC_TRACE]   /stack\n");
+    const int frameCount = ::backtrace(frames, kStackDepth);
+    emitPcscTraceLine(std::format("[PCSC_TRACE]   stack({} frames):", frameCount));
+    std::unique_ptr<char*, decltype(&std::free)> symbols(::backtrace_symbols(frames, frameCount), &std::free);
+    for (int i = 0; i < frameCount; ++i)
+        emitPcscTraceLine(symbols ? std::string_view{symbols.get()[i]} : std::string_view{"?"});
+    emitPcscTraceLine("[PCSC_TRACE]   /stack");
+}
+
+void appendHex(std::string& out, std::span<const std::uint8_t> bytes)
+{
+    for (std::uint8_t b : bytes)
+        std::format_to(std::back_inserter(out), "{:02X}", b);
 }
 
 // Emit a single [PCSC_TRACE] block for a transmit event. Takes the APDU pieces
@@ -86,36 +94,29 @@ void emitPcscTrace(const char* phase, const std::string& readerName, const void*
                    std::span<const std::uint8_t, 5> header, std::span<const std::uint8_t> data, bool dataRedacted,
                    bool hasLe, std::uint8_t le)
 {
-    writePcscTracePrefix(phase, readerName, connAddr);
-    std::fprintf(stderr, " apdu=");
+    std::string line = pcscTracePrefix(phase, readerName, connAddr);
+    line += " apdu=";
 
     // Header: CLA INS P1 P2 Lc — always printed.
-    for (std::uint8_t b : header) {
-        std::fprintf(stderr, "%02X", b);
-    }
+    appendHex(line, header);
 
     // Data: redacted for sensitive INS; otherwise first kMaxDataPrintBytes
     // bytes, with an explicit "...(N more bytes)" tail when truncated.
     if (dataRedacted) {
-        std::fprintf(stderr, "<redacted %zu bytes>", data.size());
+        std::format_to(std::back_inserter(line), "<redacted {} bytes>", data.size());
     } else {
-        const std::size_t printBytes = std::min(data.size(), kMaxDataPrintBytes);
-        for (std::size_t i = 0; i < printBytes; ++i) {
-            std::fprintf(stderr, "%02X", data[i]);
-        }
-        if (data.size() > kMaxDataPrintBytes) {
-            std::fprintf(stderr, "...(%zu more bytes)", data.size() - kMaxDataPrintBytes);
-        }
+        appendHex(line, data.first(std::min(data.size(), kMaxDataPrintBytes)));
+        if (data.size() > kMaxDataPrintBytes)
+            std::format_to(std::back_inserter(line), "...({} more bytes)", data.size() - kMaxDataPrintBytes);
     }
 
     // Le: printed last when present. For sensitive INS we still suppress
     // it (PIN-VERIFY APDUs are typically Le-less anyway, but be explicit).
-    if (hasLe && !dataRedacted) {
-        std::fprintf(stderr, "%02X", le);
-    } else if (hasLe && dataRedacted) {
-        std::fprintf(stderr, "<le redacted>");
-    }
-    std::fprintf(stderr, "\n");
+    if (hasLe && !dataRedacted)
+        std::format_to(std::back_inserter(line), "{:02X}", le);
+    else if (hasLe && dataRedacted)
+        line += "<le redacted>";
+    emitPcscTraceLine(line);
 
     emitPcscStackFrames();
 }
@@ -128,9 +129,17 @@ namespace LibreSCRS::SmartCard::Internal::detail {
 // (e.g. reconnect). No `apdu=` field — just the prefix + stack frames.
 void emitPcscTraceEvent(const char* phase, const std::string& readerName, const void* connAddr)
 {
-    writePcscTracePrefix(phase, readerName, connAddr);
-    std::fprintf(stderr, "\n");
+    emitPcscTraceLine(pcscTracePrefix(phase, readerName, connAddr));
     emitPcscStackFrames();
+}
+
+// A card's answer is traced as its length and status word only: the data
+// field can be a certificate, a personal record or decrypted key material.
+void emitPcscTraceResponse(const std::string& readerName, const void* connAddr, std::size_t length,
+                           std::uint16_t statusWord)
+{
+    emitPcscTraceLine(
+        std::format("{} rx={} bytes sw={:04X}", pcscTracePrefix("receive", readerName, connAddr), length, statusWord));
 }
 
 // Parse wire-format APDU bytes (cmdBytes, cmdLen) into the structured
@@ -204,14 +213,6 @@ namespace LibreSCRS::SmartCard::Internal {
 
 using namespace detail;
 
-// Diagnostic-only escape hatch (see header): opens a real connection for the
-// CLI tools / hardware-probe tests under tools/ and test/. A static member can
-// reach the private reader-name ctor; production code cannot.
-std::unique_ptr<PCSCConnection> PCSCConnection::openRawDiagnostic(const std::string& readerName)
-{
-    return std::unique_ptr<PCSCConnection>(new PCSCConnection(readerName));
-}
-
 // Test-only ctor: no card I/O, no handle, no card. Used by CardSession
 // injection paths to produce a connection object whose address can be used
 // as a key while keeping readerName() functional.
@@ -230,8 +231,8 @@ PCSCConnection::PCSCConnection(DetachedTag, const std::string& readerName) : sto
 //
 // A definition placed here would not stay private: this TU is compiled into
 // libLibreSCRS_SmartCard, the class is LIBRESCRS_PUBLIC_API, and both export
-// filters (the `*LibreSCRS::*` glob in cmake/librescrs-public-exports.map,
-// the `__ZN9LibreSCRS*` prefixes on Darwin) admit every member. Being a
+// filters (the `_ZN9LibreSCRS*` prefix families in
+// cmake/librescrs-public-exports.map and its Darwin list) admit every member. Being a
 // dynamic export also roots the section, so --gc-sections cannot drop it
 // either -- which is why moving the definition out, rather than annotating
 // the declaration, is what removes it.
@@ -267,7 +268,11 @@ APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
         // could spend a try on a card whose verified state the reset cleared,
         // or on another card.
         reconnect();
-        if (cmdLen >= 2 && isSensitiveIns(cmdBytes[1])) {
+        // A secure-messaging command (CLA b3-b4 set) is never resent either:
+        // the reset ended the card's SM session, so the resend would be
+        // answered as an unknown wrapped command at best, and its MAC counter
+        // is already spent.
+        if (cmdLen >= 2 && (isSensitiveIns(cmdBytes[1]) || (cmdBytes[0] & 0x0C) != 0)) {
             throw PCSCError("SCardTransmit failed", SCARD_W_RESET_CARD);
         }
         reply = exchangeWire(command);
@@ -285,6 +290,9 @@ APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
     response.sw2 = (*reply)[reply->size() - 1];
     reply->resize(reply->size() - 2);
     response.data = std::move(*reply);
+    if (pcscTraceEnabled()) {
+        emitPcscTraceResponse(readerName(), this, response.data.size() + 2, response.statusWord());
+    }
     return response;
 }
 
@@ -368,23 +376,22 @@ APDUResponse PCSCConnection::transmit(const APDUCommand& cmd)
     // indefinitely, which would grow `accumulated` without bound. 256
     // iterations × 256 bytes = 64 KiB is well above any legitimate APDU
     // response chain (eMRTD DG files cap well below this; EF.CERT payloads
-    // similarly). Break on exceed — caller sees truncated data + last SW.
+    // similarly). Past either cap the answer is no answer: 6700 with no
+    // data, never a truncated body under a success status word.
     constexpr size_t kMaxGetResponseIters = 256;
     constexpr size_t kMaxGetResponseBytes = 65536;
     size_t getRespIters = 0;
     size_t totalBytes = response.data.size();
     while (response.sw1 == 0x61) {
         if (++getRespIters > kMaxGetResponseIters)
-            break;
+            return APDUResponse{{}, 0x67, 0x00};
         auto accumulated = std::move(response.data);
         uint8_t le = response.sw2; // 0x00 = 256 bytes
         uint8_t getResponse[] = {0x00, 0xC0, 0x00, 0x00, le};
         response = transmitRaw(getResponse, sizeof(getResponse));
         totalBytes += response.data.size();
-        if (totalBytes > kMaxGetResponseBytes) {
-            response.data = std::move(accumulated);
-            break;
-        }
+        if (totalBytes > kMaxGetResponseBytes)
+            return APDUResponse{{}, 0x67, 0x00};
         if (!accumulated.empty()) {
             // Grow then copy, rather than a range insert. Same bytes, same
             // order -- but GCC 13 cannot see the bound through

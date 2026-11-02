@@ -129,7 +129,7 @@ lib/<name>/                    # Core card logic (no plugin dependency)
 
 lib/<name>-plugin/             # CardPlugin adapter
 ├── CMakeLists.txt
-├── manifest.json              # pluginId, displayName, abiVersion, capabilities, atrs
+├── manifest.json              # pluginId, capabilities, atrs
 └── src/
     └── <name>_card_plugin.cpp # CardPlugin interface implementation
 ```
@@ -143,7 +143,7 @@ via the `librescrs_add_plugin()` CMake helper.
 ### Implement the CardPlugin interface
 
 Your plugin must implement the `CardPlugin` interface defined in
-`lib/plugin/include/plugin/card_plugin.h`. The key methods are:
+`include/LibreSCRS/Plugin/CardPlugin.h`. The key methods are:
 
 ```cpp
 class CardPlugin {
@@ -151,7 +151,6 @@ public:
     // Identification — set ONCE in your derived ctor via the protected
     // setIdentity() helper; non-virtual accessors below.
     const std::string& pluginId() const noexcept;       // e.g., "mynewcard"
-    const std::string& displayName() const noexcept;    // e.g., "My New Card"
     int probePriority() const noexcept;                 // lower = probed first
 
     // Capabilities — bitfield.
@@ -192,13 +191,21 @@ protected:
                                                 GroupCallback onGroup) const = 0;
 
     // Derived constructors call this ONCE to fix identity.
-    void setIdentity(std::string id, std::string name, int priority) noexcept;
+    void setIdentity(std::string id, int priority) noexcept;
 };
 ```
 
 > **NVI pattern:** the public `readCard()` is non-virtual; it observes the
 > `CancelToken`, then dispatches to the protected virtual `doReadCard()`
-> that derived classes override. The same idea applies to detection:
+> that derived classes override. Every card operation has this shape —
+> `readCertificates()`, `getPINList()`, `changePIN()`, `sign()`,
+> `decipher()`,
+> `activateTransportPin()` and `activateSigningKey()` are public wrappers
+> over `doReadCertificates()`, `doGetPINList()` and so on. The wrapper
+> catches whatever the override throws, logs it, and returns the failure the
+> result type already has (`PluginError`, a communication error, or an empty
+> result), so no exception reaches the host from any plugin. The same idea
+> applies to detection:
 > `canHandle()` is non-virtual and derives its result from the
 > `supportedAtrs()` override that plugins provide via their manifest.
 
@@ -221,24 +228,27 @@ which the manifest codegen wires up automatically). If ATR alone is not
 sufficient (e.g. multiple card types share an ATR), override
 `canHandleConnection()` for AID-based detection on a live connection.
 
-**PKI support:** If the card supports cryptographic operations (PIN
-verification, certificate reading, digital signing), return the appropriate
+**PKI support:** If the card supports cryptographic operations (certificate
+reading, digital signing), return the appropriate
 `CardCapabilities` bits from `capabilities()` (typically
 `CardCapabilities::PKI | CardCapabilities::PinManagement`) and override the
-optional PKI methods: `readCertificates()`, `verifyPIN()`, `changePIN()`,
-`getPINList()`, `readCounters()`, `sign()`, `discoverKeyReferences()`.
+optional PKI methods: `doReadCertificates()`, `doChangePIN()`,
+`doGetPINList()`, `doSign()`. The PIN for a signature
+is not verified in a call of its own: the host deposits it with
+`setCredentials("pin", …)` and the plugin presents it inside the `doSign()`
+transaction.
 
 PIN / PUK / CAN material is carried by `LibreSCRS::Secure::String` —
-contents are `OPENSSL_cleanse`d on destruction. `verifyPIN`, `changePIN`,
-`unblockPIN`, `setCredentials` all take `const Secure::String&` for secret
+contents are `OPENSSL_cleanse`d on destruction. `doChangePIN`,
+`doActivateTransportPin`, `setCredentials` all take `const Secure::String&` for secret
 parameters; labels (PIN identifiers like `"UserPIN"`) are
 `std::string_view` since they are not secrets.
 
-`readCounters()` is the entry point for lifecycle counters: it returns a
-`CredentialCounters` (retries / uses / unblocks, each `std::optional<int>` —
-use `std::nullopt` for anything the card cannot report). Cards with
+`doGetPINList()` reports each credential's lifecycle counters in its
+`PinStatusEntry` (retries / uses / unblocks, each `std::optional<int>` —
+leave `std::nullopt` for anything the card cannot report). Cards with
 transport PINs or activatable signing keys should also override
-`activateTransportPin()` and `activateSigningKey()`.
+`doActivateTransportPin()` and `doActivateSigningKey()`.
 
 **Credentials:** If the card requires authentication before reading (e.g.,
 PACE for eMRTD), override `setCredentials()` to accept key-value pairs

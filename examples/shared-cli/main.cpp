@@ -5,7 +5,7 @@
 /// @brief Minimal CLI demonstrating LibreSCRS consumption via the SHARED
 ///        libLibreSCRS_* artefacts.
 ///
-/// Enumerates PC/SC readers via @ref LibreSCRS::SmartCard::MonitorService,
+/// Collects PC/SC readers from @ref LibreSCRS::SmartCard::MonitorService events,
 /// opens a @ref LibreSCRS::SmartCard::CardSession against the first reader
 /// that has a card present, and prints the reader name + ATR hex.
 ///
@@ -19,9 +19,15 @@
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/MonitorService.h>
 
+#include <chrono>
+#include <condition_variable>
+#include <cstddef>
 #include <cstdio>
 #include <iostream>
+#include <mutex>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -40,19 +46,58 @@ std::string toHex(const std::vector<std::uint8_t>& bytes)
     return out;
 }
 
+// The monitor reports every reader already attached as a ReaderAdded event
+// soon after the first subscribe, and a PC/SC subsystem that refuses this
+// process as one Error event. Collect events until they settle; none at all
+// within the window means no reader is attached. std::nullopt: refused.
+std::optional<std::vector<std::string>> attachedReaders(LibreSCRS::SmartCard::MonitorService& monitor)
+{
+    using LibreSCRS::SmartCard::MonitorEvent;
+    std::mutex mtx;
+    std::condition_variable cv;
+    std::vector<std::string> names;
+    bool refused = false;
+    std::size_t seen = 0;
+    const auto id = monitor.subscribe([&](const MonitorEvent& event) {
+        std::lock_guard lock(mtx);
+        if (event.kind == MonitorEvent::Kind::ReaderAdded)
+            names.push_back(event.readerName);
+        else if (event.kind == MonitorEvent::Kind::Error)
+            refused = true;
+        else
+            return;
+        ++seen;
+        cv.notify_all();
+    });
+    {
+        std::unique_lock lock(mtx);
+        cv.wait_for(lock, std::chrono::seconds(2), [&] { return seen > 0; });
+        while (seen > 0 && !refused) {
+            const auto before = seen;
+            if (!cv.wait_for(lock, std::chrono::milliseconds(300), [&] { return seen != before; }))
+                break;
+        }
+    }
+    // Drain: the callback above refers to this frame, so it must not run after
+    // the function returns.
+    monitor.unsubscribe(id, LibreSCRS::SmartCard::MonitorService::DrainPolicy::Drain);
+    std::lock_guard lock(mtx);
+    if (refused)
+        return std::nullopt;
+    return names;
+}
+
 } // namespace
 
 int main()
 {
     using namespace LibreSCRS::SmartCard;
 
-    // 1. MonitorService::listReaders is the canonical entry point for
-    //    enumerating attached PC/SC readers. Noexcept in 4.0: a missing
-    //    PC/SC subsystem surfaces as std::nullopt rather than throwing.
+    // 1. The attached PC/SC readers, as MonitorService reports them.
     MonitorService monitor;
-    const auto maybeReaders = monitor.listReaders();
+    const auto maybeReaders = attachedReaders(monitor);
     if (!maybeReaders) {
-        std::cerr << "PC/SC subsystem unavailable on this host.\n";
+        std::cerr << "The smart-card subsystem refused this process.\n";
         return 1;
     }
 
@@ -83,6 +128,9 @@ int main()
                 break;
             case OpenError::Kind::ProtocolError:
                 std::cout << "protocol error\n";
+                break;
+            case OpenError::Kind::SessionRefused:
+                std::cout << "card held by another client\n";
                 break;
             }
             continue;

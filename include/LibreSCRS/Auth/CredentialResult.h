@@ -6,7 +6,7 @@
 /// @file
 /// @brief @ref LibreSCRS::Auth::CredentialResult — secret-carrying outcome
 ///        of a @ref LibreSCRS::Auth::CredentialProvider callback, keyed by
-///        @ref LibreSCRS::Auth::FieldDescriptor::id.
+///        the credential's name.
 ///
 /// @par Thread-safety
 /// All types in this header are plain value aggregates; thread-compatible
@@ -38,9 +38,8 @@ namespace LibreSCRS::Auth {
 /// @since 4.1
 struct CredentialEntry
 {
-    /// @brief Field identifier matching the corresponding
-    ///        @ref FieldDescriptor::id from the issuing
-    ///        @ref AuthRequirement. Not secret.
+    /// @brief Name of the credential (`"pin"`, `"can"`, …), as the issuing
+    ///        @ref AuthRequirement documents it. Not secret.
     std::string id;
     /// @brief Collected secret value; cleansed when this entry (or the
     ///        enclosing @ref CredentialResult) goes out of scope.
@@ -74,11 +73,11 @@ struct CredentialResult
 
     /// @brief Outcome classification. Always set by a factory.
     Status status;
-    /// @brief Collected values keyed by @ref FieldDescriptor::id, in insertion
+    /// @brief Collected values keyed by the credential's name, in insertion
     ///        order.
     ///
-    /// Typical credential prompts carry 1–3 fields (PIN, or PIN + new-PIN +
-    /// confirm-PIN, or CAN + PIN). A flat `std::vector<std::pair<...>>`
+    /// A credential prompt asks for one value; a provider may return a few.
+    /// A flat `std::vector<std::pair<...>>`
     /// gives deterministic order for structured logs / replay fixtures,
     /// avoids an `std::map`-shaped red-black tree for a tiny N, and keeps
     /// the @ref Secure::String values densely packed.
@@ -86,8 +85,8 @@ struct CredentialResult
     /// Values cleanse-on-destruction via @ref LibreSCRS::Secure::String —
     /// the storage is zeroised when the vector entry (or the enclosing
     /// @ref CredentialResult) goes out of scope. Keys remain plain
-    /// `std::string` because field identifiers ("pin", "puk", "can",
-    /// "currentPin", …) are not secret material.
+    /// `std::string` because credential names ("pin", "puk", "can", …) are
+    /// not secret material.
     ///
     /// @warning Callers materialising a @ref LibreSCRS::Secure::String from
     /// a `QString` or `std::string` source remain responsible for cleansing

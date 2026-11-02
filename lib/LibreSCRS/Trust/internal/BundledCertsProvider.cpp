@@ -81,7 +81,7 @@ bool isValidDer(const std::vector<std::uint8_t>& bytes)
     return false;
 }
 
-void loadDirectoryInto(std::vector<TrustAnchor>& out, const fs::path& dir, const std::string& bundleRoot)
+void loadDirectoryInto(std::vector<TrustAnchor>& out, const fs::path& dir)
 {
     std::error_code ec;
     if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec))
@@ -98,7 +98,6 @@ void loadDirectoryInto(std::vector<TrustAnchor>& out, const fs::path& dir, const
 
         TrustAnchor a;
         a.certificateDer = std::move(der);
-        a.sourceLabel = "bundled:" + fs::relative(entry.path(), bundleRoot, ec).string();
         out.push_back(std::move(a));
     }
 }
@@ -118,11 +117,11 @@ BundledCertsProvider::BundledCertsProvider(std::string dir) : bundledCertDir(std
     // certificates-legacy tree next to the source bundle — is never reached.
     for (const auto& sub : fs::directory_iterator(root, ec)) {
         if (sub.is_directory()) {
-            loadDirectoryInto(cached, sub.path(), bundledCertDir);
+            loadDirectoryInto(cached, sub.path());
         }
     }
     // Also load flat .cer/.crt/.pem files directly in the root.
-    loadDirectoryInto(cached, root, bundledCertDir);
+    loadDirectoryInto(cached, root);
 }
 
 std::vector<TrustAnchor> BundledCertsProvider::anchors() const

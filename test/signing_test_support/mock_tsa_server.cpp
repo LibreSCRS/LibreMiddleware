@@ -10,12 +10,14 @@
 #include <openssl/bn.h>
 #include <openssl/evp.h>
 #include <openssl/objects.h>
+#include <openssl/pem.h>
 #include <openssl/rand.h>
 #include <openssl/ts.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <memory>
 #include <span>
 #include <stdexcept>
@@ -49,11 +51,11 @@ struct TsRespCtxDeleter
 
 using TsRespCtxPtr = std::unique_ptr<TS_RESP_CTX, TsRespCtxDeleter>;
 
-void addExtension(X509* cert, int nid, const char* value)
+void addExtension(X509* cert, X509* issuer, int nid, const char* value)
 {
     X509V3_CTX ctx;
     X509V3_set_ctx_nodb(&ctx);
-    X509V3_set_ctx(&ctx, cert, cert, nullptr, nullptr, 0);
+    X509V3_set_ctx(&ctx, issuer, cert, nullptr, nullptr, 0);
     X509_EXTENSION* ext = X509V3_EXT_conf_nid(nullptr, &ctx, nid, value);
     if (!ext)
         throw std::runtime_error(std::string("MockTsaServer: X509V3_EXT_conf_nid failed for ") + value);
@@ -63,7 +65,15 @@ void addExtension(X509* cert, int nid, const char* value)
         throw std::runtime_error("MockTsaServer: X509_add_ext failed");
 }
 
-/// Generate the self-signed authority the responder signs with.
+/// The key and certificate a responder signs with.
+struct Identity
+{
+    EvpPkeyPtr key;
+    X509Ptr cert;
+};
+
+/// Generate a time-stamping certificate, issued by @p issuerKey /
+/// @p issuerCert, or self-signed when both are null.
 ///
 /// `TS_RESP_CTX_set_signer_cert` runs `X509_check_purpose` with
 /// `X509_PURPOSE_TIMESTAMP_SIGN`, which requires an extended key usage that is
@@ -71,7 +81,7 @@ void addExtension(X509* cert, int nid, const char* value)
 /// usage is present, digitalSignature or nonRepudiation. A certificate missing
 /// any of that is rejected outright, so the extension set below is a hard
 /// requirement rather than decoration.
-void makeAuthority(EvpPkeyPtr& keyOut, X509Ptr& certOut)
+Identity makeAuthority(EVP_PKEY* issuerKey, X509* issuerCert)
 {
     EvpPkeyPtr key(EVP_RSA_gen(2048));
     if (!key)
@@ -108,29 +118,83 @@ void makeAuthority(EvpPkeyPtr& keyOut, X509Ptr& certOut)
                                    reinterpret_cast<const unsigned char*>("LibreSCRS Mock Time-Stamp Authority"), -1,
                                    -1, 0) != 1)
         throw std::runtime_error("MockTsaServer: X509_NAME_add_entry_by_txt failed");
-    if (X509_set_issuer_name(cert.get(), subject) != 1)
+    X509* issuer = issuerCert ? issuerCert : cert.get();
+    if (X509_set_issuer_name(cert.get(), X509_get_subject_name(issuer)) != 1)
         throw std::runtime_error("MockTsaServer: X509_set_issuer_name failed");
 
-    addExtension(cert.get(), NID_basic_constraints, "critical,CA:FALSE");
-    addExtension(cert.get(), NID_key_usage, "critical,digitalSignature,nonRepudiation");
-    addExtension(cert.get(), NID_ext_key_usage, "critical,timeStamping");
-    addExtension(cert.get(), NID_subject_key_identifier, "hash");
+    addExtension(cert.get(), issuer, NID_basic_constraints, "critical,CA:FALSE");
+    addExtension(cert.get(), issuer, NID_key_usage, "critical,digitalSignature,nonRepudiation");
+    addExtension(cert.get(), issuer, NID_ext_key_usage, "critical,timeStamping");
+    addExtension(cert.get(), issuer, NID_subject_key_identifier, "hash");
+    if (issuerCert)
+        addExtension(cert.get(), issuer, NID_authority_key_identifier, "keyid:always");
 
-    if (X509_sign(cert.get(), key.get(), EVP_sha256()) == 0)
+    if (X509_sign(cert.get(), issuerKey ? issuerKey : key.get(), EVP_sha256()) == 0)
         throw std::runtime_error("MockTsaServer: X509_sign failed");
 
-    keyOut = std::move(key);
-    certOut = std::move(cert);
+    return Identity{std::move(key), std::move(cert)};
+}
+
+std::string trustFixture(const char* name)
+{
+    return std::string(CMAKE_SOURCE_DIR) + "/test/fixtures/trust/" + name;
+}
+
+/// The test Trusted-List key and certificate, which issue the anchored
+/// authority's certificate.
+Identity loadIssuer()
+{
+    Identity issuer;
+    if (std::FILE* f = std::fopen(trustFixture("test-tl-signing-key.pem").c_str(), "r")) {
+        issuer.key.reset(PEM_read_PrivateKey(f, nullptr, nullptr, nullptr));
+        std::fclose(f);
+    }
+    if (std::FILE* f = std::fopen(trustFixture("test-tl-signing-cert.pem").c_str(), "r")) {
+        issuer.cert.reset(PEM_read_X509(f, nullptr, nullptr, nullptr));
+        std::fclose(f);
+    }
+    if (!issuer.key || !issuer.cert)
+        throw std::runtime_error("MockTsaServer: cannot read the test Trusted-List key and certificate");
+    return issuer;
+}
+
+struct Anchored
+{
+    Identity issuer;
+    std::shared_ptr<Identity> authority;
+};
+
+/// Issued once per process: every anchored instance signs with the same key,
+/// so a test can name the anchor before it starts a server.
+const Anchored& anchored()
+{
+    static const Anchored shared = [] {
+        Anchored a;
+        a.issuer = loadIssuer();
+        a.authority = std::make_shared<Identity>(makeAuthority(a.issuer.key.get(), a.issuer.cert.get()));
+        return a;
+    }();
+    return shared;
+}
+
+std::vector<uint8_t> derOf(X509* cert)
+{
+    unsigned char* der = nullptr;
+    const int len = i2d_X509(cert, &der);
+    if (len <= 0 || !der)
+        throw std::runtime_error("MockTsaServer: i2d_X509 failed");
+    std::vector<uint8_t> out(der, der + len);
+    OPENSSL_free(der);
+    return out;
 }
 
 } // namespace
 
 struct MockTsaServer::Impl
 {
-    EvpPkeyPtr key;
-    X509Ptr cert;
+    std::shared_ptr<Identity> identity;
     // Constructed last: its worker thread starts inside the constructor and
-    // calls back into respond(), so key and cert must already be there.
+    // calls back into respond(), so the identity must already be there.
     std::unique_ptr<LoopbackHttpServer> http;
 
     /// Build a granted TimeStampResp over @p derRequest. Returns empty on any
@@ -141,9 +205,9 @@ struct MockTsaServer::Impl
         TsRespCtxPtr ctx(TS_RESP_CTX_new());
         if (!ctx)
             return {};
-        if (TS_RESP_CTX_set_signer_cert(ctx.get(), cert.get()) != 1)
+        if (TS_RESP_CTX_set_signer_cert(ctx.get(), identity->cert.get()) != 1)
             return {};
-        if (TS_RESP_CTX_set_signer_key(ctx.get(), key.get()) != 1)
+        if (TS_RESP_CTX_set_signer_key(ctx.get(), identity->key.get()) != 1)
             return {};
         if (TS_RESP_CTX_set_signer_digest(ctx.get(), EVP_sha256()) != 1)
             return {};
@@ -159,7 +223,7 @@ struct MockTsaServer::Impl
         // Carry the authority certificate inside the token so the ESSCertID
         // in the signing-certificate attribute resolves to a present cert.
         X509StackBorrowedPtr certs(sk_X509_new_null());
-        if (!certs || sk_X509_push(certs.get(), cert.get()) <= 0)
+        if (!certs || sk_X509_push(certs.get(), identity->cert.get()) <= 0)
             return {};
         if (TS_RESP_CTX_set_certs(ctx.get(), certs.get()) != 1)
             return {};
@@ -181,9 +245,10 @@ struct MockTsaServer::Impl
     }
 };
 
-MockTsaServer::MockTsaServer() : impl(std::make_unique<Impl>())
+MockTsaServer::MockTsaServer(Authority authority) : impl(std::make_unique<Impl>())
 {
-    makeAuthority(impl->key, impl->cert);
+    impl->identity = authority == Authority::Anchored ? anchored().authority
+                                                      : std::make_shared<Identity>(makeAuthority(nullptr, nullptr));
 
     Impl* raw = impl.get();
     impl->http = std::make_unique<LoopbackHttpServer>(
@@ -205,6 +270,16 @@ uint16_t MockTsaServer::port() const
 int MockTsaServer::servedCount() const
 {
     return impl->http->servedCount();
+}
+
+std::vector<uint8_t> MockTsaServer::trustAnchor()
+{
+    return derOf(anchored().issuer.cert.get());
+}
+
+std::vector<uint8_t> MockTsaServer::anchoredCertificate()
+{
+    return derOf(anchored().authority->cert.get());
 }
 
 } // namespace libresign::test

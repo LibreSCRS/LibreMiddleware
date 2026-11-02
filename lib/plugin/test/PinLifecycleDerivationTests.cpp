@@ -255,7 +255,7 @@ TEST(PinLifecycleDerivation, StatePrecedenceBlockedOverTransport)
 // initialized=false next read -> Transport, activatable=true (still needs
 // activateTransportPin). An unblock that also sets a new value (setsNewPin /
 // UnblockAndChange-with-a-new-value) personalizes the credential -> the card
-// reports initialized=true -> Operational, activatable=false. No unblockPIN
+// reports initialized=true -> Operational, activatable=false. No unblock
 // return path needs to special-case this: the NEXT getPINList call re-derives
 // it from card evidence alone.
 TEST(PinLifecycleDerivation, PostUnblockTransportVsOperationalClassification)
@@ -411,8 +411,8 @@ TEST(PinLifecycleDerivation, KeyActivationGuidanceNotOnPukOrCan)
 
 // ---------------------------------------------------------------------------
 // resolveUnblockApdu — the RESET RETRY COUNTER P1 +
-// on-wire data-shape decision extracted from pkcs15-plugin's unblockPIN
-// override. Mirrors the classifyPinOutcome extraction precedent
+// on-wire data-shape decision of a PUK unblock.
+// Mirrors the classifyPinOutcome extraction precedent
 // (<LibreSCRS/Plugin/PinOutcome.h>): a pure free function living beside the
 // derivation engine, unit-tested directly rather than through the plugin
 // funnel — the plugin-funnel route is NOT achievable here because

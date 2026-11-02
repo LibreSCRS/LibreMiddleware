@@ -7,9 +7,7 @@
 #include "signing_keys.h"
 #include "signing_test_support/signing_test_support.h"
 
-#ifdef LIBRESIGN_HAS_NATIVE
-
-#include "dss_validation_client.h"
+#include "dss_oracle/dss_validation_client.h"
 #include "native/native_signing_service.h"
 #include "types.h"
 
@@ -208,13 +206,6 @@ TEST_P(InMemoryKey, CarriesNoStructuralWarning)
             << "signature " << i;
     }
 }
-
-#else
-TEST(SigningConformance, DISABLED_SkippedNativeNotCompiled)
-{
-    GTEST_SKIP() << "the native signing backend is not compiled in this configuration";
-}
-#endif
 
 // Custom main: the ETSI validator lives in this environment, and a suite
 // without it registered would validate nothing while looking green.

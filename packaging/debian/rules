@@ -10,18 +10,17 @@ export DEB_CPPFLAGS_MAINT_APPEND = -DNDEBUG
 # supplies the distribution's hardening set; naming a build type discards it
 # and nothing downstream would say so. NDEBUG comes back above.
 override_dh_auto_configure:
-	dh_auto_configure -- -DBUILD_TESTING=OFF -DINSTALL_GTEST=OFF \
-	                     -DLIBRESCRS_BUILD_EXAMPLES=OFF
+	dh_auto_configure -- -DBUILD_TESTING=OFF -DLIBRESCRS_BUILD_EXAMPLES=OFF
 
 # The build host has no reader and no session bus. A package build is the
 # wrong place to discover a test failure, and the test suites are gated in CI.
 override_dh_auto_test:
 
-# The card plugins and the PKCS#11 module carry a SONAME because the linker
-# writes one, not because anything links them. They are dlopen'd, so keeping
-# them out of shlibs stops them being advertised as public ABI.
+# The card plugins carry a SONAME because the linker writes one, not because
+# anything links them. They are dlopen'd, so keeping them out of shlibs stops
+# them being advertised as public ABI.
 override_dh_makeshlibs:
-	dh_makeshlibs -X/librescrs/plugins/ -X/pkcs11/
+	dh_makeshlibs -X/librescrs/plugins/
 
 # Explicit rather than inherited: an unassigned installed file must fail the
 # build, and relying on the compat level's default leaves that in doubt.

@@ -32,14 +32,44 @@ const PinEvidence* resolveChainPuk(const PinEvidence& e, const std::vector<PinEv
 
 } // namespace
 
+void resolveAuthIdChains(std::vector<PinEvidence>& evidence)
+{
+    for (std::size_t i = 0; i < evidence.size(); ++i) {
+        const auto& protecting = evidence[i].protectingAuthId;
+        if (protecting.empty())
+            continue;
+        for (std::size_t j = 0; j < evidence.size(); ++j) {
+            if (j == i || evidence[j].ownId != protecting)
+                continue;
+            evidence[i].authIdChainTarget = protecting;
+            evidence[j].unblockingPinFlag = true;
+            break;
+        }
+    }
+}
+
+std::optional<std::size_t> selectUserPin(const std::vector<PinEvidence>& evidence)
+{
+    std::optional<std::size_t> initialized;
+    for (std::size_t i = 0; i < evidence.size(); ++i) {
+        if (!evidence[i].initialized)
+            continue;
+        if (derivePinStatus(evidence[i], evidence, nullptr).kind != PinKind::UserPin)
+            continue;
+        if (evidence[i].localScope)
+            return i;
+        if (!initialized)
+            initialized = i;
+    }
+    return initialized;
+}
+
 PinStatusEntry derivePinStatus(const PinEvidence& e, const std::vector<PinEvidence>& allEvidence,
                                const FamilyQuirks* quirks)
 {
     PinStatusEntry out;
     out.label = e.label;
     out.reference = e.reference;
-    out.initialized = e.initialized;
-    out.blocked = e.blocked;
 
     // ---- kind (evidence rules) ----
     // Note: "is the chain target of another PIN" is folded into

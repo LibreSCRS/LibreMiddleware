@@ -8,12 +8,14 @@
 #include <openssl/err.h>
 #include <openssl/rand.h>
 #include <openssl/ts.h>
+#include <openssl/x509_vfy.h>
 
 #include <climits>
 #include <cstring>
 #include <memory>
 #include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
 #include <LibreSCRS_internal/Crypto/OpenSslPtrCms.h>
+#include <LibreSCRS_internal/Crypto/SystemCaStore.h>
 
 using LibreSCRS::Internal::Crypto::Asn1IntegerPtr;
 using LibreSCRS::Internal::Crypto::BnPtr;
@@ -30,6 +32,39 @@ using LibreSCRS::Internal::Crypto::Asn1IntegerPtr;
 using LibreSCRS::Internal::Crypto::BnPtr;
 using LibreSCRS::Internal::Crypto::TsReqPtr;
 using LibreSCRS::Internal::Crypto::TsRespPtr;
+using LibreSCRS::Internal::Crypto::X509StorePtr;
+
+/// Empty when @p token's signer chains to @p anchors or, if @p systemStore, to
+/// the operating system's store (the one chain validation and the https client
+/// trust); otherwise
+/// why it does not.
+///
+/// TS_RESP_verify_signature checks the CMS signature over the TSTInfo, that
+/// the ESS signing-certificate attribute names the certificate that signed,
+/// and that certificate's chain under X509_PURPOSE_TIMESTAMP_SIGN — an
+/// extended key usage of id-kp-timeStamping alone, marked critical (RFC 3161
+/// §2.3). A Trusted List names a time-stamping unit as often as the CA above
+/// it, so every certificate in the store is an anchor as it is
+/// (PARTIAL_CHAIN), the rule TrustStore::validateChain applies.
+std::string untrustedSigner(PKCS7* token, const std::vector<std::vector<uint8_t>>& anchors, bool systemStore)
+{
+    X509StorePtr store(X509_STORE_new());
+    if (!store)
+        return "X509_STORE_new() failed: " + opensslError();
+    if (systemStore)
+        LibreSCRS::Internal::Crypto::addSystemCaStore(store.get());
+    for (const auto& der : anchors) {
+        auto cert = parseCert(der);
+        if (cert)
+            X509_STORE_add_cert(store.get(), cert.get());
+    }
+    X509_STORE_set_flags(store.get(), X509_V_FLAG_PARTIAL_CHAIN);
+
+    ERR_clear_error();
+    if (TS_RESP_verify_signature(token, nullptr, store.get(), nullptr) == 1)
+        return {};
+    return opensslError();
+}
 
 } // namespace
 
@@ -127,15 +162,8 @@ TSAResult TSAClient::timestamp(const std::vector<uint8_t>& hash, const TSAReques
     std::string reqBody(reinterpret_cast<const char*>(derReqBytes.data()), derReqBytes.size());
 
     // 5. HTTP POST to TSA.
-    //
-    // Both TSAClient and HttpClient consume the same internal
-    // TransportCredentials primitive (lib/libresign/src/credentials.h),
-    // so no struct translation is needed here. Layering invariant is
-    // preserved by credentials.h itself: it has no signing-domain
-    // includes, keeping http_client.h a pure transport primitive.
     HttpClient http;
-    auto response = http.postBinaryWithCredentials(request.url, reqBody, "application/timestamp-query",
-                                                   request.credentials, request.timeoutSeconds);
+    auto response = http.postBinary(request.url, reqBody, "application/timestamp-query", request.timeoutSeconds);
 
     if (response.statusCode != 200) {
         result.errorMessage =
@@ -207,6 +235,24 @@ TSAResult TSAClient::timestamp(const std::vector<uint8_t>& hash, const TSAReques
     PKCS7* token = TS_RESP_get_token(resp.get());
     if (!token) {
         result.errorMessage = "TS_RESP_get_token() returned null: " + opensslError();
+        return result;
+    }
+
+    // 9. Verify who signed it. The nonce and imprint checked above are in the
+    //    request, in the clear on an http:// TSA, so anyone on the path can
+    //    echo them into a token of their own; only a signature that chains to
+    //    an anchor says a trusted authority issued it. The deferred anchors
+    //    are asked for only when the token does not verify without them.
+    auto why = untrustedSigner(token, request.trust.anchors, request.trust.includeSystemTrustStore);
+    if (!why.empty() && request.trust.deferredAnchors) {
+        auto anchors = request.trust.deferredAnchors();
+        if (!anchors.empty()) {
+            anchors.insert(anchors.end(), request.trust.anchors.begin(), request.trust.anchors.end());
+            why = untrustedSigner(token, anchors, request.trust.includeSystemTrustStore);
+        }
+    }
+    if (!why.empty()) {
+        result.errorMessage = "TSA token is not signed by a trusted time-stamping authority: " + why;
         return result;
     }
 

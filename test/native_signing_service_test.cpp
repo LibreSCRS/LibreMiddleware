@@ -3,14 +3,15 @@
 
 #include <gtest/gtest.h>
 
-#ifdef LIBRESIGN_HAS_NATIVE
-
 #include "native/native_signing_service.h"
 #include "signing_keys.h"
 #include "signing_test_support/mock_trusted_list_server.h"
+#include "signing_test_support/mock_tsa_server.h"
 #include "signing_test_support/signing_test_support.h"
 #include "signing_service.h"
 #include "types.h"
+
+#include <LibreSCRS/Logging.h>
 
 #include <filesystem>
 #include <string>
@@ -38,13 +39,27 @@ protected:
         return req;
     }
 
-    /// Sign at B-B with the valid signer and return the signed PDF that the
-    /// append cases start from.
+    /// Sign at B-B with the valid signer and return the ASiC-E container that
+    /// the cases adding a second signer start from.
     std::vector<uint8_t> priorSignature()
     {
-        auto result = service.sign(pdfRequest(false), validSigner);
+        auto result =
+            service.sign(bytesRequest("payload signed twice\n", SignatureFormat::AsicE, "payload.txt"), validSigner);
         EXPECT_TRUE(result.success) << result.errorMessage;
         return result.signedDocument;
+    }
+
+    /// The request that signs @p prior, an already-signed ASiC-E container,
+    /// again.
+    static SigningRequest overPrior(const std::vector<uint8_t>& prior, bool allowExpired)
+    {
+        SigningRequest req;
+        req.document = prior;
+        req.fileName = "payload.txt";
+        req.format = SignatureFormat::AsicE;
+        req.level = SignatureLevel::B_B;
+        req.allowExpiredCertificate = allowExpired;
+        return req;
     }
 
     /// Build a request around arbitrary bytes and an explicitly chosen format.
@@ -79,7 +94,7 @@ TEST_F(NativeSigningServiceTest, SignsAtBaselineWithValidSigner)
     EXPECT_FALSE(result.signedDocument.empty());
 }
 
-// Control for the append case below: expiry enforcement on the sign() entry
+// Control for the second-signer case below: expiry enforcement on the sign() entry
 // point is the behaviour that already existed, and it must keep holding.
 TEST_F(NativeSigningServiceTest, SignRejectsExpiredSignerByDefault)
 {
@@ -89,34 +104,49 @@ TEST_F(NativeSigningServiceTest, SignRejectsExpiredSignerByDefault)
     EXPECT_EQ(*result.failureKind, SignFailureKind::PolicyViolation) << result.errorMessage;
 }
 
-// Adding a signer to an already-signed document is signing. The default
-// policy refuses an expired signer certificate, and the entry point the
-// caller happens to use cannot decide whether that policy applies —
-// sign() itself redirects an already-signed XAdES/JAdES/ASiC-E input here,
-// so a policy that lived only in sign() would be silently dropped by the
-// service's own dispatch.
-TEST_F(NativeSigningServiceTest, AppendSignerRejectsExpiredSignerByDefault)
+// A certificate whose validity starts tomorrow is not signed with, opt-in or
+// not: the consent covers an expired certificate, not one not issued yet.
+TEST_F(NativeSigningServiceTest, SignRejectsANotYetValidSigner)
 {
-    auto prior = priorSignature();
-    ASSERT_FALSE(prior.empty());
+    static const auto key =
+        LibreSCRS::TestSupport::makeRsaTestKey("LibreSCRS Future Test Signer", 24L * 3600, 48L * 3600);
+    libresign::test::SoftSigningKey futureSigner{key};
+    auto request = pdfRequest(false);
+    request.allowExpiredCertificate = true;
 
-    auto result = service.appendSigner(pdfRequest(false), prior, {}, expiredSigner);
+    auto result = service.sign(request, futureSigner);
     EXPECT_FALSE(result.success);
     ASSERT_TRUE(result.failureKind.has_value()) << result.errorMessage;
     EXPECT_EQ(*result.failureKind, SignFailureKind::PolicyViolation) << result.errorMessage;
 }
 
-// The opt-in is the user-consent gate, not a sign()-only escape hatch: with
-// it set the append must go through, otherwise the fix above would have
-// turned a fail-open into an unconditional refusal.
-TEST_F(NativeSigningServiceTest, AppendSignerHonoursExpiredCertificateOptIn)
+// Adding a signer to an already-signed document is signing. The default
+// policy refuses an expired signer certificate whichever way sign() takes:
+// an already-signed XAdES/JAdES/ASiC-E input goes to the format module's
+// appendSigner, and a policy applied only on the fresh-signature way would be
+// silently dropped by the service's own dispatch.
+TEST_F(NativeSigningServiceTest, SignOverASignatureRejectsExpiredSignerByDefault)
 {
     auto prior = priorSignature();
     ASSERT_FALSE(prior.empty());
 
-    auto result = service.appendSigner(pdfRequest(true), prior, {}, expiredSigner);
+    auto result = service.sign(overPrior(prior, false), expiredSigner);
+    EXPECT_FALSE(result.success);
+    ASSERT_TRUE(result.failureKind.has_value()) << result.errorMessage;
+    EXPECT_EQ(*result.failureKind, SignFailureKind::PolicyViolation) << result.errorMessage;
+}
+
+// The opt-in is the user-consent gate, not a fresh-signature-only escape
+// hatch: with it set the second signature must go through, otherwise the
+// check above would have turned a fail-open into an unconditional refusal.
+TEST_F(NativeSigningServiceTest, SignOverASignatureHonoursExpiredCertificateOptIn)
+{
+    auto prior = priorSignature();
+    ASSERT_FALSE(prior.empty());
+
+    auto result = service.sign(overPrior(prior, true), expiredSigner);
     ASSERT_TRUE(result.success) << result.errorMessage;
-    EXPECT_FALSE(result.signedDocument.empty());
+    EXPECT_GT(result.signedDocument.size(), prior.size());
 }
 
 // A document is not a signature because of one byte. The leading octet of a
@@ -144,9 +174,9 @@ TEST_F(NativeSigningServiceTest, SignsJsonContainingTheWordSignaturesAtAsicE)
 }
 
 // The guard on the other side. A genuine detached CMS sent as CAdES carries no
-// payload to sign alongside, so it must still be refused with a pointer at the
-// append API. If this ever turns green because nothing refuses any more, the
-// dispatcher fix has gone too far.
+// payload to sign alongside, so it must still be refused, saying why. If this
+// ever turns green because nothing refuses any more, the dispatcher fix has
+// gone too far.
 TEST_F(NativeSigningServiceTest, RefusesRealDetachedCmsWhenCadesWasRequested)
 {
     auto signed_ =
@@ -165,7 +195,8 @@ TEST_F(NativeSigningServiceTest, RefusesRealDetachedCmsWhenCadesWasRequested)
     EXPECT_FALSE(result.success);
     ASSERT_TRUE(result.failureKind.has_value()) << result.errorMessage;
     EXPECT_EQ(*result.failureKind, SignFailureKind::InvalidInput) << result.errorMessage;
-    EXPECT_NE(result.errorMessage.find("appendSigner"), std::string::npos) << result.errorMessage;
+    EXPECT_NE(result.errorMessage.find("does not carry the document it signs"), std::string::npos)
+        << result.errorMessage;
 }
 
 // ---------------------------------------------------------------------------
@@ -212,7 +243,7 @@ protected:
         cfg.trustedLists.push_back(entry);
         cfg.cacheDirectory = cacheDir.string();
 
-        service.setAnchorEmitter([this](std::vector<LibreSCRS::Trust::TrustAnchor> anchors, std::string) {
+        service.setAnchorEmitter([this](std::vector<LibreSCRS::Trust::TrustAnchor> anchors) {
             anchorsEmitted += static_cast<int>(anchors.size());
         });
         service.configure(cfg);
@@ -266,4 +297,67 @@ TEST_F(LazyTrustedListTest, LazyTrustedListIsNotFetchedForBasicLevel)
     EXPECT_EQ(server.servedCount(), 0) << "a basic signature needs no anchor and must make no request";
 }
 
-#endif
+// A time-stamp is an anchor's business too. The token of the in-process
+// authority chains to the certificate tsa-tl.xml lists as a qualified
+// time-stamping service; nothing else vouches for it, so the B-T signature
+// completes only if the deferred list is fetched for the time-stamp — and it
+// is fetched then, not before, because the token did not verify without it.
+TEST_F(LazyTrustedListTest, ATimeStampIsVouchedForByTheListsTimeStampingService)
+{
+    libresign::test::MockTrustedListServer server(std::string(CMAKE_SOURCE_DIR) + "/test/fixtures/trust/tsa-tl.xml");
+    configureWithLazyList(server);
+    libresign::test::MockTsaServer tsa;
+
+    auto req = bytesRequest("time-stamped payload\n", SignatureFormat::Cades, "payload.txt");
+    req.level = SignatureLevel::B_T;
+    req.tsa.url = tsa.url();
+    auto result = service.sign(req, validSigner);
+
+    EXPECT_TRUE(result.success) << result.errorMessage;
+    EXPECT_EQ(tsa.servedCount(), 1);
+    EXPECT_EQ(server.servedCount(), 1) << "the deferred list names the authority; it must be fetched, once";
+}
+
+// The same certificate listed as a qualified CA service: a list that vouches
+// for a certificate issuer does not thereby vouch for a time-stamping
+// authority, and the time-stamp step fails.
+TEST_F(LazyTrustedListTest, ACaServiceDoesNotVouchForATimeStamp)
+{
+    libresign::test::MockTrustedListServer server(std::string(CMAKE_SOURCE_DIR) +
+                                                  "/test/fixtures/trust/synthetic-tl.xml");
+    configureWithLazyList(server);
+    libresign::test::MockTsaServer tsa;
+
+    auto req = bytesRequest("time-stamped payload\n", SignatureFormat::Cades, "payload.txt");
+    req.level = SignatureLevel::B_T;
+    req.tsa.url = tsa.url();
+    auto result = service.sign(req, validSigner);
+
+    EXPECT_EQ(tsa.servedCount(), 1);
+    EXPECT_FALSE(result.success);
+    ASSERT_TRUE(result.failureKind.has_value()) << result.errorMessage;
+    EXPECT_EQ(*result.failureKind, SignFailureKind::TsaUnreachable) << result.errorMessage;
+}
+
+// A list that cannot be loaded leaves the service degraded, and says so: the
+// URL and the reason reach the host's log sink.
+TEST(NativeSigningServiceTrustLog, AListThatFailsToLoadIsLogged)
+{
+    std::vector<std::string> lines;
+    LibreSCRS::log::init([&lines](LibreSCRS::log::Level level, std::string_view line) {
+        if (level == LibreSCRS::log::Level::Warn)
+            lines.emplace_back(line);
+    });
+
+    TrustConfig cfg;
+    TrustedListEntry entry;
+    entry.url = "file:///nonexistent/librescrs-test-tl.xml";
+    entry.localFileOnly = true;
+    cfg.trustedLists.push_back(entry);
+    NativeSigningService service;
+    EXPECT_FALSE(service.configure(cfg));
+    LibreSCRS::log::resetForTest();
+
+    ASSERT_EQ(lines.size(), 1U);
+    EXPECT_NE(lines[0].find("file:///nonexistent/librescrs-test-tl.xml"), std::string::npos) << lines[0];
+}

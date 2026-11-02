@@ -5,37 +5,36 @@
 # check-signing-backend.sh — assert the signing backend a build was asked for
 # is the one it actually got.
 #
-# SIGNING_BACKEND (lib/libresign/CMakeLists.txt) is a plain CACHE STRING. Its
+# SIGNING_BACKEND (test/CMakeLists.txt) is a plain CACHE STRING. Its
 # set_property(... PROPERTY STRINGS ...) is advisory — a cmake-gui affordance,
 # not validation. CMake therefore accepts a misspelled -D flag name without
 # error: the stray variable is recorded as UNINITIALIZED, SIGNING_BACKEND keeps
 # its "native" default, and every DSS / cross-backend target quietly disappears
 # from the build. The job stays green forever while testing nothing it claims
 # to test. The same holds for a misspelled *value* ("boht"), which matches
-# neither the native nor the dss branch and leaves LibreSign with no backend
-# compile definition at all.
+# no branch and builds the native tests alone.
 #
 # This guard is deliberately bidirectional: it fails when the expected backend
 # is missing AND when an unexpected one is present, so it cannot be satisfied
 # by a build that simply defines everything.
 #
-# Usage: check-signing-backend.sh <build-dir> <native|dss|both> [dss-oracle ON|OFF] [werror ON|OFF]
+# Usage: check-signing-backend.sh <build-dir> <native|both> [dss-oracle ON|OFF] [werror ON|OFF]
 #
 # The two optional arguments extend the same fail-closed discipline to the
 # OTHER configure flags the CI matrix passes: -DBUILD_DSS_ORACLE and
-# -DLIBREMIDDLEWARE_WERROR are equally silent when their names are mistyped,
+# -DLIBRESCRS_WERROR are equally silent when their names are mistyped,
 # and a silently-disarmed WERROR undoes the warnings gate with no signal.
 set -euo pipefail
 
-build_dir="${1:?usage: check-signing-backend.sh <build-dir> <native|dss|both> [dss-oracle ON|OFF] [werror ON|OFF]}"
-expected="${2:?usage: check-signing-backend.sh <build-dir> <native|dss|both> [dss-oracle ON|OFF] [werror ON|OFF]}"
+build_dir="${1:?usage: check-signing-backend.sh <build-dir> <native|both> [dss-oracle ON|OFF] [werror ON|OFF]}"
+expected="${2:?usage: check-signing-backend.sh <build-dir> <native|both> [dss-oracle ON|OFF] [werror ON|OFF]}"
 expected_oracle="${3:-}"
 expected_werror="${4:-}"
 
 case "$expected" in
-    native | dss | both) ;;
+    native | both) ;;
     *)
-        echo "FAIL: expected backend must be native, dss or both (got '$expected')" >&2
+        echo "FAIL: expected backend must be native or both (got '$expected')" >&2
         exit 1
         ;;
 esac
@@ -102,14 +101,14 @@ check_bool_cache_entry() {
 }
 
 check_bool_cache_entry BUILD_DSS_ORACLE "$expected_oracle"
-check_bool_cache_entry LIBREMIDDLEWARE_WERROR "$expected_werror"
+check_bool_cache_entry LIBRESCRS_WERROR "$expected_werror"
 
 # ---------------------------------------------------------------------------
-# 2. The compile definitions must have actually reached the generated build.
+# 2. The DSS compile definition must have actually reached the generated build.
 #
-# LIBRESIGN_HAS_DSS / LIBRESIGN_HAS_NATIVE are target_compile_definitions, NOT
-# cache variables — grepping CMakeCache.txt for them matches nothing and would
-# make this guard a no-op. They land in the generator's command lines.
+# LIBRESIGN_HAS_DSS is a target_compile_definition, NOT a cache variable —
+# grepping CMakeCache.txt for it matches nothing and would make this guard a
+# no-op. It lands in the generator's command lines.
 #
 # The match is anchored on the exact "-DTOKEN=1" spelling with a fixed-string
 # compare. A bare substring search for LIBRESIGN_HAS_DSS also matches
@@ -132,9 +131,8 @@ if [ "${#build_files[@]}" -eq 0 ]; then
 fi
 
 case "$expected" in
-    native) want_native=yes want_dss=no ;;
-    dss) want_native=no want_dss=yes ;;
-    both) want_native=yes want_dss=yes ;;
+    native) want_dss=no ;;
+    both) want_dss=yes ;;
 esac
 
 check_definition() {
@@ -149,13 +147,12 @@ check_definition() {
     echo "  ok: -D$token=1 present=$present (expected $want)"
 }
 
-check_definition LIBRESIGN_HAS_NATIVE "$want_native"
 check_definition LIBRESIGN_HAS_DSS "$want_dss"
 
 # ---------------------------------------------------------------------------
 # 3. Behavioural ground truth: the cross-backend cases must actually be in the
 #    suite. cross_backend_test.cpp compiles its real TESTs only under
-#    #if defined(LIBRESIGN_HAS_NATIVE) && defined(LIBRESIGN_HAS_DSS); otherwise
+#    #if defined(LIBRESIGN_HAS_DSS); otherwise
 #    it emits a single DISABLED placeholder that never runs. Checking the
 #    discovered test list therefore proves the definitions did more than appear
 #    on a command line. Skipped when the tree was configured without tests.

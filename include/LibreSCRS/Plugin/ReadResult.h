@@ -31,11 +31,10 @@ namespace LibreSCRS::Plugin {
 /// standard library are undefined behaviour; the ABI-safe contract is a
 /// status enum + optional payload. Plugin implementations wrap their
 /// internal logic in a catch-all and convert throws into a
-/// @ref ReadResult::communicationError or @ref ReadResult::parseError
-/// outcome at the boundary.
+/// @ref ReadResult::communicationError outcome at the boundary.
 ///
 /// Construct via one of the named factories (@ref ok, @ref communicationError,
-/// @ref parseError, @ref unsupportedCard, @ref authenticationFailed) so the
+/// @ref unsupportedCard, @ref authenticationFailed) so the
 /// @ref status is guaranteed to be populated. Default construction is deleted
 /// — an "undefined outcome" for a security-sensitive result is a footgun.
 ///
@@ -50,9 +49,8 @@ struct ReadResult
 {
     /// @brief Outcome classification for a card-read attempt.
     ///
-    /// @ref Cancelled mirrors the sibling cancellation surface on
-    /// @ref LibreSCRS::Signing::SigningResult::Status::Cancelled so caller-
-    /// driven cancellation is distinguishable from a real I/O fault. The
+    /// @ref Cancelled keeps caller-driven cancellation distinguishable from
+    /// a real I/O fault. The
     /// @ref LibreSCRS::Auth::ErrorKeys::cancelled diagnostic key remains
     /// the canonical translator-facing message for this status.
     /// @note Append-only: new status values may be added in future minor
@@ -61,7 +59,6 @@ struct ReadResult
     enum class Status : std::uint8_t {
         Ok,                   ///< Read completed successfully; @ref data is populated.
         CommunicationError,   ///< Card I/O failed (reader, SCard, PACE/SM).
-        ParseError,           ///< Card returned data that did not match the expected layout.
         UnsupportedCard,      ///< Plugin advertised a match but the card data contradicts it.
         AuthenticationFailed, ///< PIN / CAN / MRZ / PUK required but not supplied or rejected.
         Cancelled             ///< Caller cancelled via the @ref CancelToken passed to readCard.
@@ -108,13 +105,6 @@ struct ReadResult
         return ReadResult{Status::CommunicationError, std::nullopt, std::move(msg), std::move(diag)};
     }
 
-    /// @brief Construct a parse-error result (unexpected data layout).
-    [[nodiscard]] static ReadResult parseError(LocalizedText msg,
-                                               std::optional<std::string> diag = std::nullopt) noexcept
-    {
-        return ReadResult{Status::ParseError, std::nullopt, std::move(msg), std::move(diag)};
-    }
-
     /// @brief Construct an unsupported-card result: the plugin advertised a
     ///        match via @ref CardPlugin::canHandle or
     ///        @ref CardPlugin::canHandleConnection but the subsequent reads
@@ -138,7 +128,7 @@ struct ReadResult
     ///        @ref CancelToken reported cancellation before the plugin could
     ///        finish the read.
     ///
-    /// @since 4.0 — sibling of @ref Signing::SigningResult::cancelled.
+    /// @since 4.0
     /// Use this in preference to a @ref communicationError with a sentinel
     /// "cancelled" key; callers that route on @ref Status::Cancelled can
     /// then distinguish a clean user-cancel from a hardware I/O fault.

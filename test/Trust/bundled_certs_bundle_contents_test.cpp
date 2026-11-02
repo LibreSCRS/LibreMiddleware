@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -13,6 +14,7 @@
 #include <string>
 #include <system_error>
 #include <unistd.h>
+#include <vector>
 
 namespace fs = std::filesystem;
 using LibreSCRS::Trust::detail::BundledCertsProvider;
@@ -174,19 +176,34 @@ TEST_F(BundledCertsBundleContentsTest, ReadmeSubdirectoriesMatchDisk)
 // provider descends exactly one level below the root it is given, so no
 // resolved root can reach it — this pins that shape against a future "recurse
 // properly" change that would quietly re-admit expired and malformed material.
+// The bundle is loaded twice, in place beside the archive and as a copy with
+// nothing beside it: an anchor the first holds and the second does not came
+// from outside the bundle.
 TEST_F(BundledCertsBundleContentsTest, ArchivedSiblingIsNeverLoaded)
 {
     std::error_code ec;
     ASSERT_TRUE(fs::is_directory(kLegacyCertsDir, ec))
         << "premise gone: no archived tree at " << kLegacyCertsDir << " — this test proves nothing";
 
-    const BundledCertsProvider provider(kSourceCertsDir.string());
-    for (const auto& anchor : provider.anchors()) {
-        EXPECT_EQ(anchor.sourceLabel.find("certificates-legacy"), std::string::npos)
-            << "archived material loaded into the bundle: " << anchor.sourceLabel;
-        EXPECT_EQ(anchor.sourceLabel.find(".."), std::string::npos)
-            << "anchor resolved outside the bundle root: " << anchor.sourceLabel;
-    }
+    const auto copy = tmpDir / "certificates";
+    fs::copy(kSourceCertsDir, copy, fs::copy_options::recursive, ec);
+    ASSERT_FALSE(ec) << "could not copy the bundle: " << ec.message();
+
+    const auto ders = [](const BundledCertsProvider& provider) {
+        std::set<std::vector<std::uint8_t>> out;
+        for (const auto& anchor : provider.anchors())
+            out.insert(anchor.certificateDer);
+        return out;
+    };
+    const auto inPlace = ders(BundledCertsProvider(kSourceCertsDir.string()));
+    const auto alone = ders(BundledCertsProvider(copy.string()));
+    const auto archived = ders(BundledCertsProvider(kLegacyCertsDir.string()));
+
+    // Control: the archive holds a certificate the bundle does not, so loading
+    // it would show.
+    ASSERT_TRUE(std::any_of(archived.begin(), archived.end(), [&](const auto& der) { return !alone.contains(der); }))
+        << "premise gone: the archive adds nothing the bundle lacks — this test proves nothing";
+    EXPECT_EQ(inPlace, alone) << "the bundle loaded beside the archive differs from the bundle alone";
 }
 
 // Same shape, built from scratch so the sibling holds a certificate that is

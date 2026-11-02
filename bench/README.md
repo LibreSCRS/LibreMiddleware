@@ -11,14 +11,13 @@ baseline only requires checking out the same commit.
 |                              | eID issuer + full typed-accessor sweep                   |
 | `bench_trust_validate`       | `TrustStore::validateChain` over 1/3/5-deep chains +     |
 |                              | `findIssuerOf`                                           |
-| `bench_truststore_service`   | `TrustStoreService::create()` happy path with empty,     |
-|                              | system-store, and file:// TL fixture configs             |
+| `bench_truststore_service`   | `TrustStoreService::create()` happy path: bundled        |
+|                              | anchors and the system store, no Trusted List            |
 
 ## Build
 
 ```bash
 cmake -B build-bench -S . -DCMAKE_BUILD_TYPE=Release \
-    -DSIGNING_BACKEND=both \
     -DLIBRESCRS_BUILD_BENCH=ON \
     -DBUILD_TESTING=OFF
 cmake --build build-bench --target bench_parsed_cert bench_trust_validate \

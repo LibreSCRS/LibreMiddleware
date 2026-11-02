@@ -27,7 +27,7 @@
 #include <LibreSCRS/Plugin/PluginTypes.h>
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
-#include <LibreSCRS/SmartCard/MonitorService.h>
+#include <pcsc_connection.h>
 
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
@@ -45,7 +45,6 @@ using LibreSCRS::Plugin::CardPlugin;
 using LibreSCRS::Plugin::CardPluginService;
 using LibreSCRS::Plugin::SignMechanism;
 using LibreSCRS::SmartCard::CardSession;
-using LibreSCRS::SmartCard::MonitorService;
 using LibreSCRS::Tests::ecdsaVerifyRaw;
 using LibreSCRS::Tests::E2E::markPinFailedAndAbort;
 
@@ -76,14 +75,14 @@ protected:
             GTEST_SKIP() << "LIBRESCRS_TEST_CAN not set";
 
         registry = std::make_unique<CardPluginService>(std::filesystem::path(PLUGIN_DIR));
-        if (!registry->isUsable())
+        if (registry->size() == 0)
             GTEST_SKIP() << "no plugins loaded from " << PLUGIN_DIR;
 
-        auto readers = MonitorService{}.listReaders();
-        if (!readers || readers->empty())
+        const auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
+        if (readers.empty())
             GTEST_SKIP() << "no readers";
 
-        for (const auto& name : *readers) {
+        for (const auto& name : readers) {
             auto opened = CardSession::open(name);
             if (!opened)
                 continue;
@@ -167,16 +166,19 @@ TEST_F(SrbEid2ContactlessHw, FullContactlessFlowThroughPlugin)
         }
     }
     ASSERT_NE(signing, nullptr) << "no certificate carried a key reference";
-    ASSERT_TRUE(signing->keySizeBits.has_value()) << "signing cert reported no key size";
-    const std::uint16_t fieldBits = *signing->keySizeBits;
+    // The field size comes from the certificate's own public key.
+    const unsigned char* der = signing->derBytes.data();
+    std::unique_ptr<X509, decltype(&X509_free)> cert{
+        d2i_X509(nullptr, &der, static_cast<long>(signing->derBytes.size())), &X509_free};
+    ASSERT_NE(cert, nullptr) << "signing certificate does not parse";
+    const int fieldBits = EVP_PKEY_get_bits(X509_get0_pubkey(cert.get()));
     ASSERT_GT(fieldBits, 0);
 
-    // PIN verify through the tunnel. Guard the retry counter: any non-Ok
-    // outcome marks the suite PIN-failed and aborts, so a wrong value can
-    // never burn a second attempt on the card.
-    const auto pr = plugin->verifyPIN(*session, LibreSCRS::Secure::String{*pin});
-    if (pr.outcome != LibreSCRS::Plugin::PINResultOutcome::Ok)
-        markPinFailedAndAbort(__LINE__, "verifyPIN outcome=" + std::to_string(static_cast<int>(pr.outcome)));
+    // The PIN is deposited and presented through the tunnel inside the sign's
+    // own transaction. Guard the retry counter: a refused PIN marks the suite
+    // PIN-failed and aborts, so a wrong value can never burn a second attempt
+    // on the card.
+    plugin->setCredentials(*session, "pin", LibreSCRS::Secure::String{*pin});
 
     // Pre-hashed ECDSA over SHA-384 (P-384 card): sign the digest of a fixed
     // payload and require the canonical fixed-width r||s length.
@@ -187,6 +189,9 @@ TEST_F(SrbEid2ContactlessHw, FullContactlessFlowThroughPlugin)
     digest.resize(digestLen);
 
     const auto sr = plugin->sign(*session, *signing->keyFID, digest, SignMechanism::ECDSA_SHA384);
+    if (sr.outcome == LibreSCRS::Plugin::SignResultOutcome::PinIncorrect ||
+        sr.outcome == LibreSCRS::Plugin::SignResultOutcome::PinBlocked)
+        markPinFailedAndAbort(__LINE__, "sign refused the PIN outcome=" + std::to_string(static_cast<int>(sr.outcome)));
     ASSERT_EQ(sr.outcome, LibreSCRS::Plugin::SignResultOutcome::Ok)
         << "sign outcome != Ok (" << static_cast<int>(sr.outcome) << ")";
 

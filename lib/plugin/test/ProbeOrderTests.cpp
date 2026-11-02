@@ -32,7 +32,7 @@ class NamedPlugin final : public LibreSCRS::Plugin::CardPlugin
 public:
     NamedPlugin(const std::string& id, int priority)
     {
-        setIdentity(id, id, priority);
+        setIdentity(id, priority);
     }
 
     LibreSCRS::Plugin::CardCapabilities capabilities() const override

@@ -28,6 +28,13 @@ using native_utils::base64Decode;
 const auto* TSL_NS_X = BAD_CAST "http://uri.etsi.org/02231/v2#";
 const auto* TSL_PREFIX = BAD_CAST "tsl";
 
+// Every query starts at the document element. The list's signature covers
+// the document, and a ds:Signature may legally carry ds:Object content the
+// verifier never compares with anything: a descendant-axis query ("//tsl:...")
+// would read a provider or a pointer planted there as if the list named it.
+#define TSL_ROOT_XPATH "/tsl:TrustServiceStatusList"
+#define TSL_SCHEME_XPATH TSL_ROOT_XPATH "/tsl:SchemeInformation"
+
 // Extract text content from an XPath result (first match)
 std::string xpathText(xmlXPathContextPtr ctx, const char* expr)
 {
@@ -89,15 +96,16 @@ TrustedListInfo parseDoc(xmlDocPtr doc)
     }
 
     // Extract scheme information
-    info.schemeTerritory = xpathText(ctx.get(), "//tsl:SchemeInformation/tsl:SchemeTerritory");
-    info.schemeName = xpathText(ctx.get(), "//tsl:SchemeInformation/tsl:SchemeName/tsl:Name");
-    info.issueDate = xpathText(ctx.get(), "//tsl:SchemeInformation/tsl:ListIssueDateTime");
-    info.nextUpdate = xpathText(ctx.get(), "//tsl:SchemeInformation/tsl:NextUpdate/tsl:dateTime");
+    info.schemeTerritory = xpathText(ctx.get(), TSL_SCHEME_XPATH "/tsl:SchemeTerritory");
+    info.schemeName = xpathText(ctx.get(), TSL_SCHEME_XPATH "/tsl:SchemeName/tsl:Name");
+    info.issueDate = xpathText(ctx.get(), TSL_SCHEME_XPATH "/tsl:ListIssueDateTime");
+    info.nextUpdate = xpathText(ctx.get(), TSL_SCHEME_XPATH "/tsl:NextUpdate/tsl:dateTime");
 
     // Extract pointers to other TSLs (LOTL), including per-pointer signing certs
     {
         XPathObjPtr pointerObj(xmlXPathEvalExpression(
-            reinterpret_cast<const xmlChar*>("//tsl:PointersToOtherTSL/tsl:OtherTSLPointer"), ctx.get()));
+            reinterpret_cast<const xmlChar*>(TSL_SCHEME_XPATH "/tsl:PointersToOtherTSL/tsl:OtherTSLPointer"),
+            ctx.get()));
 
         if (pointerObj && pointerObj->nodesetval) {
             for (int i = 0; i < pointerObj->nodesetval->nodeNr; ++i) {
@@ -110,10 +118,17 @@ TrustedListInfo parseDoc(xmlDocPtr doc)
                 TslPointer pointer;
                 pointer.url = std::move(url);
 
-                std::string certB64 = xpathTextRelative(ctx.get(), pointerNode,
-                                                        "tsl:ServiceDigitalIdentity/tsl:DigitalId/tsl:X509Certificate");
-                if (!certB64.empty()) {
-                    pointer.signingCertDer = base64Decode(certB64);
+                // ETSI TS 119 612: the pointer's identities sit in a
+                // ServiceDigitalIdentities wrapper, one per signing key.
+                XPathObjPtr certs = xpathNodesRelative(ctx.get(), pointerNode,
+                                                       "tsl:ServiceDigitalIdentities/tsl:ServiceDigitalIdentity/"
+                                                       "tsl:DigitalId/tsl:X509Certificate");
+                if (certs && certs->nodesetval) {
+                    for (int c = 0; c < certs->nodesetval->nodeNr; ++c) {
+                        auto der = base64Decode(native_utils::xmlContentToString(certs->nodesetval->nodeTab[c]));
+                        if (!der.empty())
+                            pointer.signingCertsDer.push_back(std::move(der));
+                    }
                 }
 
                 info.pointersToOtherTSL.push_back(std::move(pointer));
@@ -123,7 +138,8 @@ TrustedListInfo parseDoc(xmlDocPtr doc)
 
     // Extract trust service providers
     XPathObjPtr providerObj(xmlXPathEvalExpression(
-        reinterpret_cast<const xmlChar*>("//tsl:TrustServiceProviderList/tsl:TrustServiceProvider"), ctx.get()));
+        reinterpret_cast<const xmlChar*>(TSL_ROOT_XPATH "/tsl:TrustServiceProviderList/tsl:TrustServiceProvider"),
+        ctx.get()));
 
     if (!providerObj || !providerObj->nodesetval) {
         return info;
@@ -442,37 +458,6 @@ bool TrustedListParser::isSafeFetchUrl(const std::string& urlStr, bool allowPlai
         }
     }
     return true;
-}
-
-namespace {
-constexpr size_t kMaxTslPointers = 64;
-} // namespace
-
-std::vector<TrustedServiceEntry> TrustedListParser::fetchLotl(const std::string& lotlUrl, int timeoutSeconds)
-{
-    auto lotlInfo = fetch(lotlUrl, timeoutSeconds);
-    std::vector<TrustedServiceEntry> allEntries;
-
-    // Include any services directly in the LOTL
-    allEntries.insert(allEntries.end(), std::make_move_iterator(lotlInfo.services.begin()),
-                      std::make_move_iterator(lotlInfo.services.end()));
-
-    // Fetch each member state TL — but validate URL scheme/host first to
-    // mitigate SSRF via a compromised or malformed LOTL that points at
-    // cloud-metadata IPs, internal services, file://, etc.
-    size_t fetched = 0;
-    for (const auto& pointer : lotlInfo.pointersToOtherTSL) {
-        if (fetched >= kMaxTslPointers)
-            break;
-        if (!isSafeTslUrl(pointer.url))
-            continue;
-        auto tlInfo = fetch(pointer.url, timeoutSeconds);
-        allEntries.insert(allEntries.end(), std::make_move_iterator(tlInfo.services.begin()),
-                          std::make_move_iterator(tlInfo.services.end()));
-        ++fetched;
-    }
-
-    return allEntries;
 }
 
 } // namespace libresign

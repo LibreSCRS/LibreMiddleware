@@ -21,7 +21,7 @@
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Export.h>
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
-#include <LibreSCRS/SecureChannel/PaceParams.h>
+#include <LibreSCRS_internal/SecureChannel/PaceParams.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
 
@@ -147,7 +147,7 @@ public:
     /// @note Carries default visibility (not `LIBRESCRS_INTERNAL`) so the
     ///       symbol is exported across LM shared-library boundaries:
     ///       `LibreSCRS_SmartCard` (CardSession) is the in-tree caller and
-    ///       lives in a sibling .so under `LIBREMIDDLEWARE_BUILD_SHARED=ON`.
+    ///       lives in a sibling .so.
     ///       External consumers cannot construct an `IConnection`
     ///       (header lives outside `include/LibreSCRS/`), so the exported
     ///       symbol remains effectively private to the project.

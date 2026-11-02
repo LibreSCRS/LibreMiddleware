@@ -93,8 +93,7 @@ TEST(CscaMasterListPublicApi, ReturnsTheAnchorsAndTheSignerWithNoPin)
 {
     // Pins the unpinned branch of CscaMasterList.cpp: a null
     // `expectedSpkiSha256` becomes the empty vector the internal call reads as
-    // "do not compare", and `identityChecked` comes back false so a caller
-    // cannot mistake "somebody signed this" for "the publisher signed this".
+    // "do not compare", and the signer seen is reported.
     const auto ml = LibreSCRS::Test::makeMasterList(3);
 
     const auto verified = LibreSCRS::Trust::parseAndVerifyMasterList(ml.der, nullptr);
@@ -102,10 +101,9 @@ TEST(CscaMasterListPublicApi, ReturnsTheAnchorsAndTheSignerWithNoPin)
     ASSERT_TRUE(verified.has_value());
     EXPECT_EQ(verified->anchors, ml.cscaDer) << "the anchors the list carries, in the list's own order";
     EXPECT_EQ(asBytes(verified->signerSpkiSha256), ml.signerSpkiSha256);
-    EXPECT_FALSE(verified->identityChecked) << "no pin was supplied, so nothing about the signer was established";
 }
 
-TEST(CscaMasterListPublicApi, APinThatMatchesIsRecordedAsChecked)
+TEST(CscaMasterListPublicApi, APinThatMatchesIsAccepted)
 {
     // The import flow this facade exists for, both halves of it: the first
     // import reports a fingerprint for a person to recognise, and every import
@@ -119,29 +117,8 @@ TEST(CscaMasterListPublicApi, APinThatMatchesIsRecordedAsChecked)
     const auto pinned = LibreSCRS::Trust::parseAndVerifyMasterList(ml.der, &pin);
 
     ASSERT_TRUE(pinned.has_value());
-    EXPECT_TRUE(pinned->identityChecked) << "identityChecked is what separates a compared pin from a reported one";
     EXPECT_EQ(pinned->signerSpkiSha256, pin);
     EXPECT_EQ(pinned->anchors, ml.cscaDer);
-}
-
-TEST(CscaMasterListPublicApi, ThePinIsComputedFromThePublishersCertificate)
-{
-    // The binding between the two functions, and the reason the second one is
-    // published at all: the value spkiSha256FromCertificateDer() produces from
-    // the publisher's certificate is the value parseAndVerifyMasterList()
-    // compares against. A consumer that computed the pin any other way -- over
-    // the certificate rather than over the key, or over the SubjectPublicKeyInfo
-    // slice as carried rather than re-encoded -- would get a mismatch here.
-    const auto ml = LibreSCRS::Test::makeMasterList(1);
-    const auto signerCert = LibreSCRS::Test::masterListSignerCertificateDer(ml);
-
-    const auto pin = LibreSCRS::Trust::spkiSha256FromCertificateDer(signerCert);
-    ASSERT_TRUE(pin.has_value());
-    EXPECT_EQ(asBytes(*pin), ml.signerSpkiSha256);
-
-    const auto pinned = LibreSCRS::Trust::parseAndVerifyMasterList(ml.der, &*pin);
-    ASSERT_TRUE(pinned.has_value()) << "the pin computed from the publisher's certificate has to be the one accepted";
-    EXPECT_TRUE(pinned->identityChecked);
 }
 
 TEST(CscaMasterListPublicApi, AnotherSignersFingerprintIsSignerMismatch)
@@ -230,11 +207,6 @@ TEST(CscaMasterListPublicApi, TheSignerCertificateComesBackWithTheAnchors)
 
     ASSERT_TRUE(verified.has_value());
     EXPECT_EQ(verified->signerCertDer, signerCert) << "byte for byte the certificate that signed the list";
-    // Through the published pin function, which is how a caller would tie the
-    // two fields together itself: one signer, one certificate, one fingerprint.
-    const auto pin = LibreSCRS::Trust::spkiSha256FromCertificateDer(verified->signerCertDer);
-    ASSERT_TRUE(pin.has_value());
-    EXPECT_EQ(*pin, verified->signerSpkiSha256);
 }
 
 TEST(CscaMasterListPublicApi, TheSigningTimeIsTheInstantTheListWasSignedAt)
@@ -266,42 +238,6 @@ TEST(CscaMasterListPublicApi, AListWithoutASigningTimeIsAcceptedAndCarriesNoInst
     ASSERT_TRUE(verified.has_value()) << "a list is not refused for carrying no date";
     EXPECT_FALSE(verified->signingTimeEpochSeconds.has_value());
     EXPECT_EQ(verified->anchors, ml.cscaDer) << "and everything else about it still comes back";
-}
-
-// ---------------------------------------------------------------------------
-// spkiSha256FromCertificateDer
-// ---------------------------------------------------------------------------
-
-TEST(CscaMasterListPublicApi, TheFingerprintIsOverTheKeyAndNotOverTheCertificate)
-{
-    // The documented reason this function exists rather than a certificate
-    // hash, measured on the one input in the fixture that can tell the two
-    // apart: a CSCA link certificate carries the incoming CSCA's key under a
-    // different encoding, a different issuer and a different signature. One key,
-    // two certificates, and the pin has to be the same -- otherwise a publisher
-    // that renewed its certificate while keeping its key would have to be
-    // re-pinned out of band at every renewal.
-    const auto rotation = LibreSCRS::Test::makeMasterListWithLinkCertificate();
-    const auto& incoming = rotation.list.cscaDer[static_cast<std::size_t>(rotation.incomingIndex)];
-    const auto& link = rotation.list.cscaDer[static_cast<std::size_t>(rotation.linkIndex)];
-    const auto& outgoing = rotation.list.cscaDer[static_cast<std::size_t>(rotation.outgoingIndex)];
-    ASSERT_NE(incoming, link) << "two certificates, or this test compares a thing with itself";
-
-    const auto incomingPin = LibreSCRS::Trust::spkiSha256FromCertificateDer(incoming);
-    const auto linkPin = LibreSCRS::Trust::spkiSha256FromCertificateDer(link);
-    const auto outgoingPin = LibreSCRS::Trust::spkiSha256FromCertificateDer(outgoing);
-
-    ASSERT_TRUE(incomingPin.has_value());
-    ASSERT_TRUE(linkPin.has_value());
-    ASSERT_TRUE(outgoingPin.has_value());
-    EXPECT_EQ(*incomingPin, *linkPin) << "one key under two certificates is one pin";
-    EXPECT_NE(*incomingPin, *outgoingPin) << "and two keys are two pins";
-}
-
-TEST(CscaMasterListPublicApi, BytesThatAreNotACertificateHaveNoFingerprint)
-{
-    EXPECT_FALSE(LibreSCRS::Trust::spkiSha256FromCertificateDer(rubbish(0x5a)).has_value());
-    EXPECT_FALSE(LibreSCRS::Trust::spkiSha256FromCertificateDer({}).has_value());
 }
 
 // ---------------------------------------------------------------------------

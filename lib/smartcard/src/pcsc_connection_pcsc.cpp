@@ -7,12 +7,12 @@
 
 #include "pcsc_connection.h"
 #include "pcsc_trace.h"
+#include <smartcard/secure_wipe.h>
 
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
-#include <iomanip>
-#include <iostream>
+#include <format>
 #include <memory>
 #include <optional>
 #include <span>
@@ -80,9 +80,6 @@ void PCSCConnection::reconnect()
     if (rv != SCARD_S_SUCCESS) {
         throw PCSCError("SCardReconnect failed", rv);
     }
-#ifndef NDEBUG
-    std::cerr << "[PCSC] Reconnected, protocol=" << (activeProtocol == SCARD_PROTOCOL_T0 ? "T=0" : "T=1") << std::endl;
-#endif
 }
 
 void PCSCConnection::reconnectWithReset()
@@ -110,26 +107,6 @@ std::optional<std::vector<std::uint8_t>> PCSCConnection::exchangeWire(std::span<
     const auto* cmdBytes = command.data();
     const auto cmdLen = static_cast<DWORD>(command.size());
 
-#ifndef NDEBUG
-    // Log sent APDU — mask data for INSes whose payload carries PIN /
-    // PUK / new-PIN bytes:
-    //   0x20 VERIFY
-    //   0x24 CHANGE REFERENCE DATA
-    //   0x2C RESET RETRY COUNTER (PUK + new PIN in P1=0x00/0x02 forms)
-    bool isSensitive = cmdLen >= 2 && isSensitiveIns(cmdBytes[1]);
-    std::cerr << "[PCSC] TX (" << cmdLen << " bytes,"
-              << " protocol=" << (activeProtocol == SCARD_PROTOCOL_T0 ? "T=0" : "T=1") << "):";
-    DWORD headerLen = std::min(cmdLen, static_cast<DWORD>(isSensitive ? 5 : cmdLen));
-    for (DWORD i = 0; i < headerLen; i++)
-        std::cerr << " " << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(cmdBytes[i]);
-    if (isSensitive && cmdLen > 5)
-        std::cerr << " [" << (cmdLen - 5) << " bytes masked]";
-    else
-        for (DWORD i = headerLen; i < cmdLen; i++)
-            std::cerr << " " << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(cmdBytes[i]);
-    std::cerr << std::dec << std::endl;
-#endif
-
     const SCARD_IO_REQUEST* pioSendPci = (activeProtocol == SCARD_PROTOCOL_T0) ? SCARD_PCI_T0 : SCARD_PCI_T1;
 
     // 65538 = max extended APDU response (65536 data + 2 SW bytes)
@@ -139,27 +116,22 @@ std::optional<std::vector<std::uint8_t>> PCSCConnection::exchangeWire(std::span<
     LONG rv = SCardTransmit(card, pioSendPci, cmdBytes, cmdLen, nullptr, recvBuffer.data(), &recvLength);
     if (rv == static_cast<LONG>(SCARD_W_RESET_CARD)) {
         // Card was reset (e.g. hot-swap or external reset).
-#ifndef NDEBUG
-        std::cerr << "[PCSC] SCardTransmit got RESET_CARD" << std::endl;
-#endif
+        if (pcscTraceEnabled())
+            emitPcscTraceLine("[PCSC_TRACE] SCardTransmit: card was reset");
         return std::nullopt;
     }
     if (rv != SCARD_S_SUCCESS) {
-#ifndef NDEBUG
-        std::cerr << "[PCSC] SCardTransmit FAILED, rv=0x" << std::hex << rv << std::dec << std::endl;
-#endif
+        if (pcscTraceEnabled())
+            emitPcscTraceLine(
+                std::format("[PCSC_TRACE] SCardTransmit failed rv=0x{:08X}", static_cast<std::uint32_t>(rv)));
         throw PCSCError("SCardTransmit failed", rv);
     }
 
-#ifndef NDEBUG
-    // Log received response
-    std::cerr << "[PCSC] RX (" << recvLength << " bytes):";
-    for (DWORD i = 0; i < recvLength; i++)
-        std::cerr << " " << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(recvBuffer[i]);
-    std::cerr << std::dec << std::endl;
-#endif
-
-    return std::vector<std::uint8_t>(recvBuffer.begin(), recvBuffer.begin() + static_cast<ptrdiff_t>(recvLength));
+    std::vector<std::uint8_t> reply(recvBuffer.begin(), recvBuffer.begin() + static_cast<ptrdiff_t>(recvLength));
+    // The thread's receive buffer outlives this call: what the card answered
+    // (a decrypted block, a personal record) is not left in it.
+    secureWipe(recvBuffer.data(), recvLength);
+    return reply;
 }
 
 void PCSCConnection::beginOnCard()

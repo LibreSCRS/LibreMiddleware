@@ -3,10 +3,11 @@
 
 #include "monitor.h"
 
+#include <LibreSCRS_internal/LogNoexcept.h>
+
 #include <cassert>
 #include <chrono>
 #include <cstring>
-#include <iostream>
 #include <mutex>
 #include <stdexcept>
 
@@ -120,8 +121,8 @@ void Monitor::startThread()
     stopRequested = false;
     // Spawn via a local lambda so the std::thread::_State_impl<...> template
     // instantiation parameterises over the anonymous closure (local linkage)
-    // rather than over the internal Monitor type, which the *LibreSCRS::*
-    // export glob would otherwise promote to a global SHARED-build symbol.
+    // rather than over the internal Monitor type, so no weak symbol of it
+    // names an internal type.
     // Mirrors the coalesceFlusher spawn in lib/LibreSCRS/SmartCard/MonitorService.cpp.
     monitorThread = std::thread([this] { run(); });
 }
@@ -148,6 +149,7 @@ void Monitor::stopThread()
 void Monitor::run()
 {
     bool contextEstablished = false;
+    bool refusalReported = false;
     while (!stopRequested.load()) {
         LONG rv = kScSuccess;
         try {
@@ -160,8 +162,18 @@ void Monitor::run()
             break;
         }
         if (rv == kScNoAccess) {
-            notifyEvent({MonitorEvent::Type::Error, {}, {}, pcsc->refusalDetail()});
-            return;
+            if (!refusalReported) {
+                notifyEvent({MonitorEvent::Type::Error, {}, {}, pcsc->refusalDetail()});
+                refusalReported = true;
+            }
+            const auto retry = pcsc->refusalRetryInterval();
+            if (retry <= std::chrono::milliseconds::zero())
+                return; // final: the source says it will not change
+            // Ask again later, waking often enough that stopping is prompt.
+            const auto until = std::chrono::steady_clock::now() + retry;
+            while (!stopRequested.load() && std::chrono::steady_clock::now() < until)
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            continue;
         }
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
@@ -556,9 +568,9 @@ void Monitor::notifyEvent(const MonitorEvent& event)
         try {
             cb(event);
         } catch (const std::exception& ex) {
-            std::cerr << "Monitor: event callback threw: " << ex.what() << "\n";
+            LibreSCRS::Internal::errorNoexcept("Monitor: event callback threw: {}", ex.what());
         } catch (...) {
-            std::cerr << "Monitor: event callback threw unknown exception\n";
+            LibreSCRS::Internal::errorNoexcept("Monitor: event callback threw unknown exception");
         }
     }
 }
@@ -578,9 +590,9 @@ void Monitor::notifyReaders(const std::vector<std::string>& readers)
         try {
             cb(readers);
         } catch (const std::exception& ex) {
-            std::cerr << "Monitor: reader-list callback threw: " << ex.what() << "\n";
+            LibreSCRS::Internal::errorNoexcept("Monitor: reader-list callback threw: {}", ex.what());
         } catch (...) {
-            std::cerr << "Monitor: reader-list callback threw unknown exception\n";
+            LibreSCRS::Internal::errorNoexcept("Monitor: reader-list callback threw unknown exception");
         }
     }
 }

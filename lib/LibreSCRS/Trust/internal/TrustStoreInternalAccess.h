@@ -37,7 +37,7 @@ struct TrustStoreInternalAccess
     static TrustStore makeStore(std::string bundledCertDir, bool includeSystemTrustStore);
 
     /// @brief Merge a set of pre-extracted DER-encoded trust anchors into
-    ///        @p store as a single provider tagged with @p sourceLabel.
+    ///        @p store as a single provider.
     ///        DER-byte-equality dedupe is performed against existing
     ///        providers' anchors so re-merging the same anchor list is
     ///        idempotent. The anchor span is consumed; @p store retains
@@ -59,8 +59,7 @@ struct TrustStoreInternalAccess
     ///
     /// @par Thread-safety
     /// Takes an exclusive lock on the store's internal mutex.
-    LIBRESCRS_PUBLIC_API static void mergeTrustedListAnchors(TrustStore& store, std::vector<TrustAnchor> anchors,
-                                                             const std::string& sourceLabel);
+    LIBRESCRS_PUBLIC_API static void mergeTrustedListAnchors(TrustStore& store, std::vector<TrustAnchor> anchors);
 };
 
 } // namespace detail

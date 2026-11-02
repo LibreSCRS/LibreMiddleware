@@ -6,7 +6,11 @@
 #include <eu_vrc_card.h>
 #include <ber.h>
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <iterator>
+#include <string>
 #include <vector>
 
 // Data type tests
@@ -128,6 +132,139 @@ TEST(EuVrcCard, ExtractNationalExtensions)
     EXPECT_EQ(data.nationalTags.size(), 1u);
     EXPECT_EQ(data.nationalTags[0].first, 0xC2u);
     EXPECT_EQ(data.nationalTags[0].second, "1234");
+}
+
+namespace {
+
+using EuVrcStringField = std::string euvrc::EuVrcData::*;
+
+// One field of the certificate: where Directive 2003/127/EC puts it, written
+// out as literal tags so this table does not share a dictionary with the parser.
+struct DirectivePath
+{
+    std::vector<uint32_t> path;
+    EuVrcStringField member;
+    const char* name;
+};
+
+const std::vector<DirectivePath>& directivePaths()
+{
+    using D = euvrc::EuVrcData;
+    static const std::vector<DirectivePath> paths = {
+        {{0x71, 0x80}, &D::version, "version"},
+        {{0x71, 0x9F33}, &D::memberState, "memberState"},
+        {{0x71, 0x9F35}, &D::competentAuthority, "competentAuthority"},
+        {{0x71, 0x9F36}, &D::issuingAuthority, "issuingAuthority"},
+        {{0x71, 0x9F38}, &D::documentNumber, "documentNumber"},
+        {{0x71, 0x9F34}, &D::previousDocument, "previousDocument"},
+        {{0x71, 0x81}, &D::registrationNumber, "registrationNumber"},
+        {{0x71, 0x82}, &D::firstRegistration, "firstRegistration"},
+        {{0x71, 0xA1, 0xA2, 0x83}, &D::holderName, "holderName"},
+        {{0x71, 0xA1, 0xA2, 0x84}, &D::holderOtherNames, "holderOtherNames"},
+        {{0x71, 0xA1, 0xA2, 0x85}, &D::holderAddress, "holderAddress"},
+        {{0x71, 0x86}, &D::ownershipStatus, "ownershipStatus"},
+        {{0x71, 0xA3, 0x87}, &D::vehicleMake, "vehicleMake"},
+        {{0x71, 0xA3, 0x88}, &D::vehicleType, "vehicleType"},
+        {{0x71, 0xA3, 0x89}, &D::commercialDesc, "commercialDesc"},
+        {{0x71, 0x8A}, &D::vin, "vin"},
+        {{0x71, 0xA4, 0x8B}, &D::maxLadenMass, "maxLadenMass"},
+        {{0x71, 0x8C}, &D::vehicleMass, "vehicleMass"},
+        {{0x71, 0x8D}, &D::expiryDate, "expiryDate"},
+        {{0x71, 0x8E}, &D::registrationDate, "registrationDate"},
+        {{0x71, 0x8F}, &D::typeApproval, "typeApproval"},
+        {{0x71, 0xA5, 0x90}, &D::engineCapacity, "engineCapacity"},
+        {{0x71, 0xA5, 0x91}, &D::maxNetPower, "maxNetPower"},
+        {{0x71, 0xA5, 0x92}, &D::fuelType, "fuelType"},
+        {{0x71, 0x93}, &D::powerWeightRatio, "powerWeightRatio"},
+        {{0x71, 0xA6, 0x94}, &D::numberOfSeats, "numberOfSeats"},
+        {{0x71, 0xA6, 0x95}, &D::standingPlaces, "standingPlaces"},
+        {{0x72, 0xA4, 0x96}, &D::maxLadenMassService, "maxLadenMassService"},
+        {{0x72, 0xA4, 0x97}, &D::maxLadenMassWhole, "maxLadenMassWhole"},
+        {{0x72, 0x98}, &D::vehicleCategory, "vehicleCategory"},
+        {{0x72, 0x99}, &D::numberOfAxles, "numberOfAxles"},
+        {{0x72, 0x9A}, &D::wheelbase, "wheelbase"},
+        {{0x72, 0x9B}, &D::brakedTrailerMass, "brakedTrailerMass"},
+        {{0x72, 0x9C}, &D::unbrakedTrailerMass, "unbrakedTrailerMass"},
+        {{0x72, 0xA5, 0x9D}, &D::ratedEngineSpeed, "ratedEngineSpeed"},
+        {{0x72, 0xA5, 0x9E}, &D::engineIdNumber, "engineIdNumber"},
+        {{0x72, 0x9F24}, &D::colour, "colour"},
+        {{0x72, 0x9F25}, &D::maxSpeed, "maxSpeed"},
+        {{0x72, 0x9F26}, &D::stationarySoundLevel, "stationarySoundLevel"},
+        {{0x72, 0x9F27}, &D::engineSpeedRef, "engineSpeedRef"},
+        {{0x72, 0x9F28}, &D::driveBySound, "driveBySound"},
+        {{0x72, 0x9F2F}, &D::fuelConsumption, "fuelConsumption"},
+        {{0x72, 0x9F30}, &D::co2, "co2"},
+        {{0x72, 0x9F31}, &D::envCategory, "envCategory"},
+        {{0x72, 0x9F32}, &D::fuelTankCapacity, "fuelTankCapacity"},
+        {{0x71, 0xA1, 0xA7, 0x83}, &D::owner2Name, "owner2Name"},
+        {{0x71, 0xA1, 0xA9, 0x83}, &D::userName, "userName"},
+        {{0x71, 0xA1, 0xA9, 0x84}, &D::userOtherNames, "userOtherNames"},
+        {{0x71, 0xA1, 0xA9, 0x85}, &D::userAddress, "userAddress"},
+    };
+    return paths;
+}
+
+// Puts @p value at @p path under @p root, creating the containers on the way.
+void place(LibreSCRS::SmartCard::Internal::BERField& root, const std::vector<uint32_t>& path, const std::string& value)
+{
+    auto* node = &root;
+    for (std::size_t i = 0; i < path.size(); ++i) {
+        auto it = std::find_if(node->children.begin(), node->children.end(),
+                               [&](const auto& child) { return child.tag == path[i]; });
+        if (it == node->children.end()) {
+            LibreSCRS::SmartCard::Internal::BERField child;
+            child.tag = path[i];
+            child.constructed = i + 1 < path.size();
+            node->children.push_back(child);
+            it = std::prev(node->children.end());
+        }
+        node = &*it;
+    }
+    node->value.assign(value.begin(), value.end());
+}
+
+bool isDateField(EuVrcStringField member)
+{
+    using D = euvrc::EuVrcData;
+    return member == &D::firstRegistration || member == &D::expiryDate || member == &D::registrationDate;
+}
+
+} // namespace
+
+// Every field the certificate defines is read from its own path and from no
+// other: each gets a distinct value, so a tag read under the wrong name, or a
+// field read from a neighbour's path, shows up as the wrong value.
+TEST(EuVrcCard, EveryFieldIsReadFromItsDirectivePath)
+{
+    LibreSCRS::SmartCard::Internal::BERField root;
+    std::vector<std::string> values;
+    for (std::size_t i = 0; i < directivePaths().size(); ++i) {
+        const auto& entry = directivePaths()[i];
+        values.push_back(isDateField(entry.member) ? "2019031" + std::to_string(i % 10) : "v" + std::to_string(i));
+        place(root, entry.path, values.back());
+    }
+
+    const auto data = euvrc::extractFields(root);
+    for (std::size_t i = 0; i < directivePaths().size(); ++i) {
+        const auto& entry = directivePaths()[i];
+        const auto expected = isDateField(entry.member) ? euvrc::formatVrcDate(values[i]) : values[i];
+        EXPECT_EQ(data.*entry.member, expected) << entry.name;
+    }
+}
+
+// The user (C.3) is read from the optional container when the mandatory one
+// carries none of it.
+TEST(EuVrcCard, UserFallsBackToTheOptionalContainer)
+{
+    LibreSCRS::SmartCard::Internal::BERField root;
+    place(root, {0x72, 0xA1, 0xA9, 0x83}, "name");
+    place(root, {0x72, 0xA1, 0xA9, 0x84}, "other");
+    place(root, {0x72, 0xA1, 0xA9, 0x85}, "address");
+
+    const auto data = euvrc::extractFields(root);
+    EXPECT_EQ(data.userName, "name");
+    EXPECT_EQ(data.userOtherNames, "other");
+    EXPECT_EQ(data.userAddress, "address");
 }
 
 TEST(EuVrcCard, DateFormatConversion)

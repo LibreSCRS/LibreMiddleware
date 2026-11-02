@@ -31,7 +31,7 @@
 #include <LibreSCRS/SmartCard/AppletAid.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
-#include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
+#include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 #include <LibreSCRS/SmartCard/detail/ChannelInjection.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
@@ -66,8 +66,8 @@ using LibreSCRS::SmartCard::CardSession;
 using LibreSCRS::SmartCard::PaceRequest;
 using LibreSCRS::SmartCard::SmProtocolRequest;
 using LibreSCRS::SmartCard::detail::ChannelInjector;
-using LibreSCRS::SmartCard::detail::makeDetachedCardSession;
 using LibreSCRS::SmartCard::Internal::ActiveChannelAccessor;
+using LibreSCRS::SmartCard::Testing::makeDetachedCardSession;
 
 constexpr const char* kReader = "Phantom Reader 0";
 

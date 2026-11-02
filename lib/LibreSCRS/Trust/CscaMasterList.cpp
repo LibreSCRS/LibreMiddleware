@@ -14,7 +14,7 @@
 
 // The two switches below are the cardinality half of the enum gate, and this
 // pragma is what turns them from a warning into a gate. -Wswitch is only a
-// warning in a default build and LIBREMIDDLEWARE_WERROR is off by default, so
+// warning in a default build and LIBRESCRS_WERROR is off by default, so
 // without this a value added to either enum would compile with a diagnostic
 // nobody has to read. Promoted to an error in this translation unit alone, so
 // the gate does not depend on how the tree was configured.
@@ -142,8 +142,7 @@ static_assert(mirrors(MasterListError::SignerMismatch, Internal::SignerMismatch)
 {
     [[maybe_unused]] const auto& [internalAnchors, internalFingerprint, internalChecked, internalSignerCert,
                                   internalSigningTime] = internalSide;
-    [[maybe_unused]] const auto& [publicAnchors, publicFingerprint, publicChecked, publicSignerCert,
-                                  publicSigningTime] = publicSide;
+    [[maybe_unused]] const auto& [publicAnchors, publicFingerprint, publicSignerCert, publicSigningTime] = publicSide;
 
     // The one pair whose two types differ by design: the internal side carries
     // the whole parse result, the public side the anchors taken out of it.
@@ -161,8 +160,9 @@ static_assert(mirrors(MasterListError::SignerMismatch, Internal::SignerMismatch)
         std::is_same_v<std::remove_cvref_t<decltype(publicFingerprint)>, std::array<std::uint8_t, kSpkiSha256Size>>,
         "the public signer fingerprint changed shape");
 
+    // Not carried across: a caller knows whether it passed a pin, and a value
+    // returned for a pin is the pin's match.
     static_assert(std::is_same_v<std::remove_cvref_t<decltype(internalChecked)>, bool>);
-    static_assert(std::is_same_v<std::remove_cvref_t<decltype(publicChecked)>, bool>);
 
     // These two are carried across unchanged, so here the two types must be the
     // SAME type and not merely each what it was.
@@ -185,8 +185,7 @@ parseAndVerifyMasterList(const std::vector<std::uint8_t>& der,
     // A null pointer becomes the empty vector the internal call reads as "do
     // not compare", which is the whole of the translation between the two
     // spellings of "no pin". A caller cannot express "compare against nothing"
-    // any other way, and identityChecked below is what records which of the two
-    // happened.
+    // any other way.
     const std::vector<std::uint8_t> pin =
         expectedSpkiSha256 == nullptr
             ? std::vector<std::uint8_t>{}
@@ -211,24 +210,8 @@ parseAndVerifyMasterList(const std::vector<std::uint8_t>& der,
     VerifiedMasterList out;
     out.anchors = verified->list.cscaDer;
     std::copy(verified->signerSpkiSha256.begin(), verified->signerSpkiSha256.end(), out.signerSpkiSha256.begin());
-    out.identityChecked = verified->identityChecked;
     out.signerCertDer = verified->signerCertDer;
     out.signingTimeEpochSeconds = verified->signingTimeEpochSeconds;
-    return out;
-}
-
-std::optional<std::array<std::uint8_t, kSpkiSha256Size>>
-spkiSha256FromCertificateDer(const std::vector<std::uint8_t>& certDer)
-{
-    const auto fingerprint = emrtd::crypto::spkiSha256FromCertificateDer(certDer);
-    // Same unreachable guard as above, and here the answer is the natural one:
-    // a value means a fingerprint, so anything that is not 32 bytes is nothing.
-    if (!fingerprint || fingerprint->size() != kSpkiSha256Size) {
-        return std::nullopt;
-    }
-
-    std::array<std::uint8_t, kSpkiSha256Size> out{};
-    std::copy(fingerprint->begin(), fingerprint->end(), out.begin());
     return out;
 }
 

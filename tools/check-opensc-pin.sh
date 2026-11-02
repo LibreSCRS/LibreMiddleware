@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: LGPL-2.1-or-later
 set -euo pipefail
-# Guard the vendored OpenSC submodule against drift. The bundled
-# `librescrs-opensc-pkcs11` fallback module depends on the merged srbeid
-# CardEdge driver (recognises Serbian eID / PKS / RFZO ATRs and routes
-# them to the iso7816 / cardos path); without those commits in the
-# submodule's history, the fallback module silently fails to claim the
-# Serbian-card slots and the dispatcher falls through to the in-tree
-# PKCS#15 module — degrading multi-card behaviour. Post-rebase upstream
+# Guard the vendored OpenSC submodule against drift. The OpenSC card plugin
+# depends on the merged srbeid CardEdge driver (recognises Serbian eID / PKS /
+# RFZO ATRs and routes them to the iso7816 / cardos path); without those
+# commits in the submodule's history, the plugin silently fails to claim those
+# cards. Post-rebase upstream
 # SHAs (the original PR-history SHAs are not ancestors of upstream
 # master after the upstream maintainer rebase).
 REQUIRED_COMMITS=(82d8fb895 7d5d10ef3 c1b5267e8 28ace0595)

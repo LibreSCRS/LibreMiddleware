@@ -16,9 +16,9 @@
 #include <thread>
 
 #ifdef LIBRESIGN_HAS_DSS_ORACLE
-#include "dss/dss_service_manager.h"
-#include "http_client.h"
-#include "../dss_validation_client.h"
+#include "dss_oracle/dss_http.h"
+#include "dss_oracle/dss_service_manager.h"
+#include "dss_oracle/dss_validation_client.h"
 #include <json.hpp>
 #endif
 
@@ -157,11 +157,10 @@ void SigningTestEnvironment::SetUp()
     // "HTTP 0: Could not connect to server". Poll /health for up to 30s
     // before declaring the oracle ready.
     {
-        HttpClient probe;
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
         bool ready = false;
         while (std::chrono::steady_clock::now() < deadline) {
-            auto h = probe.get(impl->baseUrl + "/health", 1, impl->socketPath);
+            auto h = dss_http::get(impl->socketPath, impl->baseUrl + "/health", 1);
             if (h.statusCode == 200) {
                 ready = true;
                 break;
@@ -190,14 +189,13 @@ void SigningTestEnvironment::SetUp()
     }
 
     try {
-        HttpClient http;
         nlohmann::json trustCfg;
         trustCfg["trustedLists"] = nlohmann::json::array(
             {{{"url", "https://www.mit.gov.rs/TrustedList/TSL-RS.xml"}, {"isLotl", false}, {"eager", true}}});
         trustCfg["crlEnabled"] = true;
         trustCfg["ocspEnabled"] = true;
 
-        auto resp = http.post(impl->baseUrl + "/config", trustCfg.dump(), 30, impl->socketPath);
+        auto resp = dss_http::postJson(impl->socketPath, impl->baseUrl + "/config", trustCfg.dump(), 30);
         if (resp.statusCode == 200) {
             impl->trustOk = true;
             std::cerr << "[SigningTestEnvironment] Trust configured successfully\n";

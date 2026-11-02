@@ -55,6 +55,37 @@ TEST(ManifestCodegen, InvalidManifestRejected)
     EXPECT_NE(rc, 0) << "invalid manifest should have been rejected by schema validation";
 }
 
+// The plugin ABI version has one source: kCardPluginAbiVersion in
+// CardPlugin.h, which the loader checks at run time. A manifest that
+// states its own number can only drift from it, so the schema refuses
+// the field rather than letting a second, unchecked copy go stale.
+TEST(ManifestCodegen, ManifestStatingAnAbiVersionRejected)
+{
+    const fs::path fixtures{LIBRESCRS_FIXTURE_DIR};
+    const fs::path generated = fs::temp_directory_path() / "_librescrs_abi_version_manifest.h";
+
+    const std::string command = std::string{LIBRESCRS_PYTHON_EXECUTABLE} + " " + LIBRESCRS_MANIFEST2HEADER_PATH +
+                                " --input " + (fixtures / "abi_version_manifest.json").string() + " --output " +
+                                generated.string() + " --schema " + LIBRESCRS_MANIFEST_SCHEMA_PATH + " >/dev/null 2>&1";
+    const int rc = std::system(command.c_str());
+    EXPECT_NE(rc, 0) << "a manifest must not carry its own abiVersion";
+}
+
+// A plugin's display name is not part of the plugin interface, so the
+// schema refuses the field: a manifest that still states one fails at
+// codegen rather than carrying a name nothing reads.
+TEST(ManifestCodegen, ManifestStatingADisplayNameRejected)
+{
+    const fs::path fixtures{LIBRESCRS_FIXTURE_DIR};
+    const fs::path generated = fs::temp_directory_path() / "_librescrs_display_name_manifest.h";
+
+    const std::string command = std::string{LIBRESCRS_PYTHON_EXECUTABLE} + " " + LIBRESCRS_MANIFEST2HEADER_PATH +
+                                " --input " + (fixtures / "display_name_manifest.json").string() + " --output " +
+                                generated.string() + " --schema " + LIBRESCRS_MANIFEST_SCHEMA_PATH + " >/dev/null 2>&1";
+    const int rc = std::system(command.c_str());
+    EXPECT_NE(rc, 0) << "a manifest must not carry a display name";
+}
+
 // Belt-and-braces: even if jsonschema is silently bypassed (stripped CI
 // image, future schema relaxation, etc.), the pluginId regex inside
 // manifest2header.py must reject identifiers that would corrupt the

@@ -44,9 +44,9 @@ constexpr std::uint8_t kMacByte = 0x22;
 SessionKeys makeAesKeys()
 {
     SessionKeys k;
-    k.encKey = LibreSCRS::Secure::Buffer{16, kEncByte};
-    k.macKey = LibreSCRS::Secure::Buffer{16, kMacByte};
-    k.ssc = LibreSCRS::Secure::Buffer{16, 0x00};
+    k.encKey = LibreSCRS::Secure::Buffer{std::vector<std::uint8_t>(16, kEncByte)};
+    k.macKey = LibreSCRS::Secure::Buffer{std::vector<std::uint8_t>(16, kMacByte)};
+    k.ssc = LibreSCRS::Secure::Buffer{std::vector<std::uint8_t>(16, 0x00)};
     k.cipher = SmCipher::Aes;
     return k;
 }

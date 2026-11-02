@@ -51,8 +51,8 @@ struct ParsedAsic
 /// the decoder behind it is the vendored ZIP implementation.
 ///
 /// Declared here rather than left in an anonymous namespace so a harness can
-/// call it. The demangled name carries no exported type, so the version
-/// script's `*LibreSCRS::*` glob does not pick it up.
+/// call it. It lives outside the LibreSCRS namespace, so the export version
+/// script does not pick it up.
 std::optional<ParsedAsic> tryParseAsic(const std::vector<uint8_t>& data);
 
 /// What a container that @ref tryParseAsic refused actually is.

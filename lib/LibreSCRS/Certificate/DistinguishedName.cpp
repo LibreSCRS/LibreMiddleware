@@ -34,17 +34,5 @@ std::string DistinguishedName::country() const
 {
     return findFirst(components, "2.5.4.6");
 }
-std::string DistinguishedName::stateOrProvince() const
-{
-    return findFirst(components, "2.5.4.8");
-}
-std::string DistinguishedName::locality() const
-{
-    return findFirst(components, "2.5.4.7");
-}
-std::string DistinguishedName::emailAddress() const
-{
-    return findFirst(components, "1.2.840.113549.1.9.1");
-}
 
 } // namespace LibreSCRS::Certificate

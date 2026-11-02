@@ -5,7 +5,8 @@ Minimal CLI demonstrating LibreSCRS consumption against the SHARED
 
 ## What it does
 
-- Enumerates PC/SC readers via `LibreSCRS::SmartCard::MonitorService::listReaders`.
+- Collects the attached PC/SC readers from the `ReaderAdded` events
+  `LibreSCRS::SmartCard::MonitorService` reports after the first subscribe.
 - Opens a `LibreSCRS::SmartCard::CardSession` against the first reader
   that has a card present.
 - Prints the reader name + ATR hex on success; prints a per-reader error
@@ -19,7 +20,6 @@ Configure LibreMiddleware with shared libraries and example targets:
 
 ```sh
 cmake -S . -B build-shared \
-    -DLIBREMIDDLEWARE_BUILD_SHARED=ON \
     -DLIBRESCRS_BUILD_EXAMPLES=ON
 cmake --build build-shared -j4 --target librescrs-example-shared-cli
 ```

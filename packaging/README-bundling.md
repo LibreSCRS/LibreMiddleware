@@ -22,10 +22,15 @@ The OpenSC and curl pins above are the ones the Arch recipe fetches by URL, so
 ## Why OpenSSL cannot come from the system
 
 The native signing engine registers its own OpenSSL provider in the default
-`OSSL_LIB_CTX`. A process that loaded two OpenSSL builds would have two
-default library contexts and the provider would be visible from only one of
-them, so there has to be exactly one OpenSSL per process, and the only way to
-guarantee that across every host layout is to carry it.
+`OSSL_LIB_CTX`, and its HTTP client (curl) must reach that provider's context,
+not another one. The invariant that guarantees this is: **one OpenSSL per
+shared object that uses it, and no OpenSSL object ever crosses a shared-object
+boundary.** Each library and plugin links the bundled OpenSSL statically with
+its symbols kept local, so a process holds several private copies (one per
+library or plugin that needs it, plus whatever the host itself links) and none
+of them can bind to another. What crosses a library boundary is DER bytes, never
+an `X509*` or an `EVP_PKEY*`. Carrying OpenSSL is what makes that hold on every
+host layout, whatever OpenSSL the system has or lacks.
 
 ## What that costs, stated rather than hidden
 

@@ -16,8 +16,6 @@
 
 #include <gtest/gtest.h>
 
-#ifdef LIBRESIGN_HAS_NATIVE
-
 #include <LibreSCRS/Signing/VisualSignatureLayout.h>
 
 #include "native/pades_module.h"
@@ -108,12 +106,3 @@ TEST(PAdESDssOracle, NativeEmitterMatchesLayoutAPI)
         EXPECT_NEAR(emitterFontSize, static_cast<double>(layout.fontSize), 0.01) << "case: " << c.name;
     }
 }
-
-#else // LIBRESIGN_HAS_NATIVE
-
-TEST(PAdESDssOracle, DISABLED_NativeNotCompiledIn)
-{
-    GTEST_SKIP() << "Native backend not compiled in (configure with -DSIGNING_BACKEND=native or both)";
-}
-
-#endif // LIBRESIGN_HAS_NATIVE

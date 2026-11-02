@@ -9,7 +9,7 @@
 Name:           librescrs-middleware
 Version:        5.0.0
 Release:        1%{?dist}
-Summary:        Smart-card libraries, card plugins and PKCS#11 provider for LibreSCRS
+Summary:        Smart-card runtime libraries for LibreSCRS
 
 License:        LGPL-2.1-or-later AND Apache-2.0 AND MIT AND OFL-1.1
 URL:            https://github.com/LibreSCRS/LibreMiddleware
@@ -45,9 +45,9 @@ LibreSCRS reads Serbian government smart cards (identity, vehicle and health)
 as well as ICAO 9303 travel documents, NIST PIV and PKCS#15 cards, talking to
 the reader over PC/SC directly.
 
-This package holds the shared libraries and the PKCS#11 provider module. The
-module is installed but not registered with p11-kit; registration is a separate
-decision and a separate package.
+This package holds the shared libraries. It installs no PKCS#11 module:
+applications reach a card through the card agent's provider, which the agent's
+own package registers.
 
 %package -n librescrs-card-plugins
 Summary:        Card plugins for the LibreSCRS smart-card libraries
@@ -61,11 +61,6 @@ and enumerate readers but recognize no card.
 %package        devel
 Summary:        Development files for the LibreSCRS smart-card libraries
 Requires:       %{name}%{?_isa} = %{version}-%{release}
-# The installed CMake config calls find_dependency for PCSC and for OpenSSL
-# before it defines a target, so a consumer without these headers fails at
-# configuration.
-Requires:       pcsc-lite-devel
-Requires:       openssl-devel
 
 %description    devel
 Headers, linker symbolic links and the CMake package configuration for building
@@ -76,8 +71,8 @@ against LibreSCRS.
 
 %build
 %cmake -GNinja \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     -DBUILD_TESTING=OFF \
-    -DINSTALL_GTEST=OFF \
     -DLIBRESCRS_BUILD_EXAMPLES=OFF
 %cmake_build
 
@@ -98,11 +93,6 @@ test -f %{_vpath_builddir}/thirdparty/curl-install/lib/libcurl.a
 %license LICENSE
 %doc README.md
 %{_libdir}/libLibreSCRS_*.so.*
-# All three paths -- .so.5.0.0, .so.5 and the bare .so -- belong to the runtime
-# package: the module is not registered with p11-kit (the agent's proxy is what
-# applications load), and a host that registers it by hand names the bare name,
-# which a machine with no -devel installed still has to resolve.
-%{_libdir}/pkcs11/librescrs-pkcs11.so*
 %dir %{_datadir}/librescrs
 %{_datadir}/librescrs/certificates/
 
@@ -113,6 +103,7 @@ test -f %{_vpath_builddir}/thirdparty/curl-install/lib/libcurl.a
 %files devel
 %{_includedir}/LibreSCRS/
 %{_libdir}/libLibreSCRS_*.so
+%{_libdir}/libLibreSCRSTesting_SmartCard.a
 %{_libdir}/cmake/LibreMiddleware/
 
 %changelog

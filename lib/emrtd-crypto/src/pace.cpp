@@ -4,6 +4,7 @@
 #include "pace.h"
 
 #include "tlv_bounds.h"
+#include <ber.h>
 #include "crypto_utils.h"
 
 #include <LibreSCRS_internal/Crypto/CleanseGuard.h>
@@ -18,9 +19,9 @@
 #include <openssl/obj_mac.h>
 #include <openssl/rand.h>
 
-#include <algorithm>
+#include <array>
 #include <cstring>
-#include <limits>
+#include <expected>
 #include <memory>
 #include <stdexcept>
 #include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
@@ -63,118 +64,15 @@ using ECGroupPtr = std::unique_ptr<EC_GROUP, ECGroupDeleter>;
 using ECPointPtr = std::unique_ptr<EC_POINT, ECPointDeleter>;
 
 // ---------------------------------------------------------------------------
-// BER-TLV helpers (minimal, for CardAccess parsing and APDU construction)
+// BER-TLV helpers: the middleware's one encoder and this library's bounds-checked
+// length reads, plus the OID codec PACE shares with Chip Authentication.
 // ---------------------------------------------------------------------------
 
-// Parse a BER-TLV length field starting at data[pos]. Returns (length, bytesConsumed).
-// Bounds-checked BER-TLV length read, shared by every parser in this library.
+using detail::oidBytesToString;
+using detail::oidStringToBytes;
 using detail::readLength;
 using detail::readLengthClamped;
-
-// Decode an ASN.1 OID from raw bytes to dotted notation string
-static std::string oidBytesToString(const uint8_t* data, size_t len)
-{
-    if (len == 0)
-        return {};
-
-    std::string result;
-    // First byte encodes two components: first*40 + second
-    result += std::to_string(data[0] / 40) + "." + std::to_string(data[0] % 40);
-
-    // Remaining bytes use variable-length encoding (base-128, high bit = continuation)
-    unsigned long value = 0;
-    for (size_t i = 1; i < len; ++i) {
-        if (value > (std::numeric_limits<unsigned long>::max() >> 7))
-            return {}; // overflow protection
-        value = (value << 7) | (data[i] & 0x7F);
-        if ((data[i] & 0x80) == 0) {
-            result += "." + std::to_string(value);
-            value = 0;
-        }
-    }
-    return result;
-}
-
-// Encode a dotted OID string to DER OID bytes (without tag/length)
-static std::vector<uint8_t> oidStringToBytes(const std::string& oid)
-{
-    std::vector<unsigned long> components;
-    size_t start = 0;
-    while (start < oid.size()) {
-        size_t dot = oid.find('.', start);
-        if (dot == std::string::npos)
-            dot = oid.size();
-        components.push_back(std::stoul(oid.substr(start, dot - start)));
-        start = dot + 1;
-    }
-
-    if (components.size() < 2)
-        return {};
-    if (components[0] > 2 || (components[0] < 2 && components[1] > 39))
-        return {};
-
-    std::vector<uint8_t> bytes;
-    unsigned long firstByte = components[0] * 40 + components[1];
-    if (firstByte > 255)
-        return {};
-    bytes.push_back(static_cast<uint8_t>(firstByte));
-
-    for (size_t i = 2; i < components.size(); ++i) {
-        unsigned long val = components[i];
-        // Base-128 encode with continuation bits
-        std::vector<uint8_t> encoded;
-        encoded.push_back(static_cast<uint8_t>(val & 0x7F));
-        val >>= 7;
-        while (val > 0) {
-            encoded.push_back(static_cast<uint8_t>((val & 0x7F) | 0x80));
-            val >>= 7;
-        }
-        std::reverse(encoded.begin(), encoded.end());
-        bytes.insert(bytes.end(), encoded.begin(), encoded.end());
-    }
-    return bytes;
-}
-
-// Build a TLV (tag || length || value) — simple tags only
-static std::vector<uint8_t> buildTLV(uint8_t tag, const std::vector<uint8_t>& value)
-{
-    std::vector<uint8_t> result;
-    result.push_back(tag);
-    size_t len = value.size();
-    if (len < 0x80) {
-        result.push_back(static_cast<uint8_t>(len));
-    } else if (len <= 0xFF) {
-        result.push_back(0x81);
-        result.push_back(static_cast<uint8_t>(len));
-    } else {
-        result.push_back(0x82);
-        result.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
-        result.push_back(static_cast<uint8_t>(len & 0xFF));
-    }
-    result.insert(result.end(), value.begin(), value.end());
-    return result;
-}
-
-// Build a TLV with a two-byte tag (e.g., 0x7F49)
-static std::vector<uint8_t> buildTLV2(uint8_t tagHi, uint8_t tagLo, const std::vector<uint8_t>& value)
-{
-    std::vector<uint8_t> result;
-    result.push_back(tagHi);
-    result.push_back(tagLo);
-    size_t len = value.size();
-    if (len < 0x80) {
-        result.push_back(static_cast<uint8_t>(len));
-    } else if (len <= 0xFF) {
-        result.push_back(0x81);
-        result.push_back(static_cast<uint8_t>(len));
-    } else {
-        result.push_back(0x82);
-        result.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
-        result.push_back(static_cast<uint8_t>(len & 0xFF));
-    }
-    result.insert(result.end(), value.begin(), value.end());
-    return result;
-}
+using LibreSCRS::SmartCard::Internal::buildTlv;
 
 // Build a BSI TR-03110 Public Key Data Object (tag 0x7F49) for authentication token.
 // When context is known (PACE mutual auth), contains only OID (tag 0x06) + EC point (tag 0x86).
@@ -183,17 +81,17 @@ static std::vector<uint8_t> buildPublicKeyDataObject(const std::string& paceOID,
 {
     // OID tag 0x06 with DER-encoded OID bytes
     auto oidBytes = oidStringToBytes(paceOID);
-    auto oidTLV = buildTLV(0x06, oidBytes);
+    auto oidTLV = buildTlv(0x06, oidBytes);
 
     // EC public point tag 0x86
-    auto pointTLV = buildTLV(0x86, ecPointBytes);
+    auto pointTLV = buildTlv(0x86, ecPointBytes);
 
     // Concatenate OID + point as the 0x7F49 value
     std::vector<uint8_t> inner;
     inner.insert(inner.end(), oidTLV.begin(), oidTLV.end());
     inner.insert(inner.end(), pointTLV.begin(), pointTLV.end());
 
-    return buildTLV2(0x7F, 0x49, inner);
+    return buildTlv(0x7F49, inner);
 }
 
 // Extract the value of a specific data object tag from a TLV(0x7C, ...) response
@@ -647,7 +545,7 @@ std::optional<std::vector<uint8_t>> derivePaceKpiSeed(PACEPasswordType passwordT
 // performPACE
 // ---------------------------------------------------------------------------
 
-std::optional<SessionKeys> performPACE(LibreSCRS::SmartCard::IConnection& conn, const PACEParams& params)
+std::expected<SessionKeys, PaceFailure> performPACE(LibreSCRS::SmartCard::IConnection& conn, const PACEParams& params)
 {
     bool isDES3 = (paceOIDToSMAlgorithm(params.oid) == SMAlgorithm::DES3);
     size_t keyLen = keyLengthFromOID(params.oid);
@@ -655,8 +553,8 @@ std::optional<SessionKeys> performPACE(LibreSCRS::SmartCard::IConnection& conn, 
 
     // --- Step 1: MSE:Set AT ---
     std::vector<uint8_t> oidBytes = oidStringToBytes(params.oid);
-    auto oidTLV = buildTLV(0x80, oidBytes);
-    auto pwdTypeTLV = buildTLV(0x83, {static_cast<uint8_t>(params.passwordType)});
+    auto oidTLV = buildTlv(0x80, oidBytes);
+    auto pwdTypeTLV = buildTlv(0x83, std::array{static_cast<uint8_t>(params.passwordType)});
 
     std::vector<uint8_t> mseData;
     mseData.insert(mseData.end(), oidTLV.begin(), oidTLV.end());
@@ -664,24 +562,31 @@ std::optional<SessionKeys> performPACE(LibreSCRS::SmartCard::IConnection& conn, 
 
     // Add standardized domain parameter ID (tag 0x84) if specified
     if (params.paramId >= 0) {
-        auto paramIdTLV = buildTLV(0x84, {static_cast<uint8_t>(params.paramId)});
+        auto paramIdTLV = buildTlv(0x84, std::array{static_cast<uint8_t>(params.paramId)});
         mseData.insert(mseData.end(), paramIdTLV.begin(), paramIdTLV.end());
     }
 
     LibreSCRS::SmartCard::Internal::APDUCommand mseCmd{0x00, 0x22, 0xC1, 0xA4, mseData, 0, false};
     auto resp = conn.transmit(mseCmd);
-    if (!resp.isSuccess())
-        return std::nullopt;
+    if (!resp.isSuccess()) {
+        // No secret has reached the card yet, so a refusal here is about the
+        // mechanism -- unless the card is reporting on the password itself
+        // (63Cx tries left, 6983 blocked, 6984 deactivated), which it may do
+        // for a PIN before any General Authenticate.
+        const auto sw = resp.statusWord();
+        const bool aboutThePassword = (sw & 0xFFF0) == 0x63C0 || sw == 0x6983 || sw == 0x6984;
+        return std::unexpected{aboutThePassword ? PaceFailure::Failed : PaceFailure::MechanismRefused};
+    }
 
     // --- Step 2: General Authenticate Step 1 — get encrypted nonce ---
     LibreSCRS::SmartCard::Internal::APDUCommand ga1Cmd{0x10, 0x86, 0x00, 0x00, {0x7C, 0x00}, 0x00, true};
     resp = conn.transmit(ga1Cmd);
     if (!resp.isSuccess())
-        return std::nullopt;
+        return std::unexpected{PaceFailure::Failed};
 
     auto encryptedNonce = extractDO(resp.data, 0x80);
     if (encryptedNonce.empty())
-        return std::nullopt;
+        return std::unexpected{PaceFailure::Failed};
 
     // --- Step 3: Decrypt nonce ---
     // BSI TR-03110 Part 3, Table A.2:
@@ -703,7 +608,7 @@ std::optional<SessionKeys> performPACE(LibreSCRS::SmartCard::IConnection& conn, 
     if (auto seed = derivePaceKpiSeed(params.passwordType, params.password)) {
         kpiSeed = std::move(*seed);
     } else {
-        return std::nullopt;
+        return std::unexpected{PaceFailure::Failed};
     }
     kPi = detail::kdf(kpiSeed, 3, isDES3, keyLen);
 
@@ -717,20 +622,20 @@ std::optional<SessionKeys> performPACE(LibreSCRS::SmartCard::IConnection& conn, 
     // --- Step 4: Determine EC parameters ---
     int nid = paramIdToNID(params.paramId);
     if (nid == 0)
-        return std::nullopt;
+        return std::unexpected{PaceFailure::Failed};
 
     ECGroupPtr baseGroup(EC_GROUP_new_by_curve_name(nid));
     if (!baseGroup)
-        return std::nullopt;
+        return std::unexpected{PaceFailure::Failed};
 
     BNCtxPtr bnCtx(BN_CTX_new());
     if (!bnCtx)
-        return std::nullopt;
+        return std::unexpected{PaceFailure::Failed};
 
     // Convert nonce to BIGNUM
     BnPtr sNonce(BN_bin2bn(nonce.data(), static_cast<int>(nonce.size()), nullptr));
     if (!sNonce)
-        return std::nullopt;
+        return std::unexpected{PaceFailure::Failed};
 
     // --- Step 5: Generic Mapping ---
     // Generate ephemeral mapping key pair
@@ -739,15 +644,15 @@ std::optional<SessionKeys> performPACE(LibreSCRS::SmartCard::IConnection& conn, 
     auto pkMapBytes = pointToBytes(baseGroup.get(), pkMap.get(), bnCtx.get());
 
     // Send PK_map to card, receive PK_map_ICC
-    auto ga2Data = buildTLV(0x7C, buildTLV(0x81, pkMapBytes));
+    auto ga2Data = buildTlv(0x7C, buildTlv(0x81, pkMapBytes));
     LibreSCRS::SmartCard::Internal::APDUCommand ga2Cmd{0x10, 0x86, 0x00, 0x00, ga2Data, 0x00, true};
     resp = conn.transmit(ga2Cmd);
     if (!resp.isSuccess())
-        return std::nullopt;
+        return std::unexpected{PaceFailure::Failed};
 
     auto pkMapICCBytes = extractDO(resp.data, 0x82);
     if (pkMapICCBytes.empty())
-        return std::nullopt;
+        return std::unexpected{PaceFailure::Failed};
 
     auto pkMapICC = bytesToPoint(baseGroup.get(), pkMapICCBytes, bnCtx.get());
 
@@ -757,7 +662,7 @@ std::optional<SessionKeys> performPACE(LibreSCRS::SmartCard::IConnection& conn, 
     // Compute mapped generator: G' = s * G + H
     ECPointPtr mappedG(EC_POINT_new(baseGroup.get()));
     if (!mappedG)
-        return std::nullopt;
+        return std::unexpected{PaceFailure::Failed};
 
     // EC_POINT_mul(group, r, n, q, m, ctx) computes r = n*G + m*q
     // We want s*G + 1*H, but EC_POINT_mul requires: r = sNonce*G + 1*hPoint
@@ -767,7 +672,7 @@ std::optional<SessionKeys> performPACE(LibreSCRS::SmartCard::IConnection& conn, 
     BnPtr one(BN_new());
     BN_one(one.get());
     if (!EC_POINT_mul(baseGroup.get(), mappedG.get(), sNonce.get(), hPoint.get(), one.get(), bnCtx.get()))
-        return std::nullopt;
+        return std::unexpected{PaceFailure::Failed};
 
     // --- Step 6: Key agreement on mapped generator ---
     // Use explicit multiplication with G' (mappedG) instead of EC_GROUP_set_generator,
@@ -780,21 +685,21 @@ std::optional<SessionKeys> performPACE(LibreSCRS::SmartCard::IConnection& conn, 
     // pkAgree = skAgree * G' (explicit multiplication with mapped generator)
     ECPointPtr pkAgree(EC_POINT_new(baseGroup.get()));
     if (!pkAgree)
-        return std::nullopt;
+        return std::unexpected{PaceFailure::Failed};
     if (!EC_POINT_mul(baseGroup.get(), pkAgree.get(), nullptr, mappedG.get(), skAgree.get(), bnCtx.get()))
-        return std::nullopt;
+        return std::unexpected{PaceFailure::Failed};
     auto pkAgreeBytes = pointToBytes(baseGroup.get(), pkAgree.get(), bnCtx.get());
 
     // Send PK_agree, receive PK_agree_ICC
-    auto ga3Data = buildTLV(0x7C, buildTLV(0x83, pkAgreeBytes));
+    auto ga3Data = buildTlv(0x7C, buildTlv(0x83, pkAgreeBytes));
     LibreSCRS::SmartCard::Internal::APDUCommand ga3Cmd{0x10, 0x86, 0x00, 0x00, ga3Data, 0x00, true};
     resp = conn.transmit(ga3Cmd);
     if (!resp.isSuccess())
-        return std::nullopt;
+        return std::unexpected{PaceFailure::Failed};
 
     auto pkAgreeICCBytes = extractDO(resp.data, 0x84);
     if (pkAgreeICCBytes.empty())
-        return std::nullopt;
+        return std::unexpected{PaceFailure::Failed};
 
     auto pkAgreeICC = bytesToPoint(baseGroup.get(), pkAgreeICCBytes, bnCtx.get());
 
@@ -822,15 +727,15 @@ std::optional<SessionKeys> performPACE(LibreSCRS::SmartCard::IConnection& conn, 
     }
 
     // Send T_IFD, receive T_ICC
-    auto ga4Data = buildTLV(0x7C, buildTLV(0x85, tIFD));
+    auto ga4Data = buildTlv(0x7C, buildTlv(0x85, tIFD));
     LibreSCRS::SmartCard::Internal::APDUCommand ga4Cmd{0x00, 0x86, 0x00, 0x00, ga4Data, 0x00, true};
     resp = conn.transmit(ga4Cmd);
     if (!resp.isSuccess())
-        return std::nullopt;
+        return std::unexpected{PaceFailure::Failed};
 
     auto tICC = extractDO(resp.data, 0x86);
     if (tICC.empty())
-        return std::nullopt;
+        return std::unexpected{PaceFailure::Failed};
 
     // T_ICC should equal MAC(K_MAC, PKDO(our ephemeral public key))
     auto pkdoIFD = buildPublicKeyDataObject(params.oid, pkAgreeBytes);
@@ -843,7 +748,7 @@ std::optional<SessionKeys> performPACE(LibreSCRS::SmartCard::IConnection& conn, 
     }
 
     if (tICC.size() != expectedTICC.size() || CRYPTO_memcmp(tICC.data(), expectedTICC.data(), tICC.size()) != 0)
-        return std::nullopt;
+        return std::unexpected{PaceFailure::Failed};
 
     // --- Step 8: Build SessionKeys ---
     SessionKeys session;

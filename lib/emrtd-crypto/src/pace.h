@@ -9,6 +9,7 @@
 
 #include "types.h"
 
+#include <expected>
 #include <optional>
 #include <string>
 #include <vector>
@@ -38,8 +39,20 @@ std::vector<std::pair<std::string, int>> parseCardAccessWithParams(const std::ve
 [[nodiscard]] std::optional<std::vector<uint8_t>> derivePaceKpiSeed(PACEPasswordType passwordType,
                                                                     const std::vector<uint8_t>& password);
 
+// Why a PACE attempt failed.
+enum class PaceFailure {
+    // The card refused MSE:Set AT for this OID and password type. Nothing
+    // derived from the password has reached the card, so no try was spent and
+    // another OID the card lists may still work.
+    MechanismRefused,
+    // Anything later -- a General Authenticate the card refused, a token that
+    // did not verify, a malformed answer -- or the card reporting on the
+    // password's state at MSE:Set AT. Another OID would only repeat it.
+    Failed,
+};
+
 // Perform PACE authentication.
-std::optional<SessionKeys> performPACE(LibreSCRS::SmartCard::IConnection& conn, const PACEParams& params);
+std::expected<SessionKeys, PaceFailure> performPACE(LibreSCRS::SmartCard::IConnection& conn, const PACEParams& params);
 
 // Map a PACE OID to the SM algorithm it produces
 SMAlgorithm paceOIDToSMAlgorithm(const std::string& oid);

@@ -2,30 +2,19 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 /// @file
-/// @brief Regression-test anchor for the cross-provider session-coordination
-///        contract that prevents a parallel PC/SC handle from invalidating
-///        a live PACE/BAC SM tunnel.
+/// @brief Regression-test anchor for the session-coordination contract that
+///        keeps a live PACE/BAC SM tunnel from being invalidated.
 ///
 /// The contract spans:
 ///
-///   - @ref LibreSCRS::SmartCard::Internal::SessionPresence — process-local
-///     registry of CardSessions with live secure-messaging channels;
-///     populated automatically when @c CardSession::activateChannelWithSm
-///     commits a channel and consulted by every in-process PKCS#11 probe.
-///   - @ref LibreSCRS::OpenSc::Pkcs11::OpenScPKCS11Provider::probe — defers
-///     when @c SessionPresence reports a live SM channel; PIV / generic ICC /
-///     contact PKCS#15 with no live SM proceed normally.
 ///   - @ref LibreSCRS::SmartCard::CardSession — refuses to corrupt a live
 ///     SM tunnel from @c activateChannelWithSm (protocol mismatch) or
 ///     @c activateChannelFor (plain activation requested while an Open SM
 ///     channel is installed). Both surface
 ///     @ref LibreSCRS::SecureChannel::ChannelActivationError::Internal
 ///     rather than tearing the tunnel down.
-///
-/// If any one layer ships ahead of the others, signing on SM-protected
-/// contactless cards — which depends on all three holding simultaneously —
-/// silently regresses. These tests pin the joint invariant down without
-/// any hardware dependency.
+///   - the OpenSC card plugin — reaches the card only through the session it
+///     is handed, never through a PC/SC connection of its own.
 ///
 /// @par Why a counting PC/SC provider, and not a null card
 /// The deferral assertions used to read "probe returned nullptr", which is
@@ -34,8 +23,6 @@
 /// reaches PC/SC through a library it dlopens by name, so pointing
 /// OPENSC_CONF at a counting provider makes the question answerable directly:
 /// did OpenSC establish a context and open a handle, or not.
-
-#include "pkcs15_pkcs11_card.h"
 
 #include "apdu.h"
 #include "chip_auth_card_oracle.h"
@@ -50,20 +37,15 @@
 #include <LibreSCRS_internal/SecureChannel/ChipAuthChannel.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
-#include <LibreSCRS_internal/SmartCard/SessionPresence.h>
-#include <LibreSCRS_internal/SmartCard/SmartCardServices.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
-#include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
+#include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 #include <LibreSCRS/SmartCard/detail/ChannelInjection.h>
 
 #include "fake_channel.h"
 
 #include "counting_pcsc_shim.h"
-
-#include <internal/OpenScPKCS11Provider.h>
-#include <internal/PinClassification.h>
 
 #include "pkcs15_types.h"
 
@@ -81,14 +63,6 @@
 #include <utility>
 #include <vector>
 
-// Lock the noexcept contract of LibreSCRS::Pkcs15::Internal::isUserPin at
-// compile time. The body allocates (label copy + std::transform); the
-// implementation must keep the body in a top-level try/catch so allocator
-// pressure degrades to a conservative @c false instead of @c std::terminate
-// (API-POLICY §5.1 noexcept-alloc contract).
-static_assert(noexcept(LibreSCRS::Pkcs15::Internal::isUserPin(std::declval<const ::pkcs15::PinInfo&>())),
-              "isUserPin must remain noexcept per API-POLICY §5.1");
-
 namespace {
 
 using LibreSCRS::SecureChannel::ChannelActivationError;
@@ -99,10 +73,7 @@ using LibreSCRS::SmartCard::CardSession;
 using LibreSCRS::SmartCard::PaceRequest;
 using LibreSCRS::SmartCard::SmProtocolRequest;
 using LibreSCRS::SmartCard::detail::ChannelInjector;
-using LibreSCRS::SmartCard::detail::makeDetachedCardSession;
-using LibreSCRS::SmartCard::Internal::ensureSessionPresenceInitialised;
-using LibreSCRS::SmartCard::Internal::sessionPresence;
-using LibreSCRS::SmartCard::Internal::shutdownSessionPresenceForTest;
+using LibreSCRS::SmartCard::Testing::makeDetachedCardSession;
 
 constexpr const char* kReader = "Phantom Reader 0";
 
@@ -273,8 +244,6 @@ class CrossProviderCoordination : public ::testing::Test
 protected:
     void SetUp() override
     {
-        ensureSessionPresenceInitialised();
-        shutdownSessionPresenceForTest();
         ASSERT_TRUE(shim().loaded()) << shim().why();
         installCountingPcscProvider();
         shim().reset();
@@ -289,88 +258,12 @@ protected:
 } // namespace
 
 // ---------------------------------------------------------------------------
-// Invariant #1 — SessionPresence::hasLiveSm reflects an injected session's
-// hasLiveSecureChannel state. The OpenScPKCS11Provider::probe consults
-// hasLiveSm and short-circuits accordingly; this anchor pins the predicate
-// down without invoking the provider directly.
-// ---------------------------------------------------------------------------
-
-TEST_F(CrossProviderCoordination, SessionPresenceReflectsLiveSm)
-{
-    auto session = makeDetachedCardSession(kReader);
-    installPaceFake(*session, ChannelState::Open);
-    auto reg = sessionPresence().insert(kReader, session);
-
-    EXPECT_TRUE(sessionPresence().hasLiveSm(kReader));
-    EXPECT_FALSE(sessionPresence().hasLiveSm("unrelated-reader"));
-}
-
-// ---------------------------------------------------------------------------
-// Invariant #2 — OpenScPKCS11Provider::probe defers ONLY when the parked
-// session reports a live SM channel. This is the PIV regression guard:
-// the earlier "skip on any registry hit" logic prevented OpenSC from
-// binding PIV cards because LC parks a CardSession even when no SM is
-// live. The fix tightens the predicate to a live-SM check via
-// SessionPresence::hasLiveSm.
-// ---------------------------------------------------------------------------
-
-TEST_F(CrossProviderCoordination, OpenScProbeShortCircuitsWhenSessionHasLiveSm)
-{
-    auto session = makeDetachedCardSession(kReader);
-    installPaceFake(*session, ChannelState::Open);
-    auto reg = sessionPresence().insert(kReader, session);
-
-    LibreSCRS::OpenSc::Pkcs11::OpenScPKCS11Provider provider;
-    auto card = provider.probe(kReader);
-    EXPECT_EQ(card, nullptr);
-
-    // The load-bearing assertion, and the reason this suite loads a counting
-    // PC/SC provider: a null return is what binding without a card returns too,
-    // so it says nothing about whether the provider deferred. Establishing a
-    // PC/SC context is the first thing OpenSC does and the first thing that
-    // would disturb a live secure channel; zero of them is the invariant.
-    EXPECT_EQ(shim().counts(nullptr).establishContext, 0u);
-
-    // SessionPresence entry survives the short-circuit so subsequent
-    // probes on the same reader continue to defer.
-    EXPECT_TRUE(sessionPresence().hasLiveSm(kReader));
-}
-
-TEST_F(CrossProviderCoordination, OpenScProbeProceedsWhenSessionHasNoLiveSm)
-{
-    auto session = makeDetachedCardSession(kReader);
-    // No channel installed at all — hasLiveSecureChannel() == false.
-    auto reg = sessionPresence().insert(kReader, session);
-
-    LibreSCRS::OpenSc::Pkcs11::OpenScPKCS11Provider provider;
-    // probe is permitted to fail at the OpenSc::bind step in this test
-    // environment (no real PC/SC handle). The contract under test is
-    // that it did NOT short-circuit early; the presence entry stays in
-    // place regardless of bind outcome.
-    (void)provider.probe(kReader);
-
-    // The positive control for the assertion above: with no live secure channel
-    // the provider goes all the way to the PC/SC layer. Without this half, a
-    // provider that short-circuited unconditionally would pass the case above.
-    //
-    // Two handles, pinned as measured rather than assumed: OpenSC opens one
-    // while enumerating readers, to probe the reader's features, and one to
-    // connect to the card. Both are closed before probe returns, which is the
-    // half of the contract the deferral cases cannot show.
-    const auto seen = shim().counts(kReader);
-    EXPECT_EQ(seen.establishContext, 1u);
-    EXPECT_EQ(seen.connect, 2u);
-    EXPECT_EQ(shim().openHandles(), 0u) << "every handle this probe opened must be closed on return";
-    EXPECT_FALSE(sessionPresence().hasLiveSm(kReader));
-}
-
-// ---------------------------------------------------------------------------
 // The OpenSC card plugin carries its own copy of OpenSC, and that copy has no
 // PC/SC reader driver: the plugin talks to the card only through the session it
-// is handed. The same counting provider the module case above reaches is
+// is handed. The counting provider is
 // configured here, and a probe through the plugin must not reach it at all --
 // not to enumerate readers, and not to connect to the one being probed. A
-// plugin linked against the PC/SC copy again loads the provider while creating
+// plugin linked against the PC/SC-enabled OpenSC build loads the provider while creating
 // its context and turns this red.
 // ---------------------------------------------------------------------------
 
@@ -593,134 +486,4 @@ TEST_F(CrossProviderCoordination, ActivateChannelForRefusesOnLiveSmChannel)
     // Live SM channel remains intact post-refusal.
     EXPECT_TRUE(session->hasLiveSecureChannel());
     EXPECT_EQ(fake->state(), ChannelState::Open);
-}
-
-// ---------------------------------------------------------------------------
-// Invariant #6 — Pkcs15PKCS11Provider consults the SessionPresence it was
-// constructed with (ctor DI), peeking BEFORE bind. The registry is injected
-// by reference rather than reached through the process-global accessor, so
-// the adopt-or-bind decision is unit-testable here without a PC/SC reader.
-//
-// Sibling of OpenScProbeShortCircuitsWhenSessionHasLiveSm, but for the
-// adopt-not-defer contract: where the OpenSc provider returns nullptr
-// (defers to the PKCS#15 provider) on a live SM channel, the PKCS#15
-// provider ADOPTS the injected session and reuses its SM tunnel instead of
-// opening a parallel PC/SC handle.
-// ---------------------------------------------------------------------------
-
-TEST_F(CrossProviderCoordination, Pkcs15ProbeFreshBindsWhenInjectedPresenceEmpty)
-{
-    // Empty injected registry -> peek misses -> fresh bind. The phantom
-    // reader has no PC/SC handle, so the fresh bind fails deterministically
-    // and probe returns nullptr. Proves the provider uses the ctor-injected
-    // reference and falls through to bind when it has no entry.
-    LibreSCRS::SmartCard::Internal::SessionPresence injectedSp;
-    LibreSCRS::Pkcs15::Pkcs11::Pkcs15PKCS11Provider provider(/*cardMap=*/nullptr, injectedSp);
-
-    auto card = provider.probe(kReader);
-    EXPECT_EQ(card, nullptr);
-}
-
-TEST_F(CrossProviderCoordination, Pkcs15ProbePreservesInjectedSessionLiveSm)
-{
-    // A live-SM session registered in the *injected* registry drives the
-    // adopt branch (peek hits -> bindFromInjectedSession), which reuses the
-    // adopted session's SM channel rather than opening a parallel PC/SC
-    // handle. The load-bearing security property: probe must NOT tear that
-    // live SM tunnel down (BSI TR-03110 §3 — a parallel handle would). Here
-    // the channel survives the probe and the injected registry still reports
-    // it live. (The detached fake's bind ultimately fails without a real
-    // card, so the returned card is not asserted; full adopt success is
-    // validated against real hardware.)
-    LibreSCRS::SmartCard::Internal::SessionPresence injectedSp;
-    auto session = makeDetachedCardSession(kReader);
-    auto* fake = installPaceFake(*session, ChannelState::Open);
-    auto reg = injectedSp.insert(kReader, session);
-    ASSERT_TRUE(injectedSp.hasLiveSm(kReader));
-
-    LibreSCRS::Pkcs15::Pkcs11::Pkcs15PKCS11Provider provider(/*cardMap=*/nullptr, injectedSp);
-    (void)provider.probe(kReader);
-
-    // Live SM channel is sacred: the adopt path never closes it.
-    EXPECT_EQ(fake->state(), ChannelState::Open);
-    EXPECT_TRUE(session->hasLiveSecureChannel());
-    EXPECT_TRUE(injectedSp.hasLiveSm(kReader));
-}
-
-// A live Chip Authentication tunnel (from a prior eMRTD contact read) must be
-// RIDDEN by the PKCS#15 adopt path, not refused: the acquire now derives its
-// SM request from the session's recorded protocol, so activateChannelWithSm
-// takes the wrapped-SELECT reuse path instead of refusing a hardcoded
-// PaceRequest against a ChipAuthChannel. Proven by the card seeing the wrapped
-// SELECT (the oracle verifies its MAC) and the tunnel surviving.
-TEST_F(CrossProviderCoordination, Pkcs15AdoptRidesLiveChipAuthTunnel)
-{
-    LibreSCRS::SmartCard::Internal::SessionPresence injectedSp;
-    auto session = makeDetachedCardSession(kReader);
-
-    // Wire an AES SM oracle behind the detached connection so the wrapped
-    // SELECT the reuse path issues round-trips.
-    auto oracle = std::make_shared<LibreSCRS::Test::AesSmCardOracle>(
-        std::vector<std::uint8_t>(16, 0x11), std::vector<std::uint8_t>(16, 0x22), std::vector<std::uint8_t>(16, 0x00));
-    LibreSCRS::SmartCard::detail::unwrap(*session).setDetachedRawResponder(
-        [oracle](std::span<const std::uint8_t> w) { return oracle->respond(w); });
-
-    // Install a real ChipAuthChannel (dynamic_cast in channelMatchesProtocol
-    // requires the concrete type) bound to the eMRTD applet, recorded as a
-    // ChipAuthRequest — the state a plain→CA upgrade leaves.
-    LibreSCRS::SecureChannel::SessionKeys keys;
-    keys.encKey = LibreSCRS::Secure::Buffer{16, 0x11};
-    keys.macKey = LibreSCRS::Secure::Buffer{16, 0x22};
-    keys.ssc = LibreSCRS::Secure::Buffer{16, 0x00};
-    keys.cipher = LibreSCRS::SecureChannel::SmCipher::Aes;
-    auto ca = std::make_unique<LibreSCRS::SecureChannel::ChipAuthChannel>(
-        LibreSCRS::SmartCard::detail::unwrap(*session), makeAid(), std::move(keys));
-    ChannelInjector::installForTesting(*session, std::move(ca),
-                                       SmProtocolRequest{LibreSCRS::SmartCard::ChipAuthRequest{}});
-
-    auto reg = injectedSp.insert(kReader, session);
-    ASSERT_TRUE(injectedSp.hasLiveSm(kReader));
-
-    LibreSCRS::Pkcs15::Pkcs11::Pkcs15PKCS11Provider provider(/*cardMap=*/nullptr, injectedSp);
-    (void)provider.probe(kReader);
-
-    // The wrapped SELECT to the PKCS#15 applet reached the card over the CA
-    // tunnel (had the request been refused Internal, no APDU would have gone
-    // out), and the tunnel is untouched.
-    EXPECT_GT(oracle->verifiedCommands(), 0)
-        << "the PKCS#15 acquire must ride the CA tunnel with a wrapped SELECT, not refuse it";
-    EXPECT_TRUE(session->hasLiveSecureChannel());
-}
-
-// Riding a live Chip Authentication tunnel proves plain readability, not PACE:
-// a ChipAuthRequest is only ever recorded by a plain→CA upgrade, so the adopt
-// must NOT latch the PACE requirement off that success. Latched, every later
-// per-op acquire would fall back to PACE-CAN once the tunnel dies — on a
-// contact interface that cannot satisfy it — instead of the plain activation
-// that provably works; while the tunnel lives, the plain path's cross-applet
-// reuse rides it anyway.
-TEST_F(CrossProviderCoordination, AdoptOverChipAuthTunnelDoesNotLatchPaceRequirement)
-{
-    auto session = makeDetachedCardSession(kReader);
-
-    auto oracle = std::make_shared<LibreSCRS::Test::AesSmCardOracle>(
-        std::vector<std::uint8_t>(16, 0x11), std::vector<std::uint8_t>(16, 0x22), std::vector<std::uint8_t>(16, 0x00));
-    LibreSCRS::SmartCard::detail::unwrap(*session).setDetachedRawResponder(
-        [oracle](std::span<const std::uint8_t> w) { return oracle->respond(w); });
-
-    LibreSCRS::SecureChannel::SessionKeys keys;
-    keys.encKey = LibreSCRS::Secure::Buffer{16, 0x11};
-    keys.macKey = LibreSCRS::Secure::Buffer{16, 0x22};
-    keys.ssc = LibreSCRS::Secure::Buffer{16, 0x00};
-    keys.cipher = LibreSCRS::SecureChannel::SmCipher::Aes;
-    auto ca = std::make_unique<LibreSCRS::SecureChannel::ChipAuthChannel>(
-        LibreSCRS::SmartCard::detail::unwrap(*session), makeAid(), std::move(keys));
-    ChannelInjector::installForTesting(*session, std::move(ca),
-                                       SmProtocolRequest{LibreSCRS::SmartCard::ChipAuthRequest{}});
-
-    auto card = std::make_shared<LibreSCRS::Pkcs15::Pkcs11::Pkcs15Card>();
-    (void)card->bindFromInjectedSession(kReader, session);
-
-    EXPECT_GT(oracle->verifiedCommands(), 0) << "the bind must still ride the tunnel with a wrapped SELECT";
-    EXPECT_FALSE(card->needsPaceFlag()) << "a CA tunnel is evidence of plain readability, not of PACE";
 }

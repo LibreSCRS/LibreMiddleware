@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace libresign::test {
 
@@ -14,27 +15,33 @@ namespace libresign::test {
 /// Binds a loopback listener on an ephemeral port and answers every
 /// `application/timestamp-query` POST with a granted, DER-encoded
 /// `TimeStampResp` built through OpenSSL's responder API
-/// (`TS_RESP_CTX` / `TS_RESP_create_response`). The signing identity is an
-/// RSA-2048 self-signed certificate generated in the constructor carrying a
-/// critical `id-kp-timeStamping` extended key usage — OpenSSL refuses to
-/// install a signer certificate without it — so the harness needs no fixture
-/// files and no key material in the tree.
+/// (`TS_RESP_CTX` / `TS_RESP_create_response`). The responder echoes the
+/// request's nonce and message imprint and stamps a serial and genTime.
 ///
-/// The responder echoes the request's nonce and message imprint and stamps a
-/// serial and genTime, which is what @ref libresign::TSAClient checks before
-/// accepting a token (RFC 3161 §2.4.2). The signature is NOT anchored in any
-/// trust store: the format modules embed the returned token verbatim, so a
-/// self-signed authority is enough to exercise every code path that runs
-/// AFTER the timestamp step — which is the point of the class. It is a
-/// stand-in for a timestamp service, not for a trusted one.
+/// Which key signs the token is the constructor's choice:
+///
+/// - @ref Authority::Anchored (the default): an RSA-2048 certificate issued
+///   once per process by the test Trusted-List key
+///   (`test/fixtures/trust/test-tl-signing-key.pem`) and shared by every
+///   instance. Its tokens verify against @ref trustAnchor, which a test hands
+///   to the client directly, and against `test/fixtures/trust/tsa-tl.xml`,
+///   which lists that certificate as a qualified time-stamping service.
+/// - @ref Authority::Unanchored: a self-signed certificate generated for this
+///   instance alone, which no anchor vouches for — an authority the client
+///   must refuse even though the nonce and imprint it echoes are right.
+///
+/// Either certificate carries a critical `id-kp-timeStamping` extended key
+/// usage; OpenSSL refuses to install a signer certificate without it.
 ///
 /// Nothing leaves the loopback interface. One request is served at a time.
 class MockTsaServer
 {
 public:
+    enum class Authority { Anchored, Unanchored };
+
     /// @throws std::runtime_error when the listener or the signing identity
     ///         cannot be created.
-    MockTsaServer();
+    explicit MockTsaServer(Authority authority = Authority::Anchored);
     ~MockTsaServer();
 
     MockTsaServer(const MockTsaServer&) = delete;
@@ -50,6 +57,14 @@ public:
     /// responder was actually reached rather than inferring it from a
     /// downstream success.
     [[nodiscard]] int servedCount() const;
+
+    /// DER of the certificate that issued the anchored authority's: the
+    /// anchor its tokens chain to.
+    [[nodiscard]] static std::vector<std::uint8_t> trustAnchor();
+
+    /// DER of the anchored authority's own certificate, for a test that
+    /// trusts it as it is, the way a Trusted List can name the unit itself.
+    [[nodiscard]] static std::vector<std::uint8_t> anchoredCertificate();
 
 private:
     struct Impl;

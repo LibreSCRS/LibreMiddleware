@@ -16,11 +16,11 @@ Exercises one call per public target:
 | # | Target              | Call                                             |
 |---|---------------------|--------------------------------------------------|
 | 0 | `LibreSCRS::Auth`   | `log::init(sink, "example.sdk-consumer")` (co-hosted in Auth lib) — first, so nothing emits to stderr before the sink exists |
-| 1 | `LibreSCRS::Auth`   | `AuthRequirement::forSigning(LocalizedText{"", "PIN", {}}, 3)` |
-| 2 | `LibreSCRS::Auth`   | `Secure::Buffer(8, 0x42)` (co-hosted in Auth lib)|
-| 3 | `LibreSCRS::SmartCard` | `Monitor::listReaders()`                       |
+| 1 | `LibreSCRS::Auth`   | `AuthRequirement::forSigning()` |
+| 2 | `LibreSCRS::Auth`   | `Secure::Buffer(span)` (co-hosted in Auth lib)  |
+| 3 | `LibreSCRS::SmartCard` | `MonitorService::subscribe()` / `unsubscribe()` |
 | 4 | `LibreSCRS::Plugin` | `CardPluginService{path}`, `kCardPluginAbiVersion` |
-| 5 | `LibreSCRS::Signing`| `SigningService(TrustConfig, TsaProvider)` ctor, `staticTsa(...)` |
+| 5 | `LibreSCRS::Signing`| `SigningService(TrustStoreService, TsaProvider)` ctor, `staticTsa(...)` |
 | 6 | `LibreSCRS::Signing`| `SigningRequest::Builder` → build               |
 
 If any future change makes a public header non-self-contained — e.g. a
@@ -61,17 +61,16 @@ Individual component targets are also aliased:
 
 ## Builder idiom
 
-`SigningRequest::Builder::build()` is rvalue-qualified (`build() &&`),
-so the chained `Builder{}.x().y().build()` form does NOT compile in this
-codebase. Use a named builder and `std::move` into `build()`:
+`SigningRequest::Builder::buildForBufferSign()` is rvalue-qualified
+(`buildForBufferSign() &&`), so the chained
+`Builder{}.x().y().buildForBufferSign()` form does NOT compile in this
+codebase. Use a named builder and `std::move` into `buildForBufferSign()`:
 
 ```cpp
 LibreSCRS::Signing::SigningRequest::Builder sb;
-sb.inputFile("/tmp/in.pdf");
-sb.outputFile("/tmp/out.pdf");
 sb.format(LibreSCRS::Signing::SignatureFormat::Pades);
 sb.level(LibreSCRS::Signing::SignatureLevel::B_T);
-auto sreq = std::move(sb).build();
+auto sreq = std::move(sb).buildForBufferSign();
 ```
 
 ## Related

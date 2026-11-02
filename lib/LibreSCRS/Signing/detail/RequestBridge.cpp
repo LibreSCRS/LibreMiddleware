@@ -63,32 +63,26 @@ libresign::SignaturePackaging mapPackaging(LibreSCRS::Signing::PackagingMode p)
 void translatePublicRequestToLibresign(const LibreSCRS::Signing::SigningRequest& request,
                                        libresign::SigningRequest& out)
 {
-    // Document name seam. The buffer-sign path (Builder::buildForBufferSign)
-    // has NO inputFile, so deriving from inputFile().filename() alone handed
-    // the ASiC-E / XAdES / JAdES engines an empty name and container creation
-    // failed outright ("Invalid filename for ASiC entry"). An explicit
-    // documentName is therefore the name source when set, in both modes.
+    // Document name seam: the request's documentName is the only name the
+    // engines get for the in-memory document (the ASiC-E entry, the XAdES /
+    // JAdES detached reference).
     //
     // The filename() call is the path-component strip: it keeps only the final
     // component, so no caller — however hostile or careless — can push a
     // directory separator or a `../` traversal into a container entry name or
     // a detached-reference basename. Doing it HERE (rather than in the setter)
-    // means every consumer of the public request, both sign() overloads and
-    // appendSigner(), gets the guarantee from one place.
+    // means every signature made from the public request gets the guarantee
+    // from one place.
     //
     // A degenerate final component is treated as ABSENT, not as a name: a
     // trailing separator ("a/b/") strips to nothing, and "." / ".." survive the
     // strip verbatim — a "." or ".." ZIP entry is precisely the shape the strip
-    // exists to prevent. All three fall back to the inputFile derivation, which
-    // in buffer mode is empty: an honest nameless failure identical to the
-    // pre-5.0 behaviour, rather than a poisoned entry name.
-    std::string documentName;
-    if (!request.documentName().empty()) {
-        documentName = std::filesystem::path(request.documentName()).filename().string();
-        if (documentName == "." || documentName == "..")
-            documentName.clear();
-    }
-    out.fileName = documentName.empty() ? request.inputFile().filename().string() : std::move(documentName);
+    // exists to prevent. All three leave the name empty: an honest nameless
+    // failure for a container format, rather than a poisoned entry name.
+    std::string documentName = std::filesystem::path(request.documentName()).filename().string();
+    if (documentName == "." || documentName == "..")
+        documentName.clear();
+    out.fileName = std::move(documentName);
     out.format = mapFormat(request.format());
     out.packaging = mapPackaging(request.packaging());
     out.level = mapLevel(request.level());
@@ -96,11 +90,10 @@ void translatePublicRequestToLibresign(const LibreSCRS::Signing::SigningRequest&
 
     // Signature-dictionary fields (ISO 32000-1:2008 §12.8.1): independent of
     // visual appearance. Always forwarded so an invisible signature can
-    // still carry /Reason, /Location and /ContactInfo — mirrors
-    // pades_module.cpp's unconditional emission of these keys.
+    // still carry /Reason and /Location — mirrors pades_module.cpp's
+    // unconditional emission of these keys.
     out.visual.reason = request.reason();
     out.visual.location = request.location();
-    out.visual.contactInfo = request.contactInfo();
 
     // Visual appearance only when the caller supplied an explicit
     // VisualSignatureParams. When visualParams() is empty,

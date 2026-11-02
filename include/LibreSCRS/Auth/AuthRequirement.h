@@ -5,15 +5,13 @@
 
 /// @file
 /// @brief @ref LibreSCRS::Auth::AuthRequirement — closed-shape credential
-///        prompt descriptor, plus @ref LibreSCRS::Auth::Purpose and
-///        @ref LibreSCRS::Auth::PreReadAuthMethod enums used by its
-///        factories.
+///        prompt descriptor, its @ref LibreSCRS::Auth::Purpose, and the
+///        @ref LibreSCRS::Auth::PreReadAuthMethod a plugin reports.
 
 #include <LibreSCRS/Auth/FieldDescriptor.h>
 #include <LibreSCRS/Auth/PaceSecretKind.h>
 #include <LibreSCRS/Export.h>
 #include <LibreSCRS/LocalizedText.h>
-#include <LibreSCRS/SmartCard/AppletAid.h>
 
 #include <cstdint>
 #include <optional>
@@ -26,10 +24,7 @@ namespace LibreSCRS::Auth {
 
 /// @brief Semantic category describing what the credential provider is being asked for.
 enum class Purpose : std::uint8_t {
-    PreRead,              ///< Unlock required before data-group reads (BAC/PACE).
     Signing,              ///< PIN entry for a signing operation.
-    ChangePin,            ///< Old + new PIN entry for a PIN change.
-    UnblockPin,           ///< PUK + new PIN entry for an unblock-and-change flow.
     EstablishPaceChannel, ///< Per-applet PACE/BAC secret (CAN/MRZ/PIN/PUK).
     CustomExtension,      ///< Plugin-defined purpose outside the canonical set.
 };
@@ -49,19 +44,18 @@ enum class PreReadAuthMethod : std::uint8_t {
 /// @brief Authoritative description of a credential prompt.
 ///
 /// The plugin or signing pipeline constructs an @ref AuthRequirement via one
-/// of the static factory functions (`forPreRead`, `forSigning`,
-/// `forChangePin`, `forUnblockPin`) and hands it to a `CredentialProvider`.
-/// @ref fields is the contract: each @ref FieldDescriptor describes one
-/// value the provider must collect and return in
-/// @ref CredentialResult::values, keyed by its @ref FieldDescriptor::id.
+/// of the static factory functions (`forSigning`, `forPaceSecret`) and hands
+/// it to a `CredentialProvider`.
+/// @ref fields gives the length bounds of the value the provider collects.
+/// The provider returns it in @ref CredentialResult::values under the
+/// credential's name: `"pin"` for a signing requirement; `"can"`, `"mrz"`,
+/// `"pin"` or `"puk"` for a PACE secret, as @ref paceKind says.
 ///
 /// @par Invariant enforcement
 /// The type's data members are private; external code cannot construct an
 /// `AuthRequirement` from scratch or mutate the field list. The factories
-/// are the only way to produce a populated instance and are responsible for
-/// maintaining the documented invariants (unique field ids, valid
-/// `equalToFieldId` back-references). Copy, move and comparison remain
-/// available so callers can pass the value around freely.
+/// are the only way to produce a populated instance. Copy, move and
+/// comparison remain available so callers can pass the value around freely.
 ///
 /// Factories are preferred over a Builder here because the shape of an
 /// `AuthRequirement` is closed — each factory produces a known,
@@ -87,8 +81,7 @@ enum class PreReadAuthMethod : std::uint8_t {
 /// freely passed across threads; concurrent reads of the same instance are
 /// race-free.
 ///
-/// @since 4.0 — private data + accessor API; consumers read via
-/// `fields()`, `retriesLeft()`, `message()`, `title()`.
+/// @since 4.0 — private data + accessor API.
 class LIBRESCRS_PUBLIC_API AuthRequirement
 {
 public:
@@ -120,87 +113,20 @@ public:
         return fieldList;
     }
 
-    /// @brief Card-reported retry count, when available.
-    [[nodiscard]] const std::optional<int>& retriesLeft() const noexcept
-    {
-        return retriesValue;
-    }
-
     /// @brief Optional explanatory message shown alongside the prompt.
     [[nodiscard]] const std::optional<LocalizedText>& message() const noexcept
     {
         return messageText;
     }
 
-    /// @brief Optional title shown as the prompt heading.
-    [[nodiscard]] const std::optional<LocalizedText>& title() const noexcept
-    {
-        return titleText;
-    }
-
     // -- Factories -----------------------------------------------------------
 
-    /// @brief Build a requirement for pre-read unlock using the given method.
-    /// @param method Pre-read unlock mechanism. `None` yields a no-field
-    ///               requirement; `Mrz` yields a single MRZ field;
-    ///               `Can` yields a single 6-digit CAN field.
-    /// @note Infallible — the input is a closed enum with no invalid values.
-    ///       See API-POLICY §5.1.
-    [[nodiscard]] static AuthRequirement forPreRead(PreReadAuthMethod method) noexcept;
-
     /// @brief Build a requirement for collecting a single signing PIN.
-    /// @param pinLabel Translator-friendly bundle. The bundle's
-    ///                 @ref LocalizedText::defaultText (or @ref
-    ///                 LocalizedText::key if the fallback is empty)
-    ///                 must be non-empty so the resulting credential prompt
-    ///                 has a renderable label. Hosts with a plain English
-    ///                 label and no translation key construct
-    ///                 `LocalizedText{"", "<label>", {}}` explicitly — the
-    ///                 empty key signals "no i18n routing" and the fallback
-    ///                 carries the literal text.
-    /// @param retriesLeft Card-reported retry count, or `std::nullopt`
-    ///                    when the card does not surface a counter. The
-    ///                    accessor @ref retriesLeft forwards the same
-    ///                    optional unchanged.
-    /// @throws std::invalid_argument if both @p pinLabel.defaultText and
-    ///         @p pinLabel.key are empty. See API-POLICY §5.1.
-    [[nodiscard]] static AuthRequirement forSigning(LocalizedText pinLabel, std::optional<int> retriesLeft);
+    [[nodiscard]] static AuthRequirement forSigning();
 
-    /// @brief Build a requirement for a PIN change (current + new + confirm).
-    /// @param pinLabel Translator-friendly bundle (see @ref forSigning for
-    ///                 the empty-bundle validation rule). The same label is
-    ///                 applied to all three fields; role is distinguished
-    ///                 via @ref FieldDescriptor::id values (`"currentPin"`,
-    ///                 `"newPin"`, `"confirmPin"`). Hosts that want "Current
-    ///                 X" / "New X" prefixed rendering must add role-aware
-    ///                 decoration in their own UI layer; this avoids
-    ///                 synthesising untranslatable English prefixes onto
-    ///                 i18n-aware labels.
-    /// @param retriesLeft Card-reported retry count on the current PIN,
-    ///                    or `std::nullopt` when the card does not
-    ///                    surface a counter. The accessor
-    ///                    @ref retriesLeft forwards the same optional
-    ///                    unchanged.
-    /// @throws std::invalid_argument if both @p pinLabel.defaultText and
-    ///         @p pinLabel.key are empty. See API-POLICY §5.1.
-    [[nodiscard]] static AuthRequirement forChangePin(LocalizedText pinLabel, std::optional<int> retriesLeft);
-
-    /// @brief Build a requirement for a PUK-based unblock (PUK + new + confirm).
-    /// @param pinLabel Translator-friendly bundle for the PIN being unblocked
-    ///                 (see @ref forSigning for the empty-bundle validation
-    ///                 rule and @ref forChangePin for the field-label policy).
-    /// @throws std::invalid_argument if both @p pinLabel.defaultText and
-    ///         @p pinLabel.key are empty. See API-POLICY §5.1.
-    [[nodiscard]] static AuthRequirement forUnblockPin(LocalizedText pinLabel);
-
-    /// @brief Build a requirement for a PACE / BAC secret prompt keyed
-    ///        per-applet.
-    /// @param aid The applet whose secure channel is being established.
+    /// @brief Build a requirement for a PACE / BAC secret prompt.
     /// @param kind Which shared-secret variant the card expects
     ///             (CAN / MRZ / PIN / PUK).
-    /// @param retriesLeft Card-reported retry count. PACE/BAC cards
-    ///        typically do not surface a counter; pass `std::nullopt`
-    ///        for the unknown case.
     /// @param reasonForUser Optional explanatory message rendered alongside
     ///        the prompt (e.g. "Insert the CAN printed on the back of your
     ///        ID card"). May be the empty default-constructed value if the
@@ -209,9 +135,7 @@ public:
     ///       its types.
     ///
     /// @since 4.1
-    [[nodiscard]] static AuthRequirement forPaceSecret(LibreSCRS::SmartCard::AppletAid aid, PaceSecretKind kind,
-                                                       std::optional<int> retriesLeft,
-                                                       LocalizedText reasonForUser) noexcept;
+    [[nodiscard]] static AuthRequirement forPaceSecret(PaceSecretKind kind, LocalizedText reasonForUser) noexcept;
 
     // -- PACE/BAC accessors -------------------------------------------------
 
@@ -223,28 +147,17 @@ public:
         return paceKindValue;
     }
 
-    /// @brief Which applet's channel is being established. Populated only
-    ///        when @ref purpose returns @ref Purpose::EstablishPaceChannel.
-    /// @since 4.1
-    [[nodiscard]] const std::optional<LibreSCRS::SmartCard::AppletAid>& paceApplet() const noexcept
-    {
-        return paceAppletValue;
-    }
-
 private:
     AuthRequirement() = default;
 
     // Project convention: no trailing underscores on member
-    // variables. The accessor names (`purpose()`, `fields()`, `retriesLeft()`,
-    // `message()`, `title()`) necessarily differ from the data members, so
-    // we use descriptive non-conflicting names instead of an `m_` prefix.
+    // variables. The accessor names necessarily differ from the data
+    // members, so we use descriptive non-conflicting names instead of an
+    // `m_` prefix.
     Purpose purposeValue = Purpose::Signing;
     std::vector<FieldDescriptor> fieldList;
-    std::optional<int> retriesValue;
     std::optional<LocalizedText> messageText;
-    std::optional<LocalizedText> titleText;
     std::optional<PaceSecretKind> paceKindValue;
-    std::optional<LibreSCRS::SmartCard::AppletAid> paceAppletValue;
 };
 
 } // namespace LibreSCRS::Auth

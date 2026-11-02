@@ -1,12 +1,22 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#define LIBRESCRS_INTERNAL_BUILD
-#include "../lib/LibreSCRS/Certificate/internal/OidDatabase.h"
+#include <LibreSCRS/Certificate/ObjectIdentifier.h>
 
 #include <gtest/gtest.h>
 
-using LibreSCRS::Certificate::detail::lookupOidName;
+#include <string>
+#include <utility>
+
+namespace {
+
+// The database is reached through the public ObjectIdentifier, as hosts reach it.
+std::string lookupOidName(std::string oid)
+{
+    return LibreSCRS::Certificate::ObjectIdentifier{std::move(oid)}.friendlyName();
+}
+
+} // namespace
 
 TEST(OidDatabase, KnownDnAttributesResolve)
 {

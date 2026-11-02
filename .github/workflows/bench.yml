@@ -50,7 +50,6 @@ jobs:
         run: |
           cmake -B build-bench -S . -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DSIGNING_BACKEND=both \
             -DLIBRESCRS_BUILD_BENCH=ON \
             -DBUILD_TESTING=OFF
 

@@ -209,11 +209,6 @@ struct ContextCounts
                                                               std::uint16_t keyReference,
                                                               unsigned int keyType) noexcept;
 
-/// Advertised key size: RSA reports @c modulus_length, EC reports
-/// @c field_length; exactly one of the two is non-zero on a parsed PrKDF
-/// entry.
-[[nodiscard]] std::uint16_t keySizeBitsFromKeyInfo(const sc_pkcs15_prkey_info_t& keyInfo) noexcept;
-
 /// ECDSA signature buffer length for a key over a @p fieldLengthBits-bit
 /// field: EXACTLY 2*ceil(field/8) bytes (96 for P-384). Drivers write a
 /// fixed-width r||s into the WHOLE buffer, r and s right-aligned in its
@@ -254,7 +249,7 @@ struct ContextCounts
 /// sc_pkcs15_bind with OpenSC's own PIN cache switched off. OpenSC keeps
 /// every PIN a successful sc_pkcs15_verify_pin presented and replays it when
 /// the card later wants it again; a PIN given to this plugin -- deposited for
-/// one operation, or passed to verifyPIN -- is used for that call only and
+/// one operation, or passed to changePIN -- is used for that call only and
 /// must not outlive it inside OpenSC.
 /// @return The sc_pkcs15_bind result.
 [[nodiscard]] int bindWithoutPinCache(sc_card_t* card, sc_pkcs15_card_t** p15card) noexcept;
@@ -447,6 +442,39 @@ signRsaBound(OpenSCSession& session, const sc_pkcs15_object_t& key, LibreSCRS::P
     return verifyDepositedPinThenRun(session, key, operation);
 }
 
+/// RSA PKCS#1 v1.5 decryption with the RSA key @p key, inside the caller's
+/// runUnderChannel callback. A key with no advertised modulus has no block
+/// size: refused before the PIN is presented and before the card sees a byte,
+/// never decrypted into an empty buffer. @p decipher has the shape of
+/// sc_pkcs15_decipher over the bound card and gets
+/// @c SC_ALGORITHM_RSA_PAD_PKCS1_TYPE_02 -- the decryption padding, which
+/// makes libopensc run the card's raw transform and strip the type-02 padding
+/// on the host (the srbeid driver advertises only @c SC_ALGORITHM_RSA_RAW) --
+/// and a buffer of the key's block size. The buffer holds plaintext: it is
+/// cleansed on every way out, a throw included, and only the bytes the card
+/// returned are copied to @p result; a count it cannot hold is not a result.
+/// @return As verifyDepositedPinThenRun. @p result is Ok only with plaintext.
+template <typename Decipher>
+[[nodiscard]] std::optional<RefusedPin> decipherRsaBound(OpenSCSession& session, const sc_pkcs15_object_t& key,
+                                                         std::span<const std::uint8_t> ciphertext,
+                                                         LibreSCRS::Plugin::DecipherResult& result, Decipher&& decipher)
+{
+    const auto* info = static_cast<const sc_pkcs15_prkey_info_t*>(key.data);
+    if (info == nullptr || info->modulus_length == 0)
+        return std::nullopt; // result stays Unspecified: PluginError at the caller, no PIN, nothing sent
+    auto operation = [&] {
+        std::vector<std::uint8_t> out((info->modulus_length + 7) / 8);
+        LibreSCRS::Internal::Crypto::CleanseGuard wipe{out};
+        const int rc = decipher(static_cast<unsigned long>(SC_ALGORITHM_RSA_PAD_PKCS1_TYPE_02), ciphertext.data(),
+                                ciphertext.size(), out.data(), out.size());
+        if (rc < 0 || static_cast<std::size_t>(rc) > out.size())
+            return;
+        result.plaintext.assign(out.begin(), out.begin() + static_cast<std::ptrdiff_t>(rc));
+        result.outcome = LibreSCRS::Plugin::DecipherResultOutcome::Ok;
+    };
+    return verifyDepositedPinThenRun(session, key, operation);
+}
+
 /// The outcome a key operation reports when VERIFY of its deposited PIN
 /// failed with @p rc. The card's verdict on the PIN is
 /// read exactly as the OpenSC PKCS#11 slot reads it: a wrong PIN is
@@ -542,7 +570,7 @@ struct ChannelRunReport
 [[nodiscard]] LibreSCRS::Plugin::ReadResult
 mapActivationErrorToReadResult(LibreSCRS::SecureChannel::ChannelActivationError err, const char* what);
 
-/// PIN-operation surface (verifyPIN/changePIN). Cancelled/UserCancelled →
+/// PIN-operation surface (changePIN). Cancelled/UserCancelled →
 /// UserCancelled; CredentialsRequired → MissingFields (the required
 /// credential was absent); everything else → PluginError.
 [[nodiscard]] LibreSCRS::Plugin::PINResultOutcome

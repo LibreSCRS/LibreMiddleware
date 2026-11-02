@@ -140,8 +140,8 @@ The PKCS#15 implementation could theoretically work standalone on any ISO 7816-1
 
 ## Implementation Reference
 
-- Types: `lib/pkcs15/include/pkcs15/pkcs15_types.h`
-- Card interface: `lib/pkcs15/include/pkcs15/pkcs15_card.h`
-- ASN.1 parsers: `lib/pkcs15/include/pkcs15/pkcs15_parser.h`
+- Types: `lib/pkcs15/src/pkcs15_types.h`
+- Card interface: `lib/pkcs15/src/pkcs15_card.h`
+- ASN.1 parsers: `lib/pkcs15/src/pkcs15_parser.h`
 - Key classes: `pkcs15::PKCS15Card`, `pkcs15::PKCS15Profile`
 - Parser functions: `parseODF()`, `parseTokenInfo()`, `parseCDF()`, `parsePrKDF()`, `parseAODF()`

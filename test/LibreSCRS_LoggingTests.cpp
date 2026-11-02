@@ -13,6 +13,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdlib>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -125,6 +126,42 @@ TEST_F(LoggingFacadeTest, ResetForTestDropsTheSinkAndTheCategory)
     // category is back. A reset that only dropped the sink would leave the
     // next case emitting under the previous test's category.
     EXPECT_EQ(sink.str(), "<6>rs.librescrs info: after reset\n");
+}
+
+TEST_F(LoggingFacadeTest, TraceIsOffUntilItsSwitchIsSet)
+{
+    ::unsetenv("LIBRESCRS_SIGN_TRACE");
+    LibreSCRS::log::resetForTest();
+    installCapturingSink("test.trace");
+
+    EXPECT_FALSE(LibreSCRS::log::traceEnabled(LibreSCRS::log::TraceChannel::Sign));
+    LibreSCRS::log::trace(LibreSCRS::log::TraceChannel::Sign, "hidden");
+    LibreSCRS::log::tracef(LibreSCRS::log::TraceChannel::Sign, "hidden {}", 1);
+    EXPECT_TRUE(captured.empty());
+}
+
+TEST_F(LoggingFacadeTest, TraceSwitchTurnsOnItsOwnChannelOnly)
+{
+    ::setenv("LIBRESCRS_SIGN_TRACE", "1", 1);
+    ::unsetenv("LIBRESCRS_PCSC_TRACE");
+    LibreSCRS::log::resetForTest();
+    ::unsetenv("LIBRESCRS_SIGN_TRACE"); // read once: the channel stays on
+    installCapturingSink("test.trace");
+
+    LibreSCRS::log::tracef(LibreSCRS::log::TraceChannel::Sign, "step {}", 3);
+    LibreSCRS::log::trace(LibreSCRS::log::TraceChannel::Pcsc, "wire");
+
+    ASSERT_EQ(captured.size(), 1u);
+    EXPECT_EQ(captured[0].level, LibreSCRS::log::Level::Trace);
+    EXPECT_EQ(captured[0].line, "<7>test.trace trace: step 3\n");
+}
+
+TEST_F(LoggingFacadeTest, TraceSwitchSetToZeroIsOff)
+{
+    ::setenv("LIBRESCRS_PROBE_TRACE", "0", 1);
+    LibreSCRS::log::resetForTest();
+    ::unsetenv("LIBRESCRS_PROBE_TRACE");
+    EXPECT_FALSE(LibreSCRS::log::traceEnabled(LibreSCRS::log::TraceChannel::Probe));
 }
 
 } // namespace

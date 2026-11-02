@@ -7,7 +7,6 @@
 
 #pragma once
 
-#include "credentials.h"
 #include "types.h"
 
 #include <cstdint>
@@ -30,19 +29,16 @@ struct TSAResult
     std::string errorMessage;
 };
 
-/// @brief Full TSA request: URL plus transport-layer credentials.
-///
-/// Internal mirror of @c LibreSCRS::Signing::TsaRequest carrying the
-/// extra knob @ref timeoutSeconds that only the internal client cares
-/// about. The public struct is copied into this one at the API bridge.
+/// @brief Full TSA request: the URL, the network timeout and the anchors
+///        the token's signer must chain to.
 struct TSARequest
 {
     /// @brief Target TSA endpoint URL (http/https).
     std::string url;
-    /// @brief Credentials applied to requests against @ref url.
-    TransportCredentials credentials;
     /// @brief Per-request network timeout (seconds). Default 10s.
     int timeoutSeconds = 10;
+    /// @brief Anchors the token's signer must chain to.
+    TimestampTrust trust;
 };
 
 /// @brief Narrow a @ref TSAConfig to the @ref TSARequest subset consumed
@@ -51,12 +47,7 @@ struct TSARequest
 ///        HTTP request itself — they are consumed by @ref RevocationClient.
 inline TSARequest toTsaRequest(const TSAConfig& cfg)
 {
-    // Aggregate copy-construction, not member-wise copy-ASSIGNMENT: the
-    // assignment form runs std::optional's destroy-then-construct payload
-    // path for `credentials`, which GCC 16.2 misanalyses at -O3 into a
-    // -Wmaybe-uninitialized false positive inside the inlined
-    // variant/shared_ptr storage (breaking -Werror builds).
-    return TSARequest{cfg.url, cfg.credentials, cfg.timeoutSeconds};
+    return TSARequest{cfg.url, cfg.timeoutSeconds, cfg.trust};
 }
 
 /// @brief RFC 3161 Time-Stamp Protocol client.
@@ -71,8 +62,9 @@ public:
     /// @param hash    32-byte SHA-256 digest of the content to timestamp.
     /// @param request Endpoint URL, credentials, and timeout.
     /// @return @ref TSAResult. `success == false` on transport failure,
-    ///         non-success TSA status, nonce mismatch, or imprint
-    ///         mismatch (RFC 3161 §2.4.2 replay / substitution checks).
+    ///         non-success TSA status, nonce mismatch, imprint mismatch
+    ///         (RFC 3161 §2.4.2 replay / substitution checks), or a token
+    ///         whose signer does not chain to an anchor of @c request.trust.
     TSAResult timestamp(const std::vector<uint8_t>& hash, const TSARequest& request);
 };
 

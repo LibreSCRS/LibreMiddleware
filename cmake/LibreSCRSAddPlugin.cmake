@@ -15,7 +15,7 @@
 #   ${CMAKE_CURRENT_BINARY_DIR}/generated/manifest.h
 # and added to the target's PRIVATE include path. Plugin sources can
 #   #include "manifest.h"
-# and consume kPluginId, kDisplayName, kCapabilities, kAtrs
+# and consume kPluginId, kCapabilities, kAtrs
 # from the LibreSCRS::Plugin::generated::<id> namespace.
 #
 # A global CMake property LIBRESCRS_PLUGIN_MANIFESTS records every manifest
@@ -120,26 +120,24 @@ function(librescrs_add_plugin name)
 
     # Install rule for card plugins.
     #
-    # Active only when LIBREMIDDLEWARE_BUILD_SHARED=ON, mirroring the public
-    # LibreSCRS_*.so install rule. The plugin .so files land under
-    # `${CMAKE_INSTALL_LIBDIR}/librescrs/plugins/` — a standard, predictable
-    # path that distros and consumers can probe at runtime by:
+    # Mirrors the public LibreSCRS_*.so install rule. The plugin .so files
+    # land under `${CMAKE_INSTALL_LIBDIR}/librescrs/plugins/` — a standard, predictable
+    # path. LibreMiddleware reads no environment variable for it; the host
+    # picks the directory, typically by:
     #
-    #   1. honouring the LIBRESCRS_PLUGIN_PATH environment variable
-    #      (intended override for development / per-user installs), or
+    #   1. honouring an override of its own (the Linux agent reads
+    #      LIBRESCRS_PLUGIN_DIR), or
     #   2. falling back to the install-tree convention
     #      ${CMAKE_INSTALL_FULL_LIBDIR}/librescrs/plugins/, or
     #   3. falling back to ${LIBREMIDDLEWARE_PLUGIN_DIR} (the build-tree
     #      cache var, for in-tree FetchContent consumers like LibreCelik).
     #
     # The contract is documented in docs/SHARED-LIBRARY-CONSUMERS.md.
-    if(LIBREMIDDLEWARE_BUILD_SHARED)
-        include(GNUInstallDirs)
-        install(TARGETS ${name}
-            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/librescrs/plugins
-        )
-        install(FILES ${LRS_PLUGIN_MANIFEST}
-            DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/librescrs/plugins/${name}
-        )
-    endif()
+    include(GNUInstallDirs)
+    install(TARGETS ${name}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/librescrs/plugins
+    )
+    install(FILES ${LRS_PLUGIN_MANIFEST}
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/librescrs/plugins/${name}
+    )
 endfunction()

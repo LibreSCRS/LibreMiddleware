@@ -60,6 +60,10 @@ prekoračujući tekst.
 | `kAppearanceTextMargin` | 4,0 pt | Unutrašnji razmak na svakoj ivici kutije |
 | `kAppearanceLineLeading` | 1,2× | `lineHeight = fontSize × ovo` |
 
+Javne su samo `kFloorAppearanceFontSize` i `kAppearanceLineLeading`
+(`VisualSignatureLayout.h`); maksimum i unutrašnji razmak su interni za
+potpisni motor.
+
 ## Granični slučajevi
 
 | Ulaz | Ponašanje |

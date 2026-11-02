@@ -14,7 +14,6 @@ Qt-free C++23 static libraries for reading smart cards via direct PC/SC APDU com
 
 - **SmartCard** — PC/SC connection management, APDU, TLV/BER-TLV encoding
 - **Card plugins** — data readers (Serbian eID, EU vehicle, Serbian health, eMRTD passport) and PKI backends (`opensc`, which drives OpenSC's driver chain; `pkcs15`, the generic gap-fill)
-- **PKCS#11 module** — a standard PKCS#11 library for Firefox, Thunderbird, and other PKCS#11-aware applications. Built and installed, but **not registered with p11-kit**: the registered provider for a LibreSCRS card is the agent proxy, so that one card offers one PIN-entry model
 - **Signing / Trust** — AdES signing (XAdES, PAdES, CAdES, JAdES, ASiC-E), timestamping, and the async trust store
 
 ## Public C++ SDK (4.0)
@@ -26,7 +25,7 @@ LibreMiddleware exposes a stable public C++23 SDK under
 - `LibreSCRS::Certificate` — X.509 introspection (`ParsedCertificate`,
   `ObjectIdentifier`, `DistinguishedName`)
 - `LibreSCRS::Plugin` — `CardPlugin` interface, `CardPluginService`,
-  `AutoReaderService`, security checks
+  security checks
 - `LibreSCRS::Secure` — cleansing `Buffer` / `String` for secret material
 - `LibreSCRS::Signing` — `SigningService`, signing requests, TSA providers
 - `LibreSCRS::SmartCard` — `CardSession`, `MonitorService`, low-level types
@@ -48,8 +47,6 @@ Toolchain: GCC 13+ / Clang 16+ / AppleClang 16+. The build enforces
   `CardPlugin::canHandle`.
 - **`std::format` / `std::print`** — diagnostic detail string
   composition inside Error types.
-- **`std::variant` + tagged structs** — `LocalizedText::Placeholder`
-  typed value payloads (Count / String / Hex / Date / Bool).
 - **C++20 concepts** — `Auth::detail::SecretParameter` gates the
   credential-bearing overload set.
 - **`[[nodiscard]]`** — every result type, factory, and accessor.
@@ -62,8 +59,8 @@ guides.
 
 ### Consuming as an installed shared library
 
-Set `-DLIBREMIDDLEWARE_BUILD_SHARED=ON` to produce versioned `.so`
-libraries plus a CMake Config package so downstream projects can use
+The build produces versioned `.so` libraries plus a CMake Config
+package, so downstream projects can use
 `find_package(LibreMiddleware 5.0 REQUIRED CONFIG)` and link against
 namespaced `LibreSCRS::*` imported targets. The full consumer
 documentation is at
@@ -79,8 +76,13 @@ cmake --build build -j4
 (cd build && ctest --output-on-failure -j4)
 ```
 
-`SIGNING_BACKEND=both` enables both the native libresign engine and the
-DSS Java fallback. `-DLIBRESCRS_BUILD_EXAMPLES=ON` builds the SDK
+The tests use the system GoogleTest (Arch `gtest`, Debian/Ubuntu
+`libgtest-dev libgmock-dev`, Fedora `gtest-devel gmock-devel`, Homebrew
+`googletest`); `-DBUILD_TESTING=OFF` builds without them.
+
+`SIGNING_BACKEND=both` also signs the tests through the DSS Java
+reference the native engine is checked against; the library itself carries
+only the native engine. `-DLIBRESCRS_BUILD_EXAMPLES=ON` builds the SDK
 consumer.
 
 ## API stability

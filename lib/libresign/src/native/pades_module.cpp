@@ -7,6 +7,7 @@
 #include "utf8.h"
 #include "native/pdf_dss.h"
 #include "native/signing_key.h"
+#include "native/visual_signature_layout.h"
 #include "native/revocation_client.h"
 #include "native_utils.h"
 
@@ -292,8 +293,6 @@ PAdESModule::PreparedPdf PAdESModule::preparePdf(const std::vector<uint8_t>& pdf
         sigDict << "   /Reason " << PdfParser::escapeStringForPdf(visual.reason) << "\n";
     if (!visual.location.empty())
         sigDict << "   /Location " << PdfParser::escapeStringForPdf(visual.location) << "\n";
-    if (!visual.contactInfo.empty())
-        sigDict << "   /ContactInfo " << PdfParser::escapeStringForPdf(visual.contactInfo) << "\n";
     sigDict << ">>\nendobj\n";
 
     objOffsets.back().second = incr.str().size();
@@ -902,19 +901,6 @@ SigningResult PAdESModule::sign(const std::vector<uint8_t>& pdfDataIn, SigningKe
     } catch (const std::exception& e) {
         return makeFailure(SignFailureKind::EngineError, std::string("PAdES error: ") + e.what());
     }
-}
-
-SigningResult PAdESModule::appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
-                                        SigningKey& key, SignatureLevel level, const TSAConfig& tsa,
-                                        const VisualSignatureParams& visual)
-{
-    // The PAdES incremental-update model lets sign() handle a prior-signed PDF
-    // transparently: the new signature occupies a fresh incremental update
-    // layered on top of the prior /Contents region. originalDoc is recoverable
-    // from the prior PDF's signed byte range, so when supplied it is currently
-    // informational only.
-    (void)originalDoc;
-    return sign(std::vector<uint8_t>(prior.begin(), prior.end()), key, level, tsa, visual);
 }
 
 } // namespace libresign

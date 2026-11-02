@@ -71,16 +71,6 @@ public:
     {};
     PCSCConnection(DetachedTag, const std::string& readerName);
 
-    /// @brief Open a real PC/SC connection OUTSIDE the CardSession single-
-    ///        session machinery. The ONLY sanctioned callers are the
-    ///        diagnostic CLI tools (tools/) and hardware-probe tests (test/);
-    ///        production libraries MUST open through CardSession::open so the
-    ///        one-session-per-reader invariant holds. ci/scripts/
-    ///        check-raw-pcsc-open.sh fails the build if any lib/ source names
-    ///        this factory, and the reader-name ctor below is private +
-    ///        friended to CardSession so it cannot be reached another way.
-    [[nodiscard]] static std::unique_ptr<PCSCConnection> openRawDiagnostic(const std::string& readerName);
-
     ~PCSCConnection();
 
     PCSCConnection(const PCSCConnection&) = delete;
@@ -205,8 +195,12 @@ public:
 
 private:
     // Real reader-name ctor: opens a live PC/SC handle. Private so the only
-    // production opener is CardSession (the single-session keystone); the
-    // diagnostic tools/tests reach it via the openRawDiagnostic() factory.
+    // production opener is CardSession (the single-session keystone).
+    // Hardware probes and diagnostic tools reach it through
+    // openRawDiagnostic(), friended below: that function is declared in
+    // raw_diagnostic/pcsc_raw_diagnostic.h and defined only in the
+    // build-tree-only LibreSCRS_SmartCard_RawDiagnostic archive, so a library
+    // source can neither name it from this header nor link it.
     explicit PCSCConnection(const std::string& readerName);
 
     // The body of the platform (pcsc_connection_pcsc.cpp or
@@ -246,6 +240,7 @@ private:
     std::function<void()> detachedReleaseObserver;
     friend class CardTransaction;
     friend class ::LibreSCRS::SmartCard::CardSession;
+    friend std::unique_ptr<PCSCConnection> openRawDiagnostic(const std::string& readerName);
 };
 
 // RAII wrapper: begins a PC/SC transaction on construction, ends it on destruction.

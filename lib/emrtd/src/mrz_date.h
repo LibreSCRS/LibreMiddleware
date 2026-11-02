@@ -9,7 +9,7 @@
 
 #include <charconv>
 #include <cstddef>
-#include <ctime>
+#include <chrono>
 #include <system_error>
 #include <string>
 
@@ -25,15 +25,26 @@ namespace emrtd {
 /// half of the rule that raw card data is never rewritten on its way through:
 /// a date that cannot be formatted is shown as the document spells it.
 ///
-/// Two-digit years are windowed by role. A date of birth is in the past, so
-/// `20yy` is used unless that would be in the future. An expiry date is in the
-/// near future, so `20yy` is used unless it would be implausibly far out.
+/// Two-digit years are windowed by role around the current year, in UTC (a
+/// document does not change its dates with the reader's time zone). A date of
+/// birth is in the past: the century is the one that puts it in the hundred
+/// years up to and including this year. An expiry date is near: the century is
+/// the one that puts it within fifty years either side of this year.
 ///
 /// Header-inline on purpose: the one caller is a plugin built as its own
 /// shared object, and a test cannot link into that. Inline emits no exported
 /// symbol, so this neither widens the ABI surface nor needs a library of its
 /// own.
-inline std::string formatMRZDate(const std::string& yymmdd, bool isExpiry = false)
+///
+/// @param currentYear the year "now" is in; defaults to the UTC year of the
+///        system clock, and is given explicitly by tests.
+inline int currentUtcYear()
+{
+    const auto today = std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now());
+    return static_cast<int>(std::chrono::year_month_day{today}.year());
+}
+
+inline std::string formatMRZDate(const std::string& yymmdd, bool isExpiry = false, int currentYear = currentUtcYear())
 {
     if (yymmdd.size() != 6)
         return yymmdd;
@@ -62,18 +73,12 @@ inline std::string formatMRZDate(const std::string& yymmdd, bool isExpiry = fals
         return yymmdd;
     }
 
-    int fullYear;
-    if (isExpiry) {
-        // Expiry dates are in the near future — use 20xx unless obviously wrong
-        fullYear = (y + 2000 > 2080) ? 1900 + y : 2000 + y;
-    } else {
-        // Birth dates are in the past — use 19xx if 20xx would be in the future
-        auto now = std::time(nullptr);
-        struct tm tmBuf{};
-        localtime_r(&now, &tmBuf);
-        int currentYY = (tmBuf.tm_year + 1900) % 100;
-        fullYear = (y > currentYY) ? 1900 + y : 2000 + y; // NOLINT(readability-magic-numbers)
-    }
+    // The window of a hundred years the date falls in: up to this year for
+    // a birth, fifty years either side of it for an expiry.
+    const int windowStart = isExpiry ? currentYear - 50 : currentYear - 99;
+    int fullYear = windowStart - (windowStart % 100) + y;
+    if (fullYear < windowStart)
+        fullYear += 100;
     return yymmdd.substr(4, 2) + "." + yymmdd.substr(2, 2) + "." + std::to_string(fullYear);
 }
 

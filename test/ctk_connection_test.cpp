@@ -10,6 +10,7 @@
 
 #include "ctk_fake.h"
 #include "pcsc_connection.h"
+#include "pcsc_raw_diagnostic.h"
 
 #include <algorithm>
 #include <atomic>
@@ -38,7 +39,7 @@ const Bytes kReadBinary{0x00, 0xB0, 0x00, 0x00, 0x04};
 
 std::unique_ptr<PCSCConnection> connect(const std::string& reader)
 {
-    return PCSCConnection::openRawDiagnostic(reader);
+    return LibreSCRS::SmartCard::Internal::openRawDiagnostic(reader);
 }
 
 APDUCommand readBinaryCommand()
@@ -110,8 +111,33 @@ TEST_F(CtkConnection, TransactionsNeverTouchTheSession)
 
 TEST_F(CtkConnection, LostSessionWithCardPresentReconnectsOnceAndRetries)
 {
-    // A secure-messaging wrapped READ BINARY: the body passes it on as bytes,
-    // and the card's plain refusal reaches the caller unchanged.
+    // A plain command: the body passes it on as bytes, and the card's answer
+    // reaches the caller unchanged.
+    Fake::slot(kReaderA).responder = [](std::span<const std::uint8_t>) -> std::expected<Bytes, Ctk::CtkStatus> {
+        return Bytes{0x69, 0x88};
+    };
+    auto conn = connect(kReaderA);
+    (void)conn->transmitRaw(std::span<const std::uint8_t>(kReadBinary));
+    Fake::loseSession(kReaderA);
+
+    const auto response = conn->transmitRaw(std::span<const std::uint8_t>(kReadBinary));
+
+    const auto c = Fake::calls(kReaderA);
+    EXPECT_EQ(c.opens, 2);
+    EXPECT_EQ(c.ends, 1);
+    EXPECT_EQ(c.order, (std::vector<std::string>{"open", "end", "open"})) << "the dead session ends before a new one";
+    ASSERT_EQ(c.received.size(), 3U) << "the first APDU, then the second one exactly twice";
+    EXPECT_EQ(c.received[1], kReadBinary);
+    EXPECT_EQ(c.received[2], kReadBinary);
+    EXPECT_EQ(response.statusWord(), 0x6988);
+}
+
+TEST_F(CtkConnection, LostSessionReconnectsButDoesNotResendASecureMessagingCommand)
+{
+    // A secure-messaging wrapped READ BINARY. The new session has no SM
+    // session on the card and the send-sequence counter is spent, so the
+    // command is not sent again: the connection reconnects and the caller
+    // is told the card was reset.
     const Bytes wrapped{0x0C, 0xB0, 0x00, 0x00, 0x0D, 0x97, 0x01, 0x00, 0x8E, 0x08,
                         0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x00};
     Fake::slot(kReaderA).responder = [](std::span<const std::uint8_t>) -> std::expected<Bytes, Ctk::CtkStatus> {
@@ -121,16 +147,12 @@ TEST_F(CtkConnection, LostSessionWithCardPresentReconnectsOnceAndRetries)
     (void)conn->transmitRaw(std::span<const std::uint8_t>(kReadBinary));
     Fake::loseSession(kReaderA);
 
-    const auto response = conn->transmitRaw(std::span<const std::uint8_t>(wrapped));
+    EXPECT_THROW((void)conn->transmitRaw(std::span<const std::uint8_t>(wrapped)), std::exception);
 
     const auto c = Fake::calls(kReaderA);
-    EXPECT_EQ(c.opens, 2);
-    EXPECT_EQ(c.ends, 1);
-    EXPECT_EQ(c.order, (std::vector<std::string>{"open", "end", "open"})) << "the dead session ends before a new one";
-    ASSERT_EQ(c.received.size(), 3U) << "the first APDU, then the wrapped one exactly twice";
+    EXPECT_EQ(c.order, (std::vector<std::string>{"open", "end", "open"})) << "the connection still recovers";
+    ASSERT_EQ(c.received.size(), 2U) << "the first APDU, then the wrapped one once";
     EXPECT_EQ(c.received[1], wrapped);
-    EXPECT_EQ(c.received[2], wrapped);
-    EXPECT_EQ(response.statusWord(), 0x6988);
 }
 
 TEST_F(CtkConnection, LostSessionHeldElsewhereFailsWithinTheBound)

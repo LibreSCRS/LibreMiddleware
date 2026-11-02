@@ -59,44 +59,46 @@ inline constexpr FileFidEntry NATIONAL_EXTENSION_FILES[] = {
     {0xC0, 0x21, "EF.Cert_Ext", false},
 };
 
-// BER-TLV container tags
+// The BER-TLV dictionary of Directive 2003/127/EC. The parser reads every
+// field by these names; a tag no field reads is not listed here.
+
+// Containers
 constexpr uint32_t TAG_MANDATORY_CONTAINER = 0x71;
 constexpr uint32_t TAG_OPTIONAL_CONTAINER = 0x72;
-constexpr uint32_t TAG_ALLOC_AUTHORITY = 0x78;
-constexpr uint32_t TAG_APP_ID = 0x4F;
 constexpr uint32_t TAG_PERSONAL_DATA = 0xA1;
-constexpr uint32_t TAG_REG_HOLDER = 0xA2;
-constexpr uint32_t TAG_VEHICLE_DATA = 0xA3;
-constexpr uint32_t TAG_MASS_DATA = 0xA4;
-constexpr uint32_t TAG_ENGINE_DATA = 0xA5;
-constexpr uint32_t TAG_SEATING_DATA = 0xA6;
-constexpr uint32_t TAG_VEHICLE_OWNER = 0xA7;
-constexpr uint32_t TAG_SECOND_OWNER = 0xA8;
-constexpr uint32_t TAG_USER = 0xA9;
+constexpr uint32_t TAG_REG_HOLDER = 0xA2;    // C.1
+constexpr uint32_t TAG_VEHICLE_DATA = 0xA3;  // D
+constexpr uint32_t TAG_MASS_DATA = 0xA4;     // F
+constexpr uint32_t TAG_ENGINE_DATA = 0xA5;   // P
+constexpr uint32_t TAG_SEATING_DATA = 0xA6;  // S
+constexpr uint32_t TAG_VEHICLE_OWNER = 0xA7; // C.2
+constexpr uint32_t TAG_USER = 0xA9;          // C.3
+
+// A person inside TAG_REG_HOLDER, TAG_VEHICLE_OWNER or TAG_USER
+constexpr uint32_t TAG_NAME = 0x83;        // C.x.1
+constexpr uint32_t TAG_OTHER_NAMES = 0x84; // C.x.2
+constexpr uint32_t TAG_ADDRESS = 0x85;     // C.x.3
 
 // EU mandatory field tags (inside container 71)
 constexpr uint32_t TAG_VERSION = 0x80;
-constexpr uint32_t TAG_REG_NUMBER = 0x81;         // A
-constexpr uint32_t TAG_FIRST_REG = 0x82;          // B
-constexpr uint32_t TAG_HOLDER_NAME = 0x83;        // C.1.1
-constexpr uint32_t TAG_HOLDER_OTHER_NAMES = 0x84; // C.1.2
-constexpr uint32_t TAG_HOLDER_ADDRESS = 0x85;     // C.1.3
-constexpr uint32_t TAG_OWNERSHIP_STATUS = 0x86;   // C.4
-constexpr uint32_t TAG_VEHICLE_MAKE = 0x87;       // D.1
-constexpr uint32_t TAG_VEHICLE_TYPE = 0x88;       // D.2
-constexpr uint32_t TAG_COMMERCIAL_DESC = 0x89;    // D.3
-constexpr uint32_t TAG_VIN = 0x8A;                // E
-constexpr uint32_t TAG_MAX_LADEN_MASS = 0x8B;     // F.1
-constexpr uint32_t TAG_VEHICLE_MASS = 0x8C;       // G
-constexpr uint32_t TAG_EXPIRY = 0x8D;             // H
-constexpr uint32_t TAG_REG_DATE = 0x8E;           // I
-constexpr uint32_t TAG_TYPE_APPROVAL = 0x8F;      // K
-constexpr uint32_t TAG_ENGINE_CAPACITY = 0x90;    // P.1
-constexpr uint32_t TAG_MAX_NET_POWER = 0x91;      // P.2
-constexpr uint32_t TAG_FUEL_TYPE = 0x92;          // P.3
-constexpr uint32_t TAG_POWER_WEIGHT = 0x93;       // Q
-constexpr uint32_t TAG_NUM_SEATS = 0x94;          // S.1
-constexpr uint32_t TAG_STANDING_PLACES = 0x95;    // S.2
+constexpr uint32_t TAG_REG_NUMBER = 0x81;       // A
+constexpr uint32_t TAG_FIRST_REG = 0x82;        // B
+constexpr uint32_t TAG_OWNERSHIP_STATUS = 0x86; // C.4
+constexpr uint32_t TAG_VEHICLE_MAKE = 0x87;     // D.1
+constexpr uint32_t TAG_VEHICLE_TYPE = 0x88;     // D.2
+constexpr uint32_t TAG_COMMERCIAL_DESC = 0x89;  // D.3
+constexpr uint32_t TAG_VIN = 0x8A;              // E
+constexpr uint32_t TAG_MAX_LADEN_MASS = 0x8B;   // F.1
+constexpr uint32_t TAG_VEHICLE_MASS = 0x8C;     // G
+constexpr uint32_t TAG_EXPIRY = 0x8D;           // H
+constexpr uint32_t TAG_REG_DATE = 0x8E;         // I
+constexpr uint32_t TAG_TYPE_APPROVAL = 0x8F;    // K
+constexpr uint32_t TAG_ENGINE_CAPACITY = 0x90;  // P.1
+constexpr uint32_t TAG_MAX_NET_POWER = 0x91;    // P.2
+constexpr uint32_t TAG_FUEL_TYPE = 0x92;        // P.3
+constexpr uint32_t TAG_POWER_WEIGHT = 0x93;     // Q
+constexpr uint32_t TAG_NUM_SEATS = 0x94;        // S.1
+constexpr uint32_t TAG_STANDING_PLACES = 0x95;  // S.2
 
 // EU optional field tags (inside container 72)
 constexpr uint32_t TAG_MAX_LADEN_SERVICE = 0x96;    // F.2

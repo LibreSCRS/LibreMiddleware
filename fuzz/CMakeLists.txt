@@ -164,6 +164,8 @@ target_link_options(fuzz_emrtd_dg_parser PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_compile_definitions(fuzz_emrtd_dg_parser PRIVATE LIBRESCRS_INTERNAL_BUILD)
 target_include_directories(fuzz_emrtd_dg_parser PRIVATE
     ${PROJECT_SOURCE_DIR}/lib/emrtd/src
+    # data_group.cpp reads its lengths through <ber.h>.
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src
 )
 target_link_libraries(fuzz_emrtd_dg_parser PRIVATE EMRTD)
 

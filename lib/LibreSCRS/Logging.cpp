@@ -3,6 +3,9 @@
 
 #include <LibreSCRS/Logging.h>
 
+#include <array>
+#include <atomic>
+#include <cstdlib>
 #include <format>
 #include <iostream>
 #include <mutex>
@@ -40,6 +43,8 @@ const char* priorityPrefix(Level level)
         return "<4>";
     case Level::Error:
         return "<3>";
+    case Level::Trace:
+        return "<7>";
     }
     return "<6>";
 }
@@ -53,6 +58,8 @@ const char* levelText(Level level)
         return "warning";
     case Level::Error:
         return "error";
+    case Level::Trace:
+        return "trace";
     }
     return "info";
 }
@@ -69,6 +76,34 @@ void defaultSink(std::string_view line)
 LogSink g_sink;
 // Guarded by logMutex().
 std::string g_category = "rs.librescrs";
+
+// One bit per TraceChannel. The environment is read once, the first time any
+// channel is asked about, and again only by resetForTest().
+constexpr std::array<const char*, 3> kTraceSwitches = {"LIBRESCRS_PCSC_TRACE", "LIBRESCRS_SIGN_TRACE",
+                                                       "LIBRESCRS_PROBE_TRACE"};
+
+std::atomic<unsigned> g_traceMask{0};
+
+unsigned readTraceMask() noexcept
+{
+    unsigned mask = 0;
+    for (std::size_t i = 0; i < kTraceSwitches.size(); ++i) {
+        const char* v = std::getenv(kTraceSwitches[i]);
+        if (v != nullptr && v[0] != '\0' && std::string_view{v} != "0")
+            mask |= 1U << i;
+    }
+    return mask;
+}
+
+unsigned traceMask() noexcept
+{
+    static const bool loaded = [] {
+        g_traceMask.store(readTraceMask(), std::memory_order_relaxed);
+        return true;
+    }();
+    (void)loaded;
+    return g_traceMask.load(std::memory_order_relaxed);
+}
 
 void emit(Level level, std::string_view message)
 {
@@ -100,6 +135,19 @@ void resetForTest() noexcept
     std::scoped_lock lock(logMutex());
     g_sink = nullptr;
     g_category = "rs.librescrs";
+    (void)traceMask();
+    g_traceMask.store(readTraceMask(), std::memory_order_relaxed);
+}
+
+bool traceEnabled(TraceChannel channel) noexcept
+{
+    return (traceMask() & (1U << static_cast<unsigned>(channel))) != 0;
+}
+
+void trace(TraceChannel channel, std::string_view message)
+{
+    if (traceEnabled(channel))
+        emit(Level::Trace, message);
 }
 
 void info(std::string_view message)

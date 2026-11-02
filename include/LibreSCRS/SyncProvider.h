@@ -19,10 +19,9 @@ namespace LibreSCRS {
 /// runtime-secret / runtime-config callback exposed across the LibreSCRS
 /// public API. Specialisations include
 /// @ref LibreSCRS::Auth::CredentialProvider
-/// (`SyncProvider<CredentialResult, AuthRequirement>`) and
-/// @ref LibreSCRS::Signing::TsaProvider
-/// (`SyncProvider<TsaRequest, TsaContext>`). Future additions follow the same
-/// shape rather than introducing a new bespoke alias each time.
+/// (`SyncProvider<CredentialResult, AuthRequirement>`). Future additions
+/// follow the same shape rather than introducing a new bespoke alias each
+/// time.
 ///
 /// @par Invocation contract
 /// The middleware calls a `SyncProvider` synchronously on the same thread

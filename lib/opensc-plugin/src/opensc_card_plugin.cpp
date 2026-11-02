@@ -102,6 +102,20 @@ ContextCounts contextCountsForTest() noexcept
     return ContextCounts{contextsCreated.load(), contextsReleased.load()};
 }
 
+// Every PKCS#15 object of @p type the card's profile holds. A fixed array
+// would silently drop the ninth key or the seventeenth certificate -- and a
+// key that is not enumerated cannot be found to sign with.
+std::vector<sc_pkcs15_object_t*> allObjectsOfType(sc_pkcs15_card_t* p15card, unsigned int type)
+{
+    const int count = sc_pkcs15_get_objects(p15card, type, nullptr, 0);
+    if (count <= 0)
+        return {};
+    std::vector<sc_pkcs15_object_t*> objects(static_cast<std::size_t>(count), nullptr);
+    const int got = sc_pkcs15_get_objects(p15card, type, objects.data(), count);
+    objects.resize(got > 0 ? static_cast<std::size_t>(got) : 0);
+    return objects;
+}
+
 // -- PluginContext (declared in opensc_session.h) ---------------------------
 
 namespace {
@@ -276,11 +290,6 @@ sc_pkcs15_object_t* selectKeyByReferenceAndType(sc_pkcs15_object_t* const* keyOb
     return nullptr;
 }
 
-std::uint16_t keySizeBitsFromKeyInfo(const sc_pkcs15_prkey_info_t& keyInfo) noexcept
-{
-    return static_cast<std::uint16_t>(keyInfo.modulus_length != 0 ? keyInfo.modulus_length : keyInfo.field_length);
-}
-
 std::size_t ecdsaSignatureLength(std::size_t fieldLengthBits) noexcept
 {
     return 2 * ((fieldLengthBits + 7) / 8);
@@ -296,24 +305,26 @@ int bindWithoutPinCache(sc_card_t* card, sc_pkcs15_card_t** p15card) noexcept
 
 LibreSCRS::Plugin::SignResultOutcome signOutcomeForRefusedPin(int rc) noexcept
 {
-    namespace Crv = LibreSCRS::Pkcs11::Internal::Crv;
-    const unsigned long refusal = LibreSCRS::OpenSc::Pkcs11::refusalFromVerifyRc(rc);
-    if (refusal == Crv::PinIncorrect)
+    switch (LibreSCRS::OpenSc::pinVerdictFromVerifyRc(rc)) {
+    case LibreSCRS::OpenSc::PinVerdict::Incorrect:
         return LibreSCRS::Plugin::SignResultOutcome::PinIncorrect;
-    if (refusal == Crv::PinLocked)
+    case LibreSCRS::OpenSc::PinVerdict::Blocked:
         return LibreSCRS::Plugin::SignResultOutcome::PinBlocked;
-    return LibreSCRS::Plugin::SignResultOutcome::PluginError;
+    default:
+        return LibreSCRS::Plugin::SignResultOutcome::PluginError;
+    }
 }
 
 LibreSCRS::Plugin::DecipherResultOutcome decipherOutcomeForRefusedPin(int rc) noexcept
 {
-    namespace Crv = LibreSCRS::Pkcs11::Internal::Crv;
-    const unsigned long refusal = LibreSCRS::OpenSc::Pkcs11::refusalFromVerifyRc(rc);
-    if (refusal == Crv::PinIncorrect)
+    switch (LibreSCRS::OpenSc::pinVerdictFromVerifyRc(rc)) {
+    case LibreSCRS::OpenSc::PinVerdict::Incorrect:
         return LibreSCRS::Plugin::DecipherResultOutcome::PinIncorrect;
-    if (refusal == Crv::PinLocked)
+    case LibreSCRS::OpenSc::PinVerdict::Blocked:
         return LibreSCRS::Plugin::DecipherResultOutcome::PinBlocked;
-    return LibreSCRS::Plugin::DecipherResultOutcome::PluginError;
+    default:
+        return LibreSCRS::Plugin::DecipherResultOutcome::PluginError;
+    }
 }
 
 unsigned long ecAlgorithmFlags(sc_card_t* card, std::size_t fieldLengthBits) noexcept
@@ -438,13 +449,12 @@ ChannelRunReport runWithChannelPtr(OpenSCSession& s, LibreSCRS::SecureChannel::I
     if (r == SC_SUCCESS) {
         report.ran = true;
         // The operation body (fn) allocates card-sized buffers whose length
-        // comes from card-reported key sizes, so a std::bad_alloc is reachable
-        // — and NO C++ exception may cross the plugin ABI boundary
-        // (CardPlugin.h: dlopen'd with a potentially-mismatched C++ runtime =
-        // undefined behaviour). Contain it here and fold it into the report as
-        // a transport-class failure; the cleanup below still runs, and the
-        // caller maps an un-completed operation to a communication/plugin
-        // error.
+        // comes from card-reported key sizes, so a std::bad_alloc is reachable.
+        // Contain it here and fold it into the report as a transport-class
+        // failure: the cleanup below has to run either way -- an escaping
+        // throw would leave the bridge pointing at a channel that is going
+        // away and a half-bound card in place -- and the caller maps an
+        // un-completed operation to a communication/plugin error.
         try {
             fn(s);
         } catch (...) {
@@ -506,8 +516,8 @@ ChannelRunReport runUnderChannel(LibreSCRS::SmartCard::CardSession& cardSession,
     // Discovery read and the PSO ride one uninterrupted transaction.
     //
     // A PIN for the operation is deposited with setCredentials("pin") and
-    // presented inside this same transaction (verifyThenRun); a caller's
-    // SEPARATE verifyPIN call is not spanned, which is why that seam exists.
+    // presented inside this same transaction (verifyThenRun), so nothing
+    // comes between the VERIFY and the operation.
     std::optional<LibreSCRS::SmartCard::Internal::CardTransaction> rawTxn;
     LibreSCRS::SecureChannel::ISecureChannel* channel = nullptr;
     if (s.requiresPace) {
@@ -542,12 +552,13 @@ ChannelRunReport runUnderChannel(LibreSCRS::SmartCard::CardSession& cardSession,
             // unavailable reader and an exclusive claim by another process,
             // and CardTransaction reports that by throwing. This acquisition
             // is the operation's FIRST PC/SC touch and sits outside the try
-            // that contains fn, so an escaping exception would leave a dlopen'd
-            // plugin through the C ABI -- undefined behaviour (CardPlugin.h).
-            // Degrade instead to what this branch did before it took an outer
-            // transaction: librescrs_opensc_bridge_lock meets the same failure
-            // on the next libopensc call and returns SC_ERROR_READER, which the
-            // caller already maps to a communication error.
+            // that contains fn, so an escaping exception would end the
+            // operation before it ran, and the base class would report no
+            // more than that the plugin failed. Degrade instead to what this
+            // branch did before it took an outer transaction:
+            // librescrs_opensc_bridge_lock meets the same failure on the next
+            // libopensc call and returns SC_ERROR_READER, which the caller
+            // already maps to a communication error.
         }
     }
     return runWithChannelPtr(s, channel, token, fn, [&holder, &rawTxn]() {
@@ -646,10 +657,8 @@ std::vector<LibreSCRS::Plugin::PinStatusEntry> buildPinStatusEntries(sc_pkcs15_o
     // needs-change signal is a bit test: drivers OR
     // SC_PIN_STATE_NEEDS_CHANGE onto the logged state.
     std::vector<Internal::PinEvidence> evidence;
-    std::vector<const sc_pkcs15_object_t*> objs; // aligned with evidence
-    std::vector<const sc_pkcs15_auth_info_t*> infos;
+    std::vector<const sc_pkcs15_auth_info_t*> infos; // aligned with evidence
     evidence.reserve(static_cast<std::size_t>(pinCount));
-    objs.reserve(static_cast<std::size_t>(pinCount));
     infos.reserve(static_cast<std::size_t>(pinCount));
     for (int i = 0; i < pinCount; ++i) {
         const sc_pkcs15_object_t* obj = pinObjs[i];
@@ -657,54 +666,13 @@ std::vector<LibreSCRS::Plugin::PinStatusEntry> buildPinStatusEntries(sc_pkcs15_o
         if (!info)
             continue;
 
-        Internal::PinEvidence ev;
-        // An empty AODF label must never be advertised verbatim: the
-        // changePIN selector contract reserves the EMPTY selector for the
-        // legacy default-PIN fallback, so "" would alias this record onto
-        // a DIFFERENT credential. The documented "pin_<reference>" form
-        // is the non-aliasing substitute — resolveChangePinTarget accepts
-        // it verbatim and addresses the record by its reference.
-        const auto reference = static_cast<std::uint8_t>(info->attrs.pin.reference & 0xff);
-        ev.label = obj->label[0] ? std::string{obj->label} : "pin_" + std::to_string(reference);
-        ev.reference = reference;
-        ev.ownId.assign(info->auth_id.value, info->auth_id.value + info->auth_id.len);
-        const unsigned int flags = info->attrs.pin.flags;
-        ev.localScope = (flags & SC_PKCS15_PIN_FLAG_LOCAL) != 0;
-        // inQscdDf / paceEvidence stay false: the generic OpenSC path has
-        // no signature-DF map and no PACE evidence.
-        ev.soPinFlag = (flags & SC_PKCS15_PIN_FLAG_SO_PIN) != 0;
-        ev.unblockingPinFlag = (flags & SC_PKCS15_PIN_FLAG_UNBLOCKING_PIN) != 0;
-        ev.unblockDisabledFlag = (flags & SC_PKCS15_PIN_FLAG_UNBLOCK_DISABLED) != 0;
-        ev.changeDisabledFlag = (flags & SC_PKCS15_PIN_FLAG_CHANGE_DISABLED) != 0;
-        ev.initialized = (flags & SC_PKCS15_PIN_FLAG_INITIALIZED) != 0;
-        // tries_left semantics: -1 = unknown; >= 0 = real count, 0 blocked.
-        ev.blocked = (info->tries_left == 0);
-        ev.needsChangeSignal = (info->logged_in & SC_PIN_STATE_NEEDS_CHANGE) != 0;
+        Internal::PinEvidence ev = LibreSCRS::OpenSc::authEvidence(*obj, *info);
         evidence.push_back(std::move(ev));
-        objs.push_back(obj);
         infos.push_back(info);
     }
 
-    // Pass 2: resolve the AODF authId protection chain per the derivation
-    // engine's contract — when object i is protected by auth object j,
-    // record the protecting object's FULL id bytes on i (matched against
-    // the target's ownId during derivation) and mark j as the unblocking
-    // chain target.
-    for (std::size_t i = 0; i < objs.size(); ++i) {
-        const sc_pkcs15_id* protecting = &objs[i]->auth_id;
-        if (protecting->len == 0)
-            continue;
-        for (std::size_t j = 0; j < objs.size(); ++j) {
-            if (j == i)
-                continue;
-            if (sc_pkcs15_compare_id(&infos[j]->auth_id, protecting)) {
-                evidence[i].authIdChainTarget =
-                    std::vector<std::uint8_t>(protecting->value, protecting->value + protecting->len);
-                evidence[j].unblockingPinFlag = true;
-                break;
-            }
-        }
-    }
+    // Pass 2: the AODF authId protection chain, resolved by the engine's own rule.
+    Internal::resolveAuthIdChains(evidence);
 
     const Internal::FamilyQuirks* quirks = Internal::findFamilyQuirks(familyFromDriverShortName(driverShortName));
 
@@ -769,56 +737,6 @@ using ChangePinFn = int (*)(sc_pkcs15_card_t*, sc_pkcs15_object_t*, const unsign
 ///        (@c sc_pkcs15_get_pin_info) as consumed by the change-dispatch seam.
 using RefreshPinInfoFn = int (*)(sc_pkcs15_card_t*, sc_pkcs15_object_t*);
 
-/// @brief Signature of the libopensc PIN-verify entry point
-///        (@c sc_pkcs15_verify_pin) as consumed by the verify-dispatch seam.
-using VerifyPinFn = int (*)(sc_pkcs15_card_t*, sc_pkcs15_object_t*, const unsigned char*, std::size_t);
-
-/// @brief Verify-dispatch seam: applies the user-PIN selector over the
-///        enumerated AUTH_PIN objects and dispatches the verify to the
-///        resolved object through the injected driver entry point.
-///
-/// Non-member seam, same rationale as @ref changePinWithSelector: the unit
-/// tests compile this translation unit directly and drive the selector with
-/// synthetic sc_pkcs15 objects plus fake driver functions.
-LibreSCRS::Plugin::PINResult verifyPinOnUserObject(sc_pkcs15_card_t* p15card, sc_pkcs15_object_t* const* pinObjs,
-                                                   int pinCount, const LibreSCRS::Secure::String& pin,
-                                                   VerifyPinFn verifyFn, RefreshPinInfoFn refreshFn)
-{
-    LibreSCRS::Plugin::PINResult result;
-    sc_pkcs15_object_t* target = firstUserPinObject(pinObjs, pinCount);
-    if (!target)
-        return result; // no user PIN in the AODF: nothing to address, leave Unspecified
-
-    auto pinView = pin.view();
-    const int rc = verifyFn(p15card, target, reinterpret_cast<const unsigned char*>(pinView.data()), pinView.size());
-    refreshFn(p15card, target); // verify may not update auth_info on all drivers
-    const auto* authInfo = static_cast<const sc_pkcs15_auth_info_t*>(target->data);
-    if (authInfo->tries_left >= 0)
-        result.retriesLeft = authInfo->tries_left;
-    result.blocked = (authInfo->tries_left == 0);
-    result.outcome = LibreSCRS::Plugin::classifyPinOutcome(result, rc == 0);
-    return result;
-}
-
-/// @brief Counter-read seam over the user PIN, same rationale.
-LibreSCRS::Plugin::CredentialCounters readCountersFromUserPin(sc_pkcs15_card_t* p15card,
-                                                              sc_pkcs15_object_t* const* pinObjs, int pinCount,
-                                                              RefreshPinInfoFn refreshFn)
-{
-    LibreSCRS::Plugin::CredentialCounters c;
-    sc_pkcs15_object_t* target = firstUserPinObject(pinObjs, pinCount);
-    if (!target)
-        return c; // no user PIN: empty counters, never the PUK's
-    if (refreshFn(p15card, target) < 0)
-        return c;
-    const auto* authInfo = static_cast<const sc_pkcs15_auth_info_t*>(target->data);
-    if (authInfo->tries_left >= 0)
-        c.retriesLeft = authInfo->tries_left;
-    if (authInfo->max_tries > 0)
-        c.retriesMax = authInfo->max_tries;
-    return c;
-}
-
 /// @brief Change-dispatch seam: applies the @c changePIN selector contract
 ///        over the enumerated AUTH_PIN objects and dispatches the change to
 ///        the resolved object through the injected driver entry points.
@@ -880,7 +798,6 @@ public:
     OpenSCCardPlugin()
     {
         setIdentity(std::string{LibreSCRS::Plugin::generated::opensc::kPluginId},
-                    std::string{LibreSCRS::Plugin::generated::opensc::kDisplayName},
                     /*priority=*/800);
     }
 
@@ -1019,13 +936,11 @@ public:
             // Detect PKI presence (PIN + private-key objects, any key
             // family). No longer exposed externally — kept for
             // diagnostic/read-path hinting.
-            sc_pkcs15_object_t* pinObjs[8];
-            int pinCount = sc_pkcs15_get_objects(session->p15card, SC_PKCS15_TYPE_AUTH_PIN, pinObjs, 8);
-
-            sc_pkcs15_object_t* keyObjs[8];
-            int keyCount = sc_pkcs15_get_objects(session->p15card, SC_PKCS15_TYPE_PRKEY, keyObjs, 8);
-
-            session->hasPKI = (pinCount > 0 || keyCount > 0);
+            // Both lists are always read: reading one parses its directory
+            // files, so a short-circuit would change what the probe leaves.
+            const bool hasPin = !LibreSCRS::OpenSc::allObjectsOfType(session->p15card, SC_PKCS15_TYPE_AUTH_PIN).empty();
+            const bool hasKey = !LibreSCRS::OpenSc::allObjectsOfType(session->p15card, SC_PKCS15_TYPE_PRKEY).empty();
+            session->hasPKI = hasPin || hasKey;
 
             publish(mapKey, std::move(session));
             return true;
@@ -1136,8 +1051,9 @@ public:
             emitGroup(std::move(tokenGroup));
 
             // Certificates summary group
-            sc_pkcs15_object_t* certObjs[16];
-            int certCount = sc_pkcs15_get_objects(session.p15card, SC_PKCS15_TYPE_CERT_X509, certObjs, 16);
+            auto certObjsAll = LibreSCRS::OpenSc::allObjectsOfType(session.p15card, SC_PKCS15_TYPE_CERT_X509);
+            sc_pkcs15_object_t** certObjs = certObjsAll.data();
+            int certCount = static_cast<int>(certObjsAll.size());
 
             if (certCount > 0) {
                 LibreSCRS::Plugin::CardFieldGroup certGroup;
@@ -1167,7 +1083,7 @@ public:
                 emitGroup(std::move(certGroup));
             }
 
-            // PIN state is surfaced via the typed getPINList() override
+            // PIN state is surfaced via the typed doGetPINList() override
             // (PinStatusEntry vector), not via the readCard() data groups.
 
             return ReadResult::ok(std::move(data));
@@ -1232,7 +1148,7 @@ public:
     }
 
     std::vector<LibreSCRS::Plugin::CertificateData>
-    readCertificates(LibreSCRS::SmartCard::CardSession& cardSession) const override
+    doReadCertificates(LibreSCRS::SmartCard::CardSession& cardSession) const override
     {
         std::vector<LibreSCRS::Plugin::CertificateData> result;
         auto s = pinnedSession(cardSession);
@@ -1251,8 +1167,9 @@ public:
     {
         std::vector<LibreSCRS::Plugin::CertificateData> result;
 
-        sc_pkcs15_object_t* certObjs[16];
-        int certCount = sc_pkcs15_get_objects(session.p15card, SC_PKCS15_TYPE_CERT_X509, certObjs, 16);
+        auto certObjsAll = LibreSCRS::OpenSc::allObjectsOfType(session.p15card, SC_PKCS15_TYPE_CERT_X509);
+        sc_pkcs15_object_t** certObjs = certObjsAll.data();
+        int certCount = static_cast<int>(certObjsAll.size());
 
         for (int i = 0; i < certCount; ++i) {
             auto* certInfo = static_cast<sc_pkcs15_cert_info_t*>(certObjs[i]->data);
@@ -1280,8 +1197,6 @@ public:
             if (rc == 0 && keyObj) {
                 auto* keyInfo = static_cast<sc_pkcs15_prkey_info_t*>(keyObj->data);
                 cd.keyFID = static_cast<std::uint16_t>(keyInfo->key_reference);
-                // RSA advertises modulus_length, EC advertises field_length.
-                cd.keySizeBits = LibreSCRS::OpenSc::keySizeBitsFromKeyInfo(*keyInfo);
                 // OpenSC's own rule, shared with the PKCS#11 slot: the PIV
                 // Digital Signature key (9C) arrives with user_consent set.
                 cd.alwaysAuthenticate = LibreSCRS::OpenSc::requiresPerOperationAuth(*keyObj);
@@ -1298,46 +1213,8 @@ public:
         return result;
     }
 
-    LibreSCRS::Plugin::PINResult verifyPIN(LibreSCRS::SmartCard::CardSession& cardSession,
-                                           const LibreSCRS::Secure::String& pin) const override
-    {
-        auto s = pinnedSession(cardSession);
-        if (!s)
-            return {};
-
-        LibreSCRS::Plugin::PINResult result;
-        bool completed = false;
-        const auto run =
-            LibreSCRS::OpenSc::runUnderChannel(cardSession, *s, LibreSCRS::CancelToken{}, [&](OpenSCSession& session) {
-                sc_pkcs15_object_t* pinObjs[4];
-                int count = sc_pkcs15_get_objects(session.p15card, SC_PKCS15_TYPE_AUTH_PIN, pinObjs, 4);
-                if (count <= 0)
-                    return; // leaves the default (Unspecified) result
-                if (!LibreSCRS::OpenSc::firstUserPinObject(pinObjs, count))
-                    return; // AODF names no user PIN: same "nothing to address" shape
-
-                result = LibreSCRS::OpenSc::verifyPinOnUserObject(session.p15card, pinObjs, count, pin,
-                                                                  &sc_pkcs15_verify_pin, &sc_pkcs15_get_pin_info);
-                completed = true;
-            });
-        if (run.activationFailed) {
-            LibreSCRS::Plugin::PINResult r;
-            r.outcome = LibreSCRS::OpenSc::mapActivationErrorToPinOutcome(run.activationError);
-            return r;
-        }
-        if (!completed && run.ran)
-            return result; // no PIN objects: preserved legacy shape (Unspecified)
-        if (!completed) {
-            LibreSCRS::Plugin::PINResult r;
-            r.outcome = run.cancelled ? LibreSCRS::Plugin::PINResultOutcome::UserCancelled
-                                      : LibreSCRS::Plugin::PINResultOutcome::PluginError;
-            return r;
-        }
-        return result; // completed verify reports its real (typed) outcome
-    }
-
     std::vector<LibreSCRS::Plugin::PinStatusEntry>
-    getPINList(LibreSCRS::SmartCard::CardSession& cardSession) const override
+    doGetPINList(LibreSCRS::SmartCard::CardSession& cardSession) const override
     {
         std::vector<LibreSCRS::Plugin::PinStatusEntry> result;
         auto s = pinnedSession(cardSession);
@@ -1352,8 +1229,9 @@ public:
         // is the only representable outcome on this surface.)
         (void)LibreSCRS::OpenSc::runUnderChannel(
             cardSession, *s, LibreSCRS::CancelToken{}, [&](OpenSCSession& session) {
-                sc_pkcs15_object_t* pinObjs[8];
-                int pinCount = sc_pkcs15_get_objects(session.p15card, SC_PKCS15_TYPE_AUTH_PIN, pinObjs, 8);
+                auto pinObjsAll = LibreSCRS::OpenSc::allObjectsOfType(session.p15card, SC_PKCS15_TYPE_AUTH_PIN);
+                sc_pkcs15_object_t** pinObjs = pinObjsAll.data();
+                int pinCount = static_cast<int>(pinObjsAll.size());
                 if (pinCount <= 0)
                     return;
 
@@ -1366,9 +1244,9 @@ public:
         return result;
     }
 
-    LibreSCRS::Plugin::PINResult changePIN(LibreSCRS::SmartCard::CardSession& cardSession, std::string_view pinLabel,
-                                           const LibreSCRS::Secure::String& oldPin,
-                                           const LibreSCRS::Secure::String& newPin) const override
+    LibreSCRS::Plugin::PINResult doChangePIN(LibreSCRS::SmartCard::CardSession& cardSession, std::string_view pinLabel,
+                                             const LibreSCRS::Secure::String& oldPin,
+                                             const LibreSCRS::Secure::String& newPin) const override
     {
         auto pluginError = []() {
             LibreSCRS::Plugin::PINResult r;
@@ -1383,8 +1261,9 @@ public:
         bool completed = false;
         const auto run =
             LibreSCRS::OpenSc::runUnderChannel(cardSession, *s, LibreSCRS::CancelToken{}, [&](OpenSCSession& session) {
-                sc_pkcs15_object_t* pinObjs[4];
-                int count = sc_pkcs15_get_objects(session.p15card, SC_PKCS15_TYPE_AUTH_PIN, pinObjs, 4);
+                auto pinObjsAll = LibreSCRS::OpenSc::allObjectsOfType(session.p15card, SC_PKCS15_TYPE_AUTH_PIN);
+                sc_pkcs15_object_t** pinObjs = pinObjsAll.data();
+                int count = static_cast<int>(pinObjsAll.size());
                 if (count <= 0)
                     return; // maps to PluginError below
 
@@ -1407,28 +1286,6 @@ public:
             return pluginError();
         }
         return result; // completed change reports its real (typed) outcome
-    }
-
-    LibreSCRS::Plugin::CredentialCounters readCounters(LibreSCRS::SmartCard::CardSession& cardSession,
-                                                       std::string_view /*pinLabel*/) const override
-    {
-        auto s = pinnedSession(cardSession);
-        if (!s)
-            return {};
-
-        LibreSCRS::Plugin::CredentialCounters c;
-        // OpenSC's sc_pkcs15_auth_info models no usage/reset counter, so
-        // uses*/unblocksLeft stay absent — the documented OpenSC limit.
-        (void)LibreSCRS::OpenSc::runUnderChannel(
-            cardSession, *s, LibreSCRS::CancelToken{}, [&](OpenSCSession& session) {
-                sc_pkcs15_object_t* pinObjs[4];
-                int count = sc_pkcs15_get_objects(session.p15card, SC_PKCS15_TYPE_AUTH_PIN, pinObjs, 4);
-                if (count <= 0)
-                    return;
-                c = LibreSCRS::OpenSc::readCountersFromUserPin(session.p15card, pinObjs, count,
-                                                               &sc_pkcs15_get_pin_info);
-            });
-        return c;
     }
 
     LibreSCRS::Plugin::SignResult doSign(LibreSCRS::SmartCard::CardSession& cardSession, std::uint16_t keyReference,
@@ -1473,8 +1330,9 @@ public:
                 // key references are only unique within a family on some
                 // cards, so an unfiltered match could address an RSA key
                 // with an ECDSA request when the references collide.
-                sc_pkcs15_object_t* keyObjs[8];
-                int keyCount = sc_pkcs15_get_objects(session.p15card, SC_PKCS15_TYPE_PRKEY, keyObjs, 8);
+                auto keyObjsAll = LibreSCRS::OpenSc::allObjectsOfType(session.p15card, SC_PKCS15_TYPE_PRKEY);
+                sc_pkcs15_object_t** keyObjs = keyObjsAll.data();
+                int keyCount = static_cast<int>(keyObjsAll.size());
                 sc_pkcs15_object_t* targetKey = LibreSCRS::OpenSc::selectKeyByReferenceAndType(
                     keyObjs, keyCount, keyReference, isEcdsa ? SC_PKCS15_TYPE_PRKEY_EC : SC_PKCS15_TYPE_PRKEY_RSA);
                 if (!targetKey)
@@ -1560,7 +1418,8 @@ public:
                     completed = result.ok();
                     return;
                 }
-                refusedPin = decipherBound(session, keyReference, ciphertext, result, completed);
+                refusedPin = decipherBound(session, keyReference, ciphertext, result);
+                completed = result.ok();
             });
         if (run.activationFailed) {
             LibreSCRS::Plugin::DecipherResult r;
@@ -1582,43 +1441,24 @@ public:
 
     std::optional<RefusedPin> decipherBound(OpenSCSession& session, std::uint16_t keyReference,
                                             std::span<const std::uint8_t> ciphertext,
-                                            LibreSCRS::Plugin::DecipherResult& result, bool& completed) const
+                                            LibreSCRS::Plugin::DecipherResult& result) const
     {
         // Same TYPE-filtered reference resolution as doSign. RSA decryption
         // addresses only an RSA key, so the filter pins
         // SC_PKCS15_TYPE_PRKEY_RSA; key agreement goes through deriveBound.
-        sc_pkcs15_object_t* keyObjs[8];
-        int keyCount = sc_pkcs15_get_objects(session.p15card, SC_PKCS15_TYPE_PRKEY, keyObjs, 8);
+        auto keyObjsAll = LibreSCRS::OpenSc::allObjectsOfType(session.p15card, SC_PKCS15_TYPE_PRKEY);
+        sc_pkcs15_object_t** keyObjs = keyObjsAll.data();
+        int keyCount = static_cast<int>(keyObjsAll.size());
         sc_pkcs15_object_t* targetKey =
             LibreSCRS::OpenSc::selectKeyByReferenceAndType(keyObjs, keyCount, keyReference, SC_PKCS15_TYPE_PRKEY_RSA);
         if (!targetKey)
             return std::nullopt; // maps to PluginError at the caller
-
-        auto* keyInfo = static_cast<sc_pkcs15_prkey_info_t*>(targetKey->data);
-        auto operation = [&] {
-            size_t outCap = keyInfo->modulus_length / 8; // RSA block size in bytes
-            std::vector<uint8_t> out(outCap);
-
-            // Raw RSA decrypt + software PKCS#1 v1.5 unpad. The srbeid driver
-            // advertises only SC_ALGORITHM_RSA_RAW and wires decipher to the raw
-            // c^d mod N transform (card-srbeid.c:91,287), so it returns the full
-            // padded block. Requesting SC_ALGORITHM_RSA_PAD_PKCS1_TYPE_02 makes
-            // libopensc take the "card does raw, host strips padding" path
-            // (sc_get_encoding_flags: pflags=TYPE_02, sflags=PAD_NONE —
-            // padding.c:728) and then strip the v1.5 type-02 padding in
-            // sc_pkcs15_decipher (pkcs15-sec.c:316). TYPE_02 (not TYPE_01) is the
-            // decryption padding marker; TYPE_01 is the signing form. Verified
-            // against the vendored OpenSC #3701 source.
-            int rc = sc_pkcs15_decipher(session.p15card, targetKey, SC_ALGORITHM_RSA_PAD_PKCS1_TYPE_02,
-                                        ciphertext.data(), ciphertext.size(), out.data(), out.size(), nullptr);
-            if (rc < 0)
-                return; // maps to PluginError at the caller
-            out.resize(static_cast<size_t>(rc));
-            result.plaintext = std::move(out);
-            result.outcome = LibreSCRS::Plugin::DecipherResultOutcome::Ok;
-            completed = true;
-        };
-        return verifyDepositedPinThenRun(session, *targetKey, operation);
+        return LibreSCRS::OpenSc::decipherRsaBound(session, *targetKey, ciphertext, result,
+                                                   [&](unsigned long flags, const std::uint8_t* in,
+                                                       std::size_t inLength, std::uint8_t* out, std::size_t outLength) {
+                                                       return sc_pkcs15_decipher(session.p15card, targetKey, flags, in,
+                                                                                 inLength, out, outLength, nullptr);
+                                                   });
     }
 
     // ECDH with the EC key at @p keyReference, TYPE-filtered like doSign: an
@@ -1627,8 +1467,9 @@ public:
                                           std::span<const std::uint8_t> peerPoint,
                                           LibreSCRS::Plugin::DecipherResult& result) const
     {
-        sc_pkcs15_object_t* keyObjs[8];
-        int keyCount = sc_pkcs15_get_objects(session.p15card, SC_PKCS15_TYPE_PRKEY, keyObjs, 8);
+        auto keyObjsAll = LibreSCRS::OpenSc::allObjectsOfType(session.p15card, SC_PKCS15_TYPE_PRKEY);
+        sc_pkcs15_object_t** keyObjs = keyObjsAll.data();
+        int keyCount = static_cast<int>(keyObjsAll.size());
         sc_pkcs15_object_t* targetKey =
             LibreSCRS::OpenSc::selectKeyByReferenceAndType(keyObjs, keyCount, keyReference, SC_PKCS15_TYPE_PRKEY_EC);
         if (!targetKey)
@@ -1642,29 +1483,6 @@ public:
                                                       return sc_pkcs15_derive(session.p15card, targetKey, flags, in,
                                                                               inLength, out, outLength);
                                                   });
-    }
-
-    std::vector<LibreSCRS::Plugin::KeyReference>
-    discoverKeyReferences(LibreSCRS::SmartCard::CardSession& cardSession) const override
-    {
-        std::vector<LibreSCRS::Plugin::KeyReference> result;
-        auto s = pinnedSession(cardSession);
-        if (!s)
-            return result;
-
-        (void)LibreSCRS::OpenSc::runUnderChannel(
-            cardSession, *s, LibreSCRS::CancelToken{}, [&](OpenSCSession& session) {
-                // All key families (RSA + EC alike) — the sign path's
-                // mechanism-family filter does the disambiguation at use time.
-                sc_pkcs15_object_t* keyObjs[8];
-                int keyCount = sc_pkcs15_get_objects(session.p15card, SC_PKCS15_TYPE_PRKEY, keyObjs, 8);
-
-                for (int i = 0; i < keyCount; ++i) {
-                    auto* keyInfo = static_cast<sc_pkcs15_prkey_info_t*>(keyObjs[i]->data);
-                    result.push_back({keyObjs[i]->label, static_cast<std::uint16_t>(keyInfo->key_reference)});
-                }
-            });
-        return result;
     }
 
     // The per-operation PIN seam (the PKCS#15 plugin's shape): a deposited

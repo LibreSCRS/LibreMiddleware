@@ -5,6 +5,7 @@
 
 #include <ber.h>
 
+#include <LibreSCRS_internal/Crypto/EcdsaSig.h>
 #include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
 
 #include <openssl/bn.h>
@@ -22,8 +23,6 @@ namespace pkcs15 {
 
 namespace {
 
-using LibreSCRS::Internal::Crypto::BnPtr;
-using LibreSCRS::Internal::Crypto::EcdsaSigPtr;
 using LibreSCRS::Internal::Crypto::EvpPkeyCtxPtr;
 using LibreSCRS::Internal::Crypto::X509Ptr;
 
@@ -127,25 +126,17 @@ bool ecdsaRawVerifiesWithCertificate(std::span<const std::uint8_t> certDer, std:
     // would verify all the same; the halves must be the curve's width.
     if (half != (EVP_PKEY_get_bits(publicKey) + 7) / 8)
         return false;
-    // The raw-to-DER step also exists in libresign (ecdsaRawToDer); the two
-    // libraries share no internal home, so it is repeated rather than linked.
-    BnPtr r(BN_bin2bn(rawRs.data(), half, nullptr));
-    BnPtr s(BN_bin2bn(rawRs.data() + half, half, nullptr));
-    const EcdsaSigPtr sig(ECDSA_SIG_new());
-    if (!r || !s || !sig || ECDSA_SIG_set0(sig.get(), r.get(), s.get()) != 1)
-        return false;
-    (void)r.release(); // owned by sig from here on
-    (void)s.release();
-    unsigned char* der = nullptr;
-    const int derLength = i2d_ECDSA_SIG(sig.get(), &der);
-    if (derLength <= 0)
+    std::vector<std::uint8_t> der;
+    try {
+        der = LibreSCRS::Internal::Crypto::ecdsaRawToDer(rawRs);
+    } catch (...) {
+        return false; // noexcept: an allocation failure is "does not verify"
+    }
+    if (der.empty())
         return false;
     const EvpPkeyCtxPtr ctx(EVP_PKEY_CTX_new(publicKey, nullptr));
-    const bool verified =
-        ctx && EVP_PKEY_verify_init(ctx.get()) == 1 &&
-        EVP_PKEY_verify(ctx.get(), der, static_cast<std::size_t>(derLength), hash.data(), hash.size()) == 1;
-    OPENSSL_free(der);
-    return verified;
+    return ctx && EVP_PKEY_verify_init(ctx.get()) == 1 &&
+           EVP_PKEY_verify(ctx.get(), der.data(), der.size(), hash.data(), hash.size()) == 1;
 }
 
 } // namespace pkcs15

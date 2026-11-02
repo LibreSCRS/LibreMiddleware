@@ -403,9 +403,6 @@ SigningResult JAdESModule::sign(const std::vector<uint8_t>& data, const std::str
         //       — error explicitly rather than fall through to fresh-sign
         //       (which would silently produce a single-signer JWS over the
         //       prior JSON bytes, erasing the prior signer's meaning).
-        //       A DETACHED-multi-sign API that supplies the original
-        //       alongside the prior signature is not exposed in this
-        //       release; see the public re-sign documentation for status.
         //
         // Recursion depth: bounded at 1 via a thread_local counter. The
         // inner sign() call is invoked with the decoded payload, which in
@@ -427,9 +424,8 @@ SigningResult JAdESModule::sign(const std::vector<uint8_t>& data, const std::str
             if (!hasPayload) {
                 return makeFailure(SignFailureKind::InvalidDocument,
                                    "JAdES DETACHED multi-sign cannot recover the original document from the prior "
-                                   "JWS (RFC 7797 §4.2 detached form omits the payload field). Pass the original "
-                                   "alongside the prior signature via SigningService::appendSigner (4.2 API), or "
-                                   "re-sign the original document separately as a fresh single-signer JWS.");
+                                   "JWS (RFC 7797 §4.2 detached form omits the payload field). Sign the original "
+                                   "document separately as a fresh single-signer JWS.");
             }
             std::string priorPayloadB64 = (*prior)["payload"].get<std::string>();
             std::vector<uint8_t> priorPayload = base64urlDecode(priorPayloadB64);

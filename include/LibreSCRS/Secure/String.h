@@ -75,9 +75,6 @@ namespace LibreSCRS::Secure {
 ///          constructing the @ref String.
 ///
 /// @note Comparison (@ref operator==) is byte-identity, not constant-time.
-///       Credential-equality checks on untrusted input should use
-///       @ref equalConstantTime — provided by this class — when timing
-///       side-channels matter to the deployment.
 ///
 /// @since 4.0
 class LIBRESCRS_PUBLIC_API String
@@ -185,32 +182,6 @@ public:
     /// @note C++20 synthesises @c operator!= from this declaration; no
     ///       hand-written inequality operator is required.
     [[nodiscard]] bool operator==(const String& other) const noexcept;
-
-    /// @brief Constant-time byte-identity comparison.
-    ///
-    /// Use when comparing user-supplied secrets (PIN candidate vs. expected
-    /// PIN, MAC tag vs. computed MAC, capability token vs. registered token)
-    /// against a stored reference, where the comparison runtime must not
-    /// vary with the position of the first differing byte. The
-    /// implementation runs in time proportional to @ref size of the longer
-    /// input regardless of how many leading bytes match. Inputs of unequal
-    /// size compare unequal but the routine still consumes the bytes of the
-    /// longer input to keep the timing profile stable across length
-    /// differences.
-    ///
-    /// @par Implementation
-    /// Uses OpenSSL's @c CRYPTO_memcmp internally. OpenSSL is a private LM
-    /// dependency already linked by the Secure target; the .cpp is the only
-    /// translation unit that pulls @c <openssl/crypto.h>, so consumers do
-    /// not see the dependency.
-    ///
-    /// @param other The reference @ref String to compare against.
-    /// @return @c true iff @c size() == other.size() AND every byte
-    ///         matches; @c false otherwise.
-    /// @note @c noexcept: no allocation, no exceptions thrown by
-    ///       @c CRYPTO_memcmp.
-    /// @since 4.0
-    [[nodiscard]] bool equalConstantTime(const String& other) const noexcept;
 
 private:
     struct Impl;

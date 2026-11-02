@@ -15,6 +15,8 @@
 #include <LibreSCRS/SmartCard/AppletAid.h>
 #include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
 
+#include "ScriptedPkcs15Card.h"
+
 #include <apdu.h>
 #include <pcsc_connection.h>
 
@@ -63,61 +65,15 @@ constexpr std::uint16_t kFidTokenInfo = 0x5032;
 // not a full profile.
 const std::vector<std::uint8_t> kEmptyOdf = {0x30, 0x00};
 
-// A scripted PKCS#15 card whose file tree is NOT flat: SELECT succeeds
-// only for a FID that is an actual child of whatever is currently
-// selected (0x3F00/MF is the universal root, always selectable). The
-// flat "any known FID selects regardless of context" scripted cards used
-// elsewhere in test/ cannot express this, and it is exactly the property
-// this test needs: EF.ODF (5031) must be reachable under 3F00/5015 but
-// NOT directly under 3F00, so the fixture's two AID-sharing entries are
-// actually distinguishable by verification rather than by luck.
-struct ScriptedProbeCard
-{
-    std::map<std::uint16_t, std::vector<std::uint8_t>> files;
-    // child FID -> required parent FID (absent from this map => never
-    // selectable, except 0x3F00, the hardcoded root).
-    std::map<std::uint16_t, std::uint16_t> parentOf;
-    bool selectAidSucceeds = false;
-
-    std::uint16_t selectedFid = 0;
-    std::vector<APDUCommand> log;
-
-    APDUResponse operator()(const APDUCommand& cmd)
-    {
-        log.push_back(cmd);
-
-        if (cmd.ins == 0xA4 && cmd.p1 == 0x04) // SELECT by AID
-            return selectAidSucceeds ? APDUResponse{{}, 0x90, 0x00} : APDUResponse{{}, 0x6A, 0x82};
-
-        if (cmd.ins == 0xA4 && cmd.p1 == 0x00 && cmd.data.size() == 2) { // SELECT by FID
-            const auto fid = static_cast<std::uint16_t>((cmd.data[0] << 8) | cmd.data[1]);
-            if (fid == kFidMf) {
-                selectedFid = fid;
-                return {{}, 0x90, 0x00};
-            }
-            const auto parentIt = parentOf.find(fid);
-            if (parentIt == parentOf.end() || parentIt->second != selectedFid)
-                return {{}, 0x6A, 0x82}; // not a child of wherever we currently are
-            selectedFid = fid;
-            return {{}, 0x90, 0x00};
-        }
-
-        if (cmd.ins == 0xB0) { // READ BINARY
-            const auto it = files.find(selectedFid);
-            if (it == files.end())
-                return {{}, 0x69, 0x86};
-            const std::size_t offset = (static_cast<std::size_t>(cmd.p1 & 0x7F) << 8) | cmd.p2;
-            if (offset >= it->second.size())
-                return {{}, 0x62, 0x82}; // EOF
-            const std::size_t n = std::min<std::size_t>(cmd.le != 0 ? cmd.le : 256, it->second.size() - offset);
-            std::vector<std::uint8_t> chunk(it->second.begin() + static_cast<std::ptrdiff_t>(offset),
-                                            it->second.begin() + static_cast<std::ptrdiff_t>(offset + n));
-            return {std::move(chunk), 0x90, 0x00};
-        }
-
-        return {{}, 0x6D, 0x00}; // anything else: instruction not supported
-    }
-};
+// The shared scripted card in its tree mode (parentOf set): SELECT succeeds
+// only for a FID that is an actual child of whatever is currently selected
+// (0x3F00/MF is the universal root, always selectable). The flat "any known
+// FID selects regardless of context" mode cannot express this, and it is
+// exactly the property this test needs: EF.ODF (5031) must be reachable
+// under 3F00/5015 but NOT directly under 3F00, so the fixture's two
+// AID-sharing entries are actually distinguishable by verification rather
+// than by luck.
+using ScriptedProbeCard = LibreSCRS::TestSupport::ScriptedPkcs15Card;
 
 bool isSelectFid(const APDUCommand& cmd, std::uint16_t fid)
 {

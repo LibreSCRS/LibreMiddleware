@@ -2,12 +2,12 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <LibreSCRS/SmartCard/MonitorService.h>
+#include <LibreSCRS/SmartCard/detail/MonitorInjection.h>
 
 #include <gtest/gtest.h>
 
 #include <atomic>
 #include <chrono>
-#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -17,6 +17,7 @@
 
 using LibreSCRS::SmartCard::MonitorEvent;
 using LibreSCRS::SmartCard::MonitorService;
+namespace detail = LibreSCRS::SmartCard::detail;
 
 namespace {
 
@@ -42,7 +43,7 @@ protected:
     {
         received.clear();
         service =
-            std::make_unique<MonitorService>(MonitorService::Config{.coalesceWindow = std::chrono::milliseconds(250)});
+            detail::makeMonitorWithConfig(detail::MonitorConfig{.coalesceWindow = std::chrono::milliseconds(250)});
         subId = service->subscribe([this](const MonitorEvent& ev) {
             if (!isSyntheticCardEvent(ev))
                 return;
@@ -62,7 +63,8 @@ protected:
     void emit(MonitorEvent::Kind kind, const std::string& reader)
     {
         MonitorEvent ev{kind, std::string(kSyntheticReaderPrefix) + reader, std::nullopt, std::nullopt};
-        service->publishForTest(ev); // test seam — exposes Impl::dispatch
+        // Through the callback the scan thread drives, so the full dispatch path runs.
+        ASSERT_TRUE(detail::publishForTest(*service, ev));
     }
 
     std::vector<MonitorEvent> snapshot()
@@ -71,7 +73,7 @@ protected:
         return received;
     }
 
-    std::unique_ptr<MonitorService> service;
+    std::shared_ptr<MonitorService> service;
     MonitorService::SubscriptionId subId{};
     std::mutex mtx;
     std::vector<MonitorEvent> received;
@@ -118,7 +120,7 @@ TEST_F(CoalescerHarness, ReaderRemovedEvictsCoalesceState)
     const std::string fullName = std::string(kSyntheticReaderPrefix) + "Vanishing Reader";
     emit(MonitorEvent::Kind::CardInserted, "Vanishing Reader");
 
-    const auto beforeSize = service->coalesceStateSizeForTest();
+    const auto beforeSize = detail::coalesceStateSizeForTest(*service);
     EXPECT_GE(beforeSize, 1u) << "CardInserted must populate coalesceState[Vanishing Reader]";
 
     // Drive the reader-list diff path: first announce the reader so it
@@ -127,10 +129,10 @@ TEST_F(CoalescerHarness, ReaderRemovedEvictsCoalesceState)
     // callback. The ReaderRemoved branch must erase the held entry under
     // coalesceMtx so coalesceState does not accumulate forever across
     // long-running sessions with USB reader churn.
-    service->publishReaderListForTest({fullName});
-    service->publishReaderListForTest({});
+    ASSERT_TRUE(detail::publishReaderListForTest(*service, {fullName}));
+    ASSERT_TRUE(detail::publishReaderListForTest(*service, {}));
 
-    EXPECT_LT(service->coalesceStateSizeForTest(), beforeSize)
+    EXPECT_LT(detail::coalesceStateSizeForTest(*service), beforeSize)
         << "ReaderRemoved must evict coalesceState[Vanishing Reader]";
 
     // And the held CardInserted must NOT surface after the original
@@ -144,10 +146,9 @@ TEST_F(CoalescerHarness, ReaderRemovedEvictsCoalesceState)
 
 TEST_F(CoalescerHarness, FloodTriggersBackoffWithWarning)
 {
-    setenv("LIBRESCRS_MONITOR_COALESCE_MS", "0", 1);
     service->unsubscribe(subId);
     service.reset();
-    service = std::make_unique<MonitorService>(MonitorService::Config{
+    service = detail::makeMonitorWithConfig(detail::MonitorConfig{
         .coalesceWindow = std::chrono::milliseconds(0),
         .maxEventsPerSecond = 5,
         .backoffOnFlood = std::chrono::milliseconds(500),
@@ -168,7 +169,6 @@ TEST_F(CoalescerHarness, FloodTriggersBackoffWithWarning)
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     EXPECT_LE(snapshot().size(), 6u) << "Flood detection must cap dispatched events near the threshold";
-    unsetenv("LIBRESCRS_MONITOR_COALESCE_MS");
 }
 
 // Regression for the OMNIKEY 5422 / dual-interface contactless race: such a
@@ -182,7 +182,7 @@ TEST_F(CoalescerHarness, TerminalCardInsertedSurvivesFloodBackoff)
 {
     service->unsubscribe(subId);
     service.reset();
-    service = std::make_unique<MonitorService>(MonitorService::Config{
+    service = detail::makeMonitorWithConfig(detail::MonitorConfig{
         .coalesceWindow = std::chrono::milliseconds(60),
         .maxEventsPerSecond = 4,
         .backoffOnFlood = std::chrono::milliseconds(120),
@@ -223,7 +223,7 @@ TEST_F(CoalescerHarness, HealthyReaderEventNotDelayedByOtherReadersFloodBackoff)
 {
     service->unsubscribe(subId);
     service.reset();
-    service = std::make_unique<MonitorService>(MonitorService::Config{
+    service = detail::makeMonitorWithConfig(detail::MonitorConfig{
         .coalesceWindow = std::chrono::milliseconds(60),
         .maxEventsPerSecond = 4,
         .backoffOnFlood = std::chrono::milliseconds(3000),
@@ -269,7 +269,7 @@ TEST_F(CoalescerHarness, TerminalCardRemovedSurvivesFloodBackoff)
 {
     service->unsubscribe(subId);
     service.reset();
-    service = std::make_unique<MonitorService>(MonitorService::Config{
+    service = detail::makeMonitorWithConfig(detail::MonitorConfig{
         .coalesceWindow = std::chrono::milliseconds(60),
         .maxEventsPerSecond = 5,
         .backoffOnFlood = std::chrono::milliseconds(120),
@@ -316,7 +316,7 @@ TEST_F(CoalescerHarness, FloodSettlingInKnownStateEmitsNothingOnReconcile)
 {
     service->unsubscribe(subId);
     service.reset();
-    service = std::make_unique<MonitorService>(MonitorService::Config{
+    service = detail::makeMonitorWithConfig(detail::MonitorConfig{
         .coalesceWindow = std::chrono::milliseconds(60),
         .maxEventsPerSecond = 5,
         .backoffOnFlood = std::chrono::milliseconds(120),
@@ -361,7 +361,7 @@ TEST_F(CoalescerHarness, ReconcileOrderingHoldsWhenCoalesceWindowExceedsBackoff)
 {
     service->unsubscribe(subId);
     service.reset();
-    service = std::make_unique<MonitorService>(MonitorService::Config{
+    service = detail::makeMonitorWithConfig(detail::MonitorConfig{
         .coalesceWindow = std::chrono::milliseconds(300),
         .maxEventsPerSecond = 4,
         .backoffOnFlood = std::chrono::milliseconds(120),
@@ -399,12 +399,11 @@ TEST_F(CoalescerHarness, ReconcileOrderingHoldsWhenCoalesceWindowExceedsBackoff)
     EXPECT_EQ(snap[1].kind, MonitorEvent::Kind::CardRemoved);
 }
 
-TEST_F(CoalescerHarness, EnvVarZeroDisablesCoalescing)
+TEST_F(CoalescerHarness, ZeroWindowDisablesCoalescing)
 {
-    setenv("LIBRESCRS_MONITOR_COALESCE_MS", "0", 1);
     service->unsubscribe(subId);
     service.reset();
-    service = std::make_unique<MonitorService>(MonitorService::Config::fromEnv());
+    service = detail::makeMonitorWithConfig(detail::MonitorConfig{.coalesceWindow = std::chrono::milliseconds(0)});
     subId = service->subscribe([this](const MonitorEvent& ev) {
         if (!isSyntheticCardEvent(ev))
             return;
@@ -416,8 +415,7 @@ TEST_F(CoalescerHarness, EnvVarZeroDisablesCoalescing)
     emit(MonitorEvent::Kind::CardRemoved, "Phantom Reader");
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    EXPECT_EQ(snapshot().size(), 2u) << "Env override = 0 must disable coalescing for diagnosis";
-    unsetenv("LIBRESCRS_MONITOR_COALESCE_MS");
+    EXPECT_EQ(snapshot().size(), 2u) << "A zero window must disable coalescing";
 }
 
 } // namespace

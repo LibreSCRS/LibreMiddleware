@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 #
 # Sites that release a BIGNUM through plain BN_free on purpose. One path:line
-# per entry, then the reason. check-cleansing-deleters.sh skips exactly those
-# lines in its fourth clause and fails on an entry whose file is untracked or
-# whose line no longer matches, so an amnesty cannot outlive the site it was
-# written for.
+# per entry, then the reason. The shared check-cleansing-deleters gate skips
+# exactly those lines in its fourth clause and fails on an entry whose file is
+# untracked or whose line no longer matches, so an amnesty cannot outlive the
+# site it was written for.
 #
 # The line number is half the entry. Excusing a path would hand the amnesty to
 # every deleter written in that file afterwards, and the ones written next are

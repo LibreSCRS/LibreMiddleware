@@ -10,24 +10,34 @@
 
 #include "native/signing_key.h"
 #include "native/signing_provider.h"
+#include "native/signing_provider_keymgmt.h"
 #include "signing_keys.h"
 #include "types.h"
 
+#include <LibreSCRS/Logging.h>
 #include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
 
+#include <openssl/core_dispatch.h>
+#include <openssl/core_names.h>
 #include <openssl/evp.h>
+#include <openssl/params.h>
 #include <openssl/x509.h>
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
 
 using LibreSCRS::Internal::Crypto::EvpMdCtxPtr;
+using LibreSCRS::Internal::Crypto::EvpPkeyCtxPtr;
 using LibreSCRS::Internal::Crypto::EvpPkeyPtr;
 using LibreSCRS::Internal::Crypto::X509Ptr;
 
@@ -117,6 +127,70 @@ TEST(SigningProviderKeymgmtTest, KeysFailureIsKeptForTheCaller)
     } catch (...) {
         ADD_FAILURE() << "the kept failure is not the key's typed one";
     }
+}
+
+// A key imported without a failure slot has nowhere to keep its failure for a
+// caller; what it threw then goes to the host's log sink, not to stderr.
+TEST(SigningProviderKeymgmtTest, AFailureWithNowhereToGoIsLogged)
+{
+    std::vector<std::pair<LibreSCRS::log::Level, std::string>> lines;
+    struct SinkReset
+    {
+        ~SinkReset()
+        {
+            LibreSCRS::log::resetForTest();
+        }
+    } sinkReset;
+    LibreSCRS::log::init(
+        [&](LibreSCRS::log::Level level, std::string_view line) { lines.emplace_back(level, std::string(line)); },
+        "test.signing.provider");
+
+    RefusingKey key;
+    const auto cert = parseCert(key.certificate());
+    ASSERT_NE(cert, nullptr);
+    libresign::SigningProviderLease provider;
+
+    // createSigningEvpKey's import, minus the failure slot.
+    libresign::detail::ProviderKeyData pub;
+    libresign::detail::populateKeyDataFromPkey(pub, X509_get0_pubkey(cert.get()));
+    ASSERT_TRUE(pub.keyType == EVP_PKEY_RSA || pub.keyType == EVP_PKEY_EC);
+    EvpPkeyCtxPtr pctx(
+        EVP_PKEY_CTX_new_from_name(nullptr, pub.keyType == EVP_PKEY_RSA ? "RSA" : "EC", "provider=librescrs"));
+    ASSERT_NE(pctx, nullptr);
+    void* keyPtr = static_cast<libresign::SigningKey*>(&key);
+    int keyType = pub.keyType;
+    int keyBits = pub.keyBits;
+    std::vector<OSSL_PARAM> params;
+    params.push_back(OSSL_PARAM_construct_octet_ptr(libresign::detail::kParamTokenPtr, &keyPtr, sizeof(void*)));
+    params.push_back(OSSL_PARAM_construct_int("librescrs-key-type", &keyType));
+    params.push_back(OSSL_PARAM_construct_int(OSSL_PKEY_PARAM_BITS, &keyBits));
+    if (keyType == EVP_PKEY_RSA) {
+        params.push_back(OSSL_PARAM_construct_BN(OSSL_PKEY_PARAM_RSA_N, pub.rsaN.data(), pub.rsaN.size()));
+        params.push_back(OSSL_PARAM_construct_BN(OSSL_PKEY_PARAM_RSA_E, pub.rsaE.data(), pub.rsaE.size()));
+    } else {
+        params.push_back(
+            OSSL_PARAM_construct_utf8_string(OSSL_PKEY_PARAM_GROUP_NAME, pub.ecGroup.data(), pub.ecGroup.size()));
+        params.push_back(
+            OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PUB_KEY, pub.ecPub.data(), pub.ecPub.size()));
+    }
+    params.push_back(OSSL_PARAM_construct_end());
+    ASSERT_EQ(EVP_PKEY_fromdata_init(pctx.get()), 1);
+    EVP_PKEY* raw = nullptr;
+    ASSERT_EQ(EVP_PKEY_fromdata(pctx.get(), &raw, OSSL_KEYMGMT_SELECT_ALL, params.data()), 1);
+    EvpPkeyPtr pkey(raw);
+
+    const std::vector<std::uint8_t> data{'s', 'i', 'g', 'n', ' ', 'm', 'e'};
+    EvpMdCtxPtr signCtx(EVP_MD_CTX_new());
+    ASSERT_EQ(EVP_DigestSignInit(signCtx.get(), nullptr, EVP_sha256(), nullptr, pkey.get()), 1);
+    std::vector<unsigned char> sig(512);
+    std::size_t sigLen = sig.size();
+    EXPECT_NE(EVP_DigestSign(signCtx.get(), sig.data(), &sigLen, data.data(), data.size()), 1);
+
+    const bool logged = std::any_of(lines.begin(), lines.end(), [](const auto& entry) {
+        return entry.first == LibreSCRS::log::Level::Error &&
+               entry.second.find("the card refused the PIN") != std::string::npos;
+    });
+    EXPECT_TRUE(logged) << lines.size() << " line(s) captured";
 }
 
 TEST(SigningProviderKeymgmtTest, NullCertThrows)

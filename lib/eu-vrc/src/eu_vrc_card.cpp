@@ -13,6 +13,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -266,75 +267,78 @@ void collectNationalTags(const LibreSCRS::SmartCard::Internal::BERField& contain
 
 EuVrcData extractFields(const LibreSCRS::SmartCard::Internal::BERField& root)
 {
+    using namespace protocol;
+    const auto field = [&root](std::initializer_list<uint32_t> path) {
+        return LibreSCRS::SmartCard::Internal::berFindString(root, path);
+    };
     EuVrcData data;
 
-    // Metadata (can be in either 71 or 72)
-    data.version = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x80});
-    data.memberState = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x9F33});
-    data.competentAuthority = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x9F35});
-    data.issuingAuthority = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x9F36});
-    data.documentNumber = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x9F38});
-    data.previousDocument = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x9F34});
+    // Metadata
+    data.version = field({TAG_MANDATORY_CONTAINER, TAG_VERSION});
+    data.memberState = field({TAG_MANDATORY_CONTAINER, TAG_MEMBER_STATE});
+    data.competentAuthority = field({TAG_MANDATORY_CONTAINER, TAG_COMPETENT_AUTH});
+    data.issuingAuthority = field({TAG_MANDATORY_CONTAINER, TAG_ISSUING_AUTH});
+    data.documentNumber = field({TAG_MANDATORY_CONTAINER, TAG_DOC_NUMBER});
+    data.previousDocument = field({TAG_MANDATORY_CONTAINER, TAG_PREVIOUS_DOC});
 
     // EU mandatory (tag 71)
-    data.registrationNumber = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x81});
-    data.firstRegistration = formatVrcDate(LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x82}));
-    data.holderName = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA1, 0xA2, 0x83});
-    data.holderOtherNames = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA1, 0xA2, 0x84});
-    data.holderAddress = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA1, 0xA2, 0x85});
-    data.ownershipStatus = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x86});
-    data.vehicleMake = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA3, 0x87});
-    data.vehicleType = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA3, 0x88});
-    data.commercialDesc = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA3, 0x89});
-    data.vin = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x8A});
-    data.maxLadenMass = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA4, 0x8B});
-    data.vehicleMass = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x8C});
-    data.expiryDate = formatVrcDate(LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x8D}));
-    data.registrationDate = formatVrcDate(LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x8E}));
-    data.typeApproval = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x8F});
-    data.engineCapacity = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA5, 0x90});
-    data.maxNetPower = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA5, 0x91});
-    data.fuelType = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA5, 0x92});
-    data.powerWeightRatio = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0x93});
-    data.numberOfSeats = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA6, 0x94});
-    data.standingPlaces = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA6, 0x95});
+    data.registrationNumber = field({TAG_MANDATORY_CONTAINER, TAG_REG_NUMBER});
+    data.firstRegistration = formatVrcDate(field({TAG_MANDATORY_CONTAINER, TAG_FIRST_REG}));
+    data.holderName = field({TAG_MANDATORY_CONTAINER, TAG_PERSONAL_DATA, TAG_REG_HOLDER, TAG_NAME});
+    data.holderOtherNames = field({TAG_MANDATORY_CONTAINER, TAG_PERSONAL_DATA, TAG_REG_HOLDER, TAG_OTHER_NAMES});
+    data.holderAddress = field({TAG_MANDATORY_CONTAINER, TAG_PERSONAL_DATA, TAG_REG_HOLDER, TAG_ADDRESS});
+    data.ownershipStatus = field({TAG_MANDATORY_CONTAINER, TAG_OWNERSHIP_STATUS});
+    data.vehicleMake = field({TAG_MANDATORY_CONTAINER, TAG_VEHICLE_DATA, TAG_VEHICLE_MAKE});
+    data.vehicleType = field({TAG_MANDATORY_CONTAINER, TAG_VEHICLE_DATA, TAG_VEHICLE_TYPE});
+    data.commercialDesc = field({TAG_MANDATORY_CONTAINER, TAG_VEHICLE_DATA, TAG_COMMERCIAL_DESC});
+    data.vin = field({TAG_MANDATORY_CONTAINER, TAG_VIN});
+    data.maxLadenMass = field({TAG_MANDATORY_CONTAINER, TAG_MASS_DATA, TAG_MAX_LADEN_MASS});
+    data.vehicleMass = field({TAG_MANDATORY_CONTAINER, TAG_VEHICLE_MASS});
+    data.expiryDate = formatVrcDate(field({TAG_MANDATORY_CONTAINER, TAG_EXPIRY}));
+    data.registrationDate = formatVrcDate(field({TAG_MANDATORY_CONTAINER, TAG_REG_DATE}));
+    data.typeApproval = field({TAG_MANDATORY_CONTAINER, TAG_TYPE_APPROVAL});
+    data.engineCapacity = field({TAG_MANDATORY_CONTAINER, TAG_ENGINE_DATA, TAG_ENGINE_CAPACITY});
+    data.maxNetPower = field({TAG_MANDATORY_CONTAINER, TAG_ENGINE_DATA, TAG_MAX_NET_POWER});
+    data.fuelType = field({TAG_MANDATORY_CONTAINER, TAG_ENGINE_DATA, TAG_FUEL_TYPE});
+    data.powerWeightRatio = field({TAG_MANDATORY_CONTAINER, TAG_POWER_WEIGHT});
+    data.numberOfSeats = field({TAG_MANDATORY_CONTAINER, TAG_SEATING_DATA, TAG_NUM_SEATS});
+    data.standingPlaces = field({TAG_MANDATORY_CONTAINER, TAG_SEATING_DATA, TAG_STANDING_PLACES});
 
     // EU optional (tag 72)
-    data.maxLadenMassService = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0xA4, 0x96});
-    data.maxLadenMassWhole = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0xA4, 0x97});
-    data.vehicleCategory = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x98});
-    data.numberOfAxles = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x99});
-    data.wheelbase = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9A});
-    data.brakedTrailerMass = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9B});
-    data.unbrakedTrailerMass = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9C});
-    data.ratedEngineSpeed = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0xA5, 0x9D});
-    data.engineIdNumber = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0xA5, 0x9E});
-    data.colour = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9F24});
-    data.maxSpeed = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9F25});
-    data.stationarySoundLevel = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9F26});
-    data.engineSpeedRef = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9F27});
-    data.driveBySound = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9F28});
-    data.fuelConsumption = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9F2F});
-    data.co2 = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9F30});
-    data.envCategory = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9F31});
-    data.fuelTankCapacity = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0x9F32});
+    data.maxLadenMassService = field({TAG_OPTIONAL_CONTAINER, TAG_MASS_DATA, TAG_MAX_LADEN_SERVICE});
+    data.maxLadenMassWhole = field({TAG_OPTIONAL_CONTAINER, TAG_MASS_DATA, TAG_MAX_LADEN_WHOLE});
+    data.vehicleCategory = field({TAG_OPTIONAL_CONTAINER, TAG_VEHICLE_CATEGORY});
+    data.numberOfAxles = field({TAG_OPTIONAL_CONTAINER, TAG_NUM_AXLES});
+    data.wheelbase = field({TAG_OPTIONAL_CONTAINER, TAG_WHEELBASE});
+    data.brakedTrailerMass = field({TAG_OPTIONAL_CONTAINER, TAG_BRAKED_TRAILER});
+    data.unbrakedTrailerMass = field({TAG_OPTIONAL_CONTAINER, TAG_UNBRAKED_TRAILER});
+    data.ratedEngineSpeed = field({TAG_OPTIONAL_CONTAINER, TAG_ENGINE_DATA, TAG_RATED_ENGINE_SPEED});
+    data.engineIdNumber = field({TAG_OPTIONAL_CONTAINER, TAG_ENGINE_DATA, TAG_ENGINE_ID});
+    data.colour = field({TAG_OPTIONAL_CONTAINER, TAG_COLOUR});
+    data.maxSpeed = field({TAG_OPTIONAL_CONTAINER, TAG_MAX_SPEED});
+    data.stationarySoundLevel = field({TAG_OPTIONAL_CONTAINER, TAG_STATIONARY_SOUND});
+    data.engineSpeedRef = field({TAG_OPTIONAL_CONTAINER, TAG_ENGINE_SPEED_REF});
+    data.driveBySound = field({TAG_OPTIONAL_CONTAINER, TAG_DRIVEBY_SOUND});
+    data.fuelConsumption = field({TAG_OPTIONAL_CONTAINER, TAG_FUEL_CONSUMPTION});
+    data.co2 = field({TAG_OPTIONAL_CONTAINER, TAG_CO2});
+    data.envCategory = field({TAG_OPTIONAL_CONTAINER, TAG_ENV_CATEGORY});
+    data.fuelTankCapacity = field({TAG_OPTIONAL_CONTAINER, TAG_FUEL_TANK_CAPACITY});
 
     // Owner2 (C.2)
-    data.owner2Name = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA1, 0xA7, 0x83});
+    data.owner2Name = field({TAG_MANDATORY_CONTAINER, TAG_PERSONAL_DATA, TAG_VEHICLE_OWNER, TAG_NAME});
 
     // User (C.3) — try 71 first, fallback to 72
-    data.userName = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA1, 0xA9, 0x83});
-    data.userOtherNames = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA1, 0xA9, 0x84});
-    data.userAddress = LibreSCRS::SmartCard::Internal::berFindString(root, {0x71, 0xA1, 0xA9, 0x85});
-    if (data.userName.empty() && data.userOtherNames.empty() && data.userAddress.empty()) {
-        data.userName = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0xA1, 0xA9, 0x83});
-        data.userOtherNames = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0xA1, 0xA9, 0x84});
-        data.userAddress = LibreSCRS::SmartCard::Internal::berFindString(root, {0x72, 0xA1, 0xA9, 0x85});
+    for (const auto container : {TAG_MANDATORY_CONTAINER, TAG_OPTIONAL_CONTAINER}) {
+        data.userName = field({container, TAG_PERSONAL_DATA, TAG_USER, TAG_NAME});
+        data.userOtherNames = field({container, TAG_PERSONAL_DATA, TAG_USER, TAG_OTHER_NAMES});
+        data.userAddress = field({container, TAG_PERSONAL_DATA, TAG_USER, TAG_ADDRESS});
+        if (!data.userName.empty() || !data.userOtherNames.empty() || !data.userAddress.empty())
+            break;
     }
 
     // National extensions — tags >= 0xC0, search recursively in both 71 and 72 containers
     for (const auto& child : root.children) {
-        if (child.tag == 0x71 || child.tag == 0x72) {
+        if (child.tag == TAG_MANDATORY_CONTAINER || child.tag == TAG_OPTIONAL_CONTAINER) {
             collectNationalTags(child, data);
         }
     }

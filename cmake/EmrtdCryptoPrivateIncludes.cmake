@@ -21,10 +21,9 @@ set(LIBRESCRS_EMRTD_CRYPTO_PRIVATE_INCLUDES
     # SecureChannel public + internal headers —
     # included via direct path rather than `LibreSCRS_SecureChannel` link to
     # avoid a circular target dependency: LibreSCRS_SecureChannel privately
-    # links EMRTDCrypto for the BAC/PACE/CA protocol implementations. A
-    # static<->static cycle is permitted, but a SHARED LibreSCRS_SecureChannel
-    # cycle fails at generate time (LIBREMIDDLEWARE_BUILD_SHARED=ON / LibreKDE
-    # consumer mode). All downstream targets that link EMRTDCrypto also link
+    # links EMRTDCrypto for the BAC/PACE/CA protocol implementations, and a
+    # cycle through the SHARED LibreSCRS_SecureChannel fails at generate time.
+    # All downstream targets that link EMRTDCrypto also link
     # LibreSCRS_SecureChannel directly, so no transitive surface is lost.
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/lib/SecureChannel/include

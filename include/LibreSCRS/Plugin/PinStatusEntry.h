@@ -41,7 +41,7 @@ enum class PinState : std::uint8_t {
     Transport,   ///< Transport value set at issuance; not yet personalized.
     Operational, ///< Initialized and usable.
     NeedsChange, ///< Card signals the PIN must be changed before use.
-    Blocked,     ///< Retry counter exhausted. Invariant: state==Blocked ⇔ blocked==true.
+    Blocked,     ///< Retry counter exhausted.
 };
 
 /// @brief How a PUK-based unblock behaves on this credential.
@@ -66,9 +66,9 @@ enum class PinRecovery : std::uint8_t {
 
 /// @brief Per-PIN state entry returned by @ref CardPlugin::getPINList.
 ///
-/// Plugins MUST populate @ref unblockable accurately: when @ref blocked is true
-/// and @ref unblockable is false, the host should surface
-/// @ref blockedGuidance rather than offering a PUK-unblock action.
+/// Plugins MUST populate @ref unblockable accurately: when @ref state is
+/// @ref PinState::Blocked and @ref unblockable is false, the host should
+/// surface @ref blockedGuidance rather than offering a PUK-unblock action.
 struct PinStatusEntry
 {
     /// @brief Plugin-defined label, used as the pinLabel in change/unblock flows.
@@ -77,10 +77,6 @@ struct PinStatusEntry
     std::uint8_t reference = 0;
     /// @brief Remaining PIN retry count; @c std::nullopt when unknown.
     std::optional<int> retriesLeft;
-    /// @brief True when the PIN has been initialised on-card.
-    bool initialized = true;
-    /// @brief True when the PIN is currently blocked.
-    bool blocked = false;
     /// @brief Enforced minimum length; @c std::nullopt when unknown.
     std::optional<std::size_t> minLength;
     /// @brief Enforced maximum length; @c std::nullopt when unknown.
@@ -97,13 +93,12 @@ struct PinStatusEntry
 
     /// @brief True when the plugin supports PUK-based unblock for this PIN.
     bool unblockable = false;
-    /// @brief Optional message displayed when @ref blocked is true and unblock is unavailable.
+    /// @brief Optional message displayed when the PIN is blocked and unblock is unavailable.
     std::optional<LocalizedText> blockedGuidance;
 
     /// @brief Credential classification (conservative default Unknown).
     PinKind kind = PinKind::Unknown;
-    /// @brief Objective lifecycle state. Invariants: Blocked ⇔ @ref blocked;
-    ///        Transport ⇒ !@ref initialized on transport-capable families.
+    /// @brief Objective lifecycle state.
     PinState state = PinState::Unknown;
     /// @brief Maximum retry count (family knowledge); @c nullopt when unknown.
     std::optional<int> retriesMax;

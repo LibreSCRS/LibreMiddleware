@@ -15,8 +15,10 @@
 #   4  one of them carries ::Impl::       -> 1, and the symbol is named
 #   5  the core libraries are gone        -> 2, and the message names the count
 #   6  one of them carries ::Impl_::      -> 1, and the symbol is named
-#   7  an allowance that matches nothing  -> 1, and the row is named
-#   8  an allowance missing a field       -> 2
+#   7  static archives instead of the core libraries -> 2, and the message
+#      names the count
+#  20  a core library exports a standard-library template instantiated on a
+#      LibreSCRS type -> 1, and the symbol is named
 #
 # Case 6 is why cases 3 and 4 are not enough. Until this file was written the
 # rule matched the demangled segment `::Impl::`, so renaming the pimpl to `Impl_`
@@ -56,15 +58,14 @@ red=0
 fail=0
 
 # A build tree whose file names and counts are exactly what the gate expects of
-# a shared build: seven core libraries, a plugin and the PKCS#11 module.
+# a shared build: seven core libraries and a plugin.
 make_tree() {
     root="$1"
-    mkdir -p "$root/lib/LibreSCRS" "$root/plugins" "$root/lib/pkcs11"
+    mkdir -p "$root/lib/LibreSCRS" "$root/plugins"
     for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
         : > "$root/lib/LibreSCRS/libLibreSCRS_$module.so"
     done
     : > "$root/plugins/libselftest-plugin.so"
-    : > "$root/lib/pkcs11/librescrs-pkcs11.so"
 }
 
 # PATH holding every tool the gate uses except the one named. Building it from
@@ -187,12 +188,11 @@ fi
 # else, and on Linux the recorded surface lists exactly that.
 pcsc_tree() {
     root="$1"
-    mkdir -p "$root/lib/LibreSCRS" "$root/plugins" "$root/lib/pkcs11"
+    mkdir -p "$root/lib/LibreSCRS" "$root/plugins"
     for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
         command cp -f "$pcsc_src/plain.$pcsc_ext" "$root/lib/LibreSCRS/libLibreSCRS_$module.$pcsc_ext"
     done
     command cp -f "$pcsc_src/plain.$pcsc_ext" "$root/plugins/libfixture-plugin.$pcsc_ext"
-    command cp -f "$pcsc_src/plain.$pcsc_ext" "$root/lib/pkcs11/librescrs-pkcs11.$pcsc_ext"
 }
 pcsc_surface="$WORK/pcsc-surface.txt"
 if [ "$pcsc_host" != "Darwin" ]; then
@@ -398,7 +398,6 @@ for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
     command cp -f "$src/clean.so" "$tree3/lib/LibreSCRS/libLibreSCRS_$module.so"
 done
 command cp -f "$src/clean.so" "$tree3/plugins/libselftest-plugin.so"
-command cp -f "$src/clean.so" "$tree3/lib/pkcs11/librescrs-pkcs11.so"
 out="$(bash "$GATE" "$tree3" 2>&1)"; rc=$?
 report 3 0 "$rc" "Impl visibility clean" "$out"
 
@@ -421,61 +420,123 @@ for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
     command cp -f "$src/clean.so" "$tree6/lib/LibreSCRS/libLibreSCRS_$module.so"
 done
 command cp -f "$src/clean.so" "$tree6/plugins/libselftest-plugin.so"
-command cp -f "$src/clean.so" "$tree6/lib/pkcs11/librescrs-pkcs11.so"
 command cp -f "$src/leak_.so" "$tree6/lib/LibreSCRS/libLibreSCRS_Signing.so"
 out="$(bash "$GATE" "$tree6" 2>&1)"; rc=$?
 report 6 1 "$rc" "LibreSCRS::Selftest::Impl_::step(int)" "$out"
 
-# --- cases 7 and 8: the allowances of the static-archive pass ----------------
-# The four inline `grep -v` lines these rows replaced could not fail: when the
-# symbol one of them excused disappeared, the line kept passing. A row that
-# matches nothing does not.
+# --- case 7: archives where the core libraries should be --------------------
+# The libraries are shared and nothing else; there is no static configuration
+# to judge. A tree holding libLibreSCRS_*.a archives in place of the seven core
+# .so files is a build this gate cannot speak for, and saying "clean" over it
+# would certify a surface nobody ships.
 ar_src="$WORK/ar"
 mkdir -p "$ar_src"
-cat > "$ar_src/residual.cpp" <<'CPP'
+cat > "$ar_src/archived.cpp" <<'CPP'
 namespace LibreSCRS { namespace Selftest {
 struct Keeper { int hold(int x); };
 int Keeper::hold(int x) { return x - 1; }
 } }
 CPP
-if ! g++ -c -fPIC -o "$ar_src/residual.o" "$ar_src/residual.cpp" 2>>"$WORK/gcc.err"; then
+if ! g++ -c -fPIC -o "$ar_src/archived.o" "$ar_src/archived.cpp" 2>>"$WORK/gcc.err"; then
     echo "FATAL: could not compile the archive fixture" >&2
     exit 2
 fi
 tree7="$WORK/tree-static"
-mkdir -p "$tree7/lib/LibreSCRS" "$tree7/plugins" "$tree7/lib/pkcs11"
+mkdir -p "$tree7/lib/LibreSCRS" "$tree7/plugins"
 for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
-    ar rcs "$tree7/lib/LibreSCRS/libLibreSCRS_$module.a" "$ar_src/residual.o" 2>/dev/null
+    ar rcs "$tree7/lib/LibreSCRS/libLibreSCRS_$module.a" "$ar_src/archived.o" 2>/dev/null
 done
+if ! nm "$tree7/lib/LibreSCRS/libLibreSCRS_Trust.a" | c++filt | grep -qF 'LibreSCRS::Selftest::Keeper::hold'; then
+    echo "FATAL: the archives carry no symbol -- the case would pass on an empty tree" >&2
+    exit 2
+fi
 command cp -f "$src/clean.so" "$tree7/plugins/libselftest-plugin.so"
-command cp -f "$src/clean.so" "$tree7/lib/pkcs11/librescrs-pkcs11.so"
-
-stale="$WORK/residuals-stale.txt"
-printf '%s\n' \
-  "libLibreSCRS_Trust.a  LibreSCRS::Selftest::LongGone::Impl::  a reason for a symbol no archive carries" \
-  > "$stale"
-out="$(LIBRESCRS_IMPL_RESIDUALS="$stale" bash "$GATE" "$tree7" 2>&1)"; rc=$?
-report 7 1 "$rc" "STALE" "$out"
-
-short="$WORK/residuals-short.txt"
-printf '%s\n' "libLibreSCRS_Trust.a  LibreSCRS::Selftest::Keeper::hold" > "$short"
-out="$(LIBRESCRS_IMPL_RESIDUALS="$short" bash "$GATE" "$tree7" 2>&1)"; rc=$?
-report 8 2 "$rc" "all three fields" "$out"
+out="$(bash "$GATE" "$tree7" 2>&1)"; rc=$?
+report 7 2 "$rc" "found 0" "$out"
 
 # --- case 9: the same spelling, in the half of the surface the modules are ----
 # Case 6 puts the leak in a CORE library, where the recorded surface catches it
-# whatever it is called. The plugin and pkcs11 pass is a different rule over a
-# different table, and it read `::Impl::` literally: a module exporting
-# `Impl_::step` was reported clean. librescrs-pkcs11.so is in that half.
+# whatever it is called. The plugin pass is a different rule over a different
+# table, and it read `::Impl::` literally: a plugin exporting `Impl_::step`
+# was reported clean.
 tree9="$WORK/tree-plugin-underscore"
 make_tree "$tree9"
 for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
     command cp -f "$src/clean.so" "$tree9/lib/LibreSCRS/libLibreSCRS_$module.so"
 done
-command cp -f "$src/clean.so" "$tree9/lib/pkcs11/librescrs-pkcs11.so"
 command cp -f "$src/leak_.so" "$tree9/plugins/libselftest-plugin.so"
 out="$(bash "$GATE" "$tree9" 2>&1)"; rc=$?
 report 9 1 "$rc" "LibreSCRS::Selftest::Impl_::step(int)" "$out"
+
+# --- case 21: a weak export of an internal entity ----------------------------
+# A lambda or an inline function under Internal:: that the linker exported
+# weak: the next library instantiating the same name binds to whichever copy
+# loaded first. Plugin.so and Signing.so once exported the call_once lambda of
+# an Internal:: helper exactly so.
+cat > "$src/weak.cpp" <<'CPP'
+namespace LibreSCRS { namespace Internal {
+inline int onceHelper(int x) { static int calls = 0; return x + ++calls; }
+} namespace Selftest {
+int usesIt(int x) { return LibreSCRS::Internal::onceHelper(x); }
+} }
+CPP
+g++ -shared -fPIC -o "$src/weak.so" "$src/weak.cpp" 2>>"$WORK/gcc.err" \
+    || { echo "FATAL: could not compile the weak-internal fixture" >&2; exit 2; }
+if ! nm -D -U "$src/weak.so" | awk '$2 == "W" || $2 == "u" { print $3 }' | c++filt | grep -qF '::Internal::'; then
+    echo "FATAL: the weak fixture exports no weak Internal:: symbol -- nothing to detect" >&2
+    exit 2
+fi
+tree21="$WORK/tree-weak-internal"
+make_tree "$tree21"
+for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
+    command cp -f "$src/clean.so" "$tree21/lib/LibreSCRS/libLibreSCRS_$module.so"
+done
+command cp -f "$src/weak.so" "$tree21/plugins/libselftest-plugin.so"
+out="$(bash "$GATE" "$tree21" 2>&1)"; rc=$?
+report 21 1 "$rc" "LibreSCRS::Internal::onceHelper" "$out"
+
+# --- case 20: a standard-library template on a LibreSCRS type ---------------
+# The export version script once promoted every symbol whose demangled name
+# mentions `LibreSCRS::`, so `std::__detail::_Map_base<..., SourceStatus>::
+# operator[]` left libLibreSCRS_Trust.so as a weak export. The internal-entity
+# rule above reads `[A-Za-z0-9]_detail::` and never matched `std::__detail`;
+# measured against the gate as it was: exit 0 on exactly this tree. The
+# fixture keeps the clean library's T-binding symbols, so the surface rule has
+# nothing to say and only the weak export can fail the case.
+cat > "$src/stdweak.cpp" <<'CPP'
+#include <unordered_map>
+namespace LibreSCRS { namespace Selftest {
+enum class Status { Fresh, Stale };
+struct Body { int step(int x); };
+int Body::step(int x)
+{
+    static std::unordered_map<int, Status> seen;
+    return x + 1 + static_cast<int>(seen[x]);
+}
+int alpha(int x) { return Body{}.step(x); }
+} }
+CPP
+g++ -shared -fPIC -o "$src/stdweak.so" "$src/stdweak.cpp" 2>>"$WORK/gcc.err" \
+    || { echo "FATAL: could not compile the standard-library fixture" >&2; exit 2; }
+if ! nm -D -U "$src/stdweak.so" | awk '$2 == "W" { print $3 }' | c++filt \
+        | grep -qF 'std::__detail::_Map_base<'; then
+    echo "FATAL: the fixture exports no weak std::__detail symbol -- nothing to detect" >&2
+    exit 2
+fi
+if ! cmp -s <(nm -D -U "$src/clean.so" | awk '$2 == "T" { print $3 }' | sort) \
+            <(nm -D -U "$src/stdweak.so" | awk '$2 == "T" { print $3 }' | sort); then
+    echo "FATAL: the fixture's T-binding symbols differ from the surface -- the case would fail for that" >&2
+    exit 2
+fi
+tree20="$WORK/tree-std-weak"
+make_tree "$tree20"
+for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
+    command cp -f "$src/clean.so" "$tree20/lib/LibreSCRS/libLibreSCRS_$module.so"
+done
+command cp -f "$src/clean.so" "$tree20/plugins/libselftest-plugin.so"
+command cp -f "$src/stdweak.so" "$tree20/lib/LibreSCRS/libLibreSCRS_Trust.so"
+out="$(bash "$GATE" "$tree20" 2>&1)"; rc=$?
+report 20 1 "$rc" "  std::__detail::_Map_base<" "$out"
 
 printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
 [ "$fail" = 0 ]

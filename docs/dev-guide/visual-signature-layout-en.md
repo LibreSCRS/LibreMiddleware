@@ -59,6 +59,10 @@ neatly.
 | `kAppearanceTextMargin` | 4.0 pt | Inset on every edge of the box |
 | `kAppearanceLineLeading` | 1.2× | `lineHeight = fontSize × this` |
 
+Only `kFloorAppearanceFontSize` and `kAppearanceLineLeading` are public
+(`VisualSignatureLayout.h`); the ceiling and the inset are internal to the
+signing engine.
+
 ## Edge-case behaviour
 
 | Input | Behaviour |

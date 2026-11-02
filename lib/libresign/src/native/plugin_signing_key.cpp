@@ -2,8 +2,10 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "native/plugin_signing_key.h"
+#include "native/native_utils.h"
 
 #include <LibreSCRS/Plugin/CardPlugin.h>
+#include <LibreSCRS/Plugin/PinDeposit.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 
 #include <algorithm>
@@ -51,39 +53,6 @@ std::optional<RequestedMechanism> requestedMechanismFor(std::string_view algorit
     return std::nullopt;
 }
 
-// Erases the deposited PIN on the way out unless keep() was called: the PIN
-// of a per-operation key never outlives its signature, and an ordinary key's
-// only outlives a successful one. Armed before the deposit, so a deposit that
-// throws half-way is erased as well.
-class PinDepositEraser
-{
-public:
-    PinDepositEraser(LibreSCRS::Plugin::CardPlugin& plugin, LibreSCRS::SmartCard::CardSession& session) noexcept
-        : plugin(&plugin), session(session)
-    {}
-    ~PinDepositEraser()
-    {
-        if (plugin == nullptr)
-            return;
-        try {
-            plugin->setCredentials(session, "pin", LibreSCRS::Secure::String{});
-        } catch (...) {
-            // Destructor: an erase that fails leaves the plugin's own session
-            // teardown to forget the PIN.
-        }
-    }
-    void keep() noexcept
-    {
-        plugin = nullptr;
-    }
-    PinDepositEraser(const PinDepositEraser&) = delete;
-    PinDepositEraser& operator=(const PinDepositEraser&) = delete;
-
-private:
-    LibreSCRS::Plugin::CardPlugin* plugin;
-    LibreSCRS::SmartCard::CardSession& session;
-};
-
 [[noreturn]] void throwFor(SignResultOutcome outcome)
 {
     switch (outcome) {
@@ -122,6 +91,20 @@ PluginSigningKey::PluginSigningKey(std::shared_ptr<const LibreSCRS::Plugin::Card
         throw std::invalid_argument("PluginSigningKey: the key id is longer than a PKCS#15 identifier");
     if (!keyId.empty() && !std::ranges::equal(keyId, this->cert.ckaId))
         throw std::invalid_argument("PluginSigningKey: the key id names another key than the candidate's");
+
+    // The card lists its certificates in its own order, and a card with more
+    // than one key carries the holder's other certificates too. The chain is
+    // the signer first, then only what verifies as its issuer: a consumer that
+    // reads element 0 as the signer (x5c, buildOrderedChain) or element i+1 as
+    // element i's issuer (revocation evidence) must never meet a sibling.
+    std::vector<std::vector<std::uint8_t>> material;
+    material.reserve(this->candidateChain.size() + 1);
+    material.push_back(this->cert.derBytes);
+    for (auto& der : this->candidateChain) {
+        if (!der.empty() && der != this->cert.derBytes)
+            material.push_back(std::move(der));
+    }
+    this->candidateChain = native_utils::orderOnTokenChain(std::move(material));
 }
 
 std::vector<std::uint8_t> PluginSigningKey::sign(std::span<const std::uint8_t> hash, const std::string& algorithm,
@@ -143,8 +126,7 @@ std::vector<std::uint8_t> PluginSigningKey::sign(std::span<const std::uint8_t> h
     // is kept in the plugin's session-keyed, mutex-guarded storage, which makes
     // the deposit a logically const call on a plugin object that is not const.
     auto& depositTo = const_cast<LibreSCRS::Plugin::CardPlugin&>(*plugin);
-    PinDepositEraser eraser{depositTo, *session};
-    depositTo.setCredentials(*session, "pin", pin);
+    LibreSCRS::Plugin::ScopedPinDeposit deposit{depositTo, *session, pin};
 
     // A transport failure or a lost session throws out of here, the PIN is
     // erased, and nothing is sent again: the plugin's sign carries the VERIFY.
@@ -158,7 +140,7 @@ std::vector<std::uint8_t> PluginSigningKey::sign(std::span<const std::uint8_t> h
     if (result.outcome != SignResultOutcome::Ok)
         throwFor(result.outcome);
     if (!cert.alwaysAuthenticate)
-        eraser.keep();
+        deposit.keepForLease();
     return std::move(result.signature);
 }
 

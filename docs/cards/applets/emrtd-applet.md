@@ -94,15 +94,17 @@ The eMRTD applet requires authentication before Data Groups can be read. Three m
 
 ### Authentication Flow
 
-1. Read EF.CardAccess from MF (SFI 0x1C) to determine supported PACE protocols
+1. Read EF.CardAccess from MF (SELECT 3F00, SELECT 011C, READ BINARY) to determine supported PACE protocols
 2. If PACE is supported, perform PACE before SELECT of eMRTD applet (accept `62xx` warnings)
 3. SELECT eMRTD application (AID `A0 00 00 02 47 10 01`)
 4. Read EF.COM to discover which Data Groups are present
-6. Read individual Data Groups as needed
+5. Read individual Data Groups as needed
 
 ### MRZ Key Derivation (PACE-MRZ)
 
-The `MRZData` structure provides the three fields used for key derivation:
+Three MRZ fields are used for key derivation — the same fields BAC uses
+(`LibreSCRS::SecureChannel::BacInput`); the plugin keeps them in
+`Secure::String`s, which are wiped when they are released:
 
 - `documentNumber` — from MRZ line 1
 - `dateOfBirth` — YYMMDD format from MRZ line 2
@@ -144,9 +146,9 @@ See `tools/card_mapper/README.md` for full environment variable documentation.
 
 ## Implementation Reference
 
-- Source: `lib/emrtd/include/emrtd/emrtd_types.h`
+- Source: `lib/emrtd/src/emrtd_types.h`
 - AID constant: `emrtd::EMRTD_AID`
 - FID helper: `emrtd::dgToFID(int dg)` returns `0x0100 + dg`
 - EF.COM FID: `emrtd::FID_COM` = `0x011E`
-- EF.CardAccess SFI: `emrtd::SFID_CARD_ACCESS` = `0x1C`
+- EF.CardAccess reader (MF, FID `011C`): `lib/SmartCard/include/LibreSCRS_internal/SmartCard/CardAccessReader.h`
 - Auth methods: BAC, PACE-MRZ and PACE-CAN (`lib/emrtd-crypto/src/bac.h`, `pace.h`)

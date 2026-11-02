@@ -11,7 +11,7 @@
 /// @ref LibreSCRS::Plugin::PINResultOutcome::Unsupported, so a caller can
 /// distinguish "plugin did not implement activation" from a genuine
 /// card-side failure — the same safe-default contract already pinned for
-/// @c verifyPIN / @c changePIN / @c unblockPIN.
+/// @c changePIN.
 ///
 /// The defaults receive a real detached @ref
 /// LibreSCRS::SmartCard::CardSession via the LM-internal test factory (the
@@ -23,7 +23,7 @@
 #include <LibreSCRS/Plugin/CardPlugin.h>
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
-#include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
+#include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 
 #include <gtest/gtest.h>
 
@@ -40,7 +40,7 @@ class BareCardPlugin final : public CardPlugin
 public:
     BareCardPlugin()
     {
-        setIdentity("bare", "Bare", 0);
+        setIdentity("bare", 0);
     }
 
     CardCapabilities capabilities() const override
@@ -64,7 +64,7 @@ protected:
 TEST(PinLifecycleVirtuals, BaseActivateTransportPinIsUnsupported)
 {
     BareCardPlugin plugin;
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("test-reader");
     ASSERT_NE(session, nullptr);
 
     const LibreSCRS::Secure::String transportValue{"000000"};
@@ -76,7 +76,7 @@ TEST(PinLifecycleVirtuals, BaseActivateTransportPinIsUnsupported)
 TEST(PinLifecycleVirtuals, BaseActivateSigningKeyIsUnsupported)
 {
     BareCardPlugin plugin;
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("test-reader");
     ASSERT_NE(session, nullptr);
 
     const LibreSCRS::Secure::String signPin{"123456"};

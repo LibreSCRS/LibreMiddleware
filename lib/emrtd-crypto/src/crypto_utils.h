@@ -62,4 +62,12 @@ void adjustParity(std::vector<uint8_t>& key);
 // Increment SSC (big-endian byte array)
 void incrementSSC(std::vector<uint8_t>& ssc);
 
+// ASN.1 OBJECT IDENTIFIER content octets <-> dotted notation, for the OIDs the
+// eMRTD protocols carry in EF.CardAccess, DG14 and their MSE/GA commands.
+// Decode returns "" on an empty or overflowing encoding; encode returns {} for
+// fewer than two arcs or a first pair DER cannot express, and lets std::stoul
+// throw on an arc that is not a number.
+std::string oidBytesToString(const uint8_t* data, size_t len);
+std::vector<uint8_t> oidStringToBytes(const std::string& oid);
+
 } // namespace emrtd::crypto::detail

@@ -28,7 +28,8 @@ public:
         respond = [this](const SignCall& call) { return signWithTheKey(call); };
     }
 
-    std::vector<LibreSCRS::Plugin::CertificateData> readCertificates(LibreSCRS::SmartCard::CardSession&) const override
+    std::vector<LibreSCRS::Plugin::CertificateData>
+    doReadCertificates(LibreSCRS::SmartCard::CardSession&) const override
     {
         LibreSCRS::Plugin::CertificateData c;
         c.label = "Soft Key Signer";

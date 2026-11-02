@@ -253,9 +253,9 @@ TEST(SecureStringTest, EmptyEqualsEmpty)
 
 TEST(SecureStringTest, ComposesInsideOptional)
 {
-    // TsaCredentials wraps Secure::String in std::optional; verify the
-    // composition does what the API spec promises: disengaged optional
-    // holds nothing, engaged optional forwards the view through.
+    // An optional secret is a Secure::String in std::optional; verify the
+    // composition: a disengaged optional holds nothing, an engaged optional
+    // forwards the view through.
     std::optional<String> maybe;
     EXPECT_FALSE(maybe.has_value());
 
@@ -270,8 +270,7 @@ TEST(SecureStringTest, ComposesInsideOptional)
 TEST(SecureStringTest, ComposesInsidePair)
 {
     // Sanity: Secure::String is copy/move-capable enough to live inside
-    // std::pair — not a design goal for TsaCredentials (which splits
-    // user+password) but a guardrail against accidentally breaking the
+    // std::pair — a guardrail against accidentally breaking the
     // value-semantic contract.
     std::pair<std::string, String> p{"user", String("pass")};
     EXPECT_EQ(p.first, "user");
@@ -283,50 +282,4 @@ TEST(SecureStringTest, ComposesInsidePair)
     // Mutating copy.second must not touch p.second.
     copy.second.clear();
     EXPECT_EQ(p.second.view(), "pass");
-}
-
-TEST(SecureStringEqualConstantTime, MatchesIdenticalContents)
-{
-    String a{"correct horse battery staple"};
-    String b{"correct horse battery staple"};
-    EXPECT_TRUE(a.equalConstantTime(b));
-    EXPECT_TRUE(b.equalConstantTime(a));
-}
-
-TEST(SecureStringEqualConstantTime, RejectsContentMismatch)
-{
-    String a{"123456"};
-    String b{"123457"}; // last byte differs
-    EXPECT_FALSE(a.equalConstantTime(b));
-    EXPECT_FALSE(b.equalConstantTime(a));
-}
-
-TEST(SecureStringEqualConstantTime, RejectsLengthMismatch)
-{
-    String a{"abcdef"};
-    String b{"abcdefg"};
-    EXPECT_FALSE(a.equalConstantTime(b));
-    EXPECT_FALSE(b.equalConstantTime(a));
-}
-
-TEST(SecureStringEqualConstantTime, BothEmptyComparesEqual)
-{
-    String a;
-    String b;
-    EXPECT_TRUE(a.equalConstantTime(b));
-}
-
-TEST(SecureStringEqualConstantTime, EmptyVsNonEmptyUnequal)
-{
-    String empty;
-    String nonEmpty{"x"};
-    EXPECT_FALSE(empty.equalConstantTime(nonEmpty));
-    EXPECT_FALSE(nonEmpty.equalConstantTime(empty));
-}
-
-TEST(SecureStringEqualConstantTime, IsConsistentWithOperatorEqualForEqualInputs)
-{
-    String a{"librescrs"};
-    String b{"librescrs"};
-    EXPECT_EQ(a == b, a.equalConstantTime(b));
 }

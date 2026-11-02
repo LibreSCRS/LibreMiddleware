@@ -7,6 +7,36 @@ Notable user-visible changes per release. Format follows
 
 ### Added
 
+- **Test support for projects built on LibreSCRS:
+  `LibreSCRS::SmartCardTesting`** (`<LibreSCRS/SmartCard/testing/CardSessionTesting.h>`).
+  A static archive in the development files with
+  `Testing::makeDetachedCardSession` — a card session with no reader behind it,
+  for tests that route, cache or hand out sessions — and
+  `Testing::installStandInChannel`, which places a live, failed or plain
+  secure channel on such a session. Link it from your tests with
+  `target_link_libraries(... LibreSCRS::SmartCardTesting)`; public headers
+  only. It replaces the detached-session factory that the shared library used
+  to export for the internal build only. The archive is valid only with the
+  shared libraries of the same release, which neither the CMake package nor
+  the loader checks: rebuild tests that link it whenever LibreMiddleware is
+  upgraded (`docs/SHARED-LIBRARY-CONSUMERS.md`).
+
+- **`OpenError::Kind::SessionRefused`.** A card that another client holds, or
+  whose session the platform has not granted yet (PC/SC
+  `SCARD_E_SHARING_VIOLATION`, the same refusal from CryptoTokenKit), is now
+  reported as such instead of as an unavailable reader, so a host can retry
+  it rather than treat the reader as gone. Appended to the enum; a `switch`
+  over `OpenError::Kind` needs the new case.
+- **Sign with a key the host already chose.** `SigningService::sign` takes
+  the `CertificateData` the user picked and the certificates the host read, so one signature reads the card's
+  certificates once and one rule decides which key signs.
+- **`LibreSCRS::Plugin::ScopedPinDeposit`** (`<LibreSCRS/Plugin/PinDeposit.h>`):
+  the signing PIN deposited in a card plugin for one operation, erased when the
+  scope ends unless kept for the session; an erase the plugin refuses is
+  logged as a warning. `SigningService::sign` now documents
+  that after a successful signature with an ordinary key the PIN stays
+  deposited for the session until `CardPlugin::clearCredentials`.
+
 - **RSA through the card plugins with every digest the PKCS#11 module signs,
   PACE or not.** `SignMechanism` gains `RSA_SHA1`, `RSA_SHA384` and
   `RSA_SHA512` (appended after `RSA_SHA256`, so ABI-additive): PKCS#1 v1.5 over
@@ -114,6 +144,37 @@ Notable user-visible changes per release. Format follows
 
 ### Changed
 
+- **A card operation that throws inside a plugin no longer throws at its
+  host.** One plugin caught every exception, another let its PIN and
+  certificate calls throw and left the host to catch. `CardPlugin` now settles
+  it for the eight card operations: `changePIN`, `getPINList`,
+  `readCertificates`, `activateTransportPin` and
+  `activateSigningKey` are non-virtual wrappers over protected `do…` virtuals,
+  as `readCard`, `sign` and `decipher` already were, and every one of these
+  wrappers catches. A throw is logged and comes back as the call's failure:
+  `PluginError` for a PIN, signing or decryption result, a communication error
+  for a read, and an empty result for a list. The other virtuals
+  (`canHandleConnection`, `preReadAuth`, `readTokenInfo`, `setCredentials`,
+  …) are still called directly and must not throw, as the class
+  documentation says.
+  **Plugin authors** override `doChangePIN`, `doReadCertificates` and so on
+  instead of the public names; the plugin ABI stays 9, which has not been
+  released.
+
+- **The CMake package no longer requires OpenSSL and PC/SC development files.**
+  `find_package(LibreMiddleware)` stopped calling `find_dependency` for them
+  (the libraries link both privately and no public header uses either), and
+  the `-dev`/`-devel` packages no longer pull them in.
+
+- **Build option `LIBREMIDDLEWARE_WERROR` is now `LIBRESCRS_WERROR`**, the
+  name every LibreSCRS project uses for promoting warnings to errors.
+
+- **The tests use the system GoogleTest** (`find_package(GTest)`) instead of
+  downloading it at configure time, and `cmake --install` no longer puts
+  gtest and gmock into the install prefix. Install your distribution's
+  GoogleTest package to build the tests, or configure with
+  `-DBUILD_TESTING=OFF`; the `INSTALL_GTEST` option is gone.
+
 - **macOS: card I/O and reader events go through CryptoTokenKit.** An open card
   session holds the card exclusively until it is closed: other applications and
   token drivers wait for it. The process needs the
@@ -177,10 +238,9 @@ Notable user-visible changes per release. Format follows
   later.
 
   **Behaviour change for hosts of the OpenSC card plugin.** The plugin no
-  longer lets OpenSC keep or replay a cached PIN. A host that calls
-  `verifyPIN` and later `sign` / `decipher` as two separate calls for a key
-  must deposit the PIN with the operation (`setCredentials("pin")`), so that it
-  is presented inside that operation's own card transaction. A key the card
+  longer lets OpenSC keep or replay a cached PIN. A host deposits the PIN
+  with the operation (`setCredentials("pin")`), so that it is presented
+  inside that operation's own card transaction. A key the card
   guards with no PIN, such as the PIV Card Authentication key (9E), runs
   without one whether or not a PIN is deposited.
 
@@ -242,8 +302,11 @@ Notable user-visible changes per release. Format follows
   (`<LibreSCRS/Logging.h>`). `init(sink, category)` installs a
   `std::function<void(Level, std::string_view)>` that receives every
   diagnostic LibreMiddleware emits without being asked; the built-in sink
-  writes to `std::clog`. The four exception shields around consumer
-  callbacks in `MonitorService` now report through it. Until now they called
+  writes to `std::clog`. The exception shields around consumer callbacks in
+  `MonitorService` and the reader monitor, the signing provider's failure
+  messages and the OpenSC bridge's transport failure now report through it;
+  nothing in the libraries writes to standard error any more, except the one
+  message printed just before the OpenSC plugin aborts. Until now they called
   `std::fprintf(stderr, ...)` and the source said why — "a defense-in-depth
   fallback because the SDK does not currently inject a logger across the
   public ABI boundary". A library writing to a stream it does not own, with
@@ -251,20 +314,18 @@ Notable user-visible changes per release. Format follows
   is the boundary that was missing. The shape is deliberately identical to
   the facade the LibreSCRS agent already ships, so one diagnostic grep reads
   the host layer and the core the same way.
-  **Scope, stated so it is not mistaken for coverage:** only unconditional
-  writers are routed here. Roughly 150 sites behind `LIBRESCRS_SIGN_TRACE`,
-  `LIBRESCRS_PCSC_TRACE`, `LIBRESCRS_PROBE_TRACE`, `LIBRESCRS_OPENSC_DEBUG`
-  and `PKCS11_DEBUG` still write to `stderr` directly; they sit in PC/SC
-  transmit, PKCS#15 profile reading and the signing engine and are unchanged.
-- **Buffer-based signing.** New `sign()` overload accepts an in-memory
-  document as bytes and returns the signed document bytes directly, in
-  addition to the existing file-based path. Suits callers that never
-  touch the filesystem.
+  Diagnostic tracing goes through it too, at a new `Trace` level that is off
+  by default: `LIBRESCRS_PCSC_TRACE`, `LIBRESCRS_SIGN_TRACE` and
+  `LIBRESCRS_PROBE_TRACE` each switch on one channel, read once per process.
+  A trace never carries what a card answered, a PIN or decrypted data — an
+  APDU response is traced as its length and status word.
+- **Buffer-based signing.** `sign()` accepts an in-memory document as bytes
+  and returns the signed document bytes directly; the library reads and
+  writes no file.
 - **Document name on a signing request.** A request can now carry an
-  explicit document name. It names the in-memory document on the
-  buffer-based signing path — where there is no input file to derive a
-  name from — and supplies the ASiC-E container entry name and the
-  detached XAdES/JAdES reference basename. Only the final path component
+  explicit document name. It names the in-memory document — the only name
+  the signing engines get for it — and supplies the ASiC-E container entry
+  name and the detached XAdES/JAdES reference basename. Only the final path component
   is kept, so a name can never introduce directory separators into a
   container. Without it, buffer-mode container signing had no name at
   all and ASiC-E packaging failed.
@@ -317,9 +378,8 @@ Notable user-visible changes per release. Format follows
   honest "not configured" answer.
 - **Arch Linux packaging.** A release-shaped `PKGBUILD` for
   `librescrs-middleware`.
-- **Four new public headers**: `ActivationProfile.h` (the declarative
-  channel-activation descriptor plugins publish), `CredentialCounters.h`
-  (per-credential retry/use counters), `PinOutcome.h` (the shared
+- **Three new public headers**: `ActivationProfile.h` (the declarative
+  channel-activation descriptor plugins publish), `PinOutcome.h` (the shared
   verify/change/unblock outcome classifier), and `SessionKey.h` (the
   per-session state-map key plugins use to avoid raw-pointer keying).
   Alongside them, thirteen new public enum values: the new `DecipherMechanism`,
@@ -366,6 +426,120 @@ Notable user-visible changes per release. Format follows
   rather than an absolute path, flagging a fragile module lookup.
 
 ### Fixed
+
+- **The system trust store finds the host's certificate authorities.**
+  Certificate chain validation asked the bundled OpenSSL for its default
+  store, which is empty unless `SSL_CERT_FILE` or `SSL_CERT_DIR` is set, so
+  the system trust store added nothing on an ordinary host. Chain validation,
+  time-stamp verification and the HTTPS client now share one lookup: those
+  two variables when set, otherwise the CA bundle the distribution or macOS
+  ships at its usual path
+  (`/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt`,
+  `/etc/ssl/cert.pem`, …), found on the host the program runs on rather than
+  the one it was built on.
+- **A signature made with a card that holds several keys names the right
+  signer.** The certificate chain a card-plugin key hands the signature
+  formats was every certificate on the card in the card's own order; it is
+  now the signing certificate first and then only the certificates that
+  verify as its issuers, so JAdES `x5c`, XAdES `KeyInfo` and the long-term
+  chain no longer start with, or carry, the holder's other certificates.
+- **A Trusted List is read only where its signature covers it.** The parser
+  looked for providers and pointers anywhere in the document, including inside
+  the signature element, whose object content an enveloped signature does not
+  cover; anyone able to hand over a list could add a trusted CA to it without
+  breaking the signature. Every query now starts at the list's root, and a
+  list whose signature does not cover the whole document -- one signed over
+  its scheme information alone, say -- is refused. The signature verifier
+  also puts the signature back where it was between references, so a list
+  signed with several references verifies.
+- **Passport data groups larger than 32 KiB read correctly.** Past offset
+  0x7FFF the reader masked the offset and read the file's beginning again, so
+  a large facial image came back with its tail replaced by its head. It now
+  uses the extended READ BINARY (ICAO 9303-10), carried over secure messaging,
+  and a file the chip cuts short with an error is reported as unreadable
+  instead of returned partial. Other card families refuse an offset past
+  0x7FFF instead of wrapping.
+- **National Trusted Lists reached through the EU List of Trusted Lists
+  verify.** The pointer certificates were looked for outside the
+  `ServiceDigitalIdentities` element the LOTL actually uses, so no national
+  list other than the pinned ones ever verified, and only the first of a
+  pointer's certificates would have been tried. Every certificate is now read
+  and tried, the signing engine and the trust store load lists through the one
+  same path (the trust store now follows a LOTL too), and a list that fails to
+  load is logged with its URL and the reason instead of skipped silently.
+- **A card with two user PINs no longer has one PIN presented for the other's
+  key.** The generic PKCS#15 plugin verified every key with "the first user
+  PIN", so on a card with a separate signature PIN one key's signature spent
+  the other PIN's tries. A key is now signed with the PIN its `authId` names,
+  and a key that names none is refused before the card is touched. Where an
+  operation names no PIN, both card plugins pick the user PIN by the same
+  rule the PIN list shows. A PIN longer or shorter than the card allows is
+  refused before it reaches the card, whether it is verified, changed or used
+  to activate a PIN (an issuer's transport value is held only to the length
+  the card stores, not to the rule for the PIN the holder sets), a blocked
+  PIN reads as zero tries left rather
+  than unknown, and the local-bit variant of a PIN reference is tried only
+  when no other PIN uses it.
+- **A second CAdES signer is added only to the document the first signed.**
+  Appending a signer checked nothing about the document handed in; the new
+  signature could sit beside one over a different document. The existing
+  signers' message digests must now match it.
+- **Revocation evidence and chains verify against a Trusted List anchor that is
+  not a root.** A list names subordinate CAs as often as roots; an OCSP
+  response signed by such an anchor, or a chain ending at one, was rejected
+  because OpenSSL looked for a self-signed certificate the store did not hold.
+- **Opening a session on an empty reader reports "no card".** The failure was
+  classified by words in a message that never contained them, so every open
+  failure read as an unavailable reader; it is now classified by the PC/SC
+  code.
+- **Card answers and PINs are wiped from transport buffers**, and an OpenSC
+  RSA decryption no longer leaves its plaintext in freed memory. The OpenSC
+  plugin also finds every key and certificate on a card that holds more than
+  eight keys or sixteen certificates.
+- **A Trusted List's withdrawn services and a stale list are not trusted.**
+  Every CA or timestamping service of a list became an anchor whatever its
+  status, so a withdrawn CA stayed trusted; now a withdrawn, deprecated or
+  revoked service is skipped, and a list more than a day past its own
+  NextUpdate is refused. A cached copy that goes stale before the cache
+  would refresh it is fetched again once, so the list is not missing until
+  the cache lets go of it.
+- **A certificate that is not valid yet is not signed with.** Only the expiry
+  was checked.
+- **The Trusted List cache no longer grows forever.** Files from an earlier
+  naming scheme and entries untouched for thirty lifetimes are removed.
+- **Passport dates get the right century on every date of the year and in
+  every time zone.** The window was taken from the local clock and a fixed
+  2080 cut-off; it now follows the current UTC year by one rule per role.
+- **A secure-messaging command is never sent in the clear or resent after a
+  reset.** When a card's secure channel had failed or been closed, the next
+  command went to the card unprotected, ending its session there; after a
+  card reset an SM-wrapped command was sent a second time. Both now fail
+  without reaching the card.
+- **A response chain longer than 64 KiB is refused**, instead of returned cut
+  short under the card's success status.
+- **A reader the system denies access to is asked again.** The monitor stopped
+  for good after one refusal, so a reader that became accessible later (a
+  session that became active) was never watched; it now reports the refusal
+  once and retries every 30 seconds. On macOS, where the refusal is final,
+  nothing changes.
+- **A wrong PACE PIN or PUK costs one try, not one per protocol variant.**
+  A protocol variant the card turns down before any secret reaches it is
+  skipped for the next one the card lists, for every PACE secret; once the
+  card has taken one, a failure ends the attempt, so a wrong CAN or MRZ is no
+  longer replayed under each variant either. A card that turns down every
+  variant it lists now fails as a protocol error instead of asking for the
+  secret again.
+- **An RSA signature from a PKCS#15 card is checked before it is returned.**
+  A card that hashes on card could "accept" a hash where it expected the
+  message and return a well-formed signature over the wrong value, which the
+  user only learned about from the recipient. The signature is now verified
+  with the certificate's key; one that does not verify is never returned.
+- **Release packages no longer write every card response to standard error.**
+  A build that did not set a build type left the transport's debug dump in, and
+  the Fedora packages shipped it: every APDU answer, certificates and personal
+  data included, went to the journal of whatever process read a card. The dump
+  is gone from the code, an unconfigured build now defaults to
+  `RelWithDebInfo`, and the package check refuses any library that carries it.
 
 - **macOS: a crash or hang of a multi-threaded process using cards.** Apple
   PCSC.framework corrupts its in-process handle table when
@@ -418,6 +592,257 @@ Notable user-visible changes per release. Format follows
 
 ### Removed
 
+- **Credential-prompt API nothing read.** `AuthRequirement::forPreRead`,
+  `forChangePin` and `forUnblockPin`, with `Purpose::PreRead`, `ChangePin`
+  and `UnblockPin`: no host or plugin asked a credential provider for them —
+  a PIN change or unblock hands the plugin the secrets directly.
+  `AuthRequirement::title()`, which no factory ever set.
+  `AuthRequirement::retriesLeft()` and the retry-count parameter of
+  `forSigning` and `forPaceSecret`: no host showed it, and signing no longer
+  reads the card's PIN counters before asking for the PIN only to fill it.
+  `AuthRequirement::paceApplet()` and the applet parameter of
+  `forPaceSecret`: the prompt is answered by the secret's kind, whichever
+  applet asks. Every `FieldDescriptor` member but `minLength` and
+  `maxLength`, with `CredentialFieldType`, and the label argument of
+  `forSigning`, which only filled one of them: hosts read the length bounds
+  and draw their own prompt. They go before the 5.0 ABI is fixed rather than staying in it until 6.0.
+
+- **Generic message builders nothing produced.** `Auth::ErrorKeys::genericParse`,
+  `pinIncorrectWithRetries`, `protocolError`, `registryEmpty`,
+  `cardReadFailed` and `noCompatiblePlugin`: no plugin, signing path or host
+  returned these messages. They are header-inline, so neither ABI baseline
+  recorded them.
+
+- **`Secure::String::equalConstantTime`.** No library path and no host
+  compared secrets with it: a card checks its own PIN, and nothing else in
+  the stack holds a reference secret to compare against.
+
+- **`LocalizedText` placeholders.** `LocalizedText::placeholders`, with
+  `Placeholder`, `Placeholder::Type`, `Count`, `Placeholder::formatted()`,
+  `LocalizedText::interpolate()` and `LocalizedText::domain()`: no plugin
+  and no part of the library filled a placeholder, and no host substituted
+  one. A `LocalizedText` is now a catalog key and its English text; brace
+  initialisers that passed an empty third element drop it. Every public
+  type that carries a `LocalizedText` shrinks with it.
+
+- **`LibreSCRS::Completion`.** The callback alias in `CancelToken.h` named no
+  parameter of any library function.
+
+- **Three constants from the public headers.** `Auth::kPaceSecretKindCount`
+  sized a cache inside `CardSession`, and `Signing::kMaxAppearanceFontSize`
+  and `kAppearanceTextMargin` are settings of the signing engine's layout; no
+  host read any of them. They are now internal. `kFloorAppearanceFontSize`
+  and `kAppearanceLineLeading` stay public, as the defaults of
+  `VisualSignatureLayout`.
+
+- **Certificate accessors nothing read.** `DistinguishedName::stateOrProvince`,
+  `locality` and `emailAddress`; `ParsedCertificate::findExtension` and
+  `signatureValue`; `PublicKeyInfo::algorithmDescription`. No host and no part
+  of the library called them. `DistinguishedName::components` and
+  `ParsedCertificate::extensions()` still carry every attribute and extension.
+
+- **The OID-name lookup export.** `libLibreSCRS_Certificate` no longer
+  exports `Certificate::detail::lookupOidName`; it was exported only so a test
+  could call it. `ObjectIdentifier::friendlyName()` is the way to the same
+  table.
+
+- **`TrustConfig::Builder`, the local Trusted List file and the system-store
+  switch.** No host built a `TrustConfig` through the builder, named a Trusted
+  List file on disk (`trustedListFile`, `trustedListFileSigningCert`) or
+  turned `includeSystemTrustStore` off. A `TrustConfig` is now its Trusted
+  List sources and cache directory; the bundled anchors and the system
+  certificate store always take part, as they did by default.
+
+- **`TrustStoreService` fetch status and observers.** `status()`,
+  `sourceStatuses()`, `waitForEagerFetches()`, `addObserver()` and
+  `removeObserver()`, with `SourceStatus`, `AggregateStatus`, `FetchObserver`
+  and `ObserverHandle`: no host waited on or watched a fetch. Eager sources are still fetched when the service
+  is created; their anchors join `trustStore()` as each list verifies, and a
+  list that fails is logged.
+
+- **`Trust::spkiSha256FromCertificateDer`, `VerifiedMasterList::identityChecked`
+  and `TrustAnchor::sourceLabel`.** The agent pins a master-list publisher
+  with the `signerSpkiSha256` an earlier import reported, and knows whether it
+  passed a pin; no host computed a pin from a certificate or read an anchor's
+  label. A `TrustAnchor` is now its certificate.
+
+- **`CardPlugin::discoverKeyReferences` and `KeyReference`.** No host listed
+  a card's keys this way: the key a certificate pairs with is its
+  `CertificateData::keyFID`, which is what `sign` and `decipher` take.
+
+- **`CardPlugin::verifyPIN` and `unblockPIN`.** No host verified a PIN in a
+  call of its own or unblocked one with a PUK through the plugin: a PIN for a
+  signature or a decryption is deposited with `setCredentials("pin")` and
+  presented inside that operation's card transaction, and no card family has
+  a confirmed unblock command. Plugins drop their `doVerifyPIN` and
+  `doUnblockPIN` overrides.
+
+- **`CardPlugin::readCounters` and `CredentialCounters.h`.** No host read a
+  credential's counters this way: the PIN list carries the same counters in
+  each `PinStatusEntry`, and signing stopped reading them before the PIN
+  prompt. Plugins drop their `doReadCounters` overrides.
+
+- **`CardPlugin::displayName` and the manifest's `displayName`.** No host
+  showed a plugin's name: hosts name a card by what was read from it.
+  `setIdentity` takes the plugin id and the probe priority, the generated
+  manifest header no longer carries `kDisplayName`, and the manifest schema
+  refuses the field, so a manifest that still states it fails at build time.
+  `CardPlugin` shrinks by one string.
+
+- **`CertificateData::keySizeBits` and `PinStatusEntry::initialized` and
+  `blocked`.** No host read them. A key's size is the size of the public key
+  in the certificate beside it, and a PIN entry's `state` already says
+  whether the PIN is blocked or still holds its transport value.
+
+- **`CardDataAccess.h` and the `CardData` lookup helpers.**
+  `Plugin::textValue` and `textValueAt`; `CardData::findGroup`, `findField`,
+  `groupAt`, `groupAtUnchecked`, `fieldAt` and `fieldAtUnchecked`; and
+  `CardField::textValue()`. No host and no plugin looked a field up through
+  them: hosts walk `groups` and `fields` and read a field's `type` and
+  `value`. `CardData` is now its card type and its groups.
+
+- **`CardPluginService::isUsable()` and the constructor that takes several
+  directories.** Every host loads plugins from one directory and reports the
+  outcome from `size()` and `loadReport()`; the single-directory constructor
+  is the one way to build a registry.
+
+- **`Plugin::statusFromString` and `categoryFromString`, and the
+  `acquireChannelForProfile` export.** Plugins write security-check tokens
+  with `statusToString` and `categoryToString`; nothing in the card stack
+  reads one back, and the agent client decodes them with its own functions.
+  The channel acquisition behind an `ActivationProfile` is run by
+  `CardPlugin::readCard` and was never called by a plugin, so
+  `libLibreSCRS_Plugin` no longer exports it.
+
+- **`SecureChannel/PaceParams.h` from the installed headers.**
+  `PaceParams`, `PaceSecurityInfo`, `PaceStandardisedDomainParam` and
+  `parsePaceOidsFromCardAccess` describe the PACE handshake `CardSession`
+  runs for a plugin; no host or plugin built one or parsed EF.CardAccess
+  itself. The header is now internal to the library.
+
+- **`ReadResult::parseError()` and `ReadResult::Status::ParseError`.** No
+  plugin returned a parse error: a card whose data does not match its
+  layout is reported as a communication error or an unsupported card. A
+  host's `switch` over `ReadResult::Status` drops the case; the enumerators
+  after it move up by one, and the plugin interface stays at version 9
+  because 5.0 is not yet released.
+
+- **The file-based `SigningService::sign`, the in-memory `sign` without a
+  chosen signer, and `SigningService::appendSigner`.** No host signed a file
+  through the library, left the choice of key to it, or added a signer through
+  a call of its own: the in-memory `sign` that takes the signer the host chose
+  is the one entry point. Signing an already-signed PDF, enveloped XAdES or
+  JAdES document, or ASiC-E container through it still adds a signature beside
+  the ones it carries; a detached XAdES or JAdES signature and a CAdES
+  signature, which do not carry the document they sign, are refused as before.
+
+- **The file fields and the key label of `SigningRequest`, and the path of
+  `SigningResult`.** `SigningRequest::inputFile` and `outputFile` with their
+  builder setters, `Builder::build()`, which required them, and
+  `certificateLabel`: with the document signed in memory by the signer the
+  host chose, nothing read them. `buildForBufferSign()` builds every request.
+  `SigningResult::ok(path)` and `outputPath` go with them; a signature comes
+  back in `signedDocumentBytes`.
+
+- **`SigningRequest::contactInfo` and the PDF `/ContactInfo` entry.** No host
+  filled it, so no signature carried it; a PAdES signature dictionary keeps
+  `/Reason` and `/Location`.
+
+- **`TsaCredentials` and the authenticated time-stamping transport.**
+  `TsaRequest::credentials` with HTTP Basic, Bearer, client-certificate (mTLS)
+  and extra-header material: no host configured a time-stamping authority that
+  needed them, so a TSA request is its URL. The engine's HTTP client no longer
+  carries the credential plumbing either.
+
+- **`TsaContext`, `TsaRequest` and the time-stamping callback.** Every
+  `TsaProvider` a host built was a fixed URL, and none looked at the format,
+  level or time the callback was given. `TsaProvider` is now that URL;
+  `staticTsa` and `staticTsaChecked` build it as before, and
+  `SigningRequest::hasTsaOverride` goes with the callback. A per-request
+  override that names no URL leaves the service's authority in place.
+
+- **`Secure::Buffer(size, fill)`, `Secure::Buffer::operator==` and
+  `operator bool`.** Every buffer is built from the bytes it holds (a span or
+  a string view), and nothing compared two buffers or tested one for a pimpl;
+  `size()` answers whether it holds anything.
+
+- **`SmartCard::CardMap` and `CardMapEntry`.** A per-card cache that nothing
+  inside the library filled or read, and that the agent only constructed and
+  passed along; no host looked anything up in it.
+
+- **`MonitorService::subscribeReaderList`, `unsubscribeReaderList` and
+  `ReaderListCallback`.** No host subscribed to the reader-list snapshot;
+  hosts follow readers through the `ReaderAdded` and `ReaderRemoved` events
+  of `subscribe`.
+
+- **`MonitorService::listReaders`, `isRunning` and `operator bool`.** No host
+  called them. The readers already attached arrive as `ReaderAdded` events
+  after the first `subscribe`, which is how the examples now list them; a
+  `MonitorService` always holds its state, so `operator bool` was always
+  true.
+
+- **`MonitorService::Config`, `Config::fromEnv` and
+  `LIBRESCRS_MONITOR_COALESCE_MS`.** No host passed a configuration and
+  nothing set the variable, so every monitor ran with the defaults, which
+  `MonitorService()` keeps: a card inserted and removed within 250 ms is
+  suppressed, and a reader past 20 card events a second is throttled for
+  5 s.
+
+- **`SigningResult::Status::Cancelled` and four `SigningResult` factories.**
+  No signing path produced `Cancelled` or called `cancelled()`: a refused
+  PIN prompt is `UserCancelled`, as before. `invalidRequestDiagnosticOnly`,
+  `invalidDocumentDiagnosticOnly` and the `trustStoreUnavailable` overload
+  that takes a message had no caller; `invalidRequest`, `invalidDocument`
+  and `trustStoreUnavailableDiagnosticOnly` stay. `InvalidDocument` takes
+  the value `Cancelled` had.
+
+- **Test seams from the shared libraries.** `MonitorService::publishForTest`,
+  `publishReaderListForTest` and `coalesceStateSizeForTest`, and the
+  detached-session factory, are no longer exported by
+  `libLibreSCRS_SmartCard`; nothing that ships called them. Tests that need a
+  detached session use `LibreSCRS::SmartCardTesting` (see Added).
+
+- **A second copy of the plugin layer in `libLibreSCRS_Signing`.** It
+  carried and exported `CardPluginService` and the `CardPlugin` entry points
+  that `libLibreSCRS_Plugin` already exports; it now links that library
+  instead. A program that constructs or implements plugins links
+  `LibreSCRS::Plugin`, also when it links `LibreSCRS::Signing`.
+
+- **`LibreSCRS::Plugin::AutoReaderService` and `CardSession::isConnected()`.**
+  Neither had a user: hosts read cards through their own monitor and plugin
+  calls, and `isConnected()` was true for every session that existed. They go
+  before the 5.0 ABI is fixed rather than staying in it until 6.0.
+
+- **The static build and its options.** `LIBREMIDDLEWARE_BUILD_SHARED`,
+  `LIBREMIDDLEWARE_BUILD_PLUGINS` and `LIBRESCRS_INSTALL_SDK_HEADERS` are
+  gone: the libraries are always shared, the card plugins are always built,
+  and an install always carries the headers and the CMake package. A static
+  build could not load the plugins, nothing built it, and its visibility
+  check could not pass. Passing one of the old options now only draws
+  CMake's unused-variable warning.
+
+- **`abiVersion` in a plugin's `manifest.json`.** The field said 8 while the
+  plugin interface is at 9, and nothing read it: the loader checks
+  `card_plugin_abi_version()` against `kCardPluginAbiVersion` in
+  `CardPlugin.h`, the one place the number lives. The manifest schema now
+  refuses the field, so a plugin author cannot copy a stale number.
+
+- **The DSS test oracle from the signing library.** The manager of the Java
+  service the tests check signatures against, and the JSON, multipart and
+  Unix-socket HTTP only it used, were compiled into the signing engine although
+  nothing that ships calls them. They are now built with the tests, and
+  `SIGNING_BACKEND` is a test option: `both` adds the DSS engine to the
+  cross-backend tests.
+
+- **The direct PKCS#11 module is no longer part of the release.**
+  `librescrs-pkcs11.so` opened the card from inside whatever application
+  loaded it — a second connection beside the agent's, which ends a
+  contactless card's secure channel, and a second PIN-entry model for the same
+  card. Applications use the agent's PKCS#11 provider, which the agent's
+  package registers. The `LIBREMIDDLEWARE_INSTALL_P11KIT_MODULE` option, the
+  in-process registry the module consulted, and the PC/SC-enabled build of the
+  vendored OpenSC go with it; the OpenSC card plugin is unchanged.
+
 - **The PKCS#11 module path resolver of the signing service, and the
   `LIBRESCRS_PKCS11_MODULE` variable it read.** Signing no longer loads a
   module, so nothing is left to find one.
@@ -440,8 +865,8 @@ Notable user-visible changes per release. Format follows
 - Malformed and expired MUP certificates were archived out of the active
   certificate bundle.
 - **`CardPlugin::getPINTriesLeft()`** — the last deprecated entry point
-  anywhere in the project. Its value has been available from
-  `readCounters(session).retriesLeft` since the credential-lifecycle
+  anywhere in the project. Its value has been available from the
+  `retriesLeft` of each `getPINList` entry since the credential-lifecycle
   surface landed, and it had no caller left. (The PKCS#15 card class has
   an unrelated method of the same name; that one stays.)
 - **`LIBRESCRS_DEPRECATED`** — the deprecation macro is gone from the
@@ -482,8 +907,7 @@ records their departure, and the SONAME moved with it.
   `LocalizedText::formattedDefault()`, `Auth::ErrorKeys::pinIncorrect()` and
   `Auth::ErrorKeys::pinBlocked()` have no caller in any of the seven
   repositories, and no translation carries their message keys.
-  `pinIncorrectWithRetries()` — the one a card with a retry counter actually
-  produces — stays. A public symbol can only be removed in a major release, so
+  A public symbol can only be removed in a major release, so
   leaving these would have locked them in until the release after this one.
   The symbol and layout baselines are unchanged by their removal: all five are
   header-inline or a type, so neither gate ever recorded them. That is a fact
@@ -498,6 +922,17 @@ records their departure, and the SONAME moved with it.
 
 ### Security
 
+- **A time-stamp token is trusted only when a trusted authority signed it.**
+  The token a time-stamping authority returns for a B-T, B-LT or B-LTA
+  signature was checked for the nonce and the hash that were asked for, but
+  not for who signed it — and both travel in the clear to an `http://`
+  authority, so anyone on the path could answer with a token of their own. The
+  token's signature, its signing-certificate attribute and an extended key
+  usage of time-stamping alone are now verified against the qualified
+  time-stamping services of the configured Trusted Lists and the system
+  certificate store chain validation and the HTTPS client use; a token nothing there vouches for fails the signature
+  as a time-stamp failure. A Trusted List whose fetch is deferred is fetched
+  for a time-stamp only when the token does not verify without it.
 - **The three statically bundled dependencies move to current releases:
   OpenSSL 3.5.8, curl 8.22.0 and miniz 3.1.2.** These are linked in, so a
   published vulnerability in any of them reaches this project without appearing
@@ -547,8 +982,8 @@ records their departure, and the SONAME moved with it.
   passing could not be relied on. The badge now requires both, and reports the
   chain state separately. Verified against a real document.
 - **The expired-signer policy did not run on the append-signer path.** `sign()`
-  routes an already-signed XAdES / JAdES / ASiC-E document into `appendSigner`,
-  so a host that only ever calls `sign()` lost the check the moment its input was
+  hands an already-signed XAdES / JAdES / ASiC-E document to the path that adds
+  a signer, so a host that only ever calls `sign()` lost the check the moment its input was
   already signed. The policy now runs on both paths.
 - **A PIN verify or change could spend the unblocking PIN's retry counter.** The
   verify, change-target and counter-read paths addressed the first PIN object in

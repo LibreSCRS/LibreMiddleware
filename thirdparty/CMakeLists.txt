@@ -45,14 +45,15 @@ endif()
 # default OSSL_LIB_CTX; a second, unrelated OpenSSL in the same address space
 # is a latent hazard and a portability inconsistency (macOS universal builds
 # have no system OpenSSL at all and already use the bundled one). Vendoring
-# curl against the bundled OpenSSL guarantees exactly ONE OpenSSL per process
-# on every platform. curl is reached only by the TSA / CRL / OCSP / Trusted-
+# curl against the bundled OpenSSL keeps the signing library on ONE OpenSSL,
+# its own, on every platform; no OpenSSL object crosses a library boundary.
+# curl is reached only by the TSA / CRL / OCSP / Trusted-
 # List HTTP paths (B-T and higher); B-B detached signing never calls it.
 #
 # See thirdparty/README.md for the pin rationale and update procedure.
 # ──────────────────────────────────────────────────────────────────────────
 option(LIBRESCRS_VENDOR_CURL
-    "Build a static libcurl against the bundled OpenSSL so exactly one OpenSSL is loaded per process" ON)
+    "Build a static libcurl against the bundled OpenSSL so the signing library uses one OpenSSL, its own" ON)
 if(LIBRESCRS_VENDOR_CURL)
     include(ExternalProject)
     # Resolve system zlib up front: the bundled static libcrypto.a references
@@ -139,9 +140,10 @@ if(LIBRESCRS_VENDOR_CURL)
             -DOPENSSL_USE_STATIC_LIBS=ON
             # The baked CA default is the build host's; CURL_CA_FALLBACK lets a
             # target whose layout differs fall back to the bundled OpenSSL's
-            # default store instead of hard-failing TLS. Cross-platform / macOS /
-            # AppImage portability is completed by HttpClient honouring
-            # SSL_CERT_FILE / SSL_CERT_DIR at runtime (a packager ships cacert.pem).
+            # default store instead of hard-failing TLS. HttpClient sets the CA
+            # bundle per request from the same lookup chain validation uses
+            # (SSL_CERT_FILE / SSL_CERT_DIR, else the host's well-known paths),
+            # so the baked default only matters where that finds nothing.
             -DCURL_CA_PATH=auto
             -DCURL_CA_BUNDLE=auto
             -DCURL_CA_FALLBACK=ON
@@ -187,7 +189,7 @@ if(LIBRESCRS_VENDOR_CURL)
 
     # libcurl.a ↔ libssl.a ↔ libcrypto.a are mutually recursive at link time;
     # rescan group on GNU ld/lld, plain ordering on Apple ld64 (multi-pass by
-    # default) — same strategy as opensc_static_with_deps below. ZLIB::ZLIB
+    # default) — same strategy as opensc_plugin_static_with_deps below. ZLIB::ZLIB
     # (system, resolved above) sits inside the group: the bundled libcrypto.a's
     # COMP objects reference inflate/deflate, pulled mid-scan.
     add_library(curl_static_with_deps INTERFACE)
@@ -208,11 +210,9 @@ endif()
 # ──────────────────────────────────────────────────────────────────────────
 # Vendored OpenSC (upstream OpenSC/OpenSC, pinned commit 07d0d40b).
 #
-# Built as STATIC archives via ExternalProject_Add so the
-# librescrs-opensc-pkcs11 SHARED library and the OpenSC card plugin can link
-# it without pulling a runtime dependency on the host distribution's
-# libopensc. The two get separate builds of the one source: the plugin's has
-# no PC/SC reader driver (opensc_external_plugin below).
+# Built as a STATIC archive via ExternalProject_Add so the OpenSC card plugin
+# can link it without pulling a runtime dependency on the host distribution's
+# libopensc. It has no PC/SC reader driver (see below).
 #
 # See thirdparty/README.md for the pin rationale and update procedure.
 # ──────────────────────────────────────────────────────────────────────────
@@ -224,12 +224,7 @@ endif()
 include(ExternalProject)
 
 set(OPENSC_SOURCE_DIR  ${CMAKE_CURRENT_SOURCE_DIR}/opensc-source)
-set(OPENSC_BUILD_DIR   ${CMAKE_CURRENT_BINARY_DIR}/opensc-build)
-set(OPENSC_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/opensc-install)
-set(OPENSC_STATIC_LIB  ${OPENSC_INSTALL_DIR}/lib/libopensc.a)
 
-# The same source is built a second time for the OpenSC card plugin, without
-# the PC/SC reader driver (see opensc_external_plugin below).
 set(OPENSC_PLUGIN_BUILD_DIR   ${CMAKE_CURRENT_BINARY_DIR}/opensc-plugin-build)
 set(OPENSC_PLUGIN_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/opensc-plugin-install)
 set(OPENSC_PLUGIN_STATIC_LIB  ${OPENSC_PLUGIN_INSTALL_DIR}/lib/libopensc.a)
@@ -245,7 +240,6 @@ set(OPENSC_PLUGIN_STATIC_LIB  ${OPENSC_PLUGIN_INSTALL_DIR}/lib/libopensc.a)
 # code includes private libopensc internals; for the public API exported via
 # libopensc/opensc.h + libopensc/pkcs15.h it is not required.
 set(OPENSC_INCLUDE_SRC   ${OPENSC_SOURCE_DIR}/src)
-set(OPENSC_INCLUDE_BUILD ${OPENSC_BUILD_DIR})
 
 # The vendored OpenSC tracks upstream directly (no downstream patches): the
 # srbeid CardEdge driver, its RSA-2048 raw signing/decryption, and the G&D SCE7
@@ -254,7 +248,7 @@ set(OPENSC_INCLUDE_BUILD ${OPENSC_BUILD_DIR})
 set(_opensc_any_patch_applied FALSE)
 
 # ExternalProject_Add tracks step completion via stamp files. Once
-# opensc_external-build exists, the build step is treated as done and not
+# opensc_external_plugin-build exists, the build step is treated as done and not
 # re-run even if the source tree changed after the stamp was written. Two
 # things can change the vendored source after a stamp exists:
 #
@@ -276,9 +270,9 @@ set(_opensc_vendored_sources
     ${OPENSC_SOURCE_DIR}/src/libopensc/card-srbeid.c
     ${OPENSC_SOURCE_DIR}/src/libopensc/card-srbeid.h)
 
-# Both builds of the source are guarded, each against its own build stamp: a
-# stale plugin archive would hide an edit exactly as a stale module archive did.
-foreach(_opensc_project opensc_external opensc_external_plugin)
+# The build is guarded against its own build stamp: a stale archive would
+# hide an edit to the driver.
+foreach(_opensc_project opensc_external_plugin)
     set(_opensc_stamp_dir ${CMAKE_CURRENT_BINARY_DIR}/${_opensc_project}-prefix/src/${_opensc_project}-stamp)
     set(_opensc_sources_changed FALSE)
     if(EXISTS ${_opensc_stamp_dir}/${_opensc_project}-build)
@@ -308,12 +302,12 @@ endforeach()
 # libopensc compiles OPENSC_CONF_PATH="$(sysconfdir)/opensc.conf" in as the
 # configuration it reads when OPENSC_CONF is unset, and opensc.conf can name an
 # OpenSSL configuration and modules to load. Left at the default, sysconfdir is
-# ${OPENSC_INSTALL_DIR}/etc: a directory in the build tree, writable by whoever
-# built it, and the file make install puts there was then read by every process
-# loading the module on that host. Point it at a root-owned directory that
-# nothing installs -- on macOS one under /System/Library, which System
-# Integrity Protection keeps anyone from creating -- so the module runs without
-# a configuration file, as it already did on every machine but the build host.
+# the staging install directory's etc: a directory in the build tree, writable
+# by whoever built it, and the file make install puts there was then read by
+# every process loading OpenSC on that host. Point it at a root-owned directory
+# that nothing installs -- on macOS one under /System/Library, which System
+# Integrity Protection keeps anyone from creating -- so OpenSC runs without a
+# configuration file, as it already did on every machine but the build host.
 # make install gets sysconfdir back as the staging directory (see
 # INSTALL_COMMAND), so nothing is written to the compiled-in path.
 if(APPLE)
@@ -322,21 +316,14 @@ else()
     set(OPENSC_SYSCONFDIR /usr/lib/librescrs/opensc)
 endif()
 
-# Reader drivers. The copy linked into the PKCS#11 module is a PC/SC client of
-# its own: it opens the readers it serves through the host PC/SC daemon, and
-# cross-process contention is left to that daemon's session arbitration.
-# libpcsclite is a system dep (autoconf detects it via --enable-pcsc); consumers
-# link it via the `opensc_static_with_deps` wrapper below.
-#
-# The copy linked into the OpenSC card plugin has no PC/SC driver. The plugin
-# reaches the card only through the bridge reader it installs over the session
-# it is handed, yet a context with the PC/SC driver enumerates every reader on
-# the host and connects to each one the moment it is created. OpenSC needs
+# Reader driver. The plugin's OpenSC has no PC/SC driver. The plugin reaches
+# the card only through the bridge reader it installs over the session it is
+# handed, yet a context with the PC/SC driver enumerates every reader on the
+# host and connects to each one the moment it is created. OpenSC needs
 # exactly one reader driver (configure refuses none, and the context
 # dereferences it unconditionally), so the CT-API driver stands in: with no
 # module named in a configuration it loads nothing, and it has no reader
 # detection at all. This is a configuration of upstream OpenSC, not a patch.
-set(OPENSC_PCSC_READER_FLAGS --enable-pcsc)
 set(OPENSC_PLUGIN_READER_FLAGS --disable-pcsc --disable-cryptotokenkit --enable-ctapi)
 
 # _opensc_configure_flags(<out> <install-dir> <reader-flags>...)
@@ -357,7 +344,7 @@ function(_opensc_configure_flags out install_dir)
         # Headless backend embedding has no use for OpenSC's desktop-notification
         # feature. Leaving it at autoconf's `detect` default makes notify.c pull in
         # GIO/GLib whenever the build host happens to ship gio-2.0, which then
-        # leaves the static-archive consumers (OpenScPkcs11UnitTests, …) with
+        # leaves the static-archive consumers (the plugin and its tests) with
         # undefined g_application_*/g_notification_* references unless every
         # consuming environment also provides gio on its link line. Disabling it
         # outright keeps the link deterministic and drops the GIO/GLib edge.
@@ -365,7 +352,7 @@ function(_opensc_configure_flags out install_dir)
         # OpenSC auto-detects libeac/openpace (EAC / PACE) whenever the build host
         # ships its headers — Arch's `opensc` package pulls them in, Ubuntu's does
         # not — which makes libopensc.a reference CVC_*/EAC_*/PACE_*/TA_* and leaves
-        # the static-archive consumers (librescrs-opensc-pkcs11, …) with undefined
+        # the static-archive consumers (the plugin and its tests) with undefined
         # references unless every consuming environment also links -leac. LibreSCRS
         # performs its own PACE, so disable it outright to keep the link
         # deterministic and drop the libeac edge (same reasoning as --disable-notify).
@@ -375,13 +362,12 @@ function(_opensc_configure_flags out install_dir)
         # tries to write opensc.module into /usr/share/p11-kit/modules/ during
         # `make install` (system path detected via pkg-config p11-kit-1) and
         # fails with EACCES on non-root builds. We don't need the p11-kit
-        # config file anyway — librescrs-opensc-pkcs11 statically links libopensc.
+        # config file anyway — the plugin statically links libopensc.
         --enable-p11_system_config_modules=${install_dir}/share/p11-kit/modules
     )
     set(${out} ${_flags} PARENT_SCOPE)
 endfunction()
 
-_opensc_configure_flags(OPENSC_CONFIGURE_FLAGS ${OPENSC_INSTALL_DIR} ${OPENSC_PCSC_READER_FLAGS})
 _opensc_configure_flags(OPENSC_PLUGIN_CONFIGURE_FLAGS ${OPENSC_PLUGIN_INSTALL_DIR} ${OPENSC_PLUGIN_READER_FLAGS})
 
 # CFLAGS for the vendored OpenSC build. Autoconf defaults to `-g -O2` when
@@ -395,8 +381,7 @@ _opensc_configure_flags(OPENSC_PLUGIN_CONFIGURE_FLAGS ${OPENSC_PLUGIN_INSTALL_DI
 #
 # `-ffunction-sections -fdata-sections` lets the consuming `.so`'s linker
 # `--gc-sections` drop unused OpenSC objects (drivers, helpers we never
-# call). Net effect: `librescrs-pkcs11.so` Release shrinks from ~15 MB
-# to ~8 MB, matching the size of the project's other static-linked plugins.
+# call), which roughly halves a consumer's Release size.
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(OPENSC_CFLAGS "-O0 -g -ffunction-sections -fdata-sections")
 elseif(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
@@ -426,15 +411,14 @@ if(APPLE AND CMAKE_OSX_ARCHITECTURES)
     set(OPENSC_OPENSSL_LIBS   "-L${OPENSSL_ROOT}/macosx/lib -lcrypto")
 endif()
 
-# On macOS nothing links this PC/SC build (its consumers are not built there);
-# it still runs because its configure step bootstraps the source tree that the
-# plugin's build below shares.
-ExternalProject_Add(opensc_external
+# The card plugin's copy, configured without the PC/SC reader driver
+# (OPENSC_PLUGIN_READER_FLAGS above). bootstrap regenerates configure and the
+# Makefile.in files via autoreconf; it must run in the source tree before
+# configure.
+ExternalProject_Add(opensc_external_plugin
     SOURCE_DIR        ${OPENSC_SOURCE_DIR}
-    BINARY_DIR        ${OPENSC_BUILD_DIR}
-    INSTALL_DIR       ${OPENSC_INSTALL_DIR}
-    # bootstrap regenerates configure/Makefile.in via autoreconf; must run
-    # in the source tree before configure.
+    BINARY_DIR        ${OPENSC_PLUGIN_BUILD_DIR}
+    INSTALL_DIR       ${OPENSC_PLUGIN_INSTALL_DIR}
     CONFIGURE_COMMAND ${CMAKE_COMMAND} -E chdir ${OPENSC_SOURCE_DIR} ./bootstrap
               COMMAND ${CMAKE_COMMAND} -E env
                       "CFLAGS=${OPENSC_CFLAGS}"
@@ -442,54 +426,10 @@ ExternalProject_Add(opensc_external
                       "OPENSSL_CFLAGS=${OPENSC_OPENSSL_CFLAGS}"
                       "OPENSSL_LIBS=${OPENSC_OPENSSL_LIBS}"
                       "MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}"
-                      ${OPENSC_SOURCE_DIR}/configure ${OPENSC_CONFIGURE_FLAGS}
+                      ${OPENSC_SOURCE_DIR}/configure ${OPENSC_PLUGIN_CONFIGURE_FLAGS}
     # The deployment target goes to the compile as well: clang reads it from
     # the environment of each compile, and configure does not turn it into a
     # flag, so without it here every object carries the SDK's own version.
-    BUILD_COMMAND     ${CMAKE_COMMAND} -E env
-                      "MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}"
-                      make -j4
-    # With autostart off and the completion directory pinned above, only
-    # opensc.conf is installed under sysconfdir. The objects were
-    # compiled by BUILD_COMMAND with the configured value, and install only
-    # copies them, so overriding it here moves the file and not the path.
-    INSTALL_COMMAND   make install sysconfdir=${OPENSC_INSTALL_DIR}/etc
-    BUILD_BYPRODUCTS  ${OPENSC_STATIC_LIB}
-    BUILD_IN_SOURCE   FALSE
-    LOG_CONFIGURE         TRUE
-    LOG_BUILD             TRUE
-    LOG_INSTALL           TRUE
-    LOG_OUTPUT_ON_FAILURE TRUE
-)
-
-add_library(opensc_static STATIC IMPORTED GLOBAL)
-set_target_properties(opensc_static PROPERTIES
-    IMPORTED_LOCATION             ${OPENSC_STATIC_LIB}
-    INTERFACE_INCLUDE_DIRECTORIES "${OPENSC_INCLUDE_SRC};${OPENSC_INCLUDE_BUILD}"
-)
-add_dependencies(opensc_static opensc_external)
-
-# The card plugin's copy: the same source, flags and build type, configured
-# without the PC/SC reader driver (OPENSC_PLUGIN_READER_FLAGS above). The price
-# is a second OpenSC build in every configuration that vendors it.
-#
-# bootstrap rewrites configure and the Makefile.in files in the shared source
-# tree, so it runs once, in opensc_external's configure step; this build's
-# configure waits for that step and does not run it again. Its make also waits
-# for the other make: automake's rebuild rules write into the shared source
-# tree as well, and two make -j4 at once would double the job count. The price
-# is that the two OpenSC builds run one after the other.
-ExternalProject_Add(opensc_external_plugin
-    SOURCE_DIR        ${OPENSC_SOURCE_DIR}
-    BINARY_DIR        ${OPENSC_PLUGIN_BUILD_DIR}
-    INSTALL_DIR       ${OPENSC_PLUGIN_INSTALL_DIR}
-    CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env
-                      "CFLAGS=${OPENSC_CFLAGS}"
-                      "LDFLAGS=${OPENSC_LDFLAGS}"
-                      "OPENSSL_CFLAGS=${OPENSC_OPENSSL_CFLAGS}"
-                      "OPENSSL_LIBS=${OPENSC_OPENSSL_LIBS}"
-                      "MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}"
-                      ${OPENSC_SOURCE_DIR}/configure ${OPENSC_PLUGIN_CONFIGURE_FLAGS}
     BUILD_COMMAND     ${CMAKE_COMMAND} -E env
                       "MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}"
                       make -j4
@@ -504,9 +444,6 @@ ExternalProject_Add(opensc_external_plugin
     LOG_INSTALL           TRUE
     LOG_OUTPUT_ON_FAILURE TRUE
 )
-ExternalProject_Add_StepTargets(opensc_external configure build)
-ExternalProject_Add_StepDependencies(opensc_external_plugin configure opensc_external-configure)
-ExternalProject_Add_StepDependencies(opensc_external_plugin build opensc_external-build)
 
 add_library(opensc_plugin_static STATIC IMPORTED GLOBAL)
 set_target_properties(opensc_plugin_static PROPERTIES
@@ -515,58 +452,23 @@ set_target_properties(opensc_plugin_static PROPERTIES
 )
 add_dependencies(opensc_plugin_static opensc_external_plugin)
 
-# Convenience wrapper bundling opensc_static with its transitive runtime
-# deps. libopensc.a references zlib (compression.o, pkcs15-actalis.o) and
-# PC/SC (SCard* via --enable-pcsc). Consumers linking the static archive
-# into a SHARED library must satisfy these symbols; depending on this
-# INTERFACE target does it once for the whole tree. (The notify backend is
-# built with --disable-notify, so there is no GIO/GLib link edge.)
-add_library(opensc_static_with_deps INTERFACE)
+# Convenience wrapper bundling the plugin's OpenSC with its transitive
+# runtime deps. libopensc.a references zlib (compression.o,
+# pkcs15-actalis.o); consumers linking the static archive into a SHARED
+# library must satisfy these symbols. (The notify backend is built with
+# --disable-notify, so there is no GIO/GLib link edge.)
+#
 # libopensc.a and libcrypto.a are mutually recursive at link time
 # (libopensc → ERR_*, X509_*, BIO_*; libcrypto pulled fresh by libopensc
 # objects discovered later). When consumers also drag OpenSSL_Crypto in
 # earlier (via e.g. SmartCard_Impl), CMake deduplicates and the late
 # OpenSSL_Crypto reference is dropped — leaving libopensc.a's undefined
-# symbols unresolved.
-#
-# On GNU ld / lld we force --start-group/--end-group rescan via
-# `$<LINK_GROUP:RESCAN,...>` so the archives are scanned until the symbol
-# set converges. Apple ld64 performs multi-pass archive linking on its own
-# (CMake's `$<LINK_GROUP>` is documented as not supported for the 'CXX'
-# link language on Apple), so the plain target ordering is sufficient —
-# ld64 will rescan both archives until no more symbols are pulled.
-#
-# ZLIB::ZLIB MUST sit inside the rescan group, not after it: libopensc.a's
-# compression.o / pkcs15-actalis.o reference inflate/uncompress/inflateInit2_
-# /inflateEnd, and those objects are pulled in mid-scan. With zlib appended
-# *after* --end-group the resolution only works by luck of link ordering
-# (e.g. when CMake happens to emit libz.so before the group, where a shared
-# lib's symbols stay available). Under a different consumer/link order — as
-# CodeQL's traced build produced for OpenScPkcs11UnitTests — the trailing
-# libz lands past the closed group and the zlib refs go undefined. Folding
-# zlib into the group makes the link order-independent and correct on every
-# consumer.
+# symbols unresolved. On GNU ld / lld `$<LINK_GROUP:RESCAN,...>` forces a
+# --start-group/--end-group rescan until the symbol set converges; Apple
+# ld64 rescans archives on its own. ZLIB::ZLIB sits inside the group, not
+# after it, so zlib references pulled in mid-scan resolve in every link
+# order.
 find_package(ZLIB REQUIRED)
-if(APPLE)
-    target_link_libraries(opensc_static_with_deps INTERFACE
-        opensc_static OpenSSL_Crypto ZLIB::ZLIB
-    )
-else()
-    target_link_libraries(opensc_static_with_deps INTERFACE
-        "$<LINK_GROUP:RESCAN,opensc_static,OpenSSL_Crypto,ZLIB::ZLIB>"
-    )
-endif()
-
-find_package(PkgConfig QUIET)
-if(PkgConfig_FOUND AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    pkg_check_modules(LIBRESCRS_OPENSC_PCSC QUIET IMPORTED_TARGET libpcsclite)
-    if(LIBRESCRS_OPENSC_PCSC_FOUND)
-        target_link_libraries(opensc_static_with_deps INTERFACE PkgConfig::LIBRESCRS_OPENSC_PCSC)
-    endif()
-endif()
-
-# The same wrapper for the plugin's copy: the same rescan group, and no PC/SC
-# library, because that copy has nothing that calls one.
 add_library(opensc_plugin_static_with_deps INTERFACE)
 if(APPLE)
     target_link_libraries(opensc_plugin_static_with_deps INTERFACE

@@ -4,6 +4,7 @@
 #include "chip_auth.h"
 
 #include "tlv_bounds.h"
+#include <ber.h>
 #include "crypto_utils.h"
 
 #include <LibreSCRS_internal/Crypto/CleanseGuard.h>
@@ -11,8 +12,6 @@
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <apdu.h>
-
-#include <limits>
 
 #include <openssl/bn.h>
 #include <openssl/crypto.h>
@@ -22,7 +21,7 @@
 #include <openssl/rand.h>
 #include <openssl/x509.h>
 
-#include <algorithm>
+#include <array>
 #include <cstring>
 #include <memory>
 #include <stdexcept>
@@ -71,87 +70,13 @@ using ECPointPtr = std::unique_ptr<EC_POINT, ECPointDeleter>;
 // BER-TLV helpers
 // ---------------------------------------------------------------------------
 
-// Bounds-checked BER-TLV length read, shared by every parser in this library.
+// Bounds-checked BER-TLV length read, shared by every parser in this library;
+// the OID codec and the TLV encoder are the ones PACE uses too.
+using detail::oidBytesToString;
+using detail::oidStringToBytes;
 using detail::readLength;
 using detail::readLengthClamped;
-
-static std::string oidBytesToString(const uint8_t* data, size_t len)
-{
-    if (len == 0)
-        return {};
-
-    std::string result;
-    result += std::to_string(data[0] / 40) + "." + std::to_string(data[0] % 40);
-
-    unsigned long value = 0;
-    for (size_t i = 1; i < len; ++i) {
-        if (value > (std::numeric_limits<unsigned long>::max() >> 7))
-            return {}; // overflow protection
-        value = (value << 7) | (data[i] & 0x7F);
-        if ((data[i] & 0x80) == 0) {
-            result += "." + std::to_string(value);
-            value = 0;
-        }
-    }
-    return result;
-}
-
-static std::vector<uint8_t> oidStringToBytes(const std::string& oid)
-{
-    std::vector<unsigned long> components;
-    size_t start = 0;
-    while (start < oid.size()) {
-        size_t dot = oid.find('.', start);
-        if (dot == std::string::npos)
-            dot = oid.size();
-        components.push_back(std::stoul(oid.substr(start, dot - start)));
-        start = dot + 1;
-    }
-
-    if (components.size() < 2)
-        return {};
-    if (components[0] > 2 || (components[0] < 2 && components[1] > 39))
-        return {};
-
-    std::vector<uint8_t> bytes;
-    unsigned long firstByte = components[0] * 40 + components[1];
-    if (firstByte > 255)
-        return {};
-    bytes.push_back(static_cast<uint8_t>(firstByte));
-
-    for (size_t i = 2; i < components.size(); ++i) {
-        unsigned long val = components[i];
-        std::vector<uint8_t> encoded;
-        encoded.push_back(static_cast<uint8_t>(val & 0x7F));
-        val >>= 7;
-        while (val > 0) {
-            encoded.push_back(static_cast<uint8_t>((val & 0x7F) | 0x80));
-            val >>= 7;
-        }
-        std::reverse(encoded.begin(), encoded.end());
-        bytes.insert(bytes.end(), encoded.begin(), encoded.end());
-    }
-    return bytes;
-}
-
-static std::vector<uint8_t> buildTLV(uint8_t tag, const std::vector<uint8_t>& value)
-{
-    std::vector<uint8_t> result;
-    result.push_back(tag);
-    size_t len = value.size();
-    if (len < 0x80) {
-        result.push_back(static_cast<uint8_t>(len));
-    } else if (len <= 0xFF) {
-        result.push_back(0x81);
-        result.push_back(static_cast<uint8_t>(len));
-    } else {
-        result.push_back(0x82);
-        result.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
-        result.push_back(static_cast<uint8_t>(len & 0xFF));
-    }
-    result.insert(result.end(), value.begin(), value.end());
-    return result;
-}
+using LibreSCRS::SmartCard::Internal::buildTlv;
 
 // ---------------------------------------------------------------------------
 // OID constants for Chip Authentication
@@ -538,14 +463,14 @@ ChipAuthResult performChipAuth(LibreSCRS::SecureChannel::ISecureChannel& channel
 
     // --- MSE:Set AT ---
     auto caOIDBytes = oidStringToBytes(caOID);
-    auto oidTLV = buildTLV(0x80, caOIDBytes);
+    auto oidTLV = buildTlv(0x80, caOIDBytes);
 
     std::vector<uint8_t> mseData;
     mseData.insert(mseData.end(), oidTLV.begin(), oidTLV.end());
 
     // Add keyId if present
     if (selectedKey->keyId.has_value()) {
-        auto keyIdTLV = buildTLV(0x84, {static_cast<uint8_t>(selectedKey->keyId.value())});
+        auto keyIdTLV = buildTlv(0x84, std::array{static_cast<uint8_t>(selectedKey->keyId.value())});
         mseData.insert(mseData.end(), keyIdTLV.begin(), keyIdTLV.end());
     }
 
@@ -561,8 +486,8 @@ ChipAuthResult performChipAuth(LibreSCRS::SecureChannel::ISecureChannel& channel
 
     // --- General Authenticate ---
     // Command: 00 86 00 00 Lc {7C {80 <terminal_pubkey>}} 00
-    auto pubKeyDO = buildTLV(0x80, terminalPubBytes);
-    auto gaData = buildTLV(0x7C, pubKeyDO);
+    auto pubKeyDO = buildTlv(0x80, terminalPubBytes);
+    auto gaData = buildTlv(0x7C, pubKeyDO);
     LibreSCRS::SmartCard::Internal::APDUCommand gaCmd{0x00, 0x86, 0x00, 0x00, gaData, 0x00, true};
     auto gaResp = channel.transmit(gaCmd, token);
 

@@ -30,6 +30,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <ios>
 #include <vector>
 
 namespace {
@@ -54,9 +56,9 @@ AppletAid makeNamEmrtdAid()
 SessionKeys makeFakeAesKeys()
 {
     SessionKeys k;
-    k.encKey = LibreSCRS::Secure::Buffer{16, 0x11};
-    k.macKey = LibreSCRS::Secure::Buffer{16, 0x22};
-    k.ssc = LibreSCRS::Secure::Buffer{16, 0x00};
+    k.encKey = LibreSCRS::Secure::Buffer{std::vector<std::uint8_t>(16, 0x11)};
+    k.macKey = LibreSCRS::Secure::Buffer{std::vector<std::uint8_t>(16, 0x22)};
+    k.ssc = LibreSCRS::Secure::Buffer{std::vector<std::uint8_t>(16, 0x00)};
     k.cipher = SmCipher::Aes;
     return k;
 }
@@ -64,9 +66,9 @@ SessionKeys makeFakeAesKeys()
 SessionKeys makeFakeDes3Keys()
 {
     SessionKeys k;
-    k.encKey = LibreSCRS::Secure::Buffer{16, 0x33};
-    k.macKey = LibreSCRS::Secure::Buffer{16, 0x44};
-    k.ssc = LibreSCRS::Secure::Buffer{8, 0x00};
+    k.encKey = LibreSCRS::Secure::Buffer{std::vector<std::uint8_t>(16, 0x33)};
+    k.macKey = LibreSCRS::Secure::Buffer{std::vector<std::uint8_t>(16, 0x44)};
+    k.ssc = LibreSCRS::Secure::Buffer{std::vector<std::uint8_t>(8, 0x00)};
     k.cipher = SmCipher::Des3;
     return k;
 }
@@ -237,30 +239,81 @@ TEST(BacChannelTests, Sw6988TransitionsToFailed)
 // separate effort.
 // -----------------------------------------------------------------------------
 
-TEST(PaceEstablishTests, CardRefusingMseSetAtIsAWrongSecret)
-{
-    using LibreSCRS::Auth::PaceSecretKind;
-    using LibreSCRS::SecureChannel::ChannelActivationError;
-    using LibreSCRS::SecureChannel::PaceParams;
+namespace {
 
-    FakePCSCConnection fakeConn;
-    PaceParams params;
+LibreSCRS::SecureChannel::PaceParams canParams()
+{
+    LibreSCRS::SecureChannel::PaceParams params;
     params.oid = "0.4.0.127.0.7.2.2.4.2.4";
-    params.passwordType = PaceSecretKind::Can;
+    params.passwordType = LibreSCRS::Auth::PaceSecretKind::Can;
     params.password = LibreSCRS::Secure::String{"123456"};
     params.paramId = LibreSCRS::SecureChannel::PaceStandardisedDomainParam::BrainpoolP256r1;
+    return params;
+}
 
-    fakeConn.setResponder([](const LibreSCRS::SmartCard::Internal::APDUCommand&) {
-        return LibreSCRS::SmartCard::Internal::APDUResponse{{}, 0x6A, 0x80};
-    });
+// The card answers MSE:Set AT with @p mseSw and General Authenticate with
+// @p gaSw.
+FakePCSCConnection::ResponseFn paceCard(std::uint16_t mseSw, std::uint16_t gaSw)
+{
+    return [mseSw, gaSw](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd) {
+        const auto sw = cmd.ins == 0x22 ? mseSw : gaSw;
+        return LibreSCRS::SmartCard::Internal::APDUResponse{
+            {}, static_cast<std::uint8_t>(sw >> 8), static_cast<std::uint8_t>(sw & 0xFF)};
+    };
+}
 
-    auto outcome = PaceChannel::establish(fakeConn, params, CancelToken{});
+} // namespace
+
+// MSE:Set AT carries the OID and the password type, nothing derived from the
+// secret: a card refusing it does not support this OID, and the caller may try
+// another one.
+TEST(PaceEstablishTests, CardRefusingMseSetAtIsAnUnsupportedOid)
+{
+    using LibreSCRS::SecureChannel::ChannelActivationError;
+
+    FakePCSCConnection fakeConn;
+    fakeConn.setResponder(paceCard(0x6A80, 0x9000));
+
+    auto outcome = PaceChannel::establish(fakeConn, canParams(), CancelToken{});
     ASSERT_FALSE(outcome.has_value());
-    EXPECT_EQ(outcome.error(), ChannelActivationError::PaceWrongSecret);
+    EXPECT_EQ(outcome.error(), ChannelActivationError::PaceUnsupported);
     ASSERT_EQ(fakeConn.history().size(), 1u);
     EXPECT_EQ(fakeConn.history()[0].ins, 0x22);
     EXPECT_EQ(fakeConn.history()[0].p1, 0xC1);
     EXPECT_EQ(fakeConn.history()[0].p2, 0xA4);
+}
+
+// A card may report on the password itself at MSE:Set AT (tries left,
+// blocked): that is about the secret, not the OID.
+TEST(PaceEstablishTests, CardReportingThePasswordAtMseSetAtIsAWrongSecret)
+{
+    using LibreSCRS::SecureChannel::ChannelActivationError;
+
+    for (const std::uint16_t sw : {std::uint16_t{0x63C2}, std::uint16_t{0x6983}, std::uint16_t{0x6984}}) {
+        FakePCSCConnection fakeConn;
+        fakeConn.setResponder(paceCard(sw, 0x9000));
+
+        auto outcome = PaceChannel::establish(fakeConn, canParams(), CancelToken{});
+        ASSERT_FALSE(outcome.has_value());
+        EXPECT_EQ(outcome.error(), ChannelActivationError::PaceWrongSecret) << std::hex << sw;
+        EXPECT_EQ(fakeConn.history().size(), 1u) << std::hex << sw;
+    }
+}
+
+// Once the card took the OID, a refused General Authenticate is a failed
+// attempt with this secret.
+TEST(PaceEstablishTests, CardRefusingGeneralAuthenticateIsAWrongSecret)
+{
+    using LibreSCRS::SecureChannel::ChannelActivationError;
+
+    FakePCSCConnection fakeConn;
+    fakeConn.setResponder(paceCard(0x9000, 0x63C2));
+
+    auto outcome = PaceChannel::establish(fakeConn, canParams(), CancelToken{});
+    ASSERT_FALSE(outcome.has_value());
+    EXPECT_EQ(outcome.error(), ChannelActivationError::PaceWrongSecret);
+    ASSERT_EQ(fakeConn.history().size(), 2u);
+    EXPECT_EQ(fakeConn.history()[1].ins, 0x86);
 }
 
 TEST(PaceEstablishTests, AlreadyCancelledTokenSkipsHandshake)

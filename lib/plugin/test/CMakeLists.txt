@@ -6,7 +6,7 @@ include(GoogleTest)
 
 # ActivationProfileTests exercises the internal isStopError /
 # shouldTryFallback predicates (hidden visibility, declared only under
-# LIBRESCRS_INTERNAL_BUILD) alongside the public acquireChannelForProfile.
+# LIBRESCRS_INTERNAL_BUILD).
 # Reaches them by absorbing the CardPlugin_Impl object archive (default
 # visibility, build-tree only) and compiling with LIBRESCRS_INTERNAL_BUILD so
 # the internal declarations are visible — mirrors ActivatedProtocolTests.
@@ -181,3 +181,20 @@ target_include_directories(ProbeOrderTests PRIVATE
 )
 target_compile_definitions(ProbeOrderTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(ProbeOrderTests)
+
+# CardPluginContainmentTests — anchors the single exception policy of the
+# CardPlugin card-operation wrappers: a plugin override that throws (a
+# std::exception or anything else) is reported as that call's failure and
+# logged once, and nothing reaches the caller. Detached-session factory as
+# in CardPluginDecipherDefaultTest.
+add_executable(CardPluginContainmentTests CardPluginContainmentTests.cpp)
+target_link_libraries(CardPluginContainmentTests PRIVATE
+    LibreSCRS::Plugin
+    LibreSCRS::SmartCard
+    LibreSCRS_SmartCard_TestHelpers
+    LibreSCRS::Secure
+    GTest::gtest_main
+)
+target_include_directories(CardPluginContainmentTests PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_compile_definitions(CardPluginContainmentTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(CardPluginContainmentTests)

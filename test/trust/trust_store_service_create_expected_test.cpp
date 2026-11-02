@@ -14,7 +14,6 @@ namespace tt = LibreSCRS::Trust;
 TEST(TrustStoreServiceCreate, ValidConfigReturnsExpected)
 {
     tt::TrustConfig cfg;
-    cfg.includeSystemTrustStore = false;
     auto result = tt::TrustStoreService::create(std::move(cfg));
     ASSERT_TRUE(result.has_value());
     EXPECT_NE(*result, nullptr);

@@ -17,6 +17,14 @@ set(PROJECT_VERSION ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_
 
 project(LibreMiddleware VERSION ${PROJECT_VERSION} LANGUAGES CXX C)
 
+# A single-configuration generator with no build type compiles without
+# optimisation and without NDEBUG. Default to the configuration the packages
+# ship, so a build nobody configured is not a debug build by accident.
+get_property(_lm_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NOT _lm_multi_config AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
+endif()
+
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -28,19 +36,18 @@ endif()
 #
 # Deliberately NOT an add_compile_options(-Werror) next to the line above:
 # that is directory-scoped and would also reach code this project does not
-# own. googletest is fetched into this build tree (test/CMakeLists.txt) and
-# the vendored miniz translation unit compiles inside LibreSign, so a global
-# -Werror would let a compiler upgrade break this build through a diagnostic
-# in someone else's source, which no local fix can address. The opt-in below
+# own. The vendored miniz translation unit compiles inside LibreSign, so a
+# global -Werror would let a compiler upgrade break this build through a
+# diagnostic in someone else's source, which no local fix can address. The opt-in below
 # is per target and is applied only to first-party libraries and plugins.
 # Test executables stay warning-only for the same reason the strictness is
 # scoped at all: the gate exists to protect the shipped library code.
-option(LIBREMIDDLEWARE_WERROR "Treat compiler warnings as errors" OFF)
+option(LIBRESCRS_WERROR "Treat compiler warnings as errors" OFF)
 
-# Opts the named targets into LIBREMIDDLEWARE_WERROR. A no-op when the option
+# Opts the named targets into LIBRESCRS_WERROR. A no-op when the option
 # is off, so call sites need no condition of their own.
 function(librescrs_warnings_as_errors)
-    if(NOT LIBREMIDDLEWARE_WERROR)
+    if(NOT LIBRESCRS_WERROR)
         return()
     endif()
     # GCC 13 reports -Wstringop-overflow / -Wstringop-overread from inside
@@ -108,12 +115,11 @@ include(GNUInstallDirs)
 # override. The value is derived, not chosen.
 set(LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR "${CMAKE_INSTALL_FULL_DATAROOTDIR}/librescrs/certificates")
 
-# Vendored OpenSC fork (static archive) for the OpenScPKCS11Provider.
+# Vendored OpenSC fork (static archive) for the OpenSC fallback card plugin.
 # Pinned at thirdparty/opensc-source. ON by default; set to OFF to skip
-# the ~5-10 minute autoconf+make build (the resulting librescrs-opensc-pkcs11
-# fallback module then will not be built either).
+# the autoconf+make build (the OpenSC card plugin is then not built).
 option(LIBRESCRS_VENDOR_OPENSC
-    "Build vendored OpenSC fork as a static library for librescrs-opensc-pkcs11 fallback" ON)
+    "Build the vendored OpenSC fork as a static library for the OpenSC card plugin" ON)
 
 if(NOT WIN32 AND LIBRESCRS_VENDOR_OPENSC)
     execute_process(
@@ -128,17 +134,11 @@ if(NOT WIN32 AND LIBRESCRS_VENDOR_OPENSC)
     message(STATUS "${_opensc_pin_out}")
 endif()
 
-# Shared-library mode. Default ON because LibreMiddleware is a plugin-
-# oriented architecture: card plugins and the in-tree PKCS#11 module are
-# always dynamic .so files, and SessionPresence (the in-process registry
-# coordinating cross-reader secure messaging) is a process-local
-# singleton whose ODR correctness requires a single SHARED definition
-# visible to every plugin via DT_NEEDED. Static LibreMiddleware is only
-# viable with LIBREMIDDLEWARE_BUILD_PLUGINS=OFF (monolithic SDK build).
-# Defined before any add_subdirectory() so subordinate CMakeLists may
-# read ${LIBREMIDDLEWARE_LIB_TYPE} during their target declarations.
-option(LIBREMIDDLEWARE_BUILD_SHARED
-       "Build public LibreSCRS_* targets as shared libraries" ON)
+# Every public LibreSCRS_* library is a shared library, and this is the only
+# configuration. Card plugins are loaded at run time as shared objects, and the
+# process-wide state the libraries hold -- the PC/SC connection, the logging
+# sink -- must have exactly one definition per process. A static copy linked
+# into each plugin would split that state between them.
 
 # SONAME integer for the LibreSCRS_* shared libraries. Independent of the
 # release version on purpose: it is bumped whenever ci/scripts/abi-layout.sh
@@ -151,42 +151,6 @@ set(LIBRESCRS_ABI_SOVERSION 5 CACHE STRING
     "SONAME integer for the LibreSCRS_* shared libraries. Independent of the
 release version: bumped whenever ci/scripts/abi-layout.sh reports a
 non-additive change. 4 = 4.0-4.2; 5 = 5.0 onward.")
-
-# Plugin and in-tree PKCS#11 module shared objects are built by default.
-# Set OFF for monolithic SDK consumers (single-binary CLI tools, embedded
-# hosts) that statically link LM and do not enumerate plugin .so files
-# at runtime. STATIC + plugins is an unsupported configuration because
-# the cross-`.so` SessionPresence singleton fractures across each
-# plugin's privately-linked LM copy (see message below).
-option(LIBREMIDDLEWARE_BUILD_PLUGINS
-       "Build card plugins and the in-tree PKCS#11 module as shared libraries" ON)
-
-if(NOT LIBREMIDDLEWARE_BUILD_SHARED AND LIBREMIDDLEWARE_BUILD_PLUGINS)
-    message(FATAL_ERROR
-        "STATIC LibreMiddleware (LIBREMIDDLEWARE_BUILD_SHARED=OFF) is "
-        "incompatible with plugin .so files. SessionPresence (the in-process "
-        "registry that gates cross-reader secure-messaging coordination) is a "
-        "singleton whose correctness requires exactly one definition per "
-        "process. With STATIC LM each plugin .so statically links its own copy "
-        "and the registry silently fractures across modules.\n"
-        "\n"
-        "Resolution:\n"
-        "  * Production builds: -DLIBREMIDDLEWARE_BUILD_SHARED=ON\n"
-        "  * Monolithic SDK builds: -DLIBREMIDDLEWARE_BUILD_PLUGINS=OFF\n"
-        "    (forgoes pkcs15-plugin/eu-vrc-plugin/etc. plus the in-tree "
-        "    PKCS#11 module; you commit to single-binary linkage)\n"
-        "\n"
-        "See docs/SHARED-LIBRARY-CONSUMERS.md.")
-endif()
-
-if(LIBREMIDDLEWARE_BUILD_SHARED)
-    set(LIBREMIDDLEWARE_LIB_TYPE SHARED)
-else()
-    set(LIBREMIDDLEWARE_LIB_TYPE STATIC)
-endif()
-message(STATUS "LibreMiddleware public libraries: ${LIBREMIDDLEWARE_LIB_TYPE}")
-message(STATUS "LibreMiddleware plugins: "
-    "${LIBREMIDDLEWARE_BUILD_PLUGINS}")
 
 # DECLARED BEFORE the first add_subdirectory that reads it. A library
 # subdirectory may gate its own tests on this (lib/pkcs15 and lib/plugin both
@@ -202,6 +166,16 @@ message(STATUS "LibreMiddleware plugins: "
 # produced no lib/plugin/test directory at all; a second configure of the same
 # directory produced it. Keep this above every add_subdirectory().
 option(BUILD_TESTING "Build tests" ON)
+
+# GoogleTest comes from the system, as for every other LibreSCRS project:
+# one way to obtain it, nothing downloaded at configure time, and nothing of
+# it installed into this project's prefix. Found here, above every
+# add_subdirectory(), because imported targets are visible only in the
+# directory that found them and below it, and lib/plugin and lib/pkcs15 add
+# their test directories long before test/ is reached.
+if(BUILD_TESTING)
+    find_package(GTest REQUIRED)
+endif()
 
 # Defer gtest test discovery to ctest time, for every test directory. The
 # default (POST_BUILD) runs each freshly linked test binary in the middle of
@@ -274,51 +248,33 @@ add_subdirectory(lib/emrtd)
 # top-level add_subdirectory(test) -- and a test that compiles in
 # $<TARGET_FILE:pcsc_counting_shim> needs the target to exist by then.
 # Not on macOS, where nothing reaches a card through PC/SC.
-if(BUILD_TESTING AND LIBREMIDDLEWARE_BUILD_PLUGINS AND LIBRESCRS_VENDOR_OPENSC AND NOT APPLE)
+if(BUILD_TESTING AND LIBRESCRS_VENDOR_OPENSC AND NOT APPLE)
     add_subdirectory(test/pcsc_counting_shim)
 endif()
 
 add_subdirectory(lib/pkcs15)
-# Digital signing support (LibreSign library + DSS integration).
-# pkcs11.so is always built — it's a standalone PKCS#11 module
-# used by Firefox, pkcs11-tool, etc.
-option(BUILD_SIGNING "Build digital signing support (LibreSign + DSS)" ON)
+# Digital signing support (the LibreSign engine).
+option(BUILD_SIGNING "Build digital signing support (LibreSign)" ON)
 if(BUILD_SIGNING)
     add_subdirectory(lib/libresign)
     message(STATUS "Digital signing: enabled")
 else()
     message(STATUS "Digital signing: disabled (set -DBUILD_SIGNING=ON to enable)")
 endif()
-if(LIBRESCRS_VENDOR_OPENSC AND LIBREMIDDLEWARE_BUILD_PLUGINS)
-    # The direct PKCS#11 provider opens readers through PC/SC itself; on macOS
-    # cards are reached through CryptoTokenKit only, so it is not built there.
-    if(NOT APPLE)
-        add_subdirectory(lib/opensc-pkcs11)
-    endif()
-    # The OpenSC fallback card plugin and the PKCS#11 module each link a copy
-    # of the vendored OpenSC: the module `opensc_static_with_deps`, the plugin
-    # `opensc_plugin_static_with_deps`, built without the PC/SC reader driver.
-    # No system libopensc package is needed; coverage is unified across Stack A
-    # (CardPlugin chain → display) and Stack B (PKCS#11 providers → sign).
+if(LIBRESCRS_VENDOR_OPENSC)
+    # The OpenSC fallback card plugin links its own copy of the vendored
+    # OpenSC (`opensc_plugin_static_with_deps`), built without the PC/SC
+    # reader driver: it reaches the card only through the session it is
+    # handed. No system libopensc package is needed.
     add_subdirectory(lib/opensc-plugin)
 endif()
 
-# Card plugins + in-tree PKCS#11 module. The hard guard at the top of
-# this file rejects LIBREMIDDLEWARE_BUILD_SHARED=OFF + BUILD_PLUGINS=ON,
-# so reaching the OFF branch here implies a deliberate monolithic-SDK
-# configuration.
-if(LIBREMIDDLEWARE_BUILD_PLUGINS)
-    # The direct PKCS#11 module drives the card itself; on macOS the agent owns
-    # the card, so the module is not built there.
-    if(NOT APPLE)
-        add_subdirectory(lib/pkcs11)
-    endif()
-    add_subdirectory(lib/rs-eid-plugin)
-    add_subdirectory(lib/eu-vrc-plugin)
-    add_subdirectory(lib/rs-health-plugin)
-    add_subdirectory(lib/emrtd-plugin)
-    add_subdirectory(lib/pkcs15-plugin)
-endif()
+# Card plugins.
+add_subdirectory(lib/rs-eid-plugin)
+add_subdirectory(lib/eu-vrc-plugin)
+add_subdirectory(lib/rs-health-plugin)
+add_subdirectory(lib/emrtd-plugin)
+add_subdirectory(lib/pkcs15-plugin)
 
 if(BUILD_TESTING)
     # Call enable_testing() at top level so add_test() calls in any
@@ -353,15 +309,7 @@ if(BUILD_TESTING)
         "Default per-test ctest timeout, in seconds")
     include(CTest)
 
-    if(LIBREMIDDLEWARE_BUILD_PLUGINS)
-        add_subdirectory(test)
-    else()
-        # Monolithic SDK build (BUILD_PLUGINS=OFF). The in-tree test suite
-        # exercises plugin loading and the in-tree PKCS#11 module, which do
-        # not exist in this configuration. Downstream SDK consumers build
-        # their own tests against the public LibreSCRS::* API instead.
-        message(STATUS "LibreMiddleware tests: skipped (BUILD_PLUGINS=OFF)")
-    endif()
+    add_subdirectory(test)
 endif()
 
 option(LIBRESCRS_BUILD_FUZZ
@@ -376,14 +324,9 @@ if(LIBRESCRS_BUILD_BENCH)
     add_subdirectory(bench)
 endif()
 
-# Examples opt-in by default when SHARED build is active — the shared-build
-# CLI example doubles as a smoke test for the SHARED-library link path.
-if(LIBREMIDDLEWARE_BUILD_SHARED)
-    set(_lm_examples_default ON)
-else()
-    set(_lm_examples_default OFF)
-endif()
-option(LIBRESCRS_BUILD_EXAMPLES "Build LibreMiddleware public-API consumer examples" ${_lm_examples_default})
+# Examples are built by default: the shared-library CLI example doubles as a
+# smoke test of the link path every consumer takes.
+option(LIBRESCRS_BUILD_EXAMPLES "Build LibreMiddleware public-API consumer examples" ON)
 # add_subdirectory unconditionally so IDE project trees (QtCreator, CLion)
 # populate the examples/ source files in their file-tree view even when the
 # build is disabled. The per-example CMakeLists gates its add_executable on
@@ -398,43 +341,28 @@ add_subdirectory(tools)
 # ──────────────────────────────────────────────────────────────────────────
 # SDK install rule for public headers.
 #
-# LibreMiddleware is consumed in-tree (FetchContent) by LibreCelik today, so
-# an install/export package is not the primary distribution channel. However,
-# if/when an SDK package is produced, the `include/LibreSCRS/**/detail/`
-# sub-trees MUST be excluded — those headers are compile-time-guarded with
-# `#error !LIBRESCRS_INTERNAL_BUILD` but must never ship in the public SDK
-# package.
-#
-# Active when:
-#   * LIBRESCRS_INSTALL_SDK_HEADERS=ON       (explicit opt-in), OR
-#   * LIBREMIDDLEWARE_BUILD_SHARED=ON        (Config-package consumers like
-#                                             LibreKDE always need the
-#                                             headers when they pick up the
-#                                             shared libs)
+# The `include/LibreSCRS/**/detail/` sub-trees are excluded — those headers
+# are compile-time-guarded with `#error !LIBRESCRS_INTERNAL_BUILD` and must
+# never ship in the public SDK package.
 #
 # Public API lives under include/LibreSCRS/. Internal detail/ sub-directories
 # are excluded via PATTERN — the regex+exclude is functionally equivalent to
 # enumerating each public component subdir explicitly.
 # ──────────────────────────────────────────────────────────────────────────
-option(LIBRESCRS_INSTALL_SDK_HEADERS
-    "Install LibreSCRS public SDK headers (detail/ sub-trees excluded)" OFF)
-if(LIBRESCRS_INSTALL_SDK_HEADERS OR LIBREMIDDLEWARE_BUILD_SHARED)
-    include(GNUInstallDirs)
-    install(DIRECTORY include/LibreSCRS
-        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
-        FILES_MATCHING
-            PATTERN "*.h"
-            PATTERN "*.hpp"
-        PATTERN "detail" EXCLUDE
-    )
-endif()
+include(GNUInstallDirs)
+install(DIRECTORY include/LibreSCRS
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+    FILES_MATCHING
+        PATTERN "*.h"
+        PATTERN "*.hpp"
+    PATTERN "detail" EXCLUDE
+)
 
 # ──────────────────────────────────────────────────────────────────────────
 # CMake Config package generation.
 #
-# Active when LIBREMIDDLEWARE_BUILD_SHARED=ON. Produces a Config-package
-# pair (`LibreMiddlewareConfig.cmake` + `LibreMiddlewareConfigVersion.cmake`)
-# plus the namespaced Targets.cmake exported in lib/LibreSCRS/CMakeLists.txt
+# Produces a Config-package pair (`LibreMiddlewareConfig.cmake` +
+# `LibreMiddlewareConfigVersion.cmake`) plus the namespaced Targets.cmake exported in lib/LibreSCRS/CMakeLists.txt
 # (`install(EXPORT LibreMiddlewareTargets …)`) so downstream consumers can:
 #
 #   find_package(LibreMiddleware 5.0 REQUIRED CONFIG)
@@ -444,32 +372,29 @@ endif()
 # compatible iff the installed major is 5. The 5.0 ABI break has already
 # happened: a 4.x floor cannot be satisfied by anything this tree installs.
 # ──────────────────────────────────────────────────────────────────────────
-if(LIBREMIDDLEWARE_BUILD_SHARED)
-    include(GNUInstallDirs)
-    include(CMakePackageConfigHelpers)
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
 
-    set(LIBREMIDDLEWARE_CMAKE_CONFIG_DIR
-        "${CMAKE_INSTALL_LIBDIR}/cmake/LibreMiddleware")
+set(LIBREMIDDLEWARE_CMAKE_CONFIG_DIR
+    "${CMAKE_INSTALL_LIBDIR}/cmake/LibreMiddleware")
 
-    configure_package_config_file(
-        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/LibreMiddlewareConfig.cmake.in"
-        "${CMAKE_CURRENT_BINARY_DIR}/LibreMiddlewareConfig.cmake"
-        INSTALL_DESTINATION "${LIBREMIDDLEWARE_CMAKE_CONFIG_DIR}"
-    )
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/LibreMiddlewareConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/LibreMiddlewareConfig.cmake"
+    INSTALL_DESTINATION "${LIBREMIDDLEWARE_CMAKE_CONFIG_DIR}"
+)
 
-    write_basic_package_version_file(
-        "${CMAKE_CURRENT_BINARY_DIR}/LibreMiddlewareConfigVersion.cmake"
-        VERSION "${PROJECT_VERSION}"
-        COMPATIBILITY SameMajorVersion
-    )
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/LibreMiddlewareConfigVersion.cmake"
+    VERSION "${PROJECT_VERSION}"
+    COMPATIBILITY SameMajorVersion
+)
 
-    install(FILES
-        "${CMAKE_CURRENT_BINARY_DIR}/LibreMiddlewareConfig.cmake"
-        "${CMAKE_CURRENT_BINARY_DIR}/LibreMiddlewareConfigVersion.cmake"
-        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/FindPCSC.cmake"
-        DESTINATION "${LIBREMIDDLEWARE_CMAKE_CONFIG_DIR}"
-    )
-endif()
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/LibreMiddlewareConfig.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/LibreMiddlewareConfigVersion.cmake"
+    DESTINATION "${LIBREMIDDLEWARE_CMAKE_CONFIG_DIR}"
+)
 
 # ──────────────────────────────────────────────────────────────────────────
 # Bundled CA certificates install rule.
@@ -511,37 +436,6 @@ install(DIRECTORY thirdparty/certificates/
             PATTERN "*.cer"
             PATTERN "*.der"
             PATTERN "README*" EXCLUDE)
-
-# ──────────────────────────────────────────────────────────────────────────
-# p11-kit module registration — OFF by default, and that is the point.
-#
-# The registered PKCS#11 provider for a LibreSCRS card is the agent proxy,
-# exclusively. The proxy collects the PIN in the agent's prompter, behind an
-# authorization prompt and a lease; this module takes the PIN inside whatever
-# application dlopened it. Registering both leaves one card with two security
-# models and lets whichever dialog the user happens to type into decide which
-# one they got. Installing no declaration is stronger than declaring a
-# conflict: there is then nothing to conflict with.
-#
-# The guard in SessionPresence.h is process-local, so it cannot arbitrate
-# between two providers living in two different processes. That is why this is
-# settled by registration rather than by locking.
-#
-# The default used to be ON for a benefit it never delivered — "Kleopatra sees
-# our cards". The GnuPG stack does not consume p11-kit at all: its card daemon
-# speaks PC/SC directly.
-#
-# ON remains the escape hatch for a headless host with no agent, and for the
-# opt-in out-of-process deployment. It is one explicit flag away.
-# ──────────────────────────────────────────────────────────────────────────
-option(LIBREMIDDLEWARE_INSTALL_P11KIT_MODULE
-    "Install p11-kit module file so PKCS#11-aware applications auto-discover LibreSCRS cards" OFF)
-if(LIBREMIDDLEWARE_INSTALL_P11KIT_MODULE)
-    include(GNUInstallDirs)
-    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/librescrs.module"
-        DESTINATION "${CMAKE_INSTALL_DATADIR}/p11-kit/modules"
-    )
-endif()
 
 # ──────────────────────────────────────────────────────────────────────────
 # Divergence gate: EMRTDCrypto's PRIVATE include list has a second consumer.

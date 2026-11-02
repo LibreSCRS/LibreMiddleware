@@ -19,8 +19,7 @@
 ///
 /// Malformed-extension robustness: the typed extension accessors return
 /// `std::nullopt` on malformed data; raw access via
-/// #LibreSCRS::Certificate::ParsedCertificate::extensions and
-/// #LibreSCRS::Certificate::ParsedCertificate::findExtension is always
+/// #LibreSCRS::Certificate::ParsedCertificate::extensions is always
 /// available as a fallback.
 ///
 /// OpenSSL is a PRIVATE dependency of `LibreSCRS_Certificate` — this
@@ -82,9 +81,6 @@ struct LIBRESCRS_PUBLIC_API PublicKeyInfo
     /// @brief Effective key length in bits (e.g. 2048 for RSA-2048,
     ///        256 for P-256). Zero if unknown.
     int bitLength{0};
-    /// @brief Human-readable algorithm description (e.g. "rsaEncryption",
-    ///        "ecPublicKey").
-    std::string algorithmDescription;
     /// @brief Public-key algorithm OID as parsed from SubjectPublicKeyInfo.
     ObjectIdentifier algorithmOid;
     /// @brief Named-curve OID for ECDSA/EdDSA keys; empty otherwise.
@@ -131,8 +127,7 @@ struct LIBRESCRS_PUBLIC_API GeneralName
 
 /// @brief One X.509 v3 extension as a raw OID + critical flag + DER value.
 ///
-/// Returned by #LibreSCRS::Certificate::ParsedCertificate::extensions and
-/// #LibreSCRS::Certificate::ParsedCertificate::findExtension as the
+/// Returned by #LibreSCRS::Certificate::ParsedCertificate::extensions as the
 /// universal escape hatch for extensions without a typed accessor.
 /// @since 4.0
 struct LIBRESCRS_PUBLIC_API Extension
@@ -253,9 +248,6 @@ public:
     /// @brief Human-readable signature algorithm description (e.g. "sha256WithRSAEncryption").
     /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::string signatureAlgorithmDescription() const;
-    /// @brief Raw signature value bytes from the certificate.
-    /// @throws std::bad_alloc on allocation failure.
-    [[nodiscard]] std::vector<std::uint8_t> signatureValue() const;
 
     // Public key
     /// @brief Parsed SubjectPublicKeyInfo (algorithm + bit length + curve).
@@ -317,9 +309,6 @@ public:
     /// @brief All extensions in the order they appear in the certificate.
     /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::vector<Extension> extensions() const;
-    /// @brief Find a single extension by OID; first match wins.
-    /// @throws std::bad_alloc on allocation failure.
-    [[nodiscard]] std::optional<Extension> findExtension(const ObjectIdentifier& oid) const;
 
     // Raw access
     /// @brief Original DER-encoded certificate bytes (read-only span into

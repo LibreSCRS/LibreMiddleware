@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <chrono>
+
 #ifdef __APPLE__
 #include <PCSC/winscard.h>
 #include <PCSC/wintypes.h>
@@ -36,6 +38,15 @@ public:
     [[nodiscard]] virtual const char* refusalDetail() const noexcept
     {
         return "PC/SC access denied to this process (SCARD_E_NO_ACCESS)";
+    }
+
+    /// How long the monitor waits before asking again after
+    /// SCARD_E_NO_ACCESS; zero means the refusal is final. A PC/SC refusal
+    /// can lift (a polkit decision tied to a session that becomes active), so
+    /// the monitor keeps asking, reporting the refusal once.
+    [[nodiscard]] virtual std::chrono::milliseconds refusalRetryInterval() const noexcept
+    {
+        return std::chrono::seconds(30);
     }
 };
 

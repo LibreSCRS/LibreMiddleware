@@ -4,15 +4,11 @@
 #include "crypto_utils.h"
 
 #include <openssl/core_names.h>
-#include <openssl/des.h>
+#include <openssl/crypto.h>
 #include <openssl/evp.h>
 
-// Suppress OpenSSL 3 deprecation warnings for low-level DES API.
-// The low-level DES_* functions are used intentionally in retailMAC to avoid
-// the legacy provider requirement that EVP_des_cbc() imposes in OpenSSL 3.
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-
+#include <algorithm>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -311,40 +307,26 @@ std::vector<uint8_t> retailMAC(const std::vector<uint8_t>& key, const std::vecto
         throw std::invalid_argument("retailMAC: data must be non-empty and block-aligned (8 bytes)");
     }
 
-    // Split into Ka (first 8 bytes) and Kb (last 8 bytes)
-    // ISO 9797-1 MAC Algorithm 3: single-DES-CBC with Ka over all blocks, then
-    // 3DES-EDE decrypt-encrypt (Kb, Ka) on the last block.
-    // We use low-level DES_* APIs to avoid the OpenSSL 3 legacy provider requirement
-    // that EVP_des_cbc() imposes.
+    // ISO 9797-1 MAC Algorithm 3: single-DES CBC with Ka over the blocks,
+    // the last one finished with 3DES (Ka, Kb, Ka). Both are expressed with
+    // two-key 3DES-EDE in the default provider: EDE with Ka||Ka is single DES
+    // with Ka, and EDE with Ka||Kb over the last block chained on the CBC
+    // value so far is E_Ka(D_Kb(E_Ka(h ^ x))). Single DES itself
+    // (EVP_des_cbc) would need OpenSSL's legacy provider.
+    std::vector<uint8_t> kaKa(key.begin(), key.begin() + 8);
+    kaKa.insert(kaKa.end(), key.begin(), key.begin() + 8);
 
-    DES_key_schedule ksA{}, ksB{};
+    std::vector<uint8_t> chained(8, 0x00);
+    if (data.size() > 8) {
+        const std::vector<uint8_t> head(data.begin(), data.end() - 8);
+        auto headCipher = des3Encrypt(kaKa, head);
+        chained.assign(headCipher.end() - 8, headCipher.end());
+        OPENSSL_cleanse(headCipher.data(), headCipher.size());
+    }
+    OPENSSL_cleanse(kaKa.data(), kaKa.size());
 
-    // DES_set_key_unchecked does not validate parity/weak-key — required for test vectors.
-    // The header declares const_DES_cblock as non-const pointer; cast accordingly.
-    DES_set_key_unchecked(reinterpret_cast<DES_cblock*>(const_cast<uint8_t*>(key.data())), &ksA);
-    DES_set_key_unchecked(reinterpret_cast<DES_cblock*>(const_cast<uint8_t*>(key.data() + 8)), &ksB);
-
-    // Step 1: single-DES CBC with Ka over all data blocks
-    std::vector<uint8_t> intermediate(data.size());
-    DES_cblock iv1 = {};
-    DES_ncbc_encrypt(data.data(), intermediate.data(), static_cast<long>(data.size()), &ksA, &iv1, DES_ENCRYPT);
-
-    // Last CBC output block (8 bytes)
-    std::vector<uint8_t> lastBlock(intermediate.end() - 8, intermediate.end());
-
-    // Step 2: decrypt last block with Kb (single-DES)
-    std::vector<uint8_t> decrypted(8);
-    DES_cblock iv2 = {};
-    DES_ncbc_encrypt(lastBlock.data(), decrypted.data(), 8, &ksB, &iv2, DES_DECRYPT);
-
-    // Step 3: re-encrypt with Ka (single-DES)
-    std::vector<uint8_t> mac(8);
-    DES_cblock iv3 = {};
-    DES_ncbc_encrypt(decrypted.data(), mac.data(), 8, &ksA, &iv3, DES_ENCRYPT);
-
-    OPENSSL_cleanse(&ksA, sizeof(ksA));
-    OPENSSL_cleanse(&ksB, sizeof(ksB));
-    return mac;
+    const std::vector<uint8_t> lastBlock(data.end() - 8, data.end());
+    return des3Encrypt(key, lastBlock, chained);
 }
 
 // ---- aesCMAC ----
@@ -423,6 +405,68 @@ void incrementSSC(std::vector<uint8_t>& ssc)
     }
 }
 
-} // namespace emrtd::crypto::detail
+// Decode an ASN.1 OID from raw bytes to dotted notation string
+std::string oidBytesToString(const uint8_t* data, size_t len)
+{
+    if (len == 0)
+        return {};
 
-#pragma GCC diagnostic pop
+    std::string result;
+    // First byte encodes two components: first*40 + second
+    result += std::to_string(data[0] / 40) + "." + std::to_string(data[0] % 40);
+
+    // Remaining bytes use variable-length encoding (base-128, high bit = continuation)
+    unsigned long value = 0;
+    for (size_t i = 1; i < len; ++i) {
+        if (value > (std::numeric_limits<unsigned long>::max() >> 7))
+            return {}; // overflow protection
+        value = (value << 7) | (data[i] & 0x7F);
+        if ((data[i] & 0x80) == 0) {
+            result += "." + std::to_string(value);
+            value = 0;
+        }
+    }
+    return result;
+}
+
+// Encode a dotted OID string to DER OID bytes (without tag/length)
+std::vector<uint8_t> oidStringToBytes(const std::string& oid)
+{
+    std::vector<unsigned long> components;
+    size_t start = 0;
+    while (start < oid.size()) {
+        size_t dot = oid.find('.', start);
+        if (dot == std::string::npos)
+            dot = oid.size();
+        components.push_back(std::stoul(oid.substr(start, dot - start)));
+        start = dot + 1;
+    }
+
+    if (components.size() < 2)
+        return {};
+    if (components[0] > 2 || (components[0] < 2 && components[1] > 39))
+        return {};
+
+    std::vector<uint8_t> bytes;
+    unsigned long firstByte = components[0] * 40 + components[1];
+    if (firstByte > 255)
+        return {};
+    bytes.push_back(static_cast<uint8_t>(firstByte));
+
+    for (size_t i = 2; i < components.size(); ++i) {
+        unsigned long val = components[i];
+        // Base-128 encode with continuation bits
+        std::vector<uint8_t> encoded;
+        encoded.push_back(static_cast<uint8_t>(val & 0x7F));
+        val >>= 7;
+        while (val > 0) {
+            encoded.push_back(static_cast<uint8_t>((val & 0x7F) | 0x80));
+            val >>= 7;
+        }
+        std::reverse(encoded.begin(), encoded.end());
+        bytes.insert(bytes.end(), encoded.begin(), encoded.end());
+    }
+    return bytes;
+}
+
+} // namespace emrtd::crypto::detail

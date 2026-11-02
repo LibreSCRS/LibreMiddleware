@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <LibreSCRS/SmartCard/CardSession.h>
-#include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
 #include <LibreSCRS_internal/SmartCard/CardSessionImpl.h>
 
@@ -12,7 +11,7 @@
 #include <LibreSCRS_internal/SecureChannel/BacChannel.h>
 #include <LibreSCRS_internal/SecureChannel/ChipAuthChannel.h>
 #include <LibreSCRS_internal/SecureChannel/PaceChannel.h>
-#include <LibreSCRS/SecureChannel/PaceParams.h>
+#include <LibreSCRS_internal/SecureChannel/PaceParams.h>
 #include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
 
 #include <LibreSCRS_internal/SecureChannel/detail/ChannelStateMutator.h>
@@ -20,8 +19,6 @@
 #include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
 #include <LibreSCRS_internal/SmartCard/CardAccessReader.h>
 #include <LibreSCRS_internal/SmartCard/PaceDowngradeVerdict.h>
-#include <LibreSCRS_internal/SmartCard/SessionPresence.h>
-#include <LibreSCRS_internal/SmartCard/SmartCardServices.h>
 
 #include "apdu.h"
 #include <pcsc_connection.h>
@@ -44,15 +41,14 @@ namespace LibreSCRS::SmartCard {
 // @ref CardSession::Impl is defined in
 // `lib/SmartCard/include/LibreSCRS_internal/SmartCard/CardSessionImpl.h`
 // so the production translation unit and the test-helper translation unit
-// (built as a separate archive, @ref LibreSCRS_SmartCard_TestHelpers) share
+// (built as a separate archive, @ref LibreSCRS_SmartCardTesting) share
 // the same layout. Production builds of @c libLibreSCRS_SmartCard never
-// carry the test-only @ref detail::ChannelInjector::installForTesting
-// symbol in their dynamic export set.
+// carry the test-only @ref detail::ChannelInjector::installForTesting or
+// @ref Testing::makeDetachedCardSession symbols in their dynamic export set.
 
 CardSession::CardSession() : d(std::make_unique<Impl>()) {}
 
-// Private constructor — used by @ref open and @ref makeDetachedCardSession
-// only. Exposes the old "throw on failure" shape internally so the existing
+// Private constructor — used by @ref open only. Exposes the old "throw on failure" shape internally so the existing
 // PCSCConnection constructor (which throws std::runtime_error with a
 // textual diagnostic) can be consumed without rewriting the transport
 // layer. The public @ref open factory translates any exception into a
@@ -66,6 +62,8 @@ CardSession::CardSession(std::string readerName) : d(std::make_unique<Impl>())
         // here (std::make_unique is not a friend and cannot call it).
         d->ownedConn = std::unique_ptr<LibreSCRS::SmartCard::Internal::PCSCConnection>(
             new LibreSCRS::SmartCard::Internal::PCSCConnection(d->readerName));
+    } catch (const LibreSCRS::SmartCard::Internal::PCSCError&) {
+        throw; // open() classifies it by its PC/SC code
     } catch (const std::exception& e) {
         throw std::runtime_error(std::string{"CardSession open failed: "} + e.what());
     }
@@ -74,26 +72,24 @@ CardSession::CardSession(std::string readerName) : d(std::make_unique<Impl>())
 
 namespace {
 
-// Classify a PCSCConnection-reported error message into a structured
-// @ref OpenError::Kind. The internal transport raises a runtime_error with a
-// human-readable diagnostic; 4.0 preserves that text as @ref
-// OpenError::diagnosticDetail while projecting the category into a stable
-// enum suitable for programmatic branching.
-OpenError::Kind classifyOpenError(std::string_view diag) noexcept
+// The category of a failed open, from the PC/SC code the connection raised
+// -- on every body alike, PC/SC or CryptoTokenKit, which raise the same codes.
+OpenError::Kind classifyOpenError(LONG code) noexcept
 {
-    // Match substrings emitted by LibreSCRS::SmartCard::Internal::PCSCConnection — the canonical
-    // strings are "reader not found", "no smartcard", and "protocol" etc.
-    // The matches are intentionally permissive: PC/SC error strings vary
-    // across pcsc-lite / WinSCard / CryptoTokenKit revisions. Unknown
-    // diagnostics fall back to ReaderUnavailable, which is the safest
-    // generic category for a host UI to render.
-    auto contains = [&](std::string_view needle) noexcept { return diag.find(needle) != std::string_view::npos; };
-
-    if (contains("no smartcard") || contains("no card") || contains("NO_SMARTCARD") || contains("REMOVED_CARD"))
+    switch (static_cast<unsigned long>(code)) {
+    case static_cast<unsigned long>(SCARD_E_NO_SMARTCARD):
+    case static_cast<unsigned long>(SCARD_W_REMOVED_CARD):
         return OpenError::Kind::NoCardPresent;
-    if (contains("protocol") || contains("PROTO_MISMATCH") || contains("comm"))
+    case static_cast<unsigned long>(SCARD_E_PROTO_MISMATCH):
+    case static_cast<unsigned long>(SCARD_W_UNRESPONSIVE_CARD):
+    case static_cast<unsigned long>(SCARD_W_UNPOWERED_CARD):
+    case static_cast<unsigned long>(SCARD_F_COMM_ERROR):
         return OpenError::Kind::ProtocolError;
-    return OpenError::Kind::ReaderUnavailable;
+    case static_cast<unsigned long>(SCARD_E_SHARING_VIOLATION):
+        return OpenError::Kind::SessionRefused;
+    default:
+        return OpenError::Kind::ReaderUnavailable;
+    }
 }
 
 // Shared failure message for CardSession::open(). Constructed once at load
@@ -105,8 +101,7 @@ OpenError::Kind classifyOpenError(std::string_view diag) noexcept
 // an untranslated host still has readable text.
 const LocalizedText kOpenFailedMsg{
     "librescrs.smartcard.error.openFailed",
-    "Failed to open the card session. Check that the reader is connected and a card is inserted.",
-    {}};
+    "Failed to open the card session. Check that the reader is connected and a card is inserted."};
 
 } // namespace
 
@@ -121,10 +116,11 @@ std::expected<CardSession, OpenError> CardSession::open(std::string readerName) 
     // (failure). No in-place tag dispatch is needed in the C++23 form.
     try {
         return CardSession{std::move(readerName)};
+    } catch (const LibreSCRS::SmartCard::Internal::PCSCError& e) {
+        return std::unexpected{OpenError{classifyOpenError(e.code()), kOpenFailedMsg,
+                                         std::string{"CardSession open failed: "} + e.what()}};
     } catch (const std::exception& e) {
-        std::string diag = e.what();
-        OpenError::Kind k = classifyOpenError(diag);
-        return std::unexpected{OpenError{k, kOpenFailedMsg, std::move(diag)}};
+        return std::unexpected{OpenError{OpenError::Kind::ReaderUnavailable, kOpenFailedMsg, std::string{e.what()}}};
     } catch (...) {
         return std::unexpected{OpenError{OpenError::Kind::ReaderUnavailable, kOpenFailedMsg,
                                          std::string{"unknown non-std exception during CardSession open"}}};
@@ -154,24 +150,15 @@ const LibreSCRS::SmartCard::Internal::PCSCConnection& PcscBridge::unwrap(const C
     return *session.d->ownedConn;
 }
 
-std::shared_ptr<CardSession> makeDetachedCardSession(std::string readerName)
-{
-    auto session = std::shared_ptr<CardSession>(new CardSession());
-    session->d->readerName = std::move(readerName);
-    session->d->ownedConn = std::make_unique<LibreSCRS::SmartCard::Internal::PCSCConnection>(
-        LibreSCRS::SmartCard::Internal::PCSCConnection::DetachedTag{}, session->d->readerName);
-    // atr stays empty — there is no card
-    return session;
-}
-
 std::uint64_t sessionGeneration(const CardSession& session) noexcept
 {
     return session.d->generation;
 }
 
-// @ref detail::ChannelInjector::installForTesting is defined in
-// `lib/LibreSCRS/SmartCard/test_helpers/channel_test_helpers.cpp`, compiled
-// into the build-tree-only @ref LibreSCRS_SmartCard_TestHelpers archive.
+// @ref detail::ChannelInjector::installForTesting and
+// @ref Testing::makeDetachedCardSession are defined in
+// `lib/LibreSCRS/SmartCard/testing/`, compiled into the static test archive
+// @ref LibreSCRS_SmartCardTesting only.
 
 } // namespace detail
 
@@ -185,10 +172,6 @@ const std::string& CardSession::readerName() const noexcept
 const std::vector<std::uint8_t>& CardSession::atr() const noexcept
 {
     return d->atr;
-}
-bool CardSession::isConnected() const noexcept
-{
-    return d->ownedConn != nullptr;
 }
 
 bool CardSession::hasLiveSecureChannel() const noexcept
@@ -297,8 +280,8 @@ constexpr int kSmActivationMaxAttempts = 3;
 // the APDU is sent plain through @p conn. Anonymous-namespace static
 // linkage keeps the helper out of the dynamic symbol table — its previous
 // public-internal incarnation (@c LibreSCRS::SmartCard::Internal::
-// sessionTransmitImpl, exported via the @c *LibreSCRS::* version-script
-// glob) is gone in 5.0 along with the free-function transmit funnel.
+// sessionTransmitImpl, exported by the version script) is gone in 5.0
+// along with the free-function transmit funnel.
 LibreSCRS::SmartCard::Internal::APDUResponse
 dispatchOverChannelOrConn(LibreSCRS::SecureChannel::ISecureChannel* activeChannel,
                           LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
@@ -307,6 +290,13 @@ dispatchOverChannelOrConn(LibreSCRS::SecureChannel::ISecureChannel* activeChanne
     using LibreSCRS::SecureChannel::ChannelState;
     if (activeChannel != nullptr && activeChannel->state() == ChannelState::Open) {
         return activeChannel->transmit(cmd, std::move(token));
+    }
+    // A secure-messaging channel that is no longer open (failed, or closed by
+    // a reset) is never bypassed: the card still expects SM, a plain command
+    // ends its session there, and the caller meant the command to be
+    // protected. The channel-failed sentinel goes back without any I/O.
+    if (activeChannel != nullptr && activeChannel->carriesSm()) {
+        return LibreSCRS::SmartCard::Internal::APDUResponse{.data = {}, .sw1 = 0x6F, .sw2 = 0x02};
     }
     return conn.transmit(cmd);
 }
@@ -396,17 +386,12 @@ void CardSession::markDead() noexcept
     // paceCredentialsCache[] (Secure::String slots) and bacInput; itself
     // marked noexcept under the same noexcept-alloc contract.
     clearCachedPaceCredentials();
-    // Defensive: drop the SessionPresence entry even if no subsequent
-    // clearActiveChannel call fires. ~Impl will also reset presence; this
-    // is the safety net for the card-removal path where the channel may
-    // still be nominally Open in the session state.
     try {
         std::lock_guard lock(d->sessionMutex);
-        d->presence.reset();
-        // Card removed: the SM tunnel is dead, so clear the recorded protocol
-        // alongside the presence entry. The active channel itself is dropped by
-        // a subsequent clearActiveChannel / ~Impl; this keeps the accessor from
-        // reporting a stale protocol in the window before that fires.
+        // Card removed: the SM tunnel is dead, so clear the recorded protocol.
+        // The active channel itself is dropped by a subsequent
+        // clearActiveChannel / ~Impl; this keeps the accessor from reporting a
+        // stale protocol in the window before that fires.
         d->activatedProtocol.reset();
     } catch (...) {
         // noexcept contract.
@@ -437,10 +422,6 @@ void CardSession::clearActiveChannel() noexcept
         // The channel is gone; clear the recorded protocol so the accessor
         // does not report a stale SM family for a torn-down channel.
         d->activatedProtocol.reset();
-        // Drop the SessionPresence entry alongside the channel: in-process
-        // PKCS#11 probes must see "no live SM" once the channel is gone,
-        // even if this CardSession remains alive on the host side.
-        d->presence.reset();
     } catch (...) {
         // noexcept contract: swallow any exception from close()/reset().
         // The worst case is a leaked channel which is preferable to
@@ -806,9 +787,9 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                     return std::unexpected{ChannelActivationError::CredentialsRequired};
                 }
                 auto requirement = LibreSCRS::Auth::AuthRequirement::forPaceSecret(
-                    aid, LibreSCRS::Auth::PaceSecretKind::Mrz, std::nullopt,
-                    previousAttemptRejected ? LibreSCRS::Auth::ErrorKeys::preReadAuthFailed()
-                                            : LibreSCRS::LocalizedText{});
+                    LibreSCRS::Auth::PaceSecretKind::Mrz, previousAttemptRejected
+                                                              ? LibreSCRS::Auth::ErrorKeys::preReadAuthFailed()
+                                                              : LibreSCRS::LocalizedText{});
                 // Snapshot the provider and drop the session mutex across the
                 // callback. The provider is permitted to call back into this
                 // CardSession (e.g. setBacInput / setPaceSecret) without
@@ -863,31 +844,6 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
             auto outcome = BacChannel::establish(*d->ownedConn, aid, *d->bacInput, token);
             if (outcome) {
                 d->activeChannel = std::move(*outcome);
-                // Cross-reader guard: a shared_ptr-managed CardSession with a
-                // live SM channel must be visible to in-process PKCS#11
-                // probes so they refuse to open a second PC/SC handle on
-                // this reader (BSI TR-03110 §3 — SM is session-scoped).
-                // Skip silently for value-stored sessions (LMAC bridge):
-                // weak_from_this() is empty when no shared_ptr anchors the
-                // session, and registering an immediately-expired weak_ptr
-                // would burn a registry slot for no observable benefit.
-                try {
-                    Internal::ensureSessionPresenceInitialised();
-                    if (auto weak = weak_from_this(); !weak.expired()) {
-                        // Drop any registration we already hold FIRST. emplace
-                        // destroys the old one after insert has already written
-                        // the new entry, and the old one owns that same entry --
-                        // so it would erase what was just registered and leave
-                        // the reader unregistered while this object believes it
-                        // is not.
-                        d->presence.reset();
-                        d->presence.emplace(Internal::sessionPresence().insert(d->readerName, std::move(weak)));
-                    }
-                } catch (...) {
-                    // bad_alloc on insert / rehash: SM already established;
-                    // losing the cross-reader guard for this one session is
-                    // preferable to terminating.
-                }
                 // Record the protocol that won this channel. On the BAC branch
                 // `protocol` is the BacRequest the caller passed (BAC is the
                 // fallback path), so the accessor reports BAC after a fallback.
@@ -921,7 +877,6 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                         // wrong-credential condition — it is RETURNED (never
                         // continued, so no retry re-enters) and the plugin maps
                         // it to a non-auth failure, never markCredentialWrong.
-                        d->presence.reset();
                         d->activatedProtocol.reset();
                         if (d->activeChannel) {
                             d->activeChannel->close();
@@ -946,7 +901,7 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                 return std::unexpected{ChannelActivationError::CredentialsRequired};
             }
             auto requirement = LibreSCRS::Auth::AuthRequirement::forPaceSecret(
-                aid, kind, std::nullopt,
+                kind,
                 previousAttemptRejected ? LibreSCRS::Auth::ErrorKeys::preReadAuthFailed() : LibreSCRS::LocalizedText{});
             // Snapshot the provider and drop the session mutex across the
             // callback. The provider is permitted to call back into this
@@ -968,10 +923,9 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
             }
 
             // If the provider re-entered to populate the cache slot directly
-            // (e.g. via setPaceSecret) honour that; otherwise pull the field
-            // whose id matches the kind. The PACE secret factory emits ids
-            // "can" / "mrz" / "pin" / "puk" — one and only one of those is
-            // present in a forPaceSecret prompt.
+            // (e.g. via setPaceSecret) honour that; otherwise pull the value
+            // named after the kind: "can" / "mrz" / "pin" / "puk", as
+            // AuthRequirement documents for a forPaceSecret prompt.
             if (d->paceCredentialsCache[static_cast<std::size_t>(kind)].empty()) {
                 const char* expectedId = "";
                 switch (kind) {
@@ -1013,6 +967,12 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
         // the freshly installed channel without a second handshake.
         ChannelActivationError lastError = ChannelActivationError::PaceWrongSecret;
         std::unique_ptr<PaceChannel> freshChannel;
+        // The next OID is tried only when the card refused this one at
+        // MSE:Set AT (PaceUnsupported from establish): nothing derived from
+        // the secret reached the card, so no try was spent. Once the card
+        // has taken an OID, any failure ends the walk -- another OID would
+        // put the same secret to the card again, spending a PIN or PUK try
+        // each time.
         for (const auto& info : paceInfos) {
             if (token.isCancellable() && token.isCancelled()) {
                 return std::unexpected{ChannelActivationError::Cancelled};
@@ -1029,14 +989,15 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                 break;
             }
             lastError = outcome.error();
-            if (outcome.error() != ChannelActivationError::PaceWrongSecret &&
-                outcome.error() != ChannelActivationError::PaceProtocolFailure) {
-                // Hard terminal categories surface immediately; only the
-                // soft "wrong secret" / "protocol failure" categories
-                // justify trying the next OID.
+            if (lastError != ChannelActivationError::PaceUnsupported)
                 break;
-            }
         }
+        // The card listed these OIDs in EF.CardAccess and then refused every
+        // one. That is a protocol failure, not a PACE-less document: surfacing
+        // PaceUnsupported would invite the BAC fallback, which a man in the
+        // middle could provoke by refusing MSE:Set AT.
+        if (lastError == ChannelActivationError::PaceUnsupported)
+            lastError = ChannelActivationError::PaceProtocolFailure;
 
         if (freshChannel) {
             // Wrapped SELECT to the target applet through the freshly
@@ -1053,17 +1014,6 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
             }
             LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(*freshChannel, aid);
             d->activeChannel = std::move(freshChannel);
-            // Cross-reader guard: see the matching block in the BAC success
-            // branch above for the rationale and lifecycle invariants.
-            try {
-                Internal::ensureSessionPresenceInitialised();
-                if (auto weak = weak_from_this(); !weak.expired()) {
-                    // Old registration first; see the BAC branch above.
-                    d->presence.reset();
-                    d->presence.emplace(Internal::sessionPresence().insert(d->readerName, std::move(weak)));
-                }
-            } catch (...) {
-            }
             // Record the protocol that won this channel. On the PACE branch
             // `protocol` is the PaceRequest the caller passed (its secretKind
             // distinguishes PACE-CAN / PACE-MRZ / PACE-PIN for label callers).
@@ -1155,19 +1105,6 @@ void ActiveChannelAccessor::installSmChannel(CardSession& session,
     }
     d->activeChannel = std::move(channel);
     d->activatedProtocol = std::move(protocol);
-    // Register the cross-reader presence entry the way the PACE/BAC success
-    // branches do, so in-process PKCS#11 probes see a live SM tunnel on this
-    // reader. Best-effort: a value-stored session (no shared_ptr anchor) or an
-    // allocation failure just forgoes the guard, never terminates.
-    try {
-        Internal::ensureSessionPresenceInitialised();
-        if (auto weak = session.weak_from_this(); !weak.expired()) {
-            // Old registration first; see the BAC branch in activateChannelWithSm.
-            d->presence.reset();
-            d->presence.emplace(Internal::sessionPresence().insert(d->readerName, std::move(weak)));
-        }
-    } catch (...) {
-    }
 }
 
 } // namespace Internal

@@ -3,7 +3,7 @@
 #
 # End-to-end smoke test for the LibreMiddleware CMake Config package.
 # Built standalone (out-of-source from LibreMiddleware) against a tree
-# where LibreMiddleware was installed with LIBREMIDDLEWARE_BUILD_SHARED=ON.
+# where LibreMiddleware was installed.
 # The build-and-run.sh sibling script automates the install +
 # consumer-configure + build + run cycle. Acts as a regression test for
 # the Config-package install layout: any broken find_package(...) state

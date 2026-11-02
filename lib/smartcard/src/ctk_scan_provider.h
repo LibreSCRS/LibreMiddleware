@@ -48,6 +48,11 @@ public:
     {
         return Ctk::kNoManagerDetail;
     }
+    /// A process without the smart-card entitlement stays without it.
+    [[nodiscard]] std::chrono::milliseconds refusalRetryInterval() const noexcept override
+    {
+        return std::chrono::milliseconds::zero();
+    }
 
 private:
     std::unique_ptr<Ctk::CtkSlots> slots;

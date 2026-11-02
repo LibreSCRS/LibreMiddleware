@@ -34,7 +34,6 @@ TEST(CardPluginRegistryTest, PluginMetadata)
     ASSERT_EQ(plugins.size(), 1u);
     const auto& p = plugins[0];
     EXPECT_EQ(p->pluginId(), "mock");
-    EXPECT_EQ(p->displayName(), "Mock Card");
     EXPECT_EQ(p->probePriority(), 500);
 }
 
@@ -72,28 +71,6 @@ TEST(CardPluginRegistryTest, NonexistentDirectoryLoadsNothing)
     EXPECT_TRUE(registry.loadReport().empty());
 }
 
-TEST(CardPluginRegistryTest, IsUsableTrueOnSuccessfulLoad)
-{
-    CardPluginService registry{mockPluginDir()};
-    ASSERT_GT(registry.size(), 0u) << "fixture sanity: mock plugin must load";
-    EXPECT_TRUE(registry.isUsable());
-}
-
-TEST(CardPluginRegistryTest, IsUsableFalseOnEmptyDirectory)
-{
-    auto tmpdir = std::filesystem::temp_directory_path() / "librescrs-test-isusable-empty";
-    std::filesystem::create_directories(tmpdir);
-    CardPluginService registry{tmpdir};
-    EXPECT_FALSE(registry.isUsable()) << "empty registry must report not-usable";
-    std::filesystem::remove(tmpdir);
-}
-
-TEST(CardPluginRegistryTest, IsUsableFalseOnNonexistentDirectory)
-{
-    CardPluginService registry{std::filesystem::path{"/nonexistent/path"}};
-    EXPECT_FALSE(registry.isUsable());
-}
-
 TEST(CardPluginRegistryTest, FindAllCandidatesByATR)
 {
     CardPluginService registry{mockPluginDir()};
@@ -123,26 +100,6 @@ TEST(CardPluginRegistryTest, LoadReportContainsSuccessEntry)
     EXPECT_EQ(report[0].pluginId, "mock");
     EXPECT_TRUE(report[0].diagnostic.empty());
     EXPECT_FALSE(report[0].soPath.empty());
-}
-
-TEST(CardPluginRegistryTest, SpanCtorScansAllDirectories)
-{
-    auto tmp1 = std::filesystem::temp_directory_path() / "librescrs-test-span-a";
-    auto tmp2 = std::filesystem::temp_directory_path() / "librescrs-test-span-b";
-    std::filesystem::create_directories(tmp1);
-    std::filesystem::create_directories(tmp2);
-
-    // Passing the mock plugin dir twice via span is legal (each directory is
-    // scanned independently) — we use two empty tmp dirs + the mock dir to
-    // exercise the span path without loading the same plugin twice.
-    std::array<std::filesystem::path, 3> dirs{tmp1, mockPluginDir(), tmp2};
-    CardPluginService registry{std::span<const std::filesystem::path>{dirs}};
-
-    EXPECT_EQ(registry.size(), 1u);
-    EXPECT_EQ(registry.plugins()[0]->pluginId(), "mock");
-
-    std::filesystem::remove(tmp1);
-    std::filesystem::remove(tmp2);
 }
 
 TEST(CardPluginRegistryTest, PluginsReturnsSharedPtr)

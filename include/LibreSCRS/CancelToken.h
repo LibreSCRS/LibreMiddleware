@@ -6,8 +6,7 @@
 /// @file
 /// @brief Public cooperative-cancellation primitive
 ///        @ref LibreSCRS::CancelToken (plus @ref LibreSCRS::CancelSource and
-///        @ref LibreSCRS::CancelToken::Registration), and the @ref
-///        LibreSCRS::Completion alias used by every async LibreMiddleware API.
+///        @ref LibreSCRS::CancelToken::Registration).
 
 #include <LibreSCRS/Export.h>
 
@@ -187,17 +186,5 @@ public:
 private:
     std::shared_ptr<CancelToken::Impl> d;
 };
-
-/// @brief Async completion callback. Always invoked on a LibreMiddleware-
-///        managed background thread; consumers marshal to their UI thread
-///        (e.g. @c QMetaObject::invokeMethod, Swift @c @MainActor).
-///
-/// Grouped with @ref CancelToken because the two compose into the
-/// canonical async-API shape `(CancelToken, Completion<T>)`. Used by
-/// inherently async LibreMiddleware APIs (e.g.
-/// @ref LibreSCRS::Trust::TrustStoreService eager-fetch observer
-/// notifications); synchronous public APIs do not require this type.
-template <typename Result>
-using Completion = std::function<void(Result)>;
 
 } // namespace LibreSCRS

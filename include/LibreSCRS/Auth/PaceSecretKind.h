@@ -9,7 +9,6 @@
 ///        same enum classifies the per-process credentials cache slot on
 ///        @ref LibreSCRS::SmartCard::CardSession.
 
-#include <cstddef>
 #include <cstdint>
 
 namespace LibreSCRS::Auth {
@@ -40,9 +39,5 @@ enum class PaceSecretKind : std::uint8_t {
     ///        unblock workflow.
     Puk = 3,
 };
-
-/// @brief Cardinality of @ref PaceSecretKind. Sized to fit a small
-///        fixed-size cache array indexed by the enumerator value.
-inline constexpr std::size_t kPaceSecretKindCount = 4;
 
 } // namespace LibreSCRS::Auth

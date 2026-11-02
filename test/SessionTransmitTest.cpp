@@ -26,10 +26,13 @@
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/detail/ChannelInjection.h>
+#include <LibreSCRS/SmartCard/detail/Unwrap.h>
+#include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 
 #include <apdu.h>
 #include <fake_channel.h>
+#include <pcsc_connection.h>
 
 #include <gtest/gtest.h>
 
@@ -45,9 +48,9 @@ using LibreSCRS::SecureChannel::TestSupport::FakeChannel;
 using LibreSCRS::SmartCard::AppletAid;
 using LibreSCRS::SmartCard::CardSession;
 using LibreSCRS::SmartCard::detail::ChannelInjector;
-using LibreSCRS::SmartCard::detail::makeDetachedCardSession;
 using LibreSCRS::SmartCard::Internal::APDUCommand;
 using LibreSCRS::SmartCard::Internal::APDUResponse;
+using LibreSCRS::SmartCard::Testing::makeDetachedCardSession;
 
 APDUCommand makeProbeCommand()
 {
@@ -92,13 +95,36 @@ TEST_F(SessionTransmitTest, returnsSw6F00OnDetachedSessionWithoutLiveChannel)
     EXPECT_EQ(resp.sw2, 0x00);
 }
 
-TEST_F(SessionTransmitTest, returnsSw6F00OnClosedChannel)
+// A secure-messaging channel that is no longer open -- closed by a reset,
+// failed on a bad MAC -- is never bypassed: the card still expects SM, and a
+// plain command would end its session there. The funnel answers the
+// channel-failed sentinel and sends nothing.
+TEST_F(SessionTransmitTest, smChannelThatIsNotOpenIsNeverBypassed)
 {
-    // Closed channel (not Open): funnel must NOT dispatch through the
-    // channel — equivalent to no channel installed. Detached session
-    // surfaces the null-conn path; the funnel returns SW=6F00.
     AppletAid aid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
-    auto channel = std::make_unique<FakeChannel>(aid, ChannelState::Closed, /*carriesSm=*/true);
+    for (const auto state : {ChannelState::Closed, ChannelState::Failed}) {
+        auto channel = std::make_unique<FakeChannel>(aid, state, /*carriesSm=*/true);
+        auto* observer = channel.get();
+        ChannelInjector::installForTesting(*session, std::move(channel));
+        std::size_t wireCommands = 0;
+        LibreSCRS::SmartCard::detail::unwrap(*session).setTransmitFilter([&](const APDUCommand&) {
+            ++wireCommands;
+            return APDUResponse{{}, 0x90, 0x00};
+        });
+
+        auto resp = session->transmitInternal(makeProbeCommand());
+        EXPECT_EQ(observer->transmits(), 0);
+        EXPECT_EQ(wireCommands, 0U) << "no plain command reaches the card";
+        EXPECT_EQ(resp.sw1, 0x6F);
+        EXPECT_EQ(resp.sw2, 0x02);
+    }
+}
+
+// A plain channel that is not open is just no channel: the connection answers.
+TEST_F(SessionTransmitTest, returnsSw6F00OnClosedPlainChannel)
+{
+    AppletAid aid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
+    auto channel = std::make_unique<FakeChannel>(aid, ChannelState::Closed, /*carriesSm=*/false);
     auto* observer = channel.get();
     ChannelInjector::installForTesting(*session, std::move(channel));
 

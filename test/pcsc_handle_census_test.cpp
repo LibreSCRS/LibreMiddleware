@@ -30,7 +30,7 @@
 ///   * compiled INTO this executable, where its definitions preempt the
 ///     middleware's own SCardConnect and friends for every library in the
 ///     process -- that is the "stub" below, and it counts the middleware's own
-///     opens, including the PKCS#11 module's copy of them;
+///     opens;
 ///   * as a shared object OpenSC dlopens through the OPENSC_CONF this test
 ///     writes -- that is the "shim" below, reached through dlsym on the handle
 ///     so it answers about its own globals, and it counts what OpenSC does.
@@ -56,11 +56,9 @@
 #include <LibreSCRS/Signing/SigningService.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
-#include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
+#include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 #include <LibreSCRS/SmartCard/detail/ChannelInjection.h>
 #include <LibreSCRS/Trust/TrustStoreService.h>
-#include <LibreSCRS_internal/SmartCard/SessionPresence.h>
-#include <LibreSCRS_internal/SmartCard/SmartCardServices.h>
 
 #include <gtest/gtest.h>
 
@@ -151,10 +149,7 @@ using LibreSCRS::SecureChannel::TestSupport::FakeChannel;
 using LibreSCRS::SmartCard::AppletAid;
 using LibreSCRS::SmartCard::CardSession;
 using LibreSCRS::SmartCard::detail::ChannelInjector;
-using LibreSCRS::SmartCard::detail::makeDetachedCardSession;
-using LibreSCRS::SmartCard::Internal::ensureSessionPresenceInitialised;
-using LibreSCRS::SmartCard::Internal::sessionPresence;
-using LibreSCRS::SmartCard::Internal::shutdownSessionPresenceForTest;
+using LibreSCRS::SmartCard::Testing::makeDetachedCardSession;
 
 // Three readers: one carrying a live secure channel, one the signature targets,
 // and one neither the caller nor the signature has any business with.
@@ -273,7 +268,9 @@ LibreSCRS::Signing::SigningResult signOnce(const std::shared_ptr<LibreSCRS::Sign
     };
     auto plugin = std::make_shared<LibreSCRS::TestSupport::SoftKeyPlugin>();
     static const std::vector<std::uint8_t> document{'t', 'o', ' ', 'b', 'e', ' ', 's', 'i', 'g', 'n', 'e', 'd'};
-    return svc->sign(makeBufferRequest(), std::span<const std::uint8_t>{document}, provider, plugin, session);
+    const auto certs = plugin->readCertificates(*session);
+    return svc->sign(makeBufferRequest(), std::span<const std::uint8_t>{document}, provider, plugin, session,
+                     certs.front(), std::span<const LibreSCRS::Plugin::CertificateData>{certs});
 }
 
 void setReaderSet(const std::string& semicolonSeparated)
@@ -281,8 +278,7 @@ void setReaderSet(const std::string& semicolonSeparated)
     ::setenv("LIBRESCRS_SHIM_READERS", semicolonSeparated.c_str(), 1);
 }
 
-/// @brief Point OpenSC at the counting provider, and the signing facade at the
-///        PKCS#11 module this build produced.
+/// @brief Point OpenSC at the counting provider.
 void installCountingProviders()
 {
     static const std::string confPath = [] {
@@ -307,8 +303,6 @@ class PcscHandleCensusTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        ensureSessionPresenceInitialised();
-        shutdownSessionPresenceForTest();
         ASSERT_TRUE(shim().loaded()) << shim().why();
         installCountingProviders();
         shim().reset();
@@ -323,13 +317,10 @@ protected:
         // call of its own and every count below is the signature's.
         target = makeDetachedCardSession(kTargetReader);
 
-        // A neighbour whose session carries a live secure channel, registered in
-        // the process-wide presence registry the module's providers consult.
+        // A neighbour whose session carries a live secure channel.
         smSession = makeDetachedCardSession(kSmReader);
         ChannelInjector::installForTesting(
             *smSession, std::make_unique<FakeChannel>(makeAid(), ChannelState::Open, /*carriesSm=*/true));
-        registration = sessionPresence().insert(kSmReader, smSession);
-        ASSERT_TRUE(sessionPresence().hasLiveSm(kSmReader));
     }
 
     void TearDown() override
@@ -341,7 +332,6 @@ protected:
     std::shared_ptr<LibreSCRS::Signing::SigningService> service;
     std::shared_ptr<CardSession> target;
     std::shared_ptr<CardSession> smSession;
-    LibreSCRS::SmartCard::Internal::SessionPresence::Registration registration;
 };
 
 } // namespace
@@ -370,10 +360,8 @@ TEST_F(PcscHandleCensusTest, DocumentSignatureOpensNoHandleBeyondTheSession)
     EXPECT_EQ(shim().openHandles(), 0u);
     EXPECT_EQ(countContaining(g_dlopened, kModuleName), 0u) << "no PKCS#11 module is loaded to sign";
 
-    // In-process sanity only: the neighbour's secure channel and its registry
-    // entry are untouched.
+    // In-process sanity only: the neighbour's secure channel is untouched.
     EXPECT_TRUE(smSession->hasLiveSecureChannel());
-    EXPECT_TRUE(sessionPresence().hasLiveSm(kSmReader));
 }
 
 // An operation running on a neighbouring reader is neither waited on nor

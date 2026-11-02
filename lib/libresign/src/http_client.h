@@ -7,12 +7,8 @@
 
 #pragma once
 
-#include "credentials.h"
-
-#include <cstdint>
 #include <map>
 #include <memory>
-#include <span>
 #include <string>
 #include <vector>
 
@@ -26,8 +22,7 @@ struct HttpResponse
     std::map<std::string, std::string> headers; // lowercase header name -> value
 };
 
-// NOT thread-safe. Each thread must use its own HttpClient instance.
-// DSSServiceManager serializes access via its recursive_mutex.
+// NOT thread-safe: one curl handle per instance, so each thread uses its own.
 class HttpClient
 {
 public:
@@ -40,41 +35,17 @@ public:
     HttpClient(const HttpClient&) = delete;
     HttpClient& operator=(const HttpClient&) = delete;
 
-    HttpResponse get(const std::string& url, int timeoutSeconds = 10, const std::string& unixSocketPath = {}) const;
+    HttpResponse get(const std::string& url, int timeoutSeconds = 10) const;
 
     /// GET with custom request headers and response header capture.
     /// requestHeaders: list of "Header: value" strings to send.
     /// Response headers are returned in HttpResponse::headers (lowercase keys).
     HttpResponse getWithHeaders(const std::string& url, const std::vector<std::string>& requestHeaders,
-                                int timeoutSeconds = 10, const std::string& unixSocketPath = {}) const;
-
-    HttpResponse post(const std::string& url, const std::string& jsonBody, int timeoutSeconds = 60,
-                      const std::string& unixSocketPath = {}) const;
+                                int timeoutSeconds = 10) const;
 
     // Binary POST with custom Content-Type (for TSA, OCSP).
     HttpResponse postBinary(const std::string& url, const std::string& body, const std::string& contentType,
-                            int timeoutSeconds = 60, const std::string& unixSocketPath = {}) const;
-
-    /// Binary POST with custom Content-Type and request credentials.
-    ///
-    /// Extends @ref postBinary with a @ref TransportCredentials bundle
-    /// carrying `Authorization` (Basic / Bearer), client-cert (mTLS),
-    /// and arbitrary extra headers. Used by @c TSAClient so that the
-    /// public @c TsaCredentials knobs actually reach the TSA endpoint.
-    HttpResponse postBinaryWithCredentials(const std::string& url, const std::string& body,
-                                           const std::string& contentType, const TransportCredentials& credentials,
-                                           int timeoutSeconds = 60, const std::string& unixSocketPath = {}) const;
-
-    // Multipart POST: binary document + JSON metadata. Response body is raw bytes.
-    HttpResponse postMultipart(const std::string& url, std::span<const uint8_t> docData, const std::string& fileName,
-                               const std::string& jsonMeta, int timeoutSeconds = 120,
-                               const std::string& unixSocketPath = {}) const;
-
-    // Multipart POST for validation: signed document + JSON metadata + optional original document.
-    HttpResponse postMultipartValidation(const std::string& url, std::span<const uint8_t> signedDoc,
-                                         const std::string& fileName, const std::string& jsonMeta,
-                                         std::span<const uint8_t> originalDoc = {}, int timeoutSeconds = 120,
-                                         const std::string& unixSocketPath = {}) const;
+                            int timeoutSeconds = 60) const;
 
 private:
     struct Impl;

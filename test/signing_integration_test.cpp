@@ -2,13 +2,13 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
-#include "dss_validation_client.h"
 #include "signing_keys.h"
 #include "signing_test_support/signing_test_support.h"
 
-#include "dss/dss_service_manager.h"
-#include "dss/dss_signing_service.h"
-#include "http_client.h"
+#include "dss_oracle/dss_http.h"
+#include "dss_oracle/dss_service_manager.h"
+#include "dss_oracle/dss_signing_service.h"
+#include "dss_oracle/dss_validation_client.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -88,8 +88,7 @@ protected:
 
 TEST_F(DSSSigningIntegrationTest, HealthEndpointReturnsJson)
 {
-    libresign::HttpClient client;
-    auto resp = client.get("http://localhost/health", 5, manager->unixSocketPath());
+    auto resp = libresign::dss_http::get(manager->unixSocketPath(), "http://localhost/health", 5);
     EXPECT_EQ(resp.statusCode, 200);
     EXPECT_FALSE(resp.body.empty());
     EXPECT_NE(resp.body.find("ok"), std::string::npos);
@@ -182,5 +181,4 @@ TEST_F(DSSSigningIntegrationTest, SignsWithAKeyTheCallerHolds)
 // RealCardSigningTest — RETIRED: every (PAdES/CAdES/ASiC-E)*(B-B/B-T/B-LT/
 // B-LTA) combination is now covered by SigningE2ETest's parametric suite,
 // which runs through both Native and DSS backends rather than just DSS.
-// Real-card multi-PIN coverage lives in test/e2e/.
 // ============================================================================

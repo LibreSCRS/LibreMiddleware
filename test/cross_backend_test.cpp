@@ -3,9 +3,10 @@
 
 #include <gtest/gtest.h>
 
-#if defined(LIBRESIGN_HAS_NATIVE) && defined(LIBRESIGN_HAS_DSS)
+#if defined(LIBRESIGN_HAS_DSS)
 
-#include "signing_service_factory.h"
+#include "dss_oracle/dss_signing_service.h"
+#include "native/native_signing_service.h"
 
 using namespace libresign;
 
@@ -16,20 +17,19 @@ using namespace libresign;
 
 TEST(CrossBackendTest, BothBackendsAvailable)
 {
-    auto native = createSigningService(Backend::Native);
-    ASSERT_NE(native, nullptr);
-    EXPECT_TRUE(native->isAvailable());
+    NativeSigningService native;
+    EXPECT_TRUE(native.isAvailable());
 
-    auto dss = createSigningService(Backend::DSS);
-    ASSERT_NE(dss, nullptr);
-    // DSS isAvailable() depends on DSSServiceManager — just verify factory returns non-null
+    // The DSS engine finds and starts its service lazily, so constructing it
+    // needs none; whether it is available depends on that service.
+    DSSSigningService dss;
+    EXPECT_FALSE(dss.isConfigured());
 }
 
 TEST(CrossBackendTest, NativeServiceIsAvailable)
 {
-    auto native = createSigningService(Backend::Native);
-    ASSERT_NE(native, nullptr);
-    EXPECT_TRUE(native->isAvailable()) << "Native backend should always be available when compiled";
+    NativeSigningService native;
+    EXPECT_TRUE(native.isAvailable()) << "Native backend should always be available when compiled";
 }
 
 #else

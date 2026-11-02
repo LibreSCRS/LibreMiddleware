@@ -3,8 +3,6 @@
 
 #include <gtest/gtest.h>
 
-#ifdef LIBRESIGN_HAS_NATIVE
-
 #include "native/xades_module.h"
 #include "signing_keys.h"
 #include "signing_test_support/mock_tsa_server.h"
@@ -363,6 +361,7 @@ TEST_F(XAdESModuleTest, BTSignsAgainstMockTsa)
     std::vector<uint8_t> data = {'T', 'i', 'm', 'e'};
     TSAConfig tsa;
     tsa.url = tsaServer.url();
+    tsa.trust.anchors = {libresign::test::MockTsaServer::trustAnchor()};
     auto result = xades.sign(data, "test.xml", token, SignatureLevel::B_T, SignaturePackaging::Detached, tsa);
 
     ASSERT_TRUE(result.success) << result.errorMessage;
@@ -396,6 +395,7 @@ TEST_F(XAdESModuleTest, AppendSignerAtLongTermRejectsUnterminatedChain)
 
     TSAConfig tsa;
     tsa.url = tsaServer.url();
+    tsa.trust.anchors = {libresign::test::MockTsaServer::trustAnchor()};
     auto appended = xades.appendSigner(prior.signedDocument, {}, "test.xml", token, SignatureLevel::B_LT, tsa);
     EXPECT_FALSE(appended.success);
     ASSERT_TRUE(appended.failureKind.has_value()) << appended.errorMessage;
@@ -442,5 +442,3 @@ TEST(XAdESModuleStandalone, RejectsEmptyInput)
     ASSERT_FALSE(result.success);
     EXPECT_NE(result.errorMessage.find("empty"), std::string::npos);
 }
-
-#endif

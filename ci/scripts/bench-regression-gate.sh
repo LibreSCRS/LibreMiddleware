@@ -12,10 +12,8 @@
 # stdlib-only, one clear exit code, one clear message per benchmark.
 #
 # Compares `cpu_time` (not `real_time`): cpu_time excludes scheduler /
-# I/O wait noise that shows up on shared CI runners — the committed
-# 4.2-bench_truststore_service.json baseline shows this directly
-# (BM_TrustStoreService_Create_WithTLFile: real_time ~1.62ms vs cpu_time
-# ~1.15ms, the gap being file-read wait, not the code path under test).
+# I/O wait noise that shows up on shared CI runners, where a file read's
+# wait can open a third of a gap between the two on the same code path.
 #
 # Usage:
 #   bench-regression-gate.sh <baseline.json> <candidate.json> [threshold_pct]

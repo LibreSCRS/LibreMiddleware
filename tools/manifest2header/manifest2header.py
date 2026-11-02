@@ -63,35 +63,6 @@ def hex_string_to_bytes(s: str) -> list[int]:
     return [int(token, 16) for token in s.split()]
 
 
-def cpp_string_escape(s: str) -> str:
-    """Escape a Python string for safe inclusion in a C++ string literal.
-
-    The manifest schema constrains pluginId to ASCII identifier characters,
-    but displayName is free-form (arbitrary UTF-8 with minLength=1). Without
-    escaping a displayName containing ``"`` or ``\\`` would terminate the
-    literal early or emit ill-formed code (CWE-94: code generation /
-    injection). This function escapes the small set of characters that have
-    syntactic meaning in a C++ string literal; any other byte passes
-    through unchanged so non-ASCII display names render correctly.
-    """
-    out: list[str] = []
-    for ch in s:
-        if ch == '"' or ch == '\\':
-            out.append('\\')
-            out.append(ch)
-        elif ch == '\n':
-            out.append('\\n')
-        elif ch == '\r':
-            out.append('\\r')
-        elif ch == '\t':
-            out.append('\\t')
-        elif ord(ch) < 0x20 or ord(ch) == 0x7F:
-            out.append(f'\\x{ord(ch):02x}')
-        else:
-            out.append(ch)
-    return "".join(out)
-
-
 def emit_atr_array(atrs: list[dict]) -> str:
     if not atrs:
         return ""
@@ -147,8 +118,7 @@ def render(manifest: dict) -> str:
 
 namespace LibreSCRS::Plugin::generated::{namespace_id} {{
 
-inline constexpr std::string_view kPluginId    = "{cpp_string_escape(plugin_id)}";
-inline constexpr std::string_view kDisplayName = "{cpp_string_escape(manifest["displayName"])}";
+inline constexpr std::string_view kPluginId = "{plugin_id}";
 inline constexpr CardCapabilities kCapabilities = {capabilities_expr};
 
 """

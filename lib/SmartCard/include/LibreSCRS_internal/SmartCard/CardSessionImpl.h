@@ -9,16 +9,17 @@
 
 #include <LibreSCRS/Auth/AuthRequirement.h>
 #include <LibreSCRS/Auth/CredentialResult.h>
+#include <LibreSCRS/Auth/PaceSecretKind.h>
 #include <LibreSCRS/Export.h>
-#include <LibreSCRS/SecureChannel/PaceParams.h>
+#include <LibreSCRS_internal/SecureChannel/PaceParams.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS_internal/SecureChannel/BacChannel.h>
-#include <LibreSCRS_internal/SmartCard/SessionPresence.h>
 
 #include <pcsc_connection.h>
 
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -46,6 +47,9 @@ inline std::uint64_t nextCardSessionGeneration() noexcept
     static std::atomic<std::uint64_t> counter{0};
     return counter.fetch_add(1, std::memory_order_relaxed) + 1;
 }
+
+// One PACE credential cache slot per PaceSecretKind, indexed by its value.
+inline constexpr std::size_t kPaceSecretKindCount = static_cast<std::size_t>(Auth::PaceSecretKind::Puk) + 1;
 
 } // namespace Internal
 
@@ -77,7 +81,7 @@ struct LIBRESCRS_INTERNAL CardSession::Impl
     // markDead). Mirrors the activeChannel lifetime so the public
     // CardSession::activatedProtocol accessor never reports a stale protocol.
     std::optional<LibreSCRS::SmartCard::SmProtocolRequest> activatedProtocol;
-    std::array<LibreSCRS::Secure::String, LibreSCRS::Auth::kPaceSecretKindCount> paceCredentialsCache;
+    std::array<LibreSCRS::Secure::String, Internal::kPaceSecretKindCount> paceCredentialsCache;
     // BAC consumes a structurally distinct tuple (documentNumber + two dates)
     // rather than a single secret, so it gets its own cache slot disjoint
     // from the PACE credentials cache.
@@ -98,15 +102,6 @@ struct LIBRESCRS_INTERNAL CardSession::Impl
     {
         return activeChannelOwner.load(std::memory_order_acquire) == std::this_thread::get_id();
     }
-
-    // SessionPresence registration: populated when this session activates a
-    // secure-messaging channel through a shared_ptr-managed CardSession. The
-    // RAII handle removes the entry from the process-local registry on
-    // destruction; ~Impl therefore covers session teardown automatically,
-    // and clearActiveChannel/markDead reset the optional explicitly so the
-    // registry reflects the absence of a live SM channel even if the
-    // shared_ptr outlives the channel.
-    std::optional<LibreSCRS::SmartCard::Internal::SessionPresence::Registration> presence;
 };
 
 } // namespace LibreSCRS::SmartCard

@@ -3,8 +3,6 @@
 
 #include <gtest/gtest.h>
 
-#ifdef LIBRESIGN_HAS_NATIVE
-
 #include "native/trusted_list_parser.h"
 
 #include <cstdlib>
@@ -50,20 +48,30 @@ static const char* minimalLotlXml = R"(<?xml version="1.0" encoding="UTF-8"?>
     <SchemeName><Name xml:lang="en">EU List of Trusted Lists</Name></SchemeName>
     <ListIssueDateTime>2026-01-01T00:00:00Z</ListIssueDateTime>
     <NextUpdate><dateTime>2026-07-01T00:00:00Z</dateTime></NextUpdate>
-  </SchemeInformation>
   <PointersToOtherTSL>
     <OtherTSLPointer>
-      <ServiceDigitalIdentity>
-        <DigitalId>
-          <X509Certificate>AQAB</X509Certificate>
-        </DigitalId>
-      </ServiceDigitalIdentity>
+      <ServiceDigitalIdentities>
+        <ServiceDigitalIdentity>
+          <DigitalId>
+            <X509Certificate>AQAB</X509Certificate>
+          </DigitalId>
+        </ServiceDigitalIdentity>
+        <ServiceDigitalIdentity>
+          <DigitalId>
+            <X509Certificate>AQAC</X509Certificate>
+          </DigitalId>
+          <DigitalId>
+            <X509SubjectName>CN=ignored</X509SubjectName>
+          </DigitalId>
+        </ServiceDigitalIdentity>
+      </ServiceDigitalIdentities>
       <TSLLocation>https://example.com/tl1.xml</TSLLocation>
     </OtherTSLPointer>
     <OtherTSLPointer>
       <TSLLocation>https://example.com/tl2.xml</TSLLocation>
     </OtherTSLPointer>
   </PointersToOtherTSL>
+  </SchemeInformation>
 </TrustServiceStatusList>)";
 
 // TL with multiple providers and services
@@ -173,9 +181,13 @@ TEST(TrustedListParser, ParseLotlExtractsPointers)
     ASSERT_EQ(info.schemeTerritory, "EU");
     ASSERT_EQ(info.pointersToOtherTSL.size(), 2u);
     ASSERT_EQ(info.pointersToOtherTSL[0].url, "https://example.com/tl1.xml");
-    ASSERT_FALSE(info.pointersToOtherTSL[0].signingCertDer.empty()); // has cert
+    // The real LOTL shape: ServiceDigitalIdentities wraps one identity per
+    // signing key, and every certificate is kept, in order.
+    ASSERT_EQ(info.pointersToOtherTSL[0].signingCertsDer.size(), 2u);
+    EXPECT_EQ(info.pointersToOtherTSL[0].signingCertsDer[0], (std::vector<uint8_t>{0x01, 0x00, 0x01}));
+    EXPECT_EQ(info.pointersToOtherTSL[0].signingCertsDer[1], (std::vector<uint8_t>{0x01, 0x00, 0x02}));
     ASSERT_EQ(info.pointersToOtherTSL[1].url, "https://example.com/tl2.xml");
-    ASSERT_TRUE(info.pointersToOtherTSL[1].signingCertDer.empty()); // no cert
+    ASSERT_TRUE(info.pointersToOtherTSL[1].signingCertsDer.empty()); // no cert
     ASSERT_TRUE(info.services.empty());
 }
 
@@ -303,5 +315,3 @@ TEST(TrustedListParser, FetchSerbianTL)
     // Serbian TL should have at least a few CAs
     ASSERT_GE(info.services.size(), 2u);
 }
-
-#endif

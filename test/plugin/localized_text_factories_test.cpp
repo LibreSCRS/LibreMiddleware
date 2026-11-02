@@ -49,13 +49,6 @@ TEST(ReadResultFactories, CommunicationErrorCarriesGenericKey)
     EXPECT_EQ(*r.diagnosticDetail, "reader returned 6300");
 }
 
-TEST(ReadResultFactories, ParseErrorPropagatesProvidedMessage)
-{
-    auto r = Plugin::ReadResult::parseError(Auth::ErrorKeys::genericParse());
-    EXPECT_EQ(r.status, Plugin::ReadResult::Status::ParseError);
-    EXPECT_EQ(r.userMessage.key, "librescrs.error.parse.generic");
-}
-
 TEST(ReadResultFactories, UnsupportedCardCarriesGenericMessage)
 {
     auto r = Plugin::ReadResult::unsupportedCard(Auth::ErrorKeys::unsupportedCard());
@@ -85,31 +78,18 @@ TEST(ReadResultFactories, CancelledCarriesCancelledKey)
 
 TEST(SigningResultFactories, OkCarriesGenericSignOkMessage)
 {
-    auto r = Signing::SigningResult::ok(std::filesystem::path{"/tmp/out.pdf"});
+    auto r = Signing::SigningResult::okWithBytes({0x25, 0x50});
     EXPECT_EQ(r.status, Signing::SigningResult::Status::Ok);
     EXPECT_EQ(r.userMessage.key, "librescrs.sign.ok");
 }
 
-TEST(SigningResultFactories, InvalidRequestRequiresMessageWithPlaceholders)
+TEST(SigningResultFactories, InvalidRequestCarriesProvidedMessage)
 {
     auto r = Signing::SigningResult::invalidRequest(
-        LocalizedText{"signing.invalid.placeholder_missing",
-                      "Required field {field} is missing.",
-                      {Placeholder{.name = "field", .value = std::string{"outputPath"}}}});
+        LocalizedText{"signing.invalid.output_missing", "The output path is missing."});
     EXPECT_EQ(r.status, Signing::SigningResult::Status::InvalidRequest);
-    ASSERT_EQ(r.userMessage.placeholders.size(), 1u);
-    EXPECT_EQ(r.userMessage.placeholders[0].name, "field");
-    ASSERT_EQ(r.userMessage.placeholders[0].type(), Placeholder::Type::String);
-    EXPECT_EQ(std::get<std::string>(r.userMessage.placeholders[0].value), "outputPath");
-}
-
-TEST(SigningResultFactories, InvalidRequestDiagnosticOnlySubstitutesGenericMessage)
-{
-    auto r = Signing::SigningResult::invalidRequestDiagnosticOnly(std::string{"bad outputPath"});
-    EXPECT_EQ(r.status, Signing::SigningResult::Status::InvalidRequest);
-    EXPECT_FALSE(r.userMessage.key.empty());
-    ASSERT_TRUE(r.diagnosticDetail.has_value());
-    EXPECT_EQ(*r.diagnosticDetail, "bad outputPath");
+    EXPECT_EQ(r.userMessage.key, "signing.invalid.output_missing");
+    EXPECT_EQ(r.userMessage.defaultText, "The output path is missing.");
 }
 
 TEST(SigningResultFactories, UserCancelledCarriesUserCancelledKey)
@@ -158,13 +138,11 @@ TEST(ErrorKeysBuilders, AllBuildersReturnNonEmptyKeyAndFallback)
 {
     const LocalizedText all[] = {
         Auth::ErrorKeys::genericComm(),
-        Auth::ErrorKeys::genericParse(),
         Auth::ErrorKeys::unsupportedCard(),
         Auth::ErrorKeys::authFailed(),
         Auth::ErrorKeys::cancelled(),
         Auth::ErrorKeys::readerUnavailable(),
         Auth::ErrorKeys::noCardPresent(),
-        Auth::ErrorKeys::protocolError(),
         Auth::ErrorKeys::readOk(),
         Auth::ErrorKeys::signOk(),
         Auth::ErrorKeys::signingEngineError(),
@@ -175,20 +153,6 @@ TEST(ErrorKeysBuilders, AllBuildersReturnNonEmptyKeyAndFallback)
         EXPECT_FALSE(lt.key.empty()) << "empty key on builder";
         EXPECT_FALSE(lt.defaultText.empty()) << "empty defaultText on builder";
     }
-}
-
-// pinIncorrectWithRetries: the {count} placeholder MUST carry a typed
-// Count payload (variant index 5) so consumers can pluralise. A
-// stringified integer would still render correctly via formatted() but
-// would defeat the type discriminator added in 5ae29f3.
-TEST(ErrorKeysBuilders, PinIncorrectWithRetriesUsesCountPayload)
-{
-    auto lt = Auth::ErrorKeys::pinIncorrectWithRetries(3);
-    EXPECT_EQ(lt.key, "librescrs.error.auth.pinIncorrectWithRetries");
-    ASSERT_EQ(lt.placeholders.size(), 1u);
-    EXPECT_EQ(lt.placeholders[0].name, "count");
-    EXPECT_EQ(lt.placeholders[0].type(), LibreSCRS::Placeholder::Type::Count);
-    EXPECT_EQ(lt.placeholders[0].formatted(), "3");
 }
 
 // ----------------------------------------------------------------------------

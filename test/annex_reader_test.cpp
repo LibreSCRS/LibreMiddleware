@@ -34,6 +34,14 @@ using LibreSCRS::SecureChannel::TestSupport::FakePCSCConnection;
 
 namespace {
 
+// The text of a Text field; empty for any other field type.
+std::string textOf(const LibreSCRS::Plugin::CardField& field)
+{
+    if (field.type != LibreSCRS::Plugin::FieldType::Text)
+        return {};
+    return std::string(field.value.begin(), field.value.end());
+}
+
 constexpr std::uint16_t kDf = 0x0FF3;
 
 /// A card that answers SELECT-by-path and READ BINARY from a file table.
@@ -177,11 +185,11 @@ TEST(RsAnnexReader, EmitsDataGroupAndItsOwnVerdictGroup)
     ASSERT_EQ(groups.size(), 2u);
     EXPECT_EQ(groups[0].groupKey, "annex.rs.personal");
     EXPECT_EQ(groups[1].groupKey, "annex.rs.security");
-    EXPECT_EQ(groups[1].fields.at(0).textValue().value_or(std::string{}), "PASSED");
+    EXPECT_EQ(textOf(groups[1].fields.at(0)), "PASSED");
     // Authenticity is not silently implied by integrity: no anchor was offered,
     // so the signer is unproven and the group says so.
     EXPECT_EQ(groups[1].fields.at(1).key, "annex_authenticity");
-    EXPECT_EQ(groups[1].fields.at(1).textValue().value_or(std::string{}), "NOT_PERFORMED");
+    EXPECT_EQ(textOf(groups[1].fields.at(1)), "NOT_PERFORMED");
 }
 
 // The contract that protects every other card in the field.
@@ -236,8 +244,8 @@ TEST(RsAnnexReader, DoesNotPublishTagsOfUnconfirmedMeaning)
 
     ASSERT_FALSE(groups.empty());
     for (const auto& f : groups[0].fields) {
-        EXPECT_NE(f.textValue().value_or(std::string{}), "SC");
-        EXPECT_NE(f.textValue().value_or(std::string{}), "X11111111X");
+        EXPECT_NE(textOf(f), "SC");
+        EXPECT_NE(textOf(f), "X11111111X");
     }
 }
 
@@ -427,9 +435,9 @@ TEST(AnnexDispatch, MasterFileRestoreClearsCachedAppletOnSmChannel)
 
     const LibreSCRS::SmartCard::AppletAid boundAid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
     LibreSCRS::SecureChannel::SessionKeys keys;
-    keys.encKey = LibreSCRS::Secure::Buffer{16, 0x11};
-    keys.macKey = LibreSCRS::Secure::Buffer{16, 0x22};
-    keys.ssc = LibreSCRS::Secure::Buffer{16, 0x00};
+    keys.encKey = LibreSCRS::Secure::Buffer{std::vector<std::uint8_t>(16, 0x11)};
+    keys.macKey = LibreSCRS::Secure::Buffer{std::vector<std::uint8_t>(16, 0x22)};
+    keys.ssc = LibreSCRS::Secure::Buffer{std::vector<std::uint8_t>(16, 0x00)};
     keys.cipher = LibreSCRS::SecureChannel::SmCipher::Aes;
     LibreSCRS::SecureChannel::ChipAuthChannel channel{conn, boundAid, std::move(keys)};
     ASSERT_FALSE(channel.currentApplet().empty());
@@ -457,9 +465,9 @@ TEST(AnnexDispatch, MasterFileRestoreClearsCachedAppletEvenWhenSelectThrows)
 
     const LibreSCRS::SmartCard::AppletAid boundAid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
     LibreSCRS::SecureChannel::SessionKeys keys;
-    keys.encKey = LibreSCRS::Secure::Buffer{16, 0x11};
-    keys.macKey = LibreSCRS::Secure::Buffer{16, 0x22};
-    keys.ssc = LibreSCRS::Secure::Buffer{16, 0x00};
+    keys.encKey = LibreSCRS::Secure::Buffer{std::vector<std::uint8_t>(16, 0x11)};
+    keys.macKey = LibreSCRS::Secure::Buffer{std::vector<std::uint8_t>(16, 0x22)};
+    keys.ssc = LibreSCRS::Secure::Buffer{std::vector<std::uint8_t>(16, 0x00)};
     keys.cipher = LibreSCRS::SecureChannel::SmCipher::Aes;
     LibreSCRS::SecureChannel::ChipAuthChannel channel{conn, boundAid, std::move(keys)};
     ASSERT_FALSE(channel.currentApplet().empty());

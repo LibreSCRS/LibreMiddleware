@@ -24,30 +24,19 @@
 
 using LibreSCRS::SmartCard::MonitorEvent;
 using LibreSCRS::SmartCard::MonitorService;
+using LibreSCRS::SmartCard::detail::isPollingForTest;
 
 TEST(MonitorTest, DefaultNotRunning)
 {
     MonitorService m;
-    EXPECT_FALSE(m.isRunning());
-}
-
-TEST(MonitorTest, ListReadersReturnsVector)
-{
-    MonitorService m;
-    // 4.0: listReaders() is noexcept and returns optional<vector>; nullopt
-    // signals PC/SC-subsystem unavailability, an engaged optional carries
-    // the snapshot (possibly empty). We just verify the call itself does
-    // not throw and returns something of the expected shape.
-    static_assert(noexcept(m.listReaders()), "MonitorService::listReaders must be noexcept");
-    auto readersOpt = m.listReaders();
-    (void)readersOpt;
+    EXPECT_FALSE(isPollingForTest(m));
 }
 
 TEST(MonitorTest, UnsubscribeUnknownIdIsNoOp)
 {
     MonitorService m;
     EXPECT_NO_THROW(m.unsubscribe(LibreSCRS::SmartCard::detail::makeSubscriptionIdForTest(9999)));
-    EXPECT_FALSE(m.isRunning());
+    EXPECT_FALSE(isPollingForTest(m));
 }
 
 TEST(MonitorTest, TypeTraits)
@@ -62,7 +51,7 @@ TEST(MonitorTest, TypeTraits)
 // subscription table keyed by stable SubscriptionId tokens referencing the
 // @c MonitorService* itself via its Impl; move-semantics cannot preserve the
 // lifetime coupling cleanly. Shared ownership goes through
-// @c std::make_shared<MonitorService>() (mirroring AutoReaderService).
+// @c std::make_shared<MonitorService>().
 TEST(MonitorTest, IsNonMovable)
 {
     static_assert(!std::is_copy_constructible_v<MonitorService>);
@@ -83,8 +72,8 @@ TEST(MonitorTest, SubscriptionIdIsOrdered)
 }
 
 // --- AutoStartStopLifecycle ---
-// isRunning() is false before any subscribe, true after first subscribe,
-// false after the last unsubscribe.
+// The poll thread is not wired before any subscribe, is after the first
+// subscribe, and is not after the last unsubscribe.
 TEST(MonitorTest, AutoStartStopLifecycle)
 {
     auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
@@ -97,18 +86,18 @@ TEST(MonitorTest, AutoStartStopLifecycle)
 
     auto monitor = LibreSCRS::SmartCard::detail::makeMonitorWithProvider(std::move(mock));
     ASSERT_NE(monitor, nullptr);
-    EXPECT_FALSE(monitor->isRunning());
+    EXPECT_FALSE(isPollingForTest(*monitor));
 
     auto id = monitor->subscribe([](const MonitorEvent&) {});
 
     // Poll thread starts asynchronously; spin briefly.
-    for (int i = 0; i < 50 && !monitor->isRunning(); ++i) {
+    for (int i = 0; i < 50 && !isPollingForTest(*monitor); ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    EXPECT_TRUE(monitor->isRunning());
+    EXPECT_TRUE(isPollingForTest(*monitor));
 
     monitor->unsubscribe(id);
-    EXPECT_FALSE(monitor->isRunning());
+    EXPECT_FALSE(isPollingForTest(*monitor));
     // cancelCount is not asserted: internal stopThread only calls cancel()
     // if the poll thread has already reached establishContext, which is
     // racy in an autostart/autostop test with no enqueued work.
@@ -187,10 +176,10 @@ TEST(MonitorTest, MultipleSubscribersReceiveSameEvents)
     // the invariant we assert is that B was actually registered (idB !=
     // idA) and that unsubscribing A did not tear down B.
 
-    EXPECT_TRUE(monitor->isRunning()); // B still subscribed
+    EXPECT_TRUE(isPollingForTest(*monitor)); // B still subscribed
 
     monitor->unsubscribe(idB);
-    EXPECT_FALSE(monitor->isRunning());
+    EXPECT_FALSE(isPollingForTest(*monitor));
 
     // After all unsubscribes, A must not have grown further. Give the
     // background thread a moment to finish any in-flight dispatch.
@@ -266,9 +255,7 @@ TEST(MonitorTest, UnsubscribeWithDrainBlocksUntilCallbackCompletes)
     //
     // Taking the lock closes the gap: the flip cannot land between the
     // predicate and the park, because the waiter holds `gate` across exactly
-    // that span. It is the same reasoning the reader-list gate further down
-    // this file already spells out — a flag disarmed before the thread parks
-    // leaves a released flag and a thread that parks afterwards.
+    // that span.
     {
         std::lock_guard lock(gate);
         releaseCallback.store(true);
@@ -284,450 +271,7 @@ TEST(MonitorTest, UnsubscribeWithDrainUnknownIdIsNoOp)
     MonitorService m;
     EXPECT_NO_THROW(m.unsubscribe(LibreSCRS::SmartCard::detail::makeSubscriptionIdForTest(9999),
                                   MonitorService::DrainPolicy::Drain));
-    EXPECT_FALSE(m.isRunning());
-}
-
-// --- subscribeReaderList: snapshot is dispatched AFTER per-reader events ---
-// Acceptance: an LC-style consumer using subscribeReaderList
-// observes the post-change reader-list snapshot strictly after the
-// per-reader ReaderAdded events for the same change. Guarantees the
-// snapshot reflects every prior per-reader event the consumer's
-// EventCallback would have observed for that change.
-TEST(MonitorTest, ReaderListSnapshotEmittedAfterPerReaderEvents)
-{
-    auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
-    auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
-    auto* mockPtr = mock.get();
-    mock->setReaders({"Reader A", "Reader B"});
-    // Hold the poll thread inside its first enumeration until BOTH callbacks
-    // are registered. The thread starts on the FIRST subscribe, so without
-    // this gate it can enumerate and dispatch in the window between the two
-    // registrations -- and the per-reader subscriber then misses the very
-    // events this test is about, leaving a log of "snapshot:2" alone.
-    mock->setListReadersBlocking(true);
-    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED, SCARD_STATE_CHANGED}, false});
-    mock->pushStatusChange({SCARD_S_SUCCESS, {}, true});
-
-    auto monitor = LibreSCRS::SmartCard::detail::makeMonitorWithProvider(std::move(mock));
-    ASSERT_NE(monitor, nullptr);
-
-    std::mutex mtx;
-    std::condition_variable cv;
-    // Recorded event log: "added:<name>" / "removed:<name>" / "snapshot:<count>"
-    // in dispatch order.
-    std::vector<std::string> log;
-
-    // Subscribe to BOTH callbacks BEFORE the poll thread starts so the
-    // initial diff fires both paths in the documented order. Using
-    // subscribeReaderList as the first subscriber means the bootstrap
-    // fire-on-subscribe path is skipped (firstSubscriber == true) and the
-    // first snapshot the test observes is the one synthesised by the
-    // change-driven diffReadersAndDispatch — which is the contract under
-    // test ("after per-reader events").
-    std::vector<std::string> lastSnapshot;
-    auto listId = monitor->subscribeReaderList([&](const std::vector<std::string>& readers) {
-        std::lock_guard lock(mtx);
-        log.push_back("snapshot:" + std::to_string(readers.size()));
-        lastSnapshot = readers;
-        cv.notify_all();
-    });
-    auto evId = monitor->subscribe([&](const MonitorEvent& e) {
-        std::lock_guard lock(mtx);
-        if (e.kind == MonitorEvent::Kind::ReaderAdded) {
-            log.push_back("added:" + e.readerName);
-        } else if (e.kind == MonitorEvent::Kind::ReaderRemoved) {
-            log.push_back("removed:" + e.readerName);
-        }
-        cv.notify_all();
-    });
-    EXPECT_NE(evId, listId);
-
-    // Both callbacks are registered now, so let the enumeration finish. The
-    // brief wait is not a race of its own: it only confirms the poll thread
-    // has REACHED the gate, because disarming it before the thread parks
-    // would leave a released flag and a thread that parks afterwards.
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    // Disarm before releasing, so the re-enumerate the CHANGED event triggers
-    // does not park again.
-    mockPtr->setListReadersBlocking(false);
-    mockPtr->releaseListReadersBlock();
-
-    // Wait until a non-empty snapshot has been observed (i.e. the
-    // change-driven snapshot reflecting Reader A + Reader B, not a stray
-    // empty bootstrap).
-    {
-        std::unique_lock lock(mtx);
-        cv.wait_for(lock, std::chrono::seconds(2), [&] {
-            for (const auto& entry : log) {
-                if (entry == "snapshot:2")
-                    return true;
-            }
-            return false;
-        });
-    }
-
-    // Assert: the "snapshot:2" entry is preceded by BOTH "added:Reader A"
-    // and "added:Reader B" — the per-reader events for that change must
-    // dispatch first.
-    std::lock_guard lock(mtx);
-    bool sawAddedABeforeSnapshot = false;
-    bool sawAddedBBeforeSnapshot = false;
-    bool sawAddedA = false;
-    bool sawAddedB = false;
-    for (const auto& entry : log) {
-        if (entry == "added:Reader A")
-            sawAddedA = true;
-        else if (entry == "added:Reader B")
-            sawAddedB = true;
-        else if (entry == "snapshot:2") {
-            sawAddedABeforeSnapshot = sawAddedA;
-            sawAddedBBeforeSnapshot = sawAddedB;
-            break;
-        }
-    }
-    auto joinLog = [&] {
-        std::string joined;
-        for (const auto& e : log) {
-            joined += e;
-            joined += '|';
-        }
-        return joined;
-    };
-    EXPECT_TRUE(sawAddedABeforeSnapshot) << "snapshot:2 must follow added:Reader A; log was: " << joinLog();
-    EXPECT_TRUE(sawAddedBBeforeSnapshot) << "snapshot:2 must follow added:Reader B; log was: " << joinLog();
-    EXPECT_EQ(lastSnapshot.size(), 2u);
-
-    monitor->unsubscribe(evId);
-    monitor->unsubscribeReaderList(listId);
-    EXPECT_FALSE(monitor->isRunning());
-}
-
-// subscribeReaderList alone keeps the poll thread alive (auto-start counts
-// reader-list subscribers in the union of populations); unsubscribeReaderList
-// of the only subscriber stops it.
-TEST(MonitorTest, ReaderListSubscriberAutoStartsAndStopsPollThread)
-{
-    auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
-    auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
-    mock->setReaders({"Reader A"});
-    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false});
-    mock->pushStatusChange({SCARD_S_SUCCESS, {}, true});
-
-    auto monitor = LibreSCRS::SmartCard::detail::makeMonitorWithProvider(std::move(mock));
-    ASSERT_NE(monitor, nullptr);
-    EXPECT_FALSE(monitor->isRunning());
-
-    auto id = monitor->subscribeReaderList([](const std::vector<std::string>&) {});
-    for (int i = 0; i < 50 && !monitor->isRunning(); ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    EXPECT_TRUE(monitor->isRunning());
-
-    monitor->unsubscribeReaderList(id);
-    EXPECT_FALSE(monitor->isRunning());
-}
-
-// Late-joining reader-list subscriber receives the current snapshot
-// immediately (bootstrap fire path) rather than waiting for the next
-// reader-list change.
-TEST(MonitorTest, ReaderListSubscriberLateJoinReceivesBootstrap)
-{
-    auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
-    auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
-    mock->setReaders({"Reader A"});
-    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false});
-    mock->pushStatusChange({SCARD_S_SUCCESS, {}, true});
-
-    auto monitor = LibreSCRS::SmartCard::detail::makeMonitorWithProvider(std::move(mock));
-    ASSERT_NE(monitor, nullptr);
-
-    // First subscriber: per-event, to trigger the internal monitor wiring
-    // so the initial diff populates knownReaders.
-    std::atomic<int> earlyAddedCount{0};
-    auto evId = monitor->subscribe([&](const MonitorEvent& e) {
-        if (e.kind == MonitorEvent::Kind::ReaderAdded)
-            earlyAddedCount.fetch_add(1);
-    });
-    // Wait for the initial diff to land.
-    for (int i = 0; i < 200 && earlyAddedCount.load() == 0; ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    ASSERT_GE(earlyAddedCount.load(), 1);
-
-    // Now late-join with subscribeReaderList. Bootstrap snapshot must
-    // arrive immediately (synchronously inside the subscribe call OR
-    // promptly afterwards, since dispatchReaderListSnapshot serialises on
-    // dispatchMtx — but in either case before any further reader-list
-    // change).
-    std::mutex mtx;
-    std::condition_variable cv;
-    std::optional<std::vector<std::string>> bootstrap;
-    auto listId = monitor->subscribeReaderList([&](const std::vector<std::string>& readers) {
-        std::lock_guard lock(mtx);
-        if (!bootstrap)
-            bootstrap = readers;
-        cv.notify_all();
-    });
-    {
-        std::unique_lock lock(mtx);
-        cv.wait_for(lock, std::chrono::seconds(2), [&] { return bootstrap.has_value(); });
-    }
-    ASSERT_TRUE(bootstrap.has_value()) << "late-joining reader-list subscriber never received bootstrap snapshot";
-    EXPECT_EQ(bootstrap->size(), 1u);
-    if (!bootstrap->empty()) {
-        EXPECT_EQ(bootstrap->front(), "Reader A");
-    }
-
-    monitor->unsubscribe(evId);
-    monitor->unsubscribeReaderList(listId);
-    EXPECT_FALSE(monitor->isRunning());
-}
-
-// unsubscribeReaderList with a per-event SubscriptionId is a no-op
-// (mismatched-variant safety per header contract).
-TEST(MonitorTest, UnsubscribeReaderListWithPerEventIdIsNoOp)
-{
-    MonitorService m;
-    auto evId = m.subscribe([](const MonitorEvent&) {});
-    // Calling the reader-list unsubscribe overload with a per-event token
-    // must not remove the per-event subscription nor crash.
-    EXPECT_NO_THROW(m.unsubscribeReaderList(evId));
-    // Per-event subscription still active — poll thread (would-be) still tracks
-    // it via callbacks map (we can't easily probe membership without isRunning
-    // depending on the internal monitor wiring; we just confirm symmetry by
-    // unsubscribing through the matching overload).
-    EXPECT_NO_THROW(m.unsubscribe(evId));
-}
-
-TEST(MonitorTest, UnsubscribeReaderListUnknownIdIsNoOp)
-{
-    MonitorService m;
-    EXPECT_NO_THROW(m.unsubscribeReaderList(LibreSCRS::SmartCard::detail::makeSubscriptionIdForTest(9999)));
-    EXPECT_FALSE(m.isRunning());
-}
-
-// Regression: ensure a snapshot subscriber registered AFTER a per-event
-// subscriber does not receive an empty bootstrap snapshot just because
-// the internal poll thread has not yet completed its first enumeration.
-//
-// Pre-fix (without `Impl::initialPollComplete`): the bootstrap branch
-// in subscribeReaderList reads an empty `knownReaders` and synchronously
-// dispatches `[]` to the late-joining subscriber; the poll thread then
-// later dispatches the real snapshot. Consumers see two emissions
-// (empty then populated) and `QSignalSpy::last()` semantics break.
-//
-// Post-fix: the bootstrap is suppressed in the first-poll window; the
-// poll thread's first dispatch delivers the populated snapshot to all
-// subscribers (early and late) uniformly. Exactly one emission with
-// the populated reader list.
-//
-// Guards: a late-joining reader-list subscriber must receive the populated
-// snapshot, never a spurious empty bootstrap, during the first-poll window.
-TEST(MonitorServiceBootstrapRace, SubscribeReaderListAfterSubscribeNoEmptyBootstrap)
-{
-    using LibreSCRS::SmartCard::MonitorEvent;
-    using LibreSCRS::SmartCard::MonitorService;
-
-    auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
-    auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
-    auto* mockPtr = mock.get();
-    mock->setReaders({"Reader A", "Reader B"});
-
-    // Block the first listReaders call. The internal poll thread's
-    // enumerateReaders() will park inside the mock until the test thread
-    // releases it, giving subscribeReaderList a deterministic chance to
-    // race against an empty knownReaders state.
-    mock->setListReadersBlocking(true);
-
-    // After enumeration completes, the internal poll thread enters its
-    // event loop with getStatusChange. Push only CANCELLED so the poll
-    // thread exits cleanly after the FIRST enumerate cycle — we deliberately
-    // skip a CHANGED event here because CHANGED would trigger a
-    // re-enumerate call to listReaders, which would block AGAIN under the
-    // listReadersBlocking flag and deadlock the test. The race we're
-    // exercising lives entirely in the first-enumerate window.
-    mock->pushStatusChange({LONG(SCARD_E_CANCELLED), {}, false});
-
-    auto monitor = LibreSCRS::SmartCard::detail::makeMonitorWithProvider(std::move(mock));
-    ASSERT_NE(monitor, nullptr);
-
-    std::mutex snapshotsMtx;
-    std::vector<std::vector<std::string>> snapshots;
-
-    // (1) Per-event subscription FIRST — this triggers poll-thread start.
-    //     The poll thread will immediately enter listReaders and block.
-    auto eventSubId = monitor->subscribe([](const MonitorEvent&) {
-        // Don't care about events for this test.
-    });
-
-    // Give the poll thread a brief moment to reach the listReaders block.
-    // We are NOT racing here — listReaders waits on the mock's condvar
-    // indefinitely, so the only effect of this delay is to confirm the
-    // poll thread reached the block. 50ms is generous on any platform.
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-
-    // (2) Snapshot subscription SECOND — this is the line that pre-fix
-    //     bootstrap-fires `[]` because knownReaders is still empty
-    //     (poll thread is parked in listReaders, hasn't called
-    //     diffReadersAndDispatch yet).
-    auto rlSubId = monitor->subscribeReaderList([&snapshotsMtx, &snapshots](const std::vector<std::string>& readers) {
-        std::lock_guard<std::mutex> lock(snapshotsMtx);
-        snapshots.push_back(readers);
-    });
-
-    // (3) Disarm the listReaders gate first (so any future re-enumerate
-    //     call from the poll thread won't block again), then release the
-    //     currently-parked first call. The poll thread completes
-    //     enumeration, fires its readersCb, populates knownReaders, and
-    //     dispatches the snapshot to all rl subscribers.
-    mockPtr->setListReadersBlocking(false);
-    mockPtr->releaseListReadersBlock();
-
-    // Wait for the poll thread's first dispatch to land. Poll on the
-    // snapshots vector with a short timeout rather than sleeping for a
-    // fixed duration to keep the test fast on green and bounded on red.
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(5000);
-    while (std::chrono::steady_clock::now() < deadline) {
-        {
-            std::lock_guard<std::mutex> lock(snapshotsMtx);
-            bool seenPopulated = false;
-            for (const auto& s : snapshots) {
-                if (s.size() == 2) {
-                    seenPopulated = true;
-                    break;
-                }
-            }
-            if (seenPopulated)
-                break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-
-    // Drain unsubscribes so no callback can fire after we inspect snapshots.
-    monitor->unsubscribeReaderList(rlSubId, MonitorService::DrainPolicy::Drain);
-    monitor->unsubscribe(eventSubId, MonitorService::DrainPolicy::Drain);
-
-    // Reproduction assertion: NO emission contained an empty list.
-    // Pre-fix: this fails because snapshots == [ [], ["A","B"] ] (or
-    // similar with the empty first).
-    // Post-fix: snapshots == [ ["A","B"] ] (or just populated entries).
-    std::lock_guard<std::mutex> lock(snapshotsMtx);
-    ASSERT_FALSE(snapshots.empty()) << "No reader-list snapshot was delivered at all";
-    for (size_t i = 0; i < snapshots.size(); ++i) {
-        EXPECT_FALSE(snapshots[i].empty()) << "Snapshot #" << i << " was empty — bootstrap race not fixed";
-    }
-    bool sawPopulated = false;
-    for (const auto& s : snapshots) {
-        if (s.size() == 2)
-            sawPopulated = true;
-    }
-    EXPECT_TRUE(sawPopulated) << "Expected at least one snapshot containing both readers";
-}
-
-// Regression guard for the initial-poll latch placement: ensures the latch
-// fires even when the first poll cycle returns zero readers, so a
-// subscribeReaderList that registers AFTER first enumerate but BEFORE
-// any reader is plugged still receives the synchronous (empty)
-// bootstrap snapshot that reflects current truth ("no readers right
-// now").
-//
-// Pre-fix behaviour: empty bootstrap delivered, then populated when
-// reader plugs — passes.
-// Naïve-fix behaviour (latch inside `if(!added.empty() || !removed.empty())`):
-//   late joiner gets NOTHING at registration; only learns of readers
-//   when one plugs in — would silently regress late-join contract.
-//   This test catches that mistake.
-// Correct-fix behaviour (latch at end of diffReadersAndDispatch
-// unconditionally): empty bootstrap delivered, then populated when
-// reader plugs — passes.
-//
-// Guards: with zero readers at boot, a subscriber still gets the empty
-// bootstrap and then the populated list when a reader later plugs in.
-TEST(MonitorServiceBootstrapRace, SubscribeReaderListZeroReadersAtBootThenPlug)
-{
-    using LibreSCRS::SmartCard::MonitorEvent;
-    using LibreSCRS::SmartCard::MonitorService;
-
-    auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
-    auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
-
-    // Empty at boot — no readers plugged.
-    mock->setReaders({});
-
-    // PnP check (no membership change yet — first enumerate returns {}).
-    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false});
-    // Then "Reader A" gets plugged in — drives the second enumerate cycle.
-    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false, std::vector<std::string>{"Reader A"}});
-    // Stop.
-    mock->pushStatusChange({LONG(SCARD_E_CANCELLED), {}, false});
-
-    auto monitor = LibreSCRS::SmartCard::detail::makeMonitorWithProvider(std::move(mock));
-    ASSERT_NE(monitor, nullptr);
-
-    std::mutex snapshotsMtx;
-    std::vector<std::vector<std::string>> snapshots;
-
-    // (1) Per-event subscription FIRST.
-    auto eventSubId = monitor->subscribe([](const MonitorEvent&) {});
-
-    // (2) Wait until poll thread has called listReaders at least once
-    //     (i.e. first enumerate has completed). MANDATORY: counter-poll,
-    //     not sleep. Sleeps are flaky under CI load; the counter
-    //     observation strictly happens-after the mock's listReaders impl.
-    auto enumerateDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(5000);
-    while (counters->listReadersCount.load() < 1 && std::chrono::steady_clock::now() < enumerateDeadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    ASSERT_GE(counters->listReadersCount.load(), 1) << "Poll thread never reached listReaders within 5s";
-
-    // (3) Snapshot subscription registered AFTER first enumerate completed.
-    //     Post-correct-fix: knownReaders == {} (truthful), initialPollComplete
-    //     == true (the latch is set after every enumerate, not only when
-    //     dispatch fires), so bootstrap-fires {} synchronously.
-    //     Post-naïve-fix: initialPollComplete still false (latch was inside
-    //     dispatch conditional, dispatch didn't fire on empty enumerate),
-    //     so bootstrap is SKIPPED — assertion below will fail.
-    auto rlSubId = monitor->subscribeReaderList([&snapshotsMtx, &snapshots](const std::vector<std::string>& readers) {
-        std::lock_guard<std::mutex> lock(snapshotsMtx);
-        snapshots.push_back(readers);
-    });
-
-    // (4) Wait for the "Reader A plugged in" cycle to dispatch.
-    auto pluggedDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(5000);
-    while (std::chrono::steady_clock::now() < pluggedDeadline) {
-        {
-            std::lock_guard<std::mutex> lock(snapshotsMtx);
-            bool sawReaderA = false;
-            for (const auto& s : snapshots) {
-                if (s.size() == 1 && s[0] == "Reader A") {
-                    sawReaderA = true;
-                    break;
-                }
-            }
-            if (sawReaderA)
-                break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-
-    monitor->unsubscribeReaderList(rlSubId, MonitorService::DrainPolicy::Drain);
-    monitor->unsubscribe(eventSubId, MonitorService::DrainPolicy::Drain);
-
-    std::lock_guard<std::mutex> lock(snapshotsMtx);
-    // Load-bearing assertion: the snapshot subscriber MUST have observed
-    // something between registration (step 3) and the "Reader A plugged
-    // in" cycle. If snapshots is empty, the initial-poll latch did not fire
-    // on the empty first enumerate — the naïve-placement regression is back.
-    ASSERT_FALSE(snapshots.empty()) << "No snapshot delivered to late joiner — initial-poll latch did not "
-                                       "fire on empty first enumerate (regression to naïve placement).";
-
-    // Sanity: at least one populated snapshot with Reader A was observed.
-    bool sawReaderA = false;
-    for (const auto& s : snapshots) {
-        if (s.size() == 1 && s[0] == "Reader A")
-            sawReaderA = true;
-    }
-    EXPECT_TRUE(sawReaderA) << "Expected at least one snapshot containing {\"Reader A\"} after plug-in";
+    EXPECT_FALSE(isPollingForTest(m));
 }
 
 // Regression: unsubscribe(Drain) must not deadlock when the

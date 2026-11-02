@@ -13,6 +13,8 @@
 #include <LibreSCRS/CancelToken.h>
 
 #include <chrono>
+#include <cstddef>
+#include <functional>
 #include <string>
 #include <variant>
 
@@ -80,6 +82,9 @@ struct FetchResult
 ///    is the verification anchor.
 ///  - Otherwise the pinned-cert table (@ref pinned_certs::pinnedCertForUrl)
 ///    is consulted.
+///  - Otherwise every certificate in @p entry.signingCertsDer (named by the
+///    LOTL that pointed here) is tried in order; the first that verifies
+///    the signature wins.
 ///  - If no candidate is available, the call fails with a descriptive
 ///    error message rather than silently accepting.
 ///
@@ -89,5 +94,22 @@ struct FetchResult
 /// and the cache is bypassed. Defense-in-depth: HttpClient itself
 /// continues to reject the @c file:// scheme via @c CURLOPT_PROTOCOLS_STR.
 [[nodiscard]] FetchResult fetchAndVerifyTrustedList(const TrustedListEntry& entry, FetchOptions opts);
+
+/// @brief The one way a configured source becomes verified lists: fetch and
+///        verify @p root and, when it is a List of Trusted Lists, every list
+///        it points to (at most @ref kMaxTslPointers, each URL checked with
+///        @ref TrustedListParser::isSafeTslUrl), each verified with the
+///        certificates its pointer names.
+///
+/// @p onList receives every list that verified, the root first. @p onFailure
+/// receives every pointed-to list that did not, with the reason; the root's
+/// own failure is the return value.
+[[nodiscard]] FetchResult
+fetchTrustedListTree(const TrustedListEntry& root, const FetchOptions& opts,
+                     const std::function<void(const std::string& url, const TrustedListInfo& info)>& onList,
+                     const std::function<void(const std::string& url, const std::string& error)>& onFailure);
+
+/// @brief The most lists followed from one List of Trusted Lists.
+inline constexpr std::size_t kMaxTslPointers = 64;
 
 } // namespace libresign

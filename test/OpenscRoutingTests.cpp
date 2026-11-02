@@ -26,7 +26,7 @@
 #include <LibreSCRS/Plugin/CardPlugin.h>
 #include <LibreSCRS/Plugin/CardPluginService.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
-#include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
+#include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 #include <LibreSCRS/SmartCard/detail/ChannelInjection.h>
 
 #include <apdu.h>
@@ -61,7 +61,7 @@ bool isSelectPkcs15Aid(const APDUCommand& cmd)
 struct ScriptedContactlessCard
 {
     explicit ScriptedContactlessCard(const std::string& readerName)
-        : session(LibreSCRS::SmartCard::detail::makeDetachedCardSession(readerName))
+        : session(LibreSCRS::SmartCard::Testing::makeDetachedCardSession(readerName))
     {
         AppletAid aid{0xA0, 0x00, 0x00, 0x00, 0x63, 0x50, 0x4B, 0x43, 0x53, 0x2D, 0x31, 0x35};
         auto owned = std::make_unique<FakeChannel>(aid, ChannelState::Open, /*carriesSm=*/true,
@@ -100,7 +100,7 @@ std::vector<std::string> candidateIds(const std::vector<std::shared_ptr<LibreSCR
 TEST(OpenscRouting, OpenscOutranksPkcs15ForSecondGenContactless)
 {
     LibreSCRS::Plugin::CardPluginService registry{std::filesystem::path(PLUGIN_DIR)};
-    ASSERT_TRUE(registry.isUsable());
+    ASSERT_GT(registry.size(), 0u);
 
     ScriptedContactlessCard card("RoutingReaderGen2");
     card.channel->transmitHandler = [](const APDUCommand& cmd) {
@@ -127,7 +127,7 @@ TEST(OpenscRouting, OpenscOutranksPkcs15ForSecondGenContactless)
 TEST(OpenscRouting, RelatedFamilyContactlessUnderLiveSmClaimsNoPkcs15Consumer)
 {
     LibreSCRS::Plugin::CardPluginService registry{std::filesystem::path(PLUGIN_DIR)};
-    ASSERT_TRUE(registry.isUsable());
+    ASSERT_GT(registry.size(), 0u);
 
     ScriptedContactlessCard card("RoutingReaderRelated");
     card.channel->transmitHandler = [](const APDUCommand& cmd) {

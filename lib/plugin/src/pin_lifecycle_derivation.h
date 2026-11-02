@@ -69,6 +69,10 @@ struct PinEvidence
     ///        the AODF change-disabled + unblock-disabled flags. Gates the CAN
     ///        kind, which additionally excludes SO/unblocking objects.
     bool paceEvidence = false;
+    /// @brief The authId of the auth object that protects this one, as
+    ///        the AODF names it; empty when none. Input to
+    ///        @ref resolveAuthIdChains.
+    std::vector<std::uint8_t> protectingAuthId;
     /// @brief FULL id bytes of the protecting auth object; see the
     ///        chain-resolution contract in the struct documentation.
     std::optional<std::vector<std::uint8_t>> authIdChainTarget;
@@ -76,6 +80,21 @@ struct PinEvidence
     ///        (e.g. the libopensc SC_PIN_STATE_NEEDS_CHANGE pin-state bit).
     bool needsChangeSignal = false;
 };
+
+/// @brief The caller's half of the chain-resolution contract, for every
+///        plugin alike: an entry whose @ref PinEvidence::protectingAuthId
+///        names another entry's @ref PinEvidence::ownId records it as its
+///        @ref PinEvidence::authIdChainTarget, and that entry is marked the
+///        unblocking authority. A name that resolves to no other entry is
+///        left unresolved.
+void resolveAuthIdChains(std::vector<PinEvidence>& evidence);
+
+/// @brief The card's user PIN among @p evidence (chains already resolved):
+///        the first entry whose derived kind is UserPin, preferring an
+///        initialized local one, then any initialized one. The one rule both
+///        card plugins apply when an operation names no PIN; nothing when
+///        none qualifies.
+[[nodiscard]] std::optional<std::size_t> selectUserPin(const std::vector<PinEvidence>& evidence);
 
 /// @brief Derives kind/state/capabilities for one credential.
 ///
@@ -90,8 +109,7 @@ struct PinEvidence
 /// @brief Resolved RESET RETRY COUNTER P1 + on-wire data shape for one
 ///        unblock attempt.
 ///
-/// Extracted from pkcs15-plugin's @c unblockPIN override (review
-/// fix) so the style→(P1, data-shape) decision is unit-testable without
+/// Kept as a pure function so the style→(P1, data-shape) decision is unit-testable without
 /// card I/O or a production injection seam — the same "pure decision
 /// function living beside the derivation engine" shape as @ref
 /// derivePinStatus itself, mirroring the @ref classifyPinOutcome

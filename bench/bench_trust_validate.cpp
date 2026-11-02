@@ -49,9 +49,8 @@ void BM_ValidateChain_DepthN(benchmark::State& state, std::size_t depth)
 
     auto store = makeStore();
     std::vector<LibreSCRS::Trust::TrustAnchor> anchors;
-    anchors.push_back({ca, "bench:ca"});
-    LibreSCRS::Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(store, std::move(anchors),
-                                                                                "bench:ca-set");
+    anchors.push_back({ca});
+    LibreSCRS::Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(store, std::move(anchors));
 
     // Build a synthetic chain of @p depth elements by repeating the rsa/ecdsa
     // certs. validateChain does not actually verify cryptographically here —
@@ -99,9 +98,8 @@ void BM_FindIssuerOf(benchmark::State& state)
 
     auto store = makeStore();
     std::vector<LibreSCRS::Trust::TrustAnchor> anchors;
-    anchors.push_back({ca, "bench:ca"});
-    LibreSCRS::Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(store, std::move(anchors),
-                                                                                "bench:ca-set");
+    anchors.push_back({ca});
+    LibreSCRS::Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(store, std::move(anchors));
 
     for (auto _ : state) {
         auto issuer = store.findIssuerOf(rsa);

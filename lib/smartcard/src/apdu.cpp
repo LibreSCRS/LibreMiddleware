@@ -3,6 +3,9 @@
 
 #include "apdu.h"
 
+#include <stdexcept>
+#include <string>
+
 namespace LibreSCRS::SmartCard::Internal {
 
 std::vector<uint8_t> APDUCommand::toBytes() const
@@ -91,9 +94,13 @@ APDUCommand selectByFileId(uint8_t fileId1, uint8_t fileId2, uint8_t p2)
 
 APDUCommand readBinary(uint16_t offset, uint8_t length)
 {
+    // P1 bit 8 selects short-EF addressing: an offset past 15 bits cannot be
+    // sent with this INS, and masking it would read from offset - 0x8000.
+    if (offset > 0x7FFF)
+        throw std::invalid_argument("READ BINARY offset " + std::to_string(offset) + " needs more than 15 bits");
     return APDUCommand{.cla = 0x00,
                        .ins = 0xB0, // READ BINARY
-                       .p1 = static_cast<uint8_t>((offset >> 8) & 0x7F),
+                       .p1 = static_cast<uint8_t>(offset >> 8),
                        .p2 = static_cast<uint8_t>(offset & 0xFF),
                        .data = {},
                        .le = length,

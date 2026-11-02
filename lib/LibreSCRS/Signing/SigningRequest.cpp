@@ -16,19 +16,15 @@ namespace LibreSCRS::Signing {
 
 struct LIBRESCRS_INTERNAL SigningRequest::Impl
 {
-    std::filesystem::path inputFile;
-    std::filesystem::path outputFile;
     SignatureFormat format = SignatureFormat::Pades;
     SignatureLevel level = SignatureLevel::B_T;
     PackagingMode packaging = PackagingMode::Enveloped;
     std::string reason;
     std::string location;
-    std::string contactInfo;
-    std::string certificateLabel;
-    std::string documentName;        // names the in-memory document on the buffer-sign path
+    std::string documentName;        // names the in-memory document
     std::vector<std::uint8_t> keyId; // CKA_ID of the signing key/cert pair (reuse-safe selector)
     std::optional<VisualSignatureParams> visualParams;
-    TsaProvider tsaOverride;
+    TsaProvider tsaOverride; // empty URL: the service-level authority
     bool allowExpiredCert = false;
 };
 
@@ -37,14 +33,6 @@ SigningRequest::~SigningRequest() = default;
 SigningRequest::SigningRequest(SigningRequest&&) noexcept = default;
 SigningRequest& SigningRequest::operator=(SigningRequest&&) noexcept = default;
 
-const std::filesystem::path& SigningRequest::inputFile() const noexcept
-{
-    return d->inputFile;
-}
-const std::filesystem::path& SigningRequest::outputFile() const noexcept
-{
-    return d->outputFile;
-}
 SignatureFormat SigningRequest::format() const noexcept
 {
     return d->format;
@@ -65,14 +53,6 @@ const std::string& SigningRequest::location() const noexcept
 {
     return d->location;
 }
-const std::string& SigningRequest::contactInfo() const noexcept
-{
-    return d->contactInfo;
-}
-const std::string& SigningRequest::certificateLabel() const noexcept
-{
-    return d->certificateLabel;
-}
 const std::string& SigningRequest::documentName() const noexcept
 {
     return d->documentName;
@@ -90,19 +70,9 @@ std::optional<VisualSignatureParams> SigningRequest::visualParams() const
     // that would be moved out by `req = std::move(otherReq)`.
     return d->visualParams;
 }
-TsaProvider SigningRequest::tsaOverride() const
+const TsaProvider& SigningRequest::tsaOverride() const noexcept
 {
-    // Return by value. TsaProvider is a std::function; the copy is move-cheap
-    // for stored closures. Avoids the reference-escape hazard of returning a
-    // pointer into pimpl state that would be invalidated by
-    // `req = std::move(otherReq)` — matches the independent-lifetime contract
-    // of visualParams().
     return d->tsaOverride;
-}
-
-bool SigningRequest::hasTsaOverride() const noexcept
-{
-    return static_cast<bool>(d->tsaOverride);
 }
 
 bool SigningRequest::allowExpiredCert() const noexcept
@@ -120,16 +90,6 @@ SigningRequest::Builder::~Builder() = default;
 SigningRequest::Builder::Builder(Builder&&) noexcept = default;
 SigningRequest::Builder& SigningRequest::Builder::operator=(Builder&&) noexcept = default;
 
-SigningRequest::Builder& SigningRequest::Builder::inputFile(std::filesystem::path p)
-{
-    d->req.d->inputFile = std::move(p);
-    return *this;
-}
-SigningRequest::Builder& SigningRequest::Builder::outputFile(std::filesystem::path p)
-{
-    d->req.d->outputFile = std::move(p);
-    return *this;
-}
 SigningRequest::Builder& SigningRequest::Builder::format(SignatureFormat f) noexcept
 {
     d->req.d->format = f;
@@ -153,16 +113,6 @@ SigningRequest::Builder& SigningRequest::Builder::reason(std::string r)
 SigningRequest::Builder& SigningRequest::Builder::location(std::string loc)
 {
     d->req.d->location = std::move(loc);
-    return *this;
-}
-SigningRequest::Builder& SigningRequest::Builder::contactInfo(std::string info)
-{
-    d->req.d->contactInfo = std::move(info);
-    return *this;
-}
-SigningRequest::Builder& SigningRequest::Builder::certificateLabel(std::string label)
-{
-    d->req.d->certificateLabel = std::move(label);
     return *this;
 }
 SigningRequest::Builder& SigningRequest::Builder::documentName(std::string name)
@@ -194,25 +144,10 @@ SigningRequest::Builder& SigningRequest::Builder::allowExpiredCert(bool allow) n
     return *this;
 }
 
-SigningRequest SigningRequest::Builder::build() &&
-{
-    if (d->req.d->inputFile.empty()) {
-        throw std::invalid_argument("SigningRequest: inputFile is required");
-    }
-    if (d->req.d->outputFile.empty()) {
-        throw std::invalid_argument("SigningRequest: outputFile is required");
-    }
-    if (d->req.d->visualParams && d->req.d->format != SignatureFormat::Pades) {
-        throw std::invalid_argument("SigningRequest: visualParams are only valid for PAdES format");
-    }
-    return std::move(d->req);
-}
-
 SigningRequest SigningRequest::Builder::buildForBufferSign() &&
 {
-    // Buffer-sign mode carries the document + signed result in memory, so the
-    // inputFile/outputFile required-field checks of build() do not apply; only
-    // the cross-field combination check remains.
+    // The document and the signed result travel in memory; the only check is
+    // the cross-field combination.
     if (d->req.d->visualParams && d->req.d->format != SignatureFormat::Pades) {
         throw std::invalid_argument("SigningRequest: visualParams are only valid for PAdES format");
     }

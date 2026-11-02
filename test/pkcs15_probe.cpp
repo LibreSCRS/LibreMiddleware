@@ -10,6 +10,7 @@
 // Usage: pkcs15_probe [reader-name]
 
 #include <pcsc_connection.h>
+#include <pcsc_raw_diagnostic.h>
 #include "apdu.h"
 
 #include <cstdio>
@@ -177,7 +178,7 @@ int main(int argc, char* argv[])
     printf("Using: %s\n", readerName.c_str());
 
     try {
-        auto connOwner = LibreSCRS::SmartCard::Internal::PCSCConnection::openRawDiagnostic(readerName);
+        auto connOwner = LibreSCRS::SmartCard::Internal::openRawDiagnostic(readerName);
         auto& conn = *connOwner;
 
         auto atr = conn.getATR();

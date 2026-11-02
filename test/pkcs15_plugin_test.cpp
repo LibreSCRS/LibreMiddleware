@@ -41,7 +41,6 @@ TEST(PKCS15PluginTest, Metadata)
     ASSERT_NE(p, nullptr);
 
     EXPECT_EQ(p->pluginId(), "pkcs15");
-    EXPECT_EQ(p->displayName(), "PKCS#15 (generic PKI)");
     EXPECT_EQ(p->probePriority(), 900);
 }
 

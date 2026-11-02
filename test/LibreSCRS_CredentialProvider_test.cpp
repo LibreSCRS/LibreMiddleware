@@ -5,7 +5,6 @@
 #include <LibreSCRS/Auth/AuthRequirement.h>
 #include <LibreSCRS/Auth/CredentialProvider.h>
 #include <LibreSCRS/Secure/String.h>
-#include <algorithm>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -14,82 +13,28 @@
 using namespace LibreSCRS::Auth;
 using LibreSCRS::LocalizedText;
 
-TEST(CredentialProviderIntegrationTest, ProviderSeesExpectedFieldsForChangePin)
-{
-    std::vector<std::string> seenFieldIds;
-    CredentialProvider provider = [&seenFieldIds](const AuthRequirement& req) {
-        for (const auto& f : req.fields()) {
-            seenFieldIds.push_back(f.id);
-        }
-        std::vector<CredentialEntry> values;
-        for (const auto& f : req.fields()) {
-            values.emplace_back(f.id, LibreSCRS::Secure::String{"test"});
-        }
-        return CredentialResult::ok(std::move(values));
-    };
-
-    auto req = AuthRequirement::forChangePin(LocalizedText{"", "UserPIN", {}}, 3);
-    auto result = provider(req);
-
-    EXPECT_EQ(result.status, CredentialResult::Status::Ok);
-    ASSERT_EQ(seenFieldIds.size(), 3u);
-    EXPECT_EQ(seenFieldIds[0], "currentPin");
-    EXPECT_EQ(seenFieldIds[1], "newPin");
-    EXPECT_EQ(seenFieldIds[2], "confirmPin");
-}
-
-TEST(CredentialProviderIntegrationTest, ProviderHonorsEqualToFieldIdContract)
-{
-    auto req = AuthRequirement::forUnblockPin(LocalizedText{"", "UserPIN", {}});
-    auto fields = req.fields();
-    auto confirmField =
-        std::find_if(fields.begin(), fields.end(), [](const FieldDescriptor& f) { return f.id == "confirmPin"; });
-    ASSERT_NE(confirmField, fields.end());
-    ASSERT_TRUE(confirmField->equalToFieldId.has_value());
-    EXPECT_EQ(*confirmField->equalToFieldId, "newPin");
-}
-
-TEST(CredentialProviderIntegrationTest, PreReadNoneProducesEmptyFields)
-{
-    CredentialProvider provider = [](const AuthRequirement& req) {
-        if (req.fields().empty()) {
-            return CredentialResult::ok({});
-        }
-        return CredentialResult::error(LibreSCRS::Auth::ErrorKeys::genericComm());
-    };
-
-    auto req = AuthRequirement::forPreRead(PreReadAuthMethod::None);
-    EXPECT_TRUE(req.fields().empty());
-    auto result = provider(req);
-    EXPECT_EQ(result.status, CredentialResult::Status::Ok);
-}
-
 TEST(CredentialProviderIntegrationTest, EmptyValuesWithOkStatusIsLegal)
 {
     CredentialProvider provider = [](const AuthRequirement&) {
         // values intentionally empty
         return CredentialResult::ok({});
     };
-    auto req = AuthRequirement::forChangePin(LocalizedText{"", "UserPIN", {}}, 3);
+    auto req = AuthRequirement::forSigning();
     auto result = provider(req);
     EXPECT_EQ(result.status, CredentialResult::Status::Ok);
     EXPECT_TRUE(result.values.empty());
-    EXPECT_EQ(result.find("currentPin"), nullptr);
-    // Consumer semantics: middleware treats missing field ids as MissingFields
-    // at the adapter layer (see ChangePINAdapterTest.MissingFieldsProducesStructuredOutcome).
+    EXPECT_EQ(result.find("pin"), nullptr);
 }
 
 TEST(CredentialProviderIntegrationTest, ExtraKeysAreIgnored)
 {
     CredentialProvider provider = [](const AuthRequirement&) {
         std::vector<CredentialEntry> values;
-        values.emplace_back("currentPin", LibreSCRS::Secure::String{"1234"});
-        values.emplace_back("newPin", LibreSCRS::Secure::String{"5678"});
-        values.emplace_back("confirmPin", LibreSCRS::Secure::String{"5678"});
+        values.emplace_back("pin", LibreSCRS::Secure::String{"1234"});
         values.emplace_back("unexpectedExtra", LibreSCRS::Secure::String{"garbage"});
         return CredentialResult::ok(std::move(values));
     };
-    auto req = AuthRequirement::forChangePin(LocalizedText{"", "UserPIN", {}}, 3);
+    auto req = AuthRequirement::forSigning();
     auto result = provider(req);
     EXPECT_EQ(result.status, CredentialResult::Status::Ok);
     // Consumer contract: extra keys beyond fields[] are silently ignored.
@@ -103,7 +48,7 @@ TEST(CredentialProviderIntegrationTest, EmptyStringValueIsStoredAsIs)
         values.emplace_back("pin", LibreSCRS::Secure::String{""});
         return CredentialResult::ok(std::move(values));
     };
-    auto req = AuthRequirement::forSigning(LocalizedText{"", "UserPIN", {}}, 3);
+    auto req = AuthRequirement::forSigning();
     auto result = provider(req);
     const auto* pin = result.find("pin");
     ASSERT_NE(pin, nullptr);
@@ -122,7 +67,7 @@ TEST(CredentialProviderIntegrationTest, ErrorStatusCarriesMandatoryMessage)
     CredentialProvider provider = [](const AuthRequirement&) {
         return CredentialResult::error(LibreSCRS::Auth::ErrorKeys::genericComm());
     };
-    auto req = AuthRequirement::forSigning(LocalizedText{"", "UserPIN", {}}, 3);
+    auto req = AuthRequirement::forSigning();
     auto result = provider(req);
     EXPECT_EQ(result.status, CredentialResult::Status::Error);
     EXPECT_FALSE(result.userMessage.key.empty());

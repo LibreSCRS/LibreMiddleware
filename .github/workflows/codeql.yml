@@ -29,8 +29,6 @@ jobs:
       contents: read
       security-events: write
 
-    env:
-      OPENSC_VERSION: '0.26.1'
 
     steps:
       - name: Checkout
@@ -46,21 +44,8 @@ jobs:
             libpcsclite-dev libssl-dev zlib1g-dev \
             libcurl4-openssl-dev libxml2-dev \
             pkg-config autoconf automake libtool \
-            cmake ninja-build python3-jsonschema
-
-      - name: Build OpenSC ${{ env.OPENSC_VERSION }} from source
-        # CodeQL needs to observe the full compile graph, so we mirror the
-        # main CI's OpenSC bootstrap. Cached toolchains aren't reliable
-        # across CodeQL action upgrades; from-source is what's currently
-        # working in build-linux.
-        run: |
-          git clone --branch ${{ env.OPENSC_VERSION }} --depth 1 \
-            https://github.com/OpenSC/OpenSC /tmp/opensc-src
-          cd /tmp/opensc-src
-          ./bootstrap
-          ./configure --prefix=/tmp/opensc-install \
-            --enable-shared --disable-static --without-readline
-          make -j$(nproc) install
+            cmake ninja-build python3-jsonschema \
+            libgtest-dev libgmock-dev
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2  # v4.38.2
@@ -74,12 +59,10 @@ jobs:
           config-file: ./.github/codeql/codeql-config.yml
 
       - name: Configure & Build
-        # Manual build path — CodeQL autobuild guesses for CMake projects but
-        # gets the OPENSC_INCLUDE_DIR PRIVATE path wrong. Mirror build-linux.
+        # Manual build path, as build-linux builds: the vendored OpenSC is
+        # built inside the CMake build, so CodeQL observes its compile graph.
         run: |
-          cmake -B build -G Ninja \
-            -DCMAKE_PREFIX_PATH=/tmp/opensc-install \
-            -DOPENSC_INCLUDE_DIR=/tmp/opensc-src/src
+          cmake -B build -G Ninja
           cmake --build build -j4
 
       - name: Perform CodeQL Analysis

@@ -7,10 +7,9 @@
 
 #pragma once
 
-#include "credentials.h"
-
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -83,9 +82,9 @@ enum class ChainTermination : std::uint8_t { Unterminated, AnchorTerminated };
 /// (PAdES, CAdES, ...) is retained only on the DSS wire protocol.
 ///
 /// Append-only across the 4.x cycle per §4 plugin-ABI rules — new formats
-/// land at the tail. The on-the-wire string form for the DSS bridge
-/// (`dss_signing_service.cpp::formatToString`) retains the legacy
-/// SCREAMING values for Java-side compatibility.
+/// land at the tail. The on-the-wire string form for the DSS test oracle
+/// (`test/dss_oracle/dss_signing_service.cpp::formatToString`) retains the
+/// legacy SCREAMING values for Java-side compatibility.
 // MIRROR-OF: LibreMiddleware/include/LibreSCRS/Signing/Enums.h - the engine's
 // own vocabulary, deliberately separate from the published one so that adding
 // a format here is not an ABI event out there. RequestBridge translates.
@@ -118,25 +117,39 @@ inline constexpr std::size_t kPdfHeaderScanWindow = 1024;
 /// API-POLICY §7) — underscores stand for the spec's hyphens.
 enum class SignatureLevel { B_B, B_T, B_LT, B_LTA };
 
+/// @brief Who may sign a time-stamp token: the anchors a token's signer must
+///        chain to.
+///
+/// The nonce and the message imprint travel in the clear to an http:// TSA, so
+/// anyone on the path can echo them into a token of their own; only a
+/// signature that chains to one of these anchors says a trusted authority
+/// issued it.
+struct TimestampTrust
+{
+    /// @brief Certificates (DER) trusted as they are, root or not: the
+    ///        qualified time-stamping services of the configured Trusted Lists.
+    std::vector<std::vector<uint8_t>> anchors;
+    /// @brief Also trust the certificate store of the operating system.
+    bool includeSystemTrustStore = true;
+    /// @brief Asked at most once, and only when a token verifies against
+    ///        neither of the above: the anchors of the Trusted Lists whose fetch
+    ///        was deferred until a signature needed them. May be empty.
+    std::function<std::vector<std::vector<uint8_t>>()> deferredAnchors;
+};
+
 /// @brief Signing-engine TSA configuration.
 ///
-/// Bundles the URL + network timeout with the credentials used for the
-/// outbound HTTP request, plus the revocation-data toggles the LT/LTA
-/// levels need to pass through to @ref RevocationClient.
-///
-/// @ref credentials is a @ref TransportCredentials — the single internal
-/// carrier shared with @ref HttpClient / @ref TSAClient. The public
-/// @c LibreSCRS::Signing::TsaCredentials is translated into it at the
-/// API bridge (see @c LibreSCRS::Signing::SigningService::sign) so the
-/// signing core never includes public headers.
+/// The URL + network timeout of the outbound HTTP request, plus the
+/// revocation-data toggles the LT/LTA levels need to pass through to
+/// @ref RevocationClient.
 struct TSAConfig
 {
     std::string url;
     int timeoutSeconds = 10;
-    /// @brief Credentials applied to requests against @ref url.
-    TransportCredentials credentials;
     bool crlEnabled = true;  // passed to RevocationClient for B-LT/B-LTA
     bool ocspEnabled = true; // passed to RevocationClient for B-LT/B-LTA
+    /// @brief Anchors the token's signer must chain to.
+    TimestampTrust trust;
 };
 
 struct VisualSignatureParams
@@ -147,11 +160,6 @@ struct VisualSignatureParams
     std::string text; // Pre-formatted signature text (GUI builds this)
     std::string reason;
     std::string location;
-    // Signer contact info, written into the PDF signature dictionary as
-    // /ContactInfo (ISO 32000-1:2008 §12.8.1, sibling of /Reason and
-    // /Location). Populated from the public SigningRequest::contactInfo()
-    // by the LibreSCRS::Signing bridge.
-    std::string contactInfo;
 };
 
 struct SigningRequest
@@ -216,20 +224,20 @@ struct TrustedListEntry
     bool isLotl = false;         // TLSource vs LOTLSource
     bool eager = true;           // sync vs background loading
     std::string signingCertPath; // optional: override pinned cert (PEM or DER file)
+    /// @brief The signer certificates a List of Trusted Lists names for this
+    ///        list (DER), tried in order when no override or pinned
+    ///        certificate applies. Filled for the lists a LOTL points to.
+    std::vector<std::vector<uint8_t>> signingCertsDer;
 
     /// @brief Internal flag: when @c true, @ref url may use the @c file://
     ///        scheme and the engine will read @ref url directly from disk via
     ///        @c std::ifstream rather than going through @ref HttpClient.
     ///
-    /// @details @ref TrustConfig::trustedListFile lets a
-    /// caller hand the engine a pre-fetched TL XML on disk. The bridge in
-    /// @c LibreSCRS::Signing::SigningService::sign synthesises a
-    /// @ref TrustedListEntry whose @ref url is @c "file://" + path and sets
-    /// this flag to opt into the disk-read path. @c HttpClient's
-    /// @c CURLOPT_PROTOCOLS_STR="http,https" guard remains intact (defense in
-    /// depth) — @c file:// never reaches HttpClient on the public path.
-    /// Public @c TrustedListSource entries (URL-fetched) leave this flag at
-    /// the default @c false and continue to flow through HTTP.
+    /// @details The engine's own tests hand it a pre-fetched TL XML on disk
+    /// this way. @c HttpClient's @c CURLOPT_PROTOCOLS_STR="http,https" guard
+    /// remains intact (defense in depth) — @c file:// never reaches
+    /// HttpClient. Entries built from the public @c TrustedListSource leave
+    /// this flag at the default @c false and flow through HTTP.
     bool localFileOnly = false;
 };
 
@@ -239,6 +247,9 @@ struct TrustConfig
     std::string cacheDirectory;
     bool crlEnabled = true;
     bool ocspEnabled = true;
+    /// @brief Whether the operating system's certificate store vouches for a
+    ///        time-stamping authority, beside the Trusted Lists.
+    bool includeSystemTrustStore = true;
 };
 
 } // namespace libresign

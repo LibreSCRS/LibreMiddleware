@@ -19,7 +19,7 @@
 #include <LibreSCRS/Plugin/CardData.h>
 #include <LibreSCRS/Plugin/CardPluginService.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
-#include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
+#include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 
 #include <gtest/gtest.h>
 
@@ -59,7 +59,7 @@ TEST(Pkcs15ReadTokenInfoPartial, AcquireChannelFailureReturnsEmptyGroupWithoutTh
     auto plugin = findPkcs15(registry);
     ASSERT_NE(plugin, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Phantom Reader 0");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Phantom Reader 0");
     ASSERT_NE(session, nullptr);
 
     LibreSCRS::Plugin::CardFieldGroup group;

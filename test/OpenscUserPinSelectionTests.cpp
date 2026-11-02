@@ -2,19 +2,17 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 /// @file
-/// @brief User-PIN selection tests for the opensc-plugin verify/change/counter
-///        seams (no hardware).
+/// @brief User-PIN selection tests for the opensc-plugin change seam (no
+///        hardware).
 ///
-/// Contract under test: verify, the empty-selector change path, and the
-/// counter read must all address the AODF's user PIN, never pinObjs[0] —
+/// Contract under test: the empty-selector change path must address the
+/// AODF's user PIN, never pinObjs[0] —
 /// on a card whose AODF lists its unblocking (PUK) PIN before the user's,
 /// addressing index 0 spends the PUK's retry counter on a user credential
 /// attempt instead.
 
-#include <LibreSCRS/Plugin/CredentialCounters.h>
 #include <LibreSCRS/Plugin/PinStatusEntry.h>
 #include <LibreSCRS/Plugin/PluginTypes.h>
-#include <LibreSCRS/Secure/String.h>
 
 #include <libopensc/opensc.h>
 #include <libopensc/pkcs15.h>
@@ -22,6 +20,7 @@
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <cstdlib>
 #include <string_view>
 #include <vector>
 
@@ -29,37 +28,10 @@
 // (compiled into this test binary). Alias underlying types must match the
 // definition exactly — drift fails loudly at link time.
 namespace LibreSCRS::OpenSc {
-using VerifyPinFn = int (*)(sc_pkcs15_card_t*, sc_pkcs15_object_t*, const unsigned char*, std::size_t);
-using RefreshPinInfoFn = int (*)(sc_pkcs15_card_t*, sc_pkcs15_object_t*);
-LibreSCRS::Plugin::PINResult verifyPinOnUserObject(sc_pkcs15_card_t* p15card, sc_pkcs15_object_t* const* pinObjs,
-                                                   int pinCount, const LibreSCRS::Secure::String& pin,
-                                                   VerifyPinFn verifyFn, RefreshPinInfoFn refreshFn);
-LibreSCRS::Plugin::CredentialCounters readCountersFromUserPin(sc_pkcs15_card_t* p15card,
-                                                              sc_pkcs15_object_t* const* pinObjs, int pinCount,
-                                                              RefreshPinInfoFn refreshFn);
 sc_pkcs15_object_t* resolveChangePinTarget(sc_pkcs15_object_t* const* pinObjs, int pinCount, std::string_view pinLabel);
 } // namespace LibreSCRS::OpenSc
 
 namespace {
-
-struct DriverLog
-{
-    std::vector<sc_pkcs15_object_t*> verifyTargets;
-    std::vector<sc_pkcs15_object_t*> changeTargets;
-    int refreshCalls = 0;
-};
-DriverLog driverLog;
-
-int fakeVerifyPin(sc_pkcs15_card_t*, sc_pkcs15_object_t* obj, const unsigned char*, std::size_t)
-{
-    driverLog.verifyTargets.push_back(obj);
-    return 0; // SC_SUCCESS
-}
-int fakeRefreshPinInfo(sc_pkcs15_card_t*, sc_pkcs15_object_t*)
-{
-    ++driverLog.refreshCalls;
-    return 0;
-}
 
 sc_pkcs15_auth_info makeAuthInfo(int reference, int triesLeft, unsigned long flags)
 {
@@ -93,16 +65,6 @@ struct ThreeObjectAodf
 
 } // namespace
 
-TEST(OpenscUserPinSelection, VerifyAddressesTheUserPinNotTheFirstObject)
-{
-    ThreeObjectAodf aodf;
-    driverLog = {};
-    const LibreSCRS::Secure::String pin{"1234"};
-    LibreSCRS::OpenSc::verifyPinOnUserObject(nullptr, aodf.objs, 3, pin, &fakeVerifyPin, &fakeRefreshPinInfo);
-    ASSERT_EQ(driverLog.verifyTargets.size(), 1u);
-    EXPECT_EQ(driverLog.verifyTargets[0], &aodf.user);
-}
-
 TEST(OpenscUserPinSelection, EmptySelectorChangeAddressesTheUserPin)
 {
     ThreeObjectAodf aodf;
@@ -110,8 +72,8 @@ TEST(OpenscUserPinSelection, EmptySelectorChangeAddressesTheUserPin)
 }
 
 // The case a naive fix would miss: an AODF with no user PIN at all must
-// dispatch NOTHING, never fall back to index 0 (the PUK).
-TEST(OpenscUserPinSelection, AllAuxiliaryAodfDispatchesNothing)
+// address NOTHING, never fall back to index 0 (the PUK).
+TEST(OpenscUserPinSelection, AllAuxiliaryAodfAddressesNothing)
 {
     sc_pkcs15_auth_info pukInfo = makeAuthInfo(0x01, 3, SC_PKCS15_PIN_FLAG_UNBLOCKING_PIN);
     sc_pkcs15_auth_info soInfo = makeAuthInfo(0x02, 3, SC_PKCS15_PIN_FLAG_SO_PIN);
@@ -119,18 +81,31 @@ TEST(OpenscUserPinSelection, AllAuxiliaryAodfDispatchesNothing)
     sc_pkcs15_object so = makeAuthObject(soInfo);
     sc_pkcs15_object* objs[2] = {&puk, &so};
 
-    driverLog = {};
-    const LibreSCRS::Secure::String pin{"1234"};
-    LibreSCRS::OpenSc::verifyPinOnUserObject(nullptr, objs, 2, pin, &fakeVerifyPin, &fakeRefreshPinInfo);
-    EXPECT_TRUE(driverLog.verifyTargets.empty()) << "no user PIN in the AODF must dispatch zero APDUs";
+    EXPECT_EQ(LibreSCRS::OpenSc::resolveChangePinTarget(objs, 2, {}), nullptr)
+        << "no user PIN in the AODF must address no PIN";
 }
 
-TEST(OpenscUserPinSelection, CountersComeFromTheUserPin)
+namespace LibreSCRS::OpenSc {
+std::vector<sc_pkcs15_object_t*> allObjectsOfType(sc_pkcs15_card_t* p15card, unsigned int type);
+} // namespace LibreSCRS::OpenSc
+
+// Every object of a type is enumerated: a card with more keys than a fixed
+// array held lost the rest, and a key that is not enumerated cannot be signed
+// with.
+TEST(OpenscObjectEnumeration, EveryKeyOfTheProfileIsEnumerated)
 {
-    ThreeObjectAodf aodf;
-    aodf.userInfo.tries_left = 2;
-    aodf.pukInfo.tries_left = 1; // if this leaked through, the test would see 1
-    const auto counters = LibreSCRS::OpenSc::readCountersFromUserPin(nullptr, aodf.objs, 3, &fakeRefreshPinInfo);
-    ASSERT_TRUE(counters.retriesLeft.has_value());
-    EXPECT_EQ(*counters.retriesLeft, 2);
+    sc_pkcs15_card_t* p15card = sc_pkcs15_card_new();
+    ASSERT_NE(p15card, nullptr);
+    constexpr int kKeys = 20;
+    for (int i = 0; i < kKeys; ++i) {
+        auto* obj = static_cast<sc_pkcs15_object_t*>(calloc(1, sizeof(sc_pkcs15_object_t)));
+        ASSERT_NE(obj, nullptr);
+        obj->type = SC_PKCS15_TYPE_PRKEY_RSA;
+        ASSERT_EQ(sc_pkcs15_add_object(p15card, obj), SC_SUCCESS);
+    }
+
+    const auto keys = LibreSCRS::OpenSc::allObjectsOfType(p15card, SC_PKCS15_TYPE_PRKEY);
+    EXPECT_EQ(keys.size(), static_cast<std::size_t>(kKeys));
+
+    sc_pkcs15_card_free(p15card);
 }

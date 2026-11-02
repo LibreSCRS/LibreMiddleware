@@ -3,12 +3,14 @@
 
 #include "opensc_reader_bridge.h"
 
+#include <smartcard/secure_wipe.h>
+
 #include <algorithm>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
 
+#include <LibreSCRS_internal/LogNoexcept.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <apdu.h>            // APDUCommand (lib/smartcard/src)
 #include <pcsc_connection.h> // PCSCConnection + APDUResponse (lib/smartcard/src)
@@ -80,10 +82,9 @@ int tunnelTransmit(BridgeData& d, sc_apdu_t* apdu)
         // via the operation token.
         if (resp.data.empty() && resp.sw1 == 0x6F && (resp.sw2 == 0x00 || resp.sw2 == 0x02) &&
             d.channel->state() != ChannelState::Open) {
-            std::fprintf(stderr,
-                         "[opensc-bridge] secure-channel sentinel SW=6F%02X with channel no longer open — "
-                         "transmit failed\n",
-                         resp.sw2);
+            LibreSCRS::Internal::warnNoexcept(
+                "OpenSC bridge: secure-channel sentinel SW=6F{:02X} with the channel no longer open; transmit failed",
+                resp.sw2);
             return SC_ERROR_TRANSMIT_FAILED;
         }
 
@@ -122,6 +123,20 @@ int librescrs_opensc_bridge_disconnect(sc_reader_t* /*reader*/)
     return SC_SUCCESS; // LM owns the real connection lifecycle.
 }
 
+namespace {
+
+// Wipes a byte buffer when the scope ends, whichever way it ends.
+struct WipeOnExit
+{
+    std::vector<unsigned char>& bytes;
+    ~WipeOnExit()
+    {
+        LibreSCRS::SmartCard::Internal::secureWipe(bytes.data(), bytes.size());
+    }
+};
+
+} // namespace
+
 int librescrs_opensc_bridge_transmit(sc_reader_t* reader, sc_apdu_t* apdu)
 {
     auto* d = static_cast<BridgeData*>(reader->drv_data);
@@ -149,20 +164,31 @@ int librescrs_opensc_bridge_transmit(sc_reader_t* reader, sc_apdu_t* apdu)
     if (r != SC_SUCCESS)
         return r;
 
+    // The encoded command can carry a PIN (VERIFY, CHANGE REFERENCE DATA)
+    // and the answer a decrypted block or a personal record: neither leaves
+    // this function in freed heap memory.
+    const auto releaseCommand = [&sbuf, ssize] {
+        if (sbuf != nullptr) {
+            LibreSCRS::SmartCard::Internal::secureWipe(sbuf, ssize);
+            std::free(sbuf);
+            sbuf = nullptr;
+        }
+    };
     try {
         APDUResponse resp = d->conn->transmitRaw(sbuf, static_cast<DWORD>(ssize));
-        std::free(sbuf);
-        sbuf = nullptr;
+        releaseCommand();
+        const WipeOnExit wipeResponse{resp.data};
 
         // Reassemble the raw response buffer [body... SW1 SW2] for sc_apdu_set_resp.
         std::vector<unsigned char> rbuf;
+        const WipeOnExit wipeRaw{rbuf};
         rbuf.reserve(resp.data.size() + 2);
         rbuf.insert(rbuf.end(), resp.data.begin(), resp.data.end());
         rbuf.push_back(resp.sw1);
         rbuf.push_back(resp.sw2);
         return sc_apdu_set_resp(reader->ctx, apdu, rbuf.data(), rbuf.size());
     } catch (...) {
-        std::free(sbuf);
+        releaseCommand();
         return SC_ERROR_TRANSMIT_FAILED;
     }
 }

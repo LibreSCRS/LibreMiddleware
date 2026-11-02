@@ -3,16 +3,21 @@
 
 #include "docp_parser.h"
 
+#include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
 #include <LibreSCRS_internal/Hex.h>
+#include <LibreSCRS_internal/Trace.h>
 #include "pkcs15_card.h"
 #include "pkcs15_parser.h"
 #include "pkcs15_types.h"
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <apdu.h>
+#include <ber.h>
 #include <ef_dir.h>
 #include <smartcard/secure_buffer.h>
 #include <openssl/evp.h>
+#include <openssl/rsa.h>
+#include <openssl/x509.h>
 #include <openssl/rand.h>
 #include <array>
 #include <cstdio>
@@ -29,6 +34,59 @@
 namespace pkcs15 {
 
 namespace {
+
+// Whether @p sig, from the card, is a signature of the key in @p certDer over
+// what @p scheme signs: PKCS#1 v1.5 over @p digestInfo, PSS over the hash of
+// @p rawData. Any other scheme, or a certificate that does not parse as an
+// RSA key, is not judged here (true).
+bool rsaSignatureVerifies(std::span<const uint8_t> certDer, SignScheme scheme, const std::vector<uint8_t>& digestInfo,
+                          const std::vector<uint8_t>& rawData, const std::vector<uint8_t>& sig)
+{
+    const EVP_MD* pssMd = nullptr;
+    switch (scheme) {
+    case SignScheme::RsaPkcs1:
+    case SignScheme::RsaSha1Pkcs1:
+    case SignScheme::RsaSha256Pkcs1:
+    case SignScheme::RsaSha384Pkcs1:
+    case SignScheme::RsaSha512Pkcs1:
+        break;
+    case SignScheme::RsaPssSha256:
+        pssMd = EVP_sha256();
+        break;
+    case SignScheme::RsaPssSha384:
+        pssMd = EVP_sha384();
+        break;
+    case SignScheme::RsaPssSha512:
+        pssMd = EVP_sha512();
+        break;
+    default:
+        return true;
+    }
+    const unsigned char* p = certDer.data();
+    LibreSCRS::Internal::Crypto::X509Ptr cert(d2i_X509(nullptr, &p, static_cast<long>(certDer.size())));
+    if (!cert)
+        return true;
+    EVP_PKEY* key = X509_get0_pubkey(cert.get());
+    if (key == nullptr || EVP_PKEY_get_base_id(key) != EVP_PKEY_RSA)
+        return true;
+    LibreSCRS::Internal::Crypto::EvpPkeyCtxPtr ctx(EVP_PKEY_CTX_new(key, nullptr));
+    if (!ctx || EVP_PKEY_verify_init(ctx.get()) != 1)
+        return false;
+    if (pssMd == nullptr) {
+        if (EVP_PKEY_CTX_set_rsa_padding(ctx.get(), RSA_PKCS1_PADDING) != 1)
+            return false;
+        return EVP_PKEY_verify(ctx.get(), sig.data(), sig.size(), digestInfo.data(), digestInfo.size()) == 1;
+    }
+    unsigned char hash[EVP_MAX_MD_SIZE];
+    unsigned int hashLen = 0;
+    if (EVP_Digest(rawData.data(), rawData.size(), hash, &hashLen, pssMd, nullptr) != 1)
+        return false;
+    if (EVP_PKEY_CTX_set_rsa_padding(ctx.get(), RSA_PKCS1_PSS_PADDING) != 1 ||
+        EVP_PKEY_CTX_set_signature_md(ctx.get(), pssMd) != 1 ||
+        EVP_PKEY_CTX_set_rsa_pss_saltlen(ctx.get(), RSA_PSS_SALTLEN_AUTO) != 1)
+        return false;
+    return EVP_PKEY_verify(ctx.get(), sig.data(), sig.size(), hash, hashLen) == 1;
+}
 // ISO 7816-4 READ BINARY short form: P1 bits 0–6 = offset high byte → max offset 32767.
 constexpr size_t MAX_FILE_SIZE = 32767;
 constexpr uint8_t READ_CHUNK_SIZE = 128;
@@ -288,45 +346,43 @@ TokenInfo PKCS15Card::readTokenInfo()
 
 PKCS15Profile PKCS15Card::readProfile()
 {
-    const bool trace = std::getenv("LIBRESCRS_SIGN_TRACE") != nullptr;
-    auto dumpHex = [](const std::vector<uint8_t>& v, std::size_t maxLen) {
-        const auto n = std::min(maxLen, v.size());
-        std::string out = LibreSCRS::Internal::hexEncode(std::span<const std::uint8_t>(v).first(n));
-        if (v.size() > n)
-            out += "...";
-        return out;
-    };
+    const bool trace = LibreSCRS::Internal::signTraceOn();
     {
         char buf[64];
         std::snprintf(buf, sizeof(buf), "READPROFILE-ENTRY this=%p", static_cast<const void*>(this));
         LibreSCRS::Internal::probeTrace(buf);
     }
     if (trace)
-        std::fprintf(stderr, "[PKCS15::readProfile] entry this=%p\n", static_cast<const void*>(this));
+        LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign, "[PKCS15::readProfile] entry this=%p\n",
+                                         static_cast<const void*>(this));
 
     if (!selectApplet()) {
         if (trace)
-            std::fprintf(stderr, "[PKCS15::readProfile] selectApplet FAILED\n");
+            LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign,
+                                             "[PKCS15::readProfile] selectApplet FAILED\n");
         throw std::runtime_error("Failed to select PKCS#15 applet");
     }
     if (trace)
-        std::fprintf(stderr, "[PKCS15::readProfile] selectApplet OK\n");
+        LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign, "[PKCS15::readProfile] selectApplet OK\n");
 
     // Read ODF (EF.ODF = 5031)
     const uint8_t odfFid[] = {0x50, 0x31};
     if (!selectByPath(odfFid)) {
         if (trace)
-            std::fprintf(stderr, "[PKCS15::readProfile] selectByPath(EF.ODF 5031) FAILED\n");
+            LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign,
+                                             "[PKCS15::readProfile] selectByPath(EF.ODF 5031) FAILED\n");
         throw std::runtime_error("Failed to select EF.ODF");
     }
     auto odfData = readSelectedFile();
     if (trace)
-        std::fprintf(stderr, "[PKCS15::readProfile] EF.ODF %zuB head=%s\n", odfData.size(),
-                     dumpHex(odfData, 32).c_str());
+        LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign, "[PKCS15::readProfile] EF.ODF %zuB\n",
+                                         odfData.size());
     auto odf = parseODF(odfData);
     if (trace)
-        std::fprintf(stderr, "[PKCS15::readProfile] parseODF: certsPath=%zuB keysPath=%zuB aodfPath=%zuB\n",
-                     odf.certificatesPath.size(), odf.privateKeysPath.size(), odf.authObjectsPath.size());
+        LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign,
+                                         "[PKCS15::readProfile] parseODF: certsPath=%zuB keysPath=%zuB aodfPath=%zuB\n",
+                                         odf.certificatesPath.size(), odf.privateKeysPath.size(),
+                                         odf.authObjectsPath.size());
 
     // Re-select applet before reading TokenInfo
     if (!selectApplet())
@@ -338,8 +394,8 @@ PKCS15Profile PKCS15Card::readProfile()
         throw std::runtime_error("Failed to select EF.TokenInfo");
     auto tokenData = readSelectedFile();
     if (trace)
-        std::fprintf(stderr, "[PKCS15::readProfile] EF.TokenInfo %zuB head=%s\n", tokenData.size(),
-                     dumpHex(tokenData, 32).c_str());
+        LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign,
+                                         "[PKCS15::readProfile] EF.TokenInfo %zuB\n", tokenData.size());
     auto tokenInfo = parseTokenInfo(tokenData);
 
     PKCS15Profile profile;
@@ -353,11 +409,12 @@ PKCS15Profile PKCS15Card::readProfile()
         if (selectByPath(odf.certificatesPath)) {
             auto cdfData = readSelectedFile();
             if (trace)
-                std::fprintf(stderr, "[PKCS15::readProfile] CDF %zuB head=%s\n", cdfData.size(),
-                             dumpHex(cdfData, 32).c_str());
+                LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign, "[PKCS15::readProfile] CDF %zuB\n",
+                                                 cdfData.size());
             profile.certificates = parseCDF(cdfData);
         } else if (trace) {
-            std::fprintf(stderr, "[PKCS15::readProfile] selectByPath(CDF) FAILED\n");
+            LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign,
+                                             "[PKCS15::readProfile] selectByPath(CDF) FAILED\n");
         }
     }
 
@@ -368,11 +425,12 @@ PKCS15Profile PKCS15Card::readProfile()
         if (selectByPath(odf.privateKeysPath)) {
             auto prkdfData = readSelectedFile();
             if (trace)
-                std::fprintf(stderr, "[PKCS15::readProfile] PrKDF %zuB head=%s\n", prkdfData.size(),
-                             dumpHex(prkdfData, 32).c_str());
+                LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign,
+                                                 "[PKCS15::readProfile] PrKDF %zuB\n", prkdfData.size());
             profile.privateKeys = parsePrKDF(prkdfData);
         } else if (trace) {
-            std::fprintf(stderr, "[PKCS15::readProfile] selectByPath(PrKDF) FAILED\n");
+            LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign,
+                                             "[PKCS15::readProfile] selectByPath(PrKDF) FAILED\n");
         }
     }
 
@@ -386,11 +444,12 @@ PKCS15Profile PKCS15Card::readProfile()
         if (selectByPath(odf.publicKeysPath)) {
             auto pukdfData = readSelectedFile();
             if (trace)
-                std::fprintf(stderr, "[PKCS15::readProfile] PuKDF %zuB head=%s\n", pukdfData.size(),
-                             dumpHex(pukdfData, 32).c_str());
+                LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign,
+                                                 "[PKCS15::readProfile] PuKDF %zuB\n", pukdfData.size());
             profile.publicKeys = parsePuKDF(pukdfData);
         } else if (trace) {
-            std::fprintf(stderr, "[PKCS15::readProfile] selectByPath(PuKDF) FAILED\n");
+            LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign,
+                                             "[PKCS15::readProfile] selectByPath(PuKDF) FAILED\n");
         }
     }
 
@@ -404,11 +463,12 @@ PKCS15Profile PKCS15Card::readProfile()
         if (selectByPath(odf.dataObjectsPath)) {
             auto dodfData = readSelectedFile();
             if (trace)
-                std::fprintf(stderr, "[PKCS15::readProfile] DODF %zuB head=%s\n", dodfData.size(),
-                             dumpHex(dodfData, 32).c_str());
+                LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign,
+                                                 "[PKCS15::readProfile] DODF %zuB\n", dodfData.size());
             profile.dataObjects = parseDODF(dodfData);
         } else if (trace) {
-            std::fprintf(stderr, "[PKCS15::readProfile] selectByPath(DODF) FAILED\n");
+            LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign,
+                                             "[PKCS15::readProfile] selectByPath(DODF) FAILED\n");
         }
     }
 
@@ -419,18 +479,20 @@ PKCS15Profile PKCS15Card::readProfile()
         if (selectByPath(odf.authObjectsPath)) {
             auto aodfData = readSelectedFile();
             if (trace)
-                std::fprintf(stderr, "[PKCS15::readProfile] AODF %zuB head=%s\n", aodfData.size(),
-                             dumpHex(aodfData, 32).c_str());
+                LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign,
+                                                 "[PKCS15::readProfile] AODF %zuB\n", aodfData.size());
             profile.pins = parseAODF(aodfData);
+            applyLocalBitFallbackRule(profile.pins);
         } else if (trace) {
-            std::fprintf(stderr, "[PKCS15::readProfile] selectByPath(AODF) FAILED\n");
+            LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign,
+                                             "[PKCS15::readProfile] selectByPath(AODF) FAILED\n");
         }
     }
 
     if (trace)
-        std::fprintf(stderr, "[PKCS15::readProfile] DONE pins=%zu keys=%zu pubkeys=%zu certs=%zu\n",
-                     profile.pins.size(), profile.privateKeys.size(), profile.publicKeys.size(),
-                     profile.certificates.size());
+        LibreSCRS::Internal::tracePrintf(
+            LibreSCRS::log::TraceChannel::Sign, "[PKCS15::readProfile] DONE pins=%zu keys=%zu pubkeys=%zu certs=%zu\n",
+            profile.pins.size(), profile.privateKeys.size(), profile.publicKeys.size(), profile.certificates.size());
 
     return profile;
 }
@@ -455,30 +517,18 @@ int PKCS15Card::getPINTriesLeft(const PinInfo& pin)
     if (!pin.path.empty())
         selectByPath(pin.path);
 
-    // Try pinReference directly
-    auto resp =
-        channel.transmit(LibreSCRS::SmartCard::Internal::verifyPINStatus(pin.pinReference), LibreSCRS::CancelToken{});
-    if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
-        return resp.sw2 & 0x0F;
-    if (resp.isSuccess())
-        return -1; // already verified
-
-    // Fallback: strip local bit (0x80)
-    uint8_t altRef = pin.pinReference & 0x7F;
-    if (altRef != pin.pinReference) {
-        resp = channel.transmit(LibreSCRS::SmartCard::Internal::verifyPINStatus(altRef), LibreSCRS::CancelToken{});
-        if (resp.sw1 == 0x63 && (resp.sw2 & 0xF0) == 0xC0)
-            return resp.sw2 & 0x0F;
-        if (resp.isSuccess())
-            return -1;
-    }
-
-    return -1; // unknown
+    // The status form of VERIFY: 63Cx counts the tries left, 6983 is a
+    // blocked PIN (no tries left), 9000 an already-verified one (count
+    // unknown).
+    const auto verdict = verifyLadder(pin, nullptr);
+    if (!verdict || verdict->success)
+        return -1;
+    return verdict->blocked ? 0 : verdict->retriesLeft;
 }
 
-LibreSCRS::Plugin::CredentialCounters PKCS15Card::readCounters(const PinInfo& pin)
+CredentialCounters PKCS15Card::readCounters(const PinInfo& pin)
 {
-    LibreSCRS::Plugin::CredentialCounters counters;
+    CredentialCounters counters;
     if (!selectApplet())
         return counters;
     if (!pin.path.empty())
@@ -521,32 +571,14 @@ PinResult PKCS15Card::verifyPIN(const PinInfo& pin, std::string_view pinValue)
 
     auto pinData = encodePIN(pinValue, pin);
 
-    if (std::getenv("LIBRESCRS_SIGN_TRACE"))
-        std::fprintf(
-            stderr,
+    if (LibreSCRS::Internal::signTraceOn())
+        LibreSCRS::Internal::tracePrintf(
+            LibreSCRS::log::TraceChannel::Sign,
             "[PKCS15] verifyPIN ref=0x%02X label=\"%s\" path=%zuB rawLen=%zu encLen=%zu stored=%d padChar=0x%02X\n",
             pin.pinReference, pin.label.c_str(), pin.path.size(), pinValue.size(), pinData.size(), pin.storedLength,
             static_cast<unsigned>(pin.padChar) & 0xFF);
 
-    // Try pinReference directly
-    auto resp = channel.transmit(LibreSCRS::SmartCard::Internal::verifyPIN(pin.pinReference, pinData),
-                                 LibreSCRS::CancelToken{});
-    if (std::getenv("LIBRESCRS_SIGN_TRACE"))
-        std::fprintf(stderr, "[PKCS15] verifyPIN ref=0x%02X SW=%04X\n", pin.pinReference, resp.statusWord());
-    if (auto mapped = classifyPinSw(resp))
-        return *mapped;
-
-    // Fallback: strip local bit
-    uint8_t altRef = pin.pinReference & 0x7F;
-    if (altRef != pin.pinReference) {
-        resp = channel.transmit(LibreSCRS::SmartCard::Internal::verifyPIN(altRef, pinData), LibreSCRS::CancelToken{});
-        if (std::getenv("LIBRESCRS_SIGN_TRACE"))
-            std::fprintf(stderr, "[PKCS15] verifyPIN altRef=0x%02X SW=%04X\n", altRef, resp.statusWord());
-        if (auto mapped = classifyPinSw(resp))
-            return *mapped;
-    }
-
-    return {false, -1, false};
+    return verifyLadder(pin, &pinData).value_or(PinResult{false, -1, false});
 }
 
 PinResult PKCS15Card::changePIN(const PinInfo& pin, std::string_view oldPin, std::string_view newPin)
@@ -609,8 +641,8 @@ PinResult PKCS15Card::changeReferenceData(const PinInfo& pin, std::string_view o
         return *mapped;
 
     // Fallback: strip local bit — ONLY on reference-not-found errors
-    uint8_t altRef = pin.pinReference & 0x7F;
-    if (altRef != pin.pinReference && (resp.statusWord() == 0x6A86 || resp.statusWord() == 0x6A88)) {
+    const uint8_t altRef = pin.pinReference & 0x7F;
+    if (pin.localBitFallback && (resp.statusWord() == 0x6A86 || resp.statusWord() == 0x6A88)) {
         resp = channel.transmit(LibreSCRS::SmartCard::Internal::changeReferenceData(altRef, oldData, newData, p1),
                                 LibreSCRS::CancelToken{});
         if (auto mapped = classifyPinSw(resp))
@@ -643,9 +675,11 @@ PinResult PKCS15Card::activate(const PinInfo& signPin, uint8_t p1, uint8_t p2)
 
 LibreSCRS::SmartCard::Internal::SecureBuffer PKCS15Card::encodePIN(std::string_view pin, const PinInfo& pinInfo)
 {
+    // A PIN longer than the card stores is not this card's PIN: cutting it
+    // would present a different value and spend a try on it.
+    if (pinInfo.storedLength > 0 && pin.size() > static_cast<std::size_t>(pinInfo.storedLength))
+        throw std::invalid_argument("PKCS15: the PIN is longer than the card stores");
     LibreSCRS::SmartCard::Internal::SecureBuffer pinData(pin);
-    if (pinInfo.storedLength > 0 && static_cast<int>(pinData.size()) > pinInfo.storedLength)
-        pinData.resize(pinInfo.storedLength);
     if (pinInfo.storedLength > 0 && static_cast<int>(pinData.size()) < pinInfo.storedLength)
         pinData.resize(pinInfo.storedLength, pinInfo.padChar);
     return pinData;
@@ -665,39 +699,39 @@ void PKCS15Card::recordPinRefusal(const LibreSCRS::SmartCard::Internal::APDUResp
         lastPinRefusal = *mapped;
 }
 
+std::optional<PinResult> PKCS15Card::verifyLadder(const PinInfo& pin,
+                                                  const LibreSCRS::SmartCard::Internal::SecureBuffer* pinData)
+{
+    const auto send = [&](uint8_t reference) {
+        auto resp = channel.transmit(pinData != nullptr ? LibreSCRS::SmartCard::Internal::verifyPIN(reference, *pinData)
+                                                        : LibreSCRS::SmartCard::Internal::verifyPINStatus(reference),
+                                     LibreSCRS::CancelToken{});
+        LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign, "[PKCS15] verifyPIN ref=0x%02X %s SW=%04X",
+                                         reference, pinData != nullptr ? "verify" : "status", resp.statusWord());
+        if (pinData != nullptr)
+            recordPinRefusal(resp);
+        return resp;
+    };
+    // A verdict on the PIN (accepted, wrong 63Cx, blocked 6983) ends the
+    // ladder: a wrong PIN tried on another reference would burn another
+    // try, and a blocked one is not "no reference worked".
+    if (auto verdict = classifyPinSw(send(pin.pinReference)))
+        return verdict;
+    // The card did not recognise the reference (6A86/6A88/...): try it
+    // without the local bit, when the profile allows that.
+    if (pin.localBitFallback) {
+        if (auto verdict = classifyPinSw(send(static_cast<uint8_t>(pin.pinReference & 0x7F))))
+            return verdict;
+    }
+    return std::nullopt;
+}
+
 int PKCS15Card::verifyPinInline(const PinInfo& pinInfo, const LibreSCRS::SmartCard::Internal::SecureBuffer& pinData)
 {
-    auto resp = channel.transmit(LibreSCRS::SmartCard::Internal::verifyPIN(pinInfo.pinReference, pinData),
-                                 LibreSCRS::CancelToken{});
-#ifndef NDEBUG
-    fprintf(stderr, "[PKCS15] verifyPIN ref=0x%02X pinLen=%zu SW=%04X\n", pinInfo.pinReference, pinData.size(),
-            resp.statusWord());
-#endif
-    recordPinRefusal(resp);
-    if (resp.isSuccess())
-        return 1;
-    // A verdict on the PIN (wrong, 63Cx, or blocked, 6983): do NOT try the
-    // alternate reference or another path -- a wrong PIN would burn another
-    // retry, and a blocked one is not "no strategy worked". 6983 on the
-    // primary reference therefore ends here, before the alternate reference.
-    if (const auto verdict = classifyPinSw(resp); verdict && !verdict->success)
-        return 0;
-
-    // Primary reference was not recognized (6A86/6A88/etc.) — try stripping local bit
-    uint8_t altRef = pinInfo.pinReference & 0x7F;
-    if (altRef != pinInfo.pinReference) {
-        auto resp2 =
-            channel.transmit(LibreSCRS::SmartCard::Internal::verifyPIN(altRef, pinData), LibreSCRS::CancelToken{});
-#ifndef NDEBUG
-        fprintf(stderr, "[PKCS15] verifyPIN altRef=0x%02X SW=%04X\n", altRef, resp2.statusWord());
-#endif
-        recordPinRefusal(resp2);
-        if (resp2.isSuccess())
-            return 1;
-        if (const auto verdict = classifyPinSw(resp2); verdict && !verdict->success)
-            return 0; // wrong or blocked PIN
-    }
-    return -1;
+    const auto verdict = verifyLadder(pinInfo, &pinData);
+    if (!verdict)
+        return -1;
+    return verdict->success ? 1 : 0;
 }
 
 PKCS15Card::KeyRefInfo PKCS15Card::resolveKeyRef(const PrivateKeyInfo& key)
@@ -721,18 +755,16 @@ std::vector<uint8_t> PKCS15Card::tryMsePsoOid(std::span<const uint8_t> algoOid, 
     mseData.push_back(keyRef.keyTag);
     mseData.push_back(static_cast<uint8_t>(keyRef.keyRefData.size()));
     mseData.insert(mseData.end(), keyRef.keyRefData.begin(), keyRef.keyRefData.end());
-#ifndef NDEBUG
-    fprintf(stderr, "[PKCS15] MSE SET OID: oid=%s", LibreSCRS::Internal::hexEncode(algoOid).c_str());
-    fprintf(stderr, " keyTag=0x%02X keyRef=%s", keyRef.keyTag,
-            LibreSCRS::Internal::hexEncode(keyRef.keyRefData).c_str());
-    fprintf(stderr, " psoDataLen=%zu\n", psoData.size());
-#endif
+    if (LibreSCRS::Internal::signTraceOn())
+        LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign,
+                                         "[PKCS15] MSE SET OID: oid=%s keyTag=0x%02X keyRef=%s psoDataLen=%zu",
+                                         LibreSCRS::Internal::hexEncode(algoOid).c_str(), keyRef.keyTag,
+                                         LibreSCRS::Internal::hexEncode(keyRef.keyRefData).c_str(), psoData.size());
     LibreSCRS::SmartCard::Internal::APDUCommand mseSet{
         .cla = 0x00, .ins = 0x22, .p1 = 0x41, .p2 = 0xB6, .data = std::move(mseData), .le = 0, .hasLe = false};
     auto resp = channel.transmit(mseSet, LibreSCRS::CancelToken{});
-#ifndef NDEBUG
-    fprintf(stderr, "[PKCS15] MSE SET OID SW=%04X\n", resp.statusWord());
-#endif
+    LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign, "[PKCS15] MSE SET OID SW=%04X\n",
+                                     resp.statusWord());
     if (!resp.isSuccess()) {
         lastSW = resp.statusWord();
         return {};
@@ -742,9 +774,9 @@ std::vector<uint8_t> PKCS15Card::tryMsePsoOid(std::span<const uint8_t> algoOid, 
         .cla = 0x00, .ins = 0x2A, .p1 = 0x9E, .p2 = 0x9A, .data = psoData, .le = psoLe, .hasLe = true};
     resp = channel.transmit(pso, LibreSCRS::CancelToken{});
     lastSW = resp.statusWord();
-#ifndef NDEBUG
-    fprintf(stderr, "[PKCS15] PSO COMPUTE (OID) SW=%04X sigLen=%zu\n", resp.statusWord(), resp.data.size());
-#endif
+    LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign,
+                                     "[PKCS15] PSO COMPUTE (OID) SW=%04X sigLen=%zu\n", resp.statusWord(),
+                                     resp.data.size());
     return resp.isSuccess() ? resp.data : std::vector<uint8_t>{};
 }
 
@@ -754,17 +786,15 @@ std::vector<uint8_t> PKCS15Card::tryMsePso(uint8_t sigAlgo, const KeyRefInfo& ke
 {
     std::vector<uint8_t> mseData = {0x80, 0x01, sigAlgo, keyRef.keyTag, static_cast<uint8_t>(keyRef.keyRefData.size())};
     mseData.insert(mseData.end(), keyRef.keyRefData.begin(), keyRef.keyRefData.end());
-#ifndef NDEBUG
-    fprintf(stderr, "[PKCS15] MSE SET: algo=0x%02X keyTag=0x%02X keyRef=%s", sigAlgo, keyRef.keyTag,
-            LibreSCRS::Internal::hexEncode(keyRef.keyRefData).c_str());
-    fprintf(stderr, " psoDataLen=%zu\n", psoData.size());
-#endif
+    if (LibreSCRS::Internal::signTraceOn())
+        LibreSCRS::Internal::tracePrintf(
+            LibreSCRS::log::TraceChannel::Sign, "[PKCS15] MSE SET: algo=0x%02X keyTag=0x%02X keyRef=%s psoDataLen=%zu",
+            sigAlgo, keyRef.keyTag, LibreSCRS::Internal::hexEncode(keyRef.keyRefData).c_str(), psoData.size());
     LibreSCRS::SmartCard::Internal::APDUCommand mseSet{
         .cla = 0x00, .ins = 0x22, .p1 = 0x41, .p2 = 0xB6, .data = std::move(mseData), .le = 0, .hasLe = false};
     auto resp = channel.transmit(mseSet, LibreSCRS::CancelToken{});
-#ifndef NDEBUG
-    fprintf(stderr, "[PKCS15] MSE SET SW=%04X\n", resp.statusWord());
-#endif
+    LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign, "[PKCS15] MSE SET SW=%04X\n",
+                                     resp.statusWord());
     if (!resp.isSuccess()) {
         lastSW = resp.statusWord();
         return {};
@@ -776,30 +806,30 @@ std::vector<uint8_t> PKCS15Card::tryMsePso(uint8_t sigAlgo, const KeyRefInfo& ke
         .cla = 0x00, .ins = 0x2A, .p1 = 0x9E, .p2 = 0x9A, .data = psoData, .le = psoLe, .hasLe = true};
     resp = channel.transmit(pso, LibreSCRS::CancelToken{});
     lastSW = resp.statusWord();
-#ifndef NDEBUG
-    fprintf(stderr, "[PKCS15] PSO COMPUTE SW=%04X sigLen=%zu\n", resp.statusWord(), resp.data.size());
-#endif
+    LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign, "[PKCS15] PSO COMPUTE SW=%04X sigLen=%zu\n",
+                                     resp.statusWord(), resp.data.size());
     return resp.isSuccess() ? resp.data : std::vector<uint8_t>{};
 }
 
 std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_view pin, const PinInfo& pinInfo,
                                       const std::vector<uint8_t>& digestInfo, const std::vector<uint8_t>& rawData,
-                                      SignScheme scheme)
+                                      SignScheme scheme, std::span<const uint8_t> signerCertDer)
 {
     lastPinRefusal.reset();
     auto pinData = encodePIN(pin, pinInfo);
     auto keyRef = resolveKeyRef(key);
     uint16_t sigLen = key.keySizeBits > 0 ? (key.keySizeBits / 8) : 256;
-#ifndef NDEBUG
-    fprintf(stderr, "[PKCS15] sign(): keyRef=%d keyPath=%s", key.keyReference,
-            LibreSCRS::Internal::hexEncode(key.path).c_str());
-    fprintf(stderr, " keySizeBits=%d scheme=%d\n", key.keySizeBits, static_cast<int>(scheme));
-    fprintf(stderr, "[PKCS15] resolved: tag=0x%02X ref=%s", keyRef.keyTag,
-            LibreSCRS::Internal::hexEncode(keyRef.keyRefData).c_str());
-    fprintf(stderr, " pinRef=0x%02X pinPath=%s", pinInfo.pinReference,
-            LibreSCRS::Internal::hexEncode(pinInfo.path).c_str());
-    fprintf(stderr, " pinStoredLen=%d\n", pinInfo.storedLength);
-#endif
+    if (LibreSCRS::Internal::signTraceOn()) {
+        LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign,
+                                         "[PKCS15] sign(): keyRef=%d keyPath=%s keySizeBits=%d scheme=%d",
+                                         key.keyReference, LibreSCRS::Internal::hexEncode(key.path).c_str(),
+                                         key.keySizeBits, static_cast<int>(scheme));
+        LibreSCRS::Internal::tracePrintf(
+            LibreSCRS::log::TraceChannel::Sign,
+            "[PKCS15] resolved: tag=0x%02X ref=%s pinRef=0x%02X pinPath=%s pinStoredLen=%d", keyRef.keyTag,
+            LibreSCRS::Internal::hexEncode(keyRef.keyRefData).c_str(), pinInfo.pinReference,
+            LibreSCRS::Internal::hexEncode(pinInfo.path).c_str(), pinInfo.storedLength);
+    }
 
     struct AlgoAttempt
     {
@@ -857,8 +887,11 @@ std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_vie
         attempts.push_back({sig_algo::RSA_RAW, digestInfo});
         attempts.push_back({sig_algo::RSA_PKCS1_V15, digestInfo});
         attempts.push_back({sig_algo::RSA_SHA256_PKCS1, rawData});
-        attempts.push_back({sig_algo::RSA_SHA256_PKCS1, h});
         attempts.push_back({sig_algo::RSA_SHA256_PKCS1_IASECC, h});
+        // Last: a card that hashes on card signs SHA-256 of h here, a
+        // structurally valid signature over the wrong value -- which the
+        // certificate check below refuses.
+        attempts.push_back({sig_algo::RSA_SHA256_PKCS1, h});
     } else if (scheme == SignScheme::RsaSha384Pkcs1) {
         auto h = computeHash(EVP_sha384(), rawData);
         attempts.push_back({sig_algo::RSA_RAW, digestInfo});
@@ -954,6 +987,18 @@ std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_vie
         oidAttempts.push_back({kSigPssSha512, std::move(h)});
     }
 
+    // An RSA signature the card returns is checked with the certificate's
+    // public key before it is accepted: a card can "accept" an attempt it
+    // does not understand -- a hash-specific algorithm handed a hash hashes
+    // it again -- and answer a well-formed signature over the wrong value. A
+    // signature that does not verify is not returned; the next attempt is
+    // tried. Without a certificate nothing can be checked.
+    const auto verifies = [&](const std::vector<uint8_t>& sig) {
+        if (signerCertDer.empty())
+            return true;
+        return rsaSignatureVerifies(signerCertDer, scheme, digestInfo, rawData, sig);
+    };
+
     auto tryAllAttempts = [&]() -> std::vector<uint8_t> {
         // OID-style attempts first — BSI TR-03110 cards reject legacy 1-byte
         // algo references with SW 6A80 / wrong-padded-block on PSO. When
@@ -962,31 +1007,29 @@ std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_vie
         // single-byte form.
         for (const auto& a : oidAttempts) {
             auto sig = tryMsePsoOid(a.oid, keyRef, a.psoData, sigLen, lastPsoSW);
-            if (!sig.empty())
+            if (!sig.empty() && verifies(sig))
                 return sig;
         }
         for (const auto& a : oidAttempts) {
             auto sig = tryMsePsoOid(a.oid, altKeyRef, a.psoData, sigLen, lastPsoSW);
-            if (!sig.empty())
+            if (!sig.empty() && verifies(sig))
                 return sig;
         }
         for (const auto& a : attempts) {
             auto sig = tryMsePso(a.sigAlgo, keyRef, a.psoData, sigLen, lastPsoSW);
-            if (!sig.empty())
+            if (!sig.empty() && verifies(sig))
                 return sig;
         }
         for (const auto& a : attempts) {
             auto sig = tryMsePso(a.sigAlgo, altKeyRef, a.psoData, sigLen, lastPsoSW);
-            if (!sig.empty())
+            if (!sig.empty() && verifies(sig))
                 return sig;
         }
         return {};
     };
 
     // Strategy 1: AID-based — verify PIN inline, then sign
-#ifndef NDEBUG
-    fprintf(stderr, "[PKCS15] Strategy 1: AID-based\n");
-#endif
+    LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign, "[PKCS15] Strategy 1: AID-based\n");
     if (!selectApplet())
         throw std::runtime_error("PKCS15: failed to select applet");
     int pinStatus = verifyPinInline(pinInfo, pinData);
@@ -996,9 +1039,8 @@ std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_vie
         auto result = tryAllAttempts();
         if (!result.empty())
             return result;
-#ifndef NDEBUG
-        fprintf(stderr, "[PKCS15] Strategy 1: all attempts failed, lastSW=%04X\n", lastPsoSW);
-#endif
+        LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign,
+                                         "[PKCS15] Strategy 1: all attempts failed, lastSW=%04X\n", lastPsoSW);
     }
 
     // Strategy 2: path-based — navigate to PIN's DF, verify, then navigate to
@@ -1010,9 +1052,7 @@ std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_vie
     // fall back to the metadata DF so SR eID and other "key under
     // DF_PKCS15_FID" cards keep working.
     if (!pinInfo.path.empty()) {
-#ifndef NDEBUG
-        fprintf(stderr, "[PKCS15] Strategy 2: path-based\n");
-#endif
+        LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign, "[PKCS15] Strategy 2: path-based\n");
         selectByPath(pinInfo.path);
         pinStatus = verifyPinInline(pinInfo, pinData);
         if (pinStatus == 0)
@@ -1033,9 +1073,8 @@ std::vector<uint8_t> PKCS15Card::sign(const PrivateKeyInfo& key, std::string_vie
             auto result = tryAllAttempts();
             if (!result.empty())
                 return result;
-#ifndef NDEBUG
-            fprintf(stderr, "[PKCS15] Strategy 2: all attempts failed, lastSW=%04X\n", lastPsoSW);
-#endif
+            LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign,
+                                             "[PKCS15] Strategy 2: all attempts failed, lastSW=%04X\n", lastPsoSW);
         }
     }
 
@@ -1049,36 +1088,38 @@ std::vector<uint8_t> PKCS15Card::extractRawHash(const std::vector<uint8_t>& dige
     if (digestInfo.size() < 11 || digestInfo[0] != 0x30)
         return {};
 
-    auto readLen = [&](size_t& pos) -> size_t {
-        if (pos >= digestInfo.size())
-            return 0;
-        uint8_t first = digestInfo[pos++];
-        if (first < 0x80)
-            return first;
-        size_t nBytes = first & 0x7F;
-        if (nBytes == 0 || nBytes > 2 || pos + nBytes > digestInfo.size())
-            return 0;
-        size_t len = 0;
-        for (size_t i = 0; i < nBytes; ++i)
-            len = (len << 8) | digestInfo[pos++];
-        return len;
+    // The shared BER length decode, with this parser's ceiling: a DigestInfo
+    // never needs more than two length octets (`next - pos` up to 3). A length
+    // that does not decode means there is no raw hash to offer.
+    auto readLen = [&](size_t& pos) -> std::optional<size_t> {
+        const auto parsed = LibreSCRS::SmartCard::Internal::tryParseLength(digestInfo.data(), digestInfo.size(), pos);
+        if (!parsed.ok || parsed.next - pos > 3)
+            return std::nullopt;
+        pos = parsed.next;
+        return parsed.length;
     };
 
     size_t pos = 1; // skip outer SEQUENCE tag
-    readLen(pos);   // skip outer length
+    if (!readLen(pos))
+        return {};
 
     // Inner SEQUENCE (AlgorithmIdentifier)
     if (pos >= digestInfo.size() || digestInfo[pos] != 0x30)
         return {};
     pos++; // skip tag
-    size_t innerLen = readLen(pos);
-    pos += innerLen; // skip AlgorithmIdentifier content
+    const auto innerLen = readLen(pos);
+    if (!innerLen || *innerLen > digestInfo.size() - pos)
+        return {};
+    pos += *innerLen; // skip AlgorithmIdentifier content
 
     // OCTET STRING containing hash
     if (pos >= digestInfo.size() || digestInfo[pos] != 0x04)
         return {};
     pos++; // skip tag
-    size_t hashLen = readLen(pos);
+    const auto hashLenParsed = readLen(pos);
+    if (!hashLenParsed)
+        return {};
+    const size_t hashLen = *hashLenParsed;
 
     if (pos + hashLen > digestInfo.size())
         return {};
@@ -1089,7 +1130,7 @@ std::vector<uint8_t> PKCS15Card::extractRawHash(const std::vector<uint8_t>& dige
 
 bool PKCS15Card::selectByPath(std::span<const uint8_t> path, uint8_t selectP2)
 {
-    const bool trace = std::getenv("LIBRESCRS_SIGN_TRACE") != nullptr;
+    const bool trace = LibreSCRS::Internal::signTraceOn();
     if (path.empty() || path.size() % 2 != 0)
         return false;
 
@@ -1106,8 +1147,9 @@ bool PKCS15Card::selectByPath(std::span<const uint8_t> path, uint8_t selectP2)
         auto resp = channel.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(path[i], path[i + 1], p2),
                                      LibreSCRS::CancelToken{});
         if (trace)
-            std::fprintf(stderr, "[PKCS15::selectByPath] FID=%02X%02X P2=%02X SW=%04X\n", path[i], path[i + 1], p2,
-                         resp.statusWord());
+            LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign,
+                                             "[PKCS15::selectByPath] FID=%02X%02X P2=%02X SW=%04X\n", path[i],
+                                             path[i + 1], p2, resp.statusWord());
         if (resp.isSuccess())
             continue;
 
@@ -1117,8 +1159,9 @@ bool PKCS15Card::selectByPath(std::span<const uint8_t> path, uint8_t selectP2)
             resp = channel.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(path[i], path[i + 1], altP2),
                                     LibreSCRS::CancelToken{});
             if (trace)
-                std::fprintf(stderr, "[PKCS15::selectByPath] FID=%02X%02X retry altP2=%02X SW=%04X\n", path[i],
-                             path[i + 1], altP2, resp.statusWord());
+                LibreSCRS::Internal::tracePrintf(LibreSCRS::log::TraceChannel::Sign,
+                                                 "[PKCS15::selectByPath] FID=%02X%02X retry altP2=%02X SW=%04X\n",
+                                                 path[i], path[i + 1], altP2, resp.statusWord());
             if (resp.isSuccess()) {
                 fileSelectP2 = altP2;
                 p2 = altP2;

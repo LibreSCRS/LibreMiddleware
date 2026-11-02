@@ -3,11 +3,9 @@
   "$id": "https://librescrs.org/schemas/plugin-manifest-v1.json",
   "title": "LibreSCRS Plugin Manifest",
   "type": "object",
-  "required": ["pluginId", "displayName", "abiVersion", "capabilities", "atrs"],
+  "required": ["pluginId", "capabilities", "atrs"],
   "properties": {
     "pluginId":    { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,30}$" },
-    "displayName": { "type": "string", "minLength": 1 },
-    "abiVersion":  { "type": "integer", "const": 8 },
     "capabilities": {
       "type": "array",
       "items": { "enum": ["PKI", "PinManagement", "IdentityData", "EmrtdCrypto"] },

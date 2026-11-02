@@ -19,6 +19,7 @@
 #include "pdf_font.h"
 #include "ttf_parser.h"
 #include "ttf_subset.h"
+#include "visual_signature_layout.h"
 
 #include <algorithm>
 #include <cmath>

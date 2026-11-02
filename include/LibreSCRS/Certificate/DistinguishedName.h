@@ -68,15 +68,6 @@ struct LIBRESCRS_PUBLIC_API DistinguishedName
     /// @brief First country (C) attribute, or empty.
     /// @throws std::bad_alloc on allocation failure.
     [[nodiscard]] std::string country() const;
-    /// @brief First stateOrProvinceName (ST) attribute, or empty.
-    /// @throws std::bad_alloc on allocation failure.
-    [[nodiscard]] std::string stateOrProvince() const;
-    /// @brief First locality (L) attribute, or empty.
-    /// @throws std::bad_alloc on allocation failure.
-    [[nodiscard]] std::string locality() const;
-    /// @brief First emailAddress (E) attribute, or empty.
-    /// @throws std::bad_alloc on allocation failure.
-    [[nodiscard]] std::string emailAddress() const;
 
     /// @brief Defaulted byte-identity equality (per-component over @ref components).
     [[nodiscard]] bool operator==(const DistinguishedName&) const noexcept = default;

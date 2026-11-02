@@ -22,7 +22,7 @@ class MockCardPlugin : public LibreSCRS::Plugin::CardPlugin
 public:
     MockCardPlugin()
     {
-        setIdentity("mock", "Mock Card", /*priority=*/500);
+        setIdentity("mock", /*priority=*/500);
     }
 
     LibreSCRS::Plugin::CardCapabilities capabilities() const override

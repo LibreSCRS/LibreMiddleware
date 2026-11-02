@@ -7,28 +7,21 @@
 /// @brief @ref LibreSCRS::Trust::TrustStoreService — first-class lifecycle
 ///        owner of @ref LibreSCRS::Trust::TrustStore. Construction is
 ///        asynchronous + non-throwing: the local anchor set is built
-///        synchronously while configured Trusted-List sources are fetched on
-///        internal worker threads. Consumers observe completion via
-///        #LibreSCRS::Trust::TrustStoreService::status,
-///        #LibreSCRS::Trust::TrustStoreService::addObserver, or the opt-in
-///        #LibreSCRS::Trust::TrustStoreService::waitForEagerFetches.
+///        synchronously while eager Trusted-List sources are fetched on
+///        internal worker threads; their anchors join the store as they
+///        arrive.
 
-#include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Export.h>
 #include <LibreSCRS/LocalizedText.h>
 #include <LibreSCRS/Trust/TrustConfig.h>
 #include <LibreSCRS/Trust/TrustStore.h>
 
-#include <chrono>
 #include <cstdint>
 #include <expected>
-#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <utility>
-#include <vector>
 
 namespace LibreSCRS::Trust {
 
@@ -40,9 +33,8 @@ namespace LibreSCRS::Trust {
 /// trust-anchor knowledge: the certificate viewer, plugin registry,
 /// signing service, and any future tooling. Construction never blocks
 /// on network IO and never throws — @ref create always returns a
-/// usable service. Eager TL fetches run on internal worker threads;
-/// consumers observe completion via @ref status, @ref addObserver, or
-/// the opt-in @ref waitForEagerFetches.
+/// usable service. Eager TL fetches run on internal worker threads and
+/// merge their anchors into @ref trustStore as each list verifies.
 ///
 /// @par Lifetime & sharing
 /// Owned by @c shared_ptr (the factory enforces this via private ctor).
@@ -60,30 +52,13 @@ namespace LibreSCRS::Trust {
 /// surface; status-code returns instead" — the same policy
 /// @ref Signing::SigningService applies to TrustConfig validation. By
 /// returning a usable service even when the network is unreachable,
-/// callers can render UI immediately (with bundled + system anchors)
-/// and update the view incrementally as remote anchors arrive.
+/// callers can render UI immediately (with bundled + system anchors);
+/// remote anchors join the same store as they arrive.
 ///
 /// @since 4.0
 class LIBRESCRS_PUBLIC_API TrustStoreService
 {
 public:
-    /// @brief Per-source fetch outcome.
-    /// @since 4.0
-    enum class SourceStatus {
-        Pending,     ///< fetch not yet started or in flight
-        Fetched,     ///< fetch completed successfully; anchors merged
-        FetchFailed, ///< network error, parse error, or signature failure
-        Skipped,     ///< source disabled or lazy with no demand yet
-    };
-
-    /// @brief Aggregate fetch state across all eager sources.
-    /// @since 4.0
-    enum class AggregateStatus {
-        Loading,  ///< at least one eager source still pending
-        Ready,    ///< all eager sources fetched successfully (or no eager sources configured)
-        Degraded, ///< all eager sources settled; one or more failed
-    };
-
     /// @brief Failure outcome of @ref create. Same shape as every other
     ///        public Error type — coarse @ref Kind enum, mandatory
     ///        @ref userMessage, optional @ref diagnosticDetail.
@@ -159,87 +134,6 @@ public:
     /// lazy fetches run inside @ref Signing::SigningService::sign.
     /// @since 4.0
     [[nodiscard]] std::shared_ptr<const TrustStore> trustStore() const;
-
-    /// @brief Snapshot of fetch state. Cheap; returns by value.
-    /// @par Thread-safety
-    /// Reentrant; reads under shared lock.
-    /// @since 4.0
-    [[nodiscard]] AggregateStatus status() const;
-
-    /// @brief Per-source status snapshot, keyed by the source URL.
-    /// @note Only enumerates sources from the original @ref TrustConfig.
-    /// @par Thread-safety
-    /// Reentrant; reads under shared lock.
-    /// @throws std::bad_alloc on allocation failure while building the
-    ///         returned vector.
-    /// @since 4.0
-    [[nodiscard]] std::vector<std::pair<std::string, SourceStatus>> sourceStatuses() const;
-
-    /// @brief Block until every eager TL fetch is settled, the deadline
-    ///        elapses, or @c token requests cancel.
-    /// @return The aggregate status at return time. May be @c Loading
-    ///         if the deadline elapsed or cancellation fired before
-    ///         all sources settled.
-    /// @par Use cases
-    /// Tests, CLI tooling, and headless consumers that legitimately
-    /// want a synchronous wait. GUI consumers should NOT call this
-    /// blocking variant — subscribe via @ref addObserver instead.
-    /// @par Thread-safety
-    /// Reentrant; multiple threads may wait concurrently. Each thread
-    /// returns when its own predicate is satisfied.
-    /// @since 4.0
-    [[nodiscard]] AggregateStatus waitForEagerFetches(std::chrono::milliseconds deadline, CancelToken token = {}) const;
-
-    /// @brief Observer callback fired once per eager source as it
-    ///        settles (succeeded, failed, or cancelled).
-    /// @note Invoked on an internal worker thread; if the consumer
-    ///       lives on a UI thread (Qt, etc.) it must marshal back
-    ///       via the platform's queued-invocation primitive.
-    /// @since 4.0
-    using FetchObserver = std::function<void(std::string_view sourceUrl, SourceStatus)>;
-
-    /// @brief Opaque handle returned by @ref addObserver and consumed by
-    ///        @ref removeObserver.
-    /// @since 4.0
-    using ObserverHandle = std::uint64_t;
-
-    /// @brief Subscribe to fetch-completion events.
-    /// @return Opaque handle; pass to @ref removeObserver to detach.
-    ///
-    /// @par Fire-once contract
-    /// Each observer is invoked AT MOST ONCE per `(sourceUrl, terminal
-    /// SourceStatus)` transition, regardless of subscription order.
-    /// `addObserver` atomically establishes the synthetic-replay set
-    /// against the snapshot of already-settled sources at call time; the
-    /// observer is fire-once per transition, meaning a worker-thread
-    /// `settle` for a `(source, generation)` tuple that has already
-    /// replayed to this observer through the synthetic-replay path does
-    /// not re-fire, and vice versa.
-    ///
-    /// @note Observers added AFTER a source has already settled receive
-    ///       a synthetic invocation for that source's terminal status,
-    ///       so subscription order is not racy w.r.t. fetches.
-    /// @par Thread-safety
-    /// Reentrant. The synthetic-replay invocation runs on the calling
-    /// thread; subsequent settle events fire on internal worker threads.
-    /// @warning Do NOT call @ref addObserver or @ref removeObserver from
-    ///          within a `FetchObserver` invocation on the same service
-    ///          — this deadlocks. The implementation provides no runtime
-    ///          detection guard.
-    /// @throws std::bad_alloc on allocation failure while copying the
-    ///         observer into internal storage.
-    /// @since 4.0
-    [[nodiscard]] ObserverHandle addObserver(FetchObserver observer);
-
-    /// @brief Detach an observer.
-    /// @note Idempotent — a no-op when @p handle is unknown or already
-    ///       removed. After this call returns, no further invocations
-    ///       of the observer are scheduled, but a fire that began
-    ///       before the call may still complete on its worker thread.
-    /// @par Thread-safety
-    /// Reentrant.
-    /// @since 4.0
-    void removeObserver(ObserverHandle handle);
 
     /// @brief Snapshot of the original config the service was constructed
     ///        with. Useful for diagnostics and for @ref Signing::SigningService

@@ -58,14 +58,15 @@ jobs:
         # PACE ephemeral private keys exist only as a BIGNUM and no CleanseGuard
         # reaches them. This was fixed in 4.1.0 and silently undone by a
         # deduplication pass that matched two deleters on their names. Checks
-        # the call and the recorded reason as two separate failures.
-        run: ./ci/scripts/check-cleansing-deleters.sh
-
-      - name: Check raw PC/SC open confinement
-        # Production code must open the card via CardSession::open (single
-        # session per reader); only the diagnostic tools/tests may use the
-        # PCSCConnection::openRawDiagnostic escape hatch.
-        run: ./ci/scripts/check-raw-pcsc-open.sh
+        # the call and the recorded reason as two separate failures. The gate
+        # is the shared one every repository runs; this tree holds the deleter
+        # the others follow and the list of sites excused from it.
+        uses: LibreSCRS/ci/actions/gates@d68f5d781a665759eaba63c67ef0e6eb1f738063
+        with:
+          gates: check-cleansing-deleters
+          deleter-args: >-
+            --canonical lib/LibreSCRS/include/LibreSCRS_internal/Crypto/OpenSslPtr.h
+            --exceptions ci/cleansing-deleter-exceptions.txt
 
       - name: Check vendored archive provenance
         # The bundled OpenSSL is four committed binaries, not a source tree.
@@ -85,8 +86,8 @@ jobs:
   build-linux:
     # Two signing backends. `native` is the production path and carries the
     # release gates; `both` additionally compiles the DSS cross-verification
-    # oracle so cross_backend_test.cpp — gated on
-    # `LIBRESIGN_HAS_NATIVE && LIBRESIGN_HAS_DSS`, and therefore never built by
+    # oracle so cross_backend_test.cpp — gated on `LIBRESIGN_HAS_DSS`, and
+    # therefore never built by
     # any job before this matrix existed — is actually exercised.
     name: build-linux (${{ matrix.signing_backend }})
     runs-on: ubuntu-24.04
@@ -121,8 +122,6 @@ jobs:
             dss_oracle: 'OFF'
             release_gates: false
             gates: selftests test-floor
-    env:
-      OPENSC_VERSION: '0.26.1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -137,18 +136,9 @@ jobs:
             libcurl4-openssl-dev libxml2-dev \
             pkg-config autoconf automake libtool \
             cmake ninja-build python3-jsonschema \
+            libgtest-dev libgmock-dev \
             opensc clang \
             poppler-utils
-
-      - name: Build OpenSC ${{ env.OPENSC_VERSION }} from source
-        run: |
-          git clone --branch ${{ env.OPENSC_VERSION }} --depth 1 \
-            https://github.com/OpenSC/OpenSC /tmp/opensc-src
-          cd /tmp/opensc-src
-          ./bootstrap
-          ./configure --prefix=/tmp/opensc-install \
-            --enable-shared --disable-static --without-readline
-          make -j$(nproc) install
 
       - name: Install clang-21 for the layout snapshot
         # The layout snapshot dumps record layouts with clang. The runner's
@@ -180,28 +170,27 @@ jobs:
         # path runs in production and in the local pre-tag verification
         # pass. Debug coverage lives in the developer workflow; the CI
         # gate exists to catch regressions in the shipped configuration.
-        # SIGNING_BACKEND is bare (declared in `lib/libresign/CMakeLists.txt`,
+        # SIGNING_BACKEND is bare (declared in `test/CMakeLists.txt`,
         # not namespaced) and BUILD_TESTING defaults ON, so neither is spelled
         # with a project prefix here.
         #
-        # LIBREMIDDLEWARE_WERROR covers the shipped libraries and card plugins
-        # only: the vendored miniz translation unit, the fetched googletest and
-        # this repo's test executables are all left warning-only, so a compiler
+        # LIBRESCRS_WERROR covers the shipped libraries and card plugins
+        # only: the vendored miniz translation unit and this repo's test
+        # executables are both left warning-only, so a compiler
         # upgrade cannot fail this build through a diagnostic no change here
-        # could fix. Set on both matrix legs — `both` compiles the DSS backend
-        # sources that `native` does not. Deliberately not set on the macOS
-        # job: the clean baseline this gate rests on was measured with GCC, and
-        # AppleClang's diagnostic set is a different one that has never been
-        # surveyed. Build type and the option are pinned together here so a
-        # later edit to one cannot quietly disarm the other.
+        # could fix. Set on both matrix legs, which build the same shipped
+        # libraries; the DSS oracle `both` adds is test code. Deliberately
+        # not set on the macOS job: the clean baseline this gate rests on was
+        # measured with GCC, and AppleClang's diagnostic set is a different
+        # one that has never been surveyed. Build type and the option are
+        # pinned together here so a later edit to one cannot quietly disarm
+        # the other.
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH=/tmp/opensc-install \
-            -DOPENSC_INCLUDE_DIR=/tmp/opensc-src/src \
             -DSIGNING_BACKEND=${{ matrix.signing_backend }} \
             -DBUILD_DSS_ORACLE=${{ matrix.dss_oracle }} \
-            -DLIBREMIDDLEWARE_WERROR=ON \
+            -DLIBRESCRS_WERROR=ON \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
           # set -o pipefail is explicit: without it `| tee` reports tee's status
           # and a failed build becomes a green step, after which the warning
@@ -316,8 +305,8 @@ jobs:
         # card validation happens locally on a developer machine before
         # tag.
         # --test-dir build, not build/test: several library subdirectories
-        # register their own suites (lib/pkcs15/test, lib/plugin/test,
-        # lib/pkcs11/test), and pointing ctest at build/test reads only
+        # register their own suites (lib/pkcs15/test, lib/plugin/test),
+        # and pointing ctest at build/test reads only
         # build/test/CTestTestfile.cmake -- so those ran nowhere. Scoping to
         # the build ROOT runs everything that was built, which is the only
         # scope that cannot silently shed a suite again. Measured on this
@@ -381,7 +370,6 @@ jobs:
     # Without a ceiling a wedged sanitizer run burns GitHub's six-hour default.
     timeout-minutes: 90
     env:
-      OPENSC_VERSION: '0.26.1'
       # halt_on_error: without it UBSan prints the diagnostic and carries on, so
       # the job stays green with undefined behaviour in the log. The suppression
       # file carries one scoped row, with its reason, for the vendored deflate
@@ -403,18 +391,9 @@ jobs:
             libcurl4-openssl-dev libxml2-dev \
             pkg-config autoconf automake libtool \
             cmake ninja-build python3-jsonschema \
+            libgtest-dev libgmock-dev \
             opensc \
             poppler-utils
-
-      - name: Build OpenSC ${{ env.OPENSC_VERSION }} from source
-        run: |
-          git clone --branch ${{ env.OPENSC_VERSION }} --depth 1 \
-            https://github.com/OpenSC/OpenSC /tmp/opensc-src
-          cd /tmp/opensc-src
-          ./bootstrap
-          ./configure --prefix=/tmp/opensc-install \
-            --enable-shared --disable-static --without-readline
-          make -j$(nproc) install
 
       - name: Configure & Build (address + undefined behaviour sanitizers)
         run: |
@@ -423,8 +402,7 @@ jobs:
           # build does not. The warning floor is judged by its own job.
           cmake -B build-asan -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DLIBREMIDDLEWARE_BUILD_SHARED=ON \
-            -DLIBREMIDDLEWARE_WERROR=OFF \
+            -DLIBRESCRS_WERROR=OFF \
             -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g" \
             -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g" \
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
@@ -463,8 +441,6 @@ jobs:
     permissions:
       contents: read
     timeout-minutes: 45
-    env:
-      OPENSC_VERSION: '0.26.1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -478,25 +454,14 @@ jobs:
             libpcsclite-dev libssl-dev zlib1g-dev \
             libcurl4-openssl-dev libxml2-dev \
             pkg-config autoconf automake libtool \
-            cmake ninja-build python3-jsonschema
-
-      - name: Build OpenSC ${{ env.OPENSC_VERSION }} from source
-        run: |
-          git clone --branch ${{ env.OPENSC_VERSION }} --depth 1 \
-            https://github.com/OpenSC/OpenSC /tmp/opensc-src
-          cd /tmp/opensc-src
-          ./bootstrap
-          ./configure --prefix=/tmp/opensc-install \
-            --enable-shared --disable-static --without-readline
-          make -j$(nproc) install
+            cmake ninja-build python3-jsonschema \
+            libgtest-dev libgmock-dev
 
       - name: Configure with examples enabled (Release)
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DLIBRESCRS_BUILD_EXAMPLES=ON \
-            -DCMAKE_PREFIX_PATH=/tmp/opensc-install \
-            -DOPENSC_INCLUDE_DIR=/tmp/opensc-src/src
 
       - name: Build sdk-consumer
         run: cmake --build build --target sdk-consumer
@@ -505,7 +470,11 @@ jobs:
         run: ./build/examples/sdk-consumer/sdk-consumer
 
   build-macos:
-    runs-on: macos-15
+    # The runner image is chosen by the Xcode it carries (the one named in
+    # .xcode-version), and that Xcode and its SDK are then selected
+    # explicitly, by the shared LibreSCRS/ci action rather than a copy of it:
+    # an image's default Xcode changes on the image's schedule.
+    runs-on: xcode-27
     permissions:
       contents: read
     timeout-minutes: 75
@@ -515,12 +484,15 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Select Xcode
+        uses: LibreSCRS/ci/actions/select-xcode@d68f5d781a665759eaba63c67ef0e6eb1f738063
+
       - name: Install build tools
         run: |
           # autoconf/automake/libtool/pkg-config are required by the vendored
           # OpenSC autoconf bootstrap (thirdparty/opensc-source/bootstrap →
           # autoreconf -fi). Homebrew's ninja covers the LM build itself.
-          brew install ninja opensc autoconf automake libtool pkg-config
+          brew install ninja googletest opensc autoconf automake libtool pkg-config
           # manifest2header.py hard-fails when jsonschema is missing
           # (the schema gates the codegen step against malformed manifests).
           python3 -m pip install --break-system-packages --user jsonschema
@@ -544,8 +516,8 @@ jobs:
 
       - name: Test
         # --test-dir build, not build/test: several library subdirectories
-        # register their own suites (lib/pkcs15/test, lib/plugin/test,
-        # lib/pkcs11/test), and pointing ctest at build/test reads only
+        # register their own suites (lib/pkcs15/test, lib/plugin/test),
+        # and pointing ctest at build/test reads only
         # build/test/CTestTestfile.cmake -- so those ran nowhere. Scoping to
         # the build ROOT runs everything that was built, which is the only
         # scope that cannot silently shed a suite again. Measured on this
@@ -560,8 +532,7 @@ jobs:
         run: ctest --output-on-failure --test-dir build --no-tests=error
 
   shared-config-package:
-    # Build LibreMiddleware with LIBREMIDDLEWARE_BUILD_SHARED=ON, install
-    # to a workspace prefix, then run examples/sdk-consumer-config/build-and-run.sh
+    # Build LibreMiddleware, install to a workspace prefix, then run examples/sdk-consumer-config/build-and-run.sh
     # which configures + builds + runs a downstream consumer via
     # find_package(LibreMiddleware 5.0 REQUIRED CONFIG). Catches regressions
     # in target export, visibility, version pinning, and bundled-dep
@@ -594,9 +565,8 @@ jobs:
         # Its own step with its own ceiling: the vendored OpenSC autotools
         # build does not fit inside a gate's budget, and when a step fails its
         # name should say which half failed. LIBRESCRS_VENDOR_OPENSC=OFF
-        # because librescrs-pkcs11 is built unconditionally and neither the
-        # registration nor the rpath invariant needs the optional fallback
-        # provider it adds.
+        # because the registration invariant below does not need the OpenSC
+        # card plugin it adds.
         timeout-minutes: 30
         run: |
           sudo apt-get install -y p11-kit
@@ -654,6 +624,3 @@ jobs:
               | grep -F 'CardSession::transmitInternal' \
               || { echo "::error::Expected CardSession::transmitInternal export not found"; exit 1; }
 
-      - name: Assert the installed module carries a relative rpath
-        timeout-minutes: 5
-        run: bash ci/scripts/check-pkcs11-rpath.sh /usr

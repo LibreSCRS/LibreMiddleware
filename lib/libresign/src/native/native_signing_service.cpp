@@ -3,6 +3,7 @@
 
 #include "native/native_signing_service.h"
 #include "native/signing_key.h"
+#include "native/fetch_and_verify_tl.h"
 #include "native/trusted_list_parser.h"
 #include "native/cades_module.h"
 #include "native/pades_module.h"
@@ -11,16 +12,16 @@
 #include "native/asic_module.h"
 #include "trust/TrustedListProvider.h"
 #include "native_utils.h" // parseCert (X509Ptr RAII) — avoids manual d2i_X509 / X509_free
-#include "pinned_tl_certs.h"
-#include "tl_cache.h"
-#include "tl_signature_verifier.h"
 
 #include <openssl/cms.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
 #include <openssl/x509.h>
 
+#include <LibreSCRS/Logging.h>
+
 #include <algorithm>
+#include <chrono>
 #include <climits>
 #include <cstring>
 #include <fstream>
@@ -30,7 +31,6 @@
 #include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
 #include <LibreSCRS_internal/Crypto/OpenSslPtrCms.h>
 
-using LibreSCRS::Internal::Crypto::BioPtr;
 using LibreSCRS::Internal::Crypto::CmsPtr;
 using LibreSCRS::Internal::Crypto::X509Ptr;
 
@@ -38,44 +38,11 @@ namespace libresign {
 
 namespace {
 
-constexpr int kMaxTlRecursionDepth = 3;
 constexpr int kTlFetchTimeoutSeconds = 30;
 
-// Load a certificate from a file (DER or PEM). Returns DER bytes.
-std::vector<uint8_t> loadCertFromFile(const std::string& path)
-{
-    std::ifstream file(path, std::ios::binary);
-    if (!file)
-        return {};
-
-    std::vector<uint8_t> data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    if (data.empty())
-        return {};
-
-    // Try DER first: attempt to parse as DER-encoded X.509
-    {
-        const unsigned char* p = data.data();
-        X509Ptr cert(d2i_X509(nullptr, &p, static_cast<long>(data.size())));
-        if (cert)
-            return data; // Already DER
-    }
-
-    // Try PEM: read PEM and convert to DER
-    BioPtr bio(BIO_new_mem_buf(data.data(), static_cast<int>(data.size())));
-    if (!bio)
-        return {};
-
-    X509Ptr cert(PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr));
-    if (!cert)
-        return {};
-
-    return native_utils::derEncode(static_cast<int (*)(const X509*, unsigned char**)>(i2d_X509), cert.get());
-}
-
-// Sniff signature format from prior bytes' magic. Used by @ref
-// NativeSigningService::appendSigner — the public API does not carry a
-// SignatureFormat for the append path, so the dispatcher infers it from
-// the wire shape of the prior signature. Order matters: PDF and ZIP are
+// Sniff signature format from a document's magic, so @ref alreadySignedIn can
+// tell whether the document already is a signature in the requested format.
+// Order matters: PDF and ZIP are
 // disjoint multi-byte magics; JSON (`{`) and DER (0x30) and XML (`<`)
 // each occupy one disambiguating leading byte; UTF-8 BOM gates an
 // alternative XAdES entry.
@@ -121,19 +88,17 @@ bool isSignedCms(std::span<const uint8_t> doc)
 }
 
 // Cheap "looks like an already-signed document of `fmt`" probe used by
-// @ref NativeSigningService::sign to lift the per-module multi-sign
-// auto-detect (previously inside xades_module / jades_module sign()
-// paths) up to the service-level dispatcher. When this returns true,
-// sign() routes the request to appendSigner instead of the per-format
-// sign() — which means an already-signed document never reaches the
-// fresh-sign code path through the public API.
+// @ref NativeSigningService::sign to route an already-signed XAdES, JAdES or
+// ASiC-E document to the format module's appendSigner instead of its sign()
+// — which means an already-signed document never reaches the fresh-sign code
+// path.
 //
 // The checks are intentionally substring scans, not full parses:
 // inferFormat() has already gated on the magic bytes, so a false
-// positive (e.g. a PDF whose content stream literally contains the
-// "/Type /Sig" octets but has no signature dict) only redirects to
-// appendSigner, which then runs its own strict parse and fails with a
-// targeted InvalidInput rather than producing a malformed signature.
+// positive (e.g. an XML document that literally contains "<Signature" but
+// no signature element) only redirects to the module's appendSigner, which
+// then runs its own strict parse and fails with a targeted failure rather
+// than producing a malformed signature.
 // CAdES is the exception and does parse: its magic is a single byte that
 // ordinary text shares, so a substring scan has nothing to stand on.
 bool looksSignedAlready(std::span<const uint8_t> doc, SignatureFormat fmt)
@@ -190,20 +155,18 @@ std::optional<SignatureFormat> alreadySignedIn(const SigningRequest& request)
 SigningResult cadesInputIsDetached()
 {
     return makeFailure(SignFailureKind::InvalidInput,
-                       "CAdES input is a detached CMS signature (no embedded payload). "
-                       "Use SigningService::appendSigner with the originalDocument argument "
-                       "to add a new signer to a prior CAdES signature.");
+                       "CAdES input is a detached CMS signature (no embedded payload): it does not carry the "
+                       "document it signs, so no signature can be added beside its signers. Sign the original "
+                       "document instead.");
 }
 } // namespace
 
 bool NativeSigningService::configure(const TrustConfig& config)
 {
     trustConfig = config;
-    tlAnchorCerts.clear();   // rebuilt from the TLs loaded below
+    tlAnchorCerts.clear(); // rebuilt from the TLs loaded below
+    tlTimestampAnchors.clear();
     lazyListsLoaded = false; // and from the deferred ones, when a level needs them
-
-    TlCache cache(config.cacheDirectory);
-    TlSignatureVerifier verifier;
 
     int eagerCount = 0;
     int successCount = 0;
@@ -212,12 +175,9 @@ bool NativeSigningService::configure(const TrustConfig& config)
         if (!entry.eager)
             continue;
         ++eagerCount;
-        try {
-            loadTrustList(entry.url, entry.isLotl, cache, verifier, 0);
+        // A list that fails leaves the service degraded, not unconfigured.
+        if (loadTrustList(entry))
             ++successCount;
-        } catch (const std::exception&) {
-            // Log warning but continue -- degraded mode
-        }
     }
 
     configured = true;
@@ -226,155 +186,41 @@ bool NativeSigningService::configure(const TrustConfig& config)
     return eagerCount == 0 || successCount > 0;
 }
 
-void NativeSigningService::loadTrustList(const std::string& url, bool isLotl, TlCache& cache,
-                                         TlSignatureVerifier& verifier, int depth)
+bool NativeSigningService::loadTrustList(const TrustedListEntry& entry)
 {
-    if (depth > kMaxTlRecursionDepth)
-        return;
+    FetchOptions opts;
+    opts.cacheDirectory = trustConfig.cacheDirectory;
+    opts.requestTimeout = std::chrono::seconds{kTlFetchTimeoutSeconds};
 
-    // Locate the TrustConfig entry for this URL up-front: the file:// gating
-    // flag (set only when the public TrustConfig::trustedListFile bridge
-    // synthesised this entry) lives on the entry, not on the URL alone. The
-    // same entry pointer is reused below for the per-entry signing-cert
-    // override (see step 3); hoisting the lookup keeps both paths
-    // single-source.
-    auto entryIt = std::find_if(trustConfig.trustedLists.begin(), trustConfig.trustedLists.end(),
-                                [&url](const TrustedListEntry& e) { return e.url == url; });
-
-    // 1. Check cache (HTTP path) or read from disk (file:// path)
-    std::vector<uint8_t> xmlData;
-    bool freshlyFetched = false;
-    std::string responseEtag;
-    std::string responseLastModified;
-
-    constexpr std::string_view kFileScheme = "file://";
-    const bool localFileBranch = entryIt != trustConfig.trustedLists.end() && entryIt->localFileOnly &&
-                                 url.compare(0, kFileScheme.size(), kFileScheme) == 0;
-
-    if (localFileBranch) {
-        // When @ref TrustConfig::trustedListFile is populated,
-        // the public bridge in @c LibreSCRS::Signing::SigningService::sign
-        // synthesises a @ref TrustedListEntry with @c localFileOnly=true and
-        // @c url="file://"+path. Read that path directly via std::ifstream,
-        // bypassing @ref HttpClient entirely. HttpClient still rejects
-        // @c file:// via @c CURLOPT_PROTOCOLS_STR="http,https" — defense in
-        // depth ensures @c file:// can never reach the network layer even
-        // if a future caller forgets to set @c localFileOnly. Public
-        // @c TrustedListSource entries (URL-fetched) leave the flag at the
-        // default @c false and stay on the HTTP path.
-        const std::string path(url.substr(kFileScheme.size()));
-        std::ifstream is(path, std::ios::binary);
-        if (!is)
-            throw std::runtime_error("Failed to read local TL file: " + path);
-        std::vector<uint8_t> buffer((std::istreambuf_iterator<char>(is)), std::istreambuf_iterator<char>());
-        if (buffer.empty())
-            throw std::runtime_error("Local TL file is empty: " + path);
-        xmlData = std::move(buffer);
-        // Local files don't participate in the on-disk cache: the source of
-        // truth is the caller-provided file itself. Skip cache.store() below.
-    } else {
-        auto cached = cache.load(url);
-        if (cached) {
-            xmlData = std::move(cached->data);
-        } else {
-            // 2. Cache miss (expired or absent). Try conditional request with stale metadata.
-            auto staleMeta = cache.loadMeta(url);
-            auto fetchResult = TrustedListParser::fetchRawConditional(
-                url, staleMeta ? staleMeta->etag : std::string{}, staleMeta ? staleMeta->lastModified : std::string{},
-                kTlFetchTimeoutSeconds);
-
-            if (fetchResult.notModified) {
-                // Server confirmed the cached data is still valid — refresh timestamp
-                cache.refreshTimestamp(url);
-                auto refreshed = cache.load(url);
-                if (refreshed) {
-                    xmlData = std::move(refreshed->data);
-                } else {
-                    throw std::runtime_error("Cache refresh failed for TL: " + url);
-                }
-            } else if (!fetchResult.data.empty()) {
-                xmlData = std::move(fetchResult.data);
-                responseEtag = std::move(fetchResult.etag);
-                responseLastModified = std::move(fetchResult.lastModified);
-                freshlyFetched = true;
-            } else {
-                throw std::runtime_error("Failed to fetch TL from " + url);
-            }
-        }
-    }
-
-    // 3. Find verification cert: user override > pinned > lotlDerived > reject
-    std::vector<uint8_t> verificationCertOwned;
-    std::span<const uint8_t> signingCert;
-
-    // Check user override from TrustConfig (entryIt resolved at top of fn)
-    if (entryIt != trustConfig.trustedLists.end() && !entryIt->signingCertPath.empty()) {
-        verificationCertOwned = loadCertFromFile(entryIt->signingCertPath);
-        if (!verificationCertOwned.empty()) {
-            signingCert = verificationCertOwned;
-        }
-    }
-
-    if (signingCert.empty()) {
-        auto pinnedCert = pinned_certs::pinnedCertForUrl(url);
-        if (!pinnedCert.empty()) {
-            signingCert = pinnedCert;
-        } else {
-            auto it = lotlDerivedCerts.find(url);
-            if (it != lotlDerivedCerts.end()) {
-                signingCert = std::span<const uint8_t>(it->second);
-            } else {
-                throw std::runtime_error("No verification cert available for TL: " + url);
-            }
-        }
-    }
-
-    // 4. Verify XML-DSig
-    if (!verifier.verify(xmlData, signingCert))
-        throw std::runtime_error("TL signature verification failed for " + url + ": " + verifier.lastError());
-
-    // 5. Parse authenticated TL
-    auto tlInfo = TrustedListParser::parse(xmlData);
-
-    // 6. Emit TL-derived anchors to the host (LibreSCRS::Signing bridge)
-    //    which merges them into the public TrustStore eagerly owned by
-    //    Trust::TrustStoreService. Inverted-callback shape: libresign
-    //    extracts anchors, the bridge owns the merge. No-op when the host
-    //    did not bind an emitter via setAnchorEmitter.
-    {
-        auto anchors = extractAnchorsFromTrustedList(tlInfo, "tl:" + url);
-        // Retain the anchor DERs for long-term chain completion (used even when
-        // no host emitter is bound, e.g. native-only signing).
+    // Every verified list hands its anchors over: retained for long-term
+    // chain completion (used even when no host emitter is bound, e.g.
+    // native-only signing) and emitted to the host, which merges them into
+    // the public TrustStore. Inverted-callback shape: libresign extracts
+    // anchors, the bridge owns the merge.
+    const auto onList = [this](const std::string& url, const TrustedListInfo& info) {
+        auto anchors = extractAnchorsFromTrustedList(info);
         for (const auto& a : anchors)
             if (!a.certificateDer.empty())
                 tlAnchorCerts.push_back(a.certificateDer);
+        for (auto& der : timestampAuthorityCertificates(info))
+            tlTimestampAnchors.push_back(std::move(der));
         if (anchorEmitter)
-            anchorEmitter(std::move(anchors), "tl:" + url);
-    }
+            anchorEmitter(std::move(anchors));
+    };
+    const auto onFailure = [](const std::string& url, const std::string& error) {
+        LibreSCRS::log::warnf("Trusted List {} skipped: {}", url, error);
+    };
 
-    // 7. Store in cache (only if freshly fetched, not from cache)
-    if (freshlyFetched) {
-        cache.store(url, xmlData, responseEtag, responseLastModified);
-    }
-
-    // 8. For LoTL: follow OtherTSLPointer entries recursively
-    if (isLotl) {
-        // Store pointer signing certs for child TL verification
-        for (const auto& pointer : tlInfo.pointersToOtherTSL) {
-            if (!pointer.signingCertDer.empty()) {
-                lotlDerivedCerts[pointer.url] = pointer.signingCertDer;
-            }
+    try {
+        auto result = fetchTrustedListTree(entry, opts, onList, onFailure);
+        if (!result) {
+            onFailure(entry.url, result.error);
+            return false;
         }
-
-        for (const auto& pointer : tlInfo.pointersToOtherTSL) {
-            if (!TrustedListParser::isSafeTslUrl(pointer.url))
-                continue; // SSRF protection
-            try {
-                loadTrustList(pointer.url, false, cache, verifier, depth + 1);
-            } catch (const std::exception&) {
-                // Continue on failure -- partial TL loading is acceptable
-            }
-        }
+        return true;
+    } catch (const std::exception& e) {
+        onFailure(entry.url, e.what());
+        return false;
     }
 }
 
@@ -389,19 +235,13 @@ void NativeSigningService::loadLazyTrustLists()
         return;
     lazyListsLoaded = true;
 
-    TlCache cache(trustConfig.cacheDirectory);
-    TlSignatureVerifier verifier;
-
     for (const auto& entry : trustConfig.trustedLists) {
         if (entry.eager)
             continue; // configure() already fetched it
-        try {
-            loadTrustList(entry.url, entry.isLotl, cache, verifier, 0);
-        } catch (const std::exception&) {
-            // Degraded, exactly as configure() treats an eager source that
-            // fails: the anchor set stays short and the chain gate below
-            // refuses with the cause the user can act on.
-        }
+        // Degraded, exactly as configure() treats an eager source that
+        // fails: the anchor set stays short and the chain gate below
+        // refuses with the cause the user can act on.
+        (void)loadTrustList(entry);
     }
 }
 
@@ -416,14 +256,14 @@ std::optional<SigningResult> NativeSigningService::completeLongTermChain(Signing
     // (tlAnchorCerts empty) — the chain then stays as the card provided it,
     // and the revocation gate fails closed on any tail the chain cannot prove
     // (an unproven terminal is the chain-incomplete failure, not a silent
-    // pass). Both entry points reach here and both reach that gate. PAdES,
-    // XAdES and ASiC-E get there by delegation — their appendSigner re-enters
-    // the same per-format sign path the sign() entry point uses (PAdES and
-    // XAdES enveloped call sign() directly, XAdES detached calls
-    // signWithSuffix, ASiC-E calls signWithCAdES which calls
-    // CAdESModule::sign). CAdES and JAdES get there directly: their
-    // appendSigner runs the same per-signer level ladder their sign() runs,
-    // which reaches the gate at B-LT. No format bypasses it.
+    // pass). A signature added to an already-signed document reaches that
+    // gate too: XAdES and ASiC-E by delegation — their appendSigner re-enters
+    // the same per-format sign path a fresh signature uses (XAdES enveloped
+    // calls sign() directly, ASiC-E calls signWithCAdES which calls
+    // CAdESModule::sign) — and JAdES directly: its appendSigner runs the same
+    // per-signer level ladder its sign() runs, which reaches the gate at
+    // B-LT. PAdES adds a signature through its sign() itself. No format
+    // bypasses it.
     if (level < SignatureLevel::B_LT)
         return std::nullopt;
 
@@ -454,15 +294,20 @@ std::optional<SigningResult> NativeSigningService::enforceSignerCertPolicy(Signi
     // default) behaves consistently with the DSS backend. The flag is the
     // production user-consent opt-in: the host GUI sets it to true only
     // after the user has acknowledged the expired-certificate warning on
-    // the signing page. Both entry points run this; appending a signer to
-    // an already-signed document is signing, and the request that reaches
-    // appendSigner carries the same opt-in the user answered for.
+    // the signing page. Adding a signer to an already-signed document is
+    // signing, and its request carries the same opt-in the user answered for.
     auto certDer = key.certificate();
     if (certDer.empty())
         return std::nullopt;
     auto x509 = native_utils::parseCert(certDer);
     if (!x509)
         return std::nullopt;
+
+    // A certificate not valid yet is never signed with: no consent covers a
+    // signature the certificate's own validity puts before its issuance.
+    const int fromCmp = X509_cmp_current_time(X509_get0_notBefore(x509.get()));
+    if (fromCmp >= 0) // 1 future, 0 malformed
+        return makeFailure(SignFailureKind::PolicyViolation, "Signing certificate is not valid yet");
 
     const int cmp = X509_cmp_current_time(X509_get0_notAfter(x509.get()));
     const bool expired = (cmp <= 0); // -1 past, 0 malformed — treat both as expired
@@ -471,44 +316,42 @@ std::optional<SigningResult> NativeSigningService::enforceSignerCertPolicy(Signi
     return std::nullopt;
 }
 
+TSAConfig NativeSigningService::timestampConfig(const SigningRequest& request)
+{
+    auto tsa = request.tsa;
+    tsa.crlEnabled = trustConfig.crlEnabled;
+    tsa.ocspEnabled = trustConfig.ocspEnabled;
+    tsa.trust.anchors.insert(tsa.trust.anchors.end(), tlTimestampAnchors.begin(), tlTimestampAnchors.end());
+    tsa.trust.includeSystemTrustStore = trustConfig.includeSystemTrustStore;
+    // Called from inside a format module, during this sign: the service
+    // outlives it.
+    tsa.trust.deferredAnchors = [this] {
+        const auto known = tlTimestampAnchors.size();
+        loadLazyTrustLists();
+        return std::vector<std::vector<uint8_t>>(tlTimestampAnchors.begin() + static_cast<std::ptrdiff_t>(known),
+                                                 tlTimestampAnchors.end());
+    };
+    return tsa;
+}
+
 SigningResult NativeSigningService::sign(const SigningRequest& request, SigningKey& key)
 {
     try {
-        // Multi-sign auto-detect, lifted from per-module sign() branches.
-        //
-        // If the input bytes already shape as a signed document in the
-        // requested format, route to appendSigner instead of the per-format
-        // sign(). ENVELOPED-capable formats (PAdES, XAdES, JAdES, ASiC-E):
-        // the per-format appendSigner extracts the original payload from the
-        // prior signature itself, so an empty originalDocument is fine.
-        //
-        // CAdES is by definition detached — the originalDocument cannot
-        // be recovered from a CMS SignedData, so the only path forward
-        // is the explicit appendSigner public API. Fail fast with a
-        // pointer at that API.
-        if (const auto fmt = alreadySignedIn(request)) {
-            switch (*fmt) {
-            case SignatureFormat::Pades:
-                // PAdES handles already-signed PDFs natively through the
-                // PDF incremental-update mechanism inside PAdESModule::sign,
-                // so it stays on this path.
-                break;
-            case SignatureFormat::Xades:
-            case SignatureFormat::Jades:
-            case SignatureFormat::AsicE:
-                return appendSigner(request, request.document, {}, key);
-            case SignatureFormat::Cades:
-                return cadesInputIsDetached();
-            }
-        }
+        // A document that already carries a signature in the requested
+        // format gains one more. PAdES adds it through a PDF incremental
+        // update inside PAdESModule::sign; XAdES, JAdES and ASiC-E add the
+        // new signer to the signatures the document carries, over the
+        // document they recover from it. A CMS SignedData does not carry the
+        // document it signs, so there is nothing to sign beside its signers:
+        // refuse it before any certificate is judged or Trusted List fetched.
+        const bool alreadySigned = alreadySignedIn(request).has_value();
+        if (alreadySigned && request.format == SignatureFormat::Cades)
+            return cadesInputIsDetached();
 
         if (auto failure = enforceSignerCertPolicy(key, request))
             return *failure;
 
-        // Wire trust config to TSA/revocation parameters
-        auto tsa = request.tsa;
-        tsa.crlEnabled = trustConfig.crlEnabled;
-        tsa.ocspEnabled = trustConfig.ocspEnabled;
+        auto tsa = timestampConfig(request);
 
         if (auto failure = completeLongTermChain(key, request.level))
             return *failure;
@@ -528,14 +371,20 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, SigningK
         }
         case SignatureFormat::Xades: {
             XAdESModule xades;
+            if (alreadySigned)
+                return xades.appendSigner(request.document, {}, request.fileName, key, request.level, tsa);
             return xades.sign(request.document, request.fileName, key, request.level, request.packaging, tsa);
         }
         case SignatureFormat::Jades: {
             JAdESModule jades;
+            if (alreadySigned)
+                return jades.appendSigner(request.document, {}, request.fileName, key, request.level, tsa);
             return jades.sign(request.document, request.fileName, key, request.level, request.packaging, tsa);
         }
         case SignatureFormat::AsicE: {
             ASiCModule asic;
+            if (alreadySigned)
+                return asic.appendSigner(request.document, {}, key, request.level, tsa);
             return asic.signWithCAdES(request.document, request.fileName, key, request.level, tsa);
         }
         }
@@ -544,60 +393,6 @@ SigningResult NativeSigningService::sign(const SigningRequest& request, SigningK
         return makeFailure(e.kind, e.what());
     } catch (const std::exception& e) {
         return makeFailure(SignFailureKind::EngineError, std::string("Native signing error: ") + e.what());
-    }
-}
-
-SigningResult NativeSigningService::appendSigner(const SigningRequest& request, std::span<const uint8_t> priorSignature,
-                                                 std::span<const uint8_t> originalDocument, SigningKey& key)
-{
-    try {
-        auto fmt = inferFormat(priorSignature);
-        if (!fmt)
-            return makeFailure(SignFailureKind::InvalidDocument,
-                               "appendSigner: cannot infer signature format from prior bytes");
-
-        if (auto failure = enforceSignerCertPolicy(key, request))
-            return *failure;
-
-        // Wire trust config to TSA/revocation parameters — the new signer
-        // inherits the host's CRL/OCSP posture, identical to sign().
-        auto tsa = request.tsa;
-        tsa.crlEnabled = trustConfig.crlEnabled;
-        tsa.ocspEnabled = trustConfig.ocspEnabled;
-
-        // Complete the new signer's chain from the Trusted List for long-term
-        // levels, identical to sign() — otherwise a B-LT counter-signature would
-        // embed a leaf-only chain. Fail closed when the issuing CA is absent.
-        if (auto failure = completeLongTermChain(key, request.level))
-            return *failure;
-
-        switch (*fmt) {
-        case SignatureFormat::Pades: {
-            PAdESModule pades;
-            return pades.appendSigner(priorSignature, originalDocument, key, request.level, tsa, request.visual);
-        }
-        case SignatureFormat::Cades: {
-            CAdESModule cades;
-            return cades.appendSigner(priorSignature, originalDocument, key, request.level, tsa);
-        }
-        case SignatureFormat::Xades: {
-            XAdESModule xades;
-            return xades.appendSigner(priorSignature, originalDocument, request.fileName, key, request.level, tsa);
-        }
-        case SignatureFormat::Jades: {
-            JAdESModule jades;
-            return jades.appendSigner(priorSignature, originalDocument, request.fileName, key, request.level, tsa);
-        }
-        case SignatureFormat::AsicE: {
-            ASiCModule asic;
-            return asic.appendSigner(priorSignature, originalDocument, key, request.level, tsa);
-        }
-        }
-        std::unreachable();
-    } catch (const SignFailureException& e) {
-        return makeFailure(e.kind, e.what());
-    } catch (const std::exception& e) {
-        return makeFailure(SignFailureKind::EngineError, std::string("Native appendSigner error: ") + e.what());
     }
 }
 

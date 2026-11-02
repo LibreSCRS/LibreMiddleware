@@ -9,6 +9,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -133,7 +134,28 @@ struct PinInfo
     // this PIN is protected/unblocked by — mirrors PrivateKeyInfo.authId).
     // Empty when the entry carries no authId.
     std::vector<uint8_t> authId;
+    // Whether a card that does not know pinReference may be asked for it
+    // with the local bit (0x80) cleared: only when that is a different
+    // reference no other PIN of the profile carries. Set by
+    // applyLocalBitFallbackRule; false for a PinInfo built any other way.
+    bool localBitFallback = false;
 };
+
+// Sets PinInfo::localBitFallback on every PIN of one profile: the reference
+// with the local bit cleared may stand in for a PIN's reference only when it
+// differs from it and is not another PIN's own reference -- asking for it
+// would otherwise present this PIN to that one.
+inline void applyLocalBitFallbackRule(std::vector<PinInfo>& pins)
+{
+    for (auto& pin : pins) {
+        const uint8_t alt = pin.pinReference & 0x7F;
+        pin.localBitFallback = alt != pin.pinReference;
+        for (const auto& other : pins) {
+            if (&other != &pin && other.pinReference == alt)
+                pin.localBitFallback = false;
+        }
+    }
+}
 
 struct ObjectDirectory
 {
@@ -164,6 +186,19 @@ struct PinResult
     bool success = false;
     int retriesLeft = -1;
     bool blocked = false;
+};
+
+/// Per-credential counters read from a card. Every field is absent unless
+/// the card exposed it. `uses*` is the credential's own usage budget
+/// (e.g. a PUK good for N unblocks); `unblocksLeft` is the remaining
+/// resets of the retry counter.
+struct CredentialCounters
+{
+    std::optional<int> retriesLeft;
+    std::optional<int> retriesMax;
+    std::optional<int> usesLeft;
+    std::optional<int> usesMax;
+    std::optional<int> unblocksLeft;
 };
 
 /// True when the card's refusal of a PIN leaves it blocked: 6983, or a wrong

@@ -3,6 +3,7 @@
 
 #include "pkcs15_parser.h"
 
+#include <LibreSCRS_internal/Hex.h>
 #include <ber.h>
 
 #include <algorithm>
@@ -258,14 +259,7 @@ ObjectDirectory parseODF(std::span<const uint8_t> data)
         return {reinterpret_cast<const char*>(bytes.data()), bytes.size()};
     }
 
-    static constexpr char kHex[] = "0123456789ABCDEF";
-    std::string out;
-    out.reserve(bytes.size() * 2);
-    for (const uint8_t b : bytes) {
-        out.push_back(kHex[b >> 4]);
-        out.push_back(kHex[b & 0x0F]);
-    }
-    return out;
+    return LibreSCRS::Internal::hexEncode(bytes);
 }
 
 TokenInfo parseTokenInfo(std::span<const uint8_t> data)

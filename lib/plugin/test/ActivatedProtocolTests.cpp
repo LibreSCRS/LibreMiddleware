@@ -20,36 +20,36 @@
 /// the accessor reads @c true. The eMRTD plugin uses this to distinguish a
 /// broker that supplies secrets on demand from a host that pre-deposits them.
 ///
-/// `makeDetachedCardSession` is the LM-internal test factory pulled in via the
-/// internal-build-guarded injection header; the @c LIBRESCRS_INTERNAL_BUILD
-/// define and the @c LibreSCRS_SmartCard_TestHelpers archive (which provides
-/// the factory definition) are wired in the matching CMakeLists.
+/// `Testing::makeDetachedCardSession` is the declared test factory from
+/// <LibreSCRS/SmartCard/testing/CardSessionTesting.h>; the
+/// @c LibreSCRS_SmartCardTesting archive that defines it is wired in the
+/// matching CMakeLists.
 
 #include <LibreSCRS/Auth/AuthRequirement.h>
 #include <LibreSCRS/Auth/CredentialProvider.h>
 #include <LibreSCRS/Auth/CredentialResult.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
-#include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
+#include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 
 #include <gtest/gtest.h>
 
 TEST(ActivatedProtocolTest, NoChannelYieldsNullopt)
 {
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("test-reader");
     ASSERT_NE(session, nullptr);
     EXPECT_FALSE(session->activatedProtocol().has_value());
 }
 
 TEST(HasCredentialProviderTest, FreshSessionReportsFalse)
 {
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("test-reader");
     ASSERT_NE(session, nullptr);
     EXPECT_FALSE(session->hasCredentialProvider());
 }
 
 TEST(HasCredentialProviderTest, ReportsTrueAfterProviderInstalled)
 {
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("test-reader");
     ASSERT_NE(session, nullptr);
     EXPECT_FALSE(session->hasCredentialProvider());
 

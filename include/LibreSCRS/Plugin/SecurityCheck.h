@@ -15,15 +15,14 @@
 /// value-aggregates with no internal synchronisation. Distinct instances are
 /// independent; concurrent reads of the same instance are race-free.
 /// #LibreSCRS::Plugin::SecurityStatus::computeOverall mutates the instance and is therefore
-/// single-threaded relative to that instance. The free `*ToString` /
-/// `*FromString` helpers are pure functions.
+/// single-threaded relative to that instance. The free `*ToString`
+/// helpers are pure functions.
 ///
 /// @since 4.0
 
 #include <LibreSCRS/Export.h>
 
 #include <cstdint>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -37,7 +36,7 @@ namespace LibreSCRS::Plugin {
 /// a type-checked vocabulary; invalid categories cannot be expressed.
 ///
 /// For wire/serialization contexts that need a stable string token, use
-/// `categoryToString` / `categoryFromString`.
+/// `categoryToString`.
 // MIRROR-OF: LibreAgent/client/qt/include/LibreSCRS/AgentClient/SecurityChecks.h
 // - this is the PRODUCER's side of one vocabulary, in a published plugin
 // surface a card plugin writes against; the reader that decodes the same
@@ -63,8 +62,8 @@ struct SecurityCheck
     ///
     /// PascalCase enumerators align with every other public enum in the SDK
     /// (`SignatureFormat::Pades`, `MonitorEvent::Kind::ReaderAdded`, etc.).
-    /// The serialization wire format preserved by `statusToString` /
-    /// `statusFromString` remains the historical UPPERCASE token form
+    /// The serialization wire format produced by `statusToString`
+    /// remains the historical UPPERCASE token form
     /// ("PASSED", "FAILED", "NOT_PERFORMED", "NOT_SUPPORTED", "SKIPPED").
     /// @note Append-only: new status values may be added in future minor
     ///       releases. Consumer @c switch statements must include a
@@ -130,8 +129,8 @@ struct SecurityStatus
 /// Returns one of: "PASSED", "FAILED", "NOT_PERFORMED", "NOT_SUPPORTED",
 /// "SKIPPED". An invalid enumerator value (e.g. a cast of a raw integer
 /// outside the declared range) falls through to "UNKNOWN" — a sentinel
-/// distinct from every recognised token so `statusFromString("UNKNOWN")`
-/// still returns @c std::nullopt.
+/// distinct from every recognised token, so a reader never decodes it as a
+/// real outcome.
 ///
 /// @note The wire format is historical UPPERCASE even though the enumerator
 ///       names are PascalCase — stability of the string form across the 4.0
@@ -157,49 +156,12 @@ struct SecurityStatus
     return "UNKNOWN";
 }
 
-/// @brief Parse a canonical status string.
-/// @param s One of "PASSED", "FAILED", "NOT_PERFORMED", "NOT_SUPPORTED",
-///          "SKIPPED".
-/// @return The matching @ref LibreSCRS::Plugin::SecurityCheck::Status on success; @c std::nullopt
-///         for unrecognized or empty input. Callers must decide what an
-///         unrecognized serialized status means in their context —
-///         silently collapsing unknown input to NotPerformed is the
-///         safest-looking wrong answer for a security-outcome type.
-///
-/// Fits API-POLICY §5.2 (runtime-error model): the string typically arrives
-/// from a wire/file format, so malformed input is an environmental failure
-/// rather than a programmer-error validation case.
-///
-/// @note Takes @c std::string_view for symmetry with #LibreSCRS::Plugin::categoryFromString
-///       and to enable compile-time evaluation. @c std::string and
-///       string-literal call sites convert implicitly without an
-///       intermediate allocation.
-// MIRROR-OF: LibreAgent/client/qt/src/SecurityChecks.cpp - the producer side
-// of the same decode, on the published plugin surface. A plugin may not link
-// a Qt client and a Qt client may not link the card stack, so the two decode
-// the same closed token set separately; a parity test in the client holds
-// the sets equal.
-[[nodiscard]] inline constexpr std::optional<SecurityCheck::Status> statusFromString(std::string_view s) noexcept
-{
-    if (s == "PASSED")
-        return SecurityCheck::Status::Passed;
-    if (s == "FAILED")
-        return SecurityCheck::Status::Failed;
-    if (s == "NOT_PERFORMED")
-        return SecurityCheck::Status::NotPerformed;
-    if (s == "NOT_SUPPORTED")
-        return SecurityCheck::Status::NotSupported;
-    if (s == "SKIPPED")
-        return SecurityCheck::Status::Skipped;
-    return std::nullopt;
-}
-
 /// @brief Canonical string form of a @c SecurityCategory for wire/serialization.
 ///
 /// Historical tokens: "data_integrity", "data_authenticity",
 /// "chip_genuineness", "other". An invalid enumerator value falls through
-/// to "unknown" — distinct from every recognised token so
-/// `categoryFromString` rejects it symmetrically.
+/// to "unknown" — distinct from every recognised token, so a reader
+/// rejects it.
 /// @note Returns a @c std::string_view backed by string-literal storage
 ///       (static duration). Zero-allocation. Callers that need an owning
 ///       @c std::string must construct one explicitly.
@@ -216,23 +178,6 @@ struct SecurityStatus
         return "other";
     }
     return "unknown";
-}
-
-/// @brief Parse a @c SecurityCategory wire token.
-/// @return The matching enumerator on success; @c std::nullopt for unknown input.
-// MIRROR-OF: LibreAgent/client/qt/src/SecurityChecks.cpp - same pair, same
-// reason as statusFromString above.
-[[nodiscard]] inline constexpr std::optional<SecurityCategory> categoryFromString(std::string_view s) noexcept
-{
-    if (s == "data_integrity")
-        return SecurityCategory::DataIntegrity;
-    if (s == "data_authenticity")
-        return SecurityCategory::Authenticity;
-    if (s == "chip_genuineness")
-        return SecurityCategory::Genuineness;
-    if (s == "other")
-        return SecurityCategory::Other;
-    return std::nullopt;
 }
 
 } // namespace LibreSCRS::Plugin

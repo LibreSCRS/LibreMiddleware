@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
+#include <crypto_utils.h>
 #include <secure_messaging.h>
 
 #include <set>
@@ -385,4 +386,62 @@ TEST(SecureMessagingTest, ProtectLargePayloadHandled)
         EXPECT_GT(wrapped.size(), bigCmd.size());
     };
     EXPECT_NO_THROW(runBig());
+}
+
+// --- Odd INS (READ BINARY B1 beyond offset 0x7FFF) ---
+//
+// ICAO 9303-11: an odd INS carries BER-TLV data, which goes in DO'85 without
+// the padding-content indicator, in the command and in the answer alike.
+
+TEST(SecureMessagingTest, OddInsCommandCarriesItsDataInDo85)
+{
+    SessionKeys keys;
+    keys.encKey = std::vector<uint8_t>(16, 0x01);
+    keys.macKey = std::vector<uint8_t>(16, 0x02);
+    keys.ssc = std::vector<uint8_t>(8, 0x00);
+    SecureMessaging sm(keys, SMAlgorithm::DES3);
+
+    // READ BINARY, offset 0x8000 in DO'54, Le = 256.
+    const std::vector<uint8_t> cmd = {0x00, 0xB1, 0x00, 0x00, 0x04, 0x54, 0x02, 0x80, 0x00, 0x00};
+    const auto wrapped = sm.protect(cmd);
+
+    ASSERT_GT(wrapped.size(), 7u);
+    EXPECT_EQ(wrapped[1], 0xB1);
+    EXPECT_EQ(wrapped[5], 0x85) << "odd INS: DO'85, not DO'87";
+    EXPECT_EQ(wrapped[6], 0x08) << "one 3DES block of cryptogram, no padding-content indicator";
+}
+
+TEST(SecureMessagingTest, UnprotectReadsAnAnswerInDo85)
+{
+    SessionKeys keys;
+    keys.encKey = std::vector<uint8_t>(16, 0x01);
+    keys.macKey = std::vector<uint8_t>(16, 0x02);
+    keys.ssc = std::vector<uint8_t>(8, 0x00);
+    SecureMessaging sm(keys, SMAlgorithm::DES3);
+
+    // The card side: DO'53 data, encrypted into DO'85, then DO'99 and the MAC.
+    const std::vector<uint8_t> plain = {0x53, 0x03, 0xAA, 0xBB, 0xCC};
+    const auto cryptogram = detail::des3Encrypt(keys.encKey, detail::pad(plain, 8));
+    std::vector<uint8_t> do85 = {0x85, static_cast<uint8_t>(cryptogram.size())};
+    do85.insert(do85.end(), cryptogram.begin(), cryptogram.end());
+    const std::vector<uint8_t> do99 = {0x99, 0x02, 0x90, 0x00};
+    std::vector<uint8_t> ssc = keys.ssc;
+    detail::incrementSSC(ssc);
+    std::vector<uint8_t> macInput = ssc;
+    macInput.insert(macInput.end(), do85.begin(), do85.end());
+    macInput.insert(macInput.end(), do99.begin(), do99.end());
+    auto mac = detail::retailMAC(keys.macKey, detail::pad(macInput, 8));
+    mac.resize(8);
+
+    std::vector<uint8_t> response = do85;
+    response.insert(response.end(), do99.begin(), do99.end());
+    response.push_back(0x8E);
+    response.push_back(0x08);
+    response.insert(response.end(), mac.begin(), mac.end());
+    response.push_back(0x90);
+    response.push_back(0x00);
+
+    const auto data = sm.unprotect(response);
+    ASSERT_TRUE(data.has_value());
+    EXPECT_EQ(*data, plain);
 }

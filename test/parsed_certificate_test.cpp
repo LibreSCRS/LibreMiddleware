@@ -72,7 +72,6 @@ TEST(DistinguishedName, ConvenienceAccessorsResolve)
     dn.components.push_back({ObjectIdentifier{"1.999.888"}, "Custom Value"});
     EXPECT_EQ(dn.commonName(), "Test CN");
     EXPECT_EQ(dn.organization(), "Test Org");
-    EXPECT_EQ(dn.locality(), "");
     EXPECT_EQ(dn.components.size(), 3u);
 }
 
@@ -131,7 +130,6 @@ TEST(ParsedCertificate, SignatureAlgorithmDescription)
     auto cert = ParsedCertificate::fromDer(readFile("cert/tls-cert.der"));
     ASSERT_TRUE(cert.has_value());
     EXPECT_FALSE(cert->signatureAlgorithmDescription().empty());
-    EXPECT_FALSE(cert->signatureValue().empty());
 }
 
 TEST(ParsedCertificate, DerBytesRoundTrip)
@@ -155,7 +153,6 @@ TEST(ParsedCertificate, PublicKeyInfoForRsa)
     auto pk = cert->publicKey();
     EXPECT_EQ(pk.algorithm, PublicKeyAlgorithm::RSA);
     EXPECT_GE(pk.bitLength, 2048);
-    EXPECT_TRUE(pk.algorithmDescription.starts_with("RSA"));
 }
 
 TEST(ParsedCertificate, PublicKeyInfoForEcdsa)
@@ -273,25 +270,6 @@ TEST(ParsedCertificate, ExtensionsEnumeratesAllIncludingUnknown)
     EXPECT_FALSE(exts.empty());
     bool hasUnknown = std::any_of(exts.begin(), exts.end(), [](const auto& e) { return e.oid.friendlyName().empty(); });
     EXPECT_TRUE(hasUnknown);
-}
-
-TEST(ParsedCertificate, FindExtensionByOid)
-{
-    auto cert = ParsedCertificate::fromDer(readFile("cert/tls-cert.der"));
-    ASSERT_TRUE(cert.has_value());
-    auto keyUsage = cert->findExtension(ObjectIdentifier{"2.5.29.15"});
-    ASSERT_TRUE(keyUsage.has_value());
-    EXPECT_EQ(keyUsage->oid.dottedDecimal, "2.5.29.15");
-    EXPECT_FALSE(keyUsage->value.empty());
-    EXPECT_TRUE(keyUsage->critical);
-}
-
-TEST(ParsedCertificate, FindExtensionMissingReturnsNullopt)
-{
-    auto cert = ParsedCertificate::fromDer(readFile("cert/rsa-cert.der"));
-    ASSERT_TRUE(cert.has_value());
-    auto missing = cert->findExtension(ObjectIdentifier{"1.3.6.1.4.1.99999.42.42"});
-    EXPECT_FALSE(missing.has_value());
 }
 
 TEST(ParsedCertificate, AbsentTypedExtensionReturnsNullopt)

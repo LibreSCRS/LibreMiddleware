@@ -59,7 +59,10 @@ public:
     /// @param cert           the signer's candidate: its certificate, the plugin's
     ///                       key handle (@c keyFID) and the card's PIN rule.
     /// @param pin            the signing PIN; copied, never empty.
-    /// @param candidateChain every certificate the candidates exposed (DER).
+    /// @param candidateChain every certificate the card exposed (DER), in any
+    ///                       order; the key keeps @p cert's certificate first
+    ///                       and then only the certificates that verify as
+    ///                       its issuers, so a sibling never rides along.
     /// @param keyId          the request's CKA_ID selector, empty when none; it
     ///                       must name @p cert's key.
     /// @param token          observed before each signature and by the plugin.

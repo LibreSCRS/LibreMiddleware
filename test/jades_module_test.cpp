@@ -3,8 +3,6 @@
 
 #include <gtest/gtest.h>
 
-#ifdef LIBRESIGN_HAS_NATIVE
-
 #include "native/jades_module.h"
 #include "signing_keys.h"
 #include "signing_test_support/mock_tsa_server.h"
@@ -240,6 +238,7 @@ TEST_F(JAdESModuleTest, AppendSignerAtBTAddsEtsiUToTheNewEntryOnly)
 
     TSAConfig tsa;
     tsa.url = tsaServer.url();
+    tsa.trust.anchors = {libresign::test::MockTsaServer::trustAnchor()};
     auto prior = signFirst(data, SignatureLevel::B_T, tsa);
     ASSERT_TRUE(prior.success) << prior.errorMessage;
 
@@ -289,6 +288,7 @@ TEST_F(JAdESModuleTest, AppendSignerAtLongTermRejectsUnterminatedChain)
 
     TSAConfig tsa;
     tsa.url = tsaServer.url();
+    tsa.trust.anchors = {libresign::test::MockTsaServer::trustAnchor()};
     auto prior = signFirst(data, SignatureLevel::B_B, {});
     ASSERT_TRUE(prior.success) << prior.errorMessage;
 
@@ -308,6 +308,7 @@ TEST_F(JAdESModuleTest, AppendSignerRejectsArchiveLevel)
 
     TSAConfig tsa;
     tsa.url = tsaServer.url();
+    tsa.trust.anchors = {libresign::test::MockTsaServer::trustAnchor()};
     auto prior = signFirst(data, SignatureLevel::B_B, {});
     ASSERT_TRUE(prior.success) << prior.errorMessage;
 
@@ -343,5 +344,3 @@ TEST(JAdESModuleStandalone, RejectsEmptyInput)
     ASSERT_FALSE(result.success);
     EXPECT_NE(result.errorMessage.find("empty"), std::string::npos);
 }
-
-#endif

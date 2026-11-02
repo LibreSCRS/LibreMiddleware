@@ -38,8 +38,8 @@ namespace LibreSCRS::SmartCard::detail {
 /// Forward-declared in the public @ref CardSession header so @c CardSession
 /// can befriend it without leaking the helper symbol or its parameter type
 /// into the public SDK include tree. The single static method @ref
-/// installForTesting has its body in the build-tree-only @c
-/// LibreSCRS_SmartCard_TestHelpers archive — production builds of
+/// installForTesting has its body in the static test archive @c
+/// LibreSCRS_SmartCardTesting — production builds of
 /// @c libLibreSCRS_SmartCard therefore never carry the symbol in their
 /// dynamic export set. Test executables that need this seam link the
 /// archive alongside the production target. The `LIBRESCRS_INTERNAL_BUILD`

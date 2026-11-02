@@ -20,6 +20,10 @@
 #include <thread>
 #include <vector>
 
+namespace LibreSCRS::SmartCard::detail {
+class MonitorFactory;
+} // namespace LibreSCRS::SmartCard::detail
+
 namespace LibreSCRS::SmartCard::Internal {
 
 using MonitorCallback = std::function<void(const MonitorEvent&)>;
@@ -41,6 +45,11 @@ public:
     bool isRunning() const;
 
 private:
+    // The test seams drive a MonitorService's dispatch by invoking the
+    // callbacks it registered here, exactly as the poll thread does; the
+    // dispatch functions themselves are hidden in the shared library.
+    friend class ::LibreSCRS::SmartCard::detail::MonitorFactory;
+
     struct Subscriber
     {
         MonitorCallback onEvent;

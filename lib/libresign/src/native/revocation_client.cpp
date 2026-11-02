@@ -192,8 +192,40 @@ std::vector<uint8_t> RevocationClient::fetchCrl(const std::string& url, X509* ce
     return derEncode(i2d_X509_CRL, crl.get());
 }
 
+bool RevocationClient::ocspResponseVerifies(OCSP_BASICRESP* basic, const std::vector<X509*>& chain,
+                                            bool anchorTerminated)
+{
+    if (basic == nullptr || chain.empty() || chain.back() == nullptr)
+        return false;
+    // Only the last chain element goes into the trust store. Earlier
+    // revisions added every intermediate as a trust anchor, which would
+    // accept an OCSP response signed by any intermediate -- a MITM with a
+    // compromised (or non-OCSPSigning) CA could forge "good" statuses.
+    // Intermediates are passed as additional chain-building material.
+    X509StorePtr trustStore(X509_STORE_new());
+    if (!trustStore)
+        return false;
+    X509_STORE_add_cert(trustStore.get(), chain.back());
+    // A Trusted-List anchor is trusted as it is: the list names a
+    // subordinate CA as often as a root, and without PARTIAL_CHAIN OpenSSL
+    // insists on reaching a self-signed certificate the store does not have.
+    if (anchorTerminated)
+        X509_STORE_set_flags(trustStore.get(), X509_V_FLAG_PARTIAL_CHAIN);
+
+    // Borrowed: the X509* pushed below come from `chain`, whose lifetime
+    // outlives this call, so only the container is freed.
+    X509StackBorrowedPtr extraCerts(sk_X509_new_null());
+    if (!extraCerts)
+        return false;
+    for (size_t i = 0; i + 1 < chain.size(); ++i) {
+        if (chain[i])
+            sk_X509_push(extraCerts.get(), chain[i]);
+    }
+    return OCSP_basic_verify(basic, extraCerts.get(), trustStore.get(), 0) == 1;
+}
+
 std::vector<uint8_t> RevocationClient::fetchOcsp(X509* cert, X509* issuer, const std::vector<X509*>& chain,
-                                                 const std::string& ocspUrl, int timeoutSeconds)
+                                                 const std::string& ocspUrl, int timeoutSeconds, bool anchorTerminated)
 {
     if (!cert || !issuer)
         return {};
@@ -254,32 +286,7 @@ std::vector<uint8_t> RevocationClient::fetchOcsp(X509* cert, X509* issuer, const
     if (!basic)
         return {};
 
-    // Only the root cert (last in chain; see collectForChain comment) goes
-    // into the trust store. Earlier revisions added every intermediate as a
-    // trust anchor, which would accept an OCSP response signed by any
-    // intermediate — a MITM with a compromised (or non-OCSPSigning) CA
-    // could forge "good" statuses. Intermediates are passed as additional
-    // chain-building material via the certs argument.
-    X509StorePtr trustStore(X509_STORE_new());
-    if (!trustStore)
-        return {};
-    if (!chain.empty() && chain.back() != nullptr)
-        X509_STORE_add_cert(trustStore.get(), chain.back());
-
-    // Borrowed: the X509* pushed below come from `chain`, whose lifetime
-    // outlives this call, so only the container is freed. The name says which
-    // of the two this is, which is the whole reason the two are named apart.
-    X509StackBorrowedPtr extraCerts(sk_X509_new_null());
-    if (!extraCerts)
-        return {};
-    // Include every non-root chain cert (and the signer itself, in case the
-    // responder re-uses it) as additional chain-building material.
-    for (size_t i = 0; i + 1 < chain.size(); ++i) {
-        if (chain[i])
-            sk_X509_push(extraCerts.get(), chain[i]);
-    }
-
-    if (OCSP_basic_verify(basic.get(), extraCerts.get(), trustStore.get(), 0) != 1)
+    if (!ocspResponseVerifies(basic.get(), chain, anchorTerminated))
         return {};
 
     // 6. Verify the response actually answers OUR question (matches certId).
@@ -364,7 +371,7 @@ RevocationData RevocationClient::collectForChain(const std::vector<X509*>& chain
         if (ocspEnabled) {
             auto ocspUrls = extractOcspUrls(cert);
             for (const auto& url : ocspUrls) {
-                auto resp = fetchOcsp(cert, issuer, chain, url);
+                auto resp = fetchOcsp(cert, issuer, chain, url, 10, termination == ChainTermination::AnchorTerminated);
                 if (!resp.empty()) {
                     data.ocspResponses.push_back(std::move(resp));
                     gotRevocation = true;

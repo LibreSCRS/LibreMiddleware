@@ -11,6 +11,7 @@
 #include <LibreSCRS/Signing/VisualSignatureParams.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/MonitorService.h>
+#include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -93,26 +94,10 @@ TEST(SigningEnumsTest, PackagingModeAllCasesCovered)
 TEST(SigningRequestBuilderTest, BuildsMinimalValid)
 {
     SigningRequest::Builder b;
-    b.inputFile("/tmp/in.pdf").outputFile("/tmp/out.pdf").format(SignatureFormat::Pades).level(SignatureLevel::B_LT);
-    auto req = std::move(b).build();
-    EXPECT_EQ(req.inputFile(), std::filesystem::path("/tmp/in.pdf"));
-    EXPECT_EQ(req.outputFile(), std::filesystem::path("/tmp/out.pdf"));
+    b.format(SignatureFormat::Pades).level(SignatureLevel::B_LT);
+    auto req = std::move(b).buildForBufferSign();
     EXPECT_EQ(req.format(), SignatureFormat::Pades);
     EXPECT_EQ(req.level(), SignatureLevel::B_LT);
-}
-
-TEST(SigningRequestBuilderTest, ThrowsOnMissingInputFile)
-{
-    SigningRequest::Builder b;
-    b.outputFile("/tmp/out.pdf");
-    EXPECT_THROW((void)std::move(b).build(), std::invalid_argument);
-}
-
-TEST(SigningRequestBuilderTest, ThrowsOnMissingOutputFile)
-{
-    SigningRequest::Builder b;
-    b.inputFile("/tmp/in.pdf");
-    EXPECT_THROW((void)std::move(b).build(), std::invalid_argument);
 }
 
 TEST(VisualSignatureParamsTest, BuilderProducesDefaults)
@@ -198,12 +183,10 @@ TEST(SigningRequestTest, VisualParamsSurvivesSourceMoveAssign)
     auto visual = std::move(vb).build();
 
     SigningRequest::Builder rb;
-    rb.inputFile("/tmp/librescrs-req-move.pdf");
-    rb.outputFile("/tmp/librescrs-req-move-out.pdf");
     rb.format(SignatureFormat::Pades);
     rb.level(SignatureLevel::B_B);
     rb.visualParams(std::move(visual));
-    auto req = std::move(rb).build();
+    auto req = std::move(rb).buildForBufferSign();
 
     // Observer pulls visualParams() — independently-owned optional copy.
     auto observed = req.visualParams();
@@ -212,12 +195,10 @@ TEST(SigningRequestTest, VisualParamsSurvivesSourceMoveAssign)
     // Replace `req` wholesale via move-assign — would have invalidated a
     // raw `const VisualSignatureParams*` under the old API.
     SigningRequest::Builder rb2;
-    rb2.inputFile("/tmp/librescrs-req-move-2.pdf");
-    rb2.outputFile("/tmp/librescrs-req-move-out-2.pdf");
     rb2.format(SignatureFormat::Pades);
     rb2.level(SignatureLevel::B_B);
     // No visualParams on the replacement — exercises the hardest case.
-    req = std::move(rb2).build();
+    req = std::move(rb2).buildForBufferSign();
 
     // `observed` is independent — still carries the original fields.
     EXPECT_EQ(observed->pageIndex(), 1);
@@ -236,11 +217,9 @@ TEST(SigningRequestBuilderTest, ThrowsOnVisualParamsWithNonPades)
     auto visual = std::move(vb).build();
 
     SigningRequest::Builder rb;
-    rb.inputFile("/tmp/in.xml");
-    rb.outputFile("/tmp/out.xml");
     rb.format(SignatureFormat::Xades);
     rb.visualParams(std::move(visual));
-    EXPECT_THROW((void)std::move(rb).build(), std::invalid_argument);
+    EXPECT_THROW((void)std::move(rb).buildForBufferSign(), std::invalid_argument);
 }
 
 #include <LibreSCRS/Trust/TrustConfig.h>
@@ -250,36 +229,14 @@ TEST(SigningRequestBuilderTest, ThrowsOnVisualParamsWithNonPades)
 TEST(TrustConfigTest, DefaultConstructs)
 {
     LibreSCRS::Trust::TrustConfig cfg;
-    EXPECT_FALSE(cfg.trustedListFile.has_value());
     EXPECT_TRUE(cfg.trustedListSources.empty());
     EXPECT_FALSE(cfg.cacheDirectory.has_value());
-    EXPECT_TRUE(cfg.includeSystemTrustStore);
 }
 
 TEST(TsaProviderTest, StaticTsaReturnsConfiguredUrl)
 {
     auto provider = staticTsa("http://timestamp.digicert.com");
-    TsaContext ctx{SignatureFormat::Pades, SignatureLevel::B_T, {}};
-    auto req = provider(ctx);
-    EXPECT_EQ(req.url, "http://timestamp.digicert.com");
-    EXPECT_FALSE(req.credentials.basicAuth.has_value());
-    EXPECT_FALSE(req.credentials.bearerToken.has_value());
-}
-
-TEST(TsaProviderTest, CustomProviderCanReturnCredentials)
-{
-    TsaProvider provider = [](const TsaContext& ctx) {
-        TsaRequest req;
-        req.url = "https://tsa.enterprise.example/tsa";
-        req.credentials.bearerToken =
-            LibreSCRS::Secure::String("token-for-" + std::to_string(static_cast<int>(ctx.format)));
-        return req;
-    };
-    TsaContext ctx{SignatureFormat::Pades, SignatureLevel::B_LT, {}};
-    auto req = provider(ctx);
-    EXPECT_EQ(req.url, "https://tsa.enterprise.example/tsa");
-    ASSERT_TRUE(req.credentials.bearerToken.has_value());
-    EXPECT_NE(req.credentials.bearerToken->view().find("token-for-"), std::string_view::npos);
+    EXPECT_EQ(provider.url, "http://timestamp.digicert.com");
 }
 
 #include <LibreSCRS/Signing/SigningResult.h>
@@ -296,16 +253,15 @@ TEST(SigningResultTest, NotDefaultConstructible)
 TEST(SigningResultTest, FactoriesSetStatus)
 {
     using S = LibreSCRS::Signing::SigningResult::Status;
-    auto genericLt = []() { return LibreSCRS::LocalizedText{"x", "x", {}}; };
-    EXPECT_EQ(LibreSCRS::Signing::SigningResult::ok("/tmp/out.pdf").status, S::Ok);
+    auto genericLt = []() { return LibreSCRS::LocalizedText{"x", "x"}; };
+    EXPECT_EQ(LibreSCRS::Signing::SigningResult::okWithBytes({0x25}).status, S::Ok);
     EXPECT_EQ(LibreSCRS::Signing::SigningResult::userCancelled().status, S::UserCancelled);
     EXPECT_EQ(LibreSCRS::Signing::SigningResult::trustStoreUnavailableDiagnosticOnly(std::string{"x"}).status,
               S::TrustStoreUnavailable);
     EXPECT_EQ(LibreSCRS::Signing::SigningResult::signingEngineError(genericLt()).status, S::SigningEngineError);
     EXPECT_EQ(LibreSCRS::Signing::SigningResult::cardBlocked(genericLt()).status, S::CardBlocked);
     EXPECT_EQ(LibreSCRS::Signing::SigningResult::pinVerificationFailed(genericLt()).status, S::PinVerificationFailed);
-    EXPECT_EQ(LibreSCRS::Signing::SigningResult::invalidRequestDiagnosticOnly(std::string{"bad"}).status,
-              S::InvalidRequest);
+    EXPECT_EQ(LibreSCRS::Signing::SigningResult::invalidRequest(genericLt()).status, S::InvalidRequest);
     EXPECT_EQ(LibreSCRS::Signing::SigningResult::tsaUnreachable(genericLt()).status, S::TsaUnreachable);
 }
 
@@ -409,27 +365,24 @@ TEST(SigningServiceClassifierTest, MapsTheKeysVerdictToItsStatus)
 // been detected; this suite guards against that path drifting again.
 // ---------------------------------------------------------------------------
 
-TEST(SigningServiceBridgeTranslationTest, ForwardsContactInfoForInvisibleSignature)
+TEST(SigningServiceBridgeTranslationTest, ForwardsReasonAndLocationForInvisibleSignature)
 {
-    // Regression guard for the pre-fix behaviour where reason / location /
-    // contactInfo were only forwarded inside `if (visualParams() != nullptr)`.
-    // An invisible signature (no visualParams configured) would therefore have
-    // silently dropped all three PDF signature-dictionary fields even though
+    // Regression guard for the pre-fix behaviour where reason / location
+    // were only forwarded inside `if (visualParams() != nullptr)`. An
+    // invisible signature (no visualParams configured) would therefore have
+    // silently dropped both PDF signature-dictionary fields even though
     // ISO 32000-1:2008 §12.8.1 defines them as independent of visual
-    // appearance. pades_module.cpp emits /Reason, /Location, /ContactInfo
+    // appearance. pades_module.cpp emits /Reason and /Location
     // unconditionally on visual.enabled, so the bridge must populate them the
     // same way.
     LibreSCRS::Signing::SigningRequest::Builder b;
-    b.inputFile("/tmp/librescrs-bridge-invisible.pdf");
-    b.outputFile("/tmp/librescrs-bridge-invisible-out.pdf");
     b.format(LibreSCRS::Signing::SignatureFormat::Pades);
     b.level(LibreSCRS::Signing::SignatureLevel::B_B);
     b.reason("Approval");
     b.location("Belgrade");
-    b.contactInfo("signer@example.com");
     // Deliberately NO visualParams(...) — this is the invisible-signature
     // path that exercised the I2 bug.
-    auto request = std::move(b).build();
+    auto request = std::move(b).buildForBufferSign();
     ASSERT_FALSE(request.visualParams().has_value());
 
     libresign::SigningRequest out;
@@ -438,13 +391,12 @@ TEST(SigningServiceBridgeTranslationTest, ForwardsContactInfoForInvisibleSignatu
     EXPECT_FALSE(out.visual.enabled) << "Invisible signature must not enable visual widget";
     EXPECT_EQ(out.visual.reason, "Approval");
     EXPECT_EQ(out.visual.location, "Belgrade");
-    EXPECT_EQ(out.visual.contactInfo, "signer@example.com");
 }
 
-TEST(SigningServiceBridgeTranslationTest, ForwardsContactInfoForVisibleSignature)
+TEST(SigningServiceBridgeTranslationTest, ForwardsReasonAndLocationForVisibleSignature)
 {
-    // Companion path: with visualParams configured, reason / location /
-    // contactInfo still flow through AND the appearance rectangle is honoured.
+    // Companion path: with visualParams configured, reason / location still
+    // flow through AND the appearance rectangle is honoured.
     LibreSCRS::Signing::VisualSignatureParams::Builder vb;
     vb.pageIndex(2);
     vb.rect(Rect{10, 20, 300, 80});
@@ -452,15 +404,12 @@ TEST(SigningServiceBridgeTranslationTest, ForwardsContactInfoForVisibleSignature
     auto visual = std::move(vb).build();
 
     LibreSCRS::Signing::SigningRequest::Builder b;
-    b.inputFile("/tmp/librescrs-bridge-visible.pdf");
-    b.outputFile("/tmp/librescrs-bridge-visible-out.pdf");
     b.format(LibreSCRS::Signing::SignatureFormat::Pades);
     b.level(LibreSCRS::Signing::SignatureLevel::B_B);
     b.reason("Approval");
     b.location("Belgrade");
-    b.contactInfo("signer@example.com");
     b.visualParams(std::move(visual));
-    auto request = std::move(b).build();
+    auto request = std::move(b).buildForBufferSign();
     ASSERT_TRUE(request.visualParams().has_value());
 
     libresign::SigningRequest out;
@@ -477,18 +426,16 @@ TEST(SigningServiceBridgeTranslationTest, ForwardsContactInfoForVisibleSignature
     EXPECT_EQ(out.visual.text, "Signed by {signerCN} on {date}");
     EXPECT_EQ(out.visual.reason, "Approval");
     EXPECT_EQ(out.visual.location, "Belgrade");
-    EXPECT_EQ(out.visual.contactInfo, "signer@example.com");
 }
 
 TEST(SigningServiceBridgeTranslationTest, MapsFormatLevelPackagingCorrectly)
 {
     LibreSCRS::Signing::SigningRequest::Builder b;
-    b.inputFile("/tmp/in.xml");
-    b.outputFile("/tmp/out.xml");
+    b.documentName("in.xml");
     b.format(LibreSCRS::Signing::SignatureFormat::Xades);
     b.level(LibreSCRS::Signing::SignatureLevel::B_LTA);
     b.packaging(LibreSCRS::Signing::PackagingMode::Detached);
-    auto request = std::move(b).build();
+    auto request = std::move(b).buildForBufferSign();
 
     libresign::SigningRequest out;
     LibreSCRS::Signing::detail::translatePublicRequestToLibresign(request, out);
@@ -506,10 +453,8 @@ TEST(SigningServiceBridgeTranslationTest, LeavesDocumentAndTsaUntouched)
     // this no-aliasing invariant when they std::move the loaded document into
     // out.document *after* the helper runs.
     LibreSCRS::Signing::SigningRequest::Builder b;
-    b.inputFile("/tmp/in.pdf");
-    b.outputFile("/tmp/out.pdf");
     b.format(LibreSCRS::Signing::SignatureFormat::Pades);
-    auto request = std::move(b).build();
+    auto request = std::move(b).buildForBufferSign();
 
     libresign::SigningRequest out;
     out.document = {0xDE, 0xAD, 0xBE, 0xEF};
@@ -537,12 +482,6 @@ TEST(SigningServiceTest, ConstructorAcceptsTrustAndTsa)
     ASSERT_NE(svc, nullptr);
 }
 
-TEST(TsaContextTest, SigningTimeDefaultIsNullopt)
-{
-    TsaContext ctx;
-    EXPECT_FALSE(ctx.signingTime.has_value());
-}
-
 TEST(TrustConfigTest, AcceptsUrlSources)
 {
     LibreSCRS::Trust::TrustConfig cfg;
@@ -559,49 +498,28 @@ TEST(TrustConfigTest, AcceptsUrlSources)
     EXPECT_TRUE(cfg.cacheDirectory.has_value());
 }
 
-TEST(SigningRequestBuilderTest, CertificateLabelRoundTrips)
-{
-    SigningRequest::Builder b;
-    b.inputFile("/tmp/in.pdf")
-        .outputFile("/tmp/out.pdf")
-        .format(SignatureFormat::Pades)
-        .certificateLabel("My Signing Cert");
-    auto req = std::move(b).build();
-    EXPECT_EQ(req.certificateLabel(), "My Signing Cert");
-}
-
 TEST(SigningRequestBuilderTest, AllowExpiredCertDefaultsFalse)
 {
     SigningRequest::Builder b;
-    b.inputFile("/tmp/in.pdf").outputFile("/tmp/out.pdf").format(SignatureFormat::Pades);
-    auto req = std::move(b).build();
+    b.format(SignatureFormat::Pades);
+    auto req = std::move(b).buildForBufferSign();
     EXPECT_FALSE(req.allowExpiredCert());
 }
 
 TEST(SigningRequestBuilderTest, AllowExpiredCertRoundTrips)
 {
     SigningRequest::Builder b;
-    b.inputFile("/tmp/in.pdf").outputFile("/tmp/out.pdf").format(SignatureFormat::Pades).allowExpiredCert(true);
-    auto req = std::move(b).build();
+    b.format(SignatureFormat::Pades).allowExpiredCert(true);
+    auto req = std::move(b).buildForBufferSign();
     EXPECT_TRUE(req.allowExpiredCert());
 }
 
 TEST(SigningRequestBuilderTest, DocumentNameDefaultsEmpty)
 {
-    // Default is empty on BOTH build paths — the bridge then derives the
-    // engine-visible name from inputFile() exactly as it did before 5.0.
-    {
-        SigningRequest::Builder b;
-        b.format(SignatureFormat::AsicE);
-        auto req = std::move(b).buildForBufferSign();
-        EXPECT_TRUE(req.documentName().empty());
-    }
-    {
-        SigningRequest::Builder b;
-        b.inputFile("/tmp/in.pdf").outputFile("/tmp/out.pdf").format(SignatureFormat::Pades);
-        auto req = std::move(b).build();
-        EXPECT_TRUE(req.documentName().empty());
-    }
+    SigningRequest::Builder b;
+    b.format(SignatureFormat::AsicE);
+    auto req = std::move(b).buildForBufferSign();
+    EXPECT_TRUE(req.documentName().empty());
 }
 
 TEST(SigningRequestBuilderTest, DocumentNameRoundTripsOnBufferSignPath)
@@ -612,18 +530,13 @@ TEST(SigningRequestBuilderTest, DocumentNameRoundTripsOnBufferSignPath)
     EXPECT_EQ(req.documentName(), "report.docx");
 }
 
-TEST(SigningRequestBuilderTest, DocumentNameIsOptionalInFileMode)
+TEST(SigningRequestBuilderTest, DocumentNameKeepsTheStringItWasGiven)
 {
-    // documentName adds NO required-field or cross-field constraint: build()
-    // accepts it and accepts its absence. The accessor round-trips the raw
-    // string the caller supplied; the path-component strip happens at
-    // translation time, not in the setter.
+    // The accessor round-trips the raw string the caller supplied; the
+    // path-component strip happens at translation time, not in the setter.
     SigningRequest::Builder b;
-    b.inputFile("/tmp/in.pdf")
-        .outputFile("/tmp/out.pdf")
-        .format(SignatureFormat::Pades)
-        .documentName("a/b/override.pdf");
-    auto req = std::move(b).build();
+    b.format(SignatureFormat::Pades).documentName("a/b/override.pdf");
+    auto req = std::move(b).buildForBufferSign();
     EXPECT_EQ(req.documentName(), "a/b/override.pdf");
 }
 
@@ -632,10 +545,8 @@ TEST(SigningServiceBridgeTranslationTest, ForwardsAllowExpiredCert)
     // Default request: bridge must produce allowExpiredCertificate=false.
     {
         LibreSCRS::Signing::SigningRequest::Builder b;
-        b.inputFile("/tmp/in.pdf");
-        b.outputFile("/tmp/out.pdf");
         b.format(LibreSCRS::Signing::SignatureFormat::Pades);
-        auto request = std::move(b).build();
+        auto request = std::move(b).buildForBufferSign();
 
         libresign::SigningRequest out;
         LibreSCRS::Signing::detail::translatePublicRequestToLibresign(request, out);
@@ -644,11 +555,9 @@ TEST(SigningServiceBridgeTranslationTest, ForwardsAllowExpiredCert)
     // Opt-in: bridge must propagate the flag.
     {
         LibreSCRS::Signing::SigningRequest::Builder b;
-        b.inputFile("/tmp/in.pdf");
-        b.outputFile("/tmp/out.pdf");
         b.format(LibreSCRS::Signing::SignatureFormat::Pades);
         b.allowExpiredCert(true);
-        auto request = std::move(b).build();
+        auto request = std::move(b).buildForBufferSign();
 
         libresign::SigningRequest out;
         LibreSCRS::Signing::detail::translatePublicRequestToLibresign(request, out);
@@ -658,9 +567,8 @@ TEST(SigningServiceBridgeTranslationTest, ForwardsAllowExpiredCert)
 
 TEST(SigningServiceBridgeTranslationTest, DocumentNameNamesTheInMemoryDocument)
 {
-    // Buffer-sign requests carry no inputFile, so the pre-5.0 bridge handed the
-    // engine an EMPTY fileName and ASiC-E container creation failed ("Invalid
-    // filename for ASiC entry"). documentName is the buffer path's name source.
+    // documentName is the only name the engine gets for the in-memory
+    // document: it names the ASiC-E container entry.
     LibreSCRS::Signing::SigningRequest::Builder b;
     b.format(LibreSCRS::Signing::SignatureFormat::AsicE).documentName("report.docx");
     auto request = std::move(b).buildForBufferSign();
@@ -676,8 +584,8 @@ TEST(SigningServiceBridgeTranslationTest, DocumentNameStripsPathComponents)
     // Only the final path component reaches the engine. A caller cannot inject
     // directory separators (or a "../" traversal) into an ASiC container entry
     // name or a XAdES/JAdES detached reference — the strip is what makes the
-    // knob foolproof, and it happens in the bridge so BOTH sign() overloads and
-    // appendSigner() get it for free.
+    // knob foolproof, and it happens in the bridge so every signature gets it
+    // for free.
     auto engineFileNameFor = [](std::string name) {
         LibreSCRS::Signing::SigningRequest::Builder b;
         b.format(LibreSCRS::Signing::SignatureFormat::AsicE).documentName(std::move(name));
@@ -697,16 +605,15 @@ TEST(SigningServiceBridgeTranslationTest, DegenerateDocumentNameIsTreatedAsUnset
     // Post-strip degenerate finals are NOT usable entry names: "a/b/" strips to
     // nothing, while "." and ".." survive the strip verbatim — and a "." or
     // ".." ZIP entry name is exactly the class the strip exists to prevent. All
-    // are treated as absent, so the request falls back to the inputFile
-    // derivation. Buffer mode has no inputFile, so the fallback yields the
-    // honest nameless failure rather than a poisoned container entry.
+    // are treated as absent, which yields the honest nameless failure rather
+    // than a poisoned container entry.
     auto engineFileNameFor = [](std::string name) {
         LibreSCRS::Signing::SigningRequest::Builder b;
         b.format(LibreSCRS::Signing::SignatureFormat::AsicE).documentName(std::move(name));
         auto request = std::move(b).buildForBufferSign();
         libresign::SigningRequest out;
         // Sentinel proves the bridge OVERWRITES fileName rather than leaving a
-        // stale value behind on the fallback path.
+        // stale value behind.
         out.fileName = "sentinel";
         LibreSCRS::Signing::detail::translatePublicRequestToLibresign(request, out);
         return out.fileName;
@@ -719,69 +626,9 @@ TEST(SigningServiceBridgeTranslationTest, DegenerateDocumentNameIsTreatedAsUnset
     EXPECT_EQ(engineFileNameFor("a/b/."), "");
 }
 
-TEST(SigningServiceBridgeTranslationTest, DegenerateDocumentNameFallsBackToInputFileInFileMode)
-{
-    // Same three degenerate finals in file mode: they fall back to the
-    // inputFile-derived name, exactly as an unset documentName does.
-    auto engineFileNameFor = [](std::string name) {
-        LibreSCRS::Signing::SigningRequest::Builder b;
-        b.inputFile("/tmp/dir/contract.pdf");
-        b.outputFile("/tmp/dir/out.asice");
-        b.format(LibreSCRS::Signing::SignatureFormat::AsicE);
-        b.documentName(std::move(name));
-        auto request = std::move(b).build();
-        libresign::SigningRequest out;
-        LibreSCRS::Signing::detail::translatePublicRequestToLibresign(request, out);
-        return out.fileName;
-    };
-
-    EXPECT_EQ(engineFileNameFor("a/b/"), "contract.pdf");
-    EXPECT_EQ(engineFileNameFor("."), "contract.pdf");
-    EXPECT_EQ(engineFileNameFor(".."), "contract.pdf");
-    // A non-degenerate name still overrides — the fallback is narrow.
-    EXPECT_EQ(engineFileNameFor("a/b/Ugovor.docx"), "Ugovor.docx");
-}
-
-TEST(SigningServiceBridgeTranslationTest, EmptyDocumentNameFallsBackToInputFile)
-{
-    // The 4.0 behaviour is preserved verbatim when documentName is unset.
-    LibreSCRS::Signing::SigningRequest::Builder b;
-    b.inputFile("/tmp/dir/in.xml");
-    b.outputFile("/tmp/dir/out.xml");
-    b.format(LibreSCRS::Signing::SignatureFormat::Xades);
-    auto request = std::move(b).build();
-    ASSERT_TRUE(request.documentName().empty());
-
-    libresign::SigningRequest out;
-    LibreSCRS::Signing::detail::translatePublicRequestToLibresign(request, out);
-
-    EXPECT_EQ(out.fileName, "in.xml");
-}
-
-TEST(SigningServiceBridgeTranslationTest, DocumentNameOverridesInputFileDerivedName)
-{
-    // File mode: a non-empty documentName intentionally wins over the
-    // inputFile-derived name, so a host can sign /tmp/scratch-1234.tmp while
-    // the container entry carries the name the user actually sees.
-    LibreSCRS::Signing::SigningRequest::Builder b;
-    b.inputFile("/tmp/scratch-1234.tmp");
-    b.outputFile("/tmp/out.asice");
-    b.format(LibreSCRS::Signing::SignatureFormat::AsicE);
-    b.documentName("Ugovor.docx");
-    auto request = std::move(b).build();
-
-    libresign::SigningRequest out;
-    LibreSCRS::Signing::detail::translatePublicRequestToLibresign(request, out);
-
-    EXPECT_EQ(out.fileName, "Ugovor.docx");
-}
-
 // A stub CardPlugin that advertises PKI but whose sign() is never reached —
 // we use it to satisfy the SigningService::sign signature. The bridge must
 // resolve the signing path through libresign, not by calling cardPlugin.sign().
-// readCounters is overridden to return {} (nullopt retriesLeft) so the bridge
-// never dereferences the connection reference for tests that exercise
-// InvalidRequest / UserCancelled paths.
 namespace {
 class StubPkiPlugin : public LibreSCRS::TestSupport::SigningStubPlugin
 {
@@ -791,154 +638,13 @@ public:
                             LibreSCRS::Plugin::CardCapabilities::PinManagement)
     {}
 };
-
-// Try to open a live CardSession for tests that must pass a real session.
-// Returns nullptr when no reader/card is present; callers must GTEST_SKIP in
-// that case.
-std::shared_ptr<LibreSCRS::SmartCard::CardSession> tryOpenSession()
-{
-    LibreSCRS::SmartCard::MonitorService mon;
-    auto readersOpt = mon.listReaders();
-    if (!readersOpt.has_value() || readersOpt->empty())
-        return nullptr;
-    auto opened = LibreSCRS::SmartCard::CardSession::open(readersOpt->front());
-    if (!opened.has_value())
-        return nullptr;
-    return std::make_shared<LibreSCRS::SmartCard::CardSession>(std::move(*opened));
-}
-
-LibreSCRS::Signing::SigningRequest makeBuiltRequest(const std::filesystem::path& in, const std::filesystem::path& out)
-{
-    LibreSCRS::Signing::SigningRequest::Builder b;
-    b.inputFile(in)
-        .outputFile(out)
-        .format(LibreSCRS::Signing::SignatureFormat::Pades)
-        .level(LibreSCRS::Signing::SignatureLevel::B_B)
-        .packaging(LibreSCRS::Signing::PackagingMode::Enveloped);
-    return std::move(b).build();
-}
 } // namespace
 
-TEST(SigningServiceBridgeTest, ReturnsInvalidRequestWhenInputMissing)
-{
-    auto session = tryOpenSession();
-    if (!session) {
-        GTEST_SKIP() << "No PC/SC reader available for opening a CardSession";
-    }
-
-    LibreSCRS::Trust::TrustConfig trust;
-    // The InvalidRequest path short-circuits before libresign reads the trust
-    // store, so a minimal TL source is sufficient to satisfy the
-    // trust-availability precondition in sign().
-    trust.trustedListSources.push_back({"https://www.mit.gov.rs/TrustedList/TSL-RS.xml", false, false});
-    auto trustResult = LibreSCRS::Trust::TrustStoreService::create(std::move(trust));
-    ASSERT_TRUE(trustResult.has_value());
-    auto svc = std::make_shared<LibreSCRS::Signing::SigningService>(*trustResult, LibreSCRS::Signing::TsaProvider{});
-
-    auto request = makeBuiltRequest("/does/not/exist/input.pdf", "/tmp/out.pdf");
-
-    auto provider = [](const LibreSCRS::Auth::AuthRequirement&) {
-        std::vector<LibreSCRS::Auth::CredentialEntry> values;
-        values.emplace_back("pin", LibreSCRS::Secure::String{"0000"});
-        return LibreSCRS::Auth::CredentialResult::ok(std::move(values));
-    };
-
-    auto plugin = std::make_shared<StubPkiPlugin>();
-    auto result = svc->sign(request, provider, plugin, session);
-
-    EXPECT_EQ(result.status, LibreSCRS::Signing::SigningResult::Status::InvalidRequest);
-    EXPECT_FALSE(result.userMessage.key.empty());
-}
-
-TEST(SigningServiceBridgeTest, ReturnsUserCancelledWhenProviderCancels)
-{
-    auto session = tryOpenSession();
-    if (!session) {
-        GTEST_SKIP() << "No PC/SC reader available for opening a CardSession";
-    }
-
-    LibreSCRS::Trust::TrustConfig trust;
-    // The UserCancelled path short-circuits before libresign reads the trust
-    // store, so a minimal TL source is sufficient to satisfy the
-    // trust-availability precondition in sign().
-    trust.trustedListSources.push_back({"https://www.mit.gov.rs/TrustedList/TSL-RS.xml", false, false});
-    auto trustResult = LibreSCRS::Trust::TrustStoreService::create(std::move(trust));
-    ASSERT_TRUE(trustResult.has_value());
-    auto svc = std::make_shared<LibreSCRS::Signing::SigningService>(*trustResult, LibreSCRS::Signing::TsaProvider{});
-
-    // Create a real tiny input file so the input-file check passes. A %PDF-
-    // header clears the fail-fast document pre-check (makeBuiltRequest signs as
-    // PAdES) so this test still exercises the provider-cancel path rather than
-    // the InvalidDocument reject path.
-    auto tmpIn = std::filesystem::temp_directory_path() / "librescrs-bridge-input.pdf";
-    {
-        std::ofstream f(tmpIn);
-        f << "%PDF-1.7\n";
-    }
-    auto request = makeBuiltRequest(tmpIn, tmpIn.parent_path() / "out.asice");
-
-    auto cancellingProvider = [](const LibreSCRS::Auth::AuthRequirement&) {
-        return LibreSCRS::Auth::CredentialResult::cancelled();
-    };
-
-    auto plugin = std::make_shared<StubPkiPlugin>();
-    auto result = svc->sign(request, cancellingProvider, plugin, session);
-
-    EXPECT_EQ(result.status, LibreSCRS::Signing::SigningResult::Status::UserCancelled);
-}
-
-// SigningService.h documents that B-T / B-LT / B-LTA
-// signatures require a configured TSA. With pure-DI ctor + nullable
-// TsaProvider, sign() must surface TsaUnreachable up front rather than letting
-// libresign emit a generic SigningEngineError.
-TEST(SigningServiceBridgeTest, TsaUnreachableWhenNonBBLevelAndEmptyTsa)
-{
-    auto session = tryOpenSession();
-    if (!session) {
-        GTEST_SKIP() << "No PC/SC reader available for opening a CardSession";
-    }
-
-    LibreSCRS::Trust::TrustConfig trust;
-    trust.trustedListSources.push_back({"https://www.mit.gov.rs/TrustedList/TSL-RS.xml", false, false});
-    auto trustResult = LibreSCRS::Trust::TrustStoreService::create(std::move(trust));
-    ASSERT_TRUE(trustResult.has_value());
-    auto svc = std::make_shared<LibreSCRS::Signing::SigningService>(*trustResult, LibreSCRS::Signing::TsaProvider{});
-
-    // Create a real tiny input file so the InvalidRequest input-file guard passes.
-    auto tmpIn = std::filesystem::temp_directory_path() / "librescrs-tsa-unreachable-input.pdf";
-    {
-        std::ofstream f(tmpIn);
-        f << "dummy";
-    }
-    LibreSCRS::Signing::SigningRequest::Builder rb;
-    rb.inputFile(tmpIn);
-    rb.outputFile(tmpIn.parent_path() / "out.pdf");
-    rb.format(LibreSCRS::Signing::SignatureFormat::Pades);
-    rb.level(LibreSCRS::Signing::SignatureLevel::B_T);
-    auto request = std::move(rb).build();
-
-    auto provider = [](const LibreSCRS::Auth::AuthRequirement&) {
-        std::vector<LibreSCRS::Auth::CredentialEntry> values;
-        values.emplace_back("pin", LibreSCRS::Secure::String{"0000"});
-        return LibreSCRS::Auth::CredentialResult::ok(std::move(values));
-    };
-
-    auto plugin = std::make_shared<StubPkiPlugin>();
-    auto result = svc->sign(request, provider, plugin, session);
-
-    EXPECT_EQ(result.status, LibreSCRS::Signing::SigningResult::Status::TsaUnreachable);
-    ASSERT_TRUE(result.diagnosticDetail.has_value());
-    EXPECT_NE(result.diagnosticDetail->find("TsaProvider"), std::string::npos)
-        << "Diagnostic should name TsaProvider; got: " << *result.diagnosticDetail;
-}
-
 // ---------------------------------------------------------------------------
-// Buffer-sign overload (5.0): span in -> SigningResult::signedDocumentBytes,
-// no file touched. These two cases exercise the overload's input seam and the
-// SHARED validate+pipeline core WITHOUT a PC/SC reader: a detached CardSession
-// drives the path, and both assertions land on early returns that fire before
-// any card I/O. The signed-bytes-equal-file-output round-trip and the CKA_ID
-// key-selection matrix require a real token and are covered by the HW matrix.
+// The in-memory sign: span in -> SigningResult::signedDocumentBytes, no file
+// touched. The first cases exercise the input seam and the validate+pipeline
+// core WITHOUT a PC/SC reader: a detached CardSession drives the path, and
+// the assertions land on early returns that fire before any card I/O.
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -961,14 +667,30 @@ LibreSCRS::Signing::SigningRequest makeBufferSignRequest()
     b.format(LibreSCRS::Signing::SignatureFormat::Pades)
         .level(LibreSCRS::Signing::SignatureLevel::B_B)
         .packaging(LibreSCRS::Signing::PackagingMode::Enveloped);
-    // buildForBufferSign skips the inputFile/outputFile required-field checks.
     return std::move(b).buildForBufferSign();
+}
+
+// The host's way into the service: it reads the card's certificates and signs
+// with the first key among them (a plugin reporting none gives a signer with no
+// key, which the cases that return before the key is needed never reach).
+LibreSCRS::Signing::SigningResult hostSign(LibreSCRS::Signing::SigningService& svc,
+                                           const LibreSCRS::Signing::SigningRequest& request,
+                                           std::span<const std::uint8_t> input,
+                                           LibreSCRS::Auth::CredentialProvider provider,
+                                           const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& plugin,
+                                           const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session)
+{
+    const auto certs = plugin->readCertificates(*session);
+    const LibreSCRS::Plugin::CertificateData signer =
+        certs.empty() ? LibreSCRS::Plugin::CertificateData{} : certs.front();
+    return svc.sign(request, input, std::move(provider), plugin, session, signer,
+                    std::span<const LibreSCRS::Plugin::CertificateData>{certs});
 }
 } // namespace
 
 TEST(SigningServiceBufferSignTest, ReturnsInvalidRequestWhenBufferEmpty)
 {
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("test-reader");
     auto svc = makeBufferSignService();
     ASSERT_NE(svc, nullptr);
     auto request = makeBufferSignRequest();
@@ -981,7 +703,7 @@ TEST(SigningServiceBufferSignTest, ReturnsInvalidRequestWhenBufferEmpty)
     auto plugin = std::make_shared<StubPkiPlugin>();
 
     const std::span<const std::uint8_t> emptyInput;
-    auto result = svc->sign(request, emptyInput, provider, plugin, session);
+    auto result = hostSign(*svc, request, emptyInput, provider, plugin, session);
 
     EXPECT_EQ(result.status, LibreSCRS::Signing::SigningResult::Status::InvalidRequest);
     // No artifact is produced on the error path.
@@ -990,14 +712,13 @@ TEST(SigningServiceBufferSignTest, ReturnsInvalidRequestWhenBufferEmpty)
 
 TEST(SigningServiceBufferSignTest, ReturnsUserCancelledWhenProviderCancels)
 {
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("test-reader");
     auto svc = makeBufferSignService();
     ASSERT_NE(svc, nullptr);
     auto request = makeBufferSignRequest();
 
-    // A non-empty buffer drives the shared pipeline up to PIN collection; the
-    // cancelling provider returns before any card I/O — proving the buffer
-    // overload reuses the same validate+pipeline core as the file path.
+    // A non-empty buffer drives the pipeline up to PIN collection; the
+    // cancelling provider returns before any card I/O.
     auto cancellingProvider = [](const LibreSCRS::Auth::AuthRequirement&) {
         return LibreSCRS::Auth::CredentialResult::cancelled();
     };
@@ -1008,10 +729,41 @@ TEST(SigningServiceBufferSignTest, ReturnsUserCancelledWhenProviderCancels)
     // reject path). The bytes need not be a valid PDF — the provider cancels
     // before the deep parse ever runs.
     const std::vector<std::uint8_t> document{'%', 'P', 'D', 'F', '-', '1', '.', '7', '\n', '%', 0xE2, 0xE3};
-    auto result = svc->sign(request, std::span<const std::uint8_t>{document}, cancellingProvider, plugin, session);
+    auto result = hostSign(*svc, request, std::span<const std::uint8_t>{document}, cancellingProvider, plugin, session);
 
     EXPECT_EQ(result.status, LibreSCRS::Signing::SigningResult::Status::UserCancelled);
     EXPECT_FALSE(result.signedDocumentBytes.has_value());
+}
+
+// B-T / B-LT / B-LTA signatures require a configured TSA. With an empty
+// TsaProvider, sign() must surface TsaUnreachable up front rather than letting
+// libresign emit a generic SigningEngineError.
+TEST(SigningServiceBufferSignTest, TsaUnreachableWhenNonBBLevelAndEmptyTsa)
+{
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("test-reader");
+    auto svc = makeBufferSignService();
+    ASSERT_NE(svc, nullptr);
+    LibreSCRS::Signing::SigningRequest::Builder b;
+    b.format(LibreSCRS::Signing::SignatureFormat::Pades)
+        .level(LibreSCRS::Signing::SignatureLevel::B_T)
+        .packaging(LibreSCRS::Signing::PackagingMode::Enveloped);
+    const auto request = std::move(b).buildForBufferSign();
+    auto plugin = std::make_shared<LibreSCRS::TestSupport::SoftKeyPlugin>();
+    const auto pdf = libresign::test::buildTestPdf();
+    const std::vector<std::uint8_t> document(pdf.begin(), pdf.end());
+    auto provider = [](const LibreSCRS::Auth::AuthRequirement&) {
+        std::vector<LibreSCRS::Auth::CredentialEntry> values;
+        values.emplace_back("pin", LibreSCRS::Secure::String{"0000"});
+        return LibreSCRS::Auth::CredentialResult::ok(std::move(values));
+    };
+
+    auto result = hostSign(*svc, request, std::span<const std::uint8_t>{document}, provider, plugin, session);
+
+    EXPECT_EQ(result.status, LibreSCRS::Signing::SigningResult::Status::TsaUnreachable);
+    ASSERT_TRUE(result.diagnosticDetail.has_value());
+    EXPECT_NE(result.diagnosticDetail->find("TsaProvider"), std::string::npos)
+        << "Diagnostic should name TsaProvider; got: " << *result.diagnosticDetail;
+    EXPECT_TRUE(plugin->signCalls.empty()) << "nothing is signed without the timestamp the level needs";
 }
 
 namespace {
@@ -1069,7 +821,7 @@ bool padesSignatureVerifies(const std::vector<std::uint8_t>& pdf, const std::vec
 // plugin's key, held in memory here, makes the document's one signature.
 TEST(SigningServiceBufferSignTest, SignsWithoutAnyPkcs11Module)
 {
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("test-reader");
     auto svc = makeBufferSignService();
     ASSERT_NE(svc, nullptr);
     auto plugin = std::make_shared<LibreSCRS::TestSupport::SoftKeyPlugin>();
@@ -1077,7 +829,7 @@ TEST(SigningServiceBufferSignTest, SignsWithoutAnyPkcs11Module)
     const std::vector<std::uint8_t> document(pdf.begin(), pdf.end());
 
     auto result =
-        svc->sign(makeBufferSignRequest(), std::span<const std::uint8_t>{document}, pinProvider, plugin, session);
+        hostSign(*svc, makeBufferSignRequest(), std::span<const std::uint8_t>{document}, pinProvider, plugin, session);
 
     ASSERT_EQ(result.status, LibreSCRS::Signing::SigningResult::Status::Ok)
         << result.diagnosticDetail.value_or("no detail");
@@ -1088,21 +840,21 @@ TEST(SigningServiceBufferSignTest, SignsWithoutAnyPkcs11Module)
 }
 
 // A key id longer than a PKCS#15 identifier names no key on any card: the
-// request is malformed, and it is refused as such before the card is read.
+// request is malformed, and it is refused as such before any PIN is deposited.
 TEST(SigningServiceBufferSignTest, OverlongKeyIdIsRefusedBeforeTheCardIsRead)
 {
     class CountingPlugin : public LibreSCRS::TestSupport::SoftKeyPlugin
     {
     public:
         std::vector<LibreSCRS::Plugin::CertificateData>
-        readCertificates(LibreSCRS::SmartCard::CardSession& s) const override
+        doReadCertificates(LibreSCRS::SmartCard::CardSession& s) const override
         {
             ++reads;
-            return SoftKeyPlugin::readCertificates(s);
+            return SoftKeyPlugin::doReadCertificates(s);
         }
         mutable int reads = 0;
     };
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("test-reader");
     auto svc = makeBufferSignService();
     ASSERT_NE(svc, nullptr);
     auto plugin = std::make_shared<CountingPlugin>();
@@ -1115,124 +867,98 @@ TEST(SigningServiceBufferSignTest, OverlongKeyIdIsRefusedBeforeTheCardIsRead)
     const auto pdf = libresign::test::buildTestPdf();
     const std::vector<std::uint8_t> document(pdf.begin(), pdf.end());
 
-    auto result = svc->sign(request, std::span<const std::uint8_t>{document}, pinProvider, plugin, session);
+    auto result = hostSign(*svc, request, std::span<const std::uint8_t>{document}, pinProvider, plugin, session);
 
     EXPECT_EQ(result.status, LibreSCRS::Signing::SigningResult::Status::InvalidRequest)
         << result.diagnosticDetail.value_or("no detail");
-    EXPECT_EQ(plugin->reads, 0) << "the card is not read for a malformed request";
+    EXPECT_EQ(plugin->reads, 1) << "only the host read the certificates";
     EXPECT_TRUE(plugin->events.empty()) << "no PIN is deposited";
     EXPECT_TRUE(plugin->signCalls.empty());
 }
 
-// The same for a second signer: an XAdES detached signature gains another
-// signature, both made through card plugins, and no module is loaded.
-TEST(SigningServiceBufferSignTest, AppendSignerSignsWithoutAnyPkcs11Module)
-{
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
-    auto svc = makeBufferSignService();
-    ASSERT_NE(svc, nullptr);
-    LibreSCRS::Signing::SigningRequest::Builder b;
-    b.format(LibreSCRS::Signing::SignatureFormat::Xades)
-        .level(LibreSCRS::Signing::SignatureLevel::B_B)
-        .packaging(LibreSCRS::Signing::PackagingMode::Detached)
-        .documentName("contract.txt");
-    const auto request = std::move(b).buildForBufferSign();
-    const std::vector<std::uint8_t> document{'t', 'h', 'e', ' ', 'c', 'o', 'n', 't', 'r', 'a', 'c', 't'};
-
-    auto first = std::make_shared<LibreSCRS::TestSupport::SoftKeyPlugin>();
-    auto signedOnce = svc->sign(request, std::span<const std::uint8_t>{document}, pinProvider, first, session);
-    ASSERT_EQ(signedOnce.status, LibreSCRS::Signing::SigningResult::Status::Ok)
-        << signedOnce.diagnosticDetail.value_or("no detail");
-    ASSERT_TRUE(signedOnce.signedDocumentBytes.has_value());
-
-    // appendSigner writes its artifact to the request's output file.
-    const auto out = std::filesystem::temp_directory_path() / "librescrs-append-without-module.xml";
-    LibreSCRS::Signing::SigningRequest::Builder ab;
-    ab.format(LibreSCRS::Signing::SignatureFormat::Xades)
-        .level(LibreSCRS::Signing::SignatureLevel::B_B)
-        .packaging(LibreSCRS::Signing::PackagingMode::Detached)
-        .documentName("contract.txt")
-        .outputFile(out);
-    const auto appendRequest = std::move(ab).buildForBufferSign();
-    auto second = std::make_shared<LibreSCRS::TestSupport::SoftKeyPlugin>();
-    auto signedTwice =
-        svc->appendSigner(appendRequest, *signedOnce.signedDocumentBytes, document, pinProvider, second, session);
-    ASSERT_EQ(signedTwice.status, LibreSCRS::Signing::SigningResult::Status::Ok)
-        << signedTwice.diagnosticDetail.value_or("no detail");
-    std::ifstream in(out, std::ios::binary);
-    const std::string xml((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    std::filesystem::remove(out);
-    // Opening <ds:SignatureValue ...> / <SignatureValue ...> tags only: the
-    // name also appears in Id attributes and closing tags.
-    const std::regex openingTag{"<([A-Za-z0-9_]+:)?SignatureValue[ >]"};
-    const auto signatures =
-        std::distance(std::sregex_iterator(xml.begin(), xml.end(), openingTag), std::sregex_iterator());
-    EXPECT_EQ(signatures, 2) << "the first signer's signature and the second's";
-    EXPECT_GE(second->signCalls.size(), 1U);
-}
-
 // Every format at B-B and B-T (against an in-process time-stamping authority),
-// signed and then given a second signer, through card plugins whose keys sign
-// in memory: Ok in every cell, with each plugin's key having signed, is the
-// proof that every format signs through the plugin it was handed.
-TEST(SigningMatrix, EveryFormatAndLevelSignsAndAppendsWithoutAnyModule)
+// signed and, where the format holds the document it signs, given a second
+// signer, through card plugins whose keys sign in memory: Ok in every cell,
+// with each plugin's key having signed, is the proof that every format signs
+// through the plugin it was handed.
+TEST(SigningMatrix, EveryFormatAndLevelSignsAndCosignsWithoutAnyModule)
 {
     using LibreSCRS::Signing::PackagingMode;
     using LibreSCRS::Signing::SignatureFormat;
     using LibreSCRS::Signing::SignatureLevel;
     using Status = LibreSCRS::Signing::SigningResult::Status;
     libresign::test::MockTsaServer tsa;
+    // The certificate that issued the in-process authority's, as the system
+    // store's CA bundle: without it no B-T token would be trusted. The engine's
+    // own tests cover the same authority named by a Trusted List.
+    struct RestoreCaFile
+    {
+        std::optional<std::string> saved;
+        ~RestoreCaFile()
+        {
+            if (saved)
+                ::setenv("SSL_CERT_FILE", saved->c_str(), 1);
+            else
+                ::unsetenv("SSL_CERT_FILE");
+        }
+    };
+    const char* previousCaFile = std::getenv("SSL_CERT_FILE");
+    const RestoreCaFile restoreCaFile{previousCaFile != nullptr ? std::optional<std::string>(previousCaFile)
+                                                                : std::nullopt};
+    const std::string caFile = std::string(CMAKE_SOURCE_DIR) + "/test/fixtures/trust/test-tl-signing-cert.pem";
+    ::setenv("SSL_CERT_FILE", caFile.c_str(), 1);
     LibreSCRS::Trust::TrustConfig trust;
-    trust.trustedListSources.push_back({"https://www.mit.gov.rs/TrustedList/TSL-RS.xml", false, false});
     auto trustResult = LibreSCRS::Trust::TrustStoreService::create(std::move(trust));
     ASSERT_TRUE(trustResult.has_value());
     const auto svc =
         std::make_shared<LibreSCRS::Signing::SigningService>(*trustResult, LibreSCRS::Signing::staticTsa(tsa.url()));
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("matrix-reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("matrix-reader");
 
     const auto pdf = libresign::test::buildTestPdf();
     const std::vector<std::uint8_t> pdfBytes(pdf.begin(), pdf.end());
+    const auto xml = libresign::test::buildTestXml();
+    const std::vector<std::uint8_t> xmlBytes(xml.begin(), xml.end());
     const std::vector<std::uint8_t> text{'t', 'h', 'e', ' ', 'c', 'o', 'n', 't', 'r', 'a', 'c', 't'};
     const struct
     {
         SignatureFormat format;
         PackagingMode packaging;
         const std::vector<std::uint8_t>* document;
-        bool detached;
+        bool cosigns;
         const char* name;
     } formats[] = {
-        {SignatureFormat::Pades, PackagingMode::Enveloped, &pdfBytes, false, "PAdES"},
-        {SignatureFormat::Cades, PackagingMode::Detached, &text, true, "CAdES"},
-        {SignatureFormat::Xades, PackagingMode::Detached, &text, true, "XAdES"},
-        {SignatureFormat::Jades, PackagingMode::Detached, &text, true, "JAdES"},
-        {SignatureFormat::AsicE, PackagingMode::Enveloped, &text, false, "ASiC-E"},
+        {SignatureFormat::Pades, PackagingMode::Enveloped, &pdfBytes, true, "PAdES"},
+        {SignatureFormat::Cades, PackagingMode::Detached, &text, false, "CAdES"},
+        {SignatureFormat::Xades, PackagingMode::Detached, &text, false, "XAdES detached"},
+        {SignatureFormat::Xades, PackagingMode::Enveloped, &xmlBytes, true, "XAdES enveloped"},
+        {SignatureFormat::Jades, PackagingMode::Detached, &text, false, "JAdES detached"},
+        {SignatureFormat::Jades, PackagingMode::Enveloped, &text, true, "JAdES enveloped"},
+        {SignatureFormat::AsicE, PackagingMode::Enveloped, &text, true, "ASiC-E"},
     };
-    const auto out = std::filesystem::temp_directory_path() / "librescrs-signing-matrix.out";
 
     for (const auto& f : formats) {
         for (const auto level : {SignatureLevel::B_B, SignatureLevel::B_T}) {
             SCOPED_TRACE(std::string{f.name} + (level == SignatureLevel::B_B ? " B-B" : " B-T"));
             LibreSCRS::Signing::SigningRequest::Builder b;
-            b.format(f.format).level(level).packaging(f.packaging).documentName("contract.txt").outputFile(out);
+            b.format(f.format).level(level).packaging(f.packaging).documentName("contract.txt");
             const auto request = std::move(b).buildForBufferSign();
 
             auto first = std::make_shared<LibreSCRS::TestSupport::SoftKeyPlugin>();
             const auto signedOnce =
-                svc->sign(request, std::span<const std::uint8_t>{*f.document}, pinProvider, first, session);
+                hostSign(*svc, request, std::span<const std::uint8_t>{*f.document}, pinProvider, first, session);
             ASSERT_EQ(signedOnce.status, Status::Ok) << signedOnce.diagnosticDetail.value_or("no detail");
             ASSERT_TRUE(signedOnce.signedDocumentBytes.has_value());
+            EXPECT_GE(first->signCalls.size(), 1U);
+            if (!f.cosigns)
+                continue;
 
             auto second = std::make_shared<LibreSCRS::TestSupport::SoftKeyPlugin>();
-            const std::span<const std::uint8_t> original =
-                f.detached ? std::span<const std::uint8_t>{*f.document} : std::span<const std::uint8_t>{};
             const auto signedTwice =
-                svc->appendSigner(request, *signedOnce.signedDocumentBytes, original, pinProvider, second, session);
+                hostSign(*svc, request, *signedOnce.signedDocumentBytes, pinProvider, second, session);
             EXPECT_EQ(signedTwice.status, Status::Ok) << signedTwice.diagnosticDetail.value_or("no detail");
-            EXPECT_GE(first->signCalls.size(), 1U);
             EXPECT_GE(second->signCalls.size(), 1U);
         }
     }
-    std::filesystem::remove(out);
 }
 
 // The card's verdict on the PIN reaches the caller as the status it names, in
@@ -1250,7 +976,7 @@ TEST(SigningPinOutcomes, EveryFormatReportsTheCardsVerdict)
 
     auto svc = makeBufferSignService();
     ASSERT_NE(svc, nullptr);
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("pin-outcome-reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("pin-outcome-reader");
     const auto pdf = libresign::test::buildTestPdf();
     const std::vector<std::uint8_t> pdfBytes(pdf.begin(), pdf.end());
     const std::vector<std::uint8_t> text{'t', 'h', 'e', ' ', 'c', 'o', 'n', 't', 'r', 'a', 'c', 't'};
@@ -1292,7 +1018,7 @@ TEST(SigningPinOutcomes, EveryFormatReportsTheCardsVerdict)
             };
 
             const auto result =
-                svc->sign(request, std::span<const std::uint8_t>{*f.document}, pinProvider, plugin, session);
+                hostSign(*svc, request, std::span<const std::uint8_t>{*f.document}, pinProvider, plugin, session);
 
             EXPECT_EQ(result.status, v.status) << result.diagnosticDetail.value_or("no detail");
             EXPECT_FALSE(result.signedDocumentBytes.has_value());
@@ -1310,10 +1036,6 @@ TEST(SigningResultFactories, InvalidDocumentCarriesStatusAndKey)
     EXPECT_EQ(r.userMessage.key, "librescrs.error.sign.invalid_document");
     ASSERT_TRUE(r.diagnosticDetail.has_value());
     EXPECT_EQ(*r.diagnosticDetail, "broken pdf xref");
-
-    auto d = SigningResult::invalidDocumentDiagnosticOnly("only-detail");
-    EXPECT_EQ(d.status, SigningResult::Status::InvalidDocument);
-    EXPECT_EQ(d.userMessage.key, "librescrs.error.sign.invalid_document");
 }
 
 // Document-content faults (bad/unparseable document bytes) route to the public
@@ -1331,4 +1053,199 @@ TEST(ErrorClassifier, DocumentContentKindsMapToInvalidDocument)
     EXPECT_EQ(S::InvalidRequest, det::classifyLibresignError(kind(SignFailureKind::InvalidInput)));
     // Genuine engine faults stay SigningEngineError.
     EXPECT_EQ(S::SigningEngineError, det::classifyLibresignError(kind(SignFailureKind::EngineError)));
+}
+
+// A host that chose the key passes its choice: the service signs with it and
+// does not read the card's certificates again, so one signature costs one
+// read of them -- the host's.
+TEST(SigningServiceBufferSignTest, ChosenSignerIsUsedWithoutReadingTheCardAgain)
+{
+    class CountingPlugin : public LibreSCRS::TestSupport::SoftKeyPlugin
+    {
+    public:
+        std::vector<LibreSCRS::Plugin::CertificateData>
+        doReadCertificates(LibreSCRS::SmartCard::CardSession& s) const override
+        {
+            ++reads;
+            return SoftKeyPlugin::doReadCertificates(s);
+        }
+        mutable int reads = 0;
+    };
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("test-reader");
+    auto svc = makeBufferSignService();
+    ASSERT_NE(svc, nullptr);
+    auto plugin = std::make_shared<CountingPlugin>();
+    const auto pdf = libresign::test::buildTestPdf();
+    const std::vector<std::uint8_t> document(pdf.begin(), pdf.end());
+
+    // The host's read, and its choice.
+    const auto certs = plugin->readCertificates(*session);
+    ASSERT_FALSE(certs.empty());
+    const auto& signer = certs.front();
+
+    auto result = svc->sign(makeBufferSignRequest(), std::span<const std::uint8_t>{document}, pinProvider, plugin,
+                            session, signer, std::span<const LibreSCRS::Plugin::CertificateData>{certs});
+
+    ASSERT_EQ(result.status, LibreSCRS::Signing::SigningResult::Status::Ok)
+        << result.diagnosticDetail.value_or("no detail");
+    ASSERT_TRUE(result.signedDocumentBytes.has_value());
+    EXPECT_TRUE(padesSignatureVerifies(*result.signedDocumentBytes, signer.derBytes));
+    EXPECT_EQ(plugin->reads, 1) << "only the host read the certificates";
+}
+
+namespace {
+
+// How many signatures @p doc carries, read the way each format stores them.
+std::size_t signatureCount(LibreSCRS::Signing::SignatureFormat format, const std::vector<std::uint8_t>& doc)
+{
+    using LibreSCRS::Signing::SignatureFormat;
+    const std::string text(doc.begin(), doc.end());
+    const auto occurrences = [&text](const std::regex& pattern) {
+        return static_cast<std::size_t>(
+            std::distance(std::sregex_iterator(text.begin(), text.end(), pattern), std::sregex_iterator()));
+    };
+    switch (format) {
+    case SignatureFormat::Pades:
+        return occurrences(std::regex{"/ByteRange"});
+    case SignatureFormat::Xades:
+        // Opening <ds:SignatureValue ...> tags only: the name also appears in
+        // Id attributes and closing tags.
+        return occurrences(std::regex{"<([A-Za-z0-9_]+:)?SignatureValue[ >]"});
+    case SignatureFormat::Jades:
+        return occurrences(std::regex{"\"protected\":"});
+    case SignatureFormat::AsicE: {
+        // Each entry name is in its local header and in the central directory.
+        std::size_t n = 0;
+        while (text.find("META-INF/signature00" + std::to_string(n + 1) + ".p7s") != std::string::npos)
+            ++n;
+        return n;
+    }
+    case SignatureFormat::Cades: {
+        const unsigned char* p = doc.data();
+        const std::unique_ptr<CMS_ContentInfo, decltype(&CMS_ContentInfo_free)> cms(
+            d2i_CMS_ContentInfo(nullptr, &p, static_cast<long>(doc.size())), &CMS_ContentInfo_free);
+        STACK_OF(CMS_SignerInfo)* signers = cms ? CMS_get0_SignerInfos(cms.get()) : nullptr;
+        return signers != nullptr ? static_cast<std::size_t>(sk_CMS_SignerInfo_num(signers)) : 0;
+    }
+    }
+    return 0;
+}
+
+} // namespace
+
+// A document that already carries a signature is signed again through the
+// entry a host uses -- the in-memory sign with the signer it chose -- and the
+// result carries both signatures where the format can hold a second one over
+// what the document alone gives back. A detached signature does not carry the
+// document it signs, and a CMS signature is detached by construction: signing
+// one of those again is refused, not answered with a signature over the
+// signature's own bytes.
+TEST(SigningOverASignature, EveryFormatThroughTheHostsEntry)
+{
+    using LibreSCRS::Signing::PackagingMode;
+    using LibreSCRS::Signing::SignatureFormat;
+    using LibreSCRS::Signing::SignatureLevel;
+    using Status = LibreSCRS::Signing::SigningResult::Status;
+
+    auto svc = makeBufferSignService();
+    ASSERT_NE(svc, nullptr);
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("cosign-reader");
+    const auto pdf = libresign::test::buildTestPdf();
+    const std::vector<std::uint8_t> pdfBytes(pdf.begin(), pdf.end());
+    const auto xml = libresign::test::buildTestXml();
+    const std::vector<std::uint8_t> xmlBytes(xml.begin(), xml.end());
+    const std::vector<std::uint8_t> text{'t', 'h', 'e', ' ', 'c', 'o', 'n', 't', 'r', 'a', 'c', 't'};
+    const struct
+    {
+        SignatureFormat format;
+        PackagingMode packaging;
+        const std::vector<std::uint8_t>* document;
+        Status second;
+        const char* name;
+    } cases[] = {
+        {SignatureFormat::Pades, PackagingMode::Enveloped, &pdfBytes, Status::Ok, "PAdES"},
+        {SignatureFormat::Xades, PackagingMode::Enveloped, &xmlBytes, Status::Ok, "XAdES enveloped"},
+        {SignatureFormat::Jades, PackagingMode::Enveloped, &text, Status::Ok, "JAdES enveloped"},
+        {SignatureFormat::AsicE, PackagingMode::Enveloped, &text, Status::Ok, "ASiC-E"},
+        {SignatureFormat::Xades, PackagingMode::Detached, &text, Status::SigningEngineError, "XAdES detached"},
+        {SignatureFormat::Jades, PackagingMode::Detached, &text, Status::SigningEngineError, "JAdES detached"},
+        {SignatureFormat::Cades, PackagingMode::Detached, &text, Status::SigningEngineError, "CAdES"},
+    };
+
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.name);
+        LibreSCRS::Signing::SigningRequest::Builder b;
+        b.format(c.format).level(SignatureLevel::B_B).packaging(c.packaging).documentName("contract.txt");
+        const auto request = std::move(b).buildForBufferSign();
+
+        auto first = std::make_shared<LibreSCRS::TestSupport::SoftKeyPlugin>();
+        const auto firstCerts = first->readCertificates(*session);
+        const auto signedOnce = svc->sign(request, std::span<const std::uint8_t>{*c.document}, pinProvider, first,
+                                          session, firstCerts.front(), firstCerts);
+        ASSERT_EQ(signedOnce.status, Status::Ok) << signedOnce.diagnosticDetail.value_or("no detail");
+        ASSERT_TRUE(signedOnce.signedDocumentBytes.has_value());
+        ASSERT_EQ(signatureCount(c.format, *signedOnce.signedDocumentBytes), 1U);
+
+        auto second = std::make_shared<LibreSCRS::TestSupport::SoftKeyPlugin>();
+        const auto secondCerts = second->readCertificates(*session);
+        const auto signedTwice = svc->sign(request, *signedOnce.signedDocumentBytes, pinProvider, second, session,
+                                           secondCerts.front(), secondCerts);
+        EXPECT_EQ(signedTwice.status, c.second) << signedTwice.diagnosticDetail.value_or("no detail");
+        if (c.second == Status::Ok) {
+            EXPECT_TRUE(signedTwice.signedDocumentBytes.has_value());
+            if (signedTwice.signedDocumentBytes.has_value()) {
+                EXPECT_EQ(signatureCount(c.format, *signedTwice.signedDocumentBytes), 2U)
+                    << "the first signer's signature and the second's";
+            }
+            EXPECT_GE(second->signCalls.size(), 1U);
+        } else {
+            EXPECT_FALSE(signedTwice.signedDocumentBytes.has_value());
+            EXPECT_TRUE(second->signCalls.empty()) << "nothing is signed for a refused document";
+        }
+    }
+}
+
+// A request whose time-stamping override names no URL keeps the service's
+// authority: an empty override is no override, so a B-T signature still gets
+// its timestamp from the authority the service was built with.
+TEST(SigningServiceBufferSignTest, OverrideNamingNoUrlKeepsTheServicesAuthority)
+{
+    libresign::test::MockTsaServer tsa;
+    struct RestoreCaFile
+    {
+        std::optional<std::string> saved;
+        ~RestoreCaFile()
+        {
+            if (saved)
+                ::setenv("SSL_CERT_FILE", saved->c_str(), 1);
+            else
+                ::unsetenv("SSL_CERT_FILE");
+        }
+    };
+    const char* previousCaFile = std::getenv("SSL_CERT_FILE");
+    const RestoreCaFile restoreCaFile{previousCaFile != nullptr ? std::optional<std::string>(previousCaFile)
+                                                                : std::nullopt};
+    const std::string caFile = std::string(CMAKE_SOURCE_DIR) + "/test/fixtures/trust/test-tl-signing-cert.pem";
+    ::setenv("SSL_CERT_FILE", caFile.c_str(), 1);
+    LibreSCRS::Trust::TrustConfig trust;
+    auto trustResult = LibreSCRS::Trust::TrustStoreService::create(std::move(trust));
+    ASSERT_TRUE(trustResult.has_value());
+    const auto svc =
+        std::make_shared<LibreSCRS::Signing::SigningService>(*trustResult, LibreSCRS::Signing::staticTsa(tsa.url()));
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("override-reader");
+    LibreSCRS::Signing::SigningRequest::Builder b;
+    b.format(LibreSCRS::Signing::SignatureFormat::Pades)
+        .level(LibreSCRS::Signing::SignatureLevel::B_T)
+        .packaging(LibreSCRS::Signing::PackagingMode::Enveloped)
+        .tsaOverride(LibreSCRS::Signing::staticTsa(""));
+    const auto request = std::move(b).buildForBufferSign();
+    auto plugin = std::make_shared<LibreSCRS::TestSupport::SoftKeyPlugin>();
+    const auto pdf = libresign::test::buildTestPdf();
+    const std::vector<std::uint8_t> document(pdf.begin(), pdf.end());
+
+    const auto result = hostSign(*svc, request, std::span<const std::uint8_t>{document}, pinProvider, plugin, session);
+
+    EXPECT_EQ(result.status, LibreSCRS::Signing::SigningResult::Status::Ok)
+        << result.diagnosticDetail.value_or("no detail");
+    EXPECT_TRUE(result.signedDocumentBytes.has_value());
 }

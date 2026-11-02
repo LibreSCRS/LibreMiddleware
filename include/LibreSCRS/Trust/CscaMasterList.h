@@ -95,8 +95,7 @@ struct VerifiedMasterList
     /// canonicalised, because at parse time nothing has verified the input and
     /// re-encoding would replace the bytes a later check is about. A consumer
     /// that hashes, fingerprints or de-duplicates an anchor must re-encode it
-    /// first -- or use spkiSha256FromCertificateDer(), which re-encodes for
-    /// exactly this reason.
+    /// first.
     std::vector<std::vector<std::uint8_t>> anchors;
 
     /// @brief SHA-256 over the DER of a signer's SubjectPublicKeyInfo.
@@ -112,24 +111,12 @@ struct VerifiedMasterList
     /// and handing that back is how a caller comes to store it.
     std::array<std::uint8_t, kSpkiSha256Size> signerSpkiSha256{};
 
-    /// @brief Whether the fingerprint was COMPARED with one the caller supplied,
-    ///        as opposed to merely reported.
-    ///
-    /// False means the call established that somebody signed this list and
-    /// nothing at all about who: no chain is built, so an attacker who signs a
-    /// list of their own anchors with a key of their own gets exactly the same
-    /// `false` the real publisher gets. It is carried here rather than folded
-    /// into the return value so a caller who forgot to pass a pin cannot mistake
-    /// it for one -- without this field both look like success.
-    bool identityChecked = false;
-
     /// @brief The certificate that SIGNED the list, as it was encoded. Always
     ///        filled when a value is returned.
     ///
     /// **Whose**, and the answer is the one signerSpkiSha256 gives: with a pin,
     /// the signer that MATCHED it; without one, the first SignerInfo in the
-    /// object's own encoded order. The two fields describe ONE certificate, so
-    /// spkiSha256FromCertificateDer() over this yields signerSpkiSha256 back.
+    /// object's own encoded order. The two fields describe ONE certificate.
     ///
     /// Taken from the signers a successful verification resolved, never from
     /// the object's certificate bag: the bag is unauthenticated and anyone may
@@ -228,45 +215,17 @@ struct VerifiedMasterList
 ///
 /// @param der the encoding of a signed master list, as published.
 /// @param expectedSpkiSha256 the fingerprint of the signer the caller will
-///        accept, from spkiSha256FromCertificateDer() or from an earlier
-///        VerifiedMasterList::signerSpkiSha256; or `nullptr` to accept any
-///        signer and only report the one seen. `nullptr` is the only way to ask
-///        for that, and it is recorded in
-///        VerifiedMasterList::identityChecked. Not retained beyond the call.
+///        accept, from an earlier VerifiedMasterList::signerSpkiSha256; or
+///        `nullptr` to accept any signer and only report the one seen.
+///        `nullptr` is the only way to ask for that: a value that comes back
+///        from a call without a pin establishes that somebody signed the list
+///        and nothing about who. Not retained beyond the call.
 /// @return the anchors together with what was established about the signer, or
 ///         the first check that failed.
 /// @since 5.0
 [[nodiscard]] LIBRESCRS_PUBLIC_API std::expected<VerifiedMasterList, MasterListError>
 parseAndVerifyMasterList(const std::vector<std::uint8_t>& der,
                          const std::array<std::uint8_t, kSpkiSha256Size>* expectedSpkiSha256);
-
-/// @brief Computes the pin parseAndVerifyMasterList() compares against, from
-///        the publisher's certificate.
-///
-/// **This is the only supported way to produce that value**, and there are two
-/// obvious ways to get it wrong.
-///
-/// Not the hash of the certificate. A publisher renews its certificate while
-/// keeping its key, and every renewal would then change the pin -- so a caller
-/// that hashed the certificate would have to re-pin at each one, out of band, or
-/// start refusing genuine lists. The key is what the claim is about; the
-/// certificate is a container for it.
-///
-/// Not the SubjectPublicKeyInfo slice as the certificate carries it. That is a
-/// byte range chosen by whoever encoded the certificate, so two encodings of one
-/// key would fingerprint differently. This hashes the SubjectPublicKeyInfo
-/// re-encoded canonically, so the same key gives the same 32 bytes whatever it
-/// arrived in.
-///
-/// @param certDer one certificate, as encoded -- the publisher's, obtained out
-///        of band. Exactly one certificate with nothing trailing it; anything
-///        else is `std::nullopt`. BER is accepted, since the answer does not
-///        depend on the encoding.
-/// @return the fingerprint to hand parseAndVerifyMasterList(), or nothing if
-///         @p certDer is not a certificate.
-/// @since 5.0
-[[nodiscard]] LIBRESCRS_PUBLIC_API std::optional<std::array<std::uint8_t, kSpkiSha256Size>>
-spkiSha256FromCertificateDer(const std::vector<std::uint8_t>& certDer);
 
 /// @brief Whether one certificate chains to any of a set of trust anchors.
 ///

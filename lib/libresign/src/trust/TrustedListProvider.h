@@ -11,6 +11,7 @@
 
 #include <LibreSCRS/Trust/TrustStore.h> // for TrustAnchor
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -21,7 +22,13 @@ namespace libresign {
 ///        items by @c serviceType to @c TrustAnchor instances. Used by
 ///        @c TrustStoreService eager-fetch workers to hand pre-mapped
 ///        anchors to @c TrustStoreInternalAccess::mergeTrustedListAnchors.
-[[nodiscard]] std::vector<LibreSCRS::Trust::TrustAnchor> extractAnchorsFromTrustedList(const TrustedListInfo& info,
-                                                                                       const std::string& sourceLabel);
+[[nodiscard]] std::vector<LibreSCRS::Trust::TrustAnchor> extractAnchorsFromTrustedList(const TrustedListInfo& info);
+
+/// @brief The certificates (DER) of the qualified time-stamping services
+///        (@c Svctype/TSA/QTST) of @p info, under the same status rule as
+///        @ref extractAnchorsFromTrustedList. A qualified CA service is not
+///        among them: a list that vouches for a certificate issuer does not
+///        thereby vouch for a time-stamping authority.
+[[nodiscard]] std::vector<std::vector<uint8_t>> timestampAuthorityCertificates(const TrustedListInfo& info);
 
 } // namespace libresign

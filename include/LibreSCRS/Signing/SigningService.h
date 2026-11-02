@@ -14,6 +14,7 @@
 
 #include <LibreSCRS/Auth/CredentialProvider.h>
 #include <LibreSCRS/Export.h>
+#include <LibreSCRS/Plugin/PluginTypes.h>
 #include <LibreSCRS/Signing/SigningRequest.h>
 #include <LibreSCRS/Signing/SigningResult.h>
 #include <LibreSCRS/Signing/TsaProvider.h>
@@ -44,8 +45,8 @@ namespace LibreSCRS::Signing {
 ///       but stack construction is equally valid. No process-wide shared
 ///       state is retained; each constructed instance is independent.
 /// @par Thread-safety
-/// Thread-safe (see API-POLICY §8). The @ref sign overloads can be called
-/// concurrently from multiple threads, each with its own
+/// Thread-safe (see API-POLICY §8). @ref sign can be called concurrently
+/// from multiple threads, each with its own
 /// `(cardPlugin, session)` pair. The injected
 /// @ref Trust::TrustStoreService is itself thread-safe (status / wait /
 /// observer methods are reentrant); concurrent @ref sign calls share the
@@ -78,14 +79,14 @@ public:
     ///                     the friend mechanism so that @ref sign and
     ///                     non-signing consumers (cert viewer, plugin
     ///                     registry) all observe the same trust universe.
-    /// @param tsa TSA lookup callback used for B_T and higher signature
-    ///            levels. Pass `TsaProvider{}` (a default-constructed empty
-    ///            std::function) when TSA is unavailable; B-B signatures
-    ///            that require no timestamp will still succeed, while
-    ///            B-T/B-LT/B-LTA requests will fail at @ref sign time with
-    ///            a TSA-required error. A per-request override supplied via
+    /// @param tsa Time-stamping authority used for B_T and higher signature
+    ///            levels. Pass `TsaProvider{}` (no URL) when none is
+    ///            available; B-B signatures that require no timestamp will
+    ///            still succeed, while B-T/B-LT/B-LTA requests will fail at
+    ///            @ref sign time with a TSA-required error. A per-request
+    ///            override supplied via
     ///            @ref SigningRequest::Builder::tsaOverride takes precedence
-    ///            over this service-level provider.
+    ///            over this service-level authority.
     /// @note This ctor does not throw; validation is deferred to @ref sign.
     /// @since 4.0
     explicit SigningService(std::shared_ptr<Trust::TrustStoreService> trustService, TsaProvider tsa);
@@ -107,13 +108,40 @@ public:
     /// callers check for the moved-from state without triggering the UB.
     /// Matches the sibling convention on @ref SigningRequest,
     /// @ref VisualSignatureParams, @ref LibreSCRS::SmartCard::CardSession,
-    /// @ref LibreSCRS::SmartCard::MonitorService, @ref LibreSCRS::Secure::Buffer
-    /// and @ref LibreSCRS::Secure::String.
+    /// @ref LibreSCRS::SmartCard::MonitorService and
+    /// @ref LibreSCRS::Secure::String.
     /// @since 4.0
     explicit operator bool() const noexcept;
 
-    /// @brief Produce a signature for @p request.
-    /// @param request Immutable signing parameters.
+    /// @brief Produce a signature entirely in memory, with the signing key the
+    ///        caller has already chosen: the document to sign is supplied as a
+    ///        byte span and the finished artifact is returned in
+    ///        @ref SigningResult::signedDocumentBytes — no file is read or
+    ///        written.
+    ///
+    /// A host that read the card's certificates to choose the key passes
+    /// its choice: the service neither reads the certificates again nor
+    /// chooses again, so one signature costs one read and one rule decides
+    /// which key signs. @p signer must carry its key handle
+    /// (@ref LibreSCRS::Plugin::CertificateData::keyFID); a request key id
+    /// (@ref SigningRequest::keyId), when set, must name @p signer's key.
+    /// The certificate chain is built from @p cardCerts: @p signer's
+    /// certificate first, then only the certificates that verify as its
+    /// issuers.
+    ///
+    /// A document that already carries a signature in the requested format
+    /// gains one more, beside the ones it carries: a PDF through an
+    /// incremental update, an enveloped XAdES or JAdES document and an ASiC-E
+    /// container by adding the new signer to them. A detached XAdES or JAdES
+    /// signature and a CAdES signature do not carry the document they sign,
+    /// so they are refused rather than signed as if they were the document.
+    ///
+    /// @param request Immutable signing parameters (build via
+    ///                @ref SigningRequest::Builder::buildForBufferSign).
+    /// @param input The document bytes to sign. Borrowed for the duration of
+    ///              the call; the service does not retain the span past
+    ///              return. Empty input or input exceeding the 256 MiB cap
+    ///              returns @ref SigningResult::Status::InvalidRequest.
     /// @param credentialProvider Callback that collects the signing PIN.
     /// @param cardPlugin Plugin used to drive on-card operations. Borrowed
     ///                   by const-reference per C++ Core Guidelines F.7 /
@@ -127,145 +155,64 @@ public:
     ///                hand-off. Element type is non-const because the
     ///                signing engine mutates session state (current applet,
     ///                cached secrets) as the sign flow progresses.
-    /// @return SigningResult whose @ref SigningResult::status is always set.
+    /// @param signer    The key to sign with, as the plugin reported it.
+    /// @param cardCerts Every certificate the plugin reported for the card.
+    /// @return SigningResult whose @ref SigningResult::status is always set;
+    ///         on @ref SigningResult::Status::Ok the artifact is in
+    ///         @ref SigningResult::signedDocumentBytes.
     /// @note Returns @ref SigningResult::Status::TrustStoreUnavailable when
     ///       the libresign backend rejects the trust configuration vended by
     ///       the @ref Trust::TrustStoreService supplied at construction (for
     ///       example, an unreachable Trusted List URL or an unwritable cache
     ///       directory). Returns @ref SigningResult::Status::InvalidRequest
-    ///       if @p cardPlugin or @p session is null, or
-    ///       @p credentialProvider is empty.
+    ///       if @p cardPlugin or @p session is null, @p credentialProvider is
+    ///       empty, or @p signer carries no key handle.
+    /// @note The PIN the provider supplies is deposited in @p cardPlugin for
+    ///       @p session for the signature. After a successful signature with
+    ///       a key the card does not require the PIN for on every use (no
+    ///       always-authenticate), the PIN stays deposited for @p session, so
+    ///       a following signature in the same session presents it again
+    ///       without a prompt, until the host calls
+    ///       @ref LibreSCRS::Plugin::CardPlugin::clearCredentials for the
+    ///       session. After a failed signature, or with an
+    ///       always-authenticate key, it is erased before this returns. A host
+    ///       managing the deposit itself uses
+    ///       @ref LibreSCRS::Plugin::ScopedPinDeposit.
     /// @par Blocking
     /// This call blocks for the duration of the signing operation: PIN
     /// verification + APDU signing on the card (typically 1-3 s), plus
     /// any TSA round-trip for B-T / B-LT / B-LTA levels (typically
     /// 0.5-5 s, network-dependent), plus libresign packaging. GUI hosts
     /// must invoke @ref sign on a worker thread; calling it from the UI
-    /// thread will freeze the UI for several seconds. A future
-    /// cancellation-aware async overload (@ref LibreSCRS::CancelToken) is
-    /// on the roadmap; the current API is synchronous.
+    /// thread will freeze the UI for several seconds.
     /// @par XAdES DETACHED Reference URI constraint
     /// When @p request.format selects XAdES with DETACHED packaging, the
-    /// emitted `ds:Reference URI` attribute names the original file by
-    /// its percent-encoded basename (e.g. `URI="my%20doc.bin"`).
-    /// Conformant XAdES validators (EU DSS, ETSI test bench, Adobe)
-    /// resolve that URI relative to the location of the `.xml` signature
-    /// file, so the original payload MUST be present alongside the
-    /// signature with the exact filename it carried at sign time.
-    /// Callers that hand the signed `.xml` to a recipient over the wire
-    /// must include the original file too; without it, validation fails
-    /// at the reference-resolution step before any cryptographic check
-    /// runs.
+    /// emitted `ds:Reference URI` attribute names the original document by
+    /// its percent-encoded name (e.g. `URI="my%20doc.bin"`), taken from
+    /// @ref SigningRequest::documentName. Conformant XAdES validators (EU DSS,
+    /// ETSI test bench, Adobe) resolve that URI relative to the location of
+    /// the `.xml` signature file, so the original payload MUST be present
+    /// alongside the signature under that name. Callers that hand the signed
+    /// `.xml` to a recipient over the wire must include the original file
+    /// too; without it, validation fails at the reference-resolution step
+    /// before any cryptographic check runs.
     /// @par Exceptions
     /// `noexcept`. Per API-POLICY §5.3 noexcept-alloc contract, internal
-    /// `std::bad_alloc` from libresign request construction, file I/O
-    /// buffers, or std::string formatting is caught and surfaced as
+    /// `std::bad_alloc` from libresign request construction or std::string
+    /// formatting is caught and surfaced as
     /// @ref SigningResult::Status::SigningEngineError; defence-in-depth
     /// catches for `std::exception` and any other escaped throw map to
     /// the same status with a diagnostic message. All functional failure
     /// modes (trust unavailable, TSA unreachable, invalid request, user
     /// cancel) surface as a non-Ok @ref SigningResult::Status without
     /// involving the exception machinery.
-    [[nodiscard]] SigningResult sign(const SigningRequest& request, Auth::CredentialProvider credentialProvider,
-                                     const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,
-                                     const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session) noexcept;
-
-    /// @brief Produce a signature entirely in memory: the document to sign
-    ///        is supplied as a byte span and the finished artifact is
-    ///        returned in @ref SigningResult::signedDocumentBytes — no file
-    ///        is read or written.
-    ///
-    /// Shares the full signing pipeline with the file-based @ref sign
-    /// overload (same preconditions, PIN-as-consent, TSA resolution, trust
-    /// configuration, in-process backend dispatch and error taxonomy); the
-    /// two differ only at the I/O seams. Build the @p request with
-    /// @ref SigningRequest::Builder::buildForBufferSign so the
-    /// `inputFile`/`outputFile` required-field checks are skipped; an
-    /// `inputFile` may still be set purely as a name hint (it drives the
-    /// XAdES/JAdES detached `ds:Reference URI` basename — see the file
-    /// overload's note), but it is never opened.
-    ///
-    /// @param request Immutable signing parameters (build via
-    ///                @ref SigningRequest::Builder::buildForBufferSign).
-    /// @param input The document bytes to sign. Borrowed for the duration of
-    ///              the call; the service does not retain the span past
-    ///              return. Empty input or input exceeding the 256 MiB cap
-    ///              returns @ref SigningResult::Status::InvalidRequest.
-    /// @param credentialProvider Callback that collects the signing PIN.
-    /// @param cardPlugin Plugin used to drive on-card operations (same
-    ///                   borrow/const contract as the file overload).
-    /// @param session Live card session (same borrow contract as the file
-    ///                overload).
-    /// @return SigningResult whose @ref SigningResult::status is always set;
-    ///         on @ref SigningResult::Status::Ok the artifact is in
-    ///         @ref SigningResult::signedDocumentBytes and
-    ///         @ref SigningResult::outputPath is absent.
-    /// @par Blocking / Exceptions
-    /// Identical to the file-based @ref sign overload.
     /// @since 5.0
     [[nodiscard]] SigningResult sign(const SigningRequest& request, std::span<const std::uint8_t> input,
                                      Auth::CredentialProvider credentialProvider,
                                      const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,
-                                     const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session) noexcept;
-
-    /// @brief Append a new signer to a prior signature, producing a multi-
-    ///        signature document with the new signer's signature alongside
-    ///        the existing ones.
-    ///
-    /// For ENVELOPED formats (PAdES, XAdES-Enveloped, JAdES-Enveloped,
-    /// ASiC-E) @p originalDocument may be empty — the original payload is
-    /// recoverable from @p priorSignature. When non-empty, the engine
-    /// asserts it matches the embedded original and returns
-    /// @ref SigningResult::Status::InvalidRequest on mismatch (tamper
-    /// detection).
-    ///
-    /// For DETACHED formats (CAdES, XAdES-Detached, JAdES-Detached)
-    /// @p originalDocument is MANDATORY — RFC 7797 / ETSI EN 319 122 / etc.
-    /// detached blobs do not carry the original by spec. An empty
-    /// @p originalDocument against a detached prior returns
-    /// @ref SigningResult::Status::InvalidRequest naming the missing
-    /// original.
-    ///
-    /// Format is INFERRED from @p priorSignature (PDF / XML / JSON / CMS
-    /// SEQUENCE / ZIP magic) and overrides any value in
-    /// @p request.format. @p request supplies signer-side parameters
-    /// (level, TSA configuration, visual appearance, contactInfo) for the
-    /// new signer only; prior signers' attributes are left untouched.
-    ///
-    /// @param request           Immutable signing parameters for the new
-    ///                          signer.
-    /// @param priorSignature    The existing signed document / signature
-    ///                          container being extended. Borrowed for the
-    ///                          duration of the call; the implementation
-    ///                          does not retain the span past return.
-    /// @param originalDocument  The original payload bytes. Empty for the
-    ///                          common ENVELOPED case (use the original
-    ///                          recovered from @p priorSignature). Non-empty
-    ///                          for DETACHED priors (mandatory) or for
-    ///                          ENVELOPED tamper-check assertions.
-    /// @param credentialProvider Callback that collects the signing PIN
-    ///                          for the new signer (same contract as
-    ///                          @ref sign).
-    /// @return SigningResult whose @ref SigningResult::status is always
-    ///         set. Same status taxonomy as @ref sign, plus
-    ///         @ref SigningResult::Status::InvalidRequest for missing
-    ///         original / unrecognised prior-signature magic / tamper
-    ///         mismatch.
-    /// @par Blocking
-    /// Same blocking contract as @ref sign — PIN verification + APDU
-    /// signing + optional TSA round-trip + packaging. Call on a worker
-    /// thread from GUI hosts.
-    /// @par Exceptions
-    /// `noexcept`. Same noexcept-alloc contract as @ref sign: internal
-    /// `std::bad_alloc` and any other escaped throw degrade to
-    /// @ref SigningResult::Status::SigningEngineError with a diagnostic
-    /// message rather than crossing the noexcept boundary.
-    /// @since 4.1
-    [[nodiscard]] SigningResult
-    appendSigner(const SigningRequest& request, std::span<const std::uint8_t> priorSignature,
-                 std::span<const std::uint8_t> originalDocument, Auth::CredentialProvider credentialProvider,
-                 const std::shared_ptr<const LibreSCRS::Plugin::CardPlugin>& cardPlugin,
-                 const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session) noexcept;
+                                     const std::shared_ptr<LibreSCRS::SmartCard::CardSession>& session,
+                                     const LibreSCRS::Plugin::CertificateData& signer,
+                                     std::span<const LibreSCRS::Plugin::CertificateData> cardCerts) noexcept;
 
     // @since 4.0: trustStore() getter removed — consumers obtain the trust
     // store from the @ref Trust::TrustStoreService they constructed and

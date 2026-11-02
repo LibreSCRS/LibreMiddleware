@@ -4,6 +4,7 @@
 #ifndef SMARTCARD_MOCK_PCSC_SCAN_PROVIDER_H
 #define SMARTCARD_MOCK_PCSC_SCAN_PROVIDER_H
 
+#include <chrono>
 #include <ipcsc_scan_provider.h>
 #include <atomic>
 #include <condition_variable>
@@ -56,6 +57,17 @@ public:
         return refusal.empty() ? IPCSCScanProvider::refusalDetail() : refusal.c_str();
     }
 
+    /// Zero makes a refusal final; anything else is the wait before the
+    /// monitor asks again. Unset: the production default.
+    void setRefusalRetryInterval(std::chrono::milliseconds interval)
+    {
+        refusalRetry = interval;
+    }
+    std::chrono::milliseconds refusalRetryInterval() const noexcept override
+    {
+        return refusalRetry ? *refusalRetry : IPCSCScanProvider::refusalRetryInterval();
+    }
+
     void setListReadersReturn(LONG rv)
     {
         std::lock_guard<std::mutex> lock(mtx);
@@ -63,10 +75,9 @@ public:
     }
 
     /// @brief Block any incoming `listReaders` call inside the mock until
-    /// `releaseListReadersBlock` is invoked. Used in regression tests for
-    /// the `MonitorService::subscribeReaderList` bootstrap race, where the
-    /// test needs to hold the internal poll thread mid-enumeration while a
-    /// late-joining snapshot subscriber registers.
+    /// `releaseListReadersBlock` is invoked. Used in regression tests that
+    /// need to hold the internal poll thread mid-enumeration while the test
+    /// acts on the service (e.g. a draining unsubscribe).
     void setListReadersBlocking(bool b)
     {
         std::lock_guard<std::mutex> lock(mtx);
@@ -234,6 +245,7 @@ public:
     }
 
 private:
+    std::optional<std::chrono::milliseconds> refusalRetry;
     std::string refusal; // set before the monitor starts; empty: the interface's text
     std::shared_ptr<MockCounters> counters;
 

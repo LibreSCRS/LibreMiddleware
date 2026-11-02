@@ -135,30 +135,4 @@ bool String::operator==(const String& other) const noexcept
 // operator!= synthesised by the compiler from operator== under C++20
 // rewriting rules; no hand-written body required.
 
-bool String::equalConstantTime(const String& other) const noexcept
-{
-    const auto a = view();
-    const auto b = other.view();
-    // Length-mismatch returns false immediately; before doing so, consume the
-    // bytes of the longer input via CRYPTO_memcmp against itself so the
-    // length-divergent path's runtime tracks size, not the length-equal path.
-    // (The narrow-and-honest version would surface the length difference as a
-    // data-dependent timing channel; that's almost always acceptable for a
-    // PIN/MAC use-case, but the routine documents constant-time semantics so
-    // we hold to them.)
-    if (a.size() != b.size()) {
-        const auto& longer = a.size() > b.size() ? a : b;
-        if (!longer.empty()) {
-            // Compare longer against itself; the result is discarded. Used as
-            // a stable-time consumer of the bytes.
-            (void)CRYPTO_memcmp(longer.data(), longer.data(), longer.size());
-        }
-        return false;
-    }
-    if (a.empty()) {
-        return true;
-    }
-    return CRYPTO_memcmp(a.data(), b.data(), a.size()) == 0;
-}
-
 } // namespace LibreSCRS::Secure

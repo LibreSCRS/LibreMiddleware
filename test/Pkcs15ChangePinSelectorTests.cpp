@@ -22,10 +22,12 @@
 #include <LibreSCRS/Plugin/CardPluginService.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
-#include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
+#include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 #include <LibreSCRS/SmartCard/detail/ChannelInjection.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
 #include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
+
+#include "ScriptedPkcs15Card.h"
 
 #include <apdu.h>
 #include <pcsc_connection.h>
@@ -49,69 +51,30 @@ using LibreSCRS::Plugin::CardPlugin;
 using LibreSCRS::Plugin::CardPluginService;
 using LibreSCRS::Plugin::PINResultOutcome;
 using LibreSCRS::SecureChannel::PlainChannel;
-using LibreSCRS::SmartCard::AppletAid;
 using LibreSCRS::SmartCard::CardSession;
 using LibreSCRS::SmartCard::detail::ChannelInjector;
-using LibreSCRS::SmartCard::detail::makeDetachedCardSession;
 using LibreSCRS::SmartCard::Internal::APDUCommand;
 using LibreSCRS::SmartCard::Internal::APDUResponse;
-
-// PKCS#15 application AID (A0 00 00 00 63 "PKCS-15") — the AID the plugin
-// activates its channel for.
-AppletAid pkcs15Aid()
-{
-    return AppletAid{0xA0, 0x00, 0x00, 0x00, 0x63, 0x50, 0x4B, 0x43, 0x53, 0x2D, 0x31, 0x35};
-}
+using LibreSCRS::SmartCard::Testing::makeDetachedCardSession;
+using LibreSCRS::TestSupport::odfPointingAtAodf;
+using LibreSCRS::TestSupport::pkcs15Aid;
+using LibreSCRS::TestSupport::plainPinAodf;
+using LibreSCRS::TestSupport::ScriptedPkcs15Card;
+using LibreSCRS::TestSupport::tokenInfoWithLabel;
 
 // ---------------------------------------------------------------------------
 // Scripted PKCS#15 card (the transmit-funnel test double).
 // ---------------------------------------------------------------------------
 
-struct ScriptedPkcs15Card
+/// The shared scripted card that also accepts CHANGE REFERENCE DATA.
+struct ChangePinCard : ScriptedPkcs15Card
 {
-    /// EF contents by FID (ODF / TokenInfo / AODF ...).
-    std::map<std::uint16_t, std::vector<std::uint8_t>> files;
-    /// FIDs that select OK but have no readable content (DFs on the path).
-    std::vector<std::uint16_t> selectableDfs{0x3F00};
-    /// Every APDU seen, copied by value (snapshot — the UAF-safe form).
-    std::vector<APDUCommand> log;
-
-    std::uint16_t selectedFid = 0;
-
-    APDUResponse operator()(const APDUCommand& cmd)
+protected:
+    std::optional<APDUResponse> answer(const APDUCommand& cmd) override
     {
-        log.push_back(cmd);
-
-        if (cmd.ins == 0xA4 && cmd.p1 == 0x04) // SELECT by AID
-            return {{}, 0x90, 0x00};
-
-        if (cmd.ins == 0xA4 && cmd.p1 == 0x00 && cmd.data.size() == 2) { // SELECT by FID
-            const auto fid = static_cast<std::uint16_t>((cmd.data[0] << 8) | cmd.data[1]);
-            const bool known = files.contains(fid) ||
-                               std::find(selectableDfs.begin(), selectableDfs.end(), fid) != selectableDfs.end();
-            if (!known)
-                return {{}, 0x6A, 0x82};
-            selectedFid = fid;
-            return {{}, 0x90, 0x00};
-        }
-
-        if (cmd.ins == 0xB0) { // READ BINARY
-            const auto it = files.find(selectedFid);
-            if (it == files.end())
-                return {{}, 0x69, 0x86};
-            const std::size_t offset = (static_cast<std::size_t>(cmd.p1 & 0x7F) << 8) | cmd.p2;
-            if (offset >= it->second.size())
-                return {{}, 0x62, 0x82}; // EOF
-            const std::size_t n = std::min<std::size_t>(cmd.le != 0 ? cmd.le : 256, it->second.size() - offset);
-            std::vector<std::uint8_t> chunk(it->second.begin() + static_cast<std::ptrdiff_t>(offset),
-                                            it->second.begin() + static_cast<std::ptrdiff_t>(offset + n));
-            return {std::move(chunk), 0x90, 0x00};
-        }
-
         if (cmd.ins == 0x24) // CHANGE REFERENCE DATA — accepted as scripted
-            return {{}, 0x90, 0x00};
-
-        return {{}, 0x6D, 0x00}; // anything else: instruction not supported
+            return APDUResponse{{}, 0x90, 0x00};
+        return std::nullopt;
     }
 };
 
@@ -128,60 +91,20 @@ bool isReadOnlyApdu(const APDUCommand& cmd)
 }
 
 // ---------------------------------------------------------------------------
-// Fixture files.
-// ---------------------------------------------------------------------------
-
-// EF.ODF with a single authObjects entry pointing at FID 4408.
-std::vector<std::uint8_t> odfPointingAtAodf()
-{
-    return {0xA8, 0x06, 0x30, 0x04, 0x04, 0x02, 0x44, 0x08};
-}
-
-// Minimal EF.TokenInfo: SEQUENCE { INTEGER 0, OCTET STRING serial,
-// [0] IMPLICIT label }.
-std::vector<std::uint8_t> tokenInfoWithLabel(const std::string& label)
-{
-    std::vector<std::uint8_t> inner = {0x02, 0x01, 0x00, 0x04, 0x02, 0x30, 0x31};
-    inner.push_back(0x80);
-    inner.push_back(static_cast<std::uint8_t>(label.size()));
-    inner.insert(inner.end(), label.begin(), label.end());
-    std::vector<std::uint8_t> out = {0x30, static_cast<std::uint8_t>(inner.size())};
-    out.insert(out.end(), inner.begin(), inner.end());
-    return out;
-}
-
-// Synthetic AODF of an unseen PKCS#15 card: ONE plain PIN ("PIN", ref 0x01,
-// initialized, 4/4/8, path 3F00) with no soPin / unblocking / PACE marks.
-std::vector<std::uint8_t> plainPinAodf()
-{
-    return {0x30, 0x29,                               // SEQUENCE (41)
-            0x30, 0x05, 0x0C, 0x03, 0x50, 0x49, 0x4E, //   CommonObjectAttributes "PIN"
-            0x30, 0x03, 0x04, 0x01, 0x01,             //   CommonAuthObjectAttributes: id 01
-            0xA1, 0x1B, 0x30, 0x19,                   //   [1] { PinAttributes
-            0x03, 0x02, 0x00, 0x08,                   //     pinFlags 0x08 (initialized)
-            0x0A, 0x01, 0x01,                         //     pinType ascii
-            0x02, 0x01, 0x04,                         //     minLength 4
-            0x02, 0x01, 0x04,                         //     storedLength 4
-            0x02, 0x01, 0x08,                         //     maxLength 8
-            0x80, 0x01, 0x01,                         //     pinReference 0x01
-            0x30, 0x04, 0x04, 0x02, 0x3F, 0x00};      //     path 3F00 }
-}
-
-// ---------------------------------------------------------------------------
 // Harness.
 // ---------------------------------------------------------------------------
 
 struct FakeCardRig
 {
     std::shared_ptr<CardSession> session;
-    std::shared_ptr<ScriptedPkcs15Card> card;
+    std::shared_ptr<ChangePinCard> card;
 };
 
 FakeCardRig makeRigWithAodf(const char* readerName, std::vector<std::uint8_t> aodf)
 {
     FakeCardRig rig;
     rig.session = makeDetachedCardSession(readerName);
-    rig.card = std::make_shared<ScriptedPkcs15Card>();
+    rig.card = std::make_shared<ChangePinCard>();
     rig.card->files = {
         {0x5031, odfPointingAtAodf()}, {0x5032, tokenInfoWithLabel("PKI Token")}, {0x4408, std::move(aodf)}};
 

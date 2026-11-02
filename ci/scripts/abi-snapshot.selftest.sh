@@ -25,6 +25,11 @@
 #   5  an empty build tree, --update: refused, baseline untouched   -> 2
 #   6  control: the same run under a PATH shim that HAS c++filt    -> 0
 #   7  c++filt taken off PATH                                      -> 2
+#   8  an exported data symbol                                     -> 2
+#   9  Internal:: / detail:: functions are not recorded            -> 0
+#  10  a public function taking an Internal:: type is recorded,
+#      and changing that parameter is drift                        -> 1
+#  11  one function exported by two libraries, --check / --update  -> 1
 set -uo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -201,6 +206,113 @@ rc=$(run "$root6" --check build)
 check "an exported data symbol is not dropped in silence" 2 "$rc"
 says "an exported data symbol is not dropped in silence" "no
        rule for"
+
+# --- case 9: an Internal:: or detail:: symbol is no contract ----------------
+#     It is exported for the in-tree plugins, which are version-locked to the
+#     tree: it is not recorded, and changing it is not drift.
+root9="$WORK/internal"
+mkdir -p "$root9/ci/scripts" "$root9/ci/abi" "$root9/build/lib/LibreSCRS"
+cp "$SUBJECT" "$root9/ci/scripts/abi-snapshot.sh"
+chmod 0755 "$root9/ci/scripts/abi-snapshot.sh"
+build_internal() {  # build_internal <internal-function-name>
+    {
+        printf 'namespace LibreSCRS {\n'
+        printf 'int selftestAlpha(int x) { return x + 1; }\n'
+        printf 'namespace Internal { int %s(int x) { return x + 4; } }\n' "$1"
+        printf 'namespace detail { int selftestDetail(int x) { return x + 5; } }\n'
+        printf '}\n'
+    } > "$root9/stub.cpp"
+    g++ -shared -fPIC -o "$root9/build/lib/LibreSCRS/libLibreSCRS_Stub.so.5.0.0" \
+        "$root9/stub.cpp" 2>"$WORK/gcc.err" \
+        || { echo "FATAL: could not build the internal-symbol stub" >&2; exit 2; }
+}
+build_internal selftestInternal
+rc=$(run "$root9" --update build)
+check "internal symbols: --update" 0 "$rc"
+if grep -qE 'selftestInternal|selftestDetail' "$root9/ci/abi/5.x-baseline.txt"; then
+    echo "FAIL  an Internal:: or detail:: symbol was recorded"
+    fails=$((fails + 1))
+fi
+build_internal selftestInternalRenamed
+rc=$(run "$root9" --check build)
+check "a changed Internal:: symbol is not drift" 0 "$rc"
+
+# --- case 10: a public function that takes an Internal:: type ---------------
+#     Only the function's own name decides. Its parameter types are not its
+#     name: a public member whose signature mentions an Internal:: type is
+#     still declared in a public header, and a change to that signature is
+#     drift like any other.
+root10="$WORK/internal-param"
+mkdir -p "$root10/ci/scripts" "$root10/ci/abi" "$root10/build/lib/LibreSCRS"
+cp "$SUBJECT" "$root10/ci/scripts/abi-snapshot.sh"
+chmod 0755 "$root10/ci/scripts/abi-snapshot.sh"
+build_internal_param() {  # build_internal_param <internal-type-name>
+    {
+        printf 'namespace LibreSCRS {\n'
+        printf 'namespace Internal { struct %s { int x; }; }\n' "$1"
+        printf 'int selftestAlpha(int x) { return x + 1; }\n'
+        printf 'int selftestTakesInternal(const Internal::%s& a) { return a.x; }\n' "$1"
+        printf '}\n'
+    } > "$root10/stub.cpp"
+    g++ -shared -fPIC -o "$root10/build/lib/LibreSCRS/libLibreSCRS_Stub.so.5.0.0" \
+        "$root10/stub.cpp" 2>"$WORK/gcc.err" \
+        || { echo "FATAL: could not build the internal-parameter stub" >&2; exit 2; }
+}
+build_internal_param SelftestCommand
+rc=$(run "$root10" --update build)
+check "public function, Internal:: parameter: --update" 0 "$rc"
+if grep -qF 'selftestTakesInternal(LibreSCRS::Internal::SelftestCommand const&)' \
+        "$root10/ci/abi/5.x-baseline.txt"; then
+    printf 'ok    %-52s recorded\n' "a public function with an Internal:: parameter"
+else
+    printf 'FAIL  %-52s not recorded\n' "a public function with an Internal:: parameter"
+    sed 's/^/        /' "$root10/ci/abi/5.x-baseline.txt"
+    fails=$((fails + 1))
+fi
+build_internal_param SelftestCommandRenamed
+rc=$(run "$root10" --check build)
+check "its changed parameter type is drift" 1 "$rc"
+says "its changed parameter type is drift" "selftestTakesInternal"
+
+# --- case 11: one function exported by two libraries ------------------------
+#     A library that absorbs another one's implementation exports its
+#     functions a second time, and the snapshot would record both copies as
+#     two promises. The control is two libraries with disjoint exports, so the
+#     refusal below is about the shared function and not about a second file.
+root11="$WORK/two-owners"
+mkdir -p "$root11/ci/scripts" "$root11/ci/abi" "$root11/build/lib/LibreSCRS"
+cp "$SUBJECT" "$root11/ci/scripts/abi-snapshot.sh"
+chmod 0755 "$root11/ci/scripts/abi-snapshot.sh"
+build_lib11() {  # build_lib11 <Module> <function-name...>
+    local module="$1"; shift
+    local fn
+    {
+        printf 'namespace LibreSCRS {\n'
+        for fn in "$@"; do printf 'int %s(int x) { return x + 1; }\n' "$fn"; done
+        printf '}\n'
+    } > "$root11/$module.cpp"
+    g++ -shared -fPIC -o "$root11/build/lib/LibreSCRS/libLibreSCRS_$module.so.5.0.0" \
+        "$root11/$module.cpp" 2>"$WORK/gcc.err" \
+        || { echo "FATAL: could not build the $module stub" >&2; exit 2; }
+}
+build_lib11 Owner selftestOwned
+build_lib11 Other selftestOther
+rc=$(run "$root11" --update build)
+check "control: two libraries, disjoint exports" 0 "$rc"
+command cp -f "$root11/ci/abi/5.x-baseline.txt" "$WORK/baseline.two"
+build_lib11 Other selftestOther selftestOwned
+rc=$(run "$root11" --check build)
+check "a function exported by two libraries" 1 "$rc"
+says "a function exported by two libraries" "exported by more than one library"
+says "a function exported by two libraries" "selftestOwned"
+rc=$(run "$root11" --update build)
+check "the duplicate is refused by --update" 1 "$rc"
+if cmp -s "$WORK/baseline.two" "$root11/ci/abi/5.x-baseline.txt"; then
+    printf 'ok    %-52s baseline untouched\n' "the refused duplicate wrote nothing"
+else
+    printf 'FAIL  %-52s the refused --update overwrote the baseline\n' "the refused duplicate wrote nothing"
+    fails=$((fails + 1))
+fi
 
 printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
 [ "$fails" = 0 ]

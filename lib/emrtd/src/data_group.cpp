@@ -3,6 +3,8 @@
 
 #include "data_group.h"
 
+#include <ber.h>
+
 #include <algorithm>
 #include <cstring>
 
@@ -65,57 +67,6 @@ void parseName(const std::string& nameField, std::string& surname, std::string& 
     givenNames = collapsed;
 }
 
-// Parse a TLV value: given a buffer and starting position, return the value bytes and advance pos.
-// Returns empty vector on error.
-[[maybe_unused]] std::vector<uint8_t> parseTLVValue(const std::vector<uint8_t>& data, size_t& pos)
-{
-    if (pos >= data.size())
-        return {};
-
-    // Skip tag (handle multi-byte tags)
-    if ((data[pos] & 0x1F) == 0x1F) {
-        ++pos;
-        while (pos < data.size() && (data[pos] & 0x80))
-            ++pos;
-        if (pos >= data.size())
-            return {};
-        ++pos; // skip last tag byte
-    } else {
-        ++pos;
-    }
-
-    if (pos >= data.size())
-        return {};
-
-    // Parse length
-    size_t len = 0;
-    size_t headerLen = 0;
-    uint8_t lenByte = data[pos];
-    if (lenByte < 0x80) {
-        len = lenByte;
-        headerLen = 1;
-    } else if (lenByte == 0x81 && pos + 1 < data.size()) {
-        len = data[pos + 1];
-        headerLen = 2;
-    } else if (lenByte == 0x82 && pos + 2 < data.size()) {
-        len = (static_cast<size_t>(data[pos + 1]) << 8) | data[pos + 2];
-        headerLen = 3;
-    } else if (lenByte == 0x83 && pos + 3 < data.size()) {
-        len = (static_cast<size_t>(data[pos + 1]) << 16) | (static_cast<size_t>(data[pos + 2]) << 8) | data[pos + 3];
-        headerLen = 4;
-    } else {
-        return {};
-    }
-
-    pos += headerLen;
-    if (pos + len > data.size())
-        return {};
-    std::vector<uint8_t> value(data.begin() + static_cast<ptrdiff_t>(pos),
-                               data.begin() + static_cast<ptrdiff_t>(pos + len));
-    pos += len;
-    return value;
-}
-
 // Find a specific tag inside a TLV-encoded buffer, return its value bytes.
 // Handles simple (1-byte) and two-byte tags.
 std::vector<uint8_t> findTag(const std::vector<uint8_t>& data, size_t start, size_t end, uint8_t tag1, uint8_t tag2 = 0)
@@ -144,27 +95,13 @@ std::vector<uint8_t> findTag(const std::vector<uint8_t>& data, size_t start, siz
         if (pos >= data.size())
             break;
 
-        // Read length
-        size_t len = 0;
-        size_t headerLen = 0;
-        uint8_t lenByte = data[pos];
-        if (lenByte < 0x80) {
-            len = lenByte;
-            headerLen = 1;
-        } else if (lenByte == 0x81 && pos + 1 < data.size()) {
-            len = data[pos + 1];
-            headerLen = 2;
-        } else if (lenByte == 0x82 && pos + 2 < data.size()) {
-            len = (static_cast<size_t>(data[pos + 1]) << 8) | data[pos + 2];
-            headerLen = 3;
-        } else if (lenByte == 0x83 && pos + 3 < data.size()) {
-            len =
-                (static_cast<size_t>(data[pos + 1]) << 16) | (static_cast<size_t>(data[pos + 2]) << 8) | data[pos + 3];
-            headerLen = 4;
-        } else {
+        // Read length: the shared decode, with this walk's ceiling of three
+        // length octets (`next - pos` up to 4).
+        const auto parsed = LibreSCRS::SmartCard::Internal::tryParseLength(data.data(), data.size(), pos);
+        if (!parsed.ok || parsed.next - pos > 4)
             break;
-        }
-        pos += headerLen;
+        const size_t len = parsed.length;
+        pos = parsed.next;
 
         if (pos + len > data.size())
             break;

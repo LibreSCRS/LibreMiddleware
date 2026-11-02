@@ -9,6 +9,9 @@
 
 #include "../types.h" // ChainTermination
 
+#include <openssl/ocsp.h>
+#include <openssl/x509.h>
+
 #include <cstdint>
 #include <ctime>
 #include <string>
@@ -92,8 +95,17 @@ public:
     // we asked about. Returns DER bytes on success, empty on failure.
     //
     // See fetchCrl for the rationale; the same ETSI clause applies.
+    //
+    // @p anchorTerminated: the chain ends in a Trusted-List anchor, which may
+    // be a subordinate CA rather than a self-signed root.
     std::vector<uint8_t> fetchOcsp(X509* cert, X509* issuer, const std::vector<X509*>& chain,
-                                   const std::string& ocspUrl, int timeoutSeconds = 10);
+                                   const std::string& ocspUrl, int timeoutSeconds = 10, bool anchorTerminated = false);
+
+    // Whether @p basic is signed by a responder that chains to the last
+    // element of @p chain, the one trust anchor. A chain that ends in a
+    // Trusted-List anchor (@p anchorTerminated) trusts that anchor as it is,
+    // self-signed or not; any other chain must reach a self-signed root.
+    static bool ocspResponseVerifies(OCSP_BASICRESP* basic, const std::vector<X509*>& chain, bool anchorTerminated);
 
     // Collect all revocation data for a certificate chain.
     // chain[0] = signer cert, chain[1] = intermediate, ..., chain[n] = terminal.

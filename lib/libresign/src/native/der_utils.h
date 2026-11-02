@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <ber.h>
+
 #include <cstdint>
 #include <span>
 #include <stdexcept>
@@ -16,31 +18,17 @@ namespace libresign {
 
 // ASN.1 DER encoding utilities.
 
-// Encode a DER definite-length field (short or long form).
+// Encode a DER definite-length field (short or long form), through the
+// middleware's one BER length encoder. The ceiling is this module's own:
+// nothing a signature carries comes near 16 MiB, so a length that large is
+// refused here even though the encoder could write it.
 inline std::vector<uint8_t> derEncodeLength(size_t len)
 {
-    std::vector<uint8_t> out;
-    if (len < 128) {
-        out.push_back(static_cast<uint8_t>(len));
-    } else if (len < 256) {
-        out.push_back(0x81);
-        out.push_back(static_cast<uint8_t>(len));
-    } else if (len < 65536) {
-        out.push_back(0x82);
-        out.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
-        out.push_back(static_cast<uint8_t>(len & 0xFF));
-    } else if (len < 0x1000000) {
-        out.push_back(0x83);
-        out.push_back(static_cast<uint8_t>((len >> 16) & 0xFF));
-        out.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
-        out.push_back(static_cast<uint8_t>(len & 0xFF));
-    } else {
-        // Anything ≥ 16 MiB would need 0x84 (4-byte) encoding, which is
-        // legal DER but far exceeds any signature-adjacent payload we
-        // produce. Fail loudly rather than silently truncating the high
-        // bits and writing a corrupt structure.
+    if (len >= 0x1000000) {
         throw std::length_error("derEncodeLength: content ≥ 16 MiB is not supported");
     }
+    std::vector<uint8_t> out;
+    LibreSCRS::SmartCard::Internal::appendLength(out, len);
     return out;
 }
 

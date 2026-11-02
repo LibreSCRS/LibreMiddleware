@@ -215,6 +215,35 @@ std::vector<uint8_t> canonicalizeSubtree(xmlDocPtr doc, xmlNodePtr node)
 
 // ---- Canonicalize entire document using Exclusive C14N ----
 
+// The enveloped-signature transform: the signature leaves the tree for one
+// digest and comes back exactly where it was, so every later reference is
+// digested over the document as signed.
+class DetachedSignature
+{
+public:
+    DetachedSignature(xmlDocPtr doc, xmlNodePtr sig) : doc(doc), sig(sig), parent(sig->parent), next(sig->next)
+    {
+        xmlUnlinkNode(sig);
+    }
+    ~DetachedSignature()
+    {
+        if (next != nullptr)
+            xmlAddPrevSibling(next, sig);
+        else if (parent != nullptr && parent->type != XML_DOCUMENT_NODE)
+            xmlAddChild(parent, sig);
+        else
+            xmlDocSetRootElement(doc, sig);
+    }
+    DetachedSignature(const DetachedSignature&) = delete;
+    DetachedSignature& operator=(const DetachedSignature&) = delete;
+
+private:
+    xmlDocPtr doc;
+    xmlNodePtr sig;
+    xmlNodePtr parent;
+    xmlNodePtr next;
+};
+
 std::vector<uint8_t> canonicalizeDoc(xmlDocPtr doc)
 {
     xmlChar* buf = nullptr;
@@ -298,7 +327,11 @@ bool TlSignatureVerifier::verify(std::span<const uint8_t> xmlData, std::span<con
     }
 
     // ---- 1. Reference Validation ----
-    // Iterate over ds:Reference elements in ds:SignedInfo
+    // Iterate over ds:Reference elements in ds:SignedInfo. One of them must
+    // cover the whole list -- URI="" or the root element's Id -- or the
+    // parser would read providers and services no signature vouches for.
+    xmlNodePtr const rootNode = xmlDocGetRootElement(doc.get());
+    bool coversWholeList = false;
     for (xmlNodePtr refNode = signedInfoNode->children; refNode; refNode = refNode->next) {
         if (refNode->type != XML_ELEMENT_NODE)
             continue;
@@ -352,18 +385,12 @@ bool TlSignatureVerifier::verify(std::span<const uint8_t> xmlData, std::span<con
         // Resolve referenced content and canonicalize
         std::vector<uint8_t> canonicalized;
 
+        bool coversRoot = false;
         if (uri.empty()) {
             // URI="" means whole document with enveloped-signature transform
-            // Temporarily remove the Signature element, canonicalize, re-attach
-            xmlNodePtr sigParent = sigNode->parent;
-            xmlUnlinkNode(sigNode);
+            const DetachedSignature detached(doc.get(), sigNode);
             canonicalized = canonicalizeDoc(doc.get());
-            // Re-attach signature node
-            if (sigParent) {
-                xmlAddChild(sigParent, sigNode);
-            } else {
-                xmlDocSetRootElement(doc.get(), sigNode);
-            }
+            coversRoot = true;
         } else if (uri.size() > 1 && uri[0] == '#') {
             // URI="#id" — find element by Id
             std::string id = uri.substr(1);
@@ -390,12 +417,11 @@ bool TlSignatureVerifier::verify(std::span<const uint8_t> xmlData, std::span<con
                 error = "could not resolve reference URI: " + uri;
                 return false;
             }
+            coversRoot = targetNode == rootNode;
 
             if (hasEnvelopedSig) {
-                xmlUnlinkNode(sigNode);
+                const DetachedSignature detached(doc.get(), sigNode);
                 canonicalized = canonicalizeSubtree(doc.get(), targetNode);
-                xmlNodePtr sigParent = targetNode; // re-attach to same parent context
-                xmlAddChild(sigParent, sigNode);
             } else {
                 canonicalized = canonicalizeSubtree(doc.get(), targetNode);
             }
@@ -423,6 +449,11 @@ bool TlSignatureVerifier::verify(std::span<const uint8_t> xmlData, std::span<con
             error = "reference digest mismatch for URI: " + (uri.empty() ? "(whole document)" : uri);
             return false;
         }
+        coversWholeList = coversWholeList || coversRoot;
+    }
+    if (!coversWholeList) {
+        error = "no ds:Reference covers the whole trust list";
+        return false;
     }
 
     // ---- 2. Signature Validation ----

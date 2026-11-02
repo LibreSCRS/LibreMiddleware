@@ -8,18 +8,16 @@
 #include "signing_test_support.h"
 
 #include "signing_service.h"
-#include "signing_service_factory.h"
 
 #include "card_signing_key.h"
 #include "signing_keys.h"
 
-#ifdef LIBRESIGN_HAS_NATIVE
+#include "native/native_signing_service.h"
 #include "signing_test_support/mock_tsa_server.h"
-#endif
 
 #ifdef LIBRESIGN_HAS_DSS
-#include "dss/dss_service_manager.h"
-#include "dss/dss_signing_service.h"
+#include "dss_oracle/dss_service_manager.h"
+#include "dss_oracle/dss_signing_service.h"
 #endif
 
 #include <json.hpp>
@@ -52,6 +50,10 @@ std::vector<uint8_t> buildTestPayload()
 
 struct BackendInfo
 {
+    /// The engine under test: the one that ships, or the DSS reference the
+    /// cross-backend cases sign through.
+    enum class Backend { Native, DSS };
+
     std::string name;
     Backend backend;
 
@@ -86,15 +88,13 @@ protected:
 
         auto info = GetParam();
 
-#ifdef LIBRESIGN_HAS_NATIVE
-        if (info.backend == Backend::Native) {
-            ownedService = createSigningService(Backend::Native);
+        if (info.backend == BackendInfo::Backend::Native) {
+            ownedService = std::make_unique<NativeSigningService>();
             service = ownedService.get();
         }
-#endif
 
 #ifdef LIBRESIGN_HAS_DSS
-        if (info.backend == Backend::DSS) {
+        if (info.backend == BackendInfo::Backend::DSS) {
             auto* mgr = static_cast<DSSServiceManager*>(SigningTestEnvironment::manager());
             if (!mgr)
                 GTEST_SKIP() << "DSS service not available";
@@ -112,13 +112,11 @@ protected:
 
         if (info.keySource == BackendInfo::KeySource::InMemory) {
             key = std::make_unique<SoftSigningKey>(validSignerKey());
-#ifdef LIBRESIGN_HAS_NATIVE
             // A responder in this process instead of a public authority: it
             // removes the only live network dependency the suite had, and it
             // can prove it was reached rather than letting a test infer that
             // from success.
             tsa = std::make_unique<MockTsaServer>();
-#endif
             return;
         }
 
@@ -132,14 +130,18 @@ protected:
             GTEST_SKIP() << skipReason;
     }
 
-    /// Timestamp endpoint for this parameterisation.
-    std::string tsaUrl() const
+    /// Timestamp endpoint for this parameterisation, and the anchor its
+    /// tokens chain to when it is the in-process authority (a public one is
+    /// vouched for by the system store).
+    TSAConfig tsaConfig() const
     {
-#ifdef LIBRESIGN_HAS_NATIVE
-        if (tsa)
-            return tsa->url();
-#endif
-        return "http://timestamp.digicert.com";
+        TSAConfig cfg;
+        cfg.url = "http://timestamp.digicert.com";
+        if (tsa) {
+            cfg.url = tsa->url();
+            cfg.trust.anchors = {MockTsaServer::trustAnchor()};
+        }
+        return cfg;
     }
 
     /// Can a long-term level succeed with this parameterisation's key?
@@ -163,7 +165,7 @@ protected:
         req.fileName = fileName;
         req.format = format;
         req.level = level;
-        req.tsa.url = tsaUrl();
+        req.tsa = tsaConfig();
         req.allowExpiredCertificate = true;
 
         auto result = service->sign(req, *key);
@@ -187,15 +189,12 @@ protected:
     std::unique_ptr<SigningKey> key;
 
     std::unique_ptr<SigningService> ownedService;
-#ifdef LIBRESIGN_HAS_NATIVE
     std::unique_ptr<MockTsaServer> tsa;
-#endif
 #ifdef LIBRESIGN_HAS_DSS
     std::unique_ptr<DSSSigningService> dssService;
 #endif
 };
 
-#ifdef LIBRESIGN_HAS_NATIVE
 // HW + Trusted-List: a native CAdES B-LT sign on a real card must complete the
 // signer chain from the Serbian TL and embed the issuing CA in the CMS (cards
 // carry only the leaf). Reads PIN/reader from env; skips when absent or when
@@ -213,8 +212,8 @@ TEST(SigningHwNativeBLT, CAdESEmbedsTrustedListChain)
     if (!key)
         GTEST_SKIP() << skipReason;
 
-    auto svc = createSigningService(Backend::Native);
-    if (!svc || !svc->isAvailable())
+    auto svc = std::make_unique<NativeSigningService>();
+    if (!svc->isAvailable())
         GTEST_SKIP() << "native backend unavailable";
 
     TrustConfig tl;
@@ -256,7 +255,6 @@ TEST(SigningHwNativeBLT, CAdESEmbedsTrustedListChain)
         sk_X509_pop_free(certs, X509_free);
     CMS_ContentInfo_free(cms);
 }
-#endif
 
 // ===========================================================================
 // CAdES
@@ -504,7 +502,7 @@ TEST_P(SigningE2ETest, JAdES_BLTA)
 // and validate at the corresponding ETSI baseline through the DSS oracle.
 
 namespace {
-SigningRequest jadesEnvelopedRequest(const std::vector<uint8_t>& doc, SignatureLevel level, const std::string& tsaUrl)
+SigningRequest jadesEnvelopedRequest(const std::vector<uint8_t>& doc, SignatureLevel level, const TSAConfig& tsa)
 {
     SigningRequest req;
     req.document = doc;
@@ -514,7 +512,7 @@ SigningRequest jadesEnvelopedRequest(const std::vector<uint8_t>& doc, SignatureL
     req.packaging = SignaturePackaging::Enveloped;
     req.allowExpiredCertificate = true;
     if (level >= SignatureLevel::B_T)
-        req.tsa.url = tsaUrl;
+        req.tsa = tsa;
     return req;
 }
 
@@ -528,7 +526,7 @@ void expectJadesEnvelopedPayloadPresent(const SigningResult& result)
 
 bool needsTrustForLta(const BackendInfo& info)
 {
-    return info.backend == Backend::DSS;
+    return info.backend == BackendInfo::Backend::DSS;
 }
 } // namespace
 
@@ -536,7 +534,7 @@ TEST_P(SigningE2ETest, JAdES_BB_Enveloped)
 {
     SKIP_IF_PIN_FAILED();
     auto data = buildTestPayload();
-    auto req = jadesEnvelopedRequest(data, SignatureLevel::B_B, tsaUrl());
+    auto req = jadesEnvelopedRequest(data, SignatureLevel::B_B, tsaConfig());
 
     auto result = service->sign(req, *key);
     checkPinFailure(result);
@@ -550,7 +548,7 @@ TEST_P(SigningE2ETest, JAdES_BT_Enveloped)
 {
     SKIP_IF_PIN_FAILED();
     auto data = buildTestPayload();
-    auto req = jadesEnvelopedRequest(data, SignatureLevel::B_T, tsaUrl());
+    auto req = jadesEnvelopedRequest(data, SignatureLevel::B_T, tsaConfig());
 
     auto result = service->sign(req, *key);
     checkPinFailure(result);
@@ -566,7 +564,7 @@ TEST_P(SigningE2ETest, JAdES_BLT_Enveloped)
     if (needsTrustForLta(GetParam()) && !SigningTestEnvironment::trustConfigured())
         GTEST_SKIP() << "B-LT requires trust store (DSS trust not configured)";
     auto data = buildTestPayload();
-    auto req = jadesEnvelopedRequest(data, SignatureLevel::B_LT, tsaUrl());
+    auto req = jadesEnvelopedRequest(data, SignatureLevel::B_LT, tsaConfig());
 
     auto result = service->sign(req, *key);
     checkPinFailure(result);
@@ -593,7 +591,7 @@ TEST_P(SigningE2ETest, JAdES_BLTA_Enveloped)
     if (needsTrustForLta(GetParam()) && !SigningTestEnvironment::trustConfigured())
         GTEST_SKIP() << "B-LTA requires trust store (DSS trust not configured)";
     auto data = buildTestPayload();
-    auto req = jadesEnvelopedRequest(data, SignatureLevel::B_LTA, tsaUrl());
+    auto req = jadesEnvelopedRequest(data, SignatureLevel::B_LTA, tsaConfig());
 
     auto result = service->sign(req, *key);
     checkPinFailure(result);
@@ -646,7 +644,7 @@ TEST_P(SigningE2ETest, XAdES_BT_Detached)
     req.format = SignatureFormat::Xades;
     req.level = SignatureLevel::B_T;
     req.packaging = SignaturePackaging::Detached;
-    req.tsa.url = tsaUrl();
+    req.tsa = tsaConfig();
     req.allowExpiredCertificate = true;
 
     auto result = service->sign(req, *key);
@@ -666,7 +664,7 @@ TEST_P(SigningE2ETest, XAdES_BLT_Detached)
     req.format = SignatureFormat::Xades;
     req.level = SignatureLevel::B_LT;
     req.packaging = SignaturePackaging::Detached;
-    req.tsa.url = tsaUrl();
+    req.tsa = tsaConfig();
     req.allowExpiredCertificate = true;
 
     auto result = service->sign(req, *key);
@@ -690,7 +688,7 @@ TEST_P(SigningE2ETest, XAdES_BLTA_Detached)
     req.format = SignatureFormat::Xades;
     req.level = SignatureLevel::B_LTA;
     req.packaging = SignaturePackaging::Detached;
-    req.tsa.url = tsaUrl();
+    req.tsa = tsaConfig();
     req.allowExpiredCertificate = true;
 
     auto result = service->sign(req, *key);
@@ -739,7 +737,7 @@ TEST_P(SigningE2ETest, XAdES_BT_Enveloped)
     req.format = SignatureFormat::Xades;
     req.level = SignatureLevel::B_T;
     req.packaging = SignaturePackaging::Enveloped;
-    req.tsa.url = tsaUrl();
+    req.tsa = tsaConfig();
     req.allowExpiredCertificate = true;
 
     auto result = service->sign(req, *key);
@@ -760,7 +758,7 @@ TEST_P(SigningE2ETest, XAdES_BLT_Enveloped)
     req.format = SignatureFormat::Xades;
     req.level = SignatureLevel::B_LT;
     req.packaging = SignaturePackaging::Enveloped;
-    req.tsa.url = tsaUrl();
+    req.tsa = tsaConfig();
     req.allowExpiredCertificate = true;
 
     auto result = service->sign(req, *key);
@@ -785,7 +783,7 @@ TEST_P(SigningE2ETest, XAdES_BLTA_Enveloped)
     req.format = SignatureFormat::Xades;
     req.level = SignatureLevel::B_LTA;
     req.packaging = SignaturePackaging::Enveloped;
-    req.tsa.url = tsaUrl();
+    req.tsa = tsaConfig();
     req.allowExpiredCertificate = true;
 
     auto result = service->sign(req, *key);
@@ -864,7 +862,7 @@ TEST_P(SigningE2ETest, PAdES_BB_VisualSignature)
     req.fileName = "test-visual.pdf";
     req.format = SignatureFormat::Pades;
     req.level = SignatureLevel::B_B;
-    req.tsa.url = tsaUrl();
+    req.tsa = tsaConfig();
     req.allowExpiredCertificate = true;
     req.visual.enabled = true;
     req.visual.page = 1;
@@ -1016,7 +1014,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BB_then_BT)
     req2.fileName = "test-multilevel.pdf";
     req2.format = SignatureFormat::Pades;
     req2.level = SignatureLevel::B_T;
-    req2.tsa.url = tsaUrl();
+    req2.tsa = tsaConfig();
     req2.allowExpiredCertificate = true;
 
     auto result2 = service->sign(req2, *key);
@@ -1037,7 +1035,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BT_then_BB)
     req1.fileName = "test.pdf";
     req1.format = SignatureFormat::Pades;
     req1.level = SignatureLevel::B_T;
-    req1.tsa.url = tsaUrl();
+    req1.tsa = tsaConfig();
     req1.allowExpiredCertificate = true;
 
     auto r1 = service->sign(req1, *key);
@@ -1061,7 +1059,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BT_then_BB)
 TEST_P(SigningE2ETest, PAdES_MultiLevel_BB_then_BLTA)
 {
     SKIP_IF_PIN_FAILED();
-    if (GetParam().backend == Backend::DSS && !SigningTestEnvironment::trustConfigured())
+    if (GetParam().backend == BackendInfo::Backend::DSS && !SigningTestEnvironment::trustConfigured())
         GTEST_SKIP() << "B-LTA requires trust store (DSS trust not configured)";
     auto pdf = buildTestPdf();
     auto pdfVec = std::vector<uint8_t>(pdf.begin(), pdf.end());
@@ -1082,7 +1080,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BB_then_BLTA)
     req2.fileName = "test.pdf";
     req2.format = SignatureFormat::Pades;
     req2.level = SignatureLevel::B_LTA;
-    req2.tsa.url = tsaUrl();
+    req2.tsa = tsaConfig();
     req2.allowExpiredCertificate = true;
 
     auto r2 = service->sign(req2, *key);
@@ -1350,191 +1348,15 @@ TEST_P(SigningE2ETest, JAdES_Detached_MultiSign_RejectedExplicitly)
     // Must REFUSE — DETACHED multi-sign cannot recover original from prior JWS.
     EXPECT_FALSE(r2.success) << "DETACHED multi-sign must error out, not silently produce a single-signer JWS";
     EXPECT_NE(r2.errorMessage.find("DETACHED"), std::string::npos) << "Error must mention DETACHED limitation";
-    // Error message cites RFC 7797 §4.2 (why payload is absent) and points
-    // at the appendSigner API (what to use instead).
+    // Error message cites RFC 7797 §4.2 (why payload is absent).
     EXPECT_NE(r2.errorMessage.find("RFC 7797"), std::string::npos)
         << "Error must cite RFC 7797 §4.2 detached-form payload omission";
-    EXPECT_NE(r2.errorMessage.find("appendSigner"), std::string::npos)
-        << "Error must point user at the 4.2 appendSigner API for DETACHED multi-sign";
 }
 
-// ===========================================================================
-// DETACHED multi-sign positive tests (CAdES, XAdES-Detached, JAdES-Detached)
-//
-// Canonical multi-sign baseline via the appendSigner public API: sign once,
-// then append a second signer over the SAME original payload. Each test
-// asserts (a) end-to-end success, (b) format-specific structural shape with
-// two signer entries, and (c) DSS oracle reports exactly 2 signatures.
-//
-// These are the positive counterparts to JAdES_Detached_MultiSign_Rejected-
-// Explicitly (which forbids the broken "re-sign by passing prior JWS through
-// service->sign" path). The correct DETACHED multi-sign API is appendSigner.
-// ===========================================================================
-
-TEST_P(SigningE2ETest, CAdES_Detached_MultiSign_Succeeds)
-{
-    SKIP_IF_PIN_FAILED();
-    auto original = buildTestPayload();
-
-    SigningRequest req;
-    req.document = original;
-    req.fileName = "test.bin";
-    req.format = SignatureFormat::Cades;
-    req.level = SignatureLevel::B_B;
-    req.tsa.url = tsaUrl();
-    req.allowExpiredCertificate = true;
-
-    auto r1 = service->sign(req, *key);
-    checkPinFailure(r1);
-    ASSERT_TRUE(r1.success) << "CAdES sign1: " << r1.errorMessage;
-    ASSERT_FALSE(r1.signedDocument.empty());
-    EXPECT_EQ(r1.signedDocument[0], 0x30); // ASN.1 SEQUENCE
-
-    auto r2 = service->appendSigner(req, std::span<const uint8_t>{r1.signedDocument},
-                                    std::span<const uint8_t>{original}, *key);
-    checkPinFailure(r2);
-    ASSERT_TRUE(r2.success) << "CAdES appendSigner: " << r2.errorMessage;
-    ASSERT_FALSE(r2.signedDocument.empty());
-    EXPECT_EQ(r2.signedDocument[0], 0x30) << "appended output must still be ASN.1 SEQUENCE";
-    EXPECT_GT(r2.signedDocument.size(), r1.signedDocument.size())
-        << "Multi-signer CMS must be strictly larger than single-signer CMS";
-
-    validateSignature(r2, "CAdES", "CAdES_BASELINE_B", "DETACHED", original, 2);
-
-    saveOutput(r2, GetParam().name + "-cades-detached-multisign.p7s");
-}
-
-TEST_P(SigningE2ETest, XAdES_Detached_MultiSign_Succeeds)
-{
-    SKIP_IF_PIN_FAILED();
-    auto original = buildTestPayload();
-
-    SigningRequest req;
-    req.document = original;
-    req.fileName = "test.bin";
-    req.format = SignatureFormat::Xades;
-    req.level = SignatureLevel::B_B;
-    req.packaging = SignaturePackaging::Detached;
-    req.tsa.url = tsaUrl();
-    req.allowExpiredCertificate = true;
-
-    auto r1 = service->sign(req, *key);
-    checkPinFailure(r1);
-    ASSERT_TRUE(r1.success) << "XAdES sign1: " << r1.errorMessage;
-    ASSERT_FALSE(r1.signedDocument.empty());
-
-    auto r2 = service->appendSigner(req, std::span<const uint8_t>{r1.signedDocument},
-                                    std::span<const uint8_t>{original}, *key);
-    checkPinFailure(r2);
-    ASSERT_TRUE(r2.success) << "XAdES appendSigner: " << r2.errorMessage;
-    ASSERT_FALSE(r2.signedDocument.empty());
-
-    // Structural check: 2 ds:Signature opening tags inside an asic:Signatures
-    // wrapper (XAdES-Detached canonical container per ETSI TS 119 442). Same
-    // counting rule as XAdES_Enveloped_DoubleSignature — exclude SignatureValue
-    // / SignatureMethod / SignatureProperties prefix collisions.
-    std::string_view sv(reinterpret_cast<const char*>(r2.signedDocument.data()), r2.signedDocument.size());
-    size_t sigCount = 0;
-    size_t pos = 0;
-    while ((pos = sv.find("<ds:Signature", pos)) != std::string_view::npos) {
-        char next = (pos + 13 < sv.size()) ? sv[pos + 13] : '\0';
-        if (next == ' ' || next == '\t' || next == '\n' || next == '>')
-            ++sigCount;
-        pos += 13;
-    }
-    EXPECT_EQ(sigCount, 2u) << "Expected exactly 2 <ds:Signature> elements in detached multi-sign output";
-    EXPECT_NE(sv.find("asic:Signatures"), std::string_view::npos)
-        << "Detached XAdES multi-sign must wrap signatures in <asic:Signatures>";
-
-    validateSignature(r2, "XAdES", "XAdES_BASELINE_B", "DETACHED", original, 2);
-
-    saveOutput(r2, GetParam().name + "-xades-detached-multisign.xml");
-}
-
-TEST_P(SigningE2ETest, JAdES_Detached_MultiSign_Succeeds)
-{
-    SKIP_IF_PIN_FAILED();
-    auto original = buildTestPayload();
-
-    SigningRequest req;
-    req.document = original;
-    req.fileName = "test.bin";
-    req.format = SignatureFormat::Jades;
-    req.level = SignatureLevel::B_B;
-    req.packaging = SignaturePackaging::Detached;
-    req.tsa.url = tsaUrl();
-    req.allowExpiredCertificate = true;
-
-    auto r1 = service->sign(req, *key);
-    checkPinFailure(r1);
-    ASSERT_TRUE(r1.success) << "JAdES sign1: " << r1.errorMessage;
-    ASSERT_FALSE(r1.signedDocument.empty());
-
-    auto r2 = service->appendSigner(req, std::span<const uint8_t>{r1.signedDocument},
-                                    std::span<const uint8_t>{original}, *key);
-    checkPinFailure(r2);
-    ASSERT_TRUE(r2.success) << "JAdES appendSigner: " << r2.errorMessage;
-    ASSERT_FALSE(r2.signedDocument.empty());
-
-    // Structural check: JWS JSON General Serialization with exactly 2 entries
-    // in signatures[] and NO payload field (RFC 7797 §4.2 detached form).
-    auto parsed = nlohmann::json::parse(r2.signedDocument, /*cb=*/nullptr, /*allow_exceptions=*/false);
-    ASSERT_FALSE(parsed.is_discarded()) << "Output must be valid JSON";
-    ASSERT_TRUE(parsed.contains("signatures")) << "JWS JSON General must contain signatures[]";
-    EXPECT_EQ(parsed["signatures"].size(), 2u) << "Expected 2 signature entries in signatures[]";
-    EXPECT_FALSE(parsed.contains("payload")) << "Detached JWS must omit payload field (RFC 7797 §4.2)";
-
-    validateSignature(r2, "JAdES", "JAdES_BASELINE_B", "DETACHED", original, 2);
-
-    saveOutput(r2, GetParam().name + "-jades-detached-multisign.json");
-}
-
-// ===========================================================================
-// DETACHED multi-sign negative tests — appendSigner input validation
-//
-// Verifies that each per-format appendSigner cleanly rejects bad inputs with
-// SignFailureKind::InvalidInput and a diagnostic message that mentions the
-// "original" payload, instead of crashing, silently emitting a malformed
-// container, or returning an opaque error class.
-//
-// Missing-original family: produce a DETACHED prior signature, then call
-// appendSigner with an empty originalDocument. CAdES, XAdES-Detached and
-// JAdES-Detached all require the original payload to be supplied and must
-// fail closed.
-//
-// Original-mismatch family: only JAdES ENVELOPED currently carries the
-// optional integrity memcmp between the decoded prior payload and the
-// caller-provided originalDocument. XAdES-Enveloped, ASiC-E and PAdES do
-// not perform that check on the appendSigner path, so only the JAdES
-// ENVELOPED variant is exercised here.
-// ===========================================================================
-
-TEST_P(SigningE2ETest, CAdES_AppendSigner_MissingOriginal_RejectsExplicitly)
-{
-    SKIP_IF_PIN_FAILED();
-    auto original = buildTestPayload();
-
-    SigningRequest req;
-    req.document = original;
-    req.fileName = "test.bin";
-    req.format = SignatureFormat::Cades;
-    req.level = SignatureLevel::B_B;
-    req.allowExpiredCertificate = true;
-
-    auto r1 = service->sign(req, *key);
-    checkPinFailure(r1);
-    ASSERT_TRUE(r1.success) << "CAdES prior sign: " << r1.errorMessage;
-
-    auto r2 = service->appendSigner(req, std::span<const uint8_t>{r1.signedDocument}, std::span<const uint8_t>{}, *key);
-    checkPinFailure(r2);
-    EXPECT_FALSE(r2.success) << "CAdES appendSigner must reject empty originalDocument";
-    ASSERT_TRUE(r2.failureKind.has_value()) << "failureKind not populated for CAdES rejection";
-    EXPECT_EQ(*r2.failureKind, libresign::SignFailureKind::InvalidInput) << r2.errorMessage;
-    EXPECT_NE(r2.errorMessage.find("original"), std::string::npos)
-        << "Diagnostic must mention 'original' payload: " << r2.errorMessage;
-}
-
-TEST_P(SigningE2ETest, XAdES_AppendSigner_MissingOriginal_RejectsExplicitly)
+// A detached XAdES signature does not carry the document it signs either:
+// signing it again is refused, naming the missing original, instead of
+// producing a signature over the prior signature's own bytes.
+TEST_P(SigningE2ETest, XAdES_Detached_MultiSign_RejectedExplicitly)
 {
     SKIP_IF_PIN_FAILED();
     auto original = buildTestPayload();
@@ -1551,70 +1373,12 @@ TEST_P(SigningE2ETest, XAdES_AppendSigner_MissingOriginal_RejectsExplicitly)
     checkPinFailure(r1);
     ASSERT_TRUE(r1.success) << "XAdES prior sign: " << r1.errorMessage;
 
-    auto r2 = service->appendSigner(req, std::span<const uint8_t>{r1.signedDocument}, std::span<const uint8_t>{}, *key);
+    req.document = r1.signedDocument;
+    auto r2 = service->sign(req, *key);
     checkPinFailure(r2);
-    EXPECT_FALSE(r2.success) << "XAdES appendSigner must reject empty originalDocument";
+    EXPECT_FALSE(r2.success) << "signing a detached XAdES signature again must be refused";
     ASSERT_TRUE(r2.failureKind.has_value()) << "failureKind not populated for XAdES rejection";
     EXPECT_EQ(*r2.failureKind, libresign::SignFailureKind::InvalidInput) << r2.errorMessage;
-    EXPECT_NE(r2.errorMessage.find("original"), std::string::npos)
-        << "Diagnostic must mention 'original' payload: " << r2.errorMessage;
-}
-
-TEST_P(SigningE2ETest, JAdES_AppendSigner_MissingOriginal_RejectsExplicitly)
-{
-    SKIP_IF_PIN_FAILED();
-    auto original = buildTestPayload();
-
-    SigningRequest req;
-    req.document = original;
-    req.fileName = "test.bin";
-    req.format = SignatureFormat::Jades;
-    req.level = SignatureLevel::B_B;
-    req.packaging = SignaturePackaging::Detached;
-    req.allowExpiredCertificate = true;
-
-    auto r1 = service->sign(req, *key);
-    checkPinFailure(r1);
-    ASSERT_TRUE(r1.success) << "JAdES prior sign: " << r1.errorMessage;
-
-    auto r2 = service->appendSigner(req, std::span<const uint8_t>{r1.signedDocument}, std::span<const uint8_t>{}, *key);
-    checkPinFailure(r2);
-    EXPECT_FALSE(r2.success) << "JAdES appendSigner must reject empty originalDocument";
-    ASSERT_TRUE(r2.failureKind.has_value()) << "failureKind not populated for JAdES rejection";
-    EXPECT_EQ(*r2.failureKind, libresign::SignFailureKind::InvalidInput) << r2.errorMessage;
-    EXPECT_NE(r2.errorMessage.find("original"), std::string::npos)
-        << "Diagnostic must mention 'original' payload: " << r2.errorMessage;
-}
-
-TEST_P(SigningE2ETest, JAdES_AppendSigner_OriginalMismatch_RejectsExplicitly)
-{
-    SKIP_IF_PIN_FAILED();
-    auto original = buildTestPayload();
-
-    SigningRequest req;
-    req.document = original;
-    req.fileName = "test.bin";
-    req.format = SignatureFormat::Jades;
-    req.level = SignatureLevel::B_B;
-    req.packaging = SignaturePackaging::Enveloped;
-    req.allowExpiredCertificate = true;
-
-    auto r1 = service->sign(req, *key);
-    checkPinFailure(r1);
-    ASSERT_TRUE(r1.success) << "JAdES enveloped prior sign: " << r1.errorMessage;
-
-    // Caller supplies an originalDocument that does NOT match the JWS payload
-    // embedded in the prior signature. The optional integrity check must trip.
-    std::vector<uint8_t> wrongOriginal{'B', 'A', 'D'};
-    auto r2 = service->appendSigner(req, std::span<const uint8_t>{r1.signedDocument},
-                                    std::span<const uint8_t>{wrongOriginal}, *key);
-    checkPinFailure(r2);
-    EXPECT_FALSE(r2.success) << "JAdES appendSigner must reject mismatched originalDocument";
-    ASSERT_TRUE(r2.failureKind.has_value()) << "failureKind not populated for JAdES mismatch";
-    // InvalidDocument, not InvalidInput: the fault is in the document handed in,
-    // not in a request parameter. This assertion named the pre-5.0 kind and had
-    // never run, because every case in this file was behind a card gate.
-    EXPECT_EQ(*r2.failureKind, libresign::SignFailureKind::InvalidDocument) << r2.errorMessage;
     EXPECT_NE(r2.errorMessage.find("original"), std::string::npos)
         << "Diagnostic must mention 'original' payload: " << r2.errorMessage;
 }
@@ -1865,10 +1629,10 @@ TEST_P(SigningE2ETest, ASiCE_MultiSign_RejectsZipSlipInPreservedEntries)
 // Multi-level multi-sign stacks
 //
 // Sign the same payload at level N, then add a second signer at level M via
-// the second signature path appropriate to each format (incremental update
-// for PAdES, in-place re-sign for ASiC-E, appendSigner for XAdES/JAdES
-// ENVELOPED). The DSS oracle is asked to confirm 2 signatures present, and
-// at least one signature carries the higher baseline level string.
+// sign() on the signed document: an incremental update for PAdES, a new
+// signature entry beside the prior ones for ASiC-E and enveloped XAdES/JAdES.
+// The DSS oracle is asked to confirm 2 signatures present, and at least one
+// signature carries the higher baseline level string.
 // ===========================================================================
 //
 // Cross-format helper `needsTrustForLta` lives in the file-level anonymous
@@ -1888,7 +1652,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BLT_then_BLTA)
     req1.fileName = "test.pdf";
     req1.format = SignatureFormat::Pades;
     req1.level = SignatureLevel::B_LT;
-    req1.tsa.url = tsaUrl();
+    req1.tsa = tsaConfig();
     req1.allowExpiredCertificate = true;
 
     auto r1 = service->sign(req1, *key);
@@ -1904,7 +1668,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BLT_then_BLTA)
     req2.fileName = "test.pdf";
     req2.format = SignatureFormat::Pades;
     req2.level = SignatureLevel::B_LTA;
-    req2.tsa.url = tsaUrl();
+    req2.tsa = tsaConfig();
     req2.allowExpiredCertificate = true;
 
     auto r2 = service->sign(req2, *key);
@@ -1941,7 +1705,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BLTA_then_BLTA)
     req1.fileName = "test.pdf";
     req1.format = SignatureFormat::Pades;
     req1.level = SignatureLevel::B_LTA;
-    req1.tsa.url = tsaUrl();
+    req1.tsa = tsaConfig();
     req1.allowExpiredCertificate = true;
 
     auto r1 = service->sign(req1, *key);
@@ -1957,7 +1721,7 @@ TEST_P(SigningE2ETest, PAdES_MultiLevel_BLTA_then_BLTA)
     req2.fileName = "test.pdf";
     req2.format = SignatureFormat::Pades;
     req2.level = SignatureLevel::B_LTA;
-    req2.tsa.url = tsaUrl();
+    req2.tsa = tsaConfig();
     req2.allowExpiredCertificate = true;
 
     auto r2 = service->sign(req2, *key);
@@ -2000,7 +1764,7 @@ TEST_P(SigningE2ETest, XAdES_MultiLevel_BB_then_BLTA_Enveloped)
     req2.format = SignatureFormat::Xades;
     req2.level = SignatureLevel::B_LTA;
     req2.packaging = SignaturePackaging::Enveloped;
-    req2.tsa.url = tsaUrl();
+    req2.tsa = tsaConfig();
     req2.allowExpiredCertificate = true;
 
     auto r2 = service->sign(req2, *key);
@@ -2023,10 +1787,10 @@ TEST_P(SigningE2ETest, XAdES_MultiLevel_BB_then_BLTA_Enveloped)
     saveOutput(r2, GetParam().name + "-xades-bb-then-blta-enveloped.xml");
 }
 
-// B-LT is the ceiling appendSigner can reach for the new signer: sigTst and
+// B-LT is the ceiling a second JAdES signer can reach: sigTst and
 // rVals go into the appended entry's own etsiU, but an arcTst seals a document
 // state that appending a signature entry changes for every signer already
-// present (see JAdESModule::appendSigner). B-LTA on append is refused, so this
+// present (see JAdESModule::appendSigner). B-LTA there is refused, so this
 // exercises the highest level it does emit.
 TEST_P(SigningE2ETest, JAdES_MultiLevel_BB_then_BLT_Enveloped)
 {
@@ -2049,17 +1813,17 @@ TEST_P(SigningE2ETest, JAdES_MultiLevel_BB_then_BLT_Enveloped)
     ASSERT_TRUE(r1.success) << "JAdES B-B first sign: " << r1.errorMessage;
 
     SigningRequest req2 = req1;
+    req2.document = r1.signedDocument;
     req2.level = SignatureLevel::B_LT;
-    req2.tsa.url = tsaUrl();
+    req2.tsa = tsaConfig();
 
-    auto r2 = service->appendSigner(req2, std::span<const uint8_t>{r1.signedDocument},
-                                    std::span<const uint8_t>{original}, *key);
+    auto r2 = service->sign(req2, *key);
     checkPinFailure(r2);
     if (!longTermReachable()) {
         ExpectLongTermRefusal(r2);
         return;
     }
-    ASSERT_TRUE(r2.success) << "JAdES B-LT appendSigner: " << r2.errorMessage;
+    ASSERT_TRUE(r2.success) << "JAdES B-LT second signer: " << r2.errorMessage;
 
     // Structural contract only: DSS reports the best level it can
     // INDEPENDENTLY verify per signature, which depends on live OCSP/CRL
@@ -2070,10 +1834,10 @@ TEST_P(SigningE2ETest, JAdES_MultiLevel_BB_then_BLT_Enveloped)
     saveOutput(r2, GetParam().name + "-jades-bb-then-blt-enveloped.json");
 }
 
-// A B-LTA append is refused outright rather than emitted wrong: the archive
+// A B-LTA second signer is refused outright rather than emitted wrong: the archive
 // timestamp would seal a document state the prior signers' own arcTst no
 // longer describes, and recomputing theirs would need their PKCS#11 sessions.
-TEST_P(SigningE2ETest, JAdES_AppendSigner_RejectsArchiveLevel)
+TEST_P(SigningE2ETest, JAdES_SecondSigner_RejectsArchiveLevel)
 {
     SKIP_IF_PIN_FAILED();
 
@@ -2092,13 +1856,13 @@ TEST_P(SigningE2ETest, JAdES_AppendSigner_RejectsArchiveLevel)
     ASSERT_TRUE(r1.success) << "JAdES B-B first sign: " << r1.errorMessage;
 
     SigningRequest req2 = req1;
+    req2.document = r1.signedDocument;
     req2.level = SignatureLevel::B_LTA;
-    req2.tsa.url = tsaUrl();
+    req2.tsa = tsaConfig();
 
-    auto r2 = service->appendSigner(req2, std::span<const uint8_t>{r1.signedDocument},
-                                    std::span<const uint8_t>{original}, *key);
+    auto r2 = service->sign(req2, *key);
     checkPinFailure(r2);
-    EXPECT_FALSE(r2.success) << "B-LTA must not be emitted on the append path";
+    EXPECT_FALSE(r2.success) << "B-LTA must not be emitted for a second signer";
     ASSERT_TRUE(r2.failureKind.has_value()) << r2.errorMessage;
     EXPECT_EQ(*r2.failureKind, SignFailureKind::PolicyViolation) << r2.errorMessage;
 }
@@ -2117,7 +1881,7 @@ TEST_P(SigningE2ETest, ASiCE_MultiLevel_BLT_then_BLTA)
     req1.format = SignatureFormat::AsicE;
     req1.level = SignatureLevel::B_LT;
     req1.packaging = SignaturePackaging::Detached;
-    req1.tsa.url = tsaUrl();
+    req1.tsa = tsaConfig();
     req1.allowExpiredCertificate = true;
 
     auto r1 = service->sign(req1, *key);
@@ -2134,18 +1898,17 @@ TEST_P(SigningE2ETest, ASiCE_MultiLevel_BLT_then_BLTA)
     req2.format = SignatureFormat::AsicE;
     req2.level = SignatureLevel::B_LTA;
     req2.packaging = SignaturePackaging::Detached;
-    req2.tsa.url = tsaUrl();
+    req2.tsa = tsaConfig();
     req2.allowExpiredCertificate = true;
 
     auto r2 = service->sign(req2, *key);
     checkPinFailure(r2);
     ASSERT_TRUE(r2.success) << "ASiC-E B-LTA second sign: " << r2.errorMessage;
 
-    // ASiC-E carries CAdES (not XAdES) inner signatures. Its append path does
-    // not go through CAdESModule::appendSigner at all: signWithCAdES mints a
-    // fresh single-signer CMS for a new signatureNNN.p7s entry, so the CAdES
-    // append ceiling never applies here and the new signer's level is whatever
-    // CAdESModule::sign emits. What DSS then reports per signature is the best
+    // ASiC-E carries CAdES (not XAdES) inner signatures. A second signer
+    // does not join the prior CMS: signWithCAdES mints a fresh single-signer
+    // CMS for a new signatureNNN.p7s entry, so the new signer's level is
+    // whatever CAdESModule::sign emits. What DSS then reports per signature is the best
     // level it can INDEPENDENTLY verify, which without a live OCSP/CRL
     // responder for the PKS chain settles at CAdES_BASELINE_T.
     validateSignature(r2, "ASiC_E", "CAdES_BASELINE_T", "DETACHED", data, 2);
@@ -2264,23 +2027,20 @@ TEST_P(SigningE2ETest, ASiCE_MultiSign_MultiDataFile_RejectsExplicitly)
 }
 
 // ===========================================================================
-// Factory tests (non-parameterized, Native only)
+// The native engine on its own (non-parameterized)
 // ===========================================================================
 
-#ifdef LIBRESIGN_HAS_NATIVE
-TEST(NativeFactoryTest, CreateNativeBackend)
+TEST(NativeEngineTest, IsAvailable)
 {
-    auto service = createSigningService(Backend::Native);
-    ASSERT_NE(service, nullptr);
-    EXPECT_TRUE(service->isAvailable());
+    NativeSigningService service;
+    EXPECT_TRUE(service.isAvailable());
 }
 
 // PAdES dispatcher rejects inputs too small to be a PDF before the key signs
 // or any network work is initiated.
-TEST(NativeFactoryTest, RejectsOneByteInput)
+TEST(NativeEngineTest, RejectsOneByteInput)
 {
-    auto service = createSigningService(Backend::Native);
-    ASSERT_NE(service, nullptr);
+    NativeSigningService service;
 
     SigningRequest req;
     req.document = {'X'};
@@ -2289,16 +2049,15 @@ TEST(NativeFactoryTest, RejectsOneByteInput)
     req.level = SignatureLevel::B_B;
 
     SoftSigningKey key(validSignerKey());
-    auto result = service->sign(req, key);
+    auto result = service.sign(req, key);
     EXPECT_FALSE(result.success) << "1-byte PDF input must be rejected";
     EXPECT_EQ(key.signCalls, 0);
     EXPECT_FALSE(result.errorMessage.empty());
 }
 
-TEST(NativeFactoryTest, Rejects7ByteNonPdf)
+TEST(NativeEngineTest, Rejects7ByteNonPdf)
 {
-    auto service = createSigningService(Backend::Native);
-    ASSERT_NE(service, nullptr);
+    NativeSigningService service;
 
     SigningRequest req;
     // 7 bytes, no "%PDF-" magic anywhere — the PAdES module's H.3
@@ -2309,12 +2068,11 @@ TEST(NativeFactoryTest, Rejects7ByteNonPdf)
     req.level = SignatureLevel::B_B;
 
     SoftSigningKey key(validSignerKey());
-    auto result = service->sign(req, key);
+    auto result = service.sign(req, key);
     EXPECT_FALSE(result.success) << "7-byte non-PDF input must be rejected";
     EXPECT_EQ(key.signCalls, 0);
     EXPECT_FALSE(result.errorMessage.empty());
 }
-#endif
 
 // ===========================================================================
 // Instantiate for each available backend
@@ -2323,11 +2081,9 @@ TEST(NativeFactoryTest, Rejects7ByteNonPdf)
 std::vector<BackendInfo> availableBackends()
 {
     std::vector<BackendInfo> backends;
-#ifdef LIBRESIGN_HAS_NATIVE
-    backends.push_back({"Native", Backend::Native});
-#endif
+    backends.push_back({"Native", BackendInfo::Backend::Native});
 #ifdef LIBRESIGN_HAS_DSS
-    backends.push_back({"DSS", Backend::DSS});
+    backends.push_back({"DSS", BackendInfo::Backend::DSS});
 #endif
     return backends;
 }
@@ -2335,12 +2091,10 @@ std::vector<BackendInfo> availableBackends()
 std::vector<BackendInfo> inMemoryBackends()
 {
     std::vector<BackendInfo> backends;
-#ifdef LIBRESIGN_HAS_NATIVE
     // Long-term levels are NOT reachable here: the in-memory signer is
     // self-signed, so its chain terminates unproven. The bodies below assert
     // the refusal instead, and the level assertions stay on the card branch.
-    backends.push_back({"Native", Backend::Native, BackendInfo::KeySource::InMemory, false});
-#endif
+    backends.push_back({"Native", BackendInfo::Backend::Native, BackendInfo::KeySource::InMemory, false});
     return backends;
 }
 

@@ -24,7 +24,6 @@ public:
     HealthCardPlugin()
     {
         setIdentity(std::string{LibreSCRS::Plugin::generated::rs_health::kPluginId},
-                    std::string{LibreSCRS::Plugin::generated::rs_health::kDisplayName},
                     /*priority=*/200);
     }
 

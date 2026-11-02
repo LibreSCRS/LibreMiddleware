@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <string>
 
 namespace LibreSCRS::SmartCard::Internal {
 
@@ -113,6 +114,11 @@ std::vector<uint8_t> readChunkedFile(IConnection& conn, const ChunkedReadOptions
     while (bodyRead < totalToRead) {
         const size_t remaining = totalToRead - bodyRead;
         const uint8_t thisChunk = static_cast<uint8_t>(std::min(static_cast<size_t>(currentChunkSize), remaining));
+        // The even-INS READ BINARY addresses 15 bits; past them the read
+        // fails rather than wrap to the beginning of the file.
+        if (offset > 0x7FFF)
+            throw std::runtime_error(opts.errorPrefix + ": READ BINARY offset " + std::to_string(offset) +
+                                     " is beyond what the card can be asked for");
 
         APDUResponse readResp = opts.readChunk ? opts.readChunk(static_cast<uint16_t>(offset), thisChunk)
                                                : conn.transmit(readBinary(static_cast<uint16_t>(offset), thisChunk));

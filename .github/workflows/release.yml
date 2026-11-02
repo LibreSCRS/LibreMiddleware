@@ -85,7 +85,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        slug: [debian13, ubuntu2604, fedora43, fedora44, opensusetw]
+        # arch builds the PKGBUILD the AUR publishes and installs what it
+        # makes; its packages are not release assets.
+        slug: [debian13, ubuntu2604, fedora43, fedora44, opensusetw, arch]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -113,8 +115,12 @@ jobs:
           hook: packaging/ci/verify-installed.sh
 
       # Named <package>.<slug>.<deb|rpm> already, debug packages refused: the
-      # asset set is decided by the builder, not by a rename here.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      # asset set is decided by the builder, not by a rename here. Whether
+      # there is a set at all is the builder's answer too, not the slug's name.
+      # Only an explicit 'false' skips the upload: a builder that does not
+      # give the answer yet leaves it empty, and that must still upload.
+      - if: steps.build.outputs.assets != 'false'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: packages-${{ matrix.slug }}
           path: ${{ steps.build.outputs.dist }}

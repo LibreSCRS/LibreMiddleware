@@ -9,8 +9,7 @@
 
 namespace LibreSCRS::Plugin::generated::rs_eid {
 
-inline constexpr std::string_view kPluginId    = "rs-eid";
-inline constexpr std::string_view kDisplayName = "Serbian electronic ID";
+inline constexpr std::string_view kPluginId = "rs-eid";
 inline constexpr CardCapabilities kCapabilities = CardCapabilities::PKI | CardCapabilities::PinManagement;
 
 inline const std::array<Atr, 2> kAtrs{{

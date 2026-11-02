@@ -15,6 +15,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
+#include <LibreSCRS_internal/Crypto/SystemCaStore.h>
 
 using LibreSCRS::Internal::Crypto::X509StackBorrowedPtr;
 
@@ -89,9 +90,8 @@ TrustStore::ChainStatus TrustStore::validateChain(std::span<const CertificateVie
     X509StorePtr store(X509_STORE_new(), X509_STORE_free);
     if (!store)
         return ChainStatus::InvalidCertificate;
-    if (d->includeSystemStore) {
-        X509_STORE_set_default_paths(store.get());
-    }
+    if (d->includeSystemStore)
+        LibreSCRS::Internal::Crypto::addSystemCaStore(store.get());
     for (const auto& provider : d->providers) {
         for (const auto& anchor : provider->anchors()) {
             auto cert = parseDer(anchor.certificateDer);
@@ -100,6 +100,11 @@ TrustStore::ChainStatus TrustStore::validateChain(std::span<const CertificateVie
             }
         }
     }
+    // Every certificate in the store is an anchor as it is: a Trusted List
+    // names subordinate CAs as often as roots, and without PARTIAL_CHAIN a
+    // chain ending at one would still have to reach a self-signed
+    // certificate the store does not hold.
+    X509_STORE_set_flags(store.get(), X509_V_FLAG_PARTIAL_CHAIN);
 
     auto leaf = parseDer(chain.front());
     if (!leaf)

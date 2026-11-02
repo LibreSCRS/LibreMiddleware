@@ -25,7 +25,6 @@ public:
     EuVrcCardPlugin()
     {
         setIdentity(std::string{LibreSCRS::Plugin::generated::eu_vrc::kPluginId},
-                    std::string{LibreSCRS::Plugin::generated::eu_vrc::kDisplayName},
                     /*priority=*/200);
     }
 

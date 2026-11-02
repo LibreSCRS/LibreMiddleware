@@ -49,6 +49,11 @@ public:
     /// Returns false if no cached entry exists for the URL.
     bool refreshTimestamp(const std::string& url);
 
+    /// End a cached entry's lifetime now: load() no longer serves it, while
+    /// loadMeta() still offers its validators for a conditional request.
+    /// Returns false if no cached entry exists for the URL.
+    bool expire(const std::string& url);
+
     /// Store XML data and HTTP conditional-request metadata for a URL.
     void store(const std::string& url, std::span<const uint8_t> data, const std::string& etag,
                const std::string& lastModified);
@@ -56,6 +61,17 @@ public:
 private:
     std::string cacheDir;
     std::chrono::hours ttl;
+
+    /// An entry older than this many lifetimes is swept away.
+    static constexpr int kSweepTtlMultiple = 30;
+
+    /// Remove from the cache directory every file store() did not write
+    /// under its naming scheme, and every entry untouched for
+    /// kSweepTtlMultiple lifetimes. Run at construction; never throws.
+    void sweep() noexcept;
+
+    /// Rewrite a cached entry's timestamp; false if there is no entry.
+    bool writeTimestamp(const std::string& url, std::int64_t timestamp);
 
     /// Map a URL to a hex-encoded SHA-256 hash for use as a filename stem.
     std::string urlToFilename(const std::string& url) const;

@@ -28,15 +28,18 @@
 /// converged on before LibreMiddleware got one, so a downstream `grep` across
 /// the host layer and the core reads the same in both.
 ///
-/// @par Scope in 5.0, stated so nobody mistakes it for coverage
-/// Only the *unconditional* writers are routed here. LibreMiddleware still
-/// carries roughly 150 diagnostic sites behind five independent environment
-/// switches (`LIBRESCRS_SIGN_TRACE`, `LIBRESCRS_PCSC_TRACE`,
-/// `LIBRESCRS_PROBE_TRACE`, `LIBRESCRS_OPENSC_DEBUG`, `PKCS11_DEBUG`) that
-/// write to `stderr` directly. Those sit in PC/SC transmit, PKCS#15 profile
-/// reading and the signing engine, whose regression test is a card on the
-/// desk; converting them is not a 5.0 job. A caller must therefore not read
-/// "installed a sink" as "captured every line LibreMiddleware can emit".
+/// @par Trace
+/// Below the three severities sits @ref Level::Trace: wire-level and
+/// step-by-step diagnostics for a reader or a card on the desk. It is off by
+/// default and nothing is formatted while it is off. Each @ref TraceChannel is
+/// switched on by one environment variable, read once per process:
+/// `LIBRESCRS_PCSC_TRACE` (every APDU on the wire), `LIBRESCRS_SIGN_TRACE`
+/// (PKCS#15 profile reading, PIN verification, signing and card verification
+/// steps) and `LIBRESCRS_PROBE_TRACE` (card-recognition probing). A trace line
+/// goes to the same sink as every other line. No channel ever carries what a
+/// card answered, a PIN or decrypted data: an APDU response is traced as its
+/// length and status word, and the data field of a PIN-bearing command is
+/// replaced by its length.
 ///
 /// @par Thread-safety
 /// Every entry point is safe to call concurrently. A single process-wide
@@ -90,15 +93,23 @@ namespace LibreSCRS::log {
 
 /// @brief Severity of a single emitted line.
 ///
-/// Three levels, not the usual six. LibreMiddleware emits nothing below
-/// @c Info on this channel (trace stays behind the environment switches named
-/// in the file header), and it has no level that should abort the consumer's
-/// process, so @c Fatal would be a lie. Mirrors
-/// `LibreSCRS::Agent::log::Level` value for value.
+/// Three severities plus @c Trace. There is no level that should abort the
+/// consumer's process, so @c Fatal would be a lie. @c Info, @c Warn and
+/// @c Error mirror `LibreSCRS::Agent::log::Level` value for value; @c Trace
+/// is the least severe and is emitted only for a channel that was switched
+/// on (see @ref traceEnabled).
 enum class Level : std::uint8_t {
     Info,  ///< Normal, expected progress worth recording.
     Warn,  ///< Something degraded, the operation continues.
     Error, ///< An operation failed or a consumer callback threw.
+    Trace, ///< Diagnostic detail for one @ref TraceChannel; off by default.
+};
+
+/// @brief One switchable source of @ref Level::Trace lines.
+enum class TraceChannel : std::uint8_t {
+    Pcsc,  ///< Every APDU on the wire; `LIBRESCRS_PCSC_TRACE`.
+    Sign,  ///< PKCS#15 reading, PIN verification, signing; `LIBRESCRS_SIGN_TRACE`.
+    Probe, ///< Card recognition; `LIBRESCRS_PROBE_TRACE`.
 };
 
 /// @brief The consumer-supplied destination for one already-formatted line.
@@ -120,8 +131,8 @@ using LogSink = std::function<void(Level level, std::string_view line)>;
 ///                 the consumer owns; the default is the LibreSCRS core's.
 ///
 /// Lines are formatted as `<N>category level: message\n`, where `<N>` is the
-/// syslog priority journald reads off the front of the line (`<6>` info,
-/// `<4>` warning, `<3>` error) and ignores nothing else. On a desktop the
+/// syslog priority journald reads off the front of the line (`<7>` trace,
+/// `<6>` info, `<4>` warning, `<3>` error) and ignores nothing else. On a desktop the
 /// prefix is inert text; under journald it is what makes the severity
 /// survive the transport. This is byte-for-byte the layout LibreAgent,
 /// LibreLinux and LibreDarwin already emit.
@@ -139,7 +150,18 @@ LIBRESCRS_PUBLIC_API void init(LogSink sink, std::string category = "rs.librescr
 /// asked for or, worse, writes into a lambda whose captured state is gone.
 /// Call it in `TearDown()`, not at the end of the test body — a failing
 /// `ASSERT_*` returns early and skips everything after it.
+///
+/// It also reads the trace switches from the environment again, so a test
+/// can set one, call this, and see the channel on.
 LIBRESCRS_PUBLIC_API void resetForTest() noexcept;
+
+/// @brief Whether @p channel was switched on: its environment variable is set
+///        to a non-empty value other than `0`. Read once per process.
+[[nodiscard]] LIBRESCRS_PUBLIC_API bool traceEnabled(TraceChannel channel) noexcept;
+
+/// @brief Emit one line at @ref Level::Trace if @p channel is on; otherwise
+///        do nothing.
+LIBRESCRS_PUBLIC_API void trace(TraceChannel channel, std::string_view message);
 
 /// @brief Emit one line at @ref Level::Info.
 LIBRESCRS_PUBLIC_API void info(std::string_view message);
@@ -167,6 +189,14 @@ template <class... Args>
 void errorf(std::format_string<Args...> fmt, Args&&... args)
 {
     error(std::format(fmt, std::forward<Args>(args)...));
+}
+/// @brief Format, then emit at @ref Level::Trace. Formats nothing when
+///        @p channel is off, so a disabled trace costs one load.
+template <class... Args>
+void tracef(TraceChannel channel, std::format_string<Args...> fmt, Args&&... args)
+{
+    if (traceEnabled(channel))
+        trace(channel, std::format(fmt, std::forward<Args>(args)...));
 }
 
 } // namespace LibreSCRS::log

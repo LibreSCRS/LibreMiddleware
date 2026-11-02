@@ -21,6 +21,7 @@
 
 #include <AnnexDispatch.h>
 #include <LibreSCRS_internal/SmartCard/CardAccessReader.h>
+#include <LibreSCRS_internal/SmartCard/PaceDowngradeVerdict.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
@@ -54,17 +55,15 @@
 
 namespace {
 
-// 4.0 hardening: pluginId / displayName / capabilities / kAtrs come
+// 4.0 hardening: pluginId / capabilities / kAtrs come
 // from the per-plugin manifest.json via the generated manifest.h header.
 // eMRTD passports never advertise via ATR — the applet is detected by
 // SELECT FILE on a live session, so kAtrs is intentionally empty.
 
-// Plugin-local cleansing MRZ aggregate. F2: SessionContext must not retain
+// Plugin-local cleansing MRZ aggregate. SessionContext must not retain
 // raw secret bytes in plain std::string fields; wrap the three MRZ inputs
-// in Secure::String so erase/overwrite paths zeroise the storage. The
-// upstream emrtd::MRZData (lib/emrtd/src/emrtd_types.h) keeps its
-// std::string fields for compatibility with the pre-4.0 BAC/PACE crypto
-// callers — this struct is the only plugin-side carrier.
+// in Secure::String so erase/overwrite paths zeroise the storage. This
+// struct is the only carrier of the MRZ inputs.
 struct SecureMRZData
 {
     LibreSCRS::Secure::String documentNumber;
@@ -129,35 +128,6 @@ struct CardAccessProbe
     std::vector<std::string> paceOids; // non-empty iff Present
 };
 
-// True iff the outer DER length octet(s) at @p data[1..] describe a value
-// wholly contained in @p data. @p data[0] is assumed to be 0x31 already.
-// Rejects the indefinite form (illegal in DER) and any >64 KiB length (a
-// single READ BINARY can never return the whole file) — both Unknown.
-bool outerBerLengthContained(const std::vector<std::uint8_t>& data)
-{
-    if (data.size() < 2)
-        return false;
-    const std::uint8_t lead = data[1];
-    std::size_t header = 2;
-    std::size_t contentLen = 0;
-    if (lead < 0x80) {
-        contentLen = lead;
-    } else if (lead == 0x81) {
-        if (data.size() < 3)
-            return false;
-        header = 3;
-        contentLen = data[2];
-    } else if (lead == 0x82) {
-        if (data.size() < 4)
-            return false;
-        header = 4;
-        contentLen = (static_cast<std::size_t>(data[2]) << 8) | data[3];
-    } else {
-        return false; // 0x80 indefinite, or 0x83+ (>64 KiB)
-    }
-    return header + contentLen <= data.size();
-}
-
 // Pre-auth (unauthenticated) EF.CardAccess capability probe. The verdict is
 // the security contract — BAC ONLY when PACE is DEFINITIVELY absent, never by
 // blanket fallback; anything ambiguous fails closed to PACE-CAN:
@@ -188,7 +158,7 @@ CardAccessProbe probeCardAccess(LibreSCRS::SmartCard::Internal::PCSCConnection& 
     const auto& data = read.data;
     if (data.empty() || data[0] != 0x31)
         return probe; // Unknown: not a SecurityInfos SET
-    if (!outerBerLengthContained(data))
+    if (!LibreSCRS::SmartCard::Internal::cardAccessOuterLengthContained(data))
         return probe; // Unknown: truncated / >256 B
     probe.paceOids = emrtd::crypto::parseCardAccess(data);
     probe.capability = probe.paceOids.empty() ? PaceCapability::Absent : PaceCapability::Present;
@@ -201,7 +171,6 @@ public:
     EMRTDCardPlugin()
     {
         setIdentity(std::string{LibreSCRS::Plugin::generated::emrtd::kPluginId},
-                    std::string{LibreSCRS::Plugin::generated::emrtd::kDisplayName},
                     /*priority=*/800);
     }
 

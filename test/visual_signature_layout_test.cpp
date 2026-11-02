@@ -21,9 +21,7 @@
 
 using LibreSCRS::Signing::embeddedAppearanceFontData;
 using LibreSCRS::Signing::kAppearanceLineLeading;
-using LibreSCRS::Signing::kAppearanceTextMargin;
 using LibreSCRS::Signing::kFloorAppearanceFontSize;
-using LibreSCRS::Signing::kMaxAppearanceFontSize;
 using LibreSCRS::Signing::layoutVisualSignature;
 using LibreSCRS::Signing::Rect;
 using LibreSCRS::Signing::VisualSignatureLayout;
@@ -68,7 +66,7 @@ TEST(VisualSignatureLayout, I1_FontSizeInRange)
 {
     auto layout = layoutVisualSignature("Hello World", kDefaultBox);
     EXPECT_GE(layout.fontSize, kFloorAppearanceFontSize);
-    EXPECT_LE(layout.fontSize, kMaxAppearanceFontSize);
+    EXPECT_LE(layout.fontSize, 72.0f); // the documented one-inch ceiling
 }
 
 TEST(VisualSignatureLayout, I2_LineHeightDerivedFromFontSize)

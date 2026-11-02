@@ -102,7 +102,8 @@ PaceChannel::establish(LibreSCRS::SmartCard::IConnection& connection, const Pace
         cryptoParams.password.assign(view.begin(), view.end());
         cryptoParams.paramId = static_cast<int>(params.paramId);
 
-        std::optional<emrtd::crypto::SessionKeys> derived;
+        std::expected<emrtd::crypto::SessionKeys, emrtd::crypto::PaceFailure> derived =
+            std::unexpected{emrtd::crypto::PaceFailure::Failed};
         try {
             derived = emrtd::crypto::performPACE(connection, cryptoParams);
         } catch (...) {
@@ -119,14 +120,14 @@ PaceChannel::establish(LibreSCRS::SmartCard::IConnection& connection, const Pace
         }
 
         if (!derived.has_value()) {
-            // emrtd::crypto::performPACE returns nullopt for any
-            // handshake-level failure (wrong CAN/MRZ, unsupported OID,
-            // card-side SW != 9000 at any step). Mapping all failures to
-            // PaceWrongSecret is consistent with the retry contract: the
-            // caller evicts the cached secret and re-prompts.
-            // PacePinBlocked / PaceUnsupported are reserved for future
-            // protocol-aware paths that can distinguish those categories at
-            // the wire level.
+            // The card refusing MSE:Set AT is about this OID, not the
+            // secret: PaceUnsupported, and the caller may try the next OID
+            // the card lists. Every later failure maps to PaceWrongSecret,
+            // which the retry contract answers by evicting the cached
+            // secret and prompting again; the card's General Authenticate
+            // answers do not tell a wrong secret from other refusals.
+            if (derived.error() == emrtd::crypto::PaceFailure::MechanismRefused)
+                return std::unexpected{ChannelActivationError::PaceUnsupported};
             return std::unexpected{ChannelActivationError::PaceWrongSecret};
         }
 

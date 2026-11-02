@@ -94,20 +94,13 @@ makepkg -si
 - `lib/libLibreSCRS_*.so` — the core shared libraries
 - `lib/librescrs/plugins/*.so` — card plugins (rs-eid, eu-vrc, rs-health,
   emrtd, pkcs15, opensc)
-- `lib/pkcs11/librescrs-pkcs11.so` — the in-tree PKCS#11 module
 - `include/LibreSCRS/**` — public SDK headers
 - `lib/cmake/LibreMiddleware/**` — the CMake config package
 - `share/librescrs/certificates/**` — bundled CA trust anchors
 
-The package installs **no p11-kit registration**, so PKCS#11-aware
-applications do not load the direct module on their own: on a desktop the card
-agent is the one provider that owns the card. On a machine that deliberately
-has no agent, such as a headless signing host, register the direct module with
-one command:
-
-```sh
-echo 'module: /usr/lib/pkcs11/librescrs-pkcs11.so' | sudo tee /etc/pkcs11/modules/librescrs.module
-```
+The package installs **no PKCS#11 module and no p11-kit registration**:
+PKCS#11-aware applications reach a card through the card agent's provider,
+which the agent's own package registers.
 
 OpenSSL (libcrypto) is **statically bundled** (`thirdparty/openssl-3.5.8`) and
 is not a runtime dependency. The vendored upstream OpenSC is built as a static

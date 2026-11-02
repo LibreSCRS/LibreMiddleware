@@ -68,21 +68,11 @@ target_compile_definitions(bench_trust_validate PRIVATE
 # ---------------------------------------------------------------------------
 # bench_truststore_service: TrustStoreService::create() happy path
 # ---------------------------------------------------------------------------
-# bench_truststore_service::waitForEagerFetches takes a defaulted
-# `CancelToken token = {}`, so the bench TU instantiates CancelToken's
-# out-of-line ctor/dtor. Those live in libLibreSCRS_Auth (CancelToken.cpp).
-# Under the SHARED LM build (default since the 4.2 minimal-API-surface wave)
-# the defining DSO must appear on the link line directly — Trust.so only
-# PRIVATE-links Auth, so GNU ld reports the versioned CancelToken symbol as
-# "DSO missing from command line". Link Auth explicitly; mirrors how
-# TrustStoreServiceTests links the same transitive dependencies.
 add_executable(bench_truststore_service bench_truststore_service.cpp)
 target_link_libraries(bench_truststore_service PRIVATE
     LibreSCRS_Trust
     LibreSCRS_Auth
     ${LIBRESCRS_BENCH_LIBS})
-target_compile_definitions(bench_truststore_service PRIVATE
-    LIBRESCRS_BENCH_FIXTURES_DIR="${PROJECT_SOURCE_DIR}/test/fixtures")
 
 # bench_signing: intentionally absent.
 #

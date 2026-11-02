@@ -30,9 +30,9 @@ Description: LibreSCRS smart-card runtime libraries
  as well as ICAO 9303 travel documents, NIST PIV and PKCS#15 cards, talking
  to the reader over PC/SC directly.
  .
- This package holds the shared libraries and the PKCS#11 provider module. The
- module is installed but not registered with p11-kit; registration is a
- separate decision and a separate package.
+ This package holds the shared libraries. It installs no PKCS#11 module:
+ applications reach a card through the card agent's provider, which the
+ agent's own package registers.
 
 Package: librescrs-card-plugins
 Architecture: amd64
@@ -50,14 +50,7 @@ Section: libdevel
 Architecture: amd64
 Multi-Arch: same
 Depends: ${misc:Depends},
-         liblibrescrs5 (= ${binary:Version}),
-         libpcsclite-dev,
-         libssl-dev
+         liblibrescrs5 (= ${binary:Version})
 Description: Development files for the LibreSCRS smart-card libraries
  Headers, linker symbolic links and the CMake package configuration for
  building against LibreSCRS.
- .
- The two development dependencies are not decoration. The installed CMake
- config calls find_dependency for PCSC and for OpenSSL before it defines a
- single target, so without their headers every downstream find_package fails at
- configuration -- which is exactly how it was found.

@@ -21,7 +21,7 @@
 
 #include <LibreSCRS/Plugin/CardPlugin.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
-#include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
+#include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 
 #include <gtest/gtest.h>
 
@@ -40,7 +40,7 @@ class BareCardPlugin final : public CardPlugin
 public:
     BareCardPlugin()
     {
-        setIdentity("bare", "Bare", 0);
+        setIdentity("bare", 0);
     }
 
     CardCapabilities capabilities() const override
@@ -64,7 +64,7 @@ protected:
 TEST(CardPluginDecipher, DefaultIsNotImplemented)
 {
     BareCardPlugin p;
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("test-reader");
     ASSERT_NE(session, nullptr);
     const std::array<std::uint8_t, 4> ct{0x01, 0x02, 0x03, 0x04};
     DecipherResult r = p.decipher(*session, /*keyReference=*/0x42, ct, DecipherMechanism::RSA_PKCS1_V15);
@@ -76,7 +76,7 @@ TEST(CardPluginDecipher, DefaultIsNotImplemented)
 TEST(CardPluginDecipher, EcdhRawDefaultIsNotImplemented)
 {
     BareCardPlugin p;
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("test-reader");
     ASSERT_NE(session, nullptr);
     std::array<std::uint8_t, 97> point{};
     point[0] = 0x04;

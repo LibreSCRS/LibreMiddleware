@@ -55,6 +55,9 @@
 #include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
 
 #include <pcsc_connection.h>
+#include <pcsc_raw_diagnostic.h>
+#include <pkcs15_card.h>
+#include <pkcs15_types.h>
 
 #include <gtest/gtest.h>
 
@@ -415,7 +418,7 @@ std::expected<PluginSession, std::string> openWithPlugin(const std::string& slot
 {
     PluginSession result;
     result.registry = std::make_unique<LibreSCRS::Plugin::CardPluginService>(std::filesystem::path(PLUGIN_DIR));
-    if (!result.registry->isUsable())
+    if (result.registry->size() == 0)
         return std::unexpected(std::string("no plugins loaded from ") + PLUGIN_DIR);
     auto opened = CardSession::open(slot);
     if (!opened)
@@ -474,7 +477,7 @@ std::expected<std::uint8_t, std::string> pinReadyToVerify(PluginSession& ps)
     for (const auto& entry : pins)
         record("pin label=\"" + entry.label + "\" ref=" + hex(std::span<const std::uint8_t>(&entry.reference, 1)) +
                " retries=" + (entry.retriesLeft ? std::to_string(*entry.retriesLeft) : std::string("unknown")) +
-               " blocked=" + std::to_string(entry.blocked));
+               " state=" + std::to_string(static_cast<int>(entry.state)));
     if (pins.empty())
         return std::unexpected(std::string("the plugin lists no PIN"));
     const auto& entry = pins.front();
@@ -483,11 +486,36 @@ std::expected<std::uint8_t, std::string> pinReadyToVerify(PluginSession& ps)
     const auto tries = entry.retriesLeft ? entry.retriesLeft : pinTriesFromStatus(*ps.session, entry.reference, &sw);
     if (!entry.retriesLeft)
         record("pin-status ref=" + hex(std::span<const std::uint8_t>(&entry.reference, 1)) + " sw=" + hex4(sw));
-    if (entry.blocked || !tries || *tries < full)
+    if (entry.state == LibreSCRS::Plugin::PinState::Blocked || !tries || *tries < full)
         return std::unexpected("PIN retry counter is not full (" +
                                (tries ? std::to_string(*tries) : std::string("unknown")) + " of " +
                                std::to_string(full) + "); refusing to present a PIN");
     return entry.reference;
+}
+
+// Presents @p value to the PIN at @p reference through the card's PKCS#15
+// application, encoded as that PIN's AODF entry says. A live secure-messaging
+// tunnel carries it when the session holds one (contactless, after PACE).
+// nullopt when the application or a PIN at @p reference is not found.
+std::optional<pkcs15::PinResult> presentPin(CardSession& session, std::uint8_t reference, std::string_view value)
+{
+    const auto aid = AppletAid::fromBytes(std::span<const std::uint8_t>{pkcs15::kPkcs15Aid});
+    const auto live = session.activatedProtocol();
+    auto holder = live ? session.activateChannelWithSm(aid, *live, LibreSCRS::CancelToken{})
+                       : session.activateChannelFor(aid, LibreSCRS::CancelToken{});
+    if (!holder)
+        return std::nullopt;
+    auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(*holder);
+    if (channel == nullptr)
+        return std::nullopt;
+    pkcs15::PKCS15Card card(*channel);
+    if (!card.probe())
+        return std::nullopt;
+    const auto profile = card.readProfile();
+    for (const auto& pin : profile.pins)
+        if (pin.pinReference == reference)
+            return card.verifyPIN(pin, value);
+    return std::nullopt;
 }
 
 // --- one APDU through a raw connection, as an outcome line ------------------------
@@ -599,7 +627,7 @@ protected:
         const auto slot = slotFor(kPlainCard);
         if (!slot)
             GTEST_SKIP() << "no contact test card (by ATR prefix) in any reader";
-        auto conn = PCSCConnection::openRawDiagnostic(*slot);
+        auto conn = LibreSCRS::SmartCard::Internal::openRawDiagnostic(*slot);
         const auto before = attempt(*conn, selectMf());
         record(std::string(caseName) + " before " + before.text());
         ASSERT_TRUE(before.replied);
@@ -692,7 +720,7 @@ TEST_F(CtkSessionHardware, RemovalMidSequenceIsRemoved)
     const auto slot = slotFor(kPlainCard);
     if (!slot)
         GTEST_SKIP() << "no contact test card (by ATR prefix) in any reader";
-    auto conn = PCSCConnection::openRawDiagnostic(*slot);
+    auto conn = LibreSCRS::SmartCard::Internal::openRawDiagnostic(*slot);
     const long seconds = envLong("LIBRESCRS_HW_CTK_WAIT_SECONDS", 600);
     std::fprintf(stderr, "\n>>> Remove the card from \"%s\" now (APDUs every 100 ms for up to %ld s).\n", slot->c_str(),
                  seconds);
@@ -752,10 +780,11 @@ TEST_F(CtkSessionHardware, SessionRestartClearsCardState)
         if (!reference)
             GTEST_SKIP() << reference.error();
 
-        const auto verified =
-            ps->plugin->verifyPIN(*ps->session, LibreSCRS::Secure::String{*envOpt("LIBRESCRS_TEST_PIN")});
-        if (verified.outcome != LibreSCRS::Plugin::PINResultOutcome::Ok) {
-            markPinFailedAndAbort(__LINE__, "verifyPIN outcome=" + std::to_string(static_cast<int>(verified.outcome)));
+        const auto verified = presentPin(*ps->session, *reference, *envOpt("LIBRESCRS_TEST_PIN"));
+        if (!verified || !verified->success) {
+            markPinFailedAndAbort(__LINE__,
+                                  "VERIFY refused, retries=" +
+                                      (verified ? std::to_string(verified->retriesLeft) : std::string("n/a")));
             return;
         }
         ranAny = true;
@@ -908,11 +937,7 @@ TEST_F(CtkSessionHardware, OpenScBridgeBindsAndSigns)
     }
 
     start = Clock::now();
-    const auto verified = ps->plugin->verifyPIN(*ps->session, LibreSCRS::Secure::String{*envOpt("LIBRESCRS_TEST_PIN")});
-    if (verified.outcome != LibreSCRS::Plugin::PINResultOutcome::Ok) {
-        markPinFailedAndAbort(__LINE__, "verifyPIN outcome=" + std::to_string(static_cast<int>(verified.outcome)));
-        return;
-    }
+    ps->plugin->setCredentials(*ps->session, "pin", LibreSCRS::Secure::String{*envOpt("LIBRESCRS_TEST_PIN")});
     const auto signedResult = ps->plugin->sign(*ps->session, *signing->keyFID, toSign, mechanism);
     record("opensc verify+sign ms=" + fixed(msSince(start)) + " key=" + (ec ? "ec" : "rsa") +
            " bits=" + std::to_string(bits) + " outcome=" + std::to_string(static_cast<int>(signedResult.outcome)) +
@@ -1017,8 +1042,8 @@ TEST_F(CtkSessionHardware, ReaderBIsNotDelayedByReaderAOnHardware)
     if (!slotA || !slotB)
         GTEST_SKIP() << "needs the contact test LK and a second test card in another reader";
     ASSERT_NE(*slotA, *slotB);
-    auto connA = PCSCConnection::openRawDiagnostic(*slotA);
-    auto connB = PCSCConnection::openRawDiagnostic(*slotB);
+    auto connA = LibreSCRS::SmartCard::Internal::openRawDiagnostic(*slotA);
+    auto connB = LibreSCRS::SmartCard::Internal::openRawDiagnostic(*slotB);
     const long count = std::max(10L, envLong("LIBRESCRS_HW_CTK_B_COUNT", 200));
     const auto aLe = static_cast<std::uint16_t>(envLong("LIBRESCRS_HW_CTK_A_LE", 0));
     const long dg = envLong("LIBRESCRS_HW_CTK_DG", 2);

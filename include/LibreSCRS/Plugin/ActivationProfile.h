@@ -3,8 +3,8 @@
 #pragma once
 
 /// @file
-/// @brief Declarative activation descriptor a plugin publishes, plus the shared
-///        channel-acquisition helper the readCard NVI wrapper drives.
+/// @brief Declarative activation descriptor a plugin publishes; the readCard
+///        NVI wrapper acquires the channel it describes.
 
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Export.h>
@@ -74,7 +74,6 @@ struct ActivationProfile
 /// @internal See @ref isStopError — internal, hidden, not public ABI.
 [[nodiscard]] LIBRESCRS_INTERNAL bool shouldTryFallback(const ActivationProfile& profile,
                                                         LibreSCRS::SecureChannel::ChannelActivationError e) noexcept;
-#endif // LIBRESCRS_INTERNAL_BUILD
 
 /// @brief Acquire a secure-messaging channel per @p profile, with a single
 ///        BAC fallback when @ref ActivationProfile::allowBacFallback is set.
@@ -83,9 +82,12 @@ struct ActivationProfile
 ///      dispatching the operation without a channel.
 /// @return The active-channel holder on success; on failure the
 ///         ChannelActivationError from the last attempt (after fallback).
-[[nodiscard]] LIBRESCRS_PUBLIC_API
+/// @internal Called only by the @ref CardPlugin::readCard NVI wrapper in the
+///           same library — internal, hidden, not public ABI.
+[[nodiscard]] LIBRESCRS_INTERNAL
     std::expected<LibreSCRS::SmartCard::ActiveChannelHolder, LibreSCRS::SecureChannel::ChannelActivationError>
     acquireChannelForProfile(LibreSCRS::SmartCard::CardSession& session, const ActivationProfile& profile,
                              LibreSCRS::CancelToken token);
+#endif // LIBRESCRS_INTERNAL_BUILD
 
 } // namespace LibreSCRS::Plugin

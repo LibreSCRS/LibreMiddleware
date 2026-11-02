@@ -127,3 +127,25 @@ TEST(MRZDateFormat, APlusIsNotADigit)
 {
     EXPECT_EQ(formatMRZDate("+10101"), "+10101");
 }
+
+// The century follows the year it is now, by one rule per role: a birth date
+// is in the hundred years up to this year, an expiry within fifty years
+// either side of it. "Now" is injected, so the edges of the year are tested
+// without waiting for them.
+TEST(MRZDateFormat, CenturyWindowsFollowTheCurrentYear)
+{
+    // Birth, in 2026: this year and last are this century, next year the last.
+    EXPECT_EQ(formatMRZDate("260101", false, 2026), "01.01.2026");
+    EXPECT_EQ(formatMRZDate("251231", false, 2026), "31.12.2025");
+    EXPECT_EQ(formatMRZDate("270101", false, 2026), "01.01.1927");
+    // The same document read a year later.
+    EXPECT_EQ(formatMRZDate("270101", false, 2027), "01.01.2027");
+    // Expiry, in 2026: last year, next year, and the edges of the window.
+    EXPECT_EQ(formatMRZDate("251231", true, 2026), "31.12.2025");
+    EXPECT_EQ(formatMRZDate("270101", true, 2026), "01.01.2027");
+    EXPECT_EQ(formatMRZDate("750101", true, 2026), "01.01.2075");
+    EXPECT_EQ(formatMRZDate("760101", true, 2026), "01.01.1976");
+    // Across a century turn.
+    EXPECT_EQ(formatMRZDate("010101", true, 2099), "01.01.2101");
+    EXPECT_EQ(formatMRZDate("990101", false, 2101), "01.01.2099");
+}

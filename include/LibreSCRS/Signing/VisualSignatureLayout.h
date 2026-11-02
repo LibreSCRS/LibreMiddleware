@@ -36,22 +36,6 @@ namespace LibreSCRS::Signing {
 /// @since 4.0
 inline constexpr float kFloorAppearanceFontSize = 6.0f;
 
-/// @brief Hard ceiling on the auto-fit font size in PDF user units.
-///
-/// 72pt = one inch. Useful only for wide-aspect annotation boxes; the
-/// binary search will normally never reach this value for the typical
-/// 200×50 default rectangle.
-/// @since 4.0
-inline constexpr float kMaxAppearanceFontSize = 72.0f;
-
-/// @brief Inset, in PDF user units, applied to every edge of the
-///        annotation rectangle before layout.
-///
-/// Available width = `box.width - 2 * kAppearanceTextMargin`.
-/// Available height = `box.height - 2 * kAppearanceTextMargin`.
-/// @since 4.0
-inline constexpr float kAppearanceTextMargin = 4.0f;
-
 /// @brief Multiplier applied to the selected font size to derive the
 ///        per-line baseline-to-baseline distance.
 ///
@@ -68,7 +52,7 @@ inline constexpr float kAppearanceLineLeading = 1.2f;
 /// verbatim — there is no second layout pass downstream.
 ///
 /// @par Invariants (postconditions of @ref layoutVisualSignature)
-///  - `fontSize ∈ [kFloorAppearanceFontSize, kMaxAppearanceFontSize]`
+///  - `fontSize ∈ [kFloorAppearanceFontSize, 72]` (72pt = one inch)
 ///  - `lineHeight == fontSize × kAppearanceLineLeading`
 ///  - `lines.size() ≥ 1` (a successful return ALWAYS yields ≥1 line,
 ///    even for empty input — `lines == {""}`)
@@ -104,12 +88,12 @@ struct VisualSignatureLayout
 ///
 /// @par Algorithm
 /// Binary search the font size in `[kFloorAppearanceFontSize,
-/// min(kMaxAppearanceFontSize, availH/leading)]`. For each candidate run
+/// min(72, availH/leading)]`. For each candidate run
 /// a greedy whitespace word-wrap to width `availW = box.width −
-/// 2·kAppearanceTextMargin` measuring each line through the bundled
+/// 2·4` (a 4pt inset on every edge) measuring each line through the bundled
 /// Liberation Sans subset. Accept a candidate when all wrapped lines fit
 /// `availW` AND total height (`lines × fontSize × leading`) fits
-/// `availH = box.height − 2·kAppearanceTextMargin`. Hard line breaks
+/// `availH = box.height − 2·4`. Hard line breaks
 /// (`\n`) split paragraphs; each paragraph wraps independently.
 /// `\r\n` collapses to `\n`; bare `\r` is ignored; `\t` is treated as
 /// space. UTF-8 boundaries are respected — wrap never splits a codepoint.

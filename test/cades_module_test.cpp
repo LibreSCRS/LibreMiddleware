@@ -3,8 +3,6 @@
 
 #include <gtest/gtest.h>
 
-#ifdef LIBRESIGN_HAS_NATIVE
-
 #include "native/cades_module.h"
 #include "native/der_utils.h"
 #include "native/native_utils.h"
@@ -64,22 +62,21 @@ LibreSCRS::Internal::Crypto::CmsPtr parseCmsOrDie(const std::vector<uint8_t>& de
     return LibreSCRS::Internal::Crypto::CmsPtr(d2i_CMS_ContentInfo(nullptr, &p, static_cast<long>(der.size())));
 }
 
-/// Number of unsigned attributes carrying @p oid on @p si. Counting per
-/// SignerInfo (rather than per document) is the whole point of the per-signer
-/// pins below: a document-level count cannot tell which signer was upgraded.
-int unsignedAttrCount(CMS_SignerInfo* si, const char* oid)
+/// @p der with @p chainDer[1..] embedded by the module's chain step, re-encoded.
+std::vector<uint8_t> withCertificateChain(const std::vector<uint8_t>& der,
+                                          const std::vector<std::vector<uint8_t>>& chainDer)
 {
-    LibreSCRS::Internal::Crypto::Asn1ObjectPtr obj(OBJ_txt2obj(oid, 1));
-    if (!obj)
-        return -1;
-    int count = 0;
-    const int attrCount = CMS_unsigned_get_attr_count(si);
-    for (int i = 0; i < attrCount; ++i) {
-        X509_ATTRIBUTE* attr = CMS_unsigned_get_attr(si, i);
-        if (attr && OBJ_cmp(X509_ATTRIBUTE_get0_object(attr), obj.get()) == 0)
-            ++count;
-    }
-    return count;
+    auto cms = parseCmsOrDie(der);
+    if (!cms)
+        return {};
+    libresign::addCertificateChainTo(cms.get(), chainDer);
+    unsigned char* out = nullptr;
+    const int len = i2d_CMS_ContentInfo(cms.get(), &out);
+    if (len <= 0)
+        return {};
+    std::vector<uint8_t> encoded(out, out + len);
+    OPENSSL_free(out);
+    return encoded;
 }
 
 /// The SignerInfo built over @p certDer, or nullptr when none matches.
@@ -441,8 +438,7 @@ class CAdESModuleTest : public ::testing::Test
 {
 protected:
     /// Sign @p data at B-B with the valid signer; reports the signer's
-    /// certificate through @p certDer so the caller can tell the two signers of
-    /// the appended document apart.
+    /// certificate through @p certDer.
     std::vector<uint8_t> signFirst(const std::vector<uint8_t>& data, std::vector<uint8_t>& certDer)
     {
         CAdESModule cades;
@@ -451,20 +447,6 @@ protected:
         auto result = cades.sign(data, token, SignatureLevel::B_B, {});
         EXPECT_TRUE(result.success) << result.errorMessage;
         return result.signedDocument;
-    }
-
-    /// Append a second signer with the OTHER test key, so the two SignerInfos
-    /// carry distinct certificates and per-signer assertions can name their
-    /// target. The second test signer's certificate is expired; module-level
-    /// appendSigner applies no expiry policy (that lives in
-    /// NativeSigningService), so it signs normally here.
-    SigningResult appendSecond(const std::vector<uint8_t>& prior, const std::vector<uint8_t>& originalDoc,
-                               SignatureLevel level, const TSAConfig& tsa, std::vector<uint8_t>& certDer)
-    {
-        CAdESModule cades;
-        libresign::test::SoftSigningKey token(libresign::test::expiredSignerKey());
-        certDer = token.certificate();
-        return cades.appendSigner(prior, originalDoc, token, level, tsa);
     }
 };
 
@@ -593,145 +575,32 @@ TEST_F(CAdESModuleTest, SignBB_DifferentDataProducesDifferentSignature)
     EXPECT_NE(cms1, cms2);
 }
 
-// ---- Per-signer level upgrades (ETSI EN 319 122-1 §5.3) ----
-
-// A signature timestamp belongs to the signer that requested it. Count the
-// signature-timestamp attribute PER SignerInfo, not per document: a
-// document-level count is satisfied by attaching the new signer's timestamp
-// to the prior signer, which is exactly the failure mode being excluded.
-TEST_F(CAdESModuleTest, AppendSignerAtBTTimestampsOnlyTheNewSigner)
-{
-    libresign::test::MockTsaServer tsaServer;
-    const std::vector<uint8_t> data = {'M', 'u', 'l', 't', 'i'};
-
-    std::vector<uint8_t> firstCert;
-    auto prior = signFirst(data, firstCert);
-    ASSERT_FALSE(prior.empty());
-
-    TSAConfig tsa;
-    tsa.url = tsaServer.url();
-    std::vector<uint8_t> secondCert;
-    auto appended = appendSecond(prior, data, SignatureLevel::B_T, tsa, secondCert);
-    ASSERT_TRUE(appended.success) << appended.errorMessage;
-    EXPECT_EQ(tsaServer.servedCount(), 1) << "exactly one RFC 3161 round-trip, for the new signer";
-
-    auto cms = parseCmsOrDie(appended.signedDocument);
-    ASSERT_NE(cms.get(), nullptr);
-    ASSERT_EQ(sk_CMS_SignerInfo_num(CMS_get0_SignerInfos(cms.get())), 2);
-
-    CMS_SignerInfo* firstSi = signerInfoForCert(cms.get(), firstCert);
-    CMS_SignerInfo* secondSi = signerInfoForCert(cms.get(), secondCert);
-    ASSERT_NE(firstSi, nullptr) << "prior signer's SignerInfo must survive the append";
-    ASSERT_NE(secondSi, nullptr) << "appended signer's SignerInfo must be present";
-
-    EXPECT_EQ(unsignedAttrCount(secondSi, kSignatureTimeStampOid), 1)
-        << "the appended signer must carry its OWN signature timestamp";
-    EXPECT_EQ(unsignedAttrCount(firstSi, kSignatureTimeStampOid), 0)
-        << "the prior signer signed at B-B and must not acquire a timestamp it never requested";
-}
-
-// Appending must not strip the certificates the prior signers depend on: a
-// verifier that can no longer build the first signer's path cannot validate a
-// signature that was valid before the append.
-TEST_F(CAdESModuleTest, AppendSignerKeepsThePriorSignerCertificate)
-{
-    libresign::test::MockTsaServer tsaServer;
-    const std::vector<uint8_t> data = {'U', 'n', 'i', 'o', 'n'};
-
-    std::vector<uint8_t> firstCert;
-    auto prior = signFirst(data, firstCert);
-    ASSERT_FALSE(prior.empty());
-
-    TSAConfig tsa;
-    tsa.url = tsaServer.url();
-    std::vector<uint8_t> secondCert;
-    auto appended = appendSecond(prior, data, SignatureLevel::B_T, tsa, secondCert);
-    ASSERT_TRUE(appended.success) << appended.errorMessage;
-    ASSERT_NE(firstCert, secondCert) << "fixture must supply two distinct signer certificates";
-
-    auto cms = parseCmsOrDie(appended.signedDocument);
-    ASSERT_NE(cms.get(), nullptr);
-    EXPECT_TRUE(cmsCarriesCert(cms.get(), firstCert)) << "prior signer's certificate was stripped by the append";
-    EXPECT_TRUE(cmsCarriesCert(cms.get(), secondCert)) << "appended signer's certificate is missing";
-}
-
-// addCertificateChain embeds the new signer's path material. It must UNION
-// into the SignedData certificate set — replacing the set would drop every
-// prior signer's certificate. Driven directly (rather than through a B-LT
-// signature) because the long-term gate fails closed on this token's
-// single self-signed leaf before the chain is ever embedded.
+// The chain step embeds the signer's path material. It must UNION into the
+// SignedData certificate set — replacing the set would drop what it already
+// holds, and appending blindly would duplicate the signer's leaf. Driven
+// directly (rather than through a B-LT signature) because the long-term gate
+// fails closed on this token's single self-signed leaf before the chain is
+// ever embedded.
 TEST_F(CAdESModuleTest, AddCertificateChainUnionsIntoTheExistingCertificateSet)
 {
-    CAdESModule cades;
     const std::vector<uint8_t> data = {'C', 'h', 'a', 'i', 'n'};
 
-    std::vector<uint8_t> firstCert;
-    auto prior = signFirst(data, firstCert);
-    ASSERT_FALSE(prior.empty());
-
-    std::vector<uint8_t> secondCert;
-    auto appended = appendSecond(prior, data, SignatureLevel::B_B, {}, secondCert);
-    ASSERT_TRUE(appended.success) << appended.errorMessage;
+    std::vector<uint8_t> signerCert;
+    auto signedOnce = signFirst(data, signerCert);
+    ASSERT_FALSE(signedOnce.empty());
 
     const auto extraCa = makeSelfSignedCaDer("LibreSCRS CAdES Union Test CA");
     ASSERT_FALSE(extraCa.empty());
 
     // chainDer[0] is by contract the leaf the SignerInfo already carries;
     // chainDer[1..] is the path material to embed.
-    auto widened = cades.addCertificateChain(appended.signedDocument, {secondCert, extraCa});
+    auto widened = withCertificateChain(signedOnce, {signerCert, extraCa});
 
     auto cms = parseCmsOrDie(widened);
     ASSERT_NE(cms.get(), nullptr);
-    EXPECT_TRUE(cmsCarriesCert(cms.get(), firstCert))
-        << "embedding the new signer's chain must not evict the first signer's certificate";
-    EXPECT_TRUE(cmsCarriesCert(cms.get(), secondCert)) << "appended signer's certificate must remain";
+    EXPECT_TRUE(cmsCarriesCert(cms.get(), signerCert)) << "the signer's certificate must remain";
     EXPECT_TRUE(cmsCarriesCert(cms.get(), extraCa)) << "supplied path material must be embedded";
-    EXPECT_EQ(cmsCertCount(cms.get()), 3) << "union of {two signer leaves} and {one CA}, with no duplicates";
-}
-
-// B-LT on append now reaches the long-term revocation gate instead of being
-// refused up front. The in-memory signer's single self-signed leaf is a chain of
-// length one: no Trusted-List anchor completed it and no issuer hop reaches a
-// verified root, so the tail is unprovable and the gate must fail closed.
-TEST_F(CAdESModuleTest, AppendSignerAtLongTermRejectsUnterminatedChain)
-{
-    libresign::test::MockTsaServer tsaServer;
-    const std::vector<uint8_t> data = {'L', 'o', 'n', 'g'};
-
-    std::vector<uint8_t> firstCert;
-    auto prior = signFirst(data, firstCert);
-    ASSERT_FALSE(prior.empty());
-
-    TSAConfig tsa;
-    tsa.url = tsaServer.url();
-    std::vector<uint8_t> secondCert;
-    auto appended = appendSecond(prior, data, SignatureLevel::B_LT, tsa, secondCert);
-    EXPECT_FALSE(appended.success);
-    ASSERT_TRUE(appended.failureKind.has_value()) << appended.errorMessage;
-    EXPECT_EQ(*appended.failureKind, SignFailureKind::CertificateChainIncomplete) << appended.errorMessage;
-}
-
-// B-LTA stays refused on the append path. The archive-timestamp message
-// imprint of ETSI EN 319 122-1 §5.5.4 covers the SignedData certificate set,
-// so an archive timestamp minted for a newly appended signer would be computed
-// over a certificate set that the prior signers' own archive timestamps do not
-// describe. Refusing is honest; emitting would be a spec-wrong document.
-TEST_F(CAdESModuleTest, AppendSignerRejectsArchiveLevel)
-{
-    libresign::test::MockTsaServer tsaServer;
-    const std::vector<uint8_t> data = {'A', 'r', 'c', 'h'};
-
-    std::vector<uint8_t> firstCert;
-    auto prior = signFirst(data, firstCert);
-    ASSERT_FALSE(prior.empty());
-
-    TSAConfig tsa;
-    tsa.url = tsaServer.url();
-    std::vector<uint8_t> secondCert;
-    auto appended = appendSecond(prior, data, SignatureLevel::B_LTA, tsa, secondCert);
-    EXPECT_FALSE(appended.success);
-    ASSERT_TRUE(appended.failureKind.has_value()) << appended.errorMessage;
-    EXPECT_EQ(*appended.failureKind, SignFailureKind::PolicyViolation) << appended.errorMessage;
+    EXPECT_EQ(cmsCertCount(cms.get()), 2) << "union of {the signer leaf} and {one CA}, with no duplicates";
 }
 
 // ---- Archive timestamp (ETSI EN 319 122-1 §5.5.4) ----
@@ -764,7 +633,7 @@ TEST_F(CAdESModuleTest, ArchiveTimestampImprintDescribesTheEmittedCertificateOrd
 
     const auto extraCa = makeSelfSignedCaDer("LibreSCRS CAdES Archive Order Test CA");
     ASSERT_FALSE(extraCa.empty());
-    const auto sorted = cades.addCertificateChain(bb, {signerCert, extraCa});
+    const auto sorted = withCertificateChain(bb, {signerCert, extraCa});
     auto sortedCms = parseCmsOrDie(sorted);
     ASSERT_NE(sortedCms.get(), nullptr);
     ASSERT_EQ(cmsCertCount(sortedCms.get()), 2) << "certificate order only has meaning with two or more of them";
@@ -782,6 +651,7 @@ TEST_F(CAdESModuleTest, ArchiveTimestampImprintDescribesTheEmittedCertificateOrd
 
     TSAConfig tsa;
     tsa.url = tsaServer.url();
+    tsa.trust.anchors = {libresign::test::MockTsaServer::trustAnchor()};
     const auto stamped = cades.addArchiveTimestamp(unsorted, tsa);
     ASSERT_FALSE(stamped.empty());
     EXPECT_EQ(tsaServer.servedCount(), 1) << "exactly one RFC 3161 round-trip, for the archive timestamp";
@@ -922,6 +792,7 @@ TEST(CAdESArchiveTimestamp, HashIndexAndImprintDescribeTheEmittedDocument)
 
     TSAConfig tsa;
     tsa.url = tsaServer.url();
+    tsa.trust.anchors = {libresign::test::MockTsaServer::trustAnchor()};
     const auto stamped = cades.addArchiveTimestamp(unsorted, tsa);
     ASSERT_FALSE(stamped.empty());
     EXPECT_EQ(tsaServer.servedCount(), 1) << "exactly one RFC 3161 round-trip, for the archive timestamp";
@@ -976,5 +847,3 @@ TEST(CAdESModuleStandalone, AddRevocationData_EmptyIsNoop)
     auto result = cades.addRevocationData(fakeCms, emptyRev);
     EXPECT_EQ(result, fakeCms);
 }
-
-#endif

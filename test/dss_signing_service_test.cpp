@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <gtest/gtest.h>
-#include "dss/dss_signing_service.h"
-#include "dss/dss_service_manager.h"
+#include "dss_oracle/dss_signing_service.h"
+#include "dss_oracle/dss_service_manager.h"
 #include "signing_keys.h"
 
 class DSSSigningServiceTest : public ::testing::Test

@@ -60,6 +60,10 @@ auto layout = layoutVisualSignature(
 | `kAppearanceTextMargin` | 4,0 pt | Унутрашњи размак на свакој ивици кутије |
 | `kAppearanceLineLeading` | 1,2× | `lineHeight = fontSize × ово` |
 
+Јавне су само `kFloorAppearanceFontSize` и `kAppearanceLineLeading`
+(`VisualSignatureLayout.h`); максимум и унутрашњи размак су интерни за
+потписни мотор.
+
 ## Гранични случајеви
 
 | Улаз | Понашање |

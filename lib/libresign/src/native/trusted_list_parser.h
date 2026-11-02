@@ -25,7 +25,9 @@ struct TrustedServiceEntry
 struct TslPointer
 {
     std::string url;
-    std::vector<uint8_t> signingCertDer; // certificate to verify this TL
+    /// Every certificate the pointer names for the list's signer, in
+    /// document order: a scheme operator rotating its key lists several.
+    std::vector<std::vector<uint8_t>> signingCertsDer;
 };
 
 struct TrustedListInfo
@@ -77,11 +79,6 @@ public:
     /// On 304, returns FetchResult with notModified=true and empty data.
     static FetchResult fetchRawConditional(const std::string& url, const std::string& etag = {},
                                            const std::string& lastModified = {}, int timeoutSeconds = 30);
-
-    // Fetch LOTL, then fetch each member state TL.
-    // Returns all entries from all member state TLs.
-    // Structural extraction only — caller must verify XML-DSig before trusting output.
-    std::vector<TrustedServiceEntry> fetchLotl(const std::string& lotlUrl, int timeoutSeconds = 30);
 
     /// SSRF validation for Trusted-List pointers: reject non-HTTPS,
     /// private/loopback IP literals. Thin https-only wrapper over

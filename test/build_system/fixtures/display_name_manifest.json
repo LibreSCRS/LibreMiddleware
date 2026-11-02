@@ -1,0 +1,8 @@
+{
+  "pluginId": "rs-eid",
+  "displayName": "Serbian electronic ID",
+  "capabilities": ["PKI", "PinManagement"],
+  "atrs": [
+    { "value": "3B 9F 96 80 0A B0 8B" }
+  ]
+}

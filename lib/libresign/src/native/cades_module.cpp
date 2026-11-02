@@ -20,8 +20,9 @@
 #include <cstring>
 #include <exception>
 #include <memory>
-#include <span>
+#include <optional>
 #include <stdexcept>
+#include <string>
 #include <LibreSCRS_internal/Crypto/OpenSslPtr.h>
 #include <LibreSCRS_internal/Crypto/OpenSslPtrCms.h>
 
@@ -192,8 +193,7 @@ void requireTsaUrl(const TSAConfig& tsa, const char* levelName)
 
 // Attach the ESS signing-certificate-v2 signed attribute (ETSI EN 319 122-1
 // §5.2.2) to @p si built over @p cert. Throws std::runtime_error on OpenSSL
-// failure. Factored out so signBB and appendSigner share the exact same
-// attribute construction.
+// failure.
 void attachSigningCertificateV2(CMS_SignerInfo* si, X509* cert)
 {
     auto sigCertV2Der = buildSigningCertV2Attr(cert);
@@ -337,24 +337,6 @@ void addTimestampTo(CMS_SignerInfo* si, const TSAConfig& tsa)
     addUnsignedAttr(si, "1.2.840.113549.1.9.16.2.14", tsaResult.token);
 }
 
-// Embed @p chainDer[1..] in the SignedData certificates set. UNION, never
-// replace: the set is shared by every signer, so evicting an entry would strip
-// path material a prior signer's verifier still needs. CMS_add1_cert is
-// idempotent on a certificate already in the set, so overlapping chains
-// between signers collapse instead of duplicating.
-void addCertificateChainTo(CMS_ContentInfo* cms, const std::vector<std::vector<uint8_t>>& chainDer)
-{
-    // chainDer[0] is the signer leaf — CMS_add1_signer already placed it in the
-    // SignedData certificates set. Embed the remaining path (issuing CA up to
-    // the trust anchor) so a B-LT signature carries the certificates a verifier
-    // needs to build the path without external fetching.
-    for (std::size_t i = 1; i < chainDer.size(); ++i) {
-        X509Ptr cert = parseCert(chainDer[i]);
-        if (cert && CMS_add1_cert(cms, cert.get()) != 1)
-            throw std::runtime_error("CMS_add1_cert() failed: " + opensslError());
-    }
-}
-
 // Attach the revocation values (ETSI EN 319 122-1 §5.4.2) to @p si.
 void addRevocationDataTo(CMS_SignerInfo* si, const RevocationData& revData)
 {
@@ -369,6 +351,23 @@ void addRevocationDataTo(CMS_SignerInfo* si, const RevocationData& revData)
 
 } // namespace
 
+// UNION, never replace: the set is shared by every signer, so evicting an
+// entry would strip path material a prior signer's verifier still needs.
+// CMS_add1_cert is idempotent on a certificate already in the set, so
+// overlapping chains between signers collapse instead of duplicating.
+void addCertificateChainTo(CMS_ContentInfo* cms, const std::vector<std::vector<uint8_t>>& chainDer)
+{
+    // chainDer[0] is the signer leaf — CMS_add1_signer already placed it in the
+    // SignedData certificates set. Embed the remaining path (issuing CA up to
+    // the trust anchor) so a B-LT signature carries the certificates a verifier
+    // needs to build the path without external fetching.
+    for (std::size_t i = 1; i < chainDer.size(); ++i) {
+        X509Ptr cert = parseCert(chainDer[i]);
+        if (cert && CMS_add1_cert(cms, cert.get()) != 1)
+            throw std::runtime_error("CMS_add1_cert() failed: " + opensslError());
+    }
+}
+
 // ---- byte-oriented wrappers ----
 //
 // Single-signer entry points kept for the callers that hand a whole document
@@ -381,17 +380,6 @@ std::vector<uint8_t> CAdESModule::addTimestamp(const std::vector<uint8_t>& cmsBy
     requireTsaUrl(tsa, "B-T");
     CmsPtr cms = parseCms(cmsBytes);
     addTimestampTo(signerInfoAt(cms.get(), 0), tsa);
-    return encodeCms(cms.get());
-}
-
-std::vector<uint8_t> CAdESModule::addCertificateChain(const std::vector<uint8_t>& cmsBytes,
-                                                      const std::vector<std::vector<uint8_t>>& chainDer)
-{
-    if (chainDer.size() <= 1)
-        return cmsBytes;
-
-    CmsPtr cms = parseCms(cmsBytes);
-    addCertificateChainTo(cms.get(), chainDer);
     return encodeCms(cms.get());
 }
 
@@ -475,10 +463,9 @@ void addArchiveTimestampTo(CMS_ContentInfo* cms, CMS_SignerInfo* si, const TSACo
 {
     // Resolving the copy's signer by position is sound only on a single-signer
     // SignedData — and that is the only shape an archive timestamp is ever
-    // minted for: signBB emits exactly one SignerInfo, and appendSigner refuses
-    // B-LTA outright because the §5.5.4 imprint covers the certificate set an
-    // append mutates. State the invariant instead of silently stamping an
-    // imprint that describes a different signer's attributes.
+    // minted for: signBB emits exactly one SignerInfo. State the invariant
+    // instead of silently stamping an imprint that describes a different
+    // signer's attributes.
     STACK_OF(CMS_SignerInfo)* signers = CMS_get0_SignerInfos(cms);
     if (!signers || sk_CMS_SignerInfo_num(signers) != 1 || sk_CMS_SignerInfo_value(signers, 0) != si)
         throw std::runtime_error("An archive timestamp requires a single-signer SignedData whose SignerInfo is the "
@@ -612,8 +599,7 @@ void addArchiveTimestampTo(CMS_ContentInfo* cms, CMS_SignerInfo* si, const TSACo
 
 // ---- the level-upgrade ladder ----
 //
-// The ONE definition of what each SignatureLevel adds on top of B-B, shared by
-// sign() and appendSigner() so the two entry points cannot drift apart.
+// The ONE definition of what each SignatureLevel adds on top of B-B.
 //
 // Everything runs against the live @p cms / @p si: a signer is identified by
 // pointer, never by position. The SignedData signerInfos field is an ASN.1
@@ -694,149 +680,6 @@ SigningResult CAdESModule::sign(const std::vector<uint8_t>& data, SigningKey& ke
         return makeFailure(e.kind, e.what());
     } catch (const std::exception& e) {
         return makeFailure(SignFailureKind::EngineError, std::string("CAdES error: ") + e.what());
-    }
-}
-
-// ---- appendSigner ----
-
-SigningResult CAdESModule::appendSigner(std::span<const uint8_t> prior, std::span<const uint8_t> originalDoc,
-                                        SigningKey& key, SignatureLevel level, const TSAConfig& tsa)
-{
-    if (prior.empty())
-        return makeFailure(SignFailureKind::InvalidDocument, "CAdES appendSigner: empty prior signature");
-    if (originalDoc.empty())
-        return makeFailure(SignFailureKind::InvalidInput, "CAdES detached appendSigner requires originalDocument");
-    if (prior.size() > static_cast<size_t>(LONG_MAX))
-        return makeFailure(SignFailureKind::InvalidDocument, "CAdES appendSigner: prior signature too large");
-    if (originalDoc.size() > static_cast<size_t>(INT_MAX))
-        return makeFailure(SignFailureKind::InvalidDocument, "CAdES appendSigner: originalDocument too large");
-
-    // B-T and B-LT carry per-signer unsigned attributes and are applied to the
-    // appended SignerInfo alone. B-LTA is not: the ETSI EN 319 122-1 §5.5.4
-    // archive-timestamp message imprint is computed over the whole SignedData,
-    // certificate set included, and appending a signer adds a certificate to
-    // that set. An archive timestamp minted here would therefore describe a
-    // document state that the prior signers' own archive timestamps do not,
-    // and recomputing theirs would need PKCS#11 sessions we no longer hold.
-    // Refuse rather than emit a spec-wrong document.
-    if (level > SignatureLevel::B_LT)
-        return makeFailure(SignFailureKind::PolicyViolation,
-                           "CAdES appendSigner: B-LTA is not supported for an appended signer — the ETSI "
-                           "EN 319 122-1 §5.5.4 archive-timestamp imprint covers the SignedData certificate "
-                           "set, which appending a signer changes; use B-LT or lower");
-
-    try {
-        // Taken first: the CMS below comes to hold a reference to the
-        // provider-backed key, so the provider has to outlive it too, as does
-        // the slot that receives what the key throws while OpenSSL signs.
-        SigningProviderLease provider;
-        std::exception_ptr keyFailure;
-
-        // 1. Parse the prior CMS ContentInfo.
-        const unsigned char* p = prior.data();
-        CmsPtr cms(d2i_CMS_ContentInfo(nullptr, &p, static_cast<long>(prior.size())));
-        if (!cms)
-            return makeFailure(SignFailureKind::InvalidDocument,
-                               "CAdES appendSigner: prior is not valid CMS: " + opensslError());
-
-        // 2. Verify the prior CMS is DETACHED. For an attached CMS,
-        //    CMS_get0_content() returns a non-null pointer to a non-null
-        //    embedded content OCTET STRING; for detached it is either null
-        //    or points to a null. We only support DETACHED multi-signer at
-        //    this layer — attached would require splicing the original
-        //    payload twice and is out of scope.
-        ASN1_OCTET_STRING** eContent = CMS_get0_content(cms.get());
-        if (eContent && *eContent && ASN1_STRING_length(*eContent) > 0)
-            return makeFailure(SignFailureKind::PolicyViolation,
-                               "CAdES appendSigner: prior CMS is attached; only detached is supported");
-
-        // 3. Load signer cert + PKCS#11-backed EVP_PKEY (same path as signBB).
-        auto certDer = key.certificate();
-        if (certDer.empty())
-            return makeFailure(SignFailureKind::CardError,
-                               "CAdES appendSigner: the signing key carries no certificate");
-
-        X509Ptr signerCert = parseCert(certDer);
-        if (!signerCert)
-            return makeFailure(SignFailureKind::EngineError, "CAdES appendSigner: failed to parse signer certificate");
-
-        EvpPkeyPtr pkey(createSigningEvpKey(provider, key, signerCert.get(), keyFailure).release());
-        if (!pkey)
-            return makeFailure(SignFailureKind::CardError, "CAdES appendSigner: failed to obtain the provider key");
-
-        // 4. Append the new SignerInfo with CMS_PARTIAL so OpenSSL does not
-        //    immediately try to sign. We sign ONLY the new SignerInfo via
-        //    CMS_SignerInfo_sign below; CMS_final / CMS_dataFinal would walk
-        //    EVERY SignerInfo and call cms_SignerInfo_content_sign on each,
-        //    which fails with CMS_R_NO_PRIVATE_KEY for the pre-existing
-        //    signers (their pkey is null after d2i — only the serialised
-        //    signature value travels across DER).
-        constexpr unsigned int kFlags = CMS_PARTIAL | CMS_BINARY | CMS_DETACHED | CMS_NOSMIMECAP;
-
-        CMS_SignerInfo* si = CMS_add1_signer(cms.get(), signerCert.get(), pkey.get(), EVP_sha256(), kFlags);
-        if (!si)
-            return makeFailure(SignFailureKind::OpensslError,
-                               "CAdES appendSigner: CMS_add1_signer failed: " + opensslError());
-
-        // 5. Attach signing-certificate-v2 to the NEW signer's signed attrs.
-        attachSigningCertificateV2(si, signerCert.get());
-
-        // 6. Compute and attach the two CMS-mandatory signed attributes
-        //    (content-type + message-digest) on the new SignerInfo.
-        //    cms_SignerInfo_content_sign would do this for us, but the only
-        //    public entry points that call it (CMS_final / CMS_dataFinal)
-        //    iterate every SignerInfo — see note above. CMS_SignerInfo_sign's
-        //    attribute-validity check (ossl_cms_si_check_attributes) rejects
-        //    the SignerInfo if either attribute is missing.
-        const ASN1_OBJECT* eContentType = CMS_get0_eContentType(cms.get());
-        if (!eContentType)
-            return makeFailure(SignFailureKind::OpensslError,
-                               "CAdES appendSigner: CMS_get0_eContentType returned null");
-        if (!CMS_signed_add1_attr_by_NID(si, NID_pkcs9_contentType, V_ASN1_OBJECT, eContentType, -1))
-            return makeFailure(SignFailureKind::OpensslError,
-                               "CAdES appendSigner: failed to add contentType attribute: " + opensslError());
-
-        auto contentHash = sha256(originalDoc.data(), originalDoc.size());
-        if (!CMS_signed_add1_attr_by_NID(si, NID_pkcs9_messageDigest, V_ASN1_OCTET_STRING, contentHash.data(),
-                                         static_cast<int>(contentHash.size())))
-            return makeFailure(SignFailureKind::OpensslError,
-                               "CAdES appendSigner: failed to add messageDigest attribute: " + opensslError());
-
-        // 7. Sign ONLY the new SignerInfo. CMS_SignerInfo_sign encodes the
-        //    signed-attrs SET, runs it through the (PKCS#11-backed)
-        //    EVP_PKEY, and stores the resulting signature value on this si.
-        //    Pre-existing SignerInfos are untouched — their original DER
-        //    signatureValue survives intact through the upcoming re-encode.
-        if (!CMS_SignerInfo_sign(si)) {
-            // As in signBB: the key's own failure is what OpenSSL reported.
-            if (keyFailure)
-                std::rethrow_exception(keyFailure);
-            return makeFailure(SignFailureKind::OpensslError,
-                               "CAdES appendSigner: CMS_SignerInfo_sign failed: " + opensslError());
-        }
-
-        // 8. Apply the requested level upgrades to the NEW SignerInfo only,
-        //    through the same ladder sign() uses. `si` is the pointer
-        //    CMS_add1_signer just handed back, which is what makes this
-        //    correct: the appended signer cannot be named by position because
-        //    the DER encode below reorders the signerInfos SET OF.
-        //
-        //    Adding this signer already mutated the SignedData certificate set
-        //    that any archive timestamp a PRIOR signer carries was computed
-        //    over — true at every level, B-B included. Appending to a document
-        //    whose existing signers hold archive timestamps is outside what
-        //    this method can keep intact.
-        if (auto failure = applyLevelUpgrades(cms.get(), si, key, level, tsa))
-            return *failure;
-
-        // 9. Serialise to DER.
-        return makeSuccess(encodeCms(cms.get()));
-    } catch (const SignFailureException& e) {
-        // Typed failure (TSA unreachable / missing URL) — preserve its precise
-        // kind. MUST precede the std::exception arm, same as sign().
-        return makeFailure(e.kind, e.what());
-    } catch (const std::exception& e) {
-        return makeFailure(SignFailureKind::EngineError, std::string("CAdES appendSigner error: ") + e.what());
     }
 }
 

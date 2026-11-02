@@ -46,9 +46,6 @@ CMakeLists.txt.user
 # MacOS
 .DS_Store
 
-# PKCS#11 module packaging output
-LibreSCRS-cardedge-pkcs11-*.tar.gz
-LibreSCRS-cardedge-pkcs11-*.zip
 .claude/
 
 # Java compiled classes

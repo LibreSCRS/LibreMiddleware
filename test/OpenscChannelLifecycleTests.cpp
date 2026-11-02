@@ -24,14 +24,18 @@
 #include <mutex>
 #include <span>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <LibreSCRS/CancelToken.h>
+#include <LibreSCRS/Logging.h>
 #include <LibreSCRS/Plugin/CardPlugin.h>
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
-#include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
+#include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 #include <LibreSCRS/SmartCard/detail/ChannelInjection.h>
 
 #include <apdu.h>
@@ -111,7 +115,7 @@ std::uint16_t readBinaryOffset(const APDUCommand& cmd)
 struct LiveSmSession
 {
     LiveSmSession(const std::string& readerName = "ChannelTestReader")
-        : session(LibreSCRS::SmartCard::detail::makeDetachedCardSession(readerName))
+        : session(LibreSCRS::SmartCard::Testing::makeDetachedCardSession(readerName))
     {
         auto owned = std::make_unique<FakeChannel>(pkcs15Aid(), ChannelState::Open, /*carriesSm=*/true,
                                                    /*crossAppletReuse=*/true);
@@ -404,7 +408,7 @@ TEST(OpenscChannelRun, ActivationFailureWithoutLiveChannelIsCredentialsRequired)
 {
     // No live channel, no cached CAN, no provider: activation reports
     // CredentialsRequired and the session state is untouched.
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("ChannelTestReader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("ChannelTestReader");
     DeferredSessionFixture f;
     f.s->bound = true; // simulate an already-bound session (spec obligation a)
 
@@ -429,7 +433,7 @@ TEST(OpenscChannelRun, ActivationFailureWithoutLiveChannelIsCredentialsRequired)
 // runUnderChannel returns.
 TEST(OpenscChannelRun, RawBranchHoldsTheCardTransaction)
 {
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("ChannelTestReader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("ChannelTestReader");
     RawSessionFixture f;
 
     EXPECT_FALSE(f.conn.isTransactionHeld()) << "nothing held before the run";
@@ -454,7 +458,7 @@ TEST(OpenscChannelRun, RawBranchHoldsTheCardTransaction)
 // have -- and must land in two transactions, so the assertion discriminates.
 TEST(OpenscOperationPin, VerifyAndOperationShareOneCardTransaction)
 {
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("ChannelTestReader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("ChannelTestReader");
     RawSessionFixture f;
     int transaction = 0;
     f.conn.setDetachedTransactionReleaseObserver([&transaction] { ++transaction; });
@@ -575,8 +579,8 @@ TEST(OpenscOperationPin, KeyWithoutAPinRunsWithADepositedPinAndNoVerify)
     EXPECT_EQ(session.operationPin.view(), std::string_view{"1234"}) << "the deposit is the host's to erase";
 }
 
-// A refused PIN on the atomic path must say so, as verifyPIN always has: a
-// host that sees PluginError cannot tell a wrong PIN from a broken card.
+// A refused PIN on the atomic path must say so: a host that sees
+// PluginError cannot tell a wrong PIN from a broken card.
 // The verdict is the one the OpenSC PKCS#11 slot gives the same VERIFY answer.
 TEST(OpenscOperationPin, RefusedPinIsReportedAsAPinOutcome)
 {
@@ -611,14 +615,14 @@ TEST(OpenscOperations, EmptyPinCredentialKeepsTheSessionClaim)
 // That acquisition is the FIRST PC/SC touch of the operation and it sits
 // OUTSIDE the try that contains fn, so a card removed, reset or claimed
 // exclusively by another process makes SCardBeginTransaction fail and
-// CardTransaction's constructor throw PCSCError. That throw would leave a
-// dlopen'd plugin through the C ABI, which CardPlugin.h calls undefined
-// behaviour. The bridge's own sc_lock has always caught the identical failure
-// and returned SC_ERROR_READER, so losing the outer transaction must degrade
-// to exactly that per-call behaviour -- never to an escaping exception.
+// CardTransaction's constructor throw PCSCError. That throw would end the
+// operation before it ran. The bridge's own sc_lock has always caught the
+// identical failure and returned SC_ERROR_READER, so losing the outer
+// transaction must degrade to exactly that per-call behaviour -- never to an
+// escaping exception.
 TEST(OpenscChannelRun, RawTransactionFailureIsContainedNotPropagated)
 {
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("ChannelTestReader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("ChannelTestReader");
     RawSessionFixture f;
     f.conn.setDetachedTransactionFailure(SCARD_E_SHARING_VIOLATION);
 
@@ -627,7 +631,7 @@ TEST(OpenscChannelRun, RawTransactionFailureIsContainedNotPropagated)
     ASSERT_NO_THROW(
         report = LibreSCRS::OpenSc::runUnderChannel(*session, *f.s, CancelToken{},
                                                     [&](OpenSCSession&) { heldInsideFn = f.conn.isTransactionHeld(); }))
-        << "no exception may cross the plugin ABI boundary";
+        << "the operation must run, not end on the failed acquisition";
     EXPECT_TRUE(report.ran) << "the operation still runs; the bridge falls back to its own per-call transaction";
     EXPECT_FALSE(heldInsideFn) << "the outer transaction was not acquired";
     EXPECT_FALSE(f.conn.isTransactionHeld()) << "and nothing is left held behind it";
@@ -645,7 +649,7 @@ TEST(OpenscChannelRun, RawTransactionFailureIsContainedNotPropagated)
 // to clear.
 TEST(OpenscChannelRun, RawTransactionIsReleasedBeforeCardStateReset)
 {
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("ChannelTestReader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("ChannelTestReader");
     RawSessionFixture f;
 
     bool observedRelease = false;
@@ -748,6 +752,50 @@ TEST(OpenscChannelRun, ChannelDeathIsJudgedByStateAndTriggersReset)
     EXPECT_NE(f.s->context.get(), nullptr);
 }
 
+// The channel's own closed/failed sentinel fails the transmit, and the line
+// saying so reaches the host's log sink rather than this process's stderr.
+TEST(OpenscChannelRun, ChannelSentinelIsReportedThroughTheLogSink)
+{
+    std::vector<std::pair<LibreSCRS::log::Level, std::string>> lines;
+    struct SinkReset
+    {
+        ~SinkReset()
+        {
+            LibreSCRS::log::resetForTest();
+        }
+    } sinkReset;
+    LibreSCRS::log::init(
+        [&](LibreSCRS::log::Level level, std::string_view line) { lines.emplace_back(level, std::string(line)); },
+        "test.opensc.bridge");
+
+    FakeChannel channel{pkcs15Aid(), ChannelState::Open, /*carriesSm=*/true};
+    DeferredSessionFixture f;
+    f.s->bound = true;
+    int rv = SC_SUCCESS;
+    (void)LibreSCRS::OpenSc::runWithChannelPtr(
+        *f.s, &channel, CancelToken{},
+        [&](OpenSCSession& session) {
+            channel.transmitHandler = [&](const APDUCommand&) {
+                channel.setState(ChannelState::Failed);
+                return sw(0x6F, 0x02);
+            };
+            sc_apdu_t a{};
+            a.cse = SC_APDU_CASE_1;
+            a.cla = 0x00;
+            a.ins = 0xA4;
+            a.p1 = 0x04;
+            a.p2 = 0x0C;
+            rv = session.bridge->reader.ops->transmit(&session.bridge->reader, &a);
+        },
+        kNoHolderRelease);
+
+    EXPECT_EQ(rv, SC_ERROR_TRANSMIT_FAILED);
+    const bool reported = std::any_of(lines.begin(), lines.end(), [](const auto& entry) {
+        return entry.first == LibreSCRS::log::Level::Warn && entry.second.find("SW=6F02") != std::string::npos;
+    });
+    EXPECT_TRUE(reported) << lines.size() << " line(s) captured";
+}
+
 TEST(OpenscChannelRun, BenignStatusWordDoesNotReset)
 {
     FakeChannel channel{pkcs15Aid(), ChannelState::Open, /*carriesSm=*/true};
@@ -821,11 +869,9 @@ TEST(OpenscChannelRun, CancelDuringBindResetsCardStateAndChannelStaysOpen)
 
 TEST(OpenscChannelRun, ExceptionFromFnIsContainedNotPropagated)
 {
-    // No C++ exception may cross the plugin ABI boundary (the plugin is
-    // dlopen'd with a potentially-mismatched C++ runtime). A throw from fn
-    // (e.g. bad_alloc sizing a card-reported buffer) must be caught inside
-    // runWithChannelPtr, folded into the report as a transport failure, and
-    // the cleanup (channel/token clear + reset) must still run.
+    // A throw from fn (e.g. bad_alloc sizing a card-reported buffer) must be
+    // caught inside runWithChannelPtr, folded into the report as a transport
+    // failure, and the cleanup (channel/token clear + reset) must still run.
     FakeChannel channel{pkcs15Aid(), ChannelState::Open, /*carriesSm=*/true};
     DeferredSessionFixture f;
     f.s->bound = true; // bind already done; fn is reached directly
@@ -907,7 +953,8 @@ TEST(OpenscOperations, DeferredClaimWithoutChannelOrCanIsTyped)
     // every operation shape (never collapsed into a generic plugin error).
     live.session->clearActiveChannel();
 
-    const auto pinResult = h.plugin->verifyPIN(*live.session, LibreSCRS::Secure::String{"0000"});
+    const auto pinResult =
+        h.plugin->changePIN(*live.session, "", LibreSCRS::Secure::String{"0000"}, LibreSCRS::Secure::String{"1111"});
     EXPECT_EQ(pinResult.outcome, LibreSCRS::Plugin::PINResultOutcome::MissingFields);
 
     const auto readResult = h.plugin->readCard(*live.session);
@@ -1165,17 +1212,6 @@ TEST(OpenscEcSurface, EcdsaSignatureLengthIsTwiceCeilFieldBytes)
     EXPECT_EQ(LibreSCRS::OpenSc::ecdsaSignatureLength(521), 132u); // P-521: 2*ceil(521/8)=2*66
 }
 
-TEST(OpenscEcSurface, KeySizeBitsComesFromModulusOrFieldLength)
-{
-    sc_pkcs15_prkey_info_t rsaInfo{};
-    rsaInfo.modulus_length = 3072;
-    EXPECT_EQ(LibreSCRS::OpenSc::keySizeBitsFromKeyInfo(rsaInfo), 3072);
-
-    sc_pkcs15_prkey_info_t ecInfo{};
-    ecInfo.field_length = 384;
-    EXPECT_EQ(LibreSCRS::OpenSc::keySizeBitsFromKeyInfo(ecInfo), 384);
-}
-
 // OpenSC's own reading of PKCS#15 userConsent -- the one its PKCS#11 framework
 // turns into CKA_ALWAYS_AUTHENTICATE, and the one the plugin and the slot share.
 TEST(OpenscUserConsent, PerOperationAuthIsOpenScsOwnRule)
@@ -1292,7 +1328,7 @@ TEST(OpenscEcSurface, FlagsComeFromTheEntryForTheKeysField)
 TEST(OpenscEcdh, EcdhRawIsNotRefusedAsAnUnknownMechanism)
 {
     PluginHandle h;
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("ChannelTestReader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("ChannelTestReader");
     using LibreSCRS::Plugin::DecipherMechanism;
     using LibreSCRS::Plugin::DecipherResultOutcome;
     const auto point = uncompressedPoint(48);
@@ -1432,7 +1468,7 @@ TEST(OpenscEcdh, PerOperationKeyWithoutAPinNeverDerives)
 // deposited PIN's VERIFY runs too (OpenscOperationPin above).
 TEST(OpenscEcdh, DeriveRunsInsideTheCardTransaction)
 {
-    auto cardSession = LibreSCRS::SmartCard::detail::makeDetachedCardSession("ChannelTestReader");
+    auto cardSession = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("ChannelTestReader");
     RawSessionFixture f;
     EcKeyObject key(384);
     bool held = false;
@@ -1506,7 +1542,7 @@ TEST(OpenscRsa, RawMessageMechanismsAreNotRefusedAsUnknown)
     // No claim on this session, so a mechanism the plugin signs fails for that
     // reason; one it does not know is turned away before it looks.
     PluginHandle h;
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("ChannelTestReader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("ChannelTestReader");
     using LibreSCRS::Plugin::SignMechanism;
     using LibreSCRS::Plugin::SignResultOutcome;
     const std::vector<std::uint8_t> message{'m', 's', 'g'};
@@ -1565,6 +1601,97 @@ TEST(OpenscRsa, RawMessageReachesTheCardAsTheDigestInfoOverItsHash)
         ASSERT_TRUE(result.ok());
         EXPECT_EQ(result.signature.size(), 256U);
     }
+}
+
+// ── RSA decryption ────────────────────────────────────────────────────────
+
+TEST(OpenscRsaDecipher, DecryptsWithType02PaddingIntoABlockSizedBuffer)
+{
+    RsaKeyObject key(2048);
+    OpenSCSession session;
+    const std::vector<std::uint8_t> ciphertext(256, 0x6B);
+    unsigned long seenFlags = 0;
+    std::vector<std::uint8_t> seenInput;
+    std::size_t seenCapacity = 0;
+    LibreSCRS::Plugin::DecipherResult result;
+
+    const auto refused =
+        LibreSCRS::OpenSc::decipherRsaBound(session, key.object, ciphertext, result,
+                                            [&](unsigned long flags, const std::uint8_t* in, std::size_t inLength,
+                                                std::uint8_t* out, std::size_t outLength) {
+                                                seenFlags = flags;
+                                                seenInput.assign(in, in + inLength);
+                                                seenCapacity = outLength;
+                                                std::fill_n(out, outLength, std::uint8_t{0xA7});
+                                                return 16; // the unpadded plaintext is shorter than the block
+                                            });
+
+    EXPECT_FALSE(refused.has_value());
+    EXPECT_EQ(seenFlags, static_cast<unsigned long>(SC_ALGORITHM_RSA_PAD_PKCS1_TYPE_02))
+        << "the decryption padding: the card runs the raw transform, the host strips";
+    EXPECT_EQ(seenInput, ciphertext);
+    EXPECT_EQ(seenCapacity, 256U) << "the key's block size";
+    ASSERT_TRUE(result.ok());
+    EXPECT_EQ(result.plaintext, std::vector<std::uint8_t>(16, 0xA7)) << "only the bytes the card returned";
+}
+
+// A key with no advertised modulus has no block size. It is refused before
+// the PIN rule -- for this per-operation key without a PIN that rule would
+// answer RefusedPin, and with a PIN it would spend a try -- and the card
+// never sees a byte.
+TEST(OpenscRsaDecipher, KeyWithoutAModulusNeverReachesThePinOrTheCard)
+{
+    RsaKeyObject key(0);
+    key.object.user_consent = 1;
+    OpenSCSession session; // no PIN deposited
+    bool called = false;
+    LibreSCRS::Plugin::DecipherResult result;
+
+    const auto refused = LibreSCRS::OpenSc::decipherRsaBound(
+        session, key.object, std::vector<std::uint8_t>(256, 0x6B), result,
+        [&](unsigned long, const std::uint8_t*, std::size_t, std::uint8_t*, std::size_t) {
+            called = true;
+            return 0;
+        });
+
+    EXPECT_FALSE(refused.has_value()) << "refused for the key, not for the PIN";
+    EXPECT_FALSE(called);
+    EXPECT_FALSE(result.ok());
+}
+
+TEST(OpenscRsaDecipher, AnErrorOrACountTheBufferCannotHoldIsNeverOk)
+{
+    for (const int answer : {-1, 257}) {
+        SCOPED_TRACE(answer);
+        RsaKeyObject key(2048);
+        OpenSCSession session;
+        LibreSCRS::Plugin::DecipherResult result;
+        (void)LibreSCRS::OpenSc::decipherRsaBound(
+            session, key.object, std::vector<std::uint8_t>(256, 0x6B), result,
+            [&](unsigned long, const std::uint8_t*, std::size_t, std::uint8_t*, std::size_t) { return answer; });
+        EXPECT_FALSE(result.ok());
+        EXPECT_TRUE(result.plaintext.empty());
+    }
+}
+
+TEST(OpenscRsaDecipher, PerOperationKeyWithoutAPinNeverDeciphers)
+{
+    RsaKeyObject key(2048);
+    key.object.user_consent = 1;
+    OpenSCSession session; // no PIN deposited
+    bool called = false;
+    LibreSCRS::Plugin::DecipherResult result;
+
+    const auto refused = LibreSCRS::OpenSc::decipherRsaBound(
+        session, key.object, std::vector<std::uint8_t>(256, 0x6B), result,
+        [&](unsigned long, const std::uint8_t*, std::size_t, std::uint8_t*, std::size_t) {
+            called = true;
+            return 16;
+        });
+
+    EXPECT_FALSE(called);
+    ASSERT_TRUE(refused.has_value());
+    EXPECT_FALSE(result.ok());
 }
 
 TEST(OpenscEcdsa, UnknownFieldLengthOrNonHashNeverSigns)

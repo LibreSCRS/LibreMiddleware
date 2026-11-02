@@ -333,21 +333,6 @@ std::string ParsedCertificate::signatureAlgorithmDescription() const
     return fn.empty() ? oid.dottedDecimal : fn;
 }
 
-std::vector<std::uint8_t> ParsedCertificate::signatureValue() const
-{
-    if (!d)
-        return {};
-    const ASN1_BIT_STRING* sig = nullptr;
-    X509_get0_signature(&sig, nullptr, d->x509.get());
-    if (!sig)
-        return {};
-    const unsigned char* sigData = ASN1_STRING_get0_data(sig);
-    int sigLen = ASN1_STRING_length(sig);
-    if (!sigData || sigLen <= 0)
-        return {};
-    return {sigData, sigData + sigLen};
-}
-
 std::span<const std::uint8_t> ParsedCertificate::derBytes() const noexcept
 {
     if (!d)
@@ -376,7 +361,6 @@ PublicKeyInfo ParsedCertificate::publicKey() const
     case EVP_PKEY_RSA:
     case EVP_PKEY_RSA_PSS:
         info.algorithm = PublicKeyAlgorithm::RSA;
-        info.algorithmDescription = "RSA " + std::to_string(info.bitLength);
         break;
     case EVP_PKEY_EC: {
         info.algorithm = PublicKeyAlgorithm::ECDSA;
@@ -390,20 +374,14 @@ PublicKeyInfo ParsedCertificate::publicKey() const
             info.curveOid = curveName;
         }
 #endif
-        info.algorithmDescription = "ECDSA " + std::to_string(info.bitLength) + "-bit";
         break;
     }
     case EVP_PKEY_ED25519:
     case EVP_PKEY_ED448:
         info.algorithm = PublicKeyAlgorithm::EdDSA;
-        info.algorithmDescription = (nid == EVP_PKEY_ED25519) ? "Ed25519" : "Ed448";
         break;
     default:
         info.algorithm = PublicKeyAlgorithm::Other;
-        info.algorithmDescription = info.algorithmOid.friendlyName();
-        if (info.algorithmDescription.empty()) {
-            info.algorithmDescription = info.algorithmOid.dottedDecimal;
-        }
         break;
     }
     return info;
@@ -641,16 +619,6 @@ std::vector<Extension> ParsedCertificate::extensions() const
         out.push_back(std::move(e));
     }
     return out;
-}
-
-std::optional<Extension> ParsedCertificate::findExtension(const ObjectIdentifier& oid) const
-{
-    auto exts = extensions();
-    for (auto& e : exts) {
-        if (e.oid.dottedDecimal == oid.dottedDecimal)
-            return std::move(e);
-    }
-    return std::nullopt;
 }
 
 } // namespace LibreSCRS::Certificate

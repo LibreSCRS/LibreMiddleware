@@ -22,7 +22,7 @@
 #include <LibreSCRS/Plugin/ReadResult.h>
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
-#include <LibreSCRS/SmartCard/MonitorService.h>
+#include <pcsc_connection.h>
 
 #include <openssl/err.h>
 #include <openssl/evp.h>
@@ -43,12 +43,11 @@
 
 using LibreSCRS::Plugin::CardPlugin;
 using LibreSCRS::Plugin::CardPluginService;
-using LibreSCRS::Plugin::PINResult;
 using LibreSCRS::Plugin::ReadResult;
 using LibreSCRS::Plugin::SignMechanism;
 using LibreSCRS::Plugin::SignResult;
+using LibreSCRS::Plugin::SignResultOutcome;
 using LibreSCRS::SmartCard::CardSession;
-using LibreSCRS::SmartCard::MonitorService;
 
 // PIN guard: g_pinFailed / SKIP_IF_PIN_FAILED come from the shared
 // test/include/pin_guard.h (single source of truth across real-card
@@ -151,8 +150,7 @@ std::string opensslLastError()
 } // namespace
 
 // ---------------------------------------------------------------------------
-// Fixture — suite-wide state so the PIN session opened in Test 5 is reused by
-// Test 6 (avoids a second verifyPIN that would consume another retry).
+// Fixture — suite-wide state so Test 6 and Test 7 sign on one card session.
 // ---------------------------------------------------------------------------
 
 class OpenSCFallbackPKS : public ::testing::Test
@@ -166,14 +164,13 @@ protected:
             GTEST_SKIP() << "No plugins loaded from " << PLUGIN_DIR << " — check build";
         }
 
-        MonitorService monitor;
-        auto readersOpt = monitor.listReaders();
-        if (!readersOpt || readersOpt->empty()) {
+        const auto readers = LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders();
+        if (readers.empty()) {
             registry.reset();
             GTEST_SKIP() << "No smart card readers found";
         }
 
-        for (const auto& readerName : *readersOpt) {
+        for (const auto& readerName : readers) {
             auto opened = CardSession::open(readerName);
             if (!opened.has_value())
                 continue; // reader without card or transient PC/SC error → keep trying
@@ -214,9 +211,7 @@ protected:
     }
 
     // Suite-wide state — initialized by SetUpTestSuite, shared across all
-    // TEST_F cases in this fixture so Test05's PIN session is reused by
-    // Test06 rather than spending a second verification against the card's
-    // PIN retry budget.
+    // TEST_F cases in this fixture.
     static std::unique_ptr<CardPluginService> registry;
     static std::optional<CardSession> session;
     static std::shared_ptr<CardPlugin> plugin;
@@ -257,9 +252,9 @@ TEST_F(OpenSCFallbackPKS, Test02ReadCardReturnsTokenInfo)
     const auto& data = *result.data;
     EXPECT_EQ(data.cardType, "opensc") << "cardType should identify opensc fallback";
 
-    const auto tokenIdx = data.findGroup("token");
-    ASSERT_TRUE(tokenIdx.has_value()) << "readCard did not produce a 'token' group";
-    const auto& tokenGroup = data.groupAt(*tokenIdx);
+    const auto tokenIt = std::ranges::find(data.groups, "token", &LibreSCRS::Plugin::CardFieldGroup::groupKey);
+    ASSERT_NE(tokenIt, data.groups.end()) << "readCard did not produce a 'token' group";
+    const auto& tokenGroup = *tokenIt;
 
     auto fieldByKey = [&](std::string_view key) -> const LibreSCRS::Plugin::CardField* {
         for (const auto& f : tokenGroup.fields) {
@@ -271,18 +266,16 @@ TEST_F(OpenSCFallbackPKS, Test02ReadCardReturnsTokenInfo)
 
     const auto* labelField = fieldByKey("label");
     ASSERT_NE(labelField, nullptr) << "token group missing 'label' field";
-    const auto labelText = labelField->textValue();
-    ASSERT_TRUE(labelText.has_value()) << "label field is not FieldType::Text (textValue returned nullopt)";
-    EXPECT_FALSE(labelText->empty()) << "Token label empty";
+    ASSERT_EQ(labelField->type, LibreSCRS::Plugin::FieldType::Text) << "label field is not FieldType::Text";
+    EXPECT_FALSE(labelField->value.empty()) << "Token label empty";
 
     // serial_number is optional in PKCS#15 TokenInfo (PKS cards don't
     // populate it); if the plugin emits it, we still require it be
     // non-empty.
     const auto* serialField = fieldByKey("serial_number");
     if (serialField != nullptr) {
-        const auto serialText = serialField->textValue();
-        if (serialText.has_value()) {
-            EXPECT_FALSE(serialText->empty()) << "Token serial present but empty";
+        if (serialField->type == LibreSCRS::Plugin::FieldType::Text) {
+            EXPECT_FALSE(serialField->value.empty()) << "Token serial present but empty";
         }
     }
     // else: serial is optional per PKCS#15 spec (PKS cards omit it)
@@ -321,29 +314,40 @@ TEST_F(OpenSCFallbackPKS, Test03ReadCertificatesReturnsParseableDER)
 
 // ---------------------------------------------------------------------------
 // Test 4 — PIN tries-left baseline. Refuses to run if already partially used.
-// Latches g_pinFailed on failure so tests 5 and 6 SKIP.
+// Latches g_pinFailed on failure so tests 6 and 7 SKIP.
 // ---------------------------------------------------------------------------
 
-TEST_F(OpenSCFallbackPKS, Test04ReadCountersBaseline)
+TEST_F(OpenSCFallbackPKS, Test04PinRetryBaseline)
 {
     SKIP_IF_PIN_FAILED();
     ASSERT_NE(plugin, nullptr);
     ASSERT_TRUE(session.has_value());
 
-    const auto triesOpt = plugin->readCounters(*session).retriesLeft;
+    // The user PIN's entry in the PIN list (the first entry when none is
+    // classified as the user PIN).
+    const auto pins = plugin->getPINList(*session);
+    std::optional<int> triesOpt;
+    for (const auto& entry : pins) {
+        if (entry.kind == LibreSCRS::Plugin::PinKind::UserPin) {
+            triesOpt = entry.retriesLeft;
+            break;
+        }
+    }
+    if (!triesOpt && !pins.empty())
+        triesOpt = pins.front().retriesLeft;
     if (!triesOpt.has_value()) {
         // A nullopt retry count here is not a card failure (this is a non-PIN
         // GET_INFO read, no lockout): on a dev box with a PKS card seated but
         // OPENSC_CONF unset, the srbeid driver is unwired so the count is
         // simply unreadable. Skip rather than hard-fail — mirrors the effective
-        // driver-wiring guard the PIN-consuming Test05/Test06 rely on. When the
+        // driver-wiring guard the PIN-consuming Test06/Test07 rely on. When the
         // driver IS wired the count is readable and the assertions below still
         // apply (we do NOT weaken them in that case).
         if (const char* conf = std::getenv("OPENSC_CONF"); !conf || *conf == '\0')
-            GTEST_SKIP() << "readCounters(...).retriesLeft returned nullopt and OPENSC_CONF is unset — "
+            GTEST_SKIP() << "the PIN list reported no retry count and OPENSC_CONF is unset — "
                             "srbeid driver "
                             "unwired, PIN retry count unreadable; skipping baseline";
-        FAIL() << "readCounters(...).retriesLeft returned nullopt — plugin did not report a PIN retry "
+        FAIL() << "the PIN list reported no retry count — plugin did not report a PIN retry "
                   "count "
                   "(OPENSC_CONF is set, so the srbeid driver should be wired)";
     }
@@ -356,56 +360,9 @@ TEST_F(OpenSCFallbackPKS, Test04ReadCountersBaseline)
 }
 
 // ---------------------------------------------------------------------------
-// Test 5 — verifyPIN succeeds; tries-left unchanged after.
-// First PIN-consuming test. Session kept warm for Test 6.
-// SKIPs if LIBRESCRS_TEST_PIN is not set.
-// ---------------------------------------------------------------------------
-
-TEST_F(OpenSCFallbackPKS, Test05VerifyPINSucceeds)
-{
-    SKIP_IF_PIN_FAILED();
-    ASSERT_NE(plugin, nullptr);
-    ASSERT_TRUE(session.has_value());
-
-    const char* pinEnv = std::getenv("LIBRESCRS_TEST_PIN");
-    if (!pinEnv || *pinEnv == '\0')
-        GTEST_SKIP() << "LIBRESCRS_TEST_PIN not set — skipping PIN-dependent tests";
-
-    LibreSCRS::Secure::String pin{std::string_view{pinEnv}};
-
-    const auto triesBeforeOpt = plugin->readCounters(*session).retriesLeft;
-    const int triesBefore = triesBeforeOpt.value_or(-1);
-
-    const auto result = plugin->verifyPIN(*session, pin);
-    if (!result.ok()) {
-        ::LibreSCRS::Tests::E2E::g_pinFailed.store(true, std::memory_order_relaxed);
-        FAIL() << "verifyPIN failed. retriesLeft="
-               << (result.retriesLeft.has_value() ? std::to_string(*result.retriesLeft) : std::string("nullopt"))
-               << ", blocked=" << (result.blocked ? "true" : "false") << ", triesBefore=" << triesBefore
-               << ", outcome=" << static_cast<int>(result.outcome) << ". All subsequent PIN-consuming tests will SKIP.";
-    }
-
-    // Post-verify tries_left reporting is unreliable on the srbeid driver
-    // path — the iso7816 pin_cmd GET_INFO handler returns SW=9000 when the
-    // card is already logged in without updating tries_left, so the value
-    // may surface as nullopt or 3 after a successful verify. Treat the
-    // success signal as result.ok() here; the sign smoke in Test06 is the
-    // ultimate authentication proof.
-    const auto triesAfterOpt = plugin->readCounters(*session).retriesLeft;
-    if (triesAfterOpt.has_value()) {
-        EXPECT_EQ(*triesAfterOpt, 3) << "Post-verify readCounters(...).retriesLeft, when populated, "
-                                        "should be 3; got "
-                                     << *triesAfterOpt;
-    }
-    if (result.retriesLeft.has_value()) {
-        EXPECT_EQ(*result.retriesLeft, 3)
-            << "PINResult::retriesLeft, when populated, should be 3 on success; got " << *result.retriesLeft;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Test 6 — sign with the first enumerated key; verify signature against the
-// matching cert's public key. Reuses PIN session from Test 5 (no extra verify).
+// Test 6 — sign with the first certificate's key; verify signature against the
+// matching cert's public key. The PIN is deposited and presented inside the
+// sign's own card transaction; a refused PIN latches g_pinFailed.
 // SKIPs if LIBRESCRS_TEST_PIN unset or g_pinFailed latched.
 //
 // OpenSC plugin's sign passes `data` verbatim into sc_pkcs15_compute_signature
@@ -426,13 +383,12 @@ TEST_F(OpenSCFallbackPKS, Test06SignRSAAuthKeyProducesValidSignature)
     if (!pin || *pin == '\0')
         GTEST_SKIP() << "LIBRESCRS_TEST_PIN not set";
 
-    const auto keyRefs = plugin->discoverKeyReferences(*session);
-    ASSERT_FALSE(keyRefs.empty()) << "discoverKeyReferences returned no keys";
-    const std::uint16_t firstKeyRef = keyRefs.front().reference;
-
     const auto certs = plugin->readCertificates(*session);
     ASSERT_FALSE(certs.empty());
+    ASSERT_TRUE(certs.front().keyFID.has_value()) << "the first certificate names no private key";
+    const std::uint16_t firstKeyRef = *certs.front().keyFID;
     const auto& firstCertDer = certs.front().derBytes;
+    plugin->setCredentials(*session, "pin", LibreSCRS::Secure::String{std::string_view{pin}});
 
     const std::vector<uint8_t> payload = {'t', 'e', 's', 't'};
 
@@ -459,6 +415,10 @@ TEST_F(OpenSCFallbackPKS, Test06SignRSAAuthKeyProducesValidSignature)
     signInput.insert(signInput.end(), digest, digest + 32);
 
     const auto sigResult = plugin->sign(*session, firstKeyRef, signInput, SignMechanism::RSA_PKCS);
+    if (sigResult.outcome == SignResultOutcome::PinIncorrect || sigResult.outcome == SignResultOutcome::PinBlocked) {
+        ::LibreSCRS::Tests::E2E::g_pinFailed.store(true, std::memory_order_relaxed);
+        FAIL() << "the card refused the PIN; all subsequent PIN-consuming tests will SKIP";
+    }
     ASSERT_TRUE(sigResult.ok()) << "sign returned outcome != Ok (outcome enum value "
                                 << static_cast<int>(sigResult.outcome) << ")";
     ASSERT_FALSE(sigResult.signature.empty()) << "sign returned empty signature despite Ok outcome";
@@ -506,7 +466,7 @@ TEST_F(OpenSCFallbackPKS, Test06SignRSAAuthKeyProducesValidSignature)
 // With the bridge there is exactly one connection. This test signs five times
 // in a row (each verified against the cert pubkey) and then confirms a FRESH
 // CardSession::open on the same reader still succeeds — the direct
-// no-session-corruption check. Reuses Test05's warm PIN session.
+// no-session-corruption check. The PIN is deposited as in Test06.
 // SKIPs if LIBRESCRS_TEST_PIN unset or g_pinFailed latched.
 // ---------------------------------------------------------------------------
 
@@ -520,13 +480,12 @@ TEST_F(OpenSCFallbackPKS, Test07BridgedSignRepeatsWithoutSessionCorruption)
     if (!pin || *pin == '\0')
         GTEST_SKIP() << "LIBRESCRS_TEST_PIN not set";
 
-    const auto keyRefs = plugin->discoverKeyReferences(*session);
-    ASSERT_FALSE(keyRefs.empty()) << "discoverKeyReferences returned no keys";
-    const std::uint16_t keyRef = keyRefs.front().reference;
-
     const auto certs = plugin->readCertificates(*session);
     ASSERT_FALSE(certs.empty());
+    ASSERT_TRUE(certs.front().keyFID.has_value()) << "the first certificate names no private key";
+    const std::uint16_t keyRef = *certs.front().keyFID;
     const std::vector<std::uint8_t> certDer = certs.front().derBytes;
+    plugin->setCredentials(*session, "pin", LibreSCRS::Secure::String{std::string_view{pin}});
 
     const std::string readerName = session->readerName();
 

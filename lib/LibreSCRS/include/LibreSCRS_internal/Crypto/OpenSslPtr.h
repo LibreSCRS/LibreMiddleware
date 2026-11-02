@@ -105,7 +105,8 @@ struct EvpMdCtxDeleter
 /// deleters that differ only in whether they wipe are one wrong pick away from
 /// handing a secret back intact, with no diagnostic anywhere.
 ///
-/// @see ci/scripts/check-cleansing-deleters.sh, which fails if this call or
+/// @see the shared check-cleansing-deleters gate (LibreSCRS/ci), which CI runs
+///      with this file as the canonical deleter. It fails if this call or
 ///      this reason goes missing again, and if a BIGNUM anywhere in this tree
 ///      is released through a deleter that does not cleanse -- written as a
 ///      struct, a function pointer or a lambda -- outside the sites recorded

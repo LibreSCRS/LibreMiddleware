@@ -9,7 +9,6 @@
 
 #include "pkcs15_types.h"
 
-#include <LibreSCRS/Plugin/CredentialCounters.h>
 #include <smartcard/secure_buffer.h>
 
 #include <cstdint>
@@ -37,10 +36,7 @@ public:
     bool probe();        // Try AID SELECT, then EF.DIR fallback
     bool selectApplet(); // Re-select using the method that worked in probe()
 
-    // CardMap interop: read / seed the discovered state so it survives
-    // across PKCS15Card instances against the same physical card.
-    // `path` empty == "AID-only SELECT worked"; `selectP2` is the
-    // probed SELECT FILE P2 value (0x0C with FCI, 0x00 without).
+    // The DF path probe() settled on; empty == "AID-only SELECT worked".
     [[nodiscard]] const std::vector<uint8_t>& pkcs15PathView() const noexcept
     {
         return pkcs15Path;
@@ -120,10 +116,13 @@ public:
     int getPINTriesLeft(const PinInfo& pin);
     // Read the credential's full DOCP counters. Non-9000 / parse miss ⇒ all
     // absent (graceful). Read-only; never decrements a counter.
-    LibreSCRS::Plugin::CredentialCounters readCounters(const PinInfo& pin);
+    CredentialCounters readCounters(const PinInfo& pin);
+    // @p signerCertDer: the key's certificate. When given, an RSA signature
+    // the card returns is accepted only if it verifies with the certificate's
+    // public key; one that does not moves on to the next attempt.
     std::vector<uint8_t> sign(const PrivateKeyInfo& key, std::string_view pin, const PinInfo& pinInfo,
                               const std::vector<uint8_t>& digestInfo, const std::vector<uint8_t>& rawData,
-                              SignScheme scheme);
+                              SignScheme scheme, std::span<const uint8_t> signerCertDer = {});
     /// The card's refusal of the PIN the last @ref sign presented: a wrong
     /// PIN (63Cx) or a blocked one (6983). @c std::nullopt when the card
     /// accepted it or never answered with a refusal -- so an empty signature
@@ -155,6 +154,12 @@ private:
     void recordPinRefusal(const LibreSCRS::SmartCard::Internal::APDUResponse& resp);
     // Returns: 1=success, 0=PIN refused (wrong 0x63Cx or blocked 0x6983), -1=other failure
     int verifyPinInline(const PinInfo& pinInfo, const LibreSCRS::SmartCard::Internal::SecureBuffer& pinData);
+    // VERIFY on the PIN's reference and, when the card does not know it and
+    // the profile allows it, on the reference without the local bit. With
+    // @p pinData null it is the status form (no PIN sent). Returns the card's
+    // verdict on the PIN, or nothing when neither reference produced one.
+    std::optional<PinResult> verifyLadder(const PinInfo& pin,
+                                          const LibreSCRS::SmartCard::Internal::SecureBuffer* pinData);
     static std::vector<uint8_t> extractRawHash(const std::vector<uint8_t>& digestInfo);
     bool selectByPath(std::span<const uint8_t> path, uint8_t selectP2 = 0x00);
     std::vector<uint8_t> readSelectedFile();

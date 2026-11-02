@@ -11,22 +11,8 @@
 
 namespace emrtd::crypto {
 
-// ---------------------------------------------------------------------------
-// BER-TLV length encoding helper
-// ---------------------------------------------------------------------------
-static void appendLength(std::vector<uint8_t>& out, size_t len)
-{
-    if (len < 128) {
-        out.push_back(static_cast<uint8_t>(len));
-    } else if (len <= 255) {
-        out.push_back(0x81);
-        out.push_back(static_cast<uint8_t>(len));
-    } else {
-        out.push_back(0x82);
-        out.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
-        out.push_back(static_cast<uint8_t>(len & 0xFF));
-    }
-}
+// The middleware's one BER length encoder.
+using LibreSCRS::SmartCard::Internal::appendLength;
 
 // ---------------------------------------------------------------------------
 // TLV parser: returns {tag, value} pairs from a byte range
@@ -185,16 +171,20 @@ std::vector<uint8_t> SecureMessaging::protect(const std::vector<uint8_t>& comman
     std::vector<uint8_t> header = {claProtected, ins, p1, p2};
     auto paddedHeader = detail::pad(header, bs);
 
-    // DO'87: encrypted command data (if any)
+    // DO'87: encrypted command data (if any). An odd INS carries its data as
+    // BER-TLV, and ICAO 9303-11 puts it in DO'85 without the padding-content
+    // indicator instead.
     std::vector<uint8_t> do87;
     if (!cmdData.empty()) {
         auto paddedData = detail::pad(cmdData, bs);
         auto encryptedData = encrypt(paddedData);
 
-        // DO'87 = tag 0x87 | len | 0x01 | encrypted bytes
-        do87.push_back(0x87);
-        appendLength(do87, 1 + encryptedData.size());
-        do87.push_back(0x01); // padding indicator
+        const bool oddIns = (ins & 0x01) != 0;
+        // DO'87 = tag 0x87 | len | 0x01 | encrypted bytes; DO'85 = tag 0x85 | len | encrypted bytes
+        do87.push_back(oddIns ? 0x85 : 0x87);
+        appendLength(do87, (oddIns ? 0 : 1) + encryptedData.size());
+        if (!oddIns)
+            do87.push_back(0x01); // padding indicator
         do87.insert(do87.end(), encryptedData.begin(), encryptedData.end());
     }
 
@@ -284,14 +274,16 @@ std::optional<std::vector<uint8_t>> SecureMessaging::unprotect(const std::vector
     // Parse TLV objects from the response body (before SW1 SW2)
     auto tlvObjects = parseTLV(responseApdu, 0, dataEnd);
 
-    std::vector<uint8_t> do87Value; // encrypted data (with 0x01 prefix stripped later)
+    std::vector<uint8_t> do87Value; // encrypted data (DO'87: with 0x01 prefix stripped later)
+    bool withIndicator = true;      // DO'87 carries the padding-content indicator, DO'85 does not
     std::vector<uint8_t> do87Raw;   // the full DO'87 TLV bytes for MAC
     std::vector<uint8_t> do99Raw;   // the full DO'99 TLV bytes for MAC
     std::vector<uint8_t> receivedMAC;
 
     for (const auto& obj : tlvObjects) {
-        if (obj.tag == 0x87) {
+        if (obj.tag == 0x87 || obj.tag == 0x85) {
             do87Value = obj.value;
+            withIndicator = obj.tag == 0x87;
             // Reconstruct raw TLV bytes from the original buffer
             do87Raw.assign(responseApdu.begin() + static_cast<ptrdiff_t>(obj.startOffset),
                            responseApdu.begin() + static_cast<ptrdiff_t>(obj.startOffset + obj.totalLen));
@@ -322,10 +314,10 @@ std::optional<std::vector<uint8_t>> SecureMessaging::unprotect(const std::vector
 
     // Decrypt DO'87 if present
     if (!do87Value.empty()) {
-        // Strip the 0x01 padding indicator byte
-        if (do87Value[0] != 0x01)
+        // Strip the 0x01 padding indicator byte (DO'87 only)
+        if (withIndicator && do87Value[0] != 0x01)
             return std::nullopt;
-        std::vector<uint8_t> ciphertext(do87Value.begin() + 1, do87Value.end());
+        std::vector<uint8_t> ciphertext(do87Value.begin() + (withIndicator ? 1 : 0), do87Value.end());
         auto decrypted = decrypt(ciphertext);
         return detail::unpad(decrypted);
     }
@@ -361,14 +353,16 @@ std::optional<UnprotectResult> SecureMessaging::unprotectWithSW(const std::vecto
     auto tlvObjects = parseTLV(responseApdu, 0, dataEnd);
 
     std::vector<uint8_t> do87Value;
+    bool withIndicator = true;
     std::vector<uint8_t> do87Raw;
     std::vector<uint8_t> do99Raw;
     std::vector<uint8_t> do99Value;
     std::vector<uint8_t> receivedMAC;
 
     for (const auto& obj : tlvObjects) {
-        if (obj.tag == 0x87) {
+        if (obj.tag == 0x87 || obj.tag == 0x85) {
             do87Value = obj.value;
+            withIndicator = obj.tag == 0x87;
             do87Raw.assign(responseApdu.begin() + static_cast<ptrdiff_t>(obj.startOffset),
                            responseApdu.begin() + static_cast<ptrdiff_t>(obj.startOffset + obj.totalLen));
         } else if (obj.tag == 0x99) {
@@ -405,9 +399,9 @@ std::optional<UnprotectResult> SecureMessaging::unprotectWithSW(const std::vecto
 
     // Decrypt DO'87 if present
     if (!do87Value.empty()) {
-        if (do87Value[0] != 0x01)
+        if (withIndicator && do87Value[0] != 0x01)
             return std::nullopt;
-        std::vector<uint8_t> ciphertext(do87Value.begin() + 1, do87Value.end());
+        std::vector<uint8_t> ciphertext(do87Value.begin() + (withIndicator ? 1 : 0), do87Value.end());
         auto decrypted = decrypt(ciphertext);
         auto unpadded = detail::unpad(decrypted);
         result.data = std::move(unpadded);

@@ -40,20 +40,6 @@
   },
   "benchmarks": [
     {
-      "name": "BM_TrustStoreService_Create_Empty",
-      "family_index": 0,
-      "per_family_instance_index": 0,
-      "run_name": "BM_TrustStoreService_Create_Empty",
-      "run_type": "iteration",
-      "repetitions": 1,
-      "repetition_index": 0,
-      "threads": 1,
-      "iterations": 668,
-      "real_time": 1.0291410853279738e+06,
-      "cpu_time": 1.0232497844311380e+06,
-      "time_unit": "ns"
-    },
-    {
       "name": "BM_TrustStoreService_Create_WithSystemStore",
       "family_index": 1,
       "per_family_instance_index": 0,
@@ -65,20 +51,6 @@
       "iterations": 672,
       "real_time": 1.0262146309536374e+06,
       "cpu_time": 1.0226928258928572e+06,
-      "time_unit": "ns"
-    },
-    {
-      "name": "BM_TrustStoreService_Create_WithTLFile",
-      "family_index": 2,
-      "per_family_instance_index": 0,
-      "run_name": "BM_TrustStoreService_Create_WithTLFile",
-      "run_type": "iteration",
-      "repetitions": 1,
-      "repetition_index": 0,
-      "threads": 1,
-      "iterations": 630,
-      "real_time": 1.6188522968265703e+06,
-      "cpu_time": 1.1477123523809521e+06,
       "time_unit": "ns"
     }
   ]

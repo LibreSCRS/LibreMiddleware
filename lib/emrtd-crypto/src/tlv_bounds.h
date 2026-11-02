@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <ber.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -14,10 +16,9 @@
 
 namespace emrtd::crypto::detail {
 
-// Longest length encoding any ISO 7816-4 / ICAO 9303 object needs; four octets
-// already describe a 4 GiB value and no chip file approaches it. The same cap
-// the middleware's other BER walker applies.
-inline constexpr std::size_t kMaxLengthOctets = 4;
+// Both reads below decode through the middleware's one BER length decode
+// (tryParseLength, which also fixes the four-octet ceiling); what they add is
+// only the policy this library applies to the length once it is read.
 
 // Read a BER-TLV length at data[pos], accepting it ONLY when the value it
 // declares lies wholly inside `data`. Returns {length, lengthOctets}; a zero
@@ -30,33 +31,12 @@ inline constexpr std::size_t kMaxLengthOctets = 4;
 // backwards onto the tag it just read.
 constexpr std::pair<std::size_t, std::size_t> readLength(std::span<const std::uint8_t> data, std::size_t pos) noexcept
 {
-    if (pos >= data.size()) {
+    const auto parsed = LibreSCRS::SmartCard::Internal::tryParseLength(data.data(), data.size(), pos);
+    // parsed.next <= data.size() whenever ok, so this subtraction cannot wrap.
+    if (!parsed.ok || parsed.length > data.size() - parsed.next) {
         return {0, 0};
     }
-
-    const std::uint8_t first = data[pos];
-    std::size_t value = first;
-    std::size_t lengthOctets = 1;
-
-    if (first >= 0x80) {
-        const std::size_t octets = static_cast<std::size_t>(first & 0x7FU);
-        if (octets == 0 || octets > kMaxLengthOctets || octets > data.size() - pos - 1) {
-            return {0, 0};
-        }
-        value = 0;
-        for (std::size_t i = 0; i < octets; ++i) {
-            value = (value << 8) | data[pos + 1 + i];
-        }
-        lengthOctets = 1 + octets;
-    }
-
-    // pos + lengthOctets <= data.size() on both branches above, so this
-    // subtraction cannot wrap.
-    if (value > data.size() - pos - lengthOctets) {
-        return {0, 0};
-    }
-
-    return {value, lengthOctets};
+    return {parsed.length, parsed.next - pos};
 }
 
 // Read a BER-TLV length that is ALLOWED to describe more than the buffer holds,
@@ -68,28 +48,12 @@ constexpr std::pair<std::size_t, std::size_t> readLength(std::span<const std::ui
 constexpr std::pair<std::size_t, std::size_t> readLengthClamped(std::span<const std::uint8_t> data,
                                                                 std::size_t pos) noexcept
 {
-    if (pos >= data.size()) {
+    const auto parsed = LibreSCRS::SmartCard::Internal::tryParseLength(data.data(), data.size(), pos);
+    if (!parsed.ok) {
         return {0, 0};
     }
-
-    const std::uint8_t first = data[pos];
-    std::size_t value = first;
-    std::size_t lengthOctets = 1;
-
-    if (first >= 0x80) {
-        const std::size_t octets = static_cast<std::size_t>(first & 0x7FU);
-        if (octets == 0 || octets > kMaxLengthOctets || octets > data.size() - pos - 1) {
-            return {0, 0};
-        }
-        value = 0;
-        for (std::size_t i = 0; i < octets; ++i) {
-            value = (value << 8) | data[pos + 1 + i];
-        }
-        lengthOctets = 1 + octets;
-    }
-
-    const std::size_t available = data.size() - pos - lengthOctets;
-    return {value > available ? available : value, lengthOctets};
+    const std::size_t available = data.size() - parsed.next;
+    return {parsed.length > available ? available : parsed.length, parsed.next - pos};
 }
 
 namespace tlv_bounds_selftest {

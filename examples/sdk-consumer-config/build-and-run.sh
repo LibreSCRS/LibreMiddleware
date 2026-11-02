@@ -21,21 +21,16 @@ PREFIX="$WORK_DIR/prefix"
 LM_BUILD="$WORK_DIR/lm-build"
 CONSUMER_BUILD="$WORK_DIR/consumer-build"
 
-echo "==> Building LibreMiddleware as SHARED, installing to $PREFIX"
+echo "==> Building LibreMiddleware, installing to $PREFIX"
 cmake -S "$LM_ROOT" -B "$LM_BUILD" \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-    -DLIBREMIDDLEWARE_BUILD_SHARED=ON \
     -DBUILD_TESTING=OFF \
     -DCMAKE_INSTALL_PREFIX="$PREFIX"
 cmake --build "$LM_BUILD" -j4
 
-echo "==> Auditing symbol visibility on the SHARED LM build"
-# Shared-config coverage for ci/scripts/check-impl-visibility.sh.
-# The static-build CI job (cf. .github/workflows/ci.yml) runs the script
-# against `build/`; this invocation closes the parity gap by scanning the
-# LM core .so files, the plugin/pkcs11 modules, and the
-# LibreSCRS_Pkcs11Inject static archive that ship from the SHARED build
-# into the consumer prefix.
+echo "==> Auditing symbol visibility on the LM build"
+# The LM core .so files and the plugin modules that ship into the consumer
+# prefix, judged by the same gate the main build runs.
 bash "$LM_ROOT/ci/scripts/check-impl-visibility.sh" "$LM_BUILD"
 
 cmake --install "$LM_BUILD"

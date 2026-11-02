@@ -4,6 +4,17 @@
 #include <gtest/gtest.h>
 #include <pace.h>
 
+#include <apdu.h>
+#include <smartcard/i_connection.h>
+
+#include <openssl/bn.h>
+#include <openssl/core_names.h>
+#include <openssl/ec.h>
+#include <openssl/evp.h>
+#include <openssl/obj_mac.h>
+#include <openssl/params.h>
+#include <openssl/rand.h>
+
 // Internal header — needed to test KDF, AES-CMAC, padding directly
 #include "../lib/emrtd-crypto/src/crypto_utils.h"
 
@@ -11,6 +22,8 @@
 #include <array>
 #include <fstream>
 #include <iterator>
+#include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -439,6 +452,298 @@ TEST(DISABLED_PaceMrzKatBSI, StepAuthTokenTIFD)
     // auto actual = detail::aesCMAC(kMac, pkdoIcc);
     // EXPECT_EQ(actual, expectedTIfd);
     GTEST_SKIP() << "Awaiting BSI TR-03110-3 Annex G.1 vectors";
+}
+
+// ---------------------------------------------------------------------------
+// PACE end to end against a chip written here from the specification.
+//
+// The primitives have their own known-answer tests; what those cannot see is
+// the composition: the nonce under K_pi, the mapped generator, the shared
+// secret, and the authentication tokens over the 0x7F49 public key data
+// object. This chip computes its half of PACE-ECDH-GM-AES-128 with OpenSSL
+// directly -- its own KDF, CMAC, AES and PKDO encoding, none of them the
+// library's -- and refuses a terminal token that is not the MAC over the PKDO
+// it builds itself, as a real chip answers 6300. A terminal that encodes the
+// PKDO, derives a key or maps the generator differently from the
+// specification does not get through.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+using LibreSCRS::SmartCard::Internal::APDUCommand;
+using LibreSCRS::SmartCard::Internal::APDUResponse;
+
+struct EcPointFree
+{
+    void operator()(EC_POINT* p) const
+    {
+        EC_POINT_free(p);
+    }
+};
+struct BnFree
+{
+    void operator()(BIGNUM* b) const
+    {
+        BN_free(b);
+    }
+};
+struct GroupFree
+{
+    void operator()(EC_GROUP* g) const
+    {
+        EC_GROUP_free(g);
+    }
+};
+using ChipPoint = std::unique_ptr<EC_POINT, EcPointFree>;
+using ChipBn = std::unique_ptr<BIGNUM, BnFree>;
+
+// TR-03110-3 A.2.3: K = SHA-1(secret || 00 00 00 counter), first 16 bytes for AES-128.
+std::vector<uint8_t> chipKdf128(const std::vector<uint8_t>& secret, uint8_t counter)
+{
+    std::vector<uint8_t> input(secret);
+    input.insert(input.end(), {0x00, 0x00, 0x00, counter});
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int len = 0;
+    EVP_Digest(input.data(), input.size(), digest, &len, EVP_sha1(), nullptr);
+    return {digest, digest + 16};
+}
+
+std::vector<uint8_t> chipAes128Encrypt(const std::vector<uint8_t>& key, const std::vector<uint8_t>& block)
+{
+    std::vector<uint8_t> out(block.size() + 16);
+    const unsigned char iv[16] = {};
+    int len = 0;
+    int tail = 0;
+    EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+    EVP_EncryptInit_ex(ctx, EVP_aes_128_cbc(), nullptr, key.data(), iv);
+    EVP_CIPHER_CTX_set_padding(ctx, 0);
+    EVP_EncryptUpdate(ctx, out.data(), &len, block.data(), static_cast<int>(block.size()));
+    EVP_EncryptFinal_ex(ctx, out.data() + len, &tail);
+    EVP_CIPHER_CTX_free(ctx);
+    out.resize(static_cast<std::size_t>(len + tail));
+    return out;
+}
+
+// AES-CMAC truncated to 8 bytes: the PACE authentication token.
+std::vector<uint8_t> chipToken(const std::vector<uint8_t>& kMac, const std::vector<uint8_t>& data)
+{
+    EVP_MAC* mac = EVP_MAC_fetch(nullptr, "CMAC", nullptr);
+    EVP_MAC_CTX* ctx = EVP_MAC_CTX_new(mac);
+    char cipher[] = "AES-128-CBC";
+    const OSSL_PARAM params[] = {OSSL_PARAM_construct_utf8_string("cipher", cipher, 0), OSSL_PARAM_construct_end()};
+    std::vector<uint8_t> out(16);
+    std::size_t outLen = 0;
+    EVP_MAC_init(ctx, kMac.data(), kMac.size(), params);
+    EVP_MAC_update(ctx, data.data(), data.size());
+    EVP_MAC_final(ctx, out.data(), &outLen, out.size());
+    EVP_MAC_CTX_free(ctx);
+    EVP_MAC_free(mac);
+    out.resize(8);
+    return out;
+}
+
+std::vector<uint8_t> chipTlv(std::vector<uint8_t> tag, const std::vector<uint8_t>& value)
+{
+    // Every object in this exchange is shorter than 128 bytes.
+    std::vector<uint8_t> out(std::move(tag));
+    out.push_back(static_cast<uint8_t>(value.size()));
+    out.insert(out.end(), value.begin(), value.end());
+    return out;
+}
+
+// The value of the one data object inside a 7C dynamic authentication template.
+std::vector<uint8_t> chipInner(const std::vector<uint8_t>& data, uint8_t tag)
+{
+    if (data.size() < 4 || data[0] != 0x7C || data[2] != tag || data[3] + 4u > data.size())
+        return {};
+    return {data.begin() + 4, data.begin() + 4 + data[3]};
+}
+
+class GenericMappingChip final : public LibreSCRS::SmartCard::IConnection
+{
+public:
+    // id-PACE-ECDH-GM-AES-CBC-CMAC-128 (0.4.0.127.0.7.2.2.4.2.2), DER contents.
+    static constexpr std::array<uint8_t, 10> kOidBytes{0x04, 0x00, 0x7F, 0x00, 0x07, 0x02, 0x02, 0x04, 0x02, 0x02};
+
+    explicit GenericMappingChip(std::string can) : password(can.begin(), can.end())
+    {
+        group.reset(EC_GROUP_new_by_curve_name(NID_brainpoolP256r1));
+        ctx = BN_CTX_new();
+    }
+    ~GenericMappingChip() override
+    {
+        BN_CTX_free(ctx);
+    }
+
+    APDUResponse transmit(const APDUCommand& cmd) override
+    {
+        if (cmd.ins == 0x22)
+            return ok({});
+        if (cmd.ins != 0x86)
+            return status(0x6D00);
+        switch (step++) {
+        case 0:
+            return nonceStep();
+        case 1:
+            return mapStep(chipInner(cmd.data, 0x81));
+        case 2:
+            return agreeStep(chipInner(cmd.data, 0x83));
+        case 3:
+            return tokenStep(chipInner(cmd.data, 0x85));
+        default:
+            return status(0x6985);
+        }
+    }
+
+    APDUResponse transmitRaw(std::span<const std::uint8_t>) override
+    {
+        return status(0x6D00);
+    }
+
+    bool acceptedTheTerminalsToken = false;
+    bool sawTheTerminalsToken = false;
+    std::vector<uint8_t> kEnc;
+    std::vector<uint8_t> kMac;
+
+private:
+    static APDUResponse ok(std::vector<uint8_t> data)
+    {
+        return APDUResponse{std::move(data), 0x90, 0x00};
+    }
+    static APDUResponse status(uint16_t sw)
+    {
+        return APDUResponse{{}, static_cast<uint8_t>(sw >> 8), static_cast<uint8_t>(sw & 0xFF)};
+    }
+
+    std::vector<uint8_t> encode(const EC_POINT* p) const
+    {
+        std::vector<uint8_t> out(EC_POINT_point2oct(group.get(), p, POINT_CONVERSION_UNCOMPRESSED, nullptr, 0, ctx));
+        EC_POINT_point2oct(group.get(), p, POINT_CONVERSION_UNCOMPRESSED, out.data(), out.size(), ctx);
+        return out;
+    }
+    ChipPoint decode(const std::vector<uint8_t>& bytes) const
+    {
+        ChipPoint p(EC_POINT_new(group.get()));
+        if (bytes.empty() || EC_POINT_oct2point(group.get(), p.get(), bytes.data(), bytes.size(), ctx) != 1)
+            return nullptr;
+        return p;
+    }
+    ChipBn randomScalar() const
+    {
+        ChipBn k(BN_new());
+        BN_rand_range(k.get(), EC_GROUP_get0_order(group.get()));
+        return k;
+    }
+    std::vector<uint8_t> pkdo(const std::vector<uint8_t>& point) const
+    {
+        auto inner = chipTlv({0x06}, std::vector<uint8_t>(kOidBytes.begin(), kOidBytes.end()));
+        const auto pointDo = chipTlv({0x86}, point);
+        inner.insert(inner.end(), pointDo.begin(), pointDo.end());
+        return chipTlv({0x7F, 0x49}, inner);
+    }
+
+    APDUResponse nonceStep()
+    {
+        nonce.resize(16);
+        RAND_bytes(nonce.data(), static_cast<int>(nonce.size()));
+        const auto kPi = chipKdf128(password, 3);
+        return ok(chipTlv({0x7C}, chipTlv({0x80}, chipAes128Encrypt(kPi, nonce))));
+    }
+
+    APDUResponse mapStep(const std::vector<uint8_t>& terminalMapKey)
+    {
+        auto pcdMap = decode(terminalMapKey);
+        if (!pcdMap)
+            return status(0x6A80);
+        auto skMap = randomScalar();
+        ChipPoint pkMap(EC_POINT_new(group.get()));
+        EC_POINT_mul(group.get(), pkMap.get(), skMap.get(), nullptr, nullptr, ctx);
+        // H = sk_map * PK_map(PCD); G' = s * G + H.
+        ChipPoint h(EC_POINT_new(group.get()));
+        EC_POINT_mul(group.get(), h.get(), nullptr, pcdMap.get(), skMap.get(), ctx);
+        ChipBn s(BN_bin2bn(nonce.data(), static_cast<int>(nonce.size()), nullptr));
+        ChipBn one(BN_new());
+        BN_one(one.get());
+        mappedG.reset(EC_POINT_new(group.get()));
+        EC_POINT_mul(group.get(), mappedG.get(), s.get(), h.get(), one.get(), ctx);
+        return ok(chipTlv({0x7C}, chipTlv({0x82}, encode(pkMap.get()))));
+    }
+
+    APDUResponse agreeStep(const std::vector<uint8_t>& terminalKey)
+    {
+        auto pcd = decode(terminalKey);
+        if (!pcd || !mappedG)
+            return status(0x6A80);
+        terminalPublic = terminalKey;
+        auto sk = randomScalar();
+        ChipPoint pk(EC_POINT_new(group.get()));
+        EC_POINT_mul(group.get(), pk.get(), nullptr, mappedG.get(), sk.get(), ctx);
+        chipPublic = encode(pk.get());
+        // K = x(sk * PK(PCD)), the field width.
+        ChipPoint shared(EC_POINT_new(group.get()));
+        EC_POINT_mul(group.get(), shared.get(), nullptr, pcd.get(), sk.get(), ctx);
+        ChipBn x(BN_new());
+        EC_POINT_get_affine_coordinates(group.get(), shared.get(), x.get(), nullptr, ctx);
+        std::vector<uint8_t> k(32);
+        BN_bn2binpad(x.get(), k.data(), static_cast<int>(k.size()));
+        kEnc = chipKdf128(k, 1);
+        kMac = chipKdf128(k, 2);
+        return ok(chipTlv({0x7C}, chipTlv({0x84}, chipPublic)));
+    }
+
+    APDUResponse tokenStep(const std::vector<uint8_t>& terminalToken)
+    {
+        sawTheTerminalsToken = true;
+        // T_PCD must be the MAC over the chip's own key, as the chip encodes it.
+        if (terminalToken != chipToken(kMac, pkdo(chipPublic)))
+            return status(0x6300);
+        acceptedTheTerminalsToken = true;
+        return ok(chipTlv({0x7C}, chipTlv({0x86}, chipToken(kMac, pkdo(terminalPublic)))));
+    }
+
+    std::vector<uint8_t> password;
+    std::unique_ptr<EC_GROUP, GroupFree> group;
+    BN_CTX* ctx = nullptr;
+    int step = 0;
+    std::vector<uint8_t> nonce;
+    ChipPoint mappedG;
+    std::vector<uint8_t> terminalPublic;
+    std::vector<uint8_t> chipPublic;
+};
+
+PACEParams canParams(const std::string& can)
+{
+    PACEParams params;
+    params.oid = pace_oid::ECDH_GM_AES_CBC_CMAC_128;
+    params.passwordType = PACEPasswordType::CAN;
+    params.password.assign(can.begin(), can.end());
+    params.paramId = 13; // brainpoolP256r1
+    return params;
+}
+
+} // namespace
+
+TEST(PACEFakeChip, GenericMappingAgreesWithAChipBuiltFromTheSpecification)
+{
+    GenericMappingChip chip("123456");
+    const auto keys = performPACE(chip, canParams("123456"));
+
+    ASSERT_TRUE(keys.has_value());
+    EXPECT_TRUE(chip.acceptedTheTerminalsToken) << "the chip verified T_PCD over its own PKDO";
+    EXPECT_EQ(keys->encKey, chip.kEnc);
+    EXPECT_EQ(keys->macKey, chip.kMac);
+    EXPECT_EQ(keys->ssc, std::vector<uint8_t>(16, 0x00));
+}
+
+TEST(PACEFakeChip, AWrongCanIsRefusedAtTheTerminalsToken)
+{
+    GenericMappingChip chip("123456");
+    const auto keys = performPACE(chip, canParams("654321"));
+
+    ASSERT_FALSE(keys.has_value());
+    EXPECT_EQ(keys.error(), PaceFailure::Failed);
+    EXPECT_TRUE(chip.sawTheTerminalsToken) << "a wrong CAN only shows at mutual authentication";
+    EXPECT_FALSE(chip.acceptedTheTerminalsToken);
 }
 
 // ---------------------------------------------------------------------------

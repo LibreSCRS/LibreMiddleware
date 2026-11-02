@@ -20,12 +20,9 @@
 int main()
 {
     LibreSCRS::SmartCard::MonitorService monitor;
-    auto readers = monitor.listReaders();
-    if (readers.has_value()) {
-        std::cout << "Detected " << readers->size() << " reader(s)\n";
-    } else {
-        std::cout << "Reader enumeration unavailable (PC/SC not running?)\n";
-    }
+    const auto sub = monitor.subscribe([](const LibreSCRS::SmartCard::MonitorEvent&) {});
+    monitor.unsubscribe(sub, LibreSCRS::SmartCard::MonitorService::DrainPolicy::Drain);
+    std::cout << "MonitorService: subscribed and unsubscribed\n";
 
     LibreSCRS::Plugin::CardPluginService registry{std::filesystem::path{"/nonexistent/plugins"}};
     std::cout << "CardPlugin ABI v" << LibreSCRS::Plugin::kCardPluginAbiVersion << ", loaded=" << registry.size()

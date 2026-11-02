@@ -10,21 +10,14 @@
 # Downstream consumers (third-party GUIs, packagers, integrators) pull
 # the package in via:
 #   find_package(LibreMiddleware 5.0 REQUIRED CONFIG)
-# and link against the namespaced LibreSCRS::* imported targets,
-# which carry their own transitive dependency chain (OpenSSL, PCSC,
-# bundled vendored static archives) so the consumer doesn't have to
-# re-discover them.
+# and link against the namespaced LibreSCRS::* imported targets.
+#
+# No find_dependency: the shared libraries link OpenSSL and PC/SC
+# privately, no public header names a type of either, and the exported
+# targets' link interface lists only LibreSCRS::* targets. A consumer
+# that uses OpenSSL or PC/SC itself finds them itself.
 
 @PACKAGE_INIT@
-
-include(CMakeFindDependencyMacro)
-find_dependency(OpenSSL 3.0 REQUIRED COMPONENTS Crypto)
-
-# PCSC: required for SmartCard. Bundled FindPCSC.cmake is installed next to
-# this Config file so downstream consumers' CMAKE_MODULE_PATH does not need
-# to ship its own copy.
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
-find_dependency(PCSC REQUIRED)
 
 include("${CMAKE_CURRENT_LIST_DIR}/LibreMiddlewareTargets.cmake")
 

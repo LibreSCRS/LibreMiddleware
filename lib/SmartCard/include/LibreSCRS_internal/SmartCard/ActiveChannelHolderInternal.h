@@ -78,8 +78,7 @@ struct ActiveChannelAccessor
 
     /// @brief Install @p channel as @p session's active secure channel and
     ///        record @p protocol, replacing (and closing) any channel already
-    ///        installed, and registering the session-presence entry the way
-    ///        the PACE/BAC activation paths do.
+    ///        installed.
     ///
     /// The production seam for a plugin that established an SM channel OUTSIDE
     /// the @ref CardSession::activateChannelWithSm state machine — Chip

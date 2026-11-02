@@ -19,7 +19,7 @@
 #include <LibreSCRS/Plugin/PluginTypes.h>
 #include <LibreSCRS/Plugin/ReadResult.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
-#include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
+#include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 #include <LibreSCRS/Trust/TrustStore.h>
 
 #include <memory>
@@ -39,7 +39,7 @@ class StubPlugin : public Plugin::CardPlugin
 public:
     StubPlugin()
     {
-        setIdentity("stub", "Stub", /*priority=*/100);
+        setIdentity("stub", /*priority=*/100);
     }
 
     [[nodiscard]] std::span<const Plugin::Atr> supportedAtrs() const noexcept override
@@ -75,7 +75,7 @@ public:
 // that only need a stable session reference.
 std::shared_ptr<SmartCard::CardSession> openDetachedSession()
 {
-    return SmartCard::detail::makeDetachedCardSession(std::string{"test-reader"});
+    return SmartCard::Testing::makeDetachedCardSession(std::string{"test-reader"});
 }
 
 } // namespace

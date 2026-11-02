@@ -54,7 +54,6 @@ LocalizedText issuerUnblockGuidance()
     return LocalizedText{
         .key = "librescrs.pin.blocked.issuer",
         .defaultText = "Unblocking is done by the issuer.",
-        .placeholders = {},
     };
 }
 
@@ -64,7 +63,6 @@ LocalizedText issuerKeyActivationGuidance()
     return LocalizedText{
         .key = "librescrs.pin.keyActivation.issuer",
         .defaultText = "The signing key is activated by the issuer.",
-        .placeholders = {},
     };
 }
 

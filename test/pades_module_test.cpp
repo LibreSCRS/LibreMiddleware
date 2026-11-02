@@ -3,8 +3,6 @@
 
 #include <gtest/gtest.h>
 
-#ifdef LIBRESIGN_HAS_NATIVE
-
 #include "native/pades_module.h"
 #include "signing_keys.h"
 #include "signing_test_support/signing_test_support.h"
@@ -545,15 +543,15 @@ TEST(PAdESModuleInMemoryKeyTest, SignsWrappedPdf_OuterRelativeStartxref)
     EXPECT_TRUE(containsString(result.signedDocument, "/Type /Sig"));
 }
 
-// The long-term revocation gate is reached through appendSigner, not only
-// through sign(). appendSigner delegates to sign() with the prior PDF as
-// input, so the B-LT chain check runs on the appended signer exactly as it
-// does on a first signer. The in-memory signer carries a single self-signed
+// The long-term revocation gate is reached by a signature added to an
+// already-signed PDF, not only by a first one: sign() takes the prior PDF as
+// input, so the B-LT chain check runs on the second signer exactly as it does
+// on a first signer. The in-memory signer carries a single self-signed
 // leaf, which is a chain of length one: no Trusted-List anchor completed it
 // and no issuer hop reaches a verified root, so the tail is unprovable and
 // the gate must fail closed with CertificateChainIncomplete rather than
 // emit a long-term signature with no verifiable revocation evidence.
-TEST(PAdESModuleInMemoryKeyTest, AppendSignerAtLongTermRejectsUnterminatedChain)
+TEST(PAdESModuleInMemoryKeyTest, SignOverASignatureAtLongTermRejectsUnterminatedChain)
 {
     libresign::test::SoftSigningKey token(libresign::test::validSignerKey());
     PAdESModule pades;
@@ -561,10 +559,8 @@ TEST(PAdESModuleInMemoryKeyTest, AppendSignerAtLongTermRejectsUnterminatedChain)
     auto prior = pades.sign(testPdfBytes(), token, SignatureLevel::B_B, {}, {});
     ASSERT_TRUE(prior.success) << prior.errorMessage;
 
-    auto appended = pades.appendSigner(prior.signedDocument, {}, token, SignatureLevel::B_LT, {}, {});
+    auto appended = pades.sign(prior.signedDocument, token, SignatureLevel::B_LT, {}, {});
     EXPECT_FALSE(appended.success);
     ASSERT_TRUE(appended.failureKind.has_value()) << appended.errorMessage;
     EXPECT_EQ(*appended.failureKind, SignFailureKind::CertificateChainIncomplete) << appended.errorMessage;
 }
-
-#endif

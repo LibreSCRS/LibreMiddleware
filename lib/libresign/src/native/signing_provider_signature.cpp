@@ -11,6 +11,8 @@
 #include "native/signing_provider_keymgmt.h"
 #include "native_utils.h"
 
+#include <LibreSCRS_internal/Crypto/EcdsaSig.h>
+#include <LibreSCRS_internal/LogNoexcept.h>
 #include <openssl/core.h>
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
@@ -27,7 +29,6 @@ constexpr int kPadPSS = 6;      // RSA_PKCS1_PSS_PADDING
 #include <cstdint>
 #include <cstring>
 #include <exception>
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
@@ -39,49 +40,13 @@ namespace {
 using native_utils::digestInfoPrefixForAlgo;
 using native_utils::tokenAlgorithm;
 
-// PKCS#11 CKM_ECDSA returns the signature as the raw concatenation r||s
-// (each zero-padded to the curve's field-size). CMS/CAdES/PAdES/ASiC-CAdES
-// (RFC 5753) require the signature as DER-encoded `Ecdsa-Sig-Value
-// SEQUENCE { r INTEGER, s INTEGER }`. Wrap before returning to OpenSSL's
-// CMS pipeline. XAdES and JAdES call SigningKey::sign() directly via
-// signHashWithKey() — those paths keep raw r||s, which is the correct
-// form for XMLDSig (ECDSASignatureValue) and JWS (RFC 7518 §3.4).
+// A card returns an ECDSA signature as the raw concatenation r||s (each
+// zero-padded to the curve's field size). CMS/CAdES/PAdES/ASiC-CAdES
+// (RFC 5753) require the DER Ecdsa-Sig-Value; XAdES and JAdES keep raw r||s,
+// the correct form for XMLDSig and JWS (RFC 7518 §3.4).
 std::vector<uint8_t> ecdsaRawToDer(const std::vector<uint8_t>& raw)
 {
-    if (raw.empty() || (raw.size() % 2) != 0)
-        return {};
-    const size_t half = raw.size() / 2;
-
-    BIGNUM* rawR = BN_bin2bn(raw.data(), static_cast<int>(half), nullptr);
-    BIGNUM* rawS = BN_bin2bn(raw.data() + half, static_cast<int>(half), nullptr);
-    if (!rawR || !rawS) {
-        BN_free(rawR);
-        BN_free(rawS);
-        return {};
-    }
-
-    // ECDSA_SIG_set0 takes ownership of r and s on success only.
-    ECDSA_SIG* sig = ECDSA_SIG_new();
-    if (!sig) {
-        BN_free(rawR);
-        BN_free(rawS);
-        return {};
-    }
-    if (!ECDSA_SIG_set0(sig, rawR, rawS)) {
-        BN_free(rawR);
-        BN_free(rawS);
-        ECDSA_SIG_free(sig);
-        return {};
-    }
-
-    unsigned char* der = nullptr;
-    int derLen = i2d_ECDSA_SIG(sig, &der);
-    ECDSA_SIG_free(sig);
-    if (derLen <= 0 || !der)
-        return {};
-    std::vector<uint8_t> out(der, der + derLen);
-    OPENSSL_free(der);
-    return out;
+    return LibreSCRS::Internal::Crypto::ecdsaRawToDer(raw);
 }
 
 // ---------------------------------------------------------------------------
@@ -115,7 +80,7 @@ struct SignCtx
 // OpenSSL only that it failed (0) and keeps the exception where the caller that
 // created the key rethrows it once OpenSSL reports the failure: a refused PIN
 // or a blocked card then reaches that caller as itself. A key loaded without a
-// failure slot has nowhere to keep it, and its message goes to stderr.
+// failure slot has nowhere to keep it, and its message goes to the log.
 int keyFailed(const ProviderKeyData& kd, const char* callback) noexcept
 {
     if (kd.failure != nullptr) {
@@ -125,9 +90,9 @@ int keyFailed(const ProviderKeyData& kd, const char* callback) noexcept
     try {
         throw;
     } catch (const std::exception& e) {
-        std::cerr << "libresign: " << callback << " exception: " << e.what() << std::endl;
+        LibreSCRS::Internal::errorNoexcept("libresign: {} exception: {}", callback, e.what());
     } catch (...) {
-        std::cerr << "libresign: " << callback << " unknown exception" << std::endl;
+        LibreSCRS::Internal::errorNoexcept("libresign: {} unknown exception", callback);
     }
     return 0;
 }
@@ -244,7 +209,7 @@ int sigDigestSignUpdate(void* ctx, const unsigned char* data, size_t datalen)
     try {
         sc->rawAccumulator.insert(sc->rawAccumulator.end(), data, data + datalen);
     } catch (const std::bad_alloc& e) {
-        std::cerr << "libresign: sigDigestSignUpdate bad_alloc: " << e.what() << std::endl;
+        LibreSCRS::Internal::errorNoexcept("libresign: sigDigestSignUpdate bad_alloc: {}", e.what());
         return 0;
     }
     return EVP_DigestUpdate(sc->mdCtx, data, datalen);

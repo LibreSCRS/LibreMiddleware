@@ -4,7 +4,8 @@
 // Hardware checks of MonitorService on macOS, whose reader and card events
 // come from CryptoTokenKit's slots rather than PC/SC:
 //   - a card inserted and removed by hand arrives as CardInserted and
-//     CardRemoved, and the reader list then equals CryptoTokenKit's slots;
+//     CardRemoved, and the readers the events report then equal
+//     CryptoTokenKit's slots;
 //   - a reader plugged in while the monitor runs arrives at once as
 //     ReaderAdded, and its removal as ReaderRemoved;
 //   - the reader name the monitor reports opens the test card.
@@ -146,6 +147,20 @@ public:
         return seen;
     }
 
+    /// The readers the ReaderAdded and ReaderRemoved events report attached now.
+    std::set<std::string> readers() const
+    {
+        std::lock_guard lock(mtx);
+        std::set<std::string> attached;
+        for (const auto& s : seen) {
+            if (s.event.kind == MonitorEvent::Kind::ReaderAdded)
+                attached.insert(s.event.readerName);
+            else if (s.event.kind == MonitorEvent::Kind::ReaderRemoved)
+                attached.erase(s.event.readerName);
+        }
+        return attached;
+    }
+
     /// The first event at index @p from or later that @p match accepts, or
     /// an Error event at any index (the monitor stops after one, so nothing
     /// else would come), waiting at most @p limit.
@@ -234,28 +249,23 @@ std::set<std::string> slotNames()
     return names;
 }
 
-// The monitor's reader list equals CryptoTokenKit's slot names within
-// kListAgreement; the last pair seen otherwise.
-::testing::AssertionResult readersMatchSlots(const MonitorService& monitor)
+// The readers the monitor's events report equal CryptoTokenKit's slot names
+// within kListAgreement; the last pair seen otherwise.
+::testing::AssertionResult readersMatchSlots(const EventLog& log)
 {
     const auto deadline = Clock::now() + kListAgreement;
     std::set<std::string> listed;
     std::set<std::string> slots;
-    bool available = false;
     for (;;) {
-        const auto readers = monitor.listReaders();
-        available = readers.has_value();
-        listed = available ? std::set<std::string>(readers->begin(), readers->end()) : std::set<std::string>{};
+        listed = log.readers();
         slots = slotNames();
-        if (available && listed == slots)
+        if (listed == slots)
             return ::testing::AssertionSuccess();
         if (Clock::now() >= deadline)
             break;
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-    if (!available)
-        return ::testing::AssertionFailure() << "listReaders() is unavailable";
-    return ::testing::AssertionFailure() << "reader list {" << quotedList(listed) << "} != CryptoTokenKit slots {"
+    return ::testing::AssertionFailure() << "reported readers {" << quotedList(listed) << "} != CryptoTokenKit slots {"
                                          << quotedList(slots) << "}";
 }
 
@@ -328,7 +338,7 @@ TEST_F(MonitorCtkHardware, InsertAndRemoveArrive)
                "\" ms_after_prompt=" + std::to_string(msBetween(start, inserted->at)));
         ASSERT_TRUE(inserted->event.atr.has_value());
         EXPECT_FALSE(inserted->event.atr->empty());
-        EXPECT_TRUE(readersMatchSlots(watch.monitor));
+        EXPECT_TRUE(readersMatchSlots(watch.log));
 
         mark = watch.log.size();
         ownerPrompt("Remove the card from \"" + reader + "\".");
@@ -341,7 +351,7 @@ TEST_F(MonitorCtkHardware, InsertAndRemoveArrive)
         own.insert(removed->index);
         record("arrived kind=CardRemoved reader=\"" + reader +
                "\" ms_after_prompt=" + std::to_string(msBetween(start, removed->at)));
-        EXPECT_TRUE(readersMatchSlots(watch.monitor));
+        EXPECT_TRUE(readersMatchSlots(watch.log));
     }
     EXPECT_EQ(errorCount(watch.log), 0u) << "the monitor reported an Error event (it stops after one)";
 }
@@ -349,9 +359,8 @@ TEST_F(MonitorCtkHardware, InsertAndRemoveArrive)
 TEST_F(MonitorCtkHardware, SecondReaderHotPlugArrives)
 {
     Watch watch;
-    const auto initial = watch.monitor.listReaders();
-    ASSERT_TRUE(initial.has_value()) << "listReaders() is unavailable";
-    record("initial readers=" + std::to_string(initial->size()));
+    const auto initial = watch.log.readers();
+    record("initial readers=" + std::to_string(initial.size()));
 
     std::size_t mark = watch.log.size();
     ownerPrompt("Plug in a reader that is not plugged in now (keep the others where they are).");
@@ -359,15 +368,14 @@ TEST_F(MonitorCtkHardware, SecondReaderHotPlugArrives)
     const auto added = watch.log.waitFor(
         mark,
         [&](const MonitorEvent& e) {
-            return e.kind == MonitorEvent::Kind::ReaderAdded &&
-                   std::find(initial->begin(), initial->end(), e.readerName) == initial->end();
+            return e.kind == MonitorEvent::Kind::ReaderAdded && !initial.contains(e.readerName);
         },
         waitLimit());
     ASSERT_TRUE(arrived(added, "ReaderAdded for a new reader"));
     const auto reader = added->event.readerName;
     record("arrived kind=ReaderAdded reader=\"" + reader +
            "\" ms_after_prompt=" + std::to_string(msBetween(start, added->at)));
-    EXPECT_TRUE(readersMatchSlots(watch.monitor));
+    EXPECT_TRUE(readersMatchSlots(watch.log));
 
     mark = watch.log.size();
     ownerPrompt("Unplug \"" + reader + "\".");
@@ -379,7 +387,7 @@ TEST_F(MonitorCtkHardware, SecondReaderHotPlugArrives)
     ASSERT_TRUE(arrived(removed, "ReaderRemoved for \"" + reader + "\""));
     record("arrived kind=ReaderRemoved reader=\"" + reader +
            "\" ms_after_prompt=" + std::to_string(msBetween(start, removed->at)));
-    EXPECT_TRUE(readersMatchSlots(watch.monitor));
+    EXPECT_TRUE(readersMatchSlots(watch.log));
     EXPECT_EQ(errorCount(watch.log), 0u) << "the monitor reported an Error event (it stops after one)";
 }
 
@@ -391,7 +399,7 @@ TEST_F(MonitorCtkHardware, ReportedNameOpensTheTestCard)
 
     Watch watch;
     // The name as the monitor reports it: from the card's own event if the
-    // monitor announced the card already present, from its reader list if not.
+    // monitor announced the card already present, from its reader events if not.
     std::optional<std::string> reported;
     for (const auto& seen : watch.log.snapshot())
         if (seen.event.kind == MonitorEvent::Kind::CardInserted && seen.event.atr &&
@@ -399,10 +407,8 @@ TEST_F(MonitorCtkHardware, ReportedNameOpensTheTestCard)
             reported = seen.event.readerName;
     const char* source = "event";
     if (!reported) {
-        source = "listReaders";
-        const auto readers = watch.monitor.listReaders();
-        ASSERT_TRUE(readers.has_value()) << "listReaders() is unavailable";
-        if (std::find(readers->begin(), readers->end(), *slot) != readers->end())
+        source = "reader events";
+        if (watch.log.readers().contains(*slot))
             reported = *slot;
     }
     ASSERT_TRUE(reported.has_value()) << "the monitor does not report the reader holding the test LK (\"" << *slot

@@ -3,10 +3,16 @@
 
 #include "mock_pcsc_scan_provider.h"
 #include <monitor.h>
+#include <LibreSCRS/Logging.h>
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <chrono>
 #include <mutex>
+#include <stdexcept>
+#include <string>
+#include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using namespace LibreSCRS::SmartCard::Internal;
@@ -803,14 +809,15 @@ TEST_F(MonitorTestFixture, UnsubscribeStopsDelivery)
     EXPECT_FALSE(monitor.isRunning());
 }
 
-// A context the source refuses with SCARD_E_NO_ACCESS stays refused (a
-// process without the smart-card entitlement on macOS, a polkit denial on
-// Linux): the monitor reports one Error and stops asking.
-TEST_F(MonitorTestFixture, NoAccessFromEstablishIsPermanent)
+// A source whose SCARD_E_NO_ACCESS is final (a process without the
+// smart-card entitlement on macOS): the monitor reports one Error and stops
+// asking.
+TEST_F(MonitorTestFixture, FinalNoAccessFromEstablishIsPermanent)
 {
     auto mock = std::make_unique<MockPCSCScanProvider>(counters);
     mock->setEstablishContextReturn(static_cast<LONG>(SCARD_E_NO_ACCESS));
     mock->setRefusalDetail("the source's own words");
+    mock->setRefusalRetryInterval(std::chrono::milliseconds::zero());
 
     std::mutex mtx;
     std::vector<MonitorEvent> events;
@@ -836,6 +843,40 @@ TEST_F(MonitorTestFixture, NoAccessFromEstablishIsPermanent)
     EXPECT_LT(destroyTook, std::chrono::milliseconds(100));
 }
 
+// A PC/SC refusal can lift (a polkit decision tied to a session that becomes
+// active): it is reported once, asked again, and the monitor carries on once
+// the context is granted.
+TEST_F(MonitorTestFixture, PcscNoAccessIsReportedOnceAndRetried)
+{
+    auto mock = std::make_unique<MockPCSCScanProvider>(counters);
+    auto* source = mock.get();
+    mock->setEstablishContextReturn(static_cast<LONG>(SCARD_E_NO_ACCESS));
+    mock->setRefusalRetryInterval(std::chrono::milliseconds(50));
+
+    std::mutex mtx;
+    std::vector<MonitorEvent> events;
+    {
+        auto monitor = std::make_unique<Monitor>(std::move(mock));
+        monitor->subscribe(
+            [&](const MonitorEvent& e) {
+                std::lock_guard lock(mtx);
+                events.push_back(e);
+            },
+            [](const std::vector<std::string>&) {});
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        source->setEstablishContextReturn(SCARD_S_SUCCESS);
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        monitor.reset();
+    }
+
+    EXPECT_GE(counters->establishContextCount.load(), 3) << "asked again after the refusal";
+    std::lock_guard lock(mtx);
+    std::size_t errors = 0;
+    for (const auto& e : events)
+        errors += e.type == MonitorEvent::Type::Error ? 1 : 0;
+    EXPECT_EQ(errors, 1U) << "the refusal is reported once, not on every retry";
+}
+
 // Any other refusal (pcscd not running yet) is retried, silently.
 TEST_F(MonitorTestFixture, NoServiceFromEstablishIsRetried)
 {
@@ -847,4 +888,49 @@ TEST_F(MonitorTestFixture, NoServiceFromEstablishIsRetried)
     EXPECT_GE(counters->establishContextCount.load(), 2);
     for (const auto& e : result.events)
         EXPECT_NE(e.type, MonitorEvent::Type::Error);
+}
+
+// A subscriber that throws does not take the scan thread down, and what it
+// threw reaches the log sink the host installed, not this process's stderr.
+TEST_F(MonitorTestFixture, ThrowingSubscribersReportThroughTheLogSink)
+{
+    // Captures first, the sink reset next, the monitor last: destruction joins
+    // the scan thread before the sink, and the sink before what it captures.
+    std::mutex mtx;
+    std::vector<std::pair<LibreSCRS::log::Level, std::string>> lines;
+    struct SinkReset
+    {
+        ~SinkReset()
+        {
+            LibreSCRS::log::resetForTest();
+        }
+    } sinkReset;
+    LibreSCRS::log::init(
+        [&](LibreSCRS::log::Level level, std::string_view line) {
+            std::lock_guard lock(mtx);
+            lines.emplace_back(level, std::string(line));
+        },
+        "test.monitor");
+
+    auto mock = std::make_unique<MockPCSCScanProvider>(counters);
+    mock->setReaders({"Reader A"});
+    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false});
+    mock->pushStatusChange(
+        {SCARD_S_SUCCESS, {SCARD_STATE_PRESENT | SCARD_STATE_CHANGED, 0 /* PnP unchanged */}, false});
+    mock->pushStatusChange({LONG(SCARD_E_CANCELLED), {}, false});
+    {
+        Monitor monitor(std::move(mock));
+        monitor.subscribe([](const MonitorEvent&) { throw std::runtime_error("event subscriber blew up"); },
+                          [](const std::vector<std::string>&) { throw 42; });
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+
+    std::lock_guard lock(mtx);
+    const auto has = [&](std::string_view text) {
+        return std::any_of(lines.begin(), lines.end(), [&](const auto& entry) {
+            return entry.first == LibreSCRS::log::Level::Error && entry.second.find(text) != std::string::npos;
+        });
+    };
+    EXPECT_TRUE(has("event callback threw: event subscriber blew up")) << lines.size() << " line(s) captured";
+    EXPECT_TRUE(has("reader-list callback threw unknown exception")) << lines.size() << " line(s) captured";
 }

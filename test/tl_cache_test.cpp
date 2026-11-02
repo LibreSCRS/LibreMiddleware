@@ -3,8 +3,6 @@
 
 #include <gtest/gtest.h>
 
-#ifdef LIBRESIGN_HAS_NATIVE
-
 // Include internal header directly (test has PRIVATE include path)
 #include "tl_cache.h"
 
@@ -211,13 +209,72 @@ TEST_F(TlCacheTest, RefreshTimestampReturnsFalseForMissing)
     EXPECT_FALSE(cache.refreshTimestamp(kTestUrl));
 }
 
-} // namespace
-
-#else // !LIBRESIGN_HAS_NATIVE
-
-TEST(TlCacheTest, SkippedNoNativeBackend)
+// An expired entry is no longer served, but keeps its validators for the
+// conditional request that replaces it.
+TEST_F(TlCacheTest, ExpireEndsTheLifetimeAndKeepsTheValidators)
 {
-    GTEST_SKIP() << "Native signing backend not enabled";
+    TlCache cache(cacheDir.string());
+    cache.store(kTestUrl, kTestData, kTestEtag, kTestLastModified);
+    ASSERT_TRUE(cache.load(kTestUrl).has_value());
+
+    EXPECT_TRUE(cache.expire(kTestUrl));
+
+    EXPECT_FALSE(cache.load(kTestUrl).has_value());
+    const auto meta = cache.loadMeta(kTestUrl);
+    ASSERT_TRUE(meta.has_value());
+    EXPECT_EQ(meta->etag, kTestEtag);
+    EXPECT_EQ(meta->lastModified, kTestLastModified);
+    EXPECT_FALSE(cache.expire("https://example.invalid/none.xml"));
 }
 
-#endif // LIBRESIGN_HAS_NATIVE
+} // namespace
+
+// The directory holds only what the cache writes. A file under any other
+// name (an earlier naming scheme, a stray file) is never read again, and an
+// entry untouched for many lifetimes belongs to a list nobody configures;
+// both are removed when a cache is opened on the directory.
+TEST_F(TlCacheTest, OpeningTheCacheSweepsForeignAndStaleFiles)
+{
+    {
+        TlCache cache(cacheDir.string());
+        std::vector<uint8_t> xml = {'<', 'x', '/', '>'};
+        cache.store("https://example.com/fresh.xml", xml, "", "");
+        cache.store("https://example.com/old.xml", xml, "", "");
+    }
+    const auto foreign = cacheDir / "https___example_com_tl_xml";
+    std::ofstream(foreign) << "<stale/>";
+    // Age the second entry well past thirty lifetimes.
+    const auto old = std::filesystem::file_time_type::clock::now() - std::chrono::hours(24 * 60);
+    std::size_t ours = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(cacheDir)) {
+        if (entry.path() == foreign)
+            continue;
+        ++ours;
+    }
+    ASSERT_EQ(ours, 4U);
+
+    TlCache probe(cacheDir.string());
+    std::filesystem::path oldXml;
+    for (const auto& entry : std::filesystem::directory_iterator(cacheDir)) {
+        if (entry.path().extension() == ".xml") {
+            std::ifstream in(entry.path());
+            oldXml = entry.path();
+            break;
+        }
+    }
+    ASSERT_FALSE(oldXml.empty());
+    auto oldMeta = oldXml;
+    oldMeta.replace_extension(".meta");
+    std::filesystem::last_write_time(oldXml, old);
+    std::filesystem::last_write_time(oldMeta, old);
+
+    TlCache reopened(cacheDir.string());
+
+    EXPECT_FALSE(std::filesystem::exists(foreign)) << "a file under another name is swept";
+    EXPECT_FALSE(std::filesystem::exists(oldXml)) << "an entry thirty lifetimes old is swept";
+    EXPECT_FALSE(std::filesystem::exists(oldMeta));
+    std::size_t left = 0;
+    for ([[maybe_unused]] const auto& entry : std::filesystem::directory_iterator(cacheDir))
+        ++left;
+    EXPECT_EQ(left, 2U) << "the fresh entry stays";
+}

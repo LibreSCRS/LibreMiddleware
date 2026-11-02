@@ -1,7 +1,7 @@
 # Maintainer: hirashix0 <hirashix0@proton.me>
 #
 # librescrs-middleware — the Qt-free C++23 smart-card core of the LibreSCRS
-# stack plus its card plugins and the in-tree PKCS#11 module. This is the
+# stack plus its card plugins. This is the
 # bottom of the dependency chain:
 #
 #     librescrs-middleware  <=  librelinux  <=  librekde
@@ -24,7 +24,7 @@
 pkgname=librescrs-middleware
 pkgver=5.0.0
 pkgrel=1
-pkgdesc="Qt-free C++23 smart-card middleware, card plugins, and PKCS#11 module for LibreSCRS (eID, ePassports, PIV, PKCS#15)"
+pkgdesc="Qt-free C++23 smart-card middleware and card plugins for LibreSCRS (eID, ePassports, PIV, PKCS#15)"
 arch=('x86_64')
 url="https://github.com/LibreSCRS/LibreMiddleware"
 license=('LGPL-2.1-or-later' 'Apache-2.0' 'OFL-1.1' 'MIT')   # MIT = vendored curl (curl license)
@@ -58,11 +58,8 @@ makedepends=(
     'libtool'
     'pkgconf'
 )
-# No p11-kit registration is installed: build() leaves
-# LIBREMIDDLEWARE_INSTALL_P11KIT_MODULE at its default, OFF, because exactly one
-# PKCS#11 provider may own a card and on a desktop that is the card agent.
-# packaging/arch/README.md names the one command that registers the direct
-# module on a machine that deliberately has no agent.
+# No PKCS#11 module is installed: applications reach a card through the card
+# agent's provider, which the agent's own package registers.
 options=('!lto')   # LTO off, as the RPM spec does; not measured to be required
 source=(
     "git+https://github.com/LibreSCRS/LibreMiddleware.git#tag=$pkgver?signed"
@@ -105,25 +102,22 @@ build() {
         -DCMAKE_BUILD_TYPE=RelWithDebInfo \
         -DCMAKE_INSTALL_PREFIX=/usr \
         -DLIBRESCRS_BUILD_EXAMPLES=OFF \
-        -DINSTALL_GTEST=OFF \
         -DBUILD_TESTING=OFF
     cmake --build build -j4
 }
 
-check() {
-    cd "$srcdir/LibreMiddleware"
-    # Card-hardware / live-PIN suites self-skip without a reader + the
-    # LIBRESCRS_TEST_* env vars; the rest are pure unit tests. QT_QPA is
-    # harmless here (the core is Qt-free) but kept for a uniform check() shape.
-    QT_QPA_PLATFORM=offscreen ctest --test-dir build --output-on-failure -j4
-}
+# No check(). build() configures without tests, so ctest would find none and
+# report success; the build host has no reader and no session bus anyway, and
+# the suites are gated in CI. The Debian and RPM recipes run none either.
 
 package() {
     cd "$srcdir/LibreMiddleware"
     DESTDIR="$pkgdir" cmake --install build
     # cmake --install already lays down: /usr/lib/libLibreSCRS_*.so,
-    # /usr/lib/librescrs/plugins/*.so, /usr/lib/pkcs11/librescrs-pkcs11.so,
+    # /usr/lib/librescrs/plugins/*.so,
     # /usr/include/LibreSCRS/**, /usr/lib/cmake/LibreMiddleware/**,
-    # /usr/share/librescrs/certificates/**.
+    # /usr/share/librescrs/certificates/**, and the test support archive
+    # /usr/lib/libLibreSCRSTesting_SmartCard.a (no shared counterpart, so
+    # makepkg's default !staticlibs keeps it).
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

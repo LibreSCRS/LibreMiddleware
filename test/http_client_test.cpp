@@ -21,7 +21,7 @@ TEST(HttpClientTest, GetToUnreachableHostReturnsError)
 TEST(HttpClientTest, PostToUnreachableHostReturnsError)
 {
     libresign::HttpClient client;
-    auto resp = client.post("http://127.0.0.1:1/nonexistent", "{}", 2);
+    auto resp = client.postBinary("http://127.0.0.1:1/nonexistent", "{}", "application/octet-stream", 2);
     EXPECT_EQ(resp.statusCode, 0);
     EXPECT_FALSE(resp.errorMessage.empty());
 }

@@ -10,16 +10,15 @@ LibreAgent, LibreDarwin, third-party tools) can consume LM via CMake's
 `find_package(LibreMiddleware ... CONFIG)`. This document covers
 build options, version pinning, and the public target surface.
 
-## Build options
+## Build configuration
 
-| Option | Default | Effect |
-|---|---|---|
-| `LIBREMIDDLEWARE_BUILD_SHARED` | `OFF` | Builds public `LibreSCRS_*` archives as SHARED libraries, with the SONAME taken from `LIBRESCRS_ABI_SOVERSION` and not from the release major (see below). |
-| `LIBRESCRS_INSTALL_SDK_HEADERS` | `OFF` | Installs public headers under `include/LibreSCRS/`. Implicit ON when `LIBREMIDDLEWARE_BUILD_SHARED=ON`. |
-
-LibreCelik's existing in-tree FetchContent build path uses the default
-(STATIC). External consumers requiring `find_package` set
-`LIBREMIDDLEWARE_BUILD_SHARED=ON`.
+LibreMiddleware builds one way: every public `LibreSCRS_*` library is a
+shared library, with the SONAME taken from `LIBRESCRS_ABI_SOVERSION` and
+not from the release major (see below), and `cmake --install` always
+installs the public headers under `include/LibreSCRS/` and the CMake
+Config package. There is no static configuration: card plugins are
+loaded at run time, and the process-wide state the libraries hold must
+have exactly one definition per process.
 
 ## Public targets
 
@@ -32,7 +31,7 @@ LibreCelik's existing in-tree FetchContent build path uses the default
 | `LibreSCRS::Trust` | `TrustStore`, certificate validation |
 | `LibreSCRS::Certificate` | X.509 utilities |
 | `LibreSCRS::Secure` | INTERFACE alias for secure-allocator-using types |
-| `LibreSCRS::All` | INTERFACE convenience aggregating the six archive targets |
+| `LibreSCRS::All` | INTERFACE convenience aggregating the six library targets |
 
 One spelling, in-tree and installed. `LibreMiddleware` names the package
 a consumer asks `find_package` for; `LibreSCRS` names every target inside
@@ -121,6 +120,26 @@ A complete working example lives at `examples/sdk-consumer-config/`,
 including a `build-and-run.sh` driver that exercises the full install →
 configure → build → run flow against a temporary install prefix.
 
+## Test support: `LibreSCRS::SmartCardTesting`
+
+`LibreSCRS::SmartCardTesting` (`<LibreSCRS/SmartCard/testing/CardSessionTesting.h>`)
+is a **static** archive in the development files, for the tests of projects
+built on LibreSCRS. Unlike the shared libraries it is bound to one release,
+not to a SONAME: it writes the private state of `CardSession`, whose layout
+is not part of the ABI `LIBRESCRS_ABI_SOVERSION` tracks and may change in any
+release, minor or patch.
+
+- Link it only against the shared libraries of the **same** release. The
+  package's `SameMajorVersion` rule cannot enforce that, and neither can the
+  dynamic loader: a test binary linked against 5.0 starts against a later
+  `libLibreSCRS_SmartCard.so.5` without complaint and misreads the session.
+- **Rebuild your tests whenever LibreMiddleware is upgraded**, before running
+  them. A build tree's test binaries are stale after an upgrade even when
+  nothing in your sources changed.
+- Packagers: tests that link this archive belong to the build (`%check`,
+  `dh_auto_test`), run against the release being built — never in a package
+  installed beside a different release of the runtime libraries.
+
 ## Card plugins (runtime-loaded)
 
 Card readers are reached through `LibreSCRS::Plugin` —
@@ -132,8 +151,7 @@ The plugins are independent `.so` artefacts (one per card family —
 
 ### Install layout
 
-When `LIBREMIDDLEWARE_BUILD_SHARED=ON`, `cmake --install` puts the
-plugin `.so` files at:
+`cmake --install` puts the plugin `.so` files at:
 
     ${CMAKE_INSTALL_LIBDIR}/librescrs/plugins/lib<id>-plugin.so
 
@@ -147,10 +165,13 @@ On a typical Linux distro this resolves to
 
 ### Discovering the plugin directory at runtime
 
-Consumers should resolve the plugin path in this order:
+LibreMiddleware reads no environment variable for this: the host chooses the
+directory and hands it to `CardPluginService`. (The LibreSCRS agent on Linux,
+for example, honours `LIBRESCRS_PLUGIN_DIR` as its own override.) A host
+should resolve the plugin path in this order:
 
-1. **`LIBRESCRS_PLUGIN_PATH` environment variable** — explicit override,
-   intended for development and per-user installs.
+1. **Its own override**, if it offers one — intended for development and
+   per-user installs.
 2. **Build-tree path** — when the consumer is co-built with LM via
    FetchContent, the CMake cache variable
    `LIBREMIDDLEWARE_PLUGIN_DIR` points at the build-tree plugins.
@@ -166,70 +187,33 @@ std::filesystem::path plugins =
 LibreSCRS::Plugin::CardPluginService registry{plugins};
 ```
 
-## p11-kit integration — the agent proxy owns the registration
+## PKCS#11 — the agent's provider is the only one
 
-A host must expose exactly **one** LibreSCRS PKCS#11 provider, and it is the
-agent proxy shipped by LibreLinux. The proxy collects the PIN in the agent's
-prompter, behind an authorization prompt and a lease; this module collects it
-inside whatever application dlopened it. Two registered providers for one card
-are two independent security models, and the choice between them falls to
-whichever dialog the user happens to type into.
-
-`LIBREMIDDLEWARE_INSTALL_P11KIT_MODULE` is therefore **`OFF` by default**.
-A default install places the library and no declaration at all:
-
-    ${CMAKE_INSTALL_LIBDIR}/pkcs11/librescrs-pkcs11.so       (the .so)
-
-Turning the option `ON` additionally installs
-
-    ${CMAKE_INSTALL_DATADIR}/p11-kit/modules/librescrs.module (registration)
-
-which is the escape hatch for a headless host that runs no agent, and for the
-opt-in out-of-process deployment. It is not the supported desktop arrangement.
-
-`librescrs.module` references the `.so` by bare filename; p11-kit resolves it
-via its standard `${libdir}/pkcs11/` search path. Priority is 10 — well below
-typical vendor middleware (50+) so proprietary middleware shipped with eID
-hardware wins automatic resolution when both are installed.
-
-### What the direct module does not do
-
-Two limits of the direct deployment, both of them properties of the module and
-not of the packaging, so choosing this arrangement means accepting them:
-
-- **It is exclusive with the agent on the same reader.** Both open PC/SC
-  handles and both collect a PIN; running them against one reader is two
-  owners for one card.
-- **It does not notice a card swapped in the same reader.** Each reader is
-  probed exactly once for the life of the loaded module, because nothing in it
-  watches for removal: `C_WaitForSlotEvent` reports
-  `CKR_FUNCTION_NOT_SUPPORTED` and the module runs no thread of its own. The
-  slots the first card published stay surfaced until `C_Finalize`, and so does
-  the first card's identity — label, serial number, certificate. Two cards of
-  the same family share their object identifiers, so a PIN collected for the
-  first is presented to the second. A host that expects hot swap must reload the
-  module, or use the agent, which owns the reader and does watch.
-
-The signing API does not use the module at all: a document signature is made
-through the card plugin on the session the caller already holds.
+LibreMiddleware ships no PKCS#11 module. The one LibreSCRS PKCS#11 provider a
+host sees is the agent's, shipped and registered with p11-kit by the agent's
+own package: it reaches the card through the agent, which owns the reader,
+collects the PIN in its own prompter behind an authorization prompt and a
+lease, and watches for card removal. A module that opened the card from inside
+whatever application loaded it would be a second connection to the card beside
+the agent's, and a second PIN-entry model.
 
 ### Packaging contract
 
-    librescrs-middleware      usr/lib/pkcs11/librescrs-pkcs11.so          ← the .so only, NO .module
     librescrs-agent           usr/lib/pkcs11/librescrs-pkcs11-agent.so
                               usr/share/p11-kit/modules/librescrs-agent.module
                               usr/lib/systemd/user/librescrs-p11-server.service
 
 The invariant is: *after installing any supported set of packages, the three
 directories p11-kit reads contain exactly one file naming a LibreSCRS provider,
-and it names the proxy.* It holds because no package registers the direct
-module: 5.0 publishes no package that carries its declaration, and a host that
-registers it by hand (the option above, or a `.module` file of its own) has
-chosen the direct deployment and its limits.
+and it names the agent's.* The middleware packages install no module and no
+declaration.
+
+The signing API does not use PKCS#11 at all: a document signature is made
+through the card plugin on the session the caller already holds.
 
 ### Consumers
 
-With the proxy registered by the agent, p11-kit-aware applications — Firefox,
+With the agent's provider registered, p11-kit-aware applications — Firefox,
 Thunderbird, Chromium (via NSS), Evolution, KMail — discover the card with no
 application-side configuration. The GnuPG stack (Kleopatra, `gpgsm`) is **not**
 among them: it does not consume p11-kit at all, its card daemon speaks PC/SC
@@ -245,27 +229,28 @@ in-tree:
 - `LibreSign` (private signing engine)
 - `SmartCard_Impl`, `CardPlugin_Impl` (PC/SC + plugin runtime helpers)
 
+Each of these is hidden inside the libraries that carry it. Every exported
+function has exactly one owning library: the plugin layer
+(`CardPluginService`, `CardPlugin`) is exported by `libLibreSCRS_Plugin`
+alone, and `libLibreSCRS_Signing` links it rather than carrying a copy. A
+consumer that constructs plugins links `LibreSCRS::Plugin`, whatever else it
+links.
+
 Downstream consumers do **not** need to link these separately. The
 exported `LibreSCRS::*` imported targets do not propagate any
 in-tree-only dep through `INSTALL_INTERFACE` (each in-source link uses
 `$<BUILD_INTERFACE:>` to scope the propagation).
 
-System dependencies that downstream consumers DO see via
-`find_dependency` in `LibreMiddlewareConfig.cmake`:
-
-- `OpenSSL 3.0` (`COMPONENTS Crypto`) — system OpenSSL; not the bundled
-  one. Used at the consumer's own translation units if any reference
-  OpenSSL types directly. The LibreMiddleware public headers do not
-  expose OpenSSL types, so most consumers won't actually need it at
-  compile time.
-- `PCSC` — system PC/SC. `FindPCSC.cmake` is shipped next to the Config
-  file so consumers don't need their own copy in `CMAKE_MODULE_PATH`.
+`LibreMiddlewareConfig.cmake` calls no `find_dependency`. The shared
+libraries link OpenSSL and PC/SC privately, no public header names a type
+of either, and the exported targets' link interface lists only
+`LibreSCRS::*` targets, so a consumer needs neither's development headers.
+A consumer that uses OpenSSL or PC/SC itself finds them itself.
 
 ## Distribution packaging
 
 Linux distros with shared-library policies (Debian, Fedora, openSUSE,
-Arch) build LibreMiddleware with `LIBREMIDDLEWARE_BUILD_SHARED=ON` and
-ship:
+Arch) ship:
 
 - `libLibreSCRS_<Component>.so.<LIBRESCRS_ABI_SOVERSION>` — runtime soname
   (in `lib/`). The integer is the cache entry's, not the release major's, so

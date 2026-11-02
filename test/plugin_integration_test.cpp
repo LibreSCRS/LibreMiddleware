@@ -39,8 +39,7 @@ TEST(PluginIntegrationTest, LoadAllPlugins)
     EXPECT_EQ(registry.size(), expectedCount);
     EXPECT_EQ(registry.plugins().size(), expectedCount);
     for (const auto& p : registry.plugins()) {
-        std::cout << "  Loaded: " << p->pluginId() << " (" << p->displayName() << ") priority=" << p->probePriority()
-                  << "\n";
+        std::cout << "  Loaded: " << p->pluginId() << " priority=" << p->probePriority() << "\n";
     }
 }
 

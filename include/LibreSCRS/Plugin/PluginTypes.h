@@ -64,10 +64,10 @@ inline constexpr std::uint32_t kCardPluginAbiVersion = 9;
 /// @since 4.0
 enum class CardCapabilities : std::uint32_t {
     None = 0,                ///< No capabilities advertised (sentinel).
-    PKI = 1U << 0,           ///< readCertificates + verifyPIN + sign + discoverKeys work.
+    PKI = 1U << 0,           ///< readCertificates + sign work.
     IdentityData = 1U << 1,  ///< readCard returns useful identity/document fields.
     EmrtdCrypto = 1U << 2,   ///< eMRTD-family crypto (BAC/PACE/PA/AA/CA) supported.
-    PinManagement = 1U << 3, ///< verifyPIN/changePIN/unblockPIN implemented.
+    PinManagement = 1U << 3, ///< getPINList/changePIN implemented.
 };
 
 /// @brief Bitwise OR for `CardCapabilities` flags.
@@ -207,14 +207,6 @@ struct CertificateData
     ///
     /// @since 4.0
     std::optional<std::uint16_t> keyFID;
-    /// @brief Key size in bits, when known.
-    ///
-    /// An engaged optional carries the bit-length reported by the card
-    /// (typically 1024 / 2048 / 3072 / 4096 for RSA, or 256 / 384 / 521
-    /// for ECDSA).
-    ///
-    /// @since 4.0
-    std::optional<std::uint16_t> keySizeBits;
 
     /// @brief Card-side CKA_ID of this certificate's key/cert pair — the
     ///        PKCS#15 object identifier (iD), which the PKCS#11 bridge surfaces
@@ -284,24 +276,6 @@ struct CertificateData
 
     /// @brief Defaulted member-wise equality.
     [[nodiscard]] bool operator==(const CertificateData&) const noexcept = default;
-};
-
-/// @brief Discovered on-card key reference paired with a plugin-defined label.
-///
-/// Returned from @ref CardPlugin::discoverKeyReferences.
-///
-/// @since 4.0
-struct KeyReference
-{
-    /// @brief Plugin-defined label (typically a PKCS#15 CDF label or a
-    ///        card-specific alias).
-    std::string label;
-    /// @brief Raw key reference value understood by the plugin's on-card
-    ///        signing path.
-    std::uint16_t reference = 0;
-
-    /// @brief Defaulted member-wise equality.
-    [[nodiscard]] bool operator==(const KeyReference&) const noexcept = default;
 };
 
 /// @brief Cryptographic mechanism for on-card signing.
@@ -387,8 +361,8 @@ enum class SignResultOutcome : std::uint8_t {
     /// @brief The card refused the PIN presented for this operation (a PIN
     ///        deposited with @ref CardPlugin::setCredentials and presented in
     ///        the operation's own transaction). Nothing was signed. The
-    ///        remaining tries are not carried here; read them with
-    ///        @ref CardPlugin::readCounters. Appended in ABI 9.
+    ///        remaining tries are not carried here; @ref CardPlugin::getPINList
+    ///        reports them. Appended in ABI 9.
     /// @since 5.0
     PinIncorrect,
     /// @brief The PIN is blocked: the card refused the operation's PIN and
@@ -426,7 +400,7 @@ struct SignResult
     /// @c token argument reports @c isCancelled() at entry. Keeps the
     /// API surface consistent with other named factories
     /// (@ref ReadResult::ok, @ref ReadResult::communicationError,
-    /// @ref ReadResult::parseError).
+    /// @ref ReadResult::unsupportedCard).
     ///
     /// @since 4.0
     [[nodiscard]] static SignResult cancelled() noexcept
@@ -474,8 +448,8 @@ enum class DecipherResultOutcome : std::uint8_t {
     /// @brief The card refused the PIN presented for this operation (a PIN
     ///        deposited with @ref CardPlugin::setCredentials and presented in
     ///        the operation's own transaction). Nothing was deciphered. The
-    ///        remaining tries are not carried here; read them with
-    ///        @ref CardPlugin::readCounters. Appended in ABI 9.
+    ///        remaining tries are not carried here; @ref CardPlugin::getPINList
+    ///        reports them. Appended in ABI 9.
     /// @since 5.0
     PinIncorrect,
     /// @brief The PIN is blocked: the card refused the operation's PIN and

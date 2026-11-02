@@ -41,8 +41,7 @@ TrustStore TrustStoreInternalAccess::makeStore(std::string bundledCertDir, bool 
     return TrustStore(std::move(impl));
 }
 
-void TrustStoreInternalAccess::mergeTrustedListAnchors(TrustStore& store, std::vector<TrustAnchor> anchors,
-                                                       const std::string& sourceLabel)
+void TrustStoreInternalAccess::mergeTrustedListAnchors(TrustStore& store, std::vector<TrustAnchor> anchors)
 {
     if (!store.d || anchors.empty())
         return;
@@ -70,8 +69,6 @@ void TrustStoreInternalAccess::mergeTrustedListAnchors(TrustStore& store, std::v
             continue;
         if (isDuplicate(a.certificateDer))
             continue;
-        if (a.sourceLabel.empty())
-            a.sourceLabel = sourceLabel;
         deduped.push_back(std::move(a));
     }
 

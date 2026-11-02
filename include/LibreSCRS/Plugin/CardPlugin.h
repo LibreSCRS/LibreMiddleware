@@ -5,10 +5,7 @@
 
 /// @file
 /// @brief @ref LibreSCRS::Plugin::CardPlugin — abstract base every card
-///        driver plugin `.so` / `.dylib` implements, plus the @ref
-///        LibreSCRS::Plugin::CertificateData / @ref
-///        LibreSCRS::Plugin::KeyReference aggregates returned by its
-///        signing-related methods.
+///        driver plugin `.so` / `.dylib` implements.
 
 #include <LibreSCRS/Auth/AuthRequirement.h>
 #include <LibreSCRS/Auth/SecretParameter.h>
@@ -16,7 +13,6 @@
 #include <LibreSCRS/Export.h>
 #include <LibreSCRS/Plugin/ActivationProfile.h>
 #include <LibreSCRS/Plugin/CardData.h>
-#include <LibreSCRS/Plugin/CredentialCounters.h>
 #include <LibreSCRS/Plugin/PinStatusEntry.h>
 #include <LibreSCRS/Plugin/PluginTypes.h>
 #include <LibreSCRS/Plugin/ReadResult.h>
@@ -90,19 +86,32 @@ struct CardPluginActivationAccessor;
 ///       @ref setCscaAnchorDirectory host-to-plugin channel. v9 removes the
 ///       superseded `getPINTriesLeft` slot and also retroactively covers two
 ///       shape changes that reached `main` under the v8 number: the
-///       @ref readCounters virtual was inserted into the MIDDLE of the
+///       `readCounters` virtual was inserted into the MIDDLE of the
 ///       vtable rather than appended, and this class grew three members
 ///       (`sizeof` 80 -> 168). v9 is also the first plugin ABI revision
 ///       that moves together with the shared objects' SONAME. v9 also grows
 ///       @ref CertificateData by its @c alwaysAuthenticate and @c canDerive members.
 ///
+/// @par Exceptions
+/// The card operations — @ref readCard, @ref readCertificates,
+/// @ref getPINList, @ref changePIN, @ref sign,
+/// @ref decipher, @ref activateTransportPin and
+/// @ref activateSigningKey — are public non-virtual wrappers over the
+/// protected @c do… virtual a plugin overrides. The wrapper catches whatever
+/// that override throws, logs it, and returns the failure the result type
+/// already has (a @c PluginError outcome, a communication error, or an empty
+/// result where the type has no failure value). A plugin may therefore throw
+/// from those overrides, and a host never sees an exception from them,
+/// whichever plugin it loaded. The remaining virtuals are called directly and
+/// must not throw.
+///
 /// Method groups:
-///  - Identification (@ref pluginId, @ref displayName, @ref probePriority) — set via @ref setIdentity
+///  - Identification (@ref pluginId, @ref probePriority) — set via @ref setIdentity
 ///  - Capabilities (@ref capabilities)
 ///  - Card matching (@ref canHandle, @ref canHandleConnection)
 ///  - Data reading (@ref readCard — unified, with optional streaming callback)
-///  - PKI (@ref readCertificates, PIN, signing, @ref discoverKeyReferences)
-///  - Auth (@ref preReadAuth, @ref verifyPIN, @ref changePIN, @ref unblockPIN)
+///  - PKI (@ref readCertificates, PIN, signing, @ref decipher)
+///  - Auth (@ref preReadAuth, @ref changePIN)
 ///  - Session credentials (@ref setCredentials, @ref clearCredentials) —
 ///    non-`const`, mutate per-session storage
 class LIBRESCRS_PUBLIC_API CardPlugin
@@ -110,14 +119,20 @@ class LIBRESCRS_PUBLIC_API CardPlugin
 public:
     /// @brief Virtual destructor.
     ///
-    /// Declared out-of-line (defined in `lib/LibreSCRS/Plugin/CardPlugin.cpp`)
-    /// to act as the Itanium-ABI key function for this class. A single
-    /// out-of-line virtual method anchors the vtable + typeinfo to one
-    /// translation unit (`LibreSCRS_Plugin`); without a key function GCC /
-    /// Clang emit both as weak symbols in every TU that instantiates a
-    /// derived class, which breaks cross-`.so` `dynamic_cast` and typeinfo
-    /// identity under macOS two-level namespaces and Windows dllimport-
-    /// consumer builds. See Itanium C++ ABI §5.1.
+    /// Declared out-of-line (defined in
+    /// `lib/plugin/src/card_plugin_key_function.cpp`) to act as the
+    /// Itanium-ABI key function for this class (Itanium C++ ABI §5.1): the
+    /// vtable and typeinfo are emitted with it instead of as weak copies in
+    /// every translation unit that defines a derived class. The exported
+    /// copy lives in `libLibreSCRS_Plugin` and no other LibreSCRS library.
+    ///
+    /// A card plugin module links the plugin implementation privately and is
+    /// loaded with `RTLD_LOCAL`, so it carries its own hidden copy of the
+    /// vtable and typeinfo. Type identity of `CardPlugin` across the
+    /// host/plugin boundary is therefore not guaranteed: the host reaches a
+    /// plugin only through its virtual interface, never through
+    /// `dynamic_cast`, `typeid` or a `catch` on a plugin-layer type thrown
+    /// across that boundary.
     virtual ~CardPlugin();
 
     // -- Identification ------------------------------------------------------
@@ -129,14 +144,6 @@ public:
     [[nodiscard]] const std::string& pluginId() const noexcept
     {
         return pluginIdValue;
-    }
-
-    /// @brief Human-readable plugin name.
-    ///
-    /// Set once by the derived constructor via @ref setIdentity.
-    [[nodiscard]] const std::string& displayName() const noexcept
-    {
-        return displayNameValue;
     }
 
     /// @brief Ordering hint; lower numeric values are probed first.
@@ -250,13 +257,9 @@ public:
     ///              do not observe cancellation between APDU exchanges (atomic
     ///              transport — @c SCardTransmit cannot be aborted on
     ///              Linux/pcsclite).
-    /// @return @ref ReadResult with a status classification. MUST NOT throw —
-    ///         plugins catch any internal exception and translate it into a
-    ///         @ref ReadResult::communicationError or
-    ///         @ref ReadResult::parseError outcome. Exceptions crossing the
-    ///         plugin ABI boundary (the plugin is loaded via @c dlopen with
-    ///         a potentially-mismatched C++ standard library) are undefined
-    ///         behaviour.
+    /// @return @ref ReadResult with a status classification;
+    ///         @ref ReadResult::Status::CommunicationError when the
+    ///         implementation threw.
     /// @since 4.0
     /// @note NVI wrapper. Plugins override @ref doReadCard instead.
     [[nodiscard]] ReadResult readCard(LibreSCRS::SmartCard::CardSession& session, GroupCallback onGroup = {},
@@ -275,55 +278,40 @@ protected:
 public:
     // -- PKI -----------------------------------------------------------------
 
-    /// @brief Return all certificates accessible on the card. Default: empty.
+    /// @brief Return all certificates accessible on the card.
+    /// @return The certificates; empty when the card has none, the plugin
+    ///         does not read them, or its implementation threw.
+    /// @note NVI wrapper. Plugins override @ref doReadCertificates instead.
+    [[nodiscard]] std::vector<CertificateData> readCertificates(LibreSCRS::SmartCard::CardSession& session) const;
+
+protected:
+    /// @brief Plugin-side implementation of @ref readCertificates. Default: empty.
     [[nodiscard]] virtual std::vector<CertificateData>
-    readCertificates(LibreSCRS::SmartCard::CardSession& /*session*/) const
-    {
-        return {};
-    }
-    /// @brief Verify @p pin against the default PIN reference.
-    ///
-    /// PIN material is carried by @ref LibreSCRS::Secure::String so the
-    /// storage is cleansed when the caller's string drops out of scope.
-    ///
-    /// @param session Live card session.
-    /// @param pin     PIN value to verify; cleansed on @p pin destruction.
-    /// @return @ref PINResult describing the outcome; @ref PINResult::ok
-    ///         returns @c true on successful verification.
-    /// @note Safe default: reports PIN verification as unsupported
-    ///       (`outcome == PINResultOutcome::Unsupported`) so a plugin that
-    ///       forgets to override this entry point can be distinguished from
-    ///       a genuine card-side rejection. Plugins that advertise
-    ///       `CardCapabilities::PinManagement` MUST override.
-    [[nodiscard]] virtual PINResult verifyPIN(LibreSCRS::SmartCard::CardSession& session,
-                                              const LibreSCRS::Secure::String& pin) const
-    {
-        // 4.0 hardening: static_assert sits in the function body, not
-        // at namespace scope, so a maintainer who relaxes the parameter to
-        // `const std::string&` trips the assertion at the relaxed declaration's
-        // own body — not at a sentinel that has no syntactic connection to
-        // the changed line.
-        static_assert(LibreSCRS::Auth::SecretParameter<decltype(pin)>,
-                      "verifyPIN credential parameter must be Secure::String const&");
-        (void)session;
-        (void)pin;
-        PINResult r;
-        r.outcome = PINResultOutcome::Unsupported;
-        return r;
-    }
-    /// @brief Return per-PIN status for all PINs exposed by the card.
-    [[nodiscard]] virtual std::vector<PinStatusEntry> getPINList(LibreSCRS::SmartCard::CardSession& /*session*/) const
+    doReadCertificates(LibreSCRS::SmartCard::CardSession& /*session*/) const
     {
         return {};
     }
 
+public:
+    /// @brief Return per-PIN status for all PINs exposed by the card.
+    /// @return The entries; empty when the card exposes none or the
+    ///         implementation threw.
+    /// @note NVI wrapper. Plugins override @ref doGetPINList instead.
+    [[nodiscard]] std::vector<PinStatusEntry> getPINList(LibreSCRS::SmartCard::CardSession& session) const;
+
+protected:
+    /// @brief Plugin-side implementation of @ref getPINList. Default: empty.
+    [[nodiscard]] virtual std::vector<PinStatusEntry> doGetPINList(LibreSCRS::SmartCard::CardSession& /*session*/) const
+    {
+        return {};
+    }
+
+public:
     /// @brief Change the PIN identified by @p pinLabel.
     ///
     /// In the 4.0 ABI (v6) plugin callers pass the old and new PIN directly as
-    /// @ref LibreSCRS::Secure::String. Orchestration of the credential
-    /// prompt is the caller's responsibility (see
-    /// @ref Auth::AuthRequirement::forChangePin and the host's
-    /// CredentialProvider infrastructure).
+    /// @ref LibreSCRS::Secure::String. Collecting them from the user is the
+    /// caller's responsibility.
     ///
     /// @param session   Live card session.
     /// @param pinLabel  PIN selector (plugin-specific — e.g. "UserPIN",
@@ -331,20 +319,32 @@ public:
     ///                  secret material.
     /// @param oldPin    Current PIN value; cleansed on @p oldPin destruction.
     /// @param newPin    New PIN value; cleansed on @p newPin destruction.
-    /// @return PINResult describing the outcome.
+    /// @return PINResult describing the outcome;
+    ///         @ref PINResultOutcome::PluginError when the implementation threw.
+    /// @note NVI wrapper. Plugins override @ref doChangePIN instead.
+    [[nodiscard]] PINResult changePIN(LibreSCRS::SmartCard::CardSession& session, std::string_view pinLabel,
+                                      const LibreSCRS::Secure::String& oldPin,
+                                      const LibreSCRS::Secure::String& newPin) const;
+
+protected:
+    /// @brief Plugin-side implementation of @ref changePIN.
     /// @note Safe default: reports PIN change as unsupported
     ///       (`outcome == PINResultOutcome::Unsupported`), so a caller that
     ///       reaches the default base implementation can distinguish "plugin
     ///       did not implement changePIN" from a real card-side failure.
-    [[nodiscard]] virtual PINResult changePIN(LibreSCRS::SmartCard::CardSession& session, std::string_view pinLabel,
-                                              const LibreSCRS::Secure::String& oldPin,
-                                              const LibreSCRS::Secure::String& newPin) const
+    [[nodiscard]] virtual PINResult doChangePIN(LibreSCRS::SmartCard::CardSession& session, std::string_view pinLabel,
+                                                const LibreSCRS::Secure::String& oldPin,
+                                                const LibreSCRS::Secure::String& newPin) const
     {
-        // 4.0 hardening: see verifyPIN above for rationale.
+        // 4.0 hardening: static_assert sits in the function body, not
+        // at namespace scope, so a maintainer who relaxes the parameter to
+        // `const std::string&` trips the assertion at the relaxed declaration's
+        // own body — not at a sentinel that has no syntactic connection to
+        // the changed line.
         static_assert(LibreSCRS::Auth::SecretParameter<decltype(oldPin)>,
-                      "changePIN oldPin parameter must be Secure::String const&");
+                      "doChangePIN oldPin parameter must be Secure::String const&");
         static_assert(LibreSCRS::Auth::SecretParameter<decltype(newPin)>,
-                      "changePIN newPin parameter must be Secure::String const&");
+                      "doChangePIN newPin parameter must be Secure::String const&");
         (void)session;
         (void)pinLabel;
         (void)oldPin;
@@ -353,15 +353,8 @@ public:
         r.outcome = PINResultOutcome::Unsupported;
         return r;
     }
-    /// Read counters for one credential (empty @p pinLabel = the default
-    /// user PIN). Backends fill what they can: native DOCP fills all;
-    /// OpenSC fills retries only. Default: nothing exposed.
-    [[nodiscard]] virtual CredentialCounters readCounters(LibreSCRS::SmartCard::CardSession& /*session*/,
-                                                          std::string_view /*pinLabel*/ = {}) const
-    {
-        return {};
-    }
 
+public:
     /// @brief Perform on-card signing with the key identified by @p keyReference.
     ///
     /// Public non-virtual entry point (NVI, *Effective C++* 3e Item 39 —
@@ -371,9 +364,9 @@ public:
     /// @ref doSign when @ref LibreSCRS::CancelToken::isCancelled() returns true).
     ///
     /// @param session      Live card session.
-    /// @param keyReference Raw on-card key reference; obtained from
-    ///                     @ref discoverKeyReferences or hard-coded by the
-    ///                     plugin per its card-family conventions.
+    /// @param keyReference Raw on-card key reference: the
+    ///                     @ref CertificateData::keyFID of the certificate
+    ///                     whose key signs.
     /// @param data         Bytes to sign. Interpretation (raw vs. hash) is
     ///                     defined by @p mechanism. The wrapper does NOT take
     ///                     ownership of @p data and does NOT zero the buffer
@@ -386,15 +379,17 @@ public:
     /// @return @ref SignResult whose @ref SignResult::ok evaluates to false on
     ///         any failure. The wrapper sets
     ///         @ref SignResultOutcome::Cancelled for the early short-circuit
-    ///         case (since 4.0).
+    ///         case (since 4.0), and @ref SignResultOutcome::PluginError when
+    ///         the implementation threw.
     /// @note PIN for the operation: when a @c "pin" credential is deposited for
     ///       @p session (@ref setCredentials), a plugin that signs presents it
     ///       to the card (VERIFY) and signs in ONE card transaction, so nothing
     ///       can come between the two. A host using a key whose
     ///       CertificateData says the card wants the PIN for every operation
     ///       MUST use this path -- deposit, call this, then erase with an empty
-    ///       @c "pin" -- and not a separate @ref verifyPIN call: such a key's
-    ///       verified state does not survive between two plugin calls. A
+    ///       @c "pin": the card is never asked to verify the PIN in a
+    ///       separate call, because such a key's verified state does not
+    ///       survive between two plugin calls. A
     ///       refused PIN is reported as @ref SignResultOutcome::PinIncorrect, or
     ///       @ref SignResultOutcome::PinBlocked when the card reports the PIN blocked.
     /// @since 4.0
@@ -414,15 +409,18 @@ public:
     /// plaintext; for @ref DecipherMechanism::ECDH_RAW the other party's
     /// uncompressed public point, and the shared secret Z comes back. The
     /// wrapper does NOT cleanse @p ciphertext (it is not secret), but what
-    /// comes back IS -- the caller owns cleansing the returned bytes.
+    /// comes back IS -- the caller owns cleansing the returned bytes. An
+    /// implementation that throws is reported as
+    /// @ref DecipherResultOutcome::PluginError.
     /// @note PIN for the operation: when a @c "pin" credential is deposited for
     ///       @p session (@ref setCredentials), a plugin that deciphers presents it
     ///       to the card (VERIFY) and deciphers in ONE card transaction, so nothing
     ///       can come between the two. A host using a key whose
     ///       CertificateData says the card wants the PIN for every operation
     ///       MUST use this path -- deposit, call this, then erase with an empty
-    ///       @c "pin" -- and not a separate @ref verifyPIN call: such a key's
-    ///       verified state does not survive between two plugin calls. A
+    ///       @c "pin": the card is never asked to verify the PIN in a
+    ///       separate call, because such a key's verified state does not
+    ///       survive between two plugin calls. A
     ///       refused PIN is reported as @ref DecipherResultOutcome::PinIncorrect, or
     ///       @ref DecipherResultOutcome::PinBlocked when the card reports the PIN blocked.
     /// @since 5.0
@@ -448,15 +446,6 @@ protected:
     }
 
 public:
-    /// @brief Enumerate on-card key references paired with a plugin-defined
-    ///        label.
-    ///
-    /// @since 4.0
-    [[nodiscard]] virtual std::vector<KeyReference>
-    discoverKeyReferences(LibreSCRS::SmartCard::CardSession& /*session*/) const
-    {
-        return {};
-    }
     /// @brief Optional token-info group (PKCS#15 TokenInfo, or equivalent).
     [[nodiscard]] virtual CardFieldGroup readTokenInfo(LibreSCRS::SmartCard::CardSession& /*session*/) const
     {
@@ -506,7 +495,7 @@ public:
     virtual void setCredentials(LibreSCRS::SmartCard::CardSession& session, std::string_view key,
                                 const LibreSCRS::Secure::String& value)
     {
-        // 4.0 hardening: see verifyPIN above for rationale.
+        // 4.0 hardening: see doChangePIN above for rationale.
         static_assert(LibreSCRS::Auth::SecretParameter<decltype(value)>,
                       "setCredentials value parameter must be Secure::String const&");
         (void)session;
@@ -529,8 +518,8 @@ protected:
     ///
     /// The @ref readCard NVI wrapper consults this once per read: a profile
     /// that @ref ActivationProfile::requiresActivation drives the wrapper's
-    /// channel-acquisition path (@ref seedCredentials then
-    /// @ref acquireChannelForProfile), keeping the acquired channel alive for
+    /// channel-acquisition path (@ref seedCredentials, then the channel
+    /// itself, with the single BAC fallback the profile allows), keeping the acquired channel alive for
     /// the duration of @ref doReadCard. A plain profile (the default) short-
     /// circuits the wrapper straight to @ref doReadCard with no channel.
     ///
@@ -548,8 +537,8 @@ protected:
     /// @brief Push any plugin-stored secrets into the session's per-session
     ///        credential cache before channel activation.
     ///
-    /// Called by the @ref readCard NVI wrapper immediately before
-    /// @ref acquireChannelForProfile, and only when @p profile
+    /// Called by the @ref readCard NVI wrapper immediately before it
+    /// acquires the channel, and only when @p profile
     /// @ref ActivationProfile::requiresActivation. Plugins that retain a
     /// secret captured during an earlier prompt (e.g. a CAN entered for a
     /// prior read on the same reader) seed it here so the activation walk
@@ -565,7 +554,7 @@ protected:
     ///
     /// @par Ordering
     /// MUST run before activation so the seeded secrets are visible to
-    /// @ref acquireChannelForProfile's cache-or-provider resolution.
+    /// the channel acquisition's cache-or-provider resolution.
     ///
     /// @param session Live card session — the per-session key for any seeded
     ///                credential storage.
@@ -575,7 +564,7 @@ protected:
     {}
 
 public:
-    // -- Pre-read auth / unblock --------------------------------------------
+    // -- Pre-read auth --------------------------------------------------------
 
     /// @brief Describe the pre-read authentication this card requires.
     ///
@@ -599,34 +588,6 @@ public:
     /// Defined out-of-line in @c lib/plugin/src/card_plugin.cpp so the
     /// derivation lives next to the activation machinery it mirrors.
     [[nodiscard]] virtual Auth::PreReadAuthMethod preReadAuth(LibreSCRS::SmartCard::CardSession& session) const;
-
-    /// @brief Unblock @p pinLabel using a PUK-based flow.
-    ///
-    /// @param session   Live card session.
-    /// @param pinLabel  PIN selector (plugin-specific label; not secret).
-    /// @param puk       Current PUK value; cleansed on destruction.
-    /// @param newPin    New PIN value to install; cleansed on destruction.
-    /// @note Safe default: reports unblock as unsupported
-    ///       (`outcome == PINResultOutcome::Unsupported`), so cards that do
-    ///       not implement PUK-based unblock are distinguishable from a
-    ///       genuine card-side failure of an attempted unblock.
-    [[nodiscard]] virtual PINResult unblockPIN(LibreSCRS::SmartCard::CardSession& session, std::string_view pinLabel,
-                                               const LibreSCRS::Secure::String& puk,
-                                               const LibreSCRS::Secure::String& newPin) const
-    {
-        // 4.0 hardening: see verifyPIN above for rationale.
-        static_assert(LibreSCRS::Auth::SecretParameter<decltype(puk)>,
-                      "unblockPIN puk parameter must be Secure::String const&");
-        static_assert(LibreSCRS::Auth::SecretParameter<decltype(newPin)>,
-                      "unblockPIN newPin parameter must be Secure::String const&");
-        (void)session;
-        (void)pinLabel;
-        (void)puk;
-        (void)newPin;
-        PINResult r;
-        r.outcome = PINResultOutcome::Unsupported;
-        return r;
-    }
 
     // -- Trust anchors (@since 4.0) ------------------------------------------
 
@@ -680,7 +641,6 @@ public:
     ///       internally and surface the failure on the next @c readCard /
     ///       @c sign call as a Status::CommunicationError or equivalent.
     /// @see LibreSCRS::Trust::TrustStore::enumerableAnchors
-    /// @see LibreSCRS::Trust::TrustStoreService::addObserver
     ///
     /// Body lives in @c lib/plugin/src/card_plugin.cpp so the public
     /// header carries the declaration only and downstream consumers do
@@ -766,12 +726,14 @@ protected:
     /// @note Appended as a single new vtable slot in 5.0 (ABI-additive,
     ///       introduced under ABI v8) rather than shifting the existing
     ///       slots. Do not relocate it above an existing virtual. Later
-    ///       additions (@ref activateTransportPin, @ref activateSigningKey)
+    ///       additions (@ref doActivateTransportPin, @ref doActivateSigningKey)
     ///       appended after it; the append anchor for future virtuals sits
-    ///       on @ref activateSigningKey — the true LAST virtual. The v8 ->
+    ///       on @ref doActivateSigningKey — the true LAST virtual. The v8 ->
     ///       v9 bump (removal of the superseded `getPINTriesLeft` slot, and
-    ///       the @ref readCounters virtual's mid-table insertion earlier in
-    ///       this class) does not move any slot in this decipher region.
+    ///       the readCounters virtual's mid-table insertion earlier in
+    ///       this class) does not move any slot in this decipher region; nor
+    ///       does v9's turning the PIN and certificate entry points into
+    ///       wrappers, which renamed each of their virtuals in its slot.
     /// @since 5.0
     [[nodiscard]] virtual DecipherResult doDecipher(LibreSCRS::SmartCard::CardSession& session,
                                                     std::uint16_t keyReference,
@@ -797,25 +759,13 @@ public:
     /// @param pinLabel        PIN selector (plugin-specific; not secret).
     /// @param transportValue  Transport PIN value; cleansed on destruction.
     /// @param newPin          Holder's new PIN value; cleansed on destruction.
-    /// @note Safe default: `PINResultOutcome::Unsupported` (base not overridden).
+    /// @return PINResult describing the outcome;
+    ///         @ref PINResultOutcome::PluginError when the implementation threw.
+    /// @note NVI wrapper. Plugins override @ref doActivateTransportPin instead.
     /// @since 5.0
-    [[nodiscard]] virtual PINResult activateTransportPin(LibreSCRS::SmartCard::CardSession& session,
-                                                         std::string_view pinLabel,
-                                                         const LibreSCRS::Secure::String& transportValue,
-                                                         const LibreSCRS::Secure::String& newPin) const
-    {
-        static_assert(LibreSCRS::Auth::SecretParameter<decltype(transportValue)>,
-                      "activateTransportPin transportValue parameter must be Secure::String const&");
-        static_assert(LibreSCRS::Auth::SecretParameter<decltype(newPin)>,
-                      "activateTransportPin newPin parameter must be Secure::String const&");
-        (void)session;
-        (void)pinLabel;
-        (void)transportValue;
-        (void)newPin;
-        PINResult r;
-        r.outcome = PINResultOutcome::Unsupported;
-        return r;
-    }
+    [[nodiscard]] PINResult activateTransportPin(LibreSCRS::SmartCard::CardSession& session, std::string_view pinLabel,
+                                                 const LibreSCRS::Secure::String& transportValue,
+                                                 const LibreSCRS::Secure::String& newPin) const;
 
     /// @brief Activate the (deactivated) signing key: VERIFY the operational
     ///        SIGN PIN and perform the key ACTIVATE, self-contained within
@@ -826,17 +776,46 @@ public:
     /// @param signPin  Operational SIGN PIN; cleansed on destruction.
     /// @return `Ok` on success; `InvalidPin`/`Blocked` when the VERIFY step
     ///         fails (retriesLeft refers to the SIGN PIN);
-    ///         `KeyActivationFailed` when VERIFY succeeded but ACTIVATE failed.
+    ///         `KeyActivationFailed` when VERIFY succeeded but ACTIVATE failed;
+    ///         `PluginError` when the implementation threw.
+    /// @note NVI wrapper. Plugins override @ref doActivateSigningKey instead.
+    /// @since 5.0
+    [[nodiscard]] PINResult activateSigningKey(LibreSCRS::SmartCard::CardSession& session,
+                                               const LibreSCRS::Secure::String& signPin) const;
+
+protected:
+    /// @brief Plugin-side implementation of @ref activateTransportPin.
+    /// @note Safe default: `PINResultOutcome::Unsupported` (base not overridden).
+    /// @since 5.0
+    [[nodiscard]] virtual PINResult doActivateTransportPin(LibreSCRS::SmartCard::CardSession& session,
+                                                           std::string_view pinLabel,
+                                                           const LibreSCRS::Secure::String& transportValue,
+                                                           const LibreSCRS::Secure::String& newPin) const
+    {
+        static_assert(LibreSCRS::Auth::SecretParameter<decltype(transportValue)>,
+                      "doActivateTransportPin transportValue parameter must be Secure::String const&");
+        static_assert(LibreSCRS::Auth::SecretParameter<decltype(newPin)>,
+                      "doActivateTransportPin newPin parameter must be Secure::String const&");
+        (void)session;
+        (void)pinLabel;
+        (void)transportValue;
+        (void)newPin;
+        PINResult r;
+        r.outcome = PINResultOutcome::Unsupported;
+        return r;
+    }
+
+    /// @brief Plugin-side implementation of @ref activateSigningKey.
     /// @note Safe default: `PINResultOutcome::Unsupported`.
     /// @note Declared as the LAST virtual in the class: future virtuals
     ///       must be appended AFTER this one so every existing vtable
     ///       slot keeps its position (ABI-additive evolution).
     /// @since 5.0
-    [[nodiscard]] virtual PINResult activateSigningKey(LibreSCRS::SmartCard::CardSession& session,
-                                                       const LibreSCRS::Secure::String& signPin) const
+    [[nodiscard]] virtual PINResult doActivateSigningKey(LibreSCRS::SmartCard::CardSession& session,
+                                                         const LibreSCRS::Secure::String& signPin) const
     {
         static_assert(LibreSCRS::Auth::SecretParameter<decltype(signPin)>,
-                      "activateSigningKey signPin parameter must be Secure::String const&");
+                      "doActivateSigningKey signPin parameter must be Secure::String const&");
         (void)session;
         (void)signPin;
         PINResult r;
@@ -847,13 +826,12 @@ public:
 protected:
     /// @brief Derived classes call this in their ctor to publish identity.
     ///
-    /// The accessors (@ref pluginId, @ref displayName, @ref probePriority)
-    /// read back what was set here. Cannot be overridden; this is the only
-    /// way to populate the identity fields.
-    void setIdentity(std::string newId, std::string newName, int newPriority) noexcept
+    /// The accessors (@ref pluginId, @ref probePriority) read back what was
+    /// set here. Cannot be overridden; this is the only way to populate the
+    /// identity fields.
+    void setIdentity(std::string newId, int newPriority) noexcept
     {
         pluginIdValue = std::move(newId);
-        displayNameValue = std::move(newName);
         probePriorityValue = newPriority;
     }
 
@@ -867,13 +845,12 @@ private:
 
     // Project convention: no trailing underscores on member
     // variables. The `*Value` suffix mirrors the convention already
-    // established for `purposeValue` / `fieldList` / `retriesValue` in
+    // established for `purposeValue` / `fieldList` in
     // AuthRequirement.h, and addresses the ergonomic concern that a
     // derived plugin author writing `std::string id;` would otherwise
     // get two `id` members with no diagnostic. The public accessors
-    // (@ref pluginId, @ref displayName, @ref probePriority) are unchanged.
+    // (@ref pluginId, @ref probePriority) are unchanged.
     std::string pluginIdValue;
-    std::string displayNameValue;
     int probePriorityValue = 0;
 
     /// Single-shot guard for @ref setTrustStore. test_and_set returns true

@@ -32,8 +32,7 @@
 /// This is a deliberate footgun-elimination rule: it removes the "must
 /// outlive" destruction-order class of UAF bugs that only surface at
 /// process shutdown. Services that apply this rule include
-/// @ref LibreSCRS::Signing::SigningService::sign (`cardPlugin`, `session`)
-/// and @ref LibreSCRS::Plugin::AutoReaderService (`monitor`, `registry`). Internal
+/// @ref LibreSCRS::Signing::SigningService::sign (`cardPlugin`, `session`). Internal
 /// workers that outlive the caller's stack frame capture `std::weak_ptr`
 /// and promote at use.
 
@@ -58,7 +57,7 @@
 /// functions are defined in a `.cpp` file and whose state is held through an
 /// opaque `struct Impl` pointer. Examples: @ref LibreSCRS::Signing::SigningService,
 /// @ref LibreSCRS::SmartCard::CardSession, @ref LibreSCRS::SmartCard::MonitorService,
-/// @ref LibreSCRS::Plugin::AutoReaderService, @ref LibreSCRS::Plugin::CardPluginService,
+/// @ref LibreSCRS::Plugin::CardPluginService,
 /// @ref LibreSCRS::Secure::Buffer, @ref LibreSCRS::Secure::String. Also applied
 /// to the @ref LibreSCRS::Plugin::CardPlugin abstract base (vtable + typeinfo
 /// must be exported so `dynamic_cast` across the plugin `.so` boundary works).
@@ -71,7 +70,7 @@
 ///
 /// **Not** applied to plain-data aggregate structs (e.g. @ref
 /// LibreSCRS::Signing::SigningResult, @ref LibreSCRS::Auth::CredentialResult,
-/// @ref LibreSCRS::Plugin::CardData, @ref LibreSCRS::Signing::TsaCredentials).
+/// @ref LibreSCRS::Plugin::CardData, @ref LibreSCRS::Signing::TsaProvider).
 /// These types are header-only: their members (`std::string`, `std::vector`,
 /// `std::map`, `std::optional`, etc.) have layouts dependent on the consumer's
 /// C++ standard library ABI, so exporting them via `__declspec(dllexport)`
@@ -99,4 +98,19 @@
 #define LIBRESCRS_INTERNAL __attribute__((visibility("hidden")))
 #else
 #define LIBRESCRS_INTERNAL
+#endif
+
+/// @def LIBRESCRS_TEST_API
+/// @brief Marks declared test support: functions that exist for other
+///        projects' tests and live only in a static test archive (for example
+///        @c LibreSCRS::SmartCardTesting), never in a shipped shared library.
+///
+/// A declaration carrying it is a stable test-facing contract, documented and
+/// installed with the development files; production code never calls it.
+/// Expands to default visibility on GCC/Clang so a test support library that
+/// links the archive can still export it.
+#if defined(__GNUC__) || defined(__clang__)
+#define LIBRESCRS_TEST_API __attribute__((visibility("default")))
+#else
+#define LIBRESCRS_TEST_API
 #endif

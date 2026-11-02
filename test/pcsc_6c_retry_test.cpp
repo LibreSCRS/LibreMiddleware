@@ -36,6 +36,9 @@ std::vector<std::vector<uint8_t>> g_scriptedReplies;
 // exhausted. A call answered with an error records the APDU and returns no data.
 std::vector<LONG> g_transmitRvs;
 int g_reconnects = 0;
+// The receive buffer of the last SCardTransmit: the connection's own, which
+// outlives the call.
+const uint8_t* g_lastRecvBuffer = nullptr;
 
 class Pcsc6cRetryTest : public ::testing::Test
 {
@@ -46,6 +49,7 @@ protected:
         g_scriptedReplies.clear();
         g_transmitRvs.clear();
         g_reconnects = 0;
+        g_lastRecvBuffer = nullptr;
     }
 };
 
@@ -82,6 +86,7 @@ LONG SCardTransmit(SCARDHANDLE, const SCARD_IO_REQUEST*, LPCBYTE pbSendBuffer, D
     }
     std::memcpy(pbRecvBuffer, reply.data(), reply.size());
     *pcbRecvLength = static_cast<DWORD>(reply.size());
+    g_lastRecvBuffer = pbRecvBuffer;
     return SCARD_S_SUCCESS;
 }
 
@@ -159,7 +164,9 @@ INSTANTIATE_TEST_SUITE_P(PinVerbs, Pcsc6cRetrySensitiveTest,
                          ::testing::Values(std::vector<uint8_t>{0x00, 0x20, 0x00, 0x01, 0x04, 0xAA, 0xBB, 0xCC, 0xDD},
                                            std::vector<uint8_t>{0x00, 0x24, 0x00, 0x01, 0x04, 0xAA, 0xBB, 0xCC, 0xDD},
                                            std::vector<uint8_t>{0x00, 0x2C, 0x00, 0x01, 0x04, 0xAA, 0xBB, 0xCC, 0xDD},
-                                           std::vector<uint8_t>{0x0C, 0x20, 0x00, 0x01, 0x04, 0x87, 0x02, 0x01, 0x00}));
+                                           std::vector<uint8_t>{0x0C, 0x20, 0x00, 0x01, 0x04, 0x87, 0x02, 0x01, 0x00},
+                                           // Any secure-messaging command: the reset ended the SM session.
+                                           std::vector<uint8_t>{0x0C, 0xB0, 0x00, 0x00, 0x04, 0x97, 0x01, 0x00, 0x00}));
 
 TEST_F(Pcsc6cRetryTest, PlainCommandIsResentOnceAfterReset)
 {
@@ -173,4 +180,47 @@ TEST_F(Pcsc6cRetryTest, PlainCommandIsResentOnceAfterReset)
     EXPECT_EQ(g_sentApdus.size(), 2u);
     EXPECT_EQ(g_reconnects, 1);
     EXPECT_TRUE(response.isSuccess());
+}
+
+// A card that keeps answering 61xx past 64 KiB gets no answer at all: 6700
+// with no data, never the first 64 KiB under a success status word.
+TEST_F(Pcsc6cRetryTest, GetResponseChainPastTheCapIsNoAnswer)
+{
+    PCSCConnection conn(PCSCConnection::DetachedTag{}, "test-reader");
+    const std::vector<uint8_t> chunk(256, 0x5A);
+    for (int i = 0; i < 300; ++i) {
+        auto reply = chunk;
+        reply.push_back(0x61);
+        reply.push_back(0x00);
+        g_scriptedReplies.push_back(std::move(reply));
+    }
+
+    const auto response = conn.transmit(LibreSCRS::SmartCard::Internal::readBinary(0x0000, 0x00));
+
+    EXPECT_EQ(response.statusWord(), 0x6700);
+    EXPECT_TRUE(response.data.empty());
+}
+
+// The connection receives every answer into a buffer its thread keeps for the
+// next call. What the card answered -- a decrypted block, a personal record --
+// reaches the caller and is not left behind in that buffer.
+using PcscReceiveBufferTest = Pcsc6cRetryTest;
+
+TEST_F(PcscReceiveBufferTest, TheCardsAnswerDoesNotStayInTheReceiveBuffer)
+{
+    PCSCConnection conn(PCSCConnection::DetachedTag{}, "test-reader");
+    const std::vector<uint8_t> answer(48, 0xA5);
+    auto reply = answer;
+    reply.push_back(0x90);
+    reply.push_back(0x00);
+    g_scriptedReplies.push_back(reply);
+    const std::vector<uint8_t> readBinary{0x00, 0xB0, 0x00, 0x00, 0x30};
+
+    const auto response = conn.transmitRaw(std::span<const uint8_t>(readBinary));
+
+    ASSERT_TRUE(response.isSuccess());
+    EXPECT_EQ(response.data, answer) << "the caller still gets the answer";
+    ASSERT_NE(g_lastRecvBuffer, nullptr);
+    const std::vector<uint8_t> left(g_lastRecvBuffer, g_lastRecvBuffer + reply.size());
+    EXPECT_EQ(left, std::vector<uint8_t>(reply.size(), 0x00)) << "the answer stayed in the receive buffer";
 }

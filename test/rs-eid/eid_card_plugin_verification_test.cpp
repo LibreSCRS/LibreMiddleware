@@ -27,7 +27,7 @@
 #include <LibreSCRS/Plugin/CardPluginService.h>
 #include <LibreSCRS/Plugin/ReadResult.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
-#include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
+#include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
 #include <pcsc_connection.h>
 
@@ -176,7 +176,7 @@ TEST(RsEidPluginVerificationTest, VerificationFieldsAppearExactlyOnceInVerificat
     auto plugin = findRsEid(registry);
     ASSERT_NE(plugin, nullptr) << "rs-eid-plugin.so did not load from " << pluginDir();
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Scripted Apollo Reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Apollo Reader");
     ASSERT_NE(session, nullptr);
 
     auto& conn = LibreSCRS::SmartCard::detail::unwrap(*session);
@@ -210,8 +210,7 @@ TEST(RsEidPluginVerificationTest, VerificationFieldsAppearExactlyOnceInVerificat
     // The historical bug appended the same three fields into "meta" (already
     // emitted earlier in the read) on top of the dedicated "verification"
     // group. Confirm "meta" carries only its own card_type field.
-    auto metaIdx = data.findGroup("meta");
-    ASSERT_TRUE(metaIdx.has_value());
-    EXPECT_EQ(data.groupAt(*metaIdx).fields.size(), 1u)
-        << "meta group must not carry verification fields alongside card_type";
+    const auto meta = std::ranges::find(data.groups, "meta", &LibreSCRS::Plugin::CardFieldGroup::groupKey);
+    ASSERT_NE(meta, data.groups.end());
+    EXPECT_EQ(meta->fields.size(), 1u) << "meta group must not carry verification fields alongside card_type";
 }

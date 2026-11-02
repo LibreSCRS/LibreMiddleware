@@ -29,10 +29,10 @@
 //
 // The helper translates everything that comes from the public
 // SigningRequest: fileName, format, packaging, level, visual-dictionary
-// fields (reason / location / contactInfo) and — when @ref visualParams is
+// fields (reason / location) and — when @ref visualParams is
 // configured — the visual appearance rectangle. It deliberately does NOT
 // touch @c libReq.document or @c libReq.tsa: those carry state sourced
-// outside the request (file bytes and the service-level TsaProvider
+// outside the request (document bytes and the service-level TsaProvider
 // snapshot), which the caller wires up in @c SigningService::sign.
 //
 // Do NOT depend on this header from consumer code: the mapping is an
@@ -59,17 +59,16 @@ libresign::SignaturePackaging mapPackaging(LibreSCRS::Signing::PackagingMode p);
 /// @ref libresign::SigningRequest that the sign-module pipelines consume.
 ///
 /// Leaves @c out.document and @c out.tsa untouched: document bytes are
-/// loaded by the caller from @c request.inputFile(), and the TSA config is
+/// the caller's in-memory input, and the TSA config is
 /// driven by the service-level provider snapshot (see
 /// @c SigningService::sign). This keeps the bridge a pure, side-effect-free
 /// field-by-field translation that is trivially unit-testable.
 ///
 /// @par Invisible-signature semantics
-/// The PDF signature-dictionary fields @c /Reason, @c /Location and
-/// @c /ContactInfo are defined by ISO 32000-1:2008 §12.8.1 as siblings of
-/// @c /ByteRange — they describe the signature itself, not any visual
-/// widget. Consequently they are forwarded into
-/// @c out.visual.{reason,location,contactInfo} unconditionally, regardless
+/// The PDF signature-dictionary fields @c /Reason and @c /Location are
+/// defined by ISO 32000-1:2008 §12.8.1 as siblings of @c /ByteRange — they
+/// describe the signature itself, not any visual widget. Consequently they
+/// are forwarded into @c out.visual.{reason,location} unconditionally, regardless
 /// of whether the caller configured a visible signature appearance. Only
 /// @c visual.enabled and the on-page rectangle depend on
 /// @ref SigningRequest::visualParams being populated.

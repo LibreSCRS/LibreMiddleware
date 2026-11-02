@@ -188,7 +188,7 @@ read -r -d '' PY2 <<'PY' || true
 import sys, pathlib
 p = pathlib.Path(sys.argv[1]) / 'LibreSCRS' / 'Plugin' / 'CardPlugin.h'
 s = p.read_text(encoding='utf-8')
-anchor = '"activateSigningKey signPin parameter must be Secure::String const&");'
+anchor = '"doActivateSigningKey signPin parameter must be Secure::String const&");'
 i = s.index(anchor)
 j = s.index('\n    }\n', i) + len('\n    }\n')
 s = s[:j] + ('\n    [[nodiscard]] virtual int selftestAppendedVirtual() const { return 0; }\n') + s[j:]

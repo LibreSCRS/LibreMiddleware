@@ -64,7 +64,6 @@ TEST(OpenscPinLifecycle, NeedsChangePropagates)
     const auto entries = LibreSCRS::OpenSc::buildPinStatusEntries(objs, 1, nullptr);
     ASSERT_EQ(entries.size(), 1u);
     EXPECT_EQ(entries[0].state, PinState::NeedsChange);
-    EXPECT_FALSE(entries[0].blocked);
     // No quirk row for this driver family, but the card demands a change
     // before use — the change action must be offered (a needs-change
     // state with no offered change verb would be a dead end).

@@ -3,8 +3,6 @@
 
 #include <gtest/gtest.h>
 
-#ifdef LIBRESIGN_HAS_NATIVE
-
 #include "native/asic_module.h"
 #include "signing_keys.h"
 #include "native/zip_records.h"
@@ -751,6 +749,7 @@ TEST(ASiCModuleInMemoryKeyTest, AppendSignerAtLongTermRejectsUnterminatedChain)
 
     TSAConfig tsa;
     tsa.url = tsaServer.url();
+    tsa.trust.anchors = {libresign::test::MockTsaServer::trustAnchor()};
     auto appended = asic.appendSigner(prior.signedDocument, {}, token, SignatureLevel::B_LT, tsa);
     EXPECT_FALSE(appended.success);
     ASSERT_TRUE(appended.failureKind.has_value()) << appended.errorMessage;
@@ -1127,5 +1126,3 @@ TEST(AsicProbe, AContainerWithNoSignatureIsSignedFresh)
 
     EXPECT_EQ(libresign::detail::probeAsic(bytes), libresign::detail::AsicProbe::NoPriorSignature);
 }
-
-#endif

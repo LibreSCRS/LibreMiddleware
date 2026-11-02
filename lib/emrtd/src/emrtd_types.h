@@ -15,13 +15,6 @@
 
 namespace emrtd {
 
-struct MRZData
-{
-    std::string documentNumber;
-    std::string dateOfBirth;  // YYMMDD
-    std::string dateOfExpiry; // YYMMDD
-};
-
 struct ContactPerson
 {
     std::string name;
@@ -32,9 +25,6 @@ struct ContactPerson
 // eMRTD Application AID
 inline constexpr uint8_t EMRTD_AID[] = {0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
 inline constexpr size_t EMRTD_AID_LEN = 7;
-
-// EF.CardAccess short file identifier
-inline constexpr uint8_t SFID_CARD_ACCESS = 0x1C;
 
 // Data Group File Identifiers
 inline uint16_t dgToFID(int dg)

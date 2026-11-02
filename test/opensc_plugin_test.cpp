@@ -5,7 +5,7 @@
 #include <LibreSCRS/Plugin/CardData.h>
 #include <LibreSCRS/Plugin/CardPluginService.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
-#include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
+#include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 
 #include <libopensc/opensc.h>
 
@@ -65,7 +65,6 @@ TEST(OpenSCPluginTest, Metadata)
     ASSERT_NE(opensc, nullptr);
 
     EXPECT_EQ(opensc->pluginId(), "opensc");
-    EXPECT_EQ(opensc->displayName(), "OpenSC (generic)");
     EXPECT_EQ(opensc->probePriority(), 800);
 }
 
@@ -192,8 +191,8 @@ TEST(OpenSCPluginConcurrency, TwoSessionsDoNotCollide)
 
     // Two detached sessions with distinct reader names → distinct
     // PCSCConnection addresses; these are the map keys the fix relies on.
-    auto sessionA = LibreSCRS::SmartCard::detail::makeDetachedCardSession("MockReaderA");
-    auto sessionB = LibreSCRS::SmartCard::detail::makeDetachedCardSession("MockReaderB");
+    auto sessionA = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("MockReaderA");
+    auto sessionB = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("MockReaderB");
     ASSERT_NE(sessionA, nullptr);
     ASSERT_NE(sessionB, nullptr);
     ASSERT_NE(sessionA.get(), sessionB.get());
@@ -238,8 +237,8 @@ TEST(OpenSCPluginConcurrency, TwoThreadsTwoSessionsDoNotCollide)
     auto opensc = findOpenSC(registry);
     ASSERT_NE(opensc, nullptr);
 
-    auto sessionA = LibreSCRS::SmartCard::detail::makeDetachedCardSession("MockReaderA");
-    auto sessionB = LibreSCRS::SmartCard::detail::makeDetachedCardSession("MockReaderB");
+    auto sessionA = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("MockReaderA");
+    auto sessionB = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("MockReaderB");
 
     constexpr int kIterations = 200;
     std::atomic<bool> failed{false};
@@ -284,7 +283,7 @@ TEST(OpenSCPluginTest, ReadTokenInfoNoBoundSessionReturnsEmptyGroupWithoutThrowi
     auto opensc = findOpenSC(registry);
     ASSERT_NE(opensc, nullptr);
 
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("Phantom Reader 0");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Phantom Reader 0");
     ASSERT_NE(session, nullptr);
 
     LibreSCRS::Plugin::CardFieldGroup group;

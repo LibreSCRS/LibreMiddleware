@@ -31,11 +31,9 @@ using CreateFunc = CardPlugin* (*)();
 using DestroyFunc = void (*)(CardPlugin*);
 using AbiVersionFunc = uint32_t (*)();
 
-// POSIX RAII for the dlopen handle. Defined TU-local on purpose so the
-// project-wide `*LibreSCRS::*` visibility glob (cmake/librescrs-public-
-// exports.map) does not promote the inline template instantiations into
-// the libLibreSCRS_Plugin.so export surface. Keeps the SO handle alive
-// across throwable allocations between dlopen and the shared_ptr handoff.
+// POSIX RAII for the dlopen handle, TU-local: nothing outside this file
+// names it. Keeps the SO handle alive across throwable allocations between
+// dlopen and the shared_ptr handoff.
 struct DlCloser
 {
     void operator()(void* handle) const noexcept
@@ -294,35 +292,17 @@ void CardPluginService::Impl::sortPlugins()
 // CardPluginService — public API defined out of line to keep Impl internal.
 // -----------------------------------------------------------------------------
 
-CardPluginService::CardPluginService(std::span<const std::filesystem::path> dirs,
-                                     std::shared_ptr<const LibreSCRS::Trust::TrustStore> trustStore)
-    : d(std::make_unique<Impl>())
-{
-    std::unique_lock lock(d->pluginsMtx);
-    for (const auto& dir : dirs) {
-        d->loadDirectory(dir);
-    }
-    // Trust subsystem: propagate the unified TrustStore to every loaded plugin BEFORE
-    // they are exposed via plugins() / findPluginForCard(). Plugins that
-    // override setTrustStore (e.g. rs-eid for card-data verification)
-    // cache the pointer; plugins that don't need it ignore via the
-    // CardPlugin default no-op.
-    if (trustStore) {
-        for (auto& lp : d->loadedPlugins) {
-            if (lp.plugin) {
-                lp.plugin->setTrustStore(trustStore);
-            }
-        }
-    }
-    d->sortPlugins();
-}
-
 CardPluginService::CardPluginService(std::filesystem::path dir,
                                      std::shared_ptr<const LibreSCRS::Trust::TrustStore> trustStore)
     : d(std::make_unique<Impl>())
 {
     std::unique_lock lock(d->pluginsMtx);
     d->loadDirectory(dir);
+    // Hand the unified TrustStore to every loaded plugin BEFORE they are
+    // exposed via plugins() / findPluginForCard(). Plugins that override
+    // setTrustStore (e.g. rs-eid for card-data verification) cache the
+    // pointer; plugins that don't need it ignore it via the CardPlugin
+    // default no-op.
     if (trustStore) {
         for (auto& lp : d->loadedPlugins) {
             if (lp.plugin) {
@@ -449,20 +429,6 @@ const std::vector<LoadOutcome>& CardPluginService::loadReport() const noexcept
     // afterwards, so no locking is needed for read access. Marked noexcept
     // to match the accessor contract on SigningService/MonitorService peers.
     return d->report;
-}
-
-bool CardPluginService::isUsable() const noexcept
-{
-    // Pure read of the post-construction snapshot. The report vector is set
-    // up during ctor and never mutated afterwards, so the comparison below
-    // does not need to take pluginsMtx.
-    if (d->sortedPlugins.empty())
-        return false;
-    for (const auto& entry : d->report) {
-        if (entry.status != LoadOutcome::Status::Loaded)
-            return false;
-    }
-    return true;
 }
 
 } // namespace LibreSCRS::Plugin

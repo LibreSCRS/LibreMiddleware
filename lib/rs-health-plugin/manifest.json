@@ -1,7 +1,5 @@
 {
   "pluginId": "rs-health",
-  "displayName": "Serbian Health Insurance",
-  "abiVersion": 8,
   "capabilities": ["IdentityData"],
   "atrs": []
 }

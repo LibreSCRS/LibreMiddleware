@@ -183,5 +183,5 @@ See [rs-vehicle-profile.md](../profiles/rs-vehicle-profile.md) for Serbian-speci
 
 - Source: `lib/eu-vrc/src/eu_vrc_card.cpp`
 - Protocol: `lib/eu-vrc/src/eu_vrc_protocol.h`
-- BER parser: `lib/smartcard/include/smartcard/ber.h`
+- BER parser: `lib/smartcard/src/ber.h`
 - Field paths use `berFindString(merged, {tag1, tag2, ...})` for nested lookups

@@ -34,10 +34,9 @@ file(GLOB LIBRESCRS_TRUST_PUBLIC_HEADERS CONFIGURE_DEPENDS
 )
 
 # Auth: header-only types + compiled factory functions.
-add_library(LibreSCRS_Auth ${LIBREMIDDLEWARE_LIB_TYPE}
+add_library(LibreSCRS_Auth SHARED
     Auth/AuthRequirementFactory.cpp
     CancelToken.cpp
-    LocalizedText.cpp
     # Logging.cpp lives in the lowest public target on purpose: LibreSCRS_Auth
     # is the one every other LibreSCRS_* target links PUBLIC (directly or via
     # LibreSCRS_SmartCard), so the facade's process-global sink has exactly one
@@ -70,20 +69,17 @@ set_target_properties(LibreSCRS_Auth PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_options(LibreSCRS_Auth PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden -fvisibility-inlines-hidden>
 )
-if(LIBREMIDDLEWARE_BUILD_SHARED)
-    set_target_properties(LibreSCRS_Auth PROPERTIES
-        VERSION   ${PROJECT_VERSION}
-        SOVERSION ${LIBRESCRS_ABI_SOVERSION}
-        C_VISIBILITY_PRESET hidden
-        CXX_VISIBILITY_PRESET hidden
-        VISIBILITY_INLINES_HIDDEN ON
-    )
-endif()
+set_target_properties(LibreSCRS_Auth PROPERTIES
+    VERSION   ${PROJECT_VERSION}
+    SOVERSION ${LIBRESCRS_ABI_SOVERSION}
+    C_VISIBILITY_PRESET hidden
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
 
 # Trust: public types + internal providers + composer + async lifecycle owner.
-add_library(LibreSCRS_Trust ${LIBREMIDDLEWARE_LIB_TYPE}
+add_library(LibreSCRS_Trust SHARED
     Trust/CscaMasterList.cpp
-    Trust/TrustConfig.cpp
     Trust/TrustStore.cpp
     Trust/TrustStoreService.cpp
     Trust/internal/BundledCertsProvider.cpp
@@ -135,22 +131,18 @@ target_compile_options(LibreSCRS_Trust PRIVATE
 # Drop libresign sources Trust does not reference. Trust pulls in LibreSign
 # for TL fetch/verify/anchor helpers only; without dead-stripping the entire
 # static archive (PAdES, CAdES, …) is mirrored into the .so.
-if(LIBREMIDDLEWARE_BUILD_SHARED)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-        target_link_options(LibreSCRS_Trust PRIVATE "LINKER:-dead_strip")
-    else()
-        target_link_options(LibreSCRS_Trust PRIVATE "LINKER:--gc-sections")
-    endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    target_link_options(LibreSCRS_Trust PRIVATE "LINKER:-dead_strip")
+else()
+    target_link_options(LibreSCRS_Trust PRIVATE "LINKER:--gc-sections")
 endif()
-if(LIBREMIDDLEWARE_BUILD_SHARED)
-    set_target_properties(LibreSCRS_Trust PROPERTIES
-        VERSION   ${PROJECT_VERSION}
-        SOVERSION ${LIBRESCRS_ABI_SOVERSION}
-        C_VISIBILITY_PRESET hidden
-        CXX_VISIBILITY_PRESET hidden
-        VISIBILITY_INLINES_HIDDEN ON
-    )
-endif()
+set_target_properties(LibreSCRS_Trust PROPERTIES
+    VERSION   ${PROJECT_VERSION}
+    SOVERSION ${LIBRESCRS_ABI_SOVERSION}
+    C_VISIBILITY_PRESET hidden
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
 
 # Certificate: ParsedCertificate public types + OID name database.
 # OID database codegen: merges OpenSSL objects.txt + curated TSVs into a
@@ -180,7 +172,7 @@ add_custom_command(
     VERBATIM
 )
 
-add_library(LibreSCRS_Certificate ${LIBREMIDDLEWARE_LIB_TYPE}
+add_library(LibreSCRS_Certificate SHARED
     Certificate/ObjectIdentifier.cpp
     Certificate/DistinguishedName.cpp
     Certificate/ParsedCertificate.cpp
@@ -204,25 +196,23 @@ set_target_properties(LibreSCRS_Certificate PROPERTIES POSITION_INDEPENDENT_CODE
 target_compile_options(LibreSCRS_Certificate PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden -fvisibility-inlines-hidden>
 )
-if(LIBREMIDDLEWARE_BUILD_SHARED)
-    set_target_properties(LibreSCRS_Certificate PROPERTIES
-        VERSION   ${PROJECT_VERSION}
-        SOVERSION ${LIBRESCRS_ABI_SOVERSION}
-        C_VISIBILITY_PRESET hidden
-        CXX_VISIBILITY_PRESET hidden
-        VISIBILITY_INLINES_HIDDEN ON
-    )
-endif()
+set_target_properties(LibreSCRS_Certificate PROPERTIES
+    VERSION   ${PROJECT_VERSION}
+    SOVERSION ${LIBRESCRS_ABI_SOVERSION}
+    C_VISIBILITY_PRESET hidden
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
 
 # SecureChannel: ISecureChannel abstraction + PlainChannel/PaceChannel/
 # BacChannel implementations. Hosts the cross-plugin secure-channel
 # coordination surface owned by CardSession. Declared before SmartCard
 # because SmartCard PUBLIC-links it for the CardSession.h surface.
 #
-# Public headers (BacParams.h, PaceParams.h, ChannelErrors.h) live under
+# Public headers (BacParams.h, ChannelErrors.h) live under
 # `include/LibreSCRS/SecureChannel/`. Implementation-private headers
-# (ISecureChannel.h, PlainChannel.h, PaceChannel.h, BacChannel.h,
-# SessionKeys.h, detail/ChannelStateMutator.h) live under
+# (ISecureChannel.h, PlainChannel.h, PaceChannel.h, PaceParams.h,
+# BacChannel.h, SessionKeys.h, detail/ChannelStateMutator.h) live under
 # `lib/SecureChannel/include/LibreSCRS_internal/SecureChannel/` and are
 # guarded by `#ifndef LIBRESCRS_INTERNAL_BUILD #error`. Only the public
 # subset is installed; the internal subset is on the target's PRIVATE
@@ -234,7 +224,7 @@ file(GLOB LIBRESCRS_SECURECHANNEL_INTERNAL_HEADERS CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/lib/SecureChannel/include/LibreSCRS_internal/SecureChannel/*.h"
     "${PROJECT_SOURCE_DIR}/lib/SecureChannel/include/LibreSCRS_internal/SecureChannel/detail/*.h"
 )
-add_library(LibreSCRS_SecureChannel ${LIBREMIDDLEWARE_LIB_TYPE}
+add_library(LibreSCRS_SecureChannel SHARED
     SecureChannel/plain_channel.cpp
     SecureChannel/pace_channel.cpp
     SecureChannel/pace_params.cpp
@@ -273,27 +263,22 @@ set_target_properties(LibreSCRS_SecureChannel PROPERTIES POSITION_INDEPENDENT_CO
 target_compile_options(LibreSCRS_SecureChannel PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden -fvisibility-inlines-hidden>
 )
-if(LIBREMIDDLEWARE_BUILD_SHARED)
-    set_target_properties(LibreSCRS_SecureChannel PROPERTIES
-        VERSION   ${PROJECT_VERSION}
-        SOVERSION ${LIBRESCRS_ABI_SOVERSION}
-        C_VISIBILITY_PRESET hidden
-        CXX_VISIBILITY_PRESET hidden
-        VISIBILITY_INLINES_HIDDEN ON
-    )
-endif()
+set_target_properties(LibreSCRS_SecureChannel PROPERTIES
+    VERSION   ${PROJECT_VERSION}
+    SOVERSION ${LIBRESCRS_ABI_SOVERSION}
+    C_VISIBILITY_PRESET hidden
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
 
 file(GLOB LIBRESCRS_SMARTCARD_INTERNAL_HEADERS CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/lib/SmartCard/include/LibreSCRS_internal/SmartCard/*.h"
 )
-add_library(LibreSCRS_SmartCard ${LIBREMIDDLEWARE_LIB_TYPE}
+add_library(LibreSCRS_SmartCard SHARED
     SmartCard/ActiveChannelHolder.cpp
-    SmartCard/CardMap.cpp
     SmartCard/CardSession.cpp
     SmartCard/DefaultScanProvider.cpp
     SmartCard/MonitorService.cpp
-    SmartCard/SessionPresence.cpp
-    SmartCard/SmartCardServices.cpp
     # The connection holds process-wide card state, so it is defined here and
     # only here; every other image imports it from this library. macOS reaches
     # the card through one held CryptoTokenKit session, everything else
@@ -320,7 +305,9 @@ target_include_directories(LibreSCRS_SmartCard PUBLIC
 # because <smartcard/pcsc_connection.h>/<smartcard/monitor.h> transitively
 # pull "apdu.h"/"ipcsc_scan_provider.h" from the same directory.
 target_include_directories(LibreSCRS_SmartCard PRIVATE
-    ${PROJECT_SOURCE_DIR}/lib/smartcard/src)
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+    # <LibreSCRS_internal/LogNoexcept.h>
+    ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include)
 target_compile_features(LibreSCRS_SmartCard PUBLIC cxx_std_23)
 target_compile_definitions(LibreSCRS_SmartCard PRIVATE LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD)
 if(APPLE)
@@ -340,20 +327,16 @@ target_link_libraries(LibreSCRS_SmartCard
 target_compile_options(LibreSCRS_SmartCard PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden -fvisibility-inlines-hidden>
 )
-if(LIBREMIDDLEWARE_BUILD_SHARED)
-    set_target_properties(LibreSCRS_SmartCard PROPERTIES
-        VERSION   ${PROJECT_VERSION}
-        SOVERSION ${LIBRESCRS_ABI_SOVERSION}
-        C_VISIBILITY_PRESET hidden
-        CXX_VISIBILITY_PRESET hidden
-        VISIBILITY_INLINES_HIDDEN ON
-    )
-endif()
+set_target_properties(LibreSCRS_SmartCard PROPERTIES
+    VERSION   ${PROJECT_VERSION}
+    SOVERSION ${LIBRESCRS_ABI_SOVERSION}
+    C_VISIBILITY_PRESET hidden
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
 
-# Plugin: public AutoReaderService wrapper over the internal CardPluginService.
-add_library(LibreSCRS_Plugin ${LIBREMIDDLEWARE_LIB_TYPE}
-    Plugin/AutoReaderService.cpp
-    Plugin/CardDataAccess.cpp
+# Plugin: the public plugin surface over the internal CardPluginService.
+add_library(LibreSCRS_Plugin SHARED
     Plugin/SecurityCheck.cpp
     ${LIBRESCRS_PLUGIN_PUBLIC_HEADERS}
 )
@@ -364,11 +347,8 @@ target_include_directories(LibreSCRS_Plugin PRIVATE
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/lib/plugin/src>)
 target_compile_features(LibreSCRS_Plugin PUBLIC cxx_std_23)
 target_compile_definitions(LibreSCRS_Plugin PRIVATE LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD)
-# LIBRESCRS_INTERNAL_BUILD: sibling-consistent with SmartCard + Signing.
-# AutoReaderService.cpp does not yet include any Plugin/detail/*.h, but making
-# this uniform across all four public targets removes the silent-design-
-# inconsistency surfaced during 4.0 arch review and ensures future
-# detail/ additions work without a CMake edit.
+# LIBRESCRS_INTERNAL_BUILD: sibling-consistent with SmartCard + Signing, so
+# future detail/ additions work without a CMake edit.
 target_link_libraries(LibreSCRS_Plugin
     PUBLIC  LibreSCRS_Auth LibreSCRS_SmartCard LibreSCRS_Trust
     PRIVATE $<BUILD_INTERFACE:CardPlugin_Impl>
@@ -376,18 +356,16 @@ target_link_libraries(LibreSCRS_Plugin
 target_compile_options(LibreSCRS_Plugin PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden -fvisibility-inlines-hidden>
 )
-if(LIBREMIDDLEWARE_BUILD_SHARED)
-    set_target_properties(LibreSCRS_Plugin PROPERTIES
-        VERSION   ${PROJECT_VERSION}
-        SOVERSION ${LIBRESCRS_ABI_SOVERSION}
-        C_VISIBILITY_PRESET hidden
-        CXX_VISIBILITY_PRESET hidden
-        VISIBILITY_INLINES_HIDDEN ON
-    )
-endif()
+set_target_properties(LibreSCRS_Plugin PROPERTIES
+    VERSION   ${PROJECT_VERSION}
+    SOVERSION ${LIBRESCRS_ABI_SOVERSION}
+    C_VISIBILITY_PRESET hidden
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
 
 # Signing: opaque-pimpl request/response types + builders.
-add_library(LibreSCRS_Signing ${LIBREMIDDLEWARE_LIB_TYPE}
+add_library(LibreSCRS_Signing SHARED
     Signing/SigningRequest.cpp
     Signing/VisualSignatureParams.cpp
     Signing/TsaProvider.cpp
@@ -402,12 +380,12 @@ target_compile_definitions(LibreSCRS_Signing PRIVATE LIBRESCRS_BUILDING LIBRESCR
 # LIBRESCRS_INTERNAL_BUILD lets SigningService.cpp include the local
 # detail/ErrorClassifier.h (guarded) and transitively pull the internal
 # apdu.h (still referenced by smartcard/pcsc_connection.h) through the
-# include graph of CardPlugin_Impl/SmartCard_Impl headers.
+# include graph of the SmartCard_Impl headers.
 target_include_directories(LibreSCRS_Signing PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 # libresign has no PUBLIC include directory; its internal headers
-# (signing_service.h, signing_service_factory.h, types.h) live in
+# (signing_service.h, native/native_signing_service.h, types.h) live in
 # lib/libresign/src/. The bridge SigningService.cpp needs them to translate
 # libresign:: types into LibreSCRS:: types, so opt in via a PRIVATE include
 # of the src root. The lifecycle role of the trust store lives on
@@ -415,30 +393,30 @@ target_include_directories(LibreSCRS_Signing PUBLIC
 target_include_directories(LibreSCRS_Signing PRIVATE
     ${PROJECT_SOURCE_DIR}/lib/libresign/src)
 target_compile_features(LibreSCRS_Signing PUBLIC cxx_std_23)
-# CardPlugin_Impl kept PRIVATE so consumers of LibreSCRS::Signing don't
-# transitively pull the internal archive's include graph. SigningService.h's
-# forward declaration of LibreSCRS::Plugin::CardPlugin is sufficient for
-# consumers; to actually construct a shared_ptr<CardPlugin> they must link
-# LibreSCRS::Plugin separately.
+# Signing calls a card plugin through the NVI entry points
+# libLibreSCRS_Plugin exports, so it links that library and does not absorb
+# CardPlugin_Impl: absorbing it made this library export the whole plugin
+# layer a second time. PRIVATE, because SigningService.h only forward-declares
+# LibreSCRS::Plugin::CardPlugin; a consumer that constructs plugins links
+# LibreSCRS::Plugin itself. abi-snapshot.sh refuses a function exported by two
+# libraries.
 target_link_libraries(LibreSCRS_Signing
     PUBLIC  LibreSCRS_Auth LibreSCRS_Trust
     PRIVATE
-        $<BUILD_INTERFACE:CardPlugin_Impl>
+        LibreSCRS_Plugin
         $<BUILD_INTERFACE:LibreSign>
         $<BUILD_INTERFACE:SmartCard_Impl>
         $<BUILD_INTERFACE:OpenSSL_Crypto>)
 target_compile_options(LibreSCRS_Signing PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden -fvisibility-inlines-hidden>
 )
-if(LIBREMIDDLEWARE_BUILD_SHARED)
-    set_target_properties(LibreSCRS_Signing PROPERTIES
-        VERSION   ${PROJECT_VERSION}
-        SOVERSION ${LIBRESCRS_ABI_SOVERSION}
-        C_VISIBILITY_PRESET hidden
-        CXX_VISIBILITY_PRESET hidden
-        VISIBILITY_INLINES_HIDDEN ON
-    )
-endif()
+set_target_properties(LibreSCRS_Signing PROPERTIES
+    VERSION   ${PROJECT_VERSION}
+    SOVERSION ${LIBRESCRS_ABI_SOVERSION}
+    C_VISIBILITY_PRESET hidden
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
 
 # ──────────────────────────────────────────────────────────────────────────
 # SHARED-build symbol hygiene: namespace-allowlist version script.
@@ -459,7 +437,9 @@ endif()
 #                                    libLibreSCRS_SmartCard.so.
 #   * Local everything else        — OpenSSL, libresign::, nlohmann::,
 #                                    miniz, pugixml, std-template
-#                                    instantiations on internal types.
+#                                    instantiations (on LibreSCRS types
+#                                    too: the patterns match the mangled
+#                                    name, rooted in the namespace).
 #
 # `--exclude-libs` was tried and rejected: the public
 # `LibreSCRS::Signing::layoutVisualSignature` lives in libresign source
@@ -468,43 +448,78 @@ endif()
 # symbol. Namespace-allowlist routes around that confusion by working in
 # C++-namespace space, not archive space.
 # ──────────────────────────────────────────────────────────────────────────
-if(LIBREMIDDLEWARE_BUILD_SHARED)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        set(_lm_export_filter "${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/librescrs-public-exports.map")
-        set(_lm_export_link_opt
-            "LINKER:--version-script=${_lm_export_filter}")
-    elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-        # Apple ld counterpart — same allowlist intent, different syntax.
-        # Itanium-ABI mangled names with the leading Darwin `_` prefix
-        # (i.e. `__ZN9LibreSCRS…` / `__ZN9smartcard…`).
-        set(_lm_export_filter "${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/librescrs-public-exports.darwin.list")
-        set(_lm_export_link_opt
-            "LINKER:-exported_symbols_list,${_lm_export_filter}")
-    else()
-        set(_lm_export_filter "")
-    endif()
-
-    if(_lm_export_filter)
-        foreach(_lm_target Auth Trust Certificate SmartCard SecureChannel Plugin Signing)
-            target_link_options(LibreSCRS_${_lm_target} PRIVATE
-                "${_lm_export_link_opt}")
-            set_property(TARGET LibreSCRS_${_lm_target} APPEND PROPERTY
-                LINK_DEPENDS "${_lm_export_filter}")
-        endforeach()
-    endif()
-
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(_lm_export_filter "${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/librescrs-public-exports.map")
+    set(_lm_export_link_opt
+        "LINKER:--version-script=${_lm_export_filter}")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    # Apple ld counterpart — same allowlist intent, different syntax.
+    # Itanium-ABI mangled names with the leading Darwin `_` prefix
+    # (i.e. `__ZN9LibreSCRS…` / `__ZN9smartcard…`).
+    set(_lm_export_filter "${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/librescrs-public-exports.darwin.list")
+    set(_lm_export_link_opt
+        "LINKER:-exported_symbols_list,${_lm_export_filter}")
+else()
+    set(_lm_export_filter "")
 endif()
+
+if(_lm_export_filter)
+    foreach(_lm_target Auth Trust Certificate SmartCard SecureChannel Plugin Signing)
+        target_link_options(LibreSCRS_${_lm_target} PRIVATE
+            "${_lm_export_link_opt}")
+        set_property(TARGET LibreSCRS_${_lm_target} APPEND PROPERTY
+            LINK_DEPENDS "${_lm_export_filter}")
+    endforeach()
+endif()
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Declared test support: LibreSCRS::SmartCardTesting.
+#
+# <LibreSCRS/SmartCard/testing/CardSessionTesting.h> — detached card sessions
+# and stand-in secure channels for the tests of projects built on LibreSCRS
+# (and for LibreMiddleware's own). A static archive, installed with the
+# development files, so no shipped shared library exports a test seam. It
+# also carries detail::ChannelInjector::installForTesting, the one path that
+# installs a channel double, which the stand-in goes through.
+#
+# The archive writes CardSession's private state (CardSessionImpl.h), so it
+# is built from the internal headers but links nothing of the internals: every
+# symbol it calls (CardSession's private constructor, the detached
+# PCSCConnection constructor) is exported by libLibreSCRS_SmartCard.
+# ──────────────────────────────────────────────────────────────────────────
+add_library(LibreSCRS_SmartCardTesting STATIC
+    SmartCard/testing/card_session_testing.cpp
+    SmartCard/testing/channel_injector.cpp
+)
+target_link_libraries(LibreSCRS_SmartCardTesting PUBLIC LibreSCRS_SmartCard)
+target_include_directories(LibreSCRS_SmartCardTesting PRIVATE
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/include
+    $<TARGET_PROPERTY:PCSC::PCSC,INTERFACE_INCLUDE_DIRECTORIES>)
+target_compile_features(LibreSCRS_SmartCardTesting PUBLIC cxx_std_23)
+target_compile_definitions(LibreSCRS_SmartCardTesting PRIVATE LIBRESCRS_INTERNAL_BUILD)
+# libLibreSCRSTesting_SmartCard.a: outside the libLibreSCRS_* name the seven
+# core libraries share, which packaging globs and the impl-visibility gate's
+# archive count rely on.
+set_target_properties(LibreSCRS_SmartCardTesting PROPERTIES
+    OUTPUT_NAME LibreSCRSTesting_SmartCard
+    POSITION_INDEPENDENT_CODE ON
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
 
 # ──────────────────────────────────────────────────────────────────────────
 # Test-only helper archive.
 #
 # The test-injection helpers (detail::makeMonitorWithProvider,
-# detail::makeSubscriptionIdForTest, detail::ChannelInjector::
-# installForTesting, Internal::shutdownSessionPresenceForTest,
+# detail::makeSubscriptionIdForTest, the MonitorService dispatch seams
+# detail::publishForTest / publishReaderListForTest / coalesceStateSizeForTest,
 # Internal::PCSCConnection::setDetachedAtr) live here rather than in the
 # production libLibreSCRS_SmartCard so consumers of the released SDK never
 # see the helper symbols at link or runtime. Test executables that need the
-# helpers link this archive alongside the production target.
+# helpers link this archive alongside the production target; it brings the
+# declared LibreSCRS_SmartCardTesting archive with it.
 #
 # PCSCConnection::setDetachedAtr is the odd one out in shape only: it is a
 # declared member of a production class (lib/smartcard/src/
@@ -521,21 +536,20 @@ endif()
 # every test executable that links it, with no archive-level
 # whole-archive opt-in needed. Default visibility on the archive
 # (overriding the production target's hidden default) keeps the helper
-# symbols linkable from test executables; the production library's
-# version-script `local:` block on Linux and `-unexported_symbol` globs
-# on Darwin strip any stray definition that ever finds its way into the
-# .so / .dylib.
+# symbols linkable from test executables. Should a definition ever find its
+# way into the production library, the version script's `local:` block
+# strips it on Linux; on Darwin, whose export list is an allowlist glob with
+# no per-symbol exclusions, the LIBRESCRS_INTERNAL attribute on each
+# declaration is the only guard.
 #
 # Not installed (no install(TARGETS …) rule). Build-tree-only.
 # ──────────────────────────────────────────────────────────────────────────
 add_library(LibreSCRS_SmartCard_TestHelpers OBJECT
     SmartCard/test_helpers/monitor_test_helpers.cpp
-    SmartCard/test_helpers/channel_test_helpers.cpp
-    SmartCard/test_helpers/session_presence_test_helpers.cpp
     SmartCard/test_helpers/pcsc_connection_test_helpers.cpp
 )
 target_link_libraries(LibreSCRS_SmartCard_TestHelpers
-    PUBLIC LibreSCRS_SmartCard
+    PUBLIC LibreSCRS_SmartCard LibreSCRS_SmartCardTesting
     PRIVATE $<BUILD_INTERFACE:SmartCard_Impl>
 )
 target_include_directories(LibreSCRS_SmartCard_TestHelpers
@@ -549,6 +563,35 @@ set_target_properties(LibreSCRS_SmartCard_TestHelpers PROPERTIES
     CXX_VISIBILITY_PRESET default
     VISIBILITY_INLINES_HIDDEN OFF
 )
+
+# ──────────────────────────────────────────────────────────────────────────
+# Raw PC/SC open for hardware probes and diagnostic tools.
+#
+# Production code opens a card through CardSession::open, which keeps one
+# session per reader. Probes under test/ and tools/ that talk to a card
+# below that layer call Internal::openRawDiagnostic(), whose declaration
+# (raw_diagnostic/pcsc_raw_diagnostic.h) is on the include path of this
+# archive's consumers only and whose definition is in this archive only. No
+# library links it, so a library source that declares the function itself
+# leaves an undefined symbol: the executables that link a core library, and
+# the plugin loader's RTLD_NOW, both refuse it.
+#
+# OBJECT, like the test helpers above: the object lands in the executable
+# ahead of SmartCard_Impl, so archive order cannot drop the reference.
+#
+# Not installed (no install(TARGETS …) rule). Build-tree-only.
+# ──────────────────────────────────────────────────────────────────────────
+add_library(LibreSCRS_SmartCard_RawDiagnostic OBJECT
+    SmartCard/raw_diagnostic/pcsc_raw_diagnostic.cpp
+)
+target_link_libraries(LibreSCRS_SmartCard_RawDiagnostic
+    PUBLIC LibreSCRS_SmartCard $<BUILD_INTERFACE:SmartCard_Impl>
+)
+target_include_directories(LibreSCRS_SmartCard_RawDiagnostic
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/SmartCard/raw_diagnostic ${PROJECT_SOURCE_DIR}/lib/smartcard/src)
+target_compile_features(LibreSCRS_SmartCard_RawDiagnostic PUBLIC cxx_std_23)
+target_compile_definitions(LibreSCRS_SmartCard_RawDiagnostic PUBLIC LIBRESCRS_INTERNAL_BUILD)
+set_target_properties(LibreSCRS_SmartCard_RawDiagnostic PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # ──────────────────────────────────────────────────────────────────────────
 # Test-only copy of the PC/SC connection.
@@ -602,10 +645,14 @@ add_library(LibreSCRS_SmartCard_CtkForTests OBJECT
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_ctk.cpp
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_scan_provider.cpp
     ${PROJECT_SOURCE_DIR}/test/ctk_fake.cpp
+    # The raw open again, compiled against this copy's class layout.
+    SmartCard/raw_diagnostic/pcsc_raw_diagnostic.cpp
 )
-target_link_libraries(LibreSCRS_SmartCard_CtkForTests PUBLIC $<BUILD_INTERFACE:SmartCard_Impl>)
+# LibreSCRS_Auth: the connection traces through the logging facade.
+target_link_libraries(LibreSCRS_SmartCard_CtkForTests PUBLIC $<BUILD_INTERFACE:SmartCard_Impl> LibreSCRS_Auth)
 target_include_directories(LibreSCRS_SmartCard_CtkForTests
-    PUBLIC ${PROJECT_SOURCE_DIR}/lib/smartcard/src ${PROJECT_SOURCE_DIR}/test)
+    PUBLIC ${PROJECT_SOURCE_DIR}/lib/smartcard/src ${PROJECT_SOURCE_DIR}/test
+           ${CMAKE_CURRENT_SOURCE_DIR}/SmartCard/raw_diagnostic)
 target_compile_features(LibreSCRS_SmartCard_CtkForTests PUBLIC cxx_std_23)
 target_compile_definitions(LibreSCRS_SmartCard_CtkForTests PUBLIC
     LIBRESCRS_SMARTCARD_CTK_FAKE LIBRESCRS_INTERNAL_BUILD)
@@ -614,7 +661,8 @@ set_target_properties(LibreSCRS_SmartCard_CtkForTests PROPERTIES POSITION_INDEPE
 # The shipped libraries. LibreSCRS_Secure and LibreSCRS_All are INTERFACE
 # targets with no sources of their own, and LibreSCRS_SmartCard_TestHelpers and
 # LibreSCRS_SmartCard_PcscForTests are build-tree-only test scaffolding — none
-# of the four is listed.
+# of the four is listed. LibreSCRS_SmartCardTesting ships in the development
+# files, so it is.
 librescrs_warnings_as_errors(
     LibreSCRS_Auth
     LibreSCRS_Trust
@@ -623,6 +671,7 @@ librescrs_warnings_as_errors(
     LibreSCRS_SmartCard
     LibreSCRS_Plugin
     LibreSCRS_Signing
+    LibreSCRS_SmartCardTesting
 )
 
 # Public aliases — consumers use these.
@@ -633,6 +682,7 @@ add_library(LibreSCRS::Signing   ALIAS LibreSCRS_Signing)
 add_library(LibreSCRS::Trust     ALIAS LibreSCRS_Trust)
 add_library(LibreSCRS::Certificate ALIAS LibreSCRS_Certificate)
 add_library(LibreSCRS::SecureChannel ALIAS LibreSCRS_SecureChannel)
+add_library(LibreSCRS::SmartCardTesting ALIAS LibreSCRS_SmartCardTesting)
 
 # Secure namespace lives inside LibreSCRS_Auth (no separate compilation unit
 # cost; see Buffer.cpp being compiled into LibreSCRS_Auth target). A pure
@@ -651,8 +701,7 @@ add_library(LibreSCRS::All ALIAS LibreSCRS_All)
 # ──────────────────────────────────────────────────────────────────────────
 # CMake Config-package export for downstream find_package consumers.
 #
-# Active when LIBREMIDDLEWARE_BUILD_SHARED=ON. Each of the six public
-# archive-or-shared targets plus the LibreSCRS_Secure INTERFACE
+# Each of the six public shared targets plus the LibreSCRS_Secure INTERFACE
 # aggregator is exported under EXPORT LibreMiddlewareTargets, with
 # EXPORT_NAME remapping the in-tree LibreSCRS_X spelling to the
 # downstream LibreSCRS::X spelling — the same spelling the headers and
@@ -660,36 +709,42 @@ add_library(LibreSCRS::All ALIAS LibreSCRS_All)
 # materialises Targets.cmake into the same dir as the Config + Version
 # files generated by the root CMakeLists.txt.
 # ──────────────────────────────────────────────────────────────────────────
-if(LIBREMIDDLEWARE_BUILD_SHARED)
-    include(GNUInstallDirs)
+include(GNUInstallDirs)
 
-    set_target_properties(LibreSCRS_Auth        PROPERTIES EXPORT_NAME Auth)
-    set_target_properties(LibreSCRS_Trust       PROPERTIES EXPORT_NAME Trust)
-    set_target_properties(LibreSCRS_Certificate PROPERTIES EXPORT_NAME Certificate)
-    set_target_properties(LibreSCRS_SmartCard   PROPERTIES EXPORT_NAME SmartCard)
-    set_target_properties(LibreSCRS_SecureChannel PROPERTIES EXPORT_NAME SecureChannel)
-    set_target_properties(LibreSCRS_Plugin      PROPERTIES EXPORT_NAME Plugin)
-    set_target_properties(LibreSCRS_Signing     PROPERTIES EXPORT_NAME Signing)
-    set_target_properties(LibreSCRS_Secure      PROPERTIES EXPORT_NAME Secure)
+set_target_properties(LibreSCRS_Auth        PROPERTIES EXPORT_NAME Auth)
+set_target_properties(LibreSCRS_Trust       PROPERTIES EXPORT_NAME Trust)
+set_target_properties(LibreSCRS_Certificate PROPERTIES EXPORT_NAME Certificate)
+set_target_properties(LibreSCRS_SmartCard   PROPERTIES EXPORT_NAME SmartCard)
+set_target_properties(LibreSCRS_SecureChannel PROPERTIES EXPORT_NAME SecureChannel)
+set_target_properties(LibreSCRS_Plugin      PROPERTIES EXPORT_NAME Plugin)
+set_target_properties(LibreSCRS_Signing     PROPERTIES EXPORT_NAME Signing)
+set_target_properties(LibreSCRS_Secure      PROPERTIES EXPORT_NAME Secure)
+set_target_properties(LibreSCRS_SmartCardTesting PROPERTIES EXPORT_NAME SmartCardTesting)
 
-    foreach(_lm_target Auth Trust Certificate SmartCard SecureChannel Plugin Signing)
-        install(TARGETS LibreSCRS_${_lm_target}
-            EXPORT   LibreMiddlewareTargets
-            LIBRARY  DESTINATION ${CMAKE_INSTALL_LIBDIR}
-            ARCHIVE  DESTINATION ${CMAKE_INSTALL_LIBDIR}
-            RUNTIME  DESTINATION ${CMAKE_INSTALL_BINDIR}
-            INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-        )
-    endforeach()
-
-    install(TARGETS LibreSCRS_Secure
+foreach(_lm_target Auth Trust Certificate SmartCard SecureChannel Plugin Signing)
+    install(TARGETS LibreSCRS_${_lm_target}
         EXPORT   LibreMiddlewareTargets
+        LIBRARY  DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        ARCHIVE  DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME  DESTINATION ${CMAKE_INSTALL_BINDIR}
         INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     )
+endforeach()
 
-    install(EXPORT LibreMiddlewareTargets
-        FILE      LibreMiddlewareTargets.cmake
-        NAMESPACE LibreSCRS::
-        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/LibreMiddleware
-    )
-endif()
+install(TARGETS LibreSCRS_Secure
+    EXPORT   LibreMiddlewareTargets
+    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+
+# Development files only: the declared test support archive.
+install(TARGETS LibreSCRS_SmartCardTesting
+    EXPORT   LibreMiddlewareTargets
+    ARCHIVE  DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+
+install(EXPORT LibreMiddlewareTargets
+    FILE      LibreMiddlewareTargets.cmake
+    NAMESPACE LibreSCRS::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/LibreMiddleware
+)

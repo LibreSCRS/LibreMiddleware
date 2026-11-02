@@ -7,6 +7,7 @@
 #include <emrtd_card.h>
 #include <emrtd_types.h>
 #include <pcsc_connection.h>
+#include <pcsc_raw_diagnostic.h>
 
 #include <LibreSCRS/Auth/PaceSecretKind.h>
 #include <LibreSCRS/CancelToken.h>
@@ -46,7 +47,7 @@ TEST(PACEHardwareTest, PaceWithCAN)
     if (readers.empty())
         GTEST_SKIP() << "No smart card readers found";
 
-    auto connOwner = LibreSCRS::SmartCard::Internal::PCSCConnection::openRawDiagnostic(readers[0]);
+    auto connOwner = LibreSCRS::SmartCard::Internal::openRawDiagnostic(readers[0]);
     auto& conn = *connOwner;
 
     // Read EF.CardAccess from MF

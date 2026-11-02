@@ -8,7 +8,76 @@
 #include <apdu.h>
 #include <ber.h>
 
+#include <cstddef>
+#include <optional>
+#include <utility>
+#include <vector>
+
 namespace emrtd {
+
+namespace {
+
+using LibreSCRS::SmartCard::Internal::APDUCommand;
+
+// READ BINARY with the even INS addresses 15 bits of offset: bit 8 of P1
+// selects short-EF addressing. Beyond them ISO 7816-4 and ICAO 9303-10 use
+// the odd INS B1, the offset in DO'54 and the data returned in DO'53.
+constexpr std::size_t kMaxShortReadOffset = 0x7FFF;
+constexpr std::size_t kMaxFileSize = 1024 * 1024;
+
+APDUCommand readBinaryAt(std::size_t offset)
+{
+    if (offset <= kMaxShortReadOffset)
+        return APDUCommand{0x00, 0xB0, static_cast<uint8_t>(offset >> 8), static_cast<uint8_t>(offset & 0xFF), {},
+                           0x00, true};
+    std::vector<uint8_t> offsetBytes;
+    for (std::size_t v = offset; v != 0; v >>= 8)
+        offsetBytes.insert(offsetBytes.begin(), static_cast<uint8_t>(v & 0xFF));
+    std::vector<uint8_t> data{0x54, static_cast<uint8_t>(offsetBytes.size())};
+    data.insert(data.end(), offsetBytes.begin(), offsetBytes.end());
+    return APDUCommand{0x00, 0xB1, 0x00, 0x00, std::move(data), 0x00, true};
+}
+
+// A BER length at data[pos]: its value and the bytes it takes, or nothing.
+// The decode is the shared one; the ceiling is this reader's: an eMRTD file
+// header uses at most three length octets (`next - pos` up to 4).
+std::optional<std::pair<std::size_t, std::size_t>> berLength(const std::vector<uint8_t>& data, std::size_t pos)
+{
+    const auto parsed = LibreSCRS::SmartCard::Internal::tryParseLength(data.data(), data.size(), pos);
+    if (!parsed.ok || parsed.next - pos > 4)
+        return std::nullopt;
+    return std::pair<std::size_t, std::size_t>{parsed.length, parsed.next - pos};
+}
+
+// The data of an odd-INS READ BINARY answer: the value of its DO'53.
+std::optional<std::vector<uint8_t>> oddInsReadData(const std::vector<uint8_t>& answer)
+{
+    if (answer.empty() || answer[0] != 0x53)
+        return std::nullopt;
+    const auto len = berLength(answer, 1);
+    if (!len || 1 + len->second + len->first > answer.size())
+        return std::nullopt;
+    const auto begin = answer.begin() + static_cast<std::ptrdiff_t>(1 + len->second);
+    return std::vector<uint8_t>(begin, begin + static_cast<std::ptrdiff_t>(len->first));
+}
+
+// The whole length of the TLV the file holds, once its header has been read;
+// 0 while it has not.
+std::size_t declaredLength(const std::vector<uint8_t>& fileData)
+{
+    if (fileData.empty())
+        return 0;
+    std::size_t pos = 1;
+    if ((fileData[0] & 0x1F) == 0x1F) {
+        while (pos < fileData.size() && (fileData[pos] & 0x80))
+            ++pos;
+        ++pos;
+    }
+    const auto len = berLength(fileData, pos);
+    return len ? pos + len->second + len->first : 0;
+}
+
+} // namespace
 
 EMRTDCard::EMRTDCard(LibreSCRS::SecureChannel::ISecureChannel& channel) : channel(channel) {}
 
@@ -30,64 +99,47 @@ std::optional<std::vector<uint8_t>> EMRTDCard::readFile(uint16_t fid, bool skipS
             return std::nullopt;
     }
 
-    // READ BINARY in chunks of 256 bytes (Le=0x00 = 256 in short APDU form)
-    static constexpr uint8_t READ_LE = 0x00;
+    // READ BINARY in chunks of up to 256 bytes until the length the file's
+    // own TLV header declares has been read. Every answer is checked: a file
+    // cut short by an error, or by an end of file before its declared end,
+    // is no file.
     std::vector<uint8_t> fileData;
-    size_t offset = 0;
-    bool firstChunk = true;
-    size_t totalLength = 0;
+    std::size_t totalLength = 0;
 
     while (true) {
-        uint8_t p1 = static_cast<uint8_t>((offset >> 8) & 0x7F);
-        uint8_t p2 = static_cast<uint8_t>(offset & 0xFF);
-        LibreSCRS::SmartCard::Internal::APDUCommand readCmd{0x00, 0xB0, p1, p2, {}, READ_LE, true};
+        const std::size_t offset = fileData.size();
+        const bool beyondShortOffset = offset > kMaxShortReadOffset;
+        auto resp = channel.transmit(readBinaryAt(offset), LibreSCRS::CancelToken{});
+        const bool endOfFile = resp.statusWord() == 0x6282;
+        if (!resp.isSuccess() && !endOfFile)
+            return std::nullopt;
 
-        auto resp = channel.transmit(readCmd, LibreSCRS::CancelToken{});
-        if (resp.data.empty()) {
+        std::vector<uint8_t> chunk;
+        if (beyondShortOffset) {
+            auto inner = oddInsReadData(resp.data);
+            if (!inner)
+                return std::nullopt;
+            chunk = std::move(*inner);
+        } else {
+            chunk = std::move(resp.data);
+        }
+        if (chunk.empty())
             break;
-        }
+        fileData.insert(fileData.end(), chunk.begin(), chunk.end());
 
-        fileData.insert(fileData.end(), resp.data.begin(), resp.data.end());
-
-        // Parse TLV length from first chunk to know total file size
-        if (firstChunk && fileData.size() >= 4) {
-            firstChunk = false;
-            size_t pos = 1; // skip tag byte
-            // Multi-byte tag check
-            if ((fileData[0] & 0x1F) == 0x1F) {
-                while (pos < fileData.size() && (fileData[pos] & 0x80))
-                    pos++;
-                pos++; // skip last tag byte
-            }
-            // Parse length
-            if (pos < fileData.size()) {
-                uint8_t lenByte = fileData[pos];
-                if (lenByte < 0x80) {
-                    totalLength = pos + 1 + lenByte;
-                } else if (lenByte == 0x81 && pos + 1 < fileData.size()) {
-                    totalLength = pos + 2 + fileData[pos + 1];
-                } else if (lenByte == 0x82 && pos + 2 < fileData.size()) {
-                    totalLength = pos + 3 + (fileData[pos + 1] << 8 | fileData[pos + 2]);
-                } else if (lenByte == 0x83 && pos + 3 < fileData.size()) {
-                    totalLength = pos + 4 + (fileData[pos + 1] << 16 | fileData[pos + 2] << 8 | fileData[pos + 3]);
-                }
-            }
-        }
-
-        offset += resp.data.size();
-
-        // Stop if we've read enough
+        if (totalLength == 0)
+            totalLength = declaredLength(fileData);
         if (totalLength > 0 && fileData.size() >= totalLength) {
             fileData.resize(totalLength);
             break;
         }
-
-        // Safety: stop after 1MB
-        if (fileData.size() > 1024 * 1024)
+        if (endOfFile)
             break;
+        if (fileData.size() > kMaxFileSize)
+            return std::nullopt;
     }
 
-    if (fileData.empty())
+    if (fileData.empty() || totalLength == 0 || fileData.size() < totalLength)
         return std::nullopt;
     return fileData;
 }
@@ -109,12 +161,12 @@ std::vector<int> EMRTDCard::readCOM()
             size_t len = 0;
             size_t dataStart = 0;
 
-            if (data[lenPos] < 0x80) {
-                len = data[lenPos];
-                dataStart = lenPos + 1;
-            } else if (data[lenPos] == 0x81 && lenPos + 1 < data.size()) {
-                len = data[lenPos + 1];
-                dataStart = lenPos + 2;
+            // The tag list is short: a short or 81 xx length, nothing longer
+            // (`next - lenPos` 1 or 2). Anything else reads as an empty list.
+            const auto parsed = LibreSCRS::SmartCard::Internal::tryParseLength(data.data(), data.size(), lenPos);
+            if (parsed.ok && parsed.next - lenPos <= 2) {
+                len = parsed.length;
+                dataStart = parsed.next;
             }
 
             // Each byte in the tag list is a DG tag

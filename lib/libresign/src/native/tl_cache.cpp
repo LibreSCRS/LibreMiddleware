@@ -4,6 +4,7 @@
 #include "tl_cache.h"
 #include "native_utils.h"
 
+#include <algorithm>
 #include <json.hpp>
 
 #include <chrono>
@@ -16,7 +17,46 @@ namespace fs = std::filesystem;
 
 namespace libresign {
 
-TlCache::TlCache(const std::string& cacheDir, std::chrono::hours ttl) : cacheDir(cacheDir), ttl(ttl) {}
+TlCache::TlCache(const std::string& cacheDir, std::chrono::hours ttl) : cacheDir(cacheDir), ttl(ttl)
+{
+    sweep();
+}
+
+void TlCache::sweep() noexcept
+{
+    if (cacheDir.empty())
+        return;
+    // The directory holds only what store() writes: <sha256 of the URL>.xml
+    // and .meta. Anything else (an earlier naming scheme, a stray file) is
+    // never read again, and an entry untouched for many lifetimes belongs to
+    // a list nobody configures any more; both would otherwise stay forever.
+    const auto isOurs = [](const fs::path& name) {
+        const auto stem = name.stem().string();
+        const auto ext = name.extension().string();
+        if (ext != ".xml" && ext != ".meta")
+            return false;
+        if (stem.size() != 64)
+            return false;
+        return std::all_of(stem.begin(), stem.end(),
+                           [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
+    };
+    const auto maxAge = std::chrono::duration_cast<fs::file_time_type::duration>(ttl * kSweepTtlMultiple);
+    const auto now = fs::file_time_type::clock::now();
+    std::error_code ec;
+    for (fs::directory_iterator it(cacheDir, ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code entryEc;
+        if (!it->is_regular_file(entryEc) || entryEc)
+            continue;
+        const auto name = it->path().filename();
+        bool stale = !isOurs(name);
+        if (!stale && ttl.count() > 0) {
+            const auto written = it->last_write_time(entryEc);
+            stale = !entryEc && now - written > maxAge;
+        }
+        if (stale)
+            fs::remove(it->path(), entryEc);
+    }
+}
 
 std::string TlCache::urlToFilename(const std::string& url) const
 {
@@ -100,6 +140,18 @@ std::optional<TlCache::CacheMeta> TlCache::loadMeta(const std::string& url) cons
 
 bool TlCache::refreshTimestamp(const std::string& url)
 {
+    return writeTimestamp(
+        url,
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+}
+
+bool TlCache::expire(const std::string& url)
+{
+    return writeTimestamp(url, 0);
+}
+
+bool TlCache::writeTimestamp(const std::string& url, std::int64_t timestamp)
+{
     auto stem = urlToFilename(url);
     auto metaPath = fs::path(cacheDir) / (stem + ".meta");
     auto xmlPath = fs::path(cacheDir) / (stem + ".xml");
@@ -120,10 +172,7 @@ bool TlCache::refreshTimestamp(const std::string& url)
         }
     }
 
-    // Update timestamp
-    auto now =
-        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    meta["timestamp"] = now;
+    meta["timestamp"] = timestamp;
 
     std::ofstream metaFile(metaPath);
     if (!metaFile)

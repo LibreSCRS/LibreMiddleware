@@ -5,7 +5,10 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
+#include <cstdint>
 #include <cstring>
+#include <span>
 #include <string_view>
 
 using LibreSCRS::Secure::Buffer;
@@ -17,21 +20,13 @@ TEST(SecureBufferTest, DefaultConstructIsEmpty)
     EXPECT_EQ(b.data(), nullptr);
 }
 
-TEST(SecureBufferTest, SizedConstructFillsWithZero)
+TEST(SecureBufferTest, SpanConstructCopiesBytes)
 {
-    Buffer b(16);
-    ASSERT_EQ(b.size(), 16u);
-    ASSERT_NE(b.data(), nullptr);
-    for (size_t i = 0; i < 16; ++i)
-        EXPECT_EQ(b.data()[i], 0);
-}
-
-TEST(SecureBufferTest, SizedConstructFillsWithValue)
-{
-    Buffer b(8, 0xAB);
-    ASSERT_EQ(b.size(), 8u);
-    for (size_t i = 0; i < 8; ++i)
-        EXPECT_EQ(b.data()[i], 0xAB);
+    const std::array<std::uint8_t, 4> bytes{0xDE, 0xAD, 0xBE, 0xEF};
+    Buffer b{std::span<const std::uint8_t>{bytes}};
+    ASSERT_EQ(b.size(), 4u);
+    EXPECT_NE(b.data(), bytes.data());
+    EXPECT_EQ(std::memcmp(b.data(), bytes.data(), 4), 0);
 }
 
 TEST(SecureBufferTest, StringViewConstructCopiesBytes)
@@ -44,7 +39,7 @@ TEST(SecureBufferTest, StringViewConstructCopiesBytes)
 
 TEST(SecureBufferTest, MoveConstructTransfersOwnership)
 {
-    Buffer src(4, 0xFF);
+    Buffer src(std::string_view{"\xFF\xFF\xFF\xFF"});
     const uint8_t* srcData = src.data();
     Buffer dst(std::move(src));
     EXPECT_EQ(dst.size(), 4u);
@@ -55,38 +50,10 @@ TEST(SecureBufferTest, MoveConstructTransfersOwnership)
 
 TEST(SecureBufferTest, MoveAssignTransfersOwnership)
 {
-    Buffer src(4, 0xEE);
-    Buffer dst(1);
+    Buffer src(std::string_view{"\xEE\xEE\xEE\xEE"});
+    Buffer dst(std::string_view{"x"});
     dst = std::move(src);
     EXPECT_EQ(dst.size(), 4u);
     EXPECT_EQ(dst.data()[0], 0xEE);
     EXPECT_EQ(src.size(), 0u);
-}
-
-TEST(SecureBufferTest, EqualityIdenticalContents)
-{
-    Buffer a(4, 0xAB);
-    Buffer b(4, 0xAB);
-    EXPECT_TRUE(a == b);
-}
-
-TEST(SecureBufferTest, EqualityDifferentSize)
-{
-    Buffer a(4, 0xAB);
-    Buffer b(5, 0xAB);
-    EXPECT_FALSE(a == b);
-}
-
-TEST(SecureBufferTest, EqualityDifferentBytes)
-{
-    Buffer a(4, 0xAB);
-    Buffer b(4, 0xCD);
-    EXPECT_FALSE(a == b);
-}
-
-TEST(SecureBufferTest, EqualityBothEmpty)
-{
-    Buffer a;
-    Buffer b;
-    EXPECT_TRUE(a == b);
 }

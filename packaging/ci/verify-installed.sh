@@ -3,8 +3,14 @@
 # Runs INSIDE a fresh container with the built packages at /pkg. Asserts what
 # the packages leave on a machine, not what the build printed.
 #
-# FAMILY is deb or rpm. Every assertion is its own test so a failure names
-# itself; nothing is measured through a pipe.
+# FAMILY is deb, rpm or arch; anything else is refused rather than read as
+# one of them. Every assertion is its own test so a failure names itself;
+# nothing is measured through a pipe.
+#
+# On arch, p11-kit comes from the package database the container step has
+# already synchronised with pacman -Syu; a -Sy here would be a partial
+# upgrade. No assertion rests on that install: V4 fails when p11-kit does not
+# answer.
 set -uo pipefail
 fail=0
 check() { if [ "$2" -eq 0 ]; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
@@ -29,7 +35,8 @@ if [ "${PKG_MANAGER:-}" = zypper ]; then
 fi
 
 
-if [ "${FAMILY:-deb}" = deb ]; then
+case "${FAMILY:-}" in
+deb)
   export DEBIAN_FRONTEND=noninteractive
   # The base container is not a machine. Ubuntu's image ships
   # /etc/dpkg/dpkg.cfg.d/excludes with path-exclude=/usr/share/locale/*/LC_MESSAGES/*.mo
@@ -40,8 +47,6 @@ if [ "${FAMILY:-deb}" = deb ]; then
   apt-get update -qq
   apt-get install -y -qq p11-kit >/dev/null
   LIBDIRGLOB="/usr/lib/*"
-  RUNTIME_PKG=liblibrescrs5
-  owner_of() { dpkg -S "$1" 2>/dev/null | cut -d: -f1; }
   installed_list() { dpkg-query -W -f='${Package}\n'; }
   install_all() { apt-get install -y --no-install-recommends /pkg/*.deb >/dev/null; }
   install_some() { apt-get install -y --no-install-recommends "$@" >/dev/null; }
@@ -54,11 +59,10 @@ if [ "${FAMILY:-deb}" = deb ]; then
       [ -e "$s" ] || continue; echo "--- $s"; cat "$s"
     done
   }
-else
+  ;;
+rpm)
   dnf -y -q install p11-kit >/dev/null
   LIBDIRGLOB="/usr/lib64"
-  RUNTIME_PKG=librescrs-middleware
-  owner_of() { rpm -qf --qf '%{NAME}' "$1" 2>/dev/null; }
   installed_list() { rpm -qa --qf '%{NAME}\n'; }
   install_all() { dnf -y -q install /pkg/*.rpm >/dev/null; }
   install_some() { dnf -y -q install "$@" >/dev/null; }
@@ -66,7 +70,28 @@ else
     dnf -y -q remove $(installed_list | grep -E '^(librescrs|liblibrescrs)') >/dev/null
   }
   dump_scripts() { rpm -q --scripts $(installed_list | grep -E '^(librescrs|liblibrescrs)') 2>/dev/null | grep -v '^$'; }
-fi
+  ;;
+arch)
+  # The PKGBUILD makes one package: Arch does not split headers or the test
+  # archive into a development package.
+  pacman -S --noconfirm --needed p11-kit >/dev/null
+  LIBDIRGLOB="/usr/lib"
+  installed_list() { pacman -Qq; }
+  install_all() { pacman -U --noconfirm /pkg/*.pkg.tar.zst >/dev/null; }
+  remove_ours() {
+    pacman -Rns --noconfirm $(installed_list | grep -E '^(librescrs|liblibrescrs)') >/dev/null
+  }
+  dump_scripts() {
+    for s in /var/lib/pacman/local/*librescrs*/install; do
+      [ -e "$s" ] || continue; echo "--- $s"; cat "$s"
+    done
+  }
+  ;;
+*)
+  echo "FAIL FAMILY='${FAMILY:-}' is not deb, rpm or arch"
+  exit 2
+  ;;
+esac
 
 # ── V1 the packages install at all ────────────────────────────────────────
 install_all; check "V1 install" $?
@@ -77,24 +102,22 @@ install_all; check "V1 install" $?
 test ! -e /usr/share/p11-kit/modules/librescrs.module
 check "V2 no p11-kit declaration from the middleware" $?
 
-# ── V3 all three module paths exist and belong to the RUNTIME package ─────
-# VERSION/SOVERSION on the PKCS#11 target emit .so.5.0.0, .so.5 and the bare
-# .so. A host that registers the module by hand names the bare name, so the
-# bare name must not sit in a development package a headless box would never
-# install.
-ls $LIBDIRGLOB/pkcs11/librescrs-pkcs11.so   >/dev/null 2>&1; check "V3 bare module path" $?
-ls $LIBDIRGLOB/pkcs11/librescrs-pkcs11.so.5 >/dev/null 2>&1; check "V3b soname path" $?
-for f in $LIBDIRGLOB/pkcs11/librescrs-pkcs11.so*; do
-  o="$(owner_of "$f")"
-  test "$o" = "$RUNTIME_PKG"; check "V3 owner $f = $o" $?
-done
+# ── V3 the middleware ships no PKCS#11 module ─────────────────────────────
+# A module opening the card from inside whatever application loads it is a
+# second connection beside the agent's; applications use the agent's provider.
+mods=$(find /usr -path '*/pkcs11/*librescrs*' 2>/dev/null | grep -v agent)
+test -z "$mods"; check "V3 no PKCS#11 module from the middleware" $?
+[ -n "$mods" ] && echo "$mods"
 
 # ── V4 no provider ────────────────────────────────────────────────────────
 # The anchor ^module: is not decoration: a bare `grep -c -i librescrs` counts
-# the path, uri and description lines too.
-n=$(p11-kit list-modules | grep -c '^module: librescrs')
-test "$n" -eq 0; check "V4 no librescrs provider registered by the middleware (counted $n)" $?
-p11-kit list-modules
+# the path, uri and description lines too. p11-kit has to answer: one that is
+# missing or fails lists nothing, and nothing would read as no provider.
+modules=$(p11-kit list-modules); p11rc=$?
+n=$(grep -c '^module: librescrs' <<<"$modules")
+test "$p11rc" -eq 0 && test "$n" -eq 0
+check "V4 no librescrs provider registered by the middleware (p11-kit rc $p11rc, counted $n)" $?
+printf '%s\n' "$modules"
 
 # ── V8 nothing generated mentions a user's home ───────────────────────────
 dump_scripts > /tmp/scripts.txt 2>&1
@@ -106,34 +129,39 @@ else
 fi
 check "V8 no maintainer script touches a home directory" $?
 
-# ── V11 nothing links against a library that is not there ─────────────────
-miss=0
-for f in $LIBDIRGLOB/libLibreSCRS_*.so.* $LIBDIRGLOB/librescrs/plugins/*.so \
-         $LIBDIRGLOB/pkcs11/librescrs-pkcs11.so; do
+# ── V12 no library dumps what a card answered ──────────────────────────────
+# An APDU response can be a certificate, a personal record or decrypted key
+# material. A build that left NDEBUG unset compiled a writer of every response
+# into the transport, and an RPM built that way shipped it. grep -a reads the
+# binaries directly: the container has no binutils.
+dump=0
+for f in $LIBDIRGLOB/libLibreSCRS_*.so* $LIBDIRGLOB/librescrs/plugins/*.so; do
   [ -e "$f" ] || continue
-  if ldd "$f" 2>/dev/null | grep -q 'not found'; then echo "  not found in $f"; miss=1; fi
+  if grep -q -a -F '[PCSC] RX' "$f"; then echo "  response dump in $f"; dump=1; fi
 done
-test "$miss" -eq 0; check "V11 no unresolved shared-library dependency" $?
+test "$dump" -eq 0; check "V12 no library carries an APDU response dump" $?
 
-# ── V3c the same claim WITHOUT the development package ────────────────────
-# The run above installed everything, so it could not see the module sitting in
-# the wrong package: the file would be on disk either way, just out of somebody
-# else's bag. A headless box is the opposite case.
-remove_ours
-if [ "${FAMILY:-deb}" = deb ]; then
-  install_some /pkg/liblibrescrs5_*.deb /pkg/librescrs-card-plugins_*.deb
+# ── V3c the runtime packages install WITHOUT the development package ──────
+# The run above installed everything, so it could not see a runtime file
+# sitting in the development package. A headless box is the opposite case.
+# Arch has no development package to leave out, so there is no such case.
+if [ "$FAMILY" = arch ]; then
+  echo "SKIP V3c headless install: the Arch recipe makes one package, with no development package to leave out"
 else
-  install_some /pkg/librescrs-middleware-5*.rpm /pkg/librescrs-card-plugins-5*.rpm
+  remove_ours
+  if [ "$FAMILY" = deb ]; then
+    install_some /pkg/liblibrescrs5_*.deb /pkg/librescrs-card-plugins_*.deb
+  else
+    install_some /pkg/librescrs-middleware-5*.rpm /pkg/librescrs-card-plugins-5*.rpm
+  fi
+  check "V3c headless install (no development package)" $?
+  installed_list > /tmp/inst.txt 2>&1; check "V3c package list readable" $?
+  test "$(wc -l < /tmp/inst.txt)" -gt 10; check "V3c package list is not empty" $?
+  test "$(grep -cE 'liblibrescrs-dev|librescrs-middleware-devel' /tmp/inst.txt)" -eq 0
+  check "V3c development package really absent" $?
+  n=$(p11-kit list-modules | grep -c '^module: librescrs')
+  test "$n" -eq 0; check "V3c still no provider" $?
 fi
-check "V3c headless install (no development package)" $?
-installed_list > /tmp/inst.txt 2>&1; check "V3c package list readable" $?
-test "$(wc -l < /tmp/inst.txt)" -gt 10; check "V3c package list is not empty" $?
-test "$(grep -cE 'liblibrescrs-dev|librescrs-middleware-devel' /tmp/inst.txt)" -eq 0
-check "V3c development package really absent" $?
-ls $LIBDIRGLOB/pkcs11/librescrs-pkcs11.so >/dev/null 2>&1
-check "V3c bare module still present without the development package" $?
-n=$(p11-kit list-modules | grep -c '^module: librescrs')
-test "$n" -eq 0; check "V3c still no provider" $?
 
 # ── V9 removal leaves nothing under /usr ──────────────────────────────────
 # Removing by query rather than by a hand-written list. A hand-written list

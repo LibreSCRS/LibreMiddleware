@@ -9,6 +9,7 @@
 
 #include <LibreSCRS/Export.h>
 #include <LibreSCRS/SmartCard/MonitorService.h>
+#include <LibreSCRS/SmartCard/detail/MonitorInjection.h>
 
 #include <ipcsc_scan_provider.h>
 #include <monitor.h>
@@ -16,6 +17,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <map>
@@ -43,60 +45,11 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
 
     std::mutex cbMtx;
     std::map<SubscriptionId, EventCallback> callbacks;
-    // Snapshot-style subscribers registered via subscribeReaderList. Keyed
-    // by the same opaque SubscriptionId token as `callbacks` so the same
-    // unsubscribe-arity disambiguates by lookup (a token is in exactly one
-    // map). Sharing the nextId counter guarantees the per-event and
-    // reader-list maps never collide on a token value.
-    std::map<SubscriptionId, MonitorService::ReaderListCallback> readerListCallbacks;
     std::optional<::LibreSCRS::SmartCard::Internal::Monitor::SubscriptionId> internalSubId;
     std::atomic<std::uint64_t> nextId{1};
 
     std::mutex readersMtx;
     std::set<std::string> knownReaders;
-
-    /// @brief True once the internal poll thread has completed its first
-    ///        @ref diffReadersAndDispatch invocation in the current polling
-    ///        session (i.e. `knownReaders` reflects an actual PC/SC scan
-    ///        outcome, even if the outcome was "zero readers").
-    ///
-    /// Gates the bootstrap-fire branch in @ref MonitorService::subscribeReaderList:
-    /// late joiners only receive a synchronous bootstrap snapshot once we
-    /// know the cached `knownReaders` set reflects a real enumeration
-    /// result, not the empty post-`clear()` state held while the poll
-    /// thread starts up. Late joiners arriving in the race window between
-    /// poll-thread start and first scan completion receive nothing
-    /// synchronously; they will receive a snapshot via the poll thread's
-    /// next dispatch — which fires whenever membership actually changes
-    /// (per @ref diffReadersAndDispatch's suppress-when-unchanged guard).
-    /// In the steady-state zero-readers-at-boot scenario specifically,
-    /// such late joiners receive nothing until a reader is plugged in;
-    /// this is acceptable because once `initialPollComplete` is set, any
-    /// FURTHER subscriber will hit the bootstrap branch and learn the
-    /// current (possibly-empty) membership synchronously.
-    ///
-    /// @par Lifecycle (monotonic per polling session, NOT per object lifetime)
-    /// - Constructed `false`.
-    /// - Set `true` at the end of `diffReadersAndDispatch` after the first
-    ///   successful enumerate-cycle in a polling session.
-    /// - Reset to `false` whenever the poll thread stops and `knownReaders`
-    ///   is cleared (i.e. inside the `firstSubscriber == true` branch of
-    ///   `subscribe` / `subscribeReaderList`, paired with `knownReaders.clear()`).
-    ///
-    /// @par Memory ordering
-    /// The atomic provides the synchronisation edge that gates whether
-    /// `subscribeReaderList` even attempts the bootstrap branch. The actual
-    /// `knownReaders` data race-freedom is provided by `readersMtx`: the
-    /// poll thread mutates `knownReaders` under `readersMtx`, releases it,
-    /// then later release-stores the flag; the subscriber acquire-loads
-    /// the flag, then takes `readersMtx` to read `knownReaders`. The mutex
-    /// alone is sufficient to publish the data; the acquire/release pair
-    /// is load-bearing only as a one-way gate ("has the poll thread
-    /// produced a real enumeration yet?").
-    ///
-    /// @since 4.2 — fix for the subscribeReaderList bootstrap-race
-    /// regression.
-    std::atomic<bool> initialPollComplete{false};
 
     // Held for the full snapshot-and-invoke phase of @ref dispatch so that
     // @ref MonitorService::unsubscribe (with @ref DrainPolicy::Drain) can
@@ -108,7 +61,7 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
 
     /// @brief Per-reader coalescer state.
     ///
-    /// A Card event is buffered for @ref Config::coalesceWindow before
+    /// A Card event is buffered for @ref detail::MonitorConfig::coalesceWindow before
     /// being forwarded to subscribers. If the opposite kind arrives on the
     /// same reader during that window, both the buffered event and the
     /// arriving one are dropped as a transient phantom (PC/SC
@@ -125,8 +78,8 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
         // Per-reader rate-limit window: timestamps of card events that
         // entered the dispatch path in the rolling 1-second trailing
         // window. Entries older than 1s are evicted on every dispatch.
-        // When the window count first crosses @ref Config::maxEventsPerSecond
-        // the reader enters a @ref Config::backoffOnFlood cool-down during
+        // When the window count first crosses @ref detail::MonitorConfig::maxEventsPerSecond
+        // the reader enters a @ref detail::MonitorConfig::backoffOnFlood cool-down during
         // which further card events are dropped at the gate (never reach
         // the coalescer or subscribers). @c floodLogged squelches the
         // one-shot warning to a single line per flood episode; it resets
@@ -155,7 +108,7 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
     mutable std::mutex coalesceMtx;
     std::condition_variable coalesceCv;
     std::unordered_map<std::string, ReaderCoalesceState> coalesceState;
-    MonitorService::Config config;
+    detail::MonitorConfig config;
     std::thread coalesceFlusher;
     bool coalesceStop{false};
 
@@ -168,12 +121,9 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
     // attribute on the template argument), so an inline ctor in this
     // header would leak the vtable/typeinfo of that instantiation into the
     // SHARED-build libLibreSCRS_SmartCard.so dynamic export table.
-    Impl(std::unique_ptr<::LibreSCRS::SmartCard::Internal::IPCSCScanProvider> provider, MonitorService::Config cfg);
-
-    // Backwards-compatible single-arg ctor used by the test-helper factory
-    // and any internal call site that did not pre-date the Config addition.
-    // Defaults the Config to the env-driven baseline.
-    explicit Impl(std::unique_ptr<::LibreSCRS::SmartCard::Internal::IPCSCScanProvider> provider);
+    // The scan provider is always the default one: a test that needs another
+    // swaps `internal` afterwards (MonitorFactory::withProvider).
+    explicit Impl(detail::MonitorConfig cfg);
 
     ~Impl();
 
@@ -181,18 +131,6 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
     // Dispatch outside cbMtx so subscribers can re-enter subscribe/unsubscribe
     // from within a callback without deadlocking.
     std::vector<std::pair<SubscriptionId, EventCallback>> snapshotCallbacks();
-
-    // Snapshot currently-registered (id, reader-list callback) pairs under
-    // cbMtx. Mirrors @ref snapshotCallbacks for the reader-list subscriber
-    // population so dispatch can run outside the cbMtx lock.
-    std::vector<std::pair<SubscriptionId, MonitorService::ReaderListCallback>> snapshotReaderListCallbacks();
-
-    // Dispatch a full post-change reader-list snapshot to every
-    // @ref MonitorService::subscribeReaderList subscriber under the
-    // dispatchMtx serialisation gate (so Drain semantics extend to the
-    // snapshot callback population uniformly). Subscriber callbacks that
-    // throw are caught and logged; the dispatch loop continues.
-    void dispatchReaderListSnapshot(const std::vector<std::string>& snapshot);
 
     // Full snapshot-and-invoke runs under dispatchMtx so @ref
     // MonitorService::unsubscribe with @ref DrainPolicy::Drain can block on
@@ -211,13 +149,12 @@ struct LIBRESCRS_INTERNAL MonitorService::Impl
     // set in the destructor.
     void runCoalesceFlusher();
 
-    // Reader-list diff: synthesise ReaderAdded / ReaderRemoved events.
-    // Shared by the subscribe-time initial snapshot path and the internal
-    // ReaderListCallback path. knownReaders is updated under readersMtx.
+    // Reader-list diff: synthesise ReaderAdded / ReaderRemoved events from
+    // the internal monitor's reader-list callback. knownReaders is updated
+    // under readersMtx.
     void diffReadersAndDispatch(const std::vector<std::string>& readers);
 
-    // First-subscriber bootstrap, shared verbatim by subscribe() and
-    // subscribeReaderList(): clear knownReaders, reset the initial-poll latch,
+    // First-subscriber bootstrap, run by subscribe(): clear knownReaders,
     // wire the internal monitor's event + reader-list callbacks, then perform
     // TOCTOU orphan-recovery if a concurrent unsubscribe emptied the subscriber
     // population between the caller's first cbMtx release and this start. Call
@@ -256,6 +193,23 @@ public:
     {
         return MonitorService::SubscriptionId{value};
     }
+
+    // Drive @p service the way its scan thread does: through the callbacks
+    // it registered on its internal monitor. Impl::dispatch and
+    // Impl::diffReadersAndDispatch are hidden in the shared library, so a
+    // test executable cannot call them; the registered callbacks are data it
+    // can reach. Both return the number of callbacks that ran — 0 when the
+    // service has no subscriber yet (nothing registered).
+    static std::size_t publishEvent(MonitorService& service,
+                                    const ::LibreSCRS::SmartCard::Internal::MonitorEvent& event);
+    static std::size_t publishReaderList(MonitorService& service, const std::vector<std::string>& readers);
+    static std::size_t coalesceStateSize(const MonitorService& service) noexcept;
+    static bool isPolling(const MonitorService& service) noexcept;
+
+    // Replaces the default configuration of a service nothing has
+    // subscribed to yet; stops the coalescer's flusher when the new window
+    // disables coalescing, as a service constructed with it never starts one.
+    static std::shared_ptr<MonitorService> withConfig(const MonitorConfig& config);
 };
 
 } // namespace detail

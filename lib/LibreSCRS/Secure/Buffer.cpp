@@ -5,7 +5,6 @@
 
 #include "secure_allocator.h"
 
-#include <cstring>
 #include <utility>
 #include <vector>
 
@@ -21,12 +20,6 @@ struct LIBRESCRS_INTERNAL Buffer::Impl
 };
 
 Buffer::Buffer() : d(nullptr) {}
-
-Buffer::Buffer(std::size_t size, std::uint8_t fill) : d(std::make_unique<Impl>())
-{
-    if (size > 0)
-        d->bytes.assign(size, fill);
-}
 
 Buffer::Buffer(std::string_view s) : d(std::make_unique<Impl>())
 {
@@ -59,23 +52,6 @@ const std::uint8_t* Buffer::data() const noexcept
 std::size_t Buffer::size() const noexcept
 {
     return d ? d->bytes.size() : 0;
-}
-
-Buffer::operator bool() const noexcept
-{
-    return d != nullptr;
-}
-
-bool Buffer::operator==(const Buffer& other) const noexcept
-{
-    const std::size_t lhsSize = size();
-    if (lhsSize != other.size())
-        return false;
-    if (lhsSize == 0)
-        return true;
-    // Byte-identity. NOT constant-time — see header doc; for security-
-    // sensitive comparisons callers must use a dedicated helper.
-    return std::memcmp(data(), other.data(), lhsSize) == 0;
 }
 
 } // namespace LibreSCRS::Secure

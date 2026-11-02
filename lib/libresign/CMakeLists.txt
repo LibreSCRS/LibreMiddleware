@@ -1,20 +1,13 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # SPDX-FileCopyrightText: 2026 hirashix0
 
-set(SIGNING_BACKEND "native" CACHE STRING "Signing backend: native, or both (native + the DSS cross-verification oracle)")
-set_property(CACHE SIGNING_BACKEND PROPERTY STRINGS "native" "both")
-
-# `dss` used to be a third value that built the DSS engine INSTEAD of the
-# native one. Nothing selects an engine at run time any more, so such a build
-# would compile and then fail inside createSigningService(Native) — a
-# configuration error is the honest place for it. `both` still compiles the DSS
-# sources, which is what the cross-backend tests need.
-if(SIGNING_BACKEND STREQUAL "dss")
-    message(FATAL_ERROR "SIGNING_BACKEND=dss is no longer a build configuration: DSS is the cross-verification oracle, not a selectable production engine. Use `native` (default) or `both`.")
-endif()
+# The native engine is the only one this library carries. The DSS Java
+# reference the tests check it against is built with the tests
+# (test/dss_oracle, SIGNING_BACKEND in test/CMakeLists.txt).
 
 # libcurl is vendored (thirdparty/curl-source), built static against the
-# bundled OpenSSL so the process loads exactly one OpenSSL. Linked below via
+# bundled OpenSSL so it shares this library's OpenSSL (and the provider the
+# engine registers in it) rather than loading the system's. Linked below via
 # the `curl_static_with_deps` INTERFACE target (NOT system find_package(CURL)).
 
 include(${LibreMiddleware_SOURCE_DIR}/cmake/EmbedBinary.cmake)
@@ -27,112 +20,78 @@ embed_binary(
     OUTPUT ${LIBRESIGN_EMBED_FONT_CPP}
 )
 
-# --- Core sources (always built) ---
 set(LIBRESIGN_SOURCES
-    src/signing_service_factory.cpp
     src/http_client.cpp
     src/trust/TrustedListProvider.cpp
+    src/native/native_utils.cpp
+    src/native/pdf_value.cpp
+    src/native/pdf_tokens.cpp
+    src/native/pdf_parser.cpp
+    src/native/plugin_signing_key.cpp
+    src/native/signing_provider.cpp
+    src/native/signing_provider_keymgmt.cpp
+    src/native/signing_provider_signature.cpp
+    src/native/tsa_client.cpp
+    src/native/revocation_client.cpp
+    src/native/cades_module.cpp
+    src/native/pades_module.cpp
+    src/native/pdf_dss.cpp
+    src/native/pdf_doc_timestamp.cpp
+    src/native/jcs.cpp
+    src/native/jades_module.cpp
+    src/native/xades_module.cpp
+    src/native/asic_module.cpp
+    ${LibreMiddleware_SOURCE_DIR}/thirdparty/miniz/miniz.c
+    src/native/pinned_tl_certs.cpp
+    src/native/trusted_list_parser.cpp
+    src/native/tl_signature_verifier.cpp
+    src/native/tl_cache.cpp
+    src/native/fetch_and_verify_tl.cpp
+    ${LIBRESIGN_EMBED_FONT_CPP}
+    src/native/ttf_parser.cpp
+    src/native/ttf_subset.cpp
+    src/native/pdf_font.cpp
+    src/native/visual_signature_layout.cpp
+    src/native/native_signing_service.cpp
 )
 set(LIBRESIGN_HEADERS
     src/types.h
     src/signing_service.h
-    src/signing_service_factory.h
     src/http_client.h
-    src/credentials.h
+    src/native/signing_key.h
+    src/native/plugin_signing_key.h
+    src/native/signing_provider.h
+    src/native/signing_provider_keymgmt.h
+    src/native/signing_provider_signature.h
+    src/native/tsa_client.h
+    src/native/revocation_client.h
+    src/native/cades_module.h
+    src/native/pades_module.h
+    src/native/pdf_dss.h
+    src/native/pdf_doc_timestamp.h
+    src/native/jcs.h
+    src/native/jades_module.h
+    src/native/xades_module.h
+    src/native/asic_module.h
+    src/native/trusted_list_parser.h
+    src/native/fetch_and_verify_tl.h
+    src/native/native_signing_service.h
+    src/native/depth_guard.h
+    src/native/der_utils.h
+    src/native/native_utils.h
+    src/native/pdf_value.h
+    src/native/pdf_tokens.h
+    src/native/pdf_parser.h
+    src/native/pinned_tl_certs.h
+    src/native/tl_cache.h
+    src/native/tl_signature_verifier.h
+    src/native/gid.h
+    src/native/ttf_parser.h
+    src/native/ttf_subset.h
+    src/native/pdf_font.h
+    src/native/xml_raii.h
+    src/native/zip_records.h
 )
-
-# --- DSS manager/resolver (POSIX-only, always built for test oracle) ---
-if(NOT WIN32)
-    list(APPEND LIBRESIGN_SOURCES
-        src/dss/dss_service_manager.cpp
-        src/dss/dss_path_resolver.cpp
-    )
-    list(APPEND LIBRESIGN_HEADERS
-        src/dss/dss_service_manager.h
-        src/dss/dss_path_resolver.h
-    )
-endif()
-
-# --- DSS backend sources ---
-if(SIGNING_BACKEND STREQUAL "dss" OR SIGNING_BACKEND STREQUAL "both")
-    list(APPEND LIBRESIGN_SOURCES
-        src/dss/dss_signing_service.cpp
-    )
-    list(APPEND LIBRESIGN_HEADERS
-        src/dss/dss_signing_service.h
-    )
-endif()
-
-# --- Native backend sources ---
-if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
-    list(APPEND LIBRESIGN_SOURCES
-        src/native/native_utils.cpp
-        src/native/pdf_value.cpp
-        src/native/pdf_tokens.cpp
-        src/native/pdf_parser.cpp
-        src/native/plugin_signing_key.cpp
-        src/native/signing_provider.cpp
-        src/native/signing_provider_keymgmt.cpp
-        src/native/signing_provider_signature.cpp
-        src/native/tsa_client.cpp
-        src/native/revocation_client.cpp
-        src/native/cades_module.cpp
-        src/native/pades_module.cpp
-        src/native/pdf_dss.cpp
-        src/native/pdf_doc_timestamp.cpp
-        src/native/jcs.cpp
-        src/native/jades_module.cpp
-        src/native/xades_module.cpp
-        src/native/asic_module.cpp
-        ${LibreMiddleware_SOURCE_DIR}/thirdparty/miniz/miniz.c
-        src/native/pinned_tl_certs.cpp
-        src/native/trusted_list_parser.cpp
-        src/native/tl_signature_verifier.cpp
-        src/native/tl_cache.cpp
-        src/native/fetch_and_verify_tl.cpp
-        ${LIBRESIGN_EMBED_FONT_CPP}
-        src/native/ttf_parser.cpp
-        src/native/ttf_subset.cpp
-        src/native/pdf_font.cpp
-        src/native/visual_signature_layout.cpp
-        src/native/native_signing_service.cpp
-    )
-    list(APPEND LIBRESIGN_HEADERS
-        src/native/signing_key.h
-        src/native/plugin_signing_key.h
-        src/native/signing_provider.h
-        src/native/signing_provider_keymgmt.h
-        src/native/signing_provider_signature.h
-        src/native/tsa_client.h
-        src/native/revocation_client.h
-        src/native/cades_module.h
-        src/native/pades_module.h
-        src/native/pdf_dss.h
-        src/native/pdf_doc_timestamp.h
-        src/native/jcs.h
-        src/native/jades_module.h
-        src/native/xades_module.h
-        src/native/asic_module.h
-        src/native/trusted_list_parser.h
-        src/native/fetch_and_verify_tl.h
-        src/native/native_signing_service.h
-        src/native/depth_guard.h
-        src/native/der_utils.h
-        src/native/native_utils.h
-        src/native/pdf_value.h
-        src/native/pdf_tokens.h
-        src/native/pdf_parser.h
-        src/native/pinned_tl_certs.h
-        src/native/tl_cache.h
-        src/native/tl_signature_verifier.h
-        src/native/gid.h
-        src/native/ttf_parser.h
-        src/native/ttf_subset.h
-        src/native/pdf_font.h
-        src/native/xml_raii.h
-        src/native/zip_records.h
-    )
-endif()
 
 # --- Build library ---
 add_library(LibreSign STATIC ${LIBRESIGN_SOURCES} ${LIBRESIGN_HEADERS})
@@ -145,8 +104,8 @@ endif()
 target_compile_definitions(LibreSign PRIVATE LIBRESCRS_INTERNAL_BUILD)
 
 # LibreSign is a static archive consumed by LibreSCRS_Trust and
-# LibreSCRS_Signing. When LIBREMIDDLEWARE_BUILD_SHARED=ON those become .so
-# libraries; their object archives must therefore be position-independent.
+# LibreSCRS_Signing, which are shared libraries; its objects must therefore be
+# position-independent.
 # Sibling impl targets (SmartCard_Impl, CardPlugin_Impl) already carry
 # POSITION_INDEPENDENT_CODE for plugin-link reasons; LibreSign now follows
 # the same rule so it can be linked into a SHARED public-target .so.
@@ -155,18 +114,14 @@ set_target_properties(LibreSign PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # Per-function/data sections enable downstream --gc-sections to dead-strip
 # unreferenced TUs. LibreSCRS_Trust links only the TL-fetch/verify subset of
 # this archive; without section splitting, the entire archive (including
-# PAdES / CAdES / etc.) lands in libLibreSCRS_Trust.so under
-# LIBREMIDDLEWARE_BUILD_SHARED=ON, duplicating sign-path symbols already
-# present in libLibreSCRS_Signing.so.
+# PAdES / CAdES / etc.) lands in libLibreSCRS_Trust.so, duplicating
+# sign-path symbols already present in libLibreSCRS_Signing.so.
 target_compile_options(LibreSign PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-ffunction-sections -fdata-sections>
 )
 # Hidden by default, like every other LM library: the engine is an
 # implementation detail of the signing and trust libraries that carry it, and
-# nothing outside them calls into it. Without this, any libresign symbol whose
-# signature names a LibreSCRS:: type (a Secure::Buffer PIN, a CardPlugin) matched
-# the export glob of cmake/librescrs-public-exports.map and leaked into the
-# public symbol table.
+# nothing outside them calls into it.
 target_compile_options(LibreSign PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden -fvisibility-inlines-hidden>
 )
@@ -186,26 +141,24 @@ target_compile_options(LibreSign PRIVATE
 # sets `__GNUC__`), which references `ftello64` / `fseeko64` / `fopen64` —
 # symbols that exist only in glibc, breaking the build. Keep the LFS macros
 # restricted to non-Apple Unix targets.
-if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
-    if(APPLE)
-        set_source_files_properties(
-            ${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/miniz/miniz.c
-            PROPERTIES
-                COMPILE_FLAGS "-Wno-strict-prototypes -Wno-unused-parameter"
-        )
-    else()
-        set_source_files_properties(
-            ${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/miniz/miniz.c
-            PROPERTIES
-                COMPILE_FLAGS "-Wno-strict-prototypes -Wno-unused-parameter"
-                COMPILE_DEFINITIONS "_FILE_OFFSET_BITS=64;_LARGEFILE64_SOURCE"
-        )
-    endif()
+if(APPLE)
+    set_source_files_properties(
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/miniz/miniz.c
+        PROPERTIES
+            COMPILE_FLAGS "-Wno-strict-prototypes -Wno-unused-parameter"
+    )
+else()
+    set_source_files_properties(
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/miniz/miniz.c
+        PROPERTIES
+            COMPILE_FLAGS "-Wno-strict-prototypes -Wno-unused-parameter"
+            COMPILE_DEFINITIONS "_FILE_OFFSET_BITS=64;_LARGEFILE64_SOURCE"
+    )
 endif()
 
 # API-POLICY §9 forward-compat hardening: format/packaging/level switch
 # dispatchers must close over every enum value. Compiler-enforced.
-# -Werror=switch-enum is targeted to the two files with these switches so
+# -Werror=switch-enum is targeted to the file with these switches so
 # the rest of LibreSign retains its existing -Wswitch posture (closed-on-
 # all-arms-with-default is still acceptable elsewhere).
 set_source_files_properties(
@@ -213,20 +166,13 @@ set_source_files_properties(
     PROPERTIES
         COMPILE_OPTIONS "-Werror=switch-enum"
 )
-if(SIGNING_BACKEND STREQUAL "dss" OR SIGNING_BACKEND STREQUAL "both")
-    set_source_files_properties(
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/dss/dss_signing_service.cpp
-        PROPERTIES
-            COMPILE_OPTIONS "-Werror=switch-enum"
-    )
-endif()
 
 # LibreSign has no public surface. Internal headers (types.h,
-# signing_service.h, signing_service_factory.h) live in src/. External
+# signing_service.h, native/native_signing_service.h) live in src/. External
 # consumers (LibreSCRS::Signing bridge, signing tests) PRIVATE-include
 # ${PROJECT_SOURCE_DIR}/lib/libresign/src and set LIBRESCRS_INTERNAL_BUILD
 # themselves to satisfy the #error guards. Within-LibreSign sources include
-# these as "signing_service.h", "types.h", "native/foo.h", "dss/foo.h" —
+# these as "signing_service.h", "types.h", "native/foo.h" —
 # resolved by the PRIVATE src/ root below. The lifecycle owner of the trust
 # store is LibreSCRS::Trust::TrustStoreService.
 target_include_directories(LibreSign PRIVATE
@@ -237,6 +183,9 @@ target_include_directories(LibreSign PRIVATE
     # include cost that was the stated reason for the split is answered by
     # OpenSslPtrCms.h rather than by a second copy of everything else.
     ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include
+    # <ber.h>: the DER length encoder (native/der_utils.h) is the middleware's
+    # one BER encoder, not a copy of it.
+    ${LibreMiddleware_SOURCE_DIR}/lib/smartcard/src
     ${LibreMiddleware_SOURCE_DIR}/thirdparty/nlohmann
     ${LibreMiddleware_SOURCE_DIR}/thirdparty/miniz
 )
@@ -269,16 +218,8 @@ target_compile_features(LibreSign PUBLIC cxx_std_23)
 target_link_libraries(LibreSign PRIVATE OpenSSL_Crypto curl_static_with_deps SmartCard_Impl)
 target_link_libraries(LibreSign PUBLIC LibreSCRS_Auth)
 
-if(SIGNING_BACKEND STREQUAL "dss" OR SIGNING_BACKEND STREQUAL "both")
-    target_compile_definitions(LibreSign PUBLIC LIBRESIGN_HAS_DSS=1)
-endif()
-
-if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
-    target_compile_definitions(LibreSign PUBLIC LIBRESIGN_HAS_NATIVE=1)
-
-    find_package(LibXml2 REQUIRED)
-    target_link_libraries(LibreSign PRIVATE LibXml2::LibXml2)
-endif()
+find_package(LibXml2 REQUIRED)
+target_link_libraries(LibreSign PRIVATE LibXml2::LibXml2)
 
 librescrs_warnings_as_errors(LibreSign)
 
@@ -288,9 +229,7 @@ librescrs_warnings_as_errors(LibreSign)
 # a compiler upgrade that grows a new diagnostic here must not break the
 # build in a file no local change may touch. Source-level flags land after
 # the target's, so this wins over the -Werror added just above.
-if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
-    set_property(
-        SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/miniz/miniz.c
-        APPEND_STRING PROPERTY COMPILE_FLAGS " -Wno-error"
-    )
-endif()
+set_property(
+    SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/miniz/miniz.c
+    APPEND_STRING PROPERTY COMPILE_FLAGS " -Wno-error"
+)

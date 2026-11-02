@@ -9,6 +9,7 @@
 #include "scaffold_generator.h"
 
 #include <pcsc_connection.h>
+#include <pcsc_raw_diagnostic.h>
 
 #include <cstdlib>
 #include <filesystem>
@@ -46,7 +47,7 @@ void writeToFile(const std::string& path, const std::string& content)
 int runPluginMode(const CliOptions& opts)
 {
     auto readerName = getReaderName(opts);
-    auto connOwner = LibreSCRS::SmartCard::Internal::PCSCConnection::openRawDiagnostic(readerName);
+    auto connOwner = LibreSCRS::SmartCard::Internal::openRawDiagnostic(readerName);
     auto& conn = *connOwner;
 
     auto appletInfo = card_mapper::mapPlugin(opts.pluginName, conn, opts.verbose);
@@ -64,7 +65,7 @@ int runPluginMode(const CliOptions& opts)
 int runDiscoverMode(const CliOptions& opts)
 {
     auto readerName = getReaderName(opts);
-    auto connOwner = LibreSCRS::SmartCard::Internal::PCSCConnection::openRawDiagnostic(readerName);
+    auto connOwner = LibreSCRS::SmartCard::Internal::openRawDiagnostic(readerName);
     auto& conn = *connOwner;
 
     // PACE pre-authentication was previously bootstrapped via emrtd::EMRTDCard

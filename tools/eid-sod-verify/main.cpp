@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 //
 /// @file
-/// @brief eid-sod-verify — read a Serbian eID card's Security Object (SOD) over
-///        PC/SC and verify it end-to-end, printing the signer identity and a
+/// @brief eid-sod-verify — read a Serbian eID card's Security Object (SOD) and
+///        verify it end-to-end, printing the signer identity and a
 ///        VALID / UNKNOWN / INVALID verdict.
 ///
 /// Three verification layers (a card SOD needs all of them; chain-only is not
@@ -18,10 +18,13 @@
 /// Deliberately independent of the in-tree rs-eid verification code, so it can act
 /// as an oracle when diagnosing a card — including future MUP certificate
 /// generations, where the signer's certificate changes but the read path does not.
+/// The card itself is opened through CardSession like everything else, so the
+/// tool holds the reader the same way the library does and never past it.
 
-#include <pcsclite.h>
-#include <winscard.h>
-#include <wintypes.h>
+#include <LibreSCRS/SmartCard/CardSession.h>
+
+#include <apdu.h>
+#include <pcsc_connection.h>
 
 #include <openssl/err.h>
 #include <openssl/pkcs7.h>
@@ -33,9 +36,9 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -59,65 +62,46 @@ const std::vector<std::uint8_t> kAidForeigner{0xF3, 0x81, 0x00, 0x00, 0x02, 0x53
 constexpr std::uint8_t kSodFxH = 0x0F, kSodFxL = 0x1C;
 constexpr std::uint8_t kSodVxH = 0x0F, kSodVxL = 0x1D;
 
-struct Pcsc
-{
-    SCARDCONTEXT ctx = 0;
-    SCARDHANDLE card = 0;
-    DWORD proto = 0;
-    ~Pcsc()
-    {
-        if (card)
-            SCardDisconnect(card, SCARD_LEAVE_CARD);
-        if (ctx)
-            SCardReleaseContext(ctx);
-    }
-};
+using LibreSCRS::SmartCard::CardSession;
+namespace Apdu = LibreSCRS::SmartCard::Internal;
 
-// Send one APDU; returns response bytes (including SW1 SW2), empty on transmit error.
-std::vector<std::uint8_t> transmit(Pcsc& p, const std::vector<std::uint8_t>& cmd)
+// Send one APDU; returns the response data, empty unless the card answered 9000.
+std::vector<std::uint8_t> transmitOk(CardSession& session, const Apdu::APDUCommand& cmd)
 {
-    SCARD_IO_REQUEST pci{p.proto, sizeof(SCARD_IO_REQUEST)};
-    std::array<std::uint8_t, 512> resp{};
-    DWORD rl = static_cast<DWORD>(resp.size());
-    if (SCardTransmit(p.card, &pci, cmd.data(), static_cast<DWORD>(cmd.size()), nullptr, resp.data(), &rl) !=
-        SCARD_S_SUCCESS)
+    const auto r = session.transmitInternal(cmd);
+    if (!r.isSuccess())
         return {};
-    return {resp.begin(), resp.begin() + rl};
+    return r.data;
 }
 
-bool sw9000(const std::vector<std::uint8_t>& r)
+bool selectAid(CardSession& session, const std::vector<std::uint8_t>& aid)
 {
-    return r.size() >= 2 && r[r.size() - 2] == 0x90 && r[r.size() - 1] == 0x00;
-}
-
-std::vector<std::uint8_t> selectAid(Pcsc& p, const std::vector<std::uint8_t>& aid)
-{
-    std::vector<std::uint8_t> cmd{0x00, 0xA4, 0x04, 0x00, static_cast<std::uint8_t>(aid.size())};
-    cmd.insert(cmd.end(), aid.begin(), aid.end());
-    return transmit(p, cmd);
+    return session.transmitInternal(Apdu::selectByAID(aid)).isSuccess();
 }
 
 // Read the full contents of an EF (SELECT by path, then READ BINARY to the length
 // reported in the SELECT FCI, falling back to reading until a short/failed response).
-std::vector<std::uint8_t> readEf(Pcsc& p, std::uint8_t fidH, std::uint8_t fidL)
+std::vector<std::uint8_t> readEf(CardSession& session, std::uint8_t fidH, std::uint8_t fidL)
 {
-    auto fci = transmit(p, {0x00, 0xA4, 0x08, 0x00, 0x02, fidH, fidL, 0x04});
-    if (!sw9000(fci))
+    const auto select = session.transmitInternal(Apdu::selectByPath(fidH, fidL, 4));
+    if (!select.isSuccess())
         return {};
     // FCI layout on these cards: FID(2) length(2) ... — take the length when present.
-    int total = (fci.size() >= 4) ? ((fci[2] << 8) | fci[3]) : 0;
+    const auto& fci = select.data;
+    const int total = (fci.size() >= 4) ? ((fci[2] << 8) | fci[3]) : 0;
 
     std::vector<std::uint8_t> out;
-    for (int off = 0; off < 0x10000; off += 256) {
-        int want = total > 0 ? std::min(256, total - off) : 256;
+    // READ BINARY with this INS addresses 15 bits; a SOD is a few kilobytes.
+    for (int off = 0; off <= 0x7FFF; off += 256) {
+        const int want = total > 0 ? std::min(256, total - off) : 256;
         if (want <= 0)
             break;
-        auto r = transmit(p, {0x00, 0xB0, static_cast<std::uint8_t>(off >> 8), static_cast<std::uint8_t>(off & 0xFF),
-                              static_cast<std::uint8_t>(want == 256 ? 0x00 : want)});
-        if (!sw9000(r) || r.size() <= 2)
+        const auto r = transmitOk(session, Apdu::readBinary(static_cast<std::uint16_t>(off),
+                                                            static_cast<std::uint8_t>(want == 256 ? 0x00 : want)));
+        if (r.empty())
             break;
-        out.insert(out.end(), r.begin(), r.end() - 2);
-        if (static_cast<int>(r.size()) - 2 < want)
+        out.insert(out.end(), r.begin(), r.end());
+        if (static_cast<int>(r.size()) < want)
             break;
     }
     return out;
@@ -228,48 +212,42 @@ int main(int argc, char** argv)
         }
     }
 
-    Pcsc p;
-    if (SCardEstablishContext(SCARD_SCOPE_SYSTEM, nullptr, nullptr, &p.ctx) != SCARD_S_SUCCESS) {
-        std::fputs("cannot establish PC/SC context (is pcscd running?)\n", stderr);
-        return 3;
-    }
-
-    // Resolve the reader: use --reader, else the first reader that has a card.
-    if (reader.empty()) {
-        DWORD len = 0;
-        if (SCardListReaders(p.ctx, nullptr, nullptr, &len) == SCARD_S_SUCCESS && len > 0) {
-            std::vector<char> names(len);
-            SCardListReaders(p.ctx, nullptr, names.data(), &len);
-            for (const char* n = names.data(); *n; n += std::strlen(n) + 1) {
-                SCARDHANDLE h;
-                DWORD pr;
-                if (SCardConnect(p.ctx, n, SCARD_SHARE_SHARED, SCARD_PROTOCOL_T0 | SCARD_PROTOCOL_T1, &h, &pr) ==
-                    SCARD_S_SUCCESS) {
-                    reader = n;
-                    SCardDisconnect(h, SCARD_LEAVE_CARD);
-                    break;
-                }
-            }
+    // Resolve the reader: use --reader, else the first reader that opens.
+    std::optional<CardSession> session;
+    std::string lastError;
+    auto tryOpen = [&](const std::string& name) {
+        auto opened = CardSession::open(name);
+        if (opened) {
+            session.emplace(std::move(*opened));
+            reader = name;
+            return true;
         }
-    }
-    if (reader.empty()) {
-        std::fputs("no reader with a card found (use --reader)\n", stderr);
-        return 3;
-    }
-
-    if (SCardConnect(p.ctx, reader.c_str(), SCARD_SHARE_SHARED, SCARD_PROTOCOL_T0 | SCARD_PROTOCOL_T1, &p.card,
-                     &p.proto) != SCARD_S_SUCCESS) {
-        std::fprintf(stderr, "cannot connect to reader: %s\n", reader.c_str());
-        return 3;
+        const auto& error = opened.error();
+        lastError = error.diagnosticDetail.value_or(error.userMessage.defaultText);
+        return false;
+    };
+    if (!reader.empty()) {
+        if (!tryOpen(reader)) {
+            std::fprintf(stderr, "cannot open the card in %s: %s\n", reader.c_str(), lastError.c_str());
+            return 3;
+        }
+    } else {
+        for (const auto& name : Apdu::PCSCConnection::listReaders())
+            if (tryOpen(name))
+                break;
+        if (!session) {
+            std::fputs("no reader with a card found (is pcscd running? use --reader)\n", stderr);
+            return 3;
+        }
     }
     std::printf("reader: %s\n", reader.c_str());
 
-    if (!sw9000(selectAid(p, kAidCitizen)) && !sw9000(selectAid(p, kAidForeigner))) {
+    if (!selectAid(*session, kAidCitizen) && !selectAid(*session, kAidForeigner)) {
         std::fputs("not a Serbian eID card (SELECT AID failed)\n", stderr);
         return 4;
     }
 
-    auto sod = variable ? readEf(p, kSodVxH, kSodVxL) : readEf(p, kSodFxH, kSodFxL);
+    auto sod = variable ? readEf(*session, kSodVxH, kSodVxL) : readEf(*session, kSodFxH, kSodFxL);
     if (sod.size() < 32) {
         std::fputs("could not read the SOD\n", stderr);
         return 4;

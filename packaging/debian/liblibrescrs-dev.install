@@ -1,3 +1,4 @@
 usr/include/LibreSCRS/
 usr/lib/*/libLibreSCRS_*.so
+usr/lib/*/libLibreSCRSTesting_SmartCard.a
 usr/lib/*/cmake/LibreMiddleware/

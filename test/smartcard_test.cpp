@@ -25,6 +25,16 @@ using namespace LibreSCRS::SmartCard::Internal;
 
 // --- APDU tests ---
 
+// The even-INS READ BINARY addresses 15 bits; an offset past them must not
+// be masked into one that reads the file's beginning again.
+TEST(APDUTest, ReadBinaryRefusesAnOffsetPast15Bits)
+{
+    const auto last = readBinary(0x7FFF, 0x10);
+    EXPECT_EQ(last.p1, 0x7F);
+    EXPECT_EQ(last.p2, 0xFF);
+    EXPECT_THROW((void)readBinary(0x8000, 0x10), std::invalid_argument);
+}
+
 TEST(APDUTest, VerifyPINCommand)
 {
     std::array<uint8_t, 4> pin = {0x31, 0x32, 0x33, 0x34};
@@ -303,6 +313,77 @@ TEST(BERTest, ThrowingPairRefusesExactlyWhatTheFlagPairRefuses)
     off = 0;
     EXPECT_EQ(parseLength(twoByte, sizeof(twoByte), off), 256u);
     EXPECT_EQ(off, 3u);
+}
+
+// The encoder at every boundary where the form changes. Each length is also
+// read back through the decoder: the two must agree on every form.
+TEST(BERTest, AppendLengthWritesTheShortestFormAtEveryBoundary)
+{
+    struct Case
+    {
+        std::size_t length;
+        std::vector<uint8_t> encoded;
+    };
+    const std::vector<Case> cases = {
+        {0x00, {0x00}},
+        {0x7F, {0x7F}},
+        {0x80, {0x81, 0x80}},
+        {0xFF, {0x81, 0xFF}},
+        {0x100, {0x82, 0x01, 0x00}},
+        {0xFFFF, {0x82, 0xFF, 0xFF}},
+        {0x10000, {0x83, 0x01, 0x00, 0x00}},
+        {0xFFFFFF, {0x83, 0xFF, 0xFF, 0xFF}},
+        {0x1000000, {0x84, 0x01, 0x00, 0x00, 0x00}},
+        {0xFFFFFFFF, {0x84, 0xFF, 0xFF, 0xFF, 0xFF}},
+    };
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.length);
+        std::vector<uint8_t> out{0xAA};
+        appendLength(out, c.length);
+        std::vector<uint8_t> expected{0xAA};
+        expected.insert(expected.end(), c.encoded.begin(), c.encoded.end());
+        EXPECT_EQ(out, expected);
+
+        const auto back = tryParseLength(c.encoded.data(), c.encoded.size(), 0);
+        ASSERT_TRUE(back.ok);
+        EXPECT_EQ(back.length, c.length);
+        EXPECT_EQ(back.next, c.encoded.size());
+    }
+}
+
+// A length the decoder could not read back is refused, not cut down to the
+// octets that fit: a truncated length would describe a different object.
+TEST(BERTest, AppendLengthRefusesWhatFourOctetsCannotHold)
+{
+    if constexpr (sizeof(std::size_t) > 4) {
+        std::vector<uint8_t> out;
+        EXPECT_THROW(appendLength(out, std::size_t{1} << 32), std::length_error);
+        EXPECT_TRUE(out.empty());
+    } else {
+        GTEST_SKIP() << "size_t cannot hold a length past four octets on this target";
+    }
+}
+
+TEST(BERTest, BuildTlvWritesEveryTagOctetAndTheLength)
+{
+    const std::vector<uint8_t> one{0x42};
+    EXPECT_EQ(buildTlv(0x86, one), (std::vector<uint8_t>{0x86, 0x01, 0x42}));
+    EXPECT_EQ(buildTlv(0x7F49, one), (std::vector<uint8_t>{0x7F, 0x49, 0x01, 0x42}));
+    EXPECT_EQ(buildTlv(0x5F1F, {}), (std::vector<uint8_t>{0x5F, 0x1F, 0x00}));
+
+    const std::vector<uint8_t> big(0x100, 0x5A);
+    const auto tlv = buildTlv(0x7C, big);
+    ASSERT_EQ(tlv.size(), 4u + big.size());
+    EXPECT_EQ((std::vector<uint8_t>(tlv.begin(), tlv.begin() + 4)), (std::vector<uint8_t>{0x7C, 0x82, 0x01, 0x00}));
+
+    // The tag reads back through the decoder's own tag parse.
+    const auto parsedTag = tryParseTag(tlv.data(), tlv.size(), 0);
+    ASSERT_TRUE(parsedTag.ok);
+    EXPECT_EQ(parsedTag.tag, 0x7Cu);
+    const auto twoOctet = buildTlv(0x7F49, one);
+    const auto parsedTwo = tryParseTag(twoOctet.data(), twoOctet.size(), 0);
+    ASSERT_TRUE(parsedTwo.ok);
+    EXPECT_EQ(parsedTwo.tag, 0x7F49u);
 }
 
 // The 0x00-padded TLV sequence the secure-messaging walk handles: padding

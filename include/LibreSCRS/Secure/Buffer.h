@@ -68,17 +68,9 @@ class LIBRESCRS_PUBLIC_API Buffer
 public:
     /// @brief Construct an empty buffer (size() == 0, data() == nullptr).
     /// @note No heap allocation — the pimpl is left unallocated until a
-    ///       sized constructor is invoked or move-assignment installs one.
+    ///       copying constructor is invoked or move-assignment installs one.
     /// @since 4.0
     Buffer();
-
-    /// @brief Construct a buffer of @p size bytes, filled with @p fill.
-    /// @param size Number of bytes to allocate.
-    /// @param fill Byte value used to initialise every byte of the new
-    ///             buffer. Defaults to @c 0.
-    /// @throws std::bad_alloc on allocation failure.
-    /// @since 4.0
-    explicit Buffer(std::size_t size, std::uint8_t fill = 0);
 
     /// @brief Copy @p s into the buffer's storage.
     /// @note The caller's `s` is not cleansed by this constructor.
@@ -107,18 +99,6 @@ public:
     ///        adopting @p other. After return @p other is empty.
     Buffer& operator=(Buffer&&) noexcept;
 
-    /// @brief True when this object owns a concrete pimpl.
-    ///
-    /// Equivalent to "not default-constructed AND not moved-from". The
-    /// default ctor leaves the pimpl unallocated as an optimisation (empty
-    /// buffers need no heap storage), so `Buffer{}` also evaluates to
-    /// @c false here — distinct from a sized-but-all-zero buffer, which
-    /// evaluates to @c true. Callers that need "is there any stored data?"
-    /// should check @c size() > 0 instead. Accessors (@ref data, @ref size)
-    /// remain safe to call on an unallocated buffer and report empty state.
-    /// @since 4.0
-    explicit operator bool() const noexcept;
-
     /// @brief Pointer to the first byte, or nullptr when empty.
     /// @note Pure accessor, @c noexcept per API-POLICY §5.3. Safe to call on
     ///       a default-constructed or moved-from buffer (returns @c nullptr).
@@ -132,24 +112,6 @@ public:
     ///       a default-constructed or moved-from buffer (returns @c 0).
     /// @since 4.0
     [[nodiscard]] std::size_t size() const noexcept;
-
-    /// @brief Byte-identity equality.
-    ///
-    /// Returns @c true iff both buffers carry the same number of bytes
-    /// AND those bytes are pairwise identical. Mirrors the equality
-    /// semantics of @ref Secure::String (which has @c operator== for the
-    /// same reason — typed equality without unwrapping the secret).
-    ///
-    /// @note Like @ref Secure::String::operator==, this comparator is
-    ///       byte-wise NOT constant-time, and @ref Buffer provides no
-    ///       constant-time alternative. For PIN/MAC/secret-equality
-    ///       checks against an attacker-controlled side channel, use a
-    ///       dedicated constant-time helper — e.g.
-    ///       @ref Secure::String::equalConstantTime for text secrets —
-    ///       rather than this operator.
-    ///
-    /// @since 4.0
-    [[nodiscard]] bool operator==(const Buffer& other) const noexcept;
 
 private:
     struct Impl;

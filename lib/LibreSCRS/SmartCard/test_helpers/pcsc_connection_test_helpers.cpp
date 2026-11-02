@@ -38,9 +38,8 @@
 ///
 /// Kept in @c pcsc_connection.cpp the definition would not stay private: that
 /// TU is compiled into @c libLibreSCRS_SmartCard, the class is
-/// @c LIBRESCRS_PUBLIC_API, and the @c *LibreSCRS::* glob in
-/// @c cmake/librescrs-public-exports.map promotes every LibreSCRS-mentioning
-/// symbol in it. A hidden-visibility attribute on the declaration is not an
+/// @c LIBRESCRS_PUBLIC_API, and @c cmake/librescrs-public-exports.map
+/// promotes every member of a LibreSCRS class. A hidden-visibility attribute on the declaration is not an
 /// alternative: the Darwin export filter is a mangled-prefix allowlist with
 /// no un-export form, so only moving the definition works on both platforms.
 ///

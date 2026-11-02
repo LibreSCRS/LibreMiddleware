@@ -17,7 +17,7 @@
 namespace LibreSCRS::Trust::detail {
 
 /// @brief Walks a directory tree at construction time, loads every .cer/.crt/.pem
-///        as a DER trust anchor. Source label encodes the relative path.
+///        as a DER trust anchor.
 class BundledCertsProvider : public TrustAnchorProvider
 {
 public:
@@ -63,8 +63,7 @@ private:
 /// @return Path to the first directory that exists and contains at least one
 ///         file with a cert-like extension (@c .crt / @c .pem / @c .cer /
 ///         @c .der). Returns @c std::nullopt if no candidate qualifies — the
-///         caller then falls back to the system trust store via the
-///         @ref TrustConfig::includeSystemTrustStore toggle.
+///         caller then relies on the system trust store alone.
 [[nodiscard]] std::optional<std::filesystem::path> resolveBundledCertsDir() noexcept;
 
 } // namespace LibreSCRS::Trust::detail

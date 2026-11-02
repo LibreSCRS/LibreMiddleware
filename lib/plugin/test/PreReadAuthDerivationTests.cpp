@@ -14,17 +14,17 @@
 /// minimal concrete plugin that overrides only the pure virtuals plus
 /// @c activationProfile.
 ///
-/// @c makeDetachedCardSession is the LM-internal test factory pulled in via the
-/// internal-build-guarded injection header; the @c LIBRESCRS_INTERNAL_BUILD
-/// define and the @c LibreSCRS_SmartCard_TestHelpers archive (which provides
-/// the factory definition) are wired in the matching CMakeLists.
+/// @c Testing::makeDetachedCardSession is the declared test factory from
+/// <LibreSCRS/SmartCard/testing/CardSessionTesting.h>; the
+/// @c LibreSCRS_SmartCardTesting archive that defines it is wired in the
+/// matching CMakeLists.
 
 #include <LibreSCRS/Auth/AuthRequirement.h>
 #include <LibreSCRS/Auth/PaceSecretKind.h>
 #include <LibreSCRS/Plugin/ActivationProfile.h>
 #include <LibreSCRS/Plugin/CardPlugin.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
-#include <LibreSCRS/SmartCard/detail/CardSessionInjection.h>
+#include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 
 #include <gtest/gtest.h>
 
@@ -42,7 +42,7 @@ class FakeProfilePlugin final : public LibreSCRS::Plugin::CardPlugin
 public:
     explicit FakeProfilePlugin(LibreSCRS::Plugin::ActivationProfile profile) : m_profile(std::move(profile))
     {
-        setIdentity("fake", "Fake", 0);
+        setIdentity("fake", 0);
     }
 
     LibreSCRS::Plugin::CardCapabilities capabilities() const override
@@ -77,7 +77,7 @@ private:
 TEST(PreReadAuthDerivationTest, PlainProfileYieldsNone)
 {
     FakeProfilePlugin plugin{LibreSCRS::Plugin::ActivationProfile::plain()};
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("test-reader");
     ASSERT_NE(session, nullptr);
     EXPECT_EQ(plugin.preReadAuth(*session), LibreSCRS::Auth::PreReadAuthMethod::None);
 }
@@ -90,7 +90,7 @@ TEST(PreReadAuthDerivationTest, CanProfileYieldsCan)
         LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can}};
 
     FakeProfilePlugin plugin{std::move(profile)};
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("test-reader");
     ASSERT_NE(session, nullptr);
     EXPECT_EQ(plugin.preReadAuth(*session), LibreSCRS::Auth::PreReadAuthMethod::Can);
 }
@@ -103,7 +103,7 @@ TEST(PreReadAuthDerivationTest, PaceMrzProfileYieldsMrz)
         LibreSCRS::SmartCard::PaceRequest{LibreSCRS::Auth::PaceSecretKind::Mrz}};
 
     FakeProfilePlugin plugin{std::move(profile)};
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("test-reader");
     ASSERT_NE(session, nullptr);
     EXPECT_EQ(plugin.preReadAuth(*session), LibreSCRS::Auth::PreReadAuthMethod::Mrz);
 }
@@ -115,7 +115,7 @@ TEST(PreReadAuthDerivationTest, BacProfileYieldsMrz)
     profile.primary = LibreSCRS::SmartCard::SmProtocolRequest{LibreSCRS::SmartCard::BacRequest{}};
 
     FakeProfilePlugin plugin{std::move(profile)};
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("test-reader");
     ASSERT_NE(session, nullptr);
     EXPECT_EQ(plugin.preReadAuth(*session), LibreSCRS::Auth::PreReadAuthMethod::Mrz);
 }
@@ -131,7 +131,7 @@ TEST(PreReadAuthDerivationTest, ChipAuthProfileYieldsNone)
     profile.primary = LibreSCRS::SmartCard::SmProtocolRequest{LibreSCRS::SmartCard::ChipAuthRequest{}};
 
     FakeProfilePlugin plugin{std::move(profile)};
-    auto session = LibreSCRS::SmartCard::detail::makeDetachedCardSession("test-reader");
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("test-reader");
     ASSERT_NE(session, nullptr);
     EXPECT_EQ(plugin.preReadAuth(*session), LibreSCRS::Auth::PreReadAuthMethod::None);
 }

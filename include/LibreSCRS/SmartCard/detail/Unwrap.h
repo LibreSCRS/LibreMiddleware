@@ -36,8 +36,8 @@ namespace LibreSCRS::SmartCard::detail {
 /// @note Exported via @ref LIBRESCRS_PUBLIC_API by design: card plugins
 /// (libpkcs15-plugin.so, libemrtd-plugin.so, …) load at runtime via dlopen
 /// and bind against libLibreSCRS_SmartCard.so, so the unwrap entry point
-/// must be reachable as a dynamic symbol. Do NOT add this symbol to the
-/// version-script local-block in @c cmake/librescrs-public-exports.map —
+/// must be reachable as a dynamic symbol. Do NOT move it out of the
+/// LibreSCRS namespace that @c cmake/librescrs-public-exports.map exports —
 /// the cross-`.so` plugin-reach edge depends on it being globally
 /// exported. The internal-only access contract is preserved by the
 /// @c #error guard above (consumers outside @c LIBRESCRS_INTERNAL_BUILD

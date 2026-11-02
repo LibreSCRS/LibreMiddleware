@@ -74,7 +74,7 @@ struct LoadOutcome
     [[nodiscard]] bool operator==(const LoadOutcome&) const noexcept = default;
 };
 
-/// @brief Loads card-plugin `.so` files from one or more directories on
+/// @brief Loads card-plugin `.so` files from a directory on
 ///        construction and dispatches card lookups against the loaded set.
 ///
 /// Owns the `dlopen` handles and plugin instances.
@@ -89,8 +89,7 @@ struct LoadOutcome
 ///
 /// @par Construction
 /// Construction is the only load point — the registry does not expose a
-/// mutable setter. Pass a list of directories via the `std::span` ctor, or
-/// a single directory via the convenience overload. Any plugin that fails
+/// mutable setter. Any plugin that fails
 /// to load is captured in the @ref loadReport with a @ref LoadOutcome::Status
 /// indicating the failure mode; the registry itself never throws on a bad
 /// plugin file (the only way construction can throw is an internal
@@ -107,24 +106,14 @@ struct LoadOutcome
 class LIBRESCRS_PUBLIC_API CardPluginService
 {
 public:
-    /// @brief Construct registry and eagerly load plugins from each of the
-    ///        supplied directories in order.
-    /// @param dirs Span of directory paths. Each is scanned for
-    ///             `.so` / `.dylib` files; every regular file with one of
-    ///             those extensions generates a @ref LoadOutcome entry.
-    ///             `dlopen` failures, ABI mismatches, missing factory
-    ///             entry points, and factory exceptions are captured in
-    ///             @ref loadReport rather than propagated. A directory
-    ///             that does not exist is not fatal and simply contributes
-    ///             no entries.
-    ///
-    /// @note Multi-directory support is the primary reason for the
-    ///       `std::span` shape — LibreCelik composes middleware-plugins
-    ///       with GUI plugin directories at startup; each directory may
-    ///       live under an install root or a build tree.
-    ///
-    /// @note Callers that pass a single directory inline can use the
-    ///       convenience single-path overload below.
+    /// @brief Construct registry and eagerly load plugins from @p dir.
+    /// @param dir Directory scanned for `.so` / `.dylib` files; every
+    ///            regular file with one of those extensions generates a
+    ///            @ref LoadOutcome entry. `dlopen` failures, ABI mismatches,
+    ///            missing factory entry points, and factory exceptions are
+    ///            captured in @ref loadReport rather than propagated. A
+    ///            directory that does not exist is not fatal and simply
+    ///            contributes no entries.
     /// @param trustStore Optional unified trust store (typically obtained
     ///        from #LibreSCRS::Trust::TrustStoreService::trustStore).
     ///        When non-null, the registry calls @ref CardPlugin::setTrustStore
@@ -134,23 +123,6 @@ public:
     ///        whatever bundled trust mechanism they shipped with.
     /// @since 4.0. Call sites that omit the trustStore argument retain that
     ///         fallback behaviour.
-    explicit CardPluginService(std::span<const std::filesystem::path> dirs,
-                               std::shared_ptr<const LibreSCRS::Trust::TrustStore> trustStore = nullptr);
-
-    /// @brief Convenience single-directory constructor. Equivalent to the
-    ///        `std::span` ctor with a single-element range.
-    ///
-    /// @note Overload-resolution guarantees: a bare path literal (e.g.
-    ///       `CardPluginService reg{"./plugins"}`) or an inline
-    ///       `std::filesystem::path` argument selects THIS single-path ctor.
-    ///       Two or more paths must be passed through the
-    ///       `std::span`-based overload — either via a braced initialiser list aliased through
-    ///       an explicit `std::vector<std::filesystem::path>` / array, or via
-    ///       a named `std::span` local. A naïve
-    ///       `CardPluginService{ {"a", "b"} }` is ill-formed; prefer
-    ///       `std::vector<std::filesystem::path> dirs{"a", "b"};
-    ///       CardPluginService reg{dirs};` to make the intent explicit at
-    ///       the call site.
     explicit CardPluginService(std::filesystem::path dir,
                                std::shared_ptr<const LibreSCRS::Trust::TrustStore> trustStore = nullptr);
 
@@ -245,24 +217,8 @@ public:
     /// @brief Number of successfully loaded plugins.
     [[nodiscard]] std::size_t size() const noexcept;
 
-    /// @brief Reports whether the registry has at least one usable plugin.
-    ///
-    /// Returns `true` iff `size() > 0` AND every entry in @ref loadReport
-    /// has @ref LoadOutcome::Status::Loaded. A `false` result means either
-    /// the registry directory was empty, every plugin failed to load (ABI
-    /// mismatch, dlopen failure, etc.), or some subset failed and the
-    /// caller may wish to surface a diagnostic instead of treating
-    /// "no matching plugin for this ATR" as the explanation.
-    ///
-    /// @par Thread-safety
-    /// Thread-safe. Pure read of the immutable post-construction snapshot;
-    /// no locking required.
-    /// @since 4.0
-    [[nodiscard]] bool isUsable() const noexcept;
-
     /// @brief Structured load report — one entry per `.so` / `.dylib`
-    ///        candidate scanned across every directory passed to the
-    ///        constructor.
+    ///        candidate scanned in the directory passed to the constructor.
     ///
     /// Iterate this to surface plugin-loading diagnostics (failed to
     /// load, ABI mismatch, etc.) to logs or a UI; the registry does not

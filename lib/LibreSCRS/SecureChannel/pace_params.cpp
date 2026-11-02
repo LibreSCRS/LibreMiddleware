@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
-#include <LibreSCRS/SecureChannel/PaceParams.h>
+#include <LibreSCRS_internal/SecureChannel/PaceParams.h>
 
 #include "pace.h"
 

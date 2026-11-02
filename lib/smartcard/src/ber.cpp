@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "ber.h"
+
 #include <stdexcept>
 
 namespace LibreSCRS::SmartCard::Internal {
@@ -45,47 +46,9 @@ TagResult tryParseTag(const uint8_t* data, size_t length, size_t pos) noexcept
     return out;
 }
 
-// Parse BER length. Reports failure through the result.
-LengthResult tryParseLength(const uint8_t* data, size_t length, size_t pos) noexcept
-{
-    LengthResult out;
-    if (pos >= length) {
-        return out;
-    }
-
-    const uint8_t firstByte = data[pos++];
-
-    if (firstByte < 0x80) {
-        // Short form
-        out.length = firstByte;
-        out.next = pos;
-        out.ok = true;
-        return out;
-    }
-
-    if (firstByte == 0x80) {
-        // Indefinite length not supported
-        return out;
-    }
-
-    // Long form: firstByte & 0x7F = number of subsequent bytes
-    const size_t numBytes = firstByte & 0x7F;
-    if (numBytes > 4 || pos + numBytes > length) {
-        return out;
-    }
-
-    size_t len = 0;
-    for (size_t i = 0; i < numBytes; i++) {
-        len = (len << 8) | data[pos++];
-    }
-    out.length = len;
-    out.next = pos;
-    out.ok = true;
-    return out;
-}
-
-// The throwing pair, written over the pair above rather than beside it: one
-// decode, and the difference is only what happens when the bytes are wrong.
+// The throwing pair, written over the flag-returning pair (tryParseTag above,
+// tryParseLength in ber.h) rather than beside it: one decode, and the
+// difference is only what happens when the bytes are wrong.
 uint32_t parseTag(const uint8_t* data, size_t length, size_t& offset)
 {
     const TagResult res = tryParseTag(data, length, offset);
@@ -104,6 +67,44 @@ size_t parseLength(const uint8_t* data, size_t length, size_t& offset)
     }
     offset = res.next;
     return res.length;
+}
+
+void appendLength(std::vector<std::uint8_t>& out, std::size_t valueLength)
+{
+    if (valueLength < 0x80) {
+        out.push_back(static_cast<std::uint8_t>(valueLength));
+        return;
+    }
+
+    std::size_t octets = 0;
+    for (std::size_t rest = valueLength; rest != 0; rest >>= 8) {
+        ++octets;
+    }
+    if (octets > kMaxLengthOctets) {
+        throw std::length_error("BER: length does not fit in four octets");
+    }
+
+    out.push_back(static_cast<std::uint8_t>(0x80 | octets));
+    for (std::size_t i = octets; i-- > 0;) {
+        out.push_back(static_cast<std::uint8_t>((valueLength >> (8 * i)) & 0xFF));
+    }
+}
+
+std::vector<std::uint8_t> buildTlv(std::uint32_t tag, std::span<const std::uint8_t> value)
+{
+    std::vector<std::uint8_t> out;
+    out.reserve(value.size() + 8);
+    bool started = false;
+    for (int shift = 24; shift >= 0; shift -= 8) {
+        const auto octet = static_cast<std::uint8_t>((tag >> shift) & 0xFF);
+        if (started || octet != 0 || shift == 0) {
+            out.push_back(octet);
+            started = true;
+        }
+    }
+    appendLength(out, value.size());
+    out.insert(out.end(), value.begin(), value.end());
+    return out;
 }
 
 namespace {

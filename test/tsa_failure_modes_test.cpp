@@ -3,8 +3,6 @@
 
 #include <gtest/gtest.h>
 
-#ifdef LIBRESIGN_HAS_NATIVE
-
 #include "native/cades_module.h"
 #include "signing_keys.h"
 #include "native/tsa_client.h"
@@ -375,5 +373,3 @@ TEST(CAdESTimestampPartition, InternalFaultIsNotTypedFailure)
     EXPECT_FALSE(threwTyped) << "internal (non-TSA) fault must NOT be a typed SignFailureException";
     EXPECT_TRUE(threwPlain) << "addArchiveTimestamp must throw a plain exception on a malformed CMS";
 }
-
-#endif

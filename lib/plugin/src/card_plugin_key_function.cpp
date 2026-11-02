@@ -5,22 +5,17 @@
 
 namespace LibreSCRS::Plugin {
 
-// Key function: this single out-of-line virtual method anchors the vtable +
-// typeinfo for CardPlugin to the CardPlugin_Impl archive. Without a key
-// function, GCC/Clang emit both as weak symbols in every TU that
-// instantiates a derived class, which breaks cross-.so dynamic_cast and
-// typeinfo identity under macOS two-level namespaces and Windows dllimport-
-// consumer builds. See Itanium C++ ABI §5.1.
+// Key function (Itanium C++ ABI §5.1): this out-of-line virtual destructor
+// makes the translation unit that defines it the one that emits the vtable and
+// typeinfo for CardPlugin, instead of a weak copy in every translation unit
+// that defines a derived class.
 //
-// Lives inside CardPlugin_Impl (STATIC) so every existing CardPlugin consumer
-// — plugins, tests, the host application — pulls it in transitively through
-// the same target they already link for the registry. Consumers of the single
-// shared LibreMiddleware instance also see the symbol:
-// lib/LibreSCRS/CMakeLists.txt links CardPlugin_Impl
-// into LibreSCRS_Plugin via $<LINK_LIBRARY:WHOLE_ARCHIVE,...> so all of the
-// archive's `LibreSCRS::Plugin::*` symbols (key function + vtable + typeinfo)
-// land in libLibreSCRS_Plugin.so, where the `*LibreSCRS::*` version-script
-// glob promotes them to default visibility.
+// It is compiled into CardPlugin_Impl, an OBJECT library. libLibreSCRS_Plugin
+// absorbs it and is the only LibreSCRS library that exports it, together with
+// the vtable and typeinfo; a library that needs the plugin layer links
+// LibreSCRS_Plugin. A card plugin module absorbs it as well and keeps its copy
+// hidden, so type identity of CardPlugin across the host/plugin boundary is
+// not guaranteed -- see ~CardPlugin() in CardPlugin.h.
 CardPlugin::~CardPlugin() = default;
 
 } // namespace LibreSCRS::Plugin

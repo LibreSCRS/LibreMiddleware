@@ -77,9 +77,9 @@ int signedBE16(std::span<const std::uint8_t> v) noexcept
 
 } // namespace
 
-LibreSCRS::Plugin::CredentialCounters parseDocpCounters(std::span<const std::uint8_t> resp) noexcept
+::pkcs15::CredentialCounters parseDocpCounters(std::span<const std::uint8_t> resp) noexcept
 {
-    LibreSCRS::Plugin::CredentialCounters c;
+    ::pkcs15::CredentialCounters c;
     const auto docp = findDocp(resp);
     for (std::size_t pos = 0; pos < docp.size();) {
         const Tlv t = readTlv(docp, pos);

@@ -891,3 +891,19 @@ TEST(ParseAODF, AnIntegerTooLargeForThePinFieldIsRefused)
     ASSERT_EQ(pins.size(), 1U);
     EXPECT_EQ(pins[0].minLength, 0);
 }
+
+// The local bit may be dropped from a PIN reference only when the result is a
+// reference no other PIN of the profile carries: asking for it would
+// otherwise present this PIN to that one.
+TEST(PinLocalBitFallback, OnlyWhenNoOtherPinCarriesTheReference)
+{
+    std::vector<pkcs15::PinInfo> pins(3);
+    pins[0].pinReference = 0x81; // 0x01 is pins[1]'s own reference
+    pins[1].pinReference = 0x01; // no local bit to drop
+    pins[2].pinReference = 0x86; // 0x06 is nobody's
+    pkcs15::applyLocalBitFallbackRule(pins);
+
+    EXPECT_FALSE(pins[0].localBitFallback);
+    EXPECT_FALSE(pins[1].localBitFallback);
+    EXPECT_TRUE(pins[2].localBitFallback);
+}
