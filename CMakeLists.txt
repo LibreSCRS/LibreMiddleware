@@ -490,3 +490,77 @@ endif()
 unset(_librescrs_emrtd_inc)
 unset(_librescrs_emrtd_inherited)
 unset(_librescrs_dir)
+
+# ──────────────────────────────────────────────────────────────────────────
+# Test binaries on macOS are built for the host architecture only.
+#
+# The libraries are universal (CMAKE_OSX_ARCHITECTURES above), but
+# GoogleTest comes from the system, and Homebrew's is built for the host
+# alone: a universal test executable finds no x86_64 slice in libgtest and
+# fails to link. A test binary runs on the machine that built it anyway, so
+# every target that links GoogleTest is narrowed to that machine's
+# architecture; the universal libraries it links still carry that slice.
+# Applied by walking the build tree once at the end, so a test target added in
+# any directory, now or later, is covered without a line of its own.
+# ──────────────────────────────────────────────────────────────────────────
+if(APPLE AND BUILD_TESTING AND CMAKE_OSX_ARCHITECTURES)
+    # Every target in the tree, then a fixpoint: a target is narrowed when it
+    # links GoogleTest or links a target already narrowed -- a test support
+    # archive narrowed for GoogleTest narrows every test that links it.
+    function(_librescrs_collect_targets dir out)
+        get_property(_targets DIRECTORY "${dir}" PROPERTY BUILDSYSTEM_TARGETS)
+        get_property(_subdirs DIRECTORY "${dir}" PROPERTY SUBDIRECTORIES)
+        foreach(_d IN LISTS _subdirs)
+            _librescrs_collect_targets("${_d}" _sub)
+            list(APPEND _targets ${_sub})
+        endforeach()
+        set(${out} ${_targets} PARENT_SCOPE)
+    endfunction()
+    _librescrs_collect_targets("${CMAKE_CURRENT_SOURCE_DIR}" _librescrs_all_targets)
+    set(_librescrs_narrowed "")
+    set(_librescrs_changed TRUE)
+    while(_librescrs_changed)
+        set(_librescrs_changed FALSE)
+        foreach(_t IN LISTS _librescrs_all_targets)
+            if(_t IN_LIST _librescrs_narrowed)
+                continue()
+            endif()
+            get_target_property(_type ${_t} TYPE)
+            if(NOT _type MATCHES "^(EXECUTABLE|SHARED_LIBRARY|MODULE_LIBRARY|STATIC_LIBRARY)$")
+                continue()
+            endif()
+            get_target_property(_links ${_t} LINK_LIBRARIES)
+            get_target_property(_ilinks ${_t} INTERFACE_LINK_LIBRARIES)
+            set(_items "")
+            foreach(_l IN LISTS _links _ilinks)
+                # $<BUILD_INTERFACE:X>, $<LINK_ONLY:X> and the like name X.
+                string(REGEX REPLACE "^\\$<[A-Z_]+:(.*)>$" "\\1" _l "${_l}")
+                if(TARGET "${_l}")
+                    get_target_property(_aliased "${_l}" ALIASED_TARGET)
+                    if(_aliased)
+                        set(_l "${_aliased}")
+                    endif()
+                endif()
+                list(APPEND _items "${_l}")
+            endforeach()
+            set(_narrow FALSE)
+            foreach(_l IN LISTS _items)
+                if(_l MATCHES "^GTest::" OR _l IN_LIST _librescrs_narrowed)
+                    set(_narrow TRUE)
+                    break()
+                endif()
+            endforeach()
+            if(_narrow)
+                set_target_properties(${_t} PROPERTIES OSX_ARCHITECTURES "${CMAKE_HOST_SYSTEM_PROCESSOR}")
+                list(APPEND _librescrs_narrowed ${_t})
+                set(_librescrs_changed TRUE)
+            endif()
+        endforeach()
+    endwhile()
+    list(LENGTH _librescrs_narrowed _librescrs_count)
+    message(STATUS "Test targets built for ${CMAKE_HOST_SYSTEM_PROCESSOR} only: ${_librescrs_count}")
+    unset(_librescrs_count)
+    unset(_librescrs_all_targets)
+    unset(_librescrs_narrowed)
+    unset(_librescrs_changed)
+endif()
