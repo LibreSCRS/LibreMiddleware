@@ -484,7 +484,7 @@ struct BnFree
 {
     void operator()(BIGNUM* b) const
     {
-        BN_free(b);
+        BN_clear_free(b);
     }
 };
 struct GroupFree
