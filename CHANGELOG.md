@@ -677,10 +677,11 @@ Notable user-visible changes per release. Format follows
   a confirmed unblock command. Plugins drop their `doVerifyPIN` and
   `doUnblockPIN` overrides.
 
-- **`CardPlugin::readCounters` and `CredentialCounters.h`.** No host read a
-  credential's counters this way: the PIN list carries the same counters in
-  each `PinStatusEntry`, and signing stopped reading them before the PIN
-  prompt. Plugins drop their `doReadCounters` overrides.
+- **`CardPlugin::readCounters` and the `CredentialCounters` header.** No host
+  read a credential's counters this way, and `CredentialCounters.h` is gone:
+  the PIN list carries the same counters in each `PinStatusEntry`, and
+  signing stopped reading them before the PIN prompt. Plugins drop their
+  `doReadCounters` overrides.
 
 - **`CardPlugin::displayName` and the manifest's `displayName`.** No host
   showed a plugin's name: hosts name a card by what was read from it.
@@ -694,12 +695,13 @@ Notable user-visible changes per release. Format follows
   in the certificate beside it, and a PIN entry's `state` already says
   whether the PIN is blocked or still holds its transport value.
 
-- **`CardDataAccess.h` and the `CardData` lookup helpers.**
-  `Plugin::textValue` and `textValueAt`; `CardData::findGroup`, `findField`,
-  `groupAt`, `groupAtUnchecked`, `fieldAt` and `fieldAtUnchecked`; and
-  `CardField::textValue()`. No host and no plugin looked a field up through
-  them: hosts walk `groups` and `fields` and read a field's `type` and
-  `value`. `CardData` is now its card type and its groups.
+- **The `CardData` lookup helpers and their `CardDataAccess` header.**
+  `CardDataAccess.h` with `Plugin::textValue` and `textValueAt`;
+  `CardData::findGroup`, `findField`, `groupAt`, `groupAtUnchecked`,
+  `fieldAt` and `fieldAtUnchecked`; and `CardField::textValue()`. No host and
+  no plugin looked a field up through them: hosts walk `groups` and `fields`
+  and read a field's `type` and `value`. `CardData` is now its card type and
+  its groups.
 
 - **`CardPluginService::isUsable()` and the constructor that takes several
   directories.** Every host loads plugins from one directory and reports the
@@ -714,11 +716,11 @@ Notable user-visible changes per release. Format follows
   `CardPlugin::readCard` and was never called by a plugin, so
   `libLibreSCRS_Plugin` no longer exports it.
 
-- **`SecureChannel/PaceParams.h` from the installed headers.**
-  `PaceParams`, `PaceSecurityInfo`, `PaceStandardisedDomainParam` and
-  `parsePaceOidsFromCardAccess` describe the PACE handshake `CardSession`
-  runs for a plugin; no host or plugin built one or parsed EF.CardAccess
-  itself. The header is now internal to the library.
+- **The PACE parameter types, from the installed headers.**
+  `SecureChannel/PaceParams.h` with `PaceParams`, `PaceSecurityInfo`,
+  `PaceStandardisedDomainParam` and `parsePaceOidsFromCardAccess` describe
+  the PACE handshake `CardSession` runs for a plugin; no host or plugin built
+  one or parsed EF.CardAccess itself. The header is now internal to the library.
 
 - **`ReadResult::parseError()` and `ReadResult::Status::ParseError`.** No
   plugin returned a parse error: a card whose data does not match its
