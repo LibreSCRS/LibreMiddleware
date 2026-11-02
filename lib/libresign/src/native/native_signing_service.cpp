@@ -197,7 +197,7 @@ bool NativeSigningService::loadTrustList(const TrustedListEntry& entry)
     // native-only signing) and emitted to the host, which merges them into
     // the public TrustStore. Inverted-callback shape: libresign extracts
     // anchors, the bridge owns the merge.
-    const auto onList = [this](const std::string& url, const TrustedListInfo& info) {
+    const auto onList = [this](const std::string& /*url*/, const TrustedListInfo& info) {
         auto anchors = extractAnchorsFromTrustedList(info);
         for (const auto& a : anchors)
             if (!a.certificateDer.empty())

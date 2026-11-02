@@ -78,7 +78,7 @@ void TrustStoreService::Impl::runWorker(std::shared_ptr<Impl> impl, libresign::T
         // The same walk the signing engine runs: the list and, for a List of
         // Trusted Lists, every list it points to. Each verified list's
         // anchors are merged under its own source tag.
-        const auto onList = [&impl, &stop](const std::string& listUrl, const libresign::TrustedListInfo& info) {
+        const auto onList = [&impl, &stop](const std::string& /*listUrl*/, const libresign::TrustedListInfo& info) {
             if (stop.stop_requested())
                 return;
             detail::TrustStoreInternalAccess::mergeTrustedListAnchors(*impl->trustStore,
