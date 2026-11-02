@@ -69,14 +69,14 @@ TEST(JCS, NonAsciiKeyThrows)
 {
     nlohmann::json j;
     j["ščć"] = 1;
-    EXPECT_THROW(jcsDump(j), std::runtime_error);
+    EXPECT_THROW((void)jcsDump(j), std::runtime_error);
 }
 
 TEST(JCS, NonFiniteNumberThrows)
 {
     nlohmann::json j;
     j["x"] = std::numeric_limits<double>::infinity();
-    EXPECT_THROW(jcsDump(j), std::runtime_error);
+    EXPECT_THROW((void)jcsDump(j), std::runtime_error);
 }
 
 TEST(JCS, ControlCharsEscaped)
