@@ -27,7 +27,6 @@ set(LIBRESIGN_SOURCES
     src/native/pdf_value.cpp
     src/native/pdf_tokens.cpp
     src/native/pdf_parser.cpp
-    src/native/plugin_signing_key.cpp
     src/native/signing_provider.cpp
     src/native/signing_provider_keymgmt.cpp
     src/native/signing_provider_signature.cpp
@@ -59,7 +58,6 @@ set(LIBRESIGN_HEADERS
     src/signing_service.h
     src/http_client.h
     src/native/signing_key.h
-    src/native/plugin_signing_key.h
     src/native/signing_provider.h
     src/native/signing_provider_keymgmt.h
     src/native/signing_provider_signature.h
@@ -233,3 +231,25 @@ set_property(
     SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/../../thirdparty/miniz/miniz.c
     APPEND_STRING PROPERTY COMPILE_FLAGS " -Wno-error"
 )
+
+# The signing key that signs through a card plugin, in its own archive. It is
+# the one part of the engine that calls into libLibreSCRS_Plugin, and the
+# dependency travels with it: every target that links this archive links the
+# plugin library after it. Inside LibreSign the edge could not be declared --
+# LibreSCRS_Trust links LibreSign and LibreSCRS_Plugin links Trust -- so a
+# consumer that pulled this object out of LibreSign for an unrelated symbol
+# failed to link on CardPlugin::sign.
+add_library(LibreSignPluginKey STATIC
+    src/native/plugin_signing_key.cpp
+    src/native/plugin_signing_key.h)
+target_compile_definitions(LibreSignPluginKey PRIVATE LIBRESCRS_INTERNAL_BUILD)
+set_target_properties(LibreSignPluginKey PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_options(LibreSignPluginKey PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-ffunction-sections -fdata-sections -fvisibility=hidden -fvisibility-inlines-hidden>
+)
+target_include_directories(LibreSignPluginKey PRIVATE
+    $<TARGET_PROPERTY:LibreSign,INCLUDE_DIRECTORIES>)
+target_link_libraries(LibreSignPluginKey
+    PUBLIC  LibreSign LibreSCRS_Plugin
+    PRIVATE OpenSSL_Crypto SmartCard_Impl)
+librescrs_warnings_as_errors(LibreSignPluginKey)

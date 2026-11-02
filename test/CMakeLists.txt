@@ -1012,7 +1012,7 @@ if(BUILD_SIGNING)
     # sign in memory carry no plugin registry and no card stack.
     add_library(CardSigningKeySupport STATIC signing_test_support/card_signing_key.cpp)
     target_link_libraries(CardSigningKeySupport PUBLIC
-        SigningTestSupport CardPlugin_Impl LibreSCRS_SmartCard SmartCard_Impl)
+        SigningTestSupport LibreSignPluginKey CardPlugin_Impl LibreSCRS_SmartCard SmartCard_Impl)
     target_compile_definitions(CardSigningKeySupport PRIVATE
         PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}")
 
@@ -1041,7 +1041,7 @@ if(BUILD_SIGNING)
     # The key that signs through a card plugin on a held session, against a
     # plugin that records every deposit and sign: no card.
     add_executable(PluginSigningKeyTests PluginSigningKeyTests.cpp)
-    target_link_libraries(PluginSigningKeyTests PRIVATE SigningTestSupport LibreSign CardPlugin_Impl
+    target_link_libraries(PluginSigningKeyTests PRIVATE SigningTestSupport LibreSignPluginKey CardPlugin_Impl
         LibreSCRS_SmartCard LibreSCRS_SmartCardTesting SmartCard_Impl OpenSSL_Crypto GTest::gtest_main)
     target_include_directories(PluginSigningKeyTests PRIVATE ${LibreMiddleware_SOURCE_DIR}/lib/smartcard/src)
     gtest_discover_tests(PluginSigningKeyTests)
