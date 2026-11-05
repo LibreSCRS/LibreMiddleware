@@ -72,7 +72,7 @@ jobs:
           sudo apt-get install -y \
             lld cmake ninja-build pkg-config \
             libcurl4-openssl-dev libssl-dev libxml2-dev libpcsclite-dev \
-            uuid-dev openssl python3-jsonschema
+            openssl python3-jsonschema
 
       - name: Install clang-21 (for std::expected support)
         # Ubuntu 24.04 default `clang` ships against an older libstdc++

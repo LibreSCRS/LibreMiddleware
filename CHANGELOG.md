@@ -142,6 +142,95 @@ Notable user-visible changes per release. Format follows
   a new release and nothing on an installed machine will say so. Watch the
   releases page, or the repository's release feed, and re-download.
 
+
+- **A logging facade the consumer can redirect: `LibreSCRS::log`**
+  (`<LibreSCRS/Logging.h>`). `init(sink, category)` installs a
+  `std::function<void(Level, std::string_view)>` that receives every
+  diagnostic LibreMiddleware emits without being asked; the built-in sink
+  writes to `std::clog`. The exception shields around consumer callbacks in
+  `MonitorService` and the reader monitor, the signing provider's failure
+  messages and the OpenSC bridge's transport failure now report through it;
+  nothing in the libraries writes to standard error any more, except the one
+  message printed just before the OpenSC plugin aborts. Until now they called
+  `std::fprintf(stderr, ...)` and the source said why — "a defense-in-depth
+  fallback because the SDK does not currently inject a logger across the
+  public ABI boundary". A library writing to a stream it does not own, with
+  no way to redirect it, is a defect rather than a matter of taste, and this
+  is the boundary that was missing. The shape is deliberately identical to
+  the facade the LibreSCRS agent already ships, so one diagnostic grep reads
+  the host layer and the core the same way.
+  Diagnostic tracing goes through it too, at a new `Trace` level that is off
+  by default: `LIBRESCRS_PCSC_TRACE`, `LIBRESCRS_SIGN_TRACE` and
+  `LIBRESCRS_PROBE_TRACE` each switch on one channel, read once per process.
+  A trace never carries what a card answered, a PIN or decrypted data — an
+  APDU response is traced as its length and status word.
+- **Buffer-based signing.** `sign()` accepts an in-memory document as bytes
+  and returns the signed document bytes directly; the library reads and
+  writes no file.
+- **Document name on a signing request.** A request can now carry an
+  explicit document name. It names the in-memory document — the only name
+  the signing engines get for it — and supplies the ASiC-E container entry
+  name and the detached XAdES/JAdES reference basename. Only the final path component
+  is kept, so a name can never introduce directory separators into a
+  container. Without it, buffer-mode container signing had no name at
+  all and ASiC-E packaging failed.
+- **AdES long-term signature levels.** B-T (timestamped), B-LT and
+  B-LTA (long-term / archival validation material) are produced by
+  composing the certificate chain from the Trusted List, extending the
+  prior B-B baseline profile.
+- **Uniform credential activation across plugins.** Cards protected by a
+  Card Access Number (CAN) — such as the contactless NAM vehicle card —
+  now share a single credential-activation architecture, so the CAN is
+  supplied the same way regardless of plugin.
+- **On-card SHA-256 RSA signing** for hash-on-card IAS-ECC cards that
+  compute the digest on the card rather than accepting a pre-hashed
+  value.
+- **On-card RSA decipher** over a single-session libopensc bridge.
+- **CKA_ID key selection** for PKCS#11 signing, so a specific key can be
+  targeted by its identifier when a card exposes several. Both public
+  `libresign::Pkcs11Token` constructors gained a `std::vector<uint8_t>
+  const&` `keyId` parameter carrying it.
+- **CSCA master-list import API.** New public `LibreSCRS::Trust`
+  functions read an ICAO 9303-12 country-signing master list: verify the
+  signed object and return the trust anchors it carries, compute the
+  fingerprint that pins its publisher, and decide whether a new
+  publisher chains to an anchor the previously trusted list already
+  carried — the rule that lets a country's key rotation be followed
+  without anyone re-pinning by hand. A host that imports master lists no
+  longer needs an OpenSSL dependency and a certificate path builder of
+  its own. A verified list also comes back with the certificate that
+  signed it and, when the list carries one, the instant it was signed
+  at, taken from the attribute the signature covers — so a host can put
+  the rotation question and refuse a replayed older list without being
+  handed, out of band, data that is already inside the file it just
+  read.
+- **Hosts can tell a plugin where their country-signing certificates
+  are.** `CardPluginService::setCscaAnchorDirectory` publishes one
+  directory to every plugin it loaded, and the eMRTD plugin judges a
+  travel document's passive authentication against what is in it. The
+  directory used to be named by the `LIBRESCRS_CSCA_STORE` environment
+  variable, which anything running as the person at the keyboard can
+  set — so a forged document could be reported as chaining to a
+  national authority. That read was removed in 5.0 and, until now,
+  nothing replaced it: a host that really
+  had imported country signing certificates was still told none were
+  configured. Only the path is published; the certificates in it are
+  read afresh at each document, so a list imported after startup takes
+  effect on the next read. A host that publishes nothing keeps the
+  honest "not configured" answer.
+- **Arch Linux packaging.** A release-shaped `PKGBUILD` for
+  `librescrs-middleware`.
+- **Three new public headers**: `ActivationProfile.h` (the declarative
+  channel-activation descriptor plugins publish), `PinOutcome.h` (the shared
+  verify/change/unblock outcome classifier), and `SessionKey.h` (the
+  per-session state-map key plugins use to avoid raw-pointer keying).
+  Alongside them, thirteen new public enum values: the new `DecipherMechanism`,
+  `DecipherResultOutcome`, `MasterListError`, `PinKind`, `PinState`,
+  `PinRecovery` and `UnblockStyle` enums, plus six enumerators appended to
+  existing enums — `ChannelActivationError::PaceDowngradeDetected`,
+  `PINResultOutcome::KeyActivationFailed` and `SignMechanism::RSA_SHA256`,
+  `RSA_SHA1`, `RSA_SHA384` and `RSA_SHA512`.
+
 ### Changed
 
 - **A card operation that throws inside a plugin no longer throws at its
@@ -296,100 +385,6 @@ Notable user-visible changes per release. Format follows
   could not resolve — signing then failed with an opaque engine error, after
   the PIN had already been collected.
 
-### Added
-
-- **A logging facade the consumer can redirect: `LibreSCRS::log`**
-  (`<LibreSCRS/Logging.h>`). `init(sink, category)` installs a
-  `std::function<void(Level, std::string_view)>` that receives every
-  diagnostic LibreMiddleware emits without being asked; the built-in sink
-  writes to `std::clog`. The exception shields around consumer callbacks in
-  `MonitorService` and the reader monitor, the signing provider's failure
-  messages and the OpenSC bridge's transport failure now report through it;
-  nothing in the libraries writes to standard error any more, except the one
-  message printed just before the OpenSC plugin aborts. Until now they called
-  `std::fprintf(stderr, ...)` and the source said why — "a defense-in-depth
-  fallback because the SDK does not currently inject a logger across the
-  public ABI boundary". A library writing to a stream it does not own, with
-  no way to redirect it, is a defect rather than a matter of taste, and this
-  is the boundary that was missing. The shape is deliberately identical to
-  the facade the LibreSCRS agent already ships, so one diagnostic grep reads
-  the host layer and the core the same way.
-  Diagnostic tracing goes through it too, at a new `Trace` level that is off
-  by default: `LIBRESCRS_PCSC_TRACE`, `LIBRESCRS_SIGN_TRACE` and
-  `LIBRESCRS_PROBE_TRACE` each switch on one channel, read once per process.
-  A trace never carries what a card answered, a PIN or decrypted data — an
-  APDU response is traced as its length and status word.
-- **Buffer-based signing.** `sign()` accepts an in-memory document as bytes
-  and returns the signed document bytes directly; the library reads and
-  writes no file.
-- **Document name on a signing request.** A request can now carry an
-  explicit document name. It names the in-memory document — the only name
-  the signing engines get for it — and supplies the ASiC-E container entry
-  name and the detached XAdES/JAdES reference basename. Only the final path component
-  is kept, so a name can never introduce directory separators into a
-  container. Without it, buffer-mode container signing had no name at
-  all and ASiC-E packaging failed.
-- **AdES long-term signature levels.** B-T (timestamped), B-LT and
-  B-LTA (long-term / archival validation material) are produced by
-  composing the certificate chain from the Trusted List, extending the
-  prior B-B baseline profile.
-- **Uniform credential activation across plugins.** Cards protected by a
-  Card Access Number (CAN) — such as the contactless NAM vehicle card —
-  now share a single credential-activation architecture, so the CAN is
-  supplied the same way regardless of plugin.
-- **On-card SHA-256 RSA signing** for hash-on-card IAS-ECC cards that
-  compute the digest on the card rather than accepting a pre-hashed
-  value.
-- **On-card RSA decipher** over a single-session libopensc bridge.
-- **CKA_ID key selection** for PKCS#11 signing, so a specific key can be
-  targeted by its identifier when a card exposes several. Both public
-  `libresign::Pkcs11Token` constructors gained a `std::vector<uint8_t>
-  const&` `keyId` parameter carrying it.
-- **`eid-sod-verify` diagnostic tool.** A standalone PC/SC utility that
-  independently reads and verifies the eID Security Object (SOD),
-  useful for troubleshooting card trust outside the signing path.
-- **CSCA master-list import API.** New public `LibreSCRS::Trust`
-  functions read an ICAO 9303-12 country-signing master list: verify the
-  signed object and return the trust anchors it carries, compute the
-  fingerprint that pins its publisher, and decide whether a new
-  publisher chains to an anchor the previously trusted list already
-  carried — the rule that lets a country's key rotation be followed
-  without anyone re-pinning by hand. A host that imports master lists no
-  longer needs an OpenSSL dependency and a certificate path builder of
-  its own. A verified list also comes back with the certificate that
-  signed it and, when the list carries one, the instant it was signed
-  at, taken from the attribute the signature covers — so a host can put
-  the rotation question and refuse a replayed older list without being
-  handed, out of band, data that is already inside the file it just
-  read.
-- **Hosts can tell a plugin where their country-signing certificates
-  are.** `CardPluginService::setCscaAnchorDirectory` publishes one
-  directory to every plugin it loaded, and the eMRTD plugin judges a
-  travel document's passive authentication against what is in it. The
-  directory used to be named by the `LIBRESCRS_CSCA_STORE` environment
-  variable, which anything running as the person at the keyboard can
-  set — so a forged document could be reported as chaining to a
-  national authority. That read was removed in 5.0 and, until now,
-  nothing replaced it: a host that really
-  had imported country signing certificates was still told none were
-  configured. Only the path is published; the certificates in it are
-  read afresh at each document, so a list imported after startup takes
-  effect on the next read. A host that publishes nothing keeps the
-  honest "not configured" answer.
-- **Arch Linux packaging.** A release-shaped `PKGBUILD` for
-  `librescrs-middleware`.
-- **Three new public headers**: `ActivationProfile.h` (the declarative
-  channel-activation descriptor plugins publish), `PinOutcome.h` (the shared
-  verify/change/unblock outcome classifier), and `SessionKey.h` (the
-  per-session state-map key plugins use to avoid raw-pointer keying).
-  Alongside them, thirteen new public enum values: the new `DecipherMechanism`,
-  `DecipherResultOutcome`, `MasterListError`, `PinKind`, `PinState`,
-  `PinRecovery` and `UnblockStyle` enums, plus six enumerators appended to
-  existing enums — `ChannelActivationError::PaceDowngradeDetected`,
-  `PINResultOutcome::KeyActivationFailed` and `SignMechanism::RSA_SHA256`,
-  `RSA_SHA1`, `RSA_SHA384` and `RSA_SHA512`.
-
-### Changed
 
 - **The shared objects' SONAME moved to `libLibreSCRS_<Component>.so.5`**
   (and `librescrs-pkcs11.so.5` with them). This release changes the
@@ -402,6 +397,14 @@ Notable user-visible changes per release. Format follows
   release that happens to be — so packagers should read it off the
   artefact (`readelf -d … | grep SONAME`) rather than derive it from the
   version. The plugin ABI sentinel moves with it, from 6 to v9.
+- **The secure channels moved into `libLibreSCRS_SmartCard.so`.** The
+  plain, PACE, BAC and Chip Authentication channels only ever ran inside a
+  `CardSession`, so `libLibreSCRS_SecureChannel.so` and its
+  `LibreSCRS::SecureChannel` CMake target are gone and six shared objects
+  ship instead of seven. `<LibreSCRS/SecureChannel/BacParams.h>` and
+  `<LibreSCRS/SecureChannel/ChannelErrors.h>` stay where they were and come
+  with `LibreSCRS::SmartCard`; a project that linked
+  `LibreSCRS::SecureChannel` links `LibreSCRS::SmartCard` instead.
 - **`SmProtocolRequest` gained a third alternative** (`ChipAuthRequest`,
   for eMRTD Chip Authentication). The extension is source-compatible —
   the variant is documented append-only — but it changes the C++
@@ -641,6 +644,14 @@ Notable user-visible changes per release. Format follows
   of the library called them. `DistinguishedName::components` and
   `ParsedCertificate::extensions()` still carry every attribute and extension.
 
+- **`CardSession::markDead` and `isDead`.** Nothing marked a session dead, so
+  `isDead` always answered `false` and the activation checks behind it never
+  fired. A removed card surfaces as the reader error of the next exchange.
+
+- **`ChannelActivationError::CardRemoved`.** With `CardSession::markDead` gone
+  nothing produced it; a removed card surfaces as `ReaderError`. Code that
+  switched on it should drop the case.
+
 - **The OID-name lookup export.** `libLibreSCRS_Certificate` no longer
   exports `Certificate::detail::lookupOidName`; it was exported only so a test
   could call it. `ObjectIdentifier::friendlyName()` is the way to the same
@@ -823,6 +834,23 @@ Notable user-visible changes per release. Format follows
   check could not pass. Passing one of the old options now only draws
   CMake's unused-variable warning.
 
+- **`BUILD_SIGNING`.** The signing library is part of every build; nothing
+  configured it off, and the agent needs it. Passing the option now only
+  draws CMake's unused-variable warning.
+
+- **The `LibreSCRS::All` target and the `LIBREMIDDLEWARE_PLUGIN_DIR` cache
+  variable.** No consumer linked the umbrella target or read the variable,
+  and the build-tree plugin directory it named is not where an installed
+  host looks. Link the `LibreSCRS::*` targets whose headers you include;
+  the examples now do. The `LIBRESCRS_PLUGIN_MANIFESTS` property, which
+  nothing read either, went with them.
+
+- **The optional pre-commit formatting hook script.** Nothing ran it; CI's
+  format check is the formatting gate.
+
+- **The `card_mapper.1` manual page.** No build or package installed it;
+  `card_mapper --help` is the reference.
+
 - **`abiVersion` in a plugin's `manifest.json`.** The field said 8 while the
   plugin interface is at 9, and nothing read it: the loader checks
   `card_plugin_abi_version()` against `kCardPluginAbiVersion` in
@@ -864,8 +892,8 @@ Notable user-visible changes per release. Format follows
   A macOS user whose provider disappears at upgrade reads this rather than
   discovering it: remove the module you registered by hand, and register the one
   the host installs. The Linux half of the same decision is the entry above.
-- Malformed and expired MUP certificates were archived out of the active
-  certificate bundle.
+- Malformed and expired MUP certificates were removed from the certificate
+  bundle.
 - **`CardPlugin::getPINTriesLeft()`** — the last deprecated entry point
   anywhere in the project. Its value has been available from the
   `retriesLeft` of each `getPINList` entry since the credential-lifecycle
@@ -899,8 +927,9 @@ records their departure, and the SONAME moved with it.
   engine is checked against (`SIGNING_BACKEND=both`, `BUILD_DSS_ORACLE=ON`),
   which is what it is for, and stops being something a deployment can turn on by
   accident. `SIGNING_BACKEND=dss` — which used to build the DSS engine *instead
-  of* the native one — is now a configure error rather than a build that
-  compiles and then fails at the first signature.
+  of* the native one — is now a configure error, like any value other than
+  `native` or `both`, rather than a build that compiles and then fails at the
+  first signature.
 
 - **Five public symbols nothing can reach.**
   `SecureChannel::ChannelOperationError` and

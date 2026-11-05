@@ -31,7 +31,6 @@ have exactly one definition per process.
 | `LibreSCRS::Trust` | `TrustStore`, certificate validation |
 | `LibreSCRS::Certificate` | X.509 utilities |
 | `LibreSCRS::Secure` | INTERFACE alias for secure-allocator-using types |
-| `LibreSCRS::All` | INTERFACE convenience aggregating the six library targets |
 
 One spelling, in-tree and installed. `LibreMiddleware` names the package
 a consumer asks `find_package` for; `LibreSCRS` names every target inside
@@ -172,10 +171,7 @@ should resolve the plugin path in this order:
 
 1. **Its own override**, if it offers one — intended for development and
    per-user installs.
-2. **Build-tree path** — when the consumer is co-built with LM via
-   FetchContent, the CMake cache variable
-   `LIBREMIDDLEWARE_PLUGIN_DIR` points at the build-tree plugins.
-3. **Install-tree convention** —
+2. **Install-tree convention** —
    `${CMAKE_INSTALL_FULL_LIBDIR}/librescrs/plugins/` (i.e. matching the
    install location above).
 
@@ -201,7 +197,6 @@ the agent's, and a second PIN-entry model.
 
     librescrs-agent           usr/lib/pkcs11/librescrs-pkcs11-agent.so
                               usr/share/p11-kit/modules/librescrs-agent.module
-                              usr/lib/systemd/user/librescrs-p11-server.service
 
 The invariant is: *after installing any supported set of packages, the three
 directories p11-kit reads contain exactly one file naming a LibreSCRS provider,

@@ -44,7 +44,7 @@ jobs:
           sudo apt-get install -y \
             cmake ninja-build pkg-config \
             libcurl4-openssl-dev libssl-dev libxml2-dev libpcsclite-dev \
-            uuid-dev openssl python3-jsonschema
+            openssl python3-jsonschema
 
       - name: Configure
         run: |
