@@ -6,18 +6,6 @@ namespace LibreSCRS::Plugin {
 
 using LibreSCRS::SecureChannel::ChannelActivationError;
 
-bool isStopError(ChannelActivationError e) noexcept
-{
-    switch (e) {
-    case ChannelActivationError::Cancelled:
-    case ChannelActivationError::UserCancelled:
-    case ChannelActivationError::CardRemoved:
-        return true;
-    default:
-        return false;
-    }
-}
-
 bool shouldTryFallback(const ActivationProfile& profile, ChannelActivationError e) noexcept
 {
     // Fall back to BAC ONLY when the document is structurally without PACE

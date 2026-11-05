@@ -15,9 +15,9 @@
 ///        @ref parsePaceOidsFromCardAccess. CardSession reads EF.CardAccess
 ///        and drives the handshake; nothing outside the library does.
 ///
-/// @note The types stay at default visibility: libLibreSCRS_SmartCard calls
-///       into libLibreSCRS_SecureChannel with them, so the symbols that
-///       carry them are exported, but the header is not installed.
+/// @note The types stay at default visibility so the in-tree channel tests,
+///       which link the shared library, can reach them; the header is not
+///       installed.
 
 #include <LibreSCRS/Auth/PaceSecretKind.h>
 #include <LibreSCRS/Export.h>

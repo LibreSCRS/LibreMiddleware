@@ -48,8 +48,6 @@ enum class ChannelActivationError : std::uint8_t {
     UserCancelled,
     /// @brief @ref LibreSCRS::CancelToken tripped. Terminal.
     Cancelled,
-    /// @brief Card removal observed mid-operation. Terminal.
-    CardRemoved,
     /// @brief PC/SC-level error. Terminal (usually).
     ReaderError,
     /// @brief Cache miss and no credential provider configured. Terminal.

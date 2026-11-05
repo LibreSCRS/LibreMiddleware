@@ -19,7 +19,7 @@
 #      `vtable for` / `typeinfo for` / `typeinfo name for` entry containing
 #      `::Impl` as a word segment.
 #
-# Linux coverage: the seven libLibreSCRS_*.so core libraries plus
+# Linux coverage: the six libLibreSCRS_*.so core libraries plus
 # plugins/*.so.
 # macOS coverage: the libLibreSCRS_*.dylib core libraries plus
 # plugins/*.dylib.
@@ -289,7 +289,7 @@ PLATFORM="$(uname -s)"
 
 if [[ "$PLATFORM" == "Darwin" ]]; then
     # Darwin Impl-visibility check covers the same surface as the Linux
-    # branch: plugin dylibs PLUS the seven LM core dylibs
+    # branch: plugin dylibs PLUS the six LM core dylibs
     # (libLibreSCRS_*.dylib). The leak pattern is
     # identical — Mach-O `nm -gU` produces the same `T`/`W`/`V` letter
     # codes for global/weak/vague symbols, so the awk + c++filt + grep
@@ -378,12 +378,12 @@ if [[ "$PLATFORM" == "Darwin" ]]; then
     exit 0
 fi
 
-# Linux branch — the plugin .so files and the seven LM core .so files
-# (Auth, Certificate, Plugin, SecureChannel, Signing, SmartCard, Trust).
+# Linux branch — the plugin .so files and the six LM core .so files
+# (Auth, Certificate, Plugin, Signing, SmartCard, Trust).
 #
 # The expected count is firm: LOUD failure on drift (renamed library, new
 # public library added or removed) is preferred over silent green.
-EXPECTED_CORE_SOS=7
+EXPECTED_CORE_SOS=6
 
 # Helper: scan a single .so for ::Impl:: T-binding and vtable/typeinfo
 # W/V-binding leaks. Prints "LEAK in ..." on stdout when any found.

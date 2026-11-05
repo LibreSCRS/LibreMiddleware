@@ -61,12 +61,9 @@ packaging choices:
 
 ## Is unbundling curl a one-flag change
 
-No, and this was measured rather than assumed. `-DLIBRESCRS_VENDOR_CURL=OFF`
-configures without complaint — CMake accepts the then-undefined
-`curl_static_with_deps` as a plain library name — and the build fails on the
-first translation unit that includes `<curl/curl.h>`, because the option has no
-`else()` branch that looks for a system curl. Taking curl from the system means
-writing that branch and re-testing the static link order of
+No. There is no option for it: the build always compiles the bundled curl,
+and nothing looks for a system curl. Taking curl from the system means writing
+that lookup and re-testing the static link order of
 libcurl/libssl/libcrypto/zlib, which is a change to this repository, not a
 change to a packaging recipe.
 
@@ -88,8 +85,8 @@ where it should. Note what is *not* in that list: the bundled OpenSSL. The tool
 catches one of the two bundles, which is why the bill of materials is the
 obligation and the lint is not.
 
-`package-name-doesnt-match-sonames` is the consequence of shipping seven shared
-libraries in one runtime package rather than seven packages of one library each.
+`package-name-doesnt-match-sonames` is the consequence of shipping six shared
+libraries in one runtime package rather than six packages of one library each.
 They have a single SOVERSION, they are released together, and nothing consumes
-one without the others; splitting them would multiply the package count by seven
+one without the others; splitting them would multiply the package count by six
 and buy nobody anything.

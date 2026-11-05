@@ -31,20 +31,8 @@ TEST(ActivationProfileTest, CanProfileRequiresActivation)
 }
 
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
-using LibreSCRS::Plugin::isStopError;
 using LibreSCRS::Plugin::shouldTryFallback;
 using LibreSCRS::SecureChannel::ChannelActivationError;
-
-TEST(StopErrorTest, StopSetIsExactlyCancelUserCancelCardRemoved)
-{
-    EXPECT_TRUE(isStopError(ChannelActivationError::Cancelled));
-    EXPECT_TRUE(isStopError(ChannelActivationError::UserCancelled));
-    EXPECT_TRUE(isStopError(ChannelActivationError::CardRemoved));
-    EXPECT_FALSE(isStopError(ChannelActivationError::PaceWrongSecret));
-    EXPECT_FALSE(isStopError(ChannelActivationError::CredentialsRequired));
-    EXPECT_FALSE(isStopError(ChannelActivationError::SelectAppletFailed));
-    EXPECT_FALSE(isStopError(ChannelActivationError::Internal));
-}
 
 TEST(ShouldTryFallbackTest, OnlyWhenAllowedAndPaceUnsupported)
 {

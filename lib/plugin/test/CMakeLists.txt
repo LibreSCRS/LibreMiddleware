@@ -4,10 +4,9 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(GoogleTest)
 
-# ActivationProfileTests exercises the internal isStopError /
-# shouldTryFallback predicates (hidden visibility, declared only under
-# LIBRESCRS_INTERNAL_BUILD).
-# Reaches them by absorbing the CardPlugin_Impl object archive (default
+# ActivationProfileTests exercises the internal shouldTryFallback predicate
+# (hidden visibility, declared only under LIBRESCRS_INTERNAL_BUILD).
+# Reaches it by absorbing the CardPlugin_Impl object archive (default
 # visibility, build-tree only) and compiling with LIBRESCRS_INTERNAL_BUILD so
 # the internal declarations are visible — mirrors ActivatedProtocolTests.
 add_executable(ActivationProfileTests ActivationProfileTests.cpp)

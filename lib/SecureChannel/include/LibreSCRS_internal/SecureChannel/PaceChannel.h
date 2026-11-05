@@ -145,9 +145,9 @@ public:
     /// @since 4.1
     ///
     /// @note Carries default visibility (not `LIBRESCRS_INTERNAL`) so the
-    ///       symbol is exported across LM shared-library boundaries:
-    ///       `LibreSCRS_SmartCard` (CardSession) is the in-tree caller and
-    ///       lives in a sibling .so.
+    ///       symbol is exported from `LibreSCRS_SmartCard`: CardSession, its
+    ///       caller, is in the same library, and the in-tree channel tests
+    ///       reach it through the export.
     ///       External consumers cannot construct an `IConnection`
     ///       (header lives outside `include/LibreSCRS/`), so the exported
     ///       symbol remains effectively private to the project.

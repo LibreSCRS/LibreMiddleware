@@ -372,37 +372,6 @@ void CardSession::clearCachedPaceCredentials() noexcept
     }
 }
 
-void CardSession::markDead() noexcept
-{
-    assert(!d->callerOwnsActiveChannel() && "CardSession re-entered on the thread holding its ActiveChannelHolder "
-                                            "— would self-deadlock on the non-recursive sessionMutex. Release the "
-                                            "holder before re-entering the session.");
-    d->dead.store(true, std::memory_order_release);
-    // Wipe cached PACE/BAC secrets on card-removal: a long-lived LC
-    // session would otherwise retain the MRZ / CAN / PIN material in RAM
-    // until the session is destructed, which can be many minutes for a
-    // GUI app sitting on an empty reader prompt. clearCachedPaceCredentials
-    // takes the session mutex internally and zeroes both
-    // paceCredentialsCache[] (Secure::String slots) and bacInput; itself
-    // marked noexcept under the same noexcept-alloc contract.
-    clearCachedPaceCredentials();
-    try {
-        std::lock_guard lock(d->sessionMutex);
-        // Card removed: the SM tunnel is dead, so clear the recorded protocol.
-        // The active channel itself is dropped by a subsequent
-        // clearActiveChannel / ~Impl; this keeps the accessor from reporting a
-        // stale protocol in the window before that fires.
-        d->activatedProtocol.reset();
-    } catch (...) {
-        // noexcept contract.
-    }
-}
-
-bool CardSession::isDead() const noexcept
-{
-    return d->dead.load(std::memory_order_acquire);
-}
-
 void CardSession::clearActiveChannel() noexcept
 {
     // Take the session mutex so the teardown is ordered against any in-
@@ -480,9 +449,6 @@ CardSession::activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token)
     if (token.isCancellable() && token.isCancelled()) {
         return std::unexpected{ChannelActivationError::Cancelled};
     }
-    if (d->dead.load(std::memory_order_acquire)) {
-        return std::unexpected{ChannelActivationError::CardRemoved};
-    }
     if (!d->ownedConn) {
         return std::unexpected{ChannelActivationError::ReaderError};
     }
@@ -494,10 +460,6 @@ CardSession::activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token)
     }
 
     std::unique_lock lock(d->sessionMutex);
-
-    if (d->dead.load(std::memory_order_acquire)) {
-        return std::unexpected{ChannelActivationError::CardRemoved};
-    }
 
     // Symmetric SM-tunnel guard, hoisted ahead of the transaction setup: a
     // plain activation must not tear down a live SM channel mid-flight —
@@ -583,9 +545,6 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
     if (token.isCancellable() && token.isCancelled()) {
         return std::unexpected{ChannelActivationError::Cancelled};
     }
-    if (d->dead.load(std::memory_order_acquire)) {
-        return std::unexpected{ChannelActivationError::CardRemoved};
-    }
     if (!d->ownedConn) {
         return std::unexpected{ChannelActivationError::ReaderError};
     }
@@ -607,10 +566,6 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
     }
 
     std::unique_lock lock(d->sessionMutex);
-
-    if (d->dead.load(std::memory_order_acquire)) {
-        return std::unexpected{ChannelActivationError::CardRemoved};
-    }
 
     using LibreSCRS::SecureChannel::ChipAuthChannel;
     auto channelMatchesProtocol = [&](const LibreSCRS::SecureChannel::ISecureChannel& ch) noexcept {
@@ -798,10 +753,6 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                 lock.unlock();
                 auto credResult = providerSnapshot(requirement);
                 lock.lock();
-                // Re-check invariants the provider may have mutated.
-                if (d->dead.load(std::memory_order_acquire)) {
-                    return std::unexpected{ChannelActivationError::CardRemoved};
-                }
                 if (credResult.status == LibreSCRS::Auth::CredentialResult::Status::UserCancelled) {
                     return std::unexpected{ChannelActivationError::UserCancelled};
                 }
@@ -911,10 +862,6 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
             lock.unlock();
             auto credResult = providerSnapshot(requirement);
             lock.lock();
-            // Re-check invariants the provider may have mutated.
-            if (d->dead.load(std::memory_order_acquire)) {
-                return std::unexpected{ChannelActivationError::CardRemoved};
-            }
             if (credResult.status == LibreSCRS::Auth::CredentialResult::Status::UserCancelled) {
                 return std::unexpected{ChannelActivationError::UserCancelled};
             }

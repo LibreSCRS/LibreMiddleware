@@ -11,5 +11,5 @@ librescrs_add_plugin(pkcs15-plugin
         ${PROJECT_SOURCE_DIR}/lib/plugin/src
         # The shared internal Crypto headers (the PKCS#1 v1.5 DigestInfo builder).
         ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
-    LINK_LIBRARIES PKCS15 EMRTDCrypto LibreSCRS_SmartCard LibreSCRS_SecureChannel LibreSCRS_Certificate
+    LINK_LIBRARIES PKCS15 EMRTDCrypto LibreSCRS_SmartCard LibreSCRS_Certificate
 )

@@ -43,7 +43,7 @@
  *       compiled into each image from hidden-visibility archives and
  *       are not exported.
  *     - LibreSCRS::SecureChannel::detail::ChannelStateMutator —
- *       required for SmartCard.so + emrtd-plugin.so to call
+ *       defined in SmartCard.so, required for emrtd-plugin.so to call
  *       SetCurrentApplet / ReplaceKeys.
  *     - LibreSCRS::SmartCard::Internal::HolderChannelAccessor —
  *       required for plugin .so files to obtain a channel pointer

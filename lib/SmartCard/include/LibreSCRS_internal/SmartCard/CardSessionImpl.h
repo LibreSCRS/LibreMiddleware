@@ -77,8 +77,8 @@ struct LIBRESCRS_INTERNAL CardSession::Impl
     // SM protocol that established @ref activeChannel (after any BAC fallback).
     // Recorded at activation time alongside every makeActiveChannelHolder
     // return that hands back a live SM channel, and reset everywhere
-    // activeChannel is reset/closed (clearActiveChannel, the Case-3 teardown,
-    // markDead). Mirrors the activeChannel lifetime so the public
+    // activeChannel is reset/closed (clearActiveChannel, the Case-3 teardown).
+    // Mirrors the activeChannel lifetime so the public
     // CardSession::activatedProtocol accessor never reports a stale protocol.
     std::optional<LibreSCRS::SmartCard::SmProtocolRequest> activatedProtocol;
     std::array<LibreSCRS::Secure::String, Internal::kPaceSecretKindCount> paceCredentialsCache;
@@ -88,7 +88,6 @@ struct LIBRESCRS_INTERNAL CardSession::Impl
     std::optional<LibreSCRS::SecureChannel::BacInput> bacInput;
     std::optional<LibreSCRS::Auth::CredentialProvider> credentialProvider;
     std::mutex sessionMutex;
-    std::atomic<bool> dead{false};
 
     // Thread currently owning the active-channel lock (holds the live
     // ActiveChannelHolder). std::thread::id{} == no owner. Set (release) when

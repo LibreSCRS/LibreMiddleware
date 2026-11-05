@@ -64,13 +64,13 @@ TEST(ActivationFallbackPolicy, FallbackNeverFiresWhenDisallowed)
     ActivationProfile p = fallbackAllowed();
     p.allowBacFallback = false;
 
-    for (const auto e : {ChannelActivationError::None, ChannelActivationError::SelectAppletFailed,
-                         ChannelActivationError::PaceWrongSecret, ChannelActivationError::PacePinBlocked,
-                         ChannelActivationError::PaceProtocolFailure, ChannelActivationError::PaceUnsupported,
-                         ChannelActivationError::UserCancelled, ChannelActivationError::Cancelled,
-                         ChannelActivationError::CardRemoved, ChannelActivationError::ReaderError,
-                         ChannelActivationError::CredentialsRequired, ChannelActivationError::Internal,
-                         ChannelActivationError::ReentrantAccess, ChannelActivationError::PaceDowngradeDetected}) {
+    for (const auto e :
+         {ChannelActivationError::None, ChannelActivationError::SelectAppletFailed,
+          ChannelActivationError::PaceWrongSecret, ChannelActivationError::PacePinBlocked,
+          ChannelActivationError::PaceProtocolFailure, ChannelActivationError::PaceUnsupported,
+          ChannelActivationError::UserCancelled, ChannelActivationError::Cancelled, ChannelActivationError::ReaderError,
+          ChannelActivationError::CredentialsRequired, ChannelActivationError::Internal,
+          ChannelActivationError::ReentrantAccess, ChannelActivationError::PaceDowngradeDetected}) {
         EXPECT_FALSE(shouldTryFallback(p, e));
     }
 }
@@ -82,5 +82,4 @@ TEST(ActivationFallbackPolicy, StopErrorsNeverFallBack)
     // Stop errors abort the walk unconditionally, even with the flag set.
     EXPECT_FALSE(shouldTryFallback(p, ChannelActivationError::Cancelled));
     EXPECT_FALSE(shouldTryFallback(p, ChannelActivationError::UserCancelled));
-    EXPECT_FALSE(shouldTryFallback(p, ChannelActivationError::CardRemoved));
 }

@@ -58,11 +58,11 @@ red=0
 fail=0
 
 # A build tree whose file names and counts are exactly what the gate expects of
-# a shared build: seven core libraries and a plugin.
+# a shared build: six core libraries and a plugin.
 make_tree() {
     root="$1"
     mkdir -p "$root/lib/LibreSCRS" "$root/plugins"
-    for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
+    for module in Auth Certificate Plugin Signing SmartCard Trust; do
         : > "$root/lib/LibreSCRS/libLibreSCRS_$module.so"
     done
     : > "$root/plugins/libselftest-plugin.so"
@@ -115,7 +115,7 @@ out="$(PATH="$shim" bash "$GATE" "$tree1" 2>&1)"; rc=$?
 report 1 2 "$rc" "c++filt not found" "$out"
 
 # --- case 2: every artefact in place, and not one symbol read ----------------
-# Seven core libraries and two modules is what the counters check; none of them
+# Six core libraries and two modules is what the counters check; none of them
 # yields a symbol. Counting containers is not counting symbols.
 # Linux only: the containers are .so files, which a macOS build never has.
 if [ "$(uname -s)" != "Darwin" ]; then
@@ -189,7 +189,7 @@ fi
 pcsc_tree() {
     root="$1"
     mkdir -p "$root/lib/LibreSCRS" "$root/plugins"
-    for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
+    for module in Auth Certificate Plugin Signing SmartCard Trust; do
         command cp -f "$pcsc_src/plain.$pcsc_ext" "$root/lib/LibreSCRS/libLibreSCRS_$module.$pcsc_ext"
     done
     command cp -f "$pcsc_src/plain.$pcsc_ext" "$root/plugins/libfixture-plugin.$pcsc_ext"
@@ -198,7 +198,7 @@ pcsc_surface="$WORK/pcsc-surface.txt"
 if [ "$pcsc_host" != "Darwin" ]; then
     {
         echo "# fixture surface for the PC/SC cases"
-        for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
+        for module in Auth Certificate Plugin Signing SmartCard Trust; do
             echo "== libLibreSCRS_$module.so =="
             nm -D -U "$pcsc_src/plain.so" | awk '$2 == "T" { print $3 }' | c++filt | sort -u
         done
@@ -384,7 +384,7 @@ fi
 fixture_surface="$WORK/fixture-surface.txt"
 {
     echo "# fixture surface for check-impl-visibility.selftest.sh"
-    for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
+    for module in Auth Certificate Plugin Signing SmartCard Trust; do
         echo "== libLibreSCRS_$module.so =="
         nm -D -U "$src/clean.so" | awk '$2 == "T" { print $3 }' | c++filt | sort -u
     done
@@ -394,7 +394,7 @@ export LIBRESCRS_ABI_BASELINE="$fixture_surface"
 # Same shape as make_tree, with libraries that are not empty.
 tree3="$WORK/tree-real"
 make_tree "$tree3"
-for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
+for module in Auth Certificate Plugin Signing SmartCard Trust; do
     command cp -f "$src/clean.so" "$tree3/lib/LibreSCRS/libLibreSCRS_$module.so"
 done
 command cp -f "$src/clean.so" "$tree3/plugins/libselftest-plugin.so"
@@ -416,7 +416,7 @@ report 5 2 "$rc" "found 0" "$out"
 # --- case 6: the spelling the old rule could not see -------------------------
 tree6="$WORK/tree-impl-underscore"
 make_tree "$tree6"
-for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
+for module in Auth Certificate Plugin Signing SmartCard Trust; do
     command cp -f "$src/clean.so" "$tree6/lib/LibreSCRS/libLibreSCRS_$module.so"
 done
 command cp -f "$src/clean.so" "$tree6/plugins/libselftest-plugin.so"
@@ -426,7 +426,7 @@ report 6 1 "$rc" "LibreSCRS::Selftest::Impl_::step(int)" "$out"
 
 # --- case 7: archives where the core libraries should be --------------------
 # The libraries are shared and nothing else; there is no static configuration
-# to judge. A tree holding libLibreSCRS_*.a archives in place of the seven core
+# to judge. A tree holding libLibreSCRS_*.a archives in place of the six core
 # .so files is a build this gate cannot speak for, and saying "clean" over it
 # would certify a surface nobody ships.
 ar_src="$WORK/ar"
@@ -443,7 +443,7 @@ if ! g++ -c -fPIC -o "$ar_src/archived.o" "$ar_src/archived.cpp" 2>>"$WORK/gcc.e
 fi
 tree7="$WORK/tree-static"
 mkdir -p "$tree7/lib/LibreSCRS" "$tree7/plugins"
-for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
+for module in Auth Certificate Plugin Signing SmartCard Trust; do
     ar rcs "$tree7/lib/LibreSCRS/libLibreSCRS_$module.a" "$ar_src/archived.o" 2>/dev/null
 done
 if ! nm "$tree7/lib/LibreSCRS/libLibreSCRS_Trust.a" | c++filt | grep -qF 'LibreSCRS::Selftest::Keeper::hold'; then
@@ -461,7 +461,7 @@ report 7 2 "$rc" "found 0" "$out"
 # was reported clean.
 tree9="$WORK/tree-plugin-underscore"
 make_tree "$tree9"
-for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
+for module in Auth Certificate Plugin Signing SmartCard Trust; do
     command cp -f "$src/clean.so" "$tree9/lib/LibreSCRS/libLibreSCRS_$module.so"
 done
 command cp -f "$src/leak_.so" "$tree9/plugins/libselftest-plugin.so"
@@ -488,7 +488,7 @@ if ! nm -D -U "$src/weak.so" | awk '$2 == "W" || $2 == "u" { print $3 }' | c++fi
 fi
 tree21="$WORK/tree-weak-internal"
 make_tree "$tree21"
-for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
+for module in Auth Certificate Plugin Signing SmartCard Trust; do
     command cp -f "$src/clean.so" "$tree21/lib/LibreSCRS/libLibreSCRS_$module.so"
 done
 command cp -f "$src/weak.so" "$tree21/plugins/libselftest-plugin.so"
@@ -530,7 +530,7 @@ if ! cmp -s <(nm -D -U "$src/clean.so" | awk '$2 == "T" { print $3 }' | sort) \
 fi
 tree20="$WORK/tree-std-weak"
 make_tree "$tree20"
-for module in Auth Certificate Plugin SecureChannel Signing SmartCard Trust; do
+for module in Auth Certificate Plugin Signing SmartCard Trust; do
     command cp -f "$src/clean.so" "$tree20/lib/LibreSCRS/libLibreSCRS_$module.so"
 done
 command cp -f "$src/clean.so" "$tree20/plugins/libselftest-plugin.so"

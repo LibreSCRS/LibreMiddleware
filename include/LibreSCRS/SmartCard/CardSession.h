@@ -261,7 +261,7 @@ public:
 
     /// @brief The SM protocol that established the currently-live channel
     ///        (after any BAC fallback), or nullopt if no SM channel is active.
-    ///        Recorded at activation time; cleared on channel teardown / markDead.
+    ///        Recorded at activation time; cleared on channel teardown.
     ///
     /// @note Acquires the session mutex for the duration of the call so it is
     ///       safe to invoke concurrently with activation paths. On lock
@@ -383,15 +383,6 @@ public:
     /// zeroise that does not allocate.
     /// @since 4.1
     void clearCachedPaceCredentials() noexcept;
-
-    /// @brief Mark the session dead, typically on a @c CardRemoved event
-    ///        for its reader; subsequent activation attempts
-    ///        return @c ChannelActivationError::CardRemoved.
-    /// @since 4.1
-    void markDead() noexcept;
-
-    /// @brief True once @ref markDead has fired.
-    [[nodiscard]] bool isDead() const noexcept;
 
     /// @brief Close and release the currently installed secure channel, if
     ///        any. The session remains usable; a subsequent

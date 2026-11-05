@@ -584,9 +584,6 @@ LibreSCRS::Plugin::ReadResult mapActivationErrorToReadResult(LibreSCRS::SecureCh
     case Err::PaceWrongSecret:
         return ReadResult::authenticationFailed(LibreSCRS::Auth::ErrorKeys::authFailed(),
                                                 std::string{what} + ": wrong CAN");
-    case Err::CardRemoved:
-        return ReadResult::communicationError(LibreSCRS::Auth::ErrorKeys::genericComm(),
-                                              std::string{what} + ": card removed");
     default:
         return ReadResult::communicationError(LibreSCRS::Auth::ErrorKeys::genericComm(),
                                               std::string{what} + ": channel activation failed");

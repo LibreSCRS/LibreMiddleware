@@ -1352,10 +1352,6 @@ private:
             suffix = "CAN required";
             return ReadResult::authenticationFailed(LibreSCRS::Auth::ErrorKeys::authFailed(),
                                                     std::string{what} + ": " + suffix);
-        case Err::CardRemoved:
-            suffix = "card removed";
-            return ReadResult::communicationError(LibreSCRS::Auth::ErrorKeys::genericComm(),
-                                                  std::string{what} + ": " + suffix);
         case Err::SelectAppletFailed:
             suffix = "failed to select PKCS#15 applet";
             return ReadResult::communicationError(LibreSCRS::Auth::ErrorKeys::genericComm(),

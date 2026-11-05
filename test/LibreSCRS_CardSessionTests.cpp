@@ -53,24 +53,6 @@ TEST(CardSessionMove, MoveDestinationPreservesReaderName)
 #include <LibreSCRS/SmartCard/AppletAid.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 
-TEST(CardSession_4_1_API, MarkDeadIsObservable)
-{
-    auto src = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("TestReader");
-    EXPECT_FALSE(src->isDead());
-    src->markDead();
-    EXPECT_TRUE(src->isDead());
-}
-
-TEST(CardSession_4_1_API, ActivateChannelForOnDeadSessionReturnsCardRemoved)
-{
-    auto src = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("TestReader");
-    src->markDead();
-    LibreSCRS::SmartCard::AppletAid aid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
-    auto result = src->activateChannelFor(std::move(aid), LibreSCRS::CancelToken{});
-    ASSERT_FALSE(result.has_value());
-    EXPECT_EQ(result.error(), LibreSCRS::SecureChannel::ChannelActivationError::CardRemoved);
-}
-
 TEST(CardSession_4_1_API, ActivateChannelWithSmCacheMissNoProviderIsCredentialsRequired)
 {
     auto src = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("TestReader");
