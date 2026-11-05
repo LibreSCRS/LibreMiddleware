@@ -28,6 +28,6 @@ set_target_properties(EMRTD PROPERTIES
     VISIBILITY_INLINES_HIDDEN ON
 )
 
-target_link_libraries(EMRTD PUBLIC EMRTDCrypto SmartCard_Impl LibreSCRS_SecureChannel)
+target_link_libraries(EMRTD PUBLIC EMRTDCrypto SmartCard_Impl LibreSCRS_SmartCard)
 
 librescrs_warnings_as_errors(EMRTD)

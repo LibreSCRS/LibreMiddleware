@@ -68,12 +68,6 @@ public:
         return refusalRetry ? *refusalRetry : IPCSCScanProvider::refusalRetryInterval();
     }
 
-    void setListReadersReturn(LONG rv)
-    {
-        std::lock_guard<std::mutex> lock(mtx);
-        listReadersRv = rv;
-    }
-
     /// @brief Block any incoming `listReaders` call inside the mock until
     /// `releaseListReadersBlock` is invoked. Used in regression tests that
     /// need to hold the internal poll thread mid-enumeration while the test
@@ -149,10 +143,6 @@ public:
         }
 
         std::lock_guard<std::mutex> lock(mtx);
-
-        if (listReadersRv != SCARD_S_SUCCESS) {
-            return listReadersRv;
-        }
 
         if (readerNames.empty()) {
             *pcchReaders = 0;
@@ -251,7 +241,6 @@ private:
 
     std::mutex mtx;
     std::vector<std::string> readerNames;
-    LONG listReadersRv = SCARD_S_SUCCESS;
     LONG establishContextRv = SCARD_S_SUCCESS;
     std::vector<StatusChangeAction> statusChangeQueue;
 

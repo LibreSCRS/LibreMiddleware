@@ -19,12 +19,12 @@ set(LIBRESCRS_EMRTD_CRYPTO_PRIVATE_INCLUDES
     ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src
     # SecureChannel public + internal headers —
-    # included via direct path rather than `LibreSCRS_SecureChannel` link to
-    # avoid a circular target dependency: LibreSCRS_SecureChannel privately
+    # included via direct path rather than a `LibreSCRS_SmartCard` link to
+    # avoid a circular target dependency: LibreSCRS_SmartCard privately
     # links EMRTDCrypto for the BAC/PACE/CA protocol implementations, and a
-    # cycle through the SHARED LibreSCRS_SecureChannel fails at generate time.
+    # cycle through the SHARED LibreSCRS_SmartCard fails at generate time.
     # All downstream targets that link EMRTDCrypto also link
-    # LibreSCRS_SecureChannel directly, so no transitive surface is lost.
+    # LibreSCRS_SmartCard directly, so no transitive surface is lost.
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/lib/SecureChannel/include
     # The shared internal Crypto headers (CleanseGuard, OpenSslPtr). Four

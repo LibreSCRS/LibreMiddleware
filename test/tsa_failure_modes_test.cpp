@@ -298,7 +298,7 @@ TEST(CAdESSignClassification, BT_TsaFailure_IsTsaUnreachable)
 // ---- CAdES timestamp-step typed-failure partition ----
 //
 // CAdESModule::sign discriminates the throws from addTimestamp /
-// addArchiveTimestamp by exception TYPE, not by message: a TSA failure (missing
+// addArchiveTimestampTo by exception TYPE, not by message: a TSA failure (missing
 // URL or failed RFC 3161 round-trip) throws SignFailureException carrying a
 // precise SignFailureKind (InvalidInput for the missing URL, TsaUnreachable for
 // a failed round-trip), which sign()'s typed catch arm maps straight through.
@@ -328,13 +328,13 @@ TEST(CAdESTimestampPartition, MissingUrlThrowsTypedInvalidInput)
 
     threw = false;
     try {
-        cades.addArchiveTimestamp(fakeCms, tsa);
+        addArchiveTimestampForTest(fakeCms, tsa);
     } catch (const libresign::SignFailureException& e) {
         threw = true;
         EXPECT_EQ(e.kind, SignFailureKind::InvalidInput)
             << "missing-TSA-URL must throw a typed InvalidInput, msg=" << e.what();
     }
-    EXPECT_TRUE(threw) << "addArchiveTimestamp must throw SignFailureException on an empty TSA URL";
+    EXPECT_TRUE(threw) << "addArchiveTimestampForTest must throw SignFailureException on an empty TSA URL";
 }
 
 TEST(CAdESTimestampPartition, InternalFaultIsNotTypedFailure)
@@ -364,12 +364,12 @@ TEST(CAdESTimestampPartition, InternalFaultIsNotTypedFailure)
     threwTyped = false;
     threwPlain = false;
     try {
-        cades.addArchiveTimestamp(garbageCms, tsa);
+        addArchiveTimestampForTest(garbageCms, tsa);
     } catch (const libresign::SignFailureException&) {
         threwTyped = true;
     } catch (const std::exception&) {
         threwPlain = true;
     }
     EXPECT_FALSE(threwTyped) << "internal (non-TSA) fault must NOT be a typed SignFailureException";
-    EXPECT_TRUE(threwPlain) << "addArchiveTimestamp must throw a plain exception on a malformed CMS";
+    EXPECT_TRUE(threwPlain) << "addArchiveTimestampForTest must throw a plain exception on a malformed CMS";
 }

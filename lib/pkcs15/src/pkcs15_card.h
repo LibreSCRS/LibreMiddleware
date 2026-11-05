@@ -36,11 +36,6 @@ public:
     bool probe();        // Try AID SELECT, then EF.DIR fallback
     bool selectApplet(); // Re-select using the method that worked in probe()
 
-    // The DF path probe() settled on; empty == "AID-only SELECT worked".
-    [[nodiscard]] const std::vector<uint8_t>& pkcs15PathView() const noexcept
-    {
-        return pkcs15Path;
-    }
     PKCS15Profile readProfile();
     TokenInfo readTokenInfo(); // Lightweight: reads only EF(TokenInfo), no certs/keys/PINs
     std::vector<uint8_t> readCertificate(const CertificateInfo& cert);

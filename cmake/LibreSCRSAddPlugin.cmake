@@ -17,11 +17,6 @@
 #   #include "manifest.h"
 # and consume kPluginId, kCapabilities, kAtrs
 # from the LibreSCRS::Plugin::generated::<id> namespace.
-#
-# A global CMake property LIBRESCRS_PLUGIN_MANIFESTS records every manifest
-# path so downstream aggregators (manifests2plist for Apple Info.plist,
-# manifests2desktop for KDE) can read them without re-parsing per-plugin
-# sources.
 
 function(librescrs_add_plugin name)
     set(options)
@@ -115,9 +110,6 @@ function(librescrs_add_plugin name)
         )
     endif()
 
-    # Track for downstream aggregation (e.g. a future manifests2plist tool).
-    set_property(GLOBAL APPEND PROPERTY LIBRESCRS_PLUGIN_MANIFESTS "${LRS_PLUGIN_MANIFEST}")
-
     # Install rule for card plugins.
     #
     # Mirrors the public LibreSCRS_*.so install rule. The plugin .so files
@@ -128,9 +120,7 @@ function(librescrs_add_plugin name)
     #   1. honouring an override of its own (the Linux agent reads
     #      LIBRESCRS_PLUGIN_DIR), or
     #   2. falling back to the install-tree convention
-    #      ${CMAKE_INSTALL_FULL_LIBDIR}/librescrs/plugins/, or
-    #   3. falling back to ${LIBREMIDDLEWARE_PLUGIN_DIR} (the build-tree
-    #      cache var, for in-tree FetchContent consumers like LibreCelik).
+    #      ${CMAKE_INSTALL_FULL_LIBDIR}/librescrs/plugins/.
     #
     # The contract is documented in docs/SHARED-LIBRARY-CONSUMERS.md.
     include(GNUInstallDirs)

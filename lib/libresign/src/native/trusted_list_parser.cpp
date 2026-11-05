@@ -213,32 +213,6 @@ TrustedListInfo TrustedListParser::parse(const std::vector<uint8_t>& xmlData)
     return parseDoc(doc.get());
 }
 
-TrustedListInfo TrustedListParser::parse(const std::string& xmlString)
-{
-    if (xmlString.empty()) {
-        return {};
-    }
-
-    // XML_PARSE_NONET: forbid network access (no external DTDs over network)
-    // XML_PARSE_NOCDATA: merge CDATA into text nodes
-    // We deliberately do NOT set XML_PARSE_NOENT or XML_PARSE_DTDLOAD —
-    // entities are kept as references (not expanded) and external DTDs are
-    // not loaded, which mitigates XXE and billion-laughs attacks.
-    constexpr int kSafeXmlOptions = XML_PARSE_NONET | XML_PARSE_NOCDATA;
-    if (xmlString.size() > static_cast<size_t>(INT_MAX)) {
-        return {};
-    }
-    XmlDocPtr doc(
-        xmlReadMemory(xmlString.data(), static_cast<int>(xmlString.size()), nullptr, nullptr, kSafeXmlOptions));
-    return parseDoc(doc.get());
-}
-
-std::vector<uint8_t> TrustedListParser::fetchRaw(const std::string& url, int timeoutSeconds)
-{
-    auto result = fetchRawConditional(url, {}, {}, timeoutSeconds);
-    return std::move(result.data);
-}
-
 TrustedListParser::FetchResult TrustedListParser::fetchRawConditional(const std::string& url, const std::string& etag,
                                                                       const std::string& lastModified,
                                                                       int timeoutSeconds)
@@ -272,18 +246,6 @@ TrustedListParser::FetchResult TrustedListParser::fetchRawConditional(const std:
         result.lastModified = it->second;
 
     return result;
-}
-
-TrustedListInfo TrustedListParser::fetch(const std::string& url, int timeoutSeconds)
-{
-    HttpClient client;
-    auto response = client.get(url, timeoutSeconds);
-
-    if (response.statusCode != 200 || response.body.empty()) {
-        return {};
-    }
-
-    return parse(response.body);
 }
 
 // LOTL pointers come from signed XML but are still attacker-controllable if

@@ -22,7 +22,6 @@ public:
     void log(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd,
              const LibreSCRS::SmartCard::Internal::APDUResponse& resp);
     std::string formatTrace() const;
-    void clear();
 
     const std::vector<Entry>& getEntries() const
     {

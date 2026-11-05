@@ -5,7 +5,9 @@
 
 #include "native/trusted_list_parser.h"
 
-#include <cstdlib>
+#include <cstdint>
+#include <string_view>
+#include <vector>
 
 using namespace libresign;
 
@@ -134,10 +136,14 @@ static const char* multiProviderTlXml = R"(<?xml version="1.0" encoding="UTF-8"?
   </TrustServiceProviderList>
 </TrustServiceStatusList>)";
 
+static std::vector<uint8_t> bytes(std::string_view text)
+{
+    return {text.begin(), text.end()};
+}
+
 TEST(TrustedListParser, ParseMinimalTL)
 {
-    std::string xml(minimalTlXml);
-    auto info = TrustedListParser::parse(xml);
+    auto info = TrustedListParser::parse(bytes(minimalTlXml));
 
     ASSERT_EQ(info.schemeTerritory, "RS");
     ASSERT_FALSE(info.schemeName.empty());
@@ -150,33 +156,15 @@ TEST(TrustedListParser, ParseMinimalTL)
     ASSERT_FALSE(info.services[0].certDer.empty());
 }
 
-TEST(TrustedListParser, ParseEmptyReturnsEmpty)
-{
-    auto info = TrustedListParser::parse(std::string(""));
-    ASSERT_TRUE(info.schemeTerritory.empty());
-    ASSERT_TRUE(info.services.empty());
-}
-
 TEST(TrustedListParser, ParseInvalidXmlReturnsEmpty)
 {
-    auto info = TrustedListParser::parse(std::string("not xml at all"));
+    auto info = TrustedListParser::parse(bytes("not xml at all"));
     ASSERT_TRUE(info.schemeTerritory.empty());
-}
-
-TEST(TrustedListParser, ParseVectorOverload)
-{
-    std::string xml(minimalTlXml);
-    std::vector<uint8_t> data(xml.begin(), xml.end());
-    auto info = TrustedListParser::parse(data);
-
-    ASSERT_EQ(info.schemeTerritory, "RS");
-    ASSERT_EQ(info.services.size(), 1u);
 }
 
 TEST(TrustedListParser, ParseLotlExtractsPointers)
 {
-    std::string xml(minimalLotlXml);
-    auto info = TrustedListParser::parse(xml);
+    auto info = TrustedListParser::parse(bytes(minimalLotlXml));
 
     ASSERT_EQ(info.schemeTerritory, "EU");
     ASSERT_EQ(info.pointersToOtherTSL.size(), 2u);
@@ -193,8 +181,7 @@ TEST(TrustedListParser, ParseLotlExtractsPointers)
 
 TEST(TrustedListParser, ParseMultipleProvidersAndServices)
 {
-    std::string xml(multiProviderTlXml);
-    auto info = TrustedListParser::parse(xml);
+    auto info = TrustedListParser::parse(bytes(multiProviderTlXml));
 
     ASSERT_EQ(info.schemeTerritory, "DE");
     ASSERT_EQ(info.services.size(), 3u);
@@ -299,19 +286,4 @@ TEST(TrustedListParserSafeUrl, RejectsNonHttps)
     EXPECT_FALSE(TrustedListParser::isSafeTslUrl("http://example.org/tl.xml"));
     EXPECT_FALSE(TrustedListParser::isSafeTslUrl("file:///etc/passwd"));
     EXPECT_FALSE(TrustedListParser::isSafeTslUrl("ftp://example.org/x"));
-}
-
-// Live test -- fetch real Serbian TL (network required, may be slow)
-TEST(TrustedListParser, FetchSerbianTL)
-{
-    if (!std::getenv("LIBRESCRS_TEST_LIVE_TL"))
-        GTEST_SKIP() << "Set LIBRESCRS_TEST_LIVE_TL=1 to run";
-
-    TrustedListParser parser;
-    auto info = parser.fetch("https://www.mtt.gov.rs/download/CyrilicTSL.xml", 30);
-
-    ASSERT_EQ(info.schemeTerritory, "RS");
-    ASSERT_FALSE(info.services.empty());
-    // Serbian TL should have at least a few CAs
-    ASSERT_GE(info.services.size(), 2u);
 }

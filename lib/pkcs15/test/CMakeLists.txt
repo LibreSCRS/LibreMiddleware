@@ -24,7 +24,6 @@ if(LIBRESCRS_VENDOR_OPENSC AND NOT APPLE)
     target_link_libraries(CrossProviderCoordinationTests PRIVATE
         PKCS15
         LibreSCRS::SmartCard
-        LibreSCRS::SecureChannel
         LibreSCRS_SmartCard_TestHelpers
         LibreSCRS::Secure
         EMRTDCrypto
@@ -72,7 +71,6 @@ add_executable(cardsession_reentrancy_test
 
 target_link_libraries(cardsession_reentrancy_test PRIVATE
     LibreSCRS::SmartCard
-    LibreSCRS::SecureChannel
     LibreSCRS_SmartCard_TestHelpers
     LibreSCRS::Secure
     PCSC::PCSC

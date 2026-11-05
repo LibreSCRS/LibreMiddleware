@@ -52,159 +52,155 @@ endif()
 #
 # See thirdparty/README.md for the pin rationale and update procedure.
 # ──────────────────────────────────────────────────────────────────────────
-option(LIBRESCRS_VENDOR_CURL
-    "Build a static libcurl against the bundled OpenSSL so the signing library uses one OpenSSL, its own" ON)
-if(LIBRESCRS_VENDOR_CURL)
-    include(ExternalProject)
-    # Resolve system zlib up front: the bundled static libcrypto.a references
-    # zlib (COMP), so curl's static-OpenSSL symbol check needs ZLIB_LIBRARY
-    # resolved during OpenSSL detection — before curl's own find_package(ZLIB).
-    find_package(ZLIB REQUIRED)
+include(ExternalProject)
+# Resolve system zlib up front: the bundled static libcrypto.a references
+# zlib (COMP), so curl's static-OpenSSL symbol check needs ZLIB_LIBRARY
+# resolved during OpenSSL detection — before curl's own find_package(ZLIB).
+find_package(ZLIB REQUIRED)
 
-    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-        set(CURL_OPENSSL_DIR ${OPENSSL_ROOT}/macosx)
-    else()
-        set(CURL_OPENSSL_DIR ${OPENSSL_ROOT}/linux)
-    endif()
-    set(CURL_SOURCE_DIR  ${CMAKE_CURRENT_SOURCE_DIR}/curl-source)
-    # curl's own CMakeCache.txt outlives a change of either bundled version:
-    # -DOPENSSL_ROOT_DIR does not reset the OPENSSL_*_LIBRARY and
-    # OPENSSL_INCLUDE_DIR it cached, so after a switch the configure step
-    # looks for a tree that no longer exists. Key the build tree by both
-    # versions, so each pair configures in a tree of its own, and re-run
-    # this configure when the curl checkout moves.
-    set(_curl_version_header ${CURL_SOURCE_DIR}/include/curl/curlver.h)
-    file(STRINGS ${_curl_version_header} _curl_version_line
-        REGEX "^#define LIBCURL_VERSION \"[^\"]+\"")
-    string(REGEX REPLACE "^#define LIBCURL_VERSION \"([^\"]+)\".*" "\\1"
-        _curl_version "${_curl_version_line}")
-    if(NOT _curl_version)
-        message(FATAL_ERROR "No LIBCURL_VERSION in ${_curl_version_header}")
-    endif()
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_curl_version_header})
-    get_filename_component(_curl_openssl_name ${OPENSSL_ROOT} NAME)
-    set(CURL_BUILD_DIR   ${CMAKE_CURRENT_BINARY_DIR}/curl-build-${_curl_version}-${_curl_openssl_name})
-    set(CURL_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/curl-install)
-    set(CURL_STATIC_LIB  ${CURL_INSTALL_DIR}/lib/libcurl.a)
-    # IMPORTED INTERFACE_INCLUDE_DIRECTORIES must exist at configure time even
-    # though ExternalProject populates it at build time.
-    file(MAKE_DIRECTORY ${CURL_INSTALL_DIR}/include)
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    set(CURL_OPENSSL_DIR ${OPENSSL_ROOT}/macosx)
+else()
+    set(CURL_OPENSSL_DIR ${OPENSSL_ROOT}/linux)
+endif()
+set(CURL_SOURCE_DIR  ${CMAKE_CURRENT_SOURCE_DIR}/curl-source)
+# curl's own CMakeCache.txt outlives a change of either bundled version:
+# -DOPENSSL_ROOT_DIR does not reset the OPENSSL_*_LIBRARY and
+# OPENSSL_INCLUDE_DIR it cached, so after a switch the configure step
+# looks for a tree that no longer exists. Key the build tree by both
+# versions, so each pair configures in a tree of its own, and re-run
+# this configure when the curl checkout moves.
+set(_curl_version_header ${CURL_SOURCE_DIR}/include/curl/curlver.h)
+file(STRINGS ${_curl_version_header} _curl_version_line
+    REGEX "^#define LIBCURL_VERSION \"[^\"]+\"")
+string(REGEX REPLACE "^#define LIBCURL_VERSION \"([^\"]+)\".*" "\\1"
+    _curl_version "${_curl_version_line}")
+if(NOT _curl_version)
+    message(FATAL_ERROR "No LIBCURL_VERSION in ${_curl_version_header}")
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${_curl_version_header})
+get_filename_component(_curl_openssl_name ${OPENSSL_ROOT} NAME)
+set(CURL_BUILD_DIR   ${CMAKE_CURRENT_BINARY_DIR}/curl-build-${_curl_version}-${_curl_openssl_name})
+set(CURL_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/curl-install)
+set(CURL_STATIC_LIB  ${CURL_INSTALL_DIR}/lib/libcurl.a)
+# IMPORTED INTERFACE_INCLUDE_DIRECTORIES must exist at configure time even
+# though ExternalProject populates it at build time.
+file(MAKE_DIRECTORY ${CURL_INSTALL_DIR}/include)
 
-    set(_curl_osx_args "")
-    if(APPLE AND CMAKE_OSX_ARCHITECTURES)
-        # CMAKE_OSX_ARCHITECTURES is a ;-list ("x86_64;arm64"). Passed verbatim
-        # through ExternalProject_Add's CMAKE_ARGS, the ';' is taken as an
-        # argument separator, so curl's sub-CMake would see only the first arch
-        # and build a NON-universal libcurl.a (undefined _curl_* for the dropped
-        # slice). Re-encode the list with '|' and declare LIST_SEPARATOR below so
-        # the full arch list reaches curl intact.
-        string(REPLACE ";" "|" _curl_osx_arch "${CMAKE_OSX_ARCHITECTURES}")
-        set(_curl_osx_args
-            -DCMAKE_OSX_ARCHITECTURES=${_curl_osx_arch}
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET})
-    endif()
+set(_curl_osx_args "")
+if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+    # CMAKE_OSX_ARCHITECTURES is a ;-list ("x86_64;arm64"). Passed verbatim
+    # through ExternalProject_Add's CMAKE_ARGS, the ';' is taken as an
+    # argument separator, so curl's sub-CMake would see only the first arch
+    # and build a NON-universal libcurl.a (undefined _curl_* for the dropped
+    # slice). Re-encode the list with '|' and declare LIST_SEPARATOR below so
+    # the full arch list reaches curl intact.
+    string(REPLACE ";" "|" _curl_osx_arch "${CMAKE_OSX_ARCHITECTURES}")
+    set(_curl_osx_args
+        -DCMAKE_OSX_ARCHITECTURES=${_curl_osx_arch}
+        -DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET})
+endif()
 
-    # Minimal HTTPS-only curl: OpenSSL TLS against the bundled tree, no extra
-    # protocol/codec deps (no ldap/psl/ssh/nghttp2/brotli/zstd/idn2). zlib IS
-    # enabled (system) — the bundled static libcrypto.a references zlib (COMP),
-    # so the static archive pulls in libssl/libcrypto + system zlib + libc.
-    ExternalProject_Add(curl_external
-        SOURCE_DIR  ${CURL_SOURCE_DIR}
-        BINARY_DIR  ${CURL_BUILD_DIR}
-        INSTALL_DIR ${CURL_INSTALL_DIR}
-        # '|' carries the ;-separated CMAKE_OSX_ARCHITECTURES list into the
-        # sub-CMake without it being split as an argument separator (see above).
-        LIST_SEPARATOR |
-        CMAKE_ARGS
-            -DCMAKE_INSTALL_PREFIX=${CURL_INSTALL_DIR}
-            # curl's own GNUInstallDirs picks lib64 on a 64-bit RPM target,
-            # while CURL_STATIC_LIB above names lib/libcurl.a unconditionally.
-            # Pin the producer, not the consumer: changing CURL_STATIC_LIB to
-            # lib64 would fix Fedora and break Debian.
-            -DCMAKE_INSTALL_LIBDIR=lib
-            -DCMAKE_BUILD_TYPE=Release
-            -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-            -DBUILD_SHARED_LIBS=OFF
-            -DBUILD_STATIC_LIBS=ON
-            -DBUILD_CURL_EXE=OFF
-            -DBUILD_TESTING=OFF
-            -DBUILD_LIBCURL_DOCS=OFF
-            -DENABLE_CURL_MANUAL=OFF
-            -DCURL_USE_OPENSSL=ON
-            -DOPENSSL_ROOT_DIR=${CURL_OPENSSL_DIR}
-            # Named, not searched: a hit elsewhere on the host would be a
-            # second OpenSSL in the process.
-            -DOPENSSL_INCLUDE_DIR=${CURL_OPENSSL_DIR}/include
-            -DOPENSSL_SSL_LIBRARY=${CURL_OPENSSL_DIR}/lib/libssl.a
-            -DOPENSSL_CRYPTO_LIBRARY=${CURL_OPENSSL_DIR}/lib/libcrypto.a
-            -DOPENSSL_USE_STATIC_LIBS=ON
-            # The baked CA default is the build host's; CURL_CA_FALLBACK lets a
-            # target whose layout differs fall back to the bundled OpenSSL's
-            # default store instead of hard-failing TLS. HttpClient sets the CA
-            # bundle per request from the same lookup chain validation uses
-            # (SSL_CERT_FILE / SSL_CERT_DIR, else the host's well-known paths),
-            # so the baked default only matters where that finds nothing.
-            -DCURL_CA_PATH=auto
-            -DCURL_CA_BUNDLE=auto
-            -DCURL_CA_FALLBACK=ON
-            -DCURL_DISABLE_LDAP=ON
-            -DCURL_DISABLE_LDAPS=ON
-            -DCURL_USE_LIBPSL=OFF
-            -DCURL_USE_LIBSSH2=OFF
-            -DCURL_USE_LIBSSH=OFF
-            -DCURL_USE_GSSAPI=OFF
-            -DUSE_NGHTTP2=OFF
-            -DUSE_NGTCP2=OFF
-            -DCURL_BROTLI=OFF
-            -DCURL_ZSTD=OFF
-            # zlib (system) is REQUIRED: the bundled static libcrypto.a was
-            # built with zlib (COMP) support, so curl's static-OpenSSL link
-            # check needs -lz. zlib carries no OpenSSL dependency, so linking
-            # the system zlib does NOT reintroduce a second OpenSSL.
-            -DCURL_ZLIB=ON
-            -DZLIB_LIBRARY=${ZLIB_LIBRARIES}
-            -DZLIB_INCLUDE_DIR=${ZLIB_INCLUDE_DIRS}
-            -DUSE_LIBIDN2=OFF
-            # curl's OpenSSL init otherwise asks for OPENSSL_INIT_LOAD_CONFIG,
-            # which reads openssl.cnf from the bundled libcrypto's compiled-in
-            # OPENSSLDIR. Defence in depth only: libcrypto still loads that
-            # file itself on its first fetch, often before curl initialises,
-            # so what keeps a planted openssl.cnf out is an OPENSSLDIR no user
-            # can create, not this flag.
-            -DCURL_DISABLE_OPENSSL_AUTO_LOAD_CONFIG=ON
-            ${_curl_osx_args}
-        BUILD_BYPRODUCTS  ${CURL_STATIC_LIB}
-        LOG_CONFIGURE         TRUE
-        LOG_BUILD             TRUE
-        LOG_INSTALL           TRUE
-        LOG_OUTPUT_ON_FAILURE TRUE
-    )
+# Minimal HTTPS-only curl: OpenSSL TLS against the bundled tree, no extra
+# protocol/codec deps (no ldap/psl/ssh/nghttp2/brotli/zstd/idn2). zlib IS
+# enabled (system) — the bundled static libcrypto.a references zlib (COMP),
+# so the static archive pulls in libssl/libcrypto + system zlib + libc.
+ExternalProject_Add(curl_external
+    SOURCE_DIR  ${CURL_SOURCE_DIR}
+    BINARY_DIR  ${CURL_BUILD_DIR}
+    INSTALL_DIR ${CURL_INSTALL_DIR}
+    # '|' carries the ;-separated CMAKE_OSX_ARCHITECTURES list into the
+    # sub-CMake without it being split as an argument separator (see above).
+    LIST_SEPARATOR |
+    CMAKE_ARGS
+        -DCMAKE_INSTALL_PREFIX=${CURL_INSTALL_DIR}
+        # curl's own GNUInstallDirs picks lib64 on a 64-bit RPM target,
+        # while CURL_STATIC_LIB above names lib/libcurl.a unconditionally.
+        # Pin the producer, not the consumer: changing CURL_STATIC_LIB to
+        # lib64 would fix Fedora and break Debian.
+        -DCMAKE_INSTALL_LIBDIR=lib
+        -DCMAKE_BUILD_TYPE=Release
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+        -DBUILD_SHARED_LIBS=OFF
+        -DBUILD_STATIC_LIBS=ON
+        -DBUILD_CURL_EXE=OFF
+        -DBUILD_TESTING=OFF
+        -DBUILD_LIBCURL_DOCS=OFF
+        -DENABLE_CURL_MANUAL=OFF
+        -DCURL_USE_OPENSSL=ON
+        -DOPENSSL_ROOT_DIR=${CURL_OPENSSL_DIR}
+        # Named, not searched: a hit elsewhere on the host would be a
+        # second OpenSSL in the process.
+        -DOPENSSL_INCLUDE_DIR=${CURL_OPENSSL_DIR}/include
+        -DOPENSSL_SSL_LIBRARY=${CURL_OPENSSL_DIR}/lib/libssl.a
+        -DOPENSSL_CRYPTO_LIBRARY=${CURL_OPENSSL_DIR}/lib/libcrypto.a
+        -DOPENSSL_USE_STATIC_LIBS=ON
+        # The baked CA default is the build host's; CURL_CA_FALLBACK lets a
+        # target whose layout differs fall back to the bundled OpenSSL's
+        # default store instead of hard-failing TLS. HttpClient sets the CA
+        # bundle per request from the same lookup chain validation uses
+        # (SSL_CERT_FILE / SSL_CERT_DIR, else the host's well-known paths),
+        # so the baked default only matters where that finds nothing.
+        -DCURL_CA_PATH=auto
+        -DCURL_CA_BUNDLE=auto
+        -DCURL_CA_FALLBACK=ON
+        -DCURL_DISABLE_LDAP=ON
+        -DCURL_DISABLE_LDAPS=ON
+        -DCURL_USE_LIBPSL=OFF
+        -DCURL_USE_LIBSSH2=OFF
+        -DCURL_USE_LIBSSH=OFF
+        -DCURL_USE_GSSAPI=OFF
+        -DUSE_NGHTTP2=OFF
+        -DUSE_NGTCP2=OFF
+        -DCURL_BROTLI=OFF
+        -DCURL_ZSTD=OFF
+        # zlib (system) is REQUIRED: the bundled static libcrypto.a was
+        # built with zlib (COMP) support, so curl's static-OpenSSL link
+        # check needs -lz. zlib carries no OpenSSL dependency, so linking
+        # the system zlib does NOT reintroduce a second OpenSSL.
+        -DCURL_ZLIB=ON
+        -DZLIB_LIBRARY=${ZLIB_LIBRARIES}
+        -DZLIB_INCLUDE_DIR=${ZLIB_INCLUDE_DIRS}
+        -DUSE_LIBIDN2=OFF
+        # curl's OpenSSL init otherwise asks for OPENSSL_INIT_LOAD_CONFIG,
+        # which reads openssl.cnf from the bundled libcrypto's compiled-in
+        # OPENSSLDIR. Defence in depth only: libcrypto still loads that
+        # file itself on its first fetch, often before curl initialises,
+        # so what keeps a planted openssl.cnf out is an OPENSSLDIR no user
+        # can create, not this flag.
+        -DCURL_DISABLE_OPENSSL_AUTO_LOAD_CONFIG=ON
+        ${_curl_osx_args}
+    BUILD_BYPRODUCTS  ${CURL_STATIC_LIB}
+    LOG_CONFIGURE         TRUE
+    LOG_BUILD             TRUE
+    LOG_INSTALL           TRUE
+    LOG_OUTPUT_ON_FAILURE TRUE
+)
 
-    add_library(curl_static STATIC IMPORTED GLOBAL)
-    set_target_properties(curl_static PROPERTIES
-        IMPORTED_LOCATION             ${CURL_STATIC_LIB}
-        INTERFACE_INCLUDE_DIRECTORIES ${CURL_INSTALL_DIR}/include
-    )
-    add_dependencies(curl_static curl_external)
+add_library(curl_static STATIC IMPORTED GLOBAL)
+set_target_properties(curl_static PROPERTIES
+    IMPORTED_LOCATION             ${CURL_STATIC_LIB}
+    INTERFACE_INCLUDE_DIRECTORIES ${CURL_INSTALL_DIR}/include
+)
+add_dependencies(curl_static curl_external)
 
-    # libcurl.a ↔ libssl.a ↔ libcrypto.a are mutually recursive at link time;
-    # rescan group on GNU ld/lld, plain ordering on Apple ld64 (multi-pass by
-    # default) — same strategy as opensc_plugin_static_with_deps below. ZLIB::ZLIB
-    # (system, resolved above) sits inside the group: the bundled libcrypto.a's
-    # COMP objects reference inflate/deflate, pulled mid-scan.
-    add_library(curl_static_with_deps INTERFACE)
-    if(APPLE)
-        # curl's macOS backend (Curl_macos_init) calls SCDynamicStoreCopyProxies
-        # (SystemConfiguration) for system-proxy discovery and CFRelease
-        # (CoreFoundation); a static libcurl.a does not carry those frameworks,
-        # so every consumer of curl must link them explicitly.
-        target_link_libraries(curl_static_with_deps INTERFACE
-            curl_static OpenSSL_Ssl OpenSSL_Crypto ZLIB::ZLIB
-            "-framework CoreFoundation" "-framework SystemConfiguration")
-    else()
-        target_link_libraries(curl_static_with_deps INTERFACE
-            "$<LINK_GROUP:RESCAN,curl_static,OpenSSL_Ssl,OpenSSL_Crypto,ZLIB::ZLIB>")
-    endif()
+# libcurl.a ↔ libssl.a ↔ libcrypto.a are mutually recursive at link time;
+# rescan group on GNU ld/lld, plain ordering on Apple ld64 (multi-pass by
+# default) — same strategy as opensc_plugin_static_with_deps below. ZLIB::ZLIB
+# (system, resolved above) sits inside the group: the bundled libcrypto.a's
+# COMP objects reference inflate/deflate, pulled mid-scan.
+add_library(curl_static_with_deps INTERFACE)
+if(APPLE)
+    # curl's macOS backend (Curl_macos_init) calls SCDynamicStoreCopyProxies
+    # (SystemConfiguration) for system-proxy discovery and CFRelease
+    # (CoreFoundation); a static libcurl.a does not carry those frameworks,
+    # so every consumer of curl must link them explicitly.
+    target_link_libraries(curl_static_with_deps INTERFACE
+        curl_static OpenSSL_Ssl OpenSSL_Crypto ZLIB::ZLIB
+        "-framework CoreFoundation" "-framework SystemConfiguration")
+else()
+    target_link_libraries(curl_static_with_deps INTERFACE
+        "$<LINK_GROUP:RESCAN,curl_static,OpenSSL_Ssl,OpenSSL_Crypto,ZLIB::ZLIB>")
 endif()
 
 # ──────────────────────────────────────────────────────────────────────────

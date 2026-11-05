@@ -624,7 +624,6 @@ TEST_F(CAdESModuleTest, AddCertificateChainUnionsIntoTheExistingCertificateSet)
 TEST_F(CAdESModuleTest, ArchiveTimestampImprintDescribesTheEmittedCertificateOrder)
 {
     libresign::test::MockTsaServer tsaServer;
-    CAdESModule cades;
     const std::vector<uint8_t> data = {'A', 'r', 'c', 'h', 'i', 'v', 'e'};
 
     std::vector<uint8_t> signerCert;
@@ -652,7 +651,7 @@ TEST_F(CAdESModuleTest, ArchiveTimestampImprintDescribesTheEmittedCertificateOrd
     TSAConfig tsa;
     tsa.url = tsaServer.url();
     tsa.trust.anchors = {libresign::test::MockTsaServer::trustAnchor()};
-    const auto stamped = cades.addArchiveTimestamp(unsorted, tsa);
+    const auto stamped = addArchiveTimestampForTest(unsorted, tsa);
     ASSERT_FALSE(stamped.empty());
     EXPECT_EQ(tsaServer.servedCount(), 1) << "exactly one RFC 3161 round-trip, for the archive timestamp";
 
@@ -713,7 +712,6 @@ TEST_F(CAdESModuleTest, ArchiveTimestampImprintDescribesTheEmittedCertificateOrd
 TEST(CAdESArchiveTimestamp, HashIndexAndImprintDescribeTheEmittedDocument)
 {
     libresign::test::MockTsaServer tsaServer;
-    CAdESModule cades;
     const std::vector<uint8_t> data = {'A', 'r', 'c', 'h', 'i', 'v', 'e'};
 
     const auto signer = makeSoftwareIdentity("LibreSCRS CAdES Archive Signer", 101);
@@ -793,7 +791,7 @@ TEST(CAdESArchiveTimestamp, HashIndexAndImprintDescribeTheEmittedDocument)
     TSAConfig tsa;
     tsa.url = tsaServer.url();
     tsa.trust.anchors = {libresign::test::MockTsaServer::trustAnchor()};
-    const auto stamped = cades.addArchiveTimestamp(unsorted, tsa);
+    const auto stamped = addArchiveTimestampForTest(unsorted, tsa);
     ASSERT_FALSE(stamped.empty());
     EXPECT_EQ(tsaServer.servedCount(), 1) << "exactly one RFC 3161 round-trip, for the archive timestamp";
 

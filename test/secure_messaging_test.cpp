@@ -188,7 +188,7 @@ TEST(SecureMessagingTest, UnprotectInvalidMACReturnsNullopt)
         0x90, 0x00                                                  // SW
     };
 
-    auto result = sm.unprotect(response);
+    auto result = sm.unprotectWithSW(response);
     EXPECT_FALSE(result.has_value());
 }
 
@@ -247,7 +247,7 @@ TEST(SecureMessagingTest, UnprotectEmptyResponseRejected)
     SecureMessaging sm(keys, SMAlgorithm::DES3);
 
     std::vector<uint8_t> empty;
-    auto result = sm.unprotect(empty);
+    auto result = sm.unprotectWithSW(empty);
     EXPECT_FALSE(result.has_value());
 }
 
@@ -262,7 +262,7 @@ TEST(SecureMessagingTest, UnprotectShorterThanSWRejected)
 
     // Single byte — clearly cannot contain DO'99 + DO'8E + SW
     std::vector<uint8_t> tooShort = {0x90};
-    auto result = sm.unprotect(tooShort);
+    auto result = sm.unprotectWithSW(tooShort);
     EXPECT_FALSE(result.has_value());
 }
 
@@ -277,7 +277,7 @@ TEST(SecureMessagingTest, UnprotectMissingDO8ERejected)
 
     // DO'99 (SW 90 00) + SW 90 00 only — no DO'8E MAC tag
     std::vector<uint8_t> response = {0x99, 0x02, 0x90, 0x00, 0x90, 0x00};
-    auto result = sm.unprotect(response);
+    auto result = sm.unprotectWithSW(response);
     EXPECT_FALSE(result.has_value());
 }
 
@@ -292,7 +292,7 @@ TEST(SecureMessagingTest, UnprotectGarbledTLVRejected)
 
     // Length byte claims 0xFF but payload is short — must not over-read.
     std::vector<uint8_t> garbled = {0x99, 0xFF, 0x90, 0x00, 0x90, 0x00};
-    auto result = sm.unprotect(garbled);
+    auto result = sm.unprotectWithSW(garbled);
     EXPECT_FALSE(result.has_value());
 }
 
@@ -322,7 +322,7 @@ TEST(SecureMessagingTest, UnprotectTamperedSingleByteRejected)
         0x8E, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // DO'8E (all-zero MAC)
         0x90, 0x00                                                  // SW
     };
-    auto result = twin.unprotect(tampered);
+    auto result = twin.unprotectWithSW(tampered);
     EXPECT_FALSE(result.has_value()) << "All-zero MAC must not validate against any session key";
 }
 
@@ -441,7 +441,7 @@ TEST(SecureMessagingTest, UnprotectReadsAnAnswerInDo85)
     response.push_back(0x90);
     response.push_back(0x00);
 
-    const auto data = sm.unprotect(response);
-    ASSERT_TRUE(data.has_value());
-    EXPECT_EQ(*data, plain);
+    const auto result = sm.unprotectWithSW(response);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->data, plain);
 }

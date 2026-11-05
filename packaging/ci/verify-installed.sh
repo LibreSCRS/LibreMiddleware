@@ -6,11 +6,6 @@
 # FAMILY is deb, rpm or arch; anything else is refused rather than read as
 # one of them. Every assertion is its own test so a failure names itself;
 # nothing is measured through a pipe.
-#
-# On arch, p11-kit comes from the package database the container step has
-# already synchronised with pacman -Syu; a -Sy here would be a partial
-# upgrade. No assertion rests on that install: V4 fails when p11-kit does not
-# answer.
 set -uo pipefail
 fail=0
 check() { if [ "$2" -eq 0 ]; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
@@ -45,7 +40,6 @@ deb)
   # not the package, so the exclusion goes before anything is installed.
   rm -f /etc/dpkg/dpkg.cfg.d/excludes
   apt-get update -qq
-  apt-get install -y -qq p11-kit >/dev/null
   LIBDIRGLOB="/usr/lib/*"
   installed_list() { dpkg-query -W -f='${Package}\n'; }
   install_all() { apt-get install -y --no-install-recommends /pkg/*.deb >/dev/null; }
@@ -61,7 +55,6 @@ deb)
   }
   ;;
 rpm)
-  dnf -y -q install p11-kit >/dev/null
   LIBDIRGLOB="/usr/lib64"
   installed_list() { rpm -qa --qf '%{NAME}\n'; }
   install_all() { dnf -y -q install /pkg/*.rpm >/dev/null; }
@@ -74,7 +67,6 @@ rpm)
 arch)
   # The PKGBUILD makes one package: Arch does not split headers or the test
   # archive into a development package.
-  pacman -S --noconfirm --needed p11-kit >/dev/null
   LIBDIRGLOB="/usr/lib"
   installed_list() { pacman -Qq; }
   install_all() { pacman -U --noconfirm /pkg/*.pkg.tar.zst >/dev/null; }
@@ -95,29 +87,6 @@ esac
 
 # ── V1 the packages install at all ────────────────────────────────────────
 install_all; check "V1 install" $?
-
-# ── V2 no package registers the module with p11-kit ───────────────────────
-# Applications reach the card through the agent's proxy, which the agent's
-# own package registers; the middleware registers nothing of its own.
-test ! -e /usr/share/p11-kit/modules/librescrs.module
-check "V2 no p11-kit declaration from the middleware" $?
-
-# ── V3 the middleware ships no PKCS#11 module ─────────────────────────────
-# A module opening the card from inside whatever application loads it is a
-# second connection beside the agent's; applications use the agent's provider.
-mods=$(find /usr -path '*/pkcs11/*librescrs*' 2>/dev/null | grep -v agent)
-test -z "$mods"; check "V3 no PKCS#11 module from the middleware" $?
-[ -n "$mods" ] && echo "$mods"
-
-# ── V4 no provider ────────────────────────────────────────────────────────
-# The anchor ^module: is not decoration: a bare `grep -c -i librescrs` counts
-# the path, uri and description lines too. p11-kit has to answer: one that is
-# missing or fails lists nothing, and nothing would read as no provider.
-modules=$(p11-kit list-modules); p11rc=$?
-n=$(grep -c '^module: librescrs' <<<"$modules")
-test "$p11rc" -eq 0 && test "$n" -eq 0
-check "V4 no librescrs provider registered by the middleware (p11-kit rc $p11rc, counted $n)" $?
-printf '%s\n' "$modules"
 
 # ── V8 nothing generated mentions a user's home ───────────────────────────
 dump_scripts > /tmp/scripts.txt 2>&1
@@ -159,8 +128,6 @@ else
   test "$(wc -l < /tmp/inst.txt)" -gt 10; check "V3c package list is not empty" $?
   test "$(grep -cE 'liblibrescrs-dev|librescrs-middleware-devel' /tmp/inst.txt)" -eq 0
   check "V3c development package really absent" $?
-  n=$(p11-kit list-modules | grep -c '^module: librescrs')
-  test "$n" -eq 0; check "V3c still no provider" $?
 fi
 
 # ── V9 removal leaves nothing under /usr ──────────────────────────────────

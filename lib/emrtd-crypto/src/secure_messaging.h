@@ -43,13 +43,10 @@ public:
     // Output: SM-protected APDU with DO'87 (encrypted data), DO'97 (Le), DO'8E (MAC)
     std::vector<uint8_t> protect(const std::vector<uint8_t>& commandApdu);
 
-    // Unwrap response APDU: verify MAC (DO'8E), decrypt data (DO'87).
-    // Returns decrypted response data, or nullopt if MAC verification fails.
-    // Input includes SW1 SW2 at the end.
-    std::optional<std::vector<uint8_t>> unprotect(const std::vector<uint8_t>& responseApdu);
-
-    // Like unprotect(), but returns the inner SW from DO'99 along with decrypted data.
-    // Needed by transmitSecureAPDU to forward real status words (e.g. 6282 end-of-file).
+    // Unwrap response APDU: verify MAC (DO'8E), decrypt data (DO'87), and
+    // return the inner SW from DO'99 with the decrypted data, so the caller
+    // forwards the real status word (e.g. 6282 end-of-file). Returns nullopt
+    // if MAC verification fails. Input includes SW1 SW2 at the end.
     std::optional<UnprotectResult> unprotectWithSW(const std::vector<uint8_t>& responseApdu);
 
 private:

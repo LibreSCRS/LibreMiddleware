@@ -87,11 +87,11 @@ TEST(EmrtdCardRead, DataGroupPastOffset7FFFIsReadWithTheOddIns)
     channel.transmitHandler = [&chip](const APDUCommand& cmd) { return chip.answer(cmd); };
     emrtd::EMRTDCard card(channel);
 
-    const auto read = card.readDataGroup(2);
+    const auto read = card.readDataGroupSafe(2);
 
-    ASSERT_TRUE(read.has_value());
-    ASSERT_EQ(read->size(), chip.file.size());
-    EXPECT_TRUE(*read == chip.file) << "the tail past 0x7FFF must be the file's tail, not its beginning again";
+    ASSERT_EQ(read.status, emrtd::DGReadStatus::OK);
+    ASSERT_EQ(read.data.size(), chip.file.size());
+    EXPECT_TRUE(read.data == chip.file) << "the tail past 0x7FFF must be the file's tail, not its beginning again";
 }
 
 TEST(EmrtdCardRead, AFileCutShortByAnErrorIsNoFile)
@@ -102,7 +102,7 @@ TEST(EmrtdCardRead, AFileCutShortByAnErrorIsNoFile)
     channel.transmitHandler = [&chip](const APDUCommand& cmd) { return chip.answer(cmd); };
     emrtd::EMRTDCard card(channel);
 
-    EXPECT_FALSE(card.readDataGroup(2).has_value());
+    EXPECT_EQ(card.readDataGroupSafe(2).status, emrtd::DGReadStatus::ERROR);
 }
 
 TEST(EmrtdCardRead, AFileEndingBeforeItsDeclaredLengthIsNoFile)
@@ -113,5 +113,5 @@ TEST(EmrtdCardRead, AFileEndingBeforeItsDeclaredLengthIsNoFile)
     channel.transmitHandler = [&chip](const APDUCommand& cmd) { return chip.answer(cmd); };
     emrtd::EMRTDCard card(channel);
 
-    EXPECT_FALSE(card.readDataGroup(2).has_value());
+    EXPECT_EQ(card.readDataGroupSafe(2).status, emrtd::DGReadStatus::ERROR);
 }

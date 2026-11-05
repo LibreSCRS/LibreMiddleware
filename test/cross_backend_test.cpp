@@ -6,7 +6,6 @@
 #if defined(LIBRESIGN_HAS_DSS)
 
 #include "dss_oracle/dss_signing_service.h"
-#include "native/native_signing_service.h"
 
 using namespace libresign;
 
@@ -17,19 +16,10 @@ using namespace libresign;
 
 TEST(CrossBackendTest, BothBackendsAvailable)
 {
-    NativeSigningService native;
-    EXPECT_TRUE(native.isAvailable());
-
     // The DSS engine finds and starts its service lazily, so constructing it
     // needs none; whether it is available depends on that service.
     DSSSigningService dss;
     EXPECT_FALSE(dss.isConfigured());
-}
-
-TEST(CrossBackendTest, NativeServiceIsAvailable)
-{
-    NativeSigningService native;
-    EXPECT_TRUE(native.isAvailable()) << "Native backend should always be available when compiled";
 }
 
 #else

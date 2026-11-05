@@ -32,8 +32,6 @@ public:
     /// @brief Add every .cer/.crt/.pem anchor in @p folderPath. Missing folder is not an error.
     void loadFromFolder(const std::string& folderPath);
 
-    [[nodiscard]] int certificateCount() const noexcept;
-
     /// @brief Underlying store. Internal seam for the verifier in this library.
     [[nodiscard]] X509_STORE* native() const noexcept;
 

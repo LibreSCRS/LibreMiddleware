@@ -113,8 +113,7 @@ BundledCertsProvider::BundledCertsProvider(std::string dir) : bundledCertDir(std
     }
 
     // Recurse one level into subdirectories (rs-mup, rs-mup-format, ...). One
-    // level only: a sibling of the resolved root — the archived
-    // certificates-legacy tree next to the source bundle — is never reached.
+    // level only: a sibling of the resolved root is never reached.
     for (const auto& sub : fs::directory_iterator(root, ec)) {
         if (sub.is_directory()) {
             loadDirectoryInto(cached, sub.path());
@@ -158,8 +157,6 @@ namespace {
     } catch (...) {
         return std::nullopt;
     }
-#else
-    return std::nullopt;
 #endif
 }
 
@@ -171,13 +168,11 @@ namespace {
 const char libraryAnchor = 0;
 
 /// @brief Absolute path of the shared object that contains this translation
-///        unit, or @c nullopt where the platform offers no lookup or the
-///        lookup fails. In a static build the loader reports the executable
+///        unit, or @c nullopt when the lookup fails. In a static build the loader reports the executable
 ///        itself, which collapses the library-relative candidates into the
 ///        exe-relative ones — a harmless duplicate probe.
 [[nodiscard]] std::optional<fs::path> libraryPath() noexcept
 {
-#if defined(__linux__) || defined(__APPLE__)
     Dl_info info{};
     if (::dladdr(&libraryAnchor, &info) == 0)
         return std::nullopt;
@@ -188,9 +183,6 @@ const char libraryAnchor = 0;
     } catch (...) {
         return std::nullopt;
     }
-#else
-    return std::nullopt;
-#endif
 }
 
 /// @brief True when at least one regular file in @p dir has a cert-like

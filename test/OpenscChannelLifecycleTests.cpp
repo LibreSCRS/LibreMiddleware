@@ -900,8 +900,6 @@ TEST(OpenscErrorVocabulary, ReadResultCells)
               Status::AuthenticationFailed);
     EXPECT_EQ(mapActivationErrorToReadResult(ChannelActivationError::PaceWrongSecret, "t").status,
               Status::AuthenticationFailed);
-    EXPECT_EQ(mapActivationErrorToReadResult(ChannelActivationError::CardRemoved, "t").status,
-              Status::CommunicationError);
     EXPECT_EQ(mapActivationErrorToReadResult(ChannelActivationError::SelectAppletFailed, "t").status,
               Status::CommunicationError);
 }
@@ -914,7 +912,6 @@ TEST(OpenscErrorVocabulary, PinOutcomeCells)
     EXPECT_EQ(mapActivationErrorToPinOutcome(ChannelActivationError::UserCancelled), Outcome::UserCancelled);
     EXPECT_EQ(mapActivationErrorToPinOutcome(ChannelActivationError::CredentialsRequired), Outcome::MissingFields);
     EXPECT_EQ(mapActivationErrorToPinOutcome(ChannelActivationError::PaceWrongSecret), Outcome::PluginError);
-    EXPECT_EQ(mapActivationErrorToPinOutcome(ChannelActivationError::CardRemoved), Outcome::PluginError);
 }
 
 TEST(OpenscErrorVocabulary, SignOutcomeCells)

@@ -6,7 +6,7 @@ SPDX-FileCopyrightText: 2026 hirashix0
 # sdk-consumer
 
 Minimal reference consumer that proves the LibreSCRS public API is
-self-contained. Links against `LibreSCRS::All` only — none of the
+self-contained. Links against public `LibreSCRS::*` targets only — none of the
 private internal targets (`SmartCard_Impl`, `CardPlugin_Impl`, `LibreSign`,
 etc.) and none of the private include directories (`lib/*/include`,
 `lib/*/src`) are reachable.
@@ -52,12 +52,12 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(LibreMiddleware)
 
 add_executable(my-app main.cpp)
-target_link_libraries(my-app PRIVATE LibreSCRS::All)
+target_link_libraries(my-app PRIVATE LibreSCRS::SmartCard LibreSCRS::Plugin)
 ```
 
-Individual component targets are also aliased:
-`LibreSCRS::Auth`, `LibreSCRS::SmartCard`, `LibreSCRS::Plugin`,
-`LibreSCRS::Signing`.
+Link the targets whose headers you include: `LibreSCRS::Auth`,
+`LibreSCRS::Certificate`, `LibreSCRS::Plugin`, `LibreSCRS::Signing`,
+`LibreSCRS::SmartCard`, `LibreSCRS::Trust`.
 
 ## Builder idiom
 

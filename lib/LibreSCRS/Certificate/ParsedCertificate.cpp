@@ -364,7 +364,6 @@ PublicKeyInfo ParsedCertificate::publicKey() const
         break;
     case EVP_PKEY_EC: {
         info.algorithm = PublicKeyAlgorithm::ECDSA;
-#if OPENSSL_VERSION_NUMBER >= 0x30000000L
         char curveName[80] = {};
         std::size_t curveLen = 0;
         if (EVP_PKEY_get_utf8_string_param(pkey, "group", curveName, sizeof(curveName), &curveLen) == 1) {
@@ -373,7 +372,6 @@ PublicKeyInfo ParsedCertificate::publicKey() const
             // and consistent with `openssl ec -text` output.
             info.curveOid = curveName;
         }
-#endif
         break;
     }
     case EVP_PKEY_ED25519:

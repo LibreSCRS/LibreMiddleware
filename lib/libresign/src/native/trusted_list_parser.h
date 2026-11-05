@@ -56,12 +56,8 @@ public:
     //
     // Structural extraction only — caller must verify XML-DSig before trusting output.
     static TrustedListInfo parse(const std::vector<uint8_t>& xmlData);
-    static TrustedListInfo parse(const std::string& xmlString);
 
-    // Fetch and parse a TL from URL. SECURITY: see warning above.
-    TrustedListInfo fetch(const std::string& url, int timeoutSeconds = 30);
-
-    /// Result of a fetchRaw() call with HTTP metadata for caching.
+    /// Result of a fetchRawConditional() call with HTTP metadata for caching.
     struct FetchResult
     {
         std::vector<uint8_t> data;
@@ -69,10 +65,6 @@ public:
         std::string lastModified;
         bool notModified = false; ///< true when server returned 304
     };
-
-    // Fetch raw XML bytes from a URL without parsing.
-    // Returns empty vector on failure (HTTP error or empty body).
-    static std::vector<uint8_t> fetchRaw(const std::string& url, int timeoutSeconds = 30);
 
     /// Fetch raw XML bytes with HTTP conditional request support.
     /// If etag/lastModified are non-empty, sends If-None-Match / If-Modified-Since.

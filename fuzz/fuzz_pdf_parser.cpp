@@ -12,7 +12,7 @@
 // over the link.
 //
 // Entry points, in the order a caller uses them: parse(), then the trailer and
-// the page lookups. pageObjectNumber() and pageObject() throw by contract on a
+// the page lookup. pageObjectNumber() and readObject() throw by contract on a
 // structural error, so catching that is a documented outcome rather than a
 // swallowed fault -- the sanitizers report before the throw, and libFuzzer's
 // own handlers catch a crash or an abort earlier still.
@@ -66,7 +66,6 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
         try {
             const int objNum = parser.pageObjectNumber(page);
             (void)parser.readObject(objNum);
-            (void)parser.pageObject(page);
         } catch (const std::exception&) {
             break;
         } catch (...) {

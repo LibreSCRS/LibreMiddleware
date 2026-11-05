@@ -96,7 +96,6 @@ public:
     PdfValueType type() const;
 
     // Type-specific accessors — throw std::runtime_error on type mismatch
-    bool asBool() const;
     int64_t asInt() const;
     const std::string& asString() const;
     const std::string& asName() const;

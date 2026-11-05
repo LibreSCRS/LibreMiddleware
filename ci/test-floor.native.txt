@@ -5,7 +5,7 @@
 ASiCModuleTests 40
 ActivatedProtocolTests 3
 ActivationFallbackPolicyTests 3
-ActivationProfileTests 4
+ActivationProfileTests 3
 AnnexTests 24
 AtrMatchingTests 8
 CAdESModuleTests 10
@@ -34,7 +34,7 @@ LibreSCRS_AetAttestationTests 3
 LibreSCRS_AuthRequirementPaceTests 7
 LibreSCRS_AuthTests 8
 LibreSCRS_CancelTokenTests 10
-LibreSCRS_CardSessionTests 18
+LibreSCRS_CardSessionTests 16
 LibreSCRS_CardTransactionTests 3
 LibreSCRS_ChipAuthChannelTests 4
 LibreSCRS_ChipAuthCryptoTests 9
@@ -75,7 +75,7 @@ PKCS15PluginTests 7
 ParsedCertificateExpectedTests 3
 ParsedCertificateTests 24
 PdfFontTests 15
-PdfParserTests 35
+PdfParserTests 34
 PinFamilyQuirksTests 8
 PinLifecycleDerivationTests 24
 PinLifecycleFieldsTests 4
@@ -102,7 +102,7 @@ SecureWipeTests 2
 SessionTransmitTest 5
 SignatureDictionaryIntegrationTests 2
 SigningConformanceTests 14
-SigningE2ETests 114
+SigningE2ETests 113
 SigningFailureKindTests 4
 SigningProviderKeymgmtTests 4
 SigningRequestTsaOverrideTest 2
@@ -111,7 +111,7 @@ TlCacheTests 14
 TlSignatureVerifierTests 19
 TrustStoreServiceCreateExpectedTests 4
 TrustStoreServiceTests 6
-TrustedListParserTests 18
+TrustedListParserTests 15
 TsaFailureModesTests 9
 TtfParserTests 14
 TtfSubsetTests 12
@@ -121,7 +121,7 @@ apdu_select_p2_test 2
 bundled_certs_bundle_contents_test 1
 bundled_certs_install_layout_test 1
 bundled_certs_walker_test 1
-card_mapper_tests 59
+card_mapper_tests 57
 cardsession_reentrancy_test 5
 csca_master_list_public_api_test 13
 librescrs-example-shared-cli 1

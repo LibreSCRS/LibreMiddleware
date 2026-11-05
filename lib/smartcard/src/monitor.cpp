@@ -75,16 +75,6 @@ void Monitor::unsubscribe(SubscriptionId id)
     }
 }
 
-bool Monitor::isRunning() const
-{
-    // Take threadMtx: startThread/stopThread mutate monitorThread under this
-    // lock, so reading monitorThread.joinable() without it is a data race.
-    // isRunning is never called from a threadMtx-holding path (only by
-    // MonitorService and tests), so there is no self-deadlock.
-    std::lock_guard<std::mutex> lock(threadMtx);
-    return monitorThread.joinable() && !stopRequested.load();
-}
-
 void Monitor::startThread()
 {
     std::lock_guard lock(threadMtx);

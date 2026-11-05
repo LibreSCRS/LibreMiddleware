@@ -11,8 +11,8 @@
 ///
 /// Exercises the SHARED-library code path:
 ///   * Public surface only: every include path is under @c <LibreSCRS/...>.
-///   * Linked against @c LibreSCRS::All which transitively pulls every
-///     @c LibreSCRS_*.so into the executable's DT_NEEDED edge.
+///   * Linked against @c LibreSCRS::SmartCard, the one target whose headers
+///     it includes.
 ///   * No reader required to BUILD or LINK; only required to demonstrate
 ///     a successful @ref CardSession::open.
 

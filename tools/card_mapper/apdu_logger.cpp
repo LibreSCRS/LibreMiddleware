@@ -32,9 +32,4 @@ std::string ApduLogger::formatTrace() const
     return out.str();
 }
 
-void ApduLogger::clear()
-{
-    entries.clear();
-}
-
 } // namespace card_mapper

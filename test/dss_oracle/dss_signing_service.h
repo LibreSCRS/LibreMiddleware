@@ -27,7 +27,7 @@ public:
 
     bool isConfigured() const;
 
-    bool isAvailable() const override;
+    bool isAvailable() const;
 
     /// @brief Sign through the Java oracle with @p key, which the caller holds:
     ///        the oracle returns the bytes to sign, @p key signs them here, and

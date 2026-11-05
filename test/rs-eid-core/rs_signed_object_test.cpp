@@ -71,7 +71,6 @@ TEST(RsSignedObject, AnchoredButForeignSignerIsUnknownNotInvalid)
 
     TrustStore trust;
     trust.addCertificate(fixture.signerCertDer);
-    EXPECT_EQ(trust.certificateCount(), 1);
 
     const auto report = verifySignedObject(fixture.cms, f.blocks(), DigestBinding::Positional, trust);
 

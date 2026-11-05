@@ -36,6 +36,6 @@ set_target_properties(CardAnnex PROPERTIES
     VISIBILITY_INLINES_HIDDEN ON
 )
 
-target_link_libraries(CardAnnex PUBLIC LibreSCRS_Plugin SmartCard_Impl RsEIdCore PRIVATE LibreSCRS_SecureChannel)
+target_link_libraries(CardAnnex PUBLIC LibreSCRS_Plugin SmartCard_Impl RsEIdCore PRIVATE LibreSCRS_SmartCard)
 
 librescrs_warnings_as_errors(CardAnnex)

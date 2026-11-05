@@ -171,11 +171,6 @@ size_t PdfParser::findXrefKeywordNear() const
     return bestMatch;
 }
 
-const std::map<int, PdfParser::CompressedRef>& PdfParser::compressedObjectRefs() const
-{
-    return compressedObjects;
-}
-
 void PdfParser::parseXrefAt(size_t offset)
 {
     if (offset >= raw.size())
@@ -256,99 +251,6 @@ const PdfValue& PdfParser::trailer() const
     return trailerDict;
 }
 
-PdfValue PdfParser::pageObject(int pageIndex) const
-{
-    // Trailer -> /Root ref
-    PdfValue rootRef = trailerDict.get("Root");
-    if (rootRef.type() != PdfValueType::Ref)
-        throw std::runtime_error("PdfParser: trailer has no /Root ref");
-
-    PdfValue catalog = readObject(rootRef.asRef().objNum);
-    if (catalog.type() != PdfValueType::Dict)
-        throw std::runtime_error("PdfParser: /Root is not a dictionary");
-
-    // Catalog -> /Pages ref
-    PdfValue pagesRef = catalog.get("Pages");
-    if (pagesRef.type() != PdfValueType::Ref)
-        throw std::runtime_error("PdfParser: catalog has no /Pages ref");
-
-    PdfValue pagesNode = readObject(pagesRef.asRef().objNum);
-    if (pagesNode.type() != PdfValueType::Dict)
-        throw std::runtime_error("PdfParser: /Pages is not a dictionary");
-
-    int remaining = pageIndex;
-    PdfValue page = resolvePageFromNode(pagesNode, remaining);
-    if (page.type() == PdfValueType::Null)
-        throw std::runtime_error(std::format("PdfParser: page index {} out of range", pageIndex));
-
-    return page;
-}
-
-// ---------------------------------------------------------------------------
-// Page tree traversal
-// ---------------------------------------------------------------------------
-
-PdfValue PdfParser::resolvePageFromNode(const PdfValue& node, int& remaining) const
-{
-    // Reuse parseDepth to guard /Kids recursion — a malformed /Pages tree
-    // with deep nesting (or cycles via /Parent refs) would otherwise
-    // overflow the stack. kMaxParseDepth (256) far exceeds any real page
-    // tree.
-    if (parseDepth >= kMaxParseDepth)
-        throw std::runtime_error("PdfParser: page tree too deep");
-    DepthGuard guard(parseDepth);
-
-    PdfValue typeVal = node.get("Type");
-    std::string nodeType;
-    if (typeVal.type() == PdfValueType::Name)
-        nodeType = typeVal.asName();
-
-    if (nodeType == "Page") {
-        if (remaining == 0)
-            return node;
-        --remaining;
-        return PdfValue::null();
-    }
-
-    // It's a Pages node — iterate /Kids
-    PdfValue kids = node.get("Kids");
-    if (kids.type() != PdfValueType::Array)
-        throw std::runtime_error("PdfParser: /Pages node has no /Kids array");
-
-    for (auto& kid : kids.asArray()) {
-        PdfValue childNode;
-        if (kid.type() == PdfValueType::Ref) {
-            childNode = readObject(kid.asRef().objNum);
-        } else if (kid.type() == PdfValueType::Dict) {
-            childNode = kid;
-        } else {
-            continue;
-        }
-
-        if (childNode.type() != PdfValueType::Dict)
-            continue;
-
-        // Optimization: check /Count on intermediate Pages nodes
-        PdfValue childType = childNode.get("Type");
-        if (childType.type() == PdfValueType::Name && childType.asName() == "Pages") {
-            PdfValue countVal = childNode.get("Count");
-            if (countVal.type() == PdfValueType::Int) {
-                int count = static_cast<int>(countVal.asInt());
-                if (remaining >= count) {
-                    remaining -= count;
-                    continue;
-                }
-            }
-        }
-
-        PdfValue result = resolvePageFromNode(childNode, remaining);
-        if (result.type() != PdfValueType::Null)
-            return result;
-    }
-
-    return PdfValue::null();
-}
-
 // ---------------------------------------------------------------------------
 // pageObjectNumber — return the indirect object number of the N-th page
 // ---------------------------------------------------------------------------
@@ -376,8 +278,10 @@ int PdfParser::pageObjectNumber(int pageIndex) const
 
 int PdfParser::resolvePageObjNumFromNode(PdfRef nodeRef, int& remaining) const
 {
-    // Same depth guard as resolvePageFromNode — deep /Kids nesting or
-    // /Parent cycles would otherwise overflow the stack.
+    // Reuse parseDepth to guard /Kids recursion — a malformed /Pages tree
+    // with deep nesting (or cycles via /Parent refs) would otherwise
+    // overflow the stack. kMaxParseDepth (256) far exceeds any real page
+    // tree.
     if (parseDepth >= kMaxParseDepth)
         throw std::runtime_error("PdfParser: page tree too deep");
     DepthGuard guard(parseDepth);

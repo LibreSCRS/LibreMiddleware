@@ -204,19 +204,21 @@ set_target_properties(LibreSCRS_Certificate PROPERTIES
     VISIBILITY_INLINES_HIDDEN ON
 )
 
-# SecureChannel: ISecureChannel abstraction + PlainChannel/PaceChannel/
-# BacChannel implementations. Hosts the cross-plugin secure-channel
-# coordination surface owned by CardSession. Declared before SmartCard
-# because SmartCard PUBLIC-links it for the CardSession.h surface.
+# SmartCard: CardSession, the monitor and the PC/SC connection, plus the
+# secure channels (ISecureChannel with the plain, PACE, BAC and Chip
+# Authentication implementations) CardSession owns. The channels have no
+# consumer outside CardSession and the card plugins that reach them through
+# it, so they live in the same library.
 #
-# Public headers (BacParams.h, ChannelErrors.h) live under
-# `include/LibreSCRS/SecureChannel/`. Implementation-private headers
-# (ISecureChannel.h, PlainChannel.h, PaceChannel.h, PaceParams.h,
-# BacChannel.h, SessionKeys.h, detail/ChannelStateMutator.h) live under
+# Public SecureChannel headers (BacParams.h, ChannelErrors.h) live under
+# `include/LibreSCRS/SecureChannel/`, because CardSession.h names their
+# types. Implementation-private headers (ISecureChannel.h, PlainChannel.h,
+# PaceChannel.h, PaceParams.h, BacChannel.h, SessionKeys.h,
+# detail/ChannelStateMutator.h) live under
 # `lib/SecureChannel/include/LibreSCRS_internal/SecureChannel/` and are
 # guarded by `#ifndef LIBRESCRS_INTERNAL_BUILD #error`. Only the public
-# subset is installed; the internal subset is on the target's PRIVATE
-# include path for in-tree consumers.
+# subset is installed; the internal subset is on the BUILD_INTERFACE for
+# in-tree consumers.
 file(GLOB LIBRESCRS_SECURECHANNEL_PUBLIC_HEADERS CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/include/LibreSCRS/SecureChannel/*.h"
 )
@@ -224,53 +226,6 @@ file(GLOB LIBRESCRS_SECURECHANNEL_INTERNAL_HEADERS CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/lib/SecureChannel/include/LibreSCRS_internal/SecureChannel/*.h"
     "${PROJECT_SOURCE_DIR}/lib/SecureChannel/include/LibreSCRS_internal/SecureChannel/detail/*.h"
 )
-add_library(LibreSCRS_SecureChannel SHARED
-    SecureChannel/plain_channel.cpp
-    SecureChannel/pace_channel.cpp
-    SecureChannel/pace_params.cpp
-    SecureChannel/bac_channel.cpp
-    SecureChannel/chip_auth_channel.cpp
-    SecureChannel/channel_state_mutator.cpp
-    ${LIBRESCRS_SECURECHANNEL_PUBLIC_HEADERS}
-    ${LIBRESCRS_SECURECHANNEL_INTERNAL_HEADERS}
-)
-target_include_directories(LibreSCRS_SecureChannel PUBLIC
-    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
-# Internal header tree under lib/<target>/include/LibreSCRS_internal/<Target>/
-# (per API-POLICY §6): on the BUILD_INTERFACE only. Consumers under
-# LIBRESCRS_INTERNAL_BUILD reach <LibreSCRS_internal/SecureChannel/...>
-# through this path; external SDK consumers never see it.
-target_include_directories(LibreSCRS_SecureChannel PUBLIC
-    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/lib/SecureChannel/include>)
-# The internal APDUCommand/APDUResponse types live in lib/smartcard/src/.
-# The channel implementations operate on those types directly (matching
-# IConnection::transmit's signature), so the internal include path is a
-# private build-time dependency.
-target_include_directories(LibreSCRS_SecureChannel PRIVATE
-    ${PROJECT_SOURCE_DIR}/lib/smartcard/src
-    ${PROJECT_SOURCE_DIR}/lib/smartcard/include
-    ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src)
-target_compile_features(LibreSCRS_SecureChannel PUBLIC cxx_std_23)
-target_compile_definitions(LibreSCRS_SecureChannel PRIVATE
-    LIBRESCRS_BUILDING LIBRESCRS_INTERNAL_BUILD)
-target_link_libraries(LibreSCRS_SecureChannel
-    PUBLIC  LibreSCRS_Auth LibreSCRS::Secure
-    PRIVATE $<BUILD_INTERFACE:EMRTDCrypto>
-            $<BUILD_INTERFACE:SmartCard_Impl>
-)
-set_target_properties(LibreSCRS_SecureChannel PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_compile_options(LibreSCRS_SecureChannel PRIVATE
-    $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden -fvisibility-inlines-hidden>
-)
-set_target_properties(LibreSCRS_SecureChannel PROPERTIES
-    VERSION   ${PROJECT_VERSION}
-    SOVERSION ${LIBRESCRS_ABI_SOVERSION}
-    C_VISIBILITY_PRESET hidden
-    CXX_VISIBILITY_PRESET hidden
-    VISIBILITY_INLINES_HIDDEN ON
-)
-
 file(GLOB LIBRESCRS_SMARTCARD_INTERNAL_HEADERS CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/lib/SmartCard/include/LibreSCRS_internal/SmartCard/*.h"
 )
@@ -288,8 +243,16 @@ add_library(LibreSCRS_SmartCard SHARED
     $<$<PLATFORM_ID:Darwin>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_smartcard.mm>
     $<$<PLATFORM_ID:Darwin>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_scan_provider.cpp>
     $<$<NOT:$<PLATFORM_ID:Darwin>>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_pcsc.cpp>
+    SecureChannel/plain_channel.cpp
+    SecureChannel/pace_channel.cpp
+    SecureChannel/pace_params.cpp
+    SecureChannel/bac_channel.cpp
+    SecureChannel/chip_auth_channel.cpp
+    SecureChannel/channel_state_mutator.cpp
     ${LIBRESCRS_SMARTCARD_PUBLIC_HEADERS}
     ${LIBRESCRS_SMARTCARD_INTERNAL_HEADERS}
+    ${LIBRESCRS_SECURECHANNEL_PUBLIC_HEADERS}
+    ${LIBRESCRS_SECURECHANNEL_INTERNAL_HEADERS}
 )
 target_include_directories(LibreSCRS_SmartCard PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
@@ -299,13 +262,18 @@ target_include_directories(LibreSCRS_SmartCard PUBLIC
 # surface (ActiveChannelHolderInternal.h) to in-tree consumers on the
 # BUILD_INTERFACE only. External SDK consumers do not see this path.
 target_include_directories(LibreSCRS_SmartCard PUBLIC
-    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/lib/SmartCard/include>)
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/lib/SmartCard/include>
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/lib/SecureChannel/include>)
 # PRIVATE: needed because MonitorService.cpp includes the internal
 # <smartcard/ipcsc_scan_provider.h> (lives under lib/smartcard/src) and
 # because <smartcard/pcsc_connection.h>/<smartcard/monitor.h> transitively
 # pull "apdu.h"/"ipcsc_scan_provider.h" from the same directory.
+# The channel implementations operate on the internal APDUCommand /
+# APDUResponse types and the eMRTD protocol code directly.
 target_include_directories(LibreSCRS_SmartCard PRIVATE
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/include
+    ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src
     # <LibreSCRS_internal/LogNoexcept.h>
     ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include)
 target_compile_features(LibreSCRS_SmartCard PUBLIC cxx_std_23)
@@ -321,8 +289,9 @@ set_target_properties(LibreSCRS_SmartCard PROPERTIES POSITION_INDEPENDENT_CODE O
 # LIBRESCRS_INTERNAL_BUILD lets CardSession.cpp include detail/Unwrap.h, and
 # MonitorService.cpp include detail/MonitorInjection.h and internal smartcard/* headers.
 target_link_libraries(LibreSCRS_SmartCard
-    PUBLIC  LibreSCRS_Auth LibreSCRS_SecureChannel
+    PUBLIC  LibreSCRS_Auth
     PRIVATE $<BUILD_INTERFACE:SmartCard_Impl>
+            $<BUILD_INTERFACE:EMRTDCrypto>
 )
 target_compile_options(LibreSCRS_SmartCard PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-fvisibility=hidden -fvisibility-inlines-hidden>
@@ -465,7 +434,7 @@ else()
 endif()
 
 if(_lm_export_filter)
-    foreach(_lm_target Auth Trust Certificate SmartCard SecureChannel Plugin Signing)
+    foreach(_lm_target Auth Trust Certificate SmartCard Plugin Signing)
         target_link_options(LibreSCRS_${_lm_target} PRIVATE
             "${_lm_export_link_opt}")
         set_property(TARGET LibreSCRS_${_lm_target} APPEND PROPERTY
@@ -500,7 +469,7 @@ target_include_directories(LibreSCRS_SmartCardTesting PRIVATE
     $<TARGET_PROPERTY:PCSC::PCSC,INTERFACE_INCLUDE_DIRECTORIES>)
 target_compile_features(LibreSCRS_SmartCardTesting PUBLIC cxx_std_23)
 target_compile_definitions(LibreSCRS_SmartCardTesting PRIVATE LIBRESCRS_INTERNAL_BUILD)
-# libLibreSCRSTesting_SmartCard.a: outside the libLibreSCRS_* name the seven
+# libLibreSCRSTesting_SmartCard.a: outside the libLibreSCRS_* name the
 # core libraries share, which packaging globs and the impl-visibility gate's
 # archive count rely on.
 set_target_properties(LibreSCRS_SmartCardTesting PROPERTIES
@@ -659,16 +628,15 @@ target_compile_definitions(LibreSCRS_SmartCard_CtkForTests PUBLIC
     LIBRESCRS_SMARTCARD_CTK_FAKE LIBRESCRS_INTERNAL_BUILD)
 set_target_properties(LibreSCRS_SmartCard_CtkForTests PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# The shipped libraries. LibreSCRS_Secure and LibreSCRS_All are INTERFACE
-# targets with no sources of their own, and LibreSCRS_SmartCard_TestHelpers and
+# The shipped libraries. LibreSCRS_Secure is an INTERFACE target with no
+# sources of its own, and LibreSCRS_SmartCard_TestHelpers and
 # LibreSCRS_SmartCard_PcscForTests are build-tree-only test scaffolding — none
-# of the four is listed. LibreSCRS_SmartCardTesting ships in the development
+# of the three is listed. LibreSCRS_SmartCardTesting ships in the development
 # files, so it is.
 librescrs_warnings_as_errors(
     LibreSCRS_Auth
     LibreSCRS_Trust
     LibreSCRS_Certificate
-    LibreSCRS_SecureChannel
     LibreSCRS_SmartCard
     LibreSCRS_Plugin
     LibreSCRS_Signing
@@ -682,7 +650,6 @@ add_library(LibreSCRS::Plugin    ALIAS LibreSCRS_Plugin)
 add_library(LibreSCRS::Signing   ALIAS LibreSCRS_Signing)
 add_library(LibreSCRS::Trust     ALIAS LibreSCRS_Trust)
 add_library(LibreSCRS::Certificate ALIAS LibreSCRS_Certificate)
-add_library(LibreSCRS::SecureChannel ALIAS LibreSCRS_SecureChannel)
 add_library(LibreSCRS::SmartCardTesting ALIAS LibreSCRS_SmartCardTesting)
 
 # Secure namespace lives inside LibreSCRS_Auth (no separate compilation unit
@@ -692,12 +659,6 @@ add_library(LibreSCRS::SmartCardTesting ALIAS LibreSCRS_SmartCardTesting)
 add_library(LibreSCRS_Secure INTERFACE)
 target_link_libraries(LibreSCRS_Secure INTERFACE LibreSCRS_Auth)
 add_library(LibreSCRS::Secure ALIAS LibreSCRS_Secure)
-
-# Umbrella for consumers who don't want to reason about component boundaries.
-add_library(LibreSCRS_All INTERFACE)
-target_link_libraries(LibreSCRS_All INTERFACE
-    LibreSCRS::Auth LibreSCRS::SmartCard LibreSCRS::SecureChannel LibreSCRS::Plugin LibreSCRS::Signing LibreSCRS::Trust LibreSCRS::Certificate)
-add_library(LibreSCRS::All ALIAS LibreSCRS_All)
 
 # ──────────────────────────────────────────────────────────────────────────
 # CMake Config-package export for downstream find_package consumers.
@@ -716,13 +677,12 @@ set_target_properties(LibreSCRS_Auth        PROPERTIES EXPORT_NAME Auth)
 set_target_properties(LibreSCRS_Trust       PROPERTIES EXPORT_NAME Trust)
 set_target_properties(LibreSCRS_Certificate PROPERTIES EXPORT_NAME Certificate)
 set_target_properties(LibreSCRS_SmartCard   PROPERTIES EXPORT_NAME SmartCard)
-set_target_properties(LibreSCRS_SecureChannel PROPERTIES EXPORT_NAME SecureChannel)
 set_target_properties(LibreSCRS_Plugin      PROPERTIES EXPORT_NAME Plugin)
 set_target_properties(LibreSCRS_Signing     PROPERTIES EXPORT_NAME Signing)
 set_target_properties(LibreSCRS_Secure      PROPERTIES EXPORT_NAME Secure)
 set_target_properties(LibreSCRS_SmartCardTesting PROPERTIES EXPORT_NAME SmartCardTesting)
 
-foreach(_lm_target Auth Trust Certificate SmartCard SecureChannel Plugin Signing)
+foreach(_lm_target Auth Trust Certificate SmartCard Plugin Signing)
     install(TARGETS LibreSCRS_${_lm_target}
         EXPORT   LibreMiddlewareTargets
         LIBRARY  DESTINATION ${CMAKE_INSTALL_LIBDIR}

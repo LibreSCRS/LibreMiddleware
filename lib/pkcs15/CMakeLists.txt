@@ -27,7 +27,7 @@ target_include_directories(PKCS15
         ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
 )
 
-target_link_libraries(PKCS15 PUBLIC SmartCard_Impl LibreSCRS::SmartCard LibreSCRS_SecureChannel PRIVATE OpenSSL_Crypto EMRTDCrypto LibreSCRS::Secure)
+target_link_libraries(PKCS15 PUBLIC SmartCard_Impl LibreSCRS::SmartCard PRIVATE OpenSSL_Crypto EMRTDCrypto LibreSCRS::Secure)
 
 # Hidden: only a library that links this archive decides what of it is exported;
 # default visibility let every symbol naming LibreSCRS:: through the export glob.

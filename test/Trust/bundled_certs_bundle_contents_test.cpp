@@ -27,11 +27,6 @@ namespace {
 // resolver reads. Tests here assert on the tree that ships, not on a fixture.
 const fs::path kSourceCertsDir{LIBREMIDDLEWARE_CERTIFICATES_DIR};
 
-// Archived material, deliberately a SIBLING of the bundle rather than a child.
-// Derived rather than configured: the sibling relation is the property under
-// test, so spelling it out here would let a moved directory pass unnoticed.
-const fs::path kLegacyCertsDir = kSourceCertsDir.parent_path() / "certificates-legacy";
-
 const std::string kSubdirectoriesHeading = "## Subdirectories";
 
 // Subdirectory names the bundle README documents: the ``- `name/` — ...``
@@ -172,43 +167,10 @@ TEST_F(BundledCertsBundleContentsTest, ReadmeSubdirectoriesMatchDisk)
                       << "\" but it does not exist in " << kSourceCertsDir;
 }
 
-// The archived tree must stay archived. It is a sibling of the bundle, and the
-// provider descends exactly one level below the root it is given, so no
-// resolved root can reach it — this pins that shape against a future "recurse
-// properly" change that would quietly re-admit expired and malformed material.
-// The bundle is loaded twice, in place beside the archive and as a copy with
-// nothing beside it: an anchor the first holds and the second does not came
-// from outside the bundle.
-TEST_F(BundledCertsBundleContentsTest, ArchivedSiblingIsNeverLoaded)
-{
-    std::error_code ec;
-    ASSERT_TRUE(fs::is_directory(kLegacyCertsDir, ec))
-        << "premise gone: no archived tree at " << kLegacyCertsDir << " — this test proves nothing";
-
-    const auto copy = tmpDir / "certificates";
-    fs::copy(kSourceCertsDir, copy, fs::copy_options::recursive, ec);
-    ASSERT_FALSE(ec) << "could not copy the bundle: " << ec.message();
-
-    const auto ders = [](const BundledCertsProvider& provider) {
-        std::set<std::vector<std::uint8_t>> out;
-        for (const auto& anchor : provider.anchors())
-            out.insert(anchor.certificateDer);
-        return out;
-    };
-    const auto inPlace = ders(BundledCertsProvider(kSourceCertsDir.string()));
-    const auto alone = ders(BundledCertsProvider(copy.string()));
-    const auto archived = ders(BundledCertsProvider(kLegacyCertsDir.string()));
-
-    // Control: the archive holds a certificate the bundle does not, so loading
-    // it would show.
-    ASSERT_TRUE(std::any_of(archived.begin(), archived.end(), [&](const auto& der) { return !alone.contains(der); }))
-        << "premise gone: the archive adds nothing the bundle lacks — this test proves nothing";
-    EXPECT_EQ(inPlace, alone) << "the bundle loaded beside the archive differs from the bundle alone";
-}
-
-// Same shape, built from scratch so the sibling holds a certificate that is
-// known-loadable: were the descent ever widened, this bundle would gain an
-// anchor. Without the control assertion below, a sibling full of unloadable
+// The provider descends exactly one level below the root it is given, so a
+// sibling of the resolved root is never read. The sibling here holds a
+// certificate that is known-loadable: were the descent ever widened, this
+// bundle would gain an anchor. Without the control assertion below, a sibling full of unloadable
 // certificates would make this pass for the wrong reason.
 TEST_F(BundledCertsBundleContentsTest, SiblingOfResolvedRootContributesNoAnchor)
 {
@@ -216,7 +178,7 @@ TEST_F(BundledCertsBundleContentsTest, SiblingOfResolvedRootContributesNoAnchor)
     ASSERT_FALSE(material.empty()) << "no loadable certificate in the bundle to build the fixture from";
 
     const auto root = tmpDir / "certificates";
-    const auto sibling = tmpDir / "certificates-legacy";
+    const auto sibling = tmpDir / "certificates-other";
     fs::create_directories(root / "rs-mup");
     fs::create_directories(sibling / "rs-mup");
     fs::copy_file(material, root / "rs-mup" / "anchor.cer");
@@ -237,9 +199,8 @@ TEST_F(BundledCertsBundleContentsTest, SiblingOfResolvedRootContributesNoAnchor)
 }
 
 // Every rung of the ladder names a directory called "certificates" — the env
-// override aside, which is the operator's own choice. The archived tree is
-// named "certificates-legacy", so no rung can name it however the prefix is
-// laid out.
+// override aside, which is the operator's own choice — so no rung can name a
+// differently named neighbour however the prefix is laid out.
 TEST_F(BundledCertsBundleContentsTest, EveryResolverCandidateNamesTheBundleDirectory)
 {
     for (const char* compiled : {LIBREMIDDLEWARE_CERTIFICATES_DIR, LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR}) {

@@ -42,8 +42,6 @@ public:
     SubscriptionId subscribe(MonitorCallback onEvent, ReaderListCallback onReaders = nullptr);
     void unsubscribe(SubscriptionId id);
 
-    bool isRunning() const;
-
 private:
     // The test seams drive a MonitorService's dispatch by invoking the
     // callbacks it registered here, exactly as the poll thread does; the

@@ -21,7 +21,7 @@
 #   newer-other-series  a newer minor or major exists  -- REPORTED, not a failure
 #   behind              a newer release in the pin's own series          -> fail
 #   stale               the pin's upstream release is older than
-#                       MAX_AGE_MONTHS (default 6)                       -> fail
+#                       six months                                       -> fail
 #   eol                 the pinned series is past its published end of life -> fail
 #   cannot-measure      no pin, an unparseable pin, an empty answer from
 #                       upstream, or no network                -> exit 2, never 0
@@ -54,7 +54,6 @@
 #                            would drop into rc=2 on most runs -- and rc=2 is
 #                            not a failure, so nobody would notice it had
 #                            stopped measuring.
-#   MAX_AGE_MONTHS           default 6
 #   SUPPLY_FRESHNESS_REPO    tree to read pins from (default: this repository)
 #   SUPPLY_FRESHNESS_FIXTURE canned upstream answers instead of the API.
 #                            For the selftest only; CI never sets it.
@@ -65,7 +64,7 @@ repo_default="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 REPO="${SUPPLY_FRESHNESS_REPO:-$repo_default}"
 FIXTURE="${SUPPLY_FRESHNESS_FIXTURE:-}"
 ALLOWANCES="${SUPPLY_FRESHNESS_ALLOWANCES:-$REPO/ci/supply-freshness-allowances.txt}"
-MAX_AGE_MONTHS="${MAX_AGE_MONTHS:-6}"
+MAX_AGE_MONTHS=6
 OFFLINE=0
 JSON_OUT=""
 

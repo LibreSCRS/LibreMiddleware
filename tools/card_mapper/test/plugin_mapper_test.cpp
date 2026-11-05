@@ -5,20 +5,7 @@
 
 #include <gtest/gtest.h>
 
-#include <algorithm>
-
 using namespace card_mapper;
-
-TEST(PluginMapper, KnownPluginsContainsAll)
-{
-    auto plugins = getKnownPlugins();
-    EXPECT_EQ(plugins.size(), 5u);
-    EXPECT_NE(std::find(plugins.begin(), plugins.end(), "eid"), plugins.end());
-    EXPECT_NE(std::find(plugins.begin(), plugins.end(), "cardedge"), plugins.end());
-    EXPECT_NE(std::find(plugins.begin(), plugins.end(), "health"), plugins.end());
-    EXPECT_NE(std::find(plugins.begin(), plugins.end(), "eu-vrc"), plugins.end());
-    EXPECT_NE(std::find(plugins.begin(), plugins.end(), "emrtd"), plugins.end());
-}
 
 TEST(PluginMapper, EidPluginInfo)
 {

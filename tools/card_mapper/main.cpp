@@ -75,10 +75,9 @@ int runDiscoverMode(const CliOptions& opts)
     // operators don't silently scan a card without the SM activation they
     // requested.
     if (!opts.can.empty()) {
-        throw std::runtime_error(
-            "card_mapper PACE pre-auth (CAN argument) is not yet ported to the 4.2 SecureChannel; "
-            "for PACE-protected card discovery use the pkcs15_after_pace_probe tool or run the card "
-            "through LibreCelik. Retry without --can to scan unauthenticated applets only.");
+        throw std::runtime_error("card_mapper PACE pre-auth (CAN argument) is not yet ported to the 4.2 SecureChannel; "
+                                 "for PACE-protected card discovery run the card through LibreCelik. "
+                                 "Retry without --can to scan unauthenticated applets only.");
     }
 
     auto scanResult = card_mapper::discoverCard(conn, opts.verbose);

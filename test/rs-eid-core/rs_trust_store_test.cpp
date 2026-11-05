@@ -7,6 +7,8 @@
 #include "rs_trust_store.h"
 #include "synthetic_annex.h"
 
+#include <openssl/x509_vfy.h>
+
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -15,6 +17,12 @@ using namespace LibreSCRS::RsEId::Core;
 namespace Fx = LibreSCRS::RsEId::Core::TestData;
 
 namespace {
+
+// Anchors the store holds, read through the verifier's own seam.
+int anchorCount(const TrustStore& trust)
+{
+    return sk_X509_OBJECT_num(X509_STORE_get0_objects(trust.native()));
+}
 
 /// Writes `der` into a fresh directory and removes it again on destruction.
 class TempAnchorDir
@@ -65,7 +73,7 @@ TEST(RsTrustStore, ByteWiseAnchorStillHonoursValidityWindow)
 
     TrustStore trust;
     trust.addCertificate(fixture.signerCertDer);
-    ASSERT_EQ(trust.certificateCount(), 1);
+    ASSERT_EQ(anchorCount(trust), 1);
 
     const auto report = verifySignedObject(fixture.cms, {}, DigestBinding::Positional, trust);
     EXPECT_EQ(report.signer, VerificationResult::Invalid);
@@ -78,7 +86,7 @@ TEST(RsTrustStore, FolderAnchorIgnoresValidityWindow)
 
     TrustStore trust;
     trust.loadFromFolder(dir.str());
-    ASSERT_EQ(trust.certificateCount(), 1);
+    ASSERT_EQ(anchorCount(trust), 1);
 
     // Chain builds despite the closed window; the signer is simply not ours.
     const auto report = verifySignedObject(fixture.cms, {}, DigestBinding::Positional, trust);
@@ -89,12 +97,12 @@ TEST(RsTrustStore, MissingFolderIsNotAnError)
 {
     TrustStore trust;
     trust.loadFromFolder("/nonexistent/librescrs/anchors");
-    EXPECT_EQ(trust.certificateCount(), 0);
+    EXPECT_EQ(anchorCount(trust), 0);
 }
 
 TEST(RsTrustStore, EmptyCertificateIsIgnored)
 {
     TrustStore trust;
     trust.addCertificate({});
-    EXPECT_EQ(trust.certificateCount(), 0);
+    EXPECT_EQ(anchorCount(trust), 0);
 }

@@ -218,14 +218,6 @@ std::optional<std::vector<uint8_t>> EMRTDCard::readSOD()
     return readFile(FID_SOD);
 }
 
-std::optional<std::vector<uint8_t>> EMRTDCard::readDataGroup(int dgNumber)
-{
-    uint16_t fid = dgToFID(dgNumber);
-    if (fid == 0)
-        return std::nullopt;
-    return readFile(fid);
-}
-
 DGReadResult EMRTDCard::readDataGroupSafe(int dgNumber)
 {
     uint16_t fid = dgToFID(dgNumber);

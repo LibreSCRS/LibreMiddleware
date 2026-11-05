@@ -180,8 +180,6 @@ bool NativeSigningService::configure(const TrustConfig& config)
             ++successCount;
     }
 
-    configured = true;
-
     // Success if at least one TL loaded, or if no TLs were configured (empty list is valid)
     return eagerCount == 0 || successCount > 0;
 }
@@ -222,11 +220,6 @@ bool NativeSigningService::loadTrustList(const TrustedListEntry& entry)
         onFailure(entry.url, e.what());
         return false;
     }
-}
-
-bool NativeSigningService::isAvailable() const
-{
-    return true;
 }
 
 void NativeSigningService::loadLazyTrustLists()

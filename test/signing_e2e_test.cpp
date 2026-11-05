@@ -100,14 +100,13 @@ protected:
                 GTEST_SKIP() << "DSS service not available";
 
             dssService = std::make_unique<DSSSigningService>(*mgr);
+            if (!dssService->isAvailable())
+                GTEST_SKIP() << "Backend " << info.name << " not available";
             service = dssService.get();
         }
 #endif
 
         if (!service)
-            GTEST_SKIP() << "Backend " << info.name << " not available";
-
-        if (!service->isAvailable())
             GTEST_SKIP() << "Backend " << info.name << " not available";
 
         if (info.keySource == BackendInfo::KeySource::InMemory) {
@@ -213,8 +212,6 @@ TEST(SigningHwNativeBLT, CAdESEmbedsTrustedListChain)
         GTEST_SKIP() << skipReason;
 
     auto svc = std::make_unique<NativeSigningService>();
-    if (!svc->isAvailable())
-        GTEST_SKIP() << "native backend unavailable";
 
     TrustConfig tl;
     TrustedListEntry entry;
@@ -2029,12 +2026,6 @@ TEST_P(SigningE2ETest, ASiCE_MultiSign_MultiDataFile_RejectsExplicitly)
 // ===========================================================================
 // The native engine on its own (non-parameterized)
 // ===========================================================================
-
-TEST(NativeEngineTest, IsAvailable)
-{
-    NativeSigningService service;
-    EXPECT_TRUE(service.isAvailable());
-}
 
 // PAdES dispatcher rejects inputs too small to be a PDF before the key signs
 // or any network work is initiated.

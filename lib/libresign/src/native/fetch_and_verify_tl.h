@@ -36,18 +36,14 @@ struct FetchOptions
 ///
 /// Mirrors the SOTA-2026 @c std::expected<T,E> shape (success xor error
 /// string) without the C++23 standard-library dependency, since the
-/// project ships against C++20. @c hasValue() short-circuits the success
-/// path; on failure @c error carries a human-readable diagnostic.
+/// project ships against C++20. Test it with @c operator bool; on failure
+/// @c error carries a human-readable diagnostic.
 struct FetchResult
 {
     bool ok = false;
     TrustedListInfo info;
     std::string error;
 
-    [[nodiscard]] bool hasValue() const noexcept
-    {
-        return ok;
-    }
     explicit operator bool() const noexcept
     {
         return ok;

@@ -121,7 +121,7 @@ set(LIBREMIDDLEWARE_INSTALLED_CERTIFICATES_DIR "${CMAKE_INSTALL_FULL_DATAROOTDIR
 option(LIBRESCRS_VENDOR_OPENSC
     "Build the vendored OpenSC fork as a static library for the OpenSC card plugin" ON)
 
-if(NOT WIN32 AND LIBRESCRS_VENDOR_OPENSC)
+if(LIBRESCRS_VENDOR_OPENSC)
     execute_process(
         COMMAND ${CMAKE_COMMAND} -E env bash ${CMAKE_CURRENT_SOURCE_DIR}/tools/check-opensc-pin.sh
         RESULT_VARIABLE _opensc_pin_rc
@@ -237,10 +237,6 @@ add_subdirectory(lib/plugin)
 set(LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/plugins" CACHE PATH
     "Directory where card plugin .so files are placed")
 
-# Export plugin directory for consumers (e.g. LibreCelik via FetchContent)
-set(LIBREMIDDLEWARE_PLUGIN_DIR "${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}" CACHE PATH
-    "Directory containing LibreMiddleware card plugins (for consumers)")
-
 add_subdirectory(lib/smartcard)
 add_subdirectory(lib/rs-eid-core)
 add_subdirectory(lib/card-annex)
@@ -261,13 +257,7 @@ endif()
 
 add_subdirectory(lib/pkcs15)
 # Digital signing support (the LibreSign engine).
-option(BUILD_SIGNING "Build digital signing support (LibreSign)" ON)
-if(BUILD_SIGNING)
-    add_subdirectory(lib/libresign)
-    message(STATUS "Digital signing: enabled")
-else()
-    message(STATUS "Digital signing: disabled (set -DBUILD_SIGNING=ON to enable)")
-endif()
+add_subdirectory(lib/libresign)
 if(LIBRESCRS_VENDOR_OPENSC)
     # The OpenSC fallback card plugin links its own copy of the vendored
     # OpenSC (`opensc_plugin_static_with_deps`), built without the PC/SC
@@ -427,11 +417,6 @@ install(FILES
 # subdirectory layout that the walker expects. README files are skipped.
 # Component "runtime" lets distro packagers split docs/dev headers out into
 # separate sub-packages.
-#
-# Only thirdparty/certificates/ is installed. The sibling tree
-# thirdparty/certificates-legacy/ holds archived, mostly unloadable material and
-# is deliberately named by no install rule and no path define, so it never
-# reaches an installed prefix — see the README in either directory.
 # ──────────────────────────────────────────────────────────────────────────
 include(GNUInstallDirs)
 install(DIRECTORY thirdparty/certificates/

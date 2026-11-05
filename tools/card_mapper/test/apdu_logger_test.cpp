@@ -83,25 +83,3 @@ TEST(ApduLogger, LogMultipleEntries)
     size_t pos2 = trace.find(">>", pos1 + 2);
     EXPECT_NE(pos2, std::string::npos);
 }
-
-TEST(ApduLogger, Clear)
-{
-    ApduLogger logger;
-
-    LibreSCRS::SmartCard::Internal::APDUCommand cmd;
-    cmd.cla = 0x00;
-    cmd.ins = 0xA4;
-    cmd.p1 = 0x00;
-    cmd.p2 = 0x00;
-    cmd.hasLe = false;
-
-    LibreSCRS::SmartCard::Internal::APDUResponse resp;
-    resp.sw1 = 0x90;
-    resp.sw2 = 0x00;
-
-    logger.log(cmd, resp);
-    EXPECT_EQ(logger.getEntries().size(), 1u);
-
-    logger.clear();
-    EXPECT_EQ(logger.getEntries().size(), 0u);
-}

@@ -452,11 +452,6 @@ AppletInfo buildEmrtdInfo()
 
 } // anonymous namespace
 
-std::vector<std::string> getKnownPlugins()
-{
-    return {"eid", "cardedge", "health", "eu-vrc", "emrtd"};
-}
-
 AppletInfo getPluginInfo(const std::string& pluginName)
 {
     if (pluginName == "eid")
@@ -492,8 +487,8 @@ AppletInfo mapEmrtdPlugin(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, 
     // 4.2 SecureChannel migration: EMRTDCard no longer performs PACE/BAC
     // internally; that responsibility moved to CardSession.activateChannelWithSm.
     // This developer tool has not yet been ported to construct a CardSession,
-    // so the PACE-authenticated DG scan is stubbed out. Use LibreCelik or the
-    // pkcs15_after_pace_probe tool when an authenticated scan is needed.
+    // so the PACE-authenticated DG scan is stubbed out. Use LibreCelik when an
+    // authenticated scan is needed.
     std::cerr << "eMRTD: card_mapper PACE-authenticated scan is not yet ported to the 4.2 SecureChannel; "
               << "returning static plugin info only.\n";
 

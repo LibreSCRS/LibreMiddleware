@@ -6,8 +6,8 @@
 ///
 /// A document is signed through the card plugin on the session the caller
 /// already holds: no PKCS#11 module is loaded into the signing process, so no
-/// slot is listed and no reader is probed. This test counts every handle either
-/// PC/SC layer opens during one signature and finds none -- not on the reader
+/// slot is listed and no reader is probed. This test counts every handle the
+/// middleware's PC/SC layer opens during one signature and finds none -- not on the reader
 /// the signature targets, where the caller's session is the only connection,
 /// not on a reader whose session carries a live secure channel, and not on a
 /// neighbour nobody asked about. A neighbour's own operation is never waited on.
@@ -19,28 +19,19 @@
 ///
 /// @par What it cannot tell you
 /// It counts handles; it says nothing about what a handle does to a card,
-/// because there is no card here. This file also WRITES the OPENSC_CONF it
-/// measures against, so every number is a number for the reader driver's own
-/// defaults.
+/// because there is no card here.
 ///
-/// @par How the two PC/SC layers are told apart
-/// There are two paths to PC/SC in this picture and they must be counted
-/// separately. The counting provider is therefore present twice, once per path,
-/// from one source:
-///   * compiled INTO this executable, where its definitions preempt the
-///     middleware's own SCardConnect and friends for every library in the
-///     process -- that is the "stub" below, and it counts the middleware's own
-///     opens;
-///   * as a shared object OpenSC dlopens through the OPENSC_CONF this test
-///     writes -- that is the "shim" below, reached through dlsym on the handle
-///     so it answers about its own globals, and it counts what OpenSC does.
-/// dlopen and dlclose are interposed the same way, which is how the module's
-/// own load and unload become observable from outside it. A linker --wrap would
-/// not do: the call that loads the module is made inside the signing library,
-/// and --wrap only redirects references in the objects it links.
+/// @par How the handles are counted
+/// The counting provider is compiled INTO this executable, where its
+/// definitions preempt the middleware's own SCardConnect and friends for every
+/// library in the process. dlopen and dlclose are interposed the same way,
+/// which is how a module's load and unload become observable from outside it.
+/// A linker --wrap would not do: the call that would load a module is made
+/// inside the signing library, and --wrap only redirects references in the
+/// objects it links.
 ///
 /// @par Where the census can be taken
-/// The first path depends on ELF's flat symbol lookup: a definition exported
+/// The census depends on ELF's flat symbol lookup: a definition exported
 /// by the executable preempts the same name in every library loaded after it.
 /// The suite is built for Linux only; macOS reaches no card through PC/SC.
 
@@ -70,8 +61,6 @@
 #include <array>
 #include <cstdint>
 #include <cstdlib>
-#include <filesystem>
-#include <fstream>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -159,73 +148,7 @@ constexpr const char* kNeighbourReader = "R-C";
 constexpr const char* kShimAtr = "3B800181";
 constexpr const char* kModuleName = "librescrs-pkcs11";
 
-/// @brief OpenSC's copy of the counting provider, reached by handle so its own
-///        globals answer rather than this executable's.
-class OpenScSideShim
-{
-public:
-    OpenScSideShim()
-    {
-        handle = ::dlopen(LIBRESCRS_PCSC_SHIM_PATH, RTLD_LAZY | RTLD_LOCAL);
-        if (handle == nullptr) {
-            const char* why = ::dlerror();
-            error = (why != nullptr) ? why : "dlopen failed";
-            return;
-        }
-        countsFn = reinterpret_cast<CountsFn>(::dlsym(handle, "librescrs_shim_counts"));
-        openHandlesFn = reinterpret_cast<OpenHandlesFn>(::dlsym(handle, "librescrs_shim_open_handles"));
-        resetFn = reinterpret_cast<ResetFn>(::dlsym(handle, "librescrs_shim_reset"));
-        if (countsFn == nullptr || openHandlesFn == nullptr || resetFn == nullptr)
-            error = "the counting provider is missing one of its entry points";
-    }
-
-    OpenScSideShim(const OpenScSideShim&) = delete;
-    OpenScSideShim& operator=(const OpenScSideShim&) = delete;
-
-    [[nodiscard]] bool loaded() const
-    {
-        return error.empty();
-    }
-    [[nodiscard]] const std::string& why() const
-    {
-        return error;
-    }
-    [[nodiscard]] unsigned long connect(const char* reader) const
-    {
-        return countsFn(reader).connect;
-    }
-    [[nodiscard]] unsigned long establishContext() const
-    {
-        return countsFn(nullptr).establishContext;
-    }
-    [[nodiscard]] unsigned long openHandles() const
-    {
-        return openHandlesFn();
-    }
-    void reset() const
-    {
-        resetFn();
-    }
-
-private:
-    using CountsFn = LibrescrsShimCounts (*)(const char*);
-    using OpenHandlesFn = unsigned long (*)();
-    using ResetFn = void (*)();
-
-    void* handle = nullptr;
-    CountsFn countsFn = nullptr;
-    OpenHandlesFn openHandlesFn = nullptr;
-    ResetFn resetFn = nullptr;
-    std::string error;
-};
-
-const OpenScSideShim& shim()
-{
-    static const OpenScSideShim view;
-    return view;
-}
-
-/// @brief This executable's own copy: the PC/SC layer the middleware reaches.
+/// @brief Connections the middleware's PC/SC layer opened to @p reader.
 unsigned long stubConnect(const char* reader)
 {
     return librescrs_shim_counts(reader).connect;
@@ -278,22 +201,9 @@ void setReaderSet(const std::string& semicolonSeparated)
     ::setenv("LIBRESCRS_SHIM_READERS", semicolonSeparated.c_str(), 1);
 }
 
-/// @brief Point OpenSC at the counting provider.
+/// @brief Present the three readers, each with a card, to the counting provider.
 void installCountingProviders()
 {
-    static const std::string confPath = [] {
-        const std::filesystem::path shimPath{LIBRESCRS_PCSC_SHIM_PATH};
-        const std::filesystem::path conf = shimPath.parent_path() / "opensc-census-shim.conf";
-        std::ofstream out(conf);
-        out << "app default {\n"
-            << "    reader_driver pcsc {\n"
-            << "        provider_library = \"" << shimPath.string() << "\";\n"
-            << "    }\n"
-            << "}\n";
-        return conf.string();
-    }();
-
-    ::setenv("OPENSC_CONF", confPath.c_str(), 1);
     ::setenv("LIBRESCRS_SHIM_ATR", kShimAtr, 1);
     setReaderSet(std::string{kSmReader} + ";" + kTargetReader + ";" + kNeighbourReader);
 }
@@ -303,9 +213,7 @@ class PcscHandleCensusTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        ASSERT_TRUE(shim().loaded()) << shim().why();
         installCountingProviders();
-        shim().reset();
         librescrs_shim_reset();
         resetDlRecords();
 
@@ -325,7 +233,6 @@ protected:
 
     void TearDown() override
     {
-        shim().reset();
         librescrs_shim_reset();
     }
 
@@ -349,15 +256,7 @@ TEST_F(PcscHandleCensusTest, DocumentSignatureOpensNoHandleBeyondTheSession)
     EXPECT_EQ(stubConnect(kTargetReader), 0u);
     EXPECT_EQ(stubConnect(kNeighbourReader), 0u);
 
-    // OpenSC's PC/SC layer: no context is established, so no reader is
-    // enumerated and none is connected to.
-    EXPECT_EQ(shim().establishContext(), 0u);
-    EXPECT_EQ(shim().connect(kSmReader), 0u);
-    EXPECT_EQ(shim().connect(kTargetReader), 0u);
-    EXPECT_EQ(shim().connect(kNeighbourReader), 0u);
-
     EXPECT_EQ(librescrs_shim_open_handles(), 0u);
-    EXPECT_EQ(shim().openHandles(), 0u);
     EXPECT_EQ(countContaining(g_dlopened, kModuleName), 0u) << "no PKCS#11 module is loaded to sign";
 
     // In-process sanity only: the neighbour's secure channel is untouched.
@@ -399,6 +298,5 @@ TEST_F(PcscHandleCensusTest, ConcurrentOperationOnNeighbourIsUndisturbed)
     EXPECT_EQ(result.get().status, LibreSCRS::Signing::SigningResult::Status::Ok);
     EXPECT_EQ(neighbourOperation.get().outcome, LibreSCRS::Plugin::SignResultOutcome::Ok);
     EXPECT_EQ(stubConnect(kNeighbourReader), 0u);
-    EXPECT_EQ(shim().connect(kNeighbourReader), 0u);
     EXPECT_LT(elapsed, std::chrono::seconds(10)) << "a B-B signature in memory takes milliseconds";
 }

@@ -18,23 +18,27 @@ if(NOT LIBRESCRS_BUILD_EXAMPLES)
     #     underlined garbage in QtCreator / VS Code / neovim-lsp.
     #   - `add_executable(... EXCLUDE_FROM_ALL ...)` is the right shape:
     #     the target is in the project graph with its transitive include
-    #     paths populated via LibreSCRS::All, compile_commands.json carries
+    #     paths populated via the LibreSCRS::* targets, compile_commands.json carries
     #     the correct flags, and `cmake --build .` does NOT build it unless
     #     someone passes `--target sdk-consumer` explicitly.
     # To build on demand: `cmake --build build --target sdk-consumer`.
     # To opt every build in: `-DLIBRESCRS_BUILD_EXAMPLES=ON`.
     add_executable(sdk-consumer EXCLUDE_FROM_ALL main.cpp)
-    target_link_libraries(sdk-consumer PRIVATE LibreSCRS::All)
+    target_link_libraries(sdk-consumer PRIVATE
+        LibreSCRS::Auth LibreSCRS::Certificate LibreSCRS::Plugin
+        LibreSCRS::Signing LibreSCRS::SmartCard LibreSCRS::Trust)
     return()
 endif()
 
 add_executable(sdk-consumer main.cpp)
 
-# Link ONLY the public umbrella target. Transitively provides
-# LibreSCRS::{Auth, SmartCard, Plugin, Signing} — and ONLY their public
-# include dirs (${PROJECT_SOURCE_DIR}/include). No lib/*/include, no
-# lib/*/src, no LibreSCRS::SmartCard::Internal:: / libresign:: reachable.
-target_link_libraries(sdk-consumer PRIVATE LibreSCRS::All)
+# Link ONLY public LibreSCRS::* targets — one per header family the example
+# includes — and so ONLY their public include dirs
+# (${PROJECT_SOURCE_DIR}/include). No lib/*/include, no lib/*/src, no
+# LibreSCRS::SmartCard::Internal:: / libresign:: reachable.
+target_link_libraries(sdk-consumer PRIVATE
+    LibreSCRS::Auth LibreSCRS::Certificate LibreSCRS::Plugin
+    LibreSCRS::Signing LibreSCRS::SmartCard LibreSCRS::Trust)
 
 # Registering sdk-consumer as a ctest entry makes its build + run part of
 # the default ctest pass — if a future change leaks an internal header

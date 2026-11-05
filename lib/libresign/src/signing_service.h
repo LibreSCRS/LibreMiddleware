@@ -25,8 +25,6 @@ public:
         return true;
     }
 
-    virtual bool isAvailable() const = 0;
-
     /// @brief Sign @p request.document with @p key, a key the caller holds:
     ///        in production the key signs through the card plugin on the
     ///        session the host holds for the reader. A document that already

@@ -44,7 +44,7 @@ public:
     // Returns DER-encoded CMS SignedData.
     std::vector<uint8_t> signBB(const std::vector<uint8_t>& data, SigningKey& key, SigningTimeAttribute signingTime);
 
-    // The three upgrade helpers below act on the CMS's FIRST SignerInfo, which
+    // The two upgrade helpers below act on the CMS's FIRST SignerInfo, which
     // is unambiguous only on a single-signer document (the PAdES path, where
     // each PDF signature is its own CMS). sign() runs a ladder that targets
     // its signer by pointer — a SignerInfo's position is not stable across a
@@ -57,11 +57,14 @@ public:
     // Upgrade B-T -> B-LT: add revocation data.
     std::vector<uint8_t> addRevocationData(const std::vector<uint8_t>& cms, const RevocationData& revData);
 
-    // Upgrade B-LT -> B-LTA: add archive timestamp.
-    std::vector<uint8_t> addArchiveTimestamp(const std::vector<uint8_t>& cms, const TSAConfig& tsa);
-
     // Convenience: sign at requested level in one call.
     SigningResult sign(const std::vector<uint8_t>& data, SigningKey& key, SignatureLevel level, const TSAConfig& tsa);
 };
+
+/// Test seam: add the B-LTA archive timestamp to the FIRST SignerInfo of a
+/// single-signer @p cms, exactly as sign() does for B-LTA. It lets a test hand
+/// in a document sign() cannot produce, such as one whose SET OF members are
+/// not in DER order. Not called by the library.
+std::vector<uint8_t> addArchiveTimestampForTest(const std::vector<uint8_t>& cms, const TSAConfig& tsa);
 
 } // namespace libresign

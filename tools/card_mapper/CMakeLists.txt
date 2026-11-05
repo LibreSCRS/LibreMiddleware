@@ -79,7 +79,9 @@ if(BUILD_TESTING)
     )
     target_link_libraries(card_mapper_tests PRIVATE GTest::gtest_main SmartCard_Impl EMRTD PKCS15 LibreSCRS_SmartCard_TestHelpers)
     target_compile_features(card_mapper_tests PRIVATE cxx_std_23)
-    target_compile_definitions(card_mapper_tests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+    target_compile_definitions(card_mapper_tests PRIVATE
+        CARD_MAPPER_VERSION="${PROJECT_VERSION}"
+        LIBRESCRS_INTERNAL_BUILD)
     include(GoogleTest)
     gtest_discover_tests(card_mapper_tests)
 endif()

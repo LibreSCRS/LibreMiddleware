@@ -393,7 +393,7 @@ std::vector<uint8_t> CAdESModule::addRevocationData(const std::vector<uint8_t>& 
     return encodeCms(cms.get());
 }
 
-// ---- addArchiveTimestamp ----
+// ---- archive timestamp ----
 
 // Build a DER-encoded SEQUENCE OF OCTET STRING from a vector of hashes.
 std::vector<uint8_t> buildSequenceOfOctetStrings(const std::vector<std::vector<uint8_t>>& hashes)
@@ -644,7 +644,7 @@ std::optional<SigningResult> applyLevelUpgrades(CMS_ContentInfo* cms, CMS_Signer
 
 } // namespace
 
-std::vector<uint8_t> CAdESModule::addArchiveTimestamp(const std::vector<uint8_t>& cmsBytes, const TSAConfig& tsa)
+std::vector<uint8_t> addArchiveTimestampForTest(const std::vector<uint8_t>& cmsBytes, const TSAConfig& tsa)
 {
     requireTsaUrl(tsa, "B-LTA");
     CmsPtr cms = parseCms(cmsBytes);

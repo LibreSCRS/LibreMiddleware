@@ -25,15 +25,7 @@ class NativeSigningService : public SigningService
 public:
     bool configure(const TrustConfig& config) override;
 
-    bool isAvailable() const override;
-
     SigningResult sign(const SigningRequest& request, SigningKey& key) override;
-
-    /// True if configure() was called (even if some TLs failed — degraded mode).
-    bool isConfigured() const
-    {
-        return configured;
-    }
 
     /// Callback invoked when @ref loadTrustList successfully fetches+verifies+
     /// parses a Trusted List and extracts trust anchors from it. The Signing-
@@ -61,7 +53,6 @@ private:
     // DER of the qualified time-stamping services among them: the only TL
     // anchors a time-stamp token's signer may chain to.
     std::vector<std::vector<uint8_t>> tlTimestampAnchors;
-    bool configured = false;
     /// Set once @ref loadLazyTrustLists has run for the current
     /// @ref configure cycle, and cleared by that call. The two must stay in
     /// step: configure() empties @ref tlAnchorCerts, so a flag that outlived

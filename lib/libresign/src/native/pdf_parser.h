@@ -39,10 +39,6 @@ public:
     // Accessor for the trailer dictionary.
     const PdfValue& trailer() const;
 
-    // Follow /Root -> /Pages -> /Kids to locate a page dict by zero-based index.
-    // Throws on out-of-range or structural error.
-    PdfValue pageObject(int pageIndex) const; // Used by PdfParserTests
-
     // Return the indirect object number of the N-th page (0-based).
     // Throws on out-of-range or structural error.
     int pageObjectNumber(int pageIndex) const;
@@ -79,10 +75,6 @@ public:
         int streamObjNum;
         int indexInStream;
     };
-
-    // Objects stored in object streams (type-2 xref entries).
-    // Key = object number, value = which stream and index within it.
-    const std::map<int, CompressedRef>& compressedObjectRefs() const;
 
 private:
     std::span<const uint8_t> raw;
@@ -126,7 +118,6 @@ private:
                                  const std::vector<std::pair<int, int>>& indexPairs);
 
     // Page tree traversal
-    PdfValue resolvePageFromNode(const PdfValue& node, int& remaining) const;
     int resolvePageObjNumFromNode(PdfRef nodeRef, int& remaining) const;
 
     // Object stream support (type-2 xref entries)

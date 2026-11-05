@@ -185,7 +185,7 @@ target_compile_options(fuzz_csca_master_list PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_link_options(fuzz_csca_master_list PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_compile_definitions(fuzz_csca_master_list PRIVATE LIBRESCRS_INTERNAL_BUILD)
 target_include_directories(fuzz_csca_master_list PRIVATE ${LIBRESCRS_EMRTD_CRYPTO_PRIVATE_INCLUDES})
-target_link_libraries(fuzz_csca_master_list PRIVATE EMRTDCrypto SmartCard_Impl LibreSCRS_SecureChannel)
+target_link_libraries(fuzz_csca_master_list PRIVATE EMRTDCrypto SmartCard_Impl LibreSCRS_SmartCard)
 
 # ---------------------------------------------------------------------------
 # Harnesses: the eMRTD walkers that run over unauthenticated card bytes.
@@ -216,7 +216,7 @@ target_compile_options(fuzz_emrtd_sod PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_link_options(fuzz_emrtd_sod PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_compile_definitions(fuzz_emrtd_sod PRIVATE LIBRESCRS_INTERNAL_BUILD)
 target_include_directories(fuzz_emrtd_sod PRIVATE ${LIBRESCRS_EMRTD_CRYPTO_PRIVATE_INCLUDES})
-target_link_libraries(fuzz_emrtd_sod PRIVATE EMRTDCrypto SmartCard_Impl LibreSCRS_SecureChannel)
+target_link_libraries(fuzz_emrtd_sod PRIVATE EMRTDCrypto SmartCard_Impl LibreSCRS_SmartCard)
 
 # Harness: parseCardAccess — EF.CardAccess, read over a plain channel.
 add_executable(fuzz_emrtd_card_access fuzz_emrtd_card_access.cpp ${LIBRESCRS_FUZZ_SRC_fuzz_emrtd_card_access})
@@ -225,7 +225,7 @@ target_compile_options(fuzz_emrtd_card_access PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_link_options(fuzz_emrtd_card_access PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_compile_definitions(fuzz_emrtd_card_access PRIVATE LIBRESCRS_INTERNAL_BUILD)
 target_include_directories(fuzz_emrtd_card_access PRIVATE ${LIBRESCRS_EMRTD_CRYPTO_PRIVATE_INCLUDES})
-target_link_libraries(fuzz_emrtd_card_access PRIVATE EMRTDCrypto SmartCard_Impl LibreSCRS_SecureChannel)
+target_link_libraries(fuzz_emrtd_card_access PRIVATE EMRTDCrypto SmartCard_Impl LibreSCRS_SmartCard)
 
 # Harness: parseDG14 / parseDG15 — the security infos and the AA public key.
 add_executable(fuzz_emrtd_security_info fuzz_emrtd_security_info.cpp ${LIBRESCRS_FUZZ_SRC_fuzz_emrtd_security_info})
@@ -234,7 +234,7 @@ target_compile_options(fuzz_emrtd_security_info PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_link_options(fuzz_emrtd_security_info PRIVATE ${LIBRESCRS_FUZZ_FLAGS})
 target_compile_definitions(fuzz_emrtd_security_info PRIVATE LIBRESCRS_INTERNAL_BUILD)
 target_include_directories(fuzz_emrtd_security_info PRIVATE ${LIBRESCRS_EMRTD_CRYPTO_PRIVATE_INCLUDES})
-target_link_libraries(fuzz_emrtd_security_info PRIVATE EMRTDCrypto SmartCard_Impl LibreSCRS_SecureChannel)
+target_link_libraries(fuzz_emrtd_security_info PRIVATE EMRTDCrypto SmartCard_Impl LibreSCRS_SmartCard)
 
 # ---------------------------------------------------------------------------
 # Harness: readChunkedFile — the one file-read loop under every card reader.

@@ -146,19 +146,20 @@ TEST(PACEHardwareTest, ReadAndParseDG1)
     emrtd::EMRTDCard card(*channel);
 
     // Read DG1 (MRZ data)
-    auto dg1Raw = card.readDataGroup(1);
-    ASSERT_TRUE(dg1Raw.has_value()) << "Failed to read DG1";
-    EXPECT_GT(dg1Raw->size(), 10u) << "DG1 too small";
+    const auto dg1 = card.readDataGroupSafe(1);
+    ASSERT_EQ(dg1.status, emrtd::DGReadStatus::OK) << "Failed to read DG1";
+    const auto& dg1Raw = dg1.data;
+    EXPECT_GT(dg1Raw.size(), 10u) << "DG1 too small";
 
     // Dump raw DG1 for debugging
-    std::cerr << "[DG1] raw (" << dg1Raw->size() << " bytes):";
-    for (size_t i = 0; i < std::min(dg1Raw->size(), size_t(80)); ++i)
-        std::cerr << " " << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>((*dg1Raw)[i]);
+    std::cerr << "[DG1] raw (" << dg1Raw.size() << " bytes):";
+    for (size_t i = 0; i < std::min(dg1Raw.size(), size_t(80)); ++i)
+        std::cerr << " " << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(dg1Raw[i]);
     std::cerr << std::dec << std::endl;
 
     // Parse it
     std::map<int, std::vector<uint8_t>> rawDGs;
-    rawDGs[1] = *dg1Raw;
+    rawDGs[1] = dg1Raw;
     auto parsed = emrtd::parseDataGroups(rawDGs);
 
     ASSERT_TRUE(parsed.dg1.has_value()) << "DG1 parsing failed";
@@ -192,12 +193,13 @@ TEST(PACEHardwareTest, ReadDG2Photo)
 
     emrtd::EMRTDCard card(*channel);
 
-    auto dg2Raw = card.readDataGroup(2);
-    ASSERT_TRUE(dg2Raw.has_value()) << "Failed to read DG2";
-    EXPECT_GT(dg2Raw->size(), 100u) << "DG2 too small for a photo";
+    const auto dg2 = card.readDataGroupSafe(2);
+    ASSERT_EQ(dg2.status, emrtd::DGReadStatus::OK) << "Failed to read DG2";
+    const auto& dg2Raw = dg2.data;
+    EXPECT_GT(dg2Raw.size(), 100u) << "DG2 too small for a photo";
 
     std::map<int, std::vector<uint8_t>> rawDGs;
-    rawDGs[2] = *dg2Raw;
+    rawDGs[2] = dg2Raw;
     auto parsed = emrtd::parseDataGroups(rawDGs);
 
     ASSERT_TRUE(parsed.dg2.has_value()) << "DG2 parsing failed";

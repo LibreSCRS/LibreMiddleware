@@ -46,32 +46,13 @@ This list is load-bearing: a test asserts that the subdirectories named
 here and the subdirectories on disk are the same set, in both
 directions. Adding or removing one means editing this section.
 
-## Archived material
+## Superseded material
 
 Earlier MUP CA generations, the superseded formatization signers, and
-the unrelated Chamber of Commerce root are no longer bundled. They were
-moved to the sibling directory `certificates-legacy/`. Most of them
+the unrelated Chamber of Commerce root are not bundled. Most of them
 cannot be loaded at all: their `serialNumber` uses non-minimal DER
-INTEGER encoding, which OpenSSL 3.5+ rejects, so the trust-store
-loaders skip them silently. The few that do parse are either expired
-(`StrongSecurityFormat_06` / `_07` / `_08`) or outside the chains this
-bundle anchors — the officials' branch intermediate `MUP Sluzbenici
-CA 4`, which the eID document-signer path does not walk, and the
-self-signed `PKS CA Root` of the Chamber of Commerce.
-
-That directory is deliberately unreachable from the running code:
-
-- it is not installed — the install rule copies `certificates/` only;
-- it cannot be resolved at runtime — every rung of the resolver ends in
-  a directory named `certificates` (env override, the two compile-time
-  paths, the library-relative and executable-relative data roots), and
-  the one-level descent described above never leaves the resolved
-  directory, so a sibling of it is never read.
-
-It is kept in-tree, rather than deleted, as the source material for a
-future lenient-load remedy and for historical verification of documents
-and cards issued under those generations. See
-`../certificates-legacy/README.md`.
+INTEGER encoding, which OpenSSL 3.5+ rejects; the few that parse are
+expired or outside the chains this bundle anchors.
 
 When in doubt, prefer adding a TL configuration over bundling new
 files here.

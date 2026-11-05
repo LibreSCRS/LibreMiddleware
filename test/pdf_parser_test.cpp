@@ -174,7 +174,7 @@ TEST(PdfParserTest, PageObjectByIndex)
     PdfParser parser(data);
     ASSERT_TRUE(parser.parse());
 
-    auto page = parser.pageObject(0);
+    auto page = parser.readObject(parser.pageObjectNumber(0));
     ASSERT_EQ(page.type(), PdfValueType::Dict);
 
     auto type = page.get("Type");
@@ -185,16 +185,6 @@ TEST(PdfParserTest, PageObjectByIndex)
     auto rotate = page.get("Rotate");
     ASSERT_EQ(rotate.type(), PdfValueType::Int);
     EXPECT_EQ(rotate.asInt(), 90);
-}
-
-TEST(PdfParserTest, PageObjectOutOfRange)
-{
-    auto data = buildMinimalPdf();
-    PdfParser parser(data);
-    ASSERT_TRUE(parser.parse());
-
-    EXPECT_THROW(parser.pageObject(1), std::runtime_error);
-    EXPECT_THROW(parser.pageObject(99), std::runtime_error);
 }
 
 // pageObjectNumber — returns the indirect object number of the N-th page.
@@ -209,12 +199,9 @@ TEST(PdfParserTest, PageObjectNumberFirst)
     int objNum = parser.pageObjectNumber(0);
     EXPECT_GT(objNum, 0);
 
-    // Verify it resolves to the same page dict as pageObject(0)
-    auto pageViaIndex = parser.pageObject(0);
-    auto pageViaObjNum = parser.readObject(objNum);
-    ASSERT_EQ(pageViaIndex.type(), PdfValueType::Dict);
-    ASSERT_EQ(pageViaObjNum.type(), PdfValueType::Dict);
-    EXPECT_EQ(pageViaIndex.get("Type").asName(), pageViaObjNum.get("Type").asName());
+    auto page = parser.readObject(objNum);
+    ASSERT_EQ(page.type(), PdfValueType::Dict);
+    EXPECT_EQ(page.get("Type").asName(), "Page");
 }
 
 TEST(PdfParserTest, PageObjectNumberOutOfRange)
@@ -291,8 +278,10 @@ TEST(PdfParserTest, BooleanValues)
 
     auto obj = parser.readObject(1);
     ASSERT_EQ(obj.type(), PdfValueType::Dict);
-    EXPECT_TRUE(obj.get("Flag").asBool());
-    EXPECT_FALSE(obj.get("Other").asBool());
+    ASSERT_EQ(obj.get("Flag").type(), PdfValueType::Bool);
+    ASSERT_EQ(obj.get("Other").type(), PdfValueType::Bool);
+    EXPECT_EQ(obj.get("Flag").serialize(), "true");
+    EXPECT_EQ(obj.get("Other").serialize(), "false");
 }
 
 TEST(PdfParserTest, HexString)
@@ -554,11 +543,11 @@ TEST(PdfParserTest, XrefStreamPageTraversal)
     PdfParser parser(data);
     ASSERT_TRUE(parser.parse());
 
-    auto page = parser.pageObject(0);
+    auto page = parser.readObject(parser.pageObjectNumber(0));
     ASSERT_EQ(page.type(), PdfValueType::Dict);
     EXPECT_EQ(page.get("Type").asName(), "Page");
 
-    EXPECT_THROW(parser.pageObject(1), std::runtime_error);
+    EXPECT_THROW(parser.pageObjectNumber(1), std::runtime_error);
 }
 
 TEST(PdfParserTest, XrefStreamCompressedEntries)
@@ -573,14 +562,10 @@ TEST(PdfParserTest, XrefStreamCompressedEntries)
     EXPECT_EQ(catalog.get("Type").asName(), "Catalog");
 
     // Object 5 is compressed but its stream object (10) doesn't exist in this PDF,
-    // so readObject should throw when trying to resolve it
+    // so readObject should throw when trying to resolve it. An object the
+    // xref does not name at all reads as Null instead, so the throw shows
+    // the type-2 entry was recorded.
     EXPECT_THROW(parser.readObject(5), std::runtime_error);
-
-    // But it should be in compressedObjects
-    auto& compressed = parser.compressedObjectRefs();
-    ASSERT_TRUE(compressed.count(5));
-    EXPECT_EQ(compressed.at(5).streamObjNum, 10);
-    EXPECT_EQ(compressed.at(5).indexInStream, 2);
 }
 
 TEST(PdfParserTest, XrefStreamWithIndexArray)
@@ -856,7 +841,7 @@ TEST(PdfParserTest, ObjStreamPageTreeTraversal)
     ASSERT_TRUE(parser.parse());
 
     // Page 0 is object 5, stored in an object stream — page tree traversal must resolve it
-    auto page = parser.pageObject(0);
+    auto page = parser.readObject(parser.pageObjectNumber(0));
     ASSERT_EQ(page.type(), PdfValueType::Dict);
     EXPECT_EQ(page.get("Type").asName(), "Page");
 

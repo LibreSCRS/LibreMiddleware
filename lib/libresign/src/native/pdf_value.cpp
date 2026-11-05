@@ -40,13 +40,6 @@ PdfValueType PdfValue::type() const
         data);
 }
 
-bool PdfValue::asBool() const
-{
-    if (auto* p = std::get_if<bool>(&data))
-        return *p;
-    throw std::runtime_error("PdfValue: not a Bool");
-}
-
 int64_t PdfValue::asInt() const
 {
     if (auto* p = std::get_if<int64_t>(&data))

@@ -62,7 +62,7 @@ gtest_discover_tests(EfDirTests)
 # include/link combination lib/pkcs15-plugin/CMakeLists.txt already uses
 # for the equivalent non-plugin PKCS15Card probe path.
 add_executable(Pkcs15ProbeEfDirTests Pkcs15ProbeEfDirTests.cpp)
-target_link_libraries(Pkcs15ProbeEfDirTests GTest::gtest_main PKCS15 LibreSCRS_SmartCard LibreSCRS_SecureChannel SmartCard_Impl LibreSCRS_SmartCard_TestHelpers)
+target_link_libraries(Pkcs15ProbeEfDirTests GTest::gtest_main PKCS15 LibreSCRS_SmartCard SmartCard_Impl LibreSCRS_SmartCard_TestHelpers)
 target_include_directories(Pkcs15ProbeEfDirTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/pkcs15/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
@@ -165,7 +165,7 @@ add_executable(AnnexTests
 target_link_libraries(AnnexTests
     GTest::gtest_main
     CardAnnex
-    LibreSCRS::SecureChannel
+    LibreSCRS::SmartCard
     SmartCard_Impl
     RsEIdCore
     EMRTDCrypto
@@ -247,7 +247,6 @@ gtest_discover_tests(LibreSCRS_CredentialProviderTests)
 add_executable(LibreSCRS_PlainChannelTests LibreSCRS_PlainChannelTests.cpp)
 target_link_libraries(LibreSCRS_PlainChannelTests
     GTest::gtest_main
-    LibreSCRS::SecureChannel
     LibreSCRS::SmartCard
     SmartCard_Impl)
 target_include_directories(LibreSCRS_PlainChannelTests PRIVATE
@@ -263,7 +262,6 @@ add_executable(LibreSCRS_AetAttestationTests LibreSCRS_AetAttestationTests.cpp)
 target_link_libraries(LibreSCRS_AetAttestationTests
     GTest::gtest_main
     PKCS15
-    LibreSCRS::SecureChannel
     LibreSCRS::SmartCard
     SmartCard_Impl)
 target_include_directories(LibreSCRS_AetAttestationTests PRIVATE
@@ -281,7 +279,6 @@ gtest_discover_tests(LibreSCRS_AetAttestationTests)
 add_executable(LibreSCRS_SmChannelTests LibreSCRS_SmChannelTests.cpp)
 target_link_libraries(LibreSCRS_SmChannelTests
     GTest::gtest_main
-    LibreSCRS::SecureChannel
     LibreSCRS::SmartCard
     SmartCard_Impl)
 target_include_directories(LibreSCRS_SmChannelTests PRIVATE
@@ -296,7 +293,6 @@ gtest_discover_tests(LibreSCRS_SmChannelTests)
 add_executable(LibreSCRS_ChipAuthChannelTests LibreSCRS_ChipAuthChannelTests.cpp)
 target_link_libraries(LibreSCRS_ChipAuthChannelTests
     GTest::gtest_main
-    LibreSCRS::SecureChannel
     LibreSCRS::SmartCard
     SmartCard_Impl
     EMRTDCrypto)
@@ -314,7 +310,6 @@ gtest_discover_tests(LibreSCRS_ChipAuthChannelTests)
 add_executable(LibreSCRS_ChipAuthCryptoTests LibreSCRS_ChipAuthCryptoTests.cpp)
 target_link_libraries(LibreSCRS_ChipAuthCryptoTests
     GTest::gtest_main
-    LibreSCRS::SecureChannel
     LibreSCRS::SmartCard
     SmartCard_Impl
     EMRTDCrypto)
@@ -334,7 +329,6 @@ add_executable(LibreSCRS_ChipAuthSessionTests LibreSCRS_ChipAuthSessionTests.cpp
 target_link_libraries(LibreSCRS_ChipAuthSessionTests
     GTest::gtest_main
     LibreSCRS::SmartCard
-    LibreSCRS::SecureChannel
     LibreSCRS_SmartCard_TestHelpers
     LibreSCRS::Secure
     SmartCard_Impl
@@ -637,39 +631,6 @@ add_dependencies(EMRTDPluginTests emrtd-plugin)
 # whole target, so it is not added here — it would mislabel the rest.
 gtest_discover_tests(EMRTDPluginTests)
 
-# PKCS#15 card investigation probe (run with a physical card inserted)
-add_executable(pkcs15_probe pkcs15_probe.cpp)
-target_link_libraries(pkcs15_probe SmartCard_Impl LibreSCRS::SmartCard LibreSCRS_SmartCard_RawDiagnostic)
-target_include_directories(pkcs15_probe PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src)
-target_compile_definitions(pkcs15_probe PRIVATE LIBRESCRS_INTERNAL_BUILD)
-
-# PKCS#15-after-PACE probe: authenticates via PACE then probes PKCS#15
-add_executable(pkcs15_after_pace_probe pkcs15_after_pace_probe.cpp)
-target_link_libraries(pkcs15_after_pace_probe SmartCard_Impl EMRTDCrypto EMRTD LibreSCRS_SmartCard
-    LibreSCRS_SmartCard_RawDiagnostic)
-target_include_directories(pkcs15_after_pace_probe PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
-)
-target_compile_definitions(pkcs15_after_pace_probe PRIVATE LIBRESCRS_INTERNAL_BUILD)
-
-# AODF + PIN reference probe
-add_executable(aodf_probe aodf_probe.cpp)
-target_link_libraries(aodf_probe SmartCard_Impl LibreSCRS::SmartCard LibreSCRS_SmartCard_RawDiagnostic)
-target_include_directories(aodf_probe PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src)
-target_compile_definitions(aodf_probe PRIVATE LIBRESCRS_INTERNAL_BUILD)
-
-# FCI format probe: tests if CardEdge SELECT FILE returns ISO TLV-wrapped FCI
-add_executable(fci_format_probe fci_format_probe.cpp)
-target_link_libraries(fci_format_probe SmartCard_Impl LibreSCRS::SmartCard LibreSCRS_SmartCard_RawDiagnostic)
-target_include_directories(fci_format_probe PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src)
-target_compile_definitions(fci_format_probe PRIVATE LIBRESCRS_INTERNAL_BUILD)
-
 # eMRTD crypto tests
 add_executable(EMRTDCryptoTests
     bac_test.cpp
@@ -922,379 +883,369 @@ option(BUILD_DSS_ORACLE "Build DSS validation oracle for testing (requires Java 
 # (test/dss_oracle) for the cross-backend cases.
 set(SIGNING_BACKEND "native" CACHE STRING "Signing tests: native, or both (also sign through the DSS cross-verification oracle)")
 set_property(CACHE SIGNING_BACKEND PROPERTY STRINGS "native" "both")
-# `dss` used to build the DSS engine INSTEAD of the native one; it was never a
-# production engine, so say so rather than quietly testing only native.
-if(SIGNING_BACKEND STREQUAL "dss")
-    message(FATAL_ERROR "SIGNING_BACKEND=dss is no longer a build configuration: DSS is the cross-verification oracle, not a selectable production engine. Use `native` (default) or `both`.")
+if(NOT SIGNING_BACKEND MATCHES "^(native|both)$")
+    message(FATAL_ERROR "SIGNING_BACKEND must be `native` or `both`, not `${SIGNING_BACKEND}`.")
 endif()
 
-# Digital signing tests (only when BUILD_SIGNING is enabled)
-if(BUILD_SIGNING)
-    add_executable(LibreSignTests libresign_test.cpp)
-    target_link_libraries(LibreSignTests PRIVATE LibreSign GTest::gtest_main OpenSSL_Crypto)
-    # libresign has no PUBLIC include/. Tests reach types.h / signing_service.h
-    # via the PRIVATE src/ root plus LIBRESCRS_INTERNAL_BUILD to satisfy the
-    # #error guards.
-    target_include_directories(LibreSignTests PRIVATE
-        ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
-        ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
-    target_compile_definitions(LibreSignTests PRIVATE
-        LIBRESCRS_INTERNAL_BUILD)
-    gtest_discover_tests(LibreSignTests)
+# Digital signing tests
+add_executable(LibreSignTests libresign_test.cpp)
+target_link_libraries(LibreSignTests PRIVATE LibreSign GTest::gtest_main OpenSSL_Crypto)
+# libresign has no PUBLIC include/. Tests reach types.h / signing_service.h
+# via the PRIVATE src/ root plus LIBRESCRS_INTERNAL_BUILD to satisfy the
+# #error guards.
+target_include_directories(LibreSignTests PRIVATE
+    ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
+target_compile_definitions(LibreSignTests PRIVATE
+    LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(LibreSignTests)
 
-    # The DSS Java service as the tests' validation oracle (and, under
-    # SIGNING_BACKEND=both, as a second signing engine). Test code only: the
-    # process management and the HTTP over a Unix socket it needs have no place
-    # in the library that ships. POSIX-only (fork/exec).
-    if(NOT WIN32)
-        add_library(LibreSignDssOracle STATIC
-            dss_oracle/dss_http.cpp
-            dss_oracle/dss_path_resolver.cpp
-            dss_oracle/dss_service_manager.cpp
-            dss_oracle/dss_validation_client.cpp)
-        if(SIGNING_BACKEND STREQUAL "both")
-            target_sources(LibreSignDssOracle PRIVATE dss_oracle/dss_signing_service.cpp)
-            # Exhaustive switches over the engine's enums: a new format or
-            # level must not map silently to a wrong wire value.
-            set_source_files_properties(dss_oracle/dss_signing_service.cpp
-                PROPERTIES COMPILE_OPTIONS "-Werror=switch-enum")
-            target_compile_definitions(LibreSignDssOracle PUBLIC LIBRESIGN_HAS_DSS=1)
-        endif()
-        target_include_directories(LibreSignDssOracle PUBLIC
-            ${CMAKE_CURRENT_SOURCE_DIR}
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
-            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include
-            ${LibreMiddleware_SOURCE_DIR}/thirdparty/nlohmann)
-        target_compile_definitions(LibreSignDssOracle PUBLIC LIBRESCRS_INTERNAL_BUILD)
-        target_link_libraries(LibreSignDssOracle PUBLIC LibreSign OpenSSL_Crypto
-            PRIVATE curl_static_with_deps)
-    endif()
+# The DSS Java service as the tests' validation oracle (and, under
+# SIGNING_BACKEND=both, as a second signing engine). Test code only: the
+# process management and the HTTP over a Unix socket it needs have no place
+# in the library that ships. POSIX-only (fork/exec).
+add_library(LibreSignDssOracle STATIC
+    dss_oracle/dss_http.cpp
+    dss_oracle/dss_path_resolver.cpp
+    dss_oracle/dss_service_manager.cpp
+    dss_oracle/dss_validation_client.cpp)
+if(SIGNING_BACKEND STREQUAL "both")
+    target_sources(LibreSignDssOracle PRIVATE dss_oracle/dss_signing_service.cpp)
+    # Exhaustive switches over the engine's enums: a new format or
+    # level must not map silently to a wrong wire value.
+    set_source_files_properties(dss_oracle/dss_signing_service.cpp
+        PROPERTIES COMPILE_OPTIONS "-Werror=switch-enum")
+    target_compile_definitions(LibreSignDssOracle PUBLIC LIBRESIGN_HAS_DSS=1)
+endif()
+target_include_directories(LibreSignDssOracle PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include
+    ${LibreMiddleware_SOURCE_DIR}/thirdparty/nlohmann)
+target_compile_definitions(LibreSignDssOracle PUBLIC LIBRESCRS_INTERNAL_BUILD)
+target_link_libraries(LibreSignDssOracle PUBLIC LibreSign OpenSSL_Crypto
+    PRIVATE curl_static_with_deps)
 
-    # Shared test support library (must be defined before tests that use it)
-    add_library(SigningTestSupport STATIC
-        signing_test_support/signing_test_support.cpp
-        signing_test_support/signing_keys.cpp
-        signing_test_support/loopback_http_server.cpp
-        signing_test_support/mock_trusted_list_server.cpp
-        signing_test_support/mock_tsa_server.cpp)
-    # LibreSign's bucket-B internal headers (http_client.h, native/*)
-    # live in src/. Tests reach them via this PUBLIC include root so they
-    # propagate to every target that links SigningTestSupport.
-    target_include_directories(SigningTestSupport PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/signing_test_support
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
-        ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include
-        # native/der_utils.h encodes through <ber.h>.
-        ${LibreMiddleware_SOURCE_DIR}/lib/smartcard/src
-        ${LibreMiddleware_SOURCE_DIR}/thirdparty/nlohmann)
-    # mock_tsa_server.cpp drives OpenSSL's RFC 3161 responder API
-    # (TS_RESP_CTX) and mints its own signing certificate, so the support
-    # library needs libcrypto directly rather than transitively.
-    target_link_libraries(SigningTestSupport PUBLIC
-        GTest::gtest GTest::gmock LibreSign OpenSSL_Crypto)
-    # Support library reaches into bucket-B libresign internals (native/*). Propagate the internal-build marker to every consumer so the
-    # #error guard lets them through.
-    target_compile_definitions(SigningTestSupport PUBLIC
-        CMAKE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
-        LIBRESCRS_INTERNAL_BUILD)
+# Shared test support library (must be defined before tests that use it)
+add_library(SigningTestSupport STATIC
+    signing_test_support/signing_test_support.cpp
+    signing_test_support/signing_keys.cpp
+    signing_test_support/loopback_http_server.cpp
+    signing_test_support/mock_trusted_list_server.cpp
+    signing_test_support/mock_tsa_server.cpp)
+# LibreSign's bucket-B internal headers (http_client.h, native/*)
+# live in src/. Tests reach them via this PUBLIC include root so they
+# propagate to every target that links SigningTestSupport.
+target_include_directories(SigningTestSupport PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/signing_test_support
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include
+    # native/der_utils.h encodes through <ber.h>.
+    ${LibreMiddleware_SOURCE_DIR}/lib/smartcard/src
+    ${LibreMiddleware_SOURCE_DIR}/thirdparty/nlohmann)
+# mock_tsa_server.cpp drives OpenSSL's RFC 3161 responder API
+# (TS_RESP_CTX) and mints its own signing certificate, so the support
+# library needs libcrypto directly rather than transitively.
+target_link_libraries(SigningTestSupport PUBLIC
+    GTest::gtest GTest::gmock LibreSign OpenSSL_Crypto)
+# Support library reaches into bucket-B libresign internals (native/*). Propagate the internal-build marker to every consumer so the
+# #error guard lets them through.
+target_compile_definitions(SigningTestSupport PUBLIC
+    CMAKE_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+    LIBRESCRS_INTERNAL_BUILD)
 
-    if(TARGET LibreSignDssOracle)
-        target_link_libraries(SigningTestSupport PUBLIC LibreSignDssOracle)
-        if(BUILD_DSS_ORACLE)
-            target_compile_definitions(SigningTestSupport PUBLIC LIBRESIGN_HAS_DSS_ORACLE=1)
-        endif()
-    endif()
-
-    # A real card's signing key, reached through the card's plugin on a
-    # session for the reader. Kept out of SigningTestSupport so the tests that
-    # sign in memory carry no plugin registry and no card stack.
-    add_library(CardSigningKeySupport STATIC signing_test_support/card_signing_key.cpp)
-    target_link_libraries(CardSigningKeySupport PUBLIC
-        SigningTestSupport LibreSignPluginKey CardPlugin_Impl LibreSCRS_SmartCard SmartCard_Impl)
-    target_compile_definitions(CardSigningKeySupport PRIVATE
-        PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}")
-
-    # Unified signing E2E tests (parameterized by backend, custom main)
-    add_executable(SigningE2ETests signing_e2e_test.cpp)
-    target_link_libraries(SigningE2ETests PRIVATE CardSigningKeySupport)
-    # Mixed target: only the AllBackends/SigningE2ETest and SigningHwNativeBLT
-    # instantiations are card-gated; the InMemory/SigningE2ETest instantiation
-    # of the SAME parameterized fixture signs with a key held in memory, not a
-    # card. `PROPERTIES LABELS` applies to the whole target (and cannot
-    # distinguish instantiations of one suite), so it is not added here.
-    gtest_discover_tests(SigningE2ETests DISCOVERY_TIMEOUT 30)
-
-    # ETSI conformance suite: every case signs against the software token and
-    # is graded by the independent validator. Its own main registers the
-    # SigningTestEnvironment, which is where the oracle lives.
-    add_executable(SigningConformanceTests signing_conformance_test.cpp)
-    target_link_libraries(SigningConformanceTests PRIVATE SigningTestSupport GTest::gmock)
-    gtest_discover_tests(SigningConformanceTests DISCOVERY_TIMEOUT 30)
-
-    # The OpenSSL provider signing through a key held in memory: no card.
-    add_executable(SigningProviderKeymgmtTests signing_provider_keymgmt_test.cpp)
-    target_link_libraries(SigningProviderKeymgmtTests PRIVATE SigningTestSupport OpenSSL_Crypto GTest::gtest_main)
-    gtest_discover_tests(SigningProviderKeymgmtTests)
-
-    # The key that signs through a card plugin on a held session, against a
-    # plugin that records every deposit and sign: no card.
-    add_executable(PluginSigningKeyTests PluginSigningKeyTests.cpp)
-    target_link_libraries(PluginSigningKeyTests PRIVATE SigningTestSupport LibreSignPluginKey CardPlugin_Impl
-        LibreSCRS_SmartCard LibreSCRS_SmartCardTesting SmartCard_Impl OpenSSL_Crypto GTest::gtest_main)
-    target_include_directories(PluginSigningKeyTests PRIVATE ${LibreMiddleware_SOURCE_DIR}/lib/smartcard/src)
-    gtest_discover_tests(PluginSigningKeyTests)
-
-    # HttpClient is core (used by both backends)
-    add_executable(HttpClientTests http_client_test.cpp)
-    target_link_libraries(HttpClientTests PRIVATE LibreSign GTest::gtest_main)
-    target_include_directories(HttpClientTests PRIVATE
-        ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
-        ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
-    target_compile_definitions(HttpClientTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
-    gtest_discover_tests(HttpClientTests)
-
-    # DSS backend tests
-    if(SIGNING_BACKEND STREQUAL "both" AND TARGET LibreSignDssOracle)
-        add_executable(DSSServiceManagerTests dss_service_manager_test.cpp)
-        target_link_libraries(DSSServiceManagerTests PRIVATE LibreSignDssOracle GTest::gmock GTest::gtest_main)
-        gtest_discover_tests(DSSServiceManagerTests)
-
-        add_executable(DSSSigningServiceTests dss_signing_service_test.cpp)
-        target_link_libraries(DSSSigningServiceTests PRIVATE SigningTestSupport GTest::gtest_main)
-        gtest_discover_tests(DSSSigningServiceTests)
-
-        # DSS integration tests (require JAR + Java on PATH)
-        add_executable(DSSIntegrationTests dss_integration_test.cpp)
-        target_link_libraries(DSSIntegrationTests PRIVATE LibreSignDssOracle GTest::gtest_main)
-        target_compile_definitions(DSSIntegrationTests PRIVATE
-            CMAKE_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
-        gtest_discover_tests(DSSIntegrationTests)
-
-        # Signing integration tests (trust store + DSS service + optional real card)
-        add_executable(SigningIntegrationTests signing_integration_test.cpp)
-        target_link_libraries(SigningIntegrationTests PRIVATE SigningTestSupport GTest::gtest_main OpenSSL_Crypto)
-        target_compile_definitions(SigningIntegrationTests PRIVATE
-            CMAKE_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
-        gtest_discover_tests(SigningIntegrationTests)
-    endif()
-
-    # Native backend tests
-    if(SIGNING_BACKEND STREQUAL "native" OR SIGNING_BACKEND STREQUAL "both")
-        # Internal-utility unit tests (derEncodeLength, sha256Base64 parity).
-        # Includes internal headers from lib/libresign/src/native/, so links
-        # LibreSign + OpenSSL directly.
-        add_executable(NativeUtilsTests native_utils_test.cpp)
-        target_link_libraries(NativeUtilsTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto)
-        target_include_directories(NativeUtilsTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/thirdparty/miniz
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
-            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include
-            ${LibreMiddleware_SOURCE_DIR}/lib/smartcard/src)
-        target_compile_definitions(NativeUtilsTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
-        # Mixed target, at a finer grain than most: nine of the ten suites in
-        # this binary need no card, and even the tenth (BuildOrderedChain)
-        # mixes GRAIN — only its HwCompletesRealCardLeafToTrustedListCa case
-        # is card-gated; the other six BuildOrderedChain cases use synthetic
-        # certs. `PROPERTIES LABELS` applies to the whole target (or nothing
-        # finer than a whole gtest suite), so it cannot express this and is
-        # not added here.
-        gtest_discover_tests(NativeUtilsTests)
-
-        add_executable(TSAClientTests tsa_client_test.cpp)
-        target_link_libraries(TSAClientTests PRIVATE GTest::gtest_main LibreSign SigningTestSupport)
-        target_include_directories(TSAClientTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
-            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
-        target_compile_definitions(TSAClientTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
-        gtest_discover_tests(TSAClientTests)
-
-        # TSA / OCSP failure-mode coverage. Exercises body-parse rejection,
-        # unreachable endpoint, timeout, plus module-level "B-T requires TSA"
-        # contract via CAdES::addTimestamp throw site.
-        add_executable(TsaFailureModesTests tsa_failure_modes_test.cpp)
-        target_link_libraries(TsaFailureModesTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
-        target_include_directories(TsaFailureModesTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
-            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
-        target_compile_definitions(TsaFailureModesTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
-        gtest_discover_tests(TsaFailureModesTests)
-
-        add_executable(RevocationClientTests revocation_client_test.cpp)
-        target_link_libraries(RevocationClientTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto)
-        target_include_directories(RevocationClientTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
-            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
-        target_compile_definitions(RevocationClientTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
-        gtest_discover_tests(RevocationClientTests)
-
-        add_executable(CAdESModuleTests cades_module_test.cpp)
-        target_link_libraries(CAdESModuleTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
-        gtest_discover_tests(CAdESModuleTests)
-
-        # Service-level policy — covers the sign() entry point and its dispatch,
-        # not the format modules.
-        add_executable(NativeSigningServiceTests native_signing_service_test.cpp)
-        target_link_libraries(NativeSigningServiceTests
-            PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
-        gtest_discover_tests(NativeSigningServiceTests)
-
-        add_executable(PAdESModuleTests pades_module_test.cpp)
-        target_link_libraries(PAdESModuleTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
-        gtest_discover_tests(PAdESModuleTests)
-
-        add_executable(PAdESUnicodeE2ETests pades_unicode_e2e_test.cpp)
-        target_link_libraries(PAdESUnicodeE2ETests PRIVATE
-            GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
-        gtest_discover_tests(PAdESUnicodeE2ETests)
-
-        # Visual-signature FILL_BOX cross-backend oracle. Self-
-        # consistency (native emitter vs layoutVisualSignature) runs
-        # under SIGNING_BACKEND=native|both. Full DSS oracle skips
-        # silently unless SIGNING_BACKEND=both AND the DSS Java service is
-        # reachable.
-        add_executable(PAdESDssOracleTests pades_dss_oracle_test.cpp)
-        target_link_libraries(PAdESDssOracleTests
-            PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
-        gtest_discover_tests(PAdESDssOracleTests)
-
-        add_executable(TtfParserTests ttf_parser_test.cpp)
-        target_link_libraries(TtfParserTests PRIVATE GTest::gtest_main LibreSign)
-        target_include_directories(TtfParserTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
-            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
-        target_compile_definitions(TtfParserTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
-        gtest_discover_tests(TtfParserTests)
-
-        add_executable(TtfSubsetTests ttf_subset_test.cpp)
-        target_link_libraries(TtfSubsetTests PRIVATE GTest::gtest_main LibreSign)
-        target_include_directories(TtfSubsetTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
-            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
-        target_compile_definitions(TtfSubsetTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
-        gtest_discover_tests(TtfSubsetTests)
-
-        add_executable(PdfFontTests pdf_font_test.cpp)
-        target_link_libraries(PdfFontTests PRIVATE GTest::gtest_main LibreSign)
-        target_include_directories(PdfFontTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
-            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
-        target_compile_definitions(PdfFontTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
-        gtest_discover_tests(PdfFontTests)
-
-        # Public visual-signature auto-fit layout API (rc2). Pure tests
-        # over the LibreSCRS::Signing interface — no internals, no
-        # libresign:: include path; LibreSCRS_Signing transitively pulls
-        # the LibreSign archive at link time so the symbols resolve.
-        add_executable(VisualSignatureLayoutTests visual_signature_layout_test.cpp)
-        target_link_libraries(VisualSignatureLayoutTests
-            PRIVATE GTest::gtest_main LibreSCRS_Signing)
-        gtest_discover_tests(VisualSignatureLayoutTests)
-
-        # Integration: the public SigningRequest reason and location wired
-        # through the libresign bridge into the PDF /Reason and /Location
-        # signature-dictionary entries. Links LibreSCRS_Signing for the
-        # public builder and LibreSign for the internal PAdES module.
-        add_executable(SignatureDictionaryIntegrationTests signature_dictionary_integration_test.cpp)
-        target_link_libraries(SignatureDictionaryIntegrationTests
-            PRIVATE GTest::gtest_main LibreSCRS_Signing LibreSign OpenSSL_Crypto SigningTestSupport)
-        target_include_directories(SignatureDictionaryIntegrationTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
-            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
-        target_compile_definitions(SignatureDictionaryIntegrationTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
-        gtest_discover_tests(SignatureDictionaryIntegrationTests)
-
-        add_executable(JAdESModuleTests jades_module_test.cpp)
-        target_link_libraries(JAdESModuleTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
-        target_include_directories(JAdESModuleTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/thirdparty/nlohmann)
-        gtest_discover_tests(JAdESModuleTests)
-
-        # JCS (RFC 8785) canonical JSON serializer — internal LibreSign TU,
-        # reached via LIBRESCRS_INTERNAL_BUILD plus the libresign src tree.
-        add_executable(JcsTests jcs_test.cpp)
-        target_link_libraries(JcsTests PRIVATE GTest::gtest_main LibreSign)
-        target_include_directories(JcsTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
-            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include
-            ${LibreMiddleware_SOURCE_DIR}/thirdparty/nlohmann)
-        target_compile_definitions(JcsTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
-        gtest_discover_tests(JcsTests)
-
-        find_package(LibXml2 REQUIRED)
-        add_executable(XAdESModuleTests xades_module_test.cpp)
-        target_link_libraries(XAdESModuleTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto LibXml2::LibXml2 SigningTestSupport)
-        gtest_discover_tests(XAdESModuleTests)
-
-        add_executable(ASiCModuleTests asic_module_test.cpp)
-        target_link_libraries(ASiCModuleTests PRIVATE GTest::gtest_main LibreSign SigningTestSupport)
-        target_include_directories(ASiCModuleTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/thirdparty/miniz)
-        # The fuzz corpus holds the inputs the harness found; a unit test reads
-        # them from there rather than carrying a second copy that can drift.
-        target_compile_definitions(ASiCModuleTests PRIVATE
-            LIBRESCRS_FUZZ_CORPUS_DIR="${LibreMiddleware_SOURCE_DIR}/fuzz/corpus")
-        gtest_discover_tests(ASiCModuleTests)
-
-        add_executable(TrustedListParserTests trusted_list_parser_test.cpp)
-        target_link_libraries(TrustedListParserTests PRIVATE GTest::gtest_main LibreSign LibXml2::LibXml2)
-        target_include_directories(TrustedListParserTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
-            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
-        target_compile_definitions(TrustedListParserTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
-        gtest_discover_tests(TrustedListParserTests)
-
-        add_executable(TlSignatureVerifierTests tl_signature_verifier_test.cpp)
-        target_link_libraries(TlSignatureVerifierTests PRIVATE GTest::gtest_main LibreSign SigningTestSupport
-            OpenSSL_Crypto LibXml2::LibXml2)
-        target_include_directories(TlSignatureVerifierTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src/native
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
-            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
-        target_compile_definitions(TlSignatureVerifierTests PRIVATE LIBRESCRS_INTERNAL_BUILD
-            LIBREMIDDLEWARE_SOURCE_DIR="${LibreMiddleware_SOURCE_DIR}")
-        gtest_discover_tests(TlSignatureVerifierTests)
-
-        add_executable(TlCacheTests tl_cache_test.cpp)
-        target_link_libraries(TlCacheTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto)
-        target_include_directories(TlCacheTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src/native)
-        target_compile_definitions(TlCacheTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
-        gtest_discover_tests(TlCacheTests)
-
-        add_executable(CrossBackendTests cross_backend_test.cpp)
-        target_link_libraries(CrossBackendTests PRIVATE GTest::gtest_main LibreSign)
-        if(TARGET LibreSignDssOracle)
-            target_link_libraries(CrossBackendTests PRIVATE LibreSignDssOracle)
-        endif()
-        target_include_directories(CrossBackendTests PRIVATE
-            ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
-            ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
-        target_compile_definitions(CrossBackendTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
-        gtest_discover_tests(CrossBackendTests)
-
-        add_executable(PdfParserTests pdf_parser_test.cpp)
-        target_link_libraries(PdfParserTests PRIVATE GTest::gtest_main LibreSign)
-        target_include_directories(PdfParserTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lib/libresign/src/native)
-        target_compile_definitions(PdfParserTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
-        gtest_discover_tests(PdfParserTests)
-
-        add_executable(ECSigningTests ec_signing_test.cpp)
-        target_link_libraries(ECSigningTests PRIVATE GTest::gtest_main LibreSign CardSigningKeySupport)
-        # Every case in this binary (ECSigningTest, ECMatrix/ECSigningMatrixTest)
-        # GTEST_SKIPs without a real card; the whole target is card-gated.
-        gtest_discover_tests(ECSigningTests DISCOVERY_TIMEOUT 30
-            PROPERTIES LABELS "HARDWARE"
-        )
+if(TARGET LibreSignDssOracle)
+    target_link_libraries(SigningTestSupport PUBLIC LibreSignDssOracle)
+    if(BUILD_DSS_ORACLE)
+        target_compile_definitions(SigningTestSupport PUBLIC LIBRESIGN_HAS_DSS_ORACLE=1)
     endif()
 endif()
+
+# A real card's signing key, reached through the card's plugin on a
+# session for the reader. Kept out of SigningTestSupport so the tests that
+# sign in memory carry no plugin registry and no card stack.
+add_library(CardSigningKeySupport STATIC signing_test_support/card_signing_key.cpp)
+target_link_libraries(CardSigningKeySupport PUBLIC
+    SigningTestSupport LibreSignPluginKey CardPlugin_Impl LibreSCRS_SmartCard SmartCard_Impl)
+target_compile_definitions(CardSigningKeySupport PRIVATE
+    PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}")
+
+# Unified signing E2E tests (parameterized by backend, custom main)
+add_executable(SigningE2ETests signing_e2e_test.cpp)
+target_link_libraries(SigningE2ETests PRIVATE CardSigningKeySupport)
+# Mixed target: only the AllBackends/SigningE2ETest and SigningHwNativeBLT
+# instantiations are card-gated; the InMemory/SigningE2ETest instantiation
+# of the SAME parameterized fixture signs with a key held in memory, not a
+# card. `PROPERTIES LABELS` applies to the whole target (and cannot
+# distinguish instantiations of one suite), so it is not added here.
+gtest_discover_tests(SigningE2ETests DISCOVERY_TIMEOUT 30)
+
+# ETSI conformance suite: every case signs against the software token and
+# is graded by the independent validator. Its own main registers the
+# SigningTestEnvironment, which is where the oracle lives.
+add_executable(SigningConformanceTests signing_conformance_test.cpp)
+target_link_libraries(SigningConformanceTests PRIVATE SigningTestSupport GTest::gmock)
+gtest_discover_tests(SigningConformanceTests DISCOVERY_TIMEOUT 30)
+
+# The OpenSSL provider signing through a key held in memory: no card.
+add_executable(SigningProviderKeymgmtTests signing_provider_keymgmt_test.cpp)
+target_link_libraries(SigningProviderKeymgmtTests PRIVATE SigningTestSupport OpenSSL_Crypto GTest::gtest_main)
+gtest_discover_tests(SigningProviderKeymgmtTests)
+
+# The key that signs through a card plugin on a held session, against a
+# plugin that records every deposit and sign: no card.
+add_executable(PluginSigningKeyTests PluginSigningKeyTests.cpp)
+target_link_libraries(PluginSigningKeyTests PRIVATE SigningTestSupport LibreSignPluginKey CardPlugin_Impl
+    LibreSCRS_SmartCard LibreSCRS_SmartCardTesting SmartCard_Impl OpenSSL_Crypto GTest::gtest_main)
+target_include_directories(PluginSigningKeyTests PRIVATE ${LibreMiddleware_SOURCE_DIR}/lib/smartcard/src)
+gtest_discover_tests(PluginSigningKeyTests)
+
+# HttpClient is core (used by both backends)
+add_executable(HttpClientTests http_client_test.cpp)
+target_link_libraries(HttpClientTests PRIVATE LibreSign GTest::gtest_main)
+target_include_directories(HttpClientTests PRIVATE
+    ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
+target_compile_definitions(HttpClientTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(HttpClientTests)
+
+# DSS backend tests
+if(SIGNING_BACKEND STREQUAL "both" AND TARGET LibreSignDssOracle)
+    add_executable(DSSServiceManagerTests dss_service_manager_test.cpp)
+    target_link_libraries(DSSServiceManagerTests PRIVATE LibreSignDssOracle GTest::gmock GTest::gtest_main)
+    gtest_discover_tests(DSSServiceManagerTests)
+
+    add_executable(DSSSigningServiceTests dss_signing_service_test.cpp)
+    target_link_libraries(DSSSigningServiceTests PRIVATE SigningTestSupport GTest::gtest_main)
+    gtest_discover_tests(DSSSigningServiceTests)
+
+    # DSS integration tests (require JAR + Java on PATH)
+    add_executable(DSSIntegrationTests dss_integration_test.cpp)
+    target_link_libraries(DSSIntegrationTests PRIVATE LibreSignDssOracle GTest::gtest_main)
+    target_compile_definitions(DSSIntegrationTests PRIVATE
+        CMAKE_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    gtest_discover_tests(DSSIntegrationTests)
+
+    # Signing integration tests (trust store + DSS service + optional real card)
+    add_executable(SigningIntegrationTests signing_integration_test.cpp)
+    target_link_libraries(SigningIntegrationTests PRIVATE SigningTestSupport GTest::gtest_main OpenSSL_Crypto)
+    target_compile_definitions(SigningIntegrationTests PRIVATE
+        CMAKE_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+    gtest_discover_tests(SigningIntegrationTests)
+endif()
+
+# Native backend tests
+# Internal-utility unit tests (derEncodeLength, sha256Base64 parity).
+# Includes internal headers from lib/libresign/src/native/, so links
+# LibreSign + OpenSSL directly.
+add_executable(NativeUtilsTests native_utils_test.cpp)
+target_link_libraries(NativeUtilsTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto)
+target_include_directories(NativeUtilsTests PRIVATE
+    ${LibreMiddleware_SOURCE_DIR}/thirdparty/miniz
+    ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include
+    ${LibreMiddleware_SOURCE_DIR}/lib/smartcard/src)
+target_compile_definitions(NativeUtilsTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+# Mixed target, at a finer grain than most: nine of the ten suites in
+# this binary need no card, and even the tenth (BuildOrderedChain)
+# mixes GRAIN — only its HwCompletesRealCardLeafToTrustedListCa case
+# is card-gated; the other six BuildOrderedChain cases use synthetic
+# certs. `PROPERTIES LABELS` applies to the whole target (or nothing
+# finer than a whole gtest suite), so it cannot express this and is
+# not added here.
+gtest_discover_tests(NativeUtilsTests)
+
+add_executable(TSAClientTests tsa_client_test.cpp)
+target_link_libraries(TSAClientTests PRIVATE GTest::gtest_main LibreSign SigningTestSupport)
+target_include_directories(TSAClientTests PRIVATE
+    ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
+target_compile_definitions(TSAClientTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(TSAClientTests)
+
+# TSA / OCSP failure-mode coverage. Exercises body-parse rejection,
+# unreachable endpoint, timeout, plus module-level "B-T requires TSA"
+# contract via CAdES::addTimestamp throw site.
+add_executable(TsaFailureModesTests tsa_failure_modes_test.cpp)
+target_link_libraries(TsaFailureModesTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
+target_include_directories(TsaFailureModesTests PRIVATE
+    ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
+target_compile_definitions(TsaFailureModesTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(TsaFailureModesTests)
+
+add_executable(RevocationClientTests revocation_client_test.cpp)
+target_link_libraries(RevocationClientTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto)
+target_include_directories(RevocationClientTests PRIVATE
+    ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
+target_compile_definitions(RevocationClientTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(RevocationClientTests)
+
+add_executable(CAdESModuleTests cades_module_test.cpp)
+target_link_libraries(CAdESModuleTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
+gtest_discover_tests(CAdESModuleTests)
+
+# Service-level policy — covers the sign() entry point and its dispatch,
+# not the format modules.
+add_executable(NativeSigningServiceTests native_signing_service_test.cpp)
+target_link_libraries(NativeSigningServiceTests
+    PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
+gtest_discover_tests(NativeSigningServiceTests)
+
+add_executable(PAdESModuleTests pades_module_test.cpp)
+target_link_libraries(PAdESModuleTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
+gtest_discover_tests(PAdESModuleTests)
+
+add_executable(PAdESUnicodeE2ETests pades_unicode_e2e_test.cpp)
+target_link_libraries(PAdESUnicodeE2ETests PRIVATE
+    GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
+gtest_discover_tests(PAdESUnicodeE2ETests)
+
+# Visual-signature FILL_BOX cross-backend oracle. Self-
+# consistency (native emitter vs layoutVisualSignature) runs
+# under SIGNING_BACKEND=native|both. Full DSS oracle skips
+# silently unless SIGNING_BACKEND=both AND the DSS Java service is
+# reachable.
+add_executable(PAdESDssOracleTests pades_dss_oracle_test.cpp)
+target_link_libraries(PAdESDssOracleTests
+    PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
+gtest_discover_tests(PAdESDssOracleTests)
+
+add_executable(TtfParserTests ttf_parser_test.cpp)
+target_link_libraries(TtfParserTests PRIVATE GTest::gtest_main LibreSign)
+target_include_directories(TtfParserTests PRIVATE
+    ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
+target_compile_definitions(TtfParserTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(TtfParserTests)
+
+add_executable(TtfSubsetTests ttf_subset_test.cpp)
+target_link_libraries(TtfSubsetTests PRIVATE GTest::gtest_main LibreSign)
+target_include_directories(TtfSubsetTests PRIVATE
+    ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
+target_compile_definitions(TtfSubsetTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(TtfSubsetTests)
+
+add_executable(PdfFontTests pdf_font_test.cpp)
+target_link_libraries(PdfFontTests PRIVATE GTest::gtest_main LibreSign)
+target_include_directories(PdfFontTests PRIVATE
+    ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
+target_compile_definitions(PdfFontTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(PdfFontTests)
+
+# Public visual-signature auto-fit layout API (rc2). Pure tests
+# over the LibreSCRS::Signing interface — no internals, no
+# libresign:: include path; LibreSCRS_Signing transitively pulls
+# the LibreSign archive at link time so the symbols resolve.
+add_executable(VisualSignatureLayoutTests visual_signature_layout_test.cpp)
+target_link_libraries(VisualSignatureLayoutTests
+    PRIVATE GTest::gtest_main LibreSCRS_Signing)
+gtest_discover_tests(VisualSignatureLayoutTests)
+
+# Integration: the public SigningRequest reason and location wired
+# through the libresign bridge into the PDF /Reason and /Location
+# signature-dictionary entries. Links LibreSCRS_Signing for the
+# public builder and LibreSign for the internal PAdES module.
+add_executable(SignatureDictionaryIntegrationTests signature_dictionary_integration_test.cpp)
+target_link_libraries(SignatureDictionaryIntegrationTests
+    PRIVATE GTest::gtest_main LibreSCRS_Signing LibreSign OpenSSL_Crypto SigningTestSupport)
+target_include_directories(SignatureDictionaryIntegrationTests PRIVATE
+    ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
+target_compile_definitions(SignatureDictionaryIntegrationTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(SignatureDictionaryIntegrationTests)
+
+add_executable(JAdESModuleTests jades_module_test.cpp)
+target_link_libraries(JAdESModuleTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto SigningTestSupport)
+target_include_directories(JAdESModuleTests PRIVATE
+    ${LibreMiddleware_SOURCE_DIR}/thirdparty/nlohmann)
+gtest_discover_tests(JAdESModuleTests)
+
+# JCS (RFC 8785) canonical JSON serializer — internal LibreSign TU,
+# reached via LIBRESCRS_INTERNAL_BUILD plus the libresign src tree.
+add_executable(JcsTests jcs_test.cpp)
+target_link_libraries(JcsTests PRIVATE GTest::gtest_main LibreSign)
+target_include_directories(JcsTests PRIVATE
+    ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include
+    ${LibreMiddleware_SOURCE_DIR}/thirdparty/nlohmann)
+target_compile_definitions(JcsTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(JcsTests)
+
+find_package(LibXml2 REQUIRED)
+add_executable(XAdESModuleTests xades_module_test.cpp)
+target_link_libraries(XAdESModuleTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto LibXml2::LibXml2 SigningTestSupport)
+gtest_discover_tests(XAdESModuleTests)
+
+add_executable(ASiCModuleTests asic_module_test.cpp)
+target_link_libraries(ASiCModuleTests PRIVATE GTest::gtest_main LibreSign SigningTestSupport)
+target_include_directories(ASiCModuleTests PRIVATE
+    ${LibreMiddleware_SOURCE_DIR}/thirdparty/miniz)
+# The fuzz corpus holds the inputs the harness found; a unit test reads
+# them from there rather than carrying a second copy that can drift.
+target_compile_definitions(ASiCModuleTests PRIVATE
+    LIBRESCRS_FUZZ_CORPUS_DIR="${LibreMiddleware_SOURCE_DIR}/fuzz/corpus")
+gtest_discover_tests(ASiCModuleTests)
+
+add_executable(TrustedListParserTests trusted_list_parser_test.cpp)
+target_link_libraries(TrustedListParserTests PRIVATE GTest::gtest_main LibreSign LibXml2::LibXml2)
+target_include_directories(TrustedListParserTests PRIVATE
+    ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
+target_compile_definitions(TrustedListParserTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(TrustedListParserTests)
+
+add_executable(TlSignatureVerifierTests tl_signature_verifier_test.cpp)
+target_link_libraries(TlSignatureVerifierTests PRIVATE GTest::gtest_main LibreSign SigningTestSupport
+    OpenSSL_Crypto LibXml2::LibXml2)
+target_include_directories(TlSignatureVerifierTests PRIVATE
+    ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src/native
+    ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
+target_compile_definitions(TlSignatureVerifierTests PRIVATE LIBRESCRS_INTERNAL_BUILD
+    LIBREMIDDLEWARE_SOURCE_DIR="${LibreMiddleware_SOURCE_DIR}")
+gtest_discover_tests(TlSignatureVerifierTests)
+
+add_executable(TlCacheTests tl_cache_test.cpp)
+target_link_libraries(TlCacheTests PRIVATE GTest::gtest_main LibreSign OpenSSL_Crypto)
+target_include_directories(TlCacheTests PRIVATE
+    ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src/native)
+target_compile_definitions(TlCacheTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(TlCacheTests)
+
+add_executable(CrossBackendTests cross_backend_test.cpp)
+target_link_libraries(CrossBackendTests PRIVATE GTest::gtest_main LibreSign)
+if(TARGET LibreSignDssOracle)
+    target_link_libraries(CrossBackendTests PRIVATE LibreSignDssOracle)
+endif()
+target_include_directories(CrossBackendTests PRIVATE
+    ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS/include)
+target_compile_definitions(CrossBackendTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(CrossBackendTests)
+
+add_executable(PdfParserTests pdf_parser_test.cpp)
+target_link_libraries(PdfParserTests PRIVATE GTest::gtest_main LibreSign)
+target_include_directories(PdfParserTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lib/libresign/src/native)
+target_compile_definitions(PdfParserTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(PdfParserTests)
+
+add_executable(ECSigningTests ec_signing_test.cpp)
+target_link_libraries(ECSigningTests PRIVATE GTest::gtest_main LibreSign CardSigningKeySupport)
+# Every case in this binary (ECSigningTest, ECMatrix/ECSigningMatrixTest)
+# GTEST_SKIPs without a real card; the whole target is card-gated.
+gtest_discover_tests(ECSigningTests DISCOVERY_TIMEOUT 30
+    PROPERTIES LABELS "HARDWARE"
+)
 
 # A census of the PC/SC handles one document signature opens.
 #
-# The counting provider is compiled INTO this executable as well as being loaded
-# from its own shared object by OpenSC: the two paths to PC/SC in this picture
-# have to be counted separately, and one source serves both. ENABLE_EXPORTS is
+# The counting provider is compiled INTO this executable. ENABLE_EXPORTS is
 # load-bearing, not tidiness -- it is what puts this executable's SCardConnect,
 # dlopen and dlclose in its dynamic symbol table, where every library's
 # references resolve to them. A linker --wrap cannot do this job: a call made
@@ -1306,12 +1257,12 @@ endif()
 #
 # The preemption is ELF's flat symbol lookup, and macOS reaches no card through
 # PC/SC: the suite is built where it can count.
-if(LIBRESCRS_VENDOR_OPENSC AND NOT APPLE)
+if(NOT APPLE)
     add_executable(pcsc_handle_census_test
         pcsc_handle_census_test.cpp
         ${PROJECT_SOURCE_DIR}/test/pcsc_counting_shim/counting_pcsc_shim.c)
     target_link_libraries(pcsc_handle_census_test PRIVATE
-        LibreSCRS::Signing LibreSCRS::SmartCard LibreSCRS::SecureChannel
+        LibreSCRS::Signing LibreSCRS::SmartCard
         # The stub plugins derive from CardPlugin, whose vtable is
         # libLibreSCRS_Plugin's.
         LibreSCRS::Plugin
@@ -1326,11 +1277,8 @@ if(LIBRESCRS_VENDOR_OPENSC AND NOT APPLE)
         ${PROJECT_SOURCE_DIR}/lib/smartcard/include
         ${PROJECT_SOURCE_DIR}/lib/SecureChannel/include)
     target_include_directories(pcsc_handle_census_test SYSTEM PRIVATE $<TARGET_PROPERTY:PCSC::PCSC,INTERFACE_INCLUDE_DIRECTORIES>)
-    target_compile_definitions(pcsc_handle_census_test PRIVATE
-        LIBRESCRS_PCSC_SHIM_PATH="$<TARGET_FILE:pcsc_counting_shim>"
-        LIBRESCRS_INTERNAL_BUILD)
+    target_compile_definitions(pcsc_handle_census_test PRIVATE LIBRESCRS_INTERNAL_BUILD)
     set_target_properties(pcsc_handle_census_test PROPERTIES ENABLE_EXPORTS ON)
-    add_dependencies(pcsc_handle_census_test pcsc_counting_shim)
     gtest_discover_tests(pcsc_handle_census_test)
 endif()
 
@@ -1430,7 +1378,6 @@ target_link_libraries(SessionTransmitTest PRIVATE
     GTest::gtest_main
     LibreSCRS_SmartCard
     LibreSCRS_SmartCard_TestHelpers
-    LibreSCRS_SecureChannel
     SmartCard_Impl
 )
 target_include_directories(SessionTransmitTest PRIVATE
@@ -1694,7 +1641,6 @@ target_link_libraries(Pkcs15PinLifecycleTests PRIVATE
     PKCS15
     LibreSCRS_SmartCard
     LibreSCRS_SmartCard_TestHelpers
-    LibreSCRS_SecureChannel
     SmartCard_Impl
 )
 target_include_directories(Pkcs15PinLifecycleTests PRIVATE
@@ -1784,7 +1730,6 @@ target_link_libraries(Pkcs15ChangePinSelectorTests PRIVATE
     CardPlugin_Impl
     LibreSCRS_SmartCard
     LibreSCRS_SmartCard_TestHelpers
-    LibreSCRS_SecureChannel
     SmartCard_Impl
 )
 target_include_directories(Pkcs15ChangePinSelectorTests PRIVATE
@@ -1815,7 +1760,6 @@ target_link_libraries(Pkcs15ProfileReadCensusTests PRIVATE
     EMRTDCrypto
     LibreSCRS_SmartCard
     LibreSCRS_SmartCard_TestHelpers
-    LibreSCRS_SecureChannel
     SmartCard_Impl
     LibreSCRS::Secure
     OpenSSL_Crypto

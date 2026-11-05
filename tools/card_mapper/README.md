@@ -116,4 +116,4 @@ MRZ variables take precedence over CAN if both are set.
 
 ## Options
 
-Run `card_mapper --help` for full usage information, or see the man page (`card_mapper.1`).
+Run `card_mapper --help` for full usage information.

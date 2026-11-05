@@ -32,29 +32,7 @@ find lib test -name "*.cpp" -o -name "*.h" \
 
 If your local `clang-format` is a different major version, please install
 version 21 specifically; do not commit a layout produced by another version
-of the tool. The pre-commit hook (if you install one) and CI will reject
-diverging layouts.
-
-### Optional pre-commit hook
-
-`scripts/pre-commit-clang-format.sh` runs `clang-format-21 --dry-run --Werror`
-against every staged C/C++ file and rejects the commit if any file is not
-formatted. Activate it via either:
-
-```bash
-# Option A: per-clone, simplest
-ln -s ../../scripts/pre-commit-clang-format.sh .git/hooks/pre-commit
-
-# Option B: shared hooks dir (works across worktrees)
-git config core.hooksPath scripts/git-hooks
-mkdir -p scripts/git-hooks
-ln -sr scripts/pre-commit-clang-format.sh scripts/git-hooks/pre-commit
-```
-
-The hook respects `$CLANG_FORMAT` if set, otherwise tries `clang-format-21`
-on PATH then `~/.local/bin/clang-format-21`. CI enforces the same check
-on every PR (see the `format-check` job), so the hook is a local-only
-convenience — skip individual commits with `--no-verify` if needed.
+of the tool. CI will reject diverging layouts (see the `format-check` job).
 
 A repo-root `.editorconfig` documents the indent / EOL / charset
 conventions for editors that support EditorConfig (most modern IDEs do).

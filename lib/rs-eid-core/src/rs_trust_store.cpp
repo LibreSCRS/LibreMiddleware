@@ -18,7 +18,6 @@ namespace LibreSCRS::RsEId::Core {
 struct TrustStore::Impl
 {
     X509_STORE* store = nullptr;
-    int certCount = 0;
 
     Impl()
     {
@@ -36,7 +35,6 @@ struct TrustStore::Impl
     {
         X509_STORE_add_cert(store, cert);
         X509_free(cert); // add_cert took its own reference
-        ++certCount;
     }
 };
 
@@ -103,11 +101,6 @@ void TrustStore::loadFromFolder(const std::string& folderPath)
             impl->add(cert);
         }
     }
-}
-
-int TrustStore::certificateCount() const noexcept
-{
-    return impl->certCount;
 }
 
 X509_STORE* TrustStore::native() const noexcept

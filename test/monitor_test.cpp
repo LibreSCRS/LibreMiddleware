@@ -798,15 +798,16 @@ TEST_F(MonitorTestFixture, UnsubscribeStopsDelivery)
     Monitor monitor(std::move(mock));
     auto id = monitor.subscribe([](const MonitorEvent&) {});
 
-    // Let it start
+    // Let it start and block
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    EXPECT_TRUE(monitor.isRunning());
+    EXPECT_EQ(counters->cancelCount.load(), 0);
 
-    // Unsubscribe — should stop the monitor
+    // Unsubscribe — should stop the monitor: the blocked wait is cancelled
+    // and the poll thread releases its context before unsubscribe returns.
     monitor.unsubscribe(id);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    EXPECT_FALSE(monitor.isRunning());
+    EXPECT_GE(counters->cancelCount.load(), 1);
+    EXPECT_EQ(counters->releaseContextCount.load(), counters->establishContextCount.load());
 }
 
 // A source whose SCARD_E_NO_ACCESS is final (a process without the

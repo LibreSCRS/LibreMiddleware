@@ -125,19 +125,9 @@ struct LIBRESCRS_INTERNAL HttpClient::Impl
         // certificate AIA/CDP extensions, which are attacker-influenceable
         // through a malicious cert. Without this, a bad actor could point
         // at file://, gopher://, dict:// or another smuggled scheme.
-        // CURLOPT_PROTOCOLS_STR was added in curl 7.85.0 (= 0x075500), and
-        // the older long-bitmask CURLOPT_PROTOCOLS / CURLOPT_REDIR_PROTOCOLS
-        // are deprecated since the same release. Note that
-        // CURLOPT_PROTOCOLS_STR is an enum value, not a #define, so an
-        // `#ifdef` guard would always evaluate false even on modern libcurl
-        // — the version-number compare is the only correct shape.
-#if LIBCURL_VERSION_NUM >= 0x075500
+        // The string form needs curl 7.85.0; the bundled curl is newer.
         curl_easy_setopt(c, CURLOPT_PROTOCOLS_STR, "http,https");
         curl_easy_setopt(c, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
-#else
-        curl_easy_setopt(c, CURLOPT_PROTOCOLS, static_cast<long>(CURLPROTO_HTTP | CURLPROTO_HTTPS));
-        curl_easy_setopt(c, CURLOPT_REDIR_PROTOCOLS, static_cast<long>(CURLPROTO_HTTP | CURLPROTO_HTTPS));
-#endif
 
         return c;
     }

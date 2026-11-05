@@ -47,7 +47,6 @@ public:
     std::vector<int> readCOM();
     /// Reads EF.SOD (FID 011D) and returns raw bytes for PA processing
     std::optional<std::vector<uint8_t>> readSOD();
-    std::optional<std::vector<uint8_t>> readDataGroup(int dgNumber);
 
     /// Reads a data group with access-denied handling for EAC-protected DGs
     DGReadResult readDataGroupSafe(int dgNumber);
