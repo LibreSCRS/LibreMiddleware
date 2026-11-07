@@ -49,7 +49,7 @@ jobs:
         # From one copy in LibreSCRS/ci: every job bounded and every shared
         # action at one commit, every skip with a reason, every version surface
         # agreeing with VERSION, and the Arch recipe building the signed tag.
-        uses: LibreSCRS/ci/actions/gates@2d5d8c63e77bf90a9ca5b0354028b9396093bd79
+        uses: LibreSCRS/ci/actions/gates@298d83a67de5e7349aad840ad9f8d972bb9168fb
         with:
           gates: check-workflows check-skip-reasons check-version check-recipe
 
@@ -60,7 +60,7 @@ jobs:
         # the call and the recorded reason as two separate failures. The gate
         # is the shared one every repository runs; this tree holds the deleter
         # the others follow and the list of sites excused from it.
-        uses: LibreSCRS/ci/actions/gates@2d5d8c63e77bf90a9ca5b0354028b9396093bd79
+        uses: LibreSCRS/ci/actions/gates@298d83a67de5e7349aad840ad9f8d972bb9168fb
         with:
           gates: check-cleansing-deleters
           deleter-args: >-
@@ -209,7 +209,7 @@ jobs:
       # where a build tree exists, handed over as BUILD_DIR), the per-binary
       # test floor of this leg, and on the native leg the warning baseline.
       - name: Shared gates after the build
-        uses: LibreSCRS/ci/actions/gates@2d5d8c63e77bf90a9ca5b0354028b9396093bd79
+        uses: LibreSCRS/ci/actions/gates@298d83a67de5e7349aad840ad9f8d972bb9168fb
         env:
           # abi-layout.selftest.sh dumps layouts with clang; the job-wide CXX
           # is the gcc the warning baseline is keyed to, which has no -Xclang.
@@ -412,7 +412,7 @@ jobs:
       # because the registered cases are a property of the sources, not of the
       # sanitizer.
       - name: The sanitizer tree registers the same cases as the plain one
-        uses: LibreSCRS/ci/actions/gates@2d5d8c63e77bf90a9ca5b0354028b9396093bd79
+        uses: LibreSCRS/ci/actions/gates@298d83a67de5e7349aad840ad9f8d972bb9168fb
         with:
           gates: test-floor
           build-dir: build-asan
@@ -483,7 +483,7 @@ jobs:
           fetch-depth: 0
 
       - name: Select Xcode
-        uses: LibreSCRS/ci/actions/select-xcode@2d5d8c63e77bf90a9ca5b0354028b9396093bd79
+        uses: LibreSCRS/ci/actions/select-xcode@298d83a67de5e7349aad840ad9f8d972bb9168fb
 
       - name: Install build tools
         run: |
