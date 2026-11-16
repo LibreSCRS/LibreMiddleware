@@ -190,10 +190,9 @@ target_include_directories(LibreSign PRIVATE
 target_compile_features(LibreSign PUBLIC cxx_std_23)
 
 # --- Link dependencies ---
-# SmartCard is header-only for our needs (SecureBuffer + PinStringScrubber
-# from smartcard/secure_buffer.h), but PRIVATE linking is the cleanest way
-# to pick up its include directory without leaking PCSC to LibreSign's
-# public API.
+# SmartCard_Impl: the DER encoders in native/der_utils.h call the
+# middleware's one BER length encoder (appendLength, ber.cpp). PRIVATE, so
+# PCSC does not leak into LibreSign's public API.
 #
 # LibreSCRS_Auth is PUBLIC because internal libresign headers (types.h,
 # http_client.h) now #include <LibreSCRS/Secure/String.h>. Tests and the

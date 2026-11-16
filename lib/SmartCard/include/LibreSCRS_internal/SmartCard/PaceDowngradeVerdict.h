@@ -92,12 +92,13 @@ namespace detail {
 /// Returns @c true if any SecurityInfo advertises a PACE OID (DER content
 /// prefix 04 00 7F 00 07 02 02 04 == id-PACE, 0.4.0.127.0.7.2.2.4) OR the
 /// inner structure is malformed — both are downgrade-worthy. Returns @c false
-/// only on a clean, complete walk that finds zero PACE OIDs. This is the
-/// OID-only test the pre-auth capability probe applies (it matches PACE
-/// regardless of the parameterId, so the authenticated re-read can never reach
-/// a weaker verdict than the unauthenticated probe on identical bytes); it is
-/// deliberately co-located with the verdict so a security decision trusts no
-/// larger parser across a module boundary.
+/// only on a clean, complete walk that finds zero PACE OIDs. It matches PACE
+/// by OID regardless of the parameterId. It is not the parser the eMRTD
+/// plugin's pre-auth capability probe uses: that probe calls
+/// `emrtd::crypto::parseCardAccess`, which skips a non-SEQUENCE element and
+/// stops at an unusable length instead of counting either as malformed. This
+/// test is deliberately co-located with the verdict so a security decision
+/// trusts no larger parser across a module boundary.
 [[nodiscard]] inline bool cardAccessAdvertisesPaceOrIsMalformed(const std::vector<std::uint8_t>& data) noexcept
 {
     static constexpr std::uint8_t kPaceOidPrefix[] = {0x04, 0x00, 0x7F, 0x00, 0x07, 0x02, 0x02, 0x04};

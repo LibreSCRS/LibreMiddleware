@@ -390,12 +390,10 @@ public:
     ///        rebuild a fresh channel.
     ///
     /// @note This is the explicit teardown hook for callers that have
-    ///       reason to drop the channel ahead of session destruction —
-    ///       most notably the PKCS#11 attachment path, which must release
-    ///       any channel whose vtable resides in the soon-to-be-`dlclose`d
-    ///       module before the module is unmapped. Without this, the
-    ///       channel's virtual destructor dispatches through an unmapped
-    ///       vtable at session destruction time and crashes.
+    ///       reason to drop the channel ahead of session destruction — for
+    ///       example a host that keeps an idle session open between
+    ///       operations and releases what the previous operation installed
+    ///       before it parks the session.
     /// @since 4.1
     void clearActiveChannel() noexcept;
 

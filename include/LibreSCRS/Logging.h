@@ -20,13 +20,11 @@
 /// boundary". This header is that boundary.
 ///
 /// @par Shape
-/// Deliberately identical to the facade LibreAgent already ships
-/// (`LibreSCRS/Agent/backend/Logging.h`) and LibreLinux and LibreDarwin
-/// already consume: one severity enum, one `std::function` sink, one
-/// process-wide `init`, three emitters plus their formatting variants. It is
-/// not a proposal — it is the shape three of the workspace's components had
-/// converged on before LibreMiddleware got one, so a downstream `grep` across
-/// the host layer and the core reads the same in both.
+/// One severity enum, one `std::function` sink, one process-wide `init`,
+/// three emitters plus their formatting variants — the shape the LibreAgent
+/// facade had before 5.0. That facade is gone: the agent core, LibreLinux and
+/// LibreDarwin log through this header, and a host installs one sink that
+/// receives the middleware's lines and the agent's alike.
 ///
 /// @par Trace
 /// Below the three severities sits @ref Level::Trace: wire-level and

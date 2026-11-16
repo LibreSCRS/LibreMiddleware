@@ -10,11 +10,12 @@
 ///        consumers that need to render the same font as the embedded PDF
 ///        subset.
 ///
-/// The PAdES native engine and every GUI preview surface (LibreCelik,
-/// LibreMac, future LibreKDE) feed the same `(text, box)` pair into
-/// @ref LibreSCRS::Signing::layoutVisualSignature and render the returned
-/// lines verbatim — there is no second layout pass downstream. This is the
-/// single source of truth for visual-signature auto-fit.
+/// The PAdES native engine and the agent's layout preview feed the same
+/// `(text, box)` pair into @ref LibreSCRS::Signing::layoutVisualSignature.
+/// GUI clients do not link this library: they ask the agent, which answers
+/// with this function's lines, and render them verbatim — there is no second
+/// layout pass downstream. This is the single source of truth for
+/// visual-signature auto-fit.
 
 #include <LibreSCRS/Export.h>
 #include <LibreSCRS/Signing/VisualSignatureParams.h>

@@ -688,8 +688,9 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
     // PACE-less — a clean 6A82 at MF, a 6283 "file deactivated" answer on the
     // EF selection (the chip's own declaration that PACE parameters are
     // unobtainable; no READ is attempted), OR a complete well-formed
-    // EF.CardAccess advertising no PACE OID (exactly the pre-auth capability
-    // probe's "Absent" verdict) — PaceUnsupported surfaces BEFORE the
+    // EF.CardAccess advertising no PACE OID (as judged by
+    // cardAccessAdvertisesPaceOrIsMalformed, which counts a malformed inner
+    // structure as PACE) — PaceUnsupported surfaces BEFORE the
     // credential provider is ever invoked, so no CAN/MRZ prompt is burned on a
     // card that cannot do PACE, on every host. An UNKNOWN read (unreadable / malformed / truncated / a PACE
     // OID with no usable parameterId) is NOT definitive: it falls through to the
