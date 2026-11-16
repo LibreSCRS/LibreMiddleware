@@ -616,7 +616,8 @@ Notable user-visible changes per release. Format follows
 
 - **Generic message builders nothing produced.** `Auth::ErrorKeys::genericParse`,
   `pinIncorrectWithRetries`, `protocolError`, `registryEmpty`,
-  `cardReadFailed` and `noCompatiblePlugin`: no plugin, signing path or host
+  `cardReadFailed`, `noCompatiblePlugin`, `readerUnavailable`, `noCardPresent`
+  and `keyAmbiguous`: no plugin, signing path or host
   returned these messages. They are header-inline, so neither ABI baseline
   recorded them.
 

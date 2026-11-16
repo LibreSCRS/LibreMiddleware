@@ -3,9 +3,8 @@
 
 /// @file
 /// @brief 4.0 mandatory @ref LibreSCRS::LocalizedText userMessage on
-///        @ref LibreSCRS::Plugin::ReadResult,
-///        @ref LibreSCRS::Signing::SigningResult, and
-///        @ref LibreSCRS::SmartCard::OpenError. The factories require a
+///        @ref LibreSCRS::Plugin::ReadResult and
+///        @ref LibreSCRS::Signing::SigningResult. The factories require a
 ///        message; callers without a card-specific text pass one of the
 ///        @ref LibreSCRS::Auth::ErrorKeys generic builders.
 
@@ -15,7 +14,6 @@
 #include <LibreSCRS/Plugin/PluginTypes.h>
 #include <LibreSCRS/Plugin/ReadResult.h>
 #include <LibreSCRS/Signing/SigningResult.h>
-#include <LibreSCRS/SmartCard/CardSession.h>
 
 #include <gtest/gtest.h>
 
@@ -116,22 +114,6 @@ TEST(SigningResultFactories, SigningEngineErrorDiagnosticOnlySubstitutesGenericM
 }
 
 // ----------------------------------------------------------------------------
-// OpenError — userMessage is no longer optional; producers populate it.
-
-TEST(OpenErrorShape, UserMessageIsAlwaysPopulated)
-{
-    SmartCard::OpenError e{SmartCard::OpenError::Kind::ReaderUnavailable, Auth::ErrorKeys::readerUnavailable(),
-                           std::nullopt};
-    EXPECT_EQ(e.userMessage.key, "librescrs.error.reader.unavailable");
-}
-
-TEST(OpenErrorShape, NoCardPresentBuildsAppropriateKey)
-{
-    SmartCard::OpenError e{SmartCard::OpenError::Kind::NoCardPresent, Auth::ErrorKeys::noCardPresent(), std::nullopt};
-    EXPECT_EQ(e.userMessage.key, "librescrs.error.reader.nocard");
-}
-
-// ----------------------------------------------------------------------------
 // ErrorKeys builders — sanity-check the generic-key set.
 
 TEST(ErrorKeysBuilders, AllBuildersReturnNonEmptyKeyAndFallback)
@@ -141,8 +123,6 @@ TEST(ErrorKeysBuilders, AllBuildersReturnNonEmptyKeyAndFallback)
         Auth::ErrorKeys::unsupportedCard(),
         Auth::ErrorKeys::authFailed(),
         Auth::ErrorKeys::cancelled(),
-        Auth::ErrorKeys::readerUnavailable(),
-        Auth::ErrorKeys::noCardPresent(),
         Auth::ErrorKeys::readOk(),
         Auth::ErrorKeys::signOk(),
         Auth::ErrorKeys::signingEngineError(),

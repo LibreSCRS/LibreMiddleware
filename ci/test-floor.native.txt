@@ -51,7 +51,7 @@ LibreSCRS_SecureStringTests 22
 LibreSCRS_SigningTests 46
 LibreSCRS_SmChannelTests 20
 LibreSignTests 4
-LocalizedTextFactoriesTests 14
+LocalizedTextFactoriesTests 12
 ManifestCodegenTests 5
 MonitorTests 33
 NativeSigningServiceTests 13

@@ -58,18 +58,6 @@ namespace LibreSCRS::Auth::ErrorKeys {
     return LocalizedText{"librescrs.error.cancelled", "The operation was cancelled."};
 }
 
-/// @brief Generic "reader unavailable" message.
-[[nodiscard]] inline LocalizedText readerUnavailable()
-{
-    return LocalizedText{"librescrs.error.reader.unavailable", "The card reader is unavailable."};
-}
-
-/// @brief Generic "no card present" message.
-[[nodiscard]] inline LocalizedText noCardPresent()
-{
-    return LocalizedText{"librescrs.error.reader.nocard", "No card present in the reader."};
-}
-
 /// @brief Generic "card read completed" message used by the success
 ///        factory @ref LibreSCRS::Plugin::ReadResult::ok.
 [[nodiscard]] inline LocalizedText readOk()
@@ -172,17 +160,6 @@ namespace LibreSCRS::Auth::ErrorKeys {
 {
     return LocalizedText{"librescrs.error.sign.policy_violation",
                          "The signing request does not satisfy the configured policy."};
-}
-
-/// @brief Signing failed because more than one private key on the token
-///        matched the requested CKA_ID discriminator, so the signing key
-///        could not be resolved unambiguously. The engine refuses rather
-///        than sign with an arbitrary match.
-/// @since 5.0
-[[nodiscard]] inline LocalizedText keyAmbiguous()
-{
-    return LocalizedText{"librescrs.error.sign.key_ambiguous",
-                         "The signing key could not be uniquely identified on the card."};
 }
 
 /// @brief Generic "trust store unavailable" message.
