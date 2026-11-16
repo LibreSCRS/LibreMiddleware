@@ -958,19 +958,24 @@ records their departure, and the SONAME moved with it.
 
 ### Security
 
-- **A PIN or a key no longer stays behind in freed memory.** The buffer a PIN
-  is padded in for VERIFY, CHANGE REFERENCE DATA and signing kept its bytes in
-  ordinary vector storage, so padding a PIN to the card's stored length
-  reallocated it and handed the first copy back to the heap unwiped. Secure
-  messaging copied the command data of every protected command — the PIN, on a
-  PIN verb over PACE or BAC — and padded it in storage nothing wiped; the
-  key-derivation function did the same with its seed (K_seed, the agreed
-  secret, a PACE CAN or PIN), and the retail MAC with the first half of the MAC
-  key. The BAC key derivation left the MRZ information (document number, date
-  of birth, date of expiry, the access secret BAC and PACE-MRZ are keyed by) in
-  freed string temporaries, and skipped wiping K_seed when it failed part-way.
-  All of them now keep those bytes in storage that is wiped before it is
-  freed, and a test searches every freed block for the secret.
+- **Fewer copies of a PIN or a key are left in freed memory.** Each of the
+  following used to hand a copy back to the heap unwiped and now wipes it
+  first:
+  - the buffer a PKCS#15 PIN is padded in for VERIFY, CHANGE REFERENCE DATA and
+    signing, which reallocated when the PIN was padded to the card's stored
+    length;
+  - the command data secure messaging pads and encrypts — the PIN, on a PIN
+    verb over PACE or BAC;
+  - the seed of the eMRTD key-derivation function (K_seed, the agreed secret,
+    a PACE CAN or PIN) and the first half of the retail-MAC key;
+  - the MRZ information BAC and PACE-MRZ are keyed by, K_seed on a failed
+    derivation, and the derived BAC K_enc and K_mac.
+
+  A test replaces the allocator and searches every block freed during each of
+  these operations for the secret. Paths not listed here were not changed.
+- **Serializing a command that carries data and an Le no longer reallocates.**
+  Hardening of a path no secret takes today: no PIN or key command carries an
+  Le.
 - **A time-stamp token is trusted only when a trusted authority signed it.**
   The token a time-stamping authority returns for a B-T, B-LT or B-LTA
   signature was checked for the nonce and the hash that were asked for, but
