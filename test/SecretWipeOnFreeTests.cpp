@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <new>
 #include <span>
 #include <stdexcept>
@@ -28,12 +29,6 @@
 #include <type_traits>
 #include <vector>
 
-#if defined(__APPLE__)
-#include <malloc/malloc.h>
-#else
-#include <malloc.h>
-#endif
-
 namespace {
 
 std::atomic<bool> g_armed{false};
@@ -41,34 +36,55 @@ std::atomic<int> g_hits{0};
 const std::uint8_t* g_needle = nullptr;
 std::size_t g_needleLen = 0;
 
-std::size_t usableSize(void* p) noexcept
+// Every block carries a header in front of the bytes handed out, holding the
+// requested size, so a block is zeroed and searched over exactly what was asked
+// for and nothing the allocator rounded up. The header is as large as the
+// alignment, so the pointer handed out keeps it.
+constexpr std::size_t kDefaultAlign = __STDCPP_DEFAULT_NEW_ALIGNMENT__;
+static_assert(kDefaultAlign >= sizeof(std::size_t));
+
+std::size_t headerFor(std::size_t align) noexcept
 {
-#if defined(__APPLE__)
-    return malloc_size(p);
-#else
-    return malloc_usable_size(p);
-#endif
+    return std::max(align, kDefaultAlign);
 }
 
-void inspectBeforeFree(void* p) noexcept
+std::size_t& requestedSize(void* user) noexcept
 {
-    if (p == nullptr || !g_armed.load(std::memory_order_relaxed))
-        return;
-    // Every block is zero-filled to its usable size on allocation, so bytes
-    // past the requested size are never stale data from an earlier owner.
-    const auto* begin = static_cast<const std::uint8_t*>(p);
-    const auto* end = begin + usableSize(p);
-    if (std::search(begin, end, g_needle, g_needle + g_needleLen) != end)
-        g_hits.fetch_add(1, std::memory_order_relaxed);
+    return *reinterpret_cast<std::size_t*>(static_cast<std::uint8_t*>(user) - sizeof(std::size_t));
 }
 
-void* allocateZeroed(std::size_t n)
+void* allocateZeroed(std::size_t n, std::size_t align, bool nothrow)
 {
-    void* p = std::malloc(n == 0 ? 1 : n);
-    if (p == nullptr)
+    const std::size_t header = headerFor(align);
+    void* base = nullptr;
+    if (align <= kDefaultAlign) {
+        base = std::malloc(header + n);
+    } else {
+        // aligned_alloc wants a size that is a multiple of the alignment.
+        base = std::aligned_alloc(align, (header + n + align - 1) / align * align);
+    }
+    if (base == nullptr) {
+        if (nothrow)
+            return nullptr;
         throw std::bad_alloc();
-    std::memset(p, 0, usableSize(p));
-    return p;
+    }
+    void* user = static_cast<std::uint8_t*>(base) + header;
+    requestedSize(user) = n;
+    std::memset(user, 0, n);
+    return user;
+}
+
+void inspectAndFree(void* user, std::size_t align) noexcept
+{
+    if (user == nullptr)
+        return;
+    if (g_armed.load(std::memory_order_relaxed)) {
+        const auto* begin = static_cast<const std::uint8_t*>(user);
+        const auto* end = begin + requestedSize(user);
+        if (std::search(begin, end, g_needle, g_needle + g_needleLen) != end)
+            g_hits.fetch_add(1, std::memory_order_relaxed);
+    }
+    std::free(static_cast<std::uint8_t*>(user) - headerFor(align));
 }
 
 /// Arms the search for @p secret for the lifetime of the scope.
@@ -102,40 +118,127 @@ std::span<const std::uint8_t> bytesOf(std::string_view s)
 
 using LibreSCRS::SmartCard::Internal::SecureBuffer;
 
+// The optimizer may drop stores into a block that is about to be deleted, and
+// even the new/delete pair itself: it does not know our delete reads the
+// block. Volatile stores are kept.
+void plantSecret(char* dst, std::string_view secret)
+{
+    volatile char* out = dst;
+    for (std::size_t i = 0; i < secret.size(); ++i)
+        out[i] = secret[i];
+}
+
 } // namespace
 
+// The whole replaceable set, so no allocation pairs a block of ours with the
+// library's free or the other way round.
 void* operator new(std::size_t n)
 {
-    return allocateZeroed(n);
+    return allocateZeroed(n, kDefaultAlign, false);
 }
 void* operator new[](std::size_t n)
 {
-    return allocateZeroed(n);
+    return allocateZeroed(n, kDefaultAlign, false);
+}
+void* operator new(std::size_t n, const std::nothrow_t&) noexcept
+{
+    return allocateZeroed(n, kDefaultAlign, true);
+}
+void* operator new[](std::size_t n, const std::nothrow_t&) noexcept
+{
+    return allocateZeroed(n, kDefaultAlign, true);
+}
+void* operator new(std::size_t n, std::align_val_t a)
+{
+    return allocateZeroed(n, static_cast<std::size_t>(a), false);
+}
+void* operator new[](std::size_t n, std::align_val_t a)
+{
+    return allocateZeroed(n, static_cast<std::size_t>(a), false);
+}
+void* operator new(std::size_t n, std::align_val_t a, const std::nothrow_t&) noexcept
+{
+    return allocateZeroed(n, static_cast<std::size_t>(a), true);
+}
+void* operator new[](std::size_t n, std::align_val_t a, const std::nothrow_t&) noexcept
+{
+    return allocateZeroed(n, static_cast<std::size_t>(a), true);
 }
 void operator delete(void* p) noexcept
 {
-    inspectBeforeFree(p);
-    std::free(p);
+    inspectAndFree(p, kDefaultAlign);
 }
 void operator delete[](void* p) noexcept
 {
-    inspectBeforeFree(p);
-    std::free(p);
+    inspectAndFree(p, kDefaultAlign);
 }
 void operator delete(void* p, std::size_t) noexcept
 {
-    inspectBeforeFree(p);
-    std::free(p);
+    inspectAndFree(p, kDefaultAlign);
 }
 void operator delete[](void* p, std::size_t) noexcept
 {
-    inspectBeforeFree(p);
-    std::free(p);
+    inspectAndFree(p, kDefaultAlign);
+}
+void operator delete(void* p, const std::nothrow_t&) noexcept
+{
+    inspectAndFree(p, kDefaultAlign);
+}
+void operator delete[](void* p, const std::nothrow_t&) noexcept
+{
+    inspectAndFree(p, kDefaultAlign);
+}
+void operator delete(void* p, std::align_val_t a) noexcept
+{
+    inspectAndFree(p, static_cast<std::size_t>(a));
+}
+void operator delete[](void* p, std::align_val_t a) noexcept
+{
+    inspectAndFree(p, static_cast<std::size_t>(a));
+}
+void operator delete(void* p, std::size_t, std::align_val_t a) noexcept
+{
+    inspectAndFree(p, static_cast<std::size_t>(a));
+}
+void operator delete[](void* p, std::size_t, std::align_val_t a) noexcept
+{
+    inspectAndFree(p, static_cast<std::size_t>(a));
+}
+void operator delete(void* p, std::align_val_t a, const std::nothrow_t&) noexcept
+{
+    inspectAndFree(p, static_cast<std::size_t>(a));
+}
+void operator delete[](void* p, std::align_val_t a, const std::nothrow_t&) noexcept
+{
+    inspectAndFree(p, static_cast<std::size_t>(a));
 }
 
 static_assert(
     std::is_same_v<SecureBuffer::Storage::allocator_type, LibreSCRS::Secure::detail::secure_allocator<std::uint8_t>>,
     "SecureBuffer must keep its bytes in storage that is wiped on every deallocation");
+
+// The watcher itself: a block freed with the secret in it is seen, by the
+// plain and by the over-aligned allocation path alike.
+TEST(SecretWipeOnFree, WatcherSeesASecretLeftInAFreedBlock)
+{
+    constexpr std::string_view secret = "SECRET-91d0c2e7-MARK";
+    struct alignas(64) OverAligned
+    {
+        char bytes[64];
+    };
+    FreedBlockWatch watch(bytesOf(secret));
+    {
+        std::vector<char> plain(secret.size());
+        plantSecret(plain.data(), secret);
+    }
+    EXPECT_EQ(watch.hits(), 1);
+    {
+        auto aligned = std::make_unique<OverAligned>();
+        ASSERT_EQ(reinterpret_cast<std::uintptr_t>(aligned.get()) % alignof(OverAligned), 0u);
+        plantSecret(aligned->bytes, secret);
+    }
+    EXPECT_EQ(watch.hits(), 2);
+}
 
 TEST(SecretWipeOnFree, SecureBufferGrowthLeavesNoPinInFreedHeap)
 {

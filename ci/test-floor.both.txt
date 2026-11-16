@@ -101,7 +101,7 @@ RsEidCoreTests 48
 RsEidDriverTests 36
 RsEidPluginTests 1
 SecretParameterConceptTests 1
-SecretWipeOnFreeTests 8
+SecretWipeOnFreeTests 9
 SecureWipeTests 2
 SessionTransmitTest 5
 SignatureDictionaryIntegrationTests 2
