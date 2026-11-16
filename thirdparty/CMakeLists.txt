@@ -405,6 +405,14 @@ if(APPLE AND CMAKE_OSX_ARCHITECTURES)
     endforeach()
     set(OPENSC_OPENSSL_CFLAGS "-I${OPENSSL_ROOT}/macosx/include")
     set(OPENSC_OPENSSL_LIBS   "-L${OPENSSL_ROOT}/macosx/lib -lcrypto")
+elseif(NOT APPLE)
+    # libopensc.a is linked against the bundled libcrypto (OpenSSL_Crypto,
+    # below), so it has to be compiled against the bundled headers too. Left
+    # to pkg-config, configure took the build host's OpenSSL: whatever version
+    # the distribution ships, which on Arch became 4.1 and failed the build on
+    # its deprecations under OpenSC's -Werror.
+    set(OPENSC_OPENSSL_CFLAGS "-I${OPENSSL_ROOT}/linux/include")
+    set(OPENSC_OPENSSL_LIBS   "-L${OPENSSL_ROOT}/linux/lib -lcrypto")
 endif()
 
 # The card plugin's copy, configured without the PC/SC reader driver
