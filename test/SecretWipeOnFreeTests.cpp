@@ -7,9 +7,11 @@
 // free(), so no freed memory is ever read. Each case arms the search around
 // one call and asserts that no block freed during it still held the secret.
 
+#include <bac.h>
 #include <crypto_utils.h>
 #include <secure_messaging.h>
 #include <smartcard/secure_buffer.h>
+#include <smartcard/secure_wipe.h>
 
 #include <gtest/gtest.h>
 
@@ -20,6 +22,8 @@
 #include <cstring>
 #include <new>
 #include <span>
+#include <stdexcept>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <vector>
@@ -205,5 +209,43 @@ TEST(SecretWipeOnFree, RetailMacLeavesNoKeyHalfInFreedHeap)
     FreedBlockWatch watch(bytesOf(ka));
     auto mac = emrtd::crypto::detail::retailMAC(key, data);
     EXPECT_EQ(mac.size(), 8u);
+    EXPECT_EQ(watch.hits(), 0);
+}
+
+TEST(SecretWipeOnFree, DeriveBacKeysLeavesNoMrzInFreedHeap)
+{
+    // The MRZ fields are the BAC access secret; MRZ_information holds them.
+    const std::string documentNumber = "MRZ7Q3X95";
+    const std::string dateOfBirth = "740727";
+    const std::string dateOfExpiry = "120714";
+    FreedBlockWatch watch(bytesOf(documentNumber));
+    {
+        const auto keys = emrtd::crypto::deriveBACKeys(documentNumber, dateOfBirth, dateOfExpiry);
+        EXPECT_EQ(keys.encKey.size(), 16u);
+    }
+    EXPECT_EQ(watch.hits(), 0);
+}
+
+TEST(SecretWipeOnFree, BuildMrzInformationLeavesNoMrzInFreedHeap)
+{
+    // Long enough to leave the small-string buffer and, without a reserve,
+    // to outgrow the first heap block on either standard library.
+    constexpr std::string_view documentNumber = "MRZ7Q3X95ABCDEFGHJKLMNPQRSTUVWXYZ0123456";
+    FreedBlockWatch watch(bytesOf(documentNumber));
+    {
+        std::string mrzInfo = emrtd::crypto::detail::buildMrzInformation(documentNumber, "740727", "120714");
+        EXPECT_EQ(mrzInfo.size(), documentNumber.size() + 1 + 7 + 7);
+        // Wiping the result is the caller's part of the contract.
+        LibreSCRS::SmartCard::Internal::secureWipe(mrzInfo.data(), mrzInfo.size());
+    }
+    EXPECT_EQ(watch.hits(), 0);
+}
+
+TEST(SecretWipeOnFree, BuildMrzInformationWipesOnAnInvalidCharacter)
+{
+    constexpr std::string_view documentNumber = "MRZ7Q3X95ABCDEFGHJKLMNPQRSTUVWXYZ0123456";
+    FreedBlockWatch watch(bytesOf(documentNumber));
+    EXPECT_THROW((void)emrtd::crypto::detail::buildMrzInformation(documentNumber, "7407!7", "120714"),
+                 std::invalid_argument);
     EXPECT_EQ(watch.hits(), 0);
 }

@@ -23,7 +23,7 @@ namespace emrtd::crypto::detail {
 std::vector<uint8_t> kdf(const std::vector<uint8_t>& seed, uint32_t counter, bool des3 = true, size_t keyLen = 16);
 
 // ICAO 9303 check digit computation for MRZ fields
-int computeCheckDigit(const std::string& input);
+int computeCheckDigit(std::string_view input);
 
 // Build ICAO 9303 MRZ_information: padded document number (9 chars, '<' filler)
 // + its check digit, date of birth + check digit, date of expiry + check digit.

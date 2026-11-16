@@ -11,6 +11,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace LibreSCRS::SmartCard {
 class IConnection;
@@ -29,7 +30,7 @@ BACKeys deriveBACKeys(const std::string& documentNumber, const std::string& date
 std::optional<SessionKeys> performBAC(LibreSCRS::SmartCard::IConnection& conn, const BACKeys& keys);
 
 namespace detail {
-int computeCheckDigit(const std::string& input);
+int computeCheckDigit(std::string_view input);
 } // namespace detail
 
 } // namespace emrtd::crypto

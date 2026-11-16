@@ -966,7 +966,10 @@ records their departure, and the SONAME moved with it.
   PIN verb over PACE or BAC — and padded it in storage nothing wiped; the
   key-derivation function did the same with its seed (K_seed, the agreed
   secret, a PACE CAN or PIN), and the retail MAC with the first half of the MAC
-  key. All of them now keep those bytes in storage that is wiped before it is
+  key. The BAC key derivation left the MRZ information (document number, date
+  of birth, date of expiry, the access secret BAC and PACE-MRZ are keyed by) in
+  freed string temporaries, and skipped wiping K_seed when it failed part-way.
+  All of them now keep those bytes in storage that is wiped before it is
   freed, and a test searches every freed block for the secret.
 - **A time-stamp token is trusted only when a trusted authority signed it.**
   The token a time-stamping authority returns for a B-T, B-LT or B-LTA

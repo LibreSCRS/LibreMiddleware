@@ -8,6 +8,7 @@
 
 #include <apdu.h>
 #include <smartcard/i_connection.h>
+#include <smartcard/secure_buffer.h>
 
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
@@ -22,24 +23,27 @@ BACKeys deriveBACKeys(const std::string& documentNumber, const std::string& date
                       const std::string& dateOfExpiry)
 {
     // MRZ_information — single source of truth (also used by the PACE-MRZ path).
+    // It is the access secret, and K_seed derives every key: both are wiped
+    // on every exit, a throw included.
     std::string mrzInfo = detail::buildMrzInformation(documentNumber, dateOfBirth, dateOfExpiry);
+    const LibreSCRS::SmartCard::Internal::PinStringScrubber wipeMrzInfo{mrzInfo};
 
     // K_seed = SHA-1(MRZ_information)[0:16]
-    std::vector<uint8_t> mrzBytes(mrzInfo.begin(), mrzInfo.end());
     uint8_t hash[EVP_MAX_MD_SIZE];
     size_t hashLen = 0;
-    if (!EVP_Q_digest(nullptr, "SHA1", nullptr, mrzBytes.data(), mrzBytes.size(), hash, &hashLen))
-        throw std::runtime_error("deriveBACKeys: SHA-1 digest failed");
-    std::vector<uint8_t> kSeed(hash, hash + 16);
+    const bool hashed = EVP_Q_digest(nullptr, "SHA1", nullptr, mrzInfo.data(), mrzInfo.size(), hash, &hashLen);
+    std::vector<uint8_t> kSeed;
+    LibreSCRS::Internal::Crypto::CleanseGuard wipeKSeed{kSeed};
+    if (hashed)
+        kSeed.assign(hash, hash + 16);
     OPENSSL_cleanse(hash, sizeof(hash));
+    if (!hashed)
+        throw std::runtime_error("deriveBACKeys: SHA-1 digest failed");
 
     // Derive K_Enc = KDF(K_seed, 1) and K_MAC = KDF(K_seed, 2)
     BACKeys keys;
     keys.encKey = detail::kdf(kSeed, 1, true);
     keys.macKey = detail::kdf(kSeed, 2, true);
-
-    OPENSSL_cleanse(kSeed.data(), kSeed.size());
-    OPENSSL_cleanse(mrzBytes.data(), mrzBytes.size());
     return keys;
 }
 

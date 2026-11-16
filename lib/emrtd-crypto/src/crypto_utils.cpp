@@ -79,7 +79,7 @@ std::vector<uint8_t> kdf(const std::vector<uint8_t>& seed, uint32_t counter, boo
 
 // ---- computeCheckDigit ----
 
-int computeCheckDigit(const std::string& input)
+int computeCheckDigit(std::string_view input)
 {
     // ICAO 9303 Part 3 Section 4.9 — weights 7, 3, 1 repeating
     static const int weights[3] = {7, 3, 1};
@@ -106,14 +106,27 @@ int computeCheckDigit(const std::string& input)
 std::string buildMrzInformation(std::string_view documentNumber, std::string_view dateOfBirth,
                                 std::string_view dateOfExpiry)
 {
-    std::string paddedDocNo(documentNumber);
-    while (paddedDocNo.size() < 9)
-        paddedDocNo += '<';
-
-    std::string dob(dateOfBirth);
-    std::string doe(dateOfExpiry);
-    return paddedDocNo + std::to_string(computeCheckDigit(paddedDocNo)) + dob + std::to_string(computeCheckDigit(dob)) +
-           doe + std::to_string(computeCheckDigit(doe));
+    // The MRZ fields are an access secret. Build the result in one
+    // allocation, with no temporaries, and wipe it if a field is refused.
+    const size_t docLen = std::max<size_t>(documentNumber.size(), 9);
+    std::string out;
+    out.reserve(docLen + 1 + dateOfBirth.size() + 1 + dateOfExpiry.size() + 1);
+    try {
+        const auto appendWithCheckDigit = [&out](std::string_view field, size_t paddedLen) {
+            const size_t start = out.size();
+            out.append(field);
+            out.append(paddedLen - field.size(), '<');
+            out.push_back(static_cast<char>('0' + computeCheckDigit(std::string_view(out).substr(start))));
+        };
+        appendWithCheckDigit(documentNumber, docLen);
+        appendWithCheckDigit(dateOfBirth, dateOfBirth.size());
+        appendWithCheckDigit(dateOfExpiry, dateOfExpiry.size());
+    } catch (...) {
+        if (!out.empty())
+            OPENSSL_cleanse(out.data(), out.size());
+        throw;
+    }
+    return out;
 }
 
 // ---- pad / unpad ----
