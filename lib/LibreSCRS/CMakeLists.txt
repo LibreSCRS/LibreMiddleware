@@ -53,6 +53,8 @@ target_compile_definitions(LibreSCRS_Auth PRIVATE LIBRESCRS_BUILDING LIBRESCRS_I
 target_include_directories(LibreSCRS_Auth PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+# <LibreSCRS_internal/Secure/secure_allocator.h>, shared with SmartCard_Impl.
+target_include_directories(LibreSCRS_Auth PRIVATE ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include)
 target_compile_features(LibreSCRS_Auth PUBLIC cxx_std_23)
 # OpenSSL_Crypto is the bundled static archive (thirdparty/openssl-3.5.8);
 # baked into the .so / .a so downstream consumers don't need to link it.

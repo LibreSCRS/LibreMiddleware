@@ -89,7 +89,7 @@ public:
         // cleansed on every exit path. `wrapped` is SM ciphertext and
         // needs no cleansing.
         const LibreSCRS::SmartCard::Internal::SecureBuffer plainBytes(cmd.toBytes());
-        auto wrapped = sm->protect(plainBytes.vector());
+        auto wrapped = sm->protect(plainBytes);
         if (wrapped.size() < 5) {
             channelState = ChannelState::Failed;
             return makeSentinel(0x6F, 0x02);

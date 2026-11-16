@@ -8,6 +8,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -44,14 +45,14 @@ std::vector<uint8_t> aesCMAC(const std::vector<uint8_t>& key, const std::vector<
 
 // 3DES-CBC encrypt/decrypt (2-key, 16-byte key)
 // Empty iv = 8 zero bytes internally
-std::vector<uint8_t> des3Encrypt(const std::vector<uint8_t>& key, const std::vector<uint8_t>& data,
+std::vector<uint8_t> des3Encrypt(const std::vector<uint8_t>& key, std::span<const uint8_t> data,
                                  const std::vector<uint8_t>& iv = {});
 std::vector<uint8_t> des3Decrypt(const std::vector<uint8_t>& key, const std::vector<uint8_t>& data,
                                  const std::vector<uint8_t>& iv = {});
 
 // AES-CBC encrypt/decrypt
 // Empty iv = 16 zero bytes internally
-std::vector<uint8_t> aesEncrypt(const std::vector<uint8_t>& key, const std::vector<uint8_t>& data,
+std::vector<uint8_t> aesEncrypt(const std::vector<uint8_t>& key, std::span<const uint8_t> data,
                                 const std::vector<uint8_t>& iv = {});
 std::vector<uint8_t> aesDecrypt(const std::vector<uint8_t>& key, const std::vector<uint8_t>& data,
                                 const std::vector<uint8_t>& iv = {});

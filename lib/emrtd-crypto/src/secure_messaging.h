@@ -12,6 +12,7 @@
 #include <openssl/crypto.h>
 
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace emrtd::crypto {
@@ -41,7 +42,9 @@ public:
     // Wrap command APDU with SM (encrypt data + compute MAC).
     // Input: plain command APDU (CLA INS P1 P2 [Lc data] [Le])
     // Output: SM-protected APDU with DO'87 (encrypted data), DO'97 (Le), DO'8E (MAC)
-    std::vector<uint8_t> protect(const std::vector<uint8_t>& commandApdu);
+    // The command data may be a PIN: it is read in place and padded only in
+    // storage that is wiped when freed.
+    std::vector<uint8_t> protect(std::span<const uint8_t> commandApdu);
 
     // Unwrap response APDU: verify MAC (DO'8E), decrypt data (DO'87), and
     // return the inner SW from DO'99 with the decrypted data, so the caller
@@ -55,7 +58,7 @@ private:
 
     std::vector<uint8_t> computeMAC(const std::vector<uint8_t>& data) const;
     std::vector<uint8_t> computeAESIV() const;
-    std::vector<uint8_t> encrypt(const std::vector<uint8_t>& data) const;
+    std::vector<uint8_t> encrypt(std::span<const uint8_t> data) const;
     std::vector<uint8_t> decrypt(const std::vector<uint8_t>& data) const;
     size_t blockSize() const;
 };

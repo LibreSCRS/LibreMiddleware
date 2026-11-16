@@ -3,6 +3,8 @@
 
 #include "crypto_utils.h"
 
+#include <LibreSCRS_internal/Crypto/CleanseGuard.h>
+
 #include <openssl/core_names.h>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
@@ -38,8 +40,13 @@ void adjustParity(std::vector<uint8_t>& key)
 
 std::vector<uint8_t> kdf(const std::vector<uint8_t>& seed, uint32_t counter, bool des3, size_t keyLen)
 {
-    // Build input: seed || counter (4 bytes big-endian)
-    std::vector<uint8_t> input(seed);
+    // Build input: seed || counter (4 bytes big-endian). The seed is key
+    // material (K_seed, a shared secret, a PACE password): reserve first so
+    // no reallocation frees a copy, and wipe the input on every exit.
+    std::vector<uint8_t> input;
+    LibreSCRS::Internal::Crypto::CleanseGuard wipeInput{input};
+    input.reserve(seed.size() + 4);
+    input.insert(input.end(), seed.begin(), seed.end());
     input.push_back(static_cast<uint8_t>((counter >> 24) & 0xFF));
     input.push_back(static_cast<uint8_t>((counter >> 16) & 0xFF));
     input.push_back(static_cast<uint8_t>((counter >> 8) & 0xFF));
@@ -136,7 +143,7 @@ std::vector<uint8_t> unpad(const std::vector<uint8_t>& data)
 
 // ---- 3DES encrypt/decrypt ----
 
-std::vector<uint8_t> des3Encrypt(const std::vector<uint8_t>& key, const std::vector<uint8_t>& data,
+std::vector<uint8_t> des3Encrypt(const std::vector<uint8_t>& key, std::span<const uint8_t> data,
                                  const std::vector<uint8_t>& iv)
 {
     if (key.size() != 16) {
@@ -226,7 +233,7 @@ static const EVP_CIPHER* selectAESCipher(size_t keySize)
     }
 }
 
-std::vector<uint8_t> aesEncrypt(const std::vector<uint8_t>& key, const std::vector<uint8_t>& data,
+std::vector<uint8_t> aesEncrypt(const std::vector<uint8_t>& key, std::span<const uint8_t> data,
                                 const std::vector<uint8_t>& iv)
 {
     const EVP_CIPHER* cipher = selectAESCipher(key.size());
@@ -313,7 +320,12 @@ std::vector<uint8_t> retailMAC(const std::vector<uint8_t>& key, const std::vecto
     // with Ka, and EDE with Ka||Kb over the last block chained on the CBC
     // value so far is E_Ka(D_Kb(E_Ka(h ^ x))). Single DES itself
     // (EVP_des_cbc) would need OpenSSL's legacy provider.
-    std::vector<uint8_t> kaKa(key.begin(), key.begin() + 8);
+    // Ka||Ka is key material: reserve first so no reallocation frees a copy
+    // of Ka, and wipe it on every exit.
+    std::vector<uint8_t> kaKa;
+    LibreSCRS::Internal::Crypto::CleanseGuard wipeKaKa{kaKa};
+    kaKa.reserve(16);
+    kaKa.insert(kaKa.end(), key.begin(), key.begin() + 8);
     kaKa.insert(kaKa.end(), key.begin(), key.begin() + 8);
 
     std::vector<uint8_t> chained(8, 0x00);
@@ -323,7 +335,6 @@ std::vector<uint8_t> retailMAC(const std::vector<uint8_t>& key, const std::vecto
         chained.assign(headCipher.end() - 8, headCipher.end());
         OPENSSL_cleanse(headCipher.data(), headCipher.size());
     }
-    OPENSSL_cleanse(kaKa.data(), kaKa.size());
 
     const std::vector<uint8_t> lastBlock(data.end() - 8, data.end());
     return des3Encrypt(key, lastBlock, chained);

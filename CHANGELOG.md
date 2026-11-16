@@ -953,6 +953,16 @@ records their departure, and the SONAME moved with it.
 
 ### Security
 
+- **A PIN or a key no longer stays behind in freed memory.** The buffer a PIN
+  is padded in for VERIFY, CHANGE REFERENCE DATA and signing kept its bytes in
+  ordinary vector storage, so padding a PIN to the card's stored length
+  reallocated it and handed the first copy back to the heap unwiped. Secure
+  messaging copied the command data of every protected command — the PIN, on a
+  PIN verb over PACE or BAC — and padded it in storage nothing wiped; the
+  key-derivation function did the same with its seed (K_seed, the agreed
+  secret, a PACE CAN or PIN), and the retail MAC with the first half of the MAC
+  key. All of them now keep those bytes in storage that is wiped before it is
+  freed, and a test searches every freed block for the secret.
 - **A time-stamp token is trusted only when a trusted authority signed it.**
   The token a time-stamping authority returns for a B-T, B-LT or B-LTA
   signature was checked for the nonce and the hash that were asked for, but

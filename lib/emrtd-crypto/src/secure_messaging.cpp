@@ -5,8 +5,11 @@
 #include "crypto_utils.h"
 
 #include <ber.h>
+#include <smartcard/secure_buffer.h>
 
 #include <openssl/crypto.h>
+
+#include <algorithm>
 #include <stdexcept>
 
 namespace emrtd::crypto {
@@ -94,7 +97,7 @@ std::vector<uint8_t> SecureMessaging::computeAESIV() const
     return detail::aesEncrypt(keys.encKey, keys.ssc);
 }
 
-std::vector<uint8_t> SecureMessaging::encrypt(const std::vector<uint8_t>& data) const
+std::vector<uint8_t> SecureMessaging::encrypt(std::span<const uint8_t> data) const
 {
     if (algo == SMAlgorithm::DES3)
         return detail::des3Encrypt(keys.encKey, data);
@@ -113,7 +116,7 @@ std::vector<uint8_t> SecureMessaging::decrypt(const std::vector<uint8_t>& data) 
 // ---------------------------------------------------------------------------
 // protect — wrap a plain command APDU with SM
 // ---------------------------------------------------------------------------
-std::vector<uint8_t> SecureMessaging::protect(const std::vector<uint8_t>& commandApdu)
+std::vector<uint8_t> SecureMessaging::protect(std::span<const uint8_t> commandApdu)
 {
     if (commandApdu.size() < 4)
         throw std::invalid_argument("APDU too short");
@@ -128,7 +131,8 @@ std::vector<uint8_t> SecureMessaging::protect(const std::vector<uint8_t>& comman
     uint8_t p2 = commandApdu[3];
 
     // Parse Lc, data, Le from the command APDU (ISO 7816-4 short + extended).
-    std::vector<uint8_t> cmdData;
+    // The data is viewed in place, never copied: on a PIN verb it is the PIN.
+    std::span<const uint8_t> cmdData;
     std::optional<uint16_t> le;
 
     if (commandApdu.size() == 4) {
@@ -144,7 +148,7 @@ std::vector<uint8_t> SecureMessaging::protect(const std::vector<uint8_t>& comman
         size_t lc = static_cast<size_t>((commandApdu[5] << 8) | commandApdu[6]);
         if (commandApdu.size() < 7 + lc)
             throw std::invalid_argument("APDU data shorter than extended Lc");
-        cmdData.assign(commandApdu.begin() + 7, commandApdu.begin() + 7 + static_cast<ptrdiff_t>(lc));
+        cmdData = commandApdu.subspan(7, lc);
         if (commandApdu.size() == 7 + lc + 2) {
             // Extended Le: 2 bytes after data
             le = static_cast<uint16_t>((commandApdu[7 + lc] << 8) | commandApdu[7 + lc + 1]);
@@ -154,7 +158,7 @@ std::vector<uint8_t> SecureMessaging::protect(const std::vector<uint8_t>& comman
         size_t lc = commandApdu[4];
         if (commandApdu.size() < 5 + lc)
             throw std::invalid_argument("APDU data shorter than Lc");
-        cmdData.assign(commandApdu.begin() + 5, commandApdu.begin() + 5 + static_cast<ptrdiff_t>(lc));
+        cmdData = commandApdu.subspan(5, lc);
         if (commandApdu.size() == 5 + lc + 1) {
             // Case 4 short: 1-byte Le
             le = commandApdu[5 + lc];
@@ -176,7 +180,11 @@ std::vector<uint8_t> SecureMessaging::protect(const std::vector<uint8_t>& comman
     // indicator instead.
     std::vector<uint8_t> do87;
     if (!cmdData.empty()) {
-        auto paddedData = detail::pad(cmdData, bs);
+        // ISO 9797-1 method 2 padding, built in storage that is wiped when
+        // freed: the padded plaintext is the PIN on a PIN verb.
+        LibreSCRS::SmartCard::Internal::SecureBuffer paddedData((cmdData.size() / bs + 1) * bs, 0x00);
+        std::copy(cmdData.begin(), cmdData.end(), paddedData.begin());
+        paddedData[cmdData.size()] = 0x80;
         auto encryptedData = encrypt(paddedData);
 
         const bool oddIns = (ins & 0x01) != 0;

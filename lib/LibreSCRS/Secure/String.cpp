@@ -3,7 +3,7 @@
 
 #include <LibreSCRS/Secure/String.h>
 
-#include "secure_allocator.h"
+#include <LibreSCRS_internal/Secure/secure_allocator.h>
 
 #include <openssl/crypto.h>
 

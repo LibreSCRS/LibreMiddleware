@@ -51,8 +51,8 @@ TEST(SecureMessagingTest, SSCIncrements)
 
     SecureMessaging sm(keys, SMAlgorithm::DES3);
 
-    auto cmd1 = sm.protect({0x00, 0xB0, 0x00, 0x00, 0x00});
-    auto cmd2 = sm.protect({0x00, 0xB0, 0x01, 0x00, 0x00});
+    auto cmd1 = sm.protect(std::vector<uint8_t>{0x00, 0xB0, 0x00, 0x00, 0x00});
+    auto cmd2 = sm.protect(std::vector<uint8_t>{0x00, 0xB0, 0x01, 0x00, 0x00});
     // Different MACs due to SSC increment
     EXPECT_NE(cmd1, cmd2);
 }
@@ -312,7 +312,7 @@ TEST(SecureMessagingTest, UnprotectTamperedSingleByteRejected)
 
     // The protect path of the genuine instance increments SSC; we need an
     // independent twin to inject a known-good response (matching SSC=1).
-    auto sentCmd = genuine.protect({0x00, 0xB0, 0x00, 0x00, 0x04});
+    auto sentCmd = genuine.protect(std::vector<uint8_t>{0x00, 0xB0, 0x00, 0x00, 0x04});
     (void)sentCmd;
 
     // For the tampering check we use the simpler "synthetic with wrong MAC"

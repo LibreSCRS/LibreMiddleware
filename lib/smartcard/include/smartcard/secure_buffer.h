@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 
+#ifndef LIBRESCRS_INTERNAL_BUILD
+#error "This header is internal to LibreMiddleware."
+#endif
+
 #pragma once
+
+#include <LibreSCRS_internal/Secure/secure_allocator.h>
 
 #include <cstdint>
 #include <cstring>
@@ -17,11 +23,16 @@ namespace LibreSCRS::SmartCard::Internal {
 /// not merged with it: that one is a sealed carrier a consumer receives across
 /// the published surface and cannot resize, this one is the scratch a card read
 /// fills in place. Collapsing them would hand a caller a buffer it can grow.
-/// RAII wrapper around std::vector<uint8_t> that zeroizes memory on destruction.
-/// Use for PIN data and other secrets to ensure cleanup even on exception paths.
+/// Byte buffer for PIN data and other secrets. Its storage uses the same
+/// allocator as `Secure::Buffer`, which wipes every block it gives back, so a
+/// reallocation on growth, a move-assignment and destruction all leave no copy
+/// of the secret in freed memory.
 class SecureBuffer
 {
 public:
+    /// The storage type: a vector whose every deallocation is wiped first.
+    using Storage = std::vector<uint8_t, LibreSCRS::Secure::detail::secure_allocator<uint8_t>>;
+
     SecureBuffer() = default;
 
     explicit SecureBuffer(size_t size, uint8_t fill = 0) : buf(size, fill) {}
@@ -36,29 +47,31 @@ public:
 
     SecureBuffer(std::initializer_list<uint8_t> init) : buf(init) {}
 
-    /// Adopt an existing byte vector (e.g. an APDU serialization from
-    /// APDUCommand::toBytes()) so its storage is cleansed on every exit
-    /// path. The moved-from vector holds no secret bytes afterwards.
-    explicit SecureBuffer(std::vector<uint8_t>&& bytes) noexcept : buf(std::move(bytes)) {}
-
-    ~SecureBuffer()
+    /// Take the bytes of an ordinary vector (e.g. an APDU serialization from
+    /// APDUCommand::toBytes()). Its storage has the default allocator and
+    /// cannot be adopted, so the bytes are copied and the source is wiped and
+    /// released, on the failure path too.
+    explicit SecureBuffer(std::vector<uint8_t>&& bytes)
     {
-        cleanse();
+        struct WipeSource
+        {
+            std::vector<uint8_t>& v;
+            ~WipeSource()
+            {
+                if (!v.empty())
+                    secureWipe(v.data(), v.size());
+                v.clear();
+                v.shrink_to_fit();
+            }
+        } wipeSource{bytes};
+        buf.assign(bytes.begin(), bytes.end());
     }
 
     SecureBuffer(const SecureBuffer&) = delete;
     SecureBuffer& operator=(const SecureBuffer&) = delete;
-
-    SecureBuffer(SecureBuffer&& other) noexcept : buf(std::move(other.buf)) {}
-
-    SecureBuffer& operator=(SecureBuffer&& other) noexcept
-    {
-        if (this != &other) {
-            cleanse();
-            buf = std::move(other.buf);
-        }
-        return *this;
-    }
+    SecureBuffer(SecureBuffer&&) noexcept = default;
+    SecureBuffer& operator=(SecureBuffer&&) noexcept = default;
+    ~SecureBuffer() = default;
 
     uint8_t* data()
     {
@@ -88,11 +101,8 @@ public:
 
     void resize(size_t n, uint8_t fill = 0)
     {
-        // On shrink, cleanse the tail that the underlying vector is about
-        // to drop. std::vector::resize(n<size) does NOT release storage
-        // (capacity is preserved), but the destructor's cleanse uses the
-        // NEW (smaller) size and would never reach the truncated bytes.
-        // Cleanse them here while we still know their location.
+        // A shrink keeps the capacity, and the dropped tail would otherwise
+        // sit in the block until it is freed; wipe it now.
         if (n < buf.size()) {
             secureWipe(buf.data() + n, buf.size() - n);
         }
@@ -122,23 +132,8 @@ public:
         return {buf.data(), buf.size()};
     }
 
-    /// Read-only view of the underlying vector for APIs that require a
-    /// `const std::vector<uint8_t>&` (e.g. SecureMessaging::protect).
-    /// The reference aliases storage owned by this buffer and is
-    /// invalidated by resize, move-assign, or destruction.
-    const std::vector<uint8_t>& vector() const noexcept
-    {
-        return buf;
-    }
-
 private:
-    void cleanse()
-    {
-        if (!buf.empty())
-            secureWipe(buf.data(), buf.size());
-    }
-
-    std::vector<uint8_t> buf;
+    Storage buf;
 };
 
 /// RAII wrapper that zeroizes a std::string on scope exit. Use when a PIN

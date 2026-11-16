@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #define LIBRESCRS_INTERNAL_BUILD
-#include "../lib/LibreSCRS/Secure/secure_allocator.h"
+#include "../lib/LibreSCRS/include/LibreSCRS_internal/Secure/secure_allocator.h"
 
 #include <gtest/gtest.h>
 

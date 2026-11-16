@@ -3,7 +3,7 @@
 
 #include <LibreSCRS/Secure/Buffer.h>
 
-#include "secure_allocator.h"
+#include <LibreSCRS_internal/Secure/secure_allocator.h>
 
 #include <utility>
 #include <vector>

@@ -69,7 +69,9 @@ std::optional<SessionKeys> performBAC(LibreSCRS::SmartCard::IConnection& conn, c
     if (RAND_bytes(rndIFD.data(), 8) != 1 || RAND_bytes(kIFD.data(), 16) != 1)
         return std::nullopt;
 
-    // Step 3: Build S = RND.IFD || RND.ICC || K.IFD (32 bytes)
+    // Step 3: Build S = RND.IFD || RND.ICC || K.IFD (32 bytes). Reserved, so
+    // no append moves it and frees a partial copy.
+    s.reserve(rndIFD.size() + rndICC.size() + kIFD.size());
     s.insert(s.end(), rndIFD.begin(), rndIFD.end());
     s.insert(s.end(), rndICC.begin(), rndICC.end());
     s.insert(s.end(), kIFD.begin(), kIFD.end());

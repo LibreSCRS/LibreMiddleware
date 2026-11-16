@@ -1348,6 +1348,23 @@ target_link_libraries(LibreSCRS_SecureAllocatorTests PRIVATE
 )
 gtest_discover_tests(LibreSCRS_SecureAllocatorTests)
 
+# Replaces the global operator new/delete to search every block for a secret
+# before it is freed, so it is a binary of its own.
+add_executable(SecretWipeOnFreeTests
+    SecretWipeOnFreeTests.cpp
+)
+target_link_libraries(SecretWipeOnFreeTests PRIVATE
+    GTest::gtest_main
+    EMRTDCrypto
+    SmartCard_Impl
+)
+target_include_directories(SecretWipeOnFreeTests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/include
+)
+target_compile_definitions(SecretWipeOnFreeTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(SecretWipeOnFreeTests)
+
 add_executable(LibreSCRS_CardSessionTests
     LibreSCRS_CardSessionTests.cpp
 )

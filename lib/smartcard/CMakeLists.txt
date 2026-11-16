@@ -30,16 +30,17 @@ add_library(SmartCard_Impl STATIC
     src/ef_dir.h
     # LC-bridge leaf types: small, dependency-free public-include surface
     # that may be reached from external consumers via the PUBLIC include
-    # path below. All four are self-contained — IConnection forward-
-    # declares APDUCommand/APDUResponse, secure_buffer is a leaf RAII
-    # wrapper, monitor_event is a POD, and chunked_read forward-declares
-    # the one internal core-transport type (APDUResponse) it names — so
-    # the public surface does not transitively drag internal
-    # core-transport headers into LM-internal consumers.
+    # path below. All are self-contained — IConnection forward-
+    # declares APDUCommand/APDUResponse, monitor_event is a POD, and
+    # chunked_read forward-declares the one internal core-transport type
+    # (APDUResponse) it names — so the public surface does not transitively
+    # drag internal core-transport headers into LM-internal consumers.
     include/smartcard/i_connection.h
-    include/smartcard/secure_buffer.h
     include/smartcard/secure_wipe.h
     include/smartcard/monitor_event.h
+    # LIBRESCRS_INTERNAL_BUILD-gated: its storage uses the internal
+    # Secure::detail::secure_allocator.
+    include/smartcard/secure_buffer.h
     # Internal helper: SmartCard_Impl-private chunked file-read loop,
     # LIBRESCRS_INTERNAL_BUILD-gated. Placed under include/ so that
     # LIBRESCRS_INTERNAL_BUILD consumers reach it via <smartcard/...>
@@ -50,7 +51,7 @@ add_library(SmartCard_Impl STATIC
 target_compile_definitions(SmartCard_Impl PRIVATE LIBRESCRS_INTERNAL_BUILD)
 
 # PUBLIC include dir (BUILD_INTERFACE-wrapped) carries only the LC-bridge
-# leaf headers (i_connection, secure_buffer, monitor_event). The
+# leaf headers (i_connection, monitor_event) and secure_buffer. The
 # PCSCConnection / Monitor surfaces live in src/ because they transitively
 # pull internal core-transport types (apdu, ipcsc_scan_provider) and LC
 # does not reach for them directly — the public Monitor surface lives at
@@ -61,6 +62,9 @@ target_include_directories(SmartCard_Impl PUBLIC
     # decoder's declarations carry -- PUBLIC because ber.h is included by
     # LM-internal consumers in other libraries, which then need it too.
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    # <LibreSCRS_internal/Secure/secure_allocator.h>, the storage allocator of
+    # secure_buffer.h -- PUBLIC because every includer of that header needs it.
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include>
 )
 
 # PRIVATE: lets SmartCard_Impl's own .cpp files resolve "apdu.h" /
@@ -72,8 +76,6 @@ target_include_directories(SmartCard_Impl PUBLIC
 # own PRIVATE include dirs.
 target_include_directories(SmartCard_Impl PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    # <LibreSCRS_internal/LogNoexcept.h>
-    ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include
 )
 
 # Hidden: only a library that links this archive decides what of it is exported;
