@@ -1360,6 +1360,7 @@ target_link_libraries(SecretWipeOnFreeTests PRIVATE
 )
 target_include_directories(SecretWipeOnFreeTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/emrtd-crypto/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/LibreSCRS/include
 )
 target_compile_definitions(SecretWipeOnFreeTests PRIVATE LIBRESCRS_INTERNAL_BUILD)

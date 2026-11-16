@@ -10,7 +10,11 @@ namespace LibreSCRS::SmartCard::Internal {
 
 std::vector<uint8_t> APDUCommand::toBytes() const
 {
+    // Header, up to 3 Lc bytes, the data, up to 3 Le bytes: reserved up front
+    // so no append moves the serialization and frees a copy of the data field,
+    // which is a PIN on a PIN verb.
     std::vector<uint8_t> bytes;
+    bytes.reserve(4 + 3 + data.size() + 3);
     bytes.push_back(cla);
     bytes.push_back(ins);
     bytes.push_back(p1);

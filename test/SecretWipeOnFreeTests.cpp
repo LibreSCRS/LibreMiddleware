@@ -7,6 +7,7 @@
 // free(), so no freed memory is ever read. Each case arms the search around
 // one call and asserts that no block freed during it still held the secret.
 
+#include <apdu.h>
 #include <bac.h>
 #include <crypto_utils.h>
 #include <secure_messaging.h>
@@ -366,4 +367,20 @@ TEST(SecretWipeOnFree, BacKeysLeaveNoKeyInFreedHeap)
         }
         EXPECT_EQ(watch.hits(), 0);
     }
+}
+
+TEST(SecretWipeOnFree, ApduSerializationWithLeLeavesNoDataInFreedHeap)
+{
+    // A command carrying a secret AND an Le: appending the Le must not move
+    // the serialization and free a copy of the data field.
+    constexpr std::string_view secret = "PIN-a63f0b9d2c-MK"; // 17 bytes
+    LibreSCRS::SmartCard::Internal::APDUCommand cmd{
+        0x00, 0x20, 0x00, 0x01, std::vector<std::uint8_t>(secret.begin(), secret.end()), 0x00, true};
+    FreedBlockWatch watch(bytesOf(secret));
+    {
+        auto bytes = cmd.toBytes();
+        ASSERT_EQ(bytes.size(), 4u + 1u + secret.size() + 1u);
+        LibreSCRS::SmartCard::Internal::secureWipe(bytes.data(), bytes.size());
+    }
+    EXPECT_EQ(watch.hits(), 0);
 }
