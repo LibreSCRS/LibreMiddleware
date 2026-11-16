@@ -17,10 +17,52 @@
 
 namespace emrtd::crypto {
 
+/// @brief BAC K_Enc / K_MAC. They decrypt a recorded BAC session, so they
+///        carry the same cleansing contract as @ref SessionKeys below: wiped
+///        on destruction and before an assignment releases them.
 struct BACKeys
 {
     std::vector<uint8_t> encKey; // 16 bytes (3DES two-key)
     std::vector<uint8_t> macKey; // 16 bytes (3DES two-key)
+
+    BACKeys() = default;
+    BACKeys(const BACKeys&) = default;
+    BACKeys(BACKeys&&) noexcept = default;
+
+    BACKeys& operator=(const BACKeys& other)
+    {
+        if (this != &other) {
+            cleanse();
+            encKey = other.encKey;
+            macKey = other.macKey;
+        }
+        return *this;
+    }
+    BACKeys& operator=(BACKeys&& other) noexcept
+    {
+        if (this != &other) {
+            cleanse();
+            encKey = std::move(other.encKey);
+            macKey = std::move(other.macKey);
+        }
+        return *this;
+    }
+
+    ~BACKeys()
+    {
+        cleanse();
+    }
+
+private:
+    void cleanse() noexcept
+    {
+        if (!encKey.empty()) {
+            OPENSSL_cleanse(encKey.data(), encKey.size());
+        }
+        if (!macKey.empty()) {
+            OPENSSL_cleanse(macKey.data(), macKey.size());
+        }
+    }
 };
 
 /// @brief Internal session-keys carrier consumed by @ref SecureMessaging.

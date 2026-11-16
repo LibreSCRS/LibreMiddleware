@@ -352,3 +352,18 @@ TEST(SecretWipeOnFree, BuildMrzInformationWipesOnAnInvalidCharacter)
                  std::invalid_argument);
     EXPECT_EQ(watch.hits(), 0);
 }
+
+TEST(SecretWipeOnFree, BacKeysLeaveNoKeyInFreedHeap)
+{
+    // K_enc and K_mac decrypt a recorded BAC session: they are worth as much
+    // as the K_seed they come from.
+    const auto reference = emrtd::crypto::deriveBACKeys("MRZ7Q3X95", "740727", "120714");
+    for (const auto* key : {&reference.encKey, &reference.macKey}) {
+        FreedBlockWatch watch(*key);
+        {
+            const auto keys = emrtd::crypto::deriveBACKeys("MRZ7Q3X95", "740727", "120714");
+            ASSERT_EQ(keys.encKey, reference.encKey);
+        }
+        EXPECT_EQ(watch.hits(), 0);
+    }
+}
