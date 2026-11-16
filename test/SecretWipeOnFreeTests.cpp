@@ -16,6 +16,8 @@
 
 #include <gtest/gtest.h>
 
+#include <openssl/evp.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -323,6 +325,29 @@ TEST(SecretWipeOnFree, DeriveBacKeysLeavesNoMrzInFreedHeap)
     const std::string dateOfBirth = "740727";
     const std::string dateOfExpiry = "120714";
     FreedBlockWatch watch(bytesOf(documentNumber));
+    {
+        const auto keys = emrtd::crypto::deriveBACKeys(documentNumber, dateOfBirth, dateOfExpiry);
+        EXPECT_EQ(keys.encKey.size(), 16u);
+    }
+    EXPECT_EQ(watch.hits(), 0);
+}
+
+TEST(SecretWipeOnFree, DeriveBacKeysLeavesNoKSeedInFreedHeap)
+{
+    // K_seed = SHA-1(MRZ_information)[0:16] derives every BAC key. It is
+    // computed here independently, before the watch is armed.
+    const std::string documentNumber = "MRZ7Q3X95";
+    const std::string dateOfBirth = "740727";
+    const std::string dateOfExpiry = "120714";
+    std::string mrzInfo = emrtd::crypto::detail::buildMrzInformation(documentNumber, dateOfBirth, dateOfExpiry);
+    std::uint8_t digest[EVP_MAX_MD_SIZE];
+    std::size_t digestLen = 0;
+    ASSERT_TRUE(EVP_Q_digest(nullptr, "SHA1", nullptr, mrzInfo.data(), mrzInfo.size(), digest, &digestLen));
+    ASSERT_GE(digestLen, 16u);
+    const std::vector<std::uint8_t> kSeed(digest, digest + 16);
+    LibreSCRS::SmartCard::Internal::secureWipe(mrzInfo.data(), mrzInfo.size());
+
+    FreedBlockWatch watch(kSeed);
     {
         const auto keys = emrtd::crypto::deriveBACKeys(documentNumber, dateOfBirth, dateOfExpiry);
         EXPECT_EQ(keys.encKey.size(), 16u);
