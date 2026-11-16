@@ -260,78 +260,31 @@ static int paramIdToNID(int paramId)
 }
 
 // ---------------------------------------------------------------------------
-// Helper: parse parameter ID from CardAccess SecurityInfo for a given PACE OID
-// Returns -1 if not found.
+// Helper: read the parameterId of one SecurityInfo, from just past its OID
+// (version INTEGER, then the optional parameterId INTEGER) to @p seqEnd.
+// Returns -1 if it has none.
 // ---------------------------------------------------------------------------
 
-static int parseParameterIdFromCardAccess(const std::vector<uint8_t>& cardAccess, const std::string& targetOid)
+static int readParameterId(const std::vector<uint8_t>& cardAccess, size_t pos, size_t seqEnd)
 {
-    if (cardAccess.size() < 2 || cardAccess[0] != 0x31)
-        return -1;
-
-    // The outer SET may legitimately declare more than one READ BINARY block
-    // returned, so its length is clamped rather than refused; every length
-    // inside it must be contained.
-    auto [setLen, setLenBytes] = readLengthClamped(cardAccess, 1);
-    if (setLenBytes == 0)
-        return -1;
-    size_t pos = 1 + setLenBytes;
-    size_t end = pos + setLen;
-
-    while (pos + 2 <= end) {
-        if (cardAccess[pos] != 0x30) {
-            pos++;
-            auto [skipLen, skipLenBytes] = readLength(cardAccess, pos);
-            if (skipLenBytes == 0)
-                break; // unusable length: stop, do not treat it as empty
-            pos += skipLenBytes + skipLen;
-            continue;
-        }
+    // Skip version INTEGER
+    if (pos < seqEnd && cardAccess[pos] == 0x02) {
         pos++;
-
-        auto [seqLen, seqLenBytes] = readLength(cardAccess, pos);
-        if (seqLenBytes == 0)
-            break;
-        pos += seqLenBytes;
-        size_t seqEnd = pos + seqLen;
-        if (seqEnd > end)
-            break;
-
-        // Parse OID
-        std::string oid;
-        if (pos < seqEnd && cardAccess[pos] == 0x06) {
-            pos++;
-            auto [oidLen, oidLenBytes] = readLength(cardAccess, pos);
-            pos += oidLenBytes;
-            if (pos + oidLen <= seqEnd) {
-                oid = oidBytesToString(cardAccess.data() + pos, oidLen);
+        auto [intLen, intLenBytes] = readLength(cardAccess, pos);
+        pos += intLenBytes + intLen;
+    }
+    // Read parameter ID INTEGER (if present)
+    if (pos < seqEnd && cardAccess[pos] == 0x02) {
+        pos++;
+        auto [intLen, intLenBytes] = readLength(cardAccess, pos);
+        pos += intLenBytes;
+        if (intLen > 0 && pos + intLen <= seqEnd) {
+            int paramId = 0;
+            for (size_t i = 0; i < intLen; ++i) {
+                paramId = (paramId << 8) | cardAccess[pos + i];
             }
-            pos += oidLen;
+            return paramId;
         }
-
-        if (oid == targetOid) {
-            // Skip version INTEGER
-            if (pos < seqEnd && cardAccess[pos] == 0x02) {
-                pos++;
-                auto [intLen, intLenBytes] = readLength(cardAccess, pos);
-                pos += intLenBytes + intLen;
-            }
-            // Read parameter ID INTEGER (if present)
-            if (pos < seqEnd && cardAccess[pos] == 0x02) {
-                pos++;
-                auto [intLen, intLenBytes] = readLength(cardAccess, pos);
-                pos += intLenBytes;
-                if (intLen > 0 && pos + intLen <= seqEnd) {
-                    int paramId = 0;
-                    for (size_t i = 0; i < intLen; ++i) {
-                        paramId = (paramId << 8) | cardAccess[pos + i];
-                    }
-                    return paramId;
-                }
-            }
-            return -1; // OID found but no parameter ID
-        }
-        pos = seqEnd;
     }
     return -1;
 }
@@ -388,9 +341,9 @@ std::vector<std::pair<std::string, int>> parseCardAccessWithParams(const std::ve
         }
 
         if (isPACEOID(oid)) {
-            // Use the dedicated helper to extract paramId for this OID
-            int paramId = parseParameterIdFromCardAccess(cardAccess, oid);
-            result.emplace_back(oid, paramId);
+            // The parameterId of THIS SecurityInfo: several may share an OID
+            // over different domain parameters.
+            result.emplace_back(oid, readParameterId(cardAccess, afterOid, seqEnd));
         }
 
         pos = seqEnd;

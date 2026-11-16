@@ -24,7 +24,7 @@ DSSSigningServiceTests 3
 DecipherTypesTest 3
 DocpParserTests 4
 ECSigningTests 9
-EMRTDCryptoTests 261
+EMRTDCryptoTests 262
 EMRTDPluginTests 67
 EMRTDTests 20
 EfDirTests 3

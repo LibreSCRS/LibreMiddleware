@@ -119,6 +119,26 @@ TEST(PACETest, ParseCardAccessWithParamsMultipleEntries)
     EXPECT_EQ(entries[1].second, 12);
 }
 
+TEST(PACETest, ParseCardAccessWithParamsSameOidKeepsEachParamId)
+{
+    // Two PACEInfos with the same protocol over different curves: each entry
+    // must carry the parameterId of its own SecurityInfo.
+    std::vector<uint8_t> cardAccess = {0x31, 0x28,
+                                       // ECDH-GM-AES-128, paramId=13 (brainpoolP256r1)
+                                       0x30, 0x12, 0x06, 0x0A, 0x04, 0x00, 0x7F, 0x00, 0x07, 0x02, 0x02, 0x04, 0x02,
+                                       0x02, 0x02, 0x01, 0x02, 0x02, 0x01, 0x0D,
+                                       // ECDH-GM-AES-128, paramId=12 (secp256r1)
+                                       0x30, 0x12, 0x06, 0x0A, 0x04, 0x00, 0x7F, 0x00, 0x07, 0x02, 0x02, 0x04, 0x02,
+                                       0x02, 0x02, 0x01, 0x02, 0x02, 0x01, 0x0C};
+
+    auto entries = parseCardAccessWithParams(cardAccess);
+    ASSERT_EQ(entries.size(), 2u);
+    EXPECT_EQ(entries[0].first, "0.4.0.127.0.7.2.2.4.2.2");
+    EXPECT_EQ(entries[0].second, 13);
+    EXPECT_EQ(entries[1].first, "0.4.0.127.0.7.2.2.4.2.2");
+    EXPECT_EQ(entries[1].second, 12);
+}
+
 TEST(PACETest, ParseCardAccessWithParamsNoParamId)
 {
     // SecurityInfo with OID and version only — no paramId INTEGER

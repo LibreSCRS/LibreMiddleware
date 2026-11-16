@@ -430,6 +430,10 @@ Notable user-visible changes per release. Format follows
 
 ### Fixed
 
+- **Each PACE protocol an EF.CardAccess offers keeps its own domain
+  parameters.** When a document advertised the same PACE protocol twice over
+  different curves, every entry was given the parameterId of the first one,
+  so falling back to the second entry ran PACE with the wrong curve.
 - **The system trust store finds the host's certificate authorities.**
   Certificate chain validation asked the bundled OpenSSL for its default
   store, which is empty unless `SSL_CERT_FILE` or `SSL_CERT_DIR` is set, so
