@@ -1,9 +1,8 @@
 # Link-time optimisation off, explicitly. Fedora's default %%optflags carry
 # -flto=auto -ffat-lto-objects, and that conflicts with the bundled static
 # OpenSC exactly as this project's own Arch recipe has recorded for a while
-# (options=('!lto')). Debian does not enable LTO by default, which is why this
-# line has no counterpart there and why one recipe mechanically translated into
-# the other would have been wrong.
+# (options=('!lto')). The deb recipe says the same with optimize=-lto: Debian
+# leaves LTO off by default, but Ubuntu turns it on.
 %global _lto_cflags %{nil}
 
 Name:           librescrs-middleware

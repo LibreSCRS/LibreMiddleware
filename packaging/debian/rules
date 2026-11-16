@@ -1,6 +1,8 @@
 #!/usr/bin/make -f
 
-export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+# Link-time optimisation off, as in the rpm and Arch recipes. Debian leaves it
+# off by default, but Ubuntu turns it on, so the deb recipe has to say so too.
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=-lto
 export DEB_CPPFLAGS_MAINT_APPEND = -DNDEBUG
 
 %:
