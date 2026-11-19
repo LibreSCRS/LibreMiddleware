@@ -50,7 +50,7 @@ export LC_ALL=C
 # no symbols, and `--update` wrote a baseline of comments over a real one. The
 # sibling repository's snapshot already refuses an empty section for exactly
 # this reason; a missing tool is "I cannot measure", never a pass.
-for tool in nm c++filt python3; do
+for tool in nm c++filt python3 readelf objdump; do
     command -v "$tool" >/dev/null 2>&1 \
         || { echo "FATAL: $tool not found on PATH -- cannot measure the ABI surface" >&2; exit 2; }
 done
@@ -265,6 +265,14 @@ if [[ -n "$dup_owners" ]]; then
     exit 1
 fi
 
+# Where each core library is, for the check that a "thrown:" entry's type is
+# really thrown by the library that exports its typeinfo.
+IMAGES="${SCRATCH}/images.tsv"
+while IFS= read -r so; do
+    name="$(basename "$so")"
+    printf '%s\t%s\n' "${name%.*.*.*}" "$so"
+done < <(find "$BUILD_DIR/lib/LibreSCRS" -maxdepth 1 -name 'libLibreSCRS_*.so.[0-9]*.[0-9]*.[0-9]*' | sort) > "$IMAGES"
+
 # What the shipped images import: the core libraries (sibling imports), every
 # card plugin, and the installed test archive (minus what its own members
 # define). Test executables are not shipped and are not read.
@@ -308,7 +316,7 @@ fi
 # the baseline as public ABI.
 surface_rc=0
 python3 "$SURFACE" --clang "$CXX" --include-root "$INCLUDE_ROOT" --exports "$EXPORTS" \
-    --imports "$IMPORTS" --allowlist "$ALLOWLIST" "${base_args[@]}" || surface_rc=$?
+    --imports "$IMPORTS" --allowlist "$ALLOWLIST" --images "$IMAGES" "${base_args[@]}" || surface_rc=$?
 if [[ "$surface_rc" -ne 0 ]]; then
     exit "$surface_rc"
 fi
