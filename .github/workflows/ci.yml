@@ -249,8 +249,9 @@ jobs:
         # baseline regeneration (`abi-snapshot.sh --update`) reviewed in
         # the same commit as the new public symbol.
         # It also refuses any export, of any binding class, that names a
-        # LibreSCRS entity the installed headers do not declare, and any entry
-        # the internal-export allowlist gained since the base revision:
+        # LibreSCRS entity the installed headers do not declare, any shipped
+        # import or inline-header call of an unlisted internal symbol, and any
+        # entry the internal-export allowlist gained since the base revision:
         # the pull request's base, the push's previous tip, or (new branch)
         # the merge base with main. The public surface is read from clang's AST
         # of the installed headers, so CXX is the clang the layout snapshot

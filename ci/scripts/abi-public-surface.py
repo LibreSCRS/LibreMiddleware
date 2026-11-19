@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-2.1-or-later
 #
-# abi-public-surface.py -- helper of abi-snapshot.sh: which exported symbols
-# name a LibreSCRS entity that the installed headers do not declare.
+# abi-public-surface.py -- helper of abi-snapshot.sh: the export, import and
+# inline-body rules over the public LibreSCRS surface.
 #
 # The public surface is read from the compiler, not from the header text: the
 # installed headers (include/LibreSCRS minus every detail/ directory, exactly
@@ -16,10 +16,7 @@
 #   - a friend declaration: it names an entity, it does not declare it for the
 #     consumer;
 #   - anything whose symbol spells a namespace or class named Internal or
-#     detail (or a project *_detail namespace), its parameter types included:
-#     an installed header may forward-declare such an entity for a friend or an
-#     inline body, which does not make it API, and a public function that takes
-#     such a type cannot be called through the installed headers either.
+#     detail (or a project *_detail namespace), its parameter types included.
 #
 # An exported symbol is attributed to a public declaration when it is:
 #   - the mangled name of a public function or variable (constructors and
@@ -27,26 +24,40 @@
 #   - a thunk, TLS wrapper/init or guard variable of one;
 #   - the vtable, VTT, typeinfo or typeinfo name of a class the installed
 #     headers DEFINE (a forward declaration does not publish a vtable).
-# Every other symbol rooted in namespace LibreSCRS is reported. A shape this
-# helper does not know is reported too: an export nobody can attribute to a
-# public declaration is exactly what the gate exists to refuse.
-#
 # Matching by mangled name also judges every type in a signature: a function
 # whose parameter type no installed header declares has no installed
 # declaration to match. The one residual: a type the installed headers only
 # forward-declare (a pimpl `Impl`) passes in a signature, which is what the
 # private pimpl constructors rely on.
 #
-# usage: abi-public-surface.py <clang++> <include-root> <exports.tsv> <allowlist> [<base allowlist>]
-#   <exports.tsv>: one "<library>\t<binding>\t<mangled>" line per export.
-#   <allowlist>: ci/abi/5.x-internal-exports.txt -- the internal exports that
-#   shipped images still need, "<library>\t<symbol>\t<reason>". A stale entry
-#   (no longer an internal export) fails.
-#   <base allowlist>: the list at the base revision; an entry it does not hold
-#   fails, so the list only shrinks.
-# Exit 0 when every export is public or allowlisted, 1 on a finding, 2 when the
-# public surface could not be measured.
+# The rules:
+#   Exports: every exported symbol rooted in namespace LibreSCRS is
+#      attributed and not internal, or is listed in the allowlist.
+#   Imports: every LibreSCRS symbol a SHIPPED image imports (the core
+#      libraries, the card plugins, the installed test archive; never a test
+#      executable) is exported by a core library, and is public or listed.
+#      Every listed entry whose reason starts with "imported:" has at least one
+#      shipped importer; an entry nobody imports is stale.
+#   Inline bodies: every LibreSCRS function an inline body of an installed
+#      header calls without defining it is exported by a core library, and is
+#      public or listed: a consumer that calls the inline function links it.
+#   Additions: with a base allowlist (the one at the merge base), every listed
+#      entry must already be in it -- the list only shrinks.
+#
+# Allowlist (ci/abi/5.x-internal-exports.txt): "<library>\t<demangled symbol>\t<reason>".
+#   reason "imported: <who>"  -- the import rule requires a shipped importer;
+#   reason "thrown: <why>"    -- the typeinfo, typeinfo name or vtable of an
+#                                exception type that leaves its library: a
+#                                catch elsewhere needs it exported whether or
+#                                not any shipped image imports it.
+#
+# usage: abi-public-surface.py --clang C --include-root DIR --exports F
+#            --imports F --allowlist F [--base-allowlist F]
+#   exports: "<library>\t<binding>\t<mangled>" per export of a core library.
+#   imports: "<image>\t<mangled>" per undefined symbol of a shipped image.
+# Exit 0 when every rule holds, 1 on a finding, 2 when it could not judge.
 
+import argparse
 import json
 import os
 import re
@@ -61,7 +72,7 @@ FUNC_KINDS = {
 # Subtrees that declare nothing a consumer can call by this exact mangled name.
 SKIP_KINDS = {'FriendDecl', 'ClassTemplateDecl', 'FunctionTemplateDecl',
               'ClassTemplateSpecializationDecl', 'ClassTemplatePartialSpecializationDecl',
-              'VarTemplateDecl', 'TypeAliasTemplateDecl', 'CompoundStmt'}
+              'VarTemplateDecl', 'TypeAliasTemplateDecl'}
 
 
 def fail(msg):
@@ -92,7 +103,28 @@ def ast_objects(text):
         yield obj
 
 
-def collect(node, path, funcs, records):
+class Surface:
+    def __init__(self):
+        self.funcs = set()       # mangled names declared (not as friend)
+        self.records = set()     # 'N...E' encodings of defined classes
+        self.by_id = {}          # AST node id -> mangled name
+        self.defined = set()     # mangled names with a body in the headers
+        self.called = {}         # referenced node id -> an inline caller's name
+
+
+def walk_body(node, caller, surface):
+    if isinstance(node, dict):
+        for key in ('referencedDecl', 'referencedMemberDecl'):
+            ref = node.get(key)
+            if isinstance(ref, dict) and 'id' in ref:
+                surface.called.setdefault(ref['id'], caller)
+            elif isinstance(ref, str):
+                surface.called.setdefault(ref, caller)
+        for child in node.get('inner', []):
+            walk_body(child, caller, surface)
+
+
+def collect(node, path, surface):
     kind = node.get('kind')
     if kind in SKIP_KINDS:
         return
@@ -106,24 +138,34 @@ def collect(node, path, funcs, records):
             return
         child_path = path + [name]
         if node.get('completeDefinition'):
-            records.add('N' + ''.join(f'{len(p)}{p}' for p in child_path) + 'E')
+            surface.records.add('N' + ''.join(f'{len(p)}{p}' for p in child_path) + 'E')
     elif kind in FUNC_KINDS:
         mangled = node.get('mangledName')
-        if mangled:
-            funcs.add(mangled)
-            if kind == 'CXXConstructorDecl':
-                funcs.add(mangled.replace('C1E', 'C2E', 1))
-                funcs.add(mangled.replace('C1E', 'C3E', 1))
-                funcs.add(mangled.replace('C1B', 'C2B', 1))
-            elif kind == 'CXXDestructorDecl':
-                for v in ('D0E', 'D2E'):
-                    funcs.add(mangled.replace('D1E', v, 1))
+        if not mangled:
+            return
+        surface.by_id[node.get('id')] = mangled
+        surface.funcs.add(mangled)
+        if kind == 'CXXConstructorDecl':
+            surface.funcs.add(mangled.replace('C1E', 'C2E', 1))
+            surface.funcs.add(mangled.replace('C1E', 'C3E', 1))
+            surface.funcs.add(mangled.replace('C1B', 'C2B', 1))
+        elif kind == 'CXXDestructorDecl':
+            for v in ('D0E', 'D2E'):
+                surface.funcs.add(mangled.replace('D1E', v, 1))
+        inner = [c for c in node.get('inner', []) if isinstance(c, dict)]
+        body = [c for c in inner if c.get('kind') == 'CompoundStmt']
+        if body or node.get('explicitlyDefaulted') or node.get('isImplicit') or \
+                (kind == 'VarDecl' and (node.get('init') or inner)):
+            surface.defined.add(mangled)
+        caller = '::'.join(path + [name])
+        for b in (body if kind != 'VarDecl' else inner):
+            walk_body(b, caller, surface)
         return
     else:
         child_path = path
     for child in node.get('inner', []):
         if isinstance(child, dict):
-            collect(child, child_path, funcs, records)
+            collect(child, child_path, surface)
 
 
 def measure_surface(clang, root):
@@ -146,14 +188,14 @@ def measure_surface(clang, root):
     if proc.returncode != 0:
         sys.stderr.write(proc.stderr[-4000:])
         fail(f'{clang} could not compile the installed headers as a consumer does')
-    funcs, records = set(), set()
+    surface = Surface()
     for obj in ast_objects(proc.stdout):
         if obj.get('kind') == 'NamespaceDecl' and obj.get('name') == 'LibreSCRS':
-            collect(obj, [], funcs, records)
-    if not funcs and not records:
-        fail(f'the AST of {len(headers)} installed header(s) declared {len(funcs)} function(s) '
-             f'and {len(records)} class(es) -- the measurement did not happen')
-    return funcs, records
+            collect(obj, [], surface)
+    if not surface.funcs and not surface.records:
+        fail(f'the AST of {len(headers)} installed header(s) declared nothing -- '
+             'the measurement did not happen')
+    return surface
 
 
 THUNK = re.compile(r'^_ZT(?:hn?\d+_|vn?\d+_n?\d+_)')
@@ -162,24 +204,27 @@ LIBRESCRS = re.compile(r'^_Z.*9LibreSCRS')
 # included: a public function that takes an Internal:: type is not usable
 # through the installed headers either.
 INTERNAL_IN_TEXT = re.compile(r'\b(Internal|detail)::|[A-Za-z0-9]_detail::')
+TYPEINFO_TEXT = re.compile(r'^(typeinfo for|typeinfo name for|vtable for) ')
 
 
-def attributed(sym, funcs, records):
-    if sym in funcs:
+def attributed(sym, surface):
+    if sym in surface.funcs:
         return True
     m = THUNK.match(sym)
     if m:
-        return '_Z' + sym[m.end():] in funcs
+        return '_Z' + sym[m.end():] in surface.funcs
     for prefix in ('_ZTH', '_ZTW', '_ZGV'):
         if sym.startswith(prefix):
-            return '_Z' + sym[len(prefix):] in funcs
+            return '_Z' + sym[len(prefix):] in surface.funcs
     for prefix in ('_ZTV', '_ZTI', '_ZTS', '_ZTT'):
         if sym.startswith(prefix):
-            return sym[len(prefix):] in records
+            return sym[len(prefix):] in surface.records
     return False
 
 
 def demangle(names):
+    if not names:
+        return []
     try:
         proc = subprocess.run(['c++filt'], input='\n'.join(names) + '\n',
                               capture_output=True, text=True, check=True)
@@ -199,75 +244,157 @@ def read_allowlist(path):
             if not line.strip() or line.startswith('#'):
                 continue
             parts = line.split('\t')
-            if len(parts) != 3 or not all(p.strip() for p in parts):
+            if len(parts) != 3 or not parts[0] or not parts[1]:
                 fail(f'{path}:{n}: expected "<library>\\t<demangled symbol>\\t<reason>", got {line!r}')
+            reason = parts[2]
+            if not re.match(r'^(imported|thrown): \S', reason):
+                fail(f'{path}:{n}: the reason must start with "imported: " or "thrown: ", got {reason!r}')
+            if reason.startswith('thrown:') and not TYPEINFO_TEXT.match(parts[1]):
+                fail(f'{path}:{n}: "thrown:" is a reason only for the typeinfo, typeinfo name or vtable '
+                     f'of an exception type, not for {parts[1]!r}')
             key = (parts[0], parts[1])
             if key in entries:
                 fail(f'{path}:{n}: duplicate entry {parts[1]!r}')
-            entries[key] = n
+            entries[key] = (n, reason)
     return entries
 
 
-def main():
-    if len(sys.argv) not in (5, 6):
-        fail('usage: abi-public-surface.py <clang++> <include-root> <exports.tsv> <allowlist> [<base allowlist>]')
-    clang, root, exports, allowlist_path = sys.argv[1:5]
-    allowlist = read_allowlist(allowlist_path)
-    base = read_allowlist(sys.argv[5]) if len(sys.argv) == 6 else None
-    funcs, records = measure_surface(clang, root)
-
+def read_rows(path, width):
     rows = []
-    with open(exports) as f:
+    with open(path) as f:
         for line in f:
             line = line.rstrip('\n')
             if not line:
                 continue
             parts = line.split('\t')
-            if len(parts) != 3:
-                fail(f'malformed export line: {line!r}')
+            if len(parts) != width:
+                fail(f'malformed line in {path}: {line!r}')
             rows.append(parts)
-    if not rows:
-        fail('no exported symbols to judge')
-    texts = demangle([r[2] for r in rows])
+    return rows
 
-    offending = {}
-    for (lib, binding, sym), text in zip(rows, texts):
-        bare = sym.split('@', 1)[0]
-        if not LIBRESCRS.match(bare):
-            continue
-        if not attributed(bare, funcs, records) or INTERNAL_IN_TEXT.search(text):
+
+def bare(sym):
+    return sym.split('@', 1)[0]
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--clang', required=True)
+    ap.add_argument('--include-root', required=True)
+    ap.add_argument('--exports', required=True)
+    ap.add_argument('--imports', required=True)
+    ap.add_argument('--allowlist', required=True)
+    ap.add_argument('--base-allowlist')
+    args = ap.parse_args()
+
+    allowlist = read_allowlist(args.allowlist)
+    base = read_allowlist(args.base_allowlist) if args.base_allowlist else None
+    surface = measure_surface(args.clang, args.include_root)
+
+    exports = read_rows(args.exports, 3)
+    imports = read_rows(args.imports, 2)
+    if not exports:
+        fail('no exported symbols to judge')
+
+    # Exports -- every one.
+    texts = demangle([e[2] for e in exports])
+    exporter = {}       # bare mangled -> (library, demangled text as listed)
+    offending = {}      # (library, text) -> binding
+    for (lib, binding, sym), text in zip(exports, texts):
+        b = bare(sym)
+        exporter.setdefault(b, (lib, text))
+        if LIBRESCRS.match(b) and (not attributed(b, surface) or INTERNAL_IN_TEXT.search(text)):
             offending.setdefault((lib, text), binding)
 
+    def offending_key(mangled):
+        hit = exporter.get(mangled)
+        return hit if hit in offending else None
+
     rc = 0
+
+    def report(title, lines, advice):
+        nonlocal rc
+        if not lines:
+            return
+        rc = 1
+        print(f'{title} ({len(lines)}):', file=sys.stderr)
+        for line in lines:
+            print(f'  {line}', file=sys.stderr)
+        print(f'       {advice}', file=sys.stderr)
+
     new = sorted(k for k in offending if k not in allowlist)
-    stale = sorted((n, k) for k, n in allowlist.items() if k not in offending)
-    if new:
-        rc = 1
-        print(f'EXPORT LEAK: {len(new)} exported symbol(s) name a LibreSCRS entity the installed '
-              'headers do not declare (or an Internal/detail one):', file=sys.stderr)
-        for lib, text in new:
-            print(f'  {lib}  {offending[(lib, text)]}  {text}', file=sys.stderr)
-        print('       Hide it (drop LIBRESCRS_PUBLIC_API), or declare it in an installed header as\n'
-              '       public API. The allowlist is not the place for a new one: it only shrinks.',
-              file=sys.stderr)
-    if stale:
-        rc = 1
-        print(f'STALE ALLOWLIST: {len(stale)} entr(y/ies) in {allowlist_path} name a symbol that is '
-              'no longer an internal export:', file=sys.stderr)
-        for n, (lib, text) in stale:
-            print(f'  line {n}: {lib}  {text}', file=sys.stderr)
-        print('       Delete the line(s).', file=sys.stderr)
-    added = sorted((n, k) for k, n in allowlist.items() if base is not None and k not in base)
-    if added:
-        rc = 1
-        print(f'ALLOWLIST GREW: {len(added)} entr(y/ies) the allowlist at the base revision does not hold:',
-              file=sys.stderr)
-        for n, (lib, text) in added:
-            print(f'  line {n}: {lib}  {text}', file=sys.stderr)
-        print('       The list only shrinks: an internal export is never added to it.', file=sys.stderr)
+    report('EXPORT LEAK: exported symbols naming a LibreSCRS entity the installed headers do not '
+           'declare (or an Internal/detail one)',
+           [f'{lib}  {offending[(lib, text)]}  {text}' for lib, text in new],
+           'Hide it (drop LIBRESCRS_PUBLIC_API), or declare it in an installed header as public API.')
+
+    # Imports -- every one of a shipped image.
+    imp_libre = [(img, bare(sym)) for img, sym in imports if LIBRESCRS.match(bare(sym))]
+    imp_texts = demangle([s for _, s in imp_libre])
+    importers = {}
+    unexported, unlisted = set(), set()
+    for (img, sym), text in zip(imp_libre, imp_texts):
+        if sym not in exporter:
+            unexported.add(f'{img}  {text}')
+            continue
+        key = offending_key(sym)
+        if key is None:
+            continue
+        importers.setdefault(key, set()).add(img)
+        if key not in allowlist:
+            unlisted.add(f'{img}  {text}')
+    report('IMPORT OF A HIDDEN SYMBOL: shipped images import LibreSCRS symbols no core library exports',
+           sorted(unexported),
+           'The image fails to load. Call public API, or export the symbol as public API.')
+    report('IMPORT OF AN INTERNAL SYMBOL: shipped images import internal exports the allowlist does not name',
+           sorted(unlisted),
+           'Call public API instead. The allowlist is not the place for a new one: it only shrinks.')
+
+    # Inline bodies -- calls from inline bodies of installed headers.
+    inline_bad, inline_listed = set(), set()
+    for ref_id, caller in surface.called.items():
+        mangled = surface.by_id.get(ref_id)
+        if not mangled or mangled in surface.defined or not LIBRESCRS.match(mangled):
+            continue
+        variants = [mangled, mangled.replace('C1E', 'C2E', 1), mangled.replace('D1E', 'D2E', 1)]
+        found = next((v for v in variants if v in exporter), None)
+        if found is None:
+            inline_bad.add(f'{caller} calls {demangle([mangled])[0]}, which no core library exports')
+            continue
+        key = offending_key(found)
+        if key is None:
+            continue
+        if key in allowlist:
+            inline_listed.add(f'{caller} calls {key[1]}')
+        else:
+            inline_bad.add(f'{caller} calls {key[1]}, an internal export the allowlist does not name')
+    report('INLINE BODY REACHES PAST THE PUBLIC SURFACE: inline code in installed headers',
+           sorted(inline_bad),
+           'A consumer calling the inline function links that symbol. Call public API from the header.')
+
+    # Staleness: an entry must still be an internal export and, unless it is the
+    # typeinfo of a thrown type, still have a shipped importer.
+    stale = []
+    for key, (n, reason) in sorted(allowlist.items(), key=lambda kv: kv[1][0]):
+        if key not in offending:
+            stale.append(f'line {n}: {key[0]}  {key[1]}  -- no longer an internal export')
+        elif reason.startswith('imported:') and not importers.get(key):
+            stale.append(f'line {n}: {key[0]}  {key[1]}  -- no shipped image imports it')
+    report(f'STALE ALLOWLIST: entries in {args.allowlist}', stale,
+           'Hide the symbol if nothing that ships imports it, and delete the line.')
+
+    if base is not None:
+        added = sorted((n, key) for key, (n, _) in allowlist.items() if key not in base)
+        report('ALLOWLIST GREW: entries the allowlist at the base revision does not hold',
+               [f'line {n}: {key[0]}  {key[1]}' for n, key in added],
+               'The list only shrinks: an internal export is never added to it.')
+
     if rc == 0:
-        print(f'Every exported LibreSCRS symbol is declared in the installed headers '
-              f'({len(rows)} exports judged; {len(allowlist)} allowlisted internal export(s) remain).')
+        print(f'Every exported, imported and inline-called LibreSCRS symbol is public or listed '
+              f'({len(exports)} exports, {len(imp_libre)} shipped imports judged; '
+              f'{len(allowlist)} listed internal export(s) remain).')
+        for line in sorted(inline_listed):
+            print(f'  listed, and called from an inline body of an installed header: {line}')
     sys.exit(rc)
 
 
