@@ -66,7 +66,7 @@ OpenScBridgeTests 19
 OpenScPluginUnitTests 2
 OpenScSrbEid2HwTest 1
 OpenscChangePinSelectorTests 4
-OpenscChannelLifecycleTests 68
+OpenscChannelLifecycleTests 78
 OpenscPinLifecycleTests 7
 OpenscRoutingTests 2
 OpenscUserPinSelectionTests 3

@@ -254,6 +254,13 @@ struct ContextCounts
 /// @return The sc_pkcs15_bind result.
 [[nodiscard]] int bindWithoutPinCache(sc_card_t* card, sc_pkcs15_card_t** p15card) noexcept;
 
+/// Makes the CardEdge (srbeid) signature key -- RSA, usage NONREPUDIATION -- ask
+/// for its PIN on every use. The vendored emulator leaves user_consent unset
+/// there, unlike the emulators of other national ID cards. The usage is the only
+/// test: a signing key in an unexpected file still asks. Remove once the pinned
+/// OpenSC sets the flag itself.
+void supplementSrbeidSigningConsent(sc_pkcs15_card_t& p15card) noexcept;
+
 /// The order every key operation keeps inside runUnderChannel: VERIFY the
 /// deposited per-operation @p pin, then @p operation -- in ONE card
 /// transaction, because runUnderChannel holds it across the whole callback.
