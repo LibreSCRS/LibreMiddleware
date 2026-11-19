@@ -13,7 +13,9 @@
 #
 # Use --check to compare a fresh build against the baseline; the script
 # fails non-zero on any difference. Use --update to regenerate the baseline.
-# Both refuse a tree in which one function is exported by two libraries.
+# Both refuse a tree in which one function is exported by two libraries, and
+# a tree that exports a LibreSCRS entity the installed headers do not declare
+# (see "Only public entities" below).
 #
 # Why text not abigail/abicompat: LibreSCRS-specific. The bulk of the API
 # is plain C++20 value types + factories + builders — header-only or
@@ -23,9 +25,14 @@
 # / removed / signature changed — with a one-line review per change.
 #
 # Usage:
-#   abi-snapshot.sh [--check|--update] [BUILD_DIR]
+#   abi-snapshot.sh [--check|--update] [--allowlist-base <rev>] [BUILD_DIR]
 #
-# Default action: --check. Default BUILD_DIR: build.
+# Default action: --check. Default BUILD_DIR: build. With --allowlist-base,
+# every entry of the internal-export allowlist must already be in the
+# allowlist at <rev> (CI passes the merge base): the list only shrinks.
+#
+# Needs clang (CXX, default clang++) and python3 besides nm and c++filt: the
+# public surface is read from clang's AST of the installed headers.
 
 set -euo pipefail
 
@@ -43,13 +50,14 @@ export LC_ALL=C
 # no symbols, and `--update` wrote a baseline of comments over a real one. The
 # sibling repository's snapshot already refuses an empty section for exactly
 # this reason; a missing tool is "I cannot measure", never a pass.
-for tool in nm c++filt; do
+for tool in nm c++filt python3; do
     command -v "$tool" >/dev/null 2>&1 \
         || { echo "FATAL: $tool not found on PATH -- cannot measure the ABI surface" >&2; exit 2; }
 done
 
 ACTION="check"
 BUILD_DIR="build"
+ALLOWLIST_BASE=""
 
 # What the scan actually saw. A section that exists but yields nothing is a
 # broken artefact; no section at all is an unbuilt tree. Both are exit 2.
@@ -78,10 +86,26 @@ total_symbols=0
 # old T-only clause would have thrown away without a word.
 #
 # What this filter does NOT answer: whether an implementation-detail symbol
-# should be in the export table at all. Sixteen of the W/V entries name
-# LibreSCRS::*::Internal:: types. That is a visibility question and it belongs to
-# check-impl-visibility.sh, which records it.
+# should be in the export table at all. That is judged over EVERY binding class,
+# not recorded, by the public-entity rule below.
 NOT_RECORDED_BINDINGS="W V u A"
+
+# ── Only public entities ──────────────────────────────────────────────────
+# Every exported symbol, whatever its binding class, must name an entity that
+# the installed headers declare as a consumer compiles them -- without
+# LIBRESCRS_INTERNAL_BUILD, friend declarations not counted -- and nothing in
+# an Internal or detail scope (abi-public-surface.py says how it is measured).
+#
+# This replaced a rule that dropped every T symbol whose own name contained
+# ::Internal:: or ::detail:: before recording the rest. That rule made the
+# baseline fall from 44 internal lines to 5 while the libraries still exported
+# 82 internal symbols, and it recorded 35 secure-channel members, declared only
+# in headers that are never installed, as public 5.x ABI.
+#
+# Symbols that are internal but still exported are listed one by one, with
+# the reason, in ci/abi/5.x-internal-exports.txt and are not recorded in the
+# baseline. Against --allowlist-base an added entry fails: the list only
+# shrinks.
 
 # emit_symbols <label> <file>
 #
@@ -113,6 +137,9 @@ emit_symbols() {
     # one-owner check after the scan.
     printf '%s\n' "$raw" | awk -v lib="$label" '$2 == "T" { print $3 "\t" lib }' >> "$OWNERS"
 
+    # Every export of every binding class, for the public-entity rule.
+    printf '%s\n' "$raw" | awk -v lib="$label" 'NF >= 3 && $2 != "A" { print lib "\t" $2 "\t" $3 }' >> "$EXPORTS"
+
     syms="$(printf '%s\n' "$raw" | awk '$2 == "T" { print $3 }' | c++filt | sort -u || true)"
     n=0
     [[ -n "$syms" ]] && n="$(printf '%s\n' "$syms" | wc -l)"
@@ -122,21 +149,11 @@ emit_symbols() {
         echo "       Refusing to emit an empty snapshot for this section." >&2
         exit 2
     fi
-    # Internal:: and detail:: are exported for the in-tree plugins and the
-    # test-helper archive, which are built from the same tree and version-
-    # locked to it. They are not a contract with any consumer, so they are not
-    # recorded: changing one is not ABI drift.
-    #
-    # Judged by the symbol's own qualified name, the text before the first
-    # '(': a public function whose parameter list mentions an Internal:: type
-    # is still declared in a public header, and a change to its signature is
-    # drift like any other.
-    printf '%s\n' "$syms" | awk '{
-        name = $0
-        paren = index(name, "(")
-        if (paren > 0) name = substr(name, 1, paren - 1)
-        if (name !~ /::(Internal|detail)::/) print
-    }' || true
+    # The allowlisted internal exports are not a contract with any consumer,
+    # so they are not recorded. Matched exactly, line for line: no spelling of a
+    # name exempts anything.
+    awk -F'\t' -v lib="$label" '!/^#/ && NF == 3 && $1 == lib { print $2 }' "$ALLOWLIST" > "$SCRATCH/allowed"
+    printf '%s\n' "$syms" | grep -vxF -f "$SCRATCH/allowed" || true
     artefacts_scanned=$((artefacts_scanned + 1))
     total_symbols=$((total_symbols + n))
 }
@@ -145,6 +162,9 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --check) ACTION="check"; shift ;;
         --update) ACTION="update"; shift ;;
+        --allowlist-base)
+            [[ $# -ge 2 ]] || { echo "ERROR: --allowlist-base needs a revision" >&2; exit 2; }
+            ALLOWLIST_BASE="$2"; shift 2 ;;
         -h|--help)
             sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
             exit 0
@@ -160,12 +180,25 @@ fi
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BASELINE="${REPO_ROOT}/ci/abi/5.x-baseline.txt"
+ALLOWLIST="${REPO_ROOT}/ci/abi/5.x-internal-exports.txt"
+SURFACE="${REPO_ROOT}/ci/scripts/abi-public-surface.py"
+INCLUDE_ROOT="${REPO_ROOT}/include"
+CXX="${CXX:-clang++}"
+for f in "$ALLOWLIST" "$SURFACE"; do
+    [[ -f "$f" ]] || { echo "FATAL: required file '$f' not found" >&2; exit 2; }
+done
+if ! "$CXX" --version 2>/dev/null | grep -q clang; then
+    echo "FATAL: '$CXX' is not clang -- the public surface is read from clang's AST" >&2
+    exit 2
+fi
 SCRATCH="$(mktemp -d)"
 trap 'rm -rf "$SCRATCH"' EXIT
 
 snapshot="${SCRATCH}/snapshot.txt"
 OWNERS="${SCRATCH}/owners.txt"
+EXPORTS="${SCRATCH}/exports.tsv"
 : > "$OWNERS"
+: > "$EXPORTS"
 
 {
     echo "# LibreSCRS public ABI snapshot"
@@ -212,9 +245,9 @@ fi
 # within the major version. Which copy a process runs depends on load order.
 # Vague-linkage entries (V, W) legitimately appear in every library that uses
 # a type, so this judges T only -- the bindings the snapshot records.
-# Internal:: functions count too: they are not recorded, but two exporting
-# copies are still two owners. Refused for --update as well, so the duplicate
-# cannot be written into the baseline.
+# Allowlisted internal functions count too: they are not recorded, but two
+# exporting copies are still two owners. Refused for --update as well, so the
+# duplicate cannot be written into the baseline.
 dup_owners="$(awk -F'\t' '{ n[$1]++; libs[$1] = libs[$1] " " $2 }
     END { for (s in n) if (n[s] > 1) print s "\t" libs[s] }' "$OWNERS" | sort)"
 if [[ -n "$dup_owners" ]]; then
@@ -227,6 +260,27 @@ if [[ -n "$dup_owners" ]]; then
     echo "       Each exported function has one owning library. Link the owner" >&2
     echo "       instead of absorbing its implementation into a second library." >&2
     exit 1
+fi
+
+# Refused for --update as well, so an internal export cannot be written into
+# the baseline as public ABI.
+base_args=()
+if [[ -n "$ALLOWLIST_BASE" ]]; then
+    if ! git -C "$REPO_ROOT" rev-parse --verify --quiet "${ALLOWLIST_BASE}^{commit}" >/dev/null; then
+        echo "FATAL: --allowlist-base '$ALLOWLIST_BASE' is not a commit of this checkout" >&2
+        exit 2
+    fi
+    if git -C "$REPO_ROOT" show "${ALLOWLIST_BASE}:ci/abi/5.x-internal-exports.txt" > "$SCRATCH/base-allowlist" 2>/dev/null; then
+        base_args=("$SCRATCH/base-allowlist")
+    else
+        echo "note: ${ALLOWLIST_BASE} holds no internal-export allowlist; additions are not judged against it"
+    fi
+fi
+
+surface_rc=0
+python3 "$SURFACE" "$CXX" "$INCLUDE_ROOT" "$EXPORTS" "$ALLOWLIST" "${base_args[@]}" || surface_rc=$?
+if [[ "$surface_rc" -ne 0 ]]; then
+    exit "$surface_rc"
 fi
 
 case "$ACTION" in

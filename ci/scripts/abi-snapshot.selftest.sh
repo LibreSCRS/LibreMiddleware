@@ -12,10 +12,14 @@
 # directions: the baseline losing a symbol, and the tree losing one.
 #
 # Every case builds a throwaway repository under /var/tmp (never /tmp, a RAM
-# filesystem on the development host) holding a copy of this gate and a stub
+# filesystem on the development host) holding a copy of this gate, its
+# public-surface helper, an installed-header tree (include/LibreSCRS) and a stub
 # shared object named the way CMake names the real ones. The stub is the point:
 # a case that leans on the repository's own build tree would measure whatever
 # was last built there.
+#
+# selftest-platforms: linux -- the fixtures are ELF shared objects read with
+# `nm -D`; the gate itself runs only on the Linux leg that records the baseline.
 #
 # Cases:
 #   1  control: --update over the stub tree, then --check          -> 0
@@ -26,10 +30,27 @@
 #   6  control: the same run under a PATH shim that HAS c++filt    -> 0
 #   7  c++filt taken off PATH                                      -> 2
 #   8  an exported data symbol                                     -> 2
-#   9  Internal:: / detail:: functions are not recorded            -> 0
-#  10  a public function taking an Internal:: type is recorded,
-#      and changing that parameter is drift                        -> 1
+#   9  an exported Internal:: function is a leak; allowlisted it is
+#      not recorded; renamed, it is a leak and its entry is stale  -> 1/0/1
+#  10  a public function taking an Internal:: type                 -> 1
 #  11  one function exported by two libraries, --check / --update  -> 1
+#
+# The public-entity rule (every export of every binding class names an entity
+# the installed headers declare, nothing Internal/detail):
+#  12  control: an exported public class with a vtable             -> 0
+#  13  a class outside Internal, declared only in a header that is
+#      not installed, re-exported (the PlainChannel shape)         -> 1
+#  14  a new Internal:: export, and the typeinfo of an Internal::
+#      class (V binding)                                           -> 1
+#  15  a public function taking a type no installed header declares -> 1
+#  16  a function declared only under LIBRESCRS_INTERNAL_BUILD      -> 1
+#  17  a function declared only as a friend                        -> 1
+#  18  a function declared only in an installed tree's detail/
+#      directory, which install() excludes                         -> 1
+#  19  the allowlist: an entry whose export is gone, an entry
+#      without a reason                                            -> 1/2
+#  20  CXX is not clang                                            -> 2
+#  25  an entry added against --allowlist-base, and its control     -> 1/0
 set -uo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,11 +59,23 @@ SUBJECT="${SUBJECT:-$HERE/abi-snapshot.sh}"
 
 # A compiler is the only way to get a shared object whose exported set this
 # file controls. Without one the answer is "I could not measure", never a pass.
-for tool in g++ nm c++filt; do
+# The gate reads the installed headers with clang. CI hands the self-tests a
+# CXX naming the clang it pins (the runner's default one crashes on <type_traits>
+# under -std=c++23); a CXX naming gcc is replaced, because it would turn every
+# case into "cannot measure".
+if ! "${CXX:-clang++}" --version 2>/dev/null | grep -q clang; then
+    CXX=clang++
+fi
+CXX="${CXX:-clang++}"
+export CXX
+
+for tool in g++ nm c++filt python3 "$CXX"; do
     command -v "$tool" >/dev/null 2>&1 \
         || { echo "FATAL: $tool not found on PATH -- cannot build the fixture" >&2; exit 2; }
 done
 
+HELPER="$HERE/abi-public-surface.py"
+[ -f "$HELPER" ] || { echo "FATAL: $HELPER is missing" >&2; exit 2; }
 WORK="$(mktemp -d /var/tmp/abi-snapshot-selftest.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -74,6 +107,19 @@ says() {  # says <label> <text>
     fi
 }
 
+# fixture <root>: the gate, its helper, an empty allowlist and the header of
+# the three stub functions, which every stub below exports.
+fixture() {
+    local root="$1"
+    mkdir -p "$root/ci/scripts" "$root/ci/abi" "$root/build/lib/LibreSCRS" "$root/include/LibreSCRS"
+    cp "$SUBJECT" "$root/ci/scripts/abi-snapshot.sh"
+    cp "$HELPER" "$root/ci/scripts/abi-public-surface.py"
+    chmod 0755 "$root/ci/scripts/abi-snapshot.sh"
+    printf '# fixture allowlist\n' > "$root/ci/abi/5.x-internal-exports.txt"
+    printf 'namespace LibreSCRS {\nint selftestAlpha(int x);\nint selftestBeta(int x);\nint selftestGamma(int x);\n}\n' \
+        > "$root/include/LibreSCRS/Stub.h"
+}
+
 # stub <name> [--without-beta] -> prints the fixture root
 stub() {
     # One `local` per name: bash 5.3 does not let the second assignment in a
@@ -82,9 +128,7 @@ stub() {
     local name="$1"
     local omit="${2:-}"
     local root="$WORK/$name"
-    mkdir -p "$root/ci/scripts" "$root/ci/abi" "$root/build/lib/LibreSCRS"
-    cp "$SUBJECT" "$root/ci/scripts/abi-snapshot.sh"
-    chmod 0755 "$root/ci/scripts/abi-snapshot.sh"
+    fixture "$root"
     {
         printf 'namespace LibreSCRS {\n'
         printf 'int selftestAlpha(int x) { return x + 1; }\n'
@@ -162,7 +206,7 @@ fi
 #     would read as the finding.
 SHIM="$WORK/shim"
 mkdir -p "$SHIM"
-for t in bash sh nm c++filt awk sort find wc basename dirname mktemp diff cat sed grep cp mkdir rm head tr env printf ls uname; do
+for t in bash sh nm c++filt awk sort find wc basename dirname mktemp diff cat sed grep cp mkdir rm head tr env printf ls uname python3 "$CXX"; do
     p="$(command -v "$t" 2>/dev/null)" && ln -sf "$p" "$SHIM/$t"
 done
 root5="$(stub shim-tree)"
@@ -207,19 +251,20 @@ check "an exported data symbol is not dropped in silence" 2 "$rc"
 says "an exported data symbol is not dropped in silence" "no
        rule for"
 
-# --- case 9: an Internal:: or detail:: symbol is no contract ----------------
-#     It is exported for the in-tree plugins, which are version-locked to the
-#     tree: it is not recorded, and changing it is not drift.
+# --- case 9: an exported Internal:: or detail:: symbol is a leak ------------
+#     It used to be dropped by its spelling, which is how 82 internal exports
+#     went unrecorded. Now it is a leak unless the allowlist names it exactly;
+#     allowlisted, it is not recorded; renamed, the new name is a leak and the
+#     entry naming the old one is stale.
 root9="$WORK/internal"
-mkdir -p "$root9/ci/scripts" "$root9/ci/abi" "$root9/build/lib/LibreSCRS"
-cp "$SUBJECT" "$root9/ci/scripts/abi-snapshot.sh"
-chmod 0755 "$root9/ci/scripts/abi-snapshot.sh"
+fixture "$root9"
 build_internal() {  # build_internal <internal-function-name>
     {
         printf 'namespace LibreSCRS {\n'
         printf 'int selftestAlpha(int x) { return x + 1; }\n'
+        printf 'int selftestBeta(int x) { return x + 2; }\n'
+        printf 'int selftestGamma(int x) { return x + 3; }\n'
         printf 'namespace Internal { int %s(int x) { return x + 4; } }\n' "$1"
-        printf 'namespace detail { int selftestDetail(int x) { return x + 5; } }\n'
         printf '}\n'
     } > "$root9/stub.cpp"
     g++ -shared -fPIC -o "$root9/build/lib/LibreSCRS/libLibreSCRS_Stub.so.5.0.0" \
@@ -228,51 +273,51 @@ build_internal() {  # build_internal <internal-function-name>
 }
 build_internal selftestInternal
 rc=$(run "$root9" --update build)
-check "internal symbols: --update" 0 "$rc"
-if grep -qE 'selftestInternal|selftestDetail' "$root9/ci/abi/5.x-baseline.txt"; then
-    echo "FAIL  an Internal:: or detail:: symbol was recorded"
+check "an Internal:: export, not allowlisted: --update" 1 "$rc"
+says "an Internal:: export, not allowlisted: --update" "LibreSCRS::Internal::selftestInternal(int)"
+printf 'libLibreSCRS_Stub.so\tLibreSCRS::Internal::selftestInternal(int)\timported: libfixture-plugin\n' \
+    >> "$root9/ci/abi/5.x-internal-exports.txt"
+rc=$(run "$root9" --update build)
+check "the same export, allowlisted: --update" 0 "$rc"
+if grep -q 'selftestInternal' "$root9/ci/abi/5.x-baseline.txt"; then
+    printf 'FAIL  %-52s recorded\n' "an allowlisted internal export is not recorded"
     fails=$((fails + 1))
+else
+    printf 'ok    %-52s not recorded\n' "an allowlisted internal export is not recorded"
 fi
 build_internal selftestInternalRenamed
 rc=$(run "$root9" --check build)
-check "a changed Internal:: symbol is not drift" 0 "$rc"
+check "a renamed Internal:: export" 1 "$rc"
+says "a renamed Internal:: export" "LibreSCRS::Internal::selftestInternalRenamed(int)"
+says "a renamed Internal:: export" "STALE ALLOWLIST"
 
 # --- case 10: a public function that takes an Internal:: type ---------------
-#     Only the function's own name decides. Its parameter types are not its
-#     name: a public member whose signature mentions an Internal:: type is
-#     still declared in a public header, and a change to that signature is
-#     drift like any other.
+#     Declared in an installed header, but a consumer can only call it with a
+#     type in an internal scope: not public API either.
 root10="$WORK/internal-param"
-mkdir -p "$root10/ci/scripts" "$root10/ci/abi" "$root10/build/lib/LibreSCRS"
-cp "$SUBJECT" "$root10/ci/scripts/abi-snapshot.sh"
-chmod 0755 "$root10/ci/scripts/abi-snapshot.sh"
-build_internal_param() {  # build_internal_param <internal-type-name>
-    {
-        printf 'namespace LibreSCRS {\n'
-        printf 'namespace Internal { struct %s { int x; }; }\n' "$1"
-        printf 'int selftestAlpha(int x) { return x + 1; }\n'
-        printf 'int selftestTakesInternal(const Internal::%s& a) { return a.x; }\n' "$1"
-        printf '}\n'
-    } > "$root10/stub.cpp"
-    g++ -shared -fPIC -o "$root10/build/lib/LibreSCRS/libLibreSCRS_Stub.so.5.0.0" \
-        "$root10/stub.cpp" 2>"$WORK/gcc.err" \
-        || { echo "FATAL: could not build the internal-parameter stub" >&2; exit 2; }
-}
-build_internal_param SelftestCommand
+fixture "$root10"
+{
+    printf 'namespace LibreSCRS {\n'
+    printf 'namespace Internal { struct SelftestCommand { int x; }; }\n'
+    printf 'int selftestAlpha(int x);\nint selftestBeta(int x);\nint selftestGamma(int x);\n'
+    printf 'int selftestTakesInternal(const Internal::SelftestCommand& a);\n'
+    printf '}\n'
+} > "$root10/include/LibreSCRS/Stub.h"
+{
+    printf '#include <LibreSCRS/Stub.h>\n'
+    printf 'namespace LibreSCRS {\n'
+    printf 'int selftestAlpha(int x) { return x + 1; }\n'
+    printf 'int selftestBeta(int x) { return x + 2; }\n'
+    printf 'int selftestGamma(int x) { return x + 3; }\n'
+    printf 'int selftestTakesInternal(const Internal::SelftestCommand& a) { return a.x; }\n'
+    printf '}\n'
+} > "$root10/stub.cpp"
+g++ -shared -fPIC -I"$root10/include" -o "$root10/build/lib/LibreSCRS/libLibreSCRS_Stub.so.5.0.0" \
+    "$root10/stub.cpp" 2>"$WORK/gcc.err" \
+    || { echo "FATAL: could not build the internal-parameter stub" >&2; exit 2; }
 rc=$(run "$root10" --update build)
-check "public function, Internal:: parameter: --update" 0 "$rc"
-if grep -qF 'selftestTakesInternal(LibreSCRS::Internal::SelftestCommand const&)' \
-        "$root10/ci/abi/5.x-baseline.txt"; then
-    printf 'ok    %-52s recorded\n' "a public function with an Internal:: parameter"
-else
-    printf 'FAIL  %-52s not recorded\n' "a public function with an Internal:: parameter"
-    sed 's/^/        /' "$root10/ci/abi/5.x-baseline.txt"
-    fails=$((fails + 1))
-fi
-build_internal_param SelftestCommandRenamed
-rc=$(run "$root10" --check build)
-check "its changed parameter type is drift" 1 "$rc"
-says "its changed parameter type is drift" "selftestTakesInternal"
+check "a public function taking an Internal:: type" 1 "$rc"
+says "a public function taking an Internal:: type" "selftestTakesInternal(LibreSCRS::Internal::SelftestCommand const&)"
 
 # --- case 11: one function exported by two libraries ------------------------
 #     A library that absorbs another one's implementation exports its
@@ -280,9 +325,9 @@ says "its changed parameter type is drift" "selftestTakesInternal"
 #     two promises. The control is two libraries with disjoint exports, so the
 #     refusal below is about the shared function and not about a second file.
 root11="$WORK/two-owners"
-mkdir -p "$root11/ci/scripts" "$root11/ci/abi" "$root11/build/lib/LibreSCRS"
-cp "$SUBJECT" "$root11/ci/scripts/abi-snapshot.sh"
-chmod 0755 "$root11/ci/scripts/abi-snapshot.sh"
+fixture "$root11"
+printf 'namespace LibreSCRS {\nint selftestOwned(int x);\nint selftestOther(int x);\n}\n' \
+    > "$root11/include/LibreSCRS/Stub.h"
 build_lib11() {  # build_lib11 <Module> <function-name...>
     local module="$1"; shift
     local fn
@@ -313,6 +358,210 @@ else
     printf 'FAIL  %-52s the refused --update overwrote the baseline\n' "the refused duplicate wrote nothing"
     fails=$((fails + 1))
 fi
+
+# --- cases 12 to 20: only public entities are exported ---------------------
+# custom <name> <installed header text> <source text> [<path> <text>]...: a
+# fixture whose one library is compiled from <source text>, with <installed
+# header text> as include/LibreSCRS/Stub.h and each further <path> (relative to
+# the fixture root) holding <text>. The source sees the internal build's view
+# (it defines LIBRESCRS_INTERNAL_BUILD and has src/ on its include path); the
+# gate sees what a consumer sees. Sets $root; called without a subshell, so a
+# failed compile stops the whole self-test.
+custom() {
+    root="$WORK/$1"
+    fixture "$root"
+    mkdir -p "$root/src"
+    printf '%s\n' "$2" > "$root/include/LibreSCRS/Stub.h"
+    printf '%s\n' "$3" > "$root/stub.cpp"
+    shift 3
+    while [ "$#" -ge 2 ]; do
+        mkdir -p "$(dirname "$root/$1")"
+        printf '%s\n' "$2" > "$root/$1"
+        shift 2
+    done
+    # The visibility flags of the shipped libraries: an inline member (an
+    # implicit constructor among them) is never exported, so the export table
+    # holds what the real one holds.
+    g++ -shared -fPIC -fvisibility=hidden -fvisibility-inlines-hidden -DLIBRESCRS_INTERNAL_BUILD \
+        -I"$root/include" -I"$root/src" \
+        -o "$root/build/lib/LibreSCRS/libLibreSCRS_Stub.so.5.0.0" "$root/stub.cpp" 2>"$WORK/gcc.err" \
+        || { echo "FATAL: could not build fixture $root" >&2; sed 's/^/        /' "$WORK/gcc.err" >&2; exit 2; }
+}
+EXPORT='__attribute__((visibility("default")))'
+PUBLIC_FNS='int selftestAlpha(int x);'
+PUBLIC_DEFS="$EXPORT int selftestAlpha(int x) { return x + 1; }"
+
+# 12: the control of 13 and 14. A public class with two polymorphic bases,
+#     defined in an installed header and exported: its members, the thunk of
+#     the override from its second base, its vtable and its typeinfo are all
+#     attributed to the installed declaration.
+custom public-class \
+    "namespace LibreSCRS { $PUBLIC_FNS
+struct $EXPORT SelftestA { virtual ~SelftestA(); virtual int a(); };
+struct $EXPORT SelftestB { virtual ~SelftestB(); virtual int b(); };
+class $EXPORT SelftestWidget : public SelftestA, public SelftestB { public: SelftestWidget(); ~SelftestWidget() override; int b() override; }; }" \
+    "#include <LibreSCRS/Stub.h>
+namespace LibreSCRS { $PUBLIC_DEFS
+SelftestA::~SelftestA() = default; int SelftestA::a() { return 1; }
+SelftestB::~SelftestB() = default; int SelftestB::b() { return 2; }
+SelftestWidget::SelftestWidget() = default; SelftestWidget::~SelftestWidget() = default;
+int SelftestWidget::b() { return 3; } }"
+root12="$root"
+if ! nm -D -U "$root12/build/lib/LibreSCRS/libLibreSCRS_Stub.so.5.0.0" | c++filt \
+        | grep -q 'non-virtual thunk to LibreSCRS::SelftestWidget::b()'; then
+    echo "FATAL: the control exports no thunk -- it would prove nothing" >&2
+    exit 2
+fi
+rc=$(run "$root12" --update build)
+check "control: an exported public class" 0 "$rc"
+
+# 13: the shape a name rule never saw. PlainChannel lives in a public namespace
+#     (not Internal), its header is not installed, and LIBRESCRS_PUBLIC_API on
+#     the class re-exports its members, vtable and typeinfo. The installed
+#     header forward-declares it, as installed headers do for a friend: a
+#     declaration is not a definition, so it publishes no vtable.
+custom reexported-plain \
+    "namespace LibreSCRS { $PUBLIC_FNS namespace SecureChannel { class PlainChannel; } }" \
+    "#include <LibreSCRS/Stub.h>
+#include \"PlainChannel.h\"
+namespace LibreSCRS { $PUBLIC_DEFS
+namespace SecureChannel { PlainChannel::PlainChannel(int a) : aid(a) {} int PlainChannel::state() const { return aid; } int PlainChannel::applet() const { return aid; } } }" \
+    src/PlainChannel.h "namespace LibreSCRS::SecureChannel {
+struct ISecureChannel { virtual ~ISecureChannel() = default; virtual int state() const = 0; };
+struct IApplet { virtual ~IApplet() = default; virtual int applet() const = 0; };
+class $EXPORT PlainChannel final : public ISecureChannel, public IApplet { public: explicit PlainChannel(int a); int state() const override; int applet() const override; private: int aid; }; }"
+root13="$root"
+rc=$(run "$root13" --update build)
+check "a re-exported PlainChannel" 1 "$rc"
+says "a re-exported PlainChannel" "LibreSCRS::SecureChannel::PlainChannel::PlainChannel(int)"
+says "a re-exported PlainChannel" "vtable for LibreSCRS::SecureChannel::PlainChannel"
+says "a re-exported PlainChannel" "non-virtual thunk to LibreSCRS::SecureChannel::PlainChannel::applet() const"
+
+# 14: a new Internal:: export, declared in the installed header (a forward
+#     declaration for a friend is the usual reason), plus the typeinfo of an
+#     Internal:: class -- a V-binding row the old T-only filter never read.
+custom new-internal \
+    "namespace LibreSCRS { $PUBLIC_FNS namespace Internal { int selftestHelper(int x); } }" \
+    "#include <LibreSCRS/Stub.h>
+namespace LibreSCRS { $PUBLIC_DEFS
+namespace Internal { $EXPORT int selftestHelper(int x) { return x; }
+struct $EXPORT SelftestProvider { virtual ~SelftestProvider(); virtual int get() = 0; };
+SelftestProvider::~SelftestProvider() = default; } }"
+root14="$root"
+rc=$(run "$root14" --update build)
+check "a new Internal:: export and its typeinfo" 1 "$rc"
+says "a new Internal:: export and its typeinfo" "LibreSCRS::Internal::selftestHelper(int)"
+says "a new Internal:: export and its typeinfo" "V  typeinfo for LibreSCRS::Internal::SelftestProvider"
+
+# 15: a public function whose parameter type no installed header declares (the
+#     SessionKeys shape): no installed declaration of the function can exist.
+custom undeclared-param \
+    "namespace LibreSCRS { $PUBLIC_FNS }" \
+    "#include <LibreSCRS/Stub.h>
+namespace LibreSCRS { $PUBLIC_DEFS
+namespace SecureChannel { struct SessionKeys { int enc; }; $EXPORT int selftestRekey(SessionKeys k) { return k.enc; } } }"
+root15="$root"
+rc=$(run "$root15" --update build)
+check "a function taking an uninstalled type" 1 "$rc"
+says "a function taking an uninstalled type" "LibreSCRS::SecureChannel::selftestRekey(LibreSCRS::SecureChannel::SessionKeys)"
+
+# 16: the two-faced header. The declaration exists only for the internal build,
+#     so the consumer's view of the same header has no such function.
+custom internal-build-only \
+    "namespace LibreSCRS { $PUBLIC_FNS
+#ifdef LIBRESCRS_INTERNAL_BUILD
+int selftestTransmitInternal(int x);
+#endif
+}" \
+    "#include <LibreSCRS/Stub.h>
+namespace LibreSCRS { $PUBLIC_DEFS $EXPORT int selftestTransmitInternal(int x) { return x; } }"
+root16="$root"
+rc=$(run "$root16" --update build)
+check "a function only the internal build declares" 1 "$rc"
+says "a function only the internal build declares" "LibreSCRS::selftestTransmitInternal(int)"
+
+# 17: a friend declaration names a function; it does not declare it for the
+#     consumer.
+custom friend-only \
+    "namespace LibreSCRS { $PUBLIC_FNS
+class SelftestSession { friend int selftestSessionGeneration(const SelftestSession&); int gen = 0; }; }" \
+    "#include <LibreSCRS/Stub.h>
+namespace LibreSCRS { $PUBLIC_DEFS $EXPORT int selftestSessionGeneration(const SelftestSession& s) { return s.gen; } }"
+root17="$root"
+rc=$(run "$root17" --update build)
+check "a function declared only as a friend" 1 "$rc"
+says "a function declared only as a friend" "LibreSCRS::selftestSessionGeneration(LibreSCRS::SelftestSession const&)"
+
+# 18: a header under include/LibreSCRS/**/detail/ is in the source tree but not
+#     in the package: install() excludes every detail directory.
+custom detail-dir \
+    "namespace LibreSCRS { $PUBLIC_FNS }" \
+    "#include <LibreSCRS/Stub.h>
+#include <LibreSCRS/detail/Bridge.h>
+namespace LibreSCRS { $PUBLIC_DEFS int selftestUnwrap(int x) { return x; } }" \
+    include/LibreSCRS/detail/Bridge.h "namespace LibreSCRS { $EXPORT int selftestUnwrap(int x); }"
+root18="$root"
+rc=$(run "$root18" --update build)
+check "a function declared only under detail/" 1 "$rc"
+says "a function declared only under detail/" "LibreSCRS::selftestUnwrap(int)"
+
+# 19: every entry is still an internal export, with a reason. Starting from the green, allowlisted case 9
+#     fixture with its first function restored:
+build_internal selftestInternal
+rc=$(run "$root9" --check build)
+check "control: one listed internal export" 0 "$rc"
+command cp -f "$root9/ci/abi/5.x-internal-exports.txt" "$WORK/allow9.good"
+#   (a) the export is hidden, the entry kept
+build_internal_free() {
+    printf 'namespace LibreSCRS {\nint selftestAlpha(int x) { return x + 1; }\nint selftestBeta(int x) { return x + 2; }\nint selftestGamma(int x) { return x + 3; }\n}\n' > "$root9/stub.cpp"
+    g++ -shared -fPIC -o "$root9/build/lib/LibreSCRS/libLibreSCRS_Stub.so.5.0.0" "$root9/stub.cpp" 2>"$WORK/gcc.err" \
+        || { echo "FATAL: could not rebuild the case 9 stub" >&2; exit 2; }
+}
+build_internal_free
+rc=$(run "$root9" --check build)
+check "an entry whose export is gone" 1 "$rc"
+says "an entry whose export is gone" "no longer an internal export"
+build_internal selftestInternal
+#   (c) an entry without a reason
+printf 'libLibreSCRS_Stub.so\tLibreSCRS::Internal::selftestInternal(int)\n' > "$root9/ci/abi/5.x-internal-exports.txt"
+rc=$(run "$root9" --check build)
+check "an entry without a reason" 2 "$rc"
+command cp -f "$WORK/allow9.good" "$root9/ci/abi/5.x-internal-exports.txt"
+
+# 20: the public surface is read from clang's AST; gcc cannot produce it.
+rc=$( if ( cd "$root12" && CXX=g++ ./ci/scripts/abi-snapshot.sh --check build ) > "$WORK/out" 2>&1; then echo 0; else echo $?; fi )
+check "CXX is not clang" 2 "$rc"
+says "CXX is not clang" "is not clang"
+
+# --- 25: the list only shrinks ----------------------------------------------
+#     The case 9 fixture as a git repository whose base commit holds the list
+#     with one entry. A second entry -- a real, imported internal export -- is
+#     green without a base and red against it.
+git_fixture() { git -C "$root9" -c user.name=selftest -c user.email=selftest@invalid \
+    -c commit.gpgsign=false -c core.hooksPath=/dev/null "$@"; }
+build_internal selftestInternal
+command cp -f "$WORK/allow9.good" "$root9/ci/abi/5.x-internal-exports.txt"
+git_fixture init -q
+git_fixture add ci/abi/5.x-internal-exports.txt
+git_fixture commit -q -m base
+{
+    printf 'namespace LibreSCRS {\n'
+    printf 'int selftestAlpha(int x) { return x + 1; }\n'
+    printf 'int selftestBeta(int x) { return x + 2; }\n'
+    printf 'int selftestGamma(int x) { return x + 3; }\n'
+    printf 'namespace Internal { int selftestInternal(int x) { return x + 4; } int selftestExtra(int x) { return x; } }\n'
+    printf '}\n'
+} > "$root9/stub.cpp"
+g++ -shared -fPIC -o "$root9/build/lib/LibreSCRS/libLibreSCRS_Stub.so.5.0.0" "$root9/stub.cpp" 2>"$WORK/gcc.err" \
+    || { echo "FATAL: could not rebuild the case 9 stub" >&2; exit 2; }
+printf 'libLibreSCRS_Stub.so\tLibreSCRS::Internal::selftestExtra(int)\timported: libfixture-plugin\n' \
+    >> "$root9/ci/abi/5.x-internal-exports.txt"
+rc=$(run "$root9" --check build)
+check "control: the added entry, judged without a base" 0 "$rc"
+rc=$(run "$root9" --check --allowlist-base HEAD build)
+check "an entry added against the base" 1 "$rc"
+says "an entry added against the base" "ALLOWLIST GREW"
+says "an entry added against the base" "LibreSCRS::Internal::selftestExtra(int)"
 
 printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
 [ "$fails" = 0 ]
