@@ -248,7 +248,24 @@ jobs:
         # signature drift forbidden. Additions land via an intentional
         # baseline regeneration (`abi-snapshot.sh --update`) reviewed in
         # the same commit as the new public symbol.
-        run: ./ci/scripts/abi-snapshot.sh --check build
+        # It also refuses any export, of any binding class, that names a
+        # LibreSCRS entity the installed headers do not declare, and any entry
+        # the internal-export allowlist gained since the base revision:
+        # the pull request's base, the push's previous tip, or (new branch)
+        # the merge base with main. The public surface is read from clang's AST
+        # of the installed headers, so CXX is the clang the layout snapshot
+        # below uses.
+        run: |
+          base="$PR_BASE"
+          [ -n "$base" ] || base="$PUSH_BEFORE"
+          if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            base="$(git merge-base HEAD origin/main)"
+          fi
+          ./ci/scripts/abi-snapshot.sh --check --allowlist-base "$base" build
+        env:
+          CXX: clang++-21
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
 
       - name: Check ABI layout vs baseline
         # Native leg only: member offsets and vtable slot order are facts about

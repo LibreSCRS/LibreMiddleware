@@ -19,6 +19,9 @@
 #      names the count
 #  20  a core library exports a standard-library template instantiated on a
 #      LibreSCRS type -> 1, and the symbol is named
+#  22  a core library exports an Internal:: function the internal-export
+#      list does not name -> 1, and the symbol is named
+#  23  the same export, named in that list -> 0   (the control of 22)
 #
 # Case 6 is why cases 3 and 4 are not enough. Until this file was written the
 # rule matched the demangled segment `::Impl::`, so renaming the pimpl to `Impl_`
@@ -537,6 +540,37 @@ command cp -f "$src/clean.so" "$tree20/plugins/libselftest-plugin.so"
 command cp -f "$src/stdweak.so" "$tree20/lib/LibreSCRS/libLibreSCRS_Trust.so"
 out="$(bash "$GATE" "$tree20" 2>&1)"; rc=$?
 report 20 1 "$rc" "  std::__detail::_Map_base<" "$out"
+
+# --- cases 22 and 23: an Internal:: function in a core library --------------
+# The core pass used to drop every T symbol whose own name held ::Internal:: or
+# ::detail:: before comparing with the surface, which is how 82 internal exports
+# passed it. Measured against the gate as it was: exit 0 on exactly the tree of
+# case 22. Case 23 is its control: the same export, named exactly in the
+# internal-export list, is not a leak.
+sed 's/int alpha(int x) { return Body{}.step(x); }/int alpha(int x) { return Body{}.step(x); }\n} namespace Internal { int selftestInternal(int x) { return x; }/' \
+    "$src/clean.cpp" > "$src/internal.cpp"
+g++ -shared -fPIC -o "$src/internal.so" "$src/internal.cpp" 2>>"$WORK/gcc.err" \
+    || { echo "FATAL: could not compile the internal-export fixture" >&2; exit 2; }
+if ! nm -D -U "$src/internal.so" | awk '$2 == "T" { print $3 }' | c++filt \
+        | grep -qxF 'LibreSCRS::Internal::selftestInternal(int)'; then
+    echo "FATAL: the fixture exports no Internal:: function -- nothing to detect" >&2
+    exit 2
+fi
+tree22="$WORK/tree-internal-export"
+make_tree "$tree22"
+for module in Auth Certificate Plugin Signing SmartCard Trust; do
+    command cp -f "$src/clean.so" "$tree22/lib/LibreSCRS/libLibreSCRS_$module.so"
+done
+command cp -f "$src/clean.so" "$tree22/plugins/libselftest-plugin.so"
+command cp -f "$src/internal.so" "$tree22/lib/LibreSCRS/libLibreSCRS_SmartCard.so"
+empty_list="$WORK/internal-exports-empty.txt"
+printf '# fixture: no internal exports\n' > "$empty_list"
+out="$(LIBRESCRS_ABI_INTERNAL_EXPORTS="$empty_list" bash "$GATE" "$tree22" 2>&1)"; rc=$?
+report 22 1 "$rc" "  LibreSCRS::Internal::selftestInternal(int)" "$out"
+listed="$WORK/internal-exports-listed.txt"
+printf 'libLibreSCRS_SmartCard.so\tLibreSCRS::Internal::selftestInternal(int)\timported: libfixture-plugin\n' > "$listed"
+out="$(LIBRESCRS_ABI_INTERNAL_EXPORTS="$listed" bash "$GATE" "$tree22" 2>&1)"; rc=$?
+report 23 0 "$rc" "Impl visibility clean" "$out"
 
 printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
 [ "$fail" = 0 ]

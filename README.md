@@ -94,7 +94,10 @@ and fails on any add / remove / signature change to the public C++
 surface, or on any type size, member offset or vtable slot that moved.
 Intentional API changes require a baseline update via
 `ci/scripts/abi-snapshot.sh --update build`, reviewed in the same commit
-as the change.
+as the change. The same check refuses any exported symbol that names a
+`LibreSCRS` entity the installed headers do not declare; the few internal
+exports in-tree plugins still import are listed one by one in
+`ci/abi/5.x-internal-exports.txt`, which only shrinks.
 
 The public surface follows the conventions documented in the
 [LibreSCRS API Policy](https://LibreSCRS.github.io/developer-guide/sdk-reference/api-policy/):
