@@ -1736,6 +1736,101 @@ TEST(EmrtdInterfaceActivation, ContactPlainReadAttemptsChipAuthAndStaysPlainWhen
     }
 }
 
+// A contact read of a document whose chip runs real Chip Authentication: the
+// LDS rig serves the files, a fake chip on the wire answers the key agreement
+// and, once it succeeded, speaks secure messaging under the derived keys
+// (serving the same files decrypted). @p setUp scripts the chip.
+struct ChipAuthContactRead
+{
+    std::shared_ptr<LdsRigState> rig;
+    std::shared_ptr<LibreSCRS::Test::CaCardOnTheWire> card;
+    std::optional<ReadResult> rr;
+};
+
+template <typename SetUp>
+ChipAuthContactRead readContactDocumentWithChipAuth(SetUp setUp)
+{
+    ChipAuthContactRead out;
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    if (plugin == nullptr) {
+        ADD_FAILURE() << "eMRTD plugin not found";
+        return out;
+    }
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contact Reader");
+    const auto key = LibreSCRS::Test::EcCardKey::generate();
+    out.rig = installLdsRig(*session, /*plainLds=*/true);
+    out.rig->files[0x010E] = LibreSCRS::Test::buildDg14(key.spkiDer);
+    out.card = std::make_shared<LibreSCRS::Test::CaCardOnTheWire>(key);
+    out.card->setFiles([rig = out.rig](const APDUCommand& cmd) { return ldsRigTransmit(*rig, cmd); });
+    setUp(*out.card);
+    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*session);
+    conn.setTransmitFilter([card = out.card](const APDUCommand& cmd) { return card->respondPlain(cmd); });
+    conn.setDetachedRawResponder([card = out.card](std::span<const uint8_t> frame) { return card->respond(frame); });
+    session->setCredentialProvider(
+        [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+    EXPECT_TRUE(plugin->canHandleConnection({}, *session));
+    out.rr.emplace(plugin->readCard(*session));
+    return out;
+}
+
+std::string chipAuthField(const CardData& data, const std::string& field)
+{
+    const auto idx = checkIndexOf(data, "security_status", "chip_auth");
+    if (!idx) {
+        return "<no chip_auth check>";
+    }
+    return checkField(data, "security_status", *idx, field).value_or("");
+}
+
+TEST(EmrtdInterfaceActivation, ContactReadWithChipAuthRaisesTheReadToSecureMessaging)
+{
+    auto read = readContactDocumentWithChipAuth([](LibreSCRS::Test::CaCardOnTheWire&) {});
+    ASSERT_TRUE(read.rr.has_value());
+    ASSERT_EQ(read.rr->status, ReadResult::Status::Ok);
+    ASSERT_TRUE(read.rr->data.has_value());
+    const auto& data = *read.rr->data;
+
+    EXPECT_EQ(chipAuthField(data, "status"), "PASSED");
+    EXPECT_EQ(chipAuthField(data, "detail"), "0.4.0.127.0.7.2.2.3.2.2");
+    EXPECT_EQ(fieldText(data, "presence", "auth_method").value_or(""), "Chip Authentication");
+    ASSERT_EQ(read.card->keyAgreements(), 1);
+    // The rest of the read went over the new tunnel: the plugin followed the
+    // channel the session installed instead of the closed plain one.
+    EXPECT_TRUE(fieldText(data, "personal", "surname").has_value()) << "DG1 must arrive after the upgrade";
+    EXPECT_GT(read.card->smOracle()->verifiedCommands(), 1);
+}
+
+TEST(EmrtdInterfaceActivation, ContactReadWithACloneChipReportsChipAuthFailedAndStaysPlain)
+{
+    auto read = readContactDocumentWithChipAuth([](LibreSCRS::Test::CaCardOnTheWire& card) { card.makeClone(); });
+    ASSERT_TRUE(read.rr.has_value());
+    ASSERT_EQ(read.rr->status, ReadResult::Status::Ok);
+    ASSERT_TRUE(read.rr->data.has_value());
+    const auto& data = *read.rr->data;
+
+    EXPECT_EQ(chipAuthField(data, "status"), "FAILED");
+    EXPECT_EQ(chipAuthField(data, "detail"), "0.4.0.127.0.7.2.2.3.2.2");
+    EXPECT_EQ(fieldText(data, "presence", "auth_method").value_or(""), "None (plain read)");
+    EXPECT_EQ(read.card->keyAgreements(), 1);
+    EXPECT_TRUE(fieldText(data, "personal", "surname").has_value()) << "the read goes on plain";
+}
+
+TEST(EmrtdInterfaceActivation, ContactReadWhoseChipRefusesChipAuthIsNotPerformedAndStaysPlain)
+{
+    auto read = readContactDocumentWithChipAuth(
+        [](LibreSCRS::Test::CaCardOnTheWire& card) { card.refuseIns(0x86, 0x69, 0x82); });
+    ASSERT_TRUE(read.rr.has_value());
+    ASSERT_EQ(read.rr->status, ReadResult::Status::Ok);
+    ASSERT_TRUE(read.rr->data.has_value());
+    const auto& data = *read.rr->data;
+
+    EXPECT_EQ(chipAuthField(data, "status"), "NOT_PERFORMED");
+    EXPECT_EQ(fieldText(data, "presence", "auth_method").value_or(""), "None (plain read)");
+    EXPECT_EQ(read.card->keyAgreements(), 0);
+    EXPECT_TRUE(fieldText(data, "personal", "surname").has_value());
+}
+
 TEST(EmrtdInterfaceActivation, ContactlessWithProviderStillActivatesSm)
 {
     CardPluginService registry{pluginDir()};

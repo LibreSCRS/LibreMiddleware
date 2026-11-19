@@ -7,14 +7,10 @@
 #include <LibreSCRS/Plugin/PluginExport.h>
 #include <LibreSCRS/Plugin/SecurityCheck.h>
 #include <LibreSCRS/Plugin/SessionKey.h>
-#include <LibreSCRS/Secure/Buffer.h>
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SecureChannel/BacParams.h>
-#include <LibreSCRS_internal/SecureChannel/ChipAuthChannel.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
-#include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
-#include <LibreSCRS_internal/SecureChannel/detail/ChannelStateMutator.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
 #include <LibreSCRS_internal/Plugin/PreReadAuthDerivation.h>
 #include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
@@ -626,99 +622,46 @@ private:
         caResult.activeAuthentication = emrtd::crypto::ChipAuthResult::NOT_PERFORMED;
 
         // Set true when a plain read was raised to a Chip Authentication SM
-        // channel below — drives the auth_method label and keeps the SM-branch
-        // key-rotation path from re-running on the same result.
+        // channel below — drives the auth_method label and the SM-only skip
+        // of the EAC-protected data groups.
         bool chipAuthUpgraded = false;
 
         if (hasDG14) {
             auto dg14Result = cardObj->readDataGroupSafe(14);
             if (dg14Result.status == emrtd::DGReadStatus::OK && !dg14Result.data.empty()) {
                 dgRawData[14] = dg14Result.data;
-                if (plainRead) {
-                    // Contact/plain read: RUN Chip Authentication and RAISE the
-                    // channel to SM with the derived keys. Skipping it on a
-                    // plain channel would leave the verdict unmade AND the rest
-                    // of the read in cleartext. establish() gates PASSED on a
-                    // real wrapped proof exchange, so a clone that cannot derive
-                    // the keys is caught on the wire, not asserted.
-                    auto upgraded = LibreSCRS::SecureChannel::ChipAuthChannel::establish(
-                        conn, *channel, dg14Result.data, makeEmrtdAid(), LibreSCRS::CancelToken{});
-                    if (upgraded) {
-                        caResult.chipAuthentication = emrtd::crypto::ChipAuthResult::PASSED;
-                        caResult.protocol = (*upgraded)->protocolOid();
-                        LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::installSmChannel(
-                            cardSession, std::move(*upgraded),
-                            LibreSCRS::SmartCard::SmProtocolRequest{LibreSCRS::SmartCard::ChipAuthRequest{}});
-                        // The plain channel is gone; re-seat over the SM channel.
-                        channel = LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::active(cardSession);
-                        cardObj.emplace(*channel);
-                        chipAuthUpgraded = true;
-                        plainRead = false;
-                    } else {
-                        // No SM upgrade. A card-side status-word refusal of the
-                        // protocol on a plain channel is NOT a genuineness
-                        // failure — the contact interface may gate CA behind SM
-                        // — so report it not-performed; a completed key
-                        // agreement that then failed its proof is a real
-                        // failure (clone signal). Reading continues plain: the
-                        // first plain APDU intentionally aborts any card-side SM
-                        // the failed GA left half-open (ISO 7816-4 SM abort).
-                        using EK = LibreSCRS::SecureChannel::ChipAuthEstablishError::Kind;
-                        switch (upgraded.error().kind) {
-                        case EK::NotSupported:
-                            caResult.chipAuthentication = emrtd::crypto::ChipAuthResult::NOT_SUPPORTED;
-                            break;
-                        case EK::ProtocolRefused:
-                            caResult.chipAuthentication = emrtd::crypto::ChipAuthResult::NOT_PERFORMED;
-                            caResult.errorDetail = "chip refused Chip Authentication on plain channel";
-                            break;
-                        case EK::Cancelled:
-                            // An aborted attempt earned no verdict either way
-                            // — never the clone signal.
-                            caResult.chipAuthentication = emrtd::crypto::ChipAuthResult::NOT_PERFORMED;
-                            caResult.errorDetail = upgraded.error().detail;
-                            break;
-                        case EK::SmProofFailed:
-                        case EK::LocalCryptoFailure:
-                            caResult.chipAuthentication = emrtd::crypto::ChipAuthResult::FAILED;
-                            caResult.errorDetail = upgraded.error().detail;
-                            break;
-                        }
-                        caResult.protocol = upgraded.error().protocol;
-                    }
-                } else {
-                    // Already inside an SM tunnel (PACE/BAC): rotate to the
-                    // CA-derived keys, then PROVE the rotation with a wrapped
-                    // exchange before trusting the PASSED verdict.
-                    caResult = emrtd::crypto::performChipAuth(*channel, dg14Result.data, LibreSCRS::CancelToken{});
-                    if (caResult.chipAuthentication == emrtd::crypto::ChipAuthResult::PASSED &&
-                        caResult.newSessionKeys) {
-                        // Promote channel SM keys to CA-derived keys. The
-                        // public-channel SessionKeys carrier composes cleansing
-                        // Secure::Buffer fields; the emrtd::crypto vectors are
-                        // cleansed by their own destructor when caResult drops.
-                        LibreSCRS::SecureChannel::SessionKeys newKeys;
-                        newKeys.encKey =
-                            LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{caResult.newSessionKeys->encKey}};
-                        newKeys.macKey =
-                            LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{caResult.newSessionKeys->macKey}};
-                        newKeys.ssc =
-                            LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{caResult.newSessionKeys->ssc}};
-                        newKeys.cipher = (caResult.newAlgorithm == emrtd::crypto::SMAlgorithm::DES3)
-                                             ? LibreSCRS::SecureChannel::SmCipher::Des3
-                                             : LibreSCRS::SecureChannel::SmCipher::Aes;
-                        LibreSCRS::SecureChannel::detail::ChannelStateMutator::replaceKeys(*channel,
-                                                                                           std::move(newKeys));
-                        // Make the verdict real on the SM path too: if the first
-                        // APDU under the rotated keys does not MAC, the key
-                        // agreement did not match — FAILED, not PASSED.
-                        if (!LibreSCRS::SecureChannel::confirmSmAfterKeyChange(*channel, makeEmrtdAid(),
-                                                                               LibreSCRS::CancelToken{})
-                                 .proven) {
-                            caResult.chipAuthentication = emrtd::crypto::ChipAuthResult::FAILED;
-                            caResult.errorDetail = "chip authentication key agreement did not verify";
-                        }
-                    }
+                // The session picks the path from the channel it holds: on a
+                // plain read it raises the channel to CA secure messaging,
+                // inside a PACE/BAC tunnel it rotates the tunnel to the CA
+                // keys. Either way PASSED rests on a protected exchange the
+                // chip answered under the new keys.
+                const auto report =
+                    cardSession.performChipAuthentication(dg14Result.data, makeEmrtdAid(), LibreSCRS::CancelToken{});
+                switch (report.outcome) {
+                case LibreSCRS::SmartCard::ChipAuthOutcome::Passed:
+                    caResult.chipAuthentication = emrtd::crypto::ChipAuthResult::PASSED;
+                    break;
+                case LibreSCRS::SmartCard::ChipAuthOutcome::Failed:
+                    caResult.chipAuthentication = emrtd::crypto::ChipAuthResult::FAILED;
+                    break;
+                case LibreSCRS::SmartCard::ChipAuthOutcome::NotSupported:
+                    caResult.chipAuthentication = emrtd::crypto::ChipAuthResult::NOT_SUPPORTED;
+                    break;
+                case LibreSCRS::SmartCard::ChipAuthOutcome::NotPerformed:
+                    caResult.chipAuthentication = emrtd::crypto::ChipAuthResult::NOT_PERFORMED;
+                    break;
+                }
+                caResult.protocol = report.protocolOid;
+                caResult.errorDetail = report.detail;
+                // A plain upgrade replaced (and closed) the channel this
+                // reader was built over: re-seat on whatever is installed now,
+                // judged by the channel itself rather than by the path taken.
+                if (auto* now = LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::active(cardSession);
+                    now != channel && now != nullptr) {
+                    channel = now;
+                    cardObj.emplace(*channel);
+                    chipAuthUpgraded = plainRead;
+                    plainRead = false;
                 }
             }
         }

@@ -1186,31 +1186,6 @@ void ActiveChannelAccessor::clearOwner(CardSession& session) noexcept
     session.d->activeChannelOwner.store(std::thread::id{}, std::memory_order_release);
 }
 
-void ActiveChannelAccessor::installSmChannel(CardSession& session,
-                                             std::unique_ptr<LibreSCRS::SecureChannel::ISecureChannel> channel,
-                                             LibreSCRS::SmartCard::SmProtocolRequest protocol) noexcept
-{
-    // Lock-free by contract: the only legal caller holds this session's
-    // ActiveChannelHolder and therefore already owns the (non-recursive)
-    // session mutex — taking it here would self-deadlock. Mirror the
-    // owner-tolerant accessors above. The null guard runs first: a moved-from
-    // session must reach the silent no-op, not a null deref inside the assert.
-    auto* d = session.d.get();
-    if (d == nullptr || !channel) {
-        return;
-    }
-    assert(d->callerOwnsActiveChannel() &&
-           "installSmChannel must be called by the thread holding the session's ActiveChannelHolder");
-    // Close and drop the channel being replaced (the plain channel the read
-    // started on): its card-side SM context, if any, is already superseded by
-    // the freshly-installed tunnel.
-    if (d->activeChannel) {
-        d->activeChannel->close();
-    }
-    d->activeChannel = std::move(channel);
-    d->activatedProtocol = std::move(protocol);
-}
-
 } // namespace Internal
 
 } // namespace LibreSCRS::SmartCard

@@ -836,13 +836,16 @@ Notable user-visible changes per release. Format follows
   detached session use `LibreSCRS::SmartCardTesting` (see Added).
 
 - **Internal secure-channel and connection exports.** `libLibreSCRS_SmartCard`
-  no longer exports the PACE and BAC channels, all but the constructor and
-  destructor of the plain channel, most of the Chip Authentication channel and
-  of the PC/SC connection, or the typeinfo of the channel interface and the
-  connection, and `libLibreSCRS_Trust` no longer exports the typeinfo of its
-  trust-anchor source: 59 symbols that no installed header declares. None of
-  them was reachable through the public headers. The ABI check now fails on
-  any export that names an entity the installed headers do not declare.
+  no longer exports the PACE, BAC and Chip Authentication channels, the Chip
+  Authentication proof exchange and key-replacement seam, all but the
+  constructor and destructor of the plain channel, most of the PC/SC
+  connection, or the typeinfo of the channel interface and the connection, and
+  `libLibreSCRS_Trust` no longer exports the typeinfo of its trust-anchor
+  source. Measured on the dynamic symbol tables against the tree before the
+  change: 76 exports fewer (each constructor and destructor variant counted)
+  and 3 added (the plain channel's destructor variants). None of them was
+  reachable through the public headers. The ABI check now fails on any export
+  that names an entity the installed headers do not declare.
 
 - **A second copy of the plugin layer in `libLibreSCRS_Signing`.** It
   carried and exported `CardPluginService` and the `CardPlugin` entry points

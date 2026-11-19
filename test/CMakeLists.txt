@@ -329,7 +329,7 @@ target_include_directories(LibreSCRS_ChipAuthCryptoTests PRIVATE
 target_compile_definitions(LibreSCRS_ChipAuthCryptoTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(LibreSCRS_ChipAuthCryptoTests)
 
-# CardSession control flow for the CA channel (installSmChannel seam, the
+# CardSession control flow for Chip Authentication (performChipAuthentication, the
 # reuse-only ChipAuthRequest guard, cross-applet wrapped-SELECT reuse). Needs
 # the test archives (ChannelInjector, Testing::makeDetachedCardSession) and the
 # EMRTDCrypto primitives behind the SM oracle.

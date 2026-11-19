@@ -78,11 +78,9 @@ struct ChipAuthEstablishError
 /// layer, applet switches ride wrapped `SELECT` through the live tunnel
 /// (BSI TR-03110 §3).
 ///
-/// Hidden except for @ref establish and the destructor, the two members the
-/// eMRTD plugin reaches across the library boundary: it receives the channel
-/// from @ref establish and, the class being final, destroys it through a
-/// direct call. Tests that construct the channel compile its sources
-/// themselves (LibreSCRS_SecureChannel_ForTests).
+/// Hidden: only @ref LibreSCRS::SmartCard::CardSession::performChipAuthentication
+/// creates and installs it, inside the library. Tests that construct the
+/// channel compile its sources themselves (LibreSCRS_SecureChannel_ForTests).
 ///
 /// @since 4.4
 class ChipAuthChannel final : public ISecureChannel
@@ -91,7 +89,7 @@ public:
     ChipAuthChannel(LibreSCRS::SmartCard::IConnection& connection, LibreSCRS::SmartCard::AppletAid currentAppletAid,
                     SessionKeys keys);
 
-    LIBRESCRS_PUBLIC_API ~ChipAuthChannel() override;
+    ~ChipAuthChannel() override;
 
     [[nodiscard]] const LibreSCRS::SmartCard::AppletAid& currentApplet() const noexcept override;
     [[nodiscard]] ChannelState state() const noexcept override;
@@ -156,21 +154,14 @@ public:
     /// already @p aid and @ref protocolOid carries the CA OID.
     ///
     /// The caller must hold the PC/SC transaction for the whole sequence
-    /// (the eMRTD read path holds it through its ActiveChannelHolder) and
-    /// is responsible for installing the returned channel on the session —
-    /// leaving the old plain channel installed after a successful GA would
-    /// desynchronise the card-side SM context.
+    /// and is responsible for installing the returned channel on the
+    /// session — leaving the old plain channel installed after a successful
+    /// GA would desynchronise the card-side SM context.
     ///
     /// Reader and transport errors propagate as the transport's exception,
     /// and @c std::bad_alloc propagates: neither is an answer from the chip.
-    ///
-    /// @note Carries default visibility (not `LIBRESCRS_INTERNAL`): the
-    ///       eMRTD plugin .so is the in-tree caller across the shared-
-    ///       library boundary. External consumers cannot construct an
-    ///       `IConnection`, so the exported symbol remains effectively
-    ///       private to the project.
     /// @since 4.4
-    [[nodiscard]] LIBRESCRS_PUBLIC_API static std::expected<std::unique_ptr<ChipAuthChannel>, ChipAuthEstablishError>
+    [[nodiscard]] static std::expected<std::unique_ptr<ChipAuthChannel>, ChipAuthEstablishError>
     establish(LibreSCRS::SmartCard::IConnection& connection, ISecureChannel& current,
               const std::vector<std::uint8_t>& dg14Raw, LibreSCRS::SmartCard::AppletAid aid,
               LibreSCRS::CancelToken token);
@@ -206,12 +197,8 @@ struct SmKeyProof
 /// in-tunnel Chip Authentication rotates keys via @c replaceKeys: without this
 /// exchange a PASSED verdict would rest on nothing but our own arithmetic.
 /// A reader error propagates as the transport's exception.
-///
-/// @note `LIBRESCRS_PUBLIC_API` deliberately — called from the eMRTD
-///       plugin .so across the shared-library boundary.
 /// @since 4.4
-[[nodiscard]] LIBRESCRS_PUBLIC_API SmKeyProof confirmSmAfterKeyChange(ISecureChannel& ch,
-                                                                      const LibreSCRS::SmartCard::AppletAid& aid,
-                                                                      LibreSCRS::CancelToken token);
+[[nodiscard]] SmKeyProof confirmSmAfterKeyChange(ISecureChannel& ch, const LibreSCRS::SmartCard::AppletAid& aid,
+                                                 LibreSCRS::CancelToken token);
 
 } // namespace LibreSCRS::SecureChannel
