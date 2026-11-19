@@ -19,7 +19,6 @@
 /// and re-activate via @ref LibreSCRS::SmartCard::CardSession.
 
 #include <LibreSCRS/CancelToken.h>
-#include <LibreSCRS/Export.h>
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
 #include <LibreSCRS_internal/SecureChannel/PaceParams.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
@@ -49,7 +48,7 @@ class PaceChannelImpl;
 /// change.
 ///
 /// @since 4.1
-class LIBRESCRS_PUBLIC_API PaceChannel final : public ISecureChannel
+class PaceChannel final : public ISecureChannel
 {
 public:
     PaceChannel(LibreSCRS::SmartCard::IConnection& connection, LibreSCRS::SmartCard::AppletAid currentAppletAid,
@@ -144,14 +143,10 @@ public:
     ///
     /// @since 4.1
     ///
-    /// @note Carries default visibility (not `LIBRESCRS_INTERNAL`) so the
-    ///       symbol is exported from `LibreSCRS_SmartCard`: CardSession, its
-    ///       caller, is in the same library, and the in-tree channel tests
-    ///       reach it through the export.
-    ///       External consumers cannot construct an `IConnection`
-    ///       (header lives outside `include/LibreSCRS/`), so the exported
-    ///       symbol remains effectively private to the project.
-    [[nodiscard]] LIBRESCRS_PUBLIC_API static std::expected<std::unique_ptr<PaceChannel>, ChannelActivationError>
+    /// @note Hidden, like the whole class: CardSession, its only caller, is in
+    ///       the same library. Tests that construct the channel compile its
+    ///       sources themselves (LibreSCRS_SecureChannel_ForTests).
+    [[nodiscard]] static std::expected<std::unique_ptr<PaceChannel>, ChannelActivationError>
     establish(LibreSCRS::SmartCard::IConnection& connection, const PaceParams& params,
               LibreSCRS::CancelToken token) noexcept;
 

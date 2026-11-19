@@ -77,7 +77,8 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/pkcs15/src
         ${CMAKE_CURRENT_SOURCE_DIR}/../../lib/smartcard/src
     )
-    target_link_libraries(card_mapper_tests PRIVATE GTest::gtest_main SmartCard_Impl EMRTD PKCS15 LibreSCRS_SmartCard_TestHelpers)
+    target_link_libraries(card_mapper_tests PRIVATE GTest::gtest_main SmartCard_Impl EMRTD PKCS15 LibreSCRS_SmartCard_TestHelpers
+        LibreSCRS_SmartCard_RawDiagnostic)
     target_compile_features(card_mapper_tests PRIVATE cxx_std_23)
     target_compile_definitions(card_mapper_tests PRIVATE
         CARD_MAPPER_VERSION="${PROJECT_VERSION}"

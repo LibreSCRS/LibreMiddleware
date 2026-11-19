@@ -84,7 +84,12 @@ using ManagerProvider = std::function<void*()>;
 
 /// One exclusive CryptoTokenKit session on one card, held for the life of the
 /// object.
-class LIBRESCRS_INTERNAL CtkCard
+///
+/// No visibility attribute: it is a member of PCSCConnection, which takes its
+/// visibility from the target's -fvisibility (hidden in the shipped library,
+/// default in the test copies). Marked hidden on its own it would be narrower
+/// than its holder in the test copies, which GCC 13 reports (-Wattributes).
+class CtkCard
 {
 public:
     /// Begins the exclusive session on @p slotName, waiting up to

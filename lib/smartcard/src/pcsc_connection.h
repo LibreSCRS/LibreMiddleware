@@ -44,6 +44,10 @@ class CardSession;
 
 namespace LibreSCRS::SmartCard::Internal {
 
+// Exported (its typeinfo and vtable): the exported members of PCSCConnection
+// below throw it out of libLibreSCRS_SmartCard, and a catch by this type in
+// another image -- a test, a probe -- matches only the one typeinfo object
+// that libc++ on x86_64 compares by address.
 class LIBRESCRS_PUBLIC_API PCSCError : public std::runtime_error
 {
 public:
@@ -57,7 +61,12 @@ private:
     LONG errorCode;
 };
 
-class LIBRESCRS_PUBLIC_API PCSCConnection : public IConnection
+// Hidden except for the members a shipped image calls: the card plugins
+// (transactions, the ATR, reconnect, the raw transmit of the OpenSC bridge)
+// and the installed test archive (the detached constructor). Measured under
+// -O3 and -O2: the same set. Probes, tools and tests that need the rest
+// compile the connection themselves (LibreSCRS_SmartCard_RawDiagnostic).
+class PCSCConnection : public IConnection
 {
 public:
     /// Tag type used to construct a "detached" PCSCConnection that performs
@@ -69,7 +78,7 @@ public:
     /// to a card, so it is outside the one-session-per-reader invariant.
     struct DetachedTag
     {};
-    PCSCConnection(DetachedTag, const std::string& readerName);
+    LIBRESCRS_PUBLIC_API PCSCConnection(DetachedTag, const std::string& readerName);
 
     ~PCSCConnection();
 
@@ -148,13 +157,13 @@ public:
 
     // Low-level transmit that bypasses the TransmitFilter.
     // Used by SM layer to send already-wrapped APDUs without recursive filtering.
-    APDUResponse transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen);
+    LIBRESCRS_PUBLIC_API APDUResponse transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen);
     APDUResponse transmitRaw(const APDUCommand& cmd);
 
     // IConnection override — forwards to the byte-pointer transmitRaw above.
     APDUResponse transmitRaw(std::span<const std::uint8_t> cmdBytes) override;
 
-    void reconnect(); // prefers T=1, falls back to T=0
+    LIBRESCRS_PUBLIC_API void reconnect(); // prefers T=1, falls back to T=0
 
     // SCardReconnect with SCARD_RESET_CARD: a cold restart of the card
     // session. Some platforms answer 6A86 to every SELECT once a non-file-
@@ -163,7 +172,7 @@ public:
     // diagnostic tools that own the bench — production code keeps using
     // reconnect() (SCARD_LEAVE_CARD).
     void reconnectWithReset();
-    std::vector<uint8_t> getATR() const;
+    LIBRESCRS_PUBLIC_API std::vector<uint8_t> getATR() const;
     const std::string& readerName() const
     {
         return storedReaderName;
@@ -177,8 +186,8 @@ public:
     // sites SHOULD use the RAII CardTransaction wrapper below — it preserves
     // pairing and feeds the `callerHoldsTransaction` flag consulted by
     // higher-level holders.
-    void beginTransaction();
-    void endTransaction() noexcept;
+    LIBRESCRS_PUBLIC_API void beginTransaction();
+    LIBRESCRS_PUBLIC_API void endTransaction() noexcept;
 
     /// @brief True iff at least one live `CardTransaction` (or a balanced
     ///        beginTransaction/endTransaction pair) currently holds an

@@ -20,7 +20,6 @@
 ///       installed.
 
 #include <LibreSCRS/Auth/PaceSecretKind.h>
-#include <LibreSCRS/Export.h>
 #include <LibreSCRS/Secure/String.h>
 
 #include <cstdint>
@@ -122,7 +121,6 @@ struct PaceSecurityInfo
 /// @throws std::bad_alloc on allocation failure.
 ///
 /// @since 4.1
-[[nodiscard]] LIBRESCRS_PUBLIC_API std::vector<PaceSecurityInfo>
-parsePaceOidsFromCardAccess(std::span<const std::uint8_t> cardAccess);
+[[nodiscard]] std::vector<PaceSecurityInfo> parsePaceOidsFromCardAccess(std::span<const std::uint8_t> cardAccess);
 
 } // namespace LibreSCRS::SecureChannel

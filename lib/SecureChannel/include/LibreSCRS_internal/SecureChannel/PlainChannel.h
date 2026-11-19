@@ -31,12 +31,19 @@ namespace LibreSCRS::SecureChannel {
 /// PlainChannel per selected applet.
 ///
 /// @since 4.1
-class LIBRESCRS_PUBLIC_API PlainChannel final : public ISecureChannel
+class PlainChannel final : public ISecureChannel
 {
 public:
-    PlainChannel(LibreSCRS::SmartCard::IConnection& connection, LibreSCRS::SmartCard::AppletAid currentAppletAid);
+    /// @note The constructor and the destructor are the only exported members:
+    ///       card plugins build a PlainChannel on their stack, so they call
+    ///       exactly these two. The destructor is out of line on purpose -- an
+    ///       inline one writes the vtable pointer from the plugin, and whether
+    ///       it does depends on the optimiser (-O2 did, -O3 did not), which
+    ///       would make the vtable an export some builds need and others not.
+    LIBRESCRS_PUBLIC_API PlainChannel(LibreSCRS::SmartCard::IConnection& connection,
+                                      LibreSCRS::SmartCard::AppletAid currentAppletAid);
 
-    ~PlainChannel() override = default;
+    LIBRESCRS_PUBLIC_API ~PlainChannel() override;
 
     [[nodiscard]] const LibreSCRS::SmartCard::AppletAid& currentApplet() const noexcept override;
     [[nodiscard]] ChannelState state() const noexcept override;

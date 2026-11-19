@@ -47,23 +47,11 @@ struct LIBRESCRS_PUBLIC_API PcscBridge
     /// @brief Obtain a mutable reference to the underlying PC/SC connection.
     /// @pre @p session must NOT be in the moved-from state.
     [[nodiscard]] static LibreSCRS::SmartCard::Internal::PCSCConnection& unwrap(CardSession& session) noexcept;
-
-    /// @brief Obtain a const reference to the underlying PC/SC connection.
-    /// @pre @p session must NOT be in the moved-from state.
-    [[nodiscard]] static const LibreSCRS::SmartCard::Internal::PCSCConnection&
-    unwrap(const CardSession& session) noexcept;
 };
 
 /// @brief Convenience: free-function spelling exposed inside @c detail::.
 ///        Equivalent to @ref PcscBridge::unwrap.
 [[nodiscard]] inline LibreSCRS::SmartCard::Internal::PCSCConnection& unwrap(CardSession& session) noexcept
-{
-    return PcscBridge::unwrap(session);
-}
-
-/// @brief Convenience: free-function wrapper around @ref PcscBridge::unwrap
-///        (const overload).
-[[nodiscard]] inline const LibreSCRS::SmartCard::Internal::PCSCConnection& unwrap(const CardSession& session) noexcept
 {
     return PcscBridge::unwrap(session);
 }

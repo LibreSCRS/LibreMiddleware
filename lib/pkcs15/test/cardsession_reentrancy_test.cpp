@@ -93,30 +93,18 @@ FakeChannel* installSmFake(CardSession& session, ChannelState state, std::option
     return ptr;
 }
 
-// RAII guard that marks the calling thread as @p session's active-channel owner
-// for its lifetime — the exact owner state the production
-// makeActiveChannelHolder factory establishes via ActiveChannelAccessor::markOwner
-// when a holder takes the session lock. Reproduces the holder-owner condition
-// under which the public, mutex-locking CardSession::activatedProtocol aborts
-// (debug) or self-deadlocks (release), so the lock-free internal accessor can be
-// exercised on the owner thread without constructing a full holder.
-class OwnerMark
+// Acquire a genuine ActiveChannelHolder over the Open SM fake installed with
+// @p protocol recorded, via the activateChannelWithSm same-applet fast path: no
+// wire traffic, and the production makeActiveChannelHolder factory takes the
+// session lock and marks this thread as the owner. That is the holder-owner
+// condition under which the public, mutex-locking CardSession::activatedProtocol
+// aborts (debug) or self-deadlocks (release).
+ActiveChannelHolder acquireSmHolder(CardSession& session, const SmProtocolRequest& protocol)
 {
-public:
-    explicit OwnerMark(CardSession& session) : session(session)
-    {
-        ActiveChannelAccessor::markOwner(session);
-    }
-    ~OwnerMark()
-    {
-        ActiveChannelAccessor::clearOwner(session);
-    }
-    OwnerMark(const OwnerMark&) = delete;
-    OwnerMark& operator=(const OwnerMark&) = delete;
-
-private:
-    CardSession& session;
-};
+    auto result = session.activateChannelWithSm(makeAid(), protocol, LibreSCRS::CancelToken{});
+    EXPECT_TRUE(result.has_value());
+    return std::move(result).value();
+}
 
 // Acquire a genuine ActiveChannelHolder on a detached session via the real
 // activateChannelFor fast path. Installs a PlainChannel bound to makeAid()
@@ -264,15 +252,15 @@ TEST(CardSessionReentrancyDeathTest, VoidMethodWhileHoldingHolderAsserts)
 // without the mutex and without the owner assert.
 //
 // Coverage:
-//   1. Owner-marked thread + live Open SM channel with a recorded PACE-CAN
+//   1. Holder-owner thread + live Open SM channel with a recorded PACE-CAN
 //      protocol → returns that protocol (this is the exact call shape the
 //      pre-fix eMRTD plugin made through the public accessor; it would have
 //      aborted/deadlocked here).
 //   2. A genuinely held production holder (real sessionMutex locked + owner
 //      set) → the accessor returns without hanging; the Watchdog tears the
 //      suite down loudly if a regression re-introduces a locking accessor.
-//   3. Closed / Failed SM channel under the owner mark → nullopt (gated on a
-//      live Open SM channel exactly like the public accessor).
+//   3. The held SM channel turning Closed / Failed → nullopt (gated on a live
+//      Open SM channel exactly like the public accessor).
 // ---------------------------------------------------------------------------
 
 TEST(ActivatedProtocolOwnerTolerant, ReturnsRecordedProtocolOnOwnerThread)
@@ -283,9 +271,10 @@ TEST(ActivatedProtocolOwnerTolerant, ReturnsRecordedProtocolOnOwnerThread)
     auto session = makeDetachedCardSession(kReader);
     installSmFake(*session, ChannelState::Open, recorded);
 
-    // Mark this thread as the holder-owner: callerOwnsActiveChannel() is now
-    // true, so the public CardSession::activatedProtocol() would abort/deadlock.
-    OwnerMark owner(*session);
+    // This thread holds the holder: callerOwnsActiveChannel() is now true, so
+    // the public CardSession::activatedProtocol() would abort/deadlock.
+    ActiveChannelHolder holder = acquireSmHolder(*session, recorded);
+    ASSERT_TRUE(holder.isActive());
 
     auto proto = ActiveChannelAccessor::activatedProtocol(*session);
     ASSERT_TRUE(proto.has_value());
@@ -310,24 +299,23 @@ TEST(ActivatedProtocolOwnerTolerant, NoHangWhileGenuineHolderHeld)
     EXPECT_FALSE(ActiveChannelAccessor::activatedProtocol(*session).has_value());
 }
 
-TEST(ActivatedProtocolOwnerTolerant, NulloptOnNonLiveChannelUnderOwnerMark)
+TEST(ActivatedProtocolOwnerTolerant, NulloptOnNonLiveChannelUnderHolder)
 {
     Watchdog watchdog(std::chrono::seconds(5));
 
     const SmProtocolRequest recorded = PaceRequest{LibreSCRS::Auth::PaceSecretKind::Can};
 
-    {
-        SCOPED_TRACE("Closed SM channel with recorded protocol → nullopt");
+    for (const ChannelState dead : {ChannelState::Closed, ChannelState::Failed}) {
+        SCOPED_TRACE(dead == ChannelState::Closed ? "held SM channel Closed → nullopt"
+                                                  : "held SM channel Failed → nullopt");
         auto session = makeDetachedCardSession(kReader);
-        installSmFake(*session, ChannelState::Closed, recorded);
-        OwnerMark owner(*session);
-        EXPECT_FALSE(ActiveChannelAccessor::activatedProtocol(*session).has_value());
-    }
-    {
-        SCOPED_TRACE("Failed SM channel with recorded protocol → nullopt");
-        auto session = makeDetachedCardSession(kReader);
-        installSmFake(*session, ChannelState::Failed, recorded);
-        OwnerMark owner(*session);
+        FakeChannel* fake = installSmFake(*session, ChannelState::Open, recorded);
+        ActiveChannelHolder holder = acquireSmHolder(*session, recorded);
+        ASSERT_TRUE(holder.isActive());
+        // Live while the holder was acquired: the accessor reports it.
+        ASSERT_TRUE(ActiveChannelAccessor::activatedProtocol(*session).has_value());
+        // The channel dies under the holder, the recorded protocol stays.
+        fake->setState(dead);
         EXPECT_FALSE(ActiveChannelAccessor::activatedProtocol(*session).has_value());
     }
 }
