@@ -233,6 +233,27 @@ Notable user-visible changes per release. Format follows
 
 ### Changed
 
+- **The CardEdge signature key asks for its PIN on every use.** On cards with
+  the CardEdge applet (the Serbian ID card, the Chamber of Commerce card, the
+  health insurance card), the OpenSC plugin now marks the key for qualified
+  signatures (the RSA key with the non-repudiation usage) as one that wants its
+  PIN for every operation, which PKCS#11 clients see as `CKA_ALWAYS_AUTHENTICATE`.
+  The authentication (key exchange) key is unchanged. A signature made with the
+  signature key no longer leaves the PIN deposited for the next operation with
+  the other (key exchange) key, and a tool that signs in a row is prompted for
+  every signature. Signing documents in applications already asked for the PIN
+  every time. Other cards are unchanged. The upstream OpenSC emulator omits the
+  flag; the plugin sets it until OpenSC does.
+
+  **Сажетак (српски):** На картицама са CardEdge апликацијом (лична карта,
+  картица Привредне коморе, здравствена картица) кључ за квалификовани потпис
+  сада тражи PIN при свакој операцији (у PKCS#11 клијентима као
+  `CKA_ALWAYS_AUTHENTICATE`). Кључ за аутентификацију се не мења. Потпис кључем
+  за потпис више не оставља PIN за следећу операцију другим (key exchange)
+  кључем, а алат који потписује у низу добија упит за сваки потпис. Потписивање
+  докумената у апликацијама је и раније тражило PIN сваки пут. Остале картице
+  су непромењене.
+
 - **A card operation that throws inside a plugin no longer throws at its
   host.** One plugin caught every exception, another let its PIN and
   certificate calls throw and left the host to catch. `CardPlugin` now settles
