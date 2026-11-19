@@ -102,10 +102,13 @@ NOT_RECORDED_BINDINGS="W V u A"
 # 82 internal symbols, and it recorded 35 secure-channel members, declared only
 # in headers that are never installed, as public 5.x ABI.
 #
-# Symbols that are internal but still exported are listed one by one, with
-# the reason, in ci/abi/5.x-internal-exports.txt and are not recorded in the
-# baseline. Against --allowlist-base an added entry fails: the list only
-# shrinks.
+# Symbols that are internal but still imported by a shipped image -- a card
+# plugin, a sibling LibreSCRS library or the installed test archive -- are
+# listed one by one, with the reason, in ci/abi/5.x-internal-exports.txt and
+# are not recorded in the baseline. The same pass reads what those shipped
+# images import (an entry no shipped image imports is stale; an import of a
+# hidden or unlisted internal symbol fails) and what inline bodies of the
+# installed headers call. Against --allowlist-base, an added entry fails.
 
 # emit_symbols <label> <file>
 #
@@ -262,8 +265,32 @@ if [[ -n "$dup_owners" ]]; then
     exit 1
 fi
 
-# Refused for --update as well, so an internal export cannot be written into
-# the baseline as public ABI.
+# What the shipped images import: the core libraries (sibling imports), every
+# card plugin, and the installed test archive (minus what its own members
+# define). Test executables are not shipped and are not read.
+IMPORTS="${SCRATCH}/imports.tsv"
+: > "$IMPORTS"
+plugin_count=0
+while IFS= read -r image; do
+    [[ -n "$image" ]] || continue
+    case "$image" in */plugins/*) plugin_count=$((plugin_count + 1)) ;; esac
+    nm -D -u "$image" 2>/dev/null | awk -v img="$(basename "$image")" '{ print img "\t" $NF }' >> "$IMPORTS"
+done < <({
+    find "$BUILD_DIR/lib/LibreSCRS" -maxdepth 1 -name 'libLibreSCRS_*.so.[0-9]*.[0-9]*.[0-9]*'
+    find "$BUILD_DIR/plugins" -maxdepth 2 -name '*.so' 2>/dev/null
+} | sort)
+if [[ "$plugin_count" -eq 0 ]]; then
+    echo "FATAL: no card plugin under '$BUILD_DIR/plugins' -- cannot judge what shipped images import" >&2
+    exit 2
+fi
+while IFS= read -r archive; do
+    [[ -n "$archive" ]] || continue
+    nm -U "$archive" 2>/dev/null | awk 'NF >= 3 { print $3 }' | sort -u > "$SCRATCH/archive-defined"
+    nm -u "$archive" 2>/dev/null | awk 'NF >= 2 { print $NF }' | sort -u \
+        | comm -23 - "$SCRATCH/archive-defined" \
+        | awk -v img="$(basename "$archive")" '{ print img "\t" $0 }' >> "$IMPORTS"
+done < <(find "$BUILD_DIR/lib/LibreSCRS" -maxdepth 1 -name 'libLibreSCRSTesting_*.a' | sort)
+
 base_args=()
 if [[ -n "$ALLOWLIST_BASE" ]]; then
     if ! git -C "$REPO_ROOT" rev-parse --verify --quiet "${ALLOWLIST_BASE}^{commit}" >/dev/null; then
@@ -271,14 +298,17 @@ if [[ -n "$ALLOWLIST_BASE" ]]; then
         exit 2
     fi
     if git -C "$REPO_ROOT" show "${ALLOWLIST_BASE}:ci/abi/5.x-internal-exports.txt" > "$SCRATCH/base-allowlist" 2>/dev/null; then
-        base_args=("$SCRATCH/base-allowlist")
+        base_args=(--base-allowlist "$SCRATCH/base-allowlist")
     else
         echo "note: ${ALLOWLIST_BASE} holds no internal-export allowlist; additions are not judged against it"
     fi
 fi
 
+# Refused for --update as well, so an internal export cannot be written into
+# the baseline as public ABI.
 surface_rc=0
-python3 "$SURFACE" "$CXX" "$INCLUDE_ROOT" "$EXPORTS" "$ALLOWLIST" "${base_args[@]}" || surface_rc=$?
+python3 "$SURFACE" --clang "$CXX" --include-root "$INCLUDE_ROOT" --exports "$EXPORTS" \
+    --imports "$IMPORTS" --allowlist "$ALLOWLIST" "${base_args[@]}" || surface_rc=$?
 if [[ "$surface_rc" -ne 0 ]]; then
     exit "$surface_rc"
 fi

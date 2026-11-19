@@ -1,4 +1,4 @@
-# Internal exports that shipped images still need.
+# Internal exports that shipped images still import.
 #
 # Each line is a symbol that names a LibreSCRS entity the installed headers do
 # not declare (or one in an Internal/detail scope), and that cannot be hidden
@@ -6,11 +6,17 @@
 # 5.x-baseline.txt, because they are no contract with any consumer.
 #
 # Format: <library section> TAB <demangled symbol, exactly as abi-snapshot.sh
-# prints it> TAB <why it is still exported>.
+# prints it> TAB <reason>. The reason is one of
+#   imported: <who>  -- a shipped image (a core library, a card plugin, the
+#                       installed test archive) imports it; the gate fails the
+#                       entry when none does;
+#   thrown: <why>    -- the typeinfo of an exception type that leaves its
+#                       library, which a catch in another image needs exported.
+# Test executables are not shipped and are never a reason.
 #
 # This list only shrinks. The gate fails on a symbol that is not here, on an
-# entry that no longer names an internal export, and in CI on any entry the
-# list at the merge base does not hold.
+# entry that no longer names an imported internal export, and in CI on any
+# entry the list at the merge base does not hold.
 libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::ChipAuthChannel::establish(LibreSCRS::SmartCard::IConnection&, LibreSCRS::SecureChannel::ISecureChannel&, std::vector<unsigned char, std::allocator<unsigned char> > const&, LibreSCRS::SmartCard::AppletAid, LibreSCRS::CancelToken)@@LM_5	imported: libemrtd-plugin (Chip Authentication over the live channel)
 libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::ChipAuthChannel::~ChipAuthChannel()@@LM_5	imported: libemrtd-plugin (destroys the channel establish returned)
 libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::PlainChannel::PlainChannel(LibreSCRS::SmartCard::IConnection&, LibreSCRS::SmartCard::AppletAid)@@LM_5	imported: libemrtd-plugin, libpkcs15-plugin (plain probe channel on the stack)

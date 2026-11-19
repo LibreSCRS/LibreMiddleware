@@ -30,8 +30,9 @@
 #   6  control: the same run under a PATH shim that HAS c++filt    -> 0
 #   7  c++filt taken off PATH                                      -> 2
 #   8  an exported data symbol                                     -> 2
-#   9  an exported Internal:: function is a leak; allowlisted it is
-#      not recorded; renamed, it is a leak and its entry is stale  -> 1/0/1
+#   9  an exported Internal:: function is a leak; allowlisted (and
+#      imported by a plugin) it is not recorded; renamed, it is a leak,
+#      the plugin's import is a hidden symbol and the entry is stale -> 1/0/1
 #  10  a public function taking an Internal:: type                 -> 1
 #  11  one function exported by two libraries, --check / --update  -> 1
 #
@@ -47,9 +48,18 @@
 #  17  a function declared only as a friend                        -> 1
 #  18  a function declared only in an installed tree's detail/
 #      directory, which install() excludes                         -> 1
-#  19  the allowlist: an entry whose export is gone, an entry
-#      without a reason                                            -> 1/2
+#  19  the allowlist: an entry no shipped image imports, an entry
+#      whose export is gone, an entry without a reason, a "thrown:"
+#      reason on a function                                        -> 1/1/2/2
 #  20  CXX is not clang                                            -> 2
+#
+# The import and inline-body rules, and the shrink-only rule:
+#  21  a plugin imports a symbol no core library exports (hidden)   -> 1
+#  22  an inline function in an installed header calls a function
+#      no core library exports                                     -> 1
+#  23  the same inline body calling an Internal:: export the
+#      allowlist does not name                                     -> 1
+#  24  control: an inline body calling an exported public function  -> 0
 #  25  an entry added against --allowlist-base, and its control     -> 1/0
 set -uo pipefail
 
@@ -107,17 +117,29 @@ says() {  # says <label> <text>
     fi
 }
 
-# fixture <root>: the gate, its helper, an empty allowlist and the header of
-# the three stub functions, which every stub below exports.
+# fixture <root>: the gate, its helper, an empty allowlist, the header of the
+# three stub functions, which every stub below exports, and a card plugin that
+# imports nothing from LibreSCRS (the gate refuses to judge imports without
+# one).
 fixture() {
     local root="$1"
-    mkdir -p "$root/ci/scripts" "$root/ci/abi" "$root/build/lib/LibreSCRS" "$root/include/LibreSCRS"
+    mkdir -p "$root/ci/scripts" "$root/ci/abi" "$root/build/lib/LibreSCRS" "$root/build/plugins" \
+        "$root/include/LibreSCRS"
     cp "$SUBJECT" "$root/ci/scripts/abi-snapshot.sh"
     cp "$HELPER" "$root/ci/scripts/abi-public-surface.py"
     chmod 0755 "$root/ci/scripts/abi-snapshot.sh"
     printf '# fixture allowlist\n' > "$root/ci/abi/5.x-internal-exports.txt"
     printf 'namespace LibreSCRS {\nint selftestAlpha(int x);\nint selftestBeta(int x);\nint selftestGamma(int x);\n}\n' \
         > "$root/include/LibreSCRS/Stub.h"
+    plugin "$root" 'extern "C" int fixture_plugin_entry() { return 0; }'
+}
+
+# plugin <root> <source text>: the fixture's one card plugin, compiled from
+# <source text>. Its undefined symbols are what a shipped image imports.
+plugin() {
+    printf '%s\n' "$2" > "$1/plugin.cpp"
+    g++ -shared -fPIC -o "$1/build/plugins/libfixture-plugin.so" "$1/plugin.cpp" 2>"$WORK/gcc.err" \
+        || { echo "FATAL: could not build the fixture plugin" >&2; sed 's/^/        /' "$WORK/gcc.err" >&2; exit 2; }
 }
 
 # stub <name> [--without-beta] -> prints the fixture root
@@ -277,6 +299,8 @@ check "an Internal:: export, not allowlisted: --update" 1 "$rc"
 says "an Internal:: export, not allowlisted: --update" "LibreSCRS::Internal::selftestInternal(int)"
 printf 'libLibreSCRS_Stub.so\tLibreSCRS::Internal::selftestInternal(int)\timported: libfixture-plugin\n' \
     >> "$root9/ci/abi/5.x-internal-exports.txt"
+plugin "$root9" 'namespace LibreSCRS { namespace Internal { int selftestInternal(int x); } }
+int fixture_use() { return LibreSCRS::Internal::selftestInternal(1); }'
 rc=$(run "$root9" --update build)
 check "the same export, allowlisted: --update" 0 "$rc"
 if grep -q 'selftestInternal' "$root9/ci/abi/5.x-baseline.txt"; then
@@ -290,6 +314,7 @@ rc=$(run "$root9" --check build)
 check "a renamed Internal:: export" 1 "$rc"
 says "a renamed Internal:: export" "LibreSCRS::Internal::selftestInternalRenamed(int)"
 says "a renamed Internal:: export" "STALE ALLOWLIST"
+says "a renamed Internal:: export" "IMPORT OF A HIDDEN SYMBOL"
 
 # --- case 10: a public function that takes an Internal:: type ---------------
 #     Declared in an installed header, but a consumer can only call it with a
@@ -505,13 +530,21 @@ rc=$(run "$root18" --update build)
 check "a function declared only under detail/" 1 "$rc"
 says "a function declared only under detail/" "LibreSCRS::selftestUnwrap(int)"
 
-# 19: every entry is still an internal export, with a reason. Starting from the green, allowlisted case 9
+# 19: every entry earns its place. Starting from the green, allowlisted case 9
 #     fixture with its first function restored:
 build_internal selftestInternal
 rc=$(run "$root9" --check build)
-check "control: one listed internal export" 0 "$rc"
+check "control: one imported, listed internal export" 0 "$rc"
 command cp -f "$root9/ci/abi/5.x-internal-exports.txt" "$WORK/allow9.good"
-#   (a) the export is hidden, the entry kept
+#   (a) the plugin stops importing it: still exported, but nothing ships that
+#       needs it, so the entry is stale and the symbol must be hidden
+plugin "$root9" 'extern "C" int fixture_plugin_entry() { return 0; }'
+rc=$(run "$root9" --check build)
+check "an entry no shipped image imports" 1 "$rc"
+says "an entry no shipped image imports" "no shipped image imports it"
+#   (b) the export is hidden, the entry kept
+plugin "$root9" 'namespace LibreSCRS { namespace Internal { int selftestInternal(int x); } }
+int fixture_use() { return LibreSCRS::Internal::selftestInternal(1); }'
 build_internal_free() {
     printf 'namespace LibreSCRS {\nint selftestAlpha(int x) { return x + 1; }\nint selftestBeta(int x) { return x + 2; }\nint selftestGamma(int x) { return x + 3; }\n}\n' > "$root9/stub.cpp"
     g++ -shared -fPIC -o "$root9/build/lib/LibreSCRS/libLibreSCRS_Stub.so.5.0.0" "$root9/stub.cpp" 2>"$WORK/gcc.err" \
@@ -526,12 +559,64 @@ build_internal selftestInternal
 printf 'libLibreSCRS_Stub.so\tLibreSCRS::Internal::selftestInternal(int)\n' > "$root9/ci/abi/5.x-internal-exports.txt"
 rc=$(run "$root9" --check build)
 check "an entry without a reason" 2 "$rc"
+#   (d) "thrown:" is a reason only for an exception type's typeinfo
+printf 'libLibreSCRS_Stub.so\tLibreSCRS::Internal::selftestInternal(int)\tthrown: not a typeinfo\n' \
+    > "$root9/ci/abi/5.x-internal-exports.txt"
+rc=$(run "$root9" --check build)
+check "a thrown: reason on a function" 2 "$rc"
 command cp -f "$WORK/allow9.good" "$root9/ci/abi/5.x-internal-exports.txt"
 
 # 20: the public surface is read from clang's AST; gcc cannot produce it.
 rc=$( if ( cd "$root12" && CXX=g++ ./ci/scripts/abi-snapshot.sh --check build ) > "$WORK/out" 2>&1; then echo 0; else echo $?; fi )
 check "CXX is not clang" 2 "$rc"
 says "CXX is not clang" "is not clang"
+
+# --- 21: a shipped image imports a symbol no core library exports ----------
+#     The load fails at dlopen. The plugin calls the public function's hidden
+#     sibling: declared, defined in the library, but not exported.
+custom hidden-import \
+    "namespace LibreSCRS { $PUBLIC_FNS }" \
+    "#include <LibreSCRS/Stub.h>
+namespace LibreSCRS { $PUBLIC_DEFS int selftestHiddenHelper(int x) { return x; } }"
+root21="$root"
+plugin "$root21" 'namespace LibreSCRS { int selftestHiddenHelper(int x); }
+int fixture_use() { return LibreSCRS::selftestHiddenHelper(1); }'
+rc=$(run "$root21" --update build)
+check "a plugin importing a hidden symbol" 1 "$rc"
+says "a plugin importing a hidden symbol" "libfixture-plugin.so  LibreSCRS::selftestHiddenHelper(int)"
+
+# --- 22 to 24: an inline body in an installed header ------------------------
+#     A consumer that calls the inline function links whatever it calls. The
+#     makeSessionKey shape: a public inline function calling a detail:: one.
+#     22: the callee is not exported at all.
+custom inline-hidden \
+    "namespace LibreSCRS { $PUBLIC_FNS int selftestGeneration(int x);
+inline int selftestKey(int x) { return selftestGeneration(x) + 1; } }" \
+    "#include <LibreSCRS/Stub.h>
+namespace LibreSCRS { $PUBLIC_DEFS int selftestGeneration(int x) { return x; } }"
+root22="$root"
+rc=$(run "$root22" --update build)
+check "an inline body calling an unexported function" 1 "$rc"
+says "an inline body calling an unexported function" "LibreSCRS::selftestKey calls LibreSCRS::selftestGeneration(int), which no core library exports"
+#     23: the callee is an exported detail:: function the allowlist does not name.
+custom inline-detail \
+    "namespace LibreSCRS { $PUBLIC_FNS namespace detail { int selftestGeneration(int x); }
+inline int selftestKey(int x) { return detail::selftestGeneration(x) + 1; } }" \
+    "#include <LibreSCRS/Stub.h>
+namespace LibreSCRS { $PUBLIC_DEFS namespace detail { $EXPORT int selftestGeneration(int x) { return x; } } }"
+root23="$root"
+rc=$(run "$root23" --update build)
+check "an inline body calling an internal export" 1 "$rc"
+says "an inline body calling an internal export" "LibreSCRS::selftestKey calls LibreSCRS::detail::selftestGeneration(int), an internal export the allowlist does not name"
+#     24: the control -- the callee is exported and public.
+custom inline-public \
+    "namespace LibreSCRS { $PUBLIC_FNS
+inline int selftestKey(int x) { return selftestAlpha(x) + 1; } }" \
+    "#include <LibreSCRS/Stub.h>
+namespace LibreSCRS { $PUBLIC_DEFS }"
+root24="$root"
+rc=$(run "$root24" --update build)
+check "control: an inline body calling public API" 0 "$rc"
 
 # --- 25: the list only shrinks ----------------------------------------------
 #     The case 9 fixture as a git repository whose base commit holds the list
@@ -554,6 +639,8 @@ git_fixture commit -q -m base
 } > "$root9/stub.cpp"
 g++ -shared -fPIC -o "$root9/build/lib/LibreSCRS/libLibreSCRS_Stub.so.5.0.0" "$root9/stub.cpp" 2>"$WORK/gcc.err" \
     || { echo "FATAL: could not rebuild the case 9 stub" >&2; exit 2; }
+plugin "$root9" 'namespace LibreSCRS { namespace Internal { int selftestInternal(int x); int selftestExtra(int x); } }
+int fixture_use() { return LibreSCRS::Internal::selftestInternal(1) + LibreSCRS::Internal::selftestExtra(2); }'
 printf 'libLibreSCRS_Stub.so\tLibreSCRS::Internal::selftestExtra(int)\timported: libfixture-plugin\n' \
     >> "$root9/ci/abi/5.x-internal-exports.txt"
 rc=$(run "$root9" --check build)
