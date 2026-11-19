@@ -14,6 +14,7 @@ add_executable(LibreMiddlewareTests
 
 target_link_libraries(LibreMiddlewareTests
     GTest::gtest_main
+    LibreSCRS_SmartCard_RawDiagnostic
     RsEId
     EuVrc
     RsHealth
@@ -62,7 +63,8 @@ gtest_discover_tests(EfDirTests)
 # include/link combination lib/pkcs15-plugin/CMakeLists.txt already uses
 # for the equivalent non-plugin PKCS15Card probe path.
 add_executable(Pkcs15ProbeEfDirTests Pkcs15ProbeEfDirTests.cpp)
-target_link_libraries(Pkcs15ProbeEfDirTests GTest::gtest_main PKCS15 LibreSCRS_SmartCard SmartCard_Impl LibreSCRS_SmartCard_TestHelpers)
+target_link_libraries(Pkcs15ProbeEfDirTests GTest::gtest_main PKCS15 LibreSCRS_SmartCard SmartCard_Impl LibreSCRS_SmartCard_TestHelpers
+    LibreSCRS_SmartCard_RawDiagnostic)
 target_include_directories(Pkcs15ProbeEfDirTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/pkcs15/src
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
@@ -83,6 +85,7 @@ add_executable(RsEidDriverTests
 )
 target_link_libraries(RsEidDriverTests
     GTest::gtest_main
+    LibreSCRS_SmartCard_RawDiagnostic
     RsEId
     SmartCard_Impl
     OpenSSL_Crypto
@@ -166,6 +169,7 @@ target_link_libraries(AnnexTests
     GTest::gtest_main
     CardAnnex
     LibreSCRS::SmartCard
+    LibreSCRS_SecureChannel_ForTests
     SmartCard_Impl
     RsEIdCore
     EMRTDCrypto
@@ -248,6 +252,7 @@ add_executable(LibreSCRS_PlainChannelTests LibreSCRS_PlainChannelTests.cpp)
 target_link_libraries(LibreSCRS_PlainChannelTests
     GTest::gtest_main
     LibreSCRS::SmartCard
+    LibreSCRS_SecureChannel_ForTests
     SmartCard_Impl)
 target_include_directories(LibreSCRS_PlainChannelTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
@@ -280,6 +285,7 @@ add_executable(LibreSCRS_SmChannelTests LibreSCRS_SmChannelTests.cpp)
 target_link_libraries(LibreSCRS_SmChannelTests
     GTest::gtest_main
     LibreSCRS::SmartCard
+    LibreSCRS_SecureChannel_ForTests
     SmartCard_Impl)
 target_include_directories(LibreSCRS_SmChannelTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
@@ -294,6 +300,7 @@ add_executable(LibreSCRS_ChipAuthChannelTests LibreSCRS_ChipAuthChannelTests.cpp
 target_link_libraries(LibreSCRS_ChipAuthChannelTests
     GTest::gtest_main
     LibreSCRS::SmartCard
+    LibreSCRS_SecureChannel_ForTests
     SmartCard_Impl
     EMRTDCrypto)
 target_include_directories(LibreSCRS_ChipAuthChannelTests PRIVATE
@@ -311,6 +318,7 @@ add_executable(LibreSCRS_ChipAuthCryptoTests LibreSCRS_ChipAuthCryptoTests.cpp)
 target_link_libraries(LibreSCRS_ChipAuthCryptoTests
     GTest::gtest_main
     LibreSCRS::SmartCard
+    LibreSCRS_SecureChannel_ForTests
     SmartCard_Impl
     EMRTDCrypto)
 target_include_directories(LibreSCRS_ChipAuthCryptoTests PRIVATE
@@ -329,6 +337,7 @@ add_executable(LibreSCRS_ChipAuthSessionTests LibreSCRS_ChipAuthSessionTests.cpp
 target_link_libraries(LibreSCRS_ChipAuthSessionTests
     GTest::gtest_main
     LibreSCRS::SmartCard
+    LibreSCRS_SecureChannel_ForTests
     LibreSCRS_SmartCard_TestHelpers
     LibreSCRS::Secure
     SmartCard_Impl
@@ -490,7 +499,7 @@ if(APPLE)
     add_executable(CardSessionMacTests cardsession_mac_test.cpp)
     target_include_directories(CardSessionMacTests PRIVATE ${PROJECT_SOURCE_DIR}/lib/smartcard/src)
     target_compile_definitions(CardSessionMacTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
-    target_link_libraries(CardSessionMacTests LibreSCRS_SmartCard SmartCard_Impl GTest::gtest_main)
+    target_link_libraries(CardSessionMacTests LibreSCRS_SmartCard SmartCard_Impl LibreSCRS_SmartCard_RawDiagnostic GTest::gtest_main)
     gtest_discover_tests(CardSessionMacTests)
 
     # Hardware checks of the held CryptoTokenKit session against real cards and
@@ -609,6 +618,7 @@ add_executable(EMRTDPluginTests
 )
 target_link_libraries(EMRTDPluginTests
     GTest::gtest_main
+    LibreSCRS_SmartCard_RawDiagnostic
     CardPlugin_Impl
     SmartCard_Impl
     EMRTDCrypto
@@ -777,6 +787,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
     target_link_libraries(OpenScBridgeTests
         GTest::gtest_main
         LibreSCRS_SmartCard
+        LibreSCRS_SmartCard_RawDiagnostic
         # fake_channel.h (tunnel-branch channel double) + its include dir.
         LibreSCRS_SmartCard_TestHelpers
         SmartCard_Impl
@@ -799,6 +810,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
         GTest::gtest_main
         CardPlugin_Impl
         LibreSCRS_SmartCard
+        LibreSCRS_SmartCard_RawDiagnostic
         SmartCard_Impl
         opensc_plugin_static_with_deps
         OpenSSL_Crypto
@@ -834,6 +846,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
         GTest::gtest_main
         CardPlugin_Impl
         LibreSCRS_SmartCard
+        LibreSCRS_SmartCard_RawDiagnostic
         SmartCard_Impl
         opensc_plugin_static_with_deps
         OpenSSL_Crypto
@@ -1636,6 +1649,7 @@ if(LIBRESCRS_VENDOR_OPENSC)
         GTest::gtest_main
         CardPlugin_Impl
         LibreSCRS_SmartCard
+        LibreSCRS_SmartCard_RawDiagnostic
         LibreSCRS_SmartCard_TestHelpers
         SmartCard_Impl
         opensc_plugin_static_with_deps

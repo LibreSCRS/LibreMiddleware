@@ -144,11 +144,6 @@ LibreSCRS::SmartCard::Internal::PCSCConnection& PcscBridge::unwrap(CardSession& 
     return *session.d->ownedConn;
 }
 
-const LibreSCRS::SmartCard::Internal::PCSCConnection& PcscBridge::unwrap(const CardSession& session) noexcept
-{
-    return *session.d->ownedConn;
-}
-
 std::uint64_t sessionGeneration(const CardSession& session) noexcept
 {
     return session.d->generation;

@@ -551,14 +551,33 @@ set_target_properties(LibreSCRS_SmartCard_TestHelpers PROPERTIES
 # OBJECT, like the test helpers above: the object lands in the executable
 # ahead of SmartCard_Impl, so archive order cannot drop the reference.
 #
+# It carries its own copy of the connection, because libLibreSCRS_SmartCard
+# exports only the members a shipped image calls: the reader-name constructor
+# openRawDiagnostic needs, the destructor, listReaders, reconnectWithReset and
+# the other transmits are hidden there. The executables that link this --
+# hardware probes, card_mapper and the tests that list readers or keep a
+# detached connection of their own -- talk to the card through this copy and
+# to CardSession through the library's. Both copies are the real PC/SC (or,
+# on macOS, CryptoTokenKit) connection; nothing is stubbed.
+#
 # Not installed (no install(TARGETS …) rule). Build-tree-only.
 # ──────────────────────────────────────────────────────────────────────────
 add_library(LibreSCRS_SmartCard_RawDiagnostic OBJECT
     SmartCard/raw_diagnostic/pcsc_raw_diagnostic.cpp
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection.cpp
+    $<$<PLATFORM_ID:Darwin>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_ctk.cpp>
+    $<$<PLATFORM_ID:Darwin>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_smartcard.mm>
+    $<$<NOT:$<PLATFORM_ID:Darwin>>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_pcsc.cpp>
 )
 target_link_libraries(LibreSCRS_SmartCard_RawDiagnostic
     PUBLIC LibreSCRS_SmartCard $<BUILD_INTERFACE:SmartCard_Impl>
 )
+if(APPLE)
+    set_source_files_properties(${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_smartcard.mm
+        TARGET_DIRECTORY LibreSCRS_SmartCard_RawDiagnostic PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(LibreSCRS_SmartCard_RawDiagnostic PUBLIC "-framework CryptoTokenKit" "-framework Foundation")
+endif()
+# PC/SC itself comes with SmartCard_Impl on every other platform.
 target_include_directories(LibreSCRS_SmartCard_RawDiagnostic
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/SmartCard/raw_diagnostic ${PROJECT_SOURCE_DIR}/lib/smartcard/src)
 target_compile_features(LibreSCRS_SmartCard_RawDiagnostic PUBLIC cxx_std_23)
@@ -600,6 +619,41 @@ if(NOT APPLE)
         VISIBILITY_INLINES_HIDDEN OFF
     )
 endif()
+
+# ──────────────────────────────────────────────────────────────────────────
+# Test-only copy of the secure channels libLibreSCRS_SmartCard keeps hidden.
+#
+# The PACE, BAC and Chip Authentication channels are not exported: CardSession,
+# their caller, is in the same library, and the one member a card plugin
+# reaches (ChipAuthChannel::establish and its destructor) is exported on its
+# own, as are PlainChannel's constructor and destructor. Tests that construct a
+# channel or call its members compile these sources into the executable
+# instead of reaching an export. A channel built here may be handed to a
+# CardSession in the library: the session matches channels by the protocol it
+# recorded, never by RTTI, so the two copies' typeinfo never meet. The state
+# mutator stays exported (the eMRTD plugin calls it), so it is not copied.
+#
+# Not installed (no install(TARGETS …) rule). Build-tree-only.
+# ──────────────────────────────────────────────────────────────────────────
+add_library(LibreSCRS_SecureChannel_ForTests OBJECT
+    SecureChannel/plain_channel.cpp
+    SecureChannel/pace_channel.cpp
+    SecureChannel/pace_params.cpp
+    SecureChannel/bac_channel.cpp
+    SecureChannel/chip_auth_channel.cpp
+)
+target_link_libraries(LibreSCRS_SecureChannel_ForTests
+    PUBLIC LibreSCRS_SmartCard
+    PRIVATE $<BUILD_INTERFACE:SmartCard_Impl> $<BUILD_INTERFACE:EMRTDCrypto>
+)
+target_include_directories(LibreSCRS_SecureChannel_ForTests PRIVATE
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/src
+    ${PROJECT_SOURCE_DIR}/lib/smartcard/include
+    ${PROJECT_SOURCE_DIR}/lib/emrtd-crypto/src
+    ${PROJECT_SOURCE_DIR}/lib/LibreSCRS/include)
+target_compile_features(LibreSCRS_SecureChannel_ForTests PUBLIC cxx_std_23)
+target_compile_definitions(LibreSCRS_SecureChannel_ForTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
+set_target_properties(LibreSCRS_SecureChannel_ForTests PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # ──────────────────────────────────────────────────────────────────────────
 # Test-only copy of the connection over CryptoTokenKit, compiled against the

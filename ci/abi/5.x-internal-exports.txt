@@ -11,85 +11,27 @@
 # This list only shrinks. The gate fails on a symbol that is not here, on an
 # entry that no longer names an internal export, and in CI on any entry the
 # list at the merge base does not hold.
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::BacChannel::BacChannel(LibreSCRS::SmartCard::IConnection&, LibreSCRS::SmartCard::AppletAid, LibreSCRS::SecureChannel::SessionKeys)@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::BacChannel::close()@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::BacChannel::currentApplet() const@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::BacChannel::establish(LibreSCRS::SmartCard::IConnection&, LibreSCRS::SmartCard::AppletAid, LibreSCRS::SecureChannel::BacInput const&, LibreSCRS::CancelToken)@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::BacChannel::replaceKeys(LibreSCRS::SecureChannel::SessionKeys)@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::BacChannel::setCurrentApplet(LibreSCRS::SmartCard::AppletAid)@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::BacChannel::state() const@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::BacChannel::transmit(LibreSCRS::SmartCard::Internal::APDUCommand const&, LibreSCRS::CancelToken)@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::BacChannel::~BacChannel()@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::ChipAuthChannel::ChipAuthChannel(LibreSCRS::SmartCard::IConnection&, LibreSCRS::SmartCard::AppletAid, LibreSCRS::SecureChannel::SessionKeys)@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::ChipAuthChannel::close()@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::ChipAuthChannel::currentApplet() const@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::ChipAuthChannel::establish(LibreSCRS::SmartCard::IConnection&, LibreSCRS::SecureChannel::ISecureChannel&, std::vector<unsigned char, std::allocator<unsigned char> > const&, LibreSCRS::SmartCard::AppletAid, LibreSCRS::CancelToken)@@LM_5	imported: libemrtd-plugin
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::ChipAuthChannel::replaceKeys(LibreSCRS::SecureChannel::SessionKeys)@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::ChipAuthChannel::setCurrentApplet(LibreSCRS::SmartCard::AppletAid)@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::ChipAuthChannel::state() const@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::ChipAuthChannel::transmit(LibreSCRS::SmartCard::Internal::APDUCommand const&, LibreSCRS::CancelToken)@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::ChipAuthChannel::~ChipAuthChannel()@@LM_5	imported: libemrtd-plugin
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::PaceChannel::PaceChannel(LibreSCRS::SmartCard::IConnection&, LibreSCRS::SmartCard::AppletAid, LibreSCRS::SecureChannel::SessionKeys)@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::PaceChannel::close()@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::PaceChannel::currentApplet() const@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::PaceChannel::establish(LibreSCRS::SmartCard::IConnection&, LibreSCRS::SecureChannel::PaceParams const&, LibreSCRS::CancelToken)@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::PaceChannel::replaceKeys(LibreSCRS::SecureChannel::SessionKeys)@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::PaceChannel::setCurrentApplet(LibreSCRS::SmartCard::AppletAid)@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::PaceChannel::state() const@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::PaceChannel::transmit(LibreSCRS::SmartCard::Internal::APDUCommand const&, LibreSCRS::CancelToken)@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::PaceChannel::~PaceChannel()@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::PlainChannel::PlainChannel(LibreSCRS::SmartCard::IConnection&, LibreSCRS::SmartCard::AppletAid)@@LM_5	imported: libemrtd-plugin, libpkcs15-plugin
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::PlainChannel::close()@@LM_5	exported with its class; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::PlainChannel::currentApplet() const@@LM_5	exported with its class; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::PlainChannel::state() const@@LM_5	exported with its class; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::PlainChannel::transmit(LibreSCRS::SmartCard::Internal::APDUCommand const&, LibreSCRS::CancelToken)@@LM_5	exported with its class; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::confirmSmAfterKeyChange(LibreSCRS::SecureChannel::ISecureChannel&, LibreSCRS::SmartCard::AppletAid const&, LibreSCRS::CancelToken)@@LM_5	imported: libemrtd-plugin
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::detail::ChannelStateMutator::replaceKeys(LibreSCRS::SecureChannel::ISecureChannel&, LibreSCRS::SecureChannel::SessionKeys)@@LM_5	imported: libemrtd-plugin
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(LibreSCRS::SecureChannel::ISecureChannel&, LibreSCRS::SmartCard::AppletAid)@@LM_5	imported: libemrtd-plugin
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::parsePaceOidsFromCardAccess(std::span<unsigned char const, 18446744073709551615ul>)@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::CardSession::transmitInternal(LibreSCRS::SmartCard::Internal::APDUCommand const&, LibreSCRS::CancelToken)@@LM_5	imported: libopensc-plugin, libpkcs15-plugin
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::activatedProtocol(LibreSCRS::SmartCard::CardSession&)@@LM_5	imported: libemrtd-plugin
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::active(LibreSCRS::SmartCard::CardSession&)@@LM_5	imported: libemrtd-plugin
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::clearOwner(LibreSCRS::SmartCard::CardSession&)@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::installSmChannel(LibreSCRS::SmartCard::CardSession&, std::unique_ptr<LibreSCRS::SecureChannel::ISecureChannel, std::default_delete<LibreSCRS::SecureChannel::ISecureChannel> >, std::variant<LibreSCRS::SmartCard::BacRequest, LibreSCRS::SmartCard::PaceRequest, LibreSCRS::SmartCard::ChipAuthRequest>)@@LM_5	imported: libemrtd-plugin
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::markOwner(LibreSCRS::SmartCard::CardSession&)@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(LibreSCRS::SmartCard::ActiveChannelHolder&)@@LM_5	imported: libemrtd-plugin, libopensc-plugin, libpkcs15-plugin
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::PCSCConnection(LibreSCRS::SmartCard::Internal::PCSCConnection::DetachedTag, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)@@LM_5	imported: libLibreSCRSTesting_SmartCard.a
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::PCSCConnection(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)@@LM_5	exported with its class; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::beginTransaction()@@LM_5	imported: libemrtd-plugin, libopensc-plugin, librs-eid-plugin
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::endTransaction()@@LM_5	imported: libemrtd-plugin, libopensc-plugin, librs-eid-plugin
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::getATR() const@@LM_5	imported: librs-eid-plugin
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::listReaders[abi:cxx11]()@@LM_5	exported with its class; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::reconnect()@@LM_5	imported: librs-eid-plugin
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::reconnectWithReset()@@LM_5	exported with its class; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::transmit(LibreSCRS::SmartCard::Internal::APDUCommand const&)@@LM_5	exported with its class; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::transmitRaw(LibreSCRS::SmartCard::Internal::APDUCommand const&)@@LM_5	exported with its class; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::transmitRaw(std::span<unsigned char const, 18446744073709551615ul>)@@LM_5	exported with its class; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::transmitRaw(unsigned char const*, unsigned long)@@LM_5	imported: libopensc-plugin
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::~PCSCConnection()@@LM_5	exported with its class; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::detail::PcscBridge::unwrap(LibreSCRS::SmartCard::CardSession const&)@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::detail::PcscBridge::unwrap(LibreSCRS::SmartCard::CardSession&)@@LM_5	imported: libemrtd-plugin, libeu-vrc-plugin, libopensc-plugin, libpkcs15-plugin, librs-eid-plugin, librs-health-plugin
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::detail::sessionGeneration(LibreSCRS::SmartCard::CardSession const&)@@LM_5	imported: libemrtd-plugin, libopensc-plugin, libpkcs15-plugin
-libLibreSCRS_SmartCard.so	typeinfo for LibreSCRS::SecureChannel::BacChannel@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	typeinfo for LibreSCRS::SecureChannel::ChipAuthChannel@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	typeinfo for LibreSCRS::SecureChannel::ISecureChannel@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	typeinfo for LibreSCRS::SecureChannel::PaceChannel@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	typeinfo for LibreSCRS::SecureChannel::PlainChannel@@LM_5	exported with its class; no shipped image imports it
-libLibreSCRS_SmartCard.so	typeinfo for LibreSCRS::SmartCard::Internal::PCSCConnection@@LM_5	exported with its class; no shipped image imports it
-libLibreSCRS_SmartCard.so	typeinfo for LibreSCRS::SmartCard::Internal::PCSCError@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	typeinfo name for LibreSCRS::SecureChannel::BacChannel@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	typeinfo name for LibreSCRS::SecureChannel::ChipAuthChannel@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	typeinfo name for LibreSCRS::SecureChannel::ISecureChannel@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	typeinfo name for LibreSCRS::SecureChannel::PaceChannel@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	typeinfo name for LibreSCRS::SecureChannel::PlainChannel@@LM_5	exported with its class; no shipped image imports it
-libLibreSCRS_SmartCard.so	typeinfo name for LibreSCRS::SmartCard::Internal::PCSCConnection@@LM_5	exported with its class; no shipped image imports it
-libLibreSCRS_SmartCard.so	typeinfo name for LibreSCRS::SmartCard::Internal::PCSCError@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	vtable for LibreSCRS::SecureChannel::BacChannel@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	vtable for LibreSCRS::SecureChannel::ChipAuthChannel@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	vtable for LibreSCRS::SecureChannel::PaceChannel@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_SmartCard.so	vtable for LibreSCRS::SecureChannel::PlainChannel@@LM_5	exported with its class; no shipped image imports it
-libLibreSCRS_SmartCard.so	vtable for LibreSCRS::SmartCard::Internal::PCSCConnection@@LM_5	exported with its class; no shipped image imports it
-libLibreSCRS_SmartCard.so	vtable for LibreSCRS::SmartCard::Internal::PCSCError@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_Trust.so	LibreSCRS::Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(LibreSCRS::Trust::TrustStore&, std::vector<LibreSCRS::Trust::TrustAnchor, std::allocator<LibreSCRS::Trust::TrustAnchor> >)@@LM_5	imported: libLibreSCRS_Signing
-libLibreSCRS_Trust.so	typeinfo for LibreSCRS::Trust::detail::TrustAnchorProvider@@LM_5	exported with its class or by its own annotation; no shipped image imports it
-libLibreSCRS_Trust.so	typeinfo name for LibreSCRS::Trust::detail::TrustAnchorProvider@@LM_5	exported with its class or by its own annotation; no shipped image imports it
+libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::ChipAuthChannel::establish(LibreSCRS::SmartCard::IConnection&, LibreSCRS::SecureChannel::ISecureChannel&, std::vector<unsigned char, std::allocator<unsigned char> > const&, LibreSCRS::SmartCard::AppletAid, LibreSCRS::CancelToken)@@LM_5	imported: libemrtd-plugin (Chip Authentication over the live channel)
+libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::ChipAuthChannel::~ChipAuthChannel()@@LM_5	imported: libemrtd-plugin (destroys the channel establish returned)
+libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::PlainChannel::PlainChannel(LibreSCRS::SmartCard::IConnection&, LibreSCRS::SmartCard::AppletAid)@@LM_5	imported: libemrtd-plugin, libpkcs15-plugin (plain probe channel on the stack)
+libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::confirmSmAfterKeyChange(LibreSCRS::SecureChannel::ISecureChannel&, LibreSCRS::SmartCard::AppletAid const&, LibreSCRS::CancelToken)@@LM_5	imported: libemrtd-plugin (proof exchange after the in-tunnel key change)
+libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::detail::ChannelStateMutator::replaceKeys(LibreSCRS::SecureChannel::ISecureChannel&, LibreSCRS::SecureChannel::SessionKeys)@@LM_5	imported: libemrtd-plugin (installs the Chip Authentication keys)
+libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(LibreSCRS::SecureChannel::ISecureChannel&, LibreSCRS::SmartCard::AppletAid)@@LM_5	imported: libemrtd-plugin (records the applet after a wrapped SELECT)
+libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::CardSession::transmitInternal(LibreSCRS::SmartCard::Internal::APDUCommand const&, LibreSCRS::CancelToken)@@LM_5	imported: libopensc-plugin, libpkcs15-plugin (SM-aware APDU funnel)
+libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::activatedProtocol(LibreSCRS::SmartCard::CardSession&)@@LM_5	imported: libemrtd-plugin (lock-free protocol read under the holder)
+libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::active(LibreSCRS::SmartCard::CardSession&)@@LM_5	imported: libemrtd-plugin (the live channel under the holder)
+libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::installSmChannel(LibreSCRS::SmartCard::CardSession&, std::unique_ptr<LibreSCRS::SecureChannel::ISecureChannel, std::default_delete<LibreSCRS::SecureChannel::ISecureChannel> >, std::variant<LibreSCRS::SmartCard::BacRequest, LibreSCRS::SmartCard::PaceRequest, LibreSCRS::SmartCard::ChipAuthRequest>)@@LM_5	imported: libemrtd-plugin (installs the Chip Authentication channel)
+libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(LibreSCRS::SmartCard::ActiveChannelHolder&)@@LM_5	imported: libemrtd-plugin, libopensc-plugin, libpkcs15-plugin (the holder's channel)
+libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::PCSCConnection(LibreSCRS::SmartCard::Internal::PCSCConnection::DetachedTag, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)@@LM_5	imported: libLibreSCRSTesting_SmartCard.a (makeDetachedCardSession)
+libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::beginTransaction()@@LM_5	imported: libemrtd-plugin, libopensc-plugin, librs-eid-plugin (PC/SC transaction)
+libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::endTransaction()@@LM_5	imported: libemrtd-plugin, libopensc-plugin, librs-eid-plugin (PC/SC transaction)
+libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::getATR() const@@LM_5	imported: librs-eid-plugin (card generation from the ATR)
+libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::reconnect()@@LM_5	imported: librs-eid-plugin (reconnect after a card reset)
+libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::transmitRaw(unsigned char const*, unsigned long)@@LM_5	imported: libopensc-plugin (raw transmit of the OpenSC reader bridge)
+libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::detail::PcscBridge::unwrap(LibreSCRS::SmartCard::CardSession&)@@LM_5	imported: every card plugin (the session's connection)
+libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::detail::sessionGeneration(LibreSCRS::SmartCard::CardSession const&)@@LM_5	imported: libemrtd-plugin, libopensc-plugin, libpkcs15-plugin; also called by the inline makeSessionKey in the installed Plugin/SessionKey.h
+libLibreSCRS_Trust.so	LibreSCRS::Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(LibreSCRS::Trust::TrustStore&, std::vector<LibreSCRS::Trust::TrustAnchor, std::allocator<LibreSCRS::Trust::TrustAnchor> >)@@LM_5	imported: libLibreSCRS_Signing (merges Trusted List anchors into a TrustStore)
+libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::PlainChannel::~PlainChannel()@@LM_5	imported: libemrtd-plugin, libpkcs15-plugin (destroys the stack probe channel)
+libLibreSCRS_SmartCard.so	typeinfo for LibreSCRS::SmartCard::Internal::PCSCError@@LM_5	thrown: PCSCError leaves libLibreSCRS_SmartCard through the exported PCSCConnection members
+libLibreSCRS_SmartCard.so	typeinfo name for LibreSCRS::SmartCard::Internal::PCSCError@@LM_5	thrown: PCSCError leaves libLibreSCRS_SmartCard through the exported PCSCConnection members
+libLibreSCRS_SmartCard.so	vtable for LibreSCRS::SmartCard::Internal::PCSCError@@LM_5	thrown: PCSCError leaves libLibreSCRS_SmartCard through the exported PCSCConnection members

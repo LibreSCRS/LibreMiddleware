@@ -40,8 +40,13 @@ namespace LibreSCRS::SecureChannel {
 /// All implementations are non-copyable. Copy/move semantics are
 /// concrete-class concerns; the interface deliberately omits them.
 ///
+/// Not exported: nothing compares this interface's typeinfo across a library
+/// boundary (no dynamic_cast, typeid or catch on it), so each image may keep
+/// its own copy, and the channel classes the card plugins name are exported
+/// on their own.
+///
 /// @since 4.1
-class LIBRESCRS_PUBLIC_API ISecureChannel
+class ISecureChannel
 {
 public:
     virtual ~ISecureChannel() = default;

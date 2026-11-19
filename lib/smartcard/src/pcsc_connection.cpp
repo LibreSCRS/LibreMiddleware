@@ -229,13 +229,10 @@ PCSCConnection::PCSCConnection(DetachedTag, const std::string& readerName) : sto
 // read them stay in the production class: the branches are inert until a
 // test arms one, and moving the members would change the class layout.
 //
-// A definition placed here would not stay private: this TU is compiled into
-// libLibreSCRS_SmartCard, the class is LIBRESCRS_PUBLIC_API, and both export
-// filters (the `_ZN9LibreSCRS*` prefix families in
-// cmake/librescrs-public-exports.map and its Darwin list) admit every member. Being a
-// dynamic export also roots the section, so --gc-sections cannot drop it
-// either -- which is why moving the definition out, rather than annotating
-// the declaration, is what removes it.
+// Keeping the definitions out of this TU keeps the seams out of the shipped
+// library altogether: libLibreSCRS_SmartCard compiles it, and a seam left
+// here would be one LIBRESCRS_PUBLIC_API away from a dynamic export, which
+// --gc-sections cannot drop either.
 
 APDUResponse PCSCConnection::transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen)
 {

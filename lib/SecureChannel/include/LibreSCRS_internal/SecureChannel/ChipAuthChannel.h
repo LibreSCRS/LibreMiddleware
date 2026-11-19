@@ -78,14 +78,20 @@ struct ChipAuthEstablishError
 /// layer, applet switches ride wrapped `SELECT` through the live tunnel
 /// (BSI TR-03110 §3).
 ///
+/// Hidden except for @ref establish and the destructor, the two members the
+/// eMRTD plugin reaches across the library boundary: it receives the channel
+/// from @ref establish and, the class being final, destroys it through a
+/// direct call. Tests that construct the channel compile its sources
+/// themselves (LibreSCRS_SecureChannel_ForTests).
+///
 /// @since 4.4
-class LIBRESCRS_PUBLIC_API ChipAuthChannel final : public ISecureChannel
+class ChipAuthChannel final : public ISecureChannel
 {
 public:
     ChipAuthChannel(LibreSCRS::SmartCard::IConnection& connection, LibreSCRS::SmartCard::AppletAid currentAppletAid,
                     SessionKeys keys);
 
-    ~ChipAuthChannel() override;
+    LIBRESCRS_PUBLIC_API ~ChipAuthChannel() override;
 
     [[nodiscard]] const LibreSCRS::SmartCard::AppletAid& currentApplet() const noexcept override;
     [[nodiscard]] ChannelState state() const noexcept override;

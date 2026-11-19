@@ -16,12 +16,11 @@ namespace LibreSCRS::Trust::detail {
 
 /// @brief Abstract source of trust anchors. Concrete subclasses encapsulate
 ///        per-source ingestion concerns (filesystem walk, parsed TL data).
-/// @note LM-internal but cross-`.so`: concrete subclasses live in the
-///        `LibreSign` archive (linked into @c libLibreSCRS_Signing.so) while
-///        the abstract base's typeinfo + vtable live in @c libLibreSCRS_Trust.so.
-///        @c LIBRESCRS_PUBLIC_API ensures the typeinfo/vtable cross the .so
-///        boundary so RTTI + virtual dispatch work under @c -fvisibility=hidden.
-class LIBRESCRS_PUBLIC_API TrustAnchorProvider
+/// @note Not exported: every subclass (BundledCertsProvider and the
+///        trusted-list provider in TrustStoreInternalAccess.cpp) lives in
+///        @c libLibreSCRS_Trust.so with the base, and nothing applies
+///        dynamic_cast, typeid or catch to it.
+class TrustAnchorProvider
 {
 public:
     virtual ~TrustAnchorProvider() = default;

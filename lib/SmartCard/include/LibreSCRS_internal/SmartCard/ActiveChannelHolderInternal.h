@@ -45,9 +45,9 @@ struct ActiveChannelAccessor
     ///        sentinel SW 0x6F00 if no channel is installed.
     /// @note Hidden visibility: an LM-internal funnel with no cross-`.so`
     ///       caller. Deliberately NOT exported (the APDU types stay off the
-    ///       public ABI surface); only @ref active / @ref activatedProtocol
-    ///       (and the owner-marker pair used by the in-tree re-entrancy test)
-    ///       carry @ref LIBRESCRS_PUBLIC_API for cross-`.so` reach.
+    ///       public ABI surface); only @ref active, @ref activatedProtocol
+    ///       and @ref installSmChannel, which card plugins call, carry
+    ///       @ref LIBRESCRS_PUBLIC_API for cross-`.so` reach.
     [[nodiscard]] static APDUResponse transmit(CardSession& session, const APDUCommand& cmd,
                                                LibreSCRS::CancelToken token);
 
@@ -69,12 +69,12 @@ struct ActiveChannelAccessor
     ///        active-channel lock. Invoked when a holder takes ownership of
     ///        the session mutex (see @ref makeActiveChannelHolder). The
     ///        re-entrancy guard reads this to refuse same-thread re-entry.
-    LIBRESCRS_PUBLIC_API static void markOwner(CardSession& session) noexcept;
+    static void markOwner(CardSession& session) noexcept;
 
     /// @brief Clears the active-channel owner on @p session. Invoked when the
     ///        owning holder releases the lock (see
     ///        @ref ActiveChannelHolder::Impl::release).
-    LIBRESCRS_PUBLIC_API static void clearOwner(CardSession& session) noexcept;
+    static void clearOwner(CardSession& session) noexcept;
 
     /// @brief Install @p channel as @p session's active secure channel and
     ///        record @p protocol, replacing (and closing) any channel already
