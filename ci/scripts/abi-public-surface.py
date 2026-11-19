@@ -49,12 +49,19 @@
 #   reason "thrown: <why>"    -- the typeinfo, typeinfo name or vtable of an
 #                                exception type that leaves its library: a
 #                                catch elsewhere needs it exported whether or
-#                                not any shipped image imports it.
+#                                not any shipped image imports it. Verified,
+#                                not trusted: the library that exports it must
+#                                contain a throw of the type -- a call to
+#                                __cxa_throw whose typeinfo argument is loaded
+#                                from that typeinfo's address or its GOT slot,
+#                                read from the x86_64 disassembly. An entry
+#                                with no such throw site is stale.
 #
 # usage: abi-public-surface.py --clang C --include-root DIR --exports F
-#            --imports F --allowlist F [--base-allowlist F]
+#            --imports F --allowlist F --images F [--base-allowlist F]
 #   exports: "<library>\t<binding>\t<mangled>" per export of a core library.
 #   imports: "<image>\t<mangled>" per undefined symbol of a shipped image.
+#   images:  "<library>\t<path>" per core library, for the throw-site check.
 # Exit 0 when every rule holds, 1 on a finding, 2 when it could not judge.
 
 import argparse
@@ -277,6 +284,51 @@ def bare(sym):
     return sym.split('@', 1)[0]
 
 
+THROW_WINDOW = 12   # instructions before the call in which the typeinfo argument is loaded
+_disassembly = {}
+
+
+def throws_type(path, typeinfo):
+    """True when the image at path calls __cxa_throw with the address of the
+    typeinfo symbol `typeinfo` (mangled, _ZTI...) as its argument: loaded from
+    the symbol itself or from the GOT slot the dynamic linker fills with it."""
+    try:
+        syms = subprocess.run(['nm', '-D', '--defined-only', path], capture_output=True, text=True,
+                              check=True).stdout
+        relocs = subprocess.run(['readelf', '-rW', path], capture_output=True, text=True, check=True).stdout
+        if path not in _disassembly:
+            _disassembly[path] = subprocess.run(['objdump', '-d', '--no-show-raw-insn', path],
+                                                capture_output=True, text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError) as e:
+        fail(f'cannot read {path} for the throw-site check: {e}')
+    addresses = set()
+    for line in syms.splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and bare(parts[2]) == typeinfo:
+            addresses.add(int(parts[0], 16))
+    for line in relocs.splitlines():
+        parts = line.split()
+        if len(parts) >= 5 and parts[2].endswith('GLOB_DAT') and bare(parts[4]) == typeinfo:
+            addresses.add(int(parts[0], 16))
+    if not addresses:
+        return False
+    recent = []
+    for line in _disassembly[path].splitlines():
+        if line.endswith('>:'):         # a new function: its loads are not this call's
+            recent = []
+            continue
+        if '\t' not in line:
+            continue
+        if re.search(r'\bcall\b.*<__cxa_throw(@plt)?>', line):
+            if addresses & set(recent[-THROW_WINDOW:]):
+                return True
+            recent = []
+            continue
+        m = re.search(r'#\s*([0-9a-f]+)\s*<', line)
+        recent.append(int(m.group(1), 16) if m else None)
+    return False
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--clang', required=True)
@@ -284,6 +336,7 @@ def main():
     ap.add_argument('--exports', required=True)
     ap.add_argument('--imports', required=True)
     ap.add_argument('--allowlist', required=True)
+    ap.add_argument('--images', required=True)
     ap.add_argument('--base-allowlist')
     args = ap.parse_args()
 
@@ -293,6 +346,7 @@ def main():
 
     exports = read_rows(args.exports, 3)
     imports = read_rows(args.imports, 2)
+    images = dict(read_rows(args.images, 2))
     if not exports:
         fail('no exported symbols to judge')
 
@@ -300,9 +354,11 @@ def main():
     texts = demangle([e[2] for e in exports])
     exporter = {}       # bare mangled -> (library, demangled text as listed)
     offending = {}      # (library, text) -> binding
+    mangled_of = {}     # (library, text) -> bare mangled
     for (lib, binding, sym), text in zip(exports, texts):
         b = bare(sym)
         exporter.setdefault(b, (lib, text))
+        mangled_of.setdefault((lib, text), b)
         if LIBRESCRS.match(b) and (not attributed(b, surface) or INTERNAL_IN_TEXT.search(text)):
             offending.setdefault((lib, text), binding)
 
@@ -380,6 +436,13 @@ def main():
             stale.append(f'line {n}: {key[0]}  {key[1]}  -- no longer an internal export')
         elif reason.startswith('imported:') and not importers.get(key):
             stale.append(f'line {n}: {key[0]}  {key[1]}  -- no shipped image imports it')
+        elif reason.startswith('thrown:'):
+            mangled = mangled_of[key]
+            path = images.get(key[0])
+            if path is None:
+                fail(f'no image path for {key[0]} -- cannot verify a "thrown:" entry')
+            if not throws_type(path, '_ZTI' + mangled[4:]):
+                stale.append(f'line {n}: {key[0]}  {key[1]}  -- {key[0]} has no throw site for this type')
     report(f'STALE ALLOWLIST: entries in {args.allowlist}', stale,
            'Hide the symbol if nothing that ships imports it, and delete the line.')
 

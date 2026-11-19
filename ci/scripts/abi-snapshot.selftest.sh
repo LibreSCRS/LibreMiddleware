@@ -61,6 +61,8 @@
 #      allowlist does not name                                     -> 1
 #  24  control: an inline body calling an exported public function  -> 0
 #  25  an entry added against --allowlist-base, and its control     -> 1/0
+#  26  a "thrown:" entry: the library throws the type (control), and
+#      the same typeinfo exported with no throw site in the library -> 0/1
 set -uo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -228,7 +230,7 @@ fi
 #     would read as the finding.
 SHIM="$WORK/shim"
 mkdir -p "$SHIM"
-for t in bash sh nm c++filt awk sort find wc basename dirname mktemp diff cat sed grep cp mkdir rm head tr env printf ls uname python3 "$CXX"; do
+for t in bash sh nm c++filt readelf objdump awk sort find wc basename dirname mktemp diff cat sed grep cp mkdir rm head tr env printf ls uname python3 "$CXX"; do
     p="$(command -v "$t" 2>/dev/null)" && ln -sf "$p" "$SHIM/$t"
 done
 root5="$(stub shim-tree)"
@@ -649,6 +651,40 @@ rc=$(run "$root9" --check --allowlist-base HEAD build)
 check "an entry added against the base" 1 "$rc"
 says "an entry added against the base" "ALLOWLIST GREW"
 says "an entry added against the base" "LibreSCRS::Internal::selftestExtra(int)"
+
+# --- 26: a "thrown:" entry is verified, not trusted --------------------------
+#     The typeinfo of an Internal exception type, exported because the library
+#     throws it out of an exported function. The control throws it; the
+#     perturbed library still exports the same typeinfo (it builds the type,
+#     so its vtable and typeinfo are emitted) but throws nothing, so the entry has nothing to stand on.
+thrown_fixture() {  # thrown_fixture <body of selftestAlpha>
+    root26="$WORK/thrown"
+    rm -rf "$root26"
+    fixture "$root26"
+    {
+        printf '#include <stdexcept>\n'
+        printf 'namespace LibreSCRS { namespace Internal {\n'
+        printf 'struct %s SelftestError : std::runtime_error { using std::runtime_error::runtime_error; };\n' "$EXPORT"
+        printf '} %s int selftestAlpha(int x) { %s }\n' "$EXPORT" "$1"
+        printf '%s int selftestBeta(int x) { return x + 2; }\n%s int selftestGamma(int x) { return x + 3; }\n}\n' "$EXPORT" "$EXPORT"
+    } > "$root26/stub.cpp"
+    g++ -shared -fPIC -O2 -fvisibility=hidden -fvisibility-inlines-hidden \
+        -o "$root26/build/lib/LibreSCRS/libLibreSCRS_Stub.so.5.0.0" "$root26/stub.cpp" 2>"$WORK/gcc.err" \
+        || { echo "FATAL: could not build the thrown-type stub" >&2; sed 's/^/        /' "$WORK/gcc.err" >&2; exit 2; }
+    printf 'libLibreSCRS_Stub.so\ttypeinfo for LibreSCRS::Internal::SelftestError\tthrown: leaves selftestAlpha\n' \
+        > "$root26/ci/abi/5.x-internal-exports.txt"
+    printf 'libLibreSCRS_Stub.so\ttypeinfo name for LibreSCRS::Internal::SelftestError\tthrown: leaves selftestAlpha\n' \
+        >> "$root26/ci/abi/5.x-internal-exports.txt"
+    printf 'libLibreSCRS_Stub.so\tvtable for LibreSCRS::Internal::SelftestError\tthrown: leaves selftestAlpha\n' \
+        >> "$root26/ci/abi/5.x-internal-exports.txt"
+}
+thrown_fixture 'if (x < 0) throw Internal::SelftestError("negative"); return x + 1;'
+rc=$(run "$root26" --update build)
+check "control: a thrown: entry the library throws" 0 "$rc"
+thrown_fixture 'Internal::SelftestError e("built, never thrown"); return x + e.what()[0];'
+rc=$(run "$root26" --update build)
+check "a thrown: entry with no throw site" 1 "$rc"
+says "a thrown: entry with no throw site" "has no throw site for this type"
 
 printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
 [ "$fails" = 0 ]

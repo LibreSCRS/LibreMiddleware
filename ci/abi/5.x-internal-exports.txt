@@ -10,9 +10,13 @@
 #   imported: <who>  -- a shipped image (a core library, a card plugin, the
 #                       installed test archive) imports it; the gate fails the
 #                       entry when none does;
-#   thrown: <why>    -- the typeinfo of an exception type that leaves its
-#                       library, which a catch in another image needs exported.
-# Test executables are not shipped and are never a reason.
+#   thrown: <why>    -- the typeinfo, typeinfo name or vtable of an exception
+#                       type the library throws out through an exported
+#                       function. Exported because the throw leaves the shared
+#                       object, whoever catches it; the gate fails the entry
+#                       when the library contains no throw of the type.
+# Neither reason is ever "a test executable needs it": test executables are
+# not shipped. A "thrown:" entry rests on the throw site in the library itself.
 #
 # This list only shrinks. The gate fails on a symbol that is not here, on an
 # entry that no longer names an imported internal export, and in CI on any
