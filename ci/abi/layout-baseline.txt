@@ -202,6 +202,11 @@ LibreSCRS::SmartCard::AppletAid	  +0     class std::vector<unsigned char> storag
 LibreSCRS::SmartCard::AppletAid	sizeof=24 align=8
 LibreSCRS::SmartCard::CardSession	  +16    class std::unique_ptr<struct LibreSCRS::SmartCard::CardSession::Impl> d
 LibreSCRS::SmartCard::CardSession	sizeof=24 align=8
+LibreSCRS::SmartCard::ChipAuthReport	  +0     ChipAuthOutcome outcome
+LibreSCRS::SmartCard::ChipAuthReport	  +1     ChipAuthReason reason
+LibreSCRS::SmartCard::ChipAuthReport	  +40    class std::basic_string<char> detail
+LibreSCRS::SmartCard::ChipAuthReport	  +8     class std::basic_string<char> protocolOid
+LibreSCRS::SmartCard::ChipAuthReport	sizeof=72 align=8
 LibreSCRS::SmartCard::MonitorEvent	  +0     Kind kind
 LibreSCRS::SmartCard::MonitorEvent	  +40    class std::optional<class std::basic_string<char> > diagnosticDetail
 LibreSCRS::SmartCard::MonitorEvent	  +8     class std::basic_string<char> readerName

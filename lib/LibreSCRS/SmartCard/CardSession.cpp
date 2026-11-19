@@ -8,7 +8,9 @@
 #include <LibreSCRS/Auth/AuthRequirement.h>
 #include <LibreSCRS/Auth/CredentialResult.h>
 #include <LibreSCRS/Auth/ErrorKeys.h>
+#include <LibreSCRS/Secure/Buffer.h>
 #include <LibreSCRS_internal/SecureChannel/BacChannel.h>
+#include <LibreSCRS_internal/SecureChannel/ChipAuthChannel.h>
 #include <LibreSCRS_internal/SecureChannel/PaceChannel.h>
 #include <LibreSCRS_internal/SecureChannel/PaceParams.h>
 #include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
@@ -20,6 +22,7 @@
 #include <LibreSCRS_internal/SmartCard/PaceDowngradeVerdict.h>
 
 #include "apdu.h"
+#include "chip_auth.h"
 #include <pcsc_connection.h>
 
 #include <array>
@@ -28,12 +31,14 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace LibreSCRS::SmartCard {
 
@@ -971,6 +976,164 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
     }
 
     return std::unexpected{ChannelActivationError::PaceWrongSecret};
+}
+
+namespace {
+
+bool isCancelled(const LibreSCRS::CancelToken& token) noexcept
+{
+    return token.isCancellable() && token.isCancelled();
+}
+
+} // namespace
+
+ChipAuthReport CardSession::performChipAuthentication(std::span<const std::uint8_t> dg14, AppletAid aid,
+                                                      LibreSCRS::CancelToken token)
+{
+    using LibreSCRS::SecureChannel::ChannelState;
+    using LibreSCRS::SecureChannel::ChipAuthChannel;
+    using EstablishKind = LibreSCRS::SecureChannel::ChipAuthEstablishError::Kind;
+
+    auto noVerdict = [](ChipAuthReason reason, std::string detail, std::string protocol = {}) {
+        ChipAuthReport r;
+        r.outcome = ChipAuthOutcome::NotPerformed;
+        r.reason = reason;
+        r.detail = std::move(detail);
+        r.protocolOid = std::move(protocol);
+        return r;
+    };
+
+    // Only the thread holding the ActiveChannelHolder may run this: it already
+    // owns the session mutex and the PC/SC transaction, so the session state
+    // is read without locking (locking would self-deadlock) and no other
+    // command can land between the key agreement and the proof exchange.
+    if (!d || !d->callerOwnsActiveChannel()) {
+        return noVerdict(ChipAuthReason::NoUsableChannel,
+                         "chip authentication needs the session's active channel held");
+    }
+    if (!d->ownedConn || !d->activeChannel || d->activeChannel->state() != ChannelState::Open) {
+        return noVerdict(ChipAuthReason::NoUsableChannel, "no open channel to run chip authentication over");
+    }
+    if (isCancelled(token)) {
+        return noVerdict(ChipAuthReason::Cancelled, "cancelled before chip authentication");
+    }
+    const std::vector<std::uint8_t> dg14Raw(dg14.begin(), dg14.end());
+
+    // Reader and transport errors, and allocation failure, propagate from
+    // both paths: none of them says anything about the chip.
+    if (!d->activeChannel->carriesSm()) {
+        // Plain channel: establish() returns a channel only after its proof
+        // exchange verified under the derived keys.
+        auto upgraded = ChipAuthChannel::establish(*d->ownedConn, *d->activeChannel, dg14Raw, aid, token);
+        if (upgraded) {
+            ChipAuthReport report;
+            report.outcome = ChipAuthOutcome::Passed;
+            report.protocolOid = (*upgraded)->protocolOid();
+            // The card now speaks SM under the derived keys; the plain channel
+            // is superseded.
+            d->activeChannel->close();
+            d->activeChannel = std::move(*upgraded);
+            d->activatedProtocol = ChipAuthRequest{};
+            return report;
+        }
+        // No upgrade: the plain channel stays, and its next command ends any
+        // SM the card left half-open (ISO 7816-4). A status-word refusal on a
+        // plain channel is no evidence against the chip (a contact interface
+        // may admit the protocol only under SM); a key agreement whose proof
+        // failed is.
+        const auto& error = upgraded.error();
+        switch (error.kind) {
+        case EstablishKind::NotSupported: {
+            ChipAuthReport report;
+            report.outcome = ChipAuthOutcome::NotSupported;
+            report.reason = ChipAuthReason::NotOffered;
+            report.protocolOid = error.protocol;
+            return report;
+        }
+        case EstablishKind::ProtocolRefused:
+            return noVerdict(ChipAuthReason::NotOffered, "chip refused Chip Authentication on plain channel",
+                             error.protocol);
+        case EstablishKind::Cancelled:
+            return noVerdict(ChipAuthReason::Cancelled, error.detail, error.protocol);
+        case EstablishKind::LocalCryptoFailure:
+            return noVerdict(ChipAuthReason::LocalCryptoFailure, error.detail, error.protocol);
+        case EstablishKind::SmProofFailed:
+            break;
+        }
+        ChipAuthReport report;
+        report.outcome = ChipAuthOutcome::Failed;
+        report.protocolOid = error.protocol;
+        report.detail = error.detail;
+        return report;
+    }
+
+    // Inside a PACE/BAC tunnel: the key agreement runs wrapped, after which
+    // the card answers only under the derived keys, so the tunnel takes them
+    // over and must prove them with a wrapped exchange before Passed.
+    auto ca = emrtd::crypto::performChipAuth(*d->activeChannel, dg14Raw, token);
+    // A failure observed while the caller was cancelling says nothing about
+    // the chip.
+    auto failedUnlessCancelled = [&](std::string detail) {
+        if (isCancelled(token)) {
+            return noVerdict(ChipAuthReason::Cancelled, "cancelled during chip authentication", ca.protocol);
+        }
+        ChipAuthReport r;
+        r.outcome = ChipAuthOutcome::Failed;
+        r.protocolOid = ca.protocol;
+        r.detail = std::move(detail);
+        return r;
+    };
+    switch (ca.chipAuthentication) {
+    case emrtd::crypto::ChipAuthResult::NOT_SUPPORTED: {
+        ChipAuthReport report;
+        report.outcome = ChipAuthOutcome::NotSupported;
+        report.reason = ChipAuthReason::NotOffered;
+        report.protocolOid = ca.protocol;
+        report.detail = ca.errorDetail;
+        return report;
+    }
+    case emrtd::crypto::ChipAuthResult::FAILED:
+        // Inside a PACE/BAC tunnel the chip's answer to an advertised protocol
+        // is a verdict: a status-word refusal, a response whose MAC does not
+        // verify, or a card-side SM abort (6987/6988). A clone holding the
+        // tunnel keys could otherwise dodge Failed by answering badly. These
+        // are answers from the card, not reader errors, which propagate. Any
+        // other failure happened on this side.
+        if (ca.chipRefusedProtocol) {
+            return failedUnlessCancelled(ca.errorDetail);
+        }
+        return noVerdict(ChipAuthReason::LocalCryptoFailure, ca.errorDetail, ca.protocol);
+    case emrtd::crypto::ChipAuthResult::NOT_PERFORMED:
+        // performChipAuth has no path that reports this; were one added, it
+        // would be a run this side did not complete.
+        return noVerdict(ChipAuthReason::LocalCryptoFailure, ca.errorDetail, ca.protocol);
+    case emrtd::crypto::ChipAuthResult::PASSED:
+        break;
+    }
+    if (!ca.newSessionKeys) {
+        return noVerdict(ChipAuthReason::LocalCryptoFailure, "chip authentication derived no session keys",
+                         ca.protocol);
+    }
+    LibreSCRS::SecureChannel::SessionKeys keys;
+    keys.encKey = LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{ca.newSessionKeys->encKey}};
+    keys.macKey = LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{ca.newSessionKeys->macKey}};
+    keys.ssc = LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{ca.newSessionKeys->ssc}};
+    keys.cipher = (ca.newAlgorithm == emrtd::crypto::SMAlgorithm::DES3) ? LibreSCRS::SecureChannel::SmCipher::Des3
+                                                                        : LibreSCRS::SecureChannel::SmCipher::Aes;
+    LibreSCRS::SecureChannel::detail::ChannelStateMutator::replaceKeys(*d->activeChannel, std::move(keys));
+    const auto proof = LibreSCRS::SecureChannel::confirmSmAfterKeyChange(*d->activeChannel, aid, token);
+    if (!proof.proven) {
+        return failedUnlessCancelled("chip authentication key agreement did not verify");
+    }
+    // When the proof exchange selected @p aid through the tunnel, the channel
+    // records it so a later activation for another applet re-selects.
+    if (proof.appletSelected) {
+        LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(*d->activeChannel, aid);
+    }
+    ChipAuthReport report;
+    report.outcome = ChipAuthOutcome::Passed;
+    report.protocolOid = ca.protocol;
+    return report;
 }
 
 namespace Internal {

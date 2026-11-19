@@ -21,6 +21,21 @@ Notable user-visible changes per release. Format follows
   the loader checks: rebuild tests that link it whenever LibreMiddleware is
   upgraded (`docs/SHARED-LIBRARY-CONSUMERS.md`).
 
+- **`CardSession::performChipAuthentication`** (`ChipAuthReport`,
+  `ChipAuthOutcome`, `ChipAuthReason` in
+  `<LibreSCRS/SmartCard/ChipAuthentication.h>`). Runs eMRTD Chip Authentication
+  over the channel the caller holds: on a plain channel it raises the session to
+  secure messaging under the derived keys, inside a PACE or BAC tunnel it
+  switches the tunnel to them. `Passed` is reported only after a protected
+  exchange verified under the new keys; `Failed` means only that the chip
+  answered and did not prove its key. A cancel, a refusal on a plain channel or
+  a local crypto failure is `NotPerformed` with a `ChipAuthReason`, and a
+  reader error propagates as an exception. The session keys never leave the
+  library. The eMRTD plugin now uses it instead of running the protocol and
+  rotating the keys itself; a local crypto failure there is now reported as
+  not performed instead of failed, and a reader error during Chip
+  Authentication ends the read instead of being reported as a failed check.
+
 - **`OpenError::Kind::SessionRefused`.** A card that another client holds, or
   whose session the platform has not granted yet (PC/SC
   `SCARD_E_SHARING_VIOLATION`, the same refusal from CryptoTokenKit), is now

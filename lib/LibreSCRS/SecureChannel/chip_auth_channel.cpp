@@ -57,79 +57,82 @@ void ChipAuthChannel::replaceKeys(SessionKeys keys) noexcept
 std::expected<std::unique_ptr<ChipAuthChannel>, ChipAuthEstablishError>
 ChipAuthChannel::establish(LibreSCRS::SmartCard::IConnection& connection, ISecureChannel& current,
                            const std::vector<std::uint8_t>& dg14Raw, LibreSCRS::SmartCard::AppletAid aid,
-                           LibreSCRS::CancelToken token) noexcept
+                           LibreSCRS::CancelToken token)
 {
-    try {
-        if (token.isCancellable() && token.isCancelled()) {
-            return std::unexpected{ChipAuthEstablishError{
-                ChipAuthEstablishError::Kind::Cancelled, {}, "cancelled before chip authentication"}};
-        }
-
-        // Run the CA key agreement (MSE:Set AT + GENERAL AUTHENTICATE + ECDH +
-        // KDF) over the current channel — plain on a contact read, wrapped when
-        // an SM tunnel already exists.
-        const auto ca = emrtd::crypto::performChipAuth(current, dg14Raw, token);
-        if (ca.chipAuthentication != emrtd::crypto::ChipAuthResult::PASSED || !ca.newSessionKeys.has_value()) {
-            ChipAuthEstablishError err;
-            err.protocol = ca.protocol;
-            err.detail = ca.errorDetail;
-            // Cancellation outranks every chip-side classification: a failure
-            // observed while the caller was aborting says nothing about the
-            // chip, so it must not surface as any genuineness verdict.
-            if (token.isCancellable() && token.isCancelled()) {
-                err.kind = ChipAuthEstablishError::Kind::Cancelled;
-            } else if (ca.chipAuthentication == emrtd::crypto::ChipAuthResult::NOT_SUPPORTED) {
-                err.kind = ChipAuthEstablishError::Kind::NotSupported;
-            } else if (ca.chipRefusedProtocol) {
-                err.kind = ChipAuthEstablishError::Kind::ProtocolRefused;
-            } else {
-                err.kind = ChipAuthEstablishError::Kind::LocalCryptoFailure;
-            }
-            return std::unexpected{std::move(err)};
-        }
-
-        // The card has switched to CA-derived SM after GENERAL AUTHENTICATE.
-        // Build the matching host-side channel from the derived keys.
-        SessionKeys keys;
-        keys.encKey = LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{ca.newSessionKeys->encKey}};
-        keys.macKey = LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{ca.newSessionKeys->macKey}};
-        keys.ssc = LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{ca.newSessionKeys->ssc}};
-        keys.cipher = (ca.newAlgorithm == emrtd::crypto::SMAlgorithm::DES3) ? SmCipher::Des3 : SmCipher::Aes;
-
-        auto channel = std::make_unique<ChipAuthChannel>(connection, aid, std::move(keys));
-        channel->caProtocolOid = ca.protocol;
-
-        // Proof exchange: the first wrapped command either carries a valid MAC
-        // or it does not. Only a channel that survives this is handed back, so
-        // a downstream PASSED verdict is never taken on faith.
-        if (!confirmSmAfterKeyChange(*channel, aid, token)) {
-            // A cancel that lands inside the proof exchange is not the clone
-            // signal — the exchange was aborted, not answered wrongly.
-            if (token.isCancellable() && token.isCancelled()) {
-                return std::unexpected{ChipAuthEstablishError{ChipAuthEstablishError::Kind::Cancelled, ca.protocol,
-                                                              "cancelled during chip authentication"}};
-            }
-            return std::unexpected{ChipAuthEstablishError{ChipAuthEstablishError::Kind::SmProofFailed, ca.protocol,
-                                                          "secure-messaging proof exchange failed"}};
-        }
-        LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(*channel, aid);
-        return channel;
-    } catch (...) {
+    if (token.isCancellable() && token.isCancelled()) {
         return std::unexpected{ChipAuthEstablishError{
-            ChipAuthEstablishError::Kind::LocalCryptoFailure, {}, "unexpected error during chip authentication"}};
+            ChipAuthEstablishError::Kind::Cancelled, {}, "cancelled before chip authentication"}};
     }
+
+    // Run the CA key agreement (MSE:Set AT + GENERAL AUTHENTICATE + ECDH +
+    // KDF) over the current channel — plain on a contact read, wrapped when
+    // an SM tunnel already exists.
+    const auto ca = emrtd::crypto::performChipAuth(current, dg14Raw, token);
+    if (ca.chipAuthentication != emrtd::crypto::ChipAuthResult::PASSED || !ca.newSessionKeys.has_value()) {
+        ChipAuthEstablishError err;
+        err.protocol = ca.protocol;
+        err.detail = ca.errorDetail;
+        // Cancellation outranks every chip-side classification: a failure
+        // observed while the caller was aborting says nothing about the
+        // chip, so it must not surface as any genuineness verdict.
+        if (token.isCancellable() && token.isCancelled()) {
+            err.kind = ChipAuthEstablishError::Kind::Cancelled;
+        } else if (ca.chipAuthentication == emrtd::crypto::ChipAuthResult::NOT_SUPPORTED) {
+            err.kind = ChipAuthEstablishError::Kind::NotSupported;
+        } else if (ca.chipRefusedProtocol) {
+            err.kind = ChipAuthEstablishError::Kind::ProtocolRefused;
+        } else {
+            err.kind = ChipAuthEstablishError::Kind::LocalCryptoFailure;
+        }
+        return std::unexpected{std::move(err)};
+    }
+
+    // The card has switched to CA-derived SM after GENERAL AUTHENTICATE.
+    // Build the matching host-side channel from the derived keys.
+    SessionKeys keys;
+    keys.encKey = LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{ca.newSessionKeys->encKey}};
+    keys.macKey = LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{ca.newSessionKeys->macKey}};
+    keys.ssc = LibreSCRS::Secure::Buffer{std::span<const std::uint8_t>{ca.newSessionKeys->ssc}};
+    keys.cipher = (ca.newAlgorithm == emrtd::crypto::SMAlgorithm::DES3) ? SmCipher::Des3 : SmCipher::Aes;
+
+    auto channel = std::make_unique<ChipAuthChannel>(connection, current.currentApplet(), std::move(keys));
+    channel->caProtocolOid = ca.protocol;
+
+    // Proof exchange: the first wrapped command either carries a valid MAC
+    // or it does not. Only a channel that survives this is handed back, so
+    // a downstream PASSED verdict is never taken on faith.
+    const auto proof = confirmSmAfterKeyChange(*channel, aid, token);
+    if (!proof.proven) {
+        // A cancel that lands inside the proof exchange is not the clone
+        // signal — the exchange was aborted, not answered wrongly.
+        if (token.isCancellable() && token.isCancelled()) {
+            return std::unexpected{ChipAuthEstablishError{ChipAuthEstablishError::Kind::Cancelled, ca.protocol,
+                                                          "cancelled during chip authentication"}};
+        }
+        return std::unexpected{ChipAuthEstablishError{ChipAuthEstablishError::Kind::SmProofFailed, ca.protocol,
+                                                      "secure-messaging proof exchange failed"}};
+    }
+    if (proof.appletSelected) {
+        LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(*channel, aid);
+    }
+    return channel;
 }
 
-bool confirmSmAfterKeyChange(ISecureChannel& ch, const LibreSCRS::SmartCard::AppletAid& aid,
-                             LibreSCRS::CancelToken token) noexcept
+SmKeyProof confirmSmAfterKeyChange(ISecureChannel& ch, const LibreSCRS::SmartCard::AppletAid& aid,
+                                   LibreSCRS::CancelToken token)
 {
-    try {
-        // P2=0x0C: no FCI payload — the round-trip itself is the proof.
-        auto resp = ch.transmit(LibreSCRS::SmartCard::Internal::selectByAID(aid.asVector(), 0x0C), std::move(token));
-        return resp.isSuccess();
-    } catch (...) {
-        return false;
-    }
+    // P2=0x0C: no FCI payload — the round-trip itself is the proof. A reader
+    // error propagates: it is no answer from the chip.
+    const auto resp = ch.transmit(LibreSCRS::SmartCard::Internal::selectByAID(aid.asVector(), 0x0C), token);
+    // The channel fails on an answer it cannot verify and on a card-side SM
+    // abort, and stays open on any answer it unwrapped. A cancel is answered
+    // by the channel itself with 6F01, nothing sent, and the channel open.
+    const bool cancelSentinel =
+        resp.data.empty() && resp.sw1 == 0x6F && resp.sw2 == 0x01 && token.isCancellable() && token.isCancelled();
+    SmKeyProof proof;
+    proof.proven = ch.carriesSm() && ch.state() == ChannelState::Open && !cancelSentinel;
+    proof.appletSelected = proof.proven && resp.isSuccess();
+    return proof;
 }
 
 } // namespace LibreSCRS::SecureChannel
