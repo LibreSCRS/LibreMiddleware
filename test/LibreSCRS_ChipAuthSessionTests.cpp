@@ -182,6 +182,30 @@ TEST(ChipAuthSessionTest, ChipAuthRequestAgainstPaceChannelRefuses)
     EXPECT_EQ(result.error(), ChannelActivationError::Internal);
 }
 
+// A channel matches a request by the protocol the session recorded when it
+// installed the channel. The public stand-in records none, so a live stand-in
+// is never reused for any protocol: an Open SM channel that serves no request
+// is refused rather than replaced -- as it was when the match was a type probe
+// the stand-in could never pass.
+TEST(ChipAuthSessionTest, LiveStandInChannelIsNeverReusedForAProtocol)
+{
+    const SmProtocolRequest requests[] = {PaceRequest{}, BacRequest{}, ChipAuthRequest{}};
+    for (const auto& request : requests) {
+        SCOPED_TRACE(request.index());
+        auto session = makeDetachedCardSession("reader-standin");
+        LibreSCRS::SmartCard::Testing::installStandInChannel(
+            *session, LibreSCRS::SmartCard::Testing::StandInChannel::LiveSecureMessaging);
+        ASSERT_TRUE(session->hasLiveSecureChannel());
+        ASSERT_FALSE(session->activatedProtocol().has_value());
+
+        auto result = session->activateChannelWithSm(aidA(), request, LibreSCRS::CancelToken{});
+        ASSERT_FALSE(result.has_value());
+        EXPECT_EQ(result.error(), ChannelActivationError::Internal);
+        // Refused, not torn down: the live tunnel is still there.
+        EXPECT_TRUE(session->hasLiveSecureChannel());
+    }
+}
+
 // --- activateChannelFor cross-applet reuse ---------------------------------
 
 TEST(ChipAuthSessionTest, ActivateChannelForReusesChipAuthTunnelAcrossApplets)
