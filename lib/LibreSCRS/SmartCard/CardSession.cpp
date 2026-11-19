@@ -9,7 +9,6 @@
 #include <LibreSCRS/Auth/CredentialResult.h>
 #include <LibreSCRS/Auth/ErrorKeys.h>
 #include <LibreSCRS_internal/SecureChannel/BacChannel.h>
-#include <LibreSCRS_internal/SecureChannel/ChipAuthChannel.h>
 #include <LibreSCRS_internal/SecureChannel/PaceChannel.h>
 #include <LibreSCRS_internal/SecureChannel/PaceParams.h>
 #include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
@@ -567,15 +566,14 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
 
     std::unique_lock lock(d->sessionMutex);
 
-    using LibreSCRS::SecureChannel::ChipAuthChannel;
+    // A live channel serves the request when it carries SM and was activated
+    // for the same protocol family. Judged from the protocol the session
+    // recorded when it installed the channel, not from the channel's dynamic
+    // type: a type probe needs each channel class's typeinfo to be one object
+    // in every image that creates a channel, which only exporting the classes
+    // provides, and libc++ compares typeinfo by address.
     auto channelMatchesProtocol = [&](const LibreSCRS::SecureChannel::ISecureChannel& ch) noexcept {
-        if (std::holds_alternative<PaceRequest>(protocol)) {
-            return dynamic_cast<const PaceChannel*>(&ch) != nullptr;
-        }
-        if (std::holds_alternative<ChipAuthRequest>(protocol)) {
-            return dynamic_cast<const ChipAuthChannel*>(&ch) != nullptr;
-        }
-        return dynamic_cast<const BacChannel*>(&ch) != nullptr;
+        return ch.carriesSm() && d->activatedProtocol.has_value() && d->activatedProtocol->index() == protocol.index();
     };
 
     // ChipAuthRequest is reuse-only: the CA handshake needs a freshly read

@@ -41,7 +41,7 @@ LibreSCRS_CardSessionTests 16
 LibreSCRS_CardTransactionTests 3
 LibreSCRS_ChipAuthChannelTests 4
 LibreSCRS_ChipAuthCryptoTests 9
-LibreSCRS_ChipAuthSessionTests 8
+LibreSCRS_ChipAuthSessionTests 9
 LibreSCRS_CleanseGuardTests 5
 LibreSCRS_CredentialProviderTests 7
 LibreSCRS_LoggingTests 5
