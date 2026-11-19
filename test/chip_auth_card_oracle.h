@@ -26,6 +26,7 @@
 #include "crypto_utils.h"
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <vector>
@@ -59,7 +60,13 @@ public:
     /// the wire) and return the transport-level response. A MAC mismatch
     /// yields SW 6988 unwrapped — exactly what production SmChannelBody maps
     /// to a failed channel, so a wrong-key terminal is rejected on the wire.
-    [[nodiscard]] LibreSCRS::SmartCard::Internal::APDUResponse respond(std::span<const std::uint8_t> wrapped)
+    /// Answers a verified command from its decrypted parts: INS, P1, P2 and
+    /// the DO'87 plaintext. Its data and status word are wrapped in turn.
+    using CommandHandler = std::function<LibreSCRS::SmartCard::Internal::APDUResponse(
+        std::uint8_t ins, std::uint8_t p1, std::uint8_t p2, const std::vector<std::uint8_t>& data)>;
+
+    [[nodiscard]] LibreSCRS::SmartCard::Internal::APDUResponse respond(std::span<const std::uint8_t> wrapped,
+                                                                       const CommandHandler& handler = {})
     {
         namespace det = emrtd::crypto::detail;
         if (wrapped.size() < 4) {
@@ -95,7 +102,13 @@ public:
             return {{}, 0x69, 0x88}; // MAC mismatch: reject like a real card
         }
         ++verifiedCount;
+        lastIns = ins;
+        lastData = decryptCommandData(do87);
 
+        if (handler) {
+            const auto answer = handler(ins, p1, p2, lastData);
+            return wrapResponse(answer.data, answer.sw1, answer.sw2);
+        }
         // Build a wrapped success response. SELECT (P2 with 0x0C etc.) usually
         // carries no data; a READ returns nextData if the test set it.
         std::vector<std::uint8_t> data = nextData;
@@ -103,7 +116,43 @@ public:
         return wrapResponse(data, 0x90, 0x00);
     }
 
+    /// INS and decrypted DO'87 plaintext of the last command whose MAC
+    /// verified (empty when it carried no data) — lets a fake chip act on a
+    /// protected command, e.g. run its side of a key agreement.
+    [[nodiscard]] std::uint8_t lastCommandIns() const noexcept
+    {
+        return lastIns;
+    }
+    [[nodiscard]] const std::vector<std::uint8_t>& lastCommandData() const noexcept
+    {
+        return lastData;
+    }
+
 private:
+    // DO'87 = 87 len 01 <ciphertext>; IV = E(K_Enc, SSC) with the command's
+    // SSC (BSI TR-03110 E.1), ISO 9797-1 method 2 padding.
+    std::vector<std::uint8_t> decryptCommandData(const std::vector<std::uint8_t>& do87) const
+    {
+        namespace det = emrtd::crypto::detail;
+        if (do87.size() < 3) {
+            return {};
+        }
+        std::size_t pos = 1;
+        if (do87[pos] < 0x80) {
+            pos += 1;
+        } else if (do87[pos] == 0x81) {
+            pos += 2;
+        } else {
+            pos += 3;
+        }
+        if (pos >= do87.size() || do87[pos] != 0x01) {
+            return {};
+        }
+        const std::vector<std::uint8_t> ct(do87.begin() + static_cast<std::ptrdiff_t>(pos + 1), do87.end());
+        const auto iv = det::aesEncrypt(enc, ssc);
+        return det::unpad(det::aesDecrypt(enc, ct, iv));
+    }
+
     // Returns false on a malformed frame. do87/do97 come back as the FULL TLV
     // bytes (tag+len+value) for the MAC recompute; receivedMac is the DO'8E
     // value only.
@@ -211,6 +260,8 @@ private:
     std::vector<std::uint8_t> macKey;
     std::vector<std::uint8_t> ssc;
     std::vector<std::uint8_t> nextData;
+    std::vector<std::uint8_t> lastData;
+    std::uint8_t lastIns = 0;
     int verifiedCount = 0;
 };
 

@@ -85,7 +85,9 @@ TEST(ChipAuthChannelTest, ProofExchangeSucceedsWhenKeysMatch)
     installOracle(conn, oracle);
 
     ChipAuthChannel ch{conn, makeEmrtdAid(), makeAesKeys()};
-    EXPECT_TRUE(confirmSmAfterKeyChange(ch, makeEmrtdAid(), CancelToken{}));
+    const auto proof = confirmSmAfterKeyChange(ch, makeEmrtdAid(), CancelToken{});
+    EXPECT_TRUE(proof.proven);
+    EXPECT_TRUE(proof.appletSelected);
     EXPECT_EQ(oracle->verifiedCommands(), 1); // the card really verified our MAC
 }
 
@@ -98,7 +100,7 @@ TEST(ChipAuthChannelTest, ProofExchangeFailsWhenCardKeysDiffer)
     installOracle(conn, oracle);
 
     ChipAuthChannel ch{conn, makeEmrtdAid(), makeAesKeys()};
-    EXPECT_FALSE(confirmSmAfterKeyChange(ch, makeEmrtdAid(), CancelToken{}));
+    EXPECT_FALSE(confirmSmAfterKeyChange(ch, makeEmrtdAid(), CancelToken{}).proven);
     EXPECT_EQ(oracle->verifiedCommands(), 0);
     EXPECT_EQ(ch.state(), ChannelState::Failed); // 6988 tore the channel down
 }

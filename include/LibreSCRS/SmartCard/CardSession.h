@@ -19,12 +19,14 @@
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
 #include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
+#include <LibreSCRS/SmartCard/ChipAuthentication.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 
 #include <cstdint>
 #include <expected>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -346,6 +348,72 @@ public:
     /// @since 4.1
     [[nodiscard]] std::expected<ActiveChannelHolder, LibreSCRS::SecureChannel::ChannelActivationError>
     activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, LibreSCRS::CancelToken token);
+
+    /// @brief Run eMRTD Chip Authentication (BSI TR-03110 §3.4, ICAO Doc 9303
+    ///        Part 11 §6.2) over the active channel and adopt the session keys
+    ///        it derives.
+    ///
+    /// The session chooses the path from the channel it holds:
+    /// - **Plain channel** (for example a contact read): the key agreement
+    ///   runs plain; on success the session installs a secure-messaging
+    ///   channel under the derived keys, records @ref ChipAuthRequest as
+    ///   @ref activatedProtocol and closes the plain channel. On any other
+    ///   outcome the plain channel stays installed and the read can go on
+    ///   plain.
+    /// - **Secure-messaging channel** (PACE or BAC): the key agreement runs
+    ///   inside the tunnel and the tunnel switches to the derived keys; the
+    ///   recorded protocol does not change, and the channel's current applet
+    ///   becomes @p aid when the proof SELECT of it succeeded.
+    ///
+    /// Either way @ref ChipAuthOutcome::Passed is reported only after a
+    /// protected exchange (a SELECT of @p aid) has verified under the derived
+    /// keys; an answer whose MAC verifies proves the keys even when its status
+    /// word is an error (the applet is then not recorded as selected).
+    /// @ref ChipAuthOutcome::Failed means only that the chip answered and did
+    /// not prove that it holds the key — inside a tunnel this includes a
+    /// refusal of the protocol and an answer that fails the tunnel's integrity
+    /// check, both answers from the card (see @ref ChipAuthOutcome::Failed). A
+    /// cancel, a refusal on a plain channel or a failure on this side is
+    /// @ref ChipAuthOutcome::NotPerformed with the matching
+    /// @ref ChipAuthReason. The derived keys never leave the library.
+    ///
+    /// @param dg14  Raw EF.DG14 as read from the document (the
+    ///              @c SecurityInfos carrying the chip's public key).
+    /// @param aid   Applet the proof exchange selects; the application the
+    ///              read continues in (the eMRTD LDS application).
+    /// @param token Cancellation; checked before the first command and
+    ///              honoured between the commands of the run.
+    /// @return The verdict, the protocol chosen and a diagnostic.
+    ///
+    /// @pre The calling thread holds this session's
+    ///      @ref ActiveChannelHolder (from @ref activateChannelFor or
+    ///      @ref activateChannelWithSm, or the one a card plugin's read runs
+    ///      under), so the run cannot interleave with other commands. Without
+    ///      it, or without an open channel, nothing is sent and the result is
+    ///      @ref ChipAuthOutcome::NotPerformed with
+    ///      @ref ChipAuthReason::NoUsableChannel.
+    ///
+    /// @throws std::bad_alloc on out-of-memory.
+    /// @throws std::runtime_error (the transport's error type) when the reader
+    ///         fails or the card goes away during the run, on either path; no
+    ///         verdict is reported then. After a throw the channel's secure
+    ///         messaging may be out of step with the card: clear the channel
+    ///         before reusing the session.
+    ///
+    /// @par Example
+    /// @code
+    /// auto holder = session.activateChannelFor(emrtdAid, token);
+    /// if (holder) {
+    ///     const auto report = session.performChipAuthentication(dg14, emrtdAid, token);
+    ///     if (report.outcome == ChipAuthOutcome::Failed) {
+    ///         warn("chip is not genuine: {}", report.detail);
+    ///     }
+    /// }
+    /// @endcode
+    ///
+    /// @since 5.0
+    [[nodiscard]] ChipAuthReport performChipAuthentication(std::span<const std::uint8_t> dg14, AppletAid aid,
+                                                           LibreSCRS::CancelToken token);
 
     /// @brief Pre-populate the per-process PACE credentials cache.
     ///        Used by the PKCS#11 module after parsing the host-supplied

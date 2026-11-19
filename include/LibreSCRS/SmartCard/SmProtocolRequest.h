@@ -45,9 +45,9 @@ struct PaceRequest
 ///        (BSI TR-03110 §4.4 / ICAO Doc 9303 Part 11).
 ///
 /// Reuse-only: the session cannot establish this protocol from scratch —
-/// the CA handshake needs a freshly read DG14 and therefore lives inside
-/// the eMRTD read flow, which installs the resulting channel and records
-/// this request. @ref CardSession::activateChannelWithSm honours it only
+/// the CA handshake needs a freshly read DG14, so it is run by
+/// @ref CardSession::performChipAuthentication, which installs the resulting
+/// channel and records this request. @ref CardSession::activateChannelWithSm honours it only
 /// through the live-channel reuse paths (same-applet fast path and
 /// wrapped-SELECT applet switch) and refuses otherwise.
 ///

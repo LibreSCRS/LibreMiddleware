@@ -210,6 +210,7 @@ LibreSCRS::SmartCard::CardSession::hasCredentialProvider() const@@LM_5
 LibreSCRS::SmartCard::CardSession::hasLiveSecureChannel() const@@LM_5
 LibreSCRS::SmartCard::CardSession::open(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)@@LM_5
 LibreSCRS::SmartCard::CardSession::operator=(LibreSCRS::SmartCard::CardSession&&)@@LM_5
+LibreSCRS::SmartCard::CardSession::performChipAuthentication(std::span<unsigned char const, 18446744073709551615ul>, LibreSCRS::SmartCard::AppletAid, LibreSCRS::CancelToken)@@LM_5
 LibreSCRS::SmartCard::CardSession::readerName[abi:cxx11]() const@@LM_5
 LibreSCRS::SmartCard::CardSession::setBacInput(LibreSCRS::SecureChannel::BacInput)@@LM_5
 LibreSCRS::SmartCard::CardSession::setCredentialProvider(std::function<LibreSCRS::Auth::CredentialResult (LibreSCRS::Auth::AuthRequirement const&)>)@@LM_5

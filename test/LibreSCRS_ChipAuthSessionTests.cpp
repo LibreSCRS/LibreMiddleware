@@ -2,10 +2,12 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 /// @file
-/// @brief CardSession control-flow tests for the Chip Authentication channel:
-///        the installSmChannel seam, the reuse-only ChipAuthRequest guard on
-///        activateChannelWithSm, and the cross-applet wrapped-SELECT reuse
-///        activateChannelFor gained for session-scoped SM tunnels.
+/// @brief CardSession control-flow tests for Chip Authentication: the
+///        performChipAuthentication operation (plain upgrade and in-tunnel key
+///        rotation, with every verdict it can give), the reuse-only
+///        ChipAuthRequest guard on activateChannelWithSm, and the cross-applet
+///        wrapped-SELECT reuse activateChannelFor gained for session-scoped SM
+///        tunnels.
 ///
 /// A detached CardSession's connection exposes setDetachedRawResponder, so a
 /// real ChipAuthChannel's wrapped SELECT round-trips against an AES SM oracle
@@ -27,12 +29,22 @@
 #include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
 #include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
 
+#include <LibreSCRS_internal/SecureChannel/PaceChannel.h>
+#include <pcsc_connection.h>
+#include <smartcard/i_connection.h>
+
 #include "apdu.h"
 #include "chip_auth_card_oracle.h"
+#include "chip_auth_fake_chip.h"
 
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <new>
+#include <optional>
+#include <stdexcept>
+#include <span>
+#include <string>
 #include <vector>
 
 namespace {
@@ -40,12 +52,17 @@ namespace {
 using LibreSCRS::SecureChannel::BacChannel;
 using LibreSCRS::SecureChannel::ChannelActivationError;
 using LibreSCRS::SecureChannel::ChipAuthChannel;
+using LibreSCRS::SecureChannel::PaceChannel;
 using LibreSCRS::SecureChannel::PlainChannel;
 using LibreSCRS::SecureChannel::SessionKeys;
 using LibreSCRS::SecureChannel::SmCipher;
+using LibreSCRS::SmartCard::ActiveChannelHolder;
 using LibreSCRS::SmartCard::AppletAid;
 using LibreSCRS::SmartCard::BacRequest;
 using LibreSCRS::SmartCard::CardSession;
+using LibreSCRS::SmartCard::ChipAuthOutcome;
+using LibreSCRS::SmartCard::ChipAuthReason;
+using LibreSCRS::SmartCard::ChipAuthReport;
 using LibreSCRS::SmartCard::ChipAuthRequest;
 using LibreSCRS::SmartCard::PaceRequest;
 using LibreSCRS::SmartCard::SmProtocolRequest;
@@ -53,6 +70,9 @@ using LibreSCRS::SmartCard::detail::ChannelInjector;
 using LibreSCRS::SmartCard::Internal::ActiveChannelAccessor;
 using LibreSCRS::SmartCard::Testing::makeDetachedCardSession;
 using LibreSCRS::Test::AesSmCardOracle;
+using LibreSCRS::Test::buildDg14;
+using LibreSCRS::Test::CaCardOnTheWire;
+using LibreSCRS::Test::EcCardKey;
 
 AppletAid aidA()
 {
@@ -94,33 +114,509 @@ std::shared_ptr<AesSmCardOracle> matchingOracle()
     return std::make_shared<AesSmCardOracle>(vec(kEncByte, 16), vec(kMacByte, 16), vec(0x00, 16));
 }
 
+// id-CA-ECDH-AES-CBC-CMAC-128, the protocol buildDg14 advertises.
+const std::string kCaAes128Oid = "0.4.0.127.0.7.2.2.3.2.2";
+
+// A plain channel that remembers being closed after it is gone.
+class CloseRecordingPlainChannel final : public LibreSCRS::SecureChannel::ISecureChannel
+{
+public:
+    CloseRecordingPlainChannel(LibreSCRS::SmartCard::IConnection& connection, AppletAid aid,
+                               std::shared_ptr<bool> closedFlag)
+        : conn(connection), appletAid(std::move(aid)), closed(std::move(closedFlag))
+    {}
+    [[nodiscard]] const AppletAid& currentApplet() const noexcept override
+    {
+        return appletAid;
+    }
+    [[nodiscard]] LibreSCRS::SecureChannel::ChannelState state() const noexcept override
+    {
+        return *closed ? LibreSCRS::SecureChannel::ChannelState::Closed : LibreSCRS::SecureChannel::ChannelState::Open;
+    }
+    [[nodiscard]] LibreSCRS::SmartCard::Internal::APDUResponse
+    transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken /*token*/) override
+    {
+        return conn.transmit(cmd);
+    }
+    void close() override
+    {
+        *closed = true;
+    }
+
+protected:
+    void setCurrentApplet(AppletAid aid) noexcept override
+    {
+        appletAid = std::move(aid);
+    }
+    void replaceKeys(SessionKeys /*keys*/) noexcept override {}
+
+private:
+    LibreSCRS::SmartCard::IConnection& conn;
+    AppletAid appletAid;
+    std::shared_ptr<bool> closed;
+};
+
+// A detached session whose connection is answered by @p card, with a channel
+// installed and held the way a plugin read holds it. @c inTunnel starts the
+// card and the session inside a PACE tunnel keyed by aesKeys(); otherwise
+// the session sits on a plain channel.
+struct CaRig
+{
+    std::shared_ptr<CardSession> session;
+    std::shared_ptr<CaCardOnTheWire> card;
+    std::optional<ActiveChannelHolder> holder;
+};
+
+CaRig makeCaRig(const EcCardKey& key, bool inTunnel, bool takeHolder = true)
+{
+    CaRig rig;
+    rig.session = makeDetachedCardSession(inTunnel ? "reader-ca-tunnel" : "reader-ca-plain");
+    rig.card = std::make_shared<CaCardOnTheWire>(key);
+    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*rig.session);
+    conn.setDetachedRawResponder(
+        [card = rig.card](std::span<const std::uint8_t> frame) { return card->respond(frame); });
+    if (inTunnel) {
+        rig.card->startInTunnel(vec(kEncByte, 16), vec(kMacByte, 16), vec(0x00, 16));
+        ChannelInjector::installForTesting(*rig.session, std::make_unique<PaceChannel>(conn, aidA(), aesKeys()),
+                                           SmProtocolRequest{PaceRequest{}});
+        if (takeHolder) {
+            auto h = rig.session->activateChannelWithSm(aidA(), PaceRequest{}, LibreSCRS::CancelToken{});
+            if (h) {
+                rig.holder.emplace(std::move(*h));
+            }
+        }
+    } else {
+        ChannelInjector::installForTesting(*rig.session, std::make_unique<PlainChannel>(conn, aidA()));
+        if (takeHolder) {
+            auto h = rig.session->activateChannelFor(aidA(), LibreSCRS::CancelToken{});
+            if (h) {
+                rig.holder.emplace(std::move(*h));
+            }
+        }
+    }
+    return rig;
+}
+
+bool sawIns(const CaCardOnTheWire& card, std::uint8_t ins)
+{
+    for (auto i : card.insLog()) {
+        if (i == ins) {
+            return true;
+        }
+    }
+    return false;
+}
+
+LibreSCRS::SmartCard::Internal::APDUCommand readBinary()
+{
+    return LibreSCRS::SmartCard::Internal::APDUCommand{0x00, 0xB0, 0x00, 0x00, {}, 0x00, true};
+}
+
 } // namespace
 
-// --- installSmChannel ------------------------------------------------------
+// --- performChipAuthentication -------------------------------------------
 
-TEST(ChipAuthSessionTest, InstallSmChannelRecordsProtocolAndClosesOldChannel)
+TEST(ChipAuthSessionTest, APlainUpgradeRecordsTheProtocolAndClosesThePlainChannel)
 {
-    auto session = makeDetachedCardSession("reader-install");
-    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*session);
-
-    // Start on a plain channel bound to aidA and take a real holder via the
-    // fast path (no wire), reproducing the owner-thread state installSmChannel
-    // requires.
-    ChannelInjector::installForTesting(*session, std::make_unique<PlainChannel>(conn, aidA()));
-    auto holder = session->activateChannelFor(aidA(), LibreSCRS::CancelToken{});
+    // A successful upgrade replaces the plain channel the read started on: the
+    // session records ChipAuthRequest and closes the channel it replaced.
+    const auto key = EcCardKey::generate();
+    auto rig = makeCaRig(key, /*inTunnel=*/false, /*takeHolder=*/false);
+    auto closed = std::make_shared<bool>(false);
+    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*rig.session);
+    ChannelInjector::installForTesting(*rig.session,
+                                       std::make_unique<CloseRecordingPlainChannel>(conn, aidA(), closed));
+    auto holder = rig.session->activateChannelFor(aidA(), LibreSCRS::CancelToken{});
     ASSERT_TRUE(holder.has_value());
+    ASSERT_FALSE(*closed);
 
-    auto ca = std::make_unique<ChipAuthChannel>(conn, aidA(), aesKeys());
-    ActiveChannelAccessor::installSmChannel(*session, std::move(ca), ChipAuthRequest{});
+    const auto report =
+        rig.session->performChipAuthentication(buildDg14(key.spkiDer), aidA(), LibreSCRS::CancelToken{});
+    ASSERT_EQ(report.outcome, ChipAuthOutcome::Passed);
+    EXPECT_TRUE(*closed) << "the replaced plain channel must be closed";
 
     // Lock-free accessor (the public one would self-deadlock under the holder).
-    auto proto = ActiveChannelAccessor::activatedProtocol(*session);
+    auto proto = ActiveChannelAccessor::activatedProtocol(*rig.session);
     ASSERT_TRUE(proto.has_value());
     EXPECT_TRUE(std::holds_alternative<ChipAuthRequest>(*proto));
-    // The live channel is now the CA channel (carries SM).
-    auto* active = ActiveChannelAccessor::active(*session);
+    auto* active = ActiveChannelAccessor::active(*rig.session);
     ASSERT_NE(active, nullptr);
     EXPECT_TRUE(active->carriesSm());
+}
+
+TEST(ChipAuthSessionTest, OverAPlainChannelASuccessfulRunInstallsTheTunnel)
+{
+    const auto key = EcCardKey::generate();
+    auto rig = makeCaRig(key, /*inTunnel=*/false);
+    ASSERT_TRUE(rig.holder.has_value());
+
+    const ChipAuthReport report =
+        rig.session->performChipAuthentication(buildDg14(key.spkiDer), aidA(), LibreSCRS::CancelToken{});
+    EXPECT_EQ(report.outcome, ChipAuthOutcome::Passed);
+    EXPECT_EQ(report.reason, ChipAuthReason::None);
+    EXPECT_EQ(report.protocolOid, kCaAes128Oid);
+    EXPECT_TRUE(report.detail.empty()) << report.detail;
+    // Passed rests on a wrapped exchange the card verified under the new keys.
+    EXPECT_EQ(rig.card->keyAgreements(), 1);
+    ASSERT_NE(rig.card->smOracle(), nullptr);
+    EXPECT_EQ(rig.card->smOracle()->verifiedCommands(), 1);
+
+    rig.holder.reset();
+    EXPECT_TRUE(rig.session->hasLiveSecureChannel());
+    const auto proto = rig.session->activatedProtocol();
+    ASSERT_TRUE(proto.has_value());
+    EXPECT_TRUE(std::holds_alternative<ChipAuthRequest>(*proto));
+}
+
+TEST(ChipAuthSessionTest, OverAPlainChannelARefusedProtocolIsNotPerformedAndTheReadStaysPlain)
+{
+    const auto key = EcCardKey::generate();
+    auto rig = makeCaRig(key, /*inTunnel=*/false);
+    ASSERT_TRUE(rig.holder.has_value());
+    rig.card->refuseIns(0x86, 0x69, 0x82);
+
+    const auto report =
+        rig.session->performChipAuthentication(buildDg14(key.spkiDer), aidA(), LibreSCRS::CancelToken{});
+    EXPECT_EQ(report.outcome, ChipAuthOutcome::NotPerformed);
+    EXPECT_EQ(report.reason, ChipAuthReason::NotOffered);
+    EXPECT_EQ(report.protocolOid, kCaAes128Oid);
+    EXPECT_EQ(report.detail, "chip refused Chip Authentication on plain channel");
+
+    // The read goes on over the same plain channel.
+    auto* active = ActiveChannelAccessor::active(*rig.session);
+    ASSERT_NE(active, nullptr);
+    EXPECT_FALSE(active->carriesSm());
+    const auto next = active->transmit(LibreSCRS::SmartCard::Internal::selectByAID(aidA().asVector(), 0x0C),
+                                       LibreSCRS::CancelToken{});
+    EXPECT_TRUE(next.isSuccess());
+
+    rig.holder.reset();
+    EXPECT_FALSE(rig.session->hasLiveSecureChannel());
+    EXPECT_FALSE(rig.session->activatedProtocol().has_value());
+}
+
+TEST(ChipAuthSessionTest, OverAPlainChannelAFailedProofIsAFailure)
+{
+    const auto key = EcCardKey::generate();
+    auto rig = makeCaRig(key, /*inTunnel=*/false);
+    ASSERT_TRUE(rig.holder.has_value());
+    rig.card->makeClone();
+
+    const auto report =
+        rig.session->performChipAuthentication(buildDg14(key.spkiDer), aidA(), LibreSCRS::CancelToken{});
+    EXPECT_EQ(report.outcome, ChipAuthOutcome::Failed);
+    EXPECT_EQ(report.reason, ChipAuthReason::None);
+    EXPECT_EQ(report.protocolOid, kCaAes128Oid);
+    EXPECT_EQ(report.detail, "secure-messaging proof exchange failed");
+    EXPECT_EQ(rig.card->keyAgreements(), 1) << "the clone must be caught on the wire, after the key agreement";
+
+    rig.holder.reset();
+    EXPECT_FALSE(rig.session->hasLiveSecureChannel());
+}
+
+TEST(ChipAuthSessionTest, ADg14WithoutKeyMaterialIsNotSupported)
+{
+    const auto key = EcCardKey::generate();
+    auto rig = makeCaRig(key, /*inTunnel=*/false);
+    ASSERT_TRUE(rig.holder.has_value());
+
+    const std::vector<std::uint8_t> noCaMaterial = {0x6E, 0x02, 0x31, 0x00};
+    const auto report = rig.session->performChipAuthentication(noCaMaterial, aidA(), LibreSCRS::CancelToken{});
+    EXPECT_EQ(report.outcome, ChipAuthOutcome::NotSupported);
+    EXPECT_EQ(report.reason, ChipAuthReason::NotOffered);
+    EXPECT_TRUE(report.protocolOid.empty());
+    EXPECT_TRUE(report.detail.empty()) << report.detail;
+    EXPECT_FALSE(sawIns(*rig.card, 0x22));
+    EXPECT_FALSE(sawIns(*rig.card, 0x86));
+}
+
+TEST(ChipAuthSessionTest, ACancelledRunEarnsNoVerdict)
+{
+    // A cancel before the run, during the key agreement, or while the proof
+    // exchange is on the wire yields no verdict on either path. In the last
+    // case the exchange is aborted (the card's answer is lost), which without
+    // the cancel would read as a proof that did not verify.
+    enum class When { Before, AtKeyAgreement, AtProof };
+    struct Case
+    {
+        bool inTunnel;
+        When when;
+        const char* name;
+    };
+    const Case cases[] = {
+        {false, When::Before, "plain, before"},
+        {true, When::Before, "tunnel, before"},
+        {false, When::AtKeyAgreement, "plain, at the key agreement"},
+        {false, When::AtProof, "plain, at the proof exchange"},
+        {true, When::AtProof, "tunnel, at the proof exchange"},
+    };
+    const auto key = EcCardKey::generate();
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.name);
+        auto rig = makeCaRig(key, c.inTunnel);
+        ASSERT_TRUE(rig.holder.has_value());
+
+        LibreSCRS::CancelSource src;
+        if (c.when == When::Before) {
+            src.requestCancel();
+        } else if (c.when == When::AtKeyAgreement) {
+            rig.card->onIns(0x86, [&src]() -> std::optional<LibreSCRS::SmartCard::Internal::APDUResponse> {
+                src.requestCancel();
+                return std::nullopt;
+            });
+        } else {
+            rig.card->onIns(0xA4, [&src]() -> std::optional<LibreSCRS::SmartCard::Internal::APDUResponse> {
+                src.requestCancel();
+                return LibreSCRS::SmartCard::Internal::APDUResponse{{}, 0x6F, 0x00}; // answer lost
+            });
+        }
+        const auto report = rig.session->performChipAuthentication(buildDg14(key.spkiDer), aidA(), src.token());
+        EXPECT_EQ(report.outcome, ChipAuthOutcome::NotPerformed);
+        EXPECT_EQ(report.reason, ChipAuthReason::Cancelled);
+        if (c.when == When::Before) {
+            EXPECT_TRUE(rig.card->insLog().empty()) << "a cancelled run must not reach the card";
+        } else {
+            EXPECT_EQ(rig.card->keyAgreements(), 1);
+        }
+    }
+}
+
+TEST(ChipAuthSessionTest, InsideATunnelASuccessfulRunRotatesTheKeys)
+{
+    const auto key = EcCardKey::generate();
+    auto rig = makeCaRig(key, /*inTunnel=*/true);
+    ASSERT_TRUE(rig.holder.has_value());
+    ASSERT_TRUE(rig.card->insLog().empty()) << "taking the holder must not touch the wire";
+
+    const auto report =
+        rig.session->performChipAuthentication(buildDg14(key.spkiDer), aidA(), LibreSCRS::CancelToken{});
+    EXPECT_EQ(report.outcome, ChipAuthOutcome::Passed);
+    EXPECT_EQ(report.reason, ChipAuthReason::None);
+    EXPECT_EQ(report.protocolOid, kCaAes128Oid);
+    EXPECT_TRUE(report.detail.empty()) << report.detail;
+    ASSERT_EQ(rig.card->keyAgreements(), 1);
+
+    // The card now answers only under the CA keys. The proof exchange was
+    // one wrapped command under them; the next APDU of the read must be too.
+    auto rotated = rig.card->smOracle();
+    ASSERT_NE(rotated, nullptr);
+    EXPECT_EQ(rotated->verifiedCommands(), 1);
+    rotated->setNextResponseData({0xAA, 0xBB});
+    auto* active = ActiveChannelAccessor::active(*rig.session);
+    ASSERT_NE(active, nullptr);
+    const auto next = active->transmit(readBinary(), LibreSCRS::CancelToken{});
+    EXPECT_TRUE(next.isSuccess());
+    EXPECT_EQ(next.data, (std::vector<std::uint8_t>{0xAA, 0xBB}));
+    EXPECT_EQ(rotated->verifiedCommands(), 2);
+
+    // The tunnel keeps the protocol it was opened with.
+    const auto proto = ActiveChannelAccessor::activatedProtocol(*rig.session);
+    ASSERT_TRUE(proto.has_value());
+    EXPECT_TRUE(std::holds_alternative<PaceRequest>(*proto));
+}
+
+TEST(ChipAuthSessionTest, ARotationThatDoesNotVerifyIsAFailure)
+{
+    const auto key = EcCardKey::generate();
+    auto rig = makeCaRig(key, /*inTunnel=*/true);
+    ASSERT_TRUE(rig.holder.has_value());
+    rig.card->makeClone();
+
+    const auto report =
+        rig.session->performChipAuthentication(buildDg14(key.spkiDer), aidA(), LibreSCRS::CancelToken{});
+    EXPECT_EQ(report.outcome, ChipAuthOutcome::Failed);
+    EXPECT_EQ(report.reason, ChipAuthReason::None);
+    EXPECT_EQ(report.protocolOid, kCaAes128Oid);
+    EXPECT_EQ(report.detail, "chip authentication key agreement did not verify");
+    EXPECT_EQ(rig.card->keyAgreements(), 1);
+}
+
+TEST(ChipAuthSessionTest, InsideATunnelACancelDuringTheRotationEarnsNoVerdict)
+{
+    const auto key = EcCardKey::generate();
+    auto rig = makeCaRig(key, /*inTunnel=*/true);
+    ASSERT_TRUE(rig.holder.has_value());
+
+    // The cancel lands after the key agreement went out, so the proof
+    // exchange is never sent: aborted, not answered wrongly.
+    LibreSCRS::CancelSource src;
+    rig.card->onIns(0x86, [&src]() -> std::optional<LibreSCRS::SmartCard::Internal::APDUResponse> {
+        src.requestCancel();
+        return std::nullopt;
+    });
+    const auto report = rig.session->performChipAuthentication(buildDg14(key.spkiDer), aidA(), src.token());
+    EXPECT_EQ(report.outcome, ChipAuthOutcome::NotPerformed);
+    EXPECT_EQ(report.reason, ChipAuthReason::Cancelled);
+    ASSERT_EQ(rig.card->keyAgreements(), 1);
+
+    // Both sides hold the CA keys: nothing went out under them yet, and the
+    // next command of the read goes through under them.
+    auto rotated = rig.card->smOracle();
+    ASSERT_NE(rotated, nullptr);
+    EXPECT_EQ(rotated->verifiedCommands(), 0);
+    auto* active = ActiveChannelAccessor::active(*rig.session);
+    ASSERT_NE(active, nullptr);
+    rotated->setNextResponseData({0x01, 0x02});
+    const auto next = active->transmit(readBinary(), LibreSCRS::CancelToken{});
+    EXPECT_TRUE(next.isSuccess());
+    EXPECT_EQ(next.data, (std::vector<std::uint8_t>{0x01, 0x02}));
+    EXPECT_EQ(rotated->verifiedCommands(), 1);
+}
+
+TEST(ChipAuthSessionTest, WithoutTheChannelHeldNothingIsSent)
+{
+    const auto key = EcCardKey::generate();
+    auto rig = makeCaRig(key, /*inTunnel=*/false, /*takeHolder=*/false);
+
+    const auto report =
+        rig.session->performChipAuthentication(buildDg14(key.spkiDer), aidA(), LibreSCRS::CancelToken{});
+    EXPECT_EQ(report.outcome, ChipAuthOutcome::NotPerformed);
+    EXPECT_EQ(report.reason, ChipAuthReason::NoUsableChannel);
+    EXPECT_TRUE(rig.card->insLog().empty());
+}
+
+TEST(ChipAuthSessionTest, AReaderFailureDuringThePlainKeyAgreementPropagates)
+{
+    const auto key = EcCardKey::generate();
+    auto rig = makeCaRig(key, /*inTunnel=*/false);
+    ASSERT_TRUE(rig.holder.has_value());
+    rig.card->onIns(0x86, []() -> std::optional<LibreSCRS::SmartCard::Internal::APDUResponse> {
+        throw LibreSCRS::SmartCard::Internal::PCSCError("SCardTransmit failed", SCARD_W_REMOVED_CARD);
+    });
+
+    // No verdict at all: the card did not answer.
+    EXPECT_THROW((void)rig.session->performChipAuthentication(buildDg14(key.spkiDer), aidA(), LibreSCRS::CancelToken{}),
+                 std::runtime_error);
+}
+
+TEST(ChipAuthSessionTest, AReaderFailureDuringTheProofInsideATunnelPropagates)
+{
+    const auto key = EcCardKey::generate();
+    auto rig = makeCaRig(key, /*inTunnel=*/true);
+    ASSERT_TRUE(rig.holder.has_value());
+    rig.card->onIns(0xA4, []() -> std::optional<LibreSCRS::SmartCard::Internal::APDUResponse> {
+        throw LibreSCRS::SmartCard::Internal::PCSCError("SCardTransmit failed", SCARD_W_REMOVED_CARD);
+    });
+
+    EXPECT_THROW((void)rig.session->performChipAuthentication(buildDg14(key.spkiDer), aidA(), LibreSCRS::CancelToken{}),
+                 std::runtime_error);
+    EXPECT_EQ(rig.card->keyAgreements(), 1);
+}
+
+TEST(ChipAuthSessionTest, AnAllocationFailureDuringTheRunPropagates)
+{
+    const auto key = EcCardKey::generate();
+    for (const bool inTunnel : {false, true}) {
+        SCOPED_TRACE(inTunnel ? "inside a tunnel" : "over a plain channel");
+        auto rig = makeCaRig(key, inTunnel);
+        ASSERT_TRUE(rig.holder.has_value());
+        rig.card->onIns(
+            0x86, []() -> std::optional<LibreSCRS::SmartCard::Internal::APDUResponse> { throw std::bad_alloc(); });
+        EXPECT_THROW(
+            (void)rig.session->performChipAuthentication(buildDg14(key.spkiDer), aidA(), LibreSCRS::CancelToken{}),
+            std::bad_alloc);
+    }
+}
+
+TEST(ChipAuthSessionTest, ALocalCryptoFailureIsNoVerdict)
+{
+    // DG14 advertises a key this side cannot use (not a SubjectPublicKeyInfo):
+    // the run fails here, before the chip is asked anything.
+    const auto key = EcCardKey::generate();
+    const auto unusableKey = buildDg14({0x30, 0x03, 0x02, 0x01, 0x00});
+    for (const bool inTunnel : {false, true}) {
+        SCOPED_TRACE(inTunnel ? "inside a tunnel" : "over a plain channel");
+        auto rig = makeCaRig(key, inTunnel);
+        ASSERT_TRUE(rig.holder.has_value());
+        const auto report = rig.session->performChipAuthentication(unusableKey, aidA(), LibreSCRS::CancelToken{});
+        EXPECT_EQ(report.outcome, ChipAuthOutcome::NotPerformed);
+        EXPECT_EQ(report.reason, ChipAuthReason::LocalCryptoFailure);
+        EXPECT_EQ(report.protocolOid, kCaAes128Oid);
+        EXPECT_FALSE(sawIns(*rig.card, 0x86));
+    }
+}
+
+TEST(ChipAuthSessionTest, InsideATunnelTheProofSelectBecomesTheCurrentApplet)
+{
+    // The proof exchange selects the applet the caller names; the channel must
+    // know it, or a later activation for the holder's applet would take the
+    // no-SELECT fast path and talk to the wrong one.
+    const auto key = EcCardKey::generate();
+    auto rig = makeCaRig(key, /*inTunnel=*/true);
+    ASSERT_TRUE(rig.holder.has_value());
+
+    const auto report =
+        rig.session->performChipAuthentication(buildDg14(key.spkiDer), aidB(), LibreSCRS::CancelToken{});
+    ASSERT_EQ(report.outcome, ChipAuthOutcome::Passed);
+    auto* active = ActiveChannelAccessor::active(*rig.session);
+    ASSERT_NE(active, nullptr);
+    EXPECT_EQ(active->currentApplet(), aidB());
+
+    // Activating the holder's original applet now re-selects it through the
+    // tunnel instead of assuming it is current.
+    rig.holder.reset();
+    const auto proofsBefore = rig.card->smOracle()->verifiedCommands();
+    auto again = rig.session->activateChannelWithSm(aidA(), PaceRequest{}, LibreSCRS::CancelToken{});
+    ASSERT_TRUE(again.has_value());
+    EXPECT_EQ(rig.card->smOracle()->verifiedCommands(), proofsBefore + 1);
+}
+
+TEST(ChipAuthSessionTest, InsideATunnelARefusalOfTheProtocolIsAFailure)
+{
+    // Inside the tunnel a chip whose signed DG14 offers Chip Authentication
+    // must complete it; a protected refusal is an answer, and a verdict.
+    const auto key = EcCardKey::generate();
+    auto rig = makeCaRig(key, /*inTunnel=*/true);
+    ASSERT_TRUE(rig.holder.has_value());
+    rig.card->refuseIns(0x86, 0x69, 0x82);
+
+    const auto report =
+        rig.session->performChipAuthentication(buildDg14(key.spkiDer), aidA(), LibreSCRS::CancelToken{});
+    EXPECT_EQ(report.outcome, ChipAuthOutcome::Failed);
+    EXPECT_EQ(report.reason, ChipAuthReason::None);
+    EXPECT_EQ(report.protocolOid, kCaAes128Oid);
+    EXPECT_EQ(rig.card->keyAgreements(), 0);
+}
+
+TEST(ChipAuthSessionTest, InsideATunnelAnIntegrityFailureIsAFailure)
+{
+    // A card-side secure-messaging abort during the key agreement is an answer
+    // from the card, not a reader error: inside the tunnel it is a verdict.
+    const auto key = EcCardKey::generate();
+    auto rig = makeCaRig(key, /*inTunnel=*/true);
+    ASSERT_TRUE(rig.holder.has_value());
+    rig.card->breakSmOn(0x86);
+
+    const auto report =
+        rig.session->performChipAuthentication(buildDg14(key.spkiDer), aidA(), LibreSCRS::CancelToken{});
+    EXPECT_EQ(report.outcome, ChipAuthOutcome::Failed);
+    EXPECT_EQ(report.reason, ChipAuthReason::None);
+    EXPECT_EQ(rig.card->keyAgreements(), 0);
+}
+
+TEST(ChipAuthSessionTest, AProofAnsweredWithAnErrorStatusUnderTheNewKeysPasses)
+{
+    // The proof SELECT names an applet the card does not have; the card says
+    // so (6A82) in a response protected under the new keys. Only a card that
+    // holds the keys can produce that response, so the keys are proven -- but
+    // the applet is not selected, and the channel does not claim it is.
+    const auto key = EcCardKey::generate();
+    for (const bool inTunnel : {false, true}) {
+        SCOPED_TRACE(inTunnel ? "inside a tunnel" : "over a plain channel");
+        auto rig = makeCaRig(key, inTunnel);
+        ASSERT_TRUE(rig.holder.has_value());
+        rig.card->refuseIns(0xA4, 0x6A, 0x82);
+
+        const auto report =
+            rig.session->performChipAuthentication(buildDg14(key.spkiDer), aidB(), LibreSCRS::CancelToken{});
+        EXPECT_EQ(report.outcome, ChipAuthOutcome::Passed);
+        ASSERT_NE(rig.card->smOracle(), nullptr);
+        EXPECT_EQ(rig.card->smOracle()->verifiedCommands(), 1);
+        auto* active = ActiveChannelAccessor::active(*rig.session);
+        ASSERT_NE(active, nullptr);
+        EXPECT_TRUE(active->carriesSm());
+        EXPECT_EQ(active->currentApplet(), aidA());
+    }
 }
 
 // --- activateChannelWithSm(ChipAuthRequest) --------------------------------

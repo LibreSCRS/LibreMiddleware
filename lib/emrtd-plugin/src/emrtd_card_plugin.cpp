@@ -713,7 +713,8 @@ private:
                         // APDU under the rotated keys does not MAC, the key
                         // agreement did not match — FAILED, not PASSED.
                         if (!LibreSCRS::SecureChannel::confirmSmAfterKeyChange(*channel, makeEmrtdAid(),
-                                                                               LibreSCRS::CancelToken{})) {
+                                                                               LibreSCRS::CancelToken{})
+                                 .proven) {
                             caResult.chipAuthentication = emrtd::crypto::ChipAuthResult::FAILED;
                             caResult.errorDetail = "chip authentication key agreement did not verify";
                         }

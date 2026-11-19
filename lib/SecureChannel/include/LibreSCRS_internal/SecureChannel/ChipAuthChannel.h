@@ -161,6 +161,9 @@ public:
     /// leaving the old plain channel installed after a successful GA would
     /// desynchronise the card-side SM context.
     ///
+    /// Reader and transport errors propagate as the transport's exception,
+    /// and @c std::bad_alloc propagates: neither is an answer from the chip.
+    ///
     /// @note Carries default visibility (not `LIBRESCRS_INTERNAL`): the
     ///       eMRTD plugin .so is the in-tree caller across the shared-
     ///       library boundary. External consumers cannot construct an
@@ -170,27 +173,45 @@ public:
     [[nodiscard]] LIBRESCRS_PUBLIC_API static std::expected<std::unique_ptr<ChipAuthChannel>, ChipAuthEstablishError>
     establish(LibreSCRS::SmartCard::IConnection& connection, ISecureChannel& current,
               const std::vector<std::uint8_t>& dg14Raw, LibreSCRS::SmartCard::AppletAid aid,
-              LibreSCRS::CancelToken token) noexcept;
+              LibreSCRS::CancelToken token);
 
 private:
     std::unique_ptr<detail::ChipAuthChannelImpl> pImpl;
     std::string caProtocolOid;
 };
 
+/// @brief Outcome of @ref confirmSmAfterKeyChange.
+/// @since 5.0
+struct SmKeyProof
+{
+    /// The card answered under the keys and the answer's MAC verified: the
+    /// card holds them. True whatever status word the answer carries.
+    bool proven = false;
+    /// The proof SELECT also succeeded (9000), so @p aid is now selected.
+    bool appletSelected = false;
+};
+
 /// @brief Prove a channel's SM keys against the card: one wrapped SELECT of
-///        @p aid through @p ch. True iff the exchange round-tripped with a
-///        success SW — i.e. the card accepted our MAC and we verified its.
+///        @p aid through @p ch.
 ///
-/// Shared by @ref ChipAuthChannel::establish (proof step) and by the eMRTD
-/// plugin after an in-tunnel Chip Authentication rotates keys via
-/// @c replaceKeys: without this exchange a PASSED verdict would rest on
-/// nothing but our own arithmetic.
+/// A response the channel could unwrap — its MAC verified under the current
+/// keys — proves that the card holds them, even when its status word is an
+/// error such as 6A82 (no such applet): a card without the keys cannot
+/// produce one. A response that does not verify, or a card-side SM abort
+/// (6987/6988), fails the channel and proves nothing; so does a cancel, which
+/// sends nothing.
+///
+/// Shared by @ref ChipAuthChannel::establish (proof step) and by
+/// @ref LibreSCRS::SmartCard::CardSession::performChipAuthentication after an
+/// in-tunnel Chip Authentication rotates keys via @c replaceKeys: without this
+/// exchange a PASSED verdict would rest on nothing but our own arithmetic.
+/// A reader error propagates as the transport's exception.
 ///
 /// @note `LIBRESCRS_PUBLIC_API` deliberately — called from the eMRTD
 ///       plugin .so across the shared-library boundary.
 /// @since 4.4
-[[nodiscard]] LIBRESCRS_PUBLIC_API bool confirmSmAfterKeyChange(ISecureChannel& ch,
-                                                                const LibreSCRS::SmartCard::AppletAid& aid,
-                                                                LibreSCRS::CancelToken token) noexcept;
+[[nodiscard]] LIBRESCRS_PUBLIC_API SmKeyProof confirmSmAfterKeyChange(ISecureChannel& ch,
+                                                                      const LibreSCRS::SmartCard::AppletAid& aid,
+                                                                      LibreSCRS::CancelToken token);
 
 } // namespace LibreSCRS::SecureChannel
