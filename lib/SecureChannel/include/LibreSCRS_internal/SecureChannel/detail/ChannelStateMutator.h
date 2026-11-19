@@ -31,8 +31,9 @@ namespace LibreSCRS::SecureChannel::detail {
 ///
 ///   - @ref LibreSCRS::SmartCard::CardSession reaches @c setCurrentApplet
 ///     after a wrapped @c SELECT, and
-///   - the Chip-Authentication pipeline reaches @c replaceKeys after CA
-///     derives fresh session keys (BSI TR-03110 §4.4).
+///   - @ref LibreSCRS::SmartCard::CardSession::performChipAuthentication
+///     reaches @c replaceKeys after CA derives fresh session keys inside a
+///     tunnel (BSI TR-03110 §4.4).
 ///
 /// All operations are @c noexcept-by-contract; concrete channels must
 /// preserve no-throw on their overrides.
@@ -60,9 +61,10 @@ struct LIBRESCRS_PUBLIC_API ChannelStateMutator
     ///
     /// The previous SM key material is zeroised through the underlying
     /// primitive's destructor before installation. Idempotent and leaves
-    /// the channel in @ref ChannelState::Open on success.
+    /// the channel in @ref ChannelState::Open on success. Hidden: its only
+    /// caller is inside the library, so session keys never cross it.
     /// @since 4.1
-    static void replaceKeys(ISecureChannel& ch, SessionKeys keys) noexcept;
+    LIBRESCRS_INTERNAL static void replaceKeys(ISecureChannel& ch, SessionKeys keys) noexcept;
 };
 
 } // namespace LibreSCRS::SecureChannel::detail
