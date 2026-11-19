@@ -1830,3 +1830,465 @@ TEST(OpenscEcdsa, HalfTheDriverDidNotWriteIsNeverASignature)
 }
 
 } // namespace
+
+// ── CardEdge qualified-signature key: user_consent supplement ──────────────
+//
+// The vendored srbeid emulator publishes the AT_SIGNATURE key without
+// user_consent. The plugin supplements it at its one binding point.
+
+namespace {
+
+/// A bound-card shape: one driver name, a chain of private-key objects.
+struct FakeBinding
+{
+    explicit FakeBinding(const char* driverShortName)
+    {
+        driver.short_name = driverShortName;
+        card.driver = &driver;
+        p15.card = &card;
+    }
+
+    /// Appends an RSA private key (or another type) the way an emulator would.
+    sc_pkcs15_object_t& addKey(unsigned int type, unsigned int usage, int keyReference)
+    {
+        auto info = std::make_unique<sc_pkcs15_prkey_info_t>();
+        info->usage = usage;
+        info->key_reference = keyReference;
+        auto object = std::make_unique<sc_pkcs15_object_t>();
+        object->type = type;
+        object->data = info.get();
+        object->user_consent = 0;
+        if (tail)
+            tail->next = object.get();
+        else
+            p15.obj_list = object.get();
+        tail = object.get();
+        infos.push_back(std::move(info));
+        objects.push_back(std::move(object));
+        return *tail;
+    }
+
+    ~FakeBinding()
+    {
+        p15.obj_list = nullptr; // not OpenSC-allocated: nothing for it to free
+    }
+
+    sc_card_driver driver{};
+    sc_card_t card{};
+    sc_pkcs15_card_t p15{};
+    sc_pkcs15_object_t* tail = nullptr;
+    std::vector<std::unique_ptr<sc_pkcs15_prkey_info_t>> infos;
+    std::vector<std::unique_ptr<sc_pkcs15_object_t>> objects;
+};
+
+constexpr unsigned int kSigUsage = SC_PKCS15_PRKEY_USAGE_SIGN | SC_PKCS15_PRKEY_USAGE_NONREPUDIATION;
+constexpr unsigned int kKxUsage = SC_PKCS15_PRKEY_USAGE_ENCRYPT | SC_PKCS15_PRKEY_USAGE_DECRYPT |
+                                  SC_PKCS15_PRKEY_USAGE_WRAP | SC_PKCS15_PRKEY_USAGE_UNWRAP |
+                                  SC_PKCS15_PRKEY_USAGE_SIGN;
+
+} // namespace
+
+// srbeid's NONREPUDIATION key wants its PIN per
+// operation; its key-exchange key does not.
+TEST(OpenscSrbeidConsent, SigningKeyGetsConsentKeyExchangeKeyDoesNot)
+{
+    FakeBinding b("srbeid");
+    auto& kx = b.addKey(SC_PKCS15_TYPE_PRKEY_RSA, kKxUsage, 0x6005);
+    auto& sig = b.addKey(SC_PKCS15_TYPE_PRKEY_RSA, kSigUsage, 0x6019);
+
+    LibreSCRS::OpenSc::supplementSrbeidSigningConsent(b.p15);
+
+    EXPECT_TRUE(LibreSCRS::OpenSc::requiresPerOperationAuth(sig)) << "the qualified-signature key signs without a PIN";
+    EXPECT_FALSE(LibreSCRS::OpenSc::requiresPerOperationAuth(kx)) << "the key-exchange key must stay lease-governed";
+}
+
+// Every container's signature key carries the rule, not just the first.
+TEST(OpenscSrbeidConsent, EverySignatureFileOfEveryContainerIsCovered)
+{
+    FakeBinding b("srbeid");
+    auto& first = b.addKey(SC_PKCS15_TYPE_PRKEY_RSA, kSigUsage, 0x6009);
+    auto& second = b.addKey(SC_PKCS15_TYPE_PRKEY_RSA, kSigUsage, 0x6019);
+    auto& third = b.addKey(SC_PKCS15_TYPE_PRKEY_RSA, kSigUsage, 0x6029);
+    LibreSCRS::OpenSc::supplementSrbeidSigningConsent(b.p15);
+    EXPECT_TRUE(LibreSCRS::OpenSc::requiresPerOperationAuth(first));
+    EXPECT_TRUE(LibreSCRS::OpenSc::requiresPerOperationAuth(second));
+    EXPECT_TRUE(LibreSCRS::OpenSc::requiresPerOperationAuth(third));
+}
+
+// The rule is the usage alone: a NONREPUDIATION key in a file the emulator's
+// naming does not predict (another card platform, a future applet layout) must
+// still ask for its PIN -- the safe direction is one prompt more, not one less.
+TEST(OpenscSrbeidConsent, SigningUsageUnderAnUnknownFileStillGetsConsent)
+{
+    FakeBinding b("srbeid");
+    auto& unknownFile = b.addKey(SC_PKCS15_TYPE_PRKEY_RSA, kSigUsage, 0x1234);
+    auto& keyExchangeFile = b.addKey(SC_PKCS15_TYPE_PRKEY_RSA, kSigUsage, 0x6005);
+    LibreSCRS::OpenSc::supplementSrbeidSigningConsent(b.p15);
+    EXPECT_TRUE(LibreSCRS::OpenSc::requiresPerOperationAuth(unknownFile));
+    EXPECT_TRUE(LibreSCRS::OpenSc::requiresPerOperationAuth(keyExchangeFile));
+}
+
+// The file number alone decides nothing: a key without NONREPUDIATION stays as
+// the emulator published it, even in a signature file.
+TEST(OpenscSrbeidConsent, SignatureFileWithoutNonRepudiationIsUntouched)
+{
+    FakeBinding b("srbeid");
+    auto& sigFileNoNr = b.addKey(SC_PKCS15_TYPE_PRKEY_RSA, SC_PKCS15_PRKEY_USAGE_SIGN, 0x6009);
+    LibreSCRS::OpenSc::supplementSrbeidSigningConsent(b.p15);
+    EXPECT_FALSE(LibreSCRS::OpenSc::requiresPerOperationAuth(sigFileNoNr));
+}
+
+// Only RSA keys are touched, and a consent value another source already set
+// (any level above 1 included) is kept as it is.
+TEST(OpenscSrbeidConsent, NonRsaKeyIsUntouchedAndExistingConsentIsKept)
+{
+    FakeBinding b("srbeid");
+    auto& ecKey = b.addKey(SC_PKCS15_TYPE_PRKEY_EC, kSigUsage, 0x6019);
+    auto& already = b.addKey(SC_PKCS15_TYPE_PRKEY_RSA, kSigUsage, 0x6029);
+    already.user_consent = 3;
+    auto& kx = b.addKey(SC_PKCS15_TYPE_PRKEY_RSA, kKxUsage, 0x6005);
+    LibreSCRS::OpenSc::supplementSrbeidSigningConsent(b.p15);
+    EXPECT_FALSE(LibreSCRS::OpenSc::requiresPerOperationAuth(ecKey));
+    EXPECT_EQ(already.user_consent, 3);
+    EXPECT_FALSE(LibreSCRS::OpenSc::requiresPerOperationAuth(kx));
+}
+
+// A marked key never reaches the card without a deposited PIN.
+TEST(OpenscSrbeidConsent, SigningKeyDoesNotRunWithoutADepositedPin)
+{
+    FakeBinding b("srbeid");
+    auto& sig = b.addKey(SC_PKCS15_TYPE_PRKEY_RSA, kSigUsage, 0x6019);
+    LibreSCRS::OpenSc::supplementSrbeidSigningConsent(b.p15);
+    OpenSCSession session;
+    int operated = 0;
+    const auto refused = LibreSCRS::OpenSc::verifyDepositedPinThenRun(session, sig, [&] { ++operated; });
+    EXPECT_EQ(operated, 0);
+    EXPECT_TRUE(refused.has_value());
+}
+
+// Controls: the same key shape under any other driver keeps what that card
+// declared (card declaration beats an unmeasured override).
+TEST(OpenscSrbeidConsent, OtherDriversAreUntouched)
+{
+    for (const char* driver : {"PIV-II", "srbeid2", "unknown"}) {
+        SCOPED_TRACE(driver);
+        FakeBinding b(driver);
+        auto& sig = b.addKey(SC_PKCS15_TYPE_PRKEY_RSA, kSigUsage, 0x6019);
+        LibreSCRS::OpenSc::supplementSrbeidSigningConsent(b.p15);
+        EXPECT_FALSE(LibreSCRS::OpenSc::requiresPerOperationAuth(sig));
+    }
+    // A card with no driver at all must not be dereferenced.
+    FakeBinding noDriver("srbeid");
+    noDriver.card.driver = nullptr;
+    auto& sig = noDriver.addKey(SC_PKCS15_TYPE_PRKEY_RSA, kSigUsage, 0x6019);
+    LibreSCRS::OpenSc::supplementSrbeidSigningConsent(noDriver.p15);
+    EXPECT_FALSE(LibreSCRS::OpenSc::requiresPerOperationAuth(sig));
+}
+
+namespace {
+
+// A CardEdge card that answers just enough for the vendored srbeid driver to
+// match and for its PKCS#15 emulator to publish a key-exchange key
+// (container 0 -> file 0x6005) and a signature key (container 1 -> 0x6019).
+// Both certificate files hold the same certificate.
+// A self-signed RSA-1024 certificate (CN=CardEdge Test), served for both keys.
+constexpr std::uint8_t kCardEdgeCertDer[] = {
+    0x30, 0x82, 0x02, 0x0E, 0x30, 0x82, 0x01, 0x77, 0xA0, 0x03, 0x02, 0x01, 0x02, 0x02, 0x14, 0x55, 0x6B, 0x79, 0xC5,
+    0x2E, 0x55, 0x89, 0x18, 0x66, 0x97, 0x7B, 0x00, 0x03, 0xE8, 0xCC, 0x52, 0x8C, 0x91, 0x1E, 0xF8, 0x30, 0x0D, 0x06,
+    0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B, 0x05, 0x00, 0x30, 0x18, 0x31, 0x16, 0x30, 0x14, 0x06,
+    0x03, 0x55, 0x04, 0x03, 0x0C, 0x0D, 0x43, 0x61, 0x72, 0x64, 0x45, 0x64, 0x67, 0x65, 0x20, 0x54, 0x65, 0x73, 0x74,
+    0x30, 0x20, 0x17, 0x0D, 0x32, 0x36, 0x31, 0x31, 0x31, 0x39, 0x31, 0x33, 0x34, 0x33, 0x31, 0x38, 0x5A, 0x18, 0x0F,
+    0x32, 0x31, 0x32, 0x36, 0x31, 0x30, 0x32, 0x36, 0x31, 0x33, 0x34, 0x33, 0x31, 0x38, 0x5A, 0x30, 0x18, 0x31, 0x16,
+    0x30, 0x14, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0C, 0x0D, 0x43, 0x61, 0x72, 0x64, 0x45, 0x64, 0x67, 0x65, 0x20, 0x54,
+    0x65, 0x73, 0x74, 0x30, 0x81, 0x9F, 0x30, 0x0D, 0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01,
+    0x05, 0x00, 0x03, 0x81, 0x8D, 0x00, 0x30, 0x81, 0x89, 0x02, 0x81, 0x81, 0x00, 0xCD, 0xBC, 0x34, 0xEA, 0x08, 0x89,
+    0x3E, 0xA8, 0xAF, 0x22, 0x43, 0x21, 0xBA, 0xB3, 0x53, 0x42, 0x20, 0xD9, 0x0C, 0xAB, 0xAF, 0x9B, 0x6E, 0x52, 0x09,
+    0x81, 0xE3, 0xFB, 0x66, 0x4D, 0x6C, 0x8C, 0x6F, 0x25, 0x14, 0xFE, 0xAF, 0x12, 0x85, 0xA4, 0xBE, 0xB5, 0xC7, 0x28,
+    0x88, 0xD8, 0x02, 0x75, 0x1C, 0xB1, 0xA5, 0x1D, 0x34, 0xE3, 0x19, 0x0A, 0xF6, 0xB5, 0x55, 0xEA, 0x83, 0x6A, 0x3D,
+    0x38, 0x30, 0x62, 0xAF, 0x53, 0x83, 0x88, 0x2E, 0xB3, 0xDD, 0x27, 0x3B, 0xC5, 0x4D, 0x2C, 0xD8, 0xBE, 0x13, 0x9B,
+    0xC7, 0xB1, 0x4D, 0xAF, 0xE1, 0xE4, 0x5D, 0x7C, 0x09, 0xE3, 0x9C, 0x15, 0xF7, 0x58, 0x77, 0x90, 0x2F, 0x26, 0x45,
+    0xF5, 0x59, 0xB7, 0x7E, 0xC6, 0xFA, 0xAE, 0xE4, 0x03, 0xB0, 0x58, 0x46, 0x85, 0xAA, 0x51, 0xBA, 0xB9, 0x13, 0x07,
+    0xC4, 0xBF, 0xD1, 0x89, 0x67, 0xB5, 0x18, 0xB9, 0x02, 0x03, 0x01, 0x00, 0x01, 0xA3, 0x53, 0x30, 0x51, 0x30, 0x1D,
+    0x06, 0x03, 0x55, 0x1D, 0x0E, 0x04, 0x16, 0x04, 0x14, 0x48, 0x40, 0x4A, 0x9B, 0x3A, 0x4C, 0x15, 0xCD, 0x67, 0x01,
+    0x35, 0xA2, 0x42, 0xDA, 0xE1, 0x7A, 0xDE, 0x8C, 0x5A, 0xF1, 0x30, 0x1F, 0x06, 0x03, 0x55, 0x1D, 0x23, 0x04, 0x18,
+    0x30, 0x16, 0x80, 0x14, 0x48, 0x40, 0x4A, 0x9B, 0x3A, 0x4C, 0x15, 0xCD, 0x67, 0x01, 0x35, 0xA2, 0x42, 0xDA, 0xE1,
+    0x7A, 0xDE, 0x8C, 0x5A, 0xF1, 0x30, 0x0F, 0x06, 0x03, 0x55, 0x1D, 0x13, 0x01, 0x01, 0xFF, 0x04, 0x05, 0x30, 0x03,
+    0x01, 0x01, 0xFF, 0x30, 0x0D, 0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B, 0x05, 0x00, 0x03,
+    0x81, 0x81, 0x00, 0x23, 0xCB, 0xD2, 0x94, 0x61, 0x0D, 0x99, 0x05, 0x48, 0x46, 0xE4, 0x45, 0x6C, 0x9D, 0x58, 0xCB,
+    0x73, 0xA1, 0x90, 0x35, 0x10, 0x0C, 0x18, 0xDF, 0x5E, 0x22, 0xCE, 0x7A, 0xC7, 0xE9, 0xC4, 0x37, 0xF7, 0x40, 0xE2,
+    0xAF, 0x02, 0x81, 0xAF, 0x71, 0x69, 0xF4, 0x45, 0x1F, 0x53, 0x39, 0xA9, 0x35, 0xF2, 0xEF, 0x31, 0x54, 0x50, 0x98,
+    0x99, 0x06, 0xB1, 0x5A, 0xB5, 0x9B, 0x6A, 0x2D, 0xAE, 0x9F, 0xBC, 0x59, 0x81, 0x36, 0x6C, 0xEE, 0xD4, 0x18, 0x0E,
+    0x4E, 0x8E, 0x3D, 0xF1, 0xE3, 0x15, 0x0C, 0x9D, 0x36, 0x52, 0x5C, 0x3F, 0x9F, 0xD6, 0x82, 0xE9, 0xD5, 0x09, 0xD9,
+    0xB2, 0x2B, 0x56, 0x3D, 0xB6, 0x3F, 0x2C, 0x0A, 0x14, 0x80, 0x96, 0x6D, 0x31, 0x46, 0xF5, 0x18, 0xAB, 0x14, 0xB9,
+    0x27, 0xE0, 0x01, 0x74, 0x52, 0xDC, 0xDE, 0xEC, 0xCE, 0x79, 0xE3, 0xD8, 0x80, 0xA2, 0x07, 0x63, 0x7D};
+
+class CardEdgeScript
+{
+public:
+    CardEdgeScript()
+    {
+        std::vector<std::uint8_t> root(10, 0);
+        root[6] = 1;
+        appendEntry(root, "mscp", kMscpFid, true);
+        files[kRootFid] = root;
+
+        std::vector<std::uint8_t> mscp(10, 0);
+        mscp[6] = 3;
+        appendEntry(mscp, "cmapfile", kCmapFid, false);
+        appendEntry(mscp, "kxc00", kKxcFid, false);
+        appendEntry(mscp, "ksc01", kKscFid, false);
+        files[kMscpFid] = mscp;
+
+        // Two 86-byte cmap records: both valid, 2048-bit signature and exchange keys.
+        std::vector<std::uint8_t> cmap(2 * 86, 0);
+        for (std::size_t rec = 0; rec < 2; ++rec) {
+            cmap[rec * 86 + 80] = 0x01;
+            cmap[rec * 86 + 82] = 0x00;
+            cmap[rec * 86 + 83] = 0x08; // 0x0800 = 2048
+            cmap[rec * 86 + 84] = 0x00;
+            cmap[rec * 86 + 85] = 0x08;
+        }
+        files[kCmapFid] = cmap;
+        // CardEdge certificate file: 2-byte little-endian length, then the DER.
+        std::vector<std::uint8_t> certFile{static_cast<std::uint8_t>(sizeof kCardEdgeCertDer & 0xFF),
+                                           static_cast<std::uint8_t>(sizeof kCardEdgeCertDer >> 8)};
+        certFile.insert(certFile.end(), std::begin(kCardEdgeCertDer), std::end(kCardEdgeCertDer));
+        files[kKxcFid] = certFile;
+        files[kKscFid] = certFile;
+    }
+
+    APDUResponse operator()(const APDUCommand& cmd)
+    {
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x04)
+            return sw(0x90, 0x00); // SELECT applet by AID
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x00 && cmd.data.size() == 2) {
+            const std::uint16_t fid = static_cast<std::uint16_t>((cmd.data[0] << 8) | cmd.data[1]);
+            const auto it = files.find(fid);
+            if (it == files.end())
+                return sw(0x6A, 0x82);
+            selected = fid;
+            const auto size = static_cast<std::uint16_t>(it->second.size());
+            // CardEdge FCI: FID, size, six ACL bytes (big-endian).
+            return sw(0x90, 0x00,
+                      {static_cast<std::uint8_t>(fid >> 8), static_cast<std::uint8_t>(fid),
+                       static_cast<std::uint8_t>(size >> 8), static_cast<std::uint8_t>(size), 0, 0, 0, 0, 0, 0});
+        }
+        if (cmd.ins == 0xB0) {
+            const auto& content = files[selected];
+            const std::size_t off = readBinaryOffset(cmd);
+            if (off >= content.size())
+                return sw(0x6B, 0x00);
+            const std::size_t want = cmd.le == 0 ? 256 : cmd.le;
+            const std::size_t n = std::min(want, content.size() - off);
+            return sw(0x90, 0x00,
+                      std::vector<std::uint8_t>(content.begin() + static_cast<std::ptrdiff_t>(off),
+                                                content.begin() + static_cast<std::ptrdiff_t>(off + n)));
+        }
+        return sw(0x6A, 0x82);
+    }
+
+private:
+    static constexpr std::uint16_t kRootFid = 0x7000;
+    static constexpr std::uint16_t kMscpFid = 0x7001;
+    static constexpr std::uint16_t kCmapFid = 0x7002;
+    static constexpr std::uint16_t kKxcFid = 0x7003;
+    static constexpr std::uint16_t kKscFid = 0x7004;
+
+    static void appendEntry(std::vector<std::uint8_t>& dir, const char* name, std::uint16_t fid, bool isDir)
+    {
+        std::string padded(name);
+        padded.resize(8, ' ');
+        dir.insert(dir.end(), padded.begin(), padded.end());
+        dir.push_back(static_cast<std::uint8_t>(fid & 0xFF));
+        dir.push_back(static_cast<std::uint8_t>(fid >> 8));
+        dir.push_back(isDir ? 1 : 0);
+        dir.push_back(0);
+    }
+
+    std::map<std::uint16_t, std::vector<std::uint8_t>> files;
+    std::uint16_t selected = 0;
+};
+
+/// ISO 7816-4 short APDU (cases 1-4) back into the typed command the script reads.
+APDUCommand parseShortApdu(std::span<const std::uint8_t> b)
+{
+    APDUCommand cmd{b[0], b[1], b[2], b[3], {}, 0, false};
+    if (b.size() == 5) {
+        cmd.le = b[4];
+        cmd.hasLe = true;
+    } else if (b.size() > 5) {
+        const std::size_t lc = b[4];
+        cmd.data.assign(b.begin() + 5, b.begin() + 5 + static_cast<std::ptrdiff_t>(lc));
+        if (b.size() > 5 + lc) {
+            cmd.le = b[5 + lc];
+            cmd.hasLe = true;
+        }
+    }
+    return cmd;
+}
+
+/// One fixture bound to the scripted CardEdge card through the plugin's own
+/// binding function, never the supplement directly.
+struct BoundCardEdge
+{
+    /// @param bindNow  false leaves the card unbound, for the deferred-bind path.
+    explicit BoundCardEdge(bool bindNow = true)
+    {
+        // ATR of "Serbian eID (Gemalto Multiapp 80K)" in the vendored table.
+        static const std::vector<std::uint8_t> atr{0x3B, 0xFF, 0x94, 0x00, 0x00, 0x81, 0x31, 0x80, 0x43,
+                                                   0x80, 0x31, 0x80, 0x65, 0xB0, 0x85, 0x02, 0x01, 0xF3,
+                                                   0x12, 0x0F, 0xFF, 0x82, 0x90, 0x00, 0x79};
+        s = std::make_shared<OpenSCSession>();
+        s->readerName = "ChannelTestReader";
+        sc_context_t* ctx = owner.context();
+        if (!ctx)
+            std::abort();
+        s->context = owner.lease();
+        s->bridge = std::make_unique<LibreSCRS::OpenSc::Bridge::OpenScBridge>();
+        s->bridge->data.conn = &conn;
+        s->bridge->readerName = s->readerName;
+        LibreSCRS::OpenSc::Bridge::initBridgeReader(ctx, *s->bridge, atr);
+        if (!bindNow)
+            return;
+        // The bridge ships raw bytes (transmitRaw), which bypass the typed filter.
+        conn.setDetachedRawResponder(
+            [this](std::span<const std::uint8_t> bytes) { return script(parseShortApdu(bytes)); });
+        connectRc = sc_connect_card(&s->bridge->reader, &s->card);
+        if (connectRc == SC_SUCCESS)
+            bindRc = LibreSCRS::OpenSc::bindWithoutPinCache(s->card, &s->p15card);
+    }
+
+    ~BoundCardEdge()
+    {
+        s->bound = (s->p15card != nullptr);
+        s.reset();
+    }
+
+    const sc_pkcs15_object_t* keyByReference(int reference) const
+    {
+        if (!s->p15card)
+            return nullptr;
+        for (const sc_pkcs15_object_t* o = s->p15card->obj_list; o; o = o->next) {
+            const auto* info = static_cast<const sc_pkcs15_prkey_info_t*>(o->data);
+            if (o->type == SC_PKCS15_TYPE_PRKEY_RSA && info && info->key_reference == reference)
+                return o;
+        }
+        return nullptr;
+    }
+
+    LibreSCRS::OpenSc::PluginContext owner;
+    PCSCConnection conn{PCSCConnection::DetachedTag{}, "ChannelTestReader"};
+    CardEdgeScript script;
+    std::shared_ptr<OpenSCSession> s;
+    int connectRc = -1;
+    int bindRc = -1;
+};
+
+} // namespace
+
+// The real path. A scripted CardEdge card is matched by the vendored
+// srbeid driver and bound by bindWithoutPinCache; the keys the emulator
+// published must come out with the consent set. Removing the call from
+// bindWithoutPinCache turns this red while the unit cases above stay green:
+// it proves the behaviour of the binding, not the existence of the helper.
+TEST(OpenscSrbeidConsent, BindingACardEdgeCardMarksOnlyTheSigningKey)
+{
+    BoundCardEdge card;
+    ASSERT_EQ(card.connectRc, SC_SUCCESS);
+    ASSERT_EQ(card.bindRc, SC_SUCCESS);
+    ASSERT_NE(card.s->card, nullptr);
+    ASSERT_STREQ(card.s->card->driver->short_name, "srbeid");
+
+    const sc_pkcs15_object_t* kx = card.keyByReference(0x6005);
+    const sc_pkcs15_object_t* sig = card.keyByReference(0x6019);
+    ASSERT_NE(kx, nullptr) << "the emulator did not publish the key-exchange key: the script is wrong";
+    ASSERT_NE(sig, nullptr) << "the emulator did not publish the signature key: the script is wrong";
+    // Precondition that the emulator really declares NONREPUDIATION on this key.
+    EXPECT_NE(static_cast<const sc_pkcs15_prkey_info_t*>(sig->data)->usage & SC_PKCS15_PRKEY_USAGE_NONREPUDIATION, 0u);
+
+    EXPECT_TRUE(LibreSCRS::OpenSc::requiresPerOperationAuth(*sig));
+    EXPECT_FALSE(LibreSCRS::OpenSc::requiresPerOperationAuth(*kx));
+}
+
+namespace {
+
+const std::vector<std::uint8_t> kCardEdgeAtr{0x3B, 0xFF, 0x94, 0x00, 0x00, 0x81, 0x31, 0x80, 0x43,
+                                             0x80, 0x31, 0x80, 0x65, 0xB0, 0x85, 0x02, 0x01, 0xF3,
+                                             0x12, 0x0F, 0xFF, 0x82, 0x90, 0x00, 0x79};
+
+/// What a consumer reads: the certificates the plugin lists, keyed by label.
+void expectOnlyTheSigningCertificateAsksForItsPin(const std::vector<LibreSCRS::Plugin::CertificateData>& certs)
+{
+    bool sawSigning = false;
+    bool sawKeyExchange = false;
+    for (const auto& cert : certs) {
+        if (cert.label == "Digital Signature Certificate") {
+            sawSigning = true;
+            EXPECT_TRUE(cert.alwaysAuthenticate) << "the signing certificate's key signs without a PIN";
+        } else if (cert.label == "Key Exchange Certificate") {
+            sawKeyExchange = true;
+            EXPECT_FALSE(cert.alwaysAuthenticate) << "the key-exchange key must stay lease-governed";
+        }
+    }
+    EXPECT_TRUE(sawSigning) << "the signing certificate was not listed: the script is wrong";
+    EXPECT_TRUE(sawKeyExchange) << "the key-exchange certificate was not listed: the script is wrong";
+}
+
+} // namespace
+
+// Probe-time binding (canHandleConnection, no live secure channel): the
+// consumer's view of the card is what readCertificates lists afterwards.
+TEST(OpenscSrbeidConsent, ProbeBindingReachesTheCertificatesConsumersRead)
+{
+    PluginHandle h;
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("CardEdgeReader");
+    CardEdgeScript script;
+    LibreSCRS::SmartCard::Internal::connectionOf(*session).setDetachedRawResponder(
+        [&](std::span<const std::uint8_t> bytes) { return script(parseShortApdu(bytes)); });
+
+    ASSERT_TRUE(h.plugin->canHandleConnection(kCardEdgeAtr, *session));
+    expectOnlyTheSigningCertificateAsksForItsPin(h.plugin->readCertificates(*session));
+}
+
+// Deferred binding: the card is claimed behind a live secure channel and bound
+// later, inside the channel run (runWithChannelPtr). The bind APDUs ride the
+// channel; afterwards the keys are read exactly as readCertificates reads them
+// (the key found by the certificate's id, then requiresPerOperationAuth).
+// The plugin's own readCertificates is not reachable here: activating a
+// channel needs a real PACE channel, the injected double does not qualify.
+TEST(OpenscSrbeidConsent, DeferredBindingReachesTheKeysConsumersRead)
+{
+    BoundCardEdge card(/*bindNow=*/false);
+    FakeChannel channel{pkcs15Aid(), ChannelState::Open, /*carriesSm=*/true};
+    channel.transmitHandler = [&](const APDUCommand& cmd) { return card.script(cmd); };
+
+    bool signingAsks = false;
+    bool keyExchangeAsks = true;
+    bool sawBoth = false;
+    const ChannelRunReport report = LibreSCRS::OpenSc::runWithChannelPtr(
+        *card.s, &channel, CancelToken{},
+        [&](OpenSCSession& session) {
+            int found = 0;
+            sc_pkcs15_object_t* certObjects[8] = {};
+            const int certCount = sc_pkcs15_get_objects(session.p15card, SC_PKCS15_TYPE_CERT_X509, certObjects, 8);
+            for (int i = 0; i < certCount; ++i) {
+                const sc_pkcs15_object_t* object = certObjects[i];
+                const auto* certInfo = static_cast<const sc_pkcs15_cert_info_t*>(object->data);
+                sc_pkcs15_object_t* keyObj = nullptr;
+                if (sc_pkcs15_find_prkey_by_id(session.p15card, &certInfo->id, &keyObj) != 0 || !keyObj)
+                    continue;
+                ++found;
+                const bool asks = LibreSCRS::OpenSc::requiresPerOperationAuth(*keyObj);
+                if (std::string_view{object->label} == "Digital Signature Certificate")
+                    signingAsks = asks;
+                else if (std::string_view{object->label} == "Key Exchange Certificate")
+                    keyExchangeAsks = asks;
+            }
+            sawBoth = found == 2;
+        },
+        kNoHolderRelease);
+    ASSERT_TRUE(report.ran) << "the deferred bind did not succeed: the script is wrong";
+    EXPECT_TRUE(sawBoth);
+    EXPECT_TRUE(signingAsks) << "the signing key signs without a PIN";
+    EXPECT_FALSE(keyExchangeAsks) << "the key-exchange key must stay lease-governed";
+}

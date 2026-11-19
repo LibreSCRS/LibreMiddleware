@@ -294,11 +294,29 @@ std::size_t ecdsaSignatureLength(std::size_t fieldLengthBits) noexcept
     return 2 * ((fieldLengthBits + 7) / 8);
 }
 
+void supplementSrbeidSigningConsent(sc_pkcs15_card_t& p15card) noexcept
+{
+    const sc_card_t* card = p15card.card;
+    if (card == nullptr || card->driver == nullptr)
+        return;
+    if (familyFromDriverShortName(card->driver->short_name) != LibreSCRS::Plugin::Internal::FamilyId::CurrentLkCardEdge)
+        return;
+    for (sc_pkcs15_object_t* object = p15card.obj_list; object != nullptr; object = object->next) {
+        if (object->type != SC_PKCS15_TYPE_PRKEY_RSA || object->data == nullptr)
+            continue;
+        const auto* info = static_cast<const sc_pkcs15_prkey_info_t*>(object->data);
+        if ((info->usage & SC_PKCS15_PRKEY_USAGE_NONREPUDIATION) != 0)
+            object->user_consent = std::max(object->user_consent, 1);
+    }
+}
+
 int bindWithoutPinCache(sc_card_t* card, sc_pkcs15_card_t** p15card) noexcept
 {
     const int rc = sc_pkcs15_bind(card, nullptr, p15card);
-    if (rc == SC_SUCCESS && *p15card != nullptr)
+    if (rc == SC_SUCCESS && *p15card != nullptr) {
         (*p15card)->opts.use_pin_cache = 0;
+        supplementSrbeidSigningConsent(**p15card);
+    }
     return rc;
 }
 
