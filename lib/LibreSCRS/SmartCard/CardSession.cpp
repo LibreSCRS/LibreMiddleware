@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include <LibreSCRS/SmartCard/CardSession.h>
-#include <LibreSCRS/SmartCard/detail/Unwrap.h>
 #include <LibreSCRS_internal/SmartCard/CardSessionImpl.h>
 
 #include <LibreSCRS/Auth/AuthRequirement.h>
@@ -187,25 +186,10 @@ CardSession::~CardSession() = default;
 CardSession::CardSession(CardSession&&) noexcept = default;
 CardSession& CardSession::operator=(CardSession&&) noexcept = default;
 
-namespace detail {
-
-// PcscBridge is the LM-internal friend that unwraps CardSession into its
-// underlying PCSCConnection. LibreSCRS::SmartCard::Internal::PCSCConnection no
-// longer appears in the public CardSession.h forward-declaration; LM-
-// internal sources go through this bridge instead. Callers MUST NOT pass
-// a moved-from CardSession; no defensive null-check (see public accessor
-// invariants).
-LibreSCRS::SmartCard::CardConnection& PcscBridge::unwrap(CardSession& session) noexcept
-{
-    return *session.d->ownedConn;
-}
-
 // @ref detail::ChannelInjector::installForTesting and
 // @ref Testing::makeDetachedCardSession are defined in
 // `lib/LibreSCRS/SmartCard/testing/`, compiled into the static test archive
 // @ref LibreSCRS_SmartCardTesting only.
-
-} // namespace detail
 
 // Accessors unconditionally dereference `d`. Calling any of these on a
 // moved-from session is undefined behaviour (see header); this matches the
@@ -406,8 +390,7 @@ void CardSession::clearCachedPaceCredentials() noexcept
 void CardSession::clearActiveChannel() noexcept
 {
     // Take the session mutex so the teardown is ordered against any in-
-    // flight activateChannel*() / ActiveChannelAccessor::transmit on
-    // another thread. close() drives the channel to ChannelState::Closed
+    // flight activateChannel*() / transmit on another thread. close() drives the channel to ChannelState::Closed
     // and zeroises the SM key material via SecureMessaging's dtor before
     // the unique_ptr release runs the virtual destructor.
     assert(!d->callerOwnsActiveChannel() && "CardSession re-entered on the thread holding its ActiveChannelHolder "
@@ -426,47 +409,6 @@ void CardSession::clearActiveChannel() noexcept
         // noexcept contract: swallow any exception from close()/reset().
         // The worst case is a leaked channel which is preferable to
         // std::terminate.
-    }
-}
-
-// LM-internal SM-aware transmit funnel. Snapshots the active-channel slot
-// + the underlying PC/SC connection pointer under the session mutex, then
-// releases the mutex before dispatching. The shared_ptr snapshot pins the
-// channel object's lifetime for the duration of the call so a concurrent
-// clearActiveChannel on another thread cannot dangle it. The mutex is NOT
-// held across the wire — that would serialise plugin reach through one
-// global lock and turn CardSession into a contention bottleneck.
-LibreSCRS::SmartCard::Internal::APDUResponse
-CardSession::transmitInternal(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token)
-{
-    assert(!d->callerOwnsActiveChannel() && "CardSession re-entered on the thread holding its ActiveChannelHolder "
-                                            "— would self-deadlock on the non-recursive sessionMutex. Release the "
-                                            "holder before re-entering the session.");
-    std::shared_ptr<LibreSCRS::SecureChannel::ISecureChannel> channelSnap;
-    LibreSCRS::SmartCard::Internal::PCSCConnection* connPtr = nullptr;
-    {
-        std::lock_guard lock(d->sessionMutex);
-        channelSnap = d->activeChannel;
-        connPtr = d->ownedConn.get();
-        if (connPtr == nullptr) {
-            // Moved-from / detached / never-attached session: surface a
-            // defined "no card available" status word rather than emitting
-            // UB. Mirrors the ActiveChannelAccessor null-check shape
-            // elsewhere in the SmartCard surface.
-            return LibreSCRS::SmartCard::Internal::APDUResponse{.data = {}, .sw1 = 0x6F, .sw2 = 0x00};
-        }
-    }
-
-    try {
-        return dispatchOverChannelOrConn(channelSnap.get(), *connPtr, cmd, std::move(token));
-    } catch (...) {
-        // A bare std::runtime_error from PCSCConnection::transmit (reader
-        // gone, card removed mid-transmit, detached test connection)
-        // surfaces here. Mirror the null-conn guard above: return a
-        // defined "no card" status word rather than propagating the
-        // exception across the LM-internal funnel boundary, where plugin
-        // callers expect a value-returning shape.
-        return LibreSCRS::SmartCard::Internal::APDUResponse{.data = {}, .sw1 = 0x6F, .sw2 = 0x00};
     }
 }
 
@@ -1278,44 +1220,6 @@ ChipAuthReport CardSession::performChipAuthentication(std::span<const std::uint8
 }
 
 namespace Internal {
-
-APDUResponse ActiveChannelAccessor::transmit(CardSession& session, const APDUCommand& cmd, LibreSCRS::CancelToken token)
-{
-    auto& impl = *session.d;
-    if (!impl.activeChannel) {
-        APDUResponse closed;
-        closed.sw1 = 0x6F;
-        closed.sw2 = 0x00;
-        return closed;
-    }
-    return impl.activeChannel->transmit(cmd, std::move(token));
-}
-
-LibreSCRS::SecureChannel::ISecureChannel* ActiveChannelAccessor::active(CardSession& session) noexcept
-{
-    return session.d->activeChannel.get();
-}
-
-std::optional<SmProtocolRequest> ActiveChannelAccessor::activatedProtocol(CardSession& session) noexcept
-{
-    // Lock-free, owner-tolerant sibling of the public CardSession::activatedProtocol
-    // accessor. Reaches d through the same friendship path active() uses, gates on
-    // the identical live-Open-SM predicate (so a recorded protocol is never reported
-    // for a Closed/Failed channel), and returns the recorded protocol — all WITHOUT
-    // locking the session mutex. Safe because the holder-owner is the only thread
-    // that can mutate session state while the holder is held; this is the accessor a
-    // plugin calls from inside a held ActiveChannelHolder where the public,
-    // mutex-locking accessor would self-deadlock on the non-recursive sessionMutex.
-    auto* d = session.d.get();
-    if (d == nullptr) {
-        return std::nullopt;
-    }
-    if (d->activeChannel && d->activeChannel->state() == LibreSCRS::SecureChannel::ChannelState::Open &&
-        d->activeChannel->carriesSm()) {
-        return d->activatedProtocol;
-    }
-    return std::nullopt;
-}
 
 void ActiveChannelAccessor::markOwner(CardSession& session) noexcept
 {

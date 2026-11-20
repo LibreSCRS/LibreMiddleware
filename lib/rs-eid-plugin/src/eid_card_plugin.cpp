@@ -6,10 +6,9 @@
 #include <LibreSCRS/Auth/ErrorKeys.h>
 #include <LibreSCRS/Plugin/CardPlugin.h>
 #include <LibreSCRS/Plugin/PluginExport.h>
-#include <LibreSCRS/SmartCard/detail/Unwrap.h>
 #include <LibreSCRS/Trust/TrustStore.h>
 #include <apdu.h>
-#include <smartcard/card_connection.h>
+#include <smartcard/session_connection.h>
 
 #include <filesystem>
 #include <fstream>
@@ -116,7 +115,7 @@ public:
     bool canHandleConnection(std::span<const std::uint8_t> /*atr*/,
                              LibreSCRS::SmartCard::CardSession& session) const override
     {
-        LibreSCRS::SmartCard::CardConnection& conn = LibreSCRS::SmartCard::detail::unwrap(session);
+        LibreSCRS::SmartCard::SessionConnection conn(session);
         try {
             // Try to detect card type by selecting eID applet AIDs
             eidcard::EIdCard card(conn);
@@ -131,7 +130,7 @@ public:
     {
         using LibreSCRS::Plugin::ReadResult;
         try {
-            LibreSCRS::SmartCard::CardConnection& conn = LibreSCRS::SmartCard::detail::unwrap(session);
+            LibreSCRS::SmartCard::SessionConnection conn(session);
             eidcard::EIdCard card(conn);
 
             LibreSCRS::Plugin::CardData data;

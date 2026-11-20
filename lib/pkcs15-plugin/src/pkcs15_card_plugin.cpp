@@ -19,15 +19,14 @@
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
+#include <LibreSCRS_internal/SecureChannel/SessionChannel.h>
 #include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
-#include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
-#include <LibreSCRS/SmartCard/detail/Unwrap.h>
 #include <apdu.h>
 #include <apdu.h>
-#include <smartcard/card_connection.h>
+#include <smartcard/session_connection.h>
 
 #include <algorithm>
 #include <array>
@@ -52,6 +51,18 @@
 #include "sign_mechanism_rules.h"
 
 namespace {
+
+// The channel a held ActiveChannelHolder runs over, as the card library sees
+// it -- or none when the holder no longer holds the session or the session no
+// longer holds a channel.
+[[nodiscard]] std::optional<LibreSCRS::SecureChannel::SessionChannel>
+heldChannel(LibreSCRS::SmartCard::CardSession& session, const LibreSCRS::SmartCard::ActiveChannelHolder& holder)
+{
+    if (!holder.isActive() || !session.channelState().has_value()) {
+        return std::nullopt;
+    }
+    return std::optional<LibreSCRS::SecureChannel::SessionChannel>(std::in_place, session);
+}
 
 // 4.0 hardening: generic PKCS#15 matches via SELECT-DF probe in
 // canHandleConnection, never via ATR. kAtrs (from manifest.json) is
@@ -326,7 +337,7 @@ public:
             // TR-03110 §3 — a plain SELECT-AID over the raw connection
             // would reset the card-side SM context, breaking the next
             // wrapped APDU. Probe the PKCS#15 applet through the SM-aware
-            // CardSession::transmitInternal funnel instead: wrapped
+            // CardSession::transmit funnel instead: wrapped
             // SELECT-AID stays inside the SM tunnel and the response SW
             // distinguishes "applet present" (0x9000 — Serbian eID and
             // similar hybrid cards, accept the candidate and route
@@ -337,8 +348,14 @@ public:
             // to a card it cannot actually read certificates from).
             if (session.hasLiveSecureChannel()) {
                 std::vector<std::uint8_t> probeAid(::pkcs15::kPkcs15Aid.begin(), ::pkcs15::kPkcs15Aid.end());
-                auto probeResp =
-                    session.transmitInternal(LibreSCRS::SmartCard::Internal::selectByAID(probeAid, /*p2=*/0x0C));
+                // A reader failure reads as 6F00 here, as the funnel this
+                // probe used to take answered it.
+                LibreSCRS::SmartCard::Internal::APDUResponse probeResp{{}, 0x6F, 0x00};
+                try {
+                    probeResp = LibreSCRS::SmartCard::SessionConnection(session).transmit(
+                        LibreSCRS::SmartCard::Internal::selectByAID(probeAid, /*p2=*/0x0C));
+                } catch (...) {
+                }
                 if (probeResp.isSuccess()) {
                     std::lock_guard lock(stateMutex);
                     sessions[mapKey].requiresPace = true;
@@ -352,7 +369,7 @@ public:
                                                 swBuf);
                 return false;
             }
-            LibreSCRS::SmartCard::CardConnection& conn = LibreSCRS::SmartCard::detail::unwrap(session);
+            LibreSCRS::SmartCard::SessionConnection conn(session);
             // Cheap, no-SM probe to decide between PlainChannel (contact
             // PKCS#15 families) and PaceChannel (PACE-gated contactless
             // families) for subsequent operations. The actual applet
@@ -438,8 +455,8 @@ public:
             if (!holderResult)
                 return mapActivationError(holderResult.error(), "pkcs15 doReadCard");
             auto holder = std::move(*holderResult);
-            auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
-            if (channel == nullptr)
+            auto channel = heldChannel(session, holder);
+            if (!channel)
                 return ReadResult::communicationError(LibreSCRS::Auth::ErrorKeys::genericComm(),
                                                       "pkcs15 doReadCard: channel not active after activation");
 
@@ -530,8 +547,8 @@ public:
             return group;
         }
 
-        auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(*holderOpt);
-        if (channel == nullptr) {
+        auto channel = heldChannel(session, *holderOpt);
+        if (!channel) {
             std::clog << "[librescrs.pkcs15.plugin] readTokenInfo: channel not active after activation\n";
             return group;
         }
@@ -581,8 +598,8 @@ public:
         if (!holderResult)
             return result;
         auto holder = std::move(*holderResult);
-        auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
-        if (channel == nullptr)
+        auto channel = heldChannel(session, holder);
+        if (!channel)
             return result;
 
         pkcs15::PKCS15Card card(*channel);
@@ -639,8 +656,8 @@ public:
         if (!holderResult)
             return result;
         auto holder = std::move(*holderResult);
-        auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
-        if (channel == nullptr)
+        auto channel = heldChannel(session, holder);
+        if (!channel)
             return result;
 
         pkcs15::PKCS15Card card(*channel);
@@ -733,8 +750,8 @@ public:
             return result;
         }
         auto holder = std::move(*holderResult);
-        auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
-        if (channel == nullptr) {
+        auto channel = heldChannel(session, holder);
+        if (!channel) {
             result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
             return result;
         }
@@ -809,8 +826,8 @@ public:
             return result;
         }
         auto holder = std::move(*holderResult);
-        auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
-        if (channel == nullptr) {
+        auto channel = heldChannel(session, holder);
+        if (!channel) {
             result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
             return result;
         }
@@ -962,8 +979,8 @@ public:
             return result;
         }
         auto holder = std::move(*holderResult);
-        auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
-        if (channel == nullptr) {
+        auto channel = heldChannel(session, holder);
+        if (!channel) {
             result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
             return result;
         }
@@ -1159,8 +1176,8 @@ public:
                 return r;
             }
             auto holder = std::move(*holderResult);
-            auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(holder);
-            if (channel == nullptr) {
+            auto channel = heldChannel(session, holder);
+            if (!channel) {
                 r.outcome = SignResultOutcome::PluginError;
                 return r;
             }

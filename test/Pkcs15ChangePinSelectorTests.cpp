@@ -24,8 +24,7 @@
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 #include <LibreSCRS/SmartCard/detail/ChannelInjection.h>
-#include <LibreSCRS/SmartCard/detail/Unwrap.h>
-#include <pcsc_raw_diagnostic.h>
+#include <session_access.h>
 #include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
 
 #include "ScriptedPkcs15Card.h"

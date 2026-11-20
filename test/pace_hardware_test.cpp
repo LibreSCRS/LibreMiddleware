@@ -15,7 +15,7 @@
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
 #include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
-#include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
+#include <LibreSCRS_internal/SecureChannel/SessionChannel.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 
@@ -112,10 +112,10 @@ TEST(PACEHardwareTest, PaceAuthenticateAndReadCOM)
 
     auto fixture = openPaceWithCanFixture(readers[0], can);
     ASSERT_TRUE(fixture.has_value()) << "PACE channel activation failed";
-    auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(fixture->holder);
-    ASSERT_NE(channel, nullptr);
+    ASSERT_TRUE(fixture->holder.isActive() && fixture->session.channelState().has_value());
+    LibreSCRS::SecureChannel::SessionChannel channel(fixture->session);
 
-    emrtd::EMRTDCard card(*channel);
+    emrtd::EMRTDCard card(channel);
 
     // After PACE + applet selection, read COM (EF.COM lists available DGs)
     auto dgList = card.readCOM();
@@ -140,10 +140,10 @@ TEST(PACEHardwareTest, ReadAndParseDG1)
 
     auto fixture = openPaceWithCanFixture(readers[0], can);
     ASSERT_TRUE(fixture.has_value()) << "PACE channel activation failed";
-    auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(fixture->holder);
-    ASSERT_NE(channel, nullptr);
+    ASSERT_TRUE(fixture->holder.isActive() && fixture->session.channelState().has_value());
+    LibreSCRS::SecureChannel::SessionChannel channel(fixture->session);
 
-    emrtd::EMRTDCard card(*channel);
+    emrtd::EMRTDCard card(channel);
 
     // Read DG1 (MRZ data)
     const auto dg1 = card.readDataGroupSafe(1);
@@ -188,10 +188,10 @@ TEST(PACEHardwareTest, ReadDG2Photo)
 
     auto fixture = openPaceWithCanFixture(readers[0], can);
     ASSERT_TRUE(fixture.has_value()) << "PACE channel activation failed";
-    auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(fixture->holder);
-    ASSERT_NE(channel, nullptr);
+    ASSERT_TRUE(fixture->holder.isActive() && fixture->session.channelState().has_value());
+    LibreSCRS::SecureChannel::SessionChannel channel(fixture->session);
 
-    emrtd::EMRTDCard card(*channel);
+    emrtd::EMRTDCard card(channel);
 
     const auto dg2 = card.readDataGroupSafe(2);
     ASSERT_EQ(dg2.status, emrtd::DGReadStatus::OK) << "Failed to read DG2";

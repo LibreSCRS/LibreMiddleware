@@ -264,6 +264,17 @@ Notable user-visible changes per release. Format follows
 
 ### Changed
 
+- **The card plugins reach the card only through public `CardSession`
+  calls.** A plugin no longer reaches into the session's PC/SC connection,
+  its secure channel or a library-internal APDU funnel: its commands go
+  through `CardSession::transmit` and `transmitRaw`, and the bytes on the
+  wire are the same. The one difference is deliberate: a plugin that sent a
+  plain command while another plugin's secure-messaging channel was live on
+  the same session (a probe, for example) used to end the card's
+  secure-messaging session; that command now rides the channel, or is refused
+  when the channel has failed, and the session survives. The shared
+  libraries export no internal symbol for plugins any more.
+
 - **A card operation that throws inside a plugin no longer throws at its
   host.** One plugin caught every exception, another let its PIN and
   certificate calls throw and left the host to catch. `CardPlugin` now settles

@@ -12,12 +12,11 @@
 #include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
-#include <LibreSCRS/SmartCard/detail/Unwrap.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
-#include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
+#include <LibreSCRS_internal/SecureChannel/SessionChannel.h>
 #include <apdu.h>
 #include <apdu.h>
-#include <smartcard/card_connection.h>
+#include <smartcard/session_connection.h>
 
 #include <libopensc/opensc.h>
 #include <libopensc/pkcs15.h>
@@ -486,8 +485,6 @@ ChannelRunReport runWithChannelPtr(OpenSCSession& s, LibreSCRS::SecureChannel::I
 ChannelRunReport runUnderChannel(LibreSCRS::SmartCard::CardSession& cardSession, OpenSCSession& s,
                                  LibreSCRS::CancelToken token, const std::function<void(OpenSCSession&)>& fn)
 {
-    using LibreSCRS::SmartCard::Internal::HolderChannelAccessor;
-
     // A credential-provider callback must NOT synchronously invoke another
     // plugin operation on the same session: the per-session mutex is
     // non-recursive. The debug assert makes that ban enforceable — no
@@ -520,6 +517,7 @@ ChannelRunReport runUnderChannel(LibreSCRS::SmartCard::CardSession& cardSession,
     // presented inside this same transaction (verifyThenRun), so nothing
     // comes between the VERIFY and the operation.
     std::optional<LibreSCRS::SmartCard::Internal::CardTransaction> rawTxn;
+    std::optional<LibreSCRS::SecureChannel::SessionChannel> heldChannel;
     LibreSCRS::SecureChannel::ISecureChannel* channel = nullptr;
     if (s.requiresPace) {
         // Ride the protocol that already holds a live SM tunnel on this
@@ -542,7 +540,10 @@ ChannelRunReport runUnderChannel(LibreSCRS::SmartCard::CardSession& cardSession,
             return report;
         }
         holder.emplace(std::move(*holderResult));
-        channel = HolderChannelAccessor::channel(*holder);
+        if (holder->isActive() && cardSession.channelState().has_value()) {
+            heldChannel.emplace(cardSession);
+            channel = &*heldChannel;
+        }
     } else if (s.bridge && s.bridge->data.conn && !s.bridge->data.conn->isTransactionHeld()) {
         // Guarded on isTransactionHeld(): CardTransaction is not re-entrant and
         // an outer owner (a host that already took one) must not be nested.
@@ -849,7 +850,6 @@ public:
         // by every session it claims: a probe or an operation never creates
         // or releases one.
         try {
-            LibreSCRS::SmartCard::CardConnection& conn = LibreSCRS::SmartCard::detail::unwrap(cardSession);
             sc_context_t* ctx = openscContext.context();
             if (!ctx)
                 return false;
@@ -860,8 +860,9 @@ public:
             // Bind libopensc to the session's one card connection via the
             // bridge reader (ATR comes from the session — no extra
             // SCardStatus).
+            session->connection = std::make_unique<LibreSCRS::SmartCard::SessionConnection>(cardSession);
             session->bridge = std::make_unique<LibreSCRS::OpenSc::Bridge::OpenScBridge>();
-            session->bridge->data.conn = &conn;
+            session->bridge->data.conn = session->connection.get();
             session->bridge->readerName = cardSession.readerName();
             LibreSCRS::OpenSc::Bridge::initBridgeReader(ctx, *session->bridge, atr);
 
@@ -872,13 +873,19 @@ public:
                 // provider's SM tunnel is open (a plain APDU desynchronises
                 // the card-side SM context), and the BIND is forbidden in its
                 // entirety — it would take the raw bridge branch. The probe
-                // rides the SM-aware transmitInternal funnel; the claim is
+                // rides the SM-aware CardSession::transmit funnel; the claim is
                 // DEFERRED (activation + bind happen inside the first
                 // operation's channel run). Every probe SELECT: P2=0C, no Le
                 // (the measured 6988 channel-killer must never fire against
                 // another provider's tunnel).
+                // A reader failure reads as 6F00, as the funnel this probe
+                // used to take answered it.
                 auto wrapped = [&cardSession](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd) {
-                    return cardSession.transmitInternal(cmd, LibreSCRS::CancelToken{});
+                    try {
+                        return LibreSCRS::SmartCard::SessionConnection(cardSession).transmit(cmd);
+                    } catch (...) {
+                        return LibreSCRS::SmartCard::Internal::APDUResponse{{}, 0x6F, 0x00};
+                    }
                 };
                 const auto resp = wrapped(LibreSCRS::SmartCard::Internal::selectByAID(aidBytes, /*p2=*/0x0C));
                 bool claim = false;
@@ -906,6 +913,7 @@ public:
             // through to today's bind-probe (PIV and OpenPGP reject P2=0C
             // outright with 6A86, measured on hardware, yet bind fine through
             // their emulators; the claim stays "on bind success").
+            auto& conn = *session->connection;
             const auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(aidBytes, /*p2=*/0x0C));
             if (!resp.isSuccess() && resp.statusWord() == 0x6982) {
                 auto raw = [&conn](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd) {

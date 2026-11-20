@@ -249,7 +249,6 @@ add_library(LibreSCRS_SmartCard SHARED
     SecureChannel/pace_params.cpp
     SecureChannel/bac_channel.cpp
     SecureChannel/chip_auth_channel.cpp
-    SecureChannel/channel_state_mutator.cpp
     ${LIBRESCRS_SMARTCARD_PUBLIC_HEADERS}
     ${LIBRESCRS_SMARTCARD_INTERNAL_HEADERS}
     ${LIBRESCRS_SECURECHANNEL_PUBLIC_HEADERS}
@@ -287,8 +286,8 @@ endif()
 # Plugins link CardPlugin_Impl (which now pulls LibreSCRS_SmartCard via PUBLIC)
 # into dynamic .so artefacts, so the static archive must be position-independent.
 set_target_properties(LibreSCRS_SmartCard PROPERTIES POSITION_INDEPENDENT_CODE ON)
-# LIBRESCRS_INTERNAL_BUILD lets CardSession.cpp include detail/Unwrap.h, and
-# MonitorService.cpp include detail/MonitorInjection.h and internal smartcard/* headers.
+# LIBRESCRS_INTERNAL_BUILD lets the sources include the internal smartcard/*
+# headers, and MonitorService.cpp include detail/MonitorInjection.h.
 target_link_libraries(LibreSCRS_SmartCard
     PUBLIC  LibreSCRS_Auth
     PRIVATE $<BUILD_INTERFACE:SmartCard_Impl>

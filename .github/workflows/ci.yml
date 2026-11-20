@@ -599,19 +599,19 @@ jobs:
           sudo cmake --install build-install
 
       - name: Verify SmartCard transmit-funnel export allowlist
-        # Per the cmake/librescrs-public-exports.map header: only
-        # CardSession::transmitInternal remains in the dynamic export set; the
-        # legacy sessionTransmitImpl / detail::sessionTransmit are forbidden.
+        # The installed library exports the public CardSession::transmit and
+        # none of the funnels it replaced: the legacy sessionTransmitImpl /
+        # detail::sessionTransmit and the internal-build transmitInternal.
         timeout-minutes: 5
         run: |
           SO=build-install/lib/LibreSCRS/libLibreSCRS_SmartCard.so
           test -f "$SO" || { echo "::error::missing $SO"; exit 1; }
           if nm -D --defined-only "$SO" | c++filt \
-              | grep -E '(sessionTransmitImpl|detail::sessionTransmit)' ; then
+              | grep -E '(sessionTransmitImpl|detail::sessionTransmit|CardSession::transmitInternal)' ; then
               echo "::error::Forbidden sessionTransmit symbol leaked into shared LibreSCRS_SmartCard.so"
               exit 1
           fi
           nm -D --defined-only "$SO" | c++filt \
-              | grep -F 'CardSession::transmitInternal' \
-              || { echo "::error::Expected CardSession::transmitInternal export not found"; exit 1; }
+              | grep -F 'CardSession::transmit(' \
+              || { echo "::error::Expected CardSession::transmit export not found"; exit 1; }
 

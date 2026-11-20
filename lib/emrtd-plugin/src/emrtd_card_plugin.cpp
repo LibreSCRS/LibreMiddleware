@@ -11,16 +11,15 @@
 #include <LibreSCRS/SecureChannel/BacParams.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
+#include <LibreSCRS_internal/SecureChannel/SessionChannel.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
 #include <LibreSCRS_internal/Plugin/PreReadAuthDerivation.h>
-#include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
 
 #include <AnnexDispatch.h>
 #include <LibreSCRS_internal/SmartCard/CardAccessReader.h>
 #include <LibreSCRS_internal/SmartCard/PaceDowngradeVerdict.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
-#include <LibreSCRS/SmartCard/detail/Unwrap.h>
 
 #include <active_auth.h>
 #include <mrz_date.h>
@@ -34,7 +33,7 @@
 #include <pace.h>
 #include <passive_auth.h>
 #include <apdu.h>
-#include <smartcard/card_connection.h>
+#include <smartcard/session_connection.h>
 #include <smartcard/secure_buffer.h>
 
 #include <algorithm>
@@ -185,7 +184,7 @@ public:
                              LibreSCRS::SmartCard::CardSession& session) const override
     {
         try {
-            LibreSCRS::SmartCard::CardConnection& conn = LibreSCRS::SmartCard::detail::unwrap(session);
+            LibreSCRS::SmartCard::SessionConnection conn(session);
             const auto key = makeSessionKey(session);
             {
                 // New card insert on this reader: drop the state of EVERY
@@ -459,7 +458,7 @@ private:
     LibreSCRS::Plugin::CardData readCardImpl(LibreSCRS::SmartCard::CardSession& cardSession,
                                              GroupCallback onGroup) const
     {
-        LibreSCRS::SmartCard::CardConnection& conn = LibreSCRS::SmartCard::detail::unwrap(cardSession);
+        LibreSCRS::SmartCard::SessionConnection conn(cardSession);
         LibreSCRS::Plugin::CardData data;
         data.cardType = "emrtd";
 
@@ -475,11 +474,15 @@ private:
         // "read over it"; no active channel means the profile was plain —
         // either a plain-readable interface (contact) or the host discovery
         // first call, which falls back to the auth_required probe below.
-        auto* channel = LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::active(cardSession);
+        // The session's channel, whichever is installed at each call: after a
+        // Chip Authentication over a plain channel that is the new
+        // secure-messaging one.
+        LibreSCRS::SecureChannel::SessionChannel channel(cardSession);
+        bool haveChannel = cardSession.channelState().has_value();
         std::optional<LibreSCRS::SmartCard::ActiveChannelHolder> plainHolder;
         bool plainRead = false;
 
-        if (!LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::activatedProtocol(cardSession).has_value()) {
+        if (!cardSession.activatedProtocol().has_value()) {
             // No live SM tunnel. When the discovery probe proved the LDS
             // plain-readable on this interface (contact "Always" access),
             // acquire a plain holder for the whole read: activateChannelFor
@@ -496,24 +499,22 @@ private:
                 plainReadable = it != sessions.end() && it->second.plainProbeDone && it->second.plainLdsReadable;
             }
             if (plainReadable) {
-                // From here on the pre-acquire channel pointer is dead: the
-                // acquire below may CLOSE or REPLACE a previously installed
-                // channel (destroying the object it pointed at), so any
+                // From here on the channel installed before the acquire does
+                // not count: the acquire below may CLOSE or REPLACE it, so any
                 // non-committed attempt must fall through to the
                 // auth_required probe with NO channel — never read over the
-                // stale pointer.
-                channel = nullptr;
+                // channel that was there.
+                haveChannel = false;
                 if (auto holder = cardSession.activateChannelFor(makeEmrtdAid(), LibreSCRS::CancelToken{})) {
-                    if (auto* held = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(*holder);
-                        held != nullptr) {
+                    if (holder->isActive() && cardSession.channelState().has_value()) {
                         // Corroborate before committing: the probe verdict
                         // may be stale (card swapped mid-session). An empty
                         // COM read releases the holder and falls back to the
                         // auth_required probe below.
-                        emrtd::EMRTDCard probeCard(*held);
+                        emrtd::EMRTDCard probeCard(channel);
                         if (!probeCard.readCOM().empty()) {
                             plainHolder = std::move(*holder);
-                            channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(*plainHolder);
+                            haveChannel = plainHolder->isActive() && cardSession.channelState().has_value();
                             plainRead = true;
                         }
                     }
@@ -521,7 +522,7 @@ private:
             }
         }
 
-        if (channel == nullptr) {
+        if (!haveChannel) {
             // No SM channel — discovery probe. Reads EF.CardAccess via the raw
             // PCSC connection because no SM is active yet; this query informs
             // the host UI which credential type to prompt for.
@@ -577,7 +578,7 @@ private:
         // Authentication SM channel mid-flow (below): the upgrade closes the
         // channel this object referenced, so it is re-seated over the new one.
         std::optional<emrtd::EMRTDCard> cardObj;
-        cardObj.emplace(*channel);
+        cardObj.emplace(channel);
 
         auto addTextField = [](LibreSCRS::Plugin::CardFieldGroup& g, std::string_view key, std::string_view label,
                                std::string_view val) {
@@ -636,6 +637,7 @@ private:
                 // inside a PACE/BAC tunnel it rotates the tunnel to the CA
                 // keys. Either way PASSED rests on a protected exchange the
                 // chip answered under the new keys.
+                const bool liveBefore = cardSession.hasLiveSecureChannel();
                 const auto report =
                     cardSession.performChipAuthentication(dg14Result.data, makeEmrtdAid(), LibreSCRS::CancelToken{});
                 switch (report.outcome) {
@@ -655,12 +657,12 @@ private:
                 caResult.protocol = report.protocolOid;
                 caResult.errorDetail = report.detail;
                 // A plain upgrade replaced (and closed) the channel this
-                // reader was built over: re-seat on whatever is installed now,
-                // judged by the channel itself rather than by the path taken.
-                if (auto* now = LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::active(cardSession);
-                    now != channel && now != nullptr) {
-                    channel = now;
-                    cardObj.emplace(*channel);
+                // reader was built over: the session now holds a live
+                // secure-messaging channel where it held none. Judged by the
+                // channel itself rather than by the path taken; the reader
+                // starts afresh over it.
+                if (!liveBefore && cardSession.hasLiveSecureChannel()) {
+                    cardObj.emplace(channel);
                     chipAuthUpgraded = plainRead;
                     plainRead = false;
                 }
@@ -676,8 +678,8 @@ private:
             auto dg15Result = cardObj->readDataGroupSafe(15);
             if (dg15Result.status == emrtd::DGReadStatus::OK && !dg15Result.data.empty()) {
                 dgRawData[15] = dg15Result.data;
-                auto aaResult = emrtd::crypto::performActiveAuth(*channel, dg15Result.data, LibreSCRS::CancelToken{});
-                if (aaResult.chipRefusedProtocol && !channel->carriesSm()) {
+                auto aaResult = emrtd::crypto::performActiveAuth(channel, dg15Result.data, LibreSCRS::CancelToken{});
+                if (aaResult.chipRefusedProtocol && !channel.carriesSm()) {
                     // A card-side status-word refusal of INTERNAL AUTHENTICATE
                     // on a plain channel is not a genuineness failure — the
                     // contact interface may legitimately SM-gate the protocol.
@@ -695,9 +697,9 @@ private:
 
         // Finalize the auth-method label now that a plain→CA upgrade (if any)
         // has happened. Derived from the protocol the session actually holds;
-        // the lock-free accessor is required because doReadCard runs while the
-        // base wrapper still holds the ActiveChannelHolder (the public,
-        // mutex-locking accessor would self-deadlock on the owner thread).
+        // doReadCard runs while the base wrapper still holds the
+        // ActiveChannelHolder, and the accessor reads without the lock on the
+        // thread that holds it.
         std::string authMethodLabel = "BAC";
         if (chipAuthUpgraded) {
             authMethodLabel = "Chip Authentication";
@@ -706,7 +708,7 @@ private:
             // access, not the physical interface (a PACE-less legacy document
             // can be plain-readable over RF too).
             authMethodLabel = "None (plain read)";
-        } else if (auto proto = LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::activatedProtocol(cardSession)) {
+        } else if (auto proto = cardSession.activatedProtocol()) {
             if (const auto* pace = std::get_if<LibreSCRS::SmartCard::PaceRequest>(&*proto)) {
                 authMethodLabel =
                     (pace->secretKind == LibreSCRS::Auth::PaceSecretKind::Can) ? "PACE (CAN)" : "PACE (MRZ)";
@@ -1169,7 +1171,7 @@ private:
         // restores the master file on its way out.
         {
             LibreSCRS::Annex::AnnexContext annexCtx;
-            annexCtx.channel = channel;
+            annexCtx.channel = &channel;
             annexCtx.conn = &conn;
             for (auto& g : LibreSCRS::Annex::readAllAnnexes(annexCtx)) {
                 emitGroup(std::move(g));

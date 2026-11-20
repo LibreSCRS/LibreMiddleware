@@ -30,39 +30,23 @@
 #include <string>
 #include <vector>
 
-#ifdef LIBRESCRS_INTERNAL_BUILD
-namespace LibreSCRS::SmartCard::Internal {
-struct APDUCommand;
-struct APDUResponse;
-} // namespace LibreSCRS::SmartCard::Internal
-#endif
-
 namespace LibreSCRS::SmartCard {
 
 class CardSession;
 
-// Forward-declare LM-internal access points the public CardSession
-// befriends. The actual declarations and implementations live in internal-
-// only headers guarded by `#ifndef LIBRESCRS_INTERNAL_BUILD` so external
-// consumers never see the underlying types or symbol names (notably
-// @c LibreSCRS::SmartCard::Internal::PCSCConnection is reached through
-// @c detail::PcscBridge from internal sources only). A friend declaration
-// targeting `Namespace::name(...)` / `Namespace::Type` still needs the
-// enclosing namespace to exist for the friend lookup to match — the
-// namespace declarations below are intentionally empty.
+// Forward-declare the library-internal access points the public CardSession
+// befriends. Their definitions live in headers that are never installed, so
+// external consumers see neither the structs' members nor any symbol of
+// theirs. A friend declaration targeting `Namespace::Type` still needs the
+// enclosing namespace to exist for the friend lookup to match.
 /// @cond internal
 namespace Internal {
-// Friend-only access struct for the active-channel cross-TU bridge.
-// Methods are declared and defined in the internal-build-guarded header
-// <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>;
-// the forward declaration here exists solely so @c CardSession can
-// befriend it without leaking the underlying APDU types into the public
-// surface.
+// Friend-only access struct through which the holder records which thread
+// holds the session's lock (<LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>).
 struct ActiveChannelAccessor;
 } // namespace Internal
 
 namespace detail {
-struct PcscBridge;
 // Friend-only access struct for the test-channel injection seam. Method
 // is declared and defined in the internal-build-guarded header
 // `LibreSCRS/SmartCard/detail/ChannelInjection.h`. Forward-declared here
@@ -622,69 +606,12 @@ public:
     /// @since 5.0
     void forgetCurrentApplet() noexcept;
 
-#ifdef LIBRESCRS_INTERNAL_BUILD
-    /// @brief SM-aware APDU transmit funnel for LM-internal callers.
-    ///
-    /// Snapshots the active secure-messaging channel under the session
-    /// mutex, releases the mutex, then dispatches the APDU through the
-    /// channel when one is live (state == Open); otherwise falls through
-    /// to the underlying PC/SC connection. The snapshot @c shared_ptr
-    /// pins the channel object's lifetime for the duration of the call,
-    /// so a concurrent teardown on another thread (e.g. via
-    /// @ref clearActiveChannel) cannot dangle the channel out from under
-    /// the in-flight dispatch. The mutex is NOT held across the wire —
-    /// that would serialise plugin reach through one global lock and
-    /// turn @c CardSession into a contention bottleneck.
-    ///
-    /// LM-internal callers (plugins, in-tree LM consumers) use this
-    /// member in place of the older "unwrap to @c PCSCConnection& then
-    /// call @c transmit()" pattern. SM correctness is preserved by
-    /// construction — no caller path can mix plain APDUs against a live
-    /// SM tunnel by accident.
-    ///
-    /// @param cmd   APDU to send.
-    /// @param token Optional cancel token forwarded to the channel /
-    ///              connection layer.
-    /// @returns The APDU response. When the session has no underlying
-    ///          PC/SC connection (moved-from / detached / never-attached),
-    ///          or when an exception (reader gone, card removed mid-
-    ///          transmit) escapes the dispatch, returns @c SW=0x6F00
-    ///          without propagating the exception across the LM-internal
-    ///          funnel boundary. When the installed channel carries secure
-    ///          messaging but is no longer open, returns @c SW=0x6F02 and
-    ///          sends nothing: a plain command never replaces a protected
-    ///          one.
-    ///
-    /// @pre Callers must serialise concurrent transmits on the same
-    ///      session themselves — the funnel does NOT internally
-    ///      serialise. Violating callers see a defined SM-failure path
-    ///      (channel state goes @c Failed) rather than undefined
-    ///      behaviour. PC/SC @c SCardBeginTransaction already serialises
-    ///      at the connection layer for in-process callers that hold a
-    ///      transaction via @ref ActiveChannelHolder.
-    ///
-    /// @note Internal-only — gated by @c LIBRESCRS_INTERNAL_BUILD so
-    ///       external SDK consumers cannot reach it. Compiled into
-    ///       libLibreSCRS_SmartCard.so; cross-`.so` plugin callers
-    ///       (which also define @c LIBRESCRS_INTERNAL_BUILD) reach it
-    ///       via the same @c DT_NEEDED edge that already carries the
-    ///       public @ref CardSession surface.
-    ///
-    /// @since 5.0
-    /// @cond internal
-    [[nodiscard]] LibreSCRS::SmartCard::Internal::APDUResponse
-    transmitInternal(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token = {});
-    /// @endcond
-#endif
-
 private:
-    // Detail-namespace free functions and access structs are the internal
-    // access points for plugin/signing bridges (unwrap)
-    // and the test seams (ChannelInjector, Testing::SessionAccess). Their
+    // The access structs are the internal access points for the holder's
+    // owner record and the test seams (ChannelInjector, Testing::SessionAccess). Their
     // declarations live outside this header; friend declarations here inject
     // the names at enclosing-namespace scope without leaking any prototypes
     // into the public include tree.
-    friend struct detail::PcscBridge;
     friend struct detail::ChannelInjector;
     friend struct Testing::SessionAccess;
     friend struct Internal::ActiveChannelAccessor;

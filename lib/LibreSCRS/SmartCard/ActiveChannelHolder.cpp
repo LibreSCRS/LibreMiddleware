@@ -65,14 +65,6 @@ public:
         return active;
     }
 
-    [[nodiscard]] LibreSCRS::SecureChannel::ISecureChannel* activeChannel() noexcept
-    {
-        if (!active || !session) {
-            return nullptr;
-        }
-        return Internal::ActiveChannelAccessor::active(*session);
-    }
-
 private:
     CardSession* session = nullptr;
     std::unique_lock<std::mutex> lock;
@@ -114,14 +106,6 @@ ActiveChannelHolder makeActiveChannelHolder(CardSession* session, std::unique_lo
         Internal::ActiveChannelAccessor::markOwner(*session);
     }
     return ActiveChannelHolder{std::move(impl)};
-}
-
-LibreSCRS::SecureChannel::ISecureChannel* HolderChannelAccessor::channel(ActiveChannelHolder& holder) noexcept
-{
-    if (!holder.d || !holder.d->isActive()) {
-        return nullptr;
-    }
-    return holder.d->activeChannel();
 }
 
 } // namespace Internal

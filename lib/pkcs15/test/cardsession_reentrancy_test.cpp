@@ -33,10 +33,9 @@
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 #include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 #include <LibreSCRS/SmartCard/detail/ChannelInjection.h>
-#include <LibreSCRS/SmartCard/detail/Unwrap.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
-#include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
+#include <session_access.h>
 
 #include "fake_channel.h"
 
@@ -66,7 +65,6 @@ using LibreSCRS::SmartCard::CardSession;
 using LibreSCRS::SmartCard::PaceRequest;
 using LibreSCRS::SmartCard::SmProtocolRequest;
 using LibreSCRS::SmartCard::detail::ChannelInjector;
-using LibreSCRS::SmartCard::Internal::ActiveChannelAccessor;
 using LibreSCRS::SmartCard::Testing::makeDetachedCardSession;
 
 constexpr const char* kReader = "Phantom Reader 0";
@@ -112,7 +110,7 @@ ActiveChannelHolder acquireSmHolder(CardSession& session, const SmProtocolReques
 // production makeActiveChannelHolder factory runs — setting the owner.
 ActiveChannelHolder acquireHolder(CardSession& session)
 {
-    auto plain = std::make_unique<PlainChannel>(LibreSCRS::SmartCard::detail::unwrap(session), makeAid());
+    auto plain = std::make_unique<PlainChannel>(LibreSCRS::SmartCard::Internal::connectionOf(session), makeAid());
     ChannelInjector::installForTesting(session, std::move(plain));
     auto result = session.activateChannelFor(makeAid(), LibreSCRS::CancelToken{});
     EXPECT_TRUE(result.has_value());
@@ -244,20 +242,17 @@ TEST(CardSessionReentrancyDeathTest, VoidMethodWhileHoldingHolderAsserts)
 #endif
 
 // ---------------------------------------------------------------------------
-// Lock-free, owner-tolerant internal accessor:
-// ActiveChannelAccessor::activatedProtocol must be callable from the thread that
-// owns the session's ActiveChannelHolder — the position a plugin's doReadCard
-// runs from, while the base readCard wrapper still holds the holder. The public
-// CardSession::activatedProtocol() asserts !callerOwnsActiveChannel() then locks
-// the non-recursive sessionMutex, so on the owner thread it aborts (debug) or
-// self-deadlocks (release). The internal accessor reads the recorded protocol
-// without the mutex and without the owner assert.
+// Owner-tolerant accessor: CardSession::activatedProtocol must be callable
+// from the thread that owns the session's ActiveChannelHolder — the position a
+// plugin's doReadCard runs from, while the base readCard wrapper still holds
+// the holder. On that thread it reads the recorded protocol without taking the
+// non-recursive sessionMutex (which the holder already holds); a locking read
+// would abort (debug) or self-deadlock (release) there.
 //
 // Coverage:
 //   1. Holder-owner thread + live Open SM channel with a recorded PACE-CAN
-//      protocol → returns that protocol (this is the exact call shape the
-//      pre-fix eMRTD plugin made through the public accessor; it would have
-//      aborted/deadlocked here).
+//      protocol → returns that protocol (the call the eMRTD plugin makes from
+//      its read).
 //   2. A genuinely held production holder (real sessionMutex locked + owner
 //      set) → the accessor returns without hanging; the Watchdog tears the
 //      suite down loudly if a regression re-introduces a locking accessor.
@@ -278,7 +273,7 @@ TEST(ActivatedProtocolOwnerTolerant, ReturnsRecordedProtocolOnOwnerThread)
     ActiveChannelHolder holder = acquireSmHolder(*session, recorded);
     ASSERT_TRUE(holder.isActive());
 
-    auto proto = ActiveChannelAccessor::activatedProtocol(*session);
+    auto proto = session->activatedProtocol();
     ASSERT_TRUE(proto.has_value());
     EXPECT_EQ(*proto, recorded);
     ASSERT_TRUE(std::holds_alternative<PaceRequest>(*proto));
@@ -298,7 +293,7 @@ TEST(ActivatedProtocolOwnerTolerant, NoHangWhileGenuineHolderHeld)
     // is nullopt — but the load-bearing assertion is that the call RETURNS
     // (a locking accessor would deadlock on the held non-recursive mutex; the
     // Watchdog aborts the suite if it does).
-    EXPECT_FALSE(ActiveChannelAccessor::activatedProtocol(*session).has_value());
+    EXPECT_FALSE(session->activatedProtocol().has_value());
 }
 
 TEST(ActivatedProtocolOwnerTolerant, NulloptOnNonLiveChannelUnderHolder)
@@ -315,9 +310,9 @@ TEST(ActivatedProtocolOwnerTolerant, NulloptOnNonLiveChannelUnderHolder)
         ActiveChannelHolder holder = acquireSmHolder(*session, recorded);
         ASSERT_TRUE(holder.isActive());
         // Live while the holder was acquired: the accessor reports it.
-        ASSERT_TRUE(ActiveChannelAccessor::activatedProtocol(*session).has_value());
+        ASSERT_TRUE(session->activatedProtocol().has_value());
         // The channel dies under the holder, the recorded protocol stays.
         fake->setState(dead);
-        EXPECT_FALSE(ActiveChannelAccessor::activatedProtocol(*session).has_value());
+        EXPECT_FALSE(session->activatedProtocol().has_value());
     }
 }
