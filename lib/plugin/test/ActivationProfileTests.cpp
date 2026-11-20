@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 // SPDX-FileCopyrightText: 2026 hirashix0
 #include <LibreSCRS/Plugin/ActivationProfile.h>
+#include <LibreSCRS_internal/Plugin/ActivationChannel.h>
 #include <LibreSCRS/Auth/PaceSecretKind.h>
 #include <gtest/gtest.h>
 

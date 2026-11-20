@@ -17,6 +17,7 @@
 // outside that gate.)
 
 #include <LibreSCRS/Plugin/ActivationProfile.h>
+#include <LibreSCRS_internal/Plugin/ActivationChannel.h>
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
 
 #include <gtest/gtest.h>

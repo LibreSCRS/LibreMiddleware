@@ -3,16 +3,15 @@
 > **Scope (LM 5.0):** Plugins are an **internal modular-driver pattern**.
 > They live in-tree under `LibreMiddleware/lib/<name>/` and
 > `LibreMiddleware/lib/<name>-plugin/`, are built and tested as part of
-> the LibreMiddleware build, and have direct access to the
-> `LIBRESCRS_INTERNAL_BUILD`-gated APDU transmission helpers
-> (`LibreSCRS::SmartCard::detail::unwrap`).
+> the LibreMiddleware build, and reach the card only through the public
+> `CardSession` calls (`transmit`, `transmitRaw`, the transaction calls,
+> `reconnect`, the channel accessors), through small header-only adapters
+> that hand the internal card libraries what they expect.
 >
-> **The LM 5.0 public C++ API does not include APDU transmission or
-> low-level card session control.** Out-of-tree (third-party) plugin
-> authoring is **not supported in 5.0**: the surface required to support
-> it (a public APDU API and a stable plugin C++ ABI) is reserved for a
-> future 4.x cycle, to be informed by a concrete real consumer rather
-> than guessed pre-emptively.
+> Out-of-tree (third-party) plugin authoring is **not supported in 5.0**:
+> it needs a stable plugin C++ ABI, which is reserved for a later cycle,
+> to be informed by a concrete real consumer rather than guessed
+> pre-emptively.
 >
 > This document is therefore a **guide for in-tree contributors** —
 > contributors adding support for additional national document types,
@@ -210,17 +209,27 @@ protected:
 > `supportedAtrs()` override that plugins provide via their manifest.
 
 > **APDU access:** `CardSession` is the opaque public handle for an
-> active card connection. In-tree plugins built via the
-> `librescrs_add_plugin()` CMake helper inherit the
-> `LIBRESCRS_INTERNAL_BUILD` compile definition and obtain the raw
-> `LibreSCRS::SmartCard::Internal::PCSCConnection&` via
-> `LibreSCRS::SmartCard::detail::unwrap(session)` — this is the standard
-> path for sending raw APDUs from a plugin.
+> active card connection, and its public calls are the only way a plugin
+> reaches the card:
 >
-> Translation units that do not carry `LIBRESCRS_INTERNAL_BUILD` cannot
-> use `detail::unwrap`. There is no public alternative in LM 5.0; out-
-> of-tree plugin authoring requires a public APDU API which is deferred
-> to a future 4.x cycle.
+> - `CardSession::transmit` sends a command through the session's
+>   secure-messaging channel when one is open, refuses (`6F02`) when a
+>   secure-messaging channel has failed, and sends it plain otherwise;
+> - `CardSession::transmitRaw` sends bytes as given, in one exchange, and
+>   refuses (`6F02`, nothing sent) while a secure-messaging channel is live;
+> - `beginTransaction` / `endTransaction` / `isTransactionHeld`,
+>   `reconnect`, `channelState`, `carriesSecureMessaging` and
+>   `forgetCurrentApplet` cover the rest.
+>
+> The card libraries take the internal interfaces `SmartCard::IConnection`
+> / `SmartCard::CardConnection` and `SecureChannel::ISecureChannel`. A
+> plugin hands them `SmartCard::SessionConnection`
+> (`<smartcard/session_connection.h>`) and `SecureChannel::SessionChannel`
+> (`<LibreSCRS_internal/SecureChannel/SessionChannel.h>`): header-only
+> adapters over those calls, so their vtables and typeinfo are the
+> plugin's own and the plugin imports nothing but public symbols. The
+> export gate (`ci/scripts/abi-snapshot.sh`) fails a plugin that imports
+> anything else.
 
 **Detection strategy:** Populate the `atrs` array in `manifest.json` for fast
 ATR-based matching (`canHandle()` derives its result from `supportedAtrs()`,
@@ -336,18 +345,14 @@ of scope for LM 5.0** and intentionally not documented here:
   LM versions. `kCardPluginAbiVersion` is a build-time handshake for
   in-tree plugins, not a stable contract for external binary plugins.
   In-tree plugins are recompiled with LM in lockstep.
-- **Public APDU transmission from a non-`LIBRESCRS_INTERNAL_BUILD`
-  translation unit.** The `detail::unwrap` gate is intentional. There
-  is no public `CardSession::transmit` in 5.0.
 - **`librescrs_add_plugin()` use from outside the LM source tree.**
   The CMake helper is part of the LM build system, not a published
   installable artefact.
 
 When and if a real out-of-tree consumer materialises (a community
 contributor with a named card platform, a partner program, or a
-sandboxed extension like the future macOS CTK appex), a public APDU
-surface and a stable plugin ABI will be designed in 4.x informed by
-that consumer's actual shape.
+sandboxed extension like the future macOS CTK appex), a stable plugin
+ABI will be designed, informed by that consumer's actual shape.
 
 ---
 

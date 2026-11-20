@@ -15,8 +15,7 @@
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 #include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
-#include <LibreSCRS/SmartCard/detail/Unwrap.h>
-#include <pcsc_raw_diagnostic.h>
+#include <session_access.h>
 #include <LibreSCRS/SecureChannel/BacParams.h>
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
 #include <LibreSCRS_internal/Plugin/CardPluginActivationAccessor.h>
@@ -863,8 +862,7 @@ TEST(EmrtdPluginSessionKeying, GenerationSurvivesMove)
     // pimpl-backed classes — no read on *sessionA after the move.
     LibreSCRS::SmartCard::CardSession movedTo{std::move(*sessionA)};
 
-    EXPECT_EQ(movedTo.generation(), originalGen)
-        << "moved-to session must retain the original generation";
+    EXPECT_EQ(movedTo.generation(), originalGen) << "moved-to session must retain the original generation";
 }
 
 // ---------------------------------------------------------------------------

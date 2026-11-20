@@ -1399,7 +1399,7 @@ target_link_libraries(LibreSCRS_CardSessionTests PRIVATE
 # pcsc_connection.h from the low-level SmartCard_Impl source tree.
 target_include_directories(LibreSCRS_CardSessionTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src)
-# The internal apdu.h / pcsc_connection.h above (transmitInternal routing on
+# The internal apdu.h / pcsc_connection.h above (CardSession::transmit routing on
 # detached sessions) are gated behind LIBRESCRS_INTERNAL_BUILD.
 target_compile_definitions(LibreSCRS_CardSessionTests PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(LibreSCRS_CardSessionTests)
@@ -1425,6 +1425,25 @@ target_include_directories(SessionTransmitTest PRIVATE
 target_compile_definitions(SessionTransmitTest PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(SessionTransmitTest)
 
+# PluginSessionPathTests — which path each shipped card plugin's commands take
+# (plain, raw, through the session's channel), on a detached session; the
+# plugins load as they ship, from the build tree.
+add_executable(PluginSessionPathTests PluginSessionPathTests.cpp)
+target_link_libraries(PluginSessionPathTests PRIVATE
+    GTest::gtest_main
+    CardPlugin_Impl
+    SmartCard_Impl
+    LibreSCRS_SmartCard_TestHelpers
+    LibreSCRS_SmartCard_RawDiagnostic
+)
+target_include_directories(PluginSessionPathTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src)
+target_compile_definitions(PluginSessionPathTests PRIVATE
+    PLUGIN_DIR="${LIBREMIDDLEWARE_PLUGIN_OUTPUT_DIR}"
+    LIBRESCRS_INTERNAL_BUILD
+)
+add_dependencies(PluginSessionPathTests rs-health-plugin eu-vrc-plugin rs-eid-plugin emrtd-plugin pkcs15-plugin opensc-plugin)
+gtest_discover_tests(PluginSessionPathTests)
+
 # CardSessionByteTransportTest — the byte-level transport of CardSession:
 # transmit through the live channel or plain, transmitRaw refused under live
 # secure messaging, transactions, reconnect, the channel accessors and the
@@ -1434,8 +1453,6 @@ target_link_libraries(CardSessionByteTransportTest PRIVATE
     GTest::gtest_main
     LibreSCRS_SmartCard
     LibreSCRS_SmartCard_TestHelpers
-    # arms seams of the session's connection: a test copy of the class
-    LibreSCRS_SmartCard_RawDiagnostic
     # arms seams of the session's connection: a test copy of the class
     LibreSCRS_SmartCard_RawDiagnostic
     SmartCard_Impl

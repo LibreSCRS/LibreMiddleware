@@ -22,13 +22,11 @@
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 #include <LibreSCRS/SmartCard/detail/ChannelInjection.h>
-#include <LibreSCRS/SmartCard/detail/Unwrap.h>
-#include <pcsc_raw_diagnostic.h>
+#include <session_access.h>
 #include <LibreSCRS_internal/SecureChannel/BacChannel.h>
 #include <LibreSCRS_internal/SecureChannel/ChipAuthChannel.h>
 #include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
 #include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
-#include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
 
 #include <LibreSCRS_internal/SecureChannel/PaceChannel.h>
 #include <pcsc_connection.h>
@@ -68,8 +66,8 @@ using LibreSCRS::SmartCard::ChipAuthRequest;
 using LibreSCRS::SmartCard::PaceRequest;
 using LibreSCRS::SmartCard::SmProtocolRequest;
 using LibreSCRS::SmartCard::detail::ChannelInjector;
-using LibreSCRS::SmartCard::Internal::ActiveChannelAccessor;
 using LibreSCRS::SmartCard::Testing::makeDetachedCardSession;
+using LibreSCRS::SmartCard::Testing::SessionAccess;
 using LibreSCRS::Test::AesSmCardOracle;
 using LibreSCRS::Test::buildDg14;
 using LibreSCRS::Test::CaCardOnTheWire;
@@ -237,10 +235,10 @@ TEST(ChipAuthSessionTest, APlainUpgradeRecordsTheProtocolAndClosesThePlainChanne
     EXPECT_TRUE(*closed) << "the replaced plain channel must be closed";
 
     // Lock-free accessor (the public one would self-deadlock under the holder).
-    auto proto = ActiveChannelAccessor::activatedProtocol(*rig.session);
+    auto proto = rig.session->activatedProtocol();
     ASSERT_TRUE(proto.has_value());
     EXPECT_TRUE(std::holds_alternative<ChipAuthRequest>(*proto));
-    auto* active = ActiveChannelAccessor::active(*rig.session);
+    auto* active = SessionAccess::activeChannel(*rig.session);
     ASSERT_NE(active, nullptr);
     EXPECT_TRUE(active->carriesSm());
 }
@@ -284,7 +282,7 @@ TEST(ChipAuthSessionTest, OverAPlainChannelARefusedProtocolIsNotPerformedAndTheR
     EXPECT_EQ(report.detail, "chip refused Chip Authentication on plain channel");
 
     // The read goes on over the same plain channel.
-    auto* active = ActiveChannelAccessor::active(*rig.session);
+    auto* active = SessionAccess::activeChannel(*rig.session);
     ASSERT_NE(active, nullptr);
     EXPECT_FALSE(active->carriesSm());
     const auto next = active->transmit(LibreSCRS::SmartCard::Internal::selectByAID(aidA().asVector(), 0x0C),
@@ -403,7 +401,7 @@ TEST(ChipAuthSessionTest, InsideATunnelASuccessfulRunRotatesTheKeys)
     ASSERT_NE(rotated, nullptr);
     EXPECT_EQ(rotated->verifiedCommands(), 1);
     rotated->setNextResponseData({0xAA, 0xBB});
-    auto* active = ActiveChannelAccessor::active(*rig.session);
+    auto* active = SessionAccess::activeChannel(*rig.session);
     ASSERT_NE(active, nullptr);
     const auto next = active->transmit(readBinary(), LibreSCRS::CancelToken{});
     EXPECT_TRUE(next.isSuccess());
@@ -411,7 +409,7 @@ TEST(ChipAuthSessionTest, InsideATunnelASuccessfulRunRotatesTheKeys)
     EXPECT_EQ(rotated->verifiedCommands(), 2);
 
     // The tunnel keeps the protocol it was opened with.
-    const auto proto = ActiveChannelAccessor::activatedProtocol(*rig.session);
+    const auto proto = rig.session->activatedProtocol();
     ASSERT_TRUE(proto.has_value());
     EXPECT_TRUE(std::holds_alternative<PaceRequest>(*proto));
 }
@@ -455,7 +453,7 @@ TEST(ChipAuthSessionTest, InsideATunnelACancelDuringTheRotationEarnsNoVerdict)
     auto rotated = rig.card->smOracle();
     ASSERT_NE(rotated, nullptr);
     EXPECT_EQ(rotated->verifiedCommands(), 0);
-    auto* active = ActiveChannelAccessor::active(*rig.session);
+    auto* active = SessionAccess::activeChannel(*rig.session);
     ASSERT_NE(active, nullptr);
     rotated->setNextResponseData({0x01, 0x02});
     const auto next = active->transmit(readBinary(), LibreSCRS::CancelToken{});
@@ -549,7 +547,7 @@ TEST(ChipAuthSessionTest, InsideATunnelTheProofSelectBecomesTheCurrentApplet)
     const auto report =
         rig.session->performChipAuthentication(buildDg14(key.spkiDer), aidB(), LibreSCRS::CancelToken{});
     ASSERT_EQ(report.outcome, ChipAuthOutcome::Passed);
-    auto* active = ActiveChannelAccessor::active(*rig.session);
+    auto* active = SessionAccess::activeChannel(*rig.session);
     ASSERT_NE(active, nullptr);
     EXPECT_EQ(active->currentApplet(), aidB());
 
@@ -613,7 +611,7 @@ TEST(ChipAuthSessionTest, AProofAnsweredWithAnErrorStatusUnderTheNewKeysPasses)
         EXPECT_EQ(report.outcome, ChipAuthOutcome::Passed);
         ASSERT_NE(rig.card->smOracle(), nullptr);
         EXPECT_EQ(rig.card->smOracle()->verifiedCommands(), 1);
-        auto* active = ActiveChannelAccessor::active(*rig.session);
+        auto* active = SessionAccess::activeChannel(*rig.session);
         ASSERT_NE(active, nullptr);
         EXPECT_TRUE(active->carriesSm());
         EXPECT_EQ(active->currentApplet(), aidA());
@@ -720,7 +718,7 @@ TEST(ChipAuthSessionTest, ActivateChannelForReusesChipAuthTunnelAcrossApplets)
     ASSERT_TRUE(result.has_value());
 
     // The tunnel survived: protocol still ChipAuthRequest, channel still SM.
-    auto proto = ActiveChannelAccessor::activatedProtocol(*session);
+    auto proto = session->activatedProtocol();
     ASSERT_TRUE(proto.has_value());
     EXPECT_TRUE(std::holds_alternative<ChipAuthRequest>(*proto));
 }

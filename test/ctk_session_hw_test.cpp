@@ -52,7 +52,8 @@
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
-#include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
+#include <LibreSCRS_internal/SecureChannel/SessionChannel.h>
+#include <smartcard/session_connection.h>
 
 #include <pcsc_connection.h>
 #include <pcsc_raw_diagnostic.h>
@@ -358,7 +359,7 @@ struct PaceHold
 {
     std::unique_ptr<CardSession> session;
     std::optional<ActiveChannelHolder> holder;
-    LibreSCRS::SecureChannel::ISecureChannel* channel = nullptr;
+    std::unique_ptr<LibreSCRS::SecureChannel::SessionChannel> channel;
 };
 
 std::expected<PaceHold, std::string> openPace(const std::string& slot, const std::string& can)
@@ -376,7 +377,8 @@ std::expected<PaceHold, std::string> openPace(const std::string& slot, const std
     if (!holder)
         return std::unexpected(std::string("PACE (CAN) did not establish a channel"));
     hold.holder.emplace(std::move(*holder));
-    hold.channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(*hold.holder);
+    if (hold.holder->isActive() && hold.session->channelState().has_value())
+        hold.channel = std::make_unique<LibreSCRS::SecureChannel::SessionChannel>(*hold.session);
     if (hold.channel == nullptr)
         return std::unexpected(std::string("no channel behind the holder"));
     return hold;
@@ -457,11 +459,21 @@ std::expected<PluginSession, std::string> openWithPlugin(const std::string& slot
     return result;
 }
 
+// One command through the session's transmit; a reader failure reads as 6F00.
+APDUResponse viaSession(CardSession& session, const APDUCommand& cmd)
+{
+    try {
+        return LibreSCRS::SmartCard::SessionConnection(session).transmit(cmd);
+    } catch (...) {
+        return APDUResponse{{}, 0x6F, 0x00};
+    }
+}
+
 // The retry counter of the PIN at @p reference, from VERIFY without data
 // (consumes no try): 63Cx gives x. nullopt when the card answers otherwise.
 std::optional<int> pinTriesFromStatus(CardSession& session, std::uint8_t reference, std::uint16_t* swOut = nullptr)
 {
-    const auto reply = session.transmitInternal(APDUCommand{0x00, 0x20, 0x00, reference, {}, 0, false});
+    const auto reply = viaSession(session, APDUCommand{0x00, 0x20, 0x00, reference, {}, 0, false});
     if (swOut != nullptr)
         *swOut = reply.statusWord();
     if (reply.sw1 == 0x63 && (reply.sw2 & 0xF0) == 0xC0)
@@ -505,10 +517,10 @@ std::optional<pkcs15::PinResult> presentPin(CardSession& session, std::uint8_t r
                        : session.activateChannelFor(aid, LibreSCRS::CancelToken{});
     if (!holder)
         return std::nullopt;
-    auto* channel = LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(*holder);
-    if (channel == nullptr)
+    if (!holder->isActive() || !session.channelState().has_value())
         return std::nullopt;
-    pkcs15::PKCS15Card card(*channel);
+    LibreSCRS::SecureChannel::SessionChannel channel(session);
+    pkcs15::PKCS15Card card(channel);
     if (!card.probe())
         return std::nullopt;
     const auto profile = card.readProfile();
@@ -790,10 +802,10 @@ TEST_F(CtkSessionHardware, SessionRestartClearsCardState)
         ranAny = true;
 
         auto& session = *ps->session;
-        const auto efSelect = session.transmitInternal(selectFile(0x2F00)); // EF.DIR, made current
+        const auto efSelect = viaSession(session, selectFile(0x2F00)); // EF.DIR, made current
         std::uint16_t statusBefore = 0;
         (void)pinTriesFromStatus(session, *reference, &statusBefore);
-        const auto readBefore = session.transmitInternal(readBinary(0, 1));
+        const auto readBefore = viaSession(session, readBinary(0, 1));
         const auto atrBefore = session.atr();
         record("restart iface=" + iface + " before verify-status=" + hex4(statusBefore) +
                " select-2F00=" + hex4(efSelect.statusWord()) + " read-current=" + hex4(readBefore.statusWord()) +
@@ -812,7 +824,7 @@ TEST_F(CtkSessionHardware, SessionRestartClearsCardState)
             ps->session = std::make_shared<CardSession>(std::move(*reopened));
             std::uint16_t statusAfter = 0;
             (void)pinTriesFromStatus(*ps->session, *reference, &statusAfter);
-            const auto readAfter = ps->session->transmitInternal(readBinary(0, 1));
+            const auto readAfter = viaSession(*ps->session, readBinary(0, 1));
             cleared = statusAfter != 0x9000;
             record("restart iface=" + iface + " pause_ms=" + std::to_string(pauseMs) +
                    " after verify-status=" + hex4(statusAfter) + " read-current=" + hex4(readAfter.statusWord()) +

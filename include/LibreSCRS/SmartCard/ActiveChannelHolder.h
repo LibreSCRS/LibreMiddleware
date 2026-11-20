@@ -29,12 +29,6 @@ class ActiveChannelHolder;
 class CardSession;
 namespace Internal {
 class CardTransaction;
-// Forward-decl: defined in the internal-build-guarded header
-// <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>.
-// Befriended on @ref ActiveChannelHolder so LM-internal sources can
-// reach the holder's underlying secure channel without leaking the
-// channel type into the public surface.
-struct HolderChannelAccessor;
 
 ActiveChannelHolder makeActiveChannelHolder(CardSession* session, std::unique_lock<std::mutex> lock,
                                             std::unique_ptr<CardTransaction> tx);
@@ -114,12 +108,6 @@ private:
     friend ActiveChannelHolder Internal::makeActiveChannelHolder(CardSession* session,
                                                                  std::unique_lock<std::mutex> lock,
                                                                  std::unique_ptr<Internal::CardTransaction> tx);
-
-    // LM-internal access to the holder's underlying secure channel goes
-    // through @ref Internal::HolderChannelAccessor declared in the
-    // internal-build-guarded `ActiveChannelHolderInternal.h`. No public
-    // surface exposes the channel pointer.
-    friend struct Internal::HolderChannelAccessor;
 };
 
 } // namespace LibreSCRS::SmartCard

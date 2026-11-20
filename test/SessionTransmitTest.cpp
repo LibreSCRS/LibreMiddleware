@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 /// @file
-/// @brief Unit tests for @ref LibreSCRS::SmartCard::CardSession::transmitInternal.
+/// @brief Unit tests for @ref LibreSCRS::SmartCard::CardSession::transmit.
 ///
 /// Drives the routing matrix of the SM-aware transmit funnel:
 ///   1. Live SM channel installed via @ref ChannelInjector — APDU goes
@@ -26,8 +26,8 @@
 #include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/detail/ChannelInjection.h>
-#include <LibreSCRS/SmartCard/detail/Unwrap.h>
-#include <pcsc_raw_diagnostic.h>
+#include <session_access.h>
+#include <smartcard/session_connection.h>
 #include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 
@@ -78,7 +78,7 @@ TEST_F(SessionTransmitTest, routesThroughSmWhenChannelLive)
     auto* observer = channel.get();
     ChannelInjector::installForTesting(*session, std::move(channel));
 
-    auto resp = session->transmitInternal(makeProbeCommand());
+    auto resp = LibreSCRS::SmartCard::SessionConnection::toResponse(session->transmit(makeProbeCommand().toBytes()));
 
     EXPECT_EQ(observer->lastWrappedCommand().ins, 0xA4);
     EXPECT_EQ(observer->transmits(), 1);
@@ -88,10 +88,11 @@ TEST_F(SessionTransmitTest, routesThroughSmWhenChannelLive)
 
 TEST_F(SessionTransmitTest, returnsSw6F00OnDetachedSessionWithoutLiveChannel)
 {
-    // No injected channel + detached PCSC connection: the null-conn /
-    // closed-channel guard short-circuits to SW=6F00 rather than emitting
-    // a real PC/SC transmit.
-    auto resp = session->transmitInternal(makeProbeCommand());
+    // No injected channel and no connection: the null-conn guard
+    // short-circuits to SW=6F00 rather than emitting a PC/SC transmit. (A
+    // reader that fails throws instead: AFailingReaderThrows.)
+    LibreSCRS::SmartCard::Testing::SessionAccess::dropConnection(*session);
+    auto resp = LibreSCRS::SmartCard::SessionConnection::toResponse(session->transmit(makeProbeCommand().toBytes()));
     EXPECT_EQ(resp.sw1, 0x6F);
     EXPECT_EQ(resp.sw2, 0x00);
 }
@@ -113,7 +114,8 @@ TEST_F(SessionTransmitTest, smChannelThatIsNotOpenIsNeverBypassed)
             return APDUResponse{{}, 0x90, 0x00};
         });
 
-        auto resp = session->transmitInternal(makeProbeCommand());
+        auto resp =
+            LibreSCRS::SmartCard::SessionConnection::toResponse(session->transmit(makeProbeCommand().toBytes()));
         EXPECT_EQ(observer->transmits(), 0);
         EXPECT_EQ(wireCommands, 0U) << "no plain command reaches the card";
         EXPECT_EQ(resp.sw1, 0x6F);
@@ -128,9 +130,15 @@ TEST_F(SessionTransmitTest, returnsSw6F00OnClosedPlainChannel)
     auto channel = std::make_unique<FakeChannel>(aid, ChannelState::Closed, /*carriesSm=*/false);
     auto* observer = channel.get();
     ChannelInjector::installForTesting(*session, std::move(channel));
+    std::size_t wireCommands = 0;
+    LibreSCRS::SmartCard::Internal::connectionOf(*session).setTransmitFilter([&](const APDUCommand&) {
+        ++wireCommands;
+        return APDUResponse{{}, 0x6F, 0x00};
+    });
 
-    auto resp = session->transmitInternal(makeProbeCommand());
+    auto resp = LibreSCRS::SmartCard::SessionConnection::toResponse(session->transmit(makeProbeCommand().toBytes()));
     EXPECT_EQ(observer->transmits(), 0);
+    EXPECT_EQ(wireCommands, 1U) << "the connection answers";
     EXPECT_EQ(resp.sw1, 0x6F);
     EXPECT_EQ(resp.sw2, 0x00);
 }
@@ -157,7 +165,7 @@ TEST_F(SessionTransmitTest, channelResetMidSnapshotKeepsChannelAlive)
     };
     ChannelInjector::installForTesting(*session, std::move(channel));
 
-    auto resp = session->transmitInternal(makeProbeCommand());
+    auto resp = LibreSCRS::SmartCard::SessionConnection::toResponse(session->transmit(makeProbeCommand().toBytes()));
 
     EXPECT_EQ(observedIns, 0xA4);
     EXPECT_EQ(observedTransmits, 1);

@@ -20,6 +20,7 @@
 #include <LibreSCRS/LocalizedText.h>
 #include <LibreSCRS/Logging.h>
 #include <LibreSCRS/Plugin/ActivationProfile.h>
+#include <LibreSCRS_internal/Plugin/ActivationChannel.h>
 #include <LibreSCRS/Plugin/CardPlugin.h>
 #include <LibreSCRS/Plugin/PluginTypes.h>
 #include <LibreSCRS/Plugin/ReadResult.h>

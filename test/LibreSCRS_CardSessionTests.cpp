@@ -131,8 +131,7 @@ TEST(CardSession_4_1_API, ActiveChannelHolderIsMoveOnly)
 #include <LibreSCRS/Auth/AuthRequirement.h>
 #include <LibreSCRS/Auth/CredentialResult.h>
 #include <LibreSCRS/Auth/ErrorKeys.h>
-#include <LibreSCRS/SmartCard/detail/Unwrap.h>
-#include <pcsc_raw_diagnostic.h>
+#include <session_access.h>
 
 #include "apdu.h"
 #include <pcsc_connection.h>

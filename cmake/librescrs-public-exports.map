@@ -32,42 +32,15 @@
  * template to whichever copy loaded first.
  * ci/scripts/check-impl-visibility.sh refuses any such export.
  *
- * Cross-`.so` ABI surface — INTENTIONAL Internal::/detail:: exports:
- *   The LibreSCRS::*::Internal:: namespace IS part of the SHARED-build
- *   ABI for cross-`.so` plugin reach and the test-helper archive.
- *   Specifically:
- *     - LibreSCRS::SmartCard::Internal::PCSCConnection,
- *       ActiveChannelAccessor — reached across the .so boundary by the
- *       card plugins and the test-helper archive.
- *       Monitor, the APDU helpers and the plugin PIN-family quirks are
- *       compiled into each image from hidden-visibility archives and
- *       are not exported.
- *     - LibreSCRS::SecureChannel::detail::ChannelStateMutator —
- *       defined in SmartCard.so, required for emrtd-plugin.so to call
- *       SetCurrentApplet / ReplaceKeys.
- *     - LibreSCRS::SmartCard::Internal::HolderChannelAccessor —
- *       required for plugin .so files to obtain a channel pointer
- *       from a holder.
- *     - LibreSCRS::Trust::detail::TrustStoreInternalAccess::
- *       mergeTrustedListAnchors — required for Signing.so to merge
- *       anchors into Trust.so's store.
- *     - LibreSCRS::Trust::detail::TrustAnchorProvider typeinfo —
- *       required for cross-`.so` dynamic_cast on subclasses linked in
- *       different .so files.
- *   Third-party consumers MUST NOT rely on Internal:: or detail::
- *   symbols; both are unstable across minor releases and are exported
- *   only because the shared-build link graph mechanically requires
- *   it.
- *
- *   SM-aware transmit funnel: the only exported entry point is
- *   `CardSession::transmitInternal()` (internal-build-gated public
- *   member), exported by the `_ZN9LibreSCRS*` family.
- *   The snapshot/dispatch primitive is a TU-local anonymous-namespace
- *   helper inside `CardSession.cpp` and is not exported; the legacy
- *   `LibreSCRS::SmartCard::Internal::sessionTransmitImpl` free
- *   function, the `detail::sessionTransmit` overload, and the
- *   `CardSession::impl{Mutex,ActiveChannelSnapshot,OwnedConn}`
- *   accessors are intentionally absent from the dynamic export set.
+ * Internal::/detail:: entities match the globs too, so the version script
+ * alone does not keep them out: what is not public API is hidden at its
+ * declaration (LIBRESCRS_INTERNAL, hidden visibility by default), and
+ * ci/scripts/abi-snapshot.sh refuses any exported symbol the installed
+ * headers do not declare. Card plugins and the other shipped images reach
+ * the libraries through public API only -- a card plugin through the public
+ * CardSession calls (transmit, transmitRaw, the transaction and channel
+ * calls). The only internal symbols exported are listed, with their reason,
+ * in ci/abi/5.x-internal-exports.txt.
  */
 
 LM_5 {

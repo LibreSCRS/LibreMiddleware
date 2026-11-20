@@ -8,7 +8,7 @@
 // (driverPresent / efDirAdvertisesAppletSuiteGen2) and the activation-error
 // vocabulary mappers can be driven without a card. Live-SM scenarios ride a
 // detached CardSession with an injected FakeChannel: the session's
-// transmitInternal funnel and the activateChannelWithSm live-protocol reuse
+// CardSession::transmit funnel and the activateChannelWithSm live-protocol reuse
 // path then route every APDU through the scripted double, which lets the
 // tests pin the deferred-claim probe branches and the channel-run teardown
 // rules (fatality by channel STATE, partial teardown preserving the

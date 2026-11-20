@@ -12,10 +12,11 @@
 ///        friend-only access seam that LM internals use to mutate a live
 ///        channel's bound AID or rotate its SM session keys.
 
-#include <LibreSCRS/Export.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
+
+#include <utility>
 
 namespace LibreSCRS::SecureChannel::detail {
 
@@ -46,25 +47,20 @@ namespace LibreSCRS::SecureChannel::detail {
 /// the duration of the call.
 ///
 /// @since 4.1
-struct LIBRESCRS_PUBLIC_API ChannelStateMutator
+// Header-only: a card plugin that clears the applet of the channel it reads
+// over (the national annex reader) calls it on its own adapter, so it needs
+// nothing exported from the library.
+struct ChannelStateMutator
 {
-    /// @brief Update @p ch's bound AID to @p aid.
-    ///
-    /// Used after a wrapped @c SELECT routes a new applet through a
-    /// PACE-class channel's existing SM tunnel. PACE SM is session-scoped
-    /// (BSI TR-03110 §3); the channel's @c currentApplet is mutable state
-    /// rather than constructor-bound identity.
-    /// @since 4.1
-    static void setCurrentApplet(ISecureChannel& ch, LibreSCRS::SmartCard::AppletAid aid) noexcept;
+    static void setCurrentApplet(ISecureChannel& ch, LibreSCRS::SmartCard::AppletAid aid) noexcept
+    {
+        ch.setCurrentApplet(std::move(aid));
+    }
 
-    /// @brief Replace @p ch's SM session keys with @p keys.
-    ///
-    /// The previous SM key material is zeroised through the underlying
-    /// primitive's destructor before installation. Idempotent and leaves
-    /// the channel in @ref ChannelState::Open on success. Hidden: its only
-    /// caller is inside the library, so session keys never cross it.
-    /// @since 4.1
-    LIBRESCRS_INTERNAL static void replaceKeys(ISecureChannel& ch, SessionKeys keys) noexcept;
+    static void replaceKeys(ISecureChannel& ch, SessionKeys keys) noexcept
+    {
+        ch.replaceKeys(std::move(keys));
+    }
 };
 
 } // namespace LibreSCRS::SecureChannel::detail

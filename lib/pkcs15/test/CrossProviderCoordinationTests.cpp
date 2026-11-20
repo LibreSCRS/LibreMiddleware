@@ -33,7 +33,6 @@
 #include <LibreSCRS/Secure/String.h>
 #include <LibreSCRS/SecureChannel/BacParams.h>
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
-#include <LibreSCRS/SmartCard/detail/Unwrap.h>
 #include <LibreSCRS_internal/SecureChannel/ChipAuthChannel.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <LibreSCRS_internal/SecureChannel/SessionKeys.h>

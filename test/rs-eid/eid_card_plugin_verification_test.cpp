@@ -9,7 +9,7 @@
 // Drives the real, dlopen'd rs-eid-plugin.so through CardPluginService,
 // against a detached PCSCConnection scripted to answer as an Apollo-family
 // card. Apollo card-type detection is ATR-only (no APDU), so only the ATR
-// needs to be faked (via the test-only PCSCConnection::setDetachedAtr seam).
+// needs to be faked (via the test-only Testing::SessionAccess::setAtr seam).
 // Each of the four data files (document, personal, address, portrait) is
 // read through the same Apollo protocol: SELECT by file id, then a 6-byte
 // header READ BINARY, then (unless the header's empty-file marker short-
@@ -28,8 +28,7 @@
 #include <LibreSCRS/Plugin/ReadResult.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
-#include <LibreSCRS/SmartCard/detail/Unwrap.h>
-#include <pcsc_raw_diagnostic.h>
+#include <session_access.h>
 #include <pcsc_connection.h>
 
 #include "card_protocol.h"
@@ -181,7 +180,8 @@ TEST(RsEidPluginVerificationTest, VerificationFieldsAppearExactlyOnceInVerificat
     ASSERT_NE(session, nullptr);
 
     auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(*session);
-    conn.setDetachedAtr(apolloAtr());
+    // The plugin reads the ATR the session recorded when it opened.
+    LibreSCRS::SmartCard::Testing::SessionAccess::setAtr(*session, apolloAtr());
 
     using namespace eidcard::protocol;
     ApolloFileRig rig;
