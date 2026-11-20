@@ -29,7 +29,8 @@
 #include <utility>
 #include <vector>
 
-#include <stdlib.h> // mkdtemp
+#include <stdlib.h> // mkdtemp (POSIX.1-2008)
+#include <unistd.h> // mkdtemp (macOS declares it here)
 
 namespace LibreSCRS::Trust {
 
