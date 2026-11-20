@@ -37,8 +37,6 @@
 
 #include <gtest/gtest.h>
 
-#include <atomic>
-#include <chrono>
 #include <thread>
 #include <cstdint>
 #include <memory>
@@ -157,24 +155,17 @@ TEST_F(SessionTransmitTest, channelResetMidSnapshotKeepsChannelAlive)
     // A teardown on another thread while a command is on the wire waits for
     // the command: a caller that does not hold the holder sends under the
     // session lock, so the channel cannot be pulled out from under the
-    // exchange.
+    // exchange. Judged by the lock itself, not by timing.
     AppletAid aid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
     auto channel = std::make_unique<FakeChannel>(aid, ChannelState::Open, /*carriesSm=*/true);
     auto* observer = channel.get();
     std::uint8_t observedIns = 0;
-    int observedTransmits = 0;
-    std::atomic<bool> cleared{false};
-    bool clearedDuringTransmit = true;
+    bool lockedOnTheWire = false;
     std::thread teardown;
     observer->onTransmitCallback = [&, this]() {
         observedIns = observer->lastWrappedCommand().ins;
-        observedTransmits = observer->transmits();
-        teardown = std::thread([&, this] {
-            session->clearActiveChannel();
-            cleared.store(true);
-        });
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        clearedDuringTransmit = cleared.load();
+        lockedOnTheWire = LibreSCRS::SmartCard::Testing::SessionAccess::lockIsHeld(*session);
+        teardown = std::thread([this] { session->clearActiveChannel(); });
     };
     ChannelInjector::installForTesting(*session, std::move(channel));
 
@@ -182,10 +173,8 @@ TEST_F(SessionTransmitTest, channelResetMidSnapshotKeepsChannelAlive)
     teardown.join();
 
     EXPECT_EQ(observedIns, 0xA4);
-    EXPECT_EQ(observedTransmits, 1);
-    EXPECT_FALSE(clearedDuringTransmit) << "the channel was torn down while its command was on the wire";
-    EXPECT_TRUE(cleared.load());
-    EXPECT_FALSE(session->channelState().has_value());
+    EXPECT_TRUE(lockedOnTheWire) << "the command went out without the session lock";
+    EXPECT_FALSE(session->channelState().has_value()) << "the teardown ran after the command";
     EXPECT_EQ(resp.sw1, 0x90);
     EXPECT_EQ(resp.sw2, 0x00);
 }

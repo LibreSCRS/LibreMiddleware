@@ -188,18 +188,42 @@ TEST(PluginSessionPath, TheEmrtdProbeDoesNotJudgePlainAccessThroughATunnel)
     EXPECT_TRUE(rig.plain.empty());
 }
 
-// A tunnel that failed is dead: a plain plugin's probe goes out plain and
-// works, as it did before the plugins reached the card through the session.
-// Nothing runs over the dead channel, so nothing protected goes plain.
-TEST(PluginSessionPath, PlainProbesWorkAfterATunnelFailed)
+// A tunnel that failed refuses every probe command when a plugin probes the
+// session directly: nothing goes plain on the session's own decision.
+TEST(PluginSessionPath, ADirectProbeSendsNothingPastAFailedTunnel)
 {
     for (const char* id : {"rs-health", "eu-vrc", "rs-eid", "emrtd", "pkcs15"}) {
         SCOPED_TRACE(id);
         WireRig rig(kGemaltoAtr);
         LibreSCRS::SmartCard::Testing::installStandInChannel(*rig.session, StandInChannel::FailedSecureMessaging);
         (void)rig.probe(id);
-        EXPECT_FALSE(rig.plain.empty()) << "the probe went nowhere: the dead tunnel refused it";
+        EXPECT_TRUE(rig.plain.empty());
+        EXPECT_TRUE(rig.raw.empty());
+        EXPECT_TRUE(rig.session->carriesSecureMessaging()) << "the session dropped the dead tunnel on its own";
+    }
+}
+
+// Identifying the card through the plugin service starts a new, plain
+// interaction: it removes the failed tunnel, and every plugin probes the
+// card exactly as on a session that never had one. Two ATRs: with the
+// Gemalto one rs-eid is matched by ATR and probes nothing; with none every
+// plugin probes.
+TEST(PluginSessionPath, PlainProbesWorkAfterATunnelFailed)
+{
+    for (const Bytes& atr : {kGemaltoAtr, Bytes{}}) {
+        SCOPED_TRACE(atr.empty() ? "no ATR" : "Gemalto ATR");
+        WireRig fresh(atr);
+        const auto freshCandidates = registry().findAllCandidates(fresh.session->atr(), *fresh.session);
+        ASSERT_FALSE(fresh.plain.empty()) << "the probes send nothing on a fresh session; the comparison proves nothing";
+
+        WireRig rig(atr);
+        LibreSCRS::SmartCard::Testing::installStandInChannel(*rig.session, StandInChannel::FailedSecureMessaging);
+        const auto candidates = registry().findAllCandidates(rig.session->atr(), *rig.session);
+
         EXPECT_FALSE(rig.session->carriesSecureMessaging()) << "the dead tunnel stayed installed";
+        EXPECT_EQ(rig.plain, fresh.plain) << "a probe went nowhere: the dead tunnel refused it";
+        EXPECT_EQ(rig.raw, fresh.raw);
+        EXPECT_EQ(candidates.size(), freshCandidates.size());
     }
 }
 

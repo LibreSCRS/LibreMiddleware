@@ -457,17 +457,13 @@ public:
     /// - an open channel (secure-messaging or plain) carries it: under secure
     ///   messaging it is wrapped, and the answer is unwrapped and verified;
     /// - an installed secure-messaging channel that is no longer open (it
-    ///   failed on a bad MAC or a 6987/6988 answer, or was closed) refuses it
-    ///   when the calling thread holds this session's
-    ///   @ref ActiveChannelHolder: the operation running over that channel
-    ///   meant the command to be protected, so the answer is @c 6F02 and
-    ///   nothing is sent. Called from any other thread, the dead channel is
-    ///   dropped (no operation runs over it, and the card has ended or will
-    ///   end that secure-messaging session). The command that finds it is
-    ///   still refused (@c 6F02), since it may have been meant to be
-    ///   protected -- unless it is an interindustry SELECT that does not ask
-    ///   for secure messaging (it carries only an AID, file identifier or
-    ///   path), which goes plain. Later commands go plain;
+    ///   failed on a bad MAC or a 6987/6988 answer, or was closed) refuses
+    ///   every command, from any thread: the answer is @c 6F02 and nothing is
+    ///   sent. The call never drops that channel, so a command the caller
+    ///   meant to be protected never goes plain. It stays until
+    ///   @ref discardFailedChannel, @ref clearActiveChannel or the activation
+    ///   of another channel (@ref activateChannelFor,
+    ///   @ref activateChannelWithSm) removes it;
     /// - otherwise (no channel, or a plain one that is not open) it goes to the
     ///   card plain. The reader layer completes the exchange as the card asks:
     ///   it fetches a chained answer (status word @c 61xx, GET RESPONSE) and,
@@ -515,9 +511,8 @@ public:
     /// nothing is sent and the answer is @c 6F02: a plain command would end the
     /// card's secure-messaging session. Use @ref transmit to reach the card
     /// through that channel. A secure-messaging channel that is no longer open
-    /// is treated as by @ref transmit: refused on the thread that holds this
-    /// session's @ref ActiveChannelHolder; dropped on any other, the bytes
-    /// that found it refused unless they are a plain interindustry SELECT.
+    /// refuses the bytes too (@c 6F02, nothing sent), from any thread, until
+    /// it is removed (see @ref transmit).
     ///
     /// @param apdu The command bytes, sent unchanged.
     /// @return The answer: response data followed by SW1 SW2. @c 6F02 when a
@@ -532,6 +527,39 @@ public:
     ///
     /// @since 5.0
     [[nodiscard]] std::vector<std::uint8_t> transmitRaw(std::span<const std::uint8_t> apdu);
+
+    /// @brief Remove a secure-messaging channel that is no longer open, so
+    ///        that plain commands reach the card again.
+    ///
+    /// A channel that failed (a bad MAC, a 6987/6988 answer) or was closed
+    /// makes @ref transmit and @ref transmitRaw refuse every command
+    /// (@c 6F02); the card has ended, or will end on its next answer, that
+    /// secure-messaging session. A host calls this at a point where it starts
+    /// a new, plain interaction with the card and no earlier operation's
+    /// commands can follow -- before it identifies the card, say.
+    /// @ref Plugin::CardPluginService::findAllCandidates does so before it
+    /// probes the plugins. An open channel, a plain channel, or no channel
+    /// is left as it is.
+    ///
+    /// @return @c true when a channel was removed.
+    ///
+    /// @par Thread-safety
+    /// The check and the removal happen under the session's lock, so a
+    /// channel another thread activates meanwhile is never removed. Called on
+    /// the thread that holds this session's @ref ActiveChannelHolder it does
+    /// nothing and returns @c false: the operation running over the channel
+    /// keeps it, and its commands stay refused.
+    ///
+    /// @par Example
+    /// @code
+    /// // A host that probes one plugin itself, on a session whose earlier
+    /// // tunnel may have failed.
+    /// (void)session.discardFailedChannel();
+    /// const bool handles = plugin->canHandleConnection(session.atr(), session);
+    /// @endcode
+    ///
+    /// @since 5.0
+    bool discardFailedChannel() noexcept;
 
     /// @brief Identity of this session among all sessions of the process.
     ///
