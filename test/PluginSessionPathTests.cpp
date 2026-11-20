@@ -27,6 +27,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <functional>
 #include <filesystem>
 #include <memory>
 #include <span>
@@ -224,6 +225,40 @@ TEST(PluginSessionPath, PlainProbesWorkAfterATunnelFailed)
         EXPECT_EQ(rig.plain, fresh.plain) << "a probe went nowhere: the dead tunnel refused it";
         EXPECT_EQ(rig.raw, fresh.raw);
         EXPECT_EQ(candidates.size(), freshCandidates.size());
+    }
+}
+
+// A plugin operation that starts plain I/O by design discards a tunnel that
+// failed earlier, with no identification pass first: the hybrid-card case of
+// a PACE operation that failed, then a plain plugin's read on the same
+// session.
+TEST(PluginSessionPath, APlainOperationAfterATunnelFailedReachesTheCard)
+{
+    struct Case
+    {
+        const char* id;
+        const char* what;
+        std::function<void(const LibreSCRS::Plugin::CardPlugin&, CardSession&)> run;
+    };
+    const std::vector<Case> cases{
+        {"rs-health", "readCard",
+         [](const LibreSCRS::Plugin::CardPlugin& p, CardSession& s) { (void)p.readCard(s); }},
+        {"eu-vrc", "readCard", [](const LibreSCRS::Plugin::CardPlugin& p, CardSession& s) { (void)p.readCard(s); }},
+        {"rs-eid", "readCard", [](const LibreSCRS::Plugin::CardPlugin& p, CardSession& s) { (void)p.readCard(s); }},
+        {"pkcs15", "readCertificates",
+         [](const LibreSCRS::Plugin::CardPlugin& p, CardSession& s) { (void)p.readCertificates(s); }},
+        {"pkcs15", "getPINList",
+         [](const LibreSCRS::Plugin::CardPlugin& p, CardSession& s) { (void)p.getPINList(s); }},
+    };
+    for (const auto& c : cases) {
+        SCOPED_TRACE(std::string{c.id} + " " + c.what);
+        WireRig rig(kGemaltoAtr);
+        LibreSCRS::SmartCard::Testing::installStandInChannel(*rig.session, StandInChannel::FailedSecureMessaging);
+        const auto p = plugin(c.id);
+        ASSERT_NE(p, nullptr);
+        c.run(*p, *rig.session);
+        EXPECT_FALSE(rig.plain.empty() && rig.raw.empty()) << "the operation was locked out by the failed tunnel";
+        EXPECT_FALSE(rig.session->carriesSecureMessaging()) << "the failed tunnel stayed installed";
     }
 }
 

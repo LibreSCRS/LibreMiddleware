@@ -75,6 +75,20 @@ auto contained(const CardPlugin& plugin, std::string_view entry, Op&& op, Fail&&
     return fail();
 }
 
+// Where an operation starts plain I/O by design -- its activation profile
+// asks for no secure messaging -- a secure-messaging channel that failed
+// earlier (another plugin's PACE operation that ended in a bad MAC, say) is
+// discarded first: it would refuse every command, and no operation can use
+// it any more (an activation replaces it). A profile that asks for secure
+// messaging leaves it to the activation. On the thread that holds the
+// session's ActiveChannelHolder the discard does nothing.
+void beginOperation(SmartCard::CardSession& session, const ActivationProfile& profile) noexcept
+{
+    if (!profile.requiresActivation()) {
+        (void)session.discardFailedChannel();
+    }
+}
+
 PINResult pinPluginError() noexcept
 {
     PINResult r;
@@ -111,6 +125,7 @@ ReadResult CardPlugin::readCard(SmartCard::CardSession& session, GroupCallback o
         *this, "readCard",
         [&]() -> ReadResult {
             const ActivationProfile profile = activationProfile(session);
+            beginOperation(session, profile);
             if (!profile.requiresActivation()) {
                 // Plain channel: no secure-messaging activation; read directly.
                 return doReadCard(session, std::move(onGroup));
@@ -157,21 +172,35 @@ ReadResult CardPlugin::readCard(SmartCard::CardSession& session, GroupCallback o
 std::vector<CertificateData> CardPlugin::readCertificates(SmartCard::CardSession& session) const
 {
     return contained(
-        *this, "readCertificates", [&] { return doReadCertificates(session); },
+        *this, "readCertificates",
+        [&] {
+            beginOperation(session, activationProfile(session));
+            return doReadCertificates(session);
+        },
         [] { return std::vector<CertificateData>{}; });
 }
 
 std::vector<PinStatusEntry> CardPlugin::getPINList(SmartCard::CardSession& session) const
 {
     return contained(
-        *this, "getPINList", [&] { return doGetPINList(session); }, [] { return std::vector<PinStatusEntry>{}; });
+        *this, "getPINList",
+        [&] {
+            beginOperation(session, activationProfile(session));
+            return doGetPINList(session);
+        },
+        [] { return std::vector<PinStatusEntry>{}; });
 }
 
 PINResult CardPlugin::changePIN(SmartCard::CardSession& session, std::string_view pinLabel,
                                 const Secure::String& oldPin, const Secure::String& newPin) const
 {
     return contained(
-        *this, "changePIN", [&] { return doChangePIN(session, pinLabel, oldPin, newPin); }, pinPluginError);
+        *this, "changePIN",
+        [&] {
+            beginOperation(session, activationProfile(session));
+            return doChangePIN(session, pinLabel, oldPin, newPin);
+        },
+        pinPluginError);
 }
 
 SignResult CardPlugin::sign(SmartCard::CardSession& session, std::uint16_t keyReference,
@@ -181,7 +210,11 @@ SignResult CardPlugin::sign(SmartCard::CardSession& session, std::uint16_t keyRe
         return SignResult::cancelled();
     }
     return contained(
-        *this, "sign", [&] { return doSign(session, keyReference, data, mechanism); },
+        *this, "sign",
+        [&] {
+            beginOperation(session, activationProfile(session));
+            return doSign(session, keyReference, data, mechanism);
+        },
         [] {
             SignResult r;
             r.outcome = SignResultOutcome::PluginError;
@@ -197,7 +230,11 @@ DecipherResult CardPlugin::decipher(SmartCard::CardSession& session, std::uint16
         return DecipherResult::cancelled();
     }
     return contained(
-        *this, "decipher", [&] { return doDecipher(session, keyReference, ciphertext, mechanism); },
+        *this, "decipher",
+        [&] {
+            beginOperation(session, activationProfile(session));
+            return doDecipher(session, keyReference, ciphertext, mechanism);
+        },
         [] {
             DecipherResult r;
             r.outcome = DecipherResultOutcome::PluginError;
@@ -210,13 +247,22 @@ PINResult CardPlugin::activateTransportPin(SmartCard::CardSession& session, std:
 {
     return contained(
         *this, "activateTransportPin",
-        [&] { return doActivateTransportPin(session, pinLabel, transportValue, newPin); }, pinPluginError);
+        [&] {
+            beginOperation(session, activationProfile(session));
+            return doActivateTransportPin(session, pinLabel, transportValue, newPin);
+        },
+        pinPluginError);
 }
 
 PINResult CardPlugin::activateSigningKey(SmartCard::CardSession& session, const Secure::String& signPin) const
 {
     return contained(
-        *this, "activateSigningKey", [&] { return doActivateSigningKey(session, signPin); }, pinPluginError);
+        *this, "activateSigningKey",
+        [&] {
+            beginOperation(session, activationProfile(session));
+            return doActivateSigningKey(session, signPin);
+        },
+        pinPluginError);
 }
 
 void CardPlugin::setTrustStore(std::shared_ptr<const LibreSCRS::Trust::TrustStore> trustStore) noexcept

@@ -47,7 +47,9 @@ Notable user-visible changes per release. Format follows
   meant to be protected never goes plain. `discardFailedChannel` removes a
   failed channel where the host starts a new plain interaction;
   `CardPluginService::findAllCandidates` calls it before it probes the
-  plugins, and activating another channel replaces it. Both transmit calls
+  plugins, every card-plugin operation whose activation profile asks for no
+  secure messaging calls it at its start, and activating another channel
+  replaces it. Both transmit calls
   return the answer as data followed by SW1 SW2 and throw on a reader
   failure.
   `beginTransaction`, `endTransaction`, `isTransactionHeld` and `reconnect`

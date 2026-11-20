@@ -538,8 +538,14 @@ public:
     /// a new, plain interaction with the card and no earlier operation's
     /// commands can follow -- before it identifies the card, say.
     /// @ref Plugin::CardPluginService::findAllCandidates does so before it
-    /// probes the plugins. An open channel, a plain channel, or no channel
-    /// is left as it is.
+    /// probes the plugins, and every card-plugin operation whose activation
+    /// profile asks for no secure messaging does so at its start. An open
+    /// channel, a plain channel, or no channel is left as it is.
+    ///
+    /// The call ends whatever secure-messaging session the failed channel
+    /// belonged to. A host must not call it in the middle of its own
+    /// multi-step secure-messaging operation (between two holders of one
+    /// operation, say): the next step would have to activate again.
     ///
     /// @return @c true when a channel was removed.
     ///
