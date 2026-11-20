@@ -180,14 +180,13 @@ TEST_F(CardSessionByteTransportTest, AClosedTunnelRefusesWithoutSending)
 
 TEST_F(CardSessionByteTransportTest, ADeadTunnelNoOperationRunsOverIsDropped)
 {
-    // No holder: nothing runs over the dead tunnel, the card has ended its
-    // secure-messaging session (or will on the next answer). Plain traffic
-    // goes through again, and the dead channel is gone.
+    // No holder: nothing runs over the dead tunnel, so it is dropped. A plain
+    // interindustry SELECT that finds it goes out (it carries no secret), and
+    // plain traffic goes through from then on.
     for (const auto state : {ChannelState::Failed, ChannelState::Closed}) {
         plainCommands.clear();
         rawCommands.clear();
-        auto* channel = install(state, /*carriesSm=*/true, SmProtocolRequest{PaceRequest{}});
-        (void)channel;
+        install(state, /*carriesSm=*/true, SmProtocolRequest{PaceRequest{}});
 
         EXPECT_EQ(session->transmit(kSelect), (Bytes{0x01, 0x02, 0x90, 0x00}));
         EXPECT_EQ(plainCommands.size(), 1U);
@@ -199,6 +198,62 @@ TEST_F(CardSessionByteTransportTest, ADeadTunnelNoOperationRunsOverIsDropped)
         EXPECT_EQ(rawCommands.size(), 1U);
         EXPECT_FALSE(session->channelState().has_value());
     }
+}
+
+// What may have been meant to be protected does not go plain when it is the
+// command that finds the dead tunnel: it is refused, sending nothing, and the
+// next command goes plain.
+TEST_F(CardSessionByteTransportTest, AVerifyThatFindsADeadTunnelIsNotSentPlain)
+{
+    // A host activated PACE, released the holder, and sends VERIFY from a
+    // thread that holds none; the tunnel failed meanwhile. The PIN must not
+    // go out in clear.
+    const SmProtocolRequest pace = PaceRequest{};
+    auto* channel = install(ChannelState::Open, /*carriesSm=*/true, pace);
+    {
+        auto holder = session->activateChannelWithSm(kAid, pace, LibreSCRS::CancelToken{});
+        ASSERT_TRUE(holder.has_value());
+    }
+    channel->setState(ChannelState::Failed);
+    const Bytes verifyPin{0x00, 0x20, 0x00, 0x81, 0x04, 0x31, 0x32, 0x33, 0x34};
+
+    EXPECT_EQ(session->transmit(verifyPin), (Bytes{0x6F, 0x02}));
+    EXPECT_TRUE(plainCommands.empty()) << "the PIN went out in clear";
+    EXPECT_TRUE(rawCommands.empty());
+    EXPECT_FALSE(session->channelState().has_value()) << "the dead tunnel is dropped";
+
+    EXPECT_EQ(session->transmit(verifyPin), (Bytes{0x01, 0x02, 0x90, 0x00})) << "the next command goes plain";
+    EXPECT_EQ(plainCommands.size(), 1U);
+}
+
+TEST_F(CardSessionByteTransportTest, OnlyAPlainInterindustrySelectGoesOutWhenItFindsADeadTunnel)
+{
+    struct Case
+    {
+        const char* what;
+        Bytes apdu;
+    };
+    const std::vector<Case> refused{
+        {"READ BINARY", {0x00, 0xB0, 0x00, 0x00, 0x00}},
+        {"GET DATA", {0x00, 0xCA, 0x9F, 0x7F, 0x00}},
+        {"GET CHALLENGE", {0x00, 0x84, 0x00, 0x00, 0x08}},
+        {"SELECT flagged as secure messaging", {0x0C, 0xA4, 0x04, 0x0C, 0x02, 0x3F, 0x00}},
+        {"SELECT in a proprietary class", {0x80, 0xA4, 0x04, 0x0C, 0x02, 0x3F, 0x00}},
+    };
+    for (const auto& c : refused) {
+        SCOPED_TRACE(c.what);
+        plainCommands.clear();
+        rawCommands.clear();
+        install(ChannelState::Failed, /*carriesSm=*/true);
+        EXPECT_EQ(session->transmit(c.apdu), (Bytes{0x6F, 0x02}));
+        install(ChannelState::Failed, /*carriesSm=*/true);
+        EXPECT_EQ(session->transmitRaw(c.apdu), (Bytes{0x6F, 0x02}));
+        EXPECT_TRUE(plainCommands.empty());
+        EXPECT_TRUE(rawCommands.empty());
+    }
+    install(ChannelState::Failed, /*carriesSm=*/true);
+    EXPECT_EQ(session->transmit(kSelect), (Bytes{0x01, 0x02, 0x90, 0x00})) << "a plain SELECT goes out";
+    EXPECT_FALSE(session->channelState().has_value());
 }
 
 TEST_F(CardSessionByteTransportTest, APlainActivationReplacesAFailedTunnel)
@@ -284,7 +339,8 @@ TEST_F(CardSessionByteTransportTest, ARawCommandUnderLiveSecureMessagingSendsNot
 TEST_F(CardSessionByteTransportTest, ARawCommandGoesOutWhenNoTunnelIsLive)
 {
     // No channel, an open plain channel, and a secure-messaging channel that
-    // already failed: none is live, so the bytes go out unchanged, once.
+    // already failed: none is live, so the bytes go out unchanged, once --
+    // past the failed one only after the command that found it was refused.
     const Bytes unusual{0x80, 0xCA, 0x9F, 0x7F, 0x00};
     const auto send = [&] {
         rawCommands.clear();
@@ -297,6 +353,7 @@ TEST_F(CardSessionByteTransportTest, ARawCommandGoesOutWhenNoTunnelIsLive)
     install(ChannelState::Open, /*carriesSm=*/false);
     send();
     install(ChannelState::Failed, /*carriesSm=*/true);
+    EXPECT_EQ(session->transmitRaw(unusual), (Bytes{0x6F, 0x02}));
     send();
     EXPECT_TRUE(plainCommands.empty());
 }

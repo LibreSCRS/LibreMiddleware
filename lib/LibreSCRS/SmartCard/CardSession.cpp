@@ -143,15 +143,18 @@ auto withSessionState(State& state, Fn&& fn) -> decltype(fn())
 // lock it took keeps every other thread out -- is dead: the card has ended,
 // or will end on the next answer, the secure-messaging session it belonged
 // to. Dropping it lets plain traffic through again, which is what an
-// activation of another channel would do. The thread that holds the holder
-// keeps it: its operation meant its commands to be protected, and they are
-// refused rather than sent plain.
+// activation of another channel would do -- from the NEXT command on: the
+// command that finds the dead channel may have been meant to be protected (a
+// VERIFY with a PIN, say), so it is refused, never sent plain, unless it is
+// a plain interindustry SELECT (see plainSelect). The thread
+// that holds the holder keeps the channel: its operation meant its commands
+// to be protected, and they are all refused. True when it dropped one.
 template <typename State>
-void dropDeadSecureChannel(State& state) noexcept
+bool dropDeadSecureChannel(State& state) noexcept
 {
     if (state.callerOwnsActiveChannel() || !state.activeChannel || !state.activeChannel->carriesSm() ||
         state.activeChannel->state() == LibreSCRS::SecureChannel::ChannelState::Open) {
-        return;
+        return false;
     }
     try {
         state.activeChannel->close();
@@ -160,6 +163,24 @@ void dropDeadSecureChannel(State& state) noexcept
     }
     state.activeChannel.reset();
     state.activatedProtocol.reset();
+    return true;
+}
+
+// The one command that may go plain right after a dead secure-messaging
+// channel was dropped: an interindustry SELECT that does not ask for secure
+// messaging. A SELECT carries only an AID, a file identifier or a path -- no
+// secret -- and it is how every card plugin's probe starts, so the probes
+// keep working on a session whose tunnel failed. Anything else -- a VERIFY
+// with a PIN, a READ BINARY, GET DATA, GET CHALLENGE, a proprietary class, a
+// command whose CLA flags secure messaging -- may have been meant to be
+// protected and is refused.
+[[nodiscard]] bool plainSelect(std::span<const std::uint8_t> apdu) noexcept
+{
+    if (apdu.size() < 4) {
+        return false;
+    }
+    const std::uint8_t cla = apdu[0];
+    return apdu[1] == 0xA4 && (cla & 0x80) == 0 && (cla & 0x0C) == 0;
 }
 
 // The answer as one byte string, data then SW1 SW2. The response data can be
@@ -443,20 +464,25 @@ std::vector<std::uint8_t> CardSession::transmit(std::span<const std::uint8_t> ap
     if (!cmd) {
         throw std::invalid_argument("CardSession::transmit: not a well-formed command APDU");
     }
-    // Snapshot the channel and the connection, then dispatch without the
-    // mutex: the shared_ptr pins the channel for the call, so a concurrent
-    // clearActiveChannel cannot pull it out from under the exchange.
-    std::shared_ptr<LibreSCRS::SecureChannel::ISecureChannel> channelSnap;
-    LibreSCRS::SmartCard::Internal::PCSCConnection* connPtr = nullptr;
-    withSessionState(*d, [&] {
-        dropDeadSecureChannel(*d);
-        channelSnap = d->activeChannel;
-        connPtr = d->ownedConn.get();
-    });
-    if (connPtr == nullptr) {
+    // The thread that holds the holder is the only one that can change the
+    // session meanwhile: it reads and sends without the lock (the holder
+    // holds it). Any other thread decides and sends under the lock, so no
+    // secure-messaging handshake started on another thread can come between
+    // the choice of the path and the command on the wire.
+    if (d->callerOwnsActiveChannel()) {
+        if (!d->ownedConn) {
+            return statusOnly(0x6F, 0x00);
+        }
+        return toAnswer(dispatchOverChannelOrConn(d->activeChannel.get(), *d->ownedConn, *cmd, std::move(token)));
+    }
+    std::lock_guard lock(d->sessionMutex);
+    if (dropDeadSecureChannel(*d) && !plainSelect(apdu)) {
+        return statusOnly(0x6F, 0x02); // this command may have been meant to be protected
+    }
+    if (!d->ownedConn) {
         return statusOnly(0x6F, 0x00);
     }
-    return toAnswer(dispatchOverChannelOrConn(channelSnap.get(), *connPtr, *cmd, std::move(token)));
+    return toAnswer(dispatchOverChannelOrConn(d->activeChannel.get(), *d->ownedConn, *cmd, std::move(token)));
 }
 
 std::vector<std::uint8_t> CardSession::transmitRaw(std::span<const std::uint8_t> apdu)
@@ -477,10 +503,12 @@ std::vector<std::uint8_t> CardSession::transmitRaw(std::span<const std::uint8_t>
     // Any other thread: the decision and the exchange happen under the lock,
     // so no secure-messaging handshake on another thread can start between
     // them. A dead secure-messaging channel nobody runs an operation over is
-    // dropped; a live one refuses the bytes -- a plain command would end the
-    // card's secure-messaging session.
+    // dropped and these bytes refused; a live one refuses the bytes -- a
+    // plain command would end the card's secure-messaging session.
     std::lock_guard lock(d->sessionMutex);
-    dropDeadSecureChannel(*d);
+    if (dropDeadSecureChannel(*d) && !plainSelect(apdu)) {
+        return statusOnly(0x6F, 0x02); // these bytes may have been meant to be protected
+    }
     if (!d->ownedConn) {
         return statusOnly(0x6F, 0x00);
     }

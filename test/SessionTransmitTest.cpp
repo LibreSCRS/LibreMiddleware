@@ -37,6 +37,9 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <chrono>
+#include <thread>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -151,30 +154,38 @@ TEST_F(SessionTransmitTest, returnsSw6F00OnClosedPlainChannel)
 
 TEST_F(SessionTransmitTest, channelResetMidSnapshotKeepsChannelAlive)
 {
-    // Snapshot pattern: even if the session-side resets the active channel
-    // during the transmit body, the funnel's snapshot @c shared_ptr keeps
-    // the channel object alive until the call returns.
+    // A teardown on another thread while a command is on the wire waits for
+    // the command: a caller that does not hold the holder sends under the
+    // session lock, so the channel cannot be pulled out from under the
+    // exchange.
     AppletAid aid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
     auto channel = std::make_unique<FakeChannel>(aid, ChannelState::Open, /*carriesSm=*/true);
     auto* observer = channel.get();
-    // The funnel's snapshot shared_ptr is the channel's LAST reference once
-    // clearActiveChannel drops d->activeChannel mid-transmit; reading
-    // @c observer after the call returns is UAF (the snapshot dies with the
-    // call). Sample the observable channel state INSIDE the callback while
-    // the snapshot still pins the object alive.
     std::uint8_t observedIns = 0;
     int observedTransmits = 0;
+    std::atomic<bool> cleared{false};
+    bool clearedDuringTransmit = true;
+    std::thread teardown;
     observer->onTransmitCallback = [&, this]() {
         observedIns = observer->lastWrappedCommand().ins;
         observedTransmits = observer->transmits();
-        session->clearActiveChannel();
+        teardown = std::thread([&, this] {
+            session->clearActiveChannel();
+            cleared.store(true);
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        clearedDuringTransmit = cleared.load();
     };
     ChannelInjector::installForTesting(*session, std::move(channel));
 
     auto resp = LibreSCRS::SmartCard::SessionConnection::toResponse(session->transmit(makeProbeCommand().toBytes()));
+    teardown.join();
 
     EXPECT_EQ(observedIns, 0xA4);
     EXPECT_EQ(observedTransmits, 1);
+    EXPECT_FALSE(clearedDuringTransmit) << "the channel was torn down while its command was on the wire";
+    EXPECT_TRUE(cleared.load());
+    EXPECT_FALSE(session->channelState().has_value());
     EXPECT_EQ(resp.sw1, 0x90);
     EXPECT_EQ(resp.sw2, 0x00);
 }

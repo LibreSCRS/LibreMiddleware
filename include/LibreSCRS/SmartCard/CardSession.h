@@ -463,7 +463,11 @@ public:
     ///   meant the command to be protected, so the answer is @c 6F02 and
     ///   nothing is sent. Called from any other thread, the dead channel is
     ///   dropped (no operation runs over it, and the card has ended or will
-    ///   end that secure-messaging session) and the command goes plain;
+    ///   end that secure-messaging session). The command that finds it is
+    ///   still refused (@c 6F02), since it may have been meant to be
+    ///   protected -- unless it is an interindustry SELECT that does not ask
+    ///   for secure messaging (it carries only an AID, file identifier or
+    ///   path), which goes plain. Later commands go plain;
     /// - otherwise (no channel, or a plain one that is not open) it goes to the
     ///   card plain. The reader layer completes the exchange as the card asks:
     ///   it fetches a chained answer (status word @c 61xx, GET RESPONSE) and,
@@ -482,10 +486,12 @@ public:
     ///         during the exchange.
     ///
     /// @par Thread-safety
-    /// Callers serialise the commands of one session. The call may be made by
-    /// the thread that holds this session's @ref ActiveChannelHolder (it then
-    /// takes no lock) or by another thread (it then waits for the holder to be
-    /// released before it reads the channel).
+    /// The call may be made by the thread that holds this session's
+    /// @ref ActiveChannelHolder (it then takes no lock: no other thread can
+    /// touch the session meanwhile) or by another thread. That one waits for
+    /// the holder to be released, then chooses the path and sends the command
+    /// under the session's lock, so no secure-messaging handshake started on
+    /// another thread can come between the two.
     ///
     /// @par Example
     /// @code
@@ -510,10 +516,8 @@ public:
     /// card's secure-messaging session. Use @ref transmit to reach the card
     /// through that channel. A secure-messaging channel that is no longer open
     /// is treated as by @ref transmit: refused on the thread that holds this
-    /// session's @ref ActiveChannelHolder, dropped on any other. Called from
-    /// a thread that does not hold the holder, the check and the exchange
-    /// happen under the session's lock, so no secure-messaging handshake
-    /// started on another thread can come between them.
+    /// session's @ref ActiveChannelHolder; dropped on any other, the bytes
+    /// that found it refused unless they are a plain interindustry SELECT.
     ///
     /// @param apdu The command bytes, sent unchanged.
     /// @return The answer: response data followed by SW1 SW2. @c 6F02 when a
