@@ -290,7 +290,10 @@ TEST_F(LazyTrustedListTest, LazyTrustedListIsFetchedWhenALevelNeedsIt)
 // The bridge is told about a phase only when all of its lists loaded: a list
 // that failed is not handed on to the trust store service, so the service
 // does not download it a second time -- it tries again on a later signature.
-TEST_F(LazyTrustedListTest, TheBridgeIsToldOnlyAboutACompleteLoad)
+// The bridge adopts from the cache whatever verified, so it is told after the
+// phase whatever its outcome -- a list that does not verify must not keep the
+// others' anchors out of the public store.
+TEST_F(LazyTrustedListTest, TheBridgeIsToldAfterEveryPhase)
 {
     libresign::test::MockTrustedListServer server(std::string(CMAKE_SOURCE_DIR) +
                                                   "/test/fixtures/trust/synthetic-tl.xml");
@@ -310,7 +313,7 @@ TEST_F(LazyTrustedListTest, TheBridgeIsToldOnlyAboutACompleteLoad)
                 ++eagerCalls;
         });
         (void)service.configure(cfg);
-        EXPECT_EQ(eagerCalls, verifies ? 1 : 0);
+        EXPECT_EQ(eagerCalls, 1);
     }
 }
 

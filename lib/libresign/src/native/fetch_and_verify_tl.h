@@ -30,6 +30,9 @@ struct FetchOptions
     /// @brief Cancellation token honoured at coarse-grained checkpoints
     ///        (between fetch and verify, between verify and parse).
     LibreSCRS::CancelToken stop;
+    /// @brief Read the lists only from @c cacheDirectory: a list it does not
+    ///        hold, or holds past its lifetime, fails without a download.
+    bool cacheOnly = false;
 };
 
 /// @brief Result of @ref fetchAndVerifyTrustedList.

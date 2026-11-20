@@ -21,7 +21,6 @@
 #include "trust/TrustedListProvider.h"
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <mutex>
@@ -30,7 +29,7 @@
 #include <utility>
 #include <vector>
 
-#include <unistd.h>
+#include <stdlib.h> // mkdtemp
 
 namespace LibreSCRS::Trust {
 
@@ -60,9 +59,10 @@ void TrustStoreService::Impl::markLoaded(const std::string& url)
 }
 
 bool TrustStoreService::Impl::fetchAndMerge(const libresign::TrustedListEntry& entry,
-                                            LibreSCRS::CancelToken token) const
+                                            LibreSCRS::CancelToken token, bool cacheOnly) const
 {
     libresign::FetchOptions opts;
+    opts.cacheOnly = cacheOnly;
     if (config.cacheDirectory.has_value())
         opts.cacheDirectory = config.cacheDirectory->string();
     opts.requestTimeout = std::chrono::seconds{30};
@@ -134,17 +134,20 @@ TrustStoreService::TrustStoreService(TrustConfig cfg) : d(std::make_shared<Impl>
     // the same directory, so a list the engine downloaded is read from disk
     // when the service adopts it, not downloaded a second time.
     if (!d->config.cacheDirectory.has_value()) {
+        // mkdtemp: a name nobody can predict or occupy first, created 0700.
+        // Under $TMPDIR when set, else /tmp -- the platform's place for
+        // per-process scratch data. A List of Trusted Lists caches tens of
+        // megabytes there for the service's lifetime; a host that minds
+        // (/tmp in RAM) configures a cacheDirectory.
         std::error_code ec;
-        static std::atomic<unsigned> counter{0};
-        auto dir = std::filesystem::temp_directory_path(ec);
+        const auto base = std::filesystem::temp_directory_path(ec);
         if (!ec) {
-            dir /= "librescrs-trusted-lists-" + std::to_string(::getpid()) + "-" + std::to_string(++counter);
-            std::filesystem::remove_all(dir, ec);
-            if (std::filesystem::create_directory(dir, ec) && !ec) {
-                std::filesystem::permissions(dir, std::filesystem::perms::owner_all,
-                                             std::filesystem::perm_options::replace, ec);
-                d->privateCacheDir = dir;
-                d->config.cacheDirectory = dir;
+            std::string pattern = (base / "librescrs-trusted-lists-XXXXXX").string();
+            std::vector<char> name(pattern.begin(), pattern.end());
+            name.push_back('\0');
+            if (::mkdtemp(name.data()) != nullptr) {
+                d->privateCacheDir = std::filesystem::path(name.data());
+                d->config.cacheDirectory = d->privateCacheDir;
             }
         }
     }
@@ -194,20 +197,20 @@ TrustStoreService::TrustStoreService(TrustConfig cfg) : d(std::make_shared<Impl>
     (void)workerCount;
 }
 
-void TrustStoreService::loadTrustedLists(Sources which, LibreSCRS::CancelToken token) noexcept
+void TrustStoreService::Impl::loadSources(Sources which, LibreSCRS::CancelToken token, bool cacheOnly) noexcept
 {
     try {
-        std::lock_guard lock(d->loadMutex);
-        for (const auto& src : d->config.trustedListSources) {
+        std::lock_guard lock(loadMutex);
+        for (const auto& src : config.trustedListSources) {
             if (!src.eager && which != Sources::All)
                 continue;
-            if (d->loadedSources.contains(src.url))
+            if (loadedSources.contains(src.url))
                 continue; // its anchors are in the store
             if (token.isCancelled())
                 return;
             try {
-                if (d->fetchAndMerge(d->entryFor(src), token))
-                    d->loadedSources.insert(src.url);
+                if (fetchAndMerge(entryFor(src), token, cacheOnly))
+                    loadedSources.insert(src.url);
             } catch (...) {
                 // A list whose fetch throws (a malformed document, an
                 // allocation failure) stays out of the store, as a failed
@@ -218,6 +221,16 @@ void TrustStoreService::loadTrustedLists(Sources which, LibreSCRS::CancelToken t
     } catch (...) {
         // noexcept: a failure to lock or to log leaves the store as it is.
     }
+}
+
+void TrustStoreService::loadTrustedLists(Sources which, LibreSCRS::CancelToken token) noexcept
+{
+    d->loadSources(which, std::move(token), /*cacheOnly=*/false);
+}
+
+void TrustStoreService::adoptCachedTrustedLists(Sources which) noexcept
+{
+    d->loadSources(which, {}, /*cacheOnly=*/true);
 }
 
 TrustStoreService::~TrustStoreService()

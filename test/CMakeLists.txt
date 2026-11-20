@@ -400,11 +400,18 @@ target_link_libraries(TrustStoreServiceTests PRIVATE
     LibreSCRS::Signing
     OpenSSL_Crypto
     SigningTestSupport
+    # A signature through SigningService: the soft-key plugin on a detached
+    # session, and the engine's cache writer to stage what it downloads.
+    LibreSCRS::Plugin
+    LibreSCRS::SmartCard
+    LibreSCRS_SmartCard_TestHelpers
+    LibreSign
 )
 # The service's private state (Trust/internal/TrustStoreServiceImpl.h) for its
 # test hook, and the libresign types it names.
 target_include_directories(TrustStoreServiceTests PRIVATE
-    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
+    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src
+    ${LibreMiddleware_SOURCE_DIR}/test ${LibreMiddleware_SOURCE_DIR}/test/include)
 target_compile_definitions(TrustStoreServiceTests PRIVATE CMAKE_SOURCE_DIR="${LibreMiddleware_SOURCE_DIR}"
     LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(TrustStoreServiceTests)

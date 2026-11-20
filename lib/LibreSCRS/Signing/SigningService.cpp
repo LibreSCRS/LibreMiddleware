@@ -290,13 +290,15 @@ SigningService::Impl::runSignPipeline(const SigningRequest& request, const Auth:
     // The engine loads the Trusted Lists it needs for its own chain and
     // time-stamp checks -- the eager ones in configure(), the deferred ones
     // when a signature level needs them -- into the cache directory it shares
-    // with the trust store service. Once a phase loaded completely, the
-    // service adopts the same lists from that cache and adds their anchors to
-    // the store it owns: one download, a list that failed here is tried again
-    // on a later signature, and Signing never adds an anchor to a store.
+    // with the trust store service. After each phase, whatever its outcome,
+    // the service adopts from that cache -- without downloading -- every list
+    // that verifies and adds its anchors to the store it owns: one download,
+    // one unreachable list of a List of Trusted Lists does not keep the
+    // others out, a list that failed here is tried again on a later
+    // signature, and Signing never adds an anchor to a store.
     service->setTrustedListsLoadedHook([trustService = trustService](bool deferred) {
-        trustService->loadTrustedLists(deferred ? Trust::TrustStoreService::Sources::All
-                                                : Trust::TrustStoreService::Sources::Eager);
+        trustService->adoptCachedTrustedLists(deferred ? Trust::TrustStoreService::Sources::All
+                                                       : Trust::TrustStoreService::Sources::Eager);
     });
     if (!service->configure(libTrust)) {
         return {SigningResult::trustStoreUnavailableDiagnosticOnly(std::string{"libresign rejected TrustConfig"}), {}};

@@ -21,7 +21,12 @@
 #include <LibreSCRS/Trust/TrustStoreService.h>
 
 #include "signing_test_support/mock_trusted_list_server.h"
+#include "soft_key_plugin.h"
 #include "Trust/internal/TrustStoreServiceImpl.h"
+#include <LibreSCRS/Auth/CredentialResult.h>
+#include <LibreSCRS/Signing/SigningRequest.h>
+#include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
+#include <native/tl_cache.h>
 
 #include <gtest/gtest.h>
 
@@ -30,6 +35,7 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -480,6 +486,111 @@ TEST(TrustStoreServiceTest, WithoutACacheDirectoryTheServiceKeepsItsOwn)
 }
 
 // =============================================================================
+TEST(TrustStoreServiceTest, AdoptingFromTheCacheDownloadsNothing)
+{
+    TrustedListRig rig;
+    auto svc = rig.service(/*eager=*/false, rig.cache("cache-only"));
+    ASSERT_NE(svc, nullptr);
+    const auto before = anchorCount(*svc);
+
+    svc->adoptCachedTrustedLists(tt::TrustStoreService::Sources::All);
+    EXPECT_EQ(rig.server.servedCount(), 0) << "a list the cache does not hold is not downloaded";
+    EXPECT_EQ(anchorCount(*svc), before);
+
+    svc->loadTrustedLists(tt::TrustStoreService::Sources::All);
+    EXPECT_EQ(rig.server.servedCount(), 1) << "the source stayed pending";
+    EXPECT_GT(anchorCount(*svc), before);
+}
+
+namespace {
+
+std::vector<std::uint8_t> fixtureBytes(const std::string& name)
+{
+    std::ifstream in(std::string(CMAKE_SOURCE_DIR) + "/test/fixtures/trust/" + name, std::ios::binary);
+    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+// What the signing engine leaves in the cache after a download.
+void putInCache(const std::filesystem::path& dir, const std::string& url, const std::vector<std::uint8_t>& bytes)
+{
+    libresign::TlCache(dir.string()).store(url, bytes, "", "");
+}
+
+// An address nothing listens on: a fetch from it fails at once.
+std::string deadUrl()
+{
+    libresign::test::MockTrustedListServer gone(std::string(CMAKE_SOURCE_DIR) + "/test/fixtures/trust/lotl-tl.xml");
+    return gone.url();
+}
+
+LibreSCRS::Signing::SigningResult signABuffer(LibreSCRS::Signing::SigningService& svc)
+{
+    LibreSCRS::Signing::SigningRequest::Builder b;
+    b.format(LibreSCRS::Signing::SignatureFormat::Cades)
+        .level(LibreSCRS::Signing::SignatureLevel::B_B)
+        .packaging(LibreSCRS::Signing::PackagingMode::Detached);
+    const auto request = std::move(b).buildForBufferSign();
+    auto provider = [](const LibreSCRS::Auth::AuthRequirement&) {
+        std::vector<LibreSCRS::Auth::CredentialEntry> values;
+        values.emplace_back("pin", LibreSCRS::Secure::String{"0000"});
+        return LibreSCRS::Auth::CredentialResult::ok(std::move(values));
+    };
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("trust-reader");
+    auto plugin = std::make_shared<LibreSCRS::TestSupport::SoftKeyPlugin>();
+    const auto certs = plugin->readCertificates(*session);
+    static const std::vector<std::uint8_t> document{'d', 'o', 'c'};
+    return svc.sign(request, std::span<const std::uint8_t>{document}, provider, plugin, session, certs.front(),
+                    std::span<const LibreSCRS::Plugin::CertificateData>{certs});
+}
+
+} // namespace
+
+// Through the signing service: a List of Trusted Lists one of whose lists
+// does not verify. The lists that verify reach the public store from the
+// cache after the signature's Trusted List phase, whatever that phase's
+// outcome, with nothing downloaded; the one that failed stays pending and is
+// taken once a later signature finds it good.
+TEST(TrustStoreServiceTest, ASignatureBringsInTheListsThatVerifiedAndKeepsTheFailedOnePending)
+{
+    TrustedListRig rig;
+    const auto cache = rig.cache("lotl");
+    const std::string root = deadUrl();
+    const std::string goodChild = "https://tl-a.invalid/tl.xml";
+    const std::string badChild = "https://tl-b.invalid/tl.xml";
+
+    tt::TrustConfig cfg;
+    cfg.trustedListSources.push_back({root, /*eager=*/true, /*lotl=*/true});
+    cfg.cacheDirectory = cache;
+    auto created = tt::TrustStoreService::create(std::move(cfg));
+    ASSERT_TRUE(created.has_value());
+    auto service = *created;
+    TrustedListRig::teachTheSigner(*service);
+    // The background fetch at construction finds nothing (the cache is empty,
+    // the address dead); let it finish so the anchors below can only come
+    // from the signature.
+    for (auto& worker : tt::detail::TrustStoreServiceAccess::impl(*service).workers)
+        if (worker.joinable())
+            worker.join();
+    const auto before = anchorCount(*service);
+
+    auto tampered = fixtureBytes("second-ca-tl.xml");
+    const std::string from = "LibreSCRS Test Second TSP";
+    const auto at = std::search(tampered.begin(), tampered.end(), from.begin(), from.end());
+    ASSERT_NE(at, tampered.end());
+    *at = 'X'; // the signature no longer covers the content
+    putInCache(cache, root, fixtureBytes("lotl-tl.xml"));
+    putInCache(cache, goodChild, fixtureBytes("synthetic-tl.xml"));
+    putInCache(cache, badChild, tampered);
+
+    LibreSCRS::Signing::SigningService signing(service, LibreSCRS::Signing::TsaProvider{});
+    (void)signABuffer(signing); // the engine cannot verify a loopback list; its phase still ends
+    EXPECT_EQ(anchorCount(*service), before + 1) << "the list that verified is in the public store";
+
+    putInCache(cache, badChild, fixtureBytes("second-ca-tl.xml"));
+    (void)signABuffer(signing);
+    EXPECT_EQ(anchorCount(*service), before + 2) << "the list that failed was taken again and now counts";
+}
+
 // Compile-time check: SigningService::trustStore() must not exist anymore.
 // =============================================================================
 

@@ -170,11 +170,8 @@ public:
     /// The call blocks until every source it takes has been fetched or has
     /// failed (each download is bounded by a 30 s request timeout); calls
     /// from several threads run one after another.
-    /// @ref Signing::SigningService::sign calls it, with @ref Sources::Eager
-    /// once the signing engine has loaded the eager lists and with
-    /// @ref Sources::All once a signature level made it load the deferred
-    /// ones, so the anchors the engine verified reach this store from the
-    /// copies it just cached.
+    /// A host calls it when it wants the anchors now, at the cost of the
+    /// downloads; @ref adoptCachedTrustedLists takes only what is on disk.
     ///
     /// @param which Which sources to take.
     /// @param token Cancellation: stops the fetch between and inside the
@@ -190,12 +187,40 @@ public:
     /// @since 5.0
     void loadTrustedLists(Sources which, LibreSCRS::CancelToken token = {}) noexcept;
 
+    /// @brief As @ref loadTrustedLists, but from the cache directory alone:
+    ///        nothing is downloaded.
+    ///
+    /// Every list of a source not loaded yet that the cache directory holds,
+    /// within its lifetime, and that verifies has its anchors merged -- for a
+    /// List of Trusted Lists, each list it points to on its own, so one list
+    /// missing from the cache does not keep the others out. A source with a
+    /// list missing or failing stays pending: a later call of either kind
+    /// takes it again. Without a cache directory nothing is adopted.
+    ///
+    /// @ref Signing::SigningService::sign calls it after each phase of the
+    /// signing engine's Trusted List loading -- @ref Sources::Eager after the
+    /// eager lists, @ref Sources::All after a signature level made it load
+    /// the deferred ones -- whatever that phase's outcome, so the anchors of
+    /// every list the engine verified and cached reach this store without a
+    /// second download, while a list that could not be fetched is tried again
+    /// on a later signature.
+    ///
+    /// @param which Which sources to take.
+    /// @par Thread-safety
+    /// Safe to call from several threads; runs one after another with
+    /// @ref loadTrustedLists.
+    /// @since 5.0
+    void adoptCachedTrustedLists(Sources which) noexcept;
+
     /// @brief The configuration in effect: the one the service was
     ///        constructed with, except that without a @c cacheDirectory it
     ///        names the private cache directory the service keeps for its
-    ///        lifetime. Useful for diagnostics and for
-    ///        @ref Signing::SigningService to forward the same config, and so
-    ///        the same cache, to the libresign engine.
+    ///        lifetime (a fresh directory under @c $TMPDIR, else @c /tmp,
+    ///        mode 0700, removed with the service). Reported here so that
+    ///        @ref Signing::SigningService, which forwards this config to the
+    ///        libresign engine, shares that cache and a list is downloaded
+    ///        once. A host that wants the cache elsewhere (a large List of
+    ///        Trusted Lists caches tens of megabytes) configures one.
     /// @par Thread-safety
     /// Reentrant; the returned reference is to immutable post-construction
     /// state.

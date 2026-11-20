@@ -104,6 +104,8 @@ std::expected<ListBytes, std::string> obtainListBytes(const TrustedListEntry& en
     TlCache cache(opts.cacheDirectory);
     if (auto cached = cache.load(entry.url))
         return ListBytes{std::move(cached->data), true};
+    if (opts.cacheOnly)
+        return std::unexpected("TL not in the cache: " + entry.url);
 
     auto staleMeta = cache.loadMeta(entry.url);
     auto fetchResult = TrustedListParser::fetchRawConditional(entry.url, staleMeta ? staleMeta->etag : std::string{},
@@ -206,7 +208,7 @@ FetchResult fetchAndVerifyTrustedList(const TrustedListEntry& entry, FetchOption
 
     bool stale = false;
     auto result = verifyAndParse(entry, bytes->data, candidates, opts, stale);
-    if (result || !stale || !bytes->fromCache)
+    if (result || !stale || !bytes->fromCache || opts.cacheOnly)
         return result;
 
     // The cached copy went stale within the cache's lifetime: the operator

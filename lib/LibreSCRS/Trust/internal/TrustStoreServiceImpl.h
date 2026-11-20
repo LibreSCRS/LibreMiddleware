@@ -73,7 +73,12 @@ struct LIBRESCRS_INTERNAL TrustStoreService::Impl
     ///        points to) and merge the anchors of each list that verifies.
     ///        A list that fails is logged and skipped. True only when every
     ///        list of the walk was merged. Throws what the fetch throws.
-    bool fetchAndMerge(const libresign::TrustedListEntry& entry, LibreSCRS::CancelToken token) const;
+    bool fetchAndMerge(const libresign::TrustedListEntry& entry, LibreSCRS::CancelToken token,
+                       bool cacheOnly = false) const;
+
+    /// loadTrustedLists() and adoptCachedTrustedLists(): every source of
+    /// @p which not loaded yet, from the cache alone when @p cacheOnly.
+    void loadSources(Sources which, LibreSCRS::CancelToken token, bool cacheOnly) noexcept;
 
     /// @brief Records @p url as loaded.
     void markLoaded(const std::string& url);
