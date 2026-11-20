@@ -215,7 +215,8 @@ TEST(PluginSessionPath, PlainProbesWorkAfterATunnelFailed)
         SCOPED_TRACE(atr.empty() ? "no ATR" : "Gemalto ATR");
         WireRig fresh(atr);
         const auto freshCandidates = registry().findAllCandidates(fresh.session->atr(), *fresh.session);
-        ASSERT_FALSE(fresh.plain.empty()) << "the probes send nothing on a fresh session; the comparison proves nothing";
+        ASSERT_FALSE(fresh.plain.empty())
+            << "the probes send nothing on a fresh session; the comparison proves nothing";
 
         WireRig rig(atr);
         LibreSCRS::SmartCard::Testing::installStandInChannel(*rig.session, StandInChannel::FailedSecureMessaging);
@@ -241,14 +242,12 @@ TEST(PluginSessionPath, APlainOperationAfterATunnelFailedReachesTheCard)
         std::function<void(const LibreSCRS::Plugin::CardPlugin&, CardSession&)> run;
     };
     const std::vector<Case> cases{
-        {"rs-health", "readCard",
-         [](const LibreSCRS::Plugin::CardPlugin& p, CardSession& s) { (void)p.readCard(s); }},
+        {"rs-health", "readCard", [](const LibreSCRS::Plugin::CardPlugin& p, CardSession& s) { (void)p.readCard(s); }},
         {"eu-vrc", "readCard", [](const LibreSCRS::Plugin::CardPlugin& p, CardSession& s) { (void)p.readCard(s); }},
         {"rs-eid", "readCard", [](const LibreSCRS::Plugin::CardPlugin& p, CardSession& s) { (void)p.readCard(s); }},
         {"pkcs15", "readCertificates",
          [](const LibreSCRS::Plugin::CardPlugin& p, CardSession& s) { (void)p.readCertificates(s); }},
-        {"pkcs15", "getPINList",
-         [](const LibreSCRS::Plugin::CardPlugin& p, CardSession& s) { (void)p.getPINList(s); }},
+        {"pkcs15", "getPINList", [](const LibreSCRS::Plugin::CardPlugin& p, CardSession& s) { (void)p.getPINList(s); }},
     };
     // The PKCS#15 cases pass with or without the wrapper's discard: that
     // plugin activates its channel in each operation, and the activation
