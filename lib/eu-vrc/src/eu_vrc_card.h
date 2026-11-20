@@ -28,9 +28,9 @@ namespace euvrc {
 class EuVrcCard
 {
 public:
-    static bool probe(LibreSCRS::SmartCard::Internal::PCSCConnection& conn);
+    static bool probe(LibreSCRS::SmartCard::IConnection& conn);
 
-    explicit EuVrcCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn);
+    explicit EuVrcCard(LibreSCRS::SmartCard::IConnection& conn);
     ~EuVrcCard();
 
     EuVrcCard(const EuVrcCard&) = delete;
@@ -39,7 +39,7 @@ public:
     EuVrcData readCard();
 
 private:
-    LibreSCRS::SmartCard::Internal::PCSCConnection* conn = nullptr;
+    LibreSCRS::SmartCard::IConnection* conn = nullptr;
 
     std::vector<uint8_t> readFile(uint8_t fidHi, uint8_t fidLo);
 };

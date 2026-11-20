@@ -5,7 +5,8 @@
 #include "pkcs15_types.h"
 
 #include <apdu.h>
-#include <pcsc_connection.h>
+#include <apdu.h>
+#include <smartcard/i_connection.h>
 
 #include <cstdint>
 #include <vector>
@@ -36,7 +37,7 @@ enum class ProbeResult : std::uint8_t {
 /// Header-inline rather than a compiled TU because the two callers live in
 /// different libraries -- a plugin and the PKCS#11 card -- with no library
 /// either could link for this without acquiring the rest of the other.
-[[nodiscard]] inline ProbeResult probeApplet(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
+[[nodiscard]] inline ProbeResult probeApplet(LibreSCRS::SmartCard::IConnection& conn)
 {
     std::vector<std::uint8_t> aid(kPkcs15Aid.begin(), kPkcs15Aid.end());
     const auto aidResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(aid, 0x0C));

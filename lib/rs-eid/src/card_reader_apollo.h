@@ -14,10 +14,10 @@ namespace eidcard {
 class CardReaderApollo : public CardReaderBase
 {
 public:
-    std::vector<uint8_t> readFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1,
+    std::vector<uint8_t> readFile(LibreSCRS::SmartCard::CardConnection& conn, uint8_t fileId1,
                                   uint8_t fileId2) override;
 
-    std::vector<uint8_t> readFileRaw(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1,
+    std::vector<uint8_t> readFileRaw(LibreSCRS::SmartCard::CardConnection& conn, uint8_t fileId1,
                                      uint8_t fileId2) override;
 };
 

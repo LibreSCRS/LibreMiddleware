@@ -15,8 +15,8 @@
 
 #include <libopensc/opensc.h> // sc_reader_t, sc_context_t, sc_reader_driver
 
-namespace LibreSCRS::SmartCard::Internal {
-class PCSCConnection;
+namespace LibreSCRS::SmartCard {
+class CardConnection;
 }
 
 namespace LibreSCRS::SecureChannel {
@@ -33,7 +33,7 @@ namespace LibreSCRS::OpenSc::Bridge {
 /// never ends a transaction it does not own.
 struct BridgeData
 {
-    LibreSCRS::SmartCard::Internal::PCSCConnection* conn = nullptr;
+    LibreSCRS::SmartCard::CardConnection* conn = nullptr;
     bool ownsTransaction = false;
     /// Borrowed live secure channel. While non-null, the transmit op routes
     /// every sc_apdu through @c channel->transmit (the tunnel branch) instead

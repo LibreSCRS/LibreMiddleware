@@ -14,12 +14,13 @@
 ///        cards that do not require PACE/BAC (contact PKCS#15 and
 ///        equivalent).
 
-#include <LibreSCRS/Export.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 
-namespace LibreSCRS::SmartCard {
-class IConnection;
-} // namespace LibreSCRS::SmartCard
+#include <smartcard/i_connection.h>
+
+#include "apdu.h"
+
+#include <utility>
 
 namespace LibreSCRS::SecureChannel {
 
@@ -34,24 +35,48 @@ namespace LibreSCRS::SecureChannel {
 class PlainChannel final : public ISecureChannel
 {
 public:
-    /// @note The constructor and the destructor are the only exported members:
-    ///       card plugins build a PlainChannel on their stack, so they call
-    ///       exactly these two. The destructor is out of line on purpose -- an
-    ///       inline one writes the vtable pointer from the plugin, and whether
-    ///       it does depends on the optimiser (-O2 did, -O3 did not), which
-    ///       would make the vtable an export some builds need and others not.
-    LIBRESCRS_PUBLIC_API PlainChannel(LibreSCRS::SmartCard::IConnection& connection,
-                                      LibreSCRS::SmartCard::AppletAid currentAppletAid);
+    /// @note Header-only, like @ref ISecureChannel itself: a plain channel
+    ///       holds no secret state, and card plugins build one on their stack.
+    ///       Every image that does so carries its own vtable and typeinfo, so
+    ///       none needs the shared library to export them -- which a sanitizer
+    ///       build (-fsanitize=vptr) would otherwise require of every image
+    ///       that so much as calls a member. Nothing compares the typeinfo
+    ///       across images (no dynamic_cast, typeid or catch on it).
+    PlainChannel(LibreSCRS::SmartCard::IConnection& connection, LibreSCRS::SmartCard::AppletAid currentAppletAid)
+        : connection(connection), appletAid(std::move(currentAppletAid))
+    {}
 
-    LIBRESCRS_PUBLIC_API ~PlainChannel() override;
+    ~PlainChannel() override = default;
 
-    [[nodiscard]] const LibreSCRS::SmartCard::AppletAid& currentApplet() const noexcept override;
-    [[nodiscard]] ChannelState state() const noexcept override;
+    [[nodiscard]] const LibreSCRS::SmartCard::AppletAid& currentApplet() const noexcept override
+    {
+        return appletAid;
+    }
+
+    [[nodiscard]] ChannelState state() const noexcept override
+    {
+        return channelState;
+    }
 
     [[nodiscard]] LibreSCRS::SmartCard::Internal::APDUResponse
-    transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token) override;
+    transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token) override
+    {
+        if (channelState == ChannelState::Closed) {
+            return sentinel(0x6F, 0x00); // channel closed
+        }
+        if (channelState == ChannelState::Failed) {
+            return sentinel(0x6F, 0x02); // channel failed
+        }
+        if (token.isCancellable() && token.isCancelled()) {
+            return sentinel(0x6F, 0x01); // cancelled
+        }
+        return connection.transmit(cmd);
+    }
 
-    void close() override;
+    void close() override
+    {
+        channelState = ChannelState::Closed;
+    }
 
 protected:
     /// @brief No-op: @ref PlainChannel has no SM tunnel and no cross-
@@ -72,6 +97,14 @@ protected:
     }
 
 private:
+    static LibreSCRS::SmartCard::Internal::APDUResponse sentinel(std::uint8_t sw1, std::uint8_t sw2)
+    {
+        LibreSCRS::SmartCard::Internal::APDUResponse response;
+        response.sw1 = sw1;
+        response.sw2 = sw2;
+        return response;
+    }
+
     LibreSCRS::SmartCard::IConnection& connection;
     LibreSCRS::SmartCard::AppletAid appletAid;
     ChannelState channelState = ChannelState::Open;

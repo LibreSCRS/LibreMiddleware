@@ -5,9 +5,12 @@
 /// @brief The arming half of every @ref
 ///        LibreSCRS::SmartCard::Internal::PCSCConnection test seam.
 ///
-/// This translation unit is compiled into the build-tree-only
-/// @ref LibreSCRS_SmartCard_TestHelpers archive — it is never installed and
-/// never linked into any shipped @c libLibreSCRS_*.so. It holds the
+/// This translation unit is compiled into the build-tree-only test copies of
+/// the connection (@c LibreSCRS_SmartCard_RawDiagnostic and its siblings) —
+/// it is never installed and never linked into any shipped
+/// @c libLibreSCRS_*.so. It goes with a copy of the class because its members
+/// are members of the class, whose typeinfo a sanitizer build references from
+/// every one of them and the library keeps hidden. It holds the
 /// definitions of the six members that can ARM a seam:
 ///
 /// - @c setTransmitFilter / @c clearTransmitFilter — the typed-APDU filter,

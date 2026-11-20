@@ -18,7 +18,6 @@
 #include <LibreSCRS_internal/SmartCard/CardSessionImpl.h>
 
 #include "apdu.h"
-#include <pcsc_connection.h>
 
 #include <memory>
 #include <string>
@@ -30,10 +29,10 @@ struct SessionAccess
 {
     static std::shared_ptr<CardSession> detached(std::string readerName)
     {
+        // The private constructor builds the detached connection inside the
+        // shared library: this archive names nothing of the connection's class.
         auto session = std::shared_ptr<CardSession>(new CardSession());
         session->d->readerName = std::move(readerName);
-        session->d->ownedConn = std::make_unique<LibreSCRS::SmartCard::Internal::PCSCConnection>(
-            LibreSCRS::SmartCard::Internal::PCSCConnection::DetachedTag{}, session->d->readerName);
         // atr stays empty — there is no card
         return session;
     }

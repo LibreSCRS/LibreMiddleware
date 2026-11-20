@@ -24,9 +24,7 @@
 
 #include <LibreSCRS/SmartCard/CardSession.h>
 
-namespace LibreSCRS::SmartCard::Internal {
-class PCSCConnection;
-} // namespace LibreSCRS::SmartCard::Internal
+#include <smartcard/card_connection.h>
 
 namespace LibreSCRS::SmartCard::detail {
 
@@ -46,12 +44,17 @@ struct LIBRESCRS_PUBLIC_API PcscBridge
 {
     /// @brief Obtain a mutable reference to the underlying PC/SC connection.
     /// @pre @p session must NOT be in the moved-from state.
-    [[nodiscard]] static LibreSCRS::SmartCard::Internal::PCSCConnection& unwrap(CardSession& session) noexcept;
+    ///
+    /// Typed as the CardConnection interface, not as the connection's class:
+    /// code that sees only the interface neither names the class nor lets the
+    /// optimiser devirtualise a call into one of its (hidden) members, and a
+    /// sanitizer build references no typeinfo the library keeps hidden.
+    [[nodiscard]] static LibreSCRS::SmartCard::CardConnection& unwrap(CardSession& session) noexcept;
 };
 
 /// @brief Convenience: free-function spelling exposed inside @c detail::.
 ///        Equivalent to @ref PcscBridge::unwrap.
-[[nodiscard]] inline LibreSCRS::SmartCard::Internal::PCSCConnection& unwrap(CardSession& session) noexcept
+[[nodiscard]] inline LibreSCRS::SmartCard::CardConnection& unwrap(CardSession& session) noexcept
 {
     return PcscBridge::unwrap(session);
 }

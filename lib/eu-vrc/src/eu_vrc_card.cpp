@@ -8,7 +8,8 @@
 #include <apdu.h>
 #include <ber.h>
 #include <date_format.h>
-#include <pcsc_connection.h>
+#include <apdu.h>
+#include <smartcard/card_connection.h>
 #include <smartcard/chunked_read.h>
 
 #include <cstddef>
@@ -25,7 +26,7 @@ std::string formatVrcDate(const std::string& raw)
     return LibreSCRS::SmartCard::Internal::formatDateYMD(raw);
 }
 
-bool EuVrcCard::probe(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
+bool EuVrcCard::probe(LibreSCRS::SmartCard::IConnection& conn)
 {
     try {
         return euvrc::probe(conn);
@@ -34,7 +35,7 @@ bool EuVrcCard::probe(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
     }
 }
 
-EuVrcCard::EuVrcCard(LibreSCRS::SmartCard::Internal::PCSCConnection& externalConn) : conn(&externalConn)
+EuVrcCard::EuVrcCard(LibreSCRS::SmartCard::IConnection& externalConn) : conn(&externalConn)
 {
     if (!detect(*conn)) {
         throw std::runtime_error("EU VRC card initialization failed");

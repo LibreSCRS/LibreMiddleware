@@ -137,13 +137,13 @@ class SodReader : public eidcard::CardReaderBase
 {
 public:
     explicit SodReader(std::vector<uint8_t> sod) : sod_(std::move(sod)) {}
-    std::vector<uint8_t> readFile(LibreSCRS::SmartCard::Internal::PCSCConnection&, uint8_t h, uint8_t l) override
+    std::vector<uint8_t> readFile(LibreSCRS::SmartCard::CardConnection&, uint8_t h, uint8_t l) override
     {
         return (h == eidcard::protocol::FILE_SOD_FX_H && l == eidcard::protocol::FILE_SOD_FX_L)
                    ? sod_
                    : std::vector<uint8_t>{};
     }
-    std::vector<uint8_t> readFileRaw(LibreSCRS::SmartCard::Internal::PCSCConnection& c, uint8_t h, uint8_t l) override
+    std::vector<uint8_t> readFileRaw(LibreSCRS::SmartCard::CardConnection& c, uint8_t h, uint8_t l) override
     {
         return readFile(c, h, l);
     }
@@ -215,12 +215,12 @@ public:
     {
         files_[key(h, l)] = std::move(v);
     }
-    std::vector<uint8_t> readFile(LibreSCRS::SmartCard::Internal::PCSCConnection&, uint8_t h, uint8_t l) override
+    std::vector<uint8_t> readFile(LibreSCRS::SmartCard::CardConnection&, uint8_t h, uint8_t l) override
     {
         auto it = files_.find(key(h, l));
         return it != files_.end() ? it->second : std::vector<uint8_t>{};
     }
-    std::vector<uint8_t> readFileRaw(LibreSCRS::SmartCard::Internal::PCSCConnection& c, uint8_t h, uint8_t l) override
+    std::vector<uint8_t> readFileRaw(LibreSCRS::SmartCard::CardConnection& c, uint8_t h, uint8_t l) override
     {
         return readFile(c, h, l);
     }

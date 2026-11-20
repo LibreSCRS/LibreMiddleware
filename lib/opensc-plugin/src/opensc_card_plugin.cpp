@@ -16,7 +16,8 @@
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <LibreSCRS_internal/SmartCard/ActiveChannelHolderInternal.h>
 #include <apdu.h>
-#include <pcsc_connection.h>
+#include <apdu.h>
+#include <smartcard/card_connection.h>
 
 #include <libopensc/opensc.h>
 #include <libopensc/pkcs15.h>
@@ -848,20 +849,20 @@ public:
         // by every session it claims: a probe or an operation never creates
         // or releases one.
         try {
-            auto& conn = LibreSCRS::SmartCard::detail::unwrap(cardSession);
+            LibreSCRS::SmartCard::CardConnection& conn = LibreSCRS::SmartCard::detail::unwrap(cardSession);
             sc_context_t* ctx = openscContext.context();
             if (!ctx)
                 return false;
             auto session = std::make_shared<OpenSCSession>();
-            session->readerName = conn.readerName();
+            session->readerName = cardSession.readerName();
             session->context = openscContext.lease();
 
-            // Bind libopensc to the agent's single LM PCSCConnection via the
+            // Bind libopensc to the session's one card connection via the
             // bridge reader (ATR comes from the session — no extra
             // SCardStatus).
             session->bridge = std::make_unique<LibreSCRS::OpenSc::Bridge::OpenScBridge>();
             session->bridge->data.conn = &conn;
-            session->bridge->readerName = conn.readerName();
+            session->bridge->readerName = cardSession.readerName();
             LibreSCRS::OpenSc::Bridge::initBridgeReader(ctx, *session->bridge, atr);
 
             const std::vector<std::uint8_t> aidBytes(pkcs15::kPkcs15Aid.begin(), pkcs15::kPkcs15Aid.end());

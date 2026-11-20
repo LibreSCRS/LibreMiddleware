@@ -533,7 +533,8 @@ private:
     friend struct Testing::SessionAccess;
     friend struct Internal::ActiveChannelAccessor;
 
-    /// @brief Private; used by @ref Testing::makeDetachedCardSession.
+    /// @brief Private; a session over a detached connection (no handle, no
+    ///        card), used by @ref Testing::makeDetachedCardSession.
     CardSession();
     /// @brief Private constructor used by @ref open and the detail factories.
     ///        Not part of the public surface.

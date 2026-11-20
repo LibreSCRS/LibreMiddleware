@@ -23,6 +23,7 @@
 #include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 #include <LibreSCRS/SmartCard/detail/ChannelInjection.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
+#include <pcsc_raw_diagnostic.h>
 #include <LibreSCRS_internal/SecureChannel/BacChannel.h>
 #include <LibreSCRS_internal/SecureChannel/ChipAuthChannel.h>
 #include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
@@ -105,7 +106,7 @@ std::vector<std::uint8_t> vec(std::uint8_t v, std::size_t n)
 // matching the channel installed on the session, so wrapped SELECTs succeed.
 void wireOracle(CardSession& session, std::shared_ptr<AesSmCardOracle> oracle)
 {
-    auto& conn = LibreSCRS::SmartCard::detail::unwrap(session);
+    auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(session);
     conn.setDetachedRawResponder([oracle](std::span<const std::uint8_t> wrapped) { return oracle->respond(wrapped); });
 }
 
@@ -172,7 +173,7 @@ CaRig makeCaRig(const EcCardKey& key, bool inTunnel, bool takeHolder = true)
     CaRig rig;
     rig.session = makeDetachedCardSession(inTunnel ? "reader-ca-tunnel" : "reader-ca-plain");
     rig.card = std::make_shared<CaCardOnTheWire>(key);
-    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*rig.session);
+    auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(*rig.session);
     conn.setDetachedRawResponder(
         [card = rig.card](std::span<const std::uint8_t> frame) { return card->respond(frame); });
     if (inTunnel) {
@@ -223,7 +224,7 @@ TEST(ChipAuthSessionTest, APlainUpgradeRecordsTheProtocolAndClosesThePlainChanne
     const auto key = EcCardKey::generate();
     auto rig = makeCaRig(key, /*inTunnel=*/false, /*takeHolder=*/false);
     auto closed = std::make_shared<bool>(false);
-    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*rig.session);
+    auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(*rig.session);
     ChannelInjector::installForTesting(*rig.session,
                                        std::make_unique<CloseRecordingPlainChannel>(conn, aidA(), closed));
     auto holder = rig.session->activateChannelFor(aidA(), LibreSCRS::CancelToken{});
@@ -624,7 +625,7 @@ TEST(ChipAuthSessionTest, AProofAnsweredWithAnErrorStatusUnderTheNewKeysPasses)
 TEST(ChipAuthSessionTest, ChipAuthRequestReusesSameAppletChannelWithoutWire)
 {
     auto session = makeDetachedCardSession("reader-case1");
-    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*session);
+    auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(*session);
 
     auto ca = std::make_unique<ChipAuthChannel>(conn, aidA(), aesKeys());
     ChannelInjector::installForTesting(*session, std::move(ca), SmProtocolRequest{ChipAuthRequest{}});
@@ -637,7 +638,7 @@ TEST(ChipAuthSessionTest, ChipAuthRequestReusesSameAppletChannelWithoutWire)
 TEST(ChipAuthSessionTest, ChipAuthRequestReusesAcrossAppletsViaWrappedSelect)
 {
     auto session = makeDetachedCardSession("reader-case2");
-    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*session);
+    auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(*session);
     wireOracle(*session, matchingOracle());
 
     auto ca = std::make_unique<ChipAuthChannel>(conn, aidA(), aesKeys());
@@ -661,7 +662,7 @@ TEST(ChipAuthSessionTest, ChipAuthRequestWithNoChannelRefusesWithoutPrompting)
 TEST(ChipAuthSessionTest, ChipAuthRequestAgainstPaceChannelRefuses)
 {
     auto session = makeDetachedCardSession("reader-mismatch");
-    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*session);
+    auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(*session);
 
     // A live BAC channel does not match a ChipAuthRequest.
     SessionKeys bacKeys = aesKeys();
@@ -707,7 +708,7 @@ TEST(ChipAuthSessionTest, LiveStandInChannelIsNeverReusedForAProtocol)
 TEST(ChipAuthSessionTest, ActivateChannelForReusesChipAuthTunnelAcrossApplets)
 {
     auto session = makeDetachedCardSession("reader-reuse");
-    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*session);
+    auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(*session);
     wireOracle(*session, matchingOracle());
 
     auto ca = std::make_unique<ChipAuthChannel>(conn, aidA(), aesKeys());
@@ -727,7 +728,7 @@ TEST(ChipAuthSessionTest, ActivateChannelForReusesChipAuthTunnelAcrossApplets)
 TEST(ChipAuthSessionTest, ActivateChannelForStillRefusesNonReusableBacTunnel)
 {
     auto session = makeDetachedCardSession("reader-bac");
-    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*session);
+    auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(*session);
 
     auto bac = std::make_unique<BacChannel>(conn, aidA(),
                                             SessionKeys{LibreSCRS::Secure::Buffer{std::vector<std::uint8_t>(16, 0x01)},
@@ -746,7 +747,7 @@ TEST(ChipAuthSessionTest, ActivateChannelForStillRefusesNonReusableBacTunnel)
 TEST(ChipAuthSessionTest, ActivateChannelForReuseWrappedSelectFailureKeepsTunnel)
 {
     auto session = makeDetachedCardSession("reader-reuse-fail");
-    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*session);
+    auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(*session);
     // Oracle with the WRONG mac key: the wrapped SELECT's response MAC will not
     // verify, so the SELECT "fails" — the tunnel must NOT be torn down.
     conn.setDetachedRawResponder(

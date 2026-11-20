@@ -255,14 +255,19 @@ jobs:
         # the pull request's base, the push's previous tip, or (new branch)
         # the merge base with main. The public surface is read from clang's AST
         # of the installed headers, so CXX is the clang the layout snapshot
-        # below uses.
+        # below uses. --sanitizer-flavour judges the shipped images also as
+        # the build-asan job builds them (its compiler flags, its -O level):
+        # -fsanitize=vptr makes a member access reference the class's
+        # typeinfo, which the plain build never does, so a typeinfo hidden here
+        # can still be imported there.
         run: |
           base="$PR_BASE"
           [ -n "$base" ] || base="$PUSH_BEFORE"
           if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
             base="$(git merge-base HEAD origin/main)"
           fi
-          ./ci/scripts/abi-snapshot.sh --check --allowlist-base "$base" build
+          ./ci/scripts/abi-snapshot.sh --check --allowlist-base "$base" \
+            --sanitizer-flavour "-fsanitize=address,undefined -O2" build
         env:
           CXX: clang++-21
           PR_BASE: ${{ github.event.pull_request.base.sha }}
@@ -416,6 +421,8 @@ jobs:
           # WERROR off on purpose: this leg measures runtime behaviour, not
           # diagnostics, and the instrumented build raises warnings the plain
           # build does not. The warning floor is judged by its own job.
+          # The export gate of the native leg rebuilds the shipped images with
+          # these flags (--sanitizer-flavour): change the two together.
           cmake -B build-asan -G Ninja \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DLIBRESCRS_WERROR=OFF \

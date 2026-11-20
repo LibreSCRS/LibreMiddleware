@@ -12,8 +12,8 @@
 #include <vector>
 #include "eidtypes.h"
 
-namespace LibreSCRS::SmartCard::Internal {
-class PCSCConnection;
+namespace LibreSCRS::SmartCard {
+class CardConnection;
 }
 
 namespace eidcard {
@@ -25,7 +25,7 @@ class CardVerifier;
 class EIdCard
 {
 public:
-    explicit EIdCard(LibreSCRS::SmartCard::Internal::PCSCConnection& conn);
+    explicit EIdCard(LibreSCRS::SmartCard::CardConnection& conn);
     ~EIdCard();
 
     EIdCard(const EIdCard&) = delete;
@@ -46,7 +46,7 @@ public:
     VerificationResult verifyVariableData();
 
 private:
-    LibreSCRS::SmartCard::Internal::PCSCConnection* conn = nullptr; // borrowed: the single card session's connection
+    LibreSCRS::SmartCard::CardConnection* conn = nullptr; // borrowed: the single card session's connection
     std::unique_ptr<CardReaderBase> cardReader;
     std::unique_ptr<CardVerifier> verifier;
     CardType cardType = CardType::Unknown;

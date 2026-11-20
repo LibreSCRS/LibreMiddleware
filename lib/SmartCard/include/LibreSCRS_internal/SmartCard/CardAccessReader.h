@@ -41,7 +41,7 @@
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 
 #include <apdu.h>
-#include <pcsc_connection.h>
+#include <smartcard/i_connection.h>
 
 #include <cstdint>
 #include <utility>
@@ -74,8 +74,9 @@ namespace detail {
 /// SM-aware transmit primitive for the reader: dispatch through @p activeChannel
 /// when it is open (the PACE SM tunnel is session-scoped, so MF/EF.CardAccess
 /// stays reachable over it), otherwise plain through @p conn.
-inline APDUResponse cardAccessDispatch(LibreSCRS::SecureChannel::ISecureChannel* activeChannel, PCSCConnection& conn,
-                                       const APDUCommand& cmd, LibreSCRS::CancelToken token)
+inline APDUResponse cardAccessDispatch(LibreSCRS::SecureChannel::ISecureChannel* activeChannel,
+                                       LibreSCRS::SmartCard::IConnection& conn, const APDUCommand& cmd,
+                                       LibreSCRS::CancelToken token)
 {
     if (activeChannel != nullptr && activeChannel->state() == LibreSCRS::SecureChannel::ChannelState::Open)
         return activeChannel->transmit(cmd, std::move(token));
@@ -91,7 +92,7 @@ inline APDUResponse cardAccessDispatch(LibreSCRS::SecureChannel::ISecureChannel*
 /// result with every flag false (an Unknown verdict downstream). Leaves the
 /// MF selected — every caller re-SELECTs its DF/AID afterwards.
 [[nodiscard]] inline CardAccessReadResult
-readCardAccessDetailed(LibreSCRS::SecureChannel::ISecureChannel* activeChannel, PCSCConnection& conn,
+readCardAccessDetailed(LibreSCRS::SecureChannel::ISecureChannel* activeChannel, LibreSCRS::SmartCard::IConnection& conn,
                        LibreSCRS::CancelToken token) noexcept
 {
     CardAccessReadResult result;

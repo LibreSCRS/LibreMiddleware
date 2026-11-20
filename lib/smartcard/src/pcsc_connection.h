@@ -33,7 +33,7 @@
 
 #include "apdu.h"
 #include <LibreSCRS/Export.h>
-#include <smartcard/i_connection.h>
+#include <smartcard/card_connection.h>
 
 namespace LibreSCRS::SmartCard {
 // The single sanctioned opener of a real PC/SC connection (CardSession::open).
@@ -44,8 +44,9 @@ class CardSession;
 
 namespace LibreSCRS::SmartCard::Internal {
 
-// Exported (its typeinfo and vtable): the exported members of PCSCConnection
-// below throw it out of libLibreSCRS_SmartCard, and a catch by this type in
+// Exported (its typeinfo and vtable): the connection throws it, and it leaves
+// libLibreSCRS_SmartCard through the CardConnection calls a card plugin makes
+// and through the exported CardSession members; a catch by this type in
 // another image -- a test, a probe -- matches only the one typeinfo object
 // that libc++ on x86_64 compares by address.
 class LIBRESCRS_PUBLIC_API PCSCError : public std::runtime_error
@@ -61,12 +62,14 @@ private:
     LONG errorCode;
 };
 
-// Hidden except for the members a shipped image calls: the card plugins
-// (transactions, the ATR, reconnect, the raw transmit of the OpenSC bridge)
-// and the installed test archive (the detached constructor). Measured under
-// -O3 and -O2: the same set. Probes, tools and tests that need the rest
-// compile the connection themselves (LibreSCRS_SmartCard_RawDiagnostic).
-class PCSCConnection : public IConnection
+// Hidden, every member and its typeinfo. Shipped images reach a connection
+// only through CardConnection (card plugins: transmit, transactions, the ATR,
+// reconnect) or not at all (the installed test archive, whose detached
+// sessions CardSession builds), so no image needs any of it -- in a plain
+// build or in a sanitizer build, where -fsanitize=vptr makes every member call
+// through this class reference its typeinfo. Probes, tools and tests that
+// name the class compile it themselves (LibreSCRS_SmartCard_RawDiagnostic).
+class PCSCConnection : public CardConnection
 {
 public:
     /// Tag type used to construct a "detached" PCSCConnection that performs
@@ -78,7 +81,7 @@ public:
     /// to a card, so it is outside the one-session-per-reader invariant.
     struct DetachedTag
     {};
-    LIBRESCRS_PUBLIC_API PCSCConnection(DetachedTag, const std::string& readerName);
+    PCSCConnection(DetachedTag, const std::string& readerName);
 
     ~PCSCConnection();
 
@@ -89,13 +92,13 @@ public:
 
     // Every setter below that ARMS a seam -- setTransmitFilter,
     // clearTransmitFilter, setDetachedRawResponder, setDetachedAtr -- is
-    // DEFINED ONLY in the build-tree-only LibreSCRS_SmartCard_TestHelpers
-    // archive (lib/LibreSCRS/SmartCard/test_helpers/
-    // pcsc_connection_test_helpers.cpp), never in pcsc_connection.cpp, so no
-    // shipped LibreSCRS_*.so exports a way to arm one -- see the note at the
-    // former definition site for why a visibility attribute would not have
-    // been enough. A target that arms a seam links that archive alongside
-    // SmartCard_Impl (the build-tree card_mapper tool does, for its
+    // DEFINED ONLY in the build-tree-only test copies of this class
+    // (LibreSCRS_SmartCard_RawDiagnostic and its siblings, from
+    // lib/LibreSCRS/SmartCard/test_helpers/pcsc_connection_test_helpers.cpp),
+    // never in pcsc_connection.cpp, so no shipped LibreSCRS_*.so exports a way
+    // to arm one -- see the note at the former definition site for why a
+    // visibility attribute would not have been enough. A target that arms a
+    // seam links such a copy (the build-tree card_mapper tool does, for its
     // wire-logging filter). The members written here and the branches that
     // read them stay in the production class, so the class layout is
     // identical either way.
@@ -157,13 +160,13 @@ public:
 
     // Low-level transmit that bypasses the TransmitFilter.
     // Used by SM layer to send already-wrapped APDUs without recursive filtering.
-    LIBRESCRS_PUBLIC_API APDUResponse transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen);
+    APDUResponse transmitRaw(const uint8_t* cmdBytes, DWORD cmdLen);
     APDUResponse transmitRaw(const APDUCommand& cmd);
 
     // IConnection override — forwards to the byte-pointer transmitRaw above.
     APDUResponse transmitRaw(std::span<const std::uint8_t> cmdBytes) override;
 
-    LIBRESCRS_PUBLIC_API void reconnect(); // prefers T=1, falls back to T=0
+    void reconnect() override; // prefers T=1, falls back to T=0
 
     // SCardReconnect with SCARD_RESET_CARD: a cold restart of the card
     // session. Some platforms answer 6A86 to every SELECT once a non-file-
@@ -172,7 +175,7 @@ public:
     // diagnostic tools that own the bench — production code keeps using
     // reconnect() (SCARD_LEAVE_CARD).
     void reconnectWithReset();
-    LIBRESCRS_PUBLIC_API std::vector<uint8_t> getATR() const;
+    std::vector<uint8_t> getATR() const override;
     const std::string& readerName() const
     {
         return storedReaderName;
@@ -182,12 +185,11 @@ public:
     // While a transaction is held, other connections' SCardTransmit calls block.
     // endTransaction() never throws; it is safe to call even after reconnect().
     //
-    // These primitives are public for backwards compatibility but new call
-    // sites SHOULD use the RAII CardTransaction wrapper below — it preserves
-    // pairing and feeds the `callerHoldsTransaction` flag consulted by
-    // higher-level holders.
-    LIBRESCRS_PUBLIC_API void beginTransaction();
-    LIBRESCRS_PUBLIC_API void endTransaction() noexcept;
+    // beginTransaction() records the transaction as held once it is taken,
+    // endTransaction() clears the record before releasing it. Call sites use
+    // the RAII CardTransaction wrapper (smartcard/card_connection.h).
+    void beginTransaction() override;
+    void endTransaction() noexcept override;
 
     /// @brief True iff at least one live `CardTransaction` (or a balanced
     ///        beginTransaction/endTransaction pair) currently holds an
@@ -195,7 +197,7 @@ public:
     ///        owners (e.g. `ActiveChannelHolder`) consult this to confirm
     ///        their cross-process atomicity invariant before issuing the
     ///        first wrapped APDU.
-    [[nodiscard]] bool isTransactionHeld() const noexcept
+    [[nodiscard]] bool isTransactionHeld() const noexcept override
     {
         return callerHoldsTransaction;
     }
@@ -247,76 +249,8 @@ private:
     // where the production state lives.
     LONG detachedTransactionRv = SCARD_S_SUCCESS;
     std::function<void()> detachedReleaseObserver;
-    friend class CardTransaction;
     friend class ::LibreSCRS::SmartCard::CardSession;
     friend std::unique_ptr<PCSCConnection> openRawDiagnostic(const std::string& readerName);
-};
-
-// RAII wrapper: begins a PC/SC transaction on construction, ends it on destruction.
-// Prevents APDU interleaving when multiple processes share the same card
-// (e.g., LibreCelik + Firefox PKCS#11 both using SCARD_SHARE_SHARED).
-//
-// Move-only with explicit release() — enables transferring transaction
-// ownership into longer-lived holders (e.g. ActiveChannelHolder) while
-// preserving full RAII unwind on error paths. After release(), the
-// transaction is no longer ended by this object's destructor; the caller
-// guarantees some other live owner will end it eventually.
-class CardTransaction
-{
-public:
-    explicit CardTransaction(PCSCConnection& c) : conn(&c)
-    {
-        conn->beginTransaction();
-        conn->callerHoldsTransaction = true;
-    }
-    ~CardTransaction()
-    {
-        if (conn) {
-            conn->callerHoldsTransaction = false;
-            conn->endTransaction();
-        }
-    }
-
-    CardTransaction(const CardTransaction&) = delete;
-    CardTransaction& operator=(const CardTransaction&) = delete;
-
-    CardTransaction(CardTransaction&& other) noexcept : conn(other.conn)
-    {
-        other.conn = nullptr;
-    }
-
-    CardTransaction& operator=(CardTransaction&& other) noexcept
-    {
-        if (this != &other) {
-            if (conn) {
-                conn->callerHoldsTransaction = false;
-                conn->endTransaction();
-            }
-            conn = other.conn;
-            other.conn = nullptr;
-        }
-        return *this;
-    }
-
-    /// @brief Release ownership without ending the transaction. After this
-    ///        call, the destructor is a no-op. The transaction remains
-    ///        live on the underlying PCSCConnection; the caller assumes
-    ///        responsibility for ending it through some other live owner
-    ///        (typically a moved-to CardTransaction held by
-    ///        ActiveChannelHolder, whose own destructor ends it).
-    void release() noexcept
-    {
-        conn = nullptr;
-    }
-
-    /// @brief True while this object still owns the transaction.
-    [[nodiscard]] bool owns() const noexcept
-    {
-        return conn != nullptr;
-    }
-
-private:
-    PCSCConnection* conn;
 };
 
 } // namespace LibreSCRS::SmartCard::Internal

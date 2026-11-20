@@ -132,6 +132,7 @@ TEST(CardSession_4_1_API, ActiveChannelHolderIsMoveOnly)
 #include <LibreSCRS/Auth/CredentialResult.h>
 #include <LibreSCRS/Auth/ErrorKeys.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
+#include <pcsc_raw_diagnostic.h>
 
 #include "apdu.h"
 #include <pcsc_connection.h>
@@ -214,7 +215,7 @@ TEST(CardSessionPacePin, WrongPinIsTriedOnOneOidOnly)
     int mseCount = 0;
     int mseAtSecondPrompt = -1;
     std::uint16_t selected = 0;
-    LibreSCRS::SmartCard::detail::unwrap(*session).setTransmitFilter([&](const APDUCommand& cmd) {
+    LibreSCRS::SmartCard::Internal::connectionOf(*session).setTransmitFilter([&](const APDUCommand& cmd) {
         if (cmd.ins == 0xA4 && cmd.p1 == 0x04)
             return APDUResponse{{}, 0x90, 0x00};
         if (cmd.ins == 0xA4 && cmd.p1 == 0x00 && cmd.data.size() == 2) {
@@ -303,7 +304,7 @@ std::expected<LibreSCRS::SmartCard::ActiveChannelHolder, LibreSCRS::SecureChanne
 activateOnce(const std::shared_ptr<CardSession>& session, TwoOidPaceCard& card, LibreSCRS::Auth::PaceSecretKind kind,
              const char* id, int& prompts)
 {
-    LibreSCRS::SmartCard::detail::unwrap(*session).setTransmitFilter(
+    LibreSCRS::SmartCard::Internal::connectionOf(*session).setTransmitFilter(
         [&card](const APDUCommand& cmd) { return card(cmd); });
     session->setCredentialProvider([&card, &prompts, id](const LibreSCRS::Auth::AuthRequirement&) {
         if (++prompts > 1) {
@@ -377,7 +378,7 @@ TEST(CardSessionPaceOid, ACardRefusingEveryOidItListsIsAProtocolFailure)
 TEST(CardSessionPaceCapabilityHoist, PaceUnsupportedSurfacesBeforeAnyCredentialPrompt)
 {
     auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
-    LibreSCRS::SmartCard::detail::unwrap(*session).setTransmitFilter(pacelessCardFilter);
+    LibreSCRS::SmartCard::Internal::connectionOf(*session).setTransmitFilter(pacelessCardFilter);
 
     int providerInvocations = 0;
     session->setCredentialProvider([&providerInvocations](const LibreSCRS::Auth::AuthRequirement&) {
@@ -404,7 +405,7 @@ TEST(CardSessionPaceCapabilityHoist, BacBranchStillPromptsBeforeEstablish)
     // PACE-less filter still prompts exactly once — proving the `if (!isBac)`
     // gate did not short-circuit the BAC leg.
     auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
-    LibreSCRS::SmartCard::detail::unwrap(*session).setTransmitFilter(pacelessCardFilter);
+    LibreSCRS::SmartCard::Internal::connectionOf(*session).setTransmitFilter(pacelessCardFilter);
 
     int providerInvocations = 0;
     session->setCredentialProvider([&providerInvocations](const LibreSCRS::Auth::AuthRequirement&) {
@@ -445,7 +446,7 @@ TEST(CardSessionRejectedRetryReason, RetryPromptAfterWrongBacSecretCarriesReject
 {
     auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
     ASSERT_NE(session, nullptr);
-    LibreSCRS::SmartCard::detail::unwrap(*session).setTransmitFilter(bacWrongSecretFilter);
+    LibreSCRS::SmartCard::Internal::connectionOf(*session).setTransmitFilter(bacWrongSecretFilter);
 
     std::vector<PromptRecord> prompts;
     session->setCredentialProvider([&prompts](const LibreSCRS::Auth::AuthRequirement& req) {
@@ -481,7 +482,7 @@ TEST(CardSessionRejectedRetryReason, FirstPromptCarriesNoRejectedReason)
     {
         auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
         ASSERT_NE(session, nullptr);
-        LibreSCRS::SmartCard::detail::unwrap(*session).setTransmitFilter(pacelessCardFilter);
+        LibreSCRS::SmartCard::Internal::connectionOf(*session).setTransmitFilter(pacelessCardFilter);
 
         std::optional<PromptRecord> first;
         session->setCredentialProvider([&first](const LibreSCRS::Auth::AuthRequirement& req) {
@@ -509,7 +510,7 @@ TEST(CardSessionRejectedRetryReason, FirstPromptCarriesNoRejectedReason)
     {
         auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contactless Reader");
         ASSERT_NE(session, nullptr);
-        LibreSCRS::SmartCard::detail::unwrap(*session).setTransmitFilter(softFailProbeFilter);
+        LibreSCRS::SmartCard::Internal::connectionOf(*session).setTransmitFilter(softFailProbeFilter);
 
         std::optional<PromptRecord> first;
         session->setCredentialProvider([&first](const LibreSCRS::Auth::AuthRequirement& req) {

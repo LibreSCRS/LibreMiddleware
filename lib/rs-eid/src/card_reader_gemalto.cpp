@@ -4,13 +4,14 @@
 #include "card_reader_gemalto.h"
 #include "card_protocol.h"
 #include "apdu.h"
-#include <pcsc_connection.h>
+#include <apdu.h>
+#include <smartcard/card_connection.h>
 #include <smartcard/chunked_read.h>
 #include <stdexcept>
 
 namespace eidcard {
 
-CardType CardReaderGemalto::selectApplication(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
+CardType CardReaderGemalto::selectApplication(LibreSCRS::SmartCard::CardConnection& conn)
 {
     // Try SERID (citizen ID) first
     auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(protocol::AID_SERID));
@@ -37,7 +38,7 @@ namespace {
 
 // SELECT file and read its 4-byte header.
 // On failure, retries with application re-selection and reconnect.
-LibreSCRS::SmartCard::Internal::APDUResponse selectAndReadHeader(LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
+LibreSCRS::SmartCard::Internal::APDUResponse selectAndReadHeader(LibreSCRS::SmartCard::CardConnection& conn,
                                                                  uint8_t fileId1, uint8_t fileId2)
 {
     auto selectResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByPath(fileId1, fileId2, 4));
@@ -71,7 +72,7 @@ LibreSCRS::SmartCard::Internal::APDUResponse selectAndReadHeader(LibreSCRS::Smar
 }
 
 // READ BINARY with retry: re-select app + file, then reconnect + re-select.
-LibreSCRS::SmartCard::Internal::APDUResponse readBinaryWithRetry(LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
+LibreSCRS::SmartCard::Internal::APDUResponse readBinaryWithRetry(LibreSCRS::SmartCard::CardConnection& conn,
                                                                  uint16_t offset, uint8_t length, uint8_t fileId1,
                                                                  uint8_t fileId2)
 {
@@ -96,8 +97,8 @@ LibreSCRS::SmartCard::Internal::APDUResponse readBinaryWithRetry(LibreSCRS::Smar
 
 // Shared Gemalto file read: 4-byte header, LE u16 content length at offset 2,
 // 64 KB sanity cap, per-chunk re-select retry policy.
-std::vector<uint8_t> readGemaltoFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1,
-                                     uint8_t fileId2, bool includeHeader)
+std::vector<uint8_t> readGemaltoFile(LibreSCRS::SmartCard::CardConnection& conn, uint8_t fileId1, uint8_t fileId2,
+                                     bool includeHeader)
 {
     auto headerResp = selectAndReadHeader(conn, fileId1, fileId2);
 
@@ -119,14 +120,14 @@ std::vector<uint8_t> readGemaltoFile(LibreSCRS::SmartCard::Internal::PCSCConnect
 
 } // namespace
 
-std::vector<uint8_t> CardReaderGemalto::readFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1,
+std::vector<uint8_t> CardReaderGemalto::readFile(LibreSCRS::SmartCard::CardConnection& conn, uint8_t fileId1,
                                                  uint8_t fileId2)
 {
     return readGemaltoFile(conn, fileId1, fileId2, /*includeHeader=*/false);
 }
 
-std::vector<uint8_t> CardReaderGemalto::readFileRaw(LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
-                                                    uint8_t fileId1, uint8_t fileId2)
+std::vector<uint8_t> CardReaderGemalto::readFileRaw(LibreSCRS::SmartCard::CardConnection& conn, uint8_t fileId1,
+                                                    uint8_t fileId2)
 {
     return readGemaltoFile(conn, fileId1, fileId2, /*includeHeader=*/true);
 }

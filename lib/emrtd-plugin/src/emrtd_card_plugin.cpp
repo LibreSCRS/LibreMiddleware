@@ -33,7 +33,8 @@
 #include <emrtd_types.h>
 #include <pace.h>
 #include <passive_auth.h>
-#include <pcsc_connection.h>
+#include <apdu.h>
+#include <smartcard/card_connection.h>
 #include <smartcard/secure_buffer.h>
 
 #include <algorithm>
@@ -140,7 +141,7 @@ struct CardAccessProbe
 //             6285 termination warning); empty data; any throw. Fails closed
 //             to PACE-CAN downstream.
 // The MF-scoped reader leaves the MF selected; the caller re-SELECTs the AID.
-CardAccessProbe probeCardAccess(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
+CardAccessProbe probeCardAccess(LibreSCRS::SmartCard::IConnection& conn)
 {
     CardAccessProbe probe;
     // No SM tunnel is live pre-auth, so the read is plain (activeChannel = nullptr).
@@ -184,7 +185,7 @@ public:
                              LibreSCRS::SmartCard::CardSession& session) const override
     {
         try {
-            auto& conn = LibreSCRS::SmartCard::detail::unwrap(session);
+            LibreSCRS::SmartCard::CardConnection& conn = LibreSCRS::SmartCard::detail::unwrap(session);
             const auto key = makeSessionKey(session);
             {
                 // New card insert on this reader: drop the state of EVERY
@@ -458,7 +459,7 @@ private:
     LibreSCRS::Plugin::CardData readCardImpl(LibreSCRS::SmartCard::CardSession& cardSession,
                                              GroupCallback onGroup) const
     {
-        auto& conn = LibreSCRS::SmartCard::detail::unwrap(cardSession);
+        LibreSCRS::SmartCard::CardConnection& conn = LibreSCRS::SmartCard::detail::unwrap(cardSession);
         LibreSCRS::Plugin::CardData data;
         data.cardType = "emrtd";
 

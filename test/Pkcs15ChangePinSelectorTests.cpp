@@ -25,6 +25,7 @@
 #include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 #include <LibreSCRS/SmartCard/detail/ChannelInjection.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
+#include <pcsc_raw_diagnostic.h>
 #include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
 
 #include "ScriptedPkcs15Card.h"
@@ -108,7 +109,7 @@ FakeCardRig makeRigWithAodf(const char* readerName, std::vector<std::uint8_t> ao
     rig.card->files = {
         {0x5031, odfPointingAtAodf()}, {0x5032, tokenInfoWithLabel("PKI Token")}, {0x4408, std::move(aodf)}};
 
-    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*rig.session);
+    auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(*rig.session);
     conn.setTransmitFilter([card = rig.card](const APDUCommand& cmd) { return (*card)(cmd); });
 
     // Pre-install a PlainChannel bound to the PKCS#15 AID so the plugin's

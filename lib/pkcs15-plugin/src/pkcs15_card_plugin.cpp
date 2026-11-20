@@ -26,7 +26,8 @@
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
 #include <apdu.h>
-#include <pcsc_connection.h>
+#include <apdu.h>
+#include <smartcard/card_connection.h>
 
 #include <algorithm>
 #include <array>
@@ -351,7 +352,7 @@ public:
                                                 swBuf);
                 return false;
             }
-            auto& conn = LibreSCRS::SmartCard::detail::unwrap(session);
+            LibreSCRS::SmartCard::CardConnection& conn = LibreSCRS::SmartCard::detail::unwrap(session);
             // Cheap, no-SM probe to decide between PlainChannel (contact
             // PKCS#15 families) and PaceChannel (PACE-gated contactless
             // families) for subsequent operations. The actual applet
