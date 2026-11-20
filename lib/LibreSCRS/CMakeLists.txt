@@ -517,8 +517,10 @@ target_link_libraries(LibreSCRS_SmartCard_TestHelpers
     PUBLIC LibreSCRS_SmartCard LibreSCRS_SmartCardTesting
     PRIVATE $<BUILD_INTERFACE:SmartCard_Impl>
 )
+# SmartCard/testing: session_access.h, the friend of CardSession that test
+# support uses (header-only, shared with the declared test archive).
 target_include_directories(LibreSCRS_SmartCard_TestHelpers
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/SmartCard/test_helpers
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/SmartCard/test_helpers ${CMAKE_CURRENT_SOURCE_DIR}/SmartCard/testing
     PRIVATE ${PROJECT_SOURCE_DIR}/lib/smartcard/src)
 target_compile_features(LibreSCRS_SmartCard_TestHelpers PUBLIC cxx_std_23)
 target_compile_definitions(LibreSCRS_SmartCard_TestHelpers PRIVATE

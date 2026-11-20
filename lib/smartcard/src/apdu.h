@@ -8,6 +8,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -50,6 +51,12 @@ struct APDUResponse
 };
 
 // Builders for common ISO 7816-4 commands
+// The command toBytes() encodes as exactly @p bytes, or nothing when no
+// APDUCommand encodes to them (a malformed APDU, or an encoding toBytes()
+// never produces, such as an extended Le of 65536). Every command LM builds
+// round-trips, so a byte-level caller sends the same bytes as a typed one.
+[[nodiscard]] std::optional<APDUCommand> parseCommand(std::span<const uint8_t> bytes);
+
 APDUCommand selectByAID(const std::vector<uint8_t>& aid, uint8_t p2 = 0x00);
 APDUCommand selectByPath(uint8_t fileId1, uint8_t fileId2, uint8_t le = 4);
 APDUCommand selectByFileId(uint8_t fileId1, uint8_t fileId2, uint8_t p2 = 0x00);

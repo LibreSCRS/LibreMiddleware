@@ -3,6 +3,8 @@
 
 #include "apdu.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <stdexcept>
 #include <string>
 
@@ -51,6 +53,74 @@ std::vector<uint8_t> APDUCommand::toBytes() const
     }
 
     return bytes;
+}
+
+std::optional<APDUCommand> parseCommand(std::span<const uint8_t> bytes)
+{
+    const std::size_t n = bytes.size();
+    if (n < 4) {
+        return std::nullopt;
+    }
+    APDUCommand cmd{
+        .cla = bytes[0], .ins = bytes[1], .p1 = bytes[2], .p2 = bytes[3], .data = {}, .le = 0, .hasLe = false};
+    const auto twoBytes = [&bytes](std::size_t at) { return static_cast<uint16_t>((bytes[at] << 8) | bytes[at + 1]); };
+    if (n == 4) {
+        // Case 1: header only.
+    } else if (n == 5) {
+        // Case 2 short: one Le byte, 00 meaning 256.
+        cmd.le = bytes[4];
+        cmd.hasLe = true;
+    } else if (bytes[4] != 0x00) {
+        // Short Lc, the data, then nothing, one Le byte, or the two-byte Le
+        // toBytes() writes for an Le of 256 after short data.
+        const std::size_t lc = bytes[4];
+        if (n < 5 + lc) {
+            return std::nullopt;
+        }
+        const std::size_t rest = n - 5 - lc;
+        cmd.data.assign(bytes.begin() + 5, bytes.begin() + 5 + static_cast<std::ptrdiff_t>(lc));
+        if (rest == 1) {
+            cmd.le = bytes[5 + lc];
+            cmd.hasLe = true;
+        } else if (rest == 2) {
+            cmd.le = twoBytes(5 + lc);
+            cmd.hasLe = true;
+        } else if (rest != 0) {
+            return std::nullopt;
+        }
+    } else if (n == 7) {
+        // Case 2 extended: 00, then a two-byte Le.
+        cmd.le = twoBytes(5);
+        cmd.hasLe = true;
+    } else {
+        // Extended Lc (00 LcHi LcLo), the data, then nothing or a two-byte Le.
+        if (n < 7) {
+            return std::nullopt;
+        }
+        const std::size_t lc = twoBytes(5);
+        if (lc == 0 || n < 7 + lc) {
+            return std::nullopt;
+        }
+        const std::size_t rest = n - 7 - lc;
+        cmd.data.assign(bytes.begin() + 7, bytes.begin() + 7 + static_cast<std::ptrdiff_t>(lc));
+        if (rest == 2) {
+            cmd.le = twoBytes(7 + lc);
+            cmd.hasLe = true;
+        } else if (rest != 0) {
+            return std::nullopt;
+        }
+    }
+    // Accept only what encodes back to the very same bytes: the command goes
+    // on as this structure, so anything else would reach the card altered.
+    auto encoded = cmd.toBytes();
+    const bool same = encoded.size() == n && std::equal(encoded.begin(), encoded.end(), bytes.begin());
+    if (!encoded.empty()) {
+        secureWipe(encoded.data(), encoded.size());
+    }
+    if (!same) {
+        return std::nullopt;
+    }
+    return cmd;
 }
 
 bool APDUResponse::isSuccess() const

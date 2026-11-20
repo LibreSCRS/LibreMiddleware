@@ -817,7 +817,7 @@ TEST(EmrtdPluginSessionKeying, GenerationBasedKeyPreventsLeak)
     {
         auto sessionA = LibreSCRS::SmartCard::Testing::makeDetachedCardSession(reader);
         ASSERT_NE(sessionA, nullptr);
-        genA = LibreSCRS::SmartCard::detail::sessionGeneration(*sessionA);
+        genA = sessionA->generation();
         EXPECT_GT(genA, 0u) << "live session must have non-zero generation";
 
         // Populate credentials on sessionA — previously would have leaked
@@ -828,7 +828,7 @@ TEST(EmrtdPluginSessionKeying, GenerationBasedKeyPreventsLeak)
 
     auto sessionB = LibreSCRS::SmartCard::Testing::makeDetachedCardSession(reader);
     ASSERT_NE(sessionB, nullptr);
-    const auto genB = LibreSCRS::SmartCard::detail::sessionGeneration(*sessionB);
+    const auto genB = sessionB->generation();
 
     // Generation counter is strictly monotonic: sessionB must have been
     // assigned a higher generation than sessionA even though both share the
@@ -854,7 +854,7 @@ TEST(EmrtdPluginSessionKeying, GenerationSurvivesMove)
 {
     auto sessionA = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Reader Move");
     ASSERT_NE(sessionA, nullptr);
-    const auto originalGen = LibreSCRS::SmartCard::detail::sessionGeneration(*sessionA);
+    const auto originalGen = sessionA->generation();
     EXPECT_GT(originalGen, 0u);
 
     // Move-construct into a fresh CardSession. The moved-to session must
@@ -863,7 +863,7 @@ TEST(EmrtdPluginSessionKeying, GenerationSurvivesMove)
     // pimpl-backed classes — no read on *sessionA after the move.
     LibreSCRS::SmartCard::CardSession movedTo{std::move(*sessionA)};
 
-    EXPECT_EQ(LibreSCRS::SmartCard::detail::sessionGeneration(movedTo), originalGen)
+    EXPECT_EQ(movedTo.generation(), originalGen)
         << "moved-to session must retain the original generation";
 }
 
