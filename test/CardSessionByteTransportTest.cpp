@@ -522,6 +522,16 @@ TEST(ApduParseCommand, ADataLessExtendedLeCarriesItsMarker)
     EXPECT_EQ(read.toBytes(), (Bytes{0x00, 0xB0, 0x00, 0x00, 0x00, 0x03, 0x00}));
 }
 
+// An Le of 256 is short: one Le byte 00, after data or alone (ISO/IEC 7816-4,
+// 5.1) -- not a short Lc followed by two Le bytes.
+TEST(ApduParseCommand, AnLeOf256IsShort)
+{
+    const APDUCommand withData{0x00, 0x2A, 0x9E, 0x9A, {0x01, 0x02}, 256, true};
+    EXPECT_EQ(withData.toBytes(), (Bytes{0x00, 0x2A, 0x9E, 0x9A, 0x02, 0x01, 0x02, 0x00}));
+    const APDUCommand alone{0x00, 0xB0, 0x00, 0x00, {}, 256, true};
+    EXPECT_EQ(alone.toBytes(), (Bytes{0x00, 0xB0, 0x00, 0x00, 0x00}));
+}
+
 // A command the byte interface cannot take is a failure of the call, which a
 // card library catches as a std::runtime_error like any other: it must not
 // leave the adapter as a logic error.

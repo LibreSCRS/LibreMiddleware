@@ -38,11 +38,10 @@ std::vector<uint8_t> APDUCommand::toBytes() const
     }
 
     if (hasLe) {
-        if (useExtended || le > 0xFF) {
+        if (useExtended) {
             // Extended Le: 2-byte encoding. With no data field it is case 2
             // extended, which starts with the 00 marker (ISO/IEC 7816-4,
-            // 5.1) -- whether the extended form was chosen for this Le or
-            // for an Le of 256.
+            // 5.1).
             if (data.empty()) {
                 bytes.push_back(0x00);
             }
@@ -50,7 +49,8 @@ std::vector<uint8_t> APDUCommand::toBytes() const
             bytes.push_back(static_cast<uint8_t>(extLe >> 8));
             bytes.push_back(static_cast<uint8_t>(extLe & 0xFF));
         } else {
-            bytes.push_back(static_cast<uint8_t>(le));
+            // Short Le: one byte, 00 meaning 256 (an Le of 256 is short).
+            bytes.push_back(static_cast<uint8_t>(le == 256 ? 0 : le));
         }
     }
 
