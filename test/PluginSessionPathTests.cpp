@@ -250,6 +250,11 @@ TEST(PluginSessionPath, APlainOperationAfterATunnelFailedReachesTheCard)
         {"pkcs15", "getPINList",
          [](const LibreSCRS::Plugin::CardPlugin& p, CardSession& s) { (void)p.getPINList(s); }},
     };
+    // The PKCS#15 cases pass with or without the wrapper's discard: that
+    // plugin activates its channel in each operation, and the activation
+    // replaces a failed one. They show the end-to-end path stays working;
+    // PlainProfileOperationsDiscardAFailedTunnelFirst below is the test of
+    // each wrapper.
     for (const auto& c : cases) {
         SCOPED_TRACE(std::string{c.id} + " " + c.what);
         WireRig rig(kGemaltoAtr);
@@ -259,6 +264,129 @@ TEST(PluginSessionPath, APlainOperationAfterATunnelFailedReachesTheCard)
         c.run(*p, *rig.session);
         EXPECT_FALSE(rig.plain.empty() && rig.raw.empty()) << "the operation was locked out by the failed tunnel";
         EXPECT_FALSE(rig.session->carriesSecureMessaging()) << "the failed tunnel stayed installed";
+    }
+}
+
+// A plugin with the default (plain) activation profile whose every
+// operation sends one command of its own through the session first.
+class PlainOpsPlugin : public LibreSCRS::Plugin::CardPlugin
+{
+public:
+    PlainOpsPlugin()
+    {
+        setIdentity("plain-ops", /*priority=*/1000);
+    }
+
+    LibreSCRS::Plugin::CardCapabilities capabilities() const override
+    {
+        return LibreSCRS::Plugin::CardCapabilities::PKI;
+    }
+
+    std::span<const LibreSCRS::Plugin::Atr> supportedAtrs() const noexcept override
+    {
+        return {};
+    }
+
+    // GET DATA with P2 naming the operation: what each one sends first.
+    static Bytes firstCommand(std::uint8_t op)
+    {
+        return {0x00, 0xCA, 0x01, op, 0x00};
+    }
+
+protected:
+    LibreSCRS::Plugin::ReadResult doReadCard(CardSession& s, GroupCallback) const override
+    {
+        send(s, 1);
+        return LibreSCRS::Plugin::ReadResult::ok(LibreSCRS::Plugin::CardData{});
+    }
+    std::vector<LibreSCRS::Plugin::CertificateData> doReadCertificates(CardSession& s) const override
+    {
+        send(s, 2);
+        return {};
+    }
+    std::vector<LibreSCRS::Plugin::PinStatusEntry> doGetPINList(CardSession& s) const override
+    {
+        send(s, 3);
+        return {};
+    }
+    LibreSCRS::Plugin::PINResult doChangePIN(CardSession& s, std::string_view, const LibreSCRS::Secure::String&,
+                                             const LibreSCRS::Secure::String&) const override
+    {
+        send(s, 4);
+        return {};
+    }
+    LibreSCRS::Plugin::SignResult doSign(CardSession& s, std::uint16_t, std::span<const std::uint8_t>,
+                                         LibreSCRS::Plugin::SignMechanism) const override
+    {
+        send(s, 5);
+        return {};
+    }
+    LibreSCRS::Plugin::DecipherResult doDecipher(CardSession& s, std::uint16_t, std::span<const std::uint8_t>,
+                                                 LibreSCRS::Plugin::DecipherMechanism) const override
+    {
+        send(s, 6);
+        return {};
+    }
+    LibreSCRS::Plugin::PINResult doActivateTransportPin(CardSession& s, std::string_view,
+                                                        const LibreSCRS::Secure::String&,
+                                                        const LibreSCRS::Secure::String&) const override
+    {
+        send(s, 7);
+        return {};
+    }
+    LibreSCRS::Plugin::PINResult doActivateSigningKey(CardSession& s, const LibreSCRS::Secure::String&) const override
+    {
+        send(s, 8);
+        return {};
+    }
+
+private:
+    static void send(CardSession& s, std::uint8_t op)
+    {
+        (void)s.transmit(firstCommand(op));
+    }
+};
+
+// Every operation wrapper of a plain-profile plugin discards a failed tunnel
+// before the operation runs: its first command goes out plain. A wrapper
+// without the discard leaves that command refused (6F02, nothing sent).
+TEST(PluginSessionPath, PlainProfileOperationsDiscardAFailedTunnelFirst)
+{
+    using LibreSCRS::Plugin::CardPlugin;
+    const LibreSCRS::Secure::String pin{"1234"};
+    const std::vector<std::uint8_t> data(32, 0x11);
+    struct Case
+    {
+        const char* what;
+        std::uint8_t op;
+        std::function<void(const CardPlugin&, CardSession&)> run;
+    };
+    const std::vector<Case> cases{
+        {"readCard", 1, [](const CardPlugin& p, CardSession& s) { (void)p.readCard(s); }},
+        {"readCertificates", 2, [](const CardPlugin& p, CardSession& s) { (void)p.readCertificates(s); }},
+        {"getPINList", 3, [](const CardPlugin& p, CardSession& s) { (void)p.getPINList(s); }},
+        {"changePIN", 4, [&](const CardPlugin& p, CardSession& s) { (void)p.changePIN(s, "pin", pin, pin); }},
+        {"sign", 5,
+         [&](const CardPlugin& p, CardSession& s) {
+             (void)p.sign(s, 0x01, data, LibreSCRS::Plugin::SignMechanism::RSA_PKCS);
+         }},
+        {"decipher", 6,
+         [&](const CardPlugin& p, CardSession& s) {
+             (void)p.decipher(s, 0x01, data, LibreSCRS::Plugin::DecipherMechanism::RSA_PKCS1_V15);
+         }},
+        {"activateTransportPin", 7,
+         [&](const CardPlugin& p, CardSession& s) { (void)p.activateTransportPin(s, "pin", pin, pin); }},
+        {"activateSigningKey", 8, [&](const CardPlugin& p, CardSession& s) { (void)p.activateSigningKey(s, pin); }},
+    };
+    const PlainOpsPlugin plugin;
+    for (const auto& c : cases) {
+        SCOPED_TRACE(c.what);
+        WireRig rig;
+        LibreSCRS::SmartCard::Testing::installStandInChannel(*rig.session, StandInChannel::FailedSecureMessaging);
+        c.run(plugin, *rig.session);
+        EXPECT_FALSE(rig.session->carriesSecureMessaging()) << "the failed tunnel stayed installed";
+        ASSERT_FALSE(rig.plain.empty()) << "the operation's first command was refused";
+        EXPECT_EQ(rig.plain.front(), PlainOpsPlugin::firstCommand(c.op));
     }
 }
 

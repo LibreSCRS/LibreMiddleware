@@ -90,7 +90,7 @@ Pkcs15ProfileReadCensusTests 39
 Pkcs15ReadTokenInfoPartialTests 2
 PluginAbiVersionTest 1
 PluginIntegrationTests 8
-PluginSessionPathTests 11
+PluginSessionPathTests 12
 PluginSigningKeyTests 15
 PluginTests 24
 PreReadAuthDerivationTests 5
