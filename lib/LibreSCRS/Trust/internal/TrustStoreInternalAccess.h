@@ -43,23 +43,13 @@ struct TrustStoreInternalAccess
     ///        idempotent. The anchor span is consumed; @p store retains
     ///        its own copy of the bytes.
     ///
-    /// Used by both:
-    ///   - @ref TrustStoreService eager-fetch worker threads
-    ///     (intra-LibreSCRS_Trust), and
-    ///   - the LibreSCRS::Signing bridge's anchor-emit lambda
-    ///     (LibreSCRS_Signing → LibreSCRS_Trust, cross-`.so` under SHARED).
-    ///
-    /// The cross-`.so` call site is the only reason this symbol is
-    /// exported via @ref LIBRESCRS_PUBLIC_API; the surrounding
-    /// `internal/` header path + LIBRESCRS_INTERNAL_BUILD #error guard
-    /// keep external consumers from including it. Sibling `makeStore` is
-    /// NOT marked because its callers all live inside LibreSCRS_Trust
-    /// itself; exporting it would widen the visible symbol set without a
-    /// use case.
+    /// Called only by @ref TrustStoreService (its eager workers and
+    /// loadDeferredTrustedLists), inside LibreSCRS_Trust: hidden, like
+    /// @ref makeStore. No other library adds an anchor to a store.
     ///
     /// @par Thread-safety
     /// Takes an exclusive lock on the store's internal mutex.
-    LIBRESCRS_PUBLIC_API static void mergeTrustedListAnchors(TrustStore& store, std::vector<TrustAnchor> anchors);
+    static void mergeTrustedListAnchors(TrustStore& store, std::vector<TrustAnchor> anchors);
 };
 
 } // namespace detail

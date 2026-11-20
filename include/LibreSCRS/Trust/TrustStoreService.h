@@ -11,6 +11,7 @@
 ///        internal worker threads; their anchors join the store as they
 ///        arrive.
 
+#include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Export.h>
 #include <LibreSCRS/LocalizedText.h>
 #include <LibreSCRS/Trust/TrustConfig.h>
@@ -130,10 +131,39 @@ public:
     /// @par Lifetime & sharing
     /// The returned snapshot is monotonically growing — consumers MUST NOT
     /// cache @ref TrustStore::enumerableAnchors() and assume immutability.
-    /// New anchors land asynchronously as eager fetches complete and as
-    /// lazy fetches run inside @ref Signing::SigningService::sign.
+    /// New anchors land asynchronously as eager fetches complete, and when
+    /// @ref loadDeferredTrustedLists fetches the deferred sources (which
+    /// @ref Signing::SigningService::sign does when a signature needs them).
     /// @since 4.0
     [[nodiscard]] std::shared_ptr<const TrustStore> trustStore() const;
+
+    /// @brief Fetch the configured Trusted List sources that are not eager,
+    ///        once, and add the anchors of every list that verifies to
+    ///        @ref trustStore.
+    ///
+    /// A source whose @c eager flag is false is left alone at construction:
+    /// this call fetches it (and, for a List of Trusted Lists, every list it
+    /// points to), verifies each list as the eager fetch does, and merges its
+    /// anchors. Only the configured sources are fetched, and only lists that
+    /// verify contribute anchors -- the call adds no anchor of its own.
+    /// The first call does the work and blocks until every deferred source
+    /// has been fetched or has failed; a failed source is logged and skipped.
+    /// Later calls return at once, and a call made while the first is still
+    /// running waits for it. @ref Signing::SigningService::sign calls it when
+    /// a signature level needs the deferred lists.
+    ///
+    /// @param token Cancellation: stops the fetch between and inside the
+    ///              lists; the sources not fetched yet are not fetched later.
+    /// @par Thread-safety
+    /// Safe to call from several threads.
+    /// @par Example
+    /// @code
+    /// // A validator that wants every configured anchor before it judges.
+    /// service->loadDeferredTrustedLists();
+    /// const auto issuer = service->trustStore()->findIssuerOf(certificate);
+    /// @endcode
+    /// @since 5.0
+    void loadDeferredTrustedLists(LibreSCRS::CancelToken token = {}) noexcept;
 
     /// @brief Snapshot of the original config the service was constructed
     ///        with. Useful for diagnostics and for @ref Signing::SigningService

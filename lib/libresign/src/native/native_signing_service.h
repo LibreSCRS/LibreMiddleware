@@ -27,19 +27,17 @@ public:
 
     SigningResult sign(const SigningRequest& request, SigningKey& key) override;
 
-    /// Callback invoked when @ref loadTrustList successfully fetches+verifies+
-    /// parses a Trusted List and extracts trust anchors from it. The Signing-
-    /// side bridge (LibreSCRS::Signing::SigningService) binds a lambda that
-    /// merges the emitted anchors into its public TrustStore via the
-    /// LM-internal access shim. Inverting the call direction (libresign
-    /// emits, the bridge merges) keeps libresign free of any direct call
-    /// into LibreSCRS_Trust internals — critical for the SHARED-build
-    /// target graph since it removes the libresign → LibreSCRS_Trust link
-    /// edge, breaking the static-only-tolerated cycle.
-    using AnchorEmitter = std::function<void(std::vector<LibreSCRS::Trust::TrustAnchor>)>;
-    void setAnchorEmitter(AnchorEmitter emit)
+    /// Called once the deferred Trusted Lists (the sources whose @c eager flag
+    /// is false) have been fetched for this signature -- that is, when a
+    /// signature level needed them. The Signing-side bridge
+    /// (LibreSCRS::Signing::SigningService) binds the trust store service's
+    /// own fetch of the same sources, so the anchors reach the public
+    /// TrustStore through the service that owns it; libresign never touches
+    /// that store.
+    using DeferredListsHook = std::function<void()>;
+    void setDeferredListsHook(DeferredListsHook hook)
     {
-        anchorEmitter = std::move(emit);
+        deferredListsHook = std::move(hook);
     }
 
 private:
@@ -59,7 +57,7 @@ private:
     /// it would leave the next long-term sign with no anchors and no attempt
     /// to fetch any.
     bool lazyListsLoaded = false;
-    AnchorEmitter anchorEmitter;
+    DeferredListsHook deferredListsHook;
 
     /// Fetch, verify and take the anchors of @p entry and, for a List of
     /// Trusted Lists, of every list it points to. A list that fails is

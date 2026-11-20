@@ -12,7 +12,6 @@
 // bound into libresign's NativeSigningService::setAnchorEmitter (below).
 // LibreSCRS_Signing already builds with LIBRESCRS_INTERNAL_BUILD, so this
 // internal include is allowed.
-#include "../Trust/internal/TrustStoreInternalAccess.h"
 #include "native/native_signing_service.h"
 #include "native/plugin_signing_key.h"
 
@@ -290,21 +289,11 @@ SigningService::Impl::runSignPipeline(const SigningRequest& request, const Auth:
     libReq.tsa.url = std::move(tsaUrl);
 
     auto service = std::make_unique<libresign::NativeSigningService>();
-    // Bind the lazy-fetch anchor-merge callback into libresign's native
-    // backend. libresign emits TL-extracted anchors via the AnchorEmitter
-    // (see NativeSigningService::setAnchorEmitter); this lambda merges them
-    // into the same TrustStore the eager-fetch worker
-    // (Trust::TrustStoreService) populates. Inverted call direction —
-    // libresign no longer reaches into Trust internals — keeps the
-    // libresign target free of any link edge to LibreSCRS_Trust.
-    {
-        auto trustStore = std::const_pointer_cast<Trust::TrustStore>(trustService->trustStore());
-        service->setAnchorEmitter([trustStore](std::vector<Trust::TrustAnchor> anchors) {
-            if (!trustStore)
-                return;
-            Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(*trustStore, std::move(anchors));
-        });
-    }
+    // When a signature level needs the deferred Trusted Lists, the engine
+    // fetches them for its own chain and time-stamp checks; the trust store
+    // service then fetches the same configured sources itself and adds their
+    // anchors to the store it owns. Signing never adds an anchor to a store.
+    service->setDeferredListsHook([trustService = trustService] { trustService->loadDeferredTrustedLists(); });
     if (!service->configure(libTrust)) {
         return {SigningResult::trustStoreUnavailableDiagnosticOnly(std::string{"libresign rejected TrustConfig"}), {}};
     }

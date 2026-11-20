@@ -399,7 +399,9 @@ target_link_libraries(TrustStoreServiceTests PRIVATE
     LibreSCRS::Trust
     LibreSCRS::Signing
     OpenSSL_Crypto
+    SigningTestSupport
 )
+target_compile_definitions(TrustStoreServiceTests PRIVATE CMAKE_SOURCE_DIR="${LibreMiddleware_SOURCE_DIR}")
 gtest_discover_tests(TrustStoreServiceTests)
 
 # TrustStoreService::create std::expected error-shape regression tests

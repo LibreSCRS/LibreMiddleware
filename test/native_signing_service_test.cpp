@@ -243,14 +243,12 @@ protected:
         cfg.trustedLists.push_back(entry);
         cfg.cacheDirectory = cacheDir.string();
 
-        service.setAnchorEmitter([this](std::vector<LibreSCRS::Trust::TrustAnchor> anchors) {
-            anchorsEmitted += static_cast<int>(anchors.size());
-        });
+        service.setDeferredListsHook([this] { ++deferredHookCalls; });
         service.configure(cfg);
     }
 
     std::filesystem::path cacheDir;
-    int anchorsEmitted = 0;
+    int deferredHookCalls = 0;
     static inline int counter = 0;
 };
 
@@ -266,9 +264,9 @@ TEST_F(LazyTrustedListTest, LazyTrustedListIsFetchedWhenALevelNeedsIt)
     auto result = service.sign(req, validSigner);
 
     EXPECT_EQ(server.servedCount(), 1) << "a long-term level must fetch the deferred list exactly once";
-    // Not the same claim as the one above: a GET that arrives and is then
-    // refused at verification leaves the anchor set empty and the count at one.
-    EXPECT_GE(anchorsEmitted, 1) << "the list was fetched but never verified and parsed";
+    // The trust store service is told once, so it fetches the same deferred
+    // sources for the store it owns.
+    EXPECT_EQ(deferredHookCalls, 1) << "the deferred lists were fetched without telling the bridge";
 
     // The in-memory signer is self-signed and this list does not name its
     // issuer, so the refusal is the chain gate working on anchors that really
@@ -295,6 +293,7 @@ TEST_F(LazyTrustedListTest, LazyTrustedListIsNotFetchedForBasicLevel)
     auto result = service.sign(pdfRequest(false), validSigner);
     EXPECT_TRUE(result.success) << result.errorMessage;
     EXPECT_EQ(server.servedCount(), 0) << "a basic signature needs no anchor and must make no request";
+    EXPECT_EQ(deferredHookCalls, 0) << "nothing was fetched, so the trust store service has nothing to fetch";
 }
 
 // A time-stamp is an anchor's business too. The token of the in-process

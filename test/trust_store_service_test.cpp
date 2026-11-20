@@ -13,11 +13,14 @@
 /// The network-gated test runs only with @c LIBRESIGN_NETWORK_TESTS=1:
 ///   * LiveSerbianTlEagerFetch — real PKS Class1 anchor over the wire.
 
+#include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Signing/SigningService.h>
 #include <LibreSCRS/Signing/TsaProvider.h>
 #include <LibreSCRS/Trust/TrustConfig.h>
 #include <LibreSCRS/Trust/TrustStore.h>
 #include <LibreSCRS/Trust/TrustStoreService.h>
+
+#include "signing_test_support/mock_trusted_list_server.h"
 
 #include <gtest/gtest.h>
 
@@ -299,6 +302,78 @@ TEST(TrustStoreServiceTest, ConstructionDoesNotBlockOnSlowDns)
     EXPECT_LT(elapsed, std::chrono::milliseconds(500))
         << "TrustStoreService::create() must not block on network IO; elapsed="
         << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << " ms";
+}
+
+// =============================================================================
+// Deferred sources: a source whose eager flag is false is the service's to
+// fetch, on request, once -- not the signing engine's to merge. A loopback
+// server counts the requests. (Its list does not verify here: the public
+// configuration names no signing certificate for a loopback URL, so the count
+// shows the fetch, not the merge; the merge is the eager workers' code.)
+// =============================================================================
+
+namespace {
+
+struct DeferredSourceRig
+{
+    DeferredSourceRig()
+        : server(std::string(CMAKE_SOURCE_DIR) + "/test/fixtures/trust/synthetic-tl.xml"),
+          cacheDir(std::filesystem::temp_directory_path() /
+                   ("librescrs-deferred-tl-" + std::to_string(::getpid()) + "-" + std::to_string(++counter)))
+    {
+        std::filesystem::remove_all(cacheDir);
+        std::filesystem::create_directories(cacheDir);
+    }
+    ~DeferredSourceRig()
+    {
+        std::error_code ec;
+        std::filesystem::remove_all(cacheDir, ec);
+    }
+
+    std::shared_ptr<tt::TrustStoreService> service()
+    {
+        tt::TrustConfig cfg;
+        tt::TrustedListSource src;
+        src.url = server.url();
+        src.eager = false;
+        cfg.trustedListSources.push_back(src);
+        cfg.cacheDirectory = cacheDir;
+        auto result = tt::TrustStoreService::create(std::move(cfg));
+        EXPECT_TRUE(result.has_value());
+        return result ? *result : nullptr;
+    }
+
+    libresign::test::MockTrustedListServer server;
+    std::filesystem::path cacheDir;
+    static inline int counter = 0;
+};
+
+} // namespace
+
+TEST(TrustStoreServiceTest, TheServiceFetchesItsDeferredSourcesOnRequest)
+{
+    DeferredSourceRig rig;
+    auto svc = rig.service();
+    ASSERT_NE(svc, nullptr);
+    EXPECT_EQ(rig.server.servedCount(), 0) << "a deferred source is left alone at construction";
+
+    svc->loadDeferredTrustedLists();
+    EXPECT_EQ(rig.server.servedCount(), 1) << "the service fetches its deferred source when asked";
+
+    svc->loadDeferredTrustedLists();
+    EXPECT_EQ(rig.server.servedCount(), 1) << "and only once";
+}
+
+TEST(TrustStoreServiceTest, ACancelledRequestFetchesNothing)
+{
+    DeferredSourceRig rig;
+    auto svc = rig.service();
+    ASSERT_NE(svc, nullptr);
+    LibreSCRS::CancelSource cancel;
+    cancel.requestCancel();
+
+    svc->loadDeferredTrustedLists(cancel.token());
+    EXPECT_EQ(rig.server.servedCount(), 0);
 }
 
 // =============================================================================

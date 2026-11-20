@@ -200,18 +200,15 @@ target_compile_features(LibreSign PUBLIC cxx_std_23)
 # be able to resolve the public header — transitive propagation of
 # LibreSCRS_Auth's PUBLIC include directory is the least-friction fix.
 # LibreSCRS_Auth itself is a leaf on LibreSign (no circular dependency).
-# SHARED-build cycle break: LibreSign no longer PRIVATE-links
-# LibreSCRS_Trust. Cross-target call edges that
-# previously reached into Trust::detail::TrustStoreInternalAccess have
-# been inverted via NativeSigningService::AnchorEmitter — libresign now
-# emits TL anchors and the LibreSCRS_Signing-side bridge owns the merge
-# into the public TrustStore. With this link edge gone, the
-# Trust ↔ LibreSign target cycle (tolerated by static archives, rejected
-# by CMake once a member becomes SHARED) dissolves into a one-way edge:
+# SHARED-build cycle break: LibreSign does not link LibreSCRS_Trust and
+# never reaches into a TrustStore. Anchors reach the public TrustStore only
+# through TrustStoreService, which fetches the Trusted Lists itself (the
+# Signing bridge asks it to through NativeSigningService::setDeferredListsHook).
+# So the Trust <-> LibreSign target graph is a one-way edge:
 # LibreSCRS_Trust  PRIVATE  LibreSign. The LibreSCRS::Trust::TrustAnchor
-# type used in the AnchorEmitter signature is reachable through
-# LibreSCRS_Auth's PUBLIC include directory; no link symbol is needed
-# for the data-only struct.
+# type libresign's anchor extraction returns is reachable through
+# LibreSCRS_Auth's PUBLIC include directory; no link symbol is needed for the
+# data-only struct.
 target_link_libraries(LibreSign PRIVATE OpenSSL_Crypto curl_static_with_deps SmartCard_Impl)
 target_link_libraries(LibreSign PUBLIC LibreSCRS_Auth)
 

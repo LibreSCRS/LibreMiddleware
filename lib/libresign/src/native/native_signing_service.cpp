@@ -190,11 +190,8 @@ bool NativeSigningService::loadTrustList(const TrustedListEntry& entry)
     opts.cacheDirectory = trustConfig.cacheDirectory;
     opts.requestTimeout = std::chrono::seconds{kTlFetchTimeoutSeconds};
 
-    // Every verified list hands its anchors over: retained for long-term
-    // chain completion (used even when no host emitter is bound, e.g.
-    // native-only signing) and emitted to the host, which merges them into
-    // the public TrustStore. Inverted-callback shape: libresign extracts
-    // anchors, the bridge owns the merge.
+    // Every verified list hands its anchors over, retained for long-term
+    // chain completion and for the time-stamp checks of this signature.
     const auto onList = [this](const std::string& /*url*/, const TrustedListInfo& info) {
         auto anchors = extractAnchorsFromTrustedList(info);
         for (const auto& a : anchors)
@@ -202,8 +199,6 @@ bool NativeSigningService::loadTrustList(const TrustedListEntry& entry)
                 tlAnchorCerts.push_back(a.certificateDer);
         for (auto& der : timestampAuthorityCertificates(info))
             tlTimestampAnchors.push_back(std::move(der));
-        if (anchorEmitter)
-            anchorEmitter(std::move(anchors));
     };
     const auto onFailure = [](const std::string& url, const std::string& error) {
         LibreSCRS::log::warnf("Trusted List {} skipped: {}", url, error);
@@ -236,6 +231,8 @@ void NativeSigningService::loadLazyTrustLists()
         // refuses with the cause the user can act on.
         (void)loadTrustList(entry);
     }
+    if (deferredListsHook)
+        deferredListsHook();
 }
 
 std::optional<SigningResult> NativeSigningService::completeLongTermChain(SigningKey& key, SignatureLevel level)

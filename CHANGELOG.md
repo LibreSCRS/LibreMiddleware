@@ -52,6 +52,14 @@ Notable user-visible changes per release. Format follows
   queries, now also answer on the thread that holds the session's
   `ActiveChannelHolder`, where they used to deadlock.
 
+- **`TrustStoreService::loadDeferredTrustedLists`.** Fetches the configured
+  Trusted List sources that are not eager, once, and adds the anchors of each
+  list that verifies to the service's store; later calls return at once.
+  `SigningService::sign` calls it when a signature level needs the deferred
+  lists, so their anchors reach the store through the service that owns it,
+  where the signing engine used to merge the anchors it fetched into that
+  store itself.
+
 - **`OpenError::Kind::SessionRefused`.** A card that another client holds, or
   whose session the platform has not granted yet (PC/SC
   `SCARD_E_SHARING_VIOLATION`, the same refusal from CryptoTokenKit), is now
