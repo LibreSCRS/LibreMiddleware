@@ -5,7 +5,8 @@
 #include <LibreSCRS/Plugin/CardPlugin.h>
 #include <LibreSCRS/Plugin/PluginExport.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
-#include <pcsc_connection.h>
+#include <apdu.h>
+#include <smartcard/card_connection.h>
 #include <eu_vrc_card.h>
 #include <eu_vrc_types.h>
 
@@ -42,7 +43,7 @@ public:
                              LibreSCRS::SmartCard::CardSession& session) const override
     {
         try {
-            auto& conn = LibreSCRS::SmartCard::detail::unwrap(session);
+            LibreSCRS::SmartCard::CardConnection& conn = LibreSCRS::SmartCard::detail::unwrap(session);
             return euvrc::EuVrcCard::probe(conn);
         } catch (...) {
             return false;
@@ -54,7 +55,7 @@ public:
     {
         using LibreSCRS::Plugin::ReadResult;
         try {
-            auto& conn = LibreSCRS::SmartCard::detail::unwrap(session);
+            LibreSCRS::SmartCard::CardConnection& conn = LibreSCRS::SmartCard::detail::unwrap(session);
             euvrc::EuVrcCard card(conn);
             auto doc = card.readCard();
 

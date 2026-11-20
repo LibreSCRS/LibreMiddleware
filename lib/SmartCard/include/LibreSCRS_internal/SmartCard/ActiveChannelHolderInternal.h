@@ -11,7 +11,8 @@
 #include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 
-#include <pcsc_connection.h>
+#include <apdu.h>
+#include <smartcard/card_connection.h>
 
 #include <memory>
 #include <mutex>

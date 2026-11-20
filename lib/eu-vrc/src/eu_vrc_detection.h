@@ -11,8 +11,8 @@
 #include <string>
 #include <vector>
 
-namespace LibreSCRS::SmartCard::Internal {
-class PCSCConnection;
+namespace LibreSCRS::SmartCard {
+class IConnection;
 }
 
 namespace euvrc {
@@ -43,9 +43,9 @@ std::vector<FileFid> getNationalExtensionFids();
 
 // Detect EU VRC on a live connection. Returns true if card is an EU VRC.
 // On success, the applet is selected and ready for file reading.
-bool detect(LibreSCRS::SmartCard::Internal::PCSCConnection& conn);
+bool detect(LibreSCRS::SmartCard::IConnection& conn);
 
 // Probe without modifying state (for canHandleConnection)
-bool probe(LibreSCRS::SmartCard::Internal::PCSCConnection& conn);
+bool probe(LibreSCRS::SmartCard::IConnection& conn);
 
 } // namespace euvrc

@@ -4,7 +4,8 @@
 #include "card_reader_apollo.h"
 #include "card_protocol.h"
 #include "apdu.h"
-#include <pcsc_connection.h>
+#include <apdu.h>
+#include <smartcard/card_connection.h>
 #include <smartcard/chunked_read.h>
 #include <stdexcept>
 
@@ -14,8 +15,8 @@ namespace {
 
 // Shared Apollo file read: 6-byte header, LE u16 content length at offset 4,
 // 0xFF marker at offset 4 = empty file, 64 KB sanity cap.
-std::vector<uint8_t> readApolloFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1,
-                                    uint8_t fileId2, bool includeHeader)
+std::vector<uint8_t> readApolloFile(LibreSCRS::SmartCard::CardConnection& conn, uint8_t fileId1, uint8_t fileId2,
+                                    bool includeHeader)
 {
     // Apollo cards: SELECT by file ID (P1=0x00). Apollo may return
     // 0x61XX (more data available) or 0x9000; both indicate SELECT OK.
@@ -41,14 +42,14 @@ std::vector<uint8_t> readApolloFile(LibreSCRS::SmartCard::Internal::PCSCConnecti
 
 } // namespace
 
-std::vector<uint8_t> CardReaderApollo::readFile(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, uint8_t fileId1,
+std::vector<uint8_t> CardReaderApollo::readFile(LibreSCRS::SmartCard::CardConnection& conn, uint8_t fileId1,
                                                 uint8_t fileId2)
 {
     return readApolloFile(conn, fileId1, fileId2, /*includeHeader=*/false);
 }
 
-std::vector<uint8_t> CardReaderApollo::readFileRaw(LibreSCRS::SmartCard::Internal::PCSCConnection& conn,
-                                                   uint8_t fileId1, uint8_t fileId2)
+std::vector<uint8_t> CardReaderApollo::readFileRaw(LibreSCRS::SmartCard::CardConnection& conn, uint8_t fileId1,
+                                                   uint8_t fileId2)
 {
     return readApolloFile(conn, fileId1, fileId2, /*includeHeader=*/true);
 }

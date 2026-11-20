@@ -7,7 +7,8 @@
 #include "card_reader_gemalto.h"
 #include "card_reader_apollo.h"
 #include "card_verifier.h"
-#include <pcsc_connection.h>
+#include <apdu.h>
+#include <smartcard/card_connection.h>
 #include "date_format.h"
 #include "tlv.h"
 #include "apdu.h"
@@ -37,7 +38,7 @@ void EIdCard::detectCardType()
     }
 }
 
-EIdCard::EIdCard(LibreSCRS::SmartCard::Internal::PCSCConnection& externalConn) : conn(&externalConn)
+EIdCard::EIdCard(LibreSCRS::SmartCard::CardConnection& externalConn) : conn(&externalConn)
 {
     detectCardType();
 }

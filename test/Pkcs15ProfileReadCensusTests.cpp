@@ -38,6 +38,7 @@
 #include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 #include <LibreSCRS/SmartCard/detail/ChannelInjection.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
+#include <pcsc_raw_diagnostic.h>
 #include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
 
 #include "pkcs15_card.h"
@@ -320,7 +321,7 @@ FakeCardRig makeRig(const char* readerName, bool userConsent = false)
     };
     rig.card->probeTries = {{0x01, 3}};
 
-    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*rig.session);
+    auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(*rig.session);
     rig.card->connection = &conn;
     conn.setDetachedTransactionReleaseObserver([card = rig.card] { ++card->transaction; });
     conn.setTransmitFilter([card = rig.card](const APDUCommand& cmd) { return (*card)(cmd); });
@@ -612,7 +613,7 @@ TEST(Pkcs15CardSignPin, RefusedPinIsPresentedOnceAndKeptForTheCaller)
         auto rig = makeSigningRig(c.reader, true);
         rig.card->triesLeft = triesBefore;
         rig.card->lastTryAnswers63C0 = c.answers63C0;
-        auto& conn = LibreSCRS::SmartCard::detail::unwrap(*rig.session);
+        auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(*rig.session);
         PlainChannel channel(conn, pkcs15Aid());
         pkcs15::PKCS15Card card(channel);
         const auto profile = card.readProfile();

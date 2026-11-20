@@ -37,11 +37,11 @@ std::vector<uint8_t> readFile(const fs::path& p)
 class NullReader : public eidcard::CardReaderBase
 {
 public:
-    std::vector<uint8_t> readFile(LibreSCRS::SmartCard::Internal::PCSCConnection&, uint8_t, uint8_t) override
+    std::vector<uint8_t> readFile(LibreSCRS::SmartCard::CardConnection&, uint8_t, uint8_t) override
     {
         return {};
     }
-    std::vector<uint8_t> readFileRaw(LibreSCRS::SmartCard::Internal::PCSCConnection&, uint8_t, uint8_t) override
+    std::vector<uint8_t> readFileRaw(LibreSCRS::SmartCard::CardConnection&, uint8_t, uint8_t) override
     {
         return {};
     }

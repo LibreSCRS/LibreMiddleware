@@ -6,7 +6,8 @@
 
 #include <apdu.h>
 #include <ber.h>
-#include <pcsc_connection.h>
+#include <apdu.h>
+#include <smartcard/card_connection.h>
 
 namespace euvrc {
 
@@ -46,7 +47,7 @@ std::vector<FileFid> getNationalExtensionFids()
 namespace {
 
 // Try to discover AID from EF.DIR
-bool tryEfDir(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
+bool tryEfDir(LibreSCRS::SmartCard::IConnection& conn)
 {
     // SELECT MF
     auto mfResp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByFileId(0x3F, 0x00));
@@ -96,14 +97,14 @@ bool tryEfDir(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
 }
 
 // Try a single EU standard AID
-bool tryEuStandardAid(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
+bool tryEuStandardAid(LibreSCRS::SmartCard::IConnection& conn)
 {
     auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(protocol::EU_VRC_AID));
     return resp.isSuccess();
 }
 
 // Try a multi-command AID sequence (all commands must succeed)
-bool tryAidSequence(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const AidSequence& seq)
+bool tryAidSequence(LibreSCRS::SmartCard::IConnection& conn, const AidSequence& seq)
 {
     for (size_t i = 0; i < seq.selectCommands.size(); ++i) {
         bool isLast = (i == seq.selectCommands.size() - 1);
@@ -131,7 +132,7 @@ bool tryAidSequence(LibreSCRS::SmartCard::Internal::PCSCConnection& conn, const 
 
 } // anonymous namespace
 
-bool detect(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
+bool detect(LibreSCRS::SmartCard::IConnection& conn)
 {
     // Level 1: EF.DIR
     if (tryEfDir(conn))
@@ -152,7 +153,7 @@ bool detect(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
     return false;
 }
 
-bool probe(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
+bool probe(LibreSCRS::SmartCard::IConnection& conn)
 {
     return detect(conn);
 }

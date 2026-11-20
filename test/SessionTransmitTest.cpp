@@ -27,6 +27,7 @@
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/detail/ChannelInjection.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
+#include <pcsc_raw_diagnostic.h>
 #include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 
@@ -107,7 +108,7 @@ TEST_F(SessionTransmitTest, smChannelThatIsNotOpenIsNeverBypassed)
         auto* observer = channel.get();
         ChannelInjector::installForTesting(*session, std::move(channel));
         std::size_t wireCommands = 0;
-        LibreSCRS::SmartCard::detail::unwrap(*session).setTransmitFilter([&](const APDUCommand&) {
+        LibreSCRS::SmartCard::Internal::connectionOf(*session).setTransmitFilter([&](const APDUCommand&) {
             ++wireCommands;
             return APDUResponse{{}, 0x90, 0x00};
         });

@@ -16,6 +16,7 @@
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 #include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
+#include <pcsc_raw_diagnostic.h>
 #include <LibreSCRS/SecureChannel/BacParams.h>
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
 #include <LibreSCRS_internal/Plugin/CardPluginActivationAccessor.h>
@@ -1102,7 +1103,7 @@ std::shared_ptr<LdsRigState> installLdsRig(LibreSCRS::SmartCard::CardSession& se
     st->files[0x0101] = dg1Fixture();
     st->files[0x010E] = {0x6E, 0x03, 0x31, 0x01, 0x00}; // DG14 stub (raw bytes only)
     st->files[0x011D] = {0x77, 0x01, 0x00};             // EF.SOD present but SM-gated
-    LibreSCRS::SmartCard::detail::unwrap(session).setTransmitFilter(
+    LibreSCRS::SmartCard::Internal::connectionOf(session).setTransmitFilter(
         [st](const APDUCommand& cmd) { return ldsRigTransmit(*st, cmd); });
     return st;
 }
@@ -1764,7 +1765,7 @@ ChipAuthContactRead readContactDocumentWithChipAuth(SetUp setUp)
     out.card = std::make_shared<LibreSCRS::Test::CaCardOnTheWire>(key);
     out.card->setFiles([rig = out.rig](const APDUCommand& cmd) { return ldsRigTransmit(*rig, cmd); });
     setUp(*out.card);
-    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*session);
+    auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(*session);
     conn.setTransmitFilter([card = out.card](const APDUCommand& cmd) { return card->respondPlain(cmd); });
     conn.setDetachedRawResponder([card = out.card](std::span<const uint8_t> frame) { return card->respond(frame); });
     session->setCredentialProvider(
@@ -2059,7 +2060,7 @@ TEST(EmrtdInterfaceActivation, HelperReportsDeactivatedCardAccessDefinitive)
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::Deactivated);
 
-    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*session);
+    auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(*session);
     const auto read = LibreSCRS::SmartCard::Internal::readCardAccessDetailed(nullptr, conn, LibreSCRS::CancelToken{});
 
     EXPECT_TRUE(read.mfSelected);
@@ -2080,7 +2081,7 @@ TEST(EmrtdInterfaceActivation, HelperKeepsTerminationWarningNonDefinitive)
     auto rig = installLdsRig(*session, /*plainLds=*/false);
     setCardAccessMode(*rig, CardAccessMode::Terminated6285);
 
-    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*session);
+    auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(*session);
     const auto read = LibreSCRS::SmartCard::Internal::readCardAccessDetailed(nullptr, conn, LibreSCRS::CancelToken{});
 
     EXPECT_TRUE(read.mfSelected);
@@ -2819,7 +2820,7 @@ std::shared_ptr<BacCardOracle> armBacDowngradeSession(LibreSCRS::SmartCard::Card
     input.dateOfExpiry = LibreSCRS::Secure::String{kIcaoDoe};
     session.setBacInput(std::move(input));
 
-    auto& conn = LibreSCRS::SmartCard::detail::unwrap(session);
+    auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(session);
     conn.setTransmitFilter([oracle](const APDUCommand& cmd) { return oracle->onTransmit(cmd); });
     conn.setDetachedRawResponder([oracle](std::span<const std::uint8_t> b) { return oracle->onTransmitRaw(b); });
     return oracle;

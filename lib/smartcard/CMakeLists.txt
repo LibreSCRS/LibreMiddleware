@@ -36,6 +36,7 @@ add_library(SmartCard_Impl STATIC
     # (APDUResponse) it names — so the public surface does not transitively
     # drag internal core-transport headers into LM-internal consumers.
     include/smartcard/i_connection.h
+    include/smartcard/card_connection.h
     include/smartcard/secure_wipe.h
     include/smartcard/monitor_event.h
     # LIBRESCRS_INTERNAL_BUILD-gated: its storage uses the internal

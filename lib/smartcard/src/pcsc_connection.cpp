@@ -302,13 +302,16 @@ void PCSCConnection::beginTransaction()
     if (detached()) {
         if (detachedTransactionRv != SCARD_S_SUCCESS)
             throw PCSCError("SCardBeginTransaction failed", detachedTransactionRv);
+        callerHoldsTransaction = true;
         return;
     }
     beginOnCard();
+    callerHoldsTransaction = true;
 }
 
 void PCSCConnection::endTransaction() noexcept
 {
+    callerHoldsTransaction = false;
     // Detached test connection: nothing to release, but a test may be
     // watching for the moment of release, the only point at which the release
     // ORDER is observable; see setDetachedTransactionReleaseObserver. The call

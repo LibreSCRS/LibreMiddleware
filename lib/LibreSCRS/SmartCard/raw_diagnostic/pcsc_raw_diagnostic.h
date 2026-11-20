@@ -15,6 +15,8 @@
 
 #pragma once
 
+#include <LibreSCRS/SmartCard/detail/Unwrap.h>
+
 #include <pcsc_connection.h>
 
 #include <memory>
@@ -25,5 +27,13 @@ namespace LibreSCRS::SmartCard::Internal {
 /// Connect to @p readerName directly. Throws PCSCError when the reader has no
 /// card or PC/SC refuses the connection.
 [[nodiscard]] std::unique_ptr<PCSCConnection> openRawDiagnostic(const std::string& readerName);
+
+// The session's connection as its class, for a test that arms one of its
+// seams. Only here, beside the test copy of the class: shipped code sees the
+// connection as the CardConnection interface only.
+[[nodiscard]] inline PCSCConnection& connectionOf(CardSession& session) noexcept
+{
+    return static_cast<PCSCConnection&>(LibreSCRS::SmartCard::detail::unwrap(session));
+}
 
 } // namespace LibreSCRS::SmartCard::Internal

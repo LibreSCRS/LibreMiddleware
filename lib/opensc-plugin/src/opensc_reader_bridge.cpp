@@ -12,8 +12,9 @@
 
 #include <LibreSCRS_internal/LogNoexcept.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
-#include <apdu.h>            // APDUCommand (lib/smartcard/src)
-#include <pcsc_connection.h> // PCSCConnection + APDUResponse (lib/smartcard/src)
+#include <apdu.h> // APDUCommand (lib/smartcard/src)
+#include <apdu.h>
+#include <smartcard/card_connection.h>
 
 // libopensc's OWN APDU (de)serialisers — the exact helpers reader-pcsc.c's
 // pcsc_transmit uses (reader-pcsc.c:332,349). Declared in libopensc/internal.h;
@@ -32,7 +33,6 @@ namespace {
 using LibreSCRS::SecureChannel::ChannelState;
 using LibreSCRS::SmartCard::Internal::APDUCommand;
 using LibreSCRS::SmartCard::Internal::APDUResponse;
-using LibreSCRS::SmartCard::Internal::PCSCConnection;
 
 // Tunnel branch: forward one sc_apdu through the live LM secure channel.
 // The sc_apdu is mapped FIELD-BY-FIELD into an APDUCommand (short cases
@@ -175,7 +175,7 @@ int librescrs_opensc_bridge_transmit(sc_reader_t* reader, sc_apdu_t* apdu)
         }
     };
     try {
-        APDUResponse resp = d->conn->transmitRaw(sbuf, static_cast<DWORD>(ssize));
+        APDUResponse resp = d->conn->transmitRaw(std::span<const std::uint8_t>(sbuf, ssize));
         releaseCommand();
         const WipeOnExit wipeResponse{resp.data};
 

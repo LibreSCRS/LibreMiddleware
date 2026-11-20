@@ -50,7 +50,14 @@ namespace LibreSCRS::SmartCard {
 // carry the test-only @ref detail::ChannelInjector::installForTesting or
 // @ref Testing::makeDetachedCardSession symbols in their dynamic export set.
 
-CardSession::CardSession() : d(std::make_unique<Impl>()) {}
+// A session over a detached connection: no handle, no card. Built here, in the
+// library, so the test support that hands such sessions out never names the
+// connection's class, whose typeinfo the library keeps hidden.
+CardSession::CardSession() : d(std::make_unique<Impl>())
+{
+    d->ownedConn = std::make_unique<LibreSCRS::SmartCard::Internal::PCSCConnection>(
+        LibreSCRS::SmartCard::Internal::PCSCConnection::DetachedTag{}, std::string{});
+}
 
 // Private constructor — used by @ref open only. Exposes the old "throw on failure" shape internally so the existing
 // PCSCConnection constructor (which throws std::runtime_error with a
@@ -144,7 +151,7 @@ namespace detail {
 // internal sources go through this bridge instead. Callers MUST NOT pass
 // a moved-from CardSession; no defensive null-check (see public accessor
 // invariants).
-LibreSCRS::SmartCard::Internal::PCSCConnection& PcscBridge::unwrap(CardSession& session) noexcept
+LibreSCRS::SmartCard::CardConnection& PcscBridge::unwrap(CardSession& session) noexcept
 {
     return *session.d->ownedConn;
 }

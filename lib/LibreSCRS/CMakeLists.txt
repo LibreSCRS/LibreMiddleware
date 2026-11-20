@@ -245,7 +245,6 @@ add_library(LibreSCRS_SmartCard SHARED
     $<$<PLATFORM_ID:Darwin>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_smartcard.mm>
     $<$<PLATFORM_ID:Darwin>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_scan_provider.cpp>
     $<$<NOT:$<PLATFORM_ID:Darwin>>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_pcsc.cpp>
-    SecureChannel/plain_channel.cpp
     SecureChannel/pace_channel.cpp
     SecureChannel/pace_params.cpp
     SecureChannel/bac_channel.cpp
@@ -486,23 +485,18 @@ set_target_properties(LibreSCRS_SmartCardTesting PROPERTIES
 #
 # The test-injection helpers (detail::makeMonitorWithProvider,
 # detail::makeSubscriptionIdForTest, the MonitorService dispatch seams
-# detail::publishForTest / publishReaderListForTest / coalesceStateSizeForTest,
-# Internal::PCSCConnection::setDetachedAtr) live here rather than in the
-# production libLibreSCRS_SmartCard so consumers of the released SDK never
-# see the helper symbols at link or runtime. Test executables that need the
-# helpers link this archive alongside the production target; it brings the
-# declared LibreSCRS_SmartCardTesting archive with it.
+# detail::publishForTest / publishReaderListForTest / coalesceStateSizeForTest)
+# live here rather than in the production libLibreSCRS_SmartCard so consumers
+# of the released SDK never see the helper symbols at link or runtime. Test
+# executables that need the helpers link this archive alongside the production
+# target; it brings the declared LibreSCRS_SmartCardTesting archive with it.
 #
-# PCSCConnection::setDetachedAtr is the odd one out in shape only: it is a
-# declared member of a production class (lib/smartcard/src/
-# pcsc_connection.h) rather than a free helper in its own namespace, so
-# only its DEFINITION moves here. The `detachedAtr` member and the
-# `card == 0` branch in getATR() stay in the production class — the class
-# layout is byte-identical either way, and the branch is inert until a
-# test arms it through the setter this archive supplies. Left in
-# pcsc_connection.cpp the definition would be a dynamic export of
-# libLibreSCRS_SmartCard, which compiles that file and exports the whole
-# class.
+# The members that arm a PCSCConnection test seam (setTransmitFilter,
+# setDetachedAtr, ...) are not here: they are members of a class whose
+# typeinfo the library hides, so they come with the test copies of that class
+# (LibreSCRS_SmartCard_RawDiagnostic and its siblings below). Here they would
+# make every consumer of this archive reference the hidden typeinfo in a
+# sanitizer build.
 #
 # The archive is OBJECT (not STATIC) so its symbols merge directly into
 # every test executable that links it, with no archive-level
@@ -518,7 +512,6 @@ set_target_properties(LibreSCRS_SmartCardTesting PROPERTIES
 # ──────────────────────────────────────────────────────────────────────────
 add_library(LibreSCRS_SmartCard_TestHelpers OBJECT
     SmartCard/test_helpers/monitor_test_helpers.cpp
-    SmartCard/test_helpers/pcsc_connection_test_helpers.cpp
 )
 target_link_libraries(LibreSCRS_SmartCard_TestHelpers
     PUBLIC LibreSCRS_SmartCard LibreSCRS_SmartCardTesting
@@ -552,18 +545,22 @@ set_target_properties(LibreSCRS_SmartCard_TestHelpers PROPERTIES
 # ahead of SmartCard_Impl, so archive order cannot drop the reference.
 #
 # It carries its own copy of the connection, because libLibreSCRS_SmartCard
-# exports only the members a shipped image calls: the reader-name constructor
-# openRawDiagnostic needs, the destructor, listReaders, reconnectWithReset and
-# the other transmits are hidden there. The executables that link this --
-# hardware probes, card_mapper and the tests that list readers or keep a
-# detached connection of their own -- talk to the card through this copy and
-# to CardSession through the library's. Both copies are the real PC/SC (or,
-# on macOS, CryptoTokenKit) connection; nothing is stubbed.
+# exports none of it: no member and not its typeinfo. The executables that
+# link this -- hardware probes, card_mapper and the tests that list readers,
+# keep a detached connection of their own or arm a seam of a session's
+# connection -- talk to the card through this copy and to CardSession through
+# the library's. Both copies are the real PC/SC (or, on macOS, CryptoTokenKit)
+# connection; nothing is stubbed. The copy also brings the class's typeinfo,
+# which a sanitizer build (-fsanitize=vptr) references from every member call,
+# and the definitions of the members that ARM a test seam
+# (test_helpers/pcsc_connection_test_helpers.cpp) -- members of this class, so
+# they come with a copy of it and with nothing else.
 #
 # Not installed (no install(TARGETS …) rule). Build-tree-only.
 # ──────────────────────────────────────────────────────────────────────────
 add_library(LibreSCRS_SmartCard_RawDiagnostic OBJECT
     SmartCard/raw_diagnostic/pcsc_raw_diagnostic.cpp
+    SmartCard/test_helpers/pcsc_connection_test_helpers.cpp
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection.cpp
     $<$<PLATFORM_ID:Darwin>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_ctk.cpp>
     $<$<PLATFORM_ID:Darwin>:${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_smartcard.mm>
@@ -601,6 +598,7 @@ set_target_properties(LibreSCRS_SmartCard_RawDiagnostic PROPERTIES POSITION_INDE
 # macOS has no PC/SC body to stub.
 if(NOT APPLE)
     add_library(LibreSCRS_SmartCard_PcscForTests OBJECT
+        SmartCard/test_helpers/pcsc_connection_test_helpers.cpp
         ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection.cpp
         ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_pcsc.cpp
     )
@@ -636,7 +634,6 @@ endif()
 # Not installed (no install(TARGETS …) rule). Build-tree-only.
 # ──────────────────────────────────────────────────────────────────────────
 add_library(LibreSCRS_SecureChannel_ForTests OBJECT
-    SecureChannel/plain_channel.cpp
     SecureChannel/pace_channel.cpp
     SecureChannel/pace_params.cpp
     SecureChannel/bac_channel.cpp
@@ -667,6 +664,7 @@ set_target_properties(LibreSCRS_SecureChannel_ForTests PROPERTIES POSITION_INDEP
 # Not installed (no install(TARGETS …) rule). Build-tree-only.
 # ──────────────────────────────────────────────────────────────────────────
 add_library(LibreSCRS_SmartCard_CtkForTests OBJECT
+    SmartCard/test_helpers/pcsc_connection_test_helpers.cpp
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection.cpp
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src/pcsc_connection_ctk.cpp
     ${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_scan_provider.cpp

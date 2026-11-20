@@ -29,6 +29,7 @@
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
+#include <pcsc_raw_diagnostic.h>
 #include <pcsc_connection.h>
 
 #include "card_protocol.h"
@@ -179,7 +180,7 @@ TEST(RsEidPluginVerificationTest, VerificationFieldsAppearExactlyOnceInVerificat
     auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Apollo Reader");
     ASSERT_NE(session, nullptr);
 
-    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*session);
+    auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(*session);
     conn.setDetachedAtr(apolloAtr());
 
     using namespace eidcard::protocol;

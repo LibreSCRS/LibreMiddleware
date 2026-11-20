@@ -63,6 +63,13 @@
 #  25  an entry added against --allowlist-base, and its control     -> 1/0
 #  26  a "thrown:" entry: the library throws the type (control), and
 #      the same typeinfo exported with no throw site in the library -> 0/1
+#
+# The sanitizer flavour (--sanitizer-flavour):
+#  27  the test archive, and a card plugin, reading a member of an
+#      Internal class whose typeinfo the library hides: clean built
+#      plain, an import of that typeinfo built with -fsanitize; the
+#      control touches nothing; without the option the gate is blind
+#      to it; without compile_commands.json it cannot judge   -> 1/1/0/0/2
 set -uo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -129,6 +136,7 @@ fixture() {
         "$root/include/LibreSCRS"
     cp "$SUBJECT" "$root/ci/scripts/abi-snapshot.sh"
     cp "$HELPER" "$root/ci/scripts/abi-public-surface.py"
+    cp "$HERE/abi-flavour-imports.py" "$root/ci/scripts/abi-flavour-imports.py"
     chmod 0755 "$root/ci/scripts/abi-snapshot.sh"
     printf '# fixture allowlist\n' > "$root/ci/abi/5.x-internal-exports.txt"
     printf 'namespace LibreSCRS {\nint selftestAlpha(int x);\nint selftestBeta(int x);\nint selftestGamma(int x);\n}\n' \
@@ -685,6 +693,81 @@ thrown_fixture 'Internal::SelftestError e("built, never thrown"); return x + e.w
 rc=$(run "$root26" --update build)
 check "a thrown: entry with no throw site" 1 "$rc"
 says "a thrown: entry with no throw site" "has no throw site for this type"
+
+# --- 27: the sanitizer flavour ----------------------------------------------
+#     gcc's -fsanitize=vptr makes a member access through a polymorphic object
+#     reference the class's typeinfo; the plain build of the same source does
+#     not. Here the core library hides the typeinfo of an Internal class, and
+#     a shipped image reads a member of it: plain, it imports nothing of it;
+#     rebuilt with the flavour's flags, it imports the typeinfo, so the plugin
+#     would not load and the archive would not link. Everything is built with
+#     ninja, as the gate reads the link lines from build.ninja.
+flavour_fixture() {  # flavour_fixture <archive body> <plugin body>
+    root27="$WORK/flavour"
+    rm -rf "$root27"
+    fixture "$root27"
+    rm -f "$root27/build/plugins/"*.so
+    mkdir -p "$root27/internal"
+    printf 'namespace LibreSCRS { namespace Internal {\nstruct Conn { virtual ~Conn(); int value = 0; };\n} }\n' \
+        > "$root27/internal/conn.h"
+    {
+        printf '#include "conn.h"\nnamespace LibreSCRS {\nInternal::Conn::~Conn() = default;\n'
+        printf '%s int selftestAlpha(int x) { return x + 1; }\n' "$EXPORT"
+        printf '%s int selftestBeta(int x) { return x + 2; }\n' "$EXPORT"
+        printf '%s int selftestGamma(int x) { return x + 3; }\n}\n' "$EXPORT"
+    } > "$root27/stub.cpp"
+    printf '#include "conn.h"\nnamespace LibreSCRS {\nint selftestTouch(Internal::Conn& c) { %s }\n}\n' "$1" \
+        > "$root27/testing.cpp"
+    printf '#include "conn.h"\nextern "C" int fixture_plugin_entry(LibreSCRS::Internal::Conn& c) { %s }\n' "$2" \
+        > "$root27/plugin.cpp"
+    cat > "$root27/build/build.ninja" <<'NINJA'
+rule cxx
+  command = g++ -c -fPIC $cflags -I../internal $in -o $out
+rule so
+  command = g++ -shared -o $out $in
+rule ar
+  command = ar qc $out $in
+build CMakeFiles/Stub.dir/stub.cpp.o: cxx ../stub.cpp
+  cflags = -fvisibility=hidden
+build lib/LibreSCRS/libLibreSCRS_Stub.so.5.0.0: so CMakeFiles/Stub.dir/stub.cpp.o
+build CMakeFiles/Testing.dir/testing.cpp.o: cxx ../testing.cpp
+build lib/LibreSCRS/libLibreSCRSTesting_Fixture.a: ar CMakeFiles/Testing.dir/testing.cpp.o
+build CMakeFiles/plugin.dir/plugin.cpp.o: cxx ../plugin.cpp
+build plugins/libfixture-plugin.so: so CMakeFiles/plugin.dir/plugin.cpp.o
+NINJA
+    ( cd "$root27/build" && ninja -t compdb cxx > compile_commands.json && ninja ) > "$WORK/gcc.err" 2>&1 \
+        || { echo "FATAL: could not build the flavour fixture" >&2; sed 's/^/        /' "$WORK/gcc.err" >&2; exit 2; }
+}
+if command -v ninja >/dev/null 2>&1; then
+    FLAVOUR='-fsanitize=address,undefined'
+    flavour_fixture 'return c.value;' 'return 0;'
+    if nm -u "$root27/build/lib/LibreSCRS/libLibreSCRSTesting_Fixture.a" | grep -q '_ZTIN9LibreSCRS8Internal4ConnE'; then
+        echo "FATAL: the plain archive already imports the typeinfo -- the case would not need the flavour" >&2
+        exit 2
+    fi
+    rc=$(run "$root27" --update --sanitizer-flavour "$FLAVOUR" build)
+    check "the test archive imports a hidden typeinfo built with -fsanitize" 1 "$rc"
+    says "the test archive imports a hidden typeinfo built with -fsanitize" "IMPORT OF A HIDDEN SYMBOL"
+    says "the test archive imports a hidden typeinfo built with -fsanitize" \
+        "libLibreSCRSTesting_Fixture.a built with $FLAVOUR  typeinfo for LibreSCRS::Internal::Conn"
+    rc=$(run "$root27" --update build)
+    check "without the flavour the same archive passes (blind)" 0 "$rc"
+    flavour_fixture '(void)c; return 0;' 'return c.value;'
+    rc=$(run "$root27" --update --sanitizer-flavour "$FLAVOUR" build)
+    check "a card plugin imports a hidden typeinfo built with -fsanitize" 1 "$rc"
+    says "a card plugin imports a hidden typeinfo built with -fsanitize" \
+        "libfixture-plugin.so built with $FLAVOUR  typeinfo for LibreSCRS::Internal::Conn"
+    flavour_fixture '(void)c; return 0;' '(void)c; return 0;'
+    rc=$(run "$root27" --update --sanitizer-flavour "$FLAVOUR" build)
+    check "control: the flavour over images that touch no hidden class" 0 "$rc"
+    rm -f "$root27/build/compile_commands.json"
+    rc=$(run "$root27" --update --sanitizer-flavour "$FLAVOUR" build)
+    check "the flavour without compile_commands.json cannot judge" 2 "$rc"
+    says "the flavour without compile_commands.json cannot judge" "compile_commands.json is missing"
+else
+    echo "FATAL: ninja not found -- the sanitizer flavour cases cannot be built" >&2
+    exit 2
+fi
 
 printf 'selftest: %s cases, %s red-proved\n' "$cases" "$red"
 [ "$fails" = 0 ]

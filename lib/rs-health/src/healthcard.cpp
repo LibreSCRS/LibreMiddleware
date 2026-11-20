@@ -4,7 +4,8 @@
 #include "healthcard.h"
 #include "health_protocol.h"
 #include "apdu.h"
-#include <pcsc_connection.h>
+#include <apdu.h>
+#include <smartcard/card_connection.h>
 #include <smartcard/chunked_read.h>
 #include "date_format.h"
 #include "tlv.h"
@@ -44,7 +45,7 @@ static std::string findUtf16String(const std::vector<LibreSCRS::SmartCard::Inter
     return decodeUtf16Le(bytes);
 }
 
-bool HealthCard::probe(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
+bool HealthCard::probe(LibreSCRS::SmartCard::IConnection& conn)
 {
     try {
         auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(protocol::AID_SERVSZK));
@@ -54,7 +55,7 @@ bool HealthCard::probe(LibreSCRS::SmartCard::Internal::PCSCConnection& conn)
     }
 }
 
-HealthCard::HealthCard(LibreSCRS::SmartCard::Internal::PCSCConnection& externalConn) : conn(externalConn)
+HealthCard::HealthCard(LibreSCRS::SmartCard::IConnection& externalConn) : conn(externalConn)
 {
     initCard();
 }

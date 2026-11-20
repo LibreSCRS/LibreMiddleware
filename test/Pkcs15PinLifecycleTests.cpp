@@ -28,6 +28,7 @@
 #include <LibreSCRS/SmartCard/testing/CardSessionTesting.h>
 #include <LibreSCRS/SmartCard/detail/ChannelInjection.h>
 #include <LibreSCRS/SmartCard/detail/Unwrap.h>
+#include <pcsc_raw_diagnostic.h>
 #include <LibreSCRS_internal/SecureChannel/PlainChannel.h>
 
 #include "fake_pcsc_connection.h"
@@ -304,7 +305,7 @@ FakeCardRig makeRig(const char* readerName, std::map<std::uint16_t, std::vector<
     rig.card->files = std::move(files);
     rig.card->probeTries = std::move(probeTries);
 
-    auto& conn = LibreSCRS::SmartCard::detail::unwrap(*rig.session);
+    auto& conn = LibreSCRS::SmartCard::Internal::connectionOf(*rig.session);
     conn.setTransmitFilter([card = rig.card](const APDUCommand& cmd) { return (*card)(cmd); });
 
     // Pre-install a PlainChannel bound to the PKCS#15 AID so the plugin's

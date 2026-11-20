@@ -145,6 +145,8 @@ target_link_libraries(RsEidPluginTests
     CardPlugin_Impl
     SmartCard_Impl
     LibreSCRS_SmartCard_TestHelpers
+    # arms a seam of the session's connection: a test copy of the class
+    LibreSCRS_SmartCard_RawDiagnostic
 )
 target_include_directories(RsEidPluginTests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
@@ -339,6 +341,8 @@ target_link_libraries(LibreSCRS_ChipAuthSessionTests
     LibreSCRS::SmartCard
     LibreSCRS_SecureChannel_ForTests
     LibreSCRS_SmartCard_TestHelpers
+    # arms a seam of the session's connection: a test copy of the class
+    LibreSCRS_SmartCard_RawDiagnostic
     LibreSCRS::Secure
     SmartCard_Impl
     EMRTDCrypto
@@ -1387,6 +1391,8 @@ target_link_libraries(LibreSCRS_CardSessionTests PRIVATE
     LibreSCRS_SmartCard
     SmartCard_Impl
     LibreSCRS_SmartCard_TestHelpers
+    # arms a seam of the session's connection: a test copy of the class
+    LibreSCRS_SmartCard_RawDiagnostic
 )
 # The CardSessionPaceCapabilityHoist tests script a card via PCSCConnection::setTransmitFilter
 # (the same detached-session seam the eMRTD plugin tests use); expose apdu.h /
@@ -1409,6 +1415,8 @@ target_link_libraries(SessionTransmitTest PRIVATE
     GTest::gtest_main
     LibreSCRS_SmartCard
     LibreSCRS_SmartCard_TestHelpers
+    # arms a seam of the session's connection: a test copy of the class
+    LibreSCRS_SmartCard_RawDiagnostic
     SmartCard_Impl
 )
 target_include_directories(SessionTransmitTest PRIVATE
@@ -1673,6 +1681,8 @@ target_link_libraries(Pkcs15PinLifecycleTests PRIVATE
     PKCS15
     LibreSCRS_SmartCard
     LibreSCRS_SmartCard_TestHelpers
+    # arms a seam of the session's connection: a test copy of the class
+    LibreSCRS_SmartCard_RawDiagnostic
     SmartCard_Impl
 )
 target_include_directories(Pkcs15PinLifecycleTests PRIVATE
@@ -1762,6 +1772,8 @@ target_link_libraries(Pkcs15ChangePinSelectorTests PRIVATE
     CardPlugin_Impl
     LibreSCRS_SmartCard
     LibreSCRS_SmartCard_TestHelpers
+    # arms a seam of the session's connection: a test copy of the class
+    LibreSCRS_SmartCard_RawDiagnostic
     SmartCard_Impl
 )
 target_include_directories(Pkcs15ChangePinSelectorTests PRIVATE
@@ -1792,6 +1804,8 @@ target_link_libraries(Pkcs15ProfileReadCensusTests PRIVATE
     EMRTDCrypto
     LibreSCRS_SmartCard
     LibreSCRS_SmartCard_TestHelpers
+    # arms a seam of the session's connection: a test copy of the class
+    LibreSCRS_SmartCard_RawDiagnostic
     SmartCard_Impl
     LibreSCRS::Secure
     OpenSSL_Crypto

@@ -21,22 +21,14 @@
 # This list only shrinks. The gate fails on a symbol that is not here, on an
 # entry that no longer names an imported internal export, and in CI on any
 # entry the list at the merge base does not hold.
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::PlainChannel::PlainChannel(LibreSCRS::SmartCard::IConnection&, LibreSCRS::SmartCard::AppletAid)@@LM_5	imported: libemrtd-plugin, libpkcs15-plugin (plain probe channel on the stack)
 libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(LibreSCRS::SecureChannel::ISecureChannel&, LibreSCRS::SmartCard::AppletAid)@@LM_5	imported: libemrtd-plugin (records the applet after a wrapped SELECT)
 libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::CardSession::transmitInternal(LibreSCRS::SmartCard::Internal::APDUCommand const&, LibreSCRS::CancelToken)@@LM_5	imported: libopensc-plugin, libpkcs15-plugin (SM-aware APDU funnel)
 libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::activatedProtocol(LibreSCRS::SmartCard::CardSession&)@@LM_5	imported: libemrtd-plugin (lock-free protocol read under the holder)
 libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::ActiveChannelAccessor::active(LibreSCRS::SmartCard::CardSession&)@@LM_5	imported: libemrtd-plugin (the live channel under the holder)
 libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::HolderChannelAccessor::channel(LibreSCRS::SmartCard::ActiveChannelHolder&)@@LM_5	imported: libemrtd-plugin, libopensc-plugin, libpkcs15-plugin (the holder's channel)
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::PCSCConnection(LibreSCRS::SmartCard::Internal::PCSCConnection::DetachedTag, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&)@@LM_5	imported: libLibreSCRSTesting_SmartCard.a (makeDetachedCardSession)
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::beginTransaction()@@LM_5	imported: libemrtd-plugin, libopensc-plugin, librs-eid-plugin (PC/SC transaction)
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::endTransaction()@@LM_5	imported: libemrtd-plugin, libopensc-plugin, librs-eid-plugin (PC/SC transaction)
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::getATR() const@@LM_5	imported: librs-eid-plugin (card generation from the ATR)
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::reconnect()@@LM_5	imported: librs-eid-plugin (reconnect after a card reset)
-libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::Internal::PCSCConnection::transmitRaw(unsigned char const*, unsigned long)@@LM_5	imported: libopensc-plugin (raw transmit of the OpenSC reader bridge)
 libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::detail::PcscBridge::unwrap(LibreSCRS::SmartCard::CardSession&)@@LM_5	imported: every card plugin (the session's connection)
 libLibreSCRS_SmartCard.so	LibreSCRS::SmartCard::detail::sessionGeneration(LibreSCRS::SmartCard::CardSession const&)@@LM_5	imported: libemrtd-plugin, libopensc-plugin, libpkcs15-plugin; also called by the inline makeSessionKey in the installed Plugin/SessionKey.h
 libLibreSCRS_Trust.so	LibreSCRS::Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(LibreSCRS::Trust::TrustStore&, std::vector<LibreSCRS::Trust::TrustAnchor, std::allocator<LibreSCRS::Trust::TrustAnchor> >)@@LM_5	imported: libLibreSCRS_Signing (merges Trusted List anchors into a TrustStore)
-libLibreSCRS_SmartCard.so	LibreSCRS::SecureChannel::PlainChannel::~PlainChannel()@@LM_5	imported: libemrtd-plugin, libpkcs15-plugin (destroys the stack probe channel)
-libLibreSCRS_SmartCard.so	typeinfo for LibreSCRS::SmartCard::Internal::PCSCError@@LM_5	thrown: PCSCError leaves libLibreSCRS_SmartCard through the exported PCSCConnection members
-libLibreSCRS_SmartCard.so	typeinfo name for LibreSCRS::SmartCard::Internal::PCSCError@@LM_5	thrown: PCSCError leaves libLibreSCRS_SmartCard through the exported PCSCConnection members
-libLibreSCRS_SmartCard.so	vtable for LibreSCRS::SmartCard::Internal::PCSCError@@LM_5	thrown: PCSCError leaves libLibreSCRS_SmartCard through the exported PCSCConnection members
+libLibreSCRS_SmartCard.so	typeinfo for LibreSCRS::SmartCard::Internal::PCSCError@@LM_5	thrown: PCSCError leaves libLibreSCRS_SmartCard through the connection calls of the card plugins and the CardSession members
+libLibreSCRS_SmartCard.so	typeinfo name for LibreSCRS::SmartCard::Internal::PCSCError@@LM_5	thrown: PCSCError leaves libLibreSCRS_SmartCard through the connection calls of the card plugins and the CardSession members
+libLibreSCRS_SmartCard.so	vtable for LibreSCRS::SmartCard::Internal::PCSCError@@LM_5	thrown: PCSCError leaves libLibreSCRS_SmartCard through the connection calls of the card plugins and the CardSession members
