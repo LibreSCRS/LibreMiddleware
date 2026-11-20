@@ -170,22 +170,29 @@ bool NativeSigningService::configure(const TrustConfig& config)
 
     int eagerCount = 0;
     int successCount = 0;
+    int completeCount = 0;
 
     for (const auto& entry : config.trustedLists) {
         if (!entry.eager)
             continue;
         ++eagerCount;
         // A list that fails leaves the service degraded, not unconfigured.
-        if (loadTrustList(entry))
+        bool complete = false;
+        if (loadTrustList(entry, complete))
             ++successCount;
+        if (complete)
+            ++completeCount;
     }
 
+    if (eagerCount > 0 && completeCount == eagerCount && trustedListsLoadedHook)
+        trustedListsLoadedHook(false);
     // Success if at least one TL loaded, or if no TLs were configured (empty list is valid)
     return eagerCount == 0 || successCount > 0;
 }
 
-bool NativeSigningService::loadTrustList(const TrustedListEntry& entry)
+bool NativeSigningService::loadTrustList(const TrustedListEntry& entry, bool& complete)
 {
+    complete = false;
     FetchOptions opts;
     opts.cacheDirectory = trustConfig.cacheDirectory;
     opts.requestTimeout = std::chrono::seconds{kTlFetchTimeoutSeconds};
@@ -200,7 +207,9 @@ bool NativeSigningService::loadTrustList(const TrustedListEntry& entry)
         for (auto& der : timestampAuthorityCertificates(info))
             tlTimestampAnchors.push_back(std::move(der));
     };
-    const auto onFailure = [](const std::string& url, const std::string& error) {
+    bool anyFailed = false;
+    const auto onFailure = [&anyFailed](const std::string& url, const std::string& error) {
+        anyFailed = true;
         LibreSCRS::log::warnf("Trusted List {} skipped: {}", url, error);
     };
 
@@ -210,6 +219,7 @@ bool NativeSigningService::loadTrustList(const TrustedListEntry& entry)
             onFailure(entry.url, result.error);
             return false;
         }
+        complete = !anyFailed;
         return true;
     } catch (const std::exception& e) {
         onFailure(entry.url, e.what());
@@ -223,16 +233,22 @@ void NativeSigningService::loadLazyTrustLists()
         return;
     lazyListsLoaded = true;
 
+    int deferredCount = 0;
+    int loadedCount = 0;
     for (const auto& entry : trustConfig.trustedLists) {
         if (entry.eager)
             continue; // configure() already fetched it
+        ++deferredCount;
         // Degraded, exactly as configure() treats an eager source that
         // fails: the anchor set stays short and the chain gate below
         // refuses with the cause the user can act on.
-        (void)loadTrustList(entry);
+        bool complete = false;
+        (void)loadTrustList(entry, complete);
+        if (complete)
+            ++loadedCount;
     }
-    if (deferredListsHook)
-        deferredListsHook();
+    if (deferredCount > 0 && loadedCount == deferredCount && trustedListsLoadedHook)
+        trustedListsLoadedHook(true);
 }
 
 std::optional<SigningResult> NativeSigningService::completeLongTermChain(SigningKey& key, SignatureLevel level)

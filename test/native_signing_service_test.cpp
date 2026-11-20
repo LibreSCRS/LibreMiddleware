@@ -243,7 +243,10 @@ protected:
         cfg.trustedLists.push_back(entry);
         cfg.cacheDirectory = cacheDir.string();
 
-        service.setDeferredListsHook([this] { ++deferredHookCalls; });
+        service.setTrustedListsLoadedHook([this](bool deferred) {
+            if (deferred)
+                ++deferredHookCalls;
+        });
         service.configure(cfg);
     }
 
@@ -264,9 +267,9 @@ TEST_F(LazyTrustedListTest, LazyTrustedListIsFetchedWhenALevelNeedsIt)
     auto result = service.sign(req, validSigner);
 
     EXPECT_EQ(server.servedCount(), 1) << "a long-term level must fetch the deferred list exactly once";
-    // The trust store service is told once, so it fetches the same deferred
-    // sources for the store it owns.
-    EXPECT_EQ(deferredHookCalls, 1) << "the deferred lists were fetched without telling the bridge";
+    // The bridge is told once, so the trust store service adopts the same
+    // deferred lists for the store it owns.
+    EXPECT_EQ(deferredHookCalls, 1) << "the deferred lists were loaded without telling the bridge";
 
     // The in-memory signer is self-signed and this list does not name its
     // issuer, so the refusal is the chain gate working on anchors that really
@@ -284,6 +287,33 @@ TEST_F(LazyTrustedListTest, LazyTrustedListIsFetchedWhenALevelNeedsIt)
     EXPECT_NE(result.errorMessage.find("issuing CA was not found"), std::string::npos) << result.errorMessage;
 }
 
+// The bridge is told about a phase only when all of its lists loaded: a list
+// that failed is not handed on to the trust store service, so the service
+// does not download it a second time -- it tries again on a later signature.
+TEST_F(LazyTrustedListTest, TheBridgeIsToldOnlyAboutACompleteLoad)
+{
+    libresign::test::MockTrustedListServer server(std::string(CMAKE_SOURCE_DIR) +
+                                                  "/test/fixtures/trust/synthetic-tl.xml");
+    for (const bool verifies : {false, true}) {
+        SCOPED_TRACE(verifies ? "the list verifies" : "the list does not verify");
+        TrustConfig cfg;
+        TrustedListEntry entry;
+        entry.url = server.url();
+        entry.eager = true;
+        if (verifies)
+            entry.signingCertPath = std::string(CMAKE_SOURCE_DIR) + "/test/fixtures/trust/test-tl-signing-cert.pem";
+        cfg.trustedLists.push_back(entry);
+        cfg.cacheDirectory = cacheDir.string();
+        int eagerCalls = 0;
+        service.setTrustedListsLoadedHook([&eagerCalls](bool deferred) {
+            if (!deferred)
+                ++eagerCalls;
+        });
+        (void)service.configure(cfg);
+        EXPECT_EQ(eagerCalls, verifies ? 1 : 0);
+    }
+}
+
 TEST_F(LazyTrustedListTest, LazyTrustedListIsNotFetchedForBasicLevel)
 {
     libresign::test::MockTrustedListServer server(std::string(CMAKE_SOURCE_DIR) +
@@ -293,7 +323,7 @@ TEST_F(LazyTrustedListTest, LazyTrustedListIsNotFetchedForBasicLevel)
     auto result = service.sign(pdfRequest(false), validSigner);
     EXPECT_TRUE(result.success) << result.errorMessage;
     EXPECT_EQ(server.servedCount(), 0) << "a basic signature needs no anchor and must make no request";
-    EXPECT_EQ(deferredHookCalls, 0) << "nothing was fetched, so the trust store service has nothing to fetch";
+    EXPECT_EQ(deferredHookCalls, 0) << "nothing was loaded, so the trust store service has nothing to adopt";
 }
 
 // A time-stamp is an anchor's business too. The token of the in-process

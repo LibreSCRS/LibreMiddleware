@@ -44,7 +44,7 @@ struct TrustStoreInternalAccess
     ///        its own copy of the bytes.
     ///
     /// Called only by @ref TrustStoreService (its eager workers and
-    /// loadDeferredTrustedLists), inside LibreSCRS_Trust: hidden, like
+    /// loadTrustedLists), inside LibreSCRS_Trust: hidden, like
     /// @ref makeStore. No other library adds an anchor to a store.
     ///
     /// @par Thread-safety

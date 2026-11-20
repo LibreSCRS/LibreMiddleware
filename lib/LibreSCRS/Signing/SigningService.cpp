@@ -8,10 +8,8 @@
 #include "detail/ErrorClassifier.h"
 #include "detail/RequestBridge.h"
 
-// LM-internal Trust friend header used by the lazy-fetch-merge lambda
-// bound into libresign's NativeSigningService::setAnchorEmitter (below).
-// LibreSCRS_Signing already builds with LIBRESCRS_INTERNAL_BUILD, so this
-// internal include is allowed.
+// The libresign engine (internal: LibreSCRS_Signing builds with
+// LIBRESCRS_INTERNAL_BUILD).
 #include "native/native_signing_service.h"
 #include "native/plugin_signing_key.h"
 
@@ -289,11 +287,17 @@ SigningService::Impl::runSignPipeline(const SigningRequest& request, const Auth:
     libReq.tsa.url = std::move(tsaUrl);
 
     auto service = std::make_unique<libresign::NativeSigningService>();
-    // When a signature level needs the deferred Trusted Lists, the engine
-    // fetches them for its own chain and time-stamp checks; the trust store
-    // service then fetches the same configured sources itself and adds their
-    // anchors to the store it owns. Signing never adds an anchor to a store.
-    service->setDeferredListsHook([trustService = trustService] { trustService->loadDeferredTrustedLists(); });
+    // The engine loads the Trusted Lists it needs for its own chain and
+    // time-stamp checks -- the eager ones in configure(), the deferred ones
+    // when a signature level needs them -- into the cache directory it shares
+    // with the trust store service. Once a phase loaded completely, the
+    // service adopts the same lists from that cache and adds their anchors to
+    // the store it owns: one download, a list that failed here is tried again
+    // on a later signature, and Signing never adds an anchor to a store.
+    service->setTrustedListsLoadedHook([trustService = trustService](bool deferred) {
+        trustService->loadTrustedLists(deferred ? Trust::TrustStoreService::Sources::All
+                                                : Trust::TrustStoreService::Sources::Eager);
+    });
     if (!service->configure(libTrust)) {
         return {SigningResult::trustStoreUnavailableDiagnosticOnly(std::string{"libresign rejected TrustConfig"}), {}};
     }

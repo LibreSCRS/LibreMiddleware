@@ -203,7 +203,7 @@ target_compile_features(LibreSign PUBLIC cxx_std_23)
 # SHARED-build cycle break: LibreSign does not link LibreSCRS_Trust and
 # never reaches into a TrustStore. Anchors reach the public TrustStore only
 # through TrustStoreService, which fetches the Trusted Lists itself (the
-# Signing bridge asks it to through NativeSigningService::setDeferredListsHook).
+# Signing bridge asks it to through NativeSigningService::setTrustedListsLoadedHook).
 # So the Trust <-> LibreSign target graph is a one-way edge:
 # LibreSCRS_Trust  PRIVATE  LibreSign. The LibreSCRS::Trust::TrustAnchor
 # type libresign's anchor extraction returns is reachable through

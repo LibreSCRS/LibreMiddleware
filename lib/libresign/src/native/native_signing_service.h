@@ -27,17 +27,19 @@ public:
 
     SigningResult sign(const SigningRequest& request, SigningKey& key) override;
 
-    /// Called once the deferred Trusted Lists (the sources whose @c eager flag
-    /// is false) have been fetched for this signature -- that is, when a
-    /// signature level needed them. The Signing-side bridge
-    /// (LibreSCRS::Signing::SigningService) binds the trust store service's
-    /// own fetch of the same sources, so the anchors reach the public
-    /// TrustStore through the service that owns it; libresign never touches
-    /// that store.
-    using DeferredListsHook = std::function<void()>;
-    void setDeferredListsHook(DeferredListsHook hook)
+    /// Called when this signature has loaded the Trusted Lists of a phase
+    /// completely: with @c false once configure() loaded every eager list,
+    /// with @c true once a signature level made it load every deferred one.
+    /// Not called when one of them failed. The Signing-side bridge
+    /// (LibreSCRS::Signing::SigningService) has the trust store service
+    /// adopt those lists, which it reads from the cache directory the two
+    /// share, so the anchors reach the public TrustStore through the service
+    /// that owns it -- one download, and no second wait when the network is
+    /// down. libresign never touches that store.
+    using TrustedListsLoadedHook = std::function<void(bool deferred)>;
+    void setTrustedListsLoadedHook(TrustedListsLoadedHook hook)
     {
-        deferredListsHook = std::move(hook);
+        trustedListsLoadedHook = std::move(hook);
     }
 
 private:
@@ -57,12 +59,13 @@ private:
     /// it would leave the next long-term sign with no anchors and no attempt
     /// to fetch any.
     bool lazyListsLoaded = false;
-    DeferredListsHook deferredListsHook;
+    TrustedListsLoadedHook trustedListsLoadedHook;
 
     /// Fetch, verify and take the anchors of @p entry and, for a List of
     /// Trusted Lists, of every list it points to. A list that fails is
-    /// logged and skipped; returns whether @p entry itself loaded.
-    bool loadTrustList(const TrustedListEntry& entry);
+    /// logged and skipped; returns whether @p entry itself loaded, and sets
+    /// @p complete when every list of the walk did.
+    bool loadTrustList(const TrustedListEntry& entry, bool& complete);
 
     /// Fetch every configured Trusted List that @ref configure deliberately
     /// left alone, i.e. every source whose @c eager flag is false.

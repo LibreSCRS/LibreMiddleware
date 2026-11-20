@@ -401,7 +401,12 @@ target_link_libraries(TrustStoreServiceTests PRIVATE
     OpenSSL_Crypto
     SigningTestSupport
 )
-target_compile_definitions(TrustStoreServiceTests PRIVATE CMAKE_SOURCE_DIR="${LibreMiddleware_SOURCE_DIR}")
+# The service's private state (Trust/internal/TrustStoreServiceImpl.h) for its
+# test hook, and the libresign types it names.
+target_include_directories(TrustStoreServiceTests PRIVATE
+    ${LibreMiddleware_SOURCE_DIR}/lib/LibreSCRS ${LibreMiddleware_SOURCE_DIR}/lib/libresign/src)
+target_compile_definitions(TrustStoreServiceTests PRIVATE CMAKE_SOURCE_DIR="${LibreMiddleware_SOURCE_DIR}"
+    LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(TrustStoreServiceTests)
 
 # TrustStoreService::create std::expected error-shape regression tests

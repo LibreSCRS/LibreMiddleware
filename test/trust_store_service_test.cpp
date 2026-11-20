@@ -21,6 +21,7 @@
 #include <LibreSCRS/Trust/TrustStoreService.h>
 
 #include "signing_test_support/mock_trusted_list_server.h"
+#include "Trust/internal/TrustStoreServiceImpl.h"
 
 #include <gtest/gtest.h>
 
@@ -305,75 +306,177 @@ TEST(TrustStoreServiceTest, ConstructionDoesNotBlockOnSlowDns)
 }
 
 // =============================================================================
-// Deferred sources: a source whose eager flag is false is the service's to
-// fetch, on request, once -- not the signing engine's to merge. A loopback
-// server counts the requests. (Its list does not verify here: the public
-// configuration names no signing certificate for a loopback URL, so the count
-// shows the fetch, not the merge; the merge is the eager workers' code.)
+// loadTrustedLists: the configured sources reach the store through the
+// service, a source that failed in any part is tried again, and a list the
+// cache already holds is not downloaded again. A loopback server serves the
+// signed synthetic list and counts the downloads; the service is told the
+// list's test signing certificate through its test hook (the public
+// configuration names none for a loopback URL, and no pinned certificate
+// covers it).
 // =============================================================================
 
 namespace {
 
-struct DeferredSourceRig
+std::filesystem::path freshDir(const std::string& tag)
 {
-    DeferredSourceRig()
-        : server(std::string(CMAKE_SOURCE_DIR) + "/test/fixtures/trust/synthetic-tl.xml"),
-          cacheDir(std::filesystem::temp_directory_path() /
-                   ("librescrs-deferred-tl-" + std::to_string(::getpid()) + "-" + std::to_string(++counter)))
-    {
-        std::filesystem::remove_all(cacheDir);
-        std::filesystem::create_directories(cacheDir);
-    }
-    ~DeferredSourceRig()
+    static int counter = 0;
+    auto dir = std::filesystem::temp_directory_path() /
+               ("librescrs-" + tag + "-" + std::to_string(::getpid()) + "-" + std::to_string(++counter));
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    return dir;
+}
+
+struct TrustedListRig
+{
+    TrustedListRig() : server(std::string(CMAKE_SOURCE_DIR) + "/test/fixtures/trust/synthetic-tl.xml") {}
+    ~TrustedListRig()
     {
         std::error_code ec;
-        std::filesystem::remove_all(cacheDir, ec);
+        for (const auto& dir : dirs)
+            std::filesystem::remove_all(dir, ec);
     }
 
-    std::shared_ptr<tt::TrustStoreService> service()
+    std::shared_ptr<tt::TrustStoreService> service(bool eager, std::optional<std::filesystem::path> cacheDir,
+                                                   bool knowsTheSigner = true)
     {
         tt::TrustConfig cfg;
         tt::TrustedListSource src;
         src.url = server.url();
-        src.eager = false;
+        src.eager = eager;
         cfg.trustedListSources.push_back(src);
-        cfg.cacheDirectory = cacheDir;
+        cfg.cacheDirectory = std::move(cacheDir);
         auto result = tt::TrustStoreService::create(std::move(cfg));
         EXPECT_TRUE(result.has_value());
-        return result ? *result : nullptr;
+        if (!result)
+            return nullptr;
+        if (knowsTheSigner)
+            teachTheSigner(**result);
+        return *result;
+    }
+
+    static void teachTheSigner(tt::TrustStoreService& svc)
+    {
+        tt::detail::TrustStoreServiceAccess::impl(svc).entryHook = [](libresign::TrustedListEntry& entry) {
+            entry.signingCertPath = std::string(CMAKE_SOURCE_DIR) + "/test/fixtures/trust/test-tl-signing-cert.pem";
+        };
+    }
+
+    std::filesystem::path cache(const std::string& tag)
+    {
+        dirs.push_back(freshDir(tag));
+        return dirs.back();
     }
 
     libresign::test::MockTrustedListServer server;
-    std::filesystem::path cacheDir;
-    static inline int counter = 0;
+    std::vector<std::filesystem::path> dirs;
 };
+
+std::size_t anchorCount(tt::TrustStoreService& svc)
+{
+    return svc.trustStore()->enumerableAnchors().size();
+}
 
 } // namespace
 
-TEST(TrustStoreServiceTest, TheServiceFetchesItsDeferredSourcesOnRequest)
+TEST(TrustStoreServiceTest, ADeferredListsAnchorsReachTheStore)
 {
-    DeferredSourceRig rig;
-    auto svc = rig.service();
+    TrustedListRig rig;
+    auto svc = rig.service(/*eager=*/false, rig.cache("deferred"));
     ASSERT_NE(svc, nullptr);
+    const auto before = anchorCount(*svc);
     EXPECT_EQ(rig.server.servedCount(), 0) << "a deferred source is left alone at construction";
 
-    svc->loadDeferredTrustedLists();
-    EXPECT_EQ(rig.server.servedCount(), 1) << "the service fetches its deferred source when asked";
+    svc->loadTrustedLists(tt::TrustStoreService::Sources::All);
+    EXPECT_EQ(rig.server.servedCount(), 1);
+    EXPECT_GT(anchorCount(*svc), before) << "the verified list's anchors are in the store";
 
-    svc->loadDeferredTrustedLists();
-    EXPECT_EQ(rig.server.servedCount(), 1) << "and only once";
+    const auto after = anchorCount(*svc);
+    svc->loadTrustedLists(tt::TrustStoreService::Sources::All);
+    EXPECT_EQ(rig.server.servedCount(), 1) << "a loaded source is not fetched again";
+    EXPECT_EQ(anchorCount(*svc), after);
 }
 
-TEST(TrustStoreServiceTest, ACancelledRequestFetchesNothing)
+TEST(TrustStoreServiceTest, AFailedLoadIsTriedAgain)
 {
-    DeferredSourceRig rig;
-    auto svc = rig.service();
+    TrustedListRig rig;
+    // The list does not verify (the service has no certificate for it yet):
+    // nothing reaches the store, and the source stays pending.
+    auto svc = rig.service(/*eager=*/false, rig.cache("retry"), /*knowsTheSigner=*/false);
     ASSERT_NE(svc, nullptr);
+    const auto before = anchorCount(*svc);
+    svc->loadTrustedLists(tt::TrustStoreService::Sources::All);
+    EXPECT_EQ(anchorCount(*svc), before);
+
+    TrustedListRig::teachTheSigner(*svc);
+    svc->loadTrustedLists(tt::TrustStoreService::Sources::All);
+    EXPECT_GT(anchorCount(*svc), before) << "the failed source was tried again and loaded";
+}
+
+TEST(TrustStoreServiceTest, ACancelledLoadFetchesNothingAndIsTriedAgain)
+{
+    TrustedListRig rig;
+    auto svc = rig.service(/*eager=*/false, rig.cache("cancel"));
+    ASSERT_NE(svc, nullptr);
+    const auto before = anchorCount(*svc);
     LibreSCRS::CancelSource cancel;
     cancel.requestCancel();
 
-    svc->loadDeferredTrustedLists(cancel.token());
+    svc->loadTrustedLists(tt::TrustStoreService::Sources::All, cancel.token());
     EXPECT_EQ(rig.server.servedCount(), 0);
+
+    svc->loadTrustedLists(tt::TrustStoreService::Sources::All);
+    EXPECT_EQ(rig.server.servedCount(), 1);
+    EXPECT_GT(anchorCount(*svc), before);
+}
+
+TEST(TrustStoreServiceTest, AnEagerSourceWhoseBackgroundFetchFailedIsLoadedLater)
+{
+    TrustedListRig rig;
+    // Built without the certificate: the background fetch cannot verify.
+    auto svc = rig.service(/*eager=*/true, rig.cache("eager"), /*knowsTheSigner=*/false);
+    ASSERT_NE(svc, nullptr);
+    const auto before = anchorCount(*svc);
+    TrustedListRig::teachTheSigner(*svc);
+
+    svc->loadTrustedLists(tt::TrustStoreService::Sources::Eager);
+    EXPECT_GT(anchorCount(*svc), before) << "the eager source the background fetch missed is in the store";
+}
+
+TEST(TrustStoreServiceTest, AListTheCacheHoldsIsNotDownloadedAgain)
+{
+    // What the signing engine downloads goes to the cache the two share; the
+    // service adopts it from there.
+    TrustedListRig rig;
+    const auto shared = rig.cache("shared");
+    auto first = rig.service(/*eager=*/false, shared);
+    ASSERT_NE(first, nullptr);
+    first->loadTrustedLists(tt::TrustStoreService::Sources::All);
+    ASSERT_EQ(rig.server.servedCount(), 1);
+
+    auto second = rig.service(/*eager=*/false, shared);
+    ASSERT_NE(second, nullptr);
+    const auto before = anchorCount(*second);
+    second->loadTrustedLists(tt::TrustStoreService::Sources::All);
+    EXPECT_EQ(rig.server.servedCount(), 1) << "read from the cache, not downloaded";
+    EXPECT_GT(anchorCount(*second), before);
+}
+
+TEST(TrustStoreServiceTest, WithoutACacheDirectoryTheServiceKeepsItsOwn)
+{
+    TrustedListRig rig;
+    std::filesystem::path privateDir;
+    {
+        auto svc = rig.service(/*eager=*/false, std::nullopt);
+        ASSERT_NE(svc, nullptr);
+        ASSERT_TRUE(svc->config().cacheDirectory.has_value())
+            << "the engine needs a directory to share with the service";
+        privateDir = *svc->config().cacheDirectory;
+        EXPECT_TRUE(std::filesystem::is_directory(privateDir));
+        svc->loadTrustedLists(tt::TrustStoreService::Sources::All);
+        EXPECT_EQ(rig.server.servedCount(), 1);
+    }
+    EXPECT_FALSE(std::filesystem::exists(privateDir)) << "the private cache goes with the service";
 }
 
 // =============================================================================

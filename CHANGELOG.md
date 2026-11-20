@@ -52,13 +52,17 @@ Notable user-visible changes per release. Format follows
   queries, now also answer on the thread that holds the session's
   `ActiveChannelHolder`, where they used to deadlock.
 
-- **`TrustStoreService::loadDeferredTrustedLists`.** Fetches the configured
-  Trusted List sources that are not eager, once, and adds the anchors of each
-  list that verifies to the service's store; later calls return at once.
-  `SigningService::sign` calls it when a signature level needs the deferred
-  lists, so their anchors reach the store through the service that owns it,
-  where the signing engine used to merge the anchors it fetched into that
-  store itself.
+- **`TrustStoreService::loadTrustedLists`** (with `TrustStoreService::Sources`).
+  Brings the configured Trusted List sources whose anchors are not in the
+  service's store yet into it: each is read from the cache directory or
+  downloaded, verified, and its anchors added; a source that failed in any
+  part is tried again on the next call. `SigningService::sign` calls it once
+  the signing engine has loaded a phase of lists completely, and the service
+  adopts them from the cache directory the two share, so a list is
+  downloaded once and its anchors reach the store through the service that
+  owns it -- where the signing engine used to merge them into that store
+  itself. Without a configured `cacheDirectory` the service keeps a private
+  one for its lifetime and reports it in `config()`.
 
 - **`OpenError::Kind::SessionRefused`.** A card that another client holds, or
   whose session the platform has not granted yet (PC/SC

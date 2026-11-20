@@ -26,6 +26,12 @@
 
 namespace LibreSCRS::Trust {
 
+/// @cond internal
+namespace detail {
+struct TrustStoreServiceAccess; // test access, in an internal header
+} // namespace detail
+/// @endcond
+
 /// @brief Lifecycle owner of @ref TrustStore. Builds the local anchor set
 ///        synchronously (bundled certs + optional OS root store) and
 ///        performs all configured Trusted-List fetches asynchronously.
@@ -132,42 +138,64 @@ public:
     /// The returned snapshot is monotonically growing — consumers MUST NOT
     /// cache @ref TrustStore::enumerableAnchors() and assume immutability.
     /// New anchors land asynchronously as eager fetches complete, and when
-    /// @ref loadDeferredTrustedLists fetches the deferred sources (which
-    /// @ref Signing::SigningService::sign does when a signature needs them).
+    /// @ref loadTrustedLists brings in sources (which
+    /// @ref Signing::SigningService::sign does when it loads Trusted Lists).
     /// @since 4.0
     [[nodiscard]] std::shared_ptr<const TrustStore> trustStore() const;
 
-    /// @brief Fetch the configured Trusted List sources that are not eager,
-    ///        once, and add the anchors of every list that verifies to
-    ///        @ref trustStore.
+    /// @brief Which configured Trusted List sources @ref loadTrustedLists
+    ///        brings into the store.
+    /// @since 5.0
+    enum class Sources : std::uint8_t {
+        /// The sources whose @c eager flag is set (fetched in the background
+        /// at construction): those whose background fetch has not loaded.
+        Eager,
+        /// Every configured source, the deferred ones included.
+        All,
+    };
+
+    /// @brief Fetch the configured Trusted List sources whose anchors are not
+    ///        in @ref trustStore yet, and add the anchors of every list that
+    ///        verifies.
     ///
-    /// A source whose @c eager flag is false is left alone at construction:
-    /// this call fetches it (and, for a List of Trusted Lists, every list it
-    /// points to), verifies each list as the eager fetch does, and merges its
-    /// anchors. Only the configured sources are fetched, and only lists that
-    /// verify contribute anchors -- the call adds no anchor of its own.
-    /// The first call does the work and blocks until every deferred source
-    /// has been fetched or has failed; a failed source is logged and skipped.
-    /// Later calls return at once, and a call made while the first is still
-    /// running waits for it. @ref Signing::SigningService::sign calls it when
-    /// a signature level needs the deferred lists.
+    /// Each source is read from the cache directory when it holds a current
+    /// copy, else downloaded (and, for a List of Trusted Lists, every list it
+    /// points to), verified as the eager fetch at construction verifies it,
+    /// and its anchors merged. A source is done once all of its lists have
+    /// been merged; one that failed in any part -- offline, a list that does
+    /// not verify, a cancel -- is fetched again on the next call. Only the
+    /// configured sources are fetched, and only lists that verify contribute
+    /// anchors: the call adds no anchor of its own.
     ///
+    /// The call blocks until every source it takes has been fetched or has
+    /// failed (each download is bounded by a 30 s request timeout); calls
+    /// from several threads run one after another.
+    /// @ref Signing::SigningService::sign calls it, with @ref Sources::Eager
+    /// once the signing engine has loaded the eager lists and with
+    /// @ref Sources::All once a signature level made it load the deferred
+    /// ones, so the anchors the engine verified reach this store from the
+    /// copies it just cached.
+    ///
+    /// @param which Which sources to take.
     /// @param token Cancellation: stops the fetch between and inside the
-    ///              lists; the sources not fetched yet are not fetched later.
+    ///              lists; a source left unfinished is fetched next time.
     /// @par Thread-safety
     /// Safe to call from several threads.
     /// @par Example
     /// @code
     /// // A validator that wants every configured anchor before it judges.
-    /// service->loadDeferredTrustedLists();
+    /// service->loadTrustedLists(TrustStoreService::Sources::All);
     /// const auto issuer = service->trustStore()->findIssuerOf(certificate);
     /// @endcode
     /// @since 5.0
-    void loadDeferredTrustedLists(LibreSCRS::CancelToken token = {}) noexcept;
+    void loadTrustedLists(Sources which, LibreSCRS::CancelToken token = {}) noexcept;
 
-    /// @brief Snapshot of the original config the service was constructed
-    ///        with. Useful for diagnostics and for @ref Signing::SigningService
-    ///        to forward the same config to the libresign engine.
+    /// @brief The configuration in effect: the one the service was
+    ///        constructed with, except that without a @c cacheDirectory it
+    ///        names the private cache directory the service keeps for its
+    ///        lifetime. Useful for diagnostics and for
+    ///        @ref Signing::SigningService to forward the same config, and so
+    ///        the same cache, to the libresign engine.
     /// @par Thread-safety
     /// Reentrant; the returned reference is to immutable post-construction
     /// state.
@@ -176,6 +204,7 @@ public:
 
 private:
     explicit TrustStoreService(TrustConfig config);
+    friend struct detail::TrustStoreServiceAccess;
     struct Impl;
     std::shared_ptr<Impl> d; // shared because async tasks reference it
 };
