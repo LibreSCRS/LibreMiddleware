@@ -108,13 +108,16 @@ NOT_RECORDED_BINDINGS="W V u A"
 # 82 internal symbols, and it recorded 35 secure-channel members, declared only
 # in headers that are never installed, as public 5.x ABI.
 #
-# Symbols that are internal but still imported by a shipped image -- a card
-# plugin, a sibling LibreSCRS library or the installed test archive -- are
-# listed one by one, with the reason, in ci/abi/5.x-internal-exports.txt and
-# are not recorded in the baseline. The same pass reads what those shipped
-# images import (an entry no shipped image imports is stale; an import of a
-# hidden or unlisted internal symbol fails) and what inline bodies of the
-# installed headers call. Against --allowlist-base, an added entry fails.
+# Strict: the only internal symbols exported are the typeinfo, typeinfo name
+# and vtable of an exception type the library throws, listed one by one with
+# the reason ("thrown:") in ci/abi/5.x-internal-exports.txt and not recorded in
+# the baseline; an entry for an importer is refused. The same pass reads what
+# the shipped images -- a card plugin, a sibling LibreSCRS library, the
+# installed test archive -- import (an import of a hidden or internal symbol
+# fails, except the typeinfo a catch of a listed type needs) and what inline
+# bodies of the installed headers call, and fails an installed header that
+# opens a condition on LIBRESCRS_INTERNAL_BUILD. Against --allowlist-base, an
+# added entry fails.
 
 # emit_symbols <label> <file>
 #

@@ -1,25 +1,21 @@
-# Internal exports that shipped images still import.
+# Internal exports: the typeinfo of an exception type the library throws.
 #
 # Each line is a symbol that names a LibreSCRS entity the installed headers do
-# not declare (or one in an Internal/detail scope), and that cannot be hidden
-# yet. Read by ci/scripts/abi-snapshot.sh; these symbols are not recorded in
-# 5.x-baseline.txt, because they are no contract with any consumer.
+# not declare (or one in an Internal/detail scope) and is exported anyway,
+# because a throw of its type leaves the shared object and a catch elsewhere
+# matches only the one exported typeinfo. Read by ci/scripts/abi-snapshot.sh;
+# these symbols are not recorded in 5.x-baseline.txt, because they are no
+# contract with any consumer.
 #
 # Format: <library section> TAB <demangled symbol, exactly as abi-snapshot.sh
-# prints it> TAB <reason>. The reason is one of
-#   imported: <who>  -- a shipped image (a core library, a card plugin, the
-#                       installed test archive) imports it; the gate fails the
-#                       entry when none does;
-#   thrown: <why>    -- the typeinfo, typeinfo name or vtable of an exception
-#                       type the library throws out through an exported
-#                       function. Exported because the throw leaves the shared
-#                       object, whoever catches it; the gate fails the entry
-#                       when the library contains no throw of the type.
-# Neither reason is ever "a test executable needs it": test executables are
-# not shipped. A "thrown:" entry rests on the throw site in the library itself.
+# prints it> TAB thrown: <why>. Only the typeinfo, typeinfo name and vtable of
+# an exception type qualify; the gate fails an entry when the library contains
+# no throw of the type. Nothing is listed for an importer: no shipped image (a
+# core library, a card plugin, the installed test archive) may import an
+# internal symbol, and the gate refuses an "imported:" entry.
 #
-# This list only shrinks. The gate fails on a symbol that is not here, on an
-# entry that no longer names an imported internal export, and in CI on any
+# This list only shrinks. The gate fails on an internal export that is not
+# here, on an entry that no longer names an internal export, and in CI on any
 # entry the list at the merge base does not hold.
 libLibreSCRS_SmartCard.so	typeinfo for LibreSCRS::SmartCard::Internal::PCSCError@@LM_5	thrown: PCSCError leaves libLibreSCRS_SmartCard through the connection calls of the card plugins and the CardSession members
 libLibreSCRS_SmartCard.so	typeinfo name for LibreSCRS::SmartCard::Internal::PCSCError@@LM_5	thrown: PCSCError leaves libLibreSCRS_SmartCard through the connection calls of the card plugins and the CardSession members
