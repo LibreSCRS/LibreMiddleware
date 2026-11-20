@@ -17,6 +17,8 @@
 #include <LibreSCRS_internal/SecureChannel/SessionKeys.h>
 #include <LibreSCRS_internal/SmartCard/CardSessionImpl.h>
 
+#include "session_access.h"
+
 #include "apdu.h"
 
 #include <memory>
@@ -24,19 +26,6 @@
 #include <utility>
 
 namespace LibreSCRS::SmartCard::Testing {
-
-struct SessionAccess
-{
-    static std::shared_ptr<CardSession> detached(std::string readerName)
-    {
-        // The private constructor builds the detached connection inside the
-        // shared library: this archive names nothing of the connection's class.
-        auto session = std::shared_ptr<CardSession>(new CardSession());
-        session->d->readerName = std::move(readerName);
-        // atr stays empty — there is no card
-        return session;
-    }
-};
 
 namespace {
 

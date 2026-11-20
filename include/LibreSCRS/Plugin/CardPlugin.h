@@ -468,9 +468,9 @@ public:
     ///
     /// @note Plugin implementations MUST key credential storage by
     ///       `&session` (or an equivalent per-session identity — see
-    ///       `LibreSCRS::SmartCard::detail::sessionGeneration` in the
-    ///       internal header for the same pattern used elsewhere in the
-    ///       middleware). A plugin-scoped map keyed only by the credential
+    ///       @ref LibreSCRS::Plugin::makeSessionKey, built on
+    ///       @ref LibreSCRS::SmartCard::CardSession::generation). A
+    ///       plugin-scoped map keyed only by the credential
     ///       label would corrupt concurrent multi-session use, since the
     ///       same plugin instance services all reader sessions.
     /// @note If the plugin cannot safely scope credentials per session, it

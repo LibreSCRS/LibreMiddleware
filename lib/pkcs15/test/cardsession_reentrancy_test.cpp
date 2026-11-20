@@ -237,7 +237,9 @@ TEST(CardSessionReentrancyDeathTest, VoidMethodWhileHoldingHolderAsserts)
     ActiveChannelHolder holder = acquireHolder(*session);
     ASSERT_TRUE(holder.isActive());
 
-    EXPECT_DEATH({ (void)session->hasLiveSecureChannel(); }, "ActiveChannelHolder");
+    // The channel queries read without the lock on the holder's thread; a
+    // mutating call still refuses to re-enter.
+    EXPECT_DEATH({ session->clearActiveChannel(); }, "ActiveChannelHolder");
 }
 #endif
 

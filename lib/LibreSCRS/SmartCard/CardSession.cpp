@@ -114,6 +114,50 @@ const LocalizedText kOpenFailedMsg{
     "librescrs.smartcard.error.openFailed",
     "Failed to open the card session. Check that the reader is connected and a card is inserted."};
 
+// Runs @p fn ordered against the other threads that use the session. The
+// thread that holds the session's ActiveChannelHolder already holds the
+// non-recursive session mutex for the holder's lifetime, and it is the only
+// thread that can change the session state meanwhile, so it reads without
+// locking; any other thread takes the mutex. The state is named by deduction
+// because CardSession::Impl is private to the class.
+template <typename State, typename Fn>
+auto withSessionState(State& state, Fn&& fn) -> decltype(fn())
+{
+    if (state.callerOwnsActiveChannel()) {
+        return fn();
+    }
+    std::lock_guard lock(state.sessionMutex);
+    return fn();
+}
+
+// An installed secure-messaging channel that is open: the state in which a
+// plain command would end the card's secure-messaging session.
+[[nodiscard]] bool liveSecureChannel(const LibreSCRS::SecureChannel::ISecureChannel* channel) noexcept
+{
+    return channel != nullptr && channel->state() == LibreSCRS::SecureChannel::ChannelState::Open &&
+           channel->carriesSm();
+}
+
+// The answer as one byte string, data then SW1 SW2. The response data can be
+// a decrypted record, so the copy it is taken from is wiped.
+[[nodiscard]] std::vector<std::uint8_t> toAnswer(LibreSCRS::SmartCard::Internal::APDUResponse response)
+{
+    std::vector<std::uint8_t> answer;
+    answer.reserve(response.data.size() + 2);
+    answer.insert(answer.end(), response.data.begin(), response.data.end());
+    answer.push_back(response.sw1);
+    answer.push_back(response.sw2);
+    if (!response.data.empty()) {
+        LibreSCRS::SmartCard::Internal::secureWipe(response.data.data(), response.data.size());
+    }
+    return answer;
+}
+
+[[nodiscard]] std::vector<std::uint8_t> statusOnly(std::uint8_t sw1, std::uint8_t sw2)
+{
+    return std::vector<std::uint8_t>{sw1, sw2};
+}
+
 } // namespace
 
 std::expected<CardSession, OpenError> CardSession::open(std::string readerName) noexcept
@@ -156,11 +200,6 @@ LibreSCRS::SmartCard::CardConnection& PcscBridge::unwrap(CardSession& session) n
     return *session.d->ownedConn;
 }
 
-std::uint64_t sessionGeneration(const CardSession& session) noexcept
-{
-    return session.d->generation;
-}
-
 // @ref detail::ChannelInjector::installForTesting and
 // @ref Testing::makeDetachedCardSession are defined in
 // `lib/LibreSCRS/SmartCard/testing/`, compiled into the static test archive
@@ -182,25 +221,13 @@ const std::vector<std::uint8_t>& CardSession::atr() const noexcept
 
 bool CardSession::hasLiveSecureChannel() const noexcept
 {
-    // Cross-provider coordination predicate. Locks the session mutex so the
-    // read is ordered against activation paths on other threads. On lock
-    // failure (allocator pressure inside std::mutex) the noexcept contract
-    // is honoured by returning false — a coordination consumer that gets a
-    // conservative "no live SM" answer will at worst skip a defer it could
-    // have honoured; mid-activation races on the activation thread itself
-    // are handled by the activation path's own invariants.
-    assert(!d->callerOwnsActiveChannel() && "CardSession re-entered on the thread holding its ActiveChannelHolder "
-                                            "— would self-deadlock on the non-recursive sessionMutex. Release the "
-                                            "holder before re-entering the session.");
+    // Cross-provider coordination predicate, ordered against activation paths
+    // on other threads. On lock failure (allocator pressure inside std::mutex)
+    // the noexcept contract is honoured by returning false — a coordination
+    // consumer that gets a conservative "no live SM" answer will at worst skip
+    // a defer it could have honoured.
     try {
-        std::lock_guard lock(d->sessionMutex);
-        if (!d->activeChannel) {
-            return false;
-        }
-        if (d->activeChannel->state() != LibreSCRS::SecureChannel::ChannelState::Open) {
-            return false;
-        }
-        return d->activeChannel->carriesSm();
+        return withSessionState(*d, [this] { return liveSecureChannel(d->activeChannel.get()); });
     } catch (...) {
         return false;
     }
@@ -209,26 +236,24 @@ bool CardSession::hasLiveSecureChannel() const noexcept
 std::optional<SmProtocolRequest> CardSession::activatedProtocol() const noexcept
 {
     // Reports the SM protocol that established the currently-live channel
-    // (after any BAC fallback). Locks the session mutex so the read is
-    // ordered against activation / teardown paths on other threads. On lock
-    // failure (allocator pressure inside std::mutex) the noexcept contract is
-    // honoured by returning nullopt — the conservative "no protocol" answer.
-    assert(!d->callerOwnsActiveChannel() && "CardSession re-entered on the thread holding its ActiveChannelHolder "
-                                            "— would self-deadlock on the non-recursive sessionMutex. Release the "
-                                            "holder before re-entering the session.");
+    // (after any BAC fallback), ordered against activation / teardown paths on
+    // other threads. On lock failure (allocator pressure inside std::mutex) the
+    // noexcept contract is honoured by returning nullopt — the conservative
+    // "no protocol" answer.
     try {
-        std::lock_guard lock(d->sessionMutex);
-        // Self-consistent with hasLiveSecureChannel(): an installed SM channel
-        // can transition to ChannelState::Failed on its own during a holder
-        // transmit (card-side 6987/6988 / MAC-unwrap failure) with no teardown
-        // call, leaving d->activeChannel set and d->activatedProtocol recorded.
-        // Gate on the same live-Open-SM predicate so the recorded protocol is
-        // never reported for a non-live channel.
-        if (d->activeChannel && d->activeChannel->state() == LibreSCRS::SecureChannel::ChannelState::Open &&
-            d->activeChannel->carriesSm()) {
-            return d->activatedProtocol;
-        }
-        return std::nullopt;
+        return withSessionState(*d, [this]() -> std::optional<SmProtocolRequest> {
+            // Self-consistent with hasLiveSecureChannel(): an installed SM
+            // channel can transition to ChannelState::Failed on its own during
+            // a transmit (card-side 6987/6988 / MAC-unwrap failure) with no
+            // teardown call, leaving d->activeChannel set and
+            // d->activatedProtocol recorded. Gate on the same live-Open-SM
+            // predicate so the recorded protocol is never reported for a
+            // non-live channel.
+            if (liveSecureChannel(d->activeChannel.get())) {
+                return d->activatedProtocol;
+            }
+            return std::nullopt;
+        });
     } catch (...) {
         return std::nullopt;
     }
@@ -442,6 +467,115 @@ CardSession::transmitInternal(const LibreSCRS::SmartCard::Internal::APDUCommand&
         // exception across the LM-internal funnel boundary, where plugin
         // callers expect a value-returning shape.
         return LibreSCRS::SmartCard::Internal::APDUResponse{.data = {}, .sw1 = 0x6F, .sw2 = 0x00};
+    }
+}
+
+std::vector<std::uint8_t> CardSession::transmit(std::span<const std::uint8_t> apdu, LibreSCRS::CancelToken token)
+{
+    auto cmd = LibreSCRS::SmartCard::Internal::parseCommand(apdu);
+    if (!cmd) {
+        throw std::invalid_argument("CardSession::transmit: not a well-formed command APDU");
+    }
+    // Snapshot the channel and the connection, then dispatch without the
+    // mutex: the shared_ptr pins the channel for the call, so a concurrent
+    // clearActiveChannel cannot pull it out from under the exchange.
+    std::shared_ptr<LibreSCRS::SecureChannel::ISecureChannel> channelSnap;
+    LibreSCRS::SmartCard::Internal::PCSCConnection* connPtr = nullptr;
+    withSessionState(*d, [&] {
+        channelSnap = d->activeChannel;
+        connPtr = d->ownedConn.get();
+    });
+    if (connPtr == nullptr) {
+        return statusOnly(0x6F, 0x00);
+    }
+    return toAnswer(dispatchOverChannelOrConn(channelSnap.get(), *connPtr, *cmd, std::move(token)));
+}
+
+std::vector<std::uint8_t> CardSession::transmitRaw(std::span<const std::uint8_t> apdu)
+{
+    bool live = false;
+    LibreSCRS::SmartCard::Internal::PCSCConnection* connPtr = nullptr;
+    withSessionState(*d, [&] {
+        live = liveSecureChannel(d->activeChannel.get());
+        connPtr = d->ownedConn.get();
+    });
+    if (connPtr == nullptr) {
+        return statusOnly(0x6F, 0x00);
+    }
+    // A plain command under a live secure-messaging channel would end the
+    // card's secure-messaging session: refuse it here, for every caller.
+    if (live) {
+        return statusOnly(0x6F, 0x02);
+    }
+    return toAnswer(connPtr->transmitRaw(apdu));
+}
+
+std::uint64_t CardSession::generation() const noexcept
+{
+    return d->generation;
+}
+
+void CardSession::reconnect()
+{
+    if (!d->ownedConn) {
+        throw std::runtime_error("CardSession::reconnect: the session holds no connection");
+    }
+    d->ownedConn->reconnect();
+}
+
+void CardSession::beginTransaction()
+{
+    if (!d->ownedConn) {
+        throw std::runtime_error("CardSession::beginTransaction: the session holds no connection");
+    }
+    d->ownedConn->beginTransaction();
+}
+
+void CardSession::endTransaction() noexcept
+{
+    if (d && d->ownedConn) {
+        d->ownedConn->endTransaction();
+    }
+}
+
+bool CardSession::isTransactionHeld() const noexcept
+{
+    return d && d->ownedConn && d->ownedConn->isTransactionHeld();
+}
+
+std::optional<LibreSCRS::SecureChannel::ChannelState> CardSession::channelState() const noexcept
+{
+    try {
+        return withSessionState(*d, [this]() -> std::optional<LibreSCRS::SecureChannel::ChannelState> {
+            if (!d->activeChannel) {
+                return std::nullopt;
+            }
+            return d->activeChannel->state();
+        });
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+bool CardSession::carriesSecureMessaging() const noexcept
+{
+    try {
+        return withSessionState(*d, [this] { return d->activeChannel && d->activeChannel->carriesSm(); });
+    } catch (...) {
+        return false;
+    }
+}
+
+void CardSession::forgetCurrentApplet() noexcept
+{
+    try {
+        withSessionState(*d, [this] {
+            if (d->activeChannel) {
+                LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(*d->activeChannel, AppletAid{});
+            }
+        });
+    } catch (...) {
+        // noexcept contract: on lock failure the channel keeps its applet.
     }
 }
 

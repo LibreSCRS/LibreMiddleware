@@ -16,8 +16,8 @@
 /// distinct from any successor session — even when the OS reissues the same
 /// @c PCSCConnection address to a freshly opened reader. Raw-pointer keying
 /// used to silently leak state in that scenario. Combining the reader name
-/// with the session's monotonic generation counter (see
-/// @ref LibreSCRS::SmartCard::detail::sessionGeneration) yields exactly that
+/// with the session's generation (see
+/// @ref LibreSCRS::SmartCard::CardSession::generation) yields exactly that
 /// identity. This is the same pattern documented on
 /// @ref CardPlugin::setCredentials.
 ///
@@ -42,8 +42,8 @@ struct SessionKey
 {
     /// @brief Reader the session is bound to.
     std::string readerName;
-    /// @brief Session's monotonic generation counter (see
-    ///        @ref LibreSCRS::SmartCard::detail::sessionGeneration).
+    /// @brief Session's generation (see
+    ///        @ref LibreSCRS::SmartCard::CardSession::generation).
     std::uint64_t generation{0};
 
     /// @brief Defaulted three-way comparison for use as an ordered map key.
@@ -53,7 +53,7 @@ struct SessionKey
 /// @brief Derive the @ref SessionKey for a live @p session.
 [[nodiscard]] inline SessionKey makeSessionKey(LibreSCRS::SmartCard::CardSession& session)
 {
-    return SessionKey{session.readerName(), LibreSCRS::SmartCard::detail::sessionGeneration(session)};
+    return SessionKey{session.readerName(), session.generation()};
 }
 
 } // namespace LibreSCRS::Plugin

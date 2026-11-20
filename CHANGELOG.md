@@ -36,6 +36,22 @@ Notable user-visible changes per release. Format follows
   not performed instead of failed, and a reader error during Chip
   Authentication ends the read instead of being reported as a failed check.
 
+- **Byte-level transport on `CardSession`.** `transmit` sends a command APDU
+  through the session's secure-messaging channel when one is open, refuses
+  (`6F02`, nothing sent) when an installed secure-messaging channel has
+  failed, and otherwise sends it plain, completing a chained answer as the
+  reader layer does. `transmitRaw` sends the bytes as given in one exchange
+  and refuses (`6F02`, nothing sent) while a secure-messaging channel is live,
+  so no caller can desynchronise the card's secure messaging. Both return the
+  answer as data followed by SW1 SW2 and throw on a reader failure.
+  `beginTransaction`, `endTransaction`, `isTransactionHeld` and `reconnect`
+  reach the reader; `channelState`, `carriesSecureMessaging` and
+  `forgetCurrentApplet` describe and adjust the session's channel; and
+  `generation` is the session's identity, which `makeSessionKey` now uses.
+  `hasLiveSecureChannel` and `activatedProtocol`, like the new channel
+  queries, now also answer on the thread that holds the session's
+  `ActiveChannelHolder`, where they used to deadlock.
+
 - **`OpenError::Kind::SessionRefused`.** A card that another client holds, or
   whose session the platform has not granted yet (PC/SC
   `SCARD_E_SHARING_VIOLATION`, the same refusal from CryptoTokenKit), is now

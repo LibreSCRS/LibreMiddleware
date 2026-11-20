@@ -1425,6 +1425,28 @@ target_include_directories(SessionTransmitTest PRIVATE
 target_compile_definitions(SessionTransmitTest PRIVATE LIBRESCRS_INTERNAL_BUILD)
 gtest_discover_tests(SessionTransmitTest)
 
+# CardSessionByteTransportTest — the byte-level transport of CardSession:
+# transmit through the live channel or plain, transmitRaw refused under live
+# secure messaging, transactions, reconnect, the channel accessors and the
+# session generation, plus the exact byte-to-command parser behind transmit.
+add_executable(CardSessionByteTransportTest CardSessionByteTransportTest.cpp)
+target_link_libraries(CardSessionByteTransportTest PRIVATE
+    GTest::gtest_main
+    LibreSCRS_SmartCard
+    LibreSCRS_SmartCard_TestHelpers
+    # arms seams of the session's connection: a test copy of the class
+    LibreSCRS_SmartCard_RawDiagnostic
+    # arms seams of the session's connection: a test copy of the class
+    LibreSCRS_SmartCard_RawDiagnostic
+    SmartCard_Impl
+    Threads::Threads
+)
+target_include_directories(CardSessionByteTransportTest PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../lib/smartcard/src
+)
+target_compile_definitions(CardSessionByteTransportTest PRIVATE LIBRESCRS_INTERNAL_BUILD)
+gtest_discover_tests(CardSessionByteTransportTest)
+
 # CardSessionApiInvariantTest — load-bearing compile-time check that the
 # public @ref CardSession surface never sprouts a connection() /
 # pcscConnection() accessor that would re-expose the PC/SC transport.

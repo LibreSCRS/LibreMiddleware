@@ -21,6 +21,7 @@
 #include <LibreSCRS/Logging.h>
 #include <LibreSCRS/Plugin/CardPluginService.h>
 #include <LibreSCRS/Plugin/PluginTypes.h>
+#include <LibreSCRS/Plugin/SessionKey.h>
 #include <LibreSCRS/Secure/Buffer.h>
 #include <LibreSCRS/Signing/SigningRequest.h>
 #include <LibreSCRS/Signing/SigningService.h>
@@ -126,6 +127,21 @@ int main()
     sb.tsaOverride(LibreSCRS::Signing::staticTsa("https://tsa.example.com"));
     auto sreq = std::move(sb).buildForBufferSign();
     std::cout << "SigningRequest: built (tsaOverride " << sreq.tsaOverride().url << ")\n";
+
+    // 10. CardSession byte transport — open fails without a card (as on CI);
+    //     with one, the per-session key and a command go through the public
+    //     session calls only: transmit takes the secure-messaging channel when
+    //     one is live and the card's plain path otherwise.
+    if (auto opened = LibreSCRS::SmartCard::CardSession::open("sdk-consumer: no such reader")) {
+        auto& session = *opened;
+        const auto key = LibreSCRS::Plugin::makeSessionKey(session);
+        const std::array<std::uint8_t, 7> selectMasterFile{0x00, 0xA4, 0x00, 0x0C, 0x02, 0x3F, 0x00};
+        const auto answer = session.transmit(selectMasterFile);
+        std::cout << "CardSession: generation " << key.generation << ", SELECT MF answered " << answer.size()
+                  << " byte(s)\n";
+    } else {
+        std::cout << "CardSession::open(no such reader) failed as expected\n";
+    }
 
     return 0;
 }

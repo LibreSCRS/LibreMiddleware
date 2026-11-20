@@ -204,17 +204,27 @@ LibreSCRS::SmartCard::CardSession::activateChannelFor(LibreSCRS::SmartCard::Appl
 LibreSCRS::SmartCard::CardSession::activateChannelWithSm(LibreSCRS::SmartCard::AppletAid, std::variant<LibreSCRS::SmartCard::BacRequest, LibreSCRS::SmartCard::PaceRequest, LibreSCRS::SmartCard::ChipAuthRequest>, LibreSCRS::CancelToken)@@LM_5
 LibreSCRS::SmartCard::CardSession::activatedProtocol() const@@LM_5
 LibreSCRS::SmartCard::CardSession::atr() const@@LM_5
+LibreSCRS::SmartCard::CardSession::beginTransaction()@@LM_5
+LibreSCRS::SmartCard::CardSession::carriesSecureMessaging() const@@LM_5
+LibreSCRS::SmartCard::CardSession::channelState() const@@LM_5
 LibreSCRS::SmartCard::CardSession::clearActiveChannel()@@LM_5
 LibreSCRS::SmartCard::CardSession::clearCachedPaceCredentials()@@LM_5
+LibreSCRS::SmartCard::CardSession::endTransaction()@@LM_5
+LibreSCRS::SmartCard::CardSession::forgetCurrentApplet()@@LM_5
+LibreSCRS::SmartCard::CardSession::generation() const@@LM_5
 LibreSCRS::SmartCard::CardSession::hasCredentialProvider() const@@LM_5
 LibreSCRS::SmartCard::CardSession::hasLiveSecureChannel() const@@LM_5
+LibreSCRS::SmartCard::CardSession::isTransactionHeld() const@@LM_5
 LibreSCRS::SmartCard::CardSession::open(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >)@@LM_5
 LibreSCRS::SmartCard::CardSession::operator=(LibreSCRS::SmartCard::CardSession&&)@@LM_5
 LibreSCRS::SmartCard::CardSession::performChipAuthentication(std::span<unsigned char const, 18446744073709551615ul>, LibreSCRS::SmartCard::AppletAid, LibreSCRS::CancelToken)@@LM_5
 LibreSCRS::SmartCard::CardSession::readerName[abi:cxx11]() const@@LM_5
+LibreSCRS::SmartCard::CardSession::reconnect()@@LM_5
 LibreSCRS::SmartCard::CardSession::setBacInput(LibreSCRS::SecureChannel::BacInput)@@LM_5
 LibreSCRS::SmartCard::CardSession::setCredentialProvider(std::function<LibreSCRS::Auth::CredentialResult (LibreSCRS::Auth::AuthRequirement const&)>)@@LM_5
 LibreSCRS::SmartCard::CardSession::setPaceSecret(LibreSCRS::Auth::PaceSecretKind, LibreSCRS::Secure::String)@@LM_5
+LibreSCRS::SmartCard::CardSession::transmit(std::span<unsigned char const, 18446744073709551615ul>, LibreSCRS::CancelToken)@@LM_5
+LibreSCRS::SmartCard::CardSession::transmitRaw(std::span<unsigned char const, 18446744073709551615ul>)@@LM_5
 LibreSCRS::SmartCard::CardSession::~CardSession()@@LM_5
 LibreSCRS::SmartCard::MonitorService::MonitorService()@@LM_5
 LibreSCRS::SmartCard::MonitorService::subscribe(std::function<void (LibreSCRS::SmartCard::MonitorEvent const&)>)@@LM_5

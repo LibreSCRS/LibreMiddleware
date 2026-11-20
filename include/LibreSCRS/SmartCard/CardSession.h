@@ -63,7 +63,6 @@ struct ActiveChannelAccessor;
 
 namespace detail {
 struct PcscBridge;
-LIBRESCRS_PUBLIC_API std::uint64_t sessionGeneration(const CardSession& session) noexcept;
 // Friend-only access struct for the test-channel injection seam. Method
 // is declared and defined in the internal-build-guarded header
 // `LibreSCRS/SmartCard/detail/ChannelInjection.h`. Forward-declared here
@@ -465,6 +464,164 @@ public:
     /// @since 4.1
     void clearActiveChannel() noexcept;
 
+    // -- Byte-level transport (5.0+) ------------------------------------------
+
+    /// @brief Send one command APDU to the card, through the secure-messaging
+    ///        channel when one is open, and return the card's whole answer.
+    ///
+    /// The command takes the path the session's channel dictates:
+    /// - an open channel (secure-messaging or plain) carries it: under secure
+    ///   messaging it is wrapped, and the answer is unwrapped and verified;
+    /// - an installed secure-messaging channel that is no longer open (it
+    ///   failed on a bad MAC or a 6987/6988 answer) refuses it: the answer is
+    ///   @c 6F02 and nothing is sent, because a plain command would end the
+    ///   card's secure-messaging session;
+    /// - otherwise (no channel, or a plain one that is not open) it goes to the
+    ///   card plain. The reader layer completes the exchange as the card asks:
+    ///   it fetches a chained answer (status word @c 61xx, GET RESPONSE) and,
+    ///   on a T=0 card, resends with the length a @c 6Cxx answer names.
+    ///
+    /// @param apdu  The command, encoded per ISO/IEC 7816-4 (short or
+    ///              extended length).
+    /// @param token Cancellation, handed to the channel: an open channel
+    ///              answers @c 6F01 without sending once it is cancelled.
+    /// @return The answer: response data followed by SW1 SW2. @c 6F00 when the
+    ///         session holds no connection to a card.
+    ///
+    /// @throws std::invalid_argument when @p apdu is not a well-formed command
+    ///         APDU in the encoding this library produces; nothing is sent.
+    /// @throws std::runtime_error when the reader fails or the card goes away
+    ///         during the exchange.
+    ///
+    /// @par Thread-safety
+    /// Callers serialise the commands of one session. The call may be made by
+    /// the thread that holds this session's @ref ActiveChannelHolder (it then
+    /// takes no lock) or by another thread (it then waits for the holder to be
+    /// released before it reads the channel).
+    ///
+    /// @par Example
+    /// @code
+    /// // SELECT the eMRTD application, no answer data wanted.
+    /// const std::uint8_t select[] = {0x00, 0xA4, 0x04, 0x0C, 0x07,
+    ///                                0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
+    /// const auto answer = session.transmit(select);
+    /// const bool ok = answer.size() >= 2 && answer[answer.size() - 2] == 0x90 && answer.back() == 0x00;
+    /// @endcode
+    ///
+    /// @since 5.0
+    [[nodiscard]] std::vector<std::uint8_t> transmit(std::span<const std::uint8_t> apdu,
+                                                     LibreSCRS::CancelToken token = {});
+
+    /// @brief Send one command APDU to the card exactly as given, as a single
+    ///        exchange, unless a secure-messaging channel is live.
+    ///
+    /// For callers that do their own APDU handling (a status word @c 61xx or
+    /// @c 6Cxx comes back as is; no GET RESPONSE follows). While the session
+    /// holds an open secure-messaging channel (see @ref hasLiveSecureChannel)
+    /// nothing is sent and the answer is @c 6F02: a plain command would end the
+    /// card's secure-messaging session. Use @ref transmit to reach the card
+    /// through that channel.
+    ///
+    /// @param apdu The command bytes, sent unchanged.
+    /// @return The answer: response data followed by SW1 SW2. @c 6F02 under a
+    ///         live secure-messaging channel; @c 6F00 when the session holds no
+    ///         connection to a card.
+    ///
+    /// @throws std::runtime_error when the reader fails or the card goes away
+    ///         during the exchange.
+    ///
+    /// @par Thread-safety
+    /// As @ref transmit.
+    ///
+    /// @since 5.0
+    [[nodiscard]] std::vector<std::uint8_t> transmitRaw(std::span<const std::uint8_t> apdu);
+
+    /// @brief Identity of this session among all sessions of the process.
+    ///
+    /// Every opened session gets a value no other session of the process has
+    /// had or will have; a moved-to session keeps the value of the session it
+    /// was moved from. @ref LibreSCRS::Plugin::makeSessionKey pairs it with
+    /// the reader name to key per-session state.
+    ///
+    /// @note Pure accessor. Calling it on a moved-from session is undefined
+    ///       behaviour.
+    /// @since 5.0
+    [[nodiscard]] std::uint64_t generation() const noexcept;
+
+    /// @brief Re-establish the connection to the card in the reader without
+    ///        resetting it.
+    ///
+    /// For a card whose context was lost (it answers every command with an
+    /// error after an interruption). The card is not reset, so other
+    /// applications' connections to it and an open secure-messaging channel
+    /// survive.
+    ///
+    /// @throws std::runtime_error when the card cannot be reached.
+    /// @since 5.0
+    void reconnect();
+
+    /// @brief Take exclusive use of the card: no other application's commands
+    ///        reach it until @ref endTransaction.
+    ///
+    /// Not counted: one @ref endTransaction ends it however many times it was
+    /// begun. @ref activateChannelFor and @ref activateChannelWithSm take one
+    /// for the lifetime of the @ref ActiveChannelHolder they return; while
+    /// @ref isTransactionHeld is true, do not begin another.
+    ///
+    /// @throws std::runtime_error when the reader refuses (the card was removed
+    ///         or reset, or another application holds it).
+    /// @since 5.0
+    void beginTransaction();
+
+    /// @brief End the exclusive use @ref beginTransaction took. Does nothing
+    ///        when none is held.
+    /// @since 5.0
+    void endTransaction() noexcept;
+
+    /// @brief True while this session holds exclusive use of the card, taken
+    ///        by @ref beginTransaction or by an @ref ActiveChannelHolder.
+    /// @since 5.0
+    [[nodiscard]] bool isTransactionHeld() const noexcept;
+
+    /// @brief State of the channel the session currently holds, or @c nullopt
+    ///        when it holds none.
+    ///
+    /// A plain channel as well as a secure-messaging one: see
+    /// @ref carriesSecureMessaging to tell them apart.
+    ///
+    /// @note Owner-tolerant: called by the thread that holds this session's
+    ///       @ref ActiveChannelHolder it reads the channel without locking;
+    ///       from another thread it takes the session mutex. On lock failure
+    ///       it returns @c nullopt.
+    /// @since 5.0
+    [[nodiscard]] std::optional<LibreSCRS::SecureChannel::ChannelState> channelState() const noexcept;
+
+    /// @brief True when the channel the session holds wraps commands in secure
+    ///        messaging (PACE, BAC or Chip Authentication), whatever its state.
+    ///
+    /// Unlike @ref hasLiveSecureChannel this stays true for a secure-messaging
+    /// channel that has failed: the card still expects secure messaging, and
+    /// @ref transmit refuses to bypass it. False with no channel or a plain
+    /// one.
+    ///
+    /// @note Owner-tolerant, as @ref channelState. On lock failure it returns
+    ///       @c false.
+    /// @since 5.0
+    [[nodiscard]] bool carriesSecureMessaging() const noexcept;
+
+    /// @brief Forget which application the session's channel has selected.
+    ///
+    /// For a caller that selected another file or application through
+    /// @ref transmit: the channel no longer records the application it was
+    /// activated for, so the next @ref activateChannelFor or
+    /// @ref activateChannelWithSm selects it again instead of reusing the
+    /// channel as it stands. Does nothing when the session holds no channel.
+    ///
+    /// @note Owner-tolerant, as @ref channelState. On lock failure it does
+    ///       nothing.
+    /// @since 5.0
+    void forgetCurrentApplet() noexcept;
+
 #ifdef LIBRESCRS_INTERNAL_BUILD
     /// @brief SM-aware APDU transmit funnel for LM-internal callers.
     ///
@@ -522,13 +679,12 @@ public:
 
 private:
     // Detail-namespace free functions and access structs are the internal
-    // access points for plugin/signing bridges (unwrap, sessionGeneration)
+    // access points for plugin/signing bridges (unwrap)
     // and the test seams (ChannelInjector, Testing::SessionAccess). Their
     // declarations live outside this header; friend declarations here inject
     // the names at enclosing-namespace scope without leaking any prototypes
     // into the public include tree.
     friend struct detail::PcscBridge;
-    friend std::uint64_t detail::sessionGeneration(const CardSession& session) noexcept;
     friend struct detail::ChannelInjector;
     friend struct Testing::SessionAccess;
     friend struct Internal::ActiveChannelAccessor;
