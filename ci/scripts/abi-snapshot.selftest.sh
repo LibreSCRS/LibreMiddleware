@@ -72,6 +72,8 @@
 #      to it; without compile_commands.json it cannot judge   -> 1/1/0/0/2
 #  28  an installed header opening a condition on
 #      LIBRESCRS_INTERNAL_BUILD, and the detail/ control          -> 1/0
+#  29  a card plugin the tree defines that was not built, and the
+#      control                                                    -> 2/0
 set -uo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -690,6 +692,19 @@ printf 'namespace LibreSCRS {\nint selftestAlpha(int x);\nint selftestBeta(int x
     > "$root28/include/LibreSCRS/Stub.h"
 rc=$(run "$root28" --update build)
 check "control: the guard of a detail/ header, which is not installed" 0 "$rc"
+
+# --- 29: every card plugin the tree defines must be built ------------------
+#     A plugin left out of the build has its imports skipped; the gate cannot
+#     judge them, so it says so.
+root29="$(stub plugin-set)"
+mkdir -p "$root29/lib/fixture-plugin" "$root29/lib/absent-plugin"
+printf '{}\n' > "$root29/lib/fixture-plugin/manifest.json"
+rc=$(run "$root29" --update build)
+check "control: the one plugin the tree defines is built" 0 "$rc"
+printf '{}\n' > "$root29/lib/absent-plugin/manifest.json"
+rc=$(run "$root29" --update build)
+check "a plugin the tree defines is not built" 2 "$rc"
+says "a plugin the tree defines is not built" "libabsent-plugin.so"
 
 # --- 27: the sanitizer flavour ----------------------------------------------
 #     gcc's -fsanitize=vptr makes a member access through a polymorphic object
