@@ -20,8 +20,8 @@ namespace libresign {
 /// @brief Stateless helper: extract qualified-CA / qualified-TSA anchors
 ///        from a parsed @ref TrustedListInfo. Maps @c TrustedServiceEntry
 ///        items by @c serviceType to @c TrustAnchor instances. Used by
-///        @c TrustStoreService eager-fetch workers to hand pre-mapped
-///        anchors to @c TrustStoreInternalAccess::mergeTrustedListAnchors.
+///        @c TrustStoreService (its eager workers and its deferred fetch) to
+///        hand pre-mapped anchors to its store.
 [[nodiscard]] std::vector<LibreSCRS::Trust::TrustAnchor> extractAnchorsFromTrustedList(const TrustedListInfo& info);
 
 /// @brief The certificates (DER) of the qualified time-stamping services

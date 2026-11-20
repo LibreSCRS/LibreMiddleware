@@ -11,6 +11,7 @@
 ///        internal worker threads; their anchors join the store as they
 ///        arrive.
 
+#include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Export.h>
 #include <LibreSCRS/LocalizedText.h>
 #include <LibreSCRS/Trust/TrustConfig.h>
@@ -24,6 +25,12 @@
 #include <utility>
 
 namespace LibreSCRS::Trust {
+
+/// @cond internal
+namespace detail {
+struct TrustStoreServiceAccess; // test access, in an internal header
+} // namespace detail
+/// @endcond
 
 /// @brief Lifecycle owner of @ref TrustStore. Builds the local anchor set
 ///        synchronously (bundled certs + optional OS root store) and
@@ -130,14 +137,90 @@ public:
     /// @par Lifetime & sharing
     /// The returned snapshot is monotonically growing — consumers MUST NOT
     /// cache @ref TrustStore::enumerableAnchors() and assume immutability.
-    /// New anchors land asynchronously as eager fetches complete and as
-    /// lazy fetches run inside @ref Signing::SigningService::sign.
+    /// New anchors land asynchronously as eager fetches complete, and when
+    /// @ref loadTrustedLists brings in sources (which
+    /// @ref Signing::SigningService::sign does when it loads Trusted Lists).
     /// @since 4.0
     [[nodiscard]] std::shared_ptr<const TrustStore> trustStore() const;
 
-    /// @brief Snapshot of the original config the service was constructed
-    ///        with. Useful for diagnostics and for @ref Signing::SigningService
-    ///        to forward the same config to the libresign engine.
+    /// @brief Which configured Trusted List sources @ref loadTrustedLists
+    ///        brings into the store.
+    /// @since 5.0
+    enum class Sources : std::uint8_t {
+        /// The sources whose @c eager flag is set (fetched in the background
+        /// at construction): those whose background fetch has not loaded.
+        Eager,
+        /// Every configured source, the deferred ones included.
+        All,
+    };
+
+    /// @brief Fetch the configured Trusted List sources whose anchors are not
+    ///        in @ref trustStore yet, and add the anchors of every list that
+    ///        verifies.
+    ///
+    /// Each source is read from the cache directory when it holds a current
+    /// copy, else downloaded (and, for a List of Trusted Lists, every list it
+    /// points to), verified as the eager fetch at construction verifies it,
+    /// and its anchors merged. A source is done once all of its lists have
+    /// been merged; one that failed in any part -- offline, a list that does
+    /// not verify, a cancel -- is fetched again on the next call. Only the
+    /// configured sources are fetched, and only lists that verify contribute
+    /// anchors: the call adds no anchor of its own.
+    ///
+    /// The call blocks until every source it takes has been fetched or has
+    /// failed (each download is bounded by a 30 s request timeout); calls
+    /// from several threads run one after another.
+    /// A host calls it when it wants the anchors now, at the cost of the
+    /// downloads; @ref adoptCachedTrustedLists takes only what is on disk.
+    ///
+    /// @param which Which sources to take.
+    /// @param token Cancellation: stops the fetch between and inside the
+    ///              lists; a source left unfinished is fetched next time.
+    /// @par Thread-safety
+    /// Safe to call from several threads.
+    /// @par Example
+    /// @code
+    /// // A validator that wants every configured anchor before it judges.
+    /// service->loadTrustedLists(TrustStoreService::Sources::All);
+    /// const auto issuer = service->trustStore()->findIssuerOf(certificate);
+    /// @endcode
+    /// @since 5.0
+    void loadTrustedLists(Sources which, LibreSCRS::CancelToken token = {}) noexcept;
+
+    /// @brief As @ref loadTrustedLists, but from the cache directory alone:
+    ///        nothing is downloaded.
+    ///
+    /// Every list of a source not loaded yet that the cache directory holds,
+    /// within its lifetime, and that verifies has its anchors merged -- for a
+    /// List of Trusted Lists, each list it points to on its own, so one list
+    /// missing from the cache does not keep the others out. A source with a
+    /// list missing or failing stays pending: a later call of either kind
+    /// takes it again. Without a cache directory nothing is adopted.
+    ///
+    /// @ref Signing::SigningService::sign calls it after each phase of the
+    /// signing engine's Trusted List loading -- @ref Sources::Eager after the
+    /// eager lists, @ref Sources::All after a signature level made it load
+    /// the deferred ones -- whatever that phase's outcome, so the anchors of
+    /// every list the engine verified and cached reach this store without a
+    /// second download, while a list that could not be fetched is tried again
+    /// on a later signature.
+    ///
+    /// @param which Which sources to take.
+    /// @par Thread-safety
+    /// Safe to call from several threads; runs one after another with
+    /// @ref loadTrustedLists.
+    /// @since 5.0
+    void adoptCachedTrustedLists(Sources which) noexcept;
+
+    /// @brief The configuration in effect: the one the service was
+    ///        constructed with, except that without a @c cacheDirectory it
+    ///        names the private cache directory the service keeps for its
+    ///        lifetime (a fresh directory under @c $TMPDIR, else @c /tmp,
+    ///        mode 0700, removed with the service). Reported here so that
+    ///        @ref Signing::SigningService, which forwards this config to the
+    ///        libresign engine, shares that cache and a list is downloaded
+    ///        once. A host that wants the cache elsewhere (a large List of
+    ///        Trusted Lists caches tens of megabytes) configures one.
     /// @par Thread-safety
     /// Reentrant; the returned reference is to immutable post-construction
     /// state.
@@ -146,6 +229,7 @@ public:
 
 private:
     explicit TrustStoreService(TrustConfig config);
+    friend struct detail::TrustStoreServiceAccess;
     struct Impl;
     std::shared_ptr<Impl> d; // shared because async tasks reference it
 };

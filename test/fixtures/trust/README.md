@@ -45,6 +45,18 @@ openssl req -x509 -new -key test-tl-signing-key.pem -days 36500 \
 ./regenerate.sh
 ```
 
+## The List of Trusted Lists pair
+
+- `lotl-tl.xml` is a List of Trusted Lists pointing at two lists on `.invalid`
+  hosts, each to be verified with `test-tl-signing-cert.pem`. The hosts are
+  never reached: a test stages the lists it wants found in the cache under
+  those URLs.
+- `second-ca-tl.xml` lists `test-tl-second-ca-cert.pem` (a CA certificate
+  with no key kept) as its one CA service, so its anchor can be told from
+  `synthetic-tl.xml`'s.
+
+Both are signed with `test-tl-signing-key.pem` by `regenerate.sh`.
+
 ## Regenerating the signed fixture
 
 `regenerate.sh` invokes `xmlsec1` (apt: `libxmlsec1-dev`, arch:

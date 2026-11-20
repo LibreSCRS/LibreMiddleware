@@ -105,3 +105,19 @@ xmlsec1 --verify \
     --id-attr:Id "http://www.w3.org/2000/09/xmldsig#:Signature" \
     tsa-tl.xml
 echo "Regenerated tsa-tl.xml"
+
+# A list of its own anchor, and a List of Trusted Lists pointing at two lists.
+for name in second-ca-tl lotl-tl; do
+    xmlsec1 --sign \
+        --privkey-pem:testkey "$KEY,$CERT" \
+        --node-id TLSignature \
+        --id-attr:Id "http://www.w3.org/2000/09/xmldsig#:Signature" \
+        --output "$name.xml" \
+        "$name.template.xml"
+    xmlsec1 --verify \
+        --trusted-pem "$CERT" \
+        --enabled-key-data x509,key-name,rsa \
+        --id-attr:Id "http://www.w3.org/2000/09/xmldsig#:Signature" \
+        "$name.xml"
+    echo "Regenerated $name.xml"
+done

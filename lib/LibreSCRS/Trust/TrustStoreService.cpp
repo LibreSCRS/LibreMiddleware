@@ -9,6 +9,7 @@
 
 #include "internal/BundledCertsProvider.h"
 #include "internal/TrustStoreInternalAccess.h"
+#include "internal/TrustStoreServiceImpl.h"
 
 // Cross-target include into libresign internals — TrustStoreService is the
 // eager-fetch driver, so it needs the libresign-side fetch+verify+parse
@@ -22,28 +23,76 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <mutex>
 #include <stop_token>
 #include <thread>
 #include <utility>
 #include <vector>
 
+#include <stdlib.h> // mkdtemp (POSIX.1-2008)
+#include <unistd.h> // mkdtemp (macOS declares it here)
+
 namespace LibreSCRS::Trust {
 
-struct LIBRESCRS_INTERNAL TrustStoreService::Impl
+TrustStoreService::Impl::~Impl()
 {
-    explicit Impl(TrustConfig cfg) : config(std::move(cfg)) {}
+    if (!privateCacheDir.empty()) {
+        std::error_code ec;
+        std::filesystem::remove_all(privateCacheDir, ec);
+    }
+}
 
-    TrustConfig config;
-    std::shared_ptr<TrustStore> trustStore;
+libresign::TrustedListEntry TrustStoreService::Impl::entryFor(const TrustedListSource& src) const
+{
+    libresign::TrustedListEntry entry;
+    entry.url = src.url;
+    entry.isLotl = src.lotl;
+    entry.eager = src.eager;
+    if (entryHook)
+        entryHook(entry);
+    return entry;
+}
 
-    // Worker pool — one jthread per eager source.
-    std::vector<std::jthread> workers;
+void TrustStoreService::Impl::markLoaded(const std::string& url)
+{
+    std::lock_guard lock(loadMutex);
+    loadedSources.insert(url);
+}
 
-    /// @brief Worker entry point. Captures @p impl by shared_ptr so the
-    ///        worker thread cannot outlive @c Impl, and so destruction
-    ///        waits on the jthread join inside @c Impl::workers.
-    static void runWorker(std::shared_ptr<Impl> impl, libresign::TrustedListEntry entry, std::stop_token stop);
-};
+bool TrustStoreService::Impl::fetchAndMerge(const libresign::TrustedListEntry& entry, LibreSCRS::CancelToken token,
+                                            bool cacheOnly) const
+{
+    libresign::FetchOptions opts;
+    opts.cacheOnly = cacheOnly;
+    if (config.cacheDirectory.has_value())
+        opts.cacheDirectory = config.cacheDirectory->string();
+    opts.requestTimeout = std::chrono::seconds{30};
+    opts.stop = std::move(token);
+
+    // The same walk the signing engine runs: the list and, for a List of
+    // Trusted Lists, every list it points to. Each verified list's anchors
+    // are merged under its own source tag.
+    bool complete = true;
+    const auto onList = [this, &opts, &complete](const std::string& /*listUrl*/,
+                                                 const libresign::TrustedListInfo& info) {
+        if (opts.stop.isCancelled()) {
+            complete = false;
+            return;
+        }
+        detail::TrustStoreInternalAccess::mergeTrustedListAnchors(*trustStore,
+                                                                  libresign::extractAnchorsFromTrustedList(info));
+    };
+    const auto onFailure = [&complete](const std::string& listUrl, const std::string& error) {
+        complete = false;
+        LibreSCRS::log::warnf("Trusted List {} skipped: {}", listUrl, error);
+    };
+    auto result = libresign::fetchTrustedListTree(entry, opts, onList, onFailure);
+    if (!result) {
+        onFailure(entry.url, result.error);
+        return false;
+    }
+    return complete && !opts.stop.isCancelled();
+}
 
 void TrustStoreService::Impl::runWorker(std::shared_ptr<Impl> impl, libresign::TrustedListEntry entry,
                                         std::stop_token stop)
@@ -62,34 +111,14 @@ void TrustStoreService::Impl::runWorker(std::shared_ptr<Impl> impl, libresign::T
         if (stop.stop_requested())
             return;
 
-        libresign::FetchOptions opts;
-        if (impl->config.cacheDirectory.has_value())
-            opts.cacheDirectory = impl->config.cacheDirectory->string();
-        opts.requestTimeout = std::chrono::seconds{30};
-
         // Bridge inbound std::jthread stop_token to a CancelToken for libresign.
         // The local CancelSource lives for the duration of this worker call;
         // the std::stop_callback fires requestCancel() on the cancelling thread
         // when the jthread is asked to stop.
         LibreSCRS::CancelSource workerCancelSource;
-        opts.stop = workerCancelSource.token();
         std::stop_callback bridgeCb(stop, [&workerCancelSource]() noexcept { workerCancelSource.requestCancel(); });
-
-        // The same walk the signing engine runs: the list and, for a List of
-        // Trusted Lists, every list it points to. Each verified list's
-        // anchors are merged under its own source tag.
-        const auto onList = [&impl, &stop](const std::string& /*listUrl*/, const libresign::TrustedListInfo& info) {
-            if (stop.stop_requested())
-                return;
-            detail::TrustStoreInternalAccess::mergeTrustedListAnchors(*impl->trustStore,
-                                                                      libresign::extractAnchorsFromTrustedList(info));
-        };
-        const auto onFailure = [](const std::string& listUrl, const std::string& error) {
-            LibreSCRS::log::warnf("Trusted List {} skipped: {}", listUrl, error);
-        };
-        auto result = libresign::fetchTrustedListTree(entry, opts, onList, onFailure);
-        if (!result)
-            onFailure(url, result.error);
+        if (impl->fetchAndMerge(entry, workerCancelSource.token()))
+            impl->markLoaded(url);
     } catch (...) {
         // The logging facade may itself throw; nothing is left to report to.
         try {
@@ -101,6 +130,29 @@ void TrustStoreService::Impl::runWorker(std::shared_ptr<Impl> impl, libresign::T
 
 TrustStoreService::TrustStoreService(TrustConfig cfg) : d(std::make_shared<Impl>(std::move(cfg)))
 {
+    // Without a configured cache directory the service keeps one of its own
+    // for its lifetime, and reports it in config(): the signing engine reads
+    // the same directory, so a list the engine downloaded is read from disk
+    // when the service adopts it, not downloaded a second time.
+    if (!d->config.cacheDirectory.has_value()) {
+        // mkdtemp: a name nobody can predict or occupy first, created 0700.
+        // Under $TMPDIR when set, else /tmp -- the platform's place for
+        // per-process scratch data. A List of Trusted Lists caches tens of
+        // megabytes there for the service's lifetime; a host that minds
+        // (/tmp in RAM) configures a cacheDirectory.
+        std::error_code ec;
+        const auto base = std::filesystem::temp_directory_path(ec);
+        if (!ec) {
+            std::string pattern = (base / "librescrs-trusted-lists-XXXXXX").string();
+            std::vector<char> name(pattern.begin(), pattern.end());
+            name.push_back('\0');
+            if (::mkdtemp(name.data()) != nullptr) {
+                d->privateCacheDir = std::filesystem::path(name.data());
+                d->config.cacheDirectory = d->privateCacheDir;
+            }
+        }
+    }
+
     // Build the local store synchronously — bundled certs walk + system flag.
     // Fast (filesystem-only); never blocks on network.
     //
@@ -115,18 +167,14 @@ TrustStoreService::TrustStoreService(TrustConfig cfg) : d(std::make_shared<Impl>
     d->trustStore = std::make_shared<TrustStore>(
         detail::TrustStoreInternalAccess::makeStore(std::move(certsDir), /*includeSystemTrustStore=*/true));
 
-    // Lazy sources are left to the signing engine, which fetches them when a
-    // signature first needs them.
+    // Lazy sources wait for loadTrustedLists(Sources::All), which the
+    // signing engine's bridge calls when a signature first needs them.
     std::vector<libresign::TrustedListEntry> eagerSources;
 
     for (const auto& src : d->config.trustedListSources) {
         if (!src.eager)
             continue;
-        libresign::TrustedListEntry entry;
-        entry.url = src.url;
-        entry.isLotl = src.lotl;
-        entry.eager = true;
-        eagerSources.push_back(std::move(entry));
+        eagerSources.push_back(d->entryFor(src));
     }
 
     // Cap parallelism. min(eager_count, 4u) keeps a hard upper bound on
@@ -148,6 +196,42 @@ TrustStoreService::TrustStoreService(TrustConfig cfg) : d(std::make_shared<Impl>
         });
     }
     (void)workerCount;
+}
+
+void TrustStoreService::Impl::loadSources(Sources which, LibreSCRS::CancelToken token, bool cacheOnly) noexcept
+{
+    try {
+        std::lock_guard lock(loadMutex);
+        for (const auto& src : config.trustedListSources) {
+            if (!src.eager && which != Sources::All)
+                continue;
+            if (loadedSources.contains(src.url))
+                continue; // its anchors are in the store
+            if (token.isCancelled())
+                return;
+            try {
+                if (fetchAndMerge(entryFor(src), token, cacheOnly))
+                    loadedSources.insert(src.url);
+            } catch (...) {
+                // A list whose fetch throws (a malformed document, an
+                // allocation failure) stays out of the store, as a failed
+                // fetch does, and is tried again on the next call.
+                LibreSCRS::log::warnf("Trusted List {} skipped: the fetch threw", src.url);
+            }
+        }
+    } catch (...) {
+        // noexcept: a failure to lock or to log leaves the store as it is.
+    }
+}
+
+void TrustStoreService::loadTrustedLists(Sources which, LibreSCRS::CancelToken token) noexcept
+{
+    d->loadSources(which, std::move(token), /*cacheOnly=*/false);
+}
+
+void TrustStoreService::adoptCachedTrustedLists(Sources which) noexcept
+{
+    d->loadSources(which, {}, /*cacheOnly=*/true);
 }
 
 TrustStoreService::~TrustStoreService()

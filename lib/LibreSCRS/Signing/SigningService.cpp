@@ -8,11 +8,8 @@
 #include "detail/ErrorClassifier.h"
 #include "detail/RequestBridge.h"
 
-// LM-internal Trust friend header used by the lazy-fetch-merge lambda
-// bound into libresign's NativeSigningService::setAnchorEmitter (below).
-// LibreSCRS_Signing already builds with LIBRESCRS_INTERNAL_BUILD, so this
-// internal include is allowed.
-#include "../Trust/internal/TrustStoreInternalAccess.h"
+// The libresign engine (internal: LibreSCRS_Signing builds with
+// LIBRESCRS_INTERNAL_BUILD).
 #include "native/native_signing_service.h"
 #include "native/plugin_signing_key.h"
 
@@ -290,21 +287,19 @@ SigningService::Impl::runSignPipeline(const SigningRequest& request, const Auth:
     libReq.tsa.url = std::move(tsaUrl);
 
     auto service = std::make_unique<libresign::NativeSigningService>();
-    // Bind the lazy-fetch anchor-merge callback into libresign's native
-    // backend. libresign emits TL-extracted anchors via the AnchorEmitter
-    // (see NativeSigningService::setAnchorEmitter); this lambda merges them
-    // into the same TrustStore the eager-fetch worker
-    // (Trust::TrustStoreService) populates. Inverted call direction —
-    // libresign no longer reaches into Trust internals — keeps the
-    // libresign target free of any link edge to LibreSCRS_Trust.
-    {
-        auto trustStore = std::const_pointer_cast<Trust::TrustStore>(trustService->trustStore());
-        service->setAnchorEmitter([trustStore](std::vector<Trust::TrustAnchor> anchors) {
-            if (!trustStore)
-                return;
-            Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(*trustStore, std::move(anchors));
-        });
-    }
+    // The engine loads the Trusted Lists it needs for its own chain and
+    // time-stamp checks -- the eager ones in configure(), the deferred ones
+    // when a signature level needs them -- into the cache directory it shares
+    // with the trust store service. After each phase, whatever its outcome,
+    // the service adopts from that cache -- without downloading -- every list
+    // that verifies and adds its anchors to the store it owns: one download,
+    // one unreachable list of a List of Trusted Lists does not keep the
+    // others out, a list that failed here is tried again on a later
+    // signature, and Signing never adds an anchor to a store.
+    service->setTrustedListsLoadedHook([trustService = trustService](bool deferred) {
+        trustService->adoptCachedTrustedLists(deferred ? Trust::TrustStoreService::Sources::All
+                                                       : Trust::TrustStoreService::Sources::Eager);
+    });
     if (!service->configure(libTrust)) {
         return {SigningResult::trustStoreUnavailableDiagnosticOnly(std::string{"libresign rejected TrustConfig"}), {}};
     }

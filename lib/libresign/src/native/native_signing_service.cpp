@@ -180,6 +180,8 @@ bool NativeSigningService::configure(const TrustConfig& config)
             ++successCount;
     }
 
+    if (eagerCount > 0 && trustedListsLoadedHook)
+        trustedListsLoadedHook(false);
     // Success if at least one TL loaded, or if no TLs were configured (empty list is valid)
     return eagerCount == 0 || successCount > 0;
 }
@@ -190,11 +192,8 @@ bool NativeSigningService::loadTrustList(const TrustedListEntry& entry)
     opts.cacheDirectory = trustConfig.cacheDirectory;
     opts.requestTimeout = std::chrono::seconds{kTlFetchTimeoutSeconds};
 
-    // Every verified list hands its anchors over: retained for long-term
-    // chain completion (used even when no host emitter is bound, e.g.
-    // native-only signing) and emitted to the host, which merges them into
-    // the public TrustStore. Inverted-callback shape: libresign extracts
-    // anchors, the bridge owns the merge.
+    // Every verified list hands its anchors over, retained for long-term
+    // chain completion and for the time-stamp checks of this signature.
     const auto onList = [this](const std::string& /*url*/, const TrustedListInfo& info) {
         auto anchors = extractAnchorsFromTrustedList(info);
         for (const auto& a : anchors)
@@ -202,8 +201,6 @@ bool NativeSigningService::loadTrustList(const TrustedListEntry& entry)
                 tlAnchorCerts.push_back(a.certificateDer);
         for (auto& der : timestampAuthorityCertificates(info))
             tlTimestampAnchors.push_back(std::move(der));
-        if (anchorEmitter)
-            anchorEmitter(std::move(anchors));
     };
     const auto onFailure = [](const std::string& url, const std::string& error) {
         LibreSCRS::log::warnf("Trusted List {} skipped: {}", url, error);
@@ -228,14 +225,18 @@ void NativeSigningService::loadLazyTrustLists()
         return;
     lazyListsLoaded = true;
 
+    int deferredCount = 0;
     for (const auto& entry : trustConfig.trustedLists) {
         if (entry.eager)
             continue; // configure() already fetched it
+        ++deferredCount;
         // Degraded, exactly as configure() treats an eager source that
         // fails: the anchor set stays short and the chain gate below
         // refuses with the cause the user can act on.
         (void)loadTrustList(entry);
     }
+    if (deferredCount > 0 && trustedListsLoadedHook)
+        trustedListsLoadedHook(true);
 }
 
 std::optional<SigningResult> NativeSigningService::completeLongTermChain(SigningKey& key, SignatureLevel level)

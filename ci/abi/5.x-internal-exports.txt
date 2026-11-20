@@ -21,7 +21,6 @@
 # This list only shrinks. The gate fails on a symbol that is not here, on an
 # entry that no longer names an imported internal export, and in CI on any
 # entry the list at the merge base does not hold.
-libLibreSCRS_Trust.so	LibreSCRS::Trust::detail::TrustStoreInternalAccess::mergeTrustedListAnchors(LibreSCRS::Trust::TrustStore&, std::vector<LibreSCRS::Trust::TrustAnchor, std::allocator<LibreSCRS::Trust::TrustAnchor> >)@@LM_5	imported: libLibreSCRS_Signing (merges Trusted List anchors into a TrustStore)
 libLibreSCRS_SmartCard.so	typeinfo for LibreSCRS::SmartCard::Internal::PCSCError@@LM_5	thrown: PCSCError leaves libLibreSCRS_SmartCard through the connection calls of the card plugins and the CardSession members
 libLibreSCRS_SmartCard.so	typeinfo name for LibreSCRS::SmartCard::Internal::PCSCError@@LM_5	thrown: PCSCError leaves libLibreSCRS_SmartCard through the connection calls of the card plugins and the CardSession members
 libLibreSCRS_SmartCard.so	vtable for LibreSCRS::SmartCard::Internal::PCSCError@@LM_5	thrown: PCSCError leaves libLibreSCRS_SmartCard through the connection calls of the card plugins and the CardSession members

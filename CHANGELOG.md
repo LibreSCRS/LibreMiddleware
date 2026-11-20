@@ -52,6 +52,23 @@ Notable user-visible changes per release. Format follows
   queries, now also answer on the thread that holds the session's
   `ActiveChannelHolder`, where they used to deadlock.
 
+- **`TrustStoreService::loadTrustedLists`** (with `TrustStoreService::Sources`).
+  Brings the configured Trusted List sources whose anchors are not in the
+  service's store yet into it: each is read from the cache directory or
+  downloaded, verified, and its anchors added; a source that failed in any
+  part is tried again on the next call. `adoptCachedTrustedLists` does the
+  same from the cache directory alone, downloading nothing. After each phase
+  of the signing engine's Trusted List loading, whatever its outcome,
+  `SigningService::sign` has the service adopt from the cache directory the
+  two share: every list the engine verified reaches the store -- with a List
+  of Trusted Lists, the lists that verified even when one is unreachable --
+  a list is downloaded once, and a list that failed is tried again on a later
+  signature. The anchors reach the store through the service that owns it,
+  where the signing engine used to merge them into that store itself.
+  Without a configured `cacheDirectory` the service keeps a private one for
+  its lifetime (a fresh directory under `$TMPDIR`, else `/tmp`, removed with
+  the service) and reports it in `config()`.
+
 - **`OpenError::Kind::SessionRefused`.** A card that another client holds, or
   whose session the platform has not granted yet (PC/SC
   `SCARD_E_SHARING_VIOLATION`, the same refusal from CryptoTokenKit), is now

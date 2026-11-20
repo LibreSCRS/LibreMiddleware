@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  A Trusted List of its own anchor: the same as synthetic-tl.template.xml, but
+  its one CA service is test-tl-second-ca-cert.pem, so a test can tell its
+  anchor from synthetic-tl's. Signed with test-tl-signing-key.pem.
+-->
+<TrustServiceStatusList xmlns="http://uri.etsi.org/02231/v2#"
+                        xmlns:ds="http://www.w3.org/2000/09/xmldsig#"
+                        TSLTag="http://uri.etsi.org/19612/TSLTag"
+                        Id="TrustServiceStatusList">
+  <SchemeInformation>
+    <TSLVersionIdentifier>5</TSLVersionIdentifier>
+    <TSLSequenceNumber>1</TSLSequenceNumber>
+    <TSLType>http://uri.etsi.org/TrstSvc/TrustedList/TSLType/EUgeneric</TSLType>
+    <SchemeOperatorName>
+      <Name xml:lang="en">LibreSCRS Test Authority</Name>
+    </SchemeOperatorName>
+    <SchemeName>
+      <Name xml:lang="en">LibreSCRS Test TL</Name>
+    </SchemeName>
+    <SchemeTerritory>RS</SchemeTerritory>
+    <ListIssueDateTime>2026-04-28T00:00:00Z</ListIssueDateTime>
+    <NextUpdate>
+      <dateTime>2126-04-28T00:00:00Z</dateTime>
+    </NextUpdate>
+  </SchemeInformation>
+  <TrustServiceProviderList>
+    <TrustServiceProvider>
+      <TSPInformation>
+        <TSPName>
+          <Name xml:lang="en">LibreSCRS Test Second TSP</Name>
+        </TSPName>
+      </TSPInformation>
+      <TSPServices>
+        <TSPService>
+          <ServiceInformation>
+            <ServiceTypeIdentifier>http://uri.etsi.org/TrstSvc/Svctype/CA/QC</ServiceTypeIdentifier>
+            <ServiceName>
+              <Name xml:lang="en">LibreSCRS Test Second CA</Name>
+            </ServiceName>
+            <ServiceDigitalIdentity>
+              <DigitalId>
+                <X509Certificate>MIIDUzCCAjugAwIBAgIUTm7gneh4lB595hwkawQE+Q1AUb4wDQYJKoZIhvcNAQELBQAwMDELMAkGA1UEBhMCUlMxITAfBgNVBAMMGExpYnJlU0NSUyBUZXN0IFNlY29uZCBDQTAgFw0yNjExMjAxMzIwNTRaGA8yMTI2MTAyNzEzMjA1NFowMDELMAkGA1UEBhMCUlMxITAfBgNVBAMMGExpYnJlU0NSUyBUZXN0IFNlY29uZCBDQTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALJrNa2aOa2lGICUPP4iq/dDHQNWCsQ1r8hUDrkAcWxiKAsn7wXPoR3mS2FHpc8sR4Ma9+X4eDqUHqdQmZ05NyXvOVe1eiAYrucqAtuV4N5es6QQlJIHuYSEKKyL3KZNeIw4kVpcy4EHd5L74hGUSVJcXxz0UEhLz5Sx97GdPHlfeZIX48ypDx2DZYCWdq06DcTElE1ZIBhwDr8SbMoNIU/thFBeVVcn4O4rWhFlZHh1Ssc4Qj71d6TS5+LigRVeNx8tcAQybc7HXYDESoXTINDnaWtj0krccARDb3gTcSrqTYeRZLP5YonqcPz3IQ7jmQblP29Fn2Mo1CT3aRZrEv0CAwEAAaNjMGEwHQYDVR0OBBYEFPK8pR57ygxe5LTHSTlHROfe3rrvMB8GA1UdIwQYMBaAFPK8pR57ygxe5LTHSTlHROfe3rrvMA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEGMA0GCSqGSIb3DQEBCwUAA4IBAQAj2qbilJZgaTUjQsrKgj+AVxUKZ8B760TUsrBuOHrNKE77fZXyYbx6f1kUlDTrgj6wmV4nQ0hPU8WZPSGEamm6h2gM8GGsUSLRPAxhe3NEFlvBLpOfXqjaorwQLEIs7s5kBWDvyPccD0agaqIlC9+FNEGOqmpzCglqM/41IsM6KkHtWU4Ck4woapKF1ag+YAzVNyEQLqkYVvXIYbo6uAQr/o1A1/iOZRwqrNS6smIkazg7fVvi6X0rGUUhrcemOcqAh2Nm9rRBxzvozHaWANmLjmJf9o741U2m321QdwQsiVDmtzyWsVQi1fhDxhPRCUF0CpWi71c6OsAXKcSiBYOJ</X509Certificate>
+              </DigitalId>
+            </ServiceDigitalIdentity>
+            <ServiceStatus>http://uri.etsi.org/TrstSvc/TrustedList/Svcstatus/granted</ServiceStatus>
+            <StatusStartingTime>2026-04-28T00:00:00Z</StatusStartingTime>
+          </ServiceInformation>
+        </TSPService>
+      </TSPServices>
+    </TrustServiceProvider>
+  </TrustServiceProviderList>
+  <ds:Signature Id="TLSignature">
+    <ds:SignedInfo>
+      <ds:CanonicalizationMethod Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
+      <ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>
+      <ds:Reference URI="">
+        <ds:Transforms>
+          <ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/>
+          <ds:Transform Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#"/>
+        </ds:Transforms>
+        <ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>
+        <ds:DigestValue></ds:DigestValue>
+      </ds:Reference>
+    </ds:SignedInfo>
+    <ds:SignatureValue></ds:SignatureValue>
+    <ds:KeyInfo>
+      <ds:KeyName>testkey</ds:KeyName>
+      <ds:X509Data>
+        <ds:X509Certificate/>
+      </ds:X509Data>
+    </ds:KeyInfo>
+  </ds:Signature>
+</TrustServiceStatusList>

@@ -55,7 +55,7 @@ LibreSignTests 4
 LocalizedTextFactoriesTests 12
 ManifestCodegenTests 5
 MonitorTests 33
-NativeSigningServiceTests 13
+NativeSigningServiceTests 14
 NativeUtilsTests 55
 OidDatabaseTests 9
 OpenSCFallbackIntegrationTest 6
@@ -113,7 +113,7 @@ TSAClientTests 9
 TlCacheTests 14
 TlSignatureVerifierTests 19
 TrustStoreServiceCreateExpectedTests 4
-TrustStoreServiceTests 6
+TrustStoreServiceTests 14
 TrustedListParserTests 15
 TsaFailureModesTests 9
 TtfParserTests 14
