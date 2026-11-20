@@ -416,6 +416,15 @@ jobs:
             opensc \
             poppler-utils
 
+      # The compiler the native leg's export gate builds with when it imitates
+      # this leg (--sanitizer-flavour): what this leg links is what that gate
+      # judged, not whatever the image ships on the day.
+      - name: Pin the compiler the export gate imitates
+        run: |
+          sudo apt-get install -y g++-13 gcc-13
+          echo "CC=gcc-13" >> "$GITHUB_ENV"
+          echo "CXX=g++-13" >> "$GITHUB_ENV"
+
       - name: Configure & Build (address + undefined behaviour sanitizers)
         run: |
           # WERROR off on purpose: this leg measures runtime behaviour, not
