@@ -303,6 +303,19 @@ if [[ "$plugin_count" -eq 0 ]]; then
     echo "FATAL: no card plugin under '$BUILD_DIR/plugins' -- cannot judge what shipped images import" >&2
     exit 2
 fi
+# Every card plugin the tree defines (lib/<name>-plugin/manifest.json) must have
+# been built: one that is missing -- a configuration that leaves it out, or a
+# stale tree -- would have its imports skipped without a word.
+missing_plugins=()
+while IFS= read -r manifest; do
+    plugin_dir="$(basename "$(dirname "$manifest")")"
+    [[ -f "$BUILD_DIR/plugins/lib${plugin_dir}.so" ]] || missing_plugins+=("lib${plugin_dir}.so")
+done < <(find "$REPO_ROOT/lib" -mindepth 2 -maxdepth 2 -path '*-plugin/manifest.json' 2>/dev/null | sort)
+if [[ ${#missing_plugins[@]} -gt 0 ]]; then
+    echo "FATAL: card plugin(s) not built under '$BUILD_DIR/plugins': ${missing_plugins[*]}" >&2
+    echo "       -- their imports cannot be judged. Build every plugin the tree defines." >&2
+    exit 2
+fi
 while IFS= read -r archive; do
     [[ -n "$archive" ]] || continue
     nm -U "$archive" 2>/dev/null | awk 'NF >= 3 { print $3 }' | sort -u > "$SCRATCH/archive-defined"
