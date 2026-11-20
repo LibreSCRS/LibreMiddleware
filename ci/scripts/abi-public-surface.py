@@ -30,22 +30,23 @@
 # forward-declare (a pimpl `Impl`) passes in a signature, which is what the
 # private pimpl constructors rely on.
 #
-# The rules:
+# The rules (strict):
 #   Exports: every exported symbol rooted in namespace LibreSCRS is
-#      attributed and not internal, or is listed in the allowlist.
+#      attributed and not internal, or is the typeinfo, typeinfo name or
+#      vtable of a thrown exception type listed in the allowlist.
 #   Imports: every LibreSCRS symbol a SHIPPED image imports (the core
 #      libraries, the card plugins, the installed test archive; never a test
-#      executable) is exported by a core library, and is public or listed.
-#      Every listed entry whose reason starts with "imported:" has at least one
-#      shipped importer; an entry nobody imports is stale.
+#      executable) is exported by a core library, and is public or one of those
+#      listed exception symbols (a catch imports the typeinfo).
 #   Inline bodies: every LibreSCRS function an inline body of an installed
 #      header calls without defining it is exported by a core library, and is
-#      public or listed: a consumer that calls the inline function links it.
+#      public: a consumer that calls the inline function links it.
+#   Installed headers: none opens a preprocessor condition on
+#      LIBRESCRS_INTERNAL_BUILD -- a consumer and the library see one class.
 #   Additions: with a base allowlist (the one at the merge base), every listed
 #      entry must already be in it -- the list only shrinks.
 #
 # Allowlist (ci/abi/5.x-internal-exports.txt): "<library>\t<demangled symbol>\t<reason>".
-#   reason "imported: <who>"  -- the import rule requires a shipped importer;
 #   reason "thrown: <why>"    -- the typeinfo, typeinfo name or vtable of an
 #                                exception type that leaves its library: a
 #                                catch elsewhere needs it exported whether or
@@ -56,6 +57,8 @@
 #                                from that typeinfo's address or its GOT slot,
 #                                read from the x86_64 disassembly. An entry
 #                                with no such throw site is stale.
+#   An entry for an importer ("imported: ...") is refused: no shipped image
+#   may import an internal symbol, so none is listed for one.
 #
 # usage: abi-public-surface.py --clang C --include-root DIR --exports F
 #            --imports F --allowlist F --images F [--base-allowlist F]
@@ -243,7 +246,7 @@ def demangle(names):
     return out
 
 
-def read_allowlist(path):
+def read_allowlist(path, strict_refusals):
     entries = {}
     with open(path) as f:
         for n, line in enumerate(f, 1):
@@ -254,8 +257,10 @@ def read_allowlist(path):
             if len(parts) != 3 or not parts[0] or not parts[1]:
                 fail(f'{path}:{n}: expected "<library>\\t<demangled symbol>\\t<reason>", got {line!r}')
             reason = parts[2]
-            if not re.match(r'^(imported|thrown): \S', reason):
-                fail(f'{path}:{n}: the reason must start with "imported: " or "thrown: ", got {reason!r}')
+            if re.match(r'^imported: ', reason):
+                strict_refusals.append(f'line {n}: {parts[0]}  {parts[1]}  -- {reason}')
+            elif not re.match(r'^thrown: \S', reason):
+                fail(f'{path}:{n}: the reason must start with "thrown: ", got {reason!r}')
             if reason.startswith('thrown:') and not TYPEINFO_TEXT.match(parts[1]):
                 fail(f'{path}:{n}: "thrown:" is a reason only for the typeinfo, typeinfo name or vtable '
                      f'of an exception type, not for {parts[1]!r}')
@@ -264,6 +269,27 @@ def read_allowlist(path):
                 fail(f'{path}:{n}: duplicate entry {parts[1]!r}')
             entries[key] = (n, reason)
     return entries
+
+
+def internal_build_parts(include_root):
+    """Lines of installed headers (include/LibreSCRS minus every detail/
+    directory, what install() ships) that open a preprocessor condition on
+    LIBRESCRS_INTERNAL_BUILD: such a header shows a consumer one class and the
+    library's own build another."""
+    hits = []
+    root = os.path.join(include_root, 'LibreSCRS')
+    cond = re.compile(r'^\s*#\s*(if|ifdef|ifndef|elif)\b.*\bLIBRESCRS_INTERNAL_BUILD\b')
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d != 'detail')
+        for name in sorted(filenames):
+            if not name.endswith(('.h', '.hpp')):
+                continue
+            path = os.path.join(dirpath, name)
+            with open(path, errors='replace') as f:
+                for n, line in enumerate(f, 1):
+                    if cond.match(line):
+                        hits.append(f'{os.path.relpath(path, include_root)}:{n}: {line.strip()}')
+    return hits
 
 
 def read_rows(path, width):
@@ -340,8 +366,9 @@ def main():
     ap.add_argument('--base-allowlist')
     args = ap.parse_args()
 
-    allowlist = read_allowlist(args.allowlist)
-    base = read_allowlist(args.base_allowlist) if args.base_allowlist else None
+    strict_refusals = []
+    allowlist = read_allowlist(args.allowlist, strict_refusals)
+    base = read_allowlist(args.base_allowlist, []) if args.base_allowlist else None
     surface = measure_surface(args.clang, args.include_root)
 
     exports = read_rows(args.exports, 3)
@@ -378,6 +405,17 @@ def main():
             print(f'  {line}', file=sys.stderr)
         print(f'       {advice}', file=sys.stderr)
 
+    report('STRICT: the allowlist names an internal export for an importer',
+           strict_refusals,
+           'No shipped image may import an internal symbol. The only listed internal exports are the typeinfo, '
+           'typeinfo name and vtable of an exception type the library throws ("thrown:").')
+
+    header_parts = internal_build_parts(args.include_root)
+    report('INSTALLED HEADER WITH AN INTERNAL-ONLY PART: a preprocessor condition on LIBRESCRS_INTERNAL_BUILD',
+           header_parts,
+           'An installed header is one header for every consumer. Move the internal declarations to a header '
+           'that is not installed.')
+
     new = sorted(k for k in offending if k not in allowlist)
     report('EXPORT LEAK: exported symbols naming a LibreSCRS entity the installed headers do not '
            'declare (or an Internal/detail one)',
@@ -387,7 +425,6 @@ def main():
     # Imports -- every one of a shipped image.
     imp_libre = [(img, bare(sym)) for img, sym in imports if LIBRESCRS.match(bare(sym))]
     imp_texts = demangle([s for _, s in imp_libre])
-    importers = {}
     unexported, unlisted = set(), set()
     for (img, sym), text in zip(imp_libre, imp_texts):
         if sym not in exporter:
@@ -396,18 +433,20 @@ def main():
         key = offending_key(sym)
         if key is None:
             continue
-        importers.setdefault(key, set()).add(img)
-        if key not in allowlist:
+        # A catch of a listed thrown type imports its typeinfo; nothing else
+        # internal may be imported, whatever the list says.
+        if key not in allowlist or not allowlist[key][1].startswith('thrown:'):
             unlisted.add(f'{img}  {text}')
     report('IMPORT OF A HIDDEN SYMBOL: shipped images import LibreSCRS symbols no core library exports',
            sorted(unexported),
            'The image fails to load. Call public API, or export the symbol as public API.')
-    report('IMPORT OF AN INTERNAL SYMBOL: shipped images import internal exports the allowlist does not name',
+    report('IMPORT OF AN INTERNAL SYMBOL: shipped images import internal exports',
            sorted(unlisted),
-           'Call public API instead. The allowlist is not the place for a new one: it only shrinks.')
+           'Call public API instead. The only internal exports an image may import are those of a listed '
+           'thrown exception type.')
 
     # Inline bodies -- calls from inline bodies of installed headers.
-    inline_bad, inline_listed = set(), set()
+    inline_bad = set()
     for ref_id, caller in surface.called.items():
         mangled = surface.by_id.get(ref_id)
         if not mangled or mangled in surface.defined or not LIBRESCRS.match(mangled):
@@ -420,22 +459,17 @@ def main():
         key = offending_key(found)
         if key is None:
             continue
-        if key in allowlist:
-            inline_listed.add(f'{caller} calls {key[1]}')
-        else:
-            inline_bad.add(f'{caller} calls {key[1]}, an internal export the allowlist does not name')
+        inline_bad.add(f'{caller} calls {key[1]}, an internal export')
     report('INLINE BODY REACHES PAST THE PUBLIC SURFACE: inline code in installed headers',
            sorted(inline_bad),
            'A consumer calling the inline function links that symbol. Call public API from the header.')
 
-    # Staleness: an entry must still be an internal export and, unless it is the
-    # typeinfo of a thrown type, still have a shipped importer.
+    # Staleness: an entry must still be an internal export, and the library must
+    # still throw its type.
     stale = []
     for key, (n, reason) in sorted(allowlist.items(), key=lambda kv: kv[1][0]):
         if key not in offending:
             stale.append(f'line {n}: {key[0]}  {key[1]}  -- no longer an internal export')
-        elif reason.startswith('imported:') and not importers.get(key):
-            stale.append(f'line {n}: {key[0]}  {key[1]}  -- no shipped image imports it')
         elif reason.startswith('thrown:'):
             mangled = mangled_of[key]
             path = images.get(key[0])
@@ -444,7 +478,7 @@ def main():
             if not throws_type(path, '_ZTI' + mangled[4:]):
                 stale.append(f'line {n}: {key[0]}  {key[1]}  -- {key[0]} has no throw site for this type')
     report(f'STALE ALLOWLIST: entries in {args.allowlist}', stale,
-           'Hide the symbol if nothing that ships imports it, and delete the line.')
+           'Hide the symbol, and delete the line.')
 
     if base is not None:
         added = sorted((n, key) for key, (n, _) in allowlist.items() if key not in base)
@@ -453,11 +487,9 @@ def main():
                'The list only shrinks: an internal export is never added to it.')
 
     if rc == 0:
-        print(f'Every exported, imported and inline-called LibreSCRS symbol is public or listed '
-              f'({len(exports)} exports, {len(imp_libre)} shipped imports judged; '
-              f'{len(allowlist)} listed internal export(s) remain).')
-        for line in sorted(inline_listed):
-            print(f'  listed, and called from an inline body of an installed header: {line}')
+        print(f'Every exported, imported and inline-called LibreSCRS symbol is public, or the typeinfo of a '
+              f'listed thrown exception type ({len(exports)} exports, {len(imp_libre)} shipped imports judged; '
+              f'{len(allowlist)} listed, all "thrown:").')
     sys.exit(rc)
 
 
