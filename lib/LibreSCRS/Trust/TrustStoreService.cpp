@@ -58,8 +58,8 @@ void TrustStoreService::Impl::markLoaded(const std::string& url)
     loadedSources.insert(url);
 }
 
-bool TrustStoreService::Impl::fetchAndMerge(const libresign::TrustedListEntry& entry,
-                                            LibreSCRS::CancelToken token, bool cacheOnly) const
+bool TrustStoreService::Impl::fetchAndMerge(const libresign::TrustedListEntry& entry, LibreSCRS::CancelToken token,
+                                            bool cacheOnly) const
 {
     libresign::FetchOptions opts;
     opts.cacheOnly = cacheOnly;
