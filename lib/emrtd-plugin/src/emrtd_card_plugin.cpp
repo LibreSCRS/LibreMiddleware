@@ -218,14 +218,18 @@ public:
             // positive readable/not-readable fact.
             bool probeDone = false;
             bool readable = false;
-            try {
-                LibreSCRS::SecureChannel::PlainChannel probeChannel(conn, makeEmrtdAid());
-                emrtd::EMRTDCard probeCard(probeChannel);
-                readable = !probeCard.readCOM().empty();
-                probeDone = true;
-            } catch (...) {
-                // verdict stays unknown
-            }
+            // Under another provider's live tunnel the read below would ride
+            // it and prove nothing about plain access: the verdict stays
+            // unknown.
+            if (!session.hasLiveSecureChannel())
+                try {
+                    LibreSCRS::SecureChannel::PlainChannel probeChannel(conn, makeEmrtdAid());
+                    emrtd::EMRTDCard probeCard(probeChannel);
+                    readable = !probeCard.readCOM().empty();
+                    probeDone = true;
+                } catch (...) {
+                    // verdict stays unknown
+                }
 
             // Pre-auth EF.CardAccess capability probe (MF-scoped,
             // unauthenticated), inside this same transaction so no other

@@ -37,6 +37,7 @@
 
 #include <gtest/gtest.h>
 
+#include <thread>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -98,16 +99,22 @@ TEST_F(SessionTransmitTest, returnsSw6F00OnDetachedSessionWithoutLiveChannel)
 }
 
 // A secure-messaging channel that is no longer open -- closed by a reset,
-// failed on a bad MAC -- is never bypassed: the card still expects SM, and a
-// plain command would end its session there. The funnel answers the
+// failed on a bad MAC -- is never bypassed by the operation running over it:
+// that operation meant its commands to be protected. The funnel answers the
 // channel-failed sentinel and sends nothing.
 TEST_F(SessionTransmitTest, smChannelThatIsNotOpenIsNeverBypassed)
 {
     AppletAid aid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
     for (const auto state : {ChannelState::Closed, ChannelState::Failed}) {
-        auto channel = std::make_unique<FakeChannel>(aid, state, /*carriesSm=*/true);
+        // An operation runs over the channel: this thread holds the holder,
+        // taken while the channel was open, and the channel dies under it.
+        const LibreSCRS::SmartCard::SmProtocolRequest pace = LibreSCRS::SmartCard::PaceRequest{};
+        auto channel = std::make_unique<FakeChannel>(aid, ChannelState::Open, /*carriesSm=*/true);
         auto* observer = channel.get();
-        ChannelInjector::installForTesting(*session, std::move(channel));
+        ChannelInjector::installForTesting(*session, std::move(channel), pace);
+        auto holder = session->activateChannelWithSm(aid, pace, LibreSCRS::CancelToken{});
+        ASSERT_TRUE(holder.has_value());
+        observer->setState(state);
         std::size_t wireCommands = 0;
         LibreSCRS::SmartCard::Internal::connectionOf(*session).setTransmitFilter([&](const APDUCommand&) {
             ++wireCommands;
@@ -145,30 +152,29 @@ TEST_F(SessionTransmitTest, returnsSw6F00OnClosedPlainChannel)
 
 TEST_F(SessionTransmitTest, channelResetMidSnapshotKeepsChannelAlive)
 {
-    // Snapshot pattern: even if the session-side resets the active channel
-    // during the transmit body, the funnel's snapshot @c shared_ptr keeps
-    // the channel object alive until the call returns.
+    // A teardown on another thread while a command is on the wire waits for
+    // the command: a caller that does not hold the holder sends under the
+    // session lock, so the channel cannot be pulled out from under the
+    // exchange. Judged by the lock itself, not by timing.
     AppletAid aid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
     auto channel = std::make_unique<FakeChannel>(aid, ChannelState::Open, /*carriesSm=*/true);
     auto* observer = channel.get();
-    // The funnel's snapshot shared_ptr is the channel's LAST reference once
-    // clearActiveChannel drops d->activeChannel mid-transmit; reading
-    // @c observer after the call returns is UAF (the snapshot dies with the
-    // call). Sample the observable channel state INSIDE the callback while
-    // the snapshot still pins the object alive.
     std::uint8_t observedIns = 0;
-    int observedTransmits = 0;
+    bool lockedOnTheWire = false;
+    std::thread teardown;
     observer->onTransmitCallback = [&, this]() {
         observedIns = observer->lastWrappedCommand().ins;
-        observedTransmits = observer->transmits();
-        session->clearActiveChannel();
+        lockedOnTheWire = LibreSCRS::SmartCard::Testing::SessionAccess::lockIsHeld(*session);
+        teardown = std::thread([this] { session->clearActiveChannel(); });
     };
     ChannelInjector::installForTesting(*session, std::move(channel));
 
     auto resp = LibreSCRS::SmartCard::SessionConnection::toResponse(session->transmit(makeProbeCommand().toBytes()));
+    teardown.join();
 
     EXPECT_EQ(observedIns, 0xA4);
-    EXPECT_EQ(observedTransmits, 1);
+    EXPECT_TRUE(lockedOnTheWire) << "the command went out without the session lock";
+    EXPECT_FALSE(session->channelState().has_value()) << "the teardown ran after the command";
     EXPECT_EQ(resp.sw1, 0x90);
     EXPECT_EQ(resp.sw2, 0x00);
 }

@@ -42,9 +42,23 @@ public:
 
     Internal::APDUResponse transmit(const Internal::APDUCommand& cmd) override
     {
+        return transmitThrough(session, cmd, token);
+    }
+
+    /// @p cmd through CardSession::transmit, as a response. A command the
+    /// byte interface refuses (std::invalid_argument: no APDU encodes it) is
+    /// a failed exchange to a card library, which catches std::runtime_error.
+    static Internal::APDUResponse transmitThrough(CardSession& session, const Internal::APDUCommand& cmd,
+                                                  LibreSCRS::CancelToken token)
+    {
         // The serialization can carry a PIN: the bytes are wiped once sent.
         const Internal::SecureBuffer bytes(cmd.toBytes());
-        return toResponse(session.transmit(std::span<const std::uint8_t>(bytes.data(), bytes.size()), token));
+        try {
+            return toResponse(
+                session.transmit(std::span<const std::uint8_t>(bytes.data(), bytes.size()), std::move(token)));
+        } catch (const std::invalid_argument& e) {
+            throw std::runtime_error(e.what());
+        }
     }
 
     Internal::APDUResponse transmitRaw(std::span<const std::uint8_t> cmdBytes) override

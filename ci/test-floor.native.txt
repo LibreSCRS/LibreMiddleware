@@ -13,7 +13,7 @@ CancellationNviTests 4
 CardPluginContainmentTests 8
 CardPluginDecipherDefaultTest 2
 CardSessionApiInvariantTest 1
-CardSessionByteTransportTest 20
+CardSessionByteTransportTest 27
 CardSessionOpenTests 4
 CrossBackendTests 1
 CrossProviderCoordinationTests 7
@@ -90,7 +90,7 @@ Pkcs15ProfileReadCensusTests 39
 Pkcs15ReadTokenInfoPartialTests 2
 PluginAbiVersionTest 1
 PluginIntegrationTests 8
-PluginSessionPathTests 7
+PluginSessionPathTests 12
 PluginSigningKeyTests 15
 PluginTests 24
 PreReadAuthDerivationTests 5

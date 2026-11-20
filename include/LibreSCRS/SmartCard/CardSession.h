@@ -457,9 +457,13 @@ public:
     /// - an open channel (secure-messaging or plain) carries it: under secure
     ///   messaging it is wrapped, and the answer is unwrapped and verified;
     /// - an installed secure-messaging channel that is no longer open (it
-    ///   failed on a bad MAC or a 6987/6988 answer) refuses it: the answer is
-    ///   @c 6F02 and nothing is sent, because a plain command would end the
-    ///   card's secure-messaging session;
+    ///   failed on a bad MAC or a 6987/6988 answer, or was closed) refuses
+    ///   every command, from any thread: the answer is @c 6F02 and nothing is
+    ///   sent. The call never drops that channel, so a command the caller
+    ///   meant to be protected never goes plain. It stays until
+    ///   @ref discardFailedChannel, @ref clearActiveChannel or the activation
+    ///   of another channel (@ref activateChannelFor,
+    ///   @ref activateChannelWithSm) removes it;
     /// - otherwise (no channel, or a plain one that is not open) it goes to the
     ///   card plain. The reader layer completes the exchange as the card asks:
     ///   it fetches a chained answer (status word @c 61xx, GET RESPONSE) and,
@@ -478,10 +482,12 @@ public:
     ///         during the exchange.
     ///
     /// @par Thread-safety
-    /// Callers serialise the commands of one session. The call may be made by
-    /// the thread that holds this session's @ref ActiveChannelHolder (it then
-    /// takes no lock) or by another thread (it then waits for the holder to be
-    /// released before it reads the channel).
+    /// The call may be made by the thread that holds this session's
+    /// @ref ActiveChannelHolder (it then takes no lock: no other thread can
+    /// touch the session meanwhile) or by another thread. That one waits for
+    /// the holder to be released, then chooses the path and sends the command
+    /// under the session's lock, so no secure-messaging handshake started on
+    /// another thread can come between the two.
     ///
     /// @par Example
     /// @code
@@ -504,12 +510,14 @@ public:
     /// holds an open secure-messaging channel (see @ref hasLiveSecureChannel)
     /// nothing is sent and the answer is @c 6F02: a plain command would end the
     /// card's secure-messaging session. Use @ref transmit to reach the card
-    /// through that channel.
+    /// through that channel. A secure-messaging channel that is no longer open
+    /// refuses the bytes too (@c 6F02, nothing sent), from any thread, until
+    /// it is removed (see @ref transmit).
     ///
     /// @param apdu The command bytes, sent unchanged.
-    /// @return The answer: response data followed by SW1 SW2. @c 6F02 under a
-    ///         live secure-messaging channel; @c 6F00 when the session holds no
-    ///         connection to a card.
+    /// @return The answer: response data followed by SW1 SW2. @c 6F02 when a
+    ///         secure-messaging channel refuses it (see above); @c 6F00 when the
+    ///         session holds no connection to a card.
     ///
     /// @throws std::runtime_error when the reader fails or the card goes away
     ///         during the exchange.
@@ -519,6 +527,45 @@ public:
     ///
     /// @since 5.0
     [[nodiscard]] std::vector<std::uint8_t> transmitRaw(std::span<const std::uint8_t> apdu);
+
+    /// @brief Remove a secure-messaging channel that is no longer open, so
+    ///        that plain commands reach the card again.
+    ///
+    /// A channel that failed (a bad MAC, a 6987/6988 answer) or was closed
+    /// makes @ref transmit and @ref transmitRaw refuse every command
+    /// (@c 6F02); the card has ended, or will end on its next answer, that
+    /// secure-messaging session. A host calls this at a point where it starts
+    /// a new, plain interaction with the card and no earlier operation's
+    /// commands can follow -- before it identifies the card, say.
+    /// @ref Plugin::CardPluginService::findAllCandidates does so before it
+    /// probes the plugins, and every card-plugin operation whose activation
+    /// profile asks for no secure messaging does so at its start. An open
+    /// channel, a plain channel, or no channel is left as it is.
+    ///
+    /// The call ends whatever secure-messaging session the failed channel
+    /// belonged to. A host must not call it in the middle of its own
+    /// multi-step secure-messaging operation (between two holders of one
+    /// operation, say): the next step would have to activate again.
+    ///
+    /// @return @c true when a channel was removed.
+    ///
+    /// @par Thread-safety
+    /// The check and the removal happen under the session's lock, so a
+    /// channel another thread activates meanwhile is never removed. Called on
+    /// the thread that holds this session's @ref ActiveChannelHolder it does
+    /// nothing and returns @c false: the operation running over the channel
+    /// keeps it, and its commands stay refused.
+    ///
+    /// @par Example
+    /// @code
+    /// // A host that probes one plugin itself, on a session whose earlier
+    /// // tunnel may have failed.
+    /// (void)session.discardFailedChannel();
+    /// const bool handles = plugin->canHandleConnection(session.atr(), session);
+    /// @endcode
+    ///
+    /// @since 5.0
+    bool discardFailedChannel() noexcept;
 
     /// @brief Identity of this session among all sessions of the process.
     ///

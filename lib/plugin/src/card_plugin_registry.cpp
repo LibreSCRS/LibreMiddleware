@@ -375,6 +375,14 @@ CardPluginService::findAllCandidates(std::span<const std::uint8_t> atr,
         }
     }
 
+    // A secure-messaging channel that failed would refuse every probe
+    // command (6F02). Identifying the card starts a new, plain interaction
+    // and no earlier operation's commands follow it, so the dead channel goes
+    // here, explicitly; the session never drops one on its own.
+    if (session.discardFailedChannel()) {
+        LibreSCRS::Internal::probeTrace("PROBE-DISCARD a failed secure-messaging channel");
+    }
+
     // Pass 2 — AID probe on the remaining plugins. ATR is already known from
     // the session we just opened, so pass it through — plugins that want to
     // combine an AID probe with a secondary ATR check avoid re-reading it.

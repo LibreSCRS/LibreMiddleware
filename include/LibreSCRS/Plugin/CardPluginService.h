@@ -196,10 +196,16 @@ public:
     /// @brief Two-phase candidate lookup: ATR match first, then AID probe
     ///        on the live @p session for any plugin that did not match by
     ///        ATR.
+    ///
+    /// Before the probes it removes a secure-messaging channel of @p session
+    /// that is no longer open (@ref SmartCard::CardSession::discardFailedChannel),
+    /// which would refuse every probe command: identifying the card starts a
+    /// new, plain interaction.
     /// @return De-duplicated list of candidates; ATR matches are ordered
     ///         before AID matches, each group sorted by priority.
     /// @since 4.0 — `atr` parameter type @c std::span<const std::uint8_t>;
-    ///        see @ref findPluginForCard.
+    ///        see @ref findPluginForCard. 5.0: removes a failed
+    ///        secure-messaging channel before the probes.
     [[nodiscard]] std::vector<std::shared_ptr<CardPlugin>>
     findAllCandidates(std::span<const std::uint8_t> atr, LibreSCRS::SmartCard::CardSession& session) const;
 

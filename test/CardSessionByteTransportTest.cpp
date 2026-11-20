@@ -21,7 +21,8 @@
 #include <fake_channel.h>
 #include <pcsc_connection.h>
 #include <session_access.h>
-#include <session_access.h>
+#include <smartcard/session_connection.h>
+#include <LibreSCRS_internal/SecureChannel/SessionChannel.h>
 
 #include <gtest/gtest.h>
 
@@ -157,17 +158,117 @@ TEST_F(CardSessionByteTransportTest, AnOpenPlainChannelCarriesTheCommand)
 
 TEST_F(CardSessionByteTransportTest, AClosedTunnelRefusesWithoutSending)
 {
+    // An operation runs over the tunnel -- this thread holds the session's
+    // holder -- and the tunnel dies under it: its commands meant to be
+    // protected are refused, never sent plain, raw or not.
+    const SmProtocolRequest pace = PaceRequest{};
     for (const auto state : {ChannelState::Failed, ChannelState::Closed}) {
         plainCommands.clear();
-        auto* channel = install(state, /*carriesSm=*/true);
+        auto* channel = install(ChannelState::Open, /*carriesSm=*/true, pace);
+        auto holder = session->activateChannelWithSm(kAid, pace, LibreSCRS::CancelToken{});
+        ASSERT_TRUE(holder.has_value());
+        channel->setState(state);
 
-        const auto answer = session->transmit(kSelect);
-
-        EXPECT_EQ(answer, (Bytes{0x6F, 0x02}));
+        EXPECT_EQ(session->transmit(kSelect), (Bytes{0x6F, 0x02}));
+        EXPECT_EQ(session->transmitRaw(kSelect), (Bytes{0x6F, 0x02}));
         EXPECT_EQ(channel->transmits(), 0);
         EXPECT_TRUE(plainCommands.empty()) << "no plain command reaches the card";
         EXPECT_TRUE(rawCommands.empty());
+        EXPECT_EQ(session->channelState(), state) << "the operation's channel stays installed";
     }
+}
+
+// No holder: a dead tunnel still refuses every command, typed or raw, and
+// stays installed -- the session never drops it on its own.
+TEST_F(CardSessionByteTransportTest, ADeadTunnelRefusesEveryCommandOnEveryThread)
+{
+    for (const auto state : {ChannelState::Failed, ChannelState::Closed}) {
+        plainCommands.clear();
+        rawCommands.clear();
+        install(state, /*carriesSm=*/true, SmProtocolRequest{PaceRequest{}});
+
+        EXPECT_EQ(session->transmit(kSelect), (Bytes{0x6F, 0x02}));
+        EXPECT_EQ(session->transmit(kSelect), (Bytes{0x6F, 0x02}));
+        EXPECT_EQ(session->transmitRaw(kSelect), (Bytes{0x6F, 0x02}));
+        EXPECT_TRUE(plainCommands.empty());
+        EXPECT_TRUE(rawCommands.empty());
+        EXPECT_EQ(session->channelState(), state) << "the dead tunnel stays installed";
+    }
+}
+
+// A host activated PACE, released the holder, and sends SELECT then VERIFY
+// from a thread that holds none; the tunnel failed meanwhile. Neither goes
+// out: the PIN never leaves in clear.
+TEST_F(CardSessionByteTransportTest, ASelectThenVerifyOnADeadTunnelSendsNothing)
+{
+    const SmProtocolRequest pace = PaceRequest{};
+    auto* channel = install(ChannelState::Open, /*carriesSm=*/true, pace);
+    {
+        auto holder = session->activateChannelWithSm(kAid, pace, LibreSCRS::CancelToken{});
+        ASSERT_TRUE(holder.has_value());
+    }
+    channel->setState(ChannelState::Failed);
+    const Bytes verifyPin{0x00, 0x20, 0x00, 0x81, 0x04, 0x31, 0x32, 0x33, 0x34};
+
+    EXPECT_EQ(session->transmit(kSelect), (Bytes{0x6F, 0x02}));
+    EXPECT_EQ(session->transmit(verifyPin), (Bytes{0x6F, 0x02}));
+    EXPECT_EQ(session->transmitRaw(kSelect), (Bytes{0x6F, 0x02}));
+    EXPECT_EQ(session->transmitRaw(verifyPin), (Bytes{0x6F, 0x02}));
+    EXPECT_TRUE(plainCommands.empty()) << "a command went out in clear";
+    EXPECT_TRUE(rawCommands.empty()) << "a command went out in clear";
+}
+
+// Only an explicit discard removes the dead tunnel; plain commands go out
+// after it.
+TEST_F(CardSessionByteTransportTest, ADiscardedDeadTunnelLetsPlainCommandsThrough)
+{
+    for (const auto state : {ChannelState::Failed, ChannelState::Closed}) {
+        plainCommands.clear();
+        install(state, /*carriesSm=*/true, SmProtocolRequest{PaceRequest{}});
+
+        EXPECT_TRUE(session->discardFailedChannel());
+        EXPECT_FALSE(session->channelState().has_value());
+        EXPECT_FALSE(session->activatedProtocol().has_value());
+        EXPECT_EQ(session->transmit(kSelect), (Bytes{0x01, 0x02, 0x90, 0x00}));
+        EXPECT_EQ(plainCommands.size(), 1U);
+        EXPECT_FALSE(session->discardFailedChannel()) << "nothing left to discard";
+    }
+}
+
+// The discard takes nothing else: a live tunnel, an open plain channel, or a
+// dead tunnel on the thread whose operation runs over it.
+TEST_F(CardSessionByteTransportTest, ADiscardLeavesEveryOtherChannelInPlace)
+{
+    install(ChannelState::Open, /*carriesSm=*/true);
+    EXPECT_FALSE(session->discardFailedChannel());
+    EXPECT_EQ(session->channelState(), ChannelState::Open);
+
+    install(ChannelState::Open, /*carriesSm=*/false);
+    EXPECT_FALSE(session->discardFailedChannel());
+    EXPECT_EQ(session->channelState(), ChannelState::Open);
+
+    const SmProtocolRequest pace = PaceRequest{};
+    auto* channel = install(ChannelState::Open, /*carriesSm=*/true, pace);
+    auto holder = session->activateChannelWithSm(kAid, pace, LibreSCRS::CancelToken{});
+    ASSERT_TRUE(holder.has_value());
+    channel->setState(ChannelState::Failed);
+    EXPECT_FALSE(session->discardFailedChannel()) << "the holder's operation keeps its channel";
+    EXPECT_EQ(session->channelState(), ChannelState::Failed);
+    EXPECT_EQ(session->transmit(kSelect), (Bytes{0x6F, 0x02}));
+    EXPECT_TRUE(plainCommands.empty());
+}
+
+TEST_F(CardSessionByteTransportTest, APlainActivationReplacesAFailedTunnel)
+{
+    install(ChannelState::Failed, /*carriesSm=*/true, SmProtocolRequest{PaceRequest{}});
+
+    auto holder = session->activateChannelFor(kAid, LibreSCRS::CancelToken{});
+
+    ASSERT_TRUE(holder.has_value()) << "the dead tunnel must not refuse the plain SELECT";
+    ASSERT_EQ(plainCommands.size(), 1U);
+    EXPECT_EQ(plainCommands.front()[1], 0xA4) << "the SELECT went out plain";
+    EXPECT_EQ(session->channelState(), ChannelState::Open);
+    EXPECT_FALSE(session->carriesSecureMessaging());
 }
 
 TEST_F(CardSessionByteTransportTest, ACommandCollectsAChainedAnswer)
@@ -239,8 +340,8 @@ TEST_F(CardSessionByteTransportTest, ARawCommandUnderLiveSecureMessagingSendsNot
 
 TEST_F(CardSessionByteTransportTest, ARawCommandGoesOutWhenNoTunnelIsLive)
 {
-    // No channel, an open plain channel, and a secure-messaging channel that
-    // already failed: none is live, so the bytes go out unchanged, once.
+    // No channel and an open plain channel: the bytes go out unchanged, once.
+    // A secure-messaging channel that already failed refuses them.
     const Bytes unusual{0x80, 0xCA, 0x9F, 0x7F, 0x00};
     const auto send = [&] {
         rawCommands.clear();
@@ -253,7 +354,9 @@ TEST_F(CardSessionByteTransportTest, ARawCommandGoesOutWhenNoTunnelIsLive)
     install(ChannelState::Open, /*carriesSm=*/false);
     send();
     install(ChannelState::Failed, /*carriesSm=*/true);
-    send();
+    rawCommands.clear();
+    EXPECT_EQ(session->transmitRaw(unusual), (Bytes{0x6F, 0x02}));
+    EXPECT_TRUE(rawCommands.empty());
     EXPECT_TRUE(plainCommands.empty());
 }
 
@@ -373,12 +476,16 @@ TEST_F(CardSessionByteTransportTest, AnotherThreadWaitsForTheHolder)
 }
 
 // Every command this library builds goes through the byte interface as the
-// same bytes: the parser is the exact inverse of APDUCommand::toBytes().
+// same bytes and as the same command: the parser is the exact inverse of
+// APDUCommand::toBytes(), Le included.
 TEST(ApduParseCommand, EveryEncodedCommandRoundTrips)
 {
     using LibreSCRS::SmartCard::Internal::parseCommand;
     const std::vector<std::size_t> dataSizes{0, 1, 2, 254, 255, 256, 257, 1000};
-    const std::vector<std::uint16_t> les{0, 1, 2, 0xFF, 0x100, 0x101, 0x1000, 0xFFFF};
+    const std::vector<std::uint16_t> les{0, 1, 2, 0xFF, 0x100, 0x101, 0x1FF, 0x200, 0x1000, 0xFFFF};
+    // Le 0 means "as much as there is": 256 in the short form, written as
+    // 0100 in the extended one.
+    const auto effectiveLe = [](const APDUCommand& c) { return c.le == 0 ? 256 : c.le; };
     int checked = 0;
     for (const auto size : dataSizes) {
         for (const bool hasLe : {false, true}) {
@@ -389,15 +496,6 @@ TEST(ApduParseCommand, EveryEncodedCommandRoundTrips)
                 APDUCommand cmd{0x0C, 0xB0, 0x81, 0x7F, Bytes(size, 0x5A), le, hasLe};
                 const auto bytes = cmd.toBytes();
                 const auto parsed = parseCommand(bytes);
-                // toBytes() drops the 00 marker of a data-less Le above 256, so
-                // its bytes are not that command: refused, or read as another
-                // command that encodes to the same bytes -- never altered.
-                if (size == 0 && hasLe && le > 0x100) {
-                    if (parsed) {
-                        EXPECT_EQ(parsed->toBytes(), bytes);
-                    }
-                    continue;
-                }
                 ASSERT_TRUE(parsed.has_value()) << "size " << size << " le " << le << " hasLe " << hasLe;
                 EXPECT_EQ(parsed->toBytes(), bytes);
                 EXPECT_EQ(parsed->cla, cmd.cla);
@@ -406,11 +504,38 @@ TEST(ApduParseCommand, EveryEncodedCommandRoundTrips)
                 EXPECT_EQ(parsed->p2, cmd.p2);
                 EXPECT_EQ(parsed->data, cmd.data);
                 EXPECT_EQ(parsed->hasLe, cmd.hasLe);
+                if (hasLe) {
+                    EXPECT_EQ(effectiveLe(*parsed), effectiveLe(cmd)) << "size " << size << " le " << le;
+                }
                 ++checked;
             }
         }
     }
-    EXPECT_GT(checked, 60);
+    EXPECT_GT(checked, 80);
+}
+
+// A data-less command expecting more than 256 bytes is case 2 extended:
+// 00 marker, then the two Le bytes (ISO/IEC 7816-4, 5.1).
+TEST(ApduParseCommand, ADataLessExtendedLeCarriesItsMarker)
+{
+    const APDUCommand read{0x00, 0xB0, 0x00, 0x00, {}, 0x0300, true};
+    EXPECT_EQ(read.toBytes(), (Bytes{0x00, 0xB0, 0x00, 0x00, 0x00, 0x03, 0x00}));
+}
+
+// A command the byte interface cannot take is a failure of the call, which a
+// card library catches as a std::runtime_error like any other: it must not
+// leave the adapter as a logic error.
+TEST_F(CardSessionByteTransportTest, AnUnencodableCommandFailsAsARuntimeError)
+{
+    // More data than an extended Lc can count: the serialization cannot
+    // carry it, so the session refuses the bytes.
+    const APDUCommand huge{0x00, 0xD6, 0x00, 0x00, Bytes(70000, 0x11), 0, false};
+    LibreSCRS::SmartCard::SessionConnection conn(*session);
+    EXPECT_THROW((void)conn.transmit(huge), std::runtime_error);
+    LibreSCRS::SecureChannel::SessionChannel channel(*session);
+    EXPECT_THROW((void)channel.transmit(huge, LibreSCRS::CancelToken{}), std::runtime_error);
+    EXPECT_TRUE(plainCommands.empty());
+    EXPECT_TRUE(rawCommands.empty());
 }
 
 } // namespace

@@ -39,11 +39,19 @@ Notable user-visible changes per release. Format follows
 - **Byte-level transport on `CardSession`.** `transmit` sends a command APDU
   through the session's secure-messaging channel when one is open, refuses
   (`6F02`, nothing sent) when an installed secure-messaging channel has
-  failed, and otherwise sends it plain, completing a chained answer as the
-  reader layer does. `transmitRaw` sends the bytes as given in one exchange
-  and refuses (`6F02`, nothing sent) while a secure-messaging channel is live,
-  so no caller can desynchronise the card's secure messaging. Both return the
-  answer as data followed by SW1 SW2 and throw on a reader failure.
+  failed or was closed, and otherwise sends it plain, completing a chained
+  answer as the reader layer does. `transmitRaw` sends the bytes as given in
+  one exchange and refuses (`6F02`, nothing sent) while any secure-messaging
+  channel is installed, so no caller can desynchronise the card's secure
+  messaging. Neither ever drops a failed channel, from any thread: a command
+  meant to be protected never goes plain. `discardFailedChannel` removes a
+  failed channel where the host starts a new plain interaction;
+  `CardPluginService::findAllCandidates` calls it before it probes the
+  plugins, every card-plugin operation whose activation profile asks for no
+  secure messaging calls it at its start, and activating another channel
+  replaces it. Both transmit calls
+  return the answer as data followed by SW1 SW2 and throw on a reader
+  failure.
   `beginTransaction`, `endTransaction`, `isTransactionHeld` and `reconnect`
   reach the reader; `channelState`, `carriesSecureMessaging` and
   `forgetCurrentApplet` describe and adjust the session's channel; and

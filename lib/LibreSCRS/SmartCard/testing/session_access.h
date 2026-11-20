@@ -25,7 +25,9 @@
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -61,6 +63,19 @@ struct SessionAccess
     static LibreSCRS::SecureChannel::ISecureChannel* activeChannel(CardSession& session) noexcept
     {
         return session.d->activeChannel.get();
+    }
+
+    /// Whether some thread holds the session's lock right now, judged from a
+    /// thread of its own (a std::mutex cannot be tried on the thread that may
+    /// hold it).
+    static bool lockIsHeld(CardSession& session)
+    {
+        bool acquired = false;
+        std::thread([&] {
+            std::unique_lock lock(session.d->sessionMutex, std::try_to_lock);
+            acquired = lock.owns_lock();
+        }).join();
+        return !acquired;
     }
 
     /// Drops the session's connection: the state of a session that holds none.

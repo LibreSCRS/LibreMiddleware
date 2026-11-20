@@ -52,9 +52,7 @@ public:
     [[nodiscard]] LibreSCRS::SmartCard::Internal::APDUResponse
     transmit(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd, LibreSCRS::CancelToken token) override
     {
-        const LibreSCRS::SmartCard::Internal::SecureBuffer bytes(cmd.toBytes());
-        return LibreSCRS::SmartCard::SessionConnection::toResponse(
-            session.transmit(std::span<const std::uint8_t>(bytes.data(), bytes.size()), std::move(token)));
+        return LibreSCRS::SmartCard::SessionConnection::transmitThrough(session, cmd, std::move(token));
     }
 
     /// The session owns its channel's lifetime: nothing to do here.
