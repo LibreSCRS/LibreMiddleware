@@ -39,9 +39,11 @@ std::vector<uint8_t> APDUCommand::toBytes() const
 
     if (hasLe) {
         if (useExtended || le > 0xFF) {
-            // Extended Le: 2-byte encoding
-            if (data.empty() && !useExtended) {
-                // Case 2 extended: no data, need 0x00 marker before Le
+            // Extended Le: 2-byte encoding. With no data field it is case 2
+            // extended, which starts with the 00 marker (ISO/IEC 7816-4,
+            // 5.1) -- whether the extended form was chosen for this Le or
+            // for an Le of 256.
+            if (data.empty()) {
                 bytes.push_back(0x00);
             }
             uint16_t extLe = (le == 0) ? 256u : le;

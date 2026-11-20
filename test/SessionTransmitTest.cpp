@@ -98,16 +98,22 @@ TEST_F(SessionTransmitTest, returnsSw6F00OnDetachedSessionWithoutLiveChannel)
 }
 
 // A secure-messaging channel that is no longer open -- closed by a reset,
-// failed on a bad MAC -- is never bypassed: the card still expects SM, and a
-// plain command would end its session there. The funnel answers the
+// failed on a bad MAC -- is never bypassed by the operation running over it:
+// that operation meant its commands to be protected. The funnel answers the
 // channel-failed sentinel and sends nothing.
 TEST_F(SessionTransmitTest, smChannelThatIsNotOpenIsNeverBypassed)
 {
     AppletAid aid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
     for (const auto state : {ChannelState::Closed, ChannelState::Failed}) {
-        auto channel = std::make_unique<FakeChannel>(aid, state, /*carriesSm=*/true);
+        // An operation runs over the channel: this thread holds the holder,
+        // taken while the channel was open, and the channel dies under it.
+        const LibreSCRS::SmartCard::SmProtocolRequest pace = LibreSCRS::SmartCard::PaceRequest{};
+        auto channel = std::make_unique<FakeChannel>(aid, ChannelState::Open, /*carriesSm=*/true);
         auto* observer = channel.get();
-        ChannelInjector::installForTesting(*session, std::move(channel));
+        ChannelInjector::installForTesting(*session, std::move(channel), pace);
+        auto holder = session->activateChannelWithSm(aid, pace, LibreSCRS::CancelToken{});
+        ASSERT_TRUE(holder.has_value());
+        observer->setState(state);
         std::size_t wireCommands = 0;
         LibreSCRS::SmartCard::Internal::connectionOf(*session).setTransmitFilter([&](const APDUCommand&) {
             ++wireCommands;

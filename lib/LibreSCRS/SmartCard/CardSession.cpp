@@ -137,6 +137,31 @@ auto withSessionState(State& state, Fn&& fn) -> decltype(fn())
            channel->carriesSm();
 }
 
+// A secure-messaging channel that is no longer open (it failed on a bad MAC
+// or a 6987/6988 answer, or was closed) and that no operation runs over --
+// the calling thread does not hold the session's ActiveChannelHolder, and the
+// lock it took keeps every other thread out -- is dead: the card has ended,
+// or will end on the next answer, the secure-messaging session it belonged
+// to. Dropping it lets plain traffic through again, which is what an
+// activation of another channel would do. The thread that holds the holder
+// keeps it: its operation meant its commands to be protected, and they are
+// refused rather than sent plain.
+template <typename State>
+void dropDeadSecureChannel(State& state) noexcept
+{
+    if (state.callerOwnsActiveChannel() || !state.activeChannel || !state.activeChannel->carriesSm() ||
+        state.activeChannel->state() == LibreSCRS::SecureChannel::ChannelState::Open) {
+        return;
+    }
+    try {
+        state.activeChannel->close();
+    } catch (...) {
+        // the channel goes regardless
+    }
+    state.activeChannel.reset();
+    state.activatedProtocol.reset();
+}
+
 // The answer as one byte string, data then SW1 SW2. The response data can be
 // a decrypted record, so the copy it is taken from is wiped.
 [[nodiscard]] std::vector<std::uint8_t> toAnswer(LibreSCRS::SmartCard::Internal::APDUResponse response)
@@ -424,6 +449,7 @@ std::vector<std::uint8_t> CardSession::transmit(std::span<const std::uint8_t> ap
     std::shared_ptr<LibreSCRS::SecureChannel::ISecureChannel> channelSnap;
     LibreSCRS::SmartCard::Internal::PCSCConnection* connPtr = nullptr;
     withSessionState(*d, [&] {
+        dropDeadSecureChannel(*d);
         channelSnap = d->activeChannel;
         connPtr = d->ownedConn.get();
     });
@@ -435,21 +461,33 @@ std::vector<std::uint8_t> CardSession::transmit(std::span<const std::uint8_t> ap
 
 std::vector<std::uint8_t> CardSession::transmitRaw(std::span<const std::uint8_t> apdu)
 {
-    bool live = false;
-    LibreSCRS::SmartCard::Internal::PCSCConnection* connPtr = nullptr;
-    withSessionState(*d, [&] {
-        live = liveSecureChannel(d->activeChannel.get());
-        connPtr = d->ownedConn.get();
-    });
-    if (connPtr == nullptr) {
+    // The thread that holds the holder runs an operation over the installed
+    // channel: under a secure-messaging channel, open or not, the raw bytes
+    // would bypass it, so they are refused. That thread is the only one that
+    // can change the session meanwhile, so it reads and sends without the lock.
+    if (d->callerOwnsActiveChannel()) {
+        if (!d->ownedConn) {
+            return statusOnly(0x6F, 0x00);
+        }
+        if (d->activeChannel && d->activeChannel->carriesSm()) {
+            return statusOnly(0x6F, 0x02);
+        }
+        return toAnswer(d->ownedConn->transmitRaw(apdu));
+    }
+    // Any other thread: the decision and the exchange happen under the lock,
+    // so no secure-messaging handshake on another thread can start between
+    // them. A dead secure-messaging channel nobody runs an operation over is
+    // dropped; a live one refuses the bytes -- a plain command would end the
+    // card's secure-messaging session.
+    std::lock_guard lock(d->sessionMutex);
+    dropDeadSecureChannel(*d);
+    if (!d->ownedConn) {
         return statusOnly(0x6F, 0x00);
     }
-    // A plain command under a live secure-messaging channel would end the
-    // card's secure-messaging session: refuse it here, for every caller.
-    if (live) {
+    if (liveSecureChannel(d->activeChannel.get())) {
         return statusOnly(0x6F, 0x02);
     }
-    return toAnswer(connPtr->transmitRaw(apdu));
+    return toAnswer(d->ownedConn->transmitRaw(apdu));
 }
 
 std::uint64_t CardSession::generation() const noexcept
@@ -553,7 +591,7 @@ CardSession::activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token)
     // through the live tunnel below, so a plain-profile plugin (PKCS#15 sign
     // on the same card) can switch applets without a rePACE and without ever
     // emitting a bare SELECT over the live SM context. Closed and Failed
-    // channels are safe to drop and fall through to the teardown path.
+    // channels are dropped below, before the plain SELECT.
     if (d->activeChannel && d->activeChannel->state() == ChannelState::Open && d->activeChannel->carriesSm() &&
         !d->activeChannel->supportsCrossAppletReuse()) {
         return std::unexpected{ChannelActivationError::Internal};
@@ -594,16 +632,19 @@ CardSession::activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token)
         return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
     }
 
+    // Whatever channel is installed now goes: an open secure-messaging one
+    // never reaches this point (refused above, or carried the SELECT), so it
+    // is a plain channel bound to another applet, or a secure-messaging one
+    // that failed or was closed. Dropped BEFORE the plain SELECT -- a dead
+    // secure-messaging channel left installed would refuse it (6F02) and
+    // lock every plain plugin out of the session.
     if (d->activeChannel) {
         d->activeChannel->close();
+        d->activeChannel.reset();
     }
+    d->activatedProtocol.reset();
 
-    // dispatchOverChannelOrConn short-circuits to ownedConn here because the
-    // preceding close() leaves the active channel in ChannelState::Closed.
-    // Routed via the helper for architectural consistency: every
-    // CardSession-level APDU goes through one funnel.
-    auto selectResp =
-        dispatchOverChannelOrConn(d->activeChannel.get(), *d->ownedConn, buildSelectAppletCommand(aid), token);
+    auto selectResp = dispatchOverChannelOrConn(nullptr, *d->ownedConn, buildSelectAppletCommand(aid), token);
     if (!selectResp.isSuccess()) {
         return std::unexpected{ChannelActivationError::SelectAppletFailed};
     }

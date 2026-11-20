@@ -457,9 +457,13 @@ public:
     /// - an open channel (secure-messaging or plain) carries it: under secure
     ///   messaging it is wrapped, and the answer is unwrapped and verified;
     /// - an installed secure-messaging channel that is no longer open (it
-    ///   failed on a bad MAC or a 6987/6988 answer) refuses it: the answer is
-    ///   @c 6F02 and nothing is sent, because a plain command would end the
-    ///   card's secure-messaging session;
+    ///   failed on a bad MAC or a 6987/6988 answer, or was closed) refuses it
+    ///   when the calling thread holds this session's
+    ///   @ref ActiveChannelHolder: the operation running over that channel
+    ///   meant the command to be protected, so the answer is @c 6F02 and
+    ///   nothing is sent. Called from any other thread, the dead channel is
+    ///   dropped (no operation runs over it, and the card has ended or will
+    ///   end that secure-messaging session) and the command goes plain;
     /// - otherwise (no channel, or a plain one that is not open) it goes to the
     ///   card plain. The reader layer completes the exchange as the card asks:
     ///   it fetches a chained answer (status word @c 61xx, GET RESPONSE) and,
@@ -504,12 +508,17 @@ public:
     /// holds an open secure-messaging channel (see @ref hasLiveSecureChannel)
     /// nothing is sent and the answer is @c 6F02: a plain command would end the
     /// card's secure-messaging session. Use @ref transmit to reach the card
-    /// through that channel.
+    /// through that channel. A secure-messaging channel that is no longer open
+    /// is treated as by @ref transmit: refused on the thread that holds this
+    /// session's @ref ActiveChannelHolder, dropped on any other. Called from
+    /// a thread that does not hold the holder, the check and the exchange
+    /// happen under the session's lock, so no secure-messaging handshake
+    /// started on another thread can come between them.
     ///
     /// @param apdu The command bytes, sent unchanged.
-    /// @return The answer: response data followed by SW1 SW2. @c 6F02 under a
-    ///         live secure-messaging channel; @c 6F00 when the session holds no
-    ///         connection to a card.
+    /// @return The answer: response data followed by SW1 SW2. @c 6F02 when a
+    ///         secure-messaging channel refuses it (see above); @c 6F00 when the
+    ///         session holds no connection to a card.
     ///
     /// @throws std::runtime_error when the reader fails or the card goes away
     ///         during the exchange.

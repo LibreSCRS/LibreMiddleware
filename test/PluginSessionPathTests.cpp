@@ -21,6 +21,7 @@
 #include <apdu.h>
 #include <pcsc_connection.h>
 #include <session_access.h>
+#include <fake_channel.h>
 #include <session_access.h>
 
 #include <gtest/gtest.h>
@@ -161,6 +162,44 @@ TEST(PluginSessionPath, NoProbeSendsPlainPastALiveTunnel)
         (void)rig.probe(id);
         EXPECT_TRUE(rig.plain.empty());
         EXPECT_TRUE(rig.raw.empty());
+    }
+}
+
+// Under another provider's live tunnel the eMRTD probe does not read EF.COM:
+// that read would ride the tunnel and be recorded as "readable without PACE".
+TEST(PluginSessionPath, TheEmrtdProbeDoesNotJudgePlainAccessThroughATunnel)
+{
+    WireRig rig;
+    std::vector<Bytes> tunnelled;
+    auto tunnel = std::make_unique<LibreSCRS::SecureChannel::TestSupport::FakeChannel>(
+        LibreSCRS::SmartCard::AppletAid{}, LibreSCRS::SecureChannel::ChannelState::Open, /*carriesSm=*/true);
+    tunnel->transmitHandler = [&tunnelled](const APDUCommand& cmd) {
+        tunnelled.push_back(cmd.toBytes());
+        return APDUResponse{{}, 0x90, 0x00};
+    };
+    LibreSCRS::SmartCard::detail::ChannelInjector::installForTesting(*rig.session, std::move(tunnel),
+                                                                     LibreSCRS::SmartCard::PaceRequest{});
+    (void)rig.probe("emrtd");
+    ASSERT_FALSE(tunnelled.empty()) << "the probe rides the tunnel";
+    for (const auto& cmd : tunnelled) {
+        const bool selectsCom = cmd.size() >= 7 && cmd[1] == 0xA4 && cmd[5] == 0x01 && cmd[6] == 0x1E;
+        EXPECT_FALSE(selectsCom) << "EF.COM was read through the tunnel";
+    }
+    EXPECT_TRUE(rig.plain.empty());
+}
+
+// A tunnel that failed is dead: a plain plugin's probe goes out plain and
+// works, as it did before the plugins reached the card through the session.
+// Nothing runs over the dead channel, so nothing protected goes plain.
+TEST(PluginSessionPath, PlainProbesWorkAfterATunnelFailed)
+{
+    for (const char* id : {"rs-health", "eu-vrc", "rs-eid", "emrtd", "pkcs15"}) {
+        SCOPED_TRACE(id);
+        WireRig rig(kGemaltoAtr);
+        LibreSCRS::SmartCard::Testing::installStandInChannel(*rig.session, StandInChannel::FailedSecureMessaging);
+        (void)rig.probe(id);
+        EXPECT_FALSE(rig.plain.empty()) << "the probe went nowhere: the dead tunnel refused it";
+        EXPECT_FALSE(rig.session->carriesSecureMessaging()) << "the dead tunnel stayed installed";
     }
 }
 
