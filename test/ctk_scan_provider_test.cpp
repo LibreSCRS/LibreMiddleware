@@ -11,6 +11,7 @@
 #include "ctk_fake.h"
 #include "ctk_scan_provider.h"
 #include "monitor.h"
+#include "wait_for.h"
 
 #include <atomic>
 #include <chrono>
@@ -109,17 +110,7 @@ private:
     std::shared_ptr<ProviderCalls> calls;
 };
 
-template <typename Pred>
-bool waitFor(Pred pred, milliseconds limit)
-{
-    const auto deadline = Clock::now() + limit;
-    while (!pred()) {
-        if (Clock::now() >= deadline)
-            return false;
-        std::this_thread::sleep_for(milliseconds{1});
-    }
-    return true;
-}
+using LibreSCRS::Test::waitFor;
 
 class CtkScanProviderTest : public ::testing::Test
 {

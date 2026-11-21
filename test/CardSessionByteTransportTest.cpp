@@ -575,7 +575,8 @@ TEST_F(CardSessionByteTransportTest, OnlyASelectThatLeavesTheApplicationMakesThe
     const std::vector<Row> rows{
         {"P1=04 another application", selectCommand(0x00, 0x04, 0x0C, kOtherAid.bytes()), true},
         {"P1=04 own application, next occurrence", selectCommand(0x00, 0x04, 0x0E, kAid.bytes()), true},
-        {"P1=04 own application, previous occurrence", selectCommand(0x00, 0x04, 0x0D, kAid.bytes()), true},
+        {"P1=04 own application, last occurrence", selectCommand(0x00, 0x04, 0x0D, kAid.bytes()), true},
+        {"P1=04 own application, previous occurrence", selectCommand(0x00, 0x04, 0x0F, kAid.bytes()), true},
         {"P1=04 own name without its last byte", selectCommand(0x00, 0x04, 0x0C, truncatedName), true},
         {"P1=04 own name and one byte more", selectCommand(0x00, 0x04, 0x0C, longerName), true},
         {"P1=04 another name of the same length", selectCommand(0x00, 0x04, 0x0C, sameLengthName), true},

@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 hirashix0
 
 #include "mock_pcsc_scan_provider.h"
+#include "wait_for.h"
 
 #include <LibreSCRS/Logging.h>
 #include <LibreSCRS/SmartCard/MonitorService.h>
@@ -636,17 +637,7 @@ TEST(MonitorServiceTest, SourceRefusalArrivesAsOneErrorEvent)
 
 namespace {
 
-template <typename Pred>
-bool waitFor(Pred pred, std::chrono::milliseconds limit)
-{
-    const auto deadline = std::chrono::steady_clock::now() + limit;
-    while (!pred()) {
-        if (std::chrono::steady_clock::now() >= deadline)
-            return false;
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    return true;
-}
+using LibreSCRS::Test::waitFor;
 
 // What a subscriber's callback shares with the test. Held by shared_ptr so a
 // callback stuck on a failing build outlives the test body.

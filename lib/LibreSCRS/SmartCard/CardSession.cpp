@@ -146,8 +146,8 @@ auto withSessionState(State& state, Fn&& fn) -> decltype(fn())
     }
     switch (cmd.p1) {
     case 0x04: {
-        // Only the first or only occurrence names one application; next and
-        // previous move to another.
+        // Only the first or only occurrence names one application; last,
+        // next and previous move to another.
         const auto name = recorded.bytes();
         const bool sameApplication =
             (cmd.p2 & 0x03) == 0 && !name.empty() && std::ranges::equal(std::span<const std::uint8_t>(cmd.data), name);
