@@ -14,6 +14,14 @@
 #import <CryptoTokenKit/CryptoTokenKit.h>
 #import <Foundation/Foundation.h>
 
+// Objective-C class names are global to the process. The build-tree copy of
+// the connection compiles this file into executables that also load
+// libLibreSCRS_SmartCard, so that copy names its classes apart.
+#ifdef LIBRESCRS_CTK_SECOND_COPY
+#define LibreSCRSCtkSlotObserver LibreSCRSCtkSlotObserverSecondCopy
+#define LibreSCRSCtkSlotsWatcher LibreSCRSCtkSlotsWatcherSecondCopy
+#endif
+
 #include <atomic>
 #include <condition_variable>
 #include <map>

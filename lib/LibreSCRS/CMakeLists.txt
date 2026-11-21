@@ -574,6 +574,8 @@ if(APPLE)
     set_source_files_properties(${PROJECT_SOURCE_DIR}/lib/smartcard/src/ctk_smartcard.mm
         TARGET_DIRECTORY LibreSCRS_SmartCard_RawDiagnostic PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(LibreSCRS_SmartCard_RawDiagnostic PUBLIC "-framework CryptoTokenKit" "-framework Foundation")
+    # The executables load the library's copy of the Objective-C classes too.
+    target_compile_definitions(LibreSCRS_SmartCard_RawDiagnostic PRIVATE LIBRESCRS_CTK_SECOND_COPY)
 endif()
 # PC/SC itself comes with SmartCard_Impl on every other platform.
 target_include_directories(LibreSCRS_SmartCard_RawDiagnostic
