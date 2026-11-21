@@ -680,8 +680,7 @@ TEST(ChipAuthSessionTest, ChipAuthRequestAgainstPaceChannelRefuses)
 // A channel matches a request by the protocol the session recorded when it
 // installed the channel. The public stand-in records none, so a live stand-in
 // is never reused for any protocol: an Open SM channel that serves no request
-// is refused rather than replaced -- as it was when the match was a type probe
-// the stand-in could never pass.
+// is refused rather than replaced.
 TEST(ChipAuthSessionTest, LiveStandInChannelIsNeverReusedForAProtocol)
 {
     const SmProtocolRequest requests[] = {PaceRequest{}, BacRequest{}, ChipAuthRequest{}};

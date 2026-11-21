@@ -436,12 +436,8 @@ recorded_surface() {
 # Measured on this tree when the rule was written: the T sets of all seven core
 # libraries match the recorded surface exactly, 0 extra and 0 missing.
 #
-# The W/V half below is still a spelling, and that is a known gap rather than an
-# oversight: the recorded surface holds T-binding symbols only, while the seven
-# libraries export 168 vague-linkage symbols it has never seen -- among them
-# real implementation detail (LibreSCRS::SmartCard::Internal::PCSCScanProvider::*,
-# LibreSCRS::Plugin::Internal::*, LibreSCRS::Internal::*). Recording them is an
-# ABI-surface change, not a check change, so it is not done here.
+# The W/V half below stays a spelling check, kept for the macOS leg: the public
+# entity rule of abi-snapshot.sh refuses a W/V export of an internal entity too.
 # Weak, vague-linkage or unique exports (W, V, u) of an internal entity: a
 # function or object under Internal:: or a project *_detail:: namespace, or a
 # lambda's operator or guard. Such a symbol is an inline or template
@@ -509,8 +505,7 @@ scan_core_so_against_surface() {
     fi
 
     # Matched exactly, line for line. No spelling of a name exempts anything:
-    # the rule that dropped every ::Internal:: or ::detail:: name hid 82
-    # internal exports from this check.
+    # every ::Internal:: and ::detail:: export is a leak.
     t_all=$(printf '%s\n' "$dyn" \
         | awk '$2 == "T" { print $3 }' \
         | c++filt \

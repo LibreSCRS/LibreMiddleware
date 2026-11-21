@@ -541,10 +541,8 @@ out="$(bash "$GATE" "$tree20" 2>&1)"; rc=$?
 report 20 1 "$rc" "  std::__detail::_Map_base<" "$out"
 
 # --- case 22: an Internal:: function in a core library ----------------------
-# The core pass used to drop every T symbol whose own name held ::Internal:: or
-# ::detail:: before comparing with the surface, which is how 82 internal exports
-# passed it. Measured against the gate as it was: exit 0 on exactly this tree.
-# Case 3 is its control.
+# The core pass compares every T symbol with the surface whatever its spelling,
+# so an Internal:: function is not exempt. Case 3 is its control.
 sed 's/int alpha(int x) { return Body{}.step(x); }/int alpha(int x) { return Body{}.step(x); }\n} namespace Internal { int selftestInternal(int x) { return x; }/' \
     "$src/clean.cpp" > "$src/internal.cpp"
 g++ -shared -fPIC -o "$src/internal.so" "$src/internal.cpp" 2>>"$WORK/gcc.err" \

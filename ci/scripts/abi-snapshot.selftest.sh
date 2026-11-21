@@ -268,9 +268,9 @@ says "an exported data symbol is not dropped in silence" "no
        rule for"
 
 # --- case 9: an exported Internal:: or detail:: symbol is a leak ------------
-#     It used to be dropped by its spelling, which is how 82 internal exports
-#     went unrecorded. A plugin that imports it is named as well; renamed, the
-#     new name is a leak and the plugin's import of the old one is hidden.
+#     No spelling of the name exempts it. A plugin that imports it changes
+#     nothing; renamed, the new name is a leak and the plugin's import of the
+#     old one is hidden.
 root9="$WORK/internal"
 fixture "$root9"
 build_internal() {  # build_internal <internal-function-name>
@@ -294,8 +294,6 @@ plugin "$root9" 'namespace LibreSCRS { namespace Internal { int selftestInternal
 int fixture_use() { return LibreSCRS::Internal::selftestInternal(1); }'
 rc=$(run "$root9" --update build)
 check "the same export, imported by a plugin" 1 "$rc"
-says "the same export, imported by a plugin" "IMPORT OF AN INTERNAL SYMBOL"
-says "the same export, imported by a plugin" "libfixture-plugin.so  LibreSCRS::Internal::selftestInternal(int)"
 build_internal selftestInternalRenamed
 rc=$(run "$root9" --check build)
 check "a renamed Internal:: export" 1 "$rc"
@@ -450,7 +448,7 @@ says "a re-exported PlainChannel" "non-virtual thunk to LibreSCRS::SecureChannel
 
 # 14: a new Internal:: export, declared in the installed header (a forward
 #     declaration for a friend is the usual reason), plus the typeinfo of an
-#     Internal:: class -- a V-binding row the old T-only filter never read.
+#     Internal:: class -- a V-binding row, which the T-only symbol list does not record.
 custom new-internal \
     "namespace LibreSCRS { $PUBLIC_FNS namespace Internal { int selftestHelper(int x); } }" \
     "#include <LibreSCRS/Stub.h>
@@ -557,7 +555,7 @@ namespace LibreSCRS { $PUBLIC_DEFS namespace detail { $EXPORT int selftestGenera
 root23="$root"
 rc=$(run "$root23" --update build)
 check "an inline body calling an internal export" 1 "$rc"
-says "an inline body calling an internal export" "LibreSCRS::selftestKey calls LibreSCRS::detail::selftestGeneration(int), an internal export"
+says "an inline body calling an internal export" "LibreSCRS::detail::selftestGeneration(int)"
 #     24: the control -- the callee is exported and public.
 custom inline-public \
     "namespace LibreSCRS { $PUBLIC_FNS

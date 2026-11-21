@@ -94,9 +94,8 @@ public:
     // DEFINED ONLY in the build-tree-only test copies of this class
     // (LibreSCRS_SmartCard_RawDiagnostic and its siblings, from
     // lib/LibreSCRS/SmartCard/test_helpers/pcsc_connection_test_helpers.cpp),
-    // never in pcsc_connection.cpp, so no shipped LibreSCRS_*.so exports a way
-    // to arm one -- see the note at the former definition site for why a
-    // visibility attribute would not have been enough. A target that arms a
+    // never in pcsc_connection.cpp, so no shipped LibreSCRS_*.so holds a way
+    // to arm one. A target that arms a
     // seam links such a copy (the build-tree card_mapper tool does, for its
     // wire-logging filter). The members written here and the branches that
     // read them stay in the production class, so the class layout is

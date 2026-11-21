@@ -39,12 +39,8 @@
 /// for the same reason: appending grows it without moving a production offset
 /// that separately-packaged objects have already compiled in.
 ///
-/// Kept in @c pcsc_connection.cpp the definition would not stay private: that
-/// TU is compiled into @c libLibreSCRS_SmartCard, the class is
-/// @c LIBRESCRS_PUBLIC_API, and @c cmake/librescrs-public-exports.map
-/// promotes every member of a LibreSCRS class. A hidden-visibility attribute on the declaration is not an
-/// alternative: the Darwin export filter is a mangled-prefix allowlist with
-/// no un-export form, so only moving the definition works on both platforms.
+/// The setters live only in the test copies so that no shipped library can
+/// arm a seam, and none references the class's hidden typeinfo.
 ///
 /// The setter cannot live in the archive's own namespace the way
 /// @ref detail::ChannelInjector::installForTesting does — it is a declared

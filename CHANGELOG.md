@@ -49,9 +49,8 @@ Notable user-visible changes per release. Format follows
   `CardPluginService::findAllCandidates` calls it before it probes the
   plugins, every card-plugin operation whose activation profile asks for no
   secure messaging calls it at its start, and activating another channel
-  replaces it. Both transmit calls
-  return the answer as data followed by SW1 SW2 and throw on a reader
-  failure.
+  replaces it. Both transmit calls return the answer as data followed by
+  SW1 SW2 and throw on a reader failure.
   `beginTransaction`, `endTransaction`, `isTransactionHeld` and `reconnect`
   reach the reader; `channelState`, `carriesSecureMessaging` and
   `forgetCurrentApplet` describe and adjust the session's channel; and
@@ -65,10 +64,9 @@ Notable user-visible changes per release. Format follows
   whose anchors are not in the service's store yet into it from the cache
   directory alone, downloading nothing: each list is verified and its anchors
   added; a source that failed in any part is tried again on the next call.
-  After each phase
-  of the signing engine's Trusted List loading, whatever its outcome,
-  `SigningService::sign` has the service adopt from the cache directory the
-  two share: every list the engine verified reaches the store -- with a List
+  After each phase of the signing engine's Trusted List loading, whatever its
+  outcome, `SigningService::sign` has the service adopt from the cache
+  directory the two share: every list the engine verified reaches the store -- with a List
   of Trusted Lists, the lists that verified even when one is unreachable --
   a list is downloaded once, and a list that failed is tried again on a later
   signature. The anchors reach the store through the service that owns it,

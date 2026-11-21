@@ -35,10 +35,10 @@
 #      attributed and not internal.
 #   Imports: every LibreSCRS symbol a SHIPPED image imports (the core
 #      libraries, the card plugins, the installed test archive; never a test
-#      executable) is exported by a core library, and is public.
+#      executable) is exported by a core library (an exported internal symbol
+#      is already an export leak).
 #   Inline bodies: every LibreSCRS function an inline body of an installed
-#      header calls without defining it is exported by a core library, and is
-#      public: a consumer that calls the inline function links it.
+#      header calls without defining it is exported by a core library: a consumer that calls the inline function links it.
 #   Installed headers: none opens a preprocessor condition on
 #      LIBRESCRS_INTERNAL_BUILD -- a consumer and the library see one class.
 #
@@ -289,10 +289,6 @@ def main():
         if LIBRESCRS.match(b) and (not attributed(b, surface) or INTERNAL_IN_TEXT.search(text)):
             offending.setdefault((lib, text), binding)
 
-    def offending_key(mangled):
-        hit = exporter.get(mangled)
-        return hit if hit in offending else None
-
     rc = 0
 
     def report(title, lines, advice):
@@ -320,19 +316,13 @@ def main():
     # Imports -- every one of a shipped image.
     imp_libre = [(img, bare(sym)) for img, sym in imports if LIBRESCRS.match(bare(sym))]
     imp_texts = demangle([s for _, s in imp_libre])
-    unexported, internal = set(), set()
+    unexported = set()
     for (img, sym), text in zip(imp_libre, imp_texts):
         if sym not in exporter:
             unexported.add(f'{img}  {text}')
-            continue
-        if offending_key(sym) is not None:
-            internal.add(f'{img}  {text}')
     report('IMPORT OF A HIDDEN SYMBOL: shipped images import LibreSCRS symbols no core library exports',
            sorted(unexported),
            'The image fails to load. Call public API, or export the symbol as public API.')
-    report('IMPORT OF AN INTERNAL SYMBOL: shipped images import internal exports',
-           sorted(internal),
-           'Call public API instead.')
 
     # Inline bodies -- calls from inline bodies of installed headers.
     inline_bad = set()
@@ -341,14 +331,8 @@ def main():
         if not mangled or mangled in surface.defined or not LIBRESCRS.match(mangled):
             continue
         variants = [mangled, mangled.replace('C1E', 'C2E', 1), mangled.replace('D1E', 'D2E', 1)]
-        found = next((v for v in variants if v in exporter), None)
-        if found is None:
+        if not any(v in exporter for v in variants):
             inline_bad.add(f'{caller} calls {demangle([mangled])[0]}, which no core library exports')
-            continue
-        key = offending_key(found)
-        if key is None:
-            continue
-        inline_bad.add(f'{caller} calls {key[1]}, an internal export')
     report('INLINE BODY REACHES PAST THE PUBLIC SURFACE: inline code in installed headers',
            sorted(inline_bad),
            'A consumer calling the inline function links that symbol. Call public API from the header.')

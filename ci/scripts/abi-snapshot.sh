@@ -93,11 +93,9 @@ NOT_RECORDED_BINDINGS="W V u A"
 # LIBRESCRS_INTERNAL_BUILD, friend declarations not counted -- and nothing in
 # an Internal or detail scope (abi-public-surface.py says how it is measured).
 #
-# This replaced a rule that dropped every T symbol whose own name contained
-# ::Internal:: or ::detail:: before recording the rest. That rule made the
-# baseline fall from 44 internal lines to 5 while the libraries still exported
-# 82 internal symbols, and it recorded 35 secure-channel members, declared only
-# in headers that are never installed, as public 5.x ABI.
+# No spelling of a name exempts anything: every Internal:: and detail:: export
+# is a leak, and a member declared only in a header that is never installed is
+# not public ABI.
 #
 # No internal symbol is exported, none is listed as an exception. The same
 # pass reads what the shipped images -- a card plugin, a sibling LibreSCRS
@@ -234,8 +232,8 @@ fi
 # within the major version. Which copy a process runs depends on load order.
 # Vague-linkage entries (V, W) legitimately appear in every library that uses
 # a type, so this judges T only -- the bindings the snapshot records.
-# Refused for --update as well, so the
-# duplicate cannot be written into the baseline.
+# Refused for --update as well, so the duplicate cannot be written into the
+# baseline.
 dup_owners="$(awk -F'\t' '{ n[$1]++; libs[$1] = libs[$1] " " $2 }
     END { for (s in n) if (n[s] > 1) print s "\t" libs[s] }' "$OWNERS" | sort)"
 if [[ -n "$dup_owners" ]]; then
