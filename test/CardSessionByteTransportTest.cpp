@@ -558,6 +558,14 @@ TEST_F(CardSessionByteTransportTest, OnlyASelectThatLeavesTheApplicationMakesThe
     const Bytes df{0xDF, 0x01};
     const Bytes path{0x2F, 0x00};
     const Bytes relativePath{0x50, 0x31};
+    const auto ownName = kAid.bytes();
+    // A right-truncated name may select another application; only the exact
+    // recorded name keeps the record.
+    const Bytes truncatedName(ownName.begin(), ownName.end() - 1);
+    Bytes longerName(ownName.begin(), ownName.end());
+    longerName.push_back(0x01);
+    Bytes sameLengthName(ownName.begin(), ownName.end());
+    sameLengthName.back() ^= 0x01;
     struct Row
     {
         const char* what;
@@ -567,6 +575,10 @@ TEST_F(CardSessionByteTransportTest, OnlyASelectThatLeavesTheApplicationMakesThe
     const std::vector<Row> rows{
         {"P1=04 another application", selectCommand(0x00, 0x04, 0x0C, kOtherAid.bytes()), true},
         {"P1=04 own application, next occurrence", selectCommand(0x00, 0x04, 0x0E, kAid.bytes()), true},
+        {"P1=04 own application, previous occurrence", selectCommand(0x00, 0x04, 0x0D, kAid.bytes()), true},
+        {"P1=04 own name without its last byte", selectCommand(0x00, 0x04, 0x0C, truncatedName), true},
+        {"P1=04 own name and one byte more", selectCommand(0x00, 0x04, 0x0C, longerName), true},
+        {"P1=04 another name of the same length", selectCommand(0x00, 0x04, 0x0C, sameLengthName), true},
         {"P1=03 parent DF", selectCommand(0x00, 0x03, 0x0C, {}), true},
         {"P1=08 path from the master file", selectCommand(0x00, 0x08, 0x0C, path), true},
         {"P1=00 no data", selectCommand(0x00, 0x00, 0x0C, {}), true},
@@ -619,6 +631,36 @@ TEST_F(CardSessionByteTransportTest, ARawSelectSentOnTheHoldersThreadMakesTheNex
     EXPECT_EQ(plainSelectsOf(kAid), 2) << "after a SELECT of the master file through transmitRaw";
 }
 
+// The PKCS#15 card selects its own application inside every operation, on the
+// thread that holds the holder: that SELECT must not cost the next activation
+// another one.
+TEST_F(CardSessionByteTransportTest, ASelectOfTheOwnApplicationOnTheHoldersThreadKeepsTheRecord)
+{
+    const Watchdog watchdog(std::chrono::seconds(10));
+    {
+        auto holder = session->activateChannelFor(kAid, LibreSCRS::CancelToken{});
+        ASSERT_TRUE(holder.has_value());
+        (void)session->transmit(selectCommand(0x00, 0x04, 0x0C, kAid.bytes()));
+    }
+    ASSERT_EQ(plainSelectsOf(kAid), 2) << "rig: the operation's own SELECT went out";
+    activatePlain(kAid);
+    EXPECT_EQ(plainSelectsOf(kAid), 2) << "through transmit";
+}
+
+TEST_F(CardSessionByteTransportTest, ARawSelectOfTheOwnApplicationOnTheHoldersThreadKeepsTheRecord)
+{
+    const Watchdog watchdog(std::chrono::seconds(10));
+    {
+        auto holder = session->activateChannelFor(kAid, LibreSCRS::CancelToken{});
+        ASSERT_TRUE(holder.has_value());
+        (void)session->transmitRaw(selectCommand(0x00, 0x04, 0x0C, kAid.bytes()));
+    }
+    ASSERT_EQ(rawCommands.size(), 1U) << "rig: a plain channel lets the raw bytes through";
+    ASSERT_EQ(plainSelectsOf(kAid), 1);
+    activatePlain(kAid);
+    EXPECT_EQ(plainSelectsOf(kAid), 1) << "through transmitRaw";
+}
+
 TEST_F(CardSessionByteTransportTest, ARawSelectIsJudgedInEitherLengthForm)
 {
     struct Row
@@ -632,6 +674,7 @@ TEST_F(CardSessionByteTransportTest, ARawSelectIsJudgedInEitherLengthForm)
         {"extended Lc and Le, 3F00", Bytes{0x00, 0xA4, 0x00, 0x00, 0x00, 0x00, 0x02, 0x3F, 0x00, 0x00, 0x00}, true},
         {"extended Lc, an EF", Bytes{0x00, 0xA4, 0x02, 0x0C, 0x00, 0x00, 0x02, 0x01, 0x1E}, false},
         {"data field cannot be located", Bytes{0x00, 0xA4, 0x02, 0x0C, 0x05, 0x01, 0x1E}, true},
+        {"proprietary class, data field cannot be located", Bytes{0x80, 0xA4, 0x00, 0x0C, 0x05, 0x01}, false},
     };
     for (const auto& row : rows) {
         activatePlain(kAid);
@@ -666,6 +709,9 @@ TEST_F(CardSessionByteTransportTest, ARefusedSelectThroughATunnelBoundToTheApple
     EXPECT_EQ(tunnel->currentApplet(), kAid);
 }
 
+// Pins the injection seam: ChannelInjector installs through the copy of
+// replaceActiveChannel in the test archive, which is what clears the applet
+// here. The library's own clears are defensive and have no state to observe.
 TEST_F(CardSessionByteTransportTest, AReplacedTunnelIsNotServedByTheAppletOfTheOneBefore)
 {
     const SmProtocolRequest bac = BacRequest{};

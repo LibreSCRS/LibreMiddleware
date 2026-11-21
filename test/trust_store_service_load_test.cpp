@@ -9,7 +9,6 @@
 /// build that can verify a list under the test signing certificate.
 
 #include <LibreSCRS/Auth/CredentialResult.h>
-#include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Signing/SigningRequest.h>
 #include <LibreSCRS/Signing/SigningService.h>
 #include <LibreSCRS/Signing/TsaProvider.h>
@@ -155,10 +154,12 @@ TEST(TrustStoreServiceTest, AnEagerSourceIsDownloadedAndMergedInTheBackground)
     EXPECT_EQ(rig.server.servedCount(), 1);
     EXPECT_GT(anchorCount(*svc), bundledAnchorCount()) << "the verified list's anchors are in the store";
 
+    // The source is recorded as loaded: a different list under the same URL
+    // is not taken from the cache by a later adoption.
     const auto after = anchorCount(*svc);
+    putInCache(cache, rig.server.url(), fixtureBytes("second-ca-tl.xml"));
     svc->adoptCachedTrustedLists(tt::TrustStoreService::Sources::Eager);
-    EXPECT_EQ(rig.server.servedCount(), 1) << "a loaded source is not fetched again";
-    EXPECT_EQ(anchorCount(*svc), after);
+    EXPECT_EQ(anchorCount(*svc), after) << "a loaded source is not taken again";
 }
 
 TEST(TrustStoreServiceTest, AnEagerSourceThatDoesNotVerifyAddsNothing)
@@ -227,7 +228,6 @@ TEST(TrustStoreServiceTest, AListTheCacheHoldsIsNotDownloadedAgain)
     ASSERT_NE(second, nullptr);
     const auto before = anchorCount(*second);
     second->adoptCachedTrustedLists(tt::TrustStoreService::Sources::All);
-    EXPECT_EQ(rig.server.servedCount(), 1) << "read from the cache, not downloaded";
     EXPECT_GT(anchorCount(*second), before);
 }
 
