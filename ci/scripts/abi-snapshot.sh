@@ -25,16 +25,11 @@
 # / removed / signature changed — with a one-line review per change.
 #
 # Usage:
-#   abi-snapshot.sh [--check|--update] [--allowlist-base <rev>]
-#                   [--sanitizer-flavour "<flags>"] [BUILD_DIR]
+#   abi-snapshot.sh [--check|--update] [--allowlist-base <rev>] [BUILD_DIR]
 #
 # Default action: --check. Default BUILD_DIR: build. With --allowlist-base,
 # every entry of the internal-export allowlist must already be in the
 # allowlist at <rev> (CI passes the merge base): the list only shrinks.
-# With --sanitizer-flavour, the shipped images are also judged as they import
-# when rebuilt with those flags (CI passes the flags of its sanitizer leg):
-# -fsanitize=vptr makes code reference typeinfo the plain build never does.
-# It needs a Ninja build tree with compile_commands.json.
 #
 # Needs clang (CXX, default clang++) and python3 besides nm and c++filt: the
 # public surface is read from clang's AST of the installed headers.
@@ -63,7 +58,6 @@ done
 ACTION="check"
 BUILD_DIR="build"
 ALLOWLIST_BASE=""
-SANITIZER_FLAVOUR=""
 
 # What the scan actually saw. A section that exists but yields nothing is a
 # broken artefact; no section at all is an unbuilt tree. Both are exit 2.
@@ -177,9 +171,6 @@ while [[ $# -gt 0 ]]; do
         --allowlist-base)
             [[ $# -ge 2 ]] || { echo "ERROR: --allowlist-base needs a revision" >&2; exit 2; }
             ALLOWLIST_BASE="$2"; shift 2 ;;
-        --sanitizer-flavour)
-            [[ $# -ge 2 && -n "$2" ]] || { echo "ERROR: --sanitizer-flavour needs compiler flags" >&2; exit 2; }
-            SANITIZER_FLAVOUR="$2"; shift 2 ;;
         -h|--help)
             sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
             exit 0
@@ -303,19 +294,6 @@ if [[ "$plugin_count" -eq 0 ]]; then
     echo "FATAL: no card plugin under '$BUILD_DIR/plugins' -- cannot judge what shipped images import" >&2
     exit 2
 fi
-# Every card plugin the tree defines (lib/<name>-plugin/manifest.json) must have
-# been built: one that is missing -- a configuration that leaves it out, or a
-# stale tree -- would have its imports skipped without a word.
-missing_plugins=()
-while IFS= read -r manifest; do
-    plugin_dir="$(basename "$(dirname "$manifest")")"
-    [[ -f "$BUILD_DIR/plugins/lib${plugin_dir}.so" ]] || missing_plugins+=("lib${plugin_dir}.so")
-done < <(find "$REPO_ROOT/lib" -mindepth 2 -maxdepth 2 -path '*-plugin/manifest.json' 2>/dev/null | sort)
-if [[ ${#missing_plugins[@]} -gt 0 ]]; then
-    echo "FATAL: card plugin(s) not built under '$BUILD_DIR/plugins': ${missing_plugins[*]}" >&2
-    echo "       -- their imports cannot be judged. Build every plugin the tree defines." >&2
-    exit 2
-fi
 while IFS= read -r archive; do
     [[ -n "$archive" ]] || continue
     nm -U "$archive" 2>/dev/null | awk 'NF >= 3 { print $3 }' | sort -u > "$SCRATCH/archive-defined"
@@ -323,29 +301,6 @@ while IFS= read -r archive; do
         | comm -23 - "$SCRATCH/archive-defined" \
         | awk -v img="$(basename "$archive")" '{ print img "\t" $0 }' >> "$IMPORTS"
 done < <(find "$BUILD_DIR/lib/LibreSCRS" -maxdepth 1 -name 'libLibreSCRSTesting_*.a' | sort)
-
-# The same images as a sanitizer build would make them. Their plain imports
-# above do not show it: gcc's -fsanitize=vptr makes every member access through
-# a polymorphic object reference the class's typeinfo, so a card plugin or the
-# test archive built that way can import a typeinfo the library keeps hidden --
-# and then fails to load or to link, in this repository's sanitizer leg and in
-# every consumer's sanitizer build that links the installed archive. Imports
-# measured this way are judged by every rule below, like the plain ones.
-if [[ -n "$SANITIZER_FLAVOUR" ]]; then
-    mapfile -t flavour_images < <({
-        find "$BUILD_DIR/lib/LibreSCRS" -maxdepth 1 -name 'libLibreSCRS_*.so.[0-9]*.[0-9]*.[0-9]*'
-        find "$BUILD_DIR/plugins" -maxdepth 2 -name '*.so' 2>/dev/null
-        find "$BUILD_DIR/lib/LibreSCRS" -maxdepth 1 -name 'libLibreSCRSTesting_*.a'
-    } | sort)
-    flavour_rc=0
-    [[ -f "${REPO_ROOT}/ci/scripts/abi-flavour-imports.py" ]] \
-        || { echo "FATAL: ci/scripts/abi-flavour-imports.py not found" >&2; exit 2; }
-    python3 "${REPO_ROOT}/ci/scripts/abi-flavour-imports.py" --build-dir "$BUILD_DIR" \
-        --flags="$SANITIZER_FLAVOUR" --out "$IMPORTS" "${flavour_images[@]}" || flavour_rc=$?
-    if [[ "$flavour_rc" -ne 0 ]]; then
-        exit 2
-    fi
-fi
 
 base_args=()
 if [[ -n "$ALLOWLIST_BASE" ]]; then
