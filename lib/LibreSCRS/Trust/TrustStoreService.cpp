@@ -156,8 +156,9 @@ TrustStoreService::TrustStoreService(TrustConfig cfg) : d(std::make_shared<Impl>
     d->trustStore = std::make_shared<TrustStore>(
         detail::TrustStoreInternalAccess::makeStore(std::move(certsDir), /*includeSystemTrustStore=*/true));
 
-    // Lazy sources wait for loadTrustedLists(Sources::All), which the
-    // signing engine's bridge calls when a signature first needs them.
+    // Lazy sources wait until a signature needs them: the signing engine
+    // downloads them into the shared cache and SigningService has this
+    // service adopt them from there (adoptCachedTrustedLists).
     std::vector<libresign::TrustedListEntry> eagerSources;
 
     for (const auto& src : d->config.trustedListSources) {
@@ -211,11 +212,6 @@ void TrustStoreService::Impl::loadSources(Sources which, LibreSCRS::CancelToken 
     } catch (...) {
         // noexcept: a failure to lock or to log leaves the store as it is.
     }
-}
-
-void TrustStoreService::loadTrustedLists(Sources which, LibreSCRS::CancelToken token) noexcept
-{
-    d->loadSources(which, std::move(token), /*cacheOnly=*/false);
 }
 
 void TrustStoreService::adoptCachedTrustedLists(Sources which) noexcept

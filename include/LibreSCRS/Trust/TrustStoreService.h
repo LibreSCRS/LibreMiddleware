@@ -138,13 +138,13 @@ public:
     /// The returned snapshot is monotonically growing — consumers MUST NOT
     /// cache @ref TrustStore::enumerableAnchors() and assume immutability.
     /// New anchors land asynchronously as eager fetches complete, and when
-    /// @ref loadTrustedLists brings in sources (which
+    /// @ref adoptCachedTrustedLists takes lists from the cache (which
     /// @ref Signing::SigningService::sign does when it loads Trusted Lists).
     /// @since 4.0
     [[nodiscard]] std::shared_ptr<const TrustStore> trustStore() const;
 
-    /// @brief Which configured Trusted List sources @ref loadTrustedLists
-    ///        brings into the store.
+    /// @brief Which configured Trusted List sources
+    ///        @ref adoptCachedTrustedLists brings into the store.
     /// @since 5.0
     enum class Sources : std::uint8_t {
         /// The sources whose @c eager flag is set (fetched in the background
@@ -154,40 +154,8 @@ public:
         All,
     };
 
-    /// @brief Fetch the configured Trusted List sources whose anchors are not
-    ///        in @ref trustStore yet, and add the anchors of every list that
-    ///        verifies.
-    ///
-    /// Each source is read from the cache directory when it holds a current
-    /// copy, else downloaded (and, for a List of Trusted Lists, every list it
-    /// points to), verified as the eager fetch at construction verifies it,
-    /// and its anchors merged. A source is done once all of its lists have
-    /// been merged; one that failed in any part -- offline, a list that does
-    /// not verify, a cancel -- is fetched again on the next call. Only the
-    /// configured sources are fetched, and only lists that verify contribute
-    /// anchors: the call adds no anchor of its own.
-    ///
-    /// The call blocks until every source it takes has been fetched or has
-    /// failed (each download is bounded by a 30 s request timeout); calls
-    /// from several threads run one after another.
-    /// A host calls it when it wants the anchors now, at the cost of the
-    /// downloads; @ref adoptCachedTrustedLists takes only what is on disk.
-    ///
-    /// @param which Which sources to take.
-    /// @param token Cancellation: stops the fetch between and inside the
-    ///              lists; a source left unfinished is fetched next time.
-    /// @par Thread-safety
-    /// Safe to call from several threads.
-    /// @par Example
-    /// @code
-    /// // A validator that wants every configured anchor before it judges.
-    /// service->loadTrustedLists(TrustStoreService::Sources::All);
-    /// const auto issuer = service->trustStore()->findIssuerOf(certificate);
-    /// @endcode
-    /// @since 5.0
-    void loadTrustedLists(Sources which, LibreSCRS::CancelToken token = {}) noexcept;
-
-    /// @brief As @ref loadTrustedLists, but from the cache directory alone:
+    /// @brief Add to @ref trustStore the anchors of the configured Trusted
+    ///        List sources not loaded yet, from the cache directory alone:
     ///        nothing is downloaded.
     ///
     /// Every list of a source not loaded yet that the cache directory holds,
@@ -207,8 +175,7 @@ public:
     ///
     /// @param which Which sources to take.
     /// @par Thread-safety
-    /// Safe to call from several threads; runs one after another with
-    /// @ref loadTrustedLists.
+    /// Safe to call from several threads; calls run one after another.
     /// @since 5.0
     void adoptCachedTrustedLists(Sources which) noexcept;
 

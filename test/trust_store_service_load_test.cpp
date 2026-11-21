@@ -41,7 +41,7 @@
 namespace tt = LibreSCRS::Trust;
 
 // =============================================================================
-// loadTrustedLists: the configured sources reach the store through the
+// Loading: the configured sources reach the store through the
 // service, a source that failed in any part is tried again, and a list the
 // cache already holds is not downloaded again. A loopback server serves the
 // signed synthetic list and counts the downloads; the service's test copy is
@@ -109,6 +109,13 @@ struct TrustedListRig
     std::vector<std::filesystem::path> dirs;
 };
 
+// The service's download path: what the eager fetch at construction runs,
+// for the sources of @p which not loaded yet.
+void load(tt::TrustStoreService& svc, tt::TrustStoreService::Sources which, LibreSCRS::CancelToken token = {})
+{
+    tt::detail::TrustStoreServiceAccess::impl(svc).loadSources(which, std::move(token), /*cacheOnly=*/false);
+}
+
 std::size_t anchorCount(tt::TrustStoreService& svc)
 {
     return svc.trustStore()->enumerableAnchors().size();
@@ -124,12 +131,12 @@ TEST(TrustStoreServiceTest, ADeferredListsAnchorsReachTheStore)
     const auto before = anchorCount(*svc);
     EXPECT_EQ(rig.server.servedCount(), 0) << "a deferred source is left alone at construction";
 
-    svc->loadTrustedLists(tt::TrustStoreService::Sources::All);
+    load(*svc, tt::TrustStoreService::Sources::All);
     EXPECT_EQ(rig.server.servedCount(), 1);
     EXPECT_GT(anchorCount(*svc), before) << "the verified list's anchors are in the store";
 
     const auto after = anchorCount(*svc);
-    svc->loadTrustedLists(tt::TrustStoreService::Sources::All);
+    load(*svc, tt::TrustStoreService::Sources::All);
     EXPECT_EQ(rig.server.servedCount(), 1) << "a loaded source is not fetched again";
     EXPECT_EQ(anchorCount(*svc), after);
 }
@@ -142,11 +149,11 @@ TEST(TrustStoreServiceTest, AFailedLoadIsTriedAgain)
     auto svc = rig.service(/*eager=*/false, rig.cache("retry"), /*knowsTheSigner=*/false);
     ASSERT_NE(svc, nullptr);
     const auto before = anchorCount(*svc);
-    svc->loadTrustedLists(tt::TrustStoreService::Sources::All);
+    load(*svc, tt::TrustStoreService::Sources::All);
     EXPECT_EQ(anchorCount(*svc), before);
 
     TrustedListRig::teachTheSigner();
-    svc->loadTrustedLists(tt::TrustStoreService::Sources::All);
+    load(*svc, tt::TrustStoreService::Sources::All);
     EXPECT_GT(anchorCount(*svc), before) << "the failed source was tried again and loaded";
 }
 
@@ -159,10 +166,10 @@ TEST(TrustStoreServiceTest, ACancelledLoadFetchesNothingAndIsTriedAgain)
     LibreSCRS::CancelSource cancel;
     cancel.requestCancel();
 
-    svc->loadTrustedLists(tt::TrustStoreService::Sources::All, cancel.token());
+    load(*svc, tt::TrustStoreService::Sources::All, cancel.token());
     EXPECT_EQ(rig.server.servedCount(), 0);
 
-    svc->loadTrustedLists(tt::TrustStoreService::Sources::All);
+    load(*svc, tt::TrustStoreService::Sources::All);
     EXPECT_EQ(rig.server.servedCount(), 1);
     EXPECT_GT(anchorCount(*svc), before);
 }
@@ -176,7 +183,7 @@ TEST(TrustStoreServiceTest, AnEagerSourceWhoseBackgroundFetchFailedIsLoadedLater
     const auto before = anchorCount(*svc);
     TrustedListRig::teachTheSigner();
 
-    svc->loadTrustedLists(tt::TrustStoreService::Sources::Eager);
+    load(*svc, tt::TrustStoreService::Sources::Eager);
     EXPECT_GT(anchorCount(*svc), before) << "the eager source the background fetch missed is in the store";
 }
 
@@ -188,13 +195,13 @@ TEST(TrustStoreServiceTest, AListTheCacheHoldsIsNotDownloadedAgain)
     const auto shared = rig.cache("shared");
     auto first = rig.service(/*eager=*/false, shared);
     ASSERT_NE(first, nullptr);
-    first->loadTrustedLists(tt::TrustStoreService::Sources::All);
+    load(*first, tt::TrustStoreService::Sources::All);
     ASSERT_EQ(rig.server.servedCount(), 1);
 
     auto second = rig.service(/*eager=*/false, shared);
     ASSERT_NE(second, nullptr);
     const auto before = anchorCount(*second);
-    second->loadTrustedLists(tt::TrustStoreService::Sources::All);
+    load(*second, tt::TrustStoreService::Sources::All);
     EXPECT_EQ(rig.server.servedCount(), 1) << "read from the cache, not downloaded";
     EXPECT_GT(anchorCount(*second), before);
 }
@@ -210,7 +217,7 @@ TEST(TrustStoreServiceTest, WithoutACacheDirectoryTheServiceKeepsItsOwn)
             << "the engine needs a directory to share with the service";
         privateDir = *svc->config().cacheDirectory;
         EXPECT_TRUE(std::filesystem::is_directory(privateDir));
-        svc->loadTrustedLists(tt::TrustStoreService::Sources::All);
+        load(*svc, tt::TrustStoreService::Sources::All);
         EXPECT_EQ(rig.server.servedCount(), 1);
     }
     EXPECT_FALSE(std::filesystem::exists(privateDir)) << "the private cache goes with the service";
@@ -228,7 +235,7 @@ TEST(TrustStoreServiceTest, AdoptingFromTheCacheDownloadsNothing)
     EXPECT_EQ(rig.server.servedCount(), 0) << "a list the cache does not hold is not downloaded";
     EXPECT_EQ(anchorCount(*svc), before);
 
-    svc->loadTrustedLists(tt::TrustStoreService::Sources::All);
+    load(*svc, tt::TrustStoreService::Sources::All);
     EXPECT_EQ(rig.server.servedCount(), 1) << "the source stayed pending";
     EXPECT_GT(anchorCount(*svc), before);
 }

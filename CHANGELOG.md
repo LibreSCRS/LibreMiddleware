@@ -60,12 +60,12 @@ Notable user-visible changes per release. Format follows
   queries, now also answer on the thread that holds the session's
   `ActiveChannelHolder`, where they used to deadlock.
 
-- **`TrustStoreService::loadTrustedLists`** (with `TrustStoreService::Sources`).
-  Brings the configured Trusted List sources whose anchors are not in the
-  service's store yet into it: each is read from the cache directory or
-  downloaded, verified, and its anchors added; a source that failed in any
-  part is tried again on the next call. `adoptCachedTrustedLists` does the
-  same from the cache directory alone, downloading nothing. After each phase
+- **`TrustStoreService::adoptCachedTrustedLists`** (with
+  `TrustStoreService::Sources`). Brings the configured Trusted List sources
+  whose anchors are not in the service's store yet into it from the cache
+  directory alone, downloading nothing: each list is verified and its anchors
+  added; a source that failed in any part is tried again on the next call.
+  After each phase
   of the signing engine's Trusted List loading, whatever its outcome,
   `SigningService::sign` has the service adopt from the cache directory the
   two share: every list the engine verified reaches the store -- with a List

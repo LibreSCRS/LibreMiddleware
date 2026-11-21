@@ -245,7 +245,6 @@ LibreSCRS::Trust::TrustStoreService::TrustStoreService(LibreSCRS::Trust::TrustCo
 LibreSCRS::Trust::TrustStoreService::adoptCachedTrustedLists(LibreSCRS::Trust::TrustStoreService::Sources)@@LM_5
 LibreSCRS::Trust::TrustStoreService::config() const@@LM_5
 LibreSCRS::Trust::TrustStoreService::create(LibreSCRS::Trust::TrustConfig)@@LM_5
-LibreSCRS::Trust::TrustStoreService::loadTrustedLists(LibreSCRS::Trust::TrustStoreService::Sources, LibreSCRS::CancelToken)@@LM_5
 LibreSCRS::Trust::TrustStoreService::trustStore() const@@LM_5
 LibreSCRS::Trust::TrustStoreService::~TrustStoreService()@@LM_5
 LibreSCRS::Trust::parseAndVerifyMasterList(std::vector<unsigned char, std::allocator<unsigned char> > const&, std::array<unsigned char, 32ul> const*)@@LM_5

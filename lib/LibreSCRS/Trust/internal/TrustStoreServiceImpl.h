@@ -52,7 +52,7 @@ struct LIBRESCRS_INTERNAL TrustStoreService::Impl
 
     /// The configured sources (by URL) whose list, and for a List of Trusted
     /// Lists every list it points to, have been fetched, verified and merged.
-    /// A source not in it is fetched again on the next loadTrustedLists().
+    /// A source not in it is taken again on the next loadSources().
     std::mutex loadMutex;
     std::set<std::string> loadedSources;
 
@@ -71,8 +71,9 @@ struct LIBRESCRS_INTERNAL TrustStoreService::Impl
     bool fetchAndMerge(const libresign::TrustedListEntry& entry, LibreSCRS::CancelToken token,
                        bool cacheOnly = false) const;
 
-    /// loadTrustedLists() and adoptCachedTrustedLists(): every source of
-    /// @p which not loaded yet, from the cache alone when @p cacheOnly.
+    /// Every source of @p which not loaded yet, from the cache alone when
+    /// @p cacheOnly (adoptCachedTrustedLists()); the tests also take the
+    /// download path.
     void loadSources(Sources which, LibreSCRS::CancelToken token, bool cacheOnly) noexcept;
 
     /// @brief Records @p url as loaded.

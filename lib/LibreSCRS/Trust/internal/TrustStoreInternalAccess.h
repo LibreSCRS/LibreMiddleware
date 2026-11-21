@@ -43,8 +43,8 @@ struct TrustStoreInternalAccess
     ///        idempotent. The anchor span is consumed; @p store retains
     ///        its own copy of the bytes.
     ///
-    /// Called only by @ref TrustStoreService (its eager workers and
-    /// loadTrustedLists), inside LibreSCRS_Trust: hidden, like
+    /// Called only by @ref TrustStoreService (its eager workers and its
+    /// cache adoption), inside LibreSCRS_Trust: hidden, like
     /// @ref makeStore. No other library adds an anchor to a store.
     ///
     /// @par Thread-safety
