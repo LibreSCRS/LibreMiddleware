@@ -401,11 +401,11 @@ set_target_properties(LibreSCRS_Signing PROPERTIES
 # symbol-interposition collisions against a host process's system OpenSSL.
 #
 # A namespace-allowlist version script is the cleanest fix:
-#   * Whitelist `LibreSCRS::*`     — public LM C++ API, including the
-#                                    cross-`.so` LibreSCRS::SmartCard::Internal::*
-#                                    helpers consumed by every card plugin
-#                                    via the DT_NEEDED edge on
-#                                    libLibreSCRS_SmartCard.so.
+#   * Whitelist `LibreSCRS::*`     — the entities declared in that
+#                                    namespace; what is not public API is
+#                                    hidden at its declaration, and card
+#                                    plugins reach the libraries through
+#                                    public API only.
 #   * Local everything else        — OpenSSL, libresign::, nlohmann::,
 #                                    miniz, pugixml, std-template
 #                                    instantiations (on LibreSCRS types
@@ -455,9 +455,8 @@ endif()
 # installs a channel double, which the stand-in goes through.
 #
 # The archive writes CardSession's private state (CardSessionImpl.h), so it
-# is built from the internal headers but links nothing of the internals: every
-# symbol it calls (CardSession's private constructor, the detached
-# PCSCConnection constructor) is exported by libLibreSCRS_SmartCard.
+# is built from the internal headers but links nothing of the internals: it
+# calls only what libLibreSCRS_SmartCard exports.
 # ──────────────────────────────────────────────────────────────────────────
 add_library(LibreSCRS_SmartCardTesting STATIC
     SmartCard/testing/card_session_testing.cpp
@@ -625,15 +624,13 @@ endif()
 # ──────────────────────────────────────────────────────────────────────────
 # Test-only copy of the secure channels libLibreSCRS_SmartCard keeps hidden.
 #
-# The PACE, BAC and Chip Authentication channels are not exported: CardSession,
-# their caller, is in the same library, and the one member a card plugin
-# reaches (ChipAuthChannel::establish and its destructor) is exported on its
-# own, as are PlainChannel's constructor and destructor. Tests that construct a
+# The PACE, BAC, Chip Authentication and plain channels are not exported:
+# CardSession, their caller, is in the same library. Tests that construct a
 # channel or call its members compile these sources into the executable
 # instead of reaching an export. A channel built here may be handed to a
 # CardSession in the library: the session matches channels by the protocol it
 # recorded, never by RTTI, so the two copies' typeinfo never meet. The state
-# mutator stays exported (the eMRTD plugin calls it), so it is not copied.
+# mutator is header-only, so it is not copied.
 #
 # Not installed (no install(TARGETS …) rule). Build-tree-only.
 # ──────────────────────────────────────────────────────────────────────────

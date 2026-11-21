@@ -25,7 +25,6 @@
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 #include <apdu.h>
-#include <apdu.h>
 #include <smartcard/session_connection.h>
 
 #include <algorithm>

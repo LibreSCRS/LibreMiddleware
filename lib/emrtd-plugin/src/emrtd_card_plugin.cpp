@@ -32,7 +32,6 @@
 #include <emrtd_types.h>
 #include <pace.h>
 #include <passive_auth.h>
-#include <apdu.h>
 #include <smartcard/session_connection.h>
 #include <smartcard/secure_buffer.h>
 

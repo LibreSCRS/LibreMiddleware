@@ -703,7 +703,7 @@ CardSession::activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token)
         return std::unexpected{ChannelActivationError::SelectAppletFailed};
     }
 
-    d->activeChannel = std::make_shared<PlainChannel>(*d->ownedConn, aid);
+    d->activeChannel = std::make_unique<PlainChannel>(*d->ownedConn, aid);
     // A freshly installed plain channel carries no SM context; clear any
     // protocol recorded for a previously closed SM channel so the accessor
     // reports nullopt for this plain activation.

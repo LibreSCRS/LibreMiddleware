@@ -7,20 +7,13 @@
 
 #pragma once
 
-#include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
-#include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 
 #include <apdu.h>
 #include <smartcard/card_connection.h>
 
 #include <memory>
 #include <mutex>
-#include <optional>
-
-namespace LibreSCRS::SecureChannel {
-class ISecureChannel;
-} // namespace LibreSCRS::SecureChannel
 
 namespace LibreSCRS::SmartCard {
 

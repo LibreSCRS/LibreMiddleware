@@ -13,13 +13,11 @@
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 
-#include <smartcard/secure_buffer.h>
 #include <smartcard/session_connection.h>
 
 #include "apdu.h"
 
 #include <optional>
-#include <span>
 
 namespace LibreSCRS::SecureChannel {
 

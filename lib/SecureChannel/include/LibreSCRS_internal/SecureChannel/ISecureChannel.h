@@ -42,8 +42,7 @@ namespace LibreSCRS::SecureChannel {
 ///
 /// Not exported: nothing compares this interface's typeinfo across a library
 /// boundary (no dynamic_cast, typeid or catch on it), so each image may keep
-/// its own copy, and the channel classes the card plugins name are exported
-/// on their own.
+/// its own copy. No channel class is exported either.
 ///
 /// @since 4.1
 class ISecureChannel

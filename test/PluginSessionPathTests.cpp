@@ -22,7 +22,6 @@
 #include <pcsc_connection.h>
 #include <session_access.h>
 #include <fake_channel.h>
-#include <session_access.h>
 
 #include <gtest/gtest.h>
 

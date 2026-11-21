@@ -6,7 +6,6 @@
 
 #include <apdu.h>
 #include <ber.h>
-#include <apdu.h>
 #include <smartcard/card_connection.h>
 
 namespace euvrc {

@@ -8,7 +8,6 @@
 #include <apdu.h>
 #include <ber.h>
 #include <date_format.h>
-#include <apdu.h>
 #include <smartcard/card_connection.h>
 #include <smartcard/chunked_read.h>
 

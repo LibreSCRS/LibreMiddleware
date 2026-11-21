@@ -11,7 +11,6 @@
 #include <smartcard/card_connection.h>
 #include "date_format.h"
 #include "tlv.h"
-#include "apdu.h"
 
 namespace eidcard {
 

@@ -59,7 +59,7 @@ fi
 
 # ── The PC/SC connection is defined in one image only ─────────────────────
 # PCSCConnection holds process-wide PC/SC state, so exactly one shipped image
-# may define it: libLibreSCRS_SmartCard, which exports it to everyone else.
+# may define it: libLibreSCRS_SmartCard, which keeps it hidden.
 # A private copy is invisible to every export check below -- it is a hidden,
 # local text symbol -- so this pass reads every definition, whatever its
 # visibility. Weak definitions are skipped: an inline accessor's out-of-line

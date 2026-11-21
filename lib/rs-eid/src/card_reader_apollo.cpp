@@ -4,7 +4,6 @@
 #include "card_reader_apollo.h"
 #include "card_protocol.h"
 #include "apdu.h"
-#include <apdu.h>
 #include <smartcard/card_connection.h>
 #include <smartcard/chunked_read.h>
 #include <stdexcept>

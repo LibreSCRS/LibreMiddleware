@@ -5,7 +5,6 @@
 #include "pkcs15_types.h"
 
 #include <apdu.h>
-#include <apdu.h>
 #include <smartcard/i_connection.h>
 
 #include <cstdint>

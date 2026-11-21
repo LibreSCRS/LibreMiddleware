@@ -13,7 +13,6 @@
 #include <LibreSCRS_internal/LogNoexcept.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <apdu.h> // APDUCommand (lib/smartcard/src)
-#include <apdu.h>
 #include <smartcard/card_connection.h>
 
 // libopensc's OWN APDU (de)serialisers — the exact helpers reader-pcsc.c's

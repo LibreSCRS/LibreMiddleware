@@ -67,14 +67,8 @@ struct LIBRESCRS_INTERNAL CardSession::Impl
     std::vector<std::uint8_t> atr;
     std::uint64_t generation{Internal::nextCardSessionGeneration()};
 
-    // 4.1: cross-plugin secure-channel coordination state.
-    //
-    // shared_ptr (not unique_ptr) so that the SM-aware transmit funnel can
-    // snapshot the channel under the session mutex, release the mutex, and
-    // dispatch the transmit on a pinned pointer that survives a concurrent
-    // teardown on another thread. The session is the sole conceptual owner;
-    // shared_ptr is purely a lifetime-pinning vehicle for the snapshot.
-    std::shared_ptr<LibreSCRS::SecureChannel::ISecureChannel> activeChannel;
+    // Cross-plugin secure-channel coordination state. The session is the sole owner.
+    std::unique_ptr<LibreSCRS::SecureChannel::ISecureChannel> activeChannel;
     // SM protocol that established @ref activeChannel (after any BAC fallback).
     // Recorded at activation time alongside every makeActiveChannelHolder
     // return that hands back a live SM channel, and reset everywhere

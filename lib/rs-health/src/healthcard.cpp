@@ -4,7 +4,6 @@
 #include "healthcard.h"
 #include "health_protocol.h"
 #include "apdu.h"
-#include <apdu.h>
 #include <smartcard/card_connection.h>
 #include <smartcard/chunked_read.h>
 #include "date_format.h"

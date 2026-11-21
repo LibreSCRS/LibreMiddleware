@@ -27,10 +27,9 @@ namespace LibreSCRS::SmartCard {
 /// (PlainChannel / PaceChannel / BacChannel) consume this interface
 /// so they can be unit-tested without a real PC/SC stack.
 ///
-/// The full set of operations on a connection (transaction control,
-/// ATR retrieval, reconnect, etc.) intentionally stays on the
-/// concrete PCSCConnection; only the byte-level transmit primitive
-/// is abstracted here because that is the only seam channels need.
+/// Only the byte-level transmit primitive is abstracted here, because
+/// that is the only seam channels need; transaction control, ATR retrieval
+/// and reconnect are on CardConnection.
 class IConnection
 {
 public:
