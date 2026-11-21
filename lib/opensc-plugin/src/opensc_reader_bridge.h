@@ -63,12 +63,33 @@ struct OpenScBridge
     std::string readerName; // backs reader.name (stable)
 };
 
-/// Initialise @c bridge.reader as a librescrs-bridge reader bound to the
-/// connection in @c bridge.data. The reader is NOT appended to
-/// @c ctx->readers (its @c ctx is set directly and the OpenScBridge owns its
-/// lifetime). @c bridge.data.conn and @c bridge.readerName must already be
-/// populated. After this returns, call @c sc_connect_card(&bridge.reader,
-/// &card).
+/// Points @c bridge.data.conn at @p conn for one probe or one operation and
+/// clears it at the end. The bridge outlives both, but the card session the
+/// connection reaches may move or be destroyed in between, so it holds no
+/// connection while nothing runs.
+class ConnectionBinding
+{
+public:
+    ConnectionBinding(OpenScBridge& bridge, LibreSCRS::SmartCard::CardConnection& conn) noexcept : bridge(bridge)
+    {
+        bridge.data.conn = &conn;
+    }
+    ~ConnectionBinding()
+    {
+        bridge.data.conn = nullptr;
+    }
+    ConnectionBinding(const ConnectionBinding&) = delete;
+    ConnectionBinding& operator=(const ConnectionBinding&) = delete;
+
+private:
+    OpenScBridge& bridge;
+};
+
+/// Initialise @c bridge.reader as a librescrs-bridge reader. The reader is
+/// NOT appended to @c ctx->readers (its @c ctx is set directly and the
+/// OpenScBridge owns its lifetime). @c bridge.readerName must already be
+/// populated. After this returns, bind a connection (@ref ConnectionBinding)
+/// and call @c sc_connect_card(&bridge.reader, &card).
 void initBridgeReader(sc_context_t* ctx, OpenScBridge& bridge, std::span<const std::uint8_t> atr);
 
 } // namespace LibreSCRS::OpenSc::Bridge

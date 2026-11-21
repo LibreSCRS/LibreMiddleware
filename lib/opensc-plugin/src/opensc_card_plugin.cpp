@@ -15,7 +15,6 @@
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
 #include <LibreSCRS_internal/SecureChannel/SessionChannel.h>
 #include <apdu.h>
-#include <apdu.h>
 #include <smartcard/session_connection.h>
 
 #include <libopensc/opensc.h>
@@ -502,6 +501,11 @@ ChannelRunReport runUnderChannel(LibreSCRS::SmartCard::CardSession& cardSession,
     if (!opLock.owns_lock())
         opLock.lock();
 
+    // The bridge reaches the card through the session this operation was
+    // given, never one an earlier probe or operation saw.
+    LibreSCRS::SmartCard::SessionConnection connection(cardSession);
+    const LibreSCRS::OpenSc::Bridge::ConnectionBinding binding(*s.bridge, connection);
+
     std::optional<LibreSCRS::SmartCard::ActiveChannelHolder> holder;
     // The raw (non-PACE) branch held no transaction of ANY kind, so libopensc's
     // own sc_lock opened and closed one PER libopensc call through the bridge
@@ -544,11 +548,11 @@ ChannelRunReport runUnderChannel(LibreSCRS::SmartCard::CardSession& cardSession,
             heldChannel.emplace(cardSession);
             channel = &*heldChannel;
         }
-    } else if (s.bridge && s.bridge->data.conn && !s.bridge->data.conn->isTransactionHeld()) {
+    } else if (!connection.isTransactionHeld()) {
         // Guarded on isTransactionHeld(): CardTransaction is not re-entrant and
         // an outer owner (a host that already took one) must not be nested.
         try {
-            rawTxn.emplace(*s.bridge->data.conn);
+            rawTxn.emplace(connection);
         } catch (...) {
             // SCardBeginTransaction fails on a removed or reset card, an
             // unavailable reader and an exclusive claim by another process,
@@ -859,12 +863,19 @@ public:
 
             // Bind libopensc to the session's one card connection via the
             // bridge reader (ATR comes from the session — no extra
-            // SCardStatus).
-            session->connection = std::make_unique<LibreSCRS::SmartCard::SessionConnection>(cardSession);
+            // SCardStatus), for this probe only.
             session->bridge = std::make_unique<LibreSCRS::OpenSc::Bridge::OpenScBridge>();
-            session->bridge->data.conn = session->connection.get();
             session->bridge->readerName = cardSession.readerName();
             LibreSCRS::OpenSc::Bridge::initBridgeReader(ctx, *session->bridge, atr);
+            LibreSCRS::SmartCard::SessionConnection conn(cardSession);
+            std::optional<LibreSCRS::OpenSc::Bridge::ConnectionBinding> binding(std::in_place, *session->bridge, conn);
+            // Unbound before it is published: from then on an operation on
+            // another thread may bind its own session.
+            const auto publishClaim = [&] {
+                binding.reset();
+                publish(mapKey, std::move(session));
+                return true;
+            };
 
             const std::vector<std::uint8_t> aidBytes(pkcs15::kPkcs15Aid.begin(), pkcs15::kPkcs15Aid.end());
 
@@ -880,9 +891,9 @@ public:
                 // another provider's tunnel).
                 // A reader failure reads as 6F00, as the funnel this probe
                 // used to take answered it.
-                auto wrapped = [&cardSession](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd) {
+                auto wrapped = [&conn](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd) {
                     try {
-                        return LibreSCRS::SmartCard::SessionConnection(cardSession).transmit(cmd);
+                        return conn.transmit(cmd);
                     } catch (...) {
                         return LibreSCRS::SmartCard::Internal::APDUResponse{{}, 0x6F, 0x00};
                     }
@@ -903,8 +914,7 @@ public:
                 if (!claim)
                     return false;
                 session->requiresPace = true; // bind deferred to the channel run
-                publish(mapKey, std::move(session));
-                return true;
+                return publishClaim();
             }
 
             // Raw path (no live SM). The SELECT serves ONLY to detect the
@@ -913,7 +923,6 @@ public:
             // through to today's bind-probe (PIV and OpenPGP reject P2=0C
             // outright with 6A86, measured on hardware, yet bind fine through
             // their emulators; the claim stays "on bind success").
-            auto& conn = *session->connection;
             const auto resp = conn.transmit(LibreSCRS::SmartCard::Internal::selectByAID(aidBytes, /*p2=*/0x0C));
             if (!resp.isSuccess() && resp.statusWord() == 0x6982) {
                 auto raw = [&conn](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd) {
@@ -924,8 +933,7 @@ public:
                 if (!LibreSCRS::OpenSc::efDirAdvertisesAppletSuiteGen2(raw))
                     return false;
                 session->requiresPace = true; // bind deferred to the channel run
-                publish(mapKey, std::move(session));
-                return true;
+                return publishClaim();
             }
 
             int rc = sc_connect_card(&session->bridge->reader, &session->card);
@@ -948,8 +956,7 @@ public:
             const bool hasKey = !LibreSCRS::OpenSc::allObjectsOfType(session->p15card, SC_PKCS15_TYPE_PRKEY).empty();
             session->hasPKI = hasPin || hasKey;
 
-            publish(mapKey, std::move(session));
-            return true;
+            return publishClaim();
         } catch (...) {
             // A thrown PCSCError (card yanked mid-probe) must not cross the
             // plugin ABI boundary; the local shared_ptr released everything.

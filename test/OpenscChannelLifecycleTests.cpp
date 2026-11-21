@@ -41,6 +41,7 @@
 #include <apdu.h>
 #include <fake_channel.h>
 #include <pcsc_connection.h>
+#include <session_access.h>
 
 #include <LibreSCRS_internal/Crypto/DigestInfo.h>
 
@@ -366,8 +367,10 @@ TEST(OpenscProbeLiveSm, ReprobeErasesPredecessorGenerationsOfSameReader)
 namespace {
 
 /// Assembles an OpenSCSession the way the probe's deferred-claim branch
-/// does: a lease on a real plugin context + bridge bound to a detached
-/// connection, requiresPace set, bind deferred.
+/// does: a lease on a real plugin context + bridge, requiresPace set, bind
+/// deferred. The bridge is bound to the detached card session's connection
+/// for the tests that drive runWithChannelPtr directly; runUnderChannel binds
+/// the session it is given, so those tests pass @c session.
 struct DeferredSessionFixture
 {
     DeferredSessionFixture()
@@ -387,7 +390,8 @@ struct DeferredSessionFixture
 
     // Declared first so it outlives the session that leases it.
     LibreSCRS::OpenSc::PluginContext owner;
-    PCSCConnection conn{PCSCConnection::DetachedTag{}, "ChannelTestReader"};
+    std::shared_ptr<CardSession> session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("ChannelTestReader");
+    PCSCConnection& conn = LibreSCRS::SmartCard::Internal::connectionOf(*session);
     std::shared_ptr<OpenSCSession> s;
 };
 
@@ -408,13 +412,12 @@ TEST(OpenscChannelRun, ActivationFailureWithoutLiveChannelIsCredentialsRequired)
 {
     // No live channel, no cached CAN, no provider: activation reports
     // CredentialsRequired and the session state is untouched.
-    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("ChannelTestReader");
     DeferredSessionFixture f;
     f.s->bound = true; // simulate an already-bound session (spec obligation a)
 
     bool ran = false;
     const ChannelRunReport report =
-        LibreSCRS::OpenSc::runUnderChannel(*session, *f.s, CancelToken{}, [&](OpenSCSession&) { ran = true; });
+        LibreSCRS::OpenSc::runUnderChannel(*f.session, *f.s, CancelToken{}, [&](OpenSCSession&) { ran = true; });
     EXPECT_TRUE(report.activationFailed);
     EXPECT_EQ(report.activationError, ChannelActivationError::CredentialsRequired);
     EXPECT_FALSE(ran);
@@ -433,14 +436,13 @@ TEST(OpenscChannelRun, ActivationFailureWithoutLiveChannelIsCredentialsRequired)
 // runUnderChannel returns.
 TEST(OpenscChannelRun, RawBranchHoldsTheCardTransaction)
 {
-    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("ChannelTestReader");
     RawSessionFixture f;
 
     EXPECT_FALSE(f.conn.isTransactionHeld()) << "nothing held before the run";
 
     bool heldInsideFn = false;
     const ChannelRunReport report = LibreSCRS::OpenSc::runUnderChannel(
-        *session, *f.s, CancelToken{}, [&](OpenSCSession&) { heldInsideFn = f.conn.isTransactionHeld(); });
+        *f.session, *f.s, CancelToken{}, [&](OpenSCSession&) { heldInsideFn = f.conn.isTransactionHeld(); });
 
     EXPECT_FALSE(report.activationFailed) << "the raw branch never activates a channel";
     EXPECT_TRUE(report.ran) << "fn must have been reached";
@@ -458,7 +460,6 @@ TEST(OpenscChannelRun, RawBranchHoldsTheCardTransaction)
 // have -- and must land in two transactions, so the assertion discriminates.
 TEST(OpenscOperationPin, VerifyAndOperationShareOneCardTransaction)
 {
-    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("ChannelTestReader");
     RawSessionFixture f;
     int transaction = 0;
     f.conn.setDetachedTransactionReleaseObserver([&transaction] { ++transaction; });
@@ -471,7 +472,7 @@ TEST(OpenscOperationPin, VerifyAndOperationShareOneCardTransaction)
     Step operated;
     const LibreSCRS::Secure::String pin{std::string_view{"1234"}};
 
-    (void)LibreSCRS::OpenSc::runUnderChannel(*session, *f.s, CancelToken{}, [&](OpenSCSession&) {
+    (void)LibreSCRS::OpenSc::runUnderChannel(*f.session, *f.s, CancelToken{}, [&](OpenSCSession&) {
         (void)LibreSCRS::OpenSc::verifyThenRun(
             pin, /*perOperation=*/true,
             [&](const LibreSCRS::Secure::String&) {
@@ -488,9 +489,9 @@ TEST(OpenscOperationPin, VerifyAndOperationShareOneCardTransaction)
     Step first;
     Step second;
     (void)LibreSCRS::OpenSc::runUnderChannel(
-        *session, *f.s, CancelToken{}, [&](OpenSCSession&) { first = {f.conn.isTransactionHeld(), transaction}; });
+        *f.session, *f.s, CancelToken{}, [&](OpenSCSession&) { first = {f.conn.isTransactionHeld(), transaction}; });
     (void)LibreSCRS::OpenSc::runUnderChannel(
-        *session, *f.s, CancelToken{}, [&](OpenSCSession&) { second = {f.conn.isTransactionHeld(), transaction}; });
+        *f.session, *f.s, CancelToken{}, [&](OpenSCSession&) { second = {f.conn.isTransactionHeld(), transaction}; });
     EXPECT_NE(first.transaction, second.transaction) << "rig regression: two calls no longer mean two transactions";
 }
 
@@ -622,14 +623,13 @@ TEST(OpenscOperations, EmptyPinCredentialKeepsTheSessionClaim)
 // escaping exception.
 TEST(OpenscChannelRun, RawTransactionFailureIsContainedNotPropagated)
 {
-    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("ChannelTestReader");
     RawSessionFixture f;
     f.conn.setDetachedTransactionFailure(SCARD_E_SHARING_VIOLATION);
 
     bool heldInsideFn = false;
     ChannelRunReport report;
     ASSERT_NO_THROW(
-        report = LibreSCRS::OpenSc::runUnderChannel(*session, *f.s, CancelToken{},
+        report = LibreSCRS::OpenSc::runUnderChannel(*f.session, *f.s, CancelToken{},
                                                     [&](OpenSCSession&) { heldInsideFn = f.conn.isTransactionHeld(); }))
         << "the operation must run, not end on the failed acquisition";
     EXPECT_TRUE(report.ran) << "the operation still runs; the bridge falls back to its own per-call transaction";
@@ -649,7 +649,6 @@ TEST(OpenscChannelRun, RawTransactionFailureIsContainedNotPropagated)
 // to clear.
 TEST(OpenscChannelRun, RawTransactionIsReleasedBeforeCardStateReset)
 {
-    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("ChannelTestReader");
     RawSessionFixture f;
 
     bool observedRelease = false;
@@ -662,7 +661,7 @@ TEST(OpenscChannelRun, RawTransactionIsReleasedBeforeCardStateReset)
     // A throwing fn is what drives the teardown: the exception is contained,
     // the operation is reported as failed, and resetCardState() runs.
     const ChannelRunReport report = LibreSCRS::OpenSc::runUnderChannel(
-        *session, *f.s, CancelToken{}, [](OpenSCSession&) { throw std::runtime_error("fn"); });
+        *f.session, *f.s, CancelToken{}, [](OpenSCSession&) { throw std::runtime_error("fn"); });
 
     EXPECT_TRUE(report.ran) << "fn must have been reached";
     EXPECT_TRUE(report.bindFailed) << "a throwing fn is reported as a failed operation";
@@ -964,6 +963,32 @@ TEST(OpenscOperations, DeferredClaimWithoutChannelOrCanIsTyped)
     // getPINList has no error channel: an activation failure yields the empty
     // list (the only representable outcome on this surface).
     EXPECT_TRUE(h.plugin->getPINList(*live.session).empty());
+}
+
+// A CardSession is movable and its claim follows it (the key is the reader
+// and the generation, both of which move). The bind of the first operation
+// must reach the card through the session the operation is given, not the
+// object the probe saw: the moved-from one has no connection.
+TEST(OpenscOperations, AnOperationOnASessionMovedAfterTheProbeReachesTheCard)
+{
+    PluginHandle h;
+
+    LiveSmSession control("MovedSessionControl");
+    control.channel->transmitHandler = [](const APDUCommand&) { return sw(0x90, 0x00); };
+    ASSERT_TRUE(h.plugin->canHandleConnection(kTestAtr, *control.session));
+    const int controlBefore = control.channel->transmits();
+    (void)h.plugin->readCard(*control.session);
+    ASSERT_GT(control.channel->transmits(), controlBefore) << "rig: the bind sends nothing even without a move";
+
+    LiveSmSession live("MovedSessionReader");
+    live.channel->transmitHandler = [](const APDUCommand&) { return sw(0x90, 0x00); };
+    ASSERT_TRUE(h.plugin->canHandleConnection(kTestAtr, *live.session));
+    const int before = live.channel->transmits();
+
+    CardSession moved{std::move(*live.session)};
+    (void)h.plugin->readCard(moved);
+    EXPECT_GT(live.channel->transmits(), before) << "the bind went to the moved-from session";
+    h.plugin->clearCredentials(moved);
 }
 
 TEST(OpenscOperations, EcdsaInputOfAWrongLengthIsRefusedBeforeAnyChannelWork)
@@ -1465,13 +1490,12 @@ TEST(OpenscEcdh, PerOperationKeyWithoutAPinNeverDerives)
 // deposited PIN's VERIFY runs too (OpenscOperationPin above).
 TEST(OpenscEcdh, DeriveRunsInsideTheCardTransaction)
 {
-    auto cardSession = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("ChannelTestReader");
     RawSessionFixture f;
     EcKeyObject key(384);
     bool held = false;
     LibreSCRS::Plugin::DecipherResult result;
 
-    (void)LibreSCRS::OpenSc::runUnderChannel(*cardSession, *f.s, CancelToken{}, [&](OpenSCSession& s) {
+    (void)LibreSCRS::OpenSc::runUnderChannel(*f.session, *f.s, CancelToken{}, [&](OpenSCSession& s) {
         (void)LibreSCRS::OpenSc::deriveEcdhBound(
             s, key.object, kCardEcdh, uncompressedPoint(48), result,
             [&](unsigned long, const std::uint8_t*, std::size_t, std::uint8_t* out, std::size_t* outLength) {

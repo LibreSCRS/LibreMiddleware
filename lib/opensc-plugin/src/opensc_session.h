@@ -27,8 +27,6 @@
 #include <LibreSCRS/SecureChannel/ChannelErrors.h>
 #include <LibreSCRS_internal/Crypto/CleanseGuard.h>
 
-#include <smartcard/card_connection.h>
-
 #include <libopensc/opensc.h>
 #include <libopensc/pkcs15.h>
 
@@ -165,15 +163,11 @@ struct OpenSCSession
     /// @guarded_by opMutex
     LibreSCRS::Secure::String operationPin;
 
-    /// The card session's connection as the bridge reaches it: through the
-    /// session's public calls (smartcard/session_connection.h). Declared
-    /// before @ref bridge, which points at it, so it outlives the bridge.
-    std::unique_ptr<LibreSCRS::SmartCard::CardConnection> connection;
-
     /// Single-session bridge: owns the librescrs-bridge sc_reader + its
-    /// private data at a stable heap address. Holds no PC/SC connection of
-    /// its own — it routes libopensc through @ref connection (raw branch) or
-    /// through a live secure channel (tunnel branch).
+    /// private data at a stable heap address. Holds no connection of its
+    /// own — each probe and operation binds the card session it was given
+    /// (raw branch), or a live secure channel (tunnel branch), for its
+    /// duration only.
     std::unique_ptr<LibreSCRS::OpenSc::Bridge::OpenScBridge> bridge;
 
     /// Partial teardown: tears down ONLY @ref p15card (unbind) and @ref card
