@@ -66,9 +66,9 @@ Notable user-visible changes per release. Format follows
   added; a source that failed in any part is tried again on the next call.
   After each phase of the signing engine's Trusted List loading, whatever its
   outcome, `SigningService::sign` has the service adopt from the cache
-  directory the two share: every list the engine verified reaches the store -- with a List
-  of Trusted Lists, the lists that verified even when one is unreachable --
-  a list is downloaded once, and a list that failed is tried again on a later
+  directory the two share: every list the engine verified reaches the store
+  -- with a List of Trusted Lists, the lists that verified even when one is
+  unreachable -- a list is downloaded once, and a list that failed is tried again on a later
   signature. The anchors reach the store through the service that owns it,
   where the signing engine used to merge them into that store itself.
   Without a configured `cacheDirectory` the service keeps a private one for

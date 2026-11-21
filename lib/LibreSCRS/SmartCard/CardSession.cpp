@@ -389,10 +389,7 @@ constexpr int kSmActivationMaxAttempts = 3;
 // and reports @c ChannelState::Open the APDU is dispatched through the
 // channel (which wraps + unwraps under the current SM tunnel); otherwise
 // the APDU is sent plain through @p conn. Anonymous-namespace static
-// linkage keeps the helper out of the dynamic symbol table — its previous
-// public-internal incarnation (@c LibreSCRS::SmartCard::Internal::
-// sessionTransmitImpl, exported by the version script) is gone in 5.0
-// along with the free-function transmit funnel.
+// linkage keeps the helper out of the dynamic symbol table.
 LibreSCRS::SmartCard::Internal::APDUResponse
 dispatchOverChannelOrConn(LibreSCRS::SecureChannel::ISecureChannel* activeChannel,
                           LibreSCRS::SmartCard::Internal::PCSCConnection& conn,

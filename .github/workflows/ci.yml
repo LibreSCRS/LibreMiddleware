@@ -565,18 +565,3 @@ jobs:
         # build-and-run.sh drives the full install -> consumer-configure
         # -> build -> run cycle and exits ==> OK on success.
         run: bash examples/sdk-consumer-config/build-and-run.sh
-
-      - name: Build and install to the system prefix
-        # Its own step with its own ceiling: the vendored OpenSC autotools
-        # build does not fit inside a gate's budget, and when a step fails its
-        # name should say which half failed. LIBRESCRS_VENDOR_OPENSC=OFF
-        # because the export check below does not need the OpenSC card plugin
-        # it adds.
-        timeout-minutes: 30
-        run: |
-          cmake -B build-install -G Ninja -DCMAKE_BUILD_TYPE=Release \
-                -DBUILD_TESTING=OFF -DLIBRESCRS_VENDOR_OPENSC=OFF \
-                -DCMAKE_INSTALL_PREFIX=/usr
-          cmake --build build-install -j4
-          sudo cmake --install build-install
-

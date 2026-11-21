@@ -42,8 +42,8 @@ target_compile_definitions(bench_parsed_cert PRIVATE
 # ---------------------------------------------------------------------------
 # The benchmark drives the LM-internal TrustStoreInternalAccess::makeStore
 # seam, which is intentionally *not* exported from libLibreSCRS_Trust.so
-# (only mergeTrustedListAnchors carries LIBRESCRS_PUBLIC_API; makeStore stays
-# hidden under -fvisibility=hidden — see TrustStoreInternalAccess.h). Under
+# (the TrustStoreInternalAccess seams, makeStore and mergeTrustedListAnchors,
+# are hidden under -fvisibility=hidden — see TrustStoreInternalAccess.h). Under
 # the SHARED LM build (default since the 4.2 minimal-API-surface wave) a
 # consumer that merely links the .so cannot resolve the hidden makeStore.
 # Mirror the established test/Trust/bundled_certs_walker_test pattern: compile

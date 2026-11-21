@@ -436,17 +436,19 @@ recorded_surface() {
 # Measured on this tree when the rule was written: the T sets of all seven core
 # libraries match the recorded surface exactly, 0 extra and 0 missing.
 #
-# The W/V half below stays a spelling check, kept for the macOS leg: the public
-# entity rule of abi-snapshot.sh refuses a W/V export of an internal entity too.
+# The W/V half below stays a spelling check. On Linux abi-snapshot.sh refuses a
+# W/V export of an internal entity from a core library too; this pass is the
+# only internal-export check for plugin images.
 # Weak, vague-linkage or unique exports (W, V, u) of an internal entity: a
 # function or object under Internal:: or a project *_detail:: namespace, or a
 # lambda's operator or guard. Such a symbol is an inline or template
 # instantiation the linker exported because nothing hid it; the next library
 # that instantiates the same name binds to whichever copy loaded first.
-# Excluded: vtables and typeinfo, which abi-snapshot.sh judges against the
-# installed headers like every other export. A standard-library entity such as std::__detail is not this rule's
-# subject: foreign_weak_exports below refuses every one of them. Read from the
-# dynamic table: what a consumer can bind to.
+# Excluded: vtables and typeinfo. For a core library abi-snapshot.sh judges
+# them against the installed headers like every other export; a plugin's are
+# judged by neither gate. A standard-library entity such as std::__detail is
+# not this rule's subject: foreign_weak_exports below refuses every one of
+# them. Read from the dynamic table: what a consumer can bind to.
 internal_weak_exports() {
     local so="$1"
     nm -D -U "$so" 2>/dev/null \
