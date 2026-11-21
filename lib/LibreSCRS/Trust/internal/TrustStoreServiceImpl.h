@@ -71,10 +71,9 @@ struct LIBRESCRS_INTERNAL TrustStoreService::Impl
     bool fetchAndMerge(const libresign::TrustedListEntry& entry, LibreSCRS::CancelToken token,
                        bool cacheOnly = false) const;
 
-    /// Every source of @p which not loaded yet, from the cache alone when
-    /// @p cacheOnly (adoptCachedTrustedLists()); the tests also take the
-    /// download path.
-    void loadSources(Sources which, LibreSCRS::CancelToken token, bool cacheOnly) noexcept;
+    /// Every source of @p which not loaded yet, from the cache alone
+    /// (adoptCachedTrustedLists()); nothing is downloaded.
+    void loadSources(Sources which) noexcept;
 
     /// @brief Records @p url as loaded.
     void markLoaded(const std::string& url);

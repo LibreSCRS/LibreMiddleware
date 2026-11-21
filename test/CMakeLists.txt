@@ -400,7 +400,6 @@ target_link_libraries(TrustStoreServiceTests PRIVATE
     LibreSCRS::Signing
     OpenSSL_Crypto
 )
-target_compile_definitions(TrustStoreServiceTests PRIVATE CMAKE_SOURCE_DIR="${LibreMiddleware_SOURCE_DIR}")
 gtest_discover_tests(TrustStoreServiceTests)
 
 # TrustStoreService — Trusted List loading against lists served on loopback,

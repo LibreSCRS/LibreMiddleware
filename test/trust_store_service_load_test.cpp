@@ -41,12 +41,13 @@
 namespace tt = LibreSCRS::Trust;
 
 // =============================================================================
-// Loading: the configured sources reach the store through the
-// service, a source that failed in any part is tried again, and a list the
-// cache already holds is not downloaded again. A loopback server serves the
-// signed synthetic list and counts the downloads; the service's test copy is
-// told the list's test signing certificate (the public configuration names
-// none for a loopback URL, and no pinned certificate covers it).
+// Loading: the eager worker downloads a configured source into the cache and
+// merges its anchors; adoptCachedTrustedLists() brings in what the cache holds
+// without a download, and a source that failed stays pending. A loopback
+// server serves the signed synthetic list and counts the downloads; the
+// service's test copy is told the list's test signing certificate (the public
+// configuration names none for a loopback URL, and no pinned certificate
+// covers it).
 // =============================================================================
 
 namespace {
@@ -84,12 +85,13 @@ struct TrustedListRig
         src.eager = eager;
         cfg.trustedListSources.push_back(src);
         cfg.cacheDirectory = std::move(cacheDir);
+        // Named before create(): the eager worker starts there.
+        if (knowsTheSigner)
+            teachTheSigner();
         auto result = tt::TrustStoreService::create(std::move(cfg));
         EXPECT_TRUE(result.has_value());
         if (!result)
             return nullptr;
-        if (knowsTheSigner)
-            teachTheSigner();
         return *result;
     }
 
@@ -109,138 +111,13 @@ struct TrustedListRig
     std::vector<std::filesystem::path> dirs;
 };
 
-// The service's download path: what the eager fetch at construction runs,
-// for the sources of @p which not loaded yet.
-void load(tt::TrustStoreService& svc, tt::TrustStoreService::Sources which, LibreSCRS::CancelToken token = {})
+// Waits for the eager workers started at construction to finish.
+void awaitWorkers(tt::TrustStoreService& svc)
 {
-    tt::detail::TrustStoreServiceAccess::impl(svc).loadSources(which, std::move(token), /*cacheOnly=*/false);
+    for (auto& worker : tt::detail::TrustStoreServiceAccess::impl(svc).workers)
+        if (worker.joinable())
+            worker.join();
 }
-
-std::size_t anchorCount(tt::TrustStoreService& svc)
-{
-    return svc.trustStore()->enumerableAnchors().size();
-}
-
-} // namespace
-
-TEST(TrustStoreServiceTest, ADeferredListsAnchorsReachTheStore)
-{
-    TrustedListRig rig;
-    auto svc = rig.service(/*eager=*/false, rig.cache("deferred"));
-    ASSERT_NE(svc, nullptr);
-    const auto before = anchorCount(*svc);
-    EXPECT_EQ(rig.server.servedCount(), 0) << "a deferred source is left alone at construction";
-
-    load(*svc, tt::TrustStoreService::Sources::All);
-    EXPECT_EQ(rig.server.servedCount(), 1);
-    EXPECT_GT(anchorCount(*svc), before) << "the verified list's anchors are in the store";
-
-    const auto after = anchorCount(*svc);
-    load(*svc, tt::TrustStoreService::Sources::All);
-    EXPECT_EQ(rig.server.servedCount(), 1) << "a loaded source is not fetched again";
-    EXPECT_EQ(anchorCount(*svc), after);
-}
-
-TEST(TrustStoreServiceTest, AFailedLoadIsTriedAgain)
-{
-    TrustedListRig rig;
-    // The list does not verify (the service has no certificate for it yet):
-    // nothing reaches the store, and the source stays pending.
-    auto svc = rig.service(/*eager=*/false, rig.cache("retry"), /*knowsTheSigner=*/false);
-    ASSERT_NE(svc, nullptr);
-    const auto before = anchorCount(*svc);
-    load(*svc, tt::TrustStoreService::Sources::All);
-    EXPECT_EQ(anchorCount(*svc), before);
-
-    TrustedListRig::teachTheSigner();
-    load(*svc, tt::TrustStoreService::Sources::All);
-    EXPECT_GT(anchorCount(*svc), before) << "the failed source was tried again and loaded";
-}
-
-TEST(TrustStoreServiceTest, ACancelledLoadFetchesNothingAndIsTriedAgain)
-{
-    TrustedListRig rig;
-    auto svc = rig.service(/*eager=*/false, rig.cache("cancel"));
-    ASSERT_NE(svc, nullptr);
-    const auto before = anchorCount(*svc);
-    LibreSCRS::CancelSource cancel;
-    cancel.requestCancel();
-
-    load(*svc, tt::TrustStoreService::Sources::All, cancel.token());
-    EXPECT_EQ(rig.server.servedCount(), 0);
-
-    load(*svc, tt::TrustStoreService::Sources::All);
-    EXPECT_EQ(rig.server.servedCount(), 1);
-    EXPECT_GT(anchorCount(*svc), before);
-}
-
-TEST(TrustStoreServiceTest, AnEagerSourceWhoseBackgroundFetchFailedIsLoadedLater)
-{
-    TrustedListRig rig;
-    // Built without the certificate: the background fetch cannot verify.
-    auto svc = rig.service(/*eager=*/true, rig.cache("eager"), /*knowsTheSigner=*/false);
-    ASSERT_NE(svc, nullptr);
-    const auto before = anchorCount(*svc);
-    TrustedListRig::teachTheSigner();
-
-    load(*svc, tt::TrustStoreService::Sources::Eager);
-    EXPECT_GT(anchorCount(*svc), before) << "the eager source the background fetch missed is in the store";
-}
-
-TEST(TrustStoreServiceTest, AListTheCacheHoldsIsNotDownloadedAgain)
-{
-    // What the signing engine downloads goes to the cache the two share; the
-    // service adopts it from there.
-    TrustedListRig rig;
-    const auto shared = rig.cache("shared");
-    auto first = rig.service(/*eager=*/false, shared);
-    ASSERT_NE(first, nullptr);
-    load(*first, tt::TrustStoreService::Sources::All);
-    ASSERT_EQ(rig.server.servedCount(), 1);
-
-    auto second = rig.service(/*eager=*/false, shared);
-    ASSERT_NE(second, nullptr);
-    const auto before = anchorCount(*second);
-    load(*second, tt::TrustStoreService::Sources::All);
-    EXPECT_EQ(rig.server.servedCount(), 1) << "read from the cache, not downloaded";
-    EXPECT_GT(anchorCount(*second), before);
-}
-
-TEST(TrustStoreServiceTest, WithoutACacheDirectoryTheServiceKeepsItsOwn)
-{
-    TrustedListRig rig;
-    std::filesystem::path privateDir;
-    {
-        auto svc = rig.service(/*eager=*/false, std::nullopt);
-        ASSERT_NE(svc, nullptr);
-        ASSERT_TRUE(svc->config().cacheDirectory.has_value())
-            << "the engine needs a directory to share with the service";
-        privateDir = *svc->config().cacheDirectory;
-        EXPECT_TRUE(std::filesystem::is_directory(privateDir));
-        load(*svc, tt::TrustStoreService::Sources::All);
-        EXPECT_EQ(rig.server.servedCount(), 1);
-    }
-    EXPECT_FALSE(std::filesystem::exists(privateDir)) << "the private cache goes with the service";
-}
-
-// =============================================================================
-TEST(TrustStoreServiceTest, AdoptingFromTheCacheDownloadsNothing)
-{
-    TrustedListRig rig;
-    auto svc = rig.service(/*eager=*/false, rig.cache("cache-only"));
-    ASSERT_NE(svc, nullptr);
-    const auto before = anchorCount(*svc);
-
-    svc->adoptCachedTrustedLists(tt::TrustStoreService::Sources::All);
-    EXPECT_EQ(rig.server.servedCount(), 0) << "a list the cache does not hold is not downloaded";
-    EXPECT_EQ(anchorCount(*svc), before);
-
-    load(*svc, tt::TrustStoreService::Sources::All);
-    EXPECT_EQ(rig.server.servedCount(), 1) << "the source stayed pending";
-    EXPECT_GT(anchorCount(*svc), before);
-}
-
-namespace {
 
 std::vector<std::uint8_t> fixtureBytes(const std::string& name)
 {
@@ -253,6 +130,137 @@ void putInCache(const std::filesystem::path& dir, const std::string& url, const 
 {
     libresign::TlCache(dir.string()).store(url, bytes, "", "");
 }
+
+std::size_t anchorCount(tt::TrustStoreService& svc)
+{
+    return svc.trustStore()->enumerableAnchors().size();
+}
+
+// The anchors a service holds before any Trusted List source joins.
+std::size_t bundledAnchorCount()
+{
+    auto bare = tt::TrustStoreService::create(tt::TrustConfig{});
+    return bare ? anchorCount(**bare) : 0;
+}
+
+} // namespace
+
+TEST(TrustStoreServiceTest, AnEagerSourceIsDownloadedAndMergedInTheBackground)
+{
+    TrustedListRig rig;
+    const auto cache = rig.cache("eager");
+    auto svc = rig.service(/*eager=*/true, cache);
+    ASSERT_NE(svc, nullptr);
+    awaitWorkers(*svc);
+    EXPECT_EQ(rig.server.servedCount(), 1);
+    EXPECT_GT(anchorCount(*svc), bundledAnchorCount()) << "the verified list's anchors are in the store";
+
+    const auto after = anchorCount(*svc);
+    svc->adoptCachedTrustedLists(tt::TrustStoreService::Sources::Eager);
+    EXPECT_EQ(rig.server.servedCount(), 1) << "a loaded source is not fetched again";
+    EXPECT_EQ(anchorCount(*svc), after);
+}
+
+TEST(TrustStoreServiceTest, AnEagerSourceThatDoesNotVerifyAddsNothing)
+{
+    TrustedListRig rig;
+    // The service has no certificate for the list: the worker's fetch fails.
+    auto svc = rig.service(/*eager=*/true, rig.cache("eager-unverified"), /*knowsTheSigner=*/false);
+    ASSERT_NE(svc, nullptr);
+    awaitWorkers(*svc);
+    EXPECT_EQ(rig.server.servedCount(), 1);
+    EXPECT_EQ(anchorCount(*svc), bundledAnchorCount());
+}
+
+TEST(TrustStoreServiceTest, ADeferredListsAnchorsReachTheStoreFromTheCache)
+{
+    TrustedListRig rig;
+    const auto cache = rig.cache("deferred");
+    auto svc = rig.service(/*eager=*/false, cache);
+    ASSERT_NE(svc, nullptr);
+    const auto before = anchorCount(*svc);
+    EXPECT_EQ(rig.server.servedCount(), 0) << "a deferred source is left alone at construction";
+
+    putInCache(cache, rig.server.url(), fixtureBytes("synthetic-tl.xml"));
+    svc->adoptCachedTrustedLists(tt::TrustStoreService::Sources::Eager);
+    EXPECT_EQ(anchorCount(*svc), before) << "a deferred source is outside Sources::Eager";
+
+    svc->adoptCachedTrustedLists(tt::TrustStoreService::Sources::All);
+    EXPECT_GT(anchorCount(*svc), before) << "the verified list's anchors are in the store";
+    EXPECT_EQ(rig.server.servedCount(), 0) << "nothing is downloaded";
+
+    const auto after = anchorCount(*svc);
+    svc->adoptCachedTrustedLists(tt::TrustStoreService::Sources::All);
+    EXPECT_EQ(anchorCount(*svc), after);
+}
+
+TEST(TrustStoreServiceTest, AFailedAdoptionIsTriedAgain)
+{
+    TrustedListRig rig;
+    const auto cache = rig.cache("retry");
+    // The list does not verify (the service has no certificate for it yet):
+    // nothing reaches the store, and the source stays pending.
+    auto svc = rig.service(/*eager=*/false, cache, /*knowsTheSigner=*/false);
+    ASSERT_NE(svc, nullptr);
+    const auto before = anchorCount(*svc);
+    putInCache(cache, rig.server.url(), fixtureBytes("synthetic-tl.xml"));
+    svc->adoptCachedTrustedLists(tt::TrustStoreService::Sources::All);
+    EXPECT_EQ(anchorCount(*svc), before);
+
+    TrustedListRig::teachTheSigner();
+    svc->adoptCachedTrustedLists(tt::TrustStoreService::Sources::All);
+    EXPECT_GT(anchorCount(*svc), before) << "the failed source was tried again and loaded";
+}
+
+TEST(TrustStoreServiceTest, AListTheCacheHoldsIsNotDownloadedAgain)
+{
+    // The eager worker downloads into the cache the engine shares with the
+    // service; a second service over that cache adopts the list from it.
+    TrustedListRig rig;
+    const auto shared = rig.cache("shared");
+    auto first = rig.service(/*eager=*/true, shared);
+    ASSERT_NE(first, nullptr);
+    awaitWorkers(*first);
+    ASSERT_EQ(rig.server.servedCount(), 1);
+
+    auto second = rig.service(/*eager=*/false, shared);
+    ASSERT_NE(second, nullptr);
+    const auto before = anchorCount(*second);
+    second->adoptCachedTrustedLists(tt::TrustStoreService::Sources::All);
+    EXPECT_EQ(rig.server.servedCount(), 1) << "read from the cache, not downloaded";
+    EXPECT_GT(anchorCount(*second), before);
+}
+
+TEST(TrustStoreServiceTest, WithoutACacheDirectoryTheServiceKeepsItsOwn)
+{
+    TrustedListRig rig;
+    std::filesystem::path privateDir;
+    {
+        auto svc = rig.service(/*eager=*/true, std::nullopt);
+        ASSERT_NE(svc, nullptr);
+        ASSERT_TRUE(svc->config().cacheDirectory.has_value())
+            << "the engine needs a directory to share with the service";
+        privateDir = *svc->config().cacheDirectory;
+        EXPECT_TRUE(std::filesystem::is_directory(privateDir));
+        awaitWorkers(*svc);
+        EXPECT_EQ(rig.server.servedCount(), 1);
+    }
+    EXPECT_FALSE(std::filesystem::exists(privateDir)) << "the private cache goes with the service";
+}
+
+TEST(TrustStoreServiceTest, AdoptingFromTheCacheDownloadsNothing)
+{
+    TrustedListRig rig;
+    auto svc = rig.service(/*eager=*/false, rig.cache("cache-only"));
+    ASSERT_NE(svc, nullptr);
+    const auto before = anchorCount(*svc);
+
+    svc->adoptCachedTrustedLists(tt::TrustStoreService::Sources::All);
+    EXPECT_EQ(rig.server.servedCount(), 0) << "a list the cache does not hold is not downloaded";
+    EXPECT_EQ(anchorCount(*svc), before);
+}
+
+namespace {
 
 // An address nothing listens on: a fetch from it fails at once.
 std::string deadUrl()
@@ -306,9 +314,7 @@ TEST(TrustStoreServiceTest, ASignatureBringsInTheListsThatVerifiedAndKeepsTheFai
     // The background fetch at construction finds nothing (the cache is empty,
     // the address dead); let it finish so the anchors below can only come
     // from the signature.
-    for (auto& worker : tt::detail::TrustStoreServiceAccess::impl(*service).workers)
-        if (worker.joinable())
-            worker.join();
+    awaitWorkers(*service);
     const auto before = anchorCount(*service);
 
     auto tampered = fixtureBytes("second-ca-tl.xml");

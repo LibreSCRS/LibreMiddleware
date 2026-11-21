@@ -188,7 +188,7 @@ TrustStoreService::TrustStoreService(TrustConfig cfg) : d(std::make_shared<Impl>
     (void)workerCount;
 }
 
-void TrustStoreService::Impl::loadSources(Sources which, LibreSCRS::CancelToken token, bool cacheOnly) noexcept
+void TrustStoreService::Impl::loadSources(Sources which) noexcept
 {
     try {
         std::lock_guard lock(loadMutex);
@@ -197,10 +197,8 @@ void TrustStoreService::Impl::loadSources(Sources which, LibreSCRS::CancelToken 
                 continue;
             if (loadedSources.contains(src.url))
                 continue; // its anchors are in the store
-            if (token.isCancelled())
-                return;
             try {
-                if (fetchAndMerge(entryFor(src), token, cacheOnly))
+                if (fetchAndMerge(entryFor(src), {}, /*cacheOnly=*/true))
                     loadedSources.insert(src.url);
             } catch (...) {
                 // A list whose fetch throws (a malformed document, an
@@ -216,7 +214,7 @@ void TrustStoreService::Impl::loadSources(Sources which, LibreSCRS::CancelToken 
 
 void TrustStoreService::adoptCachedTrustedLists(Sources which) noexcept
 {
-    d->loadSources(which, {}, /*cacheOnly=*/true);
+    d->loadSources(which);
 }
 
 TrustStoreService::~TrustStoreService()

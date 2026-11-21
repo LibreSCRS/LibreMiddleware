@@ -11,7 +11,6 @@
 ///        internal worker threads; their anchors join the store as they
 ///        arrive.
 
-#include <LibreSCRS/CancelToken.h>
 #include <LibreSCRS/Export.h>
 #include <LibreSCRS/LocalizedText.h>
 #include <LibreSCRS/Trust/TrustConfig.h>
@@ -162,8 +161,8 @@ public:
     /// within its lifetime, and that verifies has its anchors merged -- for a
     /// List of Trusted Lists, each list it points to on its own, so one list
     /// missing from the cache does not keep the others out. A source with a
-    /// list missing or failing stays pending: a later call of either kind
-    /// takes it again. Without a cache directory nothing is adopted.
+    /// list missing or failing stays pending: a later call takes it
+    /// again. Without a cache directory nothing is adopted.
     ///
     /// @ref Signing::SigningService::sign calls it after each phase of the
     /// signing engine's Trusted List loading -- @ref Sources::Eager after the
@@ -176,6 +175,13 @@ public:
     /// @param which Which sources to take.
     /// @par Thread-safety
     /// Safe to call from several threads; calls run one after another.
+    /// @par Example
+    /// A host that starts with the lists an earlier run cached takes them
+    /// without a download:
+    /// @code
+    /// service->adoptCachedTrustedLists(TrustStoreService::Sources::All);
+    /// auto anchors = service->trustStore()->enumerableAnchors();
+    /// @endcode
     /// @since 5.0
     void adoptCachedTrustedLists(Sources which) noexcept;
 

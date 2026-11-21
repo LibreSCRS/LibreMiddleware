@@ -25,7 +25,6 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 
-#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -301,6 +300,7 @@ TEST(TrustStoreServiceTest, ConstructionDoesNotBlockOnSlowDns)
         << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << " ms";
 }
 
+// =============================================================================
 // Compile-time check: SigningService::trustStore() must not exist anymore.
 // =============================================================================
 

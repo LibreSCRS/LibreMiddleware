@@ -6,15 +6,9 @@
 /// @brief Declarative activation descriptor a plugin publishes; the readCard
 ///        NVI wrapper acquires the channel it describes.
 
-#include <LibreSCRS/CancelToken.h>
-#include <LibreSCRS/Export.h>
-#include <LibreSCRS/SecureChannel/ChannelErrors.h>
-#include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
-#include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/SmProtocolRequest.h>
 
-#include <expected>
 #include <optional>
 
 namespace LibreSCRS::Plugin {
