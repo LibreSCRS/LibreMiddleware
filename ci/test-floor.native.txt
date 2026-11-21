@@ -13,7 +13,7 @@ CancellationNviTests 4
 CardPluginContainmentTests 8
 CardPluginDecipherDefaultTest 2
 CardSessionApiInvariantTest 1
-CardSessionByteTransportTest 28
+CardSessionByteTransportTest 35
 CardSessionOpenTests 4
 CrossBackendTests 1
 CrossProviderCoordinationTests 7
@@ -23,7 +23,7 @@ DecipherTypesTest 3
 DocpParserTests 4
 ECSigningTests 9
 EMRTDCryptoTests 262
-EMRTDPluginTests 70
+EMRTDPluginTests 71
 EMRTDTests 20
 EfDirTests 3
 EmrtdCardReadTests 3

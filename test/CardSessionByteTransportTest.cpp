@@ -12,6 +12,7 @@
 /// channel counts what the secure-messaging path carries.
 
 #include <LibreSCRS/CancelToken.h>
+#include <LibreSCRS/SecureChannel/ChannelErrors.h>
 #include <LibreSCRS/Plugin/SessionKey.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS/SmartCard/detail/ChannelInjection.h>
@@ -23,9 +24,11 @@
 #include <session_access.h>
 #include <smartcard/session_connection.h>
 #include <LibreSCRS_internal/SecureChannel/SessionChannel.h>
+#include <LibreSCRS_internal/SecureChannel/detail/ChannelStateMutator.h>
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -40,10 +43,12 @@
 
 namespace {
 
+using LibreSCRS::SecureChannel::ChannelActivationError;
 using LibreSCRS::SecureChannel::ChannelState;
 using LibreSCRS::SecureChannel::TestSupport::FakeChannel;
 using LibreSCRS::SmartCard::ActiveChannelHolder;
 using LibreSCRS::SmartCard::AppletAid;
+using LibreSCRS::SmartCard::BacRequest;
 using LibreSCRS::SmartCard::CardSession;
 using LibreSCRS::SmartCard::PaceRequest;
 using LibreSCRS::SmartCard::SmProtocolRequest;
@@ -54,6 +59,8 @@ using LibreSCRS::SmartCard::Testing::SessionAccess;
 using Bytes = std::vector<std::uint8_t>;
 
 const AppletAid kAid{0xA0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01};
+const AppletAid kOtherAid{0xA0, 0x00, 0x00, 0x00, 0x63, 0x50, 0x4B, 0x43, 0x53, 0x2D, 0x31, 0x35};
+const Bytes kSelectMf{0x00, 0xA4, 0x00, 0x0C, 0x02, 0x3F, 0x00};
 
 // SELECT by AID with an Le: a case 4 command.
 const Bytes kSelect{0x00, 0xA4, 0x04, 0x00, 0x02, 0x3F, 0x00, 0x00};
@@ -113,6 +120,25 @@ protected:
         auto* observer = channel.get();
         ChannelInjector::installForTesting(*session, std::move(channel), std::move(recorded));
         return observer;
+    }
+
+    // Plain SELECTs of @p aid by DF name.
+    [[nodiscard]] int plainSelectsOf(const AppletAid& aid) const
+    {
+        int count = 0;
+        for (const auto& c : plainCommands) {
+            if (c.size() >= 5 + aid.size() && c[1] == 0xA4 && c[2] == 0x04 && c[4] == aid.size() &&
+                std::ranges::equal(aid.bytes(), std::span(c).subspan(5, aid.size()))) {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    void activatePlain(const AppletAid& aid)
+    {
+        auto holder = session->activateChannelFor(aid, LibreSCRS::CancelToken{});
+        ASSERT_TRUE(holder.has_value());
     }
 
     std::shared_ptr<CardSession> session;
@@ -406,6 +432,120 @@ TEST_F(CardSessionByteTransportTest, TheSessionForgetsTheCurrentApplet)
     session->forgetCurrentApplet();
 
     EXPECT_TRUE(channel->currentApplet().empty());
+}
+
+TEST_F(CardSessionByteTransportTest, AForgottenAppletIsSelectedAgainOnAPlainChannel)
+{
+    activatePlain(kAid);
+    ASSERT_EQ(plainSelectsOf(kAid), 1) << "rig: the first activation selects the applet";
+    ASSERT_FALSE(session->carriesSecureMessaging());
+
+    session->forgetCurrentApplet();
+    activatePlain(kAid);
+
+    EXPECT_EQ(plainSelectsOf(kAid), 2);
+}
+
+TEST_F(CardSessionByteTransportTest, TheAnnexAdapterForgetsTheAppletOfAPlainChannel)
+{
+    {
+        auto holder = session->activateChannelFor(kAid, LibreSCRS::CancelToken{});
+        ASSERT_TRUE(holder.has_value());
+        LibreSCRS::SecureChannel::SessionChannel channel(*session);
+        LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(channel, AppletAid{});
+    }
+    ASSERT_EQ(plainSelectsOf(kAid), 1);
+
+    activatePlain(kAid);
+
+    EXPECT_EQ(plainSelectsOf(kAid), 2);
+}
+
+TEST_F(CardSessionByteTransportTest, AForgottenAppletIsSelectedAgainThroughATunnelBoundToIt)
+{
+    const SmProtocolRequest bac = BacRequest{};
+    auto* tunnel = install(ChannelState::Open, /*carriesSm=*/true, bac);
+    ASSERT_FALSE(tunnel->supportsCrossAppletReuse()) << "rig: a tunnel bound to one applet";
+
+    session->forgetCurrentApplet();
+    auto holder = session->activateChannelWithSm(kAid, bac, LibreSCRS::CancelToken{});
+
+    ASSERT_TRUE(holder.has_value()) << "error " << static_cast<int>(holder.error());
+    ASSERT_EQ(tunnel->transmits(), 1) << "one SELECT through the tunnel";
+    const auto& select = tunnel->lastWrappedCommand();
+    EXPECT_EQ(select.ins, 0xA4);
+    EXPECT_EQ(select.p1, 0x04);
+    EXPECT_EQ(AppletAid::fromBytes(select.data), kAid);
+    EXPECT_EQ(tunnel->currentApplet(), kAid);
+    EXPECT_TRUE(plainCommands.empty());
+}
+
+TEST_F(CardSessionByteTransportTest, AForgottenTunnelBoundToOneAppletServesNoOther)
+{
+    const SmProtocolRequest bac = BacRequest{};
+    auto* tunnel = install(ChannelState::Open, /*carriesSm=*/true, bac);
+
+    session->forgetCurrentApplet();
+    auto holder = session->activateChannelWithSm(kOtherAid, bac, LibreSCRS::CancelToken{});
+
+    ASSERT_FALSE(holder.has_value());
+    EXPECT_EQ(holder.error(), ChannelActivationError::Internal);
+    EXPECT_EQ(tunnel->transmits(), 0);
+    EXPECT_TRUE(plainCommands.empty());
+}
+
+TEST_F(CardSessionByteTransportTest, ASelectSentPastAPlainChannelMakesTheNextActivationSelectAgain)
+{
+    activatePlain(kAid);
+    ASSERT_EQ(plainSelectsOf(kAid), 1);
+
+    // A probe selects another application through the session.
+    Bytes selectOther{0x00, 0xA4, 0x04, 0x0C, static_cast<std::uint8_t>(kOtherAid.size())};
+    selectOther.insert(selectOther.end(), kOtherAid.bytes().begin(), kOtherAid.bytes().end());
+    (void)session->transmit(selectOther);
+    activatePlain(kAid);
+    EXPECT_EQ(plainSelectsOf(kAid), 2) << "after a SELECT by name";
+
+    (void)session->transmit(kSelectMf);
+    activatePlain(kAid);
+    EXPECT_EQ(plainSelectsOf(kAid), 3) << "after a SELECT of the master file";
+
+    (void)session->transmitRaw(kSelectMf);
+    activatePlain(kAid);
+    EXPECT_EQ(plainSelectsOf(kAid), 4) << "after a raw SELECT of the master file";
+}
+
+TEST_F(CardSessionByteTransportTest, ASelectSentThroughALiveTunnelMakesTheNextActivationSelectAgain)
+{
+    const SmProtocolRequest pace = PaceRequest{};
+    auto channel = std::make_unique<FakeChannel>(kAid, ChannelState::Open, /*carriesSm=*/true,
+                                                 /*crossAppletReuse=*/true);
+    auto* tunnel = channel.get();
+    ChannelInjector::installForTesting(*session, std::move(channel), pace);
+    {
+        auto holder = session->activateChannelWithSm(kAid, pace, LibreSCRS::CancelToken{});
+        ASSERT_TRUE(holder.has_value());
+    }
+    ASSERT_EQ(tunnel->transmits(), 0) << "rig: the same applet reuses the tunnel as it stands";
+
+    (void)session->transmit(kSelectMf);
+    ASSERT_EQ(tunnel->transmits(), 1);
+    auto holder = session->activateChannelWithSm(kAid, pace, LibreSCRS::CancelToken{});
+
+    ASSERT_TRUE(holder.has_value());
+    ASSERT_EQ(tunnel->transmits(), 2) << "the applet is selected again through the tunnel";
+    EXPECT_EQ(AppletAid::fromBytes(tunnel->lastWrappedCommand().data), kAid);
+}
+
+TEST_F(CardSessionByteTransportTest, ACommandInsideTheApplicationKeepsTheChannelAsItStands)
+{
+    activatePlain(kAid);
+
+    (void)session->transmit(Bytes{0x00, 0xA4, 0x02, 0x0C, 0x02, 0x01, 0x1E}); // an EF of the application
+    (void)session->transmit(Bytes{0x00, 0xB0, 0x00, 0x00, 0x00});             // READ BINARY
+    activatePlain(kAid);
+
+    EXPECT_EQ(plainSelectsOf(kAid), 1);
 }
 
 TEST_F(CardSessionByteTransportTest, ATransactionIsHeldUntilItEnds)

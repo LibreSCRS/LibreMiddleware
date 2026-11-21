@@ -1175,6 +1175,46 @@ std::optional<size_t> logIndexOfLast(const LdsRigState& st, Pred pred)
     return std::nullopt;
 }
 
+// A plain-readable document whose LDS files sit under the application DF, as on
+// a real chip: once the master file is selected, an EF selection fails until
+// the application is selected again.
+struct DfScopedLdsRig
+{
+    std::shared_ptr<LdsRigState> lds;
+    bool appletSelected = false;
+    int aidSelects = 0;
+};
+
+std::shared_ptr<DfScopedLdsRig> installDfScopedLdsRig(LibreSCRS::SmartCard::CardSession& session)
+{
+    auto rig = std::make_shared<DfScopedLdsRig>();
+    rig->lds = std::make_shared<LdsRigState>();
+    rig->lds->plainLds = true;
+    rig->lds->files[0x011E] = comFixture();
+    rig->lds->files[0x0101] = dg1Fixture();
+    rig->lds->files[0x010E] = {0x6E, 0x03, 0x31, 0x01, 0x00};
+    rig->lds->files[0x011D] = {0x77, 0x01, 0x00};
+    setCardAccessMode(*rig->lds, CardAccessMode::AbsentNotFound);
+    LibreSCRS::SmartCard::Internal::connectionOf(session).setTransmitFilter([rig](const APDUCommand& cmd) {
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x04) {
+            auto answer = ldsRigTransmit(*rig->lds, cmd);
+            rig->appletSelected = answer.isSuccess() && cmd.data == kEmrtdAidBytes;
+            if (cmd.data == kEmrtdAidBytes)
+                ++rig->aidSelects;
+            return answer;
+        }
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x00 && cmd.data == std::vector<uint8_t>{0x3F, 0x00}) {
+            rig->appletSelected = false;
+            return ldsRigTransmit(*rig->lds, cmd);
+        }
+        if (cmd.ins == 0xA4 && cmd.p1 == 0x02 && !rig->appletSelected) {
+            rig->lds->log.push_back(cmd);
+            return APDUResponse{{}, 0x6A, 0x82};
+        }
+        return ldsRigTransmit(*rig->lds, cmd);
+    });
+    return rig;
+}
 } // namespace
 
 TEST(EmrtdInterfaceActivation, ContactWithProviderReadsIdentityWithoutPace)
@@ -1986,6 +2026,39 @@ TEST(EmrtdInterfaceActivation, ContactDiscoveryWithoutProviderReadsIdentity)
     EXPECT_EQ(groupOf(*rr.data, "auth_required"), nullptr);
     EXPECT_FALSE(logContainsIns(*rig, 0x22));
     EXPECT_FALSE(logContainsIns(*rig, 0x86));
+}
+
+// The annex reader leaves the master file selected after a plain read. The
+// second read must select the application again rather than reuse the plain
+// channel that still names it, or it reads under the master file and asks for
+// an MRZ or CAN the document does not need.
+TEST(EmrtdInterfaceActivation, ASecondPlainReadSelectsTheApplicationAgain)
+{
+    CardPluginService registry{pluginDir()};
+    auto plugin = findEMRTD(registry);
+    ASSERT_NE(plugin, nullptr);
+
+    auto session = LibreSCRS::SmartCard::Testing::makeDetachedCardSession("Scripted Contact Reader");
+    ASSERT_NE(session, nullptr);
+    auto rig = installDfScopedLdsRig(*session);
+    session->setCredentialProvider(
+        [](const LibreSCRS::Auth::AuthRequirement&) { return LibreSCRS::Auth::CredentialResult::cancelled(); });
+
+    ASSERT_TRUE(plugin->canHandleConnection({}, *session));
+    auto first = plugin->readCard(*session);
+    ASSERT_EQ(first.status, ReadResult::Status::Ok);
+    ASSERT_TRUE(first.data.has_value());
+    ASSERT_NE(groupOf(*first.data, "personal"), nullptr) << "rig: the first read reads the document plain";
+    ASSERT_FALSE(session->carriesSecureMessaging()) << "rig: the read stays on a plain channel";
+    ASSERT_FALSE(rig->appletSelected) << "rig: the read leaves the master file selected";
+    const int selectsAfterFirst = rig->aidSelects;
+
+    auto second = plugin->readCard(*session);
+    ASSERT_EQ(second.status, ReadResult::Status::Ok);
+    ASSERT_TRUE(second.data.has_value());
+    EXPECT_GT(rig->aidSelects, selectsAfterFirst) << "the second read never selected the application";
+    EXPECT_NE(groupOf(*second.data, "personal"), nullptr);
+    EXPECT_EQ(groupOf(*second.data, "auth_required"), nullptr);
 }
 
 // ---------------------------------------------------------------------------

@@ -476,6 +476,10 @@ public:
     /// @return The answer: response data followed by SW1 SW2. @c 6F00 when the
     ///         session holds no connection to a card.
     ///
+    /// A SELECT that leaves the application the session's channel was
+    /// activated for makes the session forget that application first, as
+    /// @ref forgetCurrentApplet describes.
+    ///
     /// @throws std::invalid_argument when @p apdu is not a well-formed command
     ///         APDU in the encoding this library produces; nothing is sent.
     /// @throws std::runtime_error when the reader fails or the card goes away
@@ -512,7 +516,9 @@ public:
     /// card's secure-messaging session. Use @ref transmit to reach the card
     /// through that channel. A secure-messaging channel that is no longer open
     /// refuses the bytes too (@c 6F02, nothing sent), from any thread, until
-    /// it is removed (see @ref transmit).
+    /// it is removed (see @ref transmit). Bytes that parse as a SELECT leaving
+    /// the channel's application make the session forget it, as with
+    /// @ref transmit.
     ///
     /// @param apdu The command bytes, sent unchanged.
     /// @return The answer: response data followed by SW1 SW2. @c 6F02 when a
@@ -646,10 +652,20 @@ public:
     /// @ref transmit: the channel no longer records the application it was
     /// activated for, so the next @ref activateChannelFor or
     /// @ref activateChannelWithSm selects it again instead of reusing the
-    /// channel as it stands. Does nothing when the session holds no channel.
+    /// channel as it stands. A plain channel is selected again plainly; a
+    /// secure-messaging channel through the channel. One that cannot switch
+    /// applications (BAC) is selected again only for the application it was
+    /// established for, and refuses any other as before. Does nothing when
+    /// the session holds no channel.
     ///
-    /// @note Owner-tolerant, as @ref channelState. On lock failure it does
-    ///       nothing.
+    /// @ref transmit and @ref transmitRaw do the same by themselves before
+    /// they send a SELECT that leaves the application: by DF name, of the
+    /// parent DF, of the master file, or by a path from the master file
+    /// (inter-industry class only). A caller that selected away some other
+    /// way calls this.
+    ///
+    /// @note Owner-tolerant, as @ref channelState. On lock or allocation
+    ///       failure it does nothing.
     /// @since 5.0
     void forgetCurrentApplet() noexcept;
 

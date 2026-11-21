@@ -29,7 +29,9 @@ namespace LibreSCRS::SecureChannel {
 ///
 /// The current applet AID is recorded at construction time; subsequent
 /// applet switches are out of scope — CardSession constructs a new
-/// PlainChannel per selected applet.
+/// PlainChannel per selected applet. The record can only be cleared, when a
+/// caller selects away from the applet, so that the next activation selects
+/// it again instead of trusting the channel.
 ///
 /// @since 4.1
 class PlainChannel final : public ISecureChannel
@@ -79,14 +81,16 @@ public:
     }
 
 protected:
-    /// @brief No-op: @ref PlainChannel has no SM tunnel and no cross-
-    ///        applet reuse. The activation path destroys and recreates a
-    ///        @ref PlainChannel for each applet switch, so the bound AID
-    ///        is constructor-fixed for the channel's lifetime.
+    /// @brief Record @p aid as the current applet.
+    ///
+    /// Reached with an empty AID when a caller selected another file or
+    /// application past the channel: a plain channel that kept its AID would
+    /// let the next activation for that applet skip the SELECT and read
+    /// under whatever the card has selected now.
     /// @since 4.1
-    void setCurrentApplet(LibreSCRS::SmartCard::AppletAid /*aid*/) noexcept override
+    void setCurrentApplet(LibreSCRS::SmartCard::AppletAid aid) noexcept override
     {
-        // intentionally empty — applet binding is constructor-fixed
+        appletAid = std::move(aid);
     }
 
     /// @brief No-op: @ref PlainChannel has no SM session keys to rotate.

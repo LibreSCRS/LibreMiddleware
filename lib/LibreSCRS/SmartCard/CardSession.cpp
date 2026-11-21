@@ -129,6 +129,47 @@ auto withSessionState(State& state, Fn&& fn) -> decltype(fn())
     return fn();
 }
 
+// A SELECT that takes the card out of the application a channel was activated
+// for: by DF name, of the parent DF, of the master file, or by a path from it.
+// Selecting an EF or a child DF stays inside the application. Reader pseudo-
+// APDUs (CLA FF) and proprietary classes are not ISO selections.
+[[nodiscard]] bool selectsAwayFromApplication(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd) noexcept
+{
+    if (cmd.ins != 0xA4 || (cmd.cla & 0x80) != 0) {
+        return false;
+    }
+    switch (cmd.p1) {
+    case 0x03:
+    case 0x04:
+    case 0x08:
+    case 0x09:
+        return true;
+    case 0x00:
+        return cmd.data.empty() || (cmd.data.size() == 2 && cmd.data[0] == 0x3F && cmd.data[1] == 0x00);
+    default:
+        return false;
+    }
+}
+
+// The installed channel stops recording its application, so the next
+// activation selects one again. A tunnel that cannot switch applications may
+// only ever select the one it was established for, so the session keeps that
+// one for it. Throws only on allocation, before anything has changed.
+template <typename State>
+void forgetChannelApplet(State& state)
+{
+    auto& channel = state.activeChannel;
+    if (!channel || channel->currentApplet().empty()) {
+        return;
+    }
+    LibreSCRS::SmartCard::AppletAid bound;
+    if (channel->carriesSm() && !channel->supportsCrossAppletReuse()) {
+        bound = channel->currentApplet();
+    }
+    LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(*channel, {});
+    state.forgottenTunnelApplet = std::move(bound);
+}
+
 // An installed secure-messaging channel that is open: the state in which a
 // plain command would end the card's secure-messaging session.
 [[nodiscard]] bool liveSecureChannel(const LibreSCRS::SecureChannel::ISecureChannel* channel) noexcept
@@ -448,9 +489,16 @@ std::vector<std::uint8_t> CardSession::transmit(std::span<const std::uint8_t> ap
     // holds it). Any other thread decides and sends under the lock, so no
     // secure-messaging handshake started on another thread can come between
     // the choice of the path and the command on the wire.
+    //
+    // A SELECT that leaves the channel's application is noted before it is
+    // sent: whatever the card answers, the record no longer holds.
+    const bool leavesApplication = selectsAwayFromApplication(*cmd);
     if (d->callerOwnsActiveChannel()) {
         if (!d->ownedConn) {
             return statusOnly(0x6F, 0x00);
+        }
+        if (leavesApplication) {
+            forgetChannelApplet(*d);
         }
         return toAnswer(dispatchOverChannelOrConn(d->activeChannel.get(), *d->ownedConn, *cmd, std::move(token)));
     }
@@ -461,11 +509,16 @@ std::vector<std::uint8_t> CardSession::transmit(std::span<const std::uint8_t> ap
     if (!d->ownedConn) {
         return statusOnly(0x6F, 0x00);
     }
+    if (leavesApplication) {
+        forgetChannelApplet(*d);
+    }
     return toAnswer(dispatchOverChannelOrConn(d->activeChannel.get(), *d->ownedConn, *cmd, std::move(token)));
 }
 
 std::vector<std::uint8_t> CardSession::transmitRaw(std::span<const std::uint8_t> apdu)
 {
+    const auto parsed = LibreSCRS::SmartCard::Internal::parseCommand(apdu);
+    const bool leavesApplication = parsed && selectsAwayFromApplication(*parsed);
     // The thread that holds the holder runs an operation over the installed
     // channel: under a secure-messaging channel, open or not, the raw bytes
     // would bypass it, so they are refused. That thread is the only one that
@@ -476,6 +529,9 @@ std::vector<std::uint8_t> CardSession::transmitRaw(std::span<const std::uint8_t>
         }
         if (d->activeChannel && d->activeChannel->carriesSm()) {
             return statusOnly(0x6F, 0x02);
+        }
+        if (leavesApplication) {
+            forgetChannelApplet(*d);
         }
         return toAnswer(d->ownedConn->transmitRaw(apdu));
     }
@@ -492,6 +548,9 @@ std::vector<std::uint8_t> CardSession::transmitRaw(std::span<const std::uint8_t>
     }
     if (d->activeChannel && d->activeChannel->carriesSm()) {
         return statusOnly(0x6F, 0x02);
+    }
+    if (leavesApplication) {
+        forgetChannelApplet(*d);
     }
     return toAnswer(d->ownedConn->transmitRaw(apdu));
 }
@@ -570,13 +629,10 @@ bool CardSession::carriesSecureMessaging() const noexcept
 void CardSession::forgetCurrentApplet() noexcept
 {
     try {
-        withSessionState(*d, [this] {
-            if (d->activeChannel) {
-                LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(*d->activeChannel, AppletAid{});
-            }
-        });
+        withSessionState(*d, [this] { forgetChannelApplet(*d); });
     } catch (...) {
-        // noexcept contract: on lock failure the channel keeps its applet.
+        // noexcept contract: on lock or allocation failure the channel keeps
+        // its applet.
     }
 }
 
@@ -774,6 +830,24 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
         d->activeChannel->state() == ChannelState::Open && channelMatchesProtocol(*d->activeChannel)) {
         // Reused channel: re-record the protocol so a fast-path return still
         // reports the SM family that owns the live tunnel.
+        d->activatedProtocol = protocol;
+        return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
+    }
+
+    // Case 1b: live channel of correct protocol that cannot switch applets,
+    //          whose applet a caller selected away from (forgetCurrentApplet,
+    //          or a SELECT sent through transmit). Only the applet it was
+    //          established for is selected again, through the tunnel; any
+    //          other still reaches the Case 3 refusal.
+    if (d->activeChannel && d->activeChannel->state() == ChannelState::Open &&
+        channelMatchesProtocol(*d->activeChannel) && !d->activeChannel->supportsCrossAppletReuse() &&
+        d->activeChannel->currentApplet().empty() && !aid.empty() && aid == d->forgottenTunnelApplet) {
+        auto wrappedSelect = d->activeChannel->transmit(buildSelectAppletCommand(aid), token);
+        if (!wrappedSelect.isSuccess()) {
+            return std::unexpected{ChannelActivationError::SelectAppletFailed};
+        }
+        LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(*d->activeChannel, aid);
+        d->forgottenTunnelApplet = AppletAid{};
         d->activatedProtocol = protocol;
         return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
     }

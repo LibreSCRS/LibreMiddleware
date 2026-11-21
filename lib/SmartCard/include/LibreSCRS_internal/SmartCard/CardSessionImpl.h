@@ -81,6 +81,10 @@ struct LIBRESCRS_INTERNAL CardSession::Impl
     // Mirrors the activeChannel lifetime so the public
     // CardSession::activatedProtocol accessor never reports a stale protocol.
     std::optional<LibreSCRS::SmartCard::SmProtocolRequest> activatedProtocol;
+    // The applet an open tunnel that cannot switch applets (BAC) was bound to,
+    // kept when its record was forgotten: the only applet it may select again.
+    // Meaningful only while that channel's own record is empty.
+    LibreSCRS::SmartCard::AppletAid forgottenTunnelApplet;
     std::array<LibreSCRS::Secure::String, Internal::kPaceSecretKindCount> paceCredentialsCache;
     // BAC consumes a structurally distinct tuple (documentNumber + two dates)
     // rather than a single secret, so it gets its own cache slot disjoint
