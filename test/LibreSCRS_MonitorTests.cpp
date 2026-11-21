@@ -730,3 +730,74 @@ TEST(MonitorServiceTest, LastSubscriberUnsubscribesInsideTheErrorEvent)
     lastSubscriberUnsubscribesInside(LibreSCRS::SmartCard::detail::makeMonitorWithProvider(std::move(mock)),
                                      MonitorEvent::Kind::Error);
 }
+
+// The last subscriber unsubscribes inside its ReaderAdded callback and is
+// still in it when another thread destroys the service. The poll thread then
+// goes on to the second reader, so it must be joined before the service's
+// state is destroyed. The callback stays until the destructor reaches the
+// monitor's stop (its first cancel), which fixes the order. On macOS a lock of
+// a destroyed mutex fails and the reader-list shield logs it.
+TEST(MonitorServiceTest, DestroyedWhileTheLastSubscriberIsInsideItsUnsubscribingCallback)
+{
+    using namespace std::chrono_literals;
+    // Captures first, sink guard next, service last: see
+    // ThrowingSubscriberReportsThroughTheInjectedLogSink.
+    std::mutex mtx;
+    std::vector<std::string> lines;
+    struct SinkGuard
+    {
+        ~SinkGuard()
+        {
+            LibreSCRS::log::resetForTest();
+        }
+    } guard;
+    LibreSCRS::log::init(
+        [&](LibreSCRS::log::Level, std::string_view line) {
+            std::lock_guard lock(mtx);
+            lines.emplace_back(line);
+        },
+        "test.monitor.destroy");
+
+    auto counters = std::make_shared<LibreSCRS::SmartCard::Internal::MockCounters>();
+    auto mock = std::make_unique<LibreSCRS::SmartCard::Internal::MockPCSCScanProvider>(counters);
+    mock->setReaders({"Reader A", "Reader B"});
+    mock->pushStatusChange({SCARD_S_SUCCESS, {SCARD_STATE_CHANGED}, false}); // PnP check
+    mock->pushStatusChange({SCARD_S_SUCCESS, {}, false});                    // initial probe
+    mock->pushStatusChange({SCARD_S_SUCCESS, {}, true});                     // the wait
+    auto monitor = LibreSCRS::SmartCard::detail::makeMonitorWithProvider(std::move(mock));
+
+    struct Shared
+    {
+        std::atomic<MonitorService*> service{nullptr};
+        std::optional<MonitorService::SubscriptionId> id;
+        std::atomic<bool> idReady{false};
+        std::atomic<bool> entered{false};
+        std::atomic<bool> unsubscribed{false};
+        std::atomic<bool> releasedByStop{false};
+        std::atomic<bool> returned{false};
+    };
+    auto shared = std::make_shared<Shared>();
+    shared->service = monitor.get();
+    shared->id = monitor->subscribe([shared, counters](const MonitorEvent& e) {
+        if (e.kind != MonitorEvent::Kind::ReaderAdded || shared->entered.exchange(true))
+            return;
+        while (!shared->idReady.load())
+            std::this_thread::yield();
+        shared->service.load()->unsubscribe(*shared->id);
+        const int cancels = counters->cancelCount.load();
+        shared->unsubscribed = true;
+        shared->releasedByStop = waitFor([&] { return counters->cancelCount.load() > cancels; }, 3s);
+        shared->returned = true;
+    });
+    shared->idReady = true;
+
+    ASSERT_TRUE(waitFor([&] { return shared->unsubscribed.load(); }, 3s));
+    monitor.reset();
+
+    EXPECT_TRUE(shared->returned.load());
+    EXPECT_TRUE(shared->releasedByStop.load()) << "the destructor did not stop the poll thread";
+    EXPECT_EQ(counters->releaseContextCount.load(), counters->establishContextCount.load());
+    std::lock_guard lock(mtx);
+    for (const auto& line : lines)
+        ADD_FAILURE() << "the poll thread reported after the service was destroyed: " << line;
+}

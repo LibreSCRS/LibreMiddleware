@@ -117,6 +117,11 @@ MonitorService::Impl::~Impl()
         coalesceCv.notify_all();
         coalesceFlusher.join();
     }
+    // A last unsubscribe inside a callback on the poll thread leaves that
+    // thread running until the callback returns, and it still uses the
+    // members below. Join it here, after the flusher (whose callbacks may
+    // still reach `internal`) and before any member is destroyed.
+    internal.reset();
 }
 
 std::vector<std::pair<MonitorService::SubscriptionId, MonitorService::EventCallback>>
@@ -465,13 +470,9 @@ MonitorService::MonitorService() : d(std::make_unique<Impl>(detail::MonitorConfi
 
 MonitorService::~MonitorService()
 {
-    // Non-movable (see header): MonitorService always owns its Impl. Clear public
-    // subscribers, then explicitly
-    // unsubscribe from the internal MonitorService.
-    // The internal unsubscribe calls stopThread() (see
-    // smartcard/src/monitor.cpp) which joins the poll thread — that join is
-    // what actually blocks until the in-flight PC/SC syscall completes. The
-    // subsequent Impl destruction then releases the internal MonitorService cleanly.
+    // Clear the subscribers and drop the internal subscription if one is
+    // left; that stops and joins the poll thread. If the last subscriber
+    // already dropped it from inside a callback, ~Impl joins the thread.
     std::optional<::LibreSCRS::SmartCard::Internal::Monitor::SubscriptionId> subToDrop;
     {
         std::lock_guard<std::mutex> lock(d->cbMtx);
