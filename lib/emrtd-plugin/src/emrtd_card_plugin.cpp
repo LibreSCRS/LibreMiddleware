@@ -510,7 +510,7 @@ private:
                 // channel that was there.
                 haveChannel = false;
                 if (auto holder = cardSession.activateChannelFor(makeEmrtdAid(), LibreSCRS::CancelToken{})) {
-                    if (holder->isActive() && cardSession.channelState().has_value()) {
+                    if (LibreSCRS::SecureChannel::SessionChannel::held(cardSession, *holder)) {
                         // Corroborate before committing: the probe verdict
                         // may be stale (card swapped mid-session). An empty
                         // COM read releases the holder and falls back to the
@@ -518,7 +518,8 @@ private:
                         emrtd::EMRTDCard probeCard(channel);
                         if (!probeCard.readCOM().empty()) {
                             plainHolder = std::move(*holder);
-                            haveChannel = plainHolder->isActive() && cardSession.channelState().has_value();
+                            haveChannel =
+                                LibreSCRS::SecureChannel::SessionChannel::held(cardSession, *plainHolder).has_value();
                             plainRead = true;
                         }
                     }

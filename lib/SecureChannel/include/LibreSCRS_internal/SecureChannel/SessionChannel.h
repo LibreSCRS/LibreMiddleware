@@ -8,6 +8,7 @@
 #pragma once
 
 #include <LibreSCRS/CancelToken.h>
+#include <LibreSCRS/SmartCard/ActiveChannelHolder.h>
 #include <LibreSCRS/SmartCard/AppletAid.h>
 #include <LibreSCRS/SmartCard/CardSession.h>
 #include <LibreSCRS_internal/SecureChannel/ISecureChannel.h>
@@ -17,6 +18,7 @@
 
 #include "apdu.h"
 
+#include <optional>
 #include <span>
 
 namespace LibreSCRS::SecureChannel {
@@ -36,6 +38,17 @@ class SessionChannel final : public ISecureChannel
 {
 public:
     explicit SessionChannel(LibreSCRS::SmartCard::CardSession& session) noexcept : session(session) {}
+
+    /// The channel @p holder runs over, or none when the holder no longer
+    /// holds the session or the session no longer holds a channel.
+    [[nodiscard]] static std::optional<SessionChannel> held(LibreSCRS::SmartCard::CardSession& session,
+                                                            const LibreSCRS::SmartCard::ActiveChannelHolder& holder)
+    {
+        if (!holder.isActive() || !session.channelState().has_value()) {
+            return std::nullopt;
+        }
+        return std::optional<SessionChannel>(std::in_place, session);
+    }
 
     /// Not tracked here: the session's channel records it, and nothing that
     /// reads a card through this adapter asks for it.

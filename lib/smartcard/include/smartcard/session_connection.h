@@ -45,6 +45,17 @@ public:
         return transmitThrough(session, cmd, token);
     }
 
+    /// transmit() for a probe that weighs only the status word: a reader
+    /// failure reads as 6F00 (no precise diagnosis) instead of throwing.
+    Internal::APDUResponse probe(const Internal::APDUCommand& cmd)
+    {
+        try {
+            return transmit(cmd);
+        } catch (...) {
+            return Internal::APDUResponse{{}, 0x6F, 0x00};
+        }
+    }
+
     /// @p cmd through CardSession::transmit, as a response. A command the
     /// byte interface refuses (std::invalid_argument: no APDU encodes it) is
     /// a failed exchange to a card library, which catches std::runtime_error.

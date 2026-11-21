@@ -544,7 +544,7 @@ ChannelRunReport runUnderChannel(LibreSCRS::SmartCard::CardSession& cardSession,
             return report;
         }
         holder.emplace(std::move(*holderResult));
-        if (holder->isActive() && cardSession.channelState().has_value()) {
+        if (LibreSCRS::SecureChannel::SessionChannel::held(cardSession, *holder)) {
             heldChannel.emplace(cardSession);
             channel = &*heldChannel;
         }
@@ -889,16 +889,10 @@ public:
                 // operation's channel run). Every probe SELECT: P2=0C, no Le
                 // (the measured 6988 channel-killer must never fire against
                 // another provider's tunnel).
-                // A reader failure reads as 6F00, as the funnel this probe
-                // used to take answered it.
-                auto wrapped = [&conn](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd) {
-                    try {
-                        return conn.transmit(cmd);
-                    } catch (...) {
-                        return LibreSCRS::SmartCard::Internal::APDUResponse{{}, 0x6F, 0x00};
-                    }
+                auto probe = [&conn](const LibreSCRS::SmartCard::Internal::APDUCommand& cmd) {
+                    return conn.probe(cmd);
                 };
-                const auto resp = wrapped(LibreSCRS::SmartCard::Internal::selectByAID(aidBytes, /*p2=*/0x0C));
+                const auto resp = probe(LibreSCRS::SmartCard::Internal::selectByAID(aidBytes, /*p2=*/0x0C));
                 bool claim = false;
                 if (resp.isSuccess()) {
                     claim = true;
@@ -909,7 +903,7 @@ public:
                     // foreign PACE card would be claimed away from its
                     // rightful plugin.
                     claim = LibreSCRS::OpenSc::driverPresent(ctx, "srbeid2") &&
-                            LibreSCRS::OpenSc::efDirAdvertisesAppletSuiteGen2(wrapped);
+                            LibreSCRS::OpenSc::efDirAdvertisesAppletSuiteGen2(probe);
                 }
                 if (!claim)
                     return false;

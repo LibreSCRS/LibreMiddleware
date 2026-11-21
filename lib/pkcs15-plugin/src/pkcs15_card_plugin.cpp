@@ -52,18 +52,6 @@
 
 namespace {
 
-// The channel a held ActiveChannelHolder runs over, as the card library sees
-// it -- or none when the holder no longer holds the session or the session no
-// longer holds a channel.
-[[nodiscard]] std::optional<LibreSCRS::SecureChannel::SessionChannel>
-heldChannel(LibreSCRS::SmartCard::CardSession& session, const LibreSCRS::SmartCard::ActiveChannelHolder& holder)
-{
-    if (!holder.isActive() || !session.channelState().has_value()) {
-        return std::nullopt;
-    }
-    return std::optional<LibreSCRS::SecureChannel::SessionChannel>(std::in_place, session);
-}
-
 // 4.0 hardening: generic PKCS#15 matches via SELECT-DF probe in
 // canHandleConnection, never via ATR. kAtrs (from manifest.json) is
 // intentionally empty.
@@ -348,14 +336,8 @@ public:
             // to a card it cannot actually read certificates from).
             if (session.hasLiveSecureChannel()) {
                 std::vector<std::uint8_t> probeAid(::pkcs15::kPkcs15Aid.begin(), ::pkcs15::kPkcs15Aid.end());
-                // A reader failure reads as 6F00 here, as the funnel this
-                // probe used to take answered it.
-                LibreSCRS::SmartCard::Internal::APDUResponse probeResp{{}, 0x6F, 0x00};
-                try {
-                    probeResp = LibreSCRS::SmartCard::SessionConnection(session).transmit(
-                        LibreSCRS::SmartCard::Internal::selectByAID(probeAid, /*p2=*/0x0C));
-                } catch (...) {
-                }
+                const auto probeResp = LibreSCRS::SmartCard::SessionConnection(session).probe(
+                    LibreSCRS::SmartCard::Internal::selectByAID(probeAid, /*p2=*/0x0C));
                 if (probeResp.isSuccess()) {
                     std::lock_guard lock(stateMutex);
                     sessions[mapKey].requiresPace = true;
@@ -455,7 +437,7 @@ public:
             if (!holderResult)
                 return mapActivationError(holderResult.error(), "pkcs15 doReadCard");
             auto holder = std::move(*holderResult);
-            auto channel = heldChannel(session, holder);
+            auto channel = LibreSCRS::SecureChannel::SessionChannel::held(session, holder);
             if (!channel)
                 return ReadResult::communicationError(LibreSCRS::Auth::ErrorKeys::genericComm(),
                                                       "pkcs15 doReadCard: channel not active after activation");
@@ -547,7 +529,7 @@ public:
             return group;
         }
 
-        auto channel = heldChannel(session, *holderOpt);
+        auto channel = LibreSCRS::SecureChannel::SessionChannel::held(session, *holderOpt);
         if (!channel) {
             std::clog << "[librescrs.pkcs15.plugin] readTokenInfo: channel not active after activation\n";
             return group;
@@ -598,7 +580,7 @@ public:
         if (!holderResult)
             return result;
         auto holder = std::move(*holderResult);
-        auto channel = heldChannel(session, holder);
+        auto channel = LibreSCRS::SecureChannel::SessionChannel::held(session, holder);
         if (!channel)
             return result;
 
@@ -656,7 +638,7 @@ public:
         if (!holderResult)
             return result;
         auto holder = std::move(*holderResult);
-        auto channel = heldChannel(session, holder);
+        auto channel = LibreSCRS::SecureChannel::SessionChannel::held(session, holder);
         if (!channel)
             return result;
 
@@ -750,7 +732,7 @@ public:
             return result;
         }
         auto holder = std::move(*holderResult);
-        auto channel = heldChannel(session, holder);
+        auto channel = LibreSCRS::SecureChannel::SessionChannel::held(session, holder);
         if (!channel) {
             result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
             return result;
@@ -826,7 +808,7 @@ public:
             return result;
         }
         auto holder = std::move(*holderResult);
-        auto channel = heldChannel(session, holder);
+        auto channel = LibreSCRS::SecureChannel::SessionChannel::held(session, holder);
         if (!channel) {
             result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
             return result;
@@ -979,7 +961,7 @@ public:
             return result;
         }
         auto holder = std::move(*holderResult);
-        auto channel = heldChannel(session, holder);
+        auto channel = LibreSCRS::SecureChannel::SessionChannel::held(session, holder);
         if (!channel) {
             result.outcome = LibreSCRS::Plugin::PINResultOutcome::PluginError;
             return result;
@@ -1176,7 +1158,7 @@ public:
                 return r;
             }
             auto holder = std::move(*holderResult);
-            auto channel = heldChannel(session, holder);
+            auto channel = LibreSCRS::SecureChannel::SessionChannel::held(session, holder);
             if (!channel) {
                 r.outcome = SignResultOutcome::PluginError;
                 return r;
