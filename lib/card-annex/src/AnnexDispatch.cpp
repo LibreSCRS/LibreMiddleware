@@ -40,16 +40,14 @@ public:
 
     ~MasterFileRestore()
     {
-        // The MF select goes through the session's channel, plain or secure
-        // messaging, but does not update its cached applet AID (that is only
-        // stamped by CardSession after an activation). Left as-is, the
-        // channel would claim to be on the eMRTD applet while the card sits
-        // elsewhere, and a second read's same-applet fast path would skip the
-        // re-SELECT and read the wrong file. Clear the cached AID BEFORE
-        // attempting the select: host-side bookkeeping must not depend on the
-        // wire call surviving — a throw (cancellation, transient PC/SC
-        // failure) would otherwise leave the stale AID armed. A null channel
-        // means the read went straight to the connection: nothing to forget.
+        // After the MF select the channel must not claim the eMRTD applet, or
+        // a second read's same-applet fast path would skip the re-SELECT and
+        // read the wrong file. A SELECT sent through a session forgets the
+        // applet by itself; this clear covers a channel that is not the
+        // session's and a throw (cancellation, transient PC/SC failure)
+        // before the select is sent, which is why it comes first. A null
+        // channel means the read went straight to the connection: nothing to
+        // forget.
         if (ctx.channel != nullptr) {
             LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(*ctx.channel,
                                                                                     LibreSCRS::SmartCard::AppletAid{});

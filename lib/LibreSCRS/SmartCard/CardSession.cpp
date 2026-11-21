@@ -24,6 +24,7 @@
 #include "chip_auth.h"
 #include <pcsc_connection.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cassert>
@@ -129,26 +130,56 @@ auto withSessionState(State& state, Fn&& fn) -> decltype(fn())
     return fn();
 }
 
-// A SELECT that takes the card out of the application a channel was activated
-// for: by DF name, of the parent DF, of the master file, or by a path from it.
-// Selecting an EF or a child DF stays inside the application. Reader pseudo-
-// APDUs (CLA FF) and proprietary classes are not ISO selections.
-[[nodiscard]] bool selectsAwayFromApplication(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd) noexcept
+// A SELECT that takes the card out of the application @p recorded (ISO/IEC
+// 7816-4): by DF name of another application, of the parent DF, of the master
+// file, or by a path from the master file. Selecting an EF, a child DF or a
+// path from the current DF stays inside the application. A failed SELECT
+// leaves the current DF as it was, so naming the recorded application keeps
+// the record either way -- PKCS#15 selects its own application in every
+// operation, and forgetting would cost a SELECT at each activation. Reader
+// pseudo-APDUs (CLA FF) and proprietary classes are not ISO selections.
+[[nodiscard]] bool selectsAwayFromApplication(const LibreSCRS::SmartCard::Internal::APDUCommand& cmd,
+                                              const AppletAid& recorded) noexcept
 {
     if (cmd.ins != 0xA4 || (cmd.cla & 0x80) != 0) {
         return false;
     }
     switch (cmd.p1) {
+    case 0x04: {
+        // Only the first or only occurrence names one application; next and
+        // previous move to another.
+        const auto name = recorded.bytes();
+        const bool sameApplication =
+            (cmd.p2 & 0x03) == 0 && !name.empty() && std::ranges::equal(std::span<const std::uint8_t>(cmd.data), name);
+        return !sameApplication;
+    }
     case 0x03:
-    case 0x04:
     case 0x08:
-    case 0x09:
         return true;
     case 0x00:
         return cmd.data.empty() || (cmd.data.size() == 2 && cmd.data[0] == 0x3F && cmd.data[1] == 0x00);
     default:
         return false;
     }
+}
+
+// The same judgement on raw bytes, which may use either length form. A SELECT
+// whose data field cannot be located is counted as leaving.
+[[nodiscard]] bool rawSelectsAwayFromApplication(std::span<const std::uint8_t> apdu, const AppletAid& recorded)
+{
+    if (apdu.size() < 4 || apdu[1] != 0xA4 || (apdu[0] & 0x80) != 0) {
+        return false;
+    }
+    const auto cmd = LibreSCRS::SmartCard::Internal::decodeCommand(apdu);
+    return !cmd || selectsAwayFromApplication(*cmd, recorded);
+}
+
+// The application the installed channel records; empty without one.
+template <typename State>
+[[nodiscard]] const AppletAid& recordedApplet(const State& state) noexcept
+{
+    static const AppletAid none;
+    return state.activeChannel ? state.activeChannel->currentApplet() : none;
 }
 
 // The installed channel stops recording its application, so the next
@@ -198,8 +229,7 @@ bool dropDeadSecureChannel(State& state) noexcept
     } catch (...) {
         // the channel goes regardless
     }
-    state.activeChannel.reset();
-    state.activatedProtocol.reset();
+    state.replaceActiveChannel();
     return true;
 }
 
@@ -466,11 +496,10 @@ void CardSession::clearActiveChannel() noexcept
         std::lock_guard lock(d->sessionMutex);
         if (d->activeChannel) {
             d->activeChannel->close();
-            d->activeChannel.reset();
         }
-        // The channel is gone; clear the recorded protocol so the accessor
-        // does not report a stale SM family for a torn-down channel.
-        d->activatedProtocol.reset();
+        // The recorded protocol goes with the channel, so the accessor does
+        // not report a stale SM family for a torn-down channel.
+        d->replaceActiveChannel();
     } catch (...) {
         // noexcept contract: swallow any exception from close()/reset().
         // The worst case is a leaked channel which is preferable to
@@ -492,9 +521,8 @@ std::vector<std::uint8_t> CardSession::transmit(std::span<const std::uint8_t> ap
     //
     // A SELECT that leaves the channel's application is noted before it is
     // sent: whatever the card answers, the record no longer holds.
-    const bool leavesApplication = selectsAwayFromApplication(*cmd);
     if (d->callerOwnsActiveChannel()) {
-        if (leavesApplication) {
+        if (selectsAwayFromApplication(*cmd, recordedApplet(*d))) {
             forgetChannelApplet(*d);
         }
         return toAnswer(dispatchOverChannelOrConn(d->activeChannel.get(), *d->ownedConn, *cmd, std::move(token)));
@@ -503,7 +531,7 @@ std::vector<std::uint8_t> CardSession::transmit(std::span<const std::uint8_t> ap
     // here as on the holder's thread: it is never dropped implicitly, so a
     // command the caller meant to be protected never goes plain.
     std::lock_guard lock(d->sessionMutex);
-    if (leavesApplication) {
+    if (selectsAwayFromApplication(*cmd, recordedApplet(*d))) {
         forgetChannelApplet(*d);
     }
     return toAnswer(dispatchOverChannelOrConn(d->activeChannel.get(), *d->ownedConn, *cmd, std::move(token)));
@@ -511,8 +539,6 @@ std::vector<std::uint8_t> CardSession::transmit(std::span<const std::uint8_t> ap
 
 std::vector<std::uint8_t> CardSession::transmitRaw(std::span<const std::uint8_t> apdu)
 {
-    const auto parsed = LibreSCRS::SmartCard::Internal::parseCommand(apdu);
-    const bool leavesApplication = parsed && selectsAwayFromApplication(*parsed);
     // The thread that holds the holder runs an operation over the installed
     // channel: under a secure-messaging channel, open or not, the raw bytes
     // would bypass it, so they are refused. That thread is the only one that
@@ -521,7 +547,7 @@ std::vector<std::uint8_t> CardSession::transmitRaw(std::span<const std::uint8_t>
         if (d->activeChannel && d->activeChannel->carriesSm()) {
             return statusOnly(0x6F, 0x02);
         }
-        if (leavesApplication) {
+        if (rawSelectsAwayFromApplication(apdu, recordedApplet(*d))) {
             forgetChannelApplet(*d);
         }
         return toAnswer(d->ownedConn->transmitRaw(apdu));
@@ -537,7 +563,7 @@ std::vector<std::uint8_t> CardSession::transmitRaw(std::span<const std::uint8_t>
     if (d->activeChannel && d->activeChannel->carriesSm()) {
         return statusOnly(0x6F, 0x02);
     }
-    if (leavesApplication) {
+    if (rawSelectsAwayFromApplication(apdu, recordedApplet(*d))) {
         forgetChannelApplet(*d);
     }
     return toAnswer(d->ownedConn->transmitRaw(apdu));
@@ -694,20 +720,16 @@ CardSession::activateChannelFor(AppletAid aid, LibreSCRS::CancelToken token)
     // lock every plain plugin out of the session.
     if (d->activeChannel) {
         d->activeChannel->close();
-        d->activeChannel.reset();
     }
-    d->activatedProtocol.reset();
+    d->replaceActiveChannel();
 
     auto selectResp = dispatchOverChannelOrConn(nullptr, *d->ownedConn, buildSelectAppletCommand(aid), token);
     if (!selectResp.isSuccess()) {
         return std::unexpected{ChannelActivationError::SelectAppletFailed};
     }
 
-    d->activeChannel = std::make_unique<PlainChannel>(*d->ownedConn, aid);
-    // A freshly installed plain channel carries no SM context; clear any
-    // protocol recorded for a previously closed SM channel so the accessor
-    // reports nullopt for this plain activation.
-    d->activatedProtocol.reset();
+    // A plain channel carries no SM context, so no protocol is recorded.
+    d->replaceActiveChannel(std::make_unique<PlainChannel>(*d->ownedConn, aid));
     return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
 }
 
@@ -862,11 +884,10 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
             return std::unexpected{ChannelActivationError::Internal};
         }
         d->activeChannel->close();
-        d->activeChannel.reset();
-        // Channel torn down ahead of the fresh-handshake retry loop; clear the
-        // recorded protocol. A success below re-records it; a failure leaves it
-        // cleared so the accessor reports nullopt for the now-channelless session.
-        d->activatedProtocol.reset();
+        // Channel torn down ahead of the fresh-handshake retry loop, with its
+        // recorded protocol. A success below records one again; a failure
+        // leaves the accessor reporting nullopt for the channelless session.
+        d->replaceActiveChannel();
     }
 
     // Hoist the PACE EF.CardAccess capability read OUT of the retry loop and
@@ -986,11 +1007,10 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
 
             auto outcome = BacChannel::establish(*d->ownedConn, aid, *d->bacInput, token);
             if (outcome) {
-                d->activeChannel = std::move(*outcome);
                 // Record the protocol that won this channel. On the BAC branch
                 // `protocol` is the BacRequest the caller passed (BAC is the
                 // fallback path), so the accessor reports BAC after a fallback.
-                d->activatedProtocol = protocol;
+                d->replaceActiveChannel(std::move(*outcome), protocol);
 
                 // Post-BAC SM-tunnel downgrade cross-check. The
                 // pre-auth "PACE absent" verdict that routed us to BAC is
@@ -1020,11 +1040,10 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                         // wrong-credential condition — it is RETURNED (never
                         // continued, so no retry re-enters) and the plugin maps
                         // it to a non-auth failure, never markCredentialWrong.
-                        d->activatedProtocol.reset();
                         if (d->activeChannel) {
                             d->activeChannel->close();
-                            d->activeChannel.reset();
                         }
+                        d->replaceActiveChannel();
                         return std::unexpected{ChannelActivationError::PaceDowngradeDetected};
                     }
                 }
@@ -1152,11 +1171,10 @@ CardSession::activateChannelWithSm(AppletAid aid, SmProtocolRequest protocol, Li
                 return std::unexpected{ChannelActivationError::SelectAppletFailed};
             }
             LibreSCRS::SecureChannel::detail::ChannelStateMutator::setCurrentApplet(*freshChannel, aid);
-            d->activeChannel = std::move(freshChannel);
             // Record the protocol that won this channel. On the PACE branch
             // `protocol` is the PaceRequest the caller passed (its secretKind
             // distinguishes PACE-CAN / PACE-MRZ / PACE-PIN for label callers).
-            d->activatedProtocol = protocol;
+            d->replaceActiveChannel(std::move(freshChannel), protocol);
             return Internal::makeActiveChannelHolder(this, std::move(lock), std::move(tx));
         }
         if (lastError == ChannelActivationError::PaceWrongSecret) {
@@ -1225,8 +1243,7 @@ ChipAuthReport CardSession::performChipAuthentication(std::span<const std::uint8
             // The card now speaks SM under the derived keys; the plain channel
             // is superseded.
             d->activeChannel->close();
-            d->activeChannel = std::move(*upgraded);
-            d->activatedProtocol = ChipAuthRequest{};
+            d->replaceActiveChannel(std::move(*upgraded), ChipAuthRequest{});
             return report;
         }
         // No upgrade: the plain channel stays, and its next command ends any

@@ -56,6 +56,10 @@ struct APDUResponse
 // never produces, such as an extended Le of 65536). Every command LM builds
 // round-trips, so a byte-level caller sends the same bytes as a typed one.
 [[nodiscard]] std::optional<APDUCommand> parseCommand(std::span<const uint8_t> bytes);
+// The command @p bytes carry in either ISO/IEC 7816-4 length form, short or
+// extended, or nothing when they are malformed. Unlike parseCommand it does
+// not require toBytes() to reproduce them, so it reads but never re-sends.
+[[nodiscard]] std::optional<APDUCommand> decodeCommand(std::span<const uint8_t> bytes);
 
 APDUCommand selectByAID(const std::vector<uint8_t>& aid, uint8_t p2 = 0x00);
 APDUCommand selectByPath(uint8_t fileId1, uint8_t fileId2, uint8_t le = 4);

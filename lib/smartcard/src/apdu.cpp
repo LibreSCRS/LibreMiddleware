@@ -57,7 +57,7 @@ std::vector<uint8_t> APDUCommand::toBytes() const
     return bytes;
 }
 
-std::optional<APDUCommand> parseCommand(std::span<const uint8_t> bytes)
+std::optional<APDUCommand> decodeCommand(std::span<const uint8_t> bytes)
 {
     const std::size_t n = bytes.size();
     if (n < 4) {
@@ -108,9 +108,19 @@ std::optional<APDUCommand> parseCommand(std::span<const uint8_t> bytes)
             return std::nullopt;
         }
     }
+    return cmd;
+}
+
+std::optional<APDUCommand> parseCommand(std::span<const uint8_t> bytes)
+{
+    auto cmd = decodeCommand(bytes);
+    if (!cmd) {
+        return std::nullopt;
+    }
     // Accept only what encodes back to the very same bytes: the command goes
     // on as this structure, so anything else would reach the card altered.
-    auto encoded = cmd.toBytes();
+    const std::size_t n = bytes.size();
+    auto encoded = cmd->toBytes();
     const bool same = encoded.size() == n && std::equal(encoded.begin(), encoded.end(), bytes.begin());
     if (!encoded.empty()) {
         secureWipe(encoded.data(), encoded.size());

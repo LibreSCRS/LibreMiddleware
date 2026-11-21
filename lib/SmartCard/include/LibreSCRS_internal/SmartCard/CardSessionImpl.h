@@ -26,11 +26,8 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
-
-namespace LibreSCRS::SecureChannel {
-class ISecureChannel;
-} // namespace LibreSCRS::SecureChannel
 
 namespace LibreSCRS::SmartCard {
 
@@ -71,9 +68,8 @@ struct LIBRESCRS_INTERNAL CardSession::Impl
     std::unique_ptr<LibreSCRS::SecureChannel::ISecureChannel> activeChannel;
     // SM protocol that established @ref activeChannel (after any BAC fallback).
     // Recorded at activation time alongside every makeActiveChannelHolder
-    // return that hands back a live SM channel, and reset everywhere
-    // activeChannel is reset/closed (clearActiveChannel, the Case-3 teardown).
-    // Mirrors the activeChannel lifetime so the public
+    // return that hands back a live SM channel, and set together with the
+    // channel by replaceActiveChannel, so the public
     // CardSession::activatedProtocol accessor never reports a stale protocol.
     std::optional<LibreSCRS::SmartCard::SmProtocolRequest> activatedProtocol;
     // The applet an open tunnel that cannot switch applets (BAC) was bound to,
@@ -95,6 +91,17 @@ struct LIBRESCRS_INTERNAL CardSession::Impl
     // it must be readable without sessionMutex — hence atomic. Off the wire
     // path; lock-freedom not required.
     std::atomic<std::thread::id> activeChannelOwner{};
+
+    // Installs @p channel, or drops the installed one when it is null, with the
+    // protocol that established it. The applet kept for a forgotten tunnel
+    // belongs to the channel it came from, so it goes with that channel.
+    void replaceActiveChannel(std::unique_ptr<LibreSCRS::SecureChannel::ISecureChannel> channel = nullptr,
+                              std::optional<LibreSCRS::SmartCard::SmProtocolRequest> protocol = std::nullopt) noexcept
+    {
+        activeChannel = std::move(channel);
+        activatedProtocol = std::move(protocol);
+        forgottenTunnelApplet = AppletAid{};
+    }
 
     [[nodiscard]] bool callerOwnsActiveChannel() const noexcept
     {

@@ -540,6 +540,149 @@ TEST_F(CardSessionByteTransportTest, ACommandInsideTheApplicationKeepsTheChannel
     EXPECT_EQ(plainSelectsOf(kAid), 1);
 }
 
+// The command bytes of a SELECT with @p p1 / @p p2 and @p data, short Lc.
+Bytes selectCommand(std::uint8_t cla, std::uint8_t p1, std::uint8_t p2, std::span<const std::uint8_t> data)
+{
+    Bytes cmd{cla, 0xA4, p1, p2};
+    if (!data.empty()) {
+        cmd.push_back(static_cast<std::uint8_t>(data.size()));
+        cmd.insert(cmd.end(), data.begin(), data.end());
+    }
+    return cmd;
+}
+
+TEST_F(CardSessionByteTransportTest, OnlyASelectThatLeavesTheApplicationMakesTheNextActivationSelectAgain)
+{
+    const Bytes mf{0x3F, 0x00};
+    const Bytes ef{0x01, 0x1E};
+    const Bytes df{0xDF, 0x01};
+    const Bytes path{0x2F, 0x00};
+    const Bytes relativePath{0x50, 0x31};
+    struct Row
+    {
+        const char* what;
+        Bytes command;
+        bool leaves;
+    };
+    const std::vector<Row> rows{
+        {"P1=04 another application", selectCommand(0x00, 0x04, 0x0C, kOtherAid.bytes()), true},
+        {"P1=04 own application, next occurrence", selectCommand(0x00, 0x04, 0x0E, kAid.bytes()), true},
+        {"P1=03 parent DF", selectCommand(0x00, 0x03, 0x0C, {}), true},
+        {"P1=08 path from the master file", selectCommand(0x00, 0x08, 0x0C, path), true},
+        {"P1=00 no data", selectCommand(0x00, 0x00, 0x0C, {}), true},
+        {"P1=00 3F00", selectCommand(0x00, 0x00, 0x0C, mf), true},
+        {"P1=00 an EF", selectCommand(0x00, 0x00, 0x0C, ef), false},
+        {"P1=02 an EF", selectCommand(0x00, 0x02, 0x0C, ef), false},
+        {"P1=01 a child DF", selectCommand(0x00, 0x01, 0x0C, df), false},
+        {"P1=09 path from the current DF", selectCommand(0x00, 0x09, 0x0C, relativePath), false},
+        {"P1=04 own application", selectCommand(0x00, 0x04, 0x0C, kAid.bytes()), false},
+        {"proprietary class 80", selectCommand(0x80, 0x04, 0x0C, kOtherAid.bytes()), false},
+        {"reader class FF", selectCommand(0xFF, 0x00, 0x0C, mf), false},
+    };
+
+    for (const auto& row : rows) {
+        for (const bool raw : {false, true}) {
+            activatePlain(kAid);
+            (void)(raw ? session->transmitRaw(row.command) : session->transmit(row.command));
+            const int before = plainSelectsOf(kAid);
+            activatePlain(kAid);
+            EXPECT_EQ(plainSelectsOf(kAid) - before, row.leaves ? 1 : 0)
+                << row.what << (raw ? " through transmitRaw" : " through transmit");
+        }
+    }
+}
+
+TEST_F(CardSessionByteTransportTest, ASelectSentOnTheHoldersThreadMakesTheNextActivationSelectAgain)
+{
+    const Watchdog watchdog(std::chrono::seconds(10));
+    {
+        auto holder = session->activateChannelFor(kAid, LibreSCRS::CancelToken{});
+        ASSERT_TRUE(holder.has_value());
+        (void)session->transmit(kSelectMf);
+    }
+    ASSERT_EQ(plainSelectsOf(kAid), 1);
+    activatePlain(kAid);
+    EXPECT_EQ(plainSelectsOf(kAid), 2) << "after a SELECT of the master file through transmit";
+}
+
+TEST_F(CardSessionByteTransportTest, ARawSelectSentOnTheHoldersThreadMakesTheNextActivationSelectAgain)
+{
+    const Watchdog watchdog(std::chrono::seconds(10));
+    {
+        auto holder = session->activateChannelFor(kAid, LibreSCRS::CancelToken{});
+        ASSERT_TRUE(holder.has_value());
+        (void)session->transmitRaw(kSelectMf);
+    }
+    ASSERT_EQ(rawCommands.size(), 1U) << "rig: a plain channel lets the raw bytes through";
+    ASSERT_EQ(plainSelectsOf(kAid), 1);
+    activatePlain(kAid);
+    EXPECT_EQ(plainSelectsOf(kAid), 2) << "after a SELECT of the master file through transmitRaw";
+}
+
+TEST_F(CardSessionByteTransportTest, ARawSelectIsJudgedInEitherLengthForm)
+{
+    struct Row
+    {
+        const char* what;
+        Bytes command;
+        bool leaves;
+    };
+    const std::vector<Row> rows{
+        {"extended Lc, 3F00", Bytes{0x00, 0xA4, 0x00, 0x0C, 0x00, 0x00, 0x02, 0x3F, 0x00}, true},
+        {"extended Lc and Le, 3F00", Bytes{0x00, 0xA4, 0x00, 0x00, 0x00, 0x00, 0x02, 0x3F, 0x00, 0x00, 0x00}, true},
+        {"extended Lc, an EF", Bytes{0x00, 0xA4, 0x02, 0x0C, 0x00, 0x00, 0x02, 0x01, 0x1E}, false},
+        {"data field cannot be located", Bytes{0x00, 0xA4, 0x02, 0x0C, 0x05, 0x01, 0x1E}, true},
+    };
+    for (const auto& row : rows) {
+        activatePlain(kAid);
+        rawCommands.clear();
+        (void)session->transmitRaw(row.command);
+        ASSERT_EQ(rawCommands.size(), 1U) << row.what;
+        EXPECT_EQ(rawCommands.front(), row.command) << row.what << ": the bytes go unchanged";
+        const int before = plainSelectsOf(kAid);
+        activatePlain(kAid);
+        EXPECT_EQ(plainSelectsOf(kAid) - before, row.leaves ? 1 : 0) << row.what;
+    }
+}
+
+TEST_F(CardSessionByteTransportTest, ARefusedSelectThroughATunnelBoundToTheAppletHandsOutNoHolder)
+{
+    const SmProtocolRequest bac = BacRequest{};
+    auto* tunnel = install(ChannelState::Open, /*carriesSm=*/true, bac);
+    tunnel->transmitHandler = [](const APDUCommand&) { return APDUResponse{{}, 0x6A, 0x82}; };
+    session->forgetCurrentApplet();
+
+    {
+        auto holder = session->activateChannelWithSm(kAid, bac, LibreSCRS::CancelToken{});
+        ASSERT_FALSE(holder.has_value());
+        EXPECT_EQ(holder.error(), ChannelActivationError::SelectAppletFailed);
+    }
+    EXPECT_EQ(tunnel->transmits(), 1);
+    EXPECT_TRUE(tunnel->currentApplet().empty()) << "the card refused: the tunnel records no applet";
+
+    tunnel->transmitHandler = nullptr;
+    auto holder = session->activateChannelWithSm(kAid, bac, LibreSCRS::CancelToken{});
+    ASSERT_TRUE(holder.has_value()) << "the bound applet may still be selected again";
+    EXPECT_EQ(tunnel->currentApplet(), kAid);
+}
+
+TEST_F(CardSessionByteTransportTest, AReplacedTunnelIsNotServedByTheAppletOfTheOneBefore)
+{
+    const SmProtocolRequest bac = BacRequest{};
+    install(ChannelState::Open, /*carriesSm=*/true, bac);
+    session->forgetCurrentApplet();
+    session->clearActiveChannel();
+    auto next = std::make_unique<FakeChannel>(AppletAid{}, ChannelState::Open, /*carriesSm=*/true);
+    auto* tunnel = next.get();
+    ChannelInjector::installForTesting(*session, std::move(next), bac);
+
+    auto holder = session->activateChannelWithSm(kAid, bac, LibreSCRS::CancelToken{});
+
+    ASSERT_FALSE(holder.has_value());
+    EXPECT_EQ(holder.error(), ChannelActivationError::Internal);
+    EXPECT_EQ(tunnel->transmits(), 0);
+}
+
 TEST_F(CardSessionByteTransportTest, ATransactionIsHeldUntilItEnds)
 {
     EXPECT_FALSE(session->isTransactionHeld());

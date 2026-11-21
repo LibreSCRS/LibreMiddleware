@@ -43,8 +43,7 @@ void ChannelInjector::installForTesting(CardSession& session,
     // window the activatedProtocol accessor must report as nullopt.
     try {
         std::lock_guard lock(session.d->sessionMutex);
-        session.d->activeChannel = std::move(channel);
-        session.d->activatedProtocol = std::move(recordedProtocol);
+        session.d->replaceActiveChannel(std::move(channel), std::move(recordedProtocol));
     } catch (...) {
         // noexcept contract: swallow any exception. Lock acquisition
         // failure is the only realistic path here and is harmless for a

@@ -539,9 +539,10 @@ public:
     /// card's secure-messaging session. Use @ref transmit to reach the card
     /// through that channel. A secure-messaging channel that is no longer open
     /// refuses the bytes too (@c 6F02, nothing sent), from any thread, until
-    /// it is removed (see @ref transmit). Bytes that parse as a SELECT leaving
-    /// the channel's application make the session forget it, as with
-    /// @ref transmit.
+    /// it is removed (see @ref transmit). A SELECT leaving the channel's
+    /// application makes the session forget it, as with @ref transmit, in
+    /// either length form; one whose data field cannot be located counts as
+    /// leaving.
     ///
     /// @param apdu The command bytes, sent unchanged.
     /// @return The answer: response data followed by SW1 SW2. @c 6F02 when a
@@ -681,14 +682,16 @@ public:
     /// channel as it stands. A plain channel is selected again plainly; a
     /// secure-messaging channel through the channel. One that cannot switch
     /// applications (BAC) is selected again only for the application it was
-    /// established for, and refuses any other as before. Does nothing when
-    /// the session holds no channel.
+    /// established for, and refuses any other. Does nothing when the session
+    /// holds no channel.
     ///
     /// @ref transmit and @ref transmitRaw do the same by themselves before
-    /// they send a SELECT that leaves the application: by DF name, of the
-    /// parent DF, of the master file, or by a path from the master file
-    /// (inter-industry class only). A caller that selected away some other
-    /// way calls this.
+    /// they send a SELECT that leaves the application (inter-industry class
+    /// only): by DF name of another application, of the parent DF, of the
+    /// master file (by @c 3F00 or with no data), or by a path from the master
+    /// file. Selecting an EF, a child DF, a path from the current DF or the
+    /// recorded application by name (first or only occurrence) keeps it. A
+    /// caller that selected away some other way calls this.
     ///
     /// @note Owner-tolerant, as @ref channelState. On lock or allocation
     ///       failure it does nothing.
